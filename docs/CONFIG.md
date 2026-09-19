@@ -257,6 +257,17 @@ otherwise. Copy what you need; leave the rest out.
             .blink = true,
         },
         .external_browser = "", // a program to spawn; "" = the OS default (exec-bearing)
+        // The mark every terminal wears — a pty tab's icon, the strip's
+        // terminal chip. .ghostty is Ghostty's ghost, which mnml bakes
+        // into its own face at U+F2000 and paints whatever emulator it
+        // is running inside; .terminal is the codicon, and the only
+        // value that brings the per-emulator table back (kitty's cat,
+        // Apple's apple); .custom is terminal_glyph_svg, baked at the
+        // same codepoint. Right-click the terminal chip, or the
+        // view.terminal_glyph_* commands.
+        .terminal_glyph = .ghostty, // .ghostty | .terminal | .custom
+        // The SVG behind .custom. view.terminal_glyph_custom prompts for
+        // it, bakes <data root>/fonts/MnmlSymbols.ttf and sets both keys.
         .terminal_glyph_svg = "",
         .top_bar_cluster_mode = .auto, // .auto | .expanded | .compact
         // .none hides the AI chips; otherwise an enabled integration icon

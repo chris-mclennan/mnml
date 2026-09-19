@@ -1369,6 +1369,7 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .grep_query => try grep.acceptQuery(app, text),
         .grep_replace => try grep.acceptReplace(app, text),
         .add_workspace => try tree_mod.acceptAddWorkspace(app, text),
+        .terminal_glyph_svg => try toastOnFail(app, @import("terminal_glyph.zig").customAccept(app, text)),
         .ai_branch_name => try toastOnFail(app, ai_app.branchNameAccept(app, text)),
         .ai_token => try toastOnFail(app, ai_app.tokenAccept(app, text)),
         .dap_add_watch => try dap.acceptWatch(app, text),

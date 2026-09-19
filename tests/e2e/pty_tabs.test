@@ -1,4 +1,5 @@
-# Pty panes on the strip, painted as Rust paints them: `  <label> 󰅖 `
+# Pty panes on the strip, painted the way every tab is: ` 󲀀 <label> 󰅖 `
+# — the terminal mark mnml bakes, where Rust had the codicon.
 # like any tab, no divider, no `$`. `:bn` skips pty tabs, `:bn!` does
 # not; `:rename` retitles; the scratch terminal toggles; a click on a
 # pty tab's `󰅖` kills it.
@@ -9,7 +10,7 @@ ex term sleep 30
 expect screen contains "sleep 30 󰅖"
 expect pane sleep 30
 drag 2 20 12 1
-expect screen contains " 󰈙 a.txt 󰅖    sleep 30 󰅖   󰐕"
+expect screen contains " 󰈙 a.txt 󰅖   󲀀 sleep 30 󰅖   󰐕"
 expect pane sleep 30
 ex bn
 expect pane a.txt

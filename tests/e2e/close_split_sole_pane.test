@@ -1,6 +1,6 @@
 # `view.close_split` on the sole pane closes it (Rust: the last leaf's
 # pane goes, no "only one split" complaint). The pty tab is painted as
-# every tab is — `  <label> 󰅖 ` — so the tab reads `sleep 30 󰅖`.
+# every tab is — ` 󲀀 <label> 󰅖 ` — so the tab reads `sleep 30 󰅖`.
 ex term sleep 30
 expect screen contains "sleep 30 󰅖"
 expect pane sleep 30

@@ -184,6 +184,8 @@ pub const TabIndicator = enum { block, rule, line, quarter, quarter_track };
 pub const TopBarClusterMode = enum { auto, expanded, compact };
 pub const TabBarAiIcon = enum { none, claude_code, codex, both };
 pub const AiLayoutMode = enum { grid, tabs };
+/// Which mark a terminal wears in the chrome (`app/terminal_glyph.zig`).
+pub const TerminalGlyph = enum { ghostty, terminal, custom };
 
 /// How a terminal pane draws the cursor its child asked for.
 pub const PtyCursor = struct {
@@ -340,6 +342,15 @@ pub const Ui = struct {
     pty_cursor: PtyCursor = .{},
     /// A program mnml spawns — exec-bearing. Empty = the OS default.
     external_browser: []const u8 = "",
+    /// The mark every terminal wears in the chrome — a pty tab, the
+    /// strip's terminal chip. `.ghostty` is Ghostty's ghost, which mnml
+    /// bakes into its own face at U+F2000; `.terminal` is the codicon,
+    /// and the only value that brings back the per-emulator table
+    /// (kitty's cat, Apple's apple); `.custom` is the SVG below, baked
+    /// at the same codepoint.
+    terminal_glyph: TerminalGlyph = .ghostty,
+    /// The SVG behind `.custom` — `view.terminal_glyph_custom` sets both
+    /// keys and bakes `<data root>/fonts/MnmlSymbols.ttf`.
     terminal_glyph_svg: []const u8 = "",
     top_bar_cluster_mode: TopBarClusterMode = .auto,
     tab_bar_ai_icon: TabBarAiIcon = .claude_code,
@@ -825,6 +836,8 @@ test "defaults are the shipped values" {
     try std.testing.expectEqual(@as(u16, 8), c.ui.hover_help_height);
     try std.testing.expectEqualStrings("terminal", c.ui.terminal_label);
     try std.testing.expectEqual(TabBarAiIcon.claude_code, c.ui.tab_bar_ai_icon);
+    try std.testing.expectEqual(TerminalGlyph.ghostty, c.ui.terminal_glyph);
+    try std.testing.expectEqualStrings("", c.ui.terminal_glyph_svg);
     try std.testing.expectEqual(AiLayoutMode.grid, c.ui.ai_layout_mode);
     try std.testing.expect(c.ui.hover_help);
     try std.testing.expect(c.ui.show_workspace_dots);

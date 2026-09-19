@@ -408,10 +408,11 @@ pub fn accentOf(app: *const App, p: *const PtyPane, theme: *const Theme) ?Theme.
     };
 }
 
-/// The terminal mnml itself is running inside — the name and the mark
-/// a shell pane's tab wears (`bufferline.terminalFor`).
-pub fn hostTerminal(app: *const App) bufferline.Terminal {
-    return bufferline.terminalFor(app.env.get("TERM_PROGRAM"), app.env.get("WT_SESSION"));
+/// The name of the terminal mnml itself is running inside — what a
+/// shell pane's tab goes by (`labelFor`). Only the name: the mark is
+/// mnml's own whatever the emulator (`terminal_glyph.mark`).
+pub fn hostTerminalName(app: *const App) []const u8 {
+    return bufferline.terminalName(app.env.get("TERM_PROGRAM"), app.env.get("WT_SESSION"));
 }
 
 /// The shell's own name as the tab spells it: the binary's base
@@ -429,7 +430,7 @@ fn labelFor(app: *App, opts: OpenOptions) Allocator.Error![]u8 {
     if (opts.label) |l| return gpa.dupe(u8, l);
     // A shell reads `<terminal> (<shell>)`, as Rust's `BinaryProfile::
     // shell` spells it: the terminal mnml runs inside, then the child.
-    if (opts.argv.len == 0) return std.fmt.allocPrint(gpa, "{s} ({s})", .{ hostTerminal(app).label, shellName(app) });
+    if (opts.argv.len == 0) return std.fmt.allocPrint(gpa, "{s} ({s})", .{ hostTerminalName(app), shellName(app) });
     return std.mem.join(gpa, " ", opts.argv);
 }
 
@@ -1336,7 +1337,7 @@ test "the identity strip: a Claude pane's left column is the `▌` in its accent
     try t.expect(!Theme.Color.eql(glyph2.style.fg, app.theme.palette.blue));
 }
 
-test "a shell pane reads `<terminal> (<shell>)` and its tab wears that terminal's own mark, not the generic one" {
+test "a shell pane reads `<terminal> (<shell>)`; its tab wears mnml's own terminal mark, and so does a command pane" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
@@ -1352,34 +1353,48 @@ test "a shell pane reads `<terminal> (<shell>)` and its tab wears that terminal'
     try t.expectEqualStrings("pwsh", shellName(&app));
     // The terminal is the one `$TERM_PROGRAM` names.
     try app.env.put("TERM_PROGRAM", "ghostty");
-    try t.expectEqualStrings("ghostty", hostTerminal(&app).label);
-    // A shell pane's label is the pair, and the tab's mark is that
-    // terminal's — a shell has no accent, so the mark is not tinted.
+    try t.expectEqualStrings("ghostty", hostTerminalName(&app));
+    // A shell pane's label is the pair; the tab's mark is mnml's own,
+    // not the emulator's — a shell has no accent, so it is not tinted.
     try app.env.put("SHELL", "/bin/sh");
     const sh = try open(&app, .{ .placement = .tab });
     try t.expectEqualStrings("ghostty (sh)", app.panes.pty(sh).?.label);
     try t.expect(accentOf(&app, app.panes.pty(sh).?, &app.theme) == null);
     try app.render();
     const tab = (rectsOf(&app, sh)).tab orelse return error.TestUnexpectedResult;
-    try t.expectEqualStrings("\u{F02A0}", app.screen.readCell(tab.x + 1, tab.y).?.char.grapheme);
-    // An unknown terminal falls back to the codicon, and the label
-    // with it; a command pane is untouched by either.
+    try t.expectEqualStrings(bufferline.ghost_glyph, app.screen.readCell(tab.x + 1, tab.y).?.char.grapheme);
+    // An unknown terminal changes the label, never the mark; a command
+    // pane wears the same mark a shell does.
     try app.env.put("TERM_PROGRAM", "Hyper");
     const sh2 = try open(&app, .{ .placement = .tab });
     try t.expectEqualStrings("terminal (sh)", app.panes.pty(sh2).?.label);
     try app.render();
     const tab2 = (rectsOf(&app, sh2)).tab orelse return error.TestUnexpectedResult;
-    try t.expectEqualStrings(bufferline.term_glyph, app.screen.readCell(tab2.x + 1, tab2.y).?.char.grapheme);
+    try t.expectEqualStrings(bufferline.ghost_glyph, app.screen.readCell(tab2.x + 1, tab2.y).?.char.grapheme);
     const cmd = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "sleep 30" }, .kind = .command, .placement = .tab });
     try t.expectEqualStrings("/bin/sh -c sleep 30", app.panes.pty(cmd).?.label);
     try app.render();
     const tab3 = (rectsOf(&app, cmd)).tab orelse return error.TestUnexpectedResult;
-    try t.expectEqualStrings(bufferline.term_glyph, app.screen.readCell(tab3.x + 1, tab3.y).?.char.grapheme);
-    // `--ascii`: the terminal's twin, not a Nerd Font codepoint.
+    try t.expectEqualStrings(bufferline.ghost_glyph, app.screen.readCell(tab3.x + 1, tab3.y).?.char.grapheme);
+    // `ui.terminal_glyph = .terminal` is the codicon — and it is the
+    // codicon whatever `$TERM_PROGRAM` says. The per-emulator marks are
+    // gone: which terminal mnml was launched from decided the icon, and
+    // none of those glyphs was the product's own logo.
+    app.cfg.ui.terminal_glyph = .terminal;
+    try app.env.put("TERM_PROGRAM", "ghostty");
+    try app.render();
+    const tab_t = (rectsOf(&app, sh)).tab orelse return error.TestUnexpectedResult;
+    try t.expectEqualStrings(bufferline.term_glyph, app.screen.readCell(tab_t.x + 1, tab_t.y).?.char.grapheme);
+    try app.env.put("TERM_PROGRAM", "Hyper");
+    try app.render();
+    const tab_u = (rectsOf(&app, sh)).tab orelse return error.TestUnexpectedResult;
+    try t.expectEqualStrings(bufferline.term_glyph, app.screen.readCell(tab_u.x + 1, tab_u.y).?.char.grapheme);
+    app.cfg.ui.terminal_glyph = .ghostty;
+    // `--ascii`: the `$` twin, not a Nerd Font codepoint.
     app.cfg.ui.ascii_icons = true;
     try app.render();
     const tab4 = (rectsOf(&app, sh)).tab orelse return error.TestUnexpectedResult;
-    try t.expectEqualStrings(bufferline.terminalFor("ghostty", null).fallback, app.screen.readCell(tab4.x + 1, tab4.y).?.char.grapheme);
+    try t.expectEqualStrings(bufferline.ghost_ascii, app.screen.readCell(tab4.x + 1, tab4.y).?.char.grapheme);
 }
 
 test "an AI pane's tab wears its product's mark: two Claude panes, the same glyph in two accents; Codex its own glyph in the theme's cyan" {

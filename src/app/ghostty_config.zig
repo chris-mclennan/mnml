@@ -27,10 +27,32 @@ const Allocator = std.mem.Allocator;
 
 pub const Rule = struct { start: u21, end: u21, font: []const u8 };
 
+/// mnml's own block, and the face that carries it
+/// (`src/glyph/builder.zig`). A terminal renders mnml's marks only if
+/// this range is routed there; `required_line` is the line that does
+/// it, quoted verbatim in the docs and in the icon's own toast.
+pub const mnml_block_start: u21 = 0xF1B00;
+pub const mnml_block_end: u21 = 0xF20FF;
+pub const mnml_font = "MnmlSymbols";
+pub const required_line = "font-codepoint-map = U+F1B00-U+F20FF=MnmlSymbols";
+
 pub const Map = struct {
     rules: []const Rule = &.{},
     /// The file the rules came from; null when none was found.
     path: ?[]const u8 = null,
+
+    /// Is every codepoint mnml owns routed at `MnmlSymbols`? False
+    /// when a rule sends part of the block elsewhere, or when nothing
+    /// covers it — either way the marks are the terminal's fallback
+    /// chain's to decide, which no app can see.
+    pub fn coversMnmlBlock(m: Map) bool {
+        var cp: u21 = mnml_block_start;
+        while (cp <= mnml_block_end) : (cp += 1) {
+            const font = m.routedFont(cp) orelse return false;
+            if (!std.ascii.eqlIgnoreCase(std.mem.trim(u8, font, " \t"), mnml_font)) return false;
+        }
+        return true;
+    }
 
     /// The family ghostty forces `cp` to, per the last matching rule;
     /// null when no rule covers it.
@@ -148,6 +170,13 @@ test "font-codepoint-map lines: ranges, singles, a comma list; other keys and co
     try t.expect(map.routedFont(0x41) == null);
     try t.expect(map.routedFont(0xE000) == null);
     try t.expectEqual(@as(usize, 0), (try parse(arena, "")).len);
+    // The block mnml's own marks live in: routed whole, or not covered.
+    try t.expect(map.coversMnmlBlock());
+    const partial: Map = .{ .rules = try parse(arena, "font-codepoint-map = U+F1B00-U+F1FFF=MnmlSymbols\n") };
+    try t.expect(!partial.coversMnmlBlock());
+    const elsewhere: Map = .{ .rules = try parse(arena, "font-codepoint-map = U+F1B00-U+F20FF=Symbols Nerd Font Mono\n") };
+    try t.expect(!elsewhere.coversMnmlBlock());
+    try t.expect(!(Map{}).coversMnmlBlock());
 }
 
 test "the config is found under XDG_CONFIG_HOME, then ~/.config, then the macOS app-support folder" {

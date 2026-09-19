@@ -91,6 +91,7 @@ const cheatsheet = @import("cheatsheet.zig");
 const script_pane = @import("script_pane.zig");
 const pty_view = @import("../ui/pty_view.zig");
 const pty_pane = @import("pty_pane.zig");
+const terminal_glyph = @import("terminal_glyph.zig");
 const list_panel = @import("../ui/list_panel.zig");
 const git_app = @import("git.zig");
 const git_palette = @import("git_palette.zig");
@@ -862,20 +863,23 @@ fn kindIcon(ascii: bool, twin: []const u8, nerd: []const u8, color: vaxis.Color)
     return .{ .glyph = if (ascii) twin else nerd, .color = color };
 }
 
-/// A pty tab's mark, as Rust's `pty_icon` picks it: the product's own
-/// for an AI session (in the product's brand, which `tabsOf` then
-/// lets the pane's accent override), the terminal mnml runs inside
-/// for a plain shell — white, the colour the split cluster's terminal
-/// button wears — and the codicon terminal for any other command.
+/// A pty tab's mark: the product's own for an AI session (in the
+/// product's brand, which `tabsOf` then lets the pane's accent
+/// override), and the terminal mark for everything else — white for a
+/// shell, green for a command pty. Which mark that is comes from
+/// `ui.terminal_glyph` (`terminal_glyph.mark`), so a shell and a
+/// command wear the same one rather than the emulator's and the
+/// codicon's.
 fn ptyIcon(app: *App, pane: *const pty_pane.PtyPane, ascii: bool) icons.Icon {
     const p = app.theme.palette;
     if (pty_pane.productOf(app, pane)) |product| return switch (product) {
         .claude => kindIcon(ascii, bufferline.claude_ascii, bufferline.claude_glyph, pty_pane.claude_brand),
         .codex => kindIcon(ascii, bufferline.codex_ascii, bufferline.codex_glyph, p.cyan),
     };
-    if (pane.argv.len > 0) return kindIcon(ascii, bufferline.term_ascii, bufferline.term_glyph, p.green);
-    const term = pty_pane.hostTerminal(app);
-    return .{ .glyph = if (ascii) term.fallback else term.glyph, .color = .{ .index = 15 } };
+    const term = terminal_glyph.mark(app);
+    const glyph = if (ascii) term.fallback else term.glyph;
+    if (pane.argv.len > 0) return .{ .glyph = glyph, .color = p.green };
+    return .{ .glyph = glyph, .color = .{ .index = 15 } };
 }
 
 /// `✗N` / `⚠N` (or `●` under `dot`) for an editor with diagnostics,
@@ -994,6 +998,7 @@ pub fn tabsOfList(app: *App, ui: Ui, ids: []const PaneId, active_id: PaneId) All
 fn splitIds(app: *App, ui: Ui) Allocator.Error!bufferline.SplitIds {
     return .{
         .term = @intFromEnum(Button.split_term),
+        .term_mark = terminal_glyph.mark(app),
         .right = @intFromEnum(Button.split_right),
         .down = @intFromEnum(Button.split_down),
         .max = @intFromEnum(Button.split_max),
@@ -2741,7 +2746,7 @@ test "the chrome row is the Rust dump's, cell for cell, at 120 and 80 columns; e
     // split buttons at the right end.
     const row1 = wide[row0.len + 1 ..];
     try t.expect(std.mem.startsWith(u8, row1, " \u{F0415}"));
-    try t.expect(std.mem.indexOf(u8, row1[0..std.mem.indexOfScalar(u8, row1, '\n').?], "\u{EA85}  \u{EB56}  \u{EB57}") != null);
+    try t.expect(std.mem.indexOf(u8, row1[0..std.mem.indexOfScalar(u8, row1, '\n').?], "\u{F2000}  \u{EB56}  \u{EB57}") != null);
     try t.expectEqual(Button.newTab(0), app.hits.at(1, 1).?.button);
     // The empty layout's cluster is Rust's three buttons — the
     // maximize one joins once a pane is open (`rust-120x40.txt` row 1

@@ -17,18 +17,18 @@ expect screen lacks "│──────────────────�
 command ai.claude_code_new
 wait 300
 expect pane claude
-expect screen contains "claude 󰅖   󰐕               󱸀         │ 󱸀 claude 󰅖"
+expect screen contains "claude 󰅖   󰐕               󱸀  󲀀       │ 󱸀 claude 󰅖"
 expect screen lacks "│─────────────────────────────────────────────────────────────────────────────────────────"
 expect screen lacks "Add Claude Code"
 command ai.claude_code_new
 wait 300
-expect screen contains "claude 󰅖   󰐕               󱸀         │ 󱸀 claude 󰅖"
+expect screen contains "claude 󰅖   󰐕               󱸀  󲀀       │ 󱸀 claude 󰅖"
 expect screen contains "│─────────────────────────────────────────────────────────────────────────────────────────"
-expect screen contains "        │                                            "
+expect screen contains " 󲀀       │                                            "
 expect screen contains "│▌                                           │             󰐕 Add Claude Code"
 command ai.claude_code_new
 wait 300
 expect pane claude
 expect screen lacks "Add Claude Code"
-expect screen lacks "        │                                            "
+expect screen lacks " 󲀀       │                                            "
 expect screen contains "│─────────────────────────────────────────────────────────────────────────────────────────"
