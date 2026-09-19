@@ -18,6 +18,7 @@ const text_mod = @import("text.zig");
 const build_mod = @import("build.zig");
 const action_mod = @import("action.zig");
 const wire_mod = @import("../wire.zig");
+const warm_mod = @import("../warm.zig");
 
 pub const Frame = frame_mod.Frame;
 pub const Style = frame_mod.Style;
@@ -193,6 +194,27 @@ pub fn Painter(comptime Target: type) type {
                 try p.mark(.{ .x = right, .y = y, .w = w, .h = 1 }, c.target);
             }
             return right;
+        }
+
+        /// `as of 4m ago`, immediately after the subtitle and in the
+        /// same muted ink, on every listing in the family.
+        ///
+        /// A screenful of rows with nothing above it reads as now, and
+        /// on a cached pane it usually is not. This is that one line,
+        /// in one place, so the two families say it the same way and a
+        /// third does not have to decide. `fetched_at` of 0 — nothing
+        /// has ever landed — paints nothing: an empty pane says
+        /// `loading…`, not `as of 0s ago`.
+        ///
+        /// Returns the x it ended at, so the caller keeps laying out.
+        pub fn asOf(p: *Self, x0: u16, y: u16, fetched_at: i64, now_secs: i64) u16 {
+            var buf: [32]u8 = undefined;
+            const t2 = warm_mod.asOfText(&buf, fetched_at, now_secs);
+            if (t2.len == 0) return x0;
+            var x = x0;
+            x += p.put(x, y, p.cols() -| x, "  ", p.th.dimText());
+            x += p.put(x, y, p.cols() -| x, t2, p.th.dimText());
+            return x;
         }
 
         /// The refresh glyph as a chip's text, for the ladder.
@@ -771,4 +793,24 @@ test "every hint entry is a hit; the front is dropped when the row will not fit"
     const q = r.hits.rectOf(.{ .hint = 2 }).?;
     try testing.expectEqual(Demo{ .hint = 2 }, r.hits.at(q.x, 0).?);
     try testing.expect(r.hits.rectOf(.{ .hint = 0 }) == null);
+}
+
+test "every listing in the family says how old it is, in the same words and the same ink" {
+    var r = try Rig.init(60, 2);
+    defer r.deinit();
+    const th = Theme.fromHello(null);
+    var p = r.painter(th, .{});
+    const now: i64 = 1_789_526_218;
+
+    var x = p.capsTitle(1, 0, "JIRA WORK", " (8)");
+    x = p.asOf(x, 0, now - 4 * 60, now);
+    try testing.expectEqualStrings(" JIRA WORK (8)  as of 4m ago", try r.rowText(0));
+    // The same ink as the subtitle: the age is context, not a heading.
+    try testing.expectEqual(th.dimText().fg, r.f.slots[@as(usize, x) - 1].style.fg);
+
+    // A pane that has never fetched anything says nothing rather than
+    // claiming to be current.
+    const x0 = p.capsTitle(1, 1, "JIRA WORK", " (loading\u{2026})");
+    try testing.expectEqual(x0, p.asOf(x0, 1, 0, now));
+    try testing.expect(std.mem.indexOf(u8, try r.rowText(1), "as of") == null);
 }
