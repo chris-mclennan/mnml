@@ -44,6 +44,25 @@ not a template. Build on the component system (`Ui`, `HitMap`,
 `Canvas`, `ListPanel`), register every click target in the same
 statement that paints it, and add nothing the Rust screen does not show.
 
+`zig-launcher-dock-120x40.txt` / `zig-launcher-dock-left-120x40.txt`
+are the LAUNCHER dock — `ui.dock`, macOS's Dock, not the bottom panel
+and not the dock widgets — in `always` mode at each of its two shapes
+(`tools/zig-spec.sh launcher-dock` / `launcher-dock-left`,
+`steps-launcher-dock*.jsonl`, which cycle `view.dock_cycle_mode` twice
+from the shipped `auto_hide` to `always` and then, for the second dump,
+`view.dock_move` once). On the **bottom** edge it is the editor area's
+last row — row 37 at 120x40, under the panes and above the statusline
+— reading `  Browser  󲀀 New terminal` with the 󰐃 pin chip at the far
+end: the enabled integration chips first (only the browser globe is on
+out of the box), then the terminals. On the **left** edge it is the
+frame's outermost three columns, glyph-only, one item per row starting
+at row 1, with the activity bar pushed in behind it and the pin chip on
+the strip's last row — the outer-band rule (`app/hover_zones.zig`), the
+same reason a side dock pushes an auto-hiding column's reveal edge one
+cell inwards. There is nothing to diff against: Rust has no such
+surface, and no `rust-*.txt` here changed, since an `auto_hide` dock —
+the shipped default — draws nothing until the pointer asks for it.
+
 `zig-usage-120x40.txt` / `zig-usage-80x24.txt` / `zig-usage-codex-120x40.txt`
 are the usage panes (`tools/zig-spec.sh usage` / `usage-codex`), cut on
 `usage-fixture/` — three synthetic accounts, a fixed clock and a UTC
