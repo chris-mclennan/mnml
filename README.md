@@ -114,7 +114,7 @@ path, a filesystem assumption or a spawned tool.
 ## The `.test` oracle
 
 The end-to-end suite is a line-based script format — `write`, `open`, `key`,
-`type`, then `expect screen | file | dirty | pane` — run headlessly against the
+`type`, then `expect screen | status | file | dirty | pane` — run headlessly against the
 same `App` the terminal drives. The corpus in `tests/e2e` is the Rust
 repo's suite, copied here when Rust froze, plus the scripts written for this
 codebase; it is the definition of parity: 394 `.test` files, 393 of 393

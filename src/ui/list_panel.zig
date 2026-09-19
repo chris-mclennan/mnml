@@ -282,6 +282,13 @@ pub fn ListPanel(comptime Row: type) type {
                     .pane = p.pane,
                 });
                 rest = fr.rest;
+                // The caret goes on to the terminal cursor, and only the
+                // FOCUSED panel's may: `filter_focused` is the pill's own
+                // state and survives stepping away from the panel, so a
+                // panel you have left must not take the cursor off
+                // whatever you stepped to (`app/cursor.zig`). The pill is
+                // painted either way — that is how you find your way back.
+                if (!focused) caret = null;
             }
 
             if (p.prelude_rows > 0) rest = rest.splitTop(@min(p.prelude_rows, rest.h)).rest;
@@ -732,7 +739,11 @@ test "keys: motion, paging, the filter's focus and clearing" {
     try testing.expectEqual(@as(usize, 1), st.cursor);
     try testing.expectEqual(Todos.Outcome.consumed, try Todos.handleKey(&st, gpa, Key.named(.left)));
     try testing.expectEqual(Todos.Outcome.ignored, try Todos.handleKey(&st, gpa, Key.ctrl('x')));
-    const caret = Todos.draw(&st, f.ui(), f.full(), props(rows));
+    // `.focused` because only the focused panel's caret comes back —
+    // it is what the terminal cursor goes on.
+    var focused_props = props(rows);
+    focused_props.focused = true;
+    const caret = Todos.draw(&st, f.ui(), f.full(), focused_props);
     try f.expectRow(1, "  \u{F0349} to");
     try testing.expectEqual(Caret{ .x = 5, .y = 1 }, caret.?); // after the ←
     try testing.expectEqual(Todos.Outcome.filter_changed, try Todos.handleKey(&st, gpa, Key.named(.esc)));
@@ -934,4 +945,28 @@ test "cards: row_h items with a gap, the hit over every row of one, the window c
     try testing.expectEqual(@as(usize, 1), st.visible);
     try expectRowLike(&g, 5, " \u{258c}", "█");
     for (g.hits.items.items) |e| try testing.expect(g.full().intersect(e.rect).eql(e.rect));
+}
+
+test "the filter caret goes only to the focused panel: the pill still paints on one you have left" {
+    var f = try Fixture.init(40, 10);
+    defer f.deinit();
+    var st: Todos.State = .{};
+    defer st.deinit(testing.allocator);
+    st.filter_focused = true;
+    try st.filter.appendSlice(testing.allocator, "bug");
+    st.filter_caret = 3;
+    const rows = [_]Todo{.{ .title = "a", .done = false }};
+
+    // Focused: the caret comes back, so the terminal cursor lands on it.
+    var p = props(&rows);
+    p.focused = true;
+    try testing.expect(Todos.draw(&st, f.ui(), f.full(), p) != null);
+
+    // Stepped away: no caret — but the pill and its text are still
+    // painted, or there would be no way to see the filter is set.
+    var p2 = props(&rows);
+    p2.focused = false;
+    try testing.expect(Todos.draw(&st, f.ui(), f.full(), p2) == null);
+    var buf: [256]u8 = undefined;
+    try testing.expect(std.mem.indexOf(u8, f.row(1, &buf), "bug") != null);
 }

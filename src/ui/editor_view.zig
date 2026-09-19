@@ -29,6 +29,7 @@ const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const ids = @import("../core/ids.zig");
 const scrollbar = @import("scrollbar.zig");
+const blendOver = @import("diff_view.zig").blendOver;
 
 const Allocator = std.mem.Allocator;
 const Style = vaxis.Style;
@@ -1092,7 +1093,25 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
         y = drawVirtualRows(ui, pane, area, doc, line, true, text_x, text_w, y);
     }
     if (bar) scrollbar.drawVerticalLook(ui, Rect.init(area.right() - scrollbar_w, area.y, scrollbar_w, area.h), .{ .pane = pane }, total, text_h, view.scroll_line, .solid);
+    if (!doc.focused) if (found) |c| paintAwayMark(ui, c);
     return found;
+}
+
+/// An editor pane that does not have focus: a dim mark on the cell its
+/// caret is on.
+///
+/// The host terminal draws ONE cursor and it belongs to whatever has
+/// the typing (`app/cursor.zig`), so without this the other half of a
+/// split — or the buffer you left when you stepped into the tree —
+/// loses its place entirely. A terminal emulator has the same problem
+/// with a second pane and answers it by hollowing the cursor out;
+/// `pty_view`'s `.dim` is that answer in cells, and this is the same
+/// colour: the cursor's, half-way to the ground it sits on.
+fn paintAwayMark(ui: Ui, at: Cursor) void {
+    const cell = ui.canvas.screen.readCell(at.x, at.y) orelse return;
+    const ground = cell.style.bg;
+    const muted = blendOver(ui.theme.fg.fg, ground, 128, ui.theme.fg.fg);
+    ui.canvas.put(at.x, at.y, .{ .char = cell.char, .style = .{ .fg = ground, .bg = muted } });
 }
 
 // ── ui toggles ──
@@ -2071,4 +2090,33 @@ test "the scrollbar takes the last column and a cell of air before it; without i
     d.scrollbar = false;
     _ = draw(f.ui(), 0, f.full(), &view, d);
     try f.expectRow(0, "a" ** 20);
+}
+
+test "an unfocused pane marks where its caret is; a focused one leaves the cell to the terminal" {
+    var f = try Fixture.init(12, 1);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("abc");
+    d.line_numbers = false;
+    d.cursor = 1;
+
+    // Focused: the host terminal draws the cursor there, so the cell is
+    // painted as ordinary text.
+    const cur = draw(f.ui(), 0, f.full(), &view, d);
+    try testing.expectEqual(Cursor{ .x = 1, .y = 0 }, cur.?);
+    const plain = f.screen.readCell(1, 0).?;
+    try testing.expectEqualStrings("b", plain.char.grapheme);
+
+    // Unfocused: the glyph stays, over a muted block — the cursor
+    // colour half-way to the ground, as `pty_view`'s `.dim` paints it.
+    var view2: ViewState = .{};
+    d.focused = false;
+    _ = draw(f.ui(), 0, f.full(), &view2, d);
+    const marked = f.screen.readCell(1, 0).?;
+    try testing.expectEqualStrings("b", marked.char.grapheme);
+    try testing.expect(!Theme.Color.eql(plain.style.bg, marked.style.bg));
+    try testing.expect(!Theme.Color.eql(f.theme.fg.fg, marked.style.bg));
+    // Its neighbours are untouched: one cell, not a band.
+    try testing.expect(Theme.Color.eql(plain.style.bg, f.screen.readCell(0, 0).?.style.bg));
+    try testing.expect(Theme.Color.eql(plain.style.bg, f.screen.readCell(2, 0).?.style.bg));
 }
