@@ -28,6 +28,9 @@ pub const Error = error{
     LadderMissing,
     LadderOrder,
     LadderInk,
+    BarMissing,
+    BarThumbMissing,
+    BarTrackMissing,
 };
 
 fn eqlStyle(a: Style, b: Style) bool {
@@ -75,6 +78,29 @@ pub fn headerLadderTail(f: *const Frame, th: Theme, y: u16, nerd: bool, ascii: b
             if (!eqlStyle(f.slots[@as(usize, y) * f.cols + x0 + i].style, want)) return Error.LadderInk;
         }
     }
+}
+
+/// A list's scrollbar runs down column `x` from `y0` for `h` rows: a
+/// sized thumb over a dim track, both the toolkit's glyphs.
+///
+/// A pane whose list outruns its body and says nothing about where in
+/// it you are is a pane you scroll blind. One family had this from the
+/// start and the other did not, which is the only reason it is worth
+/// asserting from both.
+pub fn listScrollbar(f: *const Frame, x: u16, y0: u16, h: u16) Error!void {
+    var track: u16 = 0;
+    var thumb: u16 = 0;
+    var y = y0;
+    while (y < y0 + h and y < f.rows) : (y += 1) {
+        const sym = f.slots[@as(usize, y) * f.cols + x].symbol();
+        if (std.mem.eql(u8, sym, chrome.scroll_track)) track += 1;
+        if (std.mem.eql(u8, sym, chrome.scroll_thumb)) thumb += 1;
+    }
+    if (track + thumb == 0) return Error.BarMissing;
+    if (thumb == 0) return Error.BarThumbMissing;
+    // A thumb that fills the whole track says nothing; the list that
+    // needs a bar is by definition longer than the window.
+    if (track == 0) return Error.BarTrackMissing;
 }
 
 /// `want`, one codepoint per cell, starting at `(x0, y)`. Every glyph

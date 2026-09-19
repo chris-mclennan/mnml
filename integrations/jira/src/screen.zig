@@ -119,8 +119,15 @@ pub const Layout = struct {
     columns_y: ?u16 = null,
     body_y: u16 = 3,
     body_h: u16 = 0,
-    /// The list's width (the detail pane starts here when open).
+    /// The list's width (the detail pane starts here when open). It
+    /// is one cell narrower when the list carries a scrollbar, so the
+    /// bar has a column of its own rather than sitting on the words.
     list_w: u16 = 0,
+    /// The list has more rows than the body: the toolkit's scrollbar
+    /// goes down column `list_w`. Decided before the column header is
+    /// painted, so the header and its rows are laid out to the same
+    /// width.
+    list_bar: bool = false,
     detail_x: ?u16 = null,
     status_y: u16 = 0,
 };
@@ -197,6 +204,14 @@ pub const Painter = struct {
         p.lay.toolbar_rows = try p.paintToolbar();
         var y = p.lay.toolbar_y + p.lay.toolbar_rows;
         if (!t.cfg.isKanban()) {
+            // A list longer than its body says so, the way the forge
+            // pane's does: a thumb over a dim track down the last
+            // column. Forty-three rows in a thirty-row body used to
+            // say nothing at all about where in them you were.
+            if (try p.listOverflows(p.lay.status_y -| (y + 1))) {
+                p.lay.list_bar = true;
+                p.lay.list_w -|= 1;
+            }
             p.lay.columns_y = y;
             try p.paintColumns(y);
             y += 1;
@@ -518,6 +533,13 @@ pub const Painter = struct {
 
     /// Where each column starts at this width: the fixed ones from the
     /// config, shrunk together when they would eat the summary.
+    /// Whether the active tab's rows outrun a body `h` rows tall.
+    fn listOverflows(p: *Painter, h: u16) Allocator.Error!bool {
+        if (h == 0) return false;
+        const r = (try p.a.treeRows(p.arena)) orelse return false;
+        return r.rows.len > h;
+    }
+
     fn columnLayout(p: *Painter) Allocator.Error![]const ColX {
         const set = p.a.tab().cfg.columnSet();
         var fixed: u32 = 0;
@@ -779,6 +801,11 @@ pub const Painter = struct {
                 .show_more => |sm| try p.c.showMoreRow(.{ .x = 0, .y = y, .w = w, .h = 1 }, sum_c.x, sm.hidden, .{ .show_more = idx }),
             }
         }
+        // The bar owns the column the layout reserved for it. The whole
+        // track is one hit, so a press or a drag on it turns back into
+        // a position through `sdk.pane.scrollAt` — the same bar, and
+        // the same arithmetic, as the detail panel's.
+        if (p.lay.list_bar) try p.c.scrollbar(.{ .x = w, .y = y0, .w = 1, .h = h }, r.rows.len, t.scroll, h, .list_bar);
     }
 
     /// The row's action buttons, each wearing what its last press left:
@@ -1920,6 +1947,46 @@ test "Boards: the kanban columns, the cards with a chevron and a marker, the ava
     try testing.expectEqual(hit.Target.modal_close, a.hits.at(x_x + 1, x_y).?);
     try a.click(x_x + 1, x_y, false);
     try testing.expect(a.modal == null);
+}
+
+test "a list longer than its body carries the toolkit's scrollbar, and the bar is a control" {
+    const h = try app_mod.Harness.start(.{ .tabs = &app_mod.work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    // A body short enough that the rows outrun it. The forge pane's
+    // list has always said where in it you are; this one did not.
+    a.resize(80, 12);
+    var f = try Frame.init(testing.allocator, 80, 12);
+    defer f.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const ar = arena.allocator();
+    try paint(ar, &f, a, .{});
+    const bar_x = f.cols - 1;
+    // The track runs the height of the body with a sized thumb on it,
+    // in the toolkit's two glyphs. Asserted through `sdk.pane.expect`,
+    // the same function the forge pane's own suite calls.
+    try sdk.pane.expect.listScrollbar(&f, bar_x, 0, f.rows);
+    // Every cell of the track is the same hit, so a press anywhere on
+    // it is a position rather than a miss.
+    const first_bar_y = blk: {
+        var yy: u16 = 0;
+        while (yy < f.rows) : (yy += 1) if (a.hits.at(bar_x, yy)) |t| if (t == .list_bar) break :blk yy;
+        return error.NoScrollbarHit;
+    };
+    // The words stop one cell short of it: the bar has a column of its
+    // own rather than sitting on a clipped summary.
+    try testing.expect(a.hits.at(bar_x, first_bar_y).? == hit.Target.list_bar);
+    // A press near the bottom of the track scrolls there, and brings
+    // the cursor with it so the keys carry on from where the eye is.
+    const before = a.tab().scroll;
+    try a.click(bar_x, f.rows - 2, false);
+    try testing.expect(a.tab().scroll > before);
+    try testing.expect(a.tab().selected >= a.tab().scroll);
+    // And a drag keeps steering it back.
+    try a.drag(bar_x, first_bar_y);
+    try testing.expectEqual(@as(usize, 0), a.tab().scroll);
 }
 
 test "the narrow pane: 80x24 keeps the chips whole by wrapping, the columns shrink, the hint row still reads" {

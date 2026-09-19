@@ -1175,6 +1175,14 @@ test "the pane paints at every size the gate runs, and at one below them" {
     }
 }
 
+test "a list longer than its body carries the toolkit's scrollbar, the same one the tracker pane paints" {
+    // A body short enough that the two repos' rows outrun it.
+    const s = try Screen.init(80, 9, acme, .{});
+    defer s.deinit();
+    _ = try s.draw();
+    try sdk.pane.expect.listScrollbar(&s.frame, s.frame.cols - 1, 0, s.frame.rows);
+}
+
 test "the `/` filter: the header reads N of M while narrowed and the hint row changes with the mode" {
     const s = try Screen.init(120, 40, acme, .{});
     defer s.deinit();

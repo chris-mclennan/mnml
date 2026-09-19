@@ -3210,6 +3210,7 @@ pub const App = struct {
                 const r = a.hits.rectOf(hit.Target.detail_bar) orelse return;
                 a.details_scroll = @intCast(sdk.pane.scrollAt(r, a.details_lines, a.details_rows, row));
             },
+            .list_bar => try a.listBarTo(row),
             .column, .detail, .comment, .help_body, .picker_row, .picker_body, .modal_close, .modal_body, .jql_text, .jql_body => {},
             // Only reachable while the overlay is up, and that branch
             // returns above.
@@ -3342,10 +3343,30 @@ pub const App = struct {
     /// press, and a drag that started elsewhere must not move things
     /// under the pointer on its way past.
     pub fn drag(a: *App, col: u16, row: u16) Allocator.Error!void {
-        const tg = a.hits.at(col, row) orelse return;
-        if (tg != .detail_bar) return;
-        const r = a.hits.rectOf(hit.Target.detail_bar) orelse return;
-        a.details_scroll = @intCast(sdk.pane.scrollAt(r, a.details_lines, a.details_rows, row));
+        switch (a.hits.at(col, row) orelse return) {
+            .detail_bar => {
+                const r = a.hits.rectOf(hit.Target.detail_bar) orelse return;
+                a.details_scroll = @intCast(sdk.pane.scrollAt(r, a.details_lines, a.details_rows, row));
+            },
+            .list_bar => try a.listBarTo(row),
+            else => {},
+        }
+    }
+
+    /// A press or a drag on the list's scrollbar: the row the pointer
+    /// is over becomes the window's first row, and the cursor comes
+    /// with it so the keys carry on from where the eye is.
+    fn listBarTo(a: *App, row: u16) Allocator.Error!void {
+        const r = a.hits.rectOf(hit.Target.list_bar) orelse return;
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const rows = (try a.treeRows(scratch.allocator())) orelse return;
+        const t = a.tab();
+        t.scroll = sdk.pane.scrollAt(r, rows.rows.len, r.h, row);
+        if (t.selected < t.scroll) t.selected = t.scroll;
+        if (t.selected >= t.scroll + r.h) t.selected = t.scroll + r.h - 1;
+        if (t.selected >= rows.rows.len) t.selected = rows.rows.len -| 1;
+        try a.afterMove();
     }
 
     pub fn wheel(a: *App, col: u16, row: u16, dy: i16) Allocator.Error!void {
@@ -3367,6 +3388,8 @@ pub const App = struct {
             .detail, .detail_close, .detail_bar => {
                 if (steps > 0) a.details_scroll +|= 3 else a.details_scroll -|= 3;
             },
+            // The wheel over the list's bar moves the list, not the bar.
+            .list_bar => try a.move(steps),
             .picker_row, .picker_body => if (a.picker) |*p| try p.move(steps) else if (a.transition) |*t| t.move(steps),
             else => try a.move(steps),
         }
