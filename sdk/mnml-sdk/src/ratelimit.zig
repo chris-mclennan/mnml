@@ -102,6 +102,38 @@ pub const State = struct {
     last_429: f64 = 0,
 };
 
+/// What `acquire` was waiting on. An empty bucket and a 429 cooldown
+/// are the same `loading…` on screen and very different problems, so
+/// the limiter says which — and the request log writes it down.
+pub const Wait = enum {
+    /// It did not wait: there was a token.
+    nothing,
+    /// The bucket was empty; it refills at `rate`.
+    tokens,
+    /// A 429 had parked every process on this bucket until the
+    /// cooldown was up.
+    cooldown,
+    /// `max_block_secs` passed and the limiter failed open. The caller
+    /// sent anyway.
+    gave_up,
+
+    pub fn tag(w: Wait) []const u8 {
+        return @tagName(w);
+    }
+};
+
+/// One `acquire`, with what it cost. `ok` is the old boolean: false
+/// means the limiter gave up and the caller should send anyway.
+pub const Acquired = struct {
+    ok: bool,
+    /// Wall time the request was held before it went out.
+    wait_ms: u64 = 0,
+    waited_for: Wait = .nothing,
+    /// Tokens left in the shared bucket after this one took its token;
+    /// what the hover and the log both read.
+    tokens_after: f64 = 0,
+};
+
 pub const Status = struct {
     tokens: f64,
     capacity: f64,
@@ -141,35 +173,65 @@ pub const Limiter = struct {
     /// up (a wedged file, or `max_block_secs` passed); the caller
     /// should send anyway and let its own 429 handling decide.
     pub fn acquire(self: *Limiter) bool {
-        const deadline = nowSecs(self.io) + self.cfg.max_block_secs;
+        return self.acquireDetailed().ok;
+    }
+
+    /// The same wait, with an account of it: how long, on what, and
+    /// what was left afterwards. A pane that says `loading…` for three
+    /// seconds can say WHY with this, and the request log writes it
+    /// down for the run after.
+    pub fn acquireDetailed(self: *Limiter) Acquired {
+        const started = nowSecs(self.io);
+        const deadline = started + self.cfg.max_block_secs;
         var jitter_seed: u32 = 0;
+        // What the FIRST look found: a request held three seconds by an
+        // empty bucket and one held three seconds by a cooldown are
+        // different problems, and it is the first answer that names it.
+        var cause: Wait = .nothing;
+        var left: f64 = 0;
         while (true) {
             const now = nowSecs(self.io);
-            const wait = self.withLockedState(now, struct {
-                cfg: Config,
-                fn apply(ctx: @This(), st: *State, at: f64) f64 {
-                    if (st.cooldown_until > at) return st.cooldown_until - at;
-                    if (st.tokens >= 1.0) {
-                        st.tokens -= 1.0;
-                        // Ease the shared rate back toward the baseline.
-                        st.rate = @min(ctx.cfg.rate, @max(st.rate * ctx.cfg.recover_factor, @max(st.rate, 0.0)));
-                        return 0.0;
-                    }
-                    const need = 1.0 - st.tokens;
-                    const cur = @max(st.rate, ctx.cfg.min_rate);
-                    return need / cur;
-                }
-            }{ .cfg = self.cfg }) catch return false;
+            var probe: Probe = .{ .cfg = self.cfg, .tokens_after = &left, .cooldown = undefined };
+            var was_cooldown = false;
+            probe.cooldown = &was_cooldown;
+            const wait = self.withLockedState(now, probe) catch return .{ .ok = false, .wait_ms = millisSince(started, nowSecs(self.io)), .waited_for = .gave_up };
             if (wait <= 0.0) {
                 self.acquired += 1;
-                return true;
+                return .{ .ok = true, .wait_ms = millisSince(started, nowSecs(self.io)), .waited_for = cause, .tokens_after = left };
             }
+            if (cause == .nothing) cause = if (was_cooldown) .cooldown else .tokens;
             jitter_seed +%= 1;
             const jittered = jitter(@min(wait, 5.0), jitter_seed);
-            if (nowSecs(self.io) + jittered > deadline) return false;
-            self.io.sleep(.fromMilliseconds(@intFromFloat(@max(jittered, 0.05) * 1000.0)), .awake) catch return false;
+            if (nowSecs(self.io) + jittered > deadline) return .{ .ok = false, .wait_ms = millisSince(started, nowSecs(self.io)), .waited_for = .gave_up, .tokens_after = left };
+            self.io.sleep(.fromMilliseconds(@intFromFloat(@max(jittered, 0.05) * 1000.0)), .awake) catch
+                return .{ .ok = false, .wait_ms = millisSince(started, nowSecs(self.io)), .waited_for = .gave_up, .tokens_after = left };
         }
     }
+
+    /// One look at the bucket: take a token when there is one, else
+    /// say how long until there is, and whether a cooldown is the
+    /// reason there is not.
+    const Probe = struct {
+        cfg: Config,
+        tokens_after: *f64,
+        cooldown: *bool,
+
+        fn apply(ctx: @This(), st: *State, at: f64) f64 {
+            ctx.cooldown.* = st.cooldown_until > at;
+            ctx.tokens_after.* = st.tokens;
+            if (ctx.cooldown.*) return st.cooldown_until - at;
+            if (st.tokens >= 1.0) {
+                st.tokens -= 1.0;
+                ctx.tokens_after.* = st.tokens;
+                // Ease the shared rate back toward the baseline.
+                st.rate = @min(ctx.cfg.rate, @max(st.rate * ctx.cfg.recover_factor, @max(st.rate, 0.0)));
+                return 0.0;
+            }
+            const need = 1.0 - st.tokens;
+            const cur = @max(st.rate, ctx.cfg.min_rate);
+            return need / cur;
+        }
+    };
 
     /// Record a 429: park every process until `retry_after_secs` is
     /// up (the default cooldown when null) and cut the shared rate.
@@ -247,6 +309,12 @@ pub fn renderState(buf: []u8, st: State) []const u8 {
     return std.fmt.bufPrint(buf, "{{\"ts\":{d},\"tokens\":{d},\"rate\":{d},\"cooldown_until\":{d},\"throttles\":{d},\"last_429\":{d}}}", .{
         st.ts, st.tokens, st.rate, st.cooldown_until, st.throttles, st.last_429,
     }) catch buf[0..0];
+}
+
+fn millisSince(start: f64, end: f64) u64 {
+    const d = end - start;
+    if (d <= 0) return 0;
+    return @intFromFloat(d * 1000.0);
 }
 
 fn nowSecs(io: Io) f64 {
@@ -406,6 +474,75 @@ test "two limiters on one file share the tokens, and one 429 parks both" {
     const text = try Io.Dir.cwd().readFileAlloc(t.io, path, t.allocator, .limited(4096));
     defer t.allocator.free(text);
     try t.expect(std.mem.indexOf(u8, text, "\"throttles\":1") != null);
+}
+
+test "acquire says what it waited on: nothing, an empty bucket, then a 429's cooldown" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    const path = try std.fs.path.join(t.allocator, &.{ dir, "jira-ratelimit.json" });
+    defer t.allocator.free(path);
+    // Two tokens, and a refill slow enough that the third is a real
+    // wait rather than a race with the clock.
+    var l = try Limiter.init(t.allocator, t.io, path, .{ .capacity = 2.0, .rate = 0.05, .max_block_secs = 0.3 });
+    defer l.deinit();
+
+    // A token in hand: no wait, and the count left is what the next
+    // caller will find.
+    const first = l.acquireDetailed();
+    try t.expect(first.ok);
+    try t.expectEqual(Wait.nothing, first.waited_for);
+    try t.expectApproxEqAbs(@as(f64, 1.0), first.tokens_after, 0.01);
+    const second = l.acquireDetailed();
+    try t.expect(second.ok);
+    try t.expectEqual(Wait.nothing, second.waited_for);
+    try t.expectApproxEqAbs(@as(f64, 0.0), second.tokens_after, 0.01);
+
+    // The bucket is empty and the refill is slower than the budget to
+    // wait in: the limiter fails open rather than hanging the pane.
+    const third = l.acquireDetailed();
+    try t.expect(!third.ok);
+    try t.expectEqual(Wait.gave_up, third.waited_for);
+
+    // An empty bucket that WILL refill inside the budget: the request
+    // goes out, having really waited, and the wait is blamed on the
+    // tokens rather than on anything else.
+    // On a bucket of its own: the refill rate lives in the FILE, so a
+    // limiter pointed at the one above would inherit its 0.05.
+    const quick_path = try std.fs.path.join(t.allocator, &.{ dir, "quick-ratelimit.json" });
+    defer t.allocator.free(quick_path);
+    var quick = try Limiter.init(t.allocator, t.io, quick_path, .{ .capacity = 1.0, .rate = 20.0, .max_block_secs = 5.0 });
+    defer quick.deinit();
+    try t.expect(quick.acquire());
+    const waited = quick.acquireDetailed();
+    try t.expect(waited.ok);
+    try t.expectEqual(Wait.tokens, waited.waited_for);
+    try t.expect(waited.wait_ms > 0);
+
+    // A 429 is a different reason for the same silence, and the
+    // account of the wait says so rather than blaming the refill.
+    const parked_path = try std.fs.path.join(t.allocator, &.{ dir, "parked-ratelimit.json" });
+    defer t.allocator.free(parked_path);
+    var parked = try Limiter.init(t.allocator, t.io, parked_path, .{ .capacity = 4.0, .rate = 20.0, .max_block_secs = 5.0 });
+    defer parked.deinit();
+    try t.expect(parked.acquire());
+    parked.penalize(0.05);
+    const after_429 = parked.acquireDetailed();
+    try t.expect(after_429.ok);
+    try t.expectEqual(Wait.cooldown, after_429.waited_for);
+    try t.expect(after_429.wait_ms > 0);
+
+    // A cooldown longer than the budget fails open, and still names
+    // the cooldown rather than pretending nothing happened.
+    var impatient = try Limiter.init(t.allocator, t.io, parked_path, .{ .capacity = 4.0, .rate = 20.0, .max_block_secs = 0.0 });
+    defer impatient.deinit();
+    impatient.penalize(30);
+    const gave_up = impatient.acquireDetailed();
+    try t.expect(!gave_up.ok);
+    try t.expectEqual(Wait.gave_up, gave_up.waited_for);
+    // `acquire` is still the boolean every existing caller reads.
+    try t.expect(!impatient.acquire());
 }
 
 test "the state path follows the Rust crate's resolution order, per service" {

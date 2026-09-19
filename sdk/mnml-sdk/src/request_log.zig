@@ -1,0 +1,604 @@
+//! What every request cost, written down where a person can read it.
+//!
+//! A pane that is slow gives the user one word — `loading…` — and no
+//! way to tell a throttled bucket from a wedged socket from a tab that
+//! simply asks for forty things. So every request an integration makes
+//! appends one JSON line here:
+//!
+//! ```
+//! {"ts":1789526218.41,"service":"jira","integration":"mnml-jira",
+//!  "method":"GET","host":"acme.atlassian.net","path":"/rest/api/3/search/jql",
+//!  "status":200,"ms":412,"bytes":18244,"reason":"pane_open",
+//!  "wait_ms":3030,"tokens_after":0.14,"retry_of":0,"cache":"miss"}
+//! ```
+//!
+//! `<data root>/requests/<service>.jsonl`, one file per service so two
+//! integrations on one API share a file and read as one story — which
+//! is the point, since they share the bucket too. It rotates at
+//! `max_bytes` and keeps one older generation (`<service>.1.jsonl`):
+//! the log is a diagnosis aid, not an archive.
+//!
+//! **What is never written.** There is no free-form header field, by
+//! construction: `Entry` names the fields it carries, and the only
+//! header it takes is `RateLimit`, four numbers a server sends about
+//! the budget. No request or response body is ever written. The query
+//! IS kept — `?jql=…` is most of what makes a Jira line worth reading —
+//! so `redactQuery` strips the value of any parameter whose NAME reads
+//! like a credential (`token`, `access_token`, `api_key`, `password`,
+//! `secret`, `sig`, `signature`, `auth`) and leaves `name=***` behind,
+//! so a line still says the parameter was sent.
+//!
+//! **A log is never a reason a request fails.** Every file operation
+//! here is best effort: a log that cannot be written costs a line, not
+//! a fetch.
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const Io = std.Io;
+const ratelimit = @import("ratelimit.zig");
+
+/// The default ceiling before a rotate, in bytes.
+pub const default_max_bytes: u64 = 4 * 1024 * 1024;
+/// Older generations kept beside the live file. One: `<service>.1.jsonl`.
+pub const kept_generations: usize = 1;
+
+/// Why a request was made. Every call site passes one; a line without
+/// a reason cannot be read back to a cause, which is the whole point.
+pub const Reason = enum {
+    /// The first load of a tab, when a pane opens.
+    pane_open,
+    /// A refetch the user or the interval asked for.
+    refresh,
+    /// The statusline poller's `--values` run.
+    poll,
+    /// Filling a cache ahead of a pane that is not open yet.
+    prefetch,
+    /// One row's detail, fetched because the reader is on it.
+    detail,
+    /// The runs on a pull request's commit.
+    builds,
+    /// May this pull request merge?
+    readiness,
+    /// A command the host dispatched.
+    dispatch,
+    /// The user asked for this one outright — a transition, a comment,
+    /// an approval.
+    user,
+
+    pub fn tag(r: Reason) []const u8 {
+        return @tagName(r);
+    }
+};
+
+/// Whether a local cache answered instead of the network. `none` is
+/// "this call has no cache", which is not the same as a miss.
+pub const Cache = enum { hit, miss, none };
+
+/// The four headers a server sends about the budget, when it sends
+/// them. Numbers only — this is the only header shape the log takes,
+/// so a credential has no field to arrive in.
+pub const RateLimit = struct {
+    /// `X-RateLimit-Limit`.
+    limit: ?i64 = null,
+    /// `X-RateLimit-Remaining`.
+    remaining: ?i64 = null,
+    /// `X-RateLimit-Reset`, as the server sent it (epoch seconds).
+    reset: ?i64 = null,
+    /// `Retry-After`, in seconds.
+    retry_after: ?i64 = null,
+
+    pub fn any(r: RateLimit) bool {
+        return r.limit != null or r.remaining != null or r.reset != null or r.retry_after != null;
+    }
+};
+
+/// One request, as it is written down.
+pub const Entry = struct {
+    /// Wall clock, seconds since the epoch, with milliseconds.
+    ts: f64 = 0,
+    /// The bucket this spent from: `jira`, `bitbucket`.
+    service: []const u8,
+    /// Which binary made it — so two integrations on one service are
+    /// still told apart.
+    integration: []const u8,
+    method: []const u8,
+    /// Host only, no scheme and no credentials.
+    host: []const u8,
+    /// Path with its query, the query redacted.
+    path: []const u8,
+    /// Null when the request never reached a status — DNS, TLS, a
+    /// reset connection.
+    status: ?u16 = null,
+    /// Wall time for the request itself, the limiter's wait excluded.
+    ms: u64 = 0,
+    /// Response body size.
+    bytes: usize = 0,
+    reason: Reason,
+    /// How long `acquire` held this request before it went out.
+    wait_ms: u64 = 0,
+    /// Tokens left in the shared bucket after this request took one.
+    tokens_after: f64 = 0,
+    /// 0 for a first attempt, else which retry this is.
+    retry_of: u32 = 0,
+    cache: Cache = .none,
+    rate_limit: RateLimit = .{},
+    /// Why the limiter made this request wait, when it did.
+    waited_for: Waited = .nothing,
+};
+
+/// What `acquire` was waiting on. The limiter's own enum — one name
+/// for the thing, whether it is being decided, shown in the pane or
+/// written down here.
+pub const Waited = ratelimit.Wait;
+
+/// Where the log lives and whether it is on. Cheap to hold: an
+/// integration makes one at startup and hands `&log` to its client.
+pub const Log = struct {
+    gpa: Allocator,
+    io: Io,
+    /// `<data root>/requests`. Owned. Empty when the log is off.
+    dir: []u8 = &.{},
+    /// Owned.
+    service: []u8 = &.{},
+    /// Owned.
+    integration: []u8 = &.{},
+    enabled: bool = true,
+    max_bytes: u64 = default_max_bytes,
+    /// Lines actually written — what a test counts.
+    written: u32 = 0,
+
+    /// The log for a service, under the data root the environment
+    /// resolves to. Never fails for want of a directory: the directory
+    /// is made when the first line is written.
+    pub fn open(
+        gpa: Allocator,
+        io: Io,
+        env: *const std.process.Environ.Map,
+        service: []const u8,
+        integration: []const u8,
+    ) Allocator.Error!Log {
+        const root = try dataRoot(gpa, env);
+        defer gpa.free(root);
+        const dir = try std.fs.path.join(gpa, &.{ root, "requests" });
+        errdefer gpa.free(dir);
+        const svc = try gpa.dupe(u8, service);
+        errdefer gpa.free(svc);
+        return .{
+            .gpa = gpa,
+            .io = io,
+            .dir = dir,
+            .service = svc,
+            .integration = try gpa.dupe(u8, integration),
+        };
+    }
+
+    /// A log at an explicit directory — what a test uses, so nothing
+    /// ever writes into the user's real data root.
+    pub fn openAt(gpa: Allocator, io: Io, dir: []const u8, service: []const u8, integration: []const u8) Allocator.Error!Log {
+        const d = try gpa.dupe(u8, dir);
+        errdefer gpa.free(d);
+        const svc = try gpa.dupe(u8, service);
+        errdefer gpa.free(svc);
+        return .{
+            .gpa = gpa,
+            .io = io,
+            .dir = d,
+            .service = svc,
+            .integration = try gpa.dupe(u8, integration),
+        };
+    }
+
+    pub fn deinit(self: *Log) void {
+        self.gpa.free(self.dir);
+        self.gpa.free(self.service);
+        self.gpa.free(self.integration);
+        self.* = undefined;
+    }
+
+    /// `<dir>/<service>.jsonl`. Owned by the caller.
+    pub fn path(self: *const Log, gpa: Allocator) Allocator.Error![]u8 {
+        return std.fmt.allocPrint(gpa, "{s}/{s}.jsonl", .{ self.dir, self.service });
+    }
+
+    /// One line. Best effort throughout: a log that cannot be written
+    /// costs a line, never a request.
+    pub fn append(self: *Log, entry: Entry) void {
+        if (!self.enabled) return;
+        var e = entry;
+        if (e.service.len == 0) e.service = self.service;
+        if (e.integration.len == 0) e.integration = self.integration;
+        if (e.ts == 0) e.ts = nowSecs(self.io);
+
+        var buf: [4096]u8 = undefined;
+        var fixed: Io.Writer = .fixed(&buf);
+        writeLine(&fixed, e) catch return;
+        const line = fixed.buffered();
+
+        Io.Dir.cwd().createDirPath(self.io, self.dir) catch {};
+        const p = self.path(self.gpa) catch return;
+        defer self.gpa.free(p);
+        const file = Io.Dir.cwd().createFile(self.io, p, .{ .truncate = false, .lock = .exclusive }) catch return;
+        var end = file.length(self.io) catch 0;
+        if (end + line.len > self.max_bytes) {
+            file.close(self.io);
+            self.rotate(p);
+            const fresh = Io.Dir.cwd().createFile(self.io, p, .{ .truncate = false, .lock = .exclusive }) catch return;
+            defer fresh.close(self.io);
+            end = fresh.length(self.io) catch 0;
+            fresh.writePositionalAll(self.io, line, end) catch return;
+            self.written += 1;
+            return;
+        }
+        defer file.close(self.io);
+        file.writePositionalAll(self.io, line, end) catch return;
+        self.written += 1;
+    }
+
+    /// `<service>.jsonl` → `<service>.1.jsonl`, the old `.1` dropped.
+    /// One generation is kept: this is a diagnosis aid, not an archive.
+    fn rotate(self: *Log, live: []const u8) void {
+        const older = std.fmt.allocPrint(self.gpa, "{s}/{s}.1.jsonl", .{ self.dir, self.service }) catch return;
+        defer self.gpa.free(older);
+        Io.Dir.cwd().deleteFile(self.io, older) catch {};
+        Io.Dir.cwd().rename(live, Io.Dir.cwd(), older, self.io) catch {
+            // A rename that cannot happen must not mean the log grows
+            // without bound: truncate instead.
+            Io.Dir.cwd().writeFile(self.io, .{ .sub_path = live, .data = "" }) catch {};
+        };
+    }
+};
+
+/// One entry as its JSON line, newline included.
+pub fn writeLine(w: *Io.Writer, e: Entry) Io.Writer.Error!void {
+    try w.print("{{\"ts\":{d:.3},\"service\":\"{f}\",\"integration\":\"{f}\",\"method\":\"{f}\",\"host\":\"{f}\",\"path\":\"{f}\",\"status\":", .{
+        e.ts,
+        std.zig.fmtString(e.service),
+        std.zig.fmtString(e.integration),
+        std.zig.fmtString(e.method),
+        std.zig.fmtString(e.host),
+        std.zig.fmtString(e.path),
+    });
+    if (e.status) |s| try w.print("{d}", .{s}) else try w.writeAll("null");
+    try w.print(",\"ms\":{d},\"bytes\":{d},\"reason\":\"{s}\",\"wait_ms\":{d},\"waited_for\":\"{s}\",\"tokens_after\":{d:.3},\"retry_of\":{d},\"cache\":\"{s}\"", .{
+        e.ms, e.bytes, e.reason.tag(), e.wait_ms, e.waited_for.tag(), e.tokens_after, e.retry_of, @tagName(e.cache),
+    });
+    if (e.rate_limit.any()) {
+        try w.writeAll(",\"rate_limit\":{");
+        var first = true;
+        inline for (.{ "limit", "remaining", "reset", "retry_after" }) |name| {
+            if (@field(e.rate_limit, name)) |v| {
+                if (!first) try w.writeByte(',');
+                first = false;
+                try w.print("\"{s}\":{d}", .{ name, v });
+            }
+        }
+        try w.writeAll("}");
+    }
+    try w.writeAll("}\n");
+}
+
+/// Split a URL into its host and its `path?query`, the query redacted.
+/// Anything before `@` in the authority is dropped outright: a URL
+/// carrying `user:password@` must never reach the file.
+pub fn splitUrl(arena: Allocator, url: []const u8) Allocator.Error!struct { host: []const u8, path: []const u8 } {
+    var rest = url;
+    if (std.mem.indexOf(u8, rest, "://")) |i| rest = rest[i + 3 ..];
+    const cut = std.mem.indexOfAny(u8, rest, "/?#") orelse rest.len;
+    var authority = rest[0..cut];
+    if (std.mem.lastIndexOfScalar(u8, authority, '@')) |at| authority = authority[at + 1 ..];
+    const tail = rest[cut..];
+    const hash = std.mem.indexOfScalar(u8, tail, '#') orelse tail.len;
+    return .{ .host = authority, .path = try redactQuery(arena, tail[0..hash]) };
+}
+
+/// Parameter names whose VALUE is a credential. Matched
+/// case-insensitively against the whole name, so `jql` and `sig` are
+/// told apart rather than `sig` matching inside `assignee`.
+const credential_params = [_][]const u8{
+    "token",         "access_token",  "accesstoken", "refresh_token", "api_key",
+    "apikey",        "key",           "password",    "passwd",        "pwd",
+    "secret",        "client_secret", "sig",         "signature",     "auth",
+    "authorization", "session",       "sessionid",   "jwt",           "bearer",
+};
+
+/// `?a=1&token=abc` → `?a=1&token=***`. The parameter stays, so a line
+/// still says it was sent; only the value goes.
+pub fn redactQuery(arena: Allocator, path_and_query: []const u8) Allocator.Error![]const u8 {
+    const q = std.mem.indexOfScalar(u8, path_and_query, '?') orelse return path_and_query;
+    const query = path_and_query[q + 1 ..];
+    if (query.len == 0) return path_and_query;
+    var any = false;
+    var probe = std.mem.splitScalar(u8, query, '&');
+    while (probe.next()) |pair| {
+        if (isCredentialParam(pair)) any = true;
+    }
+    if (!any) return path_and_query;
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    try out.appendSlice(arena, path_and_query[0 .. q + 1]);
+    var it = std.mem.splitScalar(u8, query, '&');
+    var first = true;
+    while (it.next()) |pair| {
+        if (!first) try out.append(arena, '&');
+        first = false;
+        if (isCredentialParam(pair)) {
+            const eq = std.mem.indexOfScalar(u8, pair, '=').?;
+            try out.appendSlice(arena, pair[0 .. eq + 1]);
+            try out.appendSlice(arena, "***");
+        } else try out.appendSlice(arena, pair);
+    }
+    return out.toOwnedSlice(arena);
+}
+
+fn isCredentialParam(pair: []const u8) bool {
+    const eq = std.mem.indexOfScalar(u8, pair, '=') orelse return false;
+    const name = pair[0..eq];
+    for (credential_params) |c| if (std.ascii.eqlIgnoreCase(name, c)) return true;
+    return false;
+}
+
+/// `X-RateLimit-…` / `Retry-After` off a response, by name. Anything
+/// else is ignored: this is an allow-list, not a filter.
+pub fn rateLimitHeader(r: *RateLimit, name: []const u8, value: []const u8) void {
+    const v = std.mem.trim(u8, value, " \t\r\n");
+    const n = std.fmt.parseInt(i64, v, 10) catch return;
+    if (std.ascii.eqlIgnoreCase(name, "retry-after")) r.retry_after = n;
+    if (std.ascii.eqlIgnoreCase(name, "x-ratelimit-limit")) r.limit = n;
+    if (std.ascii.eqlIgnoreCase(name, "x-ratelimit-remaining")) r.remaining = n;
+    if (std.ascii.eqlIgnoreCase(name, "x-ratelimit-reset")) r.reset = n;
+}
+
+/// The SDK's own read of mnml's data-root ladder. The host always sets
+/// `MNML_DATA_ROOT` for a child it starts, so in practice this is the
+/// first branch; the rest is for an integration run by hand.
+pub fn dataRoot(gpa: Allocator, env: *const std.process.Environ.Map) Allocator.Error![]u8 {
+    if (nonEmpty(env.get("MNML_DATA_ROOT"))) |root| return gpa.dupe(u8, root);
+    if (nonEmpty(env.get("XDG_CONFIG_HOME"))) |xdg| return std.fs.path.join(gpa, &.{ xdg, "mnml" });
+    if (nonEmpty(env.get("HOME") orelse env.get("USERPROFILE"))) |home| return std.fs.path.join(gpa, &.{ home, ".config", "mnml" });
+    return gpa.dupe(u8, "mnml");
+}
+
+fn nonEmpty(v: ?[]const u8) ?[]const u8 {
+    const s = v orelse return null;
+    return if (s.len == 0) null else s;
+}
+
+fn nowSecs(io: Io) f64 {
+    const ns: f64 = @floatFromInt(Io.Timestamp.now(io, .real).toNanoseconds());
+    return ns / 1_000_000_000.0;
+}
+
+// ─── tests ───────────────────────────────────────────────────────────────
+
+const t = std.testing;
+
+test "one request, one line — and the line carries every field the pane needs to explain itself" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    var log = try Log.openAt(t.allocator, t.io, dir, "jira", "mnml-jira");
+    defer log.deinit();
+
+    log.append(.{
+        .ts = 1789526218.411,
+        .service = "",
+        .integration = "",
+        .method = "GET",
+        .host = "acme.atlassian.net",
+        .path = "/rest/api/3/search/jql",
+        .status = 200,
+        .ms = 412,
+        .bytes = 18244,
+        .reason = .pane_open,
+        .wait_ms = 3030,
+        .waited_for = .tokens,
+        .tokens_after = 0.14,
+        .cache = .miss,
+    });
+    log.append(.{
+        .service = "",
+        .integration = "",
+        .method = "GET",
+        .host = "acme.atlassian.net",
+        .path = "/rest/dev-status/latest/issue/detail?issueId=10002",
+        .status = 429,
+        .reason = .refresh,
+        .retry_of = 1,
+        .rate_limit = .{ .retry_after = 30 },
+    });
+    try t.expectEqual(@as(u32, 2), log.written);
+
+    const p = try log.path(t.allocator);
+    defer t.allocator.free(p);
+    const text = try Io.Dir.cwd().readFileAlloc(t.io, p, t.allocator, .limited(1 << 16));
+    defer t.allocator.free(text);
+    var lines = std.mem.tokenizeScalar(u8, text, '\n');
+    const first = lines.next().?;
+    // The fields the REQUESTS view and the pane's own status read.
+    for ([_][]const u8{
+        "\"ts\":1789526218.411",    "\"service\":\"jira\"",            "\"integration\":\"mnml-jira\"",
+        "\"method\":\"GET\"",       "\"host\":\"acme.atlassian.net\"", "\"path\":\"/rest/api/3/search/jql\"",
+        "\"status\":200",           "\"ms\":412",                      "\"bytes\":18244",
+        "\"reason\":\"pane_open\"", "\"wait_ms\":3030",                "\"waited_for\":\"tokens\"",
+        "\"tokens_after\":0.140",   "\"retry_of\":0",                  "\"cache\":\"miss\"",
+    }) |needle| {
+        t.expect(std.mem.indexOf(u8, first, needle) != null) catch |err| {
+            std.debug.print("missing {s} in: {s}\n", .{ needle, first });
+            return err;
+        };
+    }
+    // The second line parses as JSON and carries the 429's own hint.
+    const second = lines.next().?;
+    try t.expect(lines.next() == null);
+    try t.expect(std.mem.indexOf(u8, second, "\"status\":429") != null);
+    try t.expect(std.mem.indexOf(u8, second, "\"retry_of\":1") != null);
+    try t.expect(std.mem.indexOf(u8, second, "\"rate_limit\":{\"retry_after\":30}") != null);
+    // Every line is valid JSON — the REQUESTS view parses them.
+    var it = std.mem.tokenizeScalar(u8, text, '\n');
+    while (it.next()) |line| {
+        const parsed = try std.json.parseFromSlice(std.json.Value, t.allocator, line, .{});
+        parsed.deinit();
+    }
+    // A transport failure has no status; it is still a line.
+    log.append(.{ .service = "", .integration = "", .method = "GET", .host = "h", .path = "/p", .status = null, .reason = .poll });
+    const again = try Io.Dir.cwd().readFileAlloc(t.io, p, t.allocator, .limited(1 << 16));
+    defer t.allocator.free(again);
+    try t.expect(std.mem.indexOf(u8, again, "\"status\":null") != null);
+}
+
+test "a credential never reaches the file: not in the query, not in the authority, not from a header" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The parameter stays so the line still says it was sent; the
+    // value goes.
+    try t.expectEqualStrings(
+        "/x?jql=project+%3D+ENG&token=***",
+        try redactQuery(arena, "/x?jql=project+%3D+ENG&token=s3cr3t"),
+    );
+    for ([_][]const u8{ "access_token", "api_key", "apikey", "key", "password", "secret", "client_secret", "sig", "signature", "auth", "jwt", "session" }) |name| {
+        const url = try std.fmt.allocPrint(arena, "/p?{s}=LEAKED", .{name});
+        const out = try redactQuery(arena, url);
+        t.expect(std.mem.indexOf(u8, out, "LEAKED") == null) catch |err| {
+            std.debug.print("{s} survived redaction: {s}\n", .{ name, out });
+            return err;
+        };
+    }
+    // A name that merely CONTAINS one of them is not a credential.
+    try t.expectEqualStrings("/p?keyword=checkout", try redactQuery(arena, "/p?keyword=checkout"));
+    try t.expectEqualStrings("/p?assignee=sig", try redactQuery(arena, "/p?assignee=sig"));
+    try t.expectEqualStrings("/p", try redactQuery(arena, "/p"));
+
+    // A URL carrying `user:password@` loses the whole authority prefix.
+    const split = try splitUrl(arena, "https://me:hunter2@acme.atlassian.net/rest/api/3/myself?token=abc");
+    try t.expectEqualStrings("acme.atlassian.net", split.host);
+    try t.expectEqualStrings("/rest/api/3/myself?token=***", split.path);
+    try t.expect(std.mem.indexOf(u8, split.host, "hunter2") == null);
+
+    // The only header shape the log takes is four numbers: an
+    // `authorization` offered to it is simply not a field it has.
+    var rl: RateLimit = .{};
+    rateLimitHeader(&rl, "authorization", "Basic ZmFrZQ==");
+    rateLimitHeader(&rl, "x-ratelimit-remaining", "17");
+    rateLimitHeader(&rl, "retry-after", "30");
+    try t.expectEqual(@as(?i64, 17), rl.remaining);
+    try t.expectEqual(@as(?i64, 30), rl.retry_after);
+    try t.expect(rl.limit == null);
+
+    // And end to end: a request whose URL carried a token writes no
+    // token, and no `authorization` word at all.
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    var log = try Log.openAt(t.allocator, t.io, dir, "bitbucket", "mnml-bitbucket");
+    defer log.deinit();
+    const s = try splitUrl(arena, "https://api.bitbucket.org/2.0/repositories/acme/api?access_token=ATCTT-REAL-TOKEN");
+    log.append(.{ .service = "", .integration = "", .method = "GET", .host = s.host, .path = s.path, .status = 200, .reason = .refresh });
+    const p = try log.path(t.allocator);
+    defer t.allocator.free(p);
+    const text = try Io.Dir.cwd().readFileAlloc(t.io, p, t.allocator, .limited(1 << 16));
+    defer t.allocator.free(text);
+    try t.expect(std.mem.indexOf(u8, text, "ATCTT") == null);
+    try t.expect(std.mem.indexOf(u8, text, "hunter2") == null);
+    try t.expect(std.ascii.indexOfIgnoreCase(text, "authorization") == null);
+    try t.expect(std.mem.indexOf(u8, text, "access_token=***") != null);
+}
+
+test "the file rotates at the ceiling and keeps one older generation" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    var log = try Log.openAt(t.allocator, t.io, dir, "jira", "mnml-jira");
+    defer log.deinit();
+    const live = try log.path(t.allocator);
+    defer t.allocator.free(live);
+    const older = try std.fmt.allocPrint(t.allocator, "{s}/jira.1.jsonl", .{dir});
+    defer t.allocator.free(older);
+
+    // Five lines under a ceiling nothing can reach, to learn what a
+    // line costs rather than guessing at it.
+    var i: usize = 0;
+    while (i < 5) : (i += 1) {
+        log.append(.{ .service = "", .integration = "", .method = "GET", .host = "acme.atlassian.net", .path = "/rest/api/3/myself", .status = 200, .reason = .poll, .ms = i });
+    }
+    const five = try Io.Dir.cwd().readFileAlloc(t.io, live, t.allocator, .limited(1 << 16));
+    defer t.allocator.free(five);
+    try t.expectEqual(@as(usize, 5), std.mem.count(u8, five, "\n"));
+    try t.expectError(error.FileNotFound, Io.Dir.cwd().access(t.io, older, .{}));
+
+    // A ceiling the sixth line cannot fit under: exactly one rotate,
+    // and the five already written become the older generation.
+    log.max_bytes = five.len + 10;
+    while (i < 10) : (i += 1) {
+        log.append(.{ .service = "", .integration = "", .method = "GET", .host = "acme.atlassian.net", .path = "/rest/api/3/myself", .status = 200, .reason = .poll, .ms = i });
+    }
+    const live_text = try Io.Dir.cwd().readFileAlloc(t.io, live, t.allocator, .limited(1 << 16));
+    defer t.allocator.free(live_text);
+    const old_text = try Io.Dir.cwd().readFileAlloc(t.io, older, t.allocator, .limited(1 << 16));
+    defer t.allocator.free(old_text);
+    try t.expect(live_text.len <= log.max_bytes);
+    try t.expectEqualStrings(five, old_text);
+    try t.expectEqual(@as(u32, 10), log.written);
+    try t.expectEqual(@as(usize, 10), std.mem.count(u8, live_text, "\n") + std.mem.count(u8, old_text, "\n"));
+    // The newest line is in the LIVE file, and the oldest is not.
+    try t.expect(std.mem.indexOf(u8, live_text, "\"ms\":9") != null);
+    try t.expect(std.mem.indexOf(u8, live_text, "\"ms\":0,") == null);
+    // Only one generation is kept: there is never a `.2.jsonl`.
+    const second = try std.fmt.allocPrint(t.allocator, "{s}/jira.2.jsonl", .{dir});
+    defer t.allocator.free(second);
+    try t.expectError(error.FileNotFound, Io.Dir.cwd().access(t.io, second, .{}));
+    // And a long run keeps rotating rather than growing: the pair is
+    // still bounded after forty more lines.
+    while (i < 50) : (i += 1) {
+        log.append(.{ .service = "", .integration = "", .method = "GET", .host = "acme.atlassian.net", .path = "/rest/api/3/myself", .status = 200, .reason = .poll, .ms = i });
+    }
+    const late_live = try Io.Dir.cwd().readFileAlloc(t.io, live, t.allocator, .limited(1 << 16));
+    defer t.allocator.free(late_live);
+    const late_old = try Io.Dir.cwd().readFileAlloc(t.io, older, t.allocator, .limited(1 << 16));
+    defer t.allocator.free(late_old);
+    try t.expect(late_live.len + late_old.len <= 2 * log.max_bytes);
+    try t.expect(std.mem.indexOf(u8, late_live, "\"ms\":49") != null);
+}
+
+test "off writes nothing at all" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    var log = try Log.openAt(t.allocator, t.io, dir, "jira", "mnml-jira");
+    defer log.deinit();
+    log.enabled = false;
+    log.append(.{ .service = "", .integration = "", .method = "GET", .host = "h", .path = "/p", .status = 200, .reason = .poll });
+    try t.expectEqual(@as(u32, 0), log.written);
+    const p = try log.path(t.allocator);
+    defer t.allocator.free(p);
+    try t.expectError(error.FileNotFound, Io.Dir.cwd().access(t.io, p, .{}));
+}
+
+test "the data root is the host's, and the file is one per service" {
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    try env.put("HOME", "/home/ada");
+    {
+        const r = try dataRoot(t.allocator, &env);
+        defer t.allocator.free(r);
+        try t.expectEqualStrings("/home/ada/.config/mnml", r);
+    }
+    try env.put("XDG_CONFIG_HOME", "/xdg");
+    {
+        const r = try dataRoot(t.allocator, &env);
+        defer t.allocator.free(r);
+        try t.expectEqualStrings("/xdg/mnml", r);
+    }
+    // What the host sets for every child it starts wins over both.
+    try env.put("MNML_DATA_ROOT", "/data");
+    var log = try Log.open(t.allocator, t.io, &env, "bitbucket", "mnml-bitbucket");
+    defer log.deinit();
+    try t.expectEqualStrings("/data/requests", log.dir);
+    const p = try log.path(t.allocator);
+    defer t.allocator.free(p);
+    try t.expectEqualStrings("/data/requests/bitbucket.jsonl", p);
+}
