@@ -28,7 +28,7 @@ pub const hint = "  / filter   r reload   ⏎ full line   y copy path   esc clos
 pub const hint_ascii = "  / filter   r reload   enter full line   y copy path   esc close";
 
 /// Rows the header and the hint take before the first request.
-const head_rows: u16 = 4;
+const head_rows: u16 = 5;
 
 pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: *requests.RequestsPane, focused: bool) void {
     const t = ui.theme;
@@ -46,17 +46,22 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: *requests.RequestsPane, focused
     if (area.h < 3) return;
     _ = ui.putStr(area.x, area.y + 2, area.w, ui.clipStr(programsLine(ui, p), area.w), Theme.onBg(t.muted, t.bg.bg));
     if (area.h < 4) return;
+    // Who is handing the tokens out. A queue that is deep and a budget
+    // that is nearly gone are the two things a person opens this view
+    // to find out, and they are not in the rows.
+    _ = ui.putStr(area.x, area.y + 3, area.w, ui.clipStr(brokersLine(ui, p), area.w), Theme.onBg(t.muted, t.bg.bg));
+    if (area.h < 5) return;
 
     if (p.filtering or p.filter.items.len > 0) {
         var pill = Theme.onBg(if (p.filtering) t.accent else t.muted, t.bg.bg);
         pill.bold = p.filtering;
-        _ = ui.putStr(area.x, area.y + 3, area.w, ui.clipStr(ui.fmt("  {s} {s}{s}", .{
+        _ = ui.putStr(area.x, area.y + 4, area.w, ui.clipStr(ui.fmt("  {s} {s}{s}", .{
             if (ui.ascii) "/" else "\u{f0349}",
             p.filter.items,
             if (p.filtering) "\u{2588}" else "",
         }), area.w), pill);
     } else {
-        _ = ui.putStr(area.x, area.y + 3, area.w, ui.clipStr(if (ui.ascii) hint_ascii else hint, area.w), Theme.onBg(t.muted, t.bg.bg));
+        _ = ui.putStr(area.x, area.y + 4, area.w, ui.clipStr(if (ui.ascii) hint_ascii else hint, area.w), Theme.onBg(t.muted, t.bg.bg));
     }
     if (area.h <= head_rows) return;
 
@@ -147,6 +152,30 @@ fn programsLine(ui: Ui, p: *const requests.RequestsPane) []const u8 {
     return out.items;
 }
 
+/// `broker — jira on · queue 3 · 42% budget   bitbucket off` per
+/// service. `on` is this mnml serving it; `client` is another process
+/// serving it and this one queueing there; `off` is nobody, which
+/// means every client is on the file bucket and its first-come order.
+fn brokersLine(ui: Ui, p: *const requests.RequestsPane) []const u8 {
+    if (p.brokers.len == 0) return "  broker — not started";
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    out.appendSlice(ui.arena, "  broker — ") catch return "  broker";
+    for (p.brokers, 0..) |b, i| {
+        if (i > 0) out.appendSlice(ui.arena, "   ") catch return out.items;
+        if (b.where == .off) {
+            out.print(ui.arena, "{s} off", .{b.service}) catch return out.items;
+            continue;
+        }
+        out.print(ui.arena, "{s} {s} · queue {d} · {d}% budget", .{
+            b.service,
+            if (b.where == .hosted) "on" else "client",
+            b.queue,
+            b.budget_pct,
+        }) catch return out.items;
+    }
+    return out.items;
+}
+
 /// `14:22:03` out of a wall-clock stamp. A request log is read against
 /// the clock on the wall, never against an age.
 fn clock(ui: Ui, ts: f64) []const u8 {
@@ -229,6 +258,10 @@ test "the view paints the hour's totals, who drew on the buckets, one row per re
         .{ .program = "bb.py", .draws = 30 },
         .{ .program = "mnml-bitbucket", .draws = 12 },
     });
+    p.brokers = try a.dupe(requests.BrokerLine, &.{
+        .{ .service = "jira", .where = .hosted, .queue = 3, .budget_pct = 42 },
+        .{ .service = "bitbucket", .where = .off },
+    });
     p.cursor = 0;
     draw(f.ui(), 9, f.full(), &p, true);
 
@@ -237,34 +270,38 @@ test "the view paints the hour's totals, who drew on the buckets, one row per re
     // The line that makes a drained bucket attributable: not every
     // program on it is mnml's.
     try f.expectRow(2, "  by program — mnml-jira 41 · bb.py 30 · mnml-bitbucket 12");
-    try f.expectRow(3, "  / filter   r reload   ⏎ full line   y copy path   esc close");
+    // Who is handing the tokens out: a deep queue and a nearly-spent
+    // budget are the two things this view is opened to find out, and
+    // neither of them is in the rows.
+    try f.expectRow(3, "  broker — jira on · queue 3 · 42% budget   bitbucket off");
+    try f.expectRow(4, "  / filter   r reload   ⏎ full line   y copy path   esc close");
     // The cursor row, its columns, and the wait blamed on the bucket.
-    try f.expectRow(4, "▶ 14:22:03  mnml-jira       pane_open  GET  /rest/api/3/search/jql                                 200   412ms  3.0s bkt");
+    try f.expectRow(5, "▶ 14:22:03  mnml-jira       pane_open  GET  /rest/api/3/search/jql                                 200   412ms  3.0s bkt");
     // A 429 says so, and says it was a retry.
-    try f.expectRow(5, "  14:22:02  mnml-jira       refresh    GET  /rest/dev-status/latest/issue/detail                429r1    90ms  30.0s 429");
+    try f.expectRow(6, "  14:22:02  mnml-jira       refresh    GET  /rest/dev-status/latest/issue/detail                429r1    90ms  30.0s 429");
     // A cache hit cost nothing and says that instead of a wait.
-    try f.expectRow(6, "  14:22:01  mnml-bitbucket  poll       GET  /2.0/repositories/acme/api/pullrequests                200   1.5s     cached");
+    try f.expectRow(7, "  14:22:01  mnml-bitbucket  poll       GET  /2.0/repositories/acme/api/pullrequests                200   1.5s     cached");
     // One hit per row, so a click lands on the row it looks like.
-    try testing.expectEqual(@as(u32, 0), f.hits.at(3, 4).?.script_hit.id);
-    try testing.expectEqual(@as(u32, 2), f.hits.at(3, 6).?.script_hit.id);
-    try testing.expect(f.bgEql(2, 4, f.theme.cursor_line));
+    try testing.expectEqual(@as(u32, 0), f.hits.at(3, 5).?.script_hit.id);
+    try testing.expectEqual(@as(u32, 2), f.hits.at(3, 7).?.script_hit.id);
+    try testing.expect(f.bgEql(2, 5, f.theme.cursor_line));
 
     // The whole line opens under the row it belongs to.
     p.detail = 1;
     p.cursor = 1;
     draw(f.ui(), 9, f.full(), &p, true);
-    try f.expectRow(6, "    {}");
+    try f.expectRow(7, "    {}");
 
     // The filter pill replaces the hint while it is being typed.
     p.detail = null;
     try p.filter.appendSlice(testing.allocator, "429");
     p.filtering = true;
     draw(f.ui(), 9, f.full(), &p, true);
-    try f.expectRow(3, "  \u{f0349} 429█");
+    try f.expectRow(4, "  \u{f0349} 429█");
 }
 
 test "an empty view says where the files would be; a filter that matches nothing says so" {
-    var f = try Fixture.init(100, 8);
+    var f = try Fixture.init(100, 9);
     defer f.deinit();
     var p = requests.RequestsPane.init(testing.allocator);
     defer p.deinit();
@@ -273,7 +310,10 @@ test "an empty view says where the files would be; a filter that matches nothing
     try f.expectRow(0, "  \u{f0aee} REQUESTS (0)");
     try f.expectRow(1, "  last hour — nothing");
     try f.expectRow(2, "  by program — no draws recorded on the shared buckets");
-    try f.expectRow(4, "  nothing has been requested yet — integrations write to /home/ada/.config/mnml/requests");
+    // Before the first reload there is nothing to say about a broker,
+    // and the line says that rather than claiming one is off.
+    try f.expectRow(3, "  broker — not started");
+    try f.expectRow(5, "  nothing has been requested yet — integrations write to /home/ada/.config/mnml/requests");
 
     const a = p.snapshot.allocator();
     const rows = try a.alloc(requests.Row, 1);
@@ -282,5 +322,5 @@ test "an empty view says where the files would be; a filter that matches nothing
     p.shown = &.{};
     try p.filter.appendSlice(testing.allocator, "nope");
     draw(f.ui(), 9, f.full(), &p, true);
-    try f.expectRow(4, "  no request matches \"nope\"");
+    try f.expectRow(5, "  no request matches \"nope\"");
 }

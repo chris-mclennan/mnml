@@ -38,6 +38,7 @@ const Mouse = key_mod.Mouse;
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const alloc = @import("../core/alloc.zig");
+const broker_app = @import("broker.zig");
 const sdk = @import("mnml_sdk");
 
 pub const table = .{
@@ -109,6 +110,12 @@ pub const ServiceTotals = struct {
     }
 };
 
+/// Where each service's broker stands, as the header paints it.
+/// Filled on every reload from `app/broker.zig` — from memory for a
+/// broker this mnml hosts, and over its own socket for one another
+/// process is holding.
+pub const BrokerLine = broker_app.Line;
+
 /// What one program drew from a bucket in the window — mnml's panes,
 /// the poller, and anything else on the machine that appends to the
 /// draws file.
@@ -124,6 +131,8 @@ pub const RequestsPane = struct {
     shown: []const u32 = &.{},
     totals: []const ServiceTotals = &.{},
     programs: []const ProgramDraws = &.{},
+    /// One per service. Empty only before the first reload.
+    brokers: []const BrokerLine = &.{},
     /// Requests read, before the filter — what the header counts.
     cursor: usize = 0,
     scroll: usize = 0,
@@ -296,6 +305,7 @@ pub fn reload(app: *App, p: *RequestsPane) Allocator.Error!void {
     p.shown = &.{};
     p.totals = &.{};
     p.programs = &.{};
+    p.brokers = &.{};
     p.detail = null;
     const dir_path = try requestsDir(arena, app.data_root);
     p.dir = dir_path;
@@ -330,6 +340,10 @@ fn finish(app: *App, p: *RequestsPane, arena: Allocator, rows: *std.ArrayListUnm
     const now = nowSecs(app.io);
     p.totals = try totalsOf(arena, p.rows, now);
     p.programs = try programsOf(arena, try readDraws(app, arena), now);
+    // Who is handing the tokens out, and how much is left to hand.
+    // Read here rather than painted from live state, so the whole
+    // header is one snapshot of one moment.
+    p.brokers = try broker_app.lines(app, arena);
     try applyFilter(p);
     app.needs_render = true;
 }
@@ -339,7 +353,7 @@ fn finish(app: *App, p: *RequestsPane, arena: Allocator, rows: *std.ArrayListUnm
 /// everything else on the machine that spends from the same allowance.
 fn readDraws(app: *App, arena: Allocator) Allocator.Error![]const u8 {
     var out: std.ArrayListUnmanaged(u8) = .empty;
-    for ([_][]const u8{ "jira", "bitbucket" }) |service| {
+    for (broker_app.services) |service| {
         const state = sdk.ratelimit.statePath(arena, app.io, &app.env, service) catch continue;
         const dir = std.fs.path.dirname(state) orelse continue;
         const path = std.fmt.allocPrint(arena, "{s}/{s}-draws.jsonl", .{ dir, service }) catch continue;

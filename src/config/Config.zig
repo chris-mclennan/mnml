@@ -783,6 +783,18 @@ pub const Integrations = struct {
     /// What every integration's requests cost, written down where a
     /// person can read them (`integrations.requests` opens the view).
     request_log: RequestLog = .{},
+    /// Host the API broker while mnml runs (`app/broker.zig`): one
+    /// queue per service in front of the shared token bucket, so the
+    /// pane you are looking at gets the next token before a warmer or
+    /// a batch script that asked earlier. On, because the whole point
+    /// of it is that a machine running a dozen things against one API
+    /// budget still paints the pane in front of you first.
+    ///
+    /// Off puts every client back on the file bucket and its
+    /// first-come order — including the integrations mnml starts,
+    /// which are told so (`MNML_BROKER=0`) rather than left to open a
+    /// socket nobody is on.
+    broker: bool = true,
 };
 
 /// `<data root>/requests/<service>.jsonl` — one JSON line per request
@@ -959,6 +971,7 @@ test "defaults are the shipped values" {
     // The request log is on by default: it has to be there when the
     // slow morning happens, not be switched on afterwards.
     try std.testing.expect(c.integrations.request_log.enabled);
+    try std.testing.expect(c.integrations.broker);
     try std.testing.expectEqual(@as(u32, 4), c.integrations.request_log.max_mb);
     try std.testing.expectEqual(@as(usize, 0), c.integrations.dev_roots.len);
     try std.testing.expect(c.marketplace.enabled);

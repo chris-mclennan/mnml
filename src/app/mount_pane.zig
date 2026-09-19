@@ -23,6 +23,7 @@ const Chord = key_mod.Chord;
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const host = @import("../bridge/host.zig");
+const broker_app = @import("broker.zig");
 const wire = @import("../bridge/wire.zig");
 const Rect = @import("../ui/rect.zig");
 const Ui = @import("../ui/context.zig");
@@ -243,6 +244,10 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
         .request_log = .{ .enabled = app.cfg.integrations.request_log.enabled, .max_mb = app.cfg.integrations.request_log.max_mb },
     });
     defer env.deinit();
+    // Where the API brokers are, and whether to look for one at all
+    // (`app/broker.zig`). Not part of `envFor` because it is the App's
+    // to answer, not the bridge's.
+    try broker_app.putEnv(app, &env);
     for (opts.extra_env) |pair| try env.put(pair.name, pair.value);
 
     const mount = host.Mount.spawn(gpa, app.io, &app.events, .{
