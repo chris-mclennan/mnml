@@ -34,6 +34,7 @@ pub fn main(init: std.process.Init) !u8 {
     };
     if (std.fs.path.dirname(args[1])) |dir| Io.Dir.cwd().createDirPath(init.io, dir) catch {};
     try Io.Dir.cwd().writeFile(init.io, .{ .sub_path = args[1], .data = bytes });
-    try err.print("build-font: {s}  {d} bytes\n", .{ args[1], bytes.len });
+    // Silent on success: a build step that writes to stderr makes the
+    // build print `failed command:` beside a step that worked.
     return 0;
 }

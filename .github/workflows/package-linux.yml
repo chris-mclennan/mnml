@@ -79,7 +79,15 @@ jobs:
               exit 1
           }
           cp -R "mnml-$TRIPLE/share/mnml/lua" staging/lua
-          ls -la staging/ staging/lua/
+          # MnmlSymbols.ttf rides the same way: the archive has it as
+          # share/mnml/fonts, nfpm lays it at /usr/share/mnml/fonts.
+          test -f "mnml-$TRIPLE/share/mnml/fonts/MnmlSymbols.ttf" || {
+              echo "the tarball has no share/mnml/fonts/MnmlSymbols.ttf — scripts/package.sh did not stage it" >&2
+              exit 1
+          }
+          mkdir -p staging/fonts
+          cp "mnml-$TRIPLE/share/mnml/fonts/MnmlSymbols.ttf" staging/fonts/MnmlSymbols.ttf
+          ls -la staging/ staging/lua/ staging/fonts/
 
       - name: Install nfpm
         run: |

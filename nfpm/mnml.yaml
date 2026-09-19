@@ -26,6 +26,13 @@ contents:
   - src: staging/lua
     dst: /usr/share/mnml/lua
     type: tree
+  # MnmlSymbols.ttf, the face mnml's own block is drawn from (the Claude
+  # and Codex marks, the tree connectors, the terminal icon). Laid where
+  # the archive has it so a package and an unpacked tarball agree; the
+  # user still has to hand it to their terminal, which is what
+  # `font-codepoint-map = U+F1B00-U+F20FF=MnmlSymbols` does.
+  - src: staging/fonts/MnmlSymbols.ttf
+    dst: /usr/share/mnml/fonts/MnmlSymbols.ttf
   - src: LICENSE-MIT
     dst: /usr/share/doc/mnml/LICENSE-MIT
   - src: LICENSE-APACHE

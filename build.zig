@@ -508,6 +508,11 @@ pub fn build(b: *std.Build) void {
         .dest_dir = .{ .override = .{ .custom = b.fmt("release/{s}", .{triple}) } },
         .dest_sub_path = if (target.result.os.tag == .windows) "mnml.exe" else "mnml",
     }).step);
+    // MnmlSymbols.ttf beside the binary, in the layout the archive has
+    // (`scripts/package.sh` reads it from there, and refuses without
+    // it). The font is the same bytes on every target — the builder
+    // runs on the host and the file is not machine code.
+    release_one.dependOn(&b.addInstallFile(font_file, b.fmt("release/{s}/share/mnml/fonts/" ++ symbols_font_name, .{triple})).step);
 
     const release_step = b.step("release", "Cross-compile ReleaseSafe exes for the five shipped targets into zig-out/release/<rust-triple>/");
     for (release_targets) |rt| {

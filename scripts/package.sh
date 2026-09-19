@@ -18,8 +18,9 @@
 # lua/). The binary looks for that folder beside itself and one level up, so
 # an unpacked archive lists the five official scripts in the SCRIPTS
 # section's Marketplace tab with no config; package-linux re-lays the same
-# tree at /usr/share/mnml/lua. No completions or man page yet; when they
-# exist, stage them here.
+# tree at /usr/share/mnml/lua — plus share/mnml/fonts/MnmlSymbols.ttf, the
+# face mnml's own marks are drawn from (`zig build font`). No completions
+# or man page yet; when they exist, stage them here.
 #
 # With --macos-app, every *-apple-darwin binary is also wrapped as an
 # app bundle (dist/macos/build-app.sh) and shipped as
@@ -88,6 +89,14 @@ for dir in "$release_dir"/*/; do
     [ -d "$repo/lua" ] || { echo "package.sh: no lua/ in $repo" >&2; exit 1; }
     mkdir -p "$stage/$pkg/share/mnml"
     cp -R "$repo/lua" "$stage/$pkg/share/mnml/lua"
+    # MnmlSymbols.ttf, the face mnml's own block is drawn from — the
+    # Claude and Codex marks, the tree connectors, the terminal icon.
+    # `zig build` writes it beside the binary it just built; without it
+    # every one of those renders as `?`, so this is fatal too.
+    font_src="$dir/share/mnml/fonts/MnmlSymbols.ttf"
+    [ -f "$font_src" ] || { echo "package.sh: $dir has no share/mnml/fonts/MnmlSymbols.ttf (run \`zig build\`)" >&2; exit 1; }
+    mkdir -p "$stage/$pkg/share/mnml/fonts"
+    cp "$font_src" "$stage/$pkg/share/mnml/fonts/MnmlSymbols.ttf"
 
     asset="$pkg.$ext"
     case "$ext" in
