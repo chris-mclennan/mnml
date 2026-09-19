@@ -1,0 +1,38 @@
+# width: 120
+# `ui.dock.labels` (src/app/launcher_dock.zig): the bottom strip's two
+# forms. `.icon_label` is the default — ` glyph label ` — and `.icon`
+# paints the glyph alone in the same three cells a side dock uses, with
+# the name moving into the tooltip exactly as a side dock does it.
+#
+# At 120x40 the `always` strip is row 37 and the first item starts at
+# x=1: padding, glyph, padding. So the Browser chip's glyph is at x=2
+# under `.icon`, and the hover there is the proof the tooltip still
+# names it.
+write a.txt "alpha\n"
+open a.txt
+ex dock always
+# The default form: labels, as before.
+expect screen contains "Browser"
+expect screen contains "New terminal"
+ex dock icons
+expect screen contains "dock: icons only"
+expect screen lacks "Browser"
+expect screen lacks "New terminal"
+# The tooltip carries the name the row no longer paints.
+command view.toggle_hover_tooltip
+hover 2 37
+wait 200
+expect screen contains "Browser"
+hover 60 10
+wait 200
+command view.toggle_hover_tooltip
+# A click on the second item's three cells still opens a shell — the
+# hit rects moved with the paint.
+click 5 37
+wait 900
+expect pane Terminal
+# And back: `:dock labels` gives the row its labels again, unchanged.
+ex dock labels
+expect screen contains "dock: icons and labels"
+expect screen contains "Browser"
+expect screen contains "New terminal"
