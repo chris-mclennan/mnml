@@ -170,7 +170,11 @@ const runner_tables = .{
     @import("../app/transfers.zig"),
     @import("../app/search_section.zig"),
     @import("../app/syntax.zig"),
+<<<<<<< HEAD
     @import("../app/terminal_glyph.zig"),
+=======
+    @import("../app/sidebar_auto.zig"),
+>>>>>>> e39821b (feat(ui): ui.sidebar = auto — the side column hides itself and slides back OVER the editor)
 };
 
 pub const runners: std.enums.EnumArray(CommandId, ?CommandFn) = blk: {

@@ -65,6 +65,8 @@ const findings = @import("findings.zig");
 const debug_panel = @import("app/debug_panel.zig");
 const sessions = @import("sessions.zig");
 const dock = @import("app/dock.zig");
+const hover_zones = @import("app/hover_zones.zig");
+const sidebar_auto = @import("app/sidebar_auto.zig");
 const panel_mod = @import("core/panel.zig");
 const trust_app = @import("app/trust.zig");
 const settings_app = @import("app/settings.zig");
@@ -1056,6 +1058,15 @@ pub const App = struct {
     /// The pointer got here by moving, not by a press: the hover
     /// tooltip and the rail's info box read this (`discovery.zig`).
     hover_live: bool = false,
+    /// // changed (sidebar-autohide): the frame's dwell zones — which
+    /// chrome the pointer is resting on, and since when
+    /// (`app/hover_zones.zig`). The menu bar, the activity bar and the
+    /// side columns all read their `auto` answer out of it.
+    hover_zones: hover_zones.State = .{},
+    /// // changed (sidebar-autohide): `ui.sidebar = .auto` — which
+    /// column the overlay is carrying, where it is in its slide, and
+    /// the session's pin (`app/sidebar_auto.zig`).
+    sidebar_auto: sidebar_auto.State = .{},
     /// The mouse gesture in flight, press to release.
     drag: ?Drag = null,
     last_click: ?LastClick = null,
@@ -2615,7 +2626,14 @@ pub const App = struct {
         } else try self.flushWheel();
         self.last_was_wheel = false;
         switch (ev) {
-            .key => |k| try dispatch.key(self, k),
+            .key => |k| {
+                // // changed (sidebar-autohide): a revealed column
+                // whose keys this chord took away (Esc, `Ctrl-W l`, a
+                // focus command) goes with them.
+                const focus_before = self.focus;
+                try dispatch.key(self, k);
+                sidebar_auto.afterKey(self, focus_before);
+            },
             .mouse => |m| try self.routeMouse(m, 1),
             .winsize => |ws| try self.resize(ws.cols, ws.rows),
             .paste => |text| {
@@ -2699,7 +2717,20 @@ pub const App = struct {
     fn routeMouse(self: *App, m: key_mod.Mouse, count: u16) Allocator.Error!void {
         if (self.needs_render) try self.render();
         self.wheel_budget = null;
+        // // changed (sidebar-autohide): what the press landed on, and
+        // where the keys were, BEFORE it is dispatched — a revealed
+        // side column hides itself the moment a click on it opens
+        // something, and "opened something" is exactly "the keys left
+        // the panel for a pane, or a different pane became active".
+        const on_overlay = self.sidebar_auto.open != null and self.sidebar_auto.rect.contains(m.x, m.y);
+        const focus_before = self.focus;
+        const active_before = self.active;
         try dispatch.mouse(self, m, count);
+        if (on_overlay) {
+            const opened = (self.focus == .pane and !std.meta.eql(focus_before, self.focus)) or
+                (self.active != null and !std.meta.eql(active_before, self.active));
+            sidebar_auto.afterClick(self, opened);
+        }
     }
 
     /// `[editor] wheel_moves_cursor`: whether the wheel and a scrollbar
@@ -2782,6 +2813,7 @@ pub const App = struct {
         session.tick(self, now);
         trash.tick(self, now);
         discovery_app.tick(self, now);
+        sidebar_auto.tick(self, now);
     }
 
     /// The next moment `tick` has something to do, or null when idle.
@@ -2814,6 +2846,8 @@ pub const App = struct {
         if (self.click_echo) |e| next = @min(next orelse std.math.maxInt(i64), e.until_ms);
         if (ws_pane.nextDeadline(@constCast(self))) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (idle.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
+        if (hover_zones.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
+        if (sidebar_auto.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (self.lua) |l| if (l.nextDeadlineMs()) |d| {
             next = @min(next orelse std.math.maxInt(i64), d);
         };
@@ -3018,6 +3052,9 @@ test {
     _ = @import("findings.zig");
     _ = @import("sessions.zig");
     _ = @import("app/dock.zig");
+    _ = @import("app/hover_zones.zig");
+    _ = @import("app/sidebar_auto.zig");
+    _ = @import("ui/sidebar_overlay.zig");
     _ = @import("ui/dock_view.zig");
     _ = @import("core/dock.zig");
     _ = @import("app/git.zig");

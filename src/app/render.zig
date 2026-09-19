@@ -129,9 +129,12 @@ const scripts_panel = @import("scripts_panel.zig");
 const script_section = @import("script_section.zig");
 const transfers = @import("transfers.zig");
 const activity_bar = @import("activity_bar.zig");
+const hover_zones = @import("hover_zones.zig");
+const sidebar_auto = @import("sidebar_auto.zig");
 const side_mod = @import("side.zig");
 const bottom_mod = @import("bottom.zig");
 const rail_mod = @import("../ui/activity_bar.zig");
+const sidebar_overlay = @import("../ui/sidebar_overlay.zig");
 const icons = @import("../ui/icons.zig");
 
 /// Below this width the palette bar row is not painted at all (a tiny
@@ -196,6 +199,12 @@ pub const Button = enum(u32) {
     cmdline_bar = 23,
     cmdline_inflight = 24,
     cmdline_mention = 25,
+    /// // changed (sidebar-autohide): the revealed side column. The
+    /// panel's own cells swallow a press that no part of the section
+    /// claimed, so it cannot fall through onto the editor underneath;
+    /// the pin chip docks the column for the session.
+    sidebar_overlay = 26,
+    sidebar_pin = 27,
     /// The right cluster's tab-page chips and their `×`, 32 pages each.
     tab_page_base = 0x40,
     tab_page_close_base = 0x60,
@@ -319,9 +328,14 @@ pub fn narrowAutoHidden(app: *const App, width: u16) bool {
 /// The frame's `Chrome` for this app, this frame.
 pub fn chrome(app: *const App) Chrome {
     const narrow = narrowAutoHidden(app, app.screen.width);
+    // // changed (sidebar-autohide): a column the overlay is carrying,
+    // or one `ui.sidebar` is hiding, is NOT carved here — which is the
+    // whole point. `drawSidebarOverlay` paints it later, over the
+    // editor, and every pane keeps the rect (and every pty the size) it
+    // had; `frameRects` never learns the panel exists.
     return .{
-        .sidebar = if (!app.zen and !narrow and side_mod.shown(app, .left) != null) app.tree.width else null,
-        .right = if (!app.zen and !narrow and side_mod.shown(app, .right) != null) app.side.right_width else null,
+        .sidebar = if (!app.zen and !narrow and !sidebar_auto.autoHiding(app) and side_mod.shown(app, .left) != null) app.tree.width else null,
+        .right = if (!app.zen and !narrow and !sidebar_auto.autoHiding(app) and side_mod.shown(app, .right) != null) app.side.right_width else null,
         .bottom = if (!app.zen and bottom_mod.open(app)) app.side.bottom_height else null,
         .rail = activity_bar.shown(app),
     };
@@ -426,6 +440,15 @@ fn screenRect(screen: *vaxis.Screen) Rect {
 
 pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     app.frame.begin();
+    // The frame's dwell zones, before anything asks whether an `auto`
+    // surface is showing: `begin` swaps in what the previous frame's
+    // painters registered (the rail's rect) and re-derives the ones
+    // that need no paint (a screen edge, the bar's row).
+    hover_zones.begin(app, screenRect(screen), app.now_ms);
+    // …and the reveal / hide clock that reads them, so a `.test` script
+    // that only renders still advances it (`App.tick` calls this too;
+    // both are idempotent at one `now`).
+    sidebar_auto.tick(app, app.now_ms);
     // The info view reads the previous frame's hits: they are what the
     // pointer is resting on until this frame replaces them.
     const help_copy: ?info_view_ui.Copy = if (app.cfg.ui.hover_help and side_mod.shown(app, .left) != null and !app.zen) try info_view_app.pick(app, app.frame.allocator()) else null;
@@ -464,7 +487,12 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
         // The activity bar down the sidebar's left edge, and the `│`
         // between it and the tree — `t.line` on the rail's ground, as
         // Rust paints it, so no panel fill butts against the icons.
-        if (!fr.rail.isEmpty()) rail_mod.draw(ui, fr.rail, try activity_bar.props(app, ui.arena));
+        if (!fr.rail.isEmpty()) {
+            rail_mod.draw(ui, fr.rail, try activity_bar.props(app, ui.arena));
+            // An `auto` rail stays up while the pointer rests on it —
+            // the rail's own zone, for the next frame.
+            hover_zones.register(app, .{ .rect = fr.rail, .id = .rail_left, .priority = hover_zones.prio_rail });
+        }
         if (!fr.rail_border.isEmpty()) {
             const pal = app.theme.palette;
             const line = Theme.withFg(Theme.onBg(app.theme.border, pal.bg_darker), pal.line);
@@ -517,6 +545,11 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     try drawBody(app, ui, panes_area);
     if (app.zen) try drawFullscreenMark(app, ui, panes_area);
     if (!app.zen) try dock.draw(app, ui, dock_area);
+    // ── the revealed side column ──
+    // Over the panes and the dock, under the toasts and the overlays:
+    // the hits it registers here are the last word on every cell it
+    // covers (`HitMap.at` scans back to front).
+    if (!app.zen) try drawSidebarOverlay(app, ui, fr);
     if (!app.zen) try drawStatusline(app, ui, fr.status);
     try drawCmdline(app, ui, fr.cmdline);
     // The stack sits on the panes' last row, against the statusline, as
@@ -782,6 +815,134 @@ fn drawRightStrip(app: *App, ui: Ui, row: Rect, s: side_mod.Section) Allocator.E
         .plus_hit = .{ .button = @intFromEnum(Button.right_new) },
         .close_hit = .{ .button = @intFromEnum(Button.right_close) },
     });
+}
+
+/// `ui.sidebar = .auto` / `.hidden`: the revealed column, painted OVER
+/// the editor area. Nothing about it reaches `frameRects` — see
+/// `app/sidebar_auto.zig` for why, and for what opens and closes it.
+///
+/// The panel is laid out at its full docked width every frame and the
+/// slide is a widening CLIP over it, so no row inside it reflows or
+/// moves while it comes in — a third of the width per frame, three
+/// frames, skipped entirely when the frames are not live.
+///
+/// Inside it, left to right (mirrored on the right column): the rail
+/// and its border — `ui.activity_bar = .auto` counts as shown here,
+/// since the pointer is on the panel that carries it — the one-row
+/// strip with the section's name and the pin chip, the section itself,
+/// and the edge rule.
+fn drawSidebarOverlay(app: *App, ui: Ui, fr: FrameRects) Allocator.Error!void {
+    const s = app.sidebar_auto.open orelse return;
+    const upper = fr.upper;
+    if (upper.w <= 12 or upper.h == 0) return;
+    const side_id: side_mod.Side = if (s == .left) .left else .right;
+    const section = side_mod.shown(app, side_id) orelse {
+        // The section closed under it (a command, a restored session).
+        sidebar_auto.hide(app);
+        return;
+    };
+    const geo = overlayRects(app, upper, s);
+    if (geo.all.isEmpty() or geo.clip.isEmpty()) return;
+    const clipped = ui.withClip(geo.clip.intersect(upper));
+    const pal = app.theme.palette;
+    // The ground first, and a swallow hit under everything the panel
+    // covers: a press on a cell no part of the section claims must not
+    // reach the editor beneath it. The section's own hits are
+    // registered after this one, so they win.
+    clipped.fill(geo.all, Theme.onBg(app.theme.fg, pal.bg_darker));
+    ui.hit(geo.clip.intersect(upper), .{ .button = @intFromEnum(Button.sidebar_overlay) });
+    if (!geo.rail.isEmpty()) rail_mod.draw(clipped, geo.rail, try activity_bar.props(app, ui.arena));
+    if (!geo.rail_border.isEmpty()) {
+        const line = Theme.withFg(Theme.onBg(app.theme.border, pal.bg_darker), pal.line);
+        clipped.fill(geo.rail_border, line);
+        var y: u16 = geo.rail_border.y;
+        while (y < geo.rail_border.bottom()) : (y += 1) clipped.canvas.put(geo.rail_border.x, y, .{ .char = .{ .grapheme = if (ui.ascii) "|" else "\u{2502}", .width = 1 }, .style = line });
+    }
+    if (!geo.strip.isEmpty()) _ = sidebar_overlay.drawStrip(clipped, geo.strip, .{
+        .title = section.meta().label,
+        .pinned = app.sidebar_auto.pinned,
+        .pin_hit = .{ .button = @intFromEnum(Button.sidebar_pin) },
+    });
+    if (!geo.body.isEmpty()) try drawColumn(app, clipped, geo.body, section);
+    sidebar_overlay.drawEdge(clipped, geo.edge);
+    // The panel keeps itself up while the pointer rests anywhere on it
+    // — the second piece of the column's hover zone.
+    const on_screen = geo.clip.intersect(upper);
+    app.sidebar_auto.rect = on_screen;
+    hover_zones.register(app, .{
+        .rect = on_screen,
+        .id = sidebar_auto.zoneOf(s),
+        .dwell_ms = app.cfg.ui.sidebar_reveal_ms,
+        .priority = hover_zones.prio_sidebar,
+    });
+}
+
+/// What the overlay is made of: the panel at its full docked width
+/// (`all`) and the part of it the slide has revealed (`clip`).
+pub const OverlayRects = struct {
+    all: Rect = .empty,
+    /// What of `all` is on screen this frame — the whole of it once the
+    /// slide is done. The panel is laid out at its full width and
+    /// REVEALED through this, so no row inside it moves mid-slide.
+    clip: Rect = .empty,
+    rail: Rect = .empty,
+    rail_border: Rect = .empty,
+    strip: Rect = .empty,
+    body: Rect = .empty,
+    edge: Rect = .empty,
+};
+
+/// The overlay's geometry: the docked width under `frameRects`' own
+/// clamp, then the same rail / border carve the docked column gets, a
+/// strip row and the edge rule — and the slide's clip over the lot.
+pub fn overlayRects(app: *const App, upper: Rect, s: sidebar_auto.ColumnSide) OverlayRects {
+    if (upper.w <= 12 or upper.h == 0) return .{};
+    const side_id: side_mod.Side = if (s == .left) .left else .right;
+    const want = side_mod.size(app, side_id);
+    const w: u16 = @max(@min(want, upper.w -| 21), 8);
+    const st = app.sidebar_auto;
+    const frames: u32 = sidebar_auto.slide_frames;
+    const done: u32 = @min(@as(u32, st.step) + 1, frames);
+    const shown_w: u16 = @intCast(@max(@as(u32, 1), (@as(u32, w) * done) / frames));
+    var out: OverlayRects = .{};
+    out.all = if (s == .left)
+        Rect.init(upper.x, upper.y, w, upper.h)
+    else
+        Rect.init(upper.right() - w, upper.y, w, upper.h);
+    out.clip = if (s == .left)
+        Rect.init(upper.x, upper.y, shown_w, upper.h)
+    else
+        Rect.init(upper.right() - shown_w, upper.y, shown_w, upper.h);
+    var rest = out.all;
+    // The edge rule comes off the inner side first, so the section's
+    // width is the same whichever column it is in.
+    if (rest.w > 1) {
+        if (s == .left) {
+            const e = rest.splitRight(1);
+            out.edge = e.rest;
+            rest = e.left;
+        } else {
+            const e = rest.splitLeft(1);
+            out.edge = e.left;
+            rest = e.rest;
+        }
+    }
+    // The rail: the left column's only, as the docked carve is.
+    if (s == .left and app.cfg.ui.activity_bar != .hidden and rest.w > rail_mod.width + 2) {
+        const rs = rest.splitLeft(rail_mod.width);
+        out.rail = rs.left;
+        rest = rs.rest;
+        const bs = rest.splitLeft(1);
+        out.rail_border = bs.left;
+        rest = bs.rest;
+    }
+    if (rest.h >= 3) {
+        const ss = rest.splitTop(1);
+        out.strip = ss.top;
+        rest = ss.rest;
+    }
+    out.body = rest;
+    return out;
 }
 
 /// One column's section, in the column's rect. The painters take a

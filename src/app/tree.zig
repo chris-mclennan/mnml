@@ -31,6 +31,7 @@ const trash = @import("trash.zig");
 const watch = @import("watch.zig");
 const gitignore = @import("gitignore.zig");
 const tree_view = @import("../ui/tree_view.zig");
+const sidebar_auto = @import("sidebar_auto.zig");
 const Mouse = @import("../core/key.zig").Mouse;
 
 pub const table = .{
@@ -1463,6 +1464,11 @@ pub fn acceptDelete(app: *App, rel: []const u8) Allocator.Error!void {
 /// NvChad's `<C-n>` (`NvimTreeToggle`) does; VS Code's Ctrl+B leaves
 /// the focus where it was.
 fn toggle(app: *App) CommandError!void {
+    // // changed (sidebar-autohide): under `ui.sidebar = .auto` /
+    // `.hidden` the column is not docked, so the toggle is the
+    // overlay's — up if it is down, away if it is up. `.hidden` has no
+    // other door, which is the point of the one-shot.
+    if (sidebar_auto.keyboardReach(app, .left, true)) return;
     const opening = side.shown(app, .left) == null;
     try side.toggleColumn(app, .left);
     if (opening and app.input_style == .vim and app.tree.visible) side.focusSection(app, .explorer);

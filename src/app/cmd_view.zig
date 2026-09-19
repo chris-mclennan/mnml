@@ -15,6 +15,7 @@ const Layout = app_mod.Layout;
 const layout_mod = @import("layout.zig");
 const activity_bar = @import("activity_bar.zig");
 const side = @import("side.zig");
+const sidebar_auto = @import("sidebar_auto.zig");
 const bottom_dock = @import("bottom.zig");
 const http_panel = @import("http_panel.zig");
 const http_app = @import("http.zig");
@@ -269,6 +270,9 @@ fn toggleKeymap(app: *App) CommandError!void {
 // their names: they act on the right column.
 
 fn toggleRightPanel(app: *App) CommandError!void {
+    // // changed (sidebar-autohide): the right column's overlay, on the
+    // same rule as `view.toggle_tree`'s.
+    if (sidebar_auto.keyboardReach(app, .right, true)) return;
     return side.toggleColumn(app, .right);
 }
 

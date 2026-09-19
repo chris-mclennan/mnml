@@ -1,0 +1,23 @@
+# width: 120
+# `ui.sidebar = .hidden`: the pointer at the screen edge does nothing at
+# all, and `view.toggle_tree` is the only door — a one-shot overlay that
+# the same command takes away again. The marker file is never opened,
+# so the only thing that can put its name on screen is the tree.
+write .mnml/config.zon .{ .ui = .{ .sidebar = .hidden, .sidebar_reveal_ms = 40, .sidebar_hide_ms = 4000 } }
+write zz_marker.txt "nothing opens this\n"
+write main.txt "hello\n"
+open main.txt
+expect screen lacks "󰐃"
+expect screen lacks "zz_marker"
+hover 0 10
+wait 300
+expect screen lacks "󰐃"
+expect screen lacks "zz_marker"
+command view.toggle_tree
+wait 100
+expect screen contains "󰐃"
+expect screen contains "zz_marker"
+command view.toggle_tree
+wait 100
+expect screen lacks "󰐃"
+expect screen lacks "zz_marker"

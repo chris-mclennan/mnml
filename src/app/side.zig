@@ -39,6 +39,7 @@ const CommandError = command.CommandError;
 const Key = @import("../core/key.zig").Key;
 const rail = @import("../ui/activity_bar.zig");
 const git_palette = @import("git_palette.zig");
+const sidebar_auto = @import("sidebar_auto.zig");
 
 pub const Section = rail.Section;
 pub const Side = Config.Side;
@@ -254,6 +255,14 @@ pub fn focusSection(app: *App, s: Section) void {
     const f = focusOf(s) orelse return;
     if (app.activeBuffer()) |b| b.input.onBlur();
     app.focus = f;
+    // // changed (sidebar-autohide): handing a section the keys is what
+    // every command that targets a column ends in — `view.activity_*`,
+    // `view.focus_tree`, `space e`, a rail chord — so it is the one
+    // place the overlay needs to know about them. (`place(…, false)`
+    // does NOT come through here, which is what keeps a `.auto` launch
+    // from starting with the panel up.) Docked, this is a no-op.
+    const side = sideOf(app, s);
+    if (side != .bottom) _ = sidebar_auto.keyboardReach(app, if (side == .left) .left else .right, false);
     app.needs_render = true;
 }
 

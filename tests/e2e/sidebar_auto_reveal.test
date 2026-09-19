@@ -1,0 +1,37 @@
+# width: 120
+# `ui.sidebar = .auto` (src/app/sidebar_auto.zig): the left column hides
+# itself and slides back OVER the editor when the pointer rests in
+# column 0. The proof that nothing was re-laid-out is the marker at
+# column 95 of the open file: an editor squeezed beside a docked 30-cell
+# tree clips it, an editor that kept its full width shows it. It is on
+# screen while the overlay is up, and only disappears once the panel is
+# PINNED — which is when a relayout is the point.
+write .mnml/config.zon .{ .ui = .{ .sidebar = .auto, .sidebar_reveal_ms = 40, .sidebar_hide_ms = 40 } }
+write wide.txt "...............................................................................................ENDMARK\n"
+write zz_marker.txt "nothing opens this\n"
+open wide.txt
+# The overlay's signature is the pin chip 󰐃 in its header strip —
+# a glyph nothing else on the screen paints, so it cannot be confused
+# with a tooltip or a tab that happens to carry a section's name.
+# Hidden: no panel, and the editor has the whole width.
+expect screen lacks "󰐃"
+expect screen lacks "zz_marker"
+expect screen contains "ENDMARK"
+# The pointer rests in column 0: after the dwell the panel is up, over
+# the editor — the tree's own file is on screen and the far marker
+# still is, so no pane moved.
+hover 0 10
+wait 200
+expect screen contains "󰐃"
+expect screen contains "zz_marker"
+expect screen contains "ENDMARK"
+# Resting on the panel itself keeps it up.
+hover 12 10
+wait 200
+expect screen contains "zz_marker"
+# The pointer leaves: `sidebar_hide_ms` later it is gone and the editor
+# is uncovered.
+hover 90 20
+wait 300
+expect screen lacks "zz_marker"
+expect screen contains "ENDMARK"
