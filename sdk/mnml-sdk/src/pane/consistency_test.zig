@@ -99,10 +99,11 @@ fn Rig(comptime Target: type) type {
     };
 }
 
-/// The theme both sides paint with — every role a distinct colour, so a
-/// role swapped for another shows up as a differing cell rather than
-/// hiding behind a shared fallback.
-fn demoTheme() Theme {
+/// The theme every side paints with — every role a distinct colour, so
+/// a role swapped for another shows up as a differing cell rather than
+/// hiding behind a shared fallback. `chip_color` is the family's own
+/// manifest chip colour, which is what `brand` resolves from.
+fn themeOf(chip_color: []const u8) Theme {
     return Theme.fromHelloBranded(.{
         .fg = .{ .rgb = .{ 200, 200, 200 } },
         .bg = .{ .rgb = .{ 10, 10, 10 } },
@@ -122,8 +123,28 @@ fn demoTheme() Theme {
         .cyan = .{ .rgb = .{ 86, 182, 194 } },
         .purple = .{ .rgb = .{ 198, 120, 221 } },
         .comment = .{ .rgb = .{ 92, 99, 112 } },
-    }, "blue");
+    }, chip_color);
 }
+
+fn demoTheme() Theme {
+    return themeOf("blue");
+}
+
+/// The five families every official integration ships, each with the
+/// chip colour its manifest names and the target vocabulary its pane
+/// paints through. The toolkit is generic over the vocabulary and
+/// takes the brand off `hello`, so the chrome they share has to come
+/// out identical from all five — and the parts that are SUPPOSED to
+/// differ are only the ones that carry the brand.
+const Vocab = enum { tracker, forge };
+const Family = struct { name: []const u8, chip_color: []const u8, vocab: Vocab };
+const families = [_]Family{
+    .{ .name = "Jira Work", .chip_color = "blue", .vocab = .tracker },
+    .{ .name = "Jira Fix Versions", .chip_color = "green", .vocab = .tracker },
+    .{ .name = "Jira Boards", .chip_color = "magenta", .vocab = .tracker },
+    .{ .name = "Bitbucket PRs", .chip_color = "blue", .vocab = .forge },
+    .{ .name = "Bitbucket Pipelines", .chip_color = "green", .vocab = .forge },
+};
 
 const cols: u16 = 60;
 const rows: u16 = 24;
@@ -213,6 +234,19 @@ fn paintActionRow(comptime Target: type, p: *chrome.Painter(Target), y: u16, tar
     }
 }
 
+/// One button of each family, side by side, so a family painted in
+/// another's colour shows up as a differing cell.
+const kind_words = [_][]const u8{ "[ Open ]", "[ Review ]", "[ Triage ]", "[ Merge ]" };
+
+fn paintKindRow(comptime Target: type, p: *chrome.Painter(Target), y: u16) void {
+    var x: u16 = 1;
+    for (kind_words) |w| {
+        const cells = chrome.width(w);
+        _ = p.actionChip(x, y, cells, w, action_mod.chipOf(p.th, .idle, action_mod.kindOf(w)));
+        x += cells + 1;
+    }
+}
+
 /// A row's words, in the three foreground roles a pane's rows are
 /// painted in — none of which names a background of its own. A ground
 /// the words punch a hole back through is the bug this exists to catch,
@@ -224,8 +258,8 @@ fn paintRowWords(comptime Target: type, p: *chrome.Painter(Target), y: u16) void
 }
 
 /// Every shared element, once, at fixed coordinates.
-fn paintTracker(r: *Rig(TrackerTarget)) !void {
-    var p = r.painter(demoTheme());
+fn paintTracker(r: *Rig(TrackerTarget), th: Theme) !void {
+    var p = r.painter(th);
     p.gutter(.{ .x = 0, .y = 0, .w = 1, .h = rows - 1 }, 5);
     const x = p.capsTitle(1, 0, "PANE", "  (2 of 9)");
     _ = try p.rightChips(0, x, &.{
@@ -255,6 +289,7 @@ fn paintTracker(r: *Rig(TrackerTarget)) !void {
         .{ .action = .{ .row = 0, .button = 4 } },
     });
     paintMergeRow(TrackerTarget, &p, 14, .{ .merge = 0 }, .{ .merge = 1 });
+    paintKindRow(TrackerTarget, &p, 15);
     try paintConfirm(TrackerTarget, &p, .confirm_ok, .confirm_cancel, .confirm_body);
     try p.hintRow(rows - 1, "ENG-2", &.{
         .{ .key = "d", .title = "detail", .target = .{ .hint = 0 } },
@@ -262,8 +297,8 @@ fn paintTracker(r: *Rig(TrackerTarget)) !void {
     });
 }
 
-fn paintForge(r: *Rig(ForgeTarget)) !void {
-    var p = r.painter(demoTheme());
+fn paintForge(r: *Rig(ForgeTarget), th: Theme) !void {
+    var p = r.painter(th);
     p.gutter(.{ .x = 0, .y = 0, .w = 1, .h = rows - 1 }, 5);
     const x = p.capsTitle(1, 0, "PANE", "  (2 of 9)");
     _ = try p.rightChips(0, x, &.{
@@ -293,6 +328,7 @@ fn paintForge(r: *Rig(ForgeTarget)) !void {
         .{ .action = .{ .key = 0, .which = 4 } },
     });
     paintMergeRow(ForgeTarget, &p, 14, .{ .merge = .{ .repo = 0, .idx = 0 } }, .{ .merge = .{ .repo = 0, .idx = 1 } });
+    paintKindRow(ForgeTarget, &p, 15);
     try paintConfirm(ForgeTarget, &p, .confirm_ok, .confirm_cancel, .confirm_body);
     try p.hintRow(rows - 1, "ENG-2", &.{
         .{ .key = "d", .title = "detail", .target = .{ .hint = .{ .action = 0 } } },
@@ -305,8 +341,8 @@ test "the shared chrome paints identically from both panes' vocabularies" {
     defer tracker.deinit();
     var forge = try Rig(ForgeTarget).init(cols, rows);
     defer forge.deinit();
-    try paintTracker(&tracker);
-    try paintForge(&forge);
+    try paintTracker(&tracker, demoTheme());
+    try paintForge(&forge, demoTheme());
 
     var y: u16 = 0;
     while (y < rows) : (y += 1) {
@@ -330,10 +366,127 @@ test "the shared chrome paints identically from both panes' vocabularies" {
     }
 }
 
+/// One family painted into whichever rig its pane's vocabulary needs,
+/// then flattened to a plain grid so the five can be compared without
+/// caring which union they came from.
+const Painted = struct {
+    slots: []frame_mod.Slot,
+
+    fn of(f: Family) !Painted {
+        const th = themeOf(f.chip_color);
+        const out = try testing.allocator.alloc(frame_mod.Slot, @as(usize, cols) * rows);
+        errdefer testing.allocator.free(out);
+        switch (f.vocab) {
+            .tracker => {
+                var r = try Rig(TrackerTarget).init(cols, rows);
+                defer r.deinit();
+                try paintTracker(&r, th);
+                @memcpy(out, r.f.slots);
+            },
+            .forge => {
+                var r = try Rig(ForgeTarget).init(cols, rows);
+                defer r.deinit();
+                try paintForge(&r, th);
+                @memcpy(out, r.f.slots);
+            },
+        }
+        return .{ .slots = out };
+    }
+
+    fn deinit(p: *Painted) void {
+        testing.allocator.free(p.slots);
+    }
+};
+
+fn sameColor(a: theme_mod.Color, b: theme_mod.Color) bool {
+    return switch (a) {
+        .index => |i| b == .index and b.index == i,
+        .rgb => |v| b == .rgb and std.mem.eql(u8, &v, &b.rgb),
+    };
+}
+
+/// A family's OWN colour — the one thing about the chrome that is
+/// allowed to differ between two of them. It is the gutter stripe, the
+/// active tab's label and the mark under it, and nothing else.
+fn brandOf(f: Family) theme_mod.Color {
+    return themeOf(f.chip_color).brand;
+}
+
+test "all five families paint the shared chrome identically, and differ only where the brand is" {
+    var painted: [families.len]Painted = undefined;
+    var made: usize = 0;
+    defer for (painted[0..made]) |*pp| pp.deinit();
+    for (&painted, families) |*slot, f| {
+        slot.* = try Painted.of(f);
+        made += 1;
+    }
+    const first = families[0];
+    for (painted[1..], families[1..]) |other, f| {
+        const brands_differ = !sameColor(brandOf(first), brandOf(f));
+        var differed: usize = 0;
+        var i: usize = 0;
+        while (i < painted[0].slots.len) : (i += 1) {
+            const a = &painted[0].slots[i];
+            const b = &other.slots[i];
+            const x = i % cols;
+            const y = i / cols;
+            if (!std.mem.eql(u8, a.symbol(), b.symbol())) {
+                std.debug.print("{s} vs {s} at {d},{d}: `{s}` vs `{s}`\n", .{ first.name, f.name, x, y, a.symbol(), b.symbol() });
+                return error.SymbolDrifted;
+            }
+            if (a.style.mods.bits() != b.style.mods.bits() or !std.meta.eql(a.style.bg, b.style.bg)) {
+                std.debug.print("{s} vs {s} at {d},{d}: `{s}` ground {any}/{d} vs {any}/{d}\n", .{ first.name, f.name, x, y, a.symbol(), a.style.bg, a.style.mods.bits(), b.style.bg, b.style.mods.bits() });
+                return error.ChromeDrifted;
+            }
+            if (std.meta.eql(a.style.fg, b.style.fg)) continue;
+            differed += 1;
+            // A cell that differs has to be each family's own brand on
+            // its own side. Anything else is a role that has leaked a
+            // family colour, or a family colour that has leaked into a
+            // role — the two ways five panes stop looking like one app.
+            const a_brand = a.style.fg != null and sameColor(a.style.fg.?, brandOf(first));
+            const b_brand = b.style.fg != null and sameColor(b.style.fg.?, brandOf(f));
+            if (!a_brand or !b_brand) {
+                std.debug.print("{s} vs {s} at {d},{d}: `{s}` in {any} vs {any} — not each family's brand\n", .{ first.name, f.name, x, y, a.symbol(), a.style.fg, b.style.fg });
+                return error.BrandLeaked;
+            }
+        }
+        // …and when the two families DO wear different colours, the
+        // brand has to be somewhere on the screen, or this comparison
+        // is passing because nothing is painted in it.
+        if (brands_differ and differed == 0) {
+            std.debug.print("{s} vs {s}: different brands, identical screens — nothing paints in the brand\n", .{ first.name, f.name });
+            return error.BrandNowhere;
+        }
+        if (!brands_differ and differed != 0) {
+            std.debug.print("{s} vs {s}: same brand, {d} cells differ\n", .{ first.name, f.name, differed });
+            return error.ChromeDrifted;
+        }
+    }
+}
+
+test "every family keeps its four button families four different colours" {
+    for (families) |f| {
+        const th = themeOf(f.chip_color);
+        const roles = [_]theme_mod.Color{
+            action_mod.roleColor(th, .navigation),
+            action_mod.roleColor(th, .review),
+            action_mod.roleColor(th, .dispatch),
+            action_mod.roleColor(th, .final),
+        };
+        for (roles, 0..) |x, i| for (roles[0..i]) |y| {
+            if (std.meta.eql(x, y)) {
+                std.debug.print("{s}: two button families paint in {any}\n", .{ f.name, x });
+                return error.ButtonColoursCollide;
+            }
+        };
+    }
+}
+
 test "the elements the panes share are actually on the screen, so the comparison has something to compare" {
     var r = try Rig(TrackerTarget).init(cols, rows);
     defer r.deinit();
-    try paintTracker(&r);
+    try paintTracker(&r, demoTheme());
     const arena = r.arena.allocator();
     var text: std.ArrayList(u8) = .empty;
     var y: u16 = 0;
@@ -399,8 +552,8 @@ test "the cursor row carries the cursor-line ground edge to edge, in both panes,
     defer tracker.deinit();
     var forge = try Rig(ForgeTarget).init(cols, rows);
     defer forge.deinit();
-    try paintTracker(&tracker);
-    try paintForge(&forge);
+    try paintTracker(&tracker, demoTheme());
+    try paintForge(&forge, demoTheme());
     const cursor_line = demoTheme().cursor_line;
     // Row 4 is a row at rest, rows 5 and 6 are the two lines of the row
     // under the cursor; all three carry the same words.
