@@ -36,14 +36,16 @@ const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const hit = @import("hit.zig");
 const paletteColor = @import("integrations_view.zig").paletteColor;
+const pin_chip = @import("pin_chip.zig");
 
 const Style = Ui.Style;
 
 /// A side dock's width: padding, glyph, padding — the activity bar's.
 pub const width: u16 = 3;
-/// The pin chip at the strip's end (`view.dock_pin`).
-pub const pin_glyph = "\u{F0403}"; // 󰐃 nf-md-pin
-pub const pin_ascii = "P";
+/// The pin chip at the strip's end (`view.dock_pin`) — the family's
+/// (`ui/pin_chip.zig`), the same one the sidebar and the menu bar wear.
+pub const pin_glyph = pin_chip.pin_glyph;
+pub const pin_ascii = pin_chip.pin_ascii;
 /// The dot a running item wears (macOS's under-icon dot).
 pub const running_dot = "\u{25cf}"; // ●
 pub const running_ascii = "*";
@@ -108,20 +110,7 @@ pub fn draw(ui: Ui, area: Rect, props: Props) void {
         .bottom => drawRow(ui, area, props, bg, hover_bg),
         .left, .right => drawColumn(ui, area, props, bg, hover_bg),
     }
-    const pin = pinRect(area, props.edge);
-    if (!pin.isEmpty()) {
-        const hot = ui.hovered(pin);
-        const ground = if (hot) hover_bg else bg;
-        if (hot) ui.fill(pin, Theme.onBg(th.fg, hover_bg));
-        const style = if (props.pinned)
-            bold(Theme.withFg(Theme.onBg(th.fg, ground), pal.yellow))
-        else if (hot)
-            bold(Theme.onBg(th.fg, ground))
-        else
-            dim(Theme.withFg(Theme.onBg(th.fg, ground), pal.comment));
-        _ = ui.putStr(pin.x + 1, pin.y, pin.w -| 1, if (ui.ascii) pin_ascii else pin_glyph, style);
-        ui.hit(pin, .{ .launcher_dock = .pin });
-    }
+    pin_chip.draw(ui, pinRect(area, props.edge), .{ .pinned = props.pinned, .bg = bg, .hit = .{ .launcher_dock = .pin } });
 }
 
 fn drawRow(ui: Ui, area: Rect, props: Props, bg: vaxis.Color, hover_bg: vaxis.Color) void {
