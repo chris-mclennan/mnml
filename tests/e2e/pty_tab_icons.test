@@ -2,12 +2,12 @@
 # env: TERM_PROGRAM=ghostty
 # env: SHELL=/bin/sh
 # The mark a pty tab wears (`src/app/render.zig`'s `ptyIcon`): an AI
-# session's tab carries its product's own glyph — `󱸀` for Claude,
-# `󱸁` for Codex — where every pty tab used to show the one generic
-# codicon terminal ``. A plain shell wears the mark of the terminal
-# mnml itself runs inside (`$TERM_PROGRAM`) and reads `<terminal>
-# (<shell>)` — here `ghostty (sh)`, the ghost. A pane running any
-# other command keeps the codicon.
+# session's tab carries its product's own glyph — `󱸀` for Claude, `󱸁`
+# for Codex — and every other pty tab, shell or command, wears the
+# terminal mark `ui.terminal_glyph` names. That is `󲀀` by default:
+# mnml's own Ghostty ghost, baked at U+F2000, the same mark whichever
+# emulator mnml is running inside. The name still says which one —
+# `ghostty (sh)` here.
 #
 # `tools/shims/ai/claude` and `…/codex` stand in for the CLIs (they
 # sleep), so the strips read `claude` and `codex` and no transcript
@@ -15,11 +15,11 @@
 # one of these commands splits, and a chip on a quarter-width strip is
 # cut before its name, which would assert nothing.
 command view.toggle_tree
-# The shell: the host terminal's name and mark, not the generic pair.
+# The shell: mnml's mark, and the host terminal's name.
 command term.shell
 wait 300
 expect pane ghostty (sh)
-expect screen contains "󰊠 ghostty (sh) 󰅖"
+expect screen contains "󲀀 ghostty (sh) 󰅖"
 expect screen lacks " ghostty (sh) 󰅖"
 command buffer.close
 command ai.claude_code_new
@@ -33,6 +33,7 @@ wait 300
 expect pane codex
 expect screen contains "󱸁 codex 󰅖"
 command buffer.close
-# Any other command still wears the codicon terminal.
+# A command pty wears the same terminal mark, not the codicon.
 ex term sleep 30
-expect screen contains " sleep 30 󰅖"
+expect screen contains "󲀀 sleep 30 󰅖"
+expect screen lacks " sleep 30 󰅖"

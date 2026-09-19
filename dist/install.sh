@@ -152,6 +152,24 @@ if [ -d "$lua_src" ]; then
     fi
 fi
 
+# ── MnmlSymbols.ttf ──
+# The face mnml's own marks are drawn from — the Claude and Codex marks,
+# the tree connectors, the terminal icon. Laid beside the script set. The
+# terminal still has to be told about it; mnml's own startup check says so
+# when it is not.
+font_src="$tmp/mnml-$triple/share/mnml/fonts/MnmlSymbols.ttf"
+if [ -f "$font_src" ]; then
+    font_dir=$(dirname "$install_dir")/share/mnml/fonts
+    if mkdir -p "$font_dir" 2>/dev/null && cp "$font_src" "$font_dir/MnmlSymbols.ttf.tmp.$$" 2>/dev/null; then
+        mv -f "$font_dir/MnmlSymbols.ttf.tmp.$$" "$font_dir/MnmlSymbols.ttf"
+        say "symbols font installed to $font_dir/MnmlSymbols.ttf"
+        say "point your terminal at it: font-codepoint-map = U+F1B00-U+F20FF=MnmlSymbols"
+    else
+        rm -f "$font_dir/MnmlSymbols.ttf.tmp.$$" 2>/dev/null || true
+        say "could not install the symbols font (mnml's own marks will show as ?)"
+    fi
+fi
+
 # ── PATH hint ──
 case ":$PATH:" in
     *":$install_dir:"*) ;;

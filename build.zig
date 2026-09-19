@@ -1,5 +1,9 @@
 const std = @import("std");
 
+/// The symbols face's file name, spelled once (`src/glyph/builder.zig`
+/// carries the same string for the app's own bake).
+const symbols_font_name = "MnmlSymbols.ttf";
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -357,6 +361,27 @@ pub fn build(b: *std.Build) void {
     unit_step.dependOn(&b.addRunArtifact(glyph_tests).step);
     // ── end glyph audit ─────────────────────────────────────────────────
 
+    // ── the symbols font ────────────────────────────────────────────────
+    // `MnmlSymbols.ttf`: the face mnml's own block is drawn from — the
+    // Claude and Codex marks, the two tree connectors, and the terminal
+    // icon (`src/glyph/`). It installs beside the Lua script set, as
+    // `share/mnml/fonts/MnmlSymbols.ttf`, and `scripts/package.sh` and
+    // `nfpm/mnml.yaml` carry it from there the same way. The builder is
+    // the module the app itself runs for a custom terminal icon, so the
+    // shipped face and a user's own bake cannot drift.
+    const glyph_builder_mod = b.createModule(.{ .root_source_file = b.path("src/glyph/builder.zig"), .target = b.graph.host, .optimize = .Debug });
+    glyph_builder_mod.addImport("data", data_mod);
+    const font_mod = b.createModule(.{ .root_source_file = b.path("tools/build_font.zig"), .target = b.graph.host, .optimize = .Debug });
+    font_mod.addImport("glyph", glyph_builder_mod);
+    const font_exe = b.addExecutable(.{ .name = "build-font", .root_module = font_mod });
+    const font_run = b.addRunArtifact(font_exe);
+    const font_file = font_run.addOutputFileArg(symbols_font_name);
+    const font_install = b.addInstallFile(font_file, "share/mnml/fonts/" ++ symbols_font_name);
+    b.getInstallStep().dependOn(&font_install.step);
+    const font_step = b.step("font", "Build share/mnml/fonts/MnmlSymbols.ttf from data/glyphs/");
+    font_step.dependOn(&font_install.step);
+    // ── end the symbols font ────────────────────────────────────────────
+
     // ── the arena audit ─────────────────────────────────────────────────
     // `zig build arena-audit`: every place a string that dies at the next
     // frame reaches a consumer that outlives the frame (a menu label, a
@@ -483,6 +508,11 @@ pub fn build(b: *std.Build) void {
         .dest_dir = .{ .override = .{ .custom = b.fmt("release/{s}", .{triple}) } },
         .dest_sub_path = if (target.result.os.tag == .windows) "mnml.exe" else "mnml",
     }).step);
+    // MnmlSymbols.ttf beside the binary, in the layout the archive has
+    // (`scripts/package.sh` reads it from there, and refuses without
+    // it). The font is the same bytes on every target — the builder
+    // runs on the host and the file is not machine code.
+    release_one.dependOn(&b.addInstallFile(font_file, b.fmt("release/{s}/share/mnml/fonts/" ++ symbols_font_name, .{triple})).step);
 
     const release_step = b.step("release", "Cross-compile ReleaseSafe exes for the five shipped targets into zig-out/release/<rust-triple>/");
     for (release_targets) |rt| {

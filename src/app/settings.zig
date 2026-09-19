@@ -209,6 +209,7 @@ pub const rows = [_]RowSpec{
     .{ .path = "ui.stress_meter", .label = "Stress meter", .section = .ui, .scope = .home },
     .{ .path = "ui.top_bar_cluster_mode", .label = "Top bar cluster", .section = .ui, .scope = .home },
     .{ .path = "ui.tab_bar_ai_icon", .label = "AI icon in the bar", .section = .ui, .scope = .home },
+    .{ .path = "ui.terminal_glyph", .label = "Terminal icon", .section = .ui, .scope = .home },
     .{ .path = "ui.ai_layout_mode", .label = "AI session layout", .section = .ui, .scope = .home },
     .{ .path = "ui.coverage_chip_mode", .label = "Coverage chip", .section = .ui, .scope = .home },
     .{ .path = "ui.pty_cursor.unfocused", .label = "Terminal cursor, other panes", .section = .ui, .scope = .home },
@@ -1079,6 +1080,29 @@ test "view.tab_bar_ai_* and view.cluster_mode_* set the key, persist it to the h
     try command.run(&app, .{ .static = .@"view.cluster_mode_auto" });
     try std.testing.expectEqual(Config.TabBarAiIcon.codex, app.cfg.ui.tab_bar_ai_icon);
     try std.testing.expectEqual(Config.TopBarClusterMode.auto, app.cfg.ui.top_bar_cluster_mode);
+}
+
+test "the UI section's Terminal icon row: three choices, the ghost the shipped one, `←→` writes the key to the home config" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .data_root = root, .cols = 100, .rows = 40 });
+    defer app.deinit();
+    try open(&app);
+    const opts = options("ui.terminal_glyph");
+    try t.expectEqual(@as(usize, 3), opts.len);
+    try t.expectEqualStrings("ghostty", opts[0]);
+    try t.expectEqualStrings("terminal", opts[1]);
+    try t.expectEqualStrings("custom", opts[2]);
+    // The shipped value is the one the row opens on.
+    try t.expectEqual(@as(usize, 0), rowIndex(&app, "ui.terminal_glyph"));
+    try setRow(&app, rowId("ui.terminal_glyph"), 1);
+    try t.expectEqual(Config.TerminalGlyph.terminal, app.cfg.ui.terminal_glyph);
+    const home = (try configPath(&app, .home)).?;
+    const text = try Io.Dir.cwd().readFileAlloc(app.io, home, t.allocator, .limited(64 * 1024));
+    defer t.allocator.free(text);
+    try t.expect(std.mem.indexOf(u8, text, ".terminal_glyph = .terminal") != null);
 }
 
 // ─── opening on a section ────────────────────────────────────────────────

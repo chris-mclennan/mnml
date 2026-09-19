@@ -1134,6 +1134,10 @@ pub const specs = [_]Spec{
     .{ .id = "app.check_updates", .title = "Check GitHub for a newer mnml release now", .group = "app" },
     .{ .id = "app.startup_picker", .title = "Startup picker — new file / open file / recent files / workspaces", .group = "app" },
     .{ .id = "messages.clear", .title = "Messages: clear the toast history", .group = "view" },
+    // ── the terminal icon (terminal-icon) ──
+    .{ .id = "view.terminal_glyph_ghostty", .title = "Terminal icon: the Ghostty ghost (mnml's own mark)", .group = "view" },
+    .{ .id = "view.terminal_glyph_terminal", .title = "Terminal icon: the plain codicon terminal", .group = "view" },
+    .{ .id = "view.terminal_glyph_custom", .title = "Terminal icon: bake a custom SVG…", .group = "view" },
     .{ .id = "harpoon.clear", .title = "Harpoon: unpin every slot", .group = "harpoon" },
     // The file manager (Zig-only ids): the Files pane's own verbs.
     .{ .id = "files.up", .title = "Files: go to the parent directory", .group = "files" },
@@ -1188,7 +1192,8 @@ test "1077 specs, unique ids" {
     // copy_path / copy_line / open_pane)
     // + `integrations.dismiss_toml_notice` (the 0.2 manifests notice)
     // + `app.command_line` (the bottom row's `:` line) and
-    // `toast.run_action` (bottom-row) + `view.keep_tab` (preview-tabs).
-    try std.testing.expectEqual(@as(usize, 1081), specs.len);
+    // `toast.run_action` (bottom-row)
+    // + three terminal-icon commands (terminal-icon).
+    try std.testing.expectEqual(@as(usize, 1084), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

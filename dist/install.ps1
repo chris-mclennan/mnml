@@ -82,6 +82,20 @@ try {
         }
     }
 
+    # MnmlSymbols.ttf, the face mnml's own marks are drawn from. Laid
+    # beside the script set; the terminal still has to be told about it.
+    $FontSrc = Join-Path $Exe.Directory.FullName 'share\mnml\fonts\MnmlSymbols.ttf'
+    if (Test-Path $FontSrc) {
+        try {
+            $FontDir = Join-Path (Split-Path -Parent $InstallDir) 'share\mnml\fonts'
+            New-Item -ItemType Directory -Path $FontDir -Force | Out-Null
+            Copy-Item -Path $FontSrc -Destination (Join-Path $FontDir 'MnmlSymbols.ttf') -Force
+            Write-Host "mnml: symbols font installed to $FontDir\MnmlSymbols.ttf"
+        } catch {
+            Write-Host "mnml: could not install the symbols font (mnml's own marks will show as ?)"
+        }
+    }
+
     # User-scope PATH — no elevation, takes effect in new shells.
     if ($IsWindows -or $env:OS -eq 'Windows_NT') {
         $UserPath = [Environment]::GetEnvironmentVariable('Path', 'User')

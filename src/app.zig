@@ -309,6 +309,9 @@ pub const PromptPurpose = union(enum) {
     grep_replace,
     /// `view.add_workspace`: a folder (Tab completes path segments).
     add_workspace,
+    /// `view.terminal_glyph_custom`: the SVG to bake as the terminal
+    /// mark (`app/terminal_glyph.zig`).
+    terminal_glyph_svg,
 
     pub const BpTarget = struct { path: []u8, line: u32 };
     pub const SessionWorktreeName = struct { product: Config.AiProduct, profile: []u8 };
@@ -850,6 +853,11 @@ pub const ToastAction = union(enum) {
     /// Open the integration's marketplace row, where its description,
     /// version and source are readable before anything is fetched.
     marketplace: struct { label: []u8, id: []u8 },
+    /// Relaunch mnml. Nothing is installed and nothing is hidden: the
+    /// offer is mnml acting on itself, for the changes a running
+    /// process cannot pick up — a font it has already handed to the
+    /// terminal, a config the loader read at start.
+    restart: struct { label: []u8 },
 
     pub fn label(self: ToastAction) []const u8 {
         return switch (self) {
@@ -864,6 +872,7 @@ pub const ToastAction = union(enum) {
                 switch (self) {
                     .run_in_terminal => |r| gpa.free(r.cmd),
                     .marketplace => |m| gpa.free(m.id),
+                    .restart => {},
                 }
             },
         }
@@ -1798,6 +1807,12 @@ pub const App = struct {
                     error.OutOfMemory => return error.OutOfMemory,
                     else => self.toast("could not open the marketplace for {s}", .{id}),
                 };
+            },
+            // `app.restart`'s own path: the unsaved-changes guard and
+            // the relaunch are the command's, not a second copy here.
+            .restart => command.run(self, .{ .static = .@"app.restart" }) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => self.toast("could not restart", .{}),
             },
         }
     }

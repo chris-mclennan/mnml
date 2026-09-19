@@ -4,8 +4,12 @@
 
   winget's package format needs an MSI as its download source; nobody is
   expected to double-click this. It installs mnml.exe to
-  Program Files\mnml\bin and puts that directory on the system PATH, and
-  nothing else — no shortcuts, no icon, no EULA dialog.
+  Program Files\mnml\bin, lays MnmlSymbols.ttf (the face mnml's own marks
+  are drawn from) beside it as share\mnml\fonts, and puts the bin
+  directory on the system PATH — nothing else: no shortcuts, no icon, no
+  EULA dialog. The font is laid where mnml's own probe looks
+  (`<exe dir>\..\share\mnml`); it is NOT registered with Windows, so
+  the user still points their terminal at the file.
 
   WiX v4/v5 schema. dist/msi/build.ps1 compiles it on the windows-latest
   runner with the `wix` .NET tool:
@@ -51,11 +55,21 @@
             <Environment Id="PathEnv" Name="PATH" Value="[BinDir]" Permanent="no" Part="last" Action="set" System="yes" />
           </Component>
         </Directory>
+        <Directory Id="ShareDir" Name="share">
+          <Directory Id="ShareMnmlDir" Name="mnml">
+            <Directory Id="FontsDir" Name="fonts">
+              <Component Id="MnmlSymbolsFont" Guid="3C7A9E21-6B44-4E58-9F0D-1A2B5C8D4E71">
+                <File Id="MnmlSymbolsFont" Name="MnmlSymbols.ttf" Source="$(var.BinDir)\share\mnml\fonts\MnmlSymbols.ttf" KeyPath="yes" />
+              </Component>
+            </Directory>
+          </Directory>
+        </Directory>
       </Directory>
     </StandardDirectory>
 
     <Feature Id="Binaries" Title="mnml" Level="1" ConfigurableDirectory="APPLICATIONFOLDER" AllowAbsent="no">
       <ComponentRef Id="MnmlExe" />
+      <ComponentRef Id="MnmlSymbolsFont" />
       <Feature Id="Environment" Title="Add mnml to PATH" Level="1" AllowAbsent="yes">
         <ComponentRef Id="PathEnv" />
       </Feature>

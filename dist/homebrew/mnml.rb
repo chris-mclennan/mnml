@@ -39,6 +39,11 @@ class Mnml < Formula
     # same path the .deb and .rpm use. Without it the SCRIPTS section's
     # Marketplace tab is empty on a brew install.
     pkgshare.install "share/mnml/lua" if File.directory?("share/mnml/lua")
+    # MnmlSymbols.ttf, the face mnml's own marks are drawn from. Laid
+    # beside the scripts; `brew install --cask font-...` is not a thing
+    # for a font mnml builds itself, so the user points their terminal
+    # at this path (or copies it into ~/Library/Fonts).
+    pkgshare.install "share/mnml/fonts" if File.directory?("share/mnml/fonts")
   end
 
   test do

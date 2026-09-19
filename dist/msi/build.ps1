@@ -39,6 +39,10 @@ if ($Zip) {
 }
 if (-not $BinDir) { throw 'give -Zip or -BinDir' }
 if (-not (Test-Path (Join-Path $BinDir 'mnml.exe'))) { throw "$BinDir has no mnml.exe" }
+# MnmlSymbols.ttf rides beside the binary, the way the release archive
+# carries it (scripts/package.sh). Without it wix fails on a missing
+# source anyway; failing here says which file and why.
+if (-not (Test-Path (Join-Path $BinDir 'share\mnml\fonts\MnmlSymbols.ttf'))) { throw "$BinDir has no share\mnml\fonts\MnmlSymbols.ttf (run ``zig build``)" }
 
 if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {
     Write-Host "msi: installing wix $WixVersion (dotnet tool)"

@@ -126,7 +126,7 @@ pub const table = .{
 };
 
 const cut_forge = "the cross-host PR picker returns with the Zig forge integrations (docs/PARITY.md § Git)";
-const cut_glyph_svg = "the glyph builder's SVG preview and font patching are cut (docs/PARITY.md § Headless, IPC & extensibility)";
+const cut_glyph_svg = "the per-integration glyph builder and its SVG preview are cut — SVG-to-font itself is not: `view.terminal_glyph_custom` bakes one (docs/PARITY.md § Headless, IPC & extensibility)";
 const cut_audio = "now-playing, Sonos and mixr control are cut from mnml-zig (docs/PARITY.md § UI & theming)";
 const cut_integration_updates = "the cargo / git integration auto-updater is not in mnml-zig — Zig integrations reinstall with `<integration> --install`; `integrations.auto_update_*` keys are accepted and ignored (docs/PARITY.md § Headless, IPC & extensibility)";
 
