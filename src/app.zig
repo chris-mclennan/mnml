@@ -757,7 +757,9 @@ pub const Drag = union(enum) {
     /// A tree row: a file opens in the pane it is released over, or
     /// moves into the folder it is released on.
     /// `copy`: the press carried Alt — the drop copies instead of moving.
-    tree: struct { idx: usize, moved: bool = false, copy: bool = false },
+    /// `clicks` is the press's place in a run (`dispatch.clickCount`):
+    /// one opens the row as a glance, two keeps it.
+    tree: struct { idx: usize, moved: bool = false, copy: bool = false, clicks: u8 = 1 },
     /// A text selection: char / word / line granularity from the click
     /// count, anchored where the press landed.
     select: struct { pane: PaneId, unit: SelectUnit, anchor: usize },
@@ -1128,10 +1130,6 @@ pub const App = struct {
     /// The click-discovery panel's flash: the family a row press lit,
     /// until when (`discovery.flashRow`).
     discovery_flash: ?discovery_app.Flash = null,
-    /// The pane the tree's arrow-preview opened last (`openPreview`):
-    /// the next preview replaces it while it is clean, so browsing
-    /// the tree leaves one tab behind, not one per file.
-    preview_pane: ?PaneId = null,
     find_bar: ?FindBarState = null,
     /// The find bar's accepted queries, oldest first (`app/find_history.zig`).
     find_history: std.ArrayListUnmanaged([]u8) = .empty,
@@ -2036,46 +2034,83 @@ pub const App = struct {
         };
     }
 
-    /// Opens `path` as the preview: a file already open is shown
-    /// where it is; otherwise the previous preview pane goes (when it
-    /// is still open and clean) and the new one takes its place.
+    /// How an open arrived. A glance (a tree click, an arrow over a
+    /// tree row) opens a preview tab; everything explicit — the
+    /// picker, `:e`, a jump, the IPC `open`, a session restore — opens
+    /// a tab of its own and keeps a preview it lands on.
+    pub const OpenOpts = struct { preview: bool = false };
+
+    /// Whether a glance opens a preview tab at all. The vim profile
+    /// does not have them (every file is its own tab, as in Neovim),
+    /// and `ui.preview_tabs = false` turns them off everywhere.
+    pub fn previewTabs(self: *const App) bool {
+        return self.input_style == .standard and self.cfg.ui.preview_tabs;
+    }
+
+    /// The preview tab of the leaf the active pane sits in. Exactly
+    /// one tab per leaf is ever a preview — the next glance there
+    /// takes it over.
+    pub fn leafPreview(self: *App) ?PaneId {
+        const active = self.active orelse return null;
+        const layout = self.layouts.current();
+        const lid = layout.leafOf(active) orelse return null;
+        const leaf = layout.leaf(lid) orelse return null;
+        for (leaf.tabs.items) |id| if (self.panes.get(id)) |p| {
+            if (p.preview()) return id;
+        };
+        return null;
+    }
+
+    /// Open `path` as a glance (VS Code's preview tab): the name
+    /// paints italic and the next glance in this leaf takes the tab
+    /// over. A file already open is shown where it is and keeps
+    /// whatever it was. A dirty preview is not replaced — its own
+    /// edit already kept it, so there is nothing to take over.
     pub fn openPreview(self: *App, path: []const u8) !PaneId {
-        if (self.panes.findPath(path)) |id| {
+        if (!self.previewTabs()) return self.openPath(path);
+        if (self.panes.findShowing(path)) |id| {
             self.showPane(id);
             return id;
         }
-        if (self.preview_pane) |old| {
-            if (self.panes.get(old)) |p| {
-                if (!p.dirty()) try self.forceClosePane(old);
-            }
-            self.preview_pane = null;
-        }
-        const id = try self.openPath(path);
-        self.preview_pane = id;
-        return id;
+        if (self.leafPreview()) |old| if (self.panes.get(old)) |p| {
+            if (!p.dirty()) try self.forceClosePane(old);
+        };
+        return self.openPathOpts(path, .{ .preview = true });
     }
 
     pub fn openPath(self: *App, path: []const u8) !PaneId {
+        return self.openPathOpts(path, .{});
+    }
+
+    pub fn openPathOpts(self: *App, path: []const u8, opts: OpenOpts) !PaneId {
         try self.noteRecent(path);
         // A request file opens as a request pane on its first block; a
         // file the parser cannot read falls through to the editor.
         if (http_parse.isRequestPath(path) and self.panes.findPath(path) == null) {
-            if (http_app.openFile(self, path, false)) |id| return id else |err| switch (err) {
+            if (http_app.openFile(self, path, opts.preview)) |id| return self.opened(id, opts) else |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => {},
             }
         }
         // An image opens in the viewer, replacing the last glanced-at one.
-        if (image.isImagePath(path)) return image_pane.open(self, path);
+        if (image.isImagePath(path)) return self.opened(try image_pane.open(self, path), opts);
         const is_md = md_preview.isMarkdownPath(path);
         if (is_md and self.cfg.ui.markdown_opens_rendered and !self.cfg.ui.auto_md_preview and self.panes.findPath(path) == null) {
-            return md_preview.open(self, path, .here, null);
+            return self.opened(try md_preview.open(self, path, .here, null), opts);
         }
         const id = try self.openEditor(path);
         if (is_md and self.cfg.ui.auto_md_preview and self.panes.findPreview(path) == null) {
             _ = try md_preview.open(self, path, .beside, id);
             self.setActive(id);
         }
+        return self.opened(id, opts);
+    }
+
+    /// The tab an open landed on: a glance marks it a preview, and an
+    /// explicit open keeps one it landed on (VS Code pins the tab a
+    /// double-click, a picker or a `:e` reaches).
+    fn opened(self: *App, id: PaneId, opts: OpenOpts) PaneId {
+        if (self.panes.get(id)) |p| p.setPreview(opts.preview and self.previewTabs());
         return id;
     }
 
@@ -2774,11 +2809,32 @@ pub const App = struct {
     /// One frame into any screen (the terminal loop paints into the
     /// terminal's).
     pub fn renderInto(self: *App, screen: *vaxis.Screen) Allocator.Error!void {
+        self.keepEditedPreviews();
         const t0 = Io.Timestamp.now(self.io, .awake);
         try render_mod.render(self, screen);
         const us = @divTrunc(t0.durationTo(Io.Timestamp.now(self.io, .awake)).nanoseconds, 1000);
         self.stress.push(@intCast(std.math.clamp(us, 0, std.math.maxInt(u32))));
         self.needs_render = false;
+    }
+
+    /// The first edit keeps a preview tab: the user is working in the
+    /// file, not glancing at it. Swept once a frame rather than hooked
+    /// into the editor, so every path that can dirty a buffer — a key,
+    /// an LSP edit, a macro replay, a snippet, the IPC channel — is
+    /// covered by the one rule.
+    pub fn keepEditedPreviews(self: *App) void {
+        for (self.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+            .editor => |*e| if (e.preview and e.buf.doc.dirty) {
+                e.preview = false;
+            },
+            // A request pane records its own edit (`http.findPreview`
+            // has always refused to replace an edited one); the tab
+            // stops painting italic with it.
+            .request => |*r| if (r.is_preview and r.edited) {
+                r.is_preview = false;
+            },
+            else => {},
+        };
     }
 
     /// A `Ui` over the app's own screen and hit map, for a dispatcher

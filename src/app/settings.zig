@@ -184,6 +184,7 @@ pub const rows = [_]RowSpec{
     .{ .path = "ui.bracket_rainbow", .label = "Rainbow brackets", .section = .ui, .scope = .workspace },
     .{ .path = "ui.syntax", .label = "Syntax highlighting", .section = .ui, .scope = .workspace },
     .{ .path = "ui.tree_preview_on_arrow", .label = "Tree previews on arrow", .section = .ui, .scope = .workspace },
+    .{ .path = "ui.preview_tabs", .label = "Preview tabs", .section = .ui, .scope = .workspace },
     .{ .path = "ui.todos_sort", .label = "TODOS sort", .section = .ui, .scope = .workspace },
     .{ .path = "ui.theme", .label = "Theme", .section = .ui, .scope = .home },
     .{ .path = "ui.ascii_icons", .label = "ASCII icons", .section = .ui, .scope = .home },

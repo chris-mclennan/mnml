@@ -244,7 +244,7 @@ fn screenText(app: *App) ![]u8 {
 
 const tiny_png = "\x89PNG\r\n\x1a\n" ++ "\x00\x00\x00\x0dIHDR" ++ "\x00\x00\x00\x28" ++ "\x00\x00\x00\x14" ++ "\x08\x06\x00\x00\x00" ++ "\x00\x00\x00\x00";
 
-test "an image opens from openPath as a preview tab, shows its header, and the next image replaces it in place" {
+test "an image glanced at opens as a preview tab, shows its header, and the next glance replaces it in place" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -257,8 +257,9 @@ test "an image opens from openPath as a preview tab, shows its header, and the n
     app.tree.visible = false;
     const a = try std.fs.path.join(t.allocator, &.{ root, "shot.png" });
     defer t.allocator.free(a);
-    const id = try app.openPath(a);
+    const id = try app.openPreview(a);
     try t.expect(app.panes.get(id).?.* == .image);
+    try t.expect(app.panes.get(id).?.preview());
     try t.expectEqualStrings("shot.png [PNG]", app.panes.get(id).?.title());
     const text = try screenText(&app);
     defer t.allocator.free(text);
@@ -278,13 +279,12 @@ test "an image opens from openPath as a preview tab, shows its header, and the n
     // The second image takes the same tab.
     const b = try std.fs.path.join(t.allocator, &.{ root, "other.gif" });
     defer t.allocator.free(b);
-    const id2 = try app.openPath(b);
-    try t.expectEqual(id, id2);
+    const id2 = try app.openPreview(b);
     try t.expectEqual(@as(usize, 1), app.panes.count());
-    try t.expectEqualStrings("other.gif [GIF]", app.panes.get(id).?.title());
+    try t.expectEqualStrings("other.gif [GIF]", app.panes.get(id2).?.title());
     // `i` hides the header; the discovery / hover surfaces see a pane hit.
     try app.handle(.{ .key = Key.char('i') });
-    try t.expect(!app.panes.get(id).?.image.show_header);
+    try t.expect(!app.panes.get(id2).?.image.show_header);
     try app.render();
     try t.expect(app.hits.at(10, 5).? == .pane);
     // A GIF on kitty needs a decode; a bogus one says so instead of painting.
