@@ -1,0 +1,21 @@
+# width: 120
+# The settings overlay's two launcher-dock rows (src/app/settings.zig)
+# read the live config and write it: the bracket is `[auto_hide]` on a
+# fresh workspace and `[always]` once the mode has been changed, so a
+# row that stopped reading `ui.dock.mode` would show the stale value.
+write a.txt "alpha\n"
+open a.txt
+command view.settings
+expect screen contains "Launcher dock"
+expect screen contains "Launcher dock edge"
+expect screen contains "[auto_hide]"
+key esc
+ex dock always
+command view.settings
+expect screen contains "[always]"
+expect screen lacks "[auto_hide]"
+key esc
+ex dock left
+command view.settings
+expect screen contains "[left]"
+key esc

@@ -148,6 +148,13 @@ otherwise. Copy what you need; leave the rest out.
         .sidebar = .always, // .always (docked) | .auto (hidden; the pointer at the column's screen edge reveals it as an overlay OVER the editor — no relayout, no pty resize) | .hidden (never on hover; a keyboard command still gives a one-shot overlay)
         .sidebar_reveal_ms = 250, // how long the pointer rests in the edge zone before the overlay slides in (0..5000)
         .sidebar_hide_ms = 400, // how long after the pointer leaves the overlay before it hides (0..5000)
+        .dock = .{ // the LAUNCHER dock (`app/launcher_dock.zig`) — integrations, terminals, launchers and pinned commands along one edge of the editor area. Not the bottom panel (`ui.bottom_panel_*`) and not the dock widgets
+            .mode = .auto_hide, // .always (the strip is carved out of the frame) | .auto_hide (nothing until the pointer rests at the edge, then it is painted OVER the editor) | .hidden (never on hover; `view.dock_toggle` still gives a one-shot reveal)
+            .edge = .bottom, // .bottom (one row, icon + label) | .left | .right (three cells, icon only — the label moves into the tooltip). There is no .top: that row is the menu bar's
+            .pins = .{}, // command ids pinned onto the strip, in this order — a built-in id or an integration's (`jira.open`). An id nothing answers to is skipped
+            .reveal_ms = 250, // how long the pointer rests in the dock's edge band before an `auto_hide` strip appears (0..5000)
+            .hide_ms = 400, // how long after the pointer leaves before it goes again (0..5000)
+        },
         .animations = true, // false is the reduced-motion switch: chrome animations with an instant end state are skipped (today the overlay's three-frame slide). --headless and the .test harness behave as if it were false
         .auto_equalize_splits = false,
         .relative_line_numbers = false,
@@ -775,6 +782,40 @@ chip's glyph in its colour; a click runs the chip's command (a pty
 pane, no side panel), a right click opens the chip's menu. *Add to
 activity bar* / *Remove from activity bar* on an Installed row's menu,
 a chip's menu or the icon's own writes the list to the home config.
+
+## The launcher dock
+
+`ui.dock` is mnml-zig's own Dock: a strip of the things you *start* —
+the enabled integrations, a *New terminal* item plus one per open
+terminal (a click focuses it), the installed launchers, and any command
+`ui.dock.pins` names — along one edge of the editor area.
+
+It is not the **bottom panel** (`ui.bottom_panel_*`, `Ctrl-W J` / `K`),
+which hosts sections and panes, and it is not the **dock widgets**, the
+small panels pinned to a corner of the buffer. When the launcher dock
+and the bottom panel are both at the bottom, the launcher dock is the
+outermost row and the panel sits inside it, as the editor does.
+
+| what | how |
+|---|---|
+| show / hide it | `view.dock_toggle` — a one-shot reveal even under `.hidden` |
+| keep it up | `view.dock_pin`, or the 󰐃 chip at the strip's end. The pin lasts the session and rides in `session.zon`; it never edits the config |
+| change the mode | `view.dock_cycle_mode`, `:dock always\|auto\|hidden`, or the *Launcher dock* row in Settings |
+| move it | `view.dock_move`, `:dock bottom\|left\|right`, or the *Launcher dock edge* row in Settings |
+| use the keyboard | `view.focus_dock` (vim `Ctrl-W D`, or `:dock focus`): `h` / `l` walk a bottom strip, `j` / `k` a side one, Enter runs, Esc leaves |
+| pin a command | a chip's right-click menu grows *Pin to dock*, and a pinned row's own menu takes it off again; `ui.dock.pins` is the file form |
+
+**The outer-band rule.** A dock on a side edge always owns the
+outermost column of the frame, and an auto-hiding side column's reveal
+edge moves one cell inwards to make room — so the outer cell summons
+the dock and the next cell in summons the column, and neither surface
+can be left unsummonable. The top row is never the dock's: that is the
+menu bar's, which is why there is no `.top` edge.
+
+An `always` dock is carved out of the frame like any other chrome. An
+`auto_hide` one is **paint only**: it draws over the editor and nothing
+is re-laid-out, so no pane moves and no terminal is resized when the
+pointer brushes an edge.
 
 ## Session worktrees
 

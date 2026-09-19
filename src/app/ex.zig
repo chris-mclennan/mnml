@@ -17,6 +17,7 @@ const App = app_mod.App;
 const EditorPane = app_mod.EditorPane;
 const command = @import("../core/command.zig");
 const side = @import("side.zig");
+const launcher_dock = @import("launcher_dock.zig");
 const marks_store = @import("marks_store.zig");
 const CommandError = command.CommandError;
 const find_mod = @import("find.zig");
@@ -168,6 +169,8 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     if (eqAny(verb, &.{ "se", "set" })) return set(app, args);
     if (eqAny(verb, &.{"settings"})) return command.run(app, .{ .static = .@"view.settings" });
     if (eqAny(verb, &.{"sidebar"})) return sidebar(app, args);
+    // // changed (launcher-dock): the word form of the dock's verbs.
+    if (eqAny(verb, &.{"dock"})) return launcherDock(app, args);
     // Full screen's `:` doors: it hides the chrome, so the `:` line is
     // the vim profile's way in and out (`app/zen.zig`).
     if (eqAny(verb, &.{ "fullscreen", "zen" })) return command.run(app, .{ .static = .@"view.fullscreen" });
@@ -1205,6 +1208,23 @@ pub fn completeSet(gpa: Allocator, partial: []const u8) Allocator.Error![][]u8 {
 /// // changed (bottom-dock): `bottom` names the dock. It runs
 /// `side.move` rather than a command id: the dock's two command ids
 /// are Rust's `toggle` and `host_active`, and there is no third.
+/// `:dock bottom|left|right|always|auto|hidden|pin|focus|toggle` — the
+/// launcher dock (`app/launcher_dock.zig`), not the bottom panel
+/// (`:sidebar bottom`) and not the widgets.
+fn launcherDock(app: *App, args: []const u8) CommandError!void {
+    const a = std.mem.trim(u8, args, " \t");
+    if (eqAny(a, &.{ "b", "bot", "bottom" })) return launcher_dock.setEdge(app, .bottom);
+    if (eqAny(a, &.{ "l", "left" })) return launcher_dock.setEdge(app, .left);
+    if (eqAny(a, &.{ "r", "right" })) return launcher_dock.setEdge(app, .right);
+    if (eqAny(a, &.{"always"})) return launcher_dock.setMode(app, .always);
+    if (eqAny(a, &.{ "auto", "auto_hide", "autohide" })) return launcher_dock.setMode(app, .auto_hide);
+    if (eqAny(a, &.{ "hidden", "hide", "off" })) return launcher_dock.setMode(app, .hidden);
+    if (eqAny(a, &.{"pin"})) return command.run(app, .{ .static = .@"view.dock_pin" });
+    if (eqAny(a, &.{ "focus", "f" })) return command.run(app, .{ .static = .@"view.focus_dock" });
+    if (a.len == 0 or eqAny(a, &.{"toggle"})) return command.run(app, .{ .static = .@"view.dock_toggle" });
+    return app.diag.fail(app.frame.allocator(), ":dock bottom|left|right|always|auto|hidden|pin|focus|toggle", .{});
+}
+
 fn sidebar(app: *App, args: []const u8) CommandError!void {
     const a = std.mem.trim(u8, args, " \t");
     if (eqAny(a, &.{ "l", "left" })) return command.run(app, .{ .static = .@"view.move_section_left" });

@@ -472,6 +472,7 @@ pub fn ctrlWCommand(k: Key) ?command.CommandId {
             'h' => .@"view.focus_left",
             'j' => .@"view.focus_down",
             'k' => .@"view.focus_up",
+            'D' => .@"view.focus_dock",
             'H' => .@"view.move_section_left",
             'L' => .@"view.move_section_right",
             else => null,

@@ -71,6 +71,12 @@ pub fn chipTarget(panel_id: PanelId, kind: ChipKind, pane: ?PaneId) HitTarget {
 /// register their title / kebab / close / body here like any component.
 pub const DockPart = enum { body, title, kebab, close };
 
+/// // changed (launcher-dock): the parts of the LAUNCHER dock
+/// (`app/launcher_dock.zig`, a different surface from the widgets
+/// above): an item by its index in the strip, or the pin chip at its
+/// end.
+pub const LauncherDockPart = union(enum) { item: u16, pin };
+
 /// The parts of the sidebar's info view (`ui/info_view.zig`): the kebab
 /// on its title row, a `→ label` link row by its index, and the rest,
 /// which swallows a press.
@@ -140,6 +146,9 @@ pub const HitTarget = union(enum) {
     gutter: struct { pane: PaneId, line: u32 },
     overlay_item: u32,
     dock: struct { id: u32, part: DockPart },
+    /// // changed (launcher-dock): an item of the launcher dock, or its
+    /// pin chip (`ui/launcher_dock_view.zig`).
+    launcher_dock: LauncherDockPart,
     /// A row of the activity bar (`ui/activity_bar.zig`): a section's
     /// icon, or the settings gear at the bottom.
     rail: activity_bar.Part,
@@ -199,6 +208,10 @@ pub const HitTarget = union(enum) {
             .editor_cell => |v| try w.print(":{d}:{d}:{d}", .{ v.pane, v.line, v.col }),
             .gutter => |v| try w.print(":{d}:{d}", .{ v.pane, v.line }),
             .dock => |v| try w.print(":{d}:{s}", .{ v.id, @tagName(v.part) }),
+            .launcher_dock => |v| switch (v) {
+                .item => |i| try w.print(":item:{d}", .{i}),
+                .pin => try w.writeAll(":pin"),
+            },
             .rail => |v| switch (v) {
                 .section => |s| try w.print(":{s}", .{@tagName(s)}),
                 .gear => try w.writeAll(":gear"),
@@ -370,6 +383,8 @@ test "labels are the tag plus the payload" {
     try expectLabel("rail:sessions", .{ .rail = .{ .section = .sessions } });
     try expectLabel("rail:gear", .{ .rail = .gear });
     try expectLabel("rail:pin:2", .{ .rail = .{ .pin = 2 } });
+    try expectLabel("launcher_dock:item:3", .{ .launcher_dock = .{ .item = 3 } });
+    try expectLabel("launcher_dock:pin", .{ .launcher_dock = .pin });
     try expectLabel("git_palette:repo", .{ .git_palette = .repo });
     try expectLabel("git_palette:repo_next", .{ .git_palette = .repo_next });
     try expectLabel("http:chip:recent:clear", .{ .http = .{ .chip = .{ .section = .recent, .kind = .clear } } });

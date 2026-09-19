@@ -36,11 +36,11 @@ line), not by hand.
 | Browser & CDP capture | 17 | 0 | 0 | 0 | 17 |
 | Debugging (DAP) | 25 | 0 | 0 | 0 | 25 |
 | Testing & quality | 17 | 0 | 0 | 0 | 17 |
-| UI & theming | 84 | 0 | 3 | 0 | 87 |
+| UI & theming | 85 | 0 | 3 | 0 | 88 |
 | Workspace trust | 11 | 0 | 0 | 0 | 11 |
 | Headless, IPC & extensibility | 56 | 0 | 2 | 0 | 58 |
 | Languages | 6 | 0 | 0 | 0 | 6 |
-| **total** | **546** | **0** | **9** | **0** | **555** |
+| **total** | **547** | **0** | **9** | **0** | **556** |
 
 The first ledger (at `de423c5`) printed 278 / 36 / 10 / 149 of 473; the
 same script over that file counts 279 / 36 / 10 / 149 of 474 — the old
@@ -663,6 +663,7 @@ reply. Nine `dap_session_*.test` and ten `debug_*.test` scripts.
 | `-copy` / `-copy-N` bump | done | `copyName` in `file_clipboard.zig` | |
 | Tree drag → "Move to X?" | done | `dropTreeFile` in `dispatch.zig` | |
 | `Alt`-drag copies | done | `Drag.tree.copy` (the press's Alt, or the release's) in `dispatch.zig`; `confirmMove(…, copy)` / `acceptCopy` in `tree.zig` | *Copy to folder* confirm; the copy runs on the transfer worker, the original stays |
+| Launcher dock — integrations, terminals, launchers and pinned commands on one edge | done | `src/app/launcher_dock.zig`, `src/ui/launcher_dock_view.zig`, `ui.dock` (`mode` / `edge` / `pins` / `reveal_ms` / `hide_ms`), `view.dock_toggle` / `dock_pin` / `dock_cycle_mode` / `dock_move` / `focus_dock` / `dock_unpin_item`, `integrations.pin_to_dock` / `unpin_from_dock`, `:dock …` in `ex.zig`, `Saved.launcher_dock_pinned` in `session.zig`; `tests/e2e/launcher_dock_{always,auto_reveal,move_edge,bottom_panel,keyboard,settings}.test` | *2026-09-19, Zig-only — Rust has no such surface.* macOS's Dock: the enabled integration chips, then a *New terminal* item and one row per open pty (a click focuses it), then the installed launchers that declared no chip, then `ui.dock.pins`. Items carry the integration's category colour like a pinned rail icon, and a running one wears macOS's dot. `always` carves the strip out of the frame as the OUTERMOST band (a bottom panel then sits inside it); `auto_hide` reveals it as PAINT over the editor after `reveal_ms` in the edge band and hides `hide_ms` after the pointer leaves — no relayout, no pty resize, the `sidebar_auto` rule; `hidden` never draws, and `view.dock_toggle` is still the keyboard's one-shot door. **The outer-band rule** (`app/hover_zones.zig`, `Id.launcher_dock` at `prio_dock`): a side dock owns the outermost column outright and pushes an auto-hiding side column's reveal edge one cell in, so both stay summonable; there is no `.top` edge, because that row is the menu bar's. Two settings rows (*Launcher dock*, *Launcher dock edge*); the session pin rides in `session.zon`, the mode does not. Not the bottom panel (`ui.bottom_panel_*`) and not the dock widgets — eight new command ids, so the spec count moves 1091 → 1099 |
 | Right side panel — toggle, `Ctrl+Shift+B` | done | `view.toggle_right_panel` → `src/app/side.zig` | `// changed:` Rust's sidebar + tabbed right panel are one idea — every section has a side, the frame has two columns and each shows one section; the toggle opens the right column on the last section shown there, else the first whose side is right |
 | Sections have a side — move left / right | done | `src/app/side.zig` (`State`, `place` / `remove`, `move`, `ctrlWCommand`), `view.move_section_left` / `_right`, `:sidebar left\|right` in `ex.zig`, vim `Ctrl-W H` / `L` in a section or the tree, which-key `s H` / `s L`, the rail menu's *Move to right / left side* (`MenuAction.move_section`); `ui.sidebar_side`, `ui.section_side`; `session.zon` `sides`; `tests/e2e/section_move_{command,rail_rightclick,vim_ctrl_w,ex_sidebar}.test` | TODOS / NOTES / FINDINGS start on the left, the outline and the diagnostics on the right (Rust's placement); a section that opens a pane (search, agents) has no side; a left-column section reads `TREE` in the mode chip, the right column `PANEL`; beyond the Rust list |
 | Right panel — drag grip | done | `right_divider_id` / `FrameRects.right_divider` in `render.zig`, `dispatch.zig` | Rust's 21-column clamp |

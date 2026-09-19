@@ -85,6 +85,21 @@ pub const specs = [_]Spec{
     .{ .id = "view.toggle_wrap", .title = "Toggle line wrapping (vim :set wrap)", .group = "view" },
     .{ .id = "view.menu_bar_cycle", .title = "Cycle menu bar visibility (always → auto-hide → hidden)", .group = "view" },
     .{ .id = "view.activity_bar_cycle", .title = "Cycle activity bar visibility (always → auto-hide → hidden)", .group = "view" },
+    // // changed (launcher-dock): the launcher dock — integrations,
+    // terminals, launchers and pinned commands along one edge. Not the
+    // bottom panel (`view.toggle_bottom_panel`) and not the dock
+    // widgets (`dock.toggle`).
+    .{ .id = "view.dock_toggle", .title = "Launcher dock: show / hide the strip of integrations, terminals and pins", .group = "view" },
+    .{ .id = "view.dock_pin", .title = "Launcher dock: pin it open for this session (unpin returns to ui.dock.mode)", .group = "view" },
+    .{ .id = "view.dock_cycle_mode", .title = "Launcher dock: cycle visibility (always → auto-hide → hidden)", .group = "view" },
+    .{ .id = "view.dock_move", .title = "Launcher dock: move to the next edge (bottom → left → right)", .group = "view" },
+    // No `Keys` entry, like the rest of the `Ctrl-W` family: a
+    // `ctrl+w …` chord declared for the vim profile would take the bare
+    // `Ctrl-W` away from the editor's own window handler and break every
+    // other chord in it. `input/vim.zig` emits this id for `Ctrl-W D`,
+    // and `side.ctrlWCommand` does the same from a column.
+    .{ .id = "view.focus_dock", .title = "Launcher dock: put the keyboard in it (vim `Ctrl-W D`; h/l or j/k walk, Enter runs, Esc leaves)", .group = "view" },
+    .{ .id = "view.dock_unpin_item", .title = "Launcher dock: take the focused pinned command off the dock", .group = "view" },
     .{ .id = "view.toggle_todo_highlight", .title = "Toggle TODO/FIXME/HACK/XXX keyword highlight", .group = "view" },
     .{ .id = "view.toggle_render_markdown", .title = "Toggle inline-rendered markdown (render-markdown.nvim style)", .group = "view" },
     .{ .id = "view.toggle_sticky_context", .title = "Toggle sticky scope context (treesitter-context-style header)", .group = "view" },
@@ -822,6 +837,9 @@ pub const specs = [_]Spec{
     // place on the palette bar, from the row / chip / icon menus.
     .{ .id = "integrations.pin_to_activity_bar", .title = "Integrations: add the chip to the activity bar (a pinned launcher icon)", .group = "integrations" },
     .{ .id = "integrations.unpin_from_activity_bar", .title = "Integrations: remove the chip from the activity bar", .group = "integrations" },
+    // // changed (launcher-dock): the activity bar's pair, for the dock.
+    .{ .id = "integrations.pin_to_dock", .title = "Integrations: pin the chip's command onto the launcher dock", .group = "integrations" },
+    .{ .id = "integrations.unpin_from_dock", .title = "Integrations: take the chip's command off the launcher dock", .group = "integrations" },
     .{ .id = "integrations.toggle_palette_bar", .title = "Integrations: show / hide the chip on the palette bar", .group = "integrations" },
     .{ .id = "term.rename", .title = "Terminal: rename this session (shown in the tab)", .group = "term" },
     .{ .id = "dock.new_text", .title = "Dock: new text widget (bottom-left)", .group = "dock" },
@@ -1205,6 +1223,8 @@ test "1086 specs, unique ids" {
     // + `integrations.dismiss_toml_notice` (the 0.2 manifests notice)
     // + `app.command_line` (the bottom row's `:` line) and
     // `toast.run_action` (bottom-row).
-    try std.testing.expectEqual(@as(usize, 1091), specs.len);
+    // + the launcher dock's six (`view.dock_*`, `view.focus_dock`)
+    // and the two `integrations.*_dock` pin verbs (launcher-dock)
+    try std.testing.expectEqual(@as(usize, 1099), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

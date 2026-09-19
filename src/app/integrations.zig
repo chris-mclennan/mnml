@@ -389,6 +389,9 @@ pub const State = struct {
     /// `ui.activity_bar_pinned_integrations` after a pin / unpin: the
     /// config field points here until the next reload.
     pins_owned: ?[][]u8 = null,
+    /// // changed (launcher-dock): `ui.dock.pins` after a pin / unpin,
+    /// owned the same way `pins_owned` owns the activity bar's.
+    dock_pins_owned: ?[][]u8 = null,
     /// `ui.integration_icons` after a first-party row's Enable /
     /// Disable or Show in palette bar: the array AND its strings, so
     /// the config field cannot dangle on the next reload of the file
@@ -456,10 +459,19 @@ pub const State = struct {
     }
 
     fn freePins(self: *State, gpa: Allocator) void {
-        const owned = self.pins_owned orelse return;
+        if (self.pins_owned) |owned| {
+            for (owned) |p| gpa.free(p);
+            gpa.free(owned);
+            self.pins_owned = null;
+        }
+        self.freeDockPins(gpa);
+    }
+
+    fn freeDockPins(self: *State, gpa: Allocator) void {
+        const owned = self.dock_pins_owned orelse return;
         for (owned) |p| gpa.free(p);
         gpa.free(owned);
-        self.pins_owned = null;
+        self.dock_pins_owned = null;
     }
 
     fn setMenuChip(self: *State, gpa: Allocator, id: ?[]const u8) Allocator.Error!void {
@@ -542,6 +554,8 @@ pub const table = .{
     .@"integrations.dev_rebuild" = &devRebuildCmd,
     .@"integrations.pin_to_activity_bar" = &pinCmd,
     .@"integrations.unpin_from_activity_bar" = &unpinCmd,
+    .@"integrations.pin_to_dock" = &pinDockCmd,
+    .@"integrations.unpin_from_dock" = &unpinDockCmd,
     .@"integrations.toggle_palette_bar" = &togglePaletteBar,
     .@"integrations.open_as_split" = &openAsSplitCmd,
     .@"integrations.open_as_tab" = &openAsTabCmd,
@@ -1322,6 +1336,7 @@ pub fn openPinMenu(app: *App, i: usize, x: u16, y: u16) Allocator.Error!void {
         try items.append(app.gpa, .{ .label = if (inst.enabled()) "Disable" else "Enable", .action = .{ .command = .@"integrations.toggle_enabled" } });
         try items.append(app.gpa, .{ .label = if (on_bar) "Hide from top bar" else "Show on top bar", .action = .{ .command = .@"integrations.toggle_palette_bar" } });
         try items.append(app.gpa, .{ .label = "Remove from activity bar", .action = .{ .command = .@"integrations.unpin_from_activity_bar" } });
+        try items.append(app.gpa, try dockPinRow(app, chip.id));
         try items.append(app.gpa, .{ .label = "Copy id", .action = .{ .command = .@"integrations.copy_id" } });
         try items.append(app.gpa, openAsRow(app));
     } else {
@@ -1352,8 +1367,21 @@ fn openIconMenu(app: *App, chip: Chip, x: u16, y: u16) Allocator.Error!void {
         else
             try items.append(app.gpa, .{ .label = "Add to activity bar", .action = .{ .command = .@"integrations.pin_to_activity_bar" } });
     }
+    // // changed (launcher-dock): the dock's row, beside the rail's.
+    try items.append(app.gpa, try dockPinRow(app, chip.id));
     try items.append(app.gpa, .{ .label = "Copy id", .action = .{ .copy_text = chip.id } });
     try app.openMenu(chip.tooltip, try items.toOwnedSlice(app.gpa), x, y);
+}
+
+/// The Pin to / Unpin from dock row for a chip — the one row every
+/// chip menu grows so the dock is reachable from wherever a chip is.
+fn dockPinRow(app: *App, chip_id: []const u8) Allocator.Error!command.MenuItem {
+    const cmd_id = (try chipCommandId(app, chip_id)) orelse "";
+    const on = isPinnedToDock(app, cmd_id);
+    return .{
+        .label = if (on) "Unpin from dock" else "Pin to dock",
+        .action = .{ .command = if (on) .@"integrations.unpin_from_dock" else .@"integrations.pin_to_dock" },
+    };
 }
 
 /// The id a pin / unpin acts on: the chip a menu was opened on, else
@@ -1408,6 +1436,102 @@ pub fn unpinId(app: *App, id: []const u8) CommandError!void {
     for (old) |p| if (!std.mem.eql(u8, p, id)) try next.append(arena, p);
     try setPinned(app, next.items);
     app.toast("{s}: removed from the activity bar", .{id});
+}
+
+// ─── the launcher dock's pins ───────────────────────────────────────────
+//
+// // changed (launcher-dock): the activity bar's pair above, for the
+// strip in `app/launcher_dock.zig`. The difference is what is stored:
+// the rail pins a CHIP id, the dock pins the COMMAND id that chip
+// runs, because `ui.dock.pins` is a list of commands — a pinned row
+// there can be any command, not only an integration's.
+
+/// `ui.dock.pins` already holds `id` (a command id).
+pub fn isPinnedToDock(app: *const App, id: []const u8) bool {
+    if (id.len == 0) return false;
+    for (app.cfg.ui.dock.pins) |p| if (std.mem.eql(u8, p, id)) return true;
+    return false;
+}
+
+/// Remember which chip a launcher-dock menu was opened on, so the two
+/// runners below know their target without a picker.
+pub fn setDockMenuChip(app: *App, id: []const u8) Allocator.Error!void {
+    try app.integrations.setMenuChip(app.gpa, id);
+}
+
+/// The command id the chip `id` runs — what the dock pins.
+fn chipCommandId(app: *App, id: []const u8) Allocator.Error!?[]const u8 {
+    const chip = (try findChip(app, app.frame.allocator(), id)) orelse return null;
+    return switch (chip.action) {
+        .named => |n| n,
+        .dyn => |slot| if (app.dyn_commands.at(slot)) |c| c.id else null,
+        .none => null,
+    };
+}
+
+/// `integrations.pin_to_dock`.
+fn pinDockCmd(app: *App) CommandError!void {
+    const target = (try pinTarget(app)) orelse return pickRow(app, .integrations_pin, "Pin to the launcher dock");
+    const id = (try chipCommandId(app, target)) orelse
+        return app.diag.fail(app.frame.allocator(), "integrations: {s} has no command to pin", .{target});
+    return pinDockId(app, id);
+}
+
+/// `integrations.unpin_from_dock`.
+fn unpinDockCmd(app: *App) CommandError!void {
+    const target = (try pinTarget(app)) orelse return pickRow(app, .integrations_unpin, "Unpin from the launcher dock");
+    const id = (try chipCommandId(app, target)) orelse target;
+    return unpinDockId(app, id);
+}
+
+/// Append a command id to `ui.dock.pins` and write it home.
+pub fn pinDockId(app: *App, id: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    if (isPinnedToDock(app, id)) {
+        app.toast("{s} is already on the dock", .{id});
+        return;
+    }
+    if (command.resolve(app, id) == null) return app.diag.fail(arena, "dock: no such command: {s}", .{id});
+    const old = app.cfg.ui.dock.pins;
+    const next = try arena.alloc([]const u8, old.len + 1);
+    @memcpy(next[0..old.len], old);
+    next[old.len] = id;
+    try setDockPins(app, next);
+    app.toast("{s}: pinned to the dock", .{id});
+}
+
+/// Drop a command id from `ui.dock.pins` and write it home.
+pub fn unpinDockId(app: *App, id: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    if (!isPinnedToDock(app, id)) {
+        app.toast("{s} is not pinned to the dock", .{id});
+        return;
+    }
+    var next: std.ArrayListUnmanaged([]const u8) = .empty;
+    for (app.cfg.ui.dock.pins) |p| if (!std.mem.eql(u8, p, id)) try next.append(arena, p);
+    try setDockPins(app, next.items);
+    app.toast("{s}: unpinned from the dock", .{id});
+}
+
+/// The new `ui.dock.pins`, gpa-owned by the state and persisted home.
+pub fn setDockPins(app: *App, ids: []const []const u8) Allocator.Error!void {
+    const st = &app.integrations;
+    const gpa = app.gpa;
+    const owned = try gpa.alloc([]u8, ids.len);
+    var n: usize = 0;
+    errdefer {
+        for (owned[0..n]) |p| gpa.free(p);
+        gpa.free(owned);
+    }
+    for (ids) |id| {
+        owned[n] = try gpa.dupe(u8, id);
+        n += 1;
+    }
+    st.freeDockPins(gpa);
+    st.dock_pins_owned = owned;
+    app.cfg.ui.dock.pins = @ptrCast(owned);
+    _ = try settings.persist(app, .home, &.{ "ui", "dock", "pins" }, app.cfg.ui.dock.pins);
+    app.needs_render = true;
 }
 
 /// The new list, gpa-owned by the state and named by the config field,

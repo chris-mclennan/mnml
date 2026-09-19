@@ -73,6 +73,9 @@ pub fn describe(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!
             .title = try f.fmt(arena, "Dock widget {d}", .{d.id}),
             .detail = "click focuses · drag the header moves it · right-click: widget menu",
         },
+        // // changed (launcher-dock): the strip's own copy — the side
+        // edges paint no label, so the tip is where the name lives.
+        .launcher_dock => |part| try @import("launcher_dock.zig").describe(app, arena, part),
         .tab => |tb| blk: {
             const layout = app.layouts.current();
             const lid = (try layout.leafAt(arena, tb.leaf)) orelse break :blk null;

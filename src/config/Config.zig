@@ -192,6 +192,38 @@ pub const SectionSide = struct {
     diagnostics: ?Side = null,
     outline: ?Side = null,
 };
+/// // changed (launcher-dock): the launcher dock's three words. The
+/// dock is the strip of integrations, terminals, launchers and pinned
+/// commands along one edge of the editor area — macOS's Dock. It is
+/// NOT the bottom panel (`ui.bottom_panel_*`, `app/bottom.zig`, which
+/// hosts sections and panes) and not the dock WIDGETS
+/// (`app/dock.zig`, which persist in the session file). `always`
+/// reserves its row / column; `auto_hide` draws nothing until the
+/// pointer has rested at that edge for `reveal_ms`, and puts it away
+/// `hide_ms` after the pointer leaves; `hidden` never draws and never
+/// reveals on hover (`view.dock_toggle` is still the keyboard's
+/// one-shot door).
+pub const DockMode = enum { always, auto_hide, hidden };
+/// Which edge the launcher dock lives on. There is no `.top`: that row
+/// belongs to the menu bar (`app/menu_bar.zig`).
+pub const DockEdge = enum { bottom, left, right };
+
+/// `ui.dock` — the launcher dock (`app/launcher_dock.zig`).
+pub const Dock = struct {
+    mode: DockMode = .auto_hide,
+    edge: DockEdge = .bottom,
+    /// Command ids pinned onto the dock, in this order — a static id
+    /// or a dynamic one (an integration's `jira.open`). An id nothing
+    /// answers to is skipped rather than painted dead.
+    pins: []const []const u8 = &.{},
+    /// The dwell before an `auto_hide` dock reveals (ms; clamped to
+    /// 0..`sidebar_dwell_ms_max`, the sidebar's own ceiling).
+    reveal_ms: u16 = 250,
+    /// How long after the pointer leaves before it hides again (ms;
+    /// the same clamp).
+    hide_ms: u16 = 400,
+};
+
 pub const DiagStyle = enum { count, dot, off };
 pub const CoverageChipMode = enum { both, feature, code, ticker };
 pub const ExpandIndicator = enum { chevron, triangle };
@@ -294,6 +326,11 @@ pub const Ui = struct {
     /// appears at its full width on the first frame. `--headless` and
     /// the `.test` harness behave as if it were false.
     animations: bool = true,
+    /// // changed (launcher-dock): the launcher dock — the strip of
+    /// integrations, terminals, launchers and pinned commands along
+    /// one edge of the editor area (`app/launcher_dock.zig`). Not the
+    /// bottom panel (`ui.bottom_panel_*`) and not the dock widgets.
+    dock: Dock = .{},
     auto_equalize_splits: bool = false,
     relative_line_numbers: bool = false,
     line_numbers: bool = true,

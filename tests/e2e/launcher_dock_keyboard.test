@@ -1,0 +1,29 @@
+# width: 120
+# The keyboard path: `view.focus_dock` (vim `Ctrl-W D`) puts the keys in
+# the strip, `h` / `l` walk a bottom dock, Enter runs the item and hands
+# the keys back, Esc leaves without running anything.
+write a.txt "alpha\n"
+open a.txt
+ex dock always
+expect screen contains "New terminal"
+command view.focus_dock
+# The cursor starts on the first item; Esc leaves it alone.
+key esc
+expect screen contains "New terminal"
+expect screen lacks "Terminal ("
+# The strip holds the keyboard only while the hand is on it: a press
+# anywhere else hands the keys back, so an `h` typed into the editor
+# afterwards reaches the buffer instead of walking a dock nobody is
+# looking at.
+command view.focus_dock
+click 60 2
+type "hl"
+key ctrl+s
+expect file a.txt contains "hl"
+# `l` steps from Browser onto New terminal; Enter opens the shell.
+command view.focus_dock
+key l
+key enter
+wait 900
+expect pane Terminal
+expect screen contains "Terminal ("

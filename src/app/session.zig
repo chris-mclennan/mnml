@@ -154,6 +154,10 @@ pub const Saved = struct {
     /// The dock widgets and whether the dock is hidden.
     dock: []const dock.SavedWidget = &.{},
     dock_hidden: bool = false,
+    /// // changed (launcher-dock): the LAUNCHER dock's session pin
+    /// (`app/launcher_dock.zig`) — its mode lives in `ui.dock.mode`,
+    /// but a pin is a "for now" the config is not asked to remember.
+    launcher_dock_pinned: bool = false,
 };
 
 // ─── app-side state ──────────────────────────────────────────────────────
@@ -334,6 +338,7 @@ pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
     saved.sessions_show_ended = app.sessions.show_ended;
     saved.dock = try dock.capture(app, arena);
     saved.dock_hidden = app.dock.hidden;
+    saved.launcher_dock_pinned = app.launcher_dock.pinned;
     return saved;
 }
 
@@ -550,6 +555,7 @@ pub fn apply(app: *App, arena: Allocator, saved: Saved) RestoreError!void {
     for (saved.sessions_worktrees) |w| if (w.path.len > 0 and w.name.len > 0) try app.sessions.worktrees.add(gpa, w.path, w.name, if (w.branch.len > 0) w.branch else w.name, w.repo, w.id);
     app.sessions.show_ended = saved.sessions_show_ended;
     try dock.apply(app, saved.dock, saved.dock_hidden);
+    app.launcher_dock.pinned = saved.launcher_dock_pinned;
     for (saved.recent) |p| try app.noteRecent(p);
     for (saved.closed) |c| {
         if (c.path.len == 0) continue;
