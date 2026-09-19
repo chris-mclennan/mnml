@@ -43,6 +43,23 @@ missing one; `release.yml`'s own `verify` job runs it with `--min 16
 --without-linux-packages`, because package-linux has not run yet at that
 point.
 
+## The shipped names
+
+`zig build release` (and so `dist`, and so every archive) builds with
+`-Dinstall-names`: the stable profile's IPC mailbox is `<ws>/.mnml/ipc`
+and its running-instance marker is `mnml-running-$USER.workspace` — a
+shipped mnml is the one you live in, so it owns the plain names. This
+repo's own builds keep `ipc-zig` / `mnml-zig-running-…` so a dev build
+never finds a shipped instance, and `MNML_PROFILE=dev` takes those
+names in any build (`docs/CONFIG.md`, "Profiles"). An explicit
+`-Dipc-subdir` / `-Dmarker-prefix` still wins and is forwarded to the
+per-target builds.
+
+Installing a local build for daily use is not part of a release:
+`./run.sh install` does that from a working tree
+(`docs/CONTRIBUTING.md`, "Daily driver + development on one machine").
+A release is for everybody else.
+
 ## Trap 1 — the CHANGELOG secret scrub
 
 **Never write a credential-shaped literal in CHANGELOG.md.** Not an

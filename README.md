@@ -91,8 +91,18 @@ relaunches on exit 75 (the restart handshake):
 ./run.sh headless [WS]      # the same loop with --headless (virtual screen + file IPC)
 ./run.sh shot [OUT.png]     # screenshot the real ghostty window (macOS; scripts/shot.sh)
 ./run.sh check              # the verification sequence below, in one line
+./run.sh install [--dry-run]  # install this build as the mnml you live in (PREFIX=~/.local)
+./run.sh installed-status   # what is installed, against this tree's HEAD
 ./run.sh build | release | test | stale | clean [incremental|all] | menu | help
 ```
+
+A launch from `run.sh` runs in the **dev profile**: its own data root
+(`~/.config/mnml-dev`), its own session file (`.mnml/session-dev.zon`),
+its own IPC mailbox and marker, and a `dev` chip on the statusline — so
+you can daily-drive the installed `mnml` and develop this one in the
+same workspace at the same time. `./run.sh install` is how the
+installed one catches up. `docs/CONFIG.md` → *Profiles*, and
+`docs/CONTRIBUTING.md` → *Daily driver + development on one machine*.
 
 `-Dversion=` is what `--version` prints; without it a dev build prints the
 manifest version, the git short SHA and `-dirty` (`0.3.0-dev+g76ccf5b-dirty`).

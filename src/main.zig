@@ -10,6 +10,7 @@ const loop = @import("tui/loop.zig");
 const Term = @import("tui/term.zig").Term;
 const input = @import("input/mod.zig");
 const config = @import("config/root.zig");
+const profile = config.profile;
 const http_cli = @import("http/cli.zig");
 const sequence_editor = @import("git/sequence_editor.zig");
 
@@ -49,15 +50,25 @@ pub fn main(init: std.process.Init) !u8 {
         err_w.interface.flush() catch {};
         return code;
     }
+    // `--profile dev|stable` is the flag spelling of `MNML_PROFILE`: it
+    // goes into the environment before anything reads it (the way
+    // `--startup-picker` does), so the data root, the session file, the
+    // IPC mailbox, the marker and every integration this host spawns
+    // all get the same answer (`src/config/profile.zig`).
+    if (profile.fromArgs(args[1..])) |name| {
+        if (profile.parse(name) == null) return usage(w, "--profile needs dev or stable");
+        try env.put(profile.env_var, name);
+    }
+    if (args.len >= 2 and std.mem.eql(u8, args[1], "profile")) return profileSubcommand(gpa, io, env, args[2..], w);
     if (args.len >= 2 and std.mem.eql(u8, args[1], "test")) return testSubcommand(gpa, io, env, args[2..], w);
     if (args.len >= 2) if (httpSubcommand(gpa, io, env, args[1], args[2..], w)) |code| return code;
     for (args[1..]) |a| {
         if (std.mem.eql(u8, a, "--version") or std.mem.eql(u8, a, "-V")) {
-            try w.print("mnml-zig {s}\n", .{version});
+            try w.print("mnml-zig {s} ({s} profile)\n", .{ version, @tagName(profile.of(env)) });
             try w.flush();
             return 0;
         }
-        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, "mnml-zig [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--no-session] [--headless] [--startup-picker] | test [PATH…] [--gate] [--filter NAME] [--skip NAME] | run FILE | chain run FILE | discover SPEC | sync | sync-check | proxy --url URL | --rebase-todo PLAN TODO | --commit-msg QUEUE FILE");
+        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, "mnml-zig [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--no-session] [--headless] [--startup-picker] [--profile dev|stable] | profile seed [--from stable] [--force] | test [PATH…] [--gate] [--filter NAME] [--skip NAME] | run FILE | chain run FILE | discover SPEC | sync | sync-check | proxy --url URL | --rebase-todo PLAN TODO | --commit-msg QUEUE FILE");
     }
     if (parseInputFlag(args[1..], w)) |style| {
         app_driver.default_factory.input_style = style;
@@ -114,7 +125,13 @@ fn parseConfigFlag(argv: []const [:0]const u8) ?[]const u8 {
 /// The three config layers for `workspace`, with the command line's
 /// overrides applied, plus where mnml keeps its state. `loaded` is the
 /// caller's to hand on (the App frees it).
-const Startup = struct { loaded: config.Loaded, data_root: []u8 };
+const Startup = struct {
+    loaded: config.Loaded,
+    data_root: []u8,
+    /// A line for the first frame to say — today, that the dev profile
+    /// was just seeded. Owned by the caller.
+    note: ?[]u8 = null,
+};
 
 fn loadConfig(gpa: Allocator, io: Io, env: *std.process.Environ.Map, workspace: []const u8, argv: []const [:0]const u8, ascii: bool) !Startup {
     const exe_dir: ?[]u8 = std.process.executableDirPathAlloc(io, gpa) catch null;
@@ -122,6 +139,12 @@ fn loadConfig(gpa: Allocator, io: Io, env: *std.process.Environ.Map, workspace: 
     const cfg_env: config.data_root.Env = .{ .vars = env, .exe_dir = exe_dir };
     const data_root = try config.data_root.dataRoot(gpa, io, cfg_env);
     errdefer gpa.free(data_root);
+    // The dev profile's first launch inherits your setup rather than
+    // starting a stranger; every launch relinks the integrations built
+    // beside this binary, so a rebuild moves the dev ones and leaves
+    // the installed ones alone (`src/config/seed.zig`).
+    const note: ?[]u8 = if (cfg_env.profile() == .dev) try seedDev(gpa, io, cfg_env, data_root, exe_dir) else null;
+    errdefer if (note) |n| gpa.free(n);
     var loaded = try config.load.load(gpa, io, .{
         .explicit = parseConfigFlag(argv),
         .workspace = workspace,
@@ -132,7 +155,86 @@ fn loadConfig(gpa: Allocator, io: Io, env: *std.process.Environ.Map, workspace: 
     if (ascii) loaded.config.ui.ascii_icons = true;
     if (hasNoSessionFlag(argv)) loaded.config.session.restore = false;
     if (app_driver.default_factory.input_style) |s| loaded.config.editor.input_style = @import("app.zig").App.configStyleOf(s);
-    return .{ .loaded = loaded, .data_root = data_root };
+    return .{ .loaded = loaded, .data_root = data_root, .note = note };
+}
+
+/// Seed `<data root>` from the stable profile when it has never run,
+/// and link the integrations beside this binary into it either way.
+/// Returns the toast for a seed that happened, else null.
+fn seedDev(gpa: Allocator, io: Io, cfg_env: config.data_root.Env, dev_root: []const u8, exe_dir: ?[]const u8) Allocator.Error!?[]u8 {
+    const stable = try config.data_root.stableDataRoot(gpa, io, cfg_env);
+    defer gpa.free(stable);
+    const report = try config.seed.seed(gpa, io, stable, dev_root, false);
+    if (exe_dir) |d| _ = try config.seed.linkBeside(gpa, io, d, dev_root);
+    if (report.outcome != .seeded) return null;
+    return try std.fmt.allocPrint(gpa, "dev profile seeded from {s} ({d} files)", .{ stable, report.copied });
+}
+
+/// `mnml profile` — which one am I in — and `mnml profile seed
+/// [--from DIR|stable] [--force]`, the re-seed.
+fn profileSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: []const [:0]const u8, w: *Io.Writer) !u8 {
+    const exe_dir: ?[]u8 = std.process.executableDirPathAlloc(io, gpa) catch null;
+    defer if (exe_dir) |d| gpa.free(d);
+    const cfg_env: config.data_root.Env = .{ .vars = env, .exe_dir = exe_dir };
+    const p = cfg_env.profile();
+    const root = try config.data_root.dataRoot(gpa, io, cfg_env);
+    defer gpa.free(root);
+
+    var seed_it = false;
+    var force = false;
+    var from: ?[]const u8 = null;
+    var i: usize = 0;
+    while (i < argv.len) : (i += 1) {
+        const a = argv[i];
+        if (std.mem.eql(u8, a, "seed")) {
+            seed_it = true;
+        } else if (std.mem.eql(u8, a, "--force") or std.mem.eql(u8, a, "-f")) {
+            force = true;
+        } else if (std.mem.eql(u8, a, "--from")) {
+            i += 1;
+            if (i >= argv.len) return usage(w, "profile seed --from needs stable or a directory");
+            from = argv[i];
+        } else if (std.mem.startsWith(u8, a, "--from=")) {
+            from = a["--from=".len..];
+        } else if (std.mem.eql(u8, a, profile.flag) or std.mem.startsWith(u8, a, profile.flag ++ "=")) {
+            if (std.mem.eql(u8, a, profile.flag)) i += 1; // already in the environment
+        } else return usage(w, "mnml profile [seed [--from stable|DIR] [--force]]");
+    }
+
+    if (!seed_it) {
+        try w.print("profile:  {s}\n", .{@tagName(p)});
+        try w.print("data:     {s}\n", .{root});
+        try w.print("session:  .mnml/{s}\n", .{std.fs.path.basename(@import("app/session.zig").relPath(p))});
+        try w.print("ipc:      <workspace>/.mnml/{s}\n", .{profile.ipcSubdir(p)});
+        const marker_path = try @import("tui/marker.zig").path(gpa, env);
+        defer gpa.free(marker_path);
+        try w.print("marker:   {s}\n", .{marker_path});
+        try w.flush();
+        return 0;
+    }
+
+    if (p != .dev) {
+        try w.writeAll("mnml profile seed: only the dev profile is seeded (run it with --profile dev)\n");
+        try w.flush();
+        return 2;
+    }
+    const stable = if (from) |f|
+        if (std.mem.eql(u8, f, "stable")) try config.data_root.stableDataRoot(gpa, io, cfg_env) else try gpa.dupe(u8, f)
+    else
+        try config.data_root.stableDataRoot(gpa, io, cfg_env);
+    defer gpa.free(stable);
+    const report = try config.seed.seed(gpa, io, stable, root, force);
+    if (exe_dir) |d| {
+        const n = try config.seed.linkBeside(gpa, io, d, root);
+        if (n > 0) try w.print("linked {d} integration binaries from {s} into {s}/bin\n", .{ n, d, root });
+    }
+    switch (report.outcome) {
+        .seeded => try w.print("seeded {s} from {s} ({d} files)\n", .{ root, stable, report.copied }),
+        .already => try w.print("{s} already has state — `mnml profile seed --force` copies what is missing\n", .{root}),
+        .no_source => try w.print("nothing to seed from: {s} does not exist\n", .{stable}),
+    }
+    try w.flush();
+    return if (report.outcome == .no_source) 1 else 0;
 }
 
 /// `--no-session`: launch without restoring the session (`run.sh
@@ -147,7 +249,7 @@ fn hasNoSessionFlag(argv: []const [:0]const u8) bool {
 /// `argv[i]` is a flag whose value is the next argument — the value must
 /// not be read as a workspace or a file.
 fn takesValue(a: []const u8) bool {
-    return std.mem.eql(u8, a, "--input") or std.mem.eql(u8, a, "--config");
+    return std.mem.eql(u8, a, "--input") or std.mem.eql(u8, a, "--config") or std.mem.eql(u8, a, profile.flag);
 }
 
 /// `--startup-picker` is the flag spelling of `MNML_STARTUP_PICKER=1`:
@@ -198,11 +300,13 @@ fn terminalMain(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: []c
     }
     const startup = try loadConfig(gpa, io, env, ws_abs, argv, ascii);
     defer gpa.free(startup.data_root);
+    defer if (startup.note) |n| gpa.free(n);
     const cfg: loop.Options = .{
         .loaded = startup.loaded,
         .workspace = ws_abs,
         .data_root = startup.data_root,
         .files = files.items,
+        .note = startup.note,
     };
     return loop.run(gpa, io, env, cfg) catch |err| switch (err) {
         error.NotATty => return usage(w, "stdout is not a terminal (use --headless)"),
@@ -565,7 +669,7 @@ fn headlessSubcommand(gpa_in: Allocator, io: Io, env: *std.process.Environ.Map, 
     const size = headless.sizeFromEnv(env.get("MNML_COLS"), env.get("MNML_ROWS"));
     const opts: headless.Options = .{
         .size = size,
-        .ipc = .{ .dir_override = env.get("MNML_IPC_DIR"), .subdir = build_options.ipc_subdir },
+        .ipc = .{ .dir_override = env.get("MNML_IPC_DIR"), .subdir = profile.ipcSubdir(profile.of(env)) },
     };
     var stub_factory: e2e.driver.StubFactory = .{};
     const factory: e2e.Factory = if (use_stub) stub_factory.factory() else app_factory orelse {
@@ -575,6 +679,8 @@ fn headlessSubcommand(gpa_in: Allocator, io: Io, env: *std.process.Environ.Map, 
     };
     const startup = try loadConfig(gpa, io, env, ws_abs, argv, false);
     defer gpa.free(startup.data_root);
+    // Headless has no first frame to toast on; the seed still happened.
+    defer if (startup.note) |n| gpa.free(n);
     // `make` owns `loaded` from here, whatever it returns.
     const cfg: e2e.driver.Config = .{ .workspace = ws_abs, .data_root = startup.data_root, .cols = size.cols, .rows = size.rows, .cfg = startup.loaded.config, .loaded = startup.loaded, .startup_hook = true };
     const driver = try factory.make(gpa, io, cfg);

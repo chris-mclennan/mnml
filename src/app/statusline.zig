@@ -54,6 +54,7 @@ const tests_pane = @import("tests_pane.zig");
 const syntax_mod = @import("syntax.zig");
 const outline = @import("outline.zig");
 const ids = @import("../core/ids.zig");
+const profile_mod = @import("../config/profile.zig");
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 
@@ -98,10 +99,14 @@ pub const SegId = enum(u32) {
     bell,
     clock,
     workspace,
+    /// ` dev ` — this is the build being worked on, not the installed
+    /// mnml (`MNML_PROFILE=dev`, `src/config/profile.zig`). The stable
+    /// profile paints nothing: you are meant to forget it is a choice.
+    dev_profile,
     _,
 
     pub fn of(id: u32) ?SegId {
-        if (id < sl.seg_app_base or id > @intFromEnum(SegId.workspace)) return null;
+        if (id < sl.seg_app_base or id > @intFromEnum(SegId.dev_profile)) return null;
         return @enumFromInt(id);
     }
 
@@ -432,6 +437,13 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
         try push(&left, arena, Seg.init(ui.fmt(" {s} ", .{mode.label}), p.bg_darker, mode_bg).strong().withHit(sl.seg_mode));
     }
 
+    // ── the profile ──
+    // Which mnml this is, next to the mode, where the eye already
+    // goes. Nothing at all in the stable profile.
+    if (profile_mod.tag(app.profile()).len > 0) {
+        try push(&left, arena, Seg.init(ui.fmt(" {s} ", .{profile_mod.tag(app.profile())}), p.bg_darker, p.orange).strong().withHit(SegId.dev_profile.raw()));
+    }
+
     // ── host segments, left lane ──
     const budget = dynamicLaneBudget(area.w);
     // A segment with no text yet (a count the poller has not filled in) paints nothing — an empty chevron is noise.
@@ -671,8 +683,10 @@ test "file counts: a file is added, changed or removed once, by its staged side;
 test "SegId.of covers the app's ids and nothing else" {
     try testing.expectEqual(SegId.branch, SegId.of(sl.seg_app_base).?);
     try testing.expectEqual(SegId.workspace, SegId.of(SegId.workspace.raw()).?);
+    try testing.expectEqual(SegId.dev_profile, SegId.of(SegId.dev_profile.raw()).?);
     try testing.expect(SegId.of(sl.seg_mode) == null);
-    try testing.expect(SegId.of(SegId.workspace.raw() + 1) == null);
+    // `dev_profile` is the last one; one past it is nobody's.
+    try testing.expect(SegId.of(SegId.dev_profile.raw() + 1) == null);
     try testing.expect(SegId.of(sl.seg_dyn_base) == null);
 }
 

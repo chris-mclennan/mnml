@@ -2504,6 +2504,15 @@ pub const App = struct {
         e.buf.editor.objects = .{ .ctx = self, .lookup = &objectLookup };
     }
 
+    /// Which mnml this is — the installed one or the one being worked
+    /// on. It rides in the environment (`MNML_PROFILE`), so a pane, a
+    /// spawned integration and the session file all read the same
+    /// answer without anything being threaded through
+    /// (`src/config/profile.zig`).
+    pub fn profile(self: *const App) config.Profile {
+        return config.profile.of(&self.env);
+    }
+
     /// Workspace-relative when inside it, else the path itself.
     pub fn relPath(self: *const App, path: []const u8) []const u8 {
         if (std.mem.startsWith(u8, path, self.workspace) and path.len > self.workspace.len and path[self.workspace.len] == '/') {

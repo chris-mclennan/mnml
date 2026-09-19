@@ -838,6 +838,82 @@ command toasts the path to write.
 3. `$XDG_CONFIG_HOME/mnml/config.zon` when the variable is set
 4. `$HOME/.config/mnml/config.zon`
 
+That ladder answers for the `stable` profile; the `dev` profile is the
+same answer with `-dev` on the end (below).
+
+## Profiles
+
+One machine runs two mnmls: the installed `mnml` you live in and the
+build you are working on. A **profile** decides which state each one
+touches. There are two, and `stable` is the default — you ask for the
+other:
+
+```sh
+MNML_PROFILE=dev mnml           # or
+mnml --profile dev              # the flag writes the variable for the process
+./run.sh                        # the dev workflow: dev unless you say otherwise
+```
+
+|                   | `stable`                   | `dev`                        |
+| ----------------- | -------------------------- | ---------------------------- |
+| data root         | the ladder above           | the same, `-dev` appended     |
+| `config.zon`      | `~/.config/mnml`           | `~/.config/mnml-dev`          |
+| session file      | `<ws>/.mnml/session.zon`   | `<ws>/.mnml/session-dev.zon`  |
+| IPC mailbox       | `<ws>/.mnml/ipc`\*         | `<ws>/.mnml/ipc-zig`          |
+| running marker    | `mnml-running-$USER…`\*    | `mnml-zig-running-$USER…`     |
+| statusline        | —                          | a `dev` chip beside the mode  |
+| window title      | `mnml — work`              | `mnml [dev] — work`           |
+
+\* the build names these: `zig build release` and `run.sh install` pass
+`-Dinstall-names`, which spells the stable profile the way a shipped
+mnml does. This repo's own builds keep `ipc-zig` /
+`mnml-zig-running-…` for BOTH profiles, so nothing in the tree moves;
+the dev profile's names are its own either way. `MNML_IPC_DIR` still
+overrides the mailbox outright.
+
+The suffix applies at every rung, including an explicit
+`$MNML_DATA_ROOT` — `MNML_DATA_ROOT=/tmp/x MNML_PROFILE=dev` is
+`/tmp/x-dev`. A test with a private root stays private.
+
+`mnml profile` prints all five for the profile in play.
+
+### Seeding
+
+The first dev launch finds an empty dev root and copies your setup out
+of the stable one — `config.zon`, `integration-settings.zon`,
+`integrations/` (manifests and their configs), `launchers/`, `themes/`
+— then toasts `dev profile seeded from ~/.config/mnml`. It never
+copies a credential (any name containing `token`, `secret`,
+`credential`, `password`, `cookie`, a `.pem` / `.key`), a cache, a
+backup, the trash, a request log or a session. It is one-shot: a dev
+root with any state is left alone.
+
+```sh
+mnml profile seed --from stable --force   # copy again, filling in what is missing
+```
+
+`--force` never overwrites a file the dev root already has — it is a
+second pass, not a rollback.
+
+Every dev launch also links the integrations built beside the running
+binary into `<dev root>/bin/`, which is where mnml looks for an
+integration's binary first. So the dev profile drives the integrations
+you just built and the stable profile drives the ones you installed.
+
+### What integrations see
+
+An integration inherits `MNML_DATA_ROOT` from the host, already
+resolved for the profile, so its config, cache, sync marks, etags and
+request log land under the dev root without the integration knowing
+profiles exist.
+
+The one thing deliberately NOT per-profile is the cross-process
+rate-limit bucket (`$TATTLE_ARTIFACTS_ROOT` /
+`~/.tattle-claude-artifacts/<service>-ratelimit.json`, resolved ahead
+of the data root in `sdk/mnml-sdk/src/ratelimit.zig`). It is one
+budget per machine: two profiles each spending a full budget against
+the same API is the bug, not the feature.
+
 ## Writes
 
 Settings screens and toggles write back with `persistScalar`: the file is
