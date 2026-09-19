@@ -353,10 +353,36 @@ fn paintList(arena: Allocator, p: *Painter, box: Box) Allocator.Error!void {
         // never trades its title for them.
         const bw = rowButtonsWidth(p, if (cols.len > 0) cols[cols.len - 1].w else 0, row, selected);
         paintSpans(p, list.x + 2, y, text_w -| 2 -| bw, spans);
+        // The chevron at the head of a tree row is its own target, so
+        // a click THERE folds the row and a click anywhere else on it
+        // selects, the way the tracker pane's tree already works. A
+        // pull request with no commit to look builds up on paints no
+        // chevron and registers none.
+        if (chevronX(p, list.x, row)) |cx| p.target(cx, y, 1, .{ .chevron = idx });
         if (bw > 0) try paintRowButtons(p, list.x, y, text_w, bw, idx, row);
         y += h;
     }
     if (needs_bar) try p.c.scrollbar(.{ .x = list.x + list.w - 1, .y = list.y, .w = 1, .h = list.h }, v.cells, cellsBefore(v.rows, first), list.h, null);
+}
+
+/// Where the chevron of a tree row sits, or null when the row has
+/// none. The spans start at `list.x + 2`; a repo header's chevron is
+/// the first cell of its first cell, a pull request's is two in.
+fn chevronX(p: *Painter, list_x: u16, row: tabs.VisibleRow) ?u16 {
+    const app = p.app;
+    return switch (row) {
+        .repo_header => list_x + 2,
+        .pr => |pr_ref| blk: {
+            const repos = switch (app.activeTab().data) {
+                .repo_pr_tree => |r| r,
+                else => break :blk null,
+            };
+            if (pr_ref.repo >= repos.len or pr_ref.idx >= repos[pr_ref.repo].prs.len) break :blk null;
+            if (repos[pr_ref.repo].prs[pr_ref.idx].buildCommit().len == 0) break :blk null;
+            break :blk list_x + 4;
+        },
+        else => null,
+    };
 }
 
 /// `[ Open ] [ Merge ]` at the right end of a pull-request row.
@@ -831,6 +857,32 @@ test "the pane paints the header, the strip, the pill, the reference's columns, 
     try t.expect(has(pipelines, "REPO / BRANCH"));
 }
 
+test "an open PR's chevron folds its builds under the mouse" {
+    const s = try Screen.init(120, 40, acme, .{});
+    defer s.deinit();
+    _ = try s.draw();
+    const y = try s.rowOf("Fix the login redirect");
+    // The chevron is its own target, four cells in from the gutter.
+    const at = s.rig.app.hits.at(4, y) orelse return error.NoChevron;
+    try t.expect(at == .chevron);
+    // A click on the row's WORDS only selects it: the builds stay
+    // folded, so the pointer cannot lose a row by brushing it.
+    try s.click(40, y, .left);
+    var scr = try s.draw();
+    try t.expect(has(scr, "▸ #1234"));
+    try t.expect(!has(scr, "fetching builds"));
+    // A click on the chevron folds them out. It used to do nothing at
+    // all on an open pull request: the click path folded a MERGED one
+    // and nothing else, while the row painted a chevron either way.
+    try s.click(4, y, .left);
+    scr = try s.draw();
+    try t.expect(has(scr, "▾ #1234"));
+    // …and again folds them back.
+    try s.click(4, y, .left);
+    scr = try s.draw();
+    try t.expect(has(scr, "▸ #1234"));
+}
+
 test "the fold row's ellipsis is punctuation and only its words are bright" {
     const s = try Screen.init(120, 40, acme, .{});
     defer s.deinit();
@@ -1021,12 +1073,12 @@ test "an OPEN PR folds out to the builds on its branch head; a second open costs
     // The cursor onto #1234, the open pull request the account authored.
     try s.key("j");
     var scr = try s.draw();
-    try t.expect(has(scr, "\u{25b8} #1234"));
+    try t.expect(has(scr, "▸ #1234"));
     const served = s.rig.srv.state.served;
     try s.key("enter");
     try s.rig.drain();
     scr = try s.draw();
-    try t.expect(has(scr, "\u{25be} #1234"));
+    try t.expect(has(scr, "▾ #1234"));
     // One run on `chris/fix-login`'s head, in the toolkit's words.
     try t.expect(has(scr, "\u{23f5} IN_PROGRESS \u{b7} chris/fix-login \u{b7} "));
     try t.expect(has(scr, "\u{b7} #413"));
