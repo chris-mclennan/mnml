@@ -184,8 +184,9 @@ pub const Info = struct {
 
 /// What the mode chip says about where the keys go — the one place the
 /// editing mode is read for paint. `tree` / `view` / `edit` / `panel` are
-/// the standard handler's context labels; the rest are vim's.
-pub const ModeKind = enum { normal, insert, visual, replace, edit, view, tree, panel };
+/// the standard handler's context labels; `command` is an open `:` line,
+/// either the app's own or a buffer's; the rest are vim's.
+pub const ModeKind = enum { normal, insert, visual, replace, edit, view, tree, panel, command };
 
 /// The mode chip's ground (NvChad's `st_modes`).
 pub fn modeBg(t: *const Theme, kind: ModeKind) Color {
@@ -197,6 +198,10 @@ pub fn modeBg(t: *const Theme, kind: ModeKind) Color {
         .edit => t.mode_edit.bg,
         .tree => t.palette.blue,
         .view, .panel => t.palette.cyan,
+        // The `:` line's own colour: the bottom row paints the line in
+        // `warn_fg` (`ui/cmdline_bar.zig`), so the chip that names it
+        // carries the same one rather than inventing a ninth.
+        .command => t.warn_fg.fg,
     };
 }
 

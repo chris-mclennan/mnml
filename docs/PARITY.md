@@ -97,7 +97,7 @@ source on 2026-09-07; the rows they touched carry the new pointers.
 | track | merged | what the rows now say |
 |---|---|---|
 | `rail` | 2026-09-06 | the activity bar as its own component (`src/ui/activity_bar.zig`, `src/app/activity_bar.zig`), `ui.activity_bar` always / auto / hidden, the rail menu, badges on Rust's pulse; `view.activity_debug` / `activity_agents` / `activity_cloud_agents` got runners |
-| `statusline` | 2026-09-06 | the row is Rust's (`src/app/statusline.zig` builds the lanes in Rust's order; `src/ui/statusline.zig` paints them); the indent / encoding / input-style chips are gone, the mode chip cycles the keymap; every chip routed and described |
+| `statusline` | 2026-09-06 | the row is Rust's (`src/app/statusline.zig` builds the lanes in Rust's order; `src/ui/statusline.zig` paints them); the indent / encoding / input-style chips are gone, the mode chip cycles the keymap; every chip routed and described. *Zig-only:* the chip reads `CMD` while a `:` line is open — the app's own bottom-row one or a buffer's vim one — so the row that is taking the keys is named |
 | `welcome` | 2026-09-06 | the welcome pane matches rows 10–28 of `rust-120x40.txt` |
 | `tree` | 2026-09-06 | `src/ui/tree_view.zig` + `src/ui/icons.zig` (nvim-web-devicons as comptime data), the header chips, neo-tree connectors, the info view (`src/ui/info_view.zig`) replacing the tooltip help box |
 | `menu-bar` | 2026-09-06 | row 0 is Rust's `draw_palette_bar` cell for cell (`src/ui/menu_bar.zig`), the ten menus (`src/app/menu_bar.zig`), F10 / Alt+letter; the old bar's stress copy and green Marketplace `+` are gone — the Rust row shows neither |
