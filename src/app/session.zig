@@ -1055,7 +1055,7 @@ test "session: the two profiles key the file apart — dev saves session-dev.zon
         try t.expect(std.mem.endsWith(u8, p, rel_path_dev));
     }
     try save(&app);
-    _ = try f.tmp.dir.statFile(t.io, rel_path_dev);
+    _ = try f.tmp.dir.statFile(t.io, rel_path_dev, .{});
     // The stable profile's file is exactly as it was left.
     const stable = try f.tmp.dir.readFileAlloc(t.io, rel_path, t.allocator, .limited(1 << 16));
     defer t.allocator.free(stable);

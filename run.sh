@@ -37,6 +37,26 @@
 #   ./run.sh menu                 Interactive numbered picker.
 #   ./run.sh help                 Show this.
 #
+# Daily driver:
+#   ./run.sh install [flags]      Install this build as the mnml you live in:
+#                                 a verified ReleaseSafe build of the host and
+#                                 the shipped integrations to PREFIX/bin
+#                                 (default ~/.local), zig-out/share to
+#                                 PREFIX/share, and each integration's manifest
+#                                 into the STABLE profile's data root pointing
+#                                 at PREFIX/bin — so a rebuild in this repo
+#                                 never moves the binaries under the running
+#                                 stable copy.
+#                                   --prefix DIR   where to install (or $PREFIX)
+#                                   --dry-run      print every step, change nothing
+#                                   --allow-dirty  install from a dirty tree / a
+#                                                  Debug build
+#                                   --force        overwrite a PREFIX/bin/mnml
+#                                                  that is not an mnml-zig
+#   ./run.sh installed-status     The installed mnml's version and prefix
+#                                 against this tree's HEAD, and where the
+#                                 stable profile's integration links point.
+#
 # mnml-specific modes:
 #   ./run.sh restart              Tell the running mnml-zig to rebuild +
 #                                 relaunch ({"cmd":"restart"} in its IPC mailbox).
@@ -61,6 +81,13 @@
 #                     build's `-Dipc-subdir`; the Rust editor owns `ipc`).
 #   MNML_IPC_DIR      An absolute IPC dir instead (the app honors it too).
 #   MNML_ZIG          The zig to build with (default: `zig` on PATH).
+#   MNML_PROFILE      Which mnml this is (default dev for a launch from here:
+#                     its own data root ~/.config/mnml-dev, session-dev.zon,
+#                     the ipc-zig mailbox and a `dev` chip on the statusline).
+#                     `stable` runs this build against the installed mnml's
+#                     state. The build / test / check / install verbs never
+#                     set it — only a launch does (docs/CONFIG.md, Profiles).
+#   PREFIX            Where `install` puts things (default ~/.local).
 #   MNML_E2E_ALLOW_SHELL  `check` runs the corpus with it set to 1 unless you
 #                     export another value.
 #
@@ -163,6 +190,212 @@ step() {
   ok  $((end - start))s  $label"
 }
 
+# ── install ────────────────────────────────────────────────────────────
+# The binaries an install carries: the host as `mnml`, plus one per
+# folder under integrations/ named by its manifest's `.binary` line. The
+# test fakes (mnml-fake-*) are not integrations and never install; the
+# SDK sample is a fixture, so it ships as a binary (the SDK docs run it)
+# but its manifest is not registered — a "Sample" chip is not something
+# an install should put on your rail.
+shipped_integrations() {
+  local d id bin cat
+  for d in "$REPO"/integrations/*/; do
+    [ -f "$d/manifest.zon" ] || continue
+    id=$(basename "$d")
+    bin=$(sed -n 's/^[[:space:]]*\.binary = "\([^"]*\)".*/\1/p' "$d/manifest.zon" | head -n 1)
+    cat=$(sed -n 's/^[[:space:]]*\.category = "\([^"]*\)".*/\1/p' "$d/manifest.zon" | head -n 1)
+    [ -n "$bin" ] || continue
+    printf '%s %s %s\n' "$id" "$bin" "${cat:-integration}"
+  done
+}
+
+# Is `$1` an mnml-zig? (`--version` says so; the Rust mnml and anything
+# else on the machine do not.)
+is_ours() {
+  [ -x "$1" ] || return 1
+  "$1" --version 2>/dev/null | grep -q '^mnml-zig '
+}
+
+# The installed mnml's stable data root — asked of the binary itself, so
+# the ladder is never duplicated here.
+installed_data_root() {
+  "$1" profile 2>/dev/null | sed -n 's/^data: *//p' | head -n 1
+}
+
+do_install() {
+  local prefix="${PREFIX:-$HOME/.local}" dry=0 force=0 allow_dirty=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --prefix) shift; prefix="$1" ;;
+      --prefix=*) prefix="${1#--prefix=}" ;;
+      --dry-run|-n) dry=1 ;;
+      --force) force=1 ;;
+      --allow-dirty) allow_dirty=1 ;;
+      *) log "install: unknown flag $1"; return 2 ;;
+    esac
+    shift
+  done
+  local say="install"
+  [ "$dry" = 1 ] && say="install --dry-run"
+
+  # 1. A tree you can name. An install you cannot trace back to a commit
+  #    is the thing that makes "which mnml is this?" unanswerable.
+  local dirty head
+  head=$(cd "$REPO" && git rev-parse --short HEAD 2>/dev/null || echo unknown)
+  dirty=$(cd "$REPO" && git status --porcelain 2>/dev/null | head -n 5)
+  if [ -n "$dirty" ] && [ "$allow_dirty" = 0 ]; then
+    log "$say: the tree is dirty — commit, stash, or pass --allow-dirty"
+    printf '%s\n' "$dirty" | sed 's/^/  /' >&2
+    return 1
+  fi
+  # 2. ReleaseSafe. A Debug mnml is slow enough to be miserable all day.
+  if [ "$OPTIMIZE" != ReleaseSafe ] && [ "$allow_dirty" = 0 ]; then
+    log "$say: MNML_OPTIMIZE=$OPTIMIZE — install a ReleaseSafe build, or pass --allow-dirty"
+    return 1
+  fi
+  # 3. Not over something that is not ours (the Rust mnml lives here on
+  #    this machine, and it is not this program).
+  local dest="$prefix/bin/mnml"
+  if [ -e "$dest" ] && ! is_ours "$dest" && [ "$force" = 0 ]; then
+    log "$say: $dest exists and is not an mnml-zig (\`$dest --version\` does not say so) — pass --force to replace it"
+    return 1
+  fi
+
+  local built="$REPO/zig-out/bin/mnml-zig"
+  if [ "$dry" = 1 ]; then
+    log "would build: $ZIG build -Doptimize=ReleaseSafe -Dinstall-names=true"
+  else
+    log "building ReleaseSafe with the shipped names (-Dinstall-names)…"
+    (cd "$REPO" && "$ZIG" build -Doptimize=ReleaseSafe -Dinstall-names=true) || { log "$say: the build failed"; return 1; }
+    # 4. Verified: it runs, it says what it is, and it says it defaults
+    #    to the stable profile — the whole point of -Dinstall-names.
+    local ver
+    ver=$("$built" --version 2>/dev/null)
+    case "$ver" in
+      "mnml-zig "*"(stable profile)") log "verified: $ver" ;;
+      *) log "$say: $built --version said \"$ver\" — refusing to install an unverified build"; return 1 ;;
+    esac
+  fi
+
+  # 5. The files.
+  local id bin
+  log "$say: prefix $prefix (HEAD $head${dirty:+, dirty})"
+  install_one "$dry" "$built" "$prefix/bin/mnml" || return 1
+  while read -r id bin cat; do
+    [ -n "$id" ] || continue
+    install_one "$dry" "$REPO/zig-out/bin/$bin" "$prefix/bin/$bin" || return 1
+  done <<EOF2
+$(shipped_integrations)
+EOF2
+  # share/: MnmlSymbols.ttf and whatever else the build puts there.
+  if [ -d "$REPO/zig-out/share" ]; then
+    if [ "$dry" = 1 ]; then
+      (cd "$REPO/zig-out/share" && find . -type f | sed "s|^\./\(.*\)$|  would copy   zig-out/share/\1 → $prefix/share/\1|") >&2
+    else
+      mkdir -p "$prefix/share"
+      cp -R "$REPO/zig-out/share/." "$prefix/share/"
+      log "copied zig-out/share → $prefix/share"
+    fi
+  elif [ "$dry" = 1 ]; then
+    log "  (no zig-out/share yet — the build makes it)"
+  fi
+
+  # 6. The manifests, in the STABLE profile's data root, pointing at the
+  #    binaries just installed. Each integration writes its own
+  #    (`<binary> --install`), so the manifest and the binary cannot
+  #    drift; `<root>/bin/<name>` is then relinked from this repo's
+  #    zig-out to PREFIX/bin, which is the bug this verb exists to fix:
+  #    a rebuild here used to move the integrations under the running
+  #    stable mnml.
+  local root
+  if [ "$dry" = 1 ]; then
+    root=$(MNML_PROFILE=stable installed_data_root "$built" 2>/dev/null)
+    [ -n "$root" ] || root="(the stable data root)"
+  else
+    root=$(MNML_PROFILE=stable installed_data_root "$prefix/bin/mnml")
+    [ -n "$root" ] || { log "$say: could not ask $prefix/bin/mnml for its data root"; return 1; }
+  fi
+  log "$say: manifests → $root/integrations, links → $root/bin"
+  while read -r id bin cat; do
+    [ -n "$id" ] || continue
+    if [ "$cat" = sample ]; then
+      [ "$dry" = 1 ] && echo "  would skip   $bin --install (a fixture, not a chip on your rail)" >&2
+      continue
+    fi
+    if [ "$dry" = 1 ]; then
+      echo "  would run    MNML_PROFILE=stable MNML_DATA_ROOT=$root $prefix/bin/$bin --install" >&2
+      echo "  would link   $root/bin/$bin → $prefix/bin/$bin" >&2
+    else
+      MNML_PROFILE=stable MNML_DATA_ROOT="$root" "$prefix/bin/$bin" --install >/dev/null 2>&1 ||
+        log "  warning: $bin --install failed (the binary is installed; its manifest is not)"
+      mkdir -p "$root/bin"
+      rm -f "$root/bin/$bin"
+      ln -s "$prefix/bin/$bin" "$root/bin/$bin"
+    fi
+  done <<EOF2
+$(shipped_integrations)
+EOF2
+
+  if [ "$dry" = 1 ]; then
+    log "$say: nothing was changed"
+  else
+    log "installed. \`$prefix/bin/mnml\` is the stable profile; \`./run.sh\` here is the dev one."
+    case ":$PATH:" in
+      *":$prefix/bin:"*) ;;
+      *) log "note: $prefix/bin is not on your PATH" ;;
+    esac
+  fi
+}
+
+# Copy `$2` to `$3` (or say so, when `$1` is 1), via a temp file so a
+# running copy is replaced rather than written through.
+install_one() {
+  local dry="$1" src="$2" dst="$3"
+  if [ "$dry" = 1 ]; then
+    if [ -f "$src" ]; then echo "  would copy   ${src#"$REPO"/} → $dst" >&2
+    else echo "  would copy   ${src#"$REPO"/} → $dst  (not built yet)" >&2; fi
+    return 0
+  fi
+  [ -f "$src" ] || { log "install: $src is missing — did the build run?"; return 1; }
+  mkdir -p "$(dirname "$dst")"
+  cp "$src" "$dst.new" || return 1
+  chmod +x "$dst.new"
+  mv -f "$dst.new" "$dst" || return 1
+  echo "  ${src#"$REPO"/} → $dst" >&2
+}
+
+# What is installed, against what this tree is.
+do_installed_status() {
+  local prefix="${PREFIX:-$HOME/.local}" dest
+  dest="$prefix/bin/mnml"
+  local head
+  head=$(cd "$REPO" && git rev-parse --short HEAD 2>/dev/null || echo unknown)
+  echo "prefix:    $prefix"
+  if [ ! -e "$dest" ]; then
+    echo "installed: nothing at $dest (./run.sh install)"
+  elif is_ours "$dest"; then
+    echo "installed: $("$dest" --version)"
+    echo "here:      $(cd "$REPO" && git describe --tags --always --dirty 2>/dev/null || echo "$head")  (HEAD $head)"
+    local root
+    root=$(MNML_PROFILE=stable installed_data_root "$dest")
+    echo "data:      ${root:-?}"
+    if [ -n "$root" ] && [ -d "$root/bin" ]; then
+      local l t
+      for l in "$root"/bin/*; do
+        [ -e "$l" ] || continue
+        t=$(readlink "$l" || echo "$l")
+        case "$t" in
+          "$prefix"/*) echo "link:      $(basename "$l") → $t" ;;
+          *) echo "link:      $(basename "$l") → $t  (NOT in $prefix — a rebuild there moves it under the running mnml)" ;;
+        esac
+      done
+    fi
+  else
+    echo "installed: $dest is NOT an mnml-zig (\`--version\` does not say so) — ./run.sh install --force replaces it"
+  fi
+  exit 0
+}
+
 HEADLESS=0
 case "${1:-start}" in
   # ── Dev subcommands ─────────────────────────────────────────────
@@ -227,6 +460,8 @@ case "${1:-start}" in
     for d in $target_dir; do rm -rf "$d"; done
     echo "[run.sh clean] done."
     exit 0 ;;
+  install)         shift; do_install "$@"; exit $? ;;
+  installed-status) do_installed_status ;;
   menu)
     shift
     TEAL=$'\033[38;2;83;192;188m'
@@ -285,7 +520,8 @@ case "${1:-start}" in
     else
       echo "no marker — no mnml-zig tracked ($MARKER)"
     fi
-    exit 0 ;;
+    echo
+    do_installed_status ;;
   fresh)   shift; set -- --no-session "$@" ;;
   shot)    shift; exec bash "$REPO/scripts/shot.sh" "$@" ;;
   # ── Misc ────────────────────────────────────────────────────────
@@ -324,6 +560,14 @@ cleanup_marker() {
   [ -f "$MARKER" ] && [ "$(cat "$MARKER")" = "$ws_dir" ] && rm -f "$MARKER"
 }
 trap cleanup_marker EXIT
+
+# A launch from this repo is the dev profile unless you say otherwise:
+# its own data root, session file, IPC mailbox, marker and a `dev` chip
+# on the statusline, so it never touches the mnml you live in
+# (docs/CONFIG.md, "Profiles"). Only a LAUNCH — build / test / check /
+# install run in the stable profile, where the corpus and the installed
+# binary live.
+export MNML_PROFILE="${MNML_PROFILE:-dev}"
 
 EXTRA=()
 [ "$HEADLESS" = 1 ] && EXTRA+=(--headless)

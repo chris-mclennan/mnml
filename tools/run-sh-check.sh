@@ -26,7 +26,14 @@
 #      app writes the marker, quit removes it with exit 0, restart keeps
 #      it with exit 75.
 #
-#   tools/run-sh-check.sh            (needs zig-out/bin/mnml-zig; ~15 s)
+#   8. `install` on a throwaway repo into a throwaway PREFIX: the
+#      dry-run plan, the three refusals (dirty tree, Debug, a
+#      PREFIX/bin/mnml that is not ours), then a real copy — the host,
+#      an integration, the font, the manifest into the stable data root
+#      and the link that points at PREFIX rather than a zig-out — and
+#      the installed binary reaching a first frame headless.
+#
+#   tools/run-sh-check.sh            (needs zig-out/bin/mnml-zig; ~30 s)
 set -o pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -174,6 +181,85 @@ fi
 check "break-check: --help exits 0" '[ $rc -eq 0 ]'
 "$ROOT/tools/break-check.sh" >/dev/null 2>&1; rc=$?
 check "break-check: no arguments exits 64" '[ $rc -eq 64 ]'
+
+# ── 8. install ─────────────────────────────────────────────────────────
+# `install` is run against a throwaway repo — a copy of run.sh, a couple
+# of integration manifests, and zig-out symlinked at the real one — so
+# the guards (dirty tree, Debug, a foreign binary) are deterministic and
+# the copy path runs with the binaries that are already built. The
+# compile itself is the fake zig; what is proved here is everything
+# around it. PREFIX and MNML_DATA_ROOT are both under $TMP: nothing
+# reaches ~/.local or ~/.config/mnml.
+FAKE="$TMP/repo"
+mkdir -p "$FAKE/integrations/jira" "$FAKE/integrations/sample"
+cp "$ROOT/run.sh" "$FAKE/run.sh"
+ln -s "$ROOT/zig-out" "$FAKE/zig-out"
+printf '.{\n    .id = "jira_work",\n    .label = "Jira",\n    .binary = "mnml-jira",\n    .category = "tracker",\n}\n' > "$FAKE/integrations/jira/manifest.zon"
+printf '.{\n    .id = "sample",\n    .label = "Sample",\n    .binary = "mnml-sample",\n    .category = "sample",\n}\n' > "$FAKE/integrations/sample/manifest.zon"
+git init -q "$FAKE"
+(cd "$FAKE" && git add -A && git -c user.email=t@t -c user.name=t commit -qm init)
+PREFIX_OK="$TMP/prefix"
+PREFIX_DRY="$TMP/prefix-dry"
+PREFIX_FOREIGN="$TMP/prefix-foreign"
+
+out=$(cd "$FAKE" && PREFIX="$PREFIX_DRY" ./run.sh install --dry-run 2>&1); rc=$?
+check "install --dry-run: exit 0" '[ $rc -eq 0 ]' "$out"
+check "install --dry-run: names the host copy" 'echo "$out" | grep -q "would copy   zig-out/bin/mnml-zig → $PREFIX_DRY/bin/mnml"' "$out"
+check "install --dry-run: names the integration copy" 'echo "$out" | grep -q "would copy   zig-out/bin/mnml-jira → $PREFIX_DRY/bin/mnml-jira"' "$out"
+check "install --dry-run: names the manifest write into the stable data root" 'echo "$out" | grep -q "would run    MNML_PROFILE=stable MNML_DATA_ROOT=$MNML_DATA_ROOT $PREFIX_DRY/bin/mnml-jira --install"' "$out"
+check "install --dry-run: names the relink" 'echo "$out" | grep -q "would link   $MNML_DATA_ROOT/bin/mnml-jira → $PREFIX_DRY/bin/mnml-jira"' "$out"
+check "install --dry-run: the sample is a fixture, not a chip" 'echo "$out" | grep -q "would skip   mnml-sample --install"' "$out"
+check "install --dry-run: changed nothing" '[ ! -e "$PREFIX_DRY" ]'
+
+printf 'scratch\n' > "$FAKE/dirty.txt"
+out=$(cd "$FAKE" && PREFIX="$PREFIX_OK" ./run.sh install --dry-run 2>&1); rc=$?
+check "install: a dirty tree is refused (exit 1)" '[ $rc -eq 1 ]' "$out"
+check "install: says which file is dirty" 'echo "$out" | grep -q "dirty.txt"' "$out"
+out=$(cd "$FAKE" && PREFIX="$PREFIX_OK" ./run.sh install --dry-run --allow-dirty 2>&1); rc=$?
+check "install: --allow-dirty gets past it" '[ $rc -eq 0 ]' "$out"
+rm -f "$FAKE/dirty.txt"
+
+out=$(cd "$FAKE" && MNML_OPTIMIZE=Debug PREFIX="$PREFIX_OK" ./run.sh install --dry-run 2>&1); rc=$?
+check "install: a Debug build is refused (exit 1)" '[ $rc -eq 1 ]' "$out"
+check "install: says why" 'echo "$out" | grep -q "MNML_OPTIMIZE=Debug"' "$out"
+
+mkdir -p "$PREFIX_FOREIGN/bin"
+printf '#!/bin/sh\necho "mnml: unknown flag: $*" >&2\nexit 1\n' > "$PREFIX_FOREIGN/bin/mnml"
+chmod +x "$PREFIX_FOREIGN/bin/mnml"
+out=$(cd "$FAKE" && PREFIX="$PREFIX_FOREIGN" ./run.sh install --dry-run 2>&1); rc=$?
+check "install: will not overwrite a binary that is not an mnml-zig (exit 1)" '[ $rc -eq 1 ]' "$out"
+check "install: says --force is the way" 'echo "$out" | grep -q -- "--force"' "$out"
+check "install: left the foreign binary alone" 'grep -q "unknown flag" "$PREFIX_FOREIGN/bin/mnml"'
+
+out=$(cd "$FAKE" && PREFIX="$PREFIX_OK" ./run.sh install 2>&1); rc=$?
+check "install: exit 0" '[ $rc -eq 0 ]' "$out"
+check "install: verified the build before copying" 'echo "$out" | grep -q "verified: mnml-zig "' "$out"
+check "install: the host landed as PREFIX/bin/mnml" '[ -x "$PREFIX_OK/bin/mnml" ]'
+check "install: PREFIX/bin/mnml --version says what it is" '"$PREFIX_OK/bin/mnml" --version | grep -q "^mnml-zig "' "$("$PREFIX_OK/bin/mnml" --version 2>&1)"
+check "install: the integration landed too" '[ -x "$PREFIX_OK/bin/mnml-jira" ]'
+check "install: the font came with it" '[ -f "$PREFIX_OK/share/mnml/fonts/MnmlSymbols.ttf" ]'
+check "install: the manifest went to the stable data root" '[ -f "$MNML_DATA_ROOT/integrations/jira_work.zon" ]' "$(ls "$MNML_DATA_ROOT/integrations" 2>&1)"
+check "install: the data root's link points at PREFIX, not at a zig-out" '[ "$(readlink "$MNML_DATA_ROOT/bin/mnml-jira")" = "$PREFIX_OK/bin/mnml-jira" ]' "$(readlink "$MNML_DATA_ROOT/bin/mnml-jira" 2>&1)"
+check "install: the sample binary ships, its manifest does not" '[ -x "$PREFIX_OK/bin/mnml-sample" ] && [ ! -f "$MNML_DATA_ROOT/integrations/sample.zon" ]'
+out=$(cd "$FAKE" && PREFIX="$PREFIX_OK" ./run.sh installed-status 2>&1)
+check "installed-status: names the installed version" 'echo "$out" | grep -q "^installed: mnml-zig "' "$out"
+check "installed-status: names the data root" 'echo "$out" | grep -q "^data:      $MNML_DATA_ROOT\$"' "$out"
+check "installed-status: the link reads as pointing into the prefix" 'echo "$out" | grep -q "^link:      mnml-jira → $PREFIX_OK/bin/mnml-jira\$"' "$out"
+
+# The installed binary runs: a headless session on a throwaway
+# workspace, its data root private, reaching its own first frame.
+INST_WS="$TMP/inst-ws"; mkdir -p "$INST_WS"; printf '# inst\n' > "$INST_WS/README.md"; git init -q "$INST_WS"
+( cd "$INST_WS" && "$PREFIX_OK/bin/mnml" --headless . >/dev/null 2>&1 ) &
+INST_PID=$!
+INST_IPC="$INST_WS/.mnml/ipc-zig"
+if wait_for '[ -f "$INST_IPC/events.jsonl" ] && grep -q "\"event\":\"start\"" "$INST_IPC/events.jsonl"' 20; then
+  ok "install: the installed binary starts headless on its own workspace"
+else
+  bad "install: the installed binary never reached a first frame" "$(ls -R "$INST_WS/.mnml" 2>&1)"
+fi
+printf '{"cmd":"quit"}\n' >> "$INST_IPC/command" 2>/dev/null
+wait_for '! kill -0 "$INST_PID" 2>/dev/null' 15 || kill "$INST_PID" 2>/dev/null
+wait "$INST_PID" 2>/dev/null
 
 echo "run-sh-check: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

@@ -98,17 +98,24 @@ pub fn suffix(p: Profile) []const u8 {
 /// The IPC mailbox under `<workspace>/.mnml/`. `MNML_IPC_DIR` still
 /// overrides it outright, for both profiles.
 pub fn ipcSubdir(p: Profile) []const u8 {
-    return switch (p) {
-        .stable => build_options.ipc_subdir,
-        .dev => dev_ipc_subdir,
-    };
+    return pick(p, build_options.ipc_subdir, dev_ipc_subdir);
 }
 
 /// The running-instance marker's file-name prefix under `TMPDIR`.
 pub fn markerPrefix(p: Profile) []const u8 {
+    return pick(p, build_options.marker_prefix, dev_marker_prefix);
+}
+
+/// The rule the two above share, with the stable name as a value so a
+/// test can pin it: the dev profile's name is its own whatever the
+/// build called the stable one. In THIS repo's builds the two happen
+/// to be equal (the tree keeps the side-by-side names for both), so a
+/// test that compared them against `build_options` would pass however
+/// this was written — hence the parameter.
+pub fn pick(p: Profile, stable_name: []const u8, dev_name: []const u8) []const u8 {
     return switch (p) {
-        .stable => build_options.marker_prefix,
-        .dev => dev_marker_prefix,
+        .stable => stable_name,
+        .dev => dev_name,
     };
 }
 
@@ -168,10 +175,17 @@ test "--profile is read as a value or with an equals sign" {
 
 test "the stable names are the build's; dev's are its own either way" {
     // This repo's own build has no `-Dinstall-names`, so both profiles
-    // keep the side-by-side mailbox — the dev tree does not move — and
-    // an installed build (`-Dinstall-names`) names stable `ipc`.
+    // keep the side-by-side names and comparing them here would prove
+    // nothing. `pick` takes the stable name as a value, so the split
+    // can be pinned as an installed build would see it:
+    try t.expectEqualStrings("ipc", pick(.stable, "ipc", dev_ipc_subdir));
+    try t.expectEqualStrings("ipc-zig", pick(.dev, "ipc", dev_ipc_subdir));
+    try t.expectEqualStrings("mnml-running-", pick(.stable, "mnml-running-", dev_marker_prefix));
+    try t.expectEqualStrings("mnml-zig-running-", pick(.dev, "mnml-running-", dev_marker_prefix));
+    // And the wiring: the stable name comes from the build, the dev
+    // name never does.
     try t.expectEqualStrings(build_options.ipc_subdir, ipcSubdir(.stable));
     try t.expectEqualStrings(build_options.marker_prefix, markerPrefix(.stable));
-    try t.expectEqualStrings("ipc-zig", ipcSubdir(.dev));
-    try t.expectEqualStrings("mnml-zig-running-", markerPrefix(.dev));
+    try t.expectEqualStrings(dev_ipc_subdir, ipcSubdir(.dev));
+    try t.expectEqualStrings(dev_marker_prefix, markerPrefix(.dev));
 }
