@@ -1,0 +1,44 @@
+# width: 120
+# `ui.dock.mode = .auto_hide`, the shipped default: nothing is drawn
+# until the pointer has rested on the editor area's last row for
+# `ui.dock.reveal_ms` (250 ms), and the strip goes again
+# `ui.dock.hide_ms` (400 ms) after the pointer leaves.
+#
+# It draws OVER the editor — it never re-lays-out, the rule
+# `app/sidebar_auto.zig` already lives by — so the marker at column 95
+# of the open file is on screen the whole time.
+write wide.txt "...............................................................................................ENDMARK\n"
+open wide.txt
+# The tree closed, so the editor spans the frame and the marker at
+# column 95 is on screen: a reveal that re-laid-out would take it away.
+command view.toggle_tree
+expect screen contains "ENDMARK"
+expect screen lacks "New terminal"
+# The dwell: the pointer rests on row 37.
+hover 60 37
+wait 600
+expect screen contains "New terminal"
+expect screen contains "ENDMARK"
+# Resting on the strip itself keeps it up — the painter registers it as
+# the second piece of its own hover zone.
+hover 20 37
+wait 600
+expect screen contains "New terminal"
+# Away: gone after the hide dwell.
+hover 60 10
+wait 800
+expect screen lacks "New terminal"
+# The pin keeps it: a pinned strip docks and stays wherever the pointer
+# goes, and unpinning hands it back to `ui.dock.mode`.
+hover 60 37
+wait 600
+expect screen contains "New terminal"
+command view.dock_pin
+expect screen contains "dock pinned"
+hover 60 10
+wait 800
+expect screen contains "New terminal"
+command view.dock_pin
+expect screen contains "dock: auto_hide"
+wait 800
+expect screen lacks "New terminal"

@@ -1,0 +1,24 @@
+# width: 120
+# The launcher dock and the BOTTOM PANEL are different surfaces and
+# they coexist: the launcher dock is the outermost row, and the panel
+# sits inside it, as the editor does.
+#
+# At 120x40 with no launcher dock the panel is rows 26–37 with its
+# header (and its `×`) on row 26 — `bottom_dock_toggle.test` pins that.
+# With the dock's row taken off the frame first, everything above
+# shifts up one: the panel's header row is 25, and that is where its
+# `×` answers a click.
+write a.txt "one\ntwo\nthree\n"
+open a.txt
+ex dock always
+command view.toggle_bottom_panel
+expect screen contains "DIAGNOSTICS"
+expect screen contains "New terminal"
+# Row 26 is the panel's body now, not its header: clicking there closes
+# nothing.
+click 117 26
+expect screen contains "DIAGNOSTICS"
+# Row 25 is the header, and its `×` closes the panel — the dock stays.
+click 117 25
+expect screen lacks "DIAGNOSTICS"
+expect screen contains "New terminal"

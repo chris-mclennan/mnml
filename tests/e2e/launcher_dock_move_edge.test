@@ -1,0 +1,20 @@
+# width: 120
+# `:dock left` / `right` / `bottom` move the strip. A bottom dock is one
+# row of ` glyph label ` pairs; a side dock is three cells wide and
+# paints the glyph alone, so the label moves into the hover tooltip.
+write a.txt "alpha\n"
+open a.txt
+ex dock always
+expect screen contains "New terminal"
+ex dock left
+expect screen contains "dock: left edge"
+expect screen lacks "New terminal"
+# The tooltip is where a side dock's names live (`ui.hover_tooltip`).
+command view.toggle_hover_tooltip
+hover 1 1
+wait 200
+expect screen contains "Browser"
+# Back to the bottom, labels and all.
+ex dock bottom
+expect screen contains "dock: bottom edge"
+expect screen contains "New terminal"
