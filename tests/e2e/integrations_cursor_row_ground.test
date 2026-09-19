@@ -20,13 +20,18 @@
 # env: BITBUCKET_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/bucket.json
 # env: BITBUCKET_API_TOKEN=corpus-read-token
 # env: MNML_WORKSPACE=${MNML_E2E_WORKSPACE}
-shell "$MNML_FAKE_JIRA" --port 18732 --life-secs 180 --quiet --pid-file fake-jira.pid >/dev/null 2>&1 &
+# env: JIRA_BASE_URL=@${MNML_E2E_WORKSPACE}/jira.url
+# The fake takes port 0 and writes the URL it landed on to `jira.url`;
+# `JIRA_BASE_URL=@<file>` is how the pane reads it, so nothing here ever
+# picks a port and two runs of the corpus never collide. The config's
+# `.jira_url` is the placeholder that override replaces.
+shell "$MNML_FAKE_JIRA" --port 0 --url-file jira.url --life-secs 180 --quiet --pid-file fake-jira.pid >/dev/null 2>&1 &
 shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --lifetime-secs 180 >/dev/null 2>&1 &
 wait 500
 write sdk/mnml-sdk/build.zig ""
 write integrations/jira/build.zig ""
 write integrations/jira/manifest.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } } }"
-write .mnml/integrations/jira/config.zon ".{ .jira_url = \"http://127.0.0.1:18732\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .rate = .{ .per_sec = 1000, .burst = 1000 }, .tabs = .{ .{ .name = \"Assigned\", .kind = .work_assigned }, .{ .name = \"Recently Done\", .kind = .work_recently_done } } }"
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"https://jira.invalid\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .rate = .{ .per_sec = 1000, .burst = 1000 }, .tabs = .{ .{ .name = \"Assigned\", .kind = .work_assigned }, .{ .name = \"Recently Done\", .kind = .work_recently_done } } }"
 write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 0, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs }, .{ .name = \"Merged\", .kind = .workspace_merged_prs } } }"
 write market/bitbucket_prs.zon ".{ .id = \"bitbucket_prs\", .label = \"Bitbucket PRs\", .version = \"0.2.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .args = .{ \"--only\", \"prs\" }, .description = \"Bitbucket pull requests\", .chip = .{ .glyph = \"\u{f00a8}\", .fallback = \"BP\", .color = \"blue\", .in_palette_bar = false }, .commands = .{ .{ .id = \"bitbucket_prs.open\", .title = \"Bitbucket PRs: open\" } } }"
 command integrations.show_in_dev

@@ -21,12 +21,17 @@
 # `loading…` for a minute — a flake with no cause on screen.
 # env: JIRA_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/jira-bucket.json
 # env: JIRA_API_TOKEN=fake-token
-shell "$MNML_FAKE_JIRA" --port 18731 --life-secs 180 --quiet --pid-file fake-jira.pid >/dev/null 2>&1 &
+# env: JIRA_BASE_URL=@${MNML_E2E_WORKSPACE}/jira.url
+# The fake takes port 0 and writes the URL it landed on to `jira.url`;
+# `JIRA_BASE_URL=@<file>` is how the pane reads it, so nothing here ever
+# picks a port and two runs of the corpus never collide. The config's
+# `.jira_url` is the placeholder that override replaces.
+shell "$MNML_FAKE_JIRA" --port 0 --url-file jira.url --life-secs 180 --quiet --pid-file fake-jira.pid >/dev/null 2>&1 &
 wait 500
 write sdk/mnml-sdk/build.zig ""
 write integrations/jira/build.zig ""
 write integrations/jira/manifest.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } } }"
-write .mnml/integrations/jira/config.zon ".{\n    // keep this comment\n    .jira_url = \"http://127.0.0.1:18731\",\n    .email = \"fake@acme.com\",\n    .refresh_interval_secs = 0, .rate = .{ .per_sec = 1000, .burst = 1000 },\n    .tabs = .{\n        .{\n            // the one that changes every release\n            .name = \"QA Actionable now\",\n            .kind = .jql_editable,\n            .jql = \"project = {project} AND fixVersion in ({versions}) ORDER BY updated DESC\",\n            .vars = .{\n                .{ .name = \"project\", .value = \"ENG\" },\n                .{ .name = \"versions\", .values = .{ \"13.15.0\", \"13.17.0\" } },\n            },\n        },\n        .{ .name = \"My open work items\", .kind = .work_open },\n        .{ .name = \"Reported by me\", .kind = .work_reported },\n    },\n}\n"
+write .mnml/integrations/jira/config.zon ".{\n    // keep this comment\n    .jira_url = \"https://jira.invalid\",\n    .email = \"fake@acme.com\",\n    .refresh_interval_secs = 0, .rate = .{ .per_sec = 1000, .burst = 1000 },\n    .tabs = .{\n        .{\n            // the one that changes every release\n            .name = \"QA Actionable now\",\n            .kind = .jql_editable,\n            .jql = \"project = {project} AND fixVersion in ({versions}) ORDER BY updated DESC\",\n            .vars = .{\n                .{ .name = \"project\", .value = \"ENG\" },\n                .{ .name = \"versions\", .values = .{ \"13.15.0\", \"13.17.0\" } },\n            },\n        },\n        .{ .name = \"My open work items\", .kind = .work_open },\n        .{ .name = \"Reported by me\", .kind = .work_reported },\n    },\n}\n"
 command integrations.show_in_dev
 expect screen contains "INTEGRATIONS"
 drag 30 5 60 5

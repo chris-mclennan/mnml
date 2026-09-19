@@ -243,7 +243,7 @@ pub fn main(init: std.process.Init) !u8 {
     const data_root = sdk.manifest.dataRoot(arena, env) catch null;
     const cfg_path = try configPath(arena, io, env, args);
     if (args.check or args.diag or args.values or args.prefetch or args.dump) {
-        const loaded = try config.load(arena, io, cfg_path);
+        const loaded = try config.loadWithEnv(arena, io, env, cfg_path);
         const token = try auth.resolve(arena, io, env, .{ .config_path = loaded.config.token_file, .env_name = loaded.config.token_env, .data_root = data_root });
         if (args.check) return check(arena, stdout, loaded, token);
         if (args.diag) return diag(gpa, io, env, arena, stdout, loaded, token);
@@ -284,7 +284,7 @@ const Setup = union(enum) {
 /// Load the config and the token; either everything a pane needs or the
 /// screen that says what is missing. Everything returned is on `arena`.
 fn setup(arena: Allocator, io: Io, env: *const std.process.Environ.Map, cfg_path: []const u8, data_root: ?[]const u8, family: ?config.Family) Allocator.Error!Setup {
-    const loaded = try config.load(arena, io, cfg_path);
+    const loaded = try config.loadWithEnv(arena, io, env, cfg_path);
     if (loaded.missing) return .{ .problem = .{ .title = "No Jira config yet.", .lines = try missingConfig(arena, cfg_path) } };
     if (loaded.parse_error) |why| return .{ .problem = .{ .title = "The config did not parse.", .lines = try parseError(arena, cfg_path, why) } };
     var why: []const u8 = "";

@@ -4,6 +4,7 @@
 pub const parser = @import("parser.zig");
 pub const driver = @import("driver.zig");
 pub const runner = @import("runner.zig");
+pub const corpus = @import("corpus.zig");
 
 pub const Driver = driver.Driver;
 pub const Factory = driver.Factory;
@@ -14,5 +15,6 @@ test {
     _ = parser;
     _ = driver;
     _ = runner;
+    _ = corpus;
     _ = @import("cancel_probe.zig");
 }

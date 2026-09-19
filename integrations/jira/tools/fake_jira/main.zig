@@ -21,7 +21,7 @@
 //! shows an AGE: a fixture written as an absolute date would read `52w`
 //! a year later.
 //!
-//!   mnml-fake-jira [--port N] [--port-file P] [--pid-file P]
+//!   mnml-fake-jira [--port N] [--port-file P] [--url-file P] [--pid-file P]
 //!                  [--life-secs N] [--parent-pid N] [--no-auth] [--quiet]
 //!                  [--extra-issues N] [--log-file P] [--version]
 //!
@@ -35,11 +35,14 @@
 //! load cost, owing nothing to what the client believes it sent.
 //!
 //! Loopback only. `--port 0` (the default) binds a free one, printed as
-//! `mnml-fake-jira: listening on 127.0.0.1:NNNNN` and written to
-//! `--port-file`. `--life-secs` bounds a server nobody stopped, and
-//! `--parent-pid` ends one whose starter died — between them a killed
-//! test run leaves no server holding a port. A hard stop is the
-//! `--pid-file` pid or `/__shutdown`.
+//! `mnml-fake-jira: listening on 127.0.0.1:NNNNN`, written to
+//! `--port-file` as the bare number and to `--url-file` as the whole
+//! `http://127.0.0.1:NNNNN` the config's `.jira_url` wants — which is
+//! how a test script names the server without ever picking a port:
+//! `JIRA_BASE_URL=@<path>` reads the file back. `--life-secs` bounds a
+//! server nobody stopped, and `--parent-pid` ends one whose starter
+//! died — between them a killed test run leaves no server holding a
+//! port. A hard stop is the `--pid-file` pid or `/__shutdown`.
 //!
 //! `Store.handle` is the whole server as a pure function — method,
 //! target, auth header, body in; status, content type, body out — so
@@ -978,6 +981,7 @@ pub fn main(init: std.process.Init) !u8 {
     var port: u16 = 0;
     var pid_file: ?[]const u8 = null;
     var port_file: ?[]const u8 = null;
+    var url_file: ?[]const u8 = null;
     var life_secs: u32 = 0;
     var parent_pid: i32 = 0;
     var require_auth = true;
@@ -1015,6 +1019,9 @@ pub fn main(init: std.process.Init) !u8 {
         } else if (std.mem.eql(u8, a, "--port-file") and i + 1 < args.len) {
             i += 1;
             port_file = args[i];
+        } else if (std.mem.eql(u8, a, "--url-file") and i + 1 < args.len) {
+            i += 1;
+            url_file = args[i];
         } else if (std.mem.eql(u8, a, "--log-file") and i + 1 < args.len) {
             i += 1;
             log_file = args[i];
@@ -1053,6 +1060,18 @@ pub fn main(init: std.process.Init) !u8 {
         var pbuf: [16]u8 = undefined;
         const s = std.fmt.bufPrint(&pbuf, "{d}\n", .{bound}) catch "";
         Io.Dir.cwd().writeFile(io, .{ .sub_path = p, .data = s }) catch {};
+    }
+    // The whole base URL, for `JIRA_BASE_URL=@<path>`. Written once the
+    // socket is listening, so a reader that finds the file finds a
+    // server behind it.
+    if (url_file) |p| {
+        var ubuf: [64]u8 = undefined;
+        const s = std.fmt.bufPrint(&ubuf, "http://127.0.0.1:{d}", .{bound}) catch "";
+        if (std.fs.path.dirname(p)) |dir| Io.Dir.cwd().createDirPath(io, dir) catch {};
+        Io.Dir.cwd().writeFile(io, .{ .sub_path = p, .data = s }) catch |e| {
+            try out.print("mnml-fake-jira: cannot write {s}: {s}\n", .{ p, @errorName(e) });
+            return 1;
+        };
     }
     if (pid_file) |p| {
         var pbuf: [24]u8 = undefined;

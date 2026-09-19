@@ -8,10 +8,15 @@
 # env: JIRA_API_TOKEN=fake-token
 # env: BITBUCKET_API_TOKEN=corpus-read-token
 # env: MNML_WORKSPACE=${MNML_E2E_WORKSPACE}
-shell "$MNML_FAKE_JIRA" --port 18734 --life-secs 120 --quiet --pid-file fake-jira.pid --log-file jira-wire.jsonl >/dev/null 2>&1 &
+# env: JIRA_BASE_URL=@${MNML_E2E_WORKSPACE}/jira.url
+# The fake takes port 0 and writes the URL it landed on to `jira.url`;
+# `JIRA_BASE_URL=@<file>` is how the pane reads it, so nothing here ever
+# picks a port and two runs of the corpus never collide. The config's
+# `.jira_url` is the placeholder that override replaces.
+shell "$MNML_FAKE_JIRA" --port 0 --url-file jira.url --life-secs 120 --quiet --pid-file fake-jira.pid --log-file jira-wire.jsonl >/dev/null 2>&1 &
 shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --life-secs 120 --log-file bb-wire.jsonl >/dev/null 2>&1 &
 wait 1000
-write jira.zon ".{ .jira_url = \"http://127.0.0.1:18734\", .email = \"fake@acme.com\", .tabs = .{ .{ .name = \"Assigned\", .kind = .work_assigned } } }"
+write jira.zon ".{ .jira_url = \"https://jira.invalid\", .email = \"fake@acme.com\", .tabs = .{ .{ .name = \"Assigned\", .kind = .work_assigned } } }"
 write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .account_id = \"acct-chris\", .repos = .{ \"api\" }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs } } }"
 
 # A bucket with a tenth of its capacity left. The six keys are the ones
