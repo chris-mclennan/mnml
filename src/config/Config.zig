@@ -86,6 +86,11 @@ pub const Editor = struct {
     /// // changed (debug-ui): while the debugger is stopped, the values
     /// of the scope's variables named on a line paint after its text.
     inline_values: bool = true,
+    /// Blink the cursor mnml puts on the focused editor or text field
+    /// — it picks the blinking DECSCUSR variant, and the terminal owns
+    /// the clock, so mnml runs none of its own. A terminal pane's
+    /// cursor follows `ui.pty_cursor.blink` and its child's request
+    /// instead.
     cursor_blink: bool = false,
     semantic_tokens_viewport: bool = false,
     // changed: the Rust config had only the viewport switch; the layer
@@ -192,6 +197,8 @@ pub const CoverageChipMode = enum { both, feature, code, ticker };
 pub const ExpandIndicator = enum { chevron, triangle };
 pub const TabIndicator = enum { block, rule, line, quarter, quarter_track };
 pub const TopBarClusterMode = enum { auto, expanded, compact };
+/// `terminal` = follow the editing mode (see `ui.cursor_shape`).
+pub const CursorShape = enum { terminal, block, bar, underline };
 pub const TabBarAiIcon = enum { none, claude_code, codex, both };
 pub const AiLayoutMode = enum { grid, tabs };
 /// Which mark a terminal wears in the chrome (`app/terminal_glyph.zig`).
@@ -376,6 +383,14 @@ pub const Ui = struct {
     terminal_label: []const u8 = "terminal",
     /// How a terminal pane draws its child's cursor.
     pty_cursor: PtyCursor = .{},
+    /// The shape of the cursor mnml puts on the focused editor or text
+    /// field. `terminal` — the default — follows the editing mode, as
+    /// vim does: a block in NORMAL and VISUAL, a bar in INSERT (and in
+    /// modeless editing, which is an insert caret the whole time), an
+    /// underline in REPLACE. Any other value is that one shape
+    /// everywhere. A terminal pane's cursor is never overridden: its
+    /// child asked for a shape over DECSCUSR and gets it.
+    cursor_shape: CursorShape = .terminal,
     /// A program mnml spawns — exec-bearing. Empty = the OS default.
     external_browser: []const u8 = "",
     /// The mark every terminal wears in the chrome — a pty tab, the

@@ -59,6 +59,7 @@ const picker_mod = @import("ui/picker.zig");
 const find_bar_mod = @import("ui/find_bar.zig");
 const toast_mod = @import("ui/toast.zig");
 const editor_view = @import("ui/editor_view.zig");
+const cursor_mod = @import("app/cursor.zig");
 const todos = @import("todos.zig");
 const notes = @import("notes.zig");
 const findings = @import("findings.zig");
@@ -1106,7 +1107,25 @@ pub const App = struct {
     bell_pending: bool = false,
     pane_cols: usize = 80,
     /// Where the last render put the terminal cursor, if visible.
+    /// Written by every surface that takes typing as it draws; draw
+    /// order is the precedence, so the last writer of a frame is the
+    /// frontmost one (`app/cursor.zig`).
     cursor_pos: ?editor_view.Cursor = null,
+    /// The shape that goes with `cursor_pos`. Reset to `bar` every
+    /// frame — a text field is always a bar — and set by the two panes
+    /// that have an opinion: an editor (from its mode) and a terminal
+    /// pane (from its child's DECSCUSR).
+    cursor_shape: cursor_mod.Shape = .bar,
+    /// Whether that cursor blinks. Reset to `editor.cursor_blink` every
+    /// frame; a terminal pane's child asks for its own.
+    cursor_blink: bool = false,
+    /// A pty child asked for this cursor, so `ui.cursor_shape` leaves
+    /// it alone.
+    cursor_from_child: bool = false,
+    /// What the frame resolved: the one cursor, or null for hidden.
+    /// `render` fills it, the terminal draws it, and `status.json`
+    /// reports it so a headless script can see it too.
+    cursor_out: ?cursor_mod.Want = null,
 
     clipboard: Clipboard,
     /// `mA`…`mZ`: cross-file marks, persisted (`marks_store.zig`).

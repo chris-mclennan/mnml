@@ -65,6 +65,10 @@ otherwise. Copy what you need; leave the rest out.
         // server you named in .lsp does; .ignore says nothing anywhere.
         .lsp_missing_defaults = .quiet, // .quiet | .toast | .ignore
         .inline_values = true, // while the debugger is stopped: `  x = 1` after a line that names x
+        // Blink the cursor mnml puts on the focused editor or text
+        // field: it picks the blinking DECSCUSR variant and the
+        // terminal owns the clock, so mnml runs no blink of its own.
+        // A terminal pane follows .ui.pty_cursor.blink instead.
         .cursor_blink = false,
         .semantic_tokens_viewport = false,
         .semantic_tokens = true, // lay a server's semantic tokens over the syntax highlighting (off leaves tree-sitter alone)
@@ -260,6 +264,16 @@ otherwise. Copy what you need; leave the rest out.
             .unfocused = .hollow, // .hollow | .dim | .none
             .blink = true,
         },
+        // The shape of the cursor mnml puts on the focused editor or
+        // text field. .terminal follows the editing mode, as vim does:
+        //   NORMAL / VISUAL  a block
+        //   INSERT           a bar — and so does modeless (standard)
+        //                    editing, which is an insert caret all the time
+        //   REPLACE          an underline
+        // Any other value is that one shape everywhere. A terminal
+        // pane is never overridden: its child asked for a shape over
+        // DECSCUSR and gets it (.pty_cursor above).
+        .cursor_shape = .terminal, // .terminal | .block | .bar | .underline
         .external_browser = "", // a program to spawn; "" = the OS default (exec-bearing)
         // The mark every terminal wears — a pty tab's icon, the strip's
         // terminal chip. .ghostty is Ghostty's ghost, which mnml bakes
