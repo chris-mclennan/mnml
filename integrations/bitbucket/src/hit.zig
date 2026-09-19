@@ -33,6 +33,11 @@ pub const Target = union(enum) {
     chip: Chip,
     /// A row of the list, by its index in this frame's `VisibleRow`s.
     row: usize,
+    /// The chevron at the head of a tree row — a repo header, or a
+    /// pull request with builds to fold out. It is the row's own
+    /// two cells, so a click there FOLDS while a click anywhere else
+    /// on the row selects it, the way the tracker pane's tree works.
+    chevron: usize,
     /// A chip on a pull-request row. A DIM `[ Merge ]` registers no
     /// target at all, so a stray click there cannot merge anything —
     /// but it does register `merge_blocked`, which is what lets a

@@ -1845,6 +1845,23 @@ pub const App = struct {
                 }
                 if (app.detail_visible) try app.ensureDetail((try app.visible(a)).rows);
             },
+            // The chevron is the row's fold: it selects the row and
+            // folds it, whatever kind of row it is and whatever state
+            // that row's pull request is in. A click anywhere else on
+            // an OPEN pull request only selects — its builds used to be
+            // unreachable by the pointer altogether, because the row's
+            // own click path folded a merged one and nothing else.
+            .chevron => |i| {
+                app.select(view.rows, i);
+                if (button == .right) {
+                    const items = app.menuFor(view.rows, i);
+                    if (items.len > 0) {
+                        app.menu = .{ .row = i, .col = col, .y = row, .items = items };
+                        app.mode = .menu;
+                    }
+                } else try app.activate(a, view.rows);
+                if (app.detail_visible) try app.ensureDetail((try app.visible(a)).rows);
+            },
             // A hint entry and a key-sheet row both run exactly what
             // their chord runs: the pointer reaches what the keyboard
             // does, and there is no second table to keep in step.

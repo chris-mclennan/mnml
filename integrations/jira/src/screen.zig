@@ -93,17 +93,21 @@ pub const Styles = struct {
     }
 };
 
-pub const open_glyph = "\u{F47C}";
-pub const closed_glyph = "\u{F460}";
-pub const open_ascii = "v";
-pub const closed_ascii = ">";
-pub const refresh_nerd = "\u{eb37}";
-pub const refresh_ascii = "\u{21ba}";
-pub const search_nerd = "\u{F0349}";
-pub const search_ascii = "/";
-pub const placeholder_unfocused = "/ filter";
-pub const placeholder_focused = "type to filter…";
-pub const placeholder_focused_ascii = "type to filter...";
+// The chrome's own glyphs and words. This file kept a second copy of
+// every one of them — two places for `/ filter` to be spelled, two
+// places for a Nerd Font codepoint to be pinned.
+const Ch = sdk.pane.chrome;
+pub const open_glyph = Ch.open_glyph;
+pub const closed_glyph = Ch.closed_glyph;
+pub const open_ascii = Ch.open_ascii;
+pub const closed_ascii = Ch.closed_ascii;
+pub const refresh_nerd = Ch.refresh_nerd;
+pub const refresh_ascii = Ch.refresh_ascii;
+pub const search_nerd = Ch.search_nerd;
+pub const search_ascii = Ch.search_ascii;
+pub const placeholder_unfocused = Ch.placeholder_unfocused;
+pub const placeholder_focused = Ch.placeholder_focused;
+pub const placeholder_focused_ascii = Ch.placeholder_focused_ascii;
 
 /// The rows the chrome takes above the body, computed once per paint.
 pub const Layout = struct {
@@ -317,22 +321,54 @@ pub const Painter = struct {
 
     // ─── the toolbar chips ───────────────────────────────────────────
 
-    const ChipSpec = struct { text_: []const u8, target: hit.Chip, style: Style };
+    /// `pill` marks the search chip: it is the toolkit's filter pill
+    /// laid in the toolbar's chip geometry rather than across the pane,
+    /// so the glyph, the placeholder and the caret are the ones the
+    /// forge pane paints. `text_` is then only how WIDE it is.
+    const ChipSpec = struct { text_: []const u8, target: hit.Chip, style: Style, pill: bool = false };
+
+    /// What the search chip shows: the filter's text, or nothing —
+    /// the pill supplies its own placeholder either side of the
+    /// keyboard, so this must not.
+    fn filterText(p: *const Painter) []const u8 {
+        const f = p.a.filter orelse return "";
+        return f.edit.text();
+    }
+
+    /// The widest thing the pill will paint inside itself: the query,
+    /// or the placeholder it stands in for while the query is empty.
+    /// The chip has to be wide enough for whichever it is, or the pill
+    /// refuses the rectangle and the toolbar paints a gap.
+    fn filterShown(p: *const Painter) []const u8 {
+        const q = p.filterText();
+        if (q.len > 0) return q;
+        const editing = if (p.a.filter) |f| f.editing else false;
+        if (!editing) return placeholder_unfocused;
+        return if (p.ui.ascii) placeholder_focused_ascii else placeholder_focused;
+    }
+
+    /// The caret's BYTE offset into that text, which is what the pill
+    /// wants. The chip used to paste a `▏` on the end of the
+    /// string, so the caret was always at the end however far back the
+    /// arrow keys had walked it.
+    fn filterCaret(p: *const Painter) usize {
+        const f = p.a.filter orelse return 0;
+        return f.edit.cursor;
+    }
 
     fn chipList(p: *Painter) Allocator.Error![]const ChipSpec {
         const a = p.a;
         const t = a.tab();
         var out: std.ArrayList(ChipSpec) = .empty;
         const arena = p.arena;
-        // The search pill: the filter's text, or the placeholder.
-        const glyph = if (p.ui.ascii or !p.ui.nerd) search_ascii else search_nerd;
-        const search_text = blk: {
-            if (a.filter) |f| {
-                if (f.editing) break :blk try std.fmt.allocPrint(arena, " {s} {s}▏", .{ glyph, if (f.edit.text().len > 0) f.edit.text() else (if (p.ui.ascii) placeholder_focused_ascii else placeholder_focused) });
-                break :blk try std.fmt.allocPrint(arena, " {s} {s} ", .{ glyph, f.edit.text() });
-            }
-            break :blk try std.fmt.allocPrint(arena, " {s} {s} ", .{ glyph, placeholder_unfocused });
-        };
+        // The search chip IS the toolkit's filter pill, laid in the
+        // toolbar's chip geometry rather than across the pane. All this
+        // has to decide is how wide it is: the pill puts its glyph one
+        // cell in and its text three, and the caret lands on the cell
+        // after the text, which the chip's own trailing cell covers.
+        const search_w: u16 = 4 + text.width(p.filterShown());
+        const search_text = try arena.alloc(u8, search_w);
+        @memset(search_text, ' ');
         const search_style: Style = if (a.filter != null) p.s.chip_active else p.s.chip_style;
         if (t.cfg.isKanban()) {
             const board_name = if (t.board_id != 0) try a.boardName(t.board_id) else "default";
@@ -344,7 +380,7 @@ pub const Painter = struct {
                 break :blk "active";
             };
             try out.append(arena, .{ .text_ = try chipText(arena, "sprint", sprint_name), .target = .sprint, .style = p.s.chip_style });
-            try out.append(arena, .{ .text_ = search_text, .target = .search, .style = search_style });
+            try out.append(arena, .{ .text_ = search_text, .target = .search, .style = search_style, .pill = true });
             // The avatar cluster is painted by paintToolbar itself.
             try out.append(arena, .{ .text_ = " version ", .target = .version, .style = p.s.chip_style });
             try out.append(arena, .{ .text_ = if (t.active_epics.count() > 0) try std.fmt.allocPrint(arena, " epic: {d} ", .{t.active_epics.count()}) else " epic ", .target = .epic, .style = if (t.active_epics.count() > 0) p.s.chip_active else p.s.chip_style });
@@ -368,7 +404,7 @@ pub const Painter = struct {
             for (t.vars) |v| try out.append(arena, .{ .text_ = try chipText(arena, v.name, try varSummary(arena, v)), .target = .vars, .style = p.s.chip_style });
             try out.append(arena, .{ .text_ = " E edit ", .target = .vars, .style = p.s.chip_style });
         }
-        try out.append(arena, .{ .text_ = search_text, .target = .search, .style = search_style });
+        try out.append(arena, .{ .text_ = search_text, .target = .search, .style = search_style, .pill = true });
         try out.append(arena, .{ .text_ = try chipText(arena, "assignee", try p.assigneeLabel(t)), .target = .assignee, .style = if (t.active_assignees.count() > 0) p.s.chip_active else p.s.chip_style });
         try out.append(arena, .{ .text_ = try chipText(arena, "type", if (t.issue_type.len > 0) t.issue_type else "—"), .target = .type, .style = if (t.issue_type.len > 0) p.s.chip_active else p.s.chip_style });
         try out.append(arena, .{ .text_ = try chipText(arena, "status", t.scope.label()), .target = .status, .style = if (t.scope != .all) p.s.chip_active else p.s.chip_style });
@@ -412,8 +448,19 @@ pub const Painter = struct {
                 x = 1;
                 if (y >= p.lay.status_y -| 2) break;
             }
-            _ = p.put(x, y, max_x -| x, c.text_, c.style);
-            try p.hitAdd(.{ .x = x, .y = y, .w = @min(w, max_x -| x), .h = 1 }, .{ .chip = c.target });
+            if (c.pill) {
+                const editing_pill = if (p.a.filter) |f| f.editing else false;
+                try p.c.filterPill(
+                    .{ .x = x, .y = y, .w = @min(w, max_x -| x), .h = 1 },
+                    p.filterText(),
+                    p.filterCaret(),
+                    editing_pill,
+                    .{ .chip = c.target },
+                );
+            } else {
+                _ = p.put(x, y, max_x -| x, c.text_, c.style);
+                try p.hitAdd(.{ .x = x, .y = y, .w = @min(w, max_x -| x), .h = 1 }, .{ .chip = c.target });
+            }
             x += w + 1;
             if (c.target == .search and p.a.tab().cfg.isKanban()) {
                 const r = try p.paintAvatars(x, y, max_x);
@@ -653,10 +700,10 @@ pub const Painter = struct {
                                 const cap = if (bst == .idle) b.label else sdk.pane.action.caption(&ab, bst, sdk.pane.merge.label, a.spin, p.ui.ascii);
                                 const lw = text.width(cap);
                                 if (bst != .idle) {
-                                    _ = p.put(bx, y, lw, cap, sdk.pane.action.styleOf(p.ui.th, bst));
+                                    _ = p.c.actionChip(bx, y, lw, cap, sdk.pane.action.chipOf(p.ui.th, bst, .final));
                                     try p.hitAdd(.{ .x = bx, .y = y, .w = lw, .h = 1 }, .{ .pr_button = .{ .row = idx, .which = .merge } });
                                 } else {
-                                    _ = p.put(bx, y, lw, cap, sdk.pane.merge.styleOf(p.ui.th, ready));
+                                    _ = p.c.actionChip(bx, y, lw, cap, sdk.pane.merge.chipOf(p.ui.th, ready));
                                     if (sdk.pane.merge.isPressable(ready)) {
                                         try p.hitAdd(.{ .x = bx, .y = y, .w = lw, .h = 1 }, .{ .pr_button = .{ .row = idx, .which = .merge } });
                                     } else {
@@ -666,8 +713,21 @@ pub const Painter = struct {
                                 bx += lw + 1;
                                 continue;
                             }
-                            const lw = text.width(b.label);
-                            _ = p.put(bx, y, lw, b.label, p.s.chip_style);
+                            // `[ Open ]` folds the row and changes
+                            // nothing, so it is a grey chip and has no
+                            // session to remember. `[ Review ]` starts
+                            // one, so it wears what that session is
+                            // doing, the same as every other button
+                            // that dispatches.
+                            var rb: [32]u8 = undefined;
+                            const rst = if (b.which == .review) blk: {
+                                var kb: [256]u8 = undefined;
+                                const rk = std.fmt.bufPrint(&kb, "{s}\u{0}{s}", .{ iss.key, pr.id }) catch "";
+                                break :blk a.actions.state(rk, "review");
+                            } else .idle;
+                            const cap = if (rst == .idle) b.label else sdk.pane.action.caption(&rb, rst, "Review", a.spin, p.ui.ascii);
+                            const lw = text.width(cap);
+                            _ = p.c.actionChip(bx, y, lw, cap, sdk.pane.action.chipOf(p.ui.th, rst, sdk.pane.action.kindOf(b.label)));
                             try p.hitAdd(.{ .x = bx, .y = y, .w = lw, .h = 1 }, .{ .pr_button = .{ .row = idx, .which = b.which } });
                             bx += lw + 1;
                         }
@@ -731,7 +791,7 @@ pub const Painter = struct {
             const cap = sdk.pane.action.caption(&buf, st, word, p.a.spin, p.ui.ascii);
             const lw = text.width(cap);
             if (x + lw > x0 + max_w) break;
-            _ = p.put(x, y, lw, cap, sdk.pane.action.styleOf(p.ui.th, st));
+            _ = p.c.actionChip(x, y, lw, cap, sdk.pane.action.chipOf(p.ui.th, st, sdk.pane.action.kindOf(word)));
             try p.hitAdd(.{ .x = x, .y = y, .w = lw, .h = 1 }, .{ .action = .{ .issue = @intCast(issue_idx), .button = @intCast(bi) } });
             x += lw + 1;
         }
@@ -942,7 +1002,7 @@ pub const Painter = struct {
         const y = p.lay.status_y;
         const w = p.cols();
         var x: u16 = 1;
-        const status = a.status.items;
+        var status: []const u8 = a.status.items;
         const hint: []const u8 = blk: {
             if (a.help) break :blk "j/k scroll · Esc close";
             if (a.modal != null) break :blk "j/k · PgUp/PgDn scroll · Esc close";
@@ -954,13 +1014,10 @@ pub const Painter = struct {
             if (!a.hasTabs()) break :blk "r refresh · q quit";
             break :blk "";
         };
-        if (status.len > 0) {
-            x += p.putFit(x, y, w -| x, status, p.s.plain);
-            x += 2;
-        }
         // A dim `[ Merge ]` owes the reader a reason, and the hint row
         // is where it goes: the pointer is already there.
         if (a.hoverNote().len > 0) {
+            if (status.len > 0) x += p.putFit(x, y, w -| x, status, p.s.plain) + 2;
             _ = p.putFit(x, y, w -| x, a.hoverNote(), p.s.warn_style);
             return;
         }
@@ -976,49 +1033,37 @@ pub const Painter = struct {
                 if (iss) |i| for (dispatch.buttonsForTicket(i)) |b| {
                     const e = a.actions.get(i.key, b.kind());
                     if (e.state != .failed or e.detail.len == 0) continue;
-                    x += p.putFit(x, y, w -| x, p.fmt("{s}: {s}", .{ i.key, e.detail }), p.s.err_style);
-                    x += 2;
+                    status = p.fmt("{s}: {s}", .{ i.key, e.detail });
                     break;
                 };
             }
         }
         if (hint.len > 0) {
+            if (status.len > 0) x += p.putFit(x, y, w -| x, status, p.s.plain) + 2;
             _ = p.putFit(x, y, w -| x, hint, p.s.muted);
             return;
         }
-        // The section help row: `t transition · a assignee · …` from the
-        // bindings that apply, whole entries only, as many as fit —
-        // each one a click target that runs what its key runs, and a
-        // trailing `? keys` that opens the sheet.
+        // The section help row, from the toolkit: the bindings that
+        // apply, each entry a click target that runs what its key runs,
+        // and the `? keys` that opens the sheet last — where the
+        // drop-from-the-front rule leaves it standing however narrow the
+        // pane gets.
+        //
+        // It was hand-rolled here, with its own room-for-`? keys`
+        // arithmetic and its own skip so the row did not end
+        // `? keys · ? keys`. The toolkit does both, and the forge
+        // pane now gets the same row out of the same code.
         const list = try keymap.hints(p.arena, a.context());
-        const keys_entry = "\u{b7} ? keys";
-        const kw = text.width(keys_entry);
-        // `? keys` is the one entry that has to survive: it is the door
-        // to every chord the row could not fit. Its room is taken out
-        // first, so which of the others fit no longer turns on how long
-        // the status happens to be — and the binding that says the same
-        // thing is skipped in the loop, or the row ends `? keys · ? keys`.
-        const room = w -| kw;
-        var n: usize = 0;
+        var entries: std.ArrayList(Chrome.HintSpec) = .empty;
         for (list) |b| {
-            if (b.action == .help) continue;
-            const i = n;
-            n += 1;
             var kb: [16]u8 = undefined;
-            const label = if (b.short.len > 0) b.short else b.label;
-            const key = keymap.displayKey(&kb, b.keys[0]);
-            const entry = if (i == 0) p.fmt("{s} {s}", .{ key, label }) else p.fmt("· {s} {s}", .{ key, label });
-            const ew = text.width(entry);
-            if (x + ew > room) break;
-            const at = x;
-            x += p.put(x, y, ew, entry, p.s.muted) + 1;
-            const lead: u16 = if (i == 0) 0 else 2;
-            try p.hitAdd(.{ .x = at + lead, .y = y, .w = ew -| lead, .h = 1 }, .{ .hint = b.action });
+            try entries.append(p.arena, .{
+                .key = try p.arena.dupe(u8, keymap.displayKey(&kb, b.keys[0])),
+                .title = if (b.short.len > 0) b.short else b.label,
+                .target = .{ .hint = b.action },
+            });
         }
-        if (x + kw <= w) {
-            _ = p.put(x, y, kw, keys_entry, p.s.muted);
-            try p.hitAdd(.{ .x = x + 2, .y = y, .w = kw - 2, .h = 1 }, .{ .hint = .help });
-        }
+        try p.c.hintRow(y, status, entries.items);
     }
 
     // ─── the overlays ────────────────────────────────────────────────
@@ -1674,9 +1719,13 @@ test "Work: the header, the tab strip, the mode chips, the columns, the tree row
     // It still answers, with the reason it is dim.
     try testing.expectEqual(hit.Target{ .merge_blocked = 3 }, a.hits.at(merge_x + 2, 8).?);
     try testing.expectEqual(hit.Target{ .pr_button = .{ .row = 3, .which = .open } }, a.hits.at((try colOfText(ar, &f, 8, "[ Open ]")).? + 2, 8).?);
-    // The hint row comes from the bindings, not a string.
-    const last = try rowText(ar, &f, 39);
-    try testing.expect(std.mem.indexOf(u8, last, "t transition · a assignee · S select") != null);
+    // The hint row comes from the bindings, not a string, and it is the
+    // toolkit's: entries shed from the FRONT, so the ones that always
+    // apply survive a narrow pane and `? keys` — the door to the rest
+    // — is the last thing standing.
+    const last = std.mem.trimEnd(u8, try rowText(ar, &f, 39), " ");
+    try testing.expect(std.mem.indexOf(u8, last, "a assignee · S select · f fix version") != null);
+    try testing.expect(std.mem.endsWith(u8, last, "? keys"));
     // Every painted row is a hit, and a click on the ticket's row
     // selects that row.
     try testing.expectEqual(hit.Target{ .row = 1 }, a.hits.at(30, 6).?);
@@ -1722,6 +1771,17 @@ test "Work: the detail pane, the filter pill while typing, the bulk marks, and t
     try paint(ar, &f, a, .{});
     try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 3), "\u{F0349} vou▏") != null);
     try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 39), "type to filter · Enter commit · Esc cancel") != null);
+    // The chip is the toolkit's pill now, so the caret sits WHERE the
+    // caret is. It used to be a `▏` pasted on the end of the string,
+    // which meant the arrow keys moved a caret the chip never showed.
+    _ = try a.onKey("left");
+    _ = try a.onKey("left");
+    try paint(ar, &f, a, .{});
+    try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 3), "\u{F0349} v▏u") != null);
+    _ = try a.onKey("right");
+    _ = try a.onKey("right");
+    try paint(ar, &f, a, .{});
+    try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 3), "\u{F0349} vou▏") != null);
     _ = try a.onKey("enter");
     try paint(ar, &f, a, .{});
     try testing.expect(std.mem.startsWith(u8, try rowText(ar, &f, 0), "▌JIRA WORK (1 of 3)"));
@@ -1871,8 +1931,11 @@ test "the narrow pane: 80x24 keeps the chips whole by wrapping, the columns shri
     try testing.expect(std.mem.indexOf(u8, r3, " status: All") != null or std.mem.indexOf(u8, r2, " status: All") != null);
     try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 5), "KEY") != null or std.mem.indexOf(u8, r3, "KEY") != null);
     try testing.expect((try findRow(ar, &f, "ENG-2")) != null);
-    const last = try rowText(ar, &f, 23);
-    try testing.expect(std.mem.indexOf(u8, last, "t transition") != null);
+    // 80 columns sheds most of the row; what is left still reads, and
+    // still ends at the door.
+    const last = std.mem.trimEnd(u8, try rowText(ar, &f, 23), " ");
+    try testing.expect(std.mem.indexOf(u8, last, "d detail") != null);
+    try testing.expect(std.mem.endsWith(u8, last, "? keys"));
     // Wheel on the list moves the cursor.
     try a.wheel(20, 10, -1);
     try testing.expect(a.tab().selected > 0);

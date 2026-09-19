@@ -80,18 +80,123 @@ pub fn caption(buf: []u8, state: State, label: []const u8, tick: usize, ascii: b
     };
 }
 
-/// The colour each state wears: a pressed button is the accent, a
-/// failed one the bad colour, an untouched one an ordinary chip.
-pub fn styleOf(th: Theme, state: State) Style {
-    return switch (state) {
-        .idle => th.chip(),
-        .running, .view => th.chipActiveSoft(),
-        // A session waiting on the user is not an error and not
-        // progress: the warning colour, the same one the SESSIONS
-        // panel's `wait` badge wears.
-        .waiting => .{ .fg = th.yellow, .bg = th.chip_bg },
-        .failed => .{ .fg = th.red, .bg = th.chip_bg },
+// ─── what a button does, and the colour that says so ─────────────────────
+
+/// What pressing a button COSTS, which is what decides its colour.
+/// Every button used to paint in one grey chip, so `[ Open ]` — which
+/// goes somewhere and changes nothing — looked exactly like
+/// `[ Merge ]`, which is the one press in either pane you cannot take
+/// back. The word is all a reader has; the colour now says which
+/// family the word is in.
+pub const Kind = enum {
+    /// Goes somewhere and changes nothing: `Open`, and the `[ view ]`
+    /// a finished session leaves behind.
+    navigation,
+    /// Starts a session that READS and reports: `Review`, `Test`.
+    review,
+    /// Starts a session that WRITES: `Implement`, `Fix`, `Triage`.
+    dispatch,
+    /// The last one, and the irreversible one: `Merge`, `Decline`.
+    final,
+};
+
+/// The kind a button's word belongs to. The word is matched without
+/// its brackets or its spaces, so a caller may pass either `Merge` or
+/// `[ Merge ]`.
+///
+/// A word nobody has classified is `dispatch`: that is the family
+/// that grows (a pane adds an action long before it adds a way to
+/// navigate), and a new action painted in the pane's own colour reads
+/// as this app's doing rather than as a link or as something final.
+pub fn kindOf(word: []const u8) Kind {
+    const w = std.mem.trim(u8, word, "[] ");
+    if (std.ascii.eqlIgnoreCase(w, "open") or std.ascii.eqlIgnoreCase(w, view_label)) return .navigation;
+    if (std.ascii.eqlIgnoreCase(w, "review") or std.ascii.eqlIgnoreCase(w, "test")) return .review;
+    if (std.ascii.eqlIgnoreCase(w, "merge") or std.ascii.eqlIgnoreCase(w, "decline")) return .final;
+    return .dispatch;
+}
+
+/// The host theme role each kind paints in. Never a literal: a pane
+/// that hard-codes blue picks the terminal's blue and ignores the
+/// theme it is mounted in.
+pub fn roleColor(th: Theme, kind: Kind) theme_mod.Color {
+    return switch (kind) {
+        .navigation => th.muted,
+        .review => th.blue,
+        .dispatch => dispatchColor(th),
+        .final => th.green,
     };
+}
+
+/// A dispatch button wears the pane's OWN colour: that is the app
+/// saying it is about to go and do something.
+///
+/// Two of the five official manifests name a chip colour that is
+/// already spoken for, though — Jira Work's is blue, which is
+/// `review`; Jira Fix Versions' is green, which is `final` — and a
+/// `[ Triage ]` painted exactly like the `[ Review ]` two rows above
+/// it, or exactly like a ready `[ Merge ]`, is the one thing this
+/// whole map exists to prevent. So the brand is used when it is free
+/// and the next colour on a fixed ladder when it is not.
+fn dispatchColor(th: Theme) theme_mod.Color {
+    const taken = [_]theme_mod.Color{ th.blue, th.green };
+    const ladder = [_]theme_mod.Color{ th.brand, th.purple, th.orange, th.cyan };
+    for (ladder) |c| {
+        var free = true;
+        for (taken) |t| {
+            if (sameColor(c, t)) free = false;
+        }
+        if (free) return c;
+    }
+    return th.brand;
+}
+
+fn sameColor(a: theme_mod.Color, b: theme_mod.Color) bool {
+    return switch (a) {
+        .index => |i| b == .index and b.index == i,
+        .rgb => |v| b == .rgb and std.mem.eql(u8, &v, &b.rgb),
+    };
+}
+
+/// The two styles one button is painted in. The brackets are
+/// punctuation and stay muted; the word carries the colour. Splitting
+/// them is what keeps a row of three buttons from reading as three
+/// coloured blocks — the eye lands on the words, which is where the
+/// meaning is.
+pub const Chip = struct {
+    bracket: Style,
+    word: Style,
+
+    /// The one style a caller with nowhere to put two of them uses.
+    pub fn flat(c: Chip) Style {
+        return c.word;
+    }
+};
+
+/// What one button is painted in, given what it says and what it does.
+/// A state past `idle` is the host's word about a session and outranks
+/// the kind — a spinner is a spinner whichever button started it.
+pub fn chipOf(th: Theme, state: State, kind: Kind) Chip {
+    const punctuation: Style = .{ .fg = th.muted };
+    return switch (state) {
+        .idle => .{ .bracket = punctuation, .word = .{ .fg = roleColor(th, kind), .mods = .{ .bold = true } } },
+        // A session that is running, or one you can go and read, wears
+        // the plain foreground: it is no longer offering to do the
+        // thing its word named.
+        .running, .view => .{ .bracket = punctuation, .word = .{ .fg = th.fg } },
+        // Waiting on the user is not an error and not progress: the
+        // warning colour, the same one the SESSIONS panel's `wait`
+        // badge wears.
+        .waiting => .{ .bracket = punctuation, .word = .{ .fg = th.yellow } },
+        .failed => .{ .bracket = punctuation, .word = .{ .fg = th.red } },
+    };
+}
+
+/// The colour each state wears, for a caller that paints the caption in
+/// one style. `kind` decides an `idle` button; the rest are the
+/// session's.
+pub fn styleOf(th: Theme, state: State, kind: Kind) Style {
+    return chipOf(th, state, kind).flat();
 }
 
 /// What a press means, given what the button says now.
@@ -249,6 +354,119 @@ test "a button says its word, then a spinner, then view, then a cross" {
     while (i < spinner_frames.len) : (i += 1) {
         try testing.expectEqual(w0, width(caption(&buf, .running, "Triage", i, false)));
     }
+}
+
+test "a button's colour says what pressing it costs, and no two families collide" {
+    // A theme where every role is its own colour, so a role swapped
+    // for another shows up rather than hiding behind a shared default.
+    const th = Theme.fromHelloBranded(.{
+        .fg = .{ .rgb = .{ 200, 200, 200 } },
+        .muted = .{ .rgb = .{ 90, 90, 90 } },
+        .blue = .{ .rgb = .{ 97, 175, 239 } },
+        .green = .{ .rgb = .{ 152, 195, 121 } },
+        .purple = .{ .rgb = .{ 198, 120, 221 } },
+        .orange = .{ .rgb = .{ 209, 154, 102 } },
+        .cyan = .{ .rgb = .{ 86, 182, 194 } },
+        .accent = .{ .rgb = .{ 97, 175, 239 } },
+    }, "magenta");
+
+    // The word decides the family, with or without its brackets.
+    try testing.expectEqual(Kind.navigation, kindOf("Open"));
+    try testing.expectEqual(Kind.navigation, kindOf("[ Open ]"));
+    try testing.expectEqual(Kind.navigation, kindOf("view"));
+    try testing.expectEqual(Kind.review, kindOf("Review"));
+    try testing.expectEqual(Kind.review, kindOf("[ Test ]"));
+    try testing.expectEqual(Kind.dispatch, kindOf("Triage"));
+    try testing.expectEqual(Kind.dispatch, kindOf("Implement"));
+    try testing.expectEqual(Kind.dispatch, kindOf("Fix"));
+    try testing.expectEqual(Kind.final, kindOf("Merge"));
+    try testing.expectEqual(Kind.final, kindOf("Decline"));
+    // A word nobody has classified is a dispatch: that is the family
+    // that grows, and the pane's own colour is the safe thing to say.
+    try testing.expectEqual(Kind.dispatch, kindOf("Backport"));
+
+    // Four families, four colours, all four different.
+    const roles = [_]theme_mod.Color{
+        roleColor(th, .navigation),
+        roleColor(th, .review),
+        roleColor(th, .dispatch),
+        roleColor(th, .final),
+    };
+    for (roles, 0..) |a, i| for (roles[0..i]) |b| try testing.expect(!sameColor(a, b));
+    try testing.expectEqual(th.muted, roles[0]);
+    try testing.expectEqual(th.blue, roles[1]);
+    // The brand is free here, so a dispatch wears it.
+    try testing.expectEqual(th.purple, roles[2]);
+    try testing.expectEqual(th.green, roles[3]);
+
+    // The brackets are punctuation and stay muted; the word carries
+    // the colour, and neither names a ground — a button on the
+    // cursor's row must keep that row's fill, not punch a hole in it.
+    const c = chipOf(th, .idle, .review);
+    try testing.expectEqual(th.muted, c.bracket.fg.?);
+    try testing.expectEqual(th.blue, c.word.fg.?);
+    try testing.expect(c.bracket.bg == null and c.word.bg == null);
+}
+
+test "a brand already spoken for steps down the ladder rather than repeating a role" {
+    // Jira Work's manifest chip is blue, which is `review`.
+    const work = Theme.fromHelloBranded(.{
+        .blue = .{ .rgb = .{ 97, 175, 239 } },
+        .green = .{ .rgb = .{ 152, 195, 121 } },
+        .purple = .{ .rgb = .{ 198, 120, 221 } },
+        .orange = .{ .rgb = .{ 209, 154, 102 } },
+        .cyan = .{ .rgb = .{ 86, 182, 194 } },
+    }, "blue");
+    try testing.expect(sameColor(work.brand, work.blue));
+    try testing.expectEqual(work.purple, roleColor(work, .dispatch));
+
+    // Jira Fix Versions' is green, which is `final` — a `[ Triage ]`
+    // that paints like a ready `[ Merge ]` is worse than a grey one.
+    const fixv = Theme.fromHelloBranded(.{
+        .blue = .{ .rgb = .{ 97, 175, 239 } },
+        .green = .{ .rgb = .{ 152, 195, 121 } },
+        .purple = .{ .rgb = .{ 198, 120, 221 } },
+        .orange = .{ .rgb = .{ 209, 154, 102 } },
+        .cyan = .{ .rgb = .{ 86, 182, 194 } },
+    }, "green");
+    try testing.expect(sameColor(fixv.brand, fixv.green));
+    try testing.expectEqual(fixv.purple, roleColor(fixv, .dispatch));
+
+    // A theme whose purple is its blue again keeps stepping.
+    const odd = Theme.fromHelloBranded(.{
+        .blue = .{ .rgb = .{ 1, 1, 1 } },
+        .green = .{ .rgb = .{ 2, 2, 2 } },
+        .purple = .{ .rgb = .{ 1, 1, 1 } },
+        .orange = .{ .rgb = .{ 3, 3, 3 } },
+        .cyan = .{ .rgb = .{ 4, 4, 4 } },
+    }, "green");
+    try testing.expectEqual(odd.orange, roleColor(odd, .dispatch));
+}
+
+test "a session's state outranks the button's family, and the state colours are unchanged" {
+    const th = Theme.fromHelloBranded(.{
+        .fg = .{ .rgb = .{ 200, 200, 200 } },
+        .muted = .{ .rgb = .{ 90, 90, 90 } },
+        .blue = .{ .rgb = .{ 97, 175, 239 } },
+        .green = .{ .rgb = .{ 152, 195, 121 } },
+        .yellow = .{ .rgb = .{ 229, 192, 123 } },
+        .red = .{ .rgb = .{ 224, 108, 117 } },
+        .purple = .{ .rgb = .{ 198, 120, 221 } },
+    }, "magenta");
+    // A spinner is a spinner whichever button started it: the four
+    // kinds agree on every state past `idle`.
+    for ([_]State{ .running, .waiting, .view, .failed }) |st| {
+        const a = chipOf(th, st, .navigation);
+        for ([_]Kind{ .review, .dispatch, .final }) |k| {
+            const b = chipOf(th, st, k);
+            try testing.expectEqual(a.word.fg, b.word.fg);
+        }
+    }
+    try testing.expectEqual(th.yellow, chipOf(th, .waiting, .final).word.fg.?);
+    try testing.expectEqual(th.red, chipOf(th, .failed, .final).word.fg.?);
+    try testing.expectEqual(th.fg.?, chipOf(th, .view, .final).word.fg.?);
+    // …and an idle one does not: that is the whole point.
+    try testing.expect(!sameColor(chipOf(th, .idle, .navigation).word.fg.?, chipOf(th, .idle, .final).word.fg.?));
 }
 
 test "what a press means follows what the button says" {

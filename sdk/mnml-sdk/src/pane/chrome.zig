@@ -16,6 +16,7 @@ const theme_mod = @import("theme.zig");
 const hit = @import("hit.zig");
 const text_mod = @import("text.zig");
 const build_mod = @import("build.zig");
+const action_mod = @import("action.zig");
 const wire_mod = @import("../wire.zig");
 
 pub const Frame = frame_mod.Frame;
@@ -269,8 +270,11 @@ pub fn Painter(comptime Target: type) type {
             x += 1;
             if (query.len == 0) {
                 const ph: []const u8 = if (!editing) placeholder_unfocused else if (p.ui.ascii) placeholder_focused_ascii else placeholder_focused;
-                _ = p.put(x, rect.y, rect.w -| 4, ph, .{ .fg = th.muted, .bg = style.bg });
-                if (editing) _ = p.put(x, rect.y, 1, caret_glyph, .{ .fg = th.accent, .bg = style.bg });
+                // The caret goes BEFORE the placeholder, not on top of
+                // its first cell: `▏ype to filter…` reads as a
+                // typo rather than as an empty field with the keyboard.
+                if (editing) x += p.put(x, rect.y, 1, caret_glyph, .{ .fg = th.accent, .bg = style.bg });
+                _ = p.put(x, rect.y, rect.w -| 4 -| (x -| (rect.x + 4)), ph, .{ .fg = th.muted, .bg = style.bg });
             } else {
                 const used = p.put(x, rect.y, rect.w -| 4, query, .{ .fg = th.fg, .bg = style.bg });
                 if (editing) {
@@ -320,6 +324,30 @@ pub fn Painter(comptime Target: type) type {
             const line = build_mod.caption(&buf, run, now_secs, p.ui.ascii);
             _ = p.putFit(label_x, rect.y, rect.right() -| label_x, line, build_mod.styleOf(p.th, run.state));
             try p.mark(rect, target);
+        }
+
+        // ─── an action button ──────────────────────────────
+
+        /// One `[ Word ]` button, its brackets and its word painted
+        /// separately: the punctuation stays muted and the word carries
+        /// the colour of what pressing it does
+        /// (`sdk.pane.action.Kind`). A caption the toolkit does not
+        /// recognise as bracketed is painted whole in the word's style.
+        ///
+        /// Neither style names a ground, so a button on the cursor's
+        /// row keeps that row's fill instead of punching a hole in it.
+        /// Returns the cells used.
+        pub fn actionChip(p: *Self, x: u16, y: u16, max_w: u16, cap: []const u8, c: action_mod.Chip) u16 {
+            const lead = "[ ";
+            const tail = " ]";
+            if (!std.mem.startsWith(u8, cap, lead) or !std.mem.endsWith(u8, cap, tail) or cap.len < lead.len + tail.len) {
+                return p.put(x, y, max_w, cap, c.word);
+            }
+            const word = cap[lead.len .. cap.len - tail.len];
+            var used = p.put(x, y, max_w, lead, c.bracket);
+            used += p.put(x + used, y, max_w -| used, word, c.word);
+            used += p.put(x + used, y, max_w -| used, tail, c.bracket);
+            return used;
         }
 
         /// The stand-in where a build line would be: `→ fetching…`,

@@ -254,9 +254,28 @@ defer actions.deinit();
 
 const st = actions.state(pr_key, "merge");
 var buf: [32]u8 = undefined;
-_ = p.put(x, y, w, sdk.pane.action.caption(&buf, st, "Merge", spin, ascii),
-          sdk.pane.action.styleOf(th, st));
+const cap = sdk.pane.action.caption(&buf, st, "Merge", spin, ascii);
+_ = p.actionChip(x, y, w, cap,
+                 sdk.pane.action.chipOf(th, st, sdk.pane.action.kindOf("Merge")));
 ```
+
+`actionChip` paints the brackets and the word separately: the
+punctuation stays muted and the **word carries the colour of what
+pressing it does**, so a row of three buttons is three different
+answers rather than three identical grey chips. Neither style names a
+ground, so a button on the cursor's row keeps that row's fill.
+
+Four families, by the word (`sdk.pane.action.kindOf`):
+
+| kind | words | colour |
+|---|---|---|
+| `navigation` | `Open`, `view` | `muted` — it goes somewhere and changes nothing |
+| `review` | `Review`, `Test` | `blue` — it starts a session that READS |
+| `dispatch` | `Implement`, `Fix`, `Triage`, anything unclassified | the pane's brand, stepped to `purple`/`orange`/`cyan` when the brand is already `blue` or `green` |
+| `final` | `Merge`, `Decline` | `green` when ready, muted + dim when blocked (`sdk.pane.merge.chipOf`) |
+
+A state past `idle` is the host's word about a session and outranks
+the family — a spinner is a spinner whichever button started it.
 
 Five states, and the last four are the **host's word**, not a guess:
 

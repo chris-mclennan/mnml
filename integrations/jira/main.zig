@@ -110,8 +110,9 @@ pub const Args = struct {
     /// `--dump --steps FILE [--size WxH]`: the headless driver behind
     /// tools/jira-diff.sh — the pane painted to stdout, no mnml.
     dump: bool = false,
-    /// `--dump-style`: each `snap` also prints the row backgrounds,
-    /// run-length coded. A screen dump is text and carries no colour,
+    /// `--dump-style`: each `snap` also prints the row backgrounds and
+    /// the row foregrounds, run-length coded. A screen dump is text and
+    /// carries no colour,
     /// so this is what makes "the cursor row is a filled band"
     /// checkable from outside the process.
     dump_style: bool = false,
@@ -168,8 +169,9 @@ pub const usage =
     \\  --dump --steps FILE [--size WxH] [--only F]
     \\                            play a step script at the pane with no mnml and
     \\                            print every `snap` as text (tools/jira-diff.sh)
-    \\  --dump-style              the same, plus each snap's row backgrounds
-    \\                            run-length coded (`bg  6: 0-119 #2c323c`)
+    \\  --dump-style              the same, plus each snap's row backgrounds and
+    \\                            foregrounds, run-length coded
+    \\                            (`bg  6: 0-119 #2c323c`, `fg  6: 0-7 #61afef+b`)
     \\
 ;
 
@@ -973,6 +975,8 @@ fn dump(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
             if (args.dump_style) {
                 try out.writeAll("\n--- bg\n");
                 try out.writeAll(try sdk.frame.bgDump(arena, &frame));
+                try out.writeAll("\n--- fg\n");
+                try out.writeAll(try sdk.frame.fgDump(arena, &frame));
             }
         } else if (std.mem.eql(u8, verb, "expect")) {
             try repaint(&paint_arena, &frame, &app, ui);

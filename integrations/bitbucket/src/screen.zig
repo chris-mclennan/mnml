@@ -353,10 +353,36 @@ fn paintList(arena: Allocator, p: *Painter, box: Box) Allocator.Error!void {
         // never trades its title for them.
         const bw = rowButtonsWidth(p, if (cols.len > 0) cols[cols.len - 1].w else 0, row, selected);
         paintSpans(p, list.x + 2, y, text_w -| 2 -| bw, spans);
+        // The chevron at the head of a tree row is its own target, so
+        // a click THERE folds the row and a click anywhere else on it
+        // selects, the way the tracker pane's tree already works. A
+        // pull request with no commit to look builds up on paints no
+        // chevron and registers none.
+        if (chevronX(p, list.x, row)) |cx| p.target(cx, y, 1, .{ .chevron = idx });
         if (bw > 0) try paintRowButtons(p, list.x, y, text_w, bw, idx, row);
         y += h;
     }
     if (needs_bar) try p.c.scrollbar(.{ .x = list.x + list.w - 1, .y = list.y, .w = 1, .h = list.h }, v.cells, cellsBefore(v.rows, first), list.h, null);
+}
+
+/// Where the chevron of a tree row sits, or null when the row has
+/// none. The spans start at `list.x + 2`; a repo header's chevron is
+/// the first cell of its first cell, a pull request's is two in.
+fn chevronX(p: *Painter, list_x: u16, row: tabs.VisibleRow) ?u16 {
+    const app = p.app;
+    return switch (row) {
+        .repo_header => list_x + 2,
+        .pr => |pr_ref| blk: {
+            const repos = switch (app.activeTab().data) {
+                .repo_pr_tree => |r| r,
+                else => break :blk null,
+            };
+            if (pr_ref.repo >= repos.len or pr_ref.idx >= repos[pr_ref.repo].prs.len) break :blk null;
+            if (repos[pr_ref.repo].prs[pr_ref.idx].buildCommit().len == 0) break :blk null;
+            break :blk list_x + 4;
+        },
+        else => null,
+    };
 }
 
 /// `[ Open ] [ Merge ]` at the right end of a pull-request row.
@@ -413,7 +439,7 @@ fn paintRowButtons(p: *Painter, x0: u16, y: u16, w: u16, bw: u16, idx: usize, ro
 
     var x = x0 + w -| bw + 1;
     const ow = Painter.width(open_caption);
-    _ = p.text(x, y, ow, open_caption, p.th.chip());
+    _ = p.c.actionChip(x, y, ow, open_caption, sdk.pane.action.chipOf(p.th, .idle, sdk.pane.action.kindOf(open_caption)));
     p.target(x, y, ow, .{ .pr_button = .{ .row = idx, .which = .open } });
     x += ow + 1;
     // A merged or declined pull request has nothing to merge.
@@ -427,12 +453,12 @@ fn paintRowButtons(p: *Painter, x0: u16, y: u16, w: u16, bw: u16, idx: usize, ro
         // Once a merge session exists the button follows IT: the
         // spinner, the `⏸`, the `[ view ]`, the `✗` — readiness has
         // had its say.
-        _ = p.text(x, y, mw, shown, sdk.pane.action.styleOf(p.th, state));
+        _ = p.c.actionChip(x, y, mw, shown, sdk.pane.action.chipOf(p.th, state, .final));
         p.target(x, y, mw, .{ .pr_button = .{ .row = idx, .which = .merge } });
         return;
     }
     const r = app.readinessOf(slug, pr);
-    _ = p.text(x, y, mw, shown, sdk.pane.merge.styleOf(p.th, r));
+    _ = p.c.actionChip(x, y, mw, shown, sdk.pane.merge.chipOf(p.th, r));
     if (sdk.pane.merge.isPressable(r)) {
         p.target(x, y, mw, .{ .pr_button = .{ .row = idx, .which = .merge } });
     } else {
@@ -582,35 +608,17 @@ fn paintHintRow(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
     }
     const ctx = app.keyContext(rows);
     const hs = try view.hints(arena, ctx);
-    // The status on the left takes what the hints leave.
-    const sep = " · ";
-    const sep_w: u16 = 3;
-    var widths = try arena.alloc(u16, hs.len);
-    var total: u16 = 0;
-    for (hs, 0..) |h, i| {
-        widths[i] = Painter.width(h.key) + 1 + Painter.width(h.title);
-        total += widths[i] + if (i + 1 < hs.len) sep_w else 0;
-    }
-    const status = app.status.items;
-    const status_w: u16 = @min(Painter.width(status) + 2, p.f.cols / 2);
-    var first: usize = 0;
-    // Drop hints from the front until the row fits, keeping `q`.
-    while (first < hs.len and total + status_w > p.f.cols) {
-        total -= widths[first] + if (first + 1 < hs.len) sep_w else 0;
-        first += 1;
-    }
-    if (status.len > 0) _ = p.text(1, y, p.f.cols -| 1 -| total, status, th.mutedText());
-    var x: u16 = p.f.cols -| total;
-    var i = first;
-    while (i < hs.len) : (i += 1) {
-        const h = hs[i];
-        const start = x;
-        x += p.text(x, y, p.f.cols -| x, h.key, .{ .fg = th.fg, .mods = .{ .bold = true } });
-        x += p.text(x, y, p.f.cols -| x, " ", th.dimText());
-        x += p.text(x, y, p.f.cols -| x, h.title, th.dimText());
-        p.target(start, y, x - start, .{ .hint = h.action });
-        if (i + 1 < hs.len) x += p.text(x, y, p.f.cols -| x, sep, th.dimText());
-    }
+    // The toolkit's row: the status on the left, `key title` entries
+    // on the right each a hit that runs its chord, entries shed from
+    // the front so the ones that always apply survive a narrow pane,
+    // and a chord the pane passes twice said once.
+    //
+    // It was hand-rolled here — the same loop, the same arithmetic,
+    // one copy per pane — which is exactly the drift the toolkit
+    // exists to prevent.
+    const entries = try arena.alloc(Chrome.HintSpec, hs.len);
+    for (hs, entries) |h, *e| e.* = .{ .key = h.key, .title = h.title, .target = .{ .hint = h.action } };
+    try p.c.hintRow(y, app.status.items, entries);
 }
 
 // ─── overlays ────────────────────────────────────────────────────────────
@@ -849,6 +857,56 @@ test "the pane paints the header, the strip, the pill, the reference's columns, 
     try t.expect(has(pipelines, "REPO / BRANCH"));
 }
 
+test "an open PR's chevron folds its builds under the mouse" {
+    const s = try Screen.init(120, 40, acme, .{});
+    defer s.deinit();
+    _ = try s.draw();
+    const y = try s.rowOf("Fix the login redirect");
+    // The chevron is its own target, four cells in from the gutter.
+    const at = s.rig.app.hits.at(4, y) orelse return error.NoChevron;
+    try t.expect(at == .chevron);
+    // A click on the row's WORDS only selects it: the builds stay
+    // folded, so the pointer cannot lose a row by brushing it.
+    try s.click(40, y, .left);
+    var scr = try s.draw();
+    try t.expect(has(scr, "▸ #1234"));
+    try t.expect(!has(scr, "fetching builds"));
+    // A click on the chevron folds them out. It used to do nothing at
+    // all on an open pull request: the click path folded a MERGED one
+    // and nothing else, while the row painted a chevron either way.
+    try s.click(4, y, .left);
+    scr = try s.draw();
+    try t.expect(has(scr, "▾ #1234"));
+    // …and again folds them back.
+    try s.click(4, y, .left);
+    scr = try s.draw();
+    try t.expect(has(scr, "▸ #1234"));
+}
+
+test "the fold row's ellipsis is punctuation and only its words are bright" {
+    const s = try Screen.init(120, 40, acme, .{});
+    defer s.deinit();
+    _ = try s.draw();
+    const y = try s.rowOf("Show more (1)");
+    // The `⋯` is dim, the way the Jira tree's fold row paints it;
+    // the words carry the bright foreground a key wears, or there is
+    // nothing on the row to notice.
+    const th = s.rig.app.theme;
+    var glyph: ?sdk.frame.Style = null;
+    var word: ?sdk.frame.Style = null;
+    var x: u16 = 0;
+    while (x < s.frame.cols) : (x += 1) {
+        const slot = &s.frame.slots[@as(usize, y) * s.frame.cols + x];
+        if (std.mem.eql(u8, slot.symbol(), "⋯")) glyph = slot.style;
+        if (std.mem.eql(u8, slot.symbol(), "S") and glyph != null and word == null) word = slot.style;
+    }
+    try t.expect(glyph != null and word != null);
+    try t.expectEqual(th.muted, glyph.?.fg.?);
+    try t.expect(!glyph.?.mods.bold);
+    try t.expect(word.?.mods.bold);
+    try t.expect(!std.meta.eql(word.?.fg, glyph.?.fg));
+}
+
 test "a click on a row selects that row and toggles a header; the strip switches tabs; the hints fire" {
     const s = try Screen.init(120, 40, acme, .{});
     defer s.deinit();
@@ -1015,12 +1073,12 @@ test "an OPEN PR folds out to the builds on its branch head; a second open costs
     // The cursor onto #1234, the open pull request the account authored.
     try s.key("j");
     var scr = try s.draw();
-    try t.expect(has(scr, "\u{25b8} #1234"));
+    try t.expect(has(scr, "▸ #1234"));
     const served = s.rig.srv.state.served;
     try s.key("enter");
     try s.rig.drain();
     scr = try s.draw();
-    try t.expect(has(scr, "\u{25be} #1234"));
+    try t.expect(has(scr, "▾ #1234"));
     // One run on `chris/fix-login`'s head, in the toolkit's words.
     try t.expect(has(scr, "\u{23f5} IN_PROGRESS \u{b7} chris/fix-login \u{b7} "));
     try t.expect(has(scr, "\u{b7} #413"));

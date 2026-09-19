@@ -15,6 +15,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const sdk = @import("mnml_sdk");
+const chrome = sdk.pane.chrome;
 const model = @import("model.zig");
 const tabs = @import("tabs.zig");
 const app_mod = @import("app.zig");
@@ -279,15 +280,18 @@ pub fn rowSpans(a: Allocator, c: RowCtx) Allocator.Error![]Span {
             }
             n = 5;
         },
-        .show_more => |s| {
+        .show_more => {
             for (0..5) |i| {
                 cells[i] = "";
                 styles[i] = dim;
             }
-            // The fold row's words are the toolkit's: `Show more (N)` in
-            // the bright foreground, the same row the Jira tree paints.
-            cells[5] = try std.fmt.allocPrint(a, "\u{22ef}  Show more ({d})", .{s.hidden});
-            styles[5] = cellStyle(c, th.bright());
+            // The fold row is the toolkit's: the `\u{22ef}` is punctuation
+            // and stays dim, only the words are bright, and a host with
+            // no Nerd Font gets the same `...` the Jira tree's fold row
+            // gets. One cell cannot carry two styles, so the title
+            // column is split in two after the lay-out below.
+            cells[5] = if (c.ascii) chrome.more_ascii else chrome.more_glyph;
+            styles[5] = cellStyle(c, th.dimText());
             n = 6;
         },
         .flat => |i| switch (ts.data) {
@@ -358,6 +362,19 @@ pub fn rowSpans(a: Allocator, c: RowCtx) Allocator.Error![]Span {
             try out.append(a, .{ .text = cells[i], .style = styles[i], .w = c.cols[ci].w });
             ci += 1;
         }
+    }
+    // The fold row's words, in the bright foreground a key wears, after
+    // the dim `\u{22ef}` the lay-out just placed.
+    if (c.row == .show_more and out.items.len > 0) {
+        const last = &out.items[out.items.len - 1];
+        const room = last.w;
+        const gw: u16 = @intCast(chrome.width(last.text));
+        last.w = gw;
+        try out.append(a, .{
+            .text = try std.fmt.allocPrint(a, "  Show more ({d})", .{c.row.show_more.hidden}),
+            .style = cellStyle(c, th.bright()),
+            .w = room -| gw,
+        });
     }
     return out.toOwnedSlice(a);
 }

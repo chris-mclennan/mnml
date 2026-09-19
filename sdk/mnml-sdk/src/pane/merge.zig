@@ -27,6 +27,7 @@
 const std = @import("std");
 const frame_mod = @import("../frame.zig");
 const theme_mod = @import("theme.zig");
+const action_mod = @import("action.zig");
 const text_mod = @import("text.zig");
 
 pub const Style = frame_mod.Style;
@@ -142,12 +143,19 @@ pub fn caption(buf: []u8) []const u8 {
     return std.fmt.bufPrint(buf, "[ {s} ]", .{label}) catch "[ Merge ]";
 }
 
-/// Ready wears the chip's own colour; blocked is the muted one, so it
-/// reads as "there is something here, and it is not for you yet"
-/// rather than as an ordinary button you happened to miss.
+/// Ready wears the green every `final` button wears; blocked is the
+/// muted one, dimmed, so it reads as "there is something here, and it
+/// is not for you yet" rather than as an ordinary button you happened
+/// to miss.
+pub fn chipOf(th: Theme, r: Readiness) action_mod.Chip {
+    if (r.ready()) return action_mod.chipOf(th, .idle, .final);
+    const off: Style = .{ .fg = th.muted, .mods = .{ .dim = true } };
+    return .{ .bracket = off, .word = off };
+}
+
+/// The same, for a caller that paints the caption in one style.
 pub fn styleOf(th: Theme, r: Readiness) Style {
-    if (r.ready()) return th.chip();
-    return .{ .fg = th.muted, .bg = th.chip_bg, .mods = .{ .dim = true } };
+    return chipOf(th, r).flat();
 }
 
 /// The lines the confirm shows. Named, because a confirm that says

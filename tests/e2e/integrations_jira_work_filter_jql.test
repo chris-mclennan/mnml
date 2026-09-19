@@ -35,7 +35,9 @@ command view.focus_pane
 expect screen contains "JIRA WORK (3)"
 # /: the search pill takes the text and the tree narrows as it is typed.
 type /
-expect screen contains "type to filter…▏"
+# The caret sits BEFORE the placeholder, not on its first cell: the
+# chip is the toolkit's pill now, and `▏ype to filter…` read as a typo.
+expect screen contains "▏type to filter…"
 expect screen contains "type to filter · Enter commit · Esc cancel"
 type vou
 expect screen contains "vou▏"
