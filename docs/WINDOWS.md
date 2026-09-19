@@ -154,6 +154,20 @@ variable at `0` they are refused rather than run through `cmd`.
 
 ## Known gaps
 
+- **No `run.sh install` on Windows.** Profiles themselves are the
+  program and work there — `MNML_PROFILE=dev` / `--profile dev` moves
+  the data root (`%USERPROFILE%\.config\mnml-dev`, via
+  `data_root.zig`'s USERPROFILE rung), the session file, the IPC
+  mailbox, the marker under `%TEMP%`, and paints the `dev` chip — but
+  the install verb is bash. Windows installs by hand: copy
+  `zig-out\bin\mnml-zig.exe` to where you keep binaries (as
+  `mnml.exe`), the `mnml-*.exe` integrations beside it, `zig-out\share`
+  next to that, then run each integration's `--install` with
+  `MNML_DATA_ROOT` pointing at the stable data root and relink /
+  re-copy `<data root>\bin\<name>.exe` at the installed copy —
+  `linkBeside` already falls back to copying where symlinks need a
+  privilege. A PowerShell twin of the verb, or the MSI
+  (`docs/RELEASE.md`), is the real answer.
 - **No Windows CI job runs the tests.** `ci.yml`'s matrix should add
   `windows-latest` running `zig build test` (Debug and ReleaseSafe)
   once the checklist above has passed by hand; the cross-compile gate

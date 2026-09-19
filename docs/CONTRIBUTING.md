@@ -252,10 +252,64 @@ removes it on a clean exit — not on a restart. `restart` and `stop` drop
 `{"cmd":"restart"}` / `{"cmd":"quit"}` in `<ws>/.mnml/ipc-zig/command`;
 the terminal loop tails that file for those two lines only (the headless
 loop takes the whole command set). `MNML_BIN`, `MNML_IPC_SUBDIR`,
-`MNML_IPC_DIR`, `MNML_ZIG` and `MNML_OPTIMIZE` parameterize the wrapper;
+`MNML_IPC_DIR`, `MNML_ZIG`, `MNML_OPTIMIZE` and `MNML_PROFILE`
+parameterize the wrapper (a launch defaults to the dev profile — see
+below; the build / test / check / install verbs never set it);
 `tools/run-sh-check.sh` exercises every non-interactive verb on a
 throwaway workspace with all of them pointed at a tempdir, and
 `tools/pty-lifecycle.py` proves the marker on a real pty.
+
+## Daily driver + development on one machine
+
+You want to *use* mnml all day and *change* it on the same laptop,
+without a rebuild yanking the editor out from under you. Two things
+make that work: an install, and a profile.
+
+**Live in the install.** `./run.sh install` copies a verified
+ReleaseSafe build to `~/.local/bin` (`PREFIX` to move it) — the host as
+`mnml`, the shipped integrations beside it, `share/mnml/…` — and points
+the stable profile's integration links at `PREFIX/bin` instead of a
+repo's `zig-out`. That last part is why the verb exists: the links used
+to point into this tree, so a rebuild here swapped the integrations
+under the running copy.
+
+```sh
+./run.sh install --dry-run       # every copy, manifest and link; changes nothing
+./run.sh install                 # the real thing
+./run.sh installed-status        # what is installed, against this tree's HEAD
+```
+
+It refuses to install from a dirty tree or a Debug build
+(`--allow-dirty` overrides both), and refuses to overwrite a
+`PREFIX/bin/mnml` that does not answer `--version` as an mnml-zig
+(`--force` overrides that) — on a machine that still has the Rust
+`mnml` at `~/.local/bin/mnml`, that refusal is the point.
+
+**Develop in the dev profile.** `./run.sh` launches with
+`MNML_PROFILE=dev`, which moves every name the two copies could fight
+over: `~/.config/mnml-dev` for state, `.mnml/session-dev.zon` for the
+session (so the same workspace open in both keeps two layouts), the
+`ipc-zig` mailbox, the `mnml-zig-running-…` marker. The first dev
+launch seeds itself from your stable config and says so; see
+`docs/CONFIG.md`, "Profiles", for exactly what travels and what never
+does.
+
+**Which one am I in?** The statusline paints a `dev` chip beside the
+mode and the window title reads `mnml [dev] — work`. From a shell,
+`mnml profile` prints the profile, its data root, session file, mailbox
+and marker. Nothing is painted in the stable profile: that one you are
+meant to forget is a choice.
+
+**The loop.** Live in `mnml`. Work in `./run.sh`. When a change has
+been through the gate below, `./run.sh install` and the daily driver
+catches up — the running stable instance keeps running the binary it
+started with until you quit it.
+
+Windows gets the profiles (they are the program, and the data root
+handles `%USERPROFILE%`), but not `run.sh`, which is bash: install by
+copying `zig-out\bin\*.exe` and `zig-out\share` where you want them and
+running each integration's `--install` with `MNML_DATA_ROOT` set —
+what the verb does, by hand. `docs/WINDOWS.md` has the rest.
 
 ## The gate — the verification sequence
 
