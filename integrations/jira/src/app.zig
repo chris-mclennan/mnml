@@ -12,6 +12,7 @@ const Io = std.Io;
 const config = @import("config.zig");
 const model = @import("model.zig");
 const jira = @import("jira.zig");
+const ratelimit = @import("ratelimit.zig");
 const bitbucket = @import("bitbucket.zig");
 const tree = @import("tree.zig");
 const kanban = @import("kanban.zig");
@@ -165,6 +166,10 @@ pub const App = struct {
     family: ?config.Family,
     client: *jira.Client,
     forge: bitbucket.Client,
+    /// Where a wait long enough for a person to notice is left by
+    /// whichever thread made the request. `noteWait` turns it into the
+    /// one line that keeps `loading…` from being silent.
+    wait_notice: ratelimit.Notice = .{},
     /// `$MNML_IPC_DIR`: the channel of the mnml this pane runs inside —
     /// where a dispatched `term` line has to go. Borrowed from the
     /// environment, empty outside a host.
@@ -385,6 +390,16 @@ pub const App = struct {
     pub fn setStatus(a: *App, comptime fmt: []const u8, args: anytype) void {
         a.status.clearRetainingCapacity();
         a.status.print(a.gpa, fmt, args) catch {};
+    }
+
+    /// Say something about a wait the reader has been sitting through.
+    /// Called at the top of every loop pass, so the line appears WHILE
+    /// the fetch is still out rather than after it lands — and the
+    /// fetch's own summary replaces it when the rows arrive.
+    pub fn noteWait(a: *App) void {
+        const w = a.wait_notice.take() orelse return;
+        var buf: [96]u8 = undefined;
+        a.setStatus("{s}", .{w.text(&buf)});
     }
 
     /// A status that is also worth mnml's toast.

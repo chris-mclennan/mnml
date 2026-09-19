@@ -98,6 +98,8 @@ pub const Client = struct {
     limiter: ?*shared_rate.Limiter = null,
     /// Where every one of them is written down. Null in a test.
     log: ?*request_log.Log = null,
+    /// Where a wait long enough for a person to notice is left.
+    notice: ?*shared_rate.Notice = null,
     /// Why these calls are being made — the row's builds, or its
     /// merge readiness. Set by the caller that starts the flow.
     reason: request_log.Reason = .builds,
@@ -215,7 +217,11 @@ pub const Client = struct {
     const Got = union(enum) { ok: Value, failed: []const u8 };
 
     fn get(c: *Client, arena: Allocator, url: []const u8) Allocator.Error!Got {
-        const gate: shared_rate.Acquired = if (c.limiter) |l| l.acquireDetailed() else .{ .ok = true };
+        const gate: shared_rate.Acquired = if (c.limiter) |l| blk: {
+            l.reason = @tagName(c.reason);
+            break :blk l.acquireDetailed();
+        } else .{ .ok = true };
+        if (c.notice) |n| n.record(gate);
         const started = Io.Timestamp.now(c.io, .real);
         var client: std.http.Client = .{ .allocator = c.gpa, .io = c.io };
         defer client.deinit();

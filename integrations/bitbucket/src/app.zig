@@ -192,6 +192,10 @@ pub const App = struct {
     help_scroll: usize = 0,
     /// The transient line the hint row shows on the left, owned.
     status: std.ArrayList(u8) = .empty,
+    /// Where a wait long enough for a person to notice is left by the
+    /// worker thread. `noteWait` turns it into the one line that keeps
+    /// `loading…` from being silent.
+    wait_notice: ratelimit.Notice = .{},
     effects: std.ArrayList(Effect) = .empty,
     effect_arena: std.heap.ArenaAllocator,
     jobs: std.ArrayList(fetch.Job) = .empty,
@@ -420,6 +424,16 @@ pub const App = struct {
 
     /// The reference's status line: kept on the hint row's left and
     /// shown as a toast.
+    /// Say something about a wait the reader has been sitting through.
+    /// Called once per loop pass, so the line appears WHILE the fetch
+    /// is still out; the fetch's own summary replaces it when the rows
+    /// arrive.
+    pub fn noteWait(app: *App) void {
+        const w = app.wait_notice.take() orelse return;
+        var buf: [96]u8 = undefined;
+        app.setStatus("{s}", .{w.text(&buf)});
+    }
+
     pub fn setStatus(app: *App, comptime fmt: []const u8, args: anytype) void {
         app.status.clearRetainingCapacity();
         const text = std.fmt.allocPrint(app.gpa, fmt, args) catch return;
@@ -1945,6 +1959,7 @@ pub const App = struct {
 
 const t = std.testing;
 const api = @import("api.zig");
+const ratelimit = @import("ratelimit.zig");
 const listener = @import("../tools/fake_bitbucket/listener.zig");
 
 /// An app on the fake server, with a worker run synchronously: what

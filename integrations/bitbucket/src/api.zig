@@ -143,6 +143,9 @@ pub const Client = struct {
     /// Where every request is written down (`mnml_sdk.request_log`).
     /// Null in a test, which has no data root to write into.
     log: ?*request_log.Log = null,
+    /// Where a wait long enough for a person to notice is left for the
+    /// paint loop to say something about.
+    notice: ?*ratelimit.Notice = null,
     /// Why the requests being made right now are being made. The
     /// worker sets it when it picks up a job — a job IS a reason — so
     /// a line in the log reads back to the thing that caused it.
@@ -218,7 +221,11 @@ pub const Client = struct {
         var attempt: u8 = 0;
         while (true) {
             attempt += 1;
-            const gate: ratelimit.Acquired = if (self.limiter) |l| l.acquireDetailed() else .{ .ok = true };
+            const gate: ratelimit.Acquired = if (self.limiter) |l| blk: {
+                l.reason = @tagName(self.reason);
+                break :blk l.acquireDetailed();
+            } else .{ .ok = true };
+            if (self.notice) |n| n.record(gate);
             self.sent += 1;
             const started = Io.Timestamp.now(self.io, .real);
             var head: Head = .{};

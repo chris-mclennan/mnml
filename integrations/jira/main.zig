@@ -386,6 +386,11 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
         .log = &logs.forge,
     };
     var app = try app_mod.App.init(gpa, io, rd.cfg, family, &client, forge);
+    // Both clients leave a long wait where the paint loop finds it.
+    // `app` is a local that is never moved, so the pointer a worker's
+    // copy of the client carries stays good for the whole run.
+    client.notice = &app.wait_notice;
+    app.forge.notice = &app.wait_notice;
     // The host sets this for every integration it spawns; a dispatched
     // `term` line goes to that channel and nowhere else.
     app.setIpcDir(env.get("MNML_IPC_DIR") orelse "");
@@ -419,6 +424,9 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
 
     var paint_arena = std.heap.ArenaAllocator.init(gpa);
     defer paint_arena.deinit();
+    // Where the hover's "spent by" line keeps the program name it
+    // names, for as long as the segment it decorates.
+    var bucket_name: [64]u8 = undefined;
     try repaint(&paint_arena, &frame, &app, ui);
     mount.send(&frame) catch return 0;
     // The first fetch is started after the first paint and lands on a
@@ -428,7 +436,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     app.last_refresh_ms = app.nowMs();
     try repaint(&paint_arena, &frame, &app, ui);
     mount.send(&frame) catch return 0;
-    publishSide(&app, mount, if (ipc) |*i| i else null);
+    publishSide(&app, mount, if (ipc) |*i| i else null, bucketOf(gpa, io, &limiter, &bucket_name));
 
     while (true) {
         var ended = false;
@@ -463,6 +471,10 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
             if (ended) break;
         }
         if (ended or box.ended) break;
+        // Before anything else this pass: if a request has been sitting
+        // on the bucket, say so rather than leaving `loading…` to
+        // stand there on its own.
+        app.noteWait();
         if (app.quit) {
             mount.bye();
             break;
@@ -474,7 +486,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
         try app.tick(app.nowMs());
         try repaint(&paint_arena, &frame, &app, ui);
         mount.send(&frame) catch break;
-        publishSide(&app, mount, if (ipc) |*i| i else null);
+        publishSide(&app, mount, if (ipc) |*i| i else null, bucketOf(gpa, io, &limiter, &bucket_name));
         // While a refetch is in flight the loop wakes sooner, so its
         // rows land as soon as they arrive rather than up to half a
         // second later.
@@ -492,7 +504,7 @@ fn repaint(paint_arena: *std.heap.ArenaAllocator, frame: *sdk.Frame, app: *app_m
 
 /// The toast, the statusline segment, and the sessions this pane just
 /// started and wants told about.
-fn publishSide(app: *app_mod.App, mount: *sdk.Mount, ipc: ?*const sdk.Ipc) void {
+fn publishSide(app: *app_mod.App, mount: *sdk.Mount, ipc: ?*const sdk.Ipc, bucket: ?Bucket) void {
     for (app.watch_out.items) |w| {
         mount.watchSession(w.key, .{ .cwd = w.cwd, .prompt_line = w.prompt_line }) catch {};
     }
@@ -503,7 +515,7 @@ fn publishSide(app: *app_mod.App, mount: *sdk.Mount, ipc: ?*const sdk.Ipc) void 
     }
     if (app.segment_dirty) {
         app.segment_dirty = false;
-        if (ipc) |i| if (app.assigned_open) |n| publishSegment(i, n) catch {};
+        if (ipc) |i| if (app.assigned_open) |n| publishSegment(i, n, bucket) catch {};
     }
 }
 
@@ -581,7 +593,7 @@ fn nameIsQaActionable(name: []const u8) bool {
 /// The Work chips' statusline segments: the glyph and the count, the
 /// breakdown on hover, a click opens the pane — the manifest's slots,
 /// live.
-pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: Values) !void {
+pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: Values, bucket: ?Bucket) !void {
     var buf: [32]u8 = undefined;
     const label = std.fmt.bufPrint(&buf, "{s} {d}", .{ segment_glyph, v.assigned_open }) catch segment_glyph;
     const lead = try std.fmt.allocPrint(arena, "Jira · {d} open item{s} assigned to me", .{ v.assigned_open, if (v.assigned_open == 1) "" else "s" });
@@ -591,7 +603,7 @@ pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: Values) !void {
         .color = segment_color,
         .click_command = segment_click,
         .priority = segment_priority,
-        .tooltip = try breakdownText(arena, lead, v.assigned_by_status),
+        .tooltip = try withBucket(arena, try breakdownText(arena, lead, v.assigned_by_status), bucket),
     });
     if (v.qa_actionable) |n| {
         var qbuf: [32]u8 = undefined;
@@ -603,22 +615,60 @@ pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: Values) !void {
             .color = qa_segment_color,
             .click_command = segment_click,
             .priority = qa_segment_priority,
-            .tooltip = try breakdownText(arena, qlead, v.qa_by_status),
+            .tooltip = try withBucket(arena, try breakdownText(arena, qlead, v.qa_by_status), bucket),
         });
     }
 }
 
 /// The one-figure form the pane's own refresh publishes as it goes.
-pub fn publishSegment(ipc: *const sdk.Ipc, assigned_open: usize) sdk.ipc.Error!void {
+pub fn publishSegment(ipc: *const sdk.Ipc, assigned_open: usize, bucket: ?Bucket) sdk.ipc.Error!void {
     var buf: [32]u8 = undefined;
     const label = std.fmt.bufPrint(&buf, "{s} {d}", .{ segment_glyph, assigned_open }) catch segment_glyph;
+    var tip: [192]u8 = undefined;
     try ipc.statuslineSetSegment(.{
         .id = segment_id,
         .text = label,
         .color = segment_color,
         .click_command = segment_click,
         .priority = segment_priority,
+        .tooltip = if (bucket) |b| b.status.describe(&tip) else null,
     });
+}
+
+/// The hover text with the shared bucket's own two lines under it:
+/// what it holds, at what rate, with how many throttles and how long
+/// since the last 429 — and who has been spending it. It is the answer
+/// to "why is this chip stale", and it is one hover away.
+fn withBucket(arena: Allocator, body: []const u8, bucket: ?Bucket) Allocator.Error![]const u8 {
+    const b = bucket orelse return body;
+    var buf: [192]u8 = undefined;
+    const line = b.status.describe(&buf);
+    const d = b.draws orelse return std.fmt.allocPrint(arena, "{s}\n{s}", .{ body, line });
+    var dbuf: [96]u8 = undefined;
+    return std.fmt.allocPrint(arena, "{s}\n{s}\nspent by {s}", .{ body, line, d.describe(&dbuf, draws_window_secs) });
+}
+
+/// What the hover says about the shared bucket: its state, and who has
+/// been drawing on it lately.
+pub const Bucket = struct {
+    status: ratelimit.Status,
+    draws: ?ratelimit.Draws = null,
+};
+
+/// The window the "spent by" line covers: long enough that a quiet
+/// minute does not read as nobody spending, short enough to be about
+/// now.
+pub const draws_window_secs: u32 = 600;
+
+/// The bucket as the hover wants it — its state, and the top consumer
+/// of the last ten minutes read out of the machine-wide draws file.
+/// `name_buf` holds the program name the result points at.
+fn bucketOf(gpa: Allocator, io: Io, l: *ratelimit.Limiter, name_buf: []u8) ?Bucket {
+    const st = l.status() orelse return null;
+    const path = (l.drawsPath(gpa) catch null) orelse return .{ .status = st };
+    defer gpa.free(path);
+    const now: f64 = @as(f64, @floatFromInt(Io.Timestamp.now(io, .real).toNanoseconds())) / 1_000_000_000.0;
+    return .{ .status = st, .draws = ratelimit.recentDraws(gpa, io, path, draws_window_secs, now, name_buf) };
 }
 
 // ─── the setup screens' words ────────────────────────────────────────────
@@ -695,7 +745,17 @@ fn tabLine(arena: Allocator, t: config.Tab) Allocator.Error![]const u8 {
 fn openLimiter(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, rate: config.Rate) Allocator.Error!ratelimit.Limiter {
     const p = try ratelimit.statePath(gpa, io, env);
     defer gpa.free(p);
-    return ratelimit.Limiter.init(gpa, io, p, ratelimit.configFrom(rate));
+    var l = try ratelimit.Limiter.init(gpa, io, p, ratelimit.configFrom(rate));
+    // So every draw on the shared bucket says who took it. Without
+    // this the bucket says only how much is left, which is the half of
+    // the answer that does not help.
+    try l.identify(ratelimit.service, "mnml-jira", selfPid());
+    return l;
+}
+
+/// This process, for a draw line. Zero where there is no pid to name.
+fn selfPid() i32 {
+    return if (@import("builtin").os.tag == .windows) 0 else @intCast(std.c.getpid());
 }
 
 /// The FORGE's bucket — `bitbucket`, not `jira`. The pipeline and
@@ -704,7 +764,9 @@ fn openLimiter(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, rate
 /// so a Jira pane quietly spent it and the forge pane in the next
 /// window paid with a 429.
 fn openForgeLimiter(gpa: Allocator, io: Io, env: *const std.process.Environ.Map) Allocator.Error!sdk.ratelimit.Limiter {
-    return sdk.ratelimit.Limiter.forService(gpa, io, env, "bitbucket");
+    var l = try sdk.ratelimit.Limiter.forService(gpa, io, env, "bitbucket");
+    try l.identify("bitbucket", "mnml-jira", selfPid());
+    return l;
 }
 
 /// The two request logs a Jira pane writes: its own service's, and the
@@ -848,9 +910,10 @@ fn values(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Al
     try out.writeAll("}\n");
 
     if (try ipcFor(gpa, io, env, args.workspace)) |*ipc_ptr| {
+        var name_buf: [64]u8 = undefined;
         var ipc = ipc_ptr.*;
         defer ipc.deinit();
-        publishSegments(&ipc, arena, v) catch |e| try err.print("mnml-jira --values: could not publish the segments: {s}\n", .{@errorName(e)});
+        publishSegments(&ipc, arena, v, bucketOf(gpa, io, &limiter, &name_buf)) catch |e| try err.print("mnml-jira --values: could not publish the segments: {s}\n", .{@errorName(e)});
     }
     return 0;
 }
@@ -974,6 +1037,8 @@ fn dump(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
         .limiter = &forge_limiter,
         .log = &logs.forge,
     });
+    client.notice = &app.wait_notice;
+    app.forge.notice = &app.wait_notice;
     app.setIpcDir(env.get("MNML_IPC_DIR") orelse "");
     defer app.deinit();
     app.resize(cols, rows);
@@ -1152,7 +1217,7 @@ test "the statusline segment is the manifest's slot, live: the exact IPC line" {
     const dir = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
     var ipc = try sdk.Ipc.init(testing.allocator, testing.io, dir);
     defer ipc.deinit();
-    try publishSegment(&ipc, 3);
+    try publishSegment(&ipc, 3, null);
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const line = try tmp.dir.readFileAlloc(testing.io, "command", arena.allocator(), .unlimited);
@@ -1280,7 +1345,7 @@ test "both chips carry their count and their breakdown; the QA one is absent whe
     try publishSegments(&ipc, arena, .{
         .assigned_open = 7,
         .assigned_by_status = &.{ .{ .status = "In Progress", .n = 4 }, .{ .status = "To Do", .n = 3 } },
-    });
+    }, null);
     var got = try tmp.dir.readFileAlloc(testing.io, "command", arena, .unlimited);
     try testing.expect(std.mem.indexOf(u8, got, "\"id\":\"jira_work.assigned\"") != null);
     try testing.expect(std.mem.indexOf(u8, got, "\u{f0303} 7") != null);
@@ -1294,12 +1359,20 @@ test "both chips carry their count and their breakdown; the QA one is absent whe
         .qa_actionable = 3,
         .qa_by_status = &.{.{ .status = "Ready for QA", .n = 3 }},
         .qa_tab_name = "QA Actionable Now",
-    });
+    }, .{ .status = .{ .tokens = 0.24, .capacity = 60, .rate = 0.33, .baseline_rate = 0.33, .throttles = 3, .cooldown_remaining_secs = 0, .last_429_age_secs = 4 * 3600 }, .draws = .{ .top = "bb.py", .top_n = 30, .total = 71 } });
     got = try tmp.dir.readFileAlloc(testing.io, "command", arena, .unlimited);
     try testing.expect(std.mem.indexOf(u8, got, "\"id\":\"jira_work.qa_actionable\"") != null);
     try testing.expect(std.mem.indexOf(u8, got, "QA Actionable Now · 3 actionable now — 3 Ready for QA") != null);
     // One item reads as one item, not "1 items".
     try testing.expect(std.mem.indexOf(u8, got, "1 open item assigned to me") != null);
+    // And the hover carries the shared bucket, which is the answer to
+    // "why is this chip stale" — one hover away rather than nowhere.
+    try testing.expect(std.mem.indexOf(u8, got, "budget: 0.2 of 60 tokens") != null);
+    try testing.expect(std.mem.indexOf(u8, got, "3 throttles") != null);
+    try testing.expect(std.mem.indexOf(u8, got, "last 429 4h ago") != null);
+    // And WHO drained it — a chip that is stale because a script is
+    // holding the budget says so rather than blaming itself.
+    try testing.expect(std.mem.indexOf(u8, got, "spent by bb.py 30 of 71 draws in 10m") != null);
 }
 
 test "one binary, three manifests, one poll: only the chip that has a segment declares a values source" {

@@ -86,6 +86,9 @@ pub const Client = struct {
     /// Where every request is written down (`mnml_sdk.request_log`).
     /// Null in a test, which has no data root to write into.
     log: ?*request_log.Log = null,
+    /// Where a wait long enough for a person to notice is left for the
+    /// paint loop to say something about.
+    notice: ?*ratelimit.Notice = null,
     user_agent: []const u8 = "mnml-jira",
 
     pub fn init(gpa: Allocator, io: Io, base_url: []const u8, authorization: []const u8, api: ApiVersion) Client {
@@ -113,7 +116,14 @@ pub const Client = struct {
     pub fn request(c: *Client, arena: Allocator, method: std.http.Method, url: []const u8, body: ?[]const u8, reason: Reason) CallError!Raw {
         // The bucket is shared, so this waits on every other process
         // too — and fails open rather than leaving the pane hung.
-        const gate: ratelimit.Acquired = if (c.limiter) |l| l.acquireDetailed() else .{ .ok = true };
+        // The bucket's own draw line carries the reason too, so the
+        // machine-wide file says not just which program spent the
+        // budget but on what.
+        const gate: ratelimit.Acquired = if (c.limiter) |l| blk: {
+            l.reason = @tagName(reason);
+            break :blk l.acquireDetailed();
+        } else .{ .ok = true };
+        if (c.notice) |n| n.record(gate);
         const started = Io.Timestamp.now(c.io, .real);
         var client: std.http.Client = .{ .allocator = c.gpa, .io = c.io };
         defer client.deinit();
