@@ -731,6 +731,11 @@ pub fn build(b: *std.Build) void {
     // the folder as `$MNML_LAUNCHERS` so a `.test` can point
     // `MNML_MARKETPLACE_LOCAL` at it.
     build_options.addOption([]const u8, "launchers_dir", b.pathFromRoot("launchers"));
+    // `tests/e2e/`: the corpus itself, so a unit test can read the
+    // scripts as text. `src/e2e/corpus.zig` walks every `.test` file and
+    // fails the build on a fake server started at a port somebody chose
+    // — the thing that stops two worktrees running the corpus at once.
+    build_options.addOption([]const u8, "e2e_corpus_dir", b.pathFromRoot("tests/e2e"));
     // `lua/`: the curated script set, in this repo the way `integrations/`
     // and `launchers/` are. A dev build lists it in the SCRIPTS section's
     // Marketplace tab with no config at all, because the folder's
