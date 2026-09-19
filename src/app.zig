@@ -2766,9 +2766,15 @@ pub const App = struct {
         // something, and "opened something" is exactly "the keys left
         // the panel for a pane, or a different pane became active".
         const on_overlay = self.sidebar_auto.open != null and self.sidebar_auto.rect.contains(m.x, m.y);
+        // // changed (launcher-dock): the strip holds the keyboard only
+        // while the hand is on it — a press anywhere else hands the keys
+        // back, so `h` / `l` never go missing in the editor because the
+        // dock was focused a minute ago.
+        const on_dock = self.launcher_dock.kb and self.launcher_dock.rect.contains(m.x, m.y);
         const focus_before = self.focus;
         const active_before = self.active;
         try dispatch.mouse(self, m, count);
+        if (self.launcher_dock.kb and !on_dock and m.kind == .press) launcher_dock_mod.leaveKeyboard(self);
         if (on_overlay) {
             const did_open = (self.focus == .pane and !std.meta.eql(focus_before, self.focus)) or
                 (self.active != null and !std.meta.eql(active_before, self.active));

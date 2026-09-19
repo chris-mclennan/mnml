@@ -523,7 +523,10 @@ pub fn interceptKey(app: *App, k: Key) Allocator.Error!bool {
             return true;
         },
         .char => |c| {
-            if (k.mods.ctrl or k.mods.alt or k.mods.super) return false;
+            if (k.mods.ctrl or k.mods.alt or k.mods.super) {
+                leave(app);
+                return false;
+            }
             switch (c) {
                 'h' => if (horizontal) {
                     step(app, -1);
@@ -553,10 +556,22 @@ pub fn interceptKey(app: *App, k: Key) Allocator.Error!bool {
                 },
                 else => {},
             }
+            // A key the strip has no answer for hands the keyboard back
+            // and is handled below, so a forgotten focus cannot swallow
+            // an `h` typed into the editor a minute later.
+            leave(app);
             return false;
         },
-        else => return false,
+        else => {
+            leave(app);
+            return false;
+        },
     }
+}
+
+/// The strip gives up the keyboard (a press landed somewhere else).
+pub fn leaveKeyboard(app: *App) void {
+    leave(app);
 }
 
 fn step(app: *App, by: i32) void {
@@ -848,8 +863,15 @@ test "the keyboard: h / l walk a bottom strip and wrap, j / k do not; Enter runs
     try t.expectEqual(@as(u16, 0), app.launcher_dock.cursor);
     try t.expect(try interceptKey(&app, Key.char('l')));
     try t.expectEqual(@as(u16, 1), app.launcher_dock.cursor);
-    // `j` is the SIDE strip's key: a bottom dock does not take it.
+    // `j` is the SIDE strip's key: a bottom dock does not take it —
+    // and a key the strip has no answer for hands the keyboard back
+    // rather than swallowing the next one typed into the editor.
     try t.expect(!try interceptKey(&app, Key.char('j')));
+    try t.expect(!app.launcher_dock.kb);
+    try t.expect(!try interceptKey(&app, Key.char('h')));
+    try focusCmd(&app);
+    try app.render();
+    app.launcher_dock.cursor = 1;
     try t.expect(try interceptKey(&app, Key.char('h')));
     try t.expectEqual(@as(u16, 0), app.launcher_dock.cursor);
     // Wrapping backwards from the first lands on the last.
