@@ -172,7 +172,14 @@ pub const AppDriver = struct {
     }
 
     fn vStatus(p: *anyopaque, a: Allocator) Error!screen_mod.Status {
-        const app = &cast(p).app;
+        return statusOf(&cast(p).app, a);
+    }
+
+    /// The frame's `status.json` for any App — the driver's answer and,
+    /// under `ipc.write_screen`, the terminal loop's too, so a live
+    /// session says which surface owns the cursor the same way a
+    /// headless one does.
+    pub fn statusOf(app: *App, a: Allocator) Allocator.Error!screen_mod.Status {
         var panes: std.ArrayListUnmanaged(screen_mod.PaneStatus) = .empty;
         for (app.panes.slots.items) |*slot| if (slot.*) |*pane| {
             try panes.append(a, .{ .title = try a.dupe(u8, pane.title()), .dirty = pane.dirty(), .preview = pane.preview() });
