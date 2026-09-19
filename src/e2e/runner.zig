@@ -223,6 +223,19 @@ const Run = struct {
         // data root from the environment lands in this file's, not the
         // run's.
         file_env.put("MNML_DATA_ROOT", data_root) catch return self.fail("out of memory", .{});
+        // The SDK's cross-process rate limiter adopts a machine-wide
+        // state file when one exists (the developer's own bucket), and
+        // a pane in a test then waits on tokens the developer's live
+        // instance is spending. Each file gets private buckets under
+        // its own root, so a first fetch against the offline server is
+        // never parked behind the real API's budget.
+        for ([_][]const u8{ "JIRA", "BITBUCKET" }) |service| {
+            const var_name = std.fmt.allocPrint(gpa, "{s}_RATELIMIT_STATE", .{service}) catch return self.fail("out of memory", .{});
+            defer gpa.free(var_name);
+            const path = std.fmt.allocPrint(gpa, "{s}/{s}-ratelimit.json", .{ data_root, service }) catch return self.fail("out of memory", .{});
+            defer gpa.free(path);
+            file_env.put(var_name, path) catch return self.fail("out of memory", .{});
+        }
         for (header.envPairs()) |pair| {
             const value = expandEnv(gpa, pair.value, &file_env) catch return self.fail("out of memory", .{});
             defer gpa.free(value);
@@ -1199,6 +1212,13 @@ test "each file persists into its own data root, so one that leaves something in
     defer dir.close(t.io);
     var it = dir.iterate();
     try t.expect((try it.next(t.io)) == null);
+    // A file's panes get rate-limit buckets of their own, under its
+    // root — never the machine-wide file a developer's live instance
+    // is spending from.
+    const bucket = try env.script("d5.test", "shell test \"${JIRA_RATELIMIT_STATE#$MNML_DATA_ROOT/}\" = \"JIRA-ratelimit.json\" && test \"${BITBUCKET_RATELIMIT_STATE#$MNML_DATA_ROOT/}\" = \"BITBUCKET-ratelimit.json\"\n");
+    defer t.allocator.free(bucket);
+    var o5 = runFile(t.allocator, t.io, sf.factory(), bucket, content_size, opts);
+    try expectPassed(&o5);
     // `# shared-data-root` opts back in: the file sees the run's root,
     // where the same `shell` line left nothing, so the marker it makes
     // there is still there for the next shared-root file.

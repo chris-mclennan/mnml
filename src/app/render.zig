@@ -1895,7 +1895,9 @@ fn drawCmdline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     };
     const model: cmdline_bar.Model = .{
         .line = line,
-        .toast = if (line == null) app.lastToast() else null,
+        // No echo under an open overlay: the toast paints beneath the
+        // overlay, so its words must not surface on the row below it.
+        .toast = if (line == null and app.overlay == .none) app.lastToast() else null,
         .inflight = if (line == null) inflightNames(app, ui.arena) catch null else null,
     };
     if (cmdline_bar.draw(ui, area, model, cmdline_bar_hits)) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };

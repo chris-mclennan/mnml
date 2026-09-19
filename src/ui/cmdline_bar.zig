@@ -70,8 +70,11 @@ pub fn mentionName(s: []const u8) ?[]const u8 {
 pub fn draw(ui: Ui, area: Rect, model: Model, hits: Hits) ?struct { x: u16, y: u16 } {
     if (area.isEmpty()) return null;
     const t = ui.theme;
-    ui.fill(area, t.statusline);
-    const bg = t.statusline.bg;
+    // The row's ground is the editor's, as the blank row under the
+    // statusline always was — the statusline's own colour would make
+    // the row read as a second statusline.
+    ui.fill(area, t.bg);
+    const bg = t.bg.bg;
 
     // The row is a click target whatever it shows — an unregistered row
     // would let a click fall through to whatever painted under it.
