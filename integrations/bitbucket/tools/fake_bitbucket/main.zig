@@ -9,6 +9,7 @@
 //!   mnml-fake-bitbucket --lifetime-secs 60    exit after a minute, whatever happens
 //!   mnml-fake-bitbucket --parent-pid 1234     exit when 1234 is gone
 //!   mnml-fake-bitbucket --rate-limit-first 2  429 the first two requests
+//!   mnml-fake-bitbucket --log-file bb.jsonl   a JSON line per request served
 //!
 //! The lifetime is what makes it safe in a test script: a run that
 //! fails half way still leaves nothing behind. The pane reaches it
@@ -31,6 +32,7 @@ pub fn main(init: std.process.Init) !u8 {
     var lifetime_secs: u64 = 0;
     var parent_pid: i32 = 0;
     var rate_limit_first: u32 = 0;
+    var log_file: ?[]const u8 = null;
 
     var i: usize = 1;
     var out_buf: [512]u8 = undefined;
@@ -57,6 +59,9 @@ pub fn main(init: std.process.Init) !u8 {
         } else if (std.mem.eql(u8, a, "--rate-limit-first") and i + 1 < args.len) {
             i += 1;
             rate_limit_first = std.fmt.parseInt(u32, args[i], 10) catch 0;
+        } else if (std.mem.eql(u8, a, "--log-file") and i + 1 < args.len) {
+            i += 1;
+            log_file = args[i];
         } else {
             try stdout.print("mnml-fake-bitbucket: unknown argument `{s}`\n\n{s}", .{ a, usage });
             try stdout.flush();
@@ -71,6 +76,12 @@ pub fn main(init: std.process.Init) !u8 {
     };
     defer srv.stop();
     if (rate_limit_first > 0) srv.rateLimitNext(rate_limit_first);
+    // A fresh log per run: the measurement is one tab load's worth, not
+    // everything this file has ever seen.
+    if (log_file) |p| {
+        Io.Dir.cwd().writeFile(io, .{ .sub_path = p, .data = "" }) catch {};
+        srv.log_path = p;
+    }
 
     const base = try srv.baseUrl(gpa);
     defer gpa.free(base);
@@ -114,6 +125,7 @@ const usage =
     \\  --lifetime-secs N     exit after N seconds (default: never)
     \\  --parent-pid N        exit when that process is gone (an orphan holds a port)
     \\  --rate-limit-first N  answer the first N requests with 429
+    \\  --log-file PATH       append one JSON line per request served
     \\
     \\Point the integration at it with BITBUCKET_BASE_URL=<url>, or
     \\BITBUCKET_BASE_URL=@<path> to read the --url-file.

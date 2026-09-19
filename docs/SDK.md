@@ -436,6 +436,94 @@ things it ran into are worth knowing before you write one:
 turns them into the styles the pane paints with, falling back to
 palette indices on a host that sends none).
 
+## What every request cost — the request log
+
+A pane that is slow gives the user one word, `loading…`, and no way to
+tell a throttled bucket from a wedged socket from a tab that simply
+asks for forty things. `mnml_sdk.request_log` is the answer to that:
+one JSON line per request, appended to
+`<data root>/requests/<service>.jsonl`.
+
+```zig
+var log = try sdk.RequestLog.open(gpa, io, env, "jira", "mnml-jira");
+defer log.deinit();
+client.log = &log;
+```
+
+One file per service, because the rate bucket is per service too: two
+integrations on one API read back as one story. It rotates at 4 MB and
+keeps one older generation (`<service>.1.jsonl`). The host's
+`integrations.request_log` block reaches it as two environment
+variables on every integration mnml starts — `MNML_REQUEST_LOG`
+(`0` / `off` / `false` / `no` turns it off) and
+`MNML_REQUEST_LOG_MAX_MB`. An integration run by hand with neither set
+gets the log: the point of it is to be there when the slow morning
+happens, not to be switched on afterwards.
+
+Every call site passes a **reason** — `pane_open`, `refresh`, `poll`,
+`prefetch`, `detail`, `builds`, `readiness`, `dispatch`, `user` —
+because a line that cannot be read back to a cause is only a route.
+
+Nothing that could carry a credential has a field to arrive in.
+`Entry` names what it holds; the only header shape it takes is
+`RateLimit`, four numbers about the budget; no body is ever written;
+and the query — which IS kept, since `?jql=…` is most of what makes a
+Jira line worth reading — has the value of any credential-shaped
+parameter replaced with `***`, the parameter left in place so the line
+still says it was sent. `splitUrl` also drops a `user:password@`
+authority outright.
+
+mnml's own REQUESTS pane (`integrations.requests`) reads these files.
+
+## Who is spending the budget — the draws file
+
+The rate bucket (`mnml_sdk.ratelimit`) says how much of an API's
+per-minute allowance is left; it never said who took it. On a machine
+where a dozen things draw on the same `<service>-ratelimit.json` —
+mnml's panes, the statusline poller, the Rust crate `mnml-ratelimit`,
+the Python `bb_ratelimit.py` — that is the half of the answer that
+does not help.
+
+So every `acquire` also appends one line to `<service>-draws.jsonl`,
+**beside the state file**, in the same interop directory every one of
+those shares:
+
+```json
+{"ts":1789526218.411,"pid":48123,"program":"mnml-jira","service":"jira","reason":"pane_open","wait_ms":3030,"tokens_after":0.24}
+```
+
+**This line is a contract.** Seven keys, exactly these spellings:
+
+| key | type | meaning |
+| --- | --- | --- |
+| `ts` | number | wall clock, seconds since the epoch, milliseconds kept |
+| `pid` | integer | the process that drew; `0` where there is no pid to name |
+| `program` | string | `argv[0]`'s basename — `mnml-jira`, `bb.py` |
+| `service` | string | which bucket — `jira`, `bitbucket` |
+| `reason` | string | why, in the requesting side's own words |
+| `wait_ms` | integer | how long `acquire` held the request before it went out |
+| `tokens_after` | number | tokens left in the shared bucket afterwards |
+
+Anything else on the machine that spends from one of these buckets can
+append the same line and be counted; nothing has to be taught to read
+it. The file rotates at 4 MB and keeps one older generation
+(`<service>-draws.jsonl.1`).
+
+The state file itself is **never** given a field for this. The Rust and
+Python writers rewrite its six keys wholesale, and a seventh there
+would be dropped by one of them or choke the other.
+
+```zig
+var limiter = try sdk.ratelimit.Limiter.forService(gpa, io, env, "jira");
+try limiter.identify("jira", "mnml-jira", pid);
+limiter.reason = "pane_open";   // set per request
+```
+
+A limiter nobody identified writes no draw lines: a line that cannot
+say who drew is worth nothing. `ratelimit.recentDraws` reads the file
+back for a window, which is what a statusline chip's hover uses to say
+`spent by bb.py 30 of 83 draws in 10m`.
+
 ## Testing an integration
 
 The socket is plain: a test can `UnixAddress.listen`, spawn the binary

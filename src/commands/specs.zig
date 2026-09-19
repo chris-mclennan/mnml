@@ -584,6 +584,7 @@ pub const specs = [_]Spec{
     .{ .id = "git.codex_commit", .title = "Git: write a commit message with Codex (from the staged diff)", .group = "git" },
     .{ .id = "git.ai_recompose", .title = "Git: rewrite HEAD's message with Claude (--amend)", .group = "git" },
     .{ .id = "flaky.show", .title = "Test: flaky-test dashboard (wobbly tests from history)", .group = "test" },
+    .{ .id = "integrations.requests", .title = "Integrations: requests — what every integration asked an API for, and what it cost", .group = "integrations" },
     .{ .id = "git.checkout", .title = "Git: checkout a branch (local or remote)", .group = "git" },
     .{ .id = "git.merge", .title = "Git: merge a branch into the current (--no-edit)", .group = "git" },
     .{ .id = "git.rebase", .title = "Git: rebase the current branch onto another (local or remote)", .group = "git" },
@@ -1203,11 +1204,7 @@ test "1086 specs, unique ids" {
     // copy_path / copy_line / open_pane)
     // + `integrations.dismiss_toml_notice` (the 0.2 manifests notice)
     // + `app.command_line` (the bottom row's `:` line) and
-    // `toast.run_action` (bottom-row)
-    // + three terminal-icon commands (terminal-icon)
-    // + `view.sidebar_pin` and the three `ui.sidebar` mode commands
-    // (sidebar-autohide) + the two `integrations.open_as` commands
-    // (integration-split).
-    try std.testing.expectEqual(@as(usize, 1090), specs.len);
+    // `toast.run_action` (bottom-row).
+    try std.testing.expectEqual(@as(usize, 1091), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

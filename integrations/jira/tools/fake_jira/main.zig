@@ -23,7 +23,16 @@
 //!
 //!   mnml-fake-jira [--port N] [--port-file P] [--pid-file P]
 //!                  [--life-secs N] [--parent-pid N] [--no-auth] [--quiet]
-//!                  [--version]
+//!                  [--extra-issues N] [--log-file P] [--version]
+//!
+//! Two flags exist for the request-count measurements rather than for
+//! the tests. `--extra-issues N` grows the fixture by N more open
+//! tickets assigned to the token's own account, each with one linked
+//! pull request (two in three of them merged), so a Work tab can be
+//! loaded at the size a real one is rather than at three rows.
+//! `--log-file P` appends one JSON line per request served — method,
+//! path, query, status — which is the wire's own account of what a tab
+//! load cost, owing nothing to what the client believes it sent.
 //!
 //! Loopback only. `--port 0` (the default) binds a free one, printed as
 //! `mnml-fake-jira: listening on 127.0.0.1:NNNNN` and written to
@@ -129,6 +138,13 @@ pub const Store = struct {
     /// When set, every route answers this status with a Jira error body.
     fail_with: ?u16 = null,
     requests: usize = 0,
+    /// Where `--log-file` appends its JSON line per request; null is no
+    /// log. The socket loop writes it, not `handle`, so a unit test
+    /// that drives `handle` directly never touches a file.
+    log_path: ?[]const u8 = null,
+    /// How many tickets `--extra-issues` added past the twelve the
+    /// fixture ships. Their keys are `ENG-101` upward.
+    extra: usize = 0,
     /// The clock the forge corner's relative dates are written against.
     /// The listener stamps the real one before each request; a test
     /// sets its own, so a build line's age is the same every run.
@@ -153,6 +169,45 @@ pub const Store = struct {
 
     fn keep(s: *Store, bytes: []const u8) Allocator.Error![]const u8 {
         return s.owned.allocator().dupe(u8, bytes);
+    }
+
+    /// Grow the fixture by `n` open tickets assigned to the token's own
+    /// account — `ENG-101` upward, each carrying one linked pull
+    /// request, two in three of them merged. Only the measurements ask
+    /// for this: at `n = 0` the fixture is the twelve rows every test
+    /// asserts against.
+    pub fn addExtraIssues(s: *Store, n: usize) Allocator.Error!void {
+        const own = s.owned.allocator();
+        var i: usize = 1;
+        while (i <= n) : (i += 1) {
+            try s.issues.append(s.gpa, .{
+                .id = try std.fmt.allocPrint(own, "{d}", .{10100 + i}),
+                .key = try std.fmt.allocPrint(own, "ENG-{d}", .{100 + i}),
+                .summary = try std.fmt.allocPrint(own, "Checkout follow-up {d}", .{i}),
+                .kind = "Story",
+                .status = "In Progress",
+                .category = "indeterminate",
+                .assignee = account_me,
+                .reporter = account_sam,
+                .priority = "Medium",
+                .updated = "2026-09-15T09:00:00.000+0000",
+                .created = "2026-08-01T09:00:00.000+0000",
+                .fix_version = "13.16.0",
+                .team = "Apollo",
+                .sprint = sprint_active,
+            });
+        }
+        s.extra += n;
+    }
+
+    /// The pull-request id an extra ticket's dev panel links to, and
+    /// whether it merged. `null` for anything that is not an extra.
+    fn extraPr(s: *const Store, key: []const u8) ?struct { id: u32, merged: bool } {
+        if (!std.mem.startsWith(u8, key, "ENG-1")) return null;
+        const n = std.fmt.parseInt(usize, key["ENG-".len..], 10) catch return null;
+        if (n <= 100 or n > 100 + s.extra) return null;
+        const i = n - 100;
+        return .{ .id = @intCast(5000 + i), .merged = i % 3 != 0 };
     }
 
     fn seed(s: *Store) Allocator.Error!void {
@@ -462,6 +517,15 @@ pub const Store = struct {
         \\  "reviewers":[{"name":"Pat Ruiz","approved":false}]}
         \\]}]}
         };
+        if (s.extraPr(issue.key)) |pr| return .{ .status = 200, .body = try std.fmt.allocPrint(arena,
+            \\{{"detail":[{{"pullRequests":[
+            \\ {{"id":"#{d}","name":"Checkout follow-up","status":"{s}",
+            \\  "url":"https://bitbucket.org/acme/checkout/pull-requests/{d}",
+            \\  "repositoryName":"checkout",
+            \\  "source":{{"branch":"feat/follow-up"}},"destination":{{"branch":"main"}},
+            \\  "reviewers":[{{"name":"Sam Beckett","approved":true}}]}}
+            \\]}}]}}
+        , .{ pr.id, if (pr.merged) "MERGED" else "OPEN", pr.id }) };
         return .{ .status = 200, .body = "{\"detail\":[{\"pullRequests\":[]}]}" };
     }
 
@@ -536,6 +600,14 @@ pub const Store = struct {
         if (std.mem.eql(u8, path, "/2.0/repositories/acme/checkout/pullrequests/2023")) return s.forgePr(arena, 2023, "MERGED", "abc123def456", "feat/blur-validation", "2222222222222222", 30);
         if (std.mem.eql(u8, path, "/2.0/repositories/acme/checkout/pullrequests/2044")) return s.forgePr(arena, 2044, "OPEN", "", "feat/trim", "3333333333333333", 2);
         if (std.mem.eql(u8, path, "/2.0/repositories/acme/ops/pullrequests/3001")) return s.forgePr(arena, 3001, "MERGED", "9f9f9f9f9f9f", "chore/rotate-keys", "4444444444444444", 50);
+        if (std.mem.startsWith(u8, path, "/2.0/repositories/acme/checkout/pullrequests/5")) {
+            const id = std.fmt.parseInt(u32, path["/2.0/repositories/acme/checkout/pullrequests/".len..], 10) catch 0;
+            const i = if (id > 5000) id - 5000 else 0;
+            if (i >= 1 and i <= s.extra) {
+                const merged = i % 3 != 0;
+                return s.forgePr(arena, id, if (merged) "MERGED" else "OPEN", if (merged) "abc123def456" else "", "feat/follow-up", "3333333333333333", 6);
+            }
+        }
         if (std.mem.eql(u8, path, "/2.0/repositories/acme/checkout/pipelines/")) return s.forgePipelines(arena);
         if (std.mem.eql(u8, path, "/2.0/repositories/acme/ops/pipelines/")) return .{ .status = 200, .body = "{\"values\":[]}" };
         return .{ .status = 404, .body = "{\"type\":\"error\",\"error\":{\"message\":\"Resource not found\"}}" };
@@ -892,6 +964,8 @@ pub fn main(init: std.process.Init) !u8 {
     var parent_pid: i32 = 0;
     var require_auth = true;
     var quiet = false;
+    var log_file: ?[]const u8 = null;
+    var extra_issues: usize = 0;
 
     var buf: [1024]u8 = undefined;
     var out_w: Io.File.Writer = .init(.stdout(), io, &buf);
@@ -923,6 +997,12 @@ pub fn main(init: std.process.Init) !u8 {
         } else if (std.mem.eql(u8, a, "--port-file") and i + 1 < args.len) {
             i += 1;
             port_file = args[i];
+        } else if (std.mem.eql(u8, a, "--log-file") and i + 1 < args.len) {
+            i += 1;
+            log_file = args[i];
+        } else if (std.mem.eql(u8, a, "--extra-issues") and i + 1 < args.len) {
+            i += 1;
+            extra_issues = std.fmt.parseInt(usize, args[i], 10) catch 0;
         } else {
             try out.print("mnml-fake-jira: unknown argument {s}\n", .{a});
             return 2;
@@ -932,6 +1012,13 @@ pub fn main(init: std.process.Init) !u8 {
     var store = try Store.init(gpa);
     defer store.deinit();
     store.require_auth = require_auth;
+    if (extra_issues > 0) try store.addExtraIssues(extra_issues);
+    // A fresh log per run: the measurement is one tab load's worth, not
+    // everything this file has ever seen.
+    if (log_file) |p| {
+        Io.Dir.cwd().writeFile(io, .{ .sub_path = p, .data = "" }) catch {};
+        store.log_path = p;
+    }
 
     var addr: Io.net.IpAddress = .{ .ip4 = .loopback(port) };
     var server = addr.listen(io, .{ .reuse_address = true }) catch |e| {
@@ -1067,11 +1154,30 @@ fn serveOne(gpa: Allocator, io: Io, store: *Store, stream: Io.net.Stream) bool {
     const stop = std.mem.startsWith(u8, pathOf(target), "/__shutdown");
     const res = store.handle(arena, request.head.method, target, authorization, body_store[0..n]) catch
         Response{ .status = 500, .body = "{\"errorMessages\":[\"out of memory\"],\"errors\":{}}" };
+    logRequest(io, store, arena, request.head.method, target, res.status);
     request.respond(res.body, .{
         .status = @enumFromInt(res.status),
         .extra_headers = &.{.{ .name = "content-type", .value = res.content_type }},
     }) catch {};
     return stop;
+}
+
+/// One JSON line appended to `--log-file`: what arrived on the wire,
+/// which is the only account of a tab's cost that owes nothing to what
+/// the client believes it sent. Best effort — a server that cannot
+/// write its log still serves.
+fn logRequest(io: Io, store: *Store, arena: Allocator, method: std.http.Method, target: []const u8, status: u16) void {
+    const path = store.log_path orelse return;
+    const line = std.fmt.allocPrint(arena, "{{\"method\":\"{s}\",\"path\":\"{f}\",\"query\":\"{f}\",\"status\":{d}}}\n", .{
+        @tagName(method),
+        std.zig.fmtString(pathOf(target)),
+        std.zig.fmtString(queryOf(target)),
+        status,
+    }) catch return;
+    const file = Io.Dir.cwd().createFile(io, path, .{ .truncate = false, .lock = .exclusive }) catch return;
+    defer file.close(io);
+    const end = file.length(io) catch 0;
+    file.writePositionalAll(io, line, end) catch {};
 }
 
 // ─── tests ───────────────────────────────────────────────────────────────

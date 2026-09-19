@@ -8,6 +8,14 @@
 //!   manifest  `Manifest` + `write` for `--install`
 //!   ratelimit one cross-process token bucket per service, shared with
 //!             every other process on the machine
+//!   store     what an integration already knows, kept between runs:
+//!             `<data root>/cache/<service>/` keyed by the SERVER's
+//!             own `updated` stamp, so a pane paints on open and only
+//!             asks about what moved
+//!   request_log
+//!             one JSON line per request under
+//!             `<data root>/requests/<service>.jsonl` — what a slow
+//!             pane spent, and what it spent it waiting on
 //!   zon_edit  saving a hand-written ZON file without losing its
 //!             comments — the splice the host's settings and an
 //!             integration's own config both write through
@@ -25,6 +33,8 @@ pub const frame = @import("frame.zig");
 pub const ipc = @import("ipc.zig");
 pub const manifest = @import("manifest.zig");
 pub const ratelimit = @import("ratelimit.zig");
+pub const request_log = @import("request_log.zig");
+pub const store = @import("store.zig");
 pub const pane = @import("pane.zig");
 pub const zon_edit = @import("zon_edit.zig");
 
@@ -37,6 +47,8 @@ pub const Slot = frame.Slot;
 pub const Ipc = ipc.Ipc;
 pub const Manifest = manifest.Manifest;
 pub const Limiter = ratelimit.Limiter;
+pub const RequestLog = request_log.Log;
+pub const Store = store.Store;
 pub const HostMessage = wire.HostMessage;
 pub const SiblingMessage = wire.SiblingMessage;
 pub const Color = wire.Color;
@@ -54,6 +66,8 @@ test {
     _ = ipc;
     _ = manifest;
     _ = ratelimit;
+    _ = request_log;
+    _ = store;
     _ = pane;
     _ = zon_edit;
 }

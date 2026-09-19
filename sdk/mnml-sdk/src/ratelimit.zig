@@ -27,6 +27,23 @@
 //!   * `penalize` records a 429: the shared rate is cut, the tokens
 //!     emptied, and every process parked until `Retry-After` is up.
 //!
+//! **Who is spending it.** The bucket says how much is left, never
+//! who took it — and on this machine a dozen things draw on the same
+//! allowance, mnml's panes among them. So every `acquire` also appends
+//! one line to `<service>-draws.jsonl` BESIDE the state file, in the
+//! same interop directory the Rust crate and the Python script already
+//! share:
+//!
+//! ```
+//! {"ts":1789526218.411,"pid":48123,"program":"mnml-jira","service":"jira","reason":"pane_open","wait_ms":3030,"tokens_after":0.24}
+//! ```
+//!
+//! Seven keys, documented in `docs/SDK.md` as a contract, so anything
+//! else on the machine can append the same line and be counted. The
+//! state file itself is NEVER given a field for this: the Rust and
+//! Python writers rewrite those six keys wholesale and a seventh would
+//! be dropped or choke them.
+//!
 //! Where the file is, in order — the Rust crate's resolution, so both
 //! sides find the same bucket:
 //!
@@ -102,6 +119,95 @@ pub const State = struct {
     last_429: f64 = 0,
 };
 
+/// What `acquire` was waiting on. An empty bucket and a 429 cooldown
+/// are the same `loading…` on screen and very different problems, so
+/// the limiter says which — and the request log writes it down.
+pub const Wait = enum {
+    /// It did not wait: there was a token.
+    nothing,
+    /// The bucket was empty; it refills at `rate`.
+    tokens,
+    /// A 429 had parked every process on this bucket until the
+    /// cooldown was up.
+    cooldown,
+    /// `max_block_secs` passed and the limiter failed open. The caller
+    /// sent anyway.
+    gave_up,
+
+    pub fn tag(w: Wait) []const u8 {
+        return @tagName(w);
+    }
+};
+
+/// One `acquire`, with what it cost. `ok` is the old boolean: false
+/// means the limiter gave up and the caller should send anyway.
+pub const Acquired = struct {
+    ok: bool,
+    /// Wall time the request was held before it went out.
+    wait_ms: u64 = 0,
+    waited_for: Wait = .nothing,
+    /// Tokens left in the shared bucket after this one took its token;
+    /// what the hover and the log both read.
+    tokens_after: f64 = 0,
+};
+
+/// The last wait worth telling the reader about.
+///
+/// `loading…` for three seconds with nothing else on screen is the
+/// complaint this exists to answer. Whatever thread made the request
+/// records its wait here; the loop that paints takes it and says so.
+/// Atomics rather than a lock, because the writer is usually a worker
+/// and the reader is always the paint loop, and paint takes no locks.
+pub const Notice = struct {
+    /// The longest wait since the last `take`, in milliseconds.
+    wait_ms: std.atomic.Value(u64) = .init(0),
+    /// Tokens left afterwards, times a thousand, so it crosses as an
+    /// integer.
+    tokens_milli: std.atomic.Value(u64) = .init(0),
+    /// A 429's cooldown rather than an empty bucket.
+    cooldown: std.atomic.Value(bool) = .init(false),
+
+    /// Under this, a wait is not worth a line: it is the difference
+    /// between a pane that is working and a pane that is parked.
+    pub const threshold_ms: u64 = 2000;
+
+    pub const Taken = struct {
+        wait_ms: u64,
+        tokens: f64,
+        cooldown: bool,
+
+        /// `waiting for the API budget · 3.1 s · 0.2 tokens`, or the
+        /// cooldown's own wording. Written into `buf`.
+        pub fn text(t2: Taken, buf: []u8) []const u8 {
+            const secs = @as(f64, @floatFromInt(t2.wait_ms)) / 1000.0;
+            const what = if (t2.cooldown) "backing off after a 429" else "waiting for the API budget";
+            return std.fmt.bufPrint(buf, "{s} · {d:.1} s · {d:.1} tokens", .{ what, secs, t2.tokens }) catch what;
+        }
+    };
+
+    /// Record one `acquire`. Anything under the threshold is dropped:
+    /// the point is the wait a person notices.
+    pub fn record(n: *Notice, a: Acquired) void {
+        if (a.wait_ms < threshold_ms) return;
+        if (a.wait_ms <= n.wait_ms.load(.acquire)) return;
+        n.wait_ms.store(a.wait_ms, .release);
+        n.tokens_milli.store(@intFromFloat(@max(a.tokens_after, 0) * 1000.0), .release);
+        n.cooldown.store(a.waited_for == .cooldown, .release);
+    }
+
+    /// The wait to say something about, once. Null when nothing has
+    /// been slow since the last look.
+    pub fn take(n: *Notice) ?Taken {
+        const ms = n.wait_ms.swap(0, .acq_rel);
+        if (ms == 0) return null;
+        return .{
+            .wait_ms = ms,
+            .tokens = @as(f64, @floatFromInt(n.tokens_milli.load(.acquire))) / 1000.0,
+            .cooldown = n.cooldown.load(.acquire),
+        };
+    }
+};
+
 pub const Status = struct {
     tokens: f64,
     capacity: f64,
@@ -109,7 +215,44 @@ pub const Status = struct {
     baseline_rate: f64,
     throttles: u32,
     cooldown_remaining_secs: f64,
+    /// How long ago the last 429 was, in seconds; null when the bucket
+    /// has never seen one.
+    last_429_age_secs: ?f64 = null,
+
+    /// The hover line on an integration's statusline chip:
+    ///
+    ///     budget: 0.2 of 60 tokens · 0.33/s · 127 throttles · last 429 4h ago
+    ///
+    /// The wording is here rather than in each integration so two
+    /// chips drawing on two buckets read the same way. Written into
+    /// `buf`.
+    pub fn describe(st: Status, buf: []u8) []const u8 {
+        var w: std.Io.Writer = .fixed(buf);
+        w.print("budget: {d:.1} of {d:.0} tokens · {d:.2}/s", .{ st.tokens, st.capacity, st.rate }) catch return buf[0..w.end];
+        if (st.rate < st.baseline_rate - 0.001) w.print(" (cut from {d:.2})", .{st.baseline_rate}) catch {};
+        if (st.throttles > 0) w.print(" · {d} throttle{s}", .{ st.throttles, if (st.throttles == 1) "" else "s" }) catch {};
+        if (st.last_429_age_secs) |age| {
+            var abuf: [24]u8 = undefined;
+            w.print(" · last 429 {s} ago", .{ageText(&abuf, age)}) catch {};
+        }
+        if (st.cooldown_remaining_secs > 0.5) w.print(" · parked {d:.0}s", .{st.cooldown_remaining_secs}) catch {};
+        return buf[0..w.end];
+    }
 };
+
+/// `42s` / `7m` / `4h` / `3d` — the coarsest unit that still says
+/// something, which is all an age on a hover needs to.
+pub fn ageText(buf: []u8, secs: f64) []const u8 {
+    const s2 = @max(secs, 0);
+    if (s2 < 90) return std.fmt.bufPrint(buf, "{d:.0}s", .{s2}) catch "?";
+    if (s2 < 5400) return std.fmt.bufPrint(buf, "{d:.0}m", .{s2 / 60.0}) catch "?";
+    if (s2 < 172800) return std.fmt.bufPrint(buf, "{d:.0}h", .{s2 / 3600.0}) catch "?";
+    return std.fmt.bufPrint(buf, "{d:.0}d", .{s2 / 86400.0}) catch "?";
+}
+
+/// The ceiling on `<service>-draws.jsonl` before it rotates, and the
+/// one older generation kept beside it.
+pub const draws_max_bytes: u64 = 4 * 1024 * 1024;
 
 pub const Limiter = struct {
     gpa: Allocator,
@@ -119,9 +262,32 @@ pub const Limiter = struct {
     cfg: Config,
     /// Requests the bucket let through, for the diagnostics.
     acquired: u32 = 0,
+    /// The service this bucket is, so a draw line can name it. Owned.
+    service: []u8 = &.{},
+    /// This process, as a draw line names it: the basename of argv[0],
+    /// and the pid. Borrowed from the caller, which owns argv.
+    program: []const u8 = "",
+    pid: i32 = 0,
+    /// Why this process is spending, right now. Whoever is about to
+    /// make a request sets it; the draw line carries it so a drained
+    /// bucket is attributable to a cause and not only to a program.
+    reason: []const u8 = "user",
+    /// Off only in a test that must leave no file behind.
+    draws: bool = true,
 
     pub fn init(gpa: Allocator, io: Io, path: []const u8, cfg: Config) Allocator.Error!Limiter {
         return .{ .gpa = gpa, .io = io, .path = try gpa.dupe(u8, path), .cfg = cfg };
+    }
+
+    /// Name this process in the draw lines: `program` is argv[0]'s
+    /// basename, `service` the bucket's own name. Without this a
+    /// limiter still works — it simply writes no draw lines, since a
+    /// line that cannot say who drew is worth nothing.
+    pub fn identify(self: *Limiter, service: []const u8, program: []const u8, pid: i32) Allocator.Error!void {
+        self.gpa.free(self.service);
+        self.service = try self.gpa.dupe(u8, service);
+        self.program = program;
+        self.pid = pid;
     }
 
     /// The limiter for a service, at the shared path the environment
@@ -134,42 +300,125 @@ pub const Limiter = struct {
 
     pub fn deinit(self: *Limiter) void {
         self.gpa.free(self.path);
+        self.gpa.free(self.service);
         self.* = undefined;
+    }
+
+    /// `<dir of the state file>/<service>-draws.jsonl`. Owned by the
+    /// caller; null when the limiter was never identified.
+    pub fn drawsPath(self: *const Limiter, gpa: Allocator) Allocator.Error!?[]u8 {
+        if (self.service.len == 0) return null;
+        const dir = std.fs.path.dirname(self.path) orelse ".";
+        return try std.fmt.allocPrint(gpa, "{s}/{s}-draws.jsonl", .{ dir, self.service });
+    }
+
+    /// One draw, written where everything else on this machine that
+    /// shares the bucket can read it. Best effort throughout — a log
+    /// is never a reason a request fails.
+    fn noteDraw(self: *Limiter, a: Acquired) void {
+        if (!self.draws or self.service.len == 0) return;
+        const path = (self.drawsPath(self.gpa) catch return) orelse return;
+        defer self.gpa.free(path);
+        var buf: [512]u8 = undefined;
+        const line = std.fmt.bufPrint(
+            &buf,
+            "{{\"ts\":{d:.3},\"pid\":{d},\"program\":\"{f}\",\"service\":\"{f}\",\"reason\":\"{f}\",\"wait_ms\":{d},\"tokens_after\":{d:.3}}}\n",
+            .{
+                nowSecs(self.io),
+                self.pid,
+                std.zig.fmtString(self.program),
+                std.zig.fmtString(self.service),
+                std.zig.fmtString(self.reason),
+                a.wait_ms,
+                @max(a.tokens_after, 0),
+            },
+        ) catch return;
+        if (std.fs.path.dirname(path)) |d| Io.Dir.cwd().createDirPath(self.io, d) catch {};
+        const file = Io.Dir.cwd().createFile(self.io, path, .{ .truncate = false, .lock = .exclusive }) catch return;
+        var end = file.length(self.io) catch 0;
+        if (end + line.len > draws_max_bytes) {
+            file.close(self.io);
+            const older = std.fmt.allocPrint(self.gpa, "{s}.1", .{path}) catch return;
+            defer self.gpa.free(older);
+            Io.Dir.cwd().deleteFile(self.io, older) catch {};
+            Io.Dir.cwd().rename(path, Io.Dir.cwd(), older, self.io) catch {
+                Io.Dir.cwd().writeFile(self.io, .{ .sub_path = path, .data = "" }) catch {};
+            };
+            const fresh = Io.Dir.cwd().createFile(self.io, path, .{ .truncate = false, .lock = .exclusive }) catch return;
+            defer fresh.close(self.io);
+            end = fresh.length(self.io) catch 0;
+            fresh.writePositionalAll(self.io, line, end) catch {};
+            return;
+        }
+        defer file.close(self.io);
+        file.writePositionalAll(self.io, line, end) catch {};
     }
 
     /// Block until a token is available. False when the limiter gave
     /// up (a wedged file, or `max_block_secs` passed); the caller
     /// should send anyway and let its own 429 handling decide.
     pub fn acquire(self: *Limiter) bool {
-        const deadline = nowSecs(self.io) + self.cfg.max_block_secs;
+        return self.acquireDetailed().ok;
+    }
+
+    /// The same wait, with an account of it: how long, on what, and
+    /// what was left afterwards. A pane that says `loading…` for three
+    /// seconds can say WHY with this, and the request log writes it
+    /// down for the run after.
+    pub fn acquireDetailed(self: *Limiter) Acquired {
+        const started = nowSecs(self.io);
+        const deadline = started + self.cfg.max_block_secs;
         var jitter_seed: u32 = 0;
+        // What the FIRST look found: a request held three seconds by an
+        // empty bucket and one held three seconds by a cooldown are
+        // different problems, and it is the first answer that names it.
+        var cause: Wait = .nothing;
+        var left: f64 = 0;
         while (true) {
             const now = nowSecs(self.io);
-            const wait = self.withLockedState(now, struct {
-                cfg: Config,
-                fn apply(ctx: @This(), st: *State, at: f64) f64 {
-                    if (st.cooldown_until > at) return st.cooldown_until - at;
-                    if (st.tokens >= 1.0) {
-                        st.tokens -= 1.0;
-                        // Ease the shared rate back toward the baseline.
-                        st.rate = @min(ctx.cfg.rate, @max(st.rate * ctx.cfg.recover_factor, @max(st.rate, 0.0)));
-                        return 0.0;
-                    }
-                    const need = 1.0 - st.tokens;
-                    const cur = @max(st.rate, ctx.cfg.min_rate);
-                    return need / cur;
-                }
-            }{ .cfg = self.cfg }) catch return false;
+            var probe: Probe = .{ .cfg = self.cfg, .tokens_after = &left, .cooldown = undefined };
+            var was_cooldown = false;
+            probe.cooldown = &was_cooldown;
+            const wait = self.withLockedState(now, probe) catch return .{ .ok = false, .wait_ms = millisSince(started, nowSecs(self.io)), .waited_for = .gave_up };
             if (wait <= 0.0) {
                 self.acquired += 1;
-                return true;
+                const got: Acquired = .{ .ok = true, .wait_ms = millisSince(started, nowSecs(self.io)), .waited_for = cause, .tokens_after = left };
+                self.noteDraw(got);
+                return got;
             }
+            if (cause == .nothing) cause = if (was_cooldown) .cooldown else .tokens;
             jitter_seed +%= 1;
             const jittered = jitter(@min(wait, 5.0), jitter_seed);
-            if (nowSecs(self.io) + jittered > deadline) return false;
-            self.io.sleep(.fromMilliseconds(@intFromFloat(@max(jittered, 0.05) * 1000.0)), .awake) catch return false;
+            if (nowSecs(self.io) + jittered > deadline) return .{ .ok = false, .wait_ms = millisSince(started, nowSecs(self.io)), .waited_for = .gave_up, .tokens_after = left };
+            self.io.sleep(.fromMilliseconds(@intFromFloat(@max(jittered, 0.05) * 1000.0)), .awake) catch
+                return .{ .ok = false, .wait_ms = millisSince(started, nowSecs(self.io)), .waited_for = .gave_up, .tokens_after = left };
         }
     }
+
+    /// One look at the bucket: take a token when there is one, else
+    /// say how long until there is, and whether a cooldown is the
+    /// reason there is not.
+    const Probe = struct {
+        cfg: Config,
+        tokens_after: *f64,
+        cooldown: *bool,
+
+        fn apply(ctx: @This(), st: *State, at: f64) f64 {
+            ctx.cooldown.* = st.cooldown_until > at;
+            ctx.tokens_after.* = st.tokens;
+            if (ctx.cooldown.*) return st.cooldown_until - at;
+            if (st.tokens >= 1.0) {
+                st.tokens -= 1.0;
+                ctx.tokens_after.* = st.tokens;
+                // Ease the shared rate back toward the baseline.
+                st.rate = @min(ctx.cfg.rate, @max(st.rate * ctx.cfg.recover_factor, @max(st.rate, 0.0)));
+                return 0.0;
+            }
+            const need = 1.0 - st.tokens;
+            const cur = @max(st.rate, ctx.cfg.min_rate);
+            return need / cur;
+        }
+    };
 
     /// Record a 429: park every process until `retry_after_secs` is
     /// up (the default cooldown when null) and cut the shared rate.
@@ -207,6 +456,7 @@ pub const Limiter = struct {
             .baseline_rate = self.cfg.rate,
             .throttles = snap.throttles,
             .cooldown_remaining_secs = @max(snap.cooldown_until - now, 0.0),
+            .last_429_age_secs = if (snap.last_429 > 0) @max(now - snap.last_429, 0.0) else null,
         };
     }
 
@@ -247,6 +497,104 @@ pub fn renderState(buf: []u8, st: State) []const u8 {
     return std.fmt.bufPrint(buf, "{{\"ts\":{d},\"tokens\":{d},\"rate\":{d},\"cooldown_until\":{d},\"throttles\":{d},\"last_429\":{d}}}", .{
         st.ts, st.tokens, st.rate, st.cooldown_until, st.throttles, st.last_429,
     }) catch buf[0..0];
+}
+
+/// Who has been drawing on a bucket lately, from `<service>-draws.jsonl`.
+pub const Draws = struct {
+    /// The program with the most draws in the window.
+    top: []const u8 = "",
+    /// Its draws, and everyone's.
+    top_n: u32 = 0,
+    total: u32 = 0,
+
+    /// `mnml-jira 41 of 83 draws in 10m` — what a chip's hover says so
+    /// a drained bucket is attributable rather than mysterious.
+    /// Written into `buf`; empty when nothing drew in the window.
+    pub fn describe(d: Draws, buf: []u8, window_secs: u32) []const u8 {
+        if (d.total == 0) return "";
+        var abuf: [24]u8 = undefined;
+        return std.fmt.bufPrint(buf, "{s} {d} of {d} draws in {s}", .{
+            d.top, d.top_n, d.total, ageText(&abuf, @floatFromInt(window_secs)),
+        }) catch "";
+    }
+};
+
+/// The top consumer of the last `window_secs`, read out of a draws
+/// file. Cheap and bounded: only the tail of the file is read, since
+/// a window is always the newest lines. Null when there is no file or
+/// nothing in the window — never an error, because this only ever
+/// decorates a hover.
+pub fn recentDraws(gpa: Allocator, io: Io, path: []const u8, window_secs: u32, now: f64, name_out: []u8) ?Draws {
+    const text = Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(2 * 1024 * 1024)) catch return null;
+    defer gpa.free(text);
+    const cutoff = now - @as(f64, @floatFromInt(window_secs));
+    // Programs seen, with their counts. A machine does not run
+    // hundreds of different programs against one API; past this the
+    // tail simply lands in the total, which is still right.
+    var names: [16][]const u8 = undefined;
+    var counts: [16]u32 = @splat(0);
+    var n_names: usize = 0;
+    var total: u32 = 0;
+    var it = std.mem.tokenizeScalar(u8, text, '\n');
+    while (it.next()) |line| {
+        const ts = jsonNumber(line, "ts") orelse continue;
+        if (ts < cutoff) continue;
+        total += 1;
+        const prog = jsonString(line, "program") orelse "other";
+        var found = false;
+        for (names[0..n_names], 0..) |nm, i| {
+            if (std.mem.eql(u8, nm, prog)) {
+                counts[i] += 1;
+                found = true;
+            }
+        }
+        if (!found and n_names < names.len) {
+            names[n_names] = prog;
+            counts[n_names] = 1;
+            n_names += 1;
+        }
+    }
+    if (total == 0) return null;
+    var best: usize = 0;
+    for (counts[0..n_names], 0..) |c, i| if (c > counts[best]) {
+        best = i;
+    };
+    if (n_names == 0) return .{ .total = total };
+    // Every name points into `text`, which is freed on the way out,
+    // so the winner is copied into the caller's own buffer.
+    const name = names[best];
+    const keep = @min(name.len, name_out.len);
+    @memcpy(name_out[0..keep], name[0..keep]);
+    return .{ .top = name_out[0..keep], .top_n = counts[best], .total = total };
+}
+
+/// `"key":<number>` out of one JSON line, without parsing the whole
+/// thing — these files have millions of lines and one shape.
+fn jsonNumber(line: []const u8, key: []const u8) ?f64 {
+    var kbuf: [32]u8 = undefined;
+    const needle = std.fmt.bufPrint(&kbuf, "\"{s}\":", .{key}) catch return null;
+    const at = std.mem.indexOf(u8, line, needle) orelse return null;
+    const rest = line[at + needle.len ..];
+    var end: usize = 0;
+    while (end < rest.len and (std.ascii.isDigit(rest[end]) or rest[end] == '.' or rest[end] == '-')) : (end += 1) {}
+    return std.fmt.parseFloat(f64, rest[0..end]) catch null;
+}
+
+/// `"key":"…"` out of one JSON line. No escapes are decoded: a
+/// program name that needed them would not be one.
+fn jsonString(line: []const u8, key: []const u8) ?[]const u8 {
+    var kbuf: [32]u8 = undefined;
+    const needle = std.fmt.bufPrint(&kbuf, "\"{s}\":\"", .{key}) catch return null;
+    const at = std.mem.indexOf(u8, line, needle) orelse return null;
+    const rest = line[at + needle.len ..];
+    const end = std.mem.indexOfScalar(u8, rest, '"') orelse return null;
+    return rest[0..end];
+}
+
+fn millisSince(start: f64, end: f64) u64 {
+    const d = end - start;
+    if (d <= 0) return 0;
+    return @intFromFloat(d * 1000.0);
 }
 
 fn nowSecs(io: Io) f64 {
@@ -406,6 +754,248 @@ test "two limiters on one file share the tokens, and one 429 parks both" {
     const text = try Io.Dir.cwd().readFileAlloc(t.io, path, t.allocator, .limited(4096));
     defer t.allocator.free(text);
     try t.expect(std.mem.indexOf(u8, text, "\"throttles\":1") != null);
+}
+
+test "every draw is written beside the state file, where anything else on the machine can read it" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    const path = try std.fs.path.join(t.allocator, &.{ dir, "jira-ratelimit.json" });
+    defer t.allocator.free(path);
+
+    // A limiter nobody identified writes no draw lines: a line that
+    // cannot say who drew is worth nothing.
+    var anon = try Limiter.init(t.allocator, t.io, path, .{ .capacity = 8.0, .rate = 5.0 });
+    defer anon.deinit();
+    try t.expect(anon.acquire());
+    try t.expect((try anon.drawsPath(t.allocator)) == null);
+
+    var pane = try Limiter.init(t.allocator, t.io, path, .{ .capacity = 8.0, .rate = 5.0 });
+    defer pane.deinit();
+    try pane.identify("jira", "mnml-jira", 48123);
+    pane.reason = "pane_open";
+    try t.expect(pane.acquire());
+    try t.expect(pane.acquire());
+    pane.reason = "poll";
+    try t.expect(pane.acquire());
+
+    // A second process on the SAME bucket — the case the file exists
+    // for — appends to the same file under its own name.
+    var script = try Limiter.init(t.allocator, t.io, path, .{ .capacity = 8.0, .rate = 5.0 });
+    defer script.deinit();
+    try script.identify("jira", "bb.py", 91002);
+    script.reason = "user";
+    try t.expect(script.acquire());
+
+    const draws = (try pane.drawsPath(t.allocator)).?;
+    defer t.allocator.free(draws);
+    // Beside the state file, in the interop directory, under the name
+    // the contract in docs/SDK.md gives.
+    const want = try std.fs.path.join(t.allocator, &.{ dir, "jira-draws.jsonl" });
+    defer t.allocator.free(want);
+    try t.expectEqualStrings(want, draws);
+    const text = try Io.Dir.cwd().readFileAlloc(t.io, draws, t.allocator, .limited(1 << 16));
+    defer t.allocator.free(text);
+    try t.expectEqual(@as(usize, 4), std.mem.count(u8, text, "\n"));
+    // The seven keys the contract names, on every line, and nothing
+    // that could be a credential.
+    var it = std.mem.tokenizeScalar(u8, text, '\n');
+    while (it.next()) |line| {
+        for ([_][]const u8{ "\"ts\":", "\"pid\":", "\"program\":", "\"service\":", "\"reason\":", "\"wait_ms\":", "\"tokens_after\":" }) |k| {
+            t.expect(std.mem.indexOf(u8, line, k) != null) catch |err| {
+                std.debug.print("missing {s} in {s}\n", .{ k, line });
+                return err;
+            };
+        }
+        const parsed = try std.json.parseFromSlice(std.json.Value, t.allocator, line, .{});
+        parsed.deinit();
+    }
+    try t.expect(std.mem.indexOf(u8, text, "\"program\":\"mnml-jira\"") != null);
+    try t.expect(std.mem.indexOf(u8, text, "\"program\":\"bb.py\"") != null);
+    try t.expect(std.mem.indexOf(u8, text, "\"reason\":\"pane_open\"") != null);
+    try t.expect(std.mem.indexOf(u8, text, "\"pid\":48123") != null);
+
+    // And the state file itself gained nothing: the Rust and Python
+    // writers rewrite those six keys wholesale, so a seventh there
+    // would be dropped or choke them.
+    const st = try Io.Dir.cwd().readFileAlloc(t.io, path, t.allocator, .limited(4096));
+    defer t.allocator.free(st);
+    try t.expectEqual(@as(usize, 6), std.mem.count(u8, st, "\":"));
+    try t.expect(std.mem.indexOf(u8, st, "program") == null);
+
+    // Read back: who has been spending, over a window.
+    var nbuf: [64]u8 = undefined;
+    const now = nowSecs(t.io);
+    const d = recentDraws(t.allocator, t.io, draws, 600, now, &nbuf).?;
+    try t.expectEqual(@as(u32, 4), d.total);
+    try t.expectEqualStrings("mnml-jira", d.top);
+    try t.expectEqual(@as(u32, 3), d.top_n);
+    var buf: [96]u8 = undefined;
+    try t.expectEqualStrings("mnml-jira 3 of 4 draws in 10m", d.describe(&buf, 600));
+    // A window that ended before any of them saw nothing at all.
+    try t.expect(recentDraws(t.allocator, t.io, draws, 600, now + 4000, &nbuf) == null);
+    // A file that is not there is not an error: this only decorates a
+    // hover.
+    try t.expect(recentDraws(t.allocator, t.io, "/nonexistent/x-draws.jsonl", 600, now, &nbuf) == null);
+}
+
+test "the hover line says what the bucket holds, at what rate, and how long since the last 429" {
+    var buf: [160]u8 = undefined;
+    // A healthy bucket: no throttles, no 429, nothing alarming to say.
+    try t.expectEqualStrings(
+        "budget: 12.0 of 60 tokens · 0.33/s",
+        (Status{ .tokens = 12.0, .capacity = 60, .rate = 0.33, .baseline_rate = 0.33, .throttles = 0, .cooldown_remaining_secs = 0 }).describe(&buf),
+    );
+    // A drained, cut, parked one says all four things — which is the
+    // whole answer to "why is this pane slow".
+    try t.expectEqualStrings(
+        "budget: 0.2 of 40 tokens · 0.11/s (cut from 0.22) · 127 throttles · last 429 4h ago",
+        (Status{
+            .tokens = 0.24,
+            .capacity = 40,
+            .rate = 0.11,
+            .baseline_rate = 0.22,
+            .throttles = 127,
+            .cooldown_remaining_secs = 0,
+            .last_429_age_secs = 4 * 3600,
+        }).describe(&buf),
+    );
+    try t.expect(std.mem.indexOf(u8, (Status{
+        .tokens = 0,
+        .capacity = 40,
+        .rate = 0.22,
+        .baseline_rate = 0.22,
+        .throttles = 1,
+        .cooldown_remaining_secs = 28,
+        .last_429_age_secs = 31,
+    }).describe(&buf), "parked 28s") != null);
+    var abuf: [24]u8 = undefined;
+    try t.expectEqualStrings("42s", ageText(&abuf, 42));
+    try t.expectEqualStrings("7m", ageText(&abuf, 7 * 60));
+    try t.expectEqualStrings("4h", ageText(&abuf, 4 * 3600));
+    try t.expectEqualStrings("3d", ageText(&abuf, 3 * 86400));
+}
+
+test "the status a live bucket reports carries the age of its last 429" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    const path = try std.fs.path.join(t.allocator, &.{ dir, "b.json" });
+    defer t.allocator.free(path);
+    var l = try Limiter.init(t.allocator, t.io, path, .{ .capacity = 4.0, .rate = 0.5 });
+    defer l.deinit();
+    try t.expect(l.acquire());
+    // Never throttled: there is no age to report, and the hover says
+    // nothing about a 429 rather than saying "0s ago".
+    const clean = l.status().?;
+    try t.expect(clean.last_429_age_secs == null);
+    var buf: [160]u8 = undefined;
+    try t.expect(std.mem.indexOf(u8, clean.describe(&buf), "429") == null);
+    l.penalize(5);
+    const after = l.status().?;
+    try t.expect(after.last_429_age_secs != null);
+    try t.expect(after.last_429_age_secs.? < 5.0);
+    try t.expectEqual(@as(u32, 1), after.throttles);
+    try t.expect(std.mem.indexOf(u8, after.describe(&buf), "last 429") != null);
+}
+
+test "a wait a person would notice becomes one line; a wait they would not is dropped" {
+    var n: Notice = .{};
+    // Under the threshold: nothing to say. A pane that is working
+    // should not narrate.
+    n.record(.{ .ok = true, .wait_ms = 0, .waited_for = .nothing, .tokens_after = 12.0 });
+    n.record(.{ .ok = true, .wait_ms = Notice.threshold_ms - 1, .waited_for = .tokens, .tokens_after = 0.4 });
+    try t.expect(n.take() == null);
+
+    // Over it: the longest wait wins, and the line says how long, on
+    // what, and what is left.
+    n.record(.{ .ok = true, .wait_ms = 3100, .waited_for = .tokens, .tokens_after = 0.24 });
+    n.record(.{ .ok = true, .wait_ms = 2200, .waited_for = .tokens, .tokens_after = 0.9 });
+    const got = n.take().?;
+    try t.expectEqual(@as(u64, 3100), got.wait_ms);
+    try t.expect(!got.cooldown);
+    var buf: [96]u8 = undefined;
+    try t.expectEqualStrings("waiting for the API budget · 3.1 s · 0.2 tokens", got.text(&buf));
+    // Taken once: the next paint does not repeat it.
+    try t.expect(n.take() == null);
+
+    // A 429's cooldown is a different sentence, because it is a
+    // different problem.
+    n.record(.{ .ok = true, .wait_ms = 30000, .waited_for = .cooldown, .tokens_after = 0.0 });
+    const parked = n.take().?;
+    try t.expect(parked.cooldown);
+    try t.expectEqualStrings("backing off after a 429 · 30.0 s · 0.0 tokens", parked.text(&buf));
+}
+
+test "acquire says what it waited on: nothing, an empty bucket, then a 429's cooldown" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    const path = try std.fs.path.join(t.allocator, &.{ dir, "jira-ratelimit.json" });
+    defer t.allocator.free(path);
+    // Two tokens, and a refill slow enough that the third is a real
+    // wait rather than a race with the clock.
+    var l = try Limiter.init(t.allocator, t.io, path, .{ .capacity = 2.0, .rate = 0.05, .max_block_secs = 0.3 });
+    defer l.deinit();
+
+    // A token in hand: no wait, and the count left is what the next
+    // caller will find.
+    const first = l.acquireDetailed();
+    try t.expect(first.ok);
+    try t.expectEqual(Wait.nothing, first.waited_for);
+    try t.expectApproxEqAbs(@as(f64, 1.0), first.tokens_after, 0.01);
+    const second = l.acquireDetailed();
+    try t.expect(second.ok);
+    try t.expectEqual(Wait.nothing, second.waited_for);
+    try t.expectApproxEqAbs(@as(f64, 0.0), second.tokens_after, 0.01);
+
+    // The bucket is empty and the refill is slower than the budget to
+    // wait in: the limiter fails open rather than hanging the pane.
+    const third = l.acquireDetailed();
+    try t.expect(!third.ok);
+    try t.expectEqual(Wait.gave_up, third.waited_for);
+
+    // An empty bucket that WILL refill inside the budget: the request
+    // goes out, having really waited, and the wait is blamed on the
+    // tokens rather than on anything else.
+    // On a bucket of its own: the refill rate lives in the FILE, so a
+    // limiter pointed at the one above would inherit its 0.05.
+    const quick_path = try std.fs.path.join(t.allocator, &.{ dir, "quick-ratelimit.json" });
+    defer t.allocator.free(quick_path);
+    var quick = try Limiter.init(t.allocator, t.io, quick_path, .{ .capacity = 1.0, .rate = 20.0, .max_block_secs = 5.0 });
+    defer quick.deinit();
+    try t.expect(quick.acquire());
+    const waited = quick.acquireDetailed();
+    try t.expect(waited.ok);
+    try t.expectEqual(Wait.tokens, waited.waited_for);
+    try t.expect(waited.wait_ms > 0);
+
+    // A 429 is a different reason for the same silence, and the
+    // account of the wait says so rather than blaming the refill.
+    const parked_path = try std.fs.path.join(t.allocator, &.{ dir, "parked-ratelimit.json" });
+    defer t.allocator.free(parked_path);
+    var parked = try Limiter.init(t.allocator, t.io, parked_path, .{ .capacity = 4.0, .rate = 20.0, .max_block_secs = 5.0 });
+    defer parked.deinit();
+    try t.expect(parked.acquire());
+    parked.penalize(0.05);
+    const after_429 = parked.acquireDetailed();
+    try t.expect(after_429.ok);
+    try t.expectEqual(Wait.cooldown, after_429.waited_for);
+    try t.expect(after_429.wait_ms > 0);
+
+    // A cooldown longer than the budget fails open, and still names
+    // the cooldown rather than pretending nothing happened.
+    var impatient = try Limiter.init(t.allocator, t.io, parked_path, .{ .capacity = 4.0, .rate = 20.0, .max_block_secs = 0.0 });
+    defer impatient.deinit();
+    impatient.penalize(30);
+    const gave_up = impatient.acquireDetailed();
+    try t.expect(!gave_up.ok);
+    try t.expectEqual(Wait.gave_up, gave_up.waited_for);
+    // `acquire` is still the boolean every existing caller reads.
+    try t.expect(!impatient.acquire());
 }
 
 test "the state path follows the Rust crate's resolution order, per service" {

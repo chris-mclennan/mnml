@@ -192,6 +192,10 @@ pub const App = struct {
     help_scroll: usize = 0,
     /// The transient line the hint row shows on the left, owned.
     status: std.ArrayList(u8) = .empty,
+    /// Where a wait long enough for a person to notice is left by the
+    /// worker thread. `noteWait` turns it into the one line that keeps
+    /// `loading…` from being silent.
+    wait_notice: ratelimit.Notice = .{},
     effects: std.ArrayList(Effect) = .empty,
     effect_arena: std.heap.ArenaAllocator,
     jobs: std.ArrayList(fetch.Job) = .empty,
@@ -369,7 +373,9 @@ pub const App = struct {
         if (app.config.account_id.len == 0) try app.enqueue(.whoami);
         for (app.tabs, 0..) |*ts, i| {
             ts.loading = true;
-            try app.enqueue(.{ .refresh = .{ .tab = i, .spec = ts.spec, .scope = app.scopeInputs(ts.spec.workspace) } });
+            // The startup chain is the pane opening, whatever the job
+            // kind says; a refetch of the same tab later is not.
+            try app.enqueueFor(.{ .refresh = .{ .tab = i, .spec = ts.spec, .scope = app.scopeInputs(ts.spec.workspace) } }, .pane_open);
         }
         try app.requestValues();
         app.last_refresh_secs = app.now_secs;
@@ -382,6 +388,11 @@ pub const App = struct {
 
     fn enqueue(app: *App, kind: fetch.Job.Kind) Allocator.Error!void {
         try app.jobs.append(app.gpa, try fetch.makeJob(app.gpa, app.now_secs, kind));
+    }
+
+    /// The same, saying what the request log should call it.
+    fn enqueueFor(app: *App, kind: fetch.Job.Kind, reason: api.Reason) Allocator.Error!void {
+        try app.jobs.append(app.gpa, try fetch.makeJobFor(app.gpa, app.now_secs, kind, reason));
     }
 
     /// The jobs queued since the last take; the caller owns them.
@@ -413,6 +424,16 @@ pub const App = struct {
 
     /// The reference's status line: kept on the hint row's left and
     /// shown as a toast.
+    /// Say something about a wait the reader has been sitting through.
+    /// Called once per loop pass, so the line appears WHILE the fetch
+    /// is still out; the fetch's own summary replaces it when the rows
+    /// arrive.
+    pub fn noteWait(app: *App) void {
+        const w = app.wait_notice.take() orelse return;
+        var buf: [96]u8 = undefined;
+        app.setStatus("{s}", .{w.text(&buf)});
+    }
+
     pub fn setStatus(app: *App, comptime fmt: []const u8, args: anytype) void {
         app.status.clearRetainingCapacity();
         const text = std.fmt.allocPrint(app.gpa, fmt, args) catch return;
@@ -1938,6 +1959,7 @@ pub const App = struct {
 
 const t = std.testing;
 const api = @import("api.zig");
+const ratelimit = @import("ratelimit.zig");
 const listener = @import("../tools/fake_bitbucket/listener.zig");
 
 /// An app on the fake server, with a worker run synchronously: what

@@ -51,6 +51,11 @@ pub const Job = struct {
     arena: std.heap.ArenaAllocator,
     kind: Kind,
     now_secs: i64,
+    /// What the request log calls the requests this job makes. A job
+    /// IS a reason, so the kind supplies one; the caller overrides it
+    /// only where the kind cannot tell — the first load of a tab and a
+    /// refetch of one are both `.refresh` jobs.
+    reason: ?api.Reason = null,
 
     pub const Kind = union(enum) {
         whoami,
@@ -79,6 +84,20 @@ pub const Job = struct {
     pub fn deinit(job: *Job) void {
         job.arena.deinit();
         job.* = undefined;
+    }
+
+    /// The reason a kind means on its own.
+    pub fn reasonOf(job: *const Job) api.Reason {
+        if (job.reason) |r| return r;
+        return switch (job.kind) {
+            .whoami => .pane_open,
+            .refresh => .refresh,
+            .detail => .detail,
+            .pr_pipelines => .builds,
+            .approve => .user,
+            .readiness => .readiness,
+            .values => .poll,
+        };
     }
 };
 
@@ -246,6 +265,9 @@ pub const Worker = struct {
         var arena = std.heap.ArenaAllocator.init(w.gpa);
         errdefer arena.deinit();
         const a = arena.allocator();
+        // Every request this job makes is written down under this
+        // reason — a job is a reason, so it is set once, here.
+        w.client.reason = job.reasonOf();
         const payload: Result.Payload = switch (job.kind) {
             .whoami => .{ .whoami = try w.whoami(a) },
             .refresh => |r| .{ .refresh = try w.refresh(a, r.tab, r.spec, r.scope, job.now_secs) },
@@ -918,6 +940,11 @@ fn replaceAll(a: Allocator, s: []const u8, needle: []const u8, with: []const u8)
 
 /// A job with its inputs copied onto its own arena.
 pub fn makeJob(gpa: Allocator, now_secs: i64, kind: Job.Kind) Allocator.Error!Job {
+    return makeJobFor(gpa, now_secs, kind, null);
+}
+
+/// The same, with the reason the caller wants the log to record.
+pub fn makeJobFor(gpa: Allocator, now_secs: i64, kind: Job.Kind, reason: ?api.Reason) Allocator.Error!Job {
     var arena = std.heap.ArenaAllocator.init(gpa);
     errdefer arena.deinit();
     const a = arena.allocator();
@@ -937,7 +964,7 @@ pub fn makeJob(gpa: Allocator, now_secs: i64, kind: Job.Kind) Allocator.Error!Jo
         } },
         .values => |v| .{ .values = .{ .scope = try dupeScope(a, v.scope), .stale_after_days = v.stale_after_days, .excluded_branch_patterns = try dupeList(a, v.excluded_branch_patterns) } },
     };
-    return .{ .arena = arena, .kind = copied, .now_secs = now_secs };
+    return .{ .arena = arena, .kind = copied, .now_secs = now_secs, .reason = reason };
 }
 
 fn dupeKey(a: Allocator, k: PrKey) Allocator.Error!PrKey {

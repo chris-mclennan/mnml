@@ -25,6 +25,10 @@ const cfg = @import("config.zig");
 const auth = @import("auth.zig");
 const ratelimit = @import("ratelimit.zig");
 const cache_mod = @import("cache.zig");
+const sdk = @import("mnml_sdk");
+const request_log = sdk.request_log;
+
+pub const Reason = request_log.Reason;
 
 pub const default_base_url = "https://api.bitbucket.org/2.0";
 pub const user_agent = "mnml-bitbucket/0.2.0";
@@ -93,6 +97,14 @@ pub const Failure = struct {
     }
 };
 
+/// What one `once` learned about the budget from the response head.
+/// Numbers only; no header value that could carry a credential is ever
+/// read out of a response here.
+pub const Head = struct {
+    retry_after: ?u32 = null,
+    rate_limit: request_log.RateLimit = .{},
+};
+
 pub const Body = struct {
     status: u16,
     /// Owned by the allocator passed to `send`.
@@ -128,6 +140,16 @@ pub const Client = struct {
     read_kind: auth.Kind = .account,
     rate: cfg.Rate,
     limiter: ?*ratelimit.Limiter = null,
+    /// Where every request is written down (`mnml_sdk.request_log`).
+    /// Null in a test, which has no data root to write into.
+    log: ?*request_log.Log = null,
+    /// Where a wait long enough for a person to notice is left for the
+    /// paint loop to say something about.
+    notice: ?*ratelimit.Notice = null,
+    /// Why the requests being made right now are being made. The
+    /// worker sets it when it picks up a job — a job IS a reason — so
+    /// a line in the log reads back to the thing that caused it.
+    reason: Reason = .refresh,
     /// The prefetch cache (`cache.zig`). In `.prime` it answers the
     /// first GET for each URL without a request; in `.fill` it records
     /// every one that succeeds. Null is the same as `.off`.
@@ -188,6 +210,10 @@ pub const Client = struct {
         if (method == .GET) {
             if (self.cache) |c| {
                 if (try c.take(gpa, url, self.now_secs)) |bytes| {
+                    // A request that cost nothing is still worth a
+                    // line: "the prefetch paid for this" is the answer
+                    // to half the questions the log is read with.
+                    self.note(gpa, method, url, 200, bytes.len, 0, .{ .ok = true }, 0, .hit, .{});
                     return .{ .ok = .{ .status = 200, .bytes = bytes } };
                 }
             }
@@ -195,17 +221,26 @@ pub const Client = struct {
         var attempt: u8 = 0;
         while (true) {
             attempt += 1;
-            if (self.limiter) |l| _ = l.acquire();
+            const gate: ratelimit.Acquired = if (self.limiter) |l| blk: {
+                l.reason = @tagName(self.reason);
+                break :blk l.acquireDetailed();
+            } else .{ .ok = true };
+            if (self.notice) |n| n.record(gate);
             self.sent += 1;
-            var reply = try self.once(gpa, method, url, payload, side);
+            const started = Io.Timestamp.now(self.io, .real);
+            var head: Head = .{};
+            var reply = try self.once(gpa, method, url, payload, side, &head);
+            const ms: u64 = @intCast(@max(Io.Timestamp.now(self.io, .real).toMilliseconds() - started.toMilliseconds(), 0));
             switch (reply) {
                 .ok => |body| {
+                    self.note(gpa, method, url, body.status, body.bytes.len, ms, gate, attempt - 1, if (self.cache == null) .none else .miss, head.rate_limit);
                     if (method == .GET) {
                         if (self.cache) |c| c.put(url, body.bytes, self.now_secs);
                     }
                     return reply;
                 },
                 .failed => |f| {
+                    self.note(gpa, method, url, f.status, 0, ms, gate, attempt - 1, .none, head.rate_limit);
                     if (!f.isRateLimited()) return reply;
                     const wait = @min(f.retry_after_secs orelse self.rate.default_backoff_secs, self.rate.max_backoff_secs);
                     if (self.limiter) |l| l.penalize(@floatFromInt(wait));
@@ -217,7 +252,45 @@ pub const Client = struct {
         }
     }
 
-    fn once(self: *Client, gpa: Allocator, method: Method, url: []const u8, payload: ?[]const u8, side: Side) Allocator.Error!Reply {
+    /// One line in the request log. Best effort: a log is never a
+    /// reason a request fails.
+    fn note(
+        self: *Client,
+        gpa: Allocator,
+        method: Method,
+        url: []const u8,
+        status: ?u16,
+        bytes: usize,
+        ms: u64,
+        gate: ratelimit.Acquired,
+        retry_of: u32,
+        cache: request_log.Cache,
+        rate_limit: request_log.RateLimit,
+    ) void {
+        const log = self.log orelse return;
+        var scratch = std.heap.ArenaAllocator.init(gpa);
+        defer scratch.deinit();
+        const split = request_log.splitUrl(scratch.allocator(), url) catch return;
+        log.append(.{
+            .service = "",
+            .integration = "",
+            .method = @tagName(method),
+            .host = split.host,
+            .path = split.path,
+            .status = status,
+            .ms = ms,
+            .bytes = bytes,
+            .reason = self.reason,
+            .wait_ms = gate.wait_ms,
+            .waited_for = gate.waited_for,
+            .tokens_after = gate.tokens_after,
+            .retry_of = retry_of,
+            .cache = cache,
+            .rate_limit = rate_limit,
+        });
+    }
+
+    fn once(self: *Client, gpa: Allocator, method: Method, url: []const u8, payload: ?[]const u8, side: Side, head: *Head) Allocator.Error!Reply {
         var client: std.http.Client = .{ .allocator = gpa, .io = self.io };
         defer client.deinit();
         const uri = std.Uri.parse(url) catch return transportFailure(gpa, "the base URL does not parse");
@@ -262,7 +335,11 @@ pub const Client = struct {
             if (std.ascii.eqlIgnoreCase(h.name, "retry-after")) {
                 retry_after = std.fmt.parseInt(u32, std.mem.trim(u8, h.value, " \t"), 10) catch null;
             }
+            // The budget headers, by name — an allow-list, so nothing
+            // a response carries can reach the log by accident.
+            request_log.rateLimitHeader(&head.rate_limit, h.name, h.value);
         }
+        head.retry_after = retry_after;
 
         var transfer: [4096]u8 = undefined;
         var sink: Io.Writer.Allocating = .init(gpa);

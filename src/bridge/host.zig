@@ -479,6 +479,16 @@ pub const EnvVars = struct {
     /// private root (a dev profile, the corpus) must never have its
     /// panes reading the user's real `~/.config/mnml`.
     data_root: []const u8 = "",
+    /// `integrations.request_log`, passed down so the SDK's
+    /// `request_log.Log` knows whether to write and how big to let a
+    /// file get. A null block leaves both unset, which the SDK reads
+    /// as "on, at the default ceiling".
+    request_log: ?RequestLogVars = null,
+};
+
+pub const RequestLogVars = struct {
+    enabled: bool = true,
+    max_mb: u32 = 4,
 };
 
 /// The child's environment: the host's, plus the mount contract.
@@ -490,6 +500,11 @@ pub fn envFor(gpa: Allocator, base: *const std.process.Environ.Map, vars: EnvVar
     try env.put("MNML_THEME", vars.theme);
     try env.put("MNML_IPC_DIR", vars.ipc_dir);
     if (vars.data_root.len > 0) try env.put("MNML_DATA_ROOT", vars.data_root);
+    if (vars.request_log) |rl| {
+        try env.put("MNML_REQUEST_LOG", if (rl.enabled) "1" else "0");
+        var mbuf: [12]u8 = undefined;
+        try env.put("MNML_REQUEST_LOG_MAX_MB", std.fmt.bufPrint(&mbuf, "{d}", .{rl.max_mb}) catch "4");
+    }
     var pbuf: [4]u8 = undefined;
     try env.put("MNML_PROTOCOL", std.fmt.bufPrint(&pbuf, "{d}", .{wire.protocol}) catch "2");
     return env;
@@ -541,6 +556,16 @@ test "envFor carries the mount contract; socketPath stays short enough for socka
     var rooted = try envFor(gpa, &base, .{ .socket_path = "/s.sock", .workspace = "/ws", .theme = "onedark", .ipc_dir = "/ws/.mnml/ipc-zig", .data_root = "/private/root" });
     defer rooted.deinit();
     try testing.expectEqualStrings("/private/root", rooted.get("MNML_DATA_ROOT").?);
+    // `integrations.request_log` reaches every integration as two
+    // variables — the other half of the name the SDK reads.
+    try testing.expect(env.get("MNML_REQUEST_LOG") == null);
+    var logged = try envFor(gpa, &base, .{ .socket_path = "/s.sock", .workspace = "/ws", .theme = "onedark", .ipc_dir = "/i", .request_log = .{ .enabled = true, .max_mb = 8 } });
+    defer logged.deinit();
+    try testing.expectEqualStrings("1", logged.get("MNML_REQUEST_LOG").?);
+    try testing.expectEqualStrings("8", logged.get("MNML_REQUEST_LOG_MAX_MB").?);
+    var off = try envFor(gpa, &base, .{ .socket_path = "/s.sock", .workspace = "/ws", .theme = "onedark", .ipc_dir = "/i", .request_log = .{ .enabled = false } });
+    defer off.deinit();
+    try testing.expectEqualStrings("0", off.get("MNML_REQUEST_LOG").?);
     try testing.expectEqualStrings("/ws", env.get("MNML_WORKSPACE").?);
     try testing.expectEqualStrings("onedark", env.get("MNML_THEME").?);
     try testing.expectEqualStrings("/ws/.mnml/ipc-zig", env.get("MNML_IPC_DIR").?);

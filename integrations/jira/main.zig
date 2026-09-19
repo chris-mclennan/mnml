@@ -366,11 +366,37 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     const authorization = try auth.basicHeader(arena, rd.cfg.email, rd.token.value);
     var limiter = try openLimiter(gpa, io, env, rd.cfg.rate);
     defer limiter.deinit();
+    var forge_limiter = try openForgeLimiter(gpa, io, env);
+    defer forge_limiter.deinit();
+    var logs = try openLogs(gpa, io, env);
+    defer {
+        logs.jira.deinit();
+        logs.forge.deinit();
+    }
     var client = jira.Client.init(gpa, io, rd.cfg.jira_url, authorization, rd.cfg.api);
     client.limiter = &limiter;
+    client.log = &logs.jira;
     const forge_token = if (rd.cfg.bitbucket_token_env.len > 0) env.get(rd.cfg.bitbucket_token_env) else env.get("BITBUCKET_ACCESS_TOKEN");
-    const forge: bitbucket.Client = .{ .gpa = gpa, .io = io, .base_url = rd.cfg.bitbucket_api_url, .token = forge_token orelse "" };
+    const forge: bitbucket.Client = .{
+        .gpa = gpa,
+        .io = io,
+        .base_url = rd.cfg.bitbucket_api_url,
+        .token = forge_token orelse "",
+        .limiter = &forge_limiter,
+        .log = &logs.forge,
+    };
     var app = try app_mod.App.init(gpa, io, rd.cfg, family, &client, forge);
+    // Both clients leave a long wait where the paint loop finds it.
+    // `app` is a local that is never moved, so the pointer a worker's
+    // copy of the client carries stays good for the whole run.
+    client.notice = &app.wait_notice;
+    app.forge.notice = &app.wait_notice;
+    // What the last run learned about each ticket's linked PRs, keyed
+    // by the ticket's own `updated` stamp: a tab that has not moved
+    // paints them on open for nothing.
+    var pr_store = try openPrStore(gpa, io, env);
+    defer pr_store.deinit();
+    app.setPrStore(&pr_store);
     // The host sets this for every integration it spawns; a dispatched
     // `term` line goes to that channel and nowhere else.
     app.setIpcDir(env.get("MNML_IPC_DIR") orelse "");
@@ -413,7 +439,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     app.last_refresh_ms = app.nowMs();
     try repaint(&paint_arena, &frame, &app, ui);
     mount.send(&frame) catch return 0;
-    publishSide(&app, mount, if (ipc) |*i| i else null);
+    publishSide(&app, mount, if (ipc) |*i| i else null, gpa, io, &limiter);
 
     while (true) {
         var ended = false;
@@ -448,18 +474,26 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
             if (ended) break;
         }
         if (ended or box.ended) break;
+        // Before anything else this pass: if a request has been sitting
+        // on the bucket, say so rather than leaving `loading…` to
+        // stand there on its own.
+        app.noteWait();
         if (app.quit) {
             mount.bye();
             break;
         }
         try app.drainRefresh();
+        // The linked PRs arrive behind the paint, one at a time, in
+        // the order the rows are on screen.
+        try app.drainPrs();
+        try app.pumpPrs();
         // One spinner counter for the whole pane, so every button that
         // is mid-dispatch turns together.
         if (app.actions.anyRunning()) app.spin +%= 1;
         try app.tick(app.nowMs());
         try repaint(&paint_arena, &frame, &app, ui);
         mount.send(&frame) catch break;
-        publishSide(&app, mount, if (ipc) |*i| i else null);
+        publishSide(&app, mount, if (ipc) |*i| i else null, gpa, io, &limiter);
         // While a refetch is in flight the loop wakes sooner, so its
         // rows land as soon as they arrive rather than up to half a
         // second later.
@@ -477,7 +511,7 @@ fn repaint(paint_arena: *std.heap.ArenaAllocator, frame: *sdk.Frame, app: *app_m
 
 /// The toast, the statusline segment, and the sessions this pane just
 /// started and wants told about.
-fn publishSide(app: *app_mod.App, mount: *sdk.Mount, ipc: ?*const sdk.Ipc) void {
+fn publishSide(app: *app_mod.App, mount: *sdk.Mount, ipc: ?*const sdk.Ipc, gpa: Allocator, io: Io, limiter: *ratelimit.Limiter) void {
     for (app.watch_out.items) |w| {
         mount.watchSession(w.key, .{ .cwd = w.cwd, .prompt_line = w.prompt_line }) catch {};
     }
@@ -488,7 +522,12 @@ fn publishSide(app: *app_mod.App, mount: *sdk.Mount, ipc: ?*const sdk.Ipc) void 
     }
     if (app.segment_dirty) {
         app.segment_dirty = false;
-        if (ipc) |i| if (app.assigned_open) |n| publishSegment(i, n) catch {};
+        // The bucket is read off its file — a lock, a read and a
+        // rewrite — so it is looked at HERE, where the chip is
+        // actually being published, and not once per pass of a loop
+        // that runs many times a second.
+        var bucket_name: [64]u8 = undefined;
+        if (ipc) |i| if (app.assigned_open) |n| publishSegment(i, n, bucketOf(gpa, io, limiter, &bucket_name)) catch {};
     }
 }
 
@@ -566,7 +605,7 @@ fn nameIsQaActionable(name: []const u8) bool {
 /// The Work chips' statusline segments: the glyph and the count, the
 /// breakdown on hover, a click opens the pane — the manifest's slots,
 /// live.
-pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: Values) !void {
+pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: Values, bucket: ?Bucket) !void {
     var buf: [32]u8 = undefined;
     const label = std.fmt.bufPrint(&buf, "{s} {d}", .{ segment_glyph, v.assigned_open }) catch segment_glyph;
     const lead = try std.fmt.allocPrint(arena, "Jira · {d} open item{s} assigned to me", .{ v.assigned_open, if (v.assigned_open == 1) "" else "s" });
@@ -576,7 +615,7 @@ pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: Values) !void {
         .color = segment_color,
         .click_command = segment_click,
         .priority = segment_priority,
-        .tooltip = try breakdownText(arena, lead, v.assigned_by_status),
+        .tooltip = try withBucket(arena, try breakdownText(arena, lead, v.assigned_by_status), bucket),
     });
     if (v.qa_actionable) |n| {
         var qbuf: [32]u8 = undefined;
@@ -588,22 +627,60 @@ pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: Values) !void {
             .color = qa_segment_color,
             .click_command = segment_click,
             .priority = qa_segment_priority,
-            .tooltip = try breakdownText(arena, qlead, v.qa_by_status),
+            .tooltip = try withBucket(arena, try breakdownText(arena, qlead, v.qa_by_status), bucket),
         });
     }
 }
 
 /// The one-figure form the pane's own refresh publishes as it goes.
-pub fn publishSegment(ipc: *const sdk.Ipc, assigned_open: usize) sdk.ipc.Error!void {
+pub fn publishSegment(ipc: *const sdk.Ipc, assigned_open: usize, bucket: ?Bucket) sdk.ipc.Error!void {
     var buf: [32]u8 = undefined;
     const label = std.fmt.bufPrint(&buf, "{s} {d}", .{ segment_glyph, assigned_open }) catch segment_glyph;
+    var tip: [192]u8 = undefined;
     try ipc.statuslineSetSegment(.{
         .id = segment_id,
         .text = label,
         .color = segment_color,
         .click_command = segment_click,
         .priority = segment_priority,
+        .tooltip = if (bucket) |b| b.status.describe(&tip) else null,
     });
+}
+
+/// The hover text with the shared bucket's own two lines under it:
+/// what it holds, at what rate, with how many throttles and how long
+/// since the last 429 — and who has been spending it. It is the answer
+/// to "why is this chip stale", and it is one hover away.
+fn withBucket(arena: Allocator, body: []const u8, bucket: ?Bucket) Allocator.Error![]const u8 {
+    const b = bucket orelse return body;
+    var buf: [192]u8 = undefined;
+    const line = b.status.describe(&buf);
+    const d = b.draws orelse return std.fmt.allocPrint(arena, "{s}\n{s}", .{ body, line });
+    var dbuf: [96]u8 = undefined;
+    return std.fmt.allocPrint(arena, "{s}\n{s}\nspent by {s}", .{ body, line, d.describe(&dbuf, draws_window_secs) });
+}
+
+/// What the hover says about the shared bucket: its state, and who has
+/// been drawing on it lately.
+pub const Bucket = struct {
+    status: ratelimit.Status,
+    draws: ?ratelimit.Draws = null,
+};
+
+/// The window the "spent by" line covers: long enough that a quiet
+/// minute does not read as nobody spending, short enough to be about
+/// now.
+pub const draws_window_secs: u32 = 600;
+
+/// The bucket as the hover wants it — its state, and the top consumer
+/// of the last ten minutes read out of the machine-wide draws file.
+/// `name_buf` holds the program name the result points at.
+fn bucketOf(gpa: Allocator, io: Io, l: *ratelimit.Limiter, name_buf: []u8) ?Bucket {
+    const st = l.status() orelse return null;
+    const path = (l.drawsPath(gpa) catch null) orelse return .{ .status = st };
+    defer gpa.free(path);
+    const now: f64 = @as(f64, @floatFromInt(Io.Timestamp.now(io, .real).toNanoseconds())) / 1_000_000_000.0;
+    return .{ .status = st, .draws = ratelimit.recentDraws(gpa, io, path, draws_window_secs, now, name_buf) };
 }
 
 // ─── the setup screens' words ────────────────────────────────────────────
@@ -680,7 +757,47 @@ fn tabLine(arena: Allocator, t: config.Tab) Allocator.Error![]const u8 {
 fn openLimiter(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, rate: config.Rate) Allocator.Error!ratelimit.Limiter {
     const p = try ratelimit.statePath(gpa, io, env);
     defer gpa.free(p);
-    return ratelimit.Limiter.init(gpa, io, p, ratelimit.configFrom(rate));
+    var l = try ratelimit.Limiter.init(gpa, io, p, ratelimit.configFrom(rate));
+    // So every draw on the shared bucket says who took it. Without
+    // this the bucket says only how much is left, which is the half of
+    // the answer that does not help.
+    try l.identify(ratelimit.service, "mnml-jira", selfPid());
+    return l;
+}
+
+/// This process, for a draw line. Zero where there is no pid to name.
+fn selfPid() i32 {
+    return if (@import("builtin").os.tag == .windows) 0 else @intCast(std.c.getpid());
+}
+
+/// The FORGE's bucket — `bitbucket`, not `jira`. The pipeline and
+/// readiness calls a Work tab makes are Bitbucket requests and come out
+/// of Bitbucket's allowance; they used to go out with no bucket at all,
+/// so a Jira pane quietly spent it and the forge pane in the next
+/// window paid with a 429.
+fn openForgeLimiter(gpa: Allocator, io: Io, env: *const std.process.Environ.Map) Allocator.Error!sdk.ratelimit.Limiter {
+    var l = try sdk.ratelimit.Limiter.forService(gpa, io, env, "bitbucket");
+    try l.identify("bitbucket", "mnml-jira", selfPid());
+    return l;
+}
+
+/// Where a ticket's linked PRs are remembered between runs
+/// (`mnml_sdk.store`). Under the host's data root, beside everything
+/// else this integration keeps.
+fn openPrStore(gpa: Allocator, io: Io, env: *const std.process.Environ.Map) Allocator.Error!sdk.Store {
+    const root = try sdk.request_log.dataRoot(gpa, env);
+    defer gpa.free(root);
+    return sdk.Store.open(gpa, io, root, ratelimit.service, "dev-status");
+}
+
+/// The two request logs a Jira pane writes: its own service's, and the
+/// forge's, because a call to Bitbucket belongs in Bitbucket's file
+/// however it was started.
+fn openLogs(gpa: Allocator, io: Io, env: *const std.process.Environ.Map) Allocator.Error!struct { jira: sdk.RequestLog, forge: sdk.RequestLog } {
+    return .{
+        .jira = try sdk.RequestLog.open(gpa, io, env, ratelimit.service, "mnml-jira"),
+        .forge = try sdk.RequestLog.open(gpa, io, env, "bitbucket", "mnml-jira"),
+    };
 }
 
 fn check(arena: Allocator, w: *Io.Writer, loaded: config.Loaded, token: auth.Result) !u8 {
@@ -721,8 +838,11 @@ fn diag(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
         const authorization = try auth.basicHeader(arena, c.email, token.ok.value);
         var limiter = try openLimiter(gpa, io, env, c.rate);
         defer limiter.deinit();
+        var log = try sdk.RequestLog.open(gpa, io, env, ratelimit.service, "mnml-jira");
+        defer log.deinit();
         var client = jira.Client.init(gpa, io, c.jira_url, authorization, c.api);
         client.limiter = &limiter;
+        client.log = &log;
         switch (jira.myself(&client, arena) catch jira.Answer(model.User){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
             .ok => |u| try w.print("  └─ /myself: ✓ account_id={s}\n", .{u.account_id}),
             .failed => |f| try w.print("  └─ /myself: ✗ {s}\n", .{f.message}),
@@ -768,13 +888,16 @@ fn values(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Al
     }
     var limiter = try openLimiter(gpa, io, env, c.rate);
     defer limiter.deinit();
+    var log = try sdk.RequestLog.open(gpa, io, env, ratelimit.service, "mnml-jira");
+    defer log.deinit();
     var client = jira.Client.init(gpa, io, c.jira_url, try auth.basicHeader(arena, c.email, t.value), c.api);
     client.limiter = &limiter;
+    client.log = &log;
 
     var v: Values = .{};
     const base = config.TabKind.work_assigned.defaultJql().?;
     const jql = try jira.withProjects(arena, base, c.projects);
-    switch (jira.search(&client, arena, jql, &.{}) catch jira.Answer([]const std.json.Value){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
+    switch (jira.search(&client, arena, jql, &.{}, .poll) catch jira.Answer([]const std.json.Value){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
         .ok => |items| {
             v.assigned_open = items.len;
             v.assigned_by_status = try countByStatus(arena, try jira.parseIssues(arena, items, c.team_field_id));
@@ -793,7 +916,7 @@ fn values(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Al
         v.qa_tab_name = tab.name;
         if (try tab.staticJql(arena)) |qa_jql| {
             const scoped = try jira.withProjects(arena, qa_jql, c.projects);
-            switch (jira.search(&client, arena, scoped, &.{}) catch jira.Answer([]const std.json.Value){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
+            switch (jira.search(&client, arena, scoped, &.{}, .poll) catch jira.Answer([]const std.json.Value){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
                 .ok => |items| {
                     v.qa_actionable = items.len;
                     v.qa_by_status = try countByStatus(arena, try jira.parseIssues(arena, items, c.team_field_id));
@@ -808,9 +931,10 @@ fn values(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Al
     try out.writeAll("}\n");
 
     if (try ipcFor(gpa, io, env, args.workspace)) |*ipc_ptr| {
+        var name_buf: [64]u8 = undefined;
         var ipc = ipc_ptr.*;
         defer ipc.deinit();
-        publishSegments(&ipc, arena, v) catch |e| try err.print("mnml-jira --values: could not publish the segments: {s}\n", .{@errorName(e)});
+        publishSegments(&ipc, arena, v, bucketOf(gpa, io, &limiter, &name_buf)) catch |e| try err.print("mnml-jira --values: could not publish the segments: {s}\n", .{@errorName(e)});
     }
     return 0;
 }
@@ -842,8 +966,11 @@ fn prefetch(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: 
     };
     var limiter = try openLimiter(gpa, io, env, c.rate);
     defer limiter.deinit();
+    var log = try sdk.RequestLog.open(gpa, io, env, ratelimit.service, "mnml-jira");
+    defer log.deinit();
     var client = jira.Client.init(gpa, io, c.jira_url, try auth.basicHeader(arena, c.email, t.value), c.api);
     client.limiter = &limiter;
+    client.log = &log;
     const tabs = try config.tabsOfFamily(arena, c.tabs, args.only);
     var w: std.json.Stringify = .{ .writer = out, .options = .{} };
     try w.beginObject();
@@ -860,13 +987,13 @@ fn prefetch(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: 
         try w.beginArray();
         const jql = (try tab.staticJql(arena)) orelse "";
         if (tab.board_id != 0) {
-            switch (jira.boardIssues(&client, arena, tab.board_id, null, extra) catch jira.Answer([]const std.json.Value){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
+            switch (jira.boardIssues(&client, arena, tab.board_id, null, extra, .prefetch) catch jira.Answer([]const std.json.Value){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
                 .ok => |items| for (items) |v| try w.write(v),
                 .failed => |f| try err.print("mnml-jira --prefetch: {s}: {s}\n", .{ tab.name, f.message }),
             }
         } else if (jql.len > 0) {
             const q = if (tab.team.len > 0) try jira.withTeam(arena, jql, tab.team, c.team_field_name, c.team_field_id) else jql;
-            switch (jira.search(&client, arena, q, extra) catch jira.Answer([]const std.json.Value){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
+            switch (jira.search(&client, arena, q, extra, .prefetch) catch jira.Answer([]const std.json.Value){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
                 .ok => |items| for (items) |v| try w.write(v),
                 .failed => |f| try err.print("mnml-jira --prefetch: {s}: {s}\n", .{ tab.name, f.message }),
             }
@@ -912,10 +1039,30 @@ fn dump(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     const steps_src = if (args.steps) |p| try Io.Dir.cwd().readFileAlloc(io, p, arena, .limited(1 << 20)) else "snap screen\n";
     var limiter = try openLimiter(gpa, io, env, c.rate);
     defer limiter.deinit();
+    var forge_limiter = try openForgeLimiter(gpa, io, env);
+    defer forge_limiter.deinit();
+    var logs = try openLogs(gpa, io, env);
+    defer {
+        logs.jira.deinit();
+        logs.forge.deinit();
+    }
     var client = jira.Client.init(gpa, io, c.jira_url, try auth.basicHeader(arena, c.email, t.value), c.api);
     client.limiter = &limiter;
+    client.log = &logs.jira;
     const forge_token = if (c.bitbucket_token_env.len > 0) env.get(c.bitbucket_token_env) else env.get("BITBUCKET_ACCESS_TOKEN");
-    var app = try app_mod.App.init(gpa, io, c, args.only, &client, .{ .gpa = gpa, .io = io, .base_url = c.bitbucket_api_url, .token = forge_token orelse "" });
+    var app = try app_mod.App.init(gpa, io, c, args.only, &client, .{
+        .gpa = gpa,
+        .io = io,
+        .base_url = c.bitbucket_api_url,
+        .token = forge_token orelse "",
+        .limiter = &forge_limiter,
+        .log = &logs.forge,
+    });
+    client.notice = &app.wait_notice;
+    app.forge.notice = &app.wait_notice;
+    var pr_store = try openPrStore(gpa, io, env);
+    defer pr_store.deinit();
+    app.setPrStore(&pr_store);
     app.setIpcDir(env.get("MNML_IPC_DIR") orelse "");
     defer app.deinit();
     app.resize(cols, rows);
@@ -925,6 +1072,10 @@ fn dump(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     defer paint_arena.deinit();
     const ui: screen.Ui = .{ .th = sdk.pane.Theme.fromHelloBranded(dump_palette, chipColorOf(args.only)) };
     try app.ensureLoaded();
+    // A dump has no loop to spread the linked-PR calls over, so they
+    // all happen here — the rows a dump asserts on are the rows a pane
+    // reaches a moment later.
+    try app.drainPrQueue();
     try repaint(&paint_arena, &frame, &app, ui);
     var lines = std.mem.splitScalar(u8, steps_src, '\n');
     while (lines.next()) |raw| {
@@ -1094,7 +1245,7 @@ test "the statusline segment is the manifest's slot, live: the exact IPC line" {
     const dir = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
     var ipc = try sdk.Ipc.init(testing.allocator, testing.io, dir);
     defer ipc.deinit();
-    try publishSegment(&ipc, 3);
+    try publishSegment(&ipc, 3, null);
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const line = try tmp.dir.readFileAlloc(testing.io, "command", arena.allocator(), .unlimited);
@@ -1222,7 +1373,7 @@ test "both chips carry their count and their breakdown; the QA one is absent whe
     try publishSegments(&ipc, arena, .{
         .assigned_open = 7,
         .assigned_by_status = &.{ .{ .status = "In Progress", .n = 4 }, .{ .status = "To Do", .n = 3 } },
-    });
+    }, null);
     var got = try tmp.dir.readFileAlloc(testing.io, "command", arena, .unlimited);
     try testing.expect(std.mem.indexOf(u8, got, "\"id\":\"jira_work.assigned\"") != null);
     try testing.expect(std.mem.indexOf(u8, got, "\u{f0303} 7") != null);
@@ -1236,12 +1387,20 @@ test "both chips carry their count and their breakdown; the QA one is absent whe
         .qa_actionable = 3,
         .qa_by_status = &.{.{ .status = "Ready for QA", .n = 3 }},
         .qa_tab_name = "QA Actionable Now",
-    });
+    }, .{ .status = .{ .tokens = 0.24, .capacity = 60, .rate = 0.33, .baseline_rate = 0.33, .throttles = 3, .cooldown_remaining_secs = 0, .last_429_age_secs = 4 * 3600 }, .draws = .{ .top = "bb.py", .top_n = 30, .total = 71 } });
     got = try tmp.dir.readFileAlloc(testing.io, "command", arena, .unlimited);
     try testing.expect(std.mem.indexOf(u8, got, "\"id\":\"jira_work.qa_actionable\"") != null);
     try testing.expect(std.mem.indexOf(u8, got, "QA Actionable Now · 3 actionable now — 3 Ready for QA") != null);
     // One item reads as one item, not "1 items".
     try testing.expect(std.mem.indexOf(u8, got, "1 open item assigned to me") != null);
+    // And the hover carries the shared bucket, which is the answer to
+    // "why is this chip stale" — one hover away rather than nowhere.
+    try testing.expect(std.mem.indexOf(u8, got, "budget: 0.2 of 60 tokens") != null);
+    try testing.expect(std.mem.indexOf(u8, got, "3 throttles") != null);
+    try testing.expect(std.mem.indexOf(u8, got, "last 429 4h ago") != null);
+    // And WHO drained it — a chip that is stale because a script is
+    // holding the budget says so rather than blaming itself.
+    try testing.expect(std.mem.indexOf(u8, got, "spent by bb.py 30 of 71 draws in 10m") != null);
 }
 
 test "one binary, three manifests, one poll: only the chip that has a segment declares a values source" {

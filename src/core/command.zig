@@ -126,6 +126,7 @@ const runner_tables = .{
     @import("../app/spend.zig"),
     @import("../app/tests_pane.zig"),
     @import("../app/flaky.zig"),
+    @import("../app/requests.zig"),
     @import("../app/grep.zig"),
     @import("../app/grep_picker.zig"),
     @import("../app/image_pane.zig"),
@@ -683,6 +684,10 @@ pub const MenuAction = union(enum) {
     script_list_refresh: u32,
     /// The rail menu's *Show …* row for a script's section.
     script_section_show: u16,
+    /// An integration statusline chip's *Requests…* row: open the
+    /// REQUESTS view filtered to that chip's service. The menu's `mem`
+    /// arena owns the bytes (`app/requests.zig`).
+    requests_for: []const u8,
     none,
 };
 
@@ -812,7 +817,7 @@ test "ids round-trip through by_name and @tagName" {
     try std.testing.expectEqual(CommandId.@"app.quit", by_name.get("app.quit").?);
     try std.testing.expectEqualStrings("git.commit", name(.@"git.commit"));
     try std.testing.expect(by_name.get("nope.nope") == null);
-    try std.testing.expectEqual(@as(usize, 1090), count);
+    try std.testing.expectEqual(@as(usize, 1091), count);
     try std.testing.expectEqualStrings("Quit mnml", title(.@"app.quit"));
 }
 
