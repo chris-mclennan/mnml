@@ -946,7 +946,7 @@ pub const Painter = struct {
         const y = p.lay.status_y;
         const w = p.cols();
         var x: u16 = 1;
-        const status = a.status.items;
+        var status: []const u8 = a.status.items;
         const hint: []const u8 = blk: {
             if (a.help) break :blk "j/k scroll · Esc close";
             if (a.modal != null) break :blk "j/k · PgUp/PgDn scroll · Esc close";
@@ -958,13 +958,10 @@ pub const Painter = struct {
             if (!a.hasTabs()) break :blk "r refresh · q quit";
             break :blk "";
         };
-        if (status.len > 0) {
-            x += p.putFit(x, y, w -| x, status, p.s.plain);
-            x += 2;
-        }
         // A dim `[ Merge ]` owes the reader a reason, and the hint row
         // is where it goes: the pointer is already there.
         if (a.hoverNote().len > 0) {
+            if (status.len > 0) x += p.putFit(x, y, w -| x, status, p.s.plain) + 2;
             _ = p.putFit(x, y, w -| x, a.hoverNote(), p.s.warn_style);
             return;
         }
@@ -980,49 +977,37 @@ pub const Painter = struct {
                 if (iss) |i| for (dispatch.buttonsForTicket(i)) |b| {
                     const e = a.actions.get(i.key, b.kind());
                     if (e.state != .failed or e.detail.len == 0) continue;
-                    x += p.putFit(x, y, w -| x, p.fmt("{s}: {s}", .{ i.key, e.detail }), p.s.err_style);
-                    x += 2;
+                    status = p.fmt("{s}: {s}", .{ i.key, e.detail });
                     break;
                 };
             }
         }
         if (hint.len > 0) {
+            if (status.len > 0) x += p.putFit(x, y, w -| x, status, p.s.plain) + 2;
             _ = p.putFit(x, y, w -| x, hint, p.s.muted);
             return;
         }
-        // The section help row: `t transition · a assignee · …` from the
-        // bindings that apply, whole entries only, as many as fit —
-        // each one a click target that runs what its key runs, and a
-        // trailing `? keys` that opens the sheet.
+        // The section help row, from the toolkit: the bindings that
+        // apply, each entry a click target that runs what its key runs,
+        // and the `? keys` that opens the sheet last — where the
+        // drop-from-the-front rule leaves it standing however narrow the
+        // pane gets.
+        //
+        // It was hand-rolled here, with its own room-for-`? keys`
+        // arithmetic and its own skip so the row did not end
+        // `? keys · ? keys`. The toolkit does both, and the forge
+        // pane now gets the same row out of the same code.
         const list = try keymap.hints(p.arena, a.context());
-        const keys_entry = "\u{b7} ? keys";
-        const kw = text.width(keys_entry);
-        // `? keys` is the one entry that has to survive: it is the door
-        // to every chord the row could not fit. Its room is taken out
-        // first, so which of the others fit no longer turns on how long
-        // the status happens to be — and the binding that says the same
-        // thing is skipped in the loop, or the row ends `? keys · ? keys`.
-        const room = w -| kw;
-        var n: usize = 0;
+        var entries: std.ArrayList(Chrome.HintSpec) = .empty;
         for (list) |b| {
-            if (b.action == .help) continue;
-            const i = n;
-            n += 1;
             var kb: [16]u8 = undefined;
-            const label = if (b.short.len > 0) b.short else b.label;
-            const key = keymap.displayKey(&kb, b.keys[0]);
-            const entry = if (i == 0) p.fmt("{s} {s}", .{ key, label }) else p.fmt("· {s} {s}", .{ key, label });
-            const ew = text.width(entry);
-            if (x + ew > room) break;
-            const at = x;
-            x += p.put(x, y, ew, entry, p.s.muted) + 1;
-            const lead: u16 = if (i == 0) 0 else 2;
-            try p.hitAdd(.{ .x = at + lead, .y = y, .w = ew -| lead, .h = 1 }, .{ .hint = b.action });
+            try entries.append(p.arena, .{
+                .key = try p.arena.dupe(u8, keymap.displayKey(&kb, b.keys[0])),
+                .title = if (b.short.len > 0) b.short else b.label,
+                .target = .{ .hint = b.action },
+            });
         }
-        if (x + kw <= w) {
-            _ = p.put(x, y, kw, keys_entry, p.s.muted);
-            try p.hitAdd(.{ .x = x + 2, .y = y, .w = kw - 2, .h = 1 }, .{ .hint = .help });
-        }
+        try p.c.hintRow(y, status, entries.items);
     }
 
     // ─── the overlays ────────────────────────────────────────────────
@@ -1678,9 +1663,13 @@ test "Work: the header, the tab strip, the mode chips, the columns, the tree row
     // It still answers, with the reason it is dim.
     try testing.expectEqual(hit.Target{ .merge_blocked = 3 }, a.hits.at(merge_x + 2, 8).?);
     try testing.expectEqual(hit.Target{ .pr_button = .{ .row = 3, .which = .open } }, a.hits.at((try colOfText(ar, &f, 8, "[ Open ]")).? + 2, 8).?);
-    // The hint row comes from the bindings, not a string.
-    const last = try rowText(ar, &f, 39);
-    try testing.expect(std.mem.indexOf(u8, last, "t transition · a assignee · S select") != null);
+    // The hint row comes from the bindings, not a string, and it is the
+    // toolkit's: entries shed from the FRONT, so the ones that always
+    // apply survive a narrow pane and `? keys` — the door to the rest
+    // — is the last thing standing.
+    const last = std.mem.trimEnd(u8, try rowText(ar, &f, 39), " ");
+    try testing.expect(std.mem.indexOf(u8, last, "a assignee · S select · f fix version") != null);
+    try testing.expect(std.mem.endsWith(u8, last, "? keys"));
     // Every painted row is a hit, and a click on the ticket's row
     // selects that row.
     try testing.expectEqual(hit.Target{ .row = 1 }, a.hits.at(30, 6).?);
@@ -1875,8 +1864,11 @@ test "the narrow pane: 80x24 keeps the chips whole by wrapping, the columns shri
     try testing.expect(std.mem.indexOf(u8, r3, " status: All") != null or std.mem.indexOf(u8, r2, " status: All") != null);
     try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 5), "KEY") != null or std.mem.indexOf(u8, r3, "KEY") != null);
     try testing.expect((try findRow(ar, &f, "ENG-2")) != null);
-    const last = try rowText(ar, &f, 23);
-    try testing.expect(std.mem.indexOf(u8, last, "t transition") != null);
+    // 80 columns sheds most of the row; what is left still reads, and
+    // still ends at the door.
+    const last = std.mem.trimEnd(u8, try rowText(ar, &f, 23), " ");
+    try testing.expect(std.mem.indexOf(u8, last, "d detail") != null);
+    try testing.expect(std.mem.endsWith(u8, last, "? keys"));
     // Wheel on the list moves the cursor.
     try a.wheel(20, 10, -1);
     try testing.expect(a.tab().selected > 0);

@@ -582,35 +582,17 @@ fn paintHintRow(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
     }
     const ctx = app.keyContext(rows);
     const hs = try view.hints(arena, ctx);
-    // The status on the left takes what the hints leave.
-    const sep = " · ";
-    const sep_w: u16 = 3;
-    var widths = try arena.alloc(u16, hs.len);
-    var total: u16 = 0;
-    for (hs, 0..) |h, i| {
-        widths[i] = Painter.width(h.key) + 1 + Painter.width(h.title);
-        total += widths[i] + if (i + 1 < hs.len) sep_w else 0;
-    }
-    const status = app.status.items;
-    const status_w: u16 = @min(Painter.width(status) + 2, p.f.cols / 2);
-    var first: usize = 0;
-    // Drop hints from the front until the row fits, keeping `q`.
-    while (first < hs.len and total + status_w > p.f.cols) {
-        total -= widths[first] + if (first + 1 < hs.len) sep_w else 0;
-        first += 1;
-    }
-    if (status.len > 0) _ = p.text(1, y, p.f.cols -| 1 -| total, status, th.mutedText());
-    var x: u16 = p.f.cols -| total;
-    var i = first;
-    while (i < hs.len) : (i += 1) {
-        const h = hs[i];
-        const start = x;
-        x += p.text(x, y, p.f.cols -| x, h.key, .{ .fg = th.fg, .mods = .{ .bold = true } });
-        x += p.text(x, y, p.f.cols -| x, " ", th.dimText());
-        x += p.text(x, y, p.f.cols -| x, h.title, th.dimText());
-        p.target(start, y, x - start, .{ .hint = h.action });
-        if (i + 1 < hs.len) x += p.text(x, y, p.f.cols -| x, sep, th.dimText());
-    }
+    // The toolkit's row: the status on the left, `key title` entries
+    // on the right each a hit that runs its chord, entries shed from
+    // the front so the ones that always apply survive a narrow pane,
+    // and a chord the pane passes twice said once.
+    //
+    // It was hand-rolled here — the same loop, the same arithmetic,
+    // one copy per pane — which is exactly the drift the toolkit
+    // exists to prevent.
+    const entries = try arena.alloc(Chrome.HintSpec, hs.len);
+    for (hs, entries) |h, *e| e.* = .{ .key = h.key, .title = h.title, .target = .{ .hint = h.action } };
+    try p.c.hintRow(y, app.status.items, entries);
 }
 
 // ─── overlays ────────────────────────────────────────────────────────────
