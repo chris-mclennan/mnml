@@ -317,7 +317,7 @@ otherwise. Copy what you need; leave the rest out.
 
     // ── session / ipc ──────────────────────────────────────────────────
     .session = .{ .restore = true },
-    .ipc = .{ .write_screen = false }, // also dump screen.txt every frame
+    .ipc = .{ .write_screen = false }, // also dump screen.txt, status.json and rects.json every frame
 
     // ── keys ───────────────────────────────────────────────────────────
     // One line per binding: chord → command id. "" / "none" / "unbound"

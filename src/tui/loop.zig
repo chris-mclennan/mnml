@@ -25,6 +25,7 @@ const tasks = @import("../app/tasks.zig");
 const clipboard_os = @import("../core/clipboard_os.zig");
 const image = @import("../image/root.zig");
 const marker = @import("marker.zig");
+const app_driver = @import("../app/driver.zig");
 
 /// How often the IPC tail looks at `command`. A wrapper's `stop` /
 /// `restart` lands within this; the UI thread's one wait is untouched.
@@ -181,7 +182,17 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
                 .cell_w_px = if (term.vx.screen.width > 0) @as(u32, term.vx.screen.width_pix) / term.vx.screen.width else 0,
                 .cell_h_px = if (term.vx.screen.height > 0) @as(u32, term.vx.screen.height_pix) / term.vx.screen.height else 0,
             }) catch {};
-            if (screen_dump) |c| c.writeScreen(try screen_mod.toScreenTxt(app.frame.allocator(), term.screen()));
+            if (screen_dump) |c| {
+                const arena = app.frame.allocator();
+                c.writeScreen(try screen_mod.toScreenTxt(arena, term.screen()));
+                // The same three files the headless loop keeps, so a
+                // live session can be read the way a `.test` reads one:
+                // who owns the cursor, what is focused, every hit rect.
+                c.writeStatus(try screen_mod.statusJson(arena, try app_driver.AppDriver.statusOf(&app, arena)));
+                var rects: Io.Writer.Allocating = .init(arena);
+                app.hits.writeRectsJson(&rects.writer, app.overlayLabel()) catch return error.OutOfMemory;
+                c.writeRects(rects.written());
+            }
         }
     }
     app.hooks.emit(&app, .exit);
