@@ -268,15 +268,19 @@ step before it proved):
 8. `tools/pty-mouse-check.py` — the real binary in a pty answering the
    probes like ghostty; one click opens a file, a right-click opens the
    row menu, a wheel notch reaches the app;
-9. `tools/ui-diff.sh` on every `docs/ui-spec/steps-*.jsonl` when the
-   change touches chrome (see *Spec dumps* below) — the diff counts must
-   not grow;
-10. `tools/run-sh-check.sh` — the launcher's verbs on a throwaway
+9. `tools/pty-cursor-check.py` (and `MNML_INPUT_STYLE=vim` again) when
+   the change touches the cursor — the same pty, reading the show/hide,
+   the DECSCUSR and the CUP mnml writes: headless draws no cursor, so
+   nothing in the corpus can see those bytes;
+10. `tools/ui-diff.sh` on every `docs/ui-spec/steps-*.jsonl` when the
+    change touches chrome (see *Spec dumps* below) — the diff counts must
+    not grow;
+11. `tools/run-sh-check.sh` — the launcher's verbs on a throwaway
     workspace, the marker and the IPC lifecycle included.
 
-`./run.sh check` runs 1–5, 7 and 10 in one line, on the ReleaseSafe binary
-it builds at step 3, with `MNML_E2E_ALLOW_SHELL=1` for the corpus; 6, 8 and
-9 are run by hand. `zig build check` is the older one-step form (1, 2, the
+`./run.sh check` runs 1–5, 7 and 11 in one line, on the ReleaseSafe binary
+it builds at step 3, with `MNML_E2E_ALLOW_SHELL=1` for the corpus; 6, 8, 9
+and 10 are run by hand. `zig build check` is the older one-step form (1, 2, the
 gate, the sweep, `tests/e2e/defaults.test` and the corpus on the exe of that
 invocation).
 
