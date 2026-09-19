@@ -93,6 +93,50 @@ There is no third option, and no handler may stash the raw pointer to
 - Layout is the parent's job (`Rect.split*`); a component paints inside
   the rect it is given and clips to it.
 
+## The settings overlay — the family idiom (`src/ui/settings.zig`)
+
+mnml and mixr each own their settings UI; there is no shared crate, so
+the idiom is written down instead. A settings screen is:
+
+- A **scrollable sectioned list** in an overlay, not a pane. Headers read
+  `── UI ──` / `── Editor ──` / `── AI ──` / `── Integrations ──` /
+  `── Reset ──`.
+- One row per setting: `▸ <label>:  [active] / other1 / other2  *` — `▸`
+  is focus, `[brackets]` the current choice, `*` modified from the
+  shipped default. The labels pad so the colons line up.
+- Keys: `←→` / `h l` adjust · `↑↓` / `j k` move · `r` reset the row ·
+  `R` reset all · Enter save + close · Esc cancel (back to the
+  opened-state config, including the bytes of every file written since).
+- v1 rows are **discrete choices**. (Zig also ships the minimal number
+  row, `‹ [32] ›`.) The overlay never edits arrays of complex things —
+  those stay ZON-edited.
+- The box is ~60 % of the screen wide and caps at ~70 % tall.
+
+**The list is longer than the box, so the overflow has to be visible,
+not merely reachable** — a user cannot arrow to a section they do not
+know exists. Three affordances, all in `draw`, none of them optional:
+
+- A **section strip** under the title — `UI · Editor · AI · Integrations
+  · Reset`, the cursor's section in the active-chip colour, each name its
+  own `.overlay_item(sectionHit(n))` click target. `]` / `[` (and Tab /
+  Shift-Tab) step sections, `g` / `G` are the ends. A jump puts the
+  section's header on the *top* row of the window, so the name jumped to
+  is on screen. A box too narrow for the names falls back to the
+  initials (`U · E · A · I · R`) and then to no strip at all
+  (`stripForm`).
+- A **scrollbar** down the right edge whenever the list overflows,
+  painted by the shared `src/ui/scrollbar.zig` (never hand-rolled), with
+  the usual drag and click-on-track through `.scrollbar{owner, axis}`.
+- A **position** in the footer — `12–40 of 97`, or the compact `40/97`
+  when the long form would cost the key hint a segment, so the overflow
+  still shows in a box too narrow for a bar. The form is chosen against
+  the *widest* the long one can ever get, so it does not flip mid-scroll.
+
+Anything that moves the **view** rather than the cursor — the wheel, a
+bar drag, a section jump — goes through `State.scrollTo`, which pulls the
+cursor into the new window. `draw` scrolls back to the cursor, so a
+cursor left behind drags the window straight back on the next frame.
+
 ## Keys reach the editor before the keymap in vim's modal states
 
 - In vim Normal / Visual, every unmodified key is the handler's (`g`,
