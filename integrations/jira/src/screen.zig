@@ -1949,6 +1949,38 @@ test "Boards: the kanban columns, the cards with a chevron and a marker, the ava
     try testing.expect(a.modal == null);
 }
 
+test "the fold row is one phrase: the ellipsis is punctuation and only its words are bright" {
+    const h = try app_mod.Harness.start(.{ .tabs = &app_mod.work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    // Four linked pull requests on one ticket: three rows and a fold
+    // row for the fourth.
+    const t0 = a.tab();
+    try t0.tree.?.setExpanded("ENG-2", true);
+    try t0.tree.?.putPrs("ENG-2", &.{
+        .{ .id = "#1", .status = "MERGED" },
+        .{ .id = "#2", .status = "OPEN" },
+        .{ .id = "#3", .status = "MERGED" },
+        .{ .id = "#4", .status = "OPEN" },
+    });
+    var f = try Frame.init(testing.allocator, 120, 40);
+    defer f.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const ar = arena.allocator();
+    try paint(ar, &f, a, .{});
+    const y = (try findRow(ar, &f, "Show more (1)")) orelse return error.NoFoldRow;
+    // `⋯  Show more (N)` — the ellipsis dim, two cells of air, the
+    // words in the bright foreground a key wears, and the three of
+    // them next to one another. Asserted through `sdk.pane.expect`,
+    // the same function the forge pane's own suite calls: this pane
+    // used to pin the `⋯` to the row's left edge and put its words out
+    // in the summary column, forty cells away from it.
+    const ui: Ui = .{};
+    try sdk.pane.expect.foldRow(&f, ui.th, y, ui.ascii);
+}
+
 test "a list longer than its body carries the toolkit's scrollbar, and the bar is a control" {
     const h = try app_mod.Harness.start(.{ .tabs = &app_mod.work_tabs }, .work);
     defer h.stop();

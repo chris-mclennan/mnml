@@ -335,6 +335,19 @@ fn paintList(arena: Allocator, p: *Painter, box: Box) Allocator.Error!void {
         // column 0 (bright on the cursor's row) and the row's own hit,
         // in one statement — the same one the Jira tree paints.
         try p.c.rowGround(.{ .x = list.x, .y = y, .w = text_w, .h = @min(h, list.y + list.h - y) }, selected, .{ .row = idx });
+        // The fold row is the toolkit's `\u{22ef}  Show more (N)`, laid
+        // where the last column starts — the same row, from the same
+        // function, as the tracker pane's.
+        if (row == .show_more) {
+            try p.c.showMoreRow(
+                .{ .x = list.x, .y = y, .w = text_w, .h = 1 },
+                view.lastColumnX(cols, list.x + 2),
+                row.show_more.hidden,
+                .{ .row = idx },
+            );
+            y += h;
+            continue;
+        }
         const spans = try view.rowSpans(arena, .{ .app = app, .ts = ts, .cols = cols, .th = th, .row = row, .selected = selected, .ascii = !p.nerd });
         // The buttons take their cells off the row's right end BEFORE
         // the words are painted, so a title is shortened rather than
@@ -880,28 +893,20 @@ test "an open PR's chevron folds its builds under the mouse" {
     try t.expect(has(scr, "▸ #1234"));
 }
 
-test "the fold row's ellipsis is punctuation and only its words are bright" {
+test "the fold row is one phrase: the ellipsis is punctuation and only its words are bright" {
     const s = try Screen.init(120, 40, acme, .{});
     defer s.deinit();
     _ = try s.draw();
     const y = try s.rowOf("Show more (1)");
-    // The `⋯` is dim, the way the Jira tree's fold row paints it;
-    // the words carry the bright foreground a key wears, or there is
-    // nothing on the row to notice.
-    const th = s.rig.app.theme;
-    var glyph: ?sdk.frame.Style = null;
-    var word: ?sdk.frame.Style = null;
-    var x: u16 = 0;
-    while (x < s.frame.cols) : (x += 1) {
-        const slot = &s.frame.slots[@as(usize, y) * s.frame.cols + x];
-        if (std.mem.eql(u8, slot.symbol(), "⋯")) glyph = slot.style;
-        if (std.mem.eql(u8, slot.symbol(), "S") and glyph != null and word == null) word = slot.style;
-    }
-    try t.expect(glyph != null and word != null);
-    try t.expectEqual(th.muted, glyph.?.fg.?);
-    try t.expect(!glyph.?.mods.bold);
-    try t.expect(word.?.mods.bold);
-    try t.expect(!std.meta.eql(word.?.fg, glyph.?.fg));
+    // `⋯  Show more (N)` — the ellipsis dim, two cells of air, the
+    // words in the bright foreground a key wears, and the three of
+    // them next to one another. Asserted through `sdk.pane.expect`,
+    // the same function the tracker pane's own suite calls: this row
+    // used to be laid by the table here and by `showMoreRow` there,
+    // which put the ellipsis in two different places.
+    try sdk.pane.expect.foldRow(&s.frame, s.rig.app.theme, y, false);
+    // And it is one press: the whole row is the row's own hit.
+    try t.expect(s.rig.app.hits.at(4, y).? == .row);
 }
 
 test "a click on a row selects that row and toggles a header; the strip switches tabs; the hints fire" {

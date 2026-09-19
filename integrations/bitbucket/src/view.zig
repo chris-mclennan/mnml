@@ -15,7 +15,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const sdk = @import("mnml_sdk");
-const chrome = sdk.pane.chrome;
 const model = @import("model.zig");
 const tabs = @import("tabs.zig");
 const app_mod = @import("app.zig");
@@ -280,20 +279,10 @@ pub fn rowSpans(a: Allocator, c: RowCtx) Allocator.Error![]Span {
             }
             n = 5;
         },
-        .show_more => {
-            for (0..5) |i| {
-                cells[i] = "";
-                styles[i] = dim;
-            }
-            // The fold row is the toolkit's: the `\u{22ef}` is punctuation
-            // and stays dim, only the words are bright, and a host with
-            // no Nerd Font gets the same `...` the Jira tree's fold row
-            // gets. One cell cannot carry two styles, so the title
-            // column is split in two after the lay-out below.
-            cells[5] = if (c.ascii) chrome.more_ascii else chrome.more_glyph;
-            styles[5] = cellStyle(c, th.dimText());
-            n = 6;
-        },
+        // The fold row does not go through the table at all: it is
+        // `Painter.showMoreRow`, laid at `lastColumnX` by the caller,
+        // so the two panes' fold rows are one function and one phrase.
+        .show_more => n = 0,
         .flat => |i| switch (ts.data) {
             .pull_requests => |list| {
                 const pr = list[i];
@@ -363,20 +352,17 @@ pub fn rowSpans(a: Allocator, c: RowCtx) Allocator.Error![]Span {
             ci += 1;
         }
     }
-    // The fold row's words, in the bright foreground a key wears, after
-    // the dim `\u{22ef}` the lay-out just placed.
-    if (c.row == .show_more and out.items.len > 0) {
-        const last = &out.items[out.items.len - 1];
-        const room = last.w;
-        const gw: u16 = @intCast(chrome.width(last.text));
-        last.w = gw;
-        try out.append(a, .{
-            .text = try std.fmt.allocPrint(a, "  Show more ({d})", .{c.row.show_more.hidden}),
-            .style = cellStyle(c, th.bright()),
-            .w = room -| gw,
-        });
-    }
     return out.toOwnedSlice(a);
+}
+
+/// Where the last kept column starts, given the x the spans start at.
+/// The fold row is laid there by the toolkit rather than squeezed
+/// through the table.
+pub fn lastColumnX(cols: []const Col, x0: u16) u16 {
+    if (cols.len == 0) return x0;
+    var x = x0;
+    for (cols[0 .. cols.len - 1]) |c| x += c.w + gap;
+    return x;
 }
 
 fn orQ(s: []const u8) []const u8 {

@@ -331,13 +331,21 @@ pub fn Painter(comptime Target: type) type {
             try p.mark(rect, target);
         }
 
-        /// The fold row under a capped list: `⋯  Show more (N)`, the
-        /// label in the bright foreground a key uses.
+        /// The fold row under a capped list: `⋯  Show more (N)` from
+        /// `label_x`, the ellipsis dim punctuation and only the words
+        /// bright.
+        ///
+        /// One phrase, in one place. The ellipsis used to be pinned to
+        /// the row's left edge while its words sat out in the summary
+        /// column, which at any real width read as an empty column
+        /// with a stray `⋯` in it rather than as a row you can press.
         pub fn showMoreRow(p: *Self, rect: Rect, label_x: u16, hidden: usize, target: Target) Allocator.Error!void {
             if (rect.isEmpty()) return;
-            _ = p.put(rect.x + 1, rect.y, 3, if (p.ui.ascii) more_ascii else more_glyph, p.th.dimText());
+            var x = label_x;
+            x += p.put(x, rect.y, 3, if (p.ui.ascii) more_ascii else more_glyph, p.th.dimText());
+            x += p.put(x, rect.y, 2, "  ", p.th.dimText());
             const label = p.fmt("Show more ({d})", .{hidden});
-            _ = p.putFit(label_x, rect.y, rect.right() -| label_x, label, p.th.bright());
+            _ = p.putFit(x, rect.y, rect.right() -| x, label, p.th.bright());
             try p.mark(rect, target);
         }
 

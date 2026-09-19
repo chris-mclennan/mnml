@@ -31,10 +31,22 @@ pub const Error = error{
     BarMissing,
     BarThumbMissing,
     BarTrackMissing,
+    FoldRowMissing,
+    FoldRowSplit,
+    FoldRowInk,
 };
 
 fn eqlStyle(a: Style, b: Style) bool {
     return std.meta.eql(a.fg, b.fg) and std.meta.eql(a.bg, b.bg) and std.meta.eql(a.mods, b.mods);
+}
+
+/// Foreground and attributes only. The GROUND under a word belongs to
+/// whatever is behind it — the pane's own background, a filled cursor
+/// row — and a style with a null `bg` takes the one already on the
+/// cell, so comparing grounds here would only ever be comparing what
+/// the row was sitting on.
+fn eqlInk(a: Style, b: Style) bool {
+    return std.meta.eql(a.fg, b.fg) and std.meta.eql(a.mods, b.mods);
 }
 
 /// The caps title on row `y` starts at `x0` and is painted in
@@ -48,7 +60,7 @@ pub fn capsTitleInk(f: *const Frame, th: Theme, x0: u16, y: u16, title: []const 
     var i: u16 = 0;
     while (i < text_mod.width(title)) : (i += 1) {
         const got = f.slots[@as(usize, y) * f.cols + x0 + i].style;
-        if (!eqlStyle(got, want)) return Error.TitleInk;
+        if (!eqlInk(got, want)) return Error.TitleInk;
     }
 }
 
@@ -101,6 +113,26 @@ pub fn listScrollbar(f: *const Frame, x: u16, y0: u16, h: u16) Error!void {
     // A thumb that fills the whole track says nothing; the list that
     // needs a bar is by definition longer than the window.
     if (track == 0) return Error.BarTrackMissing;
+}
+
+/// The fold row on line `y` reads `<ellipsis>  Show more (` as one
+/// phrase: the ellipsis dim punctuation, two cells of air, then the
+/// words in the bright foreground a key wears.
+///
+/// One phrase because the two panes used to disagree about where the
+/// ellipsis went — one pinned it to the row's left edge and put its
+/// words forty columns away, which reads as an empty column with a
+/// stray mark in it rather than as a row you can press.
+pub fn foldRow(f: *const Frame, th: Theme, y: u16, ascii: bool) Error!void {
+    const ell: []const u8 = if (ascii) chrome.more_ascii else chrome.more_glyph;
+    var x: u16 = 0;
+    const at = while (x < f.cols) : (x += 1) {
+        if (rowHas(f, y, x, ell)) break x;
+    } else return Error.FoldRowMissing;
+    const words_x = at + @as(u16, @intCast(text_mod.width(ell))) + 2;
+    if (!rowHas(f, y, words_x, "Show more (")) return Error.FoldRowSplit;
+    if (!eqlInk(f.slots[@as(usize, y) * f.cols + at].style, th.dimText())) return Error.FoldRowInk;
+    if (!eqlInk(f.slots[@as(usize, y) * f.cols + words_x].style, th.bright())) return Error.FoldRowInk;
 }
 
 /// `want`, one codepoint per cell, starting at `(x0, y)`. Every glyph
