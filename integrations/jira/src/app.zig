@@ -2259,10 +2259,28 @@ pub const App = struct {
             a.setStatus("PR has no URL", .{});
             return;
         }
+        // The PR row's `[ Review ]` starts a session like every other
+        // button, so it remembers the press like every other button:
+        // keyed by the PR's row key, not the ticket's, or a ticket with
+        // two pull requests would carry one button's state on both.
+        const row_key = try prRowKey(arena, iss.key, prs[p.pr_idx].id);
+        switch (sdk.pane.action.pressOf(a.actions.state(row_key, "review"))) {
+            .focus_session => return a.focusSessionFor(row_key, "review"),
+            .dispatch, .retry => {},
+        }
         var buf: [24]u8 = undefined;
         const d = dispatch.Dispatch.forPr(iss, try model.issueUrl(arena, a.cfg.jira_url, iss.key), prs[p.pr_idx].url, a.isoNow(&buf));
         const paths = try dispatch.workspacePaths(arena, a.io, a.cfg.dispatch_workspace, a.ipc_dir);
-        a.say("{s}", .{try dispatch.fire(arena, a.io, d, paths)});
+        try a.fireAndRecord(arena, row_key, "review", d, paths);
+    }
+
+    /// `<ticket key><NUL><pr id>` — the key a pull-request row's
+    /// buttons are remembered under, so a refetch that moves the row
+    /// brings them along. `pressMerge` spells it into a stack buffer;
+    /// this is the same name on an arena, for a caller that needs it to
+    /// outlive one.
+    pub fn prRowKey(arena: Allocator, key: []const u8, pr_id: []const u8) Allocator.Error![]const u8 {
+        return std.fmt.allocPrint(arena, "{s}\u{0}{s}", .{ key, pr_id });
     }
 
     // ─── the vars editor ─────────────────────────────────────────────────
@@ -3482,6 +3500,62 @@ test "a row's action button keeps what its press left, by ticket, across a refet
     // again — without a channel it says so instead of pretending.
     try a.focusSessionFor(key, "triage");
     try testing.expect(std.mem.indexOf(u8, a.status.items, "no mnml channel") != null);
+}
+
+test "a PR row's Review button remembers its press, keyed by the pull request" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    try tmp.dir.createDirPath(testing.io, ".claude");
+    try tmp.dir.createDirPath(testing.io, ".mnml/" ++ dispatch.ipc_subdir);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/" ++ dispatch.ipc_subdir ++ "/command", .data = "" });
+    const h = try Harness.start(.{ .tabs = &work_tabs, .dispatch_workspace = root }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const ar = arena.allocator();
+
+    // Onto the first linked-PR row — the ones that carry
+    // `[ Open ] [ Review ] [ Merge ]`.
+    var steps: usize = 0;
+    const p = while (steps < 40) : (steps += 1) {
+        if (try a.focusedRow(ar)) |row| switch (row) {
+            .pr => |pr| break pr,
+            else => {},
+        };
+        _ = try a.onKey("j");
+    } else return error.NoPrRow;
+    const iss_key = try ar.dupe(u8, a.tab().issues[p.issue_idx].key);
+    const pr_id = try ar.dupe(u8, a.tab().tree.?.prs(iss_key).?[p.pr_idx].id);
+    const row_key = try App.prRowKey(ar, iss_key, pr_id);
+
+    // The press dispatched and left nothing behind: the status said so
+    // for a moment and the button went back to looking un-pressed.
+    try testing.expectEqual(sdk.pane.ActionState.idle, a.actions.state(row_key, "review"));
+    try a.dispatchReview();
+    try testing.expectEqual(sdk.pane.ActionState.running, a.actions.state(row_key, "review"));
+    try testing.expect(std.mem.startsWith(u8, a.actions.get(row_key, "review").prompt_line, "/agents:reviewer "));
+    // The key is the PULL REQUEST's, not the ticket's: a ticket with
+    // two pull requests must not wear one button's state on both.
+    try testing.expectEqual(sdk.pane.ActionState.idle, a.actions.state(iss_key, "review"));
+    // …and the host is asked to watch it, like every other button.
+    var kbuf: [320]u8 = undefined;
+    try testing.expectEqual(@as(usize, 1), a.watch_out.items.len);
+    try testing.expectEqualStrings(sdk.pane.actionWatchKey(&kbuf, row_key, "review"), a.watch_out.items[0].key);
+
+    // A second press does not fork a second session: it asks for the
+    // one that is running.
+    try a.dispatchReview();
+    try testing.expectEqual(@as(usize, 1), a.watch_out.items.len);
+    try testing.expect(std.mem.indexOf(u8, a.status.items, "no mnml channel") != null or std.mem.indexOf(u8, a.status.items, "focus") != null);
+
+    // The host's word moves it, and the button becomes the door.
+    const watch_key = try ar.dupe(u8, a.watch_out.items[0].key);
+    try a.onSessionState(watch_key, .done, "sid-9", "");
+    try testing.expectEqual(sdk.pane.ActionState.view, a.actions.state(row_key, "review"));
 }
 
 test "a refetch on the group keeps the old rows, the keys and the cursor, and lands on a later tick" {

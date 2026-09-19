@@ -713,12 +713,21 @@ pub const Painter = struct {
                                 bx += lw + 1;
                                 continue;
                             }
-                            const lw = text.width(b.label);
-                            // `[ Open ]` goes somewhere; `[ Review ]`
-                            // starts a session that reads. The words
-                            // are the same width; the colours are not
-                            // the same colour.
-                            _ = p.c.actionChip(bx, y, lw, b.label, sdk.pane.action.chipOf(p.ui.th, .idle, sdk.pane.action.kindOf(b.label)));
+                            // `[ Open ]` folds the row and changes
+                            // nothing, so it is a grey chip and has no
+                            // session to remember. `[ Review ]` starts
+                            // one, so it wears what that session is
+                            // doing, the same as every other button
+                            // that dispatches.
+                            var rb: [32]u8 = undefined;
+                            const rst = if (b.which == .review) blk: {
+                                var kb: [256]u8 = undefined;
+                                const rk = std.fmt.bufPrint(&kb, "{s}\u{0}{s}", .{ iss.key, pr.id }) catch "";
+                                break :blk a.actions.state(rk, "review");
+                            } else .idle;
+                            const cap = if (rst == .idle) b.label else sdk.pane.action.caption(&rb, rst, "Review", a.spin, p.ui.ascii);
+                            const lw = text.width(cap);
+                            _ = p.c.actionChip(bx, y, lw, cap, sdk.pane.action.chipOf(p.ui.th, rst, sdk.pane.action.kindOf(b.label)));
                             try p.hitAdd(.{ .x = bx, .y = y, .w = lw, .h = 1 }, .{ .pr_button = .{ .row = idx, .which = b.which } });
                             bx += lw + 1;
                         }
