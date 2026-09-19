@@ -148,6 +148,10 @@ pub const RefreshJob = struct {
     extra_jql: ?[]const u8,
     extra_fields: []const []const u8,
     team_field_id: []const u8,
+    /// The tab's query WITHOUT the window — what a successful whole
+    /// listing is dated under, so a changed question is never answered
+    /// with a window onto the old one.
+    base_jql: []const u8 = "",
     /// `-15m` when this is a delta window since the last successful
     /// sync, empty when the whole listing is being asked for. Already
     /// spliced into `jql`; kept so the result can say which it was.
@@ -172,6 +176,8 @@ pub const RefreshResult = struct {
     /// This was a window, not the whole listing: `issues` is what
     /// MOVED, and what did not is still on the tab.
     delta: bool = false,
+    /// The query this asked, window excluded. Owned by `arena`.
+    base_jql: []const u8 = "",
     /// Empty when the search answered.
     error_text: []const u8 = "",
 
@@ -445,22 +451,26 @@ pub const App = struct {
     /// The window a delta refetch of `t` should ask for, or null when
     /// it must ask for everything: nothing synced yet, no store, or
     /// the chain of generations is as long as it may get.
-    fn deltaWindow(a: *App, arena: Allocator, t: *const TabState) Allocator.Error!?[]const u8 {
+    fn deltaWindow(a: *App, arena: Allocator, t: *const TabState, query: []const u8) Allocator.Error!?[]const u8 {
         if (!t.fetched or t.issues.len == 0) return null;
         if (t.deltas.items.len >= max_delta_generations) return null;
         const store = a.sync_store orelse return null;
         const marks: sdk.warm.SyncMarks = .{ .store = store };
         var buf: [32]u8 = undefined;
-        const since = marks.jiraSince(&buf, t.cfg.name, a.nowSecs()) orelse return null;
+        // The query is part of the mark: a version picker, a vars edit
+        // or the JQL editor changes the question, and "what moved
+        // since" is only ever an answer about the question it was
+        // measured for.
+        const since = marks.jiraSince(&buf, t.cfg.name, query, a.nowSecs()) orelse return null;
         return try arena.dupe(u8, since);
     }
 
     /// Say a tab's listing came back whole, so the next delta has a
     /// window to measure from.
-    fn markSynced(a: *App, t: *const TabState, at: i64) void {
+    fn markSynced(a: *App, t: *const TabState, query: []const u8, at: i64) void {
         const store = a.sync_store orelse return;
         const marks: sdk.warm.SyncMarks = .{ .store = store };
-        marks.mark(t.cfg.name, at) catch return;
+        marks.mark(t.cfg.name, query, at) catch return;
         store.save();
     }
 
@@ -661,7 +671,9 @@ pub const App = struct {
         const secs = a.cfg.refresh_interval_secs;
         if (secs == 0 or !a.hasTabs()) return;
         if (a.last_refresh_ms == 0 or now - a.last_refresh_ms < @as(i64, secs) * 1000) return;
-        try a.refreshActive();
+        // The interval is the commonest refetch of all and the one
+        // nobody is watching: a window, like `r`.
+        try a.refreshActiveMode(.delta);
     }
 
     /// Fetch the active tab if it has not been.
@@ -688,8 +700,16 @@ pub const App = struct {
         }
     }
 
+    /// A refetch nobody asked for by name: after a write this pane
+    /// made, after a picker, after a filter. Always the whole listing.
+    ///
+    /// A window cannot notice a ticket that has dropped OUT of the
+    /// query, and a write is exactly the thing that drops one out —
+    /// reassign a ticket away from yourself and the Assigned tab must
+    /// lose it. So only `r` and the interval ask for a window; anything
+    /// that might have changed the row SET asks for the listing.
     pub fn refreshActive(a: *App) Allocator.Error!void {
-        try a.refreshActiveMode(.delta);
+        try a.refreshActiveMode(.full);
     }
 
     /// The active tab, as a delta where one is possible (`r`, the
@@ -704,7 +724,7 @@ pub const App = struct {
     /// this returns at once — the pane keeps its old rows, its keys and
     /// its repaint while the site is asked. Without one it runs inline.
     pub fn refreshTab(a: *App, idx: usize) Allocator.Error!void {
-        try a.refreshTabMode(idx, .delta);
+        try a.refreshTabMode(idx, .full);
     }
 
     pub fn refreshTabMode(a: *App, idx: usize, mode: RefreshMode) Allocator.Error!void {
@@ -771,12 +791,7 @@ pub const App = struct {
         // query is a list of clauses rather than one JQL string — the
         // window would have to be spliced somewhere else, so it is not
         // offered there rather than offered and silently ignored.
-        if (mode == .delta and t.board_id == 0) {
-            if (try a.deltaWindow(arena, t)) |since| {
-                job.delta_since = since;
-                job.reason = .delta;
-            }
-        }
+
         // On the job's arena, not a temporary: the job outlives this
         // frame the moment it goes to a worker.
         if (a.cfg.team_field_id.len > 0) {
@@ -795,7 +810,18 @@ pub const App = struct {
             };
             if (clauses.items.len > 0) job.extra_jql = try std.mem.join(arena, " AND ", clauses.items);
         } else {
-            const base = try a.teamClause(arena, t.jql, t.team);
+            const base = try arena.dupe(u8, try a.teamClause(arena, t.jql, t.team));
+            // A board tab is fetched through the agile endpoint, whose
+            // query is a list of clauses rather than one JQL string, so
+            // a window is not offered there rather than offered and
+            // silently ignored.
+            if (mode == .delta) {
+                if (try a.deltaWindow(arena, t, base)) |since| {
+                    job.delta_since = since;
+                    job.reason = .delta;
+                }
+            }
+            job.base_jql = base;
             job.jql = try arena.dupe(u8, try jira.withUpdatedSince(arena, base, job.delta_since));
         }
         return job;
@@ -836,7 +862,8 @@ pub const App = struct {
                 // of `loading…` this pane was reported for. They are
                 // seeded from the cache and queued behind the paint
                 // instead (`applyRefresh`, `pumpPrs`).
-                return .{ .idx = job.idx, .arena = arena, .issues = issues, .delta = job.delta_since.len > 0 };
+                const base = ar.dupe(u8, job.base_jql) catch "";
+                return .{ .idx = job.idx, .arena = arena, .issues = issues, .delta = job.delta_since.len > 0, .base_jql = base };
             },
         }
     }
@@ -1071,7 +1098,7 @@ pub const App = struct {
             t.data = res.arena;
             // Only a whole listing dates the tab: a window says nothing
             // about the rows it did not ask about.
-            a.markSynced(t, a.nowSecs());
+            a.markSynced(t, res.base_jql, a.nowSecs());
         }
         t.fetched = true;
         t.fetched_at = a.nowSecs();

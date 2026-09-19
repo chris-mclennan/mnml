@@ -313,32 +313,44 @@ fn civilFromDays(days: i64) struct { y: i64, m: u32, d: u32 } {
 /// When a keyed listing last came back whole, kept in an ordinary
 /// `Store`: the entry's `fetched_at` IS the mark, so nothing new has
 /// to be written to disk or read back.
+///
+/// **The query is part of the key.** A window is only ever valid
+/// against the question it was measured for: change the JQL, the
+/// fixVersion, the filter — and "what moved since" answers about a
+/// listing nobody is looking at any more. The query goes in the
+/// entry's `stamp`, where the store already does exactly this kind of
+/// comparison, so a changed question silently becomes a full refetch
+/// instead of silently becoming a wrong one.
 pub const SyncMarks = struct {
     store: *store_mod.Store,
 
-    /// Unix seconds of the last successful sync for `key`, or 0.
-    pub fn lastSync(self: SyncMarks, key: []const u8) i64 {
+    /// Unix seconds of the last successful sync of `key` UNDER
+    /// `query`, or 0 — never synced, or synced under a different
+    /// question.
+    pub fn lastSync(self: SyncMarks, key: []const u8, query: []const u8) i64 {
         const e = self.store.stale(key) orelse return 0;
+        if (!std.mem.eql(u8, e.stamp, query)) return 0;
         return e.fetched_at;
     }
 
     /// Record one. The body is the mark's own reason for existing, so
     /// a person reading the file can tell what it is.
-    pub fn mark(self: SyncMarks, key: []const u8, now_secs: i64) Allocator.Error!void {
-        try self.store.put(key, "", "sync", now_secs);
+    pub fn mark(self: SyncMarks, key: []const u8, query: []const u8, now_secs: i64) Allocator.Error!void {
+        try self.store.put(key, query, "sync", now_secs);
     }
 
     /// The window for `key` in Jira's dialect, or null when there has
-    /// been no successful sync and the whole listing is owed.
-    pub fn jiraSince(self: SyncMarks, buf: []u8, key: []const u8, now_secs: i64) ?[]const u8 {
-        const start = windowStart(self.lastSync(key), now_secs);
+    /// been no successful sync of this question and the whole listing
+    /// is owed.
+    pub fn jiraSince(self: SyncMarks, buf: []u8, key: []const u8, query: []const u8, now_secs: i64) ?[]const u8 {
+        const start = windowStart(self.lastSync(key, query), now_secs);
         if (start == 0) return null;
         return sinceText(buf, now_secs - start);
     }
 
     /// The same window as a Bitbucket timestamp.
-    pub fn bitbucketSince(self: SyncMarks, buf: []u8, key: []const u8, now_secs: i64) ?[]const u8 {
-        const start = windowStart(self.lastSync(key), now_secs);
+    pub fn bitbucketSince(self: SyncMarks, buf: []u8, key: []const u8, query: []const u8, now_secs: i64) ?[]const u8 {
+        const start = windowStart(self.lastSync(key, query), now_secs);
         if (start == 0) return null;
         return isoStamp(buf, start);
     }
@@ -684,30 +696,37 @@ test "the sync mark is the store's own fetched_at, so a delta window survives a 
     const path = try std.fs.path.join(t.allocator, &.{ dir, "sync.json" });
     defer t.allocator.free(path);
     const now: i64 = 1_789_526_218;
+    const q = "assignee = currentUser() ORDER BY updated DESC";
 
     {
         var s = try store_mod.Store.openAt(t.allocator, t.io, path);
         defer s.deinit();
         const marks: SyncMarks = .{ .store = &s };
         // Nothing synced: no window, so the caller asks for everything.
-        try t.expectEqual(@as(i64, 0), marks.lastSync("work_open"));
+        try t.expectEqual(@as(i64, 0), marks.lastSync("work_open", q));
         var b: [32]u8 = undefined;
-        try t.expect(marks.jiraSince(&b, "work_open", now) == null);
-        try t.expect(marks.bitbucketSince(&b, "work_open", now) == null);
-        try marks.mark("work_open", now - 300);
+        try t.expect(marks.jiraSince(&b, "work_open", q, now) == null);
+        try t.expect(marks.bitbucketSince(&b, "work_open", q, now) == null);
+        try marks.mark("work_open", q, now - 300);
         s.save();
     }
     {
         var s = try store_mod.Store.openAt(t.allocator, t.io, path);
         defer s.deinit();
         const marks: SyncMarks = .{ .store = &s };
-        try t.expectEqual(now - 300, marks.lastSync("work_open"));
+        try t.expectEqual(now - 300, marks.lastSync("work_open", q));
         var b: [32]u8 = undefined;
         // 300 s plus the 120 s overlap, rounded up: seven minutes.
-        try t.expectEqualStrings("-7m", marks.jiraSince(&b, "work_open", now).?);
-        try t.expectEqualStrings("2026-09-16T02:29:58+00:00", marks.bitbucketSince(&b, "work_open", now).?);
+        try t.expectEqualStrings("-7m", marks.jiraSince(&b, "work_open", q, now).?);
+        try t.expectEqualStrings("2026-09-16T02:29:58+00:00", marks.bitbucketSince(&b, "work_open", q, now).?);
         // A key nobody synced still has no window of its own.
-        try t.expect(marks.jiraSince(&b, "reported", now) == null);
+        try t.expect(marks.jiraSince(&b, "reported", q, now) == null);
+        // And neither has the same tab asking a DIFFERENT question:
+        // "what moved since" is only ever an answer about the listing
+        // it was measured for. A picker that rewrites the query gets a
+        // full refetch, not a window onto the last one.
+        try t.expect(marks.jiraSince(&b, "work_open", "project = ENG AND fixVersion = \"13.15.0\"", now) == null);
+        try t.expectEqual(@as(i64, 0), marks.lastSync("work_open", ""));
     }
 }
 
