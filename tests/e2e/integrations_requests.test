@@ -1,0 +1,59 @@
+# The REQUESTS view (integrations.requests): the pane mnml opens over
+# the JSONL its integrations write as they go
+# (`mnml_sdk.request_log` → `<data root>/requests/<service>.jsonl`).
+# The complaint it answers is "the Jira tabs are slow and I cannot tell
+# whether it is 429ing": one row per request with WHY it was made, what
+# it cost, and how long the shared bucket held it.
+#
+# The files go into `$MNML_DATA_ROOT`, which the runner points at this
+# file's own directory — so nothing here reads or writes the user's
+# real one. Two of them, a `jira` and a `bitbucket`, because the view
+# has to read every file in the directory rather than one. Invented
+# data throughout.
+shell mkdir -p "$MNML_DATA_ROOT/requests" && printf '%s\n%s\n' '{"ts":51723.0,"service":"jira","integration":"mnml-jira","method":"GET","host":"acme.atlassian.net","path":"/rest/api/3/search/jql","status":200,"ms":412,"bytes":18244,"reason":"pane_open","wait_ms":3030,"waited_for":"tokens","tokens_after":0.240,"retry_of":0,"cache":"miss"}' '{"ts":51722.0,"service":"jira","integration":"mnml-jira","method":"GET","host":"acme.atlassian.net","path":"/rest/dev-status/latest/issue/detail?issueId=10002","status":429,"ms":90,"bytes":40,"reason":"refresh","wait_ms":30000,"waited_for":"cooldown","tokens_after":0.0,"retry_of":1,"cache":"none"}' > "$MNML_DATA_ROOT/requests/jira.jsonl"
+shell printf '%s\n' '{"ts":51721.0,"service":"bitbucket","integration":"mnml-bitbucket","method":"GET","host":"api.bitbucket.org","path":"/2.0/repositories/acme/api/pullrequests","status":200,"ms":1500,"bytes":900,"reason":"poll","wait_ms":0,"waited_for":"nothing","tokens_after":8.0,"retry_of":0,"cache":"hit"}' > "$MNML_DATA_ROOT/requests/bitbucket.jsonl"
+# The tree away, so the view has the width its columns were drawn for.
+command view.toggle_tree
+command integrations.requests
+expect screen contains "REQUESTS (3)"
+# The hint row, and every column of every row: the clock, which
+# integration asked, WHY, the path, and what it cost.
+expect screen contains "/ filter   r reload"
+expect screen contains "14:22:03"
+expect screen contains "mnml-jira       pane_open  GET  /rest/api/3/search/jql"
+expect screen contains "412ms  3.0s bkt"
+# A 429 says so, says it was a retry, and blames the cooldown rather
+# than the network.
+expect screen contains "429r1"
+expect screen contains "30.0s 429"
+# A request a cache answered cost nothing and says that instead.
+expect screen contains "mnml-bitbucket  poll       GET  /2.0/repositories/acme/api/pullrequests"
+expect screen contains "cached"
+# Every file in the directory, not one.
+expect screen contains "/rest/dev-status/latest/issue/detail"
+# `/` narrows to a service.
+key /
+type bitbucket
+expect screen contains "REQUESTS (1)"
+expect screen contains "/2.0/repositories/acme/api/pullrequests"
+expect screen lacks "/rest/api/3/search/jql"
+key enter
+# Esc clears the filter before it closes anything, so a mistyped one
+# costs a keystroke rather than the pane.
+key esc
+expect screen contains "REQUESTS (3)"
+expect screen contains "/ filter   r reload"
+# Enter opens the row's whole line, including the fields no column had
+# room for.
+key g
+key enter
+expect screen contains "{\"ts\":51723.0,\"service\":\"jira\""
+expect screen contains "\"integration\":\"mnml-jira\",\"method\":\"GET\""
+key enter
+expect screen lacks "\"integration\":\"mnml-jira\",\"method\":\"GET\""
+# `r` re-reads the files: a line written while the view was open shows
+# up without reopening it.
+shell printf '%s\n' '{"ts":51724.0,"service":"jira","integration":"mnml-jira","method":"POST","host":"acme.atlassian.net","path":"/rest/api/3/issue/ENG-12/transitions","status":204,"ms":210,"bytes":0,"reason":"user","wait_ms":0,"waited_for":"nothing","tokens_after":11.0,"retry_of":0,"cache":"none"}' > "$MNML_DATA_ROOT/requests/jira.jsonl"
+key r
+expect screen contains "REQUESTS (2)"
+expect screen contains "user       POST /rest/api/3/issue/ENG-12/transitions"
