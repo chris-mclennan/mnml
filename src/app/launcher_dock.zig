@@ -66,6 +66,7 @@ const settings = @import("settings.zig");
 
 pub const Mode = Config.DockMode;
 pub const Edge = Config.DockEdge;
+pub const Labels = Config.DockLabels;
 pub const Part = @import("../ui/hit.zig").LauncherDockPart;
 
 pub const table = .{
@@ -118,6 +119,14 @@ pub fn mode(app: *const App) Mode {
 
 pub fn edge(app: *const App) Edge {
     return app.cfg.ui.dock.edge;
+}
+
+/// `ui.dock.labels`. A side dock has three cells and no room for a
+/// label, so it paints the icon form whatever the key says; the key is
+/// the BOTTOM strip's question.
+pub fn labels(app: *const App) Labels {
+    if (edge(app) != .bottom) return .icon;
+    return app.cfg.ui.dock.labels;
 }
 
 /// The strip is carved out of the frame this frame — `render.chrome`'s
@@ -439,6 +448,10 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
             .left => .left,
             .right => .right,
         },
+        .labels = switch (labels(app)) {
+            .icon => .icon,
+            .icon_label => .icon_label,
+        },
         .cursor = if (st.kb) st.cursor else null,
         .pinned = st.pinned,
     });
@@ -468,14 +481,37 @@ pub fn mouse(app: *App, part: Part, m: Mouse) Allocator.Error!void {
     }
 }
 
-/// The strip's own menu (the pin chip's right click): the three modes
-/// and the three edges.
+/// The two *Show* rows, ticked on the live `ui.dock.labels`. They are
+/// the family's chip-menu idiom (the `sort:` and `view:` chips): every
+/// choice listed, the current one wearing the ✓ — so there is no new
+/// command id for a two-value setting the ex word and the Settings row
+/// already reach. On a side edge they still write the key, and the
+/// row says so: the strip is icon-only there by geometry.
+fn appendLabelRows(app: *App, rows: *std.ArrayListUnmanaged(command.MenuItem)) Allocator.Error!void {
+    const now = app.cfg.ui.dock.labels;
+    const side = edge(app) != .bottom;
+    try rows.append(app.gpa, .{
+        .label = if (side) "Show: icons and labels (bottom edge only)" else "Show: icons and labels",
+        .action = .{ .set_dock_labels = .icon_label },
+        .checked = now == .icon_label,
+        .separator_before = true,
+    });
+    try rows.append(app.gpa, .{
+        .label = "Show: icons only",
+        .action = .{ .set_dock_labels = .icon },
+        .checked = now == .icon,
+    });
+}
+
+/// The strip's own menu (the pin chip's right click): the three modes,
+/// the three edges, and the two label forms.
 pub fn openDockMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     var list: std.ArrayListUnmanaged(command.MenuItem) = .empty;
     errdefer list.deinit(app.gpa);
     try list.append(app.gpa, .{ .label = if (app.launcher_dock.pinned) "Unpin dock" else "Pin dock open", .action = .{ .command = .@"view.dock_pin" } });
     try list.append(app.gpa, .{ .label = "Cycle mode (always / auto-hide / hidden)", .action = .{ .command = .@"view.dock_cycle_mode" }, .separator_before = true });
     try list.append(app.gpa, .{ .label = "Move to the next edge (bottom / left / right)", .action = .{ .command = .@"view.dock_move" } });
+    try appendLabelRows(app, &list);
     try list.append(app.gpa, .{ .label = "Settings…", .action = .{ .command = .@"view.settings" }, .separator_before = true });
     try app.openMenu("Launcher dock", try list.toOwnedSlice(app.gpa), x, y);
 }
@@ -504,6 +540,7 @@ pub fn openItemMenu(app: *App, i: usize, x: u16, y: u16) Allocator.Error!void {
     try rows.append(app.gpa, .{ .label = if (app.launcher_dock.pinned) "Unpin dock" else "Pin dock open", .action = .{ .command = .@"view.dock_pin" }, .separator_before = true });
     try rows.append(app.gpa, .{ .label = "Cycle mode (always / auto-hide / hidden)", .action = .{ .command = .@"view.dock_cycle_mode" } });
     try rows.append(app.gpa, .{ .label = "Move to the next edge (bottom / left / right)", .action = .{ .command = .@"view.dock_move" } });
+    try appendLabelRows(app, &rows);
     try app.openMenu(it.label, try rows.toOwnedSlice(app.gpa), x, y);
 }
 
@@ -736,6 +773,20 @@ pub fn setEdge(app: *App, next: Edge) CommandError!void {
     app.needs_render = true;
 }
 
+/// `ui.dock.labels`, persisted: `:dock icons` / `:dock labels`, the
+/// Settings row, and the strip's own right-click menu all land here.
+/// A side dock takes the key without complaint — it is the bottom
+/// form's question, and moving back to the bottom edge answers it.
+pub fn setLabels(app: *App, next: Labels) CommandError!void {
+    app.cfg.ui.dock.labels = next;
+    _ = try settings.persist(app, .home, &.{ "ui", "dock", "labels" }, next);
+    app.toast("dock: {s}", .{switch (next) {
+        .icon => "icons only",
+        .icon_label => "icons and labels",
+    }});
+    app.needs_render = true;
+}
+
 /// `view.focus_dock`: the keys go into the strip, revealing it first
 /// when it is not already up.
 fn focusCmd(app: *App) CommandError!void {
@@ -959,4 +1010,31 @@ test "a side dock on a narrow screen paints nothing rather than eating the edito
     const right = overlayRect(&app, Rect.init(0, 0, 120, 40));
     try t.expectEqual(@as(u16, 120), right.right());
     try t.expectEqual(@as(u16, width), right.w);
+}
+
+test "the label form: `ui.dock.labels` is written and read back, and a side edge paints icons whatever it says" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    // The default is today's row: glyph and label.
+    try t.expectEqual(Labels.icon_label, labels(&app));
+    try setLabels(&app, .icon);
+    try t.expectEqual(Labels.icon, app.cfg.ui.dock.labels);
+    try t.expectEqual(Labels.icon, labels(&app));
+    try setLabels(&app, .icon_label);
+    try t.expectEqual(Labels.icon_label, labels(&app));
+    // A side dock has three cells and no room for a label, so it reads
+    // `.icon` without touching the key — moving back answers it again.
+    try setEdge(&app, .left);
+    try t.expectEqual(Labels.icon, labels(&app));
+    try t.expectEqual(Labels.icon_label, app.cfg.ui.dock.labels);
+    try setEdge(&app, .bottom);
+    try t.expectEqual(Labels.icon_label, labels(&app));
+    // The key reached the file the settings row would write.
+    try setLabels(&app, .icon);
+    const text = try tmp.dir.readFileAlloc(t.io, "config.zon", t.allocator, .limited(1 << 16));
+    defer t.allocator.free(text);
+    try t.expect(std.mem.indexOf(u8, text, ".labels = .icon,") != null);
 }

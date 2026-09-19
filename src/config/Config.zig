@@ -207,11 +207,19 @@ pub const DockMode = enum { always, auto_hide, hidden };
 /// Which edge the launcher dock lives on. There is no `.top`: that row
 /// belongs to the menu bar (`app/menu_bar.zig`).
 pub const DockEdge = enum { bottom, left, right };
+/// How much of an item a BOTTOM launcher dock paints. `icon_label` is
+/// ` <glyph> <label> `, the strip's own form; `icon` paints the glyph
+/// alone in the same three cells a side dock uses — padding, glyph,
+/// padding — with the running dot in that padding cell and the name in
+/// the tooltip. A dock on a side edge is icon-only by geometry (three
+/// cells is all it has) and ignores this key.
+pub const DockLabels = enum { icon, icon_label };
 
 /// `ui.dock` — the launcher dock (`app/launcher_dock.zig`).
 pub const Dock = struct {
     mode: DockMode = .auto_hide,
     edge: DockEdge = .bottom,
+    labels: DockLabels = .icon_label,
     /// Command ids pinned onto the dock, in this order — a static id
     /// or a dynamic one (an integration's `jira.open`). An id nothing
     /// answers to is skipped rather than painted dead.
