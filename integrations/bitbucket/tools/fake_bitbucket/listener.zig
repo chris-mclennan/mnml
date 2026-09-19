@@ -24,6 +24,9 @@ pub const Server = struct {
     state_lock: Io.Mutex = .init,
     /// The arena the replies are built on, reset per request.
     arena: std.heap.ArenaAllocator,
+    /// Where `--log-file` appends one JSON line per request served;
+    /// null is no log. Borrowed from the argv, which outlives us.
+    log_path: ?[]const u8 = null,
 
     pub fn start(gpa: Allocator, io: Io, port: u16) !*Server {
         const self = try gpa.create(Server);
@@ -152,11 +155,32 @@ pub const Server = struct {
             extra[1] = .{ .name = "retry-after", .value = std.fmt.bufPrint(&ra_buf, "{d}", .{secs}) catch "1" };
             n_extra = 2;
         }
+        self.logRequest(method, target, reply.status);
         request.respond(reply.body, .{
             .status = @enumFromInt(reply.status),
             .extra_headers = extra[0..n_extra],
             .keep_alive = false,
         }) catch {};
+    }
+
+    /// One JSON line appended to `--log-file`: what arrived on the
+    /// wire, which is the only account of a tab's cost that owes
+    /// nothing to what the client believes it sent. Best effort — a
+    /// server that cannot write its log still serves.
+    fn logRequest(self: *Server, method: bb.Method, target: []const u8, status: u16) void {
+        const path = self.log_path orelse return;
+        const cut = std.mem.indexOfScalar(u8, target, '?') orelse target.len;
+        var buf: [3072]u8 = undefined;
+        const line = std.fmt.bufPrint(&buf, "{{\"method\":\"{s}\",\"path\":\"{f}\",\"query\":\"{f}\",\"status\":{d}}}\n", .{
+            @tagName(method),
+            std.zig.fmtString(target[0..cut]),
+            std.zig.fmtString(if (cut < target.len) target[cut + 1 ..] else ""),
+            status,
+        }) catch return;
+        const file = Io.Dir.cwd().createFile(self.io, path, .{ .truncate = false, .lock = .exclusive }) catch return;
+        defer file.close(self.io);
+        const end = file.length(self.io) catch 0;
+        file.writePositionalAll(self.io, line, end) catch {};
     }
 };
 
