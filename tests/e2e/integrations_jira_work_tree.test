@@ -74,8 +74,11 @@ expect screen contains "ENG-1"
 expect screen contains "To Do (1)"
 expect screen contains "ENG-5"
 expect screen lacks "ENG-3"
-# The hint row comes from the bindings.
-expect screen contains "t transition · a assignee"
+# The hint row comes from the bindings, through the toolkit: entries
+# shed from the FRONT as the pane narrows, so the ones that always
+# apply survive and `? keys` — the door to the rest — is last.
+expect screen contains "a assignee · S select"
+expect screen contains "? keys"
 # The statusline chip: the manifest's slot, replaced live with the count
 # the pane published over the IPC channel (the host drains it on a tick).
 wait 800
