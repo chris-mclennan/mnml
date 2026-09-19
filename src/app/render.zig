@@ -31,6 +31,7 @@ const editor_view = @import("../ui/editor_view.zig");
 const statusline = @import("../ui/statusline.zig");
 const cmdline_bar = @import("../ui/cmdline_bar.zig");
 const cmdline_mod = @import("cmdline.zig");
+const cursor_mod = @import("cursor.zig");
 const statusline_app = @import("statusline.zig");
 const messages = @import("messages.zig");
 const stress = @import("stress.zig");
@@ -473,11 +474,15 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     };
     const full = ui.canvas.full();
     ui.canvas.fill(full, app.theme.bg);
-    screen.cursor_vis = false;
-    // Back to the terminal's own shape unless this frame asks for one
-    // (`drawPty` does, for the focused pty pane).
-    screen.cursor_shape = .default;
+    // ── the frame's one cursor ──
+    // Nothing between here and `applyCursor` at the end of the frame
+    // touches `screen.cursor_vis` / `cursor` / `cursor_shape`; a
+    // surface that takes typing writes `app.cursor_pos` instead, and
+    // draw order settles which one wins (`app/cursor.zig`).
     app.cursor_pos = null;
+    app.cursor_shape = .bar;
+    app.cursor_blink = app.cfg.editor.cursor_blink;
+    app.cursor_from_child = false;
 
     // Zen: the panes fill everything above the `:` line — no bar, no
     // tree, no right panel, no strips, no statusline (`zen.zig`).
@@ -582,6 +587,50 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     // line, whatever it was anchored in.
     if (app.overlay == .menu) drawMenu(ui, Rect.init(full.x, full.y, full.w, fr.upper.bottom() -| full.y), &app.overlay.menu);
     try discovery.drawTooltip(app, ui, full);
+    applyCursor(app, screen);
+}
+
+/// The frame's last act: hand the one cursor to the terminal.
+///
+/// Everything above has drawn; `app.cursor_pos` now holds the caret of
+/// the frontmost surface that takes typing, or nothing. `cursor.resolve`
+/// applies the two rules draw order cannot — a box that takes no typing
+/// hides what is under it, and `ui.cursor_shape` overrides the mode —
+/// and this is the only place in mnml that writes the three vaxis
+/// fields.
+///
+/// It writes them headless too. Nothing draws a cursor there, so they
+/// are simply the frame's honest answer to "where would it be" — which
+/// is what `status.json` reports and what a unit test reads.
+/// `app.term_cursor` is the separate question of whether a REAL
+/// terminal will draw one, and that decides only who paints a stand-in
+/// into the cells (`drawPty`'s `paint_focused`).
+fn applyCursor(app: *App, screen: *vaxis.Screen) void {
+    const want: ?cursor_mod.Want = if (app.cursor_pos) |p| .{
+        .pos = p,
+        .shape = app.cursor_shape,
+        .blink = app.cursor_blink,
+        .from_child = app.cursor_from_child,
+    } else null;
+    const operator_popup = if (app.activeEditor()) |e| e.buf.input.operatorMenuHint() != null else false;
+    app.cursor_out = cursor_mod.resolve(want, .{
+        .blocked = cursor_mod.blocks(app.overlay, app.menu_bar.open != null, operator_popup),
+        .pref = switch (app.cfg.ui.cursor_shape) {
+            .terminal => .terminal,
+            .block => .block,
+            .bar => .bar,
+            .underline => .underline,
+        },
+    });
+    if (app.cursor_out) |c| {
+        screen.cursor_vis = true;
+        screen.cursor = .{ .row = c.pos.y, .col = c.pos.x };
+        screen.cursor_shape = cursor_mod.decscusr(c.shape, c.blink);
+    } else {
+        screen.cursor_vis = false;
+        // Back to the terminal's own shape: mnml is not asking for one.
+        screen.cursor_shape = .default;
+    }
 }
 
 // ── full screen's corner mark ──
@@ -1554,14 +1603,15 @@ fn drawPty(app: *App, ui: Ui, id: PaneId, p: *pty_pane.PtyPane, rect: Rect) Allo
     // loses focus, exactly as it does for a bare shell.
     if (focused) if (cursor) |c| {
         app.cursor_pos = .{ .x = c.x, .y = c.y };
-        const screen = ui.canvas.screen;
-        screen.cursor_vis = true;
-        screen.cursor = .{ .row = c.y, .col = c.x };
-        screen.cursor_shape = switch (c.shape) {
-            .block => if (c.blink) .block_blink else .block,
-            .bar => if (c.blink) .beam_blink else .beam,
-            .underline => if (c.blink) .underline_blink else .underline,
+        app.cursor_shape = switch (c.shape) {
+            .block => .block,
+            .bar => .bar,
+            .underline => .underline,
         };
+        app.cursor_blink = c.blink;
+        // The child's own DECSCUSR: `ui.cursor_shape` must not rewrite
+        // it, or vim inside a terminal pane would lie about its mode.
+        app.cursor_from_child = true;
     };
 }
 
@@ -1974,11 +2024,7 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .wrap = e.wrap orelse app.cfg.ui.wrap,
         .tab_width = app.cfg.editor.tab_width,
         .line_numbers = app.cfg.ui.line_numbers,
-        .cursor_shape = switch (mode) {
-            .insert, .none => .bar,
-            .replace => .underline,
-            else => .block,
-        },
+        .cursor_shape = cursor_mod.forMode(mode),
         .focused = focused,
         .visual_block = mode == .visual_block,
         .block_eol = e.buf.editor.block_eol,
@@ -2028,7 +2074,13 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         while (n >= 10) : (n /= 10) digits += 1;
         const gutter: u16 = if (app.cfg.ui.line_numbers) digits + 2 else 0;
         app.pane_cols = @max(rect.w -| gutter, 1);
-        if (focused) app.cursor_pos = cursor;
+        // The caret, with the mode's shape: a block in NORMAL and
+        // VISUAL, a bar in INSERT (and in modeless editing, which is an
+        // insert caret the whole time), an underline in REPLACE.
+        if (focused) if (cursor) |c| {
+            app.cursor_pos = c;
+            app.cursor_shape = doc.cursor_shape;
+        };
     }
     if (bar) |b| if (app.find_bar) |*fb| {
         if (find_bar_mod.draw(ui, b, &fb.state, .{ .current = e.find.current, .total = e.find.matches.items.len })) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
@@ -3116,4 +3168,112 @@ test "welcome: a recent file is a row that opens on a press; a shortcut row runs
     defer t.allocator.free(after);
     try t.expect(std.mem.indexOf(u8, after, "recent text") != null);
     try t.expect(std.mem.indexOf(u8, after, "Shortcuts") == null);
+}
+
+// ── the one cursor ──
+
+test "the frame puts exactly one cursor on the focused editor's caret, in the mode's shape" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    const e = app.activeEditor().?;
+    try e.buf.editor.setText("hello\nworld");
+    e.buf.editor.placeCursor(1, 2);
+    try app.render();
+    // Where: the caret, gutter and all. One cursor, and it is this one.
+    try t.expect(app.cursor_out != null);
+    try t.expectEqual(app.cursor_pos.?.x, app.cursor_out.?.pos.x);
+    try t.expectEqual(app.cursor_pos.?.y, app.cursor_out.?.pos.y);
+    try t.expect(app.screen.cursor_vis);
+    try t.expectEqual(app.cursor_pos.?.x, app.screen.cursor.col);
+    try t.expectEqual(app.cursor_pos.?.y, app.screen.cursor.row);
+    // Standard (modeless) editing: a bar, always.
+    try t.expectEqual(cursor_mod.Shape.bar, app.cursor_out.?.shape);
+    try t.expect(app.screen.cursor_shape == .beam);
+}
+
+test "vim: NORMAL is a block, INSERT a bar, REPLACE an underline" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    try app.setInputStyle(.vim);
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    try app.activeEditor().?.buf.editor.setText("hello");
+    try app.render();
+    try t.expectEqual(cursor_mod.Shape.block, app.cursor_out.?.shape);
+    try t.expect(app.screen.cursor_shape == .block);
+    try app.handle(.{ .key = app_mod.Key.char('i') });
+    try app.render();
+    try t.expectEqual(cursor_mod.Shape.bar, app.cursor_out.?.shape);
+    try t.expect(app.screen.cursor_shape == .beam);
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+    try app.handle(.{ .key = app_mod.Key.char('R') });
+    try app.render();
+    try t.expectEqual(cursor_mod.Shape.underline, app.cursor_out.?.shape);
+    try t.expect(app.screen.cursor_shape == .underline);
+    // VISUAL keeps the block.
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+    try app.handle(.{ .key = app_mod.Key.char('v') });
+    try app.render();
+    try t.expectEqual(cursor_mod.Shape.block, app.cursor_out.?.shape);
+}
+
+test "editor.cursor_blink picks the blinking variant; ui.cursor_shape overrides the mode" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    try app.setInputStyle(.vim);
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    try app.activeEditor().?.buf.editor.setText("hello");
+    app.cfg.editor.cursor_blink = true;
+    try app.render();
+    try t.expect(app.cursor_out.?.blink);
+    try t.expect(app.screen.cursor_shape == .block_blink);
+    app.cfg.ui.cursor_shape = .underline;
+    try app.render();
+    try t.expectEqual(cursor_mod.Shape.underline, app.cursor_out.?.shape);
+    try t.expect(app.screen.cursor_shape == .underline_blink);
+}
+
+test "an overlay's field wins over the editor; a box that takes no typing hides the cursor; the tree has none" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 13 });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    try app.activeEditor().?.buf.editor.setText("alpha beta");
+    try app.render();
+    const on_editor = app.cursor_out.?.pos;
+
+    // The prompt's input takes the typing, so it takes the cursor.
+    try command.run(&app, .{ .static = .@"editor.goto_line" });
+    try app.render();
+    try t.expect(app.cursor_out != null);
+    try t.expect(app.cursor_out.?.pos.x != on_editor.x or app.cursor_out.?.pos.y != on_editor.y);
+    try t.expectEqual(cursor_mod.Shape.bar, app.cursor_out.?.shape);
+    try t.expect(app.screen.cursor_vis);
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+
+    // The find bar is the same story, one row above the statusline.
+    try command.run(&app, .{ .static = .@"find.find" });
+    try app.render();
+    try t.expect(app.cursor_out != null);
+    try t.expect(app.cursor_out.?.pos.y != on_editor.y);
+    try t.expectEqual(cursor_mod.Shape.bar, app.cursor_out.?.shape);
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+
+    // Help paints a box and takes no typing: nothing under it may keep
+    // the cursor, or it would be drawn on top of the box.
+    try command.run(&app, .{ .static = .@"view.help" });
+    try app.render();
+    try t.expect(app.cursor_out == null);
+    try t.expect(!app.screen.cursor_vis);
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+
+    // The tree has its own highlighted row and no text field.
+    app.tree.visible = true;
+    app.focus = .tree;
+    try app.render();
+    try t.expect(app.cursor_out == null);
+    try t.expect(!app.screen.cursor_vis);
 }

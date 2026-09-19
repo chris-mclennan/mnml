@@ -213,6 +213,7 @@ pub const rows = [_]RowSpec{
     .{ .path = "ui.terminal_glyph", .label = "Terminal icon", .section = .ui, .scope = .home },
     .{ .path = "ui.ai_layout_mode", .label = "AI session layout", .section = .ui, .scope = .home },
     .{ .path = "ui.coverage_chip_mode", .label = "Coverage chip", .section = .ui, .scope = .home },
+    .{ .path = "ui.cursor_shape", .label = "Cursor shape", .section = .ui, .scope = .home },
     .{ .path = "ui.pty_cursor.unfocused", .label = "Terminal cursor, other panes", .section = .ui, .scope = .home },
     .{ .path = "ui.pty_cursor.blink", .label = "Terminal cursor blinks", .section = .ui, .scope = .home },
     .{ .path = "ui.right_panel_visible", .label = "Right panel at start", .section = .ui, .scope = .workspace },
