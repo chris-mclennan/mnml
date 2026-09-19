@@ -93,17 +93,21 @@ pub const Styles = struct {
     }
 };
 
-pub const open_glyph = "\u{F47C}";
-pub const closed_glyph = "\u{F460}";
-pub const open_ascii = "v";
-pub const closed_ascii = ">";
-pub const refresh_nerd = "\u{eb37}";
-pub const refresh_ascii = "\u{21ba}";
-pub const search_nerd = "\u{F0349}";
-pub const search_ascii = "/";
-pub const placeholder_unfocused = "/ filter";
-pub const placeholder_focused = "type to filter…";
-pub const placeholder_focused_ascii = "type to filter...";
+// The chrome's own glyphs and words. This file kept a second copy of
+// every one of them — two places for `/ filter` to be spelled, two
+// places for a Nerd Font codepoint to be pinned.
+const Ch = sdk.pane.chrome;
+pub const open_glyph = Ch.open_glyph;
+pub const closed_glyph = Ch.closed_glyph;
+pub const open_ascii = Ch.open_ascii;
+pub const closed_ascii = Ch.closed_ascii;
+pub const refresh_nerd = Ch.refresh_nerd;
+pub const refresh_ascii = Ch.refresh_ascii;
+pub const search_nerd = Ch.search_nerd;
+pub const search_ascii = Ch.search_ascii;
+pub const placeholder_unfocused = Ch.placeholder_unfocused;
+pub const placeholder_focused = Ch.placeholder_focused;
+pub const placeholder_focused_ascii = Ch.placeholder_focused_ascii;
 
 /// The rows the chrome takes above the body, computed once per paint.
 pub const Layout = struct {
@@ -317,22 +321,55 @@ pub const Painter = struct {
 
     // ─── the toolbar chips ───────────────────────────────────────────
 
-    const ChipSpec = struct { text_: []const u8, target: hit.Chip, style: Style };
+    /// `pill` marks the search chip: it is the toolkit's filter pill
+    /// laid in the toolbar's chip geometry rather than across the pane,
+    /// so the glyph, the placeholder and the caret are the ones the
+    /// forge pane paints. `text_` is then only how WIDE it is.
+    const ChipSpec = struct { text_: []const u8, target: hit.Chip, style: Style, pill: bool = false };
+
+    /// What the search chip shows: the filter's text, or nothing —
+    /// the pill supplies its own placeholder either side of the
+    /// keyboard, so this must not.
+    fn filterText(p: *const Painter) []const u8 {
+        const f = p.a.filter orelse return "";
+        return f.edit.text();
+    }
+
+    /// The widest thing the pill will paint inside itself: the query,
+    /// or the placeholder it stands in for while the query is empty.
+    /// The chip has to be wide enough for whichever it is, or the pill
+    /// refuses the rectangle and the toolbar paints a gap.
+    fn filterShown(p: *const Painter) []const u8 {
+        const q = p.filterText();
+        if (q.len > 0) return q;
+        const editing = if (p.a.filter) |f| f.editing else false;
+        if (!editing) return placeholder_unfocused;
+        // One cell more, for the caret that sits before it.
+        return if (p.ui.ascii) placeholder_focused_ascii ++ " " else placeholder_focused ++ " ";
+    }
+
+    /// The caret's BYTE offset into that text, which is what the pill
+    /// wants. The chip used to paste a `▏` on the end of the
+    /// string, so the caret was always at the end however far back the
+    /// arrow keys had walked it.
+    fn filterCaret(p: *const Painter) usize {
+        const f = p.a.filter orelse return 0;
+        return f.edit.cursor;
+    }
 
     fn chipList(p: *Painter) Allocator.Error![]const ChipSpec {
         const a = p.a;
         const t = a.tab();
         var out: std.ArrayList(ChipSpec) = .empty;
         const arena = p.arena;
-        // The search pill: the filter's text, or the placeholder.
-        const glyph = if (p.ui.ascii or !p.ui.nerd) search_ascii else search_nerd;
-        const search_text = blk: {
-            if (a.filter) |f| {
-                if (f.editing) break :blk try std.fmt.allocPrint(arena, " {s} {s}▏", .{ glyph, if (f.edit.text().len > 0) f.edit.text() else (if (p.ui.ascii) placeholder_focused_ascii else placeholder_focused) });
-                break :blk try std.fmt.allocPrint(arena, " {s} {s} ", .{ glyph, f.edit.text() });
-            }
-            break :blk try std.fmt.allocPrint(arena, " {s} {s} ", .{ glyph, placeholder_unfocused });
-        };
+        // The search chip IS the toolkit's filter pill, laid in the
+        // toolbar's chip geometry rather than across the pane. All this
+        // has to decide is how wide it is: the pill puts its glyph two
+        // cells in, its text four in, and leaves a cell past the text
+        // for the caret.
+        const search_w: u16 = 5 + text.width(p.filterShown());
+        const search_text = try arena.alloc(u8, search_w);
+        @memset(search_text, ' ');
         const search_style: Style = if (a.filter != null) p.s.chip_active else p.s.chip_style;
         if (t.cfg.isKanban()) {
             const board_name = if (t.board_id != 0) try a.boardName(t.board_id) else "default";
@@ -344,7 +381,7 @@ pub const Painter = struct {
                 break :blk "active";
             };
             try out.append(arena, .{ .text_ = try chipText(arena, "sprint", sprint_name), .target = .sprint, .style = p.s.chip_style });
-            try out.append(arena, .{ .text_ = search_text, .target = .search, .style = search_style });
+            try out.append(arena, .{ .text_ = search_text, .target = .search, .style = search_style, .pill = true });
             // The avatar cluster is painted by paintToolbar itself.
             try out.append(arena, .{ .text_ = " version ", .target = .version, .style = p.s.chip_style });
             try out.append(arena, .{ .text_ = if (t.active_epics.count() > 0) try std.fmt.allocPrint(arena, " epic: {d} ", .{t.active_epics.count()}) else " epic ", .target = .epic, .style = if (t.active_epics.count() > 0) p.s.chip_active else p.s.chip_style });
@@ -368,7 +405,7 @@ pub const Painter = struct {
             for (t.vars) |v| try out.append(arena, .{ .text_ = try chipText(arena, v.name, try varSummary(arena, v)), .target = .vars, .style = p.s.chip_style });
             try out.append(arena, .{ .text_ = " E edit ", .target = .vars, .style = p.s.chip_style });
         }
-        try out.append(arena, .{ .text_ = search_text, .target = .search, .style = search_style });
+        try out.append(arena, .{ .text_ = search_text, .target = .search, .style = search_style, .pill = true });
         try out.append(arena, .{ .text_ = try chipText(arena, "assignee", try p.assigneeLabel(t)), .target = .assignee, .style = if (t.active_assignees.count() > 0) p.s.chip_active else p.s.chip_style });
         try out.append(arena, .{ .text_ = try chipText(arena, "type", if (t.issue_type.len > 0) t.issue_type else "—"), .target = .type, .style = if (t.issue_type.len > 0) p.s.chip_active else p.s.chip_style });
         try out.append(arena, .{ .text_ = try chipText(arena, "status", t.scope.label()), .target = .status, .style = if (t.scope != .all) p.s.chip_active else p.s.chip_style });
@@ -412,8 +449,18 @@ pub const Painter = struct {
                 x = 1;
                 if (y >= p.lay.status_y -| 2) break;
             }
-            _ = p.put(x, y, max_x -| x, c.text_, c.style);
-            try p.hitAdd(.{ .x = x, .y = y, .w = @min(w, max_x -| x), .h = 1 }, .{ .chip = c.target });
+            if (c.pill) {
+                try p.c.filterPill(
+                    .{ .x = x, .y = y, .w = @min(w, max_x -| x), .h = 1 },
+                    p.filterText(),
+                    p.filterCaret(),
+                    if (p.a.filter) |f| f.editing else false,
+                    .{ .chip = c.target },
+                );
+            } else {
+                _ = p.put(x, y, max_x -| x, c.text_, c.style);
+                try p.hitAdd(.{ .x = x, .y = y, .w = @min(w, max_x -| x), .h = 1 }, .{ .chip = c.target });
+            }
             x += w + 1;
             if (c.target == .search and p.a.tab().cfg.isKanban()) {
                 const r = try p.paintAvatars(x, y, max_x);
@@ -1715,6 +1762,17 @@ test "Work: the detail pane, the filter pill while typing, the bulk marks, and t
     try paint(ar, &f, a, .{});
     try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 3), "\u{F0349} vou▏") != null);
     try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 39), "type to filter · Enter commit · Esc cancel") != null);
+    // The chip is the toolkit's pill now, so the caret sits WHERE the
+    // caret is. It used to be a `▏` pasted on the end of the string,
+    // which meant the arrow keys moved a caret the chip never showed.
+    _ = try a.onKey("left");
+    _ = try a.onKey("left");
+    try paint(ar, &f, a, .{});
+    try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 3), "\u{F0349} v▏u") != null);
+    _ = try a.onKey("right");
+    _ = try a.onKey("right");
+    try paint(ar, &f, a, .{});
+    try testing.expect(std.mem.indexOf(u8, try rowText(ar, &f, 3), "\u{F0349} vou▏") != null);
     _ = try a.onKey("enter");
     try paint(ar, &f, a, .{});
     try testing.expect(std.mem.startsWith(u8, try rowText(ar, &f, 0), "▌JIRA WORK (1 of 3)"));

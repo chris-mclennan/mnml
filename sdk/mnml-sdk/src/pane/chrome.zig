@@ -270,8 +270,11 @@ pub fn Painter(comptime Target: type) type {
             x += 1;
             if (query.len == 0) {
                 const ph: []const u8 = if (!editing) placeholder_unfocused else if (p.ui.ascii) placeholder_focused_ascii else placeholder_focused;
-                _ = p.put(x, rect.y, rect.w -| 4, ph, .{ .fg = th.muted, .bg = style.bg });
-                if (editing) _ = p.put(x, rect.y, 1, caret_glyph, .{ .fg = th.accent, .bg = style.bg });
+                // The caret goes BEFORE the placeholder, not on top of
+                // its first cell: `▏ype to filter…` reads as a
+                // typo rather than as an empty field with the keyboard.
+                if (editing) x += p.put(x, rect.y, 1, caret_glyph, .{ .fg = th.accent, .bg = style.bg });
+                _ = p.put(x, rect.y, rect.w -| 4 -| (x -| (rect.x + 4)), ph, .{ .fg = th.muted, .bg = style.bg });
             } else {
                 const used = p.put(x, rect.y, rect.w -| 4, query, .{ .fg = th.fg, .bg = style.bg });
                 if (editing) {
