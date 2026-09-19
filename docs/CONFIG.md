@@ -527,6 +527,8 @@ otherwise. Copy what you need; leave the rest out.
     .integrations = .{
         .auto_update_cargo = false,
         .auto_update_git = false,
+        .open_as = .split, // .split (a mounted integration opens BESIDE the active pane, side by side — the Rust behaviour) | .tab (another tab in the active leaf)
+        .equalize_on_open = true, // after an integration split, even the splits out whatever ui.auto_equalize_splits says
         // Folders the INTEGRATIONS section's Dev tab scans: every
         // subfolder with a build.zig and a manifest.zon beside it is an
         // integration in development (Build / Install / Rebuild +

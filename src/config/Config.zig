@@ -738,9 +738,24 @@ pub const Ci = struct {
     region: ?[]const u8 = null,
 };
 
+/// // changed (integration-split): where a mounted integration's pane
+/// lands. The Rust editor has no setting — `open_mount_with_args`
+/// always splits side by side (`integration_install_methods.rs`) — and
+/// that is the default here; `.tab` is the other half of the toggle
+/// the user asked for.
+pub const IntegrationOpenAs = enum { split, tab };
+
 pub const Integrations = struct {
     auto_update_cargo: bool = false,
     auto_update_git: bool = false,
+    /// A mounted integration opens beside the active pane (`.split`,
+    /// the Rust behaviour) or as another tab in its leaf (`.tab`).
+    open_as: IntegrationOpenAs = .split,
+    /// After an integration split, even the splits out whatever
+    /// `ui.auto_equalize_splits` says — the "they actually auto adjust"
+    /// half of the ask. Only an integration's own split equalizes; a
+    /// `Ctrl+\` still obeys `ui.auto_equalize_splits` alone.
+    equalize_on_open: bool = true,
     /// Folders the INTEGRATIONS section's Dev tab scans: every
     /// subfolder holding a `build.zig` and a `manifest.zon` is an
     /// integration in development. Relative to the workspace, `~`
@@ -908,6 +923,8 @@ test "defaults are the shipped values" {
     try std.testing.expectEqual(ProfileMode.workspace, c.browser.profile_mode);
     try std.testing.expect(c.browser.autocapture_to_log);
     try std.testing.expect(!c.integrations.auto_update_cargo);
+    try std.testing.expectEqual(IntegrationOpenAs.split, c.integrations.open_as);
+    try std.testing.expect(c.integrations.equalize_on_open);
     try std.testing.expectEqual(@as(usize, 0), c.integrations.dev_roots.len);
     try std.testing.expect(c.marketplace.enabled);
     try std.testing.expectEqual(@as(u32, 3600), c.marketplace.cache_ttl_secs);

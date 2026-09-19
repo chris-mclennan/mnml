@@ -93,6 +93,13 @@ pub const MountPane = struct {
     title_buf: ?[]u8 = null,
     /// The manifest id that opened it, if any. Owned.
     integration: ?[]u8 = null,
+    /// // changed (integration-split): the argv this pane was spawned
+    /// with, joined by spaces — what `findOpen` matches on, so a second
+    /// click on the same integration command focuses THIS pane while a
+    /// different command of the same integration (`--only prs-mine`
+    /// beside `--only prs`) still gets one of its own. Owned; empty
+    /// only for a pane a test built by hand, which matches nothing.
+    cmdline: []u8 = &.{},
     /// The UI's copy of the sibling's screen.
     grid: host.Grid = .{},
     cursor: ?wire.Cursor = null,
@@ -117,6 +124,7 @@ pub const MountPane = struct {
         self.watches.deinit(gpa);
         self.grid.deinit(gpa);
         gpa.free(self.label);
+        if (self.cmdline.len > 0) gpa.free(self.cmdline);
         if (self.title_buf) |t| gpa.free(t);
         if (self.integration) |i| gpa.free(i);
         if (self.exit) |e| gpa.free(e);
@@ -165,15 +173,61 @@ pub fn ipcDir(app: *App) Allocator.Error![]const u8 {
     return std.fs.path.join(app.frame.allocator(), &.{ app.workspace, ".mnml", build_options.ipc_subdir });
 }
 
-/// Spawn `argv` as a mount and show it as a tab.
+/// The live mount pane spawned from exactly this command line, if
+/// there is one.
+/// // changed (integration-split): clicking a chip a second time is
+/// "show me that", never "start another one" — the muscle memory of
+/// every other rail row, and what Rust does before it spawns anything
+/// (`open_mount_from_manifest`, which matches on the label). The match
+/// here is the whole argv rather than the label, because a manifest's
+/// commands share a label and differ only in their args: `--only prs`
+/// and `--only prs-mine` are two different things to look at.
+pub fn findOpen(app: *App, cmdline: []const u8) ?PaneId {
+    if (cmdline.len == 0) return null;
+    for (app.panes.slots.items, 0..) |*slot, i| {
+        const p = &(slot.* orelse continue);
+        const m = p.asMount() orelse continue;
+        // A pane showing its exit banner is not a pane to go back to;
+        // one whose child is still connecting is.
+        if (m.exit != null) continue;
+        if (std.mem.eql(u8, m.cmdline, cmdline)) return @intCast(i);
+    }
+    return null;
+}
+
+/// `argv` as one string, for `findOpen`.
+fn joinArgv(alloc: Allocator, argv: []const []const u8) Allocator.Error![]u8 {
+    return std.mem.join(alloc, " ", argv);
+}
+
+/// Spawn `argv` as a mount and show it.
+///
+/// // changed (integration-split): `integrations.open_as` decides where
+/// it lands. `.split` — the default, and what the Rust editor always
+/// does (`open_mount_with_args` → `split_leaf_with(active,
+/// SplitDir::Horizontal, …)`, which is SIDE BY SIDE: the Rust
+/// `SplitDir` names its divider, not its arrangement) — puts it beside
+/// the active pane, and with `integrations.equalize_on_open` the splits
+/// even out afterwards, so clicking two integrations gives two equal
+/// columns rather than a sliver. `.tab` keeps the old behaviour.
 pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
     if (!supported) return app.diag.fail(app.frame.allocator(), "mount: no Unix sockets on this platform", .{});
     if (opts.argv.len == 0) return app.diag.fail(app.frame.allocator(), "mount: nothing to run", .{});
+    // Already running: show that one instead of spawning a second.
+    const key = try joinArgv(app.frame.allocator(), opts.argv);
+    if (findOpen(app, key)) |existing| {
+        app.showPane(existing);
+        app.focus = .{ .pane = existing };
+        app.needs_render = true;
+        return existing;
+    }
     const gpa = app.gpa;
     const label = try gpa.dupe(u8, opts.label orelse std.fs.path.basename(opts.argv[0]));
     errdefer gpa.free(label);
     const integration: ?[]u8 = if (opts.integration) |i| try gpa.dupe(u8, i) else null;
     errdefer if (integration) |i| gpa.free(i);
+    const cmdline = try joinArgv(gpa, opts.argv);
+    errdefer gpa.free(cmdline);
 
     next_id += 1;
     const id = app.panes.peekId();
@@ -207,12 +261,31 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
         .mount = mount,
         .label = label,
         .integration = integration,
+        .cmdline = cmdline,
         .generation = next_id,
     } });
     std.debug.assert(got == id);
-    app.showPane(id);
+    place(app, id);
     app.needs_render = true;
     return id;
+}
+
+/// Where a fresh mount pane lands (see `open`'s header).
+fn place(app: *App, id: PaneId) void {
+    const layout = app.layouts.current();
+    const cur = app.active;
+    if (app.cfg.integrations.open_as == .tab or cur == null or layout.leafOf(cur.?) == null) {
+        app.showPane(id);
+        return;
+    }
+    _ = layout.split(cur.?, .horizontal, id) catch {
+        // No room for another split: a tab is better than nothing.
+        app.showPane(id);
+        return;
+    };
+    if (app.cfg.integrations.equalize_on_open) layout.equalize() else app.afterSplitChange();
+    app.setActive(id);
+    app.focus = .{ .pane = id };
 }
 
 /// `mount.open`: the binary (and args) typed into a prompt.
@@ -739,4 +812,76 @@ test "a binary that does not exist fails at open with a diag, not a pane" {
     try testing.expectError(error.Failed, open(&app, .{ .argv = &.{"/nonexistent/mnml-nope"} }));
     try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "cannot run") != null);
     try testing.expectEqual(@as(usize, 0), app.panes.count());
+}
+
+/// A pane that exists but is in no leaf, with the active pane left
+/// where it was — the state `open` hands to `place` (the mount is added
+/// to `App.panes` and shown only by `place` itself).
+fn unplacedPane(app: *App) !PaneId {
+    const keep = app.active;
+    const id = try app.openScratch();
+    _ = app.layouts.current().removePane(id);
+    app.setActive(keep);
+    return id;
+}
+
+test "integrations.open_as: a mount lands beside the active pane and the splits even out; .tab keeps it in the leaf" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    const first = try app.openScratch();
+    const layout = app.layouts.current();
+    const home = layout.leafOf(first).?;
+
+    // The shipped default is the Rust behaviour: side by side.
+    try testing.expectEqual(@import("../config/Config.zig").IntegrationOpenAs.split, app.cfg.integrations.open_as);
+    const second = try unplacedPane(&app);
+    place(&app, second);
+    const second_leaf = layout.leafOf(second).?;
+    try testing.expect(second_leaf != home);
+    try testing.expectEqual(second, app.active.?);
+    // Side by side, not stacked — Rust's `SplitDir::Horizontal`, whose
+    // name is its divider's.
+    const pair = layout.findLeafPairSplit(first, second).?;
+    try testing.expectEqual(@import("layout.zig").SplitDir.horizontal, pair.dir);
+
+    // `equalize_on_open` evens them out even with `ui.auto_equalize_splits`
+    // off, which is the "they auto adjust" the ask named.
+    try testing.expect(!app.cfg.ui.auto_equalize_splits);
+    const third = try unplacedPane(&app);
+    place(&app, third);
+    const rects = try layout.computeRects(Rect.init(0, 0, 120, 40), app.frame.allocator());
+    try testing.expectEqual(@as(usize, 3), rects.panes.len);
+    // Three equal columns, give or take the rounding a 120-cell row and
+    // its two dividers cannot divide evenly.
+    for (rects.panes) |pr| try testing.expect(pr.rect.w >= 38 and pr.rect.w <= 40);
+
+    // `.tab`: the pane joins the active leaf instead.
+    app.cfg.integrations.open_as = .tab;
+    const fourth = try unplacedPane(&app);
+    const before = layout.leafOf(app.active.?).?;
+    place(&app, fourth);
+    try testing.expectEqual(before, layout.leafOf(fourth).?);
+}
+
+test "findOpen matches the whole command line: the same integration command focuses its pane, a different one gets its own" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    defer app.deinit();
+    const gpa = testing.allocator;
+    const id = try app.panes.add(.{ .mount = .{
+        .gpa = gpa,
+        .mount = null,
+        .label = try gpa.dupe(u8, "Bitbucket PRs"),
+        .integration = try gpa.dupe(u8, "bitbucket_prs"),
+        .cmdline = try gpa.dupe(u8, "bb --only prs"),
+        .generation = 1,
+    } });
+    try testing.expectEqual(id, findOpen(&app, "bb --only prs").?);
+    // The manifest's OTHER command shares the label and the id; it is a
+    // different thing to look at, so it is not this pane.
+    try testing.expect(findOpen(&app, "bb --only prs-mine") == null);
+    // A pane built by hand with no command line matches nothing.
+    try testing.expect(findOpen(&app, "") == null);
+    // A dead pane is not a pane to go back to.
+    app.panes.get(id).?.asMount().?.exit = try gpa.dupe(u8, "gone");
+    try testing.expect(findOpen(&app, "bb --only prs") == null);
 }
