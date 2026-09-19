@@ -7,6 +7,14 @@
 //! test can be looped on the built binary without a rebuild (the build-time
 //! `-Dtest-filter` has reported "passed" while running nothing).
 //!
+//! The verdict lines carry the test's name, not just its outcome. The
+//! suite is read through `grep -E "FAIL|passed;"` far more often than in
+//! full, and a bare `  FAIL (...)` line leaves the grep window to pair it
+//! with whatever name happened to survive the same filter — which for
+//! years was "runPath: skips, sizes, names, and the ok/FAIL/N-M report",
+//! the one test name in the repo that contains the word FAIL. Three
+//! separate investigations blamed that innocent test.
+//!
 //! Per test it does what `lib/compiler/test_runner.zig` does: a fresh
 //! `testing.allocator_instance` (a leak is a failure) and a fresh
 //! `testing.io_instance` (`Io.Threaded`, its worker pool joined in
@@ -69,11 +77,11 @@ pub fn main(init: std.process.Init.Minimal) void {
         } else |err| switch (err) {
             error.SkipZigTest => {
                 skip_count += 1;
-                std.debug.print("  SKIP\n", .{});
+                std.debug.print("  SKIP {s}\n", .{test_fn.name});
             },
             else => {
                 fail_count += 1;
-                std.debug.print("  FAIL ({t}) {d} ms\n", .{ err, ms });
+                std.debug.print("  FAIL {s} ({t}) {d} ms\n", .{ test_fn.name, err, ms });
                 if (@errorReturnTrace()) |trace| std.debug.dumpErrorReturnTrace(trace);
             },
         }
