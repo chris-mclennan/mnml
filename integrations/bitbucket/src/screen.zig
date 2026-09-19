@@ -831,6 +831,30 @@ test "the pane paints the header, the strip, the pill, the reference's columns, 
     try t.expect(has(pipelines, "REPO / BRANCH"));
 }
 
+test "the fold row's ellipsis is punctuation and only its words are bright" {
+    const s = try Screen.init(120, 40, acme, .{});
+    defer s.deinit();
+    _ = try s.draw();
+    const y = try s.rowOf("Show more (1)");
+    // The `⋯` is dim, the way the Jira tree's fold row paints it;
+    // the words carry the bright foreground a key wears, or there is
+    // nothing on the row to notice.
+    const th = s.rig.app.theme;
+    var glyph: ?sdk.frame.Style = null;
+    var word: ?sdk.frame.Style = null;
+    var x: u16 = 0;
+    while (x < s.frame.cols) : (x += 1) {
+        const slot = &s.frame.slots[@as(usize, y) * s.frame.cols + x];
+        if (std.mem.eql(u8, slot.symbol(), "⋯")) glyph = slot.style;
+        if (std.mem.eql(u8, slot.symbol(), "S") and glyph != null and word == null) word = slot.style;
+    }
+    try t.expect(glyph != null and word != null);
+    try t.expectEqual(th.muted, glyph.?.fg.?);
+    try t.expect(!glyph.?.mods.bold);
+    try t.expect(word.?.mods.bold);
+    try t.expect(!std.meta.eql(word.?.fg, glyph.?.fg));
+}
+
 test "a click on a row selects that row and toggles a header; the strip switches tabs; the hints fire" {
     const s = try Screen.init(120, 40, acme, .{});
     defer s.deinit();
