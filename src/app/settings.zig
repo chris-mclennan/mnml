@@ -807,6 +807,13 @@ test "rows: every path is a bool, an enum, a number or the theme; defaults index
     setIndex(&c, "ui.pty_cursor.blink", 0);
     try t.expect(!c.ui.pty_cursor.blink);
     try t.expectEqualStrings("unfocused", (comptime keyPath("ui.pty_cursor.unfocused"))[2]);
+    // The shape of mnml's own cursor: `terminal` — follow the mode — is
+    // the default, and the three fixed shapes follow it.
+    try t.expectEqual(@as(usize, 0), currentIndex(&c, "ui.cursor_shape"));
+    setIndex(&c, "ui.cursor_shape", 2);
+    try t.expectEqual(Config.CursorShape.bar, c.ui.cursor_shape);
+    setIndex(&c, "ui.cursor_shape", 0);
+    try t.expectEqual(Config.CursorShape.terminal, c.ui.cursor_shape);
 }
 
 test "the highlighting size limit is a choice row, not a step row: off is the default, and a hand-set value reads as the choice above it" {

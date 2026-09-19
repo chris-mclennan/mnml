@@ -1,0 +1,77 @@
+# One terminal cursor, and `status.json` says whose it is.
+#
+# Headless draws no cursor at all, so a script cannot see one on the
+# screen. `status.json` reports what the frame resolved instead:
+# `cursor` is the editor's line and column, `cursorShape` is the shape
+# the one owning surface asked for — block, bar, underline, or `hidden`
+# when nothing owns it. That is the whole precedence rule, readable
+# from a script (`src/app/cursor.zig`).
+#
+# The shapes are vim's: a block in NORMAL and VISUAL, a bar in INSERT,
+# an underline in REPLACE. A text field is always a bar, whatever the
+# profile, because it is an insert caret the whole time.
+write hello.txt alpha beta\ngamma delta\n
+open hello.txt
+
+# The focused editor owns it. Standard is the default profile here and
+# is modeless, so the caret is a bar all the time.
+expect status contains "\"cursorShape\":\"bar\""
+expect status contains "\"cursor\":{\"line\":1,\"col\":1}"
+
+# It moves with the caret, and the shape does not change with it.
+key down
+key right
+expect status contains "\"cursor\":{\"line\":2,\"col\":2}"
+expect status contains "\"cursorShape\":\"bar\""
+
+# An overlay's field takes the typing, so it takes the cursor. The
+# picker's query is a bar.
+command palette
+expect screen contains "Command"
+expect status contains "\"cursorShape\":\"bar\""
+key esc
+
+# A box that takes no typing hides it: the cursor is drawn above every
+# painted cell, so leaving it on the editor underneath would put a
+# caret on top of the box.
+command view.help
+expect status contains "\"cursorShape\":\"hidden\""
+key esc
+expect status contains "\"cursorShape\":\"bar\""
+
+# The tree has its own highlighted row and no text field.
+command view.focus_tree
+expect status contains "\"cursorShape\":\"hidden\""
+
+# A panel's filter pill does take typing, so it does take the cursor.
+command view.activity_todos
+type /
+expect status contains "\"cursorShape\":\"bar\""
+key esc
+
+# ── vim ──
+# The vim profile shapes the caret by mode, the way vim does.
+command editor.use_vim
+command view.focus_pane
+expect status contains "\"mode\":\"NORMAL\""
+expect status contains "\"cursorShape\":\"block\""
+key i
+expect status contains "\"mode\":\"INSERT\""
+expect status contains "\"cursorShape\":\"bar\""
+key esc
+expect status contains "\"cursorShape\":\"block\""
+type R
+expect status contains "\"mode\":\"REPLACE\""
+expect status contains "\"cursorShape\":\"underline\""
+key esc
+type v
+expect status contains "\"cursorShape\":\"block\""
+key esc
+
+# The settings overlay carries the row that overrides all of it — and,
+# being a box that takes no typing, hides the cursor while it is up.
+command view.settings
+expect screen contains "Settings"
+expect status contains "\"cursorShape\":\"hidden\""
+key esc
+expect status contains "\"cursorShape\":\"block\""

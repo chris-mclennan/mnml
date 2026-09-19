@@ -498,8 +498,11 @@ test "the loop dumps every frame, acks every command byte-for-byte, and exits on
     try t.expectEqualStrings("Hello, mnml!\nrow two\n\n", screen);
     const status = try tmp.dir.readFileAlloc(t.io, ".mnml/ipc-zig/status.json", t.allocator, .unlimited);
     defer t.allocator.free(status);
+    // `cursorShape` is `hidden` because the screen is 20x3: the bar, the
+    // strip, the statusline and the `:` line leave the editor no rows,
+    // so no surface has a caret to give.
     try t.expectEqualStrings(
-        "{\"focus\":\"pane\",\"activePane\":0,\"activeFile\":\"hello.txt\",\"cursor\":{\"line\":1,\"col\":1},\"mode\":\"none\",\"treeCursor\":0,\"treeSelection\":\"\",\"treeVisible\":true,\"rightPanelVisible\":false,\"rightPanelPanes\":[],\"rightPanelActiveIdx\":0,\"panes\":[{\"title\":\"hello.txt\",\"dirty\":false,\"preview\":false}],\"quit\":true}",
+        "{\"focus\":\"pane\",\"activePane\":0,\"activeFile\":\"hello.txt\",\"cursor\":{\"line\":1,\"col\":1},\"mode\":\"none\",\"treeCursor\":0,\"treeSelection\":\"\",\"treeVisible\":true,\"rightPanelVisible\":false,\"rightPanelPanes\":[],\"rightPanelActiveIdx\":0,\"panes\":[{\"title\":\"hello.txt\",\"dirty\":false,\"preview\":false}],\"quit\":true,\"cursorShape\":\"hidden\"}",
         status,
     );
     const rects = try tmp.dir.readFileAlloc(t.io, ".mnml/ipc-zig/rects.json", t.allocator, .unlimited);

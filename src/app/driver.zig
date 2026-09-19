@@ -197,6 +197,9 @@ pub const AppDriver = struct {
             .right_panel_active_idx = 0,
             .panes = panes.items,
             .quit = app.quit,
+            // The frame's one cursor: headless draws none, so this is
+            // the only way a `.test` script sees which surface owns it.
+            .cursor_shape = if (app.cursor_out) |c| @tagName(c.shape) else "hidden",
         };
         if (app.activeEditor()) |e| {
             const pos = e.buf.editor.rowCol();

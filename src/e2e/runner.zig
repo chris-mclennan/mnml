@@ -555,6 +555,19 @@ const Run = struct {
                 if (std.mem.indexOf(u8, screen, want) == null) return null;
                 return std.fmt.allocPrint(gpa, "screen unexpectedly contains {f}\n── rendered screen ──\n{s}", .{ debug(want), screen }) catch null;
             },
+            .status_contains, .status_lacks => |want| {
+                var arena: std.heap.ArenaAllocator = .init(gpa);
+                defer arena.deinit();
+                const st = d.status(arena.allocator()) catch return std.fmt.allocPrint(gpa, "expect status: the driver could not build status.json", .{}) catch null;
+                const json = screen_mod.statusJson(arena.allocator(), st) catch return std.fmt.allocPrint(gpa, "expect status: out of memory", .{}) catch null;
+                const hit = std.mem.indexOf(u8, json, want) != null;
+                if (hit == (check == .status_contains)) return null;
+                return std.fmt.allocPrint(gpa, "status.json {s} {f}\n── status.json ──\n{s}", .{
+                    if (check == .status_contains) "does not contain" else "unexpectedly contains",
+                    debug(want),
+                    json,
+                }) catch null;
+            },
             .dirty => |want| {
                 const got = d.dirty() orelse false;
                 if (got == want) return null;

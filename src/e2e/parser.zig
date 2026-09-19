@@ -28,6 +28,13 @@
 //! drag <fx> <fy> <tx> <ty>       # left-button drag, one event per cell
 //! expect screen contains <text>  # the rendered screen contains the substring
 //! expect screen lacks <text>     # …does not
+//! expect status contains <text>  # `status.json` contains the substring —
+//!                                #   focus, the editor cursor's line/col, the
+//!                                #   mode, and `cursorShape` (block | bar |
+//!                                #   underline | hidden), which is the only
+//!                                #   way a headless script sees which surface
+//!                                #   owns the terminal cursor
+//! expect status lacks <text>     # …does not
 //! expect dirty <true|false>      # the active editor's dirty flag
 //! expect pane <text>             # the active pane's title contains the substring
 //! expect highlights at_least <n> # ≥ n syntax spans on the active editor
@@ -82,6 +89,12 @@ pub const Check = union(enum) {
     file_contains: struct { rel: []const u8, text: []const u8 },
     file_lacks: struct { rel: []const u8, text: []const u8 },
     highlights_at_least: usize,
+    /// A substring of `status.json`. That file is the host's view of the
+    /// app — focus, the editor cursor's line and column, the mode, and
+    /// `cursorShape`, which is the only way a headless script can see
+    /// which surface owns the terminal cursor (nothing draws one).
+    status_contains: []const u8,
+    status_lacks: []const u8,
     /// A cell's foreground or background, as a theme resolves it: the
     /// only way a `.test` can see a colour (the screen dump carries
     /// none). `expect color X Y fg #61afef`, `… bg not #1e222a`.
@@ -260,7 +273,7 @@ const Keyword = enum { write, open, key, type, command, ex, wait, snippet, shell
 
 fn parseExpect(a: Allocator, diag: *Diagnostic, ln: usize, rest: []const u8) Error!Stmt {
     const what, const arg = split1(rest);
-    const What = enum { screen, dirty, pane, highlights, file, color };
+    const What = enum { screen, status, dirty, pane, highlights, file, color };
     const kind = std.meta.stringToEnum(What, what) orelse return diag.set("line {d}: unknown expectation `{s}`", .{ ln, what });
     const check: Check = switch (kind) {
         .screen => blk: {
@@ -268,6 +281,12 @@ fn parseExpect(a: Allocator, diag: *Diagnostic, ln: usize, rest: []const u8) Err
             if (std.mem.eql(u8, op, "contains")) break :blk .{ .screen_contains = try unescape(a, text) };
             if (std.mem.eql(u8, op, "lacks")) break :blk .{ .screen_lacks = try unescape(a, text) };
             return diag.set("line {d}: expect screen <contains|lacks> …", .{ln});
+        },
+        .status => blk: {
+            const op, const text = split1(arg);
+            if (std.mem.eql(u8, op, "contains")) break :blk .{ .status_contains = try unescape(a, text) };
+            if (std.mem.eql(u8, op, "lacks")) break :blk .{ .status_lacks = try unescape(a, text) };
+            return diag.set("line {d}: expect status <contains|lacks> …", .{ln});
         },
         .dirty => blk: {
             const v = trim(arg);
