@@ -270,6 +270,7 @@ pub fn handle(app: *App, ev: *host.Event) Allocator.Error!void {
                         .rule => .rule,
                         .line => .line,
                         .quarter => .quarter,
+                        .quarter_track => .quarter_track,
                     },
                 },
             });

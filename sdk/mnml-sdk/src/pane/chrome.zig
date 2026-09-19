@@ -236,17 +236,17 @@ pub fn Painter(comptime Target: type) type {
             if (!ruled) return 1;
             // Only `rule` lays a track across the strip; the other two
             // leave the row empty either side of the active label.
-            if (p.ui.tab_indicator == .rule) {
+            if (p.ui.tab_indicator == .rule or p.ui.tab_indicator == .quarter_track) {
                 const right = @min(x, p.cols());
                 var i = x0;
-                const track = if (p.ui.ascii) tab_rule_ascii else tab_rule;
+                const track = if (p.ui.tab_indicator == .quarter_track) (if (p.ui.ascii) tab_quarter_ascii else tab_quarter) else (if (p.ui.ascii) tab_rule_ascii else tab_rule);
                 while (i < right) : (i += 1) _ = p.put(i, y + 1, 1, track, p.th.mutedText());
             }
             const glyph = switch (p.ui.tab_indicator) {
                 .block => if (p.ui.ascii) tab_block_ascii else tab_block,
                 .rule => if (p.ui.ascii) tab_rule_active_ascii else tab_rule_active,
                 .line => if (p.ui.ascii) tab_rule_ascii else tab_rule,
-                .quarter => if (p.ui.ascii) tab_quarter_ascii else tab_quarter,
+                .quarter, .quarter_track => if (p.ui.ascii) tab_quarter_ascii else tab_quarter,
             };
             var i = active_x;
             while (i < active_x + active_w and i < p.cols()) : (i += 1) {
@@ -582,6 +582,13 @@ test "the tab indicator draws each shape under the active label, and only `rule`
         defer gpa.free(r[0]);
         defer gpa.free(r[1]);
         try std.testing.expectEqualStrings(" " ++ (tab_quarter ** 7) ++ " " ** 32, r[1]);
+    }
+    // `quarter_track`: the same bar across the strip, the active tab's stretch in colour.
+    {
+        const r = try stripRows(gpa, .quarter_track, false, 20);
+        defer gpa.free(r[0]);
+        defer gpa.free(r[1]);
+        try std.testing.expectEqualStrings(" " ++ (tab_quarter ** 16) ++ " " ** 23, r[1]);
     }
     // ascii: a stand-in for each, so a terminal without the font still
     // says which tab is on.
