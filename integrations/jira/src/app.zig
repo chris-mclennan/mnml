@@ -997,6 +997,17 @@ pub const App = struct {
     }
 
     pub fn toggleDetails(a: *App) Allocator.Error!void {
+        // A board has four columns across the pane and no room for a
+        // 40%-wide side panel, so the kanban paint skips it — and `d`
+        // was a key the hint row advertised on every family that did
+        // nothing at all on one of them. It opens the modal there, the
+        // same one `D` opens: the ticket, in the space there is.
+        if (a.hasTabs() and a.tab().cfg.isKanban()) {
+            var scratch = std.heap.ArenaAllocator.init(a.gpa);
+            defer scratch.deinit();
+            if (try a.focusedKey(scratch.allocator())) |k| try a.openModal(k);
+            return;
+        }
         a.details_visible = !a.details_visible;
         a.details_scroll = 0;
         if (a.details_visible) try a.ensureFocusedDetail();
@@ -3500,6 +3511,25 @@ test "a row's action button keeps what its press left, by ticket, across a refet
     // again — without a channel it says so instead of pretending.
     try a.focusSessionFor(key, "triage");
     try testing.expect(std.mem.indexOf(u8, a.status.items, "no mnml channel") != null);
+}
+
+test "on a board, d opens the modal the hint row promises rather than nothing" {
+    const h = try Harness.start(.{ .tabs = &board_tabs }, .boards);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    try testing.expect(a.tab().cfg.isKanban());
+    // The kanban paint has no side panel to give up four columns for,
+    // so `details_visible` was flipped and nothing appeared.
+    _ = try a.onKey("d");
+    try testing.expect(!a.details_visible);
+    try testing.expect(a.modal != null);
+    // …and the tree families still get the side panel.
+    _ = try a.onKey("esc");
+    _ = try a.onKey("2");
+    _ = try a.onKey("d");
+    if (a.tab().cfg.isKanban()) return;
+    try testing.expect(a.details_visible);
 }
 
 test "a PR row's Review button remembers its press, keyed by the pull request" {
