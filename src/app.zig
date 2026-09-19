@@ -189,6 +189,13 @@ pub const InitOptions = struct {
     /// terminal loop says yes; headless and the tests have no such
     /// cursor, so the focused pty pane paints its own into the cells.
     term_cursor: bool = false,
+
+    /// // changed (sidebar-autohide): frames are going to a live
+    /// terminal at a human's rate, so a chrome animation has somewhere
+    /// to play. The terminal loop says yes; `--headless`, the `.test`
+    /// harness and the unit tests render one frame at a time and want
+    /// every animation at its end state on the first of them.
+    live_frames: bool = false,
 };
 
 /// How long an ordinary toast stays.
@@ -1040,6 +1047,8 @@ pub const App = struct {
     /// A real terminal is drawing the cursor this frame asks for. The
     /// terminal loop says yes; headless and the tests paint their own.
     term_cursor: bool = false,
+    /// See `InitOptions.live_frames`.
+    live_frames: bool = false,
     hits: hit.HitMap = .{},
     /// Where the pointer last was; the frame paints hover affordances
     /// (a row's kebab) from it.
@@ -1310,6 +1319,7 @@ pub const App = struct {
         app.workspace_trusted = opts.workspace_trusted orelse (if (app.loaded) |l| l.workspace_trusted else false);
         app.native_notify = opts.native_notify;
         app.term_cursor = opts.term_cursor;
+        app.live_frames = opts.live_frames;
         // The `g<letter>` operator table is process-global (the vim
         // handler has no App). A state reopening clears only its own
         // claims, so a fresh App wipes the whole table once — otherwise

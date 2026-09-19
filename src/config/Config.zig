@@ -145,6 +145,16 @@ pub const MenuBar = enum { always, auto, hidden };
 /// a TODO for these three, with the menu bar's vocabulary). `auto`
 /// shows the rail while the pointer is in column 0 or on the rail.
 pub const ActivityBar = enum { always, auto, hidden };
+/// // changed (sidebar-autohide): the side columns' own three words.
+/// `always` docks the column (the shipped look); `auto` hides it and
+/// reveals it as an OVERLAY over the editor — no relayout, no pty
+/// resize — once the pointer has rested at the column's screen edge
+/// for `ui.sidebar_reveal_ms`, and hides it again `ui.sidebar_hide_ms`
+/// after the pointer leaves; `hidden` never reveals on hover, and a
+/// keyboard command that targets the column brings up a one-shot
+/// overlay instead. `view.sidebar_pin` docks a revealed column for
+/// the session (`always` for as long as mnml runs).
+pub const Sidebar = enum { always, auto, hidden };
 /// // changed (debug-ui): the step toolbar strip over the editor —
 /// `auto` while a debug session is live, `always`, or never.
 pub const DebugToolbar = enum { auto, always, hidden };
@@ -219,6 +229,9 @@ pub const tree_width_max: u16 = 80;
 /// `ui/mod.rs` floors the drawn height at 3.
 pub const bottom_panel_height_min: u16 = 3;
 pub const bottom_panel_height_max: u16 = 60;
+/// // changed (sidebar-autohide): the reveal / hide dwells, clamped on
+/// load. 0 is allowed — an instant reveal.
+pub const sidebar_dwell_ms_max: u16 = 5000;
 pub const hover_help_height_min: u16 = 3;
 pub const hover_help_height_max: u16 = 20;
 
@@ -250,7 +263,30 @@ pub const Ui = struct {
     /// then land in the dock (`side.configuredSide`).
     sidebar_side: ColumnSide = .left,
     section_side: SectionSide = .{},
+    /// // changed (sidebar-autohide): a WIDTH rule, and Rust's
+    /// (`ui/mod.rs`, task #891): below this many columns both side
+    /// columns are dropped FOR THE FRAME — `tree.visible` and the
+    /// column's own section are untouched, so widening brings back
+    /// whatever was open. 0 = never. It composes with `ui.sidebar`:
+    /// a narrow screen hides the column whatever the mode says, and
+    /// under `auto` the hover reveal is refused there too.
     auto_hide_narrow_width: u16 = 0,
+    /// // changed (sidebar-autohide): `always` | `auto` | `hidden` —
+    /// see `Sidebar`. It governs BOTH columns; `ui.sidebar_side` still
+    /// says which one a section calls home.
+    sidebar: Sidebar = .always,
+    /// How long the pointer must rest in a column's edge zone before
+    /// the overlay slides in (ms; clamped to 0..`sidebar_dwell_ms_max`).
+    sidebar_reveal_ms: u16 = 250,
+    /// How long after the pointer leaves the overlay before it hides
+    /// (ms; clamped to 0..`sidebar_dwell_ms_max`).
+    sidebar_hide_ms: u16 = 400,
+    /// // changed (sidebar-autohide): the reduced-motion switch. False
+    /// skips every chrome animation that has an instant end state —
+    /// today the sidebar overlay's three-frame slide, which then
+    /// appears at its full width on the first frame. `--headless` and
+    /// the `.test` harness behave as if it were false.
+    animations: bool = true,
     auto_equalize_splits: bool = false,
     relative_line_numbers: bool = false,
     line_numbers: bool = true,
@@ -830,6 +866,11 @@ test "defaults are the shipped values" {
     try std.testing.expectEqual(NowPlayingSource.mixr, c.ui.now_playing_source);
     try std.testing.expectEqual(MenuBar.always, c.ui.menu_bar);
     try std.testing.expectEqual(ActivityBar.always, c.ui.activity_bar);
+    try std.testing.expectEqual(Sidebar.always, c.ui.sidebar);
+    try std.testing.expectEqual(@as(u16, 250), c.ui.sidebar_reveal_ms);
+    try std.testing.expectEqual(@as(u16, 400), c.ui.sidebar_hide_ms);
+    try std.testing.expectEqual(@as(u16, 0), c.ui.auto_hide_narrow_width);
+    try std.testing.expect(c.ui.animations);
     try std.testing.expectEqual(DiagStyle.count, c.ui.bufferline_diag_style);
     try std.testing.expectEqual(CoverageChipMode.feature, c.ui.coverage_chip_mode);
     try std.testing.expectEqual(ExpandIndicator.chevron, c.ui.expand_indicator);
