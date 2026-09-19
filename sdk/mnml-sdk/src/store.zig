@@ -194,12 +194,13 @@ pub const Store = struct {
         w.writeAll("{\"version\":1,\"entries\":[") catch return;
         for (self.entries.items, 0..) |e, i| {
             if (i > 0) w.writeByte(',') catch return;
-            w.print("{{\"key\":\"{f}\",\"stamp\":\"{f}\",\"fetched_at\":{d},\"body\":\"{f}\"}}", .{
-                std.zig.fmtString(e.key),
-                std.zig.fmtString(e.stamp),
-                e.fetched_at,
-                std.zig.fmtString(e.body),
-            }) catch return;
+            w.writeAll("{\"key\":") catch return;
+            writeJsonString(w, e.key) catch return;
+            w.writeAll(",\"stamp\":") catch return;
+            writeJsonString(w, e.stamp) catch return;
+            w.print(",\"fetched_at\":{d},\"body\":", .{e.fetched_at}) catch return;
+            writeJsonString(w, e.body) catch return;
+            w.writeAll("}") catch return;
         }
         w.writeAll("]}\n") catch return;
         if (std.fs.path.dirname(self.path)) |dir| Io.Dir.cwd().createDirPath(self.io, dir) catch {};
@@ -218,6 +219,34 @@ pub const Store = struct {
         self.entries.shrinkRetainingCapacity(max_entries);
     }
 };
+
+/// One JSON string, escaped as **JSON** — which is not what
+/// `std.zig.fmtString` does.
+///
+/// That was the bug this replaced: the file is JSON and the bodies were
+/// escaped for a Zig literal, so a response carrying an apostrophe or a
+/// control byte produced `\\'` or `\\x1b`, neither of which any JSON
+/// parser will read. The cache then failed to load **silently**, which
+/// is exactly the failure this module promises costs requests rather
+/// than correctness — so it cost requests, every run, and nothing said
+/// so.
+fn writeJsonString(w: *Io.Writer, s: []const u8) Io.Writer.Error!void {
+    try w.writeByte('"');
+    for (s) |c| switch (c) {
+        '"' => try w.writeAll("\\\""),
+        '\\' => try w.writeAll("\\\\"),
+        '\n' => try w.writeAll("\\n"),
+        '\r' => try w.writeAll("\\r"),
+        '\t' => try w.writeAll("\\t"),
+        0x08 => try w.writeAll("\\b"),
+        0x0c => try w.writeAll("\\f"),
+        // Everything else below a space has to go out as \u00XX; the
+        // bytes above are UTF-8 continuation bytes and pass through.
+        0x00...0x07, 0x0b, 0x0e...0x1f, 0x7f => try w.print("\\u{x:0>4}", .{c}),
+        else => try w.writeByte(c),
+    };
+    try w.writeByte('"');
+}
 
 /// `42s` / `7m` / `4h` / `3d` before now — the `as of …` a pane paints
 /// while it revalidates. Written into `buf`.
@@ -323,4 +352,40 @@ test "the age a pane paints while it revalidates" {
     try t.expectEqualStrings("3d", ageText(&buf, 1, 1 + 3 * 86400));
     // Never fetched: nothing to say about its age.
     try t.expectEqualStrings("", ageText(&buf, 0, 1000));
+}
+
+test "the file is JSON, so a body is escaped as JSON — an apostrophe or a control byte must not lose the cache" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    const path = try std.fs.path.join(t.allocator, &.{ dir, "etags.json" });
+    defer t.allocator.free(path);
+
+    // A response as they actually arrive: an apostrophe (which a Zig
+    // escaper writes `\'`, and no JSON parser will read), a control
+    // byte, a tab, a backslash, a quote, and some UTF-8.
+    const body = "{\"msg\":\"Robin's PR \x01\tsays \\\"ship\\\" \u{2014} caf\u{e9}\"}";
+    {
+        var s = try Store.openAt(t.allocator, t.io, path);
+        defer s.deinit();
+        try s.put("u1", "\"tag-'1'\"", body, 100);
+        s.save();
+    }
+    // The whole point: the next run reads it back. Before this was
+    // fixed the parse failed silently and the cache was simply empty —
+    // a cost that never showed up anywhere.
+    {
+        var s = try Store.openAt(t.allocator, t.io, path);
+        defer s.deinit();
+        try t.expectEqual(@as(usize, 1), s.entries.items.len);
+        try t.expectEqualStrings(body, s.fresh("u1", "\"tag-'1'\"").?);
+    }
+    // And it really is JSON, not merely something this parser accepts:
+    // the bytes below 0x20 are `\u00XX` and nothing is `\x`.
+    const text = try Io.Dir.cwd().readFileAlloc(t.io, path, t.allocator, .limited(1 << 16));
+    defer t.allocator.free(text);
+    try t.expect(std.mem.indexOf(u8, text, "\\u0001") != null);
+    try t.expect(std.mem.indexOf(u8, text, "\\x") == null);
+    try t.expect(std.mem.indexOf(u8, text, "\\'") == null);
 }
