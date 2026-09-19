@@ -93,6 +93,42 @@ There is no third option, and no handler may stash the raw pointer to
 - Layout is the parent's job (`Rect.split*`); a component paints inside
   the rect it is given and clips to it.
 
+## Chrome that slides in — and the pin that stops it
+
+Three surfaces hide themselves and slide back over the editor when the
+pointer asks for them, and they are one idiom, not three:
+
+| surface | config | reveals through | the module |
+|---|---|---|---|
+| the side columns | `ui.sidebar = .auto` | the column's screen edge, then the panel itself | `src/app/sidebar_auto.zig` |
+| the launcher dock | `ui.dock.mode = .auto_hide` | the edge band of `ui.dock.edge`, then the strip | `src/app/launcher_dock.zig` |
+| the menu bar | `ui.menu_bar = .auto` | the chrome row itself | `src/app/menu_bar.zig` |
+
+The rules they share:
+
+- **A reveal is paint, never layout.** `render.chrome` reports no column
+  and no strip while one is up, so every pane keeps the rect it had and
+  no pty is resized when the pointer brushes a screen edge.
+- **The dwell is arbitrated in one place** (`src/app/hover_zones.zig`),
+  because several of them want the same cell. A zone is registered per
+  frame, priority breaks the tie, and `dwelled(id)` answers the one
+  question each `shown()` asks.
+- **Each has an effective mode**, not a raw config read: `mode(app)`
+  returns `.always` while the surface is pinned and the config's value
+  otherwise. Nothing outside the module reads `app.cfg.ui.<surface>`
+  to decide whether it is up.
+- **The pin is the family's chip** (`src/ui/pin_chip.zig`): 󰐃 in three
+  cells, `P` under `--ascii`, dim and in the comment colour cold, full
+  foreground on a ground one step lighter under the pointer, the
+  theme's yellow when it is on. It sits at the END of whatever it pins
+  — the header strip's right, the dock strip's tail, the last menu
+  word — registers its hit with its paint, and is drawn only where
+  there is something to pin: a surface configured `.always` wears none.
+- **A pin lasts the session and edits nothing.** Unpinning is meant to
+  be one click, not a round trip through the config file. (The
+  launcher dock's rides in `session.zon` so a restored session comes
+  back as it was; the sidebar's and the menu bar's do not.)
+
 ## The settings overlay — the family idiom (`src/ui/settings.zig`)
 
 mnml and mixr each own their settings UI; there is no shared crate, so

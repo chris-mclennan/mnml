@@ -235,6 +235,11 @@ otherwise. Copy what you need; leave the rest out.
         .preferred_music_app = .mixr, // .mixr | .music | .spotify
         .mixr_auto_play_on_open = true,
         .projects_dir = "", // "~/code"; ~ is expanded
+        // `.auto` hides the words until the pointer rests on the
+        // chrome row; `view.menu_bar_pin` (or the 󰐃 chip past the
+        // last word) then keeps them up for the session, the way
+        // the sidebar and the launcher dock pin. The pin is never
+        // written here — unpinning is one click.
         .menu_bar = .always, // .always | .auto | .hidden
         .activity_bar = .always, // .always | .auto (pointer in column 0 reveals) | .hidden
         .debug_toolbar = .auto, // the step toolbar strip over the editor: .auto (while a debug session is live) | .always | .hidden
