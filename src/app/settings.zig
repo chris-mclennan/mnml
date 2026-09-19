@@ -210,6 +210,8 @@ pub const rows = [_]RowSpec{
     .{ .path = "ui.tab_bar_ai_icon", .label = "AI icon in the bar", .section = .ui, .scope = .home },
     .{ .path = "ui.ai_layout_mode", .label = "AI session layout", .section = .ui, .scope = .home },
     .{ .path = "ui.coverage_chip_mode", .label = "Coverage chip", .section = .ui, .scope = .home },
+    .{ .path = "ui.pty_cursor.unfocused", .label = "Terminal cursor, other panes", .section = .ui, .scope = .home },
+    .{ .path = "ui.pty_cursor.blink", .label = "Terminal cursor blinks", .section = .ui, .scope = .home },
     .{ .path = "ui.right_panel_visible", .label = "Right panel at start", .section = .ui, .scope = .workspace },
     .{ .path = "ui.right_panel_width", .label = "Right panel width", .section = .ui, .scope = .workspace, .number = .{ .min = 8, .max = 120, .step = 2 } },
     // // changed (bottom-dock): the dock's pair, beside the column's.
@@ -792,6 +794,15 @@ test "rows: every path is a bool, an enum, a number or the theme; defaults index
     try t.expectEqualStrings(theme_names[3], c.ui.theme);
     try t.expectEqual(@as(usize, 3), currentIndex(&c, "ui.theme"));
     try t.expectEqualStrings("line_numbers", (comptime keyPath("ui.line_numbers"))[1]);
+    // Three levels down: the pty-cursor rows sit inside `ui.pty_cursor`,
+    // and both the read and the write have to walk the whole path.
+    try t.expectEqual(@as(usize, 0), currentIndex(&c, "ui.pty_cursor.unfocused")); // hollow
+    setIndex(&c, "ui.pty_cursor.unfocused", 2);
+    try t.expectEqual(Config.PtyCursor.Unfocused.none, c.ui.pty_cursor.unfocused);
+    try t.expectEqual(@as(usize, 1), currentIndex(&c, "ui.pty_cursor.blink")); // on
+    setIndex(&c, "ui.pty_cursor.blink", 0);
+    try t.expect(!c.ui.pty_cursor.blink);
+    try t.expectEqualStrings("unfocused", (comptime keyPath("ui.pty_cursor.unfocused"))[2]);
 }
 
 test "the highlighting size limit is a choice row, not a step row: off is the default, and a hand-set value reads as the choice above it" {
