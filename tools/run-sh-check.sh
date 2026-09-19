@@ -134,8 +134,13 @@ check "status: process running" 'echo "$out" | grep -q "^process:   running (pid
 check "restart: exit 0" '[ $rc -eq 0 ]'
 check "restart: appended {\"cmd\":\"restart\"}" '[ "$(tail -n 1 "$IPC/command")" = "{\"cmd\":\"restart\"}" ]' "$(tail -n 2 "$IPC/command")"
 # The relaunched instance truncates events.jsonl on init, so "a fresh
-# start after a second build" is the relaunch.
-if wait_for '[ "$(zig_builds)" -ge 2 ] && has_event "\"event\":\"start\""' 20; then
+# start after a second build" is the relaunch. A start line ALONE is not
+# it: the old instance's own start is still in the file until the
+# truncation, so this waited on a line that was already there and could
+# return before the relaunch had even execed — leaving the `stop` below
+# to write its `quit` into a command file the relaunch then truncated.
+# The relaunch is the moment the file holds a start and no `exit`.
+if wait_for '[ "$(zig_builds)" -ge 2 ] && has_event "\"event\":\"start\"" && ! has_event "\"event\":\"exit\""' 20; then
   ok "restart: exit 75 → a second build → relaunch (fresh start event)"
 else
   bad "restart: no relaunch within 20s" "zig.log: $(cat "$ZIG_LOG"); loop.log: $(cat "$LOOP_LOG"); events: $(cat "$IPC/events.jsonl" 2>/dev/null)"
