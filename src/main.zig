@@ -11,6 +11,7 @@ const Term = @import("tui/term.zig").Term;
 const input = @import("input/mod.zig");
 const config = @import("config/root.zig");
 const http_cli = @import("http/cli.zig");
+const broker_cli = @import("broker_cli.zig");
 const sequence_editor = @import("git/sequence_editor.zig");
 
 /// What `--version` prints: `-Dversion=` at build time, or the derived
@@ -50,6 +51,9 @@ pub fn main(init: std.process.Init) !u8 {
         return code;
     }
     if (args.len >= 2 and std.mem.eql(u8, args[1], "test")) return testSubcommand(gpa, io, env, args[2..], w);
+    // `broker acquire` is how a shell script queues behind the panes
+    // rather than taking a token out from under one.
+    if (args.len >= 2 and std.mem.eql(u8, args[1], "broker")) return brokerSubcommand(gpa, io, env, args[2..], w);
     if (args.len >= 2) if (httpSubcommand(gpa, io, env, args[1], args[2..], w)) |code| return code;
     for (args[1..]) |a| {
         if (std.mem.eql(u8, a, "--version") or std.mem.eql(u8, a, "-V")) {
@@ -57,7 +61,7 @@ pub fn main(init: std.process.Init) !u8 {
             try w.flush();
             return 0;
         }
-        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, "mnml-zig [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--no-session] [--headless] [--startup-picker] | test [PATH…] [--gate] [--filter NAME] [--skip NAME] | run FILE | chain run FILE | discover SPEC | sync | sync-check | proxy --url URL | --rebase-todo PLAN TODO | --commit-msg QUEUE FILE");
+        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, "mnml-zig [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--no-session] [--headless] [--startup-picker] | test [PATH…] [--gate] [--filter NAME] [--skip NAME] | run FILE | chain run FILE | discover SPEC | sync | sync-check | proxy --url URL | broker acquire|status|serve | --rebase-todo PLAN TODO | --commit-msg QUEUE FILE");
     }
     if (parseInputFlag(args[1..], w)) |style| {
         app_driver.default_factory.input_style = style;
@@ -236,6 +240,20 @@ fn httpSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, verb: [
     else
         return null;
     const code = result catch 1;
+    err_file.interface.flush() catch {};
+    w.flush() catch {};
+    return code;
+}
+
+/// `mnml-zig broker acquire|status …` — the batch class, from a shell.
+fn brokerSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, rest: []const [:0]const u8, w: *Io.Writer) u8 {
+    var err_buf: [4096]u8 = undefined;
+    var err_file: Io.File.Writer = .initStreaming(.stderr(), io, &err_buf);
+    const std_: broker_cli.Std = .{ .out = w, .err = &err_file.interface };
+    var argv_buf: [32][]const u8 = undefined;
+    const n = @min(rest.len, argv_buf.len);
+    for (rest[0..n], 0..) |a, i| argv_buf[i] = a;
+    const code = broker_cli.subcommand(gpa, io, env, argv_buf[0..n], std_) orelse 2;
     err_file.interface.flush() catch {};
     w.flush() catch {};
     return code;
@@ -600,6 +618,7 @@ test {
     _ = @import("ipc/root.zig");
     _ = @import("e2e/root.zig");
     _ = @import("headless.zig");
+    _ = @import("broker_cli.zig");
     _ = @import("tui/marker.zig");
     _ = @import("editor/edit_op.zig");
     _ = @import("editor/clipboard.zig");
