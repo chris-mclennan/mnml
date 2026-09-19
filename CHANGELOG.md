@@ -56,6 +56,15 @@ architecture behind it is in `docs/DESIGN.md`.
   workspace, defaults), a typed schema, `Patch(T)` merges derived at compile
   time, `persistScalar` splices one value back into the file with a backup.
 - Workspace trust is decided at load and asked once.
+- Two profiles, so one machine can run the mnml you live in and the mnml you
+  are working on. `MNML_PROFILE=dev` (or `--profile dev`) moves the data root
+  to `~/.config/mnml-dev`, the session file to `.mnml/session-dev.zon`, the
+  IPC mailbox and the running-instance marker to their own names, and paints
+  a `dev` chip on the statusline with a matching window title. The first dev
+  launch seeds itself from your stable setup — config, integration manifests
+  and configs, launchers, themes — and never copies a credential, a cache or
+  a session; `mnml profile` says which one you are in and `mnml profile seed
+  --force` copies again.
 - `docs/CONFIG.md` is the complete commented `config.zon`, and a test parses
   it.
 
@@ -125,8 +134,8 @@ architecture behind it is in `docs/DESIGN.md`.
   `sha256.sum`, `mnml-installer.sh`, `mnml-installer.ps1`, an MSI for winget,
   `.deb` / `.rpm`, a Homebrew tap bump. Asset names drop the `-rs`:
   `mnml-<triple>.tar.xz`.
-- `--version` prints the tag; a dev build prints the manifest version, the
-  git short SHA and `-dirty`.
+- `--version` prints the tag and the profile it would run in; a dev build
+  prints the manifest version, the git short SHA and `-dirty`.
 
 ### Not in 0.3.0 (pin 0.2.x if you need one)
 
