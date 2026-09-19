@@ -170,9 +170,12 @@ pub const Painter = struct {
         try p.a.hits.add(p.a.gpa, r, target);
     }
 
+    /// The toolkit's, so a fold mark is the same glyph in every pane
+    /// and a host with no Nerd Font gets the same stand-in. This used
+    /// to be a byte-for-byte copy of `Painter.chevron` living here,
+    /// which is the shape every one of this pane's drifts started as.
     fn chevron(p: *const Painter, open: bool) []const u8 {
-        if (p.ui.ascii or !p.ui.nerd) return if (open) open_ascii else closed_ascii;
-        return if (open) open_glyph else closed_glyph;
+        return p.c.chevron(open);
     }
 
     fn fmt(p: *Painter, comptime f: []const u8, args: anytype) []const u8 {
