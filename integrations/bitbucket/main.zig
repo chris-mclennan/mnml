@@ -1257,9 +1257,6 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
     // `app` is a local that is never moved, so the pointer the worker
     // thread's client carries stays good for the whole run.
     session.client.notice = &app.wait_notice;
-    // Where the hover's "spent by" line keeps the program name it
-    // names, for as long as the segment it decorates.
-    var bucket_name: [64]u8 = undefined;
     if (app.tabs.len == 0) {
         const msg = try std.fmt.allocPrint(gpa, "--only {s}: no tabs of that family in {s} (check the `tabs` entries and their `kind`)", .{ opts.only orelse "?", session.loaded.path });
         defer gpa.free(msg);
@@ -1349,7 +1346,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
         // bucket, say so rather than leaving `loading…` on its own.
         app.noteWait();
         try dispatchJobs(gpa, io, &app, &jobs);
-        running = drain(gpa, io, env, mount, &ipc_opt, &app, bucketOf(gpa, io, &session.limiter, &bucket_name)) and running;
+        running = drain(gpa, io, env, mount, &ipc_opt, &app, &session.limiter) and running;
         _ = arena.reset(.retain_capacity);
         try screen.paint(arena.allocator(), &frame, &app, nerd);
         try mount.send(&frame);
@@ -1378,7 +1375,7 @@ fn dispatchJobs(gpa: Allocator, io: Io, app: *app_mod.App, jobs: *JobQueue) Allo
 /// Run what the last event queued: toasts over the mount, the browser
 /// and the clipboard through the machine, the chip over the file
 /// channel. False when the app asked to quit.
-fn drain(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk.Mount, ipc_opt: *?sdk.Ipc, app: *app_mod.App, bucket: ?Bucket) bool {
+fn drain(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk.Mount, ipc_opt: *?sdk.Ipc, app: *app_mod.App, limiter: *ratelimit.Limiter) bool {
     var alive = true;
     // The sessions this pane just started and wants told about. They
     // go out before the effects that started them are freed.
@@ -1407,7 +1404,12 @@ fn drain(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sd
                 // All three chips, the way `--values` publishes them.
                 // Only the first used to move from inside the pane, so
                 // the other two sat at whatever the last poll left.
-                publishSegments(ipc, arena_state.allocator(), v, bucket) catch {};
+                // The bucket is read off its file — a lock, a read
+                // and a rewrite — so it is looked at HERE, where a
+                // chip is actually being published, and not once per
+                // pass of a loop that runs at sixty hertz.
+                var bucket_name: [64]u8 = undefined;
+                publishSegments(ipc, arena_state.allocator(), v, bucketOf(gpa, io, limiter, &bucket_name)) catch {};
             }
         },
         // The one destructive action either pane offers goes through a

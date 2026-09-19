@@ -430,9 +430,6 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
 
     var paint_arena = std.heap.ArenaAllocator.init(gpa);
     defer paint_arena.deinit();
-    // Where the hover's "spent by" line keeps the program name it
-    // names, for as long as the segment it decorates.
-    var bucket_name: [64]u8 = undefined;
     try repaint(&paint_arena, &frame, &app, ui);
     mount.send(&frame) catch return 0;
     // The first fetch is started after the first paint and lands on a
@@ -442,7 +439,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     app.last_refresh_ms = app.nowMs();
     try repaint(&paint_arena, &frame, &app, ui);
     mount.send(&frame) catch return 0;
-    publishSide(&app, mount, if (ipc) |*i| i else null, bucketOf(gpa, io, &limiter, &bucket_name));
+    publishSide(&app, mount, if (ipc) |*i| i else null, gpa, io, &limiter);
 
     while (true) {
         var ended = false;
@@ -496,7 +493,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
         try app.tick(app.nowMs());
         try repaint(&paint_arena, &frame, &app, ui);
         mount.send(&frame) catch break;
-        publishSide(&app, mount, if (ipc) |*i| i else null, bucketOf(gpa, io, &limiter, &bucket_name));
+        publishSide(&app, mount, if (ipc) |*i| i else null, gpa, io, &limiter);
         // While a refetch is in flight the loop wakes sooner, so its
         // rows land as soon as they arrive rather than up to half a
         // second later.
@@ -514,7 +511,7 @@ fn repaint(paint_arena: *std.heap.ArenaAllocator, frame: *sdk.Frame, app: *app_m
 
 /// The toast, the statusline segment, and the sessions this pane just
 /// started and wants told about.
-fn publishSide(app: *app_mod.App, mount: *sdk.Mount, ipc: ?*const sdk.Ipc, bucket: ?Bucket) void {
+fn publishSide(app: *app_mod.App, mount: *sdk.Mount, ipc: ?*const sdk.Ipc, gpa: Allocator, io: Io, limiter: *ratelimit.Limiter) void {
     for (app.watch_out.items) |w| {
         mount.watchSession(w.key, .{ .cwd = w.cwd, .prompt_line = w.prompt_line }) catch {};
     }
@@ -525,7 +522,12 @@ fn publishSide(app: *app_mod.App, mount: *sdk.Mount, ipc: ?*const sdk.Ipc, bucke
     }
     if (app.segment_dirty) {
         app.segment_dirty = false;
-        if (ipc) |i| if (app.assigned_open) |n| publishSegment(i, n, bucket) catch {};
+        // The bucket is read off its file — a lock, a read and a
+        // rewrite — so it is looked at HERE, where the chip is
+        // actually being published, and not once per pass of a loop
+        // that runs many times a second.
+        var bucket_name: [64]u8 = undefined;
+        if (ipc) |i| if (app.assigned_open) |n| publishSegment(i, n, bucketOf(gpa, io, limiter, &bucket_name)) catch {};
     }
 }
 
