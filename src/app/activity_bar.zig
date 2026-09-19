@@ -31,6 +31,7 @@ const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const Mouse = @import("../core/key.zig").Mouse;
 const rail = @import("../ui/activity_bar.zig");
+const hover_zones = @import("hover_zones.zig");
 const tooltip = @import("../ui/tooltip.zig");
 const context_menus = @import("context_menus.zig");
 const settings = @import("settings.zig");
@@ -78,17 +79,19 @@ pub fn commandOf(s: Section) ?command.CommandId {
 }
 
 /// Whether the rail paints this frame. `auto`: the pointer in column 0
-/// reveals it, and it stays while the pointer rests on it — read off
-/// the previous frame's hits, so this runs before the frame resets them.
+/// reveals it, and it stays while the pointer rests on it.
+/// // changed (sidebar-autohide): the two rects — column 0 and the
+/// rail's own — are now zones registered with `hover_zones`, which
+/// arbitrates them against the menu bar's row and the side columns'
+/// edges. Same rects, same instant dwell; what changed is the top-left
+/// cell, which the menu bar now wins outright, and column 0 under
+/// `ui.sidebar = .auto`, which belongs to the column the pointer is
+/// asking for (the rail comes back inside it).
 pub fn shown(app: *const App) bool {
     return switch (app.cfg.ui.activity_bar) {
         .always => true,
         .hidden => false,
-        .auto => blk: {
-            const h = app.hover orelse break :blk false;
-            if (h.x == 0) break :blk true;
-            break :blk if (app.hits.at(h.x, h.y)) |under| under == .rail else false;
-        },
+        .auto => hover_zones.dwelled(app, .rail_left),
     };
 }
 

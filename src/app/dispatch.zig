@@ -2361,6 +2361,13 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .right_new => try context_menus.openAddPanelMenu(app, m.x, m.y),
                 // // changed (bottom-dock): the dock's `×`.
                 .bottom_close => try runCmd(app, .@"view.toggle_bottom_panel"),
+                // // changed (sidebar-autohide): the revealed column's
+                // own cells. The pin chip docks it; the ground swallows
+                // the press so it cannot fall through onto the editor
+                // the panel is floating over, and a right press on it
+                // offers the three modes.
+                .sidebar_pin => try runCmd(app, .@"view.sidebar_pin"),
+                .sidebar_overlay => if (m.button == .right) try context_menus.openSidebarModeMenu(app, m.x, m.y),
                 .back => try runCmd(app, .@"buffer.prev"),
                 .forward => try runCmd(app, .@"buffer.next"),
                 .dropdown => try runCmd(app, .@"picker.recent"),

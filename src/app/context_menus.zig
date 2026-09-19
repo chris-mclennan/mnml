@@ -435,12 +435,50 @@ pub fn openRailMenu(app: *App, s: activity_bar.Section, x: u16, y: u16) Allocato
             n_moves += 1;
         }
     }
-    const rows = try app.gpa.alloc(MenuItem, 1 + n_moves + verbs.len);
+    // // changed (sidebar-autohide): every rail row also carries the
+    // column's own three words — the rail IS the column's edge, so it
+    // is where a user goes looking for "stop doing that".
+    var mode_row = sidebarModeRow(app);
+    mode_row.separator_before = true;
+    const rows = try app.gpa.alloc(MenuItem, 1 + n_moves + verbs.len + 1);
     errdefer app.gpa.free(rows);
     rows[0] = show;
     @memcpy(rows[1 .. 1 + n_moves], moves[0..n_moves]);
-    @memcpy(rows[1 + n_moves ..], verbs);
+    @memcpy(rows[1 + n_moves .. 1 + n_moves + verbs.len], verbs);
+    rows[rows.len - 1] = mode_row;
     try app.openMenu(s.meta().label, rows, x, y);
+}
+
+/// `Sidebar \u{25b8}` — the three words `ui.sidebar` takes, with the one
+/// in force ticked, plus the session pin when there is something to pin.
+/// // changed (sidebar-autohide).
+/// A parent row's `submenu` is a slice the open menu keeps a pointer
+/// to, not a copy, so it cannot be a temporary of the function that
+/// built the row. These three are the same three rows every time —
+/// only the tick moves — so they live here, rewritten on each open. One
+/// menu is open at a time, and `openMenu` frees the previous one before
+/// this is written again.
+var sidebar_mode_kids: [3]MenuItem = undefined;
+
+pub fn sidebarModeRow(app: *const App) MenuItem {
+    const cur = app.cfg.ui.sidebar;
+    sidebar_mode_kids = .{
+        .{ .label = "Always (docked)", .action = .{ .command = .@"view.sidebar_mode_always" }, .checked = cur == .always },
+        .{ .label = "Auto-hide (reveal on the edge)", .action = .{ .command = .@"view.sidebar_mode_auto" }, .checked = cur == .auto },
+        .{ .label = "Hidden (keyboard only)", .action = .{ .command = .@"view.sidebar_mode_hidden" }, .checked = cur == .hidden },
+    };
+    return .{ .label = "Sidebar", .action = .none, .submenu = &sidebar_mode_kids };
+}
+
+/// A right-click on the revealed column's own ground: the three modes
+/// and the pin. // changed (sidebar-autohide).
+pub fn openSidebarModeMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = if (app.sidebar_auto.pinned) "Unpin (back to auto-hide)" else "Pin (dock for this session)", .action = .{ .command = .@"view.sidebar_pin" }, .checked = app.sidebar_auto.pinned },
+        sidebarModeRow(app),
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Sidebar", rows, x, y);
 }
 
 /// The activity bar's gear (Rust `open_gear_context_menu`): Settings,

@@ -31,6 +31,7 @@ const render = @import("render.zig");
 const Rect = @import("../ui/rect.zig");
 const side = @import("side.zig");
 const search_glyph = @import("../ui/menu_bar.zig").search_glyph;
+const hover_zones = @import("hover_zones.zig");
 const zen = @import("zen.zig");
 
 pub const table = .{
@@ -110,11 +111,17 @@ pub const State = struct {
 };
 
 /// Whether the words paint this frame on the bar at `bar_y`.
+/// // changed (sidebar-autohide): the bar's row is a `hover_zones`
+/// zone now, registered from the geometry rather than compared here,
+/// so it can outrank the side columns' edge zone at the top-left cell.
+/// `bar_y` is kept as the caller's assertion that it is asking about
+/// the row the zone was cut from.
 pub fn shown(app: *const App, bar_y: u16) bool {
     return switch (app.cfg.ui.menu_bar) {
         .always => true,
         .hidden => false,
-        .auto => app.menu_bar.open != null or (app.hover != null and app.hover.?.y == bar_y),
+        .auto => app.menu_bar.open != null or
+            (hover_zones.dwelled(app, .menu_bar_top) and app.hover != null and app.hover.?.y == bar_y),
     };
 }
 

@@ -73,6 +73,9 @@ pub const root: Node = .{
             cmd('/', .@"editor.toggle_line_comment", "toggle comment"),
             cmd('n', .@"view.toggle_line_numbers", "line numbers"),
             cmd('e', .@"view.focus_tree", "explorer"),
+            // // changed (sidebar-autohide): the pin sits beside the
+            // explorer it docks, in both profiles.
+            cmd('E', .@"view.sidebar_pin", "pin/unpin the sidebar"),
             cmd('w', .@"file.save", "write/save"),
             cmd('q', .@"buffer.close", "close buffer"),
             group('c', "+nvchad", &.{

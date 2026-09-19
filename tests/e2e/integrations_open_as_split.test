@@ -1,0 +1,60 @@
+# width: 160
+# env: MNML_MARKETPLACE_LOCAL=market
+# env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/bitbucket.zon
+# env: BITBUCKET_BASE_URL=@${MNML_E2E_WORKSPACE}/bb.url
+# env: BITBUCKET_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/bucket.json
+# env: BITBUCKET_API_TOKEN=corpus-read-token
+# env: MNML_WORKSPACE=${MNML_E2E_WORKSPACE}
+# `integrations.open_as` (src/app/mount_pane.zig): a mounted
+# integration opens BESIDE the active pane — what the Rust editor
+# always does (`open_mount_with_args` → `split_leaf_with(active,
+# SplitDir::Horizontal, …)`, which is side by side) — and with
+# `equalize_on_open` the splits even out afterwards. The proof is that
+# the editor's own line and the integration's rows are on screen AT
+# ONCE: tabs in one leaf would paint only the one on top.
+#
+# It also proves the two rules that keep clicking cheap: the same
+# command a second time FOCUSES the pane it already opened, and a
+# different command of the same integration (`--only prs-mine`) still
+# gets a pane of its own.
+shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --lifetime-secs 180 >/dev/null 2>&1 &
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 0, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs } } }"
+write market/bitbucket_prs.zon ".{ .id = \"bitbucket_prs\", .label = \"Bitbucket PRs\", .version = \"0.2.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .args = .{ \"--only\", \"prs\" }, .description = \"Bitbucket: open pull requests\", .chip = .{ .glyph = \"\u{f00a8}\", .fallback = \"BP\", .color = \"blue\", .in_palette_bar = false }, .commands = .{ .{ .id = \"bitbucket_prs.open\", .title = \"Bitbucket PRs: open\" }, .{ .id = \"bitbucket_prs.open_mine\", .title = \"Bitbucket PRs: open (mine only)\", .args = .{ \"--only\", \"prs-mine\" } } } }"
+write note.txt "SPLIT_PROOF_LINE\n"
+command integrations.show_marketplace
+expect screen contains "Mkt (1)"
+key i
+expect screen contains "installed bitbucket_prs"
+command view.toggle_tree
+open note.txt
+expect screen contains "SPLIT_PROOF_LINE"
+# The integration lands beside the editor: both are on screen.
+command bitbucket_prs.open
+wait 1500
+expect screen contains "BITBUCKET PRS"
+expect screen contains "SPLIT_PROOF_LINE"
+expect pane "Bitbucket PRs"
+# The same command again: the pane it already opened takes the focus,
+# it is not started a second time. (A second mount would make the
+# splits three and squeeze the editor's line off its 160 columns.)
+command bitbucket_prs.open
+wait 500
+expect pane "Bitbucket PRs"
+expect screen contains "SPLIT_PROOF_LINE"
+# A DIFFERENT command of the same integration is a different thing to
+# look at, so it gets a pane of its own — three leaves now.
+command bitbucket_prs.open_mine
+wait 1500
+expect screen contains "SPLIT_PROOF_LINE"
+command view.close_split
+command view.close_split
+# `.tab`: the next one joins the active leaf instead, so the editor's
+# line goes behind it.
+command integrations.open_as_tab
+expect screen contains "integrations open as: tab"
+open note.txt
+expect screen contains "SPLIT_PROOF_LINE"
+command bitbucket_prs.open_mine
+wait 1500
+expect screen contains "BITBUCKET PRS"
+expect screen lacks "SPLIT_PROOF_LINE"

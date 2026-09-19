@@ -191,6 +191,7 @@ pub const rows = [_]RowSpec{
     .{ .path = "ui.clock", .label = "Clock in statusline", .section = .ui, .scope = .home },
     .{ .path = "ui.menu_bar", .label = "Menu bar", .section = .ui, .scope = .home },
     .{ .path = "ui.activity_bar", .label = "Activity bar", .section = .ui, .scope = .home },
+    .{ .path = "ui.sidebar", .label = "Side columns", .section = .ui, .scope = .home },
     .{ .path = "ui.debug_toolbar", .label = "Debug toolbar strip", .section = .ui, .scope = .home },
     .{ .path = "ui.bufferline_diag_style", .label = "Diag chip on tabs", .section = .ui, .scope = .home },
     .{ .path = "ui.expand_indicator", .label = "Expand indicator", .section = .ui, .scope = .home },

@@ -39,6 +39,7 @@ const CommandError = command.CommandError;
 const Key = @import("../core/key.zig").Key;
 const rail = @import("../ui/activity_bar.zig");
 const git_palette = @import("git_palette.zig");
+const sidebar_auto = @import("sidebar_auto.zig");
 
 pub const Section = rail.Section;
 pub const Side = Config.Side;
@@ -254,6 +255,14 @@ pub fn focusSection(app: *App, s: Section) void {
     const f = focusOf(s) orelse return;
     if (app.activeBuffer()) |b| b.input.onBlur();
     app.focus = f;
+    // // changed (sidebar-autohide): handing a section the keys is what
+    // every command that targets a column ends in — `view.activity_*`,
+    // `view.focus_tree`, `space e`, a rail chord — so it is the one
+    // place the overlay needs to know about them. (`place(…, false)`
+    // does NOT come through here, which is what keeps a `.auto` launch
+    // from starting with the panel up.) Docked, this is a no-op.
+    const side = sideOf(app, s);
+    if (side != .bottom) _ = sidebar_auto.keyboardReach(app, if (side == .left) .left else .right, false);
     app.needs_render = true;
 }
 
@@ -328,6 +337,14 @@ pub fn toggleColumn(app: *App, side: Side) CommandError!void {
     const s = app.side.last.get(side) orelse (if (here.len > 0) here[0] else null) orelse
         return app.diag.fail(app.frame.allocator(), "nothing lives on the {s} — right-click a rail icon: Move to {s}", .{ sideLabel(side), sideLabel(side) });
     try open(app, s, false);
+    // // changed (sidebar-autohide): auto-hidden, the column that just
+    // opened has nowhere docked to appear — `render.chrome` carves no
+    // column at all under `ui.sidebar = .auto` / `.hidden` — so the
+    // toggle has to bring up the overlay that carries it. `open` alone
+    // does not: it goes through `place(…, false)`, which never reveals,
+    // and that is what keeps a `.auto` launch from starting with the
+    // panel up. Docked, this is a no-op.
+    if (side != .bottom) _ = sidebar_auto.keyboardReach(app, if (side == .left) .left else .right, false);
 }
 
 /// The next / previous section along `side`'s list, opened; the keys

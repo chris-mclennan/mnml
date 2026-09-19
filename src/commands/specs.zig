@@ -1016,6 +1016,17 @@ pub const specs = [_]Spec{
     .{ .id = "search.open_pane", .title = "Search: open the query as a grep pane (replace, per-hit toggles)", .group = "search" },
     // Zig-only: the menu bar's summon, the coverage chip's click and menu.
     .{ .id = "view.menu_bar_open", .title = "Menu bar: open the File menu (the words follow under `ui.menu_bar = auto`)", .group = "view" },
+    // Zig-only (sidebar-autohide): `ui.sidebar`'s three words and the
+    // pin that docks a revealed column for the session. The Rust editor
+    // has no auto-hiding sidebar, so there is nothing to keep in step.
+    .{ .id = "view.sidebar_pin", .title = "Sidebar: pin the revealed column \u{2014} dock it for this session (again to unpin)", .group = "view", .keys = .{ .vim = &.{"space E"}, .standard = &.{"ctrl+k ctrl+b"} } },
+    .{ .id = "view.sidebar_mode_always", .title = "Sidebar: always docked (ui.sidebar = always)", .group = "view" },
+    .{ .id = "view.sidebar_mode_auto", .title = "Sidebar: auto-hide \u{2014} the pointer at the column's screen edge reveals it over the editor (ui.sidebar = auto)", .group = "view" },
+    .{ .id = "view.sidebar_mode_hidden", .title = "Sidebar: hidden \u{2014} never on hover; a keyboard command still gives a one-shot overlay (ui.sidebar = hidden)", .group = "view" },
+    // Zig-only (integration-split): where a mounted integration's pane
+    // lands. The Rust editor always splits and has no setting.
+    .{ .id = "integrations.open_as_split", .title = "Integrations: open a mounted integration BESIDE the active pane (integrations.open_as = split)", .group = "view" },
+    .{ .id = "integrations.open_as_tab", .title = "Integrations: open a mounted integration as another tab in the active leaf (integrations.open_as = tab)", .group = "view" },
     .{ .id = "coverage.toast", .title = "Coverage: toast the feature and code numbers", .group = "coverage" },
     .{ .id = "git.stage", .title = "Git: stage the selected file (or the active buffer)", .group = "git" },
     .{ .id = "git.unstage", .title = "Git: unstage the selected file (or the active buffer)", .group = "git" },
@@ -1168,7 +1179,7 @@ pub const specs = [_]Spec{
     .{ .id = "view.keep_tab", .title = "Keep this tab (stop the next glance taking the preview over)", .group = "view", .keys = .{ .vim = &.{"space b k"}, .standard = &.{"ctrl+k enter"} } },
 };
 
-test "1077 specs, unique ids" {
+test "1086 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1193,7 +1204,10 @@ test "1077 specs, unique ids" {
     // + `integrations.dismiss_toml_notice` (the 0.2 manifests notice)
     // + `app.command_line` (the bottom row's `:` line) and
     // `toast.run_action` (bottom-row)
-    // + three terminal-icon commands (terminal-icon).
-    try std.testing.expectEqual(@as(usize, 1084), specs.len);
+    // + three terminal-icon commands (terminal-icon)
+    // + `view.sidebar_pin` and the three `ui.sidebar` mode commands
+    // (sidebar-autohide) + the two `integrations.open_as` commands
+    // (integration-split).
+    try std.testing.expectEqual(@as(usize, 1090), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

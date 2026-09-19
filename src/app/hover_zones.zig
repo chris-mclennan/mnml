@@ -1,0 +1,311 @@
+//! Hover zones — the one place the chrome asks "has the pointer been
+//! resting HERE long enough to reveal something?".
+//!
+//! Three surfaces want that question answered and, before this module,
+//! each answered it for itself: the menu bar (`ui.menu_bar = .auto`)
+//! against the bar's row, the activity bar (`ui.activity_bar = .auto`)
+//! against column 0 and its own rect, and — the reason this module
+//! exists — the side columns (`ui.sidebar = .auto`) against the same
+//! column 0. Two of those claim the same cell, and a fourth is coming
+//! (the dock's own edge), so the decision belongs in one dispatcher
+//! rather than in three `shown()` functions that cannot see each other.
+//!
+//! A zone is `{ rect, id, dwell_ms, priority }`, registered per frame.
+//! `winner` is the containing zone with the highest priority — the menu
+//! bar outranks the columns, so the top-left cell summons the words and
+//! not the sidebar — and `dwelled(id)` is true once the pointer has been
+//! the winner's guest for that zone's `dwell_ms`. Zones with the same id
+//! are one zone in two pieces (column 0 AND the rail it reveals): the
+//! pointer moving between them never restarts the clock.
+//!
+//! Two lists, because of when the answers are needed. The geometric
+//! zones — a screen edge, the bar's row — are computable from the screen
+//! rect and the config, so `begin` registers them itself at the top of
+//! the frame, before `frameRects` reads them. A zone only the painter
+//! knows (the rail's rect, the revealed overlay's rect) is registered
+//! during the paint into `next`, and `begin` swaps that in as the
+//! frame's own — the same "read the previous frame's geometry" rule
+//! `activity_bar.shown` already lived by.
+//!
+//! State lives in `App.hover_zones`; nothing here allocates.
+//!
+//! **The family rule for a hovered icon** (`ui/activity_bar.zig`, and
+//! the dock when it lands): the row under the pointer sheds its `dim`,
+//! takes the theme's full foreground — a coloured icon keeps its own
+//! colour, which is its identity — and its whole cell row is filled one
+//! step lighter (`palette.bg2`). The marked / active row is already at
+//! full weight and is left exactly as it is, so a mark never moves
+//! under the pointer, and nothing new is registered in the hit map: a
+//! painter that can light a row already knows the row's rect, because
+//! that is the rect it registered the click on.
+
+const std = @import("std");
+const app_mod = @import("../app.zig");
+const App = app_mod.App;
+const Config = @import("../config/Config.zig");
+const Rect = @import("../ui/rect.zig");
+
+/// The surfaces that reveal on a dwell. One id may be registered as
+/// several rects (see the header).
+pub const Id = enum {
+    /// The menu bar's row (`ui.menu_bar = .auto`).
+    menu_bar_top,
+    /// Column 0 and the rail's own rect (`ui.activity_bar = .auto`).
+    rail_left,
+    /// The left column's screen edge and, once revealed, the overlay.
+    sidebar_left,
+    /// The right column's, ditto.
+    sidebar_right,
+};
+
+pub const Zone = struct {
+    rect: Rect,
+    id: Id,
+    /// How long the pointer must rest before `dwelled` says yes.
+    dwell_ms: u16 = 0,
+    /// Higher wins the cells two zones share.
+    priority: u8 = 0,
+};
+
+/// The menu bar owns the top-left cell; a column's edge outranks the
+/// rail, which is carved out of that column in the first place.
+pub const prio_menu_bar: u8 = 3;
+pub const prio_sidebar: u8 = 2;
+pub const prio_rail: u8 = 1;
+
+/// Four surfaces × two pieces each is the ceiling today; a zone past it
+/// is dropped rather than growing the frame's state.
+const max_zones = 16;
+
+pub const State = struct {
+    live: [max_zones]Zone = undefined,
+    live_n: u8 = 0,
+    /// What this frame's painters have registered for the next one.
+    next: [max_zones]Zone = undefined,
+    next_n: u8 = 0,
+    /// The zone the pointer is the guest of, and since when.
+    in: ?Id = null,
+    since_ms: i64 = 0,
+};
+
+/// Start a frame: last frame's painter zones become this frame's, the
+/// geometric ones are re-derived, and the dwell clock is advanced.
+/// `full` is the whole screen.
+pub fn begin(app: *App, full: Rect, now: i64) void {
+    const s = &app.hover_zones;
+    s.live = s.next;
+    s.live_n = s.next_n;
+    s.next_n = 0;
+    registerGeometric(app, full);
+    const w = winner(app);
+    if (s.in == null or w == null or s.in.? != w.?) {
+        s.in = w;
+        s.since_ms = now;
+    }
+}
+
+/// The zones that need no paint to know where they are: the bar's row
+/// and each column's one-cell screen edge.
+fn registerGeometric(app: *App, full: Rect) void {
+    if (full.isEmpty()) return;
+    const cfg = &app.cfg.ui;
+    if (cfg.menu_bar == .auto) if (barRow(full)) |row| add(app, .{ .rect = row, .id = .menu_bar_top, .priority = prio_menu_bar });
+    // The rail's reveal cell is column 0, whatever the row — the rule
+    // `activity_bar.shown` shipped with.
+    if (cfg.activity_bar == .auto) add(app, .{ .rect = Rect.init(full.x, full.y, 1, full.h), .id = .rail_left, .priority = prio_rail });
+    if (cfg.sidebar == .auto and !app.zen) {
+        const dwell = cfg.sidebar_reveal_ms;
+        add(app, .{ .rect = Rect.init(full.x, full.y, 1, full.h), .id = .sidebar_left, .dwell_ms = dwell, .priority = prio_sidebar });
+        add(app, .{ .rect = Rect.init(full.right() -| 1, full.y, 1, full.h), .id = .sidebar_right, .dwell_ms = dwell, .priority = prio_sidebar });
+    }
+}
+
+/// The row `render.frameRects` gives the palette bar, or null when the
+/// screen is too small for one (its rule, kept in step by the test
+/// below).
+pub fn barRow(full: Rect) ?Rect {
+    if (full.w < @import("render.zig").palette_bar_min_width or full.h < 5) return null;
+    return Rect.init(full.x, full.y, full.w, 1);
+}
+
+fn add(app: *App, z: Zone) void {
+    const s = &app.hover_zones;
+    if (s.live_n == max_zones) return;
+    s.live[s.live_n] = z;
+    s.live_n += 1;
+}
+
+/// A painter's zone, for the NEXT frame — the rail's rect, the revealed
+/// overlay's. Called in the statement that paints it, like a hit.
+pub fn register(app: *App, z: Zone) void {
+    const s = &app.hover_zones;
+    if (s.next_n == max_zones or z.rect.isEmpty()) return;
+    s.next[s.next_n] = z;
+    s.next_n += 1;
+}
+
+/// The zone under the pointer, highest priority first. Null when the
+/// pointer is off screen or in none of them.
+pub fn winner(app: *const App) ?Id {
+    const h = app.hover orelse return null;
+    const s = &app.hover_zones;
+    var best: ?Zone = null;
+    for (s.live[0..s.live_n]) |z| {
+        if (!z.rect.contains(h.x, h.y)) continue;
+        if (best == null or z.priority > best.?.priority) best = z;
+    }
+    return if (best) |b| b.id else null;
+}
+
+/// The dwell a zone asks for — the largest of the pieces registered
+/// under that id, so two pieces cannot disagree.
+fn dwellOf(app: *const App, id: Id) u16 {
+    const s = &app.hover_zones;
+    var ms: u16 = 0;
+    for (s.live[0..s.live_n]) |z| if (z.id == id) {
+        ms = @max(ms, z.dwell_ms);
+    };
+    return ms;
+}
+
+/// Whether `id` has won the pointer and held it for its dwell.
+pub fn dwelled(app: *const App, id: Id) bool {
+    const s = &app.hover_zones;
+    if (s.in == null or s.in.? != id) return false;
+    return app.now_ms -| s.since_ms >= dwellOf(app, id);
+}
+
+/// Whether the pointer is in `id` at all, dwell or no dwell.
+pub fn inZone(app: *const App, id: Id) bool {
+    return app.hover_zones.in != null and app.hover_zones.in.? == id;
+}
+
+/// When the pointer entered whatever it is in, for a caller measuring
+/// its own timeout off the same clock.
+pub fn sinceMs(app: *const App) i64 {
+    return app.hover_zones.since_ms;
+}
+
+/// A frame is due the moment an armed zone's dwell runs out.
+pub fn nextDeadlineMs(app: *const App) ?i64 {
+    const s = &app.hover_zones;
+    const id = s.in orelse return null;
+    const ms = dwellOf(app, id);
+    if (ms == 0) return null;
+    const due = s.since_ms + ms;
+    return if (due > app.now_ms) due else null;
+}
+
+// ─── tests ──────────────────────────────────────────────────────────────
+
+const t = std.testing;
+
+fn zonedApp(app: *App, now: i64) void {
+    begin(app, Rect.init(0, 0, 120, 40), now);
+}
+
+test "winner: the menu bar takes the top-left cell from both columns; the rail keeps column 0 below it" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    app.cfg.ui.menu_bar = .auto;
+    app.cfg.ui.activity_bar = .auto;
+    app.cfg.ui.sidebar = .auto;
+    app.now_ms = 1000;
+    app.hover = .{ .x = 0, .y = 0 };
+    zonedApp(&app, 1000);
+    try t.expectEqual(Id.menu_bar_top, winner(&app).?);
+    // One row down, the column's edge outranks the rail.
+    app.hover = .{ .x = 0, .y = 10 };
+    zonedApp(&app, 1000);
+    try t.expectEqual(Id.sidebar_left, winner(&app).?);
+    // With the columns docked, column 0 is the rail's again.
+    app.cfg.ui.sidebar = .always;
+    zonedApp(&app, 1000);
+    try t.expectEqual(Id.rail_left, winner(&app).?);
+    // The far column is the right column's edge.
+    app.cfg.ui.sidebar = .auto;
+    app.hover = .{ .x = 119, .y = 10 };
+    zonedApp(&app, 1000);
+    try t.expectEqual(Id.sidebar_right, winner(&app).?);
+    // Nowhere in particular.
+    app.hover = .{ .x = 60, .y = 10 };
+    zonedApp(&app, 1000);
+    try t.expect(winner(&app) == null);
+}
+
+test "dwell: zero is instant, a reveal waits out its ms, and leaving restarts the clock" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    app.cfg.ui.menu_bar = .auto;
+    app.cfg.ui.sidebar = .auto;
+    app.cfg.ui.sidebar_reveal_ms = 250;
+    // The menu bar asks for no dwell: the first frame is enough.
+    app.now_ms = 1000;
+    app.hover = .{ .x = 20, .y = 0 };
+    zonedApp(&app, 1000);
+    try t.expect(dwelled(&app, .menu_bar_top));
+    try t.expect(nextDeadlineMs(&app) == null);
+    // The column asks for 250.
+    app.hover = .{ .x = 0, .y = 10 };
+    zonedApp(&app, 1000);
+    try t.expect(inZone(&app, .sidebar_left));
+    try t.expect(!dwelled(&app, .sidebar_left));
+    try t.expectEqual(@as(i64, 1250), nextDeadlineMs(&app).?);
+    app.now_ms = 1249;
+    zonedApp(&app, 1249);
+    try t.expect(!dwelled(&app, .sidebar_left));
+    app.now_ms = 1250;
+    zonedApp(&app, 1250);
+    try t.expect(dwelled(&app, .sidebar_left));
+    try t.expect(nextDeadlineMs(&app) == null);
+    // Away and back: the clock starts over, it does not resume.
+    app.hover = .{ .x = 60, .y = 10 };
+    app.now_ms = 1300;
+    zonedApp(&app, 1300);
+    try t.expect(!dwelled(&app, .sidebar_left));
+    app.hover = .{ .x = 0, .y = 10 };
+    app.now_ms = 1400;
+    zonedApp(&app, 1400);
+    try t.expect(!dwelled(&app, .sidebar_left));
+    app.now_ms = 1650;
+    zonedApp(&app, 1650);
+    try t.expect(dwelled(&app, .sidebar_left));
+}
+
+test "a painter's zone joins its id's other piece: moving from column 0 onto the rail does not restart the dwell" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    app.cfg.ui.sidebar = .auto;
+    app.cfg.ui.sidebar_reveal_ms = 100;
+    app.now_ms = 500;
+    app.hover = .{ .x = 0, .y = 10 };
+    // Frame 1: the painter registers the revealed panel for frame 2.
+    zonedApp(&app, 500);
+    register(&app, .{ .rect = Rect.init(0, 1, 30, 37), .id = .sidebar_left, .dwell_ms = 100, .priority = prio_sidebar });
+    app.now_ms = 600;
+    zonedApp(&app, 600);
+    try t.expect(dwelled(&app, .sidebar_left));
+    // The pointer walks into the panel: same id, same clock. (A painter
+    // registers its zone EVERY frame, like a hit.)
+    register(&app, .{ .rect = Rect.init(0, 1, 30, 37), .id = .sidebar_left, .dwell_ms = 100, .priority = prio_sidebar });
+    app.hover = .{ .x = 12, .y = 10 };
+    app.now_ms = 610;
+    zonedApp(&app, 610);
+    try t.expectEqual(Id.sidebar_left, winner(&app).?);
+    try t.expect(dwelled(&app, .sidebar_left));
+    // The clock is still the one that started when the pointer first
+    // reached column 0 — crossing from one piece of a zone to the
+    // other is not leaving it.
+    try t.expectEqual(@as(i64, 500), sinceMs(&app));
+}
+
+test "barRow agrees with frameRects about where the palette bar is" {
+    const render = @import("render.zig");
+    const wide = Rect.init(0, 0, 120, 40);
+    try t.expect(barRow(wide).?.eql(render.frameRects(wide, .{}).bar));
+    // Too narrow, and too short: no bar either way.
+    const slim = Rect.init(0, 0, 39, 40);
+    try t.expect(barRow(slim) == null and render.frameRects(slim, .{}).bar.isEmpty());
+    const short = Rect.init(0, 0, 120, 4);
+    try t.expect(barRow(short) == null and render.frameRects(short, .{}).bar.isEmpty());
+}

@@ -1,0 +1,46 @@
+# width: 120
+# `ui.sidebar = .auto` (src/app/sidebar_auto.zig): the left column hides
+# itself and slides back OVER the editor when the pointer rests in
+# column 0 for `ui.sidebar_reveal_ms` (250 ms), and goes again
+# `ui.sidebar_hide_ms` (400 ms) after the pointer leaves.
+#
+# The proof that nothing was re-laid-out is the marker at column 95 of
+# the open file: an editor squeezed beside a docked 30-cell tree clips
+# it, an editor that kept its full width shows it. It is on screen
+# while the overlay is up.
+#
+# The overlay's own signature is the pin chip 󰐃 in its header strip — a
+# glyph nothing else paints, so it cannot be confused with a tooltip or
+# a tab that happens to carry a section's name.
+write wide.txt "...............................................................................................ENDMARK\n"
+write zz_marker.txt "nothing opens this\n"
+open wide.txt
+# Docked, as mnml ships: the tree takes its 30 cells and the marker is
+# clipped off the editor's right edge.
+expect screen contains "zz_marker"
+expect screen lacks "ENDMARK"
+command view.sidebar_mode_auto
+expect screen contains "sidebar: auto"
+# Auto: no panel, and the editor has the whole width back.
+expect screen lacks "󰐃"
+expect screen lacks "zz_marker"
+expect screen contains "ENDMARK"
+# The pointer rests in column 0: after the dwell the panel is up, over
+# the editor — the tree's own file is on screen and the far marker
+# still is, so no pane moved.
+hover 0 10
+wait 500
+expect screen contains "󰐃"
+expect screen contains "zz_marker"
+expect screen contains "ENDMARK"
+# Resting on the panel itself keeps it up.
+hover 12 10
+wait 500
+expect screen contains "zz_marker"
+# The pointer leaves: `sidebar_hide_ms` later it is gone and the editor
+# is uncovered.
+hover 90 20
+wait 700
+expect screen lacks "󰐃"
+expect screen lacks "zz_marker"
+expect screen contains "ENDMARK"

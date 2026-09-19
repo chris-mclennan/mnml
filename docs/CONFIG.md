@@ -140,7 +140,11 @@ otherwise. Copy what you need; leave the rest out.
             .diagnostics = null, // null = the dock; `.right` is the pre-dock placement
             .outline = null,
         },
-        .auto_hide_narrow_width = 0, // 0 = never auto-hide the tree
+        .auto_hide_narrow_width = 0, // a WIDTH rule: below this many columns both side columns are dropped for the frame (0 = never; a non-zero value is clamped to 40..300). Nothing is mutated — widening brings back what was open
+        .sidebar = .always, // .always (docked) | .auto (hidden; the pointer at the column's screen edge reveals it as an overlay OVER the editor — no relayout, no pty resize) | .hidden (never on hover; a keyboard command still gives a one-shot overlay)
+        .sidebar_reveal_ms = 250, // how long the pointer rests in the edge zone before the overlay slides in (0..5000)
+        .sidebar_hide_ms = 400, // how long after the pointer leaves the overlay before it hides (0..5000)
+        .animations = true, // false is the reduced-motion switch: chrome animations with an instant end state are skipped (today the overlay's three-frame slide). --headless and the .test harness behave as if it were false
         .auto_equalize_splits = false,
         .relative_line_numbers = false,
         .line_numbers = true,
@@ -523,6 +527,8 @@ otherwise. Copy what you need; leave the rest out.
     .integrations = .{
         .auto_update_cargo = false,
         .auto_update_git = false,
+        .open_as = .split, // .split (a mounted integration opens BESIDE the active pane, side by side — the Rust behaviour) | .tab (another tab in the active leaf)
+        .equalize_on_open = true, // after an integration split, even the splits out whatever ui.auto_equalize_splits says
         // Folders the INTEGRATIONS section's Dev tab scans: every
         // subfolder with a build.zig and a manifest.zon beside it is an
         // integration in development (Build / Install / Rebuild +

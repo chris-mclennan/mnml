@@ -70,6 +70,7 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
         // The one loop with a real terminal cursor to hand a frame's
         // position and shape to.
         .term_cursor = true,
+        .live_frames = true,
     });
     defer app.deinit();
     // The one place the App meets a live terminal: `"+` / `"*` get the

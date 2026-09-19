@@ -1,0 +1,37 @@
+# width: 120
+# The pin. A revealed column is paint, not layout — the marker at column
+# 95 of the open file proves it, since an editor squeezed beside a
+# docked 30-cell tree clips it. `view.sidebar_pin` is the one moment a
+# relayout IS wanted: the column docks, the editor loses its 30 cells
+# and the marker goes with them. Unpinning gives them back.
+#
+# (The click that OPENS a file and takes the panel with it is pinned by
+# the unit test in src/app/sidebar_auto.zig, which finds the tree row by
+# the hit its paint registered instead of guessing a cell.)
+write wide.txt "...............................................................................................ENDMARK\n"
+write zz_marker.txt "nothing opens this\n"
+open wide.txt
+command view.sidebar_mode_auto
+expect screen contains "ENDMARK"
+hover 0 10
+wait 500
+expect screen contains "󰐃"
+expect screen contains "zz_marker"
+expect screen contains "ENDMARK"
+# Pinned: the column is docked now, so the editor really is narrower.
+command view.sidebar_pin
+expect screen contains "sidebar pinned"
+expect screen contains "zz_marker"
+expect screen lacks "ENDMARK"
+# The pinned column has no strip and no pin chip — it is an ordinary
+# docked column again.
+expect screen lacks "󰐃"
+# Unpinned: back to auto, the column goes, the editor has its width.
+# (The pointer leaves column 0 first — that cell is the reveal zone
+# again the moment the pin comes off.)
+hover 90 20
+command view.sidebar_pin
+expect screen contains "sidebar: auto-hide on"
+wait 700
+expect screen lacks "zz_marker"
+expect screen contains "ENDMARK"

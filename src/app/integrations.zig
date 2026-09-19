@@ -543,6 +543,8 @@ pub const table = .{
     .@"integrations.pin_to_activity_bar" = &pinCmd,
     .@"integrations.unpin_from_activity_bar" = &unpinCmd,
     .@"integrations.toggle_palette_bar" = &togglePaletteBar,
+    .@"integrations.open_as_split" = &openAsSplitCmd,
+    .@"integrations.open_as_tab" = &openAsTabCmd,
 };
 
 // ─── discovery ──────────────────────────────────────────────────────────
@@ -1088,6 +1090,39 @@ pub const Run = struct {
     label: []const u8,
 };
 
+/// `Open as ▸ Split / Tab` — the row every integration menu carries,
+/// with the mode in force ticked.
+/// // changed (integration-split).
+/// The open menu keeps a POINTER to a row's `submenu`, so these two
+/// rows cannot be a temporary of the function that built them; they are
+/// the same two every time, only the tick moves. One menu is open at a
+/// time and `openMenu` frees the previous one first.
+var open_as_kids: [2]command.MenuItem = undefined;
+
+pub fn openAsRow(app: *const App) command.MenuItem {
+    const cur = app.cfg.integrations.open_as;
+    open_as_kids = .{
+        .{ .label = "Split (beside the active pane)", .action = .{ .command = .@"integrations.open_as_split" }, .checked = cur == .split },
+        .{ .label = "Tab (in the active leaf)", .action = .{ .command = .@"integrations.open_as_tab" }, .checked = cur == .tab },
+    };
+    return .{ .label = "Open as", .action = .none, .separator_before = true, .submenu = &open_as_kids };
+}
+
+fn setOpenAs(app: *App, v: config.Config.IntegrationOpenAs) CommandError!void {
+    app.cfg.integrations.open_as = v;
+    _ = try settings.persist(app, .home, &.{ "integrations", "open_as" }, v);
+    app.toast("integrations open as: {s}", .{@tagName(v)});
+    app.needs_render = true;
+}
+
+fn openAsSplitCmd(app: *App) CommandError!void {
+    return setOpenAs(app, .split);
+}
+
+fn openAsTabCmd(app: *App) CommandError!void {
+    return setOpenAs(app, .tab);
+}
+
 /// A manifest command's runner: the binary as a mount (or a pty).
 pub fn runMount(app: *App, r: Run) CommandError!void {
     const arena = app.frame.allocator();
@@ -1288,6 +1323,7 @@ pub fn openPinMenu(app: *App, i: usize, x: u16, y: u16) Allocator.Error!void {
         try items.append(app.gpa, .{ .label = if (on_bar) "Hide from top bar" else "Show on top bar", .action = .{ .command = .@"integrations.toggle_palette_bar" } });
         try items.append(app.gpa, .{ .label = "Remove from activity bar", .action = .{ .command = .@"integrations.unpin_from_activity_bar" } });
         try items.append(app.gpa, .{ .label = "Copy id", .action = .{ .command = .@"integrations.copy_id" } });
+        try items.append(app.gpa, openAsRow(app));
     } else {
         try items.append(app.gpa, .{ .label = "Remove from activity bar", .action = .{ .command = .@"integrations.unpin_from_activity_bar" } });
         try items.append(app.gpa, .{ .label = "Copy id", .action = .{ .copy_text = chip.id } });
@@ -1967,6 +2003,7 @@ fn openInstalledMenu(app: *App, virtual: usize, x: u16, y: u16) Allocator.Error!
         .{ .label = if (pinned) "Remove from activity bar" else "Add to activity bar", .action = .{ .command = if (pinned) .@"integrations.unpin_from_activity_bar" else .@"integrations.pin_to_activity_bar" } },
         .{ .label = "Open manifest", .action = .{ .command = .@"integrations.show_manifest" }, .separator_before = true },
         .{ .label = "Copy id", .action = .{ .command = .@"integrations.copy_id" } },
+        openAsRow(app),
         .{ .label = "Uninstall…", .action = .{ .command = .@"integrations.remove" }, .separator_before = true },
     });
 

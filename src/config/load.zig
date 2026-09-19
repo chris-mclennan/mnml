@@ -278,6 +278,13 @@ pub fn normalize(arena: Allocator, cfg: *Config, diags: *Diagnostics, home: ?[]c
     cfg.ui.tree_width = std.math.clamp(cfg.ui.tree_width, Config.tree_width_min, Config.tree_width_max);
     cfg.ui.hover_help_height = std.math.clamp(cfg.ui.hover_help_height, Config.hover_help_height_min, Config.hover_help_height_max);
     cfg.ui.bottom_panel_height = std.math.clamp(cfg.ui.bottom_panel_height, Config.bottom_panel_height_min, Config.bottom_panel_height_max);
+    // // changed (sidebar-autohide): the two dwells, and the width
+    // rule — Rust clamps a non-zero `auto_hide_narrow_width` to
+    // 40..300 (`config.rs`), which keeps a typo like `4` from hiding
+    // the columns on every screen.
+    cfg.ui.sidebar_reveal_ms = @min(cfg.ui.sidebar_reveal_ms, Config.sidebar_dwell_ms_max);
+    cfg.ui.sidebar_hide_ms = @min(cfg.ui.sidebar_hide_ms, Config.sidebar_dwell_ms_max);
+    if (cfg.ui.auto_hide_narrow_width != 0) cfg.ui.auto_hide_narrow_width = std.math.clamp(cfg.ui.auto_hide_narrow_width, 40, 300);
     cfg.ui.projects_dir = try expandTilde(arena, cfg.ui.projects_dir, home);
     if (cfg.startup.default_workspace) |ws| cfg.startup.default_workspace = try expandTilde(arena, ws, home);
 

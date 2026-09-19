@@ -114,6 +114,16 @@ Pinned by the `ctrlWCommand` and `vim:` tests in `src/app/side.zig`.
 | `view.host_active_in_bottom_panel` | — (the palette; run again on a docked pane to send it back) | — |
 | section → the dock / back up | `Ctrl-W J` / `K` in a section or the tree | — (`:sidebar bottom`, the rail menu) |
 | focus the dock / leave it | `Ctrl-W j` / `k` (the ordinary focus step) | — |
+| `view.sidebar_pin` (dock a revealed column for the session) | `<leader>E` | `Ctrl+K Ctrl+B` |
+
+// changed (sidebar-autohide): under `ui.sidebar = .auto` / `.hidden`
+the columns are not docked, so `view.toggle_tree` and
+`view.toggle_right_panel` toggle the OVERLAY that floats over the
+editor, and every command that shows a section (`view.activity_*`,
+`view.focus_tree`, `<leader>e`) reveals it. `view.sidebar_pin` is the
+way back to a docked column without editing the config: it reads
+`ui.sidebar = always` for the rest of the session, and again unpins.
+Both profiles carry the chord and the `<leader>`/`Ctrl+K` popup row.
 
 In an editor `Ctrl-W H` / `L` keep Neovim's meaning — move the split to
 the far edge; only a focused section or the tree reads them as a side
