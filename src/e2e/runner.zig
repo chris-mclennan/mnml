@@ -69,8 +69,17 @@ pub const Options = struct {
     /// so a long file is distinguishable from a wedged one before the
     /// timeout fires (`MNML_E2E_HEARTBEAT_SECS`; 0 = off).
     heartbeat_secs: u64 = 60,
-    /// Screen sizes to run each file at. Assertions count at `content_size` only.
+    /// Screen sizes to SWEEP each file at. A sweep exists to prove
+    /// nothing panics or leaks at an unusual size, so its assertions
+    /// count only at `content_size`: a file written for 120×40 says
+    /// things about 120×40.
     sizes: []const Size = &.{content_size},
+    /// The size came from the file's own `# width:` / `# height:`
+    /// rather than from the sweep. Then it is the size the file was
+    /// WRITTEN at, and its assertions count THERE — a `# width: 80`
+    /// script whose every check is ignored is a script that proves
+    /// nothing while reading green.
+    sized_by_file: bool = false,
     timing: Timing = .{},
     /// `$SHELL` for `shell` steps.
     shell: []const u8 = "/bin/sh",
@@ -269,7 +278,7 @@ const Run = struct {
     }
 
     fn runScript(self: *Run, script: *const parser.Script) Outcome {
-        const asserting = self.size.eql(content_size);
+        const asserting = self.opts.sized_by_file or self.size.eql(content_size);
         if (self.renderCycle()) |msg| return self.failMsg(msg);
         for (script.lines) |line| switch (line.stmt) {
             .step => |step| {
@@ -900,14 +909,19 @@ pub fn runPath(gpa: Allocator, io: Io, factory: Factory, root: []const u8, opts:
             continue;
         };
         var one: [1]Size = undefined;
+        // A file that names its own size is telling us where it was
+        // written, so that is where it asserts. Only the sweep's sizes
+        // are the run-it-and-see-nothing-breaks kind.
+        var file_opts = opts;
         const sizes: []const Size = if (header.width != null or header.height != null) blk: {
             one[0] = .{ .cols = header.width orelse content_size.cols, .rows = header.height orelse content_size.rows };
+            file_opts.sized_by_file = true;
             break :blk &one;
         } else opts.sizes;
         for (sizes) |size| {
             try out.print("▶ e2e: {s}\n", .{std.fs.path.basename(path)});
             try out.flush();
-            var o = runFileWithTimeout(gpa, io, factory, path, size, opts, out);
+            var o = runFileWithTimeout(gpa, io, factory, path, size, file_opts, out);
             defer o.deinit(gpa);
             stats.total += 1;
             if (o.passed) {
@@ -1351,10 +1365,12 @@ test "runPath: skips, sizes, names, and the ok/FAIL/N-M report" {
     opts.sizes = &.{ content_size, .{ .cols = 80, .rows = 24 } };
     const stats = try runPaths(t.allocator, t.io, sf.factory(), &.{root}, opts, &out.writer);
     try t.expectEqual(@as(usize, 5), stats.total);
-    try t.expectEqual(@as(usize, 1), stats.failed);
+    try t.expectEqual(@as(usize, 2), stats.failed);
     const report = out.written();
-    // Sorted by path; a hidden file and a non-.test file are ignored; the
-    // width header pins e_wide to 80 columns where the miss is not asserted.
+    // Sorted by path; a hidden file and a non-.test file are ignored. The
+    // sweep's own second size is the not-asserted one: a_fail's miss is
+    // reported at 120×40 and ignored at 80×24. e_wide names ITS OWN size,
+    // so 80 columns is where it was written and where its miss counts.
     // Each verdict follows its own start line — the rendered-screen dump of
     // the miss sits between a_fail's first start and its 80x24 start.
     const expected =
@@ -1363,14 +1379,15 @@ test "runPath: skips, sizes, names, and the ok/FAIL/N-M report" {
         "\n▶ e2e: a_fail.test\n  ok   a_fail.test @80x24\n" ++
         "▶ e2e: b_pass.test\n  ok   b_pass.test\n▶ e2e: b_pass.test\n  ok   b_pass.test @80x24\n" ++
         "⊘ e2e SKIP (network opt-in): " ++ "SUITE/sub/c_net.test\n" ++
-        "▶ e2e: e_wide.test\n  ok   e_wide.test @80x40\n\n4/5 passed\n";
+        "▶ e2e: e_wide.test\n  FAIL e_wide.test @80x40 — line 2: screen does not contain \"nope\"\n";
     // Compare piecewise around the parts that carry paths / the screen dump.
     const head = std.mem.indexOf(u8, expected, "SCREEN").?;
     try t.expectEqualStrings(expected[0..head], report[0..head]);
     const middle = expected[head + "SCREEN".len .. std.mem.indexOf(u8, expected, "SUITE").?];
     try t.expect(std.mem.indexOf(u8, report, middle) != null);
     try t.expect(std.mem.indexOf(u8, report, "/suite/sub/c_net.test\n") != null);
-    try t.expect(std.mem.endsWith(u8, report, "/suite/sub/c_net.test\n▶ e2e: e_wide.test\n  ok   e_wide.test @80x40\n\n4/5 passed\n"));
+    try t.expect(std.mem.indexOf(u8, report, "  FAIL e_wide.test @80x40 — line 2: screen does not contain \"nope\"\n") != null);
+    try t.expect(std.mem.endsWith(u8, report, "\n3/5 passed\n"));
     try t.expectEqual(@as(usize, 5), sf.made);
 
     // A network-opted-in run includes the gated file.
@@ -1381,6 +1398,42 @@ test "runPath: skips, sizes, names, and the ok/FAIL/N-M report" {
     const s2 = try runPaths(t.allocator, t.io, sf.factory(), &.{root}, opts, &out2.writer);
     try t.expectEqual(@as(usize, 4), s2.total);
     try t.expect(std.mem.indexOf(u8, out2.written(), "  FAIL c_net.test — ") != null);
+}
+
+test "a file that names its own size asserts AT that size; only a sweep's extra sizes are the silent ones" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+    try env.tmp.dir.createDirPath(t.io, "sized");
+    // The stub paints `ok`. Each of these asks for something else, so
+    // each miss is real — what differs is whether anyone is listening.
+    try env.tmp.dir.writeFile(t.io, .{ .sub_path = "sized/narrow.test", .data = "# width: 80\nexpect screen contains nope\n" });
+    try env.tmp.dir.writeFile(t.io, .{ .sub_path = "sized/short.test", .data = "# height: 14\nexpect screen contains nope\n" });
+    try env.tmp.dir.writeFile(t.io, .{ .sub_path = "sized/plain.test", .data = "expect screen contains nope\n" });
+    const root = try std.fs.path.join(t.allocator, &.{ env.root, "sized" });
+    defer t.allocator.free(root);
+    var sf: StubFactory = .{ .proto = .{ .text = "ok" } };
+    var out: Io.Writer.Allocating = .init(t.allocator);
+    defer out.deinit();
+    const stats = try runPaths(t.allocator, t.io, sf.factory(), &.{root}, env.opts(), &out.writer);
+    // All three miss, all three fail — the two sized ones no longer
+    // read green while proving nothing.
+    try t.expectEqual(@as(usize, 3), stats.total);
+    try t.expectEqual(@as(usize, 3), stats.failed);
+    const report = out.written();
+    try t.expect(std.mem.indexOf(u8, report, "  FAIL narrow.test @80x40 — line 2: screen does not contain") != null);
+    try t.expect(std.mem.indexOf(u8, report, "  FAIL short.test @120x14 — line 2: screen does not contain") != null);
+
+    // The sweep's own extra sizes stay silent: a run at 200×60 exists to
+    // prove nothing panics, and `plain.test` was written at 120×40.
+    var out2: Io.Writer.Allocating = .init(t.allocator);
+    defer out2.deinit();
+    var opts = env.opts();
+    opts.sizes = &.{.{ .cols = 200, .rows = 60 }};
+    _ = try runPaths(t.allocator, t.io, sf.factory(), &.{root}, opts, &out2.writer);
+    try t.expect(std.mem.indexOf(u8, out2.written(), "  ok   plain.test @200x60\n") != null);
+    // A file with its own header keeps it even under a sweep, and keeps
+    // asserting there.
+    try t.expect(std.mem.indexOf(u8, out2.written(), "  FAIL narrow.test @80x40 —") != null);
 }
 
 test "runPath: --filter keeps the matching names silently, --skip announces the cut" {

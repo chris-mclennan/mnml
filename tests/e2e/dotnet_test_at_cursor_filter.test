@@ -1,8 +1,15 @@
 # `test.run_at_cursor` on a .NET project: the enclosing Class.Method
-# becomes `--filter "FullyQualifiedName~CalcTests.Adds"`, shown on the
+# becomes `--filter FullyQualifiedName~CalcTests.Adds`, shown on the
 # results pane's first row. `test.run_file` filters by the file's
-# classes. The `dotnet` is the corpus shim.
-# width: 200
+# classes, and THAT one is quoted, because a `|` in an argument is the
+# shell's business — a single name needs no quotes and gets none.
+# The `dotnet` is the corpus shim.
+#
+# The width is the command row's, not the screen's: the results pane
+# opens beside the editor, so it gets half, and the row is ellipsized
+# rather than wrapped. 300 columns is what the longest of the three
+# command lines needs to be READ rather than guessed at.
+# width: 300
 # env: PATH=${MNML_SHIMS}:${PATH}
 write Tests/Tests.csproj "<Project Sdk=\"Microsoft.NET.Sdk\" />\n"
 write Tests/CalcTests.cs "using Xunit;\n\npublic class CalcTests\n{\n    [Fact]\n    public void Adds()\n    {\n        Assert.Equal(2, 1 + 1);\n    }\n\n    [Fact]\n    public void Divides()\n    {\n        Assert.Equal(3, 6 / 2);\n    }\n}\n\npublic class OtherTests\n{\n}\n"
@@ -14,7 +21,7 @@ command editor.use_vim
 ex 8
 command test.run_at_cursor
 expect pane tests
-expect screen contains "--filter \"FullyQualifiedName~CalcTests.Adds\""
+expect screen contains "--filter FullyQualifiedName~CalcTests.Adds"
 key esc
 expect pane CalcTests.cs
 
@@ -22,7 +29,7 @@ expect pane CalcTests.cs
 ex 14
 command test.run_at_cursor
 expect pane tests
-expect screen contains "--filter \"FullyQualifiedName~CalcTests.Divides\""
+expect screen contains "--filter FullyQualifiedName~CalcTests.Divides"
 key esc
 
 command test.run_file
