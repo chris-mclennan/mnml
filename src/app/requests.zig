@@ -38,6 +38,7 @@ const Mouse = key_mod.Mouse;
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const alloc = @import("../core/alloc.zig");
+const broker_app = @import("broker.zig");
 const sdk = @import("mnml_sdk");
 
 pub const table = .{
@@ -71,6 +72,13 @@ pub const Row = struct {
     tokens_after: f64 = 0,
     retry_of: u32 = 0,
     cache: []const u8 = "none",
+    /// Which side handed the token over — `broker` or `file`
+    /// (`mnml_sdk.ratelimit.Via`). Reason-agnostic: every line has it,
+    /// so `/broker` narrows the view to what queued and `/file` to
+    /// what went straight at the bucket. A line written before the
+    /// broker existed has none and reads as `file`, which is what it
+    /// was.
+    via: []const u8 = "file",
     /// The line as it was written — what a click shows and what the
     /// right-click copies.
     raw: []const u8 = "",
@@ -79,7 +87,7 @@ pub const Row = struct {
     /// filter never has to allocate a joined string.
     pub fn matches(r: Row, needle: []const u8) bool {
         if (needle.len == 0) return true;
-        for ([_][]const u8{ r.service, r.integration, r.reason, r.method, r.host, r.path, r.cache, r.waited_for }) |f| {
+        for ([_][]const u8{ r.service, r.integration, r.reason, r.method, r.host, r.path, r.cache, r.waited_for, r.via }) |f| {
             if (containsIgnoreCase(f, needle)) return true;
         }
         var buf: [8]u8 = undefined;
@@ -109,6 +117,12 @@ pub const ServiceTotals = struct {
     }
 };
 
+/// Where each service's broker stands, as the header paints it.
+/// Filled on every reload from `app/broker.zig` — from memory for a
+/// broker this mnml hosts, and over its own socket for one another
+/// process is holding.
+pub const BrokerLine = broker_app.Line;
+
 /// What one program drew from a bucket in the window — mnml's panes,
 /// the poller, and anything else on the machine that appends to the
 /// draws file.
@@ -124,6 +138,8 @@ pub const RequestsPane = struct {
     shown: []const u32 = &.{},
     totals: []const ServiceTotals = &.{},
     programs: []const ProgramDraws = &.{},
+    /// One per service. Empty only before the first reload.
+    brokers: []const BrokerLine = &.{},
     /// Requests read, before the filter — what the header counts.
     cursor: usize = 0,
     scroll: usize = 0,
@@ -214,6 +230,7 @@ pub fn parseRow(arena: Allocator, line: []const u8) Allocator.Error!?Row {
         .tokens_after = jsonNumber(trimmed, "tokens_after") orelse 0,
         .retry_of = @intFromFloat(@max(jsonNumber(trimmed, "retry_of") orelse 0, 0)),
         .cache = try arena.dupe(u8, jsonString(trimmed, "cache") orelse "none"),
+        .via = try arena.dupe(u8, jsonString(trimmed, "via") orelse "file"),
         .raw = try arena.dupe(u8, trimmed),
     };
 }
@@ -296,6 +313,7 @@ pub fn reload(app: *App, p: *RequestsPane) Allocator.Error!void {
     p.shown = &.{};
     p.totals = &.{};
     p.programs = &.{};
+    p.brokers = &.{};
     p.detail = null;
     const dir_path = try requestsDir(arena, app.data_root);
     p.dir = dir_path;
@@ -330,6 +348,10 @@ fn finish(app: *App, p: *RequestsPane, arena: Allocator, rows: *std.ArrayListUnm
     const now = nowSecs(app.io);
     p.totals = try totalsOf(arena, p.rows, now);
     p.programs = try programsOf(arena, try readDraws(app, arena), now);
+    // Who is handing the tokens out, and how much is left to hand.
+    // Read here rather than painted from live state, so the whole
+    // header is one snapshot of one moment.
+    p.brokers = try broker_app.lines(app, arena);
     try applyFilter(p);
     app.needs_render = true;
 }
@@ -339,7 +361,7 @@ fn finish(app: *App, p: *RequestsPane, arena: Allocator, rows: *std.ArrayListUnm
 /// everything else on the machine that spends from the same allowance.
 fn readDraws(app: *App, arena: Allocator) Allocator.Error![]const u8 {
     var out: std.ArrayListUnmanaged(u8) = .empty;
-    for ([_][]const u8{ "jira", "bitbucket" }) |service| {
+    for (broker_app.services) |service| {
         const state = sdk.ratelimit.statePath(arena, app.io, &app.env, service) catch continue;
         const dir = std.fs.path.dirname(state) orelse continue;
         const path = std.fmt.allocPrint(arena, "{s}/{s}-draws.jsonl", .{ dir, service }) catch continue;
@@ -516,7 +538,7 @@ test "a log line becomes a row, and a line that is not one is skipped rather tha
     defer arena_state.deinit();
     const a = arena_state.allocator();
     const line =
-        \\{"ts":1789526218.411,"service":"jira","integration":"mnml-jira","method":"GET","host":"acme.atlassian.net","path":"/rest/api/3/search/jql?jql=assignee%20%3D%20currentUser()","status":200,"ms":412,"bytes":18244,"reason":"pane_open","wait_ms":3030,"waited_for":"tokens","tokens_after":0.240,"retry_of":0,"cache":"miss"}
+        \\{"ts":1789526218.411,"service":"jira","integration":"mnml-jira","method":"GET","host":"acme.atlassian.net","path":"/rest/api/3/search/jql?jql=assignee%20%3D%20currentUser()","status":200,"ms":412,"bytes":18244,"reason":"pane_open","wait_ms":3030,"waited_for":"tokens","tokens_after":0.240,"retry_of":0,"cache":"miss","via":"broker"}
     ;
     const r = (try parseRow(a, line)).?;
     try t.expectEqualStrings("jira", r.service);
@@ -531,12 +553,16 @@ test "a log line becomes a row, and a line that is not one is skipped rather tha
     try t.expectEqual(@as(u64, 3030), r.wait_ms);
     try t.expectEqualStrings("tokens", r.waited_for);
     try t.expectEqualStrings("miss", r.cache);
+    try t.expectEqualStrings("broker", r.via);
     try t.expectApproxEqAbs(@as(f64, 0.24), r.tokens_after, 1e-9);
 
     // A transport failure has no status; the row says so rather than
     // inventing a zero.
     const failed = (try parseRow(a, "{\"ts\":1,\"service\":\"jira\",\"method\":\"GET\",\"host\":\"h\",\"path\":\"/p\",\"status\":null,\"reason\":\"poll\"}")).?;
     try t.expect(failed.status == null);
+    // A line written before the broker existed says nothing about
+    // which side served it, and reads as `file` — which is what it was.
+    try t.expectEqualStrings("file", failed.via);
     // Nothing that is not a line.
     try t.expect((try parseRow(a, "")) == null);
     try t.expect((try parseRow(a, "not json")) == null);
@@ -549,6 +575,11 @@ test "a log line becomes a row, and a line that is not one is skipped rather tha
     try t.expect(r.matches("PANE_OPEN"));
     try t.expect(r.matches("search/jql"));
     try t.expect(r.matches("200"));
+    // `/broker` narrows the view to what queued, `/file` to what went
+    // straight at the bucket.
+    try t.expect(r.matches("broker"));
+    try t.expect(!r.matches("file"));
+    try t.expect(failed.matches("file"));
     try t.expect(!r.matches("bitbucket"));
     try t.expect(failed.matches("failed"));
 }

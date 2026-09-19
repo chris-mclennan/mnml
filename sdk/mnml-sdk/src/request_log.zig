@@ -163,7 +163,18 @@ pub const Entry = struct {
     rate_limit: RateLimit = .{},
     /// Why the limiter made this request wait, when it did.
     waited_for: Waited = .nothing,
+    /// Which side of the machine handed the token over — the local
+    /// broker's queue, or the shared state file. Reason-agnostic on
+    /// purpose: every line carries it, so "was the broker up" is a
+    /// question the log answers for a `poll` exactly as it does for a
+    /// `pane_open`. A line that took no token (`cache_hit`) still says
+    /// `file`, which is what a bucket nobody asked looks like.
+    via: Via = .file,
 };
+
+/// Where a token came from. The limiter's own enum, so the broker, the
+/// bucket and this file all spell it one way.
+pub const Via = ratelimit.Via;
 
 /// What `acquire` was waiting on. The limiter's own enum — one name
 /// for the thing, whether it is being decided, shown in the pane or
@@ -320,8 +331,9 @@ pub fn writeLine(w: *Io.Writer, e: Entry) Io.Writer.Error!void {
         std.zig.fmtString(e.path),
     });
     if (e.status) |s| try w.print("{d}", .{s}) else try w.writeAll("null");
-    try w.print(",\"ms\":{d},\"bytes\":{d},\"reason\":\"{s}\",\"wait_ms\":{d},\"waited_for\":\"{s}\",\"tokens_after\":{d:.3},\"retry_of\":{d},\"cache\":\"{s}\"", .{
-        e.ms, e.bytes, e.reason.tag(), e.wait_ms, e.waited_for.tag(), e.tokens_after, e.retry_of, @tagName(e.cache),
+    try w.print(",\"ms\":{d},\"bytes\":{d},\"reason\":\"{s}\",\"wait_ms\":{d},\"waited_for\":\"{s}\",\"tokens_after\":{d:.3},\"retry_of\":{d},\"cache\":\"{s}\",\"via\":\"{s}\"", .{
+        e.ms,           e.bytes,    e.reason.tag(),    e.wait_ms,   e.waited_for.tag(),
+        e.tokens_after, e.retry_of, @tagName(e.cache), e.via.tag(),
     });
     if (e.rate_limit.any()) {
         try w.writeAll(",\"rate_limit\":{");
@@ -473,6 +485,7 @@ test "one request, one line — and the line carries every field the pane needs 
         .waited_for = .tokens,
         .tokens_after = 0.14,
         .cache = .miss,
+        .via = .broker,
     });
     log.append(.{
         .service = "",
@@ -500,6 +513,7 @@ test "one request, one line — and the line carries every field the pane needs 
         "\"status\":200",           "\"ms\":412",                      "\"bytes\":18244",
         "\"reason\":\"pane_open\"", "\"wait_ms\":3030",                "\"waited_for\":\"tokens\"",
         "\"tokens_after\":0.140",   "\"retry_of\":0",                  "\"cache\":\"miss\"",
+        "\"via\":\"broker\"",
     }) |needle| {
         t.expect(std.mem.indexOf(u8, first, needle) != null) catch |err| {
             std.debug.print("missing {s} in: {s}\n", .{ needle, first });
@@ -512,6 +526,10 @@ test "one request, one line — and the line carries every field the pane needs 
     try t.expect(std.mem.indexOf(u8, second, "\"status\":429") != null);
     try t.expect(std.mem.indexOf(u8, second, "\"retry_of\":1") != null);
     try t.expect(std.mem.indexOf(u8, second, "\"rate_limit\":{\"retry_after\":30}") != null);
+    // Every line says which side handed the token over, whatever the
+    // reason was — a line that never asked for one says `file`, which
+    // is what a bucket nobody asked looks like.
+    try t.expect(std.mem.indexOf(u8, second, "\"via\":\"file\"") != null);
     // Every line is valid JSON — the REQUESTS view parses them.
     var it = std.mem.tokenizeScalar(u8, text, '\n');
     while (it.next()) |line| {

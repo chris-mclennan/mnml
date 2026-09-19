@@ -131,6 +131,12 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
     // Only here, in the real terminal: a headless run and the corpus
     // scan when they ask to, and their counts are written against that.
     integrations.refresh(&app) catch |err| app.toast("integrations: {s}", .{@errorName(err)});
+    // The API brokers this mnml hosts (`app/broker.zig`). Here rather
+    // than on the first tick, because an mnml that opens and is left
+    // alone never ticks — it parks on the event queue with no deadline
+    // — and the pane somebody opens an hour later should find a broker
+    // rather than the file bucket. `tick` only re-checks after this.
+    @import("../app/broker.zig").sync(&app);
     app.hooks.emit(&app, .startup);
     // Once, until Enter says the setup is done (after the trust dialog).
     try @import("../app/first_launch.zig").showIfPending(&app);

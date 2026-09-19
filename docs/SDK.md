@@ -545,6 +545,110 @@ a chip that stopped moving is explained rather than mysterious.
 toolkit's `Painter.asOf` put `as of 4m ago` after the caps subtitle in
 the same muted ink, so two panes say it the same way.
 
+## The broker — who gets the next token
+
+The shared bucket says how much of an API's budget is left and makes
+every process draw from one number. What it cannot say is **who goes
+next**: the file bucket is first-come, so the pane a person is looking
+at queues behind whatever batch script asked a millisecond earlier. On
+a machine running a dozen Claude sessions, mnml and a handful of loops,
+that is most of the time.
+
+`mnml_sdk.broker` is a queue in front of that bucket — one Unix socket
+per service, four classes:
+
+| class | who |
+| --- | --- |
+| `interactive` | the pane on screen: `pane_open`, `detail`, `user`, `dispatch`, `readiness` |
+| `refresh` | wanted soon, nobody watching: `refresh`, `poll`, `builds`, `revalidate` |
+| `warm` | speculative: `warm`, `delta`, `prefetch` |
+| `batch` | a shell script, a capture tool — nothing a pane does reaches it |
+
+**The rule, written down.** Waiters are served by *effective class*,
+ties by arrival. A waiter's effective class is its declared class
+promoted one step for every full `broker.age_step_ms` (10 s) it has
+been queued, capped at `interactive`. So strict priority never becomes
+starvation: a `batch` waiter reaches the front after three steps
+however busy it is above, and `warm.classOf` is the one mapping from a
+reason to a class, so two integrations on one bucket agree.
+
+**It is a queue, not a second bucket.** The broker holds a
+`ratelimit.Limiter` on the SAME state file, under the same exclusive
+lock the Python `bb_ratelimit.py` takes, so a Python process that
+predates it keeps working and "tokens left" is one number wherever it
+is read. It writes no draw line of its own: the client writes it once
+the reply lands, so `<service>-draws.jsonl` keeps naming whoever
+actually spent the budget.
+
+**Using it is one call.** `Limiter.forService` resolves the socket at
+startup and `acquireVia` tries it per request, falling back to the file
+bucket when there is none:
+
+```zig
+var limiter = try sdk.ratelimit.Limiter.forService(gpa, io, env, "jira");
+limiter.reason = @tagName(reason);
+const got = limiter.acquireVia(sdk.warm.classOf(reason));   // got.via: .broker | .file
+```
+
+A missing, refused or wrong-service socket is a `.file` acquire and a
+two-second quiet period, so a machine with no broker pays one failed
+connect every two seconds rather than one per request. A brokered
+`ok:false` is the same fail-open the file bucket gives — send anyway —
+and never a reason to take a second token. `Acquired.via` reaches the
+request log as a reason-agnostic `via` field, so "was the broker up" is
+a question the log answers for a `poll` exactly as for a `pane_open`.
+
+**Who hosts it.** mnml does, while it runs (`integrations.broker`, on
+by default), one per service, elected by a lock file beside the socket
+with the same pid-and-heartbeat rules as `warm.Lock` — so a second mnml
+window becomes a client of the first rather than a second queue. Its
+REQUESTS header shows the result: `broker — jira on · queue 3 · 42%
+budget`. `mnml-zig broker serve --service jira` holds one on a machine
+with no mnml. **Absent is a supported state**, not a degraded one.
+
+**The wire** is one line of JSON each way, deliberately trivial to
+speak from Python's stdlib — whitespace after the colons and all:
+
+```
+→ {"v":1,"op":"acquire","service":"bitbucket","class":"interactive","client":"mnml-jira:1234","reason":"pane_open","timeout_ms":5000}
+← {"ok":true,"wait_ms":0,"remaining":12.4}
+← {"ok":false,"wait_ms":5000,"why":"timeout"}
+```
+
+`why` is one of `timeout` (the caller's own budget ran out),
+`closed` (the broker is going down, or its bucket failed open),
+`bad_request` or `wrong_service` — the last two meaning "not your
+broker", which sends the caller to the file bucket. `{"v":1,
+"op":"status","service":"…"}` answers with the budget, the queue depth
+by class, and what the broker has served. One request, one reply, then
+the connection closes.
+
+Where the socket is, in the order the state file resolves:
+`<SERVICE>_BROKER_SOCKET`, else `<service>-broker.sock` beside the
+state file, else — when that path is longer than the ~100 bytes a
+`sockaddr_un` holds — `/tmp/mnml-broker-<service>.sock`, which both
+ends derive from the service name alone so they still meet.
+`MNML_BROKER=0` turns the whole thing off for a child.
+
+**From a shell**, so a capture tool queues behind the panes rather than
+taking a token out from under one:
+
+```sh
+mnml-zig broker acquire --service bitbucket --class batch --reason capture && curl …
+mnml-zig broker status
+```
+
+Exit 0 is a token; exit 1 is none inside the timeout, and the caller
+decides whether to send anyway.
+
+**From Python**, `sdk/clients/ratelimit_broker.py` — stdlib only, one
+connect, one line each way, and a clean `False` on anything at all so
+the caller falls through to its existing file-bucket loop. Its
+docstring shows the two-line change `bb_ratelimit.py` would make.
+Unix sockets are the whole transport, so Windows has no broker and
+every client is on the file bucket there, which is a path rather than
+a hole.
+
 ## Who is spending the budget — the draws file
 
 The rate bucket (`mnml_sdk.ratelimit`) says how much of an API's
@@ -612,6 +716,7 @@ sdk/mnml-sdk/src/
   frame.zig      Frame: the cell grid + dirty-row tracking
   ipc.zig        Ipc: the tier-2 lines
   manifest.zig   Manifest + write/remove + the data-root rule
+  broker.zig     the local broker: one queue per service, four classes
   ratelimit.zig  one cross-process token bucket per service
   request_log.zig  one JSON line per request, with its reason
   store.zig      bodies kept between runs, keyed by the server's stamp
@@ -622,6 +727,7 @@ sdk/mnml-sdk/src/
   pane/chrome.zig  Painter: header, tabs, pill, gutter, rows, detail, hints
   pane/hit.zig     Rect + Map(Target), generic over your own union
   pane/text.zig    widths and fitting, counted the way Frame paints
+sdk/clients/ratelimit_broker.py   the broker's twenty-line Python client
 sdk/examples/hello/   the small list the host's mount test spawns (`zig build sdk-example`)
 integrations/sample/  the official sample (`zig build sample-integration`, or its own build.zig)
 ```

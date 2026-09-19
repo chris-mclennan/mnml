@@ -492,6 +492,11 @@ pub const RequestLogVars = struct {
 };
 
 /// The child's environment: the host's, plus the mount contract.
+///
+/// Not everything the child is told comes from here. Where the API
+/// brokers are (`<SERVICE>_BROKER_SOCKET`, `MNML_BROKER`) is the App's
+/// answer rather than the bridge's, so `app/broker.zig`'s `putEnv`
+/// adds it on top — see `app/mount_pane.zig`.
 pub fn envFor(gpa: Allocator, base: *const std.process.Environ.Map, vars: EnvVars) Allocator.Error!std.process.Environ.Map {
     var env = try base.clone(gpa);
     errdefer env.deinit();

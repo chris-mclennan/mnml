@@ -66,6 +66,7 @@ const CommandError = command.CommandError;
 const event = @import("../core/event.zig");
 const integrations = @import("integrations.zig");
 const mount_pane = @import("mount_pane.zig");
+const broker_app = @import("broker.zig");
 const manifest_mod = @import("../bridge/manifest.zig");
 
 /// The floor a manifest's interval is clamped to, whatever the config
@@ -328,6 +329,10 @@ fn buildJob(
     try env.put("MNML_REQUEST_LOG", if (rl.enabled) "1" else "0");
     var mbuf: [12]u8 = undefined;
     try env.put("MNML_REQUEST_LOG_MAX_MB", std.fmt.bufPrint(&mbuf, "{d}", .{rl.max_mb}) catch "4");
+    // The poller's child queues on the same brokers a pane does — in
+    // the `refresh` class, since nobody is watching a `--values` run
+    // but its answer is wanted soon (`warm.classOf`).
+    try broker_app.putEnv(app, &env);
     for (inst.manifest.settings) |setting| {
         const name = try std.fmt.allocPrint(arena, "MNML_SETTING_{s}", .{setting.key});
         for (name["MNML_SETTING_".len..]) |*c| c.* = std.ascii.toUpper(c.*);

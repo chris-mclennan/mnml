@@ -8,6 +8,10 @@
 //!   manifest  `Manifest` + `write` for `--install`
 //!   ratelimit one cross-process token bucket per service, shared with
 //!             every other process on the machine
+//!   broker    the local broker: one queue per service in four
+//!             priority classes over a Unix socket, in front of that
+//!             same bucket — absent is the normal case, and every
+//!             client falls back to the file
 //!   warm      the warmer: paced sending with interactive priority,
 //!             one warmer per service across processes, delta windows,
 //!             per-kind intervals and the budget floor
@@ -35,6 +39,7 @@ pub const client = @import("client.zig");
 pub const frame = @import("frame.zig");
 pub const ipc = @import("ipc.zig");
 pub const manifest = @import("manifest.zig");
+pub const broker = @import("broker.zig");
 pub const ratelimit = @import("ratelimit.zig");
 pub const request_log = @import("request_log.zig");
 pub const store = @import("store.zig");
@@ -51,6 +56,7 @@ pub const Slot = frame.Slot;
 pub const Ipc = ipc.Ipc;
 pub const Manifest = manifest.Manifest;
 pub const Limiter = ratelimit.Limiter;
+pub const BrokerClass = broker.Class;
 pub const RequestLog = request_log.Log;
 pub const Store = store.Store;
 pub const Gate = warm.Gate;
@@ -71,6 +77,7 @@ test {
     _ = frame;
     _ = ipc;
     _ = manifest;
+    _ = broker;
     _ = ratelimit;
     _ = request_log;
     _ = store;
