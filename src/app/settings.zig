@@ -587,6 +587,15 @@ pub fn wheel(app: *App, lines: isize) Allocator.Error!void {
     app.needs_render = true;
 }
 
+/// A press or drag `off` rows down the box's scrollbar track: the
+/// window lands at the pointer's fraction of the list, the cursor
+/// riding inside it.
+pub fn barJump(app: *App, off: usize, track_h: usize) Allocator.Error!void {
+    const list = try items(app, app.frame.allocator());
+    app.overlay.settings.ui.barJump(list, off, track_h);
+    app.needs_render = true;
+}
+
 /// A click on `hit` (an `.overlay_item` id): focus the row, or jump the
 /// row to the option under the pointer.
 pub fn click(app: *App, hit: u32) Allocator.Error!void {
@@ -595,6 +604,8 @@ pub fn click(app: *App, hit: u32) Allocator.Error!void {
     const st = &app.overlay.settings;
     switch (ui_settings.decodeHit(hit)) {
         .surface => {},
+        // A name in the box's section strip: the same jump `]` / `[` make.
+        .section => |n| st.ui.jumpTo(list, n),
         .row => |id| {
             if (id == reset_id) return resetAll(app);
             st.ui.cursor = itemIndexOf(list, id) orelse return;

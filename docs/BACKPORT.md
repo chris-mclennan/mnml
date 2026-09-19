@@ -193,6 +193,34 @@ Replace "drop the `Sender` and hope the worker notices" with an explicit
 `token.cancel()` and a generation counter on results so a late reply
 from a cancelled scan is ignored rather than adopted.
 
+## 12. The settings box says how long its list is
+
+**Proof.** `src/ui/settings.zig` `draw` splits the box into a section
+strip (`stripForm` / `drawStrip`), the rows, and a footer; the rows give
+a column back to `scrollbar.drawVertical` under `scrollbar_owner`
+whenever `items.len > list_h`, and the footer carries `positionText`
+(`12-40 of 97`, compact `40/97` when the key hint needs the room).
+`State.scrollTo` is the one door for a view move — the wheel
+(`State.wheel`), a bar drag (`State.barJump`, routed by `dispatch.zig`'s
+`paneBarJump`) and a section jump (`State.jumpSection` / `jumpTo`, bound
+to `]` `[` Tab Shift-Tab `g` `G` and to each strip name's
+`sectionHit(n)`) all call it, so the cursor is pulled into the new window
+instead of dragging it back on the next frame.
+
+**In Rust.** `src/app/settings.rs` builds the same item list and
+`src/ui/` paints the same 60 % x 70 % box, and it has the same bug: the
+UI section alone outgrows the cap, so `Editor` / `Integrations` / `AI` /
+`Reset` sit below the fold with nothing on screen saying so. Take the
+three affordances in one pass — they are independent of the row
+painter. Reuse `paint_simple_scrollbar` for the bar (do not hand-roll
+one), register it under a reserved scrollbar owner so the existing
+`ScrollbarDrag` routing picks it up, and add a `section: usize` arm to
+the settings hit enum for the strip. The footer position is the one that
+matters for narrow terminals, where no bar fits; it is four lines.
+Everything here is component-local — no `Pane`, `EditOp` or `Command`
+variant is involved, and no new command id was needed in Zig either
+(these are overlay keys).
+
 ## Two more that were not on the list
 
 - **Persisted state as ZON with a version and a workspace key**

@@ -1,11 +1,11 @@
 # A row whose choices overflow the box paints a window around the active
 # one and marks the hidden side with an arrow, so `→` never steps onto a
 # value the user cannot see. At 120x40 the box is centred vertically and
-# `TODOS sort` (row 20, four choices) has 32 cells for its options; the
-# full list needs 36.
+# `TODOS sort` (row 21, under the section strip; four choices) has 32
+# cells for its options; the full list needs 36.
 command view.settings
 expect screen contains "TODOS sort:                        [newest] / oldest / name ›"
-click 40 20
+click 40 21
 key right
 key right
 key right
