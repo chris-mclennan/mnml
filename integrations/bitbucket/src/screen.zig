@@ -413,7 +413,7 @@ fn paintRowButtons(p: *Painter, x0: u16, y: u16, w: u16, bw: u16, idx: usize, ro
 
     var x = x0 + w -| bw + 1;
     const ow = Painter.width(open_caption);
-    _ = p.text(x, y, ow, open_caption, p.th.chip());
+    _ = p.c.actionChip(x, y, ow, open_caption, sdk.pane.action.chipOf(p.th, .idle, sdk.pane.action.kindOf(open_caption)));
     p.target(x, y, ow, .{ .pr_button = .{ .row = idx, .which = .open } });
     x += ow + 1;
     // A merged or declined pull request has nothing to merge.
@@ -427,12 +427,12 @@ fn paintRowButtons(p: *Painter, x0: u16, y: u16, w: u16, bw: u16, idx: usize, ro
         // Once a merge session exists the button follows IT: the
         // spinner, the `⏸`, the `[ view ]`, the `✗` — readiness has
         // had its say.
-        _ = p.text(x, y, mw, shown, sdk.pane.action.styleOf(p.th, state));
+        _ = p.c.actionChip(x, y, mw, shown, sdk.pane.action.chipOf(p.th, state, .final));
         p.target(x, y, mw, .{ .pr_button = .{ .row = idx, .which = .merge } });
         return;
     }
     const r = app.readinessOf(slug, pr);
-    _ = p.text(x, y, mw, shown, sdk.pane.merge.styleOf(p.th, r));
+    _ = p.c.actionChip(x, y, mw, shown, sdk.pane.merge.chipOf(p.th, r));
     if (sdk.pane.merge.isPressable(r)) {
         p.target(x, y, mw, .{ .pr_button = .{ .row = idx, .which = .merge } });
     } else {

@@ -653,10 +653,10 @@ pub const Painter = struct {
                                 const cap = if (bst == .idle) b.label else sdk.pane.action.caption(&ab, bst, sdk.pane.merge.label, a.spin, p.ui.ascii);
                                 const lw = text.width(cap);
                                 if (bst != .idle) {
-                                    _ = p.put(bx, y, lw, cap, sdk.pane.action.styleOf(p.ui.th, bst));
+                                    _ = p.c.actionChip(bx, y, lw, cap, sdk.pane.action.chipOf(p.ui.th, bst, .final));
                                     try p.hitAdd(.{ .x = bx, .y = y, .w = lw, .h = 1 }, .{ .pr_button = .{ .row = idx, .which = .merge } });
                                 } else {
-                                    _ = p.put(bx, y, lw, cap, sdk.pane.merge.styleOf(p.ui.th, ready));
+                                    _ = p.c.actionChip(bx, y, lw, cap, sdk.pane.merge.chipOf(p.ui.th, ready));
                                     if (sdk.pane.merge.isPressable(ready)) {
                                         try p.hitAdd(.{ .x = bx, .y = y, .w = lw, .h = 1 }, .{ .pr_button = .{ .row = idx, .which = .merge } });
                                     } else {
@@ -667,7 +667,11 @@ pub const Painter = struct {
                                 continue;
                             }
                             const lw = text.width(b.label);
-                            _ = p.put(bx, y, lw, b.label, p.s.chip_style);
+                            // `[ Open ]` goes somewhere; `[ Review ]`
+                            // starts a session that reads. The words
+                            // are the same width; the colours are not
+                            // the same colour.
+                            _ = p.c.actionChip(bx, y, lw, b.label, sdk.pane.action.chipOf(p.ui.th, .idle, sdk.pane.action.kindOf(b.label)));
                             try p.hitAdd(.{ .x = bx, .y = y, .w = lw, .h = 1 }, .{ .pr_button = .{ .row = idx, .which = b.which } });
                             bx += lw + 1;
                         }
@@ -731,7 +735,7 @@ pub const Painter = struct {
             const cap = sdk.pane.action.caption(&buf, st, word, p.a.spin, p.ui.ascii);
             const lw = text.width(cap);
             if (x + lw > x0 + max_w) break;
-            _ = p.put(x, y, lw, cap, sdk.pane.action.styleOf(p.ui.th, st));
+            _ = p.c.actionChip(x, y, lw, cap, sdk.pane.action.chipOf(p.ui.th, st, sdk.pane.action.kindOf(word)));
             try p.hitAdd(.{ .x = x, .y = y, .w = lw, .h = 1 }, .{ .action = .{ .issue = @intCast(issue_idx), .button = @intCast(bi) } });
             x += lw + 1;
         }

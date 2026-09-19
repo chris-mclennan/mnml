@@ -163,9 +163,9 @@ fn paintMergeRow(comptime Target: type, p: *chrome.Painter(Target), y: u16, read
     var buf: [16]u8 = undefined;
     const cap = merge_mod.caption(&buf);
     const w = chrome.width(cap);
-    _ = p.put(1, y, w, cap, merge_mod.styleOf(p.th, ready_pr));
+    _ = p.actionChip(1, y, w, cap, merge_mod.chipOf(p.th, ready_pr));
     if (merge_mod.isPressable(ready_pr)) p.mark(.{ .x = 1, .y = y, .w = w, .h = 1 }, ready_target) catch {};
-    _ = p.put(1 + w + 1, y, w, cap, merge_mod.styleOf(p.th, blocked_pr));
+    _ = p.actionChip(1 + w + 1, y, w, cap, merge_mod.chipOf(p.th, blocked_pr));
     if (merge_mod.isPressable(blocked_pr)) p.mark(.{ .x = 1 + w + 1, .y = y, .w = w, .h = 1 }, blocked_target) catch {};
     // The reason the dim one is dim, where a hover puts it.
     var rbuf: [160]u8 = undefined;
@@ -207,7 +207,7 @@ fn paintActionRow(comptime Target: type, p: *chrome.Painter(Target), y: u16, tar
         var buf: [32]u8 = undefined;
         const cap = action_mod.caption(&buf, st, "Merge", 2, false);
         const w = chrome.width(cap);
-        _ = p.put(x, y, w, cap, action_mod.styleOf(p.th, st));
+        _ = p.actionChip(x, y, w, cap, action_mod.chipOf(p.th, st, .final));
         p.mark(.{ .x = x, .y = y, .w = w, .h = 1 }, target) catch {};
         x += w + 1;
     }
@@ -426,6 +426,58 @@ test "the cursor row carries the cursor-line ground edge to edge, in both panes,
             }
         }
     }
+}
+
+test "a button's brackets stay muted and its word carries its family's colour" {
+    var r = try Rig(TrackerTarget).init(cols, rows);
+    defer r.deinit();
+    var p = r.painter(demoTheme());
+    const th = demoTheme();
+    // Four words, four families, painted side by side on one row the
+    // way a PR row paints them.
+    const words = [_][]const u8{ "[ Open ]", "[ Review ]", "[ Triage ]", "[ Merge ]" };
+    var x: u16 = 0;
+    for (words) |w| {
+        const kind = action_mod.kindOf(w);
+        x += p.actionChip(x, 0, cols -| x, w, action_mod.chipOf(th, .idle, kind)) + 1;
+    }
+    // `[` and `]` are punctuation: muted, every time, whatever the
+    // word between them is.
+    var seen: usize = 0;
+    var i: u16 = 0;
+    while (i < cols) : (i += 1) {
+        const slot = &r.f.slots[i];
+        if (std.mem.eql(u8, slot.symbol(), "[") or std.mem.eql(u8, slot.symbol(), "]")) {
+            seen += 1;
+            try testing.expectEqual(th.muted, slot.style.fg.?);
+        }
+    }
+    try testing.expectEqual(@as(usize, 8), seen);
+    // The words themselves: one colour each, and no two the same.
+    const at = struct {
+        fn ink(rig: *Rig(TrackerTarget), needle: []const u8, row: u16) ?frame_mod.Style {
+            var col: u16 = 0;
+            while (col < cols) : (col += 1) {
+                if (std.mem.eql(u8, rig.f.slots[@as(usize, row) * cols + col].symbol(), needle)) {
+                    return rig.f.slots[@as(usize, row) * cols + col].style;
+                }
+            }
+            return null;
+        }
+    };
+    const open = at.ink(&r, "O", 0).?;
+    const review = at.ink(&r, "R", 0).?;
+    const triage = at.ink(&r, "T", 0).?;
+    const merge = at.ink(&r, "M", 0).?;
+    try testing.expectEqual(th.muted, open.fg.?);
+    try testing.expectEqual(th.blue, review.fg.?);
+    try testing.expectEqual(th.green, merge.fg.?);
+    // The demo theme's brand is its blue, which `review` already has,
+    // so the dispatch steps to purple rather than repeating it.
+    try testing.expectEqual(th.purple, triage.fg.?);
+    // None of them paints a ground of its own: a button on the
+    // cursor's row keeps that row's fill.
+    for ([_]frame_mod.Style{ open, review, triage, merge }) |st| try testing.expect(st.bg == null);
 }
 
 test "the hint row says a chord once, however many times the pane passes it" {
