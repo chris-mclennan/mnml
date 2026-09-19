@@ -36,6 +36,13 @@
 //! ends the game for the session: `mode` then reads `.always` and the
 //! strip docks like any other chrome (the pin, unlike the mode, IS
 //! remembered — `session.zon` carries it).
+//!
+//! `view.focus_dock` puts the keyboard in the strip, and the strip
+//! holds it only while the hand is on it: a key it has no answer for,
+//! or a mouse press that lands anywhere else, hands the keyboard back
+//! at once. `h` and `l` are how you walk a bottom strip, so a dock
+//! focused and then forgotten would otherwise swallow both of them
+//! everywhere else in the app.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
