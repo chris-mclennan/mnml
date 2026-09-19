@@ -14,6 +14,7 @@ const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
+const profile = @import("../config/profile.zig");
 const App = app_mod.App;
 const PaneId = app_mod.PaneId;
 const Key = app_mod.Key;
@@ -167,10 +168,10 @@ pub const EnvPair = struct { name: []const u8, value: []const u8 };
 var next_id: u32 = 0;
 
 /// Where the file-IPC channel is for this app: `MNML_IPC_DIR`, else
-/// `<workspace>/.mnml/<ipc_subdir>`. On the frame arena.
+/// `<workspace>/.mnml/<the profile's mailbox>`. On the frame arena.
 pub fn ipcDir(app: *App) Allocator.Error![]const u8 {
     if (app.env.get("MNML_IPC_DIR")) |d| if (d.len > 0) return d;
-    return std.fs.path.join(app.frame.allocator(), &.{ app.workspace, ".mnml", build_options.ipc_subdir });
+    return std.fs.path.join(app.frame.allocator(), &.{ app.workspace, ".mnml", profile.ipcSubdir(app.profile()) });
 }
 
 /// The live mount pane spawned from exactly this command line, if
@@ -891,4 +892,36 @@ test "findOpen matches the whole command line: the same integration command focu
     // A dead pane is not a pane to go back to.
     app.panes.get(id).?.asMount().?.exit = try gpa.dupe(u8, "gone");
     try testing.expect(findOpen(&app, "bb --only prs") == null);
+}
+
+test "an integration inherits the profile's data root, so its caches and sync marks land under the dev root" {
+    var env: std.process.Environ.Map = .init(testing.allocator);
+    defer env.deinit();
+    try env.put("MNML_PROFILE", "dev");
+    var app = try App.initWith(testing.allocator, testing.io, .{
+        .workspace = "/ws",
+        // What `main` resolved for this profile (`config/data_root.zig`).
+        .data_root = "/home/x/.config/mnml-dev",
+        .cols = 40,
+        .rows = 8,
+        .env = &env,
+    });
+    defer app.deinit();
+    try testing.expectEqual(profile.Profile.dev, app.profile());
+
+    // The env a mount is spawned with — the same call `open` makes.
+    var child = try host.envFor(testing.allocator, &app.env, .{
+        .socket_path = "/s.sock",
+        .workspace = app.workspace,
+        .theme = app.theme.name,
+        .ipc_dir = try ipcDir(&app),
+        .data_root = app.data_root,
+    });
+    defer child.deinit();
+    // The integration writes its config, cache, sync marks, etags and
+    // request log under this — so the dev profile's Jira cache is not
+    // the installed mnml's, without the integration knowing profiles
+    // exist at all.
+    try testing.expectEqualStrings("/home/x/.config/mnml-dev", child.get("MNML_DATA_ROOT").?);
+    try testing.expectEqualStrings("dev", child.get("MNML_PROFILE").?);
 }
