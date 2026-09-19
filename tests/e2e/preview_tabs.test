@@ -1,0 +1,84 @@
+# VS Code's preview tabs. A single click on a tree row opens the file
+# as a glance: the tab's name paints italic and the next glance in that
+# leaf takes the tab over. A double-click keeps the tab, and so does
+# the first edit, `view.keep_tab`, a pin and a drag.
+#
+# The italic itself cannot be read out of a text dump, so what this
+# asserts is the tab COUNT — which is what the flag is FOR. (A host
+# driving the file-IPC channel reads the flag itself: `status.json`'s
+# pane entries carry `preview`.) The tree names the same files as the
+# strip, so each count is taken with the tree folded away.
+write aa.txt content-of-aa
+write bb.txt content-of-bb
+write cc.txt content-of-cc
+open aa.txt
+command tree.refresh
+
+# Rows: the menu / palette bar is 0, the workspace header 1, then
+# aa.txt 2, bb.txt 3, cc.txt 4.
+expect pane "aa.txt"
+# `open` is the explicit gesture — a tab of its own, never a glance.
+command view.toggle_tree
+expect screen contains "aa.txt"
+expect screen lacks "bb.txt"
+command view.toggle_tree
+
+# One click: a glance at bb.txt, beside the tab aa.txt kept.
+click 5 3
+expect pane "bb.txt"
+expect screen contains "content-of-bb"
+command view.toggle_tree
+expect screen contains "aa.txt"
+expect screen contains "bb.txt"
+command view.toggle_tree
+
+# A second glance takes the preview over — two clicks, still two tabs.
+click 5 4
+expect pane "cc.txt"
+command view.toggle_tree
+expect screen contains "aa.txt"
+expect screen contains "cc.txt"
+expect screen lacks "bb.txt"
+command view.toggle_tree
+
+# A double-click keeps the tab, so the next glance opens beside it:
+# three tabs where two clicks left two.
+doubleclick 5 3
+expect pane "bb.txt"
+click 5 4
+expect pane "cc.txt"
+command view.toggle_tree
+expect screen contains "aa.txt"
+expect screen contains "bb.txt"
+expect screen contains "cc.txt"
+command view.toggle_tree
+
+# `view.keep_tab` does by hand what the double-click does: the glance
+# at aa.txt lands on the tab already open, so glance at nothing new —
+# keep cc.txt (the live preview) and watch the next glance open a
+# fourth tab instead of taking it over.
+command view.keep_tab
+write dd.txt content-of-dd
+command tree.refresh
+click 5 5
+expect pane "dd.txt"
+command view.toggle_tree
+expect screen contains "cc.txt"
+expect screen contains "dd.txt"
+command view.toggle_tree
+
+# The first edit keeps the tab too. Typing the edit back out makes the
+# buffer clean again — but the edit already kept the tab, so the next
+# glance opens beside dd.txt instead of taking it over. (A dirty tab is
+# refused on its own account, which is why this asserts on a clean one.)
+type Z
+expect dirty true
+key backspace
+expect dirty false
+write ee.txt content-of-ee
+command tree.refresh
+click 5 6
+expect pane "ee.txt"
+command view.toggle_tree
+expect screen contains "dd.txt"
+expect screen contains "ee.txt"

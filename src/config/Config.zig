@@ -258,6 +258,10 @@ pub const Ui = struct {
     show_whitespace: bool = false,
     bracket_rainbow: bool = false,
     tree_preview_on_arrow: bool = true,
+    /// VS Code's preview tabs: a glance (a tree click, an arrow over a
+    /// tree row) opens an italic tab the next glance takes over. Off,
+    /// every open is a tab of its own. The vim profile never has them.
+    preview_tabs: bool = true,
     syntax: bool = true,
     scrollbar: bool = true,
     /// Lines per wheel notch.

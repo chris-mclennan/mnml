@@ -48,6 +48,7 @@ pub const table = .{
     .@"view.close_others" = &closeOthers,
     .@"view.toggle_auto_equalize_splits" = &toggleAutoEqualize,
     .@"view.only" = &only,
+    .@"view.keep_tab" = &keepTab,
     .@"view.equalize_splits" = &equalizeSplits,
     .@"layout.merge_to_tabs" = &mergeToTabs,
     .@"layout.spread_to_splits" = &spreadToSplits,
@@ -155,6 +156,21 @@ fn revealActive(app: *App) CommandError!void {
     };
     const abs = path orelse return app.diag.fail(arena, "no file to reveal", .{});
     @import("git.zig").runArgv(app, try revealArgv(arena, abs, builtin.os.tag), "the file manager");
+}
+
+/// `view.keep_tab`: the active preview tab stops being one, so the
+/// next glance in this leaf opens beside it instead of taking it over
+/// — VS Code's "Keep Open" (`ctrl+k enter`), and `<leader>b k` in the
+/// vim profile, where the tree click that made a preview is the only
+/// way to get one at all.
+fn keepTab(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const id = app.active orelse return error.NoActivePane;
+    const pane = app.panes.get(id) orelse return error.NoActivePane;
+    if (!pane.preview()) return app.diag.fail(arena, "{s} is already a tab of its own", .{pane.title()});
+    pane.setPreview(false);
+    app.toast("keeping {s}", .{pane.title()});
+    app.needs_render = true;
 }
 
 /// `view.toggle_integrations_section`: the INTEGRATIONS column closes
@@ -1839,4 +1855,111 @@ test "every pane kind splits: a request pane gets a blank request beside it, a c
     try t.expectError(error.NotAnEditor, command.run(&app, .{ .static = .@"editor.goto_line" }));
     try t.expect(std.mem.endsWith(u8, app.lastToast().?, ": needs an editor pane"));
     try t.expectEqualStrings("needs an editor pane", command.reason(error.NotAnEditor));
+}
+
+// ─── preview tabs (preview-tabs) ────────────────────────────────────────
+
+fn previewWs(tmp: *std.testing.TmpDir, names: []const []const u8) ![]u8 {
+    for (names) |n| try tmp.dir.writeFile(t.io, .{ .sub_path = n, .data = "x\n" });
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    return t.allocator.dupe(u8, buf[0..n]);
+}
+
+test "preview tabs: a glance previews, the next glance takes the tab over, and an explicit open keeps it" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try previewWs(&tmp, &.{ "a.txt", "b.txt", "c.txt" });
+    defer t.allocator.free(root);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 100, .rows = 24 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const a = try std.fs.path.join(t.allocator, &.{ root, "a.txt" });
+    defer t.allocator.free(a);
+    const b = try std.fs.path.join(t.allocator, &.{ root, "b.txt" });
+    defer t.allocator.free(b);
+    const c = try std.fs.path.join(t.allocator, &.{ root, "c.txt" });
+    defer t.allocator.free(c);
+
+    // A glance: one italic tab.
+    const first = try app.openPreview(a);
+    try t.expect(app.panes.get(first).?.preview());
+    try t.expectEqualStrings(a, app.panes.editor(first).?.buf.doc.path.?);
+    try t.expectEqual(@as(usize, 1), app.panes.count());
+    // A glance at another file takes the tab over: still one tab.
+    const second = try app.openPreview(b);
+    try t.expectEqual(@as(usize, 1), app.panes.count());
+    try t.expect(app.panes.get(second).?.preview());
+    try t.expectEqualStrings(b, app.panes.editor(second).?.buf.doc.path.?);
+    // An explicit open (the picker, `:e`, the IPC `open`) is pinned and
+    // opens beside the preview.
+    const pinned = try app.openPath(c);
+    try t.expect(!app.panes.get(pinned).?.preview());
+    try t.expectEqual(@as(usize, 2), app.panes.count());
+    // An explicit open of the file the preview is showing keeps it.
+    _ = try app.openPath(b);
+    try t.expect(!app.panes.get(second).?.preview());
+    // …and with no preview left, the next glance opens a third tab.
+    _ = try app.openPreview(a);
+    try t.expectEqual(@as(usize, 3), app.panes.count());
+}
+
+test "preview tabs: an edit keeps the tab, `view.keep_tab` keeps it, and a dirty preview is never taken over" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try previewWs(&tmp, &.{ "a.txt", "b.txt", "c.txt" });
+    defer t.allocator.free(root);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 100, .rows = 24 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const a = try std.fs.path.join(t.allocator, &.{ root, "a.txt" });
+    defer t.allocator.free(a);
+    const b = try std.fs.path.join(t.allocator, &.{ root, "b.txt" });
+    defer t.allocator.free(b);
+    const c = try std.fs.path.join(t.allocator, &.{ root, "c.txt" });
+    defer t.allocator.free(c);
+
+    // `view.keep_tab` on a preview, and the refusal when there is none.
+    const kept = try app.openPreview(a);
+    try t.expect(app.panes.get(kept).?.preview());
+    try command.run(&app, .{ .static = .@"view.keep_tab" });
+    try t.expect(!app.panes.get(kept).?.preview());
+    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"view.keep_tab" }));
+
+    // An edit keeps a preview: the tab the glance opened stays behind.
+    const glanced = try app.openPreview(b);
+    try t.expect(app.panes.get(glanced).?.preview());
+    app.panes.editor(glanced).?.buf.doc.dirty = true;
+    app.keepEditedPreviews();
+    try t.expect(!app.panes.get(glanced).?.preview());
+    // Neither tab is a preview now, so the next glance opens beside them.
+    _ = try app.openPreview(c);
+    try t.expectEqual(@as(usize, 3), app.panes.count());
+}
+
+test "preview tabs: `ui.preview_tabs = false` and the vim profile open every file pinned" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try previewWs(&tmp, &.{ "a.txt", "b.txt" });
+    defer t.allocator.free(root);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 100, .rows = 24 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const a = try std.fs.path.join(t.allocator, &.{ root, "a.txt" });
+    defer t.allocator.free(a);
+    const b = try std.fs.path.join(t.allocator, &.{ root, "b.txt" });
+    defer t.allocator.free(b);
+
+    app.cfg.ui.preview_tabs = false;
+    const one = try app.openPreview(a);
+    try t.expect(!app.panes.get(one).?.preview());
+    const two = try app.openPreview(b);
+    try t.expect(!app.panes.get(two).?.preview());
+    try t.expectEqual(@as(usize, 2), app.panes.count());
+
+    // The vim profile has no preview tabs at all (Neovim gives every
+    // file its own buffer), whatever the setting says.
+    app.cfg.ui.preview_tabs = true;
+    app.input_style = .vim;
+    try t.expect(!app.previewTabs());
 }

@@ -175,7 +175,7 @@ pub const AppDriver = struct {
         const app = &cast(p).app;
         var panes: std.ArrayListUnmanaged(screen_mod.PaneStatus) = .empty;
         for (app.panes.slots.items) |*slot| if (slot.*) |*pane| {
-            try panes.append(a, .{ .title = try a.dupe(u8, pane.title()), .dirty = pane.dirty() });
+            try panes.append(a, .{ .title = try a.dupe(u8, pane.title()), .dirty = pane.dirty(), .preview = pane.preview() });
         };
         var st: screen_mod.Status = .{
             // Rust's wire words: a left-column section is the sidebar.

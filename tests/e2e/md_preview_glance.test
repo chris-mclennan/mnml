@@ -1,17 +1,25 @@
 # A glance at a markdown file takes over the last glanced-at markdown
 # tab instead of adding one; typing swaps the raw editor in, and that
 # editor stays when the next glance opens beside it.
+#
+# The glance is the tree's single click (`open` is the explicit
+# gesture, and keeps its tab — see preview_tabs.test). Rows: the menu /
+# palette bar is 0, the workspace header 1, then a.md 2, b.md 3, c.md 4.
 write a.md "# Alpha\n\nfirst\n"
 write b.md "# Bravo\n\nsecond\n"
 write c.md "# Charlie\n\nthird\n"
-open a.md
+command tree.refresh
+click 5 2
 expect screen contains "first"
-open b.md
+click 5 3
 expect screen contains "second"
+command view.toggle_tree
 expect screen lacks " a.md "
+command view.toggle_tree
 key Z
 expect screen contains "Z# Bravo"
-open c.md
+click 5 4
 expect screen contains "third"
+command view.toggle_tree
 expect screen contains " b.md "
 expect screen contains " c.md "

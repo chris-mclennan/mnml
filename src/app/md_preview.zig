@@ -421,15 +421,17 @@ test "preview tabs: a glance at another .md replaces the glanced tab in place; t
     defer testing.allocator.free(c);
     const r = try std.fs.path.join(testing.allocator, &.{ root, "r.http" });
     defer testing.allocator.free(r);
-    // A glance, then another: the same tab, now b.md.
-    const first = try app.openPath(a);
+    // A glance, then another: the same tab, now b.md. (`openPath` is
+    // the explicit gesture — a tab of its own; `openPreview` is what a
+    // tree click reaches.)
+    const first = try app.openPreview(a);
     try testing.expect(app.panes.get(first).?.md_preview.is_preview);
-    const second = try app.openPath(b);
+    const second = try app.openPreview(b);
     try testing.expectEqual(first, second);
     try testing.expectEqualStrings(b, app.panes.get(second).?.md_preview.path);
     try testing.expectEqual(@as(usize, 1), app.panes.count());
     // Glancing back at a.md replaces it again (no tab for a.md survived).
-    _ = try app.openPath(a);
+    _ = try app.openPreview(a);
     try testing.expectEqualStrings(a, app.panes.get(first).?.md_preview.path);
     // Typing swaps the editor in: an editor, never a preview — the next
     // glance opens a new preview tab beside it instead of replacing it.
@@ -437,7 +439,7 @@ test "preview tabs: a glance at another .md replaces the glanced tab in place; t
     const eid = app.active.?;
     try testing.expect(app.panes.get(eid).?.* == .editor);
     try testing.expect(app.panes.get(first) == null);
-    const third = try app.openPath(c);
+    const third = try app.openPreview(c);
     try testing.expect(third != eid);
     try testing.expect(app.panes.get(eid).?.* == .editor);
     try testing.expectEqual(@as(usize, 2), app.panes.count());
@@ -446,7 +448,7 @@ test "preview tabs: a glance at another .md replaces the glanced tab in place; t
     try command.run(&app, .{ .static = .@"markdown.preview" });
     const explicit = app.active.?;
     try testing.expect(!app.panes.get(explicit).?.md_preview.is_preview);
-    _ = try app.openPath(b);
+    _ = try app.openPreview(b);
     try testing.expect(app.panes.get(explicit).?.* == .md_preview);
     try testing.expectEqualStrings(a, app.panes.get(explicit).?.md_preview.path);
     try testing.expectEqualStrings(b, app.panes.get(third).?.md_preview.path);

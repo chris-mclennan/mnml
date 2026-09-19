@@ -150,6 +150,7 @@ otherwise. Copy what you need; leave the rest out.
         .show_whitespace = false,
         .bracket_rainbow = false,
         .tree_preview_on_arrow = true,
+        .preview_tabs = true, // VS Code's preview tabs: a tree click (or an arrow over a tree row) opens an italic tab the next glance takes over; a double-click, an edit, `view.keep_tab`, a pin or a drag keeps it. The vim profile never has them
         .syntax = true,
         .scrollbar = true,
         .wheel_lines = 3, // lines per wheel EVENT in a text body (the editor, a markdown preview, a diff — Rust's editor gain); lists move a row an event; ghostty reports a notched detent as three events

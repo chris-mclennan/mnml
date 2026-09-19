@@ -479,8 +479,20 @@ pub const Tree = struct {
         } else if (self.expanded.fetchRemove(rel)) |kv| self.gpa.free(kv.key);
     }
 
-    /// Enter / click: a file opens, a directory toggles.
+    /// Enter / a double-click: a file opens as a tab of its own, a
+    /// directory toggles. Rust's `tree_activate` pins the same way —
+    /// the arrows are what browses.
     pub fn activate(self: *Tree, app: *App, idx: usize) Allocator.Error!void {
+        return self.activateHow(app, idx, false);
+    }
+
+    /// A single left click on a file row: the file opens as a glance
+    /// (VS Code's preview tab). A directory still toggles.
+    pub fn activateGlance(self: *Tree, app: *App, idx: usize) Allocator.Error!void {
+        return self.activateHow(app, idx, true);
+    }
+
+    fn activateHow(self: *Tree, app: *App, idx: usize, glance: bool) Allocator.Error!void {
         if (idx >= self.rows.items.len) return;
         self.cursor = idx;
         const row = self.rows.items[idx];
@@ -493,7 +505,8 @@ pub const Tree = struct {
         } else {
             const rel = try app.frame.allocator().dupe(u8, row.rel);
             const abs = try app.absPath(rel);
-            _ = app.openPath(abs) catch |err| app.toast("open {s}: {s}", .{ rel, @errorName(err) });
+            const opened = if (glance) app.openPreview(abs) else app.openPath(abs);
+            _ = opened catch |err| app.toast("open {s}: {s}", .{ rel, @errorName(err) });
         }
         app.needs_render = true;
     }

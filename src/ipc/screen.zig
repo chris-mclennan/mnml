@@ -67,6 +67,10 @@ pub const Focus = enum { tree, pane, right_panel, bottom_panel };
 pub const PaneStatus = struct {
     title: []const u8,
     dirty: bool,
+    /// VS Code's preview tab (the italic name): a pane opened by a
+    /// glance, which the next glance in its leaf takes over. A host
+    /// cannot read italics out of `screen.txt`, so it reads this.
+    preview: bool = false,
 };
 
 /// Everything `status.json` reports. The App fills one per frame; nothing
@@ -111,7 +115,7 @@ pub fn writeStatusJson(w: *Io.Writer, s: Status) Io.Writer.Error!void {
         if (i > 0) try w.writeByte(',');
         try w.writeAll("{\"title\":");
         try jsonStr(w, p.title);
-        try w.print(",\"dirty\":{}}}", .{p.dirty});
+        try w.print(",\"dirty\":{},\"preview\":{}}}", .{ p.dirty, p.preview });
     }
     try w.print("],\"quit\":{}}}", .{s.quit});
 }
@@ -219,7 +223,7 @@ test "status.json matches the bytes mnml 0.2.21 writes" {
     // Captured from `mnml --headless` (target/debug, 2026-09-04) after
     // `open hello.txt` in a 60×12 screen.
     const want =
-        "{\"focus\":\"tree\",\"activePane\":0,\"activeFile\":\"/tmp/ws/hello.txt\",\"cursor\":{\"line\":1,\"col\":1},\"mode\":\"none\",\"treeCursor\":2,\"treeSelection\":\"/tmp/ws/.gitignore\",\"treeVisible\":true,\"rightPanelVisible\":false,\"rightPanelPanes\":[],\"rightPanelActiveIdx\":0,\"panes\":[{\"title\":\"hello.txt\",\"dirty\":false}],\"quit\":false}";
+        "{\"focus\":\"tree\",\"activePane\":0,\"activeFile\":\"/tmp/ws/hello.txt\",\"cursor\":{\"line\":1,\"col\":1},\"mode\":\"none\",\"treeCursor\":2,\"treeSelection\":\"/tmp/ws/.gitignore\",\"treeVisible\":true,\"rightPanelVisible\":false,\"rightPanelPanes\":[],\"rightPanelActiveIdx\":0,\"panes\":[{\"title\":\"hello.txt\",\"dirty\":false,\"preview\":false}],\"quit\":false}";
     const got = try statusJson(t.allocator, .{
         .focus = .tree,
         .active_pane = 0,
@@ -254,12 +258,12 @@ test "status.json: null activePane, several right-panel panes, a dirty pane" {
         .right_panel_visible = true,
         .right_panel_panes = &.{ 1, 3 },
         .right_panel_active_idx = 1,
-        .panes = &.{ .{ .title = "a \"q\"", .dirty = true }, .{ .title = "b", .dirty = false } },
+        .panes = &.{ .{ .title = "a \"q\"", .dirty = true, .preview = true }, .{ .title = "b", .dirty = false } },
         .quit = true,
     });
     defer t.allocator.free(got);
     try t.expectEqualStrings(
-        "{\"focus\":\"right_panel\",\"activePane\":null,\"activeFile\":\"\",\"cursor\":{\"line\":0,\"col\":0},\"mode\":\"insert\",\"treeCursor\":0,\"treeSelection\":\"\",\"treeVisible\":false,\"rightPanelVisible\":true,\"rightPanelPanes\":[1,3],\"rightPanelActiveIdx\":1,\"panes\":[{\"title\":\"a \\\"q\\\"\",\"dirty\":true},{\"title\":\"b\",\"dirty\":false}],\"quit\":true}",
+        "{\"focus\":\"right_panel\",\"activePane\":null,\"activeFile\":\"\",\"cursor\":{\"line\":0,\"col\":0},\"mode\":\"insert\",\"treeCursor\":0,\"treeSelection\":\"\",\"treeVisible\":false,\"rightPanelVisible\":true,\"rightPanelPanes\":[1,3],\"rightPanelActiveIdx\":1,\"panes\":[{\"title\":\"a \\\"q\\\"\",\"dirty\":true,\"preview\":true},{\"title\":\"b\",\"dirty\":false,\"preview\":false}],\"quit\":true}",
         got,
     );
 }
