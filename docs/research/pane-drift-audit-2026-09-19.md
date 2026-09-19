@@ -348,6 +348,7 @@ Not a backfill item; a protocol item.
 | 4 | Right-hand chip ladder | ~ → ✓ | ~ → ✓ | ~ → ✓ | ~ → ✓ | ~ → ✓ | n/a |
 | 5 | Refresh chip | ~ → ✓ | ~ → ✓ | ~ → ✓ | ~ → ✓ | ~ → ✓ | ✗ |
 | 6 | `?` chip on the header | ~ → ✓ | ~ → ✓ | ~ → ✓ | ✗ → ✓ | ✗ → ✓ | ✗ |
+| — | The header's two runs clipped against each other (D12) | ✗ → ✓ | ✗ → ✓ | ✗ → ✓ | ✗ → ✓ | ✗ → ✓ | n/a |
 | 16 | **List** scrollbar | ✗ → ✓ | n/a | ✗ → ✓ | ✓ | ✓ | n/a |
 | 17 | `Show more (N)` fold row | ✓ | n/a | ✓ | ~ → ✓ | n/a | n/a |
 | 23 | Chevrons | ~ → ✓ | n/a | ~ → ✓ | ✓ | ✓ | n/a |
@@ -378,6 +379,27 @@ pins with `expect color` rather than with the glyph's text.
 
 — one phrase, on both, where the tracker pane used to put the `⋯` at
 column 1.
+
+### D12 — found while closing D4: the header's two runs collide
+
+Adding the `?` chip made the forge pane's header four cells narrower
+on the left, and at 80 columns that was enough to turn it into
+
+```
+▌BITBUCKET PRS  (2 repos · 33 PRs)  as of 9s agohor: all   awaiting: 1      ?
+```
+
+— `author: all` with its head eaten. The bug was not the chip. Both
+panes painted one run and then the other, so whichever went second
+won the overlap; the old ladder was simply four cells narrower and
+missed. `Painter.capsHeader` now lays the ladder FIRST, against the
+title's width, and clips everything after it at the cell the ladder
+reached; `as of …` is dropped whole rather than clipped, and the count
+gives way to the ladder before the title does.
+
+Worth recording because the audit's own table would have scored the
+header `✓` on both families and missed it: the element was present
+and shared. It took looking at 80 columns after the change.
 
 ### The guards
 

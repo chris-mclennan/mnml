@@ -1137,6 +1137,14 @@ test "the pipelines tree paints the reference's columns and glyphs; the pipeline
 test "the key sheet, the row menu and the filter paint as overlays that take the click" {
     const s = try Screen.init(120, 40, acme, .{});
     defer s.deinit();
+    // The header's `?` chip is the sheet's door for the pointer — the
+    // one the tracker pane has always had and this one did not, so the
+    // only way in was the hint row's `? keys`, which is the first entry
+    // a narrow pane drops.
+    _ = try s.draw();
+    try s.click(s.frame.cols - 3, 0, .left);
+    try t.expectEqual(app_mod.Mode.help, s.rig.app.mode);
+    try s.key("esc");
     try s.key("?");
     var scr = try s.draw();
     try t.expect(has(scr, " Keys "));
