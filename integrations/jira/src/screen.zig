@@ -344,8 +344,7 @@ pub const Painter = struct {
         if (q.len > 0) return q;
         const editing = if (p.a.filter) |f| f.editing else false;
         if (!editing) return placeholder_unfocused;
-        // One cell more, for the caret that sits before it.
-        return if (p.ui.ascii) placeholder_focused_ascii ++ " " else placeholder_focused ++ " ";
+        return if (p.ui.ascii) placeholder_focused_ascii else placeholder_focused;
     }
 
     /// The caret's BYTE offset into that text, which is what the pill
@@ -364,10 +363,10 @@ pub const Painter = struct {
         const arena = p.arena;
         // The search chip IS the toolkit's filter pill, laid in the
         // toolbar's chip geometry rather than across the pane. All this
-        // has to decide is how wide it is: the pill puts its glyph two
-        // cells in, its text four in, and leaves a cell past the text
-        // for the caret.
-        const search_w: u16 = 5 + text.width(p.filterShown());
+        // has to decide is how wide it is: the pill puts its glyph one
+        // cell in and its text three, and the caret lands on the cell
+        // after the text, which the chip's own trailing cell covers.
+        const search_w: u16 = 4 + text.width(p.filterShown());
         const search_text = try arena.alloc(u8, search_w);
         @memset(search_text, ' ');
         const search_style: Style = if (a.filter != null) p.s.chip_active else p.s.chip_style;
@@ -450,11 +449,12 @@ pub const Painter = struct {
                 if (y >= p.lay.status_y -| 2) break;
             }
             if (c.pill) {
+                const editing_pill = if (p.a.filter) |f| f.editing else false;
                 try p.c.filterPill(
                     .{ .x = x, .y = y, .w = @min(w, max_x -| x), .h = 1 },
                     p.filterText(),
                     p.filterCaret(),
-                    if (p.a.filter) |f| f.editing else false,
+                    editing_pill,
                     .{ .chip = c.target },
                 );
             } else {
