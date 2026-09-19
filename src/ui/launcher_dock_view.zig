@@ -109,7 +109,6 @@ pub fn draw(ui: Ui, area: Rect, props: Props) void {
 }
 
 fn drawRow(ui: Ui, area: Rect, props: Props, bg: vaxis.Color, hover_bg: vaxis.Color) void {
-    const th = ui.theme;
     // The pin chip owns the strip's tail; items stop before it.
     const limit = pinRect(area, .bottom);
     const right_edge = if (limit.isEmpty()) area.right() else limit.x;
@@ -122,7 +121,6 @@ fn drawRow(ui: Ui, area: Rect, props: Props, bg: vaxis.Color, hover_bg: vaxis.Co
         ui.hit(cell, .{ .launcher_dock = .{ .item = @intCast(i) } });
         x += w;
     }
-    _ = th;
 }
 
 fn drawColumn(ui: Ui, area: Rect, props: Props, bg: vaxis.Color, hover_bg: vaxis.Color) void {
