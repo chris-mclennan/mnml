@@ -20,7 +20,7 @@ expect screen contains "418 I'm a teapot  ·"
 wait 4200
 expect screen lacks "hooked 418 mock"
 # The Timeline tab: the wire headers, after the hook.
-click 60 21
+click 61 21
 expect screen contains "Sent     (after directives"
 # The block scrolls: the header rows sit under the timing bars.
 key down
@@ -33,7 +33,7 @@ expect screen contains "X-Hook: from-lua"
 expect screen contains "Accept: application/json"
 # The pane's own Headers tab is untouched by the hook (the response
 # block back on Body first, so the Timeline's copy is off the screen).
-click 34 21
-click 50 7
+click 35 21
+click 51 7
 expect screen contains "Headers"
 expect screen lacks "X-Hook"

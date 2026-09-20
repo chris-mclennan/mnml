@@ -2,6 +2,13 @@
 # `split_active`): the split chips on a request pane put a blank request
 # beside it, on a cheatsheet a scratch editor — never the raw error tag
 # a toast used to spell (`Split editor right (side by side): NotAnEditor`).
+#
+# The tree goes first for the columns: every pane wears a rail now, so
+# two split request panes are a cell narrower each, and at 120 with the
+# tree open that is exactly the cell that drops the top bar from its
+# medium tier (Method / URL / Send) to its small one (Method / URL) —
+# the Send box this asserts on.
+command view.toggle_tree
 command http.new
 expect screen contains "Enter request URL"
 command view.split_right

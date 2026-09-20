@@ -22,5 +22,5 @@ command view.toggle_tree
 command term.shell
 command term.shell
 command term.shell
-expect screen contains "                                                            │                             │                             "
-expect screen lacks "                                       │                                        │                                       "
+expect screen contains "▌                                                           │▌                            │▌                            "
+expect screen lacks "▌                                      │▌                                       │▌                                      "

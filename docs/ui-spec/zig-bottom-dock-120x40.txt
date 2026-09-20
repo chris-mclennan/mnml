@@ -1,28 +1,28 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │  ● /pri…            │  prog.dbg 󰅖   󰐕                                                          󱸀        
-▌ │▌    .mnml              │ prog.dbg
- 󰍉 │       ipc-zig          │   1 let x = 1
- 󰊢 │      prog.dbg           │   2 let p = struct{a=1,b="two"}
-  │                          │   3 print "hello"
- 󰐱 │         󰐙 Add workspace  │   4 x = x + 1
- 󰎒 │                          │   5 fn f
-  │                          │   6   let y = 10
-  │                          │   7   x = x * y
-  │                          │   8 end
- 󱘣 │                          │   9 call f
- 󰢱 │                          │  10 print x
-   │                          │
-   │                          │
-   │                          │
-   │                          │
-   │──────────────────────────│
-   │ let  ·  DBG  ·  prog.d ⋮ │
-   │                          │
-   │ [F12] Definition ·       │
-   │ [Shift+F12] References · │
-   │ [Ctrl+K Ctrl+I] Hover ·  │
-  │ [F2] Rename              │
-   │                          │
+   │  ● /pri…            │  prog.dbg 󰅖   󰐕                                                          󱸀  󲀀      
+▌ │▌    .mnml              │▌prog.dbg
+ 󰍉 │       ipc-zig          │▌  1 let x = 1
+ 󰊢 │      prog.dbg           │▌  2 let p = struct{a=1,b="two"}
+  │                          │▌  3 print "hello"
+ 󰐱 │         󰐙 Add workspace  │▌  4 x = x + 1
+ 󰎒 │                          │▌  5 fn f
+  │                          │▌  6   let y = 10
+  │                          │▌  7   x = x * y
+  │                          │▌  8 end
+ 󱘣 │                          │▌  9 call f
+ 󰢱 │                          │▌ 10 print x
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │──────────────────────────│▌
+   │ let  ·  DBG  ·  prog.d ⋮ │▌
+   │                          │▌
+   │ [F12] Definition ·       │▌
+   │ [Shift+F12] References · │▌
+   │ [Ctrl+K Ctrl+I] Hover ·  │▌
+  │ [F2] Rename              │▌
+   │                          │▌
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  DIAGNOSTICS (0)                                                                                        sort: All    ×
   󰍉 / filter
@@ -36,5 +36,5 @@
 
 
 
- EDIT   prog.dbg                                      F 59% ▼0.4  󱼀 󰐎  111B  Ln 1/10 Col 1    02:32  ws   dbg
+ EDIT   prog.dbg                                      F 59% ▲0.2  󱼀 󰐎  111B  Ln 1/10 Col 1    00:36  ws   dbg
 

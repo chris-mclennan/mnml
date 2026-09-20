@@ -33,19 +33,23 @@ expect screen contains "LL"
 ex term printf RR; sleep 30
 expect screen contains "RR"
 
+# // changed (pane-rail): every pane wears a one-cell rail down its
+# left edge now, so each child's grid starts a column further in —
+# column 3, not 2.
+#
 # The lower pane has focus: its cursor cell is filled — the cursor
 # colour is the ground, so the cell is not the pane's own #1e222a.
-expect color 2 21 bg #abb2bf
+expect color 3 21 bg #abb2bf
 # The upper one is hollow: the outline, in the cursor colour, on the
 # pane's own ground. Not filled.
 expect screen contains "LL▯"
-expect color 2 2 fg #abb2bf
-expect color 2 2 bg #1e222a
+expect color 3 2 fg #abb2bf
+expect color 3 2 bg #1e222a
 
 # Click into the upper pane and the two swap — never two filled at once.
 click 10 5
 expect pane "printf LL"
-expect color 2 2 bg #abb2bf
+expect color 3 2 bg #abb2bf
 expect screen contains "RR▯"
-expect color 2 21 fg #abb2bf
-expect color 2 21 bg #1e222a
+expect color 3 21 fg #abb2bf
+expect color 3 21 bg #1e222a

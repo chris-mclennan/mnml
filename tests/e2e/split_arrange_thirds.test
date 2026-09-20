@@ -24,10 +24,10 @@ expect screen lacks "│"
 
 # Two: halves, the divider at column 60.
 command term.shell
-expect screen contains "                                                            │                                                           "
+expect screen contains "▌                                                           │▌                                                          "
 
 # Three: thirds, the dividers at columns 39 and 80 — not 60 and 90.
 command term.shell
-expect screen contains "                                       │                                        │                                       "
-expect screen lacks "                                                            │                                                           "
-expect screen lacks "                                                            │                             │                             "
+expect screen contains "▌                                      │▌                                       │▌                                      "
+expect screen lacks "▌                                                           │▌                                                          "
+expect screen lacks "▌                                                           │▌                            │▌                            "

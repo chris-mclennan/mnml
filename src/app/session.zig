@@ -29,6 +29,7 @@ const layout_mod = @import("layout.zig");
 const Layout = layout_mod.Layout;
 const pty_pane = @import("pty_pane.zig");
 const md_preview = @import("md_preview.zig");
+const pane_accent = @import("pane_accent.zig");
 const hooks = @import("../core/hooks.zig");
 const side_mod = @import("side.zig");
 const Section = @import("../ui/activity_bar.zig").Section;
@@ -82,7 +83,9 @@ pub const Pane = struct {
     argv: []const []const u8 = &.{},
     cwd: ?[]const u8 = null,
     label: ?[]const u8 = null,
-    /// pty: the identity strip's colour, a palette name (`colors`).
+    /// The pane rail's colour, a palette name (`ui/accent_color.zig`).
+    /// // changed (pane-rail): every kind carries one now, not just a
+    /// pty — a restored pane comes back the colour it was.
     accent: ?[]const u8 = null,
 };
 
@@ -255,9 +258,13 @@ pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
                     .folds = folds.items,
                     .marks = marks.items,
                     .pinned = e.pinned,
+                    // // changed (pane-rail): the pane's rail colour,
+                    // so a restored window comes back the colour it
+                    // was rather than re-rolling off the ladder.
+                    .accent = app.panes.accent(@intCast(i)),
                 };
             },
-            .md_preview => |*m| .{ .kind = .md_preview, .path = m.path },
+            .md_preview => |*m| .{ .kind = .md_preview, .path = m.path, .accent = app.panes.accent(@intCast(i)) },
             .pty => |*pt| blk: {
                 // Runner and task ptys are re-created by their owners.
                 if (pt.kind != .shell and pt.kind != .command) break :blk null;
@@ -580,6 +587,16 @@ const OpenError = Allocator.Error || error{Skipped};
 /// `opened` is what this restore has brought back so far: a file already
 /// among them was saved from two windows, and gets its second one.
 fn openSaved(app: *App, sp: Pane, opened: []const ?PaneId) OpenError!?PaneId {
+    const id = try openSavedPane(app, sp, opened);
+    // // changed (pane-rail): the colour the pane wore is put back over
+    // the slot `PaneStore.add` just handed it. A pty holds its own
+    // (`accent_color` on the pane, passed to `open`), so this is for
+    // every other kind.
+    if (id) |got| if (sp.kind != .pty) if (sp.accent) |name| try app.panes.setAccent(got, name);
+    return id;
+}
+
+fn openSavedPane(app: *App, sp: Pane, opened: []const ?PaneId) OpenError!?PaneId {
     switch (sp.kind) {
         .editor => {
             if (sp.path.len == 0) return null;
@@ -1037,6 +1054,45 @@ test "session: the session colours and a pty pane's accent ride in the file and 
             else => {},
         };
         try t.expectEqualStrings("red", found orelse return error.TestUnexpectedResult);
+    }
+}
+
+test "session: an editor's rail colour rides in the file too, and a pane picked out of order keeps the one it had" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "a.txt", .data = "one\n" });
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "b.txt", .data = "two\n" });
+    const a = try f.abs("a.txt");
+    defer t.allocator.free(a);
+    const b = try f.abs("b.txt");
+    defer t.allocator.free(b);
+    {
+        var app = try f.app();
+        defer app.deinit();
+        // Two editors off the ladder, then the second one picked: the
+        // pick is the interesting one, because a restore that re-rolled
+        // off the ladder would hand it green's neighbour again.
+        const ida = try app.openPath(a);
+        const idb = try app.openPath(b);
+        try t.expectEqualStrings("green", pane_accent.nameOf(&app, ida).?);
+        try pane_accent.setName(&app, idb, "purple");
+        try save(&app);
+    }
+    {
+        var app = try f.app();
+        defer app.deinit();
+        try restore(&app);
+        try t.expect(app.session.restored);
+        var seen: [2]?[]const u8 = .{ null, null };
+        var n: usize = 0;
+        for (app.panes.slots.items, 0..) |*slot, i| if (slot.*) |*p| {
+            if (p.* != .editor) continue;
+            if (n < seen.len) seen[n] = pane_accent.nameOf(&app, @intCast(i));
+            n += 1;
+        };
+        try t.expectEqual(@as(usize, 2), n);
+        try t.expectEqualStrings("green", seen[0] orelse return error.TestUnexpectedResult);
+        try t.expectEqualStrings("purple", seen[1] orelse return error.TestUnexpectedResult);
     }
 }
 

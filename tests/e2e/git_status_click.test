@@ -13,10 +13,10 @@ write b.txt "b\n"
 command git.status_pane
 wait 800
 expect screen contains "▶ ? a.txt"
-click 40 6
+click 41 6
 expect screen contains "▶ ? b.txt"
 expect screen lacks "▶ ? a.txt"
-click 33 3
+click 34 3
 wait 1500
 expect screen contains "staged b.txt"
 expect screen contains "Staged changes (1)"
@@ -24,15 +24,15 @@ expect screen contains "Unstaged changes (1)"
 # The cursor keeps its flat index, which is now the staged row (y 8:
 # Unstaged header, a.txt, blank, Staged header, b.txt).
 expect screen contains "▶ A b.txt"
-click 40 5
+click 41 5
 expect screen contains "▶ ? a.txt"
 # `u` on an unstaged row only says so.
-click 35 3
+click 36 3
 wait 300
 expect screen contains "not staged"
-click 40 8
+click 41 8
 expect screen contains "▶ A b.txt"
-click 35 3
+click 36 3
 wait 1500
 expect screen contains "unstaged b.txt"
 expect screen contains "Unstaged changes (2)"

@@ -1,40 +1,40 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │ DEBUG                  + │  prog.dbg 󰅖   󰐕                       │  Debug 󰅖   󰐕                         
-  │  󰍉 / filter              │ prog.dbg                                   │  󰐊   󰆷   󰆹   󰆸   󰜉   󰓛
-   │                          │  󰐊   󰆷   󰆹   󰆸   󰜉   󰓛                     │ ── started prog.dbg ──
- 󰍉 │▌● prog.dbg:4 · main      │   1 let x = 1  x = 1                       │ hello
-   │  VARIABLES (4)          │   2 let p = struct{a=1,b="two"}  p = {a=1, │
- 󰊢 │  Locals                 │   3 print "hello"                          │
-   │     x: int = 1           │▶  4 x = x + 1  x = 1                       │
-▌ │    p: struct = {a=1, b=…│   5 f╭────────────────────────────────────────────────────────────╮
-   │  Globals                │   6  │x: int = 1                                                  │
- 󰐱 │     x: int = 1           │   7  │Locals · debugger value · right-click the gutter: breakpoin…│
-   │    p: struct = {a=1, b=…│   8 e╰────────────────────────────────────────────────────────────╯
- 󰎒 │                          │   9 call f                                 │
-   │  WATCH (0)              │  10 print x                                │
-  │     no watches — w adds …│                                            │
-   │                          │                                            │
-  │  CALL STACK (1)         │                                            │
-   │   ● thread main          │                                            │
-  │   ▶ prog.dbg:4  main     │                                            │
-   │                          │                                            │
- 󱘣 │  BREAKPOINTS (1)        │                                            │
-   │   [x] prog.dbg:4         │                                            │
- 󰢱 │   [ ] All errors         │                                            │
-   │   [x] Uncaught errors    │                                            │
-   │                          │                                            │
-   │                          │                                            │
-   │                          │                                            │
-   │                          │                                            │
-   │                          │                                            │
-   │                          │                                            │
-   │──────────────────────────│                                            │
-   │ x: int = 1             ⋮ │                                            │
-   │                          │                                            │
-   │ Locals · debugger value  │                                            │
-   │ · right-click the        │                                            │
-   │ gutter: breakpoints      │                                            │
-  │                          │                                            │
-   │                          │                                            │ > expression — Tab completes, ↑↓ history
- VIEW  [no file]                                                              F 57% ▲1.0  󱼀 󰐎    00:52  ws   —
+   │ DEBUG                  + │  prog.dbg 󰅖   󰐕             󱸀  󲀀       │  Debug 󰅖   󰐕                󱸀  󲀀      
+  │  󰍉 / filter              │▌prog.dbg                                   │▌  󰐊   󰆷   󰆹   󰆸   󰜉   󰓛
+   │                          │▌ 󰐊   󰆷   󰆹   󰆸   󰜉   󰓛                     │▌ ── started prog.dbg ──
+ 󰍉 │▌● prog.dbg:4 · main      │▌  1 let x = 1  x = 1                       │▌ hello
+   │  VARIABLES (4)          │▌  2 let p = struct{a=1,b="two"}  p = {a=1, │▌
+ 󰊢 │  Locals                 │▌  3 print "hello"                          │▌
+   │     x: int = 1           │▶  4 x = x + 1  x = 1                       │▌
+▌ │    p: struct = {a=1, b=…│▌  5 f╭────────────────────────────────────────────────────────────╮
+   │  Globals                │▌  6  │x: int = 1                                                  │
+ 󰐱 │     x: int = 1           │▌  7  │Locals · debugger value · right-click the gutter: breakpoin…│
+   │    p: struct = {a=1, b=…│▌  8 e╰────────────────────────────────────────────────────────────╯
+ 󰎒 │                          │▌  9 call f                                 │▌
+   │  WATCH (0)              │▌ 10 print x                                │▌
+  │     no watches — w adds …│▌                                           │▌
+   │                          │▌                                           │▌
+  │  CALL STACK (1)         │▌                                           │▌
+   │   ● thread main          │▌                                           │▌
+  │   ▶ prog.dbg:4  main     │▌                                           │▌
+   │                          │▌                                           │▌
+ 󱘣 │  BREAKPOINTS (1)        │▌                                           │▌
+   │   [x] prog.dbg:4         │▌                                           │▌
+ 󰢱 │   [ ] All errors         │▌                                           │▌
+   │   [x] Uncaught errors    │▌                                           │▌
+   │                          │▌                                           │▌
+   │                          │▌                                           │▌
+   │                          │▌                                           │▌
+   │                          │▌                                           │▌
+   │                          │▌                                           │▌
+   │                          │▌                                           │▌
+   │──────────────────────────│▌                                           │▌
+   │ x: int = 1             ⋮ │▌                                           │▌
+   │                          │▌                                           │▌
+   │ Locals · debugger value  │▌                                           │▌
+   │ · right-click the        │▌                                           │▌
+   │ gutter: breakpoints      │▌                                           │▌
+  │                          │▌                                           │▌
+   │                          │▌                                           │▌ > expression — Tab completes, ↑↓ history
+ VIEW  [no file]                                                              F 59% ▲0.2  󱼀 󰐎    00:37  ws   —
 

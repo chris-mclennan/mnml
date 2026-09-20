@@ -7,11 +7,11 @@ type "// dirty"
 expect dirty true
 key ctrl+f
 type alpha
-expect screen contains " Find "
+expect screen contains "▌Find "
 key ctrl+s
 expect dirty false
 expect file alpha.zig contains "// dirty"
-expect screen contains " Find "
+expect screen contains "▌Find "
 key esc
 type "!"
 expect dirty true

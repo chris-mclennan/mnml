@@ -1,0 +1,18 @@
+# An editor wears the rail too — in its gutter, so nothing moves.
+#
+# A terminal's grid owns its first column, so its body starts one cell
+# in. An editor's does not: the gutter opens with the sign column, which
+# is blank unless a diagnostic or a decoration is on that line, so the
+# rail goes in that cell (`pane_rail.drawOver`). The line numbers and
+# the text stay on the screen column they were on — the row below reads
+# `▌  1 fn main…`, the rail and then the gutter exactly as it was.
+command view.toggle_tree
+write main.rs "fn main() {}\nlet x = 1;\n"
+open main.rs
+expect screen contains "fn main"
+
+# The rail in the gutter's first cell, the number right behind it.
+expect screen contains "▌  1 fn main"
+expect screen contains "▌  2 let x = 1;"
+# In a palette colour — the first pane open takes the ladder's green.
+expect color 0 2 fg #98c379

@@ -43,6 +43,8 @@ const ui_menu_bar = @import("../ui/menu_bar.zig");
 const bufferline = @import("../ui/bufferline.zig");
 const brand = @import("../ui/brand.zig");
 const side_strip = @import("../ui/side_strip.zig");
+const pane_rail = @import("../ui/pane_rail.zig");
+const pane_accent = @import("pane_accent.zig");
 const welcome = @import("../ui/welcome.zig");
 const keymap = @import("../core/keymap.zig");
 const update = @import("update.zig");
@@ -1605,8 +1607,22 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
 /// where the rect came from. // changed (bottom-dock): lifted out of
 /// `drawBody` so the dock paints a hosted pane the same way a leaf
 /// does; a docked pane is a leaf like any other, minus the split tree.
-pub fn drawPaneContent(app: *App, ui: Ui, id: PaneId, rect: Rect) Allocator.Error!void {
+pub fn drawPaneContent(app: *App, ui: Ui, id: PaneId, full_rect: Rect) Allocator.Error!void {
     const pane = app.panes.get(id) orelse return;
+    // // changed (pane-rail): one rule for every kind — the pane's
+    // colour goes down its first column and its body starts one cell
+    // in (`ui/pane_rail.zig`). The editor is the one kind that keeps
+    // the whole rect: its gutter opens with a sign column that is
+    // blank on most lines, so the rail goes into that cell after the
+    // pane has painted (`pane_rail.drawOver`) and nothing on screen
+    // moves. With line numbers off there is no gutter to share and
+    // the editor insets like everything else.
+    const rail = pane_accent.railColorOf(app, id, ui.theme);
+    const shares_gutter = pane.* == .editor and app.cfg.ui.line_numbers;
+    const inset = rail != null and !shares_gutter;
+    const rect = pane_rail.body(full_rect, inset);
+    if (rail) |c| if (inset) pane_rail.draw(ui, full_rect, c);
+    defer if (rail) |c| if (shares_gutter) pane_rail.drawOver(ui, full_rect, c);
     switch (pane.*) {
         .editor => |*e| try drawEditor(app, ui, id, e, rect),
         .outline => |*o| {
@@ -1714,17 +1730,10 @@ fn drawPty(app: *App, ui: Ui, id: PaneId, p: *pty_pane.PtyPane, rect: Rect) Allo
         .code => |c| ui.fmt("[exited {d}] — any key closes", .{c}),
         .signal => |sg| ui.fmt("[killed by signal {d}] — any key closes", .{sg}),
     } else null;
-    // colors: the identity strip — a one-cell `▌` down the left edge in
-    // the pane's accent (Rust `pty_view.rs` #1133); a shell has none.
-    var body = rect;
-    if (pty_pane.accentOf(app, p, ui.theme)) |accent| if (rect.w >= 2) {
-        const bar = Rect.init(rect.x, rect.y, 1, rect.h);
-        ui.fill(bar, ui.theme.bg);
-        const glyph = if (ui.ascii) list_panel.marker_ascii else list_panel.marker_glyph;
-        var y: u16 = 0;
-        while (y < rect.h) : (y += 1) _ = ui.putStr(rect.x, rect.y + y, 1, glyph, Theme.withFg(ui.theme.bg, accent));
-        body = Rect.init(rect.x + 1, rect.y, rect.w - 1, rect.h);
-    };
+    // // changed (pane-rail): the rail is painted by `drawPaneContent`
+    // for every kind, and the rect that lands here has already had its
+    // column taken off. What the child sees is exactly this rect.
+    const body = rect;
     p.fit(body.w, body.h);
     try p.grid.update(app.gpa, p.session.terminal());
     const cursor = pty_view.draw(ui, body, &p.grid, .{
@@ -3022,7 +3031,9 @@ test "overlays paint over the panes and win the hit test; the find bar docks at 
     for ("alpha") |c| try app.handle(.{ .key = app_mod.Key.char(c) });
     const with_bar = try screenText(&app);
     defer t.allocator.free(with_bar);
-    try t.expect(std.mem.indexOf(u8, with_bar, " Find ") != null);
+    // The find bar docks inside the pane, so the rail takes the cell
+    // its label used to be padded with: ` Find ` reads `▌Find `.
+    try t.expect(std.mem.indexOf(u8, with_bar, "▌Find ") != null);
     try t.expect(std.mem.indexOf(u8, with_bar, "alpha") != null);
     try t.expect(std.mem.indexOf(u8, with_bar, "match 1/2") != null);
     try t.expectEqual(@as(usize, 8), app.pane_rows);

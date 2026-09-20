@@ -22,18 +22,18 @@ expect screen contains "not sent yet · press `r` to fire"
 expect screen contains "┌ AI ─"
 expect screen contains "click here to ask a custom question   · `a` quick debug"
 # The tabs by click: Params (a table), Headers (the header lines), Auth.
-click 36 7
+click 37 7
 expect screen contains "│  ━━━━━━"
 expect screen contains "│ Name"
 expect screen contains "+ Add row"
-click 50 7
+click 51 7
 # Headers is a table too: the name and value in their cells.
 expect screen contains "│ Accept"
 expect screen contains "│ application/json"
-click 58 7
+click 59 7
 expect screen contains "Current:  (no Authorization header"
 expect screen contains "+ Set Bearer token…"
-click 43 7
+click 44 7
 expect screen contains "│          ━━━━"
 # The send: the mock lands as the response — the status title on the
 # Response border, the header count on its strip, the type chip, the
@@ -49,13 +49,13 @@ expect screen contains "│ 1 {"
 expect screen contains "\"teapot\": true"
 expect screen contains "⚡  AI"
 # The response tabs by click: Headers, Timeline, back to Body.
-click 42 21
+click 43 21
 expect screen contains "Content-Type: application/json"
-click 60 21
+click 61 21
 expect screen contains "Wait     (connect + TLS + send + headers received)"
 expect screen contains "Total    "
-click 34 21
+click 35 21
 expect screen contains "│ 1 {"
 # The `[A ▥ ▤]` chip cycles the orientation.
-click 113 6
+click 114 6
 expect screen contains "layout: vertical"

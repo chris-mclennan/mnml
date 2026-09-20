@@ -4,7 +4,7 @@ write a.txt "alpha\nbravo\ncharlie\n"
 open a.txt
 command editor.use_vim
 
-expect screen contains "   3 charlie"
+expect screen contains "▌  3 charlie"
 expect screen lacks "   4 "
 key G
 expect screen contains "Ln 3/3"

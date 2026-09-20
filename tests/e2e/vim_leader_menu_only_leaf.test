@@ -7,13 +7,13 @@
 write b.zig "const std = @import(\"std\");\n"
 open b.zig
 command editor.use_vim
-expect screen contains "   1 const"
+expect screen contains "▌  1 const"
 
 type " n"
-expect screen lacks "   1 const"
+expect screen lacks "▌  1 const"
 expect screen lacks "no active find"
 type " n"
-expect screen contains "   1 const"
+expect screen contains "▌  1 const"
 type x
 expect dirty true
 type " w"

@@ -177,7 +177,9 @@ test "a script pane renders its rows, a click reaches on_hit, a key reaches on_k
     try app.render();
     const txt = try screen_mod.toTestText(t.allocator, &app.screen);
     defer t.allocator.free(txt);
-    try t.expect(std.mem.indexOf(u8, txt, "NOTES 40x") != null);
+    // 40 columns less the rail's: a script pane insets for it like
+    // any other, and its `render` is handed the width it actually has.
+    try t.expect(std.mem.indexOf(u8, txt, "NOTES 39x") != null);
     try t.expect(std.mem.indexOf(u8, txt, "- alpha") != null);
     try t.expect(std.mem.indexOf(u8, txt, "- beta") != null);
     // The hit map carries the segment ids; a click on "beta" reaches on_hit.

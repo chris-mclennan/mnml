@@ -1,40 +1,40 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │ DEBUG                  + │  prog.dbg 󰅖   󰐕                                                                   
-  │  󰍉 / filter              │ prog.dbg
+   │ DEBUG                  + │  prog.dbg 󰅖   󰐕                                                          󱸀  󲀀      
+  │  󰍉 / filter              │▌prog.dbg
    │                          │◐  1 let x = 1
- 󰍉 │ ○ no session             │   2 let p = struct{a=1,b="two"}
+ 󰍉 │ ○ no session             │▌  2 let p = struct{a=1,b="two"}
    │  VARIABLES (0)          │◆  3 print "hello"
  󰊢 │     no session — F5 star…│●  4 x = x + 1
-   │                          │   5 fn f
-▌ │  WATCH (0)              │   6   let y = 10
-   │     no watches — w adds …│   7   x = x * y
- 󰐱 │                          │   8 end
+   │                          │▌  5 fn f
+▌ │  WATCH (0)              │▌  6   let y = 10
+   │     no watches — w adds …│▌  7   x = x * y
+ 󰐱 │                          │▌  8 end
    │  CALL STACK (0)         │○  9 call f
- 󰎒 │     no session           │  10 print x
-   │                          │
-  │  BREAKPOINTS (4)        │
-   │┌ Breakpoint ──────────┐x…│
-  ││   Go to line        │h…│
-   ││   Disable           │  │
-  ││──────────────────────│  │
-   ││   Edit condition…   │  │
- 󱘣 ││   Edit hit count…   │  │
-   ││   Edit log message… │  │
- 󰢱 ││──────────────────────│  │
-   ││   Remove            │  │
-   ││                      │  │
-   │└──────────────────────┘  │
-   │                          │
-   │                          │
-   │                          │
-   │                          │
-   │──────────────────────────│
-   │ call  ·  DBG  ·  prog. ⋮ │
-   │                          │
-   │ [gd] Definition · [gr]   │
-   │ References · [K] Hover · │
-   │ [F2] Rename              │
-  │                          │
-   │                          │
- TREE   prog.dbg                                      F 57% ▲1.0  󱼀 󰐎  111B  Ln 9/10 Col 1    00:52  ws   dbg
+ 󰎒 │     no session           │▌ 10 print x
+   │                          │▌
+  │  BREAKPOINTS (4)        │▌
+   │┌ Breakpoint ──────────┐x…│▌
+  ││   Go to line        │h…│▌
+   ││   Disable           │  │▌
+  ││──────────────────────│  │▌
+   ││   Edit condition…   │  │▌
+ 󱘣 ││   Edit hit count…   │  │▌
+   ││   Edit log message… │  │▌
+ 󰢱 ││──────────────────────│  │▌
+   ││   Remove            │  │▌
+   ││                      │  │▌
+   │└──────────────────────┘  │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │──────────────────────────│▌
+   │ call  ·  DBG  ·  prog. ⋮ │▌
+   │                          │▌
+   │ [F12] Definition ·       │▌
+   │ [Shift+F12] References · │▌
+   │ [Ctrl+K Ctrl+I] Hover ·  │▌
+  │ [F2] Rename              │▌
+   │                          │▌
+ TREE   prog.dbg                                      F 59% ▲0.2  󱼀 󰐎  111B  Ln 9/10 Col 1    00:36  ws   dbg
 

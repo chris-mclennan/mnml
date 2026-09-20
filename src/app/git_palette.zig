@@ -2756,7 +2756,13 @@ test "one repo: no accent anywhere — the pill, the panes and the tree paint as
     const pill = pillRect(app) orelse return error.TestUnexpectedResult;
     try testing.expectEqualStrings(" ", app.screen.readCell(pill.x - 1, pill.y).?.char.grapheme);
     const pane = paneRect(app, app.active.?) orelse return error.TestUnexpectedResult;
-    try testing.expect(!std.mem.eql(u8, app.screen.readCell(pane.x, pane.y + 1).?.char.grapheme, "\u{258c}"));
+    // // changed (pane-rail): the pane's left column IS a rail now —
+    // every pane has one — but it is the pane's own slot off the
+    // shared ladder, not a repo accent. One repo has nothing to tell
+    // apart, so no repo colour reaches it.
+    const edge = app.screen.readCell(pane.x, pane.y + 1).?;
+    try testing.expectEqualStrings("\u{258c}", edge.char.grapheme);
+    try testing.expect(repoAccent(app, 0) == null);
     try app.handle(.{ .mouse = .{ .x = pill.x + 1, .y = pill.y, .kind = .press, .button = .right } });
     try testing.expect(app.overlay == .menu);
     try testing.expectEqualStrings("Repos", app.overlay.menu.title);

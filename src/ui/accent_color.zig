@@ -32,6 +32,27 @@ pub fn auto(index: usize) []const u8 {
     return palette[index % palette.len];
 }
 
+/// The slot a newly-opened thing takes: the first palette colour no
+/// live thing is wearing, so two panes open at once are never the same
+/// colour. `taken` is what the live ones wear (nulls and names outside
+/// the palette ignored); once every colour is spoken for the ladder
+/// cycles on `nth`, which the caller counts however it likes. A colour
+/// a closed pane gave back is free again on the next call — the whole
+/// reason this asks the live set instead of a counter.
+pub fn firstFree(taken: []const ?[]const u8, nth: usize) []const u8 {
+    for (palette) |name| {
+        var used = false;
+        for (taken) |t| if (t) |got| {
+            if (std.mem.eql(u8, got, name)) {
+                used = true;
+                break;
+            }
+        };
+        if (!used) return name;
+    }
+    return auto(nth);
+}
+
 /// The palette's own literal for `name` (so a caller can keep it
 /// without owning bytes), or null for `none` / an unknown name.
 pub fn canonical(name: []const u8) ?[]const u8 {
@@ -108,4 +129,19 @@ test "none and an unknown name resolve to nothing; auto cycles the palette in or
     try testing.expectEqualStrings("pink", auto(7));
     try testing.expectEqualStrings("green", auto(8));
     try testing.expectEqualStrings("yellow", auto(10));
+}
+
+test "firstFree hands out the first colour nobody is wearing, reuses what was given back, and cycles when the ladder runs out" {
+    try testing.expectEqualStrings("green", firstFree(&.{}, 0));
+    try testing.expectEqualStrings("blue", firstFree(&.{"green"}, 1));
+    // A gap is filled before the ladder moves on.
+    try testing.expectEqualStrings("blue", firstFree(&.{ "green", "yellow" }, 2));
+    // Nulls and names outside the palette hold nothing.
+    try testing.expectEqualStrings("green", firstFree(&.{ null, "mauve", null }, 0));
+    // Every colour taken: the ladder wraps on the caller's count.
+    const all = [_]?[]const u8{ "green", "blue", "yellow", "orange", "red", "purple", "cyan", "pink" };
+    try testing.expectEqualStrings("green", firstFree(&all, 8));
+    try testing.expectEqualStrings("blue", firstFree(&all, 9));
+    // A closed pane's colour is free again.
+    try testing.expectEqualStrings("blue", firstFree(&.{ "green", null, "yellow" }, 3));
 }
