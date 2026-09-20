@@ -274,6 +274,7 @@ pub const rows = [_]RowSpec{
     .{ .path = "http.collection_root", .label = "HTTP collection root", .section = .integrations, .scope = .home },
     .{ .path = "marketplace.enabled", .label = "Marketplace", .section = .integrations, .scope = .home },
     .{ .path = "session.restore", .label = "Restore session on open", .section = .integrations, .scope = .home },
+    .{ .path = "integrations.arrange", .label = "New pane sizing", .section = .integrations, .scope = .home },
 };
 
 pub const reset_label = "Reset all to defaults";

@@ -570,6 +570,17 @@ otherwise. Copy what you need; leave the rest out.
         .auto_update_git = false,
         .open_as = .split, // .split (a mounted integration opens BESIDE the active pane, side by side — the Rust behaviour) | .tab (another tab in the active leaf)
         .equalize_on_open = true, // after an integration split, even the splits out whatever ui.auto_equalize_splits says
+        // How a pane that opens as a SPLIT sizes itself — every such
+        // path, not only an integration's: terminals and the session
+        // panes go through the same rule (src/app/arrange.zig).
+        //   .context — an empty editor area takes the pane full, and a
+        //     split evens out every sibling along the new split's axis
+        //     (three panes are thirds, four are quarters). A stack
+        //     across that axis keeps the proportions it was dragged to.
+        //   .fixed — the old behaviour: the new pane halves the active
+        //     one and nothing else moves (an integration's
+        //     equalize_on_open still applies, a terminal's does not).
+        .arrange = .context,
         // Folders the INTEGRATIONS section's Dev tab scans: every
         // subfolder with a build.zig and a manifest.zon beside it is an
         // integration in development (Build / Install / Rebuild +
