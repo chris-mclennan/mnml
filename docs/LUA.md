@@ -86,6 +86,16 @@ Past it the call is aborted with `mnml: script budget exceeded`; the script
 sees it as an error, the user as a toast, and the editor keeps running.
 `while true do end` in an `init.lua` costs one toast.
 
+The 20 ms is the SHIPPED build's, and it is a frame budget. Most of what
+it bounds is host code — `mnml.commands()` walks eleven hundred command
+specs and builds a table per row — and unoptimized host code is not a
+little slower but much slower: the `recent-commands` example below needs
+under 20 ms in a shipped build and over 400 ms in a Debug one. So a Debug
+build gets a runaway budget (2 s) rather than a frame budget: long enough
+that no finite script trips it, short enough that `while true do end`
+still costs one toast. A script that fits in a release build fits in a
+debug one.
+
 A script that trips it wears a `⏱ N` chip on its SCRIPTS row — the count for
 this session — so a slow script is visible before it is annoying.
 `script.doctor` spells the same count out.

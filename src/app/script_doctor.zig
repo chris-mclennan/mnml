@@ -33,7 +33,14 @@ pub const title = "script.doctor";
 pub fn report(app: *App, arena: Allocator) Allocator.Error![]const u8 {
     var out: std.ArrayListUnmanaged(u8) = .empty;
     try out.print(arena, "mnml script doctor — script api {d}\n", .{manifest_mod.api_version});
-    try out.print(arena, "budget {d} ms per entry, checked every {d} instructions\n", .{ lua_mod.budget_ms, lua_mod.hook_count });
+    // The frame budget is the promise a script author reads, and it is
+    // the shipped build's (`scripting/lua.zig`). A Debug build runs a
+    // runaway budget instead, and the row says so rather than quietly
+    // reporting a figure no shipped build has.
+    if (lua_mod.budget_ms == lua_mod.frame_budget_ms)
+        try out.print(arena, "budget {d} ms per entry, checked every {d} instructions\n", .{ lua_mod.frame_budget_ms, lua_mod.hook_count })
+    else
+        try out.print(arena, "budget {d} ms per entry, checked every {d} instructions — {d} ms in this debug build\n", .{ lua_mod.frame_budget_ms, lua_mod.hook_count, lua_mod.budget_ms });
     try writeSources(app, arena, &out);
     const init_state = app.script();
     try out.appendSlice(arena, "\ninit.lua\n");

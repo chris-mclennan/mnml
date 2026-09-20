@@ -2321,6 +2321,39 @@ test "mnml.commands: every command, narrowed by the query, each row carrying its
     try testing.expectEqual(@as(i32, 0), lua.L.getTop());
 }
 
+test "a picker source that blows the script budget opens on (no matches), and the toast is the only thing that says why" {
+    // The shape the shipped `lua/recent-commands` example hit when the
+    // budget was a flat 20 ms: `items` raised `mnml: script budget
+    // exceeded`, `callItems` turned the failed call into an empty list,
+    // and the picker painted `(no matches)` — a source with nothing to
+    // show and a source that ran out of time look identical in the list.
+    // The toast is the whole difference, so it is asserted here.
+    //
+    // Forced with a loop that cannot finish rather than with a slow one,
+    // so what is pinned is the outcome, not how fast this machine is.
+    // The budget figure itself is pinned in `lua.zig`, and the shipped
+    // example's real headroom by `lua_example_recent_commands.test`
+    // against the built binary.
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 20 });
+    defer app.deinit();
+    const lua = app.script();
+    try lua.runString(
+        \\mnml.picker.source{ id = "runaway", title = "Runaway", items = function() while true do end end }
+    );
+    // The open comes back as an error too: the deadline is armed once,
+    // at the outermost call, so once `items` has spent it the chunk that
+    // called `open` trips at its next hook as well.
+    lua.runString("mnml.picker.open('runaway')") catch {};
+    try testing.expect(app.overlay == .picker);
+    try testing.expectEqual(@as(usize, 0), app.overlay.picker.labels.len);
+    var said_why = false;
+    for (app.toasts.items) |t| {
+        if (std.mem.indexOf(u8, t.text, "budget") != null) said_why = true;
+    }
+    try testing.expect(said_why);
+    try testing.expect(lua.budget_hits >= 1);
+}
+
 test "mnml.config.get walks structs, maps, optionals and Dynamic; mnml.workspace" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
