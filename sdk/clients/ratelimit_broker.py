@@ -36,19 +36,56 @@ ratelimit state file -- and, when that path is too long for a
 `sockaddr_un`, `/tmp/mnml-broker-<service>.sock`, which both ends
 derive from the service alone so they still meet. `MNML_BROKER=0`
 turns it off entirely.
+
+The `/tmp` fallback is the DERIVED path's only. A `<SERVICE>_BROKER_SOCKET`
+set by hand is used exactly as set -- a socket somewhere other than the
+place you named would be worse than none -- so one past the limit raises
+`BrokerPathTooLong`, naming the variable and both lengths. The two
+callers below catch it, warn once and fall through to the file bucket,
+because a misconfigured broker must still not be a dependency.
 """
 
 import json
 import os
 import socket
+import sys
+
+# What this platform's `sockaddr_un.sun_path` holds, NUL included --
+# and, one fewer, the longest path that can go in it. The Zig side's
+# `broker.os_path_len` / `os_max_path_len`, same numbers.
+OS_PATH_LEN = 104 if sys.platform == "darwin" else 108
+OS_MAX_PATH_LEN = OS_PATH_LEN - 1
+
+# How long a DERIVED path may be before the short /tmp name is used
+# instead. Under OS_MAX_PATH_LEN and the same on every platform,
+# because both ends derive it independently and have to agree.
+MAX_DERIVED_PATH_LEN = 100
+
+
+class BrokerPathTooLong(ValueError):
+    """`<SERVICE>_BROKER_SOCKET` names a path no `sockaddr_un` holds."""
+
+
+def _too_long(service: str, path: str) -> BrokerPathTooLong:
+    return BrokerPathTooLong(
+        f"socket path is {len(path)} bytes; the OS allows {OS_MAX_PATH_LEN}"
+        f" -- set {service.upper()}_BROKER_SOCKET shorter or unset it"
+        " for the default")
 
 
 def broker_socket(service: str) -> str:
-    """The socket path for a service, or "" when the broker is off."""
+    """The socket path for a service, or "" when the broker is off.
+
+    Raises BrokerPathTooLong when an explicit override names a path a
+    `sockaddr_un` cannot hold -- a connect to it fails as a bare OSError
+    that reads exactly like "no broker running", and the reader then
+    goes looking for a process instead of at their own environment."""
     if os.environ.get("MNML_BROKER", "1").lower() in ("0", "off", "false", "no"):
         return ""
     named = os.environ.get(f"{service.upper()}_BROKER_SOCKET")
     if named:
+        if len(named) > OS_MAX_PATH_LEN:
+            raise _too_long(service, named)
         return named
     root = os.environ.get("TATTLE_ARTIFACTS_ROOT") or os.path.expanduser(
         "~/.tattle-claude-artifacts")
@@ -57,7 +94,30 @@ def broker_socket(service: str) -> str:
     # cannot hold a socket. Both sides fall back to the same short name
     # derived from the service alone -- drop this and the two ends
     # silently stop meeting on any long path.
-    return path if len(path) <= 100 else f"/tmp/mnml-broker-{service}.sock"
+    return (path if len(path) <= MAX_DERIVED_PATH_LEN
+            else f"/tmp/mnml-broker-{service}.sock")
+
+
+_warned: set = set()
+
+
+def _warn_once(service: str, exc: BrokerPathTooLong) -> None:
+    """One line on stderr per service, then never again. A sweep that
+    makes a thousand calls must say this once, not a thousand times --
+    and must not stop: the file bucket is still there."""
+    if service in _warned:
+        return
+    _warned.add(service)
+    print(f"{service}: {exc} (falling back to the file bucket)",
+          file=sys.stderr)
+
+
+def _socket_or_warn(service: str) -> str:
+    try:
+        return broker_socket(service)
+    except BrokerPathTooLong as exc:
+        _warn_once(service, exc)
+        return ""
 
 
 def try_broker(service: str, cls: str = "batch", reason: str = "batch",
@@ -70,7 +130,7 @@ def try_broker(service: str, cls: str = "batch", reason: str = "batch",
     The three answers matter: a False must not be followed by a file
     draw, or a queued script waits its timeout twice and then spends a
     token the broker already counted."""
-    path = broker_socket(service)
+    path = _socket_or_warn(service)
     if not path or not hasattr(socket, "AF_UNIX"):
         return None
     req = {"v": 1, "op": "acquire", "service": service, "class": cls,
@@ -97,7 +157,7 @@ def acquire_via_broker(service: str, cls: str = "batch", reason: str = "batch",
 
 def broker_status(service: str) -> dict:
     """The broker's own numbers, or {} when there is none."""
-    path = broker_socket(service)
+    path = _socket_or_warn(service)
     if not path or not hasattr(socket, "AF_UNIX"):
         return {}
     try:
@@ -112,11 +172,16 @@ def broker_status(service: str) -> dict:
 
 
 if __name__ == "__main__":
-    import sys
     svc = sys.argv[1] if len(sys.argv) > 1 else "bitbucket"
+    # The message, not a traceback: a path-length mistake is the user's
+    # own setting and the stack it happened on tells them nothing.
+    try:
+        where = broker_socket(svc)
+    except BrokerPathTooLong as exc:
+        sys.exit(f"{svc}: {exc}")
     st = broker_status(svc)
     if not st:
-        print(f"{svc}: no broker at {broker_socket(svc) or '(off)'}")
+        print(f"{svc}: no broker at {where or '(off)'}")
     else:
         q = st.get("queue", {})
         print(f"{svc}: queue {sum(q.values())} · {st.get('tokens', 0):.1f} of "
