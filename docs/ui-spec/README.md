@@ -50,9 +50,10 @@ and not the dock widgets — in `always` mode at each of its two shapes
 (`tools/zig-spec.sh launcher-dock` / `launcher-dock-left`,
 `steps-launcher-dock*.jsonl`, which cycle `view.dock_cycle_mode` twice
 from the shipped `auto_hide` to `always` and then, for the second dump,
-`view.dock_move` once). On the **bottom** edge it is the editor area's
-last row — row 37 at 120x40, under the panes and above the statusline
-— reading `  Browser  󲀀 New terminal` with the 󰐃 pin chip at the far
+`view.dock_move` once). On the **bottom** edge it is the SCREEN's
+last row — row 39 at 120x40, under the `:` line, which moves to 38 with
+the statusline on 37 (// changed (edge-grip): it was the editor area's
+last row, 37, two rows in from the frame's own edge) — reading `  Browser  󲀀 New terminal` with the 󰐃 pin chip at the far
 end: the enabled integration chips first (only the browser globe is on
 out of the box), then the terminals. On the **left** edge it is the
 frame's outermost three columns, glyph-only, one item per row starting

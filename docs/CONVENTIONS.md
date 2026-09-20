@@ -128,6 +128,25 @@ The rules they share:
   be one click, not a round trip through the config file. (The
   launcher dock's rides in `session.zon` so a restored session comes
   back as it was; the sidebar's and the menu bar's do not.)
+- **The grip names the edge** (`src/ui/edge_grip.zig`): `⋯` on a top or
+  bottom row, `⋮` on a side column, three cells at the MIDDLE of the
+  very band `hover_zones` watches, dim in the comment colour and one
+  step brighter under the pointer. It is the band's name and never a
+  second way in — a dwell on it reveals because it is *inside* the
+  zone. The grip and the pin chip are the two ends of one gesture: the
+  grip brings the surface out and a click on it KEEPS it (the pin the
+  chip toggles, through the surface's existing command — no new
+  command id), the chip lets it go. So a surface wears exactly one of
+  the two at a time: the grip while it is down, the chip while it is
+  up, and neither when it is configured `.always` (nothing to summon)
+  or `.hidden` (no zone is registered, so a handle there would do
+  nothing). `ui.edge_grips = false` turns all three off together and
+  gives the invisible bands back; the bands never move, so every
+  reveal works either way. Where the middle of a band is already
+  spoken for, the grip moves to the middle of the run it is actually
+  summoning and that is written down — the menu bar's sits on the
+  words' run, because the row's own centre is the workspace chip's and
+  the chip never hides.
 
 ## The settings overlay — the family idiom (`src/ui/settings.zig`)
 
