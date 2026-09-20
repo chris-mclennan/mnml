@@ -353,6 +353,10 @@ pub const App = struct {
     quit: bool = false,
     /// The count the statusline segment shows; null until a work tab loaded.
     assigned_open: ?usize = null,
+    /// Which tab that count was taken off — the listing the chip's
+    /// hover rows are built from. An index rather than the slice: a
+    /// refetch replaces the tab's arena under it.
+    assigned_tab: ?usize = null,
     /// Set when `assigned_open` changed and has not been published.
     segment_dirty: bool = false,
     /// The last thing worth a toast (an action's outcome); the loop drains it.
@@ -673,6 +677,16 @@ pub const App = struct {
         var out: std.ArrayList(usize) = .empty;
         for (m, 0..) |ok, i| if (ok) try out.append(arena, i);
         return out.toOwnedSlice(arena);
+    }
+
+    /// The issues of the tab the statusline figure counts — what the
+    /// chip's hover rows are built from, so the publish the pane makes
+    /// for itself lists the same tickets a `--values` run would for the
+    /// same listing. Empty until that tab has loaded.
+    pub fn assignedIssues(a: *const App) []const Issue {
+        const i = a.assigned_tab orelse return &.{};
+        if (i >= a.tabs.len) return &.{};
+        return a.tabs[i].issues;
     }
 
     pub fn focusedIssueIdx(a: *App, arena: Allocator) Allocator.Error!?usize {
@@ -1148,6 +1162,7 @@ pub const App = struct {
         if (a.status.items.len == 0) a.setStatus("{s} · {d} issues", .{ t.cfg.name, t.issues.len });
         if (t.cfg.kind) |k| if (k.isAssignedOpen()) {
             a.assigned_open = t.issues.len;
+            a.assigned_tab = idx;
             a.segment_dirty = true;
         };
         // The reference auto-expands unresolved tickets on tree tabs
@@ -1232,13 +1247,13 @@ pub const App = struct {
                 n += 1;
                 if (t.cfg.kind) |k| if (k.isAssignedOpen()) {
                     a.assigned_open = t.issues.len;
+                    a.assigned_tab = idx;
                     a.segment_dirty = true;
                 };
                 if (t.tree) |*st| if (t.cfg.isTree()) {
                     for (t.issues) |iss| if (iss.isUnresolved()) try st.setExpanded(iss.key, true);
                 };
                 try a.aggregateAssignees(t);
-                _ = idx;
                 break;
             }
             if (!took) next.deinit();

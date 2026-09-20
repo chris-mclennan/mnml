@@ -563,7 +563,13 @@ fn publishSide(app: *app_mod.App, mount: *sdk.Mount, ipc: ?*const sdk.Ipc, gpa: 
         // actually being published, and not once per pass of a loop
         // that runs many times a second.
         var bucket_name: [64]u8 = undefined;
-        if (ipc) |i| if (app.assigned_open) |n| publishSegment(i, n, bucketOf(gpa, io, limiter, &bucket_name)) catch {};
+        if (ipc) |i| if (app.assigned_open != null) {
+            // The rows are built here, on an arena of their own, out of
+            // the tab the figure was counted off — no second search.
+            var rows_arena = std.heap.ArenaAllocator.init(gpa);
+            defer rows_arena.deinit();
+            publishSegment(i, rows_arena.allocator(), app.assignedIssues(), bucketOf(gpa, io, limiter, &bucket_name)) catch {};
+        };
     }
 }
 
@@ -640,6 +646,19 @@ pub const Values = struct {
     assigned_items: []const ValuesItem = &.{},
     qa_items: []const ValuesItem = &.{},
 };
+
+/// The assigned-open figure off ONE listing: the count, the status
+/// breakdown the tooltip reads, and the rows the hover lists. Both the
+/// `--values` run and the pane's own publish go through here, so a chip
+/// republished from inside the pane carries exactly what a poll would
+/// have put on it for the same issues.
+pub fn assignedValues(arena: Allocator, issues: []const model.Issue) Allocator.Error!Values {
+    return .{
+        .assigned_open = issues.len,
+        .assigned_by_status = try countByStatus(arena, issues),
+        .assigned_items = try issueItems(arena, issues),
+    };
+}
 
 /// The statuses of a set of issues, most-common first — the hover
 /// breakdown behind a bare number.
@@ -733,19 +752,17 @@ pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: Values, bucket:
     }
 }
 
-/// The one-figure form the pane's own refresh publishes as it goes.
-pub fn publishSegment(ipc: *const sdk.Ipc, assigned_open: usize, bucket: ?Bucket) sdk.ipc.Error!void {
-    var buf: [32]u8 = undefined;
-    const label = sdk.pane.figure.text(&buf, .{ .glyph = segment_glyph, .n = assigned_open });
-    var tip: [192]u8 = undefined;
-    try ipc.statuslineSetSegment(.{
-        .id = segment_id,
-        .text = label,
-        .color = segment_color,
-        .click_command = segment_click,
-        .priority = segment_priority,
-        .tooltip = if (bucket) |b| b.status.describe(&tip) else null,
-    });
+/// The form the pane's own refresh publishes as it goes — off the
+/// listing it already holds, so it costs no request.
+///
+/// It goes through `publishSegments` with `assignedValues`, which is
+/// the point: a chip the pane republishes for itself carries the SAME
+/// breakdown and the SAME rows a `--values` run would publish for those
+/// issues. It used to publish the figure alone, so the hover's list
+/// vanished the moment the pane opened and did not come back until the
+/// next poll five minutes later.
+pub fn publishSegment(ipc: *const sdk.Ipc, arena: Allocator, issues: []const model.Issue, bucket: ?Bucket) !void {
+    return publishSegments(ipc, arena, try assignedValues(arena, issues), bucket);
 }
 
 /// The hover text with the shared bucket's own two lines under it:
@@ -1022,9 +1039,10 @@ fn values(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Al
     switch (jira.search(&client, arena, jql, &.{}, .poll) catch jira.Answer([]const std.json.Value){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
         .ok => |items| {
             const issues = try jira.parseIssues(arena, items, c.team_field_id);
-            v.assigned_open = items.len;
-            v.assigned_by_status = try countByStatus(arena, issues);
-            v.assigned_items = try issueItems(arena, issues);
+            const a = try assignedValues(arena, issues);
+            v.assigned_open = a.assigned_open;
+            v.assigned_by_status = a.assigned_by_status;
+            v.assigned_items = a.assigned_items;
         },
         .failed => |f| {
             try err.print("mnml-jira --values: {s}\n", .{f.message});
@@ -1370,6 +1388,13 @@ test "the arguments parse as the reference's, and a bad --only is named" {
     try testing.expectEqualStrings("--wat", parseArgs(&.{ "mnml-jira", "--wat" }).unknown.?);
 }
 
+/// Three tickets, the shape a listing hands the chip.
+const chip_issues = [_]model.Issue{
+    .{ .key = "ENG-1", .summary = "Checkout rewrite", .status = "In Progress" },
+    .{ .key = "ENG-5", .summary = "Basket total wrong with a voucher", .status = "To Do" },
+    .{ .key = "ENG-9", .summary = "Stale session after a password change", .status = "In Progress" },
+};
+
 test "the statusline segment is the manifest's slot, live: the exact IPC line" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -1377,18 +1402,55 @@ test "the statusline segment is the manifest's slot, live: the exact IPC line" {
     const dir = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
     var ipc = try sdk.Ipc.init(testing.allocator, testing.io, dir);
     defer ipc.deinit();
-    try publishSegment(&ipc, 3, null);
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const line = try tmp.dir.readFileAlloc(testing.io, "command", arena.allocator(), .unlimited);
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    try publishSegment(&ipc, arena, &chip_issues, null);
+    const line = try tmp.dir.readFileAlloc(testing.io, "command", arena, .unlimited);
     try testing.expectEqualStrings(
-        "{\"cmd\":\"statusline-set-segment\",\"id\":\"jira_work.assigned\",\"side\":\"right\",\"text\":\"\u{f0303} 3\",\"color\":\"#1B5DCF\",\"click_command\":\"jira_work.open\",\"priority\":60,\"min_width\":4,\"max_width\":30}\n",
+        "{\"cmd\":\"statusline-set-segment\",\"id\":\"jira_work.assigned\",\"side\":\"right\",\"text\":\"\u{f0303} 3\",\"color\":\"#1B5DCF\",\"click_command\":\"jira_work.open\",\"priority\":60,\"min_width\":4,\"max_width\":30," ++
+            "\"tooltip\":\"Jira · 3 open items assigned to me — 2 In Progress · 1 To Do\"," ++
+            "\"items\":[" ++
+            "{\"text\":\"ENG-1  Checkout rewrite\",\"sub\":\"In Progress\",\"command\":\"jira_work.open\",\"args\":[]}," ++
+            "{\"text\":\"ENG-5  Basket total wrong with a voucher\",\"sub\":\"To Do\",\"command\":\"jira_work.open\",\"args\":[]}," ++
+            "{\"text\":\"ENG-9  Stale session after a password change\",\"sub\":\"In Progress\",\"command\":\"jira_work.open\",\"args\":[]}]}\n",
         line,
     );
     // The manifest's static slot and the live one name the same thing.
     try testing.expectEqualStrings(spec_work.statusline[0].color.?, segment_color);
     try testing.expectEqualStrings(spec_work.statusline[0].click_command.?, segment_click);
     try testing.expect(std.mem.endsWith(u8, segment_id, spec_work.statusline[0].id));
+}
+
+test "the pane's own publish is the `--values` publish for the same listing, rows and all" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // What the pane sends for the listing it holds…
+    var pane_tmp = testing.tmpDir(.{});
+    defer pane_tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    var pane_ipc = try sdk.Ipc.init(testing.allocator, testing.io, pbuf[0..try pane_tmp.dir.realPath(testing.io, &pbuf)]);
+    defer pane_ipc.deinit();
+    try publishSegment(&pane_ipc, arena, &chip_issues, null);
+    const pane_line = try pane_tmp.dir.readFileAlloc(testing.io, "command", arena, .unlimited);
+
+    // …and what a `--values` run sends for the same issues. Byte for
+    // byte the same line: the chip does not lose its rows the moment
+    // somebody opens the pane behind it.
+    var poll_tmp = testing.tmpDir(.{});
+    defer poll_tmp.cleanup();
+    var qbuf: [std.fs.max_path_bytes]u8 = undefined;
+    var poll_ipc = try sdk.Ipc.init(testing.allocator, testing.io, qbuf[0..try poll_tmp.dir.realPath(testing.io, &qbuf)]);
+    defer poll_ipc.deinit();
+    try publishSegments(&poll_ipc, arena, try assignedValues(arena, &chip_issues), null);
+    const poll_line = try poll_tmp.dir.readFileAlloc(testing.io, "command", arena, .unlimited);
+
+    try testing.expectEqualStrings(poll_line, pane_line);
+    // And it is a line WITH rows on it — an empty `items` would make
+    // the two agree for the wrong reason.
+    try testing.expect(std.mem.indexOf(u8, pane_line, "\"items\":[{\"text\":\"ENG-1  Checkout rewrite\"") != null);
 }
 
 test "--check prints the config and where the token is, never the token" {
