@@ -576,8 +576,8 @@ try ipc.statuslineSetSegment(.{
     .click_command = "bitbucket_prs.open_mine",
     .tooltip = "Bitbucket · 12 open pull requests you authored — 11 still unapproved",
     .items = &.{
-        .{ .text = "Fix the login redirect", .sub = "acme/api · unapproved", .command = "bitbucket_prs.open_mine" },
-        .{ .text = "Redesign the empty state", .sub = "acme/web · approved", .command = "bitbucket_prs.open_mine" },
+        .{ .text = "Fix the login redirect", .sub = "acme/api · unapproved", .command = "bitbucket_prs.open_mine", .args = &.{ "--focus", "api#1234" } },
+        .{ .text = "Redesign the empty state", .sub = "acme/web · approved", .command = "bitbucket_prs.open_mine", .args = &.{ "--focus", "web#820" } },
     },
 });
 ```
@@ -588,6 +588,36 @@ try ipc.statuslineSetSegment(.{
 | `sub` | where it lives, how old it is, what state it is in. Painted muted, right-aligned, and it outlives the tail of a long `text` |
 | `command` | the command id a left click on the row runs. Omit it and the row is a label |
 | `args` | appended to that command's argv when the command mounts a binary — `.{ "--focus", "acme/api#1198" }`, so a row opens the thing it names rather than only the pane that holds it. An integration opts in by accepting the flag; one that does not should send no `args` |
+
+### `--focus <key>`: a row that opens the thing, not the pane
+
+A row's `args` name ONE of the things the pane lists. The host knows
+exactly one shape — `--focus <key>` — and treats it as an argument to
+a listing rather than a different listing:
+
+* **the pane is not open**: it is started with the flag on its argv;
+* **the pane is already open**: the key goes down the mount as
+  `focus_item` (`docs/BRIDGE.md`) and no second pane is started. A
+  pane is known by its argv WITHOUT the deep link, so the second row
+  of the same hover reaches the pane the first one opened.
+
+So a pane that wants its rows to land takes `--focus <key>` on the
+argv AND answers `focus_item` on the socket, with the same code behind
+both. The flag is read before anything has loaded, so remember the key
+rather than applying it, and try it again at every listing that
+arrives. What landing means is the pane's own: both official
+integrations open the section that was folded shut, drop the `/` query
+that was hiding the row, switch to the tab that holds it, put the
+cursor on it and open its detail. A key in no listing is answered
+(`not in this listing: <key>`) and forgotten, rather than left waiting
+for a listing that is not coming; a narrowing the reader turned on by
+hand is the one thing `--focus` does not undo, because undoing it
+would empty the listing they asked for.
+
+```
+mnml-bitbucket --only prs --focus api#1198
+mnml-jira --only work --focus ENG-2
+```
 
 Build the rows **from the cache the run already has**. The hover is
 worth nothing if it costs a request: `--values` must not fetch more
