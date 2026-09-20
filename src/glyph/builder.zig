@@ -4,8 +4,8 @@
 //! mnml paints six marks that exist in no font anywhere — the Claude
 //! and Codex product marks, the two tree connectors, the terminal icon
 //! and the unfocused pane's hollow cursor — so it carries them itself,
-//! at codepoints in the private plane
-//! nothing else claims (`U+F1B00–U+F20FF`). A terminal renders them by
+//! at codepoints in the private plane nothing else claims
+//! (`U+F1B00–U+F20FF`). A terminal renders them by
 //! routing that range at a font named `MnmlSymbols`; ghostty spells
 //! that `font-codepoint-map` (`ghostty_config.zig` reads it back).
 //!
@@ -19,6 +19,10 @@
 //!     Same family name, same codepoints — only the terminal mark
 //!     differs — so a terminal already routed at `MnmlSymbols` picks
 //!     the new one up with nothing to reconfigure.
+//!
+//! `merge` is the third path: the face this build bakes folded INTO an
+//! already-installed one, so `run.sh install-font` keeps whatever
+//! codepoints that file carries which this repo has no source for.
 //!
 //! The two connectors and the hollow cursor are drawn here rather than
 //! imported: they are rectangles that have to touch the cell edge
@@ -161,9 +165,10 @@ fn hollowContours(arena: Allocator) Allocator.Error![]const svg.Contour {
 
 // ─── the build ──────────────────────────────────────────────────────────
 
-/// Every glyph the face carries, as bytes. `specs` are the SVG-backed
-/// marks; the connectors and the blank space are added here.
-pub fn build(arena: Allocator, specs: []const Spec) Error![]u8 {
+/// The glyphs THIS build bakes: `specs` are the SVG-backed marks, and
+/// the connectors, the hollow cursor and the blank space are added
+/// here. Unsorted — the callers sort what they end up with.
+fn ownGlyphs(arena: Allocator, specs: []const Spec) Error![]ttf.Glyph {
     var glyphs: std.ArrayListUnmanaged(ttf.Glyph) = .empty;
     for (specs) |s| {
         const img = try svg.parse(arena, s.source);
@@ -175,14 +180,24 @@ pub fn build(arena: Allocator, specs: []const Spec) Error![]u8 {
     // A blank U+0020: a rasteriser that refuses a font with no text
     // character at all will still load this one.
     try glyphs.append(arena, .{ .codepoint = ' ', .name = "space", .contours = ttf.Glyph.empty });
-    // `cmap` format 4 wants its segments in codepoint order, and
-    // format 12 its groups; one sort serves both.
-    std.mem.sort(ttf.Glyph, glyphs.items, {}, struct {
+    return glyphs.toOwnedSlice(arena);
+}
+
+/// `cmap` format 4 wants its segments in codepoint order, and format 12
+/// its groups; one sort serves both.
+fn sortByCodepoint(glyphs: []ttf.Glyph) void {
+    std.mem.sort(ttf.Glyph, glyphs, {}, struct {
         fn lt(_: void, a: ttf.Glyph, b: ttf.Glyph) bool {
             return a.codepoint < b.codepoint;
         }
     }.lt);
-    return ttf.build(arena, glyphs.items, family, version);
+}
+
+/// Every glyph the face carries, as bytes.
+pub fn build(arena: Allocator, specs: []const Spec) Error![]u8 {
+    const glyphs = try ownGlyphs(arena, specs);
+    sortByCodepoint(glyphs);
+    return ttf.build(arena, glyphs, family, version);
 }
 
 /// The face as it ships: the Ghostty ghost as the terminal mark.
@@ -195,6 +210,64 @@ pub fn buildDefault(arena: Allocator) Error![]u8 {
 pub fn buildWithTerminal(arena: Allocator, terminal_svg: []const u8) Error![]u8 {
     const specs = defaultSpecs(terminal_svg);
     return build(arena, &specs);
+}
+
+// ─── the merge ──────────────────────────────────────────────────────────
+
+pub const MergeError = Error || ttf.ReadError;
+
+/// What a merge did, for the line the installer prints.
+pub const MergeReport = struct {
+    /// Codepoints lifted from the installed face untouched.
+    kept: usize = 0,
+    /// Codepoints this build bakes that the installed face also had.
+    replaced: usize = 0,
+    /// Codepoints this build bakes that it did not have.
+    added: usize = 0,
+    /// Glyphs in the installed file that no cmap pointed at.
+    stripped: usize = 0,
+    /// Codepoints in the merged face.
+    total: usize = 0,
+};
+
+/// This build's glyphs merged INTO an already-installed face.
+///
+/// The installed MnmlSymbols may carry codepoints this repo has no
+/// source for — the Rust-era integration chips, spinners and marks
+/// around `U+F1C03…F1F00` — and overwriting the file would silently
+/// take them away. So every codepoint the installed face maps is
+/// lifted back out and kept; the ones this build bakes replace theirs;
+/// the ones it bakes and they lack are added; and an outline the
+/// installed `cmap` does not point at is dropped, since nothing could
+/// ever have rendered it.
+pub fn merge(arena: Allocator, installed: []const u8, terminal_svg: []const u8, report: ?*MergeReport) MergeError![]u8 {
+    const specs = defaultSpecs(terminal_svg);
+    const own = try ownGlyphs(arena, &specs);
+    var mine: std.AutoHashMapUnmanaged(u21, void) = .empty;
+    for (own) |g| try mine.put(arena, g.codepoint, {});
+
+    var out: std.ArrayListUnmanaged(ttf.Glyph) = .empty;
+    try out.appendSlice(arena, own);
+    var r: MergeReport = .{ .added = own.len };
+    var seen: std.AutoHashMapUnmanaged(u21, void) = .empty;
+    for (try ttf.read(arena, installed)) |g| {
+        // A face may map two codepoints at one glyph; each comes out as
+        // its own entry, and a repeat is not a second keep.
+        if (seen.contains(g.codepoint)) continue;
+        try seen.put(arena, g.codepoint, {});
+        if (mine.contains(g.codepoint)) {
+            r.replaced += 1;
+            r.added -= 1;
+            continue;
+        }
+        try out.append(arena, g);
+        r.kept += 1;
+    }
+    r.stripped = ttf.glyphCount(installed) -| (seen.count() + 1); // +1: .notdef
+    r.total = out.items.len;
+    if (report) |p| p.* = r;
+    sortByCodepoint(out.items);
+    return ttf.build(arena, out.items, family, version);
 }
 
 /// How big a custom SVG may be. An icon is a few KB; anything past
@@ -327,4 +400,94 @@ test "the hollow cursor spans the whole cell — the full advance across, connec
     // Hollow, not filled: the middle of the cell is inside no bar.
     const mid: svg.Point = .{ .x = (cell_left + cell_right) / 2, .y = (v_bottom + v_top) / 2 };
     for (h) |c| try t.expect(!svg.contains(c, mid));
+}
+
+/// The codepoints a built face maps, via the same format-12 walk
+/// `cmapHas` does.
+fn mappedCount(bytes: []const u8) usize {
+    var n: usize = 0;
+    var cp: u21 = 0;
+    while (cp < 0x20) : (cp += 1) n += @intFromBool(cmapHas(bytes, cp));
+    // The blocks these faces actually use, rather than all of Unicode.
+    cp = 0x20;
+    while (cp <= 0x7E) : (cp += 1) n += @intFromBool(cmapHas(bytes, cp));
+    cp = 0xF1B00;
+    while (cp <= 0xF20FF) : (cp += 1) n += @intFromBool(cmapHas(bytes, cp));
+    return n;
+}
+
+test "merge: the installed face keeps its own codepoints, this build replaces and adds its own" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    // An "installed" face standing in for the user's: two codepoints
+    // this repo has no source for (Rust-era chips), plus two it does.
+    const box = try rect(arena, 100, 100, 500, 500);
+    const one = [_]svg.Contour{box};
+    const installed = try ttf.build(arena, &.{
+        .{ .codepoint = ' ', .name = "space", .contours = ttf.Glyph.empty },
+        .{ .codepoint = 0xF1C03, .name = "chip-a", .contours = &one },
+        .{ .codepoint = 0xF1C04, .name = "chip-b", .contours = &one },
+        .{ .codepoint = claude, .name = "old-claude", .contours = &one },
+        .{ .codepoint = terminal, .name = "old-ghost", .contours = &one },
+    }, family, version);
+
+    var report: MergeReport = .{};
+    const merged = try merge(arena, installed, ghostty_svg, &report);
+    // Kept: the two chips. Replaced: space, claude, terminal — and
+    // nothing else of this build's was in there.
+    try t.expectEqual(@as(usize, 2), report.kept);
+    try t.expectEqual(@as(usize, 3), report.replaced);
+    try t.expectEqual(@as(usize, 4), report.added);
+    try t.expectEqual(@as(usize, 9), report.total);
+    // Everything the installed face had is still addressable…
+    for ([_]u21{ ' ', 0xF1C03, 0xF1C04, claude, terminal }) |cp| {
+        errdefer std.debug.print("lost U+{X}\n", .{cp});
+        try t.expect(cmapHas(merged, cp));
+    }
+    // …and everything this build bakes is too, the new one included.
+    for ([_]u21{ claude, codex, tree_vertical, tree_corner, terminal, cursor_hollow }) |cp| {
+        errdefer std.debug.print("missing U+{X}\n", .{cp});
+        try t.expect(cmapHas(merged, cp));
+    }
+    // Replaced means replaced: the chip's plain box is NOT what the
+    // terminal mark now carries.
+    try t.expect(!std.mem.eql(u8, merged, installed));
+}
+
+test "merge: an outline no cmap points at does not survive" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const one = [_]svg.Contour{try rect(arena, 100, 100, 500, 500)};
+    const installed = try ttf.build(arena, &.{
+        .{ .codepoint = 0xF1C03, .name = "chip-a", .contours = &one },
+        .{ .codepoint = 0xF1C04, .name = "chip-b", .contours = &one },
+        .{ .codepoint = 0xF1C05, .name = "chip-c", .contours = &one },
+    }, family, version);
+    // Orphan the last one by shortening the format-12 group list: its
+    // outline is still in `glyf`, but no codepoint reaches it. (Reaching
+    // into the writer's own layout is fair here — it is the same file.)
+    const orphaned = try arena.dupe(u8, installed);
+    const cmap_off = blk: {
+        const n = std.mem.readInt(u16, orphaned[4..6], .big);
+        for (0..n) |i| {
+            const rec = orphaned[12 + 16 * i ..][0..16];
+            if (std.mem.eql(u8, rec[0..4], "cmap")) break :blk std.mem.readInt(u32, rec[8..12], .big);
+        }
+        return error.NoCmap;
+    };
+    const sub = cmap_off + std.mem.readInt(u32, orphaned[cmap_off + 4 + 8 + 4 ..][0..4], .big);
+    try t.expectEqual(@as(u16, 12), std.mem.readInt(u16, orphaned[sub..][0..2], .big));
+    const groups = std.mem.readInt(u32, orphaned[sub + 12 ..][0..4], .big);
+    std.mem.writeInt(u32, orphaned[sub + 12 ..][0..4], groups - 1, .big);
+
+    var report: MergeReport = .{};
+    const merged = try merge(arena, orphaned, ghostty_svg, &report);
+    try t.expectEqual(@as(usize, 1), report.stripped);
+    try t.expect(cmapHas(merged, 0xF1C03));
+    try t.expect(!cmapHas(merged, 0xF1C05));
+    // The guarantee behind the number: every outline in the merged face
+    // is reachable, so nothing dead was carried forward.
+    try t.expectEqual(mappedCount(merged) + 1, ttf.glyphCount(merged));
 }

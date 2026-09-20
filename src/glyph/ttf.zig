@@ -534,6 +534,364 @@ pub fn build(arena: Allocator, glyphs: []const Glyph, family: []const u8, versio
     return out.items;
 }
 
+// ─── the reader ─────────────────────────────────────────────────────────
+//
+// Enough of a TrueType parser to LIFT glyphs back out of a font this
+// writer (or one like it) produced: the table directory, `head` for the
+// em square and the `loca` format, `maxp` for the glyph count, `cmap`
+// for codepoint → glyph, `hmtx` for the cell the glyph was drawn for,
+// and `glyf` for the outlines. Nothing else — no hinting, no layout,
+// no composites.
+//
+// It exists for one job: `run.sh install-font` must not throw away the
+// glyphs an already-installed MnmlSymbols carries that this build does
+// not bake (the Rust-era integration chips). Reading them back and
+// writing them out again is the only way to keep them, since the
+// sources for them are not in this repo.
+//
+// The outlines come back as polygons. `glyf` allows quadratic curves
+// and the older face uses them, so a curve is flattened here to within
+// `flatten_tol` font units — invisible at any ppem a terminal uses, and
+// what the writer wants anyway (it emits on-curve points only).
+
+pub const ReadError = error{
+    /// Not an sfnt this reader understands (a CFF/OTF, a collection).
+    NotTrueType,
+    /// A table the reader needs is not in the directory.
+    MissingTable,
+    /// A table ran past the end of the file, or said something absurd.
+    BadTable,
+    /// A composite glyph — one drawn out of other glyphs. The faces
+    /// this reads are built glyph-per-outline and have none.
+    Composite,
+} || Allocator.Error;
+
+/// How far a flattened curve may sit from the true one, in font units
+/// of `units_per_em`. One unit of 1000 is 0.016 px in a 16 px cell, so
+/// this is well under a pixel at any size a terminal uses.
+const flatten_tol: f64 = 1.0;
+/// The most segments one quadratic is cut into, whatever its bulge. A
+/// symbol glyph's widest arc is a quarter circle, which lands well
+/// inside this.
+const flatten_max: usize = 16;
+
+fn rdU16(b: []const u8, off: usize) ReadError!u16 {
+    if (off + 2 > b.len) return error.BadTable;
+    return std.mem.readInt(u16, b[off..][0..2], .big);
+}
+
+fn rdI16(b: []const u8, off: usize) ReadError!i16 {
+    return @bitCast(try rdU16(b, off));
+}
+
+fn rdU32(b: []const u8, off: usize) ReadError!u32 {
+    if (off + 4 > b.len) return error.BadTable;
+    return std.mem.readInt(u32, b[off..][0..4], .big);
+}
+
+/// The bytes of one table, by tag; null when the directory has none.
+fn tableOf(bytes: []const u8, tag: *const [4]u8) ReadError!?[]const u8 {
+    const n = try rdU16(bytes, 4);
+    for (0..n) |i| {
+        const rec = 12 + 16 * i;
+        if (rec + 16 > bytes.len) return error.BadTable;
+        if (!std.mem.eql(u8, bytes[rec..][0..4], tag)) continue;
+        const off = try rdU32(bytes, rec + 8);
+        const len = try rdU32(bytes, rec + 12);
+        if (@as(usize, off) + len > bytes.len) return error.BadTable;
+        return bytes[off..][0..len];
+    }
+    return null;
+}
+
+fn needTable(bytes: []const u8, tag: *const [4]u8) ReadError![]const u8 {
+    return (try tableOf(bytes, tag)) orelse error.MissingTable;
+}
+
+const CpGid = struct { cp: u21, gid: u16 };
+
+/// Every codepoint the `cmap` maps, with its glyph. Format 12 is read
+/// when present — it is the only one that reaches mnml's own block —
+/// and format 4 fills in for a BMP-only face.
+fn cmapPairs(arena: Allocator, cmap: []const u8) ReadError![]CpGid {
+    var out: std.ArrayListUnmanaged(CpGid) = .empty;
+    const n = try rdU16(cmap, 2);
+    var best: ?usize = null;
+    var best_fmt: u16 = 0;
+    for (0..n) |i| {
+        const off = try rdU32(cmap, 4 + 8 * i + 4);
+        const sub: usize = off;
+        const fmt = try rdU16(cmap, sub);
+        // 12 beats 4: it is a superset here, and the only one that can
+        // name a codepoint above U+FFFF.
+        if (fmt == 12 or (fmt == 4 and best_fmt != 12)) {
+            if (best_fmt != 12 or fmt == 12) {
+                best = sub;
+                best_fmt = fmt;
+            }
+        }
+    }
+    const sub = best orelse return out.toOwnedSlice(arena);
+    if (best_fmt == 12) {
+        const groups = try rdU32(cmap, sub + 12);
+        for (0..groups) |g| {
+            const row = sub + 16 + 12 * g;
+            const lo = try rdU32(cmap, row);
+            const hi = try rdU32(cmap, row + 4);
+            const gid0 = try rdU32(cmap, row + 8);
+            if (hi < lo or hi > 0x10FFFF) return error.BadTable;
+            for (lo..hi + 1) |cp| {
+                const gid = gid0 + (cp - lo);
+                if (gid == 0 or gid > 0xFFFF) continue;
+                try out.append(arena, .{ .cp = @intCast(cp), .gid = @intCast(gid) });
+            }
+        }
+        return out.toOwnedSlice(arena);
+    }
+    // Format 4: four parallel arrays and the idRangeOffset indirection.
+    const seg2 = try rdU16(cmap, sub + 6);
+    const segs = seg2 / 2;
+    const ends = sub + 14;
+    const starts = ends + seg2 + 2;
+    const deltas = starts + seg2;
+    const ranges = deltas + seg2;
+    for (0..segs) |s| {
+        const end = try rdU16(cmap, ends + 2 * s);
+        const start = try rdU16(cmap, starts + 2 * s);
+        if (start > end) continue;
+        const delta = try rdI16(cmap, deltas + 2 * s);
+        const range = try rdU16(cmap, ranges + 2 * s);
+        var cp: u32 = start;
+        while (cp <= end) : (cp += 1) {
+            if (cp == 0xFFFF) continue;
+            var gid: u16 = 0;
+            if (range == 0) {
+                gid = @truncate(@as(u32, @intCast(@as(i32, @intCast(cp)) +% delta)));
+            } else {
+                const at = ranges + 2 * s + range + 2 * (cp - start);
+                const raw = try rdU16(cmap, at);
+                if (raw == 0) continue;
+                gid = @truncate(@as(u32, raw) +% @as(u32, @bitCast(@as(i32, delta))));
+            }
+            if (gid == 0) continue;
+            try out.append(arena, .{ .cp = @intCast(cp), .gid = gid });
+        }
+    }
+    return out.toOwnedSlice(arena);
+}
+
+const RawPoint = struct { x: f64, y: f64, on: bool };
+
+fn mid(a: RawPoint, b: RawPoint) svg.Point {
+    return .{ .x = (a.x + b.x) / 2, .y = (a.y + b.y) / 2 };
+}
+
+/// One quadratic, as line segments from (but not including) `p0` up to
+/// and including `p1`. The segment count comes from how far the control
+/// point pulls the curve off the chord.
+fn quadTo(arena: Allocator, out: *std.ArrayListUnmanaged(svg.Point), p0: svg.Point, c: svg.Point, p1: svg.Point) Allocator.Error!void {
+    const dx = c.x - (p0.x + p1.x) / 2;
+    const dy = c.y - (p0.y + p1.y) / 2;
+    const bulge = @sqrt(dx * dx + dy * dy);
+    // A quadratic cut into n equal pieces sits within |p0−2c+p1|/(8n²)
+    // = bulge/(4n²) of the true curve, so n = √(bulge / 4·tol) is the
+    // cheapest count that holds. (The polygon's own extremum can still
+    // fall a little short of the curve's — that error is the same
+    // order, and at this tolerance it is under a unit.)
+    var n: usize = 1;
+    if (bulge > 0) n = @intFromFloat(@ceil(@sqrt(bulge / (4 * flatten_tol))));
+    n = std.math.clamp(n, 1, flatten_max);
+    for (1..n + 1) |i| {
+        const tt = @as(f64, @floatFromInt(i)) / @as(f64, @floatFromInt(n));
+        const u = 1 - tt;
+        try out.append(arena, .{
+            .x = u * u * p0.x + 2 * u * tt * c.x + tt * tt * p1.x,
+            .y = u * u * p0.y + 2 * u * tt * c.y + tt * tt * p1.y,
+        });
+    }
+}
+
+/// One `glyf` contour's points as a closed polygon.
+fn flattenContour(arena: Allocator, pts: []const RawPoint) Allocator.Error!?svg.Contour {
+    if (pts.len == 0) return null;
+    var out: std.ArrayListUnmanaged(svg.Point) = .empty;
+    // The polygon has to start on the curve. When every point is a
+    // control point (a circle drawn as four quadratics), the implied
+    // on-curve start is the midpoint of the last and the first.
+    var first: usize = 0;
+    var start: svg.Point = undefined;
+    var found = false;
+    for (pts, 0..) |p, i| if (p.on) {
+        start = .{ .x = p.x, .y = p.y };
+        first = i + 1;
+        found = true;
+        break;
+    };
+    if (!found) start = mid(pts[pts.len - 1], pts[0]);
+    try out.append(arena, start);
+    var cur = start;
+    var pending: ?svg.Point = null;
+    const steps = if (found) pts.len - 1 else pts.len;
+    for (0..steps) |k| {
+        const p = pts[(first + k) % pts.len];
+        const here: svg.Point = .{ .x = p.x, .y = p.y };
+        if (p.on) {
+            if (pending) |c| {
+                try quadTo(arena, &out, cur, c, here);
+                pending = null;
+            } else try out.append(arena, here);
+            cur = here;
+        } else {
+            // Two control points in a row imply an on-curve point
+            // halfway between them.
+            if (pending) |c| {
+                const m: svg.Point = .{ .x = (c.x + here.x) / 2, .y = (c.y + here.y) / 2 };
+                try quadTo(arena, &out, cur, c, m);
+                cur = m;
+            }
+            pending = here;
+        }
+    }
+    if (pending) |c| try quadTo(arena, &out, cur, c, start);
+    // The closing point and the start are the same place; `glyf` closes
+    // a contour implicitly, so drop the duplicate.
+    if (out.items.len > 1) {
+        const last = out.items[out.items.len - 1];
+        if (@abs(last.x - start.x) < 0.001 and @abs(last.y - start.y) < 0.001) _ = out.pop();
+    }
+    if (out.items.len < 3) return null;
+    return out.items;
+}
+
+/// One glyph's outlines, scaled by `scale`.
+fn glyphContours(arena: Allocator, glyf: []const u8, from: usize, to: usize, scale: f64) ReadError![]const svg.Contour {
+    if (to <= from or to > glyf.len) return Glyph.empty;
+    const g = glyf[from..to];
+    const n_contours = try rdI16(g, 0);
+    if (n_contours < 0) return error.Composite;
+    const nc: usize = @intCast(n_contours);
+    if (nc == 0) return Glyph.empty;
+    var ends = try arena.alloc(u16, nc);
+    for (0..nc) |i| ends[i] = try rdU16(g, 10 + 2 * i);
+    const n_pts: usize = @as(usize, ends[nc - 1]) + 1;
+    const instr = try rdU16(g, 10 + 2 * nc);
+    var p: usize = 12 + 2 * nc + instr;
+
+    var flags = try arena.alloc(u8, n_pts);
+    var i: usize = 0;
+    while (i < n_pts) {
+        if (p >= g.len) return error.BadTable;
+        const f = g[p];
+        p += 1;
+        flags[i] = f;
+        i += 1;
+        if (f & 0x08 != 0) {
+            if (p >= g.len) return error.BadTable;
+            var r = g[p];
+            p += 1;
+            while (r > 0 and i < n_pts) : (r -= 1) {
+                flags[i] = f;
+                i += 1;
+            }
+        }
+    }
+    var xs = try arena.alloc(f64, n_pts);
+    var ys = try arena.alloc(f64, n_pts);
+    var v: i32 = 0;
+    for (flags, 0..) |f, k| {
+        if (f & 0x02 != 0) {
+            if (p >= g.len) return error.BadTable;
+            const d: i32 = g[p];
+            p += 1;
+            v += if (f & 0x10 != 0) d else -d;
+        } else if (f & 0x10 == 0) {
+            v += try rdI16(g, p);
+            p += 2;
+        }
+        xs[k] = @as(f64, @floatFromInt(v)) * scale;
+    }
+    v = 0;
+    for (flags, 0..) |f, k| {
+        if (f & 0x04 != 0) {
+            if (p >= g.len) return error.BadTable;
+            const d: i32 = g[p];
+            p += 1;
+            v += if (f & 0x20 != 0) d else -d;
+        } else if (f & 0x20 == 0) {
+            v += try rdI16(g, p);
+            p += 2;
+        }
+        ys[k] = @as(f64, @floatFromInt(v)) * scale;
+    }
+
+    var out: std.ArrayListUnmanaged(svg.Contour) = .empty;
+    var at: usize = 0;
+    for (ends) |e| {
+        const stop: usize = @as(usize, e) + 1;
+        if (stop > n_pts or stop < at) return error.BadTable;
+        var raw = try arena.alloc(RawPoint, stop - at);
+        for (at..stop) |k| raw[k - at] = .{ .x = xs[k], .y = ys[k], .on = flags[k] & 0x01 != 0 };
+        if (try flattenContour(arena, raw)) |c| try out.append(arena, c);
+        at = stop;
+    }
+    return out.toOwnedSlice(arena);
+}
+
+/// `maxp`'s glyph count, `.notdef` included — what a merge measures the
+/// mapped count against to say how many outlines it dropped.
+pub fn glyphCount(bytes: []const u8) usize {
+    const maxp = needTable(bytes, "maxp") catch return 0;
+    return rdU16(maxp, 4) catch 0;
+}
+
+/// Every mapped glyph of `bytes`, in codepoint order, in THIS writer's
+/// em square and cell. A face drawn on a different em or a different
+/// advance is scaled to ours, so a lifted glyph keeps its proportion
+/// within the cell rather than its raw coordinates.
+pub fn read(arena: Allocator, bytes: []const u8) ReadError![]Glyph {
+    if (bytes.len < 12) return error.NotTrueType;
+    const sfnt = try rdU32(bytes, 0);
+    if (sfnt != 0x00010000 and sfnt != 0x74727565) return error.NotTrueType;
+    const head = try needTable(bytes, "head");
+    const maxp = try needTable(bytes, "maxp");
+    const loca = try needTable(bytes, "loca");
+    const glyf = try needTable(bytes, "glyf");
+    const cmap = try needTable(bytes, "cmap");
+    const upem = try rdU16(head, 18);
+    if (upem == 0) return error.BadTable;
+    const long_loca = (try rdI16(head, 50)) != 0;
+    const n_glyphs = try rdU16(maxp, 4);
+    var scale = @as(f64, @floatFromInt(units_per_em)) / @as(f64, @floatFromInt(upem));
+    // `hmtx`: the cell the source drew for. Scaled to our em it should
+    // already be our advance; when it is not, the glyph is resized so
+    // it occupies the same fraction of the cell it always did.
+    if (try tableOf(bytes, "hmtx")) |hmtx| if (hmtx.len >= 4) {
+        const adv = try rdU16(hmtx, 0);
+        if (adv > 0) scale *= @as(f64, @floatFromInt(advance_width)) / (@as(f64, @floatFromInt(adv)) * scale);
+    };
+
+    var out: std.ArrayListUnmanaged(Glyph) = .empty;
+    for (try cmapPairs(arena, cmap)) |pair| {
+        if (pair.gid >= n_glyphs) continue;
+        const i: usize = pair.gid;
+        const from: usize = if (long_loca) try rdU32(loca, 4 * i) else @as(usize, try rdU16(loca, 2 * i)) * 2;
+        const to: usize = if (long_loca) try rdU32(loca, 4 * (i + 1)) else @as(usize, try rdU16(loca, 2 * (i + 1))) * 2;
+        try out.append(arena, .{
+            .codepoint = pair.cp,
+            // `post` is version 3 in the faces this reads, so there are
+            // no names on disk to lift; the writer does not store them.
+            .name = try std.fmt.allocPrint(arena, "uni{X:0>4}", .{pair.cp}),
+            .contours = try glyphContours(arena, glyf, from, to, scale),
+        });
+    }
+    std.mem.sort(Glyph, out.items, {}, struct {
+        fn lt(_: void, a: Glyph, b: Glyph) bool {
+            return a.codepoint < b.codepoint;
+        }
+    }.lt);
+    return out.toOwnedSlice(arena);
+}
+
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
@@ -613,4 +971,84 @@ test "placing scales to the fit, flips y and centres on the cell" {
     // Centred vertically on 0.36 em and horizontally in the advance.
     try t.expectApproxEqAbs(@as(f64, 360), (min_y + max_y) / 2, 0.001);
     try t.expectApproxEqAbs(@as(f64, 300), (min_x + max_x) / 2, 0.001);
+}
+
+// ─── the reader's tests ─────────────────────────────────────────────────
+
+test "the reader lifts back exactly what the writer wrote" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const a = [_]svg.Contour{try square(arena, 100, 100, 500, 700)};
+    const b = [_]svg.Contour{ try square(arena, 0, 0, 600, 600), try square(arena, 200, 200, 400, 400) };
+    const bytes = try build(arena, &.{
+        .{ .codepoint = 0x20, .name = "space", .contours = Glyph.empty },
+        .{ .codepoint = 0xF1C03, .name = "chip", .contours = &a },
+        .{ .codepoint = 0xF2000, .name = "ghostty", .contours = &b },
+    }, "MnmlSymbols", "1.0");
+
+    const back = try read(arena, bytes);
+    try t.expectEqual(@as(usize, 3), back.len);
+    try t.expectEqual(@as(u21, 0x20), back[0].codepoint);
+    try t.expectEqual(@as(u21, 0xF1C03), back[1].codepoint);
+    try t.expectEqual(@as(u21, 0xF2000), back[2].codepoint);
+    // A blank glyph comes back blank, not as a stray contour.
+    try t.expectEqual(@as(usize, 0), back[0].contours.len);
+    try t.expectEqual(@as(usize, 1), back[1].contours.len);
+    try t.expectEqual(@as(usize, 2), back[2].contours.len);
+    // All-on-curve in, all-on-curve out: the coordinates are the same
+    // integers, not an approximation of them.
+    for (a[0], back[1].contours[0]) |want, got| {
+        try t.expectApproxEqAbs(want.x, got.x, 0.001);
+        try t.expectApproxEqAbs(want.y, got.y, 0.001);
+    }
+    // Three glyphs plus `.notdef`: nothing unmapped rides along.
+    try t.expectEqual(back.len, glyphCount(bytes) - 1);
+}
+
+test "the reader flattens a quadratic into the straight edges the writer needs" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    // One arch: on (0,0) → control (100,200) → on (200,0). The control
+    // point is NOT on the curve, so it must not appear in the polygon;
+    // the curve's own apex is (100,100).
+    const arch = [_]RawPoint{
+        .{ .x = 0, .y = 0, .on = true },
+        .{ .x = 100, .y = 200, .on = false },
+        .{ .x = 200, .y = 0, .on = true },
+    };
+    const c = (try flattenContour(arena, &arch)).?;
+    try t.expectApproxEqAbs(@as(f64, 0), c[0].x, 0.001);
+    try t.expectApproxEqAbs(@as(f64, 200), c[c.len - 1].x, 0.001);
+    var apex: f64 = 0;
+    for (c) |p| apex = @max(apex, p.y);
+    try t.expectApproxEqAbs(@as(f64, 100), apex, 0.001);
+    // Never the control point itself, and never a straight chord.
+    try t.expect(c.len > 3);
+    for (c) |p| try t.expect(p.y <= 100.001);
+
+    // A contour with NO on-curve point at all — four controls of a
+    // circle — starts at the implied midpoint of the last and the first.
+    const ring = [_]RawPoint{
+        .{ .x = 0, .y = 100, .on = false },
+        .{ .x = 100, .y = 100, .on = false },
+        .{ .x = 100, .y = 0, .on = false },
+        .{ .x = 0, .y = 0, .on = false },
+    };
+    const r = (try flattenContour(arena, &ring)).?;
+    try t.expectApproxEqAbs(@as(f64, 0), r[0].x, 0.001);
+    try t.expectApproxEqAbs(@as(f64, 50), r[0].y, 0.001);
+    try t.expect(r.len >= 8);
+}
+
+test "the reader refuses what it cannot lift rather than returning half a face" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    try t.expectError(error.NotTrueType, read(arena, "not a font"));
+    try t.expectError(error.NotTrueType, read(arena, &[_]u8{ 'O', 'T', 'T', 'O', 0, 0, 0, 0, 0, 0, 0, 0 }));
+    // A directory that promises a table the file does not hold.
+    var headless: [12]u8 = .{ 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    try t.expectError(error.MissingTable, read(arena, &headless));
 }
