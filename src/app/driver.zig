@@ -92,6 +92,7 @@ pub const AppDriver = struct {
         .expireChords = vExpireChords,
         .wheelNotch = vWheelNotch,
         .render = vRender,
+        .shot = vShot,
         .screen = vScreen,
         .status = vStatus,
         .rectsJson = vRectsJson,
@@ -166,6 +167,12 @@ pub const AppDriver = struct {
     fn vRender(p: *anyopaque) Error!void {
         try cast(p).app.render();
     }
+
+    /// The App renders into a cell grid, not a window: there are no
+    /// pixels here to photograph. The step still succeeds, so one script
+    /// runs unchanged under both drivers and only the ghostty one
+    /// actually leaves a picture (`src/e2e/ghostty_driver.zig`).
+    fn vShot(_: *anyopaque, _: []const u8) Error!void {}
 
     fn vScreen(p: *anyopaque) *const screen_mod.Screen {
         return &cast(p).app.screen;

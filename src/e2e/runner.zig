@@ -426,6 +426,7 @@ const Run = struct {
                 d.tick() catch |e| return self.errMsg("wait: {s}", e);
             },
             .snippet => |s| d.snippet(s.scope, s.trigger, s.expansion) catch |e| return self.errMsg("snippet: {s}", e),
+            .shot => |name| d.shot(name) catch |e| return self.errMsg("shot: {s}", e),
             .shell => |cmd| return self.runShell(cmd),
             .serve => |sv| return self.serve(sv),
             .ghost => |text| d.ghost(text) catch |e| switch (e) {
@@ -1550,4 +1551,37 @@ test "debug quoting matches Rust's {:?} for the characters that appear in script
     defer a.deinit();
     try a.writer.print("{f}", .{debug("a\"b\\c\nd\te\x01")});
     try t.expectEqualStrings("\"a\\\"b\\\\c\\nd\\te\\u{1}\"", a.written());
+}
+
+test "`shot` reaches the driver and passes on one that cannot take a picture" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+    const path = try env.script("s.test", "shot before_open\nopen a.txt\nshot after_open\n");
+    defer t.allocator.free(path);
+    const Keep = struct {
+        stub: driver_mod.Stub,
+        fn create(p: *anyopaque, _: Allocator, _: Io, _: driver_mod.Config) anyerror!Driver {
+            const self: *@This() = @ptrCast(@alignCast(p));
+            return .{ .ptr = &self.stub, .vtable = &noDeinit };
+        }
+        const noDeinit: Driver.VTable = blk: {
+            var v = @as(*const Driver.VTable, driver_mod.Stub.vtablePtr()).*;
+            v.deinit = struct {
+                fn f(_: *anyopaque) void {}
+            }.f;
+            break :blk v;
+        };
+    };
+    var keep: Keep = .{ .stub = try driver_mod.Stub.init(t.allocator, 120, 40) };
+    defer keep.stub.deinit();
+    keep.stub.text = "";
+    var o = runFile(t.allocator, t.io, .{ .ptr = &keep, .create = Keep.create }, path, content_size, env.opts());
+    // The driver has no pixels, so the step is a no-op — and the file
+    // still passes, which is the whole point: one script runs under
+    // every driver and only the ghostty one leaves a picture.
+    try expectPassed(&o);
+    const calls = try keep.stub.callsJoined(t.allocator);
+    defer t.allocator.free(calls);
+    try t.expect(std.mem.indexOf(u8, calls, "shot before_open\n") != null);
+    try t.expect(std.mem.indexOf(u8, calls, "shot after_open") != null);
 }

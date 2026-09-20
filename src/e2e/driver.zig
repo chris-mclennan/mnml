@@ -86,6 +86,12 @@ pub const Driver = struct {
         wheelNotch: *const fn (*anyopaque) void,
         /// Draw a frame into the screen.
         render: *const fn (*anyopaque) Error!void,
+        /// Leave a picture of the screen under `name` for whoever reads
+        /// the run afterwards (the `shot` step). A driver with no pixels
+        /// does nothing and succeeds: a hunter's script asks for a shot
+        /// where it cares, and must not fail on the driver that cannot
+        /// take one.
+        shot: *const fn (*anyopaque, name: []const u8) Error!void,
         /// The screen the last `render` drew into.
         screen: *const fn (*anyopaque) *const Screen,
         /// `status.json` fields; slices are allocated from the given allocator.
@@ -140,6 +146,9 @@ pub const Driver = struct {
     }
     pub fn render(d: Driver) Error!void {
         return d.vtable.render(d.ptr);
+    }
+    pub fn shot(d: Driver, name: []const u8) Error!void {
+        return d.vtable.shot(d.ptr, name);
     }
     pub fn screen(d: Driver) *const Screen {
         return d.vtable.screen(d.ptr);
@@ -347,6 +356,7 @@ pub const Stub = struct {
         .expireChords = vExpireChords,
         .wheelNotch = vWheelNotch,
         .render = vRender,
+        .shot = vShot,
         .screen = vScreen,
         .status = vStatus,
         .rectsJson = vRectsJson,
@@ -401,6 +411,13 @@ pub const Stub = struct {
         const late = if (self.late_after) |n| self.renders > n else false;
         self.paint(if (late) self.late_text else self.text);
     }
+
+    /// The stub has no pixels; it records the ask so a test can see the
+    /// step reached the driver, and succeeds.
+    fn vShot(p: *anyopaque, name: []const u8) Error!void {
+        try cast(p).record("shot {s}", .{name});
+    }
+
     fn vScreen(p: *anyopaque) *const Screen {
         return &cast(p).screen;
     }
