@@ -2423,12 +2423,14 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
         // A menu paints last of all, after the toasts (`render`).
         .menu => {},
         .settings => |*s| {
-            const items = try settings_app.items(app, ui.arena);
-            const sub = try settings_app.footer(app, ui.arena, items);
+            const both = try settings_app.lists(app, ui.arena);
+            const sub = try settings_app.footer(app, ui.arena, both.visible);
             // Centered on the screen, but the tab strip and the statusline
             // stay: the box never covers row 0 or the last row.
             const full = ui.canvas.full();
-            settings_ui.draw(ui, Rect.init(full.x, full.y + 1, full.w, full.h -| 2), &s.ui, items, sub);
+            const box = Rect.init(full.x, full.y + 1, full.w, full.h -| 2);
+            // The filter pill's caret, while the pill has the keys.
+            if (settings_ui.draw(ui, box, &s.ui, both.visible, sub, .{ .all = both.all })) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
         },
         .wizard => |*w| {
             const full = ui.canvas.full();

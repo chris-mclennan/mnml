@@ -491,6 +491,7 @@ pub const State = struct {
 
     pub fn deinit(s: *State, gpa: Allocator) void {
         for (&s.files.values) |*f| f.deinit(gpa);
+        s.ui.deinit(gpa);
     }
 
     pub fn markTouched(s: *State, scope: Scope) void {
@@ -556,6 +557,24 @@ pub fn items(app: *App, arena: Allocator) Allocator.Error![]Item {
     return out.items;
 }
 
+/// // changed (settings-search): the two lists a frame needs — the
+/// whole thing (the strip, the footer's total and the box's geometry
+/// come off it) and what the filter query leaves of it (the rows, the
+/// cursor and every key that moves it). No query means the same list
+/// twice over, at the cost of one arena copy.
+pub const Lists = struct { all: []Item, visible: []Item };
+
+pub fn lists(app: *App, arena: Allocator) Allocator.Error!Lists {
+    const all = try items(app, arena);
+    const q = app.overlay.settings.ui.filter.text();
+    return .{ .all = all, .visible = if (q.len == 0) all else try ui_settings.filtered(arena, all, q) };
+}
+
+/// What the keys act on: the rows the query left.
+fn visibleItems(app: *App, arena: Allocator) Allocator.Error![]Item {
+    return (try lists(app, arena)).visible;
+}
+
 /// The subtitle: where the focused row is written.
 pub fn footer(app: *App, arena: Allocator, list: []const Item) Allocator.Error!?[]const u8 {
     const st = &app.overlay.settings;
@@ -573,10 +592,14 @@ pub fn footer(app: *App, arena: Allocator, list: []const Item) Allocator.Error!?
 
 pub fn key(app: *App, k: Key) Allocator.Error!void {
     const arena = app.frame.allocator();
-    const list = try items(app, arena);
+    const list = try visibleItems(app, arena);
     const st = &app.overlay.settings;
-    switch (ui_settings.handleKey(&st.ui, k, list)) {
+    // `/` is the filter everywhere; the standard profile takes Ctrl+F
+    // for it too, the way VS Code's settings screen does.
+    const opts: ui_settings.KeyOpts = .{ .gpa = app.gpa, .ctrl_f = app.input_style != .vim };
+    switch (try ui_settings.handleKey(&st.ui, k, list, opts)) {
         .consumed => {},
+        .refilter => try refocus(app, list),
         .cancel => try cancel(app),
         .save => close(app),
         .adjust => |a| try adjust(app, list[a.item].row.id, a.delta),
@@ -587,10 +610,38 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
     app.needs_render = true;
 }
 
+/// // changed (settings-search): the query moved, so the list under the
+/// cursor did. The row that had focus keeps it when it still matches;
+/// otherwise the cursor is clamped to the first match, with the window
+/// back at the top — a cursor left pointing at a row that is no longer
+/// there would adjust the wrong setting.
+fn refocus(app: *App, before: []const Item) Allocator.Error!void {
+    const st = &app.overlay.settings;
+    const was: ?u32 = if (st.ui.cursor < before.len and before[st.ui.cursor] == .row) before[st.ui.cursor].row.id else null;
+    const list = try visibleItems(app, app.frame.allocator());
+    if (was) |id| if (itemIndexOf(list, id)) |i| {
+        st.ui.cursor = i;
+        st.ui.settle(list);
+        return;
+    };
+    st.ui.cursor = 0;
+    st.ui.scroll = 0;
+    st.ui.settle(list);
+}
+
+/// A paste while the filter pill has the keys.
+pub fn paste(app: *App, text: []const u8) Allocator.Error!void {
+    const st = &app.overlay.settings;
+    const list = try visibleItems(app, app.frame.allocator());
+    try ui_settings.Filter.insert(&st.ui.filter, app.gpa, text);
+    try refocus(app, list);
+    app.needs_render = true;
+}
+
 /// The wheel over the box: `lines` down (negative up), the cursor
 /// riding inside the window.
 pub fn wheel(app: *App, lines: isize) Allocator.Error!void {
-    const list = try items(app, app.frame.allocator());
+    const list = try visibleItems(app, app.frame.allocator());
     app.overlay.settings.ui.wheel(list, lines);
     app.needs_render = true;
 }
@@ -599,7 +650,7 @@ pub fn wheel(app: *App, lines: isize) Allocator.Error!void {
 /// window lands at the pointer's fraction of the list, the cursor
 /// riding inside it.
 pub fn barJump(app: *App, off: usize, track_h: usize) Allocator.Error!void {
-    const list = try items(app, app.frame.allocator());
+    const list = try visibleItems(app, app.frame.allocator());
     app.overlay.settings.ui.barJump(list, off, track_h);
     app.needs_render = true;
 }
@@ -608,18 +659,30 @@ pub fn barJump(app: *App, off: usize, track_h: usize) Allocator.Error!void {
 /// row to the option under the pointer.
 pub fn click(app: *App, hit: u32) Allocator.Error!void {
     const arena = app.frame.allocator();
-    const list = try items(app, arena);
+    const both = try lists(app, arena);
+    const list = both.visible;
     const st = &app.overlay.settings;
     switch (ui_settings.decodeHit(hit)) {
         .surface => {},
-        // A name in the box's section strip: the same jump `]` / `[` make.
-        .section => |n| st.ui.jumpTo(list, n),
+        // The pill: the keys go back to it, query and all.
+        .filter => st.ui.openFilter(),
+        // A name in the box's section strip: the same jump `]` / `[`
+        // make. The strip is painted from the whole list, so the name
+        // is looked up in what is actually on screen; a section the
+        // query emptied has nowhere to jump to.
+        .section => |n| {
+            const name = ui_settings.sectionName(both.all, n) orelse return;
+            const k = ui_settings.sectionIndexOfName(list, name) orelse return;
+            st.ui.jumpTo(list, k);
+        },
         .row => |id| {
             if (id == reset_id) return resetAll(app);
             st.ui.cursor = itemIndexOf(list, id) orelse return;
+            st.ui.filter.focused = false;
         },
         .option => |o| {
             st.ui.cursor = itemIndexOf(list, o.id) orelse return;
+            st.ui.filter.focused = false;
             // A number row's arrows: index 0 steps down, 1 up.
             if (o.id < rows.len and rows[o.id].number != null) return adjust(app, o.id, if (o.index == 0) -1 else 1);
             try setRow(app, o.id, o.index);
@@ -1204,4 +1267,150 @@ test "view.toggle_picker_position flips center ⇄ top, writes it to the home co
     const again = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, try std.fs.path.join(app.frame.allocator(), &.{ root, "config.zon" }), std.testing.allocator, .unlimited);
     defer std.testing.allocator.free(again);
     try std.testing.expect(std.mem.indexOf(u8, again, ".ai_layout_mode = .grid") != null);
+}
+
+test "the filter narrows the rows to the ones that match, clamps the cursor to one, and Esc takes the query before the box" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, "ws/.mnml");
+    try tmp.dir.createDirPath(t.io, "home");
+    const ws = try std.fs.path.join(t.allocator, &.{ root, "ws" });
+    defer t.allocator.free(ws);
+    const home = try std.fs.path.join(t.allocator, &.{ root, "home" });
+    defer t.allocator.free(home);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws, .data_root = home, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    _ = try app.openScratch();
+
+    try command.run(&app, .{ .static = .@"view.settings" });
+    const st = &app.overlay.settings;
+    const arena = app.frame.allocator();
+    const total = (try lists(&app, arena)).all.len;
+    try t.expect(total > 40);
+
+    // End puts the cursor on the last item of ninety-odd — the `Reset
+    // all to defaults` action — so a query that leaves six rows has
+    // somewhere badly wrong to leave it.
+    try app.handle(.{ .key = Key.named(.end) });
+    {
+        const l = try lists(&app, app.frame.allocator());
+        try t.expectEqual(l.all.len - 1, st.ui.cursor);
+    }
+
+    // `/` opens the pill; typing narrows the list live.
+    try app.handle(.{ .key = Key.char('/') });
+    try t.expect(st.ui.filter.open and st.ui.filter.focused);
+    for ("dock") |c| try app.handle(.{ .key = Key.char(c) });
+    try t.expectEqualStrings("dock", st.ui.filter.text());
+    {
+        const l = try lists(&app, app.frame.allocator());
+        try t.expectEqual(total, l.all.len);
+        try t.expect(l.visible.len < l.all.len);
+        // Every row left says `dock` somewhere; the UI header rode
+        // along because its rows matched, and no other header did.
+        var headers: usize = 0;
+        for (l.visible) |it| switch (it) {
+            .section => headers += 1,
+            .row => |r| {
+                var vb: [24]u8 = undefined;
+                try t.expect(std.ascii.indexOfIgnoreCase(r.label, "dock") != null or
+                    std.ascii.indexOfIgnoreCase(ui_settings.valueWord(r, &vb), "dock") != null);
+            },
+            .action => try t.expect(false),
+        };
+        try t.expectEqual(@as(usize, 1), headers);
+        // The row the cursor was on is gone, so the cursor is clamped
+        // to the FIRST match — item 1, under the one header — with the
+        // window back at the top. Not the last row it can reach.
+        try t.expectEqual(@as(usize, 1), st.ui.cursor);
+        try t.expectEqual(@as(usize, 0), st.ui.scroll);
+        try t.expectEqualStrings("Launcher dock", l.visible[st.ui.cursor].row.label);
+    }
+
+    // A row that still matches keeps the focus across a query change,
+    // wherever the narrowing moved it to.
+    try app.handle(.{ .key = Key.named(.down) });
+    try app.handle(.{ .key = Key.named(.down) });
+    {
+        const l = try lists(&app, app.frame.allocator());
+        try t.expectEqualStrings("Launcher dock labels", l.visible[st.ui.cursor].row.label);
+    }
+    try app.handle(.{ .key = Key.named(.backspace) });
+    try t.expectEqualStrings("doc", st.ui.filter.text());
+    {
+        const l = try lists(&app, app.frame.allocator());
+        try t.expectEqualStrings("Launcher dock labels", l.visible[st.ui.cursor].row.label);
+    }
+    try app.handle(.{ .key = Key.char('k') });
+    try t.expectEqualStrings("dock", st.ui.filter.text());
+
+    // A query nothing answers to: no rows, and the cursor has nowhere
+    // to sit — the next keystroke must not reach into an empty list.
+    for ("zzz") |c| try app.handle(.{ .key = Key.char(c) });
+    {
+        const l = try lists(&app, app.frame.allocator());
+        try t.expectEqual(@as(usize, 0), l.visible.len);
+    }
+    try app.handle(.{ .key = Key.named(.right) }); // the caret, not a row
+    for (0..3) |_| try app.handle(.{ .key = Key.named(.backspace) });
+    try t.expectEqualStrings("dock", st.ui.filter.text());
+
+    // Enter hands the list back; `←` then adjusts the focused *matched*
+    // row — the launcher dock's mode, the first `dock` row there is.
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expect(!st.ui.filter.focused);
+    const before_mode = app.cfg.ui.dock.mode;
+    try app.handle(.{ .key = Key.named(.left) });
+    try t.expect(app.cfg.ui.dock.mode != before_mode);
+
+    // Esc takes the query and leaves the box open; the second Esc
+    // cancels it, and cancelling puts the value back.
+    try app.handle(.{ .key = Key.named(.esc) });
+    try t.expect(app.overlay == .settings);
+    try t.expectEqualStrings("", st.ui.filter.text());
+    try t.expect(!st.ui.filter.open);
+    {
+        const l = try lists(&app, app.frame.allocator());
+        try t.expectEqual(total, l.visible.len);
+    }
+    try app.handle(.{ .key = Key.named(.esc) });
+    try t.expect(app.overlay == .none);
+    try t.expectEqual(before_mode, app.cfg.ui.dock.mode);
+}
+
+test "a click on the pill puts the keys back in it, and one on a section the query emptied does nothing" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, "ws/.mnml");
+    const ws = try std.fs.path.join(t.allocator, &.{ root, "ws" });
+    defer t.allocator.free(ws);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws, .data_root = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    _ = try app.openScratch();
+
+    try command.run(&app, .{ .static = .@"view.settings" });
+    const st = &app.overlay.settings;
+    try app.handle(.{ .key = Key.char('/') });
+    for ("dock") |c| try app.handle(.{ .key = Key.char(c) });
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expect(!st.ui.filter.focused);
+    try click(&app, ui_settings.filter_id);
+    try t.expect(st.ui.filter.focused);
+
+    // `Editor` is section 1 of the whole list and holds no `dock` row:
+    // its name is still on the strip and still clickable, and the click
+    // is a no-op rather than a jump into the wrong section.
+    const before = st.ui.cursor;
+    try click(&app, ui_settings.sectionHit(1));
+    try t.expectEqual(before, st.ui.cursor);
+    // `UI` does hold them, so its own click still jumps.
+    try click(&app, ui_settings.sectionHit(0));
+    const l = try lists(&app, app.frame.allocator());
+    try t.expect(l.visible[st.ui.cursor] == .row);
 }

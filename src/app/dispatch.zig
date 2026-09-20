@@ -1550,6 +1550,9 @@ pub fn paste(app: *App, text: []const u8) Allocator.Error!void {
             try Picker.paste(&p.state, app.gpa, text);
             return refilterPicker(app);
         },
+        // // changed (settings-search): the settings box's filter pill
+        // takes a paste like any other text field.
+        .settings => |*s| if (s.ui.filter.focused) return settings_app.paste(app, text),
         else => {},
     }
     if (app.find_bar) |*fb| return FindBar.paste(&fb.state, app.gpa, text);
