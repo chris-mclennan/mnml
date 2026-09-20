@@ -1,0 +1,59 @@
+# width: 120
+# env: PATH=${MNML_SHIMS}/ai:${PATH}
+# env: TERM_PROGRAM=Hyper
+# env: SHELL=/bin/sh
+# The Settings overlay's two mark rows (`src/app/settings.zig`) read
+# the live config: the bracket sits on `[figure]` / `[ghostty]` out of
+# the box, and moves once a chip's `Mark` menu has written the key. A
+# row that held a copy instead of reading `ui.claude_mark` back would
+# show the stale value here.
+#
+# The disk write itself is `app/claude_mark.zig`'s unit tests (they can
+# read the data root's config.zon, which lies outside the workspace
+# this file can assert on, and they re-open an App on it to prove the
+# key is read BACK). What this file proves is the round trip — menu →
+# config → overlay → chrome, through the real key dispatcher.
+#
+# Two PgDn from the top of the UI section reaches both rows; they sit
+# together, the terminal's above the Claude one.
+write a.txt "alpha alpha"
+open a.txt
+command view.settings
+key pagedown
+key pagedown
+expect screen contains "Terminal mark:"
+expect screen contains "Claude mark:"
+expect screen contains "[ghostty] / terminal / custom"
+expect screen contains "[figure] / spark"
+key esc
+expect screen lacks "Claude mark:"
+# The Claude chip's `Mark ▸ Anthropic spark` (column 106, the strip's
+# cluster).
+rightclick 106 1
+key end
+key right
+key down
+key enter
+expect screen contains "Claude mark: Anthropic spark"
+command view.settings
+key pagedown
+key pagedown
+expect screen contains "figure / [spark]"
+# The terminal row is untouched by it — two keys, two rows.
+expect screen contains "[ghostty] / terminal / custom"
+key esc
+# The terminal chip's `Mark ▸ Terminal`, the same shape. It sits three
+# cells left of its usual column here: the Claude chip is in front of
+# it on this strip.
+rightclick 108 1
+key end
+key right
+key down
+key enter
+expect screen contains "terminal icon: the codicon terminal"
+command view.settings
+key pagedown
+key pagedown
+expect screen contains "ghostty / [terminal] / custom"
+expect screen contains "figure / [spark]"
+key esc

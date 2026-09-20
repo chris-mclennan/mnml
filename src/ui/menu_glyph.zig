@@ -168,6 +168,8 @@ pub fn forItem(it: command.MenuItem, ascii: bool) []const u8 {
         .set_dock_align => if (ascii) "|" else "\u{f036}", // fa-align_left
         // Its *Show the + button* row.
         .set_dock_plus => if (ascii) "+" else "\u{F0415}", // nf-md-plus, the tab bar's own
+        // The `Mark:` rows on the two branded chips: pick an icon.
+        .set_claude_mark, .set_terminal_mark => if (ascii) "%" else "\u{f1fc}", // fa-paint_brush
         .menu_bar => if (ascii) "=" else "\u{f0c9}", // fa-bars: a menu-bar menu
         .git_palette => if (ascii) "g" else "\u{e702}", // dev-git: a palette row's action
         // The chip menu's *Requests…* row: what this number cost.

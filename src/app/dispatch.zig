@@ -1133,6 +1133,11 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
         .dock_set => |s| dock.setSetting(app, s.id, s.setting),
         .toggle_auto_refresh => |p| try auto_refresh.toggle(app, p),
         .set_coverage_mode => |m| try coverage.setMode(app, m),
+        .set_claude_mark => |m| try @import("claude_mark.zig").set(app, m),
+        .set_terminal_mark => |m| @import("terminal_glyph.zig").setMark(app, m) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {},
+        },
         .set_dock_labels => |l| launcher_dock.setLabels(app, l) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => {},
