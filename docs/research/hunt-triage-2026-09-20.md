@@ -239,6 +239,7 @@ docs/research/hunt-repros/standard-12-tab-strip-no-hidden-count.test
 `src/app/session.zig:261-266` saves shell and command ptys; `:621-628`
 calls `pty_pane.open` on restore. Relaunching after a session that had a
 shell open brings the shell back running. Neovim's `:mksession` does not
+now: tests/e2e/whichkey_standard_title.test — passes
 restore `:terminal` buffers as live processes, and a shell that starts
 itself in a workspace is a surprise. Not in `PARITY.md`'s `vim-fixes`
 list; no doc or source comment defends it.
@@ -307,7 +308,7 @@ One line each, in the order worth doing them. Items 1-7 shipped on
 2. ✅ **Give the delete confirm a cancel toast**, and correct
    `tests/e2e/tree_delete_enter.test` so it stops pinning the silence —
    then flip the finding's front matter off `status: fixed`.
-3. **Title the standard profile's which-key overlay from the active
+3. ✅ **Title the standard profile's which-key overlay from the active
    profile** rather than always as `<leader>`, once (1) makes it
    reachable again.
 4. **Paint `+N hidden` whenever any tab is off-strip**, not only on a
@@ -491,9 +492,9 @@ Plus `multilang-http-history-commands-noop` (2) — **by-design**, see above.
 | 9 | 2 | fixed-since | Welcome paints; it is an overlay, which is why `panes` never changed |
 | 10 | 3 | **still-reproduces** | `menuSize` adds the title row twice for titled context menus |
 | 11 | 3 | fixed-since | `d833b671` — the `»` list is a dropdown, so its cursor shows |
-| 12 | 3 | **still-reproduces** | `+N hidden` paints only on a whole-tail scroll |
-| 13 | 3 | fixed / **still** | Info panel fixed (`14cb7d9b`); the which-key overlay still says `<leader>` |
-| 14 | 3 | by-design / **still** | wheel is Rust parity (`dispatch.zig:1979`); the box still re-anchors |
+| 12 | 3 | **fixed (this branch)** | the chip is pulled back against the chevrons; it paints on any overflow |
+| 13 | 3 | fixed / **fixed (this branch)** | Info panel fixed (`14cb7d9b`); the overlay's header is the active profile's leader |
+| 14 | 3 | by-design / **fixed (this branch)** | wheel is Rust parity (`dispatch.zig:1979`); the box anchors on open |
 | 15 | 3 | fixed-since | `1b958a17` — one press on a COLLECTIONS row opens it |
 | 16 | 3 | fixed-since | `f72f6b62` — the chips moved to their own box |
 | 17 | 3 | fixed-since | `tests/e2e/tab_drag_into_split` — edge drop splits, centre drop joins |

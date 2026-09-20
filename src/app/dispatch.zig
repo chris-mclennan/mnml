@@ -1263,10 +1263,13 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
             // The installed integrations' chords are rows here too, so
             // `<leader>ib` is reachable by looking as well as by typing.
             const node = (try whichkey.lookupWith(app.frame.allocator(), &app.dyn_commands, w.slice(), app.input_style == .vim)) orelse {
-                // A dead end says so rather than vanishing.
+                // A dead end says so rather than vanishing — in the
+                // active profile's spelling, so the standard profile is
+                // not told about a `<leader>` it has no key for.
+                const vim = app.input_style == .vim;
                 const path = app.frame.allocator().dupe(u8, w.slice()) catch "";
                 closeOverlay(app);
-                app.toast("no leader mapping: <leader>{s}", .{path});
+                app.toast("no leader mapping: {s}{s}{s}", .{ whichkey.leaderLabel(vim), whichkey.leaderGap(vim), path });
                 return;
             };
             switch (node) {

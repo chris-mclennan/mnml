@@ -2407,15 +2407,25 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             // The title is the leader and the keys typed so far; inside
             // a group it carries that group's own row — `<leader>f
             // +find (7)` — the way the reference plugin's header reads.
+            //
+            // The leader is the ACTIVE profile's, not always vim's: the
+            // standard profile has no `<leader>` to press, it opens this
+            // popup on `Ctrl+K` (`docs/KEYMAP_PROFILES.md` rule 2), and
+            // a header naming a key that profile does not carry told a
+            // VS Code user to press something that does not exist. A
+            // deliberate departure from the reference editor, which
+            // titles both profiles `<leader>` (`docs/PARITY.md`).
             const path = w.slice();
             const vim = app.input_style == .vim;
+            const leader = whichkey.leaderLabel(vim);
+            const gap = whichkey.leaderGap(vim);
             const here = try whichkey.lookupWith(ui.arena, &app.dyn_commands, path, vim);
             const title: []const u8 = if (path.len == 0 or here == null)
-                "<leader>"
+                leader
             else if (here.? == .dyn_group)
-                ui.fmt("<leader>{s}  +{s}", .{ path, here.?.label() })
+                ui.fmt("{s}{s}{s}  +{s}", .{ leader, gap, path, here.?.label() })
             else
-                ui.fmt("<leader>{s}  {s} ({d})", .{ path, here.?.label(), whichkey.chordCount(&here.?, vim) });
+                ui.fmt("{s}{s}{s}  {s} ({d})", .{ leader, gap, path, here.?.label(), whichkey.chordCount(&here.?, vim) });
             // A group row wears its own face; a leaf wears the face of
             // the group it lives in, which `which_key` paints dimmer.
             const leaf_glyph = whichkey_glyph.forGroup(if (here) |n| n.label() else "").pick(ui.ascii);

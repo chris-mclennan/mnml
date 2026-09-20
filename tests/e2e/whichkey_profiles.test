@@ -7,21 +7,24 @@
 write a.txt "hello\n"
 open a.txt
 
-# Standard: Ctrl+K is the leader.
+# Standard: Ctrl+K is the leader, and the header says so.
 command editor.use_standard
 key ctrl+k
-expect screen contains "┌ <leader> "
+wait 700
+expect screen contains "┌ Ctrl+K "
+expect screen lacks "┌ <leader> "
 expect screen contains "f → +find"
 expect screen contains "l → +lsp"
 expect screen lacks "r → +lsp"
 expect screen lacks "d → +debug"
 expect screen contains "esc to cancel"
 key esc
-expect screen lacks "┌ <leader> "
+expect screen lacks "┌ Ctrl+K "
 
 # Vim: space is the leader, and the two NvChad-only rows are there.
 command editor.use_vim
 key space
+wait 700
 expect screen contains "┌ <leader> "
 expect screen contains "r → +lsp"
 expect screen contains "d → +debug"

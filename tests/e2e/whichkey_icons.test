@@ -10,6 +10,7 @@ open a.txt
 
 command editor.use_standard
 key ctrl+k
+wait 700
 # Group rows: the rail's SEARCH / GIT / INTEGRATIONS / SESSIONS faces.
 expect screen contains "󰍉 f → +find (7)"
 expect screen contains "󰊢 g → +git (22)"
@@ -25,7 +26,7 @@ expect screen contains "󰘵 w → write/save"
 # Inside a group the header carries that group's row, and every leaf
 # there wears the group's face rather than the neutral one.
 type f
-expect screen contains "┌ <leader>f  +find (7) "
+expect screen contains "┌ Ctrl+K f  +find (7) "
 expect screen contains "󰍉 g → grep"
 expect screen contains "󰍉 f → files"
 expect screen lacks "󰘵 g → grep"
@@ -35,8 +36,9 @@ expect screen lacks "esc to cancel"
 # A nested group: each runner wears its language's devicon and counts
 # its own leaves; the parent's count is the sum.
 key ctrl+k
+wait 700
 type L
-expect screen contains "┌ <leader>L  +lang/run (19) "
+expect screen contains "┌ Ctrl+K L  +lang/run (19) "
 expect screen contains " c → +cargo (5)"
 expect screen contains " n → +npm (7)"
 expect screen contains " p → +pytest (2)"
@@ -46,6 +48,7 @@ key esc
 # The vim profile's own two groups carry a face and a count as well.
 command editor.use_vim
 key space
+wait 700
 expect screen contains " d → +debug (15)"
 expect screen contains " r → +lsp (1)"
 type r
