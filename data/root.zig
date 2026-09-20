@@ -14,6 +14,13 @@ pub const nerd_glyphnames = @embedFile("nerd-glyphnames.json");
 ///
 /// `ghostty.svg` is Ghostty's own ghost, reduced that way — the
 /// silhouette with the `>_` prompt cut out of it.
-pub const claude_svg = @embedFile("glyphs/claude-spark.svg");
+///
+/// `claude-code.svg` is the Claude Code figure, not the Anthropic
+/// spark: the mnml editor swapped its own `claude-spark.svg` for this
+/// on 2026-08-08 and this file is that one, byte for byte. Its two
+/// small rectangles are the figure's eyes — holes, which `ttf.place`
+/// works out by nesting depth, since `fill-rule="evenodd"` on the path
+/// is exactly the rule it applies.
+pub const claude_svg = @embedFile("glyphs/claude-code.svg");
 pub const codex_svg = @embedFile("glyphs/codex.svg");
 pub const ghostty_svg = @embedFile("glyphs/ghostty.svg");

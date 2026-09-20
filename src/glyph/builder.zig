@@ -497,3 +497,53 @@ test "merge: an outline no cmap points at does not survive" {
     // is reachable, so nothing dead was carried forward.
     try t.expectEqual(mappedCount(merged) + 1, ttf.glyphCount(merged));
 }
+
+test "U+F1E00 is the Claude Code figure, with its two eye holes — not the old spark" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const img = try svg.parse(arena, claude_svg);
+    // The figure's viewBox is 24 × 24 and what it draws inside it is
+    // 24 wide by 15 tall. The spark's was 94 × 94 and square — so the
+    // ratio is what tells the two apart after `place` has scaled
+    // whichever one it got to fill the cell.
+    try t.expectEqual(@as(f64, 24), img.view.w);
+    const placed = try ttf.place(arena, img, .{});
+    try t.expectEqual(@as(usize, 3), placed.len);
+    var min_x: f64 = 1e30;
+    var max_x: f64 = -1e30;
+    var min_y: f64 = 1e30;
+    var max_y: f64 = -1e30;
+    for (placed) |c| for (c) |p| {
+        min_x = @min(min_x, p.x);
+        max_x = @max(max_x, p.x);
+        min_y = @min(min_y, p.y);
+        max_y = @max(max_y, p.y);
+    };
+    // Width-limited, so it fills `Fit.width` × the advance exactly…
+    try t.expectApproxEqAbs(@as(f64, @floatFromInt(ttf.advance_width)) * 1.25, max_x - min_x, 0.01);
+    // …and is 15/24 as tall. The spark came out square (ratio ~1.0).
+    try t.expectApproxEqAbs(15.0 / 24.0, (max_y - min_y) / (max_x - min_x), 0.01);
+
+    // The eyes are holes: two contours inside the third, wound the
+    // other way. `fill-rule="evenodd"` on the path is exactly the rule
+    // `place` applies by nesting depth, so they cut out rather than
+    // filling in.
+    var holes: usize = 0;
+    var body: usize = 0;
+    for (placed, 0..) |c, i| {
+        var inside = false;
+        for (placed, 0..) |other, j| if (i != j and svg.contains(other, c[0])) {
+            inside = true;
+        };
+        if (inside) {
+            holes += 1;
+            try t.expect(svg.signedArea(c) > 0); // counter-clockwise in y-up
+        } else {
+            body += 1;
+            try t.expect(svg.signedArea(c) < 0);
+        }
+    }
+    try t.expectEqual(@as(usize, 2), holes);
+    try t.expectEqual(@as(usize, 1), body);
+}
