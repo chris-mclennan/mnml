@@ -900,8 +900,8 @@ fn drawGapChips(app: *App, ui: Ui, left: u16, cluster_left: u16, y: u16) Allocat
 /// `view.tab_bar_ai_*` commands are the way to hide a found CLI's chip.
 /// The marks are mnml's own baked glyphs — Rust's
 /// `ai_chip_use_mnml_glyphs` resolves to them on both arms and the key
-/// is deprecated here too. WHICH mark Claude wears is `ui.claude_mark`'s
-/// to say (`claude_mark.mark`); Codex has the one.
+/// is deprecated here too. WHICH mark Claude wears is
+/// `ui.claude_mark`'s to say (`claude_mark.mark`); Codex has the one.
 fn aiChips(app: *App, ui: Ui) Allocator.Error![]const bufferline.AiChip {
     const want = app.cfg.ui.tab_bar_ai_icon;
     if (want == .none) return &.{};
@@ -1215,7 +1215,7 @@ pub fn paneIcon(app: *App, pane: *const app_mod.Pane, ascii: bool) icons.Icon {
         .sessions_table => kindIcon(ascii, "\u{25C6}", "\u{F0392}", p.purple),
         .websocket => kindIcon(ascii, "\u{25C7}", "\u{F0317}", p.teal),
         .spend_report => kindIcon(ascii, "$", "\u{F01C2}", p.orange),
-        .ai_usage => |*u| if (u.product == .claude) .{ .glyph = claude_mark.glyph(app, ascii), .color = p.orange } else kindIcon(ascii, "\u{25c8}", bufferline.codex_glyph, p.cyan),
+        .ai_usage => |*u| if (u.product == .claude) .{ .glyph = claude_mark.glyph(app, ascii), .color = p.orange } else kindIcon(ascii, bufferline.codex_ascii, bufferline.codex_glyph, p.cyan),
         .mount => kindIcon(ascii, "M", "\u{F0BD3}", p.cyan),
         .integrations => kindIcon(ascii, "\u{25C8}", "\u{F0431}", p.cyan),
     };
