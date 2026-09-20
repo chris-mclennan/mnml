@@ -3,17 +3,30 @@
 # A terminal emulator fills the focused surface's cursor and hollows out
 # every other one — which is how you tell, at a glance, which shell your
 # typing reaches. mnml paints into cells, so `ui.pty_cursor.unfocused`
-# decides what an unfocused pane gets; the default `hollow` keeps the
-# glyph readable and repaints it in the cursor colour, and the cell a
-# shell leaves its cursor on is blank, so the box □ stands in for one.
+# decides what an unfocused pane gets. The default `hollow` keeps the
+# cell's character readable in the cursor colour; the cell a shell
+# leaves its cursor on is blank, so an outline stands in for one.
 #
-# The colours are the only way a script can see this at all: a filled
+# WHICH outline depends on the face. With MnmlSymbols installed it is
+# U+F2001, the full-cell rectangle mnml bakes (`glyph/builder.zig`) to
+# match what ghostty draws in pixels; without it, the Unicode fallback
+# `▯`. What this script asserts is `▯`, for two reasons that both hold:
+# the corpus driver does not fire the `startup` hook, so the font scan
+# that would answer the question never runs here at all; and
+# `MNML_FONT_DIRS=` gives the run no font directories either way, so it
+# stays `▯` on a machine with the face installed and on one without.
+# The other three squares of that matrix (face present, and both under
+# --ascii) are pinned as unit tests in `ui/pty_view.zig`. What none of
+# them can see is the baked glyph's actual pixels.
+#
+# The colours are the only way a script can see focus at all: a filled
 # cursor and an ordinary cell hold the same character. #abb2bf is
 # onedark's foreground — the colour a terminal uses for the cursor when
 # the child has not asked (OSC 12) for another — and #1e222a its ground.
 #
 # `sleep 30` keeps each child alive: an exited pane paints its banner
 # over the last row and has no cursor at all.
+# env: MNML_FONT_DIRS=
 command view.toggle_tree
 ex term printf LL; sleep 30
 expect screen contains "LL"
@@ -23,9 +36,9 @@ expect screen contains "RR"
 # The lower pane has focus: its cursor cell is filled — the cursor
 # colour is the ground, so the cell is not the pane's own #1e222a.
 expect color 2 21 bg #abb2bf
-# The upper one is hollow: the box, in the cursor colour, on the pane's
-# own ground. Not filled.
-expect screen contains "LL□"
+# The upper one is hollow: the outline, in the cursor colour, on the
+# pane's own ground. Not filled.
+expect screen contains "LL▯"
 expect color 2 2 fg #abb2bf
 expect color 2 2 bg #1e222a
 
@@ -33,6 +46,6 @@ expect color 2 2 bg #1e222a
 click 10 5
 expect pane "printf LL"
 expect color 2 2 bg #abb2bf
-expect screen contains "RR□"
+expect screen contains "RR▯"
 expect color 2 21 fg #abb2bf
 expect color 2 21 bg #1e222a

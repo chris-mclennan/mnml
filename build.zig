@@ -399,6 +399,22 @@ pub fn build(b: *std.Build) void {
     b.getInstallStep().dependOn(&font_install.step);
     const font_step = b.step("font", "Build share/mnml/fonts/MnmlSymbols.ttf from data/glyphs/");
     font_step.dependOn(&font_install.step);
+    // `zig build font-merge -Dfont-in=<installed.ttf> -Dfont-out=<dest>`:
+    // this build's glyphs merged INTO an already-installed face, so an
+    // older MnmlSymbols keeps the codepoints this repo has no source
+    // for. `run.sh install-font` is the only caller; it is a build step
+    // rather than a shipped binary because installing the font is a
+    // thing you do from a checkout.
+    const merge_in = b.option([]const u8, "font-in", "font-merge: the installed MnmlSymbols.ttf to merge into");
+    const merge_out = b.option([]const u8, "font-out", "font-merge: where the merged face is written");
+    const merge_run = b.addRunArtifact(font_exe);
+    merge_run.addArg("merge");
+    merge_run.addArg(merge_in orelse "");
+    merge_run.addArg(merge_out orelse "");
+    merge_run.has_side_effects = true;
+    merge_run.stdio = .inherit;
+    const merge_step = b.step("font-merge", "Merge this build's MnmlSymbols glyphs into an installed face (-Dfont-in, -Dfont-out)");
+    merge_step.dependOn(&merge_run.step);
     // ── end the symbols font ────────────────────────────────────────────
 
     // ── the arena audit ─────────────────────────────────────────────────

@@ -43,6 +43,7 @@ const menu_glyph = @import("../ui/menu_glyph.zig");
 const statusline_view = @import("../ui/statusline.zig");
 const tree_view = @import("../ui/tree_view.zig");
 const bufferline_view = @import("../ui/bufferline.zig");
+const pty_view = @import("../ui/pty_view.zig");
 const font_scan = @import("font_scan.zig");
 const ghostty_config = @import("ghostty_config.zig");
 
@@ -127,6 +128,7 @@ const core_glyphs = [_]struct { glyph: []const u8, name: []const u8 }{
     .{ .glyph = tree_view.cont_glyph, .name = "tree-line-vertical" },
     .{ .glyph = tree_view.corner_glyph, .name = "tree-line-corner" },
     .{ .glyph = bufferline_view.ghost_glyph, .name = "terminal-mark" },
+    .{ .glyph = pty_view.cursor_hollow_glyph, .name = "cursor-hollow" },
 };
 
 /// The check over this machine: the fonts `font_scan` found, ghostty's
@@ -413,22 +415,25 @@ test "the startup check: a MnmlSymbols face missing the config's marks toasts th
     onStartup(&app, .startup);
     // The shipped icons: browser EB01 (routed, lacking), claude F1E00
     // (not baked), codex F1E01 (baked), http F1D8; the core claude
-    // mark again, and the terminal mark F2000, which this fixture's
-    // face does not carry either.
-    try t.expectEqualStrings("\u{26A0} 4 integration icons will render as ? — run :integrations.audit_glyphs", app.lastToast().?);
+    // mark again, the terminal mark F2000, and the hollow cursor
+    // F2001 — neither of which this fixture's face carries.
+    try t.expectEqualStrings("\u{26A0} 5 integration icons will render as ? — run :integrations.audit_glyphs", app.lastToast().?);
     const c = try tofuCheck(&app, app.frame.allocator());
     try t.expect(c.mnml_present);
     try t.expectEqual(@as(usize, 2), c.map.rules.len);
-    try t.expectEqual(@as(usize, 9), c.refs);
-    try t.expectEqual(@as(usize, 4), c.verdicts.len);
+    try t.expectEqual(@as(usize, 10), c.refs);
+    try t.expectEqual(@as(usize, 5), c.verdicts.len);
     try t.expectEqualStrings("browser", c.verdicts[0].id);
     try t.expect(std.mem.startsWith(u8, c.verdicts[0].why, "force-routed to `Symbols Nerd Font Mono`"));
     try t.expectEqualStrings("claude_code", c.verdicts[1].id);
     try t.expectEqualStrings("claude-mark", c.verdicts[2].id);
     try t.expectEqualStrings("core UI", c.verdicts[2].source);
-    // The terminal mark is core too, and this face does not carry it.
+    // The terminal mark is core too, and this face does not carry it;
+    // nor the hollow cursor an unfocused pty pane paints.
     try t.expectEqualStrings("terminal-mark", c.verdicts[3].id);
     try t.expectEqual(@as(u21, 0xF2000), c.verdicts[3].cp);
+    try t.expectEqualStrings("cursor-hollow", c.verdicts[4].id);
+    try t.expectEqual(@as(u21, 0xF2001), c.verdicts[4].cp);
     // The pane: the verdicts under the check's header.
     try tmp.dir.createDirPath(io, "src");
     try command.run(&app, .{ .static = .@"integrations.audit_glyphs" });
@@ -436,7 +441,7 @@ test "the startup check: a MnmlSymbols face missing the config's marks toasts th
     try t.expect(std.mem.indexOf(u8, text, "ghostty map: ") != null);
     try t.expect(std.mem.indexOf(u8, text, "(2 rules)") != null);
     try t.expect(std.mem.indexOf(u8, text, "browser              U+0EB01  Browser  (config icon)  → force-routed") != null);
-    try t.expect(std.mem.indexOf(u8, text, "4 of 9 icon refs will render as ?") != null);
+    try t.expect(std.mem.indexOf(u8, text, "5 of 10 icon refs will render as ?") != null);
     // Without the face, the block stands down and only the routed miss remains.
     try tmp.dir.deleteFile(io, "fonts/MnmlSymbols.ttf");
     font_scan.onStartup(&app, .startup);

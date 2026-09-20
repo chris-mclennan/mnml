@@ -1206,6 +1206,8 @@ test "the wheel over a pty: a child tracking the mouse gets every event of a bat
 // ─── the accent (colors) ───────────────────────────────────────────────
 
 const Config = @import("../config/Config.zig");
+const font_scan = @import("font_scan.zig");
+const pty_view = @import("../ui/pty_view.zig");
 const TestRect = @import("../ui/rect.zig");
 var color_profiles = [_]Config.LaunchProfile{.{ .name = "t", .product = .claude, .binary = "claude" }};
 
@@ -1497,20 +1499,37 @@ test "two terminals in a split: one filled cursor on the focused pane, a hollow 
     try t.expectEqual(hot.y, app.screen.cursor.row);
     try t.expect(app.screen.cursor_shape == .block);
 
-    // The other pane: hollow — the box in the cursor colour, on the
-    // pane's own ground, never filled.
+    // The other pane: hollow — the outline in the cursor colour, on the
+    // pane's own ground, never filled. No MnmlSymbols has been scanned
+    // here (nothing fires the startup hook), which is the same state a
+    // user without the face is in, so the mark is the fallback `▯`.
+    try t.expect(app.fonts.mnml_glyphs == null);
     const cold = cellAfter(&app, "LL") orelse return error.TestUnexpectedResult;
     const cold_cell = app.screen.readCell(cold.x, cold.y).?;
-    try t.expectEqualStrings("\u{25a1}", cold_cell.char.grapheme);
+    try t.expectEqualStrings("\u{25af}", cold_cell.char.grapheme);
     try t.expect(Theme.Color.eql(th.fg.fg, cold_cell.style.fg));
     try t.expect(!Theme.Color.eql(th.fg.fg, cold_cell.style.bg));
+
+    // With the face installed and carrying it, the SAME cell paints the
+    // baked full-cell outline instead — the one wire from the scan to
+    // the painter (`render.zig`'s `.mnml_font`), which no other test
+    // crosses.
+    var baked: font_scan.CpSet = .empty;
+    try baked.put(app.gpa, pty_view.cursor_hollow_cp, {});
+    app.fonts.mnml_glyphs = baked; // `App.deinit` frees it
+    try app.render();
+    try t.expectEqualStrings("\u{F2001}", app.screen.readCell(cold.x, cold.y).?.char.grapheme);
+    // An installed face that PREDATES the glyph is the fallback again.
+    _ = app.fonts.mnml_glyphs.?.remove(pty_view.cursor_hollow_cp);
+    try app.render();
+    try t.expectEqualStrings("\u{25af}", app.screen.readCell(cold.x, cold.y).?.char.grapheme);
 
     // Focus the other way round and the two swap.
     app.active = left;
     app.focus = .{ .pane = left };
     try app.render();
     try t.expect(Theme.Color.eql(th.fg.fg, app.screen.readCell(cold.x, cold.y).?.style.bg));
-    try t.expectEqualStrings("\u{25a1}", app.screen.readCell(hot.x, hot.y).?.char.grapheme);
+    try t.expectEqualStrings("\u{25af}", app.screen.readCell(hot.x, hot.y).?.char.grapheme);
     try t.expectEqual(cold.x, app.screen.cursor.col);
 
     // `.none` leaves the unfocused pane's cell alone; the focused one

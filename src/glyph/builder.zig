@@ -1,10 +1,11 @@
 //! MnmlSymbols: the face mnml's own block is drawn from, and the one
 //! command that builds it.
 //!
-//! mnml paints five marks that exist in no font anywhere — the Claude
-//! and Codex product marks, the two tree connectors, and the terminal
-//! icon — so it carries them itself, at codepoints in the private plane
-//! nothing else claims (`U+F1B00–U+F20FF`). A terminal renders them by
+//! mnml paints six marks that exist in no font anywhere — the Claude
+//! and Codex product marks, the two tree connectors, the terminal icon
+//! and the unfocused pane's hollow cursor — so it carries them itself,
+//! at codepoints in the private plane nothing else claims
+//! (`U+F1B00–U+F20FF`). A terminal renders them by
 //! routing that range at a font named `MnmlSymbols`; ghostty spells
 //! that `font-codepoint-map` (`ghostty_config.zig` reads it back).
 //!
@@ -19,9 +20,14 @@
 //!     differs — so a terminal already routed at `MnmlSymbols` picks
 //!     the new one up with nothing to reconfigure.
 //!
-//! The two connectors are drawn here rather than imported: they are
-//! rectangles that have to touch the cell edge exactly, and an SVG
-//! rasterised at those coordinates leaves hairline gaps between rows.
+//! `merge` is the third path: the face this build bakes folded INTO an
+//! already-installed one, so `run.sh install-font` keeps whatever
+//! codepoints that file carries which this repo has no source for.
+//!
+//! The two connectors and the hollow cursor are drawn here rather than
+//! imported: they are rectangles that have to touch the cell edge
+//! exactly, and an SVG rasterised at those coordinates leaves hairline
+//! gaps between rows.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -45,6 +51,12 @@ pub const tree_corner: u21 = 0xF1F05;
 /// user names when the icon is set to custom. One codepoint either
 /// way, so the routing never has to change.
 pub const terminal: u21 = 0xF2000;
+/// The stand-in cursor an UNFOCUSED pty pane paints: a hollow block
+/// that fills the whole cell, which is the shape ghostty draws in
+/// pixels for a surface that is not the focused one. Drawn here for
+/// the same reason the connectors are — it has to meet the cell edge
+/// exactly, and nothing in Unicode is a full-cell outline.
+pub const cursor_hollow: u21 = 0xF2001;
 
 pub const Error = svg.Error || ttf.Error;
 
@@ -129,11 +141,34 @@ fn cornerContours(arena: Allocator) Allocator.Error![]const svg.Contour {
     return out;
 }
 
+// ─── the hollow cursor ──────────────────────────────────────────────────
+
+// The same cell the connectors measure themselves against: the full
+// advance across, and `v_bottom`…`v_top` down — so the outline sits on
+// the cell's own edges rather than inside them, which is what makes it
+// read as ghostty's rectangle and not as `□`, a small centred square.
+// The stroke is the tree line's, so the two weigh the same on screen.
+const cell_left: f64 = 0;
+const cell_right: f64 = @floatFromInt(ttf.advance_width);
+
+/// Four bars — left, right, bottom, top — each wound clockwise. They
+/// overlap at the corners; TrueType fills by non-zero winding, so a
+/// doubly-wound corner is still solid.
+fn hollowContours(arena: Allocator) Allocator.Error![]const svg.Contour {
+    const out = try arena.alloc(svg.Contour, 4);
+    out[0] = try rect(arena, cell_left, v_bottom, cell_left + stroke, v_top);
+    out[1] = try rect(arena, cell_right - stroke, v_bottom, cell_right, v_top);
+    out[2] = try rect(arena, cell_left, v_bottom, cell_right, v_bottom + stroke);
+    out[3] = try rect(arena, cell_left, v_top - stroke, cell_right, v_top);
+    return out;
+}
+
 // ─── the build ──────────────────────────────────────────────────────────
 
-/// Every glyph the face carries, as bytes. `specs` are the SVG-backed
-/// marks; the connectors and the blank space are added here.
-pub fn build(arena: Allocator, specs: []const Spec) Error![]u8 {
+/// The glyphs THIS build bakes: `specs` are the SVG-backed marks, and
+/// the connectors, the hollow cursor and the blank space are added
+/// here. Unsorted — the callers sort what they end up with.
+fn ownGlyphs(arena: Allocator, specs: []const Spec) Error![]ttf.Glyph {
     var glyphs: std.ArrayListUnmanaged(ttf.Glyph) = .empty;
     for (specs) |s| {
         const img = try svg.parse(arena, s.source);
@@ -141,17 +176,28 @@ pub fn build(arena: Allocator, specs: []const Spec) Error![]u8 {
     }
     try glyphs.append(arena, .{ .codepoint = tree_vertical, .name = "tree-line-vertical", .contours = try verticalContours(arena) });
     try glyphs.append(arena, .{ .codepoint = tree_corner, .name = "tree-line-corner", .contours = try cornerContours(arena) });
+    try glyphs.append(arena, .{ .codepoint = cursor_hollow, .name = "cursor-hollow", .contours = try hollowContours(arena) });
     // A blank U+0020: a rasteriser that refuses a font with no text
     // character at all will still load this one.
     try glyphs.append(arena, .{ .codepoint = ' ', .name = "space", .contours = ttf.Glyph.empty });
-    // `cmap` format 4 wants its segments in codepoint order, and
-    // format 12 its groups; one sort serves both.
-    std.mem.sort(ttf.Glyph, glyphs.items, {}, struct {
+    return glyphs.toOwnedSlice(arena);
+}
+
+/// `cmap` format 4 wants its segments in codepoint order, and format 12
+/// its groups; one sort serves both.
+fn sortByCodepoint(glyphs: []ttf.Glyph) void {
+    std.mem.sort(ttf.Glyph, glyphs, {}, struct {
         fn lt(_: void, a: ttf.Glyph, b: ttf.Glyph) bool {
             return a.codepoint < b.codepoint;
         }
     }.lt);
-    return ttf.build(arena, glyphs.items, family, version);
+}
+
+/// Every glyph the face carries, as bytes.
+pub fn build(arena: Allocator, specs: []const Spec) Error![]u8 {
+    const glyphs = try ownGlyphs(arena, specs);
+    sortByCodepoint(glyphs);
+    return ttf.build(arena, glyphs, family, version);
 }
 
 /// The face as it ships: the Ghostty ghost as the terminal mark.
@@ -164,6 +210,64 @@ pub fn buildDefault(arena: Allocator) Error![]u8 {
 pub fn buildWithTerminal(arena: Allocator, terminal_svg: []const u8) Error![]u8 {
     const specs = defaultSpecs(terminal_svg);
     return build(arena, &specs);
+}
+
+// ─── the merge ──────────────────────────────────────────────────────────
+
+pub const MergeError = Error || ttf.ReadError;
+
+/// What a merge did, for the line the installer prints.
+pub const MergeReport = struct {
+    /// Codepoints lifted from the installed face untouched.
+    kept: usize = 0,
+    /// Codepoints this build bakes that the installed face also had.
+    replaced: usize = 0,
+    /// Codepoints this build bakes that it did not have.
+    added: usize = 0,
+    /// Glyphs in the installed file that no cmap pointed at.
+    stripped: usize = 0,
+    /// Codepoints in the merged face.
+    total: usize = 0,
+};
+
+/// This build's glyphs merged INTO an already-installed face.
+///
+/// The installed MnmlSymbols may carry codepoints this repo has no
+/// source for — the Rust-era integration chips, spinners and marks
+/// around `U+F1C03…F1F00` — and overwriting the file would silently
+/// take them away. So every codepoint the installed face maps is
+/// lifted back out and kept; the ones this build bakes replace theirs;
+/// the ones it bakes and they lack are added; and an outline the
+/// installed `cmap` does not point at is dropped, since nothing could
+/// ever have rendered it.
+pub fn merge(arena: Allocator, installed: []const u8, terminal_svg: []const u8, report: ?*MergeReport) MergeError![]u8 {
+    const specs = defaultSpecs(terminal_svg);
+    const own = try ownGlyphs(arena, &specs);
+    var mine: std.AutoHashMapUnmanaged(u21, void) = .empty;
+    for (own) |g| try mine.put(arena, g.codepoint, {});
+
+    var out: std.ArrayListUnmanaged(ttf.Glyph) = .empty;
+    try out.appendSlice(arena, own);
+    var r: MergeReport = .{ .added = own.len };
+    var seen: std.AutoHashMapUnmanaged(u21, void) = .empty;
+    for (try ttf.read(arena, installed)) |g| {
+        // A face may map two codepoints at one glyph; each comes out as
+        // its own entry, and a repeat is not a second keep.
+        if (seen.contains(g.codepoint)) continue;
+        try seen.put(arena, g.codepoint, {});
+        if (mine.contains(g.codepoint)) {
+            r.replaced += 1;
+            r.added -= 1;
+            continue;
+        }
+        try out.append(arena, g);
+        r.kept += 1;
+    }
+    r.stripped = ttf.glyphCount(installed) -| (seen.count() + 1); // +1: .notdef
+    r.total = out.items.len;
+    if (report) |p| p.* = r;
+    sortByCodepoint(out.items);
+    return ttf.build(arena, out.items, family, version);
 }
 
 /// How big a custom SVG may be. An icon is a few KB; anything past
@@ -211,7 +315,7 @@ test "the shipped face carries every codepoint mnml's own block needs, and nothi
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     const bytes = try buildDefault(arena);
-    for ([_]u21{ claude, codex, tree_vertical, tree_corner, terminal, ' ' }) |cp| {
+    for ([_]u21{ claude, codex, tree_vertical, tree_corner, terminal, cursor_hollow, ' ' }) |cp| {
         errdefer std.debug.print("missing U+{X}\n", .{cp});
         try t.expect(cmapHas(bytes, cp));
     }
@@ -266,4 +370,180 @@ test "the connectors are the cell-edge rectangles the tree draws, not scaled art
         stem_max = @max(stem_max, p.x);
     };
     try t.expectApproxEqAbs(band_left + stroke / 2, (stem_min + stem_max) / 2, 0.001);
+}
+
+test "the hollow cursor spans the whole cell — each bar on its own edge" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const h = try hollowContours(arena);
+    try t.expectEqual(@as(usize, 4), h.len);
+
+    const Box = struct { x0: f64, y0: f64, x1: f64, y1: f64 };
+    // Each bar checked WHERE IT IS, not as part of the union: a bar
+    // pulled off its edge still leaves the union spanning the cell, so
+    // the union alone would not notice.
+    const want = [_]Box{
+        .{ .x0 = cell_left, .y0 = v_bottom, .x1 = cell_left + stroke, .y1 = v_top },
+        .{ .x0 = cell_right - stroke, .y0 = v_bottom, .x1 = cell_right, .y1 = v_top },
+        .{ .x0 = cell_left, .y0 = v_bottom, .x1 = cell_right, .y1 = v_bottom + stroke },
+        .{ .x0 = cell_left, .y0 = v_top - stroke, .x1 = cell_right, .y1 = v_top },
+    };
+    for (h, want, 0..) |c, w, i| {
+        errdefer std.debug.print("bar {d}\n", .{i});
+        // Clockwise in y-up, like every other bar here: TrueType fills
+        // the overlapping corners by winding rather than cancelling them.
+        try t.expect(svg.signedArea(c) < 0);
+        var b: Box = .{ .x0 = 1e30, .y0 = 1e30, .x1 = -1e30, .y1 = -1e30 };
+        for (c) |p| {
+            b.x0 = @min(b.x0, p.x);
+            b.x1 = @max(b.x1, p.x);
+            b.y0 = @min(b.y0, p.y);
+            b.y1 = @max(b.y1, p.y);
+        }
+        try t.expectEqual(w, b);
+    }
+    // Hollow, not filled: the middle of the cell is inside no bar.
+    const mid: svg.Point = .{ .x = (cell_left + cell_right) / 2, .y = (v_bottom + v_top) / 2 };
+    for (h) |c| try t.expect(!svg.contains(c, mid));
+}
+
+/// The codepoints a built face maps, via the same format-12 walk
+/// `cmapHas` does.
+fn mappedCount(bytes: []const u8) usize {
+    var n: usize = 0;
+    var cp: u21 = 0;
+    while (cp < 0x20) : (cp += 1) n += @intFromBool(cmapHas(bytes, cp));
+    // The blocks these faces actually use, rather than all of Unicode.
+    cp = 0x20;
+    while (cp <= 0x7E) : (cp += 1) n += @intFromBool(cmapHas(bytes, cp));
+    cp = 0xF1B00;
+    while (cp <= 0xF20FF) : (cp += 1) n += @intFromBool(cmapHas(bytes, cp));
+    return n;
+}
+
+test "merge: the installed face keeps its own codepoints, this build replaces and adds its own" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    // An "installed" face standing in for the user's: two codepoints
+    // this repo has no source for (Rust-era chips), plus two it does.
+    const box = try rect(arena, 100, 100, 500, 500);
+    const one = [_]svg.Contour{box};
+    const installed = try ttf.build(arena, &.{
+        .{ .codepoint = ' ', .name = "space", .contours = ttf.Glyph.empty },
+        .{ .codepoint = 0xF1C03, .name = "chip-a", .contours = &one },
+        .{ .codepoint = 0xF1C04, .name = "chip-b", .contours = &one },
+        .{ .codepoint = claude, .name = "old-claude", .contours = &one },
+        .{ .codepoint = terminal, .name = "old-ghost", .contours = &one },
+    }, family, version);
+
+    var report: MergeReport = .{};
+    const merged = try merge(arena, installed, ghostty_svg, &report);
+    // Kept: the two chips. Replaced: space, claude, terminal — and
+    // nothing else of this build's was in there.
+    try t.expectEqual(@as(usize, 2), report.kept);
+    try t.expectEqual(@as(usize, 3), report.replaced);
+    try t.expectEqual(@as(usize, 4), report.added);
+    try t.expectEqual(@as(usize, 9), report.total);
+    // Everything the installed face had is still addressable…
+    for ([_]u21{ ' ', 0xF1C03, 0xF1C04, claude, terminal }) |cp| {
+        errdefer std.debug.print("lost U+{X}\n", .{cp});
+        try t.expect(cmapHas(merged, cp));
+    }
+    // …and everything this build bakes is too, the new one included.
+    for ([_]u21{ claude, codex, tree_vertical, tree_corner, terminal, cursor_hollow }) |cp| {
+        errdefer std.debug.print("missing U+{X}\n", .{cp});
+        try t.expect(cmapHas(merged, cp));
+    }
+    // Replaced means replaced: the chip's plain box is NOT what the
+    // terminal mark now carries.
+    try t.expect(!std.mem.eql(u8, merged, installed));
+}
+
+test "merge: an outline no cmap points at does not survive" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const one = [_]svg.Contour{try rect(arena, 100, 100, 500, 500)};
+    const installed = try ttf.build(arena, &.{
+        .{ .codepoint = 0xF1C03, .name = "chip-a", .contours = &one },
+        .{ .codepoint = 0xF1C04, .name = "chip-b", .contours = &one },
+        .{ .codepoint = 0xF1C05, .name = "chip-c", .contours = &one },
+    }, family, version);
+    // Orphan the last one by shortening the format-12 group list: its
+    // outline is still in `glyf`, but no codepoint reaches it. (Reaching
+    // into the writer's own layout is fair here — it is the same file.)
+    const orphaned = try arena.dupe(u8, installed);
+    const cmap_off = blk: {
+        const n = std.mem.readInt(u16, orphaned[4..6], .big);
+        for (0..n) |i| {
+            const rec = orphaned[12 + 16 * i ..][0..16];
+            if (std.mem.eql(u8, rec[0..4], "cmap")) break :blk std.mem.readInt(u32, rec[8..12], .big);
+        }
+        return error.NoCmap;
+    };
+    const sub = cmap_off + std.mem.readInt(u32, orphaned[cmap_off + 4 + 8 + 4 ..][0..4], .big);
+    try t.expectEqual(@as(u16, 12), std.mem.readInt(u16, orphaned[sub..][0..2], .big));
+    const groups = std.mem.readInt(u32, orphaned[sub + 12 ..][0..4], .big);
+    std.mem.writeInt(u32, orphaned[sub + 12 ..][0..4], groups - 1, .big);
+
+    var report: MergeReport = .{};
+    const merged = try merge(arena, orphaned, ghostty_svg, &report);
+    try t.expectEqual(@as(usize, 1), report.stripped);
+    try t.expect(cmapHas(merged, 0xF1C03));
+    try t.expect(!cmapHas(merged, 0xF1C05));
+    // The guarantee behind the number: every outline in the merged face
+    // is reachable, so nothing dead was carried forward.
+    try t.expectEqual(mappedCount(merged) + 1, ttf.glyphCount(merged));
+}
+
+test "U+F1E00 is the Claude Code figure, with its two eye holes — not the old spark" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const img = try svg.parse(arena, claude_svg);
+    // The figure's viewBox is 24 × 24 and what it draws inside it is
+    // 24 wide by 15 tall. The spark's was 94 × 94 and square — so the
+    // ratio is what tells the two apart after `place` has scaled
+    // whichever one it got to fill the cell.
+    try t.expectEqual(@as(f64, 24), img.view.w);
+    const placed = try ttf.place(arena, img, .{});
+    try t.expectEqual(@as(usize, 3), placed.len);
+    var min_x: f64 = 1e30;
+    var max_x: f64 = -1e30;
+    var min_y: f64 = 1e30;
+    var max_y: f64 = -1e30;
+    for (placed) |c| for (c) |p| {
+        min_x = @min(min_x, p.x);
+        max_x = @max(max_x, p.x);
+        min_y = @min(min_y, p.y);
+        max_y = @max(max_y, p.y);
+    };
+    // Width-limited, so it fills `Fit.width` × the advance exactly…
+    try t.expectApproxEqAbs(@as(f64, @floatFromInt(ttf.advance_width)) * 1.25, max_x - min_x, 0.01);
+    // …and is 15/24 as tall. The spark came out square (ratio ~1.0).
+    try t.expectApproxEqAbs(15.0 / 24.0, (max_y - min_y) / (max_x - min_x), 0.01);
+
+    // The eyes are holes: two contours inside the third, wound the
+    // other way. `fill-rule="evenodd"` on the path is exactly the rule
+    // `place` applies by nesting depth, so they cut out rather than
+    // filling in.
+    var holes: usize = 0;
+    var body: usize = 0;
+    for (placed, 0..) |c, i| {
+        var inside = false;
+        for (placed, 0..) |other, j| if (i != j and svg.contains(other, c[0])) {
+            inside = true;
+        };
+        if (inside) {
+            holes += 1;
+            try t.expect(svg.signedArea(c) > 0); // counter-clockwise in y-up
+        } else {
+            body += 1;
+            try t.expect(svg.signedArea(c) < 0);
+        }
+    }
+    try t.expectEqual(@as(usize, 2), holes);
+    try t.expectEqual(@as(usize, 1), body);
 }

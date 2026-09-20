@@ -16,14 +16,23 @@
 //! ghostty's own renderer does (`renderer/cursor.zig`: not focused →
 //! `block_hollow`, hidden → nothing at all).
 //!
-//! mnml paints into cells, so there is no outline to draw: a hollow
-//! block cannot be expressed in one cell without losing the glyph under
-//! it. What CAN be expressed is the property that actually distinguishes
-//! the two — a filled cursor swallows its character (fg and bg swap), a
-//! hollow one leaves it readable. So `hollow` keeps the cell's glyph and
-//! repaints it in the cursor colour (a blank cell gets `□`, so a shell
-//! prompt still shows one), and `dim` is the other honest answer: a
-//! filled block at half strength. `none` opts out.
+//! mnml paints into cells, and a cell holds exactly one grapheme. On a
+//! BLANK cell that grapheme can be the outline itself, so `hollow`
+//! paints `U+F2001` — the full-cell rectangle MnmlSymbols bakes
+//! (`glyph/builder.zig`), which is ghostty's shape rather than the
+//! small centred `□` that used to stand in for it. On a cell that
+//! already holds a character there is no second grapheme to put the
+//! outline in, and dropping the character to draw a box would hide what
+//! the shell wrote; so the character stays and takes the cursor colour,
+//! which is the half of "hollow" that survives — a filled cursor
+//! swallows its character (fg and bg swap), a hollow one leaves it
+//! readable. `dim` is the other honest answer: a filled block at half
+//! strength. `none` opts out.
+//!
+//! The outline is only there when the face is: `props.mnml_font` comes
+//! from the installed MnmlSymbols' own cmap (`app/font_scan.zig`), and
+//! a terminal without it gets `▯` (U+25AF, a tall rectangle — closer to
+//! a cell than `□` is) and `|` under `--ascii`.
 //!
 //! The FOCUSED pane is different again: in a real terminal the host's
 //! own cursor is put on that cell (`render.zig` hands the position and
@@ -70,11 +79,22 @@ pub const Props = struct {
     unfocused: Unfocused = .hollow,
     /// Pass the child's blink request out in the returned `Cursor`.
     blink: bool = true,
+    /// The installed MnmlSymbols carries `cursor_hollow_cp`. Off by
+    /// default: a caller that cannot say gets the Unicode fallback,
+    /// which renders everywhere, rather than a guaranteed `?`.
+    mnml_font: bool = false,
 };
 
-/// A blank cell under a hollow cursor still has to show one.
-const hollow_glyph = "□";
-const hollow_ascii = "[";
+/// The full-cell outline MnmlSymbols bakes — the hollow cursor proper.
+/// `cursor_hollow_cp` is the same codepoint for the caller that has to
+/// ask the installed face whether it carries it.
+pub const cursor_hollow_glyph = "\u{F2001}";
+pub const cursor_hollow_ascii = "|";
+pub const cursor_hollow_cp: u21 = 0xF2001;
+/// Without the face: the tall rectangle, which at least fills the cell
+/// vertically. `□` is a small centred square and reads as a character,
+/// not as a cursor.
+const hollow_fallback = "▯";
 /// The bar cursor: a left-edge sliver, as a terminal draws it.
 const bar_glyph = "▏";
 const bar_ascii = "|";
@@ -149,6 +169,15 @@ fn cursorColor(grid: *const pty.Grid, th: *const Theme) Color {
     return .{ .rgb = .{ c.r, c.g, c.b } };
 }
 
+/// What a blank cell under a `.hollow` cursor shows: the baked outline
+/// when the face is installed, the tall rectangle when it is not, and
+/// the bar under `--ascii` (which is a terminal that was told to stay
+/// inside ASCII, whatever fonts it has).
+fn hollowGlyph(ui: Ui, props: Props) []const u8 {
+    if (ui.ascii) return cursor_hollow_ascii;
+    return if (props.mnml_font) cursor_hollow_glyph else hollow_fallback;
+}
+
 /// The cursor cell, painted. `focused` picks the filled look the child
 /// asked for; otherwise `props.unfocused` picks the stand-in.
 fn paintCursor(ui: Ui, area: Rect, grid: *const pty.Grid, cur: pty.grid.Cursor, props: Props) void {
@@ -183,16 +212,17 @@ fn paintCursor(ui: Ui, area: Rect, grid: *const pty.Grid, cur: pty.grid.Cursor, 
     }
     switch (props.unfocused) {
         .none => {},
-        // The glyph stays readable — that is what makes a hollow cursor
-        // hollow — and takes the cursor colour. A blank cell would show
-        // nothing at all, so it gets the outlined box instead.
+        // A blank cell has a grapheme to spare, so it gets the outline
+        // itself. A cell with a character does not — one cell, one
+        // grapheme — so the character stays readable and takes the
+        // cursor colour, which is the half of "hollow" a cell can hold.
         .hollow => {
             const blank = cell.isEmpty();
             var s = base;
             s.fg = ink;
             s.bold = true;
             ui.canvas.put(x, y, .{
-                .char = .{ .grapheme = if (blank) (if (ui.ascii) hollow_ascii else hollow_glyph) else glyph, .width = if (blank) 1 else width },
+                .char = .{ .grapheme = if (blank) hollowGlyph(ui, props) else glyph, .width = if (blank) 1 else width },
                 .style = s,
             });
         },
@@ -384,7 +414,7 @@ test "focused: with a real terminal cursor on top, the cells are left alone" {
     try testing.expect(Color.eql(f.theme.bg.bg, f.cell(2, 0).style.bg));
 }
 
-test "unfocused: hollow keeps the glyph readable in the cursor colour; a blank cell shows the box" {
+test "unfocused: hollow keeps the glyph readable in the cursor colour; a blank cell shows the outline" {
     var g = try GridFixture.init(10, 2, "ab\x1b[D"); // back onto the 'b'
     defer g.deinit();
     var f = try Fixture.init(10, 2);
@@ -397,13 +427,62 @@ test "unfocused: hollow keeps the glyph readable in the cursor colour; a blank c
     // Hollow, not filled: the ground is the pane's, not the cursor's.
     try testing.expect(Color.eql(th.bg.bg, c.style.bg));
 
-    // A blank cell has no glyph to keep, so the box stands in for one.
+    // A blank cell has a grapheme to spare, so the outline takes it.
     var blank = try GridFixture.init(10, 2, "ab");
     defer blank.deinit();
     var f2 = try Fixture.init(10, 2);
     defer f2.deinit();
-    _ = draw(f2.ui(), Rect.init(0, 0, 10, 2), &blank.grid, .{ .focused = false });
-    try testing.expectEqualStrings("□", f2.cell(2, 0).char.grapheme);
+    _ = draw(f2.ui(), Rect.init(0, 0, 10, 2), &blank.grid, .{ .focused = false, .mnml_font = true });
+    try testing.expectEqualStrings("\u{F2001}", f2.cell(2, 0).char.grapheme);
+}
+
+test "unfocused hollow: which mark a blank cell gets, over font × ascii" {
+    var g = try GridFixture.init(10, 2, "ab");
+    defer g.deinit();
+    const Case = struct { font: bool, ascii: bool, want: []const u8 };
+    // The outline only when the installed face carries it; `▯` rather
+    // than a certain `?` when it does not; `|` when the terminal was
+    // told to stay inside ASCII, whatever it has installed.
+    for ([_]Case{
+        .{ .font = true, .ascii = false, .want = cursor_hollow_glyph },
+        .{ .font = false, .ascii = false, .want = hollow_fallback },
+        .{ .font = true, .ascii = true, .want = cursor_hollow_ascii },
+        .{ .font = false, .ascii = true, .want = cursor_hollow_ascii },
+    }) |c| {
+        var f = try Fixture.init(10, 2);
+        defer f.deinit();
+        f.ascii = c.ascii;
+        _ = draw(f.ui(), Rect.init(0, 0, 10, 2), &g.grid, .{ .focused = false, .mnml_font = c.font });
+        errdefer std.debug.print("font={} ascii={}\n", .{ c.font, c.ascii });
+        try testing.expectEqualStrings(c.want, f.cell(2, 0).char.grapheme);
+    }
+}
+
+test "unfocused hollow: a cell with a character never gets the outline — one cell, one grapheme" {
+    // Even with the face installed: the outline would have to replace
+    // the shell's character, and hiding it is worse than tinting it.
+    var g = try GridFixture.init(10, 2, "ab\x1b[D");
+    defer g.deinit();
+    for ([_]bool{ true, false }) |font| {
+        var f = try Fixture.init(10, 2);
+        defer f.deinit();
+        _ = draw(f.ui(), Rect.init(0, 0, 10, 2), &g.grid, .{ .focused = false, .mnml_font = font });
+        try testing.expectEqualStrings("b", f.cell(1, 0).char.grapheme);
+        try testing.expect(Color.eql(f.theme.fg.fg, f.cell(1, 0).style.fg));
+    }
+}
+
+test "unfocused: dim and none ignore the face entirely" {
+    var g = try GridFixture.init(10, 2, "ab");
+    defer g.deinit();
+    var f = try Fixture.init(10, 2);
+    defer f.deinit();
+    _ = draw(f.ui(), Rect.init(0, 0, 10, 2), &g.grid, .{ .focused = false, .unfocused = .dim, .mnml_font = true });
+    try testing.expectEqualStrings(" ", f.cell(2, 0).char.grapheme);
+    var f2 = try Fixture.init(10, 2);
+    defer f2.deinit();
+    _ = draw(f2.ui(), Rect.init(0, 0, 10, 2), &g.grid, .{ .focused = false, .unfocused = .none, .mnml_font = true });
+    try testing.expect(Color.eql(f2.theme.bg.bg, f2.cell(2, 0).style.bg));
 }
 
 test "unfocused: dim is a filled block half-way to the ground; none paints nothing" {
@@ -448,14 +527,14 @@ test "OSC 12 wins over the theme for the cursor's colour" {
     try testing.expect(Color.eql(.{ .rgb = .{ 0x10, 0x20, 0x30 } }, f.cell(2, 0).style.bg));
 }
 
-test "--ascii swaps the box and the sliver for characters a plain font has" {
+test "--ascii swaps the outline and the sliver for characters a plain font has" {
     var g = try GridFixture.init(10, 2, "ab");
     defer g.deinit();
     var f = try Fixture.init(10, 2);
     defer f.deinit();
     f.ascii = true;
     _ = draw(f.ui(), Rect.init(0, 0, 10, 2), &g.grid, .{ .focused = false });
-    try testing.expectEqualStrings("[", f.cell(2, 0).char.grapheme);
+    try testing.expectEqualStrings("|", f.cell(2, 0).char.grapheme);
 
     var bar = try GridFixture.init(10, 2, "\x1b[6 q");
     defer bar.deinit();

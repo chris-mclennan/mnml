@@ -43,6 +43,18 @@ missing one; `release.yml`'s own `verify` job runs it with `--min 16
 --without-linux-packages`, because package-linux has not run yet at that
 point.
 
+## The symbols font
+
+Every archive carries `share/mnml/fonts/MnmlSymbols.ttf` (built by `zig
+build font` from `src/glyph/`), and the `.deb` / `.rpm` install it under
+the prefix. Neither puts it in the user's font directory — nothing
+should write there behind their back — so mnml falls back for its own
+block until they do: the unfocused pty pane's hollow cursor paints `▯`
+instead of `U+F2001`, and the tofu check names the rest. From a
+checkout that step is `./run.sh install-font`, which merges with
+whatever MnmlSymbols is already installed rather than replacing it. A
+release note that changes what the face carries should say so.
+
 ## The shipped names
 
 `zig build release` (and so `dist`, and so every archive) builds with

@@ -83,6 +83,11 @@ pub const State = struct {
     /// The latest release, gpa-owned; null until the cache or the worker says.
     latest: ?[]u8 = null,
     fetching: bool = false,
+    /// The installed MnmlSymbols' cmap, read once per scan and
+    /// gpa-owned; null when no face is installed. A painter choosing
+    /// between a baked glyph and a Unicode fallback asks `baked` every
+    /// frame, and that must not touch the disk.
+    mnml_glyphs: ?CpSet = null,
 
     pub fn init(gpa: Allocator) State {
         return .{ .snapshot = .init(gpa) };
@@ -91,7 +96,16 @@ pub const State = struct {
     pub fn deinit(self: *State, gpa: Allocator, io: Io) void {
         self.group.cancel(io);
         if (self.latest) |l| gpa.free(l);
+        if (self.mnml_glyphs) |*s| s.deinit(gpa);
         self.snapshot.deinit();
+    }
+
+    /// Does the installed MnmlSymbols carry `cp`? False when no face is
+    /// installed, and false when the installed one predates the glyph —
+    /// an older bake is exactly the case a fallback exists for.
+    pub fn baked(self: *const State, cp: u21) bool {
+        const set = self.mnml_glyphs orelse return false;
+        return set.contains(cp);
     }
 };
 
@@ -632,6 +646,9 @@ pub fn scan(app: *App) Allocator.Error!void {
     const arena = st.snapshot.allocator();
     st.families = try scanDirs(arena, app.gpa, app.io, try fontDirs(arena, &app.env));
     st.scanned = true;
+    // The installed face's cmap, read here so the painters never do.
+    if (st.mnml_glyphs) |*s| s.deinit(app.gpa);
+    st.mnml_glyphs = if (mnmlSymbolsPath(app)) |p| try cmapCodepoints(app.gpa, app.io, p) else null;
     if (st.latest == null) {
         if (app.env.get("MNML_NERDFONTS_LATEST")) |v| {
             if (v.len > 0) st.latest = try app.gpa.dupe(u8, v);

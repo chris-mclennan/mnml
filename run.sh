@@ -53,6 +53,15 @@
 #                                                  Debug build
 #                                   --force        overwrite a PREFIX/bin/mnml
 #                                                  that is not an mnml-zig
+#   ./run.sh install-font         Put MnmlSymbols.ttf in the OS font directory
+#                                 (~/Library/Fonts on macOS, ~/.local/share/
+#                                 fonts on Linux), MERGING with whatever is
+#                                 already there so an older face keeps the
+#                                 codepoints this repo has no source for. The
+#                                 old file is backed up to ~/Backups/mnml-zig/
+#                                 fonts/ first. `install` only prints this step
+#                                 — it never touches your font directory.
+#                                   --dry-run      print every step, change nothing
 #   ./run.sh installed-status     The installed mnml's version and prefix
 #                                 against this tree's HEAD, and where the
 #                                 stable profile's integration links point.
@@ -336,6 +345,25 @@ EOF2
 $(shipped_integrations)
 EOF2
 
+  # 7. The font. mnml paints its own block (the tree connectors, the
+  #    terminal mark, the unfocused pane's hollow cursor) out of
+  #    MnmlSymbols, and a terminal can only find it in the OS font
+  #    directory. That is a change to a place outside PREFIX, so
+  #    `install` only ever PRINTS it — `install-font` is the verb that
+  #    does it, and it merges rather than overwrites.
+  echo >&2
+  echo "  the symbols font is installed separately — mnml's own glyphs (the tree" >&2
+  echo "  connectors, the terminal mark, the unfocused pane's hollow cursor) need it" >&2
+  echo "  in your OS font directory, which this verb does not write to:" >&2
+  echo >&2
+  echo "      ./run.sh install-font" >&2
+  echo >&2
+  echo "  or by hand (this OVERWRITES; install-font merges instead, keeping any" >&2
+  echo "  glyphs an older MnmlSymbols carries that this build does not bake):" >&2
+  echo >&2
+  echo "      cp $prefix/share/mnml/fonts/MnmlSymbols.ttf $(font_dir)/" >&2
+  echo >&2
+
   if [ "$dry" = 1 ]; then
     log "$say: nothing was changed"
   else
@@ -345,6 +373,78 @@ EOF2
       *) log "note: $prefix/bin is not on your PATH" ;;
     esac
   fi
+}
+
+# Where this OS looks for a user's fonts.
+font_dir() {
+  case "$(uname -s)" in
+    Darwin) echo "$HOME/Library/Fonts" ;;
+    *)      echo "${XDG_DATA_HOME:-$HOME/.local/share}/fonts" ;;
+  esac
+}
+
+# ── install-font ───────────────────────────────────────────────────────
+# The one verb that writes outside the repo and outside PREFIX, which is
+# why it is a verb of its own and not a step of `install`.
+#
+# It MERGES. An already-installed MnmlSymbols may carry codepoints this
+# repo has no source for — the Rust-era integration chips, spinners and
+# marks around U+F1C03…F1F00 — and copying over the file would take
+# them away with no way back. `zig build font-merge` keeps every
+# codepoint the installed file maps, replaces the ones this build bakes,
+# adds the new ones, and drops an outline no cmap points at. The old
+# file is copied to ~/Backups/mnml-zig/fonts/ first, timestamped, so a
+# merge that goes wrong is one `cp` from undone.
+do_install_font() {
+  local dry=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --dry-run|-n) dry=1 ;;
+      *) log "install-font: unknown flag $1"; return 2 ;;
+    esac
+    shift
+  done
+  local say="install-font"
+  [ "$dry" = 1 ] && say="install-font --dry-run"
+  local dir dest backup_dir stamp
+  dir=$(font_dir)
+  dest="$dir/MnmlSymbols.ttf"
+  backup_dir="$HOME/Backups/mnml-zig/fonts"
+  stamp=$(date +%Y%m%d-%H%M%S)
+
+  if [ -f "$dest" ]; then
+    log "$say: merging into the installed face at $dest"
+    if [ "$dry" = 1 ]; then
+      echo "  would back up $dest → $backup_dir/MnmlSymbols-$stamp.ttf" >&2
+      echo "  would run    $ZIG build font-merge -Dfont-in=$dest -Dfont-out=$dest" >&2
+      log "$say: nothing was changed"
+      return 0
+    fi
+    mkdir -p "$backup_dir" || return 1
+    cp "$dest" "$backup_dir/MnmlSymbols-$stamp.ttf" || { log "$say: could not back up $dest"; return 1; }
+    echo "  backed up    $dest → $backup_dir/MnmlSymbols-$stamp.ttf" >&2
+    # Written through a temp file: a merge that fails must not leave a
+    # half-font where a working one was.
+    (cd "$REPO" && "$ZIG" build font-merge -Dfont-in="$dest" -Dfont-out="$dest.new") || {
+      log "$say: the merge failed — $dest is untouched"; rm -f "$dest.new"; return 1; }
+    mv -f "$dest.new" "$dest" || return 1
+    echo "  merged       $dest" >&2
+  else
+    local built="$REPO/zig-out/share/mnml/fonts/MnmlSymbols.ttf"
+    log "$say: no MnmlSymbols installed — copying this build's"
+    if [ "$dry" = 1 ]; then
+      echo "  would run    $ZIG build font" >&2
+      echo "  would copy   zig-out/share/mnml/fonts/MnmlSymbols.ttf → $dest" >&2
+      log "$say: nothing was changed"
+      return 0
+    fi
+    (cd "$REPO" && "$ZIG" build font) || { log "$say: the font build failed"; return 1; }
+    [ -f "$built" ] || { log "$say: $built is missing after the build"; return 1; }
+    mkdir -p "$dir" || return 1
+    cp "$built" "$dest" || return 1
+    echo "  ${built#"$REPO"/} → $dest" >&2
+  fi
+  log "$say: done. Terminals read the font directory at launch — restart yours."
 }
 
 # Copy `$2` to `$3` (or say so, when `$1` is 1), via a temp file so a
@@ -461,6 +561,7 @@ case "${1:-start}" in
     echo "[run.sh clean] done."
     exit 0 ;;
   install)         shift; do_install "$@"; exit $? ;;
+  install-font)    shift; do_install_font "$@"; exit $? ;;
   installed-status) do_installed_status ;;
   menu)
     shift
@@ -487,6 +588,7 @@ case "${1:-start}" in
         "check — the verification sequence"
         "status — the running instance"
         "install — install this build as the mnml you live in"
+        "install-font — merge MnmlSymbols into your OS font directory"
         "quit"
     )
     select choice in "${options[@]}"; do
@@ -500,7 +602,8 @@ case "${1:-start}" in
             7) exec "$0" check ;;
             8) exec "$0" status ;;
             9) exec "$0" install ;;
-            10) echo "bye"; exit 0 ;;
+            10) exec "$0" install-font ;;
+            11) echo "bye"; exit 0 ;;
             *) printf '  %sunknown choice %q — try again%s\n' "$GREY" "$REPLY" "$RST" ;;
         esac
     done
