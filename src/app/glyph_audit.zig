@@ -124,6 +124,10 @@ fn firstCodepoint(s: []const u8) ?u21 {
 /// The core glyphs mnml paints from its own block every frame.
 const core_glyphs = [_]struct { glyph: []const u8, name: []const u8 }{
     .{ .glyph = statusline_view.claude_glyph, .name = "claude-mark" },
+    // The alternate `ui.claude_mark = .spark` paints — baked into the
+    // same face, so an audit that skipped it would call a face fine
+    // that turns the chosen mark into tofu.
+    .{ .glyph = bufferline_view.spark_glyph, .name = "claude-spark" },
     .{ .glyph = statusline_view.codex_glyph, .name = "codex-mark" },
     .{ .glyph = tree_view.cont_glyph, .name = "tree-line-vertical" },
     .{ .glyph = tree_view.corner_glyph, .name = "tree-line-corner" },
