@@ -122,6 +122,14 @@ pub const HitTarget = union(enum) {
     link: struct { url: []const u8 },
     menu_item: struct { menu: u32, idx: u16 },
     statusline_seg: u32,
+    /// // changed (statusline-hover): a row of the hover tooltip's
+    /// list — one of the things the figure counts. `seg` is the
+    /// statusline segment the tip came from (so the tip survives the
+    /// pointer moving onto it), `idx` the row. A press runs what the
+    /// row names. `x` / `y` are the cell the tip was anchored at, so
+    /// the box does not walk away from under a pointer that moved onto
+    /// one of its own rows.
+    tip_row: struct { seg: u32, idx: u16, x: u16, y: u16 },
     /// A file tree entry, by its row index in the app's tree.
     tree_node: u32,
     /// A workspace section's header row (`ui/tree_view.zig`): 0 the
@@ -189,6 +197,7 @@ pub const HitTarget = union(enum) {
                 .try_it => |i| try w.print(":try_it:{d}", .{i}),
                 else => try w.print(":{s}", .{@tagName(p)}),
             },
+            .tip_row => |v| try w.print(":{d}:{d}", .{ v.seg, v.idx }),
             .tab, .tab_close => |v| try w.print(":{d}:{d}", .{ v.leaf, v.idx }),
             .breadcrumb => |v| try w.print(":{d}:{d}", .{ v.pane, v.idx }),
             .row, .kebab => |v| try w.print(":{s}:{d}", .{ @tagName(v.panel), v.idx }),
