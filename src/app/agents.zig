@@ -40,14 +40,15 @@ pub const Source = enum {
     claude,
     codex,
 
+    // No `glyph` here any more: a session wears its PRODUCT's own mark
+    // now — the one `ui.claude_mark` names for Claude, and the same
+    // the pty tab and the tab bar's cluster wear
+    // (`ui/sessions_table_view.zig`'s `sourceGlyph`). A neutral pair
+    // of this enum's own would only be a second, wrong answer to
+    // "which mark is Claude's", waiting to be used.
+
     pub fn label(s: Source) []const u8 {
         return @tagName(s);
-    }
-    pub fn glyph(s: Source, ascii: bool) []const u8 {
-        return switch (s) {
-            .claude => if (ascii) "*" else "✦",
-            .codex => if (ascii) "#" else "◈",
-        };
     }
 };
 
