@@ -140,15 +140,35 @@ fn registerGeometric(app: *App, full: Rect) void {
         .left => .left,
         .right => .right,
     };
+
     if (cfg.sidebar == .auto and !app.zen) {
         const dwell = cfg.sidebar_reveal_ms;
-        // A side dock owns the outermost cell, so the column's own
-        // reveal edge is the cell one step in.
-        const left_x = full.x + @as(u16, if (dock_side == .left) 1 else 0);
-        const right_x = full.right() -| @as(u16, if (dock_side == .right) 2 else 1);
-        add(app, .{ .rect = Rect.init(left_x, full.y, 1, full.h), .id = .sidebar_left, .dwell_ms = dwell, .priority = prio_sidebar });
-        add(app, .{ .rect = Rect.init(right_x, full.y, 1, full.h), .id = .sidebar_right, .dwell_ms = dwell, .priority = prio_sidebar });
+        add(app, .{ .rect = sidebarEdge(full, dock_side, .left), .id = .sidebar_left, .dwell_ms = dwell, .priority = prio_sidebar });
+        add(app, .{ .rect = sidebarEdge(full, dock_side, .right), .id = .sidebar_right, .dwell_ms = dwell, .priority = prio_sidebar });
     }
+}
+
+/// The one-cell screen edge a side column reveals through. A side dock
+/// owns the outermost cell (the outer-band rule), so the column's own
+/// reveal edge is then the cell one step in — which is also where its
+/// grip goes, since the grip names the zone's own cell and never a
+/// second one (`ui/edge_grip.zig`).
+pub fn sidebarEdge(full: Rect, dock_side: ?Config.ColumnSide, side: Config.ColumnSide) Rect {
+    return switch (side) {
+        .left => Rect.init(full.x + @as(u16, if (dock_side == .left) 1 else 0), full.y, 1, full.h),
+        .right => Rect.init(full.right() -| @as(u16, if (dock_side == .right) 2 else 1), full.y, 1, full.h),
+    };
+}
+
+/// Which side a launcher dock has taken, or null when it has taken
+/// neither (it is hidden, or it is on the bottom edge).
+pub fn dockSide(app: *const App, full: Rect) ?Config.ColumnSide {
+    if (dockBand(app, full) == null) return null;
+    return switch (app.cfg.ui.dock.edge) {
+        .bottom => null,
+        .left => .left,
+        .right => .right,
+    };
 }
 
 /// The one-cell band the launcher dock reveals through, or null when

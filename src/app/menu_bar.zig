@@ -148,6 +148,15 @@ pub fn pinShown(app: *const App, bar_y: u16) bool {
     return app.cfg.ui.menu_bar != .always and shown(app, bar_y);
 }
 
+/// // changed (edge-grip): whether the `⋯` grip paints on the bar's
+/// row instead of the words. Only `.auto` wears one: `.hidden`
+/// registers no hover zone at all, so a grip there would be a handle
+/// that does nothing, and `.always` has nothing to summon. Pinned, the
+/// words are up and the chip at their end is the handle.
+pub fn gripShown(app: *const App, bar_y: u16) bool {
+    return app.cfg.ui.edge_grips and app.cfg.ui.menu_bar == .auto and !app.menu_bar.pinned and !shown(app, bar_y);
+}
+
 /// What the painter reports back: where the words landed.
 pub fn notePainted(app: *App, bar_y: u16, word_x: []const ?u16, first_hidden: ?usize, words_end: u16) void {
     const s = &app.menu_bar;

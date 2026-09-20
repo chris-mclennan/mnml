@@ -145,6 +145,18 @@ pub fn shown(app: *const App) bool {
     return docked(app) or revealed(app);
 }
 
+/// // changed (edge-grip): whether the `⋯` / `⋮` grip paints at the
+/// middle of the strip's own band. Only `auto_hide` wears one —
+/// `hidden` registers no hover zone, so a grip there would be a handle
+/// that does nothing — and only while the strip is down: revealed, the
+/// pin chip at its end is the handle, and pinned (`mode` reads
+/// `.always`) there is nothing left to summon. A `:` line on the
+/// bottom row takes the row back, grip and all.
+pub fn gripShown(app: *App) bool {
+    return app.cfg.ui.edge_grips and !app.zen and mode(app) == .auto_hide and
+        !app.launcher_dock.open and !cmdlineBlocks(app);
+}
+
 /// The frame needs this many columns before a side dock is worth
 /// carving or revealing — its own cells plus the 21 the panes are
 /// never squeezed below (`render.frameRects`' own floor).

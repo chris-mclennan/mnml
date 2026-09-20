@@ -1364,6 +1364,12 @@ pub fn openButtonMenu(app: *App, id: u32, x: u16, y: u16) Allocator.Error!bool {
             return true;
         },
         .menu_bar_pin => try openMenuBarPinMenu(app, x, y),
+        // // changed (edge-grip): a grip answers everything the chip at
+        // the other end of its surface does, so a right press on one
+        // opens that surface's own menu rather than doing nothing.
+        .edge_grip_menu_bar => try openMenuBarPinMenu(app, x, y),
+        .edge_grip_sidebar_left, .edge_grip_sidebar_right => try openSidebarModeMenu(app, x, y),
+        .edge_grip_dock => try @import("launcher_dock.zig").openDockMenu(app, x, y),
         .toggle_tree => try openSidebarMenu(app, x, y),
         .toggle_right_panel => try openRightPanelMenu(app, x, y),
         .right_tab, .right_close => try openRightColumnMenu(app, x, y),

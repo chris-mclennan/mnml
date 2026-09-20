@@ -1,0 +1,52 @@
+# width: 120
+# height: 40
+# A side column's edge grip (src/ui/edge_grip.zig): `⋮` on the one-cell
+# screen edge the column reveals through, vertically centred — rows
+# 18..20 with the glyph on 19 at 40 rows — so the edge that summons the
+# panel says so.
+#
+# `⋮` is also the info view's kebab, so the hover-help panel is turned
+# off for this file: the only one on screen is then the grip.
+write wide.txt "...............................................................................................ENDMARK\n"
+write zz_marker.txt "nothing opens this\n"
+open wide.txt
+command view.toggle_hover_help
+# Docked, as mnml ships: the column is on screen, so there is nothing
+# to summon and no grip.
+expect screen contains "zz_marker"
+expect screen lacks "⋮"
+command view.sidebar_mode_auto
+expect screen contains "sidebar: auto"
+hover 60 10
+expect screen lacks "zz_marker"
+# Hidden: a grip on each column's edge — the left one at column 0, the
+# right one at column 119.
+expect screen contains "⋮"
+# Dwelling on it reveals the panel, because it is INSIDE the column's
+# hover zone. Nothing re-lays-out: the marker at column 95 of the open
+# file is still on screen.
+hover 0 19
+wait 500
+expect screen contains "zz_marker"
+expect screen contains "ENDMARK"
+# Away again, and the grip is back.
+hover 60 10
+wait 700
+expect screen lacks "zz_marker"
+expect screen contains "⋮"
+# A click on it pins: the column docks for the session, its header
+# strip's pin chip is the handle now, and the grip is gone.
+click 0 19
+expect screen contains "sidebar pinned"
+expect screen contains "zz_marker"
+hover 60 10
+expect screen contains "zz_marker"
+expect screen lacks "⋮"
+# Unpinning hands the columns back to `ui.sidebar`, and the grip with
+# them.
+command view.sidebar_pin
+expect screen contains "sidebar: auto-hide on"
+hover 60 10
+wait 700
+expect screen lacks "zz_marker"
+expect screen contains "⋮"

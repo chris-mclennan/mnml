@@ -108,6 +108,16 @@ pub const Layout = struct {
     pin: Rect = Rect.empty,
 };
 
+/// // changed (edge-grip): the run the WORDS take — the left of the
+/// row, up to the nav cluster's safe left edge. The row's own centre
+/// belongs to the workspace chip, which never hides, so a bar that can
+/// hide itself wears its grip at the middle of THIS run instead: the
+/// cells it is actually summoning.
+pub fn wordsRun(area: Rect) Rect {
+    if (area.isEmpty()) return .empty;
+    return Rect.init(area.x, area.y, (area.w -| conservative_cluster_w) / 2, 1);
+}
+
 pub fn draw(ui: Ui, area: Rect, p: Props, ids: Ids) Layout {
     const th = ui.theme;
     const pal = th.palette;

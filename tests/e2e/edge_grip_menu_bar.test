@@ -1,0 +1,48 @@
+# width: 120
+# height: 40
+# The menu bar's edge grip (src/ui/edge_grip.zig): `⋯` on the bar's own
+# row while the words are hidden, so the row that summons them says so
+# instead of being an invisible band you had to be told about.
+#
+# It sits at the middle of the run the WORDS take — cells 16..18 with
+# the glyph on 17 at 120 columns — and NOT at the middle of the row,
+# which is the workspace chip's and never hides.
+#
+# The launcher dock's grip is a `⋯` too, so it is parked for this file:
+# the only one on screen is then the bar's.
+write a.txt "alpha\n"
+open a.txt
+ex dock hidden
+# `.always`, as mnml ships: the words are up and there is nothing to
+# summon, so no grip at all.
+expect screen contains " ❯_  mnml  File  Edit  » "
+expect screen lacks "⋯"
+command view.menu_bar_cycle
+expect screen contains "menu bar: auto"
+hover 60 20
+expect screen lacks "❯_  mnml"
+# Hidden: the grip names the row.
+expect screen contains "⋯"
+# Dwelling on it reveals the words — because the grip is INSIDE the
+# bar's hover zone, not because it is a second way in.
+hover 17 0
+expect screen contains " ❯_  mnml  File  Edit  » "
+# Away again, and the grip is back.
+hover 60 20
+expect screen lacks "❯_  mnml"
+expect screen contains "⋯"
+# A click on it pins: the words come out and stay, the pin chip at
+# their end is the handle now, and the grip is gone — there is nothing
+# left to summon.
+click 17 0
+expect screen contains "menu bar pinned"
+expect screen contains "󰐃"
+hover 60 20
+expect screen contains " ❯_  mnml  File  Edit  » "
+expect screen lacks "⋯"
+# Unpinning hands the bar back to `ui.menu_bar`, and the grip with it.
+command view.menu_bar_pin
+expect screen contains "menu bar: auto-hide on"
+hover 60 20
+expect screen lacks "❯_  mnml"
+expect screen contains "⋯"
