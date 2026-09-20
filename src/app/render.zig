@@ -1613,8 +1613,10 @@ pub fn drawPaneContent(app: *App, ui: Ui, id: PaneId, full_rect: Rect) Allocator
     // colour goes down its first column and its body starts one cell
     // in (`ui/pane_rail.zig`). The editor is the one kind that keeps
     // the whole rect: its gutter opens with a sign column that is
-    // blank on most lines, so the rail goes in that cell and nothing
-    // on screen moves (`editor_view.Doc.rail`).
+    // blank on most lines, so the rail goes into that cell after the
+    // pane has painted (`pane_rail.drawOver`) and nothing on screen
+    // moves. With line numbers off there is no gutter to share and
+    // the editor insets like everything else.
     const rail = pane_accent.railColorOf(app, id, ui.theme);
     const shares_gutter = pane.* == .editor and app.cfg.ui.line_numbers;
     const inset = rail != null and !shares_gutter;

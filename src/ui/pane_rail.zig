@@ -15,10 +15,10 @@
 //!
 //! The editor is the one kind that does not inset. Its gutter already
 //! opens with a sign column that is blank unless a diagnostic or a
-//! decoration is on that line, so the rail goes in that cell and the
-//! numbers and the text stay on the screen column they were on
-//! (`editor_view.Doc.rail`). A sign still wins the cell it needs —
-//! an alarm is never hidden by decoration.
+//! decoration is on that line, so the rail goes into that cell after
+//! the pane has painted (`drawOver`) and the numbers and the text stay
+//! on the screen column they were on. A sign still wins the cell it
+//! needs — an alarm is never hidden by decoration.
 
 const std = @import("std");
 const vaxis = @import("vaxis");
