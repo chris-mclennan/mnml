@@ -87,6 +87,13 @@ jobs:
           }
           mkdir -p staging/fonts
           cp "mnml-$TRIPLE/share/mnml/fonts/MnmlSymbols.ttf" staging/fonts/MnmlSymbols.ttf
+          # The mnml catalogue — the INTEGRATIONS section's Marketplace
+          # tab default source — rides the same way.
+          test -f "mnml-$TRIPLE/share/mnml/marketplace.zon" || {
+              echo "the tarball has no share/mnml/marketplace.zon — scripts/package.sh did not stage it" >&2
+              exit 1
+          }
+          cp "mnml-$TRIPLE/share/mnml/marketplace.zon" staging/marketplace.zon
           ls -la staging/ staging/lua/ staging/fonts/
 
       - name: Install nfpm

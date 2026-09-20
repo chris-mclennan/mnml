@@ -659,7 +659,21 @@ otherwise. Copy what you need; leave the rest out.
     .marketplace = .{
         .enabled = true,
         .cache_ttl_secs = 3600,
-        .use_defaults = true, // prepend mnml's own sources (none ship yet — the official set comes with the first Zig integrations)
+        // Prepend mnml's own source: the `mnml` catalogue — the
+        // integrations mnml itself ships (Jira, Bitbucket, the SDK
+        // sample). It is one ZON file, `data/marketplace.zon` in the
+        // repo, packaged as `share/mnml/marketplace.zon` beside the
+        // binary, so the tab lists the shipped set out of the box with
+        // no config at all. Installing one of its rows runs
+        // `<binary> --install` and links `<data root>/bin/<name>` at
+        // the binary — PREFIX's copy after `run.sh install`, else this
+        // checkout's `zig-out/bin` — which is what keeps a manifest
+        // from ever hardcoding a repo path. A row says `installed`,
+        // `update available` (the catalogue is ahead of the installed
+        // manifest's version) or `not installed`.
+        // MNML_MARKETPLACE_CATALOGUE=<file> points at a different
+        // catalogue; see the three overrides below.
+        .use_defaults = true, // prepend mnml's own source: the shipped integration catalogue
         .sources = .{
             .{ .crates_keyword = .{ .id = "crates.io", .keyword = "mnml-integration" } },
             .{ .github_launcher_folder = .{ .id = "me/launchers", .repo = "me/launchers", .path = "launchers" } },
@@ -674,6 +688,21 @@ otherwise. Copy what you need; leave the rest out.
             // it is the official set.
             .{ .local_folder = .{ .id = "private", .path = "~/mnml-private" } },
         },
+        // Three environment overrides, for a scripted run (the .test
+        // corpus, the UI specs) and for pointing a session somewhere
+        // without editing a config:
+        //   MNML_MARKETPLACE_CATALOGUE=<file>   the `mnml` source reads
+        //       this catalogue instead of the shipped one. Relative
+        //       paths are workspace-relative; `~` expanded.
+        //   MNML_MARKETPLACE_LOCAL=<folder>     a local_folder source,
+        //       and the ONLY source while it is set.
+        //   MNML_MARKETPLACE_GITHUB=<owner>/<repo>[:<apps dir>]
+        //       a github_monorepo_apps source (default apps dir
+        //       `apps`), and likewise the only source. Pair it with
+        //       MNML_MARKETPLACE_API=<base url> to point the fetch at
+        //       a server other than api.github.com.
+        // LOCAL and GITHUB replace the configured sources entirely;
+        // CATALOGUE only changes which file the `mnml` source reads.
         .show_dev_tab = false,
         // The Marketplace tab opens with a FONTS section: every Nerd
         // Font family installed (the platform font folders, read from

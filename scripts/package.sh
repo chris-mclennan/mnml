@@ -97,6 +97,12 @@ for dir in "$release_dir"/*/; do
     [ -f "$font_src" ] || { echo "package.sh: $dir has no share/mnml/fonts/MnmlSymbols.ttf (run \`zig build\`)" >&2; exit 1; }
     mkdir -p "$stage/$pkg/share/mnml/fonts"
     cp "$font_src" "$stage/$pkg/share/mnml/fonts/MnmlSymbols.ttf"
+    # The mnml catalogue — the INTEGRATIONS section's Marketplace tab
+    # default source, probed beside the binary exactly as lua/ is.
+    # Without it a packaged mnml lists no integrations at all, so this
+    # is fatal too.
+    [ -f "$repo/data/marketplace.zon" ] || { echo "package.sh: no data/marketplace.zon in $repo" >&2; exit 1; }
+    cp "$repo/data/marketplace.zon" "$stage/$pkg/share/mnml/marketplace.zon"
 
     asset="$pkg.$ext"
     case "$ext" in

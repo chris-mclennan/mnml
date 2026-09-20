@@ -82,6 +82,20 @@ try {
         }
     }
 
+    # The mnml catalogue — the INTEGRATIONS section's Marketplace tab
+    # default source. Laid beside the script set and probed the same way.
+    $CatSrc = Join-Path $Exe.Directory.FullName 'share\mnml\marketplace.zon'
+    if (Test-Path $CatSrc) {
+        try {
+            $ShareDir = Join-Path (Split-Path -Parent $InstallDir) 'share\mnml'
+            New-Item -ItemType Directory -Path $ShareDir -Force | Out-Null
+            Copy-Item -Path $CatSrc -Destination (Join-Path $ShareDir 'marketplace.zon') -Force
+            Write-Host "mnml: integration catalogue installed to $ShareDir\marketplace.zon"
+        } catch {
+            Write-Host 'mnml: could not install the integration catalogue (the Marketplace tab will be empty)'
+        }
+    }
+
     # MnmlSymbols.ttf, the face mnml's own marks are drawn from. Laid
     # beside the script set; the terminal still has to be told about it.
     $FontSrc = Join-Path $Exe.Directory.FullName 'share\mnml\fonts\MnmlSymbols.ttf'

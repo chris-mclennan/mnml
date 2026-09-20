@@ -152,6 +152,22 @@ if [ -d "$lua_src" ]; then
     fi
 fi
 
+# ── the mnml catalogue ──
+# The INTEGRATIONS section's Marketplace tab default source, laid beside
+# the script set and probed the same way. A failure here costs an empty
+# Marketplace tab, not an install.
+cat_src="$tmp/mnml-$triple/share/mnml/marketplace.zon"
+if [ -f "$cat_src" ]; then
+    share_dir=$(dirname "$install_dir")/share/mnml
+    if mkdir -p "$share_dir" 2>/dev/null && cp "$cat_src" "$share_dir/marketplace.zon.tmp.$$" 2>/dev/null; then
+        mv -f "$share_dir/marketplace.zon.tmp.$$" "$share_dir/marketplace.zon"
+        say "integration catalogue installed to $share_dir/marketplace.zon"
+    else
+        rm -f "$share_dir/marketplace.zon.tmp.$$" 2>/dev/null || true
+        say "could not install the integration catalogue (the Marketplace tab will be empty)"
+    fi
+fi
+
 # ── MnmlSymbols.ttf ──
 # The face mnml's own marks are drawn from — the Claude and Codex marks,
 # the tree connectors, the terminal icon. Laid beside the script set. The

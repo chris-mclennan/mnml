@@ -6,8 +6,17 @@
 //! and lands as one `.marketplace` event; an install runs the same way
 //! and refreshes the installed list when it is done.
 //!
-//! Three source shapes do work in this build:
+//! Four source shapes do work in this build:
 //!
+//!   mnml                     THE DEFAULT. The catalogue of integrations
+//!                            mnml itself ships
+//!                            (`marketplace_catalogue.zig`,
+//!                            `data/marketplace.zon` — packaged as
+//!                            `share/mnml/marketplace.zon`). The binary
+//!                            already exists, so install is
+//!                            `<binary> --install` plus the link
+//!                            `<data root>/bin/<name>` → PREFIX's copy,
+//!                            else the checkout's `zig-out/bin`.
 //!   github_launcher_folder   every `*.zon` under `<repo>/<path>` is a
 //!                            manifest; install = write it under
 //!                            `<data root>/integrations/`. For a binary
@@ -27,18 +36,27 @@
 //!
 //! `crates_keyword` is kept in the config so a 0.2 file still loads,
 //! but integrations are no longer crates: it is reported and lists
-//! nothing. No source ships by default yet (`Config.default_marketplace_sources`
-//! is empty): the 0.2 sources listed integrations on the old bridge,
-//! which this host cannot mount.
+//! nothing. The 0.2 GitHub sources are gone for the same reason — they
+//! listed integrations on the old bridge, which this host cannot mount
+//! — so `Config.default_marketplace_sources` stays empty and the
+//! `mnml` source above is what `use_defaults` prepends instead.
 //!
-//! `MNML_MARKETPLACE_API` replaces `https://api.github.com` (the tests
-//! point it at a local server). `MNML_MARKETPLACE_LOCAL=<folder>` makes
-//! that folder the only source — a `local_folder` named `local`,
-//! relative to the workspace — for an offline or private setup and for
-//! the corpus, which cannot write config. A local folder that is this
+//! Three environment overrides, for an offline or private setup and
+//! for the corpus and the UI specs, which cannot write config:
+//!
+//!   MNML_MARKETPLACE_CATALOGUE=<file>   the `mnml` source reads this
+//!       catalogue instead of the shipped one.
+//!   MNML_MARKETPLACE_LOCAL=<folder>     a `local_folder` named
+//!       `local`, relative to the workspace.
+//!   MNML_MARKETPLACE_GITHUB=<owner>/<repo>[:<apps dir>]
+//!       a `github_monorepo_apps` source named `github`.
+//!
+//! The last two REPLACE every other source while they are set, so a
+//! scripted run never fetches what the machine's own config names;
+//! `MNML_MARKETPLACE_API` replaces `https://api.github.com` under them
+//! (the tests point it at a local server). A local folder that is this
 //! build's own `launchers/` (the repo's, `build_options.launchers_dir`)
-//! lists as `✓ Official` rather than `Private`: it is the official set,
-//! the one the default source will name once it ships.
+//! lists as `✓ Official` rather than `Private`: it is the official set.
 
 const std = @import("std");
 const Io = std.Io;
@@ -54,12 +72,15 @@ const http_client = @import("../http/client.zig");
 const http_parse = @import("../http/parse.zig");
 const manifest_mod = @import("../bridge/manifest.zig");
 const integrations = @import("integrations.zig");
+const catalogue = @import("marketplace_catalogue.zig");
 const build_options = @import("build_options");
 
 pub const default_api = "https://api.github.com";
 pub const max_body = 4 * 1024 * 1024;
 
-pub const Kind = enum { launcher, app };
+/// `builtin` is a `mnml`-source row: a binary mnml ships, whose
+/// install is `--install` plus a link rather than a download or a build.
+pub const Kind = enum { launcher, app, builtin };
 
 /// One row of the listing. Borrows the result's arena.
 pub const Entry = struct {
@@ -78,6 +99,14 @@ pub const Entry = struct {
     official: bool = false,
     /// From a `local_folder` source — the private path.
     private: bool = false,
+    /// builtin: the binary the catalogue names (a bare name, or the
+    /// `$VAR` / absolute path the corpus points an entry at).
+    binary: []const u8 = "",
+    /// builtin: where the entry is documented.
+    docs: []const u8 = "",
+    /// builtin: the checkout the catalogue came from, whose
+    /// `zig-out/bin` an install falls back to. Empty for a packaged one.
+    repo: []const u8 = "",
     /// The manifest's chip, when the source had the manifest to read.
     glyph: []const u8 = "",
     fallback: []const u8 = "",
@@ -87,9 +116,11 @@ pub const Entry = struct {
 /// A source as the worker sees it (gpa-owned copy of the config).
 pub const SourceSpec = struct {
     id: []u8,
-    kind: enum { launcher_folder, monorepo_apps, crates, local_folder },
+    kind: enum { mnml, launcher_folder, monorepo_apps, crates, local_folder },
+    /// mnml: the checkout the catalogue came from, or empty.
     repo: []u8,
-    /// The repo path, the keyword, or the local folder (absolute).
+    /// The repo path, the keyword, the local folder (absolute), or the
+    /// catalogue file (mnml).
     path: []u8,
     official: bool = false,
 
@@ -156,31 +187,54 @@ fn apiBase(app: *App) []const u8 {
     return default_api;
 }
 
-/// The sources to list: the defaults first when `use_defaults`, then the
-/// config's — or only `$MNML_MARKETPLACE_LOCAL` when that is set.
+/// The sources to list: the defaults first when `use_defaults`, then
+/// the config's — or only the environment's when one of the two
+/// overrides is set. The overrides are how the corpus and the UI specs
+/// point the tab somewhere without writing a config; they REPLACE
+/// everything, so a scripted run never fetches what the machine's own
+/// config names.
 pub fn sources(app: *App, gpa: Allocator) Allocator.Error![]SourceSpec {
     var out: std.ArrayListUnmanaged(SourceSpec) = .empty;
     errdefer {
         for (out.items) |s| s.deinit(gpa);
         out.deinit(gpa);
     }
+    var overridden = false;
     if (app.env.get("MNML_MARKETPLACE_LOCAL")) |folder| if (folder.len > 0) {
         var spec = try specOf(app, gpa, .{ .local_folder = .{ .id = "local", .path = folder } });
         spec.official = officialLocal(app, spec.path);
         try out.append(gpa, spec);
-        return out.toOwnedSlice(gpa);
+        overridden = true;
     };
-    if (app.cfg.marketplace.use_defaults) for (Config.default_marketplace_sources) |s| {
-        var spec = try specOf(app, gpa, s);
-        spec.official = true;
-        try out.append(gpa, spec);
+    if (app.env.get("MNML_MARKETPLACE_GITHUB")) |v| if (v.len > 0) {
+        const g = githubOverride(v);
+        try out.append(gpa, try specOf(app, gpa, .{ .github_monorepo_apps = .{ .id = "github", .repo = g.repo, .apps_dir = g.dir } }));
+        overridden = true;
     };
+    if (overridden) return out.toOwnedSlice(gpa);
+    if (app.cfg.marketplace.use_defaults) {
+        // The mnml catalogue leads: what the editor itself ships is the
+        // first thing the tab lists, before anything a config added.
+        if (try mnmlSource(app, gpa)) |spec| try out.append(gpa, spec);
+        for (Config.default_marketplace_sources) |s| {
+            var spec = try specOf(app, gpa, s);
+            spec.official = true;
+            try out.append(gpa, spec);
+        }
+    }
     for (app.cfg.marketplace.sources) |s| {
         var spec = try specOf(app, gpa, s);
         if (spec.kind == .local_folder) spec.official = officialLocal(app, spec.path);
         try out.append(gpa, spec);
     }
     return out.toOwnedSlice(gpa);
+}
+
+/// `$MNML_MARKETPLACE_GITHUB`: `<owner>/<repo>[:<apps dir>]`, a
+/// `github_monorepo_apps` source against `$MNML_MARKETPLACE_API`.
+fn githubOverride(v: []const u8) struct { repo: []const u8, dir: []const u8 } {
+    const colon = std.mem.indexOfScalar(u8, v, ':') orelse return .{ .repo = v, .dir = "apps" };
+    return .{ .repo = v[0..colon], .dir = if (colon + 1 < v.len) v[colon + 1 ..] else "apps" };
 }
 
 /// Whether a local folder is mnml's own `launchers/` — the official
@@ -196,11 +250,56 @@ pub fn officialLocal(app: *App, abs: []const u8) bool {
     return std.mem.eql(u8, a_buf[0..a_n], b_buf[0..b_n]);
 }
 
+/// The catalogue file behind the `mnml` source:
+/// `$MNML_MARKETPLACE_CATALOGUE` first (how the corpus and the UI specs
+/// seed the tab), else the shipped one beside the binary. Empty when
+/// there is none — a bare binary copied out of its package.
+pub fn cataloguePath(app: *App, arena: Allocator) Allocator.Error![]const u8 {
+    if (app.env.get("MNML_MARKETPLACE_CATALOGUE")) |v| if (v.len > 0) {
+        const expanded = try app.expandTilde(v);
+        return if (std.fs.path.isAbsolute(expanded)) expanded else try std.fs.path.join(arena, &.{ app.workspace, expanded });
+    };
+    const exe_dir = std.process.executableDirPathAlloc(app.io, arena) catch null;
+    return (try catalogue.find(app.io, arena, build_options.marketplace_catalogue, exe_dir)) orelse "";
+}
+
+/// The `mnml` source, or null when this build has no catalogue to read.
+fn mnmlSource(app: *App, gpa: Allocator) Allocator.Error!?SourceSpec {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const path = try cataloguePath(app, arena);
+    if (path.len == 0) return null;
+    return .{
+        .id = try gpa.dupe(u8, "mnml"),
+        .kind = .mnml,
+        .repo = try gpa.dupe(u8, try catalogue.repoOf(app.io, arena, path)),
+        .path = try gpa.dupe(u8, path),
+        .official = true,
+    };
+}
+
 /// How many sources `sources` would list, without building them: the
-/// `MNML_MARKETPLACE_LOCAL` folder counts as one.
+/// `MNML_MARKETPLACE_LOCAL` folder counts as one, and so does the mnml
+/// catalogue when this build has one.
 pub fn sourceCount(app: *App) usize {
-    if (app.env.get("MNML_MARKETPLACE_LOCAL")) |folder| if (folder.len > 0) return 1;
-    const defaults: usize = if (app.cfg.marketplace.use_defaults) Config.default_marketplace_sources.len else 0;
+    var overrides: usize = 0;
+    if (app.env.get("MNML_MARKETPLACE_LOCAL")) |folder| if (folder.len > 0) {
+        overrides += 1;
+    };
+    if (app.env.get("MNML_MARKETPLACE_GITHUB")) |v| if (v.len > 0) {
+        overrides += 1;
+    };
+    if (overrides > 0) return overrides;
+    var defaults: usize = 0;
+    if (app.cfg.marketplace.use_defaults) {
+        defaults += Config.default_marketplace_sources.len;
+        var buf: [std.fs.max_path_bytes * 2]u8 = undefined;
+        var fba = std.heap.FixedBufferAllocator.init(&buf);
+        if (cataloguePath(app, fba.allocator())) |p| {
+            if (p.len > 0) defaults += 1;
+        } else |_| {}
+    }
     return defaults + app.cfg.marketplace.sources.len;
 }
 
@@ -344,6 +443,7 @@ fn listSource(io: Io, gpa: Allocator, arena: Allocator, api: []const u8, s: Sour
             try problems.append(arena, try std.fmt.allocPrint(arena, "{s}: crates.io sources are not searched — integrations are Zig packages now", .{s.id}));
             return;
         },
+        .mnml => return listCatalogue(io, arena, s, entries, problems),
         .local_folder => return listLocal(io, arena, s, entries, problems),
         .launcher_folder, .monorepo_apps => {},
     }
@@ -409,8 +509,50 @@ fn listSource(io: Io, gpa: Allocator, arena: Allocator, api: []const u8, s: Sour
                     .official = s.official,
                 });
             },
-            .crates, .local_folder => unreachable,
+            .crates, .local_folder, .mnml => unreachable,
         }
+    }
+}
+
+/// The `mnml` source: one ZON file, one row per binary mnml ships.
+fn listCatalogue(io: Io, arena: Allocator, s: SourceSpec, entries: *std.ArrayListUnmanaged(Entry), problems: *std.ArrayListUnmanaged([]const u8)) Allocator.Error!void {
+    const text = Io.Dir.cwd().readFileAllocOptions(io, s.path, arena, .limited(1 << 20), .of(u8), 0) catch |err| {
+        try problems.append(arena, try std.fmt.allocPrint(arena, "{s}: cannot read {s}: {s}", .{ s.id, s.path, @errorName(err) }));
+        return;
+    };
+    var why: []const u8 = "";
+    const cat = catalogue.parse(arena, text, &why) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.BadCatalogue => {
+            try problems.append(arena, try std.fmt.allocPrint(arena, "{s}: {s}", .{ s.id, why }));
+            return;
+        },
+    };
+    for (cat.entries) |e| {
+        io.checkCancel() catch return;
+        var glyph: []const u8 = "";
+        if (e.chip) |c| {
+            const chip: manifest_mod.Chip = .{ .glyph = c.glyph, .glyph_codepoint = c.glyph_codepoint, .fallback = c.fallback, .color = c.color };
+            glyph = try integrations.chipGlyph(arena, chip);
+        }
+        try entries.append(arena, .{
+            .source = try arena.dupe(u8, s.id),
+            .kind = .builtin,
+            .id = e.id,
+            .label = e.label,
+            .description = e.description,
+            .version = e.version,
+            // The catalogue file itself is where the row came from; the
+            // detail pane shows it as the entry's origin.
+            .url = try arena.dupe(u8, s.path),
+            .official = true,
+            .binary = e.binary,
+            .docs = e.docs,
+            .repo = try arena.dupe(u8, s.repo),
+            .glyph = glyph,
+            .fallback = if (e.chip) |c| c.fallback else "",
+            .color = if (e.chip) |c| c.color else "",
+        });
     }
 }
 
@@ -481,7 +623,7 @@ pub fn install(app: *App, idx: usize) CommandError!void {
     const gpa = app.gpa;
     const job = try gpa.create(InstallJob);
     errdefer gpa.destroy(job);
-    job.* = .{ .kind = e.kind, .id = &.{}, .root = &.{}, .url = &.{}, .subpath = &.{}, .env = undefined };
+    job.* = .{ .kind = e.kind, .id = &.{}, .root = &.{}, .url = &.{}, .subpath = &.{}, .binary = &.{}, .repo = &.{}, .env = undefined };
     job.id = try gpa.dupe(u8, e.id);
     errdefer gpa.free(job.id);
     job.root = try gpa.dupe(u8, app.data_root);
@@ -490,6 +632,11 @@ pub fn install(app: *App, idx: usize) CommandError!void {
     errdefer gpa.free(job.url);
     job.subpath = try gpa.dupe(u8, e.subpath);
     errdefer gpa.free(job.subpath);
+    // `$VAR` resolves against the app's environment, not the worker's.
+    job.binary = try gpa.dupe(u8, try integrations.expandEnv(app, app.frame.allocator(), e.binary));
+    errdefer gpa.free(job.binary);
+    job.repo = try gpa.dupe(u8, e.repo);
+    errdefer gpa.free(job.repo);
     job.env = try app.env.clone(gpa);
     errdefer job.env.deinit();
     try job.env.put("MNML_DATA_ROOT", app.data_root);
@@ -506,6 +653,11 @@ const InstallJob = struct {
     root: []u8,
     url: []u8,
     subpath: []u8,
+    /// builtin: the binary to run `--install` on and link, `$VAR`
+    /// already expanded.
+    binary: []u8,
+    /// builtin: the checkout to fall back to, or empty.
+    repo: []u8,
     env: std.process.Environ.Map,
 
     fn destroy(self: *InstallJob, gpa: Allocator) void {
@@ -513,6 +665,8 @@ const InstallJob = struct {
         gpa.free(self.root);
         gpa.free(self.url);
         gpa.free(self.subpath);
+        gpa.free(self.binary);
+        gpa.free(self.repo);
         self.env.deinit();
         gpa.destroy(self);
     }
@@ -551,6 +705,26 @@ fn installInner(io: Io, gpa: Allocator, arena: Allocator, job: *InstallJob, why:
         return error.Failed;
     };
     switch (job.kind) {
+        // A binary mnml ships: it exists already, so the whole install
+        // is the link plus `--install`. The link goes down FIRST, so
+        // the manifest `--install` writes (naming the bare binary) is
+        // resolvable the moment the scan reads it.
+        .builtin => {
+            const path_var = job.env.get("PATH") orelse "";
+            const target = (try catalogue.linkTarget(io, arena, job.binary, path_var, job.root, job.repo)) orelse {
+                why.* = try std.fmt.allocPrint(arena, "{s} is not on PATH and not built in this checkout — `zig build`, or `run.sh install`", .{job.binary});
+                return error.Failed;
+            };
+            const linked = linkBinary(io, arena, job.root, target) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.LinkFailed => {
+                    why.* = try std.fmt.allocPrint(arena, "cannot link {s} into {s}/bin", .{ target, job.root });
+                    return error.Failed;
+                },
+            };
+            try run(io, gpa, arena, &.{ target, "--install" }, null, &job.env, "--install", why);
+            return try std.fmt.allocPrint(arena, "linked {s} \u{2192} {s}", .{ linked, target });
+        },
         .launcher => {
             // A local folder's manifest is a file; a GitHub one a download.
             const text = if (std.fs.path.isAbsolute(job.url))
@@ -622,16 +796,33 @@ fn installInner(io: Io, gpa: Allocator, arena: Allocator, job: *InstallJob, why:
                 why.* = "zig build produced no binary";
                 return error.Failed;
             };
-            // Reachable by its bare name: <root>/bin is on `runMount`'s path.
-            const link_dir = try std.fs.path.join(arena, &.{ job.root, "bin" });
-            Io.Dir.cwd().createDirPath(io, link_dir) catch {};
-            const link = try std.fs.path.join(arena, &.{ link_dir, std.fs.path.basename(exe) });
-            Io.Dir.cwd().deleteFile(io, link) catch {};
-            Io.Dir.cwd().symLink(io, exe, link, .{}) catch {};
+            _ = linkBinary(io, arena, job.root, exe) catch "";
             try run(io, gpa, arena, &.{ exe, "--install" }, null, &job.env, "--install", why);
             return try std.fmt.allocPrint(arena, "built {s}", .{exe});
         },
     }
+}
+
+pub const LinkError = error{ OutOfMemory, LinkFailed };
+
+/// `<root>/bin/<name>` → `target`, the one indirection that keeps a
+/// manifest's bare `binary` name honest: `integrations.resolveBinary`
+/// prefers this link over PATH, so relinking it (here, by `run.sh
+/// install`, or by `integrations.update`) moves every installed
+/// manifest at once and none of them hardcodes a path. A symlink where
+/// there are symlinks, a copy where there are not (Windows without the
+/// privilege). Returns the link's path.
+pub fn linkBinary(io: Io, arena: Allocator, root: []const u8, target: []const u8) LinkError![]const u8 {
+    const link_dir = try std.fs.path.join(arena, &.{ root, "bin" });
+    Io.Dir.cwd().createDirPath(io, link_dir) catch {};
+    const link = try std.fs.path.join(arena, &.{ link_dir, std.fs.path.basename(target) });
+    // The link is replaced, not written through: deleting it first is
+    // what stops a copy overwriting the binary a symlink points at.
+    Io.Dir.cwd().deleteFile(io, link) catch {};
+    Io.Dir.cwd().symLink(io, target, link, .{}) catch {
+        Io.Dir.cwd().copyFile(target, Io.Dir.cwd(), link, io, .{}) catch return error.LinkFailed;
+    };
+    return link;
 }
 
 /// Run a child to completion; a non-zero exit is `Failed` with its stderr tail in `why`.
@@ -843,7 +1034,7 @@ const hello_zon =
     \\.{ .id = "hello", .label = "Hello", .description = "The sample", .version = "0.1.0", .binary = "mnml-hello" }
 ;
 
-test "the shipped defaults list no source: nothing from the 0.2 monorepo, launchers or crates reaches the Marketplace tab" {
+test "the default source is the mnml catalogue, and nothing from the 0.2 monorepo, launchers or crates is prepended with it" {
     const gpa = testing.allocator;
     const io = testing.io;
     var tmp = testing.tmpDir(.{});
@@ -853,28 +1044,119 @@ test "the shipped defaults list no source: nothing from the 0.2 monorepo, launch
     var app = try App.initWith(gpa, io, .{ .workspace = root, .data_root = root, .cols = 100, .rows = 20 });
     defer app.deinit();
     try testing.expect(app.cfg.marketplace.use_defaults);
-    try testing.expectEqual(@as(usize, 0), sourceCount(&app));
+    // One source out of the box: the catalogue this build ships, with
+    // no config at all.
+    try testing.expectEqual(@as(usize, 1), sourceCount(&app));
     const specs = try sources(&app, gpa);
     defer {
         for (specs) |sp| sp.deinit(gpa);
         gpa.free(specs);
     }
-    try testing.expectEqual(@as(usize, 0), specs.len);
-    for (Config.default_marketplace_sources) |d| switch (d) {
-        .github_launcher_folder => |g| try testing.expect(std.mem.indexOf(u8, g.repo, "mnml-integrations") == null),
-        .github_monorepo_apps => |g| try testing.expect(std.mem.indexOf(u8, g.repo, "mnml-integrations") == null),
-        .crates_keyword => return error.CratesSourceShipped,
-        .local_folder => {},
-    };
-    // The tab says why it is empty instead of asking for a refresh.
+    try testing.expectEqual(@as(usize, 1), specs.len);
+    try testing.expectEqualStrings("mnml", specs[0].id);
+    try testing.expect(specs[0].kind == .mnml);
+    try testing.expect(specs[0].official);
+    // A dev build's catalogue is the checkout's, so the install has a
+    // `zig-out/bin` to fall back to.
+    try testing.expect(specs[0].repo.len > 0);
+    // The 0.2 sources are still gone.
+    try testing.expectEqual(@as(usize, 0), Config.default_marketplace_sources.len);
+
+    // The tab lists the three shipped integrations, each `✓ Official`,
+    // each `not installed` in a fresh data root.
     app.tree.visible = false;
+    app.tree.width = 70;
     try command.run(&app, .{ .static = .@"integrations.show_marketplace" });
+    var waited: u32 = 0;
+    while (app.marketplace.fetching and waited < 10_000) : (waited += 10) {
+        try app.tick(App.nowMs(io));
+        io.sleep(.fromMilliseconds(10), .awake) catch {};
+    }
+    try testing.expectEqual(@as(usize, 3), app.marketplace.entries.len);
+    try testing.expectEqual(@as(usize, 0), app.marketplace.problems.len);
+    for (app.marketplace.entries) |e| {
+        try testing.expectEqual(Kind.builtin, e.kind);
+        try testing.expect(e.official and !e.private);
+        try testing.expectEqualStrings("mnml", e.source);
+        try testing.expect(e.binary.len > 0);
+    }
     try app.render();
     const text = try screen_mod.toTestText(gpa, &app.screen);
     defer gpa.free(text);
-    try testing.expect(std.mem.indexOf(u8, text, "No sources yet") != null);
-    try testing.expect(!app.marketplace.fetching);
-    try testing.expect(std.mem.indexOf(u8, text, "run `marketplace.refresh`") == null);
+    try testing.expect(std.mem.indexOf(u8, text, "Marketplace (3)") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "Jira") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "Bitbucket") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "\u{2713} Official  not installed") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "No sources yet") == null);
+}
+
+test "a mnml catalogue installs by linking the binary and running --install; the row turns installed, then update when the catalogue moves ahead; uninstall takes both" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+    // The prebuilt sample: its `--install` writes the manifest the row
+    // then counts, so nothing is built here.
+    const exe = build_options.sample_integration_exe;
+    Io.Dir.cwd().access(io, exe, .{}) catch return error.SkipZigTest;
+
+    try tmp.dir.createDirPath(io, "cat");
+    const cat_text = try std.fmt.allocPrint(gpa,
+        \\.{{ .entries = .{{ .{{ .id = "sample", .label = "Sample", .description = "The counter", .category = "sample", .version = "0.1.0", .binary = "{s}" }} }} }}
+    , .{exe});
+    defer gpa.free(cat_text);
+    try tmp.dir.writeFile(io, .{ .sub_path = "cat/marketplace.zon", .data = cat_text });
+    const cat_path = try std.fs.path.join(gpa, &.{ root, "cat", "marketplace.zon" });
+    defer gpa.free(cat_path);
+
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try env.put("MNML_MARKETPLACE_CATALOGUE", cat_path);
+    var app = try App.initWith(gpa, io, .{ .workspace = root, .data_root = root, .cols = 100, .rows = 24, .env = &env });
+    defer app.deinit();
+    app.tree.visible = false;
+    app.tree.width = 70;
+    try testing.expectEqual(@as(usize, 1), sourceCount(&app));
+    try command.run(&app, .{ .static = .@"integrations.show_marketplace" });
+    var waited: u32 = 0;
+    while (app.marketplace.fetching and waited < 10_000) : (waited += 10) {
+        try app.tick(App.nowMs(io));
+        io.sleep(.fromMilliseconds(10), .awake) catch {};
+    }
+    const st = &app.marketplace;
+    try testing.expectEqual(@as(usize, 1), st.entries.len);
+    try testing.expectEqual(Kind.builtin, st.entries[0].kind);
+    try testing.expectEqual(catalogue.State.not_installed, try integrations.catalogueState(&app, app.frame.allocator(), st.entries[0].binary, "0.1.0"));
+
+    // Install: the link goes down and `--install` writes the manifest.
+    try install(&app, 0);
+    waited = 0;
+    while (st.installing != null and waited < 30_000) : (waited += 10) {
+        try app.tick(App.nowMs(io));
+        io.sleep(.fromMilliseconds(10), .awake) catch {};
+    }
+    try testing.expect(st.installing == null);
+    const link = try std.fs.path.join(gpa, &.{ root, "bin", std.fs.path.basename(exe) });
+    defer gpa.free(link);
+    try Io.Dir.cwd().access(io, link, .{});
+    try testing.expectEqual(@as(usize, 1), app.integrations.list.len);
+    try testing.expectEqualStrings("sample", app.integrations.list[0].id());
+    // The manifest names the BARE binary; the link is the indirection.
+    try testing.expectEqualStrings("mnml-sample", app.integrations.list[0].manifest.binary);
+    try testing.expect(app.integrations.list[0].binary_found);
+    try testing.expectEqual(catalogue.State.installed, try integrations.catalogueState(&app, app.frame.allocator(), "mnml-sample", "0.1.0"));
+    // The catalogue moving ahead is the update signal — and the two
+    // sides match on the file name, though this catalogue's binary is
+    // an absolute path and the manifest's is the bare name.
+    try testing.expectEqual(catalogue.State.update, try integrations.catalogueState(&app, app.frame.allocator(), exe, "0.2.0"));
+
+    // Uninstall takes the manifest AND the link.
+    try integrations.removeAccept(&app, "sample");
+    try testing.expectEqual(@as(usize, 0), app.integrations.list.len);
+    try testing.expectError(error.FileNotFound, Io.Dir.cwd().access(io, link, .{}));
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "the manifest and the link") != null);
 }
 
 test "the repo's launchers/ as MNML_MARKETPLACE_LOCAL: four ✓ Official launcher rows with their glyphs; Install copies the file into the data root" {

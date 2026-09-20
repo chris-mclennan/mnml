@@ -44,6 +44,10 @@ class Mnml < Formula
     # for a font mnml builds itself, so the user points their terminal
     # at this path (or copies it into ~/Library/Fonts).
     pkgshare.install "share/mnml/fonts" if File.directory?("share/mnml/fonts")
+    # The mnml catalogue — the INTEGRATIONS section's Marketplace tab
+    # default source, probed beside the script set. Without it that tab
+    # is empty on a brew install.
+    pkgshare.install "share/mnml/marketplace.zon" if File.exist?("share/mnml/marketplace.zon")
   end
 
   test do

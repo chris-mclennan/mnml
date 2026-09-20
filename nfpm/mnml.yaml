@@ -33,6 +33,12 @@ contents:
   # `font-codepoint-map = U+F1B00-U+F20FF=MnmlSymbols` does.
   - src: staging/fonts/MnmlSymbols.ttf
     dst: /usr/share/mnml/fonts/MnmlSymbols.ttf
+  # The mnml catalogue — the INTEGRATIONS section's Marketplace tab
+  # default source. `<exe dir>/../share/mnml/marketplace.zon` is what a
+  # system-installed `/usr/bin/mnml` probes; without it the tab lists
+  # nothing for everyone who installed from a `.deb` or an `.rpm`.
+  - src: staging/marketplace.zon
+    dst: /usr/share/mnml/marketplace.zon
   - src: LICENSE-MIT
     dst: /usr/share/doc/mnml/LICENSE-MIT
   - src: LICENSE-APACHE

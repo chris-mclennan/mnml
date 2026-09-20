@@ -127,6 +127,10 @@ pub const Entry = struct {
     missing: ?[]const u8 = null,
     version: []const u8 = "",
     badge: ?Badge = null,
+    /// // changed (int-distribution): a Marketplace row's install
+    /// state — `installed` / `update available` / `not installed`,
+    /// after the badge. Null on a tab that has no such state to show.
+    state: ?@import("../app/marketplace_catalogue.zig").State = null,
     /// `(source)` after the badge, dim.
     source: []const u8 = "",
     /// The second row: the first command's id, the description, the folder.
@@ -449,6 +453,14 @@ fn paintEntry(ui: Ui, r1: Rect, r2: Rect, e: Entry, style: Style) void {
         };
         x += ui.putStr(x, r1.y, right -| x, ui.fmt("  {s}", .{b.text(ui.ascii)}), Theme.withFg(style, fg));
     }
+    if (e.state) |st| {
+        const fg: Color = switch (st) {
+            .installed => t.palette.green,
+            .update => t.palette.yellow,
+            .not_installed => t.muted.fg,
+        };
+        x += ui.putStr(x, r1.y, right -| x, ui.clipStr(ui.fmt("  {s}", .{st.text()}), right -| x), Theme.withFg(style, fg));
+    }
     if (e.source.len > 0) {
         var ss = Theme.withFg(style, t.muted.fg);
         ss.dim = true;
@@ -720,6 +732,28 @@ test "marketplace and dev rows carry their tag, badge and source; the empty stat
     defer h.deinit();
     _ = drawSection(h.ui(), h.full(), sectionProps(rows[2..], &scroll, .dev));
     try h.expectRow(4, "\u{258c} [dev] Sample  installed from here  (integrations)");
+}
+
+test "a mnml-catalogue row paints its version, badge and install state — installed, update available, not installed" {
+    var f = try Fixture.init(70, 12);
+    defer f.deinit();
+    var scroll: usize = 0;
+    const rows = [_]Entry{
+        .{ .kind = .app, .label = "Jira", .version = "0.2.0", .badge = .official, .state = .not_installed, .source = "mnml", .line2 = "Jira: work, boards" },
+        .{ .kind = .app, .label = "Bitbucket", .version = "0.2.0", .badge = .official, .state = .installed, .source = "mnml", .line2 = "PRs + pipelines", .dim = true },
+        .{ .kind = .app, .label = "Sample", .version = "0.2.0", .badge = .official, .state = .update, .source = "mnml", .line2 = "The counter", .dim = true },
+    };
+    _ = drawSection(f.ui(), f.full(), sectionProps(&rows, &scroll, .marketplace));
+    // Version, then badge, then state, then the source.
+    try f.expectContains("[app] Jira  0.2.0  \u{2713} Official  not installed  (mnml)");
+    try f.expectContains("Bitbucket  0.2.0  \u{2713} Official  installed  (mnml)");
+    try f.expectContains("Sample  0.2.0  \u{2713} Official  update available  (mnml)");
+    // A row with no state to show paints none of it.
+    const plain = [_]Entry{.{ .kind = .launcher, .label = "btop", .badge = .official, .source = "acme", .line2 = "Resource monitor" }};
+    var g = try Fixture.init(60, 8);
+    defer g.deinit();
+    _ = drawSection(g.ui(), g.full(), sectionProps(&plain, &scroll, .marketplace));
+    try g.expectContains("[launcher] btop  \u{2713} Official  (acme)");
 }
 
 test "the detail pane: title, buttons with hits, the manifest's sections" {

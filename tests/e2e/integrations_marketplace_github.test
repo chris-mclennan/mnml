@@ -1,0 +1,22 @@
+# env: MNML_MARKETPLACE_API=http://127.0.0.1:19801
+# env: MNML_MARKETPLACE_GITHUB=acme/mono:apps
+# The GitHub source shape still works beside the `mnml` catalogue: a
+# `github_monorepo_apps` source fetched through mnml's own HTTP client
+# against the runner's mock. MNML_MARKETPLACE_GITHUB names the repo
+# (the corpus cannot write config) and MNML_MARKETPLACE_API points the
+# fetch at the mock instead of api.github.com; both override the
+# configured sources entirely, so this file lists exactly what the mock
+# answers with.
+serve 19801 200 "[{\"name\":\"mnml-db\",\"type\":\"dir\"},{\"name\":\"bad name\",\"type\":\"dir\"},{\"name\":\".github\",\"type\":\"dir\"},{\"name\":\"README.md\",\"type\":\"file\"}]"
+command integrations.show_marketplace
+wait 1500
+# One row: a file is not an app, and `bad name` / `.github` are not path
+# components (`safeName`).
+expect screen contains "Mkt (1)"
+drag 30 5 70 5
+expect screen contains "[app] mnml-db"
+expect screen contains "(github)"
+expect screen contains "acme/mono/apps/mnml-db"
+# Not mnml's own, so it is Community, not Official.
+expect screen contains "Community"
+expect screen lacks "Offi"
