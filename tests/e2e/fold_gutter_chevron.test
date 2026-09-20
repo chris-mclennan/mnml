@@ -10,7 +10,7 @@ command editor.use_vim
 
 # Nothing folded and the pointer off the file: the sign cell is blank.
 hover 100 20
-expect screen contains "   1 fn main() {"
+expect screen contains "▌  1 fn main() {"
 
 # Fold the block with vim's own `zc` — the chevron and the chip both say so.
 key down
@@ -34,17 +34,17 @@ expect screen contains "▶  1 fn main() { ⋯ folded"
 # A line that starts no fold gets no chevron, hovered or not.
 click 31 2
 hover 40 4
-expect screen contains "   3     two();"
+expect screen contains "▌  3     two();"
 
 # `ui.always_show_fold_arrows`: the offer without the pointer at all,
 # and only on the lines that can take it.
 ex set ui.always_show_fold_arrows=true
 hover 100 20
 expect screen contains "▼  1 fn main() {"
-expect screen contains "   3     two();"
+expect screen contains "▌  3     two();"
 ex set ui.always_show_fold_arrows=false
 hover 100 20
-expect screen contains "   1 fn main() {"
+expect screen contains "▌  1 fn main() {"
 
 # `ui.expand_indicator = triangle`: the small triangles instead.
 ex set ui.expand_indicator=triangle
