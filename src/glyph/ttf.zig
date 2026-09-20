@@ -862,9 +862,11 @@ pub fn read(arena: Allocator, bytes: []const u8) ReadError![]Glyph {
     const long_loca = (try rdI16(head, 50)) != 0;
     const n_glyphs = try rdU16(maxp, 4);
     var scale = @as(f64, @floatFromInt(units_per_em)) / @as(f64, @floatFromInt(upem));
-    // `hmtx`: the cell the source drew for. Scaled to our em it should
+    // `hmtx`: the cell the source drew for (these faces are monospace,
+    // so the first metric is every glyph's). Scaled to our em it should
     // already be our advance; when it is not, the glyph is resized so
-    // it occupies the same fraction of the cell it always did.
+    // it keeps the same fraction of the cell it always had — the em
+    // factor cancels and what is left is the two cells' ratio.
     if (try tableOf(bytes, "hmtx")) |hmtx| if (hmtx.len >= 4) {
         const adv = try rdU16(hmtx, 0);
         if (adv > 0) scale *= @as(f64, @floatFromInt(advance_width)) / (@as(f64, @floatFromInt(adv)) * scale);
