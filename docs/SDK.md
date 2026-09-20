@@ -524,7 +524,7 @@ What mnml does with each field:
 | `chip` | a button on the palette bar: `glyph` (Nerd Font) — or `glyph_codepoint` (`F1D00`, painted verbatim when `glyph` is empty, for a mark in mnml's own font block), `fallback` (plain, always), `color` (a theme name — `red orange yellow green blue cyan teal purple pink comment fg` — or `#rrggbb`), `tooltip`, `enabled`, `in_palette_bar`. Right-click → enable / disable / show or hide on the bar / add to the activity bar / manifest / remove |
 | `commands[]` | each is a palette command with `keys`; it opens the binary (with `args`) unless `run` (or `ex`, the same field) names an ex line to run instead — `term mnml-hello --pty`, `:term code --goto {{current_file_abs}}:{{cursor_line}}:{{cursor_col}}`; mnml expands `{{workspace}}` `{{workspace_name}}` `{{current_file}}` `{{current_file_abs}}` `{{current_file_dir}}` `{{cursor_line}}` `{{cursor_col}}` `{{selection}}` when it fires and leaves an unknown token as written (`launchers/README.md`). The first one is what the chip, Enter and a pinned activity-bar icon do |
 | `settings[]` | a row in mnml's settings overlay under *Integrations* (discrete choices); the chosen value reaches the binary as `MNML_SETTING_<KEY>` |
-| `statusline[]` | a segment on the statusline while the integration is enabled and its binary resolves — `text`, `side`, `color`, `priority`, and `click_command` (a command id) — keyed `<id>.<segment id>`; it goes with the manifest |
+| `statusline[]` | a segment on the statusline while the integration is enabled and its binary resolves — `text`, `side`, `color`, `priority`, and `click_command` (a command id) — keyed `<id>.<segment id>`; it goes with the manifest. The live run replaces it over Tier 2, where it may also carry `items` (below) |
 | `requires[]` | environment variables the integration needs (shown in the detail pane) |
 | `context_menu[]`, `menu_bar[]`, `auth[]`, `values_sources[]` | parsed and shown in the detail pane; wiring into mnml's menus / auth store is a later slice |
 
@@ -561,6 +561,43 @@ if (try sdk.Ipc.fromEnv(gpa, io, env)) |ipc_const| {
     try ipc.notify("Hello", "something happened", .info, false);
 }
 ```
+
+### A figure's hover lists what it counts
+
+**The design-language rule: a statusline figure's hover lists what the
+figure counts.** A chip that says `12(11)` and nothing else sends the
+reader into a pane to find out WHICH twelve. `tooltip` says what the
+number is; `items` says what it is made of.
+
+```zig
+try ipc.statuslineSetSegment(.{
+    .id = "bitbucket_prs.prs_mine",
+    .text = "12(11)",
+    .click_command = "bitbucket_prs.open_mine",
+    .tooltip = "Bitbucket · 12 open pull requests you authored — 11 still unapproved",
+    .items = &.{
+        .{ .text = "Fix the login redirect", .sub = "acme/api · unapproved", .command = "bitbucket_prs.open_mine" },
+        .{ .text = "Redesign the empty state", .sub = "acme/web · approved", .command = "bitbucket_prs.open_mine" },
+    },
+});
+```
+
+| field | what it is |
+|---|---|
+| `text` | the thing itself — a pull request title, a ticket key and summary, a pipeline and its stage. Painted in the foreground. Required; a row without one is dropped |
+| `sub` | where it lives, how old it is, what state it is in. Painted muted, right-aligned, and it outlives the tail of a long `text` |
+| `command` | the command id a left click on the row runs. Omit it and the row is a label |
+| `args` | appended to that command's argv when the command mounts a binary — `.{ "--focus", "acme/api#1198" }`, so a row opens the thing it names rather than only the pane that holds it. An integration opts in by accepting the flag; one that does not should send no `args` |
+
+Build the rows **from the cache the run already has**. The hover is
+worth nothing if it costs a request: `--values` must not fetch more
+than it did before it carried `items`, and both official integrations
+have a test on the fake's `--log-file` that says so.
+
+The host keeps at most 24 rows off the wire and paints at most
+`statusline.hover_items` (8 by default, `docs/CONFIG.md`), with
+`… and N more` under them. Send no `items` and the chip keeps the
+one-line hover — nothing about an older integration changes.
 
 Each call appends one JSON line to `$MNML_IPC_DIR/command`; the shapes
 are in `docs/BRIDGE.md`. Over a mount, prefer `mount.toast` and

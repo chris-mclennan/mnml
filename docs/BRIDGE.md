@@ -254,9 +254,22 @@ are mnml's `src/ipc/command.zig`; the ones an integration uses:
 {"cmd":"toast-dismiss","id":"jira-sync"}
 {"cmd":"progress-start","id":"p1","text":"Fetching"}   {"cmd":"progress-update","id":"p1","count":40}   {"cmd":"progress-end","id":"p1","text":"success"}
 {"cmd":"statusline-set-segment","id":"jira","side":"right","text":"TE-12","priority":100,"min_width":4,"max_width":30}
+{"cmd":"statusline-set-segment","id":"jira","text":"\uf0224 43","tooltip":"Jira \u00b7 43 open items assigned to me","items":[{"text":"ENG-12  Fix the login redirect","sub":"In Review","command":"jira_work.open"}]}
 {"cmd":"set-activity-badge","section":"integrations","count":3}
 {"cmd":"notify","title":"Jira","text":"assigned to you","level":"info","sound":false}
 ```
+
+`items` is the list behind the figure — what the chip's number
+counts, one row per thing. The hover paints the tooltip line as its
+title and then one row per item, `text` in the foreground and `sub`
+muted at the right; a left click on a row runs its `command`, with
+`args` appended to that command's argv when the command mounts a
+binary (`--focus <key>` and the like), so a row can open the thing it
+names rather than only the pane that holds it. The host keeps at most
+24 rows off the wire and paints at most `statusline.hover_items` (8 by
+default), with `… and N more` for the rest; a row with no `text` is
+dropped, not the line. Leave `items` out and the chip keeps the
+one-line hover it always had.
 
 A `register-command` id resolves in the palette, `.keys` and `.test`
 scripts; when it runs, mnml writes a `plugin-command` line to
