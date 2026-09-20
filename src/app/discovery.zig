@@ -502,9 +502,29 @@ fn describeSegment(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Tip {
         },
         .bell => blk: {
             const u = app.messages.unread();
+            // What the number counts: the unread warnings and errors
+            // themselves, newest first. The infos the log also holds
+            // are not what the bell counts, so they are not listed.
+            const log = app.messages.items.items;
+            const from = @min(app.messages.read_upto, log.len);
+            var rows: std.ArrayListUnmanaged(Row) = .empty;
+            var i = log.len;
+            while (i > from) {
+                i -= 1;
+                if (log[i].level == .info) continue;
+                try rows.append(arena, .{
+                    .text = try arena.dupe(u8, firstLine(log[i].text)),
+                    .sub = if (log[i].level == .err) "error" else "warning",
+                    .command = "messages.show",
+                });
+            }
+            const listed = capped(app, seg, rows.items, 0);
             break :blk .{
                 .title = if (u.err + u.warn == 0) "Messages — nothing unread" else try std.fmt.allocPrint(arena, "Messages — {d} unread ({d} errors)", .{ u.err + u.warn, u.err }),
                 .detail = "click: the history · right-click: clear",
+                .rows = listed.rows,
+                .more = listed.more,
+                .row_seg = listed.row_seg,
             };
         },
         .clock => .{ .title = "Clock", .detail = "local time (a Z is UTC) · click: local ⇄ UTC · right-click: local / UTC / hide" },

@@ -1548,6 +1548,43 @@ test "the highlight chip stays, reading `on`, while the file is over the limit" 
     try testing.expect(std.mem.indexOf(u8, try b.row(38), "highlight on · 4 KB") != null);
 }
 
+test "the bell's hover lists the unread warnings and errors, newest first, and the read ones are gone" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var b = try Bench.init(120, 40);
+    defer b.deinit();
+    b.app.cfg.ui.hover_tooltip = true;
+    try b.app.toastLevel(.info, "saved src/main.zig", .{});
+    try b.app.toastLevel(.warn, "no formatter for .fk", .{});
+    try b.app.toastLevel(.err, "lsp: fake exited with 1\nrestarting", .{});
+
+    const tip = (try discovery.describe(&b.app, arena, .{ .statusline_seg = SegId.bell.raw() })).?;
+    // Newest first, and the info the log also holds is not what the
+    // bell counts — so it is not one of the rows.
+    try testing.expectEqual(@as(usize, 2), tip.rows.len);
+    // A multi-line toast is one row: the message up to its newline.
+    try testing.expectEqualStrings("lsp: fake exited with 1", tip.rows[0].text);
+    try testing.expectEqualStrings("error", tip.rows[0].sub);
+    try testing.expectEqualStrings("no formatter for .fk", tip.rows[1].text);
+    try testing.expectEqualStrings("warning", tip.rows[1].sub);
+
+    // The box paints them, and a press on one opens the history.
+    _ = (try b.rowHover(38, SegId.bell.raw())).?;
+    try testing.expect(std.mem.indexOf(u8, try screen_mod.toTestText(arena, &b.app.screen), "no formatter for .fk") != null);
+    const first = b.tipRowAt(0) orelse return error.NoTipRow;
+    try b.app.handle(.{ .mouse = .{ .x = first.x, .y = first.y, .kind = .press, .button = .left } });
+    try testing.expect(b.app.overlay == .picker);
+    try dispatch.key(&b.app, Key.named(.esc));
+
+    // Reading them empties both the figure and its list: a bell with
+    // nothing unread lists nothing rather than last week's warnings.
+    b.app.messages.markRead();
+    const read = (try discovery.describe(&b.app, arena, .{ .statusline_seg = SegId.bell.raw() })).?;
+    try testing.expectEqual(@as(usize, 0), read.rows.len);
+    try testing.expect(read.row_seg == null);
+}
+
 test "a figure's hover lists what it counts, the pointer can walk onto the list, and a row runs its command" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
