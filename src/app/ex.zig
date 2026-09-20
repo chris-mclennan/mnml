@@ -1208,11 +1208,13 @@ pub fn completeSet(gpa: Allocator, partial: []const u8) Allocator.Error![][]u8 {
 /// // changed (bottom-dock): `bottom` names the dock. It runs
 /// `side.move` rather than a command id: the dock's two command ids
 /// are Rust's `toggle` and `host_active`, and there is no third.
-/// `:dock bottom|left|right|always|auto|hidden|icons|labels|pin|focus|toggle`
+/// `:dock bottom|left|right|always|auto|hidden|icons|labels|text|start|center|end|plus|pin|focus|toggle`
 /// — the launcher dock (`app/launcher_dock.zig`), not the bottom panel
-/// (`:sidebar bottom`) and not the widgets. `icons` / `labels` is
-/// `ui.dock.labels`, the bottom strip's two forms; `l` stays `left`,
-/// so the label words are spelled out.
+/// (`:sidebar bottom`) and not the widgets. `icons` / `labels` /
+/// `text` is `ui.dock.labels`, the bottom strip's three forms, and
+/// `start` / `center` / `end` is `ui.dock.align`; `plus` flips
+/// `ui.dock.plus`, the `+` at the head of the run; `l` stays `left`, so
+/// the label words are spelled out.
 fn launcherDock(app: *App, args: []const u8) CommandError!void {
     const a = std.mem.trim(u8, args, " \t");
     if (eqAny(a, &.{ "b", "bot", "bottom" })) return launcher_dock.setEdge(app, .bottom);
@@ -1223,10 +1225,17 @@ fn launcherDock(app: *App, args: []const u8) CommandError!void {
     if (eqAny(a, &.{ "hidden", "hide", "off" })) return launcher_dock.setMode(app, .hidden);
     if (eqAny(a, &.{ "icon", "icons" })) return launcher_dock.setLabels(app, .icon);
     if (eqAny(a, &.{ "label", "labels" })) return launcher_dock.setLabels(app, .icon_label);
+    // `labels` has meant *icons and labels* since the strip shipped, so
+    // the third form takes a word of its own rather than stealing it.
+    if (eqAny(a, &.{ "text", "words" })) return launcher_dock.setLabels(app, .label);
+    if (eqAny(a, &.{ "center", "centre", "centred", "centered" })) return launcher_dock.setAlign(app, .center);
+    if (eqAny(a, &.{"start"})) return launcher_dock.setAlign(app, .start);
+    if (eqAny(a, &.{"end"})) return launcher_dock.setAlign(app, .end);
+    if (eqAny(a, &.{"plus"})) return launcher_dock.setPlus(app, !app.cfg.ui.dock.plus);
     if (eqAny(a, &.{"pin"})) return command.run(app, .{ .static = .@"view.dock_pin" });
     if (eqAny(a, &.{ "focus", "f" })) return command.run(app, .{ .static = .@"view.focus_dock" });
     if (a.len == 0 or eqAny(a, &.{"toggle"})) return command.run(app, .{ .static = .@"view.dock_toggle" });
-    return app.diag.fail(app.frame.allocator(), ":dock bottom|left|right|always|auto|hidden|icons|labels|pin|focus|toggle", .{});
+    return app.diag.fail(app.frame.allocator(), ":dock bottom|left|right|always|auto|hidden|icons|labels|text|start|center|end|plus|pin|focus|toggle", .{});
 }
 
 fn sidebar(app: *App, args: []const u8) CommandError!void {

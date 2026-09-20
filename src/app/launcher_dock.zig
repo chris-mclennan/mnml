@@ -63,10 +63,13 @@ const integrations = @import("integrations.zig");
 const terminal_glyph = @import("terminal_glyph.zig");
 const menu_glyph = @import("../ui/menu_glyph.zig");
 const settings = @import("settings.zig");
+const bufferline = @import("../ui/bufferline.zig");
+const context_menus = @import("context_menus.zig");
 
 pub const Mode = Config.DockMode;
 pub const Edge = Config.DockEdge;
 pub const Labels = Config.DockLabels;
+pub const Align = Config.DockAlign;
 pub const Part = @import("../ui/hit.zig").LauncherDockPart;
 
 pub const table = .{
@@ -122,11 +125,17 @@ pub fn edge(app: *const App) Edge {
 }
 
 /// `ui.dock.labels`. A side dock has three cells and no room for a
-/// label, so it paints the icon form whatever the key says; the key is
-/// the BOTTOM strip's question.
+/// label, so it paints the icon form whatever the key says — `.label`
+/// included; the key is the BOTTOM strip's question.
 pub fn labels(app: *const App) Labels {
     if (edge(app) != .bottom) return .icon;
     return app.cfg.ui.dock.labels;
+}
+
+/// `ui.dock.align` — where the run of items sits along the strip. The
+/// pin chip keeps the far end whatever it says.
+pub fn alignment(app: *const App) Align {
+    return app.cfg.ui.dock.@"align";
 }
 
 /// The strip is carved out of the frame this frame — `render.chrome`'s
@@ -264,13 +273,16 @@ fn reveal(app: *App, by_key: bool) void {
 
 // ─── the model ──────────────────────────────────────────────────────────
 
-pub const Kind = enum { integration, launcher, terminal_new, terminal, pin };
+pub const Kind = enum { plus, integration, launcher, terminal_new, terminal, pin };
 
 pub const Action = union(enum) {
     static: command.CommandId,
     named: []const u8,
     dyn: u32,
     pane: PaneId,
+    /// The `+`: the tab bar's own *Create…* menu, opened where the
+    /// click landed (`context_menus.openNewTabMenu`).
+    menu,
     none,
 };
 
@@ -292,6 +304,9 @@ pub const Item = struct {
 /// terminals, then `ui.dock.pins`.
 pub fn items(app: *App, arena: Allocator) Allocator.Error![]Item {
     var out: std.ArrayListUnmanaged(Item) = .empty;
+    // ── the `+`, leading the run: the tab bar's own, opening the same
+    //    *Create…* menu. `ui.dock.plus = false` takes it off ──
+    if (app.cfg.ui.dock.plus) try out.append(arena, plusItem(app));
     // ── integrations ──
     for (try integrations.allChips(app, arena)) |c| {
         if (!c.enabled) continue;
@@ -376,6 +391,28 @@ pub fn items(app: *App, arena: Allocator) Allocator.Error![]Item {
     return out.toOwnedSlice(arena);
 }
 
+/// The `+` item. It is the tab bar's `+` (`ui/bufferline.zig`'s glyph
+/// and its ascii twin) and it opens the tab bar's menu — the one
+/// `context_menus.openNewTabMenu` builds, never a fork of it. Under
+/// `.label`, where nothing on the strip is a glyph, the `+` is a
+/// character of the word instead.
+fn plusItem(app: *const App) Item {
+    return .{
+        .kind = .plus,
+        .id = plus_id,
+        .glyph = bufferline.plus_glyph,
+        .fallback = bufferline.plus_ascii,
+        .color = "green",
+        .label = if (labels(app) == .label) "+ New" else "New",
+        .running = false,
+        .action = .menu,
+    };
+}
+
+/// What the `+` row answers to — not a command id (the menu is not a
+/// command), just the name `describe` and the item menu key off.
+pub const plus_id = "dock.plus";
+
 /// A command title is written for the palette, where a line is long:
 /// *Browser: open Chrome (CDP) — console / nav / eval*. A bottom strip
 /// is one row for every item there is, so a pin wears the part before
@@ -423,7 +460,15 @@ fn integrationOpen(app: *App, id: []const u8) bool {
 }
 
 /// Run item `i` — the one door a click, Enter and a menu row share.
+/// The `+` needs somewhere to hang its menu; without a pointer it
+/// hangs at the strip's own corner.
 pub fn activate(app: *App, i: usize) Allocator.Error!void {
+    const r = app.launcher_dock.rect;
+    return activateAt(app, i, r.x, r.y);
+}
+
+/// `activate`, with the pointer's cell — where a menu opens from.
+pub fn activateAt(app: *App, i: usize, x: u16, y: u16) Allocator.Error!void {
     const list = try items(app, app.frame.allocator());
     if (i >= list.len) return;
     const it = list[i];
@@ -437,6 +482,14 @@ pub fn activate(app: *App, i: usize) Allocator.Error!void {
         .pane => |id| {
             app.showPane(id);
             app.focus = .{ .pane = id };
+        },
+        .menu => {
+            // The `+` opens the tab bar's own menu. A revealed strip
+            // stays up under it: the menu is where the hand is going,
+            // and putting the strip away would take the `+` with it.
+            try context_menus.openNewTabMenu(app, x, y);
+            app.needs_render = true;
+            return;
         },
         .none => app.toast("{s}: nothing to run", .{it.label}),
     }
@@ -480,6 +533,12 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         .labels = switch (labels(app)) {
             .icon => .icon,
             .icon_label => .icon_label,
+            .label => .label,
+        },
+        .@"align" = switch (alignment(app)) {
+            .start => .start,
+            .center => .center,
+            .end => .end,
         },
         .cursor = if (st.kb) st.cursor else null,
         .pinned = st.pinned,
@@ -503,19 +562,20 @@ pub fn mouse(app: *App, part: Part, m: Mouse) Allocator.Error!void {
             else => {},
         },
         .item => |i| switch (m.button) {
-            .left => try activate(app, i),
+            .left => try activateAt(app, i, m.x, m.y),
             .right => try openItemMenu(app, i, m.x, m.y),
             else => {},
         },
     }
 }
 
-/// The two *Show* rows, ticked on the live `ui.dock.labels`. They are
-/// the family's chip-menu idiom (the `sort:` and `view:` chips): every
-/// choice listed, the current one wearing the ✓ — so there is no new
-/// command id for a two-value setting the ex word and the Settings row
-/// already reach. On a side edge they still write the key, and the
-/// row says so: the strip is icon-only there by geometry.
+/// The three *Show* rows and the three *Align* rows, ticked on the
+/// live `ui.dock.labels` / `ui.dock.align`. They are the family's
+/// chip-menu idiom (the `sort:` and `view:` chips): every choice
+/// listed, the current one wearing the ✓ — so there is no new command
+/// id for a setting the ex word and the Settings row already reach. On
+/// a side edge the *Show* rows still write the key, and they say so:
+/// the strip is icon-only there by geometry.
 fn appendLabelRows(app: *App, rows: *std.ArrayListUnmanaged(command.MenuItem)) Allocator.Error!void {
     const now = app.cfg.ui.dock.labels;
     const side = edge(app) != .bottom;
@@ -529,6 +589,26 @@ fn appendLabelRows(app: *App, rows: *std.ArrayListUnmanaged(command.MenuItem)) A
         .label = "Show: icons only",
         .action = .{ .set_dock_labels = .icon },
         .checked = now == .icon,
+    });
+    try rows.append(app.gpa, .{
+        .label = if (side) "Show: labels only (bottom edge only)" else "Show: labels only",
+        .action = .{ .set_dock_labels = .label },
+        .checked = now == .label,
+    });
+    const at = app.cfg.ui.dock.@"align";
+    try rows.append(app.gpa, .{
+        .label = "Align: centre",
+        .action = .{ .set_dock_align = .center },
+        .checked = at == .center,
+        .separator_before = true,
+    });
+    try rows.append(app.gpa, .{ .label = "Align: start", .action = .{ .set_dock_align = .start }, .checked = at == .start });
+    try rows.append(app.gpa, .{ .label = "Align: end", .action = .{ .set_dock_align = .end }, .checked = at == .end });
+    try rows.append(app.gpa, .{
+        .label = "Show the + button",
+        .action = .{ .set_dock_plus = !app.cfg.ui.dock.plus },
+        .checked = app.cfg.ui.dock.plus,
+        .separator_before = true,
     });
 }
 
@@ -712,9 +792,12 @@ pub fn describe(app: *App, arena: Allocator, part: Part) Allocator.Error!tooltip
             const list = try items(app, arena);
             if (i >= list.len) return .{ .title = "Dock", .detail = "click runs this item" };
             const it = list[i];
+            // The `+` is not a thing that runs: its tip is the verb.
+            if (it.kind == .plus) return .{ .title = "New…", .detail = "click opens the new-thing menu — the tab bar's own" };
             return .{
                 .title = try std.fmt.allocPrint(arena, "{s}{s}", .{ it.label, if (it.running) " · running" else "" }),
                 .detail = switch (it.kind) {
+                    .plus => "click opens the new-thing menu — the tab bar's own",
                     .integration => "click opens the integration · right-click: pin / unpin",
                     .launcher => "click runs the launcher · right-click: pin / unpin",
                     .terminal_new => "click opens a new shell",
@@ -812,7 +895,32 @@ pub fn setLabels(app: *App, next: Labels) CommandError!void {
     app.toast("dock: {s}", .{switch (next) {
         .icon => "icons only",
         .icon_label => "icons and labels",
+        .label => "labels only",
     }});
+    app.needs_render = true;
+}
+
+/// `ui.dock.align`, persisted: `:dock center|start|end`, the Settings
+/// row and the strip's own right-click menu all land here. A side dock
+/// takes it too — there it centres the items down the column.
+pub fn setAlign(app: *App, next: Align) CommandError!void {
+    app.cfg.ui.dock.@"align" = next;
+    _ = try settings.persist(app, .home, &.{ "ui", "dock", "align" }, next);
+    app.toast("dock: {s}", .{switch (next) {
+        .start => "aligned to the start",
+        .center => "centred",
+        .end => "aligned to the end",
+    }});
+    app.needs_render = true;
+}
+
+/// `ui.dock.plus`, persisted: the `+` leads the strip or it does not.
+/// `:dock plus` is the word form, the Settings row and the strip's own
+/// right-click menu the others.
+pub fn setPlus(app: *App, on: bool) CommandError!void {
+    app.cfg.ui.dock.plus = on;
+    _ = try settings.persist(app, .home, &.{ "ui", "dock", "plus" }, on);
+    app.toast("dock: {s}", .{if (on) "the + is on the strip" else "no + on the strip"});
     app.needs_render = true;
 }
 
@@ -844,7 +952,7 @@ fn testApp(tmp: *std.testing.TmpDir, buf: []u8) !App {
     return App.initWith(t.allocator, t.io, .{ .workspace = buf[0..n], .data_root = buf[0..n], .cols = 120, .rows = 40 });
 }
 
-test "the model: the enabled integrations come first, then the New terminal item, then `ui.dock.pins` — an id nothing answers to is skipped rather than painted dead" {
+test "the model: the `+` leads, then the enabled integrations, then the New terminal item, then `ui.dock.pins` — an id nothing answers to is skipped rather than painted dead" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -853,19 +961,32 @@ test "the model: the enabled integrations come first, then the New terminal item
     app.cfg.ui.dock.pins = &.{ "picker.files", "no.such.command" };
     try app.render();
     const list = try items(&app, app.frame.allocator());
+    // The `+` leads the run — the tab bar's own, opening its menu.
+    try t.expectEqual(Kind.plus, list[0].kind);
+    try t.expectEqualStrings("New", list[0].label);
+    try t.expectEqualStrings(@import("../ui/bufferline.zig").plus_glyph, list[0].glyph);
+    try t.expect(list[0].action == .menu);
+    // It names no command id: the menu is not one, so nothing can pin it.
+    try t.expect(commandIdOf(&app, list[0]) == null);
     // Browser is the one first-party chip enabled out of the box.
-    try t.expectEqualStrings("Browser", list[0].label);
-    try t.expectEqual(Kind.integration, list[0].kind);
+    try t.expectEqualStrings("Browser", list[1].label);
+    try t.expectEqual(Kind.integration, list[1].kind);
     // The terminals, then the pins — the unresolvable id is skipped, so
-    // the strip is exactly Browser, New terminal, picker.files.
-    try t.expectEqual(@as(usize, 3), list.len);
-    try t.expectEqual(Kind.terminal_new, list[1].kind);
-    try t.expectEqualStrings("New terminal", list[1].label);
-    try t.expectEqual(Kind.pin, list[2].kind);
-    try t.expectEqualStrings(shortTitle(command.title(.@"picker.files")), list[2].label);
-    try t.expectEqualStrings("picker.files", commandIdOf(&app, list[2]).?);
+    // the strip is exactly +, Browser, New terminal, picker.files.
+    try t.expectEqual(@as(usize, 4), list.len);
+    try t.expectEqual(Kind.terminal_new, list[2].kind);
+    try t.expectEqualStrings("New terminal", list[2].label);
+    try t.expectEqual(Kind.pin, list[3].kind);
+    try t.expectEqualStrings(shortTitle(command.title(.@"picker.files")), list[3].label);
+    try t.expectEqualStrings("picker.files", commandIdOf(&app, list[3]).?);
     // A pin that resolves to nothing never becomes a row.
     for (list) |it| try t.expect(!std.mem.eql(u8, it.id, "no.such.command"));
+    // `ui.dock.plus = false` takes the `+` off and the rest closes up.
+    app.cfg.ui.dock.plus = false;
+    const without = try items(&app, app.frame.allocator());
+    try t.expectEqual(@as(usize, 3), without.len);
+    try t.expectEqualStrings("Browser", without[0].label);
+    for (without) |it| try t.expect(it.kind != .plus);
 }
 
 test "a pinned command wears the part of its title before the first parenthetical or dash, clipped to the strip's own width" {
@@ -1146,4 +1267,104 @@ test "the label form: `ui.dock.labels` is written and read back, and a side edge
     const text = try tmp.dir.readFileAlloc(t.io, "config.zon", t.allocator, .limited(1 << 16));
     defer t.allocator.free(text);
     try t.expect(std.mem.indexOf(u8, text, ".labels = .icon,") != null);
+}
+
+test "the third label form: `.label` is written and read back, and a side edge still paints the icon form — it has three cells whatever the key says" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    try setLabels(&app, .label);
+    try t.expectEqual(Labels.label, app.cfg.ui.dock.labels);
+    try t.expectEqual(Labels.label, labels(&app));
+    // Under `.label` the `+` wears its plus as a character of the word
+    // — the form paints no glyphs at all.
+    try app.render();
+    const worded = try items(&app, app.frame.allocator());
+    try t.expectEqualStrings("+ New", worded[0].label);
+    try setLabels(&app, .icon_label);
+    try t.expectEqualStrings("New", (try items(&app, app.frame.allocator()))[0].label);
+    // A side dock reads `.icon` without touching the key, as it does
+    // for `.icon_label`.
+    try setLabels(&app, .label);
+    try setEdge(&app, .left);
+    try t.expectEqual(Labels.icon, labels(&app));
+    try t.expectEqual(Labels.label, app.cfg.ui.dock.labels);
+    const side = try items(&app, app.frame.allocator());
+    try t.expectEqualStrings("New", side[0].label);
+    try setEdge(&app, .bottom);
+    try t.expectEqual(Labels.label, labels(&app));
+    const text = try tmp.dir.readFileAlloc(t.io, "config.zon", t.allocator, .limited(1 << 16));
+    defer t.allocator.free(text);
+    try t.expect(std.mem.indexOf(u8, text, ".labels = .label,") != null);
+}
+
+test "`ui.dock.align`: the default is centred, the three values are written and read back, and the file wears the keyword's quotes" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    // The user's own setup: centred out of the box.
+    try t.expectEqual(Align.center, alignment(&app));
+    try setAlign(&app, .start);
+    try t.expectEqual(Align.start, alignment(&app));
+    try setAlign(&app, .end);
+    try t.expectEqual(Align.end, alignment(&app));
+    try setAlign(&app, .center);
+    try t.expectEqual(Align.center, alignment(&app));
+    // A side dock takes the key too — it centres down the column there.
+    try setEdge(&app, .left);
+    try t.expectEqual(Align.center, alignment(&app));
+    // `align` is a Zig keyword, so the key is quoted in the file; a
+    // bare `.align = ` would not parse back.
+    try setAlign(&app, .end);
+    const text = try tmp.dir.readFileAlloc(t.io, "config.zon", t.allocator, .limited(1 << 16));
+    defer t.allocator.free(text);
+    try t.expect(std.mem.indexOf(u8, text, ".@\"align\" = .end,") != null);
+    try t.expect(std.mem.indexOf(u8, text, ".align = ") == null);
+}
+
+test "the strip's Settings rows: the five discrete `ui.dock.*` choices, each reading the live config" {
+    // v1 Settings is discrete choices; the dock's dwells and its pins
+    // stay config-only. A row whose path stopped resolving would not
+    // compile, so this pins WHICH rows the overlay offers.
+    const rows = @import("settings.zig").rows;
+    const want = [_][]const u8{ "ui.dock.mode", "ui.dock.edge", "ui.dock.labels", "ui.dock.align", "ui.dock.plus" };
+    for (want) |path| {
+        var found = false;
+        for (rows) |r| if (std.mem.eql(u8, r.path, path)) {
+            found = true;
+            break;
+        };
+        try t.expect(found);
+    }
+    // The two new ones offer exactly the choices the enum has.
+    try t.expectEqual(@as(usize, 3), @import("settings.zig").options("ui.dock.align").len);
+    try t.expectEqual(@as(usize, 3), @import("settings.zig").options("ui.dock.labels").len);
+    try t.expectEqual(@as(usize, 2), @import("settings.zig").options("ui.dock.plus").len);
+}
+
+test "the `+`: its hover copy is the verb, its menu is the tab bar's own, and the keyboard reaches it first" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    try app.render();
+    const tip = try describe(&app, app.frame.allocator(), .{ .item = 0 });
+    try t.expectEqualStrings("New\u{2026}", tip.title);
+    // Running it opens the `+` menu — `Create\u{2026}`, the one
+    // `context_menus.openNewTabMenu` builds for the tab bar.
+    try activateAt(&app, 0, 4, 37);
+    try t.expect(app.overlay == .menu);
+    try t.expectEqualStrings("Create\u{2026}", app.overlay.menu.title);
+    try t.expect(app.overlay.menu.items.len > 0);
+    // It is the keyboard's first item too: `view.focus_dock` parks on it.
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    try focusCmd(&app);
+    try app.render();
+    try t.expectEqual(@as(u16, 0), app.launcher_dock.cursor);
 }
