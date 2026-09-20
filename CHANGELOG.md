@@ -48,6 +48,12 @@ architecture behind it is in `docs/DESIGN.md`.
 - The first-launch wizard — seven sections, Enter writes only what was
   touched. The settings overlay — sectioned rows, the file follows the row.
 - Build-artifact directories stay hidden in the tree without a `.gitignore`.
+- A pane that opens beside another sizes itself by what is already there:
+  the first one takes an empty editor area whole, the third makes thirds and
+  the fourth quarters, and a stack inside one of the columns keeps its own
+  proportions. Integrations, terminals and session panes all follow the one
+  rule now. `integrations.arrange = .fixed` — a row under Integrations in the
+  settings overlay — puts back the old half-the-active-pane sizing.
 
 ### Config — ZON, not TOML
 
