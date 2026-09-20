@@ -1,0 +1,67 @@
+# env: JIRA_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/jira-bucket.json
+# env: JIRA_API_TOKEN=fake-token
+# env: JIRA_BASE_URL=@${MNML_E2E_WORKSPACE}/jira.url
+# A row of the Work chip's hover names ONE ticket, and a press on it
+# lands the cursor there: the pane opens with `--focus ENG-5` on its
+# argv and the detail beside the list opens on that ticket — not on
+# whatever the cursor started on, which is the first group's header.
+#
+# The second press is the half a mount cannot do. The pane is already
+# up, so the key goes DOWN the mount as `focus_item`: the cursor moves
+# onto ENG-2, and the listing is never asked for a second time, which
+# is what says no second pane was started.
+shell mkdir -p .mnml/ipc-zig
+shell "$MNML_FAKE_JIRA" --port 0 --url-file jira.url --life-secs 180 --quiet --pid-file fake-jira.pid --log-file wire.jsonl >/dev/null 2>&1 &
+wait 500
+write sdk/mnml-sdk/build.zig ""
+write integrations/jira/build.zig ""
+write integrations/jira/manifest.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } } }"
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"https://jira.invalid\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .rate = .{ .per_sec = 1000, .burst = 1000 }, .tabs = .{ .{ .name = \"Assigned\", .kind = .work_assigned } } }"
+command integrations.show_in_dev
+expect screen contains "INTEGRATIONS"
+drag 30 5 60 5
+key i
+expect screen contains "installed jira_work from"
+# Narrow the panel again: the detail beside the list wants 60 columns
+# of pane, and the widened panel leaves it 57.
+drag 60 5 34 5
+wait 1200
+command integrations.open_as_tab
+shell "$MNML_JIRA" --values --only work --workspace "$MNML_E2E_WORKSPACE" > values.json
+wait 700
+command view.toggle_hover_tooltip
+# The Work chip on the statusline (row 38); the box sits above it, its
+# rows in the order the search returned them — ENG-1 at 34, ENG-2 at
+# 35, ENG-5 at 36.
+hover 73 38
+wait 300
+expect screen contains "ENG-5"
+click 70 36
+wait 2500
+expect screen contains "DETAIL"
+expect screen contains "Applying a percentage voucher"
+
+# The pane republishes the segment for itself — with the count, not
+# the rows — so the hover's list has to be published again before a
+# second row can be pressed.
+shell "$MNML_JIRA" --values --only work --workspace "$MNML_E2E_WORKSPACE" > values2.json
+wait 700
+# What the listing has cost so far. The press that follows must not
+# add to it: a second pane would ask for the whole listing again.
+shell grep -c '"path":"/rest/api/3/search/jql"' wire.jsonl > searches.txt
+hover 20 38
+wait 200
+hover 73 38
+wait 600
+expect screen contains "ENG-2  Card form validates"
+click 70 35
+wait 2000
+# The cursor moved onto the other ticket: the detail is ENG-2's own
+# description, and ENG-5's is gone.
+expect screen contains "Validate the card number"
+expect screen lacks "Applying a percentage voucher"
+# And no second pane: a fresh one would have asked for the listing
+# again, and the count is the one taken before the press.
+shell test "$(grep -c '"path":"/rest/api/3/search/jql"' wire.jsonl)" -eq "$(cat searches.txt)"
+
+shell kill "$(cat fake-jira.pid)" 2>/dev/null || true

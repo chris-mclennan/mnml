@@ -1,0 +1,51 @@
+# env: MNML_MARKETPLACE_LOCAL=market
+# env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/bitbucket.zon
+# env: BITBUCKET_BASE_URL=@${MNML_E2E_WORKSPACE}/bb.url
+# env: BITBUCKET_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/bucket.json
+# env: BITBUCKET_API_TOKEN=corpus-read-token
+# A row of the PR chip's hover names ONE pull request, and a press on
+# it lands the cursor there: the pane opens with `--focus web#820` on
+# its argv and the detail opens on that pull request.
+shell mkdir -p .mnml/ipc-zig
+shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --lifetime-secs 180 --log-file wire.jsonl >/dev/null 2>&1 &
+wait 500
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 0, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs } } }"
+write market/bitbucket_prs.zon ".{ .id = \"bitbucket_prs\", .label = \"Bitbucket PRs\", .version = \"0.2.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .args = .{ \"--only\", \"prs\" }, .description = \"Bitbucket pull requests\", .commands = .{ .{ .id = \"bitbucket_prs.open_mine\", .title = \"Bitbucket PRs: open (mine only)\", .args = .{ \"--only\", \"prs-mine\" } } } }"
+command integrations.show_marketplace
+key i
+expect screen contains "installed bitbucket_prs"
+command integrations.open_as_tab
+shell "$MNML_BITBUCKET_INTEGRATION" --values --workspace "$MNML_E2E_WORKSPACE" > values.json
+wait 700
+expect screen contains "2(1)"
+command view.toggle_hover_tooltip
+hover 61 38
+wait 300
+# The box's rows: "Fix the login redirect" (acme/api#1234) at 35,
+# "Redesign the empty state" (acme/web#820) at 36.
+expect screen contains "Redesign the empty state"
+click 62 36
+wait 2500
+expect screen contains "Part of ENG-4300"
+
+# The pane republishes the chip for itself — with the figure, not the
+# rows — so the hover's list is published again before a second row
+# can be pressed.
+shell "$MNML_BITBUCKET_INTEGRATION" --values --workspace "$MNML_E2E_WORKSPACE" > values2.json
+wait 700
+# What the listings have cost so far. The press that follows must not
+# add to it: a second pane would ask for every repo again.
+shell grep -c 'pullrequests"' wire.jsonl > listings.txt
+hover 20 38
+wait 200
+hover 61 38
+wait 600
+expect screen contains "Fix the login redirect"
+click 62 35
+wait 2000
+# The cursor moved onto the other pull request: the detail is
+# api#1234's own description, and web#820's is gone.
+expect screen contains "The redirect dropped the query string"
+expect screen lacks "Part of ENG-4300"
+# And no second pane: a fresh one would have listed every repo again.
+shell test "$(grep -c 'pullrequests"' wire.jsonl)" -eq "$(cat listings.txt)"
