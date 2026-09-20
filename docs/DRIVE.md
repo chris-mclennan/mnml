@@ -229,6 +229,31 @@ script:
   fixture.
 * both fail, differently → usually two bugs.
 
+### A pixel is not a theme hex
+
+Measured on this machine, at the default `onedark`, with
+`mnml-drive pixel`:
+
+| cell | theme says | the screen says | gap |
+|---|---|---|---|
+| the statusline `TREE` chip | `#61afef` (`blue`) | `#5aa5e8` | −7, −10, −7 |
+| the `dev` profile chip | `#ff75a0` (`pink`) | `#f999a0` | −6, **+36**, ±0 |
+
+The first looks like a gamma shift and the second does not — green moves
+36 the wrong way. That is a **colour-space conversion**: the window is
+composited and captured in the display's profile, not in sRGB, and the
+conversion is not a per-channel offset. There is no tolerance that turns
+a screen pixel back into a theme constant.
+
+So: a pixel assertion is a check that the right colour was **drawn**,
+not that a constant was **emitted**. Use it to tell one theme colour
+from another (blue chip vs pink chip vs background — those are 60+ apart
+on every channel), never to assert a hex. `--tolerance` defaults to 8,
+which is right for "is this the same colour as last time on this
+machine" and far too tight for "is this `#61afef`". The headless
+`expect color` remains the exact check; it reads the cell mnml computed,
+which is the only place the constant actually exists.
+
 `expect color X Y fg|bg #RRGGBB` is the place this bites hardest. A
 **background** colour samples cleanly: the cell centre is background
 almost everywhere. A **foreground** colour does not — the cell centre
