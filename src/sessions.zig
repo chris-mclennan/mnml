@@ -40,6 +40,16 @@
 //! row menu pins, moves, renames, opens the transcript, copies the id,
 //! deletes the transcript after a confirm.
 //!
+//! // changed (card-preview): a banner row is a picture, not a
+//! sentence — Claude's orange figure is drawn half from block glyphs
+//! and half from cells that carry only a background — so a line read
+//! off the grid carries its cells' colours (`CellColor`, `CardLine`)
+//! and `paintRow` paints it run by run in them, resolved through
+//! `pty_view.colorOf`, the same path `drawPty` takes. A cell whose
+//! colour is the terminal's default keeps the card's own ground and
+//! muted ink; a row the card synthesized has no cells behind it and
+//! paints flat, as it always did.
+//!
 //! Ended sessions — an exited pane past `ui.session_ended_grace_min`,
 //! and the scan's ended transcripts of this workspace — hide behind the
 //! header's history chip, which reads their count; a click (or `E`)
@@ -83,6 +93,7 @@ const pty_pane_mod = @import("app/pty_pane.zig");
 const cli = @import("ai/cli.zig");
 const pty_pane = @import("app/pty_pane.zig");
 const pty_mod = @import("pty");
+const pty_view = @import("ui/pty_view.zig");
 const settings = @import("app/settings.zig");
 const Config = @import("config/Config.zig");
 const accent_color = @import("ui/accent_color.zig");
@@ -201,8 +212,9 @@ pub const RowView = struct {
     name: []const u8,
     pinned: bool = false,
     active: bool = false,
-    /// `exited` alone, the last exchange, or `—`.
-    lines: []const []const u8 = &.{},
+    /// `exited` alone, the last exchange, or `—`. A row read off the
+    /// pane's grid carries that grid's colours (`CardLine.colors`).
+    lines: []const CardLine = &.{},
     kind: Summary = .none,
     ticket: ?[]const u8 = null,
     /// // changed (colors): the accent's palette name — the user's pick
@@ -296,6 +308,44 @@ pub const Card = struct {
 /// the scan's ended transcript (an `items` index).
 pub const Ended = union(enum) { pane: app_mod.PaneId, item: u32 };
 
+/// The colours one cell of the pane's grid was painted in. A Claude
+/// session's banner is a picture — an orange figure drawn half from
+/// block glyphs and half from plain spaces with an orange background —
+/// so a line flattened to text loses the spaces entirely and paints the
+/// glyphs in one grey. The walk keeps these beside the text and
+/// `paintRow` paints the line cell by cell.
+///
+/// One entry per BYTE of the line, a glyph's bytes all carrying its
+/// cell's colours, so every slice the walk takes of a row (the trim,
+/// the spinner strip) slices the colours with it.
+pub const CellColor = struct {
+    fg: pty_mod.grid.Color = .default,
+    bg: pty_mod.grid.Color = .default,
+
+    pub fn eql(a: CellColor, b: CellColor) bool {
+        return std.meta.eql(a.fg, b.fg) and std.meta.eql(a.bg, b.bg);
+    }
+
+    /// Nothing to paint differently: the card's own ground and ink.
+    pub fn isPlain(c: CellColor) bool {
+        return std.meta.activeTag(c.fg) == .default and std.meta.activeTag(c.bg) == .default;
+    }
+};
+
+/// One summary row of a card: the text, and — for a row read off the
+/// pane's grid — the colours its cells carried. A row the card
+/// synthesizes (`exited`, the transcript's exchange, `—`) has no cells
+/// behind it, so `colors` is empty and the row paints as flat text.
+pub const CardLine = struct {
+    text: []const u8,
+    colors: []const CellColor = &.{},
+
+    /// The colours are usable only when there is one per byte.
+    pub fn colored(self: CardLine) bool {
+        return self.colors.len == self.text.len and self.text.len > 0;
+    }
+};
+
 /// What one grid walk of a pane yields (Rust's `derived_cache`): the
 /// last content lines most-recent-first (`summarizeGridLines`), whether
 /// Claude / Codex is thinking, the one-line summary the waiting
@@ -307,11 +357,16 @@ pub const Derived = struct {
     prio: u8,
     thinking: bool,
     /// Owned by the gpa, most-recent-first, up to `grid_lines_max`.
-    lines: [][]u8 = &.{},
+    /// The card outlives the frame, so the bytes AND the colours are
+    /// the cache's own — never the frame arena's, never the grid's.
+    lines: []CardLine = &.{},
     summary: ?[]u8 = null,
 
     fn deinit(self: *Derived, gpa: Allocator) void {
-        for (self.lines) |l| gpa.free(l);
+        for (self.lines) |l| {
+            gpa.free(l.text);
+            gpa.free(l.colors);
+        }
         gpa.free(self.lines);
         if (self.summary) |m| gpa.free(m);
         self.* = undefined;
@@ -1886,29 +1941,32 @@ pub fn cardView(app: *App, arena: Allocator, c: Card) Allocator.Error!RowView {
     const p = app.panes.pty(c.pane);
     const row_item = cardItem(app, c);
     const name = try arena.dupe(u8, cardName(app, c));
-    var lines: std.ArrayListUnmanaged([]const u8) = .empty;
+    var lines: std.ArrayListUnmanaged(CardLine) = .empty;
     var kind: Summary = .text;
     if (p == null or p.?.exit != null) {
         kind = .exited;
-        try lines.append(arena, "exited");
+        try lines.append(arena, .{ .text = "exited" });
     } else {
         const d = derive(app, c.pane);
         const thinking = if (d) |dd| dd.thinking else false;
         if (!thinking) if (c.session_id) |sid| if (st.itemOf(sid)) |it| {
-            if (it.last_user_msg) |m| if (try collapseWs(arena, m)) |cw| try lines.append(arena, try std.fmt.allocPrint(arena, "you: {s}", .{clipChars(cw, transcript_line_max)}));
-            if (it.last_assistant_msg) |m| if (try collapseWs(arena, m)) |cw| try lines.append(arena, try std.fmt.allocPrint(arena, "claude: {s}", .{clipChars(cw, transcript_line_max)}));
+            if (it.last_user_msg) |m| if (try collapseWs(arena, m)) |cw| try lines.append(arena, .{ .text = try std.fmt.allocPrint(arena, "you: {s}", .{clipChars(cw, transcript_line_max)}) });
+            if (it.last_assistant_msg) |m| if (try collapseWs(arena, m)) |cw| try lines.append(arena, .{ .text = try std.fmt.allocPrint(arena, "claude: {s}", .{clipChars(cw, transcript_line_max)}) });
         };
         if (lines.items.len == 0) if (d) |dd| {
             // Most-recent-first in the cache; the card reads top-down.
             var k = @min(dd.lines.len, 3);
             while (k > 0) {
                 k -= 1;
-                try lines.append(arena, try arena.dupe(u8, dd.lines[k]));
+                try lines.append(arena, .{
+                    .text = try arena.dupe(u8, dd.lines[k].text),
+                    .colors = try arena.dupe(CellColor, dd.lines[k].colors),
+                });
             }
         };
         if (lines.items.len == 0) {
             kind = .none;
-            try lines.append(arena, "—");
+            try lines.append(arena, .{ .text = "—" });
         }
     }
     const aliased = st.alias(c.key) != null;
@@ -1958,10 +2016,12 @@ pub fn hoverTip(app: *App, arena: Allocator, idx: u32) Allocator.Error!?@import(
             if (it.last_assistant_msg) |m| if (try collapseWs(arena, m)) |cw| try content.append(arena, try std.fmt.allocPrint(arena, "claude: {s}", .{clipChars(cw, transcript_line_max)}));
         };
         if (content.items.len == 0) if (d) |dd| {
+            // The tip is flat muted text (`tooltip.Tip`): the colours
+            // are the card's affordance, not the popup's.
             var k = dd.lines.len;
             while (k > 0) {
                 k -= 1;
-                try content.append(arena, try arena.dupe(u8, dd.lines[k]));
+                try content.append(arena, try arena.dupe(u8, dd.lines[k].text));
             }
         };
     }
@@ -2062,8 +2122,9 @@ fn prioOf(d: Derived) u8 {
 }
 
 /// One row of the grid as text (`row_to_string`: an empty cell is a
-/// space) and whether it reads dim (`is_dim_row`).
-const GridRow = struct { text: []const u8, dim: bool };
+/// space), the colours each byte of that text was painted in, and
+/// whether it reads dim (`is_dim_row`).
+const GridRow = struct { text: []const u8, colors: []const CellColor, dim: bool };
 
 /// The grid's rows, top to bottom, on `arena`.
 fn gridRows(arena: Allocator, grid: *const pty_pane.Grid) Allocator.Error![]GridRow {
@@ -2074,14 +2135,21 @@ fn gridRows(arena: Allocator, grid: *const pty_pane.Grid) Allocator.Error![]Grid
     var y: u16 = 0;
     while (y < grid.rows()) : (y += 1) {
         var text: std.ArrayListUnmanaged(u8) = .empty;
+        var colors: std.ArrayListUnmanaged(CellColor) = .empty;
         var total: u32 = 0;
         var dim: u32 = 0;
         var x: u16 = 0;
         while (x < grid.cols()) : (x += 1) {
             const cell = grid.cell(x, y);
             if (cell.wide == .spacer_tail) continue;
+            // The cell's own colours, one copy per byte it contributes —
+            // an erased cell keeps its background, which is half of what
+            // draws Claude's banner figure.
+            const paint: CellColor = .{ .fg = cell.fg, .bg = cell.bg };
+            const before = text.items.len;
             if (cell.isEmpty()) {
                 try text.append(arena, ' ');
+                try colors.append(arena, paint);
                 continue;
             }
             var buf: [4]u8 = undefined;
@@ -2094,6 +2162,7 @@ fn gridRows(arena: Allocator, grid: *const pty_pane.Grid) Allocator.Error![]Grid
                 const n = std.unicode.utf8Encode(cell.cp, &buf) catch continue;
                 try text.appendSlice(arena, buf[0..n]);
             }
+            try colors.appendNTimes(arena, paint, text.items.len - before);
             if (cell.cp == ' ') continue;
             total += 1;
             const rgb: ?pty_mod.grid.Color.Rgb = switch (cell.fg) {
@@ -2108,7 +2177,7 @@ fn gridRows(arena: Allocator, grid: *const pty_pane.Grid) Allocator.Error![]Grid
                 if (default_bright != 0 and b < threshold) dim += 1;
             }
         }
-        rows[y] = .{ .text = text.items, .dim = total >= 4 and dim * 5 >= total * 3 };
+        rows[y] = .{ .text = text.items, .colors = colors.items, .dim = total >= 4 and dim * 5 >= total * 3 };
     }
     return rows;
 }
@@ -2120,14 +2189,19 @@ fn walkGrid(gpa: Allocator, grid: *const pty_pane.Grid) Allocator.Error!Derived 
     const arena = scratch.allocator();
     const rows = try gridRows(arena, grid);
     const lines = try summarizeGridLines(arena, rows, grid_lines_max);
-    const owned = try gpa.alloc([]u8, lines.len);
+    const owned = try gpa.alloc(CardLine, lines.len);
     var filled: usize = 0;
     errdefer {
-        for (owned[0..filled]) |l| gpa.free(l);
+        for (owned[0..filled]) |l| {
+            gpa.free(l.text);
+            gpa.free(l.colors);
+        }
         gpa.free(owned);
     }
     for (lines) |l| {
-        owned[filled] = try gpa.dupe(u8, l);
+        const text = try gpa.dupe(u8, l.text);
+        errdefer gpa.free(text);
+        owned[filled] = .{ .text = text, .colors = try gpa.dupe(CellColor, l.colors) };
         filled += 1;
     }
     const summary: ?[]u8 = if (summarizeGrid(rows)) |m| try gpa.dupe(u8, m) else null;
@@ -2141,16 +2215,39 @@ fn walkGrid(gpa: Allocator, grid: *const pty_pane.Grid) Allocator.Error!Derived 
     };
 }
 
+/// The text the walk chose, back as a card line carrying the colours
+/// its cells were painted in. `s` is a subslice of `row.text`, so the
+/// colours are the same span — widened first back over any blank beside
+/// it that carries a background: the trim reads those as padding, but
+/// in a banner row they are the figure. Which line a row yields is
+/// decided on the trimmed text, exactly as before; only what is painted
+/// grows.
+fn lineOf(row: GridRow, s: []const u8) CardLine {
+    if (s.len == 0 or row.colors.len != row.text.len) return .{ .text = s };
+    const at = @intFromPtr(s.ptr) -% @intFromPtr(row.text.ptr);
+    if (at > row.text.len or at + s.len > row.text.len) return .{ .text = s };
+    var start = at;
+    var end = at + s.len;
+    while (start > 0 and isBlankByte(row.text[start - 1]) and !row.colors[start - 1].isPlain()) start -= 1;
+    while (end < row.text.len and isBlankByte(row.text[end]) and !row.colors[end].isPlain()) end += 1;
+    return .{ .text = row.text[start..end], .colors = row.colors[start..end] };
+}
+
+fn isBlankByte(c: u8) bool {
+    return c == ' ' or c == '\t';
+}
+
 /// Rust's `summarize_grid_lines`: bottom-up, skipping blank rows,
 /// chrome, footer chips, the input prompt and `Worked for Ns`; the dim
 /// rows first (Claude Code's summary above the composer), then the
 /// plain ones; no row twice, no line equal to the one before it; at
-/// most `max`. Most-recent-first within each pass.
-pub fn summarizeGridLines(arena: Allocator, rows: []const GridRow, max: usize) Allocator.Error![]const []const u8 {
-    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+/// most `max`. Most-recent-first within each pass. Each line carries
+/// the colours of the cells it came from (`lineOf`).
+pub fn summarizeGridLines(arena: Allocator, rows: []const GridRow, max: usize) Allocator.Error![]const CardLine {
+    var out: std.ArrayListUnmanaged(CardLine) = .empty;
     if (max == 0) return out.items;
-    var dim_hits: std.ArrayListUnmanaged([]const u8) = .empty;
-    var plain_hits: std.ArrayListUnmanaged([]const u8) = .empty;
+    var dim_hits: std.ArrayListUnmanaged(CardLine) = .empty;
+    var plain_hits: std.ArrayListUnmanaged(CardLine) = .empty;
     var y = rows.len;
     while (y > 0) {
         y -= 1;
@@ -2158,11 +2255,12 @@ pub fn summarizeGridLines(arena: Allocator, rows: []const GridRow, max: usize) A
         if (trimmed.len == 0 or isChromeLine(trimmed) or isFooterChip(trimmed) or isInputPrompt(trimmed) or isWorkedCompletion(trimmed)) continue;
         const cleaned = std.mem.trim(u8, stripLeadingSpinner(trimmed), " \t");
         if ((std.unicode.utf8CountCodepoints(cleaned) catch cleaned.len) < 3) continue;
-        if (rows[y].dim) try dim_hits.append(arena, cleaned) else try plain_hits.append(arena, cleaned);
+        const line = lineOf(rows[y], cleaned);
+        if (rows[y].dim) try dim_hits.append(arena, line) else try plain_hits.append(arena, line);
     }
-    for ([_][]const []const u8{ dim_hits.items, plain_hits.items }) |pass| for (pass) |text| {
-        if (out.items.len > 0 and std.mem.eql(u8, out.items[out.items.len - 1], text)) continue;
-        try out.append(arena, text);
+    for ([_][]const CardLine{ dim_hits.items, plain_hits.items }) |pass| for (pass) |line| {
+        if (out.items.len > 0 and std.mem.eql(u8, out.items[out.items.len - 1].text, line.text)) continue;
+        try out.append(arena, line);
         if (out.items.len >= max) return out.items;
     };
     return out.items;
@@ -2375,12 +2473,42 @@ fn paintRow(ui: Ui, r: Rect, row: RowView, selected: bool) void {
         const yy = r.y + 1 + @as(u16, @intCast(i));
         var xx = r.x + 2;
         xx += ui.putStr(xx, yy, end -| xx, " ", bg);
-        xx += ui.putStr(xx, yy, end -| xx, ui.clipStr(line, max_cells), Theme.withFg(bg, color));
+        xx += paintLine(ui, xx, yy, end, max_cells, line, bg, color);
         if (i == 0) if (row.ticket) |tk| {
             xx += ui.putStr(xx, yy, end -| xx, " · ", Theme.withFg(bg, t.muted.fg));
             _ = ui.putStr(xx, yy, end -| xx, tk, Theme.withFg(bg, t.palette.cyan));
         };
     }
+}
+
+/// One summary row of a card, painted, returning the cells used. A row
+/// the card synthesized (`exited`, the exchange, `—`) is flat text in
+/// `ink`, as it always was. A row read off the pane's grid is painted
+/// run by run in the colours its cells carried: the card's own ground
+/// where the source background is the terminal default, the source
+/// background where it is set — which is what draws the orange figure
+/// of Claude's banner, half of it plain spaces. Colours resolve through
+/// the same path `drawPty` takes (`pty_view.colorOf`), so the card's
+/// orange is the pane's orange. The last run to reach the card's edge
+/// carries the ellipsis.
+fn paintLine(ui: Ui, x0: u16, y: u16, end: u16, max_cells: u16, line: CardLine, ground: vaxis.Style, ink: vaxis.Color) u16 {
+    if (!line.colored()) return ui.putStr(x0, y, end -| x0, ui.clipStr(line.text, max_cells), Theme.withFg(ground, ink));
+    var used: u16 = 0;
+    var i: usize = 0;
+    while (i < line.text.len and used < max_cells) {
+        var j = i + 1;
+        while (j < line.text.len and line.colors[j].eql(line.colors[i])) j += 1;
+        const room = @min(max_cells - used, end -| (x0 + used));
+        if (room == 0) break;
+        var style = ground;
+        style.fg = pty_view.colorOf(line.colors[i].fg, ink);
+        style.bg = pty_view.colorOf(line.colors[i].bg, ground.bg);
+        const painted = ui.putStr(x0 + used, y, room, ui.clipStr(line.text[i..j], room), style);
+        if (painted == 0) break;
+        used += painted;
+        i = j;
+    }
+    return used;
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
@@ -2471,7 +2599,7 @@ const Fixture = struct {
             try f.app.tick(App.nowMs(testing.io));
             const p = f.app.panes.pty(pid) orelse return false;
             p.fed_gen +%= 1; // a walk afresh, whatever the cache holds
-            if (derive(&f.app, pid)) |d| for (d.lines) |l| if (std.mem.indexOf(u8, l, needle) != null) return true;
+            if (derive(&f.app, pid)) |d| for (d.lines) |l| if (std.mem.indexOf(u8, l.text, needle) != null) return true;
             testing.io.sleep(.fromMilliseconds(10), .awake) catch {};
         }
         return false;
@@ -2581,11 +2709,11 @@ test "the cards are this app's AI panes: a fresh one reads its banner off the gr
     const v_fresh = try cardView(app, app.frame.allocator(), f.cardAt(1));
     try testing.expectEqual(Summary.text, v_fresh.kind);
     try testing.expectEqual(@as(usize, 3), v_fresh.lines.len);
-    try testing.expectEqualStrings("Claude Code v9 (fake)", v_fresh.lines[0]);
+    try testing.expectEqualStrings("Claude Code v9 (fake)", v_fresh.lines[0].text);
     // The child gone: `exited` alone, red.
     const v_gone = try cardView(app, app.frame.allocator(), f.cardAt(2));
     try testing.expectEqual(Summary.exited, v_gone.kind);
-    try testing.expectEqualStrings("exited", v_gone.lines[0]);
+    try testing.expectEqualStrings("exited", v_gone.lines[0].text);
     try testing.expect(std.mem.indexOf(u8, txt, "exited") != null);
     // The owned transcript is no EXTERNAL row; the live unowned one is;
     // the ended ones: the fresh one listed under ENDED, the old one hidden.
@@ -2867,8 +2995,8 @@ test "the grid walk: chrome, footer chips, the prompt and `Worked for` skipped; 
     try testing.expect(!rows[0].dim);
     const lines = try summarizeGridLines(arena, rows, 6);
     try testing.expectEqual(@as(usize, 2), lines.len);
-    try testing.expectEqualStrings("Drafted the notes", lines[0]);
-    try testing.expectEqualStrings("Claude Code v9", lines[1]);
+    try testing.expectEqualStrings("Drafted the notes", lines[0].text);
+    try testing.expectEqualStrings("Claude Code v9", lines[1].text);
     try testing.expect(!isClaudeThinking(rows));
     try testing.expect(!detectCodexThinking(rows));
     // The one-liner is Rust's `summarize_grid`: the activity-shaped
@@ -3121,10 +3249,80 @@ fn cardProps(rows: []const RowView) Panel.Props {
 /// The three cards of `rust-sessions-120x40.txt`, as `cardView` builds them.
 fn specCards() [3]RowView {
     return .{
-        .{ .item = item("5e551011-0000-4000-8000-000000000003", .done, 1, "ws", "write the release notes for 0.3"), .name = "write the release notes for 0.3", .pinned = true, .lines = &.{"exited"}, .kind = .exited },
-        .{ .item = item("5e551011-0000-4000-8000-000000000001", .streaming, 3, "ws", "fix the failing tests in src/main.rs"), .name = "fix the failing tests in src/main.rs", .lines = &.{ "you: fix the failing tests in src/main.rs", "claude: Running the suite first to see which ones fail." }, .kind = .text },
-        .{ .item = item("5e551011-0000-4000-8000-000000000002", .idle, 2, "ws", "add a --json flag to the CLI"), .name = "release train", .lines = &.{ "you: add a --json flag to the CLI", "claude: Added the flag and a test for it. Anything else?" }, .kind = .text },
+        .{ .item = item("5e551011-0000-4000-8000-000000000003", .done, 1, "ws", "write the release notes for 0.3"), .name = "write the release notes for 0.3", .pinned = true, .lines = &.{.{ .text = "exited" }}, .kind = .exited },
+        .{ .item = item("5e551011-0000-4000-8000-000000000001", .streaming, 3, "ws", "fix the failing tests in src/main.rs"), .name = "fix the failing tests in src/main.rs", .lines = &.{ .{ .text = "you: fix the failing tests in src/main.rs" }, .{ .text = "claude: Running the suite first to see which ones fail." } }, .kind = .text },
+        .{ .item = item("5e551011-0000-4000-8000-000000000002", .idle, 2, "ws", "add a --json flag to the CLI"), .name = "release train", .lines = &.{ .{ .text = "you: add a --json flag to the CLI" }, .{ .text = "claude: Added the flag and a test for it. Anything else?" } }, .kind = .text },
     };
+}
+
+test "a banner row keeps its cells' colours through the walk, and the card paints them: the bg-coloured space paints that background, the glyph that foreground, the rest the card's own" {
+    // A banner row the shape Claude Code's is: a space that is only a
+    // background, a block glyph that is only a foreground, two cells
+    // erased under that background (a cell with no codepoint at all —
+    // the other half of how the figure is drawn), then text.
+    const orange: pty_mod.grid.Color.Rgb = .{ .r = 215, .g = 119, .b = 87 };
+    var term: pty_mod.vt.Terminal = try .init(testing.io, testing.allocator, .{ .cols = 40, .rows = 4 });
+    defer term.deinit(testing.allocator);
+    var vs = term.vtStream();
+    defer vs.deinit();
+    vs.nextSlice("\x1b[48;2;215;119;87m \x1b[0m\x1b[38;2;215;119;87m\u{2588}\x1b[0m" ++
+        "\x1b[48;2;215;119;87m\x1b[2X\x1b[2C\x1b[0m Claude Code v9\r\n");
+    var grid: pty_mod.Grid = .{};
+    defer grid.deinit(testing.allocator);
+    try grid.update(testing.allocator, &term);
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const lines = try summarizeGridLines(arena, try gridRows(arena, &grid), 6);
+    try testing.expectEqual(@as(usize, 1), lines.len);
+    // The trim would drop the leading space — in a banner row that space
+    // IS the figure, so a coloured one is kept (`lineOf`).
+    try testing.expectEqualStrings(" \u{2588}   Claude Code v9", lines[0].text);
+    try testing.expect(lines[0].colored());
+    try testing.expectEqual(pty_mod.grid.Color{ .rgb = orange }, lines[0].colors[0].bg);
+    try testing.expectEqual(pty_mod.grid.Color.default, lines[0].colors[0].fg);
+    // The glyph is three bytes, each carrying its cell's foreground.
+    try testing.expectEqual(pty_mod.grid.Color{ .rgb = orange }, lines[0].colors[1].fg);
+    try testing.expectEqual(pty_mod.grid.Color{ .rgb = orange }, lines[0].colors[3].fg);
+    try testing.expectEqual(pty_mod.grid.Color.default, lines[0].colors[3].bg);
+    // The erased cells: no codepoint, a background — the space the card
+    // used to drop on the floor.
+    try testing.expectEqual(pty_mod.grid.Color{ .rgb = orange }, lines[0].colors[4].bg);
+    try testing.expectEqual(pty_mod.grid.Color{ .rgb = orange }, lines[0].colors[5].bg);
+    try testing.expect(lines[0].colors[6].isPlain());
+    try testing.expect(lines[0].colors[lines[0].colors.len - 1].isPlain());
+
+    // Painted: the space is that background, the glyph that foreground,
+    // and the plain text the card's own muted ink on the panel ground.
+    var f = try UiFixture.init(40, 6);
+    defer f.deinit();
+    const row: RowView = .{
+        .item = item("5e551011-0000-4000-8000-000000000004", .streaming, 1, "ws", "claude"),
+        .name = "claude",
+        .lines = lines[0..1],
+        .kind = .text,
+    };
+    paintRow(f.ui(), Rect.init(0, 0, 40, 4), row, false);
+    try f.expectRow(1, " \u{258C}  \u{2588}   Claude Code v9");
+    const vx_orange: vaxis.Color = .{ .rgb = .{ 215, 119, 87 } };
+    try testing.expect(vaxis.Color.eql(f.style(3, 1).bg, vx_orange));
+    try testing.expect(vaxis.Color.eql(f.style(3, 1).fg, f.theme.muted.fg));
+    try testing.expect(vaxis.Color.eql(f.style(4, 1).fg, vx_orange));
+    try testing.expect(vaxis.Color.eql(f.style(4, 1).bg, f.theme.panel_bg.bg));
+    try testing.expect(vaxis.Color.eql(f.style(5, 1).bg, vx_orange));
+    try testing.expect(vaxis.Color.eql(f.style(6, 1).bg, vx_orange));
+    try testing.expect(vaxis.Color.eql(f.style(8, 1).fg, f.theme.muted.fg));
+    try testing.expect(vaxis.Color.eql(f.style(8, 1).bg, f.theme.panel_bg.bg));
+    // A line the card synthesized has no cells behind it: flat text.
+    var g = try UiFixture.init(40, 6);
+    defer g.deinit();
+    var plain = row;
+    plain.lines = &.{.{ .text = "exited" }};
+    plain.kind = .exited;
+    paintRow(g.ui(), Rect.init(0, 0, 40, 4), plain, false);
+    try g.expectRow(1, " \u{258C} exited");
+    try testing.expect(vaxis.Color.eql(g.style(3, 1).fg, g.theme.palette.red));
+    try testing.expect(vaxis.Color.eql(g.style(3, 1).bg, g.theme.panel_bg.bg));
 }
 
 test "the card at 26 cells is Rust's, cell for cell: rows 3–18 of rust-sessions-120x40.txt, the top block per the user above them" {

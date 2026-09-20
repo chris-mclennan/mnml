@@ -1,0 +1,31 @@
+# env: HOME=home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# width: 120
+# A starting Claude session shows its banner — an orange figure drawn
+# half from block glyphs and half from plain cells that carry only a
+# background. The SESSIONS card reproduces those rows off the pane's
+# grid, and it paints each cell in the colour that cell was painted in:
+# the card's figure is the pane's figure, not a grey flatten of it.
+# The fake `claude` prints a banner of that shape in truecolor.
+write bin/claude #!/bin/bash\nsid=""\nwhile [ $# -gt 0 ]; do case "$1" in --session-id|--resume) sid=$2; shift 2;; *) shift;; esac; done\nprintf '\\033]0;claude\\007'\nprintf '\\033[48;2;215;119;87m \\033[0m\\033[38;2;215;119;87m\\342\\226\\210\\033[0m\\033[48;2;215;119;87m\\033[2X\\033[2C\\033[0m Claude Code v9 (fake)\\n'\nexec -a claude /bin/sh -c 'i=0; while [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done' --resume "$sid"
+shell chmod +x bin/claude
+command ai.claude_code_new
+wait 600
+command view.activity_sessions
+wait 400
+expect screen contains "Claude Code v9 (fake)"
+# The pane paints the banner row: an orange background on a cell that
+# is only a background (x 32), the figure's glyph in that same orange.
+expect color 32 2 bg #d77757
+expect color 33 2 fg #d77757
+# The card's row, cell for cell, is the same picture in the same
+# orange: the space that carries only a background (x 7), the block
+# glyph's foreground (x 8), the two erased cells after it (x 9, 10).
+expect color 7 7 bg #d77757
+expect color 8 7 fg #d77757
+expect color 9 7 bg #d77757
+expect color 10 7 bg #d77757
+# Where the source cell had no colour the card keeps its own: the blank
+# before the text is the panel's ground, the text the card's muted ink.
+expect color 11 7 bg not #d77757
+expect color 12 7 fg not #d77757

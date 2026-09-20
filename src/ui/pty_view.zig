@@ -86,7 +86,12 @@ const ascii_table: [128][1]u8 = blk: {
     break :blk tbl;
 };
 
-fn colorOf(c: pty.grid.Color, fallback: Color) Color {
+/// The vaxis colour a grid colour paints as: the terminal palette index
+/// straight through (so the host resolves it as the child meant), an
+/// explicit rgb verbatim, the default deferred to the caller. Every
+/// surface that repaints a pane's cells — the pane itself, the SESSIONS
+/// card's banner rows — goes through here, so one orange is one orange.
+pub fn colorOf(c: pty.grid.Color, fallback: Color) Color {
     return switch (c) {
         .default => fallback,
         .palette => |i| .{ .index = i },
