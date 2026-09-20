@@ -57,9 +57,14 @@
 //!
 //!   1. `<SERVICE>_BROKER_SOCKET` names it outright
 //!   2. beside the ratelimit state file, `<service>-broker.sock`
-//!   3. and if that path will not fit a `sockaddr_un`, a short
+//!   3. and if that DERIVED path will not fit a `sockaddr_un`, a short
 //!      `/tmp` name derived from the service alone, so two processes
 //!      deriving it still agree.
+//!
+//! An explicit override is never moved to `/tmp` — a socket somewhere
+//! other than the place the user named is worse than none — so one
+//! past the limit is refused, by name and by length, at the `serve`,
+//! at mnml's election and at `broker status`.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -76,13 +81,62 @@ pub const supported = Io.net.has_unix_sockets;
 /// another one is answered `bad_request` rather than guessed at.
 pub const version: u8 = 1;
 
-/// The longest socket path this is willing to use. `sockaddr_un`'s
-/// `sun_path` is 104 bytes on macOS and 108 on Linux, and the runtime
-/// asserts rather than erroring when a path will not fit — so the
-/// ceiling here is the smaller one, minus room for the NUL, and is the
-/// same number on every platform. A path past it is not a broker: the
-/// caller falls back to the file bucket, which needs no socket.
+/// How long a DERIVED socket path may be before the short `/tmp` name
+/// is used instead. Deliberately under `os_max_path_len`, and the same
+/// number on every platform: the two ends of this socket derive their
+/// path independently, so the rule that picks between "beside the
+/// bucket" and `/tmp` has to give both of them the same answer.
 pub const max_path_len: usize = 100;
+
+/// What this platform's `sockaddr_un.sun_path` holds, NUL included:
+/// 104 bytes on macOS, 108 on Linux. `Io.net.UnixAddress.max_len`
+/// believes 108 everywhere that is not Windows — four bytes past the
+/// end of the struct on macOS — and `listen` asserts rather than
+/// erroring, so this, not the runtime, is what says a path fits.
+pub const os_path_len: usize = switch (builtin.os.tag) {
+    .macos, .ios, .tvos, .watchos, .visionos => 104,
+    else => 108,
+};
+
+/// The longest socket path this machine can bind OR connect to: the
+/// `sun_path` above, less the NUL. Past it there is no broker for
+/// anybody — which is why an explicit `<SERVICE>_BROKER_SOCKET` past
+/// it is refused with a sentence up front rather than left to fail at
+/// the bind, where all anybody saw was `BindFailed`.
+pub const os_max_path_len: usize = os_path_len - 1;
+
+/// Whether `path` is past what a `sockaddr_un` on this machine holds.
+///
+/// A derived path never is — `socketPath` falls back to `/tmp` well
+/// before this — so a true here always means an explicit
+/// `<SERVICE>_BROKER_SOCKET` named it, which is what
+/// `explainPathTooLong` tells the reader to go and fix.
+pub fn pathTooLong(path: []const u8) bool {
+    return path.len > os_max_path_len;
+}
+
+/// Room for the longest sentence `explainPathTooLong` or
+/// `explainStart` writes.
+pub const explain_max: usize = 256;
+
+/// Why a path that is too long is too long, as a sentence:
+///
+///     socket path is 131 bytes; the OS allows 103 — set
+///     BITBUCKET_BROKER_SOCKET shorter or unset it for the default
+///
+/// Both numbers are there on purpose. The length is the one the reader
+/// can measure against their own setting; the limit is the one nobody
+/// carries around, and `BindFailed` never hinted a length was the
+/// problem at all. Written into `buf` — pass `explain_max` bytes.
+pub fn explainPathTooLong(buf: []u8, service: []const u8, path: []const u8) []const u8 {
+    var name_buf: [max_service_len + "_BROKER_SOCKET".len]u8 = undefined;
+    const name = socketEnvName(&name_buf, service) orelse "the broker socket override";
+    return std.fmt.bufPrint(
+        buf,
+        "socket path is {d} bytes; the OS allows {d} — set {s} shorter or unset it for the default",
+        .{ path.len, os_max_path_len, name },
+    ) catch "socket path is too long for a sockaddr_un";
+}
 
 // ─── classes ─────────────────────────────────────────────────────────────
 
@@ -449,10 +503,16 @@ fn sanitizeByte(c: u8) u8 {
 ///
 /// Derived the same way the ratelimit state file is, so the socket
 /// sits beside the bucket it fronts and every process resolves the
-/// same one. A path that will not fit a `sockaddr_un` (104 usable
-/// bytes on macOS) falls back to a short `/tmp` name derived from the
-/// service alone — deterministic, so two processes that both fall
-/// back still meet.
+/// same one. A path that will not fit a `sockaddr_un` (`sun_path` is
+/// 104 bytes on macOS, so 103 of them may be path) falls back to a
+/// short `/tmp` name derived from the service alone — deterministic,
+/// so two processes that both fall back still meet.
+///
+/// **The fallback is the DERIVED path's only.** An explicit
+/// `<SERVICE>_BROKER_SOCKET` is returned exactly as it was set, long
+/// or not: silently serving somewhere else than the place the user
+/// named would be worse than refusing, and `pathTooLong` +
+/// `explainPathTooLong` are how the refusal is said.
 pub fn socketPath(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, service: []const u8) Allocator.Error![]u8 {
     var name_buf: [max_service_len + "_BROKER_SOCKET".len]u8 = undefined;
     if (socketEnvName(&name_buf, service)) |name| {
@@ -677,7 +737,23 @@ pub const Server = struct {
     /// bucket has no way to take one back. At most one is ever held.
     spare: ?f64 = null,
 
-    pub const StartError = error{ Unsupported, BindFailed, ListenFailed } || Allocator.Error;
+    /// Why a broker did not come up. Every one of these is a sentence
+    /// in `explainStart`: `BindFailed` on its own sent the reader to
+    /// read this file, which is the bug this set exists to fix.
+    pub const StartError = error{
+        Unsupported,
+        /// An explicit `<SERVICE>_BROKER_SOCKET` past `os_max_path_len`.
+        PathTooLong,
+        /// Something is already bound there — or a socket file is in
+        /// the way that we were not allowed to take away.
+        AddressInUse,
+        PermissionDenied,
+        /// The directory the socket would sit in is not there.
+        DirMissing,
+        /// Anything else the bind said.
+        BindFailed,
+        ListenFailed,
+    } || Allocator.Error;
 
     pub const Options = struct {
         /// Which bucket this broker fronts — and, through
@@ -709,14 +785,14 @@ pub const Server = struct {
         const svc = try gpa.dupe(u8, service);
         errdefer gpa.free(svc);
 
-        if (sock.len > max_path_len) return error.BindFailed;
+        if (pathTooLong(sock)) return error.PathTooLong;
         if (std.fs.path.dirname(sock)) |dir| Io.Dir.cwd().createDirPath(io, dir) catch {};
         // A socket file left by a broker that crashed would block the
         // bind. The election lock, not the file, is what says whether
         // somebody else is really serving.
         Io.Dir.cwd().deleteFile(io, sock) catch {};
-        const addr = Io.net.UnixAddress.init(sock) catch return error.BindFailed;
-        var listener = addr.listen(io, .{}) catch return error.BindFailed;
+        const addr = Io.net.UnixAddress.init(sock) catch return error.PathTooLong;
+        var listener = addr.listen(io, .{}) catch |err| return bindError(err);
         errdefer listener.deinit(io);
 
         const s = try gpa.create(Server);
@@ -796,6 +872,56 @@ pub const Server = struct {
         gpa.destroy(s);
     }
 };
+
+/// The bind's own errno, kept rather than flattened. `AddressInUse`
+/// and `PermissionDenied` are the two a reader can act on — one is a
+/// socket file in the way, the other is a directory they cannot write
+/// — and telling them apart is the whole point of this mapping.
+fn bindError(err: Io.net.UnixAddress.ListenError) Server.StartError {
+    return switch (err) {
+        error.AddressInUse => error.AddressInUse,
+        error.AccessDenied, error.PermissionDenied, error.ReadOnlyFileSystem => error.PermissionDenied,
+        error.FileNotFound, error.NotDir => error.DirMissing,
+        else => error.BindFailed,
+    };
+}
+
+/// The whole sentence for a broker that did not come up, `service: `
+/// prefix excluded so a caller can print it after its own label.
+///
+/// `stale_pid` is who the election lock named BEFORE this process took
+/// it. A socket file outlives the process that bound it, so an
+/// `AddressInUse` is nearly always somebody's leftovers — and the pid
+/// is the one thing that turns "address in use" into something the
+/// reader can go and check.
+pub fn explainStart(
+    buf: []u8,
+    path: []const u8,
+    err: Server.StartError,
+    service: []const u8,
+    stale_pid: ?i32,
+) []const u8 {
+    if (err == error.PathTooLong) return explainPathTooLong(buf, service, path);
+    const reason: []const u8 = switch (err) {
+        error.Unsupported => "this platform has no Unix sockets",
+        error.AddressInUse => "address in use",
+        error.PermissionDenied => "permission denied",
+        error.DirMissing => "no such directory",
+        error.ListenFailed => "the accept loop would not start",
+        error.OutOfMemory => "out of memory",
+        else => "the bind failed",
+    };
+    if (err == error.AddressInUse) {
+        if (stale_pid) |pid| {
+            return std.fmt.bufPrint(
+                buf,
+                "could not serve on {s} ({s} — a stale socket from pid {d}?)",
+                .{ path, reason, pid },
+            ) catch reason;
+        }
+    }
+    return std.fmt.bufPrint(buf, "could not serve on {s} ({s})", .{ path, reason }) catch reason;
+}
 
 /// The accept loop. One task per connection where the runtime will
 /// give us one; inline when it will not, which serves the queue one
@@ -957,7 +1083,7 @@ pub const Line = struct {
 };
 
 fn talk(io: Io, path: []const u8, req: Request) ?Line {
-    if (path.len == 0 or path.len > max_path_len) return null;
+    if (path.len == 0 or pathTooLong(path)) return null;
     const addr = Io.net.UnixAddress.init(path) catch return null;
     const stream = addr.connect(io) catch return null;
     defer stream.close(io);
@@ -1270,6 +1396,114 @@ test "a path too long for a sockaddr_un falls back to a short name both sides de
     defer t.allocator.free(p);
     try t.expectEqualStrings("/tmp/mnml-broker-bitbucket.sock", p);
     try t.expect(p.len < Io.net.UnixAddress.max_len);
+}
+
+test "an explicit override past the sockaddr_un is kept, refused, and explained by length" {
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    var deep: std.ArrayListUnmanaged(u8) = .empty;
+    defer deep.deinit(t.allocator);
+    try deep.appendSlice(t.allocator, "/very");
+    while (deep.items.len < 126) try deep.appendSlice(t.allocator, "/deep");
+    try deep.appendSlice(t.allocator, "/b.sock");
+    try env.put("BITBUCKET_BROKER_SOCKET", deep.items);
+
+    // Kept as set, NOT quietly moved to /tmp: a broker somewhere other
+    // than the place the user named is worse than no broker.
+    const p = try socketPath(t.allocator, t.io, &env, "bitbucket");
+    defer t.allocator.free(p);
+    try t.expectEqualStrings(deep.items, p);
+    try t.expect(pathTooLong(p));
+
+    // …and said so: the length they can measure, the limit they cannot
+    // guess, and the variable to go and change.
+    var buf: [explain_max]u8 = undefined;
+    const why = explainPathTooLong(&buf, "bitbucket", p);
+    var expect_buf: [explain_max]u8 = undefined;
+    try t.expectEqualStrings(
+        try std.fmt.bufPrint(
+            &expect_buf,
+            "socket path is {d} bytes; the OS allows {d} — set BITBUCKET_BROKER_SOCKET shorter or unset it for the default",
+            .{ p.len, os_max_path_len },
+        ),
+        why,
+    );
+
+    // The boundary is the NUL's: `sun_path` holds 104 bytes on macOS,
+    // so 103 of them may be path.
+    try t.expectEqual(os_path_len - 1, os_max_path_len);
+    try t.expect(!pathTooLong("x" ** os_max_path_len));
+    try t.expect(pathTooLong("x" ** (os_max_path_len + 1)));
+    // And a derived path never trips it — that is what the headroom is.
+    try t.expect(max_path_len < os_max_path_len);
+
+    // Nothing connects to it either, so a client is on the file bucket
+    // rather than parked on an errno nobody declared.
+    try t.expect(askStatus(t.io, p, "bitbucket") == null);
+}
+
+test "every other bind failure names its errno, and a leftover lock names the stale pid" {
+    // The bind's own errno reaches the sentence rather than being
+    // flattened on the way: `BindFailed` for all of these was the bug.
+    try t.expectEqual(Server.StartError.AddressInUse, bindError(error.AddressInUse));
+    try t.expectEqual(Server.StartError.PermissionDenied, bindError(error.AccessDenied));
+    try t.expectEqual(Server.StartError.PermissionDenied, bindError(error.PermissionDenied));
+    try t.expectEqual(Server.StartError.PermissionDenied, bindError(error.ReadOnlyFileSystem));
+    try t.expectEqual(Server.StartError.DirMissing, bindError(error.FileNotFound));
+    try t.expectEqual(Server.StartError.DirMissing, bindError(error.NotDir));
+    // Only what nobody can act on stays generic.
+    try t.expectEqual(Server.StartError.BindFailed, bindError(error.NetworkDown));
+
+    var buf: [explain_max]u8 = undefined;
+    try t.expectEqualStrings(
+        "could not serve on /tmp/x.sock (address in use — a stale socket from pid 4242?)",
+        explainStart(&buf, "/tmp/x.sock", error.AddressInUse, "bitbucket", 4242),
+    );
+    // No lock to name: still the errno, never `BindFailed`.
+    try t.expectEqualStrings(
+        "could not serve on /tmp/x.sock (address in use)",
+        explainStart(&buf, "/tmp/x.sock", error.AddressInUse, "bitbucket", null),
+    );
+    try t.expectEqualStrings(
+        "could not serve on /tmp/x.sock (permission denied)",
+        explainStart(&buf, "/tmp/x.sock", error.PermissionDenied, "bitbucket", null),
+    );
+    try t.expectEqualStrings(
+        "could not serve on /tmp/x.sock (no such directory)",
+        explainStart(&buf, "/tmp/x.sock", error.DirMissing, "bitbucket", null),
+    );
+    // A pid on anything but an in-use address would be a guess.
+    try t.expectEqualStrings(
+        "could not serve on /tmp/x.sock (permission denied)",
+        explainStart(&buf, "/tmp/x.sock", error.PermissionDenied, "bitbucket", 4242),
+    );
+    // The length case is its own sentence, not an errno.
+    const long = "x" ** (os_max_path_len + 7);
+    try t.expect(std.mem.startsWith(
+        u8,
+        explainStart(&buf, long, error.PathTooLong, "jira", null),
+        "socket path is ",
+    ));
+    try t.expect(std.mem.indexOf(
+        u8,
+        explainStart(&buf, long, error.PathTooLong, "jira", null),
+        "JIRA_BROKER_SOCKET",
+    ) != null);
+}
+
+test "a server refuses an override it cannot bind, by length rather than at the bind" {
+    if (!supported) return error.SkipZigTest;
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    var deep: std.ArrayListUnmanaged(u8) = .empty;
+    defer deep.deinit(t.allocator);
+    try deep.appendSlice(t.allocator, "/tmp");
+    while (deep.items.len < 126) try deep.appendSlice(t.allocator, "/deep");
+    try deep.appendSlice(t.allocator, "/b.sock");
+    try env.put("BITBUCKET_BROKER_SOCKET", deep.items);
+    // `BindFailed` was the whole bug: the caller could not tell a long
+    // path from a busy address, so it could not say which to fix.
+    try t.expectError(error.PathTooLong, Server.start(t.allocator, t.io, &env, .{ .service = "bitbucket" }));
 }
 
 // ─── tests: a real broker on a private socket ────────────────────────────

@@ -863,10 +863,46 @@ the connection closes.
 
 Where the socket is, in the order the state file resolves:
 `<SERVICE>_BROKER_SOCKET`, else `<service>-broker.sock` beside the
-state file, else — when that path is longer than the ~100 bytes a
-`sockaddr_un` holds — `/tmp/mnml-broker-<service>.sock`, which both
-ends derive from the service name alone so they still meet.
+state file, else — when that DERIVED path is longer than
+`broker.max_path_len` (100 bytes, the same number on every platform so
+both ends pick the same branch) — `/tmp/mnml-broker-<service>.sock`,
+which both ends derive from the service name alone so they still meet.
 `MNML_BROKER=0` turns the whole thing off for a child.
+
+**The limit, and what happens at it.** A `sockaddr_un`'s `sun_path`
+holds 104 bytes on macOS and 108 on Linux, NUL included — so the
+longest usable path is `broker.os_max_path_len`, one fewer. That is the
+hard ceiling: nothing past it can be bound *or* connected to, by
+anybody, on that machine. (`Io.net.UnixAddress.max_len` says 108
+everywhere it is not Windows, which on macOS is four bytes past the end
+of the struct, and `listen` asserts rather than erroring — so the SDK's
+own number is what decides, not the runtime's.)
+
+**The `/tmp` fallback is the derived path's only.** An explicit
+`<SERVICE>_BROKER_SOCKET` is used exactly as it was set: a broker
+listening somewhere other than the place you named is worse than no
+broker, because everything that reads the same variable would go on
+looking at the path you gave. So an override past the limit is
+*refused*, by length, with the same sentence in all four places that
+can hit it:
+
+```
+bitbucket: socket path is 131 bytes; the OS allows 103 — set BITBUCKET_BROKER_SOCKET shorter or unset it for the default
+```
+
+`mnml-zig broker serve` prints it and exits 1 before it takes a lock or
+touches a bucket; mnml's own election prints it as a warning toast and
+a `:messages` line, once per service, and leaves every client on the
+file bucket exactly as an absent broker does; `mnml-zig broker status`
+prints it instead of the indistinguishable `no broker at <path>`; and
+the Python client raises `BrokerPathTooLong` (which `try_broker` /
+`broker_status` catch, warn about once on stderr, and fall through on —
+a misconfigured broker must still not be a dependency).
+
+Every other bind failure names its errno rather than flattening to one
+`BindFailed`, because the fix differs: `address in use` — with `a stale
+socket from pid N?` appended when the election lock still named one —
+`permission denied`, `no such directory`.
 
 **From a shell**, so a capture tool queues behind the panes rather than
 taking a token out from under one:

@@ -82,6 +82,11 @@ const Slot = struct {
     /// Held only while this process is the one serving.
     lock: ?sdk.warm.Lock = null,
     server: ?*sdk.broker.Server = null,
+    /// Whether this slot has already said why it cannot serve. The
+    /// election re-runs every twenty seconds and the reason — a socket
+    /// path the OS will not hold, say — does not change between looks;
+    /// one toast is a report, a toast every twenty seconds is a fault.
+    reported: bool = false,
 };
 
 pub const State = struct {
@@ -155,6 +160,7 @@ pub fn sync(app: *App) void {
     const st = &app.broker;
     if (!hosting(app)) return;
     const now = nowSecs(app.io);
+    var why_buf: [sdk.broker.explain_max]u8 = undefined;
     for (&st.slots) |*s| {
         if (s.path.len == 0) {
             s.path = sdk.broker.socketPath(app.gpa, app.io, &app.env, s.service) catch continue;
@@ -165,12 +171,30 @@ pub fn sync(app: *App) void {
             if (s.lock) |*l| l.heartbeat(now);
             continue;
         }
+        // A socket path the OS will not hold is somebody's
+        // `<SERVICE>_BROKER_SOCKET`, and nothing here can fix it —
+        // there is no election to hold and no lock to take. Say which
+        // setting and how long it is, once, and leave every client on
+        // the file bucket exactly as an absent broker does.
+        if (sdk.broker.pathTooLong(s.path)) {
+            report(app, s, sdk.broker.explainPathTooLong(&why_buf, s.service, s.path));
+            continue;
+        }
         if (s.lock == null) {
             const lock_path = sdk.broker.lockPath(app.gpa, s.path) catch continue;
             defer app.gpa.free(lock_path);
             s.lock = sdk.warm.Lock.init(app.gpa, app.io, lock_path, sdk.warm.selfPid(), program) catch continue;
         }
         const l = if (s.lock) |*l| l else continue;
+        // Who the lock named before we take it: `acquire` overwrites
+        // the file, so this is the only moment a leftover pid can be
+        // read, and it is what names a stale socket further down.
+        const prior: ?sdk.warm.Lock.Holder = blk: {
+            const lock_path = sdk.broker.lockPath(app.gpa, s.path) catch break :blk null;
+            defer app.gpa.free(lock_path);
+            break :blk sdk.warm.Lock.peek(app.gpa, app.io, lock_path) catch null;
+        };
+        defer if (prior) |h| app.gpa.free(h.program);
         // Somebody else is serving this bucket. That is the right
         // answer, not a failure: this process is a client of theirs,
         // exactly as an integration is.
@@ -179,13 +203,28 @@ pub fn sync(app: *App) void {
             .service = s.service,
             .program = program,
             .pid = sdk.warm.selfPid(),
-        }) catch {
+        }) catch |err| {
             // The lock without the socket would lock everybody out of
             // a broker nobody is running.
             l.release();
+            const stale: ?i32 = if (prior) |h| (if (h.pid != sdk.warm.selfPid()) h.pid else null) else null;
+            report(app, s, sdk.broker.explainStart(&why_buf, s.path, err, s.service, stale));
             continue;
         };
+        // It came up: a later failure is news again.
+        s.reported = false;
     }
+}
+
+/// Why this service has no broker, once: a toast the user sees now and
+/// a `:messages` line they can go back to — `toastLevel` writes both.
+///
+/// Once per reason, not once per look. `sync` runs again every twenty
+/// seconds and a socket path does not get shorter between them.
+fn report(app: *App, s: *Slot, why: []const u8) void {
+    if (s.reported) return;
+    s.reported = true;
+    app.toastLevel(.warn, "broker {s}: {s}", .{ s.service, why }) catch {};
 }
 
 /// Start on the first tick, then look again every `recheck_ms` — the
@@ -355,6 +394,64 @@ test "one broker per service: a lock another process holds means this mnml serve
     const before = app.broker.slotFor("jira").?.server.?;
     sync(app);
     try testing.expectEqual(before, app.broker.slotFor("jira").?.server.?);
+}
+
+test "an election that cannot bind says why once, and every client stays on the file bucket" {
+    if (!sdk.broker.supported) return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+
+    var a = try App.initWith(testing.allocator, testing.io, .{ .workspace = dir, .data_root = dir, .cols = 80, .rows = 24 });
+    defer a.deinit();
+    const app = &a;
+    try app.env.put(enabled_env, "1");
+    for (services) |service| {
+        var nbuf: [64]u8 = undefined;
+        const state = try std.fmt.allocPrint(testing.allocator, "{s}/{s}-ratelimit.json", .{ dir, service });
+        defer testing.allocator.free(state);
+        try app.env.put(sdk.ratelimit.stateEnvName(&nbuf, service).?, state);
+    }
+
+    // Somebody's `BITBUCKET_BROKER_SOCKET` names a path no
+    // `sockaddr_un` holds — under the test's own tmp dir, so the real
+    // bucket is never near this.
+    var sock: std.ArrayListUnmanaged(u8) = .empty;
+    defer sock.deinit(testing.allocator);
+    try sock.appendSlice(testing.allocator, dir);
+    while (sock.items.len < sdk.broker.os_max_path_len + 1) try sock.appendSlice(testing.allocator, "/deeeeeeep");
+    try sock.appendSlice(testing.allocator, "/bitbucket-broker.sock");
+    try app.env.put("BITBUCKET_BROKER_SOCKET", sock.items);
+
+    sync(app);
+    defer app.broker.stop(app.gpa, app.io);
+    // Jira was fine and is ours; Bitbucket could not be, and said so
+    // instead of leaving a header chip that reads like nobody is home.
+    try testing.expect(app.broker.slotFor("jira").?.server != null);
+    try testing.expect(app.broker.slotFor("bitbucket").?.server == null);
+    const said = app.lastToast().?;
+    try testing.expect(std.mem.startsWith(u8, said, "broker bitbucket: socket path is "));
+    try testing.expect(std.mem.indexOf(u8, said, "BITBUCKET_BROKER_SOCKET shorter") != null);
+    try testing.expectEqual(@as(usize, 1), app.toasts.items.len);
+    try testing.expect(app.toasts.items[0].level == .warn);
+    // `:messages` keeps it after the toast has gone.
+    try testing.expectEqual(@as(usize, 1), app.messages.items.items.len);
+    try testing.expectEqualStrings(said, app.messages.items.items[0].text);
+
+    // The look repeats every twenty seconds and the path does not get
+    // shorter: one report, not one every recheck.
+    sync(app);
+    sync(app);
+    try testing.expectEqual(@as(usize, 1), app.messages.items.items.len);
+
+    // And the client side is untouched: no broker for bitbucket, which
+    // is the file bucket and a supported state, not an error.
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    for (try lines(app, arena_state.allocator())) |l| {
+        if (std.mem.eql(u8, l.service, "bitbucket")) try testing.expectEqual(Where.off, l.where);
+    }
 }
 
 test "the header says which brokers are up, and an integration is told where they are" {

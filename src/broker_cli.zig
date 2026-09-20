@@ -201,6 +201,19 @@ fn status(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: []const [
     for (wanted) |service| {
         const path = try sdk.broker.socketPath(gpa, io, env, service);
         defer gpa.free(path);
+        // A path nothing can connect to reads exactly like a broker
+        // that is not running, and the reader goes looking for the
+        // process instead of at their own environment. Say which.
+        if (sdk.broker.pathTooLong(path)) {
+            var buf: [sdk.broker.explain_max]u8 = undefined;
+            const why = sdk.broker.explainPathTooLong(&buf, service, path);
+            if (a.json) {
+                try std_.out.print("{{\"service\":\"{s}\",\"broker\":false,\"socket\":\"{s}\",\"error\":\"{s}\"}}\n", .{ service, path, why });
+            } else {
+                try std_.err.print("{s}: {s}\n", .{ service, why });
+            }
+            continue;
+        }
         const snap = sdk.broker.askStatus(io, path, service);
         if (a.json) {
             if (snap) |s| {
@@ -243,8 +256,21 @@ fn serve(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: []const []
     }
     const sock = try sdk.broker.socketPath(gpa, io, env, a.service);
     defer gpa.free(sock);
+    var why_buf: [sdk.broker.explain_max]u8 = undefined;
+    // Up front, before the lock and the bucket: a path a `sockaddr_un`
+    // cannot hold is the user's own setting, and the only thing that
+    // helps is its length beside the limit.
+    if (sdk.broker.pathTooLong(sock)) {
+        try std_.err.print("{s}: {s}\n", .{ a.service, sdk.broker.explainPathTooLong(&why_buf, a.service, sock) });
+        return 1;
+    }
     const lock_path = try sdk.broker.lockPath(gpa, sock);
     defer gpa.free(lock_path);
+    // Who the lock named BEFORE we take it: `acquire` overwrites the
+    // file, so this is the only moment a leftover pid is readable, and
+    // it is what turns a later "address in use" into a name.
+    const prior: ?sdk.warm.Lock.Holder = sdk.warm.Lock.peek(gpa, io, lock_path) catch null;
+    defer if (prior) |h| gpa.free(h.program);
     var lock = try sdk.warm.Lock.init(gpa, io, lock_path, sdk.warm.selfPid(), "mnml-zig broker");
     defer lock.deinit();
     if (!lock.acquire(nowSecs(io))) {
@@ -261,7 +287,8 @@ fn serve(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: []const []
         .config = cfg,
     }) catch |err| {
         lock.release();
-        try std_.err.print("{s}: could not serve ({s})\n", .{ a.service, @errorName(err) });
+        const stale: ?i32 = if (prior) |h| (if (h.pid != sdk.warm.selfPid()) h.pid else null) else null;
+        try std_.err.print("{s}: {s}\n", .{ a.service, sdk.broker.explainStart(&why_buf, sock, err, a.service, stale) });
         return 1;
     };
     defer {
@@ -402,4 +429,77 @@ test "status says there is no broker rather than failing when nothing is listeni
     var w2: Io.Writer = .fixed(&buf);
     const std2: Std = .{ .out = &w2, .err = &e };
     try t.expectEqual(@as(u8, 2), subcommand(t.allocator, t.io, &env, &.{"drain"}, std2).?);
+}
+
+/// A `<SERVICE>_BROKER_SOCKET` longer than any `sockaddr_un` holds,
+/// under the test's own tmp dir so nothing near the real bucket is
+/// touched. Owned by the caller.
+fn longOverride(gpa: Allocator, dir: []const u8) ![]u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(gpa);
+    try out.appendSlice(gpa, dir);
+    while (out.items.len < sdk.broker.os_max_path_len + 1) try out.appendSlice(gpa, "/deeeeeeep");
+    try out.appendSlice(gpa, "/bitbucket-broker.sock");
+    return out.toOwnedSlice(gpa);
+}
+
+test "serve refuses a socket path the OS cannot hold, by length, before it binds anything" {
+    if (!sdk.broker.supported) return error.SkipZigTest;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    const state = try std.fmt.allocPrint(t.allocator, "{s}/bitbucket-ratelimit.json", .{dir});
+    defer t.allocator.free(state);
+    try env.put("BITBUCKET_RATELIMIT_STATE", state);
+    const sock = try longOverride(t.allocator, dir);
+    defer t.allocator.free(sock);
+    try env.put("BITBUCKET_BROKER_SOCKET", sock);
+
+    var buf: [4096]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    var ebuf: [4096]u8 = undefined;
+    var e: Io.Writer = .fixed(&ebuf);
+
+    // `serve` exits 1 and says which setting and how long it is —
+    // where it used to print `bitbucket: could not serve (BindFailed)`
+    // and leave the reader with no way in.
+    const code = subcommand(t.allocator, t.io, &env, &.{ "serve", "--service", "bitbucket" }, .{ .out = &w, .err = &e }).?;
+    try t.expectEqual(@as(u8, 1), code);
+    const said = e.buffered();
+    try t.expect(std.mem.indexOf(u8, said, "BindFailed") == null);
+    var expect_buf: [sdk.broker.explain_max]u8 = undefined;
+    const want = try std.fmt.bufPrint(
+        &expect_buf,
+        "bitbucket: socket path is {d} bytes; the OS allows {d} — set BITBUCKET_BROKER_SOCKET shorter or unset it for the default\n",
+        .{ sock.len, sdk.broker.os_max_path_len },
+    );
+    try t.expectEqualStrings(want, said);
+    // Refused UP FRONT: no bucket, no election lock, and — the one a
+    // later guard would not catch — none of the deep directory tree
+    // that `Lock.acquire` would have made on the way to a socket
+    // nothing can ever bind. The tmp dir is still empty.
+    var it = tmp.dir.iterate();
+    try t.expect((try it.next(t.io)) == null);
+
+    // And `status` says the same thing rather than the indistinguishable
+    // "no broker at <path>" it used to print.
+    var w2: Io.Writer = .fixed(&buf);
+    var e2: Io.Writer = .fixed(&ebuf);
+    const scode = subcommand(t.allocator, t.io, &env, &.{ "status", "--service", "bitbucket" }, .{ .out = &w2, .err = &e2 }).?;
+    try t.expectEqual(@as(u8, 0), scode);
+    try t.expect(std.mem.indexOf(u8, e2.buffered(), "socket path is ") != null);
+    try t.expect(std.mem.indexOf(u8, e2.buffered(), "BITBUCKET_BROKER_SOCKET shorter") != null);
+    try t.expect(std.mem.indexOf(u8, w2.buffered(), "no broker at") == null);
+
+    // `--json` keeps its one-object-per-line shape and carries the
+    // reason in it, so a script sees the same thing a reader does.
+    var w3: Io.Writer = .fixed(&buf);
+    var e3: Io.Writer = .fixed(&ebuf);
+    _ = subcommand(t.allocator, t.io, &env, &.{ "status", "--service", "bitbucket", "--json" }, .{ .out = &w3, .err = &e3 }).?;
+    try t.expect(std.mem.indexOf(u8, w3.buffered(), "\"broker\":false") != null);
+    try t.expect(std.mem.indexOf(u8, w3.buffered(), "\"error\":\"socket path is ") != null);
 }
