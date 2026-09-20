@@ -1103,6 +1103,14 @@ pub const Run = struct {
     args: []const []const u8 = &.{},
     pty: bool = false,
     label: []const u8,
+    /// // changed (focus-row): how many of `args` at the end are a deep
+    /// link rather than part of what this command IS. A pane is known
+    /// by the rest, so `--focus ENG-2` and `--focus ENG-5` reach the
+    /// same pane instead of opening two.
+    deep_link: usize = 0,
+    /// The one thing the pane should land on, when the press named one
+    /// — forwarded down the mount if that pane is already open.
+    focus: []const u8 = "",
 };
 
 /// `Open as ▸ Split / Tab` — the row every integration menu carries,
@@ -1151,7 +1159,17 @@ pub fn runMount(app: *App, r: Run) CommandError!void {
         return;
     }
     const extra = try settingsEnv(app, arena, id);
-    _ = try mount_pane.open(app, .{ .argv = argv.items, .label = r.label, .integration = id, .extra_env = extra });
+    // The deep link rides on the argv but is not part of the pane's
+    // identity: `findOpen` matches on what is left when it is cut off.
+    const identity = argv.items[0 .. argv.items.len - @min(r.deep_link, argv.items.len - 1)];
+    _ = try mount_pane.open(app, .{
+        .argv = argv.items,
+        .identity = identity,
+        .focus = r.focus,
+        .label = r.label,
+        .integration = id,
+        .extra_env = extra,
+    });
 }
 
 /// `MNML_SETTING_<KEY>` for every setting the manifest declares: the

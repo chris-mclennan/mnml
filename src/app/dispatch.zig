@@ -2579,6 +2579,19 @@ fn runTipRow(app: *App, seg: u32, idx: u16) Allocator.Error!void {
     };
 }
 
+/// // changed (focus-row): the one deep-link shape the host knows.
+/// A hover row's `args` of exactly `--focus <key>` name ONE thing
+/// inside a listing rather than a different listing, so the pane they
+/// reach is the same pane: already open, it is handed the key down the
+/// mount; not open, it is started with the flag on its argv. Any other
+/// `args` are just argv, and a different argv is a different pane.
+pub fn focusKeyOf(extra: []const []const u8) ?[]const u8 {
+    if (extra.len != 2) return null;
+    if (!std.mem.eql(u8, extra[0], "--focus")) return null;
+    if (extra[1].len == 0) return null;
+    return extra[1];
+}
+
 /// True when `ref` mounts a binary and the run was started with
 /// `extra` appended to its argv.
 fn mountWithArgs(app: *App, ref: command.CommandRef, extra: []const []const u8) Allocator.Error!bool {
@@ -2593,6 +2606,7 @@ fn mountWithArgs(app: *App, ref: command.CommandRef, extra: []const []const u8) 
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
     for (r.args) |a| try argv.append(arena, a);
     for (extra) |a| try argv.append(arena, a);
+    const focus = focusKeyOf(extra);
     integrations.runMount(app, .{
         .id = switch (c.owner) {
             .integration => |i| i,
@@ -2602,6 +2616,8 @@ fn mountWithArgs(app: *App, ref: command.CommandRef, extra: []const []const u8) 
         .args = argv.items,
         .pty = r.pty,
         .label = r.label,
+        .deep_link = if (focus != null) extra.len else 0,
+        .focus = focus orelse "",
     }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => {},
@@ -3879,6 +3895,20 @@ pub fn cmdlineInsert(app: *App, e: *EditorPane, text: []const u8) Allocator.Erro
     const joined = try std.mem.concat(app.frame.allocator(), u8, &.{ line[0..caret], clean.items, line[caret..] });
     try e.buf.input.cmdlineSet(joined);
     e.buf.input.setCmdlineCaret(caret + clean.items.len);
+}
+
+test "the one deep-link shape: `--focus <key>` names a thing inside a listing, anything else is just argv" {
+    // What a hover row publishes.
+    try std.testing.expectEqualStrings("api#1198", focusKeyOf(&.{ "--focus", "api#1198" }).?);
+    try std.testing.expectEqualStrings("ENG-2", focusKeyOf(&.{ "--focus", "ENG-2" }).?);
+    // Not a deep link: a different listing (its own pane), a flag with
+    // nothing after it, an empty key, or the pair with anything else
+    // around it — the host does not guess at a shape it was not given.
+    try std.testing.expect(focusKeyOf(&.{ "--only", "prs-mine" }) == null);
+    try std.testing.expect(focusKeyOf(&.{"--focus"}) == null);
+    try std.testing.expect(focusKeyOf(&.{ "--focus", "" }) == null);
+    try std.testing.expect(focusKeyOf(&.{ "--focus", "ENG-2", "--only", "work" }) == null);
+    try std.testing.expect(focusKeyOf(&.{}) == null);
 }
 
 test "chord chain: ctrl+k alone is pending with a which-key fallback; expiring opens it" {
