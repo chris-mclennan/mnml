@@ -1,0 +1,26 @@
+# width: 120
+# height: 40
+# env: SHELL=/bin/sh
+# `integrations.arrange = .fixed`: the sizing mnml had before there was
+# a rule, cell for cell. A new pane halves the pane that has the focus
+# and nothing else moves, so the third terminal is a quarter of the
+# screen and its dividers sit at columns 60 and 90 — the thirds of
+# `split_arrange_thirds.test` are at 39 and 80. The setting is there for
+# anyone who liked the old sizing, and this is also the proof that the
+# Settings row under Integrations reaches it.
+command view.settings
+key G
+key k
+expect screen contains "New pane sizing"
+expect screen contains "[context]"
+key l
+expect screen contains "[fixed]"
+key enter
+expect screen lacks "Settings"
+
+command view.toggle_tree
+command term.shell
+command term.shell
+command term.shell
+expect screen contains "                                                            │                             │                             "
+expect screen lacks "                                       │                                        │                                       "

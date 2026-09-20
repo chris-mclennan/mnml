@@ -26,6 +26,7 @@ const key_mod = @import("../core/key.zig");
 const Key = key_mod.Key;
 const Mouse = key_mod.Mouse;
 const layout_mod = @import("layout.zig");
+const arrange = @import("arrange.zig");
 const command = @import("../core/command.zig");
 const side = @import("side.zig");
 const statusline = @import("statusline.zig");
@@ -455,9 +456,7 @@ fn initialSize(app: *App, placement: Placement) struct { cols: u16, rows: u16 } 
 /// live pane and later puts it back below the active one.
 pub fn place(app: *App, id: PaneId, placement: Placement) Allocator.Error!void {
     if (placement == .detached) return;
-    const layout = app.layouts.current();
-    const anchor: ?PaneId = if (app.active) |a| (if (layout.leafOf(a) != null) a else null) else null;
-    if (anchor == null or placement == .tab) {
+    if (placement == .tab) {
         app.showPane(id);
         return;
     }
@@ -466,26 +465,13 @@ pub fn place(app: *App, id: PaneId, placement: Placement) Allocator.Error!void {
         .right, .left => .horizontal,
         .tab, .detached => unreachable,
     };
-    defer app.afterSplitChange();
-    const new_leaf = (try layout.split(anchor.?, dir, id)) orelse {
-        app.showPane(id);
-        return;
-    };
-    if (placement == .above or placement == .left) {
-        // `split` puts the new leaf second; swap the halves.
-        const parent = parentSplit(layout, new_leaf) orelse return app.setActive(id);
-        const s = &layout.node(parent).split;
-        std.mem.swap(layout_mod.NodeId, &s.first, &s.second);
-    }
-    app.setActive(id);
-}
-
-fn parentSplit(layout: *layout_mod.Layout, child: layout_mod.NodeId) ?layout_mod.NodeId {
-    for (layout.nodes.items, 0..) |n, i| switch (n) {
-        .split => |s| if (s.first == child or s.second == child) return @intCast(i),
-        else => {},
-    };
-    return null;
+    // `integrations.arrange` sizes it — the one rule every new pane
+    // goes through (`app/arrange.zig`); `.fixed` is the half-the-active
+    // -pane this used to do on its own.
+    _ = try arrange.splitActive(app, id, .{
+        .dir = dir,
+        .before = placement == .above or placement == .left,
+    });
 }
 
 /// Replace the child with a fresh one running the same command line.

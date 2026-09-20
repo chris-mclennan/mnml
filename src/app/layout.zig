@@ -367,6 +367,67 @@ pub const Layout = struct {
         };
     }
 
+    /// Every slot along ONE axis an equal share: the run of
+    /// same-direction splits that `split_id` belongs to is shared out
+    /// between its halves, and a subtree that splits the OTHER way
+    /// counts as one slot and keeps the proportions inside it. So a
+    /// third pane opened into a row of two makes thirds without
+    /// flattening the stack living in one of the columns — which is
+    /// what `equalize`, weighing the whole tree by leaf count, does.
+    pub fn equalizeAxis(self: *Layout, split_id: NodeId) void {
+        const top = self.axisRoot(split_id);
+        const dir = switch (self.nodes.items[top]) {
+            .split => |s| s.dir,
+            else => return,
+        };
+        self.equalizeAxisUnder(top, dir);
+    }
+
+    /// The highest split of the unbroken run of `id`-direction splits
+    /// that `id` is part of. A non-split is its own root.
+    pub fn axisRoot(self: *const Layout, id: NodeId) NodeId {
+        const dir = switch (self.nodes.items[id]) {
+            .split => |s| s.dir,
+            else => return id,
+        };
+        var cur = id;
+        while (self.parentOf(cur)) |p| {
+            const up = switch (self.nodes.items[p]) {
+                .split => |s| s,
+                else => break,
+            };
+            if (up.dir != dir) break;
+            cur = p;
+        }
+        return cur;
+    }
+
+    /// Slots `id` occupies along `dir`: a run of `dir` splits counts
+    /// its halves, anything else — a leaf, an `.empty`, a subtree that
+    /// splits the other way — is one.
+    fn axisSlots(self: *const Layout, id: NodeId, dir: SplitDir) u32 {
+        return switch (self.nodes.items[id]) {
+            .split => |s| if (s.dir == dir) self.axisSlots(s.first, dir) + self.axisSlots(s.second, dir) else 1,
+            .free => 0,
+            .leaf, .empty => 1,
+        };
+    }
+
+    fn equalizeAxisUnder(self: *Layout, id: NodeId, dir: SplitDir) void {
+        switch (self.nodes.items[id]) {
+            .split => |*s| {
+                if (s.dir != dir) return;
+                const first = self.axisSlots(s.first, dir);
+                const total = first + self.axisSlots(s.second, dir);
+                if (total > 0) s.ratio = @intCast(std.math.clamp(first * 100 / total, 10, 90));
+                const halves = .{ s.first, s.second };
+                self.equalizeAxisUnder(halves[0], dir);
+                self.equalizeAxisUnder(halves[1], dir);
+            },
+            else => {},
+        }
+    }
+
     /// Move `pane` to position `idx` among the tabs of the leaf it is
     /// in. Out-of-range appends.
     pub fn reorderTab(self: *Layout, pane: PaneId, idx: usize) void {
@@ -880,6 +941,56 @@ test "layout: min sizes clamp a dragged ratio, equalize resets, tabs reorder, di
     try std.testing.expectEqual(l0, l.leafOf(0).?);
     try std.testing.expectEqual(l0, (try l.leafAt(a, 0)).?);
     try std.testing.expect((try l.leafAt(a, 1)) == null);
+}
+
+test "layout: equalizeAxis shares one axis out in equal slots and leaves the stack across it alone" {
+    const gpa = std.testing.allocator;
+    var l = Layout.init(gpa);
+    defer l.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const area = Rect.init(0, 0, 120, 40);
+    // A | (B over C), the stack dragged to 70 / 30.
+    _ = try l.showIn(null, 0);
+    _ = try l.split(0, .horizontal, 1);
+    const stack = (try l.split(1, .vertical, 2)).?;
+    const stack_split = l.parentOf(stack).?;
+    l.setRatio(stack_split, 70);
+    try std.testing.expectEqual(@as(u16, 28), (try rectOf(&l, area, a, 1)).?.h);
+
+    // A third column: the axis is thirds, the stack keeps 70 / 30.
+    const third = (try l.split(0, .horizontal, 3)).?;
+    l.equalizeAxis(l.parentOf(third).?);
+    try std.testing.expectEqual(@as(u16, 39), (try rectOf(&l, area, a, 0)).?.w);
+    try std.testing.expectEqual(@as(u16, 39), (try rectOf(&l, area, a, 3)).?.w);
+    try std.testing.expectEqual(@as(u16, 40), (try rectOf(&l, area, a, 1)).?.w);
+    try std.testing.expectEqual(@as(u16, 28), (try rectOf(&l, area, a, 1)).?.h);
+    try std.testing.expectEqual(@as(u16, 11), (try rectOf(&l, area, a, 2)).?.h);
+
+    // A fourth: quarters, the stack still its own.
+    const fourth = (try l.split(3, .horizontal, 4)).?;
+    l.equalizeAxis(l.parentOf(fourth).?);
+    var wide: u16 = 0;
+    for ([_]PaneId{ 0, 3, 4, 1 }) |p| {
+        const w = (try rectOf(&l, area, a, p)).?.w;
+        // 120 cells less three dividers is 117: 29 apiece and one 30.
+        try std.testing.expect(w == 29 or w == 30);
+        wide += w;
+    }
+    try std.testing.expectEqual(@as(u16, 117), wide);
+    try std.testing.expectEqual(@as(u16, 28), (try rectOf(&l, area, a, 1)).?.h);
+
+    // `equalize` is the other rule: it weighs the whole tree by leaf
+    // count, so the stack is flattened with everything else.
+    l.equalize();
+    try std.testing.expectEqual(@as(u16, 20), (try rectOf(&l, area, a, 1)).?.h);
+
+    // The axis a stacked split names is the stack's own, not the row's.
+    l.equalizeAxis(stack_split);
+    try std.testing.expectEqual(@as(u16, 20), (try rectOf(&l, area, a, 1)).?.h);
+    // A leaf names no axis; nothing moves and nothing panics.
+    l.equalizeAxis(l.leafOf(0).?);
 }
 
 /// The rect `computeRects` gives `pane` over `area`, or null.
