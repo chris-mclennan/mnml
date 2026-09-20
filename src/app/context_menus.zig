@@ -1522,7 +1522,7 @@ fn openWindowMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     try app.openMenu("mnml", rows, x, y);
 }
 
-/// The `Terminal icon ▸` submenu: the mark's two choices with the
+/// The terminal chip's `Mark ▸` submenu: the mark's two choices with the
 /// current one ticked, and the bake below them. On the strip's terminal
 /// chip and on a pty tab — the two places the mark itself is on screen,
 /// so the menu is where the eye already is. Rows live on `arena`, which
@@ -1539,8 +1539,8 @@ fn terminalIconRows(app: *App, arena: Allocator) Allocator.Error![]const MenuIte
     return rows;
 }
 
-/// The `Claude mark ▸` submenu: the two values of `ui.claude_mark`, the
-/// current one ticked. Its twin above.
+/// The Claude chip's `Mark ▸` submenu: the two values of
+/// `ui.claude_mark`, the current one ticked. Its twin above.
 fn claudeMarkRows(app: *App, arena: Allocator) Allocator.Error![]const MenuItem {
     const cur = app.cfg.ui.claude_mark;
     const rows = try arena.alloc(MenuItem, 2);
