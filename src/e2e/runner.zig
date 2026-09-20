@@ -46,6 +46,37 @@ pub const Size = struct {
 /// Content assertions hold only here; every `.test` was written at it.
 pub const content_size: Size = .{ .cols = 120, .rows = 40 };
 
+/// `--sizes ladder`: the widths where mnml's chrome is known to change
+/// shape, so a sweep brackets every breakpoint instead of the two ends.
+/// Each rung is here because something switches form at or near it:
+///
+///   80x24    the smallest terminal anyone runs. The dock's labels are
+///            gone, the menu bar is down to `»`, the sidebar is at its
+///            floor.
+///   100x30   between the two: the menu bar has started to overflow but
+///            the dock still has room for its counts.
+///   120x40   the corpus size. Every `.test` content assertion was
+///            written here, so a difference at this rung is a real
+///            regression rather than a reflow.
+///   135x42   the Bitbucket PR row swaps its icons for labelled buttons
+///            around here; the settings strip leaves its initials form.
+///   160x48   wide enough for the full menu word list and the right
+///            panel at once — where two-column layouts first fit.
+///   200x60   the widest sweep size the gate already uses. Nothing
+///            should be clipped; anything that still is, is a bug in the
+///            layout rather than in the space it was given.
+///
+/// A size-only bug hides between two rungs, which is the whole reason
+/// the list is not just its ends (`docs/DRIVE.md`, "the ladder").
+pub const ladder: []const Size = &.{
+    .{ .cols = 80, .rows = 24 },
+    .{ .cols = 100, .rows = 30 },
+    .{ .cols = 120, .rows = 40 },
+    .{ .cols = 135, .rows = 42 },
+    .{ .cols = 160, .rows = 48 },
+    .{ .cols = 200, .rows = 60 },
+};
+
 pub const Timing = struct {
     /// Sleep inside every post-step render cycle.
     step_settle_ms: u64 = 50,
@@ -1584,4 +1615,32 @@ test "`shot` reaches the driver and passes on one that cannot take a picture" {
     defer t.allocator.free(calls);
     try t.expect(std.mem.indexOf(u8, calls, "shot before_open\n") != null);
     try t.expect(std.mem.indexOf(u8, calls, "shot after_open") != null);
+}
+
+test "the ladder brackets every known chrome breakpoint, in order, and includes the corpus size" {
+    // Not just its ends: a size-only bug hides BETWEEN two rungs, and a
+    // sweep of 80 and 200 has walked past several (the dock's label
+    // collapse, the menu bar's `»`, the PR row's icon/label switch).
+    try t.expect(ladder.len >= 6);
+    var prev: u16 = 0;
+    var has_corpus = false;
+    for (ladder) |s| {
+        try t.expect(s.cols > prev); // strictly widening, so a sweep is a ramp
+        prev = s.cols;
+        try t.expect(s.cols >= 80 and s.rows >= 24); // nothing below what the picker survives
+        if (s.eql(content_size)) has_corpus = true;
+    }
+    // The corpus size has to be on it: every `.test` content assertion
+    // was written there, so it is the rung where a difference means a
+    // regression rather than a reflow.
+    try t.expect(has_corpus);
+    try t.expectEqual(@as(u16, 80), ladder[0].cols);
+    try t.expectEqual(@as(u16, 200), ladder[ladder.len - 1].cols);
+    // The Bitbucket PR row's icon/label switch and the settings strip's
+    // initials form both sit around 135; a rung has to bracket them.
+    var brackets_135 = false;
+    for (ladder) |s| {
+        if (s.cols >= 130 and s.cols <= 140) brackets_135 = true;
+    }
+    try t.expect(brackets_135);
 }

@@ -423,6 +423,43 @@ pub fn build(b: *std.Build) void {
     unit_step.dependOn(&b.addRunArtifact(arena_tests).step);
     // ── end arena audit ─────────────────────────────────────────────────
 
+    // ── mnml-drive: the real-terminal harness (tools/drive/) ────────────
+    // A dev-only program that launches its OWN ghostty window, drives it
+    // with CoreGraphics events posted AT that process, and reads pixels
+    // back. It is not shipped — nothing in `run.sh install`, `release` or
+    // `scripts/package.sh` mentions it — and it is only part of the build
+    // graph under `-Ddrive` on a macOS host, so every other platform and
+    // CI never compiles it. `docs/DRIVE.md`.
+    const want_drive = b.option(bool, "drive", "Build mnml-drive, the dev-only macOS+ghostty harness (tools/drive/)") orelse false;
+    if (want_drive) {
+        if (target.result.os.tag != .macos) {
+            std.debug.panic("-Ddrive is macOS-only (the harness is CoreGraphics + ghostty); target is {s}", .{@tagName(target.result.os.tag)});
+        }
+        // `key.zig` is the only thing shared with the app: it imports
+        // nothing but std, so the harness speaks mnml's own Key / KeyCode
+        // / Mods without linking the editor (tools/drive/keys.zig says
+        // why the parser is not shared too).
+        const key_mod = b.createModule(.{ .root_source_file = b.path("src/core/key.zig"), .target = target, .optimize = optimize });
+        const drive_mod = b.createModule(.{
+            .root_source_file = b.path("tools/drive/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .imports = &.{.{ .name = "key", .module = key_mod }},
+        });
+        drive_mod.linkFramework("CoreGraphics", .{});
+        drive_mod.linkFramework("CoreFoundation", .{});
+        drive_mod.linkFramework("ApplicationServices", .{});
+        const drive_exe = b.addExecutable(.{ .name = "mnml-drive", .root_module = drive_mod });
+        b.installArtifact(drive_exe);
+        const drive_step = b.step("drive", "Build mnml-drive (zig-out/bin/mnml-drive)");
+        drive_step.dependOn(&b.addInstallArtifact(drive_exe, .{}).step);
+        // Its tests join the unit suite only when it is being built, so
+        // `zig build unit` is the same on every machine by default.
+        unit_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = drive_mod, .filters = test_filters, .test_runner = test_runner })).step);
+    }
+    // ── end mnml-drive ──────────────────────────────────────────────────
+
     // ── e2e: gate-build ──
     // Compile the exe and every test binary for the selected target without
     // running them, installed under zig-out/gate/. The exe alone is not a
