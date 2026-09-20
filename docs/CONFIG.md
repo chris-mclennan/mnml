@@ -305,6 +305,15 @@ otherwise. Copy what you need; leave the rest out.
         // shows its chip, and a CLI found on PATH shows its chip when named
         // here (.claude_code | .codex | .both). view.tab_bar_ai_* set it.
         .tab_bar_ai_icon = .claude_code,
+        // What the tab strip's maximize button does on a LEFT click.
+        // .zoom_pane is the leaf zoom: the active pane's leaf alone
+        // fills the editor area, the other splits hide, the chrome
+        // stays. .fullscreen drops the tree, the strips and the
+        // statusline and keeps every pane. There is no third scope —
+        // a leaf IS the tab group. The button's right-click menu lists
+        // both and ticks this one; while something is maximized the
+        // button is the way back whatever the value says.
+        .maximize_click = .zoom_pane, // .zoom_pane | .fullscreen
         .ai_layout_mode = .grid, // .grid (Claude tiles 2×2 → 4×2, eight per screen) | .tabs
         .ai_chip_use_mnml_glyphs = false, // deprecated, read by nothing: the chips always paint mnml's baked marks
         .auto_show_sessions_on_ai_activate = true,
