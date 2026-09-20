@@ -22,4 +22,4 @@ type zR
 type gg
 type zf2j
 expect screen lacks "   3 l3"
-expect screen contains "   4 l4"
+expect screen contains "▌  4 l4"

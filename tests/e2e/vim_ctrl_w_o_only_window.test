@@ -15,7 +15,7 @@ key esc
 expect dirty true
 open a.txt
 ex vsplit
-expect screen contains "│   1 alpha"
+expect screen contains "│▌  1 alpha"
 key ctrl+w
 key o
 expect screen lacks "│   1 alpha"

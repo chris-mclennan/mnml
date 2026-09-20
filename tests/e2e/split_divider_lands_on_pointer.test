@@ -2,14 +2,17 @@
 # short of it. With the tree at 30 the panes span x=31..119 (89 cells);
 # the fresh split's divider is at x=75 and the left pane's text starts
 # at x=36, so the cell left of a divider at x=100 is (99-36)%10 = 3.
+# (An editor shares its gutter's sign column with the pane rail, so
+# the `▌` after each divider is the right pane's rail and no text on
+# either side moved.)
 write a.txt 0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\nsecond
 open a.txt
 command view.split_right
-expect screen contains "45678│   1 01234567890"
+expect screen contains "45678│▌  1 01234567890"
 drag 75 10 100 10
-expect screen contains "90123│   1 01234567890"
+expect screen contains "90123│▌  1 01234567890"
 drag 100 10 60 10
-expect screen contains "0123│   1 012345678901234567890123456789"
+expect screen contains "0123│▌  1 012345678901234567890123456789"
 drag 60 10 90 10
-expect screen contains "0123│   1 01234567890"
+expect screen contains "0123│▌  1 01234567890"
 expect screen lacks "9012│"

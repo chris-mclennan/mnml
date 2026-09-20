@@ -5,7 +5,7 @@ open alpha.zig
 key ctrl+f
 type return
 key enter
-expect screen contains " Find "
+expect screen contains "▌Find "
 expect screen contains "match 1/2"
 key enter
 expect screen contains "match 2/2"
@@ -13,5 +13,5 @@ key shift+enter
 expect screen contains "match 1/2"
 expect dirty false
 key esc
-expect screen lacks " Find "
+expect screen lacks "▌Find "
 expect screen contains "Ln 2/"
