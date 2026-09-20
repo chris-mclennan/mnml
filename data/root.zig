@@ -21,6 +21,11 @@ pub const nerd_glyphnames = @embedFile("nerd-glyphnames.json");
 /// small rectangles are the figure's eyes — holes, which `ttf.place`
 /// works out by nesting depth, since `fill-rule="evenodd"` on the path
 /// is exactly the rule it applies.
+/// `claude-spark.svg` is that earlier spark, kept as the ALTERNATE the
+/// chrome offers (`ui.claude_mark = .spark`, `app/claude_mark.zig`): it
+/// is baked one codepoint along from the figure, so both marks are in
+/// the face at once and picking one is a repaint, not a re-bake.
 pub const claude_svg = @embedFile("glyphs/claude-code.svg");
+pub const claude_spark_svg = @embedFile("glyphs/claude-spark.svg");
 pub const codex_svg = @embedFile("glyphs/codex.svg");
 pub const ghostty_svg = @embedFile("glyphs/ghostty.svg");

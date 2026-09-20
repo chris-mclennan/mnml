@@ -45,6 +45,12 @@ pub const user_dir = "fonts";
 /// mnml's codepoints, all inside its own private block.
 pub const claude: u21 = 0xF1E00;
 pub const codex: u21 = 0xF1E01;
+/// The Anthropic spark — the mark Claude Code wore before the figure
+/// took `claude`'s codepoint, kept as the alternate `ui.claude_mark`
+/// offers. One along, so the face carries both and the choice is a
+/// repaint rather than a re-bake (`ui/bufferline.zig`'s `spark_cp`,
+/// which is the chrome's copy of this number).
+pub const claude_spark: u21 = 0xF1E02;
 pub const tree_vertical: u21 = 0xF1F04;
 pub const tree_corner: u21 = 0xF1F05;
 /// The terminal mark — Ghostty's ghost by default, whatever SVG the
@@ -75,15 +81,19 @@ pub const Spec = struct {
 /// is rooted at `src/` and cannot reach a sibling directory, so they
 /// come through the `data` module as everything else there does.
 pub const claude_svg = data.claude_svg;
+pub const claude_spark_svg = data.claude_spark_svg;
 pub const codex_svg = data.codex_svg;
 pub const ghostty_svg = data.ghostty_svg;
 
 /// The shipped set, in codepoint order. `terminal_svg` replaces the
-/// ghost when the user has named their own.
-pub fn defaultSpecs(terminal_svg: []const u8) [3]Spec {
+/// ghost when the user has named their own. Both Claude marks are
+/// baked: which one the chrome paints is `ui.claude_mark`'s to say,
+/// and a face that carried only one would turn the other into tofu.
+pub fn defaultSpecs(terminal_svg: []const u8) [4]Spec {
     return .{
         .{ .codepoint = claude, .name = "claude-mark", .source = claude_svg },
         .{ .codepoint = codex, .name = "codex-mark", .source = codex_svg },
+        .{ .codepoint = claude_spark, .name = "claude-spark", .source = claude_spark_svg },
         .{ .codepoint = terminal, .name = "terminal-mark", .source = terminal_svg },
     };
 }
@@ -315,7 +325,7 @@ test "the shipped face carries every codepoint mnml's own block needs, and nothi
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     const bytes = try buildDefault(arena);
-    for ([_]u21{ claude, codex, tree_vertical, tree_corner, terminal, cursor_hollow, ' ' }) |cp| {
+    for ([_]u21{ claude, claude_spark, codex, tree_vertical, tree_corner, terminal, cursor_hollow, ' ' }) |cp| {
         errdefer std.debug.print("missing U+{X}\n", .{cp});
         try t.expect(cmapHas(bytes, cp));
     }
@@ -329,7 +339,7 @@ test "a custom terminal SVG replaces the ghost at the same codepoint; the rest o
     const arena = arena_state.allocator();
     const custom = try buildWithTerminal(arena, "<svg viewBox=\"0 0 10 10\"><path d=\"M1 1 L9 1 L9 9 L1 9 Z\"/></svg>");
     try t.expect(!std.mem.eql(u8, custom, try buildDefault(arena)));
-    for ([_]u21{ claude, codex, tree_vertical, tree_corner, terminal }) |cp| try t.expect(cmapHas(custom, cp));
+    for ([_]u21{ claude, claude_spark, codex, tree_vertical, tree_corner, terminal }) |cp| try t.expect(cmapHas(custom, cp));
 }
 
 test "a broken SVG fails the build rather than baking an empty mark" {
@@ -546,4 +556,49 @@ test "U+F1E00 is the Claude Code figure, with its two eye holes — not the old 
     }
     try t.expectEqual(@as(usize, 2), holes);
     try t.expectEqual(@as(usize, 1), body);
+}
+
+test "U+F1E02 is the Anthropic spark — the other art, at its own codepoint, so a face carries both marks" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    // The two marks are different art. Same bytes at two codepoints
+    // would make the menu's choice a no-op that still looked wired.
+    try t.expect(!std.mem.eql(u8, claude_svg, claude_spark_svg));
+    const img = try svg.parse(arena, claude_spark_svg);
+    // The spark's viewBox is 94 × 94, square — the one measurement the
+    // figure's own test uses to say it is NOT this.
+    try t.expectEqual(@as(f64, 94), img.view.w);
+    try t.expectEqual(@as(f64, 94), img.view.h);
+    // One contour and no holes: a star, where the figure is a body
+    // with two eyes cut out of it.
+    const placed = try ttf.place(arena, img, .{});
+    try t.expectEqual(@as(usize, 1), placed.len);
+    var min_x: f64 = 1e30;
+    var max_x: f64 = -1e30;
+    var min_y: f64 = 1e30;
+    var max_y: f64 = -1e30;
+    for (placed[0]) |p| {
+        min_x = @min(min_x, p.x);
+        max_x = @max(max_x, p.x);
+        min_y = @min(min_y, p.y);
+        max_y = @max(max_y, p.y);
+    }
+    // Square after `place` has scaled it, where the figure comes out
+    // 15/24 as tall as it is wide.
+    try t.expectApproxEqAbs(@as(f64, 1.0), (max_y - min_y) / (max_x - min_x), 0.01);
+
+    // And the two are baked at the codepoints the chrome names, in one
+    // face: the figure the default, the spark the alternate the
+    // `Mark ▸` menu offers. Read off the spec list rather than the
+    // cmap, so a swap of the two sources fails here.
+    const specs = defaultSpecs(ghostty_svg);
+    var figure_src: ?[]const u8 = null;
+    var spark_src: ?[]const u8 = null;
+    for (specs) |s| {
+        if (s.codepoint == claude) figure_src = s.source;
+        if (s.codepoint == claude_spark) spark_src = s.source;
+    }
+    try t.expectEqualStrings(claude_svg, figure_src.?);
+    try t.expectEqualStrings(claude_spark_svg, spark_src.?);
 }
