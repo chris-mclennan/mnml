@@ -105,6 +105,14 @@ pub const Status = struct {
     /// click elsewhere closes an empty one) has no other way to see it.
     /// Additive, after `cursorShape`.
     cmdline: bool = false,
+    /// What AI ghost text is doing: `idle` | `armed` | `inflight` |
+    /// `shown` | `empty` | `error` (`app/ghost_chip.zig`). A suggestion
+    /// arrives on a worker seconds after the keystroke that asked for
+    /// it, so a script has no other way to wait for one — or to tell a
+    /// backend that answered nothing from one that never answered.
+    /// Additive, after `cmdline` — the terminal geometry below stays
+    /// the last four keys, which is what `tools/drive/` reads for.
+    ghost: []const u8 = "idle",
     /// The screen this frame was drawn into, and how big one cell is in
     /// device pixels. A host that drives the REAL terminal (`tools/drive/`,
     /// `docs/DRIVE.md`) has to turn a cell into a pixel before it can
@@ -148,7 +156,8 @@ pub fn writeStatusJson(w: *Io.Writer, s: Status) Io.Writer.Error!void {
     }
     try w.print("],\"quit\":{},\"cursorShape\":", .{s.quit});
     try jsonStr(w, s.cursor_shape);
-    try w.print(",\"cmdline\":{}", .{s.cmdline});
+    try w.print(",\"cmdline\":{},\"ghost\":", .{s.cmdline});
+    try jsonStr(w, s.ghost);
     try w.print(",\"cols\":{d},\"rows\":{d},\"cellWidthPx\":{d},\"cellHeightPx\":{d}", .{ s.cols, s.rows, s.cell_w_px, s.cell_h_px });
     try w.writeAll("}");
 }
@@ -258,7 +267,7 @@ test "status.json matches the bytes mnml 0.2.21 writes, plus the cursor shape" {
     // are mnml-zig's own, appended in that order after Rust's last key
     // so every byte before them still matches Rust.
     const want =
-        "{\"focus\":\"tree\",\"activePane\":0,\"activeFile\":\"/tmp/ws/hello.txt\",\"cursor\":{\"line\":1,\"col\":1},\"mode\":\"none\",\"treeCursor\":2,\"treeSelection\":\"/tmp/ws/.gitignore\",\"treeVisible\":true,\"rightPanelVisible\":false,\"rightPanelPanes\":[],\"rightPanelActiveIdx\":0,\"panes\":[{\"title\":\"hello.txt\",\"dirty\":false,\"preview\":false}],\"quit\":false,\"cursorShape\":\"hidden\",\"cmdline\":false,\"cols\":0,\"rows\":0,\"cellWidthPx\":0,\"cellHeightPx\":0}";
+        "{\"focus\":\"tree\",\"activePane\":0,\"activeFile\":\"/tmp/ws/hello.txt\",\"cursor\":{\"line\":1,\"col\":1},\"mode\":\"none\",\"treeCursor\":2,\"treeSelection\":\"/tmp/ws/.gitignore\",\"treeVisible\":true,\"rightPanelVisible\":false,\"rightPanelPanes\":[],\"rightPanelActiveIdx\":0,\"panes\":[{\"title\":\"hello.txt\",\"dirty\":false,\"preview\":false}],\"quit\":false,\"cursorShape\":\"hidden\",\"cmdline\":false,\"ghost\":\"idle\",\"cols\":0,\"rows\":0,\"cellWidthPx\":0,\"cellHeightPx\":0}";
     const got = try statusJson(t.allocator, .{
         .focus = .tree,
         .active_pane = 0,
@@ -301,10 +310,11 @@ test "status.json: null activePane, several right-panel panes, a dirty pane" {
         .rows = 40,
         .cell_w_px = 9,
         .cell_h_px = 19,
+        .ghost = "inflight",
     });
     defer t.allocator.free(got);
     try t.expectEqualStrings(
-        "{\"focus\":\"right_panel\",\"activePane\":null,\"activeFile\":\"\",\"cursor\":{\"line\":0,\"col\":0},\"mode\":\"insert\",\"treeCursor\":0,\"treeSelection\":\"\",\"treeVisible\":false,\"rightPanelVisible\":true,\"rightPanelPanes\":[1,3],\"rightPanelActiveIdx\":1,\"panes\":[{\"title\":\"a \\\"q\\\"\",\"dirty\":true,\"preview\":true},{\"title\":\"b\",\"dirty\":false,\"preview\":false}],\"quit\":true,\"cursorShape\":\"bar\",\"cmdline\":true,\"cols\":120,\"rows\":40,\"cellWidthPx\":9,\"cellHeightPx\":19}",
+        "{\"focus\":\"right_panel\",\"activePane\":null,\"activeFile\":\"\",\"cursor\":{\"line\":0,\"col\":0},\"mode\":\"insert\",\"treeCursor\":0,\"treeSelection\":\"\",\"treeVisible\":false,\"rightPanelVisible\":true,\"rightPanelPanes\":[1,3],\"rightPanelActiveIdx\":1,\"panes\":[{\"title\":\"a \\\"q\\\"\",\"dirty\":true,\"preview\":true},{\"title\":\"b\",\"dirty\":false,\"preview\":false}],\"quit\":true,\"cursorShape\":\"bar\",\"cmdline\":true,\"ghost\":\"inflight\",\"cols\":120,\"rows\":40,\"cellWidthPx\":9,\"cellHeightPx\":19}",
         got,
     );
 }

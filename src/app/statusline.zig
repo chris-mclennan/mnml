@@ -44,6 +44,7 @@ const remote = @import("../git/remote.zig");
 const parse = @import("../git/parse.zig");
 const lsp = @import("lsp.zig");
 const usage_pane = @import("usage_pane.zig");
+const ghost_chip = @import("ghost_chip.zig");
 const coverage = @import("coverage.zig");
 const now_playing = @import("now_playing.zig");
 const integration_poll = @import("integration_poll.zig");
@@ -77,6 +78,10 @@ pub const SegId = enum(u32) {
     test_run,
     ai_claude,
     ai_codex,
+    /// The ghost-text chip (` ⠋ 1.8s ` under its mark) — what AI
+    /// inline suggestion is doing when there is no ghost to look at
+    /// (`app/ghost_chip.zig`, `sl.ghost_glyph`).
+    ghost,
     coverage,
     /// The now-playing cluster: the brand mark (idle), play / pause,
     /// skip, and the title.
@@ -537,6 +542,12 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
         const chip = try usage_pane.codexChip(app, arena, glyph);
         const seg = Seg.init(chip.text, if (chip.has_data) p.bg_darker else p.comment, p.cyan);
         try push(&right, arena, seg.withHit(SegId.ai_codex.raw()));
+    }
+    // Ghost text, beside the two AI meters: nothing while it is idle
+    // or while a suggestion is on screen, and a chip for every moment
+    // in between — the ones that used to look identical to "off".
+    if (try ghost_chip.chipText(arena, ghost_chip.phase(app), ghost_chip.elapsedMs(app), app.now_ms, ui.ascii)) |text| {
+        try push(&right, arena, Seg.init(text, p.comment, p.bg2).withHit(SegId.ghost.raw()));
     }
     if (coverage.shown(app)) |shown| {
         const glyph = if (ui.ascii) sl.coverage_ascii else if (enabledIcon(app, "acmeco_coverage")) |ic| (if (ic.glyph.len > 0) ic.glyph else sl.coverage_glyph) else sl.coverage_glyph;

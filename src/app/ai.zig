@@ -4,15 +4,24 @@
 //!
 //!   D1  every worker owns its argument strings and frees them; a result
 //!       is posted as an owned `AiMsg` the handler adopts or frees;
-//!   D3  one `Io.Group` for every AI worker; the ghost text is cancelled
-//!       by generation (a result for an older buffer is dropped), a job
-//!       by its atomic flag between turns; the confirm channel is the
-//!       job's own `Io.Queue(bool)` — the worker parks on `getOne`, the
-//!       confirm box answers with `putOne` (the D3 reverse channel);
+//!   D3  one `Io.Group` for every AI worker; the ghost text has a group
+//!       of its own so typing can cancel IT without touching a running
+//!       agent — and cancelling kills the `claude -p` child, not just
+//!       our interest in its answer. A job is cancelled by its atomic
+//!       flag between turns; the confirm channel is the job's own
+//!       `Io.Queue(bool)` — the worker parks on `getOne`, the confirm
+//!       box answers with `putOne` (the D3 reverse channel);
 //!   D2  workers never toast — they post `.err` / `.failed`.
 //!
 //! Local FIM is API-only in this release: `suggest_backend = "local"`
 //! toasts the migration note once and sends nothing.
+//!
+//! Ghost text is observable (`app/ghost_chip.zig`): a statusline chip
+//! for armed / in-flight / empty / error, one `:messages` line per
+//! request with its latency, and `status.json`'s `"ghost"`. Three keys
+//! shape it — `[ai] suggest_model` (a fast model by default: a
+//! suggestion nobody waited for is worth nothing), `suggest_timeout_ms`
+//! and `suggest_idle_ms`.
 
 const std = @import("std");
 const Io = std.Io;
@@ -36,6 +45,7 @@ const settings = @import("settings.zig");
 const agents = @import("agents.zig");
 const spend = @import("spend.zig");
 const usage_pane = @import("usage_pane.zig");
+const ghost_chip = @import("ghost_chip.zig");
 const transcript = @import("../ai/transcript.zig");
 const ai_apply = @import("ai_apply.zig");
 const launch_profiles = @import("launch_profiles.zig");
@@ -136,8 +146,14 @@ pub const State = struct {
     jobs: std.ArrayListUnmanaged(*Job) = .empty,
     next_job: u64 = 1,
     debounce: suggest.Debounce = .{},
+    /// The ghost-text worker's own group. Separate from `group` so a
+    /// keystroke can cancel the suggestion in flight — and with it the
+    /// `claude -p` child — without touching an agent mid-answer.
+    suggest_group: Io.Group = .init,
     /// The pane whose suggestion is in flight.
     suggest_pane: ?PaneId = null,
+    /// What the chip, `:messages` and `status.json` read.
+    ghost: ghost_chip.State = .{},
     /// A runtime pick from the setup picker; wins over the config.
     backend_override: ?suggest.Backend = null,
     hint_shown: bool = false,
@@ -167,7 +183,9 @@ pub const State = struct {
     /// `app.workspace` and post into `app.events`.
     pub fn deinit(self: *State, gpa: Allocator, io: Io) void {
         self.group.cancel(io);
+        self.suggest_group.cancel(io);
         self.spend_group.cancel(io);
+        self.ghost.deinit(gpa);
         self.usage.deinit(gpa, io);
         for (self.jobs.items) |j| gpa.destroy(j);
         self.jobs.deinit(gpa);
@@ -282,7 +300,23 @@ fn extraBool(app: *App, key: []const u8) ?bool {
 
 /// A typed edit landed: the debounce clock restarts and whatever was
 /// in flight answers a buffer that no longer exists.
+///
+/// Dropping the result is not enough. With the `claude-code` backend
+/// the flight is a whole `claude -p` process; leaving it to finish
+/// means a machine grinding on answers for cursors that moved three
+/// keystrokes ago, and the in-flight slot held the whole time. So the
+/// child is killed: `suggest_group.cancel` unwinds the worker through
+/// `std.process.run`'s `defer child.kill`. Only when something IS in
+/// flight — the cancel is a no-op on an empty group, but the check
+/// keeps a keystroke off the group's atomics.
 pub fn noteEdit(app: *App) void {
+    if (app.ai.debounce.in_flight != null) {
+        app.ai.suggest_group.cancel(app.io);
+        ghost_chip.settle(app, .cancelled, 0, null) catch {};
+    }
+    // `[ai] suggest_idle_ms` read here rather than baked in, so an
+    // edit to the config takes on the very next keystroke.
+    app.ai.debounce.idle_ms = app.cfg.ai.suggest_idle_ms;
     app.ai.debounce.noteEdit(app.now_ms);
 }
 
@@ -354,6 +388,14 @@ pub fn tick(app: *App) Allocator.Error!void {
 
 pub fn nextDeadlineMs(app: *const App) ?i64 {
     var next: ?i64 = app.ai.debounce.deadline();
+    // The chip is animate: a spinner frame while a request is out, and
+    // an `∅` / `!` that has to come down on its own. Without these the
+    // frame would only redraw when something else asked it to, and the
+    // elapsed would freeze at whatever it read when the user last typed.
+    if (app.ai.debounce.in_flight != null) next = @min(next orelse std.math.maxInt(i64), app.now_ms + 100);
+    for ([_]i64{ app.ai.ghost.empty_until_ms, app.ai.ghost.error_until_ms }) |until| {
+        if (until > app.now_ms) next = @min(next orelse std.math.maxInt(i64), until);
+    }
     if (spend.anyLoading(app)) next = @min(next orelse std.math.maxInt(i64), app.now_ms + 120);
     if (usage_pane.tickerActive(app)) next = @min(next orelse std.math.maxInt(i64), app.now_ms + 1000);
     return next;
@@ -403,19 +445,31 @@ fn fireSuggestion(app: *App) Allocator.Error!void {
     const user = try suggest.userPrompt(app.frame.allocator(), lang, ctx);
     const prompt = if (backend == .claude_code) try std.mem.concat(gpa, u8, &.{ suggest.system_prompt, "\n\n", user }) else try gpa.dupe(u8, user);
     errdefer gpa.free(prompt);
-    const model = try gpa.dupe(u8, extraString(app, "suggest_model") orelse suggest.default_model);
+    const model = try gpa.dupe(u8, suggestModel(app));
     errdefer gpa.free(model);
     const key_owned = try gpa.dupe(u8, key);
     errdefer gpa.free(key_owned);
     const cwd = try gpa.dupe(u8, app.workspace);
     errdefer gpa.free(cwd);
-    const generation = st.debounce.fire();
+    // A fresh request replaces whatever the last one left on the chip.
+    st.ghost.clearHolds();
+    const generation = st.debounce.fire(app.now_ms);
     st.suggest_pane = id;
     st.current_accepted = false;
-    st.group.concurrent(app.io, suggestWorker, .{ &app.events, app.io, gpa, @as(u32, id), generation, backend, prompt, model, key_owned, cwd, &app.env }) catch {
+    st.suggest_group.concurrent(app.io, suggestWorker, .{ &app.events, app.io, gpa, @as(u32, id), generation, backend, prompt, model, key_owned, cwd, &app.env, app.cfg.ai.suggest_timeout_ms }) catch {
         st.debounce.cancel();
         return error.OutOfMemory;
     };
+    app.needs_render = true;
+}
+
+/// `[ai] suggest_model` — a FAST model by default, and only here: the
+/// panes and the agents keep `ai.model`. A suggestion is worth having
+/// only if it beats the typist to the next token, so the trade the rest
+/// of the app makes (the best model, however long it takes) is the
+/// wrong one for this one call.
+pub fn suggestModel(app: *App) []const u8 {
+    return extraString(app, "suggest_model") orelse suggest.default_model;
 }
 
 /// One-time nudge that the feature exists, for a machine that has not
@@ -437,7 +491,27 @@ fn maybeShowHint(app: *App) Allocator.Error!void {
 }
 
 /// The ghost-text worker. Owns every string it was handed.
-fn suggestWorker(events: *event.EventQueue, io: Io, gpa: Allocator, pane: u32, generation: u32, backend: suggest.Backend, prompt: []u8, model: []u8, key: []u8, cwd: []u8, env: *const std.process.Environ.Map) Io.Cancelable!void {
+///
+/// Every exit but a cancel posts a `.suggestion` — an empty answer and
+/// a failure included. Silence used to be the failure path, which is
+/// exactly why a broken backend was indistinguishable from a slow one:
+/// the app kept the request marked in flight and showed nothing, for
+/// ever. The outcome travels with the result now, and the app settles
+/// the clock, holds the chip and writes the `:messages` line off it.
+fn suggestWorker(
+    events: *event.EventQueue,
+    io: Io,
+    gpa: Allocator,
+    pane: u32,
+    generation: u32,
+    backend: suggest.Backend,
+    prompt: []u8,
+    model: []u8,
+    key: []u8,
+    cwd: []u8,
+    env: *const std.process.Environ.Map,
+    timeout_ms: u32,
+) Io.Cancelable!void {
     defer gpa.free(prompt);
     defer gpa.free(model);
     defer gpa.free(key);
@@ -449,20 +523,15 @@ fn suggestWorker(events: *event.EventQueue, io: Io, gpa: Allocator, pane: u32, g
             defer gpa.free(body);
             const res = api.post(gpa, io, api.endpoint, key, body) catch |err| switch (err) {
                 error.Canceled => return error.Canceled,
-                else => {
-                    postErr(events, io, gpa, "ghost-text: the request failed");
-                    return;
-                },
+                else => return postOutcome(events, io, gpa, pane, generation, .failed, "the request failed"),
             };
             defer gpa.free(res.body);
             if (res.status != 200) {
                 var scratch = std.heap.ArenaAllocator.init(gpa);
                 defer scratch.deinit();
                 const why = api.errorMessage(scratch.allocator(), res.body) orelse "";
-                const msg = std.fmt.allocPrint(gpa, "ghost-text: HTTP {d} {s}", .{ res.status, why }) catch return;
-                defer gpa.free(msg);
-                postErr(events, io, gpa, msg);
-                return;
+                const msg = std.fmt.allocPrint(scratch.allocator(), "HTTP {d} {s}", .{ res.status, why }) catch return;
+                return postOutcome(events, io, gpa, pane, generation, .failed, msg);
             }
             var reply = api.parseReply(gpa, res.body) catch return;
             defer reply.deinit();
@@ -471,20 +540,20 @@ fn suggestWorker(events: *event.EventQueue, io: Io, gpa: Allocator, pane: u32, g
         .claude_code => {
             var arena = std.heap.ArenaAllocator.init(gpa);
             defer arena.deinit();
-            const argv = cli.claudeArgv(arena.allocator(), prompt, null, null) catch return;
-            const out = cli.run(gpa, io, argv, cwd, env) catch |err| switch (err) {
+            // The model is named here too, not only for the API: a
+            // `claude -p` that picks up the CLI's own default runs the
+            // big model for a one-line completion, which is where the
+            // multi-second waits came from.
+            const argv = cli.claudeArgv(arena.allocator(), prompt, null, model) catch return;
+            const out = cli.runWithin(gpa, io, argv, cwd, env, timeout_ms) catch |err| switch (err) {
                 error.Canceled => return error.Canceled,
-                else => {
-                    postErr(events, io, gpa, "ghost-text: `claude` could not be run — is it installed and signed in?");
-                    return;
-                },
+                error.TimedOut => return postOutcome(events, io, gpa, pane, generation, .timed_out, ""),
+                else => return postOutcome(events, io, gpa, pane, generation, .failed, "`claude` could not be run — is it installed and signed in?"),
             };
             if (!out.ok) {
                 defer gpa.free(out.text);
-                const msg = std.fmt.allocPrint(gpa, "ghost-text: claude -p: {s}", .{out.text}) catch return;
-                defer gpa.free(msg);
-                postErr(events, io, gpa, msg);
-                return;
+                const msg = std.fmt.allocPrint(arena.allocator(), "claude -p: {s}", .{out.text}) catch return;
+                return postOutcome(events, io, gpa, pane, generation, .failed, msg);
             }
             raw = out.text;
         },
@@ -494,8 +563,20 @@ fn suggestWorker(events: *event.EventQueue, io: Io, gpa: Allocator, pane: u32, g
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     const clean = suggest.cleanCompletion(arena.allocator(), raw) catch return;
-    const owned = gpa.dupe(u8, clean) catch return;
-    events.post(io, .{ .ai = .{ .job = 0, .msg = .{ .suggestion = .{ .pane = pane, .generation = generation, .text = owned } } } });
+    if (clean.len == 0) return postOutcome(events, io, gpa, pane, generation, .empty, "");
+    postOutcome(events, io, gpa, pane, generation, .shown, clean);
+}
+
+/// One result, whatever it says. `text` is copied; on `.failed` it is
+/// the reason, on `.shown` the completion, and empty otherwise.
+fn postOutcome(events: *event.EventQueue, io: Io, gpa: Allocator, pane: u32, generation: u32, outcome: event.SuggestOutcome, text: []const u8) void {
+    const owned = gpa.dupe(u8, text) catch return;
+    events.post(io, .{ .ai = .{ .job = 0, .msg = .{ .suggestion = .{
+        .pane = pane,
+        .generation = generation,
+        .text = owned,
+        .outcome = outcome,
+    } } } });
 }
 
 fn postErr(events: *event.EventQueue, io: Io, gpa: Allocator, msg: []const u8) void {
@@ -512,14 +593,23 @@ pub fn handle(app: *App, job_id: u64, msg: event.AiMsg) Allocator.Error!void {
         .suggestion => |s| {
             defer gpa.free(s.text);
             const st = &app.ai;
-            if (!st.debounce.settle(s.generation)) return;
-            if (st.suggest_pane != @as(PaneId, s.pane)) return;
+            // A result for a buffer that has moved on is still worth
+            // one line: the latency it cost is real, and the outcome
+            // tells the reader whether the backend answers at all.
+            const wanted = st.debounce.settle(s.generation);
+            switch (s.outcome) {
+                .empty => return ghost_chip.settle(app, .empty, 0, null),
+                .timed_out => return ghost_chip.settle(app, .timeout, 0, null),
+                .failed => return ghost_chip.settle(app, .failed, 0, s.text),
+                .shown => {},
+            }
+            if (!wanted or st.suggest_pane != @as(PaneId, s.pane)) return;
             const e = app.panes.editor(s.pane) orelse return;
             if (s.text.len == 0) return;
             try e.buf.editor.setGhostSuggestion(s.text);
             st.shown +|= 1;
             st.current_accepted = false;
-            app.needs_render = true;
+            try ghost_chip.settle(app, .shown, s.text.len, null);
         },
         .text => |text| {
             defer gpa.free(text);
@@ -1463,9 +1553,12 @@ pub fn setupAccept(app: *App, row: usize) CommandError!void {
 
 fn suggestionStats(app: *App) CommandError!void {
     const st = &app.ai;
-    if (st.shown == 0) return app.toast("AI ghost-text: no suggestions shown yet this session", .{});
-    const pct = @as(u64, st.accepted) * 100 / @as(u64, st.shown);
-    app.toast("AI ghost-text: {d} of {d} accepted ({d}%)", .{ st.accepted, st.shown, pct });
+    // Nothing shown is not nothing to say: a session that asked five
+    // times and got five timeouts used to report the same silence as
+    // one that never asked.
+    if (st.shown == 0 and st.ghost.latency_n == 0) return app.toast("AI ghost-text: no suggestions shown yet this session", .{});
+    const line = try ghost_chip.statsLine(app.frame.allocator(), &st.ghost, st.shown, st.accepted);
+    app.toast("{s}", .{line});
 }
 
 fn showConfig(app: *App) CommandError!void {
@@ -1707,13 +1800,13 @@ test "ghost text: typing arms the debounce; a stale generation's result is dropp
     try t.expect(app.ai.debounce.dirty_ms == null);
     try t.expect(e.buf.editor.ghost_suggestion == null);
     // A worker's result for a generation that typing has moved past.
-    const gen = app.ai.debounce.fire();
+    const gen = app.ai.debounce.fire(app.now_ms);
     app.ai.suggest_pane = id;
     app.ai.debounce.noteEdit(app.now_ms);
     const stale = try t.allocator.dupe(u8, "OLD");
     try app.handle(.{ .ai = .{ .job = 0, .msg = .{ .suggestion = .{ .pane = id, .generation = gen, .text = stale } } } });
     try t.expect(e.buf.editor.ghost_suggestion == null);
-    const live_gen = app.ai.debounce.fire();
+    const live_gen = app.ai.debounce.fire(app.now_ms);
     const live = try t.allocator.dupe(u8, "NEW");
     try app.handle(.{ .ai = .{ .job = 0, .msg = .{ .suggestion = .{ .pane = id, .generation = live_gen, .text = live } } } });
     try t.expectEqualStrings("NEW", e.buf.editor.ghost_suggestion.?);
@@ -1926,4 +2019,136 @@ test "the strip's AI chip: a click shows SESSIONS, and starts a session only whe
     // The command a click starts is the panel's own `+ New session`
     // row's, not a copy of it.
     try t.expectEqual(command.CommandId.@"ai.claude_code_new", @import("../sessions.zig").new_command);
+}
+
+test "ghost text is observable: the chip paints each phase, every request lands a `:messages` line, status.json says which" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const id = try app.openScratch();
+    const e = app.activeEditor().?;
+    app.ai.backend_override = .claude_code;
+
+    const row = struct {
+        fn f(a: *App) ![]const u8 {
+            try a.render();
+            return @import("../ipc/screen.zig").toTestText(a.frame.allocator(), &a.screen);
+        }
+    }.f;
+    const ghost_key = struct {
+        fn f(a: *App) ![]const u8 {
+            const st = try @import("driver.zig").AppDriver.statusOf(a, a.frame.allocator());
+            return @import("../ipc/screen.zig").statusJson(a.frame.allocator(), st);
+        }
+    }.f;
+
+    // Idle: no chip at all, and nothing to say.
+    try t.expect(std.mem.indexOf(u8, try row(&app), ghost_chip_glyph) == null);
+    try t.expect(std.mem.indexOf(u8, try ghost_key(&app), "\"ghost\":\"idle\"") != null);
+
+    // Typing arms the clock: `…`.
+    try app.handle(.{ .key = Key.char('x') });
+    try t.expectEqual(ghost_chip.Phase.armed, ghost_chip.phase(&app));
+    try t.expect(std.mem.indexOf(u8, try row(&app), ghost_chip_glyph ++ " \u{2026} ") != null);
+    try t.expect(std.mem.indexOf(u8, try ghost_key(&app), "\"ghost\":\"armed\"") != null);
+
+    // In flight: the app's spinner and the elapsed, and a frame due
+    // soon so the spinner actually turns.
+    app.ai.debounce.dirty_ms = app.now_ms - 400;
+    try app.tick(app.now_ms);
+    try t.expect(app.ai.debounce.in_flight != null);
+    const gen = app.ai.debounce.in_flight.?;
+    app.now_ms += 1800;
+    try t.expectEqual(ghost_chip.Phase.inflight, ghost_chip.phase(&app));
+    try t.expect(std.mem.indexOf(u8, try row(&app), "1.8s") != null);
+    try t.expect(std.mem.indexOf(u8, try ghost_key(&app), "\"ghost\":\"inflight\"") != null);
+    try t.expect(nextDeadlineMs(&app).? <= app.now_ms + 100);
+
+    // A suggestion lands: the ghost text IS the state, so no chip —
+    // and the line says how long it took and how much came back.
+    const text = try t.allocator.dupe(u8, "alpha beta");
+    try app.handle(.{ .ai = .{ .job = 0, .msg = .{ .suggestion = .{ .pane = id, .generation = gen, .text = text } } } });
+    try t.expectEqualStrings("alpha beta", e.buf.editor.ghost_suggestion.?);
+    try t.expectEqual(ghost_chip.Phase.shown, ghost_chip.phase(&app));
+    try t.expect(std.mem.indexOf(u8, try row(&app), ghost_chip_glyph) == null);
+    try t.expect(std.mem.indexOf(u8, try ghost_key(&app), "\"ghost\":\"shown\"") != null);
+    try t.expectEqualStrings("ghost-text: claude-code · 1.8s · 10 chars", lastMessage(&app));
+    // Recorded, never toasted: one toast per keystroke-pause would be
+    // the opposite of the quiet the feature is for.
+    try t.expect(app.toasts.items.len == 0);
+
+    // An empty answer: `∅`, for two seconds and no longer.
+    try e.buf.editor.setGhostSuggestion(null);
+    app.ai.debounce.fired_ms = app.now_ms - 900;
+    const nothing = try t.allocator.dupe(u8, "");
+    try app.handle(.{ .ai = .{ .job = 0, .msg = .{ .suggestion = .{ .pane = id, .generation = gen, .text = nothing, .outcome = .empty } } } });
+    try t.expectEqualStrings("ghost-text: claude-code · 0.9s · empty", lastMessage(&app));
+    try t.expect(std.mem.indexOf(u8, try row(&app), ghost_chip_glyph ++ " \u{2205} ") != null);
+    try t.expect(std.mem.indexOf(u8, try ghost_key(&app), "\"ghost\":\"empty\"") != null);
+    app.now_ms += ghost_chip.empty_hold_ms;
+    try t.expect(std.mem.indexOf(u8, try ghost_key(&app), "\"ghost\":\"idle\"") != null);
+
+    // A timeout: `!`, and the reason is in the log rather than nowhere.
+    app.ai.debounce.fired_ms = app.now_ms - 4000;
+    const nil2 = try t.allocator.dupe(u8, "");
+    try app.handle(.{ .ai = .{ .job = 0, .msg = .{ .suggestion = .{ .pane = id, .generation = gen, .text = nil2, .outcome = .timed_out } } } });
+    try t.expectEqualStrings("ghost-text: claude-code · 4.0s · timeout", lastMessage(&app));
+    try t.expect(std.mem.indexOf(u8, try row(&app), ghost_chip_glyph ++ " ! ") != null);
+    try t.expect(std.mem.indexOf(u8, try ghost_key(&app), "\"ghost\":\"error\"") != null);
+
+    // A failure carries its words, once — the worker's own prefix does
+    // not read twice.
+    app.ai.debounce.fired_ms = app.now_ms - 1200;
+    const why = try t.allocator.dupe(u8, "claude -p: not signed in");
+    try app.handle(.{ .ai = .{ .job = 0, .msg = .{ .suggestion = .{ .pane = id, .generation = gen, .text = why, .outcome = .failed } } } });
+    try t.expectEqualStrings("ghost-text: claude-code · 1.2s · error: claude -p: not signed in", lastMessage(&app));
+
+    // The stats grow with the mean and the last five outcomes.
+    try command.run(&app, .{ .static = .@"ai.suggestion_stats" });
+    const stats = app.toasts.items[app.toasts.items.len - 1].text;
+    try t.expect(std.mem.indexOf(u8, stats, "mean ") != null);
+    try t.expect(std.mem.indexOf(u8, stats, "last: ok, empty, timeout, error") != null);
+}
+
+const ghost_chip_glyph = @import("../ui/statusline.zig").ghost_glyph;
+
+fn lastMessage(app: *App) []const u8 {
+    const items = app.messages.items.items;
+    return if (items.len == 0) "" else items[items.len - 1].text;
+}
+
+test "ghost text: typing through a request kills the claude child, not just our interest in its answer" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 10 });
+    defer app.deinit();
+    // A worker on the ghost group, blocked in a child that sleeps far
+    // longer than any test would wait for.
+    const Probe = struct {
+        fn run(io: Io, gpa: Allocator) Io.Cancelable!void {
+            const out = cli.run(gpa, io, &.{ "/bin/sh", "-c", "sleep 30" }, "/tmp", null) catch |e| switch (e) {
+                error.Canceled => return error.Canceled,
+                else => return,
+            };
+            gpa.free(out.text);
+        }
+    };
+    app.ai.backend_override = .claude_code;
+    try app.ai.suggest_group.concurrent(app.io, Probe.run, .{ app.io, t.allocator });
+    app.ai.debounce.dirty_ms = null;
+    _ = app.ai.debounce.fire(app.now_ms);
+    app.now_ms += 400;
+
+    const t0 = Io.Timestamp.now(app.io, .awake);
+    noteEdit(&app); // the user types
+    const elapsed = t0.untilNow(app.io, .awake).toMilliseconds();
+    // The group is DRAINED, not merely ignored: a null token is
+    // `Io.Group`'s own word for "no pending tasks", and the task only
+    // ends when `std.process.run` unwinds through `defer child.kill`.
+    // Clearing the generation — which `Debounce.noteEdit` does anyway —
+    // proves nothing about the process; this does.
+    try t.expect(app.ai.suggest_group.token.load(.acquire) == null);
+    // And it came back at once rather than waiting out the child's 30 s.
+    try t.expect(elapsed < 5_000);
+    try t.expect(app.ai.debounce.in_flight == null);
+    try t.expectEqualStrings("ghost-text: claude-code · 0.4s · cancelled (typed)", lastMessage(&app));
 }

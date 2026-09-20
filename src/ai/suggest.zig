@@ -51,8 +51,14 @@ fn eqlAny(s: []const u8, list: []const []const u8) bool {
     return false;
 }
 
-/// Idle time after the last edit before a request goes out.
+/// Idle time after the last edit before a request goes out — Cursor's
+/// feel. `[ai] suggest_idle_ms` overrides it per machine.
 pub const debounce_ms: i64 = 300;
+/// The wall-clock budget one request gets (`[ai] suggest_timeout_ms`).
+/// Past it the child is killed and the outcome reads `timeout`: an
+/// answer that arrives after four seconds is for a cursor that has
+/// moved on, and silence longer than that reads as broken.
+pub const default_timeout_ms: u64 = 4000;
 /// Code points sent before / after the cursor. A 100 KB file per
 /// keystroke-pause is waste; the model wants the neighbourhood.
 pub const prefix_chars: usize = 2000;
@@ -142,6 +148,11 @@ pub const Debounce = struct {
     generation: u32 = 0,
     /// The generation whose request is out; null when none is.
     in_flight: ?u32 = null,
+    /// `[ai] suggest_idle_ms`, refreshed from the config each fire.
+    idle_ms: i64 = debounce_ms,
+    /// `App.now_ms` when the in-flight request went out, for the
+    /// elapsed the chip paints and the latency the log line records.
+    fired_ms: i64 = 0,
 
     pub fn noteEdit(d: *Debounce, now: i64) void {
         d.dirty_ms = now;
@@ -152,20 +163,21 @@ pub const Debounce = struct {
 
     pub fn due(d: *const Debounce, now: i64) bool {
         const at = d.dirty_ms orelse return false;
-        return d.in_flight == null and now - at >= debounce_ms;
+        return d.in_flight == null and now - at >= d.idle_ms;
     }
 
     /// The moment `due` turns true, for the loop's deadline.
     pub fn deadline(d: *const Debounce) ?i64 {
         const at = d.dirty_ms orelse return null;
         if (d.in_flight != null) return null;
-        return at + debounce_ms;
+        return at + d.idle_ms;
     }
 
     /// Arm a request; the returned generation travels with it.
-    pub fn fire(d: *Debounce) u32 {
+    pub fn fire(d: *Debounce, now: i64) u32 {
         d.dirty_ms = null;
         d.in_flight = d.generation;
+        d.fired_ms = now;
         return d.generation;
     }
 
@@ -272,19 +284,29 @@ test "debounce: an edit arms it, it fires once after 300 ms, a later edit invali
     try t.expect(!d.due(1299));
     try t.expect(d.due(1300));
     try t.expectEqual(@as(?i64, 1300), d.deadline());
-    const g = d.fire();
+    const g = d.fire(1300);
+    try t.expectEqual(@as(i64, 1300), d.fired_ms);
     try t.expect(!d.due(5000));
     try t.expect(d.deadline() == null);
     // Typing again: the result for `g` is stale when it lands.
     d.noteEdit(1400);
     try t.expect(!d.settle(g));
     try t.expect(d.due(1700));
-    const g2 = d.fire();
+    const g2 = d.fire(1700);
     try t.expect(d.settle(g2));
     try t.expect(d.in_flight == null);
     d.noteEdit(2000);
     d.cancel();
     try t.expect(!d.due(9000));
+}
+
+test "debounce: `[ai] suggest_idle_ms` moves the clock without touching the default" {
+    try t.expectEqual(@as(i64, 300), debounce_ms);
+    var d: Debounce = .{ .idle_ms = 900 };
+    d.noteEdit(1000);
+    try t.expect(!d.due(1300)); // the shipped default would have fired here
+    try t.expect(d.due(1900));
+    try t.expectEqual(@as(?i64, 1900), d.deadline());
 }
 
 test "prompt and cleaning" {

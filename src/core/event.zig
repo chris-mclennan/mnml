@@ -73,10 +73,19 @@ pub const DapEvent = union(enum) {
 /// What an AI worker posts (`src/app/ai.zig`). `job` on the event is
 /// the `Job` id; 0 for the ghost text, which has no job. Every slice is
 /// gpa-owned by the event.
+/// How a ghost-text request ended, as the worker saw it. It rides on
+/// the result rather than arriving as a separate `.err` so the app has
+/// one place to log the line, hold the chip and settle the clock —
+/// before this, a failure reached the user as a toast and left the
+/// suggestion machinery looking exactly like one that had simply not
+/// answered yet.
+pub const SuggestOutcome = enum { shown, empty, failed, timed_out };
+
 pub const AiMsg = union(enum) {
     /// An inline suggestion for `pane`; dropped unless `generation` is
-    /// still the one the debounce wants.
-    suggestion: struct { pane: u32, generation: u32, text: []u8 },
+    /// still the one the debounce wants. `text` is the completion on
+    /// `.shown` and the reason on `.failed`; empty otherwise.
+    suggestion: struct { pane: u32, generation: u32, text: []u8, outcome: SuggestOutcome = .shown },
     /// Answer text for the job's pane (a whole turn, or a chunk).
     text: []u8,
     /// The job finished; nothing more will arrive.

@@ -12,6 +12,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const side = @import("side.zig");
+const ghost_chip = @import("ghost_chip.zig");
 const App = app_mod.App;
 const dispatch = @import("dispatch.zig");
 const tasks = @import("tasks.zig");
@@ -218,6 +219,11 @@ pub const AppDriver = struct {
             // vim `:` too, but this key is about the one the bottom row
             // owns — the one a click opens and a click off it closes.
             .cmdline = app.cmdline != null,
+            // Ghost text is the one subsystem whose whole story is
+            // off-screen: the request goes out on a worker and the
+            // answer lands seconds later. Without this a `.test` could
+            // only poll the screen and hope.
+            .ghost = ghost_chip.phase(app).wire(),
             // The screen the frame was drawn into, so a host that drives
             // the real window can turn a cell into a pixel. How big a
             // cell is in pixels is the terminal's to answer, and only

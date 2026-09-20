@@ -108,6 +108,11 @@ pub const claude_glyph = "\u{F1E00}";
 pub const claude_ascii = "\u{2733}";
 pub const codex_glyph = "\u{F1E01}";
 pub const codex_ascii = "\u{25c8}";
+/// nf-md-code_json — the ghost-text chip, which says what the inline
+/// suggestion is doing when there is no suggestion to look at
+/// (`app/ghost_chip.zig`).
+pub const ghost_glyph = "\u{f0626}";
+pub const ghost_ascii = "AI";
 /// The now-playing cluster's marks: mnml's baked Beatport B (mixr),
 /// nf-fa-apple (Music), nf-fa-spotify (Spotify) as the idle brand;
 /// nf-md-play_box_outline as the idle play chip; nf-md-pause /
