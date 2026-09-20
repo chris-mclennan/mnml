@@ -90,6 +90,10 @@ pub const Target = union(enum) {
     detail,
     detail_close,
     detail_bar,
+    /// The list's own scrollbar. The whole track is one hit, so a
+    /// press or a drag on it turns back into a position, the same way
+    /// the detail panel's does.
+    list_bar,
     /// A `key label` entry of the hint row, and a row of the key sheet:
     /// clicking either runs what the key runs.
     hint: keymap.Action,

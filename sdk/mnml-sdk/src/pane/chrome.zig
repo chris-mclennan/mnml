@@ -77,9 +77,20 @@ pub const tab_quarter_ascii = "_";
 /// active label wears the terminal's underline attribute instead.
 pub const tab_rule_min_rows: u16 = 12;
 
+/// The `?` chip's caption. Every pane in the family has a key sheet
+/// and every pane's hint row ends in `? keys` — but the hint row is
+/// what a narrow pane drops first, so the chip on the header ladder is
+/// the door that stays. One caption, so it is the same door.
+pub const help_chip_text = " ? ";
+
 pub const placeholder_unfocused = "/ filter";
 pub const placeholder_focused = "type to filter\u{2026}";
 pub const placeholder_focused_ascii = "type to filter...";
+
+/// What a caps header left behind: the cell its left-hand run ended
+/// at, and the first cell the right-hand ladder took. Anything else a
+/// pane wants on the row goes between them and is clipped at `edge`.
+pub const CapsHeader = struct { x: u16, edge: u16 };
 
 /// A chip on the header's right-hand ladder.
 pub fn Chip(comptime Target: type) type {
@@ -217,6 +228,51 @@ pub fn Painter(comptime Target: type) type {
             return x;
         }
 
+        /// The whole caps header row, in one call: the title and its
+        /// count at the left, `as of 4m ago` after them, and the
+        /// right-hand chip ladder — laid so the two runs cannot
+        /// collide. Hands back where the left run ended and where the
+        /// ladder began, so a pane with something else to say on the
+        /// row (`3 selected`) can put it between them.
+        ///
+        /// The collision is the reason this exists. A pane that paints
+        /// the left run and then the ladder gets the ladder over the
+        /// top of its own words; one that paints the ladder first and
+        /// then the left run gets `as of 9s agohor: all`, which is
+        /// what the forge pane did at 80 columns the moment its ladder
+        /// grew a chip. The ladder is laid FIRST, against the title's
+        /// width, and everything after it is clipped at whatever cell
+        /// the ladder reached.
+        ///
+        /// `as of …` is dropped whole rather than clipped: half of an
+        /// age is worse than no age, and the count beside the title is
+        /// the line that must survive.
+        pub fn capsHeader(
+            p: *Self,
+            x0: u16,
+            y: u16,
+            title: []const u8,
+            sub: []const u8,
+            fetched_at: i64,
+            now_secs: i64,
+            chips: []const ChipSpec,
+        ) Allocator.Error!CapsHeader {
+            // The ladder may take everything past the title; the count
+            // gives way to it before the title does.
+            const right = try p.rightChips(y, x0 + width(title) + 1, chips);
+            const edge = right -| 1;
+            var x = x0;
+            x += p.put(x, y, edge -| x, title, p.th.label());
+            if (sub.len > 0) x += p.put(x, y, edge -| x, sub, p.th.dimText());
+            var buf: [32]u8 = undefined;
+            const age = warm_mod.asOfText(&buf, fetched_at, now_secs);
+            if (age.len > 0 and x + 2 + width(age) <= edge) {
+                x += p.put(x, y, edge -| x, "  ", p.th.dimText());
+                x += p.put(x, y, edge -| x, age, p.th.dimText());
+            }
+            return .{ .x = x, .edge = edge };
+        }
+
         /// The refresh glyph as a chip's text, for the ladder.
         pub fn refreshChipText(p: *const Self) []const u8 {
             return if (p.ui.ascii or !p.ui.nerd) " " ++ refresh_ascii ++ " " else " " ++ refresh_nerd ++ " ";
@@ -325,13 +381,21 @@ pub fn Painter(comptime Target: type) type {
             try p.mark(rect, target);
         }
 
-        /// The fold row under a capped list: `⋯  Show more (N)`, the
-        /// label in the bright foreground a key uses.
+        /// The fold row under a capped list: `⋯  Show more (N)` from
+        /// `label_x`, the ellipsis dim punctuation and only the words
+        /// bright.
+        ///
+        /// One phrase, in one place. The ellipsis used to be pinned to
+        /// the row's left edge while its words sat out in the summary
+        /// column, which at any real width read as an empty column
+        /// with a stray `⋯` in it rather than as a row you can press.
         pub fn showMoreRow(p: *Self, rect: Rect, label_x: u16, hidden: usize, target: Target) Allocator.Error!void {
             if (rect.isEmpty()) return;
-            _ = p.put(rect.x + 1, rect.y, 3, if (p.ui.ascii) more_ascii else more_glyph, p.th.dimText());
+            var x = label_x;
+            x += p.put(x, rect.y, 3, if (p.ui.ascii) more_ascii else more_glyph, p.th.dimText());
+            x += p.put(x, rect.y, 2, "  ", p.th.dimText());
             const label = p.fmt("Show more ({d})", .{hidden});
-            _ = p.putFit(label_x, rect.y, rect.right() -| label_x, label, p.th.bright());
+            _ = p.putFit(x, rect.y, rect.right() -| x, label, p.th.bright());
             try p.mark(rect, target);
         }
 
@@ -736,6 +800,52 @@ test "the header's chip ladder lays right to left and drops a chip whole rather 
     try testing.expect(std.mem.indexOf(u8, try r.rowText(0), "a very wide chip") == null);
 }
 
+test "the caps header's two runs never land on each other: the ladder is laid first and the age gives way" {
+    const now: i64 = 1_789_526_218;
+    const chips = [_]P.ChipSpec{
+        .{ .text = help_chip_text, .target = .{ .chip = 0 } },
+        .{ .text = " \u{21ba} ", .target = .{ .chip = 1 } },
+        .{ .text = " author: all ", .target = .{ .chip = 2 } },
+    };
+    // Wide: the count, the age and every chip.
+    {
+        var r = try Rig.init(80, 1);
+        defer r.deinit();
+        var p = r.painter(Theme.fromHello(null), .{});
+        const head = try p.capsHeader(1, 0, "FORGE PRS", "  (2 repos)", now - 9, now, &chips);
+        const row = try r.rowText(0);
+        try testing.expect(std.mem.indexOf(u8, row, "FORGE PRS  (2 repos)  as of 9s ago") != null);
+        try testing.expect(std.mem.indexOf(u8, row, " author: all ") != null);
+        try testing.expect(head.x < head.edge);
+    }
+    // Narrow: the chips still fit, the age no longer does — so it is
+    // dropped WHOLE. The forge pane used to paint it over the first
+    // chip's words instead: `as of 9s agohor: all`.
+    {
+        var r = try Rig.init(46, 1);
+        defer r.deinit();
+        var p = r.painter(Theme.fromHello(null), .{});
+        _ = try p.capsHeader(1, 0, "FORGE PRS", "  (2 repos)", now - 9, now, &chips);
+        const row = try r.rowText(0);
+        try testing.expect(std.mem.indexOf(u8, row, "FORGE PRS  (2 repos)") != null);
+        try testing.expect(std.mem.indexOf(u8, row, " author: all ") != null);
+        try testing.expect(std.mem.indexOf(u8, row, "as of") == null);
+        try testing.expect(std.mem.indexOf(u8, row, "agohor") == null);
+    }
+    // Narrower still: the count gives way to the ladder before the
+    // title does, and the title is never clipped by it.
+    {
+        var r = try Rig.init(22, 1);
+        defer r.deinit();
+        var p = r.painter(Theme.fromHello(null), .{});
+        _ = try p.capsHeader(1, 0, "FORGE PRS", "  (2 repos)", now - 9, now, &chips);
+        const row = try r.rowText(0);
+        try testing.expect(std.mem.startsWith(u8, row, " FORGE PRS"));
+        try testing.expect(r.hits.rectOf(.{ .chip = 0 }) != null);
+        try testing.expect(r.hits.rectOf(.{ .chip = 2 }) == null);
+    }
+}
+
 test "the filter pill: the placeholder at rest, the query with a caret while editing, one hit either way" {
     var r = try Rig.init(30, 2);
     defer r.deinit();
@@ -749,15 +859,24 @@ test "the filter pill: the placeholder at rest, the query with a caret while edi
     try testing.expectEqual(Demo.filter, r.hits.at(4, 1).?);
 }
 
-test "a show-more row says `Show more (N)` in the bright foreground and is one hit" {
+test "a show-more row is one phrase: the ellipsis leads its own words, and the row is one hit" {
     var r = try Rig.init(40, 2);
     defer r.deinit();
-    const th = Theme.fromHello(.{ .fg = .{ .rgb = .{ 9, 9, 9 } } });
+    const th = Theme.fromHello(.{ .fg = .{ .rgb = .{ 9, 9, 9 } }, .muted = .{ .rgb = .{ 5, 5, 5 } } });
     var p = r.painter(th, .{});
     try p.showMoreRow(.{ .x = 0, .y = 0, .w = 40, .h = 1 }, 10, 7, .show_more);
-    try testing.expect(std.mem.indexOf(u8, try r.rowText(0), "Show more (7)") != null);
-    try testing.expectEqual(theme_mod.Color{ .rgb = .{ 9, 9, 9 } }, r.f.slots[10].style.fg.?);
-    try testing.expect(r.f.slots[10].style.mods.bold);
+    // `\u{22ef}  Show more (7)` from `label_x`, contiguous. The ellipsis
+    // used to be pinned to the row's left edge while its words sat at
+    // `label_x`, which at any real width read as two things.
+    try testing.expect(std.mem.indexOf(u8, try r.rowText(0), "\u{22ef}  Show more (7)") != null);
+    try testing.expectEqualStrings(more_glyph, r.f.slots[10].symbol());
+    // Punctuation stays dim; only the words are bright.
+    try testing.expectEqual(theme_mod.Color{ .rgb = .{ 5, 5, 5 } }, r.f.slots[10].style.fg.?);
+    try testing.expect(!r.f.slots[10].style.mods.bold);
+    try testing.expectEqualStrings("S", r.f.slots[13].symbol());
+    try testing.expectEqual(theme_mod.Color{ .rgb = .{ 9, 9, 9 } }, r.f.slots[13].style.fg.?);
+    try testing.expect(r.f.slots[13].style.mods.bold);
+    // The whole row is the press, not just the words.
     try testing.expectEqual(Demo.show_more, r.hits.at(3, 0).?);
 }
 

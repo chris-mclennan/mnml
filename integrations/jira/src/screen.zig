@@ -105,6 +105,7 @@ pub const refresh_nerd = Ch.refresh_nerd;
 pub const refresh_ascii = Ch.refresh_ascii;
 pub const search_nerd = Ch.search_nerd;
 pub const search_ascii = Ch.search_ascii;
+pub const help_chip_text = Ch.help_chip_text;
 pub const placeholder_unfocused = Ch.placeholder_unfocused;
 pub const placeholder_focused = Ch.placeholder_focused;
 pub const placeholder_focused_ascii = Ch.placeholder_focused_ascii;
@@ -118,8 +119,15 @@ pub const Layout = struct {
     columns_y: ?u16 = null,
     body_y: u16 = 3,
     body_h: u16 = 0,
-    /// The list's width (the detail pane starts here when open).
+    /// The list's width (the detail pane starts here when open). It
+    /// is one cell narrower when the list carries a scrollbar, so the
+    /// bar has a column of its own rather than sitting on the words.
     list_w: u16 = 0,
+    /// The list has more rows than the body: the toolkit's scrollbar
+    /// goes down column `list_w`. Decided before the column header is
+    /// painted, so the header and its rows are laid out to the same
+    /// width.
+    list_bar: bool = false,
     detail_x: ?u16 = null,
     status_y: u16 = 0,
 };
@@ -162,9 +170,12 @@ pub const Painter = struct {
         try p.a.hits.add(p.a.gpa, r, target);
     }
 
+    /// The toolkit's, so a fold mark is the same glyph in every pane
+    /// and a host with no Nerd Font gets the same stand-in. This used
+    /// to be a byte-for-byte copy of `Painter.chevron` living here,
+    /// which is the shape every one of this pane's drifts started as.
     fn chevron(p: *const Painter, open: bool) []const u8 {
-        if (p.ui.ascii or !p.ui.nerd) return if (open) open_ascii else closed_ascii;
-        return if (open) open_glyph else closed_glyph;
+        return p.c.chevron(open);
     }
 
     fn fmt(p: *Painter, comptime f: []const u8, args: anytype) []const u8 {
@@ -196,6 +207,14 @@ pub const Painter = struct {
         p.lay.toolbar_rows = try p.paintToolbar();
         var y = p.lay.toolbar_y + p.lay.toolbar_rows;
         if (!t.cfg.isKanban()) {
+            // A list longer than its body says so, the way the forge
+            // pane's does: a thumb over a dim track down the last
+            // column. Forty-three rows in a thirty-row body used to
+            // say nothing at all about where in them you were.
+            if (try p.listOverflows(p.lay.status_y -| (y + 1))) {
+                p.lay.list_bar = true;
+                p.lay.list_w -|= 1;
+            }
             p.lay.columns_y = y;
             try p.paintColumns(y);
             y += 1;
@@ -265,8 +284,6 @@ pub const Painter = struct {
         const y = p.lay.header_y;
         const t = p.a.tab();
         const title = upperOf(p.arena, if (p.a.family) |f| f.label() else "Jira");
-        var x: u16 = 1;
-        x += p.put(x, y, p.cols() -| x, title, p.s.accent);
         var arena_mask = std.heap.ArenaAllocator.init(p.a.gpa);
         defer arena_mask.deinit();
         const shown = filters.countTrue(try p.a.mask(arena_mask.allocator(), t));
@@ -276,34 +293,27 @@ pub const Painter = struct {
             " (error)"
         else
             " (loading…)";
-        x += p.put(x, y, p.cols() -| x, sub, p.s.muted);
         // A refetch runs on a worker: the rows on screen are the ones
-        // from last time, and this says so rather than letting them read
-        // as current.
-        if (p.a.refresh.busy() and t.fetched) {
-            x += p.put(x, y, p.cols() -| x, if (p.ui.ascii) " refreshing..." else " refreshing…", p.s.muted);
-        }
-        // How old the rows are. A screenful with nothing above it reads
-        // as now, and on a pane that painted from cache it is not. The
-        // wording and the ink are the toolkit's, so the Bitbucket pane
-        // says it the same way.
-        x = p.c.asOf(x, y, t.fetched_at, p.a.nowSecs());
+        // from last time, and the count says so rather than letting
+        // them read as current. Same ink as the count, so it is one
+        // phrase and the toolkit can clip the pair as one.
+        const sub_all = if (p.a.refresh.busy() and t.fetched)
+            p.fmt("{s}{s}", .{ sub, if (p.ui.ascii) " refreshing..." else " refreshing…" })
+        else
+            sub;
+        // The whole row from the toolkit: the title muted and bold, the
+        // count dim beside it, `as of …` after that, and the ladder at
+        // the right with `?` at the very end. This pane used to paint
+        // its title in the ACCENT, which made the same header two
+        // colours depending on which integration you were looking at,
+        // and laid its own ladder beside the forge pane's copy of the
+        // same geometry.
+        const head = try p.c.capsHeader(1, y, title, sub_all, t.fetched_at, p.a.nowSecs(), &.{
+            .{ .text = help_chip_text, .target = .{ .chip = .help } },
+            .{ .text = p.c.refreshChipText(), .target = .{ .chip = .refresh } },
+        });
         if (p.a.selection.count() > 0) {
-            x += p.put(x + 1, y, p.cols() -| (x + 1), p.fmt("{d} selected", .{p.a.selection.count()}), p.s.bulk) + 1;
-        }
-        // The right-end chips, dropped whole when they do not fit.
-        const help_t = " ? ";
-        const refresh_t = if (p.ui.ascii or !p.ui.nerd) " " ++ refresh_ascii ++ " " else " " ++ refresh_nerd ++ " ";
-        const hw = text.width(help_t);
-        const rw = text.width(refresh_t);
-        var rx = p.cols();
-        if (rx >= x + hw + rw + 3) {
-            rx -= hw + 1;
-            _ = p.put(rx, y, hw, help_t, p.s.chip_style);
-            try p.hitAdd(.{ .x = rx, .y = y, .w = hw, .h = 1 }, .{ .chip = .help });
-            rx -= rw + 1;
-            _ = p.put(rx, y, rw, refresh_t, p.s.chip_style);
-            try p.hitAdd(.{ .x = rx, .y = y, .w = rw, .h = 1 }, .{ .chip = .refresh });
+            _ = p.put(head.x + 1, y, head.edge -| (head.x + 1), p.fmt("{d} selected", .{p.a.selection.count()}), p.s.bulk);
         }
     }
 
@@ -520,6 +530,13 @@ pub const Painter = struct {
 
     /// Where each column starts at this width: the fixed ones from the
     /// config, shrunk together when they would eat the summary.
+    /// Whether the active tab's rows outrun a body `h` rows tall.
+    fn listOverflows(p: *Painter, h: u16) Allocator.Error!bool {
+        if (h == 0) return false;
+        const r = (try p.a.treeRows(p.arena)) orelse return false;
+        return r.rows.len > h;
+    }
+
     fn columnLayout(p: *Painter) Allocator.Error![]const ColX {
         const set = p.a.tab().cfg.columnSet();
         var fixed: u32 = 0;
@@ -781,6 +798,11 @@ pub const Painter = struct {
                 .show_more => |sm| try p.c.showMoreRow(.{ .x = 0, .y = y, .w = w, .h = 1 }, sum_c.x, sm.hidden, .{ .show_more = idx }),
             }
         }
+        // The bar owns the column the layout reserved for it. The whole
+        // track is one hit, so a press or a drag on it turns back into
+        // a position through `sdk.pane.scrollAt` — the same bar, and
+        // the same arithmetic, as the detail panel's.
+        if (p.lay.list_bar) try p.c.scrollbar(.{ .x = w, .y = y0, .w = 1, .h = h }, r.rows.len, t.scroll, h, .list_bar);
     }
 
     /// The row's action buttons, each wearing what its last press left:
@@ -1697,6 +1719,14 @@ test "Work: the header, the tab strip, the mode chips, the columns, the tree row
     try testing.expect(std.mem.indexOf(u8, r2, " assignee: All ") != null);
     try testing.expect(std.mem.indexOf(u8, r2, " status: All") != null);
     try testing.expect(std.mem.indexOf(u8, r0, "\u{eb37}") != null);
+    // The caps header is the TOOLKIT's, not a copy of it: the title in
+    // `label()` and the ladder ending in the refresh chip then `?`,
+    // both on the chip ground. Asserted through `sdk.pane.expect`, the
+    // same function the forge pane's own suite calls, so the two
+    // families cannot drift into checking two different things.
+    const ui: Ui = .{};
+    try sdk.pane.expect.capsTitleInk(&f, ui.th, 1, 0, "JIRA WORK");
+    try sdk.pane.expect.headerLadderTail(&f, ui.th, 0, ui.nerd, ui.ascii);
     try testing.expect(std.mem.indexOf(u8, r2, "/ filter") != null);
     const r3 = try rowText(ar, &f, 4);
     try testing.expect(std.mem.startsWith(u8, r3, "▌ KEY"));
@@ -1914,6 +1944,78 @@ test "Boards: the kanban columns, the cards with a chevron and a marker, the ava
     try testing.expectEqual(hit.Target.modal_close, a.hits.at(x_x + 1, x_y).?);
     try a.click(x_x + 1, x_y, false);
     try testing.expect(a.modal == null);
+}
+
+test "the fold row is one phrase: the ellipsis is punctuation and only its words are bright" {
+    const h = try app_mod.Harness.start(.{ .tabs = &app_mod.work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    // Four linked pull requests on one ticket: three rows and a fold
+    // row for the fourth.
+    const t0 = a.tab();
+    try t0.tree.?.setExpanded("ENG-2", true);
+    try t0.tree.?.putPrs("ENG-2", &.{
+        .{ .id = "#1", .status = "MERGED" },
+        .{ .id = "#2", .status = "OPEN" },
+        .{ .id = "#3", .status = "MERGED" },
+        .{ .id = "#4", .status = "OPEN" },
+    });
+    var f = try Frame.init(testing.allocator, 120, 40);
+    defer f.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const ar = arena.allocator();
+    try paint(ar, &f, a, .{});
+    const y = (try findRow(ar, &f, "Show more (1)")) orelse return error.NoFoldRow;
+    // `⋯  Show more (N)` — the ellipsis dim, two cells of air, the
+    // words in the bright foreground a key wears, and the three of
+    // them next to one another. Asserted through `sdk.pane.expect`,
+    // the same function the forge pane's own suite calls: this pane
+    // used to pin the `⋯` to the row's left edge and put its words out
+    // in the summary column, forty cells away from it.
+    const ui: Ui = .{};
+    try sdk.pane.expect.foldRow(&f, ui.th, y, ui.ascii);
+}
+
+test "a list longer than its body carries the toolkit's scrollbar, and the bar is a control" {
+    const h = try app_mod.Harness.start(.{ .tabs = &app_mod.work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    // A body short enough that the rows outrun it. The forge pane's
+    // list has always said where in it you are; this one did not.
+    a.resize(80, 12);
+    var f = try Frame.init(testing.allocator, 80, 12);
+    defer f.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const ar = arena.allocator();
+    try paint(ar, &f, a, .{});
+    const bar_x = f.cols - 1;
+    // The track runs the height of the body with a sized thumb on it,
+    // in the toolkit's two glyphs. Asserted through `sdk.pane.expect`,
+    // the same function the forge pane's own suite calls.
+    try sdk.pane.expect.listScrollbar(&f, bar_x, 0, f.rows);
+    // Every cell of the track is the same hit, so a press anywhere on
+    // it is a position rather than a miss.
+    const first_bar_y = blk: {
+        var yy: u16 = 0;
+        while (yy < f.rows) : (yy += 1) if (a.hits.at(bar_x, yy)) |t| if (t == .list_bar) break :blk yy;
+        return error.NoScrollbarHit;
+    };
+    // The words stop one cell short of it: the bar has a column of its
+    // own rather than sitting on a clipped summary.
+    try testing.expect(a.hits.at(bar_x, first_bar_y).? == hit.Target.list_bar);
+    // A press near the bottom of the track scrolls there, and brings
+    // the cursor with it so the keys carry on from where the eye is.
+    const before = a.tab().scroll;
+    try a.click(bar_x, f.rows - 2, false);
+    try testing.expect(a.tab().scroll > before);
+    try testing.expect(a.tab().selected >= a.tab().scroll);
+    // And a drag keeps steering it back.
+    try a.drag(bar_x, first_bar_y);
+    try testing.expectEqual(@as(usize, 0), a.tab().scroll);
 }
 
 test "the narrow pane: 80x24 keeps the chips whole by wrapping, the columns shrink, the hint row still reads" {

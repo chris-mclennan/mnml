@@ -24,6 +24,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const sdk = @import("mnml_sdk");
+const chrome = sdk.pane.chrome;
 const app_mod = @import("app.zig");
 const tabs = @import("tabs.zig");
 const view = @import("view.zig");
@@ -43,8 +44,6 @@ pub const list_share_pct: u16 = 55;
 
 pub const marker = "▌";
 pub const filter_glyph_nerd = "\u{F0349}";
-pub const refresh_glyph_nerd = "\u{eb37}";
-pub const refresh_glyph_ascii = "\u{21ba}";
 
 pub const Box = struct { x: u16, y: u16, w: u16, h: u16 };
 
@@ -135,11 +134,8 @@ fn familyLabel(app: *App) []const u8 {
 
 fn paintHeader(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
     const app = p.app;
-    const th = p.th;
     const ts = app.activeTab();
-    var x: u16 = 1;
     const label = familyLabel(app);
-    x += p.text(x, y, p.f.cols -| x, label, th.label());
     // The subtitle: the reference's status count, dim.
     var sub: []const u8 = "";
     if (ts.loading and !ts.fetched) {
@@ -170,19 +166,16 @@ fn paintHeader(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
     if (ts.loading and ts.fetched) {
         sub = try std.fmt.allocPrint(arena, "{s}{s}", .{ sub, if (p.nerd) "  refreshing…" else "  refreshing..." });
     }
-    // The chips, laid right to left, each dropped whole when it would
-    // cross the title.
-    const refresh_text = if (p.nerd) " " ++ refresh_glyph_nerd ++ " " else " " ++ refresh_glyph_ascii ++ " ";
-    var right = p.f.cols;
-    const rw = Painter.width(refresh_text);
-    if (right >= x + rw + 2) {
-        right -= rw;
-        _ = p.text(right, y, rw, refresh_text, th.refresh());
-        p.target(right, y, rw, .{ .chip = .refresh });
-    }
-    const Chip = struct { text: []const u8, target: hit.Chip, active: bool };
-    var chips: [6]Chip = undefined;
+    // The chips, laid right to left by the toolkit, each dropped whole
+    // when it would cross the title, each a hit registered with its
+    // cells. `?` first, so it lands at the very end — it is the one
+    // chip that applies on every family and in every state.
+    var chips: [8]Chrome.ChipSpec = undefined;
     var n: usize = 0;
+    chips[n] = .{ .text = chrome.help_chip_text, .target = .{ .chip = .help } };
+    n += 1;
+    chips[n] = .{ .text = p.c.refreshChipText(), .target = .{ .chip = .refresh } };
+    n += 1;
     switch (app.family()) {
         .prs => {
             const kind_ok = ts.spec.kind == .workspace_open_prs or ts.spec.kind == .workspace_merged_prs;
@@ -191,40 +184,31 @@ fn paintHeader(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
             // chip costs nothing and can say its number at rest.
             const waiting = app.awaitingCount();
             if (waiting > 0 or app.awaiting_only) {
-                chips[n] = .{ .text = try std.fmt.allocPrint(arena, " awaiting: {d} ", .{waiting}), .target = .awaiting, .active = app.awaiting_only };
+                chips[n] = .{ .text = try std.fmt.allocPrint(arena, " awaiting: {d} ", .{waiting}), .target = .{ .chip = .awaiting }, .active = app.awaiting_only };
                 n += 1;
             }
             if (kind_ok) {
                 const who = if (ts.spec.mine_only) (if (app.me_display_name.len > 0) app.me_display_name else "me") else "all";
-                chips[n] = .{ .text = try std.fmt.allocPrint(arena, " author: {s} ", .{who}), .target = .author, .active = ts.spec.mine_only };
+                chips[n] = .{ .text = try std.fmt.allocPrint(arena, " author: {s} ", .{who}), .target = .{ .chip = .author }, .active = ts.spec.mine_only };
                 n += 1;
             }
         },
         .pipelines => {
-            chips[n] = .{ .text = " usage ", .target = .usage, .active = false };
+            chips[n] = .{ .text = " usage ", .target = .{ .chip = .usage }, .active = false };
             n += 1;
-            chips[n] = .{ .text = " caches ", .target = .caches, .active = false };
+            chips[n] = .{ .text = " caches ", .target = .{ .chip = .caches }, .active = false };
             n += 1;
-            chips[n] = .{ .text = " schedules ", .target = .schedules, .active = false };
+            chips[n] = .{ .text = " schedules ", .target = .{ .chip = .schedules }, .active = false };
             n += 1;
-            chips[n] = .{ .text = " run pipeline ", .target = .run_pipeline, .active = false };
+            chips[n] = .{ .text = " run pipeline ", .target = .{ .chip = .run_pipeline }, .active = false };
             n += 1;
         },
         .branches => {},
     }
-    var i: usize = 0;
-    while (i < n) : (i += 1) {
-        const c = chips[i];
-        const w = Painter.width(c.text);
-        if (right < x + w + 2) break;
-        right -= w + 1;
-        _ = p.text(right, y, w, c.text, if (c.active) th.chipActive() else th.chip());
-        p.target(right, y, w, .{ .chip = c.target });
-    }
-    if (sub.len > 0) x += p.text(x, y, right -| x -| 1, sub, th.dimText());
-    // How old the rows are, in the toolkit's words and ink — the same
-    // line the tracker pane wears, so the two families read alike.
-    _ = p.c.asOf(x, y, ts.fetched_at, app.now_secs);
+    // The whole row from the toolkit: the title and its count, the
+    // `as of …` line in the same words and ink the tracker pane wears,
+    // and the ladder — laid so the two runs cannot land on each other.
+    _ = try p.c.capsHeader(1, y, label, sub, ts.fetched_at, app.now_secs, chips[0..n]);
 }
 
 // ─── the tab strip ───────────────────────────────────────────────────────
@@ -348,6 +332,19 @@ fn paintList(arena: Allocator, p: *Painter, box: Box) Allocator.Error!void {
         // column 0 (bright on the cursor's row) and the row's own hit,
         // in one statement — the same one the Jira tree paints.
         try p.c.rowGround(.{ .x = list.x, .y = y, .w = text_w, .h = @min(h, list.y + list.h - y) }, selected, .{ .row = idx });
+        // The fold row is the toolkit's `\u{22ef}  Show more (N)`, laid
+        // where the last column starts — the same row, from the same
+        // function, as the tracker pane's.
+        if (row == .show_more) {
+            try p.c.showMoreRow(
+                .{ .x = list.x, .y = y, .w = text_w, .h = 1 },
+                view.lastColumnX(cols, list.x + 2),
+                row.show_more.hidden,
+                .{ .row = idx },
+            );
+            y += h;
+            continue;
+        }
         const spans = try view.rowSpans(arena, .{ .app = app, .ts = ts, .cols = cols, .th = th, .row = row, .selected = selected, .ascii = !p.nerd });
         // The buttons take their cells off the row's right end BEFORE
         // the words are painted, so a title is shortened rather than
@@ -836,6 +833,13 @@ test "the pane paints the header, the strip, the pill, the reference's columns, 
     try t.expect(has(scr, "chris/fix-login"));
     try t.expect(has(scr, "Show more (1)"));
     try t.expect(has(scr, "author: all"));
+    // The caps header is the TOOLKIT's, not a copy of it: the title in
+    // `label()` and the ladder ending in the refresh chip then `?`,
+    // both on the chip ground. Asserted through `sdk.pane.expect`, the
+    // same function the tracker pane's own suite calls, so the two
+    // families cannot drift into checking two different things.
+    try sdk.pane.expect.capsTitleInk(&s.frame, s.rig.app.theme, 1, 0, "BITBUCKET PRS");
+    try sdk.pane.expect.headerLadderTail(&s.frame, s.rig.app.theme, 0, true, false);
     try t.expect(has(scr, "Open + Draft · 2 repos, 3 PRs"));
     try t.expect(has(scr, "⏎ expand"));
     try t.expect(has(scr, "q quit"));
@@ -886,28 +890,20 @@ test "an open PR's chevron folds its builds under the mouse" {
     try t.expect(has(scr, "▸ #1234"));
 }
 
-test "the fold row's ellipsis is punctuation and only its words are bright" {
+test "the fold row is one phrase: the ellipsis is punctuation and only its words are bright" {
     const s = try Screen.init(120, 40, acme, .{});
     defer s.deinit();
     _ = try s.draw();
     const y = try s.rowOf("Show more (1)");
-    // The `⋯` is dim, the way the Jira tree's fold row paints it;
-    // the words carry the bright foreground a key wears, or there is
-    // nothing on the row to notice.
-    const th = s.rig.app.theme;
-    var glyph: ?sdk.frame.Style = null;
-    var word: ?sdk.frame.Style = null;
-    var x: u16 = 0;
-    while (x < s.frame.cols) : (x += 1) {
-        const slot = &s.frame.slots[@as(usize, y) * s.frame.cols + x];
-        if (std.mem.eql(u8, slot.symbol(), "⋯")) glyph = slot.style;
-        if (std.mem.eql(u8, slot.symbol(), "S") and glyph != null and word == null) word = slot.style;
-    }
-    try t.expect(glyph != null and word != null);
-    try t.expectEqual(th.muted, glyph.?.fg.?);
-    try t.expect(!glyph.?.mods.bold);
-    try t.expect(word.?.mods.bold);
-    try t.expect(!std.meta.eql(word.?.fg, glyph.?.fg));
+    // `⋯  Show more (N)` — the ellipsis dim, two cells of air, the
+    // words in the bright foreground a key wears, and the three of
+    // them next to one another. Asserted through `sdk.pane.expect`,
+    // the same function the tracker pane's own suite calls: this row
+    // used to be laid by the table here and by `showMoreRow` there,
+    // which put the ellipsis in two different places.
+    try sdk.pane.expect.foldRow(&s.frame, s.rig.app.theme, y, false);
+    // And it is one press: the whole row is the row's own hit.
+    try t.expect(s.rig.app.hits.at(4, y).? == .row);
 }
 
 test "a click on a row selects that row and toggles a header; the strip switches tabs; the hints fire" {
@@ -1141,6 +1137,14 @@ test "the pipelines tree paints the reference's columns and glyphs; the pipeline
 test "the key sheet, the row menu and the filter paint as overlays that take the click" {
     const s = try Screen.init(120, 40, acme, .{});
     defer s.deinit();
+    // The header's `?` chip is the sheet's door for the pointer — the
+    // one the tracker pane has always had and this one did not, so the
+    // only way in was the hint row's `? keys`, which is the first entry
+    // a narrow pane drops.
+    _ = try s.draw();
+    try s.click(s.frame.cols - 3, 0, .left);
+    try t.expectEqual(app_mod.Mode.help, s.rig.app.mode);
+    try s.key("esc");
     try s.key("?");
     var scr = try s.draw();
     try t.expect(has(scr, " Keys "));
@@ -1179,6 +1183,14 @@ test "the pane paints at every size the gate runs, and at one below them" {
         try s.key("3");
         _ = try s.draw();
     }
+}
+
+test "a list longer than its body carries the toolkit's scrollbar, the same one the tracker pane paints" {
+    // A body short enough that the two repos' rows outrun it.
+    const s = try Screen.init(80, 9, acme, .{});
+    defer s.deinit();
+    _ = try s.draw();
+    try sdk.pane.expect.listScrollbar(&s.frame, s.frame.cols - 1, 0, s.frame.rows);
 }
 
 test "the `/` filter: the header reads N of M while narrowed and the hint row changes with the mode" {

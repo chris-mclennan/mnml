@@ -12,6 +12,10 @@ const sdk = @import("mnml_sdk");
 
 pub const Chip = enum {
     refresh,
+    /// The header ladder's `?` — the key sheet's door for the pointer.
+    /// The hint row's `? keys` says the same thing, and is the first
+    /// entry a narrow pane drops.
+    help,
     /// The PR family's `author:` chip (mine ↔ all).
     author,
     /// `awaiting: N` — the open pull requests waiting on YOUR review.

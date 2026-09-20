@@ -11,6 +11,9 @@
 //!           ground, `Show more (N)`, a detail panel with its `×` and
 //!           scrollbar, and the hint row where every entry is a hit
 //!   text    widths and fitting, counted the way `Frame` paints
+//!   expect  what an integration's OWN tests assert about the chrome
+//!           it painted — the check that a pane CALLS the toolkit,
+//!           which the toolkit's self-consistency cannot show
 //!   work    the one-job channel a pane refetches through, so a slow
 //!           fetch never freezes its keys or its repaint
 //!   build   the build lines under a pull-request row — one pipeline
@@ -47,6 +50,9 @@ pub const build = @import("pane/build.zig");
 pub const merge = @import("pane/merge.zig");
 pub const chrome = @import("pane/chrome.zig");
 pub const text = @import("pane/text.zig");
+/// The assertions an integration's own tests make about the shared
+/// chrome, so two families check one expectation rather than two.
+pub const expect = @import("pane/expect.zig");
 
 pub const Theme = theme.Theme;
 pub const Rect = hit.Rect;
@@ -78,6 +84,7 @@ test {
     _ = action;
     _ = build;
     _ = merge;
+    _ = expect;
     // The anti-drift test: the shared elements painted from two panes'
     // target vocabularies must come out cell for cell identical.
     _ = @import("pane/consistency_test.zig");

@@ -1,0 +1,101 @@
+# The shared pane chrome, on BOTH official integrations in one file —
+# the check that the two families paint the same header, the same
+# ladder and the same list furniture when they are really mounted, not
+# just when the toolkit is painted twice in a unit test.
+#
+# What it pins, per family:
+#   * the caps header's ladder ends in the refresh chip then `?`, both
+#     on the chip ground, both at the same two columns;
+#   * a list longer than its body carries the toolkit's scrollbar.
+# And on the forge pane, where a fold row is reachable from the fake:
+#   * `⋯  Show more (N)` is one phrase, the ellipsis beside its words.
+#
+# The two `expect color` lines are the point of the file. `?` and the
+# refresh glyph are easy to assert as text and that says nothing about
+# whether they came from `Painter.rightChips`: the tracker pane painted
+# a chip ground and the forge pane painted bare accent ink for a year,
+# and both spelled the glyph the same. The GROUND is what differed.
+# #353b45 is onedark's `one_bg2`, which the host sends as `chip_bg`.
+# env: JIRA_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/jira-bucket.json
+# env: JIRA_API_TOKEN=fake-token
+# env: JIRA_BASE_URL=@${MNML_E2E_WORKSPACE}/jira.url
+# env: MNML_MARKETPLACE_LOCAL=market
+# env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/bitbucket.zon
+# env: BITBUCKET_BASE_URL=@${MNML_E2E_WORKSPACE}/bb.url
+# env: BITBUCKET_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/bucket.json
+# env: BITBUCKET_API_TOKEN=corpus-read-token
+# env: MNML_WORKSPACE=${MNML_E2E_WORKSPACE}
+# Both fakes take port 0 and write the URL they landed on, so nothing
+# here ever picks one. `--extra-issues` / `--extra-prs` are what make
+# the lists outrun the body: the whole point of a scrollbar.
+shell "$MNML_FAKE_JIRA" --port 0 --url-file jira.url --life-secs 240 --quiet --extra-issues 40 --pid-file fake-jira.pid >/dev/null 2>&1 &
+shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --lifetime-secs 240 --extra-prs 30 >/dev/null 2>&1 &
+wait 600
+
+# ── the tracker pane ─────────────────────────────────────────────────
+write sdk/mnml-sdk/build.zig ""
+write integrations/jira/build.zig ""
+write integrations/jira/manifest.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } } }"
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"https://jira.invalid\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .rate = .{ .per_sec = 1000, .burst = 1000 }, .tabs = .{ .{ .name = \"My open work items\", .kind = .work_open }, .{ .name = \"Reported by me\", .kind = .work_reported } } }"
+command integrations.show_in_dev
+expect screen contains "INTEGRATIONS"
+key i
+expect screen contains "installed jira_work from"
+wait 1200
+command integrations.open_as_tab
+command jira_work.open
+wait 9000
+command view.toggle_tree
+command view.focus_pane
+wait 1000
+expect screen contains "JIRA WORK"
+# The ladder: `?` flush at the right with a cell of air past it, the
+# refresh glyph four cells before it, both on the chip ground.
+expect screen contains "?"
+expect color 117 2 bg #353b45
+expect color 113 2 bg #353b45
+# Forty-three issues in a thirty-row body: the bar's thumb is on the
+# list's last column. This pane had no list scrollbar at all.
+expect screen contains "█"
+key q
+wait 500
+key x
+expect screen lacks "JIRA WORK"
+shell kill "$(cat fake-jira.pid)" 2>/dev/null || true
+
+# ── the forge pane ───────────────────────────────────────────────────
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 0, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs } } }"
+write market/bitbucket_prs.zon ".{ .id = \"bitbucket_prs\", .label = \"Bitbucket PRs\", .version = \"0.2.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .args = .{ \"--only\", \"prs\" }, .description = \"Bitbucket: open pull requests\", .chip = .{ .glyph = \"\u{f00a8}\", .fallback = \"BP\", .color = \"blue\", .in_palette_bar = false }, .commands = .{ .{ .id = \"bitbucket_prs.open\", .title = \"Bitbucket PRs: open\" } } }"
+command integrations.show_marketplace
+expect screen contains "Mkt (1)"
+key i
+expect screen contains "installed bitbucket_prs"
+command integrations.open_as_tab
+command bitbucket_prs.open
+command view.toggle_tree
+command view.focus_pane
+wait 6000
+expect screen contains "BITBUCKET PRS"
+# The same ladder, at the same two columns, on the same ground. This
+# pane had no `?` chip at all and painted its refresh glyph in bare
+# accent ink.
+expect screen contains "?"
+expect color 117 2 bg #353b45
+expect color 113 2 bg #353b45
+# The fold row is one phrase: the ellipsis next to its own words, not
+# in a column of its own. (The tracker pane's fold row needs a ticket
+# with four linked pull requests, which the Jira fake does not carry;
+# it is asserted there by the unit test in integrations/jira/src.)
+expect screen contains "⋯  Show more ("
+# Pressing it lifts the window, and THEN the rows outrun the body: the
+# same bar, from the same `Painter.scrollbar`, as the tracker pane's.
+key G
+key enter
+expect screen lacks "Show more ("
+expect screen contains "█"
+key q
+wait 500
+key x
+expect screen lacks "BITBUCKET PRS"
+# No uninstall dance: every `.test` gets its own data root, so what
+# this file installed goes when its root does.
