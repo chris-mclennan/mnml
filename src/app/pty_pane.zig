@@ -34,6 +34,7 @@ const CommandError = command.CommandError;
 const launch_profiles = @import("launch_profiles.zig");
 const accent_color = @import("../ui/accent_color.zig");
 const pane_accent = @import("pane_accent.zig");
+const pane_rail = @import("../ui/pane_rail.zig");
 const bufferline = @import("../ui/bufferline.zig");
 const Theme = @import("../ui/theme.zig");
 
@@ -283,7 +284,7 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
     const cwd: ?[]u8 = if (opts.cwd) |c| try gpa.dupe(u8, c) else null;
     errdefer if (cwd) |c| gpa.free(c);
 
-    const size = initialSize(app, opts.placement);
+    const size = initialSize(app, opts);
     const id = app.panes.peekId();
     const wire = try gpa.create(Wire);
     errdefer gpa.destroy(wire);
@@ -408,8 +409,15 @@ fn labelFor(app: *App, opts: OpenOptions) Allocator.Error![]u8 {
 
 /// A guess at the pane's size before the first frame lays it out; the
 /// frame corrects it and the child gets one SIGWINCH.
-fn initialSize(app: *App, placement: Placement) struct { cols: u16, rows: u16 } {
-    const body_w = app.screen.width -| (if (app.tree.visible) app.tree.width + 1 else 0);
+fn initialSize(app: *App, opts: OpenOptions) struct { cols: u16, rows: u16 } {
+    const placement = opts.placement;
+    // // changed (pane-rail): the rail takes a column off the pane, so
+    // the child starts at the width it will really get. A width it has
+    // to be resized off reflows the terminal on the first frame, and
+    // the reflow costs whatever the child had already written — the
+    // scrollback the wheel is there to scroll.
+    const rail: u16 = if (railOnFor(app, opts)) pane_rail.width else 0;
+    const body_w = app.screen.width -| (if (app.tree.visible) app.tree.width + 1 else 0) -| rail;
     const body_h = app.screen.height -| 2;
     const cols: u16 = switch (placement) {
         .right, .left, .detached => body_w / 2,
@@ -420,6 +428,19 @@ fn initialSize(app: *App, placement: Placement) struct { cols: u16, rows: u16 } 
         else => body_h,
     };
     return .{ .cols = @max(cols, 2), .rows = @max(rows, 1) };
+}
+
+/// Whether a pane opened with `opts` will wear a rail, which only
+/// `ui.pane_rail` and — under `sessions` — the product the argv names
+/// can answer before the pane exists.
+fn railOnFor(app: *App, opts: OpenOptions) bool {
+    return switch (app.cfg.ui.pane_rail) {
+        .off => false,
+        .all => true,
+        .sessions => opts.argv.len > 0 and for (std.enums.values(launch_profiles.Product)) |product| {
+            if (launch_profiles.isProductArgv(app, opts.argv[0], product)) break true;
+        } else false,
+    };
 }
 
 /// Put `id` where `placement` says. With no active leaf it simply
