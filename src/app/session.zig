@@ -29,6 +29,7 @@ const layout_mod = @import("layout.zig");
 const Layout = layout_mod.Layout;
 const pty_pane = @import("pty_pane.zig");
 const md_preview = @import("md_preview.zig");
+const pane_accent = @import("pane_accent.zig");
 const hooks = @import("../core/hooks.zig");
 const side_mod = @import("side.zig");
 const Section = @import("../ui/activity_bar.zig").Section;
@@ -1053,6 +1054,45 @@ test "session: the session colours and a pty pane's accent ride in the file and 
             else => {},
         };
         try t.expectEqualStrings("red", found orelse return error.TestUnexpectedResult);
+    }
+}
+
+test "session: an editor's rail colour rides in the file too, and a pane picked out of order keeps the one it had" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "a.txt", .data = "one\n" });
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "b.txt", .data = "two\n" });
+    const a = try f.abs("a.txt");
+    defer t.allocator.free(a);
+    const b = try f.abs("b.txt");
+    defer t.allocator.free(b);
+    {
+        var app = try f.app();
+        defer app.deinit();
+        // Two editors off the ladder, then the second one picked: the
+        // pick is the interesting one, because a restore that re-rolled
+        // off the ladder would hand it green's neighbour again.
+        const ida = try app.openPath(a);
+        const idb = try app.openPath(b);
+        try t.expectEqualStrings("green", pane_accent.nameOf(&app, ida).?);
+        try pane_accent.setName(&app, idb, "purple");
+        try save(&app);
+    }
+    {
+        var app = try f.app();
+        defer app.deinit();
+        try restore(&app);
+        try t.expect(app.session.restored);
+        var seen: [2]?[]const u8 = .{ null, null };
+        var n: usize = 0;
+        for (app.panes.slots.items, 0..) |*slot, i| if (slot.*) |*p| {
+            if (p.* != .editor) continue;
+            if (n < seen.len) seen[n] = pane_accent.nameOf(&app, @intCast(i));
+            n += 1;
+        };
+        try t.expectEqual(@as(usize, 2), n);
+        try t.expectEqualStrings("green", seen[0] orelse return error.TestUnexpectedResult);
+        try t.expectEqualStrings("purple", seen[1] orelse return error.TestUnexpectedResult);
     }
 }
 
