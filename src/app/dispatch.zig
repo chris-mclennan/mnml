@@ -1896,42 +1896,14 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         // at its column 1 (Rust's gutter press fires `SelectLineToEnd`),
         // Shift extending the selection to that line. Anything else is
         // the editor cell at the line's start (the wheel, a drag).
-        .gutter => |g| {
-            if (m.kind == .press and (m.button == .right or m.button == .left)) {
-                if (app.panes.editor(g.pane)) |e| {
-                    if (app.overlay != .none) closeOverlay(app);
-                    if (app.active != g.pane) app.showPane(g.pane);
-                    const ed = e.buf.editor;
-                    const line = @min(g.line, ed.lineCount() -| 1);
-                    if (m.button == .right or try dap.gutterToggles(app, e)) {
-                        ed.anchor = null;
-                        ed.placeCursor(line, 0);
-                        if (m.button == .right) return context_menus.openGutterMenu(app, m.x, m.y);
-                        return dap.gutterToggle(app, g.pane, line);
-                    }
-                    const start = ed.lineStart(line);
-                    const stop = @min(ed.lineEnd(line) + 1, ed.len());
-                    if (m.mods.shift and ed.anchor != null) {
-                        // Extend the selection to cover that line too:
-                        // down from its low end, or up from its high end.
-                        const lo = @min(ed.anchor.?, ed.cursor);
-                        const hi = @max(ed.anchor.?, ed.cursor);
-                        if (start >= lo) {
-                            ed.anchor = lo;
-                            ed.setCursor(stop);
-                        } else {
-                            ed.anchor = hi;
-                            ed.setCursor(start);
-                        }
-                    } else {
-                        ed.anchor = stop;
-                        ed.setCursor(start);
-                    }
-                    e.buf.input.requestVisualMode();
-                    return;
-                }
-            }
-            return editorCellMouse(app, .{ .pane = g.pane, .line = g.line, .col = 0 }, m, count, wheel);
+        .gutter => |g| return gutterMouse(app, g, m, count, wheel),
+        // The fold chevron owns its one cell of the gutter: a left press
+        // toggles that line's fold. Everything else — the right press's
+        // menu, a drag, the wheel — is the gutter's, so the chevron
+        // never costs the row a behaviour.
+        .fold_arrow => |f| {
+            if (m.kind == .press and m.button == .left) return foldArrowPress(app, f);
+            return gutterMouse(app, f, m, count, wheel);
         },
         .tab => |tb| {
             // // changed (bottom-dock): the dock's strip is not a leaf.
@@ -2504,6 +2476,60 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             try runCmd(app, .@"ai.claude_code_new");
         },
     }
+}
+
+/// A press in an editor's gutter — the sign cell and the line number
+/// alike. Shared by `.gutter` and the fold chevron's `.fold_arrow`,
+/// which falls back to it for everything but its own left press.
+fn gutterMouse(app: *App, g: hit_mod.GutterRef, m: Mouse, count: u16, wheel: bool) Allocator.Error!void {
+    if (m.kind == .press and (m.button == .right or m.button == .left)) {
+        if (app.panes.editor(g.pane)) |e| {
+            if (app.overlay != .none) closeOverlay(app);
+            if (app.active != g.pane) app.showPane(g.pane);
+            const ed = e.buf.editor;
+            const line = @min(g.line, ed.lineCount() -| 1);
+            if (m.button == .right or try dap.gutterToggles(app, e)) {
+                ed.anchor = null;
+                ed.placeCursor(line, 0);
+                if (m.button == .right) return context_menus.openGutterMenu(app, m.x, m.y);
+                return dap.gutterToggle(app, g.pane, line);
+            }
+            const start = ed.lineStart(line);
+            const stop = @min(ed.lineEnd(line) + 1, ed.len());
+            if (m.mods.shift and ed.anchor != null) {
+                // Extend the selection to cover that line too:
+                // down from its low end, or up from its high end.
+                const lo = @min(ed.anchor.?, ed.cursor);
+                const hi = @max(ed.anchor.?, ed.cursor);
+                if (start >= lo) {
+                    ed.anchor = lo;
+                    ed.setCursor(stop);
+                } else {
+                    ed.anchor = hi;
+                    ed.setCursor(start);
+                }
+            } else {
+                ed.anchor = stop;
+                ed.setCursor(start);
+            }
+            e.buf.input.requestVisualMode();
+            return;
+        }
+    }
+    return editorCellMouse(app, .{ .pane = g.pane, .line = g.line, .col = 0 }, m, count, wheel);
+}
+
+/// The fold chevron's left press: the cursor onto that line, then the
+/// very command `za` runs, so the fold, its undo and the dot repeat see
+/// nothing a keyboard toggle would not.
+fn foldArrowPress(app: *App, f: hit_mod.GutterRef) Allocator.Error!void {
+    const e = app.panes.editor(f.pane) orelse return;
+    if (app.overlay != .none) closeOverlay(app);
+    if (app.active != f.pane) app.showPane(f.pane);
+    const ed = e.buf.editor;
+    ed.anchor = null;
+    ed.placeCursor(@min(f.line, ed.lineCount() -| 1), 0);
+    return runCmd(app, .@"editor.toggle_fold");
 }
 
 /// The pane whose rect holds `(x, y)` becomes active — a strip's
@@ -4557,7 +4583,8 @@ pub const right_click_of = std.EnumArray(HitTag, RightClick).init(.{
     .script_hit = .here,
     .editor_cell = .{ .delegated = "editorCellMouse" },
     .hover_popup = .{ .none = "dismisses" },
-    .gutter = .here,
+    .gutter = .{ .delegated = "gutterMouse" },
+    .fold_arrow = .{ .delegated = "gutterMouse" },
     .overlay_item = .here,
     .dock = .{ .delegated = "dock.mouse" },
     .launcher_dock = .{ .delegated = "launcher_dock.mouse" },
