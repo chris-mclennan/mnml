@@ -1468,6 +1468,7 @@ test "both chips carry their count and their breakdown; the QA one is absent whe
     try publishSegments(&ipc, arena, .{
         .assigned_open = 7,
         .assigned_by_status = &.{ .{ .status = "In Progress", .n = 4 }, .{ .status = "To Do", .n = 3 } },
+        .assigned_items = &.{ .{ .text = "ENG-1  Checkout rewrite", .sub = "In Progress" }, .{ .text = "ENG-5  Basket total wrong with a voucher", .sub = "To Do" } },
     }, null);
     var got = try tmp.dir.readFileAlloc(testing.io, "command", arena, .unlimited);
     try testing.expect(std.mem.indexOf(u8, got, "\"id\":\"jira_work.assigned\"") != null);
@@ -1476,12 +1477,17 @@ test "both chips carry their count and their breakdown; the QA one is absent whe
     // No tab, no chip: a zero here would read as "nothing to do" when
     // it means "not set up".
     try testing.expect(std.mem.indexOf(u8, got, "jira_work.qa_actionable") == null);
+    // The figure says how many; `items` says which, in the order the
+    // search returned them, each carrying what a click on the row runs.
+    try testing.expect(std.mem.indexOf(u8, got, "\"items\":[{\"text\":\"ENG-1  Checkout rewrite\",\"sub\":\"In Progress\",\"command\":\"jira_work.open\"") != null);
+    try testing.expect(std.mem.indexOf(u8, got, "{\"text\":\"ENG-5  Basket total wrong with a voucher\",\"sub\":\"To Do\",\"command\":\"jira_work.open\"") != null);
 
     try publishSegments(&ipc, arena, .{
         .assigned_open = 1,
         .qa_actionable = 3,
         .qa_by_status = &.{.{ .status = "Ready for QA", .n = 3 }},
         .qa_tab_name = "QA Actionable Now",
+        .qa_items = &.{.{ .text = "ENG-9  Voucher stacking", .sub = "Ready for QA" }},
     }, .{ .status = .{ .tokens = 0.24, .capacity = 60, .rate = 0.33, .baseline_rate = 0.33, .throttles = 3, .cooldown_remaining_secs = 0, .last_429_age_secs = 4 * 3600 }, .draws = .{ .top = "bb.py", .top_n = 30, .total = 71 } });
     got = try tmp.dir.readFileAlloc(testing.io, "command", arena, .unlimited);
     try testing.expect(std.mem.indexOf(u8, got, "\"id\":\"jira_work.qa_actionable\"") != null);
@@ -1496,6 +1502,8 @@ test "both chips carry their count and their breakdown; the QA one is absent whe
     // And WHO drained it — a chip that is stale because a script is
     // holding the budget says so rather than blaming itself.
     try testing.expect(std.mem.indexOf(u8, got, "spent by bb.py 30 of 71 draws in 10m") != null);
+    // The QA chip lists its own, not the assigned chip's.
+    try testing.expect(std.mem.indexOf(u8, got, "\"text\":\"ENG-9  Voucher stacking\",\"sub\":\"Ready for QA\"") != null);
 }
 
 test "every segment this pane publishes obeys the family's figure rule" {

@@ -1741,6 +1741,15 @@ test "the three chips carry their counts, what they mean and WHICH; the review c
     try sdk.pane.expect.statuslineFigure(reviewText(&fbuf, 3));
     try sdk.pane.expect.statuslineFigure(awaitingText(&fbuf, 2));
 
+    // The sentence names the first few; `items` carries every one the
+    // values run had, each with where it lives and what a click on the
+    // row runs. Three chips, three lists — the awaiting chip lists the
+    // ones waiting on YOU, not the ones you wrote.
+    try t.expect(std.mem.indexOf(u8, got, "\"items\":[{\"text\":\"Fix the login redirect\",\"sub\":\"acme/api \u{b7} unapproved\",\"command\":\"bitbucket_prs.open_mine\"") != null);
+    try t.expect(std.mem.indexOf(u8, got, "{\"text\":\"Redesign the empty state\",\"sub\":\"acme/web \u{b7} approved\",\"command\":\"bitbucket_prs.open_mine\"") != null);
+    try t.expect(std.mem.indexOf(u8, got, "{\"text\":\"Fix the login redirect\",\"sub\":\"acme/api \u{b7} 2 waiting\",\"command\":\"bitbucket_prs.open_mine\"") != null);
+    try t.expect(std.mem.indexOf(u8, got, "\"items\":[{\"text\":\"Bump the client timeout to 30s\",\"sub\":\"acme/api\",\"command\":\"bitbucket_prs.open_awaiting\"") != null);
+
     // Not counted: the second chip is not published at all. A zero
     // there would read as "nothing outstanding".
     try tmp.dir.writeFile(t.io, .{ .sub_path = "command", .data = "" });
