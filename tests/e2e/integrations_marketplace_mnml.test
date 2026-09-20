@@ -1,0 +1,54 @@
+# env: MNML_MARKETPLACE_CATALOGUE=cat/marketplace.zon
+# The `mnml` source — the Marketplace tab's DEFAULT, and the whole
+# distribution story in one file. A catalogue is one row per BINARY
+# mnml ships; installing one links `<data root>/bin/<name>` at the
+# binary and runs `<binary> --install`, so the manifest that lands
+# names the bare binary and never a repo path. Uninstall takes both
+# halves back.
+#
+# $MNML_SAMPLE_INTEGRATION is the prebuilt sample, so nothing is built
+# and nothing is fetched here. MNML_MARKETPLACE_CATALOGUE points the
+# source at this file instead of the shipped `data/marketplace.zon`
+# (the corpus cannot write config).
+write cat/marketplace.zon ".{ .entries = .{ .{ .id = \"sample\", .label = \"Sample\", .description = \"The mnml-sdk sample: a live counter\", .category = \"sample\", .version = \"0.1.0\", .binary = \"$MNML_SAMPLE_INTEGRATION\" } } }"
+command integrations.show_marketplace
+expect screen contains "Mkt (1)"
+drag 30 5 70 5
+# The row: official, because it is mnml's own catalogue, and its state.
+expect screen contains "[app] Sample"
+expect screen contains "Offi"
+expect screen contains "not installed"
+expect screen contains "The mnml-sdk sample: a live counter"
+# `i` installs the focused row.
+key i
+wait 2000
+expect screen contains "installed sample"
+# The link is down, under the data root, named for the binary.
+shell test -e "$MNML_DATA_ROOT/bin/mnml-sample"
+# …and the manifest `--install` wrote names the BARE binary: the link
+# is the indirection, so nothing here points into a checkout.
+shell grep -q '.binary = "mnml-sample"' "$MNML_DATA_ROOT/integrations/sample.zon"
+# The Marketplace row now says installed.
+expect screen contains "installed"
+expect screen lacks "not installed"
+# The Installed tab has it, and its command runs.
+command integrations.show_installed
+expect screen contains "Sample  0.1.0"
+expect screen contains "sample.open"
+# The activity bar shows it once pinned.
+command integrations.show_marketplace
+command integrations.show_installed
+key down
+key down
+key down
+key down
+command integrations.pin_to_activity_bar
+expect screen contains "sample: added to the activity bar"
+# Uninstall takes the manifest AND the link — the confirm says so.
+key x
+expect screen contains "Remove Sample?"
+expect screen contains "bin/mnml-sample"
+key r
+expect screen contains "the manifest and the link"
+shell test ! -e "$MNML_DATA_ROOT/bin/mnml-sample"
+shell test ! -e "$MNML_DATA_ROOT/integrations/sample.zon"
