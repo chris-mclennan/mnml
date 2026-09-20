@@ -92,13 +92,21 @@ pub fn check(s: []const u8) Error!void {
 
 const testing = std.testing;
 
+/// The two official panes' chip glyphs, for the tests below. Named
+/// with their ascii twins beside them so `zig build glyph-audit` reads
+/// the fallback off the site rather than calling it a glyph with none.
+const forge_glyph = "\u{f00a8}"; // md-bitbucket
+const forge_ascii = "BB";
+const tracker_glyph = "\u{f0303}"; // md-jira
+const tracker_ascii = "J";
+
 test "a segment says one figure, and a subset only when it has one" {
     var buf: [64]u8 = undefined;
     // The forge pane: open pull requests of mine, of which N are not
     // yet approved.
-    try testing.expectEqualStrings("\u{f00a8} 12(11)", text(&buf, .{ .glyph = "\u{f00a8}", .n = 12, .subset = 11 }));
+    try testing.expectEqualStrings(forge_glyph ++ " 12(11)", text(&buf, .{ .glyph = forge_glyph, .n = 12, .subset = 11 }));
     // The tracker pane: one figure, and no invented second one.
-    try testing.expectEqualStrings("\u{f0303} 43", text(&buf, .{ .glyph = "\u{f0303}", .n = 43 }));
+    try testing.expectEqualStrings(tracker_glyph ++ " 43", text(&buf, .{ .glyph = tracker_glyph, .n = 43 }));
     // Saying nothing about a subset is the default, so a pane that has
     // none cannot accidentally grow one.
     try testing.expectEqual(@as(?usize, null), (Figure{ .glyph = "x", .n = 1 }).subset);
@@ -106,28 +114,32 @@ test "a segment says one figure, and a subset only when it has one" {
     try testing.expectEqualStrings("x 0(0)", text(&buf, .{ .glyph = "x", .n = 0, .subset = 0 }));
     // A buffer that cannot hold the number keeps the glyph rather than
     // printing half a figure.
+    // The ascii forms are the same shape, which is the point of the
+    // fallback: a terminal with no Nerd Font still reads the figure.
+    try testing.expectEqualStrings(forge_ascii ++ " 12(11)", text(&buf, .{ .glyph = forge_ascii, .n = 12, .subset = 11 }));
+    try testing.expectEqualStrings(tracker_ascii ++ " 43", text(&buf, .{ .glyph = tracker_ascii, .n = 43 }));
     var tiny: [2]u8 = undefined;
-    try testing.expectEqualStrings("\u{f00a8}", text(&tiny, .{ .glyph = "\u{f00a8}", .n = 12, .subset = 11 }));
+    try testing.expectEqualStrings(forge_glyph, text(&tiny, .{ .glyph = forge_glyph, .n = 12, .subset = 11 }));
 }
 
 test "the rule refuses a second figure, a tail, and a subset that is not one" {
-    try check("\u{f00a8} 12(11)");
-    try check("\u{f0303} 43");
+    try check(forge_glyph ++ " 12(11)");
+    try check(tracker_glyph ++ " 43");
     try check("x 0");
     // Trailing air is air.
     try check("x 7  ");
 
     // Nothing to read.
-    try testing.expectError(Error.FigureMissing, check("\u{f00a8}"));
+    try testing.expectError(Error.FigureMissing, check(forge_glyph));
     try testing.expectError(Error.FigureMissing, check(""));
-    try testing.expectError(Error.FigureMissing, check("\u{f00a8} !"));
+    try testing.expectError(Error.FigureMissing, check(forge_glyph ++ " !"));
     // Two bare figures: two segments, not one — a reader cannot learn
     // which of `12 3` is which.
-    try testing.expectError(Error.FigureTwo, check("\u{f00a8} 12 3"));
-    try testing.expectError(Error.FigureTwo, check("\u{f00a8} 12(11) 3"));
+    try testing.expectError(Error.FigureTwo, check(forge_glyph ++ " 12 3"));
+    try testing.expectError(Error.FigureTwo, check(forge_glyph ++ " 12(11) 3"));
     // Words after the figure.
-    try testing.expectError(Error.FigureTail, check("\u{f00a8} 12 open"));
-    try testing.expectError(Error.FigureTail, check("\u{f00a8} 12/34"));
+    try testing.expectError(Error.FigureTail, check(forge_glyph ++ " 12 open"));
+    try testing.expectError(Error.FigureTail, check(forge_glyph ++ " 12/34"));
     // Brackets with nothing in them, or that never close.
     try testing.expectError(Error.FigureSubsetEmpty, check("x 12()"));
     try testing.expectError(Error.FigureSubsetEmpty, check("x 12(11"));
@@ -139,9 +151,9 @@ test "the rule refuses a second figure, a tail, and a subset that is not one" {
 test "what the helper writes is what the rule accepts" {
     var buf: [64]u8 = undefined;
     for ([_]Figure{
-        .{ .glyph = "\u{f00a8}", .n = 12, .subset = 11 },
-        .{ .glyph = "\u{f0303}", .n = 43 },
-        .{ .glyph = "\u{f0303}", .n = 0 },
+        .{ .glyph = forge_glyph, .n = 12, .subset = 11 },
+        .{ .glyph = tracker_glyph, .n = 43 },
+        .{ .glyph = tracker_glyph, .n = 0 },
         .{ .glyph = "A", .n = 999_999 },
     }) |f| try check(text(&buf, f));
 }

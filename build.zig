@@ -365,10 +365,16 @@ pub fn build(b: *std.Build) void {
     glyph_audit.addArg("audit");
     glyph_audit.addFileArg(glyph_table);
     glyph_audit.addDirectoryArg(b.path("src"));
+    // The pane toolkit too: a glyph with no `--ascii` twin is exactly
+    // as broken in the chrome every integration paints through as it is
+    // in mnml's own. (`integrations/` is not walked yet — the two
+    // official panes carry fourteen statusline-chip glyphs with no
+    // twin, which is its own pass.)
+    glyph_audit.addDirectoryArg(b.path("sdk/mnml-sdk/src"));
     glyph_audit.addArg("--strict");
     glyph_audit.has_side_effects = true;
     glyph_audit.stdio = .inherit;
-    const glyph_step = b.step("glyph-audit", "Every Nerd Font glyph literal in src/ against data/nerd-glyphnames.json, with its --ascii twin");
+    const glyph_step = b.step("glyph-audit", "Every Nerd Font glyph literal in src/ and the SDK against data/nerd-glyphnames.json, with its --ascii twin");
     glyph_step.dependOn(&glyph_audit.step);
     const glyph_tests = b.addTest(.{ .root_module = glyph_mod, .filters = test_filters, .test_runner = test_runner });
     unit_step.dependOn(&b.addRunArtifact(glyph_tests).step);

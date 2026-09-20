@@ -50,15 +50,25 @@ pub fn main(init: std.process.Init) !u8 {
         return 0;
     }
     if (args.len >= 4 and std.mem.eql(u8, args[1], "audit")) {
-        const strict = args.len >= 5 and std.mem.eql(u8, args[4], "--strict");
+        var strict = false;
         const tsv = try Io.Dir.cwd().readFileAlloc(init.io, args[2], arena, .unlimited);
         const table = try loadTable(arena, tsv);
-        const sites = try walk(arena, init.io, args[3]);
-        const summary = try report(w, sites, table);
+        // Every tree named, not just one: the pane toolkit and the
+        // official integrations carry glyphs of their own, and a glyph
+        // with no ascii twin is exactly as broken there as in `src/`.
+        var sites: std.ArrayList(Site) = .empty;
+        for (args[3..]) |a| {
+            if (std.mem.eql(u8, a, "--strict")) {
+                strict = true;
+                continue;
+            }
+            try sites.appendSlice(arena, try walk(arena, init.io, a));
+        }
+        const summary = try report(w, sites.items, table);
         try w.print("glyph-audit: {d} sites, {d} tests, {d} without a fallback, {d} unknown to the catalog\n", .{ summary.sites, summary.tests, summary.no_fallback, summary.unknown });
         return if (strict and (summary.no_fallback > 0 or summary.unknown > 0)) 1 else 0;
     }
-    try w.writeAll("usage: glyph-audit bake <glyphnames.json> <table.tsv> | audit <table.tsv> <src dir> [--strict]\n");
+    try w.writeAll("usage: glyph-audit bake <glyphnames.json> <table.tsv> | audit <table.tsv> <src dir>… [--strict]\n");
     return 2;
 }
 
