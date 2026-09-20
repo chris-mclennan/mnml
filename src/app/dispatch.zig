@@ -2151,6 +2151,13 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             if (app.overlay != .none) closeOverlay(app);
             try beginDividerDrag(app, id);
         },
+        // // changed (statusline-hover): a row of a figure's hover
+        // list — one of the things the figure counts. A press runs
+        // what the row names.
+        .tip_row => |r| {
+            if (m.kind != .press or m.button != .left) return;
+            try runTipRow(app, r.seg, r.idx);
+        },
         .statusline_seg => |seg| {
             if (m.kind != .press) return;
             if (app.overlay != .none) closeOverlay(app);
@@ -2505,6 +2512,59 @@ fn chipClick(app: *App, product: app_mod.Config.AiProduct) Allocator.Error!void 
         error.OutOfMemory => return error.OutOfMemory,
         else => {},
     };
+}
+
+/// A press on one row of a figure's hover list. The row is re-derived
+/// from the segment rather than remembered: the tip's strings live on
+/// the frame that painted them, and the segment is the durable thing.
+fn runTipRow(app: *App, seg: u32, idx: u16) Allocator.Error!void {
+    const arena = app.frame.allocator();
+    const tip = (try discovery.describe(app, arena, .{ .statusline_seg = seg })) orelse return;
+    if (idx >= tip.rows.len) return;
+    const row = tip.rows[idx];
+    const id = row.command orelse return;
+    const ref = command.resolve(app, id) orelse {
+        app.toast("no such command: {s}", .{id});
+        return;
+    };
+    // `args` are the row's deep link: a command that mounts a binary
+    // takes them on its argv, so a row says WHICH pull request rather
+    // than only which pane.
+    if (row.args.len > 0 and try mountWithArgs(app, ref, row.args)) return;
+    command.run(app, ref) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {},
+    };
+}
+
+/// True when `ref` mounts a binary and the run was started with
+/// `extra` appended to its argv.
+fn mountWithArgs(app: *App, ref: command.CommandRef, extra: []const []const u8) Allocator.Error!bool {
+    const slot = switch (ref) {
+        .dyn => |sl| sl,
+        .static => return false,
+    };
+    const c = app.dyn_commands.at(slot) orelse return false;
+    if (c.runner != .mount) return false;
+    const r = c.runner.mount;
+    const arena = app.frame.allocator();
+    var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+    for (r.args) |a| try argv.append(arena, a);
+    for (extra) |a| try argv.append(arena, a);
+    integrations.runMount(app, .{
+        .id = switch (c.owner) {
+            .integration => |i| i,
+            else => "",
+        },
+        .binary = r.binary,
+        .args = argv.items,
+        .pty = r.pty,
+        .label = r.label,
+    }) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {},
+    };
+    return true;
 }
 
 fn runCmd(app: *App, id: command.CommandId) Allocator.Error!void {
@@ -4477,6 +4537,7 @@ pub const right_click_of = std.EnumArray(HitTag, RightClick).init(.{
     .link = .here,
     .menu_item = .here,
     .statusline_seg = .here,
+    .tip_row = .{ .none = "left runs the row" },
     .tree_node = .here,
     .tree_root = .here,
     .tree_empty = .here,

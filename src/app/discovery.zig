@@ -39,11 +39,14 @@ const md_preview = @import("md_preview.zig");
 const integrations = @import("integrations.zig");
 const command = @import("../core/command.zig");
 const activity_bar = @import("activity_bar.zig");
+const lsp_app = @import("lsp.zig");
+const lsp_types = @import("../lsp/types.zig");
 const tree_mod = @import("tree.zig");
 const git_toolbar = @import("../ui/git_toolbar.zig");
 const overlay = @import("../ui/overlay.zig");
 
 pub const Tip = tooltip.Tip;
+pub const Row = tooltip.Row;
 
 /// The words for `target`, or null for a target with nothing to say.
 pub fn describe(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!?Tip {
@@ -142,6 +145,10 @@ pub fn describe(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!
             };
         },
         .statusline_seg => |seg| try describeSegment(app, arena, seg),
+        // The pointer moved onto the tip's own list: the tip is the
+        // segment's, unchanged — anything else would make the rows
+        // flicker away as the pointer reached them.
+        .tip_row => |r| try describeSegment(app, arena, r.seg),
         .tree_node => |idx| blk: {
             if (idx >= app.tree.rows.items.len) break :blk null;
             const row = app.tree.rows.items[idx];
@@ -272,6 +279,46 @@ fn describeButton(app: *App, arena: Allocator, id: u32) Allocator.Error!?Tip {
     return @import("menu_bar.zig").describeButton(app, arena, id);
 }
 
+/// A diagnostic's message up to its first newline — a row is a row.
+fn firstLine(msg: []const u8) []const u8 {
+    return msg[0 .. std.mem.indexOfScalar(u8, msg, '\n') orelse msg.len];
+}
+
+/// What a figure's hover lists, capped at `statusline.hover_items`
+/// with the rest counted. `row_seg` is null when nothing is listed, so
+/// a tip with no rows registers no hits at all.
+pub const Listed = struct {
+    rows: []const Row = &.{},
+    more: usize = 0,
+    row_seg: ?u32 = null,
+};
+
+/// `rows`, capped. `total` is how many there really are when the
+/// caller had more than it handed over (an integration sends the first
+/// few of a longer list); 0 means `rows.len` is the whole of it.
+pub fn capped(app: *const App, seg: u32, rows: []const Row, total: usize) Listed {
+    const cap: usize = app.cfg.statusline.hover_items;
+    if (cap == 0 or rows.len == 0) return .{};
+    const shown = @min(rows.len, cap);
+    const whole = @max(total, rows.len);
+    return .{ .rows = rows[0..shown], .more = whole - shown, .row_seg = seg };
+}
+
+/// A host segment's rows, from what it already knows. The `total` is
+/// the real count behind the figure, which is often larger than the
+/// rows the caller could cheaply build.
+fn segmentRows(app: *App, arena: Allocator, items: []const @import("../ipc/effects.zig").Item, seg: u32) Allocator.Error!Listed {
+    if (items.len == 0) return .{};
+    var rows = try arena.alloc(Row, items.len);
+    for (items, 0..) |it, i| rows[i] = .{
+        .text = it.text,
+        .sub = it.sub,
+        .command = if (it.command) |c| c else null,
+        .args = @ptrCast(it.args),
+    };
+    return capped(app, seg, rows, 0);
+}
+
 fn describeSegment(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Tip {
     switch (seg) {
         statusline.seg_mode => return .{
@@ -299,8 +346,31 @@ fn describeSegment(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Tip {
             const polled = app.integration_poll.jobForSegment(segs[slot].id) != null;
             const busy = polled and app.integration_poll.segmentBusy(segs[slot].id);
             const detail: []const u8 = if (busy) "refreshing… · click runs the segment's command · right-click: Refresh now" else if (polled) "click runs the segment's command · right-click: Refresh now" else "click runs the segment's command";
-            if (segs[slot].tooltip) |tip| return .{ .title = try arena.dupe(u8, tip), .detail = detail };
-            if (polled) return .{ .title = "Integration segment", .detail = detail };
+            const listed = try segmentRows(app, arena, segs[slot].items, seg);
+            if (segs[slot].tooltip) |tip| {
+                // The publisher's hover text is one line per newline:
+                // the first is the title, the rest sit under the
+                // detail (the shared bucket's own two lines).
+                var it = std.mem.splitScalar(u8, tip, '\n');
+                const head = try arena.dupe(u8, it.first());
+                var rest: std.ArrayListUnmanaged([]const u8) = .empty;
+                while (it.next()) |l| try rest.append(arena, try arena.dupe(u8, l));
+                return .{
+                    .title = head,
+                    .detail = detail,
+                    .lines = rest.items,
+                    .rows = listed.rows,
+                    .more = listed.more,
+                    .row_seg = listed.row_seg,
+                };
+            }
+            if (polled or listed.rows.len > 0) return .{
+                .title = "Integration segment",
+                .detail = detail,
+                .rows = listed.rows,
+                .more = listed.more,
+                .row_seg = listed.row_seg,
+            };
         }
         return .{ .title = "Integration segment", .detail = "click runs the segment's command" };
     }
@@ -318,10 +388,45 @@ fn describeSegment(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Tip {
                 if (c.removed > 0) try detail.print(arena, " · {d} removed", .{c.removed});
                 if (c.conflicts > 0) try detail.print(arena, " · {d} in conflict", .{c.conflicts});
             }
-            break :blk .{ .title = try std.fmt.allocPrint(arena, "Branch {s}", .{app.git.branchLabel() orelse "?"}), .detail = detail.items };
+            var rows: std.ArrayListUnmanaged(Row) = .empty;
+            if (app.git.status) |st| for (st.entries) |en| try rows.append(arena, .{
+                .text = try arena.dupe(u8, en.path),
+                .sub = try std.fmt.allocPrint(arena, "{c}", .{en.code}),
+                .command = "git.status_pane",
+            });
+            const listed = capped(app, seg, rows.items, 0);
+            break :blk .{
+                .title = try std.fmt.allocPrint(arena, "Branch {s}", .{app.git.branchLabel() orelse "?"}),
+                .detail = detail.items,
+                .rows = listed.rows,
+                .more = listed.more,
+                .row_seg = listed.row_seg,
+            };
         },
         .pr => .{ .title = "Pull request on this branch", .detail = "click opens it in the browser" },
-        .diagnostics => .{ .title = "Diagnostics in this file", .detail = "click: the panel · right-click: next / previous / filter" },
+        .diagnostics => blk: {
+            // What the count counts: the problems themselves, worst
+            // first, each at its line.
+            const e = app.activeEditor() orelse break :blk .{ .title = "Diagnostics in this file", .detail = "click: the panel · right-click: next / previous / filter" };
+            const pth = e.buf.doc.path orelse break :blk .{ .title = "Diagnostics in this file", .detail = "click: the panel · right-click: next / previous / filter" };
+            const diags = lsp_app.diagnosticsFor(app, pth);
+            var rows: std.ArrayListUnmanaged(Row) = .empty;
+            for ([_]lsp_types.Severity{ .err, .warning }) |want| {
+                for (diags) |d| if (d.severity == want) try rows.append(arena, .{
+                    .text = try std.fmt.allocPrint(arena, "{s}", .{firstLine(d.message)}),
+                    .sub = try std.fmt.allocPrint(arena, "{s} {d}", .{ d.severity.label(), d.range.start.line + 1 }),
+                    .command = "lsp.diagnostics",
+                });
+            }
+            const listed = capped(app, seg, rows.items, 0);
+            break :blk .{
+                .title = "Diagnostics in this file",
+                .detail = "click: the panel · right-click: next / previous / filter",
+                .rows = listed.rows,
+                .more = listed.more,
+                .row_seg = listed.row_seg,
+            };
+        },
         .symbol => .{ .title = "Enclosing symbol", .detail = "click: the outline pane" },
         .macro => .{ .title = "Recording a macro", .detail = "click stops it (q)" },
         .find => .{ .title = "Find", .detail = "the query and the match under the cursor · click reopens the find bar" },
@@ -333,8 +438,37 @@ fn describeSegment(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Tip {
         .np_next => .{ .title = "Next track", .detail = "click skips ahead · right-click: the player menu" },
         .np_track => .{ .title = "Now playing", .detail = "the track and its player · click opens the player · right-click: the player menu" },
         .coverage => .{ .title = "Coverage", .detail = "feature (F) and code (C) coverage from the trends files, with the move since last week / last commit · click toasts both · right-click picks the mode" },
-        .transfer => .{ .title = "File transfers", .detail = "progress of the running copies · right-click: cancel all" },
-        .lsp => .{ .title = "Language servers running", .detail = "click: which servers, on which roots · right-click: the LSP menu" },
+        .transfer => blk: {
+            var rows: std.ArrayListUnmanaged(Row) = .empty;
+            for (app.transfers.jobs.items) |job| try rows.append(arena, .{
+                .text = try std.fmt.allocPrint(arena, "{s} → {s}", .{ @tagName(job.kind), std.fs.path.basename(job.dest) }),
+                .sub = try std.fmt.allocPrint(arena, "{d}%", .{job.percent()}),
+            });
+            const listed = capped(app, seg, rows.items, 0);
+            break :blk .{
+                .title = "File transfers",
+                .detail = "progress of the running copies · right-click: cancel all",
+                .rows = listed.rows,
+                .more = listed.more,
+                .row_seg = listed.row_seg,
+            };
+        },
+        .lsp => blk: {
+            var rows: std.ArrayListUnmanaged(Row) = .empty;
+            for (app.lsp.servers.items) |srv| if (!srv.transport.isDead()) try rows.append(arena, .{
+                .text = try arena.dupe(u8, srv.name),
+                .sub = try std.fmt.allocPrint(arena, "{s}", .{std.fs.path.basename(srv.root)}),
+                .command = "lsp.status",
+            });
+            const listed = capped(app, seg, rows.items, 0);
+            break :blk .{
+                .title = "Language servers running",
+                .detail = "click: which servers, on which roots · right-click: the LSP menu",
+                .rows = listed.rows,
+                .more = listed.more,
+                .row_seg = listed.row_seg,
+            };
+        },
         .wrap => .{ .title = "WRAP — long lines wrap", .detail = "click turns wrapping off" },
         .autosave => .{ .title = try std.fmt.allocPrint(arena, "Autosave every {d}s", .{app.cfg.editor.autosave_secs}), .detail = "`[editor] autosave_secs` sets it" },
         .highlight => blk: {
@@ -397,7 +531,14 @@ pub fn drawTooltip(app: *App, ui: Ui, screen: Rect) Allocator.Error!void {
     if (!app.cfg.ui.hover_tooltip or app.overlay == .info or app.overlay == .discovery) return;
     const h = app.hover orelse return;
     const tip = (try hoverTip(app, ui.arena)) orelse return;
-    tooltip.draw(ui, screen, h.x, h.y, tip);
+    // A pointer that has walked onto the tip's own list keeps the box
+    // where it was: anchoring on the pointer again would slide the row
+    // out from under it, one cell per frame.
+    const anchor: struct { x: u16, y: u16 } = if (app.hits.at(h.x, h.y)) |under|
+        (if (under == .tip_row) .{ .x = under.tip_row.x, .y = under.tip_row.y } else .{ .x = h.x, .y = h.y })
+    else
+        .{ .x = h.x, .y = h.y };
+    tooltip.draw(ui, screen, anchor.x, anchor.y, tip);
 }
 
 // ─── the F1 overlay ─────────────────────────────────────────────────────

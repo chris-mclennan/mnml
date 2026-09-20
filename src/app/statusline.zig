@@ -844,6 +844,29 @@ const Bench = struct {
     fn key(b: *Bench, k: Key) !void {
         try b.app.handle(.{ .key = k });
     }
+
+    /// Put the pointer on chip `id` as a real motion report (which is
+    /// what wakes the hover surfaces), then paint. Returns the chip's
+    /// first column.
+    fn rowHover(b: *Bench, y: u16, id: u32) !?u16 {
+        _ = try b.row(y);
+        const x = b.colOf(y, id) orelse return null;
+        try b.app.handle(.{ .mouse = .{ .x = x, .y = y, .kind = .motion, .button = .left } });
+        _ = try b.row(y);
+        return x;
+    }
+
+    /// The first cell whose hit is row `idx` of a tip's list.
+    fn tipRowAt(b: *Bench, idx: u16) ?struct { x: u16, y: u16, hit: @import("../ui/hit.zig").HitTarget } {
+        var y: u16 = 0;
+        while (y < b.app.screen.height) : (y += 1) {
+            var x: u16 = 0;
+            while (x < b.app.screen.width) : (x += 1) if (b.app.hits.at(x, y)) |h| if (h == .tip_row and h.tip_row.idx == idx) {
+                return .{ .x = x, .y = y, .hit = h };
+            };
+        }
+        return null;
+    }
 };
 
 fn specRow(text: []const u8, y: usize) []const u8 {
@@ -1523,4 +1546,79 @@ test "the highlight chip stays, reading `on`, while the file is over the limit" 
     try command.run(&b.app, .{ .static = .@"editor.highlight_this_file" });
     // Over the limit either way: the chip reports the state, not the limit.
     try testing.expect(std.mem.indexOf(u8, try b.row(38), "highlight on · 4 KB") != null);
+}
+
+test "a figure's hover lists what it counts, the pointer can walk onto the list, and a row runs its command" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var b = try Bench.init(120, 40);
+    defer b.deinit();
+    b.app.cfg.ui.hover_tooltip = true;
+    try b.app.ipc_fx.setSegment(testing.allocator, .{
+        .id = "bitbucket_prs.prs_mine",
+        .text = "PR 3(2)",
+        .side = .left,
+        .priority = 5,
+        .max_width = 12,
+        .tooltip = "Bitbucket \u{b7} 3 open pull requests you authored\nbucket: 40 of 60",
+        .items = &.{
+            .{ .text = "Fix the login redirect", .sub = "acme/api \u{b7} unapproved", .command = "view.toggle_wrap" },
+            .{ .text = "Redesign the empty state", .sub = "acme/web \u{b7} approved", .command = "view.toggle_wrap" },
+        },
+    });
+    const tip = (try discovery.describe(&b.app, arena, .{ .statusline_seg = sl.seg_dyn_base })).?;
+    // The publisher's first line is the title; the bucket line it put
+    // after a newline is a row of its own, not a run-on.
+    try testing.expectEqualStrings("Bitbucket \u{b7} 3 open pull requests you authored", tip.title);
+    try testing.expectEqual(@as(usize, 1), tip.lines.len);
+    try testing.expectEqualStrings("bucket: 40 of 60", tip.lines[0]);
+    try testing.expectEqual(@as(usize, 2), tip.rows.len);
+    try testing.expectEqualStrings("Fix the login redirect", tip.rows[0].text);
+    try testing.expectEqualStrings("acme/api \u{b7} unapproved", tip.rows[0].sub);
+    try testing.expectEqual(@as(?u32, sl.seg_dyn_base), tip.row_seg);
+
+    // `statusline.hover_items` is the cap, and what it cuts is counted.
+    b.app.cfg.statusline.hover_items = 1;
+    const one = (try discovery.describe(&b.app, arena, .{ .statusline_seg = sl.seg_dyn_base })).?;
+    try testing.expectEqual(@as(usize, 1), one.rows.len);
+    try testing.expectEqual(@as(usize, 1), one.more);
+    // 0 leaves the chip the one-line hover every integration had.
+    b.app.cfg.statusline.hover_items = 0;
+    const none = (try discovery.describe(&b.app, arena, .{ .statusline_seg = sl.seg_dyn_base })).?;
+    try testing.expectEqual(@as(usize, 0), none.rows.len);
+    try testing.expect(none.row_seg == null);
+    b.app.cfg.statusline.hover_items = 8;
+
+    // The box paints over the row, and every row of it is a hit that
+    // remembers where the box was anchored.
+    const chip_x = (try b.rowHover(38, sl.seg_dyn_base)).?;
+    try testing.expect(std.mem.indexOf(u8, try screen_mod.toTestText(arena, &b.app.screen), "Fix the login redirect") != null);
+    const second = b.tipRowAt(1) orelse return error.NoTipRow;
+    try testing.expectEqual(chip_x, second.hit.tip_row.x);
+    try testing.expectEqual(@as(u16, 38), second.hit.tip_row.y);
+
+    // The pointer moves onto that row: the tip is still the segment's,
+    // so the list does not flicker away as the pointer reaches it.
+    const same = (try discovery.describe(&b.app, arena, second.hit)).?;
+    try testing.expectEqualStrings(tip.title, same.title);
+
+    // And a press on the row runs what the row names.
+    const was = b.app.cfg.ui.wrap;
+    try b.app.handle(.{ .mouse = .{ .x = second.x, .y = second.y, .kind = .press, .button = .left } });
+    try testing.expectEqualStrings(if (was) "wrap off" else "wrap on", b.app.lastToast().?);
+    // A row that names no command is a label: nothing runs, no toast.
+    try b.app.ipc_fx.setSegment(testing.allocator, .{
+        .id = "bitbucket_prs.prs_mine",
+        .text = "PR 3(2)",
+        .side = .left,
+        .priority = 5,
+        .max_width = 12,
+        .items = &.{.{ .text = "Fix the login redirect" }},
+    });
+    _ = (try b.rowHover(38, sl.seg_dyn_base)).?;
+    const label = b.tipRowAt(0) orelse return error.NoTipRow;
+    const toasts = b.app.toasts.items.len;
+    try b.app.handle(.{ .mouse = .{ .x = label.x, .y = label.y, .kind = .press, .button = .left } });
+    try testing.expectEqual(toasts, b.app.toasts.items.len);
 }
