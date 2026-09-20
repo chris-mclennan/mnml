@@ -21,16 +21,31 @@
 # writes, `mnml-zig-running-$USER.workspace`), read its
 # on-screen bounds, and `screencapture -R` just that region.
 #
-# Usage:  scripts/shot.sh [OUT.png]
+# Usage:  scripts/shot.sh [--drive[=DATA_ROOT]] [OUT.png]
 #   OUT.png  where to write (default: $TMPDIR/mnml-zig-shot.png). The absolute
 #            path is printed to stdout on success — the only thing on stdout,
 #            so callers can `OUT=$(scripts/shot.sh)`.
+#   --drive  photograph the mnml-drive HARNESS window instead of the user's own
+#            (docs/DRIVE.md). The window is found through the harness's
+#            `drive.json` — by window id, so it is that window and no other,
+#            and never one the developer is working in. DATA_ROOT defaults to
+#            $MNML_DRIVE_DATA_ROOT.
 #
 # Permissions (one-time macOS grants, prompted on first run):
 #   - Screen Recording  (for screencapture)
 #   - Accessibility     (for System Events window geometry)
 #
 set -o pipefail
+
+DRIVE=""
+DRIVE_ROOT="${MNML_DRIVE_DATA_ROOT:-}"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --drive)   DRIVE=1; shift ;;
+    --drive=*) DRIVE=1; DRIVE_ROOT="${1#--drive=}"; shift ;;
+    *)         break ;;
+  esac
+done
 
 OUT="${1:-${TMPDIR:-/tmp}/mnml-zig-shot.png}"
 # Absolutize OUT so the printed path is unambiguous regardless of cwd.
@@ -45,6 +60,37 @@ MARKER="${TMPDIR:-/tmp}/mnml-zig-running-${USER:-x}.workspace"
 WANT=""
 if [ -f "$MARKER" ]; then
   WANT=$(basename "$(cat "$MARKER")")
+fi
+
+# --drive: the harness window, by id, out of drive.json. `screencapture -l`
+# photographs ONE window rather than a region of the screen, so nothing of the
+# developer's can be in the frame even when their window is on top of it.
+if [ -n "$DRIVE" ]; then
+  if [ -z "$DRIVE_ROOT" ]; then
+    echo "[shot] --drive needs a data root (--drive=DIR or \$MNML_DRIVE_DATA_ROOT)" >&2
+    exit 1
+  fi
+  REC="$DRIVE_ROOT/drive.json"
+  if [ ! -f "$REC" ]; then
+    echo "[shot] no harness at $REC — run \`mnml-drive launch\` first" >&2
+    exit 1
+  fi
+  WID=$(sed -n 's/.*"windowId":\([0-9][0-9]*\).*/\1/p' "$REC")
+  PID=$(sed -n 's/.*"pid":\([0-9][0-9]*\).*/\1/p' "$REC")
+  if [ -z "$WID" ] || [ -z "$PID" ]; then
+    echo "[shot] $REC is unreadable; delete it and launch again" >&2
+    exit 1
+  fi
+  if ! kill -0 "$PID" 2>/dev/null; then
+    echo "[shot] the harness process $PID is gone (stale drive.json)" >&2
+    exit 1
+  fi
+  if ! screencapture -x -o -l "$WID" "$OUT"; then
+    echo "[shot] screencapture refused window $WID (Screen Recording granted?)" >&2
+    exit 1
+  fi
+  echo "$OUT"
+  exit 0
 fi
 
 if ! pgrep -qx ghostty 2>/dev/null && ! pgrep -q -f Ghostty.app 2>/dev/null; then

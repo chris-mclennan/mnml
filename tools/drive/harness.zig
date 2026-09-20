@@ -13,11 +13,46 @@ const Allocator = std.mem.Allocator;
 /// to read it.
 pub const window_title = "mnml-drive harness";
 
-/// The corpus runs at 120x40; a harness narrower than that clips the
-/// very chrome it exists to photograph, so nothing smaller is allowed
-/// even when a caller asks.
-pub const min_cols: u16 = 120;
-pub const min_rows: u16 = 40;
+/// The floor a `--size` name may reach. 80x24 is the smallest terminal
+/// anyone runs, and the corpus's own bottom rung; below it the picker
+/// used to panic outright.
+pub const min_cols: u16 = 80;
+pub const min_rows: u16 = 24;
+
+/// The named sizes. `full` has no number here: it is measured on the
+/// machine (the user's own largest ghostty window, or the display).
+pub const Cells = struct { cols: u16, rows: u16 };
+
+pub const Named = enum {
+    small,
+    corpus,
+    full,
+
+    pub fn cells(n: Named) ?Cells {
+        return switch (n) {
+            // The floor. The dock has no labels, the menu bar is `»`.
+            .small => .{ .cols = 80, .rows = 24 },
+            // Where every `.test` content assertion was written.
+            .corpus => .{ .cols = 120, .rows = 40 },
+            // Measured, not declared.
+            .full => null,
+        };
+    }
+};
+
+/// How many cells fit in a window of `w` x `h` POINTS at the measured
+/// cell size. The measurement comes from a real window the harness
+/// already opened, so it is the user's own font at the user's own size
+/// rather than a guess from a font table.
+pub fn cellsFor(w: f64, h: f64, cell_w: f64, cell_h: f64) Cells {
+    if (cell_w <= 0 or cell_h <= 0) return .{ .cols = min_cols, .rows = min_rows };
+    const c: f64 = @floor(w / cell_w);
+    const r: f64 = @floor(h / cell_h);
+    return .{
+        .cols = @intFromFloat(@min(@max(c, @as(f64, min_cols)), 400)),
+        .rows = @intFromFloat(@min(@max(r, @as(f64, min_rows)), 200)),
+    };
+}
 
 pub const ConfigOptions = struct {
     cols: u16,
@@ -145,6 +180,63 @@ fn renderInto(w: *Io.Writer, base: []const u8, opts: ConfigOptions) Io.Writer.Er
 ///                               does, and the first harness window ever
 ///                               shown to a user was that wizard, clipped.
 pub const mnml_config = ".{ .ipc = .{ .write_screen = true }, .ui = .{ .first_launch_complete = true } }\n";
+
+/// The keys the harness copies out of the developer's own
+/// `config.zon`, and nothing else.
+///
+/// A hunter looking at the harness should be looking at the LAYOUT the
+/// developer looks at — a left column at their width, tabs with their
+/// indicator — or half of what they report is about a layout nobody
+/// uses. Two keys, both pure appearance. Nothing that names a token, a
+/// path, an integration or a host goes anywhere near the harness: the
+/// harness runs scripts, and a script that could read a credential out
+/// of the config it was launched under is a credential in a screenshot.
+pub const copied_keys = [_][]const u8{ "tree_width", "tab_indicator" };
+
+/// `mnml_config` with the copied keys folded into its `.ui` block.
+/// `user` is the text of the developer's `config.zon`, or "" when there
+/// is none.
+pub fn mnmlConfigFrom(gpa: Allocator, user: []const u8) Allocator.Error![]u8 {
+    var out: Io.Writer.Allocating = .init(gpa);
+    errdefer out.deinit();
+    const w = &out.writer;
+    writeMnmlConfig(w, user) catch return error.OutOfMemory;
+    return out.toOwnedSlice();
+}
+
+fn writeMnmlConfig(w: *Io.Writer, user: []const u8) Io.Writer.Error!void {
+    try w.writeAll(".{ .ipc = .{ .write_screen = true }, .ui = .{ .first_launch_complete = true");
+    for (copied_keys) |key| {
+        if (uiValue(user, key)) |v| try w.print(", .{s} = {s}", .{ key, v });
+    }
+    try w.writeAll(" } }\n");
+}
+
+/// The value of `.<key> = …` in a `config.zon`, as written. A hand-rolled
+/// scan rather than a ZON parse because this tool must not link the
+/// config loader (and through it the app); the keys it looks for are a
+/// number and an enum literal, both of which end at the comma.
+fn uiValue(text: []const u8, key: []const u8) ?[]const u8 {
+    var buf: [64]u8 = undefined;
+    const needle = std.fmt.bufPrint(&buf, ".{s} = ", .{key}) catch return null;
+    const at = std.mem.indexOf(u8, text, needle) orelse return null;
+    // Only a key at the start of its line; `.foo_tree_width = 1` is not
+    // `.tree_width`.
+    if (at > 0) {
+        const before = text[at - 1];
+        if (before != '\n' and before != ' ' and before != '\t' and before != '{') return null;
+    }
+    const rest = text[at + needle.len ..];
+    var n: usize = 0;
+    while (n < rest.len and rest[n] != ',' and rest[n] != '\n' and rest[n] != '}') n += 1;
+    const v = std.mem.trim(u8, rest[0..n], " \t\r");
+    if (v.len == 0 or v.len > 40) return null;
+    // Numbers and enum literals only — never a string, a path or a list.
+    for (v) |c| {
+        if (!std.ascii.isAlphanumeric(c) and c != '_' and c != '.') return null;
+    }
+    return v;
+}
 
 // ─── drive.json ─────────────────────────────────────────────────────────
 
@@ -414,4 +506,84 @@ test "the harness root's mnml config turns the dumps on and the first-launch wiz
     // struct literal, newline-terminated.
     try t.expect(std.mem.startsWith(u8, mnml_config, ".{"));
     try t.expect(std.mem.endsWith(u8, mnml_config, "}\n"));
+}
+
+test "cellsFor turns measured points into a cell count, floored and clamped" {
+    // 960 points of window at 8-point cells is 120 columns exactly; the
+    // remainder is dropped rather than rounded, because a half column is
+    // a column ghostty will not draw.
+    const a = cellsFor(960, 680, 8, 17);
+    try t.expectEqual(@as(u16, 120), a.cols);
+    try t.expectEqual(@as(u16, 40), a.rows);
+    const b = cellsFor(967, 690, 8, 17);
+    try t.expectEqual(@as(u16, 120), b.cols);
+    try t.expectEqual(@as(u16, 40), b.rows);
+    // A tiny window still gets the floor: the harness would rather show
+    // a window bigger than asked than one the picker panics in.
+    const tiny = cellsFor(100, 100, 8, 17);
+    try t.expectEqual(min_cols, tiny.cols);
+    try t.expectEqual(min_rows, tiny.rows);
+    // And a measurement that never arrived is the floor too, never a
+    // divide by zero.
+    const nothing = cellsFor(960, 680, 0, 0);
+    try t.expectEqual(min_cols, nothing.cols);
+    try t.expectEqual(min_rows, nothing.rows);
+}
+
+test "the named sizes are the two the corpus already sweeps, and `full` is measured" {
+    try t.expectEqual(@as(u16, 80), Named.small.cells().?.cols);
+    try t.expectEqual(@as(u16, 24), Named.small.cells().?.rows);
+    try t.expectEqual(@as(u16, 120), Named.corpus.cells().?.cols);
+    try t.expectEqual(@as(u16, 40), Named.corpus.cells().?.rows);
+    // `full` deliberately has no number: on one machine it is the user's
+    // own window, on another the display, and a constant would be wrong
+    // on both.
+    try t.expect(Named.full.cells() == null);
+}
+
+test "the harness copies the developer's layout keys and nothing else" {
+    // A config with the two keys the harness wants, next to several it
+    // must not touch.
+    const user =
+        \\.{
+        \\    .ui = .{
+        \\        .tree_width = 46,
+        \\        .tab_indicator = .quarter_track,
+        \\    },
+        \\    .ai = .{ .api_key = "sk-not-a-real-key" },
+        \\    .integrations = .{ .dir = "/home/me/secrets" },
+        \\}
+    ;
+    const got = try mnmlConfigFrom(t.allocator, user);
+    defer t.allocator.free(got);
+    try t.expect(std.mem.indexOf(u8, got, ".tree_width = 46") != null);
+    try t.expect(std.mem.indexOf(u8, got, ".tab_indicator = .quarter_track") != null);
+    // The harness's own two keys survive the merge.
+    try t.expect(std.mem.indexOf(u8, got, ".write_screen = true") != null);
+    try t.expect(std.mem.indexOf(u8, got, ".first_launch_complete = true") != null);
+    // Nothing else crosses. A script runs under this config, and a
+    // credential in a config a script can read is a credential in a
+    // screenshot.
+    try t.expect(std.mem.indexOf(u8, got, "api_key") == null);
+    try t.expect(std.mem.indexOf(u8, got, "sk-") == null);
+    try t.expect(std.mem.indexOf(u8, got, "secrets") == null);
+    try t.expect(std.mem.indexOf(u8, got, "integrations") == null);
+}
+
+test "a developer with no config, or with only one of the keys, still gets a valid one" {
+    const none = try mnmlConfigFrom(t.allocator, "");
+    defer t.allocator.free(none);
+    try t.expectEqualStrings(mnml_config, none);
+
+    const partial = try mnmlConfigFrom(t.allocator, ".{ .ui = .{ .tree_width = 52 } }");
+    defer t.allocator.free(partial);
+    try t.expect(std.mem.indexOf(u8, partial, ".tree_width = 52") != null);
+    try t.expect(std.mem.indexOf(u8, partial, "tab_indicator") == null);
+    try t.expect(std.mem.endsWith(u8, partial, "} }\n"));
+
+    // A value that is not a bare number or enum literal is refused
+    // rather than pasted into a config mnml then fails to parse.
+    const stringy = try mnmlConfigFrom(t.allocator, ".{ .ui = .{ .tree_width = \"wide\" } }");
+    defer t.allocator.free(stringy);
+    try t.expect(std.mem.indexOf(u8, stringy, "wide") == null);
 }

@@ -77,6 +77,16 @@ extern "c" fn CGEventGetLocation(event: CFTypeRef) CGPoint;
 extern "c" fn CGWarpMouseCursorPosition(p: CGPoint) i32;
 extern "c" fn CGAssociateMouseAndMouseCursorPosition(connected: bool) i32;
 
+// Accessibility, for exactly one job: moving OUR OWN window onto the
+// main display. Ghostty 1.3 accepts `window-position-x/y` and then
+// cascades the window next to the last one anyway, which on a two-display
+// desk puts the harness across the bezel. Nothing here ever names a
+// window the harness did not launch.
+extern "c" fn AXUIElementCreateApplication(pid: i32) CFTypeRef;
+extern "c" fn AXUIElementCopyAttributeValue(el: CFTypeRef, attr: CFTypeRef, out: *CFTypeRef) i32;
+extern "c" fn AXUIElementSetAttributeValue(el: CFTypeRef, attr: CFTypeRef, value: CFTypeRef) i32;
+extern "c" fn AXValueCreate(kind: u32, value: *const anyopaque) CFTypeRef;
+
 extern "c" fn CGMainDisplayID() u32;
 extern "c" fn CGDisplayBounds(display: u32) CGRect;
 
@@ -109,6 +119,54 @@ pub const flag_command: u64 = 1 << 20;
 pub fn mainDisplayBounds() CGRect {
     return CGDisplayBounds(CGMainDisplayID());
 }
+
+/// Move one of OUR windows to a point on screen. `pid` must be a process
+/// the harness launched — the caller has already proved that, and this
+/// function takes the pid rather than a window so it cannot be pointed at
+/// a stranger's window by an id alone.
+///
+/// Best effort: it returns whether the window server took the change, and
+/// the caller re-reads the bounds either way rather than believing it.
+pub fn moveWindow(pid: i32, id: u32, to: CGPoint) bool {
+    const app = AXUIElementCreateApplication(pid) orelse return false;
+    defer CFRelease(app);
+    const k_windows = CFStringCreateWithCString(null, "AXWindows", kCFStringEncodingUTF8);
+    defer CFRelease(k_windows);
+    const k_position = CFStringCreateWithCString(null, "AXPosition", kCFStringEncodingUTF8);
+    defer CFRelease(k_position);
+    var windows: CFTypeRef = null;
+    if (AXUIElementCopyAttributeValue(app, k_windows, &windows) != 0) return false;
+    if (windows == null) return false;
+    defer CFRelease(windows);
+    // The AX list does not carry the CGWindow id, so the match is on
+    // geometry: the one AX window whose frame is the frame the window
+    // server reports for `id`. A harness that opened one window has one
+    // candidate anyway; this keeps it honest if it ever opens two.
+    var mine: [32]Window = undefined;
+    const target = for (windowsOf(pid, &mine)) |candidate| {
+        if (candidate.id == id) break candidate;
+    } else return false;
+    const k_size = CFStringCreateWithCString(null, "AXSize", kCFStringEncodingUTF8);
+    defer CFRelease(k_size);
+    var i: isize = 0;
+    while (i < CFArrayGetCount(windows)) : (i += 1) {
+        const win = CFArrayGetValueAtIndex(windows, i);
+        var pos_val: CFTypeRef = null;
+        if (AXUIElementCopyAttributeValue(win, k_position, &pos_val) != 0) continue;
+        defer if (pos_val) |v| CFRelease(v);
+        var at: CGPoint = .{ .x = 0, .y = 0 };
+        if (!AXValueGetValue(pos_val, ax_value_cgpoint, &at)) continue;
+        if (@abs(at.x - target.x) > 2 or @abs(at.y - target.y) > 2) continue;
+        var point = to;
+        const v = AXValueCreate(ax_value_cgpoint, &point) orelse return false;
+        defer CFRelease(v);
+        return AXUIElementSetAttributeValue(win, k_position, v) == 0;
+    }
+    return false;
+}
+
+const ax_value_cgpoint: u32 = 1;
+extern "c" fn AXValueGetValue(value: CFTypeRef, kind: u32, out: *anyopaque) bool;
 
 // ─── windows ────────────────────────────────────────────────────────────
 
@@ -192,6 +250,82 @@ pub fn windowsOf(pid: i32, out: []Window) []Window {
         }
     }.less);
     return found;
+}
+
+/// Which process owns the frontmost on-screen window. The window list
+/// comes back in front-to-back order, so the first layer-0 entry is the
+/// one the user is looking at — and macOS only routes synthetic KEY
+/// events to the active application, which makes this the difference
+/// between a keystroke landing and vanishing.
+pub fn frontWindowPid() ?i32 {
+    const list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, 0) orelse return null;
+    defer CFRelease(list);
+    const k_owner = CFStringCreateWithCString(null, "kCGWindowOwnerPID", kCFStringEncodingUTF8);
+    defer CFRelease(k_owner);
+    const k_layer = CFStringCreateWithCString(null, "kCGWindowLayer", kCFStringEncodingUTF8);
+    defer CFRelease(k_layer);
+    var i: isize = 0;
+    const count = CFArrayGetCount(list);
+    while (i < count) : (i += 1) {
+        const d = CFArrayGetValueAtIndex(list, i);
+        var layer: i32 = 0;
+        if (CFDictionaryGetValue(d, k_layer)) |v| _ = CFNumberGetValue(v, kCFNumberSInt32Type, &layer);
+        if (layer != 0) continue;
+        var owner: i32 = 0;
+        if (CFDictionaryGetValue(d, k_owner)) |v| _ = CFNumberGetValue(v, kCFNumberSInt32Type, &owner) else continue;
+        return owner;
+    }
+    return null;
+}
+
+/// Make OUR OWN process the active application. Called only by the
+/// explicit `focus` verb, never on the way to something else: taking the
+/// keyboard is the one thing this tool does that the person at the
+/// machine will notice, so it is never a side effect.
+pub fn activate(pid: i32) bool {
+    const app = AXUIElementCreateApplication(pid) orelse return false;
+    defer CFRelease(app);
+    const k_front = CFStringCreateWithCString(null, "AXFrontmost", kCFStringEncodingUTF8);
+    defer CFRelease(k_front);
+    return AXUIElementSetAttributeValue(app, k_front, kCFBooleanTrue) == 0;
+}
+
+extern const kCFBooleanTrue: CFTypeRef;
+
+/// Every process that owns an on-screen ghostty window, except our own.
+/// Used for ONE thing: measuring how big the user's own terminal is, so
+/// a `full` harness comes up the size they actually work at. The pids
+/// here are never signalled, raised, focused or posted to — the caller
+/// reads bounds and forgets them.
+var ghostty_pid_buf: [32]i32 = undefined;
+
+pub fn ghosttyPids(exclude: i32) []const i32 {
+    const list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, 0) orelse return &.{};
+    defer CFRelease(list);
+    const k_owner = CFStringCreateWithCString(null, "kCGWindowOwnerPID", kCFStringEncodingUTF8);
+    defer CFRelease(k_owner);
+    const k_app = CFStringCreateWithCString(null, "kCGWindowOwnerName", kCFStringEncodingUTF8);
+    defer CFRelease(k_app);
+    var n: usize = 0;
+    var i: isize = 0;
+    const count = CFArrayGetCount(list);
+    outer: while (i < count and n < ghostty_pid_buf.len) : (i += 1) {
+        const d = CFArrayGetValueAtIndex(list, i);
+        var owner: i32 = 0;
+        if (CFDictionaryGetValue(d, k_owner)) |v| _ = CFNumberGetValue(v, kCFNumberSInt32Type, &owner) else continue;
+        if (owner == exclude) continue;
+        var name: [128]u8 = undefined;
+        name[0] = 0;
+        if (CFDictionaryGetValue(d, k_app)) |v| _ = CFStringGetCString(v, &name, name.len, kCFStringEncodingUTF8);
+        const app = std.mem.sliceTo(&name, 0);
+        if (std.ascii.indexOfIgnoreCase(app, "ghostty") == null) continue;
+        for (ghostty_pid_buf[0..n]) |seen| {
+            if (seen == owner) continue :outer;
+        }
+        ghostty_pid_buf[n] = owner;
+        n += 1;
+    }
+    return ghostty_pid_buf[0..n];
 }
 
 /// The one on-screen window with this id, if it is still there AND still

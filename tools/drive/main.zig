@@ -49,6 +49,7 @@ const usage_text =
     \\  wait-frame [--timeout MS]                   block until screen.txt moves
     \\  info                    the recorded window, re-verified
     \\  doctor                  permissions, and what to do about them
+    \\  focus                   take the keyboard (explicit: keys need it)
     \\  quit
     \\
     \\Every verb but `launch`, `doctor` and the usage text reads
@@ -111,6 +112,14 @@ pub fn main(init: std.process.Init) !u8 {
         return 0;
     }
     if (std.mem.eql(u8, verb, "quit")) return quit(io, &session, w);
+    if (std.mem.eql(u8, verb, "focus")) {
+        if (!mac.activate(session.rec.pid)) {
+            try e.writeAll("mnml-drive focus: the window server refused to activate the harness\n");
+            return exit_refused;
+        }
+        sleepMs(io, 250);
+        return 0;
+    }
     if (std.mem.eql(u8, verb, "screen")) return catDump(arena, io, session.rec.ipc_dir, "screen.txt", w, e);
     if (std.mem.eql(u8, verb, "status")) return catDump(arena, io, session.rec.ipc_dir, "status.json", w, e);
     if (std.mem.eql(u8, verb, "rects")) return catDump(arena, io, session.rec.ipc_dir, "rects.json", w, e);
@@ -306,12 +315,39 @@ fn launch(gpa: Allocator, io: Io, init_env: *std.process.Environ.Map, args: []co
         try e.writeAll("mnml-drive launch: --data-root DIR is required\n");
         return exit_usage;
     };
-    // Never below the corpus size: a harness narrower than 120x40 clips
-    // the chrome it exists to photograph, and the first thing the user
-    // saw out of this tool was a wizard cut off at 80 columns.
-    const cols = @max(flagInt(u16, args, "--cols") orelse harness.min_cols, harness.min_cols);
-    const rows = @max(flagInt(u16, args, "--rows") orelse harness.min_rows, harness.min_rows);
-    var font_pt = flagInt(u16, args, "--size") orelse 13;
+    // How big. Three ways to say it, in precedence order:
+    //
+    //   --cols/--rows   exact. What a script's own `# width:` /
+    //                   `# height:` header turns into, so a file that
+    //                   declares a size gets that size and no other.
+    //   --size NAME     `small` (80x24), `corpus` (120x40), or `full`.
+    //   (nothing)       `full`: the size the user actually works at.
+    //
+    // The default is `full` because the default was 120x40 and the first
+    // thing the user said about it was that the menu bar collapses to
+    // `»` at that width — which is a real screen, but not the screen
+    // they look at all day, and a hunter sweeping the wrong one finds
+    // the wrong bugs.
+    const explicit_cols = flagInt(u16, args, "--cols");
+    const explicit_rows = flagInt(u16, args, "--rows");
+    const named: harness.Named = if (flagValue(args, "--size")) |n|
+        std.meta.stringToEnum(harness.Named, n) orelse {
+            try e.print("mnml-drive launch: --size takes small | corpus | full (got `{s}`)\n", .{n});
+            return exit_usage;
+        }
+    else
+        .full;
+    // A `full` launch has no number until a window has been measured, so
+    // it starts at the corpus size and re-launches once it knows.
+    var want: ?harness.Cells = if (explicit_cols != null or explicit_rows != null) .{
+        .cols = @max(explicit_cols orelse harness.min_cols, harness.min_cols),
+        .rows = @max(explicit_rows orelse harness.min_rows, harness.min_rows),
+    } else named.cells();
+    var cols: u16 = if (want) |v| v.cols else harness.Named.corpus.cells().?.cols;
+    var rows: u16 = if (want) |v| v.rows else harness.Named.corpus.cells().?.rows;
+    // The user's own font size, unless they set none: `--font-size`
+    // exists for the retry path and for a machine with no ghostty config.
+    var font_pt = flagInt(u16, args, "--font-size") orelse 13;
     const timeout_ms = flagInt(u64, args, "--timeout") orelse 20_000;
     const ghostty = flagValue(args, "--ghostty") orelse "/Applications/Ghostty.app/Contents/MacOS/ghostty";
     const exe = flagValue(args, "--exe") orelse "zig-out/bin/mnml-zig";
@@ -326,10 +362,16 @@ fn launch(gpa: Allocator, io: Io, init_env: *std.process.Environ.Map, args: []co
     // only the un-suffixed one is exactly the bug that put the
     // first-launch wizard on the user's screen: the file was there, and
     // the app was reading the directory next door.
+    // Plus the developer's own layout keys, so a hunter is looking at
+    // the layout the developer looks at rather than the defaults
+    // (`harness.copied_keys` — two appearance keys, and nothing that
+    // names a token, a path or an integration).
+    const own_cfg = readUserMnmlConfig(gpa, io, init_env) orelse "";
+    const mnml_cfg = try harness.mnmlConfigFrom(gpa, own_cfg);
     for ([_][]const u8{ data_root, try std.fmt.allocPrint(gpa, "{s}-dev", .{data_root}) }) |root| {
         try Io.Dir.cwd().createDirPath(io, root);
         const cfg_path = try std.fs.path.join(gpa, &.{ root, "config.zon" });
-        try Io.Dir.cwd().writeFile(io, .{ .sub_path = cfg_path, .data = harness.mnml_config });
+        try Io.Dir.cwd().writeFile(io, .{ .sub_path = cfg_path, .data = mnml_cfg });
     }
 
     const user_cfg = readUserGhosttyConfig(gpa, io, init_env) orelse "";
@@ -338,6 +380,9 @@ fn launch(gpa: Allocator, io: Io, init_env: *std.process.Environ.Map, args: []co
     const abs_ws = if (std.fs.path.isAbsolute(workspace)) workspace else try Io.Dir.cwd().realPathFileAlloc(io, workspace, gpa);
     const ipc_dir = try std.fs.path.join(gpa, &.{ abs_ws, ".mnml", "ipc-zig" });
     const screen = mac.mainDisplayBounds();
+    // The menu bar owns the top of the main display; a window placed at
+    // y = 0 has its first row under it.
+    const menu_bar_pt: f64 = 38;
 
     // Measure, then adjust. Nothing here can predict how many points a
     // cell takes at a given font size — that is CoreText's answer, for
@@ -346,7 +391,7 @@ fn launch(gpa: Allocator, io: Io, init_env: *std.process.Environ.Map, args: []co
     // works out the size that WOULD fit and tries again. The grid never
     // shrinks; only the type does.
     var attempt: u8 = 0;
-    while (attempt < 4) : (attempt += 1) {
+    while (attempt < 6) : (attempt += 1) {
         const conf = try harness.renderConfig(gpa, user_cfg, .{
             .cols = cols,
             .rows = rows,
@@ -426,15 +471,54 @@ fn launch(gpa: Allocator, io: Io, init_env: *std.process.Environ.Map, args: []co
         const fits = placed.x >= screen.origin.x - 1 and placed.y >= screen.origin.y - 1 and
             placed.x + placed.w <= screen.origin.x + screen.size.width + 1 and
             placed.y + placed.h <= screen.origin.y + screen.size.height + 1;
-        if (got.cols == cols and got.rows == rows and fits) {
+        const cell_w0 = if (got.cols > 0) placed.w / @as(f64, @floatFromInt(got.cols)) else 0;
+        const cell_h0 = if (got.rows > 0) placed.h / @as(f64, @floatFromInt(got.rows)) else 0;
+        // Ghostty 1.3 takes `window-position-x/y` and then cascades the
+        // window beside the last one anyway, which on a two-display desk
+        // puts the harness across the bezel. Ask the window server to
+        // move OUR window to the main display's top-left, under the menu
+        // bar, and re-read the bounds rather than believing the ask.
+        var settled = placed;
+        if (!fits or placed.x != screen.origin.x or placed.y < menu_bar_pt) {
+            if (mac.moveWindow(pid, found.id, .{ .x = screen.origin.x, .y = screen.origin.y + menu_bar_pt })) {
+                sleepMs(io, 250);
+                settled = mac.windowOwnedBy(pid, found.id) orelse placed;
+            }
+        }
+        const settled_fits = settled.x >= screen.origin.x - 1 and settled.y >= screen.origin.y - 1 and
+            settled.x + settled.w <= screen.origin.x + screen.size.width + 1 and
+            settled.y + settled.h <= screen.origin.y + screen.size.height + 1;
+
+        // `full` has no number until now: measure a cell on THIS machine,
+        // at the user's own font, and work out how many of them the
+        // target area holds. The target is the user's own largest ghostty
+        // window when they have one open — "the size I usually work at" —
+        // and otherwise the display itself, less the menu bar.
+        if (want == null) {
+            const area = fullTargetArea(pid, screen, menu_bar_pt);
+            const cells = harness.cellsFor(area.width, area.height, cell_w0, cell_h0);
+            want = .{ .cols = cells.cols, .rows = cells.rows };
+            if (cells.cols != got.cols or cells.rows != got.rows) {
+                try e.print("mnml-drive launch: full size on this machine is {d}x{d} cells ({d:.0}x{d:.0} pt at {d:.2}x{d:.2} pt a cell)\n", .{ cells.cols, cells.rows, area.width, area.height, cell_w0, cell_h0 });
+                cols = cells.cols;
+                rows = cells.rows;
+                _ = std.c.kill(pid, .TERM);
+                sleepMs(io, 300);
+                continue;
+            }
+            cols = cells.cols;
+            rows = cells.rows;
+        }
+
+        if (got.cols == cols and got.rows == rows and settled_fits) {
             const rec: harness.Record = .{
                 .pid = pid,
                 .window_id = found.id,
                 .title = harness.window_title,
-                .x = placed.x,
-                .y = placed.y,
-                .w = placed.w,
-                .h = placed.h,
+                .x = settled.x,
+                .y = settled.y,
+                .w = settled.w,
+                .h = settled.h,
                 .cols = cols,
                 .rows = rows,
                 .workspace = abs_ws,
@@ -449,9 +533,7 @@ fn launch(gpa: Allocator, io: Io, init_env: *std.process.Environ.Map, args: []co
         // It did not fit. Measure what a cell actually costs at this
         // size and scale the type down by the shortfall, with a little
         // slack so a rounding error does not need a fourth attempt.
-        const cell_w = if (got.cols > 0) placed.w / @as(f64, @floatFromInt(got.cols)) else 0;
-        const cell_h = if (got.rows > 0) placed.h / @as(f64, @floatFromInt(got.rows)) else 0;
-        const next = nextFontSize(font_pt, cell_w, cell_h, cols, rows, screen);
+        const next = nextFontSize(font_pt, cell_w0, cell_h0, cols, rows, screen);
         _ = std.c.kill(pid, .TERM);
         if (got.cols == cols and got.rows == rows and next == null) {
             // The grid is right and the type is not the problem: the
@@ -460,7 +542,7 @@ fn launch(gpa: Allocator, io: Io, init_env: *std.process.Environ.Map, args: []co
                 "mnml-drive launch: the window came up {d}x{d} as asked, but at {d:.0},{d:.0} {d:.0}x{d:.0} pt\n" ++
                     "  it is not fully on the main display ({d:.0},{d:.0} {d:.0}x{d:.0} pt). Refusing: a window\n" ++
                     "  partly off screen photographs as a window partly off screen.\n",
-                .{ got.cols, got.rows, placed.x, placed.y, placed.w, placed.h, screen.origin.x, screen.origin.y, screen.size.width, screen.size.height },
+                .{ got.cols, got.rows, settled.x, settled.y, settled.w, settled.h, screen.origin.x, screen.origin.y, screen.size.width, screen.size.height },
             );
             return exit_refused;
         }
@@ -514,6 +596,16 @@ fn waitForGrid(gpa: Allocator, io: Io, ipc_dir: []const u8, timeout_ms: u64) ?st
         sleepMs(io, 120);
     }
     return null;
+}
+
+/// The developer's own `config.zon`, read-only, for the two layout keys
+/// the harness copies. The stable root, not the dev one: the dev profile
+/// is a scratch copy, and the settings a person actually lives in are in
+/// the one they opened first.
+fn readUserMnmlConfig(gpa: Allocator, io: Io, env: *std.process.Environ.Map) ?[]u8 {
+    const home = env.get("HOME") orelse return null;
+    const p = std.fs.path.join(gpa, &.{ home, ".config", "mnml", "config.zon" }) catch return null;
+    return Io.Dir.cwd().readFileAlloc(io, p, gpa, .limited(1 << 20)) catch null;
 }
 
 fn readUserGhosttyConfig(gpa: Allocator, io: Io, env: *std.process.Environ.Map) ?[]u8 {
@@ -577,7 +669,27 @@ fn jsonInt(text: []const u8, key: []const u8) ?u16 {
 
 // ─── the acting verbs ───────────────────────────────────────────────────
 
+/// macOS routes synthetic KEY events to the ACTIVE application only: a
+/// harness window that is not frontmost is handed the keystroke and
+/// drops it, silently, which looked exactly like mnml ignoring the key.
+/// So the keyboard verbs check first and refuse — they never take focus
+/// on their own, because taking the keyboard is the one thing this tool
+/// does that the person at the machine will notice.
+fn requireFront(s: *Session, e: *Io.Writer) bool {
+    const front = mac.frontWindowPid() orelse return true;
+    if (front == s.rec.pid) return true;
+    e.print(
+        "mnml-drive: refusing — the harness is not the active application (pid {d} is), and macOS\n" ++
+            "  delivers synthetic keys only to the active one. Nothing was posted.\n" ++
+            "  Run `mnml-drive focus --data-root <root>` first; it takes the keyboard from you\n" ++
+            "  until you click back, which is why it is a separate verb and never automatic.\n",
+        .{front},
+    ) catch {};
+    return false;
+}
+
 fn sendKeys(io: Io, s: *Session, spec: []const u8, e: *Io.Writer) !u8 {
+    if (!requireFront(s, e)) return exit_refused;
     var buf: [keys.max_seq]keys.Key = undefined;
     const chain = keys.parseSpec(spec, &buf) catch |err| {
         try e.print("mnml-drive key: {s} in `{s}`\n", .{ @errorName(err), spec });
@@ -599,6 +711,7 @@ fn sendKeys(io: Io, s: *Session, spec: []const u8, e: *Io.Writer) !u8 {
 }
 
 fn sendText(gpa: Allocator, io: Io, s: *Session, text: []const u8, e: *Io.Writer) !u8 {
+    if (!requireFront(s, e)) return exit_refused;
     var it = std.unicode.Utf8View.init(text) catch {
         try e.writeAll("mnml-drive type: the text is not valid UTF-8\n");
         return exit_usage;
@@ -873,4 +986,29 @@ fn sleepMs(io: Io, ms: u64) void {
 test {
     _ = keys;
     _ = harness;
+}
+
+/// What a `full` launch should fill: the user's own largest ghostty
+/// window when one is open — "the size I usually work at" — and
+/// otherwise the main display, less the menu bar.
+///
+/// Their window is only ever MEASURED. It is never raised, moved,
+/// focused or driven; the harness reads its bounds out of the window
+/// list and forgets it.
+fn fullTargetArea(own_pid: i32, screen: mac.CGRect, menu_bar_pt: f64) mac.CGSize {
+    const fallback: mac.CGSize = .{ .width = screen.size.width, .height = screen.size.height - menu_bar_pt };
+    var best: ?mac.CGSize = null;
+    var buf: [32]mac.Window = undefined;
+    for (mac.ghosttyPids(own_pid)) |pid| {
+        for (mac.windowsOf(pid, &buf)) |win| {
+            const area = win.w * win.h;
+            if (best == null or area > best.?.width * best.?.height) best = .{ .width = win.w, .height = win.h };
+        }
+    }
+    const target = best orelse fallback;
+    // Never larger than the display the harness has to fit on.
+    return .{
+        .width = @min(target.width, fallback.width),
+        .height = @min(target.height, fallback.height),
+    };
 }
