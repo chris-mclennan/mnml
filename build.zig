@@ -397,6 +397,9 @@ pub fn build(b: *std.Build) void {
     const font_file = font_run.addOutputFileArg(symbols_font_name);
     const font_install = b.addInstallFile(font_file, "share/mnml/fonts/" ++ symbols_font_name);
     b.getInstallStep().dependOn(&font_install.step);
+    // The catalogue travels beside the font, so an archive built from
+    // `zig-out/` already carries the Marketplace tab's default source.
+    b.getInstallStep().dependOn(&b.addInstallFile(b.path("data/marketplace.zon"), "share/mnml/marketplace.zon").step);
     const font_step = b.step("font", "Build share/mnml/fonts/MnmlSymbols.ttf from data/glyphs/");
     font_step.dependOn(&font_install.step);
     // `zig build font-merge -Dfont-in=<installed.ttf> -Dfont-out=<dest>`:
@@ -585,6 +588,9 @@ pub fn build(b: *std.Build) void {
     // it). The font is the same bytes on every target — the builder
     // runs on the host and the file is not machine code.
     release_one.dependOn(&b.addInstallFile(font_file, b.fmt("release/{s}/share/mnml/fonts/" ++ symbols_font_name, .{triple})).step);
+    // The catalogue the same way — the Marketplace tab's default source
+    // has to be in the archive or a packaged mnml lists nothing.
+    release_one.dependOn(&b.addInstallFile(b.path("data/marketplace.zon"), b.fmt("release/{s}/share/mnml/marketplace.zon", .{triple})).step);
 
     const release_step = b.step("release", "Cross-compile ReleaseSafe exes for the five shipped targets into zig-out/release/<rust-triple>/");
     for (release_targets) |rt| {
@@ -822,6 +828,14 @@ pub fn build(b: *std.Build) void {
     // (`src/app/scripts.zig`'s `shippedRoot`, `nfpm/mnml.yaml`,
     // `scripts/package.sh`).
     build_options.addOption([]const u8, "scripts_dir", b.pathFromRoot("lua"));
+    // `data/marketplace.zon`: the mnml catalogue — the Marketplace
+    // tab's default source, the same way `lua/` is the SCRIPTS tab's.
+    // A dev build reads the checkout's copy (its absolute path is baked
+    // in here); a packaged build finds it as `share/mnml/marketplace.zon`
+    // beside the binary (`src/app/marketplace_catalogue.zig`'s `find`,
+    // `nfpm/mnml.yaml`, `scripts/package.sh`) — which is also the
+    // install below.
+    build_options.addOption([]const u8, "marketplace_catalogue", b.pathFromRoot("data/marketplace.zon"));
     tests_run.step.dependOn(&fake_dap_install.step);
     e2e_run.step.dependOn(&fake_dap_install.step);
     gate_in_test.step.dependOn(&fake_dap_install.step);
