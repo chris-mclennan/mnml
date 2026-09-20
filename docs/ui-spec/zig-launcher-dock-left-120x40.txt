@@ -1,6 +1,6 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-     │  ● /pri…            │  prog.dbg 󰅖   󰐕                                                       󱸀  󲀀      
- 󲀀 ▌ │▌    .mnml              │ prog.dbg
+      │  ● /pri…            │  prog.dbg 󰅖   󰐕                                                       󱸀  󲀀      
+   ▌ │▌    .mnml              │ prog.dbg
       │       ipc-zig          │   1 let x = 1
     󰍉 │      prog.dbg           │   2 let p = struct{a=1,b="two"}
       │                          │   3 print "hello"
@@ -15,9 +15,9 @@
      │                          │
       │                          │
      │                          │
-      │                          │
-     │                          │
-      │                          │
+ 󰐕    │                          │
+    │                          │
+ 󲀀    │                          │
     󱘣 │                          │
       │                          │
     󰢱 │                          │

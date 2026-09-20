@@ -822,9 +822,14 @@ a chip's menu or the icon's own writes the list to the home config.
 ## The launcher dock
 
 `ui.dock` is mnml-zig's own Dock: a strip of the things you *start* —
-the enabled integrations, a *New terminal* item plus one per open
-terminal (a click focuses it), the installed launchers, and any command
-`ui.dock.pins` names — along one edge of the editor area.
+the `+`, the enabled integrations, a *New terminal* item plus one per
+open terminal (a click focuses it), the installed launchers, and any
+command `ui.dock.pins` names — along one edge of the editor area,
+centred on it the way macOS's Dock is.
+
+The `+` leads the run. It is the tab bar's own `+`, and it opens the
+same *Create…* menu — the one `ui.plus_menu_pinned` /
+`ui.plus_menu_hidden` curate. `ui.dock.plus = false` takes it off.
 
 It is not the **bottom panel** (`ui.bottom_panel_*`, `Ctrl-W J` / `K`),
 which hosts sections and panes, and it is not the **dock widgets**, the
@@ -838,7 +843,9 @@ outermost row and the panel sits inside it, as the editor does.
 | keep it up | `view.dock_pin`, or the 󰐃 chip at the strip's end. The pin lasts the session and rides in `session.zon`; it never edits the config |
 | change the mode | `view.dock_cycle_mode`, `:dock always\|auto\|hidden`, or the *Launcher dock* row in Settings |
 | move it | `view.dock_move`, `:dock bottom\|left\|right`, or the *Launcher dock edge* row in Settings |
-| icon only, or icon + label | `:dock icons` / `:dock labels`, the *Launcher dock labels* row in Settings, or the *Show:* rows on the strip's right-click menu. `ui.dock.labels` is the file form. It is the BOTTOM strip's question — a side dock is three cells wide and paints the glyph alone whatever the key says |
+| icons, labels, or both | `:dock icons` / `:dock labels` / `:dock text`, the *Launcher dock labels* row in Settings, or the *Show:* rows on the strip's right-click menu. `ui.dock.labels` is the file form — `.icon` is the glyph alone in three cells, `.icon_label` (the default) is ` glyph label `, `.label` is the word with no glyph anywhere. It is the BOTTOM strip's question — a side dock is three cells wide and paints the glyph alone whatever the key says, `.label` included |
+| centre the run, or push it to an end | `:dock center` / `:dock start` / `:dock end`, the *Launcher dock alignment* row in Settings, or the *Align:* rows on the strip's right-click menu. `ui.dock.align` is the file form (`.@"align"` in the file — `align` is a Zig keyword), and `.center` is the default. The pin chip keeps the far end whatever it says, and a run with no room to move is laid from the start rather than clipped on the left. On a side edge it centres the items down the column |
+| take the `+` off | `ui.dock.plus = false`, or the *Launcher dock + button* row in Settings |
 | use the keyboard | `view.focus_dock` (vim `Ctrl-W D`, or `:dock focus`): `h` / `l` walk a bottom strip, `j` / `k` a side one, Enter runs, Esc leaves |
 | pin a command | a chip's right-click menu grows *Pin to dock*, and a pinned row's own menu takes it off again; `ui.dock.pins` is the file form |
 | find it when it is hidden | the `⋯` grip at the middle of its band (`ui.edge_grips`) — a click there reveals and pins in one gesture |
