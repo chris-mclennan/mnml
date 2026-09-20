@@ -49,6 +49,31 @@ pub fn close(app: *App) void {
     app.needs_render = true;
 }
 
+/// A press that landed anywhere but the bar itself, while the line is
+/// open — the way a text field loses focus when you click off it.
+///
+/// An EMPTY line closes. Opened by a stray click on the bottom row and
+/// then left alone, a bare `:` with a caret is indistinguishable from a
+/// blank row that grew an extra line, while every key quietly goes to
+/// it; nothing but Esc got it back, and Esc is not a thing you try
+/// against a row you did not know was listening.
+///
+/// A line with TYPED TEXT stays. The user is mid-command, and losing a
+/// half-typed `:w some/long/path` to a click meant for the tree is the
+/// worse of the two mistakes. The caret does not move either — the
+/// press was not on the line, so it says nothing about where in the
+/// line the user wants to be.
+///
+/// Returns true when it closed one, so a caller can tell the click
+/// consumed something. Either way the press then goes on to whatever
+/// it landed on: this only takes the focus away, never the click.
+pub fn clickAway(app: *App) bool {
+    const c = app.cmdline orelse return false;
+    if (c.text.items.len > 0) return false;
+    close(app);
+    return true;
+}
+
 /// Insert `text` at the caret — a typed char, or a paste. Control
 /// characters and newlines are dropped so a multi-line paste stays one
 /// line (the `:` line has nowhere to put the rest).
@@ -257,6 +282,56 @@ test "the chord opens the line from any focus and outranks a half-typed chord ch
     try dispatch.key(&app, Key.ctrl(';'));
     try t.expect(app.cmdline != null);
     try t.expect(try key(&app, Key.named(.esc)));
+}
+
+test "a click off the bar closes an empty line; a half-typed one survives it" {
+    const dispatch = @import("dispatch.zig");
+    const render = @import("render.zig");
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    defer app.deinit();
+    _ = try app.openScratch();
+
+    // The bottom row is the last one; a frame registers its hit.
+    const bar_y: u16 = 23;
+    try app.render();
+    const under = app.hits.at(40, bar_y).?;
+    try t.expect(under == .button);
+    try t.expectEqual(@intFromEnum(render.Button.cmdline_bar), under.button);
+
+    const press = struct {
+        fn at(a: *App, x: u16, y: u16) !void {
+            try a.render();
+            try dispatch.mouse(a, .{ .x = x, .y = y, .kind = .press, .button = .left }, 1);
+        }
+    };
+
+    // A click on the row opens it; a second click on the row is a
+    // no-op — the row is the line's own, so it never closes it.
+    try press.at(&app, 40, bar_y);
+    try t.expect(app.cmdline != null);
+    try press.at(&app, 10, bar_y);
+    try t.expect(app.cmdline != null);
+
+    // A click anywhere else, with nothing typed, takes the focus away.
+    try press.at(&app, 5, 5);
+    try t.expect(app.cmdline == null);
+
+    // A right click off the bar does it too.
+    try press.at(&app, 40, bar_y);
+    try t.expect(app.cmdline != null);
+    try app.render();
+    try dispatch.mouse(&app, .{ .x = 5, .y = 5, .kind = .press, .button = .right }, 1);
+    try t.expect(app.cmdline == null);
+
+    // Half typed, the line stays and keeps its text and caret: losing
+    // it to a stray click is the worse mistake.
+    try press.at(&app, 40, bar_y);
+    try insert(&app, "wq");
+    try t.expect(try key(&app, Key.named(.left)));
+    try press.at(&app, 5, 5);
+    try t.expect(app.cmdline != null);
+    try t.expectEqualStrings("wq", app.cmdline.?.text.items);
+    try t.expectEqual(@as(usize, 1), app.cmdline.?.caret);
 }
 
 test "a paste stays on one line and control characters are dropped" {

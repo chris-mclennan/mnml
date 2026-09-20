@@ -185,6 +185,12 @@ cursor left behind drags the window straight back on the next frame.
   handler as a motion. Esc on a pending chord cancels it — no fallback.
 - The `:` line takes every key while open; Insert / Replace keep every
   unmodified key; an operator-pending state keeps every unmodified key.
+- Because it takes every key, an open `:` line says so: the statusline
+  mode chip reads `CMD` (one word for the app's own line and a
+  buffer's vim one), and `status.json` carries `"cmdline"` for the
+  app's. A press off the bottom row closes an EMPTY line the way a
+  text field loses focus — a half-typed one stays, since the user is
+  mid-command (`cmdline.clickAway`).
 
 ## Commands (D5)
 

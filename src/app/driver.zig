@@ -207,6 +207,10 @@ pub const AppDriver = struct {
             // The frame's one cursor: headless draws none, so this is
             // the only way a `.test` script sees which surface owns it.
             .cursor_shape = if (app.cursor_out) |c| @tagName(c.shape) else "hidden",
+            // The app's own `:` line. The chip says CMD for a buffer's
+            // vim `:` too, but this key is about the one the bottom row
+            // owns — the one a click opens and a click off it closes.
+            .cmdline = app.cmdline != null,
         };
         if (app.activeEditor()) |e| {
             const pos = e.buf.editor.rowCol();

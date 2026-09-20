@@ -1,0 +1,58 @@
+# width: 120
+# height: 40
+# The `:` line the bottom row opens says so, and a click off it puts it
+# away again.
+#
+# The report this comes from: a click on the bottom row opened the line
+# and then it just sat there — an empty `:` with a caret, the mode chip
+# still reading TREE, every key going to the line, and only Esc closing
+# it. Two things fix it. The chip names the line (CMD), and a click
+# anywhere else closes an EMPTY one, the way a text field loses focus.
+# A half-typed line stays: the user is mid-command.
+
+write notes.txt "alpha beta gamma\nsecond line here\n"
+open notes.txt
+
+# At rest the row is blank and nobody says CMD.
+expect status contains "\"cmdline\":false"
+expect screen lacks ":▏"
+expect screen lacks "CMD"
+
+# ── a click on the bottom row opens it, and three things say so ──
+click 60 39
+expect status contains "\"cmdline\":true"
+expect screen contains ":▏"
+expect screen contains "CMD"
+# The chip really is the mode chip: it replaced the word that was there.
+expect screen lacks "EDIT"
+
+# A click on the row itself is the line's own row — a no-op.
+click 10 39
+expect status contains "\"cmdline\":true"
+
+# ── a click anywhere else closes the empty line ──
+click 60 10
+expect status contains "\"cmdline\":false"
+expect screen lacks ":▏"
+expect screen lacks "CMD"
+
+# ── a half-typed line survives the same click ──
+click 60 39
+type w
+expect screen contains ":w▏"
+click 60 10
+expect status contains "\"cmdline\":true"
+expect screen contains ":w▏"
+expect screen contains "CMD"
+key esc
+expect status contains "\"cmdline\":false"
+
+# ── the tree is a click target like any other ──
+command view.focus_tree
+click 60 39
+expect status contains "\"cmdline\":true"
+expect screen contains "CMD"
+expect screen lacks "TREE"
+click 10 10
+expect status contains "\"cmdline\":false"
+expect screen contains "TREE"

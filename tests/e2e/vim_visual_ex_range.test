@@ -1,7 +1,9 @@
 # A Visual `:` fills the line with `'<,'>` covering every selected line —
 # the cursor's included (`vim -es -u NONE`: `2GV2j` → `'<`=2, `'>`=4) —
-# and leaves Visual the moment `:` is typed (`:help v_:`), so the mode
-# chip reads NORMAL while the line is open and a `u` afterwards is undo.
+# and leaves Visual the moment `:` is typed (`:help v_:`), so V-LINE is
+# gone while the line is open and a `u` afterwards is undo. The chip
+# reads CMD there — an open `:` line owns the keys and the chip names
+# it, whichever mode the buffer fell back to.
 write fruit.txt "banana\napple\ncherry\ndate\napple\nzebra\n"
 open fruit.txt
 command editor.use_vim
@@ -11,7 +13,8 @@ key 4
 key j
 expect screen contains "V-LINE"
 key :
-expect screen contains "NORMAL"
+expect screen lacks "V-LINE"
+expect screen contains "CMD"
 type sort
 key enter
 command file.save

@@ -1610,6 +1610,15 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         closeOverlay(app);
         return;
     }
+    // // changed (cmdline-fix): a press off the bar takes the focus
+    // away from an EMPTY `:` line before the click goes on to whatever
+    // it landed on — see `cmdline.clickAway` for why an empty line goes
+    // and a half-typed one stays. The bar's own hit is exempt: a press
+    // there is the line's own row.
+    if (m.kind == .press and (m.button == .left or m.button == .right) and app.cmdline != null) {
+        const on_bar = if (app.hits.at(m.x, m.y)) |u| u == .button and u.button == @intFromEnum(render.Button.cmdline_bar) else false;
+        if (!on_bar) _ = cmdline_mod.clickAway(app);
+    }
     const target = app.hits.at(m.x, m.y) orelse {
         if (m.kind == .press) pressOutside(app);
         return;

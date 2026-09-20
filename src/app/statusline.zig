@@ -222,6 +222,17 @@ fn focusUnder(app: *const App) FocusId {
 pub fn modeOf(app: *App) Mode {
     const focus = focusUnder(app);
     const editor = if (focus == .pane) app.activeEditor() else null;
+    // // changed (cmdline-fix): an open `:` line has the keys, so the
+    // chip says so. Without it the row could sit there with a caret on
+    // it while the chip still read TREE, and nothing on screen said the
+    // typing was going to the line.
+    //
+    // One word for both lines. The app's own `:` (`app/cmdline.zig`)
+    // and a buffer's vim `:` are two states, but they paint on the same
+    // row in the same colour and neither was named before this; a user
+    // cannot tell them apart and has no reason to want to.
+    if (app.cmdline != null) return .{ .label = "CMD", .kind = .command, .vim = false };
+    if (editor) |e| if (e.buf.input.isCmdlineOpen()) return .{ .label = "CMD", .kind = .command, .vim = true };
     if (editor) |e| {
         const m = e.buf.input.mode();
         if (m.label()) |label| return .{ .label = label, .kind = switch (m) {
@@ -680,6 +691,36 @@ test "file counts: a file is added, changed or removed once, by its staged side;
     try testing.expectEqual(@as(usize, 40), dynamicLaneBudget(120));
 }
 
+test "the mode chip names the open line — CMD for the app's and for a buffer's" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    _ = try app.openScratch();
+
+    // The app's own line, from tree focus: the chip was TREE and the
+    // line had no name on the row at all.
+    app.focus = .tree;
+    app.tree.visible = true;
+    try testing.expectEqualStrings("TREE", modeOf(&app).label);
+    cmdline_mod.open(&app);
+    const m = modeOf(&app);
+    try testing.expectEqualStrings("CMD", m.label);
+    try testing.expectEqual(sl.ModeKind.command, m.kind);
+    cmdline_mod.close(&app);
+    try testing.expectEqualStrings("TREE", modeOf(&app).label);
+
+    // The same word for a buffer's vim `:` — one line, one word, and
+    // the vim glyph still leads it as every vim mode's chip does.
+    app.focus = .{ .pane = app.active.? };
+    try app.setInputStyle(.vim);
+    try testing.expectEqualStrings("NORMAL", modeOf(&app).label);
+    try dispatch.key(&app, Key.char(':'));
+    const v = modeOf(&app);
+    try testing.expectEqualStrings("CMD", v.label);
+    try testing.expect(v.vim);
+    try dispatch.key(&app, Key.named(.esc));
+    try testing.expectEqualStrings("NORMAL", modeOf(&app).label);
+}
+
 test "SegId.of covers the app's ids and nothing else" {
     try testing.expectEqual(SegId.branch, SegId.of(sl.seg_app_base).?);
     try testing.expectEqual(SegId.workspace, SegId.of(SegId.workspace.raw()).?);
@@ -697,6 +738,7 @@ const client = @import("../git/client.zig");
 const screen_mod = @import("../ipc/screen.zig");
 const discovery = @import("discovery.zig");
 const dispatch = @import("dispatch.zig");
+const cmdline_mod = @import("cmdline.zig");
 const Config = @import("../config/Config.zig");
 const Key = app_mod.Key;
 
