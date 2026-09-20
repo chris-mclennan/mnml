@@ -285,14 +285,30 @@ fn foldAtCursor(app: *App, action: FoldAction) CommandError!void {
 /// encloses the cursor, or an unmatched opener on the cursor's own line
 /// (vim folds the block a header line starts, not its parent).
 pub fn foldRangeAt(ed: *const Editor, row: usize) ?[2]usize {
+    return foldRangeFrom(ed, row, ed.cursor);
+}
+
+/// Does a fold START on `row`? What the gutter's hover chevron asks —
+/// the same rule `editor.toggle_fold` applies, read from the line
+/// itself rather than from the cursor, so the chevron never offers a
+/// fold the command would refuse to make.
+pub fn foldStartsAt(ed: *const Editor, row: usize) bool {
+    const r = foldRangeFrom(ed, row, ed.lineStart(row)) orelse return false;
+    return r[0] == row;
+}
+
+/// `foldRangeAt` from an explicit byte: `from` is where the search for
+/// an enclosing pair starts. A fold that starts on `row` comes from the
+/// unmatched opener on `row`'s own line either way.
+pub fn foldRangeFrom(ed: *const Editor, row: usize, from: usize) ?[2]usize {
     const text = ed.bytes();
     const pairs = [_][2]u8{ .{ '{', '}' }, .{ '[', ']' }, .{ '(', ')' } };
     var best: ?[2]usize = null;
     const ls = ed.lineStart(row);
     const le = ed.lineEnd(row);
     for (pairs) |pr| {
-        if (enclosingPair(text, ed.cursor, pr[0], pr[1])) |p| consider(ed, &best, p[0], p[1]);
-        // Last unmatched opener on the cursor's line.
+        if (enclosingPair(text, from, pr[0], pr[1])) |p| consider(ed, &best, p[0], p[1]);
+        // Last unmatched opener on `row`'s own line.
         var open_pos: ?usize = null;
         var i = ls;
         while (i < le) : (i += 1) {
@@ -763,6 +779,26 @@ test "fold_all_brackets closes every multi-line pair once, outermost first per s
     try command.run(&app, .{ .static = .@"editor.fold_all_brackets" });
     try t.expectEqualStrings("nothing to fold", app.lastToast().?);
     try t.expectEqual(@as(usize, 3), e.buf.editor.folds.count());
+}
+
+test "foldStartsAt answers for the line, not the cursor — what the gutter's chevron asks" {
+    var app = try appWith("fn main() {\n    if x {\n        one;\n    }\n}\nlet end = 1;");
+    defer app.deinit();
+    const ed = app.activeEditor().?.buf.editor;
+    // The cursor deep inside the nested block does not change the
+    // answer for any other line: only the two header lines start a fold.
+    ed.placeCursor(2, 8);
+    try t.expect(foldStartsAt(ed, 0));
+    try t.expect(foldStartsAt(ed, 1));
+    try t.expect(!foldStartsAt(ed, 2));
+    try t.expect(!foldStartsAt(ed, 3));
+    try t.expect(!foldStartsAt(ed, 4));
+    try t.expect(!foldStartsAt(ed, 5));
+    // And the answer is the command's: folding line 1 gives 1..3.
+    ed.placeCursor(1, 0);
+    try command.run(&app, .{ .static = .@"editor.toggle_fold" });
+    try t.expectEqual(@as(usize, 1), app.activeEditor().?.buf.editor.folds.keys()[0]);
+    try t.expectEqual(@as(usize, 3), app.activeEditor().?.buf.editor.folds.values()[0]);
 }
 
 test "folds: toggle picks the smallest enclosing block, zo/zc are idempotent, unfold_all clears" {
