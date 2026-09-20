@@ -20,16 +20,17 @@ const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const hit = @import("hit.zig");
+const pin_chip = @import("pin_chip.zig");
 
 const Style = vaxis.Style;
 
 pub const HitTarget = hit.HitTarget;
 
-/// nf-md-pin — the chip that docks the revealed panel for the session.
-pub const pin_glyph = "\u{F0403}";
-pub const pin_ascii = "P";
-/// ` <glyph> `, like every other header chip.
-pub const chip_w: u16 = 3;
+/// The pin chip is the family's (`ui/pin_chip.zig`) — the same glyph,
+/// the same hover rule the dock and the menu bar wear.
+pub const pin_glyph = pin_chip.pin_glyph;
+pub const pin_ascii = pin_chip.pin_ascii;
+pub const chip_w: u16 = pin_chip.width;
 
 pub const Props = struct {
     /// The section's name, as the rail's menu spells it.
@@ -57,11 +58,8 @@ pub fn drawStrip(ui: Ui, row: Rect, p: Props) Layout {
     if (room > 1) _ = ui.putStr(row.x + 1, row.y, room -| 1, ui.clipStr(p.title, room -| 1), label_style);
     if (row.w < chip_w) return out;
     const cell = Rect.init(row.right() - chip_w, row.y, chip_w, 1);
-    const fg = if (p.pinned) pal.yellow else pal.comment;
-    const style = if (ui.hovered(cell)) Theme.onBg(Theme.withFg(th.fg, pal.yellow), pal.bg2) else Theme.onBg(Theme.withFg(th.fg, fg), pal.bg_darker);
-    _ = ui.putStr(cell.x, cell.y, chip_w, ui.fmt(" {s} ", .{if (ui.ascii) pin_ascii else pin_glyph}), style);
+    pin_chip.draw(ui, cell, .{ .pinned = p.pinned, .bg = pal.bg_darker, .hit = p.pin_hit });
     out.pin = cell;
-    if (p.pin_hit) |h| ui.hit(cell, h);
     return out;
 }
 

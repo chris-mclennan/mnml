@@ -1035,6 +1035,9 @@ pub const specs = [_]Spec{
     .{ .id = "search.open_pane", .title = "Search: open the query as a grep pane (replace, per-hit toggles)", .group = "search" },
     // Zig-only: the menu bar's summon, the coverage chip's click and menu.
     .{ .id = "view.menu_bar_open", .title = "Menu bar: open the File menu (the words follow under `ui.menu_bar = auto`)", .group = "view" },
+    // Zig-only (menu-bar-pin): the third pin, after the sidebar's and
+    // the dock's — an auto-hiding bar keeps its words for the session.
+    .{ .id = "view.menu_bar_pin", .title = "Menu bar: pin the revealed bar — keep the words up for this session (again to unpin)", .group = "view" },
     // Zig-only (sidebar-autohide): `ui.sidebar`'s three words and the
     // pin that docks a revealed column for the session. The Rust editor
     // has no auto-hiding sidebar, so there is nothing to keep in step.
@@ -1225,6 +1228,7 @@ test "1086 specs, unique ids" {
     // `toast.run_action` (bottom-row).
     // + the launcher dock's six (`view.dock_*`, `view.focus_dock`)
     // and the two `integrations.*_dock` pin verbs (launcher-dock)
-    try std.testing.expectEqual(@as(usize, 1099), specs.len);
+    // + `view.menu_bar_pin` (menu-bar-pin)
+    try std.testing.expectEqual(@as(usize, 1100), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

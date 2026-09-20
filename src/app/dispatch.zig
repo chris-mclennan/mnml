@@ -2394,6 +2394,10 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 // the panel is floating over, and a right press on it
                 // offers the three modes.
                 .sidebar_pin => try runCmd(app, .@"view.sidebar_pin"),
+                // // changed (menu-bar-pin): the chip past the words.
+                // Its right press is the bar's own menu
+                // (`openButtonMenu`), which ran before this switch.
+                .menu_bar_pin => try runCmd(app, .@"view.menu_bar_pin"),
                 .sidebar_overlay => if (m.button == .right) try context_menus.openSidebarModeMenu(app, m.x, m.y),
                 .back => try runCmd(app, .@"buffer.prev"),
                 .forward => try runCmd(app, .@"buffer.next"),

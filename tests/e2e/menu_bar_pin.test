@@ -1,0 +1,43 @@
+# width: 120
+# `ui.menu_bar = .auto` (src/app/menu_bar.zig): the words hide and come
+# back while the pointer rests on the chrome row. The pin is the third
+# of them — the sidebar's and the dock's are the other two — and wears
+# the same 󰐃 chip (src/ui/pin_chip.zig): a click keeps the words up
+# wherever the pointer goes, another click hands the bar back to
+# `ui.menu_bar`.
+#
+# The chip sits at the right end of the bar's own run: past the last
+# word and past the ` » ` that carries the ones that did not fit, which
+# at 120 columns puts it in cells 25..27 with the glyph on 26.
+#
+# `.always`, as mnml ships: the words are up and there is nothing to
+# pin, so no chip is painted at all.
+expect screen contains " ❯_  mnml  File  Edit  » "
+expect screen lacks "󰐃"
+command view.menu_bar_cycle
+expect screen contains "menu bar: auto"
+# Auto, pointer elsewhere: no words, and so no chip either.
+hover 60 20
+expect screen lacks "❯_  mnml"
+expect screen lacks "󰐃"
+# The pointer on the row reveals the words, and the chip with them.
+hover 5 0
+expect screen contains " ❯_  mnml  File  Edit  » "
+expect screen contains "󰐃"
+# A click on the chip pins the bar…
+click 26 0
+expect screen contains "menu bar pinned"
+# …and now the pointer can go anywhere: the words stay.
+hover 60 20
+expect screen contains " ❯_  mnml  File  Edit  » "
+expect screen contains "󰐃"
+# A click on it again unpins. (The pointer has to be on the chip to
+# click it, which is also why the words are still up on the next line.)
+click 26 0
+expect screen contains "menu bar: auto-hide on"
+expect screen contains "❯_  mnml"
+# Away, and the bar is gone again — the pin really was the only thing
+# holding it.
+hover 60 20
+expect screen lacks "❯_  mnml"
+expect screen lacks "󰐃"

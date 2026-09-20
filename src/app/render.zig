@@ -208,6 +208,10 @@ pub const Button = enum(u32) {
     /// the pin chip docks the column for the session.
     sidebar_overlay = 26,
     sidebar_pin = 27,
+    /// // changed (menu-bar-pin): the chip past the menu bar's words.
+    /// It paints only while `ui.menu_bar` can hide the bar, and keeps
+    /// the words up for the session.
+    menu_bar_pin = 28,
     /// The right cluster's tab-page chips and their `×`, 32 pages each.
     tab_page_base = 0x40,
     tab_page_close_base = 0x60,
@@ -715,9 +719,11 @@ fn drawPaletteBar(app: *App, ui: Ui, bar: Rect) Allocator.Error!void {
         .tree_open = app.tree.visible,
         .right_open = side_mod.shown(app, .right) != null,
         .nav_enabled = app.panes.count() > 1,
+        .pin = if (menu_bar.pinShown(app, bar.y)) app.menu_bar.pinned else null,
     }, .{
         .word_base = menu_bar.button_base,
         .overflow = menu_bar.overflow_button,
+        .pin = @intFromEnum(Button.menu_bar_pin),
         .sidebar = @intFromEnum(Button.toggle_tree),
         .back = @intFromEnum(Button.back),
         .forward = @intFromEnum(Button.forward),

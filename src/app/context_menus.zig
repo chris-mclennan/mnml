@@ -1363,6 +1363,7 @@ pub fn openButtonMenu(app: *App, id: u32, x: u16, y: u16) Allocator.Error!bool {
             };
             return true;
         },
+        .menu_bar_pin => try openMenuBarPinMenu(app, x, y),
         .toggle_tree => try openSidebarMenu(app, x, y),
         .toggle_right_panel => try openRightPanelMenu(app, x, y),
         .right_tab, .right_close => try openRightColumnMenu(app, x, y),
@@ -1640,18 +1641,44 @@ fn openIntegrationsTabsMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
 }
 
 /// A menu-bar word (Rust `menu_bar_words`): open it, then the bar's
-/// own mode.
+/// own pin and mode.
 fn openMenuBarMenu(app: *App, which: @import("menu_bar.zig").Menu, x: u16, y: u16) Allocator.Error!void {
     const rows = try items(app, &.{
         .{ .label = "Open", .action = .{ .menu_bar = @intFromEnum(which) } },
-        .{ .label = switch (app.cfg.ui.menu_bar) {
-            .always => "Menu bar: always → auto",
-            .auto => "Menu bar: auto → hidden",
-            .hidden => "Menu bar: hidden → always",
-        }, .action = .{ .command = .@"view.menu_bar_cycle" }, .separator_before = true },
+        menuBarPinRow(app),
+        menuBarCycleRow(app),
     });
     errdefer app.gpa.free(rows);
     try app.openMenu("Menu bar", rows, x, y);
+}
+
+/// // changed (menu-bar-pin): the pin chip's own right press — the
+/// pin and the mode, with no word to open. The dock's pin chip answers
+/// the right button the same way.
+pub fn openMenuBarPinMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{ menuBarPinRow(app), menuBarCycleRow(app) });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Menu bar", rows, x, y);
+}
+
+/// Pin / unpin the bar for the session. The row is there whatever the
+/// mode: under `.always` the command answers with why there is nothing
+/// to pin, which beats a row that quietly is not there.
+fn menuBarPinRow(app: *const App) MenuItem {
+    return .{
+        .label = if (app.menu_bar.pinned) "Unpin menu bar" else "Pin menu bar",
+        .action = .{ .command = .@"view.menu_bar_pin" },
+        .checked = app.menu_bar.pinned,
+        .separator_before = true,
+    };
+}
+
+fn menuBarCycleRow(app: *const App) MenuItem {
+    return .{ .label = switch (app.cfg.ui.menu_bar) {
+        .always => "Menu bar: always → auto",
+        .auto => "Menu bar: auto → hidden",
+        .hidden => "Menu bar: hidden → always",
+    }, .action = .{ .command = .@"view.menu_bar_cycle" } };
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────

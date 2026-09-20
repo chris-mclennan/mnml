@@ -7,6 +7,13 @@
 //! groups. The caller paints the right cluster and the gap chips after
 //! it, from the `palette_right_edge` this reports.
 //!
+//! // changed (menu-bar-pin): a bar that can hide itself wears the
+//! family's pin chip (`ui/pin_chip.zig`) at the right end of its own
+//! run — past the last word, past the ` » ` when there is one — the
+//! way the launcher dock wears one at the end of its strip. `Props.pin`
+//! is null for a bar that never hides, which is the shipped default, so
+//! the default chrome row is cell for cell what it was.
+//!
 //! Props only: the words, which one is open, the toggles' states, the
 //! workspace name. Every element registers the `.button` the caller
 //! names in the same statement it is painted. The hidden-word rule is
@@ -18,6 +25,7 @@ const vaxis = @import("vaxis");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
+const pin_chip = @import("pin_chip.zig");
 
 const Style = vaxis.Style;
 
@@ -49,6 +57,9 @@ pub const cluster_w: u16 = 2 + 1 + 3 + 3 + 1 + chip_w + 3 + 1 + 3;
 /// The words stop before this estimate of the cluster's left edge.
 const conservative_cluster_w: u16 = 50;
 const overflow_reserve: u16 = 3;
+/// The pin chip's slot, kept back from the words the way the ` » `'s
+/// is so the two never contend for the same cells.
+const pin_reserve: u16 = pin_chip.width;
 const nav_gap: u16 = 1;
 
 pub const Ids = struct {
@@ -61,6 +72,8 @@ pub const Ids = struct {
     chip: u32,
     dropdown: u32,
     right_panel: u32,
+    /// The pin chip past the words (`view.menu_bar_pin`).
+    pin: u32 = 0,
 };
 
 pub const Props = struct {
@@ -74,6 +87,10 @@ pub const Props = struct {
     right_open: bool = false,
     /// Lit arrows: there is another buffer to go to.
     nav_enabled: bool = false,
+    /// The pin chip's state, or null for no chip at all — which is
+    /// what an `ui.menu_bar = .always` bar passes, since a bar that
+    /// never hides has nothing to pin (`app/menu_bar.zig:pinShown`).
+    pin: ?bool = null,
 };
 
 pub const Layout = struct {
@@ -86,6 +103,9 @@ pub const Layout = struct {
     words_end: u16 = 0,
     /// Each word's x, null when hidden (`labels.len` entries, arena).
     word_x: []const ?u16 = &.{},
+    /// Where the pin chip landed; empty when none was asked for or the
+    /// row had no cells left for it.
+    pin: Rect = Rect.empty,
 };
 
 pub fn draw(ui: Ui, area: Rect, p: Props, ids: Ids) Layout {
@@ -110,13 +130,17 @@ fn drawWords(ui: Ui, area: Rect, p: Props, ids: Ids, out: *Layout) []const ?u16 
     const xs = ui.arena.alloc(?u16, p.labels.len) catch return &.{};
     @memset(xs, null);
     const cluster_left_safe = area.x + (area.w -| conservative_cluster_w) / 2;
+    // The pin's cells are taken off both ceilings before the first
+    // word, so a word never lands where the chip is going.
+    const pin_slot: u16 = if (p.pin == null) 0 else pin_reserve;
     var mx = area.x;
     const any_open = p.open != null;
     for (p.labels, 0..) |label, i| {
         const label_w = ui.width(label) + 2;
         const need_slot = i + 1 < p.labels.len;
-        const area_end = if (need_slot) area.right() -| overflow_reserve else area.right();
-        const bound = if (need_slot) cluster_left_safe -| overflow_reserve else cluster_left_safe;
+        const reserve = pin_slot + @as(u16, if (need_slot) overflow_reserve else 0);
+        const area_end = area.right() -| reserve;
+        const bound = cluster_left_safe -| reserve;
         if (mx + label_w > area_end or mx + label_w > bound) {
             out.first_hidden = i;
             break;
@@ -154,6 +178,19 @@ fn drawWords(ui: Ui, area: Rect, p: Props, ids: Ids, out: *Layout) []const ?u16 
         _ = ui.putStr(mx, area.y, overflow_reserve, overflow_chip, .{ .fg = pal.cyan, .bg = bg });
         ui.hit(r, .{ .button = ids.overflow });
         out.words_end = mx + overflow_reserve;
+    }
+    // The pin sits past the last word — past the ` » ` when there is
+    // one — at the right end of the bar's own run, where the dock's
+    // pin sits at the end of its strip. `words_end` is left where it
+    // was: a menu dropped for a hidden word still lands beside the
+    // ` » ` it was reached through, not under the chip.
+    if (p.pin) |pinned| {
+        const px = out.words_end;
+        if (px + pin_reserve <= area.right()) {
+            const r = Rect.init(px, area.y, pin_reserve, 1);
+            pin_chip.draw(ui, r, .{ .pinned = pinned, .bg = bg, .hit = .{ .button = ids.pin } });
+            out.pin = r;
+        }
     }
     return xs;
 }
@@ -323,4 +360,61 @@ test "the open word inverts and the accelerators underline; a long name is cut w
     a.ascii = true;
     _ = draw(a.ui(), a.full(), .{ .labels = &test_labels, .workspace = "ws" }, test_ids);
     try a.expectContains("|  <  >    ?  ws");
+}
+
+test "the pin chip: past the words under a bar that can hide, absent under one that cannot, and the words give up its cells" {
+    var f = try Fixture.init(120, 1);
+    defer f.deinit();
+    // No pin asked for: the Rust row, untouched.
+    const none = draw(f.ui(), f.full(), .{ .labels = &test_labels, .workspace = "ws" }, test_ids);
+    try f.expectRow(0, rust_row_120);
+    try testing.expect(none.pin.isEmpty());
+    try f.expectLacks(pin_chip.pin_glyph);
+
+    // Pinned-capable: the chip lands at `words_end`, three cells wide,
+    // and is a hit over all three.
+    var g = try Fixture.init(120, 1);
+    defer g.deinit();
+    const l = draw(g.ui(), g.full(), .{ .labels = &test_labels, .workspace = "ws", .pin = false }, test_ids);
+    try testing.expectEqual(l.words_end, l.pin.x);
+    try testing.expectEqual(pin_chip.width, l.pin.w);
+    try g.expectContains(pin_chip.pin_glyph);
+    try testing.expectEqual(test_ids.pin, g.hits.at(l.pin.x, 0).?.button);
+    try testing.expectEqual(test_ids.pin, g.hits.at(l.pin.x + 2, 0).?.button);
+    // The chip never reaches the centred cluster: the words gave up
+    // its cells before the first of them was painted.
+    try testing.expect(l.pin.right() <= 120 / 2 - cluster_w / 2 + 1);
+
+    // Pinned: the same cells, the lit glyph.
+    var h = try Fixture.init(120, 1);
+    defer h.deinit();
+    const lit = draw(h.ui(), h.full(), .{ .labels = &test_labels, .workspace = "ws", .pin = true }, test_ids);
+    try testing.expect(lit.pin.eql(l.pin));
+    try testing.expect(!vaxis.Color.eql(g.style(l.pin.x + 1, 0).fg, h.style(l.pin.x + 1, 0).fg));
+
+    // A bar whose words are down still has no chip — there is nothing
+    // for it to sit at the end of.
+    var k = try Fixture.init(120, 1);
+    defer k.deinit();
+    const bare = draw(k.ui(), k.full(), .{ .workspace = "ws", .pin = false }, test_ids);
+    try testing.expectEqual(@as(u16, 0), bare.pin.x);
+    try k.expectLacks("mnml");
+    // With no words the chip sits at the row's start, which is where
+    // the words would have ended.
+    try testing.expectEqual(pin_chip.width, bare.pin.w);
+}
+
+test "the pin chip's --ascii twin, and a row with no cells to spare drops it rather than clipping it" {
+    var f = try Fixture.init(120, 1);
+    defer f.deinit();
+    f.ascii = true;
+    _ = draw(f.ui(), f.full(), .{ .labels = &test_labels, .workspace = "ws", .pin = false }, test_ids);
+    try f.expectContains(pin_chip.pin_ascii);
+    try f.expectLacks(pin_chip.pin_glyph);
+    // Two cells wide: no room for anything, and nothing half-painted.
+    var g = try Fixture.init(2, 1);
+    defer g.deinit();
+    const l = draw(g.ui(), g.full(), .{ .labels = &test_labels, .workspace = "ws", .pin = false }, test_ids);
+    try testing.expect(l.pin.isEmpty());
+    try g.expectLacks(pin_chip.pin_glyph);
 }
