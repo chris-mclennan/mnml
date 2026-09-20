@@ -1,0 +1,33 @@
+# width: 120
+# height: 40
+# env: SHELL=/bin/sh
+# `integrations.arrange` (`src/app/arrange.zig`): ONE rule for every
+# pane that opens as a split — an integration, a terminal, a session
+# pane. `.context`, the shipped default, reads the room. The first
+# terminal takes an EMPTY editor area whole: nothing is split against a
+# placeholder. Each one after that evens out every pane along the row,
+# so two are halves and three are thirds. Before the rule the new pane
+# halved whatever had the focus, and the third terminal got a quarter of
+# the screen — `split_arrange_fixed.test` is that layout, still reachable
+# on `.fixed`.
+#
+# The divider COLUMNS are the proof, and a blank row of the panes is how
+# a script reads them: `toTestText` pads every row to the full width, so
+# each expectation below is one whole 120-cell row, dividers and all.
+# `/bin/sh` keeps the prompt to one line, well clear of them.
+command view.toggle_tree
+
+# One terminal, the whole area: there is no divider on the screen at all.
+command term.shell
+expect pane "Terminal (sh)"
+expect screen lacks "│"
+
+# Two: halves, the divider at column 60.
+command term.shell
+expect screen contains "                                                            │                                                           "
+
+# Three: thirds, the dividers at columns 39 and 80 — not 60 and 90.
+command term.shell
+expect screen contains "                                       │                                        │                                       "
+expect screen lacks "                                                            │                                                           "
+expect screen lacks "                                                            │                             │                             "
