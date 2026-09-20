@@ -31,10 +31,14 @@ expect screen lacks "\n  󰐕 New "
 ex dock center
 expect screen contains "dock: centred"
 expect screen contains "\n                                          󰐕 New "
-# The strip's own right-click menu carries the same three, the current
-# one ticked — the family's chip-menu idiom, no new command id.
-rightclick 118 37
+# The strip's own right-click menu carries every choice, the current one
+# ticked — three label forms, three alignments, and the `+`.
+rightclick 118 39
+expect screen contains "Show: icons and labels"
+expect screen contains "Show: icons only"
+expect screen contains "Show: labels only"
 expect screen contains "Align: centre"
 expect screen contains "Align: start"
 expect screen contains "Align: end"
+expect screen contains "Show the + button"
 key esc
