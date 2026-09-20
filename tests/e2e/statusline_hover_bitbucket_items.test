@@ -33,8 +33,10 @@ expect screen contains "Fix the login redirect"
 expect screen contains "acme/api"
 
 # The wire: whoami, one listing per repo, one comments pass per pull
-# request of mine that moved. Five, exactly as before the rows existed
-# — a hover that costs a request is not worth having.
+# request of mine that moved. Five, and five is what the same run asked
+# for before `items` existed — measured against the pre-branch binary,
+# same paths in the same order. A hover that costs a request is not
+# worth having, and this line is what says so.
 shell test "$(wc -l < wire.jsonl | tr -d ' ')" -eq 5
 
 # A row is a click target, and a press on it runs what the row names

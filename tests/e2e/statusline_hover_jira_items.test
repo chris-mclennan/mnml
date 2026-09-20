@@ -29,7 +29,8 @@ expect screen contains "open items assigned to me"
 expect screen contains "ENG-"
 
 # One search, and only one: the rows are the issues it returned, so
-# carrying them costs nothing the count did not already cost.
+# carrying them costs nothing the count did not already cost. One is
+# also what the pre-branch binary asked for on the same run.
 shell test "$(wc -l < wire.jsonl | tr -d ' ')" -eq 1
 
 shell kill "$(cat fake-jira.pid)" 2>/dev/null || true
