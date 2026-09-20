@@ -3247,13 +3247,16 @@ fn specCards() [3]RowView {
 
 test "a banner row keeps its cells' colours through the walk, and the card paints them: the bg-coloured space paints that background, the glyph that foreground, the rest the card's own" {
     // A banner row the shape Claude Code's is: a space that is only a
-    // background, a block glyph that is only a foreground, then text.
+    // background, a block glyph that is only a foreground, two cells
+    // erased under that background (a cell with no codepoint at all —
+    // the other half of how the figure is drawn), then text.
     const orange: pty_mod.grid.Color.Rgb = .{ .r = 215, .g = 119, .b = 87 };
     var term: pty_mod.vt.Terminal = try .init(testing.io, testing.allocator, .{ .cols = 40, .rows = 4 });
     defer term.deinit(testing.allocator);
     var vs = term.vtStream();
     defer vs.deinit();
-    vs.nextSlice("\x1b[48;2;215;119;87m \x1b[0m\x1b[38;2;215;119;87m\u{2588}\x1b[0m Claude Code v9\r\n");
+    vs.nextSlice("\x1b[48;2;215;119;87m \x1b[0m\x1b[38;2;215;119;87m\u{2588}\x1b[0m" ++
+        "\x1b[48;2;215;119;87m\x1b[2X\x1b[2C\x1b[0m Claude Code v9\r\n");
     var grid: pty_mod.Grid = .{};
     defer grid.deinit(testing.allocator);
     try grid.update(testing.allocator, &term);
@@ -3264,7 +3267,7 @@ test "a banner row keeps its cells' colours through the walk, and the card paint
     try testing.expectEqual(@as(usize, 1), lines.len);
     // The trim would drop the leading space — in a banner row that space
     // IS the figure, so a coloured one is kept (`lineOf`).
-    try testing.expectEqualStrings(" \u{2588} Claude Code v9", lines[0].text);
+    try testing.expectEqualStrings(" \u{2588}   Claude Code v9", lines[0].text);
     try testing.expect(lines[0].colored());
     try testing.expectEqual(pty_mod.grid.Color{ .rgb = orange }, lines[0].colors[0].bg);
     try testing.expectEqual(pty_mod.grid.Color.default, lines[0].colors[0].fg);
@@ -3272,6 +3275,11 @@ test "a banner row keeps its cells' colours through the walk, and the card paint
     try testing.expectEqual(pty_mod.grid.Color{ .rgb = orange }, lines[0].colors[1].fg);
     try testing.expectEqual(pty_mod.grid.Color{ .rgb = orange }, lines[0].colors[3].fg);
     try testing.expectEqual(pty_mod.grid.Color.default, lines[0].colors[3].bg);
+    // The erased cells: no codepoint, a background — the space the card
+    // used to drop on the floor.
+    try testing.expectEqual(pty_mod.grid.Color{ .rgb = orange }, lines[0].colors[4].bg);
+    try testing.expectEqual(pty_mod.grid.Color{ .rgb = orange }, lines[0].colors[5].bg);
+    try testing.expect(lines[0].colors[6].isPlain());
     try testing.expect(lines[0].colors[lines[0].colors.len - 1].isPlain());
 
     // Painted: the space is that background, the glyph that foreground,
@@ -3285,14 +3293,16 @@ test "a banner row keeps its cells' colours through the walk, and the card paint
         .kind = .text,
     };
     paintRow(f.ui(), Rect.init(0, 0, 40, 4), row, false);
-    try f.expectRow(1, " \u{258C}  \u{2588} Claude Code v9");
+    try f.expectRow(1, " \u{258C}  \u{2588}   Claude Code v9");
     const vx_orange: vaxis.Color = .{ .rgb = .{ 215, 119, 87 } };
     try testing.expect(vaxis.Color.eql(f.style(3, 1).bg, vx_orange));
     try testing.expect(vaxis.Color.eql(f.style(3, 1).fg, f.theme.muted.fg));
     try testing.expect(vaxis.Color.eql(f.style(4, 1).fg, vx_orange));
     try testing.expect(vaxis.Color.eql(f.style(4, 1).bg, f.theme.panel_bg.bg));
-    try testing.expect(vaxis.Color.eql(f.style(6, 1).fg, f.theme.muted.fg));
-    try testing.expect(vaxis.Color.eql(f.style(6, 1).bg, f.theme.panel_bg.bg));
+    try testing.expect(vaxis.Color.eql(f.style(5, 1).bg, vx_orange));
+    try testing.expect(vaxis.Color.eql(f.style(6, 1).bg, vx_orange));
+    try testing.expect(vaxis.Color.eql(f.style(8, 1).fg, f.theme.muted.fg));
+    try testing.expect(vaxis.Color.eql(f.style(8, 1).bg, f.theme.panel_bg.bg));
     // A line the card synthesized has no cells behind it: flat text.
     var g = try UiFixture.init(40, 6);
     defer g.deinit();
