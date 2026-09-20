@@ -1916,6 +1916,15 @@ pub fn gutterMarksFor(app: *App, arena: Allocator, pane: PaneId, e: *EditorPane,
     return all;
 }
 
+/// The gutter's hover chevron asks this of every line the pointer
+/// visits: `editor.toggle_fold`'s own rule (`cmd_editor.foldStartsAt`),
+/// reached through the `Doc` so the view keeps knowing nothing about
+/// brackets.
+fn foldStartsAt(ctx: *const anyopaque, line: u32) bool {
+    const ed: *const @import("../editor/editor.zig").Editor = @ptrCast(@alignCast(ctx));
+    return @import("cmd_editor.zig").foldStartsAt(ed, line);
+}
+
 /// `ui.highlight_word_under_cursor`: every whole-word occurrence of the
 /// word at the cursor within `[from, to)`, sorted — the view underlines
 /// them. No word under the cursor = nothing.
@@ -2176,6 +2185,7 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .anchor = e.buf.editor.anchor,
         .extra_cursors = e.buf.editor.extra_cursors.items,
         .folds = folds,
+        .foldable = .{ .ctx = e.buf.editor, .startsFold = &foldStartsAt },
         .spans = spans,
         .matches = matches,
         .current_match = e.find.current,

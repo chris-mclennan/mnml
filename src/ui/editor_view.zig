@@ -52,6 +52,20 @@ pub const Range = struct { start: usize, end: usize };
 /// are hidden. 0-based, inclusive.
 pub const Fold = struct { first_line: u32, last_line: u32 };
 
+/// Answers "does a fold START on this line?" for the one line under the
+/// pointer — the gutter paints its `▼` there. The app hands over
+/// `editor.toggle_fold`'s own rule, so the chevron never offers a fold
+/// the command would refuse to make; without it the hover chevron is
+/// simply off.
+pub const Foldable = struct {
+    ctx: *const anyopaque,
+    startsFold: *const fn (ctx: *const anyopaque, line: u32) bool,
+
+    pub fn call(f: Foldable, line: u32) bool {
+        return f.startsFold(f.ctx, line);
+    }
+};
+
 pub const CursorShape = enum { block, bar, underline };
 
 /// A byte range underlined over the syntax style — a diagnostic. The
@@ -97,6 +111,8 @@ pub const Doc = struct {
     anchor: ?usize,
     extra_cursors: []const usize = &.{},
     folds: []const Fold = &.{},
+    /// The rule behind the gutter's hover chevron (`Foldable`).
+    foldable: ?Foldable = null,
     /// Sorted by `start`, non-overlapping.
     spans: []const Span = &.{},
     var_spans: []const VarSpan = &.{},
@@ -201,6 +217,11 @@ pub const GutterMark = struct {
 pub const mark_priority = struct {
     /// The debugger's ▶ and its breakpoints (`app/dap.zig`).
     pub const breakpoint: u8 = 90;
+    /// A fold's chevron — `▶` on a folded line, `▼` on a foldable one
+    /// under the pointer. Above a diagnostic and git's bars, so a fold
+    /// is never silent on a line that also has one; below the debugger,
+    /// whose signs a fold must not hide.
+    pub const fold: u8 = 75;
     /// A diagnostic's severity dot (`app/lsp.zig`).
     pub const diagnostic: u8 = 60;
     /// `mnml.decor.gutter`'s default.
@@ -208,6 +229,11 @@ pub const mark_priority = struct {
     /// Git's change bars, which live in the gutter's other column
     /// anyway (`app/git.zig`).
     pub const git_change: u8 = 10;
+    /// The chevron a foldable line wears while the pointer is on it —
+    /// the last word, so it only ever fills a cell nothing else wanted.
+    /// A folded line's own chevron is `fold` above; this is the offer,
+    /// not the state, and an offer must not hide a fact.
+    pub const fold_hover: u8 = 5;
 };
 
 /// The widest blame label the gutter will show.
@@ -235,6 +261,26 @@ pub const Cursor = struct { x: u16, y: u16 };
 pub const fold_marker = " ⋯ folded · ";
 pub const fold_marker_ascii = " ... folded - ";
 pub const fold_tail = " lines hidden";
+
+/// The gutter's fold chevrons. The sign cell speaks in geometric
+/// shapes — the breakpoint's `●`, the debugger's `▶` — so the fold
+/// joins that family rather than the tree's Octicons, and
+/// `ui.expand_indicator` still picks between the chevron and the small
+/// triangle as it does for every expander.
+pub const fold_closed_chevron = "\u{25B6}";
+pub const fold_open_chevron = "\u{25BC}";
+pub const fold_closed_triangle = "\u{25B8}";
+pub const fold_open_triangle = "\u{25BE}";
+pub const fold_closed_ascii = ">";
+pub const fold_open_ascii = "v";
+
+/// `closed` = the line is folded (the chevron points at what is hidden).
+pub fn foldGlyph(ui: Ui, closed: bool) []const u8 {
+    // Geometric shapes, not Nerd Font glyphs — only `--ascii` drops them.
+    if (ui.ascii) return if (closed) fold_closed_ascii else fold_open_ascii;
+    if (ui.triangle) return if (closed) fold_closed_triangle else fold_open_triangle;
+    return if (closed) fold_closed_chevron else fold_open_chevron;
+}
 
 // ─── the breadcrumb row ─────────────────────────────────────────────────
 //
@@ -602,6 +648,25 @@ fn signAt(marks: []const GutterMark, line: u32) ?GutterMark {
     return null;
 }
 
+/// What the gutter's sign cell shows on `line`: the highest-priority
+/// mark there, or the fold chevron when that outranks it. `fold_arrow`
+/// says the cell is the fold's, so the paint can register the click.
+const Sign = struct { mark: GutterMark, fold_arrow: bool = false };
+
+fn signFor(ui: Ui, doc: Doc, line: u32, folded: bool, hovered: bool) ?Sign {
+    const mark = signAt(doc.gutter_marks, line);
+    const chevron: ?GutterMark = blk: {
+        // A folded line always wears its `▶`: the fold is otherwise
+        // only visible as a chip past the end of a long row.
+        if (folded) break :blk .{ .line = line, .kind = .sign, .glyph = foldGlyph(ui, true), .style = .{ .fg = ui.theme.fold.fg }, .priority = mark_priority.fold };
+        if (hovered) if (doc.foldable) |f| if (f.call(line)) break :blk GutterMark{ .line = line, .kind = .sign, .glyph = foldGlyph(ui, false), .style = .{ .fg = ui.theme.muted.fg }, .priority = mark_priority.fold_hover };
+        break :blk null;
+    };
+    const c = chevron orelse return if (mark) |m| Sign{ .mark = m } else null;
+    if (mark) |m| if (m.priority > c.priority) return Sign{ .mark = m };
+    return .{ .mark = c, .fold_arrow = true };
+}
+
 pub fn markStyle(t: *const Theme, kind: MarkKind, base: Style) Style {
     return Theme.withFg(base, switch (kind) {
         .added => t.syntax.string.fg,
@@ -854,6 +919,12 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
             const row_rect = Rect.init(area.x, y, area.w, 1);
             ui.fill(row_rect, row_style);
 
+            // The pointer anywhere on the line arms its fold chevron, as
+            // it does in the Rust gutter — the affordance follows the
+            // row, not the one cell.
+            const line_rect = Rect.init(area.x, y, area.w, @min(@as(u16, @intCast(rows.len)), area.bottom() - y));
+            const picked: ?Sign = if (ri == 0 and gutter_w > 0) signFor(ui, doc, line, fold != null, ui.hovered(line_rect)) else null;
+
             // Gutter: the number on the line's first row, blank after.
             if (gutter_w > 0) {
                 const gr = Rect.init(area.x, y, gutter_w, 1);
@@ -872,7 +943,7 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
                 // The change mark takes the gutter's last cell, the sign
                 // its first; a one-cell gutter gives the cell to the sign.
                 if (ri == 0) {
-                    const sign = signAt(doc.gutter_marks, line);
+                    const sign: ?GutterMark = if (picked) |pk| pk.mark else null;
                     if (changeMarkAt(doc.gutter_marks, line)) |kind| if (sign == null or gutter_w > 1) {
                         const mark_glyph: []const u8 = if (ui.ascii) (switch (kind) {
                             .added => "+",
@@ -884,10 +955,13 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
                         });
                         _ = ui.putStr(area.x + gutter_w - 1, y, 1, mark_glyph, markStyle(t, kind, row_style));
                     };
-                    if (sign) |m| _ = ui.putStr(area.x, y, 1, m.glyph, Theme.onBg(m.style, row_style.bg));
+                    if (picked) |pk| _ = ui.putStr(area.x, y, 1, pk.mark.glyph, Theme.onBg(pk.mark.style, row_style.bg));
                 }
                 ui.hit(gr, .{ .editor_cell = .{ .pane = pane, .line = line, .col = 0 } });
                 ui.hit(gr, .{ .gutter = .{ .pane = pane, .line = line } });
+                // Last, so the chevron's own cell wins the press the
+                // gutter would otherwise take (`at` reads back to front).
+                if (picked) |pk| if (pk.fold_arrow) ui.hit(Rect.init(area.x, y, 1, 1), .{ .fold_arrow = .{ .pane = pane, .line = line } });
             }
 
             // Cells. `abs_x` is the display column within the line (what
@@ -1633,7 +1707,8 @@ test "a fold collapses to one row naming folded and hidden, in both glyph sets" 
     d.folds = &.{.{ .first_line = 0, .last_line = 4 }};
     d.cursor = 21; // inside the fold body
     const cur = draw(f.ui(), 0, f.full(), &view, d);
-    try f.expectRow(0, "   1 fn main() { ⋯ folded · 4 lines hidden");
+    // // changed (fold-gutter): the folded line wears its chevron.
+    try f.expectRow(0, "\u{25B6}  1 fn main() { ⋯ folded · 4 lines hidden");
     try f.expectRow(1, "   6 let end = 1;");
     try f.expectLacks("two;");
     try f.expectContains("folded");
@@ -1643,7 +1718,7 @@ test "a fold collapses to one row naming folded and hidden, in both glyph sets" 
 
     f.ascii = true;
     _ = draw(f.ui(), 0, f.full(), &view, d);
-    try f.expectRow(0, "   1 fn main() { ... folded - 4 lines hidden");
+    try f.expectRow(0, ">  1 fn main() { ... folded - 4 lines hidden");
 }
 
 test "vertical scrolling keeps the cursor row on screen, both ways" {
@@ -1837,6 +1912,111 @@ test "a line ground paints the whole row, and the cursor line's band still wins"
     try testing.expect(f.bgEql(9, 0, f.theme.cursor_line));
     // …and a line with no ground is plain.
     try testing.expect(f.bgEql(9, 2, f.theme.bg));
+}
+
+test "a folded line wears the gutter's chevron above a diagnostic and a git bar, below the debugger's signs" {
+    var f = try Fixture.init(14, 4);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("fn a() {\nbody\n}\nafter");
+    d.folds = &.{.{ .first_line = 0, .last_line = 2 }};
+    // Line 0 also carries a diagnostic dot and a git bar: the fold
+    // outranks both, and both still paint where they can (the bar has
+    // its own column).
+    d.gutter_marks = &.{
+        .{ .line = 0, .kind = .sign, .glyph = "D", .style = .{}, .priority = mark_priority.diagnostic },
+        .{ .line = 0, .kind = .modified, .glyph = "", .style = .{}, .priority = mark_priority.git_change },
+    };
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRow(0, "\u{25B6}  1▎fn a() {");
+    try testing.expect(f.fgEql(0, 0, .{ .fg = f.theme.fold.fg }));
+
+    // A breakpoint is above it: the debugger keeps the cell.
+    d.gutter_marks = &.{.{ .line = 0, .kind = .sign, .glyph = "B", .style = .{}, .priority = mark_priority.breakpoint }};
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRow(0, "B  1 fn a() {");
+}
+
+test "a foldable line wears the open chevron only while the pointer is on it, and only when it starts a fold" {
+    var f = try Fixture.init(14, 4);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("fn a() {\nbody\n}\nafter");
+    const Rule = struct {
+        fn startsFold(_: *const anyopaque, line: u32) bool {
+            return line == 0;
+        }
+    };
+    d.foldable = .{ .ctx = &d, .startsFold = &Rule.startsFold };
+
+    // Pointer away: the sign cell is blank.
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRow(0, "   1 fn a() {");
+
+    // Anywhere on the line arms it, and it takes the comment grey.
+    f.hover = .{ .x = 9, .y = 0 };
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRow(0, "\u{25BC}  1 fn a() {");
+    try testing.expect(f.fgEql(0, 0, .{ .fg = f.theme.muted.fg }));
+
+    // A line the rule refuses gets nothing, hovered or not.
+    f.hover = .{ .x = 9, .y = 1 };
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRow(1, "   2 body");
+
+    // And a diagnostic outranks a mere hover — the dot is the one that
+    // matters while the pointer drifts over its line.
+    f.hover = .{ .x = 9, .y = 0 };
+    d.gutter_marks = &.{.{ .line = 0, .kind = .sign, .glyph = "D", .style = .{}, .priority = mark_priority.diagnostic }};
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRow(0, "D  1 fn a() {");
+}
+
+test "the fold chevrons follow ui.expand_indicator and --ascii" {
+    const Rule = struct {
+        fn startsFold(_: *const anyopaque, _: u32) bool {
+            return true;
+        }
+    };
+    // closed (folded) / open (foldable, hovered), per glyph set.
+    for ([_][2][]const u8{
+        .{ "\u{25B6}", "\u{25BC}" },
+        .{ "\u{25B8}", "\u{25BE}" },
+        .{ ">", "v" },
+    }, 0..) |want, set| {
+        var f = try Fixture.init(14, 4);
+        defer f.deinit();
+        f.triangle = set == 1;
+        f.ascii = set == 2;
+        var view: ViewState = .{};
+        var d = mkDoc("fn a() {\nbody\n}\nafter");
+        d.foldable = .{ .ctx = &d, .startsFold = &Rule.startsFold };
+        d.folds = &.{.{ .first_line = 0, .last_line = 2 }};
+        _ = draw(f.ui(), 0, f.full(), &view, d);
+        var buf: [64]u8 = undefined;
+        try testing.expectEqualStrings(want[0], f.row(0, &buf)[0..want[0].len]);
+
+        d.folds = &.{};
+        f.hover = .{ .x = 9, .y = 0 };
+        _ = draw(f.ui(), 0, f.full(), &view, d);
+        try testing.expectEqualStrings(want[1], f.row(0, &buf)[0..want[1].len]);
+    }
+}
+
+test "the chevron's own cell is a fold_arrow hit, registered over the gutter's" {
+    var f = try Fixture.init(14, 4);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("fn a() {\nbody\n}\nafter");
+    d.folds = &.{.{ .first_line = 0, .last_line = 2 }};
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    // The one cell is the fold's; the rest of the gutter stays the
+    // gutter's, so a press on the numbers still selects the line.
+    try testing.expect(f.hits.at(0, 0).? == .fold_arrow);
+    try testing.expectEqual(@as(u32, 0), f.hits.at(0, 0).?.fold_arrow.line);
+    try testing.expect(f.hits.at(2, 0).? == .gutter);
+    // A line with no chevron registers none.
+    try testing.expect(f.hits.at(0, 1).? == .gutter);
 }
 
 test "the gutter paints the highest-priority sign on a line" {

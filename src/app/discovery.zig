@@ -221,6 +221,10 @@ pub fn describe(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!
             .title = try f.fmt(arena, "Line {d} gutter", .{g.line + 1}),
             .detail = "click the sign cell: toggle breakpoint · right-click: breakpoint menu",
         },
+        .fold_arrow => |g| .{
+            .title = try f.fmt(arena, "Line {d} fold", .{g.line + 1}),
+            .detail = "click toggles the fold on this line",
+        },
         .overlay_item => .{ .title = "Overlay item", .detail = "click chooses it" },
         .rail => |part| try activity_bar.describeIn(app, arena, part),
         .welcome => |row| switch (row.kind) {

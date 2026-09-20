@@ -98,6 +98,11 @@ pub const PanelRow = struct { panel: PanelId, idx: u32 };
 /// A tab on a leaf's strip, by the leaf's index and the tab's position
 /// in it — shared by `.tab` and `.tab_close` so one arm captures both.
 pub const TabRef = struct { leaf: u32, idx: u16 };
+
+/// An editor row's gutter, by pane and 0-based line — shared by
+/// `.gutter` and `.fold_arrow` so one arm captures both.
+pub const GutterRef = struct { pane: PaneId, line: u32 };
+
 /// A row of the welcome pane (`ui/welcome.zig`): the `idx`-th recent
 /// file (newest first) or the `idx`-th shortcut shown.
 pub const WelcomeRow = struct { kind: enum { recent, shortcut }, idx: u16 };
@@ -151,7 +156,11 @@ pub const HitTarget = union(enum) {
     editor_cell: struct { pane: PaneId, line: u32, col: u32 },
     /// The gutter of an editor row (`editor_view.zig`), registered over
     /// the row's `.editor_cell` so it wins: a breakpoint's home.
-    gutter: struct { pane: PaneId, line: u32 },
+    gutter: GutterRef,
+    /// The fold chevron in an editor row's sign cell (`editor_view.zig`),
+    /// registered over that row's `.gutter` so it wins the one cell it
+    /// covers: a press toggles the fold on that line.
+    fold_arrow: GutterRef,
     overlay_item: u32,
     dock: struct { id: u32, part: DockPart },
     /// // changed (launcher-dock): an item of the launcher dock, or its
@@ -215,7 +224,7 @@ pub const HitTarget = union(enum) {
             .menu_item => |v| try w.print(":{d}:{d}", .{ v.menu, v.idx }),
             .script_hit => |v| try w.print(":{d}:{d}", .{ v.pane, v.id }),
             .editor_cell => |v| try w.print(":{d}:{d}:{d}", .{ v.pane, v.line, v.col }),
-            .gutter => |v| try w.print(":{d}:{d}", .{ v.pane, v.line }),
+            .gutter, .fold_arrow => |v| try w.print(":{d}:{d}", .{ v.pane, v.line }),
             .dock => |v| try w.print(":{d}:{s}", .{ v.id, @tagName(v.part) }),
             .launcher_dock => |v| switch (v) {
                 .item => |i| try w.print(":item:{d}", .{i}),
@@ -383,6 +392,7 @@ test "labels are the tag plus the payload" {
     try expectLabel("script_hit:3:9", .{ .script_hit = .{ .pane = 3, .id = 9 } });
     try expectLabel("editor_cell:0:12:4", .{ .editor_cell = .{ .pane = 0, .line = 12, .col = 4 } });
     try expectLabel("gutter:0:12", .{ .gutter = .{ .pane = 0, .line = 12 } });
+    try expectLabel("fold_arrow:0:12", .{ .fold_arrow = .{ .pane = 0, .line = 12 } });
     try expectLabel("overlay_item:2", .{ .overlay_item = 2 });
     try expectLabel("statusline_seg:1", .{ .statusline_seg = 1 });
     try expectLabel("tree_node:8", .{ .tree_node = 8 });

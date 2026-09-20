@@ -1,0 +1,42 @@
+# width: 120
+# The gutter's fold chevrons (src/ui/editor_view.zig): a folded line
+# always wears `▶` in the sign cell, a foldable line wears `▼` while the
+# pointer is on it, and either cell is a click target that toggles the
+# fold. `ui.expand_indicator = triangle` swaps the pair for `▸` / `▾`,
+# as it does for every other expander.
+write code.rs "fn main() {\n    one();\n    two();\n    three();\n}\nlet end = 1;"
+open code.rs
+
+# Nothing folded and the pointer off the file: the sign cell is blank.
+hover 100 20
+expect screen contains "   1 fn main() {"
+
+# Fold the block from the keyboard — the chevron and the chip both say so.
+key down
+key down
+command editor.toggle_fold
+expect screen contains "▶  1 fn main() { ⋯ folded"
+expect screen lacks "two();"
+
+# The chevron's own cell is the click target: a press unfolds.
+click 31 2
+expect screen contains "two();"
+expect screen lacks "lines hidden"
+
+# The press left the pointer on that line, which is foldable — so the
+# open chevron is there now, and clicking it folds again.
+expect screen contains "▼  1 fn main() {"
+click 31 2
+expect screen contains "▶  1 fn main() { ⋯ folded"
+
+# A line that starts no fold gets no chevron, hovered or not.
+click 31 2
+hover 40 4
+expect screen contains "   3     two();"
+
+# `ui.expand_indicator = triangle`: the small triangles instead.
+ex set ui.expand_indicator=triangle
+hover 40 2
+expect screen contains "▾  1 fn main() {"
+command editor.toggle_fold
+expect screen contains "▸  1 fn main() { ⋯ folded"
