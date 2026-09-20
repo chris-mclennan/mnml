@@ -1,0 +1,39 @@
+#!/bin/sh
+# tools/shims/ghost/claude — the `claude` the ghost-text scripts see: a
+# one-shot that prints a canned completion after a delay, so a `.test`
+# can watch a suggestion go out, arrive, and be accepted without a
+# network call, an API key, or a cent of anyone's quota.
+#
+# `mnml-zig test` exports `MNML_SHIMS` (tools/shims); a script puts this
+# directory first on PATH with
+#
+#   # env: PATH=${MNML_SHIMS}/ghost:${PATH}
+#
+# Two knobs, both read from the App's environment (a `.test` sets them
+# the same way):
+#
+#   MNML_FAKE_CLAUDE_DELAY_MS  how long to think (default 150). Set it
+#                              past `[ai] suggest_timeout_ms` and the
+#                              request is a timeout — the one case that
+#                              needs a `claude` that never answers.
+#   MNML_FAKE_CLAUDE_OUT       what to print (default GHOSTFAKE). Set and
+#                              EMPTY means print nothing — the answer a
+#                              model gives when there is nothing to
+#                              suggest, which is `:-`'s blind spot and
+#                              so is spelled `-` below.
+#
+# The sibling `tools/shims/ai/claude` is the OTHER fake: a session that
+# stays open and prints nothing. This one answers and exits.
+delay=${MNML_FAKE_CLAUDE_DELAY_MS:-150}
+out=${MNML_FAKE_CLAUDE_OUT-GHOSTFAKE}
+# `sleep` takes seconds; keep one decimal so 150 ms is 0.1 s and not 0.
+secs=$(( delay / 1000 )).$(( (delay % 1000) / 100 ))
+# A cancel or a timeout sends SIGTERM to THIS process — the direct
+# child — and not to the group, so the sleeper has to be taken down by
+# hand or the corpus leaves one `sleep` behind per cancelled request.
+# (The real `claude` is exec'd directly and needs no such help.)
+sleep "$secs" &
+sleeper=$!
+trap 'kill "$sleeper" 2>/dev/null; exit 143' TERM INT
+wait "$sleeper"
+printf '%s' "$out"

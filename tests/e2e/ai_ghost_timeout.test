@@ -1,0 +1,23 @@
+# env: PATH=${MNML_SHIMS}/ghost:${PATH}
+# env: MNML_FAKE_CLAUDE_DELAY_MS=9000
+# A `claude` that never answers. `[ai] suggest_timeout_ms` (4 s by
+# default) kills the child and says so — before the budget existed the
+# request simply stayed in flight, the chip would have said nothing,
+# and the typist had no way to tell a hung backend from a quiet one.
+write a.txt "fn main() {"
+open a.txt
+command ai.setup_suggestions
+key enter
+expect screen lacks "pick a backend"
+
+type "\n    let x"
+wait 400
+expect status contains "\"ghost\":\"inflight\""
+
+# Past the budget: the chip turns to `!` and the log names the reason.
+wait 4500
+expect status contains "\"ghost\":\"error\""
+expect screen lacks "GHOSTFAKE"
+command messages.show
+expect screen contains "ghost-text: claude-code"
+expect screen contains "timeout"

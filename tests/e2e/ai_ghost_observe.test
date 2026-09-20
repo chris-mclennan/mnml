@@ -1,0 +1,56 @@
+# env: PATH=${MNML_SHIMS}/ghost:${PATH}
+# env: MNML_FAKE_CLAUDE_DELAY_MS=600
+# Ghost text you can watch. `ai_ghost_text.test` injects a suggestion
+# and asserts the key handling; this one drives the REAL request path —
+# the debounce arms, a worker runs `claude -p`, the answer comes back —
+# with `tools/shims/ghost/claude` standing in for the CLI. Nothing here
+# reaches the network, an API key, or anyone's quota.
+#
+# What is under test is the observability: before this, a request in
+# flight looked exactly like a feature that was switched off.
+write a.txt "fn main() {"
+open a.txt
+
+# Pick the Claude Code backend from the setup picker — the first row.
+command ai.setup_suggestions
+expect screen contains "pick a backend"
+expect screen contains "Claude Code sub"
+key enter
+expect screen lacks "pick a backend"
+
+# Idle: no chip and nothing pending.
+expect status contains "\"ghost\":\"idle\""
+
+# Typing arms the clock. The chip is the `…`; `status.json` says armed.
+type "\n    let x"
+expect status contains "\"ghost\":\"armed\""
+
+# Past the idle window the request goes out. The fake thinks for 600 ms,
+# so there is a real in-flight window for the chip to be caught in.
+wait 400
+expect status contains "\"ghost\":\"inflight\""
+# The chip itself: the mark, and the elapsed beside the spinner.
+expect screen contains "󰘦 "
+expect screen contains "0.4s"
+
+# The answer arrives as ghost text. The chip goes: the suggestion IS
+# the state now.
+wait 900
+expect screen contains "GHOSTFAKE"
+expect status contains "\"ghost\":\"shown\""
+
+# Tab accepts it into the buffer.
+key tab
+command file.save
+expect file a.txt contains "GHOSTFAKE"
+
+# And the request left a line behind: which backend, how long, how much.
+command messages.show
+expect screen contains "ghost-text: claude-code"
+expect screen contains "chars"
+key esc
+
+# The stats command reads the same history back.
+command ai.suggestion_stats
+expect screen contains "mean "
+expect screen contains "last: ok"
