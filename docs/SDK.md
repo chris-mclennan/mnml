@@ -237,7 +237,8 @@ the next backfill has to come back for.
 | The detail panel's `×` and its own scrollbar | `Painter.detailPanel`, `Painter.scrollbar` |
 | A build line under a pull request, and the line where one would be | `Painter.buildRow`, `Painter.buildNote` |
 | The door a build line opens — the whole line, in a free row or a table cell | `pane.buildHit` + `pane.build.pageUrl` |
-| An action button: the word in its role colour, the brackets muted | `Painter.actionChip`, `pane.action.chipOf` |
+| A row's run of action buttons, always present — `[󰏌 Open]` with room, `󰏌` without | `Painter.actionChips`, `pane.action.formFor` |
+| One of them, painted alone: the word in its role colour, the brackets muted | `Painter.actionChip`, `pane.action.chipOf` |
 | What a press left on a button — spinner, `⏸`, `[ view ]`, `✗` | `pane.action.caption` |
 | Whether a pull request may merge, and why not | `pane.merge` |
 | A named confirm | `Painter.confirmBox` |
@@ -311,6 +312,7 @@ try sdk.pane.expect.foldRow(&frame, theme, fold_y, ascii);
 try sdk.pane.expect.statuslineFigure(my_segment_text);
 try sdk.pane.expect.buildLineHit(Target, &hits, y, x0, x1, .{ .build_line = i });
 try sdk.pane.expect.gutterFullHeight(&frame, theme, 0, 0, frame.rows - 1, ascii);
+try sdk.pane.expect.actionRun(Target, &frame, &hits, y, &targets, form);
 ```
 
 Both official integrations call these, which is the point: one
@@ -372,12 +374,63 @@ that dispatches a Claude Code session. `sdk.pane.action` is the button:
 var actions = sdk.pane.ActionStore.init(gpa);       // keyed by ROW KEY, not row index
 defer actions.deinit();
 
-const st = actions.state(pr_key, "merge");
-var buf: [32]u8 = undefined;
-const cap = sdk.pane.action.caption(&buf, st, "Merge", spin, ascii);
-_ = p.actionChip(x, y, w, cap,
-                 sdk.pane.action.chipOf(th, st, sdk.pane.action.kindOf("Merge")));
+// The whole run, in one call. `formFor` is asked BEFORE the row paints
+// its words, because the buttons take their cells off the text column.
+const specs = [_]sdk.pane.action.Spec{
+    .{ .word = "Open" },
+    .{ .word = "Merge", .state = actions.state(pr_key, "merge") },
+};
+const form = sdk.pane.action.formFor(&specs, text_w, sdk.pane.action.text_floor, spin, ascii);
+const run_w = sdk.pane.action.runWidth(&specs, form, spin, ascii);
+_ = try p.actionChips(x, y, form, spin, &.{
+    .{ .word = "Open", .target = .{ .pr_button = .{ .row = i, .which = .open } } },
+    .{ .word = "Merge", .state = specs[1].state, .chip = sdk.pane.merge.chipOf(th, readiness),
+      .target = if (sdk.pane.merge.isPressable(readiness)) .{ .pr_button = … } else .{ .merge_blocked = i } },
+});
 ```
+
+#### The two forms, and why the buttons never go away
+
+**A row's buttons are always there. The width decides how much of
+themselves they show, never whether they exist.**
+
+```
+ icon+label   [󰏌 Open] [󰊢 Merge]     the glyph, the word, muted brackets
+ icon         󰏌 󰊢                     one cell each, the same role colour
+```
+
+`action.formFor` picks the widest form that still leaves
+`action.text_floor` cells of the text column for the row's own words;
+below that the run reduces to its glyphs, and it never reduces past
+them. That is one rule for both families and it replaced two: the
+forge pane dropped its buttons whole below about 135 columns — on the
+CURSOR's row, the one row that can act, so at 80 and 120 the action
+was reachable only by key — and the tracker pane clipped forty
+summaries to show forty copies of a word.
+
+A button that disappears teaches nothing. A button reduced to its
+glyph is still there, still coloured by what pressing it costs, still
+pressable, and the hover names it (`action.hoverText`, empty at
+icon+label where the word is already on screen).
+
+One glyph per KIND, not one per word, so the whole set is four and
+both families wear the same four — each with an `--ascii` twin:
+
+| kind | glyph | ascii |
+|---|---|---|
+| `navigation` | `󰏌` `md-open_in_new` | `>` |
+| `review` | `` `fa-eye` | `?` |
+| `dispatch` | `` `fa-rocket` | `*` |
+| `final` | `󰊢` `md-source_merge` | `&` |
+
+`[󰏌 Open]` is exactly as wide as the `[ Open ]` it replaces, so no row
+got narrower for growing a glyph. A state past `idle` outranks the
+kind at both widths: a spinner is a spinner in one cell, and `[ ⠙ ]`
+where the word would be.
+
+`sdk.pane.expect.actionRun` is the assertion both suites call — the
+buttons are there, the form is the one the row can afford, and every
+hit is exactly the cells its button painted.
 
 `actionChip` paints the brackets and the word separately: the
 punctuation stays muted and the **word carries the colour of what

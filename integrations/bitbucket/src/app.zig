@@ -973,6 +973,22 @@ pub const App = struct {
     pub fn hover(app: *App, col: u16, row: u16) void {
         app.hover_len = 0;
         const target = app.hits.at(col, row) orelse return;
+        // A button showing only its glyph is the one place the action
+        // is not named on screen, so the pointer names it. One cell
+        // wide IS the icon form — the rect the paint registered says
+        // so, and nothing has to be remembered between frames.
+        if (target == .pr_button) {
+            const r = app.hits.rectOf(target) orelse return;
+            if (r.w != 1) return;
+            const word = switch (target.pr_button.which) {
+                .open => "Open",
+                .merge => sdk.pane.merge.label,
+            };
+            var wbuf: [96]u8 = undefined;
+            const st = app.buttonStateOf(target.pr_button.row, target.pr_button.which);
+            app.setHover(sdk.pane.action.hoverText(&wbuf, .icon, st, word));
+            return;
+        }
         const idx = switch (target) {
             .merge_blocked => |i| i,
             else => return,
@@ -991,9 +1007,32 @@ pub const App = struct {
         const r = app.readinessOf(repos[ref.repo].slug, pr);
         var buf: [192]u8 = undefined;
         const note = r.hoverText(&buf);
+        app.setHover(note);
+    }
+
+    fn setHover(app: *App, note: []const u8) void {
         const n = @min(note.len, app.hover_buf.len);
         @memcpy(app.hover_buf[0..n], note[0..n]);
         app.hover_len = n;
+    }
+
+    /// What the button on `row` for `which` is wearing — the state its
+    /// last press left, so a one-cell button's hover says `running`
+    /// rather than offering a word it is no longer offering.
+    fn buttonStateOf(app: *App, row: usize, which: hit.PrButton) sdk.pane.action.State {
+        if (which != .merge) return .idle;
+        var scratch = std.heap.ArenaAllocator.init(app.gpa);
+        defer scratch.deinit();
+        const v = app.visible(scratch.allocator()) catch return .idle;
+        if (row >= v.rows.len) return .idle;
+        const ref = tabs.prOf(v.rows[row]) orelse return .idle;
+        const repos = switch (app.activeTab().data) {
+            .repo_pr_tree => |r| r,
+            else => return .idle,
+        };
+        if (ref.repo >= repos.len or ref.idx >= repos[ref.repo].prs.len) return .idle;
+        var kbuf: [256]u8 = undefined;
+        return app.actions.state(App.prRowKey(&kbuf, repos[ref.repo].slug, repos[ref.repo].prs[ref.idx].id), "merge");
     }
 
     /// The strategies this workspace allows, as the toolkit spells

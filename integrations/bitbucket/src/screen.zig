@@ -351,7 +351,8 @@ fn paintList(arena: Allocator, p: *Painter, box: Box) Allocator.Error!void {
         // painted over.
         // The buttons come out of the LAST column's width, so a row
         // never trades its title for them.
-        const bw = rowButtonsWidth(p, if (cols.len > 0) cols[cols.len - 1].w else 0, row, selected);
+        const plan = rowButtonPlan(p, if (cols.len > 0) cols[cols.len - 1].w else 0, row);
+        const bw = plan.w;
         paintSpans(p, list.x + 2, y, text_w -| 2 -| bw, spans);
         // The chevron at the head of a tree row is its own target, so
         // a click THERE folds the row and a click anywhere else on it
@@ -368,7 +369,7 @@ fn paintList(arena: Allocator, p: *Painter, box: Box) Allocator.Error!void {
             p.target(door.x, door.y, door.w, .{ .build_line = idx });
         }
         if (chevronX(p, list.x, row)) |cx| p.target(cx, y, 1, .{ .chevron = idx });
-        if (bw > 0) try paintRowButtons(p, list.x, y, text_w, bw, idx, row);
+        if (bw > 0) try paintRowButtons(p, list.x, y, text_w, bw, plan.form, idx, row);
         y += h;
     }
     if (needs_bar) try p.c.scrollbar(.{ .x = list.x + list.w - 1, .y = list.y, .w = 1, .h = list.h }, v.cells, cellsBefore(v.rows, first), list.h, null);
@@ -394,85 +395,78 @@ fn chevronX(p: *Painter, list_x: u16, row: tabs.VisibleRow) ?u16 {
     };
 }
 
-/// `[ Open ] [ Merge ]` at the right end of a pull-request row.
+/// `[󰏌 Open] [󰊢 Merge]` at the right end of EVERY pull-request row.
 ///
 /// `[ Merge ]` is dim and registers NO `pr_button` target until the
 /// pull request may actually merge — only `merge_blocked`, which a
 /// hover reads for its reason and a click answers with the same
 /// sentence. A button that is always pressable teaches nothing.
-const open_caption = "[ Open ]";
-/// Cells the title keeps when a row carries its buttons.
-const title_floor: u16 = 16;
-
-/// What one row's buttons will take, or 0 when the row has none.
-///
-/// Only the row under the CURSOR carries them, and only when the title
-/// column can give up their cells and still say something — this table
-/// is dense, and a title clipped to `Rede` is worse than no button.
-/// `M` merges the focused pull request whether or not the button fits,
-/// so a narrow pane loses the convenience and not the action.
-fn rowButtonsWidth(p: *Painter, title_w: u16, row: tabs.VisibleRow, selected: bool) u16 {
+/// The specs one row's buttons are built from, and the state each
+/// wears. Empty for a row that has no buttons at all.
+fn rowButtonSpecs(p: *Painter, row: tabs.VisibleRow, out: *[2]sdk.pane.action.Spec) []sdk.pane.action.Spec {
     const app = p.app;
-    if (!selected or row != .pr) return 0;
+    if (row != .pr) return out[0..0];
     const repos = switch (app.activeTab().data) {
         .repo_pr_tree => |r| r,
-        else => return 0,
+        else => return out[0..0],
     };
-    if (row.pr.repo >= repos.len or row.pr.idx >= repos[row.pr.repo].prs.len) return 0;
+    if (row.pr.repo >= repos.len or row.pr.idx >= repos[row.pr.repo].prs.len) return out[0..0];
     const pr = repos[row.pr.repo].prs[row.pr.idx];
-    var total = Painter.width(open_caption);
-    if (pr.isOpen()) {
-        var kbuf: [256]u8 = undefined;
-        const row_key = app_mod.App.prRowKey(&kbuf, repos[row.pr.repo].slug, pr.id);
-        var abuf: [32]u8 = undefined;
-        var mbuf: [16]u8 = undefined;
-        const state = app.actions.state(row_key, "merge");
-        const shown = if (state == .idle) sdk.pane.merge.caption(&mbuf) else sdk.pane.action.caption(&abuf, state, sdk.pane.merge.label, app.spin, !p.nerd);
-        total += 1 + Painter.width(shown);
-    }
-    // Below this the row keeps its words instead.
-    if (title_w < total + title_floor) return 0;
-    return total + 1;
+    out[0] = .{ .word = "Open" };
+    // A merged or declined pull request has nothing to merge.
+    if (!pr.isOpen()) return out[0..1];
+    var kbuf: [256]u8 = undefined;
+    const row_key = app_mod.App.prRowKey(&kbuf, repos[row.pr.repo].slug, pr.id);
+    out[1] = .{ .word = sdk.pane.merge.label, .state = app.actions.state(row_key, "merge") };
+    return out[0..2];
 }
 
-fn paintRowButtons(p: *Painter, x0: u16, y: u16, w: u16, bw: u16, idx: usize, row: tabs.VisibleRow) Allocator.Error!void {
+/// What one row's buttons will take, and the form they will wear.
+///
+/// The buttons are on EVERY pull-request row now, and `title_w`
+/// decides only how much of themselves they show. This pane used to
+/// put them on the cursor's row alone and only above ~135 columns —
+/// so at 80 and 120 the one row that could act was the one row that
+/// could not, and `M` was the only way to merge anything.
+fn rowButtonPlan(p: *Painter, title_w: u16, row: tabs.VisibleRow) struct { form: sdk.pane.action.Form, w: u16 } {
+    var buf: [2]sdk.pane.action.Spec = undefined;
+    const specs = rowButtonSpecs(p, row, &buf);
+    if (specs.len == 0) return .{ .form = .icon, .w = 0 };
+    const form = sdk.pane.action.formFor(specs, title_w, sdk.pane.action.text_floor, p.app.spin, !p.nerd);
+    return .{ .form = form, .w = sdk.pane.action.runWidth(specs, form, p.app.spin, !p.nerd) + 1 };
+}
+
+fn paintRowButtons(p: *Painter, x0: u16, y: u16, w: u16, bw: u16, form: sdk.pane.action.Form, idx: usize, row: tabs.VisibleRow) Allocator.Error!void {
     const app = p.app;
-    const repos = switch (app.activeTab().data) {
-        .repo_pr_tree => |r| r,
-        else => return,
-    };
+    var buf: [2]sdk.pane.action.Spec = undefined;
+    const specs = rowButtonSpecs(p, row, &buf);
+    if (specs.len == 0) return;
+    const repos = app.activeTab().data.repo_pr_tree;
     const slug = repos[row.pr.repo].slug;
     const pr = repos[row.pr.repo].prs[row.pr.idx];
-    var kbuf: [256]u8 = undefined;
-    const row_key = app_mod.App.prRowKey(&kbuf, slug, pr.id);
 
-    var x = x0 + w -| bw + 1;
-    const ow = Painter.width(open_caption);
-    _ = p.c.actionChip(x, y, ow, open_caption, sdk.pane.action.chipOf(p.th, .idle, sdk.pane.action.kindOf(open_caption)));
-    p.target(x, y, ow, .{ .pr_button = .{ .row = idx, .which = .open } });
-    x += ow + 1;
-    // A merged or declined pull request has nothing to merge.
-    if (!pr.isOpen()) return;
-    const state = app.actions.state(row_key, "merge");
-    var abuf: [32]u8 = undefined;
-    var mbuf: [16]u8 = undefined;
-    const shown = if (state == .idle) sdk.pane.merge.caption(&mbuf) else sdk.pane.action.caption(&abuf, state, sdk.pane.merge.label, app.spin, !p.nerd);
-    const mw = Painter.width(shown);
-    if (state != .idle) {
-        // Once a merge session exists the button follows IT: the
-        // spinner, the `⏸`, the `[ view ]`, the `✗` — readiness has
-        // had its say.
-        _ = p.c.actionChip(x, y, mw, shown, sdk.pane.action.chipOf(p.th, state, .final));
-        p.target(x, y, mw, .{ .pr_button = .{ .row = idx, .which = .merge } });
-        return;
+    var list: [2]sdk.pane.chrome.ActionChip(hit.Target) = undefined;
+    for (specs, 0..) |sp, i| {
+        const is_merge = i == 1;
+        if (!is_merge) {
+            list[i] = .{ .word = sp.word, .target = .{ .pr_button = .{ .row = idx, .which = .open } } };
+            continue;
+        }
+        if (sp.state != .idle) {
+            // Once a merge session exists the button follows IT: the
+            // spinner, the `⏸`, the `[ view ]`, the `✗` — readiness has
+            // had its say.
+            list[i] = .{ .word = sp.word, .state = sp.state, .target = .{ .pr_button = .{ .row = idx, .which = .merge } } };
+            continue;
+        }
+        const r = app.readinessOf(slug, pr);
+        list[i] = .{
+            .word = sp.word,
+            .chip = sdk.pane.merge.chipOf(p.th, r),
+            .target = if (sdk.pane.merge.isPressable(r)) .{ .pr_button = .{ .row = idx, .which = .merge } } else .{ .merge_blocked = idx },
+        };
     }
-    const r = app.readinessOf(slug, pr);
-    _ = p.c.actionChip(x, y, mw, shown, sdk.pane.merge.chipOf(p.th, r));
-    if (sdk.pane.merge.isPressable(r)) {
-        p.target(x, y, mw, .{ .pr_button = .{ .row = idx, .which = .merge } });
-    } else {
-        p.target(x, y, mw, .{ .merge_blocked = idx });
-    }
+    _ = try p.c.actionChips(x0 + w -| bw + 1, y, form, app.spin, list[0..specs.len]);
 }
 
 fn cellsBefore(rows: []const tabs.VisibleRow, first: usize) usize {
@@ -838,7 +832,7 @@ test "the pane paints the header, the strip, the pill, the reference's columns, 
     try t.expect(has(scr, "▌ ▾ api"));
     try t.expect(has(scr, "2 PRs"));
     try t.expect(has(scr, "#1234"));
-    try t.expect(has(scr, "Fix the login redirect"));
+    try t.expect(has(scr, "Fix the login redir"));
     try t.expect(has(scr, "chris/fix-login"));
     try t.expect(has(scr, "Show more (1)"));
     try t.expect(has(scr, "author: all"));
@@ -881,7 +875,7 @@ test "an open PR's chevron folds its builds under the mouse" {
     const s = try Screen.init(120, 40, acme, .{});
     defer s.deinit();
     _ = try s.draw();
-    const y = try s.rowOf("Fix the login redirect");
+    const y = try s.rowOf("Fix the login redir");
     // The chevron is its own target, four cells in from the gutter.
     const at = s.rig.app.hits.at(4, y) orelse return error.NoChevron;
     try t.expect(at == .chevron);
@@ -936,7 +930,7 @@ test "a click on a row selects that row and toggles a header; the strip switches
     try t.expect(has(scr, "▸ api"));
     // The header keeps its preview of #1234; the PR row itself is gone.
     try t.expect(has(scr, "#1234 · Fix the login"));
-    try t.expect(!has(scr, "Fix the login redirect"));
+    try t.expect(!has(scr, "Fix the login redir"));
     // The strip.
     const hit_tab = s.rig.app.hits.rectOf(.{ .tab = 1 }).?;
     try s.click(hit_tab.x + 2, hit_tab.y, .left);
@@ -988,19 +982,54 @@ test "a PR folds out to its builds under enter, one row per run, and the detail 
     try t.expect(!has(nscr, "REPO / #PR"));
 }
 
-test "the cursor's PR row grows its buttons, the Merge is dim, and hovering it says why" {
-    // Wide enough for the row to give up the cells: at 120 the title
-    // would pay for them, so the buttons are not offered there and the
-    // `M` key and the row menu carry the action instead.
+test "a PR row's buttons are always there: words at 140, glyphs at 80, hit = paint" {
+    // Wide: the glyph AND the word, each a hit the width of the cells
+    // it painted.
+    {
+        const s = try Screen.init(140, 24, acme, .{});
+        defer s.deinit();
+        try s.key("j");
+        _ = try s.draw();
+        try sdk.pane.expect.actionRun(hit.Target, &s.frame, &s.rig.app.hits.inner, s.rig.app.hits.rectOf(.{ .pr_button = .{ .row = 1, .which = .open } }).?.y, &.{
+            .{ .pr_button = .{ .row = 1, .which = .open } },
+            .{ .merge_blocked = 1 },
+        }, .icon_label);
+    }
+    // Narrow: the SAME buttons, one cell each. This pane used to drop
+    // them whole below ~135 columns — on the CURSOR's row, the one row
+    // that can act — so at the two sizes the corpus runs at they were
+    // never available at all.
+    {
+        const s = try Screen.init(80, 24, acme, .{});
+        defer s.deinit();
+        try s.key("j");
+        _ = try s.draw();
+        const r = s.rig.app.hits.rectOf(.{ .pr_button = .{ .row = 1, .which = .open } }).?;
+        try sdk.pane.expect.actionRun(hit.Target, &s.frame, &s.rig.app.hits.inner, r.y, &.{
+            .{ .pr_button = .{ .row = 1, .which = .open } },
+            .{ .merge_blocked = 1 },
+        }, .icon);
+        // And the pointer names what the glyph cannot.
+        s.rig.app.hover(r.x, r.y);
+        try t.expectEqualStrings("Open", s.rig.app.hoverNote());
+    }
+}
+
+test "every PR row carries its buttons, the Merge is dim, and hovering it says why" {
+    // Wide enough for the words. Below that the run reduces to its
+    // glyphs — it is never dropped, which is what this pane used to do
+    // below ~135 columns, on the one row that could act.
     const s = try Screen.init(200, 40, acme, .{});
     defer s.deinit();
     // The cursor onto #1234.
     try s.key("j");
     var scr = try s.draw();
-    try t.expect(has(scr, "[ Open ] [ Merge ]"));
-    // Only the row under the cursor carries them: the table is dense,
-    // and the title is the column that would otherwise pay.
-    try t.expectEqual(@as(usize, 1), std.mem.count(u8, scr, "[ Merge ]"));
+    try t.expect(has(scr, "[\u{f03cc} Open] [\u{f062d} Merge]"));
+    // EVERY open pull request carries them now, not just the cursor's:
+    // the acme fake has two, and the second is merged, so it has an
+    // `Open` and no `Merge`.
+    try t.expect(std.mem.count(u8, scr, "[\u{f062d} Merge]") >= 1);
+    try t.expect(std.mem.count(u8, scr, "[\u{f03cc} Open]") >= 2);
 
     // Landing on the row took its one readiness look, and #1234 is
     // blocked: the button registers `merge_blocked` rather than a
@@ -1036,7 +1065,7 @@ test "the cursor's PR row grows its buttons, the Merge is dim, and hovering it s
     try s.rig.app.pressMerge("api", pr);
     scr = try s.draw();
     try t.expect(has(scr, "Merge acme/api/pull-requests/1234"));
-    try t.expect(has(scr, "Fix the login redirect"));
+    try t.expect(has(scr, "Fix the login redir"));
     try t.expect(has(scr, "chris/fix-login \u{2192} main"));
     try t.expect(has(scr, "strategy: merge commit"));
     try t.expect(has(scr, "merged by a Claude Code session, not by this pane"));
@@ -1065,7 +1094,7 @@ test "the awaiting chip says its count, narrows the tab, and the header says wha
     try t.expect(has(scr, "(1 of 3 awaiting my review)"));
     // Only Dana's #1198, which I am a reviewer on and have not voted.
     try t.expect(has(scr, "#1198"));
-    try t.expect(!has(scr, "Fix the login redirect"));
+    try t.expect(!has(scr, "Fix the login redir"));
     // …and it is 30 hours old, so the 24-hour window the tree usually
     // folds it behind is lifted rather than hiding the very thing the
     // chip is for.
@@ -1076,7 +1105,7 @@ test "the awaiting chip says its count, narrows the tab, and the header says wha
     try s.click(chip.x + 1, chip.y, .left);
     scr = try s.draw();
     try t.expect(has(scr, "(2 repos \u{b7} 3 PRs)"));
-    try t.expect(has(scr, "Fix the login redirect"));
+    try t.expect(has(scr, "Fix the login redir"));
 }
 
 test "an OPEN PR folds out to the builds on its branch head; a second open costs nothing while it has not moved" {
@@ -1195,7 +1224,7 @@ test "the key sheet, the row menu and the filter paint as overlays that take the
     for ("login") |c| try s.key(&[_]u8{c});
     scr = try s.draw();
     try t.expect(has(scr, "login▏"));
-    try t.expect(has(scr, "Fix the login redirect"));
+    try t.expect(has(scr, "Fix the login redir"));
     try t.expect(!has(scr, "Redesign the empty"));
 }
 

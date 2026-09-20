@@ -1673,6 +1673,38 @@ pub const App = struct {
     pub fn hover(a: *App, col: u16, row: u16) Allocator.Error!void {
         a.hover_len = 0;
         const target = a.hits.at(col, row) orelse return;
+        // A button showing only its glyph is the one place the action
+        // is not named on screen, so the pointer names it. One cell
+        // wide IS the icon form — the rect the paint registered says
+        // so, and nothing has to be remembered between frames.
+        switch (target) {
+            .pr_button => |b| {
+                const r = a.hits.rectOf(target) orelse return;
+                if (r.w != 1) return;
+                const word = switch (b.which) {
+                    .open => "Open",
+                    .review => "Review",
+                    .merge => sdk.pane.merge.label,
+                };
+                var wbuf: [96]u8 = undefined;
+                a.setHover(sdk.pane.action.hoverText(&wbuf, .icon, .idle, word));
+                return;
+            },
+            .action => |ab| {
+                const r = a.hits.rectOf(target) orelse return;
+                if (r.w != 1) return;
+                const t2 = a.tab();
+                if (ab.issue >= t2.issues.len) return;
+                const iss = t2.issues[ab.issue];
+                const set = dispatch.buttonsForTicket(iss);
+                if (ab.button >= set.len) return;
+                const b = set[ab.button];
+                var wbuf: [96]u8 = undefined;
+                a.setHover(sdk.pane.action.hoverText(&wbuf, .icon, a.actions.state(iss.key, b.kind()), std.mem.trim(u8, b.label(), "[] ")));
+                return;
+            },
+            else => {},
+        }
         const idx = switch (target) {
             .merge_blocked => |i| i,
             else => return,
@@ -1690,7 +1722,10 @@ pub const App = struct {
         const prs = (t.tree.?).prs(key) orelse return;
         if (pr_ref.pr_idx >= prs.len) return;
         var buf: [192]u8 = undefined;
-        const note = a.readinessOf(key, prs[pr_ref.pr_idx]).hoverText(&buf);
+        a.setHover(a.readinessOf(key, prs[pr_ref.pr_idx]).hoverText(&buf));
+    }
+
+    fn setHover(a: *App, note: []const u8) void {
         const n = @min(note.len, a.hover_buf.len);
         @memcpy(a.hover_buf[0..n], note[0..n]);
         a.hover_len = n;
