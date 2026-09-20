@@ -287,8 +287,10 @@ otherwise. Copy what you need; leave the rest out.
         // when it opens — the one the SESSIONS panel draws from — and
         // keeps it until it closes, skipping whatever another open pane
         // is already wearing, so two terminals are never the same
-        // colour at the same time. An integration pane wears its app's
-        // colour instead, and a git pane its repo's.
+        // colour at the same time. A git pane wears its repo's accent
+        // when there is more than one repo; a mounted integration is
+        // not striped at all — the app colour is the sibling's own to
+        // paint on the grid it owns.
         //   .all       every pane (the default)
         //   .sessions  only an AI session pane, the look before the
         //              rail was a rule

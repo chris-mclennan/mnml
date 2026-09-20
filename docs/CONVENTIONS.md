@@ -97,8 +97,11 @@ There is no third option, and no handler may stash the raw pointer to
 
 A pane is a colour. One cell wide, down its left edge, its full height,
 the `▌` every other "this thing is that colour" marker in the app uses.
-No pane kind is exempt: a terminal, an editor, a git diff, a mounted
-integration, a request, a list — if it is a pane, it has a rail.
+No pane kind is exempt but one: a terminal, an editor, a git diff, a
+request, a list — if it is a pane, it has a rail. The exception is a
+mounted integration, which owns every cell of its own grid: the app
+colour there is the sibling's to paint, and a rail on top would be the
+same colour twice and a column narrower for the sibling.
 
 - **The colour comes off the one ladder** (`src/ui/accent_color.zig`),
   the same one the SESSIONS panel draws from. A pane takes the first
@@ -110,10 +113,12 @@ integration, a request, a list — if it is a pane, it has a rail.
   without its author doing anything. Adding a kind is a `Pane` variant,
   not a visit to the rail code.
 - **A pane that already belongs to something wears that owner's
-  colour** and takes no ladder slot — a mounted integration its app
-  colour, a git pane its repo's accent (`Pane.wearsOwnAccent`). That is
-  the whole exception list; do not paint a second stripe beside one of
-  these, the owner's colour IS the rail.
+  colour**, not a slot off the ladder: a git status / diff / graph
+  pane its repo's accent, which is what tells two repos' panes apart
+  (one repo has no accent — nothing to tell apart — and the pane falls
+  back to its own slot). A mounted integration goes further and takes
+  no ladder slot at all (`Pane.wearsOwnAccent`): the app colour IS its
+  rail, and mnml paints nothing over it.
 - **The rail registers no hit.** The pane's own hit already covers the
   column, so the stripe is transparent to the pointer.
 - **Where it goes.** A pane whose content owns its first column insets:
