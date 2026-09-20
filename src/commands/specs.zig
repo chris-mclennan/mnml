@@ -1238,6 +1238,6 @@ test "1086 specs, unique ids" {
     // and the two `integrations.*_dock` pin verbs (launcher-dock)
     // + `view.menu_bar_pin` (menu-bar-pin)
     // + `integrations.update` (int-distribution)
-    try std.testing.expectEqual(@as(usize, 1102), specs.len);
+    try std.testing.expectEqual(@as(usize, 1103), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }
