@@ -4,6 +4,7 @@
 //! folds a non-zero exit into an error message.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
@@ -40,15 +41,79 @@ pub const Outcome = struct {
 /// only when the process could not be started; a non-zero exit is an
 /// `Outcome` with `ok = false`.
 pub fn run(gpa: Allocator, io: Io, argv: []const []const u8, cwd: []const u8, env: ?*const std.process.Environ.Map) error{ OutOfMemory, Canceled, Failed }!Outcome {
+    return runWithin(gpa, io, argv, cwd, env, null) catch |err| switch (err) {
+        error.TimedOut => unreachable, // no budget was asked for
+        else => |e| return e,
+    };
+}
+
+/// `argv` with a bare `argv[0]` replaced by its absolute path, looked
+/// up on the PATH of `env`.
+///
+/// `std.process.run` resolves `argv[0]` against the PARENT process's
+/// environment — explicitly, and whatever `environ_map` says. So a
+/// caller that hands mnml a PATH (a `.test` script's
+/// `# env: PATH=${MNML_SHIMS}/…`, a launch profile's `env`) got the
+/// environment it asked for everywhere EXCEPT in the one decision that
+/// picks which binary runs: the fake was on the child's PATH and the
+/// real `claude` was the one that answered. Resolving here is what
+/// makes a shim a shim.
+///
+/// Anything not found is left alone, so the failure still comes back
+/// as the spawn error the caller already words ("is it installed?").
+fn resolveArgv(arena: Allocator, io: Io, argv: []const []const u8, env: ?*const std.process.Environ.Map) Allocator.Error![]const []const u8 {
+    if (argv.len == 0) return argv;
+    const name = argv[0];
+    if (name.len == 0 or std.mem.indexOfScalar(u8, name, '/') != null) return argv;
+    if (builtin.os.tag == .windows and std.mem.indexOfScalar(u8, name, '\\') != null) return argv;
+    const path = (env orelse return argv).get("PATH") orelse return argv;
+    const sep: u8 = if (builtin.os.tag == .windows) ';' else ':';
+    var it = std.mem.splitScalar(u8, path, sep);
+    while (it.next()) |dir| {
+        if (dir.len == 0) continue;
+        const full = std.fs.path.join(arena, &.{ dir, name }) catch return error.OutOfMemory;
+        // Executable-or-not is the OS's call at spawn; existence is
+        // all this needs to know to prefer an earlier PATH entry.
+        Io.Dir.cwd().access(io, full, .{}) catch continue;
+        const out = try arena.dupe([]const u8, argv);
+        out[0] = full;
+        return out;
+    }
+    return argv;
+}
+
+/// `run` with a wall-clock budget. Past `timeout_ms` the child is
+/// killed and `error.TimedOut` comes back. Ghost text asks for one
+/// (`[ai] suggest_timeout_ms`): a `claude -p` that stalls would
+/// otherwise hold the single in-flight slot until it felt like
+/// answering, and the typist would have no way to tell that from a
+/// backend that is merely slow. The kill is `std.process.run`'s own
+/// `defer child.kill`, the same unwind a cancel takes.
+pub fn runWithin(
+    gpa: Allocator,
+    io: Io,
+    argv: []const []const u8,
+    cwd: []const u8,
+    env: ?*const std.process.Environ.Map,
+    timeout_ms: ?u64,
+) error{ OutOfMemory, Canceled, Failed, TimedOut }!Outcome {
+    var scratch = std.heap.ArenaAllocator.init(gpa);
+    defer scratch.deinit();
+    const resolved = try resolveArgv(scratch.allocator(), io, argv, env);
     const result = std.process.run(gpa, io, .{
-        .argv = argv,
+        .argv = resolved,
         .cwd = .{ .path = cwd },
         .environ_map = env,
         .stdout_limit = .limited(8 * 1024 * 1024),
         .stderr_limit = .limited(1024 * 1024),
+        .timeout = if (timeout_ms) |ms| .{ .duration = .{
+            .raw = .fromMilliseconds(@intCast(@min(ms, @as(u64, std.math.maxInt(i32))))),
+            .clock = .awake,
+        } } else .none,
     }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.Canceled => return error.Canceled,
+        error.Timeout => return error.TimedOut,
         else => return error.Failed,
     };
     const ok = result.term == .exited and result.term.exited == 0;
@@ -156,4 +221,50 @@ test "run: a shell that exits 0 hands back stdout; a failure hands back stderr" 
     try t.expect(!bad.ok);
     try t.expectEqualStrings("boom", bad.text);
     try t.expectError(error.Failed, run(t.allocator, t.io, &.{"/definitely/not/a/binary"}, "/tmp", null));
+}
+
+test "the binary is resolved on the caller's PATH, not the parent process's" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    // The whole point of a shim: a `.test` that puts a fake `claude`
+    // first on PATH must get the fake. `std.process.run` resolves
+    // `argv[0]` against the PARENT environment whatever `environ_map`
+    // says, so without `resolveArgv` the user's real CLI answers — and
+    // the corpus quietly drives their actual Claude account.
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "git", .data = "#!/bin/sh\nprintf SHIMMED\n" });
+    try tmp.dir.setFilePermissions(t.io, "git", .fromMode(0o755), .{});
+
+    var env: std.process.Environ.Map = .init(t.allocator);
+    defer env.deinit();
+    try env.put("PATH", dir);
+    const out = try run(t.allocator, t.io, &.{ "git", "--version" }, "/tmp", &env);
+    defer t.allocator.free(out.text);
+    try t.expectEqualStrings("SHIMMED", out.text);
+
+    // An absolute argv[0] is left alone, and so is a name nothing on
+    // that PATH provides — the spawn failure is still the caller's to
+    // word.
+    const abs = try run(t.allocator, t.io, &.{ "/bin/sh", "-c", "printf REAL" }, "/tmp", &env);
+    defer t.allocator.free(abs.text);
+    try t.expectEqualStrings("REAL", abs.text);
+    try t.expectError(error.Failed, run(t.allocator, t.io, &.{"definitely-not-a-binary"}, "/tmp", &env));
+}
+
+test "runWithin: a child that sleeps past the budget is killed, and the call comes back inside it" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    // The evidence that the CHILD dies and not just our interest in it:
+    // `sleep 30` would hold the call for 30 s if the budget only
+    // dropped the result. `process.run`'s `defer child.kill` is what
+    // makes the return prompt.
+    const t0 = Io.Timestamp.now(t.io, .awake);
+    try t.expectError(error.TimedOut, runWithin(t.allocator, t.io, &.{ "/bin/sh", "-c", "sleep 30" }, "/tmp", null, 200));
+    const elapsed = t0.untilNow(t.io, .awake).toMilliseconds();
+    try t.expect(elapsed < 5_000);
+    // A budget the command finishes inside of is not a timeout.
+    const ok = try runWithin(t.allocator, t.io, &.{ "/bin/sh", "-c", "printf quick" }, "/tmp", null, 10_000);
+    defer t.allocator.free(ok.text);
+    try t.expectEqualStrings("quick", ok.text);
 }
