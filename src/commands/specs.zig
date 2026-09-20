@@ -829,6 +829,7 @@ pub const specs = [_]Spec{
     .{ .id = "marketplace.open_detail_focused", .title = "Marketplace: open details for right-clicked entry", .group = "integrations" },
     .{ .id = "marketplace.install_focused", .title = "Marketplace: install right-clicked entry", .group = "integrations" },
     .{ .id = "marketplace.copy_id_focused", .title = "Marketplace: copy id of right-clicked entry", .group = "integrations" },
+    .{ .id = "integrations.update", .title = "Integrations: update — relink <data root>/bin at the binary's current home", .group = "integrations" },
     .{ .id = "coverage.chip_show_both", .title = "Coverage chip: show Feature + Code", .group = "view" },
     .{ .id = "coverage.chip_show_feature", .title = "Coverage chip: show Feature only", .group = "view" },
     .{ .id = "coverage.chip_show_code", .title = "Coverage chip: show Code (Istanbul) only", .group = "view" },
@@ -1230,6 +1231,7 @@ test "1086 specs, unique ids" {
     // + the launcher dock's six (`view.dock_*`, `view.focus_dock`)
     // and the two `integrations.*_dock` pin verbs (launcher-dock)
     // + `view.menu_bar_pin` (menu-bar-pin)
-    try std.testing.expectEqual(@as(usize, 1101), specs.len);
+    // + `integrations.update` (int-distribution)
+    try std.testing.expectEqual(@as(usize, 1102), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

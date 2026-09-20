@@ -54,6 +54,7 @@ const pty_pane = @import("pty_pane.zig");
 const cmd_picker = @import("cmd_picker.zig");
 const runners = @import("runners.zig");
 const marketplace = @import("marketplace.zig");
+const catalogue = @import("marketplace_catalogue.zig");
 const font_scan = @import("font_scan.zig");
 const fonts_section = @import("../ui/fonts_section.zig");
 const side = @import("side.zig");
@@ -540,6 +541,7 @@ pub const table = .{
     .@"integrations.show_installed" = &showInstalled,
     .@"view.activity_integrations" = &showInstalled,
     .@"integrations.show_marketplace" = &showMarketplace,
+    .@"integrations.update" = &updateCmd,
     .@"integrations.show_in_dev" = &showDevCmd,
     .@"integrations.toggle_dev_tab" = &toggleDevTab,
     .@"integrations.toggle_tab" = &toggleTab,
@@ -727,6 +729,37 @@ pub fn chipGlyph(arena: Allocator, chip: ?manifest_mod.Chip) Allocator.Error![]c
     const g = c.glyphText(&buf);
     if (g.len == 0) return "";
     return try arena.dupe(u8, g);
+}
+
+/// A `mnml`-source row's state, read off what is installed: a
+/// catalogue entry is one BINARY, so it counts as installed when any
+/// manifest naming that binary is, and as an update when one of those
+/// manifests is older than the catalogue's version.
+///
+/// The two sides are matched on the binary's FILE NAME, `$VAR`
+/// expanded: a catalogue may point at `$MNML_SAMPLE_INTEGRATION` or an
+/// absolute path while the manifest `--install` wrote names the bare
+/// `mnml-sample`, and those are the same program.
+pub fn catalogueState(app: *App, arena: Allocator, binary: []const u8, version: []const u8) Allocator.Error!catalogue.State {
+    const want = std.fs.path.basename(try expandEnv(app, arena, binary));
+    var state: catalogue.State = .not_installed;
+    for (app.integrations.list) |*inst| {
+        const have = std.fs.path.basename(try expandEnv(app, arena, inst.manifest.binary));
+        if (!std.mem.eql(u8, have, want)) continue;
+        if (catalogue.olderThan(inst.manifest.version, version)) return .update;
+        state = .installed;
+    }
+    return state;
+}
+
+/// Whether any manifest OTHER than `except` still names `binary` —
+/// what decides whether an uninstall may take the link with it.
+fn binaryStillUsed(app: *App, binary: []const u8, except: []const u8) bool {
+    for (app.integrations.list) |*inst| {
+        if (std.mem.eql(u8, inst.id(), except)) continue;
+        if (std.mem.eql(u8, inst.manifest.binary, binary)) return true;
+    }
+    return false;
 }
 
 /// Absolute → exists; bare → somewhere on PATH.
@@ -2147,7 +2180,8 @@ fn openInstalledMenu(app: *App, virtual: usize, x: u16, y: u16) Allocator.Error!
         .{ .label = "Open manifest", .action = .{ .command = .@"integrations.show_manifest" }, .separator_before = true },
         .{ .label = "Copy id", .action = .{ .command = .@"integrations.copy_id" } },
         openAsRow(app),
-        .{ .label = "Uninstall…", .action = .{ .command = .@"integrations.remove" }, .separator_before = true },
+        .{ .label = "Update (relink the binary)", .action = .{ .command = .@"integrations.update" }, .separator_before = true },
+        .{ .label = "Uninstall…", .action = .{ .command = .@"integrations.remove" } },
     });
 
     errdefer app.gpa.free(items);
@@ -2257,17 +2291,30 @@ fn entryRow(app: *App, arena: Allocator, idx: usize) Allocator.Error!view.Entry 
         },
         .marketplace => {
             const e = app.marketplace.entries[idx];
-            const installed = st.find(e.id) != null;
+            // A catalogue row is one binary, not one manifest, so what
+            // counts as installed is read off the binary
+            // (`catalogueState`) rather than looked up by the row's id.
+            const state: ?catalogue.State = if (e.kind == .builtin) try catalogueState(app, arena, e.binary, e.version) else null;
+            const installed = if (state) |s2| s2 != .not_installed else st.find(e.id) != null;
             return .{
                 .glyph = e.glyph,
                 .fallback = e.fallback,
                 .color = e.color,
                 .kind = switch (e.kind) {
                     .launcher => .launcher,
-                    .app => .app,
+                    // A catalogue row IS an app — one mnml ships — so
+                    // it wears the same `[app]` tag; the `✓ Official`
+                    // badge and the `(mnml)` source say where from.
+                    .app, .builtin => .app,
                 },
                 .label = e.label,
                 .badge = if (e.private) .private else if (e.official) .official else .community,
+                .state = state orelse (if (installed) catalogue.State.installed else null),
+                // A catalogue row carries the version the install will
+                // land, which is what `update available` is read
+                // against; the other sources' rows keep the label
+                // alone.
+                .version = if (e.kind == .builtin) e.version else "",
                 .source = e.source,
                 .line2 = if (e.description.len > 0) e.description else "(no description)",
                 .dim = installed,
@@ -2625,7 +2672,17 @@ fn removeAt(app: *App, i: usize) CommandError!void {
     const st = &app.integrations;
     if (i >= st.list.len) return;
     const inst = &st.list[i];
-    const msg = try std.fmt.allocPrint(app.gpa, "  Remove {s}? Its manifest {s} is deleted; the binary stays.", .{ inst.manifest.label, app.relPath(inst.path) });
+    // // changed (int-distribution): the link goes with the manifest
+    // when nothing else names the binary, so an uninstall leaves
+    // neither half behind. The binary itself is not ours to delete —
+    // it is PREFIX's, or the checkout's.
+    const arena = app.frame.allocator();
+    const bin = std.fs.path.basename(try expandEnv(app, arena, inst.manifest.binary));
+    const takes_link = !inst.manifest.isLauncher() and !binaryStillUsed(app, inst.manifest.binary, inst.id());
+    const msg = if (takes_link)
+        try std.fmt.allocPrint(app.gpa, "  Remove {s}? Its manifest {s} and the link bin/{s} are deleted; the binary itself stays.", .{ inst.manifest.label, app.relPath(inst.path), bin })
+    else
+        try std.fmt.allocPrint(app.gpa, "  Remove {s}? Its manifest {s} is deleted; the binary stays.", .{ inst.manifest.label, app.relPath(inst.path) });
     errdefer app.gpa.free(msg);
     const id = try app.gpa.dupe(u8, inst.id());
     errdefer app.gpa.free(id);
@@ -2645,15 +2702,68 @@ pub const remove_choices = [_]app_mod.Confirm.Choice{ .{ .key = 'r', .label = "R
 /// chip and the segments the next scan no longer finds.
 pub fn removeAccept(app: *App, id: []const u8) Allocator.Error!void {
     const st = &app.integrations;
+    const arena = app.frame.allocator();
     const i = st.find(id) orelse return;
-    const path = try app.frame.allocator().dupe(u8, st.list[i].path);
+    const path = try arena.dupe(u8, st.list[i].path);
+    const manifest_binary = try arena.dupe(u8, st.list[i].manifest.binary);
+    const launcher = st.list[i].manifest.isLauncher();
     Io.Dir.cwd().deleteFile(app.io, path) catch |err| {
         app.toast("cannot delete {s}: {s}", .{ app.relPath(path), @errorName(err) });
         return;
     };
-    const copy = try app.frame.allocator().dupe(u8, id);
+    // The link too, once no other manifest names the binary. The check
+    // runs against the list as it still is — `refresh` below is what
+    // drops this one — so `except` is this id.
+    var link_went = false;
+    if (!launcher and app.data_root.len > 0 and !binaryStillUsed(app, manifest_binary, id)) {
+        const name = std.fs.path.basename(try expandEnv(app, arena, manifest_binary));
+        const link = try std.fs.path.join(arena, &.{ app.data_root, "bin", name });
+        if (Io.Dir.cwd().deleteFile(app.io, link)) |_| {
+            link_went = true;
+        } else |_| {}
+    }
+    const copy = try arena.dupe(u8, id);
     try refresh(app);
-    app.toast("removed {s}", .{copy});
+    if (link_went) app.toast("removed {s} — the manifest and the link", .{copy}) else app.toast("removed {s}", .{copy});
+}
+
+/// `integrations.update`: relink `<data root>/bin/<binary>` at
+/// wherever the binary is NOW — PREFIX's copy after a `run.sh install`,
+/// else this checkout's fresh build. The manifest names the bare
+/// binary and `resolveBinary` prefers the link, so this one file is the
+/// whole update: nothing is downloaded, nothing is rewritten, and a
+/// version bump reaches every manifest that binary wrote at once.
+fn updateCmd(app: *App) CommandError!void {
+    const i = (try focusedRow(app)) orelse
+        return app.diag.fail(app.frame.allocator(), "integrations: pick an installed integration first", .{});
+    return updateAt(app, i);
+}
+
+fn updateAt(app: *App, i: usize) CommandError!void {
+    const st = &app.integrations;
+    const arena = app.frame.allocator();
+    if (i >= st.list.len) return;
+    const inst = &st.list[i];
+    if (inst.manifest.isLauncher())
+        return app.diag.fail(arena, "integrations: {s} is a launcher \u{2014} it has no binary to relink", .{inst.id()});
+    if (app.data_root.len == 0) return app.diag.fail(arena, "integrations: no data root to link into", .{});
+    const id = try arena.dupe(u8, inst.id());
+    const version = try arena.dupe(u8, inst.manifest.version);
+    const binary = try expandEnv(app, arena, inst.manifest.binary);
+    const path_var = app.env.get("PATH") orelse "";
+    const repo = try catalogue.repoOf(app.io, arena, try marketplace.cataloguePath(app, arena));
+    const target = (try catalogue.linkTarget(app.io, arena, binary, path_var, app.data_root, repo)) orelse
+        return app.diag.fail(arena, "integrations: {s} is not on PATH and not built in this checkout \u{2014} `zig build`, or `run.sh install`", .{binary});
+    const link = marketplace.linkBinary(app.io, arena, app.data_root, target) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.LinkFailed => return app.diag.fail(arena, "integrations: cannot link {s} into {s}/bin", .{ target, app.relPath(app.data_root) }),
+    };
+    const shown = try arena.dupe(u8, app.relPath(link));
+    try refresh(app);
+    if (version.len > 0)
+        app.toast("updated {s} {s} \u{2014} {s} \u{2192} {s}", .{ id, version, shown, target })
+    else
+        app.toast("updated {s} \u{2014} {s} \u{2192} {s}", .{ id, shown, target });
 }
 
 fn copyId(app: *App) CommandError!void {
@@ -2689,6 +2799,7 @@ const Button = enum {
     edit_manifest,
     copy_id,
     refresh,
+    update,
     uninstall,
     install,
     reinstall,
@@ -2702,6 +2813,7 @@ const Button = enum {
             .edit_manifest => "Edit manifest",
             .copy_id => "Copy id",
             .refresh => "Refresh",
+            .update => "Update",
             .uninstall => "Uninstall",
             .install => "Install",
             .reinstall => "Reinstall",
@@ -2714,7 +2826,11 @@ const Button = enum {
 fn buttonsFor(app: *App, p: *const IntegrationsPane) []const Button {
     const st = &app.integrations;
     return switch (p.target) {
-        .installed => &.{ .open, .toggle, .edit_manifest, .copy_id, .refresh, .uninstall },
+        // A launcher has no binary to relink, so no Update button.
+        .installed => |id| if (st.find(id)) |i| (if (st.list[i].manifest.isLauncher())
+            @as([]const Button, &.{ .open, .toggle, .edit_manifest, .copy_id, .refresh, .uninstall })
+        else
+            @as([]const Button, &.{ .open, .toggle, .edit_manifest, .copy_id, .refresh, .update, .uninstall })) else &.{ .open, .toggle, .edit_manifest, .copy_id, .refresh, .uninstall },
         .marketplace => |id| if (st.find(id) != null) &.{ .reinstall, .copy_id, .refresh } else &.{ .install, .copy_id, .refresh },
         .dev => |key| if (st.findDev(key)) |i| blk: {
             const d = &st.dev[i];
@@ -2741,6 +2857,7 @@ fn fireButton(app: *App, p: *IntegrationsPane) CommandError!void {
         .edit_manifest => return showManifest(app),
         .copy_id => return copyId(app),
         .refresh => return refreshCmd(app),
+        .update => if (try focusedRow(app)) |i| return updateAt(app, i),
         .uninstall => if (try focusedRow(app)) |i| return removeAt(app, i),
         .install, .reinstall => switch (p.target) {
             .marketplace => return command.run(app, .{ .static = .@"marketplace.install_focused" }),
