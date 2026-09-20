@@ -96,6 +96,7 @@ const script_pane = @import("script_pane.zig");
 const pty_view = @import("../ui/pty_view.zig");
 const pty_pane = @import("pty_pane.zig");
 const terminal_glyph = @import("terminal_glyph.zig");
+const claude_mark = @import("claude_mark.zig");
 const list_panel = @import("../ui/list_panel.zig");
 const git_app = @import("git.zig");
 const git_palette = @import("git_palette.zig");
@@ -897,9 +898,10 @@ fn drawGapChips(app: *App, ui: Ui, left: u16, cluster_left: u16, y: u16) Allocat
 /// fresh install with `claude` on PATH gets the Claude chip with no
 /// config, an enabled icon shows whatever the key says, and the
 /// `view.tab_bar_ai_*` commands are the way to hide a found CLI's chip.
-/// The marks are mnml's own baked glyphs (U+F1E00 / U+F1E01) — Rust's
+/// The marks are mnml's own baked glyphs — Rust's
 /// `ai_chip_use_mnml_glyphs` resolves to them on both arms and the key
-/// is deprecated here too.
+/// is deprecated here too. WHICH mark Claude wears is
+/// `ui.claude_mark`'s to say (`claude_mark.mark`); Codex has the one.
 fn aiChips(app: *App, ui: Ui) Allocator.Error![]const bufferline.AiChip {
     const want = app.cfg.ui.tab_bar_ai_icon;
     if (want == .none) return &.{};
@@ -911,8 +913,15 @@ fn aiChips(app: *App, ui: Ui) Allocator.Error![]const bufferline.AiChip {
     // with what is running — a chip in this cluster is a button, and
     // the four beside it look the same whatever state they act on
     // (`ui/bufferline.zig`'s `AiChip`).
-    if (aiChipShown(app, .claude)) try out.append(ui.arena, .{ .id = @intFromEnum(Button.ai_claude), .glyph = "\u{F1E00}", .fallback = "*", .fg = brand.claude });
-    if (aiChipShown(app, .codex)) try out.append(ui.arena, .{ .id = @intFromEnum(Button.ai_codex), .glyph = "\u{F1E01}", .fallback = ">", .fg = app.theme.palette.cyan });
+    if (aiChipShown(app, .claude)) {
+        // Which Claude mark this is comes from `ui.claude_mark`
+        // (`claude_mark.mark`) — the chip, a Claude pty tab, the
+        // statusline meter and the dock all read the one resolver, so
+        // the right-click menu's choice lands on every one of them.
+        const m = claude_mark.mark(app);
+        try out.append(ui.arena, .{ .id = @intFromEnum(Button.ai_claude), .glyph = m.glyph, .fallback = m.fallback, .fg = brand.claude });
+    }
+    if (aiChipShown(app, .codex)) try out.append(ui.arena, .{ .id = @intFromEnum(Button.ai_codex), .glyph = bufferline.codex_glyph, .fallback = ">", .fg = app.theme.palette.cyan });
     return out.items;
 }
 
@@ -1206,7 +1215,7 @@ pub fn paneIcon(app: *App, pane: *const app_mod.Pane, ascii: bool) icons.Icon {
         .sessions_table => kindIcon(ascii, "\u{25C6}", "\u{F0392}", p.purple),
         .websocket => kindIcon(ascii, "\u{25C7}", "\u{F0317}", p.teal),
         .spend_report => kindIcon(ascii, "$", "\u{F01C2}", p.orange),
-        .ai_usage => |*u| if (u.product == .claude) kindIcon(ascii, "\u{2733}", "\u{F1E00}", p.orange) else kindIcon(ascii, "\u{25c8}", "\u{F1E01}", p.cyan),
+        .ai_usage => |*u| if (u.product == .claude) .{ .glyph = claude_mark.glyph(app, ascii), .color = p.orange } else kindIcon(ascii, bufferline.codex_ascii, bufferline.codex_glyph, p.cyan),
         .mount => kindIcon(ascii, "M", "\u{F0BD3}", p.cyan),
         .integrations => kindIcon(ascii, "\u{25C8}", "\u{F0431}", p.cyan),
     };
@@ -1248,7 +1257,7 @@ fn kindIcon(ascii: bool, twin: []const u8, nerd: []const u8, color: vaxis.Color)
 fn ptyIcon(app: *App, pane: *const pty_pane.PtyPane, ascii: bool) icons.Icon {
     const p = app.theme.palette;
     if (pty_pane.productOf(app, pane)) |product| return switch (product) {
-        .claude => kindIcon(ascii, bufferline.claude_ascii, bufferline.claude_glyph, pty_pane.claude_brand),
+        .claude => .{ .glyph = claude_mark.glyph(app, ascii), .color = pty_pane.claude_brand },
         .codex => kindIcon(ascii, bufferline.codex_ascii, bufferline.codex_glyph, p.cyan),
     };
     const term = terminal_glyph.mark(app);

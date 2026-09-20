@@ -124,6 +124,10 @@ fn firstCodepoint(s: []const u8) ?u21 {
 /// The core glyphs mnml paints from its own block every frame.
 const core_glyphs = [_]struct { glyph: []const u8, name: []const u8 }{
     .{ .glyph = statusline_view.claude_glyph, .name = "claude-mark" },
+    // The alternate `ui.claude_mark = .spark` paints — baked into the
+    // same face, so an audit that skipped it would call a face fine
+    // that turns the chosen mark into tofu.
+    .{ .glyph = bufferline_view.spark_glyph, .name = "claude-spark" },
     .{ .glyph = statusline_view.codex_glyph, .name = "codex-mark" },
     .{ .glyph = tree_view.cont_glyph, .name = "tree-line-vertical" },
     .{ .glyph = tree_view.corner_glyph, .name = "tree-line-corner" },
@@ -415,25 +419,31 @@ test "the startup check: a MnmlSymbols face missing the config's marks toasts th
     onStartup(&app, .startup);
     // The shipped icons: browser EB01 (routed, lacking), claude F1E00
     // (not baked), codex F1E01 (baked), http F1D8; the core claude
-    // mark again, the terminal mark F2000, and the hollow cursor
-    // F2001 — neither of which this fixture's face carries.
-    try t.expectEqualStrings("\u{26A0} 5 integration icons will render as ? — run :integrations.audit_glyphs", app.lastToast().?);
+    // mark again, its spark alternate F1E02, the terminal mark F2000,
+    // and the hollow cursor F2001 — none of which this fixture's face
+    // carries.
+    try t.expectEqualStrings("\u{26A0} 6 integration icons will render as ? — run :integrations.audit_glyphs", app.lastToast().?);
     const c = try tofuCheck(&app, app.frame.allocator());
     try t.expect(c.mnml_present);
     try t.expectEqual(@as(usize, 2), c.map.rules.len);
-    try t.expectEqual(@as(usize, 10), c.refs);
-    try t.expectEqual(@as(usize, 5), c.verdicts.len);
+    try t.expectEqual(@as(usize, 11), c.refs);
+    try t.expectEqual(@as(usize, 6), c.verdicts.len);
     try t.expectEqualStrings("browser", c.verdicts[0].id);
     try t.expect(std.mem.startsWith(u8, c.verdicts[0].why, "force-routed to `Symbols Nerd Font Mono`"));
     try t.expectEqualStrings("claude_code", c.verdicts[1].id);
     try t.expectEqualStrings("claude-mark", c.verdicts[2].id);
     try t.expectEqualStrings("core UI", c.verdicts[2].source);
+    // The spark `ui.claude_mark = .spark` picks is core too — a face
+    // that carries the figure and not it turns the menu's other choice
+    // into `?`, which is the whole point of the check.
+    try t.expectEqualStrings("claude-spark", c.verdicts[3].id);
+    try t.expectEqual(@as(u21, 0xF1E02), c.verdicts[3].cp);
     // The terminal mark is core too, and this face does not carry it;
     // nor the hollow cursor an unfocused pty pane paints.
-    try t.expectEqualStrings("terminal-mark", c.verdicts[3].id);
-    try t.expectEqual(@as(u21, 0xF2000), c.verdicts[3].cp);
-    try t.expectEqualStrings("cursor-hollow", c.verdicts[4].id);
-    try t.expectEqual(@as(u21, 0xF2001), c.verdicts[4].cp);
+    try t.expectEqualStrings("terminal-mark", c.verdicts[4].id);
+    try t.expectEqual(@as(u21, 0xF2000), c.verdicts[4].cp);
+    try t.expectEqualStrings("cursor-hollow", c.verdicts[5].id);
+    try t.expectEqual(@as(u21, 0xF2001), c.verdicts[5].cp);
     // The pane: the verdicts under the check's header.
     try tmp.dir.createDirPath(io, "src");
     try command.run(&app, .{ .static = .@"integrations.audit_glyphs" });
@@ -441,7 +451,7 @@ test "the startup check: a MnmlSymbols face missing the config's marks toasts th
     try t.expect(std.mem.indexOf(u8, text, "ghostty map: ") != null);
     try t.expect(std.mem.indexOf(u8, text, "(2 rules)") != null);
     try t.expect(std.mem.indexOf(u8, text, "browser              U+0EB01  Browser  (config icon)  → force-routed") != null);
-    try t.expect(std.mem.indexOf(u8, text, "5 of 10 icon refs will render as ?") != null);
+    try t.expect(std.mem.indexOf(u8, text, "6 of 11 icon refs will render as ?") != null);
     // Without the face, the block stands down and only the routed miss remains.
     try tmp.dir.deleteFile(io, "fonts/MnmlSymbols.ttf");
     font_scan.onStartup(&app, .startup);

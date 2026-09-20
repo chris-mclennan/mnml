@@ -22,6 +22,10 @@ const Mouse = @import("../core/key.zig").Mouse;
 const activity_bar = @import("activity_bar.zig");
 const side = @import("side.zig");
 const sessions = @import("../sessions.zig");
+const terminal_glyph = @import("terminal_glyph.zig");
+const claude_mark = @import("claude_mark.zig");
+const pty_pane = @import("pty_pane.zig");
+const Config = @import("../config/Config.zig");
 
 pub const table = .{
     .@"buffer.close_others" = &closeOthers,
@@ -178,8 +182,13 @@ pub fn openTabMenu(app: *App, pane: PaneId, x: u16, y: u16) Allocator.Error!void
         });
         // colors: the accent, on the tab as on the SESSIONS row.
         try rows.append(app.gpa, .{ .label = "Color", .action = .none, .submenu = try sessions.colorMenuRows(mem.allocator(), .{ .target = .{ .pane = pane }, .name = "" }, pt.accent_color) });
-        // the mark this tab is wearing, changed from the tab itself.
-        try rows.append(app.gpa, .{ .label = "Terminal icon", .action = .none, .submenu = try terminalIconRows(app, mem.allocator()) });
+        // The mark this tab is wearing, changed from the tab itself —
+        // a Claude session's is the Claude one, not the terminal's.
+        const claude_tab = if (pty_pane.productOf(app, pt)) |prod| prod == .claude else false;
+        try rows.append(app.gpa, if (claude_tab)
+            .{ .label = "Mark", .action = .none, .submenu = try claudeMarkRows(app, mem.allocator()) }
+        else
+            .{ .label = "Mark", .action = .none, .submenu = try terminalIconRows(app, mem.allocator()) });
     }
     if (app.zen) try rows.append(app.gpa, exit_fullscreen_row);
     const owned = try rows.toOwnedSlice(app.gpa);
@@ -1513,17 +1522,30 @@ fn openWindowMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     try app.openMenu("mnml", rows, x, y);
 }
 
-/// The `Terminal icon ▸` submenu: the three values of
-/// `ui.terminal_glyph`, the current one ticked. On the strip's terminal
+/// The terminal chip's `Mark ▸` submenu: the mark's two choices with the
+/// current one ticked, and the bake below them. On the strip's terminal
 /// chip and on a pty tab — the two places the mark itself is on screen,
 /// so the menu is where the eye already is. Rows live on `arena`, which
 /// the open menu owns.
 fn terminalIconRows(app: *App, arena: Allocator) Allocator.Error![]const MenuItem {
     const cur = app.cfg.ui.terminal_glyph;
     const rows = try arena.alloc(MenuItem, 3);
-    rows[0] = .{ .label = "Terminal", .action = .{ .command = .@"view.terminal_glyph_terminal" }, .checked = cur == .terminal };
-    rows[1] = .{ .label = "Ghostty", .action = .{ .command = .@"view.terminal_glyph_ghostty" }, .checked = cur == .ghostty };
-    rows[2] = .{ .label = "Custom SVG…", .action = .{ .command = .@"view.terminal_glyph_custom" }, .checked = cur == .custom };
+    // The default first, as it reads: the ghost, then the plain one.
+    rows[0] = .{ .label = terminal_glyph.label(.ghostty), .action = .{ .set_terminal_mark = .ghostty }, .checked = cur == .ghostty };
+    rows[1] = .{ .label = terminal_glyph.label(.terminal), .action = .{ .set_terminal_mark = .terminal }, .checked = cur == .terminal };
+    // Not a third mark — the bake that puts your own art behind the
+    // ghost's codepoint, so it keeps its own row and its prompt.
+    rows[2] = .{ .label = "Custom SVG…", .action = .{ .command = .@"view.terminal_glyph_custom" }, .checked = cur == .custom, .separator_before = true };
+    return rows;
+}
+
+/// The Claude chip's `Mark ▸` submenu: the two values of
+/// `ui.claude_mark`, the current one ticked. Its twin above.
+fn claudeMarkRows(app: *App, arena: Allocator) Allocator.Error![]const MenuItem {
+    const cur = app.cfg.ui.claude_mark;
+    const rows = try arena.alloc(MenuItem, 2);
+    rows[0] = .{ .label = claude_mark.label(.figure), .action = .{ .set_claude_mark = .figure }, .checked = cur == .figure };
+    rows[1] = .{ .label = claude_mark.label(.spark), .action = .{ .set_claude_mark = .spark }, .checked = cur == .spark };
     return rows;
 }
 
@@ -1539,7 +1561,7 @@ fn openTerminalChipMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
         .{ .label = "Open shell in top half", .action = .{ .command = .@"term.shell_top" } },
         .{ .label = "Open shell in bottom half", .action = .{ .command = .@"term.shell_bottom" } },
         .{ .label = "Scratch terminal", .action = .{ .command = .@"term.scratch_toggle" }, .separator_before = true },
-        .{ .label = "Terminal icon", .action = .none, .separator_before = true, .submenu = try terminalIconRows(app, mem.allocator()) },
+        .{ .label = "Mark", .action = .none, .separator_before = true, .submenu = try terminalIconRows(app, mem.allocator()) },
     });
     errdefer app.gpa.free(rows);
     try openOwned(app, "Terminal", rows, x, y, mem);
@@ -1588,6 +1610,8 @@ fn openMaximizeMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
 /// glyph pair.
 fn openAiLauncherMenu(app: *App, codex: bool, x: u16, y: u16) Allocator.Error!void {
     const grid = app.cfg.ui.ai_layout_mode == .grid;
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
     const rows = try items(app, if (codex) &.{
         .{ .label = "Toggle existing Codex pane", .action = .{ .command = .@"ai.codex" } },
         .{ .label = "New Codex session in left half", .action = .{ .command = .@"ai.codex_new_left" }, .separator_before = true },
@@ -1608,9 +1632,12 @@ fn openAiLauncherMenu(app: *App, codex: bool, x: u16, y: u16) Allocator.Error!vo
         .{ .label = "Layout: Tabs (stack in leaf)", .action = .{ .command = .@"view.ai_layout_tabs" }, .checked = !grid },
         .{ .label = "Bake AI glyphs into MnmlSymbols", .action = .{ .command = .@"integrations.bake_ai_glyphs" }, .separator_before = true },
         .{ .label = "Edit Claude Code glyph…", .action = .{ .command = .@"integrations.edit_claude_glyph" } },
+        // Which of the two branded marks Claude wears, everywhere the
+        // chrome draws one (`app/claude_mark.zig`).
+        .{ .label = "Mark", .action = .none, .separator_before = true, .submenu = try claudeMarkRows(app, mem.allocator()) },
     });
     errdefer app.gpa.free(rows);
-    try app.openMenu(if (codex) "Codex launcher" else "Claude Code launcher", rows, x, y);
+    try openOwned(app, if (codex) "Codex launcher" else "Claude Code launcher", rows, x, y, mem);
 }
 
 /// A tab-page chip or its `×` (Zig-only — Rust's cluster had no menu):
@@ -1799,31 +1826,66 @@ test "right-click: the maximize chip lists its two modes and ticks the one a lef
     try t.expectEqual(app_mod.Config.MaximizeClick.fullscreen, app.cfg.ui.maximize_click);
 }
 
-test "right-click: the terminal chip's `Terminal icon` submenu — the three choices, the current one ticked, and every id registered" {
+test "right-click: the terminal chip's `Mark` submenu — the ghost first and ticked, the codicon under it, the bake below, and every id registered" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
     defer app.deinit();
     const render = @import("render.zig");
     try t.expect(try openButtonMenu(&app, @intFromEnum(render.Button.split_term), 3, 3));
     const icon_row = app.overlay.menu.items[app.overlay.menu.items.len - 1];
-    try t.expectEqualStrings("Terminal icon", icon_row.label);
+    try t.expectEqualStrings("Mark", icon_row.label);
     try t.expectEqual(@as(usize, 3), icon_row.submenu.len);
-    try t.expectEqualStrings("Terminal", icon_row.submenu[0].label);
-    try t.expectEqualStrings("Ghostty", icon_row.submenu[1].label);
+    // The default reads first.
+    try t.expectEqualStrings("Ghostty ghost", icon_row.submenu[0].label);
+    try t.expectEqualStrings("Terminal", icon_row.submenu[1].label);
     try t.expectEqualStrings("Custom SVG…", icon_row.submenu[2].label);
+    // The two marks are set-rows, not commands: no command id exists
+    // for either, and the row carries the value it writes.
+    try t.expectEqual(Config.TerminalGlyph.ghostty, icon_row.submenu[0].action.set_terminal_mark);
+    try t.expectEqual(Config.TerminalGlyph.terminal, icon_row.submenu[1].action.set_terminal_mark);
     // The shipped default is the ghost, and exactly one row is ticked.
-    try t.expect(!icon_row.submenu[0].checked);
-    try t.expect(icon_row.submenu[1].checked);
+    try t.expect(icon_row.submenu[0].checked);
+    try t.expect(!icon_row.submenu[1].checked);
     try t.expect(!icon_row.submenu[2].checked);
-    // Every id resolves — a row that names one the registry does not
-    // have compiles and renders, and only a click would find it.
-    for (icon_row.submenu) |it| try t.expect(command.by_name.get(command.name(it.action.command)) != null);
+    // The bake is still a command — a row that names one the registry
+    // does not have compiles and renders, and only a click would find
+    // it.
+    try t.expect(command.by_name.get(command.name(icon_row.submenu[2].action.command)) != null);
     closeMenu(&app);
     // The tick follows the key.
     app.cfg.ui.terminal_glyph = .custom;
     try t.expect(try openButtonMenu(&app, @intFromEnum(render.Button.split_term), 3, 3));
     const after = app.overlay.menu.items[app.overlay.menu.items.len - 1];
-    try t.expect(!after.submenu[1].checked);
+    try t.expect(!after.submenu[0].checked);
     try t.expect(after.submenu[2].checked);
+    closeMenu(&app);
+}
+
+test "right-click: the Claude chip's `Mark` submenu — the figure and the spark, the current one ticked, and the rows write the key" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    const render = @import("render.zig");
+    try t.expect(try openButtonMenu(&app, @intFromEnum(render.Button.ai_claude), 3, 3));
+    const row = app.overlay.menu.items[app.overlay.menu.items.len - 1];
+    try t.expectEqualStrings("Mark", row.label);
+    try t.expectEqual(@as(usize, 2), row.submenu.len);
+    try t.expectEqualStrings("Claude Code figure", row.submenu[0].label);
+    try t.expectEqualStrings("Anthropic spark", row.submenu[1].label);
+    try t.expectEqual(Config.ClaudeMark.figure, row.submenu[0].action.set_claude_mark);
+    try t.expectEqual(Config.ClaudeMark.spark, row.submenu[1].action.set_claude_mark);
+    // The shipped default is the figure; exactly one tick.
+    try t.expect(row.submenu[0].checked);
+    try t.expect(!row.submenu[1].checked);
+    closeMenu(&app);
+    // The tick follows the key.
+    app.cfg.ui.claude_mark = .spark;
+    try t.expect(try openButtonMenu(&app, @intFromEnum(render.Button.ai_claude), 3, 3));
+    const after = app.overlay.menu.items[app.overlay.menu.items.len - 1];
+    try t.expect(!after.submenu[0].checked);
+    try t.expect(after.submenu[1].checked);
+    closeMenu(&app);
+    // The Codex chip has no `Mark` row: Codex has one mark.
+    try t.expect(try openButtonMenu(&app, @intFromEnum(render.Button.ai_codex), 3, 3));
+    for (app.overlay.menu.items) |it| try t.expect(!std.mem.eql(u8, it.label, "Mark"));
     closeMenu(&app);
 }
 
@@ -2059,7 +2121,6 @@ test "the + menu: the Integrations group lists the enabled integration chips wit
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
-    const Config = @import("../config/Config.zig");
     const icons = [_]Config.IntegrationIcon{
         .{ .id = "jira", .glyph = "\u{e75c}", .fallback = "j", .command = "view.settings", .label = "Jira" },
         .{ .id = "off", .glyph = "\u{e75c}", .fallback = "o", .command = "view.settings", .enabled = false },

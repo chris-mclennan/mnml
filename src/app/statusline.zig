@@ -45,6 +45,7 @@ const parse = @import("../git/parse.zig");
 const lsp = @import("lsp.zig");
 const usage_pane = @import("usage_pane.zig");
 const ghost_chip = @import("ghost_chip.zig");
+const claude_mark = @import("claude_mark.zig");
 const coverage = @import("coverage.zig");
 const now_playing = @import("now_playing.zig");
 const integration_poll = @import("integration_poll.zig");
@@ -533,7 +534,9 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
     // usage pane shows) — Claude's session / weekly percent, near-black
     // on the brand coral whatever the tier; Codex's tokens today.
     if (enabledIcon(app, "claude_code")) |ic| {
-        const glyph = if (ui.ascii) sl.claude_ascii else sl.claude_glyph;
+        // The mark `ui.claude_mark` names, not a codepoint of this
+        // file's own (`app/claude_mark.zig`).
+        const glyph = claude_mark.glyph(app, ui.ascii);
         const text = try usage_pane.claudeChip(app, arena, glyph);
         try push(&right, arena, Seg.init(text, claude_ink, iconColor(ui, ic, claude_brand)).withHit(SegId.ai_claude.raw()));
     }

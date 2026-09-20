@@ -53,12 +53,28 @@ pub fn userFontPath(app: *const App, arena: Allocator) Allocator.Error![]const u
 /// which art is behind it is the font's business, not the chrome's.
 pub fn mark(app: *const App) bufferline.Terminal {
     const name = @import("pty_pane.zig").hostTerminalName(app);
-    const base: bufferline.Terminal = switch (app.cfg.ui.terminal_glyph) {
-        .ghostty, .custom => bufferline.terminal_ghost,
-        .terminal => bufferline.terminal_generic,
-    };
+    const base = bufferline.terminalMark(app.cfg.ui.terminal_glyph);
     // Only the name comes from the environment.
     return .{ .label = name, .glyph = base.glyph, .fallback = base.fallback };
+}
+
+/// What a `Mark: …` menu row calls (`command.MenuAction.set_terminal_mark`):
+/// the same write the two commands do, named by the value.
+pub fn setMark(app: *App, value: Config.TerminalGlyph) CommandError!void {
+    return set(app, value, switch (value) {
+        .ghostty => "terminal icon: the Ghostty ghost",
+        .terminal => "terminal icon: the codicon terminal",
+        .custom => "terminal icon: the baked SVG",
+    });
+}
+
+/// What a menu row calls each value of `ui.terminal_glyph`.
+pub fn label(value: Config.TerminalGlyph) []const u8 {
+    return switch (value) {
+        .ghostty => "Ghostty ghost",
+        .terminal => "Terminal",
+        .custom => "Custom SVG",
+    };
 }
 
 // ─── the three commands ─────────────────────────────────────────────────

@@ -638,6 +638,14 @@ pub const MenuAction = union(enum) {
     set_dock_align: @import("../config/Config.zig").DockAlign,
     /// Its *Show the + button* row (`ui.dock.plus`).
     set_dock_plus: bool,
+    /// The Claude chip's `Mark:` rows — the figure or the Anthropic
+    /// spark (`app/claude_mark.zig`, `ui.claude_mark`). Two choices and
+    /// no picker, so the rows are set-rows rather than commands.
+    set_claude_mark: @import("../config/Config.zig").ClaudeMark,
+    /// The terminal chip's `Mark:` rows — the ghost or the codicon
+    /// (`app/terminal_glyph.zig`, `ui.terminal_glyph`). `.custom` is
+    /// not a row here: baking an SVG is its own prompt.
+    set_terminal_mark: @import("../config/Config.zig").TerminalGlyph,
     /// // changed (menu-bar): a row of the ` » ` overflow menu — opens
     /// menu-bar menu `index` (`app/menu_bar.zig`).
     menu_bar: u8,

@@ -826,6 +826,7 @@ pub fn drawPane(app: *App, ui: Ui, id: PaneId, tp: *TablePane, rect: Rect) Alloc
         .cloud_configured = cloud_agents.configured(&app.cfg.cloud_agents, &app.env) or hasCloud(app),
         .home_missing = st.home == null and sessions.envHome(app) == null,
         .now_ms = app.now_ms,
+        .claude_mark = @import("claude_mark.zig").mark(app),
     });
     if (focused_pane) if (caret) |c| {
         app.cursor_pos = .{ .x = c.x, .y = c.y };

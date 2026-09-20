@@ -24,10 +24,12 @@ const ids = @import("../core/ids.zig");
 const table = @import("../app/sessions_table.zig");
 const transcript = @import("../ai/transcript.zig");
 const accent_color = @import("accent_color.zig");
+const bufferline = @import("bufferline.zig");
 
 pub const PaneId = ids.PaneId;
 pub const Caret = text_field.Caret;
 pub const Row = table.Row;
+pub const Source = @import("../app/agents.zig").Source;
 pub const Panel = table.Panel;
 
 pub const Props = struct {
@@ -45,7 +47,28 @@ pub const Props = struct {
     /// The `where:` chip paints only when a cloud is configured or listed.
     cloud_configured: bool,
     home_missing: bool,
+    /// The Claude mark as `ui.claude_mark` has it — the caller resolves
+    /// it (`app/claude_mark.zig`), because the config does not reach
+    /// this layer. A Claude card wears the same mark the tab bar's
+    /// cluster and a Claude pty tab do.
+    claude_mark: bufferline.Mark = bufferline.claudeMark(.figure),
 };
+
+/// A session's mark: the product's own, the same one its pty tab, the
+/// launcher dock and the tab bar's cluster wear — Claude's is whichever
+/// `ui.claude_mark` names, Codex has the one. The rows used to carry a
+/// neutral `✦` / `◈` pair of their own, which meant a Claude session
+/// read as one mark here and another two cells away on its own tab.
+/// `paintRow` sees no props, so `draw` parks the resolved mark here
+/// beside the clock it already parks.
+var ui_claude_mark: bufferline.Mark = bufferline.claudeMark(.figure);
+
+fn sourceGlyph(ascii: bool, source: Source) []const u8 {
+    return switch (source) {
+        .claude => if (ascii) ui_claude_mark.fallback else ui_claude_mark.glyph,
+        .codex => if (ascii) bufferline.codex_ascii else bufferline.codex_glyph,
+    };
+}
 
 pub const help_title = "Sessions table — help (? to close)";
 pub const Help = union(enum) { section: []const u8, row: struct { key: []const u8, what: []const u8 } };
@@ -96,6 +119,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, tp: *table.TablePane, props: Props
     }
     setClock(props.now_ms);
     ui_now_s = props.now_s;
+    ui_claude_mark = props.claude_mark;
     const sh = summaryRows(area.h);
     var list_area = area;
     var summary_area = Rect.empty;
@@ -237,7 +261,7 @@ fn paintRow(ui: Ui, r: Rect, row: Row, selected: bool) void {
                     x += ui.putStr(x, r.y, r.right() -| x, "  ", style);
                 }
             }
-            x += ui.putStr(x, r.y, r.right() -| x, it.source.glyph(ui.ascii), Theme.withFg(style, th.accent.fg));
+            x += ui.putStr(x, r.y, r.right() -| x, sourceGlyph(ui.ascii, it.source), Theme.withFg(style, th.accent.fg));
             x += ui.putStr(x, r.y, r.right() -| x, " ", style);
             const badge_style = switch (it.state) {
                 .waiting => Theme.withFg(style, th.warn_fg.fg),
@@ -353,7 +377,7 @@ fn drawSummary(ui: Ui, pane: PaneId, area: Rect, props: Props) void {
     const pid_part = if (it.pid) |p| ui.fmt(" · pid {d}", .{p}) else "";
     const branch_part = if (it.git_branch) |b| ui.fmt(" · {s} {s}", .{ g.pick(ui.ascii, "\u{F062C}", "@"), b }) else "";
     const where_part = if (it.where == .cloud) (if (it.cloud) |c| ui.fmt(" · cloud {s}{s}", .{ c.raw_state, if (c.pr_url) |u| ui.fmt(" · {s}", .{u}) else "" }) else " · cloud") else "";
-    const line2 = ui.fmt("  {s} · {s} {s} · {s}{s}{s}{s} · {s}", .{ v.name, it.source.glyph(ui.ascii), it.source.label(), it.model orelse "?", pid_part, branch_part, where_part, it.cwd orelse it.workspace });
+    const line2 = ui.fmt("  {s} · {s} {s} · {s}{s}{s}{s} · {s}", .{ v.name, sourceGlyph(ui.ascii, it.source), it.source.label(), it.model orelse "?", pid_part, branch_part, where_part, it.cwd orelse it.workspace });
     _ = ui.putStr(r2.x, r2.y, r2.w, ui.clipStr(line2, r2.w), Theme.withFg(bg, th.fg.fg));
     if (area.h < 5) return;
     const r3 = area.row(3);
@@ -445,13 +469,37 @@ test "a group row carries the captions over the numbers; a session row is the ba
     try testing.expect(std.mem.endsWith(u8, std.mem.trimEnd(u8, g, " "), "id  tokens     cost   age dirty"));
     var buf2: [256]u8 = undefined;
     const s = f.row(1, &buf2);
-    try testing.expect(std.mem.startsWith(u8, s, "☑ ✦ ● live fix the tests"));
+    // The row wears the product's own mark — `ui.claude_mark`'s, the
+    // same one the session's pty tab and the cluster chip wear, not a
+    // neutral star of the table's own.
+    try testing.expect(std.mem.startsWith(u8, s, "☑ " ++ bufferline.claude_glyph ++ " ● live fix the tests"));
     try testing.expect(std.mem.indexOf(u8, s, "aaaaaaaa") != null);
     try testing.expect(std.mem.indexOf(u8, s, "12.5k") != null);
     try testing.expect(std.mem.indexOf(u8, s, "$0.42") != null);
     try testing.expect(std.mem.indexOf(u8, s, "2m") != null);
     try testing.expect(std.mem.endsWith(u8, std.mem.trimEnd(u8, s, " "), "●3"));
     try testing.expect(std.mem.indexOf(u8, s, "Running") == null);
+}
+
+test "a session row wears the Claude mark the caller resolved — the spark once `ui.claude_mark` says so, the figure by default" {
+    var f = try Fixture.init(90, 2);
+    defer f.deinit();
+    setClock(1_000_000 * 1000);
+    ui_now_s = 1_000_000;
+    defer ui_claude_mark = bufferline.claudeMark(.figure);
+    const it = sessions.testItem("aaaaaaaa-1111", .idle, 1_000_000 - 120, "mnml", "fix the tests");
+    const row: Row = .{ .item = .{ .it = it, .name = "fix the tests", .ticked = false, .active = false, .pinned = false } };
+    ui_claude_mark = bufferline.claudeMark(.figure);
+    paintRow(f.ui(), Rect.init(0, 0, 90, 1), row, false);
+    ui_claude_mark = bufferline.claudeMark(.spark);
+    paintRow(f.ui(), Rect.init(0, 1, 90, 1), row, false);
+    var a: [256]u8 = undefined;
+    var b: [256]u8 = undefined;
+    try testing.expect(std.mem.indexOf(u8, f.row(0, &a), bufferline.claude_glyph) != null);
+    try testing.expect(std.mem.indexOf(u8, f.row(1, &b), bufferline.spark_glyph) != null);
+    // Not both at once — the row took the mark it was given.
+    try testing.expect(std.mem.indexOf(u8, f.row(0, &a), bufferline.spark_glyph) == null);
+    try testing.expect(std.mem.indexOf(u8, f.row(1, &b), bufferline.claude_glyph) == null);
 }
 
 test "colors: a session row's first cell is the `▌` in its accent; a tick takes the cells over it; no colour is air" {

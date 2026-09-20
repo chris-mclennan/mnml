@@ -36,6 +36,7 @@ const vaxis = @import("vaxis");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
+const bufferline = @import("bufferline.zig");
 
 const Style = vaxis.Style;
 const Color = vaxis.Color;
@@ -103,11 +104,14 @@ pub const bell_ascii = "!";
 /// nf-fa-folder, before the workspace name.
 pub const folder_glyph = "\u{f07b}";
 pub const folder_ascii = "";
-/// The Claude / Codex marks — mnml's own baked glyphs (U+F1B00–U+F20FF).
-pub const claude_glyph = "\u{F1E00}";
-pub const claude_ascii = "\u{2733}";
-pub const codex_glyph = "\u{F1E01}";
-pub const codex_ascii = "\u{25c8}";
+/// The Claude / Codex marks — mnml's own baked glyphs (U+F1B00–U+F20FF),
+/// the same constants the strip paints, so the two cannot drift. WHICH
+/// Claude mark the statusline draws is `ui.claude_mark`'s to say, and
+/// `app/claude_mark.zig` answers it; `claude_glyph` is the figure.
+pub const claude_glyph = bufferline.claude_glyph;
+pub const claude_ascii = bufferline.claude_ascii;
+pub const codex_glyph = bufferline.codex_glyph;
+pub const codex_ascii = bufferline.codex_ascii;
 /// nf-md-code_json — the ghost-text chip, which says what the inline
 /// suggestion is doing when there is no suggestion to look at
 /// (`app/ghost_chip.zig`).

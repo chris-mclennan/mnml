@@ -1,0 +1,60 @@
+# env: PATH=${MNML_SHIMS}/ai:${PATH}
+# Right-click the cluster's Claude chip: the launcher rows, then `Mark`
+# with the two branded choices under it and the current one ticked. The
+# shipped mark is the Claude Code figure 󱸀 (U+F1E00); the alternate is
+# the Anthropic spark 󱸂 (U+F1E02). Two choices, no glyph picker.
+#
+# Picking one changes the mark EVERYWHERE the chrome draws it in the
+# same frame — the cluster chip here and a Claude pty tab below —
+# because every painter reads `claude_mark.mark` rather than naming a
+# codepoint.
+#
+# `tools/shims/ai/claude` stands in for the CLI (it sleeps), so the
+# chip shows without the real binary. The mark sits at column 106 of
+# the strip (`cluster_claude_chip.test`).
+write a.txt "alpha alpha"
+open a.txt
+expect screen contains "󱸀"
+expect screen lacks "󱸂"
+rightclick 106 1
+expect screen contains "Toggle existing Claude Code pane"
+expect screen contains "Mark"
+# `Mark` is the menu's last row, so End reaches it however many rows
+# precede; Right opens the submenu.
+key end
+key right
+expect screen contains "Claude Code figure"
+expect screen contains "Anthropic spark"
+expect screen contains "✓ Claude Code figure"
+expect screen lacks "✓ Anthropic spark"
+# Down then Enter — the second row, the spark.
+key down
+key enter
+expect screen contains "Claude mark: Anthropic spark"
+expect screen contains "󱸂"
+expect screen lacks "󱸀"
+# The tick moved with the key.
+rightclick 106 1
+key end
+key right
+expect screen contains "✓ Anthropic spark"
+expect screen lacks "✓ Claude Code figure"
+key esc
+expect screen lacks "Toggle existing Claude Code pane"
+# A Claude pty tab wears the chosen mark too, not the figure: one
+# resolver, every surface. (`tools/shims/ai/claude` is the session.)
+command view.toggle_tree
+command ai.claude_code_new
+wait 400
+expect pane claude
+expect screen contains "󱸂 claude 󰅖"
+expect screen lacks "󱸀 claude 󰅖"
+# And back: the figure returns everywhere in the same frame, tab and
+# cluster chip together.
+rightclick 106 1
+key end
+key right
+key enter
+expect screen contains "Claude mark: Claude Code figure"
+expect screen contains "󱸀 claude 󰅖"
+expect screen lacks "󱸂"

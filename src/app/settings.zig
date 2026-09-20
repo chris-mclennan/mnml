@@ -223,7 +223,11 @@ pub const rows = [_]RowSpec{
     // Which of the maximize button's two modes a left click runs
     // (`app/zen.zig`); the button's own right-click menu ticks it.
     .{ .path = "ui.maximize_click", .label = "Maximize button", .section = .ui, .scope = .home },
-    .{ .path = "ui.terminal_glyph", .label = "Terminal icon", .section = .ui, .scope = .home },
+    .{ .path = "ui.terminal_glyph", .label = "Terminal mark", .section = .ui, .scope = .home },
+    // The Claude chip's two branded marks, the twin of the row above
+    // (`app/claude_mark.zig`); the cluster chip's right-click menu is
+    // the other way in.
+    .{ .path = "ui.claude_mark", .label = "Claude mark", .section = .ui, .scope = .home },
     .{ .path = "ui.ai_layout_mode", .label = "AI session layout", .section = .ui, .scope = .home },
     .{ .path = "ui.coverage_chip_mode", .label = "Coverage chip", .section = .ui, .scope = .home },
     .{ .path = "ui.cursor_shape", .label = "Cursor shape", .section = .ui, .scope = .home },
@@ -1195,7 +1199,7 @@ test "view.tab_bar_ai_* and view.cluster_mode_* set the key, persist it to the h
     try std.testing.expectEqual(Config.TopBarClusterMode.auto, app.cfg.ui.top_bar_cluster_mode);
 }
 
-test "the UI section's Terminal icon row: three choices, the ghost the shipped one, `←→` writes the key to the home config" {
+test "the UI section's Terminal mark row: three choices, the ghost the shipped one, `←→` writes the key to the home config" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.fs.max_path_bytes]u8 = undefined;
