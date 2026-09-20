@@ -119,6 +119,13 @@ same colour twice and a column narrower for the sibling.
   back to its own slot). A mounted integration goes further and takes
   no ladder slot at all (`Pane.wearsOwnAccent`): the app colour IS its
   rail, and mnml paints nothing over it.
+- **Who paints it is a second question** (`pane_accent.paintsOwnStripe`,
+  not `wearsOwnAccent` — a slot and a stripe are different things). Two
+  kinds paint their own first column and so get no rail on top of it: a
+  mounted integration, and a git status / diff / graph pane while its
+  repo has an accent (`git_palette.repoGutter` paints the same `▌` in
+  the same cell). Painting both would be the colour twice and the
+  content two columns in.
 - **The rail registers no hit.** The pane's own hit already covers the
   column, so the stripe is transparent to the pointer.
 - **Where it goes.** A pane whose content owns its first column insets:
