@@ -35,7 +35,13 @@ pub const ToastLevel = enum { info, warn, err };
 
 /// What the loop does on the app's behalf after an event.
 pub const Effect = union(enum) {
-    toast: struct { level: ToastLevel, text: []const u8 },
+    /// `action` is the offer attached to the message — a label and a
+    /// command the host runs or a page it opens
+    /// (`sdk.wire.ToastAction`). A message that reports a merge and
+    /// then vanishes leaves the reader with no door to the thing it
+    /// merged; one that reports a failed refresh leaves them a stale
+    /// list and no way back.
+    toast: struct { level: ToastLevel, text: []const u8, action: ?sdk.wire.ToastAction = null },
     open_url: []const u8,
     copy: []const u8,
     /// The statusline chip: `󰂨 4(2)`, or the reference's `!` / `…`.
@@ -446,6 +452,19 @@ pub const App = struct {
         app.effect(.{ .toast = .{ .level = level, .text = text } });
     }
 
+    /// A toast with something to do about it. The strings must outlive
+    /// the frame the toast is posted on, so they come off the effect
+    /// arena like the text.
+    fn toastWithAction(app: *App, level: ToastLevel, action: sdk.wire.ToastAction, comptime fmt: []const u8, args: anytype) void {
+        const text = std.fmt.allocPrint(app.effect_arena.allocator(), fmt, args) catch return;
+        app.effect(.{ .toast = .{ .level = level, .text = text, .action = action } });
+    }
+
+    /// The offer a failed fetch owes the reader: the list on screen is
+    /// stale and nothing on it says so, so the message carries the way
+    /// back rather than expecting them to know that `r` is refresh.
+    pub const retry_action: sdk.wire.ToastAction = .{ .label = "Retry", .command = "integrations.retry_refresh" };
+
     /// The reference's status line: kept on the hint row's left and
     /// shown as a toast.
     /// Say something about a wait the reader has been sitting through.
@@ -686,7 +705,11 @@ pub const App = struct {
                 const pr = ts.data.repo_pr_tree[b.repo].prs[b.idx];
                 const runs = app.prPipelinesOf(slug, pr.id) orelse break :blk null;
                 if (b.run >= runs.pipelines.len) break :blk null;
-                break :blk try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/pipelines/results/{d}", .{ ws, slug, runs.pipelines[b.run].build_number });
+                // The toolkit's spelling, so a build line in this pane
+                // and one in the tracker pane open the same page from
+                // the same function.
+                var buf: [256]u8 = undefined;
+                break :blk try a.dupe(u8, sdk.pane.build.pageUrl(&buf, ws, slug, runs.pipelines[b.run].build_number));
             },
             // The note where a build line would be opens the pull
             // request's own pipelines page — the place to go and see why.
@@ -698,7 +721,10 @@ pub const App = struct {
                     var buf: [256]u8 = undefined;
                     break :blk try a.dupe(u8, list[i].url(&buf, ws, list[i].repoSlug()));
                 },
-                .pipelines => |list| try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/pipelines/results/{d}", .{ ws, ts.spec.repo, list[i].build_number }),
+                .pipelines => |list| blk: {
+                    var buf: [256]u8 = undefined;
+                    break :blk try a.dupe(u8, sdk.pane.build.pageUrl(&buf, ws, ts.spec.repo, list[i].build_number));
+                },
                 .branches => |list| try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/branch/{s}", .{ ws, ts.spec.repo, list[i].name }),
                 else => null,
             },
@@ -966,6 +992,22 @@ pub const App = struct {
     pub fn hover(app: *App, col: u16, row: u16) void {
         app.hover_len = 0;
         const target = app.hits.at(col, row) orelse return;
+        // A button showing only its glyph is the one place the action
+        // is not named on screen, so the pointer names it. One cell
+        // wide IS the icon form — the rect the paint registered says
+        // so, and nothing has to be remembered between frames.
+        if (target == .pr_button) {
+            const r = app.hits.rectOf(target) orelse return;
+            if (r.w != 1) return;
+            const word = switch (target.pr_button.which) {
+                .open => "Open",
+                .merge => sdk.pane.merge.label,
+            };
+            var wbuf: [96]u8 = undefined;
+            const st = app.buttonStateOf(target.pr_button.row, target.pr_button.which);
+            app.setHover(sdk.pane.action.hoverText(&wbuf, .icon, st, word));
+            return;
+        }
         const idx = switch (target) {
             .merge_blocked => |i| i,
             else => return,
@@ -984,9 +1026,32 @@ pub const App = struct {
         const r = app.readinessOf(repos[ref.repo].slug, pr);
         var buf: [192]u8 = undefined;
         const note = r.hoverText(&buf);
+        app.setHover(note);
+    }
+
+    fn setHover(app: *App, note: []const u8) void {
         const n = @min(note.len, app.hover_buf.len);
         @memcpy(app.hover_buf[0..n], note[0..n]);
         app.hover_len = n;
+    }
+
+    /// What the button on `row` for `which` is wearing — the state its
+    /// last press left, so a one-cell button's hover says `running`
+    /// rather than offering a word it is no longer offering.
+    fn buttonStateOf(app: *App, row: usize, which: hit.PrButton) sdk.pane.action.State {
+        if (which != .merge) return .idle;
+        var scratch = std.heap.ArenaAllocator.init(app.gpa);
+        defer scratch.deinit();
+        const v = app.visible(scratch.allocator()) catch return .idle;
+        if (row >= v.rows.len) return .idle;
+        const ref = tabs.prOf(v.rows[row]) orelse return .idle;
+        const repos = switch (app.activeTab().data) {
+            .repo_pr_tree => |r| r,
+            else => return .idle,
+        };
+        if (ref.repo >= repos.len or ref.idx >= repos[ref.repo].prs.len) return .idle;
+        var kbuf: [256]u8 = undefined;
+        return app.actions.state(App.prRowKey(&kbuf, repos[ref.repo].slug, repos[ref.repo].prs[ref.idx].id), "merge");
     }
 
     /// The strategies this workspace allows, as the toolkit spells
@@ -1189,6 +1254,29 @@ pub const App = struct {
             .text = try std.fmt.allocPrint(a, "{s} \u{2014} {s}", .{ pair.row, if (detail.len > 0) detail else "see the session" }),
             .bad = state == .failed,
         } });
+        // A merge that lands takes its own row off the open list, so
+        // the message about it is the last place the pull request is
+        // named. The offer is the door back to it.
+        if (try app.mergedPrUrl(a, pair.row)) |url| {
+            app.toastWithAction(
+                if (state == .done) .info else .err,
+                .{ .label = "Open PR", .url = url },
+                "merge {s}: {s}",
+                .{ if (state == .done) "finished" else "failed", pair.row },
+            );
+        }
+    }
+
+    /// The web page of the pull request a `<ws>/<repo>#<id>` row key
+    /// names, or null when this pane has no such row any more — which
+    /// is exactly what a landed merge does to it.
+    fn mergedPrUrl(app: *App, a: Allocator, row_key: []const u8) Allocator.Error!?[]const u8 {
+        const hash = std.mem.lastIndexOfScalar(u8, row_key, '#') orelse return null;
+        const slug = row_key[0..hash];
+        const id = row_key[hash + 1 ..];
+        const ws = app.activeTab().spec.workspace;
+        if (ws.len == 0 or slug.len == 0 or id.len == 0) return null;
+        return try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/pull-requests/{s}", .{ ws, slug, id });
     }
 
     /// A pull request's builds: fold them out (fetching the runs on
@@ -1545,10 +1633,19 @@ pub const App = struct {
                     // A message set after the refresh was queued (`hid api`)
                     // outlives it, as it does in the reference.
                     if (r.tab == app.active and (app.status.items.len == 0 or std.mem.startsWith(u8, app.status.items, "refreshing "))) app.setStatus("{s}", .{r.status});
+                    // A refresh that came back with every repo errored
+                    // and nothing to show is a failed refresh, whatever
+                    // the shape of the answer: the list on screen is
+                    // stale and nothing on it says so. It gets the same
+                    // offer as one that failed outright.
+                    if (r.errored > 0 and r.items == 0) {
+                        app.toastWithAction(.err, retry_action, "error: {s}", .{r.status});
+                    }
                 } else {
                     try TabState.setText(app.gpa, &ts.error_text, r.error_text);
                     try TabState.setText(app.gpa, &ts.status, r.status);
-                    app.say(.err, "error: {s}", .{r.error_text});
+                    app.setStatus("error: {s}", .{r.error_text});
+                    app.toastWithAction(.err, retry_action, "error: {s}", .{r.error_text});
                 }
                 _ = app.frame_arena.reset(.retain_capacity);
                 const rows = (try app.visible(app.frame_arena.allocator())).rows;
@@ -1886,6 +1983,23 @@ pub const App = struct {
             .confirm_ok => try app.acceptMergeConfirm(),
             .confirm_cancel => app.closeMergeConfirm(),
             .confirm_body => {},
+            // A build line is a door, not a row you select: left goes
+            // to that run's page — `activate` already knows the way —
+            // and right keeps the row menu, so the rest of the tree is
+            // still reachable from there.
+            .build_line => |i| {
+                app.select(view.rows, i);
+                if (button == .right) {
+                    const items = app.menuFor(view.rows, i);
+                    if (items.len > 0) {
+                        app.menu = .{ .row = i, .col = col, .y = row, .items = items };
+                        app.mode = .menu;
+                    }
+                } else {
+                    try app.activate(a, view.rows);
+                }
+                if (app.detail_visible) try app.ensureDetail((try app.visible(a)).rows);
+            },
             .row => |i| {
                 app.select(view.rows, i);
                 if (button == .right) {
@@ -2402,6 +2516,23 @@ test "a ready PR opens a named confirm, and confirming dispatches a Claude Code 
         else => {},
     };
     try t.expect(notified);
+    // …and so is the toast: a merge that lands takes its own row off
+    // the open list, so the message about it is the LAST place that
+    // pull request is named. The offer is the door back to it
+    // (`wire.ToastAction`), and it is a url rather than a command
+    // because the page is not mnml's to run.
+    var offered = false;
+    for (fx2) |e| switch (e) {
+        .toast => |x| if (x.action) |act| {
+            offered = true;
+            try t.expectEqualStrings("Open PR", act.label);
+            try t.expectEqualStrings("https://bitbucket.org/acme/api/pull-requests/1234", act.url);
+            try t.expectEqualStrings("", act.command);
+            try t.expect(act.isValid());
+        },
+        else => {},
+    };
+    try t.expect(offered);
 
     // Focused, the same edge is not worth a notification: the reader
     // is looking at it.

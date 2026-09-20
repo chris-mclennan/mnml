@@ -11,6 +11,8 @@
 //!           ground, `Show more (N)`, a detail panel with its `×` and
 //!           scrollbar, and the hint row where every entry is a hit
 //!   text    widths and fitting, counted the way `Frame` paints
+//!   figure  what a statusline segment is allowed to say — one named
+//!           figure, and a bracketed subset only when the pane has one
 //!   expect  what an integration's OWN tests assert about the chrome
 //!           it painted — the check that a pane CALLS the toolkit,
 //!           which the toolkit's self-consistency cannot show
@@ -50,6 +52,9 @@ pub const build = @import("pane/build.zig");
 pub const merge = @import("pane/merge.zig");
 pub const chrome = @import("pane/chrome.zig");
 pub const text = @import("pane/text.zig");
+/// What a statusline segment is allowed to say: one named figure, and
+/// a bracketed subset only when the pane genuinely has one.
+pub const figure = @import("pane/figure.zig");
 /// The assertions an integration's own tests make about the shared
 /// chrome, so two families check one expectation rather than two.
 pub const expect = @import("pane/expect.zig");
@@ -65,11 +70,16 @@ pub const Ui = chrome.Ui;
 pub const width = text.width;
 pub const fit = text.fit;
 pub const scrollAt = chrome.scrollAt;
+/// The cells one build line's click covers — the whole line, so a pane
+/// that paints its build line as a table cell registers the same door.
+pub const buildHit = hit.buildHit;
 pub const Slot = work.Slot;
 pub const BuildRun = build.Run;
 pub const Readiness = merge.Readiness;
 pub const MergeStrategy = merge.Strategy;
 pub const buildCaption = build.caption;
+pub const Figure = figure.Figure;
+pub const figureText = figure.text;
 pub const ActionState = action.State;
 pub const ActionStore = action.Store;
 pub const actionStateOf = action.fromSessionState;
@@ -84,6 +94,7 @@ test {
     _ = action;
     _ = build;
     _ = merge;
+    _ = figure;
     _ = expect;
     // The anti-drift test: the shared elements painted from two panes'
     // target vocabularies must come out cell for cell identical.

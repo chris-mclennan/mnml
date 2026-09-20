@@ -164,6 +164,21 @@ pub const Mount = struct {
         return m.sendMessage(.{ .toast = .{ .level = level, .text = text } });
     }
 
+    /// A toast with something to DO about it — a label and either a
+    /// command the host runs or a page it opens
+    /// (`wire.ToastAction`). Use it when the message reports
+    /// something whose only door goes with the box: a merge that
+    /// takes its own row off the list, a refresh that failed and left
+    /// a stale one.
+    ///
+    /// An action that is not one (no label, or neither/both of the two
+    /// doors) is sent as a plain toast rather than a button that does
+    /// nothing.
+    pub fn toastWithAction(m: *Mount, level: wire.ToastLevel, text: []const u8, act: wire.ToastAction) SendError!void {
+        if (!act.isValid()) return m.toast(level, text);
+        return m.sendMessage(.{ .toast = .{ .level = level, .text = text, .action = act } });
+    }
+
     /// "I started this session; keep me posted." `key` is the pane's
     /// own name for the button that started it — `sdk.pane.action`'s
     /// `watchKey` builds one — and comes back on every `session_state`

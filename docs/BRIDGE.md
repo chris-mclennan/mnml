@@ -17,7 +17,7 @@ file as `src/bridge/wire.zig`). Every example below is what
    | variable | value |
    |---|---|
    | `MNML_MOUNT_SOCKET` | the socket path |
-   | `MNML_PROTOCOL` | `2` |
+   | `MNML_PROTOCOL` | `3` |
    | `MNML_WORKSPACE` | the workspace, absolute |
    | `MNML_THEME` | the theme's name (`onedark`) |
    | `MNML_IPC_DIR` | the file-IPC channel (tier 2, see below) |
@@ -68,20 +68,57 @@ fields. An unknown **tag** is an error.
 | `goodbye` | `{}` | leave now |
 
 ```json
-{"hello":{"protocol":2,"geometry":{"cols":80,"rows":24},"theme":"onedark",
+{"hello":{"protocol":3,"geometry":{"cols":80,"rows":24},"theme":"onedark",
           "workspace":"/Users/me/proj","capabilities":{"rgb":true,"nerd_font":true,"ascii":false}}}
 {"resize":{"geometry":{"cols":100,"rows":30}}}
 {"focus":true}
 {"goodbye":{}}
 ```
 
-`hello.protocol` is the version; refuse anything but `2`.
+`hello.protocol` is the version. **3** adds the optional `action` on a
+`toast` (below) and nothing else; every 2 message is unchanged, so a
+sibling built against 2 runs on a 3 host and a 3 sibling that never
+offers a toast action runs on a 2 host. Refuse a host below the
+version whose features you actually need.
 `capabilities.rgb=false` means the terminal has no truecolor — mnml
 folds rgb onto the 256-cube for you either way, but an integration that
 cares can pick indices itself. `nerd_font=false` / `ascii=true` say to
 use plain glyphs.
 
 `geometry` is the pane's **body** in cells: the tab strip is not yours.
+
+### A toast with something to do about it
+
+A message that reports something and then vanishes leaves the reader
+holding the consequence: a merge that landed and took its own row off
+the list, a refresh that failed and left a stale one. Since protocol 3
+a `toast` may carry an `action`, and mnml paints it as the button in
+the box:
+
+```json
+"action": {"label": "Open PR", "url": "https://bitbucket.org/acme/api/pull-requests/1234"}
+"action": {"label": "Retry",   "command": "integrations.retry_refresh"}
+```
+
+`label` is what the button says. **Exactly one** of `command` and
+`url` is set — a row with neither or both is dropped rather than
+guessed at, because a button that does nothing is worse than no
+button.
+
+Neither is a free hand. `command` is an id the host already knows —
+one of mnml's, or one this integration registered in its manifest —
+resolved through the same registry a key or the palette uses; a
+sibling cannot name a shell line here. `url` is a page, and mnml
+applies its own http(s) rule to it. A `command` offer is run with the
+pane that offered it focused, so a `Retry` lands on the pane that
+failed rather than on whichever one is in front.
+
+`integrations.retry_refresh` is the host command for exactly that: it
+sends `r` — the refresh key every pane in the family binds — to the
+focused integration pane.
+
+The offer goes when the box does. It is attached to the message,
+including the box a repeat coalesced into.
 
 ### `session_state` — what happened to a session you started
 
@@ -150,7 +187,7 @@ are mnml's — the same rule as a terminal pane.
 | `title` | string | the tab label |
 | `cursor` | `{x, y}` or `null` | where the terminal cursor goes while focused; `null` hides it |
 | `command` | `{id}` | run an mnml command by id (a built-in, or one you registered) |
-| `toast` | `{level, text}` | `level` ∈ `info`, `warn`, `error` |
+| `toast` | `{level, text, action?}` | `level` ∈ `info`, `warn`, `error`; `action` since protocol 3 |
 | `watch_session` | `{key, selector}` | "I started this session; tell me what it does" |
 | `bye` | `{}` | a clean exit |
 
@@ -159,6 +196,8 @@ are mnml's — the same rule as a terminal pane.
 {"cursor":{"x":4,"y":1}}
 {"command":{"id":"file.save"}}
 {"toast":{"level":"warn","text":"token expires in 2 days"}}
+{"toast":{"level":"info","text":"merged #1234","action":{"label":"Open PR","url":"https://bitbucket.org/acme/api/pull-requests/1234"}}}
+{"toast":{"level":"error","text":"refresh failed: 503","action":{"label":"Retry","command":"integrations.retry_refresh"}}}
 {"watch_session":{"key":"ENG-2\u001ftriage",
                   "selector":{"cwd":"/Users/me/proj","prompt_line":"/agents:developer ENG-2"}}}
 ```

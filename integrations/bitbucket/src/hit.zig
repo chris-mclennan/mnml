@@ -37,6 +37,12 @@ pub const Target = union(enum) {
     chip: Chip,
     /// A row of the list, by its index in this frame's `VisibleRow`s.
     row: usize,
+    /// A build line under a pull request. Its own target rather than
+    /// the row's, because the only thing a build line stands for is
+    /// that run's page: a click on it goes there. The line is a table
+    /// CELL in this pane and a free row in the tracker pane, and
+    /// `sdk.pane.buildHit` is the one door both register.
+    build_line: usize,
     /// The chevron at the head of a tree row — a repo header, or a
     /// pull request with builds to fold out. It is the row's own
     /// two cells, so a click there FOLDS while a click anywhere else

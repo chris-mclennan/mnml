@@ -80,6 +80,126 @@ pub fn caption(buf: []u8, state: State, label: []const u8, tick: usize, ascii: b
     };
 }
 
+// ─── the two forms a button wears ────────────────────────────────────────
+
+/// A row's buttons are ALWAYS there. What changes with the room is how
+/// much of themselves they show:
+///
+///   icon+label  `[󰏌 Open] [󰊢 Merge]`   — the glyph, the word in its
+///                                        role colour, muted brackets
+///   icon        `󰏌 󰊢`                   — one cell each, same colour
+///
+/// The rule in one line: reduce to the icon when tight, show icon AND
+/// label when there is room. It is one rule for both families, and it
+/// replaces the two they had — one pane dropped the buttons entirely
+/// below a width (so the only row that could act could not, at 80
+/// columns), and the other clipped forty summaries to show forty
+/// copies of a button. A button that disappears teaches nothing; a
+/// button reduced to its glyph is still there, still coloured by what
+/// it costs, and still pressable.
+pub const Form = enum { icon, icon_label };
+
+/// The glyph a button wears when the row is too tight for its word —
+/// one per KIND, not one per word, so the whole set is four glyphs
+/// and both families wear the same four. The colour already says what
+/// pressing it costs; the glyph says it again in one cell.
+pub const nav_glyph = "\u{f03cc}"; // md-open_in_new
+pub const nav_ascii = ">";
+pub const review_glyph = "\u{f06e}"; // fa-eye
+pub const review_ascii = "?";
+pub const dispatch_glyph = "\u{f135}"; // fa-rocket
+pub const dispatch_ascii = "*";
+pub const final_glyph = "\u{f062d}"; // md-source_merge
+pub const final_ascii = "&";
+
+pub fn kindGlyph(kind: Kind, ascii: bool) []const u8 {
+    return switch (kind) {
+        .navigation => if (ascii) nav_ascii else nav_glyph,
+        .review => if (ascii) review_ascii else review_glyph,
+        .dispatch => if (ascii) dispatch_ascii else dispatch_glyph,
+        .final => if (ascii) final_ascii else final_glyph,
+    };
+}
+
+/// One button as a row hands it over: the word it says when there is
+/// room, and what its last press left on it.
+pub const Spec = struct {
+    word: []const u8,
+    state: State = .idle,
+};
+
+/// The cells the row's own words keep when its buttons take theirs.
+/// Below this the buttons reduce to their glyphs rather than the row
+/// reducing to `Rede…`.
+pub const text_floor: u16 = 16;
+
+/// One cell of air between two buttons.
+pub const gap: u16 = 1;
+
+/// What one button says in `form`. `.icon` is always one cell: the
+/// kind's glyph while the button is idle, and the SESSION's glyph
+/// once there is one — a spinner is a spinner at any width.
+pub fn captionIn(buf: []u8, form: Form, state: State, word: []const u8, tick: usize, ascii: bool) []const u8 {
+    if (form == .icon) {
+        return switch (state) {
+            .idle => kindGlyph(kindOf(word), ascii),
+            .running => spinnerFrame(tick, ascii),
+            .waiting => if (ascii) waiting_ascii else waiting_glyph,
+            // A session you can go and read is a door: the navigation
+            // glyph, which is what pressing it does.
+            .view => if (ascii) nav_ascii else nav_glyph,
+            .failed => if (ascii) failed_ascii else failed_glyph,
+        };
+    }
+    // Past `idle` the button is no longer offering the thing its word
+    // named, and it has said so as `[ ⠙ ]` since it grew states. The
+    // glyph goes where the word was, not beside it.
+    if (state != .idle) return caption(buf, state, word, tick, ascii);
+    return std.fmt.bufPrint(buf, "[{s} {s}]", .{ kindGlyph(kindOf(word), ascii), word }) catch word;
+}
+
+/// The cells one button takes in `form`.
+pub fn buttonWidth(s: Spec, form: Form, tick: usize, ascii: bool) u16 {
+    var buf: [64]u8 = undefined;
+    return @intCast(width(captionIn(&buf, form, s.state, s.word, tick, ascii)));
+}
+
+/// The cells a whole run takes, one cell of air between buttons.
+pub fn runWidth(list: []const Spec, form: Form, tick: usize, ascii: bool) u16 {
+    var total: u16 = 0;
+    for (list, 0..) |b, i| {
+        if (i > 0) total +|= gap;
+        total +|= buttonWidth(b, form, tick, ascii);
+    }
+    return total;
+}
+
+/// The widest form the row can afford: icon+label when the run still
+/// leaves `floor` of `avail` cells for the row's own words, else icon.
+///
+/// `avail` is the whole text column the run shares with the words —
+/// what the row would have had to itself.
+pub fn formFor(list: []const Spec, avail: u16, floor: u16, tick: usize, ascii: bool) Form {
+    if (list.len == 0) return .icon;
+    const wide = runWidth(list, .icon_label, tick, ascii);
+    if (avail >= wide +| gap +| floor) return .icon_label;
+    return .icon;
+}
+
+/// What the hover says about a button showing only its glyph. At
+/// icon+label the word is on screen and there is nothing to add; at
+/// icon it is the only place the action is named.
+pub fn hoverText(buf: []u8, form: Form, state: State, word: []const u8) []const u8 {
+    if (form == .icon_label) return "";
+    return switch (state) {
+        .idle => std.fmt.bufPrint(buf, "{s}", .{word}) catch word,
+        .running => std.fmt.bufPrint(buf, "{s}: running", .{word}) catch word,
+        .waiting => std.fmt.bufPrint(buf, "{s}: waiting on you", .{word}) catch word,
+        .view => std.fmt.bufPrint(buf, "{s}: finished — press to read it", .{word}) catch word,
+        .failed => std.fmt.bufPrint(buf, "{s}: failed", .{word}) catch word,
+    };
+}
+
 // ─── what a button does, and the colour that says so ─────────────────────
 
 /// What pressing a button COSTS, which is what decides its colour.
@@ -354,6 +474,86 @@ test "a button says its word, then a spinner, then view, then a cross" {
     while (i < spinner_frames.len) : (i += 1) {
         try testing.expectEqual(w0, width(caption(&buf, .running, "Triage", i, false)));
     }
+}
+
+test "a button is always there: icon when tight, icon and label when there is room" {
+    var buf: [64]u8 = undefined;
+    // The wide form: the glyph, the word, muted brackets — and it is
+    // exactly as wide as the `[ Open ]` it replaces, so no row got
+    // narrower for growing a glyph.
+    try testing.expectEqualStrings("[" ++ nav_glyph ++ " Open]", captionIn(&buf, .icon_label, .idle, "Open", 0, false));
+    try testing.expectEqualStrings("[" ++ final_glyph ++ " Merge]", captionIn(&buf, .icon_label, .idle, "Merge", 0, false));
+    try testing.expectEqualStrings("[" ++ review_glyph ++ " Review]", captionIn(&buf, .icon_label, .idle, "Review", 0, false));
+    try testing.expectEqualStrings("[" ++ dispatch_glyph ++ " Triage]", captionIn(&buf, .icon_label, .idle, "Triage", 0, false));
+    try testing.expectEqual(width("[ Open ]"), width(captionIn(&buf, .icon_label, .idle, "Open", 0, false)));
+
+    // The tight form: one cell, the kind's glyph, nothing else.
+    try testing.expectEqualStrings(nav_glyph, captionIn(&buf, .icon, .idle, "Open", 0, false));
+    try testing.expectEqualStrings(final_glyph, captionIn(&buf, .icon, .idle, "Merge", 0, false));
+    try testing.expectEqual(@as(usize, 1), width(captionIn(&buf, .icon, .idle, "Triage", 0, false)));
+    // Ascii keeps the same four distinctions in four plain characters.
+    try testing.expectEqualStrings(">", captionIn(&buf, .icon, .idle, "Open", 0, true));
+    try testing.expectEqualStrings("&", captionIn(&buf, .icon, .idle, "Merge", 0, true));
+    try testing.expectEqualStrings("?", captionIn(&buf, .icon, .idle, "Review", 0, true));
+    try testing.expectEqualStrings("*", captionIn(&buf, .icon, .idle, "Backport", 0, true));
+
+    // A session's state outranks the kind at BOTH widths: a spinner is
+    // a spinner in one cell, and `[ ⠙ ]` where the word would be.
+    try testing.expectEqualStrings("\u{2807}", captionIn(&buf, .icon, .running, "Merge", 0, false));
+    try testing.expectEqualStrings("[ \u{2807} ]", captionIn(&buf, .icon_label, .running, "Merge", 0, false));
+    try testing.expectEqualStrings("\u{2717}", captionIn(&buf, .icon, .failed, "Triage", 0, false));
+    // A finished session is a door, so it wears the door's glyph.
+    try testing.expectEqualStrings(nav_glyph, captionIn(&buf, .icon, .view, "Triage", 0, false));
+}
+
+test "the ladder: the form is the widest the row can afford, and never no buttons at all" {
+    const three = [_]Spec{ .{ .word = "Open" }, .{ .word = "Review" }, .{ .word = "Merge" } };
+    // `[󰏌 Open]` 8 + 1 + `[ Review]` 10 + 1 + `[󰊢 Merge]` 9 = 29.
+    try testing.expectEqual(@as(u16, 29), runWidth(&three, .icon_label, 0, false));
+    // Three glyphs and two cells of air.
+    try testing.expectEqual(@as(u16, 5), runWidth(&three, .icon, 0, false));
+
+    // Wide: the words fit and the row still keeps its floor.
+    try testing.expectEqual(Form.icon_label, formFor(&three, 29 + 1 + text_floor, text_floor, 0, false));
+    // One cell short of that and the words go, not the buttons.
+    try testing.expectEqual(Form.icon, formFor(&three, 29 + text_floor, text_floor, 0, false));
+    // A pane so narrow that even the glyphs crowd the words still
+    // shows the glyphs: the button is the point of the row.
+    try testing.expectEqual(Form.icon, formFor(&three, 6, text_floor, 0, false));
+    try testing.expectEqual(Form.icon, formFor(&three, 0, text_floor, 0, false));
+    // No buttons is no run.
+    try testing.expectEqual(@as(u16, 0), runWidth(&.{}, .icon_label, 0, false));
+
+    // The real widths, measured the way a pane asks: a 120-column pane
+    // with a 40-cell text column gets words; an 80-column pane with 24
+    // gets glyphs.
+    try testing.expectEqual(Form.icon_label, formFor(&three, 46, text_floor, 0, false));
+    try testing.expectEqual(Form.icon, formFor(&three, 24, text_floor, 0, false));
+
+    // Two buttons — the forge pane's row — cross over lower.
+    const two = [_]Spec{ .{ .word = "Open" }, .{ .word = "Merge" } };
+    try testing.expectEqual(@as(u16, 18), runWidth(&two, .icon_label, 0, false));
+    try testing.expectEqual(@as(u16, 3), runWidth(&two, .icon, 0, false));
+    try testing.expectEqual(Form.icon_label, formFor(&two, 35, text_floor, 0, false));
+    try testing.expectEqual(Form.icon, formFor(&two, 34, text_floor, 0, false));
+
+    // A running button is narrower in the wide form, so a row can gain
+    // its words back while a session runs. That is the ladder doing
+    // its job, not a wobble: the width is re-measured every frame.
+    const running = [_]Spec{ .{ .word = "Open" }, .{ .word = "Merge", .state = .running } };
+    try testing.expect(runWidth(&running, .icon_label, 0, false) < runWidth(&two, .icon_label, 0, false));
+}
+
+test "the hover names the action only when the glyph is all there is" {
+    var buf: [96]u8 = undefined;
+    // At icon+label the word is on screen; saying it again is noise.
+    try testing.expectEqualStrings("", hoverText(&buf, .icon_label, .idle, "Merge"));
+    // At icon it is the only place the action is named.
+    try testing.expectEqualStrings("Merge", hoverText(&buf, .icon, .idle, "Merge"));
+    try testing.expectEqualStrings("Triage: running", hoverText(&buf, .icon, .running, "Triage"));
+    try testing.expectEqualStrings("Triage: waiting on you", hoverText(&buf, .icon, .waiting, "Triage"));
+    try testing.expectEqualStrings("Triage: finished \u{2014} press to read it", hoverText(&buf, .icon, .view, "Triage"));
+    try testing.expectEqualStrings("Triage: failed", hoverText(&buf, .icon, .failed, "Triage"));
 }
 
 test "a button's colour says what pressing it costs, and no two families collide" {

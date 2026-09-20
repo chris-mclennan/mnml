@@ -107,12 +107,28 @@ pub fn Tab(comptime Target: type) type {
     return struct { label: []const u8, target: Target, active: bool = false };
 }
 
+/// One action button of a row's run, as the row hands it over.
+pub fn ActionChip(comptime Target: type) type {
+    return struct {
+        /// The word it says when the row can spare the cells.
+        word: []const u8,
+        /// What its last press left on it.
+        state: action_mod.State = .idle,
+        target: Target,
+        /// The two styles to paint it in, when the pane has a reason
+        /// to override what the word's kind would give: the dim
+        /// `[ Merge ]` of a pull request that may not merge yet.
+        chip: ?action_mod.Chip = null,
+    };
+}
+
 pub fn Painter(comptime Target: type) type {
     return struct {
         const Self = @This();
         pub const ChipSpec = Chip(Target);
         pub const HintSpec = Hint(Target);
         pub const TabSpec = Tab(Target);
+        pub const ActionChipSpec = ActionChip(Target);
 
         f: *Frame,
         /// The hit map's allocator — it outlives the frame.
@@ -409,7 +425,11 @@ pub fn Painter(comptime Target: type) type {
             var buf: [192]u8 = undefined;
             const line = build_mod.caption(&buf, run, now_secs, p.ui.ascii);
             _ = p.putFit(label_x, rect.y, rect.right() -| label_x, line, build_mod.styleOf(p.th, run.state));
-            try p.mark(rect, target);
+            // `hit.buildHit`, not the rect as given: the door is the
+            // whole line, and a pane that paints its build line as a
+            // table cell registers the SAME rect by calling
+            // `buildHit` itself. One door, two lay-outs.
+            try p.mark(hit.buildHit(rect, rect.right()), target);
         }
 
         // ─── an action button ──────────────────────────────
@@ -424,8 +444,12 @@ pub fn Painter(comptime Target: type) type {
         /// row keeps that row's fill instead of punching a hole in it.
         /// Returns the cells used.
         pub fn actionChip(p: *Self, x: u16, y: u16, max_w: u16, cap: []const u8, c: action_mod.Chip) u16 {
-            const lead = "[ ";
-            const tail = " ]";
+            // `[ Merge ]` — what a state past `idle` still says — and
+            // `[󰊢 Merge]`, which is the idle form now that a button
+            // carries its glyph. The brackets are punctuation either
+            // way; everything between them is the word's.
+            const lead = if (std.mem.startsWith(u8, cap, "[ ")) "[ " else "[";
+            const tail = if (std.mem.endsWith(u8, cap, " ]")) " ]" else "]";
             if (!std.mem.startsWith(u8, cap, lead) or !std.mem.endsWith(u8, cap, tail) or cap.len < lead.len + tail.len) {
                 return p.put(x, y, max_w, cap, c.word);
             }
@@ -433,6 +457,36 @@ pub fn Painter(comptime Target: type) type {
             var used = p.put(x, y, max_w, lead, c.bracket);
             used += p.put(x + used, y, max_w -| used, word, c.word);
             used += p.put(x + used, y, max_w -| used, tail, c.bracket);
+            return used;
+        }
+
+        /// A row's whole run of action buttons, laid left to right from
+        /// `x`, each hit registered with the cells it painted. The
+        /// cells used.
+        ///
+        /// `form` comes from `action.formFor`, which the row asks
+        /// BEFORE it paints its words — the buttons take their cells
+        /// off the text column, so the words are shortened rather than
+        /// painted over.
+        ///
+        /// Every button in the list is painted. A row whose buttons do
+        /// not fit gets `action.Form.icon` and three glyphs; it never
+        /// gets an empty right margin where an action used to be.
+        pub fn actionChips(p: *Self, x: u16, y: u16, form: action_mod.Form, tick: usize, list: []const ActionChipSpec) Allocator.Error!u16 {
+            var used: u16 = 0;
+            for (list, 0..) |b, i| {
+                if (i > 0) used += p.put(x + used, y, action_mod.gap, " ", p.th.dimText());
+                var buf: [64]u8 = undefined;
+                const cap = action_mod.captionIn(&buf, form, b.state, b.word, tick, p.ui.ascii);
+                const c = b.chip orelse action_mod.chipOf(p.th, b.state, action_mod.kindOf(b.word));
+                const w = if (form == .icon)
+                    p.put(x + used, y, 2, cap, c.word)
+                else
+                    p.actionChip(x + used, y, p.cols() -| (x + used), cap, c);
+                if (w == 0) break;
+                try p.mark(.{ .x = x + used, .y = y, .w = w, .h = 1 }, b.target);
+                used += w;
+            }
             return used;
         }
 

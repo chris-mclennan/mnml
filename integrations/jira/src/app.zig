@@ -350,6 +350,11 @@ pub const App = struct {
     /// The last thing worth a toast (an action's outcome); the loop drains it.
     toast: std.ArrayList(u8) = .empty,
     toast_pending: bool = false,
+    /// The offer attached to the pending toast, when it has one — a
+    /// label and either a command the host runs or a page it opens
+    /// (`sdk.wire.ToastAction`). Its strings are owned by `toast_act`.
+    toast_action: ?sdk.wire.ToastAction = null,
+    toast_act_buf: [512]u8 = undefined,
 
     const DetailEntry = struct { arena: std.heap.ArenaAllocator, detail: model.IssueDetail };
 
@@ -548,6 +553,26 @@ pub const App = struct {
         a.toast.clearRetainingCapacity();
         a.toast.print(a.gpa, fmt, args) catch {};
         a.toast_pending = true;
+        a.toast_action = null;
+    }
+
+    /// The offer a failed fetch owes the reader: the list on screen is
+    /// stale and nothing on it says so, so the message carries the way
+    /// back rather than expecting them to know that `r` is refresh.
+    pub const retry_action: sdk.wire.ToastAction = .{ .label = "Retry", .command = "integrations.retry_refresh" };
+
+    /// A toast with something to DO about it. `url` (when it is one)
+    /// is copied into the app's own buffer, so the offer outlives the
+    /// arena the caller formatted it on.
+    pub fn sayWithAction(a: *App, action: sdk.wire.ToastAction, comptime fmt: []const u8, args: anytype) void {
+        a.say(fmt, args);
+        if (action.url.len == 0) {
+            a.toast_action = action;
+            return;
+        }
+        if (action.url.len > a.toast_act_buf.len) return;
+        @memcpy(a.toast_act_buf[0..action.url.len], action.url);
+        a.toast_action = .{ .label = action.label, .url = a.toast_act_buf[0..action.url.len] };
     }
 
     pub fn nowMs(a: *App) i64 {
@@ -1081,7 +1106,7 @@ pub const App = struct {
         const t = &a.tabs[idx];
         if (res.error_text.len > 0) {
             t.last_error = try std.fmt.allocPrint(t.meta.allocator(), "{s}", .{res.error_text});
-            a.setStatus("error: {s}", .{res.error_text});
+            a.sayWithAction(retry_action, "error: {s}", .{res.error_text});
             res.drop();
             return;
         }
@@ -1673,6 +1698,38 @@ pub const App = struct {
     pub fn hover(a: *App, col: u16, row: u16) Allocator.Error!void {
         a.hover_len = 0;
         const target = a.hits.at(col, row) orelse return;
+        // A button showing only its glyph is the one place the action
+        // is not named on screen, so the pointer names it. One cell
+        // wide IS the icon form — the rect the paint registered says
+        // so, and nothing has to be remembered between frames.
+        switch (target) {
+            .pr_button => |b| {
+                const r = a.hits.rectOf(target) orelse return;
+                if (r.w != 1) return;
+                const word = switch (b.which) {
+                    .open => "Open",
+                    .review => "Review",
+                    .merge => sdk.pane.merge.label,
+                };
+                var wbuf: [96]u8 = undefined;
+                a.setHover(sdk.pane.action.hoverText(&wbuf, .icon, .idle, word));
+                return;
+            },
+            .action => |ab| {
+                const r = a.hits.rectOf(target) orelse return;
+                if (r.w != 1) return;
+                const t2 = a.tab();
+                if (ab.issue >= t2.issues.len) return;
+                const iss = t2.issues[ab.issue];
+                const set = dispatch.buttonsForTicket(iss);
+                if (ab.button >= set.len) return;
+                const b = set[ab.button];
+                var wbuf: [96]u8 = undefined;
+                a.setHover(sdk.pane.action.hoverText(&wbuf, .icon, a.actions.state(iss.key, b.kind()), std.mem.trim(u8, b.label(), "[] ")));
+                return;
+            },
+            else => {},
+        }
         const idx = switch (target) {
             .merge_blocked => |i| i,
             else => return,
@@ -1690,7 +1747,10 @@ pub const App = struct {
         const prs = (t.tree.?).prs(key) orelse return;
         if (pr_ref.pr_idx >= prs.len) return;
         var buf: [192]u8 = undefined;
-        const note = a.readinessOf(key, prs[pr_ref.pr_idx]).hoverText(&buf);
+        a.setHover(a.readinessOf(key, prs[pr_ref.pr_idx]).hoverText(&buf));
+    }
+
+    fn setHover(a: *App, note: []const u8) void {
         const n = @min(note.len, a.hover_buf.len);
         @memcpy(a.hover_buf[0..n], note[0..n]);
         a.hover_len = n;
@@ -2616,13 +2676,37 @@ pub const App = struct {
         if (!ended or a.focused) return;
         const pair = sdk.pane.action.splitWatchKey(key) orelse return;
         if (!std.mem.eql(u8, pair.action, "merge")) return;
-        const ipc = a.ipc orelse return;
         var scratch = std.heap.ArenaAllocator.init(a.gpa);
         defer scratch.deinit();
         const arena = scratch.allocator();
+        // A merge that lands takes its pull request off the row it was
+        // under, so the message about it is the last place that pull
+        // request is named. The offer is the door back to it — over the
+        // MOUNT, so it does not wait on a file channel the pane may not
+        // have.
+        if (try a.mergedPrUrl(arena, pair.row)) |url| {
+            a.sayWithAction(.{ .label = "Open PR", .url = url }, "merge {s}: {s}", .{ if (state == .done) "finished" else "failed", pair.row });
+        }
+        const ipc = a.ipc orelse return;
         const title = try std.fmt.allocPrint(arena, "Merge {s}", .{if (state == .done) "finished" else "failed"});
         const body = try std.fmt.allocPrint(arena, "{s} \u{2014} {s}", .{ pair.row, if (detail.len > 0) detail else "see the session" });
         ipc.notify(title, body, if (state == .failed) .@"error" else .info, state == .failed) catch {};
+    }
+
+    /// The web page of the pull request a `<ticket key>\x00<pr id>` row
+    /// key names, or null when the pane no longer holds it — which is
+    /// exactly what a landed merge does to it.
+    fn mergedPrUrl(a: *App, arena: Allocator, row_key: []const u8) Allocator.Error!?[]const u8 {
+        const nul = std.mem.indexOfScalar(u8, row_key, 0) orelse return null;
+        const key = row_key[0..nul];
+        const pr_id = row_key[nul + 1 ..];
+        const t = a.tab();
+        const st = &(t.tree orelse return null);
+        const prs = st.prs(key) orelse return null;
+        for (prs) |pr| if (std.mem.eql(u8, pr.id, pr_id) and pr.url.len > 0) {
+            return try arena.dupe(u8, pr.url);
+        };
+        return null;
     }
 
     /// A press on a button whose session is live or finished: ask the
@@ -3145,6 +3229,9 @@ pub const App = struct {
         switch (tg) {
             .row => |i| try a.clickRow(i, right),
             .chevron => |i| try a.clickChevron(i),
+            // A build line is a door, not a row you select: the click
+            // opens that run's page, the same as the forge pane's.
+            .build_line => |i| try a.clickBuildLine(i, right),
             .show_more => |i| {
                 a.tab().selected = i;
                 try a.treeActivate();
@@ -3250,6 +3337,24 @@ pub const App = struct {
     /// chevron through `treeActivate` made the one chevron that has
     /// something to reveal (the post-merge pipelines) launch a browser
     /// instead of expanding, which reads as "the mouse cannot fold".
+    /// A press on a build line. Left goes to the run's page — the only
+    /// thing the line stands for; right selects it, so the row menu and
+    /// the keyboard still reach the rest of the tree from there.
+    fn clickBuildLine(a: *App, i: u32, right: bool) Allocator.Error!void {
+        const t = a.tab();
+        t.selected = i;
+        try a.afterMove();
+        if (right) return;
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const r = (try a.treeRows(scratch.allocator())) orelse return;
+        if (i >= r.rows.len) return;
+        switch (r.rows[i]) {
+            .pipeline => |pl| try a.openBuild(pl),
+            else => {},
+        }
+    }
+
     fn clickChevron(a: *App, i: u32) Allocator.Error!void {
         const t = a.tab();
         if (!t.cfg.isTree()) return;
@@ -4006,6 +4111,48 @@ test "a PR row's Review button remembers its press, keyed by the pull request" {
     const watch_key = try ar.dupe(u8, a.watch_out.items[0].key);
     try a.onSessionState(watch_key, .done, "sid-9", "");
     try testing.expectEqual(sdk.pane.ActionState.view, a.actions.state(row_key, "review"));
+}
+
+test "a merge that ends offers the door back to the pull request it merged" {
+    const h = try Harness.start(.{ .tabs = &work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    const t0 = a.tab();
+    try t0.tree.?.setExpanded("ENG-2", true);
+    try t0.tree.?.putPrs("ENG-2", &.{.{ .id = "#1", .status = "OPEN", .url = "https://bitbucket.org/acme/api/pull-requests/1" }});
+
+    var kbuf: [256]u8 = undefined;
+    const row_key = try std.fmt.bufPrint(&kbuf, "ENG-2\u{0}#1", .{});
+    try a.actions.set(row_key, "merge", .{ .state = .running, .prompt_line = "merge #1" });
+    var wbuf: [320]u8 = undefined;
+    const watch_key = sdk.pane.actionWatchKey(&wbuf, row_key, "merge");
+
+    // Not focused, so the end is worth telling the user about. A merge
+    // that lands takes its pull request off the row it was under, so
+    // the message about it is the LAST place it is named — the offer
+    // is the door back to it (`wire.ToastAction`).
+    a.focused = false;
+    try a.onSessionState(watch_key, .done, "sid-9", "merged");
+    try testing.expect(a.toast_pending);
+    const act = a.toast_action orelse return error.NoToastAction;
+    try testing.expectEqualStrings("Open PR", act.label);
+    try testing.expectEqualStrings("https://bitbucket.org/acme/api/pull-requests/1", act.url);
+    try testing.expectEqualStrings("", act.command);
+    try testing.expect(act.isValid());
+
+    // A plain `say` clears the offer: it belongs to the message it was
+    // attached to, not to the pane.
+    a.say("something else", .{});
+    try testing.expect(a.toast_action == null);
+
+    // And a failed fetch offers the way back rather than expecting the
+    // reader to know that `r` is refresh.
+    a.sayWithAction(App.retry_action, "error: {s}", .{"503"});
+    const retry = a.toast_action orelse return error.NoToastAction;
+    try testing.expectEqualStrings("Retry", retry.label);
+    try testing.expectEqualStrings("integrations.retry_refresh", retry.command);
+    try testing.expect(retry.isValid());
 }
 
 test "a refetch on the group keeps the old rows, the keys and the cursor, and lands on a later tick" {

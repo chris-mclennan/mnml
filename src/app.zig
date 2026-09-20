@@ -870,6 +870,20 @@ pub const ToastAction = union(enum) {
     /// process cannot pick up — a font it has already handed to the
     /// terminal, a config the loader read at start.
     restart: struct { label: []u8 },
+    /// Run a command by id. What a mounted integration's toast offers
+    /// (`wire.ToastAction.command`) — its own id or one of mnml's,
+    /// resolved through the registry a key or the palette would use.
+    /// Never a shell line: a pane cannot name one here.
+    ///
+    /// `pane` is the pane whose toast it was, focused before the
+    /// command runs: a `Retry` offered by a refresh that failed has to
+    /// land on the pane that failed, not on whichever one happens to
+    /// be in front when the reader gets round to pressing it.
+    command: struct { label: []u8, id: []u8, pane: ?PaneId = null },
+    /// Open a page. The other half of an integration's offer
+    /// (`wire.ToastAction.url`), and the reason the merge that took
+    /// the pull request off the list still has a door to it.
+    open_url: struct { label: []u8, url: []u8 },
 
     pub fn label(self: ToastAction) []const u8 {
         return switch (self) {
@@ -884,6 +898,8 @@ pub const ToastAction = union(enum) {
                 switch (self) {
                     .run_in_terminal => |r| gpa.free(r.cmd),
                     .marketplace => |m| gpa.free(m.id),
+                    .command => |c| gpa.free(c.id),
+                    .open_url => |u| gpa.free(u.url),
                     .restart => {},
                 }
             },
@@ -1868,6 +1884,23 @@ pub const App = struct {
             .restart => command.run(self, .{ .static = .@"app.restart" }) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => self.toast("could not restart", .{}),
+            },
+            // A mounted pane's offer: an id the host already knows,
+            // run the way a key or the palette would run it. An id
+            // nobody registered says so rather than failing silently.
+            .command => |c| {
+                const id = try self.frame.allocator().dupe(u8, c.id);
+                if (c.pane) |pid| if (self.panes.get(pid) != null) self.setActive(pid);
+                command.runNamed(self, id) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => self.toast("no such command: {s}", .{id}),
+                };
+            },
+            // …and the other half: a page. The http(s) rule is the
+            // host's, not the pane's.
+            .open_url => |u| {
+                const url = try self.frame.allocator().dupe(u8, u.url);
+                @import("app/git.zig").openExternal(self, url);
             },
         }
     }

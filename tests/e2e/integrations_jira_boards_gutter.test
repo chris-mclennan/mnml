@@ -1,0 +1,39 @@
+# width: 120
+# height: 40
+# Jira Boards: the app-colour stripe runs the WHOLE height of the pane.
+#
+# The kanban columns used to paint their own boxes straight over column
+# 0, so the pane's identity stripe stopped where the header did and
+# every card grew a little `▌` of its own instead, as if the identity had
+# moved onto the cards. The board now starts one cell in.
+#
+# `▌` immediately followed by a box-drawing character is the whole
+# assertion: it can only be true if the stripe is in column 0 and the
+# board's frame begins in column 1. It is checked at the board's top
+# edge, down its body and at its bottom edge, so a stripe that stops
+# part way fails.
+# env: JIRA_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/jira-bucket.json
+# env: JIRA_API_TOKEN=fake-token
+# env: JIRA_BASE_URL=@${MNML_E2E_WORKSPACE}/jira.url
+shell "$MNML_FAKE_JIRA" --port 0 --url-file jira.url --life-secs 180 --quiet --pid-file fake-jira.pid >/dev/null 2>&1 &
+wait 500
+write sdk/mnml-sdk/build.zig ""
+write integrations/jira/build.zig ""
+write integrations/jira/manifest.zon ".{ .id = \"jira_boards\", .label = \"Jira Boards\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_boards.open\", .title = \"Jira Boards\", .args = .{ \"--only\", \"boards\" } } } }"
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"https://jira.invalid\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .rate = .{ .per_sec = 1000, .burst = 1000 }, .team_field_id = \"customfield_10056\", .tabs = .{ .{ .name = \"Sprint\", .kind = .board_active_sprint, .project = \"ENG\", .board_id = 7 } } }"
+command integrations.show_in_dev
+expect screen contains "INTEGRATIONS"
+key i
+expect screen contains "installed jira_boards from"
+wait 4000
+command integrations.open_as_tab
+command jira_boards.open
+command view.toggle_tree
+command view.focus_pane
+expect screen contains "JIRA BOARDS"
+expect screen contains " To Do ("
+# The board's top-left corner is in column 1, with the stripe beside it.
+expect screen contains "▌┌ To Do ("
+# Its body, and its bottom edge: the stripe is still there on both.
+expect screen contains "▌│"
+expect screen contains "▌└"

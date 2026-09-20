@@ -17,13 +17,16 @@ const std = @import("std");
 const frame_mod = @import("../frame.zig");
 const theme_mod = @import("theme.zig");
 const chrome = @import("chrome.zig");
+const action = @import("action.zig");
+const hit = @import("hit.zig");
+const figure = @import("figure.zig");
 const text_mod = @import("text.zig");
 
 pub const Frame = frame_mod.Frame;
 pub const Style = frame_mod.Style;
 pub const Theme = theme_mod.Theme;
 
-pub const Error = error{
+pub const Error = figure.Error || error{
     TitleInk,
     LadderMissing,
     LadderOrder,
@@ -34,6 +37,15 @@ pub const Error = error{
     FoldRowMissing,
     FoldRowSplit,
     FoldRowInk,
+    BuildHitMissing,
+    BuildHitPartial,
+    GutterBroken,
+    GutterInk,
+    ActionRunMissing,
+    ActionRunOrder,
+    ActionRunWidth,
+    ActionRunShape,
+    ActionRunBlank,
 };
 
 fn eqlStyle(a: Style, b: Style) bool {
@@ -61,6 +73,85 @@ pub fn capsTitleInk(f: *const Frame, th: Theme, x0: u16, y: u16, title: []const 
     while (i < text_mod.width(title)) : (i += 1) {
         const got = f.slots[@as(usize, y) * f.cols + x0 + i].style;
         if (!eqlInk(got, want)) return Error.TitleInk;
+    }
+}
+
+/// The row at `y` carries EVERY one of `targets` as a button, left to
+/// right, each a hit exactly as wide as the cells it painted, in the
+/// form `form` says.
+///
+/// Three things at once, because they came apart together:
+///
+///  * the buttons are THERE. One pane dropped them whole below a
+///    width, so at 80 columns the only row that could act could not;
+///  * the form is the one the row can afford — one cell each when
+///    tight, `[󰏌 Open]` when there is room — rather than a clipped
+///    word or an empty margin;
+///  * the hit is the painted cells. A button whose rect is wider than
+///    its glyph eats the cell beside it; one that is narrower has a
+///    dead edge the pointer falls through.
+pub fn actionRun(
+    comptime Target: type,
+    f: *const Frame,
+    m: *const hit.Map(Target),
+    y: u16,
+    targets: []const Target,
+    form: action.Form,
+) Error!void {
+    var prev_right: u16 = 0;
+    for (targets) |tg| {
+        const r = m.rectOf(tg) orelse return Error.ActionRunMissing;
+        if (r.y != y or r.isEmpty()) return Error.ActionRunMissing;
+        if (r.x < prev_right) return Error.ActionRunOrder;
+        prev_right = r.right();
+        switch (form) {
+            // One cell, and a glyph in it.
+            .icon => {
+                if (r.w != 1) return Error.ActionRunWidth;
+                if (blank(f, r.x, y)) return Error.ActionRunBlank;
+            },
+            // `[…]`, and the cell the rect names really carries the
+            // opening bracket.
+            .icon_label => {
+                if (r.w < 4) return Error.ActionRunWidth;
+                if (!rowHas(f, y, r.x, "[")) return Error.ActionRunShape;
+                if (!rowHas(f, y, r.right() - 1, "]")) return Error.ActionRunShape;
+                // The cell after the bracket is the kind's glyph, not
+                // air: `[ Open ]` without one would pass the shape
+                // check and say nothing about the icon.
+                if (blank(f, r.x + 1, y)) return Error.ActionRunBlank;
+            },
+        }
+        // The hit stops where the paint does: the cell past the
+        // button is air or the next button's, never this one's.
+        if (m.at(r.x, y) == null) return Error.ActionRunMissing;
+    }
+}
+
+fn blank(f: *const Frame, x: u16, y: u16) bool {
+    const sym = f.slots[@as(usize, y) * f.cols + x].symbol();
+    return sym.len == 0 or std.mem.eql(u8, sym, " ") or std.mem.eql(u8, sym, "\x00");
+}
+
+/// The app-colour stripe down column `x`, unbroken from `y0` for `h`
+/// rows, in one of the gutter's two inks.
+///
+/// It is the pane's identity and the only column that says which
+/// application you are looking at, so a pane that loses it halfway
+/// down reads as two panes stacked. The tracker pane's board did
+/// exactly that: the header rows wore the stripe, the kanban columns
+/// then painted their own boxes straight over column 0, and every
+/// card grew a little `▌` of its own as if the identity had moved
+/// onto them. The board now starts one cell in.
+pub fn gutterFullHeight(f: *const Frame, th: Theme, x: u16, y0: u16, h: u16, ascii: bool) Error!void {
+    const g: []const u8 = if (ascii) chrome.gutter_ascii else chrome.gutter_glyph;
+    const on = th.gutterOn();
+    const off = th.gutterOff();
+    var y = y0;
+    while (y < y0 + h and y < f.rows) : (y += 1) {
+        const slot = f.slots[@as(usize, y) * f.cols + x];
+        if (!std.mem.eql(u8, slot.symbol(), g)) return Error.GutterBroken;
+        if (!eqlInk(slot.style, on) and !eqlInk(slot.style, off)) return Error.GutterInk;
     }
 }
 
@@ -135,6 +226,37 @@ pub fn foldRow(f: *const Frame, th: Theme, y: u16, ascii: bool) Error!void {
     if (!eqlInk(f.slots[@as(usize, y) * f.cols + words_x].style, th.bright())) return Error.FoldRowInk;
 }
 
+/// The text of one statusline segment obeys the family's figure rule:
+/// one figure the segment is named for, and a bracketed subset only
+/// when the pane genuinely has one (`sdk.pane.figure`).
+///
+/// Asserted from both suites because the two panes disagreed about it
+/// by accident rather than on purpose — the forge pane had a real
+/// subset to publish and the tracker pane did not, and nothing said
+/// which of those was the standard.
+pub fn statuslineFigure(s: []const u8) Error!void {
+    return figure.check(s);
+}
+
+/// Every cell of the build line on row `y`, from `x0` up to but not
+/// including `x1`, resolves to `want` — one door, the width of the
+/// line.
+///
+/// Both panes painted the toolkit's build line and neither opened the
+/// run when you clicked it: the caption fell through to the generic
+/// row hit, which selects. Asserted from both suites because the two
+/// lay-outs differ — one is a free row and the other a cell inside a
+/// table — and the door must not.
+pub fn buildLineHit(comptime Target: type, m: *const hit.Map(Target), y: u16, x0: u16, x1: u16, want: Target) Error!void {
+    if (x1 <= x0) return Error.BuildHitMissing;
+    if (m.at(x0, y) == null) return Error.BuildHitMissing;
+    var x = x0;
+    while (x < x1) : (x += 1) {
+        const got = m.at(x, y) orelse return Error.BuildHitPartial;
+        if (!std.meta.eql(got, want)) return Error.BuildHitPartial;
+    }
+}
+
 /// `want`, one codepoint per cell, starting at `(x0, y)`. Every glyph
 /// the ladder carries is single-width, so a cell is a codepoint here.
 fn rowHas(f: *const Frame, y: u16, x0: u16, want: []const u8) bool {
@@ -154,7 +276,68 @@ fn rowHas(f: *const Frame, y: u16, x0: u16, want: []const u8) bool {
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const testing = std.testing;
-const hit = @import("hit.zig");
+
+test "a row's buttons are there at both widths, and the hit is the cells" {
+    const Target = union(enum) { btn: u8 };
+    var f = try Frame.init(testing.allocator, 60, 3);
+    defer f.deinit();
+    var hits: hit.Map(Target) = .{};
+    defer hits.deinit(testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const th = Theme.fromHello(.{ .fg = .{ .rgb = .{ 1, 2, 3 } }, .muted = .{ .rgb = .{ 4, 5, 6 } } });
+    var p: chrome.Painter(Target) = .{ .f = &f, .gpa = testing.allocator, .arena = arena.allocator(), .hits = &hits, .th = th, .ui = .{ .nerd = true } };
+
+    const list = [_]chrome.ActionChip(Target){
+        .{ .word = "Open", .target = .{ .btn = 0 } },
+        .{ .word = "Merge", .target = .{ .btn = 1 } },
+    };
+    const wide = try p.actionChips(2, 0, .icon_label, 0, &list);
+    try testing.expectEqual(action.runWidth(&.{ .{ .word = "Open" }, .{ .word = "Merge" } }, .icon_label, 0, false), wide);
+    try actionRun(Target, &f, &hits, 0, &.{ .{ .btn = 0 }, .{ .btn = 1 } }, .icon_label);
+    // …and the icon form is one cell each, still both there.
+    hits.reset();
+    const tight = try p.actionChips(2, 1, .icon, 0, &list);
+    try testing.expectEqual(@as(u16, 3), tight);
+    try actionRun(Target, &f, &hits, 1, &.{ .{ .btn = 0 }, .{ .btn = 1 } }, .icon);
+    // The wrong form is caught either way round.
+    try testing.expectError(Error.ActionRunWidth, actionRun(Target, &f, &hits, 1, &.{.{ .btn = 0 }}, .icon_label));
+
+    // A row that dropped one of its buttons — what the forge pane did
+    // below 135 columns — fails rather than passing quietly.
+    hits.reset();
+    _ = try p.actionChips(2, 2, .icon_label, 0, list[0..1]);
+    try testing.expectError(Error.ActionRunMissing, actionRun(Target, &f, &hits, 2, &.{ .{ .btn = 0 }, .{ .btn = 1 } }, .icon_label));
+}
+
+test "a build line's door is the whole line, and a door over only the words fails" {
+    const Target = union(enum) { build: u8, row: u8 };
+    var m: hit.Map(Target) = .{};
+    defer m.deinit(testing.allocator);
+    // What `Painter.buildRow` registers: the whole line.
+    try m.add(testing.allocator, hit.buildHit(.{ .x = 0, .y = 3, .w = 60, .h = 1 }, 60), .{ .build = 1 });
+    try buildLineHit(Target, &m, 3, 0, 60, .{ .build = 1 });
+
+    // What both panes had instead: the row's own hit under the line,
+    // so a click selected rather than opening the run.
+    var bad: hit.Map(Target) = .{};
+    defer bad.deinit(testing.allocator);
+    try bad.add(testing.allocator, .{ .x = 0, .y = 3, .w = 60, .h = 1 }, .{ .row = 1 });
+    try testing.expectError(Error.BuildHitPartial, buildLineHit(Target, &bad, 3, 0, 60, .{ .build = 1 }));
+
+    // A door over only the caption's cells leaves the indent and the
+    // air past the words dead.
+    var short: hit.Map(Target) = .{};
+    defer short.deinit(testing.allocator);
+    try short.add(testing.allocator, .{ .x = 6, .y = 3, .w = 30, .h = 1 }, .{ .build = 1 });
+    try testing.expectError(Error.BuildHitMissing, buildLineHit(Target, &short, 3, 0, 60, .{ .build = 1 }));
+    try testing.expectError(Error.BuildHitPartial, buildLineHit(Target, &short, 3, 6, 60, .{ .build = 1 }));
+
+    // Nothing at all on the row.
+    var empty: hit.Map(Target) = .{};
+    defer empty.deinit(testing.allocator);
+    try testing.expectError(Error.BuildHitMissing, buildLineHit(Target, &empty, 3, 0, 60, .{ .build = 1 }));
+}
 
 test "the header expectations pass on a toolkit-painted header and fail on a hand-rolled one" {
     const Target = union(enum) { chip: u8 };

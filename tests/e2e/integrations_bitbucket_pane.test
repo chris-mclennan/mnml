@@ -56,7 +56,7 @@ expect screen contains "TITLE"
 expect screen contains "▌ ▾ api"
 expect screen contains "2 PRs"
 expect screen contains "#1234"
-expect screen contains "Fix the login redirect"
+expect screen contains "Fix the login redir"
 expect screen contains "chris/fix-login"
 expect screen contains "▾ web"
 expect screen contains "#820"
@@ -81,19 +81,19 @@ expect screen contains "Bump the client"
 expect screen lacks "Show more ("
 # c collapses every repo (the header keeps its preview), e opens them.
 key c
-expect screen lacks "Fix the login redirect"
+expect screen lacks "Fix the login redir"
 expect screen contains "▸ api"
 key e
-expect screen contains "Fix the login redirect"
+expect screen contains "Fix the login redir"
 
 # The filter narrows the PR rows under the headers; esc clears it.
 type /
 type empty
 key enter
 expect screen contains "Redesign the em"
-expect screen lacks "Fix the login redirect"
+expect screen lacks "Fix the login redir"
 key esc
-expect screen contains "Fix the login redirect"
+expect screen contains "Fix the login redir"
 
 # The detail beside the list: the reference's header lines, the
 # description, the comments most-recent first.
@@ -143,10 +143,10 @@ key shift+a
 wait 400
 expect screen contains "(1 of 3 awaiting my review)"
 expect screen contains "#1198"
-expect screen lacks "Fix the login redirect"
+expect screen lacks "Fix the login redir"
 key shift+a
 wait 400
-expect screen contains "Fix the login redirect"
+expect screen contains "Fix the login redir"
 
 # The key sheet is the one keymap table; any other key closes it.
 type ?

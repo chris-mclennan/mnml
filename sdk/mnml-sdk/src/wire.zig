@@ -12,7 +12,7 @@
 //! `{"<tag>": payload}`, the shape `std.json` gives a tagged union. A
 //! void payload is `{}`:
 //!
-//!   {"hello":{"protocol":2,"geometry":{"cols":80,"rows":24},…}}
+//!   {"hello":{"protocol":3,"geometry":{"cols":80,"rows":24},…}}
 //!   {"input":{"event":{"key":{"spec":"ctrl+p"}}}}
 //!   {"frame":{"cells":[[{"symbol":"a","fg":{"index":4}}]]}}
 //!   {"goodbye":{}}
@@ -27,7 +27,15 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
 /// The protocol this module speaks. `Hello.protocol` carries it.
-pub const protocol: u8 = 2;
+///
+/// 3 — a `toast` may carry an `action`: a label and either a command
+/// the host runs or a page it opens. The field is optional and
+/// defaults to none, so a sibling built against 2 keeps working and a
+/// host built against 2 ignores it; the version is bumped because a
+/// sibling that NEEDS the button (a merge result whose only door to
+/// the pull request is the toast) can now refuse a host below 3
+/// rather than posting a message with nothing to press.
+pub const protocol: u8 = 3;
 
 /// The largest frame either side will read.
 pub const max_message: u32 = 16 * 1024 * 1024;
@@ -269,6 +277,37 @@ pub const Row = struct { y: u16, cells: []const Cell };
 
 pub const ToastLevel = enum { info, warn, @"error" };
 
+/// What a toast offers to DO about itself.
+///
+/// A message that reports something and then vanishes leaves the
+/// reader holding the consequence: a merge that succeeded and took
+/// the pane's own row away with it, a refresh that failed and left a
+/// stale list. The offer is attached to the box the message landed in
+/// and goes when the box does.
+///
+/// Exactly one of `command` and `url` is set. Neither is a free hand:
+/// `command` is an id the host already knows — its own, or one this
+/// integration registered in its manifest, so the host resolves it
+/// through the same registry a key or the palette would; `url` is a
+/// page, and the host applies its own http(s) rule to it. A sibling
+/// cannot name a shell line here.
+pub const ToastAction = struct {
+    /// What the button says: one or two words, `Open PR`, `Retry`.
+    label: []const u8,
+    /// A command id the host runs. Empty when this is a `url` offer.
+    command: []const u8 = "",
+    /// A page the host opens. Empty when this is a `command` offer.
+    url: []const u8 = "",
+
+    /// Is this an offer the host can act on? A row with neither (or
+    /// both) is refused rather than guessed at: a button that does
+    /// nothing is worse than no button.
+    pub fn isValid(a: ToastAction) bool {
+        if (a.label.len == 0) return false;
+        return (a.command.len == 0) != (a.url.len == 0);
+    }
+};
+
 pub const Cursor = struct { x: u16, y: u16 };
 
 pub const SiblingMessage = union(enum) {
@@ -283,7 +322,10 @@ pub const SiblingMessage = union(enum) {
     cursor: ?Cursor,
     /// Run a command by id (a built-in, or one the sibling registered).
     command: struct { id: []const u8 },
-    toast: struct { level: ToastLevel = .info, text: []const u8 },
+    /// A message for mnml's toast stack, and — since protocol 3 —
+    /// what to DO about it. `action` defaults to none, so a sibling
+    /// that never sets it is unchanged.
+    toast: struct { level: ToastLevel = .info, text: []const u8, action: ?ToastAction = null },
     /// "I just started this session; keep me posted." The host answers
     /// with `session_state` lines carrying the same `key` back. A
     /// second watch under a key replaces the first, so a button that
@@ -368,6 +410,53 @@ pub fn receive(comptime T: type, gpa: Allocator, arena: Allocator, r: *Io.Reader
 
 // ─── tests ───────────────────────────────────────────────────────────────
 
+test "a toast can carry an offer, and a toast without one is unchanged" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = a.allocator();
+
+    // A command offer: the id is one the host already knows.
+    const cmd = try roundTrip(SiblingMessage, arena, .{ .toast = .{
+        .level = .info,
+        .text = "merged #1234",
+        .action = .{ .label = "Open PR", .command = "bitbucket_prs.open" },
+    } });
+    try testing.expectEqualStrings("Open PR", cmd.toast.action.?.label);
+    try testing.expectEqualStrings("bitbucket_prs.open", cmd.toast.action.?.command);
+    try testing.expectEqualStrings("", cmd.toast.action.?.url);
+    try testing.expect(cmd.toast.action.?.isValid());
+
+    // A url offer.
+    const url = try roundTrip(SiblingMessage, arena, .{ .toast = .{
+        .level = .info,
+        .text = "merged #1234",
+        .action = .{ .label = "Open PR", .url = "https://bitbucket.org/acme/api/pull-requests/1234" },
+    } });
+    try testing.expectEqualStrings("https://bitbucket.org/acme/api/pull-requests/1234", url.toast.action.?.url);
+    try testing.expect(url.toast.action.?.isValid());
+
+    // Neither, or both, is not an offer: a button that does nothing is
+    // worse than no button.
+    try testing.expect(!(ToastAction{ .label = "Retry" }).isValid());
+    try testing.expect(!(ToastAction{ .label = "Retry", .command = "c", .url = "u" }).isValid());
+    try testing.expect(!(ToastAction{ .label = "", .command = "c" }).isValid());
+
+    // A HOST built against 2 sends a line with no `action` field, and a
+    // sibling built against 3 reads it as no offer rather than failing.
+    const old = try decode(SiblingMessage, arena, "{\"toast\":{\"text\":\"t\",\"level\":\"warn\"}}");
+    try testing.expect(old.toast.action == null);
+    try testing.expectEqualStrings("t", old.toast.text);
+
+    // And an explicit null is the same as absent.
+    const nulled = try decode(SiblingMessage, arena, "{\"toast\":{\"text\":\"t\",\"action\":null}}");
+    try testing.expect(nulled.toast.action == null);
+
+    // The field is on the wire only when it is set, so a pane that
+    // never offers anything sends the same bytes it always did.
+    const plain = try encode(arena, SiblingMessage{ .toast = .{ .text = "t" } });
+    try testing.expectEqualStrings("{\"toast\":{\"level\":\"info\",\"text\":\"t\"}}", plain);
+}
+
 const testing = std.testing;
 
 fn roundTrip(comptime T: type, arena: Allocator, msg: T) !T {
@@ -387,7 +476,7 @@ test "every host message round-trips" {
         .workspace = "/ws",
         .capabilities = .{ .rgb = false, .ascii = true },
     } });
-    try testing.expectEqual(@as(u8, 2), hello.hello.protocol);
+    try testing.expectEqual(@as(u8, 3), hello.hello.protocol);
     try testing.expectEqual(@as(u16, 80), hello.hello.geometry.cols);
     try testing.expectEqualStrings("onedark", hello.hello.theme);
     try testing.expectEqualStrings("/ws", hello.hello.workspace);
@@ -399,7 +488,7 @@ test "every host message round-trips" {
     try testing.expectEqual(TabIndicator.block, hello.hello.tab_indicator);
     const ruled = try roundTrip(HostMessage, arena, .{ .hello = .{ .geometry = .{ .cols = 1, .rows = 1 }, .tab_indicator = .rule } });
     try testing.expectEqual(TabIndicator.rule, ruled.hello.tab_indicator);
-    const old_host = try decode(HostMessage, arena, "{\"hello\":{\"protocol\":2,\"geometry\":{\"cols\":8,\"rows\":2}}}");
+    const old_host = try decode(HostMessage, arena, "{\"hello\":{\"protocol\":3,\"geometry\":{\"cols\":8,\"rows\":2}}}");
     try testing.expectEqual(TabIndicator.block, old_host.hello.tab_indicator);
 
     const resize = try roundTrip(HostMessage, arena, .{ .resize = .{ .geometry = .{ .cols = 10, .rows = 3 } } });
@@ -475,6 +564,9 @@ test "every sibling message round-trips; colours are externally tagged" {
     try testing.expectEqualStrings("file.save", cmd.command.id);
     const toast = try roundTrip(SiblingMessage, arena, .{ .toast = .{ .level = .warn, .text = "hmm" } });
     try testing.expectEqual(ToastLevel.warn, toast.toast.level);
+    // A toast with nothing to do about it carries no action at all,
+    // which is what a sibling built against protocol 2 sends.
+    try testing.expect(toast.toast.action == null);
     const watch = try roundTrip(SiblingMessage, arena, .{ .watch_session = .{ .key = "acme/api#7\u{1f}merge", .selector = .{ .cwd = "/ws", .prompt_line = "/agents:developer ENG-2" } } });
     try testing.expectEqualStrings("acme/api#7\u{1f}merge", watch.watch_session.key);
     try testing.expectEqualStrings("/ws", watch.watch_session.selector.cwd);
@@ -488,7 +580,7 @@ test "the JSON shape is the documented one" {
     const gpa = testing.allocator;
     const hello = try encode(gpa, HostMessage{ .hello = .{ .geometry = .{ .cols = 8, .rows = 2 } } });
     defer gpa.free(hello);
-    try testing.expectEqualStrings("{\"hello\":{\"protocol\":2,\"geometry\":{\"cols\":8,\"rows\":2},\"theme\":\"\",\"workspace\":\"\",\"capabilities\":{\"rgb\":true,\"nerd_font\":true,\"ascii\":false},\"tab_indicator\":\"block\"}}", hello);
+    try testing.expectEqualStrings("{\"hello\":{\"protocol\":3,\"geometry\":{\"cols\":8,\"rows\":2},\"theme\":\"\",\"workspace\":\"\",\"capabilities\":{\"rgb\":true,\"nerd_font\":true,\"ascii\":false},\"tab_indicator\":\"block\"}}", hello);
     const bye = try encode(gpa, @as(SiblingMessage, .bye));
     defer gpa.free(bye);
     try testing.expectEqualStrings("{\"bye\":{}}", bye);

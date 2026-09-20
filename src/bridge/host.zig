@@ -135,7 +135,10 @@ pub const Event = struct {
         title: []u8,
         cursor: ?wire.Cursor,
         command: []u8,
-        toast: struct { level: wire.ToastLevel, text: []u8 },
+        /// `action` is the offer the pane attached, when it sent one
+        /// the host can act on: a label and either a command id or a
+        /// page. Owned like the text, and freed with it.
+        toast: struct { level: wire.ToastLevel, text: []u8, action: ?ToastAction = null },
         /// The sibling started a session and wants to be told what it
         /// does next. One `key` per button; a second watch under a key
         /// replaces the first.
@@ -146,10 +149,29 @@ pub const Event = struct {
         closed: []u8,
     },
 
+    /// A toast's offer, owned by the event. `wire.ToastAction` with
+    /// its strings copied out of the frame arena.
+    pub const ToastAction = struct {
+        label: []u8,
+        command: []u8,
+        url: []u8,
+
+        pub fn isCommand(a: ToastAction) bool {
+            return a.command.len > 0;
+        }
+    };
+
     pub fn destroy(self: *Event, gpa: Allocator) void {
         switch (self.kind) {
             .title, .command, .closed => |s| gpa.free(s),
-            .toast => |t| gpa.free(t.text),
+            .toast => |t| {
+                gpa.free(t.text);
+                if (t.action) |a| {
+                    gpa.free(a.label);
+                    gpa.free(a.command);
+                    gpa.free(a.url);
+                }
+            },
             .watch_session => |w| {
                 gpa.free(w.key);
                 gpa.free(w.id);
@@ -424,7 +446,29 @@ fn readLoop(events: *event.EventQueue, io: Io, gpa: Allocator, shared: *Shared, 
             .command => |c| postOwned(events, io, gpa, pane, generation, "command", c.id),
             .toast => |t| {
                 const copy = gpa.dupe(u8, t.text) catch continue;
-                post(events, io, gpa, .{ .pane = pane, .generation = generation, .kind = .{ .toast = .{ .level = t.level, .text = copy } } });
+                // The offer, if the pane sent one that is an offer.
+                // Three owned strings or none: a half-allocated action
+                // would be freed wrong.
+                var action: ?Event.ToastAction = null;
+                if (t.action) |a| if (a.isValid()) {
+                    const label = gpa.dupe(u8, a.label) catch {
+                        gpa.free(copy);
+                        continue;
+                    };
+                    const cmd = gpa.dupe(u8, a.command) catch {
+                        gpa.free(copy);
+                        gpa.free(label);
+                        continue;
+                    };
+                    const url = gpa.dupe(u8, a.url) catch {
+                        gpa.free(copy);
+                        gpa.free(label);
+                        gpa.free(cmd);
+                        continue;
+                    };
+                    action = .{ .label = label, .command = cmd, .url = url };
+                };
+                post(events, io, gpa, .{ .pane = pane, .generation = generation, .kind = .{ .toast = .{ .level = t.level, .text = copy, .action = action } } });
             },
             .watch_session => |req| {
                 // Four owned strings or none: a half-allocated watch
@@ -511,7 +555,7 @@ pub fn envFor(gpa: Allocator, base: *const std.process.Environ.Map, vars: EnvVar
         try env.put("MNML_REQUEST_LOG_MAX_MB", std.fmt.bufPrint(&mbuf, "{d}", .{rl.max_mb}) catch "4");
     }
     var pbuf: [4]u8 = undefined;
-    try env.put("MNML_PROTOCOL", std.fmt.bufPrint(&pbuf, "{d}", .{wire.protocol}) catch "2");
+    try env.put("MNML_PROTOCOL", std.fmt.bufPrint(&pbuf, "{d}", .{wire.protocol}) catch "3");
     return env;
 }
 
@@ -574,7 +618,7 @@ test "envFor carries the mount contract; socketPath stays short enough for socka
     try testing.expectEqualStrings("/ws", env.get("MNML_WORKSPACE").?);
     try testing.expectEqualStrings("onedark", env.get("MNML_THEME").?);
     try testing.expectEqualStrings("/ws/.mnml/ipc-zig", env.get("MNML_IPC_DIR").?);
-    try testing.expectEqualStrings("2", env.get("MNML_PROTOCOL").?);
+    try testing.expectEqualStrings("3", env.get("MNML_PROTOCOL").?);
     try testing.expectEqualStrings("/h", env.get("HOME").?);
     const short = try socketPath(gpa, "/ws/.mnml/ipc-zig", 3);
     defer gpa.free(short);

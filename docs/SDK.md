@@ -225,7 +225,7 @@ the next backfill has to come back for.
 | element | the toolkit's |
 |---|---|
 | Host palette roles, never ANSI indices | `Theme.fromHelloBranded` |
-| The app-colour left gutter, full height | `Painter.gutter` |
+| The app-colour left gutter, full height — under a board-shaped body too | `Painter.gutter` + `expect.gutterFullHeight` |
 | The caps header — title, count, `as of …`, and the ladder, clipped against each other | `Painter.capsHeader` |
 | Its pieces, if you need them apart | `Painter.capsTitle`, `Painter.rightChips`, `Painter.asOf`, `Painter.refreshChipText`, `chrome.help_chip_text` |
 | The tab strip and its indicator | `Painter.tabStrip` |
@@ -236,7 +236,9 @@ the next backfill has to come back for.
 | `⋯  Show more (N)`, one phrase, the words bright | `Painter.showMoreRow` |
 | The detail panel's `×` and its own scrollbar | `Painter.detailPanel`, `Painter.scrollbar` |
 | A build line under a pull request, and the line where one would be | `Painter.buildRow`, `Painter.buildNote` |
-| An action button: the word in its role colour, the brackets muted | `Painter.actionChip`, `pane.action.chipOf` |
+| The door a build line opens — the whole line, in a free row or a table cell | `pane.buildHit` + `pane.build.pageUrl` |
+| A row's run of action buttons, always present — `[󰏌 Open]` with room, `󰏌` without | `Painter.actionChips`, `pane.action.formFor` |
+| One of them, painted alone: the word in its role colour, the brackets muted | `Painter.actionChip`, `pane.action.chipOf` |
 | What a press left on a button — spinner, `⏸`, `[ view ]`, `✗` | `pane.action.caption` |
 | Whether a pull request may merge, and why not | `pane.merge` |
 | A named confirm | `Painter.confirmBox` |
@@ -244,10 +246,56 @@ the next backfill has to come back for.
 | State colours | `Theme.prState` / `pipelineState` / `ticketStatus` |
 | A chevron that folds under the mouse | `Painter.chevron` |
 
+The gutter runs the WHOLE height of the pane, whatever shape the body
+is. A pane with a column-shaped body (a board of boxed columns) starts
+its columns one cell in rather than painting over it: the stripe is
+the only column that says which application this is, and a pane that
+loses it halfway down reads as two panes stacked. The bad-scope error
+screen wears it too — a pane that cannot show anything is still this
+pane.
+| One figure on a statusline segment, and a bracketed subset only when the pane has one | `pane.figure` |
+
 Keys and chrome that are not the toolkit's but ARE the family's: `r`
 refreshes and `R` refreshes past every cache; `?` opens the key sheet;
-the statusline segment carries the pane's figure and a hover that
-breaks it down; the tab wears the manifest's chip glyph.
+the tab wears the manifest's chip glyph.
+
+#### What a statusline segment may say
+
+**One named figure per segment, plus a bracketed subset only when the
+pane genuinely has one.**
+
+```
+󰂨 12(11)    twelve of my pull requests open, eleven of them unapproved
+󰌃 43        forty-three items assigned to me — and no second number
+```
+
+The bracket is a SUBSET of the figure beside it, never a second count
+about something else. A pane with two things to say publishes two
+segments, each named for its own figure, because a reader looking at
+`󰂨 12 3` has no way to learn which number is which.
+
+A pane with no subset says one figure and stops. That is not the
+poorer half of the standard — `43(2)` invented so the tracker's chip
+matches the forge's shape is a number nobody can believe, which is
+worse than a chip that says less.
+
+`sdk.pane.figure` is the helper, and it makes the rule true by
+construction: one `n`, one optional `subset`.
+
+```zig
+var buf: [32]u8 = undefined;
+const text = sdk.pane.figure.text(&buf, .{ .glyph = glyph, .n = open_mine, .subset = unapproved_mine });
+try ipc.statuslineSetSegment(.{ .id = "…", .text = text, .tooltip = breakdown });
+```
+
+`sdk.pane.expect.statuslineFigure` is the assertion both integration
+suites call on their own published text; `sdk.pane.figure.check`
+refuses a second bare figure, a tail after the figure, empty brackets,
+and a "subset" larger than the figure it claims to be a subset of.
+
+The hover is where the breakdown goes, and it is not rationed: the
+figure is what the reader sees from across the room, and the sentence
+under the pointer is what explains it.
 
 ### Proving your pane CALLS the toolkit
 
@@ -261,6 +309,10 @@ try sdk.pane.expect.capsTitleInk(&frame, theme, 1, 0, "SAMPLE");
 try sdk.pane.expect.headerLadderTail(&frame, theme, 0, nerd, ascii);
 try sdk.pane.expect.listScrollbar(&frame, frame.cols - 1, 0, frame.rows);
 try sdk.pane.expect.foldRow(&frame, theme, fold_y, ascii);
+try sdk.pane.expect.statuslineFigure(my_segment_text);
+try sdk.pane.expect.buildLineHit(Target, &hits, y, x0, x1, .{ .build_line = i });
+try sdk.pane.expect.gutterFullHeight(&frame, theme, 0, 0, frame.rows - 1, ascii);
+try sdk.pane.expect.actionRun(Target, &frame, &hits, y, &targets, form);
 ```
 
 Both official integrations call these, which is the point: one
@@ -291,8 +343,24 @@ try p.buildRow(.{ .x = 0, .y = y, .w = cols, .h = 1 }, indent, .{
 p.buildNote(.{ .x = 0, .y = y, .w = cols, .h = 1 }, indent, "no build ran on abc1234", false);
 ```
 
-`buildRow` registers the hit with the paint, so clicking the line can
-open that run (`sdk.pane.build.pageUrl`). `buildNote` is the line where
+`buildRow` registers the hit with the paint, so clicking the line
+opens that run (`sdk.pane.build.pageUrl`). The door is
+`sdk.pane.buildHit` — the WHOLE line, indent and trailing air
+included, clipped at the first column the pane does not own:
+
+```zig
+const door = sdk.pane.buildHit(.{ .x = list_x, .y = y, .w = text_w, .h = 1 }, list_x + text_w);
+try hits.add(gpa, door, .{ .build_line = i });
+```
+
+A pane whose build line is a table CELL rather than a free row calls
+`buildHit` itself, after its table has painted — the map's
+last-painted-wins rule then puts the door over the row. That is the
+forge pane: both panes paint the same line, both know the page, and on
+neither did a click go there until the door was one function.
+`sdk.pane.expect.buildLineHit` is the assertion both suites call.
+
+`buildNote` is the line where
 a build line would be — fetching, none, or why not — dim, or in the bad
 colour when `bad`. `sdk.pane.build.parseEpoch` reads an ISO-8601 stamp
 with its offset, which is all the age needs.
@@ -306,12 +374,63 @@ that dispatches a Claude Code session. `sdk.pane.action` is the button:
 var actions = sdk.pane.ActionStore.init(gpa);       // keyed by ROW KEY, not row index
 defer actions.deinit();
 
-const st = actions.state(pr_key, "merge");
-var buf: [32]u8 = undefined;
-const cap = sdk.pane.action.caption(&buf, st, "Merge", spin, ascii);
-_ = p.actionChip(x, y, w, cap,
-                 sdk.pane.action.chipOf(th, st, sdk.pane.action.kindOf("Merge")));
+// The whole run, in one call. `formFor` is asked BEFORE the row paints
+// its words, because the buttons take their cells off the text column.
+const specs = [_]sdk.pane.action.Spec{
+    .{ .word = "Open" },
+    .{ .word = "Merge", .state = actions.state(pr_key, "merge") },
+};
+const form = sdk.pane.action.formFor(&specs, text_w, sdk.pane.action.text_floor, spin, ascii);
+const run_w = sdk.pane.action.runWidth(&specs, form, spin, ascii);
+_ = try p.actionChips(x, y, form, spin, &.{
+    .{ .word = "Open", .target = .{ .pr_button = .{ .row = i, .which = .open } } },
+    .{ .word = "Merge", .state = specs[1].state, .chip = sdk.pane.merge.chipOf(th, readiness),
+      .target = if (sdk.pane.merge.isPressable(readiness)) .{ .pr_button = … } else .{ .merge_blocked = i } },
+});
 ```
+
+#### The two forms, and why the buttons never go away
+
+**A row's buttons are always there. The width decides how much of
+themselves they show, never whether they exist.**
+
+```
+ icon+label   [󰏌 Open] [󰘭 Merge]     the glyph, the word, muted brackets
+ icon         󰏌 󰘭                     one cell each, the same role colour
+```
+
+`action.formFor` picks the widest form that still leaves
+`action.text_floor` cells of the text column for the row's own words;
+below that the run reduces to its glyphs, and it never reduces past
+them. That is one rule for both families and it replaced two: the
+forge pane dropped its buttons whole below about 135 columns — on the
+CURSOR's row, the one row that can act, so at 80 and 120 the action
+was reachable only by key — and the tracker pane clipped forty
+summaries to show forty copies of a word.
+
+A button that disappears teaches nothing. A button reduced to its
+glyph is still there, still coloured by what pressing it costs, still
+pressable, and the hover names it (`action.hoverText`, empty at
+icon+label where the word is already on screen).
+
+One glyph per KIND, not one per word, so the whole set is four and
+both families wear the same four — each with an `--ascii` twin:
+
+| kind | glyph | ascii |
+|---|---|---|
+| `navigation` | `󰏌` `md-open_in_new` | `>` |
+| `review` | `` `fa-eye` | `?` |
+| `dispatch` | `` `fa-rocket` | `*` |
+| `final` | `󰘭` `md-source_merge` | `&` |
+
+`[󰏌 Open]` is exactly as wide as the `[ Open ]` it replaces, so no row
+got narrower for growing a glyph. A state past `idle` outranks the
+kind at both widths: a spinner is a spinner in one cell, and `[ ⠙ ]`
+where the word would be.
+
+`sdk.pane.expect.actionRun` is the assertion both suites call — the
+buttons are there, the form is the one the row can afford, and every
+hit is exactly the cells its button painted.
 
 `actionChip` paints the brackets and the word separately: the
 punctuation stays muted and the **word carries the colour of what
@@ -446,6 +565,34 @@ if (try sdk.Ipc.fromEnv(gpa, io, env)) |ipc_const| {
 Each call appends one JSON line to `$MNML_IPC_DIR/command`; the shapes
 are in `docs/BRIDGE.md`. Over a mount, prefer `mount.toast` and
 `mount.command` — they need no file.
+
+### A toast with something to do about it
+
+A message that reports something and then vanishes leaves the reader
+holding the consequence. Since protocol 3 a mounted pane's toast can
+carry an offer, and mnml paints it as the button in the box:
+
+```zig
+try mount.toastWithAction(.info, "merged #1234",
+    .{ .label = "Open PR", .url = pr_url });
+try mount.toastWithAction(.@"error", "refresh failed: 503",
+    .{ .label = "Retry", .command = "integrations.retry_refresh" });
+```
+
+`label` is what the button says, and **exactly one** of `command` and
+`url` is set — a row with neither or both is sent as a plain toast
+instead, because a button that does nothing is worse than no button.
+`command` is an id the host already knows (one of mnml's, or one this
+integration registered), run with the pane that offered it focused;
+`url` is a page, and mnml applies its own http(s) rule to it. A
+sibling cannot name a shell line here.
+
+Use it where the message is the LAST place a thing is named: a merge
+that lands takes its own row off the open list, and a refresh that
+fails leaves a stale one with nothing on it saying so.
+`integrations.retry_refresh` is the host command for the second — it
+sends `r`, the refresh key every pane in the family binds, to the
+focused integration pane.
 
 `ipc.focusSession(.{ .id = e.session, .cwd = ws, .prompt_line = e.prompt_line })`
 brings a session mnml is running to the front — what a `[ view ]` press

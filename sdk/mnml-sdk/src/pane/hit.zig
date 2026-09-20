@@ -34,6 +34,30 @@ pub const Rect = struct {
     }
 };
 
+/// The cells one build line's click covers.
+///
+/// Both official panes paint the toolkit's build line, both know the
+/// page it stands for, and on neither of them did a click go there:
+/// the tracker pane painted it as a free row and the forge pane as a
+/// cell of its table, and both fell through to the generic row hit,
+/// which selects. The line read as a link in two panes and behaved as
+/// one in neither.
+///
+/// The door is the WHOLE line — from the row's own left edge to
+/// `right_edge` — so the indent left of the caption and the air right
+/// of it are part of it rather than dead cells the pointer has to
+/// find its way between. A pane whose build line is a table cell
+/// registers this rect AFTER its table has painted; the map's
+/// last-painted-wins rule then puts the door over the row.
+///
+/// `right_edge` is the first column the pane does NOT own — a list's
+/// scrollbar column, or the detail panel's left edge — so the door
+/// never reaches under furniture painted beside it.
+pub fn buildHit(row: Rect, right_edge: u16) Rect {
+    if (right_edge <= row.x) return .{ .x = row.x, .y = row.y, .w = 0, .h = 0 };
+    return .{ .x = row.x, .y = row.y, .w = @min(row.w, right_edge - row.x), .h = 1 };
+}
+
 pub fn Map(comptime Target: type) type {
     return struct {
         const Self = @This();
@@ -89,6 +113,25 @@ pub fn Map(comptime Target: type) type {
 const testing = std.testing;
 
 const Demo = union(enum) { row: u32, chevron: u32 };
+
+test "a build line's door is the whole line, clipped at what the pane owns" {
+    // The indent left of the caption and the air right of it are part
+    // of the door: a pointer aimed at a build line must not have to
+    // find the words.
+    const r = buildHit(.{ .x = 0, .y = 7, .w = 80, .h = 1 }, 79);
+    try testing.expectEqual(@as(u16, 0), r.x);
+    try testing.expectEqual(@as(u16, 79), r.w);
+    try testing.expectEqual(@as(u16, 1), r.h);
+    // Never under the furniture painted beside it — a list scrollbar,
+    // or the detail panel's left edge.
+    try testing.expectEqual(@as(u16, 40), buildHit(.{ .x = 0, .y = 7, .w = 80, .h = 1 }, 40).w);
+    // A row taller than one line still registers one line: a build
+    // line is one line, whatever the row around it is.
+    try testing.expectEqual(@as(u16, 1), buildHit(.{ .x = 2, .y = 7, .w = 20, .h = 3 }, 60).h);
+    // Nothing to click when the pane owns nothing there.
+    try testing.expect(buildHit(.{ .x = 10, .y = 7, .w = 20, .h = 1 }, 10).isEmpty());
+    try testing.expect(buildHit(.{ .x = 10, .y = 7, .w = 20, .h = 1 }, 4).isEmpty());
+}
 
 test "the last thing painted wins, an empty rect is never a target, rectOf finds a target by meaning" {
     var m: Map(Demo) = .{};

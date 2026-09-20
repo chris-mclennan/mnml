@@ -145,6 +145,9 @@ pub const Painter = struct {
     c: Chrome,
     lay: Layout = .{},
 
+    /// One action button as the toolkit's `actionChips` takes it.
+    pub const ActionSpec = sdk.pane.chrome.ActionChip(hit.Target);
+
     fn cols(p: *const Painter) u16 {
         return p.f.cols;
     }
@@ -660,19 +663,21 @@ pub const Painter = struct {
                         .type => _ = p.putFit(c.x, y, c.w -| 1, iss.issuetype, base),
                         .updated => _ = p.putFit(c.x, y, c.w -| 1, iss.updatedDay(), base),
                         .fix_version => _ = p.putFit(c.x, y, c.w -| 1, if (iss.fix_versions.len > 0) iss.fix_versions[0] else "—", base),
-                        .actions => try p.paintActions(c.x, y, c.w -| 1, tk.issue_idx, iss),
+                        .actions => try p.paintActions(c.x, y, p.actionPlan(iss, c.w -| 1).form, tk.issue_idx, iss),
                     };
                     // The summary, with the action buttons after it when
                     // there is no actions column and they fit.
                     const has_actions_col = colOf(layout, .actions) != null;
                     var sw = @min(sum_c.w, w -| sum_c.x);
                     if (!has_actions_col) {
-                        const buttons = dispatch.buttonsForTicket(iss);
-                        var bw: u16 = 0;
-                        for (buttons) |b| bw += text.width(b.label()) + 1;
-                        if (buttons.len > 0 and sw > bw + 12) {
-                            sw -= bw;
-                            try p.paintActions(sum_c.x + sw, y, bw, tk.issue_idx, iss);
+                        // The ladder: the buttons are always there, and
+                        // `avail` decides only how much of themselves
+                        // they show. This used to drop them whole below
+                        // `bw + 12` and clip the summary above it.
+                        const plan = p.actionPlan(iss, sw);
+                        if (plan.w > 0 and sw > plan.w) {
+                            sw -= plan.w + 1;
+                            try p.paintActions(sum_c.x + sw + 1, y, plan.form, tk.issue_idx, iss);
                         }
                     }
                     _ = p.putFit(sum_c.x, y, sw -| 1, iss.summary, base);
@@ -699,60 +704,41 @@ pub const Painter = struct {
                     const Btn = struct { label: []const u8, which: hit.PrButton };
                     // Chronological: you open a PR, then it is reviewed,
                     // then it merges.
-                    const open_set = [_]Btn{ .{ .label = "[ Open ]", .which = .open }, .{ .label = "[ Review ]", .which = .review }, .{ .label = "[ Merge ]", .which = .merge } };
-                    const closed_set = [_]Btn{.{ .label = "[ Open ]", .which = .open }};
+                    const open_set = [_]Btn{ .{ .label = "Open", .which = .open }, .{ .label = "Review", .which = .review }, .{ .label = "Merge", .which = .merge } };
+                    const closed_set = [_]Btn{.{ .label = "Open", .which = .open }};
                     const set: []const Btn = if (pr.isOpen()) &open_set else &closed_set;
-                    var bw: u16 = 0;
-                    for (set) |b| bw += text.width(b.label) + 1;
+                    const ready = a.readinessOf(iss.key, pr);
+                    var kb: [256]u8 = undefined;
+                    const rk = std.fmt.bufPrint(&kb, "{s}\u{0}{s}", .{ iss.key, pr.id }) catch "";
+                    // The ladder. The buttons are ALWAYS on the row;
+                    // what the width decides is whether they wear their
+                    // words. This block used to drop all three below
+                    // `bw + 12`, which at 80 columns is every row.
+                    var specs: [3]sdk.pane.action.Spec = undefined;
+                    for (set, specs[0..set.len]) |b, *sp| sp.* = .{
+                        .word = b.label,
+                        .state = if (b.which == .open) .idle else a.actions.state(rk, if (b.which == .merge) "merge" else "review"),
+                    };
                     var sw = @min(sum_c.w, w -| sum_c.x);
-                    if (sw > bw + 12) {
-                        sw -= bw;
-                        var bx = sum_c.x + sw;
-                        const ready = a.readinessOf(iss.key, pr);
-                        for (set) |b| {
-                            // `[ Merge ]` wears whatever its session
-                            // left once there is one; before that it is
-                            // dim, and not a target at all, until the
-                            // pull request may actually merge.
-                            if (b.which == .merge) {
-                                var kb: [256]u8 = undefined;
-                                const rk = std.fmt.bufPrint(&kb, "{s}\u{0}{s}", .{ iss.key, pr.id }) catch "";
-                                const bst = a.actions.state(rk, "merge");
-                                var ab: [32]u8 = undefined;
-                                const cap = if (bst == .idle) b.label else sdk.pane.action.caption(&ab, bst, sdk.pane.merge.label, a.spin, p.ui.ascii);
-                                const lw = text.width(cap);
-                                if (bst != .idle) {
-                                    _ = p.c.actionChip(bx, y, lw, cap, sdk.pane.action.chipOf(p.ui.th, bst, .final));
-                                    try p.hitAdd(.{ .x = bx, .y = y, .w = lw, .h = 1 }, .{ .pr_button = .{ .row = idx, .which = .merge } });
-                                } else {
-                                    _ = p.c.actionChip(bx, y, lw, cap, sdk.pane.merge.chipOf(p.ui.th, ready));
-                                    if (sdk.pane.merge.isPressable(ready)) {
-                                        try p.hitAdd(.{ .x = bx, .y = y, .w = lw, .h = 1 }, .{ .pr_button = .{ .row = idx, .which = .merge } });
-                                    } else {
-                                        try p.hitAdd(.{ .x = bx, .y = y, .w = lw, .h = 1 }, .{ .merge_blocked = idx });
-                                    }
-                                }
-                                bx += lw + 1;
-                                continue;
-                            }
-                            // `[ Open ]` folds the row and changes
-                            // nothing, so it is a grey chip and has no
-                            // session to remember. `[ Review ]` starts
-                            // one, so it wears what that session is
-                            // doing, the same as every other button
-                            // that dispatches.
-                            var rb: [32]u8 = undefined;
-                            const rst = if (b.which == .review) blk: {
-                                var kb: [256]u8 = undefined;
-                                const rk = std.fmt.bufPrint(&kb, "{s}\u{0}{s}", .{ iss.key, pr.id }) catch "";
-                                break :blk a.actions.state(rk, "review");
-                            } else .idle;
-                            const cap = if (rst == .idle) b.label else sdk.pane.action.caption(&rb, rst, "Review", a.spin, p.ui.ascii);
-                            const lw = text.width(cap);
-                            _ = p.c.actionChip(bx, y, lw, cap, sdk.pane.action.chipOf(p.ui.th, rst, sdk.pane.action.kindOf(b.label)));
-                            try p.hitAdd(.{ .x = bx, .y = y, .w = lw, .h = 1 }, .{ .pr_button = .{ .row = idx, .which = b.which } });
-                            bx += lw + 1;
+                    const form = sdk.pane.action.formFor(specs[0..set.len], sw, sdk.pane.action.text_floor, a.spin, p.ui.ascii);
+                    const bw = sdk.pane.action.runWidth(specs[0..set.len], form, a.spin, p.ui.ascii);
+                    if (sw > bw) {
+                        var list: std.ArrayList(Painter.ActionSpec) = .empty;
+                        for (set, specs[0..set.len]) |b, sp| {
+                            // `[ Merge ]` is dim, and not a target at
+                            // all, until the pull request may actually
+                            // merge — a hover (or a click) then says
+                            // which condition does not hold.
+                            const blocked = b.which == .merge and sp.state == .idle and !sdk.pane.merge.isPressable(ready);
+                            try list.append(p.arena, .{
+                                .word = sp.word,
+                                .state = sp.state,
+                                .target = if (blocked) .{ .merge_blocked = idx } else .{ .pr_button = .{ .row = idx, .which = b.which } },
+                                .chip = if (b.which == .merge and sp.state == .idle) sdk.pane.merge.chipOf(p.ui.th, ready) else null,
+                            });
                         }
+                        sw -= bw + 1;
+                        _ = try p.c.actionChips(sum_c.x + sw + 1, y, form, a.spin, list.items);
                     }
                     const title = if (pr.name.len > 0) pr.name else pr.url;
                     _ = p.putFit(sum_c.x, y, sw -| 1, title, base);
@@ -791,7 +777,7 @@ pub const Painter = struct {
                         .branch = pipe.branch,
                         .created_on = pipe.created_on,
                         .number = pipe.build_number,
-                    }, a.nowSecs(), .{ .row = idx });
+                    }, a.nowSecs(), .{ .build_line = idx });
                 },
                 // The fold row, from the toolkit: `⋯  Show more (N)`
                 // with the label in the bright foreground a key wears.
@@ -809,22 +795,46 @@ pub const Painter = struct {
     /// its word, a spinner, the `[ view ]` that focuses the session it
     /// started, or a red cross. The state is keyed by the ticket, so a
     /// refetch that moves the row brings it along.
-    fn paintActions(p: *Painter, x0: u16, y: u16, max_w: u16, issue_idx: usize, iss: model.Issue) Allocator.Error!void {
-        var x = x0;
-        for (dispatch.buttonsForTicket(iss), 0..) |b, bi| {
-            const st = p.a.actions.state(iss.key, b.kind());
-            var buf: [48]u8 = undefined;
-            const word = std.mem.trim(u8, b.label(), "[] ");
-            const cap = sdk.pane.action.caption(&buf, st, word, p.a.spin, p.ui.ascii);
-            const lw = text.width(cap);
-            if (x + lw > x0 + max_w) break;
-            _ = p.c.actionChip(x, y, lw, cap, sdk.pane.action.chipOf(p.ui.th, st, sdk.pane.action.kindOf(word)));
-            try p.hitAdd(.{ .x = x, .y = y, .w = lw, .h = 1 }, .{ .action = .{ .issue = @intCast(issue_idx), .button = @intCast(bi) } });
-            x += lw + 1;
+    fn paintActions(p: *Painter, x0: u16, y: u16, form: sdk.pane.action.Form, issue_idx: usize, iss: model.Issue) Allocator.Error!void {
+        const set = dispatch.buttonsForTicket(iss);
+        if (set.len == 0) return;
+        var list: std.ArrayList(Painter.ActionSpec) = .empty;
+        for (set, 0..) |b, bi| {
+            try list.append(p.arena, .{
+                .word = std.mem.trim(u8, b.label(), "[] "),
+                .state = p.a.actions.state(iss.key, b.kind()),
+                .target = .{ .action = .{ .issue = @intCast(issue_idx), .button = @intCast(bi) } },
+            });
         }
+        _ = try p.c.actionChips(x0, y, form, p.a.spin, list.items);
+    }
+
+    /// What a row's buttons will take, and which form they will wear —
+    /// asked BEFORE the words are painted, so the summary is shortened
+    /// rather than painted over.
+    ///
+    /// The buttons are ALWAYS there: `avail` decides how much of
+    /// themselves they show, never whether they exist. This pane used
+    /// to clip forty summaries to show forty copies of a word.
+    fn actionPlan(p: *Painter, iss: model.Issue, avail: u16) struct { form: sdk.pane.action.Form, w: u16 } {
+        const set = dispatch.buttonsForTicket(iss);
+        if (set.len == 0) return .{ .form = .icon, .w = 0 };
+        var specs: [4]sdk.pane.action.Spec = undefined;
+        const n = @min(set.len, specs.len);
+        for (set[0..n], specs[0..n]) |b, *sp| sp.* = .{
+            .word = std.mem.trim(u8, b.label(), "[] "),
+            .state = p.a.actions.state(iss.key, b.kind()),
+        };
+        const form = sdk.pane.action.formFor(specs[0..n], avail, sdk.pane.action.text_floor, p.a.spin, p.ui.ascii);
+        return .{ .form = form, .w = sdk.pane.action.runWidth(specs[0..n], form, p.a.spin, p.ui.ascii) };
     }
 
     // ─── the kanban ──────────────────────────────────────────────────
+
+    /// The cell the board leaves to the pane's own stripe. One column,
+    /// the toolkit's `Painter.gutter` width, so a board-shaped body
+    /// wears the same identity as a list-shaped one.
+    const kanban_gutter: u16 = 1;
 
     fn paintKanban(p: *Painter) Allocator.Error!void {
         const a = p.a;
@@ -844,10 +854,18 @@ pub const Painter = struct {
         }
         const m = try a.mask(p.arena, t);
         const buckets = try kanban.bucket(p.arena, t.issues, m);
-        const col_w: u16 = w / kanban.count;
+        // The board starts one cell in, so the app-colour gutter runs
+        // the WHOLE height of the pane rather than stopping where the
+        // header does. A stripe that ends a third of the way down
+        // reads as two panes stacked; the columns' own boxes used to
+        // paint straight over it, and every card then carried its own
+        // little `▌` as if the pane's identity had moved onto them.
+        const board_x = kanban_gutter;
+        const avail = w -| board_x;
+        const col_w: u16 = avail / kanban.count;
         var c: usize = 0;
         while (c < kanban.count) : (c += 1) {
-            const cx: u16 = @intCast(c * col_w);
+            const cx: u16 = board_x + @as(u16, @intCast(c * col_w));
             const inner_w = col_w -| 2;
             const col: kanban.Col = @enumFromInt(c);
             try p.box(.{ .x = cx, .y = y0, .w = col_w, .h = h }, p.fmt(" {s} ({d}) ", .{ col.title(), buckets[c].len }), p.s.border);
@@ -921,7 +939,7 @@ pub const Painter = struct {
                     .hint => |hint_line| {
                         _ = p.putFit(ix + 3, y, inner_w -| 3, hint_line, p.s.muted);
                     },
-                    .actions => try p.paintActions(ix + 3, y, inner_w -| 3, ln.issue, iss),
+                    .actions => try p.paintActions(ix + 3, y, p.actionPlan(iss, inner_w -| 3).form, ln.issue, iss),
                     .blank => {},
                 }
             }
@@ -1740,20 +1758,20 @@ test "Work: the header, the tab strip, the mode chips, the columns, the tree row
     try testing.expect(std.mem.indexOf(u8, r5, "In PR Review") != null);
     try testing.expect(std.mem.indexOf(u8, r5, "Ada Lovelace") != null);
     try testing.expect(std.mem.indexOf(u8, r5, "Card form validates on blur") != null);
-    try testing.expect(std.mem.indexOf(u8, r5, "[ Review ]") != null);
+    try testing.expect(std.mem.indexOf(u8, r5, "[\u{f06e} Review]") != null);
     const r6 = try rowText(ar, &f, 7);
     try testing.expect(std.mem.indexOf(u8, r6, "MERGED") != null);
-    try testing.expect(std.mem.indexOf(u8, r6, "[ Open ]") != null);
-    try testing.expect(std.mem.indexOf(u8, r6, "[ Merge ]") == null);
+    try testing.expect(std.mem.indexOf(u8, r6, "[\u{f03cc} Open]") != null);
+    try testing.expect(std.mem.indexOf(u8, r6, "[\u{f062d} Merge]") == null);
     const r7 = try rowText(ar, &f, 8);
     try testing.expect(std.mem.indexOf(u8, r7, "OPEN") != null);
-    try testing.expect(std.mem.indexOf(u8, r7, "[ Open ] [ Review ] [ Merge ]") != null);
-    const merge_x = (try colOfText(ar, &f, 8, "[ Merge ]")).?;
+    try testing.expect(std.mem.indexOf(u8, r7, "[\u{f03cc} Open] [\u{f06e} Review] [\u{f062d} Merge]") != null);
+    const merge_x = (try colOfText(ar, &f, 8, "[\u{f062d} Merge]")).?;
     // Nothing has judged this pull request, so `[ Merge ]` is dim and
     // is NOT a `pr_button`: a stray click there cannot merge anything.
     // It still answers, with the reason it is dim.
     try testing.expectEqual(hit.Target{ .merge_blocked = 3 }, a.hits.at(merge_x + 2, 8).?);
-    try testing.expectEqual(hit.Target{ .pr_button = .{ .row = 3, .which = .open } }, a.hits.at((try colOfText(ar, &f, 8, "[ Open ]")).? + 2, 8).?);
+    try testing.expectEqual(hit.Target{ .pr_button = .{ .row = 3, .which = .open } }, a.hits.at((try colOfText(ar, &f, 8, "[\u{f03cc} Open]")).? + 2, 8).?);
     // The hint row comes from the bindings, not a string, and it is the
     // toolkit's: entries shed from the FRONT, so the ones that always
     // apply survive a narrow pane and `? keys` — the door to the rest
@@ -1766,7 +1784,7 @@ test "Work: the header, the tab strip, the mode chips, the columns, the tree row
     try testing.expectEqual(hit.Target{ .row = 1 }, a.hits.at(30, 6).?);
     try testing.expectEqual(hit.Target{ .tab = 1 }, a.hits.at(14, 1).?);
     try testing.expectEqual(hit.Target{ .chip = .help }, a.hits.at(118, 0).?);
-    const review_x = (try colOfText(ar, &f, 6, "[ Review ]")).?;
+    const review_x = (try colOfText(ar, &f, 6, "[\u{f06e} Review]")).?;
     try testing.expectEqual(hit.Target{ .action = .{ .issue = 1, .button = 0 } }, a.hits.at(review_x + 2, 6).?);
     try a.click(30, 7, false);
     try testing.expectEqual(@as(usize, 2), a.tab().selected);
@@ -1888,6 +1906,24 @@ test "Fix Versions: the pill, the bump star, the transition picker's rows, and t
     try testing.expect(!a.help);
 }
 
+test "the bad-scope screen wears the pane's stripe too" {
+    // A pane that cannot show anything is still this pane. The error
+    // screen a `--only <scope>` with no matching tab lands on had no
+    // stripe at all for a while, which made mnml's most confusing
+    // screen also its most anonymous one.
+    const h = try app_mod.Harness.start(.{ .tabs = &app_mod.work_tabs }, .boards);
+    defer h.stop();
+    var f = try Frame.init(testing.allocator, 100, 10);
+    defer f.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const ar = arena.allocator();
+    try paint(ar, &f, &h.app, .{});
+    try testing.expect((try findRow(ar, &f, "No tabs for this scope.")) != null);
+    const ui: Ui = .{};
+    try sdk.pane.expect.gutterFullHeight(&f, ui.th, 0, 0, f.rows - 1, ui.ascii);
+}
+
 test "Boards: the kanban columns, the cards with a chevron and a marker, the avatar cluster, and the modal" {
     const h = try app_mod.Harness.start(.{ .tabs = &app_mod.board_tabs, .team_field_id = "customfield_10056" }, .boards);
     defer h.stop();
@@ -1900,6 +1936,16 @@ test "Boards: the kanban columns, the cards with a chevron and a marker, the ava
     const ar = arena.allocator();
     try paint(ar, &f, a, .{});
     try testing.expect(std.mem.startsWith(u8, try rowText(ar, &f, 0), "▌JIRA BOARDS (3 of 9)"));
+    // The app-colour stripe runs the WHOLE height of the pane, board
+    // and all: the columns start one cell in rather than painting
+    // their boxes over column 0. Asserted through `sdk.pane.expect`,
+    // the same function the forge pane's own suite calls. The stripe
+    // used to stop where the header did, which read as two panes
+    // stacked — and it is the only column that says which application
+    // this is.
+    const ui: Ui = .{};
+    try sdk.pane.expect.gutterFullHeight(&f, ui.th, 0, 0, f.rows - 1, ui.ascii);
+    try testing.expectEqualStrings("\u{2502}", cellAt(&f, 1, (try findRow(ar, &f, " To Do (")).? + 1).symbol());
     const r2 = try rowText(ar, &f, 3);
     try testing.expect(std.mem.indexOf(u8, r2, " board: Checkout board ") != null);
     try testing.expect(std.mem.indexOf(u8, r2, " sprint: Sprint 4 ") != null);
@@ -1976,6 +2022,87 @@ test "the fold row is one phrase: the ellipsis is punctuation and only its words
     // in the summary column, forty cells away from it.
     const ui: Ui = .{};
     try sdk.pane.expect.foldRow(&f, ui.th, y, ui.ascii);
+}
+
+test "a ticket row's buttons are always there: words at 140, glyphs at 80, hit = paint" {
+    const h = try app_mod.Harness.start(.{ .tabs = &app_mod.work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const ar = arena.allocator();
+    const ui: Ui = .{};
+
+    // Wide: the glyph AND the word, and every button a hit the width
+    // of the cells it painted.
+    {
+        a.resize(140, 24);
+        var f = try Frame.init(testing.allocator, 140, 24);
+        defer f.deinit();
+        try paint(ar, &f, a, .{});
+        const y = (try findRow(ar, &f, "ENG-2")) orelse return error.NoTicketRow;
+        try sdk.pane.expect.actionRun(hit.Target, &f, &a.hits, y, &.{.{ .action = .{ .issue = 1, .button = 0 } }}, .icon_label);
+    }
+    // Narrow: the SAME buttons, one cell each. They are not dropped —
+    // this pane used to clip forty summaries to show them and the
+    // forge pane used to drop them whole, and neither rule is this one.
+    {
+        a.resize(80, 24);
+        var f = try Frame.init(testing.allocator, 80, 24);
+        defer f.deinit();
+        try paint(ar, &f, a, .{});
+        const y = (try findRow(ar, &f, "ENG-2")) orelse return error.NoTicketRow;
+        try sdk.pane.expect.actionRun(hit.Target, &f, &a.hits, y, &.{.{ .action = .{ .issue = 1, .button = 0 } }}, .icon);
+        // And the pointer names what the glyph cannot: at icon+label
+        // the word is on screen and the hover says nothing.
+        const r = a.hits.rectOf(.{ .action = .{ .issue = 1, .button = 0 } }).?;
+        try a.hover(r.x, y);
+        try testing.expect(a.hoverNote().len > 0);
+    }
+    _ = ui;
+}
+
+test "a build line is a door: the whole line is one hit, and it opens that run" {
+    const h = try app_mod.Harness.start(.{ .tabs = &app_mod.work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    const t0 = a.tab();
+    try t0.tree.?.setExpanded("ENG-2", true);
+    try t0.tree.?.putPrs("ENG-2", &.{.{ .id = "#1", .status = "OPEN", .url = "https://bitbucket.org/acme/api/pull-requests/1" }});
+    try t0.tree.?.setPrExpanded("ENG-2", "#1", true);
+    try t0.tree.?.putPipelines("ENG-2", "#1", &.{.{ .build_number = 413, .branch = "chris/fix", .created_on = "2026-09-15T15:20:00+00:00" }});
+    var f = try Frame.init(testing.allocator, 120, 40);
+    defer f.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const ar = arena.allocator();
+    try paint(ar, &f, a, .{});
+    const y = (try findRow(ar, &f, "#413")) orelse return error.NoBuildLine;
+
+    // The whole line is one door, from the pane's left edge to the
+    // cell the list ends at — `sdk.pane.expect.buildLineHit`, the same
+    // function the forge pane's own suite calls, whose build line is a
+    // table CELL rather than a free row. Both fell through to the
+    // generic row hit before this, which selects; the line read as a
+    // link in two panes and behaved as one in neither.
+    const idx = blk: {
+        var x: u16 = 0;
+        while (x < f.cols) : (x += 1) if (a.hits.at(x, y)) |tg| if (tg == .build_line) break :blk tg.build_line;
+        return error.NoBuildHit;
+    };
+    const right = a.hits.rectOf(.{ .build_line = idx }).?.right();
+    try sdk.pane.expect.buildLineHit(hit.Target, &a.hits, y, 0, right, .{ .build_line = idx });
+
+    // And pressing it goes to that run's page rather than selecting
+    // the line. `open_command` is `true`, so nothing on the machine is
+    // launched and the status line still says which URL was handed
+    // over — and `sdk.pane.build.pageUrl` is what spelled it, on both
+    // panes.
+    a.cfg.open_command = "true";
+    try a.click(1, y, false);
+    try testing.expectEqualStrings("opened https://bitbucket.org/acme/api/pipelines/results/413", a.status.items);
 }
 
 test "a list longer than its body carries the toolkit's scrollbar, and the bar is a control" {
