@@ -13,6 +13,7 @@ const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const side = @import("side.zig");
 const ghost_chip = @import("ghost_chip.zig");
+const settings_app = @import("settings.zig");
 const App = app_mod.App;
 const dispatch = @import("dispatch.zig");
 const tasks = @import("tasks.zig");
@@ -253,7 +254,29 @@ pub const AppDriver = struct {
             st.active_file = if (e.buf.doc.path) |path| try a.dupe(u8, path) else "";
             st.mode = e.buf.input.mode().label() orelse "none";
         }
+        st.settings = try settingsList(app, a);
         return st;
+    }
+
+    /// The Settings overlay's list window for `status.json`. The box's
+    /// footer carries the same fact as `22/98`, but the total moves
+    /// every time a row lands, so a script that reads the footer is
+    /// re-pinned for a change it has nothing to do with. This is the
+    /// window on its own: where it starts, how tall it is, and whether
+    /// it is against either end.
+    fn settingsList(app: *App, a: Allocator) Allocator.Error!?screen_mod.SettingsList {
+        if (app.overlay != .settings) return null;
+        const ui = &app.overlay.settings.ui;
+        // Before the first draw the box has not said how tall its list
+        // is; a window of no rows is the honest answer, not a guess.
+        const total = (try settings_app.lists(app, a)).visible.len;
+        const visible = @min(ui.rows, total);
+        return .{
+            .top = ui.scroll + 1,
+            .visible = visible,
+            .at_top = ui.scroll == 0,
+            .at_end = ui.scroll + visible >= total,
+        };
     }
 
     fn vRectsJson(p: *anyopaque, a: Allocator) Error![]u8 {

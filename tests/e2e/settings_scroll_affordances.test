@@ -1,9 +1,17 @@
-# The Settings box says how long its list is. At 120x40 it shows 22 of 99
-# rows, and the UI section alone is longer than that — so `── Editor ──`,
-# `── AI ──`, `── Integrations ──` and `── Reset ──` all sit below the
-# fold. Without an affordance a user cannot tell they exist. Three of
-# them say so: a section strip under the title, a scrollbar down the
-# right edge (column 94, rows 9..30), and the position in the footer.
+# The Settings box says how long its list is. At 120x40 it shows 22 rows
+# at a time, and the UI section alone is longer than that — so
+# `── Editor ──`, `── AI ──`, `── Integrations ──` and `── Reset ──` all
+# sit below the fold. Without an affordance a user cannot tell they
+# exist. Three of them say so: a section strip under the title, a
+# scrollbar down the right edge (column 94, rows 9..30), and the
+# position in the footer.
+#
+# Nothing below names the list's TOTAL. That number moved five times in
+# one day — 93 → 95 → 96 → 98 — as rows landed on unrelated tracks, and
+# each move re-pinned this file for a change it has nothing to do with.
+# `status.json`'s `settings` object carries the window instead: where it
+# starts, how many rows it shows, and whether it is against either end
+# (`src/ipc/screen.zig`). The window is what this file is about.
 command view.settings
 
 # The strip, and the bar beside the rows: the box's last inner column is
@@ -11,43 +19,54 @@ command view.settings
 expect screen contains "UI · Editor · AI · Integrations · Reset"
 expect screen contains "── UI ──                                                            █"
 expect screen contains "▸ Line numbers:                      off / [on]                     █"
-# The footer: 22 rows of 99. (The compact form — the long `1–22 of 99`
-# would cost the key hint its tail at this width.)
-expect screen contains "22/99"
+# The footer is there, tail and all, and the first window is 22 rows
+# starting at the first one.
 expect screen contains "Esc cancel"
+expect status contains "\"settings\":{\"top\":1,\"visible\":22,\"atTop\":true,\"atEnd\":false}"
 
 # `]` steps a section: the cursor lands on Editor's first row and the
 # header goes to the window's top row, so the name jumped to is visible.
+# The view moved off the top, and Editor is not the end of the list.
 key ]
 expect screen contains "── Editor ──"
 expect screen contains "▸ Input style:"
 expect screen lacks "── UI ──"
-expect screen contains "84/99"
+expect status contains "\"atTop\":false,\"atEnd\":false"
 
 # A click on `Integrations` in the strip (x=45, the strip row y=8) is the
-# same jump.
+# same jump. Integrations is the last section before Reset, so the
+# window lands against the bottom.
 click 45 8
 expect screen contains "── Integrations ──"
 expect screen contains "▸ Sonos:"
-expect screen contains "99/99"
+expect status contains "\"atEnd\":true"
 
 # `g` is the top again, and the wheel moves the VIEW, not just the
 # cursor: a notch down slides the window one row and the position says so.
 key g
 expect screen contains "── UI ──"
-expect screen contains "22/99"
+expect status contains "\"top\":1,\"visible\":22,\"atTop\":true"
 scroll 60 20 down
 expect screen lacks "── UI ──"
-expect screen contains "23/99"
+expect status contains "\"top\":2,\"visible\":22,\"atTop\":false"
 scroll 60 20 up
 expect screen contains "── UI ──"
-expect screen contains "22/99"
+expect status contains "\"top\":1,\"visible\":22,\"atTop\":true"
+
+# `G` is the end of the list, wherever the end has got to.
+key G
+expect screen contains "── Reset ──"
+expect screen contains "Reset all to defaults"
+expect status contains "\"atTop\":false,\"atEnd\":true"
 
 # A press on the scrollbar track lands the window at the pointer's
 # fraction of the list — three quarters down the track is the end here.
+key g
+expect status contains "\"atTop\":true,\"atEnd\":false"
 click 94 28
 expect screen contains "── Reset ──"
 expect screen contains "Reset all to defaults"
-expect screen contains "99/99"
+expect status contains "\"atEnd\":true"
 key esc
 expect screen lacks "UI · Editor · AI · Integrations · Reset"
+expect status contains "\"settings\":null"

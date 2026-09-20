@@ -73,6 +73,26 @@ pub const PaneStatus = struct {
     preview: bool = false,
 };
 
+/// Where the Settings overlay's list window sits — the footer's
+/// position without its total.
+///
+/// The box's footer reads `22/98`, and a script that asserted that
+/// string had to be re-pinned every time a settings row landed: six
+/// times in one day, 93 → 95 → 96 → 98. The total is the volatile
+/// half; the window is not. `top` is the 1-based first row showing,
+/// `visible` how many it shows, and the two flags say whether the
+/// window is against either end — which is how a script asserts `G`
+/// reached the bottom without knowing what the bottom counts to.
+///
+/// Measured over the rows the filter query leaves, so narrowing the
+/// list with `/` moves this the same way scrolling does.
+pub const SettingsList = struct {
+    top: usize,
+    visible: usize,
+    at_top: bool,
+    at_end: bool,
+};
+
 /// Everything `status.json` reports. The App fills one per frame; nothing
 /// here is owned — slices borrow from the App or the frame arena.
 pub const Status = struct {
@@ -129,6 +149,10 @@ pub const Status = struct {
     rows: u16 = 0,
     cell_w_px: u32 = 0,
     cell_h_px: u32 = 0,
+    /// The Settings overlay's list window, `null` when the overlay is
+    /// not open. Additive, last — the four geometry keys above stay
+    /// where `tools/drive/` looks for them.
+    settings: ?SettingsList = null,
 };
 
 pub fn writeStatusJson(w: *Io.Writer, s: Status) Io.Writer.Error!void {
@@ -159,6 +183,10 @@ pub fn writeStatusJson(w: *Io.Writer, s: Status) Io.Writer.Error!void {
     try w.print(",\"cmdline\":{},\"ghost\":", .{s.cmdline});
     try jsonStr(w, s.ghost);
     try w.print(",\"cols\":{d},\"rows\":{d},\"cellWidthPx\":{d},\"cellHeightPx\":{d}", .{ s.cols, s.rows, s.cell_w_px, s.cell_h_px });
+    try w.writeAll(",\"settings\":");
+    if (s.settings) |sl| {
+        try w.print("{{\"top\":{d},\"visible\":{d},\"atTop\":{},\"atEnd\":{}}}", .{ sl.top, sl.visible, sl.at_top, sl.at_end });
+    } else try w.writeAll("null");
     try w.writeAll("}");
 }
 
@@ -267,7 +295,7 @@ test "status.json matches the bytes mnml 0.2.21 writes, plus the cursor shape" {
     // are mnml-zig's own, appended in that order after Rust's last key
     // so every byte before them still matches Rust.
     const want =
-        "{\"focus\":\"tree\",\"activePane\":0,\"activeFile\":\"/tmp/ws/hello.txt\",\"cursor\":{\"line\":1,\"col\":1},\"mode\":\"none\",\"treeCursor\":2,\"treeSelection\":\"/tmp/ws/.gitignore\",\"treeVisible\":true,\"rightPanelVisible\":false,\"rightPanelPanes\":[],\"rightPanelActiveIdx\":0,\"panes\":[{\"title\":\"hello.txt\",\"dirty\":false,\"preview\":false}],\"quit\":false,\"cursorShape\":\"hidden\",\"cmdline\":false,\"ghost\":\"idle\",\"cols\":0,\"rows\":0,\"cellWidthPx\":0,\"cellHeightPx\":0}";
+        "{\"focus\":\"tree\",\"activePane\":0,\"activeFile\":\"/tmp/ws/hello.txt\",\"cursor\":{\"line\":1,\"col\":1},\"mode\":\"none\",\"treeCursor\":2,\"treeSelection\":\"/tmp/ws/.gitignore\",\"treeVisible\":true,\"rightPanelVisible\":false,\"rightPanelPanes\":[],\"rightPanelActiveIdx\":0,\"panes\":[{\"title\":\"hello.txt\",\"dirty\":false,\"preview\":false}],\"quit\":false,\"cursorShape\":\"hidden\",\"cmdline\":false,\"ghost\":\"idle\",\"cols\":0,\"rows\":0,\"cellWidthPx\":0,\"cellHeightPx\":0,\"settings\":null}";
     const got = try statusJson(t.allocator, .{
         .focus = .tree,
         .active_pane = 0,
@@ -314,9 +342,54 @@ test "status.json: null activePane, several right-panel panes, a dirty pane" {
     });
     defer t.allocator.free(got);
     try t.expectEqualStrings(
-        "{\"focus\":\"right_panel\",\"activePane\":null,\"activeFile\":\"\",\"cursor\":{\"line\":0,\"col\":0},\"mode\":\"insert\",\"treeCursor\":0,\"treeSelection\":\"\",\"treeVisible\":false,\"rightPanelVisible\":true,\"rightPanelPanes\":[1,3],\"rightPanelActiveIdx\":1,\"panes\":[{\"title\":\"a \\\"q\\\"\",\"dirty\":true,\"preview\":true},{\"title\":\"b\",\"dirty\":false,\"preview\":false}],\"quit\":true,\"cursorShape\":\"bar\",\"cmdline\":true,\"ghost\":\"inflight\",\"cols\":120,\"rows\":40,\"cellWidthPx\":9,\"cellHeightPx\":19}",
+        "{\"focus\":\"right_panel\",\"activePane\":null,\"activeFile\":\"\",\"cursor\":{\"line\":0,\"col\":0},\"mode\":\"insert\",\"treeCursor\":0,\"treeSelection\":\"\",\"treeVisible\":false,\"rightPanelVisible\":true,\"rightPanelPanes\":[1,3],\"rightPanelActiveIdx\":1,\"panes\":[{\"title\":\"a \\\"q\\\"\",\"dirty\":true,\"preview\":true},{\"title\":\"b\",\"dirty\":false,\"preview\":false}],\"quit\":true,\"cursorShape\":\"bar\",\"cmdline\":true,\"ghost\":\"inflight\",\"cols\":120,\"rows\":40,\"cellWidthPx\":9,\"cellHeightPx\":19,\"settings\":null}",
         got,
     );
+}
+
+test "status.json: the Settings list window is an object of four keys, and null when the overlay is shut" {
+    // The footer says `22/98`; this says the same window without the
+    // total, so a script asserting it survives the next settings row.
+    const open = try statusJson(t.allocator, .{
+        .focus = .pane,
+        .active_pane = null,
+        .active_file = "",
+        .cursor_line = 0,
+        .cursor_col = 0,
+        .mode = "none",
+        .tree_cursor = 0,
+        .tree_selection = "",
+        .tree_visible = false,
+        .right_panel_visible = false,
+        .right_panel_panes = &.{},
+        .right_panel_active_idx = 0,
+        .panes = &.{},
+        .quit = false,
+        .settings = .{ .top = 1, .visible = 22, .at_top = true, .at_end = false },
+    });
+    defer t.allocator.free(open);
+    try t.expect(std.mem.endsWith(u8, open, ",\"settings\":{\"top\":1,\"visible\":22,\"atTop\":true,\"atEnd\":false}}"));
+    // No number in it names the list's length — that is the whole point.
+    try t.expect(std.mem.indexOf(u8, open, "98") == null);
+
+    const shut = try statusJson(t.allocator, .{
+        .focus = .pane,
+        .active_pane = null,
+        .active_file = "",
+        .cursor_line = 0,
+        .cursor_col = 0,
+        .mode = "none",
+        .tree_cursor = 0,
+        .tree_selection = "",
+        .tree_visible = false,
+        .right_panel_visible = false,
+        .right_panel_panes = &.{},
+        .right_panel_active_idx = 0,
+        .panes = &.{},
+        .quit = false,
+    });
+    defer t.allocator.free(shut);
+    try t.expect(std.mem.endsWith(u8, shut, ",\"settings\":null}"));
 }
 
 test "jsonStr escapes exactly the dangerous characters" {
@@ -359,7 +432,7 @@ test "status.json: the terminal geometry is the last four keys, and zero when no
         .rows = 24,
     });
     defer t.allocator.free(headless);
-    try t.expect(std.mem.endsWith(u8, headless, ",\"cols\":80,\"rows\":24,\"cellWidthPx\":0,\"cellHeightPx\":0}"));
+    try t.expect(std.mem.endsWith(u8, headless, ",\"cols\":80,\"rows\":24,\"cellWidthPx\":0,\"cellHeightPx\":0,\"settings\":null}"));
     // And the live terminal's, straight off vaxis: 1200 px over 120 cols.
     const live = try statusJson(t.allocator, .{
         .focus = .pane,
@@ -382,5 +455,5 @@ test "status.json: the terminal geometry is the last four keys, and zero when no
         .cell_h_px = 21,
     });
     defer t.allocator.free(live);
-    try t.expect(std.mem.endsWith(u8, live, ",\"cols\":120,\"rows\":40,\"cellWidthPx\":10,\"cellHeightPx\":21}"));
+    try t.expect(std.mem.endsWith(u8, live, ",\"cols\":120,\"rows\":40,\"cellWidthPx\":10,\"cellHeightPx\":21,\"settings\":null}"));
 }

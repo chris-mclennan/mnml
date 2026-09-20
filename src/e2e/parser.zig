@@ -39,7 +39,11 @@
 //!                                #   shown | empty | error), what AI inline
 //!                                #   suggestion is doing — the only way to
 //!                                #   wait for a request that answers on a
-//!                                #   worker seconds later
+//!                                #   worker seconds later, and `settings`
+//!                                #   ({top, visible, atTop, atEnd} | null),
+//!                                #   the Settings overlay's list window —
+//!                                #   the footer's `22/98` without the total
+//!                                #   that moves every time a row lands
 //! expect status lacks <text>     # …does not
 //! expect dirty <true|false>      # the active editor's dirty flag
 //! expect pane <text>             # the active pane's title contains the substring
