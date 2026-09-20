@@ -312,5 +312,34 @@ printf '{"cmd":"quit"}\n' >> "$INST_IPC/command" 2>/dev/null
 wait_for '! kill -0 "$INST_PID" 2>/dev/null' 15 || kill "$INST_PID" 2>/dev/null
 wait "$INST_PID" 2>/dev/null
 
+# ── 9. broker serve / status with a socket override the OS cannot hold ─
+# A `<SERVICE>_BROKER_SOCKET` longer than a `sockaddr_un` printed
+# `bitbucket: could not serve (BindFailed)` and exited — no hint that a
+# LENGTH was the problem, and the automatic /tmp fallback applies only
+# to the DERIVED path, never to an explicit override. Both verbs now
+# name the variable and both numbers. Private paths throughout: the
+# real bucket under ~/.tattle-claude-artifacts is never touched.
+BROKER_DIR="$TMP/broker"
+mkdir -p "$BROKER_DIR"
+export BITBUCKET_RATELIMIT_STATE="$BROKER_DIR/bitbucket-ratelimit.json"
+export JIRA_RATELIMIT_STATE="$BROKER_DIR/jira-ratelimit.json"
+LONG_SOCK="$BROKER_DIR"
+while [ ${#LONG_SOCK} -lt 104 ]; do LONG_SOCK="$LONG_SOCK/deeeeeeep"; done
+LONG_SOCK="$LONG_SOCK/bitbucket-broker.sock"
+out=$(BITBUCKET_BROKER_SOCKET="$LONG_SOCK" "$MNML_BIN" broker serve --service bitbucket 2>&1); rc=$?
+check "broker serve: a too-long override exits 1 instead of hanging or binding" '[ $rc -eq 1 ]' "$out"
+check "broker serve: names the length and the limit" 'echo "$out" | grep -q "socket path is ${#LONG_SOCK} bytes; the OS allows "' "$out"
+check "broker serve: names the variable to change" 'echo "$out" | grep -q "set BITBUCKET_BROKER_SOCKET shorter or unset it for the default"' "$out"
+check "broker serve: never the bare BindFailed" '! echo "$out" | grep -q "BindFailed"' "$out"
+check "broker serve: refused up front — no socket, no lock, no directory" '[ ! -e "$LONG_SOCK" ] && [ -z "$(ls -A "$BROKER_DIR")" ]' "$(ls -R "$BROKER_DIR" 2>&1)"
+out=$(BITBUCKET_BROKER_SOCKET="$LONG_SOCK" "$MNML_BIN" broker status --service bitbucket 2>&1)
+check "broker status: says the same rather than 'no broker at …'" 'echo "$out" | grep -q "socket path is ${#LONG_SOCK} bytes"' "$out"
+check "broker status: not the line an absent broker prints" '! echo "$out" | grep -q "no broker at"' "$out"
+# And with no override the ordinary answer is unchanged — the new
+# message must not swallow the one that says nothing is listening.
+out=$("$MNML_BIN" broker status --service bitbucket 2>&1)
+check "broker status: an ordinary path still reports an absent broker" 'echo "$out" | grep -q "no broker at"' "$out"
+check "broker status: and says nothing about a length" '! echo "$out" | grep -q "socket path is"' "$out"
+
 echo "run-sh-check: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
