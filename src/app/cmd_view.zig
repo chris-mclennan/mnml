@@ -111,6 +111,7 @@ pub const table = .{
     .@"view.about" = &about,
     .@"view.discovery" = &discovery,
     .@"view.settings" = &openSettings,
+    .@"view.settings_search" = &openSettingsSearch,
     .@"view.cmdline_history" = &cmdlineHistory,
     // changed: `editor.toggle_keymap` is the statusline mode chip's
     // click; it lives with the view code because that is who calls it.
@@ -853,6 +854,13 @@ pub fn drawInfo(app: *App, ui: Ui, screen: Rect, kind: app_mod.InfoKind) void {
 
 fn openSettings(app: *App) CommandError!void {
     return settings.open(app);
+}
+
+/// The settings box, filter first. `/` inside the box is the same
+/// thing, but a user has to already be in the box to find it — this is
+/// the palette's way in.
+fn openSettingsSearch(app: *App) CommandError!void {
+    return settings.openSearch(app);
 }
 
 fn showFirstLaunch(app: *App) CommandError!void {

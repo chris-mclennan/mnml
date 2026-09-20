@@ -254,6 +254,13 @@ pub const rows = [_]RowSpec{
     .{ .path = "editor.ensure_trailing_newline", .label = "Ensure trailing newline", .section = .editor, .scope = .workspace },
     .{ .path = "editor.breadcrumb", .label = "Breadcrumb", .section = .editor, .scope = .home },
     .{ .path = "editor.inline_values", .label = "Inline debugger values", .section = .editor, .scope = .workspace },
+    // The gutter's fold chevron is an offer made under the pointer; on
+    // `on` every foldable line wears one whether the pointer is there
+    // or not, so the offer is findable without hunting for it
+    // (`ui/editor_view.zig`). A `ui.` key in the Editor section on
+    // purpose — it is the editor's own gutter, and that is where
+    // someone looking for it looks.
+    .{ .path = "ui.always_show_fold_arrows", .label = "Always show fold arrows", .section = .editor, .scope = .home },
     .{ .path = "editor.cursor_blink", .label = "Cursor blink", .section = .editor, .scope = .home },
     .{ .path = "editor.wheel_moves_cursor", .label = "Mouse wheel moves cursor", .section = .editor, .scope = .home },
     .{ .path = "editor.scroll_accel", .label = "Scroll acceleration", .section = .editor, .scope = .home },
@@ -527,6 +534,19 @@ pub fn open(app: *App) Allocator.Error!void {
     app.overlay = .{ .settings = st };
     app.focus = .overlay;
     app.needs_render = true;
+}
+
+/// `view.settings_search`: the box, with the filter pill up and
+/// holding the keys. `/` inside the box does the same, but the box has
+/// to be open before a user can learn that — from the palette this is
+/// one step.
+///
+/// Opening it fresh every time is deliberate: a box already open is
+/// re-snapshotted, so Esc still puts back exactly the config the
+/// search started from.
+pub fn openSearch(app: *App) Allocator.Error!void {
+    try open(app);
+    app.overlay.settings.ui.openFilter();
 }
 
 /// The list as it stands, on the frame arena.
@@ -1427,4 +1447,87 @@ test "a click on the pill puts the keys back in it, and one on a section the que
     try click(&app, ui_settings.sectionHit(0));
     const l = try lists(&app, app.frame.allocator());
     try t.expect(l.visible[st.ui.cursor] == .row);
+}
+
+test "the fold-arrows row sits in Editor, offers off / on, and writes ui.always_show_fold_arrows to the home config" {
+    // The gutter's chevron is offered under the pointer; this row is
+    // how you ask for it on every foldable line without one.
+    const idx = comptime blk: {
+        for (rows, 0..) |r, i| if (std.mem.eql(u8, r.path, "ui.always_show_fold_arrows")) break :blk i;
+        @compileError("no settings row for ui.always_show_fold_arrows");
+    };
+    try t.expectEqual(Section.editor, rows[idx].section);
+    try t.expectEqual(Scope.home, rows[idx].scope);
+    try t.expectEqualStrings("Always show fold arrows", rows[idx].label);
+    try t.expectEqual(@as(usize, 2), options("ui.always_show_fold_arrows").len);
+    try t.expectEqualStrings("off", options("ui.always_show_fold_arrows")[0]);
+    try t.expectEqualStrings("on", options("ui.always_show_fold_arrows")[1]);
+    // Off is the default, so a fresh config shows the row unmodified.
+    try t.expectEqual(@as(usize, 0), comptime defaultIndex("ui.always_show_fold_arrows"));
+
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, "ws/.mnml");
+    try tmp.dir.createDirPath(t.io, "home");
+    const ws = try std.fs.path.join(t.allocator, &.{ root, "ws" });
+    defer t.allocator.free(ws);
+    const home = try std.fs.path.join(t.allocator, &.{ root, "home" });
+    defer t.allocator.free(home);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws, .data_root = home, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    _ = try app.openScratch();
+
+    try command.run(&app, .{ .static = .@"view.settings" });
+    try t.expect(!app.cfg.ui.always_show_fold_arrows);
+    // The row's own id, adjusted the way `←→` adjust it: the live
+    // config flips and the home file carries the value.
+    try adjust(&app, idx, 1);
+    try t.expect(app.cfg.ui.always_show_fold_arrows);
+    const path = try std.fs.path.join(t.allocator, &.{ home, config.data_root.config_file });
+    defer t.allocator.free(path);
+    const written = try Io.Dir.cwd().readFileAlloc(t.io, path, t.allocator, .unlimited);
+    defer t.allocator.free(written);
+    try t.expect(std.mem.indexOf(u8, written, ".always_show_fold_arrows = true") != null);
+
+    // Esc cancels, and cancelling puts both the value and the file back.
+    try app.handle(.{ .key = Key.named(.esc) });
+    try t.expect(!app.cfg.ui.always_show_fold_arrows);
+}
+
+test "view.settings_search opens the box with the filter holding the keys, and `fold` finds the row" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, "ws/.mnml");
+    const ws = try std.fs.path.join(t.allocator, &.{ root, "ws" });
+    defer t.allocator.free(ws);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws, .data_root = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    _ = try app.openScratch();
+
+    // `view.settings` alone leaves the pill down — the keys move the
+    // list. The search verb is the one that opens it.
+    try command.run(&app, .{ .static = .@"view.settings" });
+    try t.expect(!app.overlay.settings.ui.filter.open);
+    try app.handle(.{ .key = Key.named(.esc) });
+
+    try command.run(&app, .{ .static = .@"view.settings_search" });
+    try t.expect(app.overlay == .settings);
+    try t.expect(app.focus == .overlay);
+    const st = &app.overlay.settings;
+    try t.expect(st.ui.filter.open and st.ui.filter.focused);
+    try t.expectEqualStrings("", st.ui.filter.text());
+
+    // Typing goes to the query, not the list: `fold` leaves the row
+    // this track added, and the cursor is on it.
+    for ("fold") |c| try app.handle(.{ .key = Key.char(c) });
+    try t.expectEqualStrings("fold", st.ui.filter.text());
+    const l = try lists(&app, app.frame.allocator());
+    try t.expect(l.visible.len < l.all.len);
+    try t.expectEqualStrings("Always show fold arrows", l.visible[st.ui.cursor].row.label);
 }
