@@ -286,19 +286,20 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
 
 /// Where a fresh mount pane lands (see `open`'s header).
 fn place(app: *App, id: PaneId) void {
-    if (app.cfg.integrations.open_as == .tab) {
-        app.showPane(id);
-        app.focus = .{ .pane = id };
-        return;
-    }
+    if (app.cfg.integrations.open_as == .tab) return app.showPane(id);
     // `integrations.arrange` sizes it — the one rule every new pane
     // goes through (`app/arrange.zig`). No room for another split: a
     // tab is better than nothing.
-    _ = arrange.splitActive(app, id, .{
+    const leaf = arrange.splitActive(app, id, .{
         .dir = .horizontal,
         .fixed_equalize = app.cfg.integrations.equalize_on_open,
-    }) catch app.showPane(id);
-    app.focus = .{ .pane = id };
+    }) catch blk: {
+        app.showPane(id);
+        break :blk null;
+    };
+    // A pane that took a leaf of its own takes the keys with it; one
+    // that joined a strip leaves the focus where it was.
+    if (leaf != null) app.focus = .{ .pane = id };
 }
 
 /// `mount.open`: the binary (and args) typed into a prompt.
