@@ -58,6 +58,11 @@ key left
 key X
 expect screen contains ":seX▏t"
 key esc
+# // changed (edge-grip): the row is the launcher dock's reveal band
+# too now, so the pointer is taken off it before the next click — left
+# resting there with no `:` line open it would summon the strip over
+# the row, which `edge_grip_dock.test` is the place to watch.
+hover 60 10
 
 # ── the echoed toast's `[name]` is a link to the pane it names ──
 # `editor.file_info` on a scratch buffer says `[scratch]: …`; the row

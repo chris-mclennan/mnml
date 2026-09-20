@@ -15,5 +15,8 @@ expect screen contains "running…"
 
 # The indicator is the click target, right-aligned one cell off the edge.
 click 112 39
+# // changed (edge-grip): off the row again — resting on it is what
+# summons the launcher dock, which would paint over the echo below.
+hover 60 10
 expect screen contains "http.abort: cancelled"
 expect screen lacks "running…"

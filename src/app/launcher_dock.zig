@@ -152,6 +152,11 @@ pub const side_min_width: u16 = width + 21;
 
 /// Where a revealed strip paints: the band `hover_zones` watches,
 /// grown to the strip's own size. Empty when there is no room.
+/// // changed (edge-grip): on the bottom edge that band is the
+/// SCREEN's last row, so a revealed strip paints over the `:` line's
+/// row — the toast echo and the in-flight chip with it. An open `:`
+/// line refuses the reveal outright (`cmdlineBlocks`), so the one
+/// thing that row can be mid-use is never covered.
 pub fn overlayRect(app: *const App, full: Rect) Rect {
     const band = hover_zones.dockBand(app, full) orelse return .empty;
     return switch (edge(app)) {
@@ -163,12 +168,24 @@ pub fn overlayRect(app: *const App, full: Rect) Rect {
 
 // ─── the dwell ──────────────────────────────────────────────────────────
 
+/// // changed (edge-grip): a bottom strip reveals OVER the `:` line's
+/// row, so an open `:` line refuses it outright — and puts one that is
+/// already up away. Typing is never covered. Only the bottom edge is
+/// in contest: a side strip covers no part of that row.
+pub fn cmdlineBlocks(app: *App) bool {
+    return edge(app) == .bottom and mode(app) != .always and @import("cmdline.zig").anyOpen(app);
+}
+
 /// Advance the reveal / hide clock. Called from `App.tick` and from the
 /// top of `render`, both idempotent at one `now`.
 pub fn tick(app: *App, now: i64) void {
     const st = &app.launcher_dock;
     if (app.zen) {
         close(app);
+        return;
+    }
+    if (cmdlineBlocks(app)) {
+        if (st.open) close(app);
         return;
     }
     // A docked strip has no reveal to run down; the keyboard may still
@@ -898,9 +915,13 @@ test "the dwell: auto-hide reveals after reveal_ms in the band, stays while the 
     app.cfg.ui.dock.hide_ms = 400;
     const full = Rect.init(0, 0, 120, 40);
     const band = hover_zones.dockBand(&app, full).?;
-    // The bottom band is the editor area's last row, never the
-    // statusline's and never the `:` line's.
-    try t.expectEqual(render.frameRects(full, .{}).upper.bottom() - 1, band.y);
+    // // changed (edge-grip): the bottom band is the SCREEN's last row
+    // — the `:` line's row while the strip is down — so the strip is
+    // the frame's outermost edge in every mode, and a hand reaching
+    // past the statusline for it finds it.
+    try t.expectEqual(full.bottom() - 1, band.y);
+    try t.expectEqual(@as(u16, 39), band.y);
+    try t.expectEqual(full.w, band.w);
 
     app.now_ms = 1000;
     app.hover = .{ .x = 60, .y = band.y };
@@ -932,6 +953,82 @@ test "the dwell: auto-hide reveals after reveal_ms in the band, stays while the 
     hover_zones.begin(&app, full, 2500);
     tick(&app, 2500);
     try t.expect(!revealed(&app));
+}
+
+test "the `:` line owns the bottom row outright: an open one refuses the reveal and puts a revealed strip away — a side strip, which covers none of that row, is not in contest" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    const cmdline = @import("cmdline.zig");
+    app.cfg.ui.dock.reveal_ms = 250;
+    const full = Rect.init(0, 0, 120, 40);
+    const band = hover_zones.dockBand(&app, full).?;
+    // The band IS the `:` line's row: that is the whole reason for the
+    // rule below.
+    try t.expectEqual(render.frameRects(full, .{}).cmdline.y, band.y);
+
+    // Dwell with the line open: nothing comes up.
+    cmdline.open(&app);
+    try t.expect(cmdlineBlocks(&app));
+    app.now_ms = 1000;
+    app.hover = .{ .x = 60, .y = band.y };
+    hover_zones.begin(&app, full, 1000);
+    tick(&app, 1000);
+    app.now_ms = 1400;
+    hover_zones.begin(&app, full, 1400);
+    tick(&app, 1400);
+    try t.expect(!revealed(&app));
+
+    // Closing the line asks for a FRESH dwell, and does not pop the
+    // strip up the frame the line goes: the band is not registered at
+    // all while a line is open (`hover_zones.registerGeometric`), so
+    // the clock was down the whole time rather than running under it.
+    cmdline.close(&app);
+    try t.expect(!cmdlineBlocks(&app));
+    hover_zones.begin(&app, full, 1400);
+    tick(&app, 1400);
+    try t.expect(!revealed(&app));
+    app.now_ms = 1600;
+    hover_zones.begin(&app, full, 1600);
+    tick(&app, 1600);
+    try t.expect(!revealed(&app));
+    app.now_ms = 1800;
+    hover_zones.begin(&app, full, 1800);
+    tick(&app, 1800);
+    try t.expect(revealed(&app));
+
+    // Opening the line over a revealed strip puts the strip away
+    // rather than typing under it.
+    cmdline.open(&app);
+    tick(&app, 1800);
+    try t.expect(!revealed(&app));
+    cmdline.close(&app);
+
+    // A side strip covers no part of that row, so the line is no
+    // business of its own.
+    try setEdge(&app, .left);
+    cmdline.open(&app);
+    try t.expect(!cmdlineBlocks(&app));
+    const side = hover_zones.dockBand(&app, full).?;
+    app.now_ms = 3000;
+    app.hover = .{ .x = side.x, .y = 10 };
+    hover_zones.begin(&app, full, 3000);
+    tick(&app, 3000);
+    app.now_ms = 3300;
+    hover_zones.begin(&app, full, 3300);
+    tick(&app, 3300);
+    try t.expect(revealed(&app));
+
+    // A docked strip is carved, not painted over anything, so it is
+    // never in contest either.
+    cmdline.close(&app);
+    try setEdge(&app, .bottom);
+    try setMode(&app, .always);
+    cmdline.open(&app);
+    try t.expect(!cmdlineBlocks(&app));
+    try t.expect(docked(&app));
 }
 
 test "zone arbitration: a left dock owns the outermost column and pushes the auto-hiding sidebar's reveal edge one cell in; hidden gives the edge back" {

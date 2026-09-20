@@ -144,6 +144,14 @@ const icons = @import("../ui/icons.zig");
 /// screen); Rust's chrome row needs its 48-cell cluster or shows the
 /// workspace chip alone.
 pub const palette_bar_min_width: u16 = 40;
+
+/// // changed (edge-grip): the screen a bottom launcher dock needs
+/// before it takes the last row. Its own row, plus the bar, the
+/// statusline and the `:` line, plus the four rows the editor area
+/// kept under the old carve — so a frame that could hold the strip
+/// before still can. `hover_zones.dockBand` reads it too, so the
+/// reveal band and the carve appear and disappear together.
+pub const dock_bottom_min_height: u16 = launcher_dock.height + 8;
 /// The divider hit ids the split tree does not use (`.divider` is
 /// otherwise an index into the split tree's dividers).
 pub const tree_divider_id: u32 = std.math.maxInt(u32);
@@ -385,6 +393,19 @@ pub fn chrome(app: *const App) Chrome {
 /// keeps rows whatever height the user drags to.
 pub fn frameRects(full: Rect, ch: Chrome) FrameRects {
     var r = full;
+    // ── the bottom launcher dock ──
+    // // changed (edge-grip): it comes off the SCREEN's last row,
+    // under the `:` line, before anything else is carved — the dock is
+    // the frame's outermost edge, which is the row its reveal band
+    // watches in every other mode (`hover_zones.dockBand`). The bottom
+    // panel / statusline / `:` line keep their order inside what is
+    // left. A side dock is still carved off `upper` below.
+    var dock_bottom = Rect.empty;
+    if (ch.dock == .bottom and full.h >= dock_bottom_min_height) {
+        const rows = r.splitBottom(launcher_dock.height);
+        r = rows.top;
+        dock_bottom = rows.rest;
+    }
     var bar = Rect.empty;
     if (full.w >= palette_bar_min_width and full.h >= 5) {
         const s = r.splitTop(1);
@@ -398,18 +419,14 @@ pub fn frameRects(full: Rect, ch: Chrome) FrameRects {
         r = s.top;
     }
     const s = r.splitBottom(1);
-    var fr: FrameRects = .{ .bar = bar, .upper = s.top, .status = s.rest, .cmdline = cmdline, .body = s.top };
+    var fr: FrameRects = .{ .bar = bar, .upper = s.top, .status = s.rest, .cmdline = cmdline, .body = s.top, .launcher_dock = dock_bottom };
     // ── launcher dock ──
-    // The outermost band of the editor area: everything else — the
-    // bottom panel, both columns, the splits — is carved out of what
-    // is left, so the dock reads as the frame's own edge.
+    // A SIDE dock is the outermost band of the editor area:
+    // everything else — the bottom panel, both columns, the splits —
+    // is carved out of what is left, so the dock reads as the frame's
+    // own edge. The bottom one is already off the screen's last row.
     if (ch.dock) |dock_edge| switch (dock_edge) {
-        .bottom => if (fr.upper.h >= launcher_dock.height + 4) {
-            const rows = fr.upper.splitBottom(launcher_dock.height);
-            fr.upper = rows.top;
-            fr.launcher_dock = rows.rest;
-            fr.body = fr.upper;
-        },
+        .bottom => {},
         .left => if (fr.upper.w >= launcher_dock.side_min_width) {
             const cols = fr.upper.splitLeft(launcher_dock.width);
             fr.launcher_dock = cols.left;
@@ -601,16 +618,20 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     // the hits it registers here are the last word on every cell it
     // covers (`HitMap.at` scans back to front).
     if (!app.zen) try drawSidebarOverlay(app, ui, fr);
+    if (!app.zen) try drawStatusline(app, ui, fr.status);
+    try drawCmdline(app, ui, fr.cmdline);
     // ── the launcher dock ──
     // Over the panes, the dock widgets AND the revealed side column:
     // the strip owns the frame's outermost band, so nothing paints on
     // top of it (`app/launcher_dock.zig`, the outer-band rule).
+    // // changed (edge-grip): and over the `:` line's row too, which is
+    // where a revealed bottom strip now lands — so it paints AFTER
+    // `drawCmdline`, and its hits are the last word on those cells.
+    // An open `:` line refuses the reveal, so nothing in use is hidden.
     if (!app.zen) {
         const strip = if (!fr.launcher_dock.isEmpty()) fr.launcher_dock else if (launcher_dock.revealed(app)) launcher_dock.overlayRect(app, screenRect(screen)) else Rect.empty;
         if (!strip.isEmpty()) try launcher_dock.draw(app, ui, strip) else app.launcher_dock.rect = .empty;
     }
-    if (!app.zen) try drawStatusline(app, ui, fr.status);
-    try drawCmdline(app, ui, fr.cmdline);
     // The stack sits on the panes' last row, against the statusline, as
     // Rust's does. The Undo chip takes that row when it is up, and so
     // does the flash cue (`drawFlashCue`, right-aligned there): the
@@ -2658,6 +2679,40 @@ test "frameRects: the bar needs 40 columns (narrow below 80), the cmdline row ne
     const one = frameRects(Rect.init(0, 0, 100, 1), .{});
     try t.expect(one.upper.isEmpty());
     try t.expect(one.status.eql(Rect.init(0, 0, 100, 1)));
+}
+
+test "frameRects: an `always` bottom launcher dock takes the SCREEN's last row, under the `:` line, and every other row moves up one" {
+    // // changed (edge-grip): it used to be the editor area's last row
+    // (37 at 120x40), two rows in from the screen's edge, where the
+    // reveal band nothing marked also sat. Both are row 39 now.
+    const wide = frameRects(Rect.init(0, 0, 120, 40), .{ .dock = .bottom });
+    try t.expect(wide.launcher_dock.eql(Rect.init(0, 39, 120, 1)));
+    // The bottom panel / statusline / `:` line keep their order inside
+    // what is left — each one row up from the dockless frame.
+    try t.expect(wide.bar.eql(Rect.init(0, 0, 120, 1)));
+    try t.expect(wide.status.eql(Rect.init(0, 37, 120, 1)));
+    try t.expect(wide.cmdline.eql(Rect.init(0, 38, 120, 1)));
+    // The editor area is one row shorter, and nothing else changed.
+    const none = frameRects(Rect.init(0, 0, 120, 40), .{});
+    try t.expectEqual(none.upper.h - 1, wide.upper.h);
+    try t.expect(wide.upper.eql(Rect.init(0, 1, 120, 36)));
+    try t.expect(wide.body.eql(wide.upper));
+    // The bottom panel is carved INSIDE it, as it always was.
+    const panel = frameRects(Rect.init(0, 0, 120, 40), .{ .dock = .bottom, .bottom = 12 });
+    try t.expect(panel.launcher_dock.eql(Rect.init(0, 39, 120, 1)));
+    try t.expect(panel.bottom.eql(Rect.init(0, 25, 120, 12)));
+    try t.expect(panel.bottom_divider.eql(Rect.init(0, 24, 120, 1)));
+    // A side dock is still carved off the editor area, not the screen.
+    const left = frameRects(Rect.init(0, 0, 120, 40), .{ .dock = .left });
+    try t.expect(left.launcher_dock.eql(Rect.init(0, 1, 3, 37)));
+    try t.expect(left.cmdline.eql(Rect.init(0, 39, 120, 1)));
+    // Too short for the row: no dock rather than an editor with none.
+    const tight = frameRects(Rect.init(0, 0, 120, dock_bottom_min_height), .{ .dock = .bottom });
+    try t.expect(!tight.launcher_dock.isEmpty());
+    const short = frameRects(Rect.init(0, 0, 120, dock_bottom_min_height - 1), .{ .dock = .bottom });
+    const bare = frameRects(Rect.init(0, 0, 120, dock_bottom_min_height - 1), .{});
+    try t.expect(short.launcher_dock.isEmpty());
+    try t.expect(short.upper.eql(bare.upper) and short.status.eql(bare.status) and short.cmdline.eql(bare.cmdline));
 }
 
 test "frameRects: the rail and its border come off the sidebar's own 30 columns — the tree's divider stays at column 30 (the Rust dump); hidden hands the tree the cells back; a narrow sidebar keeps the rail, loses the border" {

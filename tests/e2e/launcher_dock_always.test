@@ -4,10 +4,11 @@
 # reserves the OUTERMOST row of the editor area and lists the enabled
 # integrations, then the terminals, then whatever `ui.dock.pins` names.
 #
-# At 120x40 that row is 37: the palette bar takes row 0, the statusline
-# 38 and the `:` line 39, so the editor area is rows 1..37 and the dock
-# takes its last row. The click below is the proof — if the strip were
-# anywhere else it would land in the editor instead.
+# At 120x40 that row is 39 — the SCREEN's last row, under the `:` line
+# (which moves to 38 and the statusline to 37), because the dock is the
+# frame's outermost edge in every mode and that is the row its reveal
+# band watches when it is down. The click below is the proof: if the
+# strip were anywhere else it would land on the `:` row instead.
 write a.txt "alpha\n"
 open a.txt
 expect screen lacks "New terminal"
@@ -20,7 +21,7 @@ expect screen contains "New terminal"
 # The pin chip lives at the strip's end.
 expect screen contains "󰐃"
 # A click on New terminal opens a shell…
-click 16 37
+click 16 39
 wait 900
 expect pane Terminal
 # …and the shell joins the strip as a running item, wearing the dot

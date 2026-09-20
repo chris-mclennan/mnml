@@ -49,6 +49,17 @@ pub fn close(app: *App) void {
     app.needs_render = true;
 }
 
+/// // changed (edge-grip): whether ANY `:` line owns the bottom row —
+/// the app's own or the active buffer's, the two `render.drawCmdline`
+/// paints in that order. The launcher dock asks before it reveals over
+/// that row: a strip that covered a half-typed command would be the
+/// one reveal the user could not have wanted.
+pub fn anyOpen(app: *App) bool {
+    if (app.cmdline != null) return true;
+    const e = app.activeEditor() orelse return false;
+    return e.buf.input.cmdlineGet() != null;
+}
+
 /// A press that landed anywhere but the bar itself, while the line is
 /// open — the way a text field loses focus when you click off it.
 ///
