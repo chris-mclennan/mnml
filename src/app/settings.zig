@@ -192,6 +192,9 @@ pub const rows = [_]RowSpec{
     .{ .path = "ui.menu_bar", .label = "Menu bar", .section = .ui, .scope = .home },
     .{ .path = "ui.activity_bar", .label = "Activity bar", .section = .ui, .scope = .home },
     .{ .path = "ui.sidebar", .label = "Side columns", .section = .ui, .scope = .home },
+    // // changed (edge-grip): one row for all three grips — the menu
+    // bar's, the dock's and the columns'.
+    .{ .path = "ui.edge_grips", .label = "Edge grips on slide-ins", .section = .ui, .scope = .home },
     // // changed (launcher-dock): the strip's three discrete rows. Its
     // dwells and its pins are config-only (v1 is choices).
     .{ .path = "ui.dock.mode", .label = "Launcher dock", .section = .ui, .scope = .home },
