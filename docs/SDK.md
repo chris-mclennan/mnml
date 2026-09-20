@@ -685,6 +685,15 @@ worth nothing if it costs a request: `--values` must not fetch more
 than it did before it carried `items`, and both official integrations
 have a test on the fake's `--log-file` that says so.
 
+**Every publish of a segment carries its rows, not just the poll's.**
+A `statusline-set-segment` REPLACES the chip, so an open pane that
+republishes its own figure without `items` takes the hover's list away
+until the next poll — a list that disappears the moment the reader
+opens the pane is worse than one that was never there. Give a pane ONE
+publish function, fed from whichever listing is at hand, so the chip a
+pane sends for itself is the chip a `--values` run would have sent for
+the same things.
+
 The host keeps at most 24 rows off the wire and paints at most
 `statusline.hover_items` (8 by default, `docs/CONFIG.md`), with
 `… and N more` under them. Send no `items` and the chip keeps the
