@@ -243,6 +243,21 @@ fn describeButton(app: *App, arena: Allocator, id: u32) Allocator.Error!?Tip {
     if (id == @intFromEnum(render.Button.cmdline_bar)) return .{ .title = "Command line", .detail = "click opens the `:` line (Ctrl+;)" };
     if (id == @intFromEnum(render.Button.cmdline_inflight)) return .{ .title = "Work in flight", .detail = "click aborts every in-flight send (http.abort)" };
     if (id == @intFromEnum(render.Button.cmdline_mention)) return .{ .title = "The pane this message names", .detail = "click reveals it" };
+    // // changed (edge-grip): the `⋯` / `⋮` handle at the middle of a
+    // hidden slide-in's edge (`ui/edge_grip.zig`). The words say what
+    // the handle is for, since the glyph alone cannot.
+    if (id == @intFromEnum(render.Button.edge_grip_menu_bar)) return .{
+        .title = "The menu bar hides here",
+        .detail = "rest here to bring the words back \u{b7} click keeps them (view.menu_bar_pin) \u{b7} right-click: the bar's modes",
+    };
+    if (id == @intFromEnum(render.Button.edge_grip_sidebar_left) or id == @intFromEnum(render.Button.edge_grip_sidebar_right)) return .{
+        .title = "The side column hides here",
+        .detail = "rest here to slide it in \u{b7} click docks it for this session (view.sidebar_pin) \u{b7} right-click: the column's modes",
+    };
+    if (id == @intFromEnum(render.Button.edge_grip_dock)) return .{
+        .title = "The launcher dock hides here",
+        .detail = "rest here to bring the strip up \u{b7} click keeps it (view.dock_pin) \u{b7} right-click: its mode, edge and settings",
+    };
     if (id >= integrations_view.chip_base and id < integrations_view.chip_base + integrations_view.max_chips) {
         const list = try integrations.chips(app, arena);
         const i = id - integrations_view.chip_base;
