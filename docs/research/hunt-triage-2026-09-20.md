@@ -262,7 +262,7 @@ row. `standard-10-menu-blank-row.test`, FAIL line 14 → `tests/e2e/menu_title_n
 **Standard #14 (second half) — the palette box re-anchors as you type.**
 `picker.placeWith` sizes the box from the filtered count and
 `overlay.place` re-centres it, so the box slides down the screen as the
-list shrinks. `standard-14-palette-box-reanchors.test`, FAIL line 18.
+list shrinks. `standard-14-palette-box-reanchors.test`, FAIL line 18 → `tests/e2e/palette_box_anchor.test`, passes.
 (The first half of #14, the wheel moving three rows per event, is
 by-design — `src/app/dispatch.zig:1979` documents it as Rust parity.)
 
@@ -322,7 +322,7 @@ One line each, in the order worth doing them. Items 1-7 shipped on
    and let the user start it, or restore it exited.
 6. ✅ **Subtract the title row from `menuSize`'s height** for titled
    context menus (`src/app/render.zig:2536`).
-7. **Anchor the palette box on open** and let only the list shrink
+7. ✅ **Anchor the palette box on open** and let only the list shrink
    (`picker.placeWith` / `overlay.place`).
 8. **Backport vim #3, #10 and #11 to the Rust `mnml`** — all three
    carried "Rust: same/identical" in the report and only Zig was fixed,

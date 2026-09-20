@@ -1,0 +1,19 @@
+# width: 120
+# height: 40
+# The palette box is anchored on the frame it opened on. Its height comes
+# from the filtered count and `overlay.place` re-centres what it is given,
+# so re-placing it every frame slid the whole box DOWN the screen as the
+# list shrank under the query — the reader's eye chased a moving box while
+# typing. Only the list shrinks now (VS Code's palette does the same).
+#
+# The activity-bar margin differs per row, so the row the top border sits
+# on is identifiable: it opens on a blank-margin row, and before this it
+# had moved onto the row whose margin carries the 󰎒 glyph.
+write a.txt hello
+open a.txt
+command palette
+expect screen contains "   │           ┌ Command palette "
+type toggle wrap
+expect screen contains "toggle wrap"
+expect screen contains "   │           ┌ Command palette "
+key esc

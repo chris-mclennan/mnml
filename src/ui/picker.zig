@@ -93,6 +93,14 @@ pub const State = struct {
     preview_h: u16 = 0,
     /// Tab marks a row and Enter passes every marked one.
     multi: bool = false,
+    /// The screen row the box's top border landed on when it opened.
+    /// The height comes from the filtered count, so re-placing the box
+    /// every frame slid it DOWN the screen as the list shrank under the
+    /// query — the reader's eye chased a moving box while typing. The
+    /// top is decided once, on the first frame, and the list is the only
+    /// thing that shrinks (VS Code's palette does the same).
+    /// `null` again whenever the picker re-opens (`deinit` resets it).
+    top: ?u16 = null,
 
     pub fn deinit(s: *State, gpa: Allocator) void {
         s.query.deinit(gpa);
@@ -306,12 +314,27 @@ pub fn placeWith(area: Rect, n: usize, anchor: overlay.Anchor, has_preview: bool
     return overlay.place(area, w, h, if (anchor == .top) .top else .center);
 }
 
+/// `placeWith`, anchored on the frame the picker opened on: the size
+/// still follows the filtered count, but the top border stays on the
+/// row it first landed on instead of re-centring under every keystroke.
+/// Remembers that row the first time it is asked, and clamps it back on
+/// screen if the terminal was resized since.
+pub fn placeState(area: Rect, n: usize, s: *State) Rect {
+    var r = placeWith(area, n, s.anchor, s.has_preview);
+    const top = s.top orelse {
+        s.top = r.y;
+        return r;
+    };
+    r.y = @max(@min(top, area.bottom() -| r.h), area.y);
+    return r;
+}
+
 /// The box: query row, then the rows. Registers `.overlay_item(i)` per
 /// visible row. Returns the query caret.
 pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item) ?Caret {
     const t = ui.theme;
     if (area.isEmpty()) return null;
-    const inner = overlay.frameLook(ui, placeWith(area, items.len, s.anchor, s.has_preview), s.title, .modal);
+    const inner = overlay.frameLook(ui, placeState(area, items.len, s), s.title, .modal);
     if (inner.isEmpty()) return null;
     const bg = t.overlay_bg.bg;
 
