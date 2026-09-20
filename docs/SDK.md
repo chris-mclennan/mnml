@@ -225,7 +225,7 @@ the next backfill has to come back for.
 | element | the toolkit's |
 |---|---|
 | Host palette roles, never ANSI indices | `Theme.fromHelloBranded` |
-| The app-colour left gutter, full height | `Painter.gutter` |
+| The app-colour left gutter, full height — under a board-shaped body too | `Painter.gutter` + `expect.gutterFullHeight` |
 | The caps header — title, count, `as of …`, and the ladder, clipped against each other | `Painter.capsHeader` |
 | Its pieces, if you need them apart | `Painter.capsTitle`, `Painter.rightChips`, `Painter.asOf`, `Painter.refreshChipText`, `chrome.help_chip_text` |
 | The tab strip and its indicator | `Painter.tabStrip` |
@@ -244,6 +244,14 @@ the next backfill has to come back for.
 | The hint row, every `key label` a hit | `Painter.hintRow` |
 | State colours | `Theme.prState` / `pipelineState` / `ticketStatus` |
 | A chevron that folds under the mouse | `Painter.chevron` |
+
+The gutter runs the WHOLE height of the pane, whatever shape the body
+is. A pane with a column-shaped body (a board of boxed columns) starts
+its columns one cell in rather than painting over it: the stripe is
+the only column that says which application this is, and a pane that
+loses it halfway down reads as two panes stacked. The bad-scope error
+screen wears it too — a pane that cannot show anything is still this
+pane.
 | One figure on a statusline segment, and a bracketed subset only when the pane has one | `pane.figure` |
 
 Keys and chrome that are not the toolkit's but ARE the family's: `r`
@@ -302,6 +310,7 @@ try sdk.pane.expect.listScrollbar(&frame, frame.cols - 1, 0, frame.rows);
 try sdk.pane.expect.foldRow(&frame, theme, fold_y, ascii);
 try sdk.pane.expect.statuslineFigure(my_segment_text);
 try sdk.pane.expect.buildLineHit(Target, &hits, y, x0, x1, .{ .build_line = i });
+try sdk.pane.expect.gutterFullHeight(&frame, theme, 0, 0, frame.rows - 1, ascii);
 ```
 
 Both official integrations call these, which is the point: one

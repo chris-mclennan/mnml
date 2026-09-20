@@ -826,6 +826,11 @@ pub const Painter = struct {
 
     // ─── the kanban ──────────────────────────────────────────────────
 
+    /// The cell the board leaves to the pane's own stripe. One column,
+    /// the toolkit's `Painter.gutter` width, so a board-shaped body
+    /// wears the same identity as a list-shaped one.
+    const kanban_gutter: u16 = 1;
+
     fn paintKanban(p: *Painter) Allocator.Error!void {
         const a = p.a;
         const t = a.tab();
@@ -844,10 +849,18 @@ pub const Painter = struct {
         }
         const m = try a.mask(p.arena, t);
         const buckets = try kanban.bucket(p.arena, t.issues, m);
-        const col_w: u16 = w / kanban.count;
+        // The board starts one cell in, so the app-colour gutter runs
+        // the WHOLE height of the pane rather than stopping where the
+        // header does. A stripe that ends a third of the way down
+        // reads as two panes stacked; the columns' own boxes used to
+        // paint straight over it, and every card then carried its own
+        // little `▌` as if the pane's identity had moved onto them.
+        const board_x = kanban_gutter;
+        const avail = w -| board_x;
+        const col_w: u16 = avail / kanban.count;
         var c: usize = 0;
         while (c < kanban.count) : (c += 1) {
-            const cx: u16 = @intCast(c * col_w);
+            const cx: u16 = board_x + @as(u16, @intCast(c * col_w));
             const inner_w = col_w -| 2;
             const col: kanban.Col = @enumFromInt(c);
             try p.box(.{ .x = cx, .y = y0, .w = col_w, .h = h }, p.fmt(" {s} ({d}) ", .{ col.title(), buckets[c].len }), p.s.border);
@@ -1888,6 +1901,24 @@ test "Fix Versions: the pill, the bump star, the transition picker's rows, and t
     try testing.expect(!a.help);
 }
 
+test "the bad-scope screen wears the pane's stripe too" {
+    // A pane that cannot show anything is still this pane. The error
+    // screen a `--only <scope>` with no matching tab lands on had no
+    // stripe at all for a while, which made mnml's most confusing
+    // screen also its most anonymous one.
+    const h = try app_mod.Harness.start(.{ .tabs = &app_mod.work_tabs }, .boards);
+    defer h.stop();
+    var f = try Frame.init(testing.allocator, 100, 10);
+    defer f.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const ar = arena.allocator();
+    try paint(ar, &f, &h.app, .{});
+    try testing.expect((try findRow(ar, &f, "No tabs for this scope.")) != null);
+    const ui: Ui = .{};
+    try sdk.pane.expect.gutterFullHeight(&f, ui.th, 0, 0, f.rows - 1, ui.ascii);
+}
+
 test "Boards: the kanban columns, the cards with a chevron and a marker, the avatar cluster, and the modal" {
     const h = try app_mod.Harness.start(.{ .tabs = &app_mod.board_tabs, .team_field_id = "customfield_10056" }, .boards);
     defer h.stop();
@@ -1900,6 +1931,16 @@ test "Boards: the kanban columns, the cards with a chevron and a marker, the ava
     const ar = arena.allocator();
     try paint(ar, &f, a, .{});
     try testing.expect(std.mem.startsWith(u8, try rowText(ar, &f, 0), "▌JIRA BOARDS (3 of 9)"));
+    // The app-colour stripe runs the WHOLE height of the pane, board
+    // and all: the columns start one cell in rather than painting
+    // their boxes over column 0. Asserted through `sdk.pane.expect`,
+    // the same function the forge pane's own suite calls. The stripe
+    // used to stop where the header did, which read as two panes
+    // stacked — and it is the only column that says which application
+    // this is.
+    const ui: Ui = .{};
+    try sdk.pane.expect.gutterFullHeight(&f, ui.th, 0, 0, f.rows - 1, ui.ascii);
+    try testing.expectEqualStrings("\u{2502}", cellAt(&f, 1, (try findRow(ar, &f, " To Do (")).? + 1).symbol());
     const r2 = try rowText(ar, &f, 3);
     try testing.expect(std.mem.indexOf(u8, r2, " board: Checkout board ") != null);
     try testing.expect(std.mem.indexOf(u8, r2, " sprint: Sprint 4 ") != null);

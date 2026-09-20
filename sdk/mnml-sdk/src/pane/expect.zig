@@ -38,6 +38,8 @@ pub const Error = figure.Error || error{
     FoldRowInk,
     BuildHitMissing,
     BuildHitPartial,
+    GutterBroken,
+    GutterInk,
 };
 
 fn eqlStyle(a: Style, b: Style) bool {
@@ -65,6 +67,28 @@ pub fn capsTitleInk(f: *const Frame, th: Theme, x0: u16, y: u16, title: []const 
     while (i < text_mod.width(title)) : (i += 1) {
         const got = f.slots[@as(usize, y) * f.cols + x0 + i].style;
         if (!eqlInk(got, want)) return Error.TitleInk;
+    }
+}
+
+/// The app-colour stripe down column `x`, unbroken from `y0` for `h`
+/// rows, in one of the gutter's two inks.
+///
+/// It is the pane's identity and the only column that says which
+/// application you are looking at, so a pane that loses it halfway
+/// down reads as two panes stacked. The tracker pane's board did
+/// exactly that: the header rows wore the stripe, the kanban columns
+/// then painted their own boxes straight over column 0, and every
+/// card grew a little `▌` of its own as if the identity had moved
+/// onto them. The board now starts one cell in.
+pub fn gutterFullHeight(f: *const Frame, th: Theme, x: u16, y0: u16, h: u16, ascii: bool) Error!void {
+    const g: []const u8 = if (ascii) chrome.gutter_ascii else chrome.gutter_glyph;
+    const on = th.gutterOn();
+    const off = th.gutterOff();
+    var y = y0;
+    while (y < y0 + h and y < f.rows) : (y += 1) {
+        const slot = f.slots[@as(usize, y) * f.cols + x];
+        if (!std.mem.eql(u8, slot.symbol(), g)) return Error.GutterBroken;
+        if (!eqlInk(slot.style, on) and !eqlInk(slot.style, off)) return Error.GutterInk;
     }
 }
 

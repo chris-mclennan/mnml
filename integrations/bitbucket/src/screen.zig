@@ -848,6 +848,10 @@ test "the pane paints the header, the strip, the pill, the reference's columns, 
     // same function the tracker pane's own suite calls, so the two
     // families cannot drift into checking two different things.
     try sdk.pane.expect.capsTitleInk(&s.frame, s.rig.app.theme, 1, 0, "BITBUCKET PRS");
+    // And the app-colour stripe runs the whole height of the pane —
+    // the same assertion the tracker pane's own suite makes of its
+    // board, where the kanban columns used to paint over it.
+    try sdk.pane.expect.gutterFullHeight(&s.frame, s.rig.app.theme, 0, 0, s.frame.rows - 1, false);
     try sdk.pane.expect.headerLadderTail(&s.frame, s.rig.app.theme, 0, true, false);
     try t.expect(has(scr, "Open + Draft · 2 repos, 3 PRs"));
     try t.expect(has(scr, "⏎ expand"));
