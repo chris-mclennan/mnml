@@ -1,0 +1,74 @@
+# Ninety-odd settings rows are more than a section strip and a
+# scrollbar can answer for, so `/` opens the family filter pill under
+# the box's title and the list narrows live — over each row's label,
+# the word its current value reads as, and its section's name.
+#
+# The strip stays put under the pill (a section with no match dims but
+# is still there to click), the footer swaps its scroll position for
+# `N of M`, and Esc takes the query before it takes the box.
+
+command view.settings
+expect screen contains "UI · Editor · AI · Integrations · Reset"
+expect screen contains "▸ Line numbers:"
+
+# `/` opens the pill; typing narrows the rows as it goes.
+key /
+expect screen contains "type to filter"
+type dock
+expect screen contains "󰍉 dock"
+expect screen contains "── UI ──"
+expect screen contains "Launcher dock:"
+expect screen contains "Launcher dock edge:"
+expect screen contains "Bottom dock at start:"
+# Everything else is gone, headers included — `Line numbers` is three
+# rows above `Launcher dock` unfiltered.
+expect screen lacks "Line numbers"
+expect screen lacks "── Editor ──"
+expect screen lacks "── AI ──"
+# The footer counts what the query left. The total moves as rows are
+# added, so the assertion is the form, not the number.
+expect screen contains " of "
+
+# Enter hands the list back to the cursor, query and all — and the
+# cursor is on a match, so `←` adjusts the row the search found.
+key enter
+expect screen contains "󰍉 dock"
+expect screen contains "▸ Launcher dock:"
+expect screen contains "always / [auto_hide] / hidden"
+key left
+expect screen contains "[always] / auto_hide / hidden"
+
+# Esc takes the query and puts the whole list back; the box stays.
+key esc
+expect screen lacks "󰍉 dock"
+expect screen contains "▸ Launcher dock:"
+expect screen contains "Line numbers"
+
+# The second Esc is the box's own way out — and it cancels, so the
+# value the filter found goes back to what it was.
+key esc
+expect screen lacks "UI · Editor · AI · Integrations · Reset"
+command view.settings
+expect screen contains "Launcher dock:"
+expect screen contains "always / [auto_hide] / hidden"
+key esc
+
+# A query with exactly one answer: the count form, both halves of it.
+command view.settings
+key /
+type rainbow
+expect screen contains "Rainbow brackets:"
+expect screen contains "1 of "
+expect screen lacks "Line numbers"
+key esc
+key esc
+
+# A query nothing answers to says so, rather than leaving a blank box.
+command view.settings
+key /
+type zzzz
+expect screen contains "no setting matches \"zzzz\""
+expect screen lacks "▸ Line numbers:"
+key esc
+expect screen contains "▸ Line numbers:"
+key esc
