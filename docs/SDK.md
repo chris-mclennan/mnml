@@ -226,9 +226,8 @@ the next backfill has to come back for.
 |---|---|
 | Host palette roles, never ANSI indices | `Theme.fromHelloBranded` |
 | The app-colour left gutter, full height | `Painter.gutter` |
-| The caps header's title and count | `Painter.capsTitle` |
-| The right-to-left chip ladder, ending in the refresh chip then `?` | `Painter.rightChips`, `Painter.refreshChipText`, `chrome.help_chip_text` |
-| `as of 4m ago` after the count | `Painter.asOf` |
+| The caps header — title, count, `as of …`, and the ladder, clipped against each other | `Painter.capsHeader` |
+| Its pieces, if you need them apart | `Painter.capsTitle`, `Painter.rightChips`, `Painter.asOf`, `Painter.refreshChipText`, `chrome.help_chip_text` |
 | The tab strip and its indicator | `Painter.tabStrip` |
 | The filter pill — glyph, placeholder, caret | `Painter.filterPill` |
 | A row's ground, its stripe and its hit, in one statement | `Painter.rowGround` |

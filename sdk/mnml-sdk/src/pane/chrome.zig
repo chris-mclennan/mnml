@@ -231,7 +231,9 @@ pub fn Painter(comptime Target: type) type {
         /// The whole caps header row, in one call: the title and its
         /// count at the left, `as of 4m ago` after them, and the
         /// right-hand chip ladder — laid so the two runs cannot
-        /// collide. Returns the x the left-hand run ended at.
+        /// collide. Hands back where the left run ended and where the
+        /// ladder began, so a pane with something else to say on the
+        /// row (`3 selected`) can put it between them.
         ///
         /// The collision is the reason this exists. A pane that paints
         /// the left run and then the ladder gets the ladder over the
