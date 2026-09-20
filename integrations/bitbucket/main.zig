@@ -97,6 +97,10 @@ const Opts = struct {
     prefetch: bool = false,
     help: bool = false,
     only: ?[]const u8 = null,
+    /// `--focus <repo>#<id>`: the pull request to land the cursor on
+    /// once the first listing is in — what a row of the statusline
+    /// figure's hover asks for. Empty is "wherever the cursor lands".
+    focus: []const u8 = "",
     /// `--dump --steps FILE [--size WxH]`: the headless driver — the
     /// same App and the same paint as the pane, driven by a step
     /// script, with every `snap` printed as text. `--dump-style` adds
@@ -157,6 +161,9 @@ fn parseArgs(args: []const []const u8) !Opts {
         } else if (std.mem.eql(u8, a, "--only") and i + 1 < args.len) {
             i += 1;
             o.only = args[i];
+        } else if (std.mem.eql(u8, a, "--focus") and i + 1 < args.len and args[i + 1].len > 0) {
+            i += 1;
+            o.focus = args[i];
         } else if (std.mem.eql(u8, a, "--owner") and i + 1 < args.len) {
             i += 1;
             o.owner = args[i];
@@ -275,6 +282,8 @@ const usage =
     \\                           (`bg  6: 0-119 #31353d`, `fg  6: 0-7 #61afef+b`)
     \\  --prefetch                warm the pane's cache; 0 complete, 2 partial, 1 could not run
     \\  --only prs|prs-mine|prs-awaiting|pipelines|branches   one family of tabs
+    \\  --focus REPO#ID          land the cursor on that pull request once the
+    \\                           listing is in, and open its detail
     \\
 ;
 
@@ -1047,7 +1056,7 @@ fn dumpCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: A
         }
     }
 
-    var app = try app_mod.App.init(gpa, io, session.loaded.config, session.loaded.path, .{ .only = only, .mine = mine, .awaiting = awaiting, .workspace_dir = env.get("MNML_WORKSPACE") orelse "" });
+    var app = try app_mod.App.init(gpa, io, session.loaded.config, session.loaded.path, .{ .only = only, .mine = mine, .awaiting = awaiting, .focus = opts.focus, .workspace_dir = env.get("MNML_WORKSPACE") orelse "" });
     defer app.deinit();
     if (app.tabs.len == 0) {
         try err.print("mnml-bitbucket --dump: no tabs of that family in {s}\n", .{session.loaded.path});
@@ -1329,7 +1338,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
     defer warm_lock.deinit();
     const may_warm = warm_lock.acquire(@floatFromInt(nowSecs(io)));
 
-    var app = try app_mod.App.init(gpa, io, session.loaded.config, session.loaded.path, .{ .only = only, .mine = mine, .awaiting = awaiting, .workspace_dir = env.get("MNML_WORKSPACE") orelse mount.hello.workspace });
+    var app = try app_mod.App.init(gpa, io, session.loaded.config, session.loaded.path, .{ .only = only, .mine = mine, .awaiting = awaiting, .focus = opts.focus, .workspace_dir = env.get("MNML_WORKSPACE") orelse mount.hello.workspace });
     defer app.deinit();
     app.may_warm = may_warm;
     // The worker leaves a long wait where the paint loop finds it.
