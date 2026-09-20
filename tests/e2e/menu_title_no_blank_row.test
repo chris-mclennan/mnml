@@ -1,0 +1,13 @@
+# width: 120
+# height: 40
+# A TITLED context menu is `rows + 2` tall, the same as a dropdown. The
+# title is painted INSIDE the top border by `overlay.frameLook`, so the
+# height that also reserved a row for it left one empty line above the
+# bottom border of every right-click menu in the app. The reference
+# editor (`src/ui/context_menu.rs`) has the same off-by-one; this
+# departs from it (`docs/PARITY.md`).
+write a.txt hello
+open a.txt
+rightclick 50 2
+expect screen contains "Save"
+expect screen lacks "│                           │"

@@ -257,7 +257,7 @@ bottom border.** `menuSize` (`src/app/render.zig:2536`) returns
 now: tests/e2e/tab_strip_hidden_count.test — passes
 border, so a titled menu is one row too tall. Dropdowns
 (`h = rows + 2`) are correct, which is why the `»` popup has no blank
-row. `standard-10-menu-blank-row.test`, FAIL line 14.
+row. `standard-10-menu-blank-row.test`, FAIL line 14 → `tests/e2e/menu_title_no_blank_row.test`, passes.
 
 **Standard #14 (second half) — the palette box re-anchors as you type.**
 `picker.placeWith` sizes the box from the filtered count and
@@ -320,7 +320,7 @@ One line each, in the order worth doing them. Items 1-7 shipped on
    whole-tail scroll (`src/ui/bufferline.zig:465`).
 5. ✅ **Stop restoring shell ptys as running processes** — persist the pane
    and let the user start it, or restore it exited.
-6. **Subtract the title row from `menuSize`'s height** for titled
+6. ✅ **Subtract the title row from `menuSize`'s height** for titled
    context menus (`src/app/render.zig:2536`).
 7. **Anchor the palette box on open** and let only the list shrink
    (`picker.placeWith` / `overlay.place`).
@@ -495,7 +495,7 @@ Plus `multilang-http-history-commands-noop` (2) — **by-design**, see above.
 | 7 | 2 | fixed-since | `4c7a7567` — `f5` continue, `shift+f5` terminate |
 | 8 | 2 | fixed-since | `954d7b89` — the globe opens a pane |
 | 9 | 2 | fixed-since | Welcome paints; it is an overlay, which is why `panes` never changed |
-| 10 | 3 | **still-reproduces** | `menuSize` adds the title row twice for titled context menus |
+| 10 | 3 | **fixed (this branch)** | `menuSize` is `rows + 2`; the title lives in the border |
 | 11 | 3 | fixed-since | `d833b671` — the `»` list is a dropdown, so its cursor shows |
 | 12 | 3 | **fixed (this branch)** | the chip is pulled back against the chevrons; it paints on any overflow |
 | 13 | 3 | fixed / **fixed (this branch)** | Info panel fixed (`14cb7d9b`); the overlay's header is the active profile's leader |

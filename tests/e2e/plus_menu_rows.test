@@ -2,8 +2,12 @@
 # Rust's `Create…` menu (src/app/context_menus.zig `plus_tree`) from
 # the empty strip's `󰐕` at column 32: the four groups with their icons
 # and the enabled integration chips as a fifth, each a `▸ ` row, the
-# frame at x 31 with its blank row above the bottom edge; a hover on a
-# group shows its rows beside it (the child hung from the row); Esc closes.
+# frame at x 31 closing straight under the last row — the title sits
+# INSIDE the top border, so `rows + 2` is the whole frame and there is
+# no blank line above the bottom edge (2026-09-20: `menuSize` used to
+# reserve a row for the title as well, and this file pinned the gap); a
+# hover on a group shows its rows beside it (the child hung from the
+# row); Esc closes.
 click 32 1
 expect screen contains "┌ Create… ──────────┐"
 expect screen contains "│   New          ▸ │"
@@ -11,7 +15,7 @@ expect screen contains "│   Open         ▸ │"
 expect screen contains "│ 󰚩  AI           ▸ │"
 expect screen contains "│   Dock         ▸ │"
 expect screen contains "│   Integrations ▸ │"
-expect screen contains "│                   │"
+expect screen lacks "│                   │"
 hover 36 3
 expect screen contains "│   New          ▸ │┌───────────────────┐"
 expect screen contains "│   Scratch buffer │"

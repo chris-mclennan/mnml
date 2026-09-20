@@ -2481,11 +2481,12 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
 /// `bg2`, the selected row `bg_dark` on cyan, a child beside its
 /// parent row, to the right when it fits, else to the left.
 ///
-/// A context menu (`m.dropdown == false`) carries its title in the
-/// top border and one blank row above the bottom one (Rust reserves a
-/// title row the border already holds); a row is ` <glyph>  label `,
-/// padded, then `▸ ` on a parent row or `⋮ ` on the focused leaf of a
-/// curatable menu. A menu-bar dropdown has no title; its row is a
+/// A context menu (`m.dropdown == false`) carries its title in the top
+/// border and nothing else: the frame is `rows + 2` tall, as a
+/// dropdown's is. (It used to reserve a title row the border already
+/// held, which painted as a blank line above the bottom border.) A row
+/// is ` <glyph>  label `, padded, then `▸ ` on a parent row or `⋮ ` on
+/// the focused leaf of a curatable menu. A menu-bar dropdown has no title; its row is a
 /// two-cell marker (`▸ ` on the highlighted row), the icon column
 /// (three cells, when any row has an icon), the label, and ` ▸` at
 /// the end of a parent row. The highlight paints only once the menu
@@ -2587,8 +2588,14 @@ fn menuSize(ui: Ui, title: ?[]const u8, items: []const command.MenuItem, dropdow
     var longest: u16 = @max(widest + menu_glyph.width, 8);
     if (title) |tt| longest = @max(longest, ui.width(tt));
     const inner = @max(longest + 2, context_min_inner);
-    const title_rows: u16 = if (title != null) 1 else 0;
-    return .{ .w = inner + 2, .h = rows + title_rows + 2 };
+    // A titled context menu is `rows + 2`, the same as a dropdown. The
+    // title is NOT a row: `overlay.frameLook` paints it INSIDE the top
+    // border, so a height that reserved a row for it left an empty line
+    // above the bottom border of every right-click menu in the app —
+    // the reference editor (`src/ui/context_menu.rs`, `items.len() +
+    // title_rows + 2`) has the same off-by-one, and this departs from it
+    // deliberately (`docs/PARITY.md`).
+    return .{ .w = inner + 2, .h = rows + 2 };
 }
 
 const RowsProps = struct {
