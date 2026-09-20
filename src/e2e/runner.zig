@@ -979,6 +979,18 @@ pub fn runPath(gpa: Allocator, io: Io, factory: Factory, root: []const u8, opts:
             try out.flush();
             continue;
         };
+        // `# requires: optimized`: the file's deadlines are pinned
+        // outside the runner — the `wait <ms>` it spells out, and the
+        // `--life-secs` it gives the offline server it starts itself —
+        // so against an unoptimized build it fails on the clock and says
+        // nothing about the app. Skipped with the reason and the
+        // command, rather than failing `zig build e2e` (which builds
+        // Debug by default) on something the shipped build passes.
+        if (header.requires_optimized and debug_slowdown != 1) {
+            try out.print("⊘ e2e SKIP (needs an optimized build — `zig build e2e -Doptimize=ReleaseSafe`): {s}\n", .{path});
+            try out.flush();
+            continue;
+        }
         var one: [1]Size = undefined;
         // A file that names its own size is telling us where it was
         // written, so that is where it asserts. Only the sweep's sizes
@@ -1586,6 +1598,31 @@ test "runPath: --filter keeps the matching names silently, --skip announces the 
     try t.expectEqualStrings(expected, out.written());
     try t.expectEqualStrings("alpha_one", stemOf("/x/alpha_one.test"));
     try t.expectEqualStrings("notes", stemOf("notes"));
+}
+
+test "`# requires: optimized` runs against a shipped build and is announced as skipped against a Debug one" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+    const path = try env.script("pinned.test", "# requires: optimized\nexpect screen contains ok\n");
+    defer t.allocator.free(path);
+    var sf: StubFactory = .{ .proto = .{ .text = "ok" } };
+    var out: Io.Writer.Allocating = .init(t.allocator);
+    defer out.deinit();
+    const s = try runPath(t.allocator, t.io, sf.factory(), path, env.opts(), &out.writer);
+    if (debug_slowdown == 1) {
+        // The shipped build runs it like any other file.
+        try t.expectEqual(@as(usize, 1), s.total);
+        try t.expectEqual(@as(usize, 0), s.failed);
+        try t.expectEqualStrings("▶ e2e: pinned.test\n  ok   pinned.test\n", out.written());
+    } else {
+        // Debug: not run, not failed, and the line says why and what to
+        // type — the whole point is that it stops reading as a bug in
+        // the app.
+        try t.expectEqual(@as(usize, 0), s.total);
+        try t.expectEqual(@as(usize, 0), s.failed);
+        try t.expect(std.mem.startsWith(u8, out.written(), "⊘ e2e SKIP (needs an optimized build — `zig build e2e -Doptimize=ReleaseSafe`): "));
+        try t.expect(std.mem.endsWith(u8, out.written(), "pinned.test\n"));
+    }
 }
 
 test "runPath on a single file and on an empty directory" {

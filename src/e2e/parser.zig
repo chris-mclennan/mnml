@@ -68,7 +68,10 @@
 //! most `Header.max_env` of them, and one more is a parse error rather
 //! than a line that disappears), and
 //! `# shared-data-root` (this file wants the run's one data root instead
-//! of the private one every file gets).
+//! of the private one every file gets), and `# requires: optimized`
+//! (this file's deadlines are pinned outside the runner — an offline
+//! server started with `--lifetime-secs 180` — so an unoptimized build
+//! announces it as skipped instead of failing it on the clock).
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -141,6 +144,17 @@ pub const Header = struct {
     /// Option-as-Alt fix writes ghostty's `macos-option-as-alt`, which
     /// exists nowhere else, so elsewhere the row says there is no fix.
     requires_os: ?std.Target.Os.Tag = null,
+    /// `# requires: optimized`: the file's timings only hold against a
+    /// shipped build, so an unoptimized one announces it as skipped
+    /// rather than failing it. Not a get-out — it is for a file whose
+    /// deadlines are pinned OUTSIDE the runner and so cannot be scaled
+    /// with the build: the `wait <ms>` a script spells out, and the
+    /// `--life-secs` it gives the offline server it starts itself. One
+    /// family carries it — the files that mount a real integration child
+    /// against a server they start themselves — because which member of
+    /// it falls over in a Debug build depends on what else the machine
+    /// is doing. Nothing outside that family has needed the mark.
+    requires_optimized: bool = false,
     /// `# shared-data-root`: this file wants the run's one data root
     /// rather than the private one every file otherwise gets. Nothing in
     /// the corpus asks for it; it exists so a file that genuinely needs
@@ -443,6 +457,7 @@ pub fn parseHeader(text: []const u8) Header {
             if (std.ascii.eqlIgnoreCase(what, "macos")) h.requires_os = .macos;
             if (std.ascii.eqlIgnoreCase(what, "linux")) h.requires_os = .linux;
             if (std.ascii.eqlIgnoreCase(what, "windows")) h.requires_os = .windows;
+            if (std.ascii.eqlIgnoreCase(what, "optimized")) h.requires_optimized = true;
         }
         if (std.ascii.eqlIgnoreCase(after_hash, "shared-data-root")) h.shared_data_root = true;
         if (std.ascii.startsWithIgnoreCase(after_hash, "height:")) {
@@ -666,6 +681,10 @@ test "header directives come only from the leading comment block" {
     try t.expectEqual(@as(?std.Target.Os.Tag, .linux), parseHeader("#  Requires: Linux \nopen x\n").requires_os);
     try t.expectEqual(@as(?std.Target.Os.Tag, null), parseHeader("# requires: network\nopen x\n").requires_os);
     try t.expectEqual(@as(?std.Target.Os.Tag, null), parseHeader("open x\n# requires: macos\n").requires_os);
+    try t.expect(parseHeader("# requires: optimized\nopen x\n").requires_optimized);
+    try t.expect(parseHeader("#  Requires: Optimized \nopen x\n").requires_optimized);
+    try t.expect(!parseHeader("# requires: network\nopen x\n").requires_optimized);
+    try t.expect(!parseHeader("open x\n# requires: optimized\n").requires_optimized);
     try t.expect(parseHeader("# shared-data-root\nopen x\n").shared_data_root);
     try t.expect(parseHeader("#  Shared-Data-Root  \nopen x\n").shared_data_root);
     try t.expect(!parseHeader("# width: 120\nopen x\n").shared_data_root);
