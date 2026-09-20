@@ -522,6 +522,15 @@ fn ptyKey(app: *App, id: PaneId, p: *pty_pane.PtyPane, k: Key) Allocator.Error!v
     const modified = k.mods.ctrl or k.mods.alt or k.mods.super;
     if (p.exit != null) {
         if (modified and try chordChain(app, k)) return;
+        // A pane restored from a saved session never ran: a key offers
+        // it back rather than closing the tab the restore just brought.
+        if (p.dormant) {
+            pty_pane.restart(app, id) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {},
+            };
+            return;
+        }
         try app.forceClosePane(id);
         return;
     }

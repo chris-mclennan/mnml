@@ -1726,7 +1726,11 @@ fn drawDropHint(app: *App, ui: Ui, pane: PaneId, body: Rect) void {
 fn drawPty(app: *App, ui: Ui, id: PaneId, p: *pty_pane.PtyPane, rect: Rect) Allocator.Error!void {
     if (!pty_pane.supported) return;
     const focused = app.active == id and app.focus == .pane;
-    const exit_label: ?[]const u8 = if (p.exit) |e| switch (e) {
+    // A dormant pane never ran, so it has no exit to report and a key
+    // starts it rather than closing it.
+    const exit_label: ?[]const u8 = if (p.dormant)
+        ui.fmt("[exited] — any key restarts {s}", .{p.label})
+    else if (p.exit) |e| switch (e) {
         .code => |c| ui.fmt("[exited {d}] — any key closes", .{c}),
         .signal => |sg| ui.fmt("[killed by signal {d}] — any key closes", .{sg}),
     } else null;
@@ -1735,7 +1739,7 @@ fn drawPty(app: *App, ui: Ui, id: PaneId, p: *pty_pane.PtyPane, rect: Rect) Allo
     // column taken off. What the child sees is exactly this rect.
     const body = rect;
     p.fit(body.w, body.h);
-    try p.grid.update(app.gpa, p.session.terminal());
+    if (p.session) |session| try p.grid.update(app.gpa, session.terminal());
     const cursor = pty_view.draw(ui, body, &p.grid, .{
         .focused = focused,
         .exit_label = exit_label,

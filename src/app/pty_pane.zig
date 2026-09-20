@@ -92,6 +92,11 @@ pub const OpenOptions = struct {
     /// app's environment for this child only (`MNML_WORKSPACE` pointing
     /// at a session worktree).
     env_extra: []const []const u8 = &.{},
+    /// Open the pane WITHOUT starting anything: the tab, the title and
+    /// `[exited]`, waiting for a key to start it. What a restored
+    /// session uses, so relaunching an editor never runs a shell (and
+    /// its rc files, and whatever it was in the middle of) unasked.
+    dormant: bool = false,
 };
 
 /// The reader thread's way into the app: posts `.pty_readable{pane}`
@@ -111,7 +116,15 @@ const Wire = struct {
 };
 
 pub const PtyPane = struct {
-    session: if (supported) *Session else void,
+    /// The child and its pty — `null` on a DORMANT pane: one restored
+    /// from `.mnml/session.zon`, which comes back with its tab, its
+    /// title and `[exited]` rather than a shell that started itself.
+    /// Neovim's `:mksession` does not bring `:terminal` buffers back as
+    /// live processes either, and a shell that runs a workspace's rc
+    /// files unasked at launch is a surprise nobody chose. Any key on
+    /// the pane starts it (`restart`), which is where the session is
+    /// filled in.
+    session: ?*Session,
     grid: Grid = .{},
     wire: *Wire,
     /// The tab label. Owned.
@@ -151,12 +164,14 @@ pub const PtyPane = struct {
     /// The grid size the session was last fitted to.
     cols: u16,
     rows: u16,
+    /// Restored from a saved session and never started: `session` is
+    /// null, `exit` is set so every live-pane path already skips it, and
+    /// the footer says a key restarts rather than closes.
+    dormant: bool = false,
 
     pub fn deinit(self: *PtyPane, gpa: Allocator) void {
-        if (supported) {
-            self.session.deinit();
-            self.grid.deinit(gpa);
-        }
+        if (self.session) |s| s.deinit();
+        self.grid.deinit(gpa);
         gpa.destroy(self.wire);
         if (self.accent_color) |c| gpa.free(c);
         gpa.free(self.label);
@@ -168,11 +183,11 @@ pub const PtyPane = struct {
     /// Drain the ring into the terminal and notice an exit. The frame
     /// after this repaints the pane.
     pub fn pump(self: *PtyPane, app: *App) void {
-        if (!supported) return;
-        const fed = self.session.pump();
+        const session = self.session orelse return;
+        const fed = session.pump();
         if (fed) self.fed_gen +%= 1;
         if (self.exit == null) {
-            self.exit = exitOf(self.session.exited());
+            self.exit = exitOf(session.exited());
             if (self.exit != null) {
                 self.exited_at_ms = app.now_ms;
                 self.noticeExit(app);
@@ -207,30 +222,31 @@ pub const PtyPane = struct {
     /// Resize the pty and the terminal to the rect the layout gave the
     /// pane. Cheap when unchanged.
     pub fn fit(self: *PtyPane, cols: u16, rows: u16) void {
-        if (!supported) return;
         if (cols == 0 or rows == 0) return;
         if (cols == self.cols and rows == self.rows) return;
-        self.session.resize(cols, rows) catch return;
+        // A dormant pane has no pty to size; the grid it paints is empty
+        // either way, and the fresh child takes these cells.
+        if (self.session) |s| s.resize(cols, rows) catch return;
         self.cols = cols;
         self.rows = rows;
     }
 
     pub fn write(self: *PtyPane, bytes: []const u8) void {
-        if (!supported) return;
         if (self.exit != null) return;
+        const session = self.session orelse return;
         // Typing brings the live screen back.
-        self.session.terminal().scrollViewport(.bottom);
-        self.session.write(bytes);
+        session.terminal().scrollViewport(.bottom);
+        session.write(bytes);
     }
 
     pub fn scrollBy(self: *PtyPane, delta: isize) void {
-        if (!supported) return;
-        self.session.terminal().scrollViewport(.{ .delta = delta });
+        const session = self.session orelse return;
+        session.terminal().scrollViewport(.{ .delta = delta });
     }
 
     pub fn scrollTo(self: *PtyPane, where: enum { top, bottom }) void {
-        if (!supported) return;
-        self.session.terminal().scrollViewport(switch (where) {
+        const session = self.session orelse return;
+        session.terminal().scrollViewport(switch (where) {
             .top => .top,
             .bottom => .bottom,
         });
@@ -238,8 +254,8 @@ pub const PtyPane = struct {
 
     /// What the child has asked the terminal for — the encoders read it.
     pub fn encoding(self: *const PtyPane) Encoding {
-        if (!supported) return .{};
-        const term = &self.session.term;
+        const session = self.session orelse return .{};
+        const term = &session.term;
         const kitty = term.screens.active.kitty_keyboard.current();
         return .{
             .kitty = kitty.disambiguate or kitty.report_all,
@@ -258,8 +274,8 @@ pub const PtyPane = struct {
 
     /// The child's title (OSC 0/2), if it set one.
     pub fn childTitle(self: *const PtyPane) ?[]const u8 {
-        if (!supported) return null;
-        return self.session.term.getTitle();
+        const session = self.session orelse return null;
+        return session.term.getTitle();
     }
 };
 
@@ -297,7 +313,7 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
         const eq = std.mem.indexOfScalar(u8, kv, '=') orelse continue;
         try m.put(kv[0..eq], kv[eq + 1 ..]);
     };
-    const session = pty.Session.spawn(gpa, app.io, .{
+    const session: ?*Session = if (opts.dormant) null else pty.Session.spawn(gpa, app.io, .{
         .cols = size.cols,
         .rows = size.rows,
         .env = if (env_copy) |*m| m else &app.env,
@@ -309,22 +325,29 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
         error.Canceled => return error.Canceled,
         else => return app.diag.fail(app.frame.allocator(), "{s}: {s}", .{ label, @errorName(err) }),
     };
-    errdefer session.deinit();
+    errdefer if (session) |sn| sn.deinit();
     const accent: ?[]u8 = if (opts.accent_color) |c| (if (accent_color.canonical(c)) |name| try gpa.dupe(u8, name) else null) else null;
     errdefer if (accent) |c| gpa.free(c);
 
-    const got = try app.panes.add(.{ .pty = .{
-        .session = session,
-        .wire = wire,
-        .label = label,
-        .argv = argv,
-        .cwd = cwd,
-        .kind = opts.kind,
-        .after_exit = opts.after_exit,
-        .accent_color = accent,
-        .cols = size.cols,
-        .rows = size.rows,
-    } });
+    const got = try app.panes.add(.{
+        .pty = .{
+            .session = session,
+            .wire = wire,
+            .label = label,
+            .argv = argv,
+            .cwd = cwd,
+            .kind = opts.kind,
+            // A dormant pane reads as exited from the first frame, so every
+            // path that skips a dead child (`write`, the cursor, the
+            // sessions card) skips it without learning a new state.
+            .exit = if (opts.dormant) .{ .code = 0 } else null,
+            .dormant = opts.dormant,
+            .after_exit = opts.after_exit,
+            .accent_color = accent,
+            .cols = size.cols,
+            .rows = size.rows,
+        },
+    });
     std.debug.assert(got == id);
     place(app, id, opts.placement) catch |err| {
         app.panes.remove(id);
@@ -489,11 +512,13 @@ pub fn restart(app: *App, id: PaneId) CommandError!void {
         error.Canceled => return error.Canceled,
         else => return app.diag.fail(app.frame.allocator(), "{s}: {s}", .{ p.label, @errorName(err) }),
     };
-    p.session.deinit();
+    if (p.session) |old| old.deinit();
     p.grid.deinit(app.gpa);
     p.grid = .{};
     p.session = fresh;
     p.exit = null;
+    p.exited_at_ms = null;
+    p.dormant = false;
     app.needs_render = true;
 }
 
@@ -543,9 +568,10 @@ pub fn tickAll(app: *App) void {
     for (app.panes.slots.items) |*slot| if (slot.*) |*pane| switch (pane.*) {
         .pty => |*p| {
             if (p.exit != null) continue;
-            if (p.session.shared.ring.len() > 0 or p.session.eof()) {
+            const session = p.session orelse continue;
+            if (session.shared.ring.len() > 0 or session.eof()) {
                 p.pump(app);
-            } else if (p.session.exited()) |e| {
+            } else if (session.exited()) |e| {
                 p.exit = PtyPane.exitOf(e);
                 p.exited_at_ms = app.now_ms;
                 p.noticeExit(app);

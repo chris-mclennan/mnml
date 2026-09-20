@@ -234,7 +234,7 @@ docs/research/hunt-repros/standard-12-tab-strip-no-hidden-count.test
   FAIL line 35: screen does not contain " hidden "
 ```
 
-### 5. Session restore re-spawns terminal panes as live shells — SEV-3 (vim #22)
+### 5. Session restore re-spawns terminal panes as live shells — SEV-3 (vim #22) — **fixed (this branch)**
 
 `src/app/session.zig:261-266` saves shell and command ptys; `:621-628`
 calls `pty_pane.open` on restore. Relaunching after a session that had a
@@ -269,6 +269,10 @@ by-design — `src/app/dispatch.zig:1979` documents it as Rust parity.)
 ## By-design (5)
 
 | finding | why |
+now: tests/e2e/session_restore_terminal_dormant.test — passes. The
+     assertion moved with the fix: the pane IS saved (losing the tab
+     would be its own bug); it comes back DORMANT, `[exited] — any key
+     restarts`, which is the half the finding was about.
 |---|---|
 | `nvchad2-vblock-cursor-past-eol-short-line` | Block corners are virtual columns (`:help visual-block`, `:help v_b_I`). Real `vim -es -u NONE` reproduces mnml's output exactly; the finding's "expected" clamp is Normal-mode behavior. |
 | `multilang-http-history-commands-noop` | Did not reproduce on the hunt's own build. `http.history` opens with both rows; the toast the report quoted is drawn below the excerpt it pasted. `tests/e2e/http_history_picker.test` passes. |
@@ -314,7 +318,7 @@ One line each, in the order worth doing them. Items 1-7 shipped on
    reachable again.
 4. ✅ **Paint `+N hidden` whenever any tab is off-strip**, not only on a
    whole-tail scroll (`src/ui/bufferline.zig:465`).
-5. **Stop restoring shell ptys as running processes** — persist the pane
+5. ✅ **Stop restoring shell ptys as running processes** — persist the pane
    and let the user start it, or restore it exited.
 6. **Subtract the title row from `menuSize`'s height** for titled
    context menus (`src/app/render.zig:2536`).
@@ -529,6 +533,6 @@ Plus `multilang-http-history-commands-noop` (2) — **by-design**, see above.
 | 19 | 3 | fixed-since | `28b2632e` — `u` lands on the restored text |
 | 20 | 3 | fixed-since | `ex q` leaves `"panes":[]` |
 | 21 | 3 | fixed-since | `f573a8bb` — a second Tab descends into the one directory match |
-| 22 | 3 | **still-reproduces** | `session.zig:261` saves ptys, `:621` re-opens them live |
+| 22 | 3 | **fixed (this branch)** | `session.zig:261` still saves ptys; `:621` restores them dormant |
 | once A | — | fixed-since | `b5fcbcfe` — `acceptsGhost()` guards both accept and fetch |
 | once B | — | by-design | `headless.zig:88` emits `signal` only for SIGTERM/INT/HUP — an external kill |
