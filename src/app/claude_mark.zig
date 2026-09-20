@@ -138,10 +138,10 @@ test "the mark survives a restart: the loader reads the persisted key back off t
 /// The surfaces that draw the Claude mark. Each must take it from the
 /// resolver: a painter that names the codepoint keeps the old mark
 /// after the menu changes it, and nothing but clicking would find it.
-/// `config/Config.zig` and `app/usage_pane.zig` are not here — their
-/// `U+F1E00` is the integration registry's DEFAULT DATA, the value
-/// `allChips` compares against to know the row is still the shipped
-/// figure, not a paint.
+/// `ui/bufferline.zig` is the one file that spells a codepoint, and
+/// the registry defaults that need the shipped figure by value borrow
+/// it from there (`config/Config.zig`, `app/integrations.zig`) rather
+/// than write it again.
 const painters = [_]struct { name: []const u8, src: []const u8, resolves: bool }{
     .{ .name = "app/render.zig", .src = @embedFile("render.zig"), .resolves = true },
     .{ .name = "app/statusline.zig", .src = @embedFile("statusline.zig"), .resolves = true },
