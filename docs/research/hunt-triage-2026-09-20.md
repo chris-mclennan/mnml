@@ -218,7 +218,7 @@ docs/research/hunt-repros/standard-13-which-key-shows-vim-chords.test
   FAIL line 12: screen unexpectedly contains "┌ <leader> "
 ```
 
-### 4. Tab-strip overflow never shows a hidden count — SEV-3 (standard #12)
+### 4. Tab-strip overflow never shows a hidden count — SEV-3 (standard #12) — **fixed (this branch)**
 
 The `+N hidden` chip exists (`0e3c7a66`) but `src/ui/bufferline.zig:465`
 paints it only when the strip is scrolled to a tail that fits whole —
@@ -254,6 +254,7 @@ docs/research/hunt-repros/vim-22-session-restores-terminal.test
 **Standard #10 — a titled context menu paints one blank row above its
 bottom border.** `menuSize` (`src/app/render.zig:2536`) returns
 `h = rows + title_rows + 2`, but the title is painted *inside* the top
+now: tests/e2e/tab_strip_hidden_count.test — passes
 border, so a titled menu is one row too tall. Dropdowns
 (`h = rows + 2`) are correct, which is why the `»` popup has no blank
 row. `standard-10-menu-blank-row.test`, FAIL line 14.
@@ -311,7 +312,7 @@ One line each, in the order worth doing them. Items 1-7 shipped on
 3. ✅ **Title the standard profile's which-key overlay from the active
    profile** rather than always as `<leader>`, once (1) makes it
    reachable again.
-4. **Paint `+N hidden` whenever any tab is off-strip**, not only on a
+4. ✅ **Paint `+N hidden` whenever any tab is off-strip**, not only on a
    whole-tail scroll (`src/ui/bufferline.zig:465`).
 5. **Stop restoring shell ptys as running processes** — persist the pane
    and let the user start it, or restore it exited.

@@ -1,0 +1,37 @@
+# width: 120
+# height: 40
+# The tab strip's ` +N hidden ` chip paints whenever ANY tab is off the
+# strip — not only when the strip happens to be scrolled to a tail that
+# fits whole. The chip used to be painted after the last chip with
+# whatever room was left before the chevrons, and in the ordinary
+# overflow case (the last chip cut at the right edge) there was none,
+# so twelve buffers at 120 columns said nothing about the missing ones.
+# `stripRight` decides the chips' right edge before anything is painted:
+# the chip takes the leftover cells where there are some (a whole tail
+# lays out exactly as before), and is GIVEN cells where there are not.
+write file01name.txt x
+write file02name.txt x
+write file03name.txt x
+write file04name.txt x
+write file05name.txt x
+write file06name.txt x
+write file07name.txt x
+write file08name.txt x
+write file09name.txt x
+write file10name.txt x
+write file11name.txt x
+write file12name.txt x
+open file01name.txt
+open file02name.txt
+open file03name.txt
+open file04name.txt
+open file05name.txt
+open file06name.txt
+open file07name.txt
+open file08name.txt
+open file09name.txt
+open file10name.txt
+open file11name.txt
+open file12name.txt
+expect screen contains "file12name.txt"
+expect screen contains " hidden "

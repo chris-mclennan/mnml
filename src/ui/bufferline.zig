@@ -387,13 +387,57 @@ fn countPainted(ui: Ui, tabs: []const Tab, room: u16, first: usize) usize {
     return n;
 }
 
+/// The label the ` +N hidden ` chip would carry for `n` tabs off the
+/// strip — one spelling, so the room measured for it and the string
+/// painted into that room can never disagree.
+fn hiddenLabel(ui: Ui, n: usize) []const u8 {
+    return ui.fmt(" +{d} hidden ", .{n});
+}
+
+/// Where the chips end: `room` cells from `first`, chips measured whole
+/// and cut at the edge, a cell of gap between them. The paint loop's
+/// arithmetic, without the paint — so the layout can be decided before
+/// a cell is touched.
+fn paintedEnd(ui: Ui, tabs: []const Tab, room: u16, first: usize) u16 {
+    var x: u16 = 0;
+    var i = first;
+    while (i < tabs.len) : (i += 1) {
+        if (x >= room) break;
+        x += @min(chipWidth(ui, tabs[i]), room - x) + 1;
+    }
+    return x;
+}
+
+/// The right edge the chips lay out against.
+///
+/// Normally the strip's own (`g.tabs_right`): ` +N hidden ` takes the
+/// cells left over after the last chip and the `󰐕`, which is where it
+/// has always gone, so a strip scrolled to a whole tail is laid out
+/// cell for cell as before. When there are none — the ordinary overflow
+/// case, the last chip cut at the right edge — the chip is GIVEN its
+/// cells instead of going unpainted, because a strip that hides tabs
+/// and says nothing about them is the bug. It never takes the `󰐕`'s
+/// room: that button has nowhere else to be.
+fn stripRight(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts, g: Geometry) u16 {
+    const room = g.tabs_right -| area.x;
+    const first = clampScroll(ui, tabs, room, opts.first);
+    const hidden = first + (tabs.len - first - countPainted(ui, tabs, room, first)) + opts.hidden_extra;
+    if (hidden == 0) return g.tabs_right;
+    const w = ui.width(hiddenLabel(ui, hidden));
+    const plus_slot: u16 = if (opts.new_tab != null) plus_w else 0;
+    const end = area.x + paintedEnd(ui, tabs, room, first);
+    const after_plus = @min(end, g.arrows_x -| plus_slot) + plus_slot;
+    if (after_plus + w <= g.arrows_x) return g.tabs_right;
+    return @max(g.tabs_right -| w, area.x);
+}
+
 /// The offset to paint from when the active tab changed: `current` when
 /// the active tab is already in view, else the active tab itself (the
 /// clamp pulls it back so the tail fills the strip).
 pub fn fitActive(ui: Ui, area: Rect, tabs: []const Tab, current: usize, opts: Opts) usize {
     if (tabs.len == 0) return 0;
     const g = geometry(ui, area, tabs.len, opts);
-    const room = g.tabs_right -| area.x;
+    const room = stripRight(ui, area, tabs, opts, g) -| area.x;
     const first = clampScroll(ui, tabs, room, current);
     var active: usize = 0;
     for (tabs, 0..) |tab, i| if (tab.active) {
@@ -411,14 +455,16 @@ pub fn draw(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Window {
     const y = area.y;
     const g = geometry(ui, area, tabs.len, opts);
 
-    // The tabs from the clamped offset, a cell of strip between chips.
-    const first = clampScroll(ui, tabs, g.tabs_right -| area.x, opts.first);
+    // The tabs from the clamped offset, a cell of strip between chips —
+    // against the edge ` +N hidden ` leaves them (`stripRight`).
+    const tabs_right = stripRight(ui, area, tabs, opts, g);
+    const first = clampScroll(ui, tabs, tabs_right -| area.x, opts.first);
     var x = area.x;
     var painted: usize = 0;
     var i = first;
     while (i < tabs.len) : (i += 1) {
-        if (x >= g.tabs_right) break;
-        const w = paintChip(ui, x, y, g.tabs_right - x, tabs[i], opts.leaf, @intCast(i));
+        if (x >= tabs_right) break;
+        const w = paintChip(ui, x, y, tabs_right - x, tabs[i], opts.leaf, @intCast(i));
         if (w == 0) break;
         x += w + 1;
         painted += 1;
@@ -457,16 +503,24 @@ pub fn draw(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Window {
     // ` +N hidden `: the tabs that are still there — off either edge of
     // the window (Rust's `tabs.len() - painted_count`, which counts the
     // scrolled-off left as well as the right) and the ones the caller
-    // kept off the strip. The chip needs room after the `+`, so it shows
-    // once the strip is scrolled to a tail that fits whole, not while a
-    // cut chip runs to the edge.
+    // kept off the strip.
+    //
+    // It PAINTS whenever any tab is off the strip. It used to sit after
+    // the last chip and only if what was left before the chevrons
+    // happened to hold it — which is room only when the strip is
+    // scrolled to a tail that fits whole. In the ordinary overflow case
+    // the last chip is cut at the right edge, nothing is left, and the
+    // one piece of chrome that says tabs are missing never painted.
+    // `stripRight` gives it the cells in exactly that case, and leaves
+    // the strip alone in the other.
     const hidden_total = first + hidden_right + opts.hidden_extra;
     if (hidden_total > 0) {
-        const label = ui.fmt(" +{d} hidden ", .{hidden_total});
+        const label = hiddenLabel(ui, hidden_total);
         const w = ui.width(label);
-        if (after_plus + w <= g.arrows_x) {
-            const r = Rect.init(after_plus, y, w, 1);
-            _ = ui.putStr(after_plus, y, w, label, .{ .fg = p.comment, .bg = p.bg2 });
+        const cx = @max(@min(after_plus, g.arrows_x -| w), area.x);
+        if (cx + w <= g.arrows_x) {
+            const r = Rect.init(cx, y, w, 1);
+            _ = ui.putStr(cx, y, w, label, .{ .fg = p.comment, .bg = p.bg2 });
             if (opts.hidden_button) |id| ui.hit(r, .{ .button = id });
         }
     }
@@ -831,36 +885,39 @@ test "an overflowing strip: the offset clamps to what fills it, the chevrons lig
         .{ .id = 5, .title = "five.txt", .glyph = "x", .active = true },
     };
     const opts: Opts = .{ .new_tab = 77, .scroll_left = 70, .scroll_right = 71 };
-    // From the start: 40 cells hold two chips whole and three cells of
-    // the third; the + takes its reserved slot before the chevrons.
+    // From the start: three tabs are off the strip, so ` +3 hidden ` is
+    // GIVEN its cells (`stripRight`) and what is left holds one chip
+    // whole and six cells of the next; the + keeps its reserved slot.
+    // The chip costs a tab of window — the trade it exists to make.
     const w0 = draw(f.ui(), f.full(), &tabs, opts);
-    try f.expectRow(0, " x one.txt " ++ close_glyph ++ "   x two.txt " ++ close_glyph ++ "   x  " ++ plus_glyph ++ "  " ++ arrow_left_glyph ++ "  " ++ arrow_right_glyph);
+    try f.expectRow(0, " x one.txt " ++ close_glyph ++ "   x two  " ++ plus_glyph ++ " +3 hidden  " ++ arrow_left_glyph ++ "  " ++ arrow_right_glyph);
     try testing.expectEqual(@as(usize, 0), w0.first);
-    try testing.expectEqual(@as(usize, 3), w0.painted);
-    try testing.expectEqual(@as(usize, 2), w0.hidden_right);
+    try testing.expectEqual(@as(usize, 2), w0.painted);
+    try testing.expectEqual(@as(usize, 3), w0.hidden_right);
     try testing.expect(!hasButton(&f, 70));
     try testing.expectEqual(@as(u32, 71), f.hits.at(38, 0).?.button);
-    try testing.expectEqual(@as(u32, 77), f.hits.at(32, 0).?.button);
-    // The cut third chip keeps its tab hit and has no close.
-    try testing.expectEqual(@as(u16, 2), f.hits.at(29, 0).?.tab.idx);
-    try testing.expect(f.hits.at(30, 0).? == .tab);
+    try testing.expectEqual(@as(u32, 77), f.hits.at(22, 0).?.button);
+    // The cut second chip keeps its tab hit and has no close.
+    try testing.expectEqual(@as(u16, 1), f.hits.at(18, 0).?.tab.idx);
+    try testing.expect(f.hits.at(19, 0).? == .tab);
     // The active tab is last: fitActive jumps to it and the clamp pulls
-    // back to the offset whose tail fills the strip.
+    // back to the offset whose tail fills the strip — which is the last
+    // tab alone, once the chip has taken its cells.
     const first = fitActive(f.ui(), f.full(), &tabs, 0, opts);
-    try testing.expectEqual(@as(usize, 3), first);
+    try testing.expectEqual(@as(usize, 4), first);
     var g = try Fixture.init(40, 1);
     defer g.deinit();
     const w1 = draw(g.ui(), g.full(), &tabs, .{ .new_tab = 77, .scroll_left = 70, .scroll_right = 71, .first = first });
-    try g.expectRow(0, " x four.txt " ++ close_glyph ++ "   x five.txt " ++ close_glyph ++ "   " ++ plus_glyph ++ "   " ++ arrow_left_glyph ++ "  " ++ arrow_right_glyph);
-    try testing.expectEqual(@as(usize, 3), w1.hidden_left);
+    try testing.expectEqual(@as(usize, 4), w1.hidden_left);
     try testing.expectEqual(@as(usize, 0), w1.hidden_right);
+    try g.expectContains(" x five.txt " ++ close_glyph ++ "   " ++ plus_glyph ++ "  +4 hidden ");
     try testing.expectEqual(@as(u32, 70), g.hits.at(35, 0).?.button);
     try testing.expect(!hasButton(&g, 71));
     try testing.expect(hasTab(&g, 4));
     // A stale offset past that is pulled back; the active tab already in
     // view keeps the offset.
-    try testing.expectEqual(@as(usize, 3), draw(g.ui(), g.full(), &tabs, .{ .new_tab = 77, .first = 4 }).first);
-    try testing.expectEqual(@as(usize, 3), fitActive(g.ui(), g.full(), &tabs, 4, opts));
+    try testing.expectEqual(@as(usize, 4), draw(g.ui(), g.full(), &tabs, .{ .new_tab = 77, .first = 4 }).first);
+    try testing.expectEqual(@as(usize, 4), fitActive(g.ui(), g.full(), &tabs, 4, opts));
     // Everything fits: the chevrons stay, dim.
     var k = try Fixture.init(90, 1);
     defer k.deinit();
