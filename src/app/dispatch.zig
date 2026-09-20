@@ -716,6 +716,21 @@ fn chordChain(app: *App, k: Key) Allocator.Error!bool {
             // the popup owns every key under an armed leader, however
             // fast it was typed.
             const menu = if (!was_first and k.code != .esc) leaderLookup(app.chord.seq[0..app.chord.len], app.input_style == .vim) else null;
+            // An ARMED LEADER owns its whole chord, however fast it was
+            // typed: `<leader>cx` names no row, so the `x` is dropped
+            // with a word — never handed on as vim's delete-a-character.
+            // That used to fall out of the popup being open by the time
+            // the tail arrived, which only held when a pending chain was
+            // expired without reading its deadline; the popup is the
+            // timeout's fallback now, so the rule lives here.
+            //
+            // A CHARACTER tail only. A tail that is not one — an arrow,
+            // Enter, a modified chord — keeps what it always did: the
+            // leader's own fallback fires and the popup opens on it,
+            // which is the reading the popup itself gives such a key.
+            const plain_tail = k.code == .char and !k.mods.ctrl and !k.mods.alt and !k.mods.super;
+            const dead_leader = !was_first and plain_tail and menu == null and leaderArmed(app);
+            const tail: []const u8 = if (dead_leader) leaderTail(app, app.chord.seq[1..app.chord.len]) else "";
             app.chord.clear(app.gpa);
             if (menu) |hit| {
                 if (fallback) |fb| freeTarget(app, fb);
@@ -726,6 +741,12 @@ fn chordChain(app: *App, k: Key) Allocator.Error!bool {
             // popup on Esc is the opposite of what was asked), no retry.
             if (!was_first and k.code == .esc) {
                 if (fallback) |fb| freeTarget(app, fb);
+                return true;
+            }
+            if (dead_leader) {
+                if (fallback) |fb| freeTarget(app, fb);
+                const vim = app.input_style == .vim;
+                app.toast("no leader mapping: {s}{s}{s}", .{ whichkey.leaderLabel(vim), whichkey.leaderGap(vim), tail });
                 return true;
             }
             var fired = false;
@@ -763,6 +784,37 @@ fn chordChain(app: *App, k: Key) Allocator.Error!bool {
             }
         },
     }
+}
+
+/// Whether the chord chain was opened by the leader itself — the key
+/// `whichkey.leader` is bound to in the active profile, whatever the
+/// config spells it as. It is the one binding that is a command AND a
+/// prefix, so `resolveSeq` answers `pending_with_fallback` for it.
+fn leaderArmed(app: *const App) bool {
+    if (app.chord.len == 0) return false;
+    return switch (app.keymap.resolveSeq(app.chord.seq[0..1])) {
+        .pending_with_fallback => |t| t == .static and t.static == .@"whichkey.leader",
+        else => false,
+    };
+}
+
+/// The keys typed after the leader, as the dead-end toast spells them:
+/// a plain character as itself, anything else (a modified chord, an
+/// arrow) as `…`, since the toast is a sentence and not a key spec.
+fn leaderTail(app: *App, seq: []const Chord) []const u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    for (seq) |c| {
+        const ch: ?u21 = switch (c.code) {
+            .char => |v| v,
+            else => null,
+        };
+        if (ch != null and ch.? < 128 and !c.mods.ctrl and !c.mods.alt and !c.mods.super) {
+            out.append(app.frame.allocator(), @intCast(ch.?)) catch return out.items;
+        } else {
+            out.appendSlice(app.frame.allocator(), "\u{2026}") catch return out.items;
+        }
+    }
+    return out.items;
 }
 
 fn setFallback(app: *App, t: ?keymap.Target) Allocator.Error!void {

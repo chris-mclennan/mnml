@@ -140,7 +140,7 @@ standard #1 and #13, and it is the most serious thing in this document.
 
 ## Still-reproducing, ranked by user impact
 
-### 1. A bare `ctrl+k` shadows all eighteen `ctrl+k …` standard chords — SEV-2, new
+### 1. A bare `ctrl+k` shadows all eighteen `ctrl+k …` standard chords — SEV-2, new — **fixed (this branch)**
 
 `whichkey.leader` binds a bare `ctrl+k` in the standard profile
 (`src/commands/specs.zig`, `.standard = &.{"ctrl+k"}`). Pressing it opens
@@ -189,6 +189,7 @@ Half of that revert is defensible and cited in the source — "Cancel is
 the focus, as in Rust: a destructive box's Enter must not be the
 destructive act". The other half is not: pressing Enter tears the dialog
 down with **no toast and no statusline line**, which on screen is
+now: tests/e2e/chord_ctrl_k_prefix.test — passes
 indistinguishable from a delete that worked. Nothing anywhere defends
 the silence. The committed repro asserts only that undefended half.
 
@@ -281,12 +282,21 @@ no `error:` or `fatal:` on screen.
 
 ## Fix tracks
 
-One line each, in the order worth doing them.
+One line each, in the order worth doing them. Items 1-7 shipped on
+`hunt-fixes` (2026-09-20); item 8 is still open.
 
-1. **Unbind bare `ctrl+k` from `whichkey.leader` in the standard
-   profile** — leave `.vim` and `.both` alone; the eighteen `ctrl+k …`
-   chords and standard #1 and #13 all fall out of this one change.
-2. **Give the delete confirm a cancel toast**, and correct
+1. ~~**Unbind bare `ctrl+k` from `whichkey.leader` in the standard
+   profile.**~~ Done differently, and better: the binding stays, and
+   **chord resolution wins over the overlay**. `keymap.resolveSeq`
+   already answered `pending_with_fallback` for a chord that is bound on
+   its own AND a prefix, and `chordChain` already honoured it — what did
+   not was `app/driver.zig`'s `expireChords` hook, which fired every
+   pending fallback the moment it was called, so a driven run opened the
+   popup on the `ctrl+k` and ate the tail. It reads the deadline now, as
+   `App.tick` always has. The eighteen chords work, and a lone `ctrl+k`
+   plus a pause still shows the popup — unbinding it would have cost the
+   standard profile its which-key door. Pins unchanged.
+2. ✅ **Give the delete confirm a cancel toast**, and correct
    `tests/e2e/tree_delete_enter.test` so it stops pinning the silence —
    then flip the finding's front matter off `status: fixed`.
 3. **Title the standard profile's which-key overlay from the active
@@ -462,7 +472,7 @@ Plus `multilang-http-history-commands-noop` (2) — **by-design**, see above.
 
 | # | sev | status | evidence |
 |---|---|---|---|
-| 1 | 2 | fixed / **still** | Esc-Esc + corner exit leave zen (`995320e0`, `4038fc51`); the `ctrl+k z` chord is shadowed |
+| 1 | 2 | fixed / **fixed (this branch)** | Esc-Esc + corner exit leave zen (`995320e0`, `4038fc51`); `ctrl+k z` reaches `view.fullscreen` again |
 | 2 | 2 | fixed-since | `8c67ebf1` — a pending chord owns the next key; URL not corrupted |
 | 3 | 2 | fixed-since | click after `down` opens the right row; break-check fails |
 | 4 | 2 | fixed-since | `5637e40c` — wrapped-row clicks give col 13 / 95, the finding's expected |

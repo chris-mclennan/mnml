@@ -161,8 +161,22 @@ pub const AppDriver = struct {
         try app.tick(App.nowMs(app.io));
     }
 
+    /// Only a chain whose `timeoutlen` has actually run out. The hook
+    /// used to fire every pending fallback the moment it was called,
+    /// which made a driven run unlike a user's hands: a chord bound on
+    /// its own AND a prefix — `ctrl+k`, the standard profile's
+    /// which-key leader and the prefix of eighteen `ctrl+k …` chords —
+    /// expired into its fallback between one step and the next, so the
+    /// popup opened, ate the tail, and none of the eighteen could be
+    /// driven at all. `App.tick` has always read the deadline; this
+    /// reads the same clock, so the harness resolves a chord the way
+    /// the terminal loop does and only a `wait` past `timeoutlen`
+    /// opens the popup.
     fn vExpireChords(p: *anyopaque) Error!void {
-        try dispatch.expireChords(&cast(p).app);
+        const app = &cast(p).app;
+        const deadline = app.chord.deadline_ms orelse return;
+        if (App.nowMs(app.io) < deadline) return;
+        try dispatch.expireChords(app);
     }
 
     fn vRender(p: *anyopaque) Error!void {

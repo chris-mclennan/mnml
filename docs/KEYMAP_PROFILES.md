@@ -17,6 +17,17 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
    with one of these is `standard` only.
 2. **`ctrl+k …` menus are the standard leader.** NvChad uses `ctrl+k` for
    window-up; the vim profile keeps `space` as its only which-key leader.
+   A bare `ctrl+k` is therefore bound on its own (`whichkey.leader`) AND
+   is the prefix of eighteen `ctrl+k …` chords. **Chord resolution wins:**
+   `keymap.resolveSeq` answers `pending_with_fallback`, the tail key
+   completes the chord, and the popup is only the `timeoutlen` fallback
+   for a `ctrl+k` nothing followed. Anything that expires a pending chain
+   without reading the deadline turns that on its head — the popup opens
+   on the `ctrl+k` and eats the tail, and none of the eighteen can fire.
+   That is what the `.test` runner and the headless loop used to do, so
+   `Ctrl+K Ctrl+I` (hover, which the Info panel advertises) could not be
+   driven at all; `app/driver.zig`'s `expireChords` hook reads the same
+   clock `App.tick` does. `tests/e2e/chord_ctrl_k_prefix.test`.
 3. **`ctrl+]` / `ctrl+[`** indent / outdent in `standard` (VS Code);
    `editor.bracket_match` keeps `ctrl+]` in `vim`.
 4. **`ctrl+l`** is select-line in standard and window-right in vim, so
