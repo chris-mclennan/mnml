@@ -168,6 +168,18 @@ variable at `0` they are refused rather than run through `cmd`.
   `linkBeside` already falls back to copying where symlinks need a
   privilege. A PowerShell twin of the verb, or the MSI
   (`docs/RELEASE.md`), is the real answer.
+- **No `run.sh install-font` on Windows either**, and no MSI step for
+  it. The face is at `zig-out\share\mnml\fonts\MnmlSymbols.ttf`;
+  install it by hand (right-click → Install, or copy to
+  `%LOCALAPPDATA%\Microsoft\Windows\Fonts`) and point Windows
+  Terminal at it. Without it mnml's own block falls back rather than
+  rendering as `?` — the unfocused pty pane's cursor paints `▯` in
+  place of `U+F2001` — because `font_scan` reads the installed face's
+  cmap and only offers a glyph it actually carries;
+  `%LOCALAPPDATA%\Microsoft\Windows\Fonts` is already in
+  `fontDirs`, so the check works there. The merge that `install-font`
+  does (`zig build font-merge -Dfont-in=… -Dfont-out=…`) is a build
+  step and runs on Windows unchanged; only the bash wrapper is missing.
 - **No Windows CI job runs the tests.** `ci.yml`'s matrix should add
   `windows-latest` running `zig build test` (Debug and ReleaseSafe)
   once the checklist above has passed by hand; the cross-compile gate

@@ -266,9 +266,13 @@ otherwise. Copy what you need; leave the rest out.
         // host's OWN cursor — so Ghostty blinks it, and hollows it out
         // when the mnml window itself loses focus. Every other pty pane
         // gets a painted stand-in, which is what `unfocused` picks:
-        //   .hollow the cell keeps its glyph, repainted in the cursor
-        //           colour — a cell grid cannot draw a true outline, so
-        //           a blank cell shows □ and the cursor is still there
+        //   .hollow a BLANK cell shows the full-cell outline mnml bakes
+        //           at U+F2001 — ghostty's own unfocused shape. Without
+        //           MnmlSymbols installed (./run.sh install-font) it is
+        //           ▯ instead, and | under --ascii. A cell that already
+        //           holds a character keeps it, repainted in the cursor
+        //           colour: one cell holds one grapheme, so the outline
+        //           and the character cannot share it
         //   .dim    a muted filled block: the cursor colour half-way to
         //           the pane's ground
         //   .none   nothing

@@ -285,6 +285,29 @@ It refuses to install from a dirty tree or a Debug build
 (`--force` overrides that) — on a machine that still has the Rust
 `mnml` at `~/.local/bin/mnml`, that refusal is the point.
 
+**The symbols font is its own verb.** mnml paints its own block out of
+`MnmlSymbols.ttf` — the tree connectors, the terminal mark, the
+unfocused pty pane's hollow cursor — and a terminal only finds that
+file in the OS font directory. `install` puts it under
+`PREFIX/share/mnml/fonts/` and PRINTS the next step; it never writes
+outside `PREFIX`.
+
+```sh
+./run.sh install-font --dry-run  # the backup and the merge; changes nothing
+./run.sh install-font            # ~/Library/Fonts, or ~/.local/share/fonts
+```
+
+It MERGES rather than copies over. An already-installed MnmlSymbols may
+carry codepoints this repo has no source for — the Rust-era integration
+chips around `U+F1C03…F1F00` — so the file is read back
+(`src/glyph/ttf.zig`'s reader), folded into what this build bakes
+(`builder.merge`: keep theirs, replace ours, add the new, drop an
+outline no cmap reaches), and written through a temp file, with the old
+one copied to `~/Backups/mnml-zig/fonts/` first. Terminals read the
+font directory at launch, so restart yours. Without the face the
+affected glyphs fall back — the hollow cursor to `▯` — rather than
+rendering as `?`; `:integrations.audit_glyphs` says which are at risk.
+
 **Develop in the dev profile.** `./run.sh` launches with
 `MNML_PROFILE=dev`, which moves every name the two copies could fight
 over: `~/.config/mnml-dev` for state, `.mnml/session-dev.zon` for the
