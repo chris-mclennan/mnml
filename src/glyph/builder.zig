@@ -372,31 +372,37 @@ test "the connectors are the cell-edge rectangles the tree draws, not scaled art
     try t.expectApproxEqAbs(band_left + stroke / 2, (stem_min + stem_max) / 2, 0.001);
 }
 
-test "the hollow cursor spans the whole cell — the full advance across, connector-height down" {
+test "the hollow cursor spans the whole cell — each bar on its own edge" {
     var arena_state = std.heap.ArenaAllocator.init(t.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     const h = try hollowContours(arena);
     try t.expectEqual(@as(usize, 4), h.len);
-    var min_x: f64 = 1e30;
-    var max_x: f64 = -1e30;
-    var min_y: f64 = 1e30;
-    var max_y: f64 = -1e30;
-    for (h) |c| {
+
+    const Box = struct { x0: f64, y0: f64, x1: f64, y1: f64 };
+    // Each bar checked WHERE IT IS, not as part of the union: a bar
+    // pulled off its edge still leaves the union spanning the cell, so
+    // the union alone would not notice.
+    const want = [_]Box{
+        .{ .x0 = cell_left, .y0 = v_bottom, .x1 = cell_left + stroke, .y1 = v_top },
+        .{ .x0 = cell_right - stroke, .y0 = v_bottom, .x1 = cell_right, .y1 = v_top },
+        .{ .x0 = cell_left, .y0 = v_bottom, .x1 = cell_right, .y1 = v_bottom + stroke },
+        .{ .x0 = cell_left, .y0 = v_top - stroke, .x1 = cell_right, .y1 = v_top },
+    };
+    for (h, want, 0..) |c, w, i| {
+        errdefer std.debug.print("bar {d}\n", .{i});
         // Clockwise in y-up, like every other bar here: TrueType fills
         // the overlapping corners by winding rather than cancelling them.
         try t.expect(svg.signedArea(c) < 0);
+        var b: Box = .{ .x0 = 1e30, .y0 = 1e30, .x1 = -1e30, .y1 = -1e30 };
         for (c) |p| {
-            min_x = @min(min_x, p.x);
-            max_x = @max(max_x, p.x);
-            min_y = @min(min_y, p.y);
-            max_y = @max(max_y, p.y);
+            b.x0 = @min(b.x0, p.x);
+            b.x1 = @max(b.x1, p.x);
+            b.y0 = @min(b.y0, p.y);
+            b.y1 = @max(b.y1, p.y);
         }
+        try t.expectEqual(w, b);
     }
-    try t.expectEqual(cell_left, min_x);
-    try t.expectEqual(cell_right, max_x);
-    try t.expectEqual(v_bottom, min_y);
-    try t.expectEqual(v_top, max_y);
     // Hollow, not filled: the middle of the cell is inside no bar.
     const mid: svg.Point = .{ .x = (cell_left + cell_right) / 2, .y = (v_bottom + v_top) / 2 };
     for (h) |c| try t.expect(!svg.contains(c, mid));
