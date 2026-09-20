@@ -30,3 +30,14 @@ command view.settings
 expect screen contains "[icon]"
 expect screen lacks "[icon_label]"
 key esc
+
+# // changed (edge-grip): the grips row sits under the three, so a
+# couple of wheel notches brings it into the window. It is one row for
+# all three slide-ins' handles, and `on` out of the box.
+command view.settings
+scroll 60 20 down
+scroll 60 20 down
+scroll 60 20 down
+expect screen contains "Edge grips on slide-ins"
+expect screen contains "off / [on]"
+key esc

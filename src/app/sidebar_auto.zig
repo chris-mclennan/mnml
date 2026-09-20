@@ -112,6 +112,16 @@ pub fn suppressed(app: *const App, s: ColumnSide) bool {
     return autoHiding(app) and !overlaid(app, s);
 }
 
+/// // changed (edge-grip): whether the `⋮` grip paints on `s`'s screen
+/// edge. Only `.auto` wears one — `.hidden` registers no hover zone,
+/// so a grip there would be a handle that does nothing — and only
+/// while the column is down: revealed, the pin chip in its header
+/// strip is the handle, and pinned there is nothing left to summon.
+pub fn gripShown(app: *const App, s: ColumnSide) bool {
+    return app.cfg.ui.edge_grips and app.cfg.ui.sidebar == .auto and
+        !app.sidebar_auto.pinned and !overlaid(app, s) and !app.zen;
+}
+
 /// The zone id a column reveals through.
 pub fn zoneOf(s: ColumnSide) hover_zones.Id {
     return switch (s) {
@@ -361,6 +371,16 @@ pub fn togglePin(app: *App) CommandError!void {
     }
     app.toast("sidebar pinned — docked for this session", .{});
     app.needs_render = true;
+}
+
+/// // changed (edge-grip): the grip's click — reveal this side and pin
+/// it in one gesture. `view.sidebar_pin` docks whatever is up and,
+/// with nothing up, the side the configured home column is on; the
+/// grip is asking for ITS side, so the section is opened there first
+/// and the ordinary pin then docks it. No new command id.
+pub fn gripPin(app: *App, s: ColumnSide) CommandError!void {
+    if (!app.sidebar_auto.pinned) _ = ensureSection(app, s);
+    return togglePin(app);
 }
 
 fn setMode(app: *App, m: Config.Sidebar) CommandError!void {

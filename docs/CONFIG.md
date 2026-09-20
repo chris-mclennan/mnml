@@ -156,6 +156,7 @@ otherwise. Copy what you need; leave the rest out.
             .reveal_ms = 250, // how long the pointer rests in the dock's edge band before an `auto_hide` strip appears (0..5000)
             .hide_ms = 400, // how long after the pointer leaves before it goes again (0..5000)
         },
+        .edge_grips = true, // the three-dot handle at the middle of a hidden slide-in's edge: `⋯` on the menu bar's row and on the dock's bottom row, `⋮` on a side column's screen edge (`--ascii` spends one `.` per cell). Dwelling on it reveals, a left click reveals and PINS, a right click opens that surface's own menu. False gives the invisible bands back — they never move, so every reveal works either way
         .animations = true, // false is the reduced-motion switch: chrome animations with an instant end state are skipped (today the overlay's three-frame slide). --headless and the .test harness behave as if it were false
         .auto_equalize_splits = false,
         .relative_line_numbers = false,
@@ -820,6 +821,7 @@ outermost row and the panel sits inside it, as the editor does.
 | icon only, or icon + label | `:dock icons` / `:dock labels`, the *Launcher dock labels* row in Settings, or the *Show:* rows on the strip's right-click menu. `ui.dock.labels` is the file form. It is the BOTTOM strip's question — a side dock is three cells wide and paints the glyph alone whatever the key says |
 | use the keyboard | `view.focus_dock` (vim `Ctrl-W D`, or `:dock focus`): `h` / `l` walk a bottom strip, `j` / `k` a side one, Enter runs, Esc leaves |
 | pin a command | a chip's right-click menu grows *Pin to dock*, and a pinned row's own menu takes it off again; `ui.dock.pins` is the file form |
+| find it when it is hidden | the `⋯` grip at the middle of its band (`ui.edge_grips`) — a click there reveals and pins in one gesture |
 
 **The outer-band rule.** A dock on a side edge always owns the
 outermost column of the frame, and an auto-hiding side column's reveal
@@ -832,6 +834,17 @@ An `always` dock is carved out of the frame like any other chrome. An
 `auto_hide` one is **paint only**: it draws over the editor and nothing
 is re-laid-out, so no pane moves and no terminal is resized when the
 pointer brushes an edge.
+
+**The bottom dock is the screen's last row.** Its band — the row the
+dwell watches, and the row an `always` strip is carved from — is the
+frame's outermost row, under the `:` line rather than two rows in from
+the edge. Under `always` the `:` line, the statusline and everything
+above them move up one; under `auto_hide` the revealed strip paints
+over that row, covering the toast echo and the `⟳ … running…` chip
+while it is up. The `:` line itself is never covered: while one is
+open the band is not watched at all, so the strip neither reveals nor
+stays, and its grip goes with it. Closing the line asks for a fresh
+`reveal_ms` rather than popping the strip up the same frame.
 
 ## Session worktrees
 

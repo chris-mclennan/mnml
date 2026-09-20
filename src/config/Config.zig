@@ -342,6 +342,13 @@ pub const Ui = struct {
     /// appears at its full width on the first frame. `--headless` and
     /// the `.test` harness behave as if it were false.
     animations: bool = true,
+    /// // changed (edge-grip): the three-dot handle `⋯` / `⋮` at the
+    /// middle of a hidden slide-in's edge (`ui/edge_grip.zig`) — the
+    /// menu bar's row, the launcher dock's bottom row, each side
+    /// column's screen edge. False gives the invisible dwell bands
+    /// back; the bands themselves never move, so every reveal works
+    /// either way.
+    edge_grips: bool = true,
     /// // changed (launcher-dock): the launcher dock — the strip of
     /// integrations, terminals, launchers and pinned commands along
     /// one edge of the editor area (`app/launcher_dock.zig`). Not the
@@ -987,6 +994,7 @@ test "defaults are the shipped values" {
     try std.testing.expectEqual(@as(u16, 400), c.ui.sidebar_hide_ms);
     try std.testing.expectEqual(@as(u16, 0), c.ui.auto_hide_narrow_width);
     try std.testing.expect(c.ui.animations);
+    try std.testing.expect(c.ui.edge_grips);
     try std.testing.expectEqual(DiagStyle.count, c.ui.bufferline_diag_style);
     try std.testing.expectEqual(CoverageChipMode.feature, c.ui.coverage_chip_mode);
     try std.testing.expectEqual(ExpandIndicator.chevron, c.ui.expand_indicator);

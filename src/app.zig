@@ -3141,6 +3141,7 @@ test {
     _ = @import("app/sidebar_auto.zig");
     _ = @import("ui/sidebar_overlay.zig");
     _ = @import("ui/pin_chip.zig");
+    _ = @import("ui/edge_grip.zig");
     _ = @import("ui/dock_view.zig");
     _ = @import("core/dock.zig");
     _ = @import("app/git.zig");

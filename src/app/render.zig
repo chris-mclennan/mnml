@@ -30,6 +30,7 @@ const Ui = context;
 const editor_view = @import("../ui/editor_view.zig");
 const statusline = @import("../ui/statusline.zig");
 const cmdline_bar = @import("../ui/cmdline_bar.zig");
+const edge_grip = @import("../ui/edge_grip.zig");
 const cmdline_mod = @import("cmdline.zig");
 const cursor_mod = @import("cursor.zig");
 const statusline_app = @import("statusline.zig");
@@ -144,6 +145,14 @@ const icons = @import("../ui/icons.zig");
 /// screen); Rust's chrome row needs its 48-cell cluster or shows the
 /// workspace chip alone.
 pub const palette_bar_min_width: u16 = 40;
+
+/// // changed (edge-grip): the screen a bottom launcher dock needs
+/// before it takes the last row. Its own row, plus the bar, the
+/// statusline and the `:` line, plus the four rows the editor area
+/// kept under the old carve — so a frame that could hold the strip
+/// before still can. `hover_zones.dockBand` reads it too, so the
+/// reveal band and the carve appear and disappear together.
+pub const dock_bottom_min_height: u16 = launcher_dock.height + 8;
 /// The divider hit ids the split tree does not use (`.divider` is
 /// otherwise an index into the split tree's dividers).
 pub const tree_divider_id: u32 = std.math.maxInt(u32);
@@ -212,6 +221,16 @@ pub const Button = enum(u32) {
     /// It paints only while `ui.menu_bar` can hide the bar, and keeps
     /// the words up for the session.
     menu_bar_pin = 28,
+    /// // changed (edge-grip): the `⋯` / `⋮` handle at the middle of a
+    /// hidden slide-in's edge (`ui/edge_grip.zig`). A left click
+    /// reveals AND pins the surface it marks — the same pin the chip
+    /// at the other end of the revealed surface toggles — and a right
+    /// click opens that surface's own menu, so the grip answers
+    /// everything its chip does.
+    edge_grip_menu_bar = 29,
+    edge_grip_sidebar_left = 30,
+    edge_grip_sidebar_right = 31,
+    edge_grip_dock = 32,
     /// The right cluster's tab-page chips and their `×`, 32 pages each.
     tab_page_base = 0x40,
     tab_page_close_base = 0x60,
@@ -385,6 +404,19 @@ pub fn chrome(app: *const App) Chrome {
 /// keeps rows whatever height the user drags to.
 pub fn frameRects(full: Rect, ch: Chrome) FrameRects {
     var r = full;
+    // ── the bottom launcher dock ──
+    // // changed (edge-grip): it comes off the SCREEN's last row,
+    // under the `:` line, before anything else is carved — the dock is
+    // the frame's outermost edge, which is the row its reveal band
+    // watches in every other mode (`hover_zones.dockBand`). The bottom
+    // panel / statusline / `:` line keep their order inside what is
+    // left. A side dock is still carved off `upper` below.
+    var dock_bottom = Rect.empty;
+    if (ch.dock == .bottom and full.h >= dock_bottom_min_height) {
+        const rows = r.splitBottom(launcher_dock.height);
+        r = rows.top;
+        dock_bottom = rows.rest;
+    }
     var bar = Rect.empty;
     if (full.w >= palette_bar_min_width and full.h >= 5) {
         const s = r.splitTop(1);
@@ -398,18 +430,14 @@ pub fn frameRects(full: Rect, ch: Chrome) FrameRects {
         r = s.top;
     }
     const s = r.splitBottom(1);
-    var fr: FrameRects = .{ .bar = bar, .upper = s.top, .status = s.rest, .cmdline = cmdline, .body = s.top };
+    var fr: FrameRects = .{ .bar = bar, .upper = s.top, .status = s.rest, .cmdline = cmdline, .body = s.top, .launcher_dock = dock_bottom };
     // ── launcher dock ──
-    // The outermost band of the editor area: everything else — the
-    // bottom panel, both columns, the splits — is carved out of what
-    // is left, so the dock reads as the frame's own edge.
+    // A SIDE dock is the outermost band of the editor area:
+    // everything else — the bottom panel, both columns, the splits —
+    // is carved out of what is left, so the dock reads as the frame's
+    // own edge. The bottom one is already off the screen's last row.
     if (ch.dock) |dock_edge| switch (dock_edge) {
-        .bottom => if (fr.upper.h >= launcher_dock.height + 4) {
-            const rows = fr.upper.splitBottom(launcher_dock.height);
-            fr.upper = rows.top;
-            fr.launcher_dock = rows.rest;
-            fr.body = fr.upper;
-        },
+        .bottom => {},
         .left => if (fr.upper.w >= launcher_dock.side_min_width) {
             const cols = fr.upper.splitLeft(launcher_dock.width);
             fr.launcher_dock = cols.left;
@@ -601,16 +629,28 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     // the hits it registers here are the last word on every cell it
     // covers (`HitMap.at` scans back to front).
     if (!app.zen) try drawSidebarOverlay(app, ui, fr);
+    if (!app.zen) try drawStatusline(app, ui, fr.status);
+    try drawCmdline(app, ui, fr.cmdline);
     // ── the launcher dock ──
     // Over the panes, the dock widgets AND the revealed side column:
     // the strip owns the frame's outermost band, so nothing paints on
     // top of it (`app/launcher_dock.zig`, the outer-band rule).
+    // // changed (edge-grip): and over the `:` line's row too, which is
+    // where a revealed bottom strip now lands — so it paints AFTER
+    // `drawCmdline`, and its hits are the last word on those cells.
+    // An open `:` line refuses the reveal, so nothing in use is hidden.
     if (!app.zen) {
         const strip = if (!fr.launcher_dock.isEmpty()) fr.launcher_dock else if (launcher_dock.revealed(app)) launcher_dock.overlayRect(app, screenRect(screen)) else Rect.empty;
         if (!strip.isEmpty()) try launcher_dock.draw(app, ui, strip) else app.launcher_dock.rect = .empty;
     }
-    if (!app.zen) try drawStatusline(app, ui, fr.status);
-    try drawCmdline(app, ui, fr.cmdline);
+    // ── the edge grips ──
+    // Last of the frame's chrome, so a grip's hit is the last word on
+    // its three cells: the dock's sits on the `:` line's row, whose
+    // own hit `drawCmdline` registered a moment ago, and a click there
+    // must pin the dock rather than open a command line
+    // (`ui/edge_grip.zig`). The overlays, the toasts and the menus all
+    // paint after this and still cover it.
+    if (!app.zen) drawEdgeGrips(app, ui, fr, screenRect(screen));
     // The stack sits on the panes' last row, against the statusline, as
     // Rust's does. The Undo chip takes that row when it is up, and so
     // does the flash cue (`drawFlashCue`, right-aligned there): the
@@ -709,6 +749,57 @@ fn drawFullscreenMark(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
 /// left (`ui/menu_bar.zig`), the centred nav cluster and workspace chip,
 /// the right cluster (`bufferline.drawCluster`) and, in the gap between
 /// them, the enabled integration chips — the browser globe by default.
+/// // changed (edge-grip): the `⋯` / `⋮` handles at the middle of each
+/// hidden slide-in's edge (`ui/edge_grip.zig`). Each one is placed in
+/// the very band `hover_zones` watches — the grip names the zone's own
+/// cell and is never a second way in — so dwelling on it reveals the
+/// surface because it is INSIDE the zone, and a click on it reveals
+/// and pins.
+///
+/// It runs last of the frame's chrome for one reason: the dock's grip
+/// sits on the `:` line's row, whose whole-row hit `drawCmdline` has
+/// just registered, and `HitMap.at` scans back to front — so a click
+/// on those three cells pins the dock instead of opening a command
+/// line the user did not ask for.
+fn drawEdgeGrips(app: *App, ui: Ui, fr: FrameRects, full: Rect) void {
+    const bg = app.theme.bg.bg;
+    const dock_side = hover_zones.dockSide(app, full);
+    // ── the menu bar: the middle of the run its WORDS take ──
+    // Not the middle of the row: that is the workspace chip's, and the
+    // chip never hides, so a grip there would paint through its name.
+    // The words' run is the left of the row (`ui_menu_bar.wordsRun`) —
+    // the cells the grip is actually summoning.
+    if (!fr.bar.isEmpty() and menu_bar.gripShown(app, fr.bar.y)) {
+        if (hover_zones.barRow(full)) |row| if (edge_grip.place(ui_menu_bar.wordsRun(row), .top)) |cell| {
+            edge_grip.draw(ui, cell, .top, .{ .bg = app.theme.palette.bg_dark, .hit = .{ .button = @intFromEnum(Button.edge_grip_menu_bar) } });
+        };
+    }
+    // ── the side columns: the middle of each one's screen edge ──
+    for ([_]Config.ColumnSide{ .left, .right }) |s| {
+        if (!sidebar_auto.gripShown(app, s)) continue;
+        const band = hover_zones.sidebarEdge(full, dock_side, s);
+        const cell = edge_grip.place(band, if (s == .left) .left else .right) orelse continue;
+        edge_grip.draw(ui, cell, if (s == .left) .left else .right, .{
+            .bg = bg,
+            .hit = .{ .button = @intFromEnum(if (s == .left) Button.edge_grip_sidebar_left else Button.edge_grip_sidebar_right) },
+        });
+    }
+    // ── the launcher dock: the middle of its band, whichever edge ──
+    if (launcher_dock.gripShown(app)) {
+        if (hover_zones.dockBand(app, full)) |band| {
+            const e: edge_grip.Edge = switch (launcher_dock.edge(app)) {
+                .bottom => .bottom,
+                .left => .left,
+                .right => .right,
+            };
+            if (edge_grip.place(band, e)) |cell| edge_grip.draw(ui, cell, e, .{
+                .bg = bg,
+                .hit = .{ .button = @intFromEnum(Button.edge_grip_dock) },
+            });
+        }
+    }
+}
+
 fn drawPaletteBar(app: *App, ui: Ui, bar: Rect) Allocator.Error!void {
     if (bar.isEmpty()) return;
     const words = menu_bar.shown(app, bar.y);
@@ -2660,6 +2751,40 @@ test "frameRects: the bar needs 40 columns (narrow below 80), the cmdline row ne
     try t.expect(one.status.eql(Rect.init(0, 0, 100, 1)));
 }
 
+test "frameRects: an `always` bottom launcher dock takes the SCREEN's last row, under the `:` line, and every other row moves up one" {
+    // // changed (edge-grip): it used to be the editor area's last row
+    // (37 at 120x40), two rows in from the screen's edge, where the
+    // reveal band nothing marked also sat. Both are row 39 now.
+    const wide = frameRects(Rect.init(0, 0, 120, 40), .{ .dock = .bottom });
+    try t.expect(wide.launcher_dock.eql(Rect.init(0, 39, 120, 1)));
+    // The bottom panel / statusline / `:` line keep their order inside
+    // what is left — each one row up from the dockless frame.
+    try t.expect(wide.bar.eql(Rect.init(0, 0, 120, 1)));
+    try t.expect(wide.status.eql(Rect.init(0, 37, 120, 1)));
+    try t.expect(wide.cmdline.eql(Rect.init(0, 38, 120, 1)));
+    // The editor area is one row shorter, and nothing else changed.
+    const none = frameRects(Rect.init(0, 0, 120, 40), .{});
+    try t.expectEqual(none.upper.h - 1, wide.upper.h);
+    try t.expect(wide.upper.eql(Rect.init(0, 1, 120, 36)));
+    try t.expect(wide.body.eql(wide.upper));
+    // The bottom panel is carved INSIDE it, as it always was.
+    const panel = frameRects(Rect.init(0, 0, 120, 40), .{ .dock = .bottom, .bottom = 12 });
+    try t.expect(panel.launcher_dock.eql(Rect.init(0, 39, 120, 1)));
+    try t.expect(panel.bottom.eql(Rect.init(0, 25, 120, 12)));
+    try t.expect(panel.bottom_divider.eql(Rect.init(0, 24, 120, 1)));
+    // A side dock is still carved off the editor area, not the screen.
+    const left = frameRects(Rect.init(0, 0, 120, 40), .{ .dock = .left });
+    try t.expect(left.launcher_dock.eql(Rect.init(0, 1, 3, 37)));
+    try t.expect(left.cmdline.eql(Rect.init(0, 39, 120, 1)));
+    // Too short for the row: no dock rather than an editor with none.
+    const tight = frameRects(Rect.init(0, 0, 120, dock_bottom_min_height), .{ .dock = .bottom });
+    try t.expect(!tight.launcher_dock.isEmpty());
+    const short = frameRects(Rect.init(0, 0, 120, dock_bottom_min_height - 1), .{ .dock = .bottom });
+    const bare = frameRects(Rect.init(0, 0, 120, dock_bottom_min_height - 1), .{});
+    try t.expect(short.launcher_dock.isEmpty());
+    try t.expect(short.upper.eql(bare.upper) and short.status.eql(bare.status) and short.cmdline.eql(bare.cmdline));
+}
+
 test "frameRects: the rail and its border come off the sidebar's own 30 columns — the tree's divider stays at column 30 (the Rust dump); hidden hands the tree the cells back; a narrow sidebar keeps the rail, loses the border" {
     const with = frameRects(Rect.init(0, 0, 120, 40), .{ .sidebar = 30 });
     try t.expect(with.rail.eql(Rect.init(0, 1, 3, 37)));
@@ -2779,6 +2904,107 @@ test "a wide frame has the palette bar on row 0 and the strip on row 1; each lea
     try t.expectEqual(@as(u32, 0), app.hits.at(9, 2).?.editor_cell.line);
     try t.expectEqual(statusline.seg_mode, app.hits.at(2, 38).?.statusline_seg);
     try t.expect(app.hits.at(60, 38) == null);
+}
+
+test "the edge grips: one per hidden slide-in, each on its own zone's cells, each a hit that pins — and none at all when the surface is up, pinned, or `ui.edge_grips` is off" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    _ = try app.openScratch();
+    app.cfg.ui.menu_bar = .auto;
+    app.cfg.ui.sidebar = .auto;
+    // The shipped dock is already `auto_hide`; say so out loud.
+    try t.expectEqual(Config.DockMode.auto_hide, app.cfg.ui.dock.mode);
+    try app.render();
+
+    // Where each one landed. The menu bar's is on the words' run, NOT
+    // the row's middle — that is the workspace chip's, and the chip
+    // never hides.
+    const words = ui_menu_bar.wordsRun(hover_zones.barRow(Rect.init(0, 0, 120, 40)).?);
+    const menu_cell = edge_grip.place(words, .top).?;
+    try t.expectEqual(@as(u16, 16), menu_cell.x);
+    try t.expectEqual(@as(u16, 0), menu_cell.y);
+    try t.expect(menu_cell.right() < 35);
+    const grips = [_]struct { x: u16, y: u16, id: Button }{
+        // The bar's row, in the middle of the words' own run.
+        .{ .x = menu_cell.x + 1, .y = 0, .id = .edge_grip_menu_bar },
+        // Each column's one-cell screen edge, vertically centred.
+        .{ .x = 0, .y = 20, .id = .edge_grip_sidebar_left },
+        .{ .x = 119, .y = 20, .id = .edge_grip_sidebar_right },
+        // The dock's band: the SCREEN's last row, in its middle.
+        .{ .x = 59, .y = 39, .id = .edge_grip_dock },
+    };
+    for (grips) |g| {
+        const hit = app.hits.at(g.x, g.y) orelse return error.NoGripHere;
+        try t.expectEqual(@intFromEnum(g.id), hit.button);
+    }
+    // The dock's grip beat the `:` line's whole-row hit, which was
+    // registered a moment before it: a click there pins the dock
+    // rather than opening a command line.
+    try t.expectEqual(@intFromEnum(Button.cmdline_bar), app.hits.at(20, 39).?.button);
+    // The glyph really is on each grip's middle cell. (`⋯` and `⋮`
+    // turn up elsewhere in the chrome — a fold mark, a row kebab — so
+    // the CELL is the honest question, never the whole screen.)
+    try t.expectEqualStrings(edge_grip.grip_h, app.screen.readCell(menu_cell.x + 1, 0).?.char.grapheme);
+    // The run is rows 18..20; the glyph sits on the middle one.
+    try t.expectEqualStrings(edge_grip.grip_v, app.screen.readCell(0, 19).?.char.grapheme);
+    try t.expectEqualStrings(edge_grip.grip_v, app.screen.readCell(119, 19).?.char.grapheme);
+    try t.expectEqualStrings(edge_grip.grip_h, app.screen.readCell(59, 39).?.char.grapheme);
+
+    // A surface that is UP wears no grip — the pin chip at its end is
+    // the handle then.
+    app.menu_bar.pinned = true;
+    app.sidebar_auto.pinned = true;
+    app.launcher_dock.pinned = true;
+    try app.render();
+    for (grips) |g| {
+        const hit = app.hits.at(g.x, g.y);
+        if (hit) |h| try t.expect(h != .button or h.button != @intFromEnum(g.id));
+    }
+    try t.expect(!std.mem.eql(u8, edge_grip.grip_v, app.screen.readCell(0, 19).?.char.grapheme));
+
+    // And `ui.edge_grips = false` gives the invisible bands back — the
+    // bands themselves never moved, so the dwell still reveals.
+    app.menu_bar.pinned = false;
+    app.sidebar_auto.pinned = false;
+    app.launcher_dock.pinned = false;
+    app.cfg.ui.edge_grips = false;
+    try app.render();
+    for (grips) |g| {
+        const hit = app.hits.at(g.x, g.y);
+        if (hit) |h| try t.expect(h != .button or h.button != @intFromEnum(g.id));
+    }
+    try t.expect(!std.mem.eql(u8, edge_grip.grip_v, app.screen.readCell(0, 19).?.char.grapheme));
+    try t.expect(!std.mem.eql(u8, edge_grip.grip_h, app.screen.readCell(59, 39).?.char.grapheme));
+    // The band itself never moved: the dwell still reveals.
+    try t.expect(hover_zones.dockBand(&app, Rect.init(0, 0, 120, 40)) != null);
+}
+
+test "the edge grips: a screen too small for a band paints none of it, and `.hidden` — which registers no dwell zone — never wears one" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 30, .rows = 6 });
+    defer app.deinit();
+    _ = try app.openScratch();
+    app.cfg.ui.menu_bar = .auto;
+    app.cfg.ui.sidebar = .auto;
+    try app.render();
+    // No palette bar at 30 columns, so no bar row and no grip on it;
+    // the frame is too short for the dock's row too.
+    try t.expect(hover_zones.barRow(Rect.init(0, 0, 30, 6)) == null);
+    try t.expect(hover_zones.dockBand(&app, Rect.init(0, 0, 30, 6)) == null);
+    try app.render();
+
+    // `.hidden` reveals on no dwell at all, so a grip there would be a
+    // handle that does nothing.
+    var wide = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer wide.deinit();
+    _ = try wide.openScratch();
+    wide.cfg.ui.menu_bar = .hidden;
+    wide.cfg.ui.sidebar = .hidden;
+    wide.cfg.ui.dock.mode = .hidden;
+    try wide.render();
+    for (wide.hits.items.items) |h| if (h.target == .button) switch (@as(Button, @enumFromInt(h.target.button))) {
+        .edge_grip_menu_bar, .edge_grip_sidebar_left, .edge_grip_sidebar_right, .edge_grip_dock => return error.GripOnAHiddenSurface,
+        else => {},
+    };
 }
 
 test "overlays paint over the panes and win the hit test; the find bar docks at the pane bottom" {

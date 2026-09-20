@@ -35,6 +35,6 @@
    │ [Ctrl+K Ctrl+I] Hover ·  │                                                                        ┌─────────── × ┐
   │ [F2] Rename              │                                                                        │ dock: always │
    │                          │                                                                        └──────────────┘
-   Browser  󲀀 New terminal                                                                                           󰐃
  EDIT   prog.dbg                                  F 59% ▲0.2  󱼀 󰐎  111B  Ln 1/10 Col 1   1  12:27  ws   dbg
 dock: always
+   Browser  󲀀 New terminal                                                                                           󰐃

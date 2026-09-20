@@ -49,6 +49,17 @@ pub fn close(app: *App) void {
     app.needs_render = true;
 }
 
+/// // changed (edge-grip): whether ANY `:` line owns the bottom row —
+/// the app's own or the active buffer's, the two `render.drawCmdline`
+/// paints in that order. The launcher dock asks before it reveals over
+/// that row: a strip that covered a half-typed command would be the
+/// one reveal the user could not have wanted.
+pub fn anyOpen(app: *App) bool {
+    if (app.cmdline != null) return true;
+    const e = app.activeEditor() orelse return false;
+    return e.buf.input.cmdlineGet() != null;
+}
+
 /// A press that landed anywhere but the bar itself, while the line is
 /// open — the way a text field loses focus when you click off it.
 ///
@@ -292,11 +303,16 @@ test "a click off the bar closes an empty line; a half-typed one survives it" {
     _ = try app.openScratch();
 
     // The bottom row is the last one; a frame registers its hit.
+    // // changed (edge-grip): the launcher dock's grip takes the middle
+    // three cells of that row (38..40 at 80 columns) and its hit wins
+    // them, so the clicks below land at 60 — a cell the row still owns
+    // outright.
     const bar_y: u16 = 23;
     try app.render();
-    const under = app.hits.at(40, bar_y).?;
+    const under = app.hits.at(60, bar_y).?;
     try t.expect(under == .button);
     try t.expectEqual(@intFromEnum(render.Button.cmdline_bar), under.button);
+    try t.expectEqual(@intFromEnum(render.Button.edge_grip_dock), app.hits.at(39, bar_y).?.button);
 
     const press = struct {
         fn at(a: *App, x: u16, y: u16) !void {
@@ -307,7 +323,7 @@ test "a click off the bar closes an empty line; a half-typed one survives it" {
 
     // A click on the row opens it; a second click on the row is a
     // no-op — the row is the line's own, so it never closes it.
-    try press.at(&app, 40, bar_y);
+    try press.at(&app, 60, bar_y);
     try t.expect(app.cmdline != null);
     try press.at(&app, 10, bar_y);
     try t.expect(app.cmdline != null);
@@ -317,7 +333,7 @@ test "a click off the bar closes an empty line; a half-typed one survives it" {
     try t.expect(app.cmdline == null);
 
     // A right click off the bar does it too.
-    try press.at(&app, 40, bar_y);
+    try press.at(&app, 60, bar_y);
     try t.expect(app.cmdline != null);
     try app.render();
     try dispatch.mouse(&app, .{ .x = 5, .y = 5, .kind = .press, .button = .right }, 1);
@@ -325,7 +341,7 @@ test "a click off the bar closes an empty line; a half-typed one survives it" {
 
     // Half typed, the line stays and keeps its text and caret: losing
     // it to a stray click is the worse mistake.
-    try press.at(&app, 40, bar_y);
+    try press.at(&app, 60, bar_y);
     try insert(&app, "wq");
     try t.expect(try key(&app, Key.named(.left)));
     try press.at(&app, 5, 5);

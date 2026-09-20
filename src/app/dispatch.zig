@@ -30,6 +30,8 @@ const clock_mod = @import("clock.zig");
 const coverage = @import("coverage.zig");
 const now_playing = @import("now_playing.zig");
 const menu_bar = @import("menu_bar.zig");
+const sidebar_auto = @import("sidebar_auto.zig");
+const Config = @import("../config/Config.zig");
 const activity_bar = @import("activity_bar.zig");
 const browser_open = @import("browser_open.zig");
 const ex = @import("ex.zig");
@@ -2407,6 +2409,23 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 // Its right press is the bar's own menu
                 // (`openButtonMenu`), which ran before this switch.
                 .menu_bar_pin => try runCmd(app, .@"view.menu_bar_pin"),
+                // // changed (edge-grip): the `⋯` / `⋮` handle at the
+                // middle of a hidden slide-in's edge. A left click
+                // reveals AND pins — the grip brings the surface out
+                // and keeps it, the chip at its other end lets it go —
+                // through the pin command each surface already has, so
+                // there is no new command id. The right press is that
+                // surface's own menu (`openButtonMenu`, which ran
+                // before this switch).
+                .edge_grip_menu_bar => try runCmd(app, .@"view.menu_bar_pin"),
+                .edge_grip_sidebar_left, .edge_grip_sidebar_right => {
+                    const grip_side: Config.ColumnSide = if (@as(render.Button, @enumFromInt(id)) == .edge_grip_sidebar_left) .left else .right;
+                    sidebar_auto.gripPin(app, grip_side) catch |err| switch (err) {
+                        error.OutOfMemory => return error.OutOfMemory,
+                        else => {},
+                    };
+                },
+                .edge_grip_dock => try runCmd(app, .@"view.dock_pin"),
                 .sidebar_overlay => if (m.button == .right) try context_menus.openSidebarModeMenu(app, m.x, m.y),
                 .back => try runCmd(app, .@"buffer.prev"),
                 .forward => try runCmd(app, .@"buffer.next"),
