@@ -2589,7 +2589,7 @@ const Fixture = struct {
             try f.app.tick(App.nowMs(testing.io));
             const p = f.app.panes.pty(pid) orelse return false;
             p.fed_gen +%= 1; // a walk afresh, whatever the cache holds
-            if (derive(&f.app, pid)) |d| for (d.lines) |l| if (std.mem.indexOf(u8, l, needle) != null) return true;
+            if (derive(&f.app, pid)) |d| for (d.lines) |l| if (std.mem.indexOf(u8, l.text, needle) != null) return true;
             testing.io.sleep(.fromMilliseconds(10), .awake) catch {};
         }
         return false;
@@ -2699,11 +2699,11 @@ test "the cards are this app's AI panes: a fresh one reads its banner off the gr
     const v_fresh = try cardView(app, app.frame.allocator(), f.cardAt(1));
     try testing.expectEqual(Summary.text, v_fresh.kind);
     try testing.expectEqual(@as(usize, 3), v_fresh.lines.len);
-    try testing.expectEqualStrings("Claude Code v9 (fake)", v_fresh.lines[0]);
+    try testing.expectEqualStrings("Claude Code v9 (fake)", v_fresh.lines[0].text);
     // The child gone: `exited` alone, red.
     const v_gone = try cardView(app, app.frame.allocator(), f.cardAt(2));
     try testing.expectEqual(Summary.exited, v_gone.kind);
-    try testing.expectEqualStrings("exited", v_gone.lines[0]);
+    try testing.expectEqualStrings("exited", v_gone.lines[0].text);
     try testing.expect(std.mem.indexOf(u8, txt, "exited") != null);
     // The owned transcript is no EXTERNAL row; the live unowned one is;
     // the ended ones: the fresh one listed under ENDED, the old one hidden.
@@ -2985,8 +2985,8 @@ test "the grid walk: chrome, footer chips, the prompt and `Worked for` skipped; 
     try testing.expect(!rows[0].dim);
     const lines = try summarizeGridLines(arena, rows, 6);
     try testing.expectEqual(@as(usize, 2), lines.len);
-    try testing.expectEqualStrings("Drafted the notes", lines[0]);
-    try testing.expectEqualStrings("Claude Code v9", lines[1]);
+    try testing.expectEqualStrings("Drafted the notes", lines[0].text);
+    try testing.expectEqualStrings("Claude Code v9", lines[1].text);
     try testing.expect(!isClaudeThinking(rows));
     try testing.expect(!detectCodexThinking(rows));
     // The one-liner is Rust's `summarize_grid`: the activity-shaped
@@ -3239,10 +3239,70 @@ fn cardProps(rows: []const RowView) Panel.Props {
 /// The three cards of `rust-sessions-120x40.txt`, as `cardView` builds them.
 fn specCards() [3]RowView {
     return .{
-        .{ .item = item("5e551011-0000-4000-8000-000000000003", .done, 1, "ws", "write the release notes for 0.3"), .name = "write the release notes for 0.3", .pinned = true, .lines = &.{"exited"}, .kind = .exited },
-        .{ .item = item("5e551011-0000-4000-8000-000000000001", .streaming, 3, "ws", "fix the failing tests in src/main.rs"), .name = "fix the failing tests in src/main.rs", .lines = &.{ "you: fix the failing tests in src/main.rs", "claude: Running the suite first to see which ones fail." }, .kind = .text },
-        .{ .item = item("5e551011-0000-4000-8000-000000000002", .idle, 2, "ws", "add a --json flag to the CLI"), .name = "release train", .lines = &.{ "you: add a --json flag to the CLI", "claude: Added the flag and a test for it. Anything else?" }, .kind = .text },
+        .{ .item = item("5e551011-0000-4000-8000-000000000003", .done, 1, "ws", "write the release notes for 0.3"), .name = "write the release notes for 0.3", .pinned = true, .lines = &.{.{ .text = "exited" }}, .kind = .exited },
+        .{ .item = item("5e551011-0000-4000-8000-000000000001", .streaming, 3, "ws", "fix the failing tests in src/main.rs"), .name = "fix the failing tests in src/main.rs", .lines = &.{ .{ .text = "you: fix the failing tests in src/main.rs" }, .{ .text = "claude: Running the suite first to see which ones fail." } }, .kind = .text },
+        .{ .item = item("5e551011-0000-4000-8000-000000000002", .idle, 2, "ws", "add a --json flag to the CLI"), .name = "release train", .lines = &.{ .{ .text = "you: add a --json flag to the CLI" }, .{ .text = "claude: Added the flag and a test for it. Anything else?" } }, .kind = .text },
     };
+}
+
+test "a banner row keeps its cells' colours through the walk, and the card paints them: the bg-coloured space paints that background, the glyph that foreground, the rest the card's own" {
+    // A banner row the shape Claude Code's is: a space that is only a
+    // background, a block glyph that is only a foreground, then text.
+    const orange: pty_mod.grid.Color.Rgb = .{ .r = 215, .g = 119, .b = 87 };
+    var term: pty_mod.vt.Terminal = try .init(testing.io, testing.allocator, .{ .cols = 40, .rows = 4 });
+    defer term.deinit(testing.allocator);
+    var vs = term.vtStream();
+    defer vs.deinit();
+    vs.nextSlice("\x1b[48;2;215;119;87m \x1b[0m\x1b[38;2;215;119;87m\u{2588}\x1b[0m Claude Code v9\r\n");
+    var grid: pty_mod.Grid = .{};
+    defer grid.deinit(testing.allocator);
+    try grid.update(testing.allocator, &term);
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const lines = try summarizeGridLines(arena, try gridRows(arena, &grid), 6);
+    try testing.expectEqual(@as(usize, 1), lines.len);
+    // The trim would drop the leading space — in a banner row that space
+    // IS the figure, so a coloured one is kept (`lineOf`).
+    try testing.expectEqualStrings(" \u{2588} Claude Code v9", lines[0].text);
+    try testing.expect(lines[0].colored());
+    try testing.expectEqual(pty_mod.grid.Color{ .rgb = orange }, lines[0].colors[0].bg);
+    try testing.expectEqual(pty_mod.grid.Color.default, lines[0].colors[0].fg);
+    // The glyph is three bytes, each carrying its cell's foreground.
+    try testing.expectEqual(pty_mod.grid.Color{ .rgb = orange }, lines[0].colors[1].fg);
+    try testing.expectEqual(pty_mod.grid.Color{ .rgb = orange }, lines[0].colors[3].fg);
+    try testing.expectEqual(pty_mod.grid.Color.default, lines[0].colors[3].bg);
+    try testing.expect(lines[0].colors[lines[0].colors.len - 1].isPlain());
+
+    // Painted: the space is that background, the glyph that foreground,
+    // and the plain text the card's own muted ink on the panel ground.
+    var f = try UiFixture.init(40, 6);
+    defer f.deinit();
+    const row: RowView = .{
+        .item = item("5e551011-0000-4000-8000-000000000004", .streaming, 1, "ws", "claude"),
+        .name = "claude",
+        .lines = lines[0..1],
+        .kind = .text,
+    };
+    paintRow(f.ui(), Rect.init(0, 0, 40, 4), row, false);
+    try f.expectRow(1, " \u{258C}  \u{2588} Claude Code v9");
+    const vx_orange: vaxis.Color = .{ .rgb = .{ 215, 119, 87 } };
+    try testing.expect(vaxis.Color.eql(f.style(3, 1).bg, vx_orange));
+    try testing.expect(vaxis.Color.eql(f.style(3, 1).fg, f.theme.muted.fg));
+    try testing.expect(vaxis.Color.eql(f.style(4, 1).fg, vx_orange));
+    try testing.expect(vaxis.Color.eql(f.style(4, 1).bg, f.theme.panel_bg.bg));
+    try testing.expect(vaxis.Color.eql(f.style(6, 1).fg, f.theme.muted.fg));
+    try testing.expect(vaxis.Color.eql(f.style(6, 1).bg, f.theme.panel_bg.bg));
+    // A line the card synthesized has no cells behind it: flat text.
+    var g = try UiFixture.init(40, 6);
+    defer g.deinit();
+    var plain = row;
+    plain.lines = &.{.{ .text = "exited" }};
+    plain.kind = .exited;
+    paintRow(g.ui(), Rect.init(0, 0, 40, 4), plain, false);
+    try g.expectRow(1, " \u{258C} exited");
+    try testing.expect(vaxis.Color.eql(g.style(3, 1).fg, g.theme.palette.red));
+    try testing.expect(vaxis.Color.eql(g.style(3, 1).bg, g.theme.panel_bg.bg));
 }
 
 test "the card at 26 cells is Rust's, cell for cell: rows 3–18 of rust-sessions-120x40.txt, the top block per the user above them" {
