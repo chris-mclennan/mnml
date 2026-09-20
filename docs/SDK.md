@@ -236,6 +236,7 @@ the next backfill has to come back for.
 | `⋯  Show more (N)`, one phrase, the words bright | `Painter.showMoreRow` |
 | The detail panel's `×` and its own scrollbar | `Painter.detailPanel`, `Painter.scrollbar` |
 | A build line under a pull request, and the line where one would be | `Painter.buildRow`, `Painter.buildNote` |
+| The door a build line opens — the whole line, in a free row or a table cell | `pane.buildHit` + `pane.build.pageUrl` |
 | An action button: the word in its role colour, the brackets muted | `Painter.actionChip`, `pane.action.chipOf` |
 | What a press left on a button — spinner, `⏸`, `[ view ]`, `✗` | `pane.action.caption` |
 | Whether a pull request may merge, and why not | `pane.merge` |
@@ -300,6 +301,7 @@ try sdk.pane.expect.headerLadderTail(&frame, theme, 0, nerd, ascii);
 try sdk.pane.expect.listScrollbar(&frame, frame.cols - 1, 0, frame.rows);
 try sdk.pane.expect.foldRow(&frame, theme, fold_y, ascii);
 try sdk.pane.expect.statuslineFigure(my_segment_text);
+try sdk.pane.expect.buildLineHit(Target, &hits, y, x0, x1, .{ .build_line = i });
 ```
 
 Both official integrations call these, which is the point: one
@@ -330,8 +332,24 @@ try p.buildRow(.{ .x = 0, .y = y, .w = cols, .h = 1 }, indent, .{
 p.buildNote(.{ .x = 0, .y = y, .w = cols, .h = 1 }, indent, "no build ran on abc1234", false);
 ```
 
-`buildRow` registers the hit with the paint, so clicking the line can
-open that run (`sdk.pane.build.pageUrl`). `buildNote` is the line where
+`buildRow` registers the hit with the paint, so clicking the line
+opens that run (`sdk.pane.build.pageUrl`). The door is
+`sdk.pane.buildHit` — the WHOLE line, indent and trailing air
+included, clipped at the first column the pane does not own:
+
+```zig
+const door = sdk.pane.buildHit(.{ .x = list_x, .y = y, .w = text_w, .h = 1 }, list_x + text_w);
+try hits.add(gpa, door, .{ .build_line = i });
+```
+
+A pane whose build line is a table CELL rather than a free row calls
+`buildHit` itself, after its table has painted — the map's
+last-painted-wins rule then puts the door over the row. That is the
+forge pane: both panes paint the same line, both know the page, and on
+neither did a click go there until the door was one function.
+`sdk.pane.expect.buildLineHit` is the assertion both suites call.
+
+`buildNote` is the line where
 a build line would be — fetching, none, or why not — dim, or in the bad
 colour when `bad`. `sdk.pane.build.parseEpoch` reads an ISO-8601 stamp
 with its offset, which is all the age needs.

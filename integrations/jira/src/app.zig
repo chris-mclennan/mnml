@@ -3145,6 +3145,9 @@ pub const App = struct {
         switch (tg) {
             .row => |i| try a.clickRow(i, right),
             .chevron => |i| try a.clickChevron(i),
+            // A build line is a door, not a row you select: the click
+            // opens that run's page, the same as the forge pane's.
+            .build_line => |i| try a.clickBuildLine(i, right),
             .show_more => |i| {
                 a.tab().selected = i;
                 try a.treeActivate();
@@ -3250,6 +3253,24 @@ pub const App = struct {
     /// chevron through `treeActivate` made the one chevron that has
     /// something to reveal (the post-merge pipelines) launch a browser
     /// instead of expanding, which reads as "the mouse cannot fold".
+    /// A press on a build line. Left goes to the run's page — the only
+    /// thing the line stands for; right selects it, so the row menu and
+    /// the keyboard still reach the rest of the tree from there.
+    fn clickBuildLine(a: *App, i: u32, right: bool) Allocator.Error!void {
+        const t = a.tab();
+        t.selected = i;
+        try a.afterMove();
+        if (right) return;
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const r = (try a.treeRows(scratch.allocator())) orelse return;
+        if (i >= r.rows.len) return;
+        switch (r.rows[i]) {
+            .pipeline => |pl| try a.openBuild(pl),
+            else => {},
+        }
+    }
+
     fn clickChevron(a: *App, i: u32) Allocator.Error!void {
         const t = a.tab();
         if (!t.cfg.isTree()) return;

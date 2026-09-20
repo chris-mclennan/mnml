@@ -358,6 +358,15 @@ fn paintList(arena: Allocator, p: *Painter, box: Box) Allocator.Error!void {
         // selects, the way the tracker pane's tree already works. A
         // pull request with no commit to look builds up on paints no
         // chevron and registers none.
+        // A build line is a door to that run's page, and the door is
+        // the whole line: `sdk.pane.buildHit` decides the cells, so
+        // this pane's table cell and the tracker pane's free row
+        // register the same rect. Registered AFTER the row ground, so
+        // the map's last-painted-wins rule puts the door over it.
+        if (row == .build) {
+            const door = sdk.pane.buildHit(.{ .x = list.x, .y = y, .w = text_w, .h = 1 }, list.x + text_w);
+            p.target(door.x, door.y, door.w, .{ .build_line = idx });
+        }
         if (chevronX(p, list.x, row)) |cx| p.target(cx, y, 1, .{ .chevron = idx });
         if (bw > 0) try paintRowButtons(p, list.x, y, text_w, bw, idx, row);
         y += h;
@@ -1110,6 +1119,22 @@ test "an OPEN PR folds out to the builds on its branch head; a second open costs
     // The page, and the toast that says which page.
     try t.expectEqual(@as(usize, 2), fx.len);
     try t.expectEqualStrings("https://bitbucket.org/acme/api/pipelines/results/413", fx[0].open_url);
+
+    // And so is a CLICK on it. This pane's build line is a table cell
+    // rather than a free row, so it fell through to the generic row
+    // hit and a click only selected — the line read as a link and
+    // behaved as one nowhere. `sdk.pane.buildHit` is the door both
+    // panes register and `sdk.pane.expect.buildLineHit` the assertion
+    // both suites call: the WHOLE line, indent and trailing air
+    // included, not just the cells the caption fills.
+    _ = try s.draw();
+    const by = s.rig.app.hits.rectOf(.{ .build_line = build_row.? }).?;
+    try sdk.pane.expect.buildLineHit(hit.Target, &s.rig.app.hits.inner, by.y, by.x, by.right(), .{ .build_line = build_row.? });
+    _ = try s.rig.app.click(by.x + 1, by.y, .left);
+    const fx2 = s.rig.app.takeEffects();
+    defer s.rig.app.freeEffects(fx2);
+    try t.expect(fx2.len > 0);
+    try t.expectEqualStrings("https://bitbucket.org/acme/api/pipelines/results/413", fx2[0].open_url);
 }
 
 test "the pipelines tree paints the reference's columns and glyphs; the pipelines chips are on the header" {

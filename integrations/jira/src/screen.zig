@@ -791,7 +791,7 @@ pub const Painter = struct {
                         .branch = pipe.branch,
                         .created_on = pipe.created_on,
                         .number = pipe.build_number,
-                    }, a.nowSecs(), .{ .row = idx });
+                    }, a.nowSecs(), .{ .build_line = idx });
                 },
                 // The fold row, from the toolkit: `⋯  Show more (N)`
                 // with the label in the bright foreground a key wears.
@@ -1976,6 +1976,48 @@ test "the fold row is one phrase: the ellipsis is punctuation and only its words
     // in the summary column, forty cells away from it.
     const ui: Ui = .{};
     try sdk.pane.expect.foldRow(&f, ui.th, y, ui.ascii);
+}
+
+test "a build line is a door: the whole line is one hit, and it opens that run" {
+    const h = try app_mod.Harness.start(.{ .tabs = &app_mod.work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    const t0 = a.tab();
+    try t0.tree.?.setExpanded("ENG-2", true);
+    try t0.tree.?.putPrs("ENG-2", &.{.{ .id = "#1", .status = "OPEN", .url = "https://bitbucket.org/acme/api/pull-requests/1" }});
+    try t0.tree.?.setPrExpanded("ENG-2", "#1", true);
+    try t0.tree.?.putPipelines("ENG-2", "#1", &.{.{ .build_number = 413, .branch = "chris/fix", .created_on = "2026-09-15T15:20:00+00:00" }});
+    var f = try Frame.init(testing.allocator, 120, 40);
+    defer f.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const ar = arena.allocator();
+    try paint(ar, &f, a, .{});
+    const y = (try findRow(ar, &f, "#413")) orelse return error.NoBuildLine;
+
+    // The whole line is one door, from the pane's left edge to the
+    // cell the list ends at — `sdk.pane.expect.buildLineHit`, the same
+    // function the forge pane's own suite calls, whose build line is a
+    // table CELL rather than a free row. Both fell through to the
+    // generic row hit before this, which selects; the line read as a
+    // link in two panes and behaved as one in neither.
+    const idx = blk: {
+        var x: u16 = 0;
+        while (x < f.cols) : (x += 1) if (a.hits.at(x, y)) |tg| if (tg == .build_line) break :blk tg.build_line;
+        return error.NoBuildHit;
+    };
+    const right = a.hits.rectOf(.{ .build_line = idx }).?.right();
+    try sdk.pane.expect.buildLineHit(hit.Target, &a.hits, y, 0, right, .{ .build_line = idx });
+
+    // And pressing it goes to that run's page rather than selecting
+    // the line. `open_command` is `true`, so nothing on the machine is
+    // launched and the status line still says which URL was handed
+    // over — and `sdk.pane.build.pageUrl` is what spelled it, on both
+    // panes.
+    a.cfg.open_command = "true";
+    try a.click(1, y, false);
+    try testing.expectEqualStrings("opened https://bitbucket.org/acme/api/pipelines/results/413", a.status.items);
 }
 
 test "a list longer than its body carries the toolkit's scrollbar, and the bar is a control" {

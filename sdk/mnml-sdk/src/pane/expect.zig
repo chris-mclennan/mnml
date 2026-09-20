@@ -17,6 +17,7 @@ const std = @import("std");
 const frame_mod = @import("../frame.zig");
 const theme_mod = @import("theme.zig");
 const chrome = @import("chrome.zig");
+const hit = @import("hit.zig");
 const figure = @import("figure.zig");
 const text_mod = @import("text.zig");
 
@@ -35,6 +36,8 @@ pub const Error = figure.Error || error{
     FoldRowMissing,
     FoldRowSplit,
     FoldRowInk,
+    BuildHitMissing,
+    BuildHitPartial,
 };
 
 fn eqlStyle(a: Style, b: Style) bool {
@@ -148,6 +151,25 @@ pub fn statuslineFigure(s: []const u8) Error!void {
     return figure.check(s);
 }
 
+/// Every cell of the build line on row `y`, from `x0` up to but not
+/// including `x1`, resolves to `want` — one door, the width of the
+/// line.
+///
+/// Both panes painted the toolkit's build line and neither opened the
+/// run when you clicked it: the caption fell through to the generic
+/// row hit, which selects. Asserted from both suites because the two
+/// lay-outs differ — one is a free row and the other a cell inside a
+/// table — and the door must not.
+pub fn buildLineHit(comptime Target: type, m: *const hit.Map(Target), y: u16, x0: u16, x1: u16, want: Target) Error!void {
+    if (x1 <= x0) return Error.BuildHitMissing;
+    if (m.at(x0, y) == null) return Error.BuildHitMissing;
+    var x = x0;
+    while (x < x1) : (x += 1) {
+        const got = m.at(x, y) orelse return Error.BuildHitPartial;
+        if (!std.meta.eql(got, want)) return Error.BuildHitPartial;
+    }
+}
+
 /// `want`, one codepoint per cell, starting at `(x0, y)`. Every glyph
 /// the ladder carries is single-width, so a cell is a codepoint here.
 fn rowHas(f: *const Frame, y: u16, x0: u16, want: []const u8) bool {
@@ -167,7 +189,35 @@ fn rowHas(f: *const Frame, y: u16, x0: u16, want: []const u8) bool {
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const testing = std.testing;
-const hit = @import("hit.zig");
+
+test "a build line's door is the whole line, and a door over only the words fails" {
+    const Target = union(enum) { build: u8, row: u8 };
+    var m: hit.Map(Target) = .{};
+    defer m.deinit(testing.allocator);
+    // What `Painter.buildRow` registers: the whole line.
+    try m.add(testing.allocator, hit.buildHit(.{ .x = 0, .y = 3, .w = 60, .h = 1 }, 60), .{ .build = 1 });
+    try buildLineHit(Target, &m, 3, 0, 60, .{ .build = 1 });
+
+    // What both panes had instead: the row's own hit under the line,
+    // so a click selected rather than opening the run.
+    var bad: hit.Map(Target) = .{};
+    defer bad.deinit(testing.allocator);
+    try bad.add(testing.allocator, .{ .x = 0, .y = 3, .w = 60, .h = 1 }, .{ .row = 1 });
+    try testing.expectError(Error.BuildHitPartial, buildLineHit(Target, &bad, 3, 0, 60, .{ .build = 1 }));
+
+    // A door over only the caption's cells leaves the indent and the
+    // air past the words dead.
+    var short: hit.Map(Target) = .{};
+    defer short.deinit(testing.allocator);
+    try short.add(testing.allocator, .{ .x = 6, .y = 3, .w = 30, .h = 1 }, .{ .build = 1 });
+    try testing.expectError(Error.BuildHitMissing, buildLineHit(Target, &short, 3, 0, 60, .{ .build = 1 }));
+    try testing.expectError(Error.BuildHitPartial, buildLineHit(Target, &short, 3, 6, 60, .{ .build = 1 }));
+
+    // Nothing at all on the row.
+    var empty: hit.Map(Target) = .{};
+    defer empty.deinit(testing.allocator);
+    try testing.expectError(Error.BuildHitMissing, buildLineHit(Target, &empty, 3, 0, 60, .{ .build = 1 }));
+}
 
 test "the header expectations pass on a toolkit-painted header and fail on a hand-rolled one" {
     const Target = union(enum) { chip: u8 };

@@ -46,6 +46,11 @@ pub const Target = union(enum) {
     chevron: u32,
     /// A `Show all N PRs` row.
     show_more: u32,
+    /// A build line under a pull request. Its own target rather than
+    /// the row's, because the only thing a build line stands for is
+    /// that run's page: a click on it goes there, the same as the
+    /// forge pane's (`sdk.pane.buildHit`).
+    build_line: u32,
     /// A `[ Review ]` / `[ Merge ]` / `[ Open ]` chip on a PR row.
     pr_button: struct { row: u32, which: PrButton },
     /// A DIM `[ Merge ]`. It paints but is not a `pr_button`, so a

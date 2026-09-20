@@ -70,6 +70,9 @@ pub const Ui = chrome.Ui;
 pub const width = text.width;
 pub const fit = text.fit;
 pub const scrollAt = chrome.scrollAt;
+/// The cells one build line's click covers — the whole line, so a pane
+/// that paints its build line as a table cell registers the same door.
+pub const buildHit = hit.buildHit;
 pub const Slot = work.Slot;
 pub const BuildRun = build.Run;
 pub const Readiness = merge.Readiness;

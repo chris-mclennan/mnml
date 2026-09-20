@@ -686,7 +686,11 @@ pub const App = struct {
                 const pr = ts.data.repo_pr_tree[b.repo].prs[b.idx];
                 const runs = app.prPipelinesOf(slug, pr.id) orelse break :blk null;
                 if (b.run >= runs.pipelines.len) break :blk null;
-                break :blk try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/pipelines/results/{d}", .{ ws, slug, runs.pipelines[b.run].build_number });
+                // The toolkit's spelling, so a build line in this pane
+                // and one in the tracker pane open the same page from
+                // the same function.
+                var buf: [256]u8 = undefined;
+                break :blk try a.dupe(u8, sdk.pane.build.pageUrl(&buf, ws, slug, runs.pipelines[b.run].build_number));
             },
             // The note where a build line would be opens the pull
             // request's own pipelines page — the place to go and see why.
@@ -698,7 +702,10 @@ pub const App = struct {
                     var buf: [256]u8 = undefined;
                     break :blk try a.dupe(u8, list[i].url(&buf, ws, list[i].repoSlug()));
                 },
-                .pipelines => |list| try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/pipelines/results/{d}", .{ ws, ts.spec.repo, list[i].build_number }),
+                .pipelines => |list| blk: {
+                    var buf: [256]u8 = undefined;
+                    break :blk try a.dupe(u8, sdk.pane.build.pageUrl(&buf, ws, ts.spec.repo, list[i].build_number));
+                },
                 .branches => |list| try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/branch/{s}", .{ ws, ts.spec.repo, list[i].name }),
                 else => null,
             },
@@ -1886,6 +1893,23 @@ pub const App = struct {
             .confirm_ok => try app.acceptMergeConfirm(),
             .confirm_cancel => app.closeMergeConfirm(),
             .confirm_body => {},
+            // A build line is a door, not a row you select: left goes
+            // to that run's page — `activate` already knows the way —
+            // and right keeps the row menu, so the rest of the tree is
+            // still reachable from there.
+            .build_line => |i| {
+                app.select(view.rows, i);
+                if (button == .right) {
+                    const items = app.menuFor(view.rows, i);
+                    if (items.len > 0) {
+                        app.menu = .{ .row = i, .col = col, .y = row, .items = items };
+                        app.mode = .menu;
+                    }
+                } else {
+                    try app.activate(a, view.rows);
+                }
+                if (app.detail_visible) try app.ensureDetail((try app.visible(a)).rows);
+            },
             .row => |i| {
                 app.select(view.rows, i);
                 if (button == .right) {

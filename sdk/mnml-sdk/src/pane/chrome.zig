@@ -409,7 +409,11 @@ pub fn Painter(comptime Target: type) type {
             var buf: [192]u8 = undefined;
             const line = build_mod.caption(&buf, run, now_secs, p.ui.ascii);
             _ = p.putFit(label_x, rect.y, rect.right() -| label_x, line, build_mod.styleOf(p.th, run.state));
-            try p.mark(rect, target);
+            // `hit.buildHit`, not the rect as given: the door is the
+            // whole line, and a pane that paints its build line as a
+            // table cell registers the SAME rect by calling
+            // `buildHit` itself. One door, two lay-outs.
+            try p.mark(hit.buildHit(rect, rect.right()), target);
         }
 
         // ─── an action button ──────────────────────────────
