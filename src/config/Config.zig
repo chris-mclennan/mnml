@@ -15,6 +15,7 @@ const std = @import("std");
 const map = @import("map.zig");
 const dynamic = @import("Dynamic.zig");
 const brand = @import("../ui/brand.zig");
+const bufferline = @import("../ui/bufferline.zig");
 
 pub const Map = map.Map;
 pub const Dynamic = dynamic.Dynamic;
@@ -283,7 +284,12 @@ pub const TabBarAiIcon = enum { none, claude_code, codex, both };
 pub const MaximizeClick = enum { zoom_pane, fullscreen };
 pub const AiLayoutMode = enum { grid, tabs };
 /// Which mark a terminal wears in the chrome (`app/terminal_glyph.zig`).
-pub const TerminalGlyph = enum { ghostty, terminal, custom };
+/// The type lives beside the resolver that answers it, so the tags and
+/// the glyphs they pick cannot drift apart.
+pub const TerminalGlyph = bufferline.TerminalMark;
+/// Which mark Claude Code wears (`app/claude_mark.zig`) — same idea,
+/// same file.
+pub const ClaudeMark = bufferline.ClaudeMark;
 
 /// How a terminal pane draws the cursor its child asked for.
 pub const PtyCursor = struct {
@@ -501,6 +507,13 @@ pub const Ui = struct {
     /// The SVG behind `.custom` — `view.terminal_glyph_custom` sets both
     /// keys and bakes `<data root>/fonts/MnmlSymbols.ttf`.
     terminal_glyph_svg: []const u8 = "",
+    /// The mark Claude Code wears everywhere in the chrome — the tab
+    /// bar's right cluster, a Claude pty tab, the statusline meter, the
+    /// launcher dock, a SESSIONS card. `.figure` is the Claude Code
+    /// figure mnml bakes at U+F1E00; `.spark` is the Anthropic spark,
+    /// one codepoint along. The cluster chip's right-click menu is the
+    /// other way to set it (`app/claude_mark.zig`).
+    claude_mark: ClaudeMark = .figure,
     top_bar_cluster_mode: TopBarClusterMode = .auto,
     /// The tab strip's maximize button, left click. The default is the
     /// zoom, not full screen: with the frame split, a click on it is
@@ -565,8 +578,13 @@ pub const default_todo_keywords = [_][]const u8{ "TODO", "FIXME", "XXX", "HACK",
 /// two together.
 pub const default_integration_icons = [_]IntegrationIcon{
     .{ .id = "browser", .glyph = "\u{EB01}", .fallback = "B", .command = "browser.open", .color = "blue", .label = "Browser", .enabled = true, .in_palette_bar = true },
-    .{ .id = "claude_code", .glyph = "\u{F1E00}", .fallback = "\u{2733}", .command = "ai.claude_code", .color = brand.claude_hex, .label = "Claude Code", .enabled = false, .in_palette_bar = false },
-    .{ .id = "codex", .glyph = "\u{F1E01}", .fallback = "\u{276F}_", .command = "ai.codex", .color = "cyan", .label = "Codex", .enabled = false, .in_palette_bar = false },
+    // The marks come from `ui/bufferline.zig`, which is where a
+    // codepoint is spelled: this row's glyph is the value `allChips`
+    // compares against to know the icon is still the shipped figure
+    // (`app/integrations.zig`), so a second spelling here would let
+    // the two drift.
+    .{ .id = "claude_code", .glyph = bufferline.claude_glyph, .fallback = bufferline.claude_ascii, .command = "ai.claude_code", .color = brand.claude_hex, .label = "Claude Code", .enabled = false, .in_palette_bar = false },
+    .{ .id = "codex", .glyph = bufferline.codex_glyph, .fallback = "\u{276F}_", .command = "ai.codex", .color = "cyan", .label = "Codex", .enabled = false, .in_palette_bar = false },
     .{ .id = "http", .glyph = "\u{F1D8}", .fallback = "H", .command = "view.activity_http", .color = "teal", .label = "HTTP", .enabled = false, .in_palette_bar = false },
 };
 

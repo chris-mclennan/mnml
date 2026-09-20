@@ -197,6 +197,36 @@ pub const claude_ascii = "\u{2733}";
 pub const codex_glyph = "\u{F1E01}";
 pub const codex_ascii = "\u{25C8}";
 
+/// Anthropic's spark — the mark Claude Code wore before the Claude Code
+/// figure took `claude_glyph`'s codepoint. mnml bakes it one along, at
+/// `U+F1E02`; the glyph track owns the art and the bake.
+pub const spark_cp: u21 = 0xF1E02;
+pub const spark_glyph = "\u{F1E02}";
+/// The figure keeps the `✳` twin it has always shipped with; the
+/// spark's is the plain asterisk, so the two are still tellable apart
+/// with no Nerd Font at all.
+pub const spark_ascii = "*";
+
+/// A mark as the chrome paints it: the glyph and its `--ascii` twin.
+/// Everything that draws a branded mark takes one of these from a
+/// resolver rather than naming a codepoint, so a change of mark lands
+/// on every surface at once.
+pub const Mark = struct { glyph: []const u8, fallback: []const u8 };
+
+/// Which mark Claude Code wears — `ui.claude_mark`. Two choices and no
+/// picker: the product's own figure, or the Anthropic spark.
+pub const ClaudeMark = enum { figure, spark };
+
+/// The ONE answer to "which mark is Claude's right now". The app side
+/// reads the config and calls this (`app/claude_mark.zig`); no painter
+/// names `claude_glyph` itself.
+pub fn claudeMark(which: ClaudeMark) Mark {
+    return switch (which) {
+        .figure => .{ .glyph = claude_glyph, .fallback = claude_ascii },
+        .spark => .{ .glyph = spark_glyph, .fallback = spark_ascii },
+    };
+}
+
 /// A terminal as the chrome shows it: the name a shell pane's tab goes
 /// by, and the mark it wears.
 ///
@@ -220,6 +250,23 @@ pub const Terminal = struct {
 pub const terminal_ghost: Terminal = .{ .label = "terminal", .glyph = ghost_glyph, .fallback = ghost_ascii };
 /// `ui.terminal_glyph = .terminal`: the codicon, everywhere.
 pub const terminal_generic: Terminal = .{ .label = "terminal", .glyph = term_glyph, .fallback = term_ascii };
+
+/// Which mark a terminal wears — `ui.terminal_glyph`, whose type this
+/// is (`config/Config.zig` aliases it, so there is one definition).
+/// `.custom` is the user's own SVG baked at the ghost's codepoint, so
+/// it resolves to the same string: which art is behind it is the
+/// font's business, not the chrome's.
+pub const TerminalMark = enum { ghostty, terminal, custom };
+
+/// The ONE answer to "which mark is a terminal's right now", the twin
+/// of `claudeMark`. The app side adds the emulator's NAME to it
+/// (`app/terminal_glyph.zig`).
+pub fn terminalMark(which: TerminalMark) Terminal {
+    return switch (which) {
+        .ghostty, .custom => terminal_ghost,
+        .terminal => terminal_generic,
+    };
+}
 
 /// `$TERM_PROGRAM` as each terminal spells it, and the name mnml shows
 /// for it, in the order a lookup walks (the first match wins; the
