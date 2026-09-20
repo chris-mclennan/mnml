@@ -142,3 +142,67 @@ pub fn railColorOf(app: *App, id: PaneId, theme: *const Theme) ?Color {
         .all => colorOf(app, id, theme),
     };
 }
+
+// ─── tests ──────────────────────────────────────────────────────────────
+
+const t = std.testing;
+
+test "every pane opens wearing a colour, no two live panes share one, and a closed pane's colour comes back" {
+    var app = try App.initWith(t.allocator, t.io, .{ .cols = 80, .rows = 24 });
+    defer app.deinit();
+    const a = try app.openScratch();
+    const b = try app.openScratch();
+    const c = try app.openScratch();
+    try t.expectEqualStrings("green", nameOf(&app, a).?);
+    try t.expectEqualStrings("blue", nameOf(&app, b).?);
+    try t.expectEqualStrings("yellow", nameOf(&app, c).?);
+    // The colour is the pane's rail colour, resolved through the theme.
+    try t.expect(Color.eql(colorOf(&app, b, &app.theme).?, app.theme.palette.blue));
+    // Close the middle one and blue is free: the next pane takes it
+    // rather than marching on down the ladder.
+    try app.closePane(b, true);
+    const d = try app.openScratch();
+    try t.expectEqualStrings("blue", nameOf(&app, d).?);
+    // A pane keeps its colour while it lives, whatever opens after it.
+    try t.expectEqualStrings("green", nameOf(&app, a).?);
+    try t.expectEqualStrings("yellow", nameOf(&app, c).?);
+}
+
+test "the ladder cycles once every colour is worn, and a pick still wins" {
+    var app = try App.initWith(t.allocator, t.io, .{ .cols = 80, .rows = 24 });
+    defer app.deinit();
+    var ids: [10]app_mod.PaneId = undefined;
+    for (&ids) |*id| id.* = try app.openScratch();
+    const ladder = @import("../ui/accent_color.zig").palette;
+    for (ids[0..8], ladder) |id, want| try t.expectEqualStrings(want, nameOf(&app, id).?);
+    // Nine panes, eight colours: the ninth wraps rather than going
+    // colourless.
+    try t.expect(nameOf(&app, ids[8]) != null);
+    try t.expect(nameOf(&app, ids[9]) != null);
+    // A pick wins over the slot, and `Auto` puts the pane back on the
+    // ladder — onto the first colour nobody else holds.
+    try setName(&app, ids[0], "pink");
+    try t.expectEqualStrings("pink", nameOf(&app, ids[0]).?);
+    try setName(&app, ids[0], "mauve");
+    try t.expectEqualStrings("pink", nameOf(&app, ids[0]).?);
+    try setName(&app, ids[0], "none");
+    try t.expectEqualStrings("green", nameOf(&app, ids[0]).?);
+}
+
+test "the three settings: all paints every pane, sessions only an AI session pane, off none" {
+    var app = try App.initWith(t.allocator, t.io, .{ .cols = 80, .rows = 24 });
+    defer app.deinit();
+    const ed = try app.openScratch();
+    app.cfg.ui.pane_rail = .all;
+    try t.expect(railColorOf(&app, ed, &app.theme) != null);
+    // `sessions` is the look before the rail was a rule: a pane that is
+    // not an AI session wears nothing, whatever colour it holds.
+    app.cfg.ui.pane_rail = .sessions;
+    try t.expect(railColorOf(&app, ed, &app.theme) == null);
+    app.cfg.ui.pane_rail = .off;
+    try t.expect(railColorOf(&app, ed, &app.theme) == null);
+    // The colour itself is untouched by the setting — turning the rail
+    // back on does not re-roll it.
+    app.cfg.ui.pane_rail = .all;
+    try t.expect(Color.eql(railColorOf(&app, ed, &app.theme).?, app.theme.palette.green));
+}

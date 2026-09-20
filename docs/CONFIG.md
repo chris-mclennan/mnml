@@ -282,6 +282,18 @@ otherwise. Copy what you need; leave the rest out.
             .unfocused = .hollow, // .hollow | .dim | .none
             .blink = true,
         },
+        // Which panes wear the one-cell colour rail down their left
+        // edge. Every pane takes a colour off the shared accent ladder
+        // when it opens — the one the SESSIONS panel draws from — and
+        // keeps it until it closes, skipping whatever another open pane
+        // is already wearing, so two terminals are never the same
+        // colour at the same time. An integration pane wears its app's
+        // colour instead, and a git pane its repo's.
+        //   .all       every pane (the default)
+        //   .sessions  only an AI session pane, the look before the
+        //              rail was a rule
+        //   .off       none
+        .pane_rail = .all, // .all | .sessions | .off
         // The shape of the cursor mnml puts on the focused editor or
         // text field. .terminal follows the editing mode, as vim does:
         //   NORMAL / VISUAL  a block

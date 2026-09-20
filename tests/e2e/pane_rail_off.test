@@ -1,0 +1,16 @@
+# `ui.pane_rail = off` paints no rail at all.
+#
+# Three settings: `all` (the default — every pane), `sessions` (the
+# older look, where only an AI session pane wore one) and `off`. With
+# `off` the first column of a terminal pane is the child's own grid
+# again, and no cell of it is the rail's ▌.
+command view.toggle_tree
+ex set ui.pane_rail=off
+ex term printf LL; sleep 30
+expect screen contains "LL"
+expect screen lacks "▌LL"
+expect color 0 2 fg not #98c379
+
+# Back to `all` and the rail is there again.
+ex set ui.pane_rail=all
+expect color 0 2 fg #98c379

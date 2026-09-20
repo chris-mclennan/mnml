@@ -93,6 +93,39 @@ There is no third option, and no handler may stash the raw pointer to
 - Layout is the parent's job (`Rect.split*`); a component paints inside
   the rect it is given and clips to it.
 
+## Every pane wears a rail (`src/ui/pane_rail.zig`)
+
+A pane is a colour. One cell wide, down its left edge, its full height,
+the `▌` every other "this thing is that colour" marker in the app uses.
+No pane kind is exempt: a terminal, an editor, a git diff, a mounted
+integration, a request, a list — if it is a pane, it has a rail.
+
+- **The colour comes off the one ladder** (`src/ui/accent_color.zig`),
+  the same one the SESSIONS panel draws from. A pane takes the first
+  slot no live pane is wearing when it opens (`accent_color.firstFree`),
+  keeps it for its life, and gives it back when it closes. Two
+  terminals open at once are therefore never the same colour, and a
+  closed pane's colour is the next pane's.
+- **`PaneStore.add` hands it out**, so a new pane kind gets a rail
+  without its author doing anything. Adding a kind is a `Pane` variant,
+  not a visit to the rail code.
+- **A pane that already belongs to something wears that owner's
+  colour** and takes no ladder slot — a mounted integration its app
+  colour, a git pane its repo's accent (`Pane.wearsOwnAccent`). That is
+  the whole exception list; do not paint a second stripe beside one of
+  these, the owner's colour IS the rail.
+- **The rail registers no hit.** The pane's own hit already covers the
+  column, so the stripe is transparent to the pointer.
+- **Where it goes.** A pane whose content owns its first column insets:
+  the body is `pane_rail.body(rect, true)` and the rail has the column
+  to itself. A pane with a blank chrome cell there shares it instead
+  (`pane_rail.drawOver`), so nothing on screen moves — the editor's
+  gutter opens with the sign column, and a sign still wins the cell it
+  needs. When you add a kind, ask which of the two it is; do not invent
+  a third.
+- `ui.pane_rail` is `all` / `sessions` / `off`, read in one place
+  (`pane_accent.railColorOf`). Nothing else branches on it.
+
 ## Chrome that slides in — and the pin that stops it
 
 Three surfaces hide themselves and slide back over the editor when the
