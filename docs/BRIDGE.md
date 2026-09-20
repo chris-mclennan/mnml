@@ -65,6 +65,7 @@ fields. An unknown **tag** is an error.
 | `input` | `{event}` | the user did something (below) |
 | `focus` | `true` / `false` | the pane gained / lost the keyboard |
 | `session_state` | `{key, state, session_id?, detail?}` | a session you asked to watch moved (below) |
+| `focus_item` | `{key}` | land the cursor on this one thing you already list (below) |
 | `goodbye` | `{}` | leave now |
 
 ```json
@@ -72,6 +73,7 @@ fields. An unknown **tag** is an error.
           "workspace":"/Users/me/proj","capabilities":{"rgb":true,"nerd_font":true,"ascii":false}}}
 {"resize":{"geometry":{"cols":100,"rows":30}}}
 {"focus":true}
+{"focus_item":{"key":"acme/api#1198"}}
 {"goodbye":{}}
 ```
 
@@ -119,6 +121,18 @@ focused integration pane.
 
 The offer goes when the box does. It is attached to the message,
 including the box a repeat coalesced into.
+
+### `focus_item` — land the cursor on one thing
+
+A pane that lists things is sent `{"focus_item":{"key":"…"}}` when a
+statusline hover row names one of them and this pane is already the
+open one. The key is the pane's own name for the thing — whatever it
+accepts on its `--focus` flag, since the same row spells it the same
+way both ways: on the argv when the pane has to be started, down the
+socket when it is already there. Landing is the pane's to define
+(open what was folded, switch tab, put the cursor on it, open its
+detail); a key the pane does not hold is the pane's to answer, and
+both official integrations say `not in this listing: <key>`.
 
 ### `session_state` — what happened to a session you started
 
@@ -265,7 +279,9 @@ title and then one row per item, `text` in the foreground and `sub`
 muted at the right; a left click on a row runs its `command`, with
 `args` appended to that command's argv when the command mounts a
 binary (`--focus <key>` and the like), so a row can open the thing it
-names rather than only the pane that holds it. The host keeps at most
+names rather than only the pane that holds it — and when the pane that
+command opens is ALREADY up, the key comes down this socket as
+`focus_item` instead of a second pane opening beside the first. The host keeps at most
 24 rows off the wire and paints at most `statusline.hover_items` (8 by
 default), with `… and N more` for the rest; a row with no `text` is
 dropped, not the line. Leave `items` out and the chip keeps the
@@ -284,7 +300,7 @@ file.
 * `hello.protocol` exists; `hello.capabilities` and `hello.workspace`
   are new; `MNML_PROTOCOL=2` is in the environment.
 * `frame_dirty`, `cursor`, `command`, `toast` are new messages;
-  `focus` and `hover` are new host messages.
+  `focus`, `focus_item` and `hover` are new host messages.
 * `mods` keeps ratatui's bit layout.
 * The manifest is ZON, not TOML (`docs/SDK.md`).
 

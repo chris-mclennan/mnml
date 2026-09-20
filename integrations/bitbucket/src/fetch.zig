@@ -172,6 +172,11 @@ pub const hover_items: usize = 8;
 pub const ValuesItem = struct {
     text: []const u8,
     sub: []const u8 = "",
+    /// // changed (focus-row): which pull request this row is, in
+    /// `prRowKey`'s shape (`repo#id`) — what a press on the row hands
+    /// the pane as `--focus`, so it lands on this one rather than
+    /// leaving the reader to find it. Empty for a row that names none.
+    key: []const u8 = "",
 };
 
 pub const ValuesResult = struct {
@@ -888,11 +893,16 @@ pub const Worker = struct {
                             if (open_items.items.len < hover_items) try open_items.append(a, .{
                                 .text = pr.title,
                                 .sub = try std.fmt.allocPrint(a, "{s}/{s} · {s}", .{ scope.workspace, slug, if (pr.approvalCount() > 0) "approved" else "unapproved" }),
+                                .key = try std.fmt.allocPrint(a, "{s}#{d}", .{ slug, pr.id }),
                             });
                             try mine.append(a, .{ .repo = slug, .id = pr.id, .updated_on = pr.updated_on, .title = pr.title });
                         } else if (pr.awaitingApproval(me)) {
                             awaiting += 1;
-                            if (awaiting_items.items.len < hover_items) try awaiting_items.append(a, .{ .text = pr.title, .sub = try std.fmt.allocPrint(a, "{s}/{s}", .{ scope.workspace, slug }) });
+                            if (awaiting_items.items.len < hover_items) try awaiting_items.append(a, .{
+                                .text = pr.title,
+                                .sub = try std.fmt.allocPrint(a, "{s}/{s}", .{ scope.workspace, slug }),
+                                .key = try std.fmt.allocPrint(a, "{s}#{d}", .{ slug, pr.id }),
+                            });
                         }
                     }
                 },
@@ -923,6 +933,7 @@ pub const Worker = struct {
                     if (n > 0 and comment_items.items.len < hover_items) try comment_items.append(a, .{
                         .text = m.title,
                         .sub = try std.fmt.allocPrint(a, "{s}/{s} · {d} waiting", .{ scope.workspace, m.repo, n }),
+                        .key = try std.fmt.allocPrint(a, "{s}#{d}", .{ m.repo, m.id }),
                     });
                     continue;
                 }
@@ -937,6 +948,7 @@ pub const Worker = struct {
                         if (n > 0 and comment_items.items.len < hover_items) try comment_items.append(a, .{
                             .text = m.title,
                             .sub = try std.fmt.allocPrint(a, "{s}/{s} · {d} waiting", .{ scope.workspace, m.repo, n }),
+                            .key = try std.fmt.allocPrint(a, "{s}#{d}", .{ m.repo, m.id }),
                         });
                         try rc.put(k, m.updated_on, n);
                     },

@@ -97,6 +97,10 @@ const Opts = struct {
     prefetch: bool = false,
     help: bool = false,
     only: ?[]const u8 = null,
+    /// `--focus <repo>#<id>`: the pull request to land the cursor on
+    /// once the first listing is in — what a row of the statusline
+    /// figure's hover asks for. Empty is "wherever the cursor lands".
+    focus: []const u8 = "",
     /// `--dump --steps FILE [--size WxH]`: the headless driver — the
     /// same App and the same paint as the pane, driven by a step
     /// script, with every `snap` printed as text. `--dump-style` adds
@@ -157,6 +161,9 @@ fn parseArgs(args: []const []const u8) !Opts {
         } else if (std.mem.eql(u8, a, "--only") and i + 1 < args.len) {
             i += 1;
             o.only = args[i];
+        } else if (std.mem.eql(u8, a, "--focus") and i + 1 < args.len and args[i + 1].len > 0) {
+            i += 1;
+            o.focus = args[i];
         } else if (std.mem.eql(u8, a, "--owner") and i + 1 < args.len) {
             i += 1;
             o.owner = args[i];
@@ -275,6 +282,8 @@ const usage =
     \\                           (`bg  6: 0-119 #31353d`, `fg  6: 0-7 #61afef+b`)
     \\  --prefetch                warm the pane's cache; 0 complete, 2 partial, 1 could not run
     \\  --only prs|prs-mine|prs-awaiting|pipelines|branches   one family of tabs
+    \\  --focus REPO#ID          land the cursor on that pull request once the
+    \\                           listing is in, and open its detail
     \\
 ;
 
@@ -611,7 +620,21 @@ pub fn titleTail(arena: Allocator, items: []const fetch.ValuesItem) Allocator.Er
 pub fn hoverItems(arena: Allocator, items: []const fetch.ValuesItem, click: []const u8) Allocator.Error![]const sdk.ipc.Item {
     if (items.len == 0) return &.{};
     const out = try arena.alloc(sdk.ipc.Item, items.len);
-    for (items, 0..) |it, i| out[i] = .{ .text = it.text, .sub = it.sub, .command = click };
+    // // changed (focus-row): `args` is the row's deep link. The host
+    // appends them to the command's argv when it mounts the pane, and
+    // hands them down the mount as a `focus_item` when the pane is
+    // already open — either way the cursor ends on THIS pull request.
+    for (items, 0..) |it, i| out[i] = .{ .text = it.text, .sub = it.sub, .command = click, .args = try focusArgs(arena, it.key) };
+    return out;
+}
+
+/// `--focus <key>` as a two-element argv, or nothing for a row that
+/// names no pull request.
+pub fn focusArgs(arena: Allocator, key: []const u8) Allocator.Error![]const []const u8 {
+    if (key.len == 0) return &.{};
+    const out = try arena.alloc([]const u8, 2);
+    out[0] = "--focus";
+    out[1] = key;
     return out;
 }
 
@@ -1047,7 +1070,7 @@ fn dumpCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: A
         }
     }
 
-    var app = try app_mod.App.init(gpa, io, session.loaded.config, session.loaded.path, .{ .only = only, .mine = mine, .awaiting = awaiting, .workspace_dir = env.get("MNML_WORKSPACE") orelse "" });
+    var app = try app_mod.App.init(gpa, io, session.loaded.config, session.loaded.path, .{ .only = only, .mine = mine, .awaiting = awaiting, .focus = opts.focus, .workspace_dir = env.get("MNML_WORKSPACE") orelse "" });
     defer app.deinit();
     if (app.tabs.len == 0) {
         try err.print("mnml-bitbucket --dump: no tabs of that family in {s}\n", .{session.loaded.path});
@@ -1176,6 +1199,9 @@ const HostEvent = union(enum) {
     /// A plain move: what a dim button's reason hangs off.
     hover: struct { col: u16, row: u16 },
     session_state: struct { key: []u8, state: sdk.wire.SessionState, session_id: []u8, detail: []u8 },
+    /// // changed (focus-row): a hover row pressed while this pane is
+    /// already the open one — the pull request to put the cursor on.
+    focus_item: []u8,
     scroll: struct { col: u16, row: u16, dy: i16 },
     resize: sdk.wire.Geometry,
     focus: bool,
@@ -1212,6 +1238,7 @@ fn readerThread(gpa: Allocator, io: Io, mount: *sdk.Mount, q: *EventQueue) void 
                 .detail = gpa.dupe(u8, ss.detail) catch continue,
             } },
             .focus => |f| .{ .focus = f },
+            .focus_item => |f| .{ .focus_item = gpa.dupe(u8, f.key) catch continue },
             .goodbye => .goodbye,
             .resize => |r| .{ .resize = r.geometry },
             .input => |in| switch (in.event) {
@@ -1329,7 +1356,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
     defer warm_lock.deinit();
     const may_warm = warm_lock.acquire(@floatFromInt(nowSecs(io)));
 
-    var app = try app_mod.App.init(gpa, io, session.loaded.config, session.loaded.path, .{ .only = only, .mine = mine, .awaiting = awaiting, .workspace_dir = env.get("MNML_WORKSPACE") orelse mount.hello.workspace });
+    var app = try app_mod.App.init(gpa, io, session.loaded.config, session.loaded.path, .{ .only = only, .mine = mine, .awaiting = awaiting, .focus = opts.focus, .workspace_dir = env.get("MNML_WORKSPACE") orelse mount.hello.workspace });
     defer app.deinit();
     app.may_warm = may_warm;
     // The worker leaves a long wait where the paint loop finds it.
@@ -1411,6 +1438,10 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
                 },
                 .goodbye => running = false,
                 .focus => |f| app.focused = f,
+                .focus_item => |k| {
+                    defer gpa.free(k);
+                    try app.requestFocus(k);
+                },
                 .other => {},
             },
             .result => |r| {
@@ -1701,9 +1732,9 @@ test "the three chips carry their counts, what they mean and WHICH; the review c
         .unresolved_comments = 3,
         .comment_hits = 3,
         .comment_requests = 1,
-        .open_items = &.{ .{ .text = "Fix the login redirect", .sub = "acme/api · unapproved" }, .{ .text = "Redesign the empty state", .sub = "acme/web · approved" } },
-        .comment_items = &.{.{ .text = "Fix the login redirect", .sub = "acme/api · 2 waiting" }},
-        .awaiting_items = &.{ .{ .text = "Bump the client timeout to 30s", .sub = "acme/api" }, .{ .text = "Tidy the footer links", .sub = "acme/web" } },
+        .open_items = &.{ .{ .text = "Fix the login redirect", .sub = "acme/api · unapproved", .key = "api#1198" }, .{ .text = "Redesign the empty state", .sub = "acme/web · approved", .key = "web#820" } },
+        .comment_items = &.{.{ .text = "Fix the login redirect", .sub = "acme/api · 2 waiting", .key = "api#1198" }},
+        .awaiting_items = &.{ .{ .text = "Bump the client timeout to 30s", .sub = "acme/api", .key = "api#1234" }, .{ .text = "Tidy the footer links", .sub = "acme/web", .key = "web#77" } },
     }, .{ .status = .{ .tokens = 0.24, .capacity = 40, .rate = 0.11, .baseline_rate = 0.22, .throttles = 127, .cooldown_remaining_secs = 0, .last_429_age_secs = 4 * 3600 }, .draws = .{ .top = "bb.py", .top_n = 30, .total = 83 } });
     var got = try tmp.dir.readFileAlloc(t.io, "command", arena, .unlimited);
     try t.expect(std.mem.indexOf(u8, got, "\"id\":\"bitbucket_prs.prs_mine\"") != null);
@@ -1749,6 +1780,12 @@ test "the three chips carry their counts, what they mean and WHICH; the review c
     try t.expect(std.mem.indexOf(u8, got, "{\"text\":\"Redesign the empty state\",\"sub\":\"acme/web \u{b7} approved\",\"command\":\"bitbucket_prs.open_mine\"") != null);
     try t.expect(std.mem.indexOf(u8, got, "{\"text\":\"Fix the login redirect\",\"sub\":\"acme/api \u{b7} 2 waiting\",\"command\":\"bitbucket_prs.open_mine\"") != null);
     try t.expect(std.mem.indexOf(u8, got, "\"items\":[{\"text\":\"Bump the client timeout to 30s\",\"sub\":\"acme/api\",\"command\":\"bitbucket_prs.open_awaiting\"") != null);
+    // And WHICH pull request each row is: the host appends these to
+    // the command's argv, so the press lands the cursor on that one
+    // rather than only opening the pane.
+    try t.expect(std.mem.indexOf(u8, got, "\"command\":\"bitbucket_prs.open_mine\",\"args\":[\"--focus\",\"api#1198\"]") != null);
+    try t.expect(std.mem.indexOf(u8, got, "\"command\":\"bitbucket_prs.open_mine\",\"args\":[\"--focus\",\"web#820\"]") != null);
+    try t.expect(std.mem.indexOf(u8, got, "\"command\":\"bitbucket_prs.open_awaiting\",\"args\":[\"--focus\",\"api#1234\"]") != null);
 
     // Not counted: the second chip is not published at all. A zero
     // there would read as "nothing outstanding".

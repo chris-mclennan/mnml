@@ -102,7 +102,7 @@ pub fn main(init: std.process.Init) !u8 {
         const msg = (try mount.next(msg_arena.allocator())) orelse break;
         switch (msg) {
             // A pane that starts no sessions is told about none.
-            .hello, .focus, .session_state => {},
+            .hello, .focus, .session_state, .focus_item => {},
             .goodbye => break,
             .resize => |r| try frame.resize(r.geometry.cols, r.geometry.rows),
             .input => |in| switch (in.event) {

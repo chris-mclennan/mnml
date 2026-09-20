@@ -105,6 +105,10 @@ pub const Args = struct {
     write_config: bool = false,
     only: ?config.Family = null,
     bad_only: ?[]const u8 = null,
+    /// `--focus <KEY>`: the ticket to land the cursor on once the first
+    /// listing is in — what a row of the Work chip's hover asks for.
+    /// Empty is "wherever the cursor lands".
+    focus: []const u8 = "",
     config_path: ?[]const u8 = null,
     workspace: ?[]const u8 = null,
     /// `--dump --steps FILE [--size WxH]`: the headless driver behind
@@ -130,6 +134,9 @@ pub fn parseArgs(argv: []const []const u8) Args {
             i += 1;
             a.only = config.Family.fromCli(argv[i]);
             if (a.only == null) a.bad_only = argv[i];
+        } else if (std.mem.eql(u8, s, "--focus") and i + 1 < argv.len and argv[i + 1].len > 0) {
+            i += 1;
+            a.focus = argv[i];
         } else if (std.mem.eql(u8, s, "--config") and i + 1 < argv.len) {
             i += 1;
             a.config_path = argv[i];
@@ -164,6 +171,8 @@ pub const usage =
     \\  --prefetch --only F       the family's tabs and issues as JSON
     \\  --write-config            write config.zon and print its path
     \\  --only work|fix-versions|boards   the family a pane shows
+    \\  --focus KEY               land the cursor on that ticket once the
+    \\                            listing is in, and open its detail
     \\  --config PATH             the config file (else $MNML_JIRA_CONFIG, the
     \\                            workspace's, the data root's)
     \\  --dump --steps FILE [--size WxH] [--only F]
@@ -413,6 +422,9 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     // The host sets this for every integration it spawns; a dispatched
     // `term` line goes to that channel and nowhere else.
     app.setIpcDir(env.get("MNML_IPC_DIR") orelse "");
+    // `--focus ENG-2`: remembered now, landed at the first listing
+    // that can hold it.
+    if (args.focus.len > 0) app.setFocusKey(args.focus);
     // Where a saved vars edit is spliced back into.
     app.setConfigPath(rd.path);
     // Refetches go to a task on this group, so a search and its per-row
@@ -465,6 +477,10 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
             switch (msg) {
                 .hello => {},
                 .focus => |f| app.focused = f,
+                // A row of the hover pressed while this pane is
+                // already the open one: the cursor moves, rather than
+                // a second pane opening beside it.
+                .focus_item => |f| try app.requestFocus(f.key),
                 // The host's word on a session this pane dispatched.
                 .session_state => |ss| try app.onSessionState(ss.key, ss.state, ss.session_id, ss.detail),
                 .goodbye => ended = true,
@@ -564,6 +580,11 @@ pub const hover_items: usize = 8;
 pub const ValuesItem = struct {
     text: []const u8,
     sub: []const u8 = "",
+    /// // changed (focus-row): which ticket this row is (`ENG-2`) —
+    /// what a press on the row hands the pane as `--focus`, so it
+    /// lands on this one rather than leaving the reader to find it.
+    /// Empty for a row that names none.
+    key: []const u8 = "",
 };
 
 /// The tickets themselves, for the hover to list — key, summary, and
@@ -576,6 +597,7 @@ pub fn issueItems(arena: Allocator, issues: []const model.Issue) Allocator.Error
     for (issues[0..n], 0..) |iss, i| out[i] = .{
         .text = try std.fmt.allocPrint(arena, "{s}  {s}", .{ iss.key, iss.summary }),
         .sub = if (iss.status.len > 0) iss.status else "(no status)",
+        .key = iss.key,
     };
     return out;
 }
@@ -584,7 +606,21 @@ pub fn issueItems(arena: Allocator, issues: []const model.Issue) Allocator.Error
 pub fn hoverRows(arena: Allocator, items: []const ValuesItem, click: []const u8) Allocator.Error![]const sdk.ipc.Item {
     if (items.len == 0) return &.{};
     const out = try arena.alloc(sdk.ipc.Item, items.len);
-    for (items, 0..) |it, i| out[i] = .{ .text = it.text, .sub = it.sub, .command = click };
+    // // changed (focus-row): `args` is the row's deep link. The host
+    // appends them to the command's argv when it mounts the pane, and
+    // hands them down the mount as a `focus_item` when the pane is
+    // already open — either way the cursor ends on THIS ticket.
+    for (items, 0..) |it, i| out[i] = .{ .text = it.text, .sub = it.sub, .command = click, .args = try focusArgs(arena, it.key) };
+    return out;
+}
+
+/// `--focus <KEY>` as a two-element argv, or nothing for a row that
+/// names no ticket.
+pub fn focusArgs(arena: Allocator, key: []const u8) Allocator.Error![]const []const u8 {
+    if (key.len == 0) return &.{};
+    const out = try arena.alloc([]const u8, 2);
+    out[0] = "--focus";
+    out[1] = key;
     return out;
 }
 
@@ -1159,6 +1195,7 @@ fn dump(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     defer sync_store.deinit();
     app.setSyncStore(&sync_store);
     app.setIpcDir(env.get("MNML_IPC_DIR") orelse "");
+    if (args.focus.len > 0) app.setFocusKey(args.focus);
     defer app.deinit();
     app.resize(cols, rows);
     var frame = try sdk.Frame.init(gpa, cols, rows);
@@ -1468,7 +1505,7 @@ test "both chips carry their count and their breakdown; the QA one is absent whe
     try publishSegments(&ipc, arena, .{
         .assigned_open = 7,
         .assigned_by_status = &.{ .{ .status = "In Progress", .n = 4 }, .{ .status = "To Do", .n = 3 } },
-        .assigned_items = &.{ .{ .text = "ENG-1  Checkout rewrite", .sub = "In Progress" }, .{ .text = "ENG-5  Basket total wrong with a voucher", .sub = "To Do" } },
+        .assigned_items = &.{ .{ .text = "ENG-1  Checkout rewrite", .sub = "In Progress", .key = "ENG-1" }, .{ .text = "ENG-5  Basket total wrong with a voucher", .sub = "To Do", .key = "ENG-5" } },
     }, null);
     var got = try tmp.dir.readFileAlloc(testing.io, "command", arena, .unlimited);
     try testing.expect(std.mem.indexOf(u8, got, "\"id\":\"jira_work.assigned\"") != null);
@@ -1481,6 +1518,11 @@ test "both chips carry their count and their breakdown; the QA one is absent whe
     // search returned them, each carrying what a click on the row runs.
     try testing.expect(std.mem.indexOf(u8, got, "\"items\":[{\"text\":\"ENG-1  Checkout rewrite\",\"sub\":\"In Progress\",\"command\":\"jira_work.open\"") != null);
     try testing.expect(std.mem.indexOf(u8, got, "{\"text\":\"ENG-5  Basket total wrong with a voucher\",\"sub\":\"To Do\",\"command\":\"jira_work.open\"") != null);
+    // And WHICH ticket each row is: the host appends these to the
+    // command's argv, so the press lands the cursor on that one
+    // rather than only opening the pane.
+    try testing.expect(std.mem.indexOf(u8, got, "\"command\":\"jira_work.open\",\"args\":[\"--focus\",\"ENG-1\"]") != null);
+    try testing.expect(std.mem.indexOf(u8, got, "\"command\":\"jira_work.open\",\"args\":[\"--focus\",\"ENG-5\"]") != null);
 
     try publishSegments(&ipc, arena, .{
         .assigned_open = 1,

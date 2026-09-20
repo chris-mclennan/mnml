@@ -153,6 +153,9 @@ pub const Options = struct {
     /// `--only prs-awaiting`: open with the awaiting-my-review filter
     /// already on — what the `reviews_pending` chip's click asks for.
     awaiting: bool = false,
+    /// `--focus <repo>#<id>`: the pull request to land the cursor on
+    /// once the first listing is in. Empty asks for nothing.
+    focus: []const u8 = "",
     workspace_dir: []const u8 = ".",
 };
 
@@ -256,8 +259,20 @@ pub const App = struct {
     refreshes_landed: u32 = 0,
     /// The worker's progress, read by the header while a tab loads.
     progress: ?*const fetch.Progress = null,
+    /// // changed (focus-row): the pull request a `--focus <repo>#<id>`
+    /// asked the cursor to land on, `repo#id` (`prRowKey`'s shape).
+    /// It outlives the first paint — the flag is read before any
+    /// listing exists — and is cleared the moment it lands or is
+    /// answered with `not in this listing`. A forwarded focus
+    /// (`focus_item` over the mount, the pane already open) goes
+    /// through the same field, so there is one landing, not two.
+    focus_key_buf: [256]u8 = undefined,
+    focus_key_len: usize = 0,
 
     pub fn init(gpa: Allocator, io: Io, config: cfg.Config, config_path: []const u8, opts: Options) Allocator.Error!App {
+        // `--focus acme/api#12` and `--focus api#12` name the same
+        // pull request; the rows are keyed by the short one.
+        const focus = shortKey(opts.focus);
         var app: App = .{
             .gpa = gpa,
             .io = io,
@@ -266,6 +281,7 @@ pub const App = struct {
             .scope = config.scope,
             .workspace_dir = opts.workspace_dir,
             .awaiting_only = opts.awaiting,
+            .focus_key_len = @min(focus.len, 256),
             .tabs = &.{},
             .only = opts.only,
             .effect_arena = std.heap.ArenaAllocator.init(gpa),
@@ -275,6 +291,7 @@ pub const App = struct {
             .watch_arena = std.heap.ArenaAllocator.init(gpa),
         };
         errdefer app.deinit();
+        @memcpy(app.focus_key_buf[0..app.focus_key_len], focus[0..app.focus_key_len]);
         for (config.hidden_repos) |h| try app.hidden.append(gpa, try gpa.dupe(u8, h));
         for (config.repo_order) |o| try app.order.append(gpa, try gpa.dupe(u8, o));
         app.syncConfigLists();
@@ -1421,6 +1438,112 @@ pub const App = struct {
         for (app.tabs, 0..) |*ts, i| if (ts.spec.kind.isWorkspaceWide()) try app.refreshTab(i);
     }
 
+    // ─── focus one pull request ──────────────────────────────────────
+
+    /// // changed (focus-row): land the cursor on ONE pull request,
+    /// `<repo>#<id>` — `--focus` on the argv, or a `focus_item` handed
+    /// over the mount when this pane is already the open one. A key
+    /// that cannot land yet is remembered and tried again at every
+    /// listing that arrives, so the flag may be read long before there
+    /// is anything to land on.
+    ///
+    /// `workspace/repo#id` is accepted too: the hover row and the
+    /// detail cache spell the same pull request two ways, and a reader
+    /// who types either means the same thing.
+    pub fn requestFocus(app: *App, key: []const u8) Allocator.Error!void {
+        const want = shortKey(key);
+        app.focus_key_len = @min(want.len, app.focus_key_buf.len);
+        @memcpy(app.focus_key_buf[0..app.focus_key_len], want[0..app.focus_key_len]);
+        // The listing may already be here — a second row of the same
+        // hover must move the cursor now, not at the next refresh.
+        try app.tryFocus(app.activeTab().fetched);
+    }
+
+    /// `acme/api#12` and `api#12` are the same pull request; the tabs
+    /// key rows by the second shape.
+    fn shortKey(key: []const u8) []const u8 {
+        const cut = std.mem.lastIndexOfScalar(u8, key, '/') orelse return key;
+        return key[cut + 1 ..];
+    }
+
+    /// Try to put the cursor on the pull request `--focus` asked for.
+    /// `settle` says this was the answer being waited on: a key that is
+    /// in no listing gets told so and is forgotten, rather than lying
+    /// in wait for a tab that will never hold it.
+    pub fn tryFocus(app: *App, settle: bool) Allocator.Error!void {
+        if (app.focus_key_len == 0) return;
+        var want_buf: [256]u8 = undefined;
+        const want = want_buf[0..app.focus_key_len];
+        @memcpy(want, app.focus_key_buf[0..app.focus_key_len]);
+        if (try app.landFocus(want)) {
+            app.focus_key_len = 0;
+            return;
+        }
+        if (!settle) return;
+        app.say(.warn, "not in this listing: {s}", .{want});
+        app.focus_key_len = 0;
+    }
+
+    /// The tab that holds `want`, the repo it sits under, and the
+    /// cursor on its row — or false, and nothing touched.
+    fn landFocus(app: *App, want: []const u8) Allocator.Error!bool {
+        // The tab in front of the reader first: a pull request that is
+        // in two listings is the one already on screen.
+        var i: usize = 0;
+        while (i <= app.tabs.len) : (i += 1) {
+            const idx = if (i == 0) app.active else i - 1;
+            if (idx >= app.tabs.len) continue;
+            if (i > 0 and idx == app.active) continue;
+            const slug = prSlugIn(&app.tabs[idx], want) orelse continue;
+            if (idx != app.active) try app.switchTab(idx);
+            const ts = app.activeTab();
+            // Whatever hides the row, open it: a repo folded shut, the
+            // 24-hour `Show more` cut, a `/` query from before.
+            try ts.expanded.setRepo(slug, true);
+            ts.show_all = true;
+            app.filter.clearRetainingCapacity();
+            app.filter_caret = 0;
+            _ = app.frame_arena.reset(.retain_capacity);
+            const rows = (try app.visible(app.frame_arena.allocator())).rows;
+            const was = ts.selected;
+            for (rows, 0..) |_, r| {
+                ts.selected = r;
+                const k = app.focusedKey(rows) orelse continue;
+                var kb: [256]u8 = undefined;
+                if (!std.mem.eql(u8, prRowKey(&kb, k.repo, k.id), want)) continue;
+                app.detail_visible = true;
+                app.detail_scroll = 0;
+                try app.ensureDetail(rows);
+                return true;
+            }
+            // In the data but not in the rows: the awaiting-only
+            // filter is the one thing `--focus` will not undo, because
+            // undoing it would empty the listing the reader asked for.
+            ts.selected = was;
+            return false;
+        }
+        return false;
+    }
+
+    /// The repo slug `want` sits under in this tab's data, if it is
+    /// there at all. Read off the data rather than the rows, because a
+    /// row that is folded away is still a pull request this tab holds.
+    fn prSlugIn(ts: *const TabState, want: []const u8) ?[]const u8 {
+        if (!ts.fetched) return null;
+        var buf: [256]u8 = undefined;
+        switch (ts.data) {
+            .repo_pr_tree => |repos| for (repos) |rp| {
+                for (rp.prs) |pr| if (std.mem.eql(u8, prRowKey(&buf, rp.slug, pr.id), want)) return rp.slug;
+            },
+            .pull_requests => |list| for (list) |pr| {
+                const slug = if (pr.repoSlug().len > 0) pr.repoSlug() else ts.spec.repo;
+                if (std.mem.eql(u8, prRowKey(&buf, slug, pr.id), want)) return slug;
+            },
+            else => {},
+        }
+        return null;
+    }
+
     // ─── tabs and refresh ────────────────────────────────────────────
 
     pub fn switchTab(app: *App, idx: usize) Allocator.Error!void {
@@ -1664,6 +1787,10 @@ pub const App = struct {
                     } else ts.selected = was;
                 }
                 ts.keep_key_len = 0;
+                // A `--focus` is answered by the listing it was
+                // waiting for: the active tab's, which is the one the
+                // reader is looking at.
+                try app.tryFocus(r.tab == app.active);
             },
             .detail => |d| {
                 var buf: [256]u8 = undefined;
@@ -2243,6 +2370,49 @@ test "startup prefetches every tab, opens the trees, and the keys walk the rows 
     try t.expectEqual(@as(usize, 9), rows.len);
     try t.expect(rows[1] == .branch);
     try t.expect(!(try r.key("q")));
+}
+
+test "`--focus` lands the cursor on that pull request, lifts what was hiding it, and opens its detail" {
+    // #1198 is 30 hours old, so the workspace tab folds it behind
+    // `Show more (1)` — the row the flag asks for is one nothing but a
+    // key press would otherwise reach.
+    const r = try Rig.init(acme, .{ .focus = "api#1198" });
+    defer r.deinit();
+    const ts = &r.app.tabs[0];
+    try t.expect(ts.show_all);
+    const rows = try r.rows();
+    const k = r.app.focusedKey(rows) orelse return error.NoCursor;
+    var kb: [256]u8 = undefined;
+    try t.expectEqualStrings("api#1198", App.prRowKey(&kb, k.repo, k.id));
+    // And the panel beside the list is open on it, not on whatever the
+    // cursor happened to start on.
+    try t.expect(r.app.detail_visible);
+    // Consumed: a later refetch does not drag the cursor back.
+    try t.expectEqual(@as(usize, 0), r.app.focus_key_len);
+}
+
+test "`--focus` takes the long spelling too, and a key in no listing says so and leaves the cursor alone" {
+    const r = try Rig.init(acme, .{ .focus = "acme/api#1234" });
+    defer r.deinit();
+    var rows = try r.rows();
+    var kb: [256]u8 = undefined;
+    const k = r.app.focusedKey(rows) orelse return error.NoCursor;
+    try t.expectEqualStrings("api#1234", App.prRowKey(&kb, k.repo, k.id));
+
+    // A second ask — what a `focus_item` off the hover hands a pane
+    // that is already open — moves the cursor where it points.
+    try r.app.requestFocus("web#820");
+    rows = try r.rows();
+    const k2 = r.app.focusedKey(rows) orelse return error.NoCursor;
+    try t.expectEqualStrings("web#820", App.prRowKey(&kb, k2.repo, k2.id));
+
+    // And one that names nothing this pane holds is answered, not
+    // silently ignored — the cursor stays where the reader left it.
+    const before = r.app.activeTab().selected;
+    try r.app.requestFocus("api#999999");
+    try t.expectEqualStrings("not in this listing: api#999999", r.app.status.items);
+    try t.expectEqual(before, r.app.activeTab().selected);
+    try t.expectEqual(@as(usize, 0), r.app.focus_key_len);
 }
 
 test "a refetch keeps the old rows on screen and puts the cursor back on the PR it was on, not the row index" {

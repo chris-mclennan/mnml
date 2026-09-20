@@ -171,6 +171,14 @@ pub const HostMessage = union(enum) {
         /// on the hint row.
         detail: []const u8 = "",
     },
+    /// // changed (focus-row): land the cursor on one thing this pane
+    /// already lists — the ticket or the pull request a row of a
+    /// statusline hover names. Sent instead of mounting a second copy
+    /// of the same pane when one is already open, so the same argv
+    /// flag (`--focus <key>`) and the same wire verb say the same
+    /// thing whether the pane was just started or has been up for an
+    /// hour. A key the pane does not hold is the pane's to answer.
+    focus_item: struct { key: []const u8 },
     /// The host is going away; the sibling should exit.
     goodbye,
 };

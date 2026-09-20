@@ -147,6 +147,18 @@ pub const MountPane = struct {
         m.send(msg) catch {};
     }
 
+    /// // changed (focus-row): hand the sibling the one thing a hover
+    /// row named, so an already-open pane moves its cursor instead of
+    /// a second copy of the same listing opening beside it. False when
+    /// the child is not there to hear it — a pane still connecting has
+    /// the key on its own argv already.
+    pub fn focusItem(self: *MountPane, key: []const u8) bool {
+        const m = self.mount orelse return false;
+        if (!m.connected) return false;
+        m.send(.{ .focus_item = .{ .key = key } }) catch return false;
+        return true;
+    }
+
     fn setExit(self: *MountPane, reason: []const u8) Allocator.Error!void {
         if (self.exit != null) return;
         self.exit = try std.fmt.allocPrint(self.gpa, "[{s}] — any key closes", .{reason});
@@ -155,6 +167,16 @@ pub const MountPane = struct {
 
 pub const OpenOptions = struct {
     argv: []const []const u8,
+    /// // changed (focus-row): the argv this pane is KNOWN by, when
+    /// that is not the argv it runs. A deep link (`--focus ENG-2`) is
+    /// an argument to one listing, not a different listing, so the
+    /// identity leaves it out: the second row of the same hover then
+    /// finds the pane the first one opened. Empty means `argv` itself.
+    identity: []const []const u8 = &.{},
+    /// The one thing the pane should land on — forwarded down the
+    /// mount when `identity` is already open, rather than opening a
+    /// second one. Empty asks for nothing.
+    focus: []const u8 = "",
     /// The tab label; argv[0]'s basename when null.
     label: ?[]const u8 = null,
     /// The manifest that opened it.
@@ -217,8 +239,14 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
     if (!supported) return app.diag.fail(app.frame.allocator(), "mount: no Unix sockets on this platform", .{});
     if (opts.argv.len == 0) return app.diag.fail(app.frame.allocator(), "mount: nothing to run", .{});
     // Already running: show that one instead of spawning a second.
-    const key = try joinArgv(app.frame.allocator(), opts.argv);
+    const identity = if (opts.identity.len > 0) opts.identity else opts.argv;
+    const key = try joinArgv(app.frame.allocator(), identity);
     if (findOpen(app, key)) |existing| {
+        // // changed (focus-row): and if the press named one thing,
+        // the pane that is already up moves its cursor onto it.
+        if (opts.focus.len > 0) if (app.panes.get(existing)) |p| if (p.asMount()) |mp| {
+            _ = mp.focusItem(opts.focus);
+        };
         app.showPane(existing);
         app.focus = .{ .pane = existing };
         app.needs_render = true;
@@ -229,7 +257,7 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
     errdefer gpa.free(label);
     const integration: ?[]u8 = if (opts.integration) |i| try gpa.dupe(u8, i) else null;
     errdefer if (integration) |i| gpa.free(i);
-    const cmdline = try joinArgv(gpa, opts.argv);
+    const cmdline = try joinArgv(gpa, identity);
     errdefer gpa.free(cmdline);
 
     next_id += 1;
@@ -938,6 +966,37 @@ test "findOpen matches the whole command line: the same integration command focu
     // A dead pane is not a pane to go back to.
     app.panes.get(id).?.asMount().?.exit = try gpa.dupe(u8, "gone");
     try testing.expect(findOpen(&app, "bb --only prs") == null);
+}
+
+test "a deep link reaches the pane that is already open rather than a second one, and only for the same command" {
+    if (!supported) return error.SkipZigTest;
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    defer app.deinit();
+    const gpa = testing.allocator;
+    const id = try app.panes.add(.{ .mount = .{
+        .gpa = gpa,
+        .mount = null,
+        .label = try gpa.dupe(u8, "Bitbucket PRs"),
+        .integration = try gpa.dupe(u8, "bitbucket_prs"),
+        .cmdline = try gpa.dupe(u8, "bb --only prs"),
+        .generation = 1,
+    } });
+    const before = app.panes.slots.items.len;
+    // The hover row's press: the same command, plus which pull request.
+    // `identity` is what the pane is KNOWN by, so the deep link does
+    // not make it a different thing to look at — nothing is spawned
+    // (the binary `bb` does not exist, so a spawn would fail loudly).
+    try testing.expectEqual(id, try open(&app, .{
+        .argv = &.{ "bb", "--only", "prs", "--focus", "api#1198" },
+        .identity = &.{ "bb", "--only", "prs" },
+        .focus = "api#1198",
+    }));
+    try testing.expectEqual(before, app.panes.slots.items.len);
+    // A pane with no child cannot be told; the press still raises it.
+    try testing.expect(!app.panes.get(id).?.asMount().?.focusItem("api#1198"));
+    // And the manifest's OTHER command is still its own pane: a deep
+    // link narrows a listing, it does not widen one.
+    try testing.expect(findOpen(&app, "bb --only prs-mine") == null);
 }
 
 test "an integration inherits the profile's data root, so its caches and sync marks land under the dev root" {

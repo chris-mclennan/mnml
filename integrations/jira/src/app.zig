@@ -342,6 +342,14 @@ pub const App = struct {
     /// so it can go back on it when the rows are swapped.
     keep_key_buf: [64]u8 = undefined,
     keep_key_len: usize = 0,
+    /// // changed (focus-row): the ticket a `--focus ENG-2` asked the
+    /// cursor to land on. It outlives the first paint — the flag is
+    /// read before any listing exists — and is cleared the moment it
+    /// lands or is answered with `not in this listing`. A forwarded
+    /// focus (`focus_item` over the mount, this pane already open)
+    /// goes through the same field, so there is one landing, not two.
+    focus_key_buf: [64]u8 = undefined,
+    focus_key_len: usize = 0,
     quit: bool = false,
     /// The count the statusline segment shows; null until a work tab loaded.
     assigned_open: ?usize = null,
@@ -416,6 +424,13 @@ pub const App = struct {
     /// line. Set by the caller right after `init`; empty outside a host.
     pub fn setIpcDir(a: *App, dir: []const u8) void {
         a.ipc_dir = dir;
+    }
+
+    /// `--focus ENG-2` off the argv, before anything has loaded. The
+    /// key is only remembered here; `tryFocus` lands it at the first
+    /// listing that can hold it.
+    pub fn setFocusKey(a: *App, key: []const u8) void {
+        a.rememberFocus(key);
     }
 
     /// The group a refetch runs on. Set by the pane loop right after
@@ -1164,6 +1179,9 @@ pub const App = struct {
                 try a.clampCursor();
             }
         }
+        // A `--focus` is answered by the listing it was waiting for:
+        // the active tab's, which is the one the reader is looking at.
+        try a.tryFocus(idx == a.active);
     }
 
     /// `--prefetch`'s JSON (`{"generated_at":…,"tabs":[{"name":…,"issues":[…]}]}`)
@@ -1505,6 +1523,121 @@ pub const App = struct {
     pub fn prevTab(a: *App) Allocator.Error!void {
         if (a.tabs.len == 0) return;
         try a.switchTab(if (a.active == 0) a.tabs.len - 1 else a.active - 1);
+    }
+
+    // ─── focus one ticket ────────────────────────────────────────────
+
+    /// // changed (focus-row): land the cursor on ONE ticket, `ENG-2` —
+    /// `--focus` on the argv, or a `focus_item` handed over the mount
+    /// when this pane is already the open one. A key that cannot land
+    /// yet is remembered and tried again at every listing that
+    /// arrives, so the flag may be read long before there is anything
+    /// to land on.
+    pub fn requestFocus(a: *App, key: []const u8) Allocator.Error!void {
+        a.rememberFocus(key);
+        // The listing may already be here — a second row of the same
+        // hover must move the cursor now, not at the next refetch.
+        try a.tryFocus(a.hasTabs() and a.tabConst().fetched);
+    }
+
+    /// `eng-2` and `ENG-2` name the same ticket; Jira spells its keys
+    /// in upper case, so that is the shape the rest of this works in.
+    fn rememberFocus(a: *App, key: []const u8) void {
+        a.focus_key_len = @min(key.len, a.focus_key_buf.len);
+        for (key[0..a.focus_key_len], 0..) |c, i| a.focus_key_buf[i] = std.ascii.toUpper(c);
+    }
+
+    /// Try to put the cursor on the ticket `--focus` asked for.
+    /// `settle` says this was the answer being waited on: a key that is
+    /// in no listing gets told so and is forgotten, rather than lying
+    /// in wait for a tab that will never hold it.
+    pub fn tryFocus(a: *App, settle: bool) Allocator.Error!void {
+        if (a.focus_key_len == 0) return;
+        var want_buf: [64]u8 = undefined;
+        const want = want_buf[0..a.focus_key_len];
+        @memcpy(want, a.focus_key_buf[0..a.focus_key_len]);
+        if (try a.landFocus(want)) {
+            a.focus_key_len = 0;
+            return;
+        }
+        if (!settle) return;
+        a.say("not in this listing: {s}", .{want});
+        a.focus_key_len = 0;
+    }
+
+    /// The tab that holds `want`, the section it sits in opened, and
+    /// the cursor on its row — or false, and nothing touched.
+    fn landFocus(a: *App, want: []const u8) Allocator.Error!bool {
+        // The tab in front of the reader first: a ticket that is in two
+        // listings is the one already on screen.
+        var i: usize = 0;
+        while (i <= a.tabs.len) : (i += 1) {
+            const idx = if (i == 0) a.active else i - 1;
+            if (idx >= a.tabs.len) continue;
+            if (i > 0 and idx == a.active) continue;
+            // Only a tab whose listing is in. Switching to one that has
+            // not fetched starts a refetch, and the landing would then
+            // be running inside the thing that calls it.
+            if (!a.tabs[idx].fetched) continue;
+            const issue_idx = keyIndex(&a.tabs[idx], want) orelse continue;
+            if (idx != a.active) try a.switchTab(idx);
+            const t = a.tab();
+            // Whatever hides the row, lift it: a `/` query from before,
+            // and the section the ticket sits in folded shut.
+            try a.closeFilter(false);
+            if (t.cfg.isTree()) if (t.tree) |*st| {
+                const place = tree.groupOf(t.issues[issue_idx], st, t.cfg, a.cfg.release_cut);
+                try st.setGroup(place.status, false);
+            };
+            var scratch = std.heap.ArenaAllocator.init(a.gpa);
+            defer scratch.deinit();
+            const arena = scratch.allocator();
+            const was = t.selected;
+            if (t.cfg.isTree()) {
+                const r = (try a.treeRows(arena)) orelse return false;
+                t.selected = rowOfIssue(r.rows, issue_idx) orelse {
+                    // In the data but not in the rows: an assignee, an
+                    // epic or a scope chip the reader turned on is the
+                    // one thing `--focus` will not undo, because undoing
+                    // it would empty the listing they asked for.
+                    t.selected = was;
+                    return false;
+                };
+            } else {
+                const m = try a.mask(arena, t);
+                if (issue_idx >= m.len or !m[issue_idx]) {
+                    t.selected = was;
+                    return false;
+                }
+                t.selected = issue_idx;
+            }
+            // And the panel beside the list opens on it, not on
+            // whatever the cursor happened to start on. A board has no
+            // room for one, so there it is only the cursor that moves.
+            if (!t.cfg.isKanban()) {
+                a.details_visible = true;
+                a.details_scroll = 0;
+                try a.ensureFocusedDetail();
+            }
+            return true;
+        }
+        return false;
+    }
+
+    /// Where `want` sits in this tab's issues, if it is there at all.
+    /// Read off the issues rather than the rows, because a ticket in a
+    /// folded section is still one this tab holds.
+    fn keyIndex(t: *const TabState, want: []const u8) ?usize {
+        for (t.issues, 0..) |iss, i| if (std.ascii.eqlIgnoreCase(iss.key, want)) return i;
+        return null;
+    }
+
+    /// The row a ticket is painted on, by its place in the issues —
+    /// the key has already been matched once and its case need not
+    /// survive the second look.
+    fn rowOfIssue(rows: []const tree.Row, issue_idx: usize) ?usize {
+        for (rows, 0..) |r, i| if (r == .ticket and r.ticket.issue_idx == issue_idx) return i;
+        return null;
     }
 
     // ─── the tree ────────────────────────────────────────────────────────
@@ -3688,6 +3821,64 @@ test "Work: the assigned tab loads the three tickets, auto-expands them with the
     try testing.expectEqualStrings("ENG-12", a.tab().issues[0].key);
     _ = try a.onKey("1");
     try testing.expectEqual(@as(usize, 0), a.active);
+}
+
+test "`--focus` lands the cursor on that ticket and opens its detail, whatever case it was asked for in" {
+    const h = try Harness.start(.{ .tabs = &work_tabs, .team_field_id = "customfield_10056" }, .work);
+    defer h.stop();
+    const a = &h.app;
+    // The flag is read before there is any listing to land in, which is
+    // the whole reason it is remembered rather than applied.
+    a.setFocusKey("eng-5");
+    try a.ensureLoaded();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    try testing.expectEqualStrings("ENG-5", (try a.focusedKey(arena.allocator())).?);
+    // And the panel beside the list is open on it, not on whatever the
+    // cursor happened to start on — which is the first group's row.
+    try testing.expect(a.details_visible);
+    // Consumed: a later refetch does not drag the cursor back off the
+    // row the reader moved it to.
+    try testing.expectEqual(@as(usize, 0), a.focus_key_len);
+    const rows = (try a.treeRows(arena.allocator())).?.rows;
+    a.tab().selected = tree.rowOfKey(rows, a.tab().issues, "ENG-1").?;
+    _ = try a.onKey("r");
+    try testing.expectEqualStrings("ENG-1", (try a.focusedKey(arena.allocator())).?);
+}
+
+test "a forwarded focus opens the section that was folded shut, drops the filter hiding the row, and says so when the key is in no listing" {
+    const h = try Harness.start(.{ .tabs = &work_tabs, .team_field_id = "customfield_10056" }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    // Two things hide ENG-5: its section folded shut, and a `/` query
+    // from before that matches only ENG-1.
+    try a.tab().tree.?.setGroup("To Do", true);
+    try a.openFilter();
+    if (a.filter) |*f| try f.edit.set("Checkout");
+    try a.closeFilter(true);
+    try testing.expect(tree.rowOfKey((try a.treeRows(arena.allocator())).?.rows, a.tab().issues, "ENG-5") == null);
+
+    // The press on the hover row, handed to a pane that is already up.
+    try a.requestFocus("ENG-5");
+    try testing.expectEqualStrings("ENG-5", (try a.focusedKey(arena.allocator())).?);
+    try testing.expect(a.filter == null);
+    try testing.expect(!a.tab().tree.?.isCollapsed("To Do"));
+
+    // A second row moves the cursor again rather than waiting for a
+    // refetch that is not coming.
+    try a.requestFocus("ENG-2");
+    try testing.expectEqualStrings("ENG-2", (try a.focusedKey(arena.allocator())).?);
+
+    // And one that names nothing this pane holds is answered, not
+    // silently ignored — the cursor stays where the reader left it.
+    const before = a.tab().selected;
+    try a.requestFocus("ENG-4242");
+    try testing.expectEqualStrings("not in this listing: ENG-4242", a.status.items);
+    try testing.expectEqual(before, a.tab().selected);
+    try testing.expectEqual(@as(usize, 0), a.focus_key_len);
 }
 
 test "every PR row folds out to its builds — an open one on its branch head — and the second look costs one request, not two" {
