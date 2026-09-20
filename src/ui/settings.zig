@@ -638,8 +638,16 @@ pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item, subtitle: ?[]con
     const cap_h: u16 = @max(area.h * 7 / 10, @min(area.h, 8));
     // Border 2 + the section strip + the footer: what a list has to
     // clear before the box stops growing.
+    //
+    // // changed (settings-search): the height is asked of `all`, the
+    // unfiltered list, for the same reason the width is — a box that
+    // shrank to fit each query's result would jump under the hand with
+    // every character typed, and the rows left on screen would slide
+    // out from under the pointer between one keystroke and the next.
+    // The box is the size the whole list asks for; a query empties rows
+    // inside it rather than resizing it.
     const pill_rows: usize = if (s.filter.open) 1 else 0;
-    const want_h: u16 = @intCast(@min(@as(usize, cap_h), items.len + 5 + pill_rows));
+    const want_h: u16 = @intCast(@min(@as(usize, cap_h), all.len + 5 + pill_rows));
     const full_title = if (subtitle) |sub| ui.fmt("{s} · {s}", .{ title, sub }) else title;
     const box_rect = overlay.place(area, w, want_h, .center);
     const inner = overlay.frame(ui, box_rect, full_title);
@@ -1668,4 +1676,66 @@ test "an unfocused pill keeps the query on screen and reads `/ filter` when empt
     _ = draw(f.ui(), f.full(), &s, &all, null, .{ .all = &all });
     text = try f.text();
     try testing.expect(std.mem.indexOf(u8, text, "\u{F0349} / filter") != null);
+}
+
+/// The frame's top and bottom rows in a rendered screen, so a test can
+/// say where the box came out and how tall it is.
+const BoxRows = struct { top: usize, bottom: usize };
+
+fn boxRows(text: []const u8) BoxRows {
+    var out: BoxRows = .{ .top = 0, .bottom = 0 };
+    var it = std.mem.splitScalar(u8, text, '\n');
+    var y: usize = 0;
+    var seen_top = false;
+    while (it.next()) |line| : (y += 1) {
+        if (std.mem.indexOf(u8, line, "\u{256d}") != null and !seen_top) {
+            out.top = y;
+            seen_top = true;
+        }
+        if (std.mem.indexOf(u8, line, "\u{2570}") != null) out.bottom = y;
+    }
+    return out;
+}
+
+/// One draw on a screen of its own — the fixture never clears, so two
+/// draws into one would leave the first box's corners on screen and a
+/// shrinking box would measure as though it had not moved.
+fn drawnBox(s: *State, items: []const Item, all: []const Item) !BoxRows {
+    var f = try Fixture.init(70, 30);
+    defer f.deinit();
+    _ = draw(f.ui(), f.full(), s, items, null, .{ .all = all });
+    return boxRows(try f.text());
+}
+
+test "the box keeps the height the whole list asks for while a query narrows it" {
+    // Thirty rows: the 70 % cap is 21 and the list wants 15, so the
+    // list length is what decides the height here. On a screen where
+    // the cap won, every list would come out the same size and this
+    // would pass without the fix.
+    var s: State = .{};
+    defer s.deinit(testing.allocator);
+    const all = filterSample();
+    s.openFilter();
+    const open = try drawnBox(&s, &all, &all);
+    // Nine items plus the border, the strip, the footer and the pill.
+    try testing.expectEqual(@as(usize, 14), open.bottom - open.top);
+
+    // Two rows and one header survive `dock` — a third of the list.
+    // The box does not follow them down.
+    try text_field.insert(&s.filter.buf, &s.filter.caret, testing.allocator, "dock");
+    const vis = try filtered(testing.allocator, &all, "dock");
+    defer testing.allocator.free(vis);
+    try testing.expectEqual(@as(usize, 3), vis.len);
+    const narrowed = try drawnBox(&s, vis, &all);
+    try testing.expectEqual(open.top, narrowed.top);
+    try testing.expectEqual(open.bottom, narrowed.bottom);
+
+    // And a query nothing answers to leaves the box where it is too, so
+    // the `no setting matches` line has the same ground under it.
+    const none = try filtered(testing.allocator, &all, "zzz");
+    defer testing.allocator.free(none);
+    try testing.expectEqual(@as(usize, 0), none.len);
+    const empty = try drawnBox(&s, none, &all);
+    try testing.expectEqual(open.top, empty.top);
+    try testing.expectEqual(open.bottom, empty.bottom);
 }
