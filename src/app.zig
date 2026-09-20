@@ -3043,6 +3043,7 @@ test {
     _ = @import("ui/outline_view.zig");
     _ = @import("ui/md_view.zig");
     _ = @import("app/layout.zig");
+    _ = @import("app/arrange.zig");
     _ = @import("app/find.zig");
     _ = @import("app/syntax.zig");
     _ = @import("app/whichkey.zig");

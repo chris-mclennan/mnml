@@ -825,6 +825,20 @@ pub const Ci = struct {
 /// the user asked for.
 pub const IntegrationOpenAs = enum { split, tab };
 
+/// How a pane opened as a split sizes itself against what is already
+/// there (`app/arrange.zig`).
+pub const SplitArrange = enum {
+    /// Read the room: an empty editor area takes the pane FULL, and a
+    /// split evens out every sibling along the new split's axis, so a
+    /// third pane is thirds and a fourth is quarters. A stack across
+    /// that axis keeps the proportions it was dragged to.
+    context,
+    /// The old behaviour, cell for cell: the new pane halves the
+    /// active one and everything else stays where it is (`.tab` and
+    /// `equalize_on_open` still apply).
+    fixed,
+};
+
 pub const Integrations = struct {
     auto_update_cargo: bool = false,
     auto_update_git: bool = false,
@@ -836,6 +850,12 @@ pub const Integrations = struct {
     /// half of the ask. Only an integration's own split equalizes; a
     /// `Ctrl+\` still obeys `ui.auto_equalize_splits` alone.
     equalize_on_open: bool = true,
+    /// How a new pane sizes itself when it opens as a split — every
+    /// such path, not only an integration's: terminals and the session
+    /// panes go through the same rule (`app/arrange.zig`). `.context`
+    /// is the default because a fixed half-of-the-active-pane made the
+    /// third thing opened a quarter and the fourth an eighth.
+    arrange: SplitArrange = .context,
     /// Folders the INTEGRATIONS section's Dev tab scans: every
     /// subfolder holding a `build.zig` and a `manifest.zon` is an
     /// integration in development. Relative to the workspace, `~`

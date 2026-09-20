@@ -24,6 +24,7 @@ const Chord = key_mod.Chord;
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const host = @import("../bridge/host.zig");
+const arrange = @import("arrange.zig");
 const broker_app = @import("broker.zig");
 const wire = @import("../bridge/wire.zig");
 const Rect = @import("../ui/rect.zig");
@@ -285,19 +286,18 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
 
 /// Where a fresh mount pane lands (see `open`'s header).
 fn place(app: *App, id: PaneId) void {
-    const layout = app.layouts.current();
-    const cur = app.active;
-    if (app.cfg.integrations.open_as == .tab or cur == null or layout.leafOf(cur.?) == null) {
+    if (app.cfg.integrations.open_as == .tab) {
         app.showPane(id);
+        app.focus = .{ .pane = id };
         return;
     }
-    _ = layout.split(cur.?, .horizontal, id) catch {
-        // No room for another split: a tab is better than nothing.
-        app.showPane(id);
-        return;
-    };
-    if (app.cfg.integrations.equalize_on_open) layout.equalize() else app.afterSplitChange();
-    app.setActive(id);
+    // `integrations.arrange` sizes it — the one rule every new pane
+    // goes through (`app/arrange.zig`). No room for another split: a
+    // tab is better than nothing.
+    _ = arrange.splitActive(app, id, .{
+        .dir = .horizontal,
+        .fixed_equalize = app.cfg.integrations.equalize_on_open,
+    }) catch app.showPane(id);
     app.focus = .{ .pane = id };
 }
 
