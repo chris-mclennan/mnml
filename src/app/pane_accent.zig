@@ -69,32 +69,7 @@ pub fn setName(app: *App, id: PaneId, name: []const u8) Allocator.Error!void {
 /// cleared.
 pub fn assign(app: *App, id: PaneId) Allocator.Error!void {
     const p = app.panes.get(id) orelse return;
-    if (p.wearsOwnAccent()) return;
-    if (nameOf(app, id) != null) return;
-    const taken = try app.gpa.alloc(?[]const u8, app.panes.slots.items.len);
-    defer app.gpa.free(taken);
-    var live: usize = 0;
-    for (app.panes.slots.items, 0..) |*slot, i| {
-        taken[i] = null;
-        if (i == id) continue;
-        if (slot.*) |*other| {
-            live += 1;
-            if (other.wearsOwnAccent()) continue;
-            taken[i] = if (other.* == .pty) other.pty.accent_color else app.panes.accent(@intCast(i));
-        }
-    }
-    try setNameRaw(app, id, accent_color.firstFree(taken, live));
-}
-
-fn setNameRaw(app: *App, id: PaneId, name: []const u8) Allocator.Error!void {
-    const p = app.panes.get(id) orelse return;
-    if (p.* == .pty) {
-        const fresh = try app.gpa.dupe(u8, name);
-        if (p.pty.accent_color) |c| app.gpa.free(c);
-        p.pty.accent_color = fresh;
-    } else {
-        try app.panes.setAccent(id, name);
-    }
+    try app.panes.assignAccent(id, p);
 }
 
 /// The colour a pane's rail is painted in: the owner's when it has one
@@ -108,10 +83,14 @@ pub fn colorOf(app: *App, id: PaneId, theme: *const Theme) ?Color {
         // rail row, its tab glyph. The rail is that colour, not a
         // second one on top of it.
         .mount => |*mp| if (mp.integration) |mid| return integrationColor(app, mid, theme),
-        .integrations => return theme.palette.cyan,
-        .git_status => |*s| return git_palette.repoAccent(app, s.repo) orelse theme.palette.green,
-        .diff => |*d| return git_palette.repoAccent(app, d.repo) orelse theme.palette.green,
-        .git_graph => |*g| return git_palette.repoAccent(app, g.repo) orelse theme.palette.green,
+        // A repo's accent is what tells two repos' panes apart, so it
+        // wins over the pane's own slot. One repo has no accent (there
+        // is nothing to tell apart) and the pane falls back to its slot
+        // like any other.
+        .git_status => |*s| if (git_palette.repoAccent(app, s.repo)) |c| return c,
+        .diff => |*d| if (git_palette.repoAccent(app, d.repo)) |c| return c,
+        .git_graph => |*g| if (git_palette.repoAccent(app, g.repo)) |c| return c,
+        // A pty's own precedence: its name, then its product's brand.
         .pty => |*pt| return pty_pane.accentOf(app, pt, theme),
         else => {},
     }

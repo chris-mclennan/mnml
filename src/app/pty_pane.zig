@@ -1326,11 +1326,13 @@ test "a shell pane reads `<terminal> (<shell>)`; its tab wears mnml's own termin
     try app.env.put("TERM_PROGRAM", "ghostty");
     try t.expectEqualStrings("ghostty", hostTerminalName(&app));
     // A shell pane's label is the pair; the tab's mark is mnml's own,
-    // not the emulator's — a shell has no accent, so it is not tinted.
+    // not the emulator's. // changed (pane-rail): a shell takes a slot
+    // off the ladder like every other pane, so its mark is tinted —
+    // the first pane open wears the ladder's green.
     try app.env.put("SHELL", "/bin/sh");
     const sh = try open(&app, .{ .placement = .tab });
     try t.expectEqualStrings("ghostty (sh)", app.panes.pty(sh).?.label);
-    try t.expect(accentOf(&app, app.panes.pty(sh).?, &app.theme) == null);
+    try t.expect(Theme.Color.eql(accentOf(&app, app.panes.pty(sh).?, &app.theme).?, app.theme.palette.green));
     try app.render();
     const tab = (rectsOf(&app, sh)).tab orelse return error.TestUnexpectedResult;
     try t.expectEqualStrings(bufferline.ghost_glyph, app.screen.readCell(tab.x + 1, tab.y).?.char.grapheme);
@@ -1405,11 +1407,16 @@ test "an AI pane's tab wears its product's mark: two Claude panes, the same glyp
     try t.expect(Theme.Color.eql(g1.style.fg, app.theme.palette.green));
     try t.expect(Theme.Color.eql(g2.style.fg, app.theme.palette.blue));
     try t.expect(!Theme.Color.eql(g1.style.fg, g2.style.fg));
-    // Codex has its own mark, in the theme's cyan (no auto slot).
+    // Codex has its own mark. // changed (pane-rail): it takes a slot
+    // off the ladder now, as every pane does — the theme's cyan was
+    // its brand fallback, and two Codex panes both wearing it was the
+    // thing the rail exists to stop. Third pane open, third slot.
     const t3 = (rectsOf(&app, cx)).tab orelse return error.TestUnexpectedResult;
     const g3 = app.screen.readCell(t3.x + 1, t3.y).?;
     try t.expectEqualStrings(bufferline.codex_glyph, g3.char.grapheme);
-    try t.expect(Theme.Color.eql(g3.style.fg, app.theme.palette.cyan));
+    try t.expect(Theme.Color.eql(g3.style.fg, app.theme.palette.yellow));
+    try t.expect(!Theme.Color.eql(g3.style.fg, g1.style.fg));
+    try t.expect(!Theme.Color.eql(g3.style.fg, g2.style.fg));
     // `--ascii`: each product's twin, not its Nerd Font codepoint.
     app.cfg.ui.ascii_icons = true;
     try app.render();

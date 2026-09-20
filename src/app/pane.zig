@@ -320,12 +320,16 @@ pub const Pane = union(enum) {
     }
 
     /// // changed (pane-rail): this pane's rail wears somebody else's
-    /// identity colour rather than a slot off the shared ladder — an
-    /// integration's app colour, a repo's accent. It takes no ladder
-    /// slot, and `pane_accent.colorOf` paints it from the owner.
+    /// identity colour rather than a slot off the shared ladder — a
+    /// mounted integration's app colour, which it already wears on its
+    /// chip, its rail row and its tab. It takes no ladder slot, and
+    /// `pane_accent.colorOf` paints it from the owner. A git pane is
+    /// NOT one of these: it prefers its repo's accent when the
+    /// workspace has more than one repo to tell apart, and falls back
+    /// to its own slot when there is nothing to tell apart.
     pub fn wearsOwnAccent(self: *const Pane) bool {
         return switch (self.*) {
-            .mount, .integrations, .git_status, .diff, .git_graph => true,
+            .mount => |*m| m.integration != null,
             else => false,
         };
     }
@@ -504,7 +508,7 @@ pub const PaneStore = struct {
     /// already has one — a resumed session's remembered colour — keeps
     /// it, and a pane that wears somebody else's identity (an
     /// integration's app colour, a repo's) takes no ladder slot.
-    fn assignAccent(self: *PaneStore, id: PaneId, p: *Pane) Allocator.Error!void {
+    pub fn assignAccent(self: *PaneStore, id: PaneId, p: *Pane) Allocator.Error!void {
         if (p.wearsOwnAccent()) return;
         const current: ?[]const u8 = if (p.* == .pty) p.pty.accent_color else self.accent(id);
         if (current != null) return;
