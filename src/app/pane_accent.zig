@@ -6,9 +6,12 @@
 //! (`ui/accent_color.zig` — the same ladder the SESSIONS panel draws
 //! from), handed out by `PaneStore.add` so two terminals open at once
 //! are never the same colour. A pane that already belongs to something
-//! wears that owner's colour instead and takes no slot: an
-//! integration's app colour, a repo's accent. That is the whole
-//! exception list.
+//! wears that owner's colour instead and takes no slot: a mounted
+//! integration's app colour, a repo's accent (`colorOf`). A mounted
+//! integration is also the one pane mnml does not stripe at all — the
+//! sibling owns every cell of that grid, so the app colour is its own
+//! gutter to paint, and a rail on top would be the same colour twice
+//! and a column narrower for the sibling.
 //!
 //! Where the name lives is the one seam: a pty keeps its own in
 //! `PtyPane.accent_color` (the SESSIONS card, the colour menu and the
@@ -110,10 +113,15 @@ fn integrationColor(app: *App, mid: []const u8, theme: *const Theme) Color {
 /// `.all` paints every pane, `.sessions` only the AI session panes that
 /// wore one before the rail was a rule, `.off` none.
 pub fn railColorOf(app: *App, id: PaneId, theme: *const Theme) ?Color {
+    const p = app.panes.get(id) orelse return null;
+    // A mounted integration owns its own grid, first column included:
+    // mnml painting a stripe there would take a cell off the sibling's
+    // layout, and the app colour is the sibling's to paint. `colorOf`
+    // still knows the colour — the pane just is not mnml's to stripe.
+    if (p.wearsOwnAccent()) return null;
     return switch (app.cfg.ui.pane_rail) {
         .off => null,
         .sessions => blk: {
-            const p = app.panes.get(id) orelse break :blk null;
             if (p.* != .pty) break :blk null;
             if (pty_pane.productOf(app, &p.pty) == null) break :blk null;
             break :blk pty_pane.accentOf(app, &p.pty, theme);
@@ -121,7 +129,6 @@ pub fn railColorOf(app: *App, id: PaneId, theme: *const Theme) ?Color {
         .all => colorOf(app, id, theme),
     };
 }
-
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;

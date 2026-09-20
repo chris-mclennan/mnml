@@ -490,15 +490,18 @@ pub const PaneStore = struct {
     /// takes its rail colour here — the one place every kind is opened,
     /// so no caller has to remember to ask for one.
     pub fn add(self: *PaneStore, pane: Pane) Allocator.Error!PaneId {
-        var p = pane;
-        if (self.free.pop()) |id| {
-            try self.assignAccent(id, &p);
-            self.slots.items[id] = p;
-            return id;
-        }
-        const id: PaneId = @intCast(self.slots.items.len);
-        try self.assignAccent(id, &p);
-        try self.slots.append(self.gpa, p);
+        const id: PaneId = if (self.free.pop()) |reused| blk: {
+            self.slots.items[reused] = pane;
+            break :blk reused;
+        } else blk: {
+            const fresh: PaneId = @intCast(self.slots.items.len);
+            try self.slots.append(self.gpa, pane);
+            break :blk fresh;
+        };
+        // The pane is in the store before it is given a colour: the
+        // accent table is keyed by id and will not hold one for a slot
+        // that does not exist yet.
+        try self.assignAccent(id, &self.slots.items[id].?);
         return id;
     }
 
