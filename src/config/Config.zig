@@ -442,6 +442,9 @@ pub const Ui = struct {
     todo_keywords: []const []const u8 = &default_todo_keywords,
     render_markdown: bool = false,
     markdown_opens_rendered: bool = true,
+    /// The gutter's fold offer (`▼`) on every foldable line, not only
+    /// the one under the pointer — read by `signFor` in
+    /// `ui/editor_view.zig`.
     always_show_fold_arrows: bool = false,
     sticky_context: bool = false,
     md_image_rows: u16 = 12,

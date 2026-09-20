@@ -2186,6 +2186,7 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .extra_cursors = e.buf.editor.extra_cursors.items,
         .folds = folds,
         .foldable = .{ .ctx = e.buf.editor, .startsFold = &foldStartsAt },
+        .always_show_fold_arrows = app.cfg.ui.always_show_fold_arrows,
         .spans = spans,
         .matches = matches,
         .current_match = e.find.current,

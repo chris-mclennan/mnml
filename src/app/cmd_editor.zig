@@ -293,8 +293,32 @@ pub fn foldRangeAt(ed: *const Editor, row: usize) ?[2]usize {
 /// itself rather than from the cursor, so the chevron never offers a
 /// fold the command would refuse to make.
 pub fn foldStartsAt(ed: *const Editor, row: usize) bool {
+    // The cheap half first. `foldRangeFrom`'s other candidate — the pair
+    // that ENCLOSES the line's start — always opens on an earlier line,
+    // so a fold can only begin here if this line has an opener nothing
+    // on it closes. The whole-file scan is skipped for every line that
+    // has none, which is what lets `ui.always_show_fold_arrows` ask this
+    // of every visible line instead of just the hovered one.
+    if (!hasUnmatchedOpener(ed, row)) return false;
     const r = foldRangeFrom(ed, row, ed.lineStart(row)) orelse return false;
     return r[0] == row;
+}
+
+/// Does `row` end with a bracket nothing later on the line closes? One
+/// pass over the line, no look past it.
+fn hasUnmatchedOpener(ed: *const Editor, row: usize) bool {
+    const text = ed.bytes();
+    const ls = ed.lineStart(row);
+    const le = ed.lineEnd(row);
+    for ([_][2]u8{ .{ '{', '}' }, .{ '[', ']' }, .{ '(', ')' } }) |pr| {
+        var open = false;
+        var i = ls;
+        while (i < le) : (i += 1) {
+            if (text[i] == pr[0]) open = true else if (text[i] == pr[1] and open) open = false;
+        }
+        if (open) return true;
+    }
+    return false;
 }
 
 /// `foldRangeAt` from an explicit byte: `from` is where the search for
@@ -799,6 +823,21 @@ test "foldStartsAt answers for the line, not the cursor — what the gutter's ch
     try command.run(&app, .{ .static = .@"editor.toggle_fold" });
     try t.expectEqual(@as(usize, 1), app.activeEditor().?.buf.editor.folds.keys()[0]);
     try t.expectEqual(@as(usize, 3), app.activeEditor().?.buf.editor.folds.values()[0]);
+}
+
+test "a line whose brackets all close on it starts no fold — foldStartsAt's cheap half" {
+    var app = try appWith("let v = f(1);\nfn one() {}\nfn two() {\n    a();\n}\nlet end = 1;");
+    defer app.deinit();
+    const ed = app.activeEditor().?.buf.editor;
+    // A call whose `(` closes on the line, and a body whose `{}` does
+    // too: neither can start a fold, and neither pays for a scan of the
+    // file to learn it.
+    try t.expect(!foldStartsAt(ed, 0));
+    try t.expect(!foldStartsAt(ed, 1));
+    // The one line with an opener nothing on it closes does start one.
+    try t.expect(foldStartsAt(ed, 2));
+    try t.expect(!foldStartsAt(ed, 3));
+    try t.expect(!foldStartsAt(ed, 5));
 }
 
 test "folds: toggle picks the smallest enclosing block, zo/zc are idempotent, unfold_all clears" {

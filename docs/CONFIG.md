@@ -194,7 +194,7 @@ otherwise. Copy what you need; leave the rest out.
         .todo_keywords = .{ "TODO", "FIXME", "XXX", "HACK", "REVIEW" }, // what the TODOS panel scans for (after a comment opener, or a markdown list item)
         .render_markdown = false,
         .markdown_opens_rendered = true,
-        .always_show_fold_arrows = false,
+        .always_show_fold_arrows = false, // the gutter's ▼ on every foldable line, not only the hovered one
         .sticky_context = false,
         .md_image_rows = 12,
         .git_graph_branch_col = null, // null = auto width

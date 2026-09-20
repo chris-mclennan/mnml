@@ -113,6 +113,10 @@ pub const Doc = struct {
     folds: []const Fold = &.{},
     /// The rule behind the gutter's hover chevron (`Foldable`).
     foldable: ?Foldable = null,
+    /// `ui.always_show_fold_arrows`: every foldable line wears its `▼`
+    /// whether or not the pointer is on it, so a mouse never has to go
+    /// looking for the one it can click.
+    always_show_fold_arrows: bool = false,
     /// Sorted by `start`, non-overlapping.
     spans: []const Span = &.{},
     var_spans: []const VarSpan = &.{},
@@ -659,7 +663,7 @@ fn signFor(ui: Ui, doc: Doc, line: u32, folded: bool, hovered: bool) ?Sign {
         // A folded line always wears its `▶`: the fold is otherwise
         // only visible as a chip past the end of a long row.
         if (folded) break :blk .{ .line = line, .kind = .sign, .glyph = foldGlyph(ui, true), .style = .{ .fg = ui.theme.fold.fg }, .priority = mark_priority.fold };
-        if (hovered) if (doc.foldable) |f| if (f.call(line)) break :blk GutterMark{ .line = line, .kind = .sign, .glyph = foldGlyph(ui, false), .style = .{ .fg = ui.theme.muted.fg }, .priority = mark_priority.fold_hover };
+        if (hovered or doc.always_show_fold_arrows) if (doc.foldable) |f| if (f.call(line)) break :blk GutterMark{ .line = line, .kind = .sign, .glyph = foldGlyph(ui, false), .style = .{ .fg = ui.theme.muted.fg }, .priority = mark_priority.fold_hover };
         break :blk null;
     };
     const c = chevron orelse return if (mark) |m| Sign{ .mark = m } else null;
@@ -1970,6 +1974,33 @@ test "a foldable line wears the open chevron only while the pointer is on it, an
     d.gutter_marks = &.{.{ .line = 0, .kind = .sign, .glyph = "D", .style = .{}, .priority = mark_priority.diagnostic }};
     _ = draw(f.ui(), 0, f.full(), &view, d);
     try f.expectRow(0, "D  1 fn a() {");
+}
+
+test "ui.always_show_fold_arrows wears the offer on every foldable line, pointer or not" {
+    var f = try Fixture.init(14, 4);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("fn a() {\nbody\n}\nafter");
+    const Rule = struct {
+        fn startsFold(_: *const anyopaque, line: u32) bool {
+            return line == 0;
+        }
+    };
+    d.foldable = .{ .ctx = &d, .startsFold = &Rule.startsFold };
+
+    // Off by default: no pointer, no chevron.
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRow(0, "   1 fn a() {");
+
+    // On: the foldable line wears it with the pointer nowhere near, in
+    // the same muted grey, and its cell is a click target all the same.
+    d.always_show_fold_arrows = true;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRow(0, "\u{25BC}  1 fn a() {");
+    try testing.expect(f.fgEql(0, 0, .{ .fg = f.theme.muted.fg }));
+    try testing.expect(f.hits.at(0, 0).? == .fold_arrow);
+    // A line the rule refuses still gets nothing.
+    try f.expectRow(1, "   2 body");
 }
 
 test "the fold chevrons follow ui.expand_indicator and --ascii" {
