@@ -29,7 +29,8 @@
 #   8. `install` on a throwaway repo into a throwaway PREFIX: the
 #      dry-run plan, the three refusals (dirty tree, Debug, a
 #      PREFIX/bin/mnml that is not ours), then a real copy — the host,
-#      an integration, the font, the manifest into the stable data root
+#      an integration, the font, the integration catalogue, the manifest
+#      into the stable data root
 #      and the link that points at PREFIX rather than a zig-out — and
 #      the installed binary reaching a first frame headless. Plus the
 #      font step `install` only PRINTS, and `install-font` — the one
@@ -248,6 +249,9 @@ check "install: the host landed as PREFIX/bin/mnml" '[ -x "$PREFIX_OK/bin/mnml" 
 check "install: PREFIX/bin/mnml --version says what it is" '"$PREFIX_OK/bin/mnml" --version | grep -q "^mnml-zig "' "$("$PREFIX_OK/bin/mnml" --version 2>&1)"
 check "install: the integration landed too" '[ -x "$PREFIX_OK/bin/mnml-jira" ]'
 check "install: the font came with it" '[ -f "$PREFIX_OK/share/mnml/fonts/MnmlSymbols.ttf" ]'
+# The Marketplace tab's default source rides in share/ beside the font:
+# without it an installed mnml lists no integrations at all.
+check "install: the integration catalogue came with it" '[ -f "$PREFIX_OK/share/mnml/marketplace.zon" ]' "$(ls "$PREFIX_OK/share/mnml" 2>&1)"
 check "install: the manifest went to the stable data root" '[ -f "$MNML_DATA_ROOT/integrations/jira_work.zon" ]' "$(ls "$MNML_DATA_ROOT/integrations" 2>&1)"
 check "install: the data root's link points at PREFIX, not at a zig-out" '[ "$(readlink "$MNML_DATA_ROOT/bin/mnml-jira")" = "$PREFIX_OK/bin/mnml-jira" ]' "$(readlink "$MNML_DATA_ROOT/bin/mnml-jira" 2>&1)"
 check "install: the sample binary ships, its manifest does not" '[ -x "$PREFIX_OK/bin/mnml-sample" ] && [ ! -f "$MNML_DATA_ROOT/integrations/sample.zon" ]'

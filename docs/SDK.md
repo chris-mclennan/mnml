@@ -543,6 +543,67 @@ returns the path it wrote. `sdk.manifest.remove(gpa, io, env, id)` is
 uninstall. mnml re-scans on `integrations.refresh` and at startup; an
 `id` must be a file name (`[A-Za-z0-9_.-]`).
 
+## Publishing an integration — the catalogue entry
+
+`--install` is what a user runs once they HAVE your binary. The
+Marketplace tab is how they find it. Its default source is the **mnml
+catalogue** — one ZON file listing the integrations mnml itself ships
+(`data/marketplace.zon` in the repo, `share/mnml/marketplace.zon`
+beside a packaged binary). One entry per BINARY, not per manifest:
+`mnml-jira --install` writes three manifests, so Jira is one row and
+three chips.
+
+```zig
+.{
+    .entries = .{
+        .{
+            .id = "jira",                  // a file name; the row's id, not a manifest id
+            .label = "Jira",
+            .description = "Jira: work, boards and fix versions — three chips on one binary",
+            .category = "tracker",
+            .version = "0.2.0",            // what the manifests will say
+            .binary = "mnml-jira",         // a bare name, or $VAR / an absolute path
+            .docs = "https://github.com/…/integrations/jira",
+            .chip = .{ .glyph = "\u{f0303}", .fallback = "J", .color = "blue" },
+        },
+    },
+}
+```
+
+Install from such a row is deliberately small: the binary already
+exists, so mnml links `<data root>/bin/<name>` at it and runs
+`<binary> --install`. The link is the indirection that lets your
+manifest keep a bare `binary` name — `resolveBinary` prefers the link
+over PATH — so a rebuild in a checkout never moves the binary out from
+under a running stable copy, and `run.sh install` relinks the same file
+when it moves one to `PREFIX/bin`. `integrations.update` relinks it on
+demand; uninstall deletes the manifest and, when no other manifest
+names the binary, the link.
+
+A row's state is read off what is installed, matching on the binary's
+file name: `installed`, `update available` (the catalogue's `version`
+is ahead of an installed manifest's), or `not installed`.
+
+**To publish your own**, you have two shapes today and neither needs
+mnml to ship your code:
+
+* a **`github_monorepo_apps`** source — your repo, a directory per
+  integration, each with a `build.zig` and a `manifest.zon`. mnml
+  shallow-clones, `zig build`s into the data root, links the binary and
+  runs `--install`. Users add it with
+
+  ```zig
+  .marketplace = .{ .sources = .{ .{ .github_monorepo_apps = .{ .id = "acme", .repo = "acme/mnml-apps", .apps_dir = "apps" } } } },
+  ```
+
+* a **`github_launcher_folder`** source — a folder of bare `*.zon`
+  manifests for programs already on the machine (launchers). Install is
+  the file being copied into the data root.
+
+A `local_folder` source is the same two shapes on a disk you can
+reach — a company share, a private checkout — and lists with the
+`Private` badge.
+
 ## Tier 2 — toasts, progress, statusline, badges, commands
 
 Anything mnml spawned can write to the file-IPC channel, socket or not:

@@ -452,6 +452,48 @@ and the test. `docs/DESIGN.md` is the plan: it is annotated with dated
 profiles; the debugger's and the section-move chords are pinned by
 tests (`src/app/cmd_dap.zig`, `src/app/side.zig`).
 
+## Adding a shipped integration
+
+An integration mnml ships is three things, and all three are in this
+repo:
+
+1. **`integrations/<id>/`** — a `build.zig`, a `manifest.zon` (plus
+   `manifest_*.zon` for each extra chip the one binary registers) and
+   the source. `<binary> --install` writes those manifests into the
+   data root; that file is the interface (`docs/SDK.md`).
+2. **`build.zig`** — the executable, and a `build_options` path to it
+   for the corpus (`sample_integration_exe`, `jira_integration_exe`, …)
+   when a `.test` needs to point a manifest at a prebuilt binary.
+3. **`data/marketplace.zon`** — one entry, so the INTEGRATIONS
+   section's Marketplace tab lists it out of the box. One entry per
+   BINARY, not per manifest: `mnml-jira` writes three manifests and is
+   one row.
+
+```zig
+.{
+    .id = "jira",                 // a file name; the row's id, not a manifest id
+    .label = "Jira",
+    .description = "…",
+    .category = "tracker",
+    .version = "0.2.0",           // MUST match the folder's manifests
+    .binary = "mnml-jira",        // MUST match the folder's manifests
+    .docs = "https://…",
+    .chip = .{ .glyph = "\u{f0303}", .fallback = "J", .color = "blue" },
+},
+```
+
+The `version` and `binary` are held against the folder's own manifests
+by a test in `src/app/marketplace_catalogue.zig` — a drift there is
+what would make a freshly-installed row say `update available` forever
+— and the same test pins the number of entries, so a new one is a
+deliberate edit in two places.
+
+`run.sh install` reads `integrations/*/manifest.zon` for the binary
+name, installs each binary to `PREFIX/bin`, runs `--install` and
+relinks `<data root>/bin/<name>`. Nothing there needs editing; an entry
+whose `.category` is `sample` is installed as a binary but not
+registered (a fixture is not a chip on anyone's rail).
+
 ## Subagents
 
 Leaves are delegated by default; the serial trunk design is the one

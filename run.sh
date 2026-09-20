@@ -205,7 +205,10 @@ step() {
 # test fakes (mnml-fake-*) are not integrations and never install; the
 # SDK sample is a fixture, so it ships as a binary (the SDK docs run it)
 # but its manifest is not registered — a "Sample" chip is not something
-# an install should put on your rail.
+# an install should put on your rail. The same set is listed in
+# data/marketplace.zon, the catalogue the Marketplace tab reads; both
+# derive from integrations/*/manifest.zon, and a unit test
+# (src/app/marketplace_catalogue.zig) holds the catalogue to it.
 shipped_integrations() {
   local d id bin cat
   for d in "$REPO"/integrations/*/; do
@@ -296,7 +299,10 @@ do_install() {
   done <<EOF2
 $(shipped_integrations)
 EOF2
-  # share/: MnmlSymbols.ttf and whatever else the build puts there.
+  # share/: MnmlSymbols.ttf, data/marketplace.zon (the INTEGRATIONS
+  # section's Marketplace default source — an installed mnml probes
+  # <exe dir>/../share/mnml/marketplace.zon for it) and whatever else
+  # the build puts there.
   if [ -d "$REPO/zig-out/share" ]; then
     if [ "$dry" = 1 ]; then
       (cd "$REPO/zig-out/share" && find . -type f | sed "s|^\./\(.*\)$|  would copy   zig-out/share/\1 → $prefix/share/\1|") >&2
