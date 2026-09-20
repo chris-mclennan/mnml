@@ -56,6 +56,8 @@ const runners = @import("runners.zig");
 const marketplace = @import("marketplace.zig");
 const catalogue = @import("marketplace_catalogue.zig");
 const font_scan = @import("font_scan.zig");
+const claude_mark = @import("claude_mark.zig");
+const bufferline = @import("../ui/bufferline.zig");
 const fonts_section = @import("../ui/fonts_section.zig");
 const side = @import("side.zig");
 const usage_pane = @import("usage_pane.zig");
@@ -105,11 +107,15 @@ pub const FirstParty = struct {
 pub const first_party = [_]FirstParty{
     .{ .id = "browser", .glyph = "\u{EB01}", .fallback = "B", .command = "browser.open", .color = "blue", .label = "Browser", .enabled = true, .in_palette_bar = true },
     // Claude's mark is mnml's own baked glyph; the fallback is the idle
-    // char a user without the font still sees. The colour is Anthropic's
-    // brand orange as a literal — no theme role is it — and it comes
-    // from `ui/brand.zig`, the one place that spells it.
-    .{ .id = "claude_code", .glyph = "\u{F1E00}", .fallback = "\u{2733}", .command = "ai.claude_code", .color = @import("../ui/brand.zig").claude_hex, .label = "Claude Code", .enabled = false, .in_palette_bar = false },
-    .{ .id = "codex", .glyph = "\u{F1E01}", .fallback = "\u{276F}_", .command = "ai.codex", .color = "cyan", .label = "Codex", .enabled = false, .in_palette_bar = false },
+    // char a user without the font still sees. Both come from
+    // `ui/bufferline.zig`, which is where a mark's codepoint is spelled
+    // — this row is the value `allChips` compares against to know the
+    // icon is still the shipped figure, so the two cannot be allowed to
+    // drift. The colour is Anthropic's brand orange as a literal — no
+    // theme role is it — and it comes from `ui/brand.zig`, the one
+    // place that spells THAT.
+    .{ .id = "claude_code", .glyph = bufferline.claude_glyph, .fallback = bufferline.claude_ascii, .command = "ai.claude_code", .color = @import("../ui/brand.zig").claude_hex, .label = "Claude Code", .enabled = false, .in_palette_bar = false },
+    .{ .id = "codex", .glyph = bufferline.codex_glyph, .fallback = "\u{276F}_", .command = "ai.codex", .color = "cyan", .label = "Codex", .enabled = false, .in_palette_bar = false },
     .{ .id = "http", .glyph = "\u{F1D8}", .fallback = "H", .command = "view.activity_http", .color = "teal", .label = "HTTP", .enabled = false, .in_palette_bar = false },
 };
 
@@ -1249,10 +1255,17 @@ pub fn allChips(app: *App, arena: Allocator) Allocator.Error![]Chip {
     var out: std.ArrayListUnmanaged(Chip) = .empty;
     for (app.cfg.ui.integration_icons) |icon| {
         if (icon.id.len == 0) continue;
+        // The Claude row's mark is `ui.claude_mark`'s to say wherever
+        // this chip paints — the launcher dock, the palette bar — so it
+        // matches the tab bar's cluster. A user who typed a glyph of
+        // their own on the row keeps it: only the shipped figure is
+        // swapped (`app/claude_mark.zig`).
+        const branded = std.mem.eql(u8, icon.id, "claude_code") and std.mem.eql(u8, icon.glyph, bufferline.claude_glyph);
+        const m = claude_mark.mark(app);
         try out.append(arena, .{
             .id = icon.id,
-            .glyph = icon.glyph,
-            .fallback = icon.fallback,
+            .glyph = if (branded) m.glyph else icon.glyph,
+            .fallback = if (branded) m.fallback else icon.fallback,
             .color = icon.color,
             .tooltip = icon.label orelse icon.id,
             .enabled = icon.enabled,
