@@ -1451,11 +1451,20 @@ fn drain(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sd
     const taken = app.takeEffects();
     defer app.freeEffects(taken);
     for (taken) |e| switch (e) {
-        .toast => |x| mount.toast(switch (x.level) {
-            .info => .info,
-            .warn => .warn,
-            .err => .@"error",
-        }, x.text) catch {},
+        .toast => |x| {
+            const level: sdk.wire.ToastLevel = switch (x.level) {
+                .info => .info,
+                .warn => .warn,
+                .err => .@"error",
+            };
+            // An offer, when the message carries one: the host paints
+            // it as the button in the box (`wire.ToastAction`).
+            if (x.action) |act| {
+                mount.toastWithAction(level, x.text, act) catch {};
+            } else {
+                mount.toast(level, x.text) catch {};
+            }
+        },
         .open_url => |url| {
             if (os.openUrl(gpa, io, url)) |whynot| mount.toast(.warn, whynot) catch {};
         },

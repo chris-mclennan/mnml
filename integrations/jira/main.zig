@@ -531,7 +531,14 @@ fn publishSide(app: *app_mod.App, mount: *sdk.Mount, ipc: ?*const sdk.Ipc, gpa: 
     app.watch_out.clearRetainingCapacity();
     if (app.toast_pending) {
         app.toast_pending = false;
-        mount.toast(.info, app.toast.items) catch {};
+        // An offer, when the message carries one: the host paints it
+        // as the button in the box (`wire.ToastAction`).
+        if (app.toast_action) |act| {
+            mount.toastWithAction(.info, app.toast.items, act) catch {};
+        } else {
+            mount.toast(.info, app.toast.items) catch {};
+        }
+        app.toast_action = null;
     }
     if (app.segment_dirty) {
         app.segment_dirty = false;

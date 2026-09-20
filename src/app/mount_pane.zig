@@ -379,11 +379,30 @@ pub fn handle(app: *App, ev: *host.Event) Allocator.Error!void {
         .command => |id| {
             command.runNamed(app, id) catch {};
         },
-        .toast => |t| try app.toastLevel(switch (t.level) {
-            .info => .info,
-            .warn => .warn,
-            .@"error" => .err,
-        }, "{s}: {s}", .{ p.title(), t.text }),
+        .toast => |t| {
+            const level: app_mod.ToastLevel = switch (t.level) {
+                .info => .info,
+                .warn => .warn,
+                .@"error" => .err,
+            };
+            // An offer, when the pane sent one and it is one the host
+            // can act on: a label and EITHER a command id or a page,
+            // never both and never neither (`wire.ToastAction`). A
+            // message that reports a merge and then vanishes leaves
+            // the reader with no door to the thing it merged.
+            if (t.action) |a| {
+                const owned: app_mod.ToastAction = if (a.isCommand()) .{ .command = .{
+                    .label = try app.gpa.dupe(u8, a.label),
+                    .id = try app.gpa.dupe(u8, a.command),
+                    .pane = ev.pane,
+                } } else .{ .open_url = .{
+                    .label = try app.gpa.dupe(u8, a.label),
+                    .url = try app.gpa.dupe(u8, a.url),
+                } };
+                return app.toastWithAction(level, owned, "{s}: {s}", .{ p.title(), t.text });
+            }
+            try app.toastLevel(level, "{s}: {s}", .{ p.title(), t.text });
+        },
         .watch_session => |req| {
             // The event's four strings become the watch's, or are
             // freed here — `Event.destroy` frees them either way, so
@@ -468,6 +487,27 @@ fn notifyOne(app: *App, p: *MountPane, w: *Watch) void {
 pub fn firstLine(s: []const u8) []const u8 {
     const end = std.mem.indexOfScalar(u8, s, '\n') orelse s.len;
     return s[0..@min(end, 200)];
+}
+
+/// `integrations.retry_refresh` — what an integration's failed-refresh
+/// toast offers. The pane the toast came from is focused first (the
+/// offer carries its id), so this always lands on the pane that
+/// failed rather than on whichever one happens to be in front.
+///
+/// `r` is the refresh key every pane in the family binds, which is why
+/// the host can retry without knowing anything about the integration.
+pub fn retryRefresh(app: *App) CommandError!void {
+    const id = app.active orelse return;
+    const pane = app.panes.get(id) orelse return;
+    const mp = pane.asMount() orelse {
+        app.toast("retry: the focused pane is not an integration", .{});
+        return;
+    };
+    if (!mp.alive()) {
+        app.toast("retry: {s} is no longer running", .{mp.title()});
+        return;
+    }
+    mp.send(.{ .input = .{ .event = .{ .key = .{ .spec = "r" } } } });
 }
 
 /// After a sessions snapshot: every mount pane hears about every watch

@@ -533,6 +533,7 @@ pub const IntegrationsPane = struct {
 
 pub const table = .{
     .@"integrations.refresh" = &refreshCmd,
+    .@"integrations.retry_refresh" = &@import("mount_pane.zig").retryRefresh,
     .@"integrations.poll_now" = &integration_poll.pollNow,
     .@"integrations.refresh_binary_cache" = &refreshCmd,
     .@"integrations.dismiss_toml_notice" = &dismissTomlNotice,

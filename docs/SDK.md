@@ -566,6 +566,34 @@ Each call appends one JSON line to `$MNML_IPC_DIR/command`; the shapes
 are in `docs/BRIDGE.md`. Over a mount, prefer `mount.toast` and
 `mount.command` — they need no file.
 
+### A toast with something to do about it
+
+A message that reports something and then vanishes leaves the reader
+holding the consequence. Since protocol 3 a mounted pane's toast can
+carry an offer, and mnml paints it as the button in the box:
+
+```zig
+try mount.toastWithAction(.info, "merged #1234",
+    .{ .label = "Open PR", .url = pr_url });
+try mount.toastWithAction(.@"error", "refresh failed: 503",
+    .{ .label = "Retry", .command = "integrations.retry_refresh" });
+```
+
+`label` is what the button says, and **exactly one** of `command` and
+`url` is set — a row with neither or both is sent as a plain toast
+instead, because a button that does nothing is worse than no button.
+`command` is an id the host already knows (one of mnml's, or one this
+integration registered), run with the pane that offered it focused;
+`url` is a page, and mnml applies its own http(s) rule to it. A
+sibling cannot name a shell line here.
+
+Use it where the message is the LAST place a thing is named: a merge
+that lands takes its own row off the open list, and a refresh that
+fails leaves a stale one with nothing on it saying so.
+`integrations.retry_refresh` is the host command for the second — it
+sends `r`, the refresh key every pane in the family binds, to the
+focused integration pane.
+
 `ipc.focusSession(.{ .id = e.session, .cwd = ws, .prompt_line = e.prompt_line })`
 brings a session mnml is running to the front — what a `[ view ]` press
 asks for. It names the session the same way `watch_session` does, on

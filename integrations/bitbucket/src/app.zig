@@ -35,7 +35,13 @@ pub const ToastLevel = enum { info, warn, err };
 
 /// What the loop does on the app's behalf after an event.
 pub const Effect = union(enum) {
-    toast: struct { level: ToastLevel, text: []const u8 },
+    /// `action` is the offer attached to the message — a label and a
+    /// command the host runs or a page it opens
+    /// (`sdk.wire.ToastAction`). A message that reports a merge and
+    /// then vanishes leaves the reader with no door to the thing it
+    /// merged; one that reports a failed refresh leaves them a stale
+    /// list and no way back.
+    toast: struct { level: ToastLevel, text: []const u8, action: ?sdk.wire.ToastAction = null },
     open_url: []const u8,
     copy: []const u8,
     /// The statusline chip: `󰂨 4(2)`, or the reference's `!` / `…`.
@@ -445,6 +451,19 @@ pub const App = struct {
         const text = std.fmt.allocPrint(app.effect_arena.allocator(), fmt, args) catch return;
         app.effect(.{ .toast = .{ .level = level, .text = text } });
     }
+
+    /// A toast with something to do about it. The strings must outlive
+    /// the frame the toast is posted on, so they come off the effect
+    /// arena like the text.
+    fn toastWithAction(app: *App, level: ToastLevel, action: sdk.wire.ToastAction, comptime fmt: []const u8, args: anytype) void {
+        const text = std.fmt.allocPrint(app.effect_arena.allocator(), fmt, args) catch return;
+        app.effect(.{ .toast = .{ .level = level, .text = text, .action = action } });
+    }
+
+    /// The offer a failed fetch owes the reader: the list on screen is
+    /// stale and nothing on it says so, so the message carries the way
+    /// back rather than expecting them to know that `r` is refresh.
+    pub const retry_action: sdk.wire.ToastAction = .{ .label = "Retry", .command = "integrations.retry_refresh" };
 
     /// The reference's status line: kept on the hint row's left and
     /// shown as a toast.
@@ -1235,6 +1254,29 @@ pub const App = struct {
             .text = try std.fmt.allocPrint(a, "{s} \u{2014} {s}", .{ pair.row, if (detail.len > 0) detail else "see the session" }),
             .bad = state == .failed,
         } });
+        // A merge that lands takes its own row off the open list, so
+        // the message about it is the last place the pull request is
+        // named. The offer is the door back to it.
+        if (try app.mergedPrUrl(a, pair.row)) |url| {
+            app.toastWithAction(
+                if (state == .done) .info else .err,
+                .{ .label = "Open PR", .url = url },
+                "merge {s}: {s}",
+                .{ if (state == .done) "finished" else "failed", pair.row },
+            );
+        }
+    }
+
+    /// The web page of the pull request a `<ws>/<repo>#<id>` row key
+    /// names, or null when this pane has no such row any more — which
+    /// is exactly what a landed merge does to it.
+    fn mergedPrUrl(app: *App, a: Allocator, row_key: []const u8) Allocator.Error!?[]const u8 {
+        const hash = std.mem.lastIndexOfScalar(u8, row_key, '#') orelse return null;
+        const slug = row_key[0..hash];
+        const id = row_key[hash + 1 ..];
+        const ws = app.activeTab().spec.workspace;
+        if (ws.len == 0 or slug.len == 0 or id.len == 0) return null;
+        return try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/pull-requests/{s}", .{ ws, slug, id });
     }
 
     /// A pull request's builds: fold them out (fetching the runs on
@@ -1594,7 +1636,8 @@ pub const App = struct {
                 } else {
                     try TabState.setText(app.gpa, &ts.error_text, r.error_text);
                     try TabState.setText(app.gpa, &ts.status, r.status);
-                    app.say(.err, "error: {s}", .{r.error_text});
+                    app.setStatus("error: {s}", .{r.error_text});
+                    app.toastWithAction(.err, retry_action, "error: {s}", .{r.error_text});
                 }
                 _ = app.frame_arena.reset(.retain_capacity);
                 const rows = (try app.visible(app.frame_arena.allocator())).rows;

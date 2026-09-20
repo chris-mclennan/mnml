@@ -819,6 +819,7 @@ pub const specs = [_]Spec{
     .{ .id = "trusted.forget", .title = "Workspace: forget this workspace's trust decision (asks again next launch)", .group = "trusted" },
     .{ .id = "integrations.refresh", .title = "Integrations: re-scan manifests in .mnml/integrations/ + ~/.config/mnml/integrations/", .group = "integrations" },
     .{ .id = "integrations.cycle_sort", .title = "Integrations: cycle sort mode (active tab)", .group = "integrations" },
+    .{ .id = "integrations.retry_refresh", .title = "Integrations: ask the focused integration pane to refresh", .group = "integrations" },
     .{ .id = "integrations.dev_build", .title = "Integrations: build the focused Dev folder (zig build, in a task pane)", .group = "integrations" },
     .{ .id = "integrations.dev_install", .title = "Integrations: install the focused Dev folder (build if needed, then --install)", .group = "integrations" },
     .{ .id = "integrations.dev_rebuild", .title = "Integrations: rebuild + reinstall the focused Dev folder", .group = "integrations" },
@@ -1229,6 +1230,6 @@ test "1086 specs, unique ids" {
     // + the launcher dock's six (`view.dock_*`, `view.focus_dock`)
     // and the two `integrations.*_dock` pin verbs (launcher-dock)
     // + `view.menu_bar_pin` (menu-bar-pin)
-    try std.testing.expectEqual(@as(usize, 1100), specs.len);
+    try std.testing.expectEqual(@as(usize, 1101), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

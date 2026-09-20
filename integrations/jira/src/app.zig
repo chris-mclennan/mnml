@@ -350,6 +350,11 @@ pub const App = struct {
     /// The last thing worth a toast (an action's outcome); the loop drains it.
     toast: std.ArrayList(u8) = .empty,
     toast_pending: bool = false,
+    /// The offer attached to the pending toast, when it has one — a
+    /// label and either a command the host runs or a page it opens
+    /// (`sdk.wire.ToastAction`). Its strings are owned by `toast_act`.
+    toast_action: ?sdk.wire.ToastAction = null,
+    toast_act_buf: [512]u8 = undefined,
 
     const DetailEntry = struct { arena: std.heap.ArenaAllocator, detail: model.IssueDetail };
 
@@ -548,6 +553,26 @@ pub const App = struct {
         a.toast.clearRetainingCapacity();
         a.toast.print(a.gpa, fmt, args) catch {};
         a.toast_pending = true;
+        a.toast_action = null;
+    }
+
+    /// The offer a failed fetch owes the reader: the list on screen is
+    /// stale and nothing on it says so, so the message carries the way
+    /// back rather than expecting them to know that `r` is refresh.
+    pub const retry_action: sdk.wire.ToastAction = .{ .label = "Retry", .command = "integrations.retry_refresh" };
+
+    /// A toast with something to DO about it. `url` (when it is one)
+    /// is copied into the app's own buffer, so the offer outlives the
+    /// arena the caller formatted it on.
+    pub fn sayWithAction(a: *App, action: sdk.wire.ToastAction, comptime fmt: []const u8, args: anytype) void {
+        a.say(fmt, args);
+        if (action.url.len == 0) {
+            a.toast_action = action;
+            return;
+        }
+        if (action.url.len > a.toast_act_buf.len) return;
+        @memcpy(a.toast_act_buf[0..action.url.len], action.url);
+        a.toast_action = .{ .label = action.label, .url = a.toast_act_buf[0..action.url.len] };
     }
 
     pub fn nowMs(a: *App) i64 {
@@ -1081,7 +1106,7 @@ pub const App = struct {
         const t = &a.tabs[idx];
         if (res.error_text.len > 0) {
             t.last_error = try std.fmt.allocPrint(t.meta.allocator(), "{s}", .{res.error_text});
-            a.setStatus("error: {s}", .{res.error_text});
+            a.sayWithAction(retry_action, "error: {s}", .{res.error_text});
             res.drop();
             return;
         }
@@ -2658,6 +2683,28 @@ pub const App = struct {
         const title = try std.fmt.allocPrint(arena, "Merge {s}", .{if (state == .done) "finished" else "failed"});
         const body = try std.fmt.allocPrint(arena, "{s} \u{2014} {s}", .{ pair.row, if (detail.len > 0) detail else "see the session" });
         ipc.notify(title, body, if (state == .failed) .@"error" else .info, state == .failed) catch {};
+        // A merge that lands takes its pull request off the row it was
+        // under, so the message about it is the last place that pull
+        // request is named. The offer is the door back to it.
+        if (try a.mergedPrUrl(arena, pair.row)) |url| {
+            a.sayWithAction(.{ .label = "Open PR", .url = url }, "merge {s}: {s}", .{ if (state == .done) "finished" else "failed", pair.row });
+        }
+    }
+
+    /// The web page of the pull request a `<ticket key>\x00<pr id>` row
+    /// key names, or null when the pane no longer holds it — which is
+    /// exactly what a landed merge does to it.
+    fn mergedPrUrl(a: *App, arena: Allocator, row_key: []const u8) Allocator.Error!?[]const u8 {
+        const nul = std.mem.indexOfScalar(u8, row_key, 0) orelse return null;
+        const key = row_key[0..nul];
+        const pr_id = row_key[nul + 1 ..];
+        const t = a.tab();
+        const st = &(t.tree orelse return null);
+        const prs = st.prs(key) orelse return null;
+        for (prs) |pr| if (std.mem.eql(u8, pr.id, pr_id) and pr.url.len > 0) {
+            return try arena.dupe(u8, pr.url);
+        };
+        return null;
     }
 
     /// A press on a button whose session is live or finished: ask the
