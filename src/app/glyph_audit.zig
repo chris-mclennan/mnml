@@ -43,6 +43,7 @@ const menu_glyph = @import("../ui/menu_glyph.zig");
 const statusline_view = @import("../ui/statusline.zig");
 const tree_view = @import("../ui/tree_view.zig");
 const bufferline_view = @import("../ui/bufferline.zig");
+const pty_view = @import("../ui/pty_view.zig");
 const font_scan = @import("font_scan.zig");
 const ghostty_config = @import("ghostty_config.zig");
 
@@ -127,6 +128,7 @@ const core_glyphs = [_]struct { glyph: []const u8, name: []const u8 }{
     .{ .glyph = tree_view.cont_glyph, .name = "tree-line-vertical" },
     .{ .glyph = tree_view.corner_glyph, .name = "tree-line-corner" },
     .{ .glyph = bufferline_view.ghost_glyph, .name = "terminal-mark" },
+    .{ .glyph = pty_view.cursor_hollow_glyph, .name = "cursor-hollow" },
 };
 
 /// The check over this machine: the fonts `font_scan` found, ghostty's

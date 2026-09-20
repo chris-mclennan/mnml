@@ -1741,6 +1741,7 @@ fn drawPty(app: *App, ui: Ui, id: PaneId, p: *pty_pane.PtyPane, rect: Rect) Allo
             .none => .none,
         },
         .blink = app.cfg.ui.pty_cursor.blink,
+        .mnml_font = app.fonts.baked(pty_view.cursor_hollow_cp),
     });
     if (app.active == id) {
         app.pane_rows = @max(body.h, 1);
