@@ -80,18 +80,22 @@ pub const ModeChip = struct {
     kind: enum { edit_md, preview_md, view_zon, source_zon },
 };
 
-/// One AI mark on the tab bar's right-hand cluster. The colours come
-/// from the caller because they are the product's brand, not the
-/// theme's accent — Claude's mark is Anthropic's orange whatever theme
-/// mnml is wearing, full when a session is live and pulled toward the
-/// muted when it is not.
+/// One AI mark on the tab bar's right-hand cluster. The colour comes
+/// from the caller because it is the product's brand, not the theme's
+/// accent — Claude's mark is Anthropic's orange whatever theme mnml is
+/// wearing.
+///
+/// One colour, always. The mark used to pale while no session ran, so
+/// the chip carried two jobs: a button, and a running light. Its four
+/// neighbours in the cluster are buttons that look the same whatever
+/// the state behind them, and this one reading dimmer than the rest
+/// said "disabled" rather than "idle". Whether a session is live is
+/// the sessions panel's to show, and the statusline's.
 pub const AiChip = struct {
     id: u32,
     glyph: []const u8,
     fallback: []const u8,
-    live: bool,
-    fg_live: Color,
-    fg_idle: Color,
+    fg: Color,
 };
 
 /// The split cluster's `.button` ids; `ai` paints before the four.
@@ -496,7 +500,7 @@ fn drawSplit(ui: Ui, x0: u16, y: u16, right: u16, s: SplitIds, n_ai: usize, zoom
     var buttons: [8]Btn = undefined;
     var n: usize = 0;
     for (s.ai[0..n_ai]) |chip| {
-        buttons[n] = .{ .glyph = chip.glyph, .ascii = chip.fallback, .fg = if (chip.live) chip.fg_live else chip.fg_idle, .id = chip.id };
+        buttons[n] = .{ .glyph = chip.glyph, .ascii = chip.fallback, .fg = chip.fg, .id = chip.id };
         n += 1;
     }
     buttons[n] = .{ .glyph = s.term_mark.glyph, .ascii = s.term_mark.fallback, .fg = .{ .index = 15 }, .id = s.term };
@@ -908,11 +912,11 @@ test "the hidden chip counts the filtered tabs; the mode chip sits before the cl
     var f = try Fixture.init(56, 1);
     defer f.deinit();
     const tabs = [_]Tab{.{ .id = 1, .title = "a.md", .glyph = "x", .active = true }};
-    const live_fg = brand.claude;
-    const idle_fg = Theme.rgb(0x7a4a36);
+    const claude_fg = brand.claude;
+    const codex_fg = Theme.rgb(0x56b6c2);
     const ai = [_]AiChip{
-        .{ .id = 40, .glyph = "\u{2733}", .fallback = "*", .live = true, .fg_live = live_fg, .fg_idle = idle_fg },
-        .{ .id = 41, .glyph = "\u{276F}", .fallback = ">", .live = false, .fg_live = live_fg, .fg_idle = idle_fg },
+        .{ .id = 40, .glyph = "\u{2733}", .fallback = "*", .fg = claude_fg },
+        .{ .id = 41, .glyph = "\u{276F}", .fallback = ">", .fg = codex_fg },
     };
     _ = draw(f.ui(), f.full(), &tabs, .{
         .new_tab = 9,
@@ -927,13 +931,14 @@ test "the hidden chip counts the filtered tabs; the mode chip sits before the cl
     try testing.expect(f.bgEql(30, 0, .{ .bg = f.theme.palette.purple }));
     try testing.expectEqual(@as(u32, 40), f.hits.at(39, 0).?.button);
     try testing.expectEqual(@as(u32, 41), f.hits.at(42, 0).?.button);
-    // The marks wear their product's brand, never the theme's accent:
-    // full while a session is live, pulled toward the muted when not.
-    const live_x = f.hits.entryAt(39, 0).?.rect.x + 1;
-    const idle_x = f.hits.entryAt(42, 0).?.rect.x + 1;
-    try testing.expectEqual(live_fg, f.style(live_x, 0).fg);
-    try testing.expectEqual(idle_fg, f.style(idle_x, 0).fg);
-    try testing.expect(!std.meta.eql(f.style(live_x, 0).fg, f.theme.accent.fg));
+    // The marks wear their product's brand, never the theme's accent,
+    // and they wear it whatever is or is not running behind them — the
+    // chip is a button like its four neighbours, not a running light.
+    const claude_x = f.hits.entryAt(39, 0).?.rect.x + 1;
+    const codex_x = f.hits.entryAt(42, 0).?.rect.x + 1;
+    try testing.expectEqual(claude_fg, f.style(claude_x, 0).fg);
+    try testing.expectEqual(codex_fg, f.style(codex_x, 0).fg);
+    try testing.expect(!std.meta.eql(f.style(claude_x, 0).fg, f.theme.accent.fg));
     try testing.expectEqual(@as(u32, 4), f.hits.at(54, 0).?.button);
     // Short of room, the AI chips go before the four.
     var g = try Fixture.init(15, 1);

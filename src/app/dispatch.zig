@@ -2436,15 +2436,22 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     focusLeafAt(app, m.x, m.y);
                     try runCmd(app, .@"view.split_down");
                 },
+                // What the button does on a left click is
+                // `ui.maximize_click`'s to say; while something is
+                // already maximized it is the way back whatever the
+                // mode (`app/zen.zig`).
                 .split_max => {
                     focusLeafAt(app, m.x, m.y);
-                    try runCmd(app, .@"view.fullscreen");
+                    try runCmd(app, zen.clickCommand(app));
                 },
                 // Full screen's corner mark: the click leaves.
                 .fullscreen_exit => try runCmd(app, .@"view.fullscreen"),
                 .hidden_tabs => try runCmd(app, .@"picker.buffers"),
-                .ai_claude => try runCmd(app, .@"ai.claude_code"),
-                .ai_codex => try runCmd(app, .@"ai.codex"),
+                // The chips are the way to the SESSIONS panel; a click
+                // starts a session only when none of that product is
+                // running (`app/ai.zig`'s `chipClick`).
+                .ai_claude => try chipClick(app, .claude),
+                .ai_codex => try chipClick(app, .codex),
                 else => {},
             }
         },
@@ -2468,6 +2475,16 @@ fn focusLeafAt(app: *App, x: u16, y: u16) void {
     for (app.hits.items.items) |h| if (h.target == .pane and h.rect.contains(x, y)) {
         app.setActive(h.target.pane);
         return;
+    };
+}
+
+/// `ai_app.chipClick` with the command errors swallowed, as `runCmd`
+/// does — a chip click reports through a toast, never through the
+/// mouse path.
+fn chipClick(app: *App, product: app_mod.Config.AiProduct) Allocator.Error!void {
+    ai_app.chipClick(app, product) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {},
     };
 }
 

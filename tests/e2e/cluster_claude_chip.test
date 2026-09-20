@@ -1,0 +1,40 @@
+# env: PATH=${MNML_SHIMS}/ai:${PATH}
+# The strip cluster's Claude mark. It used to pale while no session
+# ran and light up when one did, so a chip sitting beside four buttons
+# that never change read as disabled rather than as idle. It is
+# Anthropic's orange, always — whether a session is live is the
+# SESSIONS panel's to show, and the statusline's.
+#
+# `tools/shims/ai/claude` stands in for the CLI (it sleeps), so the
+# chip shows without the real binary and no transcript reaches the
+# screen. The mark sits at column 106 of the strip, before the
+# terminal and the three split buttons.
+write a.txt "alpha alpha"
+open a.txt
+expect screen contains "󱸀"
+expect color 106 1 fg #d97757
+# A click is the way to the sessions: the SESSIONS section comes up,
+# and with nothing running it starts one — the command the panel's own
+# `+ New session` row runs.
+click 106 1
+wait 300
+expect screen contains "SESSIONS"
+expect pane claude
+# The mark did not change colour under the click, and it is still
+# orange with a session live.
+expect color 106 1 fg #d97757
+# A second click shows the panel again and does NOT open a second
+# session: the chip is a way in, not one more launcher.
+command view.activity_explorer
+expect screen lacks "SESSIONS"
+click 106 1
+wait 300
+expect screen contains "SESSIONS"
+# The report behind this: "when I click the claude code icon it lights
+# up blue afterwards". It was never the cluster's mark — that one is
+# fixed above at every step. It is the TAB the click opened: a Claude
+# pane's glyph wears its session's own slot colour (`ui/accent_color`),
+# green for the first session, blue for the second. Before this change
+# a click opened a session every time, so a click with one already up
+# put a blue-marked tab on the strip under the icon.
+expect color 77 1 fg #98c379

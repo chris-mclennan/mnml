@@ -20,6 +20,7 @@ const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const side = @import("side.zig");
 const settings = @import("settings.zig");
+const Config = @import("../config/Config.zig");
 
 pub const table = .{
     .@"view.fullscreen" = &toggle,
@@ -84,6 +85,44 @@ fn toggleZoom(app: *App) CommandError!void {
     };
     app.zoomed_leaf = if (app.zoomed_leaf == active) null else active;
     app.needs_render = true;
+}
+
+// ─── the strip's maximize button ────────────────────────────────────────
+//
+// The button has two modes because the two commands answer two
+// different asks, and the one a click should run is not the same for
+// everybody. `ui.maximize_click` picks; the right button lists both and
+// ticks the pick (`app/context_menus.zig`).
+//
+// There is no third mode. The split tree's only scope between one pane
+// and the whole window is the leaf, and a leaf IS the tab group — the
+// tabs it holds are its own. So "zoom this pane" and "zoom this tab
+// group" name the same rect, and a second row running the same command
+// would be a row that does nothing new.
+
+/// What `ui.maximize_click` names, for the hover line and the menu.
+pub fn modeLabel(mode: Config.MaximizeClick) []const u8 {
+    return switch (mode) {
+        .zoom_pane => "Zoom this pane",
+        .fullscreen => "Full screen",
+    };
+}
+
+/// The command the maximize button runs on a left click. Whatever the
+/// mode, while something is already maximized the button is the way
+/// back, so it undoes what is on — full screen first, since it hides
+/// the chrome the zoom keeps. With nothing on, it is the mode.
+pub fn clickCommand(app: *const App) command.CommandId {
+    if (app.zen) return .@"view.fullscreen";
+    if (app.zoomed_leaf != null) return .@"view.toggle_zoom";
+    return commandFor(app.cfg.ui.maximize_click);
+}
+
+pub fn commandFor(mode: Config.MaximizeClick) command.CommandId {
+    return switch (mode) {
+        .zoom_pane => .@"view.toggle_zoom",
+        .fullscreen => .@"view.fullscreen",
+    };
 }
 
 /// `view.reset_layout` (`:resetview`, the View menu's last row): the
@@ -481,4 +520,94 @@ test "zen: the editor and tab context menus end with Exit full screen while insi
     app.overlay.menu.highlight = true;
     try app.handle(.{ .key = Key.named(.enter) });
     try t.expect(!app.zen);
+}
+
+test "the maximize button: `ui.maximize_click` picks what a left click runs, and while something is maximized the button is the way back whatever the mode" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    app.tree.loaded = true;
+    // The shipped default is the zoom. A click on a button that says
+    // "maximize" is read as "give this pane the room", and full screen
+    // — which keeps every pane and drops the chrome instead — is not
+    // that.
+    try t.expectEqual(app_mod.Config.MaximizeClick.zoom_pane, app.cfg.ui.maximize_click);
+    try t.expectEqual(command.CommandId.@"view.toggle_zoom", commandFor(.zoom_pane));
+    try t.expectEqual(command.CommandId.@"view.fullscreen", commandFor(.fullscreen));
+    try t.expectEqualStrings("Zoom this pane", modeLabel(.zoom_pane));
+    try t.expectEqualStrings("Full screen", modeLabel(.fullscreen));
+
+    const a = try app.openScratch();
+    try command.run(&app, .{ .static = .@"view.split_right" });
+    const b = app.active.?;
+    try t.expect(a != b);
+    try app.render();
+
+    // Two panes side by side: the click zooms the one under it and
+    // leaves the chrome alone.
+    try clickMaximize(&app);
+    try t.expect(!app.zen);
+    try t.expectEqual(b, app.zoomed_leaf.?);
+    // Zoomed, the button is the restore.
+    try t.expectEqual(command.CommandId.@"view.toggle_zoom", clickCommand(&app));
+    try clickMaximize(&app);
+    try t.expect(app.zoomed_leaf == null);
+
+    // The other mode: the same click drops the chrome instead.
+    app.cfg.ui.maximize_click = .fullscreen;
+    try app.render();
+    try clickMaximize(&app);
+    try t.expect(app.zen);
+    try t.expect(app.zoomed_leaf == null);
+
+    // Inside full screen the button leaves it — it never toggles the
+    // zoom underneath, whichever mode is configured.
+    try t.expectEqual(command.CommandId.@"view.fullscreen", clickCommand(&app));
+    app.cfg.ui.maximize_click = .zoom_pane;
+    try t.expectEqual(command.CommandId.@"view.fullscreen", clickCommand(&app));
+    set(&app, false);
+
+    // A zoom the other mode did not start is still undone by a click.
+    app.cfg.ui.maximize_click = .fullscreen;
+    app.setActive(b);
+    try command.run(&app, .{ .static = .@"view.toggle_zoom" });
+    try t.expectEqual(command.CommandId.@"view.toggle_zoom", clickCommand(&app));
+    try app.render();
+    try clickMaximize(&app);
+    try t.expect(app.zoomed_leaf == null);
+    try t.expect(!app.zen);
+
+    // The strip's own restore mark, while zoomed and in full screen —
+    // the button swaps glyphs off `Opts.zoomed` (`ui/bufferline.zig`).
+    const bufferline = @import("../ui/bufferline.zig");
+    app.setActive(b);
+    try command.run(&app, .{ .static = .@"view.toggle_zoom" });
+    try app.render();
+    try t.expect(std.mem.indexOf(u8, try rowText(&app, 1), bufferline.restore_glyph) != null);
+    try command.run(&app, .{ .static = .@"view.toggle_zoom" });
+    try app.render();
+    try t.expect(std.mem.indexOf(u8, try rowText(&app, 1), bufferline.maximize_glyph) != null);
+}
+
+/// Presses the rightmost maximize button the last frame registered.
+fn clickMaximize(app: *App) !void {
+    const render = @import("render.zig");
+    const want = @intFromEnum(render.Button.split_max);
+    var at: ?struct { x: u16, y: u16 } = null;
+    for (app.hits.items.items) |h| if (h.target == .button and h.target.button == want) {
+        if (at == null or h.rect.x > at.?.x) at = .{ .x = h.rect.x + 1, .y = h.rect.y };
+    };
+    const cell = at orelse return error.NoMaximizeButton;
+    try app.handle(.{ .mouse = .{ .x = cell.x, .y = cell.y, .kind = .press, .button = .left } });
+    try app.render();
+}
+
+/// Row `y` of the last frame, as text.
+fn rowText(app: *App, y: u16) ![]const u8 {
+    const screen_mod = @import("../ipc/screen.zig");
+    const txt = try screen_mod.toTestText(app.frame.allocator(), &app.screen);
+    var it = std.mem.splitScalar(u8, txt, '\n');
+    var i: u16 = 0;
+    while (it.next()) |line| : (i += 1) if (i == y) return line;
+    return error.NoSuchRow;
 }

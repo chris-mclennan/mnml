@@ -1182,6 +1182,27 @@ pub fn findSession(app: *App, product: Product) ?PaneId {
     return null;
 }
 
+/// The tab strip's cluster chip for `product`, left click. The chip is
+/// the way to the sessions, not a second launcher beside the panel's:
+/// the SESSIONS section comes up either way, and only when nothing of
+/// that product is running does the click also start one — the command
+/// the panel's own `+ New session` row runs first
+/// (`sessions.new_command`), never a copy of it.
+///
+/// It used to run `ai.claude_code` / `ai.codex` outright, which open a
+/// session every time, so a click with one already up opened a second.
+pub fn chipClick(app: *App, product: Product) CommandError!void {
+    activity_bar.enter(app, .sessions);
+    side.place(app, .sessions, true);
+    if (findSession(app, product) != null) return;
+    // Codex has no `+ New session` menu of its own; its new-session
+    // command is the whole of the path.
+    return command.run(app, .{ .static = switch (product) {
+        .claude => @import("../sessions.zig").new_command,
+        .codex => .@"ai.codex_new",
+    } });
+}
+
 fn claudeCode(app: *App) CommandError!void {
     _ = try openSession(app, .claude, null);
 }
@@ -1863,4 +1884,46 @@ test "a ghost is Insert's: in vim Normal a Tab drops it and edits nothing; with 
     app.ai.debounce.noteEdit(app.now_ms);
     try app.tick(app.now_ms + 10_000);
     try t.expect(app.ai.debounce.deadline() == null);
+}
+
+test "the strip's AI chip: a click shows SESSIONS, and starts a session only when that product has none running" {
+    const build_options = @import("build_options");
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .data_root = root, .cols = 120, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    app.tree.loaded = true;
+    // `tools/shims/ai/claude` stands in for the CLI (it sleeps).
+    const path = try std.fmt.allocPrint(t.allocator, "{s}/ai:{s}", .{ build_options.shims_dir, app.env.get("PATH") orelse "/usr/bin:/bin" });
+    defer t.allocator.free(path);
+    try app.env.put("PATH", path);
+
+    // Nothing running: the panel comes up and a session starts.
+    try t.expect(findSession(&app, .claude) == null);
+    try chipClick(&app, .claude);
+    try t.expectEqual(side.Section.sessions, side.shown(&app, .left).?);
+    const first = findSession(&app, .claude) orelse return error.NoSessionStarted;
+
+    // One already running: the panel again, and no second session —
+    // the chip is the way to the sessions, not one more launcher.
+    side.place(&app, .explorer, false);
+    try chipClick(&app, .claude);
+    try t.expectEqual(side.Section.sessions, side.shown(&app, .left).?);
+    try t.expectEqual(first, findSession(&app, .claude).?);
+    var claudes: usize = 0;
+    for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+        .pty => |*pt| if (pty_pane.productOf(&app, pt) == .claude) {
+            claudes += 1;
+        },
+        else => {},
+    };
+    try t.expectEqual(@as(usize, 1), claudes);
+
+    // The command a click starts is the panel's own `+ New session`
+    // row's, not a copy of it.
+    try t.expectEqual(command.CommandId.@"ai.claude_code_new", @import("../sessions.zig").new_command);
 }

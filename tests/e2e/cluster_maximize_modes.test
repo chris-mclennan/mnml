@@ -1,0 +1,65 @@
+# The tab strip's maximize button, at the right end of every strip. It
+# used to run `view.fullscreen` outright, so a click on it with the
+# frame split dropped the chrome and left both panes where they were.
+# `ui.maximize_click` picks what it runs; the default is the zoom, and
+# the right button lists both modes with a tick on the default.
+write a.txt "alpha alpha"
+write b.txt "beta beta"
+open a.txt
+command view.split_right
+open b.txt
+expect screen contains "alpha alpha"
+expect screen contains "beta beta"
+# The right leaf's button is its strip's last cell but one (column
+# 118); the Claude mark, the terminal, the two splits and it fill the
+# strip's right end.
+click 118 1
+# Only the pane under the button fills the body — the other split is
+# gone, and the chrome around it is not.
+expect screen lacks "alpha alpha"
+expect screen contains "beta beta"
+expect screen contains "Add workspace"
+expect screen contains "Ln 1/1"
+# Zoomed, the button is the way back.
+click 118 1
+expect screen contains "alpha alpha"
+expect screen contains "beta beta"
+# The right button lists the two modes. There is no third: a leaf is
+# the tab group, so "this pane" and "this tab group" are one rect.
+rightclick 118 1
+expect screen contains "Maximize"
+expect screen contains "Zoom this pane / restore"
+expect screen contains "Full screen / restore"
+expect screen contains "Equalize splits"
+key esc
+expect screen lacks "Equalize splits"
+# Picking a mode runs it: full screen drops the tree, the strips and
+# the statusline and keeps both panes.
+rightclick 118 1
+key down
+key enter
+expect screen lacks "Add workspace"
+expect screen lacks "Ln 1/1"
+expect screen contains "alpha alpha"
+expect screen contains "beta beta"
+# The one cell of chrome full screen keeps — the restore mark at the
+# body's top-right, where the strip's button would be — brings the
+# frame back.
+click 119 0
+expect screen contains "Add workspace"
+expect screen contains "Ln 1/1"
+expect screen contains "alpha alpha"
+expect screen contains "beta beta"
+# `ui.maximize_click` is the setting behind the button (Settings -> UI
+# has its row; `:set` is the way in from a script). On `.fullscreen` a
+# plain click drops the chrome rather than zooming.
+ex set ui.maximize_click=fullscreen
+click 118 1
+expect screen lacks "Add workspace"
+expect screen contains "alpha alpha"
+expect screen contains "beta beta"
+click 119 0
+expect screen contains "Add workspace"
+# And the tick in the menu follows the setting, not the last pick.
+ex set ui.maximize_click=zoom_pane
+expect screen contains "ui.maximize_click=zoom_pane"

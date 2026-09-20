@@ -240,6 +240,14 @@ pub const TopBarClusterMode = enum { auto, expanded, compact };
 /// `terminal` = follow the editing mode (see `ui.cursor_shape`).
 pub const CursorShape = enum { terminal, block, bar, underline };
 pub const TabBarAiIcon = enum { none, claude_code, codex, both };
+/// What the tab strip's maximize button does on a left click. The
+/// layout's only scope between one pane and the whole window is the
+/// leaf — a leaf IS the tab group — so `.zoom_pane` is that zoom: the
+/// active pane's leaf alone fills the editor area, the other splits
+/// hide, the chrome stays. `.fullscreen` is the other end — the tree,
+/// the strips and the statusline go with them. The right button lists
+/// both and ticks this one (`app/context_menus.zig`).
+pub const MaximizeClick = enum { zoom_pane, fullscreen };
 pub const AiLayoutMode = enum { grid, tabs };
 /// Which mark a terminal wears in the chrome (`app/terminal_glyph.zig`).
 pub const TerminalGlyph = enum { ghostty, terminal, custom };
@@ -449,6 +457,11 @@ pub const Ui = struct {
     /// keys and bakes `<data root>/fonts/MnmlSymbols.ttf`.
     terminal_glyph_svg: []const u8 = "",
     top_bar_cluster_mode: TopBarClusterMode = .auto,
+    /// The tab strip's maximize button, left click. The default is the
+    /// zoom, not full screen: with the frame split, a click on it is
+    /// read as "give this one the room", and hiding every other pane is
+    /// that, where dropping the chrome and keeping both is not.
+    maximize_click: MaximizeClick = .zoom_pane,
     tab_bar_ai_icon: TabBarAiIcon = .claude_code,
     ai_layout_mode: AiLayoutMode = .grid,
     /// Deprecated, read by nothing: the AI chips always paint mnml's own
@@ -980,6 +993,8 @@ test "defaults are the shipped values" {
     try std.testing.expectEqual(@as(u16, 8), c.ui.hover_help_height);
     try std.testing.expectEqualStrings("terminal", c.ui.terminal_label);
     try std.testing.expectEqual(TabBarAiIcon.claude_code, c.ui.tab_bar_ai_icon);
+    // The maximize button zooms by default; full screen is the choice.
+    try std.testing.expectEqual(MaximizeClick.zoom_pane, c.ui.maximize_click);
     try std.testing.expectEqual(TerminalGlyph.ghostty, c.ui.terminal_glyph);
     try std.testing.expectEqualStrings("", c.ui.terminal_glyph_svg);
     try std.testing.expectEqual(AiLayoutMode.grid, c.ui.ai_layout_mode);

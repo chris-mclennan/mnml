@@ -1563,10 +1563,14 @@ fn openSplitChipMenu(app: *App, dir: enum { horizontal, vertical }, x: u16, y: u
 }
 
 /// The strip's maximize chip (Rust `split_strip_maximize_buttons`).
+/// The two modes the button can be, ticked on the one a left click
+/// runs — `ui.maximize_click`, which Settings → UI is the way to change
+/// (picking a row here runs it once, it does not re-point the button).
 fn openMaximizeMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const mode = app.cfg.ui.maximize_click;
     const rows = try items(app, &.{
-        .{ .label = "Zoom this leaf / restore", .action = .{ .command = .@"view.toggle_zoom" } },
-        .{ .label = "Full screen / restore", .action = .{ .command = .@"view.fullscreen" } },
+        .{ .label = "Zoom this pane / restore", .action = .{ .command = .@"view.toggle_zoom" }, .checked = mode == .zoom_pane },
+        .{ .label = "Full screen / restore", .action = .{ .command = .@"view.fullscreen" }, .checked = mode == .fullscreen },
         .{ .label = "Equalize splits", .action = .{ .command = .@"view.equalize_splits" }, .separator_before = true },
     });
     errdefer app.gpa.free(rows);
@@ -1754,6 +1758,39 @@ test "right-click: the chrome chips — a chip with a menu answers true, one wit
     try t.expectEqualStrings("Tab page 1", app.overlay.menu.title);
     closeMenu(&app);
     try t.expect(!try openButtonMenu(&app, render.Button.tabPage(7), 3, 3));
+}
+
+test "right-click: the maximize chip lists its two modes and ticks the one a left click runs" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    const render = @import("render.zig");
+    const zen = @import("zen.zig");
+    try t.expect(try openButtonMenu(&app, @intFromEnum(render.Button.split_max), 3, 3));
+    try t.expectEqualStrings("Maximize", app.overlay.menu.title);
+    // Two modes and the equalize; there is no third zoom scope — a
+    // leaf is the tab group (`app/zen.zig`).
+    try t.expectEqual(@as(usize, 3), app.overlay.menu.items.len);
+    try t.expectEqualStrings("Zoom this pane / restore", app.overlay.menu.items[0].label);
+    try t.expectEqualStrings("Full screen / restore", app.overlay.menu.items[1].label);
+    try t.expectEqual(zen.commandFor(.zoom_pane), app.overlay.menu.items[0].action.command);
+    try t.expectEqual(zen.commandFor(.fullscreen), app.overlay.menu.items[1].action.command);
+    // The tick follows `ui.maximize_click`, on exactly one row.
+    try t.expect(app.overlay.menu.items[0].checked);
+    try t.expect(!app.overlay.menu.items[1].checked);
+    try t.expect(!app.overlay.menu.items[2].checked);
+    closeMenu(&app);
+    app.cfg.ui.maximize_click = .fullscreen;
+    try t.expect(try openButtonMenu(&app, @intFromEnum(render.Button.split_max), 3, 3));
+    try t.expect(!app.overlay.menu.items[0].checked);
+    try t.expect(app.overlay.menu.items[1].checked);
+    // Picking a row runs it; it does not re-point the button, which is
+    // Settings -> UI's to change.
+    app.overlay.menu.cursor = 0;
+    app.overlay.menu.highlight = true;
+    _ = try app.openScratch();
+    try app.handle(.{ .key = app_mod.Key.named(.enter) });
+    try t.expect(app.zoomed_leaf != null);
+    try t.expectEqual(app_mod.Config.MaximizeClick.fullscreen, app.cfg.ui.maximize_click);
 }
 
 test "right-click: the terminal chip's `Terminal icon` submenu — the three choices, the current one ticked, and every id registered" {
