@@ -17,6 +17,9 @@
 //! side dock is icon-only by geometry and ignores the field — three
 //! cells is all it has, `.label` included.
 //!
+//! Under `.label` the word takes the glyph's own styling, because with
+//! no glyph beside it the word is what carries the item's colour.
+//!
 //! `Props.align` (`ui.dock.align`) is where the run sits: `.center` is
 //! the shipped look, the way macOS's Dock centres its icons, and the
 //! pin chip keeps the far end whatever it says. A run too long to
@@ -226,7 +229,13 @@ fn paintItem(ui: Ui, cell: Rect, it: Item, focused: bool, bg: vaxis.Color, hover
             _ = ui.putStr(x, cell.y, 1, if (ui.ascii) running_ascii else running_dot, dotStyle(th, ground));
         }
         x += 1;
-        _ = ui.putStr(x, cell.y, cell.right() -| x, it.label, label_style);
+        // The word wears the item's own colour here, not the label
+        // grey the `.icon_label` form gives it: with no glyph beside
+        // it the word IS the icon, and the colour is the item's
+        // identity (the rule at the top of this file). So it takes the
+        // glyph's treatment exactly — `dim` when cold, `bold` when the
+        // pointer or the cursor is on it.
+        _ = ui.putStr(x, cell.y, cell.right() -| x, it.label, glyph_style);
         return;
     }
     if (form == .icon_label) {
@@ -485,6 +494,19 @@ test "bottom under .label: the word alone — no glyph on the strip at all — t
     for ([_]u16{ 1, 2, 9 }) |x| try t.expectEqual(@as(u16, 0), fx.hits.at(x, 5).?.launcher_dock.item);
     for ([_]u16{ 10, 11, 15 }) |x| try t.expectEqual(@as(u16, 1), fx.hits.at(x, 5).?.launcher_dock.item);
     try t.expect(fx.hits.at(16, 5) == null);
+    // The word carries the item's colour, the way the glyph does in
+    // every other form: cold it is dim, and the pointer on it brightens
+    // it without changing the colour.
+    const cold = fx.style(2, 5);
+    try t.expect(cold.dim);
+    try t.expect(vaxis.Color.eql(cold.fg, fx.style(11, 5).fg) == false); // Browser's blue is not HTTP's teal
+    fx.hits.reset();
+    fx.hover = .{ .x = 3, .y = 5 };
+    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .labels = .label, .@"align" = .start });
+    const hot = fx.style(2, 5);
+    try t.expect(!hot.dim);
+    try t.expect(vaxis.Color.eql(cold.fg, hot.fg));
+    fx.hover = null;
     // The keyboard cursor takes the dot's cell, the way it does under
     // `.icon` — so focusing an open thing never moves the word.
     fx.hits.reset();
