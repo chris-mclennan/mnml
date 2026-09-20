@@ -243,11 +243,49 @@ the next backfill has to come back for.
 | The hint row, every `key label` a hit | `Painter.hintRow` |
 | State colours | `Theme.prState` / `pipelineState` / `ticketStatus` |
 | A chevron that folds under the mouse | `Painter.chevron` |
+| One figure on a statusline segment, and a bracketed subset only when the pane has one | `pane.figure` |
 
 Keys and chrome that are not the toolkit's but ARE the family's: `r`
 refreshes and `R` refreshes past every cache; `?` opens the key sheet;
-the statusline segment carries the pane's figure and a hover that
-breaks it down; the tab wears the manifest's chip glyph.
+the tab wears the manifest's chip glyph.
+
+#### What a statusline segment may say
+
+**One named figure per segment, plus a bracketed subset only when the
+pane genuinely has one.**
+
+```
+󰂨 12(11)    twelve of my pull requests open, eleven of them unapproved
+󰌃 43        forty-three items assigned to me — and no second number
+```
+
+The bracket is a SUBSET of the figure beside it, never a second count
+about something else. A pane with two things to say publishes two
+segments, each named for its own figure, because a reader looking at
+`󰂨 12 3` has no way to learn which number is which.
+
+A pane with no subset says one figure and stops. That is not the
+poorer half of the standard — `43(2)` invented so the tracker's chip
+matches the forge's shape is a number nobody can believe, which is
+worse than a chip that says less.
+
+`sdk.pane.figure` is the helper, and it makes the rule true by
+construction: one `n`, one optional `subset`.
+
+```zig
+var buf: [32]u8 = undefined;
+const text = sdk.pane.figure.text(&buf, .{ .glyph = glyph, .n = open_mine, .subset = unapproved_mine });
+try ipc.statuslineSetSegment(.{ .id = "…", .text = text, .tooltip = breakdown });
+```
+
+`sdk.pane.expect.statuslineFigure` is the assertion both integration
+suites call on their own published text; `sdk.pane.figure.check`
+refuses a second bare figure, a tail after the figure, empty brackets,
+and a "subset" larger than the figure it claims to be a subset of.
+
+The hover is where the breakdown goes, and it is not rationed: the
+figure is what the reader sees from across the room, and the sentence
+under the pointer is what explains it.
 
 ### Proving your pane CALLS the toolkit
 
@@ -261,6 +299,7 @@ try sdk.pane.expect.capsTitleInk(&frame, theme, 1, 0, "SAMPLE");
 try sdk.pane.expect.headerLadderTail(&frame, theme, 0, nerd, ascii);
 try sdk.pane.expect.listScrollbar(&frame, frame.cols - 1, 0, frame.rows);
 try sdk.pane.expect.foldRow(&frame, theme, fold_y, ascii);
+try sdk.pane.expect.statuslineFigure(my_segment_text);
 ```
 
 Both official integrations call these, which is the point: one

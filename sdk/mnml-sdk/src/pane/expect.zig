@@ -17,13 +17,14 @@ const std = @import("std");
 const frame_mod = @import("../frame.zig");
 const theme_mod = @import("theme.zig");
 const chrome = @import("chrome.zig");
+const figure = @import("figure.zig");
 const text_mod = @import("text.zig");
 
 pub const Frame = frame_mod.Frame;
 pub const Style = frame_mod.Style;
 pub const Theme = theme_mod.Theme;
 
-pub const Error = error{
+pub const Error = figure.Error || error{
     TitleInk,
     LadderMissing,
     LadderOrder,
@@ -133,6 +134,18 @@ pub fn foldRow(f: *const Frame, th: Theme, y: u16, ascii: bool) Error!void {
     if (!rowHas(f, y, words_x, "Show more (")) return Error.FoldRowSplit;
     if (!eqlInk(f.slots[@as(usize, y) * f.cols + at].style, th.dimText())) return Error.FoldRowInk;
     if (!eqlInk(f.slots[@as(usize, y) * f.cols + words_x].style, th.bright())) return Error.FoldRowInk;
+}
+
+/// The text of one statusline segment obeys the family's figure rule:
+/// one figure the segment is named for, and a bracketed subset only
+/// when the pane genuinely has one (`sdk.pane.figure`).
+///
+/// Asserted from both suites because the two panes disagreed about it
+/// by accident rather than on purpose — the forge pane had a real
+/// subset to publish and the tracker pane did not, and nothing said
+/// which of those was the standard.
+pub fn statuslineFigure(s: []const u8) Error!void {
+    return figure.check(s);
 }
 
 /// `want`, one codepoint per cell, starting at `(x0, y)`. Every glyph

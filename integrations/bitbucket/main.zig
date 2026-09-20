@@ -570,19 +570,24 @@ fn valuesCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *
 }
 
 /// The chip's text for a values result: `󰂨 4(2)`, or `󰂨 !` on a failure.
+///
+/// Through `sdk.pane.figure` because the shape is the family's, not
+/// this pane's: the figure is the pull requests of mine that are open,
+/// and the bracket is the SUBSET of them nobody has approved yet. A
+/// pane with no such subset publishes the figure alone.
 pub fn segmentText(buf: []u8, v: fetch.ValuesResult) []const u8 {
     if (v.error_text.len > 0) return app_mod.App.chip_glyph ++ " !";
-    return std.fmt.bufPrint(buf, app_mod.App.chip_glyph ++ " {d}({d})", .{ v.open_mine, v.unapproved_mine }) catch app_mod.App.chip_glyph;
+    return sdk.pane.figure.text(buf, .{ .glyph = app_mod.App.chip_glyph, .n = v.open_mine, .subset = v.unapproved_mine });
 }
 
 /// The review chip's text: `󰅺 3`, the threads still waiting on someone.
 pub fn reviewText(buf: []u8, unresolved: usize) []const u8 {
-    return std.fmt.bufPrint(buf, review_segment_glyph ++ " {d}", .{unresolved}) catch review_segment_glyph;
+    return sdk.pane.figure.text(buf, .{ .glyph = review_segment_glyph, .n = unresolved });
 }
 
 /// The awaiting chip's text: ` 2`, the pull requests waiting on you.
 pub fn awaitingText(buf: []u8, n: usize) []const u8 {
-    return std.fmt.bufPrint(buf, awaiting_segment_glyph ++ " {d}", .{n}) catch awaiting_segment_glyph;
+    return sdk.pane.figure.text(buf, .{ .glyph = awaiting_segment_glyph, .n = n });
 }
 
 /// ` — “Fix the login redirect”, “Bump the client timeout”`, or nothing
@@ -1702,6 +1707,16 @@ test "the three chips carry their counts, what they mean and WHICH; the review c
     try t.expect(std.mem.indexOf(u8, got, "\u{201c}Bump the client timeout to 30s\u{201d}, \u{201c}Tidy the footer links\u{201d}") != null);
     try t.expect(std.mem.indexOf(u8, got, "2 approved \u{2014} \u{201c}Fix the login redirect\u{201d}, \u{201c}Redesign the empty state\u{201d}") != null);
     try t.expect(std.mem.indexOf(u8, got, "counted off the cache \u{2014} \u{201c}Fix the login redirect\u{201d}") != null);
+    // The SDK's assertion, not this pane's own opinion of it: one
+    // figure the segment is named for, and a bracketed subset only
+    // when the pane genuinely has one. This pane has one — the open
+    // pull requests of mine nobody has approved are a SUBSET of the
+    // open pull requests of mine — so it is the family's `12(11)`
+    // shape and the other two chips are one figure each.
+    var fbuf: [32]u8 = undefined;
+    try sdk.pane.expect.statuslineFigure(segmentText(&fbuf, .{ .open_mine = 12, .unapproved_mine = 11 }));
+    try sdk.pane.expect.statuslineFigure(reviewText(&fbuf, 3));
+    try sdk.pane.expect.statuslineFigure(awaitingText(&fbuf, 2));
 
     // Not counted: the second chip is not published at all. A zero
     // there would read as "nothing outstanding".

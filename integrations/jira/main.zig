@@ -620,7 +620,10 @@ fn nameIsQaActionable(name: []const u8) bool {
 /// live.
 pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: Values, bucket: ?Bucket) !void {
     var buf: [32]u8 = undefined;
-    const label = std.fmt.bufPrint(&buf, "{s} {d}", .{ segment_glyph, v.assigned_open }) catch segment_glyph;
+    // One figure, and no bracketed subset: a tracker has no subset of
+    // "assigned to me" it can name, and `43(2)` invented to match the
+    // forge pane's shape would be a number nobody could believe.
+    const label = sdk.pane.figure.text(&buf, .{ .glyph = segment_glyph, .n = v.assigned_open });
     const lead = try std.fmt.allocPrint(arena, "Jira · {d} open item{s} assigned to me", .{ v.assigned_open, if (v.assigned_open == 1) "" else "s" });
     try ipc.statuslineSetSegment(.{
         .id = segment_id,
@@ -632,7 +635,9 @@ pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: Values, bucket:
     });
     if (v.qa_actionable) |n| {
         var qbuf: [32]u8 = undefined;
-        const qlabel = std.fmt.bufPrint(&qbuf, "{s} {d}", .{ qa_segment_glyph, n }) catch qa_segment_glyph;
+        // Its own segment, named for its own figure — which is the
+        // family's answer to a pane with a second thing to say.
+        const qlabel = sdk.pane.figure.text(&qbuf, .{ .glyph = qa_segment_glyph, .n = n });
         const qlead = try std.fmt.allocPrint(arena, "{s} · {d} actionable now", .{ if (v.qa_tab_name.len > 0) v.qa_tab_name else "QA Actionable Now", n });
         try ipc.statuslineSetSegment(.{
             .id = qa_segment_id,
@@ -648,7 +653,7 @@ pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: Values, bucket:
 /// The one-figure form the pane's own refresh publishes as it goes.
 pub fn publishSegment(ipc: *const sdk.Ipc, assigned_open: usize, bucket: ?Bucket) sdk.ipc.Error!void {
     var buf: [32]u8 = undefined;
-    const label = std.fmt.bufPrint(&buf, "{s} {d}", .{ segment_glyph, assigned_open }) catch segment_glyph;
+    const label = sdk.pane.figure.text(&buf, .{ .glyph = segment_glyph, .n = assigned_open });
     var tip: [192]u8 = undefined;
     try ipc.statuslineSetSegment(.{
         .id = segment_id,
@@ -1440,6 +1445,19 @@ test "both chips carry their count and their breakdown; the QA one is absent whe
     // And WHO drained it — a chip that is stale because a script is
     // holding the budget says so rather than blaming itself.
     try testing.expect(std.mem.indexOf(u8, got, "spent by bb.py 30 of 71 draws in 10m") != null);
+}
+
+test "every segment this pane publishes obeys the family's figure rule" {
+    // The SDK's assertion, not this pane's own opinion of it: one
+    // figure the segment is named for, and a bracketed subset only
+    // when the pane genuinely has one. A tracker has no subset of
+    // "assigned to me" it can name, so both of its chips say one
+    // number — and the rule is what stops `43(2)` being invented here
+    // to make the two families' chips look alike.
+    var buf: [32]u8 = undefined;
+    try sdk.pane.expect.statuslineFigure(sdk.pane.figure.text(&buf, .{ .glyph = segment_glyph, .n = 43 }));
+    try sdk.pane.expect.statuslineFigure(sdk.pane.figure.text(&buf, .{ .glyph = segment_glyph, .n = 0 }));
+    try sdk.pane.expect.statuslineFigure(sdk.pane.figure.text(&buf, .{ .glyph = qa_segment_glyph, .n = 3 }));
 }
 
 test "one binary, three manifests, one poll: only the chip that has a segment declares a values source" {
