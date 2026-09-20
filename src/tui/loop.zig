@@ -188,7 +188,14 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
                 // The same three files the headless loop keeps, so a
                 // live session can be read the way a `.test` reads one:
                 // who owns the cursor, what is focused, every hit rect.
-                c.writeStatus(try screen_mod.statusJson(arena, try app_driver.AppDriver.statusOf(&app, arena)));
+                // The terminal's own geometry rides along: `statusOf`
+                // knows the screen's cols/rows, but only this loop has
+                // a terminal to ask how big a cell is in pixels, and
+                // `tools/drive/` cannot click a cell without it.
+                var st = try app_driver.AppDriver.statusOf(&app, arena);
+                st.cell_w_px = if (term.vx.screen.width > 0) @as(u32, term.vx.screen.width_pix) / term.vx.screen.width else 0;
+                st.cell_h_px = if (term.vx.screen.height > 0) @as(u32, term.vx.screen.height_pix) / term.vx.screen.height else 0;
+                c.writeStatus(try screen_mod.statusJson(arena, st));
                 var rects: Io.Writer.Allocating = .init(arena);
                 app.hits.writeRectsJson(&rects.writer, app.overlayLabel()) catch return error.OutOfMemory;
                 c.writeRects(rects.written());

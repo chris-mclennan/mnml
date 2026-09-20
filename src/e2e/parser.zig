@@ -82,6 +82,13 @@ pub const Step = union(enum) {
     ghost: []const u8,
     mouse: struct { x: u16, y: u16, action: MouseAction },
     drag: struct { from_x: u16, from_y: u16, to_x: u16, to_y: u16 },
+    /// `shot <name>`: leave a picture of the screen for whoever reads
+    /// the run afterwards. Every driver understands it and none of them
+    /// fails on it — headless has no pixels and does nothing, the real
+    /// ghostty window writes `<name>.png` under the run's shot
+    /// directory. A hunter's script can ask for one at the moment it
+    /// cares about without knowing which driver it is running under.
+    shot: []const u8,
 };
 
 pub const Check = union(enum) {
@@ -273,6 +280,17 @@ pub fn parse(gpa: Allocator, text: []const u8, diag: *Diagnostic) Error!Script {
                 const to = try parseXy(diag, ln, "drag", from.rest);
                 break :blk .{ .step = .{ .drag = .{ .from_x = from.x, .from_y = from.y, .to_x = to.x, .to_y = to.y } } };
             },
+            .shot => blk: {
+                // A bare name, not a path: the driver owns where shots
+                // land, and a script that could name `../` would write
+                // outside the run directory.
+                const name = trim(rest);
+                if (name.len == 0) return diag.set("line {d}: `shot` needs a name", .{ln});
+                if (std.mem.indexOfAny(u8, name, "/\\") != null or std.mem.eql(u8, name, "..")) {
+                    return diag.set("line {d}: `shot` takes a bare name, not a path (`{s}`)", .{ ln, name });
+                }
+                break :blk .{ .step = .{ .shot = try a.dupe(u8, name) } };
+            },
             .expect => try parseExpect(a, diag, ln, rest),
         } else return diag.set("line {d}: unknown statement `{s}`", .{ ln, head });
         try lines.append(a, .{ .ln = ln, .stmt = stmt });
@@ -281,7 +299,7 @@ pub fn parse(gpa: Allocator, text: []const u8, diag: *Diagnostic) Error!Script {
     return .{ .arena = arena, .header = header, .lines = try lines.toOwnedSlice(a) };
 }
 
-const Keyword = enum { write, open, key, type, command, ex, wait, snippet, shell, serve, ghost, click, rightclick, doubleclick, hover, scroll, drag, expect };
+const Keyword = enum { write, open, key, type, command, ex, wait, snippet, shell, serve, ghost, click, rightclick, doubleclick, hover, scroll, drag, shot, expect };
 
 fn parseExpect(a: Allocator, diag: *Diagnostic, ln: usize, rest: []const u8) Error!Stmt {
     const what, const arg = split1(rest);
@@ -696,4 +714,20 @@ test "expect color takes a cell, fg or bg, and an optional `not`" {
         "expect color 10 39 middle #1e222a\n",
         "expect color x 39 bg #1e222a\n",
     }) |bad| t.allocator.free(try parseErr(bad));
+}
+
+test "`shot` takes a bare name; a path or nothing is a parse error" {
+    var d: Diagnostic = .{};
+    var s = try parse(t.allocator, "shot tree_open\n", &d);
+    defer s.deinit();
+    try t.expectEqualStrings("tree_open", s.lines[0].stmt.step.shot);
+
+    // A name, never a path: the driver owns the directory, and `../`
+    // would write outside the run's own.
+    var d2: Diagnostic = .{};
+    try t.expectError(error.Syntax, parse(t.allocator, "shot ../escape\n", &d2));
+    try t.expect(std.mem.indexOf(u8, d2.message(), "bare name") != null);
+    var d3: Diagnostic = .{};
+    try t.expectError(error.Syntax, parse(t.allocator, "shot\n", &d3));
+    try t.expect(std.mem.indexOf(u8, d3.message(), "needs a name") != null);
 }

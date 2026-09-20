@@ -105,6 +105,22 @@ pub const Status = struct {
     /// click elsewhere closes an empty one) has no other way to see it.
     /// Additive, after `cursorShape`.
     cmdline: bool = false,
+    /// The screen this frame was drawn into, and how big one cell is in
+    /// device pixels. A host that drives the REAL terminal (`tools/drive/`,
+    /// `docs/DRIVE.md`) has to turn a cell into a pixel before it can
+    /// click one, and `status.json` is the only thing it can read for
+    /// that: `screen.txt` says nothing about pixels, and counting the
+    /// longest row lies the moment a row is right-trimmed.
+    ///
+    /// `cols`/`rows` are the drawn screen's own size. `cell_*_px` is what
+    /// the terminal reported (vaxis `width_pix / width`), `0` when nobody
+    /// said — a headless screen has no pixels, and a terminal that never
+    /// answered the pixel-size query leaves zero rather than a guess.
+    /// Additive, after `cmdline`.
+    cols: u16 = 0,
+    rows: u16 = 0,
+    cell_w_px: u32 = 0,
+    cell_h_px: u32 = 0,
 };
 
 pub fn writeStatusJson(w: *Io.Writer, s: Status) Io.Writer.Error!void {
@@ -133,6 +149,7 @@ pub fn writeStatusJson(w: *Io.Writer, s: Status) Io.Writer.Error!void {
     try w.print("],\"quit\":{},\"cursorShape\":", .{s.quit});
     try jsonStr(w, s.cursor_shape);
     try w.print(",\"cmdline\":{}", .{s.cmdline});
+    try w.print(",\"cols\":{d},\"rows\":{d},\"cellWidthPx\":{d},\"cellHeightPx\":{d}", .{ s.cols, s.rows, s.cell_w_px, s.cell_h_px });
     try w.writeAll("}");
 }
 
@@ -241,7 +258,7 @@ test "status.json matches the bytes mnml 0.2.21 writes, plus the cursor shape" {
     // are mnml-zig's own, appended in that order after Rust's last key
     // so every byte before them still matches Rust.
     const want =
-        "{\"focus\":\"tree\",\"activePane\":0,\"activeFile\":\"/tmp/ws/hello.txt\",\"cursor\":{\"line\":1,\"col\":1},\"mode\":\"none\",\"treeCursor\":2,\"treeSelection\":\"/tmp/ws/.gitignore\",\"treeVisible\":true,\"rightPanelVisible\":false,\"rightPanelPanes\":[],\"rightPanelActiveIdx\":0,\"panes\":[{\"title\":\"hello.txt\",\"dirty\":false,\"preview\":false}],\"quit\":false,\"cursorShape\":\"hidden\",\"cmdline\":false}";
+        "{\"focus\":\"tree\",\"activePane\":0,\"activeFile\":\"/tmp/ws/hello.txt\",\"cursor\":{\"line\":1,\"col\":1},\"mode\":\"none\",\"treeCursor\":2,\"treeSelection\":\"/tmp/ws/.gitignore\",\"treeVisible\":true,\"rightPanelVisible\":false,\"rightPanelPanes\":[],\"rightPanelActiveIdx\":0,\"panes\":[{\"title\":\"hello.txt\",\"dirty\":false,\"preview\":false}],\"quit\":false,\"cursorShape\":\"hidden\",\"cmdline\":false,\"cols\":0,\"rows\":0,\"cellWidthPx\":0,\"cellHeightPx\":0}";
     const got = try statusJson(t.allocator, .{
         .focus = .tree,
         .active_pane = 0,
@@ -280,10 +297,14 @@ test "status.json: null activePane, several right-panel panes, a dirty pane" {
         .quit = true,
         .cursor_shape = "bar",
         .cmdline = true,
+        .cols = 120,
+        .rows = 40,
+        .cell_w_px = 9,
+        .cell_h_px = 19,
     });
     defer t.allocator.free(got);
     try t.expectEqualStrings(
-        "{\"focus\":\"right_panel\",\"activePane\":null,\"activeFile\":\"\",\"cursor\":{\"line\":0,\"col\":0},\"mode\":\"insert\",\"treeCursor\":0,\"treeSelection\":\"\",\"treeVisible\":false,\"rightPanelVisible\":true,\"rightPanelPanes\":[1,3],\"rightPanelActiveIdx\":1,\"panes\":[{\"title\":\"a \\\"q\\\"\",\"dirty\":true,\"preview\":true},{\"title\":\"b\",\"dirty\":false,\"preview\":false}],\"quit\":true,\"cursorShape\":\"bar\",\"cmdline\":true}",
+        "{\"focus\":\"right_panel\",\"activePane\":null,\"activeFile\":\"\",\"cursor\":{\"line\":0,\"col\":0},\"mode\":\"insert\",\"treeCursor\":0,\"treeSelection\":\"\",\"treeVisible\":false,\"rightPanelVisible\":true,\"rightPanelPanes\":[1,3],\"rightPanelActiveIdx\":1,\"panes\":[{\"title\":\"a \\\"q\\\"\",\"dirty\":true,\"preview\":true},{\"title\":\"b\",\"dirty\":false,\"preview\":false}],\"quit\":true,\"cursorShape\":\"bar\",\"cmdline\":true,\"cols\":120,\"rows\":40,\"cellWidthPx\":9,\"cellHeightPx\":19}",
         got,
     );
 }
@@ -302,4 +323,54 @@ test "jsonEvent is a flat object of string values in insertion order" {
     const raw = try jsonEvent(t.allocator, &.{ .{ "event", "unknown" }, .{ "raw", "{\"cmd\":\"nope\"}" } });
     defer t.allocator.free(raw);
     try t.expectEqualStrings("{\"event\":\"unknown\",\"raw\":\"{\\\"cmd\\\":\\\"nope\\\"}\"}", raw);
+}
+
+test "status.json: the terminal geometry is the last four keys, and zero when nobody said" {
+    // `tools/drive/` reads exactly these to turn a cell into a pixel:
+    // origin + (x * cellWidthPx, y * cellHeightPx). A headless screen has
+    // no pixels, so both stay 0 and the host refuses to click rather
+    // than clicking a guessed spot.
+    const headless = try statusJson(t.allocator, .{
+        .focus = .pane,
+        .active_pane = null,
+        .active_file = "",
+        .cursor_line = 0,
+        .cursor_col = 0,
+        .mode = "none",
+        .tree_cursor = 0,
+        .tree_selection = "",
+        .tree_visible = false,
+        .right_panel_visible = false,
+        .right_panel_panes = &.{},
+        .right_panel_active_idx = 0,
+        .panes = &.{},
+        .quit = false,
+        .cols = 80,
+        .rows = 24,
+    });
+    defer t.allocator.free(headless);
+    try t.expect(std.mem.endsWith(u8, headless, ",\"cols\":80,\"rows\":24,\"cellWidthPx\":0,\"cellHeightPx\":0}"));
+    // And the live terminal's, straight off vaxis: 1200 px over 120 cols.
+    const live = try statusJson(t.allocator, .{
+        .focus = .pane,
+        .active_pane = null,
+        .active_file = "",
+        .cursor_line = 0,
+        .cursor_col = 0,
+        .mode = "none",
+        .tree_cursor = 0,
+        .tree_selection = "",
+        .tree_visible = false,
+        .right_panel_visible = false,
+        .right_panel_panes = &.{},
+        .right_panel_active_idx = 0,
+        .panes = &.{},
+        .quit = false,
+        .cols = 120,
+        .rows = 40,
+        .cell_w_px = 10,
+        .cell_h_px = 21,
+    });
+    defer t.allocator.free(live);
+    try t.expect(std.mem.endsWith(u8, live, ",\"cols\":120,\"rows\":40,\"cellWidthPx\":10,\"cellHeightPx\":21}"));
 }

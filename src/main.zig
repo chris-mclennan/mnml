@@ -72,7 +72,7 @@ pub fn main(init: std.process.Init) !u8 {
             try w.flush();
             return 0;
         }
-        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, "mnml-zig [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--no-session] [--headless] [--startup-picker] [--profile dev|stable] | profile seed [--from stable] [--force] | test [PATH…] [--gate] [--filter NAME] [--skip NAME] | run FILE | chain run FILE | discover SPEC | sync | sync-check | proxy --url URL | broker acquire|status|serve | --rebase-todo PLAN TODO | --commit-msg QUEUE FILE");
+        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, "mnml-zig [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--no-session] [--headless] [--startup-picker] [--profile dev|stable] | profile seed [--from stable] [--force] | test [PATH…] [--gate] [--sizes ladder|WxH,…] [--filter NAME] [--skip NAME] | run FILE | chain run FILE | discover SPEC | sync | sync-check | proxy --url URL | broker acquire|status|serve | --rebase-todo PLAN TODO | --commit-msg QUEUE FILE");
     }
     if (parseInputFlag(args[1..], w)) |style| {
         app_driver.default_factory.input_style = style;
@@ -452,12 +452,10 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
             use_stub = true;
         } else if (std.mem.eql(u8, a, "--sizes")) {
             i += 1;
-            if (i >= argv.len) return usage(w, "--sizes needs a list like 80x24,120x40");
-            var it = std.mem.splitScalar(u8, argv[i], ',');
-            while (it.next()) |tok| try sizes.append(gpa, parseSize(tok) orelse return usage(w, "bad size (want WxH)"));
+            if (i >= argv.len) return usage(w, "--sizes needs a list like 80x24,120x40 (or `ladder`)");
+            if (!(try appendSizes(gpa, &sizes, argv[i]))) return usage(w, "bad size (want WxH, or `ladder`)");
         } else if (std.mem.startsWith(u8, a, "--sizes=")) {
-            var it = std.mem.splitScalar(u8, a["--sizes=".len..], ',');
-            while (it.next()) |tok| try sizes.append(gpa, parseSize(tok) orelse return usage(w, "bad size (want WxH)"));
+            if (!(try appendSizes(gpa, &sizes, a["--sizes=".len..]))) return usage(w, "bad size (want WxH, or `ladder`)");
         } else if (a.len > 0 and a[0] == '-') {
             // Unknown flags are ignored, as the Rust runner ignores them.
         } else try paths.append(gpa, a);
@@ -603,6 +601,23 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
 
 fn noAppDriver(_: *anyopaque, _: Allocator, _: Io, _: e2e.driver.Config) anyerror!e2e.Driver {
     return error.NoAppDriverYet;
+}
+
+/// `--sizes` takes a comma list of `WxH`, and the word `ladder` for the
+/// breakpoint sweep (`e2e.runner.ladder`) — the same preset the ghostty
+/// harness takes, so one script can be swept identically in either.
+fn appendSizes(gpa: Allocator, out: *std.ArrayList(e2e.Size), spec: []const u8) !bool {
+    var it = std.mem.splitScalar(u8, spec, ',');
+    while (it.next()) |raw| {
+        const tok = std.mem.trim(u8, raw, " \t");
+        if (tok.len == 0) continue;
+        if (std.mem.eql(u8, tok, "ladder")) {
+            try out.appendSlice(gpa, e2e.runner.ladder);
+            continue;
+        }
+        try out.append(gpa, parseSize(tok) orelse return false);
+    }
+    return out.items.len > 0;
 }
 
 fn parseSize(tok: []const u8) ?e2e.Size {

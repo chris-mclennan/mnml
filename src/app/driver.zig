@@ -92,6 +92,7 @@ pub const AppDriver = struct {
         .expireChords = vExpireChords,
         .wheelNotch = vWheelNotch,
         .render = vRender,
+        .shot = vShot,
         .screen = vScreen,
         .status = vStatus,
         .rectsJson = vRectsJson,
@@ -167,6 +168,12 @@ pub const AppDriver = struct {
         try cast(p).app.render();
     }
 
+    /// The App renders into a cell grid, not a window: there are no
+    /// pixels here to photograph. The step still succeeds, so one script
+    /// runs unchanged under both drivers and only the ghostty one
+    /// actually leaves a picture (`src/e2e/ghostty_driver.zig`).
+    fn vShot(_: *anyopaque, _: []const u8) Error!void {}
+
     fn vScreen(p: *anyopaque) *const screen_mod.Screen {
         return &cast(p).app.screen;
     }
@@ -211,6 +218,13 @@ pub const AppDriver = struct {
             // vim `:` too, but this key is about the one the bottom row
             // owns — the one a click opens and a click off it closes.
             .cmdline = app.cmdline != null,
+            // The screen the frame was drawn into, so a host that drives
+            // the real window can turn a cell into a pixel. How big a
+            // cell is in pixels is the terminal's to answer, and only
+            // the terminal loop has one — it fills `cell_*_px` in after
+            // this call (tui/loop.zig); headless leaves them zero.
+            .cols = app.screen.width,
+            .rows = app.screen.height,
         };
         if (app.activeEditor()) |e| {
             const pos = e.buf.editor.rowCol();
@@ -379,6 +393,13 @@ test "driver: open, type, status, dirty, title, rects, quit — the runner's con
     try t.expectEqual(@as(usize, 1), st.panes.len);
     try t.expectEqualStrings("notes.txt", st.panes[0].title);
     try t.expect(st.focus == .pane);
+    // The geometry a host driving the real window reads to turn a cell
+    // into a pixel: the screen it was made with, and no pixel size,
+    // because nothing here is a terminal.
+    try t.expectEqual(@as(u16, 60), st.cols);
+    try t.expectEqual(@as(u16, 12), st.rows);
+    try t.expectEqual(@as(u32, 0), st.cell_w_px);
+    try t.expectEqual(@as(u32, 0), st.cell_h_px);
     const rects = try d.rectsJson(arena.allocator());
     try t.expect(std.mem.indexOf(u8, rects, "\"label\":\"pane:0\"") != null);
     try t.expect(std.mem.indexOf(u8, rects, "editor_cell:0:0:0") != null);
