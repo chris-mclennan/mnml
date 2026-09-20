@@ -31,7 +31,12 @@
 #      PREFIX/bin/mnml that is not ours), then a real copy — the host,
 #      an integration, the font, the manifest into the stable data root
 #      and the link that points at PREFIX rather than a zig-out — and
-#      the installed binary reaching a first frame headless.
+#      the installed binary reaching a first frame headless. Plus the
+#      font step `install` only PRINTS, and `install-font` — the one
+#      verb that writes to the OS font directory — against a scratch
+#      HOME: the two dry-runs (nothing installed / a face already
+#      there), and that a failed merge leaves the installed face alone
+#      after backing it up.
 #
 #   tools/run-sh-check.sh            (needs zig-out/bin/mnml-zig; ~30 s)
 set -o pipefail
@@ -250,6 +255,47 @@ out=$(cd "$FAKE" && PREFIX="$PREFIX_OK" ./run.sh installed-status 2>&1)
 check "installed-status: names the installed version" 'echo "$out" | grep -q "^installed: mnml-zig "' "$out"
 check "installed-status: names the data root" 'echo "$out" | grep -q "^data:      $MNML_DATA_ROOT\$"' "$out"
 check "installed-status: the link reads as pointing into the prefix" 'echo "$out" | grep -q "^link:      mnml-jira → $PREFIX_OK/bin/mnml-jira\$"' "$out"
+
+# ── 8b. the font step, and install-font ────────────────────────────────
+# `install` must never write to the OS font directory; it prints the
+# step instead. `install-font` is the verb that does, with HOME pointed
+# at a tempdir so no real ~/Library/Fonts is touched.
+out=$(cd "$FAKE" && PREFIX="$PREFIX_DRY" ./run.sh install --dry-run 2>&1)
+check "install --dry-run: names install-font as the font step" 'echo "$out" | grep -q "\./run.sh install-font"' "$out"
+check "install --dry-run: prints the by-hand copy command too" 'echo "$out" | grep -q "cp $PREFIX_DRY/share/mnml/fonts/MnmlSymbols.ttf "' "$out"
+
+FONT_HOME="$TMP/fonthome"
+case "$(uname -s)" in
+  Darwin) FONT_DIR="$FONT_HOME/Library/Fonts" ;;
+  *)      FONT_DIR="$FONT_HOME/.local/share/fonts" ;;
+esac
+mkdir -p "$FONT_HOME"
+out=$(cd "$FAKE" && HOME="$FONT_HOME" XDG_DATA_HOME= ./run.sh install-font --dry-run 2>&1); rc=$?
+check "install-font --dry-run: exit 0 with nothing installed" '[ $rc -eq 0 ]' "$out"
+check "install-font --dry-run: says there is no face to merge with" 'echo "$out" | grep -q "no MnmlSymbols installed"' "$out"
+check "install-font --dry-run: names the destination" 'echo "$out" | grep -q "→ $FONT_DIR/MnmlSymbols.ttf"' "$out"
+check "install-font --dry-run: wrote nothing" '[ ! -e "$FONT_DIR" ]'
+
+# Now with a face already there: it must MERGE, and back up first.
+mkdir -p "$FONT_DIR"
+printf 'not really a font, but a file that is in the way\n' > "$FONT_DIR/MnmlSymbols.ttf"
+BEFORE=$(cksum < "$FONT_DIR/MnmlSymbols.ttf")
+out=$(cd "$FAKE" && HOME="$FONT_HOME" XDG_DATA_HOME= ./run.sh install-font --dry-run 2>&1); rc=$?
+check "install-font --dry-run: exit 0 with a face installed" '[ $rc -eq 0 ]' "$out"
+check "install-font --dry-run: merges rather than overwrites" 'echo "$out" | grep -q "would run    .*font-merge -Dfont-in=$FONT_DIR/MnmlSymbols.ttf"' "$out"
+check "install-font --dry-run: names the backup" 'echo "$out" | grep -q "would back up .* → $FONT_HOME/Backups/mnml-zig/fonts/MnmlSymbols-"' "$out"
+check "install-font --dry-run: still wrote nothing" '[ "$(cksum < "$FONT_DIR/MnmlSymbols.ttf")" = "$BEFORE" ]'
+
+# For real. The fake zig builds nothing, so the merge produces no file —
+# which is the failure this must survive: the installed face is left
+# exactly as it was, and the backup is already on disk.
+out=$(cd "$FAKE" && HOME="$FONT_HOME" XDG_DATA_HOME= ./run.sh install-font 2>&1); rc=$?
+check "install-font: a merge that produces no file fails loudly" '[ $rc -ne 0 ]' "$out"
+check "install-font: and leaves the installed face untouched" '[ "$(cksum < "$FONT_DIR/MnmlSymbols.ttf")" = "$BEFORE" ]' "$out"
+check "install-font: the backup was taken before the merge ran" 'ls "$FONT_HOME/Backups/mnml-zig/fonts/"MnmlSymbols-*.ttf >/dev/null 2>&1' "$(ls -R "$FONT_HOME/Backups" 2>&1)"
+check "install-font: no half-written .new is left behind" '[ ! -e "$FONT_DIR/MnmlSymbols.ttf.new" ]'
+check "install-font: asked zig for the merge" 'grep -q "build font-merge" "$ZIG_LOG"' "$(cat "$ZIG_LOG")"
+check "install-font: an unknown flag exits 2" 'out=$(cd "$FAKE" && HOME="$FONT_HOME" ./run.sh install-font --nope 2>&1); [ $? -eq 2 ]'
 
 # The installed binary runs: a headless session on a throwaway
 # workspace, its data root private, reaching its own first frame.
