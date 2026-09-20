@@ -93,10 +93,13 @@ test "the shipped mark is the figure; `.spark` resolves to the spark codepoint, 
     // Two marks, told apart with a Nerd Font and without one.
     try t.expect(!std.mem.eql(u8, bufferline.claude_glyph, bufferline.spark_glyph));
     try t.expect(!std.mem.eql(u8, bufferline.claude_ascii, bufferline.spark_ascii));
-    // The spark sits one along from the figure, where the glyph track
-    // bakes it.
+    // The spark sits one along from the figure, where the glyph
+    // builder bakes it. Two sides, two greps: the chrome's copy of the
+    // number and the font's own must be the SAME number, or the mark
+    // the menu offers renders as tofu.
     try t.expectEqual(@as(u21, 0xF1E02), bufferline.spark_cp);
     try t.expectEqual(bufferline.spark_cp, try std.unicode.utf8Decode(bufferline.spark_glyph));
+    try t.expectEqual(@import("../glyph/builder.zig").claude_spark, bufferline.spark_cp);
 }
 
 test "set writes the key to the home config and says which mark is on" {
