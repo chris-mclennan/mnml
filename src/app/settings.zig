@@ -536,6 +536,19 @@ pub fn open(app: *App) Allocator.Error!void {
     app.needs_render = true;
 }
 
+/// `view.settings_search`: the box, with the filter pill up and
+/// holding the keys. `/` inside the box does the same, but the box has
+/// to be open before a user can learn that — from the palette this is
+/// one step.
+///
+/// Opening it fresh every time is deliberate: a box already open is
+/// re-snapshotted, so Esc still puts back exactly the config the
+/// search started from.
+pub fn openSearch(app: *App) Allocator.Error!void {
+    try open(app);
+    app.overlay.settings.ui.openFilter();
+}
+
 /// The list as it stands, on the frame arena.
 pub fn items(app: *App, arena: Allocator) Allocator.Error![]Item {
     @setEvalBranchQuota(200_000);
@@ -1482,4 +1495,39 @@ test "the fold-arrows row sits in Editor, offers off / on, and writes ui.always_
     // Esc cancels, and cancelling puts both the value and the file back.
     try app.handle(.{ .key = Key.named(.esc) });
     try t.expect(!app.cfg.ui.always_show_fold_arrows);
+}
+
+test "view.settings_search opens the box with the filter holding the keys, and `fold` finds the row" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, "ws/.mnml");
+    const ws = try std.fs.path.join(t.allocator, &.{ root, "ws" });
+    defer t.allocator.free(ws);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws, .data_root = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    _ = try app.openScratch();
+
+    // `view.settings` alone leaves the pill down — the keys move the
+    // list. The search verb is the one that opens it.
+    try command.run(&app, .{ .static = .@"view.settings" });
+    try t.expect(!app.overlay.settings.ui.filter.open);
+    try app.handle(.{ .key = Key.named(.esc) });
+
+    try command.run(&app, .{ .static = .@"view.settings_search" });
+    try t.expect(app.overlay == .settings);
+    try t.expect(app.focus == .overlay);
+    const st = &app.overlay.settings;
+    try t.expect(st.ui.filter.open and st.ui.filter.focused);
+    try t.expectEqualStrings("", st.ui.filter.text());
+
+    // Typing goes to the query, not the list: `fold` leaves the row
+    // this track added, and the cursor is on it.
+    for ("fold") |c| try app.handle(.{ .key = Key.char(c) });
+    try t.expectEqualStrings("fold", st.ui.filter.text());
+    const l = try lists(&app, app.frame.allocator());
+    try t.expect(l.visible.len < l.all.len);
+    try t.expectEqualStrings("Always show fold arrows", l.visible[st.ui.cursor].row.label);
 }

@@ -55,6 +55,12 @@ pub const specs = [_]Spec{
     .{ .id = "integrations.diag", .title = "Run diagnostics on an integration… (auth + config probe)", .group = "integrations" },
     .{ .id = "view.help", .title = "Keybindings & help — help overlay (auto-generated keymap reference)", .group = "view", .keys = .{ .both = &.{"f1"} } },
     .{ .id = "view.settings", .title = "Settings overlay (keyboard-driven schema editor)", .group = "view", .keys = .{ .both = &.{"ctrl+,"} } },
+    // The filter is `/` once the box is open, which a user has to open
+    // the box to find out. This is the same thing from the palette:
+    // `ctrl+shift+p` → "settings search" lands in the box with the
+    // query field already holding the keys. No chord of its own — the
+    // box's own `/` (and Ctrl+F in the standard profile) is that.
+    .{ .id = "view.settings_search", .title = "Settings: search… (open the settings overlay with the filter focused)", .group = "view" },
     .{ .id = "view.toggle_picker_position", .title = "Picker: toggle position (center ⇄ top)", .group = "view" },
     .{ .id = "view.focus_tree", .title = "Focus the file tree (opening it when closed)", .group = "view", .keys = .{ .vim = &.{"space e"}, .both = &.{ "ctrl+shift+e", "ctrl+0" } } },
     .{ .id = "view.toggle_tree_section", .title = "Toggle workspace section (collapse/expand the file list)", .group = "view" },

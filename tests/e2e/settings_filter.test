@@ -74,6 +74,30 @@ expect screen lacks "Line numbers"
 key esc
 key esc
 
+# `view.settings_search` is the palette's way in: the box opens with the
+# pill already holding the keys, so `ctrl+shift+p` → "Settings: search"
+# → a query is one move. (`/` inside the box does the same, but a user
+# has to already be in the box to learn that.)
+#
+# The query it answers is `fold` — the Editor section's fold-arrow row,
+# which sits far below the fold of the first window and is reached here
+# by searching rather than by scrolling to a row number that moves.
+command view.settings_search
+expect screen contains "type to filter"
+type fold
+expect screen contains "󰍉 fold"
+expect screen contains "── Editor ──"
+expect screen contains "Always show fold arrows:"
+expect screen contains "[off] / on"
+expect screen lacks "Line numbers"
+# The cursor is on the match, so `←` adjusts the row the search found.
+key enter
+expect screen contains "▸ Always show fold arrows:"
+key left
+expect screen contains "off / [on]"
+key esc
+key esc
+
 # A query nothing answers to says so, rather than leaving a blank box.
 command view.settings
 key /
