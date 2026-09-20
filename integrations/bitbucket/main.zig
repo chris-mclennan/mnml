@@ -593,15 +593,26 @@ pub fn awaitingText(buf: []u8, n: usize) []const u8 {
 /// ` — “Fix the login redirect”, “Bump the client timeout”`, or nothing
 /// when there are no titles. A count alone sends the reader into the
 /// pane to find out WHICH; the names answer it under the pointer.
-pub fn titleTail(arena: Allocator, titles: []const []const u8) Allocator.Error![]const u8 {
-    if (titles.len == 0) return "";
+pub fn titleTail(arena: Allocator, items: []const fetch.ValuesItem) Allocator.Error![]const u8 {
+    if (items.len == 0) return "";
     var out: std.Io.Writer.Allocating = .init(arena);
     out.writer.writeAll(" \u{2014} ") catch return error.OutOfMemory;
-    for (titles, 0..) |title, i| {
+    for (items[0..@min(items.len, fetch.tooltip_titles)], 0..) |it, i| {
         if (i > 0) out.writer.writeAll(", ") catch return error.OutOfMemory;
-        out.writer.print("\u{201c}{s}\u{201d}", .{title}) catch return error.OutOfMemory;
+        out.writer.print("\u{201c}{s}\u{201d}", .{it.text}) catch return error.OutOfMemory;
     }
     return out.toOwnedSlice() catch return error.OutOfMemory;
+}
+
+/// The rows the statusline hover lists for a figure: the pull requests
+/// themselves, each a click away from the pane that holds it. Built
+/// from what the values run already has — no second request pays for
+/// the hover.
+pub fn hoverItems(arena: Allocator, items: []const fetch.ValuesItem, click: []const u8) Allocator.Error![]const sdk.ipc.Item {
+    if (items.len == 0) return &.{};
+    const out = try arena.alloc(sdk.ipc.Item, items.len);
+    for (items, 0..) |it, i| out[i] = .{ .text = it.text, .sub = it.sub, .command = click };
+    return out;
 }
 
 /// What the PR chip means, on hover. A number with no sentence behind
@@ -611,7 +622,7 @@ pub fn segmentTooltip(arena: Allocator, v: fetch.ValuesResult) Allocator.Error![
     return std.fmt.allocPrint(
         arena,
         "Bitbucket · {d} open pull request{s} you authored — {d} still unapproved, {d} approved{s}",
-        .{ v.open_mine, if (v.open_mine == 1) "" else "s", v.unapproved_mine, v.approved_mine, try titleTail(arena, v.open_titles) },
+        .{ v.open_mine, if (v.open_mine == 1) "" else "s", v.unapproved_mine, v.approved_mine, try titleTail(arena, v.open_items) },
     );
 }
 
@@ -621,7 +632,7 @@ pub fn reviewTooltip(arena: Allocator, v: fetch.ValuesResult, unresolved: usize)
     return std.fmt.allocPrint(
         arena,
         "Bitbucket · {d} review thread{s} across your open pull requests still waiting on someone (neither resolved nor replied to) — {d} of {d} counted off the cache{s}",
-        .{ unresolved, if (unresolved == 1) "" else "s", v.comment_hits, v.comment_hits + v.comment_requests, try titleTail(arena, v.comment_titles) },
+        .{ unresolved, if (unresolved == 1) "" else "s", v.comment_hits, v.comment_hits + v.comment_requests, try titleTail(arena, v.comment_items) },
     );
 }
 
@@ -631,7 +642,7 @@ pub fn awaitingTooltip(arena: Allocator, v: fetch.ValuesResult) Allocator.Error!
     return std.fmt.allocPrint(
         arena,
         "Bitbucket · {d} open pull request{s} waiting on YOUR review — you are a reviewer and have not approved{s}",
-        .{ v.reviews_pending, if (v.reviews_pending == 1) "" else "s", try titleTail(arena, v.awaiting_titles) },
+        .{ v.reviews_pending, if (v.reviews_pending == 1) "" else "s", try titleTail(arena, v.awaiting_items) },
     );
 }
 
@@ -653,6 +664,7 @@ pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: fetch.ValuesRes
         .click_command = segment_click,
         .priority = 60,
         .tooltip = try withBucket(arena, try segmentTooltip(arena, v), bucket),
+        .items = try hoverItems(arena, v.open_items, segment_click),
     });
     if (v.unresolved_comments) |n| {
         var rbuf: [64]u8 = undefined;
@@ -663,6 +675,7 @@ pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: fetch.ValuesRes
             .click_command = segment_click,
             .priority = 59,
             .tooltip = try withBucket(arena, try reviewTooltip(arena, v, n), bucket),
+            .items = try hoverItems(arena, v.comment_items, segment_click),
         });
     }
     var abuf: [64]u8 = undefined;
@@ -673,6 +686,7 @@ pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: fetch.ValuesRes
         .click_command = awaiting_segment_click,
         .priority = 58,
         .tooltip = try withBucket(arena, try awaitingTooltip(arena, v), bucket),
+        .items = try hoverItems(arena, v.awaiting_items, awaiting_segment_click),
     });
     try ipc.setActivityBadge("integrations", @intCast(@min(v.open_mine, std.math.maxInt(u32))));
 }
@@ -1687,9 +1701,9 @@ test "the three chips carry their counts, what they mean and WHICH; the review c
         .unresolved_comments = 3,
         .comment_hits = 3,
         .comment_requests = 1,
-        .open_titles = &.{ "Fix the login redirect", "Redesign the empty state" },
-        .comment_titles = &.{"Fix the login redirect"},
-        .awaiting_titles = &.{ "Bump the client timeout to 30s", "Tidy the footer links" },
+        .open_items = &.{ .{ .text = "Fix the login redirect", .sub = "acme/api · unapproved" }, .{ .text = "Redesign the empty state", .sub = "acme/web · approved" } },
+        .comment_items = &.{.{ .text = "Fix the login redirect", .sub = "acme/api · 2 waiting" }},
+        .awaiting_items = &.{ .{ .text = "Bump the client timeout to 30s", .sub = "acme/api" }, .{ .text = "Tidy the footer links", .sub = "acme/web" } },
     }, .{ .status = .{ .tokens = 0.24, .capacity = 40, .rate = 0.11, .baseline_rate = 0.22, .throttles = 127, .cooldown_remaining_secs = 0, .last_429_age_secs = 4 * 3600 }, .draws = .{ .top = "bb.py", .top_n = 30, .total = 83 } });
     var got = try tmp.dir.readFileAlloc(t.io, "command", arena, .unlimited);
     try t.expect(std.mem.indexOf(u8, got, "\"id\":\"bitbucket_prs.prs_mine\"") != null);
