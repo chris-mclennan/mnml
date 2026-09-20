@@ -28,11 +28,10 @@ click 62 36
 wait 2500
 expect screen contains "Part of ENG-4300"
 
-# The pane republishes the chip for itself — with the figure, not the
-# rows — so the hover's list is published again before a second row
-# can be pressed.
-shell "$MNML_BITBUCKET_INTEGRATION" --values --workspace "$MNML_E2E_WORKSPACE" > values2.json
-wait 700
+# No second `--values` run: the pane republishes all three chips for
+# itself as its own values land, rows and all, so the list is still
+# under the pointer when the second row is pressed.
+wait 12000
 # What the listings have cost so far. The press that follows must not
 # add to it: a second pane would ask for every repo again.
 shell grep -c 'pullrequests"' wire.jsonl > listings.txt

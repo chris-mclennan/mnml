@@ -1697,13 +1697,13 @@ test "the chip's Tier-2 lines are the exact JSON mnml reads: the segment, its ro
         .open_mine = 1,
         .unapproved_mine = 1,
         .approved_mine = 0,
-        .open_items = &.{.{ .text = "Fix the login redirect", .sub = "acme/api \u{b7} unapproved" }},
+        .open_items = &.{.{ .text = "Fix the login redirect", .sub = "acme/api \u{b7} unapproved", .key = "api#1234" }},
     }, null);
     const got = try tmp.dir.readFileAlloc(t.io, "command", arena, .unlimited);
     try t.expectEqualStrings(
         "{\"cmd\":\"statusline-set-segment\",\"id\":\"bitbucket_prs.prs_mine\",\"side\":\"right\",\"text\":\"\u{f00a8} 1(1)\",\"color\":\"green\",\"click_command\":\"bitbucket_prs.open_mine\",\"priority\":60,\"min_width\":4,\"max_width\":30," ++
             "\"tooltip\":\"Bitbucket \u{b7} 1 open pull request you authored \u{2014} 1 still unapproved, 0 approved \u{2014} \u{201c}Fix the login redirect\u{201d}\"," ++
-            "\"items\":[{\"text\":\"Fix the login redirect\",\"sub\":\"acme/api \u{b7} unapproved\",\"command\":\"bitbucket_prs.open_mine\",\"args\":[]}]}\n" ++
+            "\"items\":[{\"text\":\"Fix the login redirect\",\"sub\":\"acme/api \u{b7} unapproved\",\"command\":\"bitbucket_prs.open_mine\",\"args\":[\"--focus\",\"api#1234\"]}]}\n" ++
             "{\"cmd\":\"statusline-set-segment\",\"id\":\"bitbucket_prs.reviews_pending\",\"side\":\"right\",\"text\":\"\u{f0e5} 0\",\"color\":\"green\",\"click_command\":\"bitbucket_prs.open_awaiting\",\"priority\":58,\"min_width\":4,\"max_width\":30," ++
             "\"tooltip\":\"Bitbucket \u{b7} 0 open pull requests waiting on YOUR review \u{2014} you are a reviewer and have not approved\"}\n" ++
             "{\"cmd\":\"set-activity-badge\",\"section\":\"integrations\",\"count\":1}\n",

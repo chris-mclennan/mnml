@@ -1410,10 +1410,13 @@ test "the statusline segment is the manifest's slot, live: the exact IPC line" {
     try testing.expectEqualStrings(
         "{\"cmd\":\"statusline-set-segment\",\"id\":\"jira_work.assigned\",\"side\":\"right\",\"text\":\"\u{f0303} 3\",\"color\":\"#1B5DCF\",\"click_command\":\"jira_work.open\",\"priority\":60,\"min_width\":4,\"max_width\":30," ++
             "\"tooltip\":\"Jira · 3 open items assigned to me — 2 In Progress · 1 To Do\"," ++
+            // Each row carries `focus-row`'s deep link, so a press from
+            // the hover of a chip the PANE published lands on that
+            // ticket just as it does from the poll's.
             "\"items\":[" ++
-            "{\"text\":\"ENG-1  Checkout rewrite\",\"sub\":\"In Progress\",\"command\":\"jira_work.open\",\"args\":[]}," ++
-            "{\"text\":\"ENG-5  Basket total wrong with a voucher\",\"sub\":\"To Do\",\"command\":\"jira_work.open\",\"args\":[]}," ++
-            "{\"text\":\"ENG-9  Stale session after a password change\",\"sub\":\"In Progress\",\"command\":\"jira_work.open\",\"args\":[]}]}\n",
+            "{\"text\":\"ENG-1  Checkout rewrite\",\"sub\":\"In Progress\",\"command\":\"jira_work.open\",\"args\":[\"--focus\",\"ENG-1\"]}," ++
+            "{\"text\":\"ENG-5  Basket total wrong with a voucher\",\"sub\":\"To Do\",\"command\":\"jira_work.open\",\"args\":[\"--focus\",\"ENG-5\"]}," ++
+            "{\"text\":\"ENG-9  Stale session after a password change\",\"sub\":\"In Progress\",\"command\":\"jira_work.open\",\"args\":[\"--focus\",\"ENG-9\"]}]}\n",
         line,
     );
     // The manifest's static slot and the live one name the same thing.
