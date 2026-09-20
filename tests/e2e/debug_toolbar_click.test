@@ -14,11 +14,11 @@ expect screen contains "dap: stopped (breakpoint)"
 expect screen contains "▶"
 command dap.show
 expect screen contains "▶ prog.dbg:4  main"
-click 36 2
+click 37 2
 expect screen contains "dap: stopped (step)"
 expect screen contains "▶ prog.dbg:9  main"
-click 85 2
+click 86 2
 expect screen contains "▶ prog.dbg:6  f"
 expect screen contains "prog.dbg:9  main"
-click 97 2
+click 98 2
 expect screen contains "dap: terminated"
