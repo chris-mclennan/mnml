@@ -170,7 +170,7 @@ docs/research/hunt-repros/standard-ctrl-k-prefix-shadowed.test
   FAIL line 19: screen unexpectedly contains "no leader mapping"
 ```
 
-### 2. The tree's delete confirm cancels with no feedback — SEV-3, a regression with its test rewritten
+### 2. The tree's delete confirm cancels with no feedback — SEV-3, a regression with its test rewritten — **fixed (this branch)**
 
 `vscode-delete-dialog-enter-cancels-silently` still reads `status: fixed`
 and is not. The fix `387d7a9c` (2026-09-05) made Enter the default
@@ -199,7 +199,13 @@ docs/research/hunt-repros/vscode-delete-dialog-enter-cancels-silently.test
   FAIL line 24: screen does not contain "cancel"
 ```
 
-### 3. The standard profile's which-key popup lists vim chords — SEV-3 (standard #13, second half)
+The finding file IS tracked here —
+`.mnml/findings/vscode-delete-dialog-enter-cancels-silently.md`, one of
+the 81 — and its `## Fix` section, which named only `387d7a9c`, now
+records the revert and what this branch actually closed. `status:` stays
+`fixed`, because it is.
+
+### 3. The standard profile's which-key popup lists vim chords — SEV-3 (standard #13, second half) — **fixed (this branch)**
 
 The Info panel was fixed (`14cb7d9b`) and now reads `[F12] Definition ·
 [Shift+F12] References · [Ctrl+K Ctrl+I] Hover · [F2] Rename`. The
@@ -218,6 +224,8 @@ The `+N hidden` chip exists (`0e3c7a66`) but `src/ui/bufferline.zig:465`
 paints it only when the strip is scrolled to a tail that fits whole —
 never in the ordinary case where the active tab is cut at the edge. With
 twelve buffers at 120x40 nothing says buffers are missing; labels still
+now: tests/e2e/tree_delete_cancel_toast.test — passes
+     tests/e2e/tree_delete_enter.test corrected: it asserted the silence
 clip to `ddd`. Partly mitigated since the report: the `‹ ›` arrows now
 paint and are clickable, so it is no longer strictly silent.
 
@@ -430,7 +438,7 @@ Re-derived independently (22):
 | `api-cookies-dropped-across-redirect` | 2 | fixed-since | both `Set-Cookie` ride the 302 to the next hop |
 | `vscode2-grep-long-line-panic` | 1 | fixed-since | 545k line, match late — no overflow |
 | `vscode-git-graph-detail-panic` | 1 | fixed-since | the finding's own drive (graph, down, enter) ×2 commits |
-| `vscode-delete-dialog-enter-cancels-silently` | 3 | **still-reproduces** | see above — the silent half |
+| `vscode-delete-dialog-enter-cancels-silently` | 3 | **fixed (this branch)** | the cancel toasts and names the key that deletes |
 | `vscode2-files-trash-stacks-tabs-and-leaks-data-root` | 3 | fixed-since | no twin tab; `files.up` stays in Trash, no `.index.zon` |
 | `vscode-tree-ctrl-shift-d-duplicates-file` | 2 | fixed-since | on a directory row: no data-copy, DEBUG opens |
 | `multilang-project-todos-command-dead` | 2 | fixed-since | lists a `.py` TODO and a `.ts` FIXME |

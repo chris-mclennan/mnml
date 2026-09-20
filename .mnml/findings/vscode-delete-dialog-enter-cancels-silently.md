@@ -32,4 +32,24 @@ After `Enter`: dialog gone, `ls` still shows the file, no `deleted …` toast. `
 
 ## Fix
 
-`387d7a9` on branch `fix-git-tree` — trash: enter on the delete confirm deletes; the action is the default in both forms and the toast follows. Regression: `tests/e2e-zig/tree_delete_enter.test`, the reworked unit test in `src/app/trash.zig`; break-checked.
+`387d7a9` on branch `fix-git-tree` made Enter the default action. Two
+days later `fcb8b5e6` ("prompts and confirms as Rust paints them") put
+`trash.zig`'s `.selected` back on Cancel — deliberately, and the source
+says why: *a destructive box's Enter must not be the destructive act* —
+and rewrote `tests/e2e/tree_delete_enter.test` to assert the behaviour
+this finding reported as the bug, silence included. So half of the fix
+was reverted on purpose and half was lost with it, and the regression
+test pinned the loss (`docs/research/hunt-triage-2026-09-20.md` #2).
+
+`hunt-fixes` (2026-09-20) closes the half that had no defence. Enter
+still does not delete — that stays by design — but it is no longer
+SILENT: `trash.acceptDelete` toasts
+
+    cancelled — a.txt kept; `d` deletes, `p` permanently
+
+so a torn-down box no longer reads on screen exactly like a delete that
+worked, and the toast names the key that does delete. Esc stays quiet.
+
+Regression: `tests/e2e/tree_delete_cancel_toast.test`;
+`tree_delete_enter.test` corrected to assert the toast instead of the
+silence.

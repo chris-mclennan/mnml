@@ -1,5 +1,7 @@
-# The tree's delete confirm (Rust's): Cancel is the focused button, so
-# Enter is a silent way out; `d` trashes and toasts.
+# The tree's delete confirm (the reference editor's): Cancel is the
+# focused button, so Enter does not delete — but it is no longer a
+# SILENT way out. It says the file was kept and names the key that
+# deletes. `d` trashes and toasts; Esc is the one quiet exit.
 write a.txt "aa"
 command view.focus_tree
 key r
@@ -9,6 +11,7 @@ expect screen contains "Delete a.txt?"
 expect screen contains "Delete permanently"
 key enter
 expect screen lacks "a.txt?"
+expect screen contains "cancelled — a.txt kept"
 expect file a.txt contains "aa"
 command file.delete
 key d

@@ -269,7 +269,7 @@ trust sink. Each row names its file and its test.
 | `transfer.cancel_all` | done | `cancelAllCmd` in `transfers.zig` | |
 | `:qa` refuses mid-transfer | done | `ex.zig` | toast + refusal; `:qa!` overrides |
 | Undoable delete → trash | done | `src/app/trash.zig` | `// changed:` `<data root>/trash/<workspace hash>/`, not `.mnml/trash` — a deleted file must not reappear in the tree, grep or git status |
-| "Delete permanently" in the confirm | done | `confirmDelete` in `trash.zig` | `[D]elete / Delete [P]ermanently / [C]ancel`, Cancel the default |
+| "Delete permanently" in the confirm | done | `confirmDelete` / `acceptDelete` in `trash.zig` | `[D]elete / Delete [P]ermanently / [C]ancel`, Cancel the default. *2026-09-20 (hunt-fixes):* the cancel is no longer SILENT — `cancelled — a.txt kept; `d` deletes, `p` permanently`. Cancel being focused means Enter, the likeliest key on any dialog, landed there, and a box that vanished with nothing said reads on screen exactly like a delete that worked. Esc stays quiet (asking to leave and being told you left is noise). `tests/e2e/tree_delete_cancel_toast.test`, `tree_delete_enter.test` |
 | `files.trash` / `restore_from_trash` | done | `openTrashCmd` / `restoreCmd` in `trash.zig` | the trash is a Files pane titled `Trash`; restore refuses when the origin exists again |
 | Trash bounds (7 d / 512 MB / 256 MB) | done | `prune` / `tick` in `trash.zig` | age by the entry stamp; on the first tick, every ten minutes, and after every delete |
 | Editor breadcrumb row | done | `drawBreadcrumb` in `render.zig` behind `editor.breadcrumb`, `view.toggle_breadcrumb` | `dir › dir › name` on the tab strip |
