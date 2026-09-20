@@ -620,7 +620,21 @@ pub fn titleTail(arena: Allocator, items: []const fetch.ValuesItem) Allocator.Er
 pub fn hoverItems(arena: Allocator, items: []const fetch.ValuesItem, click: []const u8) Allocator.Error![]const sdk.ipc.Item {
     if (items.len == 0) return &.{};
     const out = try arena.alloc(sdk.ipc.Item, items.len);
-    for (items, 0..) |it, i| out[i] = .{ .text = it.text, .sub = it.sub, .command = click };
+    // // changed (focus-row): `args` is the row's deep link. The host
+    // appends them to the command's argv when it mounts the pane, and
+    // hands them down the mount as a `focus_item` when the pane is
+    // already open — either way the cursor ends on THIS pull request.
+    for (items, 0..) |it, i| out[i] = .{ .text = it.text, .sub = it.sub, .command = click, .args = try focusArgs(arena, it.key) };
+    return out;
+}
+
+/// `--focus <key>` as a two-element argv, or nothing for a row that
+/// names no pull request.
+pub fn focusArgs(arena: Allocator, key: []const u8) Allocator.Error![]const []const u8 {
+    if (key.len == 0) return &.{};
+    const out = try arena.alloc([]const u8, 2);
+    out[0] = "--focus";
+    out[1] = key;
     return out;
 }
 
@@ -1185,6 +1199,9 @@ const HostEvent = union(enum) {
     /// A plain move: what a dim button's reason hangs off.
     hover: struct { col: u16, row: u16 },
     session_state: struct { key: []u8, state: sdk.wire.SessionState, session_id: []u8, detail: []u8 },
+    /// // changed (focus-row): a hover row pressed while this pane is
+    /// already the open one — the pull request to put the cursor on.
+    focus_item: []u8,
     scroll: struct { col: u16, row: u16, dy: i16 },
     resize: sdk.wire.Geometry,
     focus: bool,
@@ -1221,6 +1238,7 @@ fn readerThread(gpa: Allocator, io: Io, mount: *sdk.Mount, q: *EventQueue) void 
                 .detail = gpa.dupe(u8, ss.detail) catch continue,
             } },
             .focus => |f| .{ .focus = f },
+            .focus_item => |f| .{ .focus_item = gpa.dupe(u8, f.key) catch continue },
             .goodbye => .goodbye,
             .resize => |r| .{ .resize = r.geometry },
             .input => |in| switch (in.event) {
@@ -1420,6 +1438,10 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
                 },
                 .goodbye => running = false,
                 .focus => |f| app.focused = f,
+                .focus_item => |k| {
+                    defer gpa.free(k);
+                    try app.requestFocus(k);
+                },
                 .other => {},
             },
             .result => |r| {
@@ -1710,9 +1732,9 @@ test "the three chips carry their counts, what they mean and WHICH; the review c
         .unresolved_comments = 3,
         .comment_hits = 3,
         .comment_requests = 1,
-        .open_items = &.{ .{ .text = "Fix the login redirect", .sub = "acme/api · unapproved" }, .{ .text = "Redesign the empty state", .sub = "acme/web · approved" } },
-        .comment_items = &.{.{ .text = "Fix the login redirect", .sub = "acme/api · 2 waiting" }},
-        .awaiting_items = &.{ .{ .text = "Bump the client timeout to 30s", .sub = "acme/api" }, .{ .text = "Tidy the footer links", .sub = "acme/web" } },
+        .open_items = &.{ .{ .text = "Fix the login redirect", .sub = "acme/api · unapproved", .key = "api#1198" }, .{ .text = "Redesign the empty state", .sub = "acme/web · approved", .key = "web#820" } },
+        .comment_items = &.{.{ .text = "Fix the login redirect", .sub = "acme/api · 2 waiting", .key = "api#1198" }},
+        .awaiting_items = &.{ .{ .text = "Bump the client timeout to 30s", .sub = "acme/api", .key = "api#1234" }, .{ .text = "Tidy the footer links", .sub = "acme/web", .key = "web#77" } },
     }, .{ .status = .{ .tokens = 0.24, .capacity = 40, .rate = 0.11, .baseline_rate = 0.22, .throttles = 127, .cooldown_remaining_secs = 0, .last_429_age_secs = 4 * 3600 }, .draws = .{ .top = "bb.py", .top_n = 30, .total = 83 } });
     var got = try tmp.dir.readFileAlloc(t.io, "command", arena, .unlimited);
     try t.expect(std.mem.indexOf(u8, got, "\"id\":\"bitbucket_prs.prs_mine\"") != null);
@@ -1758,6 +1780,12 @@ test "the three chips carry their counts, what they mean and WHICH; the review c
     try t.expect(std.mem.indexOf(u8, got, "{\"text\":\"Redesign the empty state\",\"sub\":\"acme/web \u{b7} approved\",\"command\":\"bitbucket_prs.open_mine\"") != null);
     try t.expect(std.mem.indexOf(u8, got, "{\"text\":\"Fix the login redirect\",\"sub\":\"acme/api \u{b7} 2 waiting\",\"command\":\"bitbucket_prs.open_mine\"") != null);
     try t.expect(std.mem.indexOf(u8, got, "\"items\":[{\"text\":\"Bump the client timeout to 30s\",\"sub\":\"acme/api\",\"command\":\"bitbucket_prs.open_awaiting\"") != null);
+    // And WHICH pull request each row is: the host appends these to
+    // the command's argv, so the press lands the cursor on that one
+    // rather than only opening the pane.
+    try t.expect(std.mem.indexOf(u8, got, "\"command\":\"bitbucket_prs.open_mine\",\"args\":[\"--focus\",\"api#1198\"]") != null);
+    try t.expect(std.mem.indexOf(u8, got, "\"command\":\"bitbucket_prs.open_mine\",\"args\":[\"--focus\",\"web#820\"]") != null);
+    try t.expect(std.mem.indexOf(u8, got, "\"command\":\"bitbucket_prs.open_awaiting\",\"args\":[\"--focus\",\"api#1234\"]") != null);
 
     // Not counted: the second chip is not published at all. A zero
     // there would read as "nothing outstanding".
