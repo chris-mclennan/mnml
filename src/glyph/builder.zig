@@ -1,9 +1,10 @@
 //! MnmlSymbols: the face mnml's own block is drawn from, and the one
 //! command that builds it.
 //!
-//! mnml paints five marks that exist in no font anywhere — the Claude
-//! and Codex product marks, the two tree connectors, and the terminal
-//! icon — so it carries them itself, at codepoints in the private plane
+//! mnml paints six marks that exist in no font anywhere — the Claude
+//! and Codex product marks, the two tree connectors, the terminal icon
+//! and the unfocused pane's hollow cursor — so it carries them itself,
+//! at codepoints in the private plane
 //! nothing else claims (`U+F1B00–U+F20FF`). A terminal renders them by
 //! routing that range at a font named `MnmlSymbols`; ghostty spells
 //! that `font-codepoint-map` (`ghostty_config.zig` reads it back).
@@ -19,9 +20,10 @@
 //!     differs — so a terminal already routed at `MnmlSymbols` picks
 //!     the new one up with nothing to reconfigure.
 //!
-//! The two connectors are drawn here rather than imported: they are
-//! rectangles that have to touch the cell edge exactly, and an SVG
-//! rasterised at those coordinates leaves hairline gaps between rows.
+//! The two connectors and the hollow cursor are drawn here rather than
+//! imported: they are rectangles that have to touch the cell edge
+//! exactly, and an SVG rasterised at those coordinates leaves hairline
+//! gaps between rows.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -45,6 +47,12 @@ pub const tree_corner: u21 = 0xF1F05;
 /// user names when the icon is set to custom. One codepoint either
 /// way, so the routing never has to change.
 pub const terminal: u21 = 0xF2000;
+/// The stand-in cursor an UNFOCUSED pty pane paints: a hollow block
+/// that fills the whole cell, which is the shape ghostty draws in
+/// pixels for a surface that is not the focused one. Drawn here for
+/// the same reason the connectors are — it has to meet the cell edge
+/// exactly, and nothing in Unicode is a full-cell outline.
+pub const cursor_hollow: u21 = 0xF2001;
 
 pub const Error = svg.Error || ttf.Error;
 
@@ -129,6 +137,28 @@ fn cornerContours(arena: Allocator) Allocator.Error![]const svg.Contour {
     return out;
 }
 
+// ─── the hollow cursor ──────────────────────────────────────────────────
+
+// The same cell the connectors measure themselves against: the full
+// advance across, and `v_bottom`…`v_top` down — so the outline sits on
+// the cell's own edges rather than inside them, which is what makes it
+// read as ghostty's rectangle and not as `□`, a small centred square.
+// The stroke is the tree line's, so the two weigh the same on screen.
+const cell_left: f64 = 0;
+const cell_right: f64 = @floatFromInt(ttf.advance_width);
+
+/// Four bars — left, right, bottom, top — each wound clockwise. They
+/// overlap at the corners; TrueType fills by non-zero winding, so a
+/// doubly-wound corner is still solid.
+fn hollowContours(arena: Allocator) Allocator.Error![]const svg.Contour {
+    const out = try arena.alloc(svg.Contour, 4);
+    out[0] = try rect(arena, cell_left, v_bottom, cell_left + stroke, v_top);
+    out[1] = try rect(arena, cell_right - stroke, v_bottom, cell_right, v_top);
+    out[2] = try rect(arena, cell_left, v_bottom, cell_right, v_bottom + stroke);
+    out[3] = try rect(arena, cell_left, v_top - stroke, cell_right, v_top);
+    return out;
+}
+
 // ─── the build ──────────────────────────────────────────────────────────
 
 /// Every glyph the face carries, as bytes. `specs` are the SVG-backed
@@ -141,6 +171,7 @@ pub fn build(arena: Allocator, specs: []const Spec) Error![]u8 {
     }
     try glyphs.append(arena, .{ .codepoint = tree_vertical, .name = "tree-line-vertical", .contours = try verticalContours(arena) });
     try glyphs.append(arena, .{ .codepoint = tree_corner, .name = "tree-line-corner", .contours = try cornerContours(arena) });
+    try glyphs.append(arena, .{ .codepoint = cursor_hollow, .name = "cursor-hollow", .contours = try hollowContours(arena) });
     // A blank U+0020: a rasteriser that refuses a font with no text
     // character at all will still load this one.
     try glyphs.append(arena, .{ .codepoint = ' ', .name = "space", .contours = ttf.Glyph.empty });
@@ -211,7 +242,7 @@ test "the shipped face carries every codepoint mnml's own block needs, and nothi
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     const bytes = try buildDefault(arena);
-    for ([_]u21{ claude, codex, tree_vertical, tree_corner, terminal, ' ' }) |cp| {
+    for ([_]u21{ claude, codex, tree_vertical, tree_corner, terminal, cursor_hollow, ' ' }) |cp| {
         errdefer std.debug.print("missing U+{X}\n", .{cp});
         try t.expect(cmapHas(bytes, cp));
     }
@@ -266,4 +297,34 @@ test "the connectors are the cell-edge rectangles the tree draws, not scaled art
         stem_max = @max(stem_max, p.x);
     };
     try t.expectApproxEqAbs(band_left + stroke / 2, (stem_min + stem_max) / 2, 0.001);
+}
+
+test "the hollow cursor spans the whole cell — the full advance across, connector-height down" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const h = try hollowContours(arena);
+    try t.expectEqual(@as(usize, 4), h.len);
+    var min_x: f64 = 1e30;
+    var max_x: f64 = -1e30;
+    var min_y: f64 = 1e30;
+    var max_y: f64 = -1e30;
+    for (h) |c| {
+        // Clockwise in y-up, like every other bar here: TrueType fills
+        // the overlapping corners by winding rather than cancelling them.
+        try t.expect(svg.signedArea(c) < 0);
+        for (c) |p| {
+            min_x = @min(min_x, p.x);
+            max_x = @max(max_x, p.x);
+            min_y = @min(min_y, p.y);
+            max_y = @max(max_y, p.y);
+        }
+    }
+    try t.expectEqual(cell_left, min_x);
+    try t.expectEqual(cell_right, max_x);
+    try t.expectEqual(v_bottom, min_y);
+    try t.expectEqual(v_top, max_y);
+    // Hollow, not filled: the middle of the cell is inside no bar.
+    const mid: svg.Point = .{ .x = (cell_left + cell_right) / 2, .y = (v_bottom + v_top) / 2 };
+    for (h) |c| try t.expect(!svg.contains(c, mid));
 }
