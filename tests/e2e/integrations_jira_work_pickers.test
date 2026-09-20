@@ -61,7 +61,7 @@ key esc
 # .: the ticket's buttons — ENG-2 is In PR Review, so Review.
 type .
 expect screen contains "actions"
-expect screen contains "[ Review ]"
+expect screen contains "[ Review]"
 key esc
 # S selects ENG-2 for a bulk action; the header counts; a picker's
 # title carries the count.
