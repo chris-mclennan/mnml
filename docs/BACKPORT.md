@@ -248,9 +248,20 @@ one), register it under a reserved scrollbar owner so the existing
 `ScrollbarDrag` routing picks it up, and add a `section: usize` arm to
 the settings hit enum for the strip. The footer position is the one that
 matters for narrow terminals, where no bar fits; it is four lines.
-Everything here is component-local — no `Pane`, `EditOp` or `Command`
-variant is involved, and no new command id was needed in Zig either
-(these are overlay keys).
+Everything here is component-local — no `Pane` or `EditOp` variant is
+involved, and one command id: `view.settings_search`, which opens the
+box with the filter already holding the keys. `/` is only discoverable
+once you are in the box, so the palette needs its own way in; Rust
+focuses the field on open and so needs no equivalent.
+
+**One thing the Rust side should NOT copy.** The script that proves
+these affordances used to assert the footer's `22/93` verbatim, and
+every settings row that landed anywhere re-pinned it — 93, 95, 96, 98
+in a single day. Zig's `status.json` grew a `settings` object instead
+(`{top, visible, atTop, atEnd}`, `src/ipc/screen.zig`), the same
+window without the total, and the script reads that. Rust's
+`status.json` can take the same key: it is additive and its `quit` /
+`cursor` neighbours are untouched.
 
 ## Two more that were not on the list
 
