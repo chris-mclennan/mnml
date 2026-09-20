@@ -1,40 +1,40 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS ●1 󰅖  ●━  󰅖
-   │  ● /pri…            │  config.zon 󰅖    config.zon 󰅖   󰐕                          󰅁  󰅂   Source        
-▌ │▌    .mnml              │ config.zon › ui › md_preview_engine                               mnml config · unsaved
-   │       ipc-zig          │  󰍉 / filter
- 󰍉 │     󱼅  config.zon       │   editor:  .{ 4 fields } *
-   │      prog.dbg           │    input_style:  vim / [standard]
- 󰊢 │                          │    tab_width:  ‹ [4] ›
-   │  ○ mnml                 │    breadcrumb:  true / [false] *
-  │                          │    format_on_save:  true / [false]
-   │  ○ mnml-zig             │   ui:  .{ 5 fields }
- 󰐱 │                          │    theme:  "onedark"
-   │         󰐙 Add workspace  │    line_numbers:  [true] / false
- 󰎒 │                          │▸   md_preview_engine:  builtin / [glow] / pandoc / custom
-   │                          │     todo_keywords:  .{╭───────────╮
-  │                          │      [0]:  "TODO"      │  builtin  │
-   │                          │      [1]:  "FIXME"     │✓ glow     │
-  │                          │      [2]:  "HACK"      │  pandoc   │
-   │                          │    sidebar_side:  [left│  custom   │
-  │                          │   startup:  .{ 2 field╰───────────╯
-   │                          │    default_workspace:  null   set…
- 󱘣 │                          │     layout:  .{ 0 items }
-   │                          │   workspaces:  .{ 2 items }
- 󰢱 │                          │     [0]:  .{ 3 fields }
-   │                          │      name:  "mnml"
-   │                          │      path:  "~/Projects/mnml"
-   │                          │      group:  "personal"
-   │                          │     [1]:  .{ 2 fields }
-   │                          │      name:  "mnml-zig"
-   │                          │      path:  "~/Projects/mnml-zig"
-   │                          │
-   │──────────────────────────│
-   │ ui.md_preview_engine   ⋮ │
-   │                          │
-   │ union: .builtin | .glow  │
-   │ | .pandoc | .custom      │
-   │                          │
-  │                          │
-   │                          │ ⏎ edit · ←→ adjust · + add · x remove · J/K move · n null · / filter · e source · ^S sa…
- VIEW  [no file]                                                              F 57% ▲1.0  󱼀 󰐎    23:05  ws   —
+   │  ● /pri…            │  config.zon 󰅖    config.zon 󰅖   󰐕                       󰅁  󰅂   Source  󱸀  󲀀      
+▌ │▌    .mnml              │▌ config.zon › ui › md_preview_engine                              mnml config · unsaved
+   │       ipc-zig          │▌  󰍉 / filter
+ 󰍉 │     󱼅  config.zon       │▌   editor:  .{ 4 fields } *
+   │      prog.dbg           │▌    input_style:  vim / [standard]
+ 󰊢 │                          │▌    tab_width:  ‹ [4] ›
+   │  ○ mnml                 │▌    breadcrumb:  true / [false] *
+  │                          │▌    format_on_save:  true / [false]
+   │  ○ mnml-zig             │▌   ui:  .{ 5 fields }
+ 󰐱 │                          │▌    theme:  "onedark"
+   │         󰐙 Add workspace  │▌    line_numbers:  [true] / false
+ 󰎒 │                          │▌▸   md_preview_engine:  builtin / [glow] / pandoc / custom
+   │                          │▌     todo_keywords:  .{╭───────────╮
+  │                          │▌      [0]:  "TODO"      │  builtin  │
+   │                          │▌      [1]:  "FIXME"     │✓ glow     │
+  │                          │▌      [2]:  "HACK"      │  pandoc   │
+   │                          │▌    sidebar_side:  [left│  custom   │
+  │                          │▌   startup:  .{ 2 field╰───────────╯
+   │                          │▌    default_workspace:  null   set…
+ 󱘣 │                          │▌     layout:  .{ 0 items }
+   │                          │▌   workspaces:  .{ 2 items }
+ 󰢱 │                          │▌     [0]:  .{ 3 fields }
+   │                          │▌      name:  "mnml"
+   │                          │▌      path:  "~/Projects/mnml"
+   │                          │▌      group:  "personal"
+   │                          │▌     [1]:  .{ 2 fields }
+   │                          │▌      name:  "mnml-zig"
+   │                          │▌      path:  "~/Projects/mnml-zig"
+   │                          │▌
+   │──────────────────────────│▌
+   │ ui.md_preview_engine   ⋮ │▌
+   │                          │▌
+   │ union: .builtin | .glow  │▌
+   │ | .pandoc | .custom      │▌
+   │                          │▌
+  │                          │▌
+   │                          │▌ ⏎ edit · ←→ adjust · + add · x remove · J/K move · n null · / filter · e source · ^S s…
+ VIEW  [no file]                                                              F 59% ▲0.2  󱼀 󰐎    00:39  ws   —
 

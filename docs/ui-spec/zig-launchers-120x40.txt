@@ -1,6 +1,6 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │ INTEGRATIONS           │ 󰐕                                                                            󱸀      
-  │ Inst (1) Mkt (4)         │
+   │ INTEGRATIONS           │ 󰐕                                                                            󱸀  󲀀    
+  │ Inst (5) Mkt (4)         │
    │  󰍉 / filter              │
  󰍉 │                          │
    │  FONTS · latest Nerd Fon…│
@@ -14,19 +14,19 @@
    │  󱴀  [launcher] htop  ✓ Of│                           | '_ ` _ \  | '_ \  | '_ ` _ \  | |
   │    Interactive process v…│                           | | | | | | | | | | | | | | | | | |
    │                          │                           |_| |_| |_| |_| |_| |_| |_| |_| |_|
-  │  󰛳  [launcher] iftop  ✓ O│
-   │    Interactive bandwidth…│                                     workspace · ws
-  │                          │
-   │    [launcher] VSCode  ✓ │                                        Shortcuts
- 󱘣 │    Visual Studio Code (o…│                                     ──────────────
-   │                          │                                     ^P     find file
- 󰢱 │                          │                                    ^R     recent files
+  │  󰛳  [launc┌ Add to activity bar ───────────────────────────────────────────────────────────────────┐
+   │    Interac│                                                                                      1 │
+  │           │▌btop  btop                                                                             │
+   │    [launc│                                                                                        │
+ 󱘣 │    Visual │                                                                                        │
+   │           │                                                                                        │
+ 󰢱 │           └────────────────────────────────────────────────────────────────────────────────────────┘
    │                          │                                   ^K     which-key menu
- 󰫯 │                          │                                      ^N     new file
+   │                          │                                      ^N     new file
    │                          │                                    ^B     toggle tree
    │                          │                                        ^Q     quit
    │                          │
-   │                          │                                 mnml 0.3.0-dev+gcffb814
+   │                          │                              mnml 0.3.0-dev+gd2e8d6a-dirty
    │                          │
    │──────────────────────────│
    │ Integrations           ⋮ │
@@ -36,5 +36,5 @@
    │ Right-click for          │
   │ Configure / Uninstall.   │
    │                          │
- TREE  [no file]                                                              F 57% ▲1.0  󱼀 󰐎    02:06  ws   —
+ TREE  [no file]                                                              F 59% ▲0.2  󱼀 󰐎    00:38  ws   —
 

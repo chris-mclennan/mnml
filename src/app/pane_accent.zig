@@ -24,6 +24,7 @@ const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const PaneId = app_mod.PaneId;
+const pane_mod = @import("pane.zig");
 const pty_pane = @import("pty_pane.zig");
 const git_palette = @import("git_palette.zig");
 const accent_color = @import("../ui/accent_color.zig");
@@ -107,16 +108,32 @@ fn integrationColor(app: *App, mid: []const u8, theme: *const Theme) Color {
     return integrations_view.paletteColor(theme, chip.color);
 }
 
+/// A pane that already paints a stripe down its own first column, so
+/// the rail would be a second one beside it in the same colour.
+///
+/// Two do. A mounted integration owns every cell of its grid: the app
+/// colour there is the sibling's to paint, and mnml taking a column
+/// would narrow the sibling for nothing. A git status / diff / graph
+/// pane paints its repo's gutter (`git_palette.repoGutter`) — but only
+/// while a repo HAS an accent, which is only while there is more than
+/// one repo to tell apart; the single-repo pane paints none and takes
+/// the rail like anything else.
+fn paintsOwnStripe(app: *App, p: *const pane_mod.Pane) bool {
+    return switch (p.*) {
+        .mount => |*mp| mp.integration != null,
+        .git_status => |*s| git_palette.repoAccent(app, s.repo) != null,
+        .diff => |*d| git_palette.repoAccent(app, d.repo) != null,
+        .git_graph => |*g| git_palette.repoAccent(app, g.repo) != null,
+        else => false,
+    };
+}
+
 /// The rail colour for a pane under the current `ui.pane_rail` setting:
 /// `.all` paints every pane, `.sessions` only the AI session panes that
 /// wore one before the rail was a rule, `.off` none.
 pub fn railColorOf(app: *App, id: PaneId, theme: *const Theme) ?Color {
     const p = app.panes.get(id) orelse return null;
-    // A mounted integration owns its own grid, first column included:
-    // mnml painting a stripe there would take a cell off the sibling's
-    // layout, and the app colour is the sibling's to paint. `colorOf`
-    // still knows the colour — the pane just is not mnml's to stripe.
-    if (p.wearsOwnAccent()) return null;
+    if (paintsOwnStripe(app, p)) return null;
     return switch (app.cfg.ui.pane_rail) {
         .off => null,
         .sessions => blk: {

@@ -1,24 +1,24 @@
  ❯_  mnml  »             󰍉  ws                                    󰐕  ●━  󰅖
-   │ DEBUG                  + │  prog.d 󰐕         │  Debug  󰐕        
-  │  󰍉 / filter              │ prog.dbg               │  󰐊   󰆷   󰆹   󰆸   󰜉   󰓛
- 󰍉 │                          │  󰐊   󰆷   󰆹   󰆸   󰜉   󰓛 │ ── started prog.dbg ──
- 󰊢 │▌● prog.dbg:4 · main     █│   1 let x = 1  x = 1   │ hello
-▌ │  VARIABLES (4)         █│   2 let p = struct{a=1,│
- 󰐱 │  Locals                █│   3 print "hello"      │
- 󰎒 │     x: int = 1          █│▶  4 x = x + 1  x = 1   │
+   │ DEBUG                  + │  pro 󰐕  󱸀  󲀀       │  Deb 󰐕  󱸀  󲀀      
+  │  󰍉 / filter              │▌prog.dbg               │▌  󰐊   󰆷   󰆹   󰆸   󰜉
+ 󰍉 │                          │▌ 󰐊   󰆷   󰆹   󰆸   󰜉   󰓛 │▌ ── started prog.dbg ──
+ 󰊢 │▌● prog.dbg:4 · main     █│▌  1 let x = 1  x = 1   │▌ hello
+▌ │  VARIABLES (4)         █│▌  2 let p = struct{a=1,│▌
+ 󰐱 │  Locals                █│▌  3 print "hello"      │▌
+ 󰎒 │     x: int = 1          █│▶  4 x = x + 1  x = 1   │▌
   │    p: struct╭────────────────────────────────────────────────────────────╮
   │  Globals    │x: int = 1                                                  │
   │     x: int = │Locals · debugger value · right-click the gutter: breakpoin…│
  󱘣 │    p: struct╰────────────────────────────────────────────────────────────╯
- 󰢱 │                         █│   9 call f             │
-   │  WATCH (0)             █│  10 print x            │
-   │──────────────────────────│                        │
-   │ x: int = 1             ⋮ │                        │
-   │                          │                        │
-   │ Locals · debugger value  │                        │
-   │ · right-click the        │                        │
-   │ gutter: breakpoints      │                        │
-  │                          │                        │
-   │                          │                        │ > expression — Tab comp
- VIEW  [no file]                      F 57% ▲1.0  󱼀 󰐎    00:53  ws   —
+ 󰢱 │                         █│▌  9 call f             │▌
+   │  WATCH (0)             █│▌ 10 print x            │▌
+   │──────────────────────────│▌                       │▌
+   │ x: int = 1             ⋮ │▌                       │▌
+   │                          │▌                       │▌
+   │ Locals · debugger value  │▌                       │▌
+   │ · right-click the        │▌                       │▌
+   │ gutter: breakpoints      │▌                       │▌
+  │                          │▌                       │▌
+   │                          │▌                       │▌ > expression — Tab com
+ VIEW  [no file]                      F 59% ▲0.2  󱼀 󰐎    00:37  ws   —
 
