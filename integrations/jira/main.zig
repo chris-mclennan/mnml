@@ -554,6 +554,40 @@ fn publishSide(app: *app_mod.App, mount: *sdk.Mount, ipc: ?*const sdk.Ipc, gpa: 
 /// One status and how many of the counted issues are in it.
 pub const StatusCount = struct { status: []const u8, n: usize };
 
+/// How many of the things behind a figure `--values` hands over for
+/// the statusline hover to list. The host caps again at
+/// `statusline.hover_items`; this is what the wire carries.
+pub const hover_items: usize = 8;
+
+/// One of the things behind a figure: a ticket. `sub` is the status it
+/// is in — the hover paints it muted at the right of the row.
+pub const ValuesItem = struct {
+    text: []const u8,
+    sub: []const u8 = "",
+};
+
+/// The tickets themselves, for the hover to list — key, summary, and
+/// the status they sit in. Off the issues the count was taken from, so
+/// the rows cost no second search.
+pub fn issueItems(arena: Allocator, issues: []const model.Issue) Allocator.Error![]const ValuesItem {
+    const n = @min(issues.len, hover_items);
+    if (n == 0) return &.{};
+    const out = try arena.alloc(ValuesItem, n);
+    for (issues[0..n], 0..) |iss, i| out[i] = .{
+        .text = try std.fmt.allocPrint(arena, "{s}  {s}", .{ iss.key, iss.summary }),
+        .sub = if (iss.status.len > 0) iss.status else "(no status)",
+    };
+    return out;
+}
+
+/// The rows a segment publishes, each a click away from the pane.
+pub fn hoverRows(arena: Allocator, items: []const ValuesItem, click: []const u8) Allocator.Error![]const sdk.ipc.Item {
+    if (items.len == 0) return &.{};
+    const out = try arena.alloc(sdk.ipc.Item, items.len);
+    for (items, 0..) |it, i| out[i] = .{ .text = it.text, .sub = it.sub, .command = click };
+    return out;
+}
+
 /// What one `--values` run found. Two figures about two different
 /// things, each with the breakdown that makes it mean something.
 pub const Values = struct {
@@ -565,6 +599,10 @@ pub const Values = struct {
     qa_actionable: ?usize = null,
     qa_by_status: []const StatusCount = &.{},
     qa_tab_name: []const u8 = "",
+    /// The tickets behind each figure — the rows the statusline hover
+    /// lists.
+    assigned_items: []const ValuesItem = &.{},
+    qa_items: []const ValuesItem = &.{},
 };
 
 /// The statuses of a set of issues, most-common first — the hover
@@ -639,6 +677,7 @@ pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: Values, bucket:
         .click_command = segment_click,
         .priority = segment_priority,
         .tooltip = try withBucket(arena, try breakdownText(arena, lead, v.assigned_by_status), bucket),
+        .items = try hoverRows(arena, v.assigned_items, segment_click),
     });
     if (v.qa_actionable) |n| {
         var qbuf: [32]u8 = undefined;
@@ -653,6 +692,7 @@ pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: Values, bucket:
             .click_command = segment_click,
             .priority = qa_segment_priority,
             .tooltip = try withBucket(arena, try breakdownText(arena, qlead, v.qa_by_status), bucket),
+            .items = try hoverRows(arena, v.qa_items, segment_click),
         });
     }
 }
@@ -945,8 +985,10 @@ fn values(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Al
     const jql = try jira.withProjects(arena, base, c.projects);
     switch (jira.search(&client, arena, jql, &.{}, .poll) catch jira.Answer([]const std.json.Value){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
         .ok => |items| {
+            const issues = try jira.parseIssues(arena, items, c.team_field_id);
             v.assigned_open = items.len;
-            v.assigned_by_status = try countByStatus(arena, try jira.parseIssues(arena, items, c.team_field_id));
+            v.assigned_by_status = try countByStatus(arena, issues);
+            v.assigned_items = try issueItems(arena, issues);
         },
         .failed => |f| {
             try err.print("mnml-jira --values: {s}\n", .{f.message});
@@ -964,8 +1006,10 @@ fn values(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Al
             const scoped = try jira.withProjects(arena, qa_jql, c.projects);
             switch (jira.search(&client, arena, scoped, &.{}, .poll) catch jira.Answer([]const std.json.Value){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
                 .ok => |items| {
+                    const issues = try jira.parseIssues(arena, items, c.team_field_id);
                     v.qa_actionable = items.len;
-                    v.qa_by_status = try countByStatus(arena, try jira.parseIssues(arena, items, c.team_field_id));
+                    v.qa_by_status = try countByStatus(arena, issues);
+                    v.qa_items = try issueItems(arena, issues);
                 },
                 .failed => |f| try err.print("mnml-jira --values: {s}: {s}\n", .{ tab.name, f.message }),
             }
