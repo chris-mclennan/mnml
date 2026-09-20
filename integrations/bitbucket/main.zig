@@ -749,19 +749,6 @@ fn bucketOf(gpa: Allocator, io: Io, l: *ratelimit.Limiter, name_buf: []u8) ?Buck
     return .{ .status = st, .draws = ratelimit.recentDraws(gpa, io, path, draws_window_secs, now, name_buf) };
 }
 
-/// The one-chip form, for callers with no arena to spare.
-pub fn publishSegment(ipc: *const sdk.Ipc, v: fetch.ValuesResult) sdk.ipc.Error!void {
-    var buf: [64]u8 = undefined;
-    try ipc.statuslineSetSegment(.{
-        .id = segment_id,
-        .text = segmentText(&buf, v),
-        .color = if (v.error_text.len > 0) "red" else segment_color,
-        .click_command = segment_click,
-        .priority = 60,
-    });
-    try ipc.setActivityBadge("integrations", @intCast(@min(v.open_mine, std.math.maxInt(u32))));
-}
-
 /// The channel a headless run publishes on: `$MNML_IPC_DIR`, else
 /// `<workspace>/.mnml/ipc-zig` — a `term` child does not inherit the
 /// variable, which is why the ex line passes `--workspace`.
@@ -1691,22 +1678,35 @@ test "the pane's brand is its OWN family's chip colour, not the host's accent" {
     try t.expectEqual(sdk.wire.Color{ .rgb = .{ 4, 5, 6 } }, theme_mod.Theme.fromHelloBranded(pal, chipColorOf(.pipelines)).brand);
 }
 
-test "the chip's Tier-2 lines are the exact JSON mnml reads: the segment and the badge" {
+test "the chip's Tier-2 lines are the exact JSON mnml reads: the segment, its rows and the badge" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var pbuf: [std.fs.max_path_bytes]u8 = undefined;
     const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
     var ipc = try sdk.Ipc.init(t.allocator, t.io, dir);
     defer ipc.deinit();
-    try publishSegment(&ipc, .{ .open_mine = 4, .unapproved_mine = 2, .approved_mine = 2 });
-    try publishSegment(&ipc, .{ .error_text = "HTTP 401: auth" });
-    const got = try tmp.dir.readFileAlloc(t.io, "command", t.allocator, .unlimited);
-    defer t.allocator.free(got);
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    // `publishSegments` is the ONE publish this pane has: `--values`,
+    // `--refresh` and the pane's own `.segment` effect all go through
+    // it, so the chip an open pane republishes for itself carries the
+    // rows rather than dropping back to a bare figure. There is no
+    // figure-only form left to reach for.
+    try publishSegments(&ipc, arena, .{
+        .open_mine = 1,
+        .unapproved_mine = 1,
+        .approved_mine = 0,
+        .open_items = &.{.{ .text = "Fix the login redirect", .sub = "acme/api \u{b7} unapproved", .key = "api#1234" }},
+    }, null);
+    const got = try tmp.dir.readFileAlloc(t.io, "command", arena, .unlimited);
     try t.expectEqualStrings(
-        "{\"cmd\":\"statusline-set-segment\",\"id\":\"bitbucket_prs.prs_mine\",\"side\":\"right\",\"text\":\"\u{f00a8} 4(2)\",\"color\":\"green\",\"click_command\":\"bitbucket_prs.open_mine\",\"priority\":60,\"min_width\":4,\"max_width\":30}\n" ++
-            "{\"cmd\":\"set-activity-badge\",\"section\":\"integrations\",\"count\":4}\n" ++
-            "{\"cmd\":\"statusline-set-segment\",\"id\":\"bitbucket_prs.prs_mine\",\"side\":\"right\",\"text\":\"\u{f00a8} !\",\"color\":\"red\",\"click_command\":\"bitbucket_prs.open_mine\",\"priority\":60,\"min_width\":4,\"max_width\":30}\n" ++
-            "{\"cmd\":\"set-activity-badge\",\"section\":\"integrations\",\"count\":0}\n",
+        "{\"cmd\":\"statusline-set-segment\",\"id\":\"bitbucket_prs.prs_mine\",\"side\":\"right\",\"text\":\"\u{f00a8} 1(1)\",\"color\":\"green\",\"click_command\":\"bitbucket_prs.open_mine\",\"priority\":60,\"min_width\":4,\"max_width\":30," ++
+            "\"tooltip\":\"Bitbucket \u{b7} 1 open pull request you authored \u{2014} 1 still unapproved, 0 approved \u{2014} \u{201c}Fix the login redirect\u{201d}\"," ++
+            "\"items\":[{\"text\":\"Fix the login redirect\",\"sub\":\"acme/api \u{b7} unapproved\",\"command\":\"bitbucket_prs.open_mine\",\"args\":[\"--focus\",\"api#1234\"]}]}\n" ++
+            "{\"cmd\":\"statusline-set-segment\",\"id\":\"bitbucket_prs.reviews_pending\",\"side\":\"right\",\"text\":\"\u{f0e5} 0\",\"color\":\"green\",\"click_command\":\"bitbucket_prs.open_awaiting\",\"priority\":58,\"min_width\":4,\"max_width\":30," ++
+            "\"tooltip\":\"Bitbucket \u{b7} 0 open pull requests waiting on YOUR review \u{2014} you are a reviewer and have not approved\"}\n" ++
+            "{\"cmd\":\"set-activity-badge\",\"section\":\"integrations\",\"count\":1}\n",
         got,
     );
 }

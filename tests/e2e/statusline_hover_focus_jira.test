@@ -41,11 +41,11 @@ wait 2500
 expect screen contains "DETAIL"
 expect screen contains "Applying a percentage voucher"
 
-# The pane republishes the segment for itself — with the count, not
-# the rows — so the hover's list has to be published again before a
-# second row can be pressed.
-shell "$MNML_JIRA" --values --only work --workspace "$MNML_E2E_WORKSPACE" > values2.json
-wait 700
+# No second `--values` run: the pane republishes the segment for
+# itself as its own listing lands, and that publish carries the rows.
+# It used to carry the count alone, and the list under the pointer had
+# to be put back by a poll before a second row could be pressed.
+wait 9000
 # What the listing has cost so far. The press that follows must not
 # add to it: a second pane would ask for the whole listing again.
 shell grep -c '"path":"/rest/api/3/search/jql"' wire.jsonl > searches.txt

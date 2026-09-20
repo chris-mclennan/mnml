@@ -1,0 +1,46 @@
+# env: JIRA_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/jira-bucket.json
+# env: JIRA_API_TOKEN=fake-token
+# env: JIRA_BASE_URL=@${MNML_E2E_WORKSPACE}/jira.url
+# The hover's list survives the pane it opens. A chip published by a
+# `--values` poll lists the tickets behind the figure; the pane then
+# republishes that chip for itself every time its own listing lands,
+# and it used to send the figure ALONE — so the rows vanished the
+# moment somebody opened the pane and did not come back until the next
+# poll, five minutes later. The pane's publish now carries the same
+# rows, built off the listing it already holds.
+shell mkdir -p .mnml/ipc-zig
+shell "$MNML_FAKE_JIRA" --port 0 --url-file jira.url --life-secs 180 --quiet --pid-file fake-jira.pid --log-file wire.jsonl >/dev/null 2>&1 &
+wait 500
+write sdk/mnml-sdk/build.zig ""
+write integrations/jira/build.zig ""
+write integrations/jira/manifest.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } } }"
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"https://jira.invalid\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .rate = .{ .per_sec = 1000, .burst = 1000 }, .tabs = .{ .{ .name = \"Assigned\", .kind = .work_assigned } } }"
+command integrations.show_in_dev
+expect screen contains "INTEGRATIONS"
+drag 30 5 60 5
+key i
+expect screen contains "installed jira_work from"
+wait 1200
+# The ONE values run in this script: it is what puts the chip up in the
+# first place. Everything after it is the pane's own publishing.
+shell "$MNML_JIRA" --values --only work --workspace "$MNML_E2E_WORKSPACE" > values.json
+wait 700
+command view.toggle_hover_tooltip
+hover 73 38
+wait 300
+expect screen contains "open items assigned to me"
+expect screen contains "ENG-"
+# A press on a row opens the pane.
+click 74 35
+wait 3000
+expect screen contains "JIRA"
+# The pane has its listing now, and has republished the chip for
+# itself — with the rows on it. No second `--values` run in between.
+wait 9000
+hover 20 38
+wait 200
+hover 73 38
+wait 600
+expect screen contains "ENG-"
+expect screen contains "open items assigned to me"
+shell kill "$(cat fake-jira.pid)" 2>/dev/null || true
