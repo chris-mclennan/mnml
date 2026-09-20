@@ -489,7 +489,11 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
     // paths on a cloned repo, not for explicit invocations.
     const allow_shell = std.mem.eql(u8, env.get("MNML_E2E_ALLOW_SHELL") orelse "1", "1");
     const network = std.mem.eql(u8, env.get("MNML_E2E_NETWORK") orelse "0", "1");
-    const timeout: u64 = if (env.get("MNML_E2E_FILE_TIMEOUT_SECS")) |v| std.fmt.parseInt(u64, v, 10) catch 120 else 120;
+    // The default follows the build (`e2e.runner.debug_slowdown`): an
+    // unoptimized app needs the same multiple of wall clock the expect
+    // budget now gets, or a file is cut off mid-retry.
+    const default_timeout: u64 = e2e.runner.default_file_timeout_secs;
+    const timeout: u64 = if (env.get("MNML_E2E_FILE_TIMEOUT_SECS")) |v| std.fmt.parseInt(u64, v, 10) catch default_timeout else default_timeout;
     const heartbeat: u64 = if (env.get("MNML_E2E_HEARTBEAT_SECS")) |v| std.fmt.parseInt(u64, v, 10) catch 60 else 60;
     // `TMPDIR` is the POSIX spelling, `TEMP` / `TMP` Windows's.
     const tmp_root = env.get("TMPDIR") orelse env.get("TEMP") orelse env.get("TMP") orelse "/tmp";
