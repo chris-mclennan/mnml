@@ -3031,7 +3031,9 @@ test "overlays paint over the panes and win the hit test; the find bar docks at 
     for ("alpha") |c| try app.handle(.{ .key = app_mod.Key.char(c) });
     const with_bar = try screenText(&app);
     defer t.allocator.free(with_bar);
-    try t.expect(std.mem.indexOf(u8, with_bar, " Find ") != null);
+    // The find bar docks inside the pane, so the rail takes the cell
+    // its label used to be padded with: ` Find ` reads `▌Find `.
+    try t.expect(std.mem.indexOf(u8, with_bar, "▌Find ") != null);
     try t.expect(std.mem.indexOf(u8, with_bar, "alpha") != null);
     try t.expect(std.mem.indexOf(u8, with_bar, "match 1/2") != null);
     try t.expectEqual(@as(usize, 8), app.pane_rows);
