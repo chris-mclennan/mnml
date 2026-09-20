@@ -33,6 +33,7 @@ const statusline = @import("statusline.zig");
 const CommandError = command.CommandError;
 const launch_profiles = @import("launch_profiles.zig");
 const accent_color = @import("../ui/accent_color.zig");
+const pane_accent = @import("pane_accent.zig");
 const bufferline = @import("../ui/bufferline.zig");
 const Theme = @import("../ui/theme.zig");
 
@@ -328,7 +329,6 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
         app.panes.remove(id);
         return err;
     };
-    try assignAutoAccent(app, id);
     app.needs_render = true;
     return id;
 }
@@ -347,49 +347,20 @@ pub fn productOf(app: *const App, p: *const PtyPane) ?launch_profiles.Product {
     return null;
 }
 
-/// How many Claude panes sit before `id` in the store (Rust's
-/// `assign_auto_accent_color` counts every existing one when a pane
-/// opens; `set_session_color("none")` counts those before it).
-fn claudePanesBefore(app: *const App, id: PaneId) usize {
-    var n: usize = 0;
-    for (app.panes.slots.items, 0..) |*slot, i| {
-        if (i == id) break;
-        if (slot.*) |*pane| switch (pane.*) {
-            .pty => |*p| if (productOf(app, p) == .claude) {
-                n += 1;
-            },
-            else => {},
-        };
-    }
-    return n;
-}
-
-/// A new Claude session with no colour takes the palette slot of its
-/// position among the Claude panes open, wrapping (Rust
-/// `assign_auto_accent_color`). Every other pane keeps what it has.
+/// A pane with no colour takes the next free slot off the shared
+/// ladder. // changed (pane-rail): `PaneStore.add` does this for every
+/// pane it opens, whatever its kind — a shell is as much a pane as a
+/// Claude session, and telling two shells apart is the point. This
+/// stays as the way back after a colour was cleared.
 pub fn assignAutoAccent(app: *App, id: PaneId) Allocator.Error!void {
-    const p = app.panes.pty(id) orelse return;
-    if (p.accent_color != null) return;
-    if (productOf(app, p) != .claude) return;
-    p.accent_color = try app.gpa.dupe(u8, accent_color.auto(claudePanesBefore(app, id)));
+    try pane_accent.assign(app, id);
 }
 
-/// `name` becomes the pane's accent; the `none` sentinel clears it and a
-/// Claude pane re-derives its slot (Rust `set_session_color`). An
+/// `name` becomes the pane's accent; the `none` sentinel clears it and
+/// the pane takes the next free slot (Rust `set_session_color`). An
 /// unknown name is ignored.
 pub fn setAccent(app: *App, id: PaneId, name: []const u8) Allocator.Error!void {
-    const p = app.panes.pty(id) orelse return;
-    if (accent_color.isNone(name)) {
-        if (p.accent_color) |c| app.gpa.free(c);
-        p.accent_color = null;
-        try assignAutoAccent(app, id);
-    } else {
-        const canon = accent_color.canonical(name) orelse return;
-        const fresh = try app.gpa.dupe(u8, canon);
-        if (p.accent_color) |c| app.gpa.free(c);
-        p.accent_color = fresh;
-    }
-    app.needs_render = true;
+    try pane_accent.setName(app, id, name);
 }
 
 /// Anthropic's orange — one definition, in `ui/brand.zig`, shared with

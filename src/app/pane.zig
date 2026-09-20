@@ -41,6 +41,7 @@ const requests_pane = @import("requests.zig");
 const files_pane = @import("files_pane.zig");
 const zon_pane = @import("zon_pane.zig");
 const DocStore = @import("doc_store.zig").DocStore;
+const accent_color = @import("../ui/accent_color.zig");
 
 pub const PaneId = ids.PaneId;
 pub const Buffer = buffer_mod.Buffer;
@@ -318,6 +319,17 @@ pub const Pane = union(enum) {
         };
     }
 
+    /// // changed (pane-rail): this pane's rail wears somebody else's
+    /// identity colour rather than a slot off the shared ladder — an
+    /// integration's app colour, a repo's accent. It takes no ladder
+    /// slot, and `pane_accent.colorOf` paints it from the owner.
+    pub fn wearsOwnAccent(self: *const Pane) bool {
+        return switch (self.*) {
+            .mount, .integrations, .git_status, .diff, .git_graph => true,
+            else => false,
+        };
+    }
+
     /// `buffer.pin_toggle` set it: a pinned editor tab.
     pub fn pinned(self: *const Pane) bool {
         return switch (self.*) {
@@ -432,6 +444,14 @@ pub const PaneStore = struct {
     io: std.Io,
     slots: std.ArrayListUnmanaged(?Pane) = .empty,
     free: std.ArrayListUnmanaged(PaneId) = .empty,
+    /// // changed (pane-rail): the accent every pane that is not a pty
+    /// wears on its rail, by pane id — a palette name from
+    /// `ui/accent_color.zig`, owned here, dropped when the pane closes
+    /// so the colour is free for the next one. A pty keeps its own in
+    /// `PtyPane.accent_color`, which the SESSIONS surfaces and the
+    /// session file already read; `app/pane_accent.zig` is the one
+    /// accessor over both.
+    accents: std.ArrayListUnmanaged(?[]u8) = .empty,
 
     pub fn init(gpa: Allocator, io: std.Io) PaneStore {
         return .{ .gpa = gpa, .io = io };
@@ -439,19 +459,72 @@ pub const PaneStore = struct {
 
     pub fn deinit(self: *PaneStore) void {
         for (self.slots.items) |*slot| if (slot.*) |*p| p.deinit(self.gpa, self.io);
+        for (self.accents.items) |a| if (a) |name| self.gpa.free(name);
+        self.accents.deinit(self.gpa);
         self.slots.deinit(self.gpa);
         self.free.deinit(self.gpa);
     }
 
-    /// Takes ownership of `pane`.
+    /// The accent stored for a non-pty pane, a palette name; null when
+    /// it has none yet. Read through `app/pane_accent.zig`, never here.
+    pub fn accent(self: *const PaneStore, id: PaneId) ?[]const u8 {
+        if (id >= self.accents.items.len) return null;
+        return self.accents.items[id];
+    }
+
+    /// Give a non-pty pane an accent (null clears it). Takes a copy.
+    pub fn setAccent(self: *PaneStore, id: PaneId, name: ?[]const u8) Allocator.Error!void {
+        if (id >= self.slots.items.len) return;
+        const fresh: ?[]u8 = if (name) |n| try self.gpa.dupe(u8, n) else null;
+        errdefer if (fresh) |f| self.gpa.free(f);
+        while (self.accents.items.len <= id) try self.accents.append(self.gpa, null);
+        if (self.accents.items[id]) |old| self.gpa.free(old);
+        self.accents.items[id] = fresh;
+    }
+
+    /// Takes ownership of `pane`. // changed (pane-rail): the pane also
+    /// takes its rail colour here — the one place every kind is opened,
+    /// so no caller has to remember to ask for one.
     pub fn add(self: *PaneStore, pane: Pane) Allocator.Error!PaneId {
+        var p = pane;
         if (self.free.pop()) |id| {
-            self.slots.items[id] = pane;
+            try self.assignAccent(id, &p);
+            self.slots.items[id] = p;
             return id;
         }
         const id: PaneId = @intCast(self.slots.items.len);
-        try self.slots.append(self.gpa, pane);
+        try self.assignAccent(id, &p);
+        try self.slots.append(self.gpa, p);
         return id;
+    }
+
+    /// The rail colour a pane opens with: the first palette name no
+    /// live pane is wearing, so two terminals are never the same colour
+    /// while both are open (`accent_color.firstFree`). A pane that
+    /// already has one — a resumed session's remembered colour — keeps
+    /// it, and a pane that wears somebody else's identity (an
+    /// integration's app colour, a repo's) takes no ladder slot.
+    fn assignAccent(self: *PaneStore, id: PaneId, p: *Pane) Allocator.Error!void {
+        if (p.wearsOwnAccent()) return;
+        const current: ?[]const u8 = if (p.* == .pty) p.pty.accent_color else self.accent(id);
+        if (current != null) return;
+        const taken = try self.gpa.alloc(?[]const u8, self.slots.items.len);
+        defer self.gpa.free(taken);
+        var live: usize = 0;
+        for (self.slots.items, 0..) |*slot, i| {
+            taken[i] = null;
+            if (slot.*) |*other| {
+                live += 1;
+                if (other.wearsOwnAccent()) continue;
+                taken[i] = if (other.* == .pty) other.pty.accent_color else self.accent(@intCast(i));
+            }
+        }
+        const name = accent_color.firstFree(taken, live);
+        if (p.* == .pty) {
+            p.pty.accent_color = try self.gpa.dupe(u8, name);
+        } else {
+            try self.setAccent(id, name);
+        }
     }
 
     /// The id the next `add` will hand out — for a pane that must know
@@ -481,6 +554,12 @@ pub const PaneStore = struct {
         if (self.slots.items[id]) |*p| {
             p.deinit(self.gpa, self.io);
             self.slots.items[id] = null;
+            // The pane's rail colour goes back on the ladder for the
+            // next pane to take (`pane_accent.assign`).
+            if (id < self.accents.items.len) if (self.accents.items[id]) |a| {
+                self.gpa.free(a);
+                self.accents.items[id] = null;
+            };
             self.free.append(self.gpa, id) catch {};
         }
     }

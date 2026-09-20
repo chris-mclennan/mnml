@@ -263,6 +263,11 @@ pub const Dock = struct {
 pub const DiagStyle = enum { count, dot, off };
 pub const CoverageChipMode = enum { both, feature, code, ticker };
 pub const ExpandIndicator = enum { chevron, triangle };
+/// Which panes wear the one-cell colour rail down their left edge
+/// (`ui/pane_rail.zig`). `all` is every pane, so two terminals side by
+/// side are never the same colour; `sessions` is the older look, where
+/// only an AI session pane wore one; `off` paints none.
+pub const PaneRail = enum { all, sessions, off };
 pub const TabIndicator = enum { block, rule, line, quarter, quarter_track };
 pub const TopBarClusterMode = enum { auto, expanded, compact };
 /// `terminal` = follow the editing mode (see `ui.cursor_shape`).
@@ -471,6 +476,8 @@ pub const Ui = struct {
     terminal_label: []const u8 = "terminal",
     /// How a terminal pane draws its child's cursor.
     pty_cursor: PtyCursor = .{},
+    /// Which panes wear a colour rail down their left edge.
+    pane_rail: PaneRail = .all,
     /// The shape of the cursor mnml puts on the focused editor or text
     /// field. `terminal` — the default — follows the editing mode, as
     /// vim does: a block in NORMAL and VISUAL, a bar in INSERT (and in
