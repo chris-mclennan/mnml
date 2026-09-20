@@ -40,6 +40,16 @@
 //! row menu pins, moves, renames, opens the transcript, copies the id,
 //! deletes the transcript after a confirm.
 //!
+//! // changed (card-preview): a banner row is a picture, not a
+//! sentence — Claude's orange figure is drawn half from block glyphs
+//! and half from cells that carry only a background — so a line read
+//! off the grid carries its cells' colours (`CellColor`, `CardLine`)
+//! and `paintRow` paints it run by run in them, resolved through
+//! `pty_view.colorOf`, the same path `drawPty` takes. A cell whose
+//! colour is the terminal's default keeps the card's own ground and
+//! muted ink; a row the card synthesized has no cells behind it and
+//! paints flat, as it always did.
+//!
 //! Ended sessions — an exited pane past `ui.session_ended_grace_min`,
 //! and the scan's ended transcripts of this workspace — hide behind the
 //! header's history chip, which reads their count; a click (or `E`)
