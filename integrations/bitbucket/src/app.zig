@@ -2581,9 +2581,12 @@ test "the awaiting chip counts and filters what is waiting on MY review, off the
     try t.expectEqual(@as(usize, 1), r.app.values.?.reviews_pending);
     try t.expectEqual(@as(usize, 2), r.app.values.?.open_mine);
     // And each figure's tooltip names what is behind it.
-    try t.expectEqual(@as(usize, 2), r.app.values.?.open_titles.len);
-    try t.expectEqual(@as(usize, 1), r.app.values.?.awaiting_titles.len);
-    try t.expectEqualStrings("Bump the client timeout to 30s", r.app.values.?.awaiting_titles[0]);
+    try t.expectEqual(@as(usize, 2), r.app.values.?.open_items.len);
+    try t.expectEqual(@as(usize, 1), r.app.values.?.awaiting_items.len);
+    try t.expectEqualStrings("Bump the client timeout to 30s", r.app.values.?.awaiting_items[0].text);
+    // The row says where it lives — a title with no repo behind it
+    // still sends the reader into the pane to find out which one.
+    try t.expectEqualStrings("acme/api", r.app.values.?.awaiting_items[0].sub);
 }
 
 test "a click selects the row it lands on, a right-click opens its menu, the author chip toggles mine-only" {

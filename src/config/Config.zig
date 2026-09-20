@@ -51,6 +51,18 @@ integrations: Integrations = .{},
 workspaces: []const Workspace = &.{},
 marketplace: Marketplace = .{},
 scripts: Scripts = .{},
+statusline: Statusline = .{},
+
+// ─── statusline ──────────────────────────────────────────────
+
+pub const Statusline = struct {
+    /// How many of the things behind a figure the chip's hover lists
+    /// before the `… and N more` line. A figure counts something; the
+    /// hover is where the reader finds out WHAT, so the default is
+    /// generous enough for a normal day's pull requests. 0 turns the
+    /// list off and leaves the one-line hover every chip had.
+    hover_items: u8 = 8,
+};
 
 // ─── editor ──────────────────────────────────────────────────────────────
 

@@ -41,6 +41,9 @@ pub const Segment = struct {
     /// The hover text the publisher sent: what this number counts, and
     /// its breakdown. Null falls back to the generic line.
     tooltip: ?[]u8,
+    /// The things behind the figure, in the publisher's order — the
+    /// hover lists them. Empty leaves the one-line hover.
+    items: []Item,
 
     fn deinit(self: *Segment, gpa: Allocator) void {
         gpa.free(self.id);
@@ -48,6 +51,26 @@ pub const Segment = struct {
         if (self.color) |c| gpa.free(c);
         if (self.click_command) |c| gpa.free(c);
         if (self.tooltip) |c| gpa.free(c);
+        for (self.items) |*it| it.deinit(gpa);
+        gpa.free(self.items);
+    }
+};
+
+/// One of the things a figure counts: a pull request, a ticket, a
+/// pipeline. `text` is what it is, `sub` where it lives or how old it
+/// is, `command` what a click on the row runs.
+pub const Item = struct {
+    text: []u8,
+    sub: []u8,
+    command: ?[]u8,
+    args: [][]u8,
+
+    fn deinit(self: *Item, gpa: Allocator) void {
+        gpa.free(self.text);
+        gpa.free(self.sub);
+        if (self.command) |c| gpa.free(c);
+        for (self.args) |a| gpa.free(a);
+        gpa.free(self.args);
     }
 };
 
@@ -83,12 +106,14 @@ pub const State = struct {
             .min_width = s.min_width,
             .max_width = s.max_width,
             .tooltip = null,
+            .items = &.{},
         };
         errdefer fresh.deinit(gpa);
         fresh.text = try gpa.dupe(u8, s.text);
         if (s.color) |c| fresh.color = try gpa.dupe(u8, c);
         if (s.click_command) |c| fresh.click_command = try gpa.dupe(u8, c);
         if (s.tooltip) |c| fresh.tooltip = try gpa.dupe(u8, c);
+        fresh.items = try dupeItems(gpa, s.items);
         if (self.find(s.id)) |i| {
             self.segments.items[i].deinit(gpa);
             self.segments.items[i] = fresh;
@@ -152,7 +177,40 @@ pub const SegmentSpec = struct {
     max_width: u16 = 30,
     /// The hover text: what the number counts, and its breakdown.
     tooltip: ?[]const u8 = null,
+    /// The things behind the figure, for the hover to list.
+    items: []const ipc_command.SegmentItem = &.{},
 };
+
+/// The rows, gpa-owned. Partway through, every row already taken is
+/// freed — a half-built list must not reach a `Segment`.
+fn dupeItems(gpa: Allocator, src: []const ipc_command.SegmentItem) Allocator.Error![]Item {
+    if (src.len == 0) return &.{};
+    var out = try gpa.alloc(Item, src.len);
+    var n: usize = 0;
+    errdefer {
+        for (out[0..n]) |*it| it.deinit(gpa);
+        gpa.free(out);
+    }
+    while (n < src.len) : (n += 1) {
+        const it = src[n];
+        out[n] = .{ .text = undefined, .sub = undefined, .command = null, .args = &.{} };
+        out[n].text = try gpa.dupe(u8, it.text);
+        errdefer gpa.free(out[n].text);
+        out[n].sub = try gpa.dupe(u8, it.sub);
+        errdefer gpa.free(out[n].sub);
+        if (it.command) |c| out[n].command = try gpa.dupe(u8, c);
+        errdefer if (out[n].command) |c| gpa.free(c);
+        const args = try gpa.alloc([]u8, it.args.len);
+        var m: usize = 0;
+        errdefer {
+            for (args[0..m]) |a| gpa.free(a);
+            gpa.free(args);
+        }
+        while (m < it.args.len) : (m += 1) args[m] = try gpa.dupe(u8, it.args[m]);
+        out[n].args = args;
+    }
+    return out;
+}
 
 /// One segment as the statusline paints it. `text` is on the frame
 /// arena when it was truncated, else a view into `State`.
@@ -461,6 +519,7 @@ pub fn apply(app: *App, cmd: *const ipc_command.Command) Allocator.Error!bool {
             .min_width = s.min_width,
             .max_width = s.max_width,
             .tooltip = s.tooltip,
+            .items = s.items,
         }),
         .statusline_clear_segment => |id| _ = app.ipc_fx.clearSegment(app.gpa, id),
         .set_activity_badge => |b| try app.ipc_fx.setBadge(app.gpa, b.section, b.count),
@@ -510,6 +569,29 @@ test "segments: set replaces in place, clear removes, badges drop at zero" {
     try t.expectEqual(@as(u16, 5), st.segments.items[0].max_width);
     try t.expectEqualStrings("red", st.segments.items[1].color.?);
     try t.expectEqualStrings("file.save", st.segments.items[1].click_command.?);
+    // The rows are copied, not borrowed: the publisher's arena is gone
+    // by the time a hover paints them.
+    {
+        var text = [_]u8{ 'P', 'R', ' ', '1' };
+        var sub = [_]u8{ 'a', 'p', 'i' };
+        var arg = [_]u8{'x'};
+        var args = [_][]const u8{&arg};
+        try st.setSegment(t.allocator, .{ .id = "a", .text = "uno", .items = &.{
+            .{ .text = &text, .sub = &sub, .command = "bb.open", .args = &args },
+        } });
+        text[0] = '!';
+        sub[0] = '!';
+        arg[0] = '!';
+        try t.expectEqual(@as(usize, 1), st.segments.items[0].items.len);
+        try t.expectEqualStrings("PR 1", st.segments.items[0].items[0].text);
+        try t.expectEqualStrings("api", st.segments.items[0].items[0].sub);
+        try t.expectEqualStrings("bb.open", st.segments.items[0].items[0].command.?);
+        try t.expectEqualStrings("x", st.segments.items[0].items[0].args[0]);
+        // A later set with no rows drops the old ones rather than
+        // leaving a figure's hover listing last week's pull requests.
+        try st.setSegment(t.allocator, .{ .id = "a", .text = "uno", .max_width = 5 });
+        try t.expectEqual(@as(usize, 0), st.segments.items[0].items.len);
+    }
     try t.expect(st.clearSegment(t.allocator, "a"));
     try t.expect(!st.clearSegment(t.allocator, "a"));
     try t.expectEqualStrings("b", st.segments.items[0].id);

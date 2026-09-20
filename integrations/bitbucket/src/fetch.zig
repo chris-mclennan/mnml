@@ -161,6 +161,19 @@ pub const ReadinessResult = struct {
 /// four; three titles answer it where the pointer already is.
 pub const tooltip_titles: usize = 3;
 
+/// How many of the things behind a figure `--values` hands over for
+/// the statusline hover to list. The host caps again at
+/// `statusline.hover_items`; this is what the wire carries.
+pub const hover_items: usize = 8;
+
+/// One of the things behind a figure: a pull request. `sub` is where
+/// it lives and what state it is in — the hover paints it muted at
+/// the right of the row.
+pub const ValuesItem = struct {
+    text: []const u8,
+    sub: []const u8 = "",
+};
+
 pub const ValuesResult = struct {
     open_mine: usize = 0,
     unapproved_mine: usize = 0,
@@ -170,10 +183,12 @@ pub const ValuesResult = struct {
     /// Counted out of the same listing as `open_mine`: one BBQL asks
     /// for both sets, so the third figure costs no extra request.
     reviews_pending: usize = 0,
-    /// The top three by title behind each figure, newest first.
-    open_titles: []const []const u8 = &.{},
-    comment_titles: []const []const u8 = &.{},
-    awaiting_titles: []const []const u8 = &.{},
+    /// The pull requests behind each figure, newest first — the rows
+    /// the statusline hover lists, and the first few by name in the
+    /// one-line tooltip.
+    open_items: []const ValuesItem = &.{},
+    comment_items: []const ValuesItem = &.{},
+    awaiting_items: []const ValuesItem = &.{},
     /// Review threads across those pull requests that are still waiting
     /// on someone — not resolved and not replied to. Null when the
     /// count was not asked for (`review_cache` absent) or when every
@@ -848,8 +863,8 @@ pub const Worker = struct {
         // without a second listing.
         const Mine = struct { repo: []const u8, id: i64, updated_on: []const u8, title: []const u8 };
         var mine: std.ArrayList(Mine) = .empty;
-        var open_titles: std.ArrayList([]const u8) = .empty;
-        var awaiting_titles: std.ArrayList([]const u8) = .empty;
+        var open_items: std.ArrayList(ValuesItem) = .empty;
+        var awaiting_items: std.ArrayList(ValuesItem) = .empty;
         var awaiting: usize = 0;
         w.progress.set(0, @intCast(repos.len));
         for (repos, 0..) |slug, i| {
@@ -870,11 +885,14 @@ pub const Worker = struct {
                         if (std.mem.eql(u8, pr.author_id, me)) {
                             open += 1;
                             approved += @intFromBool(pr.approvalCount() > 0);
-                            if (open_titles.items.len < tooltip_titles) try open_titles.append(a, pr.title);
+                            if (open_items.items.len < hover_items) try open_items.append(a, .{
+                                .text = pr.title,
+                                .sub = try std.fmt.allocPrint(a, "{s}/{s} · {s}", .{ scope.workspace, slug, if (pr.approvalCount() > 0) "approved" else "unapproved" }),
+                            });
                             try mine.append(a, .{ .repo = slug, .id = pr.id, .updated_on = pr.updated_on, .title = pr.title });
                         } else if (pr.awaitingApproval(me)) {
                             awaiting += 1;
-                            if (awaiting_titles.items.len < tooltip_titles) try awaiting_titles.append(a, pr.title);
+                            if (awaiting_items.items.len < hover_items) try awaiting_items.append(a, .{ .text = pr.title, .sub = try std.fmt.allocPrint(a, "{s}/{s}", .{ scope.workspace, slug }) });
                         }
                     }
                 },
@@ -887,22 +905,25 @@ pub const Worker = struct {
             .unapproved_mine = open - approved,
             .approved_mine = approved,
             .reviews_pending = awaiting,
-            .open_titles = try open_titles.toOwnedSlice(a),
-            .awaiting_titles = try awaiting_titles.toOwnedSlice(a),
+            .open_items = try open_items.toOwnedSlice(a),
+            .awaiting_items = try awaiting_items.toOwnedSlice(a),
         };
         // The second figure, when a cache was handed over to pay for it.
         if (w.review_cache) |rc| {
             var unresolved: usize = 0;
             var counted: usize = 0;
             var live: std.ArrayList([]const u8) = .empty;
-            var comment_titles: std.ArrayList([]const u8) = .empty;
+            var comment_items: std.ArrayList(ValuesItem) = .empty;
             for (mine.items) |m| {
                 const k = try rc.key(scope.workspace, m.repo, m.id);
                 try live.append(a, k);
                 if (rc.get(k, m.updated_on)) |n| {
                     unresolved += n;
                     counted += 1;
-                    if (n > 0 and comment_titles.items.len < tooltip_titles) try comment_titles.append(a, m.title);
+                    if (n > 0 and comment_items.items.len < hover_items) try comment_items.append(a, .{
+                        .text = m.title,
+                        .sub = try std.fmt.allocPrint(a, "{s}/{s} · {d} waiting", .{ scope.workspace, m.repo, n }),
+                    });
                     continue;
                 }
                 var reply = try w.client.prComments(w.gpa, scope.workspace, m.repo, m.id);
@@ -913,7 +934,10 @@ pub const Worker = struct {
                         const n = model.unresolvedThreads(try model.parseComments(a, v));
                         unresolved += n;
                         counted += 1;
-                        if (n > 0 and comment_titles.items.len < tooltip_titles) try comment_titles.append(a, m.title);
+                        if (n > 0 and comment_items.items.len < hover_items) try comment_items.append(a, .{
+                            .text = m.title,
+                            .sub = try std.fmt.allocPrint(a, "{s}/{s} · {d} waiting", .{ scope.workspace, m.repo, n }),
+                        });
                         try rc.put(k, m.updated_on, n);
                     },
                     // One repo's comments failing is not a reason to
@@ -922,7 +946,7 @@ pub const Worker = struct {
                 }
             }
             rc.save(w.io, live.items);
-            out.comment_titles = try comment_titles.toOwnedSlice(a);
+            out.comment_items = try comment_items.toOwnedSlice(a);
             out.comment_hits = rc.hits;
             out.comment_requests = rc.misses;
             if (mine.items.len == 0 or counted > 0) out.unresolved_comments = unresolved;

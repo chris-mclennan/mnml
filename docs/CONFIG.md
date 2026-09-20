@@ -708,6 +708,11 @@ otherwise. Copy what you need; leave the rest out.
         .default_workspace_label = "", // "" reads as "cloud"
         .managed_agents_enabled = false,
     },
+
+    // ── statusline ─────────────────────────────────────────────────
+    .statusline = .{
+        .hover_items = 8, // how many things a figure's hover lists before `… and N more`; 0 lists none
+    },
 }
 ```
 

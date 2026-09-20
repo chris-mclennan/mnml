@@ -2253,6 +2253,7 @@ test "an integration chip's menu offers the requests behind its number, filtered
         .min_width = 0,
         .max_width = 0,
         .tooltip = null,
+        .items = &.{},
     });
     try openIntegrationSegmentMenu(&app, 0, 4, 1);
     var found: ?[]const u8 = null;

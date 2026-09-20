@@ -1,0 +1,16 @@
+# A statusline figure's hover lists what the figure counts. The ⚠1
+# after the file name is one warning; the hover says which one, at
+# which line, rather than sending the reader to the panel to find out.
+write src/main.fk "fn foo() {\n  let x = 1;  \n  foo(x); // TODO later\n}\nfn bar() { foo(); }\n"
+write .fkroot ""
+write .mnml/config.zon .{ .lsp = .{ .fake = .{ .cmd = "$MNML_FAKE_LSP", .args = .{ "--log", "lsp.log" }, .extensions = .{ "fk" }, .root_markers = .{ ".fkroot" } } } }
+open src/main.fk
+expect screen contains "LSP 1"
+expect screen contains "main.fk ⚠1"
+command view.toggle_hover_tooltip
+# The ⚠ chip on the statusline (row 38), after ` EDIT ` and ` main.fk `.
+hover 19 38
+wait 300
+expect screen contains "Diagnostics in this file"
+expect screen contains "unresolved TODO"
+expect screen contains "warning 3"
