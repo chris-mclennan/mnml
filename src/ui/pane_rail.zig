@@ -59,6 +59,25 @@ pub fn draw(ui: Ui, rect: Rect, color: Color) void {
     while (y < rect.h) : (y += 1) _ = ui.putStr(rect.x, rect.y + y, width, g, style);
 }
 
+/// Paint the rail INTO a column the pane has already drawn: the
+/// editor's gutter opens with a sign column that is blank on almost
+/// every line, so the rail goes there and not one cell of the file
+/// moves. A cell that is not blank keeps what it has — a diagnostic
+/// sign is an alarm, and decoration never hides one — and the cell's
+/// own background is kept, so the cursor line's band runs under the
+/// rail unbroken.
+pub fn drawOver(ui: Ui, rect: Rect, color: Color) void {
+    if (rect.w < 2 or rect.h == 0) return;
+    const g = glyph(ui.ascii);
+    var y: u16 = 0;
+    while (y < rect.h) : (y += 1) {
+        const cell = ui.canvas.screen.readCell(rect.x, rect.y + y) orelse continue;
+        const ch = cell.char.grapheme;
+        if (ch.len != 0 and !std.mem.eql(u8, ch, " ")) continue;
+        _ = ui.putStr(rect.x, rect.y + y, width, g, Theme.withFg(cell.style, color));
+    }
+}
+
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
@@ -112,4 +131,25 @@ test "a rail with no room to spare paints nothing rather than eating the content
     defer f.deinit();
     draw(f.ui(), Rect.init(0, 0, 1, 2), f.theme.palette.red);
     try testing.expect(!std.mem.eql(u8, list_panel.marker_glyph, f.cell(0, 0).char.grapheme));
+}
+
+test "drawOver fills the blank cells of a column it shares, keeps their ground, and never hides a glyph" {
+    var f = try Fixture.init(12, 4);
+    defer f.deinit();
+    const ui = f.ui();
+    // A pane that has already painted: a banded row, and a sign on one line.
+    ui.fill(f.full(), f.theme.bg);
+    ui.fill(Rect.init(0, 1, 12, 1), f.theme.cursor_line);
+    _ = ui.putStr(0, 2, 1, "E", f.theme.bg);
+    drawOver(ui, f.full(), f.theme.palette.orange);
+    // Blank cells take the rail, in the accent.
+    try testing.expectEqualStrings(list_panel.marker_glyph, f.cell(0, 0).char.grapheme);
+    try testing.expect(vaxis.Color.eql(f.cell(0, 0).style.fg, f.theme.palette.orange));
+    // The banded row keeps its ground under the rail.
+    try testing.expectEqualStrings(list_panel.marker_glyph, f.cell(0, 1).char.grapheme);
+    try testing.expect(f.bgEql(0, 1, f.theme.cursor_line));
+    // The sign wins its cell.
+    try testing.expectEqualStrings("E", f.cell(0, 2).char.grapheme);
+    // And nothing was painted one cell in.
+    try testing.expect(!std.mem.eql(u8, list_panel.marker_glyph, f.cell(1, 0).char.grapheme));
 }

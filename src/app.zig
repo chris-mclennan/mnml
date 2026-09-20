@@ -3107,6 +3107,8 @@ test {
     _ = @import("app/watch.zig");
     _ = @import("ui/pty_view.zig");
     _ = @import("ui/accent_color.zig");
+    _ = @import("ui/pane_rail.zig");
+    _ = @import("app/pane_accent.zig");
     _ = @import("app/ai.zig");
     _ = @import("app/agents.zig");
     _ = @import("app/sessions_table.zig");

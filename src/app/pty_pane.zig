@@ -1199,7 +1199,7 @@ fn rectsOf(app: *App, id: PaneId) Rects {
     return out;
 }
 
-test "the accent: a new Claude session takes the next palette slot, a shell none; the user's pick wins, Auto re-derives, an unknown name is ignored" {
+test "the accent: every new pane takes the first free palette slot, a shell included; the user's pick wins, Auto takes a free slot again, an unknown name is ignored" {
     // A POSIX shell script stands in for the CLI.
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     var tmp = t.tmpDir(.{});
@@ -1216,17 +1216,20 @@ test "the accent: a new Claude session takes the next palette slot, a shell none
     const c2 = try open(&app, .{ .argv = &.{shim}, .label = "claude", .kind = .command, .placement = .tab });
     const sh = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "sleep 30" }, .label = "sh", .kind = .command, .placement = .tab });
     const c3 = try open(&app, .{ .argv = &.{shim}, .label = "claude", .kind = .command, .placement = .tab });
-    // The auto slots, in the palette's order; the shell has none.
+    // // changed (pane-rail): the ladder is handed out in its order to
+    // every pane that opens, Claude session or shell — two terminals
+    // open at once are never the same colour.
     try t.expectEqualStrings("green", app.panes.pty(c1).?.accent_color.?);
     try t.expectEqualStrings("blue", app.panes.pty(c2).?.accent_color.?);
-    try t.expect(app.panes.pty(sh).?.accent_color == null);
-    try t.expectEqualStrings("yellow", app.panes.pty(c3).?.accent_color.?);
+    try t.expectEqualStrings("yellow", app.panes.pty(sh).?.accent_color.?);
+    try t.expectEqualStrings("orange", app.panes.pty(c3).?.accent_color.?);
     try t.expect(productOf(&app, app.panes.pty(c1).?) == .claude);
     try t.expect(productOf(&app, app.panes.pty(sh).?) == null);
-    try t.expect(accentOf(&app, app.panes.pty(sh).?, &app.theme) == null);
+    try t.expect(Theme.Color.eql(accentOf(&app, app.panes.pty(sh).?, &app.theme).?, app.theme.palette.yellow));
     try t.expect(Theme.Color.eql(accentOf(&app, app.panes.pty(c2).?, &app.theme).?, app.theme.palette.blue));
-    // The user's pick wins; Auto re-derives the slot from the position;
-    // an unknown name changes nothing.
+    // The user's pick wins; Auto gives the pane the first colour
+    // nobody else is wearing (blue is free the moment it lets go of
+    // it); an unknown name changes nothing.
     try setAccent(&app, c2, "red");
     try t.expectEqualStrings("red", app.panes.pty(c2).?.accent_color.?);
     try t.expect(Theme.Color.eql(accentOf(&app, app.panes.pty(c2).?, &app.theme).?, app.theme.palette.red));
@@ -1234,21 +1237,25 @@ test "the accent: a new Claude session takes the next palette slot, a shell none
     try t.expectEqualStrings("red", app.panes.pty(c2).?.accent_color.?);
     try setAccent(&app, c2, accent_color.none);
     try t.expectEqualStrings("blue", app.panes.pty(c2).?.accent_color.?);
-    // A shell given a colour keeps it (Rust lets any pty be coloured);
-    // Auto on a shell is nothing, not a slot.
+    // A shell takes a pick like any other pane, and Auto puts it back
+    // on the ladder rather than leaving it colourless.
     try setAccent(&app, sh, "pink");
     try t.expectEqualStrings("pink", app.panes.pty(sh).?.accent_color.?);
     try setAccent(&app, sh, accent_color.none);
-    try t.expect(app.panes.pty(sh).?.accent_color == null);
-    // Opening with a remembered colour keeps it over the auto slot; a
+    try t.expectEqualStrings("yellow", app.panes.pty(sh).?.accent_color.?);
+    // Opening with a remembered colour keeps it over the free slot; a
     // bogus one falls back to the slot.
     const c4 = try open(&app, .{ .argv = &.{shim}, .label = "claude", .kind = .command, .placement = .tab, .accent_color = "purple" });
     try t.expectEqualStrings("purple", app.panes.pty(c4).?.accent_color.?);
     const c5 = try open(&app, .{ .argv = &.{shim}, .label = "claude", .kind = .command, .placement = .tab, .accent_color = "bogus" });
     try t.expectEqualStrings("red", app.panes.pty(c5).?.accent_color.?);
+    // A closed pane gives its colour back: the next pane to open takes it.
+    try app.closePane(c5, true);
+    const c6 = try open(&app, .{ .argv = &.{shim}, .label = "claude", .kind = .command, .placement = .tab });
+    try t.expectEqualStrings("red", app.panes.pty(c6).?.accent_color.?);
 }
 
-test "the identity strip: a Claude pane's left column is the `▌` in its accent and its tab glyph is the same colour; a shell's grid starts at the edge" {
+test "the pane rail: a pane's left column is the `▌` in its accent, its grid is a cell narrower, and its tab glyph is the same colour — a shell's too" {
     // A POSIX shell script stands in for the CLI.
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     var tmp = t.tmpDir(.{});
@@ -1280,20 +1287,25 @@ test "the identity strip: a Claude pane's left column is the `▌` in its accent
     const tab = r1.tab orelse return error.TestUnexpectedResult;
     const glyph = app.screen.readCell(tab.x + 1, tab.y).?;
     try t.expect(Theme.Color.eql(glyph.style.fg, app.theme.palette.blue));
-    // A shell: no strip, the grid at the edge, the glyph in its stock colour.
+    // // changed (pane-rail): a shell wears one too, in the slot it
+    // took when it opened — that is the whole point, two terminals you
+    // can tell apart. Its grid is a cell narrower, like the session's.
     const sh = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "sleep 30" }, .label = "sh", .kind = .command, .placement = .tab });
     try app.render();
     const r2 = rectsOf(&app, sh);
     const pane2 = r2.pane orelse return error.TestUnexpectedResult;
-    var yy: u16 = pane2.y;
+    const shell_accent = accentOf(&app, app.panes.pty(sh).?, &app.theme) orelse return error.TestUnexpectedResult;
+    try t.expect(!Theme.Color.eql(shell_accent, app.theme.palette.blue));
+    var yy: u16 = pane2.y + 1;
     while (yy < pane2.y + pane2.h) : (yy += 1) {
         const edge = app.screen.readCell(pane2.x, yy).?;
-        try t.expect(!std.mem.eql(u8, edge.char.grapheme, "\u{258c}"));
+        try t.expectEqualStrings("\u{258c}", edge.char.grapheme);
+        try t.expect(Theme.Color.eql(edge.style.fg, shell_accent));
     }
-    try t.expectEqual(pane2.w, app.panes.pty(sh).?.cols);
+    try t.expectEqual(pane2.w - 1, app.panes.pty(sh).?.cols);
     const tab2 = r2.tab orelse return error.TestUnexpectedResult;
     const glyph2 = app.screen.readCell(tab2.x + 1, tab2.y).?;
-    try t.expect(!Theme.Color.eql(glyph2.style.fg, app.theme.palette.blue));
+    try t.expect(Theme.Color.eql(glyph2.style.fg, shell_accent));
 }
 
 test "a shell pane reads `<terminal> (<shell>)`; its tab wears mnml's own terminal mark, and so does a command pane" {

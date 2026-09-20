@@ -1616,9 +1616,11 @@ pub fn drawPaneContent(app: *App, ui: Ui, id: PaneId, full_rect: Rect) Allocator
     // blank on most lines, so the rail goes in that cell and nothing
     // on screen moves (`editor_view.Doc.rail`).
     const rail = pane_accent.railColorOf(app, id, ui.theme);
-    const inset = rail != null and pane.* != .editor;
+    const shares_gutter = pane.* == .editor and app.cfg.ui.line_numbers;
+    const inset = rail != null and !shares_gutter;
     const rect = pane_rail.body(full_rect, inset);
     if (rail) |c| if (inset) pane_rail.draw(ui, full_rect, c);
+    defer if (rail) |c| if (shares_gutter) pane_rail.drawOver(ui, full_rect, c);
     switch (pane.*) {
         .editor => |*e| try drawEditor(app, ui, id, e, rect),
         .outline => |*o| {
