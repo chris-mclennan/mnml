@@ -422,6 +422,12 @@ pub const Stub = struct {
             .right_panel_active_idx = 0,
             .panes = if (self.has_editor) try a.dupe(screen_mod.PaneStatus, &.{.{ .title = title, .dirty = self.dirty_flag orelse false }}) else &.{},
             .quit = self.quit,
+            // The stub's screen is a real one, so it answers the
+            // geometry keys honestly. It has no pixels, so `cell_*_px`
+            // stays zero and a host refuses to click rather than
+            // clicking a guessed spot.
+            .cols = self.screen.width,
+            .rows = self.screen.height,
         };
     }
     fn vRectsJson(_: *anyopaque, a: Allocator) Error![]u8 {
