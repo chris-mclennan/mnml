@@ -423,6 +423,26 @@ otherwise. Copy what you need; leave the rest out.
         // repository; `~` expands, a relative path sits under the repository.
         .default_worktree_root = null,
         .inline_suggestions = true,
+        // Which backend answers a ghost-text request. Not a typed field —
+        // ai.setup_suggestions writes it and a runtime override wins for the
+        // session. "claude-code" (your Max/Pro plan, via `claude -p`),
+        // "claude-api" ($ANTHROPIC_API_KEY), "local" (not in this release).
+        .suggest_backend = "claude-code",
+        // The model ghost text asks, and ONLY ghost text — the panes and the
+        // agents keep .model. It defaults to a fast one: a suggestion is worth
+        // having only if it beats you to the next token, so the trade the rest
+        // of the app makes (the best model, however long it takes) is the wrong
+        // one here.
+        .suggest_model = "claude-haiku-4-5",
+        // Idle time after your last keystroke before a request goes out
+        // (50..5000, clamped). Lower feels eager and spends more; higher waits
+        // out a typing burst.
+        .suggest_idle_ms = 300,
+        // The wall-clock budget one request gets (500..120000, clamped). Past
+        // it the child is killed, the statusline chip turns to ! and :messages
+        // says `timeout`. An answer that arrives after four seconds is for a
+        // cursor that has moved on.
+        .suggest_timeout_ms = 4000,
         .claude_show_all_accounts = false,
         // How the statusline's Claude chip shows several accounts: .off = the
         // active one alone, .compact = a sparkline block per account, .ticker =
