@@ -26,4 +26,4 @@ expect color 0 21 fg #61afef
 expect color 0 2 fg not #61afef
 expect color 0 21 fg not #98c379
 # It runs the pane's full height, not just its first row.
-expect color 0 19 fg #98c379
+expect color 0 17 fg #98c379
