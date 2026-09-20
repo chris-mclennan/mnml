@@ -29,7 +29,7 @@ line), not by hand.
 | Language intelligence (LSP) | 33 | 0 | 0 | 0 | 33 |
 | Git | 47 | 0 | 2 | 0 | 49 |
 | TODOs, notes & findings | 22 | 0 | 0 | 0 | 22 |
-| AI | 30 | 0 | 1 | 0 | 31 |
+| AI | 34 | 0 | 1 | 0 | 35 |
 | Terminal & process panes | 15 | 0 | 0 | 0 | 15 |
 | Dock widgets | 13 | 0 | 0 | 0 | 13 |
 | HTTP request client | 48 | 0 | 1 | 0 | 49 |
@@ -40,7 +40,7 @@ line), not by hand.
 | Workspace trust | 11 | 0 | 0 | 0 | 11 |
 | Headless, IPC & extensibility | 56 | 0 | 2 | 0 | 58 |
 | Languages | 6 | 0 | 0 | 0 | 6 |
-| **total** | **547** | **0** | **9** | **0** | **556** |
+| **total** | **551** | **0** | **9** | **0** | **560** |
 
 The first ledger (at `de423c5`) printed 278 / 36 / 10 / 149 of 473; the
 same script over that file counts 279 / 36 / 10 / 149 of 474 — the old
@@ -454,10 +454,14 @@ trust sink. Each row names its file and its test.
 | Backend — Messages API + read-only tool loop | done | `src/ai/api_client.zig`, `agentLoop` | |
 | Config knobs — backend / model / prompt / cap | done | `Config.Ai`, `ai.show_config` | |
 | Ghost text — API backend | done | `src/ai/suggest.zig`, `drawGhost` in `render.zig` | |
+| Ghost text — a visible state | done | `src/app/ghost_chip.zig` — a statusline chip in the AI segment area: nothing while idle or while a suggestion shows, `…` armed, the app's spinner + the elapsed in flight, `∅` for 2 s on an empty answer, `!` for 5 s on a failure; click picks the backend, right-click is the ghost-text menu, hover names the backend and the last latency | mnml-zig's own — Rust ghost text had no state at all, which is what made a slow backend indistinguishable from a broken one; `tests/e2e/ai_ghost_observe.test` |
+| Ghost text — one `:messages` line per request | done | `logLine` in `ghost_chip.zig`; `ai.suggestion_stats` grows a mean latency and the last five outcomes | `ghost-text: claude-code · 2.3s · 41 chars` / `· empty` / `· error: …` / `· timeout` / `· cancelled (typed)`; recorded, never toasted |
+| Ghost text — `status.json` `"ghost"` | done | `statusOf` in `src/app/driver.zig`, `src/ipc/screen.zig` | `idle` \| `armed` \| `inflight` \| `shown` \| `empty` \| `error`, so a `.test` can watch a request without a screen assertion |
+| Ghost text — latency: a fast model, a budget, a cancel that kills the child | done | `suggestModel` + `suggestWorker` in `ai.zig`, `cli.runWithin`, `[ai] suggest_model` / `suggest_timeout_ms` / `suggest_idle_ms` | `--model` now reaches `claude -p` too (it was built and dropped); typing cancels the flight on its own `Io.Group`, which unwinds `std.process.run`'s `defer child.kill`; `tests/e2e/ai_ghost_timeout.test`, `ai_ghost_cancel.test` |
 | Ghost text — local FIM model | cut | `ai.zig` header; `suggest_backend = local` toasts the migration note | |
 | Opt-in via the first-launch wizard | done | `src/app/first_launch.zig` (the AI ghost-text section), `src/app/first_launch_install.zig` (the Claude Code + Codex section's Space: the vendors' `curl … \| sh` installers — `irm \| iex` on Windows — for whichever is missing, in an `install: ai clis` pane; the rows re-detect on its exit and the wizard returns with them) | the rows are Rust's badge rows; a line says the top-right chip appears when the CLI is found; `tests/e2e/first_launch_ai_cli_install.test` |
 | Opt-in via `ai.setup_suggestions` | done | `ai.zig` | |
-| Opt-in via Settings → AI | done | `Section.ai` in `src/app/settings.zig` — ghost text, ghost-text backend (a virtual row over `ai.extra` + the setup picker's override), Claude / Codex backend (`ai.routing.*.backend`, optional enums: `unset` first), Claude meter | the model stays `ai.model` in the config — free text, and v1 rows are discrete choices (the family idiom); `tests/e2e/settings_ai_section.test` |
+| Opt-in via Settings → AI | done | `Section.ai` in `src/app/settings.zig` — ghost text, ghost-text backend (a virtual row over `ai.extra` + the setup picker's override), the ghost-text idle and budget (number rows over the typed `ai.suggest_idle_ms` / `suggest_timeout_ms`), Claude / Codex backend (`ai.routing.*.backend`, optional enums: `unset` first), Claude meter | the model stays `ai.model` in the config — free text, and v1 rows are discrete choices (the family idiom); `tests/e2e/settings_ai_section.test` |
 | Secret-bearing files never sent | done | `isSecretBearing` in `suggest.zig` | |
 | Context-aware chat | done | `chatCmd` in `ai.zig` | |
 | Launch profiles | done | `src/app/launch_profiles.zig`, `Config.Ai.launch_profiles` / `default_profile` | the chip menu's *New session:* / *Default:* lanes; the `mnml-ai-<name>` shim (`writeShim`); both keys are exec-bearing (`Sink.launch_profile`), as Rust's `pty_pane.rs` refused an untrusted workspace's launcher |
