@@ -428,3 +428,164 @@ file that declared its own size was evaluated once and discarded.
 Thirty-three checks across four corpus files had never been read, and
 two of the four were wrong. Fixed in `730f680`, which is why this pass
 could capture the 80×24 half of the table at all.
+
+## 6. After O1–O5 — the five decisions, taken
+
+The user took all five. What §4 listed as recommendations is now
+shipped, and §2's D7, D9, D10 and D11 are closed with them.
+
+### O1 — the row's action buttons
+
+The user's rule, and it is neither of the two the panes had:
+
+> we always reduce to icon when tight on space and when more available
+> we do icon and label.
+
+So the buttons are on every row that has them, at every width, and
+what the width decides is how much of themselves they show.
+
+```
+140+   ▌    #1234   OPEN   …   Fix the login redirect   [󰏌 Open] [󰘭 Merge]
+80/120 ▌    #1234   OPEN   …   Fix the login redir 󰏌 󰘭
+```
+
+```
+140+   ▌       OPEN   …  Follow-up: trim the whitespace   [󰏌 Open] [ Review] [󰘭 Merge]
+80     ▌       OPEN   …  Follow-up: tr…  󰏌    󰘭
+```
+
+`sdk.pane.action.formFor` picks the widest form that still leaves
+`text_floor` (16) cells of the text column for the row's own words,
+and below that the run reduces to its glyphs and never past them.
+`[󰏌 Open]` is exactly as wide as the `[ Open ]` it replaces, so no row
+got narrower for growing a glyph.
+
+One glyph per KIND, not one per word, so the set is four and both
+families wear the same four — `󰏌` navigation, `` review, ``
+dispatch, `󰘭` final — each with an ascii twin (`>` `?` `*` `&`), and
+`zig build glyph-audit` now walks the SDK so a fifth cannot arrive
+without one.
+
+What this cost, and it is the trade the decision names: the forge
+pane's TITLE column gives up cells it used to keep. At 120 columns
+`Fix the login redirect` is now `Fix the login redir`. A clipped title
+with a reachable action beats a whole title with none — and the
+alternative the audit measured was no buttons at all at either of the
+two sizes the corpus runs at.
+
+The hover names the action when the glyph is all there is
+(`action.hoverText`), and both panes read the FORM off the painted hit
+rect — one cell wide IS the icon form — so nothing has to be
+remembered between frames.
+
+### O2 — the gutter under a board (closes D9)
+
+The board starts one cell in and the stripe runs the whole height. The
+bad-scope error screen already had it (fixed between the audit's
+capture and this pass); it is now asserted rather than assumed.
+
+### O3 — the statusline figure (closes D10)
+
+The standard, written into `docs/SDK.md`: **one named figure per
+segment, plus a bracketed subset only when the pane genuinely has
+one.** The bracket is a subset OF the figure beside it, never a second
+count; a pane with two things to say publishes two segments.
+
+Bitbucket keeps `󰂨 12(11)`. Jira stays `󰌃 43` — a tracker has no
+subset of "assigned to me" it can name, and `43(2)` invented for
+symmetry would be a number nobody could believe.
+
+`sdk.pane.figure` makes it true by construction (one `n`, one optional
+`subset`) and `figure.check` makes it true of a string, which is what
+`expect.statuslineFigure` asserts from both suites.
+
+### O4 — the build line's door (closes D7)
+
+Not the layout, the HIT — which is what the audit recommended, and it
+turned out to be worth more than recorded: **neither** pane opened the
+run when you clicked a build line. The tracker pane's free row and the
+forge pane's table cell both fell through to the generic row hit,
+which selects. The line read as a link in two panes and behaved as one
+in neither.
+
+`sdk.pane.buildHit` is the one rect both register — the whole line,
+indent and trailing air included, clipped at the first column the pane
+does not own. The forge pane calls it itself after its table paints;
+the map's last-painted-wins rule puts the door over the row. The page
+is `sdk.pane.build.pageUrl` on both sides now (the forge pane had two
+copies of the same string).
+
+### O5 — actionable toasts (closes D11)
+
+In the wire before the pane, as recommended. `wire.toast` gains an
+optional `action`: a label, and either a command id the host runs or a
+page it opens. Protocol 2 → 3.
+
+The field defaults to none and the encoder omits it, so a sibling
+built against 2 is unchanged on the wire; the version is bumped
+anyway, because a sibling that NEEDS the button can now refuse a host
+below 3 rather than posting a message with nothing to press.
+
+Neither door is a free hand. `command` is an id the host already knows
+— its own, or one the integration registered — resolved through the
+registry a key or the palette uses; a sibling cannot name a shell
+line. `url` is a page and the host applies its own http(s) rule.
+Exactly one of the two.
+
+Both cases the audit named are in use:
+
+```
+  Bitbucket PRs: merge finished: api#1234     [ Open PR ]
+  Bitbucket PRs: error: 2 repos errored       [ Retry ]
+```
+
+A `command` offer carries the pane that made it and focuses it before
+running, so a `Retry` lands on the pane that failed rather than on
+whichever one is in front. `integrations.retry_refresh` is the host
+command behind it: it sends `r`, the refresh key every pane in the
+family binds, to the focused integration pane. Command-id pins 1100 →
+1101.
+
+### The table, after O1–O5
+
+| # | Standard element | Jira Work | Jira Boards | Jira FixV | BB PRs | BB Pipelines |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2 | App-colour left gutter | ✓ | ~ → ✓ | ✓ | ✓ | ✓ |
+| 19 | Action buttons | ✓ | ✓ | ✓ | ~ → ✓ | n/a |
+| 22 | Build lines under a PR row | ✓ | ✓ | ✓ | ~ → ✓ | n/a |
+| 25 | Actionable toasts | ✗ → ✓ | ✗ → ✓ | ✗ → ✓ | ✗ → ✓ | ✗ → ✓ |
+| 28 | Statusline figures | ~ → ✓ | ~ → ✓ | ~ → ✓ | ✓ | ✓ |
+
+Row 19 changed meaning as well as score: it used to read "the word is
+in its role colour", which both families already did. It now reads
+"the buttons are there, in the form the row can afford".
+
+### The guards
+
+The same three shapes as §5:
+
+1. `sdk.pane.expect` gained `actionRun`, `gutterFullHeight`,
+   `buildLineHit` and `statuslineFigure` — four assertions, in the
+   SDK, called from BOTH integration suites;
+2. unit tests on `std.testing.allocator` for the width ladder
+   (`action.zig`), the statusline rule (`figure.zig`), the build hit
+   (`hit.zig`) and the wire codec (`wire.zig`);
+3. four `.test` scripts really mounted against the fakes —
+   `integrations_row_buttons_narrow.test` (`# width: 80`) and
+   `integrations_row_buttons_wide.test` (`# width: 140`) on both
+   families, `integrations_jira_boards_gutter.test`, and
+   `integrations_toast_action.test`, which kills the service under the
+   pane (a short `--lifetime-secs`, so nothing is killed by name) and
+   presses `R`.
+
+Each was break-checked: the fix reverted on a scratch copy, the
+failure read, the file restored from the copy rather than from git.
+
+### What is NOT covered by an e2e
+
+The merge half of O5 — `Open PR` after a merge session ends — needs a
+real Claude Code session to produce the `session_state` edge the toast
+hangs off, which the headless harness cannot make. It is asserted by a
+unit test in each pane's own suite instead (the effect carries the
+`Open PR` offer with the pull request's URL), and the `Retry` half is
+what the e2e drives end to end.

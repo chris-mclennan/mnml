@@ -1,0 +1,70 @@
+# width: 140
+# height: 24
+# The other half of the ladder: with room, a row's buttons wear their
+# GLYPH AND their WORD — `[󰏌 Open] [󰘭 Merge]`, the word in the colour
+# of what pressing it costs and the brackets muted. Both families, at a
+# width where the text column can spare the cells.
+#
+# 140 is the crossing point the width ladder picks for a two-button row
+# with a 16-cell text floor (`sdk.pane.action.formFor`); the narrow half
+# of this pair runs the same panes at 80.
+# env: JIRA_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/jira-bucket.json
+# env: JIRA_API_TOKEN=fake-token
+# env: JIRA_BASE_URL=@${MNML_E2E_WORKSPACE}/jira.url
+# env: MNML_MARKETPLACE_LOCAL=market
+# env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/bitbucket.zon
+# env: BITBUCKET_BASE_URL=@${MNML_E2E_WORKSPACE}/bb.url
+# env: BITBUCKET_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/bucket.json
+# env: BITBUCKET_API_TOKEN=corpus-read-token
+# env: MNML_WORKSPACE=${MNML_E2E_WORKSPACE}
+shell "$MNML_FAKE_JIRA" --port 0 --url-file jira.url --life-secs 240 --quiet --pid-file fake-jira.pid >/dev/null 2>&1 &
+shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --lifetime-secs 240 >/dev/null 2>&1 &
+wait 600
+
+# ── the tracker pane ─────────────────────────────────────────────────
+write sdk/mnml-sdk/build.zig ""
+write integrations/jira/build.zig ""
+write integrations/jira/manifest.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } } }"
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"https://jira.invalid\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .rate = .{ .per_sec = 1000, .burst = 1000 }, .tabs = .{ .{ .name = \"My open work items\", .kind = .work_open } } }"
+command integrations.show_in_dev
+expect screen contains "INTEGRATIONS"
+key i
+expect screen contains "installed jira_work from"
+wait 1200
+command integrations.open_as_tab
+command jira_work.open
+wait 9000
+command view.toggle_tree
+command view.focus_pane
+expect screen contains "JIRA WORK"
+# The tracker's ticket rows carry a dispatch button, glyph and word.
+expect screen contains "[ Review]"
+
+key q
+wait 500
+key x
+expect screen lacks "JIRA WORK"
+
+# ── the forge pane ───────────────────────────────────────────────────
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 0, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs } } }"
+write market/bitbucket_prs.zon ".{ .id = \"bitbucket_prs\", .label = \"Bitbucket PRs\", .version = \"0.2.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .args = .{ \"--only\", \"prs\" }, .description = \"Bitbucket: open pull requests\", .chip = .{ .glyph = \"\u{f00a8}\", .fallback = \"BP\", .color = \"blue\", .in_palette_bar = false }, .commands = .{ .{ .id = \"bitbucket_prs.open\", .title = \"Bitbucket PRs: open\" } } }"
+command integrations.show_marketplace
+expect screen contains "Mkt (1)"
+key i
+expect screen contains "installed bitbucket_prs"
+command integrations.open_as_tab
+command bitbucket_prs.open
+# The marketplace panel re-opened the sidebar; the corpus lays its
+# screens out at full width.
+command view.toggle_tree
+command view.focus_pane
+wait 6000
+expect screen contains "BITBUCKET PRS"
+key j
+key j
+expect screen contains "[󰏌 Open]"
+expect screen contains "[󰘭 Merge]"
+key q
+wait 500
+key x
+expect screen lacks "BITBUCKET PRS"

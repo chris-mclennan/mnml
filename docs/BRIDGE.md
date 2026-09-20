@@ -17,7 +17,7 @@ file as `src/bridge/wire.zig`). Every example below is what
    | variable | value |
    |---|---|
    | `MNML_MOUNT_SOCKET` | the socket path |
-   | `MNML_PROTOCOL` | `2` |
+   | `MNML_PROTOCOL` | `3` |
    | `MNML_WORKSPACE` | the workspace, absolute |
    | `MNML_THEME` | the theme's name (`onedark`) |
    | `MNML_IPC_DIR` | the file-IPC channel (tier 2, see below) |

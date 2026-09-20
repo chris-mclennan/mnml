@@ -2676,19 +2676,21 @@ pub const App = struct {
         if (!ended or a.focused) return;
         const pair = sdk.pane.action.splitWatchKey(key) orelse return;
         if (!std.mem.eql(u8, pair.action, "merge")) return;
-        const ipc = a.ipc orelse return;
         var scratch = std.heap.ArenaAllocator.init(a.gpa);
         defer scratch.deinit();
         const arena = scratch.allocator();
-        const title = try std.fmt.allocPrint(arena, "Merge {s}", .{if (state == .done) "finished" else "failed"});
-        const body = try std.fmt.allocPrint(arena, "{s} \u{2014} {s}", .{ pair.row, if (detail.len > 0) detail else "see the session" });
-        ipc.notify(title, body, if (state == .failed) .@"error" else .info, state == .failed) catch {};
         // A merge that lands takes its pull request off the row it was
         // under, so the message about it is the last place that pull
-        // request is named. The offer is the door back to it.
+        // request is named. The offer is the door back to it — over the
+        // MOUNT, so it does not wait on a file channel the pane may not
+        // have.
         if (try a.mergedPrUrl(arena, pair.row)) |url| {
             a.sayWithAction(.{ .label = "Open PR", .url = url }, "merge {s}: {s}", .{ if (state == .done) "finished" else "failed", pair.row });
         }
+        const ipc = a.ipc orelse return;
+        const title = try std.fmt.allocPrint(arena, "Merge {s}", .{if (state == .done) "finished" else "failed"});
+        const body = try std.fmt.allocPrint(arena, "{s} \u{2014} {s}", .{ pair.row, if (detail.len > 0) detail else "see the session" });
+        ipc.notify(title, body, if (state == .failed) .@"error" else .info, state == .failed) catch {};
     }
 
     /// The web page of the pull request a `<ticket key>\x00<pr id>` row
@@ -4109,6 +4111,48 @@ test "a PR row's Review button remembers its press, keyed by the pull request" {
     const watch_key = try ar.dupe(u8, a.watch_out.items[0].key);
     try a.onSessionState(watch_key, .done, "sid-9", "");
     try testing.expectEqual(sdk.pane.ActionState.view, a.actions.state(row_key, "review"));
+}
+
+test "a merge that ends offers the door back to the pull request it merged" {
+    const h = try Harness.start(.{ .tabs = &work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    const t0 = a.tab();
+    try t0.tree.?.setExpanded("ENG-2", true);
+    try t0.tree.?.putPrs("ENG-2", &.{.{ .id = "#1", .status = "OPEN", .url = "https://bitbucket.org/acme/api/pull-requests/1" }});
+
+    var kbuf: [256]u8 = undefined;
+    const row_key = try std.fmt.bufPrint(&kbuf, "ENG-2\u{0}#1", .{});
+    try a.actions.set(row_key, "merge", .{ .state = .running, .prompt_line = "merge #1" });
+    var wbuf: [320]u8 = undefined;
+    const watch_key = sdk.pane.actionWatchKey(&wbuf, row_key, "merge");
+
+    // Not focused, so the end is worth telling the user about. A merge
+    // that lands takes its pull request off the row it was under, so
+    // the message about it is the LAST place it is named — the offer
+    // is the door back to it (`wire.ToastAction`).
+    a.focused = false;
+    try a.onSessionState(watch_key, .done, "sid-9", "merged");
+    try testing.expect(a.toast_pending);
+    const act = a.toast_action orelse return error.NoToastAction;
+    try testing.expectEqualStrings("Open PR", act.label);
+    try testing.expectEqualStrings("https://bitbucket.org/acme/api/pull-requests/1", act.url);
+    try testing.expectEqualStrings("", act.command);
+    try testing.expect(act.isValid());
+
+    // A plain `say` clears the offer: it belongs to the message it was
+    // attached to, not to the pane.
+    a.say("something else", .{});
+    try testing.expect(a.toast_action == null);
+
+    // And a failed fetch offers the way back rather than expecting the
+    // reader to know that `r` is refresh.
+    a.sayWithAction(App.retry_action, "error: {s}", .{"503"});
+    const retry = a.toast_action orelse return error.NoToastAction;
+    try testing.expectEqualStrings("Retry", retry.label);
+    try testing.expectEqualStrings("integrations.retry_refresh", retry.command);
+    try testing.expect(retry.isValid());
 }
 
 test "a refetch on the group keeps the old rows, the keys and the cursor, and lands on a later tick" {

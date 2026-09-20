@@ -395,8 +395,8 @@ _ = try p.actionChips(x, y, form, spin, &.{
 themselves they show, never whether they exist.**
 
 ```
- icon+label   [󰏌 Open] [󰊢 Merge]     the glyph, the word, muted brackets
- icon         󰏌 󰊢                     one cell each, the same role colour
+ icon+label   [󰏌 Open] [󰘭 Merge]     the glyph, the word, muted brackets
+ icon         󰏌 󰘭                     one cell each, the same role colour
 ```
 
 `action.formFor` picks the widest form that still leaves
@@ -421,7 +421,7 @@ both families wear the same four — each with an `--ascii` twin:
 | `navigation` | `󰏌` `md-open_in_new` | `>` |
 | `review` | `` `fa-eye` | `?` |
 | `dispatch` | `` `fa-rocket` | `*` |
-| `final` | `󰊢` `md-source_merge` | `&` |
+| `final` | `󰘭` `md-source_merge` | `&` |
 
 `[󰏌 Open]` is exactly as wide as the `[ Open ]` it replaces, so no row
 got narrower for growing a glyph. A state past `idle` outranks the

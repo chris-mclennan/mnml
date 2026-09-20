@@ -555,7 +555,7 @@ pub fn envFor(gpa: Allocator, base: *const std.process.Environ.Map, vars: EnvVar
         try env.put("MNML_REQUEST_LOG_MAX_MB", std.fmt.bufPrint(&mbuf, "{d}", .{rl.max_mb}) catch "4");
     }
     var pbuf: [4]u8 = undefined;
-    try env.put("MNML_PROTOCOL", std.fmt.bufPrint(&pbuf, "{d}", .{wire.protocol}) catch "2");
+    try env.put("MNML_PROTOCOL", std.fmt.bufPrint(&pbuf, "{d}", .{wire.protocol}) catch "3");
     return env;
 }
 
@@ -618,7 +618,7 @@ test "envFor carries the mount contract; socketPath stays short enough for socka
     try testing.expectEqualStrings("/ws", env.get("MNML_WORKSPACE").?);
     try testing.expectEqualStrings("onedark", env.get("MNML_THEME").?);
     try testing.expectEqualStrings("/ws/.mnml/ipc-zig", env.get("MNML_IPC_DIR").?);
-    try testing.expectEqualStrings("2", env.get("MNML_PROTOCOL").?);
+    try testing.expectEqualStrings("3", env.get("MNML_PROTOCOL").?);
     try testing.expectEqualStrings("/h", env.get("HOME").?);
     const short = try socketPath(gpa, "/ws/.mnml/ipc-zig", 3);
     defer gpa.free(short);

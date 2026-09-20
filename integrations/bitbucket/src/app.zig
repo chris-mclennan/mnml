@@ -1633,6 +1633,14 @@ pub const App = struct {
                     // A message set after the refresh was queued (`hid api`)
                     // outlives it, as it does in the reference.
                     if (r.tab == app.active and (app.status.items.len == 0 or std.mem.startsWith(u8, app.status.items, "refreshing "))) app.setStatus("{s}", .{r.status});
+                    // A refresh that came back with every repo errored
+                    // and nothing to show is a failed refresh, whatever
+                    // the shape of the answer: the list on screen is
+                    // stale and nothing on it says so. It gets the same
+                    // offer as one that failed outright.
+                    if (r.errored > 0 and r.items == 0) {
+                        app.toastWithAction(.err, retry_action, "error: {s}", .{r.status});
+                    }
                 } else {
                     try TabState.setText(app.gpa, &ts.error_text, r.error_text);
                     try TabState.setText(app.gpa, &ts.status, r.status);
@@ -2508,6 +2516,23 @@ test "a ready PR opens a named confirm, and confirming dispatches a Claude Code 
         else => {},
     };
     try t.expect(notified);
+    // …and so is the toast: a merge that lands takes its own row off
+    // the open list, so the message about it is the LAST place that
+    // pull request is named. The offer is the door back to it
+    // (`wire.ToastAction`), and it is a url rather than a command
+    // because the page is not mnml's to run.
+    var offered = false;
+    for (fx2) |e| switch (e) {
+        .toast => |x| if (x.action) |act| {
+            offered = true;
+            try t.expectEqualStrings("Open PR", act.label);
+            try t.expectEqualStrings("https://bitbucket.org/acme/api/pull-requests/1234", act.url);
+            try t.expectEqualStrings("", act.command);
+            try t.expect(act.isValid());
+        },
+        else => {},
+    };
+    try t.expect(offered);
 
     // Focused, the same edge is not worth a notification: the reader
     // is looking at it.
