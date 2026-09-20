@@ -595,7 +595,12 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
             try w.writeAll("mnml-zig test: no App driver yet — every file FAILs (use --parse to check scripts, --stub to exercise the harness)\n");
             break :blk .{ .ptr = &no_app, .create = noAppDriver };
         };
-    const stats = try e2e.runner.runPaths(gpa, io, factory, paths.items, opts, w);
+    // A path that is not there is a hard error, never a green `0/0`:
+    // the runner has already named it on `w`.
+    const stats = e2e.runner.runPaths(gpa, io, factory, paths.items, opts, w) catch |err| switch (err) {
+        error.PathNotFound => return 2,
+        else => return err,
+    };
     return if (stats.failed == 0) 0 else 1;
 }
 
@@ -640,7 +645,14 @@ fn parseOnly(gpa: Allocator, io: Io, roots: []const []const u8, w: *Io.Writer) !
     var total: usize = 0;
     var failed: usize = 0;
     for (roots) |root| {
-        const files = try e2e.runner.collectFiles(gpa, io, root);
+        const files = e2e.runner.collectFiles(gpa, io, root) catch |err| switch (err) {
+            error.PathNotFound => {
+                try w.print("mnml-zig test: no such path: {s}\n", .{root});
+                try w.flush();
+                return 2;
+            },
+            else => return err,
+        };
         defer {
             for (files) |p| gpa.free(p);
             gpa.free(files);

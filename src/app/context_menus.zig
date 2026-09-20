@@ -1969,15 +1969,18 @@ test "the + menu is Rust's Create… tree: New / Open / AI / Dock ▸ rows with 
     };
     try t.expectEqual(leaves.len, k);
     // The rows as Rust paints them (`rust-menu-plus-120x40.txt`): the
-    // title in the border, ` <icon>  label` with `▸ ` at the end, the
-    // blank row above the bottom edge; no child yet.
+    // title in the border, ` <icon>  label` with `▸ ` at the end, and
+    // the bottom edge straight under the last row — the title is IN the
+    // border, so `rows + 2` is the whole frame (2026-09-20: it used to
+    // reserve a row for the title as well, which painted as a blank
+    // line, and this test pinned it); no child yet.
     const closed = try screenOf(&app);
     defer t.allocator.free(closed);
     // Four short group names: the inner width is Rust's floor of 12.
     try t.expect(std.mem.indexOf(u8, closed, "┌ Create… ───┐") != null);
     try t.expect(std.mem.indexOf(u8, closed, "│ \u{f15b}  New   ▸ │") != null);
     try t.expect(std.mem.indexOf(u8, closed, "│ \u{F06A9}  AI    ▸ │") != null);
-    try t.expect(std.mem.indexOf(u8, closed, "│            │") != null);
+    try t.expect(std.mem.indexOf(u8, closed, "│            │") == null);
     try t.expect(std.mem.indexOf(u8, closed, "Scratch buffer") == null);
     // → opens New's child hung from its row: the frame's top on the
     // row, the rows below, Rust's glyph rule on each leaf, no

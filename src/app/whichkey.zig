@@ -290,6 +290,23 @@ pub const root: Node = .{
 
 pub const max_depth = 8;
 
+/// How the ACTIVE profile spells the key that opens this popup. The vim
+/// profile has a leader and writes it Neovim's way; the standard profile
+/// has none — it opens the popup on `Ctrl+K` (`docs/KEYMAP_PROFILES.md`
+/// rule 2). The header and the dead-end toast both read it here, so
+/// neither can name a chord its profile does not carry. A deliberate
+/// departure from the reference editor, which titles both profiles
+/// `<leader>` (`docs/PARITY.md`).
+pub fn leaderLabel(vim: bool) []const u8 {
+    return if (vim) "<leader>" else "Ctrl+K";
+}
+
+/// The gap between the leader and the keys typed after it: none in vim
+/// (`<leader>f`), one cell for a chord spelling (`Ctrl+K f`).
+pub fn leaderGap(vim: bool) []const u8 {
+    return if (vim) "" else " ";
+}
+
 /// The keys typed since the leader.
 pub const State = struct {
     path: [max_depth]u8 = undefined,
@@ -626,10 +643,16 @@ test "the popup: backspace goes up a level, a non-character key leaves it open, 
     try t.expectEqualStrings("", app.overlay.which_key.slice());
     try app.handle(.{ .key = app_mod.Key.named(.backspace) });
     try t.expect(app.overlay == .none);
-    // A key no row carries says so instead of vanishing silently.
+    // A key no row carries says so instead of vanishing silently — and
+    // names the key this profile actually opens the popup with. The app
+    // above is the default (standard) profile, so that is `Ctrl+K`.
     try command.run(&app, .{ .static = .@"whichkey.leader" });
     try app.handle(.{ .key = app_mod.Key.char('\\') });
     try t.expect(app.overlay == .none);
+    try t.expectEqualStrings("no leader mapping: Ctrl+K \\", app.lastToast().?);
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
+    try command.run(&app, .{ .static = .@"whichkey.leader" });
+    try app.handle(.{ .key = app_mod.Key.char('\\') });
     try t.expectEqualStrings("no leader mapping: <leader>\\", app.lastToast().?);
 }
 

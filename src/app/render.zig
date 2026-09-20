@@ -1726,7 +1726,11 @@ fn drawDropHint(app: *App, ui: Ui, pane: PaneId, body: Rect) void {
 fn drawPty(app: *App, ui: Ui, id: PaneId, p: *pty_pane.PtyPane, rect: Rect) Allocator.Error!void {
     if (!pty_pane.supported) return;
     const focused = app.active == id and app.focus == .pane;
-    const exit_label: ?[]const u8 = if (p.exit) |e| switch (e) {
+    // A dormant pane never ran, so it has no exit to report and a key
+    // starts it rather than closing it.
+    const exit_label: ?[]const u8 = if (p.dormant)
+        ui.fmt("[exited] — any key restarts {s}", .{p.label})
+    else if (p.exit) |e| switch (e) {
         .code => |c| ui.fmt("[exited {d}] — any key closes", .{c}),
         .signal => |sg| ui.fmt("[killed by signal {d}] — any key closes", .{sg}),
     } else null;
@@ -1735,7 +1739,7 @@ fn drawPty(app: *App, ui: Ui, id: PaneId, p: *pty_pane.PtyPane, rect: Rect) Allo
     // column taken off. What the child sees is exactly this rect.
     const body = rect;
     p.fit(body.w, body.h);
-    try p.grid.update(app.gpa, p.session.terminal());
+    if (p.session) |session| try p.grid.update(app.gpa, session.terminal());
     const cursor = pty_view.draw(ui, body, &p.grid, .{
         .focused = focused,
         .exit_label = exit_label,
@@ -2407,15 +2411,25 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             // The title is the leader and the keys typed so far; inside
             // a group it carries that group's own row — `<leader>f
             // +find (7)` — the way the reference plugin's header reads.
+            //
+            // The leader is the ACTIVE profile's, not always vim's: the
+            // standard profile has no `<leader>` to press, it opens this
+            // popup on `Ctrl+K` (`docs/KEYMAP_PROFILES.md` rule 2), and
+            // a header naming a key that profile does not carry told a
+            // VS Code user to press something that does not exist. A
+            // deliberate departure from the reference editor, which
+            // titles both profiles `<leader>` (`docs/PARITY.md`).
             const path = w.slice();
             const vim = app.input_style == .vim;
+            const leader = whichkey.leaderLabel(vim);
+            const gap = whichkey.leaderGap(vim);
             const here = try whichkey.lookupWith(ui.arena, &app.dyn_commands, path, vim);
             const title: []const u8 = if (path.len == 0 or here == null)
-                "<leader>"
+                leader
             else if (here.? == .dyn_group)
-                ui.fmt("<leader>{s}  +{s}", .{ path, here.?.label() })
+                ui.fmt("{s}{s}{s}  +{s}", .{ leader, gap, path, here.?.label() })
             else
-                ui.fmt("<leader>{s}  {s} ({d})", .{ path, here.?.label(), whichkey.chordCount(&here.?, vim) });
+                ui.fmt("{s}{s}{s}  {s} ({d})", .{ leader, gap, path, here.?.label(), whichkey.chordCount(&here.?, vim) });
             // A group row wears its own face; a leaf wears the face of
             // the group it lives in, which `which_key` paints dimmer.
             const leaf_glyph = whichkey_glyph.forGroup(if (here) |n| n.label() else "").pick(ui.ascii);
@@ -2467,11 +2481,12 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
 /// `bg2`, the selected row `bg_dark` on cyan, a child beside its
 /// parent row, to the right when it fits, else to the left.
 ///
-/// A context menu (`m.dropdown == false`) carries its title in the
-/// top border and one blank row above the bottom one (Rust reserves a
-/// title row the border already holds); a row is ` <glyph>  label `,
-/// padded, then `▸ ` on a parent row or `⋮ ` on the focused leaf of a
-/// curatable menu. A menu-bar dropdown has no title; its row is a
+/// A context menu (`m.dropdown == false`) carries its title in the top
+/// border and nothing else: the frame is `rows + 2` tall, as a
+/// dropdown's is. (It used to reserve a title row the border already
+/// held, which painted as a blank line above the bottom border.) A row
+/// is ` <glyph>  label `, padded, then `▸ ` on a parent row or `⋮ ` on
+/// the focused leaf of a curatable menu. A menu-bar dropdown has no title; its row is a
 /// two-cell marker (`▸ ` on the highlighted row), the icon column
 /// (three cells, when any row has an icon), the label, and ` ▸` at
 /// the end of a parent row. The highlight paints only once the menu
@@ -2573,8 +2588,14 @@ fn menuSize(ui: Ui, title: ?[]const u8, items: []const command.MenuItem, dropdow
     var longest: u16 = @max(widest + menu_glyph.width, 8);
     if (title) |tt| longest = @max(longest, ui.width(tt));
     const inner = @max(longest + 2, context_min_inner);
-    const title_rows: u16 = if (title != null) 1 else 0;
-    return .{ .w = inner + 2, .h = rows + title_rows + 2 };
+    // A titled context menu is `rows + 2`, the same as a dropdown. The
+    // title is NOT a row: `overlay.frameLook` paints it INSIDE the top
+    // border, so a height that reserved a row for it left an empty line
+    // above the bottom border of every right-click menu in the app —
+    // the reference editor (`src/ui/context_menu.rs`, `items.len() +
+    // title_rows + 2`) has the same off-by-one, and this departs from it
+    // deliberately (`docs/PARITY.md`).
+    return .{ .w = inner + 2, .h = rows + 2 };
 }
 
 const RowsProps = struct {

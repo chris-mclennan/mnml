@@ -1,9 +1,14 @@
-# The which-key popup as Rust paints it: `<leader>` on the top edge,
-# group labels with their `+`, the keys typed so far in the title of a
-# sub-popup — which since 2026-09-14 carries that group's own row,
-# `<leader>f  +find (7)` — and `esc to cancel` at the bottom.
+# The which-key popup as Rust paints it: the leader on the top edge —
+# the ACTIVE profile's, so the default (standard) profile reads `Ctrl+K`
+# rather than a `<leader>` it has no key for — group labels with their
+# `+`, the keys typed so far in the title of a sub-popup (which since
+# 2026-09-14 carries that group's own row, `Ctrl+K f  +find (7)`), and
+# `esc to cancel` at the bottom. The leader is bound on its own AND a
+# prefix, so the popup opens on the `timeoutlen` pause, not the press
+# (`tests/e2e/chord_ctrl_k_prefix.test`).
 key ctrl+k
-expect screen contains "┌ <leader> "
+wait 700
+expect screen contains "┌ Ctrl+K "
 expect screen contains "f → +find"
 expect screen contains "e → explorer"
 expect screen contains "q → close buffer"
@@ -11,8 +16,9 @@ expect screen contains "w → write/save"
 expect screen contains "P → +pr"
 expect screen contains "esc to cancel"
 type f
-expect screen contains "┌ <leader>f  +find (7) "
+expect screen contains "┌ Ctrl+K f  +find (7) "
 expect screen contains "f → files"
 expect screen contains "g → grep"
 key esc
-expect screen lacks "<leader>"
+expect screen lacks "esc to cancel"
+expect screen lacks "f → +find"

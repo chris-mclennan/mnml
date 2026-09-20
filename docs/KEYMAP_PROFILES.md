@@ -17,6 +17,17 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
    with one of these is `standard` only.
 2. **`ctrl+k …` menus are the standard leader.** NvChad uses `ctrl+k` for
    window-up; the vim profile keeps `space` as its only which-key leader.
+   A bare `ctrl+k` is therefore bound on its own (`whichkey.leader`) AND
+   is the prefix of eighteen `ctrl+k …` chords. **Chord resolution wins:**
+   `keymap.resolveSeq` answers `pending_with_fallback`, the tail key
+   completes the chord, and the popup is only the `timeoutlen` fallback
+   for a `ctrl+k` nothing followed. Anything that expires a pending chain
+   without reading the deadline turns that on its head — the popup opens
+   on the `ctrl+k` and eats the tail, and none of the eighteen can fire.
+   That is what the `.test` runner and the headless loop used to do, so
+   `Ctrl+K Ctrl+I` (hover, which the Info panel advertises) could not be
+   driven at all; `app/driver.zig`'s `expireChords` hook reads the same
+   clock `App.tick` does. `tests/e2e/chord_ctrl_k_prefix.test`.
 3. **`ctrl+]` / `ctrl+[`** indent / outdent in `standard` (VS Code);
    `editor.bracket_match` keeps `ctrl+]` in `vim`.
 4. **`ctrl+l`** is select-line in standard and window-right in vim, so
@@ -169,11 +180,21 @@ profile's `Ctrl+K` popup keeps the reference editor's rows. `r` carries
 NvChad's `<leader>ra` (LSP rename), which that popup does not list, so
 the vim profile shows the row and the standard one does not.
 
+The popup's header names the key that opened it in the ACTIVE profile —
+`<leader>` in vim, `Ctrl+K` in standard (`whichkey.leaderLabel` /
+`leaderGap`) — and so does the dead-end toast. It used to say `<leader>`
+in both, which is what the reference editor does (`docs/PARITY.md`) and
+which told a VS Code user, on the same screen whose Info panel reads
+`[Ctrl+K Ctrl+I] Hover`, to press a leader that profile does not have.
+The rows are already per-profile (`Entry.vim_only`), so a standard popup
+never listed a chord it could not run; only the header did.
+`tests/e2e/whichkey_standard_title.test`.
+
 Inside the popup `<BS>` climbs back one level (the reference plugin's
 key); a key that is not a character — an arrow, Enter, a function key —
 leaves the popup where it is; and a key no row carries toasts `no
-leader mapping: <leader>…` rather than dismissing it silently. A vim
-operator with a pending prefix (`g`, `z`, `ctrl+w`) paints the same
+leader mapping: Ctrl+K …` / `<leader>…` rather than dismissing it
+silently. A vim operator with a pending prefix (`g`, `z`, `ctrl+w`) paints the same
 popup titled `Vim: <prefix>` — with no glyph column, since its rows are
 motions rather than groups.
 

@@ -2094,7 +2094,7 @@ pub fn derive(app: *App, pid: app_mod.PaneId) ?*const Derived {
         }
         return gop.value_ptr;
     }
-    p.grid.update(app.gpa, p.session.terminal()) catch {};
+    if (p.session) |session| p.grid.update(app.gpa, session.terminal()) catch {};
     st.grid_walks += 1;
     var fresh = walkGrid(app.gpa, &p.grid) catch {
         if (!gop.found_existing) _ = st.derived.remove(pid);

@@ -1,26 +1,48 @@
 # `# @assert` / `# @capture` lines after the body boundary are directives,
-# not body bytes. A GET carrying them used to abort the whole process at
+# not body bytes. A GET carrying a body used to abort the whole process at
 # std's `assert(r.method.requestHasBody())` (api-http-send-get-with-body-
-# crashes-process); a POST shipped them inside its JSON
-# (api-http-directives-leak-into-request-body). The Body tab is the
-# request's wire body, so it must show the JSON alone; the send to a
-# closed port fails soft instead of taking the runner down.
-write requests/get.http "### get-json\nGET http://127.0.0.1:1/get\nAccept: application/json\n\n# @assert status == 200\n# @capture origin = body.origin\n"
-write requests/post.http "POST http://127.0.0.1:1/post\nContent-Type: application/json\n\n{\n  \"hello\": \"world\"\n}\n\n# @assert status == 200\n# @capture origin = body.json.hello\n"
+# crashes-process); a POST shipped its directives inside the JSON
+# (api-http-directives-leak-into-request-body).
+#
+# The send goes to the runner's own `@echo` server, which answers with the
+# request exactly as it arrived — so the assertions below read the WIRE,
+# not the pane. Sending to a closed port, which is what this file used to
+# do, never reaches `sendInner`'s body branch: the crash site this test
+# was written for went untested by the test that shipped with its fix.
+serve 19892 200 @echo
+write requests/get.http "### get-json\nGET http://127.0.0.1:19892/get\nAccept: application/json\n\n# @assert status == 200\n# @capture where = body.origin\n"
+write requests/post.http "POST http://127.0.0.1:19892/post\nContent-Type: application/json\n\n{\n  \"hello\": \"world\"\n}\n\n# @assert status == 200\n"
+write requests/getbody.http "GET http://127.0.0.1:19892/search\nContent-Type: application/json\n\n{\n  \"q\": \"zig\"\n}\n"
+
+# A GET whose only lines past the boundary are directives: the Body tab is
+# empty, and the wire carries neither directive.
 open requests/get.http
 expect pane GET
-# The Body tab is empty: neither directive is body.
 expect screen lacks "@assert"
 expect screen lacks "@capture"
 command http.send
-wait 600
-# A closed port is a soft failure on the pane, not an abort.
-expect screen contains "connection failed"
+wait 800
+expect screen contains "GET /get HTTP/1.1"
+expect screen lacks "@assert"
+expect screen lacks "@capture"
+
+# A POST's body is the JSON alone — the directive below it is not bytes.
 open requests/post.http
 expect pane POST
 expect screen contains "\"hello\": \"world\""
 expect screen lacks "@assert"
-expect screen lacks "@capture"
 command http.send
-wait 600
-expect screen contains "connection failed"
+wait 800
+expect screen contains "POST /post HTTP/1.1"
+expect screen contains "\"hello\": \"world\""
+expect screen lacks "@assert"
+
+# The crash site itself: a GET with a REAL body. std frames no body for a
+# bodyless method, so mnml writes the length and the bytes itself; the
+# process must survive and the body must reach the server.
+open requests/getbody.http
+expect pane GET
+command http.send
+wait 800
+expect screen contains "GET /search HTTP/1.1"
+expect screen contains "\"q\": \"zig\""

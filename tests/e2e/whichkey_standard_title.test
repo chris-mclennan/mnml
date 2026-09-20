@@ -1,0 +1,35 @@
+# width: 120
+# The which-key popup is titled with the key that opens it in the ACTIVE
+# profile. It used to read `<leader>` in both — but the standard profile
+# has no leader to press (`docs/KEYMAP_PROFILES.md` rule 2: the `ctrl+k …`
+# menus are its leader), and the Info panel on the same screen already
+# says `Ctrl+K Ctrl+I`. A deliberate departure from the reference editor,
+# which titles both profiles `<leader>` (`docs/PARITY.md`).
+write a.txt "hello\n"
+open a.txt
+command editor.use_standard
+expect screen contains "[F12] Definition"
+
+key ctrl+k
+wait 700
+expect screen lacks "┌ <leader> "
+expect screen contains "┌ Ctrl+K "
+expect screen contains "f → +find"
+# A level inside a group carries that group's row after the same key.
+type f
+expect screen contains "┌ Ctrl+K f  +find (7) "
+key esc
+
+# A dead end names the same key rather than a leader that is not there.
+key ctrl+k
+wait 700
+type ;
+expect screen contains "no leader mapping: Ctrl+K ;"
+expect screen lacks "no leader mapping: <leader>"
+
+# The vim profile keeps Neovim's spelling, header and toast alike.
+command editor.use_vim
+key space
+wait 700
+expect screen contains "┌ <leader> "
+key esc

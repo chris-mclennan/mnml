@@ -637,6 +637,12 @@ fn openSavedPane(app: *App, sp: Pane, opened: []const ?PaneId) OpenError!?PaneId
         },
         .pty => {
             if (!pty_pane.supported) return null;
+            // Dormant: the tab, the title and `[exited]`, never a shell
+            // that started itself. Neovim's `:mksession` does not bring
+            // `:terminal` buffers back as live processes, and a restored
+            // shell runs the workspace's rc files — and whatever the
+            // last one was in the middle of — without being asked. A key
+            // on the pane starts it.
             return pty_pane.open(app, .{
                 .argv = sp.argv,
                 .cwd = sp.cwd,
@@ -644,6 +650,7 @@ fn openSavedPane(app: *App, sp: Pane, opened: []const ?PaneId) OpenError!?PaneId
                 .placement = .tab,
                 .kind = if (sp.argv.len == 0) .shell else .command,
                 .accent_color = sp.accent,
+                .dormant = true,
             }) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => return null,
@@ -1049,11 +1056,18 @@ test "session: the session colours and a pty pane's accent ride in the file and 
         try t.expectEqualStrings("blue", app.sessions.color("sid-1").?);
         try t.expectEqualStrings("pink", app.sessions.color("sid-2").?);
         var found: ?[]const u8 = null;
+        var dormant = false;
         for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-            .pty => |*pt| found = pt.accent_color,
+            .pty => |*pt| {
+                found = pt.accent_color;
+                dormant = pt.dormant and pt.session == null and pt.exit != null;
+            },
             else => {},
         };
         try t.expectEqualStrings("red", found orelse return error.TestUnexpectedResult);
+        // The pane came back; the child did not. `sleep 30` is not
+        // running in this workspace because a session was restored.
+        try t.expect(dormant);
     }
 }
 

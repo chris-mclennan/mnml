@@ -1,6 +1,9 @@
 # Sixteen tabs overflow the strip (Rust's chips: an icon, the name,
 # `󰅖`, three cells between). The strip ends on the active tab with
-# the `󰐕` after it and the `󰅁  󰅂` chevrons on the right; the
+# the `󰐕` and ` +N hidden ` after it and the `󰅁  󰅂` chevrons on the
+# right — since 2026-09-20 the chip is GIVEN its cells when the leftover
+# ones cannot hold it (`bufferline.stripRight`), which is also why the
+# last chip is whole here rather than cut at the edge; the
 # wheel over the strip scrolls it a tab at a time, back to the first
 # tab and forward again; Ctrl+Tab wraps to the first tab and reveals it.
 # The strip's right cluster paints an AI chip for a `claude` / `codex`
@@ -40,12 +43,14 @@ open t12.txt
 open t13.txt
 open t14.txt
 open t15.txt
-expect screen contains "t15.txt 󰅖 󰐕"
+expect screen contains "t15.txt 󰅖   󰐕  +12 hidden "
 expect screen contains "󰅁  󰅂"
 expect screen lacks "alpha.zig 󰅖   󰈙 t1.txt"
 scroll 60 1 up
-expect screen lacks "t15.txt 󰅖 󰐕"
-expect screen contains "t10.txt 󰅖"
+expect screen lacks "t15.txt 󰅖   󰐕"
+# One tab further left: the window was t12…t15, so it is now t11…t14.
+expect screen contains "t11.txt 󰅖"
+scroll 60 1 up
 scroll 60 1 up
 scroll 60 1 up
 scroll 60 1 up

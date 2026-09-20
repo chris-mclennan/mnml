@@ -870,15 +870,22 @@ fn childrenSummary(gpa: Allocator, io: Io) ?[]u8 {
 
 // ─── a path ─────────────────────────────────────────────────────────────
 
+/// A root the filesystem does not have. It used to come back as an
+/// empty list, which read exactly like a directory with no scripts in
+/// it: the run printed `0/0 passed` and exited **0**. A shell that
+/// builds a path list and forgets to word-split it hands the runner one
+/// argument of 44 joined paths, and that green run tested nothing.
+pub const CollectError = Allocator.Error || error{PathNotFound};
+
 /// Every `*.test` under `root` (recursively, hidden entries skipped,
 /// sorted), or `root` itself when it is a file. Owned paths.
-pub fn collectFiles(gpa: Allocator, io: Io, root: []const u8) Allocator.Error![][]u8 {
+pub fn collectFiles(gpa: Allocator, io: Io, root: []const u8) CollectError![][]u8 {
     var out: std.ArrayList([]u8) = .empty;
     errdefer {
         for (out.items) |p| gpa.free(p);
         out.deinit(gpa);
     }
-    const st = Io.Dir.cwd().statFile(io, root, .{}) catch return out.toOwnedSlice(gpa);
+    const st = Io.Dir.cwd().statFile(io, root, .{}) catch return error.PathNotFound;
     if (st.kind != .directory) {
         try out.append(gpa, try gpa.dupe(u8, root));
         return out.toOwnedSlice(gpa);
@@ -907,7 +914,14 @@ fn lessThan(_: void, a: []u8, b: []u8) bool {
 /// than after the whole root: a 500-file corpus takes ten minutes, and
 /// a run that prints only start lines for that long reads as a hang.
 pub fn runPath(gpa: Allocator, io: Io, factory: Factory, root: []const u8, opts: Options, out: *Io.Writer) !Stats {
-    const files = try collectFiles(gpa, io, root);
+    const files = collectFiles(gpa, io, root) catch |err| switch (err) {
+        error.PathNotFound => {
+            try out.print("mnml-zig test: no such path: {s}\n", .{root});
+            try out.flush();
+            return err;
+        },
+        else => return err,
+    };
     defer {
         for (files) |p| gpa.free(p);
         gpa.free(files);
@@ -1375,6 +1389,37 @@ test "a hung file times out, is abandoned, and the suite continues" {
     // test allocator checks for leaks.
     try Hang.finished.wait(std.testing.io);
     std.testing.io.sleep(.fromMilliseconds(100), .awake) catch {};
+}
+
+test "a root that is not there is an error, not a green 0/0 — including a joined path list" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+    try env.tmp.dir.createDirPath(t.io, "suite");
+    try env.tmp.dir.writeFile(t.io, .{ .sub_path = "suite/a.test", .data = "expect screen contains ok\n" });
+    const real = try std.fs.path.join(t.allocator, &.{ env.root, "suite" });
+    defer t.allocator.free(real);
+    const missing = try std.fs.path.join(t.allocator, &.{ env.root, "nope" });
+    defer t.allocator.free(missing);
+    // A path list a shell forgot to word-split arrives as ONE argument.
+    const joined = try std.mem.join(t.allocator, " ", &.{ real, real });
+    defer t.allocator.free(joined);
+
+    try t.expectError(error.PathNotFound, collectFiles(t.allocator, t.io, missing));
+    try t.expectError(error.PathNotFound, collectFiles(t.allocator, t.io, joined));
+    const found = try collectFiles(t.allocator, t.io, real);
+    defer {
+        for (found) |f| t.allocator.free(f);
+        t.allocator.free(found);
+    }
+    try t.expectEqual(@as(usize, 1), found.len);
+
+    // And the runner says which path, rather than reporting a pass.
+    var sf: StubFactory = .{ .proto = .{ .text = "ok" } };
+    var out: Io.Writer.Allocating = .init(t.allocator);
+    defer out.deinit();
+    try t.expectError(error.PathNotFound, runPaths(t.allocator, t.io, sf.factory(), &.{joined}, env.opts(), &out.writer));
+    try t.expect(std.mem.indexOf(u8, out.written(), "no such path: ") != null);
+    try t.expect(std.mem.indexOf(u8, out.written(), "passed") == null);
 }
 
 test "runPath: skips, sizes, names, and the ok/FAIL/N-M report" {

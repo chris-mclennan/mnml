@@ -246,16 +246,33 @@ pub fn confirmDelete(app: *App, paths: []const []const u8) Allocator.Error!void 
 }
 
 /// The confirm's answer: choice 0 trashes (or deletes, inside the
-/// trash), the permanent button deletes outright.
+/// trash), the permanent button deletes outright, and the Cancel button
+/// says so.
 pub fn acceptDelete(app: *App, paths: []const []const u8, permanent_only: bool, choice: usize) Allocator.Error!void {
     if (permanent_only) {
-        if (choice != 0) return;
+        if (choice != 0) return cancelled(app, paths, true);
         return deletePaths(app, paths, true);
     }
     switch (choice) {
         0 => try deletePaths(app, paths, false),
         1 => try deletePaths(app, paths, true),
-        else => {},
+        else => cancelled(app, paths, false),
+    }
+}
+
+/// Cancel was the answer. Cancel is the FOCUSED button, so Enter — the
+/// most likely key on any dialog — lands here, and it used to tear the
+/// box down with nothing said: on screen that is indistinguishable from
+/// a delete that worked. The toast names the key that does delete, so
+/// the keeping of the file reads as the deliberate default it is.
+/// (Esc stays silent: asking to leave and being told you left is noise.)
+fn cancelled(app: *App, paths: []const []const u8, permanent_only: bool) void {
+    if (paths.len == 0) return;
+    const keys = if (permanent_only) "`p` deletes permanently" else "`d` deletes, `p` permanently";
+    if (paths.len == 1) {
+        app.toast("cancelled — {s} kept; {s}", .{ app.relPath(paths[0]), keys });
+    } else {
+        app.toast("cancelled — {d} items kept; {s}", .{ paths.len, keys });
     }
 }
 
@@ -670,14 +687,18 @@ test "the confirm: Cancel is the default (Rust's), d trashes with a toast, p ski
     try t.expectEqual(@as(usize, 3), app.overlay.confirm.state.choices.len);
     try t.expect(app.overlay.confirm.state.buttons == .plain);
     try t.expectEqualStrings("Delete a.txt?", app.overlay.confirm.state.message);
-    // Esc and Enter (on Cancel) are the silent ways out; `d` trashes and says so.
+    // Esc is the silent way out; `d` trashes and says so.
     try app.handle(.{ .key = Key.named(.esc) });
     try t.expect(app.overlay == .none);
     try t.expect(exists(&app, a));
+    // Enter lands on Cancel — and SAYS so. A box that tore down with
+    // nothing said read on screen exactly like a delete that worked,
+    // and Enter is the likeliest key on any dialog.
     try confirmDelete(&app, &.{a});
     try app.handle(.{ .key = Key.named(.enter) });
     try t.expect(app.overlay == .none);
     try t.expect(exists(&app, a));
+    try t.expectEqualStrings("cancelled — a.txt kept; `d` deletes, `p` permanently", app.lastToast().?);
     try confirmDelete(&app, &.{a});
     try app.handle(.{ .key = Key.char('d') });
     try t.expect(!exists(&app, a));

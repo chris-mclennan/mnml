@@ -4,9 +4,9 @@
 # Esc Esc leaves; the corner mark at the body's top-right is a click
 # target that leaves too; reset view brings the frame back. The
 # statusline's EDIT chip is the frame's witness. Entering is by the
-# command: the runner expires pending chords after every `key` step, so
-# `Ctrl+K Z` cannot be typed here — `zen.zig`'s unit test types it
-# through `App.handle` from an editor, a request pane and a terminal.
+# command here; the chord itself is driven in
+# `tests/e2e/chord_ctrl_k_prefix.test`, and `zen.zig`'s unit test types
+# it through `App.handle` from an editor, a request pane and a terminal.
 write a.txt "hello\nworld\n"
 open a.txt
 expect screen contains "EDIT"

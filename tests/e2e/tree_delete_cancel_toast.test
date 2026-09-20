@@ -1,0 +1,24 @@
+# The tree's delete confirm opens with Cancel focused — as the reference
+# editor focuses it: a destructive box's Enter must not be the
+# destructive act (`src/app/trash.zig`). That half is by design and this
+# file does not contest it.
+#
+# The SILENT half had no rationale anywhere. Enter on `Delete a.txt?`
+# tore the dialog down with no toast and no statusline line, which on
+# screen is indistinguishable from a delete that worked — and Enter is
+# the likeliest key on any dialog. The cancel now says so, and names the
+# key that does delete.
+write a.txt "aa"
+command view.focus_tree
+key r
+key end
+command file.delete
+expect screen contains "Delete a.txt?"
+key enter
+wait 400
+# The by-design half: the file survives.
+expect file a.txt contains "aa"
+# The open half: the app says the delete did not happen, and how to.
+expect screen contains "cancelled"
+expect screen contains "a.txt kept"
+expect screen contains "`d` deletes"

@@ -1,0 +1,30 @@
+# requires: macos
+# Session restore brings a terminal pane back DORMANT — its tab, its
+# title and `[exited]`, waiting for a key — never a running shell.
+# Neovim's `:mksession` does not restore `:terminal` buffers as live
+# processes either, and a shell that starts itself in a workspace runs
+# that workspace's rc files (and whatever the last one was in the middle
+# of) without being asked.
+write notes.txt "alpha\n"
+open notes.txt
+# The TERMINAL mode chip is the vim profile's reading of a focused pty
+# pane (`statusline.modeOf`), and `<leader>h` is where the shell lives.
+command editor.use_vim
+command term.shell_bottom
+wait 2000
+expect screen contains "TERMINAL"
+expect screen lacks "any key restarts"
+
+# The pane IS saved — losing the tab would be its own bug.
+command session.save
+expect file .mnml/session.zon contains "pty"
+
+command session.restore
+wait 500
+expect screen contains "session restored"
+expect screen contains "[exited] — any key restarts"
+
+# And a key on it starts the child the restore did not.
+key enter
+wait 1500
+expect screen lacks "any key restarts"

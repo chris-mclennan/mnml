@@ -1,10 +1,14 @@
-# Ctrl+K opens the which-key leader menu (any input mode); a group key descends
-# into it; Esc closes it.
+# Ctrl+K opens the which-key leader menu (any input mode); a group key
+# descends into it; Esc closes it. `ctrl+k` is bound on its own AND is
+# the prefix of eighteen `ctrl+k …` chords, so the popup is the
+# `timeoutlen` fallback — the pause is what opens it, not the press
+# (`tests/e2e/chord_ctrl_k_prefix.test`).
 write src.txt hello world
 open src.txt
 expect screen lacks "+split"
 
 key ctrl+k
+wait 700
 expect screen contains "+split"
 
 # Descend into the +split group — its leaves show up.

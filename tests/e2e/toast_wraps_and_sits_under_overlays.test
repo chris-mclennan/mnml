@@ -7,6 +7,7 @@ command editor.suspend_hint
 expect screen contains "mnml does not suspend"
 expect screen contains "quit with ctrl+q"
 key ctrl+k
+wait 700
 expect screen contains "+split"
 expect screen lacks "quit with ctrl+q"
 key esc
