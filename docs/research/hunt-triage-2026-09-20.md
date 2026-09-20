@@ -98,7 +98,28 @@ Two live examples of why that matters, both hit during this pass:
   (`NvimTreeFocus`). A future pass should not "fix" main to match the
   finding.
 
-## Where the repro scripts live
+## Fixed on branch `hunt-fixes` (2026-09-20)
+
+Every still-reproducing finding below, and both harness traps, were
+worked on that branch. Each repro script moved out of
+`docs/research/hunt-repros/` into `tests/e2e/` under the corpus's naming,
+where it now passes; the directory is gone. The per-finding sections
+keep the original diagnosis and name the script's new home.
+
+The two harness traps are closed too:
+
+- **A path the runner cannot find is a hard error.** `collectFiles`
+  returns `error.PathNotFound` instead of an empty list; `runPath` prints
+  `mnml-zig test: no such path: <p>` and `mnml-zig test` exits **2**. A
+  joined path list therefore fails loudly rather than reporting `0/0
+  passed`. Unit-tested in `src/e2e/runner.zig` against both a missing
+  path and a space-joined pair of real ones.
+- **`tests/e2e/http_directives_not_body.test` reaches the crash site.**
+  It sends to the runner's own `serve … @echo` fixture and asserts the
+  echoed wire, and it carries a third block — a GET with a REAL body,
+  which is the case that reaches `sendInner`'s `sendBodyUnflushed`.
+
+## Where the repro scripts lived
 
 `src/e2e/parser.zig` accepts exactly five header directives —
 `requires:`, `width:`, `height:`, `env:` and `shared-data-root`. There
@@ -166,8 +187,9 @@ that correctly repaired the rest of zen mode: the chord never reaches
 `view.fullscreen` at all.
 
 ```
-docs/research/hunt-repros/standard-ctrl-k-prefix-shadowed.test
+was: docs/research/hunt-repros/standard-ctrl-k-prefix-shadowed.test
   FAIL line 19: screen unexpectedly contains "no leader mapping"
+now: tests/e2e/chord_ctrl_k_prefix.test — passes
 ```
 
 ### 2. The tree's delete confirm cancels with no feedback — SEV-3, a regression with its test rewritten — **fixed (this branch)**
@@ -189,14 +211,15 @@ Half of that revert is defensible and cited in the source — "Cancel is
 the focus, as in Rust: a destructive box's Enter must not be the
 destructive act". The other half is not: pressing Enter tears the dialog
 down with **no toast and no statusline line**, which on screen is
-now: tests/e2e/chord_ctrl_k_prefix.test — passes
 indistinguishable from a delete that worked. Nothing anywhere defends
 the silence. The committed repro asserts only that undefended half.
 
 ```
-docs/research/hunt-repros/vscode-delete-dialog-enter-cancels-silently.test
+was: docs/research/hunt-repros/vscode-delete-dialog-enter-cancels-silently.test
   line 22 (file survives — the by-design half) passes
   FAIL line 24: screen does not contain "cancel"
+now: tests/e2e/tree_delete_cancel_toast.test — passes
+     tests/e2e/tree_delete_enter.test corrected: it asserted the silence
 ```
 
 The finding file IS tracked here —
@@ -214,8 +237,9 @@ lists NvChad groups (`harpoon`, `+nvchad`, `+split`) to a user who has no
 leader. Same root cause as #1.
 
 ```
-docs/research/hunt-repros/standard-13-which-key-shows-vim-chords.test
+was: docs/research/hunt-repros/standard-13-which-key-shows-vim-chords.test
   FAIL line 12: screen unexpectedly contains "┌ <leader> "
+now: tests/e2e/whichkey_standard_title.test — passes
 ```
 
 ### 4. Tab-strip overflow never shows a hidden count — SEV-3 (standard #12) — **fixed (this branch)**
@@ -224,14 +248,13 @@ The `+N hidden` chip exists (`0e3c7a66`) but `src/ui/bufferline.zig:465`
 paints it only when the strip is scrolled to a tail that fits whole —
 never in the ordinary case where the active tab is cut at the edge. With
 twelve buffers at 120x40 nothing says buffers are missing; labels still
-now: tests/e2e/tree_delete_cancel_toast.test — passes
-     tests/e2e/tree_delete_enter.test corrected: it asserted the silence
 clip to `ddd`. Partly mitigated since the report: the `‹ ›` arrows now
 paint and are clickable, so it is no longer strictly silent.
 
 ```
-docs/research/hunt-repros/standard-12-tab-strip-no-hidden-count.test
+was: docs/research/hunt-repros/standard-12-tab-strip-no-hidden-count.test
   FAIL line 35: screen does not contain " hidden "
+now: tests/e2e/tab_strip_hidden_count.test — passes
 ```
 
 ### 5. Session restore re-spawns terminal panes as live shells — SEV-3 (vim #22) — **fixed (this branch)**
@@ -239,22 +262,24 @@ docs/research/hunt-repros/standard-12-tab-strip-no-hidden-count.test
 `src/app/session.zig:261-266` saves shell and command ptys; `:621-628`
 calls `pty_pane.open` on restore. Relaunching after a session that had a
 shell open brings the shell back running. Neovim's `:mksession` does not
-now: tests/e2e/whichkey_standard_title.test — passes
 restore `:terminal` buffers as live processes, and a shell that starts
 itself in a workspace is a surprise. Not in `PARITY.md`'s `vim-fixes`
 list; no doc or source comment defends it.
 
 ```
-docs/research/hunt-repros/vim-22-session-restores-terminal.test
+was: docs/research/hunt-repros/vim-22-session-restores-terminal.test
   FAIL line 11: file .mnml/session.zon unexpectedly contains "zsh"
+now: tests/e2e/session_restore_terminal_dormant.test — passes. The
+     assertion moved with the fix: the pane IS saved (losing the tab
+     would be its own bug); it comes back DORMANT, `[exited] — any key
+     restarts`, which is the half the finding was about.
 ```
 
-### 6-7. The two remaining, both SEV-3 cosmetic
+### 6-7. The two remaining, both SEV-3 cosmetic — **both fixed (this branch)**
 
 **Standard #10 — a titled context menu paints one blank row above its
 bottom border.** `menuSize` (`src/app/render.zig:2536`) returns
 `h = rows + title_rows + 2`, but the title is painted *inside* the top
-now: tests/e2e/tab_strip_hidden_count.test — passes
 border, so a titled menu is one row too tall. Dropdowns
 (`h = rows + 2`) are correct, which is why the `»` popup has no blank
 row. `standard-10-menu-blank-row.test`, FAIL line 14 → `tests/e2e/menu_title_no_blank_row.test`, passes.
@@ -269,10 +294,6 @@ by-design — `src/app/dispatch.zig:1979` documents it as Rust parity.)
 ## By-design (5)
 
 | finding | why |
-now: tests/e2e/session_restore_terminal_dormant.test — passes. The
-     assertion moved with the fix: the pane IS saved (losing the tab
-     would be its own bug); it comes back DORMANT, `[exited] — any key
-     restarts`, which is the half the finding was about.
 |---|---|
 | `nvchad2-vblock-cursor-past-eol-short-line` | Block corners are virtual columns (`:help visual-block`, `:help v_b_I`). Real `vim -es -u NONE` reproduces mnml's output exactly; the finding's "expected" clamp is Normal-mode behavior. |
 | `multilang-http-history-commands-noop` | Did not reproduce on the hunt's own build. `http.history` opens with both rows; the toast the report quoted is drawn below the excerpt it pasted. `tests/e2e/http_history_picker.test` passes. |
@@ -324,14 +345,15 @@ One line each, in the order worth doing them. Items 1-7 shipped on
    context menus (`src/app/render.zig:2536`).
 7. ✅ **Anchor the palette box on open** and let only the list shrink
    (`picker.placeWith` / `overlay.place`).
-8. **Backport vim #3, #10 and #11 to the Rust `mnml`** — all three
+8. ⬜ **Backport vim #3, #10 and #11 to the Rust `mnml`** — all three
    carried "Rust: same/identical" in the report and only Zig was fixed,
    so the Rust editor is now the wrong one on each.
 
 ## Two harness traps worth recording
 
-Neither is a finding; both produced a false green during this pass and
-both will do it again.
+Neither is a finding; both produced a false green during this pass.
+**Both are closed on `hunt-fixes` (2026-09-20)** — what follows is the
+diagnosis that led there.
 
 **A path list passed unquoted to the runner reports success having run
 nothing.** `./zig-out/bin/mnml-zig test $paths` with 44 paths in the
