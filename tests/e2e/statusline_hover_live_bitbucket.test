@@ -1,0 +1,40 @@
+# env: MNML_MARKETPLACE_LOCAL=market
+# env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/bitbucket.zon
+# env: BITBUCKET_BASE_URL=@${MNML_E2E_WORKSPACE}/bb.url
+# env: BITBUCKET_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/bucket.json
+# env: BITBUCKET_API_TOKEN=corpus-read-token
+# The PR chip's hover list survives the pane it opens. This pane has
+# always had ONE publish — `publishSegments`, rows and all, which the
+# poll, `--refresh` and the pane's own `.segment` effect share — and
+# this is what says so: open the pane off a hover row, let it republish
+# its own chip, and hover again with no second `--values` run behind
+# it. Its sibling lost the rows there for a year.
+shell mkdir -p .mnml/ipc-zig
+shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --lifetime-secs 180 --log-file wire.jsonl >/dev/null 2>&1 &
+wait 500
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 0, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs } } }"
+write market/bitbucket_prs.zon ".{ .id = \"bitbucket_prs\", .label = \"Bitbucket PRs\", .version = \"0.2.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .args = .{ \"--only\", \"prs\" }, .description = \"Bitbucket pull requests\", .commands = .{ .{ .id = \"bitbucket_prs.open_mine\", .title = \"Bitbucket PRs: open (mine only)\", .args = .{ \"--only\", \"prs-mine\" } } } }"
+command integrations.show_marketplace
+key i
+expect screen contains "installed bitbucket_prs"
+# The ONE values run in this script: it is what puts the chip up.
+shell "$MNML_BITBUCKET_INTEGRATION" --values --workspace "$MNML_E2E_WORKSPACE" > values.json
+wait 700
+expect screen contains "2(1)"
+command view.toggle_hover_tooltip
+hover 61 38
+wait 300
+expect screen contains "Fix the login redirect"
+# A press on a row opens the pane.
+click 62 35
+wait 2500
+expect screen contains "BITBUCKET"
+# The pane has its own values now and has republished all three chips
+# for itself. The rows are still under the pointer.
+wait 12000
+hover 20 38
+wait 200
+hover 61 38
+wait 600
+expect screen contains "Fix the login redirect"
+expect screen contains "open pull requests you authored"
