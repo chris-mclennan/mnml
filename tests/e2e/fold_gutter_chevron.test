@@ -6,15 +6,17 @@
 # as it does for every other expander.
 write code.rs "fn main() {\n    one();\n    two();\n    three();\n}\nlet end = 1;"
 open code.rs
+command editor.use_vim
 
 # Nothing folded and the pointer off the file: the sign cell is blank.
 hover 100 20
 expect screen contains "   1 fn main() {"
 
-# Fold the block from the keyboard — the chevron and the chip both say so.
+# Fold the block with vim's own `zc` — the chevron and the chip both say so.
 key down
 key down
-command editor.toggle_fold
+key z
+key c
 expect screen contains "▶  1 fn main() { ⋯ folded"
 expect screen lacks "two();"
 
@@ -33,6 +35,16 @@ expect screen contains "▶  1 fn main() { ⋯ folded"
 click 31 2
 hover 40 4
 expect screen contains "   3     two();"
+
+# `ui.always_show_fold_arrows`: the offer without the pointer at all,
+# and only on the lines that can take it.
+ex set ui.always_show_fold_arrows=true
+hover 100 20
+expect screen contains "▼  1 fn main() {"
+expect screen contains "   3     two();"
+ex set ui.always_show_fold_arrows=false
+hover 100 20
+expect screen contains "   1 fn main() {"
 
 # `ui.expand_indicator = triangle`: the small triangles instead.
 ex set ui.expand_indicator=triangle
