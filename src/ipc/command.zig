@@ -63,9 +63,30 @@ pub const Raw = struct {
     max_width: ?Num(u16) = null,
     /// `statusline-set-segment`: the hover text.
     tooltip: ?[]const u8 = null,
+    /// `statusline-set-segment`: the things behind the figure, for the
+    /// hover to list. A row with no `text` is skipped rather than
+    /// failing the line — one malformed item must not cost the chip.
+    items: []const RawItem = &.{},
     /// `notify`.
     sound: ?bool = null,
     source: ?[]const u8 = null,
+};
+
+/// One row of a segment's hover list, as it arrives.
+pub const RawItem = struct {
+    text: ?[]const u8 = null,
+    sub: ?[]const u8 = null,
+    command: ?[]const u8 = null,
+    args: []const []const u8 = &.{},
+};
+
+/// One row of a segment's hover list, kept: what it is, what to say
+/// about it on the right, and what a click on it runs.
+pub const SegmentItem = struct {
+    text: []const u8,
+    sub: []const u8 = "",
+    command: ?[]const u8 = null,
+    args: []const []const u8 = &.{},
 };
 
 /// An integer that must arrive as a bare JSON number. `std.json` would also
@@ -150,6 +171,10 @@ pub const Command = union(enum) {
         /// own: a count worth publishing every five minutes is worth
         /// saying what it counts.
         tooltip: ?[]const u8,
+        /// The things the figure counts, in the publisher's order —
+        /// the hover lists them under the tooltip line. Empty leaves
+        /// the one-line hover an older integration sends.
+        items: []const SegmentItem,
     },
     statusline_clear_segment: []const u8,
     notify: struct {
@@ -181,10 +206,10 @@ pub fn parse(arena: Allocator, line: []const u8) Allocator.Error!Command {
         error.OutOfMemory => return error.OutOfMemory,
         else => return .{ .unknown = try arena.dupe(u8, line) },
     };
-    return fromRaw(raw) orelse .{ .unknown = try arena.dupe(u8, line) };
+    return (try fromRaw(arena, raw)) orelse .{ .unknown = try arena.dupe(u8, line) };
 }
 
-fn fromRaw(raw: Raw) ?Command {
+fn fromRaw(arena: Allocator, raw: Raw) Allocator.Error!?Command {
     const Kind = enum {
         open,
         key,
@@ -278,6 +303,7 @@ fn fromRaw(raw: Raw) ?Command {
             .min_width = val(u16, raw.min_width) orelse 4,
             .max_width = val(u16, raw.max_width) orelse 30,
             .tooltip = raw.tooltip,
+            .items = try segmentItems(arena, raw.items),
         } },
         .@"statusline-clear-segment" => .{ .statusline_clear_segment = raw.id orelse return null },
         .notify => .{ .notify = .{
@@ -325,6 +351,30 @@ pub fn mouseButton(s: ?[]const u8) key.MouseButton {
 }
 
 /// Comma-separated modifier names; unknown names are dropped.
+/// The rows a `statusline-set-segment` carried, kept in order. A row
+/// with no `text` is dropped — there is nothing to paint for it and
+/// dropping one row is cheaper than losing the chip. The wire cap is
+/// the host's guard against a publisher that sends a thousand; what
+/// the hover actually shows is `statusline.hover_items`.
+pub const max_segment_items: usize = 24;
+
+fn segmentItems(arena: Allocator, raw: []const RawItem) Allocator.Error![]const SegmentItem {
+    if (raw.len == 0) return &.{};
+    var out: std.ArrayListUnmanaged(SegmentItem) = .empty;
+    for (raw) |it| {
+        if (out.items.len == max_segment_items) break;
+        const text = it.text orelse continue;
+        if (text.len == 0) continue;
+        try out.append(arena, .{
+            .text = text,
+            .sub = it.sub orelse "",
+            .command = it.command,
+            .args = it.args,
+        });
+    }
+    return out.toOwnedSlice(arena);
+}
+
 pub fn parseMods(s: ?[]const u8) key.Mods {
     var out: key.Mods = .{};
     var it = std.mem.splitScalar(u8, s orelse return out, ',');
@@ -427,6 +477,9 @@ test "the command table: every cmd resolves to its variant" {
     try t.expectEqual(@as(u16, 30), seg.max_width);
     try t.expectEqual(@as(?[]const u8, null), seg.color);
     try t.expectEqualStrings("s", (try parseT(a, "{\"cmd\":\"statusline-clear-segment\",\"id\":\"s\"}")).statusline_clear_segment);
+    // A segment with nothing behind it lists nothing: the line an
+    // older integration sends is unchanged.
+    try t.expectEqual(@as(usize, 0), seg.items.len);
 
     const n = (try parseT(a, "{\"cmd\":\"notify\",\"text\":\"body\"}")).notify;
     try t.expectEqualStrings("mnml", n.title);
@@ -501,4 +554,40 @@ test "parseMods and mouseButton accept the documented spellings" {
     try t.expect(!parseMods(null).ctrl);
     try t.expectEqual(key.MouseButton.right, mouseButton("R"));
     try t.expectEqual(key.MouseButton.left, mouseButton(null));
+}
+
+test "a segment's items: kept in order, a row with no text skipped, the wire capped" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const line =
+        "{\"cmd\":\"statusline-set-segment\",\"id\":\"s\",\"text\":\"T\",\"items\":[" ++
+        "{\"text\":\"Fix the login redirect\",\"sub\":\"acme/api\",\"command\":\"bb.open\",\"args\":[\"--focus\",\"acme/api#1\"]}," ++
+        "{\"sub\":\"no text at all\"}," ++
+        "{\"text\":\"\"}," ++
+        "{\"text\":\"Bump the client timeout\"}]}";
+    const seg = (try parseT(a, line)).statusline_set_segment;
+    try t.expectEqual(@as(usize, 2), seg.items.len);
+    try t.expectEqualStrings("Fix the login redirect", seg.items[0].text);
+    try t.expectEqualStrings("acme/api", seg.items[0].sub);
+    try t.expectEqualStrings("bb.open", seg.items[0].command.?);
+    try t.expectEqualStrings("--focus", seg.items[0].args[0]);
+    // A row that only said where it lives is dropped, not the line.
+    try t.expectEqualStrings("Bump the client timeout", seg.items[1].text);
+    try t.expectEqualStrings("", seg.items[1].sub);
+    try t.expect(seg.items[1].command == null);
+
+    // Far more than the wire keeps: the first `max_segment_items` land
+    // and the rest go, rather than a publisher sizing the host's heap.
+    var many: std.Io.Writer.Allocating = .init(a);
+    try many.writer.writeAll("{\"cmd\":\"statusline-set-segment\",\"id\":\"s\",\"text\":\"T\",\"items\":[");
+    for (0..max_segment_items + 10) |i| try many.writer.print("{s}{{\"text\":\"row {d}\"}}", .{ if (i == 0) "" else ",", i });
+    try many.writer.writeAll("]}");
+    const big = (try parseT(a, many.written())).statusline_set_segment;
+    try t.expectEqual(max_segment_items, big.items.len);
+    try t.expectEqualStrings("row 0", big.items[0].text);
+
+    // A malformed `items` (not an array of objects) fails the line the
+    // way any wrong-typed field does — `.unknown`, never a crash.
+    try t.expect((try parseT(a, "{\"cmd\":\"statusline-set-segment\",\"id\":\"s\",\"text\":\"T\",\"items\":\"nope\"}")) == .unknown);
 }

@@ -25,6 +25,23 @@ pub const Segment = struct {
     /// The hover text: what this number counts, and its breakdown. A
     /// chip that says `󰂨 4(2)` and nothing else makes the reader guess.
     tooltip: ?[]const u8 = null,
+    /// The things behind the figure — the hover lists them under the
+    /// tooltip line, and a click on a row runs its `command`. The
+    /// design-language rule: a statusline figure's hover lists what it
+    /// counts. Leave it empty and the chip keeps the one-line hover.
+    items: []const Item = &.{},
+};
+
+/// One thing behind a figure: a pull request, a ticket, a pipeline.
+/// `text` is what it is; `sub` is where it lives or how old it is,
+/// painted muted and right-aligned; `command` is the command id a
+/// click on the row runs, with `args` appended to its argv when that
+/// command mounts a binary.
+pub const Item = struct {
+    text: []const u8,
+    sub: []const u8 = "",
+    command: ?[]const u8 = null,
+    args: []const []const u8 = &.{},
 };
 
 pub const Error = error{ NoChannel, WriteFailed } || Allocator.Error;
@@ -102,6 +119,20 @@ pub const Ipc = struct {
     }
 
     pub fn statuslineSetSegment(self: *const Ipc, seg: Segment) Error!void {
+        // A chip with nothing behind it sends no `items` key at all:
+        // the line an older SDK wrote stays byte for byte what it was.
+        if (seg.items.len == 0) return self.line(.{
+            .cmd = "statusline-set-segment",
+            .id = seg.id,
+            .side = seg.side,
+            .text = seg.text,
+            .color = seg.color,
+            .click_command = seg.click_command,
+            .priority = seg.priority,
+            .min_width = seg.min_width,
+            .max_width = seg.max_width,
+            .tooltip = seg.tooltip,
+        });
         return self.line(.{
             .cmd = "statusline-set-segment",
             .id = seg.id,
@@ -113,6 +144,7 @@ pub const Ipc = struct {
             .min_width = seg.min_width,
             .max_width = seg.max_width,
             .tooltip = seg.tooltip,
+            .items = seg.items,
         });
     }
 
