@@ -39,7 +39,7 @@ command editor.use_standard
 
 # ── a click anywhere on the row opens it; a click while it is open is a
 #    no-op, so the half-typed line survives ──
-click 60 39
+click 40 39
 expect screen contains ":▏"
 type w
 expect screen contains ":w▏"

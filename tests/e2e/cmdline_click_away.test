@@ -19,7 +19,9 @@ expect screen lacks ":▏"
 expect screen lacks "CMD"
 
 # ── a click on the bottom row opens it, and three things say so ──
-click 60 39
+# // changed (edge-grip): at column 40 — the middle three cells of the
+# row are the launcher dock's grip, whose hit wins them.
+click 40 39
 expect status contains "\"cmdline\":true"
 expect screen contains ":▏"
 expect screen contains "CMD"
@@ -37,7 +39,7 @@ expect screen lacks ":▏"
 expect screen lacks "CMD"
 
 # ── a half-typed line survives the same click ──
-click 60 39
+click 40 39
 type w
 expect screen contains ":w▏"
 click 60 10
@@ -49,7 +51,7 @@ expect status contains "\"cmdline\":false"
 
 # ── the tree is a click target like any other ──
 command view.focus_tree
-click 60 39
+click 40 39
 expect status contains "\"cmdline\":true"
 expect screen contains "CMD"
 expect screen lacks "TREE"

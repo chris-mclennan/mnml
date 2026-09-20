@@ -192,14 +192,14 @@ pub const rows = [_]RowSpec{
     .{ .path = "ui.menu_bar", .label = "Menu bar", .section = .ui, .scope = .home },
     .{ .path = "ui.activity_bar", .label = "Activity bar", .section = .ui, .scope = .home },
     .{ .path = "ui.sidebar", .label = "Side columns", .section = .ui, .scope = .home },
-    // // changed (edge-grip): one row for all three grips — the menu
-    // bar's, the dock's and the columns'.
-    .{ .path = "ui.edge_grips", .label = "Edge grips on slide-ins", .section = .ui, .scope = .home },
     // // changed (launcher-dock): the strip's three discrete rows. Its
     // dwells and its pins are config-only (v1 is choices).
     .{ .path = "ui.dock.mode", .label = "Launcher dock", .section = .ui, .scope = .home },
     .{ .path = "ui.dock.edge", .label = "Launcher dock edge", .section = .ui, .scope = .home },
     .{ .path = "ui.dock.labels", .label = "Launcher dock labels", .section = .ui, .scope = .home },
+    // // changed (edge-grip): one row for all three grips — it sits
+    // under the surfaces it governs, after the last of them.
+    .{ .path = "ui.edge_grips", .label = "Edge grips on slide-ins", .section = .ui, .scope = .home },
     .{ .path = "ui.debug_toolbar", .label = "Debug toolbar strip", .section = .ui, .scope = .home },
     .{ .path = "ui.bufferline_diag_style", .label = "Diag chip on tabs", .section = .ui, .scope = .home },
     .{ .path = "ui.expand_indicator", .label = "Expand indicator", .section = .ui, .scope = .home },
