@@ -207,6 +207,37 @@ to `]` `[` Tab Shift-Tab `g` `G` and to each strip name's
 `sectionHit(n)`) all call it, so the cursor is pulled into the new window
 instead of dragging it back on the next frame.
 
+**The filter on the box is NOT one of these.** Rust already has one —
+`SettingItem::matches_row` / `filter_settings` / `settings_filter_focus`
+in `src/app/settings.rs`, painted as row 0 of the inner area by
+`src/ui/settings_overlay.rs` — and Zig's (`Filter` / `filterKey` /
+`filtered` / `rowMatches` in `src/ui/settings.zig`, `lists` / `refocus`
+in `src/app/settings.zig`) is the same feature with four differences
+worth taking the other way, back into Rust:
+
+- Rust's filter input is **append-only** (`s.filter.push(c)`), with a
+  painted `▏` for a cursor. Zig's is a `text_field`, so the caret,
+  `←→`, Home/End, the word deletes and a paste all work. This is the
+  gap `docs/CONVENTIONS.md` says to close on day one, and it is still
+  open in Rust.
+- Rust matches a row's label and **every option it offers**; Zig
+  matches the label, the word the **current value** reads as, and the
+  **section's name**. `always` should find the rows that *are* always,
+  not every row that could be; `editor` should bring that section.
+- Rust drops the empty sections silently. Zig keeps every name on the
+  section strip and **dims** the ones with no match, so the strip says
+  where the matches are and a click still jumps (by name — the visible
+  list has lost the headers). Rust has no strip yet either (above).
+- Zig's footer swaps its position for **`5 of 87`**, and a query
+  nothing answers to says **`no setting matches "…"`** where the rows
+  would be rather than leaving a blank box.
+
+One difference goes the other way and should stay: Rust focuses the
+field the moment the overlay opens (a vscode-keyboard finding — typing
+straight in used to drop keystrokes). Zig cannot, because its list
+binds `j` `k` `h` `l` `r` `R` `g` `G` `q`; `/` (and Ctrl+F in the
+standard profile) opens it instead.
+
 **In Rust.** `src/app/settings.rs` builds the same item list and
 `src/ui/` paints the same 60 % x 70 % box, and it has the same bug: the
 UI section alone outgrows the cap, so `Editor` / `Integrations` / `AI` /

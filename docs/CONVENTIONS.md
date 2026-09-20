@@ -159,9 +159,11 @@ the idiom is written down instead. A settings screen is:
 - One row per setting: `▸ <label>:  [active] / other1 / other2  *` — `▸`
   is focus, `[brackets]` the current choice, `*` modified from the
   shipped default. The labels pad so the colons line up.
-- Keys: `←→` / `h l` adjust · `↑↓` / `j k` move · `r` reset the row ·
-  `R` reset all · Enter save + close · Esc cancel (back to the
-  opened-state config, including the bytes of every file written since).
+- Keys: `←→` / `h l` adjust · `↑↓` / `j k` move · `/` filter (Ctrl+F
+  too in the standard profile) · `r` reset the row · `R` reset all ·
+  Enter save + close · Esc cancel (back to the opened-state config,
+  including the bytes of every file written since) — a live filter
+  first, see below.
 - v1 rows are **discrete choices**. (Zig also ships the minimal number
   row, `‹ [32] ›`.) The overlay never edits arrays of complex things —
   those stay ZON-edited.
@@ -186,6 +188,41 @@ know exists. Three affordances, all in `draw`, none of them optional:
   when the long form would cost the key hint a segment, so the overflow
   still shows in a box too narrow for a bar. The form is chosen against
   the *widest* the long one can ever get, so it does not flip mid-scroll.
+
+**Past sixty-odd rows the three affordances stop being enough, so a
+settings screen filters.** This is a family rule, not a Zig detail:
+scrolling ninety rows to find `Launcher dock labels` is not a control.
+mnml's Rust build has a first version of it (`filter_settings` in
+`src/app/settings.rs`) that misses most of what follows — the shape
+below is the one every settings screen in the family owes, and
+`docs/BACKPORT.md` §12 lists what Rust still has to take.
+
+- `/` opens the **family filter pill** (`src/ui/filter_input.zig`'s
+  look: a cell of ground, the search glyph in the accent, then the
+  query or `/ filter`) on its own row *under the box's title and above
+  the section strip*. The strip stays — which sections still hold a
+  match is part of the answer, and a pill that replaced it would throw
+  that away. The standard profile takes **Ctrl+F** for it as well (VS
+  Code's habit); vim gets `/` alone. The footer's hint row names it.
+- The field is a **`text_field`** — caret, arrows, Home/End, word
+  deletes and paste from day one, never an append-only buffer.
+- The query is a **case-insensitive substring over three things**: the
+  row's label, the word its current value reads as (`always`, `on`,
+  a number row's digits — so `always` finds every row set to it), and
+  its section's name (so `editor` brings that whole section).
+- A **section header survives only where a row under it matched**; the
+  strip dims the sections with none but still lets a click jump. The
+  footer swaps its scroll position for `3 of 91` — matched rows of all
+  of them. A query nothing answers to says so where the rows would be.
+- **The cursor is always on a match.** A focused row that still matches
+  keeps the focus; one the query dropped hands it to the first match,
+  window back at the top — a cursor left pointing at a row that is no
+  longer there adjusts the wrong setting. `↑↓` from the field walk the
+  matches without leaving it, `Enter` hands the list back with the
+  query still on, and only then does `←→` adjust the focused row.
+- **Esc takes the query before it takes the box**: the first press
+  clears the filter and returns to the whole list, the second cancels
+  the overlay the way it always did.
 
 Anything that moves the **view** rather than the cursor — the wheel, a
 bar drag, a section jump — goes through `State.scrollTo`, which pulls the
