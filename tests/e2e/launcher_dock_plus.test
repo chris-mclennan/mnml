@@ -1,0 +1,47 @@
+# width: 120
+# The `+` at the head of the strip (src/app/launcher_dock.zig): it is the
+# tab bar's own `+` — the same glyph, opening the same *Create…* menu
+# (`context_menus.openNewTabMenu`, never a fork of it) — and
+# `ui.dock.plus` takes it off.
+#
+# At 120x40 the `always` strip is row 39 — the SCREEN's last row, the
+# `:` line's — and it is centred, so the `+` item's run is columns
+# 41..47 with the glyph at 42.
+write a.txt "alpha\n"
+open a.txt
+ex dock always
+expect screen contains "󰐕 New "
+# A click on it opens the tab bar's menu, rows and all.
+click 42 39
+expect screen contains "Create"
+expect screen contains "Integrations"
+expect screen contains "Dock"
+key esc
+expect screen lacks "Integrations"
+# `.label` — the third form — paints words and no glyphs at all, and
+# the `+` reads as one: `+ New`.
+ex dock text
+expect screen contains "dock: labels only"
+expect screen contains "\n                                            + New "
+expect screen contains "Browser"
+expect screen contains "New terminal"
+expect screen lacks "󰐕 New"
+# (the glyphs still live on the rail and in the tab bar — what the
+# form drops is the one before each word on the STRIP)
+expect screen lacks " Browser"
+expect screen lacks "󲀀 New terminal"
+# The pin chip is not a label and does not go.
+expect screen contains "󰐃"
+ex dock labels
+expect screen contains "󰐕 New "
+# `ui.dock.plus = false` takes the `+` off and the rest of the run
+# closes up — Browser leads it.
+ex dock plus
+expect screen contains "no + on the strip"
+expect screen lacks "󰐕 New"
+expect screen contains " Browser"
+expect screen contains "New terminal"
+# And back.
+ex dock plus
+expect screen contains "the + is on the strip"
+expect screen contains "󰐕 New "

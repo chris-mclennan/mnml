@@ -630,9 +630,14 @@ pub const MenuAction = union(enum) {
     toggle_auto_refresh: panel.PanelId,
     /// The coverage chip's mode menu (`app/coverage.zig`).
     set_coverage_mode: @import("../config/Config.zig").CoverageChipMode,
-    /// The launcher dock's *Show* rows: icons, or icons and labels
+    /// The launcher dock's *Show* rows: icons, labels, or both
     /// (`app/launcher_dock.zig`, `ui.dock.labels`).
     set_dock_labels: @import("../config/Config.zig").DockLabels,
+    /// Its *Align* rows: where the run sits along the strip
+    /// (`ui.dock.align`).
+    set_dock_align: @import("../config/Config.zig").DockAlign,
+    /// Its *Show the + button* row (`ui.dock.plus`).
+    set_dock_plus: bool,
     /// // changed (menu-bar): a row of the ` » ` overflow menu — opens
     /// menu-bar menu `index` (`app/menu_bar.zig`).
     menu_bar: u8,

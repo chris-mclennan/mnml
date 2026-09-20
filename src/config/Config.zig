@@ -223,15 +223,31 @@ pub const DockEdge = enum { bottom, left, right };
 /// ` <glyph> <label> `, the strip's own form; `icon` paints the glyph
 /// alone in the same three cells a side dock uses — padding, glyph,
 /// padding — with the running dot in that padding cell and the name in
-/// the tooltip. A dock on a side edge is icon-only by geometry (three
-/// cells is all it has) and ignores this key.
-pub const DockLabels = enum { icon, icon_label };
+/// the tooltip. `label` is the third form the user asked for — the
+/// word alone, no glyph anywhere on the strip, with the running dot
+/// (and the keyboard cursor) in the one padding cell before it. A dock
+/// on a side edge is icon-only by geometry (three cells is all it has)
+/// and paints the icon form whatever this key says — `label` included.
+pub const DockLabels = enum { icon, icon_label, label };
+/// Where the run of items sits along the strip. `center` is the
+/// shipped look — macOS's Dock, centred — and the pin chip keeps the
+/// far end whatever this says. On a side edge it centres the items
+/// vertically. A run too long to centre is laid from the start rather
+/// than clipped on the left.
+pub const DockAlign = enum { start, center, end };
 
 /// `ui.dock` — the launcher dock (`app/launcher_dock.zig`).
 pub const Dock = struct {
     mode: DockMode = .auto_hide,
     edge: DockEdge = .bottom,
     labels: DockLabels = .icon_label,
+    /// Where the items sit along the strip (`:dock center|start|end`).
+    /// `align` is a Zig keyword, so the field wears the quotes the key
+    /// name does not: `.@"align" = .center` in the file.
+    @"align": DockAlign = .center,
+    /// The `+` leads the strip — the tab bar's own `+`, opening the
+    /// same *Create…* menu. `false` takes it off.
+    plus: bool = true,
     /// Command ids pinned onto the dock, in this order — a static id
     /// or a dynamic one (an integration's `jira.open`). An id nothing
     /// answers to is skipped rather than painted dead.

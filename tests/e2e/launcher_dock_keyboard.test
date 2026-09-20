@@ -1,7 +1,8 @@
 # width: 120
 # The keyboard path: `view.focus_dock` (vim `Ctrl-W D`) puts the keys in
 # the strip, `h` / `l` walk a bottom dock, Enter runs the item and hands
-# the keys back, Esc leaves without running anything.
+# the keys back, Esc leaves without running anything. The run starts on
+# the `+` — the strip's first item.
 write a.txt "alpha\n"
 open a.txt
 ex dock always
@@ -20,8 +21,10 @@ click 60 2
 type "hl"
 key ctrl+s
 expect file a.txt contains "hl"
-# `l` steps from Browser onto New terminal; Enter opens the shell.
+# The cursor starts on the `+`, which leads the strip: two `l` steps
+# walk it past Browser onto New terminal, and Enter opens the shell.
 command view.focus_dock
+key l
 key l
 key enter
 wait 900

@@ -1,0 +1,44 @@
+# width: 120
+# `ui.dock.align` (src/app/launcher_dock.zig, src/ui/launcher_dock_view.zig):
+# where the run of items sits along the strip. `.center` is the shipped
+# default — macOS's Dock, centred — and the pin chip keeps the far end
+# whatever it says.
+#
+# At 120x40 the `always` strip is row 39 — the SCREEN's last row, the
+# `:` line's — and the pin chip takes 117..119, so the items have 1..117.
+# The default row is ` 󰐕 New   Browser  󲀀 New terminal `,
+# 34 cells of it, which centres at column 42 and ends at 84. The `\n` in
+# each assertion anchors it to the start of a row — the only way a
+# `contains` script can pin a column.
+write a.txt "alpha\n"
+open a.txt
+ex dock always
+# Centred out of the box: 42 blank cells lead the row.
+expect screen contains "\n                                          󰐕 New "
+# `:dock start` slides the whole run to the strip's first cell — the
+# same items, the same widths, a different offset.
+ex dock start
+expect screen contains "dock: aligned to the start"
+expect screen contains "\n  󰐕 New "
+expect screen lacks "\n                                          󰐕 New "
+# `:dock end` puts it against the pin chip, and never under it.
+ex dock end
+expect screen contains "dock: aligned to the end"
+expect screen contains "\n                                                                                    󰐕 New "
+expect screen contains "󰐃"
+expect screen lacks "\n  󰐕 New "
+# And back to the middle.
+ex dock center
+expect screen contains "dock: centred"
+expect screen contains "\n                                          󰐕 New "
+# The strip's own right-click menu carries every choice, the current one
+# ticked — three label forms, three alignments, and the `+`.
+rightclick 118 39
+expect screen contains "Show: icons and labels"
+expect screen contains "Show: icons only"
+expect screen contains "Show: labels only"
+expect screen contains "Align: centre"
+expect screen contains "Align: start"
+expect screen contains "Align: end"
+expect screen contains "Show the + button"
+key esc

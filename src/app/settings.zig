@@ -192,11 +192,13 @@ pub const rows = [_]RowSpec{
     .{ .path = "ui.menu_bar", .label = "Menu bar", .section = .ui, .scope = .home },
     .{ .path = "ui.activity_bar", .label = "Activity bar", .section = .ui, .scope = .home },
     .{ .path = "ui.sidebar", .label = "Side columns", .section = .ui, .scope = .home },
-    // // changed (launcher-dock): the strip's three discrete rows. Its
+    // // changed (launcher-dock): the strip's five discrete rows. Its
     // dwells and its pins are config-only (v1 is choices).
     .{ .path = "ui.dock.mode", .label = "Launcher dock", .section = .ui, .scope = .home },
     .{ .path = "ui.dock.edge", .label = "Launcher dock edge", .section = .ui, .scope = .home },
     .{ .path = "ui.dock.labels", .label = "Launcher dock labels", .section = .ui, .scope = .home },
+    .{ .path = "ui.dock.align", .label = "Launcher dock alignment", .section = .ui, .scope = .home },
+    .{ .path = "ui.dock.plus", .label = "Launcher dock + button", .section = .ui, .scope = .home },
     // // changed (edge-grip): one row for all three grips — it sits
     // under the surfaces it governs, after the last of them.
     .{ .path = "ui.edge_grips", .label = "Edge grips on slide-ins", .section = .ui, .scope = .home },
@@ -1102,8 +1104,13 @@ test "number rows: → steps the right panel width, writes it, and the config se
     try app.handle(.{ .key = Key.named(.esc) });
     try t.expectEqual(@as(u16, 30), app.cfg.ui.right_panel_width);
     try t.expect((try readOrNull(tmp, "ws/.mnml/config.zon")) == null);
-    // The rendered row reads `‹ [30] ›`.
+    // The rendered row reads `‹ [30] ›`. // changed (dock-v2): the UI
+    // section grew past what 80 rows show, so the reopened list has to
+    // be scrolled to the row — `draw` scrolls to the cursor.
     try open(&app);
+    for (try items(&app, app.frame.allocator()), 0..) |it, i| if (it == .row and std.mem.eql(u8, it.row.label, "Right panel width")) {
+        app.overlay.settings.ui.cursor = i;
+    };
     try app.render();
     const screen = try @import("../ipc/screen.zig").toTestText(t.allocator, &app.screen);
     defer t.allocator.free(screen);

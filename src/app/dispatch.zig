@@ -1075,6 +1075,14 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
             error.OutOfMemory => return error.OutOfMemory,
             else => {},
         },
+        .set_dock_align => |a| launcher_dock.setAlign(app, a) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {},
+        },
+        .set_dock_plus => |on| launcher_dock.setPlus(app, on) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {},
+        },
         .menu_bar => |i| try menu_bar.openIndex(app, i),
         .git_palette => |a| try git_palette.menuAction(app, a),
         // colors: the `Color: …` rows — a session's, a repo's.

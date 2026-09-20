@@ -5,10 +5,11 @@
 # the name moving into the tooltip exactly as a side dock does it.
 #
 # At 120x40 the `always` strip is row 39 — the screen's last row — and
-# the first item starts at
-# x=1: padding, glyph, padding. So the Browser chip's glyph is at x=2
-# under `.icon`, and the hover there is the proof the tooltip still
-# names it.
+# the centred run of three three-cell items (`ui.dock.align` is
+# `.center` out of the box) starts at column 54: the `+` at 54..56,
+# Browser at 57..59, New terminal at 60..62, each ` padding glyph
+# padding `. So the Browser chip's glyph is at x=58, and the hover there
+# is the proof the tooltip still names it.
 write a.txt "alpha\n"
 open a.txt
 ex dock always
@@ -21,15 +22,15 @@ expect screen lacks "Browser"
 expect screen lacks "New terminal"
 # The tooltip carries the name the row no longer paints.
 command view.toggle_hover_tooltip
-hover 2 39
+hover 58 39
 wait 200
 expect screen contains "Browser"
 hover 60 10
 wait 200
 command view.toggle_hover_tooltip
-# A click on the second item's three cells still opens a shell — the
-# hit rects moved with the paint.
-click 5 39
+# A click on the New terminal item's three cells still opens a shell —
+# the hit rects moved with the paint.
+click 61 39
 wait 900
 expect pane Terminal
 # And back: `:dock labels` gives the row its labels again, unchanged.

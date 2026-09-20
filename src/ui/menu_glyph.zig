@@ -164,6 +164,10 @@ pub fn forItem(it: command.MenuItem, ascii: bool) []const u8 {
         .set_coverage_mode => if (ascii) "%" else "\u{f0e4}", // fa-dashboard
         // The launcher dock's *Show* rows: a label, on or off.
         .set_dock_labels => if (ascii) "#" else "\u{f02b}", // fa-tag
+        // Its *Align* rows: where the run sits.
+        .set_dock_align => if (ascii) "|" else "\u{f036}", // fa-align_left
+        // Its *Show the + button* row.
+        .set_dock_plus => if (ascii) "+" else "\u{F0415}", // nf-md-plus, the tab bar's own
         .menu_bar => if (ascii) "=" else "\u{f0c9}", // fa-bars: a menu-bar menu
         .git_palette => if (ascii) "g" else "\u{e702}", // dev-git: a palette row's action
         // The chip menu's *Requests…* row: what this number cost.

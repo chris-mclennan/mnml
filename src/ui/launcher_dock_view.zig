@@ -9,11 +9,21 @@
 //! cell, the glyph, a padding cell, the activity bar's own column — and
 //! the label lives in the tooltip instead.
 //!
-//! `Props.labels` (`ui.dock.labels`) narrows the bottom row to the side
-//! form: `.icon` gives each item the same three cells a side dock has,
-//! laid left to right, and the name moves to the tooltip. A side dock
-//! is icon-only by geometry and ignores the field — three cells is all
-//! it has.
+//! `Props.labels` (`ui.dock.labels`) is how much of an item the bottom
+//! row paints. `.icon` gives each item the same three cells a side dock
+//! has, laid left to right, and the name moves to the tooltip; `.label`
+//! drops the glyph instead and paints the word alone, with the running
+//! dot (and the keyboard cursor) in the one padding cell before it. A
+//! side dock is icon-only by geometry and ignores the field — three
+//! cells is all it has, `.label` included.
+//!
+//! Under `.label` the word takes the glyph's own styling, because with
+//! no glyph beside it the word is what carries the item's colour.
+//!
+//! `Props.align` (`ui.dock.align`) is where the run sits: `.center` is
+//! the shipped look, the way macOS's Dock centres its icons, and the
+//! pin chip keeps the far end whatever it says. A run too long to
+//! centre falls back to `.start` — it is never clipped on the left.
 //!
 //! An item carries its integration's category colour, the way a pinned
 //! rail icon does, because the colour is the integration's identity. A
@@ -55,7 +65,9 @@ pub const cursor_ascii = ">";
 
 pub const Edge = enum { bottom, left, right };
 /// `ui.dock.labels` — how much of an item a bottom strip paints.
-pub const Labels = enum { icon, icon_label };
+pub const Labels = enum { icon, icon_label, label };
+/// `ui.dock.align` — where the run sits along the strip.
+pub const Align = enum { start, center, end };
 
 pub const Item = struct {
     glyph: []const u8,
@@ -73,6 +85,8 @@ pub const Props = struct {
     /// How much of an item a bottom strip paints; a side one is
     /// icon-only whatever this says.
     labels: Labels = .icon_label,
+    /// Where the run sits along the strip.
+    @"align": Align = .center,
     /// The keyboard cursor's item, when the dock has the keys.
     cursor: ?u16 = null,
     /// The pin chip is lit (the dock is pinned open).
@@ -93,10 +107,39 @@ pub fn pinRect(area: Rect, edge: Edge) Rect {
 /// side. Under `.icon` it is the side form's three — a padding cell
 /// (the dot's, or the keyboard cursor's), the glyph, a padding cell —
 /// whether or not it is running, so the row does not shuffle when a
-/// thing opens.
+/// thing opens. Under `.label` it is that same padding cell, the word,
+/// and one cell of air: the dot keeps a cell, it is just the one the
+/// glyph is not in, so this form does not shuffle either.
 fn itemWidth(ui: Ui, it: Item, labels: Labels) u16 {
-    if (labels == .icon) return width;
-    return 1 + 1 + @as(u16, if (it.running) 1 else 0) + 1 + ui.width(it.label) + 1;
+    return switch (labels) {
+        .icon => width,
+        .label => 1 + ui.width(it.label) + 1,
+        .icon_label => 1 + 1 + @as(u16, if (it.running) 1 else 0) + 1 + ui.width(it.label) + 1,
+    };
+}
+
+/// Where the run starts on a bottom strip, given the cells it needs.
+/// `left` is the strip's first cell and `right` the first cell the pin
+/// chip (or the frame) has taken; the run always keeps the strip's one
+/// leading cell of air, so a run with nowhere to go reads from the
+/// start rather than off the left edge.
+fn rowStart(left: u16, right: u16, total: u16, a: Align) u16 {
+    const first = left + 1;
+    return switch (a) {
+        .start => first,
+        .center => @max(first, left + (right -| left -| total) / 2),
+        .end => @max(first, right -| total),
+    };
+}
+
+/// The same sum down a side strip, where every item is one row and
+/// there is no leading cell of air to keep.
+fn colStart(top: u16, bottom: u16, rows: u16, a: Align) u16 {
+    return switch (a) {
+        .start => top,
+        .center => top + (bottom -| top -| rows) / 2,
+        .end => @max(top, bottom -| rows),
+    };
 }
 
 pub fn draw(ui: Ui, area: Rect, props: Props) void {
@@ -117,12 +160,26 @@ fn drawRow(ui: Ui, area: Rect, props: Props, bg: vaxis.Color, hover_bg: vaxis.Co
     // The pin chip owns the strip's tail; items stop before it.
     const limit = pinRect(area, .bottom);
     const right_edge = if (limit.isEmpty()) area.right() else limit.x;
-    var x: u16 = area.x + 1;
-    for (props.items, 0..) |it, i| {
+    // Which items fit, and what they cost — measured from the strip's
+    // own start, so the answer is the alignment's input, never its
+    // output: moving the run must never change which items are on it.
+    var fits: usize = 0;
+    var total: u16 = 0;
+    {
+        var x: u16 = area.x + 1;
+        for (props.items) |it| {
+            const w = itemWidth(ui, it, props.labels);
+            if (x + w > right_edge) break;
+            x += w;
+            total += w;
+            fits += 1;
+        }
+    }
+    var x = rowStart(area.x, right_edge, total, props.@"align");
+    for (props.items[0..fits], 0..) |it, i| {
         const w = itemWidth(ui, it, props.labels);
-        if (x + w > right_edge) break;
         const cell = Rect.init(x, area.y, w, 1);
-        paintItem(ui, cell, it, props.cursor == @as(u16, @intCast(i)), bg, hover_bg, props.labels == .icon_label);
+        paintItem(ui, cell, it, props.cursor == @as(u16, @intCast(i)), bg, hover_bg, props.labels);
         ui.hit(cell, .{ .launcher_dock = .{ .item = @intCast(i) } });
         x += w;
     }
@@ -131,21 +188,21 @@ fn drawRow(ui: Ui, area: Rect, props: Props, bg: vaxis.Color, hover_bg: vaxis.Co
 fn drawColumn(ui: Ui, area: Rect, props: Props, bg: vaxis.Color, hover_bg: vaxis.Color) void {
     const limit = pinRect(area, .left);
     const bottom_edge = if (limit.isEmpty()) area.bottom() else limit.y;
-    var y: u16 = area.y;
-    for (props.items, 0..) |it, i| {
-        if (y >= bottom_edge) break;
+    const fits = @min(props.items.len, bottom_edge -| area.y);
+    var y = colStart(area.y, bottom_edge, @intCast(fits), props.@"align");
+    for (props.items[0..fits], 0..) |it, i| {
         const cell = Rect.init(area.x, y, area.w, 1);
-        paintItem(ui, cell, it, props.cursor == @as(u16, @intCast(i)), bg, hover_bg, false);
+        paintItem(ui, cell, it, props.cursor == @as(u16, @intCast(i)), bg, hover_bg, .icon);
         ui.hit(cell, .{ .launcher_dock = .{ .item = @intCast(i) } });
         y += 1;
     }
 }
 
-/// One item in its own cell run. `with_label` is the bottom strip's
-/// `.icon_label` form; the icon form — a side dock, or a bottom one
-/// under `.icon` — paints the glyph alone and leaves the label to the
-/// tip.
-fn paintItem(ui: Ui, cell: Rect, it: Item, focused: bool, bg: vaxis.Color, hover_bg: vaxis.Color, with_label: bool) void {
+/// One item in its own cell run, in one of the three forms: a side
+/// dock and a bottom one under `.icon` paint the glyph alone and leave
+/// the label to the tip, `.icon_label` paints both, and `.label`
+/// paints the word with no glyph at all.
+fn paintItem(ui: Ui, cell: Rect, it: Item, focused: bool, bg: vaxis.Color, hover_bg: vaxis.Color, form: Labels) void {
     const th = ui.theme;
     const pal = th.palette;
     const hot = ui.hovered(cell);
@@ -157,8 +214,31 @@ fn paintItem(ui: Ui, cell: Rect, it: Item, focused: bool, bg: vaxis.Color, hover
     // integration's identity — and only sheds the `dim`.
     const glyph_style = if (hot or focused) bold(base) else dim(base);
     const glyph = if (ui.ascii or !ui.nerd_font or it.glyph.len == 0) it.fallback else it.glyph;
+    const label_style = if (hot or focused)
+        Theme.onBg(th.fg, ground)
+    else
+        dim(Theme.withFg(Theme.onBg(th.fg, ground), pal.comment));
     var x = cell.x;
-    if (with_label) {
+    if (form == .label) {
+        // The word alone. The padding cell before it is the cursor's,
+        // then the dot's — the same cell the icon form shares them on,
+        // so the run's width never moves when a thing opens.
+        if (focused) {
+            _ = ui.putStr(x, cell.y, 1, if (ui.ascii) cursor_ascii else cursor_glyph, bold(Theme.withFg(Theme.onBg(th.fg, ground), pal.blue)));
+        } else if (it.running) {
+            _ = ui.putStr(x, cell.y, 1, if (ui.ascii) running_ascii else running_dot, dotStyle(th, ground));
+        }
+        x += 1;
+        // The word wears the item's own colour here, not the label
+        // grey the `.icon_label` form gives it: with no glyph beside
+        // it the word IS the icon, and the colour is the item's
+        // identity (the rule at the top of this file). So it takes the
+        // glyph's treatment exactly — `dim` when cold, `bold` when the
+        // pointer or the cursor is on it.
+        _ = ui.putStr(x, cell.y, cell.right() -| x, it.label, glyph_style);
+        return;
+    }
+    if (form == .icon_label) {
         if (focused) {
             _ = ui.putStr(x, cell.y, 1, if (ui.ascii) cursor_ascii else cursor_glyph, bold(Theme.withFg(Theme.onBg(th.fg, ground), pal.blue)));
         }
@@ -166,10 +246,6 @@ fn paintItem(ui: Ui, cell: Rect, it: Item, focused: bool, bg: vaxis.Color, hover
         x += ui.putStr(x, cell.y, cell.right() -| x, glyph, glyph_style);
         if (it.running) x += ui.putStr(x, cell.y, cell.right() -| x, if (ui.ascii) running_ascii else running_dot, dotStyle(th, ground));
         x += 1;
-        const label_style = if (hot or focused)
-            Theme.onBg(th.fg, ground)
-        else
-            dim(Theme.withFg(Theme.onBg(th.fg, ground), pal.comment));
         _ = ui.putStr(x, cell.y, cell.right() -| x, it.label, label_style);
         return;
     }
@@ -213,7 +289,9 @@ test "bottom: the items lay left to right with their labels, each a hit; the pin
     var fx = try test_fixture.init(60, 6);
     defer fx.deinit();
     const area = Rect.init(0, 5, 60, 1);
-    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom });
+    // `.start` is this test's subject: the run from the strip's first
+    // cell. Where the shipped `.center` puts it is its own test.
+    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .@"align" = .start });
     var buf: [256]u8 = undefined;
     const row = fx.row(5, &buf);
     try t.expect(std.mem.indexOf(u8, row, "Browser") != null);
@@ -230,7 +308,7 @@ test "side: one item per row, glyph only, the running dot in the padding cell; t
     var fx = try test_fixture.init(10, 12);
     defer fx.deinit();
     const area = Rect.init(0, 1, width, 10);
-    draw(fx.ui(), area, .{ .items = &sample, .edge = .left });
+    draw(fx.ui(), area, .{ .items = &sample, .edge = .left, .@"align" = .start });
     try t.expectEqualStrings("\u{EB01}", fx.cell(1, 1).char.grapheme);
     try t.expectEqualStrings("\u{F1D8}", fx.cell(1, 2).char.grapheme);
     try t.expectEqualStrings(running_dot, fx.cell(0, 2).char.grapheme);
@@ -244,13 +322,13 @@ test "the item under the pointer brightens — it sheds its dim onto a lighter g
     var fx = try test_fixture.init(60, 6);
     defer fx.deinit();
     const area = Rect.init(0, 5, 60, 1);
-    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom });
+    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .@"align" = .start });
     const cold = fx.style(2, 5);
     try t.expect(cold.dim);
 
     fx.hits.reset();
     fx.hover = .{ .x = 2, .y = 5 };
-    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom });
+    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .@"align" = .start });
     const hot = fx.style(2, 5);
     try t.expect(!hot.dim);
     try t.expect(!vaxis.Color.eql(cold.bg, hot.bg));
@@ -259,7 +337,7 @@ test "the item under the pointer brightens — it sheds its dim onto a lighter g
     // The keyboard cursor lights its item without the pointer.
     fx.hits.reset();
     fx.hover = null;
-    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .cursor = 1 });
+    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .@"align" = .start, .cursor = 1 });
     var buf: [256]u8 = undefined;
     try t.expect(std.mem.indexOf(u8, fx.row(5, &buf), cursor_glyph) != null);
 }
@@ -269,7 +347,7 @@ test "ascii: the twins, and no Nerd Font glyph anywhere on the strip" {
     defer fx.deinit();
     var ui = fx.ui();
     ui.ascii = true;
-    draw(ui, Rect.init(0, 5, 60, 1), .{ .items = &sample, .edge = .bottom, .pinned = true });
+    draw(ui, Rect.init(0, 5, 60, 1), .{ .items = &sample, .edge = .bottom, .@"align" = .start, .pinned = true });
     var buf: [256]u8 = undefined;
     const row = fx.row(5, &buf);
     try t.expect(std.mem.indexOf(u8, row, "B Browser") != null);
@@ -282,7 +360,7 @@ test "ascii: the twins, and no Nerd Font glyph anywhere on the strip" {
 test "a strip too narrow for the next item drops it whole rather than painting half a label" {
     var fx = try test_fixture.init(20, 6);
     defer fx.deinit();
-    draw(fx.ui(), Rect.init(0, 5, 20, 1), .{ .items = &sample, .edge = .bottom });
+    draw(fx.ui(), Rect.init(0, 5, 20, 1), .{ .items = &sample, .edge = .bottom, .@"align" = .start });
     var buf: [64]u8 = undefined;
     const row = fx.row(5, &buf);
     try t.expect(std.mem.indexOf(u8, row, "Browser") != null);
@@ -311,7 +389,7 @@ test "bottom under .icon: the glyph alone in the side form's three cells, no lab
     var fx = try test_fixture.init(60, 6);
     defer fx.deinit();
     const area = Rect.init(0, 5, 60, 1);
-    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .labels = .icon });
+    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .labels = .icon, .@"align" = .start });
     var buf: [256]u8 = undefined;
     const row = fx.row(5, &buf);
     try t.expect(std.mem.indexOf(u8, row, "Browser") == null);
@@ -333,14 +411,14 @@ test "bottom under .icon: the keyboard cursor and the hover still read, on the s
     var fx = try test_fixture.init(60, 6);
     defer fx.deinit();
     const area = Rect.init(0, 5, 60, 1);
-    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .labels = .icon });
+    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .labels = .icon, .@"align" = .start });
     const cold = fx.style(2, 5);
     try t.expect(cold.dim);
 
     // The pointer on the item's run brightens it and keeps its colour.
     fx.hits.reset();
     fx.hover = .{ .x = 2, .y = 5 };
-    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .labels = .icon });
+    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .labels = .icon, .@"align" = .start });
     const hot = fx.style(2, 5);
     try t.expect(!hot.dim);
     try t.expect(!vaxis.Color.eql(cold.bg, hot.bg));
@@ -350,6 +428,177 @@ test "bottom under .icon: the keyboard cursor and the hover still read, on the s
     // it takes when both want it.
     fx.hits.reset();
     fx.hover = null;
-    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .labels = .icon, .cursor = 1 });
+    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .labels = .icon, .@"align" = .start, .cursor = 1 });
     try t.expectEqualStrings(cursor_glyph, fx.cell(4, 5).char.grapheme);
+}
+
+test "itemWidth: the third form pays for its word and nothing else — no glyph cell, and the dot shares the padding cell so the run never shuffles" {
+    var fx = try test_fixture.init(20, 2);
+    defer fx.deinit();
+    const ui = fx.ui();
+    // ` <label> ` — the padding cell (the cursor's, then the dot's),
+    // the word, one cell of air.
+    try t.expectEqual(@as(u16, 9), itemWidth(ui, sample[0], .label)); // "Browser" = 7
+    try t.expectEqual(@as(u16, 6), itemWidth(ui, sample[1], .label)); // "HTTP" = 4
+    // Running or not is the same width, as under `.icon` — unlike
+    // `.icon_label`, which buys the dot its own cell.
+    var idle = sample[1];
+    idle.running = false;
+    try t.expectEqual(itemWidth(ui, sample[1], .label), itemWidth(ui, idle, .label));
+    try t.expect(itemWidth(ui, sample[1], .icon_label) != itemWidth(ui, idle, .icon_label));
+    // The three forms in order: icons are narrowest, words next, both widest.
+    try t.expect(itemWidth(ui, sample[0], .icon) < itemWidth(ui, sample[0], .label));
+    try t.expect(itemWidth(ui, sample[0], .label) < itemWidth(ui, sample[0], .icon_label));
+}
+
+test "rowStart / colStart: the three alignments' offsets, and a run with no room clamps to the start rather than off the left edge" {
+    // A 60-cell strip from x=0 whose pin chip starts at 57, holding a
+    // 20-cell run: 1..57 is what the items may have.
+    try t.expectEqual(@as(u16, 1), rowStart(0, 57, 20, .start));
+    try t.expectEqual(@as(u16, 18), rowStart(0, 57, 20, .center)); // (57-0-20)/2
+    try t.expectEqual(@as(u16, 37), rowStart(0, 57, 20, .end)); // 57-20
+    // Off the origin, the sum travels with it.
+    try t.expectEqual(@as(u16, 11), rowStart(10, 67, 20, .start));
+    try t.expectEqual(@as(u16, 28), rowStart(10, 67, 20, .center)); // 10 + (67-10-20)/2
+    try t.expectEqual(@as(u16, 47), rowStart(10, 67, 20, .end)); // 67-20
+    // A run that fills the strip: every alignment is the start, and no
+    // alignment can push it left of the strip's own leading cell.
+    for ([_]Align{ .start, .center, .end }) |a| {
+        try t.expectEqual(@as(u16, 1), rowStart(0, 57, 56, a));
+        try t.expectEqual(@as(u16, 1), rowStart(0, 57, 200, a));
+        try t.expectEqual(@as(u16, 1), rowStart(0, 2, 1, a));
+    }
+    // A column: rows 1..11 holding three items.
+    try t.expectEqual(@as(u16, 1), colStart(1, 11, 3, .start));
+    try t.expectEqual(@as(u16, 4), colStart(1, 11, 3, .center)); // (11-1-3)/2 = 3
+    try t.expectEqual(@as(u16, 8), colStart(1, 11, 3, .end));
+    for ([_]Align{ .start, .center, .end }) |a| try t.expectEqual(@as(u16, 1), colStart(1, 11, 10, a));
+}
+
+test "bottom under .label: the word alone — no glyph on the strip at all — the dot in the padding cell before it, and the hits match the painted run" {
+    var fx = try test_fixture.init(60, 6);
+    defer fx.deinit();
+    const area = Rect.init(0, 5, 60, 1);
+    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .labels = .label, .@"align" = .start });
+    var buf: [256]u8 = undefined;
+    const row = fx.row(5, &buf);
+    try t.expect(std.mem.indexOf(u8, row, "Browser") != null);
+    try t.expect(std.mem.indexOf(u8, row, "HTTP") != null);
+    try t.expect(std.mem.indexOf(u8, row, "\u{EB01}") == null);
+    try t.expect(std.mem.indexOf(u8, row, "\u{F1D8}") == null);
+    // Item 0 is ` Browser ` from x=1: the word starts at 2 and the run
+    // ends at 9. Item 1 follows at 10, and its dot takes that cell.
+    try t.expectEqualStrings("B", fx.cell(2, 5).char.grapheme);
+    try t.expectEqualStrings(running_dot, fx.cell(10, 5).char.grapheme);
+    try t.expectEqualStrings("H", fx.cell(11, 5).char.grapheme);
+    for ([_]u16{ 1, 2, 9 }) |x| try t.expectEqual(@as(u16, 0), fx.hits.at(x, 5).?.launcher_dock.item);
+    for ([_]u16{ 10, 11, 15 }) |x| try t.expectEqual(@as(u16, 1), fx.hits.at(x, 5).?.launcher_dock.item);
+    try t.expect(fx.hits.at(16, 5) == null);
+    // The word carries the item's colour, the way the glyph does in
+    // every other form: cold it is dim, and the pointer on it brightens
+    // it without changing the colour.
+    const cold = fx.style(2, 5);
+    try t.expect(cold.dim);
+    try t.expect(vaxis.Color.eql(cold.fg, fx.style(11, 5).fg) == false); // Browser's blue is not HTTP's teal
+    fx.hits.reset();
+    fx.hover = .{ .x = 3, .y = 5 };
+    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .labels = .label, .@"align" = .start });
+    const hot = fx.style(2, 5);
+    try t.expect(!hot.dim);
+    try t.expect(vaxis.Color.eql(cold.fg, hot.fg));
+    fx.hover = null;
+    // The keyboard cursor takes the dot's cell, the way it does under
+    // `.icon` — so focusing an open thing never moves the word.
+    fx.hits.reset();
+    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .labels = .label, .@"align" = .start, .cursor = 1 });
+    try t.expectEqualStrings(cursor_glyph, fx.cell(10, 5).char.grapheme);
+    try t.expectEqualStrings("H", fx.cell(11, 5).char.grapheme);
+}
+
+test "the run is centred by default and the alignment slides it whole — the same items, the same widths, a different offset; the pin chip never moves" {
+    var fx = try test_fixture.init(60, 6);
+    defer fx.deinit();
+    const area = Rect.init(0, 5, 60, 1);
+    // `.icon_label`: 11 + 9 = 20 cells of items, 1..57 to put them in,
+    // so the centred run is 18..38.
+    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .@"align" = .center });
+    try t.expectEqual(@as(u16, 0), fx.hits.at(18, 5).?.launcher_dock.item);
+    try t.expect(fx.hits.at(17, 5) == null);
+    try t.expectEqual(@as(u16, 1), fx.hits.at(29, 5).?.launcher_dock.item);
+    try t.expect(fx.hits.at(38, 5) == null);
+    // The centre is the shipped default: omitting the field is the
+    // same paint.
+    var buf: [256]u8 = undefined;
+    var centred: [256]u8 = undefined;
+    const with = fx.row(5, &centred);
+    fx.hits.reset();
+    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom });
+    try t.expectEqualStrings(with, fx.row(5, &buf));
+
+    // `.start` puts it back at the strip's first cell.
+    fx.hits.reset();
+    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .@"align" = .start });
+    try t.expectEqual(@as(u16, 0), fx.hits.at(1, 5).?.launcher_dock.item);
+    try t.expectEqual(@as(u16, 1), fx.hits.at(12, 5).?.launcher_dock.item);
+
+    // `.end` puts it against the pin chip — and never under it.
+    fx.hits.reset();
+    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .@"align" = .end, .pinned = true });
+    try t.expectEqual(@as(u16, 1), fx.hits.at(56, 5).?.launcher_dock.item);
+    try t.expectEqual(@as(u16, 0), fx.hits.at(37, 5).?.launcher_dock.item);
+    try t.expect(fx.hits.at(36, 5) == null);
+    // The pin chip's three cells are its own whatever the run does.
+    try t.expect(fx.hits.at(57, 5).?.launcher_dock == .pin);
+    try t.expect(pinRect(area, .bottom).eql(Rect.init(57, 5, 3, 1)));
+}
+
+test "a narrow strip drops the item that will not fit and never pushes the rest off the left edge — which items are on the strip is the alignment's input, not its output" {
+    var fx = try test_fixture.init(20, 6);
+    defer fx.deinit();
+    const area = Rect.init(0, 5, 20, 1);
+    // 1..17 for the items: only ` Browser ` (11) fits, and the SAME one
+    // fits under every alignment — sliding the run must never change
+    // what is on it. Its six spare cells put the start at 1 / 3 / 6.
+    const starts = [_]u16{ 1, 3, 6 };
+    for ([_]Align{ .start, .center, .end }, starts) |a, at| {
+        fx.hits.reset();
+        draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .@"align" = a });
+        var buf: [64]u8 = undefined;
+        const row = fx.row(5, &buf);
+        try t.expect(std.mem.indexOf(u8, row, "Browser") != null);
+        try t.expect(std.mem.indexOf(u8, row, "HTTP") == null);
+        try t.expect(fx.hits.at(0, 5) == null);
+        try t.expectEqual(@as(u16, 0), fx.hits.at(at, 5).?.launcher_dock.item);
+    }
+    // Narrower still, with nothing to spare: every alignment reads from
+    // the strip's own first cell rather than off the edge.
+    const tight = Rect.init(0, 5, 15, 1); // pin at 12, items 1..12 — exactly ` Browser `
+    for ([_]Align{ .start, .center, .end }) |a| {
+        fx.hits.reset();
+        draw(fx.ui(), tight, .{ .items = &sample, .edge = .bottom, .@"align" = a });
+        try t.expect(fx.hits.at(0, 5) == null);
+        try t.expectEqual(@as(u16, 0), fx.hits.at(1, 5).?.launcher_dock.item);
+    }
+}
+
+test "side: the alignment centres the items down the column, and the pin chip keeps the last row" {
+    var fx = try test_fixture.init(10, 12);
+    defer fx.deinit();
+    const area = Rect.init(0, 1, width, 10);
+    // Rows 1..10 are the items' (the pin chip takes 10): centred puts
+    // the two of them at 4 and 5.
+    draw(fx.ui(), area, .{ .items = &sample, .edge = .left, .@"align" = .center });
+    try t.expectEqualStrings("\u{EB01}", fx.cell(1, 4).char.grapheme);
+    try t.expectEqualStrings("\u{F1D8}", fx.cell(1, 5).char.grapheme);
+    try t.expectEqual(@as(u16, 0), fx.hits.at(1, 4).?.launcher_dock.item);
+    try t.expect(fx.hits.at(1, 1) == null);
+    // `.start` is the top of the column; `.end` sits on the pin chip's row.
+    fx.hits.reset();
+    draw(fx.ui(), area, .{ .items = &sample, .edge = .left, .@"align" = .start });
+    try t.expectEqualStrings("\u{EB01}", fx.cell(1, 1).char.grapheme);
+    fx.hits.reset();
+    draw(fx.ui(), area, .{ .items = &sample, .edge = .left, .@"align" = .end });
+    try t.expectEqualStrings("\u{EB01}", fx.cell(1, 8).char.grapheme);
+    try t.expectEqualStrings("\u{F1D8}", fx.cell(1, 9).char.grapheme);
+    try t.expect(fx.hits.at(1, 10).?.launcher_dock == .pin);
 }
