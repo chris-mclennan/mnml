@@ -297,13 +297,21 @@ pub fn applyBumps(iss: Issue, raw_status: []const u8, bumps: config.Bumps, state
 const Group = struct { status: []const u8, idxs: std.ArrayList(usize) };
 
 /// The row list. `visible[i]` masks ticket `i` (a null mask shows all).
+/// // changed (focus-row): the group a ticket sits in — its status, or
+/// wherever a `bumps` rule moves it. Independent of what is collapsed,
+/// which is the point: `--focus` has to name the section to open
+/// BEFORE the ticket has a row to read it off.
+pub const Placement = struct { status: []const u8, bumped: bool };
+
+pub fn groupOf(iss: Issue, state: *const State, tab: config.Tab, release_cut: bool) Placement {
+    const raw = if (iss.status.len > 0) iss.status else "Unknown";
+    const bumped_to = if (tab.bumps) |b| applyBumps(iss, raw, b, state, release_cut) else null;
+    return if (bumped_to) |g| .{ .status = g, .bumped = true } else .{ .status = raw, .bumped = false };
+}
+
 pub fn computeRows(arena: Allocator, issues: []const Issue, state: *State, tab: config.Tab, release_cut: bool, visible: ?[]const bool) Allocator.Error!Rows {
-    const effective = try arena.alloc(struct { status: []const u8, bumped: bool }, issues.len);
-    for (issues, 0..) |iss, i| {
-        const raw = if (iss.status.len > 0) iss.status else "Unknown";
-        const bumped_to = if (tab.bumps) |b| applyBumps(iss, raw, b, state, release_cut) else null;
-        effective[i] = if (bumped_to) |t| .{ .status = t, .bumped = true } else .{ .status = raw, .bumped = false };
-    }
+    const effective = try arena.alloc(Placement, issues.len);
+    for (issues, 0..) |iss, i| effective[i] = groupOf(iss, state, tab, release_cut);
 
     var groups: std.ArrayList(Group) = .empty;
     var ticket_count: usize = 0;
