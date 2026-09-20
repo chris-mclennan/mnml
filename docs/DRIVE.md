@@ -47,11 +47,24 @@ one.
   recorded window id is still on screen *and* still owned by that pid.
   Not "a ghostty window". Not "the frontmost window". That one. Window
   ids get recycled, so both halves are checked every time.
-* Events are posted with `CGEventPostToPid` — **to a process**, never to
+* **Keys** are posted with `CGEventPostToPid` — to a process, never to
   the screen. The usual `CGEventPost(.cghidEventTap, …)` that every
   automation script on the internet uses (`scripts/macclick.swift` in
   the Rust repo included) delivers to whatever is frontmost, which on a
   developer's machine is their editor with unsaved work in it.
+* **The mouse cannot use that route.** A mouse event delivered straight
+  to a process arrives with no window attached and AppKit drops it: the
+  first clicks this tool sent moved nothing at all, on a window that was
+  frontmost, while keystrokes were landing fine. Naming the window on
+  the event (`kCGMouseEventWindowUnderMousePointer`) does not rescue it;
+  the window server has to do the hit-testing, which means the global
+  tap. So before a single mouse event is posted the harness proves that
+  **`topWindowAt(point)` — the window the server itself would deliver to
+  — is our window**, and that the harness is the active application.
+  Anything over it (a notification, a Spotlight panel, the developer's
+  own terminal) and nothing is posted. That is a stronger guarantee
+  than "post at the frontmost thing and hope", which is what the prior
+  art did.
 * Nothing is ever raised. The one Accessibility call in the tool moves
   **our own** window onto the main display, and it takes the pid rather
   than a window id so it cannot be aimed at a stranger's window.
@@ -271,11 +284,14 @@ because a test that pretends otherwise will flake on a font change.
 
 ## What it cannot do
 
-* **It needs the keyboard.** macOS routes synthetic key events to the
-  active application; a harness window that is not frontmost gets the
-  events and drops them. The harness will not steal focus on its own —
-  it refuses and says so — which means a run that presses keys owns the
-  machine while it runs. Clicks and pixel reads do not have this
-  problem.
+* **It needs the foreground.** macOS routes synthetic key events to the
+  active application only, and the mouse guard above requires the
+  harness window to be the one under the pointer. A harness that is not
+  frontmost refuses rather than silently dropping the event — but that
+  means a run that presses keys or clicks **owns the machine while it
+  runs**. `mnml-drive focus` is the explicit verb that takes the
+  keyboard; nothing takes it as a side effect. Only `shot`, `pixel`,
+  `screen`, `status` and `rects` work while you carry on with something
+  else.
 * One window. Not tabs, not splits at the terminal level.
 * macOS, ghostty. Both on purpose.

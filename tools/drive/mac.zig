@@ -72,6 +72,10 @@ extern "c" fn CGEventCreateScrollWheelEvent(source: CFTypeRef, units: u32, wheel
 extern "c" fn CGEventSetFlags(event: CFTypeRef, flags: u64) void;
 extern "c" fn CGEventSetIntegerValueField(event: CFTypeRef, field: u32, value: i64) void;
 extern "c" fn CGEventPostToPid(pid: i32, event: CFTypeRef) void;
+extern "c" fn CGEventPost(tap: u32, event: CFTypeRef) void;
+/// `kCGHIDEventTap`. See `postClick` for why the mouse has to use it and
+/// what is proved before a single event goes near it.
+const hid_event_tap: u32 = 0;
 extern "c" fn CGEventCreate(source: CFTypeRef) CFTypeRef;
 extern "c" fn CGEventGetLocation(event: CFTypeRef) CGPoint;
 extern "c" fn CGWarpMouseCursorPosition(p: CGPoint) i32;
@@ -106,6 +110,15 @@ const ev_left_dragged: u32 = 6;
 /// pair that says "2", and a terminal that implements word-select reads
 /// exactly this field.
 const field_click_state: u32 = 1;
+
+/// `kCGMouseEventWindowUnderMousePointer` (91) and
+/// `…ThatCanHandleThisEvent` (92). A mouse event posted to a PROCESS
+/// arrives with no window attached, and AppKit drops what it cannot
+/// route — which is why the first clicks this tool sent moved nothing at
+/// all while keystrokes were landing fine. Naming the window on the
+/// event is what gives it somewhere to go.
+const field_window_under_pointer: u32 = 91;
+const field_window_can_handle: u32 = 92;
 
 /// `CGEventFlags`.
 pub const flag_shift: u64 = 1 << 17;
@@ -328,6 +341,57 @@ pub fn ghosttyPids(exclude: i32) []const i32 {
     return ghostty_pid_buf[0..n];
 }
 
+/// The topmost on-screen window containing this point — what the window
+/// server itself would deliver a click to. The list comes back
+/// front-to-back, so the first layer-0 window whose bounds contain the
+/// point IS the one that would get the event.
+///
+/// This is the check that makes a global mouse post safe: not "our window
+/// is somewhere under there", but "nothing at all is between the pointer
+/// and our window".
+pub fn topWindowAt(p: CGPoint) ?Window {
+    const list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, 0) orelse return null;
+    defer CFRelease(list);
+    const k_owner = CFStringCreateWithCString(null, "kCGWindowOwnerPID", kCFStringEncodingUTF8);
+    defer CFRelease(k_owner);
+    const k_number = CFStringCreateWithCString(null, "kCGWindowNumber", kCFStringEncodingUTF8);
+    defer CFRelease(k_number);
+    const k_layer = CFStringCreateWithCString(null, "kCGWindowLayer", kCFStringEncodingUTF8);
+    defer CFRelease(k_layer);
+    const k_bounds = CFStringCreateWithCString(null, "kCGWindowBounds", kCFStringEncodingUTF8);
+    defer CFRelease(k_bounds);
+    const k_x = CFStringCreateWithCString(null, "X", kCFStringEncodingUTF8);
+    defer CFRelease(k_x);
+    const k_y = CFStringCreateWithCString(null, "Y", kCFStringEncodingUTF8);
+    defer CFRelease(k_y);
+    const k_w = CFStringCreateWithCString(null, "Width", kCFStringEncodingUTF8);
+    defer CFRelease(k_w);
+    const k_h = CFStringCreateWithCString(null, "Height", kCFStringEncodingUTF8);
+    defer CFRelease(k_h);
+    var i: isize = 0;
+    const count = CFArrayGetCount(list);
+    while (i < count) : (i += 1) {
+        const d = CFArrayGetValueAtIndex(list, i);
+        var layer: i32 = 0;
+        if (CFDictionaryGetValue(d, k_layer)) |v| _ = CFNumberGetValue(v, kCFNumberSInt32Type, &layer);
+        if (layer != 0) continue;
+        var win: Window = .{ .id = 0, .pid = 0, .x = 0, .y = 0, .w = 0, .h = 0, .title_buf = undefined, .title_len = 0 };
+        if (CFDictionaryGetValue(d, k_owner)) |v| _ = CFNumberGetValue(v, kCFNumberSInt32Type, &win.pid) else continue;
+        if (CFDictionaryGetValue(d, k_number)) |v| _ = CFNumberGetValue(v, kCFNumberIntType, &win.id);
+        if (CFDictionaryGetValue(d, k_bounds)) |b| {
+            if (CFDictionaryGetValue(b, k_x)) |v| _ = CFNumberGetValue(v, kCFNumberDoubleType, &win.x);
+            if (CFDictionaryGetValue(b, k_y)) |v| _ = CFNumberGetValue(v, kCFNumberDoubleType, &win.y);
+            if (CFDictionaryGetValue(b, k_w)) |v| _ = CFNumberGetValue(v, kCFNumberDoubleType, &win.w);
+            if (CFDictionaryGetValue(b, k_h)) |v| _ = CFNumberGetValue(v, kCFNumberDoubleType, &win.h);
+        }
+        if (win.w <= 0 or win.h <= 0) continue;
+        if (p.x < win.x or p.y < win.y or p.x >= win.x + win.w or p.y >= win.y + win.h) continue;
+        win.title_buf[0] = 0;
+        return win;
+    }
+    return null;
+}
+
 /// The one on-screen window with this id, if it is still there AND still
 /// belongs to `pid`. Both halves matter: window ids are recycled, so an id
 /// that resolves to a window owned by somebody else is exactly the case
@@ -394,15 +458,43 @@ pub fn postText(pid: i32, utf16: []const u16) void {
 
 pub const MouseButton = enum { left, right };
 
-pub fn postMouseMove(pid: i32, p: CGPoint) void {
+fn tagWindow(e: CFTypeRef, window_id: u32) void {
+    CGEventSetIntegerValueField(e, field_window_under_pointer, @intCast(window_id));
+    CGEventSetIntegerValueField(e, field_window_can_handle, @intCast(window_id));
+}
+
+/// ── why the mouse does not use `CGEventPostToPid` ──────────────────
+///
+/// It does not work. A mouse event delivered straight to a process
+/// arrives with no window attached, and AppKit drops what it cannot
+/// route: the first clicks this tool sent moved nothing at all, on a
+/// window that was frontmost, while keystrokes were landing fine.
+/// Naming the window on the event
+/// (`kCGMouseEventWindowUnderMousePointer`) does not rescue it either.
+/// The window server has to do the hit-testing, which means the HID tap.
+///
+/// So the mouse goes through the global tap — and every mouse call proves
+/// three things first, in `main.zig`:
+///
+///   1. the harness window is still on screen and still owned by the pid
+///      we launched (as every verb does);
+///   2. the harness is the frontmost application;
+///   3. `topWindowAt(point)` — the window the server itself would deliver
+///      to — IS our window, so nothing is between the pointer and it.
+///
+/// If any of those is false the event is not posted at all. That is a
+/// stronger check than "post it at the frontmost thing and hope", which
+/// is what the prior art did.
+pub fn postMouseMove(window_id: u32, p: CGPoint) void {
     const e = CGEventCreateMouseEvent(null, ev_mouse_moved, p, 0) orelse return;
     defer CFRelease(e);
-    CGEventPostToPid(pid, e);
+    tagWindow(e, window_id);
+    CGEventPost(hid_event_tap, e);
 }
 
 /// A press/release pair at `p`. `click_state` is 1 for a single click and
 /// 2 for the second press of a double.
-pub fn postClick(pid: i32, p: CGPoint, button: MouseButton, click_state: i64) void {
+pub fn postClick(window_id: u32, p: CGPoint, button: MouseButton, click_state: i64) void {
     const down: u32 = if (button == .right) ev_right_down else ev_left_down;
     const up: u32 = if (button == .right) ev_right_up else ev_left_up;
     const btn: u32 = if (button == .right) 1 else 0;
@@ -410,11 +502,12 @@ pub fn postClick(pid: i32, p: CGPoint, button: MouseButton, click_state: i64) vo
         const e = CGEventCreateMouseEvent(null, kind, p, btn) orelse continue;
         defer CFRelease(e);
         CGEventSetIntegerValueField(e, field_click_state, click_state);
-        CGEventPostToPid(pid, e);
+        tagWindow(e, window_id);
+        CGEventPost(hid_event_tap, e);
     }
 }
 
-pub fn postDragStep(pid: i32, p: CGPoint, kind: enum { down, move, up }) void {
+pub fn postDragStep(window_id: u32, p: CGPoint, kind: enum { down, move, up }) void {
     const ev: u32 = switch (kind) {
         .down => ev_left_down,
         .move => ev_left_dragged,
@@ -423,20 +516,22 @@ pub fn postDragStep(pid: i32, p: CGPoint, kind: enum { down, move, up }) void {
     const e = CGEventCreateMouseEvent(null, ev, p, 0) orelse return;
     defer CFRelease(e);
     CGEventSetIntegerValueField(e, field_click_state, 1);
-    CGEventPostToPid(pid, e);
+    tagWindow(e, window_id);
+    CGEventPost(hid_event_tap, e);
 }
 
 /// One wheel notch. `units` 1 is "lines" — the discrete form; ghostty
 /// multiplies a notch by its own `mouse-scroll-multiplier`, so one call
 /// here is one detent to the user and several events to mnml (see
 /// docs/DRIVE.md, "a notch is not an event").
-pub fn postScroll(pid: i32, p: CGPoint, lines: i32) void {
+pub fn postScroll(window_id: u32, p: CGPoint, lines: i32) void {
     // The wheel event carries no location of its own, so the pointer has
     // to be where the scroll is meant to land first.
-    postMouseMove(pid, p);
+    postMouseMove(window_id, p);
     const e = CGEventCreateScrollWheelEvent(null, 1, 1, lines) orelse return;
     defer CFRelease(e);
-    CGEventPostToPid(pid, e);
+    tagWindow(e, window_id);
+    CGEventPost(hid_event_tap, e);
 }
 
 /// Where the pointer is now, so a verb can put it back. The harness moves

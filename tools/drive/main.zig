@@ -733,10 +733,33 @@ fn utf8Of(gpa: Allocator, cp: u21) []const u8 {
     return gpa.dupe(u8, buf[0..n]) catch "?";
 }
 
+/// A mouse event has to go through the global tap to be routed at all
+/// (`mac.postMouseMove`'s comment says why), so before one is posted the
+/// harness proves that the spot it is about to click belongs to it: the
+/// window the SERVER would deliver to at that exact point is ours, and
+/// the harness is the active app. Anything over our window — a
+/// notification, a Spotlight panel, the developer's own terminal — and
+/// nothing is posted.
+fn pointIsOurs(s: *Session, p: mac.CGPoint, e: *Io.Writer) bool {
+    if (!requireFront(s, e)) return false;
+    const top = mac.topWindowAt(p) orelse {
+        e.print("mnml-drive: refusing — no window at {d:.0},{d:.0}; nothing was posted\n", .{ p.x, p.y }) catch {};
+        return false;
+    };
+    if (top.pid == s.rec.pid and top.id == s.rec.window_id) return true;
+    e.print(
+        "mnml-drive: refusing — the window at {d:.0},{d:.0} is {d} (window {d}), not the harness\n" ++
+            "  (pid {d}, window {d}). Something is on top of it. Nothing was posted.\n",
+        .{ p.x, p.y, top.pid, top.id, s.rec.pid, s.rec.window_id },
+    ) catch {};
+    return false;
+}
+
 fn mouse(io: Io, s: *Session, verb: []const u8, cx: u16, cy: u16, e: *Io.Writer) !u8 {
     if (offGrid(s, cx, cy, e)) return exit_usage;
     const c = s.rec.cellCentre(cx, cy);
     const p: mac.CGPoint = .{ .x = c.x, .y = c.y };
+    if (!pointIsOurs(s, p, e)) return exit_refused;
     const before = mac.cursorPosition();
     // The pointer is moved for real because a terminal decides hover
     // state from where the cursor IS, not from the event's coordinate;
@@ -744,16 +767,16 @@ fn mouse(io: Io, s: *Session, verb: []const u8, cx: u16, cy: u16, e: *Io.Writer)
     // the harness window.
     mac.warpCursor(p);
     defer mac.warpCursor(before);
-    mac.postMouseMove(s.rec.pid, p);
+    mac.postMouseMove(s.rec.window_id, p);
     if (std.mem.eql(u8, verb, "hover")) {
         sleepMs(io, 30);
         return 0;
     }
     if (std.mem.eql(u8, verb, "doubleclick")) {
-        mac.postClick(s.rec.pid, p, .left, 1);
-        mac.postClick(s.rec.pid, p, .left, 2);
+        mac.postClick(s.rec.window_id, p, .left, 1);
+        mac.postClick(s.rec.window_id, p, .left, 2);
     } else {
-        mac.postClick(s.rec.pid, p, if (std.mem.eql(u8, verb, "rightclick")) .right else .left, 1);
+        mac.postClick(s.rec.window_id, p, if (std.mem.eql(u8, verb, "rightclick")) .right else .left, 1);
     }
     sleepMs(io, 30);
     return 0;
@@ -761,11 +784,13 @@ fn mouse(io: Io, s: *Session, verb: []const u8, cx: u16, cy: u16, e: *Io.Writer)
 
 fn drag(io: Io, s: *Session, fx: u16, fy: u16, tx: u16, ty: u16, e: *Io.Writer) !u8 {
     if (offGrid(s, fx, fy, e) or offGrid(s, tx, ty, e)) return exit_usage;
+    const from = s.rec.cellCentre(fx, fy);
+    if (!pointIsOurs(s, .{ .x = from.x, .y = from.y }, e)) return exit_refused;
     const before = mac.cursorPosition();
     defer mac.warpCursor(before);
     const a = s.rec.cellCentre(fx, fy);
     mac.warpCursor(.{ .x = a.x, .y = a.y });
-    mac.postDragStep(s.rec.pid, .{ .x = a.x, .y = a.y }, .down);
+    mac.postDragStep(s.rec.window_id, .{ .x = a.x, .y = a.y }, .down);
     // One event per cell along the way, as the headless driver's `drag`
     // does: a selection that reads every intermediate position gets the
     // same path under both drivers.
@@ -777,17 +802,19 @@ fn drag(io: Io, s: *Session, fx: u16, fy: u16, tx: u16, ty: u16, e: *Io.Writer) 
         const cy = lerp(fy, ty, f);
         const p = s.rec.cellCentre(cx, cy);
         mac.warpCursor(.{ .x = p.x, .y = p.y });
-        mac.postDragStep(s.rec.pid, .{ .x = p.x, .y = p.y }, .move);
+        mac.postDragStep(s.rec.window_id, .{ .x = p.x, .y = p.y }, .move);
         sleepMs(io, 6);
     }
     const b = s.rec.cellCentre(tx, ty);
-    mac.postDragStep(s.rec.pid, .{ .x = b.x, .y = b.y }, .up);
+    mac.postDragStep(s.rec.window_id, .{ .x = b.x, .y = b.y }, .up);
     sleepMs(io, 30);
     return 0;
 }
 
 fn scroll(io: Io, s: *Session, cx: u16, cy: u16, up: bool, notches: i32, e: *Io.Writer) !u8 {
     if (offGrid(s, cx, cy, e)) return exit_usage;
+    const at = s.rec.cellCentre(cx, cy);
+    if (!pointIsOurs(s, .{ .x = at.x, .y = at.y }, e)) return exit_refused;
     const before = mac.cursorPosition();
     defer mac.warpCursor(before);
     const c = s.rec.cellCentre(cx, cy);
@@ -795,7 +822,7 @@ fn scroll(io: Io, s: *Session, cx: u16, cy: u16, up: bool, notches: i32, e: *Io.
     mac.warpCursor(p);
     var i: i32 = 0;
     while (i < notches) : (i += 1) {
-        mac.postScroll(s.rec.pid, p, if (up) 1 else -1);
+        mac.postScroll(s.rec.window_id, p, if (up) 1 else -1);
         sleepMs(io, 20);
     }
     sleepMs(io, 30);
