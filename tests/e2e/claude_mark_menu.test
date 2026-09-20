@@ -5,7 +5,7 @@
 # the Anthropic spark 󱸂 (U+F1E02). Two choices, no glyph picker.
 #
 # Picking one changes the mark EVERYWHERE the chrome draws it in the
-# same frame — the cluster chip here and the SESSIONS card below —
+# same frame — the cluster chip here and a Claude pty tab below —
 # because every painter reads `claude_mark.mark` rather than naming a
 # codepoint.
 #
