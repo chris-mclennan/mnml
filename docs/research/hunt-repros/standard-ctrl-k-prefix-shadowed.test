@@ -1,0 +1,20 @@
+# NEW (not in either report, found while triaging hunt-standard #1 and #13).
+#
+# `whichkey.leader` binds a BARE `ctrl+k` in the standard profile
+# (src/commands/specs.zig, `.standard = &.{"ctrl+k"}`). Pressing it opens the
+# which-key overlay, whose handler consumes the next key. Eighteen standard
+# chords are spelled `ctrl+k <key>` — view.fullscreen, lsp.hover, git.commit,
+# keys.edit, theme.toggle, the four focus-split chords and ten more — so none
+# of them can ever fire in the profile that declares them.
+#
+# `Ctrl+K Ctrl+I` for lsp.hover is actively advertised in the Info panel.
+#
+# This asserts the advertised chord reaches its command. It fails on main:
+# the leader popup opens instead and eats the tail.
+write a.txt "alpha\n"
+open a.txt
+key ctrl+k
+key z
+# the leader overlay must NOT have taken the chord
+expect screen lacks "no leader mapping"
+expect screen lacks "<leader>"

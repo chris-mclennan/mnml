@@ -1,0 +1,12 @@
+# Finding 13 (second half) — the which-key popup the STANDARD profile
+# opens on Ctrl+K is still titled `<leader>` and lists NvChad leader
+# chords (harpoon, +nvchad, +split …). Standard/VS Code users have no
+# leader. The first half of the finding IS fixed: the Info panel now
+# reads [F12] / [Shift+F12] / [Ctrl+K Ctrl+I] / [F2], not [gd] [gr] [K].
+# width: 120
+# height: 40
+write a.txt hello
+open a.txt
+expect screen contains "[F12] Definition"
+key ctrl+k
+expect screen lacks "┌ <leader> "

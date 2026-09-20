@@ -1,0 +1,24 @@
+# vscode-delete-dialog-enter-cancels-silently — the half that is still open.
+#
+# The finding has two halves. Enter NOT deleting is now deliberate: the fix
+# (387d7a9c) was reverted by fcb8b5e6, and src/app/trash.zig:234 says why —
+# "Cancel is the focus, as in Rust: a destructive box's Enter must not be
+# the destructive act". That half is by-design and this script does not
+# contest it.
+#
+# The SILENT half has no stated rationale anywhere. A user who presses Enter
+# on "Delete a.txt?" gets the dialog torn down with no toast and no
+# statusline line — indistinguishable on screen from a delete that worked.
+# This asserts only that the cancel announces itself. It fails on main.
+write a.txt "aa"
+command view.focus_tree
+key r
+key end
+command file.delete
+expect screen contains "Delete a.txt?"
+key enter
+wait 400
+# the by-design half — the file survives. This passes today.
+expect file a.txt contains "aa"
+# the open half — the app must say the delete did not happen.
+expect screen contains "cancel"

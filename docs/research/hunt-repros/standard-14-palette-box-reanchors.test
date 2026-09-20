@@ -1,0 +1,18 @@
+# Finding 14 (second half) — the palette box re-anchors as you type.
+# `picker.placeWith` (src/ui/picker.zig) derives the box height from the
+# filtered item count and `overlay.place` re-centres it (ui.picker_position
+# defaults to .center), so the whole box slides DOWN the screen as the list
+# shrinks. VS Code keeps the palette put and only the list shrinks.
+# The activity-bar margin differs per row, so the row the top border sits on
+# is identifiable: it opens on a blank-margin row ("   |"), and after a query
+# it has moved onto the row whose margin carries the 󰎒 glyph.
+# Correct behaviour: the box stays where it opened.
+# width: 120
+# height: 40
+write a.txt hello
+open a.txt
+command palette
+expect screen contains "   │           ┌ Command palette "
+type toggle wrap
+expect screen contains "toggle wrap"
+expect screen contains "   │           ┌ Command palette "

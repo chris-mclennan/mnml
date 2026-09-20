@@ -1,0 +1,35 @@
+# Finding 12 — the tab strip still gives no ` +N hidden ` count when it
+# overflows, and labels still clip. The chip exists (ui/bufferline.zig)
+# but only paints when the strip is scrolled to a tail that fits whole;
+# in the ordinary overflow case (the active tab cut at the right edge)
+# it never renders. The `<` `>` arrows DO paint and are clickable now,
+# so the overflow is no longer completely silent.
+# 12 buffers at 120x40 — the Rust strip shows `+N hidden` here.
+# width: 120
+# height: 40
+write file01name.txt x
+write file02name.txt x
+write file03name.txt x
+write file04name.txt x
+write file05name.txt x
+write file06name.txt x
+write file07name.txt x
+write file08name.txt x
+write file09name.txt x
+write file10name.txt x
+write file11name.txt x
+write file12name.txt x
+open file01name.txt
+open file02name.txt
+open file03name.txt
+open file04name.txt
+open file05name.txt
+open file06name.txt
+open file07name.txt
+open file08name.txt
+open file09name.txt
+open file10name.txt
+open file11name.txt
+open file12name.txt
+expect screen contains "file12name.txt"
+expect screen contains " hidden "
