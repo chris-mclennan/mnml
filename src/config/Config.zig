@@ -742,6 +742,16 @@ pub const ClaudeAccount = struct {
     active: bool = false,
 };
 
+/// Ghost text's two clocks, clamped on load. The idle one is how long
+/// typing must stop before a request goes out; the budget is what keeps
+/// a `claude -p` that never answers from holding the only in-flight
+/// slot. Both are observable in the statusline chip
+/// (`src/app/ghost_chip.zig`).
+pub const suggest_idle_ms_min: u16 = 50;
+pub const suggest_idle_ms_max: u16 = 5000;
+pub const suggest_timeout_ms_min: u32 = 500;
+pub const suggest_timeout_ms_max: u32 = 120_000;
+
 pub const Ai = struct {
     /// Legacy single-backend switch; `.routing.claude.backend` wins.
     backend: ?AiBackend = null,
@@ -754,6 +764,11 @@ pub const Ai = struct {
     /// repository) overrides it. The worktree itself is `<root>/<name>`.
     default_worktree_root: ?[]const u8 = null,
     inline_suggestions: bool = true,
+    /// Idle time after the last edit before a suggestion is asked for.
+    suggest_idle_ms: u16 = 300,
+    /// The wall-clock budget one suggestion gets. Past it the child is
+    /// killed, the chip says `!`, and `:messages` says `timeout`.
+    suggest_timeout_ms: u32 = 4000,
     claude_show_all_accounts: bool = false,
     claude_meter_mode: ClaudeMeterMode = .compact,
     /// The Claude logins the usage chip and pane read; see `ClaudeAccount`.
@@ -1013,6 +1028,9 @@ test "defaults are the shipped values" {
     try std.testing.expect(!c.editor.format_on_save);
     try std.testing.expectEqual(@as(u16, 80), c.editor.text_width);
     try std.testing.expectEqual(@as(u16, 500), c.editor.chord_timeout_ms);
+    try std.testing.expect(c.ai.inline_suggestions);
+    try std.testing.expectEqual(@as(u16, 300), c.ai.suggest_idle_ms);
+    try std.testing.expectEqual(@as(u32, 4000), c.ai.suggest_timeout_ms);
     try std.testing.expectEqual(WheelMovesCursor.auto, c.editor.wheel_moves_cursor);
     try std.testing.expectEqual(ScrollAccel.normal, c.editor.scroll_accel);
     try std.testing.expectEqual(Clipboard.auto, c.editor.clipboard);

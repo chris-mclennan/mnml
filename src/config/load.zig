@@ -275,6 +275,8 @@ fn decideTrust(gpa: Allocator, io: Io, loaded: *Loaded, p: Patch(Config), facts:
 /// layout entries that cannot open. Runs once, after every layer.
 pub fn normalize(arena: Allocator, cfg: *Config, diags: *Diagnostics, home: ?[]const u8) Allocator.Error!void {
     cfg.editor.chord_timeout_ms = std.math.clamp(cfg.editor.chord_timeout_ms, Config.chord_timeout_ms_min, Config.chord_timeout_ms_max);
+    cfg.ai.suggest_idle_ms = std.math.clamp(cfg.ai.suggest_idle_ms, Config.suggest_idle_ms_min, Config.suggest_idle_ms_max);
+    cfg.ai.suggest_timeout_ms = std.math.clamp(cfg.ai.suggest_timeout_ms, Config.suggest_timeout_ms_min, Config.suggest_timeout_ms_max);
     cfg.ui.tree_width = std.math.clamp(cfg.ui.tree_width, Config.tree_width_min, Config.tree_width_max);
     cfg.ui.hover_help_height = std.math.clamp(cfg.ui.hover_help_height, Config.hover_help_height_min, Config.hover_help_height_max);
     cfg.ui.bottom_panel_height = std.math.clamp(cfg.ui.bottom_panel_height, Config.bottom_panel_height_min, Config.bottom_panel_height_max);
@@ -466,6 +468,8 @@ test "normalize clamps, expands ~, and drops broken layout entries" {
     cfg.ui.tree_width = 500;
     cfg.ui.hover_help_height = 1;
     cfg.editor.chord_timeout_ms = 1;
+    cfg.ai.suggest_idle_ms = 1;
+    cfg.ai.suggest_timeout_ms = 1;
     cfg.ui.projects_dir = "~/code";
     cfg.startup.default_workspace = "~";
     cfg.startup.layout = &.{
@@ -478,6 +482,10 @@ test "normalize clamps, expands ~, and drops broken layout entries" {
     try t.expectEqual(@as(u16, 80), cfg.ui.tree_width);
     try t.expectEqual(@as(u16, 3), cfg.ui.hover_help_height);
     try t.expectEqual(@as(u16, 100), cfg.editor.chord_timeout_ms);
+    // Ghost text's clocks: a typo of `1` would spin a request per
+    // keystroke and give it no time to answer.
+    try t.expectEqual(@as(u16, Config.suggest_idle_ms_min), cfg.ai.suggest_idle_ms);
+    try t.expectEqual(@as(u32, Config.suggest_timeout_ms_min), cfg.ai.suggest_timeout_ms);
     try t.expectEqualStrings("/home/u/code", cfg.ui.projects_dir);
     try t.expectEqualStrings("/home/u", cfg.startup.default_workspace.?);
     try t.expectEqual(@as(usize, 2), cfg.startup.layout.len);

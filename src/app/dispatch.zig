@@ -28,6 +28,7 @@ const find_history = @import("find_history.zig");
 const auto_refresh = @import("auto_refresh.zig");
 const clock_mod = @import("clock.zig");
 const coverage = @import("coverage.zig");
+const ghost_chip = @import("ghost_chip.zig");
 const now_playing = @import("now_playing.zig");
 const menu_bar = @import("menu_bar.zig");
 const sidebar_auto = @import("sidebar_auto.zig");
@@ -2170,6 +2171,10 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                         app.focus = .{ .pane = id_pane };
                     },
                     .ai_claude, .ai_codex => if (right) try context_menus.openAiChipMenu(app, id == .ai_codex, m.x, m.y) else try runCmd(app, if (id == .ai_codex) .@"ai.codex_usage" else .@"ai.claude_usage"),
+                    // Ghost text: the picker on a click — the chip is
+                    // there because something is wrong, and the backend
+                    // is the first thing to check.
+                    .ghost => if (right) try ghost_chip.openMenu(app, m.x, m.y) else try runCmd(app, .@"ai.setup_suggestions"),
                     .coverage => if (right) try coverage.openModeMenu(app, m.x, m.y) else try runCmd(app, .@"coverage.toast"),
                     // The now-playing cluster: the right button is the player
                     // menu on every chip; the left drives the player.

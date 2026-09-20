@@ -38,7 +38,7 @@ pub const table = .{
     .@"menu.copy_id" = &copyRowId,
 };
 
-fn items(app: *App, rows: []const MenuItem) Allocator.Error![]MenuItem {
+pub fn items(app: *App, rows: []const MenuItem) Allocator.Error![]MenuItem {
     return app.gpa.dupe(MenuItem, rows);
 }
 

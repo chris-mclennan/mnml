@@ -266,6 +266,8 @@ pub const rows = [_]RowSpec{
     //    discrete choices) ──
     .{ .path = "ai.inline_suggestions", .label = "Ghost text", .section = .ai, .scope = .home },
     .{ .path = "ai.suggest_backend", .label = "Ghost-text backend", .section = .ai, .scope = .home },
+    .{ .path = "ai.suggest_idle_ms", .label = "Ghost-text idle (ms)", .section = .ai, .scope = .home, .number = .{ .min = config.Config.suggest_idle_ms_min, .max = config.Config.suggest_idle_ms_max, .step = 50 } },
+    .{ .path = "ai.suggest_timeout_ms", .label = "Ghost-text budget (ms)", .section = .ai, .scope = .home, .number = .{ .min = config.Config.suggest_timeout_ms_min, .max = config.Config.suggest_timeout_ms_max, .step = 500 } },
     .{ .path = "ai.routing.claude.backend", .label = "Claude backend", .section = .ai, .scope = .home },
     .{ .path = "ai.routing.codex.backend", .label = "Codex backend", .section = .ai, .scope = .home },
     .{ .path = "ai.claude_meter_mode", .label = "Claude meter", .section = .ai, .scope = .home },

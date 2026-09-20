@@ -33,8 +33,13 @@
 //!                                #   mode, `cursorShape` (block | bar |
 //!                                #   underline | hidden), which is the only
 //!                                #   way a headless script sees which surface
-//!                                #   owns the terminal cursor, and `cmdline`,
-//!                                #   whether the app's own `:` line is open
+//!                                #   owns the terminal cursor, `cmdline`,
+//!                                #   whether the app's own `:` line is open,
+//!                                #   and `ghost` (idle | armed | inflight |
+//!                                #   shown | empty | error), what AI inline
+//!                                #   suggestion is doing — the only way to
+//!                                #   wait for a request that answers on a
+//!                                #   worker seconds later
 //! expect status lacks <text>     # …does not
 //! expect dirty <true|false>      # the active editor's dirty flag
 //! expect pane <text>             # the active pane's title contains the substring

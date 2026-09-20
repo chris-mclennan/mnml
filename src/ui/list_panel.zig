@@ -117,6 +117,17 @@ pub fn ageText(ui: Ui, now_s: i64, then_s: i64) []const u8 {
 
 const spinner_frames = [_][]const u8{ "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" };
 const spinner_ascii = [_][]const u8{ "|", "/", "-", "\\" };
+/// One turn of the frame ring, in ms.
+pub const spinner_step_ms: i64 = 80;
+
+/// The frame the whole app's spinners are on at `now_ms`. The panel
+/// headers paint it themselves (`paintSpinner`); a statusline chip
+/// that wants the same tick — `app/ghost_chip.zig` — asks for the text.
+pub fn spinnerFrame(now_ms: i64, ascii: bool) []const u8 {
+    const frames: []const []const u8 = if (ascii) &spinner_ascii else &spinner_frames;
+    const idx: usize = @intCast(@mod(@divFloor(now_ms, spinner_step_ms), @as(i64, @intCast(frames.len))));
+    return frames[idx];
+}
 
 /// While a scan runs the refresh chip shows a spinner. The chip's
 /// cells are the header's last three when it fits (`header.zig`'s
@@ -128,12 +139,10 @@ const spinner_ascii = [_][]const u8{ "|", "/", "-", "\\" };
 pub fn paintSpinner(ui: Ui, area: Rect, label: []const u8, now_ms: i64) void {
     const label_w = ui.width(label);
     if (area.w < label_w + 3 + 3 or area.h == 0) return;
-    const frames: []const []const u8 = if (ui.ascii) &spinner_ascii else &spinner_frames;
-    const idx: usize = @intCast(@mod(@divFloor(now_ms, 80), @as(i64, @intCast(frames.len))));
     const style = chip.refreshStyle(ui.theme, ui.theme.panel_bg.bg);
     const x = area.right() - 3;
     _ = ui.putStr(x, area.y, 1, " ", style);
-    _ = ui.putStr(x + 1, area.y, 1, frames[idx], style);
+    _ = ui.putStr(x + 1, area.y, 1, spinnerFrame(now_ms, ui.ascii), style);
     _ = ui.putStr(x + 2, area.y, 1, " ", style);
 }
 
