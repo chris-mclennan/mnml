@@ -1563,10 +1563,14 @@ fn openSplitChipMenu(app: *App, dir: enum { horizontal, vertical }, x: u16, y: u
 }
 
 /// The strip's maximize chip (Rust `split_strip_maximize_buttons`).
+/// The two modes the button can be, ticked on the one a left click
+/// runs — `ui.maximize_click`, which Settings → UI is the way to change
+/// (picking a row here runs it once, it does not re-point the button).
 fn openMaximizeMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const mode = app.cfg.ui.maximize_click;
     const rows = try items(app, &.{
-        .{ .label = "Zoom this leaf / restore", .action = .{ .command = .@"view.toggle_zoom" } },
-        .{ .label = "Full screen / restore", .action = .{ .command = .@"view.fullscreen" } },
+        .{ .label = "Zoom this pane / restore", .action = .{ .command = .@"view.toggle_zoom" }, .checked = mode == .zoom_pane },
+        .{ .label = "Full screen / restore", .action = .{ .command = .@"view.fullscreen" }, .checked = mode == .fullscreen },
         .{ .label = "Equalize splits", .action = .{ .command = .@"view.equalize_splits" }, .separator_before = true },
     });
     errdefer app.gpa.free(rows);

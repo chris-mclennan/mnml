@@ -797,7 +797,7 @@ fn drawGapChips(app: *App, ui: Ui, left: u16, cluster_left: u16, y: u16) Allocat
     }
 }
 
-/// The strip's AI chips, lit while a session runs. A product's chip
+/// The strip's AI chips. A product's chip
 /// shows when its icon is enabled in `ui.integration_icons`, or when
 /// its CLI is on PATH and `ui.tab_bar_ai_icon` names it (`.claude_code`
 /// — the default — / `.codex` / `.both`); `.none` hides both. So a
@@ -813,11 +813,13 @@ fn aiChips(app: *App, ui: Ui) Allocator.Error![]const bufferline.AiChip {
     var out: std.ArrayListUnmanaged(bufferline.AiChip) = .empty;
     // The marks wear their product's colour, not the theme's accent:
     // Claude's is Anthropic's orange (`ui/brand.zig`, the same value the
-    // statusline chip and a Claude pty tab paint), dimmed toward the
-    // muted while no session is live; Codex has no published brand, so
-    // it keeps the theme's cyan.
-    if (aiChipShown(app, .claude)) try out.append(ui.arena, .{ .id = @intFromEnum(Button.ai_claude), .glyph = "\u{F1E00}", .fallback = "*", .live = ai_app.findSession(app, .claude) != null, .fg_live = brand.claude, .fg_idle = brand.claudeIdle(&app.theme) });
-    if (aiChipShown(app, .codex)) try out.append(ui.arena, .{ .id = @intFromEnum(Button.ai_codex), .glyph = "\u{F1E01}", .fallback = ">", .live = ai_app.findSession(app, .codex) != null, .fg_live = app.theme.palette.cyan, .fg_idle = app.theme.muted.fg });
+    // statusline chip and a Claude pty tab paint); Codex has no
+    // published brand, so it keeps the theme's cyan. Neither changes
+    // with what is running — a chip in this cluster is a button, and
+    // the four beside it look the same whatever state they act on
+    // (`ui/bufferline.zig`'s `AiChip`).
+    if (aiChipShown(app, .claude)) try out.append(ui.arena, .{ .id = @intFromEnum(Button.ai_claude), .glyph = "\u{F1E00}", .fallback = "*", .fg = brand.claude });
+    if (aiChipShown(app, .codex)) try out.append(ui.arena, .{ .id = @intFromEnum(Button.ai_codex), .glyph = "\u{F1E01}", .fallback = ">", .fg = app.theme.palette.cyan });
     return out.items;
 }
 

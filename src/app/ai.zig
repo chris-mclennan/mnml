@@ -1182,6 +1182,27 @@ pub fn findSession(app: *App, product: Product) ?PaneId {
     return null;
 }
 
+/// The tab strip's cluster chip for `product`, left click. The chip is
+/// the way to the sessions, not a second launcher beside the panel's:
+/// the SESSIONS section comes up either way, and only when nothing of
+/// that product is running does the click also start one — the command
+/// the panel's own `+ New session` row runs first
+/// (`sessions.new_command`), never a copy of it.
+///
+/// It used to run `ai.claude_code` / `ai.codex` outright, which open a
+/// session every time, so a click with one already up opened a second.
+pub fn chipClick(app: *App, product: Product) CommandError!void {
+    activity_bar.enter(app, .sessions);
+    side.place(app, .sessions, true);
+    if (findSession(app, product) != null) return;
+    // Codex has no `+ New session` menu of its own; its new-session
+    // command is the whole of the path.
+    return command.run(app, .{ .static = switch (product) {
+        .claude => @import("../sessions.zig").new_command,
+        .codex => .@"ai.codex_new",
+    } });
+}
+
 fn claudeCode(app: *App) CommandError!void {
     _ = try openSession(app, .claude, null);
 }

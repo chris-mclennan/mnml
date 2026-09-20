@@ -33,6 +33,7 @@ const side = @import("side.zig");
 const search_glyph = @import("../ui/menu_bar.zig").search_glyph;
 const hover_zones = @import("hover_zones.zig");
 const zen = @import("zen.zig");
+const ai_app = @import("ai.zig");
 
 pub const table = .{
     .@"view.menu_bar_cycle" = &cycleCmd,
@@ -569,11 +570,29 @@ pub fn describeButton(app: *App, arena: Allocator, id: u32) Allocator.Error!?Tip
         .split_term => .{ .title = "New terminal", .detail = "click: open a shell in a split (term.shell)" },
         .split_right => .{ .title = "Split right", .detail = "click: side by side (view.split_right)" },
         .split_down => .{ .title = "Split down", .detail = "click: stacked (view.split_down)" },
-        .split_max => .{ .title = "Maximize", .detail = "click: this pane alone, full screen (view.fullscreen)" },
+        // The line names the mode the click will run, because the
+        // button has two and `ui.maximize_click` picks which
+        // (`app/zen.zig`); while something is maximized it names the
+        // way back instead.
+        .split_max => if (app.zen or app.zoomed_leaf != null) .{
+            .title = "Restore",
+            .detail = try std.fmt.allocPrint(arena, "click: the frame comes back ({s}) · right-click: the modes", .{command.name(zen.clickCommand(app))}),
+        } else .{
+            .title = try std.fmt.allocPrint(arena, "Maximize — {s}", .{zen.modeLabel(app.cfg.ui.maximize_click)}),
+            .detail = try std.fmt.allocPrint(arena, "click: {s} · right-click: the modes · Settings → UI to change", .{command.name(zen.clickCommand(app))}),
+        },
         .fullscreen_exit => .{ .title = "Exit full screen", .detail = "click: the frame comes back (view.fullscreen) · Esc Esc" },
         .hidden_tabs => .{ .title = "Hidden tabs", .detail = "click: the buffer picker lists every tab, shown or not (picker.buffers)" },
-        .ai_claude => .{ .title = "Claude Code", .detail = "click opens the session (ai.claude_code)" },
-        .ai_codex => .{ .title = "Codex", .detail = "click opens the session (ai.codex)" },
+        // The chip shows SESSIONS, and starts a session only when
+        // there is none (`app/ai.zig`'s `chipClick`).
+        .ai_claude => .{
+            .title = "Claude Code",
+            .detail = if (ai_app.findSession(app, .claude) != null) "click: show the SESSIONS panel" else "click: show SESSIONS and start a session",
+        },
+        .ai_codex => .{
+            .title = "Codex",
+            .detail = if (ai_app.findSession(app, .codex) != null) "click: show the SESSIONS panel" else "click: show SESSIONS and start a session",
+        },
         else => null,
     };
 }

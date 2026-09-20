@@ -20,6 +20,7 @@ const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const side = @import("side.zig");
 const settings = @import("settings.zig");
+const Config = @import("../config/Config.zig");
 
 pub const table = .{
     .@"view.fullscreen" = &toggle,
@@ -84,6 +85,44 @@ fn toggleZoom(app: *App) CommandError!void {
     };
     app.zoomed_leaf = if (app.zoomed_leaf == active) null else active;
     app.needs_render = true;
+}
+
+// ─── the strip's maximize button ────────────────────────────────────────
+//
+// The button has two modes because the two commands answer two
+// different asks, and the one a click should run is not the same for
+// everybody. `ui.maximize_click` picks; the right button lists both and
+// ticks the pick (`app/context_menus.zig`).
+//
+// There is no third mode. The split tree's only scope between one pane
+// and the whole window is the leaf, and a leaf IS the tab group — the
+// tabs it holds are its own. So "zoom this pane" and "zoom this tab
+// group" name the same rect, and a second row running the same command
+// would be a row that does nothing new.
+
+/// What `ui.maximize_click` names, for the hover line and the menu.
+pub fn modeLabel(mode: Config.MaximizeClick) []const u8 {
+    return switch (mode) {
+        .zoom_pane => "Zoom this pane",
+        .fullscreen => "Full screen",
+    };
+}
+
+/// The command the maximize button runs on a left click. Whatever the
+/// mode, while something is already maximized the button is the way
+/// back, so it undoes what is on — full screen first, since it hides
+/// the chrome the zoom keeps. With nothing on, it is the mode.
+pub fn clickCommand(app: *const App) command.CommandId {
+    if (app.zen) return .@"view.fullscreen";
+    if (app.zoomed_leaf != null) return .@"view.toggle_zoom";
+    return commandFor(app.cfg.ui.maximize_click);
+}
+
+pub fn commandFor(mode: Config.MaximizeClick) command.CommandId {
+    return switch (mode) {
+        .zoom_pane => .@"view.toggle_zoom",
+        .fullscreen => .@"view.fullscreen",
+    };
 }
 
 /// `view.reset_layout` (`:resetview`, the View menu's last row): the

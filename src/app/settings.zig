@@ -215,6 +215,9 @@ pub const rows = [_]RowSpec{
     .{ .path = "ui.stress_meter", .label = "Stress meter", .section = .ui, .scope = .home },
     .{ .path = "ui.top_bar_cluster_mode", .label = "Top bar cluster", .section = .ui, .scope = .home },
     .{ .path = "ui.tab_bar_ai_icon", .label = "AI icon in the bar", .section = .ui, .scope = .home },
+    // Which of the maximize button's two modes a left click runs
+    // (`app/zen.zig`); the button's own right-click menu ticks it.
+    .{ .path = "ui.maximize_click", .label = "Maximize button", .section = .ui, .scope = .home },
     .{ .path = "ui.terminal_glyph", .label = "Terminal icon", .section = .ui, .scope = .home },
     .{ .path = "ui.ai_layout_mode", .label = "AI session layout", .section = .ui, .scope = .home },
     .{ .path = "ui.coverage_chip_mode", .label = "Coverage chip", .section = .ui, .scope = .home },
