@@ -29,6 +29,17 @@ expect screen lacks "── AI ──"
 # added, so the assertion is the form, not the number.
 expect screen contains " of "
 
+# The box does not shrink to fit what the query left. At 120x40 it is
+# the height the whole list asks for (the 70 % cap), whether five rows
+# are showing or ninety — otherwise the box would jump and re-centre
+# with every character, sliding the matches out from under the pointer
+# about to click one. Row 30 is empty overlay ground well below the
+# last match, and row 34 is outside the frame: `expect color` is the
+# only way a script sees WHERE the box is, because a `contains` finds
+# the border wherever it moved to.
+expect color 60 30 bg #353b45
+expect color 60 34 bg not #353b45
+
 # Enter hands the list back to the cursor, query and all — and the
 # cursor is on a match, so `←` adjusts the row the search found.
 key enter
