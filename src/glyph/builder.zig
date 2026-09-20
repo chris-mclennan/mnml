@@ -451,18 +451,19 @@ test "merge: the installed face keeps its own codepoints, this build replaces an
     var report: MergeReport = .{};
     const merged = try merge(arena, installed, ghostty_svg, &report);
     // Kept: the two chips. Replaced: space, claude, terminal — and
-    // nothing else of this build's was in there.
+    // nothing else of this build's was in there, the spark included,
+    // which is why it counts as added.
     try t.expectEqual(@as(usize, 2), report.kept);
     try t.expectEqual(@as(usize, 3), report.replaced);
-    try t.expectEqual(@as(usize, 4), report.added);
-    try t.expectEqual(@as(usize, 9), report.total);
+    try t.expectEqual(@as(usize, 5), report.added);
+    try t.expectEqual(@as(usize, 10), report.total);
     // Everything the installed face had is still addressable…
     for ([_]u21{ ' ', 0xF1C03, 0xF1C04, claude, terminal }) |cp| {
         errdefer std.debug.print("lost U+{X}\n", .{cp});
         try t.expect(cmapHas(merged, cp));
     }
     // …and everything this build bakes is too, the new one included.
-    for ([_]u21{ claude, codex, tree_vertical, tree_corner, terminal, cursor_hollow }) |cp| {
+    for ([_]u21{ claude, claude_spark, codex, tree_vertical, tree_corner, terminal, cursor_hollow }) |cp| {
         errdefer std.debug.print("missing U+{X}\n", .{cp});
         try t.expect(cmapHas(merged, cp));
     }
