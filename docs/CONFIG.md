@@ -390,7 +390,17 @@ otherwise. Copy what you need; leave the rest out.
 
     // ── session / ipc ──────────────────────────────────────────────────
     .session = .{
-        .restore = true, // reopen the last session's panes, layout and chrome on launch
+        // Reopen the last session's panes, layout and chrome on
+        // launch. Beside the editors, the previews and the
+        // terminals that comes back a review in progress: a git
+        // status pane, a workspace Search (its query, its case /
+        // whole-word / regex options and the row it was on), a
+        // commit graph, a worktree / HEAD / staged / per-file
+        // diff and an image. Each re-RUNS its query rather than
+        // replaying a saved result, and one whose subject is
+        // gone (not a repo any more, the file deleted) is
+        // skipped without a word.
+        .restore = true,
         // What a saved TERMINAL pane comes back as. On .running a plain
         // shell restarts in the cwd it was saved in, and an AI session
         // pane whose session could be named resumes it — `claude
