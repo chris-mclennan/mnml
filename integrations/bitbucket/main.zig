@@ -1862,3 +1862,81 @@ test "--only spells the reference's families; the last one wins; an unknown flag
     try t.expectEqualStrings("main", f.branch);
     try t.expectError(error.UnknownArgument, parseArgs(&.{ "mnml-bitbucket", "--nope" }));
 }
+
+test "the three chips keep what they list: every segment and every hover row survives a refresh, a `--values` and a refetch, on a scribbling allocator" {
+    // The fetch side — the client, the worker, and every job and
+    // result arena — on an allocator that poisons what it frees. A
+    // chip that kept a SLICE into a finished listing rather than the
+    // arena under it reads as 0xAA here, where a plain allocator hands
+    // the right answer back and the test passes for no reason.
+    var scribble: sdk.testing.Scribble = .{ .child = t.allocator };
+    const r = try app_mod.Rig.initOn(app_mod.acme, .{}, scribble.allocator());
+    defer r.deinit();
+
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    var ipc = try sdk.Ipc.init(t.allocator, t.io, dir);
+    defer ipc.deinit();
+
+    var keep = std.heap.ArenaAllocator.init(t.allocator);
+    defer keep.deinit();
+
+    const Published = struct {
+        /// Publish all three chips the way the pane's own `.segment`
+        /// effect does, and hand back the bytes the host would read.
+        fn line(app: *app_mod.App, out_ipc: *const sdk.Ipc, d: Io.Dir, out: Allocator) ![]const u8 {
+            var scratch = std.heap.ArenaAllocator.init(t.allocator);
+            defer scratch.deinit();
+            try publishSegments(out_ipc, scratch.allocator(), app.values orelse return error.NoValues, null);
+            const text = try d.readFileAlloc(t.io, "command", out, .unlimited);
+            try d.deleteFile(t.io, "command");
+            return text;
+        }
+        /// Every row of every chip, and the tooltip behind each figure.
+        fn check(v: fetch.ValuesResult, published: []const u8) !void {
+            try t.expect(std.mem.indexOfScalar(u8, published, 0xAA) == null);
+            for ([_][]const fetch.ValuesItem{ v.open_items, v.comment_items, v.awaiting_items }) |rows| {
+                for (rows) |it| {
+                    try t.expect(it.text.len > 0);
+                    try t.expect(std.mem.indexOfScalar(u8, it.text, 0xAA) == null);
+                    try t.expect(std.mem.indexOfScalar(u8, it.sub, 0xAA) == null);
+                    try t.expect(std.mem.indexOfScalar(u8, it.key, 0xAA) == null);
+                    // And the row actually reached the wire, rather than
+                    // the chip agreeing with itself about nothing.
+                    try t.expect(std.mem.indexOf(u8, published, it.text) != null);
+                }
+            }
+            try t.expect(std.mem.indexOfScalar(u8, v.error_text, 0xAA) == null);
+        }
+    };
+
+    // 1. The first listing, straight off `startup`.
+    const first = try Published.line(&r.app, &ipc, tmp.dir, keep.allocator());
+    const v1 = r.app.values.?;
+    try t.expect(v1.open_items.len > 0);
+    try t.expect(v1.awaiting_items.len > 0);
+    try Published.check(v1, first);
+
+    // 2. A fresh `--values`. The result that carried the previous
+    //    figure is let go here; anything the chip still pointed into it
+    //    is 0xAA from this line on.
+    try r.app.requestValues();
+    try r.drain();
+    const second = try Published.line(&r.app, &ipc, tmp.dir, keep.allocator());
+    try Published.check(r.app.values.?, second);
+
+    // 3. A refetch of every tab. Each one DEINITS the arena its old
+    //    rows lived on, which is the other listing the chip could have
+    //    been pointing into.
+    for (r.app.tabs, 0..) |_, i| try r.app.refreshTab(i);
+    try r.drain();
+    for (r.app.tabs) |ts| try t.expect(ts.fetched);
+    const third = try Published.line(&r.app, &ipc, tmp.dir, keep.allocator());
+    try Published.check(r.app.values.?, third);
+
+    // 4. And what a hover row hands back is still a pull request the
+    //    pane can be told to focus — the `--focus` argv on the wire.
+    try t.expect(std.mem.indexOf(u8, third, "\"args\":[\"--focus\",\"api#") != null);
+}
