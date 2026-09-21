@@ -1,0 +1,40 @@
+# THE privacy test: with `suggest_backend = "copilot"` and everything
+# else configured, a workspace that has NOT opted in sends nothing at
+# all — not a completion request, not a `didChange`, not even a
+# `didOpen`, which would already have shipped the whole file.
+#
+# The assertion is an ABSENCE, so it is made against a record of
+# everything that arrived: the fake server's `--log` holds every method
+# it receives and rewrites the file on each one. The log is seeded with
+# a sentinel first — if the server had started and been sent ANYTHING,
+# the sentinel would be gone.
+write src/a.zig "const std = @import(\"std\");\n"
+write copilot.log "SENTINEL-NOTHING-WAS-SENT\n"
+write .mnml/config.zon .{ .ai = .{ .suggest_backend = "copilot", .inline_suggestions = true, .suggest_idle_ms = 50, .copilot = .{ .command = .{ "$MNML_FAKE_COPILOT", "--stdio", "--log", "copilot.log" } } } }
+open src/a.zig
+
+# Type, twice, with room for a handshake between — the path that WOULD
+# start the server and ask.
+key end
+type "\npub fn main() "
+wait 400
+type "void {"
+wait 600
+
+# No ghost text, and the chip never went in flight.
+expect screen lacks "fake_copilot_suggestion"
+expect status contains "\"ghost\":\"idle\""
+
+# And the proof: the log is untouched.
+expect file copilot.log contains "SENTINEL-NOTHING-WAS-SENT"
+expect file copilot.log lacks "initialize"
+expect file copilot.log lacks "textDocument/didOpen"
+expect file copilot.log lacks "textDocument/didChange"
+expect file copilot.log lacks "textDocument/inlineCompletion"
+
+# The status command says why, by name, rather than leaving the user to
+# guess that a working backend is doing nothing on purpose.
+command ai.copilot_status
+command messages.show
+expect screen contains "off here · not opted in (ai.copilot_enable_here)"
+key esc

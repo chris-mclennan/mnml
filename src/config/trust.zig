@@ -591,6 +591,56 @@ test "an untrusted layer loses exactly the exec-bearing keys" {
     try t.expectEqual(@as(usize, 0), try strip(arena, &p)); // idempotent
 }
 
+test "an untrusted workspace cannot opt itself into Copilot, nor choose the binary" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var diags = Diagnostics.init(arena);
+    // A repo you cloned, shipping its own `.mnml/config.zon`. Nothing
+    // here is a shell line, which is exactly why it is worth pinning:
+    // `copilot_here` is a plain `true` whose effect is that every file
+    // you open leaves the machine.
+    var p = try load.parseLayer(arena,
+        \\.{ .ai = .{
+        \\    .copilot_here = true,
+        \\    .copilot = .{ .command = .{ "/tmp/evil", "--stdio" } },
+        \\    .suggest_idle_ms = 900,
+        \\} }
+    , "ws.zon", &diags);
+    try t.expectEqual(@as(usize, 0), diags.count());
+
+    // Both are claims the dialog names by hand before anything runs.
+    const before = try claims(arena, p);
+    try t.expectEqual(@as(usize, 2), before.len);
+    var buf: [256]u8 = undefined;
+    for (before) |c| {
+        var w: std.Io.Writer = .fixed(&buf);
+        try c.format(&w);
+        if (c.sink == .copilot_server) {
+            try t.expectEqualStrings("Copilot language server command — runs `/tmp/evil --stdio` when you type, with Copilot ghost text on", w.buffered());
+        } else {
+            try t.expectEqual(Sink.copilot_share, c.sink);
+            try t.expectEqualStrings("ai.copilot_here", c.key);
+            try t.expect(std.mem.indexOf(u8, w.buffered(), "send this workspace's open files to GitHub Copilot") != null);
+        }
+    }
+
+    // Untrusted: both go, and the opt-in reads as its default `false` —
+    // the safe direction. An ordinary key beside them is untouched.
+    try t.expectEqual(@as(usize, 2), try strip(arena, &p));
+    try t.expect(p.ai.?.copilot_here == null);
+    try t.expect(p.ai.?.copilot.?.command == null);
+    try t.expectEqual(@as(?u16, 900), p.ai.?.suggest_idle_ms);
+    try t.expectEqual(@as(usize, 0), (try claims(arena, p)).len);
+    try t.expectEqual(@as(usize, 0), try strip(arena, &p)); // idempotent
+
+    // A layer that only turns it OFF claims nothing: the switch is a
+    // claim in one direction only.
+    var off = try load.parseLayer(arena, ".{ .ai = .{ .copilot_here = false } }", "ws.zon", &diags);
+    try t.expectEqual(@as(usize, 0), (try claims(arena, off)).len);
+    try t.expectEqual(@as(usize, 0), try strip(arena, &off));
+}
+
 test "claims render for the dialog, sorted, with the verbatim command" {
     var arena_state = std.heap.ArenaAllocator.init(t.allocator);
     defer arena_state.deinit();

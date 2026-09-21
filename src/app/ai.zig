@@ -319,6 +319,7 @@ pub fn noteEdit(app: *App) void {
     // edit to the config takes on the very next keystroke.
     app.ai.debounce.idle_ms = app.cfg.ai.suggest_idle_ms;
     app.ai.debounce.noteEdit(app.now_ms);
+    copilot_app.noteEdit(app);
 }
 
 /// Keys while a ghost is showing: Tab takes it, ctrl+→ a word,
@@ -363,6 +364,9 @@ fn acceptGhost(app: *App, e: *EditorPane, take_in: usize) Allocator.Error!bool {
     const arena = app.frame.allocator();
     const accepted = try arena.dupe(u8, ghost[0..take]);
     const remaining = try arena.dupe(u8, ghost[take..]);
+    // Before the splice, which is an edit that cancels the flight: the
+    // accept telemetry needs the item that is still on screen.
+    copilot_app.noteAccept(app, take, remaining.len);
     const at = e.buf.editor.cursor;
     try app.splice(e, at, at, accepted);
     try e.buf.editor.setGhostSuggestion(if (remaining.len > 0) remaining else null);
@@ -409,6 +413,11 @@ fn fireSuggestion(app: *App) Allocator.Error!void {
     const e = app.panes.editor(id) orelse return st.debounce.cancel();
     if (e.buf.editor.ghost_suggestion != null) return st.debounce.cancel();
     if (!acceptsGhost(e)) return st.debounce.cancel();
+    // A `.mnml/config.zon` written AFTER launch is not in `app.cfg`
+    // (`copilot.refreshConfig`, and `lsp.refreshServers` before it).
+    // Only look again when nothing has named a backend yet, so the
+    // common path — a key in the home config — costs nothing.
+    if (suggestBackend(app) == .unset) try copilot_app.refreshConfig(app);
     const backend = suggestBackend(app);
     switch (backend) {
         .unset => {

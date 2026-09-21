@@ -1,13 +1,15 @@
 # ai.setup_suggestions opens the inline-suggestion backend picker so the
-# user can choose Claude API vs the embedded local model (and change it
-# later). Esc dismisses without changing anything.
+# user can choose between the Claude backends, GitHub Copilot and the
+# embedded local model (and change it later). Esc dismisses without
+# changing anything.
 write a.txt hello
 open a.txt
 
-# Open the backend picker — both backends + the off row are listed.
+# Open the backend picker — every backend + the off row are listed.
 command ai.setup_suggestions
 expect screen contains "pick a backend"
 expect screen contains "Claude API"
+expect screen contains "GitHub Copilot"
 expect screen contains "Local model"
 expect screen contains "Turn off inline suggestions"
 

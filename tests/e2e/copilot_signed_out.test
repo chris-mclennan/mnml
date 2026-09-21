@@ -1,0 +1,36 @@
+# Signed out: the state is readable, and the sign-in puts the device
+# code AND the verification URL on screen. The URL is the half the
+# language server's own README leaves out of its example — a terminal
+# editor that only showed the code would leave the user nowhere to go.
+write src/a.zig "const x = 1;\n"
+write .mnml/config.zon .{ .ai = .{ .suggest_backend = "copilot", .inline_suggestions = true, .suggest_idle_ms = 50, .copilot_here = true, .copilot = .{ .command = .{ "$MNML_FAKE_COPILOT", "--stdio", "--signed-out", "--log", "copilot.log" } } } }
+open src/a.zig
+
+# The status command starts the server and reports what it finds.
+command ai.copilot_status
+wait 500
+command ai.copilot_status
+command messages.show
+expect screen contains "Copilot: signed out"
+key esc
+
+# Typing asks for nothing while signed out — there is no point, and the
+# silence should not look like a bug.
+key end
+type "\nconst y ="
+wait 700
+expect screen lacks "fake_copilot_suggestion"
+
+# The sign-in: a code to type and a page to type it on, with an Open
+# button, held up until the flow finishes rather than faded in four
+# seconds (a device code is good for a quarter of an hour).
+command ai.copilot_sign_in
+wait 500
+command messages.show
+expect screen contains "FAKE-CODE"
+expect screen contains "https://github.com/login/device"
+key esc
+
+# mnml ran the command the reply handed back; it never invents one.
+expect file copilot.log contains "signIn"
+expect file copilot.log contains "workspace/executeCommand github.copilot.finishDeviceFlow"

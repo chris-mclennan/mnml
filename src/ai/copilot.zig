@@ -142,17 +142,19 @@ pub const Reason = enum {
         return r == .allowed;
     }
 
-    /// One line for the chip's hover and `ai.copilot_status`.
+    /// One line for the chip's hover and `ai.copilot_status`. Short
+    /// enough that the whole status line fits a toast on an 80-column
+    /// screen: a reason the box clips is a reason nobody reads.
     pub fn words(r: Reason) []const u8 {
         return switch (r) {
-            .allowed => "sharing with Copilot",
-            .not_selected => "ghost-text backend is not Copilot",
-            .not_opted_in => "this workspace has not opted in (ai.copilot_enable_here)",
-            .workspace_untrusted => "this workspace is not trusted, so its Copilot opt-in was ignored",
-            .secret_bearing => "the file name says secret",
-            .excluded => "an ai.copilot.exclude glob matched",
-            .gitignored => "the file is gitignored",
-            .no_path => "the buffer has no file on disk",
+            .allowed => "sharing this file",
+            .not_selected => "backend is not Copilot",
+            .not_opted_in => "not opted in (ai.copilot_enable_here)",
+            .workspace_untrusted => "workspace not trusted",
+            .secret_bearing => "secret-looking file name",
+            .excluded => "ai.copilot.exclude matched",
+            .gitignored => "gitignored",
+            .no_path => "unsaved buffer",
         };
     }
 };
@@ -330,12 +332,13 @@ test "the gate: the file lists — secrets, the exclude globs, gitignore" {
 test "the gate: gitignored files stay home" {
     var st = gitignore.Stack.init(t.allocator);
     defer st.deinit();
-    try st.push(try gitignore.Rules.parse(t.allocator, "", "zig-out/\n*.secret\n"));
-    try t.expectEqual(Reason.gitignored, Gate.decide(.{ .opted_in = true, .path = "/w/a.secret", .rel = "a.secret", .ignores = &st }));
+    try st.push(try gitignore.Rules.parse(t.allocator, "", "zig-out/\n*.generated.zig\n"));
+    try t.expectEqual(Reason.gitignored, Gate.decide(.{ .opted_in = true, .path = "/w/a.generated.zig", .rel = "a.generated.zig", .ignores = &st }));
+    try t.expectEqual(Reason.gitignored, Gate.decide(.{ .opted_in = true, .path = "/w/zig-out/bin/x.zig", .rel = "zig-out/bin/x.zig", .ignores = &st }));
     try t.expectEqual(Reason.allowed, Gate.decide(.{ .opted_in = true, .path = "/w/src/a.zig", .rel = "src/a.zig", .ignores = &st }));
     // Outside the workspace there is no relative path, so gitignore
     // cannot have an opinion — the other checks still do.
-    try t.expectEqual(Reason.allowed, Gate.decide(.{ .opted_in = true, .path = "/elsewhere/a.zig", .rel = null, .ignores = &st }));
+    try t.expectEqual(Reason.allowed, Gate.decide(.{ .opted_in = true, .path = "/elsewhere/a.generated.zig", .rel = null, .ignores = &st }));
 }
 
 test "status words: what the chip says after `copilot · `" {

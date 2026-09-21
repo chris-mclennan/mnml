@@ -44,6 +44,7 @@ const gitignore = @import("gitignore.zig");
 const settings = @import("settings.zig");
 const lsp_decor = @import("lsp_decor.zig");
 const dap_client = @import("../dap/client.zig");
+const config = @import("../config/root.zig");
 
 pub const table = .{
     .@"ai.copilot_sign_in" = &signInCmd,
@@ -53,7 +54,8 @@ pub const table = .{
     .@"ai.copilot_status" = &statusCmd,
 };
 
-/// How long a device code is worth showing without a repeat.
+/// The persistent toast holding the device code: it has to outlive a
+/// four-second fade, and comes down when the flow finishes.
 pub const device_code_toast_id = "copilot-device-code";
 
 pub const State = struct {
@@ -79,6 +81,10 @@ pub const State = struct {
     ignores: ?gitignore.Stack = null,
     /// Set while a device flow is waiting on the user.
     pending_sign_in: bool = false,
+    /// `refreshConfig` has run; and the layers it read, whose arena the
+    /// adopted `.ai.copilot` / `.ai.extra` values borrow.
+    refreshed: bool = false,
+    loaded: ?config.Loaded = null,
 
     pub fn deinit(self: *State, gpa: Allocator) void {
         if (self.client) |c| c.deinit();
@@ -88,6 +94,8 @@ pub const State = struct {
         self.message = null;
         if (self.ignores) |*st| st.deinit();
         self.ignores = null;
+        if (self.loaded) |*l| l.deinit();
+        self.loaded = null;
     }
 
     pub fn clearShown(self: *State, gpa: Allocator) void {
@@ -109,6 +117,35 @@ pub const State = struct {
 /// say which of the two it was.
 pub fn optedIn(app: *App) bool {
     return app.cfg.ai.copilot_here;
+}
+
+/// A `.mnml/config.zon` written AFTER launch — which is exactly how a
+/// `.test` seeds one — is not in `app.cfg`. `app/lsp.zig` has the same
+/// problem and answers it the same way: read the layers once more and
+/// adopt only the keys this subsystem owns. Exec-bearing (the argv),
+/// hence trusted workspaces only, and once per session.
+pub fn refreshConfig(app: *App) Allocator.Error!void {
+    const st = &app.copilot;
+    if (st.refreshed or !app.workspace_trusted) return;
+    st.refreshed = true;
+    var env = try app.env.clone(app.gpa);
+    defer env.deinit();
+    if (app.data_root.len > 0) try env.put("MNML_DATA_ROOT", app.data_root);
+    var fresh = try config.load.load(app.gpa, app.io, .{ .workspace = app.workspace, .trust = .trusted, .env = .{ .vars = &env } });
+    const says_anything = fresh.config.ai.copilot_here or
+        fresh.config.ai.copilot.command.len != 0 or
+        fresh.config.ai.extra.get("suggest_backend") != null;
+    if (!says_anything) {
+        fresh.deinit();
+        return;
+    }
+    if (st.loaded) |*old| old.deinit();
+    st.loaded = fresh;
+    app.cfg.ai.copilot = fresh.config.ai.copilot;
+    app.cfg.ai.copilot_here = fresh.config.ai.copilot_here;
+    // `suggest_backend` lives in `.ai.extra` (a Dynamic, whole-replace),
+    // so the whole table comes across rather than one key out of it.
+    app.cfg.ai.extra = fresh.config.ai.extra;
 }
 
 /// The one door. Every caller that would put buffer text on the wire
@@ -178,6 +215,7 @@ pub fn argvFor(app: *App, arena: Allocator) Allocator.Error![]const []const u8 {
 /// Returns null on every refusal — a missing binary has toasted once by
 /// then and the backend is quiet for the session.
 pub fn ensure(app: *App) Allocator.Error!?*Client {
+    try refreshConfig(app);
     const st = &app.copilot;
     if (st.client) |c| {
         if (!c.transport.isDead()) return c;
@@ -307,6 +345,7 @@ pub fn onClose(app: *App, path: []const u8) void {
 /// and this pane wants a suggestion. Everything before here (idle time,
 /// the backend switch, a ghost already showing) is shared.
 pub fn fireSuggestion(app: *App, pane: PaneId, e: *EditorPane) Allocator.Error!void {
+    try refreshConfig(app);
     const st = &app.copilot;
     const path = e.buf.doc.path orelse return app.ai.debounce.cancel();
     const reason = gateFor(app, path);
@@ -339,8 +378,11 @@ pub fn fireSuggestion(app: *App, pane: PaneId, e: *EditorPane) Allocator.Error!v
 /// `app/ai.zig::noteEdit` cancels a Claude worker.
 pub fn noteEdit(app: *App) void {
     const c = app.copilot.client orelse return;
+    // Only the flight: the item on screen is NOT dropped here, because
+    // an accept is itself an edit and `acceptGhost` needs the item it
+    // is accepting. A stale one is replaced by the next answer and
+    // refused by `noteAccept`'s backend check.
     c.cancelInFlight();
-    app.copilot.clearShown(app.gpa);
 }
 
 // ─── the accept ─────────────────────────────────────────────────────────
@@ -350,6 +392,7 @@ pub fn noteEdit(app: *App) void {
 /// counts in bytes, Copilot's telemetry in UTF-16 units from the start
 /// of `insertText`, so the conversion is `ai/copilot.zig`'s.
 pub fn noteAccept(app: *App, taken: usize, remaining: usize) void {
+    if (@import("ai.zig").suggestBackend(app) != .copilot) return;
     const st = &app.copilot;
     const c = st.client orelse return;
     const insert = st.shown_insert_text orelse return;
@@ -563,16 +606,21 @@ fn onSignIn(app: *App, c: *Client, result: ?jsonrpc.Value) Allocator.Error!void 
     };
     const uri = reply.verification_uri orelse "https://github.com/login/device";
     st.pending_sign_in = true;
-    const line = try std.fmt.allocPrint(
-        app.frame.allocator(),
-        "Copilot: enter code {s} at {s} — press Enter here once you have",
-        .{ code, uri },
-    );
+    // The code AND the URL, on screen, with a button — and PERSISTENT,
+    // because a device code is good for a quarter of an hour and a
+    // toast that fades in four seconds would be a code the user has to
+    // ask for again. It comes down when `didChangeStatus` says the
+    // flow finished.
+    //
+    // Never an unasked-for browser launch: the server may open the page
+    // itself through `window/showDocument` (handled above), but mnml's
+    // own half offers it rather than taking it.
+    const line = try std.fmt.allocPrint(app.frame.allocator(), "Copilot: enter code {s} at {s}", .{ code, uri });
     try app.toastPersistent(device_code_toast_id, line, .info);
-    // The server opens the URL itself where it can (`window/showDocument`
-    // reaches us above); this is the terminal's own way, and the code is
-    // on screen either way.
-    lsp_decor.openExternal(app, uri) catch {};
+    app.attachToastAction(device_code_toast_id, .{ .open_url = .{
+        .label = try app.gpa.dupe(u8, "Open"),
+        .url = try app.gpa.dupe(u8, uri),
+    } });
     c.finishDeviceFlow() catch {};
 }
 
@@ -637,18 +685,16 @@ fn disableHere(app: *App) CommandError!void {
 /// `ai.copilot_status` — the one place that answers "is this thing
 /// sending my code, and if not why not".
 fn statusCmd(app: *App) CommandError!void {
-    const arena = app.frame.allocator();
     const st = &app.copilot;
+    // Asking is allowed to start the server: "is this signed in" has no
+    // answer until something has asked GitHub, and the gate has already
+    // decided whether starting it is permitted at all.
+    _ = try ensure(app);
     const path: ?[]const u8 = if (app.activeEditor()) |e| e.buf.doc.path else null;
-    const reason = gateFor(app, path);
-    const argv = try argvFor(app, arena);
-    app.toast("Copilot: {s} · {s} · server {s}{s}", .{
+    app.toast("Copilot: {s} · {s} · server {s}", .{
         copilot.stateWord(st.signed_in, st.kind, optedIn(app), st.client != null),
-        reason.words(),
+        gateFor(app, path).words(),
         if (st.client != null) "running" else if (st.unavailable) "unavailable" else "not started",
-        if (argv.len != 0) blk: {
-            break :blk std.fmt.allocPrint(arena, " (`{s}`)", .{argv[0]}) catch "";
-        } else "",
     });
 }
 
