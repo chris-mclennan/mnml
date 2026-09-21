@@ -1,0 +1,53 @@
+# width: 120
+# height: 40
+# Two things the vim hunt noted but did not file, both about SILENCE.
+#
+# 1. `]p` / `[p` (put with the indent adjusted to the current line,
+#    `:help ]p`) were swallowed by the `]` / `[` prefix — no put, no
+#    word. They now answer out loud through the editor's `Unsupported`
+#    path, the same way `iq` / `ii` do, so the slice is visible.
+# 2. `:set expandtab` toasted `— noted` for a field that did not exist.
+#    `Document.use_tabs` is its inverse, so it is wired now.
+write a.txt "aaa\n    bbb\nccc\n"
+open a.txt
+command editor.use_vim
+
+key y
+key y
+key j
+key ]
+key p
+wait 300
+expect screen contains "paste_after_indent: not supported yet"
+key ctrl+s
+# Nothing was put — the silent swallow was the complaint, not the put.
+expect file a.txt contains "aaa\n    bbb\nccc\n"
+
+key [
+key p
+wait 300
+expect screen contains "paste_before_indent: not supported yet"
+
+key ]
+key P
+wait 300
+expect screen contains "paste_before_indent: not supported yet"
+
+# `:set noexpandtab` makes Tab and `>>` pad with a real tab…
+ex set noexpandtab
+expect screen contains ":set noexpandtab"
+expect screen lacks "noted"
+key G
+type ">>"
+key ctrl+s
+expect file a.txt contains "\tccc"
+
+# …and `:set expandtab` puts it back to spaces.
+ex set expandtab
+expect screen contains ":set expandtab"
+key G
+type "<<"
+type ">>"
+key ctrl+s
+expect file a.txt contains "\n    ccc"
+expect file a.txt lacks "\tccc"

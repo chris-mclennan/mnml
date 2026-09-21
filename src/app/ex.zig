@@ -1086,9 +1086,16 @@ fn set(app: *App, args: []const u8) CommandError!void {
             const toggle = std.mem.endsWith(u8, name, "!") or std.mem.startsWith(u8, name, "inv");
             const want = if (toggle) side.shown(app, .right) == null else !off;
             if (want != (side.shown(app, .right) != null)) try command.run(app, .{ .static = .@"view.toggle_right_panel" });
-        } else if (eqAny(name, &.{ "hls", "hlsearch", "is", "incsearch", "et", "expandtab" })) {
-            // Accepted for muscle memory; nothing is behind them.
-            app.toast(":set {s} — noted", .{opt});
+        } else if (eqAny(name, &.{ "et", "expandtab" })) {
+            // Buffer-local in vim, and `Document.use_tabs` is its
+            // inverse: what Tab types and what `>>` pads with.
+            const e = app.activeEditor() orelse return app.diag.fail(arena, ":set {s} — no editor", .{opt});
+            e.buf.setIndent(e.buf.doc.tab_width, e.buf.doc.indent_unit, off);
+            app.toast(":set {s}", .{opt});
+        } else if (eqAny(name, &.{ "hls", "hlsearch", "is", "incsearch" })) {
+            // Accepted for muscle memory; mnml always highlights and
+            // always searches as you type, so there is nothing to set.
+            app.toast(":set {s} — always on", .{opt});
         } else {
             // Every discrete config field, by its dotted path or bare name.
             try setOption(app, opt, name, value, off);
@@ -1102,7 +1109,7 @@ fn set(app: *App, args: []const u8) CommandError!void {
 const settings = @import("settings.zig");
 
 /// The vim spellings `:set` understands ahead of the config table.
-pub const vim_option_names = [_][]const u8{ "wrap", "ignorecase", "smartcase", "number", "relativenumber", "list", "cursorline", "autoindent", "tabstop", "shiftwidth", "input", "theme", "stickycontext", "rightpanel" };
+pub const vim_option_names = [_][]const u8{ "wrap", "ignorecase", "smartcase", "number", "relativenumber", "list", "cursorline", "autoindent", "expandtab", "tabstop", "shiftwidth", "input", "theme", "stickycontext", "rightpanel" };
 
 /// Vim names that are one config field in disguise.
 const vim_aliases = [_]struct { name: []const u8, path: []const u8 }{

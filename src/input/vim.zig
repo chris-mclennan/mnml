@@ -1087,6 +1087,10 @@ pub const Vim = struct {
                     '[' => runCmd(.@"editor.section_prev_start"),
                     ']' => runCmd(.@"editor.section_prev_end"),
                     'm' => runCmd(.@"editor.method_prev"),
+                    // `[p` / `[P` / `]P` all put BEFORE with the indent
+                    // adjusted (`:help [p`). Refused out loud rather
+                    // than swallowed while the put slice is pending.
+                    'p', 'P' => ops(arena, &.{.paste_before_indent}),
                     else => .consumed,
                 };
             },
@@ -1102,6 +1106,10 @@ pub const Vim = struct {
                     ']' => runCmd(.@"editor.section_next_start"),
                     '[' => runCmd(.@"editor.section_next_end"),
                     'm' => runCmd(.@"editor.method_next"),
+                    // `]p` puts AFTER with the indent adjusted; `]P` is
+                    // vim's synonym for `[P` (`:help ]p`).
+                    'p' => ops(arena, &.{.paste_after_indent}),
+                    'P' => ops(arena, &.{.paste_before_indent}),
                     else => .consumed,
                 };
             },

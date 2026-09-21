@@ -174,6 +174,7 @@ trust sink. Each row names its file and its test.
 | Tree-sitter objects `if` / `ic` / `ia` | done | `src/editor/select.zig` `object()`, provider at `src/app.zig` `objectLookup` | |
 | Indent objects | done | `src/editor/select.zig` | |
 | Registers — named, numbered ring, `0`, blackhole | done | `src/editor/clipboard.zig`, `:reg` in `ex.zig`, `picker.clipboard` in `src/app/cmd_app.zig` | `"+` / `"*` are the OS clipboard (below); a write lands in the unnamed register first, then the sink |
+| `]p` / `[p` / `[P` / `]P` — put with the indent adjusted | partial | `paste_after_indent` / `paste_before_indent` in `src/editor/edit_op.zig`, refused in `src/editor/apply.zig` (`TODO(vim-slice: put)`), bound in the `[` / `]` prongs of `src/input/vim.zig` | *2026-09-21:* the chords were swallowed by the bracket prefix — no put, no word. They now answer `not supported yet` through the editor's `Unsupported` path, as `iq` / `ii` do, so the gap is visible rather than silent. `tests/e2e/vim_bracket_put_and_expandtab.test` |
 | Macros — named, persisted | done | `putMacro` / `macro` on `src/editor/clipboard.zig` (replays in any buffer), `src/app/macros_store.zig` (`<data root>/macros.zon`) | `vim.macro_*` ids are keymap-only |
 | Marks — buffer-local, persisted | done | `src/editor/buffer.zig`, `src/app/session.zig` `Pane.marks`, `:marks` / `:delm`, `picker.marks` | |
 | Global (uppercase) marks | done | `src/app/marks_store.zig` (`mA`–`mZ` on the App, `<data root>/marks.zon`), `'A` as an ex address | `'A` opens the file when it is not |
@@ -217,6 +218,7 @@ trust sink. Each row names its file and its test.
 | Snippets with tab-stops | done | `src/app/snippets.zig`; `snippet.pick` / `pick_all` (`openPicker`, `PickerKind.snippets`) | the file's scope + `global`, or every scope; trigger / scope hint / one-line body; Enter inserts at the cursor through the same `insertBody` as a trigger expansion |
 | Trailing-whitespace tools | done | `editor.trim_trailing_ws_on_save`, `ensure_trailing_newline` (both read by `Buffer.save`), `ui.highlight_trailing_ws` painted from `render.zig` | |
 | `:set` over every discrete config field | done | `option_paths` / `setOption` / `completeSet` in `src/app/ex.zig` | Zig-only: `no` / `!` / `inv` / `?` / `=value`, bare names when unique |
+| `:set expandtab` / `noexpandtab` | done | `set` in `src/app/ex.zig` → `Buffer.setIndent`, `Document.use_tabs` | *2026-09-21:* buffer-local, as vim's is. It used to toast `— noted` for a field that did not exist, which reads like `applied`; `:set hlsearch` / `incsearch` now say `always on` instead, because they are. `tests/e2e/vim_bracket_put_and_expandtab.test` |
 | Ex `:messages` / `:messages!` | done | `src/app/ex.zig` → `src/app/messages.zig` | |
 
 ## Panes, splits & tab pages
