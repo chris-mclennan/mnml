@@ -374,15 +374,20 @@ otherwise. Copy what you need; leave the rest out.
     .session = .{
         .restore = true, // reopen the last session's panes, layout and chrome on launch
         // What a saved TERMINAL pane comes back as. On .running a plain
-        // shell restarts in the cwd it was saved in, and a Claude Code
-        // pane whose session id was saved resumes it (`claude --resume
-        // <id>`) — never a second session under an id that exists, and
-        // never a new billed one, so a missing id falls through. On
-        // .dormant every terminal pane waits instead. Either way a pane
-        // whose command cannot be re-run safely — an arbitrary command
-        // line, a Codex pane (the CLI has no resume), a bare `claude`
-        // with no id — comes back dormant.
-        .restore_terminals = .running, // .running (a shell restarts, a Claude pane resumes its session) | .dormant (every terminal pane comes back `[exited] — any key restarts …`)
+        // shell restarts in the cwd it was saved in, and an AI session
+        // pane whose session could be named resumes it — `claude
+        // --resume <id>` off the id on its command line, `codex resume
+        // <id>` off the id mnml looked up in the rollout that session
+        // opened. Never a second session under an id that exists, never
+        // a new billed one, and never `codex resume --last` (the newest
+        // session on the machine is not necessarily this pane's): a
+        // session that cannot be named falls through. On .dormant every
+        // terminal pane waits instead. Either way a pane whose command
+        // cannot be re-run safely — an arbitrary command line, a bare
+        // `claude` with no id, a Codex pane whose session could not be
+        // told apart from another started in the same directory —
+        // comes back dormant.
+        .restore_terminals = .running, // .running (a shell restarts, a Claude / Codex pane resumes its session) | .dormant (every terminal pane comes back `[exited] — any key restarts …`)
     },
     .ipc = .{ .write_screen = false }, // also dump screen.txt, status.json and rects.json every frame
 

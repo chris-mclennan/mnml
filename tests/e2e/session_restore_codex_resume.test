@@ -1,0 +1,40 @@
+# requires: macos
+# env: HOME=home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# Rule 2 of the terminal restore, for Codex. Codex takes no session id
+# when it STARTS one — it picks its own and names it only in the
+# rollout it opens under `~/.codex/sessions` — so mnml looks the id up
+# at save time (`ai/codex_rollout.zig`: the rollout of this pane's cwd
+# started at or after the pane) and the restore comes back as
+# `codex resume <id>`. Never `--last`, and never a second session.
+#
+# A fake `codex` on PATH stands in for the CLI: on a new session it
+# writes the rollout the real one would and logs `new <id>`; on a
+# resume it logs `resume <id>`, plus `resumed-the-same-session` when
+# the id it was handed is the one it started under. A restore that
+# started a SECOND session instead would log `second-new-session`.
+write bin/codex #!/bin/bash\nsid="abcdabcd-0000-4000-8000-00000000c0de"\nif [ "$1" = resume ]; then\n  printf 'resume %s\\n' "$2" >> argv.log\n  if [ -f "started-$2" ]; then printf 'resumed-the-same-session\\n' >> argv.log; fi\nelse\n  if [ -f "started-$sid" ]; then printf 'second-new-session\\n' >> argv.log; fi\n  d="$HOME/.codex/sessions/2026/09/21"\n  mkdir -p "$d"\n  printf '{"timestamp":"%s.000Z","type":"session_meta","payload":{"id":"%s","cwd":"%s"}}\\n' "$(date -u +%Y-%m-%dT%H:%M:%S)" "$sid" "$MNML_E2E_WORKSPACE" > "$d/rollout-$(date -u +%Y-%m-%dT%H-%M-%S)-$sid.jsonl"\n  : > "started-$sid"\n  printf 'new %s\\n' "$sid" >> argv.log\nfi\nprintf 'Codex (fake)\\n'\nexec -a codex /bin/sh -c 'i=0; while [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done'
+shell chmod +x bin/codex
+write notes.txt "alpha\n"
+open notes.txt
+
+command ai.codex_new
+wait 1500
+expect screen contains "Codex (fake)"
+expect file argv.log contains "new abcdabcd-0000-4000-8000-00000000c0de"
+
+# The line the pane runs carries no id at all — the file does, because
+# the save looked it up.
+command session.save
+expect file .mnml/session.zon contains "abcdabcd-0000-4000-8000-00000000c0de"
+
+command session.restore
+wait 2000
+expect screen contains "session restored"
+# The restore ran the fake again, resuming the SAME session.
+expect file argv.log contains "resume abcdabcd-0000-4000-8000-00000000c0de"
+expect file argv.log contains "resumed-the-same-session"
+# And it never started a second one.
+expect file argv.log lacks "second-new-session"
+# So the pane is live, not a dead tab offering to start one.
+expect screen lacks "any key restarts"

@@ -31,6 +31,108 @@ pub fn codexArgv(arena: Allocator, prompt: []const u8) Allocator.Error![]const [
     return arena.dupe([]const u8, &.{ codex_binary, "exec", prompt });
 }
 
+/// The options `codex resume` takes that carry a value (`codex resume
+/// --help`, CLI 0.146).
+const codex_resume_value_flags = [_][]const u8{
+    "-c",
+    "--config",
+    "--enable",
+    "--disable",
+    "--remote",
+    "--remote-auth-token-env",
+    "-i",
+    "--image",
+    "-m",
+    "--model",
+    "--local-provider",
+    "-p",
+    "--profile",
+    "-s",
+    "--sandbox",
+    "-C",
+    "--cd",
+    "--add-dir",
+    "-a",
+    "--ask-for-approval",
+};
+
+/// The options `codex resume` takes that do not.
+const codex_resume_bool_flags = [_][]const u8{
+    "--strict-config",
+    "--oss",
+    "--dangerously-bypass-approvals-and-sandbox",
+    "--dangerously-bypass-hook-trust",
+    "--search",
+    "--no-alt-screen",
+};
+
+fn inList(list: []const []const u8, a: []const u8) bool {
+    for (list) |f| if (std.mem.eql(u8, f, a)) return true;
+    return false;
+}
+
+/// Whether `a` is a `codex resume` option whose value is the NEXT argv
+/// entry (`-m opus`, `--sandbox read-only`).
+fn codexResumeTakesValue(a: []const u8) bool {
+    return inList(&codex_resume_value_flags, a);
+}
+
+/// Whether `a` is a `codex resume` option that stands on its own — a
+/// boolean (`--search`), a long option with its value attached
+/// (`--model=opus`), or a short one with its value attached (`-mopus`).
+fn codexResumeStandsAlone(a: []const u8) bool {
+    if (inList(&codex_resume_bool_flags, a)) return true;
+    if (std.mem.startsWith(u8, a, "--")) {
+        const eq = std.mem.indexOfScalar(u8, a, '=') orelse return false;
+        return codexResumeTakesValue(a[0..eq]);
+    }
+    // `-mopus`: the first two characters name the option.
+    if (a.len > 2 and a[0] == '-' and a[1] != '-') return codexResumeTakesValue(a[0..2]);
+    return false;
+}
+
+/// `codex resume <id>` on `exe`, carrying over the options of `from`
+/// (the pane's own command line) that `resume` accepts.
+///
+/// Codex has no `--session-id`: a session names itself in the rollout
+/// it writes, and the id is looked up afterwards
+/// (`ai/codex_rollout.zig`). So the restored line is BUILT here rather
+/// than patched in place the way a Claude line is, and `exe` is the
+/// pane's own binary — a profile shim keeps its shim.
+///
+/// What is dropped, and why: every positional — `from`'s own prompt,
+/// which `codex resume [SESSION_ID] [PROMPT]` would re-send, and the
+/// `resume <id>` this function writes itself, so a line it already
+/// built is safe to pass back in — and the three options that PICK a
+/// session, `--last` / `--all` / `--include-non-interactive`, which
+/// would argue with the id this call exists to pass. Everything else
+/// `resume` takes rides along, so a pane opened with `--search` or
+/// `-m` comes back the same way. Pass `&.{}` for `from` when there is
+/// nothing to carry.
+pub fn codexResumeArgv(
+    arena: Allocator,
+    exe: []const u8,
+    session_id: []const u8,
+    from: []const []const u8,
+) Allocator.Error![]const []const u8 {
+    var argv: std.ArrayList([]const u8) = .empty;
+    try argv.appendSlice(arena, &.{ exe, "resume", session_id });
+    // `from[0]` is the binary, which `exe` already is.
+    var i: usize = @intFromBool(from.len > 0);
+    while (i < from.len) : (i += 1) {
+        const a = from[i];
+        if (codexResumeTakesValue(a)) {
+            if (i + 1 < from.len) {
+                try argv.appendSlice(arena, &.{ a, from[i + 1] });
+                i += 1;
+            }
+            continue;
+        }
+        if (codexResumeStandsAlone(a)) try argv.append(arena, a);
+    }
+    return argv.items;
+}
+
 pub const Outcome = struct {
     ok: bool,
     /// stdout on success, the trimmed stderr (or a fallback) on failure. Owned.
@@ -188,6 +290,35 @@ test "argv builders" {
     try t.expectEqualStrings("p", with_model[with_model.len - 1]);
     try t.expectEqualSlices([]const u8, &.{ "codex", "exec", "p" }, try codexArgv(a, "p"));
     try t.expectEqualSlices([]const u8, &.{ "claude", "--resume", "s" }, try claudeResumeArgv(a, "s"));
+}
+
+test "codexResumeArgv: the id, the pane's own binary, the flags resume takes — and nothing that would pick a different session" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // The plain case: a pane opened as bare `codex`.
+    try t.expectEqualSlices([]const u8, &.{ "codex", "resume", "sid-9" }, try codexResumeArgv(a, "codex", "sid-9", &.{"codex"}));
+    try t.expectEqualSlices([]const u8, &.{ "codex", "resume", "sid-9" }, try codexResumeArgv(a, "codex", "sid-9", &.{}));
+
+    // The binary is the pane's, so a launch profile keeps its shim.
+    const shim = try codexResumeArgv(a, "/d/mnml-ai-work", "sid-9", &.{"/d/mnml-ai-work"});
+    try t.expectEqualStrings("/d/mnml-ai-work", shim[0]);
+
+    // The flags `resume` takes ride along, in either spelling.
+    try t.expectEqualSlices([]const u8, &.{ "codex", "resume", "sid-9", "-m", "gpt-5", "--search", "--sandbox", "read-only" }, try codexResumeArgv(a, "codex", "sid-9", &.{ "codex", "-m", "gpt-5", "--search", "--sandbox", "read-only" }));
+    try t.expectEqualSlices([]const u8, &.{ "codex", "resume", "sid-9", "--model=gpt-5", "-mgpt-5" }, try codexResumeArgv(a, "codex", "sid-9", &.{ "codex", "--model=gpt-5", "-mgpt-5" }));
+
+    // The prompt is a positional and is NOT re-sent; neither are the
+    // three options that would pick a session of their own, nor
+    // anything `resume` does not know.
+    try t.expectEqualSlices([]const u8, &.{ "codex", "resume", "sid-9" }, try codexResumeArgv(a, "codex", "sid-9", &.{ "codex", "fix the tests" }));
+    try t.expectEqualSlices([]const u8, &.{ "codex", "resume", "sid-9" }, try codexResumeArgv(a, "codex", "sid-9", &.{ "codex", "--last", "--all", "--include-non-interactive", "--full-auto" }));
+
+    // A line this function already built comes back unchanged: the
+    // `resume` and the id are positionals, so the restore is idempotent.
+    const once = try codexResumeArgv(a, "codex", "sid-9", &.{ "codex", "--search" });
+    try t.expectEqualSlices([]const u8, once, try codexResumeArgv(a, "codex", "sid-9", once));
 }
 
 test "session ids are v4 uuids and distinct" {
