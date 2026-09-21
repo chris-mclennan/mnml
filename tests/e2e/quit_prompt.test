@@ -10,8 +10,8 @@ write two.txt "two\n"
 open one.txt
 open two.txt
 
-# Clean: no box. (`app.quit` would end the run, so the screen is the
-# check: nothing is raised on the way to the dirty case.)
+# Nothing raised yet. (The clean workspace's own box — Quit / Cancel —
+# is `quit_confirm_clean.test`; this file is the unsaved-work one.)
 expect screen lacks "Quit mnml?"
 
 type CHANGED
@@ -36,8 +36,10 @@ type CHANGED
 key ctrl+q
 expect screen contains "Unsaved: one.txt, two.txt"
 
-# A click on Cancel answers it too.
-click 74 15
+# A click on Cancel answers it too. Row 14 is the button row — row 15 is
+# the box's bottom border, and a click there dismisses the box like any
+# click that misses, so it would have proved nothing.
+click 74 14
 expect screen lacks "Quit mnml?"
 expect dirty true
 
