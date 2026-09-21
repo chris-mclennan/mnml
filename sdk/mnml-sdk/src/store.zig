@@ -221,7 +221,8 @@ pub const Store = struct {
 };
 
 /// One JSON string, escaped as **JSON** — which is not what
-/// `std.zig.fmtString` does.
+/// `std.zig.fmtString` does. Public because `warm.zig`'s lock file had
+/// the same confusion and now writes through this.
 ///
 /// That was the bug this replaced: the file is JSON and the bodies were
 /// escaped for a Zig literal, so a response carrying an apostrophe or a
@@ -230,7 +231,7 @@ pub const Store = struct {
 /// is exactly the failure this module promises costs requests rather
 /// than correctness — so it cost requests, every run, and nothing said
 /// so.
-fn writeJsonString(w: *Io.Writer, s: []const u8) Io.Writer.Error!void {
+pub fn writeJsonString(w: *Io.Writer, s: []const u8) Io.Writer.Error!void {
     try w.writeByte('"');
     for (s) |c| switch (c) {
         '"' => try w.writeAll("\\\""),
