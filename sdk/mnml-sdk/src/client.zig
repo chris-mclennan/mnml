@@ -261,8 +261,14 @@ test "shutdown ends a read that is already parked, so the close after it cannot 
     defer tmp.cleanup();
     var pbuf: [std.fs.max_path_bytes]u8 = undefined;
     const dir = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
-    const path = try std.fmt.allocPrint(t.allocator, "{s}/m.sock", .{dir});
-    defer t.allocator.free(path);
+    // The host's own rule (`bridge/host.zig` socketPath): a name that would
+    // not fit a sockaddr_un (104 bytes on macOS) moves to a short /tmp
+    // name. A worktree under a long path is exactly that case.
+    const long = try std.fmt.allocPrint(t.allocator, "{s}/m.sock", .{dir});
+    defer t.allocator.free(long);
+    const path = if (long.len < Io.net.UnixAddress.max_len - 4) long else try std.fmt.allocPrint(t.allocator, "/tmp/mnml-sdk-test-{s}.sock", .{&tmp.sub_path});
+    defer if (path.ptr != long.ptr) t.allocator.free(path);
+    defer if (path.ptr != long.ptr) Io.Dir.cwd().deleteFile(io, path) catch {};
     const addr = try Io.net.UnixAddress.init(path);
     var server = try addr.listen(io, .{});
     defer server.deinit(io);
