@@ -1549,6 +1549,11 @@ pub const App = struct {
         self.probeWorkspaceToml();
         try self.applyTheme();
         try script_api.rebind(self);
+        // The reload may have taken the Copilot opt-in away (the key
+        // edited out, or trust withdrawn). The server goes with it —
+        // leaving it running would keep answering for a workspace that
+        // has just said no.
+        copilot_app.stopIfNotAllowed(self);
         // A workspace just trusted gets its `.mnml/init.lua` now, and
         // its manifests join the integrations.
         if (!was_trusted and self.workspace_trusted) {
@@ -2554,6 +2559,7 @@ pub const App = struct {
         self.afterSplitChange();
         self.panes.remove(id);
         if (closed_path) |p| lsp.onClose(self, id, p);
+        if (closed_path) |p| copilot_app.onClose(self, p);
         files_pane.onPaneClosed(self, id);
         if (self.last_editor == id) self.last_editor = null;
         if (self.outline_panel == id) self.outline_panel = null;
