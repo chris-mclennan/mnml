@@ -211,6 +211,10 @@ pub const Document = struct {
     /// The edit-log seq the language server has been told about; null
     /// until a server has the file open.
     lsp_seen: ?u64 = null,
+    /// The same seq for the Copilot language server (`app/copilot.zig`),
+    /// kept apart from `lsp_seen`: the two servers see different sets of
+    /// files — Copilot only ever sees the ones the privacy gate allows.
+    copilot_seen: ?u64 = null,
 
     // ─── views ───
 

@@ -574,6 +574,11 @@ pub const specs = [_]Spec{
     .{ .id = "ai.toggle_inline_suggestions", .title = "AI: toggle inline ghost-text suggestions (Cursor-style)", .group = "ai" },
     .{ .id = "ai.setup_suggestions", .title = "AI: pick inline-suggestion backend (Claude API / local)", .group = "ai" },
     .{ .id = "ai.suggestion_stats", .title = "AI: inline-suggestion accept rate", .group = "ai" },
+    .{ .id = "ai.copilot_sign_in", .title = "AI (Copilot): sign in to GitHub (device code)", .group = "ai" },
+    .{ .id = "ai.copilot_sign_out", .title = "AI (Copilot): sign out of GitHub", .group = "ai" },
+    .{ .id = "ai.copilot_enable_here", .title = "AI (Copilot): allow this workspace's files to be sent to Copilot", .group = "ai" },
+    .{ .id = "ai.copilot_disable_here", .title = "AI (Copilot): stop sending this workspace's files to Copilot", .group = "ai" },
+    .{ .id = "ai.copilot_status", .title = "AI (Copilot): what is shared right now, and why or why not", .group = "ai" },
     .{ .id = "ai.show_config", .title = "AI: show current backend / model / tools", .group = "ai" },
     .{ .id = "ai.token_usage", .title = "AI: token usage + cost estimate", .group = "ai" },
     .{ .id = "view.image_open", .title = "View: open image file (PNG/JPG/GIF/WebP/BMP)", .group = "view" },
@@ -1212,7 +1217,7 @@ pub const specs = [_]Spec{
     .{ .id = "view.keep_tab", .title = "Keep this tab (stop the next glance taking the preview over)", .group = "view", .keys = .{ .vim = &.{"space b k"}, .standard = &.{"ctrl+k enter"} } },
 };
 
-test "1087 specs, unique ids" {
+test "1109 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1242,6 +1247,7 @@ test "1087 specs, unique ids" {
     // + `view.menu_bar_pin` (menu-bar-pin)
     // + `integrations.update` (int-distribution)
     // + `editor.lsp_this_file` (the `editor.lsp_max_bytes` override)
-    try std.testing.expectEqual(@as(usize, 1104), specs.len);
+    // + the five `ai.copilot_*` verbs (the Copilot ghost-text backend)
+    try std.testing.expectEqual(@as(usize, 1109), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

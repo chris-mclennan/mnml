@@ -85,6 +85,7 @@ const watch = @import("app/watch.zig");
 const git_app = @import("app/git.zig");
 const git_palette_app = @import("app/git_palette.zig");
 const ai_app = @import("app/ai.zig");
+const copilot_app = @import("app/copilot.zig");
 const spend = @import("app/spend.zig");
 const usage_pane = @import("app/usage_pane.zig");
 const tests_pane = @import("app/tests_pane.zig");
@@ -1040,6 +1041,7 @@ pub const App = struct {
     git_palette: git_palette_app.State = .{},
     snippets: snippets.State,
     ai: ai_app.State = .{},
+    copilot: copilot_app.State = .{},
     dap: dap.State = .{},
     /// The DEBUG section's cursor, folds and last-stop values.
     debug_panel: debug_panel.State = .{},
@@ -1684,6 +1686,7 @@ pub const App = struct {
         self.transfers.deinit(gpa, self.io);
         self.update.deinit(gpa, self.io);
         self.ai.deinit(gpa, self.io);
+        self.copilot.deinit(gpa);
         self.now_playing.deinit(self.io);
         self.integration_poll.deinit(gpa, self.io);
         // After the poller: its children were told where the sockets
@@ -2779,6 +2782,7 @@ pub const App = struct {
             .ai => |a| try ai_app.handle(self, a.job, a.msg),
             .dap => |d| try dap.handle(self, d.session, d.msg),
             .lsp => |l| try lsp.handle(self, l.server, l.msg),
+            .copilot => |c| try copilot_app.handle(self, c.msg),
             .http => |result| try http_app.handle(self, result),
             .sse => |chunk| try http_app.handleStream(self, chunk),
             .ws => |wev| try ws_pane.handle(self, wev),
@@ -3166,6 +3170,9 @@ test {
     _ = @import("app/jumplist.zig");
     _ = @import("app/gitignore.zig");
     _ = @import("ai/suggest.zig");
+    _ = @import("ai/copilot.zig");
+    _ = @import("copilot/client.zig");
+    _ = @import("app/copilot.zig");
     _ = @import("ai/transcript.zig");
     _ = @import("ai/api_client.zig");
     _ = @import("ai/cli.zig");

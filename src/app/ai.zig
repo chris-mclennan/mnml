@@ -46,6 +46,7 @@ const agents = @import("agents.zig");
 const spend = @import("spend.zig");
 const usage_pane = @import("usage_pane.zig");
 const ghost_chip = @import("ghost_chip.zig");
+const copilot_app = @import("copilot.zig");
 const transcript = @import("../ai/transcript.zig");
 const ai_apply = @import("ai_apply.zig");
 const launch_profiles = @import("launch_profiles.zig");
@@ -421,6 +422,10 @@ fn fireSuggestion(app: *App) Allocator.Error!void {
             }
             return st.debounce.cancel();
         },
+        // Copilot is not a worker of ours: `app/copilot.zig` owns the
+        // client, the privacy gate and the request. It settles the
+        // same debounce and posts the same `.suggestion`.
+        .copilot => return copilot_app.fireSuggestion(app, id, e),
         .claude_code, .claude_api => {},
     }
     if (e.buf.doc.path) |p| if (suggest.isSecretBearing(p)) return st.debounce.cancel();
@@ -518,6 +523,11 @@ fn suggestWorker(
     defer gpa.free(cwd);
     var raw: []u8 = undefined;
     switch (backend) {
+        // The worker only ever runs for the Claude family: the picker's
+        // other rows never reach `suggestWorker` (`fireSuggestion`
+        // returns first), and a silent `return` here would read as a
+        // request that vanished.
+        .unset, .local, .copilot => return postOutcome(events, io, gpa, pane, generation, .failed, "no worker for this backend"),
         .claude_api => {
             const body = api.completionRequest(gpa, model, suggest.system_prompt, prompt, suggest.max_tokens) catch return;
             defer gpa.free(body);
@@ -557,7 +567,6 @@ fn suggestWorker(
             }
             raw = out.text;
         },
-        .unset, .local => return,
     }
     defer gpa.free(raw);
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -1498,7 +1507,7 @@ fn toggleInline(app: *App) CommandError!void {
     app.toast("AI ghost-text: {s}", .{if (next) "on" else "off"});
 }
 
-pub const backend_rows = [_]suggest.Backend{ .claude_code, .claude_api, .local };
+pub const backend_rows = [_]suggest.Backend{ .claude_code, .claude_api, .copilot, .local };
 
 /// `ai.setup_suggestions`: the backend picker (change it any time).
 fn setupSuggestions(app: *App) CommandError!void {
@@ -1515,6 +1524,7 @@ fn setupSuggestions(app: *App) CommandError!void {
     const rows = [_]struct { b: suggest.Backend, label: []const u8, detail: []const u8 }{
         .{ .b = .claude_code, .label = "Claude Code sub", .detail = "reuses your Max/Pro plan · no separate API key · ~1s" },
         .{ .b = .claude_api, .label = "Claude API", .detail = "needs $ANTHROPIC_API_KEY · ~1s · works now" },
+        .{ .b = .copilot, .label = "GitHub Copilot", .detail = "your Copilot seat (free tier too) · per-workspace opt-in, off by default" },
         .{ .b = .local, .label = "Local model (embedded)", .detail = "not in this release — a migration note for now" },
     };
     for (rows) |r| {
@@ -1544,6 +1554,7 @@ pub fn setupAccept(app: *App, row: usize) CommandError!void {
     _ = try settings.persist(app, .home, &.{ "ai", "suggest_backend" }, b.token());
     _ = try settings.persist(app, .home, &.{ "ai", "inline_suggestions" }, true);
     switch (b) {
+        .copilot => try copilot_app.announcePick(app),
         .local => app.toast("{s}", .{suggest.migration_note}),
         .claude_api => app.toast("AI ghost-text: Claude API{s}", .{if (app.env.get(api.env_key) == null) " — export $ANTHROPIC_API_KEY to use it" else " · on"}),
         .claude_code => app.toast("AI ghost-text: Claude Code sub · on (run `claude` once to sign in)", .{}),
