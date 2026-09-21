@@ -299,10 +299,7 @@ pub fn translateKey(k: vaxis.Key) ?key_mod.Key {
     const code: key_mod.KeyCode = switch (k.codepoint) {
         vaxis.Key.escape => .esc,
         vaxis.Key.enter, vaxis.Key.kp_enter => .enter,
-        vaxis.Key.tab => if (mods.shift) blk: {
-            mods.shift = false;
-            break :blk .backtab;
-        } else .tab,
+        vaxis.Key.tab => .tab,
         vaxis.Key.backspace, 0x08 => .backspace,
         vaxis.Key.delete => .delete,
         vaxis.Key.insert => .insert,
@@ -335,7 +332,9 @@ pub fn translateKey(k: vaxis.Key) ?key_mod.Key {
             break :blk .{ .char = k.codepoint };
         },
     };
-    return .{ .code = code, .mods = mods };
+    // `Key.canonical` settles the one spelling a shifted Tab has, so
+    // the terminal path and `keymap.parseKeySpec` cannot disagree.
+    return (key_mod.Key{ .code = code, .mods = mods }).canonical();
 }
 
 pub fn translateMouse(m: vaxis.Mouse) key_mod.Mouse {
@@ -370,7 +369,12 @@ const t = std.testing;
 
 test "translateKey: named keys, shifted text, legacy control bytes, kitty chords" {
     try t.expect(translateKey(.{ .codepoint = vaxis.Key.escape }).?.code == .esc);
-    try t.expect(translateKey(.{ .codepoint = vaxis.Key.tab, .mods = .{ .shift = true } }).?.code == .backtab);
+    const shifted_tab = translateKey(.{ .codepoint = vaxis.Key.tab, .mods = .{ .shift = true } }).?;
+    try t.expect(shifted_tab.code == .backtab);
+    try t.expect(!shifted_tab.mods.shift);
+    const ctrl_shift_tab = translateKey(.{ .codepoint = vaxis.Key.tab, .mods = .{ .ctrl = true, .shift = true } }).?;
+    try t.expect(ctrl_shift_tab.code == .backtab and ctrl_shift_tab.mods.ctrl and !ctrl_shift_tab.mods.shift);
+    try t.expect(translateKey(.{ .codepoint = vaxis.Key.tab }).?.code == .tab);
     const p = translateKey(.{ .codepoint = 'p', .shifted_codepoint = 'P', .text = "P", .mods = .{ .shift = true } }).?;
     try t.expectEqual(@as(u21, 'P'), p.code.char);
     try t.expect(!p.mods.shift);

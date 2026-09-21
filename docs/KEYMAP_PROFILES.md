@@ -221,6 +221,20 @@ reference editor's popup, which has neither (`docs/PARITY.md`).
   ctrl table), and `ctrl+tab` does on every terminal. The choice follows
   NvChad because that is what a vim user's hands expect on `Tab`.
 
+## A shifted Tab has one spelling
+
+No terminal sends Tab with a shift modifier: it sends its own back-tab
+code and drops the modifier, and `tui/loop.zig`'s `translateKey` folds
+vaxis's form the same way. So `Key.canonical` (`src/core/key.zig`) is the
+one place the spelling is settled, and `keymap.parseKeySpec` goes through
+it — `shift+tab`, `<S-Tab>`, `shift+backtab` and `backtab` are one chord,
+and `ctrl+shift+tab` is `ctrl+backtab`. That holds for the spec table, a
+`[keys.*]` line in the config, a `.test` script's `key` directive and the
+IPC `key` verb alike, so a script can no longer synthesise a key a
+terminal never sends. Before it did, and `buffer.prev` was dead on
+`Ctrl+Shift+Tab` and on NvChad's `<S-Tab>` in every terminal while the
+corpus reported it working.
+
 ## Known tension to resolve in Phase 1
 
 - `ctrl+h` / `ctrl+j` are on the vim side as NvChad window nav (rule 5 of the

@@ -413,6 +413,10 @@ otherwise. Copy what you need; leave the rest out.
     // One line per binding: chord → command id. "" / "none" / "unbound"
     // removes a default. .global applies to both profiles; .vim and
     // .standard on top of it. ZonGen rejects a chord written twice.
+    // A shifted Tab has ONE chord however it is written: "shift+tab",
+    // "<S-Tab>", "shift+backtab" and "backtab" are all `backtab`, and
+    // "ctrl+shift+tab" is "ctrl+backtab" — that is what a terminal
+    // sends, so a spec cannot name a key that never arrives.
     .keys = .{
         .global = .{
             .@"ctrl+p" = "picker.files",
