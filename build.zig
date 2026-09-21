@@ -445,6 +445,12 @@ pub fn build(b: *std.Build) void {
     // the seventh bug of that shape fails the suite rather than shipping.
     const arena_opts = b.addOptions();
     arena_opts.addOptionPath("src_root", b.path("src"));
+    // The job-result rule travels where the frame-arena ones do not:
+    // an integration has no menus and no screen, but it does have a
+    // worker handing results back with their own arenas, which is the
+    // shape the bitbucket chip shipped broken.
+    arena_opts.addOptionPath("integrations_root", b.path("integrations"));
+    arena_opts.addOptionPath("sdk_root", b.path("sdk"));
     const arena_mod = b.createModule(.{ .root_source_file = b.path("tools/arena_audit.zig"), .target = target, .optimize = optimize });
     arena_mod.addOptions("build_options", arena_opts);
     const arena_exe = b.addExecutable(.{ .name = "arena-audit", .root_module = arena_mod });
@@ -455,6 +461,18 @@ pub fn build(b: *std.Build) void {
     arena_run.stdio = .inherit;
     const arena_step = b.step("arena-audit", "Frame-arena and stack strings reaching consumers that outlive the frame");
     arena_step.dependOn(&arena_run.step);
+    // …and the same binary over the two roots that hold the other
+    // shape: a job result's arena let go by the consumer that kept a
+    // slice out of it.
+    for ([_][]const u8{ "integrations", "sdk" }) |root| {
+        const jr = b.addRunArtifact(arena_exe);
+        jr.addDirectoryArg(b.path(root));
+        jr.addArg("--job-results");
+        jr.addArg("--strict");
+        jr.has_side_effects = true;
+        jr.stdio = .inherit;
+        arena_step.dependOn(&jr.step);
+    }
     const arena_tests = b.addTest(.{ .root_module = arena_mod, .filters = test_filters, .test_runner = test_runner });
     unit_step.dependOn(&b.addRunArtifact(arena_tests).step);
     // ── end arena audit ─────────────────────────────────────────────────
