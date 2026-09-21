@@ -168,12 +168,25 @@ pub const PtyPane = struct {
     /// null, `exit` is set so every live-pane path already skips it, and
     /// the footer says a key restarts rather than closes.
     dormant: bool = false,
+    /// // changed (codex-resume): the WALL clock when the child was
+    /// spawned, in epoch seconds (`exited_at_ms` is the awake clock and
+    /// cannot be compared with a file's timestamp). A Codex session
+    /// takes no id on its command line, so this is half of what names
+    /// it — the rollout opened in this pane's cwd at or after this
+    /// second (`ai/codex_rollout.zig`). 0 on a pane that never started.
+    started_at_s: i64 = 0,
+    /// // changed (codex-resume): the Codex session this pane was found
+    /// to be running. Owned; learned once and kept, because the window
+    /// that identifies a session only narrows as later ones start — the
+    /// first unambiguous answer is the one worth holding.
+    codex_session_id: ?[]u8 = null,
 
     pub fn deinit(self: *PtyPane, gpa: Allocator) void {
         if (self.session) |s| s.deinit();
         self.grid.deinit(gpa);
         gpa.destroy(self.wire);
         if (self.accent_color) |c| gpa.free(c);
+        if (self.codex_session_id) |c| gpa.free(c);
         gpa.free(self.label);
         for (self.argv) |a| gpa.free(a);
         gpa.free(self.argv);
@@ -313,6 +326,10 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
         const eq = std.mem.indexOfScalar(u8, kv, '=') orelse continue;
         try m.put(kv[0..eq], kv[eq + 1 ..]);
     };
+    // // changed (codex-resume): read BEFORE the spawn. The child may
+    // open its Codex rollout before this call returns, and a rollout
+    // dated a second earlier than the pane would never match it.
+    const started_at_s: i64 = if (opts.dormant) 0 else Io.Timestamp.now(app.io, .real).toSeconds();
     const session: ?*Session = if (opts.dormant) null else pty.Session.spawn(gpa, app.io, .{
         .cols = size.cols,
         .rows = size.rows,
@@ -346,6 +363,7 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
             .accent_color = accent,
             .cols = size.cols,
             .rows = size.rows,
+            .started_at_s = started_at_s,
         },
     });
     std.debug.assert(got == id);
@@ -500,6 +518,8 @@ pub fn restart(app: *App, id: PaneId) CommandError!void {
     // A Claude session started with `--session-id` cannot be started
     // twice under that id: the restart resumes it.
     try resumeInPlace(app.gpa, p.argv);
+    // // changed (codex-resume): before the spawn, as in `open`.
+    const started_at_s = Io.Timestamp.now(app.io, .real).toSeconds();
     const fresh = pty.Session.spawn(app.gpa, app.io, .{
         .cols = p.cols,
         .rows = p.rows,
@@ -519,6 +539,12 @@ pub fn restart(app: *App, id: PaneId) CommandError!void {
     p.exit = null;
     p.exited_at_ms = null;
     p.dormant = false;
+    // // changed (codex-resume): a fresh child is a fresh window to
+    // match a Codex rollout in, and the id the last one was found under
+    // is not this one's unless the command line says `resume <id>`.
+    p.started_at_s = started_at_s;
+    if (p.codex_session_id) |c| app.gpa.free(c);
+    p.codex_session_id = null;
     app.needs_render = true;
 }
 
@@ -532,6 +558,18 @@ pub fn sessionIdOfArgv(argv: []const []const u8) ?[]const u8 {
         if (std.mem.eql(u8, argv[i], "--session-id") or std.mem.eql(u8, argv[i], "--resume")) return argv[i + 1];
     }
     return null;
+}
+
+/// // changed (codex-resume): the Codex session a command line names.
+/// Only one line ever does — `codex resume <id>`, as
+/// `cli.codexResumeArgv` writes it for a restore — because Codex takes
+/// no session id when it STARTS one. Null for every other line.
+pub fn codexSessionIdOfArgv(argv: []const []const u8) ?[]const u8 {
+    if (argv.len < 3) return null;
+    if (!std.mem.eql(u8, argv[1], "resume")) return null;
+    const id = argv[2];
+    if (id.len == 0 or id[0] == '-') return null;
+    return id;
 }
 
 /// `--session-id` → `--resume` in place, so a saved or restarted Claude

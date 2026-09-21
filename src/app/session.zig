@@ -8,9 +8,11 @@
 //!
 //! A terminal pane comes back the way `session.restore_terminals` says
 //! (`terminalRestore`): on the default `.running` a plain shell restarts
-//! in its cwd and an AI session pane resumes its session, while anything
-//! that cannot be re-run safely waits for a key; `.dormant` makes every
-//! one of them wait.
+//! in its cwd and an AI session pane resumes its session — Claude off
+//! the id on its command line, Codex off the one `paneSessionId` looked
+//! up when the file was written (`ai/codex_rollout.zig`) — while
+//! anything that cannot be re-run safely waits for a key; `.dormant`
+//! makes every one of them wait.
 //!
 //! Saved on quit (the `exit` hook) and every `autosave_ms` from `tick`;
 //! restored from the `startup` hook when `session.restore` is on. A
@@ -36,6 +38,8 @@ const Layout = layout_mod.Layout;
 const pty_pane = @import("pty_pane.zig");
 const launch_profiles = @import("launch_profiles.zig");
 const cli = @import("../ai/cli.zig");
+const codex_rollout = @import("../ai/codex_rollout.zig");
+const sessions = @import("../sessions.zig");
 const md_preview = @import("md_preview.zig");
 const pane_accent = @import("pane_accent.zig");
 const hooks = @import("../core/hooks.zig");
@@ -95,14 +99,16 @@ pub const Pane = struct {
     /// // changed (pane-rail): every kind carries one now, not just a
     /// pty — a restored pane comes back the colour it was.
     accent: ?[]const u8 = null,
-    /// pty: the AI session this pane's command line runs, which is
-    /// what a `.running` restore RESUMES (`--resume <id>`, never a
-    /// second session under the same id). Read off the argv the way
-    /// SESSIONS reads it (`pty_pane.sessionIdOfArgv` — `Card.session_id`
-    /// is the same value), and written down here so the restore rule
-    /// does not have to re-derive it; a file from before this field
-    /// still resumes, off its argv. Null for a shell, for Codex, and
-    /// for a bare `claude`.
+    /// pty: the AI session this pane runs, which is what a `.running`
+    /// restore RESUMES (never a second session under the same id).
+    /// Claude's is read off the argv the way SESSIONS reads it
+    /// (`pty_pane.sessionIdOfArgv` — `Card.session_id` is the same
+    /// value); a file from before this field still resumes, off its
+    /// argv. // changed (codex-resume): Codex's is not on any command
+    /// line, so `paneSessionId` looks it up here and this field is the
+    /// only place it is written down. Null for a shell, for a bare
+    /// `claude`, and for a Codex pane whose session could not be named
+    /// without guessing.
     session_id: ?[]const u8 = null,
 };
 
@@ -243,6 +249,42 @@ pub fn render(arena: Allocator, saved: Saved) Allocator.Error![]u8 {
     return out.written();
 }
 
+/// The AI session a pty pane is running, for the file to write down.
+///
+/// Claude wears its id on its command line, so that is the whole answer
+/// for a Claude pane. Codex does not: `codex` picks its own id and
+/// names it only in the rollout it opens, so the id is looked up by
+/// the pane's cwd and the second it started
+/// (`ai/codex_rollout.discover`) and then REMEMBERED on the pane — the
+/// window that identifies a session only narrows as later Codex
+/// sessions start in the same directory, so the first unambiguous
+/// answer is the one to keep. A lookup that is not unique gives
+/// nothing, and the pane falls to the dormant rule rather than
+/// resuming a conversation that might be somebody else's.
+///
+/// The walk is paid for only while a Codex pane has no id yet, and one
+/// `stat` per rollout rules out the years of them a machine keeps.
+fn paneSessionId(app: *App, arena: Allocator, pt: *pty_pane.PtyPane, argv: []const []const u8) Allocator.Error!?[]const u8 {
+    if (pty_pane.sessionIdOfArgv(argv)) |id| return id;
+    if (argv.len == 0 or !launch_profiles.isProductArgv(app, argv[0], .codex)) return null;
+    if (pt.codex_session_id) |id| return id;
+    if (pt.started_at_s > 0) find: {
+        const home = (try sessions.homeFor(app)) orelse break :find;
+        const cwd = pt.cwd orelse app.workspace;
+        const found = codex_rollout.discover(app.gpa, app.io, arena, home, cwd, pt.started_at_s) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Canceled => break :find,
+        };
+        if (found) |id| {
+            pt.codex_session_id = try app.gpa.dupe(u8, id);
+            return id;
+        }
+    }
+    // A pane this restore already resumed keeps naming its session on
+    // its command line, whether or not the lookup can see it again.
+    return pty_pane.codexSessionIdOfArgv(argv);
+}
+
 /// The app as a `Saved`, every slice on `arena`.
 pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
     var saved: Saved = .{ .workspace = try canonicalWorkspace(app, arena) };
@@ -288,7 +330,7 @@ pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
                 // A Claude session started under `--session-id` comes
                 // back with `--resume`: the id is taken once.
                 const argv = try pty_pane.resumeArgv(arena, pt.argv);
-                break :blk .{ .kind = .pty, .argv = argv, .cwd = pt.cwd, .label = pt.label, .accent = pt.accent_color, .session_id = pty_pane.sessionIdOfArgv(argv) };
+                break :blk .{ .kind = .pty, .argv = argv, .cwd = pt.cwd, .label = pt.label, .accent = pt.accent_color, .session_id = try paneSessionId(app, arena, pt, argv) };
             },
             else => null,
         };
@@ -638,16 +680,22 @@ fn hasFlag(argv: []const []const u8, flag: []const u8) bool {
 ///
 ///  1. A plain shell pane (no command line) comes back RUNNING — a
 ///     fresh shell in the saved cwd, which is cheap and harmless.
-///  2. A Claude Code pane whose session id was saved RESUMES that
-///     session (`claude --resume <id>`). Never a NEW one: an id that
-///     did not survive the save is rule 3, not a fresh billed session
-///     started behind the user's back. Codex has no resume in
-///     `ai/cli.zig` (`codex exec <prompt>` is the whole surface), so a
-///     Codex pane is rule 3 too.
+///  2. An AI session pane whose session id was saved RESUMES that
+///     session — `claude --resume <id>`, `codex resume <id>`. Never a
+///     NEW one: an id that did not survive the save is rule 3, not a
+///     fresh billed session started behind the user's back.
+///     // changed (codex-resume): Codex is in this rule now. Its id is
+///     not on its command line — `codex` names itself only in the
+///     rollout it writes — so `paneSessionId` looks it up at save time
+///     (`ai/codex_rollout.zig`: the rollout opened in the pane's cwd at
+///     or after the second the pane started, and ONLY when exactly one
+///     answers to that). `codex resume --last` is never the fallback:
+///     "the newest session on the machine" is not "this pane's
+///     session".
 ///  3. Anything else — an arbitrary command line, a bare `claude` with
-///     no id — comes back DORMANT, waiting for a key. Re-running
-///     someone's build, deploy or test command at launch is not a
-///     restore.
+///     no id, a Codex pane whose session could not be named — comes
+///     back DORMANT, waiting for a key. Re-running someone's build,
+///     deploy or test command at launch is not a restore.
 ///
 /// `session.restore_terminals = .dormant` is the one switch that puts
 /// every pane in bucket 3, which is what mnml did for the day this rule
@@ -656,10 +704,13 @@ pub fn terminalRestore(app: *const App, sp: Pane) TerminalRestore {
     if (app.cfg.session.restore_terminals == .dormant) return .dormant;
     if (sp.argv.len == 0) return .shell;
     // The field, or the argv it was read off — a file older than the
-    // field still carries `--resume <id>`.
-    const id = sp.session_id orelse pty_pane.sessionIdOfArgv(sp.argv) orelse return .dormant;
+    // field still carries `--resume <id>`, and a restored Codex pane
+    // carries `resume <id>`.
+    const id = sp.session_id orelse pty_pane.sessionIdOfArgv(sp.argv) orelse pty_pane.codexSessionIdOfArgv(sp.argv) orelse return .dormant;
     if (id.len == 0) return .dormant;
-    if (!launch_profiles.isProductArgv(app, sp.argv[0], .claude)) return .dormant;
+    const claude = launch_profiles.isProductArgv(app, sp.argv[0], .claude);
+    const codex = launch_profiles.isProductArgv(app, sp.argv[0], .codex);
+    if (!claude and !codex) return .dormant;
     return .{ .resumed = id };
 }
 
@@ -710,6 +761,15 @@ fn openSavedPane(app: *App, sp: Pane, opened: []const ?PaneId) OpenError!?PaneId
                 .shell => &.{},
                 .dormant => sp.argv,
                 .resumed => |id| blk: {
+                    // // changed (codex-resume): a Codex line is BUILT
+                    // rather than patched — `codex` has no `--resume`
+                    // flag to swap in, and its own prompt (a positional)
+                    // must not be re-sent. `codexResumeArgv` keeps the
+                    // pane's binary and the options `resume` accepts,
+                    // and is idempotent on a line it already wrote.
+                    if (launch_profiles.isProductArgv(app, sp.argv[0], .codex)) {
+                        break :blk try cli.codexResumeArgv(app.frame.allocator(), sp.argv[0], id, sp.argv);
+                    }
                     // `capture` already spells a live `--session-id` as
                     // `--resume`, so the saved line resumes as it stands
                     // — and keeps whatever else was on it (`--model`).
@@ -1244,16 +1304,36 @@ test "session: the three terminal-restore rules, and the switch that overrides t
     const with_model: Pane = .{ .kind = .pty, .argv = &.{ "/opt/homebrew/bin/claude", "--model", "opus", "--resume", "sid-9" }, .session_id = "sid-9" };
     try t.expectEqualStrings("sid-9", terminalRestore(&app, with_model).resumed);
 
+    // // changed (codex-resume): a Codex pane is rule 2 as well, off the
+    // id `paneSessionId` looked up when the file was written — the
+    // command line carries none when the session starts, and carries
+    // `resume <id>` once a restore has built it.
+    const codex_found: Pane = .{ .kind = .pty, .argv = &.{"codex"}, .session_id = "cdx-1" };
+    try t.expectEqualStrings("cdx-1", terminalRestore(&app, codex_found).resumed);
+    const codex_again: Pane = .{ .kind = .pty, .argv = &.{ "codex", "resume", "cdx-1" } };
+    try t.expectEqualStrings("cdx-1", terminalRestore(&app, codex_again).resumed);
+    const codex_abs: Pane = .{ .kind = .pty, .argv = &.{ "/opt/homebrew/bin/codex", "--search" }, .session_id = "cdx-1" };
+    try t.expectEqualStrings("cdx-1", terminalRestore(&app, codex_abs).resumed);
+    // A profile's shim is its product too, on either side.
+    const profiles = [_]launch_profiles.Profile{.{ .name = "fast", .product = .codex, .binary = "codex", .args = &.{"--fast"} }};
+    app.cfg.ai.launch_profiles = &profiles;
+    const codex_shim: Pane = .{ .kind = .pty, .argv = &.{"/d/bin/mnml-ai-fast"}, .session_id = "cdx-1" };
+    try t.expectEqualStrings("cdx-1", terminalRestore(&app, codex_shim).resumed);
+    try t.expect(terminalRestore(&app, .{ .kind = .pty, .argv = &.{"/d/bin/mnml-ai-nope"}, .session_id = "cdx-1" }) == .dormant);
+
     // Rule 3 — anything else waits for a key. An arbitrary command line
     // (re-running someone's deploy at launch is not a restore); a bare
     // `claude` with no id, because a resume must never quietly become a
-    // NEW billed session; and Codex, which has no resume in
-    // `ai/cli.zig` at all (`codex exec <prompt>` is the whole surface).
+    // NEW billed session; and a Codex pane whose session could not be
+    // named, because `--last` is not an answer to "which one was this".
     try t.expect(terminalRestore(&app, .{ .kind = .pty, .argv = &.{ "npm", "run", "deploy" } }) == .dormant);
     try t.expect(terminalRestore(&app, .{ .kind = .pty, .argv = &.{"claude"} }) == .dormant);
-    try t.expect(terminalRestore(&app, .{ .kind = .pty, .argv = &.{ "codex", "--resume", "sid-9" }, .session_id = "sid-9" }) == .dormant);
+    try t.expect(terminalRestore(&app, .{ .kind = .pty, .argv = &.{"codex"} }) == .dormant);
+    try t.expect(terminalRestore(&app, .{ .kind = .pty, .argv = &.{ "codex", "--search" } }) == .dormant);
+    try t.expect(terminalRestore(&app, .{ .kind = .pty, .argv = &.{ "codex", "exec", "fix the tests" } }) == .dormant);
     // An empty id is no id.
     try t.expect(terminalRestore(&app, .{ .kind = .pty, .argv = &.{ "claude", "--resume", "" }, .session_id = "" }) == .dormant);
+    try t.expect(terminalRestore(&app, .{ .kind = .pty, .argv = &.{"codex"}, .session_id = "" }) == .dormant);
 
     // The one switch puts every one of them in bucket 3 — what mnml did
     // for the day this rule was the other way around.
@@ -1261,6 +1341,9 @@ test "session: the three terminal-restore rules, and the switch that overrides t
     try t.expect(terminalRestore(&app, .{ .kind = .pty }) == .dormant);
     try t.expect(terminalRestore(&app, claude) == .dormant);
     try t.expect(terminalRestore(&app, with_model) == .dormant);
+    try t.expect(terminalRestore(&app, codex_found) == .dormant);
+    try t.expect(terminalRestore(&app, codex_again) == .dormant);
+    try t.expect(terminalRestore(&app, codex_shim) == .dormant);
 }
 
 /// The one pty pane an app has, for the round-trip tests below.
@@ -1341,5 +1424,137 @@ test "session: a Claude pane's id rides in the file, and the restored line resum
         try t.expectEqual(@as(usize, 3), p.argv.len);
         try t.expectEqualStrings("--resume", p.argv[1]);
         try t.expectEqualStrings("sid-9", p.argv[2]);
+    }
+}
+
+/// `secs` as the UTC ISO-8601 stamp a rollout's first line carries —
+/// what the real `codex` writes when it opens one.
+fn isoUtc(arena: Allocator, secs: i64) ![]u8 {
+    const es: std.time.epoch.EpochSeconds = .{ .secs = @intCast(secs) };
+    const yd = es.getEpochDay().calculateYearDay();
+    const md = yd.calculateMonthDay();
+    const ds = es.getDaySeconds();
+    return std.fmt.allocPrint(arena, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}.000Z", .{
+        yd.year,
+        md.month.numeric(),
+        @as(u16, md.day_index) + 1,
+        ds.getHoursIntoDay(),
+        ds.getMinutesIntoHour(),
+        ds.getSecondsIntoMinute(),
+    });
+}
+
+test "session: a Codex pane's session is looked up from its rollout, rides in the file, and the restored line resumes it" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var f = try Fixture.init();
+    defer f.deinit();
+    // A fake `codex` — the basename is what tells mnml the product, and
+    // the real CLI is never run by a test.
+    try f.tmp.dir.createDirPath(t.io, "bin");
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "bin/codex", .data = "#!/bin/sh\nprintf '%s ' \"$@\" >> argv.log\nsleep 30\n" });
+    try f.tmp.dir.setFilePermissions(t.io, "bin/codex", .fromMode(0o755), .{});
+    const fake = try f.abs("bin/codex");
+    defer t.allocator.free(fake);
+    const home = try f.abs("home");
+    defer t.allocator.free(home);
+    // Hex, because a rollout name that is not shaped like a uuid is not
+    // a session id.
+    const sid = "abcdabcd-0000-4000-8000-0000000c0dec";
+    {
+        var app = try f.app();
+        defer app.deinit();
+        // The fixture's home, so the lookup never reads the developer's
+        // own `~/.codex`.
+        try app.env.put("HOME", home);
+        // As `ai.codex_new` starts one: no session id anywhere on the
+        // line, because Codex takes none.
+        _ = try pty_pane.open(&app, .{ .argv = &.{fake}, .label = "codex", .kind = .command, .placement = .tab });
+        const pt = solePty(&app) orelse return error.TestUnexpectedResult;
+        try t.expect(pt.started_at_s > 0);
+        try t.expect(pt.codex_session_id == null);
+
+        // The rollout that child would have opened: this workspace,
+        // this second.
+        const arena = app.frame.allocator();
+        try f.tmp.dir.createDirPath(t.io, "home/.codex/sessions/2026/09/21");
+        const name = try std.fmt.allocPrint(arena, "home/.codex/sessions/2026/09/21/rollout-now-{s}.jsonl", .{sid});
+        const line = try std.fmt.allocPrint(
+            arena,
+            "{{\"timestamp\":\"{s}\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{s}\",\"cwd\":\"{s}\"}}}}\n",
+            .{ try isoUtc(arena, pt.started_at_s), sid, f.root },
+        );
+        try f.tmp.dir.writeFile(t.io, .{ .sub_path = name, .data = line });
+
+        try save(&app);
+        // Learned at save time and kept: the pane knows its session now.
+        try t.expectEqualStrings(sid, pt.codex_session_id.?);
+    }
+    const text = try f.tmp.dir.readFileAlloc(t.io, rel_path, t.allocator, .limited(1 << 16));
+    defer t.allocator.free(text);
+    try t.expect(std.mem.indexOf(u8, text, sid) != null);
+    {
+        var app = try f.app();
+        defer app.deinit();
+        try app.env.put("HOME", home);
+        try restore(&app);
+        const p = solePty(&app) orelse return error.TestUnexpectedResult;
+        try t.expect(!p.dormant);
+        try t.expect(p.session != null);
+        try t.expectEqual(@as(usize, 3), p.argv.len);
+        // The pane's own binary, `resume`, and the id it was found under
+        // — never `--last`, and never a second session.
+        try t.expectEqualStrings(fake, p.argv[0]);
+        try t.expectEqualStrings("resume", p.argv[1]);
+        try t.expectEqualStrings(sid, p.argv[2]);
+    }
+}
+
+test "session: a Codex pane whose session cannot be named uniquely comes back dormant, not resumed" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var f = try Fixture.init();
+    defer f.deinit();
+    try f.tmp.dir.createDirPath(t.io, "bin");
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "bin/codex", .data = "#!/bin/sh\nsleep 30\n" });
+    try f.tmp.dir.setFilePermissions(t.io, "bin/codex", .fromMode(0o755), .{});
+    const fake = try f.abs("bin/codex");
+    defer t.allocator.free(fake);
+    const home = try f.abs("home");
+    defer t.allocator.free(home);
+    {
+        var app = try f.app();
+        defer app.deinit();
+        try app.env.put("HOME", home);
+        _ = try pty_pane.open(&app, .{ .argv = &.{fake}, .label = "codex", .kind = .command, .placement = .tab });
+        const pt = solePty(&app) orelse return error.TestUnexpectedResult;
+        const arena = app.frame.allocator();
+        const iso = try isoUtc(arena, pt.started_at_s);
+        try f.tmp.dir.createDirPath(t.io, "home/.codex/sessions/2026/09/21");
+        // TWO sessions of this workspace inside the window — a second
+        // Codex started in the same directory while this one was still
+        // finding its feet. Which one is this pane's cannot be told, so
+        // neither is the answer.
+        for ([_][]const u8{ "abcdabcd-0000-4000-8000-00000000000a", "abcdabcd-0000-4000-8000-00000000000b" }) |id| {
+            const name = try std.fmt.allocPrint(arena, "home/.codex/sessions/2026/09/21/rollout-now-{s}.jsonl", .{id});
+            const line = try std.fmt.allocPrint(
+                arena,
+                "{{\"timestamp\":\"{s}\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{s}\",\"cwd\":\"{s}\"}}}}\n",
+                .{ iso, id, f.root },
+            );
+            try f.tmp.dir.writeFile(t.io, .{ .sub_path = name, .data = line });
+        }
+        try save(&app);
+        try t.expect(pt.codex_session_id == null);
+    }
+    {
+        var app = try f.app();
+        defer app.deinit();
+        try app.env.put("HOME", home);
+        try restore(&app);
+        const p = solePty(&app) orelse return error.TestUnexpectedResult;
+        // Rule 3: the tab is back, nothing was started, and no
+        // stranger's conversation was resumed.
+        try t.expect(p.dormant);
+        try t.expect(p.session == null);
+        try t.expectEqual(@as(usize, 1), p.argv.len);
     }
 }

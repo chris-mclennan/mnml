@@ -616,7 +616,11 @@ pub fn envHome(app: *const App) ?[]const u8 {
 /// The test override, else `$HOME`. A relative HOME — a `.test` file's
 /// `# env: HOME=home` — is under the workspace, and is kept as the
 /// override so the worker's slice outlives the frame.
-fn homeFor(app: *App) Allocator.Error!?[]const u8 {
+/// // changed (codex-resume): public, because the session file's Codex
+/// lookup reads the same `~/.codex` the scan does and must resolve the
+/// home the same way — two spellings of "which home" is how a `.test`
+/// file quietly reads the developer's real one.
+pub fn homeFor(app: *App) Allocator.Error!?[]const u8 {
     const st = &app.sessions;
     if (st.home) |h| return h;
     const h = envHome(app) orelse return null;
