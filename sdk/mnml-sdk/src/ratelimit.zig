@@ -289,6 +289,10 @@ pub const Limiter = struct {
     /// Why this process is spending, right now. Whoever is about to
     /// make a request sets it; the draw line carries it so a drained
     /// bucket is attributable to a cause and not only to a program.
+    ///
+    /// **Borrowed, and read on a LATER call than the one that set it.**
+    /// A literal or a `@tagName` — never a frame-arena or job-result
+    /// string, which would be gone by the time a draw is recorded.
     reason: []const u8 = "user",
     /// Off only in a test that must leave no file behind.
     draws: bool = true,

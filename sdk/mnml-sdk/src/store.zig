@@ -110,6 +110,11 @@ pub const Store = struct {
         }
     }
 
+    /// The entry for `key`. **Every slice in it lives on the store's
+    /// own arena**, so it is good for exactly as long as the `Store`
+    /// is: a caller that keeps one past `deinit` has this file's
+    /// lifetime rule backwards. `fresh` and `stale` hand back the same
+    /// borrow.
     pub fn get(self: *const Store, key: []const u8) ?Entry {
         for (self.entries.items) |e| if (std.mem.eql(u8, e.key, key)) return e;
         return null;

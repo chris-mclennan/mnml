@@ -160,6 +160,12 @@ pub fn styleOf(th: Theme, r: Readiness) Style {
 
 /// The lines the confirm shows. Named, because a confirm that says
 /// "Merge this pull request?" is a confirm nobody reads.
+///
+/// **Every string here is borrowed, and a confirm stays up across
+/// frames**, so a pane that holds one has to own what it names — both
+/// shipped panes wrap it in a `MergeConfirm { arena, … }` and dupe
+/// each field onto that arena. A title taken off a frame or a job
+/// result paints as garbage the moment the reader stops to read it.
 pub const Confirm = struct {
     title: []const u8,
     source: []const u8,
