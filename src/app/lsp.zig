@@ -25,6 +25,7 @@ const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const event = @import("../core/event.zig");
 const hooks = @import("../core/hooks.zig");
+const lsp_sync = @import("lsp_sync.zig");
 const key_mod = @import("../core/key.zig");
 const EditingMode = @import("../input/mod.zig").EditingMode;
 const Key = key_mod.Key;
@@ -698,9 +699,14 @@ pub fn onClose(app: *App, pane: PaneId, path: []const u8) void {
     semantic_app.drop(app, path);
 }
 
-/// Push the edits since the last sync as `didChange`: one splice on an
-/// incremental server (and a pure insertion, or utf-8, so the range
-/// converts exactly) goes as a range; anything else is the full text.
+/// Push the edits since the last sync as `didChange`: on an incremental
+/// server the frame's splices — one, or the three a fast typist leaves
+/// between two paints — fold into ONE range change (`lsp_sync.zig`), so
+/// what goes out is the region that moved and never the file. The whole
+/// text is left for a server that asked for full sync, for a wholesale
+/// replacement the log could not describe, and for the one range
+/// `lsp_sync` will not guess at: a deletion reaching the document's last
+/// line on a server that negotiated utf-16 positions.
 /// Called from the frame, so every mutation path is covered. The sync
 /// point is the document's: two windows on a file send its edits once.
 pub fn syncPane(app: *App, pane: PaneId, e: *EditorPane) void {
@@ -713,22 +719,15 @@ pub fn syncPane(app: *App, pane: PaneId, e: *EditorPane) void {
     const s = serverFor(app, path) orelse return;
     if (!s.isOpen(path)) return;
     const text = ed.bytes();
-    var full = ed.doc.edits.lostSince(seen) or !s.caps.incremental;
-    const splices = ed.doc.edits.since(seen);
-    if (!full and splices.len == 1) {
-        const sp = splices[0];
-        const insertion = sp.old_end == sp.start;
-        if (insertion or s.encoding == .utf8) {
-            const start = types.positionOf(text, sp.start, s.encoding);
-            const end: types.Position = if (insertion) start else .{ .line = sp.old_end_pt.row, .character = sp.old_end_pt.col };
-            const new_text = text[@min(sp.start, text.len)..@min(sp.new_end, text.len)];
-            s.didChange(path, &.{.{ .range = .{ .start = start, .end = end }, .text = new_text }}) catch {};
-            ed.doc.lsp_seen = head;
-            markSymbolsDue(app, path);
-            return;
+    if (!ed.doc.edits.lostSince(seen) and s.caps.incremental) {
+        if (lsp_sync.compose(ed.doc.edits.since(seen))) |c| {
+            if (lsp_sync.changeFor(ed, c, s.encoding)) |ch| {
+                s.didChange(path, &.{.{ .range = ch.range, .text = text[ch.text_start..ch.text_end] }}) catch {};
+                ed.doc.lsp_seen = head;
+                markSymbolsDue(app, path);
+                return;
+            }
         }
-    } else if (!full and splices.len == 0) {
-        full = true;
     }
     s.didChange(path, &.{.{ .range = null, .text = text }}) catch {};
     ed.doc.lsp_seen = head;
