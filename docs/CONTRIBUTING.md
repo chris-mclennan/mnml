@@ -223,6 +223,62 @@ paints tofu. Open the thing, swap `app.frame` to the fixed buffer,
 `app.frame.begin()`, scribble 1024 × 16 bytes of `'X'`, then assert the
 text (`openDiffRowMenu` in `src/app/git.zig` is the model).
 
+## Things a task holds the address of
+
+A worker started with `group.concurrent(io, fn, args)` runs past the
+call that started it, and so does everything whose ADDRESS it was given.
+`Io.Group` is the sharpest case: the running task holds the group's
+address, so a group that MOVES after it has a task is a group whose
+`cancel` waits on a task it can no longer see — forever. That is a
+wedged quit, with every pool thread idle and the main thread parked in
+`Group.cancel`, and it reproduces only when something moved.
+
+The storage that moves in this tree is `PaneStore.slots` — an
+`ArrayList(?Pane)`. Opening ANY pane can reallocate it, and every open
+pane moves with it. So a pane's group living inside the pane is a bug
+waiting for a second pane, and it shipped three times:
+
+- **`GrepPane`** (2026-09-21) — found restoring a Search pane from the
+  session file, which opens a pane and then keeps opening panes behind
+  it, so the move was the ordinary case rather than a rare race. Its
+  `abort` was already heap-allocated, with the reason in a comment; the
+  group beside it was not.
+- **`SpendPane`** and **`TestsPane`** — the same shape, found by reading
+  for it rather than by hitting it.
+
+The rule: **anything a task holds the address of lives on the heap, or
+in storage that never moves.** In practice that means a `*Io.Group`
+created in `init` and destroyed after the `cancel` in `deinit` (the
+`GrepPane` / `SpendPane` / `TestsPane` idiom), a `*Job` in an
+`ArrayList(*Job)` rather than an `ArrayList(Job)`, a heap `*Shared` for
+a `std.Thread`'s context, or a module-level `var`. `App` itself moves
+exactly once — `initWith` returns it by value — so nothing started
+inside `initWith` may hold an address into it; every worker starts from
+the `startup` hook, after the App is in place (`App.script` re-points
+the Lua states for the same reason).
+
+`zig build arena-audit` walks the `Pane` payload types and fails on an
+`Io.Group` / `Io.Queue` / `Io.Event` / `Io.Mutex` declared inline in one
+of them; `zig build test` runs the same rule as a unit test.
+
+Testing it needs two things the ordinary test does not:
+
+1. **A move that really happens.** Appending until `capacity` changes is
+   not enough — the real allocators extend the mapping in place most of
+   the time and the pane stays put, so the test passes against the bug.
+   `alloc.NoRemap` (`src/core/alloc.zig`) wraps the test allocator and
+   declines every in-place grow, which makes the move a fact of the run.
+2. **A watchdog.** Call `deinit` on a `std.Thread` and wait on an
+   `Io.Event.waitTimeout`; a regression then FAILS in ten seconds
+   instead of hanging the suite. Leave the worker parked — do not close
+   the pipe it is blocked on — on the failure path: letting it return
+   would have it touch the group it was started with, which the moved
+   pane no longer owns, and the segfault would land before the runner
+   printed its verdict.
+
+`app.spend.test."the spend pane's group survives the pane store moving
+it under a live worker"` is the model.
+
 ## Tests
 
 - Unit tests run on `std.testing.allocator` only; a leak is a failure.
