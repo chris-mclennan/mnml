@@ -31,6 +31,7 @@ const App = app_mod.App;
 const syntax_mod = @import("syntax.zig");
 const Syntax = syntax_mod.Syntax;
 const Document = @import("../editor/editor.zig").Document;
+const mem_report = @import("../core/mem_report.zig");
 
 /// Shared by the document's `Syntax` and the worker: the way to tell a
 /// parse that nobody wants its tree any more. Two holders, freed by the
@@ -134,6 +135,7 @@ pub fn start(app: *App, s: *Syntax, doc: *const Document) bool {
     };
     st.next_id += 1;
     st.started += 1;
+    mem_report.Tally.bump(&mem_report.tally.jobs_started);
     s.pending = .{ .id = job.id, .base_seq = s.seen_seq, .ticket = ticket };
     return true;
 }
@@ -151,6 +153,7 @@ fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, job: *Job) Io.Cance
     // frees the result with the rest).
     try io.checkCancel();
     job.result = null;
+    mem_report.Tally.bump(&mem_report.tally.jobs_posted);
     events.post(io, .{ .syntax = result });
 }
 
@@ -158,11 +161,16 @@ fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, job: *Job) Io.Cance
 /// does not share with its successor are its alone to free, and at 100 MB
 /// that is tens of milliseconds. On this thread only if no task can start.
 fn dispose(app: *App, old: *ts.Tree) void {
-    app.syntax_jobs.group.concurrent(app.io, disposer, .{old}) catch old.deinit();
+    mem_report.Tally.bump(&mem_report.tally.disposals_asked);
+    app.syntax_jobs.group.concurrent(app.io, disposer, .{old}) catch {
+        old.deinit();
+        mem_report.Tally.bump(&mem_report.tally.disposals_done);
+    };
 }
 
 fn disposer(old: *ts.Tree) Io.Cancelable!void {
     old.deinit();
+    mem_report.Tally.bump(&mem_report.tally.disposals_done);
 }
 
 /// A parse came back. Adopt its tree if its document still wants it.
@@ -178,13 +186,16 @@ pub fn handle(app: *App, r: *Result) void {
         const tree = r.tree orelse {
             // Could not parse (out of memory): the gate tries again.
             s.dirty = true;
+            mem_report.Tally.bump(&mem_report.tally.results_dropped);
             return;
         };
         if (edits.lostSince(p.base_seq)) {
             s.dirty = true;
+            mem_report.Tally.bump(&mem_report.tally.results_dropped);
             return;
         }
         r.tree = null;
+        mem_report.Tally.bump(&mem_report.tally.results_adopted);
         if (s.hl.swap(tree)) |old| dispose(app, old);
         // What was typed while it parsed: the tree is told, as the one it
         // replaces was.
@@ -199,6 +210,7 @@ pub fn handle(app: *App, r: *Result) void {
         return;
     }
     // Nobody is waiting for it (the document closed): `destroy` frees it.
+    mem_report.Tally.bump(&mem_report.tally.results_dropped);
 }
 
 // ── tests ──

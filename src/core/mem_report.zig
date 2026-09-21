@@ -1,7 +1,9 @@
 //! `-Dmem-report`: where the process's memory is, measured rather than
 //! guessed. Two counters — every byte live through the app's allocator,
 //! and every byte live inside the tree-sitter runtime (its own malloc,
-//! routed here through `ts_set_allocator`) — each with its peak. The
+//! routed here through `ts_set_allocator`) — each with its peak, plus a
+//! tally of the parse jobs, so a tree-sitter figure can be read as "one
+//! tree is this big" rather than "trees are piling up". The
 //! per-document breakdown (text, saved copy, line index, undo, redo) is
 //! structural and lives with the app (`app/driver.zig` prints the table
 //! to stderr as a headless session ends).
@@ -32,6 +34,26 @@ pub const Counter = struct {
 
 pub var app: Counter = .{};
 pub var tree_sitter: Counter = .{};
+
+/// Parse-job bookkeeping. `started` minus `posted` is what is still
+/// parsing; `adopted` minus `disposed` is how many trees are held; a
+/// gap between `asked` and `done` is a replaced tree still queued for
+/// the thread that frees it. Only touched when `enabled`.
+pub const Tally = struct {
+    jobs_started: std.atomic.Value(u64) = .init(0),
+    jobs_posted: std.atomic.Value(u64) = .init(0),
+    results_adopted: std.atomic.Value(u64) = .init(0),
+    results_dropped: std.atomic.Value(u64) = .init(0),
+    disposals_asked: std.atomic.Value(u64) = .init(0),
+    disposals_done: std.atomic.Value(u64) = .init(0),
+
+    pub fn bump(v: *std.atomic.Value(u64)) void {
+        if (!enabled) return;
+        _ = v.fetchAdd(1, .monotonic);
+    }
+};
+
+pub var tally: Tally = .{};
 
 /// Wraps the process allocator; every byte through it is counted.
 pub const Counting = struct {

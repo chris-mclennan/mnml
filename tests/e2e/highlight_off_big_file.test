@@ -1,19 +1,21 @@
-# The per-buffer highlight switch on a real multi-megabyte file.
+# The per-buffer highlight switch on a real megabyte-scale file.
 #
-# `editor.highlight_max_bytes` decides this automatically on open (0 —
-# no limit — is the shipped default, and a `.test` cannot change the
-# config the App booted with), so this drives the same switch by hand:
-# `editor.highlight_toggle_file` turns tree-sitter off for ONE buffer,
-# the statusline chip and a toast say so, and `editor.highlight_this_file`
-# turns it back on. The limit's own decision is unit-tested in
+# `editor.highlight_max_bytes` decides this automatically on open (a
+# `.test` cannot change the config the App booted with), so this drives
+# the same switch by hand: `editor.highlight_toggle_file` turns
+# tree-sitter off for ONE buffer, the statusline chip and a toast say so,
+# and `editor.highlight_this_file` turns it back on. The limit's own
+# decision — including the shipped 4 MiB default — is unit-tested in
 # `src/app/syntax.zig`.
 #
-# The fixture is ~5 MB of Rust, doubled up from a seed rather than
-# committed: past `Syntax.worker_min_bytes` it is a file whose parse runs
-# on a worker, which is the case the switch exists for.
+# The fixture is ~1.3 MB of Rust, doubled up from a seed rather than
+# committed. Two sizes bracket it: past `Syntax.worker_min_bytes` (1 MiB)
+# it is a file whose parse runs on a worker, which is the case the switch
+# exists for; under the 4 MiB default ceiling it opens highlighted, so
+# the first toggle here really is the one that turns it OFF.
 write seed.rs // a repeated seed\npub fn one(x: u32) -> u32 {\n    let y: u32 = x + 1;\n    y\n}\n
-shell cp seed.rs big.rs; for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do cat big.rs big.rs > grow.rs; mv grow.rs big.rs; done; rm seed.rs
-shell test "$(wc -c < big.rs)" -gt 4000000
+shell cp seed.rs big.rs; for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14; do cat big.rs big.rs > grow.rs; mv grow.rs big.rs; done; rm seed.rs
+shell test "$(wc -c < big.rs)" -gt 1048576 && test "$(wc -c < big.rs)" -lt 4194304
 
 open big.rs
 expect pane "big.rs"

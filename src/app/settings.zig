@@ -361,8 +361,8 @@ fn isTheme(comptime path: []const u8) bool {
 
 /// `editor.highlight_max_bytes` is an integer the overlay offers as a
 /// short list of sizes rather than a step row: stepping a byte count
-/// through four orders of magnitude is not a control. 0 is "Off" — no
-/// limit, the shipped default.
+/// through four orders of magnitude is not a control. 0 is "off" — no
+/// limit at all; the shipped default is 4 MB.
 fn isHighlightMax(comptime path: []const u8) bool {
     return std.mem.eql(u8, path, "editor.highlight_max_bytes");
 }
@@ -955,7 +955,7 @@ test "rows: every path is a bool, an enum, a number or the theme; defaults index
     try t.expectEqual(Config.CursorShape.terminal, c.ui.cursor_shape);
 }
 
-test "the highlighting size limit is a choice row, not a step row: off is the default, and a hand-set value reads as the choice above it" {
+test "the highlighting size limit is a choice row, not a step row: 4 MB is the default, and a hand-set value reads as the choice above it" {
     // A u64 of bytes, offered as five sizes — the raw number is the ZON
     // view's to edit.
     try t.expect(!comptime isNumber("editor.highlight_max_bytes"));
@@ -963,13 +963,15 @@ test "the highlighting size limit is a choice row, not a step row: off is the de
     try t.expectEqualStrings("off", options("editor.highlight_max_bytes")[0]);
     try t.expectEqualStrings("4 MB", options("editor.highlight_max_bytes")[2]);
     var c: Config = .{};
-    try t.expectEqual(@as(usize, 0), currentIndex(&c, "editor.highlight_max_bytes"));
-    setIndex(&c, "editor.highlight_max_bytes", 2);
-    try t.expectEqual(@as(u64, 4 << 20), c.editor.highlight_max_bytes);
+    // The shipped default is the third choice, and the row says so.
     try t.expectEqual(@as(usize, 2), currentIndex(&c, "editor.highlight_max_bytes"));
-    // Back to off, and round the row wraps.
+    setIndex(&c, "editor.highlight_max_bytes", 3);
+    try t.expectEqual(@as(u64, 16 << 20), c.editor.highlight_max_bytes);
+    try t.expectEqual(@as(usize, 3), currentIndex(&c, "editor.highlight_max_bytes"));
+    // Round to off, and round the row wraps.
     setIndex(&c, "editor.highlight_max_bytes", 5);
     try t.expectEqual(@as(u64, 0), c.editor.highlight_max_bytes);
+    try t.expectEqual(@as(usize, 0), currentIndex(&c, "editor.highlight_max_bytes"));
     // A value typed into the file by hand: never reported as "off".
     c.editor.highlight_max_bytes = 8 << 20;
     try t.expectEqual(@as(usize, 3), currentIndex(&c, "editor.highlight_max_bytes"));
