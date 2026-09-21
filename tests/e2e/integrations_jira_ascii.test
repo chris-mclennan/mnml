@@ -1,8 +1,3 @@
-# requires: optimized
-# The `integrations_*` family — real integration children against
-# offline servers the files start themselves — is timing-marginal in a
-# Debug build. See `integrations_row_buttons_wide.test` for the whole
-# reason; the runner scales its deadlines, a file's `wait <ms>` cannot.
 # ascii
 # width: 140
 # height: 24
