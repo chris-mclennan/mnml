@@ -33,6 +33,16 @@ pub const Sink = enum {
     /// chip click runs). A profile list is whole-replace in a layer, so
     /// an untrusted one could put its own binary behind the AI chip.
     launch_profile,
+    /// `ai.copilot.command` — the argv of the Copilot language server.
+    /// A workspace that could set it would choose which binary runs
+    /// every time you type.
+    copilot_server,
+    /// `ai.copilot_here` — not an argv but the switch that sends this
+    /// workspace's buffer text to GitHub. A cloned repo must not be
+    /// able to opt its reader in by shipping a config, so the key is
+    /// stripped from an untrusted layer and listed as a claim the
+    /// trust dialog names out loud.
+    copilot_share,
     /// `<ws>/.mnml/init.lua` — not a config key but a file beside the
     /// config, which runs with the whole `mnml` table (tasks, panes,
     /// keys) once the workspace is trusted.
@@ -61,6 +71,8 @@ pub const Sink = enum {
             .startup_task => "task at startup",
             .external_browser => "browser",
             .launch_profile => "AI launch profile",
+            .copilot_server => "Copilot language server",
+            .copilot_share => "Copilot sharing",
             .init_lua => "script",
             .workspace_manifests => "integration",
             .script_install => "script",
@@ -78,6 +90,8 @@ pub const Sink = enum {
             .startup_pty, .startup_task => "immediately, on open",
             .external_browser => "when you open a link",
             .launch_profile => "when you start a Claude / Codex session",
+            .copilot_server => "when you type, with Copilot ghost text on",
+            .copilot_share => "when you type, with Copilot ghost text on",
             .init_lua => "immediately, on open",
             .workspace_manifests => "when you run one of its commands",
             .script_install => "every time mnml starts",
@@ -101,6 +115,8 @@ pub const exec_bearing = [_]Rule{
     .{ .path = "startup.tasks", .sink = .startup_task },
     .{ .path = "ai.launch_profiles[] .binary / .args / .env / .worktree", .sink = .launch_profile },
     .{ .path = "ai.default_profile", .sink = .launch_profile },
+    .{ .path = "ai.copilot.command", .sink = .copilot_server },
+    .{ .path = "ai.copilot_here", .sink = .copilot_share },
     .{ .path = ".mnml/init.lua (the file beside the config)", .sink = .init_lua },
     .{ .path = ".mnml/integrations/*.zon (the manifests beside the config)", .sink = .workspace_manifests },
     .{ .path = "<data root>/scripts/<name>/ (an installed script's directory)", .sink = .script_install },
@@ -224,6 +240,26 @@ fn stripSink(comptime sink: Sink, arena: Allocator, p: *Patch(Config)) Allocator
                 ai.default_profile = null;
             }
             return n;
+        },
+        .copilot_server => {
+            const ai = &(p.ai orelse return 0);
+            const cop = &(ai.copilot orelse return 0);
+            if (cop.command) |cmd| if (cmd.len != 0) {
+                cop.command = null;
+                return 1;
+            };
+            return 0;
+        },
+        // Not an argv — the switch that sends this workspace's text to
+        // GitHub. Stripping it means an untrusted workspace's `true`
+        // reads as the default `false`, which is the safe direction.
+        .copilot_share => {
+            const ai = &(p.ai orelse return 0);
+            if (ai.copilot_here) |v| if (v) {
+                ai.copilot_here = null;
+                return 1;
+            };
+            return 0;
         },
         // Nothing in the patch: the file is gated by `workspace_trusted`.
         .init_lua => return 0,
@@ -400,6 +436,21 @@ fn collect(comptime sink: Sink, arena: Allocator, p: Patch(Config), facts: Facts
                 const cmd = e.cmd orelse continue;
                 if (cmd.len != 0) try out.append(arena, .{ .sink = sink, .key = "startup.layout", .command = cmd });
             }
+        },
+        .copilot_server => {
+            const ai = p.ai orelse return;
+            const cop = ai.copilot orelse return;
+            const cmd = cop.command orelse return;
+            if (cmd.len != 0) try out.append(arena, .{ .sink = sink, .key = "ai.copilot.command", .command = try joinList(arena, cmd) });
+        },
+        .copilot_share => {
+            const ai = p.ai orelse return;
+            const on = ai.copilot_here orelse return;
+            if (on) try out.append(arena, .{
+                .sink = sink,
+                .key = "ai.copilot_here",
+                .command = "send this workspace's open files to GitHub Copilot",
+            });
         },
         .launch_profile => {
             const ai = p.ai orelse return;
