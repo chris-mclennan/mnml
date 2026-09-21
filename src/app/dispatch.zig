@@ -3476,7 +3476,7 @@ pub fn handleAppCommand(app: *App, pane_id: PaneId, e: *EditorPane, cmd: input.A
             const range = paragraphRows(e.buf.editor, p.around);
             try openFilterPrompt(app, range[0], range[1]);
         },
-        .repeat_insert_start => |r| try beginRepeatInsert(app, pane_id, e, r.count, r.above),
+        .repeat_insert_start => |r| try beginRepeatInsert(app, pane_id, e, r.count, r.kind),
         .operator_linewise_to => |o| try linewiseOp(app, e, o.op, o.target),
         .cmdline_tab_complete => try cmdlineTabComplete(app, e),
         .cmdline_popup_move => |d| try cmdlineCycle(app, e, d),
@@ -3624,12 +3624,26 @@ fn blockReplace(app: *App, e: *EditorPane, ch: u21) Allocator.Error!void {
     _ = app;
 }
 
-/// `<count>o` / `<count>O`: open one line now, replicate on Esc.
-fn beginRepeatInsert(app: *App, pane_id: PaneId, e: *EditorPane, count: u32, above: bool) Allocator.Error!void {
+/// `<count>i` / `I` / `a` / `A` / `o` / `O`: enter Insert where the
+/// command says, then replicate what was typed on Esc (`:help count`).
+fn beginRepeatInsert(app: *App, pane_id: PaneId, e: *EditorPane, count: u32, kind: input.RepeatInsertKind) Allocator.Error!void {
     e.buf.input.requestInsertMode();
-    _ = try app.applyOps(e, &.{if (above) .insert_newline_above else .insert_newline_below});
+    const opening: ?EditOp = switch (kind) {
+        .open_below => .insert_newline_below,
+        .open_above => .insert_newline_above,
+        .line_first_non_ws => .move_line_first_non_ws,
+        .after_cursor => .move_right,
+        .line_end => .move_line_end,
+        .at_cursor => null,
+    };
+    if (opening) |op| {
+        _ = try app.applyOps(e, &.{op});
+        // `App.applyOps` does not record for `.`; this op is the head of
+        // the change (`A` appends, it does not insert at the cursor).
+        try e.buf.trackAppOps(&.{op}, app.frame.allocator());
+    }
     const ed = e.buf.editor;
-    app.repeat_insert = .{ .pane = pane_id, .count = count, .above = above, .start_byte = ed.cursor, .len_before = ed.len() };
+    app.repeat_insert = .{ .pane = pane_id, .count = count, .kind = kind, .start_byte = ed.cursor, .len_before = ed.len() };
 }
 
 /// Once Insert mode ends, replay the typed run for the block insert /
@@ -3673,17 +3687,34 @@ pub fn finishDeferredInserts(app: *App) Allocator.Error!void {
         if (r.start_byte + typed_len > ed.len()) return;
         const typed = try app.frame.allocator().dupe(u8, ed.bytes()[r.start_byte .. r.start_byte + typed_len]);
         const line = ed.lineOfByte(r.start_byte);
-        var i: u32 = 1;
-        while (i < r.count) : (i += 1) {
-            if (r.above) {
-                const at = ed.lineStart(line);
-                const with_nl = try std.mem.concat(app.frame.allocator(), u8, &.{ typed, "\n" });
-                try ed.splice(at, at, with_nl);
-            } else {
-                const at = ed.lineEnd(line + i - 1);
-                const with_nl = try std.mem.concat(app.frame.allocator(), u8, &.{ "\n", typed });
-                try ed.splice(at, at, with_nl);
+        if (r.kind.opensLine()) {
+            var i: u32 = 1;
+            while (i < r.count) : (i += 1) {
+                if (r.kind == .open_above) {
+                    const at = ed.lineStart(line);
+                    const with_nl = try std.mem.concat(app.frame.allocator(), u8, &.{ typed, "\n" });
+                    try ed.splice(at, at, with_nl);
+                } else {
+                    const at = ed.lineEnd(line + i - 1);
+                    const with_nl = try std.mem.concat(app.frame.allocator(), u8, &.{ "\n", typed });
+                    try ed.splice(at, at, with_nl);
+                }
             }
+        } else if (typed_len > 0) {
+            // `3iab<Esc>` = the run again at the insertion point, newlines
+            // and all; Esc had already stepped one left, so step back from
+            // the end of the LAST copy instead.
+            const at = r.start_byte + typed_len;
+            var i: u32 = 1;
+            while (i < r.count) : (i += 1) try ed.splice(at, at, typed);
+            ed.setCursor(at + (r.count - 1) * typed_len);
+            _ = try app.applyOps(e, &.{.move_left_no_cross_line});
+        }
+        // `.` repeats a counted insert with its count (`:help .`): the
+        // deferred copies join the change the Esc just recorded.
+        if (r.count > 1 and typed_len > 0) {
+            const tail = if (r.kind.opensLine()) try std.mem.concat(app.frame.allocator(), u8, &.{ "\n", typed }) else typed;
+            try e.buf.appendDotInsertRepeat(r.count - 1, tail);
         }
         e.buf.doc.recomputeDirty();
         e.syntax.dirty = true;

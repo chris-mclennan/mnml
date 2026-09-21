@@ -177,7 +177,8 @@ trust sink. Each row names its file and its test.
 | Macros — named, persisted | done | `putMacro` / `macro` on `src/editor/clipboard.zig` (replays in any buffer), `src/app/macros_store.zig` (`<data root>/macros.zon`) | `vim.macro_*` ids are keymap-only |
 | Marks — buffer-local, persisted | done | `src/editor/buffer.zig`, `src/app/session.zig` `Pane.marks`, `:marks` / `:delm`, `picker.marks` | |
 | Global (uppercase) marks | done | `src/app/marks_store.zig` (`mA`–`mZ` on the App, `<data root>/marks.zon`), `'A` as an ex address | `'A` opens the file when it is not |
-| `.` repeat | done | `src/editor/buffer.zig` dot state | |
+| `.` repeat | done | `src/editor/buffer.zig` dot state | a counted Insert carries its count into the record (`dot_insert_repeat`, `appendDotInsertRepeat`), so `3ix<Esc>` then `.` types six and `2.` replaces the count with two — probed against Neovim 0.12.5 |
+| `<count>` before `i` / `I` / `a` / `A` / `o` / `O` | done | `RepeatInsertKind` in `src/input/mod.zig`, `beginRepeatInsert` / `finishDeferredInserts` in `src/app/dispatch.zig` | *2026-09-21 (`vim-count-insert`):* the typed run repeats on Esc — `80i-<Esc>` draws the rule, `3A;<Esc>` puts three semicolons on. Only `o` / `O` honoured the count before; the other four swallowed it silently. `tests/e2e/vim_count_insert.test` |
 | Change list `g;` / `g,` | done | `src/editor/editor.zig` `change_list`, `editor.jump_prev_edit` / `jump_next_edit` | |
 | Jumplist `Ctrl-O` / `Ctrl-I` | done | `src/app/jumplist.zig`, `nav.back` / `nav.forward` / `nav.jump_toggle_prev` | two stacks capped at 100; `''` / ``` `` ``` toggle; a search hit and a file open push |
 | `f` / `t` / `;` / `,` | done | `src/input/vim.zig`, `find_char_on_line` in `src/editor/edit_op.zig` | |

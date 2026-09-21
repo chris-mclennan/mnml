@@ -740,8 +740,10 @@ pub const FindBarState = struct {
 /// row is replayed on the others once Insert mode ends.
 /// `eol`: `$A` — the typed run goes to every row's end, whatever its length.
 pub const BlockInsert = struct { pane: PaneId, first_row: usize, last_row: usize, col: usize, start_byte: usize, len_before: usize, eol: bool = false };
-/// `<count>o` / `<count>O` in flight.
-pub const RepeatInsert = struct { pane: PaneId, count: u32, above: bool, start_byte: usize, len_before: usize };
+/// `<count>i` / `I` / `a` / `A` / `o` / `O` in flight: what was typed
+/// replicates on Esc — as whole new lines for `o` / `O`, in place for
+/// the other four (`:help count`).
+pub const RepeatInsert = struct { pane: PaneId, count: u32, kind: input.RepeatInsertKind, start_byte: usize, len_before: usize };
 
 pub const ClosedBuffer = struct { path: []u8, cursor: usize };
 

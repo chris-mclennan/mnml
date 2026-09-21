@@ -1328,28 +1328,30 @@ pub const Vim = struct {
                         self.resetPending();
                         return runCmd(.@"view.move_cursor_view_bottom");
                     },
-                    'i' => {
-                        self.enterInsert();
-                        return .consumed;
-                    },
-                    'I' => {
-                        self.enterInsert();
-                        return ops(arena, &.{.move_line_first_non_ws});
-                    },
-                    'a' => {
-                        self.enterInsert();
-                        return ops(arena, &.{.move_right});
-                    },
-                    'A' => {
-                        self.enterInsert();
-                        return ops(arena, &.{.move_line_end});
-                    },
-                    'o', 'O' => {
+                    // `<count>i I a A o O`: the typed run repeats `count`
+                    // times when Insert is left (`:help count`) — the
+                    // `80i-<Esc>` rule and `3A;<Esc>`. The app arms the
+                    // deferred half; the bare form stays a plain key.
+                    'i', 'I', 'a', 'A', 'o', 'O' => {
                         self.resetPending();
-                        const above = c == 'O';
-                        if (n > 1) return .{ .app = .{ .repeat_insert_start = .{ .count = n, .above = above } } };
+                        const kind: input.RepeatInsertKind = switch (c) {
+                            'i' => .at_cursor,
+                            'I' => .line_first_non_ws,
+                            'a' => .after_cursor,
+                            'A' => .line_end,
+                            'O' => .open_above,
+                            else => .open_below,
+                        };
+                        if (n > 1) return .{ .app = .{ .repeat_insert_start = .{ .count = n, .kind = kind } } };
                         self.enterInsert();
-                        return ops(arena, &.{if (above) .insert_newline_above else .insert_newline_below});
+                        return switch (kind) {
+                            .at_cursor => .consumed,
+                            .line_first_non_ws => ops(arena, &.{.move_line_first_non_ws}),
+                            .after_cursor => ops(arena, &.{.move_right}),
+                            .line_end => ops(arena, &.{.move_line_end}),
+                            .open_above => ops(arena, &.{.insert_newline_above}),
+                            .open_below => ops(arena, &.{.insert_newline_below}),
+                        };
                     },
                     'x', 'X' => {
                         // `x` is `dl`, `X` is `dh`: a real delete, so the

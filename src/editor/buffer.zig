@@ -54,6 +54,10 @@ pub const Buffer = struct {
 
     /// Dot-repeat: the last change, gpa-owned ops.
     dot: ?[]EditOp = null,
+    /// Index in `dot` of the `repeat` op a counted Insert (`3iab<Esc>`)
+    /// appended, so a `{count}.` replaces THAT count rather than the
+    /// first counted motion in the record.
+    dot_insert_repeat: ?usize = null,
     dot_pending: std.ArrayList(EditOp) = .empty,
     /// The pending record is still open because the change entered
     /// insert/replace mode — typed keys keep joining it until Esc.
@@ -709,6 +713,14 @@ pub const Buffer = struct {
         }
     }
 
+    /// An op the APP applied on the handler's behalf — the newline of a
+    /// counted `<count>o`, the opening move of `<count>A` — is part of
+    /// the change, so `.` has to see it. The key path records itself
+    /// (`applyHandlerOps`); `App.applyOps` does not.
+    pub fn trackAppOps(self: *Buffer, list: []const EditOp, arena: Allocator) Allocator.Error!void {
+        try self.trackDot(list, null, arena);
+    }
+
     fn appendDot(self: *Buffer, list: []const EditOp) Allocator.Error!void {
         for (list) |o| {
             const copy = try o.dupe(self.gpa);
@@ -721,6 +733,29 @@ pub const Buffer = struct {
         self.dot_collecting = false;
         if (self.dot) |d| freeOps(self.gpa, d);
         self.dot = try self.dot_pending.toOwnedSlice(self.gpa);
+        self.dot_insert_repeat = null;
+    }
+
+    /// The deferred half of a counted Insert (`3iab<Esc>`, `3ofoo<Esc>`)
+    /// joins the change the Esc just closed, so `.` repeats the count
+    /// too — vim records the whole command, count and all (`:help .`).
+    pub fn appendDotInsertRepeat(self: *Buffer, times: u32, text: []const u8) Allocator.Error!void {
+        if (times == 0 or text.len == 0) return;
+        const d = self.dot orelse return;
+        const gpa = self.gpa;
+        const inner = try gpa.create(EditOp);
+        errdefer gpa.destroy(inner);
+        inner.* = .{ .insert_str = try gpa.dupe(u8, text) };
+        errdefer inner.free(gpa);
+        // Esc closed the record with its `move_left_no_cross_line`; the
+        // copies belong at the insertion point, ahead of that step back.
+        var at = d.len;
+        if (at > 0 and std.meta.activeTag(d[at - 1]) == .move_left_no_cross_line) at -= 1;
+        const grown = try gpa.realloc(d, d.len + 1);
+        std.mem.copyBackwards(EditOp, grown[at + 1 ..], grown[at .. grown.len - 1]);
+        grown[at] = .{ .repeat = .{ .count = times, .inner = inner } };
+        self.dot = grown;
+        self.dot_insert_repeat = at;
     }
 
     /// The Insert session just closed: what it typed, from the pending
@@ -770,7 +805,11 @@ pub const Buffer = struct {
         defer self.replaying_dot = false;
         var times: u32 = 1;
         if (count > 0) {
-            if (countedOp(d)) |n| n.* = count else times = count;
+            if (self.dot_insert_repeat) |idx| {
+                // `2.` after `3ix`: the new count replaces the insert's,
+                // and the record already types one copy itself.
+                d[idx].repeat.count = count -| 1;
+            } else if (countedOp(d)) |n| n.* = count else times = count;
         }
         const tok = try self.editor.beginAtomic();
         var changed = false;
