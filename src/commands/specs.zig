@@ -1212,7 +1212,7 @@ pub const specs = [_]Spec{
     .{ .id = "view.keep_tab", .title = "Keep this tab (stop the next glance taking the preview over)", .group = "view", .keys = .{ .vim = &.{"space b k"}, .standard = &.{"ctrl+k enter"} } },
 };
 
-test "1086 specs, unique ids" {
+test "1087 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1241,6 +1241,7 @@ test "1086 specs, unique ids" {
     // and the two `integrations.*_dock` pin verbs (launcher-dock)
     // + `view.menu_bar_pin` (menu-bar-pin)
     // + `integrations.update` (int-distribution)
-    try std.testing.expectEqual(@as(usize, 1103), specs.len);
+    // + `editor.lsp_this_file` (the `editor.lsp_max_bytes` override)
+    try std.testing.expectEqual(@as(usize, 1104), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }
