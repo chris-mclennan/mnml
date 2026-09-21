@@ -93,7 +93,13 @@ pub const Abort = struct { generation: std.atomic.Value(u32) = .init(0) };
 /// `Pane.spend_report`.
 pub const SpendPane = struct {
     gpa: Allocator,
-    group: Io.Group = .init,
+    /// Heap-allocated, like `abort` and for the same reason: a pane
+    /// lives in `PaneStore.slots`, which is an ArrayList, so opening
+    /// ANY other pane while a run is in flight moves this struct. An
+    /// `Io.Group` cannot be moved once it has a task — the task holds
+    /// its address — and a moved one makes `cancel` wait forever,
+    /// which is a wedged quit.
+    group: *Io.Group,
     snapshot: alloc.SnapshotArena,
     rows: []WsRow = &.{},
     claude_sessions: usize = 0,
@@ -114,12 +120,16 @@ pub const SpendPane = struct {
         const abort = try gpa.create(Abort);
         errdefer gpa.destroy(abort);
         abort.* = .{};
-        return .{ .gpa = gpa, .snapshot = alloc.SnapshotArena.init(gpa), .abort = abort, .home = if (home) |h| try gpa.dupe(u8, h) else null };
+        const grp = try gpa.create(Io.Group);
+        errdefer gpa.destroy(grp);
+        grp.* = .init;
+        return .{ .gpa = gpa, .snapshot = alloc.SnapshotArena.init(gpa), .abort = abort, .group = grp, .home = if (home) |h| try gpa.dupe(u8, h) else null };
     }
 
     pub fn deinit(self: *SpendPane, io: Io) void {
         self.abort.generation.store(std.math.maxInt(u32), .release);
         self.group.cancel(io);
+        self.gpa.destroy(self.group);
         self.gpa.destroy(self.abort);
         if (self.home) |h| self.gpa.free(h);
         self.snapshot.deinit();
@@ -580,4 +590,91 @@ test "ai.spend_today opens the pane beside the editor, toasts, and a stale resul
     // The pane closes with the worker cancelled and nothing leaked.
     try app.handle(.{ .key = Key.char('q') });
     try t.expect(find(&app) == null);
+}
+
+// ─── the group must not move ────────────────────────────────────────────
+
+/// A worker parked on a pipe nobody writes to — `e2e/cancel_probe.zig`'s
+/// shape, and the worst case for `Io.Group.cancel`.
+const MoveProbe = struct {
+    io: Io,
+    fd: std.posix.fd_t,
+    /// Set once the worker is about to block.
+    entered: Io.Event = .unset,
+
+    fn run(p: *MoveProbe) Io.Cancelable!void {
+        const f: Io.File = .{ .handle = p.fd, .flags = .{ .nonblocking = false } };
+        var buf: [16]u8 = undefined;
+        p.entered.set(p.io);
+        _ = f.readStreaming(p.io, &.{&buf}) catch |e| switch (e) {
+            error.Canceled => return error.Canceled,
+            else => {},
+        };
+    }
+};
+
+/// `SpendPane.deinit` on a thread of its own, so a `cancel` that never
+/// returns is a failing test rather than a hung suite.
+const Closer = struct {
+    pane: *SpendPane,
+    io: Io,
+    done: Io.Event = .unset,
+
+    fn run(c: *Closer) void {
+        c.pane.deinit(c.io);
+        c.done.set(c.io);
+    }
+};
+
+// `tools/break-check.sh` cannot grade this one: with the break in
+// place the test FAILS by name (the watchdog, at ~10 s), but the
+// abandoned worker then touches the group it was started with — the
+// memory the moved pane no longer owns — and the binary dies before
+// the runner prints its per-binary summary, which is the line the
+// script counts. Break-check it by hand, under a hard timeout, and
+// read the `FAIL … (SpendGroupMovedAndCancelWedged)` verdict line.
+test "the spend pane's group survives the pane store moving it under a live worker" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const io = t.io;
+    // `NoRemap` so the store's growth really relocates the panes — the
+    // whole point of the test (`core/alloc.zig`).
+    var nr = alloc.NoRemap.init(t.allocator);
+    const gpa = nr.allocator();
+
+    const fds = try Io.Threaded.pipe2(.{});
+    const read_end: Io.File = .{ .handle = fds[0], .flags = .{ .nonblocking = false } };
+    const write_end: Io.File = .{ .handle = fds[1], .flags = .{ .nonblocking = false } };
+    defer read_end.close(io);
+    defer write_end.close(io);
+
+    // No `defer store.deinit()`: past the watchdog the pane is wedged
+    // inside the closer thread's `deinit` and must not be deinit'd twice.
+    var store = app_mod.PaneStore.init(gpa, io);
+    const id = try store.add(.{ .spend_report = try SpendPane.init(gpa, null) });
+
+    var probe: MoveProbe = .{ .io = io, .fd = fds[0] };
+    try store.get(id).?.spend_report.group.concurrent(io, MoveProbe.run, .{&probe});
+    try probe.entered.wait(io);
+    try io.sleep(.fromMilliseconds(50), .awake);
+
+    // Open panes until `slots` reallocates: the pane — and anything
+    // living inside it — moves, which is what opening any pane during a
+    // run does in the app.
+    const capacity_before = store.slots.capacity;
+    const addr_before = @intFromPtr(&store.slots.items[id].?.spend_report);
+    while (store.slots.capacity == capacity_before) _ = try store.add(.{ .git_status = .{ .repo = 0 } });
+    try t.expect(@intFromPtr(&store.slots.items[id].?.spend_report) != addr_before);
+
+    var closer: Closer = .{ .pane = &store.slots.items[id].?.spend_report, .io = io };
+    const th = try std.Thread.spawn(.{}, Closer.run, .{&closer});
+    closer.done.waitTimeout(io, .{ .duration = .{ .raw = .fromMilliseconds(10_000), .clock = .awake } }) catch |err| switch (err) {
+        // The group moved with the pane: the running task holds the
+        // address the group had before, and `cancel` waits forever on a
+        // task the group at the new address cannot see.
+        error.Timeout => return error.SpendGroupMovedAndCancelWedged,
+        error.Canceled => return error.Canceled,
+    };
+    th.join();
+    store.slots.items[id] = null; // `Closer` has already deinit'd it
+    store.deinit();
 }

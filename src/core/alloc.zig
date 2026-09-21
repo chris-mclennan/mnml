@@ -116,6 +116,63 @@ pub const Gpa = struct {
     }
 };
 
+/// A test allocator that never grows an allocation in place: `resize`
+/// and `remap` always decline, so an `ArrayList` outgrowing its buffer
+/// always gets a NEW one and everything in it MOVES.
+///
+/// The concurrency tests need that guarantee. `PaneStore.slots` is an
+/// ArrayList of panes, so opening a pane while a worker runs can move
+/// the pane the worker is addressing — the bug `GrepPane`, `SpendPane`
+/// and `TestsPane` each shipped. A test that just appends until the
+/// capacity changes does NOT reproduce it: the real allocators extend
+/// the mapping in place most of the time, and the pane stays put.
+/// Wrap the test allocator in this and the move is a fact of the run
+/// rather than a coincidence of it.
+pub const NoRemap = struct {
+    child: Allocator,
+
+    pub fn init(child: Allocator) NoRemap {
+        return .{ .child = child };
+    }
+
+    pub fn allocator(self: *NoRemap) Allocator {
+        return .{ .ptr = self, .vtable = &vtable };
+    }
+
+    const vtable: Allocator.VTable = .{ .alloc = vAlloc, .resize = vResize, .remap = vRemap, .free = vFree };
+
+    fn vAlloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ra: usize) ?[*]u8 {
+        const self: *NoRemap = @ptrCast(@alignCast(ctx));
+        return self.child.rawAlloc(len, alignment, ra);
+    }
+    /// Shrinking in place is harmless and keeps `toOwnedSlice` cheap;
+    /// growing is what has to move.
+    fn vResize(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ra: usize) bool {
+        if (new_len > memory.len) return false;
+        const self: *NoRemap = @ptrCast(@alignCast(ctx));
+        return self.child.rawResize(memory, alignment, new_len, ra);
+    }
+    fn vRemap(_: *anyopaque, _: []u8, _: std.mem.Alignment, _: usize, _: usize) ?[*]u8 {
+        return null;
+    }
+    fn vFree(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ra: usize) void {
+        const self: *NoRemap = @ptrCast(@alignCast(ctx));
+        self.child.rawFree(memory, alignment, ra);
+    }
+};
+
+test "NoRemap: a list that outgrows its buffer gets a new one, so its contents move" {
+    var nr = NoRemap.init(std.testing.allocator);
+    const a = nr.allocator();
+    var list: std.ArrayListUnmanaged(u64) = .empty;
+    defer list.deinit(a);
+    try list.append(a, 1);
+    const before = @intFromPtr(&list.items[0]);
+    while (list.items.len < list.capacity) try list.append(a, 2);
+    try list.append(a, 3); // the append that reallocates
+    try std.testing.expect(@intFromPtr(&list.items[0]) != before);
+}
+
 test "frame arena: begin frees everything from the previous iteration" {
     var frame = FrameArena.init(std.testing.allocator);
     defer frame.deinit();
