@@ -34,6 +34,7 @@ pub const SendError = jsonrpc.SendError || Allocator.Error;
 /// The requests mnml makes. Rides in the transport's `Pending.kind`.
 pub const ReqKind = enum(u16) {
     initialize,
+    shutdown,
     check_status,
     sign_in,
     sign_out,
@@ -111,7 +112,7 @@ pub const Client = struct {
     pub fn deinit(self: *Client) void {
         const gpa = self.gpa;
         if (!self.transport.isDead()) {
-            _ = self.request(.sign_out, "shutdown", null) catch 0;
+            _ = self.request(.shutdown, "shutdown", null) catch 0;
             self.notify("exit", null) catch {};
         }
         self.transport.shutdown();

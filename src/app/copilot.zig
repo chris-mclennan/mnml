@@ -541,7 +541,7 @@ fn handleResponse(app: *App, c: *Client, kind: cop_client.ReqKind, result: ?json
             app.toast("Copilot: signed out", .{});
             app.needs_render = true;
         },
-        .execute_command => {},
+        .shutdown, .execute_command => {},
         .inline_completion => try onCompletion(app, c, result),
     }
 }
