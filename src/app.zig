@@ -3149,6 +3149,7 @@ test {
     _ = @import("ai/transcript.zig");
     _ = @import("ai/api_client.zig");
     _ = @import("ai/cli.zig");
+    _ = @import("ai/codex_rollout.zig");
     _ = @import("ui/ai_view.zig");
     _ = @import("ui/spend_view.zig");
     _ = @import("ai/usage.zig");
