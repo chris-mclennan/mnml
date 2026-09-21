@@ -588,8 +588,8 @@ pub const Painter = struct {
     fn paintTree(p: *Painter) Allocator.Error!void {
         const a = p.a;
         const t = a.tab();
-        const y0 = p.lay.body_y;
-        const h = p.lay.body_h;
+        var y0 = p.lay.body_y;
+        var h = p.lay.body_h;
         const w = p.lay.list_w;
         if (h == 0) return;
         if (t.last_error.len > 0 and t.issues.len == 0) {
@@ -602,9 +602,15 @@ pub const Painter = struct {
             return;
         }
         const r = (try a.treeRows(p.arena)) orelse return;
-        if (r.rows.len == 0) {
+        if (r.ticket_count == 0) {
             _ = p.put(2, y0, w -| 2, if (t.issues.len == 0) "no tickets" else "no tickets match the filter", p.s.muted);
-            return;
+            // A windowed tab still has its widen row here, and an empty
+            // window is exactly when it is worth pressing — so the
+            // message takes the first line and the rows follow.
+            if (r.rows.len == 0) return;
+            y0 += 1;
+            h -|= 1;
+            if (h == 0) return;
         }
         // Keep the cursor on screen.
         if (t.selected < t.scroll) t.scroll = t.selected;
@@ -782,6 +788,18 @@ pub const Painter = struct {
                 // The fold row, from the toolkit: `⋯  Show more (N)`
                 // with the label in the bright foreground a key wears.
                 .show_more => |sm| try p.c.showMoreRow(.{ .x = 0, .y = y, .w = w, .h = 1 }, sum_c.x, sm.hidden, .{ .show_more = idx }),
+                // The same fold row, for the tab's date window rather
+                // than a count: `⋯  Show older (2 weeks → 30 days)`.
+                .show_older => |so| {
+                    var from_buf: [16]u8 = undefined;
+                    var to_buf: [16]u8 = undefined;
+                    const label = p.fmt("Show older ({s} {s} {s})", .{
+                        config.windowLabel(&from_buf, so.window),
+                        if (p.ui.ascii) "->" else "→",
+                        config.windowLabel(&to_buf, so.next),
+                    });
+                    try p.c.foldRow(.{ .x = 0, .y = y, .w = w, .h = 1 }, sum_c.x, label, .{ .show_older = idx });
+                },
             }
         }
         // The bar owns the column the layout reserved for it. The whole

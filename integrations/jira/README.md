@@ -83,6 +83,7 @@ example.
 | `status_order = [...]` | `.status_order = .{ "Testing", … }` | default: Testing, In PR Review, Code Review, In Progress, To Do, Open, Done |
 | `[tabs.bumps] pr_approved = "Testing"` | `.bumps = .{ .pr_approved = "Testing" }` | |
 | `[tabs.bumps] no_open_prs = "Testing"` | `.bumps = .{ .no_open_prs = "Testing" }` | |
+| `reported_window_days = 14` | `.reported_window_days = 14` | `work_reported` only: how far back the tab looks when it opens. `0` opens it on everything you ever filed |
 | `[tabs.bumps.release_cut] Done = "top"` | `.bumps = .{ .release_cut = .{ .{ .status = "Done", .target = "top" } } }` | `top` is the group above every other |
 | `version_name_contains`, `team`, `issue_type`, `label` | the same names | |
 | `board_id = 200` | `.board_id = 200` | the Agile board a kanban tab reads |
@@ -199,8 +200,26 @@ questions a working day asks:
 | tab | kind | what it answers |
 | --- | --- | --- |
 | **My open work items** | `work_open` | what is on my plate — the count the `󰌃` chip carries |
-| **Reported by me** | `work_reported` | what I filed that is still open (`reporter = currentUser() AND resolution = Unresolved`) |
+| **Reported by me** | `work_reported` | what I filed, newest first, for the last two weeks (`reporter = currentUser() AND created >= -14d ORDER BY created DESC`) — Jira's own filter, windowed |
 | **QA Actionable now** | `jql_editable` | your own JQL, with the parts that change per release pulled out into `.vars` |
+
+**Reported by me** is Jira's own filter — newest *filed* first, every
+resolution — with a created-date window on the front, because without
+one it is every ticket the account ever filed and the tab takes its
+time. It opens on two weeks (`reported_window_days`, `0` for none) and
+carries a trailing row below the last group:
+
+```
+⋯  Show older (2 weeks → 30 days)
+```
+
+`⏎` or a click widens one step — 14 days → 30 → 90 → all time — and the
+row's words move on to name the next step. Each press is one ordinary
+refetch at the wider window, through the same broker and the same token
+bucket as `r`: no count query, and nothing extra to be rate-limited for.
+At all time there is nowhere left to go and the row is gone. The window
+is the session's, not the file's: a restart opens the tab back on
+`reported_window_days`.
 
 An editable tab wears its vars as header chips (`project: ENG`,
 `versions: 1.2.0 +1`). **`E`**, or a click on any of them, opens a small

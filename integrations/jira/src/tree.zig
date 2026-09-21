@@ -46,6 +46,11 @@ pub const State = struct {
     /// May each pull request merge, and the `updated_on` it was true
     /// at. One cached look per PR, exactly like the runs above.
     readiness: std.StringHashMapUnmanaged(ReadinessEntry) = .empty,
+    /// The created-date window the tab's query carries, in days, or
+    /// null on a tab that has none — every tab but Reported by me. 0 is
+    /// the last step: widened out to all time. Runtime only; a restart
+    /// opens the tab back on its configured window.
+    window_days: ?u16 = null,
 
     pub fn init(gpa: Allocator) State {
         return .{ .gpa = gpa, .owned = std.heap.ArenaAllocator.init(gpa) };
@@ -232,6 +237,10 @@ pub const Row = union(enum) {
     pipeline_error: PrRef,
     pipeline: struct { issue_idx: usize, pr_idx: usize, pipeline_idx: usize },
     show_more: struct { issue_idx: usize, hidden: usize },
+    /// The tab's trailing row on a windowed listing: press it and the
+    /// window widens one step. `window` is what the rows on screen
+    /// came back under, `next` what pressing it asks for (0 = none).
+    show_older: struct { window: u16, next: u16 },
 
     /// The ticket a row belongs to.
     pub fn issueIdx(r: Row) ?usize {
@@ -243,13 +252,16 @@ pub const Row = union(enum) {
             .pipeline_loading, .pipeline_empty, .pipeline_error => |p| p.issue_idx,
             .pipeline => |p| p.issue_idx,
             .show_more => |p| p.issue_idx,
+            .show_older => null,
         };
     }
 
     /// A row that hangs under a ticket (any PR-level row).
     pub fn isChild(r: Row) bool {
         return switch (r) {
-            .group, .ticket => false,
+            // The widen row hangs off the TAB, not a ticket: it is no
+            // more a child than a group header is.
+            .group, .ticket, .show_older => false,
             else => true,
         };
     }
@@ -360,6 +372,12 @@ pub fn computeRows(arena: Allocator, issues: []const Issue, state: *State, tab: 
         r.ticket.effective_status = effective[r.ticket.issue_idx].status;
         r.ticket.bumped = effective[r.ticket.issue_idx].bumped;
     };
+    // The widen row, last, below every group — and emitted even on an
+    // empty listing, because an empty two weeks is exactly when you
+    // want the next step. It goes once the window is all time.
+    if (state.window_days) |w| if (config.nextReportedWindow(w)) |next| {
+        try out.append(arena, .{ .show_older = .{ .window = w, .next = next } });
+    };
     return .{ .rows = try out.toOwnedSlice(arena), .ticket_count = ticket_count };
 }
 
@@ -446,6 +464,52 @@ test "groups follow the default order, the rest alphabetical at the end; a colla
     try testing.expectEqualStrings("Aardvark", folded.rows[5].group.status);
     try st.toggleGroup("Done");
     try testing.expect((try computeRows(a.allocator(), &issues, &st, fixTab(), false, null)).rows[4].group.expanded);
+}
+
+test "the widen row is the last row on a windowed tab, widens 14 -> 30 -> 90 -> none, and is gone at none" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    var st = State.init(testing.allocator);
+    defer st.deinit();
+    const issues = [_]Issue{issue("TE-1", "To Do")};
+    var tab = fixTab();
+    tab.kind = .work_reported;
+    // No window: no row. Every other tab is this one.
+    try testing.expectEqual(@as(usize, 2), (try computeRows(a.allocator(), &issues, &st, tab, false, null)).rows.len);
+
+    // The tab opens on two weeks; the row sits below the group, last.
+    st.window_days = 14;
+    const wk2 = try computeRows(a.allocator(), &issues, &st, tab, false, null);
+    try testing.expectEqual(@as(usize, 3), wk2.rows.len);
+    try testing.expectEqual(@as(u16, 14), wk2.rows[2].show_older.window);
+    try testing.expectEqual(@as(u16, 30), wk2.rows[2].show_older.next);
+    // It belongs to no ticket and folds nothing.
+    try testing.expect(wk2.rows[2].issueIdx() == null);
+    try testing.expect(!wk2.rows[2].isChild());
+
+    // One press per step: 30, then 90, then all time.
+    st.window_days = 30;
+    const d30 = try computeRows(a.allocator(), &issues, &st, tab, false, null);
+    try testing.expectEqual(@as(u16, 30), d30.rows[2].show_older.window);
+    try testing.expectEqual(@as(u16, 90), d30.rows[2].show_older.next);
+    st.window_days = 90;
+    const d90 = try computeRows(a.allocator(), &issues, &st, tab, false, null);
+    try testing.expectEqual(@as(u16, 90), d90.rows[2].show_older.window);
+    try testing.expectEqual(@as(u16, 0), d90.rows[2].show_older.next);
+    // All time is the last step: nothing left to press.
+    st.window_days = 0;
+    const all = try computeRows(a.allocator(), &issues, &st, tab, false, null);
+    try testing.expectEqual(@as(usize, 2), all.rows.len);
+    try testing.expect(all.rows[1] == .ticket);
+
+    // An empty two weeks still offers the step out — that is when it
+    // matters most.
+    st.window_days = 14;
+    const none = [_]bool{false};
+    const empty = try computeRows(a.allocator(), &issues, &st, tab, false, &none);
+    try testing.expectEqual(@as(usize, 1), empty.rows.len);
+    try testing.expectEqual(@as(usize, 0), empty.ticket_count);
+    try testing.expectEqual(@as(u16, 30), empty.rows[0].show_older.next);
 }
 
 test "the mask narrows the tree and drops an emptied group; a custom status_order wins" {
