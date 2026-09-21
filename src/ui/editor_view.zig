@@ -265,6 +265,13 @@ pub const Cursor = struct { x: u16, y: u16 };
 pub const fold_marker = " ⋯ folded · ";
 pub const fold_marker_ascii = " ... folded - ";
 pub const fold_tail = " lines hidden";
+pub const fold_tail_one = " line hidden";
+
+/// The closed-fold tail for `n` hidden lines. A fold over two lines hides
+/// exactly one, and Neovim's own `foldtext()` gets that singular right.
+pub fn foldTail(hidden: usize) []const u8 {
+    return if (hidden == 1) fold_tail_one else fold_tail;
+}
 
 /// The gutter's fold chevrons. The sign cell speaks in geometric
 /// shapes — the breakpoint's `●`, the debugger's `▶` — so the fold
@@ -1155,7 +1162,7 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
                     const hidden = f.last_line - f.first_line;
                     // ── ui toggles ── the brackets inside the fold still nest
                     if (doc.bracket_rainbow) rainbow_depth = bracketDepthOver(doc.text, line_end, lines.end(f.last_line), rainbow_depth);
-                    const marker = ui.fmt("{s}{d}{s}", .{ fold_word, hidden, fold_tail });
+                    const marker = ui.fmt("{s}{d}{s}", .{ fold_word, hidden, foldTail(hidden) });
                     _ = ui.putStr(eol_x, y, text_x + text_w - eol_x, marker, Theme.onBg(t.fold, row_style.bg));
                     if (is_cursor_line and cursor_line_real != cursor_line) found = .{ .x = eol_x, .y = y };
                 }

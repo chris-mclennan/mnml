@@ -7,14 +7,16 @@ open a.txt
 command editor.use_vim
 
 type zfj
-expect screen contains "lines hidden"
+# Two lines folded hides exactly one, and the marker says so in the
+# singular (`foldTail`, 2026-09-21).
+expect screen contains "1 line hidden"
 expect screen lacks "   2 l2"
 expect screen contains "Ln 1/8"
 type zR
 type 6G
 type zfap
 expect screen contains "NORMAL"
-expect screen contains "lines hidden"
+expect screen contains "3 lines hidden"
 expect screen lacks "   7 p2"
 expect screen lacks "   6 p1"
 expect screen contains "Ln 5/8"

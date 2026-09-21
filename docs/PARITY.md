@@ -186,7 +186,7 @@ trust sink. Each row names its file and its test.
 | Multi-cursor (vim side) | done | `src/editor/multicursor.zig` | |
 | Abbreviations | done | `abbreviate` in `src/app/ex.zig`, expansion in `src/app/dispatch.zig` | |
 | Charwise VISUAL inclusive | done | `make_selection_inclusive` in `src/editor/edit_op.zig` | |
-| Folds `za` / `zo` / `zc`, idempotent | done | `src/editor/buffer.zig` folds, `editor.toggle_fold` / `open_fold` / `close_fold` | the gutter's click targets for the same toggles are the *Code folding — the gutter's chevrons* row below |
+| Folds `za` / `zo` / `zc`, idempotent | done | `src/editor/buffer.zig` folds, `editor.toggle_fold` / `open_fold` / `close_fold` | the gutter's click targets for the same toggles are the *Code folding — the gutter's chevrons* row below. The closed-fold marker pluralises (`foldTail` in `src/ui/editor_view.zig`) — `zfj` hides one line and says `1 line hidden`, not `1 lines` (*2026-09-21, `vim-fold-one-lines-hidden`*) |
 | Fold navigation `zj` / `zk`, fold the selection | done | `editor.fold_next` / `fold_prev` / `fold_selection` in `src/app/cmd_app.zig`; `editor.fold_all_brackets` (`foldAllBrackets` in `cmd_editor.zig`) | one stack scan per bracket family, the first fold to claim a start line keeps it; `tests/e2e/fold_snippet_pick.test` |
 | Flash-motion `s` + two chars, labels | done | `src/app/flash.zig` (`start`, `interceptKey`), `drawFlashCue` in `render.zig`, `Doc.labels` in `src/ui/editor_view.zig` | labels nearest-to-cursor first; a single match jumps at once |
 | Ex `:w` `:q` `:e` `:wq` `:x` `:qa` `:bd` `:enew` | done | `src/app/ex.zig` | `:qa` refuses mid-transfer; `:qa!` overrides |
