@@ -356,6 +356,12 @@ fn printMemReport(app: *App) void {
         mb(mem_report.app.live.load(.monotonic)),         mb(mem_report.app.peak.load(.monotonic)),
         mb(mem_report.tree_sitter.live.load(.monotonic)), mb(mem_report.tree_sitter.peak.load(.monotonic)),
     });
+    const ta = &mem_report.tally;
+    std.debug.print("mem-report: parse jobs started {d} posted {d} | results adopted {d} dropped {d} | trees disposed {d} of {d} asked\n", .{
+        ta.jobs_started.load(.monotonic),    ta.jobs_posted.load(.monotonic),
+        ta.results_adopted.load(.monotonic), ta.results_dropped.load(.monotonic),
+        ta.disposals_done.load(.monotonic),  ta.disposals_asked.load(.monotonic),
+    });
     for (app.docs.entries.items) |e| {
         const d = e.doc;
         const h = &d.history;
