@@ -1,0 +1,23 @@
+# requires: macos
+# Rule 3 of the terminal restore: a pane running an arbitrary command
+# line is NOT re-run at launch — re-running someone's build, deploy or
+# test command because they reopened the editor is not a restore. The
+# pane comes back with its tab, its title and `[exited] — any key
+# restarts <label>`, and the key is what starts it.
+# (A plain shell does come back live — rule 1,
+# tests/e2e/session_restore_terminal_running.test.)
+write notes.txt "alpha\n"
+open notes.txt
+ex term sleep 30
+wait 1000
+expect pane sleep 30
+expect screen lacks "any key restarts"
+
+command session.save
+expect file .mnml/session.zon contains "sleep 30"
+
+command session.restore
+wait 1000
+expect screen contains "session restored"
+expect pane sleep 30
+expect screen contains "[exited] — any key restarts sleep 30"

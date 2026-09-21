@@ -1,0 +1,34 @@
+# requires: macos
+# Session restore brings a terminal pane back WORKING — the default,
+# and what a restart is for: a plain shell comes back live in the cwd
+# it was saved in, with its tab and its title. Starting a fresh shell
+# is cheap and harmless; handing someone a dead pane and asking them to
+# press a key to get their terminal back is not a restore.
+# (`session.restore_terminals = .dormant` is the other way —
+# tests/e2e/session_restore_terminal_dormant.test.)
+write notes.txt "alpha\n"
+open notes.txt
+# The TERMINAL mode chip is the vim profile's reading of a focused pty
+# pane (`statusline.modeOf`), and `<leader>h` is where the shell lives.
+command editor.use_vim
+command term.shell_bottom
+wait 2000
+expect screen contains "TERMINAL"
+expect screen lacks "any key restarts"
+
+command session.save
+expect file .mnml/session.zon contains "pty"
+
+command session.restore
+wait 1500
+expect screen contains "session restored"
+# The pane came back — and it came back RUNNING, so there is no line
+# offering to start it.
+expect screen contains "TERMINAL"
+expect screen lacks "any key restarts"
+
+# And the child is really there: a command typed at it answers.
+type "echo mnml-shell-is-live"
+key enter
+wait 2000
+expect screen contains "mnml-shell-is-live"

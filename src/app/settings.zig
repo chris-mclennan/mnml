@@ -293,6 +293,11 @@ pub const rows = [_]RowSpec{
     .{ .path = "http.collection_root", .label = "HTTP collection root", .section = .integrations, .scope = .home },
     .{ .path = "marketplace.enabled", .label = "Marketplace", .section = .integrations, .scope = .home },
     .{ .path = "session.restore", .label = "Restore session on open", .section = .integrations, .scope = .home },
+    // What a restored terminal pane comes back as — running (a shell
+    // restarts, an AI session resumes) or dormant (every one waits for
+    // a key). Beside the row that turns the restore on, which is where
+    // someone looking for it looks (`app/session.zig`).
+    .{ .path = "session.restore_terminals", .label = "Restore terminals", .section = .integrations, .scope = .home },
     .{ .path = "integrations.arrange", .label = "New pane sizing", .section = .integrations, .scope = .home },
 };
 
