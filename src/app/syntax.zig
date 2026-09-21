@@ -194,9 +194,10 @@ pub const Syntax = struct {
     }
 
     /// On open: decide whether this document is highlighted at all.
-    /// `limit` of 0 is no limit — the shipped default, and every file is
-    /// parsed in full. Over the limit the file opens with no tree-sitter
-    /// at all; `overLimit` then tells the statusline to say so.
+    /// `limit` of 0 is no limit — every file is parsed in full. Over the
+    /// limit (4 MiB is the shipped default) the file opens with no
+    /// tree-sitter at all; `over_limit` then tells the statusline to say
+    /// so.
     pub fn applyLimit(self: *Syntax, size: usize, limit: u64) void {
         self.size_bytes = size;
         self.limit_bytes = limit;
@@ -724,7 +725,7 @@ test "a file over editor.highlight_max_bytes opens with no tree-sitter at all, a
     try testing.expect(std.mem.startsWith(u8, ed.bytes(), "// still editable"));
 }
 
-test "the limit is off by default: the same file at limit 0 keeps its grammar" {
+test "limit 0 is no limit: the same file keeps its grammar however large" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -738,6 +739,38 @@ test "the limit is off by default: the same file at limit 0 keeps its grammar" {
     try testing.expect(!e.syntax.showsChip());
     try testing.expect(e.syntax.hasLanguage());
     try testing.expectEqualStrings("rs", e.syntax.key().?);
+}
+
+// The value people actually run with. A test that only brackets the
+// default — 4 KB on one side, 64 MB on the other — would pass with the
+// ceiling set to anything at all; this one boots the App on `Config{}`
+// and opens a file on either side of the shipped number.
+test "the shipped default is 4 MiB: a 5 MB source opens unhighlighted, a 3 MB one does not" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &buf);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = buf[0..n], .data_root = buf[0..n], .cols = 120, .rows = 40 });
+    defer app.deinit();
+    app.tree.visible = false;
+    try testing.expectEqual(@as(u64, 4 << 20), app.cfg.editor.highlight_max_bytes);
+    const root = app.workspace;
+
+    try writeRust(&tmp, "over.rs", 5 * 1024 * 1024);
+    const over = try openIn(&app, &tmp, root, "over.rs");
+    try testing.expect(over.syntax.over_limit and over.syntax.off);
+    try testing.expect(!over.syntax.hasLanguage());
+    try testing.expect(over.syntax.showsChip());
+    // And it said so, by name and by both sizes.
+    const msg = app.toasts.items[app.toasts.items.len - 1].text;
+    try testing.expect(std.mem.indexOf(u8, msg, "highlighting off for over.rs") != null);
+    try testing.expect(std.mem.indexOf(u8, msg, "(5 MB > 4 MB)") != null);
+
+    try writeRust(&tmp, "under.rs", 3 * 1024 * 1024);
+    const under = try openIn(&app, &tmp, root, "under.rs");
+    try testing.expect(!under.syntax.over_limit and !under.syntax.off);
+    try testing.expect(under.syntax.hasLanguage());
+    try testing.expect(!under.syntax.showsChip());
 }
 
 test "editor.highlight_this_file parses the file the limit skipped; a second run says it is already on" {
