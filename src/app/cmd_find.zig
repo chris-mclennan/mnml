@@ -275,6 +275,8 @@ fn acceptAndClose(app: *App) Allocator.Error!void {
     f.regex = fb.state.regex;
     try f.setQuery(pattern, tg.text(), if (fb.state.match_case) true else app.search_case);
     f.offset = offset;
+    // `/` and `?` write vim's last search pattern, which `:s//new/` reads.
+    try app.noteSearchPattern(pattern);
     if (f.matches.items.len == 0) {
         if (f.bad_pattern) |err| app.toast("{s}: \"{s}\"", .{ patternProblem(err), pattern }) else app.toast("no matches for \"{s}\"", .{pattern});
         app.closeFindBar(false);
@@ -473,6 +475,8 @@ fn wordSearch(app: *App, forward: bool) CommandError!void {
     };
     const word = try app.frame.allocator().dupe(u8, text[r.start..r.end]);
     try e.find.setQuery(word, text, app.search_case);
+    // `*` / `#` write the last search pattern too (`:help star`).
+    try app.noteSearchPattern(word);
     // Step off the word under the cursor so the jump is a real move.
     e.find.current = if (forward) e.find.indexAtOrAfter(r.end) else e.find.indexBefore(r.start);
     try stepFromCurrent(app, e);

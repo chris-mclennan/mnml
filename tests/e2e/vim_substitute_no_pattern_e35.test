@@ -1,0 +1,23 @@
+# width: 120
+# height: 40
+# The other side of `vim-empty-substitute-pattern`: with NOTHING ever
+# searched in the session, an empty pattern is still vim's E35 rather
+# than a silent no-op (`:help E35`). The last-search slot is
+# session-wide, so this needs an app that has searched nothing — hence
+# its own script rather than a case inside
+# `vim_substitute_last_search_pattern.test`.
+write a.txt "foo1\nbar\nfoo2\n"
+open a.txt
+command editor.use_vim
+
+ex %s//X/g
+expect screen contains "E35: no previous regular expression"
+key ctrl+s
+expect file a.txt contains "foo1\nbar\nfoo2\n"
+expect file a.txt lacks "X"
+
+# `:g//d` with nothing searched is the same refusal.
+ex g//d
+expect screen contains "E35: no pattern"
+key ctrl+s
+expect file a.txt contains "foo1\nbar\nfoo2\n"
