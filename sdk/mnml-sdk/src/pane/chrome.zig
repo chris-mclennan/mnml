@@ -40,6 +40,21 @@ pub const Ui = struct {
     }
 };
 
+/// The name of the host's `ui.ascii_icons`, for a run that has no pane
+/// and so no `hello` to read it off.
+pub const ascii_env = "MNML_ASCII";
+
+/// `$MNML_ASCII`, as the statusline poller's `--values` child sees it.
+/// A chip published with no pane open has to pick the same twin the
+/// pane would, and the environment is the only place it can learn
+/// which. Unset is "the terminal has the font": the answer a child run
+/// by hand from a shell gets, and the one that held before the
+/// variable existed.
+pub fn asciiFromEnv(env: *const std.process.Environ.Map) bool {
+    const v = env.get(ascii_env) orelse return false;
+    return v.len > 0 and (v[0] == '1' or v[0] == 't' or v[0] == 'T');
+}
+
 // ─── the glyphs the chrome owns ──────────────────────────────────────────
 
 pub const gutter_glyph = "\u{258c}"; // ▌ left half block

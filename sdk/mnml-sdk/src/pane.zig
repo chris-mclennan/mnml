@@ -67,6 +67,7 @@ pub const Chip = chrome.Chip;
 pub const Hint = chrome.Hint;
 pub const Tab = chrome.Tab;
 pub const Ui = chrome.Ui;
+pub const asciiFromEnv = chrome.asciiFromEnv;
 pub const width = text.width;
 pub const fit = text.fit;
 pub const scrollAt = chrome.scrollAt;
