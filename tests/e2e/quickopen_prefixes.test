@@ -1,0 +1,76 @@
+# width: 120
+# height: 40
+# kbd (keyboard-purist VS Code user): VS Code's quick open is ONE widget
+# with four modes and the mode is the first character typed — `>`
+# commands, `@` symbols in this file, `:` a line number, `?` the list.
+# In mnml all four were plain text: each became a filename query that
+# matched nothing and the box said `0 of 1 · (no matches)`
+# (hunt/findings-2026-09-21/kbd-quickopen-prefixes.md).
+#
+# `>` matters more than an affordance. `palette` is bound to
+# `ctrl+shift+p` and nothing else, and a terminal without the kitty
+# keyboard protocol cannot tell that from `ctrl+p` — both are byte
+# 0x10 — so on Terminal.app, Alacritty's default config or plain tmux
+# it is the last door to every command with no chord of its own.
+write alpha.txt "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n"
+write beta.txt "two\n"
+open alpha.txt
+
+# `>` is the command palette, and the rest of what is typed is its query.
+key ctrl+p
+expect screen contains "Open file"
+type ">"
+expect screen contains "Command palette"
+expect screen lacks "(no matches)"
+# …and the palette finds `view.focus_dock` by the obvious words. Its
+# title used to be the only `view.focus_*` one that did not begin
+# `Focus`, so `focus dock` matched eleven other rows and not it.
+type "focus dock"
+expect screen contains "Focus the launcher dock"
+key esc
+
+# `?` lists the four modes, and a row is a way into its mode.
+key ctrl+p
+type "?"
+expect screen contains "Quick open prefixes"
+expect screen contains ">  ·  Command palette"
+expect screen contains "@  ·  Symbols in this file"
+expect screen contains ":  ·  Go to line"
+expect screen contains "?  ·  This list"
+key enter
+expect screen contains "Command palette"
+key esc
+
+# `:` + a number is that line of the active buffer, column and all.
+key ctrl+p
+type ":12:3"
+expect screen contains "Go to line"
+expect screen contains "12:3"
+key enter
+expect status contains "\"line\":12"
+expect status contains "\"col\":3"
+
+# `@` is the symbols of this file. There is no language server for a
+# `.txt`, so it says so and leaves quick open exactly as it was —
+# it does not close the box, and it does not type `@` in as a filename.
+key ctrl+p
+expect screen contains "Open file"
+type "@"
+expect screen contains "Open file"
+expect screen lacks "(no matches)"
+key esc
+
+# Only a LEADING prefix counts: the same characters later in a query are
+# path characters, so a file with one in its name is still findable.
+key ctrl+p
+type "alpha>"
+expect screen contains "Open file"
+expect screen contains "alpha>"
+expect screen lacks "Command palette"
+key esc
+
+# And quick open still opens files.
+key ctrl+p
+type "beta"
+key enter
+expect pane "beta.txt"
