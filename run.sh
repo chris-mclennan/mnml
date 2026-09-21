@@ -26,7 +26,9 @@
 #                                 docs/CONTRIBUTING.md: fmt, the unit tests in
 #                                 Debug and ReleaseSafe, a ReleaseSafe build,
 #                                 the gate at three sizes, the corpus, the
-#                                 glyph audit, tools/run-sh-check.sh.
+#                                 glyph audit, tools/run-sh-check.sh and
+#                                 tools/run-ps1-check.py (run.ps1's structure
+#                                 — the real ps1 check needs a PowerShell).
 #   ./run.sh stale                Say whether the binary is behind the sources
 #                                 (exit 0 = a build is needed, 1 = current).
 #   ./run.sh clean [mode]         Reclaim space: `incremental` (default) drops
@@ -65,6 +67,10 @@
 #   ./run.sh installed-status     The installed mnml's version and prefix
 #                                 against this tree's HEAD, and where the
 #                                 stable profile's integration links point.
+#
+#   On Windows these three verbs are run.ps1's (plus `profile`) — the
+#   same semantics, the same refusals, the same --dry-run plan, spelled
+#   for PowerShell. docs/WINDOWS.md and docs/INSTALL-CHECKLIST.md.
 #
 # mnml-specific modes:
 #   ./run.sh restart              Tell the running mnml-zig to rebuild +
@@ -520,6 +526,16 @@ case "${1:-start}" in
     step "mnml-zig test (the corpus, MNML_E2E_ALLOW_SHELL=$MNML_E2E_ALLOW_SHELL)" ./zig-out/bin/mnml-zig test
     step "zig build glyph-audit"                          "$ZIG" build glyph-audit
     step "tools/run-sh-check.sh"                          bash tools/run-sh-check.sh
+    # run.ps1's structure: balance, quoting, the 5.1-incompatible
+    # spellings, every verb reachable, the refusals and plan phrases
+    # present. The real check (tools/run-ps1-check.ps1) needs a
+    # PowerShell; there is none here, so it runs on the Windows guest
+    # instead — docs/INSTALL-CHECKLIST.md, Windows 11 step W-0.
+    if command -v python3 >/dev/null 2>&1; then
+      step "tools/run-ps1-check.py (run.ps1 structure; no pwsh here)" python3 tools/run-ps1-check.py
+    else
+      log "check: no python3 — skipping tools/run-ps1-check.py"
+    fi
     echo
     echo "── check: all green$CHECK_SUMMARY"
     exit 0 ;;

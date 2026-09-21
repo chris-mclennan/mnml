@@ -26,7 +26,9 @@ packaging — runs on both (`tools/linux/run.sh`, and see
 **compiled, not yet run**: `zig build gate-build -Dtarget=x86_64-windows-gnu`
 builds the exe and every test binary on each merge, which is enough to
 catch a target-gated branch that does not compile and not enough to catch
-one that does not work.
+one that does not work. `docs/WINDOWS.md` is the honest ledger of that,
+and `docs/INSTALL-CHECKLIST.md` is what to walk on a clean guest of any
+of the three.
 
 
 ```sh
@@ -164,6 +166,11 @@ toolchain. `tools/debug-demo.sh` opens the same setup on a real screen.
 - `docs/CONTRIBUTING.md` — worktrees, commits, the oracle, the verification
   sequence, break-checks.
 - `docs/RELEASE.md` — cutting a release, and the two traps in it.
+- `docs/INSTALL-CHECKLIST.md` — the per-OS first-run checklist (macOS,
+  Ubuntu, Windows 11): what to install, what a pass looks like at every
+  step, and the UTM snapshot routine the guests are kept on.
+- `docs/WINDOWS.md` — what is implemented on Windows, what has been
+  proven and how, and what is still open.
 - `CHANGELOG.md` — what a user notices, release by release.
 - The manual: [mnml.sh](https://mnml.sh).
 

@@ -219,12 +219,17 @@ pub fn validateId(id: []const u8) IdError!void {
 
 pub const subdir = "integrations";
 
-/// mnml's data root under this environment.
+/// mnml's data root under this environment. `%USERPROFILE%` stands in
+/// for `$HOME`, the way `src/config/data_root.zig`'s `home()` does:
+/// Windows sets no `HOME`, so without that rung `<integration>
+/// --install` answers `error.NoHome` there and writes no manifest
+/// unless the caller hands it `MNML_DATA_ROOT` — `run.ps1 install`
+/// does, a user running the binary by hand does not.
 pub fn dataRoot(gpa: Allocator, env: *const std.process.Environ.Map) Allocator.Error!?[]u8 {
     if (nonEmpty(env.get("MNML_DATA_ROOT"))) |root| return try gpa.dupe(u8, root);
     if (nonEmpty(env.get("XDG_CONFIG_HOME"))) |xdg| return try std.fs.path.join(gpa, &.{ xdg, "mnml" });
-    if (nonEmpty(env.get("HOME"))) |home| return try std.fs.path.join(gpa, &.{ home, ".config", "mnml" });
-    return null;
+    const home = nonEmpty(env.get("HOME")) orelse nonEmpty(env.get("USERPROFILE")) orelse return null;
+    return try std.fs.path.join(gpa, &.{ home, ".config", "mnml" });
 }
 
 fn nonEmpty(v: ?[]const u8) ?[]const u8 {
@@ -359,6 +364,25 @@ test "the data root follows MNML_DATA_ROOT, XDG, HOME" {
     const p = try path(testing.allocator, &env, "jira");
     defer testing.allocator.free(p);
     try testing.expectEqualStrings("/r/integrations/jira.zon", p);
+}
+
+test "USERPROFILE is the home where HOME is not set" {
+    // Windows sets USERPROFILE and no HOME. Without this rung a bare
+    // `mnml-jira.exe --install` there returns error.NoHome and writes
+    // nothing; `src/config/data_root.zig` has had the same fallback
+    // since the Windows backends landed, and the two must agree or the
+    // manifest lands somewhere mnml never reads.
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    try env.put("USERPROFILE", "C:\\Users\\u");
+    const a = (try dataRoot(testing.allocator, &env)).?;
+    defer testing.allocator.free(a);
+    try testing.expectEqualStrings("C:\\Users\\u" ++ std.fs.path.sep_str ++ ".config" ++ std.fs.path.sep_str ++ "mnml", a);
+    // HOME still wins where both are set (MSYS and Git Bash set both).
+    try env.put("HOME", "/h");
+    const b = (try dataRoot(testing.allocator, &env)).?;
+    defer testing.allocator.free(b);
+    try testing.expectEqualStrings("/h" ++ std.fs.path.sep_str ++ ".config" ++ std.fs.path.sep_str ++ "mnml", b);
 }
 
 test "write renders ZON that parses back with the same shape" {
