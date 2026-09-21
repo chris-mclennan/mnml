@@ -16,12 +16,17 @@ pub const Backend = enum {
     unset,
     claude_code,
     claude_api,
+    /// GitHub Copilot's own language server, over stdio
+    /// (`ai/copilot.zig`, `app/copilot.zig`). Off until the workspace
+    /// opts in — picking it here shares nothing by itself.
+    copilot,
     local,
 
     pub fn parse(s: []const u8) Backend {
         const tok = std.mem.trim(u8, s, " \t\"");
         if (eqlAny(tok, &.{ "claude-code", "cc", "sub", "subscription" })) return .claude_code;
         if (eqlAny(tok, &.{ "claude-api", "claude", "api" })) return .claude_api;
+        if (eqlAny(tok, &.{ "copilot", "github-copilot", "gh" })) return .copilot;
         if (eqlAny(tok, &.{ "local", "candle" })) return .local;
         return .unset;
     }
@@ -32,6 +37,7 @@ pub const Backend = enum {
             .unset => "unset",
             .claude_code => "claude-code",
             .claude_api => "claude-api",
+            .copilot => "copilot",
             .local => "local",
         };
     }
@@ -41,8 +47,16 @@ pub const Backend = enum {
             .unset => "not set up",
             .claude_code => "Claude Code sub",
             .claude_api => "Claude API",
+            .copilot => "GitHub Copilot",
             .local => "Local model",
         };
+    }
+
+    /// Whether the backend answers from a worker of our own (`app/ai.zig`)
+    /// rather than from the Copilot client. The one place the two
+    /// families are told apart.
+    pub fn isClaude(b: Backend) bool {
+        return b == .claude_code or b == .claude_api;
     }
 };
 
@@ -229,10 +243,15 @@ test "backend tokens parse their synonyms and round-trip" {
     try t.expectEqual(Backend.claude_code, Backend.parse(" SUB "));
     try t.expectEqual(Backend.claude_api, Backend.parse("api"));
     try t.expectEqual(Backend.local, Backend.parse("candle"));
+    try t.expectEqual(Backend.copilot, Backend.parse("copilot"));
+    try t.expectEqual(Backend.copilot, Backend.parse(" GitHub-Copilot "));
     try t.expectEqual(Backend.unset, Backend.parse("nope"));
-    inline for (.{ Backend.claude_code, Backend.claude_api, Backend.local, Backend.unset }) |b| {
+    inline for (.{ Backend.claude_code, Backend.claude_api, Backend.copilot, Backend.local, Backend.unset }) |b| {
         try t.expectEqual(b, Backend.parse(b.token()));
     }
+    try t.expect(Backend.claude_api.isClaude());
+    try t.expect(!Backend.copilot.isClaude());
+    try t.expectEqualStrings("GitHub Copilot", Backend.copilot.label());
 }
 
 test "context caps the window in code points on utf-8 boundaries" {

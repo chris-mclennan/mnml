@@ -416,9 +416,10 @@ fn isSuggestBackend(comptime path: []const u8) bool {
     return std.mem.eql(u8, path, "ai.suggest_backend");
 }
 
-/// The ghost-text backend tokens, in `suggest.Backend` order.
-pub const suggest_tokens: [4][]const u8 = blk: {
-    var out: [4][]const u8 = undefined;
+/// The ghost-text backend tokens, in `suggest.Backend` order. The
+/// length follows the enum: a new backend must not need this line.
+pub const suggest_tokens: [std.enums.values(suggest.Backend).len][]const u8 = blk: {
+    var out: [std.enums.values(suggest.Backend).len][]const u8 = undefined;
     for (std.enums.values(suggest.Backend), 0..) |b, i| out[i] = b.token();
     break :blk out;
 };
