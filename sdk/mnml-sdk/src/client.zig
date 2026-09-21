@@ -109,6 +109,12 @@ pub const Mount = struct {
     /// The next host message, on `arena`; null once the host said
     /// goodbye or the stream ended. A `resize` updates `geometry`
     /// before it is returned.
+    ///
+    /// **Every slice in it lives on `arena` and nothing else.** A pane
+    /// that resets that arena per iteration — both shipped ones do —
+    /// must `dupe` anything it keeps: a pasted string, a `focus_item`
+    /// key, a session id. See `docs/SDK.md` → "Results outlive the
+    /// job"; this is the same rule with the host at the other end.
     pub fn next(m: *Mount, arena: Allocator) (wire.ReadError || wire.DecodeError)!?HostMessage {
         if (m.done) return null;
         const msg = (wire.receive(HostMessage, m.gpa, arena, &m.reader.interface) catch |err| switch (err) {

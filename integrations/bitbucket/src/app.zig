@@ -538,7 +538,10 @@ pub const App = struct {
     /// The reference polls the chip every five minutes.
     pub const values_every_secs: i64 = 300;
 
-    fn requestValues(app: *App) Allocator.Error!void {
+    /// Ask the worker for the chip's figure again. Public because the
+    /// chip's own tests republish it, which is the read that proves the
+    /// figure still owns what it lists.
+    pub fn requestValues(app: *App) Allocator.Error!void {
         app.values_requested = true;
         try app.enqueue(.{ .values = .{
             .scope = app.scopeInputs(app.config.workspace),
@@ -2357,7 +2360,9 @@ pub const Rig = struct {
     }
 };
 
-const acme: cfg.Config = .{ .email = "me@x.com", .workspace = "acme", .repos = &.{ "api", "web" }, .refresh_interval_secs = 0, .tabs = &cfg.default_tabs };
+/// The fixture both this file's tests and `main.zig`'s chip tests run
+/// on, so the two never drift into testing different panes.
+pub const acme: cfg.Config = .{ .email = "me@x.com", .workspace = "acme", .repos = &.{ "api", "web" }, .refresh_interval_secs = 0, .tabs = &cfg.default_tabs };
 
 test "startup prefetches every tab, opens the trees, and the keys walk the rows the way the reference does" {
     const r = try Rig.init(acme, .{});
@@ -2797,48 +2802,9 @@ test "the awaiting chip counts and filters what is waiting on MY review, off the
     try t.expectEqualStrings("acme/api", r.app.values.?.awaiting_items[0].sub);
 }
 
-/// An allocator that writes 0xAA over everything it frees, in every
-/// build mode, and hands the call on.
-///
-/// Nothing else does. `Allocator.free`'s own poison is `undefined`,
-/// which a release build is free to skip, and an arena gives its pages
-/// back through `rawFree`, which never poisons at all — so a slice of
-/// freed memory goes on reading correctly until something else claims
-/// the page. That is precisely how this bug hid: the chip's rows sat
-/// on an arena `commit` had already let go, and they read right for
-/// minutes before they didn't. Without this, a test for it passes
-/// whatever the code does.
-const Scribble = struct {
-    child: std.mem.Allocator,
-
-    fn allocator(s: *Scribble) std.mem.Allocator {
-        return .{ .ptr = s, .vtable = &.{ .alloc = alloc, .resize = resize, .remap = remap, .free = free } };
-    }
-
-    fn alloc(ctx: *anyopaque, len: usize, a: std.mem.Alignment, ra: usize) ?[*]u8 {
-        const s: *Scribble = @ptrCast(@alignCast(ctx));
-        return s.child.rawAlloc(len, a, ra);
-    }
-
-    fn resize(ctx: *anyopaque, mem: []u8, a: std.mem.Alignment, new_len: usize, ra: usize) bool {
-        const s: *Scribble = @ptrCast(@alignCast(ctx));
-        if (!s.child.rawResize(mem, a, new_len, ra)) return false;
-        // The tail a shrink gives back is freed memory too.
-        if (new_len < mem.len) @memset(mem[new_len..], 0xAA);
-        return true;
-    }
-
-    fn remap(ctx: *anyopaque, mem: []u8, a: std.mem.Alignment, new_len: usize, ra: usize) ?[*]u8 {
-        const s: *Scribble = @ptrCast(@alignCast(ctx));
-        return s.child.rawRemap(mem, a, new_len, ra);
-    }
-
-    fn free(ctx: *anyopaque, mem: []u8, a: std.mem.Alignment, ra: usize) void {
-        const s: *Scribble = @ptrCast(@alignCast(ctx));
-        @memset(mem, 0xAA);
-        s.child.rawFree(mem, a, ra);
-    }
-};
+/// The scribbling allocator lives in the SDK now, so a third
+/// integration inherits it rather than copying it: `sdk.testing`.
+const Scribble = sdk.testing.Scribble;
 
 test "the chip keeps its own copy of the rows: nothing it lists points into a finished listing" {
     var scribble: Scribble = .{ .child = t.allocator };

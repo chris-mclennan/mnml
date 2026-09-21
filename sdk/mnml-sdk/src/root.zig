@@ -26,6 +26,9 @@
 //!   zon_edit  saving a hand-written ZON file without losing its
 //!             comments — the splice the host's settings and an
 //!             integration's own config both write through
+//!   testing   test allocators an integration's suite borrows —
+//!             `Scribble`, which poisons what it frees so a slice into
+//!             a let-go arena reads as `0xAA` rather than as luck
 //!   pane      the pane toolkit: mnml's chrome (caps header + chip
 //!             ladder, tab strip, filter pill, app-colour left gutter,
 //!             row ground, `Show more (N)`, a detail panel with `×` and
@@ -46,6 +49,7 @@ pub const store = @import("store.zig");
 pub const warm = @import("warm.zig");
 pub const pane = @import("pane.zig");
 pub const zon_edit = @import("zon_edit.zig");
+pub const testing = @import("testing.zig");
 
 pub const Mount = client.Mount;
 pub const Frame = frame.Frame;
@@ -70,6 +74,8 @@ pub const Theme = pane.Theme;
 pub const Painter = pane.Painter;
 pub const HitMap = pane.HitMap;
 pub const Rect = pane.Rect;
+/// An allocator that poisons what it frees — see `testing.Scribble`.
+pub const Scribble = testing.Scribble;
 
 test {
     _ = wire;
@@ -84,4 +90,5 @@ test {
     _ = warm;
     _ = pane;
     _ = zon_edit;
+    _ = testing;
 }

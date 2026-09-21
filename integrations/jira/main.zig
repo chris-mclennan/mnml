@@ -1667,3 +1667,132 @@ test "one binary, three manifests, one poll: only the chip that has a segment de
     // The one that polls is the one with chips to feed, and vice versa.
     for (specs) |s| try testing.expectEqual(s.statusline.len > 0, s.values_sources.len > 0);
 }
+
+test "the chip keeps what it lists: every segment and every hover row survives a refresh, a delta and a `--values`, on a scribbling allocator" {
+    // Every job arena and every result arena — the pane's gpa is where
+    // both are made — on an allocator that poisons what it frees. A
+    // string the chip kept the SLICE of rather than the arena reads as
+    // 0xAA here, where a plain allocator hands it back correct and the
+    // test passes for no reason.
+    var scribble: sdk.testing.Scribble = .{ .child = testing.allocator };
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    const sync_path = try std.fs.path.join(testing.allocator, &.{ dir, "sync.json" });
+    defer testing.allocator.free(sync_path);
+
+    const h = try app_mod.Harness.startOn(.{ .tabs = &app_mod.work_tabs }, .work, scribble.allocator());
+    defer h.stop();
+    const a = &h.app;
+    var sync = try sdk.Store.openAt(testing.allocator, testing.io, sync_path);
+    defer sync.deinit();
+    a.setSyncStore(&sync);
+
+    var ipc_tmp = testing.tmpDir(.{});
+    defer ipc_tmp.cleanup();
+    var ibuf: [std.fs.max_path_bytes]u8 = undefined;
+    var pane_ipc = try sdk.Ipc.init(testing.allocator, testing.io, ibuf[0..try ipc_tmp.dir.realPath(testing.io, &ibuf)]);
+    defer pane_ipc.deinit();
+
+    // Publish the chip the way the loop does, and read back the line
+    // the host would have got. Every byte of it comes off the listing.
+    const Published = struct {
+        fn line(app: *app_mod.App, ipc: *const sdk.Ipc, d: Io.Dir, out: Allocator) ![]const u8 {
+            var scratch = std.heap.ArenaAllocator.init(testing.allocator);
+            defer scratch.deinit();
+            try publishSegment(ipc, scratch.allocator(), app.assignedIssues(), null);
+            const text_ = try d.readFileAlloc(testing.io, "command", out, .unlimited);
+            try d.deleteFile(testing.io, "command");
+            return text_;
+        }
+    };
+
+    var keep = std.heap.ArenaAllocator.init(testing.allocator);
+    defer keep.deinit();
+
+    // 1. The first whole listing.
+    try a.ensureLoaded();
+    const after_load = try Published.line(a, &pane_ipc, ipc_tmp.dir, keep.allocator());
+    try testing.expect(a.assignedIssues().len > 0);
+    try testing.expect(std.mem.indexOf(u8, after_load, "\"items\":[{\"text\":\"") != null);
+    for (a.assignedIssues()) |iss| {
+        try testing.expect(iss.key.len > 0);
+        try testing.expect(std.mem.indexOfScalar(u8, iss.key, 0xAA) == null);
+        try testing.expect(std.mem.indexOf(u8, after_load, iss.key) != null);
+    }
+
+    // 2. A DELTA. The rows it did not return still live on the arena
+    //    the previous generation came on, which is kept rather than
+    //    freed — a merge that dropped it poisons everything it did not
+    //    re-fetch, and the chip's rows are the first read of it.
+    h.store.issues.items[0].moved = true;
+    h.store.issues.items[0].status = "Done";
+    _ = try a.onKey("r");
+    try testing.expectEqual(@as(usize, 1), a.tab().deltas.items.len);
+    const after_delta = try Published.line(a, &pane_ipc, ipc_tmp.dir, keep.allocator());
+    for (a.assignedIssues()) |iss| {
+        try testing.expect(std.mem.indexOfScalar(u8, iss.key, 0xAA) == null);
+        try testing.expect(std.mem.indexOfScalar(u8, iss.summary, 0xAA) == null);
+        try testing.expect(std.mem.indexOf(u8, after_delta, iss.key) != null);
+    }
+
+    // 3. The whole listing again. This one DEINITS the old `t.data`,
+    //    so anything the chip still pointed into it is now 0xAA.
+    _ = try a.onKey("shift+r");
+    try testing.expectEqual(@as(usize, 0), a.tab().deltas.items.len);
+    const after_full = try Published.line(a, &pane_ipc, ipc_tmp.dir, keep.allocator());
+    for (a.assignedIssues()) |iss| {
+        try testing.expect(std.mem.indexOfScalar(u8, iss.key, 0xAA) == null);
+        try testing.expect(std.mem.indexOf(u8, after_full, iss.key) != null);
+    }
+
+    // 4. And the `--values` shape off the same listing — the poll's
+    //    rows and the pane's are the same bytes, both still readable.
+    var vals = std.heap.ArenaAllocator.init(testing.allocator);
+    defer vals.deinit();
+    const v = try assignedValues(vals.allocator(), a.assignedIssues());
+    try testing.expectEqual(a.assignedIssues().len, v.assigned_open);
+    for (v.assigned_items) |it| {
+        try testing.expect(it.text.len > 0);
+        try testing.expect(std.mem.indexOfScalar(u8, it.text, 0xAA) == null);
+        try testing.expect(std.mem.indexOfScalar(u8, it.sub, 0xAA) == null);
+    }
+}
+
+test "the detail modal's fields are readable after it is open: its arena is taken from where it lives" {
+    // `openModal` used to take `allocator()` off a STACK local and then
+    // copy the struct into `a.modal`. A `std.json.Value` is not plain
+    // data — every object and array inside it keeps that handle — so
+    // the modal's own data held a pointer to a dead frame.
+    var scribble: sdk.testing.Scribble = .{ .child = testing.allocator };
+    const h = try app_mod.Harness.startOn(.{ .tabs = &app_mod.work_tabs }, .work, scribble.allocator());
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    const key = a.tab().issues[0].key;
+    try a.openModal(key);
+    const m = a.modal orelse return error.NoModal;
+    try testing.expectEqualStrings(key, m.key);
+    try testing.expectEqualStrings("", m.error_text);
+    const data = m.data orelse return error.NoData;
+    const summary = json.getStr(data, "fields.summary") orelse return error.NoSummary;
+    try testing.expect(summary.len > 0);
+    try testing.expect(std.mem.indexOfScalar(u8, summary, 0xAA) == null);
+
+    // The decisive one. A `std.json.Array` is `std.array_list.Managed`,
+    // so it CARRIES the allocator it was parsed on — and an
+    // `ArenaAllocator`'s `allocator()` binds to the address it was taken
+    // from. Taken off a stack local and then copied into `a.modal`, that
+    // address is a frame that has returned; taken off the field, it is
+    // the arena the modal will free. Nothing else in the modal can tell
+    // the two apart, which is why this looked fine for as long as it did.
+    const arr = switch (json.get(data, "fields.labels") orelse return error.NoLabels) {
+        .array => |x| x,
+        else => return error.NotAnArray,
+    };
+    try testing.expectEqual(@intFromPtr(&a.modal.?.arena), @intFromPtr(arr.allocator.ptr));
+
+    a.closeModal();
+    try testing.expect(a.modal == null);
+}

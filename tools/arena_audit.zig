@@ -51,14 +51,21 @@ pub fn main(init: std.process.Init) !u8 {
     const w = &stdout_file.interface;
     defer w.flush() catch {};
     if (args.len < 2) {
-        try w.writeAll("usage: arena-audit <src dir> [--strict]\n");
+        try w.writeAll("usage: arena-audit <dir> [--strict] [--job-results]\n");
         return 2;
     }
     const strict = for (args[2..]) |a| {
         if (std.mem.eql(u8, a, "--strict")) break true;
     } else false;
-    const result = try walk(arena, init.io, args[1]);
-    try report(w, result);
+    // `--job-results` reads the OTHER shape: a job's result arena let go
+    // by the consumer that stored a slice out of it. The frame-arena
+    // rules are `src/`-shaped (menus, prompts, the screen); this one
+    // travels, which is why `integrations/` and `sdk/` get it alone.
+    const job_results = for (args[2..]) |a| {
+        if (std.mem.eql(u8, a, "--job-results")) break true;
+    } else false;
+    const result = if (job_results) try walkJobResults(arena, init.io, args[1]) else try walk(arena, init.io, args[1]);
+    if (job_results) try jobReport(w, args[1], result) else try report(w, result);
     return if (strict and result.findings.len > 0) 1 else 0;
 }
 
@@ -82,9 +89,13 @@ pub const Origin = enum {
     frame,
     /// A local `[N]u8` — gone when the function returns.
     stack,
+    /// A background job's RESULT arena, which the consumer lets go on
+    /// the way out unless it says otherwise. Gone the moment `commit`
+    /// returns.
+    result,
 
     pub fn dies(o: Origin) bool {
-        return o == .frame or o == .stack;
+        return o == .frame or o == .stack or o == .result;
     }
 };
 
@@ -95,6 +106,7 @@ pub const Rule = enum {
     dead_stack_paint,
     stored_string,
     raw_open_menu,
+    job_result,
 
     pub fn text(r: Rule) []const u8 {
         return switch (r) {
@@ -104,6 +116,7 @@ pub const Rule = enum {
             .dead_stack_paint => "dead-stack-paint",
             .stored_string => "stored-string",
             .raw_open_menu => "raw-open-menu",
+            .job_result => "job-result",
         };
     }
 };
@@ -130,6 +143,8 @@ pub const Counts = struct {
     confirm_calls: usize = 0,
     paints: usize = 0,
     stores: usize = 0,
+    /// Switch prongs of a job-result consumer the audit read.
+    prongs: usize = 0,
 };
 
 pub const Result = struct { findings: []const Finding, counts: Counts };
@@ -725,6 +740,191 @@ fn storedAssignment(line: []const u8) ?struct { field: []const u8, rhs: []const 
     return null;
 }
 
+// ─── the job-result rule ────────────────────────────────────────────────
+
+// A pane's slow work comes back as a RESULT that carries its own
+// arena, and the consumer on the loop lets that arena go on the way
+// out — `defer if (!keep_arena) res.arena.deinit()`. A prong of that
+// switch which stores a payload into the app WITHOUT taking the arena
+// (or duping) leaves a field pointing at a listing that is over: the
+// bitbucket chip's rows republished as NUL bytes for exactly this
+// reason, and the same shape had shipped three times before.
+//
+// The rule reads one consumer at a time:
+//
+//   1. A scope is a consumer when it has a `defer` that deinits a
+//      parameter's `.arena` — that is the promise to let it go.
+//   2. Inside it, `switch (<res>.payload)` opens the union, and each
+//      `.tag => |cap|` binds one payload.
+//   3. A prong that assigns `cap` (or a field of it) into something
+//      that is NOT a local is a store. It is answered by taking the
+//      arena (`… = <res>.arena` / `keep_arena = true`) or by duping.
+//   4. A store with neither is the finding.
+
+/// Names bound by `.tag => |cap|` on `line`, if any.
+fn prongCapture(line: []const u8) ?[]const u8 {
+    const s = stripComment(line);
+    const arrow = std.mem.indexOf(u8, s, "=> |") orelse return null;
+    const start = arrow + "=> |".len;
+    const end = std.mem.indexOfScalarPos(u8, s, start, '|') orelse return null;
+    const name = std.mem.trim(u8, s[start..end], " \t*");
+    if (name.len == 0) return null;
+    for (name) |c| if (!isIdentChar(c)) return null;
+    return name;
+}
+
+/// `defer … <name>.arena.deinit()` — the promise this scope lets a
+/// result's arena go. Answers the parameter's name.
+fn resultArenaDefer(line: []const u8) ?[]const u8 {
+    const s = std.mem.trim(u8, stripComment(line), " \t");
+    if (!std.mem.startsWith(u8, s, "defer ")) return null;
+    const at = std.mem.indexOf(u8, s, ".arena.deinit()") orelse return null;
+    return receiverBefore(s, at);
+}
+
+/// `x.y = <rhs>;` where `x` is not a local — a store into something
+/// that outlives this call. Answers the whole right-hand side.
+fn storeIntoState(sc: *const Scope, line: []const u8) ?[]const u8 {
+    const s = std.mem.trim(u8, stripComment(line), " \t");
+    if (!std.mem.endsWith(u8, s, ";")) return null;
+    const eq = std.mem.indexOf(u8, s, " = ") orelse return null;
+    const lvalue = std.mem.trim(u8, s[0..eq], " \t");
+    if (std.mem.startsWith(u8, lvalue, "const ") or std.mem.startsWith(u8, lvalue, "var ")) return null;
+    if (std.mem.indexOfAny(u8, lvalue, " \t()[]") != null) return null;
+    if (std.mem.indexOfScalar(u8, lvalue, '.') == null) return null;
+    if (sc.locals.contains(identHead(lvalue))) return null;
+    return std.mem.trim(u8, s[eq + 3 .. s.len - 1], " \t");
+}
+
+/// The right-hand side is the prong's payload, or a field of it.
+fn namesCapture(rhs: []const u8, cap: []const u8) bool {
+    const e = std.mem.trim(u8, rhs, " \t");
+    if (std.mem.eql(u8, e, cap)) return true;
+    if (e.len > cap.len + 1 and std.mem.startsWith(u8, e, cap) and e[cap.len] == '.') {
+        // `v.open_items` counts; `v.open_mine` is a number and does not.
+        return true;
+    }
+    return false;
+}
+
+/// What makes a store safe: the arena came too, or the bytes were
+/// copied onto something the holder owns.
+fn prongKeeps(line: []const u8, res: []const u8) bool {
+    const s = stripComment(line);
+    if (std.mem.indexOf(u8, s, "keep_arena = true") != null) return true;
+    if (std.mem.indexOf(u8, s, "keep_arena=true") != null) return true;
+    var buf: [128]u8 = undefined;
+    const marker = std.fmt.bufPrint(&buf, "{s}.arena", .{res}) catch return false;
+    // `ts.data_arena = res.arena;` / `.arena = res.arena,`
+    if (std.mem.indexOf(u8, s, marker) != null and std.mem.indexOf(u8, s, " = ") != null) return true;
+    return false;
+}
+
+/// A store answered on its own line: `x.y = try gpa.dupe(…)`.
+fn rhsCopies(rhs: []const u8) bool {
+    inline for (.{ "dupe(", "dupeZ(", "allocPrint", "setText", "join(", "concat(", "toOwnedSlice" }) |k| {
+        if (std.mem.indexOf(u8, rhs, k) != null) return true;
+    }
+    return false;
+}
+
+/// Every job-result store in `src` that lets its arena go.
+pub fn jobResultFindings(arena: Allocator, file: []const u8, src: []const u8, counts: *Counts) Allocator.Error![]Finding {
+    var out: std.ArrayListUnmanaged(Finding) = .empty;
+    var lines = std.mem.splitScalar(u8, src, '\n');
+    var lineno: u32 = 0;
+    var sc: Scope = .{ .name = "(file)" };
+    // The consumer's result parameter, empty outside one.
+    var res: []const u8 = "";
+    // The prong being read, and whether it has answered for the arena.
+    var cap: []const u8 = "";
+    var cap_depth: i32 = 0;
+    var depth: i32 = 0;
+    var kept = false;
+    var pending: ?Finding = null;
+    while (lines.next()) |raw| {
+        lineno += 1;
+        const line = stripComment(raw);
+        if (declName(raw)) |d| {
+            sc = .{ .name = d.name, .is_test = d.is_test };
+            res = "";
+            cap = "";
+            depth = 0;
+            pending = null;
+        }
+        const before = depth;
+        depth += braceDelta(line);
+        if (sc.is_test) continue;
+
+        // Locals, so a store into one is not a store into the app.
+        const trimmed = std.mem.trim(u8, line, " \t");
+        inline for (.{ "const ", "var " }) |kw| {
+            if (std.mem.startsWith(u8, trimmed, kw)) {
+                const rest = trimmed[kw.len..];
+                const end = std.mem.indexOfAny(u8, rest, " :=") orelse rest.len;
+                if (end > 0) sc.locals.put(arena, rest[0..end], {}) catch {};
+            }
+        }
+
+        if (res.len == 0) {
+            if (resultArenaDefer(line)) |name| res = name;
+            continue;
+        }
+
+        // A prong closing: report what it never answered for.
+        if (cap.len > 0 and depth <= cap_depth) {
+            if (pending) |f| if (!kept) try out.append(arena, f);
+            pending = null;
+            cap = "";
+        }
+        if (prongCapture(line)) |c| {
+            cap = c;
+            cap_depth = before;
+            kept = false;
+            pending = null;
+            counts.prongs += 1;
+            continue;
+        }
+        if (cap.len == 0) continue;
+        if (prongKeeps(line, res)) kept = true;
+        if (pending != null) continue;
+        const rhs = storeIntoState(&sc, line) orelse continue;
+        if (!namesCapture(rhs, cap)) continue;
+        if (rhsCopies(rhs)) continue;
+        pending = .{ .file = file, .line = lineno, .rule = .job_result, .origin = .result, .scope = sc.name, .expr = trimmed };
+    }
+    if (pending) |f| if (!kept) try out.append(arena, f);
+    return out.toOwnedSlice(arena);
+}
+
+/// Every `.zig` under `root`, read for the job-result rule alone. The
+/// frame-arena rules above are shaped for `src/` — its menus, prompts
+/// and screen — and would only be noise over an integration.
+pub fn walkJobResults(arena: Allocator, io: Io, root: []const u8) !Result {
+    var files: std.ArrayListUnmanaged([]const u8) = .empty;
+    var dir = try Io.Dir.cwd().openDir(io, root, .{ .iterate = true });
+    defer dir.close(io);
+    var walker = try dir.walk(arena);
+    defer walker.deinit();
+    while (try walker.next(io)) |entry| {
+        if (entry.kind != .file or !std.mem.endsWith(u8, entry.basename, ".zig")) continue;
+        try files.append(arena, try arena.dupe(u8, entry.path));
+    }
+    std.mem.sort([]const u8, files.items, {}, struct {
+        fn lt(_: void, a: []const u8, b: []const u8) bool {
+            return std.mem.order(u8, a, b) == .lt;
+        }
+    }.lt);
+    var out: std.ArrayListUnmanaged(Finding) = .empty;
+    var counts: Counts = .{};
+    for (files.items) |rel| {
+        counts.files += 1;
+        const text = try dir.readFileAlloc(io, rel, arena, .unlimited);
+        try out.appendSlice(arena, try jobResultFindings(arena, rel, text, &counts));
+    }
+    return .{ .findings = try out.toOwnedSlice(arena), .counts = counts };
+}
+
 // ─── the walk ───────────────────────────────────────────────────────────
 
 /// Every `.zig` under `root`, sorted, and its findings. Paths are
@@ -760,6 +960,16 @@ pub fn report(w: *Io.Writer, r: Result) Io.Writer.Error!void {
     try w.print(
         "arena-audit: {d} findings over {d} files / {d} scopes ({d} menu strings, {d} openPrompt, {d} openConfirm, {d} paints, {d} stores inspected)\n",
         .{ r.findings.len, r.counts.files, r.counts.scopes, r.counts.menu_labels, r.counts.prompt_calls, r.counts.confirm_calls, r.counts.paints, r.counts.stores },
+    );
+}
+
+pub fn jobReport(w: *Io.Writer, root: []const u8, r: Result) Io.Writer.Error!void {
+    for (r.findings) |f| {
+        try w.print("{s}/{s}:{d}  {s}  in {s}()  {s}\n", .{ root, f.file, f.line, f.rule.text(), f.scope, f.expr });
+    }
+    try w.print(
+        "arena-audit (job results): {d} findings over {d} files / {d} result prongs in {s}\n",
+        .{ r.findings.len, r.counts.files, r.counts.prongs, root },
     );
 }
 
@@ -865,6 +1075,120 @@ test "a test block is not audited, and a literal label is not a finding" {
         \\}
     );
     try t.expectEqual(@as(usize, 0), f.len);
+}
+
+fn jobFindingsOf(a: Allocator, src: []const u8) ![]Finding {
+    var counts: Counts = .{};
+    return jobResultFindings(a, "x.zig", src, &counts);
+}
+
+test "a job result's payload stored without its arena is a finding; taking the arena or duping is not" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+
+    // The bitbucket chip's bug, in the shape it shipped in.
+    const bad = try jobFindingsOf(a,
+        \\pub fn commit(app: *App, res: *fetch.Result) !void {
+        \\    var keep_arena = false;
+        \\    defer if (!keep_arena) res.arena.deinit();
+        \\    switch (res.payload) {
+        \\        .values => |v| {
+        \\            app.values = v;
+        \\        },
+        \\    }
+        \\}
+    );
+    try t.expectEqual(@as(usize, 1), bad.len);
+    try t.expectEqual(Rule.job_result, bad[0].rule);
+    try t.expectEqual(Origin.result, bad[0].origin);
+    try t.expectEqual(@as(u32, 6), bad[0].line);
+
+    // The fix: the arena comes with the figure.
+    const kept = try jobFindingsOf(a,
+        \\pub fn commit(app: *App, res: *fetch.Result) !void {
+        \\    var keep_arena = false;
+        \\    defer if (!keep_arena) res.arena.deinit();
+        \\    switch (res.payload) {
+        \\        .values => |v| {
+        \\            if (app.values_arena) |*old| old.deinit();
+        \\            app.values_arena = res.arena;
+        \\            keep_arena = true;
+        \\            app.values = v;
+        \\        },
+        \\    }
+        \\}
+    );
+    try t.expectEqual(@as(usize, 0), kept.len);
+
+    // The other answer: the bytes are copied onto something the app owns.
+    const duped = try jobFindingsOf(a,
+        \\pub fn commit(app: *App, res: *fetch.Result) !void {
+        \\    var keep_arena = false;
+        \\    defer if (!keep_arena) res.arena.deinit();
+        \\    switch (res.payload) {
+        \\        .whoami => |w| {
+        \\            app.me_account_id = try app.gpa.dupe(u8, w.account_id);
+        \\        },
+        \\    }
+        \\}
+    );
+    try t.expectEqual(@as(usize, 0), duped.len);
+
+    // A function that never promises to free the arena is not a consumer.
+    const not_a_consumer = try jobFindingsOf(a,
+        \\pub fn apply(app: *App, res: *Result) !void {
+        \\    switch (res.payload) {
+        \\        .values => |v| {
+        \\            app.values = v;
+        \\        },
+        \\    }
+        \\}
+    );
+    try t.expectEqual(@as(usize, 0), not_a_consumer.len);
+
+    // And a count is not a slice: storing one keeps nothing alive.
+    const scalar = try jobFindingsOf(a,
+        \\pub fn commit(app: *App, res: *fetch.Result) !void {
+        \\    var keep_arena = false;
+        \\    defer if (!keep_arena) res.arena.deinit();
+        \\    switch (res.payload) {
+        \\        .readiness => |rr| {
+        \\            var buf: [8]u8 = undefined;
+        \\            const key = prRowKey(&buf, rr.key.repo, rr.key.id);
+        \\            try app.putReadiness(key, rr.updated_on, rr.readiness);
+        \\        },
+        \\    }
+        \\}
+    );
+    try t.expectEqual(@as(usize, 0), scalar.len);
+}
+
+test "integrations/ and sdk/ store nothing out of a job result they let go" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const roots = [_][]const u8{ build_options.integrations_root, build_options.sdk_root };
+    var prongs: usize = 0;
+    var files: usize = 0;
+    for (roots) |root| {
+        const r = try walkJobResults(a, t.io, root);
+        if (r.findings.len > 0) {
+            var out: Io.Writer.Allocating = .init(a);
+            try jobReport(&out.writer, root, r);
+            std.debug.print("\n{s}\n", .{out.written()});
+        }
+        try t.expectEqual(@as(usize, 0), r.findings.len);
+        prongs += r.counts.prongs;
+        files += r.counts.files;
+    }
+    // An empty finding list is only evidence when the audit actually
+    // looked. `sdk/` has no job-result consumer of its own today — the
+    // `Slot` it hands out carries no arena — so the prongs are all on
+    // the integrations' side, and a rule that stopped finding them
+    // would fail here rather than go quiet.
+    try t.expect(files > 60);
+    try t.expect(prongs >= 7);
 }
 
 test "src/ has no string that dies before the consumer that keeps it" {

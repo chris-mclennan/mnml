@@ -110,6 +110,11 @@ pub const Store = struct {
         }
     }
 
+    /// The entry for `key`. **Every slice in it lives on the store's
+    /// own arena**, so it is good for exactly as long as the `Store`
+    /// is: a caller that keeps one past `deinit` has this file's
+    /// lifetime rule backwards. `fresh` and `stale` hand back the same
+    /// borrow.
     pub fn get(self: *const Store, key: []const u8) ?Entry {
         for (self.entries.items) |e| if (std.mem.eql(u8, e.key, key)) return e;
         return null;
@@ -221,7 +226,8 @@ pub const Store = struct {
 };
 
 /// One JSON string, escaped as **JSON** — which is not what
-/// `std.zig.fmtString` does.
+/// `std.zig.fmtString` does. Public because `warm.zig`'s lock file had
+/// the same confusion and now writes through this.
 ///
 /// That was the bug this replaced: the file is JSON and the bodies were
 /// escaped for a Zig literal, so a response carrying an apostrophe or a
@@ -230,7 +236,7 @@ pub const Store = struct {
 /// is exactly the failure this module promises costs requests rather
 /// than correctness — so it cost requests, every run, and nothing said
 /// so.
-fn writeJsonString(w: *Io.Writer, s: []const u8) Io.Writer.Error!void {
+pub fn writeJsonString(w: *Io.Writer, s: []const u8) Io.Writer.Error!void {
     try w.writeByte('"');
     for (s) |c| switch (c) {
         '"' => try w.writeAll("\\\""),

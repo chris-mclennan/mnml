@@ -143,6 +143,39 @@ Serial, hand-written, settled before any leaf is generated. Verified against Zig
 
 Tests: every `test` block on `std.testing.allocator`; `.test` runner + headless on `DebugAllocator` so e2e leak-checks too.
 
+*// changed 2026-09-20 (arena audit):* there is a **fourth tier the table
+does not name, and it is where this family of bug keeps landing** — a
+background job's **result arena**. The job runs off the loop, hands back
+a struct carrying its own `ArenaAllocator`, and the consumer on the loop
+either **takes that arena into a field** or lets it go on the way out.
+Storing a slice out of the payload while letting the arena go is the
+same mistake as keeping a frame-arena string, except the window is
+minutes rather than one frame, so it reads correctly for a long time
+first. Four instances have now shipped (the bitbucket chip's hover rows
+being the fourth; see `docs/SDK.md` → "Results outlive the job").
+
+Two things changed to stop the fifth:
+
+- `zig build arena-audit` grew a `--job-results` rule and now walks
+  `integrations/` and `sdk/` as well as `src/`. A prong of a result
+  switch that stores the payload without taking the arena or duping is
+  a finding; a unit test walks both roots.
+- `sdk.testing.Scribble` — an allocator that writes `0xAA` over
+  everything it frees, in every build mode. Put under a test rig's
+  fetch side it is the **only** way a test can see this: `Allocator`'s
+  own poison is `undefined` (skippable in a release build) and an arena
+  returns pages through `rawFree`, which poisons nothing, so a test
+  written without it passes whatever the code does.
+
+Two adjacent shapes the same audit turned up, worth naming because
+neither is a frame arena: an `ArenaAllocator`'s `allocator()` **binds to
+the address it was taken from**, so a handle taken off a stack local and
+then copied into a field points at a dead frame (harmless for plain
+slices, not for a `std.json.Value`, whose arrays are
+`std.array_list.Managed` and carry the handle); and a `FixedBufferAllocator`
+over a stack buffer hands `std.json` somewhere to put an escaped string,
+which then escapes the function.
+
 ### D2. Errors — error code + `Diag` side slot, owned by the dispatcher
 
 ```zig

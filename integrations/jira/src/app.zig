@@ -2121,7 +2121,11 @@ pub const App = struct {
         const arena = scratch.allocator();
         const to_name = if (chosen.to_name.len > 0) chosen.to_name else chosen.name;
         if (a.selection.count() == 0) {
-            const key = p.key;
+            // The key is the PICKER's — duped onto the arena its own
+            // `deinit` frees. `closeTransition` below IS that deinit,
+            // and the ticket is named again after it, so what is held
+            // here is a copy on the scratch, not the picker's bytes.
+            const key = try arena.dupe(u8, p.key);
             switch (jira.doTransition(a.client, arena, key, chosen.id) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 error.Transport => jira.Answer(void){ .failed = .{ .status = 0, .message = "the site did not answer" } },
@@ -2996,7 +3000,14 @@ pub const App = struct {
 
     pub fn openModal(a: *App, key: []const u8) Allocator.Error!void {
         a.closeModal();
-        var m: Modal = .{ .key = try a.keep(key), .arena = std.heap.ArenaAllocator.init(a.gpa) };
+        // The arena goes into the field FIRST, and the allocator is
+        // taken from where it will LIVE. An `ArenaAllocator`'s
+        // `allocator()` binds to the address it was taken from, and a
+        // `std.json.Value` is not plain data — every object and array
+        // inside it keeps that handle — so a handle taken from a local
+        // and then copied into `a.modal` points at a dead stack slot.
+        a.modal = .{ .key = try a.keep(key), .arena = std.heap.ArenaAllocator.init(a.gpa) };
+        const m = &a.modal.?;
         var fields: std.ArrayList([]const u8) = .empty;
         const arena = m.arena.allocator();
         for (a.cfg.detail_modal.fields) |spec| try fields.append(arena, a.cfg.detail_modal.resolveId(spec));
@@ -3014,7 +3025,6 @@ pub const App = struct {
             .ok => |v| m.data = v,
             .failed => |f| m.error_text = try arena.dupe(u8, f.message),
         }
-        a.modal = m;
     }
 
     pub fn closeModal(a: *App) void {
@@ -3719,6 +3729,15 @@ pub const Harness = struct {
     forge_base: []const u8,
 
     pub fn start(cfg_in: config.Config, family: ?config.Family) !*Harness {
+        return startOn(cfg_in, family, testing.allocator);
+    }
+
+    /// The Harness with the FETCH side on `gpa` — the client, the forge
+    /// client, and the App, which is where every job and every result
+    /// arena is made (`startRefresh`, `startPrFetch`). `Scribble` passes
+    /// one that poisons what it frees, which is the only way a test can
+    /// see a pane still pointing at a listing that is over.
+    pub fn startOn(cfg_in: config.Config, family: ?config.Family, gpa: Allocator) !*Harness {
         const io = testing.io;
         const h = try testing.allocator.create(Harness);
         errdefer testing.allocator.destroy(h);
@@ -3739,13 +3758,13 @@ pub const Harness = struct {
         const authorization = try auth.basicHeader(testing.allocator, "fake@acme.com", "fake-token");
         defer testing.allocator.free(authorization);
         h.client = try testing.allocator.create(jira.Client);
-        h.client.* = jira.Client.init(testing.allocator, io, h.base, try testing.allocator.dupe(u8, authorization), .v3);
+        h.client.* = jira.Client.init(gpa, io, h.base, try testing.allocator.dupe(u8, authorization), .v3);
         var cfg = cfg_in;
         cfg.jira_url = h.base;
         cfg.email = "fake@acme.com";
         cfg.refresh_interval_secs = 0;
         cfg.bitbucket_api_url = h.forge_base;
-        h.app = try App.init(testing.allocator, io, cfg, family, h.client, .{ .gpa = testing.allocator, .io = io, .base_url = h.forge_base, .token = "fake-forge" });
+        h.app = try App.init(gpa, io, cfg, family, h.client, .{ .gpa = gpa, .io = io, .base_url = h.forge_base, .token = "fake-forge" });
         h.app.resize(120, 40);
         return h;
     }
@@ -4115,6 +4134,48 @@ test "Work: the transition picker moves a ticket; the bulk selection transitions
     try testing.expectEqualStrings("Testing", h.store.find("ENG-5").?.status);
     try testing.expectEqual(@as(usize, 0), a.selection.count());
     try testing.expect(std.mem.startsWith(u8, a.status.items, "2 ticket(s) → Testing"));
+}
+
+test "a single transition invalidates the detail of the ticket it moved, after the picker that carried the key is gone" {
+    // `commitTransition` held `p.key` — a slice on the picker's OWN
+    // arena — across `closeTransition`, which is that arena's `deinit`,
+    // and then hashed it in `invalidateDetail`. On a scribbling
+    // allocator the key is 0xAA by then, so the lookup matches nothing
+    // and the STALE detail survives the move that made it stale.
+    var scribble: sdk.testing.Scribble = .{ .child = testing.allocator };
+    const h = try Harness.startOn(.{ .tabs = &work_tabs }, .work, scribble.allocator());
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const r = (try a.treeRows(arena.allocator())).?;
+    a.tab().selected = tree.rowOfKey(r.rows, a.tab().issues, "ENG-2").?;
+
+    // Open the panel so the ticket's detail is cached, then close it
+    // again. The entry stays — that is the point of the cache — and
+    // with the panel shut nothing re-fetches behind the transition, so
+    // what the assertion sees is the invalidation itself.
+    _ = try a.onKey("d");
+    try testing.expect(a.details.contains("ENG-2"));
+    _ = try a.onKey("d");
+    try testing.expect(!a.details_visible);
+    try testing.expect(a.details.contains("ENG-2"));
+
+    _ = try a.onKey("t");
+    try testing.expect(a.transition != null);
+    for (a.transition.?.transitions.?, 0..) |tr, i| if (std.mem.eql(u8, tr.to_name, "Testing")) a.transition.?.jump(i);
+    _ = try a.onKey("enter");
+    try testing.expect(a.transition == null);
+
+    // The move landed…
+    try testing.expectEqualStrings("Testing", h.store.find("ENG-2").?.status);
+    // …it was named with the ticket it was about…
+    try testing.expect(std.mem.indexOf(u8, a.status.items, "ENG-2") != null);
+    // …and the detail that is now out of date is GONE. This is the
+    // assertion the freed key defeats: `fetchRemove` on 0xAA bytes
+    // matches nothing and leaves the stale entry in place.
+    try testing.expect(!a.details.contains("ENG-2"));
 }
 
 test "Work: the assignee picker assigns, the fixVersion picker sets, watching toggles, a comment posts" {

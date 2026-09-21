@@ -246,6 +246,11 @@ pub const Kind = enum { listing, builds, readiness };
 pub const min_interval_secs: u32 = 30;
 /// A listing an hour stale is worse than no listing.
 pub const max_interval_secs: u32 = 3600;
+
+/// The longest holder name a lock file hands back. A program name is
+/// `mnml-jira` sized; anything past this is another writer's nonsense
+/// and is truncated rather than trusted.
+pub const max_program: usize = 128;
 pub const default_listing_secs: u32 = 300;
 /// A pipeline that is still running: 90 s is the shortest wait that
 /// still reads as "watching it" without being a spin.
@@ -490,8 +495,9 @@ pub const Lock = struct {
         }) catch return false;
         defer file.close(self.io);
         var buf: [512]u8 = undefined;
+        var name: [max_program]u8 = undefined;
         const n = file.readPositionalAll(self.io, &buf, 0) catch 0;
-        if (parseHolder(buf[0..n])) |h| {
+        if (parseHolder(buf[0..n], &name)) |h| {
             if (h.pid != self.pid and !isStale(h, now_secs)) return false;
         }
         writeHolder(self.io, file, self.pid, self.program, now_secs) catch return false;
@@ -525,8 +531,9 @@ pub const Lock = struct {
         {
             defer file.close(self.io);
             var buf: [512]u8 = undefined;
+            var name: [max_program]u8 = undefined;
             const n = file.readPositionalAll(self.io, &buf, 0) catch 0;
-            if (parseHolder(buf[0..n])) |h| mine = h.pid == self.pid;
+            if (parseHolder(buf[0..n], &name)) |h| mine = h.pid == self.pid;
         }
         if (mine) Io.Dir.cwd().deleteFile(self.io, self.path) catch {};
     }
@@ -535,8 +542,9 @@ pub const Lock = struct {
     /// prints and what a pane's hover says.
     pub fn peek(gpa: Allocator, io: Io, path: []const u8) Allocator.Error!?Holder {
         var buf: [512]u8 = undefined;
+        var name: [max_program]u8 = undefined;
         const text = Io.Dir.cwd().readFile(io, path, &buf) catch return null;
-        const h = parseHolder(text) orelse return null;
+        const h = parseHolder(text, &name) orelse return null;
         return .{ .pid = h.pid, .program = try gpa.dupe(u8, h.program), .ts = h.ts };
     }
 };
@@ -552,8 +560,9 @@ pub const Lock = struct {
 /// answers with a stack trace on the user's terminal.
 pub fn heldBySomeone(io: Io, path: []const u8, now_secs: f64) bool {
     var buf: [512]u8 = undefined;
+    var name: [max_program]u8 = undefined;
     const text = Io.Dir.cwd().readFile(io, path, &buf) catch return false;
-    const h = parseHolder(text) orelse return false;
+    const h = parseHolder(text, &name) orelse return false;
     return !isStale(h, now_secs);
 }
 
@@ -586,16 +595,40 @@ pub fn pidAlive(pid: i32) bool {
     return std.c._errno().* != @intFromEnum(std.c.E.SRCH);
 }
 
+/// The holder line, escaped as **JSON** — which is not what
+/// `std.zig.fmtString` does.
+///
+/// It rendered a control byte as `\xNN`, which no JSON parser accepts,
+/// so `parseHolder` answered `null`, `acquire`'s "nonsense is free"
+/// rule fired, and the lock read as FREE while it was held — two
+/// warmers on one bucket. `store.zig` fixed the same confusion in the
+/// cache file and left `writeJsonString` behind for it; this is the
+/// second caller.
 fn writeHolder(io: Io, file: Io.File, pid: i32, program: []const u8, now_secs: f64) !void {
     var out: [512]u8 = undefined;
-    const text = std.fmt.bufPrint(&out, "{{\"pid\":{d},\"program\":\"{f}\",\"ts\":{d:.3}}}", .{
-        pid, std.zig.fmtString(program), now_secs,
-    }) catch return error.NoSpaceLeft;
+    var w: Io.Writer = .fixed(&out);
+    w.print("{{\"pid\":{d},\"program\":", .{pid}) catch return error.NoSpaceLeft;
+    store_mod.writeJsonString(&w, program) catch return error.NoSpaceLeft;
+    w.print(",\"ts\":{d:.3}}}", .{now_secs}) catch return error.NoSpaceLeft;
     try file.setLength(io, 0);
-    try file.writePositionalAll(io, text, 0);
+    try file.writePositionalAll(io, w.buffered(), 0);
 }
 
-fn parseHolder(text: []const u8) ?Lock.Holder {
+/// The holder named in `text`, with `program` copied into `name_out`
+/// — never handed back pointing at this function's own scratch.
+///
+/// `parseFromSliceLeaky` defaults to `.alloc_if_needed`: a name with no
+/// escape in it comes back as a subslice of `text`, but one WITH an
+/// escape is allocated on the allocator it was given, which here is a
+/// fixed buffer on this stack frame. Returning that slice is the
+/// family's own bug — a string handed to something that outlives the
+/// arena it was made on — and `Lock.peek` then `dupe`s out of the dead
+/// frame, which the `dupe` call itself is free to have reused.
+///
+/// The name is copied out the way `recentDraws` copies its winner: the
+/// caller owns the buffer, so what comes back is as long-lived as the
+/// caller is.
+fn parseHolder(text: []const u8, name_out: []u8) ?Lock.Holder {
     const trimmed = std.mem.trim(u8, text, " \t\r\n");
     if (trimmed.len == 0) return null;
     // A fixed buffer rather than an allocator: this runs under a file
@@ -606,7 +639,9 @@ fn parseHolder(text: []const u8) ?Lock.Holder {
     const Row = struct { pid: i32 = 0, program: []const u8 = "", ts: f64 = 0 };
     const row = std.json.parseFromSliceLeaky(Row, fba.allocator(), trimmed, .{ .ignore_unknown_fields = true }) catch return null;
     if (row.pid == 0) return null;
-    return .{ .pid = row.pid, .program = row.program, .ts = row.ts };
+    const n = @min(row.program.len, name_out.len);
+    @memcpy(name_out[0..n], row.program[0..n]);
+    return .{ .pid = row.pid, .program = name_out[0..n], .ts = row.ts };
 }
 
 // ─── tests ───────────────────────────────────────────────────────────────
@@ -843,6 +878,48 @@ test "one warmer per service: the second process reads the cache, and a dead hol
     try t.expect(a.acquire(now + 3 * Lock.stale_secs));
 }
 
+test "the holder line is JSON, and the name it carries belongs to the caller" {
+    var name: [max_program]u8 = undefined;
+
+    // `\"` is a JSON escape, so `parseFromSliceLeaky` cannot hand back a
+    // subslice of the input — it ALLOCATES, on the allocator it was
+    // given, which inside `parseHolder` is a fixed buffer on that
+    // function's own frame. Returning that slice was the family's own
+    // bug: a string handed to something that outlives the arena it was
+    // made on, and `Lock.peek` then duping out of a dead frame.
+    const h = parseHolder("{\"pid\":7,\"program\":\"mnml\\\"jira\",\"ts\":1.0}", &name).?;
+    try t.expectEqualStrings("mnml\"jira", h.program);
+    // What comes back lives in the CALLER's buffer. This is the
+    // assertion the old shape fails deterministically — the frame it
+    // used to point into is not inside `name`.
+    const base = @intFromPtr(&name);
+    const at = @intFromPtr(h.program.ptr);
+    try t.expect(at >= base and at + h.program.len <= base + name.len);
+
+    // And the writer's half: a name with a control byte in it used to
+    // be rendered `\xNN` (escaped for a Zig literal, not for JSON), so
+    // the line came back UNPARSEABLE and `acquire`'s "nonsense is free"
+    // rule read a held lock as free — two warmers on one bucket.
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    const path = try std.fs.path.join(t.allocator, &.{ dir, "odd-warm.lock" });
+    defer t.allocator.free(path);
+    const odd = "mnml\x1b\"jira";
+    var lock = try Lock.init(t.allocator, t.io, path, selfPid(), odd);
+    defer lock.deinit();
+    const now: f64 = 1_789_526_218.0;
+    try t.expect(lock.acquire(now));
+    // Read it back the way a second process would: the lock is HELD,
+    // and the name on it is the name that was written.
+    try t.expect(heldBySomeone(t.io, path, now + 1));
+    const who = (try Lock.peek(t.allocator, t.io, path)).?;
+    defer t.allocator.free(who.program);
+    try t.expectEqualStrings(odd, who.program);
+    lock.release();
+}
+
 test "a lock whose holder is a pid nobody is, or nonsense on disk, is free" {
     const now: f64 = 1_789_526_218.0;
     // A live pid with a fresh heartbeat is held.
@@ -854,10 +931,11 @@ test "a lock whose holder is a pid nobody is, or nonsense on disk, is free" {
     // No pid at all.
     try t.expect(isStale(.{ .pid = 0, .program = "x", .ts = now }, now));
     // Scribble on disk is a free lock, not a warmer stopped forever.
-    try t.expect(parseHolder("not json") == null);
-    try t.expect(parseHolder("") == null);
-    try t.expect(parseHolder("{\"program\":\"x\"}") == null);
-    const h = parseHolder("{\"pid\":7,\"program\":\"mnml-jira\",\"ts\":12.5}").?;
+    var name: [max_program]u8 = undefined;
+    try t.expect(parseHolder("not json", &name) == null);
+    try t.expect(parseHolder("", &name) == null);
+    try t.expect(parseHolder("{\"program\":\"x\"}", &name) == null);
+    const h = parseHolder("{\"pid\":7,\"program\":\"mnml-jira\",\"ts\":12.5}", &name).?;
     try t.expectEqual(@as(i32, 7), h.pid);
     try t.expectEqualStrings("mnml-jira", h.program);
     try t.expectEqual(@as(f64, 12.5), h.ts);

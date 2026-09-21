@@ -58,7 +58,45 @@ pub fn buildHit(row: Rect, right_edge: u16) Rect {
     return .{ .x = row.x, .y = row.y, .w = @min(row.w, right_edge - row.x), .h = 1 };
 }
 
+/// Is there a pointer anywhere inside `T`?
+fn hasPointer(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .pointer => true,
+        .optional => |o| hasPointer(o.child),
+        .array => |a| hasPointer(a.child),
+        .@"struct" => |st| blk: {
+            inline for (st.fields) |f| {
+                if (hasPointer(f.type)) break :blk true;
+            }
+            break :blk false;
+        },
+        .@"union" => |u| blk: {
+            inline for (u.fields) |f| {
+                if (hasPointer(f.type)) break :blk true;
+            }
+            break :blk false;
+        },
+        else => false,
+    };
+}
+
 pub fn Map(comptime Target: type) type {
+    // A target is indices and enums, never a string.
+    //
+    // The map's entries live on the GPA and are only `reset` at the top
+    // of the NEXT frame, while a click is dispatched from `at()`
+    // BETWEEN frames — after the pane's frame arena has been reset. A
+    // `Target` carrying a `[]const u8` from that arena would therefore
+    // dangle at exactly the moment it is read, which is the family of
+    // bug `docs/SDK.md` → "Results outlive the job" is about. It would
+    // also break `rectOf` silently: `std.meta.eql` compares slices by
+    // pointer, so a test that clicks by meaning would stop finding its
+    // target for a reason nothing names.
+    //
+    // Neither shipped pane does this today. This is the tripwire, not a
+    // report of a bug: say what you mean with an index into the frame's
+    // own rows.
+    comptime std.debug.assert(!hasPointer(Target));
     return struct {
         const Self = @This();
 
@@ -148,4 +186,23 @@ test "the last thing painted wins, an empty rect is never a target, rectOf finds
     try testing.expectEqual(@as(usize, 2), m.count());
     m.reset();
     try testing.expect(m.at(5, 2) == null);
+}
+
+test "a target that carries a string does not compile" {
+    // The guard above is a `comptime assert`, so the proof that it can
+    // fire is a compile error, not a runtime one — this test pins the
+    // shapes it accepts and names the one it does not, so a change that
+    // quietly relaxed it would have nothing left saying what it was for.
+    const Ok = union(enum) { row: usize, chip: enum { sort, filter }, none };
+    const Bad = union(enum) { row: usize, label: []const u8 };
+    try std.testing.expect(!hasPointer(Ok));
+    try std.testing.expect(hasPointer(Bad));
+    try std.testing.expect(hasPointer(struct { inner: struct { s: []const u8 } }));
+    try std.testing.expect(hasPointer(?[]const u8));
+    try std.testing.expect(!hasPointer(struct { a: u16, b: [4]u8 }));
+    // And the accepted one really does build a map.
+    var m: Map(Ok) = .{};
+    defer m.deinit(std.testing.allocator);
+    try m.add(std.testing.allocator, .{ .x = 0, .y = 0, .w = 4, .h = 1 }, .{ .row = 2 });
+    try std.testing.expectEqual(@as(?Ok, .{ .row = 2 }), m.at(1, 0));
 }

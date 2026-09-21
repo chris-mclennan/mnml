@@ -1112,6 +1112,76 @@ say who drew is worth nothing. `ratelimit.recentDraws` reads the file
 back for a window, which is what a statusline chip's hover uses to say
 `spent by bb.py 30 of 83 draws in 10m`.
 
+## Results outlive the job — take the arena, or dupe
+
+A pane's slow work runs off the loop and comes back as a **result that
+carries its own arena**: the HTTP body, the parsed JSON, and every
+string the payload points into all live on it. The consumer on the loop
+then has exactly two options, and no third:
+
+- **take the arena** into a field that lives as long as the thing you
+  are keeping, or
+- **dupe** what you keep onto an allocator the holder owns.
+
+Letting the arena go while keeping a slice out of the payload is the
+one mistake this shape invites, and it has now shipped four times. It
+is not loud: an arena hands its pages back through `rawFree`, which
+poisons nothing, so the rows go on reading correctly until something
+else claims the page — minutes later, on someone's screen.
+
+The idiom is a `keep_arena` flag and a field beside the value:
+
+```zig
+/// The last statusline values, for the chip.
+values: ?fetch.ValuesResult = null,
+/// The arena those values live on — the result's own, taken off it
+/// rather than let go at the end of `commit`. This figure is not a
+/// number: it carries the tooltip's breakdown and the hover's rows,
+/// and the pane republishes all of it every time it opens one of
+/// those rows. It has to still be there minutes after it landed.
+values_arena: ?std.heap.ArenaAllocator = null,
+
+pub fn commit(app: *App, res: *fetch.Result) !void {
+    var keep_arena = false;
+    defer if (!keep_arena) res.arena.deinit();
+    switch (res.payload) {
+        .values => |v| {
+            if (app.values_arena) |*old| old.deinit();
+            app.values_arena = res.arena;   // the strings come with it
+            keep_arena = true;
+            app.values = v;
+        },
+        .whoami => |w| {
+            // The other answer: a copy the app owns.
+            app.gpa.free(app.me_account_id);
+            app.me_account_id = try app.gpa.dupe(u8, w.account_id);
+        },
+    }
+}
+```
+
+`app.deinit` frees `values_arena` like any other owned thing. Only
+scalars — counts, flags, timestamps — may be stored out of a payload
+without one of the two.
+
+Two rules that fall out of the same reasoning:
+
+- **An `ArenaAllocator`'s `allocator()` binds to the address it was
+  taken from.** Put the arena in the field FIRST, then take the handle
+  off the field. A handle taken from a stack local and copied into
+  state points at a frame that has returned — harmless for plain
+  slices, not for a `std.json.Value`, whose arrays are
+  `std.array_list.Managed` and carry the handle inside them.
+- **A `FixedBufferAllocator` over a local buffer is an arena too.**
+  `std.json`'s default `.alloc_if_needed` puts an escaped string on it
+  and hands you the slice; return that and you have returned a piece of
+  your own frame. Copy into a caller-supplied buffer instead.
+
+`zig build arena-audit` enforces the first rule mechanically over
+`integrations/` and `sdk/`: a prong of a result switch that stores the
+payload without taking the arena or duping is a finding, and a unit
+test walks both roots under `zig build unit`.
+
 ## Testing an integration
 
 The socket is plain: a test can `UnixAddress.listen`, spawn the binary
@@ -1119,6 +1189,32 @@ with `MNML_MOUNT_SOCKET`, send a `hello` with `sdk.wire.send`, and read
 frames back with `sdk.wire.receive(sdk.SiblingMessage, …)`. mnml's own
 test does exactly this against the sample
 (`src/app/mount_pane.zig`, "a mounted sample integration paints…").
+
+### Proving a result outlives its job — `sdk.testing.Scribble`
+
+A test for the rule above passes whatever the code does unless the
+allocator underneath poisons what it frees. `Allocator.free`'s own
+poison is `undefined`, which a release build may skip; an arena gives
+its pages back through `rawFree`, which never poisons. `Scribble`
+writes `0xAA` over everything it frees, in every build mode, and hands
+the call on to a child — so `std.testing.allocator` underneath still
+reports leaks as it always did.
+
+Put it under the rig's **fetch** side — the client, the worker, and
+every arena a job or a result makes:
+
+```zig
+var scribble: sdk.testing.Scribble = .{ .child = std.testing.allocator };
+const r = try Rig.initOn(cfg, .{}, scribble.allocator());
+defer r.deinit();
+// The listing is over. Anything the chip kept a slice of is 0xAA now.
+try t.expectEqualStrings("Fix the login redirect", r.app.values.?.open_items[0].text);
+```
+
+Both shipped integrations expose that door — bitbucket's
+`Rig.initOn(config, opts, gpa)` and jira's
+`Harness.startOn(config, family, gpa)` — and a third should, for the
+same reason.
 
 ## Layout of the package
 
@@ -1136,6 +1232,9 @@ sdk/mnml-sdk/src/
   store.zig      bodies kept between runs, keyed by the server's stamp
   warm.zig       the warmer: pacing with priority, one warmer per
                  service, delta windows, intervals, the budget floor
+  testing.zig    test allocators a suite borrows — Scribble, which
+                 poisons what it frees so a slice into a let-go arena
+                 reads as 0xAA rather than as luck
   pane.zig       the pane toolkit's barrel (Theme, Painter, HitMap)
   pane/theme.zig   the host theme's roles, the brand colour, state colours
   pane/chrome.zig  Painter: header, tabs, pill, gutter, rows, detail, hints
