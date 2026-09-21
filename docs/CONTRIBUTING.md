@@ -463,18 +463,8 @@ deadlines (`debug_slowdown`) and prints that it is a Debug build, but a
 script's `wait <ms>`, and the `--lifetime-secs` it gives its offline
 server, are written into the file and cannot move. A file pinned that
 way carries `# requires: optimized` and is announced as skipped against
-a Debug build rather than failing on the clock. One family carries it: the
-twenty-four `integrations_*` and `statusline_hover_*` files that mount
-real integration children against offline servers they start
-themselves. They are timing-marginal in a Debug build — the servers of
-earlier files are still alive on their own `--life-secs` while later
-ones run — and WHICH member falls over depends on what else the machine
-is doing: three Debug corpus runs failed a different member each time
-(`integrations_bitbucket_pipelines` + `integrations_pane_chrome`;
-`integrations_bitbucket_pane` + `integrations_row_buttons_wide`;
-`integrations_jira_work_tabs`), and every one of them passes against
-ReleaseSafe. Nothing outside the family has failed in Debug, so the mark
-is that family's and not a get-out for a slow file. So:
+a Debug build rather than failing on the clock. No file carries it
+today. So:
 
 ```sh
 zig build e2e -Doptimize=ReleaseSafe      # the run whose green means something
@@ -484,10 +474,42 @@ A timing failure from a Debug run is not a finding until it reproduces
 there. It has now read as "fails only in a worktree" three times over;
 it was never the path.
 
-CI runs the corpus that way: the Linux full-corpus leg builds
-ReleaseSafe, and the macOS/Windows job now installs ReleaseSafe before
-its `--gate` sweep for the same reason (the gate subset includes a file
-from this family). The Debug compile stays covered there by `zig build
+**But "only in Debug" is not the same as "only about the clock."** The
+twenty-four `integrations_*` and `statusline_hover_*` files — real
+integration children against offline servers they start themselves —
+carried `# requires: optimized` for exactly one release, on the reading
+that they were timing-marginal: which member fell over moved between
+runs, and every one passed against ReleaseSafe. They were not
+timing-marginal. The child was dying, and the host, which can only see
+its end of the socket, could only say `[connection closed]`; the
+child's own stderr went to `/dev/null`, so its reason was never read.
+Two bugs, each of which a shipped build hides:
+
+- The Bitbucket pane stored the statusline values by value and let the
+  result's arena go with `commit`. The chip is published later and
+  reads those titles again, so it read freed memory — bytes that
+  usually still say what they said, and sometimes a segfault.
+- The Jira pane closed the mount socket while its inbox task was still
+  parked in a read on it. The read then fails `EBADF`, which a Debug
+  build treats as a programmer bug and panics on; a shipped build
+  returns the error.
+
+So when a Debug e2e run says `[connection closed]`, read the child
+before reaching for the clock:
+
+```sh
+MNML_CHILD_STDERR=/tmp/child zig build e2e -- tests/e2e/some.test
+cat /tmp/child.*       # one file per mounted child, in spawn order
+```
+
+`MNML_CHILD_STDERR` (`src/bridge/host.zig`) is off unless set, and a
+normal run is unchanged: a sibling's stderr goes to `/dev/null` because
+writing to the terminal would scribble over the screen mnml is
+painting.
+
+CI runs the corpus optimized: the Linux full-corpus leg builds
+ReleaseSafe, and the macOS/Windows job installs ReleaseSafe before its
+`--gate` sweep. The Debug compile stays covered there by `zig build
 test -Doptimize=Debug`.
 
 ## Spec dumps
