@@ -1,6 +1,6 @@
 # env: TERM_PROGRAM=Hyper
 # env: SHELL=/bin/sh
-# Right-click the strip's terminal chip: the shell rows, then `Mark`
+# Right-click the strip's terminal chip: the shell rows, then `Icon`
 # with the two branded choices under it and the current one ticked
 # (the bake sits below them, separated). Picking Terminal swaps the
 # chip's mark from mnml's own ghost to the codicon — `$TERM_PROGRAM`
@@ -8,19 +8,24 @@
 # per-emulator choice lands.
 #
 # The chip is the first of the split cluster, three cells apart, at
-# the right end of row 1 on the 120-column screen. `Mark` is the
+# the right end of row 1 on the 120-column screen. `Icon` is the
 # menu's last row, so `End` reaches it however many rows precede.
+#
+# Each row draws the icon it picks: the ghost on one, the codicon on
+# the other. They both used to draw a paint brush.
 command view.toggle_tree
 expect screen contains "󲀀  "
 rightclick 111 1
 expect screen contains "Open shell (beside)"
-expect screen contains "Mark"
+expect screen contains "Icon"
 key end
 key right
-expect screen contains "Ghostty ghost"
+expect screen contains "Ghostty"
 expect screen contains "Custom SVG…"
-expect screen contains "✓ Ghostty ghost"
+expect screen contains "✓ Ghostty"
 expect screen lacks "✓ Terminal"
+expect screen contains "󲀀  ✓ Ghostty"
+expect screen contains "  Terminal"
 # Down then Enter — the second row, Terminal.
 key down
 key enter
@@ -32,7 +37,7 @@ rightclick 111 1
 key end
 key right
 expect screen contains "✓ Terminal"
-expect screen lacks "✓ Ghostty ghost"
+expect screen lacks "✓ Ghostty"
 key esc
 expect screen lacks "Open shell (beside)"
 # A pty tab wears the mark the menu chose, not the ghost it shipped

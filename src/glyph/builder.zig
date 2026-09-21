@@ -591,7 +591,7 @@ test "U+F1E02 is the Anthropic spark — the other art, at its own codepoint, so
 
     // And the two are baked at the codepoints the chrome names, in one
     // face: the figure the default, the spark the alternate the
-    // `Mark ▸` menu offers. Read off the spec list rather than the
+    // `Icon ▸` menu offers. Read off the spec list rather than the
     // cmap, so a swap of the two sources fails here.
     const specs = defaultSpecs(ghostty_svg);
     var figure_src: ?[]const u8 = null;
