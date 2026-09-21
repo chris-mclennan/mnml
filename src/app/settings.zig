@@ -671,7 +671,7 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
     const st = &app.overlay.settings;
     // `/` is the filter everywhere; the standard profile takes Ctrl+F
     // for it too, the way VS Code's settings screen does.
-    const opts: ui_settings.KeyOpts = .{ .gpa = app.gpa, .ctrl_f = app.input_style != .vim };
+    const opts: ui_settings.KeyOpts = .{ .gpa = app.gpa, .ctrl_f = app.input_style != .vim, .typeahead = app.input_style != .vim };
     switch (try ui_settings.handleKey(&st.ui, k, list, opts)) {
         .consumed => {},
         .refilter => try refocus(app, list),
@@ -680,7 +680,9 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
         .adjust => |a| try adjust(app, list[a.item].row.id, a.delta),
         .reset_row => |i| try resetRow(app, list[i].row.id),
         .reset_all => try resetAll(app),
-        .activate => |i| if (list[i].action.id == reset_id) try resetAll(app),
+        // // changed (settings-reset-confirm): the Reset row asks first,
+        // the same box `R` raises in the vim profile.
+        .activate => |i| if (list[i].action.id == reset_id) st.ui.askResetAll(),
     }
     app.needs_render = true;
 }
@@ -734,9 +736,17 @@ pub fn barJump(app: *App, off: usize, track_h: usize) Allocator.Error!void {
 /// row to the option under the pointer.
 pub fn click(app: *App, hit: u32) Allocator.Error!void {
     const arena = app.frame.allocator();
+    const st = &app.overlay.settings;
+    // // changed (settings-reset-confirm): the ask paints last, so its
+    // two choices are the hits a click lands on and `hit` is the index.
+    if (st.ui.confirm != null) {
+        st.ui.confirm = null;
+        app.needs_render = true;
+        if (hit == 0) try resetAll(app);
+        return;
+    }
     const both = try lists(app, arena);
     const list = both.visible;
-    const st = &app.overlay.settings;
     switch (ui_settings.decodeHit(hit)) {
         .surface => {},
         // The pill: the keys go back to it, query and all.
@@ -751,7 +761,7 @@ pub fn click(app: *App, hit: u32) Allocator.Error!void {
             st.ui.jumpTo(list, k);
         },
         .row => |id| {
-            if (id == reset_id) return resetAll(app);
+            if (id == reset_id) return st.ui.askResetAll();
             st.ui.cursor = itemIndexOf(list, id) orelse return;
             st.ui.filter.focused = false;
         },
@@ -1066,7 +1076,7 @@ test "adjust writes the row's file live; Esc restores bytes (and absence); Enter
         theme_item = i;
     };
     app.overlay.settings.ui.cursor = theme_item;
-    try app.handle(.{ .key = Key.char('l') });
+    try app.handle(.{ .key = Key.named(.right) });
     try t.expect(!std.mem.eql(u8, app.cfg.ui.theme, "onedark"));
     try t.expectEqualStrings(app.cfg.ui.theme, app.theme.name);
     {
@@ -1078,13 +1088,16 @@ test "adjust writes the row's file live; Esc restores bytes (and absence); Enter
     try t.expectEqualStrings("onedark", app.theme.name);
     try t.expect((try readOrNull(tmp, "home/config.zon")) == null);
 
-    // r resets the row; the `*` marker follows; R resets everything.
+    // Ctrl+R resets the row; the `*` marker follows. // changed
+    // (settings-typeahead): this app is in the standard profile, where
+    // a bare `r` is a query character — Ctrl+R is the reset the footer
+    // advertises there, and it works in both profiles.
     try command.run(&app, .{ .static = .@"view.settings" });
     {
         const l = try items(&app, app.frame.allocator());
         try t.expect(l[1].row.modified); // line_numbers is off, default on
     }
-    try app.handle(.{ .key = Key.char('r') });
+    try app.handle(.{ .key = Key.ctrl('r') });
     try t.expect(app.cfg.ui.line_numbers);
     {
         const l = try items(&app, app.frame.allocator());
@@ -1094,6 +1107,20 @@ test "adjust writes the row's file live; Esc restores bytes (and absence); Enter
     try app.handle(.{ .key = Key.named(.down) });
     try app.handle(.{ .key = Key.named(.right) });
     try t.expect(!app.cfg.ui.line_numbers and app.cfg.ui.relative_line_numbers);
+    // // changed (settings-reset-confirm): reset-all is the Reset
+    // section's action row here, and it asks first. Enter takes the
+    // focused Cancel and changes nothing; the `R` letter answers Reset.
+    {
+        const l = try items(&app, app.frame.allocator());
+        app.overlay.settings.ui.cursor = l.len - 1;
+    }
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expect(app.overlay.settings.ui.confirm != null);
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expect(app.overlay.settings.ui.confirm == null);
+    try t.expect(!app.cfg.ui.line_numbers and app.cfg.ui.relative_line_numbers);
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expect(app.overlay.settings.ui.confirm != null);
     try app.handle(.{ .key = Key.char('R') });
     try t.expect(app.cfg.ui.line_numbers and !app.cfg.ui.relative_line_numbers);
     try app.handle(.{ .key = Key.named(.enter) });

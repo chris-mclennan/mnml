@@ -8,12 +8,15 @@
 # `split_arrange_thirds.test` are at 39 and 80. The setting is there for
 # anyone who liked the old sizing, and this is also the proof that the
 # Settings row under Integrations reaches it.
+# // changed (settings-typeahead): the standard profile's box is
+# type-to-filter, so `G` / `k` / `l` are query characters there now —
+# End / ↑ / → are the controls that reach the row in both profiles.
 command view.settings
-key G
-key k
+key end
+key up
 expect screen contains "New pane sizing"
 expect screen contains "[context]"
-key l
+key right
 expect screen contains "[fixed]"
 key enter
 expect screen lacks "Settings"

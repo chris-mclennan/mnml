@@ -214,11 +214,27 @@ the idiom is written down instead. A settings screen is:
 - One row per setting: `▸ <label>:  [active] / other1 / other2  *` — `▸`
   is focus, `[brackets]` the current choice, `*` modified from the
   shipped default. The labels pad so the colons line up.
-- Keys: `←→` / `h l` adjust · `↑↓` / `j k` move · `/` filter (Ctrl+F
-  too in the standard profile) · `r` reset the row · `R` reset all ·
-  Enter save + close · Esc cancel (back to the opened-state config,
-  including the bytes of every file written since) — a live filter
-  first, see below.
+- Keys, in **both** profiles: `←→` adjust · `↑↓` move · Tab /
+  Shift-Tab step a section · Home/End/PgUp/PgDn move further · `/`
+  filter (Ctrl+F too in the standard profile) · `Ctrl+R` reset the
+  focused row · Enter save + close · Esc cancel (back to the
+  opened-state config, including the bytes of every file written
+  since) — a live filter first, see below.
+- **The vim profile adds its letters**: `h l` adjust, `j k` move, `[`
+  `]` section, `g` `G` the ends, `r` reset the row, `R` reset all, `q`
+  save. **The standard profile has none of them and is type-to-filter
+  instead**: any printable key opens the pill and goes into the query,
+  the way VS Code's settings screen behaves, because a settings box
+  whose first letter is a command turns `quit` into "save, close, and
+  drop `uit` into the buffer underneath". `/` and space are the two
+  printables the standard box still spends on a control (the family
+  filter chord and the row's toggle), so a query cannot *begin* with
+  either. The footer says which set is live (`hintFor`'s two families
+  of five forms), and reset-all is the Reset section's action row
+  there rather than a letter.
+- **Reset-all asks first**, in both profiles, in the app's own confirm
+  box (`src/ui/confirm.zig`) with Cancel focused — Enter on reflex is
+  the harmless answer.
 - v1 rows are **discrete choices**. (Zig also ships the minimal number
   row, `‹ [32] ›`.) The overlay never edits arrays of complex things —
   those stay ZON-edited.
@@ -230,8 +246,9 @@ know exists. Three affordances, all in `draw`, none of them optional:
 
 - A **section strip** under the title — `UI · Editor · AI · Integrations
   · Reset`, the cursor's section in the active-chip colour, each name its
-  own `.overlay_item(sectionHit(n))` click target. `]` / `[` (and Tab /
-  Shift-Tab) step sections, `g` / `G` are the ends. A jump puts the
+  own `.overlay_item(sectionHit(n))` click target. Tab / Shift-Tab step
+  sections (`]` / `[` too in the vim profile), Home / End are the ends
+  (`g` / `G` too in vim). A jump puts the
   section's header on the *top* row of the window, so the name jumped to
   is on screen. A box too narrow for the names falls back to the
   initials (`U · E · A · I · R`) and then to no strip at all

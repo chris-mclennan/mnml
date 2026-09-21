@@ -24,10 +24,13 @@ expect screen contains "▸ Line numbers:                      off / [on]       
 expect screen contains "Esc cancel"
 expect status contains "\"settings\":{\"top\":1,\"visible\":22,\"atTop\":true,\"atEnd\":false}"
 
-# `]` steps a section: the cursor lands on Editor's first row and the
+# Tab steps a section: the cursor lands on Editor's first row and the
 # header goes to the window's top row, so the name jumped to is visible.
 # The view moved off the top, and Editor is not the end of the list.
-key ]
+# (// changed (settings-typeahead): `]` / `g` / `G` are the vim
+# profile's spellings and are query characters in the standard one —
+# Tab, Home and End are the controls both profiles share.)
+key tab
 expect screen contains "── Editor ──"
 expect screen contains "▸ Input style:"
 expect screen lacks "── UI ──"
@@ -41,9 +44,9 @@ expect screen contains "── Integrations ──"
 expect screen contains "▸ Sonos:"
 expect status contains "\"atEnd\":true"
 
-# `g` is the top again, and the wheel moves the VIEW, not just the
+# Home is the top again, and the wheel moves the VIEW, not just the
 # cursor: a notch down slides the window one row and the position says so.
-key g
+key home
 expect screen contains "── UI ──"
 expect status contains "\"top\":1,\"visible\":22,\"atTop\":true"
 scroll 60 20 down
@@ -53,15 +56,15 @@ scroll 60 20 up
 expect screen contains "── UI ──"
 expect status contains "\"top\":1,\"visible\":22,\"atTop\":true"
 
-# `G` is the end of the list, wherever the end has got to.
-key G
+# End is the end of the list, wherever the end has got to.
+key end
 expect screen contains "── Reset ──"
 expect screen contains "Reset all to defaults"
 expect status contains "\"atTop\":false,\"atEnd\":true"
 
 # A press on the scrollbar track lands the window at the pointer's
 # fraction of the list — three quarters down the track is the end here.
-key g
+key home
 expect status contains "\"atTop\":true,\"atEnd\":false"
 click 94 28
 expect screen contains "── Reset ──"

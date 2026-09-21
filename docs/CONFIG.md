@@ -1182,9 +1182,20 @@ next to it, keeping the newest 50.
 ```
 
 `▸` marks focus, `[brackets]` the current choice, a trailing `*` a value
-that is not the shipped default. `←→` / `h l` adjust, `↑↓` / `j k` move,
-`r` resets the row, `R` everything, `Enter` (or a click outside) keeps
-and closes, `Esc` cancels.
+that is not the shipped default. `←→` adjust, `↑↓` move, Tab /
+Shift-Tab step a section, `Ctrl+R` resets the focused row, `Enter` (or
+a click outside) keeps and closes, `Esc` cancels — a live filter first.
+
+The two profiles differ in one place. **Vim** keeps its letters: `h l`
+adjust, `j k` move, `[` `]` section, `g` `G` the ends, `r` reset the
+row, `R` reset all, `q` save. **Standard** has none of them and is
+type-to-filter: any printable key opens the search pill and goes into
+the query, so typing the name of the row you came for finds it instead
+of running five commands (`/` and space are the exceptions — the
+family's filter chord and the row's toggle). The footer advertises
+whichever set is live. Reset-all is the `Reset all to defaults` row
+under `── Reset ──` there, and in both profiles it asks before it
+throws anything away.
 
 **The file follows the row.** Adjusting a row applies at once and writes
 the value to the row's file, so what you see is what is on disk. Which

@@ -2492,7 +2492,7 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             const full = ui.canvas.full();
             const box = Rect.init(full.x, full.y + 1, full.w, full.h -| 2);
             // The filter pill's caret, while the pill has the keys.
-            if (settings_ui.draw(ui, box, &s.ui, both.visible, sub, .{ .all = both.all })) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
+            if (settings_ui.draw(ui, box, &s.ui, both.visible, sub, .{ .all = both.all, .typeahead = app.input_style != .vim })) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
         },
         .wizard => |*w| {
             const full = ui.canvas.full();

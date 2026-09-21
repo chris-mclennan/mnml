@@ -1,0 +1,112 @@
+# width: 120
+# height: 40
+# kbd (keyboard-purist VS Code user): VS Code's Settings screen opens
+# with the caret in "Search settings", so the reflex on Ctrl+, is to
+# type the name of the row you came for. mnml's overlay opened with the
+# LIST focused and every bare letter live, so `quit` — the obvious
+# query for the `Confirm on quit` row — was a small program: `q` saved
+# and closed the box with no toast, and `uit` fell into the buffer
+# underneath, which four keystrokes aimed at a search box had now
+# dirtied (hunt/findings-2026-09-21/kbd-settings-typeahead.md).
+#
+# The standard profile's box is type-to-filter now. The vim profile
+# keeps `h j k l r R q g G [ ]` — that is the family convention and
+# what a vim user's hands expect — and both profiles ask before `R`
+# throws every setting away.
+write a.txt "alpha\n"
+open a.txt
+expect dirty false
+
+command view.settings
+expect screen contains "▸ Line numbers:"
+# The footer advertises what actually works here: no letter commands.
+# (At 120 columns the footer is down to its tightest form, which is why
+# it is `ctrl+r reset` rather than `type to search` that is asserted —
+# `hintFor`'s five standard forms have their own unit test.)
+expect screen contains "ctrl+r reset"
+expect screen lacks "r/R reset"
+
+type "quit"
+# The box is still open, with a query in it…
+expect screen contains "UI · Editor · AI · Integrations · Reset"
+expect screen contains "󰍉 quit"
+expect screen contains "Confirm on quit:"
+expect screen lacks "▸ Line numbers:"
+# …and nothing reached the file.
+expect dirty false
+expect screen lacks "uitalpha"
+key esc
+key esc
+
+# Every letter that used to be a command is a query character now —
+# `h` and `l` no longer adjust the focused row behind the search.
+command view.settings
+expect screen contains "off / [on]"
+type "hjklr"
+expect screen contains "󰍉 hjklr"
+expect screen contains "no setting matches"
+key esc
+expect screen contains "▸ Line numbers:"
+expect screen contains "off / [on]"
+
+# Ctrl+R is the reset the footer names, and it is a chord rather than a
+# letter, so it survives in a box you can type into.
+key right
+expect screen contains "[off] / on"
+key ctrl+r
+expect screen contains "off / [on]"
+
+# `R` resets nothing here — it is a query byte.
+type "R"
+expect screen contains "󰍉 R"
+key esc
+key esc
+
+# Reset-all is the Reset section's action row, and it asks first with
+# Cancel focused, so Enter on reflex changes nothing.
+command view.settings
+key right
+expect screen contains "[off] / on"
+key end
+expect screen contains "▸ Reset all to defaults"
+key enter
+expect screen contains "Reset settings"
+expect screen contains "Reset every setting to its default?"
+expect screen contains "[C]ancel"
+key enter
+expect screen lacks "Reset every setting to its default?"
+expect screen contains "▸ Reset all to defaults"
+# Esc answers no too.
+key enter
+expect screen contains "Reset every setting to its default?"
+key esc
+expect screen lacks "Reset every setting to its default?"
+# …and the Reset choice is the one that does it.
+key enter
+key r
+expect screen lacks "Reset every setting to its default?"
+key home
+expect screen contains "▸ Line numbers:"
+expect screen contains "off / [on]"
+key esc
+
+# The vim profile is untouched: bare letters are its commands, and `R`
+# raises the same ask.
+command editor.use_vim
+command view.settings
+expect screen contains "r/R reset"
+expect screen lacks "ctrl+r reset"
+expect screen contains "▸ Line numbers:"
+key l
+expect screen contains "[off] / on"
+key r
+expect screen contains "off / [on]"
+key R
+expect screen contains "Reset every setting to its default?"
+key esc
+expect screen lacks "Reset every setting to its default?"
+# `q` still saves and closes in vim, where it is documented and expected.
+key q
+expect screen lacks "UI · Editor · AI · Integrations · Reset"
+expect dirty false
+command editor.use_standard

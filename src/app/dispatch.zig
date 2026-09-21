@@ -1732,7 +1732,15 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 closeOverlay(app);
                 return;
             },
-            .settings => if (target != .overlay_item and target != .scrollbar) settings_app.close(app),
+            // // changed (settings-reset-confirm): while the ask is up a
+            // press off it answers "no" rather than saving and closing
+            // the whole box.
+            .settings => |*st| if (target != .overlay_item and target != .scrollbar) {
+                if (st.ui.confirm != null) {
+                    st.ui.confirm = null;
+                    app.needs_render = true;
+                } else settings_app.close(app);
+            },
             .picker => if (target != .overlay_item and target != .scrollbar) {
                 cmd_picker.cancel(app);
                 closeOverlay(app);
