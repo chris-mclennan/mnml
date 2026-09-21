@@ -1889,7 +1889,7 @@ test "the three chips keep what they list: every segment and every hover row sur
         fn line(app: *app_mod.App, out_ipc: *const sdk.Ipc, d: Io.Dir, out: Allocator) ![]const u8 {
             var scratch = std.heap.ArenaAllocator.init(t.allocator);
             defer scratch.deinit();
-            try publishSegments(out_ipc, scratch.allocator(), app.values orelse return error.NoValues, null);
+            try publishSegments(out_ipc, scratch.allocator(), app.values orelse return error.NoValues, null, false);
             const text = try d.readFileAlloc(t.io, "command", out, .unlimited);
             try d.deleteFile(t.io, "command");
             return text;
