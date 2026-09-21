@@ -201,6 +201,17 @@ pub const Gate = struct {
             if (gitignore.globMatch(g, subject)) return .excluded;
         }
         if (in.ignores) |st| if (in.rel) |rel| {
+            // A directory rule (`zig-out/`) is matched against the
+            // DIRECTORY, which during a walk is then pruned. Nothing
+            // walks here, so each ancestor is offered to the rules in
+            // turn before the file itself — otherwise `zig-out/` would
+            // exclude the directory and share every file under it,
+            // which is the opposite of what it says.
+            var i: usize = 0;
+            while (std.mem.indexOfScalarPos(u8, rel, i, '/')) |slash| {
+                if (st.ignored(rel[0..slash], true)) return .gitignored;
+                i = slash + 1;
+            }
             if (st.ignored(rel, false)) return .gitignored;
         };
         return .allowed;
@@ -312,8 +323,11 @@ test "the gate: the file lists — secrets, the exclude globs, gitignore" {
     // The Claude backends' own secret list guards Copilot too.
     try t.expectEqual(Reason.secret_bearing, Gate.decide(.{ .opted_in = true, .path = "/w/.env", .rel = ".env" }));
     try t.expectEqual(Reason.secret_bearing, Gate.decide(.{ .opted_in = true, .path = "/w/aws_credentials.json", .rel = "aws_credentials.json" }));
-    // The shipped exclude globs.
-    try t.expectEqual(Reason.excluded, Gate.decide(.{ .opted_in = true, .path = "/w/server.key", .rel = "server.key" }));
+    // The shipped exclude globs. `*.key` and `*.pem` overlap the secret
+    // list on purpose — a file caught by both is reported as
+    // `secret_bearing`, the rule the user cannot turn off.
+    try t.expectEqual(Reason.secret_bearing, Gate.decide(.{ .opted_in = true, .path = "/w/server.key", .rel = "server.key" }));
+    // `id_*` is the glob's own: an SSH public key is not secret-named.
     try t.expectEqual(Reason.excluded, Gate.decide(.{ .opted_in = true, .path = "/home/u/.ssh/id_ed25519.pub", .rel = null }));
     // `.env.local` is caught by BOTH lists; secret-bearing is reported
     // first because it is the one the user cannot turn off.
@@ -334,6 +348,9 @@ test "the gate: gitignored files stay home" {
     defer st.deinit();
     try st.push(try gitignore.Rules.parse(t.allocator, "", "zig-out/\n*.generated.zig\n"));
     try t.expectEqual(Reason.gitignored, Gate.decide(.{ .opted_in = true, .path = "/w/a.generated.zig", .rel = "a.generated.zig", .ignores = &st }));
+    // A DIRECTORY rule covers what is under it: `zig-out/` matches the
+    // directory, and nothing here walks, so the ancestors are offered
+    // to the rules in turn.
     try t.expectEqual(Reason.gitignored, Gate.decide(.{ .opted_in = true, .path = "/w/zig-out/bin/x.zig", .rel = "zig-out/bin/x.zig", .ignores = &st }));
     try t.expectEqual(Reason.allowed, Gate.decide(.{ .opted_in = true, .path = "/w/src/a.zig", .rel = "src/a.zig", .ignores = &st }));
     // Outside the workspace there is no relative path, so gitignore

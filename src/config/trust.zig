@@ -617,7 +617,7 @@ test "an untrusted workspace cannot opt itself into Copilot, nor choose the bina
         var w: std.Io.Writer = .fixed(&buf);
         try c.format(&w);
         if (c.sink == .copilot_server) {
-            try t.expectEqualStrings("Copilot language server command — runs `/tmp/evil --stdio` when you type, with Copilot ghost text on", w.buffered());
+            try t.expectEqualStrings("Copilot language server copilot.command — runs `/tmp/evil --stdio` when you type, with Copilot ghost text on", w.buffered());
         } else {
             try t.expectEqual(Sink.copilot_share, c.sink);
             try t.expectEqualStrings("ai.copilot_here", c.key);

@@ -1931,8 +1931,18 @@ test "the setup picker lists the backends and Esc leaves the config alone; a pic
     const text = try tmp.dir.readFileAlloc(t.io, "config.zon", t.allocator, .unlimited);
     defer t.allocator.free(text);
     try t.expect(std.mem.indexOf(u8, text, ".suggest_backend = \"claude-api\"") != null);
-    // The local row toasts the migration note instead of enabling anything.
+    // The Copilot row (third) shares nothing by itself: the toast says
+    // what still has to happen, by name.
     try command.run(&app, .{ .static = .@"ai.setup_suggestions" });
+    try app.handle(.{ .key = Key.named(.down) });
+    try app.handle(.{ .key = Key.named(.down) });
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expectEqual(suggest.Backend.copilot, suggestBackend(&app));
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "ai.copilot_enable_here") != null);
+    // The local row (fourth) toasts the migration note instead of
+    // enabling anything.
+    try command.run(&app, .{ .static = .@"ai.setup_suggestions" });
+    try app.handle(.{ .key = Key.named(.down) });
     try app.handle(.{ .key = Key.named(.down) });
     try app.handle(.{ .key = Key.named(.down) });
     try app.handle(.{ .key = Key.named(.enter) });
