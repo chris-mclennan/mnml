@@ -253,6 +253,13 @@ pub const App = struct {
     watch_arena: std.heap.ArenaAllocator,
     /// The last statusline values, for the chip.
     values: ?fetch.ValuesResult = null,
+    /// The arena those values live on — the result's own, taken off it
+    /// rather than let go at the end of `commit`. This figure is not a
+    /// number: it carries the tooltip's breakdown and the hover's rows,
+    /// and the pane republishes all of it every time it opens one of
+    /// those rows. It has to still be there minutes after the listing
+    /// landed.
+    values_arena: ?std.heap.ArenaAllocator = null,
     values_at_secs: i64 = 0,
     values_requested: bool = false,
     /// Set by `commit` when a refresh landed, so a test can wait on it.
@@ -357,6 +364,7 @@ pub const App = struct {
         app.actions.deinit();
         app.watch_out.deinit(gpa);
         app.watch_arena.deinit();
+        if (app.values_arena) |*a| a.deinit();
         app.filter.deinit(gpa);
         app.status.deinit(gpa);
         app.effects.deinit(gpa);
@@ -1853,6 +1861,14 @@ pub const App = struct {
             .values => |v| {
                 app.values_requested = false;
                 app.values_at_secs = app.now_secs;
+                // The figure's strings come with it: the arena is taken
+                // off the result rather than dropped at the bottom of
+                // this function, because `app.values` is read long
+                // after — every `.segment` effect republishes the chip
+                // out of it, rows and all.
+                if (app.values_arena) |*old| old.deinit();
+                app.values_arena = res.arena;
+                keep_arena = true;
                 app.values = v;
                 const a = app.effect_arena.allocator();
                 if (v.error_text.len > 0) {
@@ -2258,6 +2274,14 @@ pub const Rig = struct {
     tmp: std.testing.TmpDir,
 
     pub fn init(config: cfg.Config, opts: Options) !*Rig {
+        return initOn(config, opts, t.allocator);
+    }
+
+    /// The Rig with the FETCH side — the client, the worker, and every
+    /// arena a job or a result makes — on `gpa`. `Scribble` passes one
+    /// that poisons what it frees, which is the only way a test can see
+    /// a result still pointing at a listing that is over.
+    pub fn initOn(config: cfg.Config, opts: Options, gpa: std.mem.Allocator) !*Rig {
         const r = try t.allocator.create(Rig);
         errdefer t.allocator.destroy(r);
         r.tmp = t.tmpDir(.{});
@@ -2268,9 +2292,9 @@ pub const Rig = struct {
         r.srv = try listener.Server.start(t.allocator, t.io, 0);
         const base = try r.srv.baseUrl(t.allocator);
         defer t.allocator.free(base);
-        r.client = try api.Client.init(t.allocator, t.io, base, "me@x.com", "tok", "", .{});
+        r.client = try api.Client.init(gpa, t.io, base, "me@x.com", "tok", "", .{});
         r.progress = .{};
-        r.worker = fetch.Worker.init(t.allocator, t.io, &r.client, &r.progress, config.account_id, config.workspace);
+        r.worker = fetch.Worker.init(gpa, t.io, &r.client, &r.progress, config.account_id, config.workspace);
         r.app = try App.init(t.allocator, t.io, config, r.config_path, opts);
         r.app.now_secs = Io.Timestamp.now(t.io, .real).toSeconds();
         r.app.cols = 120;
@@ -2757,6 +2781,75 @@ test "the awaiting chip counts and filters what is waiting on MY review, off the
     // The row says where it lives — a title with no repo behind it
     // still sends the reader into the pane to find out which one.
     try t.expectEqualStrings("acme/api", r.app.values.?.awaiting_items[0].sub);
+}
+
+/// An allocator that writes 0xAA over everything it frees, in every
+/// build mode, and hands the call on.
+///
+/// Nothing else does. `Allocator.free`'s own poison is `undefined`,
+/// which a release build is free to skip, and an arena gives its pages
+/// back through `rawFree`, which never poisons at all — so a slice of
+/// freed memory goes on reading correctly until something else claims
+/// the page. That is precisely how this bug hid: the chip's rows sat
+/// on an arena `commit` had already let go, and they read right for
+/// minutes before they didn't. Without this, a test for it passes
+/// whatever the code does.
+const Scribble = struct {
+    child: std.mem.Allocator,
+
+    fn allocator(s: *Scribble) std.mem.Allocator {
+        return .{ .ptr = s, .vtable = &.{ .alloc = alloc, .resize = resize, .remap = remap, .free = free } };
+    }
+
+    fn alloc(ctx: *anyopaque, len: usize, a: std.mem.Alignment, ra: usize) ?[*]u8 {
+        const s: *Scribble = @ptrCast(@alignCast(ctx));
+        return s.child.rawAlloc(len, a, ra);
+    }
+
+    fn resize(ctx: *anyopaque, mem: []u8, a: std.mem.Alignment, new_len: usize, ra: usize) bool {
+        const s: *Scribble = @ptrCast(@alignCast(ctx));
+        if (!s.child.rawResize(mem, a, new_len, ra)) return false;
+        // The tail a shrink gives back is freed memory too.
+        if (new_len < mem.len) @memset(mem[new_len..], 0xAA);
+        return true;
+    }
+
+    fn remap(ctx: *anyopaque, mem: []u8, a: std.mem.Alignment, new_len: usize, ra: usize) ?[*]u8 {
+        const s: *Scribble = @ptrCast(@alignCast(ctx));
+        return s.child.rawRemap(mem, a, new_len, ra);
+    }
+
+    fn free(ctx: *anyopaque, mem: []u8, a: std.mem.Alignment, ra: usize) void {
+        const s: *Scribble = @ptrCast(@alignCast(ctx));
+        @memset(mem, 0xAA);
+        s.child.rawFree(mem, a, ra);
+    }
+};
+
+test "the chip keeps its own copy of the rows: nothing it lists points into a finished listing" {
+    var scribble: Scribble = .{ .child = t.allocator };
+    // Every HTTP body, every job arena and every result arena on an
+    // allocator that poisons what it frees.
+    const r = try Rig.initOn(acme, .{}, scribble.allocator());
+    defer r.deinit();
+
+    // The listings are over: each repo's response body went back to the
+    // allocator inside `values`, and the job that carried the figure has
+    // been committed. Everything either of those lent out is 0xAA now.
+    const v = r.app.values.?;
+    try t.expectEqual(@as(usize, 2), v.open_items.len);
+    try t.expectEqualStrings("Fix the login redirect", v.open_items[0].text);
+    try t.expectEqualStrings("acme/api · approved", v.open_items[0].sub);
+    try t.expectEqualStrings("api#1234", v.open_items[0].key);
+    try t.expectEqualStrings("Redesign the empty state", v.open_items[1].text);
+    try t.expectEqualStrings("Bump the client timeout to 30s", v.awaiting_items[0].text);
+
+    // And the chip republishes the SAME rows the pane opens one of —
+    // the `.segment` effect reads this figure minutes after it landed,
+    // which is the moment the reader is certainly looking at it.
+    try r.app.requestValues();
+    try r.drain();
+    try t.expectEqualStrings("Fix the login redirect", r.app.values.?.open_items[0].text);
 }
 
 test "a click selects the row it lands on, a right-click opens its menu, the author chip toggles mine-only" {
