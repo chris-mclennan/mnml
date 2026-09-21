@@ -1,0 +1,73 @@
+# Jira Work — the Reported-by-me window and the row that widens it.
+#
+# The tab runs Jira's own "Reported by me" filter (newest FILED first,
+# every resolution) with a two-week created window on the front, because
+# unwindowed it is every ticket the account ever filed. The trailing
+# `⋯  Show older (2 weeks → 30 days)` row is the step out of it: one
+# press is one ordinary refetch at the next window, and the row's words
+# move on to name the step after it.
+#
+# The offline server ignores the `created >= -Nd` clause — deliberately:
+# a fixture with real dates in it would age out of its own window and
+# take this file with it. What is asserted here is the window the pane
+# asks for and the row that changes it, not the server's arithmetic.
+# The pane's token bucket, private to this file. Without it the
+# bucket resolves to a machine-wide shared file (the fleet's
+# ~/.tattle-claude-artifacts/jira-ratelimit.json), where anything
+# else on the machine can drain it and leave the pane on
+# `loading…` for a minute — a flake with no cause on screen.
+# env: JIRA_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/jira-bucket.json
+# env: JIRA_API_TOKEN=fake-token
+# env: JIRA_BASE_URL=@${MNML_E2E_WORKSPACE}/jira.url
+# The fake takes port 0 and writes the URL it landed on to `jira.url`;
+# `JIRA_BASE_URL=@<file>` is how the pane reads it, so nothing here ever
+# picks a port and two runs of the corpus never collide.
+shell "$MNML_FAKE_JIRA" --port 0 --url-file jira.url --life-secs 180 --quiet --pid-file fake-jira.pid >/dev/null 2>&1 &
+wait 500
+write sdk/mnml-sdk/build.zig ""
+write integrations/jira/build.zig ""
+write integrations/jira/manifest.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } } }"
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"https://jira.invalid\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .rate = .{ .per_sec = 1000, .burst = 1000 }, .tabs = .{ .{ .name = \"Reported by me\", .kind = .work_reported } } }"
+command integrations.show_in_dev
+expect screen contains "INTEGRATIONS"
+drag 30 5 60 5
+expect screen contains "[dev] Jira Work  0.2.0  not installed"
+key i
+expect screen contains "installed jira_work from"
+wait 1200
+expect screen lacks "installed jira_work from"
+command integrations.open_as_tab
+command jira_work.open
+# The pane spawns, searches the offline Jira and paints; the wait covers
+# the startup an expect's own 3 s budget cannot.
+wait 8000
+command view.toggle_tree
+command view.focus_pane
+# Four tickets, not three: the tab no longer excludes what is resolved,
+# so the Done sub-task I filed is on it. That is Jira's filter.
+expect screen contains "JIRA WORK (4)"
+expect screen contains "ENG-4"
+expect screen contains "ENG-11"
+# The step out of the window, below the last group.
+expect screen contains "Show older (2 weeks → 30 days)"
+# End lands on it; Enter widens one step and refetches.
+key end
+key enter
+wait 3000
+expect screen contains "Show older (30 days → 90 days)"
+expect screen lacks "Show older (2 weeks"
+# The listing is still the same four tickets — a wider window is the
+# same query with more room, not a different tab.
+expect screen contains "JIRA WORK (4)"
+expect screen contains "ENG-4"
+# q ends the pane; uninstall before leaving.
+key q
+wait 500
+key x
+command integrations.show_installed
+key end
+key x
+expect screen contains "Remove Jira Work?"
+key r
+expect screen contains "removed jira_work"
+shell kill "$(cat fake-jira.pid)" 2>/dev/null || true
