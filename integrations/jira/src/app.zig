@@ -3000,7 +3000,14 @@ pub const App = struct {
 
     pub fn openModal(a: *App, key: []const u8) Allocator.Error!void {
         a.closeModal();
-        var m: Modal = .{ .key = try a.keep(key), .arena = std.heap.ArenaAllocator.init(a.gpa) };
+        // The arena goes into the field FIRST, and the allocator is
+        // taken from where it will LIVE. An `ArenaAllocator`'s
+        // `allocator()` binds to the address it was taken from, and a
+        // `std.json.Value` is not plain data — every object and array
+        // inside it keeps that handle — so a handle taken from a local
+        // and then copied into `a.modal` points at a dead stack slot.
+        a.modal = .{ .key = try a.keep(key), .arena = std.heap.ArenaAllocator.init(a.gpa) };
+        const m = &a.modal.?;
         var fields: std.ArrayList([]const u8) = .empty;
         const arena = m.arena.allocator();
         for (a.cfg.detail_modal.fields) |spec| try fields.append(arena, a.cfg.detail_modal.resolveId(spec));
@@ -3018,7 +3025,6 @@ pub const App = struct {
             .ok => |v| m.data = v,
             .failed => |f| m.error_text = try arena.dupe(u8, f.message),
         }
-        a.modal = m;
     }
 
     pub fn closeModal(a: *App) void {

@@ -1667,3 +1667,40 @@ test "one binary, three manifests, one poll: only the chip that has a segment de
     // The one that polls is the one with chips to feed, and vice versa.
     for (specs) |s| try testing.expectEqual(s.statusline.len > 0, s.values_sources.len > 0);
 }
+
+test "the detail modal's fields are readable after it is open: its arena is taken from where it lives" {
+    // `openModal` used to take `allocator()` off a STACK local and then
+    // copy the struct into `a.modal`. A `std.json.Value` is not plain
+    // data — every object and array inside it keeps that handle — so
+    // the modal's own data held a pointer to a dead frame.
+    var scribble: sdk.testing.Scribble = .{ .child = testing.allocator };
+    const h = try app_mod.Harness.startOn(.{ .tabs = &app_mod.work_tabs }, .work, scribble.allocator());
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    const key = a.tab().issues[0].key;
+    try a.openModal(key);
+    const m = a.modal orelse return error.NoModal;
+    try testing.expectEqualStrings(key, m.key);
+    try testing.expectEqualStrings("", m.error_text);
+    const data = m.data orelse return error.NoData;
+    const summary = json.getStr(data, "fields.summary") orelse return error.NoSummary;
+    try testing.expect(summary.len > 0);
+    try testing.expect(std.mem.indexOfScalar(u8, summary, 0xAA) == null);
+
+    // The decisive one. A `std.json.Array` is `std.array_list.Managed`,
+    // so it CARRIES the allocator it was parsed on — and an
+    // `ArenaAllocator`'s `allocator()` binds to the address it was taken
+    // from. Taken off a stack local and then copied into `a.modal`, that
+    // address is a frame that has returned; taken off the field, it is
+    // the arena the modal will free. Nothing else in the modal can tell
+    // the two apart, which is why this looked fine for as long as it did.
+    const arr = switch (json.get(data, "fields.labels") orelse return error.NoLabels) {
+        .array => |x| x,
+        else => return error.NotAnArray,
+    };
+    try testing.expectEqual(@intFromPtr(&a.modal.?.arena), @intFromPtr(arr.allocator.ptr));
+
+    a.closeModal();
+    try testing.expect(a.modal == null);
+}
