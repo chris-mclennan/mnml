@@ -375,6 +375,10 @@ fn fakeLspPath(gpa: Allocator, io: Io) Allocator.Error!?[]u8 {
     return fakeToolPath(gpa, io, "mnml-fake-lsp", build_options.fake_lsp_exe);
 }
 
+fn fakeCopilotPath(gpa: Allocator, io: Io) Allocator.Error!?[]u8 {
+    return fakeToolPath(gpa, io, "mnml-fake-copilot", build_options.fake_copilot_exe);
+}
+
 fn sampleIntegrationPath(gpa: Allocator, io: Io) Allocator.Error!?[]u8 {
     return fakeToolPath(gpa, io, "mnml-sample", build_options.sample_integration_exe);
 }
@@ -533,6 +537,13 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
             try env.put("MNML_FAKE_LSP", p);
         }
     }
+    // `$MNML_FAKE_COPILOT`, for the `copilot_*` scripts.
+    if (env.get("MNML_FAKE_COPILOT") == null) {
+        if (try fakeCopilotPath(gpa, io)) |p| {
+            defer gpa.free(p);
+            try env.put("MNML_FAKE_COPILOT", p);
+        }
+    }
     // `$MNML_SAMPLE_INTEGRATION`: the prebuilt sample integration
     // (`integrations/sample/`), for the `integrations_*` scripts — a
     // manifest whose `binary` is that variable resolves to it, so the
@@ -629,6 +640,7 @@ fn reportHarness(env: *const std.process.Environ.Map, w: *Io.Writer) !void {
         .{ .name = "MNML_SAMPLE_INTEGRATION", .step = "sample-integration" },
         .{ .name = "MNML_FAKE_DAP", .step = "install" },
         .{ .name = "MNML_FAKE_LSP", .step = "install" },
+        .{ .name = "MNML_FAKE_COPILOT", .step = "install" },
     };
     for (helpers) |h| {
         // Empty counts as unset: that is what a `.binary = "$MNML_JIRA"`

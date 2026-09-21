@@ -34,6 +34,7 @@ const event = @import("../core/event.zig");
 const jsonrpc = @import("../rpc/jsonrpc.zig");
 const types = @import("../lsp/types.zig");
 const lsp_client = @import("../lsp/client.zig");
+const lsp_sync = @import("lsp_sync.zig");
 const copilot = @import("../ai/copilot.zig");
 const cop_client = @import("../copilot/client.zig");
 const Client = cop_client.Client;
@@ -256,6 +257,12 @@ pub fn stopIfNotAllowed(app: *App) void {
 /// Mirror `e` onto the server, if the gate allows this file. Called
 /// before a request rather than on every open, so a file that is never
 /// completed in is never sent.
+///
+/// The change itself is `app/lsp_sync.zig`'s — the same fold of a
+/// frame's splices into one range that the language servers get, so
+/// Copilot and rust-analyzer never disagree about what the buffer says.
+/// The README calls incremental sync required; `changeFor` returning
+/// null is the signal to send the whole text instead.
 fn syncDoc(app: *App, c: *Client, e: *EditorPane) Allocator.Error!bool {
     const path = e.buf.doc.path orelse return false;
     if (gateFor(app, path) != .allowed) return false;
@@ -274,39 +281,17 @@ fn syncDoc(app: *App, c: *Client, e: *EditorPane) Allocator.Error!bool {
         return true;
     };
     if (seen == head) return true;
-    // Incremental where the splice log can say what changed — the
-    // README calls incremental sync required. A lost log falls back to
-    // the full text, which the server still accepts as one change with
-    // no range.
-    const splices = ed.doc.edits.since(seen);
-    if (!ed.doc.edits.lostSince(seen) and splices.len == 1) {
-        const sp = splices[0];
-        const insertion = sp.old_end == sp.start;
-        const start = types.positionOf(text, sp.start, cop_client.encoding);
-        const stop: types.Position = if (insertion) start else .{ .line = sp.old_end_pt.row, .character = sp.old_end_pt.col };
-        // A non-insertion under UTF-16 needs the old text's columns,
-        // which the splice records in code points; only trust it when
-        // the line is ASCII, else send the whole buffer.
-        const simple = insertion or asciiLine(text, sp.start);
-        if (simple) {
-            const new_text = text[@min(sp.start, text.len)..@min(sp.new_end, text.len)];
-            c.didChange(path, &.{.{ .range = .{ .start = start, .end = stop }, .text = new_text }}) catch return false;
-            ed.doc.copilot_seen = head;
-            return true;
+    if (!ed.doc.edits.lostSince(seen)) {
+        if (lsp_sync.compose(ed.doc.edits.since(seen))) |composed| {
+            if (lsp_sync.changeFor(ed, composed, cop_client.encoding)) |ch| {
+                c.didChange(path, &.{.{ .range = ch.range, .text = text[ch.text_start..ch.text_end] }}) catch return false;
+                ed.doc.copilot_seen = head;
+                return true;
+            }
         }
     }
     c.didChange(path, &.{.{ .range = null, .text = text }}) catch return false;
     ed.doc.copilot_seen = head;
-    return true;
-}
-
-/// Whether the line containing `byte` is ASCII — then a code-point
-/// column and a UTF-16 one are the same number.
-fn asciiLine(text: []const u8, byte: usize) bool {
-    const at = @min(byte, text.len);
-    const start = if (std.mem.lastIndexOfScalar(u8, text[0..at], '\n')) |nl| nl + 1 else 0;
-    const end = if (std.mem.indexOfScalarPos(u8, text, at, '\n')) |nl| nl else text.len;
-    for (text[start..end]) |ch| if (ch >= 0x80) return false;
     return true;
 }
 
@@ -393,6 +378,19 @@ pub fn handle(app: *App, ev: *event.LspEvent) Allocator.Error!void {
             try app.toastLevel(.warn, "Copilot: the language server stopped", .{});
         },
         .message => |msg| try handleMessage(app, c, msg),
+        // A frame over `jsonrpc.max_body`, read off the pipe and thrown
+        // away. If it was the answer to a completion the asker would
+        // wait for ever, so the pending entry goes and the chip settles.
+        .oversize => |o| {
+            if (o.id) |id| if (c.transport.take(id)) |pend| {
+                if (@as(cop_client.ReqKind, @enumFromInt(pend.kind)) == .inline_completion) {
+                    c.in_flight = null;
+                    if (app.ai.debounce.settle(app.copilot.req_generation)) {
+                        try ghost_chip.settle(app, .failed, 0, "Copilot: the reply was too big to read");
+                    }
+                }
+            };
+        },
     }
 }
 
