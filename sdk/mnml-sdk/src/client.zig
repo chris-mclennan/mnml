@@ -96,8 +96,27 @@ pub const Mount = struct {
         return connect(gpa, io, path);
     }
 
+    /// End the stream without closing the handle: a read already in
+    /// flight returns end-of-stream instead of hanging on, and the fd
+    /// stays valid while it does.
+    ///
+    /// A pane that reads the mount on a task of its own has to call
+    /// this before it stops that task and before `destroy`. `close`
+    /// alone pulls the descriptor out from under a read that is still
+    /// parked in the kernel, and the read then fails with `EBADF` —
+    /// which a Debug build treats as a programmer bug and panics on,
+    /// so the child dies at teardown and the host, which can only see
+    /// the socket end, reports `[connection closed]`. A shipped build
+    /// returns the error instead, which is why this only ever showed
+    /// up in Debug.
+    pub fn shutdown(m: *Mount) void {
+        m.done = true;
+        m.stream.shutdown(m.io, .both) catch {};
+    }
+
     /// Close the socket and free everything. Does not send `bye` — call
-    /// `bye` first for a clean exit.
+    /// `bye` first for a clean exit, and `shutdown` first if anything
+    /// else may still be reading.
     pub fn destroy(m: *Mount) void {
         m.stream.close(m.io);
         m.hello_arena.deinit();
@@ -204,3 +223,82 @@ pub const Mount = struct {
         m.done = true;
     }
 };
+
+// ─── tests ───────────────────────────────────────────────────────────────
+
+const t = std.testing;
+
+/// The other end: accept, say `hello`, then say nothing at all — which
+/// is what a host does between keystrokes, and the state a pane's
+/// reader task spends nearly all of its life in.
+fn silentHost(io: Io, server: *Io.net.Server, accepted: *Io.Event) void {
+    const stream = server.accept(io) catch return;
+    defer stream.close(io);
+    var buf: [4096]u8 = undefined;
+    var w: Io.net.Stream.Writer = .init(stream, io, &buf);
+    const body = wire.encode(t.allocator, wire.HostMessage{ .hello = .{ .geometry = .{ .cols = 80, .rows = 24 } } }) catch return;
+    defer t.allocator.free(body);
+    wire.writeMessage(&w.interface, body) catch return;
+    accepted.set(io);
+    // Hold the socket open. The reader below is now parked in a read
+    // that only the client's own shutdown can end.
+    io.sleep(.fromMilliseconds(30_000), .awake) catch {};
+}
+
+/// Parks in `next` until the mount ends.
+fn parkedReader(io: Io, m: *Mount, ended: *Io.Event, got_null: *std.atomic.Value(bool)) void {
+    var arena = std.heap.ArenaAllocator.init(m.gpa);
+    defer arena.deinit();
+    const msg = m.next(arena.allocator()) catch null;
+    got_null.store(msg == null, .release);
+    ended.set(io);
+}
+
+test "shutdown ends a read that is already parked, so the close after it cannot pull the descriptor away" {
+    if (!Io.net.has_unix_sockets) return error.SkipZigTest;
+    const io = t.io;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+    const path = try std.fmt.allocPrint(t.allocator, "{s}/m.sock", .{dir});
+    defer t.allocator.free(path);
+    const addr = try Io.net.UnixAddress.init(path);
+    var server = try addr.listen(io, .{});
+    defer server.deinit(io);
+
+    var hosts: Io.Group = .init;
+    defer hosts.cancel(io);
+    var accepted: Io.Event = .unset;
+    try hosts.concurrent(io, silentHost, .{ io, &server, &accepted });
+
+    const m = try Mount.connect(t.allocator, io, path);
+    // `destroy` closes the socket. Before this, the reader below was
+    // still in the kernel on that descriptor and the close failed the
+    // read with `EBADF` — a programmer bug a Debug build panics on, and
+    // a shipped build merely returns, which is the whole reason this
+    // only ever showed up in Debug.
+    defer m.destroy();
+
+    var readers: Io.Group = .init;
+    defer readers.cancel(io);
+    var ended: Io.Event = .unset;
+    var got_null: std.atomic.Value(bool) = .init(false);
+    try readers.concurrent(io, parkedReader, .{ io, m, &ended, &got_null });
+
+    // The reader has the hello behind it and is parked on the next
+    // message, which the host will never send.
+    try accepted.wait(io);
+    io.sleep(.fromMilliseconds(50), .awake) catch {};
+    try t.expect(!got_null.load(.acquire));
+
+    m.shutdown();
+    // It comes back on its own, and with end-of-stream rather than an
+    // error — so a pane that reads the mount on a task can join that
+    // task before it closes anything.
+    ended.waitTimeout(io, .{ .duration = .{ .raw = .fromMilliseconds(5000), .clock = .awake } }) catch |err| switch (err) {
+        error.Timeout => return error.@"the parked read never came back",
+        error.Canceled => return error.SkipZigTest,
+    };
+    try t.expect(got_null.load(.acquire));
+}
