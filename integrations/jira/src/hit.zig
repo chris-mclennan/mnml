@@ -46,6 +46,9 @@ pub const Target = union(enum) {
     chevron: u32,
     /// A `Show all N PRs` row.
     show_more: u32,
+    /// The listing's trailing `Show older (…)` row — one press widens
+    /// the tab's date window a step.
+    show_older: u32,
     /// A build line under a pull request. Its own target rather than
     /// the row's, because the only thing a build line stands for is
     /// that run's page: a click on it goes there, the same as the

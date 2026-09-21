@@ -413,7 +413,14 @@ pub const App = struct {
                 .jql = (try c.staticJql(keys.allocator())) orelse "",
                 .data = std.heap.ArenaAllocator.init(gpa),
                 .meta = std.heap.ArenaAllocator.init(gpa),
-                .tree = if (c.isTree() or c.isKanban()) tree.State.init(gpa) else null,
+                .tree = if (c.isTree() or c.isKanban()) blk: {
+                    var st = tree.State.init(gpa);
+                    // Reported by me opens on its configured window; it
+                    // is the only kind that has one, and the tree's
+                    // trailing row is what widens it.
+                    if (c.kind == .work_reported) st.window_days = c.reported_window_days;
+                    break :blk st;
+                } else null,
                 .team = c.team,
                 .issue_type = c.issue_type,
                 .label = c.label,
@@ -1685,9 +1692,25 @@ pub const App = struct {
             // A build line is a door to that run's page.
             .pipeline => |pl| try a.openBuild(pl),
             .show_more => |s| try st.showAll(t.issues[s.issue_idx].key),
+            .show_older => |s| try a.widenWindow(s.next),
             else => {},
         }
         try a.clampCursor();
+    }
+
+    /// One step out of the Reported-by-me window: 14 days, then 30,
+    /// then 90, then none at all. The new window goes into the tab's
+    /// JQL and the tab is refetched the ordinary way — the same broker,
+    /// the same bucket, the same cache as `r` — so widening costs one
+    /// search and nothing else. No count query: what a step brings back
+    /// IS the count.
+    fn widenWindow(a: *App, next: u16) Allocator.Error!void {
+        const t = a.tab();
+        if (t.tree) |*st| st.window_days = next;
+        t.jql = try config.reportedJql(a.keys.allocator(), next);
+        var buf: [16]u8 = undefined;
+        a.say("reported: {s}", .{config.windowLabel(&buf, next)});
+        try a.refreshActiveMode(.full);
     }
 
     /// The run a build line stands for, in the browser. Bitbucket
@@ -1986,6 +2009,9 @@ pub const App = struct {
             },
             .pr_loading => |x| try st.setExpanded(t.issues[x.issue_idx].key, false),
             .show_more => |x| try st.setExpanded(t.issues[x.issue_idx].key, false),
+            // The widen row belongs to no ticket: there is nothing
+            // under it to close.
+            .show_older => {},
             .pipeline_loading, .pipeline_empty, .pipeline_error => |x| {
                 const k = t.issues[x.issue_idx].key;
                 if (st.prs(k)) |prs| if (x.pr_idx < prs.len) try st.setPrExpanded(k, prs[x.pr_idx].id, false);
@@ -3394,6 +3420,10 @@ pub const App = struct {
                 a.tab().selected = i;
                 try a.treeActivate();
             },
+            .show_older => |i| {
+                a.tab().selected = i;
+                try a.treeActivate();
+            },
             .pr_button => |b| try a.clickPrButton(b.row, b.which),
             // A dim `[ Merge ]` is not a `pr_button`: a click on one
             // says which condition fails rather than doing anything.
@@ -3530,7 +3560,7 @@ pub const App = struct {
         const t = a.tab();
         const st = &(t.tree.?);
         switch (row) {
-            .group, .ticket, .show_more => try a.treeActivate(),
+            .group, .ticket, .show_more, .show_older => try a.treeActivate(),
             .pr => |p| {
                 const key = t.issues[p.issue_idx].key;
                 const prs = st.prs(key) orelse return;

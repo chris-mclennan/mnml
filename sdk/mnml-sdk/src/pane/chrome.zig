@@ -421,11 +421,19 @@ pub fn Painter(comptime Target: type) type {
         /// column, which at any real width read as an empty column
         /// with a stray `⋯` in it rather than as a row you can press.
         pub fn showMoreRow(p: *Self, rect: Rect, label_x: u16, hidden: usize, target: Target) Allocator.Error!void {
+            try p.foldRow(rect, label_x, p.fmt("Show more ({d})", .{hidden}), target);
+        }
+
+        /// The fold row with its words given rather than counted — the
+        /// same ellipsis, the same dim punctuation, the same bright
+        /// label, for a row that folds something a count cannot say
+        /// (a date window, say). `showMoreRow` is this with `Show more
+        /// (N)` filled in.
+        pub fn foldRow(p: *Self, rect: Rect, label_x: u16, label: []const u8, target: Target) Allocator.Error!void {
             if (rect.isEmpty()) return;
             var x = label_x;
             x += p.put(x, rect.y, 3, if (p.ui.ascii) more_ascii else more_glyph, p.th.dimText());
             x += p.put(x, rect.y, 2, "  ", p.th.dimText());
-            const label = p.fmt("Show more ({d})", .{hidden});
             _ = p.putFit(x, rect.y, rect.right() -| x, label, p.th.bright());
             try p.mark(rect, target);
         }
