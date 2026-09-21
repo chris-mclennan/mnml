@@ -58,11 +58,25 @@ Unit tests that run on every host and cover the Windows code:
 - `runners.zig`: `findOnPath` with the platform delimiter and
   `PATHEXT`.
 - `data_root.zig`: `USERPROFILE` as the home when `HOME` is unset.
+- `sdk/mnml-sdk/src/manifest.zig`: the same rung on the SDK side, so
+  `<integration> --install` finds a data root on Windows without being
+  handed `MNML_DATA_ROOT`.
+- `run.ps1` structure, via `tools/run-ps1-check.py` (in `run.sh check`):
+  brace / quote / here-string balance, the 5.1-incompatible spellings,
+  every verb reachable, and the refusals, build lines, font destination
+  and dry-run phrases present by name. Structure only — it is not a run.
 
 ## What has NOT been proven — run this on a Windows box
 
 Everything that touches the real console or a real child process.
 Checklist, in order; each step assumes the previous passed.
+
+`docs/INSTALL-CHECKLIST.md` → *Windows 11* is the wider, install-shaped
+version of this: prerequisites, `run.ps1 install`, the font, the first
+launch, a file, a terminal pane, the Jira pane against the offline fake,
+quit-and-return — plus the UTM pristine-snapshot routine. That one is
+for a clean guest; this one is for the console and ConPTY surfaces
+specifically.
 
 ### Build + unit tests
 
@@ -154,32 +168,72 @@ variable at `0` they are refused rather than run through `cmd`.
 
 ## Known gaps
 
-- **No `run.sh install` on Windows.** Profiles themselves are the
-  program and work there — `MNML_PROFILE=dev` / `--profile dev` moves
-  the data root (`%USERPROFILE%\.config\mnml-dev`, via
-  `data_root.zig`'s USERPROFILE rung), the session file, the IPC
-  mailbox, the marker under `%TEMP%`, and paints the `dev` chip — but
-  the install verb is bash. Windows installs by hand: copy
-  `zig-out\bin\mnml-zig.exe` to where you keep binaries (as
-  `mnml.exe`), the `mnml-*.exe` integrations beside it, `zig-out\share`
-  next to that, then run each integration's `--install` with
-  `MNML_DATA_ROOT` pointing at the stable data root and relink /
-  re-copy `<data root>\bin\<name>.exe` at the installed copy —
-  `linkBeside` already falls back to copying where symlinks need a
-  privilege. A PowerShell twin of the verb, or the MSI
-  (`docs/RELEASE.md`), is the real answer.
-- **No `run.sh install-font` on Windows either**, and no MSI step for
-  it. The face is at `zig-out\share\mnml\fonts\MnmlSymbols.ttf`;
-  install it by hand (right-click → Install, or copy to
-  `%LOCALAPPDATA%\Microsoft\Windows\Fonts`) and point Windows
-  Terminal at it. Without it mnml's own block falls back rather than
-  rendering as `?` — the unfocused pty pane's cursor paints `▯` in
-  place of `U+F2001` — because `font_scan` reads the installed face's
-  cmap and only offers a glyph it actually carries;
-  `%LOCALAPPDATA%\Microsoft\Windows\Fonts` is already in
-  `fontDirs`, so the check works there. The merge that `install-font`
-  does (`zig build font-merge -Dfont-in=… -Dfont-out=…`) is a build
-  step and runs on Windows unchanged; only the bash wrapper is missing.
+- **`run.ps1` is the install, and it has never been run.** The four
+  daily-driver verbs now have a PowerShell twin — `run.ps1 install`,
+  `install-font`, `installed-status`, `profile` — with run.sh's
+  semantics, refusals and dry-run plan. Only the STRUCTURE of it has
+  been checked (`tools/run-ps1-check.py`, which `run.sh check` runs);
+  the real check, `tools/run-ps1-check.ps1`, needs a PowerShell and has
+  not executed anywhere yet. `docs/INSTALL-CHECKLIST.md` → *Windows 11*
+  step W-0 is the first run of both.
+
+  Three things it does differently from run.sh, because Windows differs:
+
+  - The prefix defaults to `%LOCALAPPDATA%\Programs\mnml`, not
+    `~/.local`.
+  - `<data root>\bin\<name>.exe` is a **copy**, not a symlink: a
+    symlink needs Developer Mode or elevation, and `linkBeside`
+    (`src/config/seed.zig`) already falls back to copying for the same
+    reason. `installed-status` therefore compares hashes where run.sh
+    reads a link target.
+  - `install-font` writes the per-user font directory **and** registers
+    the face under HKCU (below).
+
+  Still bash-only, and still by hand on Windows: the restart loop,
+  `headless`, `shot`, `fresh`, `clean`, `menu`, and the IPC verbs
+  (`restart` / `stop` / `status`). Those drive a running instance,
+  which is a separate pass.
+
+  Profiles themselves are the program and work there —
+  `MNML_PROFILE=dev` / `--profile dev` moves the data root
+  (`%USERPROFILE%\.config\mnml-dev`, via `data_root.zig`'s USERPROFILE
+  rung), the session file, the IPC mailbox, the marker under `%TEMP%`,
+  and paints the `dev` chip. `run.ps1 profile` prints all four from the
+  binary itself, which is how a first Windows session confirms them.
+
+  The SDK had the other half of that rung missing: `manifest.zig`'s
+  `dataRoot` went `MNML_DATA_ROOT` → `XDG_CONFIG_HOME` → `HOME` and
+  stopped, so a bare `mnml-jira.exe --install` on Windows answered
+  `error.NoHome` and wrote nothing. It reads `USERPROFILE` now, the way
+  `data_root.zig` always did. `run.ps1 install` passes `MNML_DATA_ROOT`
+  explicitly and never depended on it; a user running the binary by
+  hand did.
+- **The font gap is closed by `run.ps1 install-font`.** A file is not an
+  installed font on Windows, so the verb does both halves: it puts the
+  merged face in `%LOCALAPPDATA%\Microsoft\Windows\Fonts` and names it
+  under `HKCU\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts` as
+  `MnmlSymbols (TrueType)` — per-user, no elevation, the same shape
+  `first_launch_install.zig` uses for the Nerd Font. It merges rather
+  than overwrites (`zig build font-merge -Dfont-in=… -Dfont-out=…`, a
+  build step that always ran on Windows) and backs the old face up to
+  `%USERPROFILE%\Backups\mnml-zig\fonts\` first. A machine-wide
+  `C:\Windows\Fonts\MnmlSymbols.ttf` is merged FROM but never written
+  to — that would need elevation, and a per-user face wins for the user
+  anyway.
+
+  Without the face, mnml's own block falls back rather than rendering
+  as `?` — the unfocused pty pane's cursor paints `▯` in place of
+  `U+F2001` — because `font_scan` reads the installed face's cmap and
+  only offers a glyph it actually carries;
+  `%LOCALAPPDATA%\Microsoft\Windows\Fonts` is already in `fontDirs`,
+  so the check works there.
+
+  What is still open: Windows Terminal has **no font-fallback list**, so
+  MnmlSymbols only ever fills mnml's own `U+F1B00–U+F20FF`. Nerd Font
+  icons need the profile's own font face to be a full patched mono
+  (`terminalHint` in `first_launch_install.zig` says so). And there is
+  still no MSI step for the font — the installer drops it under the
+  prefix and leaves the font directory alone, like every other package.
 - **No Windows CI job runs the tests.** `ci.yml`'s matrix should add
   `windows-latest` running `zig build test` (Debug and ReleaseSafe)
   once the checklist above has passed by hand; the cross-compile gate

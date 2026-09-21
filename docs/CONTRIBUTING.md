@@ -328,11 +328,42 @@ been through the gate below, `./run.sh install` and the daily driver
 catches up — the running stable instance keeps running the binary it
 started with until you quit it.
 
-Windows gets the profiles (they are the program, and the data root
-handles `%USERPROFILE%`), but not `run.sh`, which is bash: install by
-copying `zig-out\bin\*.exe` and `zig-out\share` where you want them and
-running each integration's `--install` with `MNML_DATA_ROOT` set —
-what the verb does, by hand. `docs/WINDOWS.md` has the rest.
+**Windows: `run.ps1`, the same four verbs.** `run.sh` is bash, so the
+daily-driver half of it has a PowerShell twin — `install`,
+`install-font`, `installed-status`, `profile` — with the same
+semantics, the same three refusals and the same `-DryRun` plan.
+PowerShell 5.1 and 7 both run it; no modules.
+
+```powershell
+.\run.ps1 install -DryRun        # every copy, manifest and plan step
+.\run.ps1 install                # default prefix %LOCALAPPDATA%\Programs\mnml
+.\run.ps1 install-font           # per-user font dir + the HKCU registration
+.\run.ps1 installed-status
+.\run.ps1 profile                # data root, session, mailbox, %TEMP% marker
+```
+
+Three differences, all because Windows differs: the prefix default,
+`<data root>\bin\<name>.exe` being a copy rather than a symlink (a
+symlink needs Developer Mode; `linkBeside` already falls back to
+copying for the same reason), and `install-font` having to register the
+face under HKCU as well as write the file — a file alone is not an
+installed font there. The restart loop, `headless`, `shot`, `clean` and
+the IPC verbs stay bash-only.
+
+`run.ps1` has **never been executed**: there is no PowerShell on the
+author's Mac. `tools/run-ps1-check.py` (a structure check — balance,
+quoting, the 5.1-incompatible spellings, every verb reachable, the
+refusals and plan phrases present) runs in `./run.sh check`;
+`tools/run-ps1-check.ps1` is the real one and waits for a Windows
+guest. `docs/INSTALL-CHECKLIST.md` → *Windows 11* step W-0 runs it
+first thing. `docs/WINDOWS.md` has the rest of the Windows picture.
+
+**A clean machine.** `docs/INSTALL-CHECKLIST.md` is the per-OS
+first-run checklist — macOS, Ubuntu, Windows 11, one numbered list
+each, with what a pass looks like per step, and the UTM
+pristine-snapshot routine the guests are kept on. Walk it after
+anything that touches install, the font, the first-launch wizard or a
+platform backend.
 
 ## The gate — the verification sequence
 
@@ -364,11 +395,17 @@ step before it proved):
     change touches chrome (see *Spec dumps* below) — the diff counts must
     not grow;
 11. `tools/run-sh-check.sh` — the launcher's verbs on a throwaway
-    workspace, the marker and the IPC lifecycle included.
+    workspace, the marker and the IPC lifecycle included;
+12. `tools/run-ps1-check.py` — what can be checked about `run.ps1`
+    without a PowerShell: balance, quoting, the 5.1-incompatible
+    spellings, every verb reachable, and the refusals, build lines and
+    plan phrases present by name. `tools/run-ps1-check.ps1` is the real
+    check and runs on the Windows guest
+    (`docs/INSTALL-CHECKLIST.md` → *Windows 11*, step W-0).
 
-`./run.sh check` runs 1–5, 7 and 11 in one line, on the ReleaseSafe binary
-it builds at step 3, with `MNML_E2E_ALLOW_SHELL=1` for the corpus; 6, 8, 9
-and 10 are run by hand. `zig build check` is the older one-step form (1, 2, the
+`./run.sh check` runs 1–5, 7, 11 and 12 in one line, on the ReleaseSafe
+binary it builds at step 3, with `MNML_E2E_ALLOW_SHELL=1` for the corpus;
+6, 8, 9 and 10 are run by hand. `zig build check` is the older one-step form (1, 2, the
 gate, the sweep, `tests/e2e/defaults.test` and the corpus on the exe of that
 invocation).
 

@@ -51,9 +51,19 @@ the prefix. Neither puts it in the user's font directory — nothing
 should write there behind their back — so mnml falls back for its own
 block until they do: the unfocused pty pane's hollow cursor paints `▯`
 instead of `U+F2001`, and the tofu check names the rest. From a
-checkout that step is `./run.sh install-font`, which merges with
-whatever MnmlSymbols is already installed rather than replacing it. A
-release note that changes what the face carries should say so.
+checkout that step is `./run.sh install-font` — `.\run.ps1
+install-font` on Windows, which also has to register the face under
+HKCU, because a file alone is not an installed font there — and both
+merge with whatever MnmlSymbols is already installed rather than
+replacing it. A release note that changes what the face carries should
+say so.
+
+The MSI has no font step either, and Windows Terminal has no
+font-fallback list, so a Windows user who installs from a release has
+two manual steps left: point the profile's font face at a full
+Nerd-Font-patched mono, and install MnmlSymbols per-user.
+`docs/INSTALL-CHECKLIST.md` → *Windows 11* steps 2 and 4 are those two,
+written out.
 
 ## The shipped names
 
@@ -68,9 +78,15 @@ names in any build (`docs/CONFIG.md`, "Profiles"). An explicit
 per-target builds.
 
 Installing a local build for daily use is not part of a release:
-`./run.sh install` does that from a working tree
-(`docs/CONTRIBUTING.md`, "Daily driver + development on one machine").
-A release is for everybody else.
+`./run.sh install` does that from a working tree — `.\run.ps1 install`
+on Windows (`docs/CONTRIBUTING.md`, "Daily driver + development on one
+machine"). A release is for everybody else.
+
+Before a release that anyone will install on a clean machine, walk
+`docs/INSTALL-CHECKLIST.md` for each OS the release ships for: it is
+the per-OS first-run list — prerequisites, install, font, first launch,
+a file, a terminal pane, quit-and-return — plus the UTM
+pristine-snapshot routine the guests are kept on.
 
 ## Trap 1 — the CHANGELOG secret scrub
 
