@@ -1533,7 +1533,7 @@ fn setupSuggestions(app: *App) CommandError!void {
     const rows = [_]struct { b: suggest.Backend, label: []const u8, detail: []const u8 }{
         .{ .b = .claude_code, .label = "Claude Code sub", .detail = "reuses your Max/Pro plan · no separate API key · ~1s" },
         .{ .b = .claude_api, .label = "Claude API", .detail = "needs $ANTHROPIC_API_KEY · ~1s · works now" },
-        .{ .b = .copilot, .label = "GitHub Copilot", .detail = "your Copilot seat (free tier too) · per-workspace opt-in, off by default" },
+        .{ .b = .copilot, .label = "GitHub Copilot", .detail = "your seat (free tier too) · opt in per workspace" },
         .{ .b = .local, .label = "Local model (embedded)", .detail = "not in this release — a migration note for now" },
     };
     for (rows) |r| {
