@@ -71,10 +71,11 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     var verb = rest[0..i];
     // A command id may carry dots and digits (`tab.close`); the copy /
     // move verbs take an address right after their letters (`:t.`,
-    // `:m0`, `:co5`), so those split at the first non-letter.
+    // `:m0`, `:co5`) and `:d` / `:y` a count (`:1d2`), so those split at
+    // the first non-letter.
     var letters: usize = 0;
     while (letters < verb.len and std.ascii.isAlphabetic(verb[letters])) letters += 1;
-    if (letters < verb.len and eqAny(verb[0..letters], &.{ "t", "co", "copy", "m", "mo", "move" })) {
+    if (letters < verb.len and eqAny(verb[0..letters], &.{ "t", "co", "copy", "m", "mo", "move", "d", "de", "del", "delete", "y", "ya", "yan", "yank" })) {
         i = letters;
         verb = rest[0..i];
     }
@@ -165,7 +166,8 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     if (eqAny(verb, &.{"A"})) return alternate(app);
     if (eqAny(verb, &.{ "sor", "sort" })) return sort(app, range, args, bang);
     if (eqAny(verb, &.{ "ret", "retab" })) return retab(app);
-    if (eqAny(verb, &.{ "d", "de", "del", "delete" })) return deleteLines(app, range);
+    if (eqAny(verb, &.{ "d", "de", "del", "delete" })) return deleteLines(app, range, args);
+    if (eqAny(verb, &.{ "y", "ya", "yan", "yank" })) return yankLines(app, range, args);
     if (eqAny(verb, &.{ "ab", "abb", "abbreviate", "iab", "iabbrev" })) return abbreviate(app, args);
     if (eqAny(verb, &.{ "una", "unabbreviate", "iuna", "iunabbrev" })) return unabbreviate(app, args);
     if (eqAny(verb, &.{ "reg", "registers", "di", "display" })) return registers(app, args);
@@ -829,17 +831,60 @@ fn retab(app: *App) CommandError!void {
     app.toast(":retab — {d} tab(s)", .{tabs});
 }
 
-/// `:[range]d` — delete whole lines into the unnamed register.
-fn deleteLines(app: *App, range: ?Range) CommandError!void {
+/// The tail of `:[range]d[elete] [x] [count]` and
+/// `:[range]y[ank] [x] [count]` (`:help :d`, `:help :y`): an optional
+/// register takes the lines (an uppercase one appends), and an optional
+/// count turns the range into `count` lines from the range's LAST line.
+const LineArgs = struct { register: ?u8 = null, count: ?usize = null };
+
+fn isRegisterName(c: u8) bool {
+    return std.ascii.isAlphabetic(c) or c == '_' or c == '+' or c == '*';
+}
+
+fn parseLineArgs(app: *App, label: []const u8, args: []const u8) CommandError!LineArgs {
+    var out: LineArgs = .{};
+    var it = std.mem.tokenizeAny(u8, args, " \t");
+    while (it.next()) |tok| {
+        // A digit is always the count, never register `"1` (`:help :d`);
+        // `:1d a2` puts both in one token.
+        if (isRegisterName(tok[0])) {
+            if (out.register != null or out.count != null) return app.diag.fail(app.frame.allocator(), "{s} — usage: {s} [register] [count]", .{ label, label });
+            out.register = tok[0];
+            if (tok.len == 1) continue;
+            out.count = std.fmt.parseInt(usize, tok[1..], 10) catch return app.diag.fail(app.frame.allocator(), "{s} — not a count: {s}", .{ label, tok[1..] });
+            continue;
+        }
+        if (out.count != null) return app.diag.fail(app.frame.allocator(), "{s} — usage: {s} [register] [count]", .{ label, label });
+        out.count = std.fmt.parseInt(usize, tok, 10) catch return app.diag.fail(app.frame.allocator(), "{s} — not a count: {s}", .{ label, tok });
+    }
+    if (out.count) |c| if (c == 0) return app.diag.fail(app.frame.allocator(), "{s} — E939: positive count required", .{label});
+    return out;
+}
+
+/// The range the verb really acts on once `[count]` has had its say.
+fn linesFor(ed: *const Editor, range: ?Range, count: ?usize) [2]usize {
+    const r = range orelse Range{ .first = ed.currentLine(), .last = ed.currentLine() };
+    var first = @min(r.first, ed.lineCount() - 1);
+    var last = @min(r.last, ed.lineCount() - 1);
+    if (count) |n| {
+        first = last;
+        last = @min(first +| (n - 1), ed.lineCount() - 1);
+    }
+    return .{ first, last };
+}
+
+fn deleteLines(app: *App, range: ?Range, args: []const u8) CommandError!void {
     const arena = app.frame.allocator();
     const e = try editor(app, ":d");
+    const a = try parseLineArgs(app, ":d", args);
     const ed = e.buf.editor;
-    const r = range orelse Range{ .first = ed.currentLine(), .last = ed.currentLine() };
-    const first = @min(r.first, ed.lineCount() - 1);
-    const last = @min(r.last, ed.lineCount() - 1);
+    const rows = linesFor(ed, range, a.count);
+    const first = rows[0];
+    const last = rows[1];
     const start = ed.lineStart(first);
     const end = ed.lineEnd(last);
     const copy = try std.mem.concat(arena, u8, &.{ ed.bytes()[start..end], "\n" });
+    if (a.register) |reg| app.clipboard.setPendingRegister(reg);
     try app.clipboard.pushDelete(copy, true);
     const del_start = if (end < ed.len()) start else if (start > 0) start - 1 else start;
     const del_end = if (end < ed.len()) end + 1 else end;
@@ -848,6 +893,20 @@ fn deleteLines(app: *App, range: ?Range) CommandError!void {
     ed.setCursor(ed.firstNonWs(row));
     ed.goal_col = null;
     app.toast(":d — {d} line(s)", .{last - first + 1});
+}
+
+fn yankLines(app: *App, range: ?Range, args: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    const e = try editor(app, ":y");
+    const a = try parseLineArgs(app, ":y", args);
+    const ed = e.buf.editor;
+    const rows = linesFor(ed, range, a.count);
+    const first = rows[0];
+    const last = rows[1];
+    const copy = try std.mem.concat(arena, u8, &.{ ed.bytes()[ed.lineStart(first)..ed.lineEnd(last)], "\n" });
+    if (a.register) |reg| app.clipboard.setPendingRegister(reg);
+    try app.clipboard.setYank(copy, true);
+    app.toast(":y — {d} line(s)", .{last - first + 1});
 }
 
 // ─── settings + read-outs ───────────────────────────────────────────────

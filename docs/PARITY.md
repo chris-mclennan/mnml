@@ -196,6 +196,7 @@ trust sink. Each row names its file and its test.
 | Ex `:norm` | done | `normal` in `ex_verbs.zig` | keys through the active handler per line; `<esc>` / `<lt>` / `<c-x>` notation |
 | Ex `:!cmd`, `:r`, `:r !cmd`, `:<` / `:>` | done | `shell` / `read` / `shift` in `ex_verbs.zig` | `:!` into a reused `[scratch]` pane; `:[range]!` filters; `:!!` repeats |
 | Ex `:sort` | done | `sort` in `ex.zig` | |
+| Ex `:[range]d[elete] [x] [count]` / `:[range]y[ank] [x] [count]` | done | `parseLineArgs` / `linesFor` / `deleteLines` / `yankLines` in `src/app/ex.zig` | *2026-09-21 (`vim-ex-delete-args`):* the register (uppercase appends) and the count, which starts at the range's LAST line as vim's does — `:2,3d 2` takes lines 3–4. `:1d2` splits like `:t.` / `:m0`. `:y` did not exist at all. `tests/e2e/vim_ex_delete_args.test` |
 | User-defined `:command`s | done | `defineCommand` / `deleteCommand` / `runUserCommand` in `ex_verbs.zig` | `<args>` `<q-args>` `<bang>` `<line1>` `<line2>` `<range>`; `<data root>/commands.zon`; Tab completion on the `:` line |
 | Ex history with completion | done | `App.cmd_history`, `view.cmdline_history` (`q:`), `cmdlineTabComplete` in `dispatch.zig`, `picker.recent_commands`, `vim.replay_last_ex` | `:set` completes option names and values |
 | Standard keymap — modeless VS Code editing | done | `src/input/standard.zig` | Ctrl+C / X / V carry the `"+` hint |
