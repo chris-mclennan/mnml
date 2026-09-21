@@ -1720,7 +1720,7 @@ test "the chip keeps what it lists: every segment and every hover row survives a
         fn line(app: *app_mod.App, ipc: *const sdk.Ipc, d: Io.Dir, out: Allocator) ![]const u8 {
             var scratch = std.heap.ArenaAllocator.init(testing.allocator);
             defer scratch.deinit();
-            try publishSegment(ipc, scratch.allocator(), app.assignedIssues(), null);
+            try publishSegment(ipc, scratch.allocator(), app.assignedIssues(), null, false);
             const text_ = try d.readFileAlloc(testing.io, "command", out, .unlimited);
             try d.deleteFile(testing.io, "command");
             return text_;
