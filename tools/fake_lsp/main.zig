@@ -45,6 +45,23 @@ const capabilities = .{
     .documentFormattingProvider = true,
 };
 
+/// `--sync incremental`: the same, advertising range sync (`change:
+/// 2`) so the client sends the region it changed instead of the file.
+/// A separate constant rather than a field because the reply is a
+/// comptime literal either way.
+const capabilities_incremental = .{
+    .positionEncoding = "utf-8",
+    .textDocumentSync = .{ .openClose = true, .change = 2, .save = .{ .includeText = false } },
+    .hoverProvider = true,
+    .definitionProvider = true,
+    .referencesProvider = true,
+    .completionProvider = .{ .triggerCharacters = &[_][]const u8{"."}, .resolveProvider = false },
+    .renameProvider = true,
+    .documentSymbolProvider = true,
+    .codeActionProvider = .{ .codeActionKinds = &[_][]const u8{"quickfix"} },
+    .documentFormattingProvider = true,
+};
+
 pub const Server = struct {
     gpa: Allocator,
     io: Io,
@@ -55,6 +72,11 @@ pub const Server = struct {
     /// `--log PATH`: every incoming method, one per line, rewritten on
     /// each message so a test can read it at any point.
     log_path: ?[]const u8 = null,
+    /// `--sync incremental`: advertise range sync, apply each
+    /// `contentChanges[]` to the stored text in order, and write what
+    /// the change was into the log — the only way a script can tell a
+    /// range sync from a full one.
+    incremental: bool = false,
     log: std.ArrayList(u8) = .empty,
     initialized: bool = false,
     shutdown: bool = false,
@@ -174,7 +196,11 @@ pub const Server = struct {
     fn request(self: *Server, arena: Allocator, id: Value, method: []const u8, params: Value) !void {
         const eql = std.mem.eql;
         if (eql(u8, method, "initialize")) {
-            try self.respond(id, .{ .capabilities = capabilities, .serverInfo = .{ .name = "mnml-fake-lsp", .version = version } });
+            if (self.incremental) {
+                try self.respond(id, .{ .capabilities = capabilities_incremental, .serverInfo = .{ .name = "mnml-fake-lsp", .version = version } });
+            } else {
+                try self.respond(id, .{ .capabilities = capabilities, .serverInfo = .{ .name = "mnml-fake-lsp", .version = version } });
+            }
             self.initialized = true;
             // The complaint rust-analyzer makes on a root that is no
             // crate, once, as an Error: mnml toasts it `LSP: …`.
@@ -250,10 +276,14 @@ pub const Server = struct {
             const td = getObj(params, "textDocument") orelse return;
             const uri = getStr(td, "uri") orelse return;
             const changes = getArr(params, "contentChanges") orelse return;
-            // Full sync (`change: 1`): the last change is the document.
             if (changes.len == 0) return;
-            const text = getStr(changes[changes.len - 1], "text") orelse return;
-            try self.setDoc(uri, text);
+            if (self.incremental) {
+                try self.applyChanges(arena, uri, changes);
+            } else {
+                // Full sync (`change: 1`): the last change is the document.
+                const text = getStr(changes[changes.len - 1], "text") orelse return;
+                try self.setDoc(uri, text);
+            }
             try self.publish(arena, uri);
         } else if (eql(u8, method, "textDocument/didClose")) {
             const td = getObj(params, "textDocument") orelse return;
@@ -265,6 +295,57 @@ pub const Server = struct {
             try self.notify("textDocument/publishDiagnostics", .{ .uri = uri, .diagnostics = &[_]Diagnostic{} });
         }
         // `initialized`, `didSave`, `$/cancelRequest`…: nothing to do.
+    }
+
+    /// Apply an incremental `didChange`, in order, exactly as the
+    /// protocol says: each change describes the document the one before
+    /// it left. A change with no range is the whole text.
+    fn applyChanges(self: *Server, arena: Allocator, uri: []const u8, changes: []const Value) !void {
+        for (changes) |ch| {
+            const text = getStr(ch, "text") orelse return;
+            const range = getObj(ch, "range") orelse {
+                try self.logChange("full", text.len);
+                try self.setDoc(uri, text);
+                continue;
+            };
+            const cur = self.docs.get(uri) orelse return;
+            const start = offsetOf(cur, getObj(range, "start").?);
+            const end = offsetOf(cur, getObj(range, "end").?);
+            try self.logChange(try std.fmt.allocPrint(arena, "range {d}:{d}-{d}:{d}", .{
+                getInt(getObj(range, "start").?, "line") orelse 0,
+                getInt(getObj(range, "start").?, "character") orelse 0,
+                getInt(getObj(range, "end").?, "line") orelse 0,
+                getInt(getObj(range, "end").?, "character") orelse 0,
+            }), text.len);
+            const next = try std.mem.concat(self.gpa, u8, &.{ cur[0..start], text, cur[end..] });
+            defer self.gpa.free(next);
+            try self.setDoc(uri, next);
+        }
+    }
+
+    /// An LSP position's byte offset in `text`, utf-8 (a character IS a
+    /// byte, as `initialize` promised) and clamped: a line past the end
+    /// lands at the end, a character past the line's at the line's end.
+    fn offsetOf(text: []const u8, p: Value) usize {
+        const want_line: usize = @intCast(@max(getInt(p, "line") orelse 0, 0));
+        const want_col: usize = @intCast(@max(getInt(p, "character") orelse 0, 0));
+        var line: usize = 0;
+        var start: usize = 0;
+        while (line < want_line) : (line += 1) {
+            const nl = std.mem.indexOfScalarPos(u8, text, start, '\n') orelse return text.len;
+            start = nl + 1;
+        }
+        const end = std.mem.indexOfScalarPos(u8, text, start, '\n') orelse text.len;
+        return @min(start + want_col, end);
+    }
+
+    /// The log's extra line in incremental mode: what the change was and
+    /// how many bytes it carried, so a script can tell a range sync from
+    /// a full one and see it never grew to the file's size.
+    fn logChange(self: *Server, what: []const u8, bytes: usize) !void {
+        const path = self.log_path orelse return;
+        try self.log.print(self.gpa, "didChange {s} len={d}\n", .{ what, bytes });
+        Io.Dir.cwd().writeFile(self.io, .{ .sub_path = path, .data = self.log.items }) catch {};
     }
 
     fn setDoc(self: *Server, uri: []const u8, text: []const u8) !void {
@@ -596,6 +677,7 @@ pub fn main(init: std.process.Init) !u8 {
     defer arena_state.deinit();
     const args = try init.minimal.args.toSlice(arena_state.allocator());
     var log_path: ?[]const u8 = null;
+    var incremental = false;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const a = args[i];
@@ -609,13 +691,17 @@ pub fn main(init: std.process.Init) !u8 {
         if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) {
             var buf: [512]u8 = undefined;
             var w: Io.File.Writer = .initStreaming(.stdout(), io, &buf);
-            try w.interface.writeAll("mnml-fake-lsp [--log PATH]: a deterministic language server over stdio (see tools/fake_lsp/README.md)\n");
+            try w.interface.writeAll("mnml-fake-lsp [--log PATH] [--sync full|incremental]: a deterministic language server over stdio (see tools/fake_lsp/README.md)\n");
             try w.interface.flush();
             return 0;
         }
         if (std.mem.eql(u8, a, "--log") and i + 1 < args.len) {
             i += 1;
             log_path = args[i];
+        }
+        if (std.mem.eql(u8, a, "--sync") and i + 1 < args.len) {
+            i += 1;
+            incremental = std.mem.eql(u8, args[i], "incremental");
         }
     }
     var in_buf: [64 * 1024]u8 = undefined;
@@ -625,6 +711,7 @@ pub fn main(init: std.process.Init) !u8 {
     var server = Server.init(gpa, io, &writer.interface);
     defer server.deinit();
     server.log_path = log_path;
+    server.incremental = incremental;
     while (!server.done) {
         const body = readFrame(gpa, &reader.interface) catch |err| switch (err) {
             error.Closed, error.BadFrame => break,
@@ -852,4 +939,31 @@ test "the text helpers: the word under or before the caret, whole-word occurrenc
     const tidy = try formatted(arena, "a  \n\nb\t\n\n\n");
     try t.expectEqualStrings("a\n\nb\n", tidy);
     try t.expectEqual(@as(u32, 5), wholeRange(sample).end.line);
+}
+
+test "--sync incremental: range changes apply in order, and the text they leave is what the client has" {
+    var h: Harness = undefined;
+    h.init();
+    defer h.deinit();
+    h.server.incremental = true;
+    const open = try h.send(0, "textDocument/didOpen", "{\"textDocument\":{\"uri\":\"file:///ws/a.fk\",\"languageId\":\"fk\",\"version\":1,\"text\":\"fn foo() {\\n  let x = 1;\\n}\\n\"}}");
+    defer t.allocator.free(open);
+    // Two changes in one notification, the second described against the
+    // document the first left — the protocol's own rule, and the shape
+    // a folded burst arrives in.
+    const two = try h.send(0, "textDocument/didChange", "{\"textDocument\":{\"uri\":\"file:///ws/a.fk\",\"version\":2},\"contentChanges\":[" ++
+        "{\"range\":{\"start\":{\"line\":1,\"character\":6},\"end\":{\"line\":1,\"character\":7}},\"text\":\"yy\"}," ++
+        "{\"range\":{\"start\":{\"line\":2,\"character\":0},\"end\":{\"line\":2,\"character\":1}},\"text\":\"} // TODO\"}]}");
+    defer t.allocator.free(two);
+    try t.expectEqualStrings("fn foo() {\n  let yy = 1;\n} // TODO\n", h.server.docs.get("file:///ws/a.fk").?);
+    // The diagnostics are the proof the client can see: the TODO the
+    // second range put there is on the line it was aimed at.
+    try t.expectEqual(@as(usize, 1), two.len);
+    const diags = getArr(getObj(two[0], "params").?, "diagnostics").?;
+    try t.expectEqual(@as(usize, 1), diags.len);
+    try t.expectEqual(@as(i64, 2), getInt(getObj(getObj(diags[0], "range").?, "start").?, "line").?);
+    // A change with no range is still the whole text.
+    const full = try h.send(0, "textDocument/didChange", "{\"textDocument\":{\"uri\":\"file:///ws/a.fk\",\"version\":3},\"contentChanges\":[{\"text\":\"fn bar() {}\\n\"}]}");
+    defer t.allocator.free(full);
+    try t.expectEqualStrings("fn bar() {}\n", h.server.docs.get("file:///ws/a.fk").?);
 }

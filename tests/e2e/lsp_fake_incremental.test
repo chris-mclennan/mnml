@@ -1,0 +1,33 @@
+# Incremental sync: when the server advertises range sync (`change: 2`,
+# the fake server's `--sync incremental`), a frame's edits go out as the
+# region that moved, never as the file. `:%s` makes three replacements
+# on three lines in ONE frame — the case that used to re-encode the
+# whole document — and the fake server applies the range it is given to
+# its own copy, so the diagnostics it publishes afterwards are the proof
+# that the range was right: one warning per line that now holds TODO.
+# The accented line is there so a byte column that was counted as a
+# character count would land in the wrong place.
+write src/main.fk "fn foo() {\n  let café = 1;\n  foo(café);\n}\nfn bar() { foo(); }\n"
+write .fkroot ""
+write .mnml/config.zon .{ .lsp = .{ .fake = .{ .cmd = "$MNML_FAKE_LSP", .args = .{ "--log", "lsp.log", "--sync", "incremental" }, .extensions = .{ "fk" }, .root_markers = .{ ".fkroot" } } } }
+open src/main.fk
+expect screen contains "LSP 1"
+expect screen lacks "⚠"
+# The handshake has to have landed before the first edit: the client
+# only sends ranges once `initialize` told it the server takes them, so
+# an edit that beat the reply would go out as the whole text and this
+# script would be testing the wrong thing.
+expect file lsp.log contains "initialize\ninitialized\ntextDocument/didOpen\n"
+ex %s/foo/TODO_foo/g
+expect file lsp.log contains "didChange range"
+expect file lsp.log lacks "didChange full"
+# Three lines held `foo`; the server sees TODO on all three only if the
+# one range it was sent described the document exactly.
+expect screen contains "main.fk ⚠3"
+# An edit after the accented characters: the column is a byte count
+# under utf-8, which is what `initialize` negotiated.
+ex %s/café/latte/g
+expect screen contains "latte"
+expect file lsp.log lacks "didChange full"
+command lsp.diagnostics
+expect screen contains "DIAGNOSTICS (3)"
