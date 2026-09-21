@@ -123,6 +123,63 @@ two pty scripts. `tools/linux/run.sh all` runs the same sequence inside a
 Linux container — do that for anything touching a process, a thread, a
 path, a filesystem assumption or a spawned tool.
 
+## AI ghost text, and what leaves your machine
+
+Ghost text — the grey suggestion at the cursor, Tab to take it — has
+three backends, chosen with `ai.setup_suggestions` or
+`ai.suggest_backend`:
+
+| backend | what it sends, and where |
+|---|---|
+| `claude-code` | the ~2000 characters before and ~1000 after the cursor, to Anthropic, through your own `claude` CLI and plan |
+| `claude-api` | the same window, to Anthropic, with your `$ANTHROPIC_API_KEY` |
+| `copilot` | the **whole open file**, to GitHub, through Copilot's own language server — and only once you opt in, per workspace |
+
+Nothing at all is sent while `inline_suggestions = false`, or while the
+backend is unset.
+
+### GitHub Copilot is off until a workspace opts in
+
+Copilot's protocol is document-based, not window-based: it wants
+`didOpen` and `didChange` for the file you are editing, so choosing it
+means whole files leave the machine. mnml therefore treats the
+**workspace**, not the setting, as the unit of consent.
+
+Four things must all be true before one byte is sent:
+
+1. `ai.suggest_backend = "copilot"`;
+2. **this workspace opted in** — `ai.copilot_here = true` in
+   `<workspace>/.mnml/config.zon`, which `ai.copilot_enable_here`
+   writes. It is `false` by default and there is no key that opts in on
+   another workspace's behalf;
+3. **the workspace is trusted.** `ai.copilot_here` is a trust-gated key
+   (`docs/CONFIG.md`, "Workspace trust"), so a repo you cloned cannot
+   opt you in by shipping a config: untrusted, it reads as `false`, and
+   trusting the workspace lists it as a claim you accept by name;
+4. **the file is not excluded** — `ai.copilot.exclude` globs (default
+   `.env*`, `*.pem`, `*.key`, `id_*`), plus the secret-looking-name
+   list every backend already honours, plus anything **gitignored**.
+
+A file that fails (4) is never opened on the server either, because
+opening it would already have sent it. The server itself is not even
+started until (1)–(3) hold.
+
+    ai.copilot_status          what is shared right now, and why or why not
+    ai.copilot_enable_here     opt this workspace in
+    ai.copilot_disable_here    opt it back out (the server stops)
+    ai.copilot_sign_in         device code + the URL to enter it at
+    ai.copilot_sign_out
+
+mnml never downloads the Copilot server. It runs
+`copilot-language-server` from your `PATH`
+(`npm i -g @github/copilot-language-server`), or exactly the argv you put
+in `ai.copilot.command`; a missing binary is one toast with the install
+line, not a silent no-op. GitHub's own content-exclusion rules apply on
+top of all of this — the chip reads `file excluded` when they fire.
+
+`docs/research/copilot-backend-2026-09-21.md` records which parts of the
+protocol were verified, and from where.
+
 ## The `.test` oracle
 
 The end-to-end suite is a line-based script format — `write`, `open`, `key`,
