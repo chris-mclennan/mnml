@@ -1193,7 +1193,10 @@ type-to-filter: any printable key opens the search pill and goes into
 the query, so typing the name of the row you came for finds it instead
 of running five commands (`/` and space are the exceptions — the
 family's filter chord and the row's toggle). The footer advertises
-whichever set is live. Reset-all is the `Reset all to defaults` row
+whichever set is live — and while the search pill has the keys it
+advertises the pill's own (`←→` move the caret, Enter hands the list
+back, Esc clears the query), because none of `adjust`, `move` or `save`
+is true there. Reset-all is the `Reset all to defaults` row
 under `── Reset ──` there, and in both profiles it asks before it
 throws anything away.
 

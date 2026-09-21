@@ -1,0 +1,44 @@
+# width: 120
+# height: 40
+# daily: the Settings overlay has TWO key states and painted one footer
+# for both. With the filter field focused (`/`), the line under the
+# reader's hand still read `←→ adjust · ↑↓ move · … · Enter save` — but
+# there `←→` move the text caret and Enter only hands the list back, so
+# a daily driver who searched for a row and pressed `→` per the hint
+# changed nothing, silently
+# (hunt/findings-2026-09-21/daily-settings-filter-hint.md).
+#
+# The behaviour is deliberate and unit-tested; the footer is what was
+# wrong. It is the field's own set while the field has the keys.
+write notes.txt "alpha\n"
+open notes.txt
+command view.settings
+expect screen contains "Launcher dock edge"
+# The list's own footer, which is true of the list.
+expect screen contains "adjust"
+
+key /
+type "dock edge"
+expect screen contains "[bottom] / left / right"
+# The field has the keys now, and the footer says what the field does.
+expect screen contains "Enter to the list"
+expect screen contains "Esc clears"
+expect screen contains "caret"
+expect screen lacks "adjust"
+expect screen lacks "Enter save"
+
+# And the keys it names are the keys that work: Enter hands the list
+# back, keeping the query, and THEN `→` adjusts the row the search found.
+key enter
+expect screen contains "adjust"
+expect screen lacks "Enter to the list"
+key right
+expect screen contains "bottom / [left] / right"
+
+# `/` again puts the keys — and the footer — back in the field.
+key /
+expect screen contains "Enter to the list"
+expect screen lacks "adjust"
+key esc
+expect screen contains "adjust"
+key esc

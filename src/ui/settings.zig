@@ -679,6 +679,17 @@ pub const std_hint_search = "←→ adjust · ↑↓ move · type to search · c
 pub const std_hint_search_tight = "←→ adjust · type to search · ctrl+r reset · Enter save · Esc cancel";
 pub const std_hint = "←→ adjust · ↑↓ move · ctrl+r reset · Enter save · Esc cancel";
 pub const std_hint_tight = "←→ adjust · ctrl+r reset · Enter save · Esc cancel";
+
+/// // changed (settings-filter-hint): the box has TWO key states and
+/// used to paint one footer for both. While the filter field has the
+/// keys, `←→` move the text caret and Enter only hands the list back —
+/// so a reader who took the list's `←→ adjust · … · Enter save` at its
+/// word changed nothing, silently. These four are what the FIELD does,
+/// and they are the same in both profiles because the field is.
+pub const filter_hint = "type to filter · ←→ caret · ↑↓ move · Enter to the list · Esc clears";
+pub const filter_hint_move = "←→ caret · ↑↓ move · Enter to the list · Esc clears";
+pub const filter_hint_tight = "←→ caret · Enter to the list · Esc clears";
+pub const filter_hint_tightest = "Enter to the list · Esc clears";
 pub const max_width: u16 = 84;
 pub const min_width: u16 = 40;
 /// A row with more choices than this paints `[current] ‹ i/n ›` instead
@@ -917,7 +928,7 @@ pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item, subtitle: ?[]con
         _ = ui.putStr(foot.x + 1, foot.y, room, p, Theme.onBg(t.accent, bg));
         hint_room = room -| (ui.width(p) + 2);
     }
-    if (hint_room >= 10) _ = ui.putStrRight(foot.right() -| 1, foot.y, hint_room, ui.clipStr(hintFor(ui, hint_room, opts.typeahead), hint_room), hint_style);
+    if (hint_room >= 10) _ = ui.putStrRight(foot.right() -| 1, foot.y, hint_room, ui.clipStr(hintFor(ui, hint_room, opts.typeahead, s.filter.focused), hint_room), hint_style);
     // // changed (settings-reset-confirm): the ask goes on top of the
     // box, last, so its choices are the hits a click lands on and the
     // caret is not left blinking in a pill that no longer has the keys.
@@ -963,11 +974,23 @@ const std_hint_search_ascii = "<- -> adjust - up/down move - type to search - ct
 const std_hint_search_tight_ascii = "<- -> adjust - type to search - ctrl+r reset - Enter save - Esc cancel";
 const std_hint_ascii = "<- -> adjust - up/down move - ctrl+r reset - Enter save - Esc cancel";
 const std_hint_tight_ascii = "<- -> adjust - ctrl+r reset - Enter save - Esc cancel";
+const filter_hint_ascii = "type to filter - <- -> caret - up/down move - Enter to the list - Esc clears";
+const filter_hint_move_ascii = "<- -> caret - up/down move - Enter to the list - Esc clears";
+const filter_hint_tight_ascii = "<- -> caret - Enter to the list - Esc clears";
+const filter_hint_tightest_ascii = "Enter to the list - Esc clears";
 
 /// The widest of the five hints that fits `room`, in descending width.
 /// Below the tightest the caller clips — and the tight form ends in
 /// `Esc cancel`, so what survives a clip is still the way out.
-pub fn hintFor(ui: Ui, room: u16, typeahead: bool) []const u8 {
+pub fn hintFor(ui: Ui, room: u16, typeahead: bool, filtering: bool) []const u8 {
+    if (filtering) {
+        const ff = if (ui.ascii)
+            [_][]const u8{ filter_hint_ascii, filter_hint_move_ascii, filter_hint_tight_ascii, filter_hint_tightest_ascii }
+        else
+            [_][]const u8{ filter_hint, filter_hint_move, filter_hint_tight, filter_hint_tightest };
+        for (ff) |f| if (ui.width(f) <= room) return f;
+        return ff[ff.len - 1];
+    }
     const forms = if (typeahead)
         (if (ui.ascii)
             [_][]const u8{ std_hint_sections_ascii, std_hint_search_ascii, std_hint_search_tight_ascii, std_hint_ascii, std_hint_tight_ascii }
@@ -1583,23 +1606,37 @@ test "the footer carries the position, in the long form when the hint leaves roo
     // The hint shrinks in four named steps and always ends in the way
     // out. `/ search` rides the two widest forms, so the key is on
     // screen wherever the footer can carry it.
-    try testing.expectEqualStrings(hint_text_sections, hintFor(ui, ui.width(hint_text_sections), false));
-    try testing.expectEqualStrings(hint_text_search, hintFor(ui, ui.width(hint_text_sections) - 1, false));
-    try testing.expectEqualStrings(hint_text_search_tight, hintFor(ui, ui.width(hint_text_search) - 1, false));
-    try testing.expectEqualStrings(hint_text, hintFor(ui, ui.width(hint_text), false));
-    try testing.expectEqualStrings(hint_text_tight, hintFor(ui, ui.width(hint_text) - 1, false));
-    try testing.expectEqualStrings(hint_text_tight, hintFor(ui, 0, false));
+    try testing.expectEqualStrings(hint_text_sections, hintFor(ui, ui.width(hint_text_sections), false, false));
+    try testing.expectEqualStrings(hint_text_search, hintFor(ui, ui.width(hint_text_sections) - 1, false, false));
+    try testing.expectEqualStrings(hint_text_search_tight, hintFor(ui, ui.width(hint_text_search) - 1, false, false));
+    try testing.expectEqualStrings(hint_text, hintFor(ui, ui.width(hint_text), false, false));
+    try testing.expectEqualStrings(hint_text_tight, hintFor(ui, ui.width(hint_text) - 1, false, false));
+    try testing.expectEqualStrings(hint_text_tight, hintFor(ui, 0, false, false));
     // // changed (settings-typeahead): the standard profile's own five,
     // which never name a letter command the box no longer has.
-    try testing.expectEqualStrings(std_hint_sections, hintFor(ui, ui.width(std_hint_sections), true));
-    try testing.expectEqualStrings(std_hint_search, hintFor(ui, ui.width(std_hint_sections) - 1, true));
-    try testing.expectEqualStrings(std_hint_search_tight, hintFor(ui, ui.width(std_hint_search) - 1, true));
-    try testing.expectEqualStrings(std_hint, hintFor(ui, ui.width(std_hint), true));
-    try testing.expectEqualStrings(std_hint_tight, hintFor(ui, ui.width(std_hint) - 1, true));
-    try testing.expectEqualStrings(std_hint_tight, hintFor(ui, 0, true));
+    try testing.expectEqualStrings(std_hint_sections, hintFor(ui, ui.width(std_hint_sections), true, false));
+    try testing.expectEqualStrings(std_hint_search, hintFor(ui, ui.width(std_hint_sections) - 1, true, false));
+    try testing.expectEqualStrings(std_hint_search_tight, hintFor(ui, ui.width(std_hint_search) - 1, true, false));
+    try testing.expectEqualStrings(std_hint, hintFor(ui, ui.width(std_hint), true, false));
+    try testing.expectEqualStrings(std_hint_tight, hintFor(ui, ui.width(std_hint) - 1, true, false));
+    try testing.expectEqualStrings(std_hint_tight, hintFor(ui, 0, true, false));
     for ([_][]const u8{ std_hint_sections, std_hint_search, std_hint_search_tight, std_hint, std_hint_tight }) |form| {
         try testing.expect(std.mem.indexOf(u8, form, "r/R") == null);
         try testing.expect(std.mem.indexOf(u8, form, "ctrl+r reset") != null);
+    }
+    // // changed (settings-filter-hint): while the field has the keys
+    // the footer is the FIELD's, in either profile — it never promises
+    // `adjust` or `save`, neither of which the arrows or Enter do there.
+    try testing.expectEqualStrings(filter_hint, hintFor(ui, ui.width(filter_hint), false, true));
+    try testing.expectEqualStrings(filter_hint, hintFor(ui, ui.width(filter_hint), true, true));
+    try testing.expectEqualStrings(filter_hint_move, hintFor(ui, ui.width(filter_hint) - 1, true, true));
+    try testing.expectEqualStrings(filter_hint_tight, hintFor(ui, ui.width(filter_hint_move) - 1, true, true));
+    try testing.expectEqualStrings(filter_hint_tightest, hintFor(ui, ui.width(filter_hint_tight) - 1, true, true));
+    try testing.expectEqualStrings(filter_hint_tightest, hintFor(ui, 0, false, true));
+    for ([_][]const u8{ filter_hint, filter_hint_move, filter_hint_tight, filter_hint_tightest }) |form| {
+        try testing.expect(std.mem.indexOf(u8, form, "adjust") == null);
+        try testing.expect(std.mem.indexOf(u8, form, "save") == null);
+        try testing.expect(std.mem.indexOf(u8, form, "Esc clears") != null);
     }
     try testing.expect(std.mem.indexOf(u8, hint_text_sections, "/ search") != null);
     try testing.expect(std.mem.indexOf(u8, hint_text_search, "/ search") != null);

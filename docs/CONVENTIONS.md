@@ -232,6 +232,13 @@ the idiom is written down instead. A settings screen is:
   either. The footer says which set is live (`hintFor`'s two families
   of five forms), and reset-all is the Reset section's action row
   there rather than a letter.
+- **The footer is state-aware.** The box has two key states and the
+  footer says which one it is in: the list's set above, or — while the
+  filter field has the keys — the FIELD's (`type to filter · ←→ caret ·
+  ↑↓ move · Enter to the list · Esc clears`). There `←→` move the text
+  caret and Enter only hands the list back, so a footer that still
+  promised `adjust` and `save` was wrong about every clause a
+  searching user would act on.
 - **Reset-all asks first**, in both profiles, in the app's own confirm
   box (`src/ui/confirm.zig`) with Cancel focused — Enter on reflex is
   the harmless answer.
