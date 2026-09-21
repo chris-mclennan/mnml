@@ -3,7 +3,10 @@
 # until the pointer has rested on the SCREEN's last row — the `:`
 # line's row, row 39 at 120x40 — for `ui.dock.reveal_ms` (250 ms), and
 # the strip goes again `ui.dock.hide_ms` (400 ms) after the pointer
-# leaves. The revealed strip paints OVER that row.
+# leaves. The edge a hand reaches for is the frame's own whichever
+# placement is in force; under the default `.inner` the strip then
+# PAINTS two rows up, over the editor area's last row, leaving the
+# statusline and the `:` line alone (`launcher_dock_placement.test`).
 #
 # It draws OVER the editor — it never re-lays-out, the rule
 # `app/sidebar_auto.zig` already lives by — so the marker at column 95

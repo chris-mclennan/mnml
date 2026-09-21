@@ -633,6 +633,9 @@ pub const MenuAction = union(enum) {
     /// The launcher dock's *Show* rows: icons, labels, or both
     /// (`app/launcher_dock.zig`, `ui.dock.labels`).
     set_dock_labels: @import("../config/Config.zig").DockLabels,
+    /// // changed (dock-placement): its *Place* rows — a bottom strip
+    /// above the statusline or under the `:` line (`ui.dock.placement`).
+    set_dock_placement: @import("../config/Config.zig").DockPlacement,
     /// Its *Align* rows: where the run sits along the strip
     /// (`ui.dock.align`).
     set_dock_align: @import("../config/Config.zig").DockAlign,

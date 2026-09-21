@@ -196,6 +196,7 @@ pub const rows = [_]RowSpec{
     // dwells and its pins are config-only (v1 is choices).
     .{ .path = "ui.dock.mode", .label = "Launcher dock", .section = .ui, .scope = .home },
     .{ .path = "ui.dock.edge", .label = "Launcher dock edge", .section = .ui, .scope = .home },
+    .{ .path = "ui.dock.placement", .label = "Launcher dock placement", .section = .ui, .scope = .home },
     .{ .path = "ui.dock.labels", .label = "Launcher dock labels", .section = .ui, .scope = .home },
     .{ .path = "ui.dock.align", .label = "Launcher dock alignment", .section = .ui, .scope = .home },
     .{ .path = "ui.dock.plus", .label = "Launcher dock + button", .section = .ui, .scope = .home },
@@ -376,6 +377,17 @@ fn highlightMaxIndex(v: u64) usize {
     return highlight_max_values.len - 1;
 }
 
+/// // changed (dock-placement): `ui.dock.placement` is a two-value
+/// enum whose tag names (`inner` / `outer`) say nothing to a person
+/// reading a settings row. The row offers the words instead; the key
+/// keeps the tags, because the list is in tag order and `setIndex`
+/// writes `@enumFromInt(i)` as it does for every other enum row.
+fn isDockPlacement(comptime path: []const u8) bool {
+    return std.mem.eql(u8, path, "ui.dock.placement");
+}
+
+pub const dock_placement_labels = [_][]const u8{ "above statusline", "below command line" };
+
 /// `ai.suggest_backend` is not a typed field: the config keeps it in
 /// `ai.extra` (a string, aliases allowed) and the setup picker sets a
 /// runtime override. The row reads through `ai.suggestBackend` and
@@ -402,6 +414,7 @@ pub fn options(comptime path: []const u8) []const []const u8 {
     if (comptime isTheme(path)) return &theme_names;
     if (comptime isSuggestBackend(path)) return &suggest_tokens;
     if (comptime isHighlightMax(path)) return &highlight_max_labels;
+    if (comptime isDockPlacement(path)) return &dock_placement_labels;
     const T = FieldType(path);
     return switch (@typeInfo(T)) {
         .bool => &bool_options,
@@ -1373,7 +1386,10 @@ test "the filter narrows the rows to the ones that match, clamps the cursor to o
     }
 
     // A row that still matches keeps the focus across a query change,
-    // wherever the narrowing moved it to.
+    // wherever the narrowing moved it to. // changed (dock-placement):
+    // the placement row sits between the edge row and the labels one,
+    // so three downs is where `Launcher dock labels` is now.
+    try app.handle(.{ .key = Key.named(.down) });
     try app.handle(.{ .key = Key.named(.down) });
     try app.handle(.{ .key = Key.named(.down) });
     {

@@ -4,11 +4,13 @@
 # reserves the OUTERMOST row of the editor area and lists the enabled
 # integrations, then the terminals, then whatever `ui.dock.pins` names.
 #
-# At 120x40 that row is 39 — the SCREEN's last row, under the `:` line
-# (which moves to 38 and the statusline to 37), because the dock is the
-# frame's outermost edge in every mode and that is the row its reveal
-# band watches when it is down. The click below is the proof: if the
-# strip were anywhere else it would land on the `:` row instead.
+# At 120x40 that row is 37 — the EDITOR AREA's last row
+# (`ui.dock.placement = .inner`, the default), so the statusline stays
+# on 38 and the `:` line on 39, exactly where they sit with no dock at
+# all. The click below is the proof: if the strip were anywhere else it
+# would land on the editor instead.
+# `launcher_dock_always_outer.test` is the other placement, where the
+# strip takes the SCREEN's last row and those two move up one.
 #
 # The run is centred (`ui.dock.align`, `.center` out of the box) and the
 # `+` leads it, so at 120 the row is ` + New  Browser  New terminal `
@@ -27,7 +29,7 @@ expect screen contains "New terminal"
 # The pin chip lives at the strip's end.
 expect screen contains "󰐃"
 # A click on New terminal opens a shell…
-click 62 39
+click 62 37
 wait 900
 expect pane Terminal
 # …and the shell joins the strip as a running item, wearing the dot

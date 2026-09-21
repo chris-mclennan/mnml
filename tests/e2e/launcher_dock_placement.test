@@ -1,0 +1,78 @@
+# width: 120
+# height: 40
+# `ui.dock.placement` (src/app/launcher_dock.zig, src/app/render.zig):
+# which of the frame's bottom rows a BOTTOM launcher dock takes.
+#
+# `.inner` is the default and the user's own preference — the strip is
+# the EDITOR AREA's last row, above the statusline, so the two rows the
+# frame keeps for itself never move: at 120x40 the strip is 37, the
+# statusline 38 and the `:` line 39, exactly where the last two sit
+# with no dock at all. `.outer` is the other one: the strip takes the
+# SCREEN's last row, under the `:` line, and both of those move up one.
+#
+# The clicks are the proof, because a `contains` script cannot name a
+# row: a click on the `:` line's row opens the `:` line, and a click on
+# the strip's row does not.
+write a.txt "alpha\n"
+open a.txt
+ex dock always
+expect screen contains "New terminal"
+
+# ── `.inner`, the default: 37 strip / 38 statusline / 39 `:` line ──
+click 110 39
+expect status contains "\"cmdline\":true"
+key esc
+expect status contains "\"cmdline\":false"
+# Row 37 is the strip's, so the same click there opens nothing.
+click 110 37
+expect status contains "\"cmdline\":false"
+
+# ── `:dock below` moves it under the `:` line ──
+ex dock below
+expect screen contains "dock: below the command line"
+expect screen contains "New terminal"
+# The `:` line moved up one with the statusline: 38 is the line now…
+click 110 38
+expect status contains "\"cmdline\":true"
+key esc
+# …and 39 is the strip, which opens nothing.
+click 110 39
+expect status contains "\"cmdline\":false"
+
+# ── `:dock above` puts it back, and `:dock outer` / `inner` are the
+#    key's own words for the same two ──
+ex dock above
+expect screen contains "dock: above the statusline"
+click 110 39
+expect status contains "\"cmdline\":true"
+key esc
+ex dock outer
+expect screen contains "dock: below the command line"
+ex dock inner
+expect screen contains "dock: above the statusline"
+
+# ── auto_hide + `.inner`: the dwell is still the SCREEN's bottom edge ──
+# The edge is where a hand goes to summon a thing, so the band does not
+# move with the strip — but the strip comes up ABOVE the statusline, so
+# the `:` line's own row is never covered and still answers a click.
+# (off the band first — the pointer is still on row 39 from the click
+# above, and a dwell there is exactly what `auto_hide` answers)
+hover 60 10
+ex dock auto
+wait 600
+expect screen lacks "New terminal"
+hover 60 39
+wait 600
+expect screen contains "New terminal"
+click 110 39
+expect status contains "\"cmdline\":true"
+key esc
+hover 60 10
+wait 800
+expect screen lacks "New terminal"
+
+# ── and the strip's hits really are on row 37 ──
+ex dock always
+click 62 37
+wait 900
+expect pane Terminal

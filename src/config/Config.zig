@@ -220,6 +220,17 @@ pub const DockMode = enum { always, auto_hide, hidden };
 /// Which edge the launcher dock lives on. There is no `.top`: that row
 /// belongs to the menu bar (`app/menu_bar.zig`).
 pub const DockEdge = enum { bottom, left, right };
+/// // changed (dock-placement): where a BOTTOM launcher dock sits
+/// relative to the two rows the frame keeps for itself. `.inner` (the
+/// default) puts the strip ABOVE the statusline — it is the editor
+/// area's last row, carved out of `upper` under `always` and painted
+/// over that row when it reveals, so the statusline and the `:` line
+/// stay exactly where they are. `.outer` puts it UNDER the `:` line,
+/// as the frame's last row: everything else moves up one, and a
+/// revealed strip paints over the `:` line's row (so an open `:` line
+/// refuses the reveal). A dock on a side edge ignores the key — it is
+/// a column, and neither of those rows is its business.
+pub const DockPlacement = enum { inner, outer };
 /// How much of an item a BOTTOM launcher dock paints. `icon_label` is
 /// ` <glyph> <label> `, the strip's own form; `icon` paints the glyph
 /// alone in the same three cells a side dock uses — padding, glyph,
@@ -241,6 +252,10 @@ pub const DockAlign = enum { start, center, end };
 pub const Dock = struct {
     mode: DockMode = .auto_hide,
     edge: DockEdge = .bottom,
+    /// // changed (dock-placement): where a bottom strip goes — above
+    /// the statusline (the default) or under the `:` line. Side edges
+    /// ignore it (`:dock inner|outer`, also `above` / `below`).
+    placement: DockPlacement = .inner,
     labels: DockLabels = .icon_label,
     /// Where the items sit along the strip (`:dock center|start|end`).
     /// `align` is a Zig keyword, so the field wears the quotes the key

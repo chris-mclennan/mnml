@@ -4,15 +4,15 @@
 # (`context_menus.openNewTabMenu`, never a fork of it) — and
 # `ui.dock.plus` takes it off.
 #
-# At 120x40 the `always` strip is row 39 — the SCREEN's last row, the
-# `:` line's — and it is centred, so the `+` item's run is columns
-# 41..47 with the glyph at 42.
+# At 120x40 the `always` strip is row 37 — the editor area's last row,
+# `ui.dock.placement = .inner` being the default — and it is centred, so
+# the `+` item's run is columns 41..47 with the glyph at 42.
 write a.txt "alpha\n"
 open a.txt
 ex dock always
 expect screen contains "󰐕 New "
 # A click on it opens the tab bar's menu, rows and all.
-click 42 39
+click 42 37
 expect screen contains "Create"
 expect screen contains "Integrations"
 expect screen contains "Dock"

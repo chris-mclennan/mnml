@@ -165,6 +165,8 @@ pub fn forItem(it: command.MenuItem, ascii: bool) []const u8 {
         .set_coverage_mode => if (ascii) "%" else "\u{f0e4}", // fa-dashboard
         // The launcher dock's *Show* rows: a label, on or off.
         .set_dock_labels => if (ascii) "#" else "\u{f02b}", // fa-tag
+        // Its *Place* rows: which of the frame's rows the strip takes.
+        .set_dock_placement => if (ascii) "^" else "\u{f07d}", // fa-arrows_v
         // Its *Align* rows: where the run sits.
         .set_dock_align => if (ascii) "|" else "\u{f036}", // fa-align_left
         // Its *Show the + button* row.

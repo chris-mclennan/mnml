@@ -351,6 +351,11 @@ pub const Chrome = struct {
     /// this frame, or null when it is hidden or only revealed as an
     /// overlay (`launcher_dock.docked`).
     dock: ?Config.DockEdge = null,
+    /// // changed (dock-placement): where a BOTTOM dock is carved from
+    /// — `.inner` (the default) off the editor area's last row, so the
+    /// statusline and the `:` line do not move, `.outer` off the
+    /// screen's last row, under them both. A side dock ignores it.
+    dock_placement: Config.DockPlacement = .inner,
 };
 
 /// `ui.auto_hide_narrow_width`: below that many columns both side
@@ -382,6 +387,7 @@ pub fn chrome(app: *const App) Chrome {
         // a revealed one is paint over the editor, as the sidebar
         // overlay is, so nothing reflows when the pointer brushes an edge.
         .dock = if (launcher_dock.docked(app)) app.cfg.ui.dock.edge else null,
+        .dock_placement = launcher_dock.placement(app),
     };
 }
 
@@ -414,8 +420,11 @@ pub fn frameRects(full: Rect, ch: Chrome) FrameRects {
     // watches in every other mode (`hover_zones.dockBand`). The bottom
     // panel / statusline / `:` line keep their order inside what is
     // left. A side dock is still carved off `upper` below.
+    // // changed (dock-placement): only `.outer` takes that row. An
+    // `.inner` bottom dock is carved off `upper` below, with the side
+    // docks, so the statusline and the `:` line stay where they are.
     var dock_bottom = Rect.empty;
-    if (ch.dock == .bottom and full.h >= dock_bottom_min_height) {
+    if (ch.dock == .bottom and ch.dock_placement == .outer and full.h >= dock_bottom_min_height) {
         const rows = r.splitBottom(launcher_dock.height);
         r = rows.top;
         dock_bottom = rows.rest;
@@ -440,7 +449,17 @@ pub fn frameRects(full: Rect, ch: Chrome) FrameRects {
     // is carved out of what is left, so the dock reads as the frame's
     // own edge. The bottom one is already off the screen's last row.
     if (ch.dock) |dock_edge| switch (dock_edge) {
-        .bottom => {},
+        // // changed (dock-placement): an `.inner` bottom dock is the
+        // outermost band of the EDITOR AREA — the row above the
+        // statusline — carved before the bottom panel and the columns,
+        // so the panel sits inside it exactly as it does on a side
+        // edge. An `.outer` one already came off the screen's last row.
+        .bottom => if (ch.dock_placement == .inner and fr.upper.h >= launcher_dock.height + 4) {
+            const rows = fr.upper.splitBottom(launcher_dock.height);
+            fr.upper = rows.top;
+            fr.launcher_dock = rows.rest;
+            fr.body = fr.upper;
+        },
         .left => if (fr.upper.w >= launcher_dock.side_min_width) {
             const cols = fr.upper.splitLeft(launcher_dock.width);
             fr.launcher_dock = cols.left;
@@ -2804,11 +2823,49 @@ test "frameRects: the bar needs 40 columns (narrow below 80), the cmdline row ne
     try t.expect(one.status.eql(Rect.init(0, 0, 100, 1)));
 }
 
-test "frameRects: an `always` bottom launcher dock takes the SCREEN's last row, under the `:` line, and every other row moves up one" {
+test "frameRects: `ui.dock.placement = .inner`, the default — an `always` bottom dock is the EDITOR AREA's last row and the statusline and the `:` line do not move" {
+    // // changed (dock-placement), the user's "I'd like it above the
+    // statusline I think": the default carve is the editor area's last
+    // row again (37 at 120x40). `.outer` — the whole frame's last row,
+    // under the `:` line — is the test below, and is now opt-in.
+    const wide = frameRects(Rect.init(0, 0, 120, 40), .{ .dock = .bottom });
+    const none = frameRects(Rect.init(0, 0, 120, 40), .{});
+    try t.expect(wide.launcher_dock.eql(Rect.init(0, 37, 120, 1)));
+    // The two rows the frame keeps for itself are exactly where they
+    // were with no dock at all — the user's "extra bar at the bottom".
+    try t.expect(wide.status.eql(none.status) and wide.status.eql(Rect.init(0, 38, 120, 1)));
+    try t.expect(wide.cmdline.eql(none.cmdline) and wide.cmdline.eql(Rect.init(0, 39, 120, 1)));
+    try t.expect(wide.bar.eql(none.bar));
+    // The editor area is the one thing that gave up a row.
+    try t.expectEqual(none.upper.h - 1, wide.upper.h);
+    try t.expect(wide.upper.eql(Rect.init(0, 1, 120, 36)));
+    try t.expect(wide.body.eql(wide.upper));
+    // The bottom panel is carved INSIDE the strip, as on a side edge.
+    const panel = frameRects(Rect.init(0, 0, 120, 40), .{ .dock = .bottom, .bottom = 12 });
+    try t.expect(panel.launcher_dock.eql(Rect.init(0, 37, 120, 1)));
+    try t.expect(panel.bottom.eql(Rect.init(0, 25, 120, 12)));
+    try t.expect(panel.bottom_divider.eql(Rect.init(0, 24, 120, 1)));
+    // A side dock ignores the key: the same frame whichever it says.
+    const li = frameRects(Rect.init(0, 0, 120, 40), .{ .dock = .left, .dock_placement = .inner });
+    const lo = frameRects(Rect.init(0, 0, 120, 40), .{ .dock = .left, .dock_placement = .outer });
+    try t.expect(li.launcher_dock.eql(lo.launcher_dock) and li.launcher_dock.eql(Rect.init(0, 1, 3, 37)));
+    try t.expect(li.status.eql(lo.status) and li.cmdline.eql(lo.cmdline));
+    // Too little editor to carve from: no strip rather than an editor
+    // with none (the old `upper.h >= height + 4` floor).
+    const small = frameRects(Rect.init(0, 0, 120, 8), .{ .dock = .bottom });
+    const small_bare = frameRects(Rect.init(0, 0, 120, 8), .{});
+    try t.expect(small_bare.upper.h >= launcher_dock.height + 4);
+    try t.expect(!small.launcher_dock.isEmpty() and small.upper.h == small_bare.upper.h - 1);
+    const tiny = frameRects(Rect.init(0, 0, 120, 6), .{ .dock = .bottom });
+    try t.expect(tiny.launcher_dock.isEmpty() and tiny.upper.eql(frameRects(Rect.init(0, 0, 120, 6), .{}).upper));
+}
+
+test "frameRects: `ui.dock.placement = .outer` — an `always` bottom launcher dock takes the SCREEN's last row, under the `:` line, and every other row moves up one" {
     // // changed (edge-grip): it used to be the editor area's last row
     // (37 at 120x40), two rows in from the screen's edge, where the
     // reveal band nothing marked also sat. Both are row 39 now.
-    const wide = frameRects(Rect.init(0, 0, 120, 40), .{ .dock = .bottom });
+    // // changed (dock-placement): and this is `.outer` now — the opt-in.
+    const wide = frameRects(Rect.init(0, 0, 120, 40), .{ .dock = .bottom, .dock_placement = .outer });
     try t.expect(wide.launcher_dock.eql(Rect.init(0, 39, 120, 1)));
     // The bottom panel / statusline / `:` line keep their order inside
     // what is left — each one row up from the dockless frame.
@@ -2821,7 +2878,7 @@ test "frameRects: an `always` bottom launcher dock takes the SCREEN's last row, 
     try t.expect(wide.upper.eql(Rect.init(0, 1, 120, 36)));
     try t.expect(wide.body.eql(wide.upper));
     // The bottom panel is carved INSIDE it, as it always was.
-    const panel = frameRects(Rect.init(0, 0, 120, 40), .{ .dock = .bottom, .bottom = 12 });
+    const panel = frameRects(Rect.init(0, 0, 120, 40), .{ .dock = .bottom, .dock_placement = .outer, .bottom = 12 });
     try t.expect(panel.launcher_dock.eql(Rect.init(0, 39, 120, 1)));
     try t.expect(panel.bottom.eql(Rect.init(0, 25, 120, 12)));
     try t.expect(panel.bottom_divider.eql(Rect.init(0, 24, 120, 1)));
@@ -2830,9 +2887,9 @@ test "frameRects: an `always` bottom launcher dock takes the SCREEN's last row, 
     try t.expect(left.launcher_dock.eql(Rect.init(0, 1, 3, 37)));
     try t.expect(left.cmdline.eql(Rect.init(0, 39, 120, 1)));
     // Too short for the row: no dock rather than an editor with none.
-    const tight = frameRects(Rect.init(0, 0, 120, dock_bottom_min_height), .{ .dock = .bottom });
+    const tight = frameRects(Rect.init(0, 0, 120, dock_bottom_min_height), .{ .dock = .bottom, .dock_placement = .outer });
     try t.expect(!tight.launcher_dock.isEmpty());
-    const short = frameRects(Rect.init(0, 0, 120, dock_bottom_min_height - 1), .{ .dock = .bottom });
+    const short = frameRects(Rect.init(0, 0, 120, dock_bottom_min_height - 1), .{ .dock = .bottom, .dock_placement = .outer });
     const bare = frameRects(Rect.init(0, 0, 120, dock_bottom_min_height - 1), .{});
     try t.expect(short.launcher_dock.isEmpty());
     try t.expect(short.upper.eql(bare.upper) and short.status.eql(bare.status) and short.cmdline.eql(bare.cmdline));

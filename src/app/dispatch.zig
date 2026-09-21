@@ -1142,6 +1142,10 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
             error.OutOfMemory => return error.OutOfMemory,
             else => {},
         },
+        .set_dock_placement => |pl| launcher_dock.setPlacement(app, pl) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {},
+        },
         .set_dock_align => |a| launcher_dock.setAlign(app, a) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => {},
