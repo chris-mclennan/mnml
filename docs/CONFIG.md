@@ -1205,7 +1205,9 @@ the value to the row's file, so what you see is what is on disk. Which
 file depends on the row: a per-project view setting (line numbers, wrap,
 format on save, …) goes to the workspace's `.mnml/config.zon`; a
 preference (theme, input style, ASCII icons, AI, Sonos, …) goes to the
-home config. The title names the focused row's file. `Esc` puts back
+home config. The title names the focused row's file — under `~` for a home-scope
+row, and cut from the LEFT when it is longer than the box, so the file
+name is the half that survives. `Esc` puts back
 the config, the input style, the theme, and the exact bytes of every
 file written since the overlay opened — a file that did not exist is
 removed again.

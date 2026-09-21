@@ -232,6 +232,12 @@ the idiom is written down instead. A settings screen is:
   either. The footer says which set is live (`hintFor`'s two families
   of five forms), and reset-all is the Reset section's action row
   there rather than a letter.
+- **The title names the focused row's destination file** (`Settings · →
+  .mnml/config.zon`), under `~` for a home-scope one. The FILE NAME is
+  the fact it carries — "this project, or every project?" — so a
+  subtitle too long for the box is cut from the LEFT
+  (`→ …/mnml/config.zon`, `elideLeft`); the border clips from the right,
+  which threw exactly that half away.
 - **The footer is state-aware.** The box has two key states and the
   footer says which one it is in: the list's set above, or — while the
   filter field has the keys — the FIELD's (`type to filter · ←→ caret ·

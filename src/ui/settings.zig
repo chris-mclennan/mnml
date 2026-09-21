@@ -761,7 +761,16 @@ pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item, subtitle: ?[]con
     // inside it rather than resizing it.
     const pill_rows: usize = if (s.filter.open) 1 else 0;
     const want_h: u16 = @intCast(@min(@as(usize, cap_h), all.len + 5 + pill_rows));
-    const full_title = if (subtitle) |sub| ui.fmt("{s} · {s}", .{ title, sub }) else title;
+    // // changed (settings-title-path): the subtitle is the focused
+    // row's destination file and the name is what it is for, so it is
+    // cut from the LEFT when the box is too narrow — the border clips
+    // from the right, which threw the name away.
+    const full_title = if (subtitle) |sub| blk: {
+        // The `→` stays put: it is what says the rest is a destination.
+        const arrow: []const u8 = if (std.mem.startsWith(u8, sub, "→ ")) "→ " else "";
+        const room = (w -| 4) -| ui.width(title) -| ui.width(" · ") -| ui.width(arrow);
+        break :blk ui.fmt("{s} · {s}{s}", .{ title, arrow, elideLeft(ui, sub[arrow.len..], room) });
+    } else title;
     const box_rect = overlay.place(area, w, want_h, .center);
     const inner = overlay.frame(ui, box_rect, full_title);
     if (inner.isEmpty() or inner.h < 2) return null;
@@ -937,6 +946,28 @@ pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item, subtitle: ?[]con
         return null;
     }
     return caret;
+}
+
+/// // changed (settings-title-path): `s` cut to `max` cells from the
+/// LEFT — `…/mnml/config.zon`. The box's title carries the focused
+/// row's destination file, and the FILE NAME is the fact it exists to
+/// carry ("did I just change this project, or every project?"). The
+/// border clips from the right, so a long absolute path lost exactly
+/// that half; this keeps the tail and drops the head.
+pub fn elideLeft(ui: Ui, s: []const u8, max: u16) []const u8 {
+    if (max == 0) return "";
+    if (ui.fitsIn(s, max)) return s;
+    const mark: []const u8 = if (ui.ascii) "..." else "…";
+    const budget = max -| @as(u16, if (ui.ascii) 3 else 1);
+    if (budget == 0) return mark;
+    var i: usize = s.len;
+    while (i > 0) {
+        var j = i - 1;
+        while (j > 0 and (s[j] & 0xc0) == 0x80) j -= 1;
+        if (!ui.fitsIn(s[j..], budget)) break;
+        i = j;
+    }
+    return ui.fmt("{s}{s}", .{ mark, s[i..] });
 }
 
 /// The family filter pill, in the box instead of on a panel: a cell of
