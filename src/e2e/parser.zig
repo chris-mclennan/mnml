@@ -61,6 +61,7 @@
 //! line.
 //!
 //! The leading comment block may carry runner directives:
+//! `# ascii` (the App starts in `--ascii` mode),
 //! `# requires: network` (skipped unless opted in), `# width: 120` (runs
 //! at that width only), `# height: 14` (that height only — a menu taller
 //! than the screen needs a short one), `# env: NAME=value` (set in the App's environment
@@ -162,6 +163,11 @@ pub const Header = struct {
     shared_data_root: bool = false,
     width: ?u16 = null,
     height: ?u16 = null,
+    /// `# ascii`: the App starts with `ui.ascii_icons` on, as
+    /// `mnml-zig --ascii` does. A terminal with no Nerd Font is a
+    /// shipped mode, and the only way a script can prove a glyph's
+    /// twin is really painted is to run the whole App in it.
+    ascii: bool = false,
     /// `# env: NAME=value` lines, in order; slices of the text parsed.
     env: [max_env]EnvPair = undefined,
     env_len: usize = 0,
@@ -460,6 +466,7 @@ pub fn parseHeader(text: []const u8) Header {
             if (std.ascii.eqlIgnoreCase(what, "optimized")) h.requires_optimized = true;
         }
         if (std.ascii.eqlIgnoreCase(after_hash, "shared-data-root")) h.shared_data_root = true;
+        if (std.ascii.eqlIgnoreCase(after_hash, "ascii")) h.ascii = true;
         if (std.ascii.startsWithIgnoreCase(after_hash, "height:")) {
             h.height = std.fmt.parseInt(u16, trim(after_hash["height:".len..]), 10) catch null;
         }
@@ -682,6 +689,10 @@ test "header directives come only from the leading comment block" {
     try t.expectEqual(@as(?std.Target.Os.Tag, null), parseHeader("# requires: network\nopen x\n").requires_os);
     try t.expectEqual(@as(?std.Target.Os.Tag, null), parseHeader("open x\n# requires: macos\n").requires_os);
     try t.expect(parseHeader("# requires: optimized\nopen x\n").requires_optimized);
+    try t.expect(parseHeader("# ascii\nopen x\n").ascii);
+    try t.expect(parseHeader("#  Ascii \nopen x\n").ascii);
+    try t.expect(!parseHeader("open x\n# ascii\n").ascii);
+    try t.expect(!parseHeader("# width: 80\nopen x\n").ascii);
     try t.expect(parseHeader("#  Requires: Optimized \nopen x\n").requires_optimized);
     try t.expect(!parseHeader("# requires: network\nopen x\n").requires_optimized);
     try t.expect(!parseHeader("open x\n# requires: optimized\n").requires_optimized);
