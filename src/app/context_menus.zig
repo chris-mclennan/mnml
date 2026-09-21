@@ -182,13 +182,13 @@ pub fn openTabMenu(app: *App, pane: PaneId, x: u16, y: u16) Allocator.Error!void
         });
         // colors: the accent, on the tab as on the SESSIONS row.
         try rows.append(app.gpa, .{ .label = "Color", .action = .none, .submenu = try sessions.colorMenuRows(mem.allocator(), .{ .target = .{ .pane = pane }, .name = "" }, pt.accent_color) });
-        // The mark this tab is wearing, changed from the tab itself —
+        // The icon this tab is wearing, changed from the tab itself —
         // a Claude session's is the Claude one, not the terminal's.
         const claude_tab = if (pty_pane.productOf(app, pt)) |prod| prod == .claude else false;
         try rows.append(app.gpa, if (claude_tab)
-            .{ .label = "Mark", .action = .none, .submenu = try claudeMarkRows(app, mem.allocator()) }
+            .{ .label = "Icon", .action = .none, .submenu = try claudeIconRows(app, mem.allocator()) }
         else
-            .{ .label = "Mark", .action = .none, .submenu = try terminalIconRows(app, mem.allocator()) });
+            .{ .label = "Icon", .action = .none, .submenu = try terminalIconRows(app, mem.allocator()) });
     }
     if (app.zen) try rows.append(app.gpa, exit_fullscreen_row);
     const owned = try rows.toOwnedSlice(app.gpa);
@@ -1522,30 +1522,36 @@ fn openWindowMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     try app.openMenu("mnml", rows, x, y);
 }
 
-/// The terminal chip's `Mark ▸` submenu: the mark's two choices with the
-/// current one ticked, and the bake below them. On the strip's terminal
-/// chip and on a pty tab — the two places the mark itself is on screen,
-/// so the menu is where the eye already is. Rows live on `arena`, which
-/// the open menu owns.
+/// The terminal chip's `Icon ▸` submenu: the icon's two choices with
+/// the current one ticked, and the bake below them. On the strip's
+/// terminal chip and on a pty tab — the two places the icon itself is
+/// on screen, so the menu is where the eye already is. Rows live on
+/// `arena`, which the open menu owns.
+///
+/// Each row's own glyph is the icon that row PICKS — `menu_glyph`
+/// reads `set_terminal_mark`'s value through the same resolver the
+/// chrome paints with. So the menu shows the ghost and the codicon
+/// themselves, and the label only has to name whose they are.
 fn terminalIconRows(app: *App, arena: Allocator) Allocator.Error![]const MenuItem {
     const cur = app.cfg.ui.terminal_glyph;
     const rows = try arena.alloc(MenuItem, 3);
     // The default first, as it reads: the ghost, then the plain one.
-    rows[0] = .{ .label = terminal_glyph.label(.ghostty), .action = .{ .set_terminal_mark = .ghostty }, .checked = cur == .ghostty };
-    rows[1] = .{ .label = terminal_glyph.label(.terminal), .action = .{ .set_terminal_mark = .terminal }, .checked = cur == .terminal };
-    // Not a third mark — the bake that puts your own art behind the
+    rows[0] = .{ .label = terminal_glyph.rowLabel(.ghostty), .action = .{ .set_terminal_mark = .ghostty }, .checked = cur == .ghostty };
+    rows[1] = .{ .label = terminal_glyph.rowLabel(.terminal), .action = .{ .set_terminal_mark = .terminal }, .checked = cur == .terminal };
+    // Not a third icon — the bake that puts your own art behind the
     // ghost's codepoint, so it keeps its own row and its prompt.
     rows[2] = .{ .label = "Custom SVG…", .action = .{ .command = .@"view.terminal_glyph_custom" }, .checked = cur == .custom, .separator_before = true };
     return rows;
 }
 
-/// The Claude chip's `Mark ▸` submenu: the two values of
-/// `ui.claude_mark`, the current one ticked. Its twin above.
-fn claudeMarkRows(app: *App, arena: Allocator) Allocator.Error![]const MenuItem {
+/// The Claude chip's `Icon ▸` submenu: the two values of
+/// `ui.claude_mark`, the current one ticked, each row drawing the mark
+/// it picks. Its twin above.
+fn claudeIconRows(app: *App, arena: Allocator) Allocator.Error![]const MenuItem {
     const cur = app.cfg.ui.claude_mark;
     const rows = try arena.alloc(MenuItem, 2);
-    rows[0] = .{ .label = claude_mark.label(.figure), .action = .{ .set_claude_mark = .figure }, .checked = cur == .figure };
-    rows[1] = .{ .label = claude_mark.label(.spark), .action = .{ .set_claude_mark = .spark }, .checked = cur == .spark };
+    rows[0] = .{ .label = claude_mark.rowLabel(.figure), .action = .{ .set_claude_mark = .figure }, .checked = cur == .figure };
+    rows[1] = .{ .label = claude_mark.rowLabel(.spark), .action = .{ .set_claude_mark = .spark }, .checked = cur == .spark };
     return rows;
 }
 
@@ -1561,7 +1567,7 @@ fn openTerminalChipMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
         .{ .label = "Open shell in top half", .action = .{ .command = .@"term.shell_top" } },
         .{ .label = "Open shell in bottom half", .action = .{ .command = .@"term.shell_bottom" } },
         .{ .label = "Scratch terminal", .action = .{ .command = .@"term.scratch_toggle" }, .separator_before = true },
-        .{ .label = "Mark", .action = .none, .separator_before = true, .submenu = try terminalIconRows(app, mem.allocator()) },
+        .{ .label = "Icon", .action = .none, .separator_before = true, .submenu = try terminalIconRows(app, mem.allocator()) },
     });
     errdefer app.gpa.free(rows);
     try openOwned(app, "Terminal", rows, x, y, mem);
@@ -1634,7 +1640,7 @@ fn openAiLauncherMenu(app: *App, codex: bool, x: u16, y: u16) Allocator.Error!vo
         .{ .label = "Edit Claude Code glyph…", .action = .{ .command = .@"integrations.edit_claude_glyph" } },
         // Which of the two branded marks Claude wears, everywhere the
         // chrome draws one (`app/claude_mark.zig`).
-        .{ .label = "Mark", .action = .none, .separator_before = true, .submenu = try claudeMarkRows(app, mem.allocator()) },
+        .{ .label = "Icon", .action = .none, .separator_before = true, .submenu = try claudeIconRows(app, mem.allocator()) },
     });
     errdefer app.gpa.free(rows);
     try openOwned(app, if (codex) "Codex launcher" else "Claude Code launcher", rows, x, y, mem);
@@ -1826,18 +1832,31 @@ test "right-click: the maximize chip lists its two modes and ticks the one a lef
     try t.expectEqual(app_mod.Config.MaximizeClick.fullscreen, app.cfg.ui.maximize_click);
 }
 
-test "right-click: the terminal chip's `Mark` submenu — the ghost first and ticked, the codicon under it, the bake below, and every id registered" {
+test "right-click: the terminal chip's `Icon` submenu — the ghost first and ticked, the codicon under it, the bake below, and every id registered" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
     defer app.deinit();
     const render = @import("render.zig");
     try t.expect(try openButtonMenu(&app, @intFromEnum(render.Button.split_term), 3, 3));
     const icon_row = app.overlay.menu.items[app.overlay.menu.items.len - 1];
-    try t.expectEqualStrings("Mark", icon_row.label);
+    // `Icon`, not `Mark`: *mark* is the code's word for the thing, and
+    // the user never asked for it.
+    try t.expectEqualStrings("Icon", icon_row.label);
     try t.expectEqual(@as(usize, 3), icon_row.submenu.len);
-    // The default reads first.
-    try t.expectEqualStrings("Ghostty ghost", icon_row.submenu[0].label);
+    // The default reads first. The label names whose icon it is — the
+    // row's own glyph is the icon itself, asserted below.
+    try t.expectEqualStrings("Ghostty", icon_row.submenu[0].label);
     try t.expectEqualStrings("Terminal", icon_row.submenu[1].label);
     try t.expectEqualStrings("Custom SVG…", icon_row.submenu[2].label);
+    // The picture, not a brush: each row paints the glyph it would
+    // set, straight from `bufferline`'s resolver, with its own twin
+    // under `--ascii`. A generic icon here (the brush these rows used
+    // to draw) makes the two rows indistinguishable at a glance.
+    const menu_glyph = @import("../ui/menu_glyph.zig");
+    const bufferline = @import("../ui/bufferline.zig");
+    try t.expectEqualStrings(bufferline.ghost_glyph, menu_glyph.forItem(icon_row.submenu[0], false));
+    try t.expectEqualStrings(bufferline.term_glyph, menu_glyph.forItem(icon_row.submenu[1], false));
+    try t.expectEqualStrings(bufferline.ghost_ascii, menu_glyph.forItem(icon_row.submenu[0], true));
+    try t.expectEqualStrings(bufferline.term_ascii, menu_glyph.forItem(icon_row.submenu[1], true));
     // The two marks are set-rows, not commands: no command id exists
     // for either, and the row carries the value it writes.
     try t.expectEqual(Config.TerminalGlyph.ghostty, icon_row.submenu[0].action.set_terminal_mark);
@@ -1860,16 +1879,23 @@ test "right-click: the terminal chip's `Mark` submenu — the ghost first and ti
     closeMenu(&app);
 }
 
-test "right-click: the Claude chip's `Mark` submenu — the figure and the spark, the current one ticked, and the rows write the key" {
+test "right-click: the Claude chip's `Icon` submenu — the figure and the spark drawn as themselves, the current one ticked, and the rows write the key" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
     defer app.deinit();
     const render = @import("render.zig");
     try t.expect(try openButtonMenu(&app, @intFromEnum(render.Button.ai_claude), 3, 3));
     const row = app.overlay.menu.items[app.overlay.menu.items.len - 1];
-    try t.expectEqualStrings("Mark", row.label);
+    try t.expectEqualStrings("Icon", row.label);
     try t.expectEqual(@as(usize, 2), row.submenu.len);
-    try t.expectEqualStrings("Claude Code figure", row.submenu[0].label);
-    try t.expectEqualStrings("Anthropic spark", row.submenu[1].label);
+    // The word says whose the icon is; the row's glyph says which.
+    try t.expectEqualStrings("Claude Code", row.submenu[0].label);
+    try t.expectEqualStrings("Anthropic", row.submenu[1].label);
+    const menu_glyph = @import("../ui/menu_glyph.zig");
+    const bufferline = @import("../ui/bufferline.zig");
+    try t.expectEqualStrings(bufferline.claude_glyph, menu_glyph.forItem(row.submenu[0], false));
+    try t.expectEqualStrings(bufferline.spark_glyph, menu_glyph.forItem(row.submenu[1], false));
+    try t.expectEqualStrings(bufferline.claude_ascii, menu_glyph.forItem(row.submenu[0], true));
+    try t.expectEqualStrings(bufferline.spark_ascii, menu_glyph.forItem(row.submenu[1], true));
     try t.expectEqual(Config.ClaudeMark.figure, row.submenu[0].action.set_claude_mark);
     try t.expectEqual(Config.ClaudeMark.spark, row.submenu[1].action.set_claude_mark);
     // The shipped default is the figure; exactly one tick.
@@ -1883,9 +1909,9 @@ test "right-click: the Claude chip's `Mark` submenu — the figure and the spark
     try t.expect(!after.submenu[0].checked);
     try t.expect(after.submenu[1].checked);
     closeMenu(&app);
-    // The Codex chip has no `Mark` row: Codex has one mark.
+    // The Codex chip has no `Icon` row: Codex has one mark.
     try t.expect(try openButtonMenu(&app, @intFromEnum(render.Button.ai_codex), 3, 3));
-    for (app.overlay.menu.items) |it| try t.expect(!std.mem.eql(u8, it.label, "Mark"));
+    for (app.overlay.menu.items) |it| try t.expect(!std.mem.eql(u8, it.label, "Icon"));
     closeMenu(&app);
 }
 

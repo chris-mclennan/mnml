@@ -1,5 +1,10 @@
 //! Which mark Claude Code wears in mnml's chrome.
 //!
+//! *Mark* is the word this file uses for the thing; the word the USER
+//! sees is **icon** — the chips' `Icon ▸` submenu, the `Claude icon: …`
+//! toast, Settings → UI's *Claude icon* row. The config key stays
+//! `ui.claude_mark` so a config already on disk keeps working.
+//!
 //! `ui.claude_mark` has two values and no picker:
 //!
 //!   - `.figure` (the default) — the Claude Code figure, which mnml
@@ -35,20 +40,32 @@ pub fn glyph(app: *const App, ascii: bool) []const u8 {
     return if (ascii) m.fallback else m.glyph;
 }
 
-/// The `Mark: …` menu rows' action (`command.MenuAction.set_claude_mark`)
+/// The `Icon ▸` menu rows' action (`command.MenuAction.set_claude_mark`)
 /// and the Settings row's write: set the key, persist it, repaint.
 pub fn set(app: *App, value: Config.ClaudeMark) Allocator.Error!void {
     app.cfg.ui.claude_mark = value;
     _ = try settings.persist(app, .home, &.{ "ui", "claude_mark" }, value);
-    app.toast("Claude mark: {s}", .{label(value)});
+    app.toast("Claude icon: {s}", .{label(value)});
     app.needs_render = true;
 }
 
-/// What a menu row and a toast call each value.
+/// What a toast and Settings call each value — the descriptive name,
+/// which has to stand on its own with no picture beside it.
 pub fn label(value: Config.ClaudeMark) []const u8 {
     return switch (value) {
         .figure => "Claude Code figure",
         .spark => "Anthropic spark",
+    };
+}
+
+/// What an `Icon ▸` menu row calls each value. Shorter than `label`,
+/// and deliberately: the row DRAWS the glyph it picks
+/// (`ui/menu_glyph.zig`), so the picture says which mark and the word
+/// only has to say whose it is.
+pub fn rowLabel(value: Config.ClaudeMark) []const u8 {
+    return switch (value) {
+        .figure => "Claude Code",
+        .spark => "Anthropic",
     };
 }
 
@@ -109,12 +126,12 @@ test "set writes the key to the home config and says which mark is on" {
     const app = &fx.app;
     try set(app, .spark);
     try t.expectEqual(Config.ClaudeMark.spark, app.cfg.ui.claude_mark);
-    try t.expectEqualStrings("Claude mark: Anthropic spark", app.lastToast().?);
+    try t.expectEqualStrings("Claude icon: Anthropic spark", app.lastToast().?);
     const home = try std.fs.path.join(app.frame.allocator(), &.{ fx.root, "config.zon" });
     const text = try std.Io.Dir.cwd().readFileAlloc(app.io, home, app.frame.allocator(), .limited(64 * 1024));
     try t.expect(std.mem.indexOf(u8, text, ".claude_mark = .spark") != null);
     try set(app, .figure);
-    try t.expectEqualStrings("Claude mark: Claude Code figure", app.lastToast().?);
+    try t.expectEqualStrings("Claude icon: Claude Code figure", app.lastToast().?);
 }
 
 test "the mark survives a restart: the loader reads the persisted key back off the home config" {

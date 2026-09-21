@@ -307,27 +307,31 @@ otherwise. Copy what you need; leave the rest out.
         // DECSCUSR and gets it (.pty_cursor above).
         .cursor_shape = .terminal, // .terminal | .block | .bar | .underline
         .external_browser = "", // a program to spawn; "" = the OS default (exec-bearing)
-        // The mark every terminal wears — a pty tab's icon, the strip's
+        // The icon every terminal wears — a pty tab's icon, the strip's
         // terminal chip. .ghostty is Ghostty's ghost, which mnml bakes
         // into its own face at U+F2000 and paints whatever emulator it
         // is running inside; .terminal is the codicon, and the only
         // value that brings the per-emulator table back (kitty's cat,
         // Apple's apple); .custom is terminal_glyph_svg, baked at the
-        // same codepoint. Right-click the terminal chip -> Mark, the
-        // Settings overlay's "Terminal mark" row, or the
-        // view.terminal_glyph_* commands.
+        // same codepoint. Right-click the terminal chip -> Icon (each
+        // row draws the icon it picks), the Settings overlay's
+        // "Terminal icon" row, or the view.terminal_glyph_* commands.
+        // The KEY keeps the older "glyph" spelling so a config already
+        // on disk keeps working; "icon" is the word the UI uses.
         .terminal_glyph = .ghostty, // .ghostty | .terminal | .custom
         // The SVG behind .custom. view.terminal_glyph_custom prompts for
         // it, bakes <data root>/fonts/MnmlSymbols.ttf and sets both keys.
         .terminal_glyph_svg = "",
-        // The mark Claude Code wears, everywhere the chrome draws one:
+        // The icon Claude Code wears, everywhere the chrome draws one:
         // the tab bar's right cluster, a Claude pty tab, the statusline
         // meter, the launcher dock, a SESSIONS card. .figure is the
         // Claude Code figure mnml bakes at U+F1E00; .spark is the
         // Anthropic spark, one codepoint along at U+F1E02. Two choices
         // and no picker: right-click the cluster's Claude chip (or a
-        // Claude pty tab) -> Mark, or the Settings overlay's
-        // "Claude mark" row.
+        // Claude pty tab) -> Icon, or the Settings overlay's
+        // "Claude icon" row. The KEY keeps the older "mark" spelling so
+        // a config already on disk keeps working; "icon" is the word
+        // the UI uses.
         .claude_mark = .figure, // .figure | .spark
         .top_bar_cluster_mode = .auto, // .auto | .expanded | .compact
         // .none hides the AI chips; otherwise an enabled integration icon

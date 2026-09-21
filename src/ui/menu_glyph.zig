@@ -12,6 +12,7 @@
 
 const std = @import("std");
 const command = @import("../core/command.zig");
+const bufferline = @import("bufferline.zig");
 
 /// Glyph column width in cells: the one-cell glyph and two cells of
 /// air before the label (Rust's `COLUMN_W`).
@@ -168,8 +169,20 @@ pub fn forItem(it: command.MenuItem, ascii: bool) []const u8 {
         .set_dock_align => if (ascii) "|" else "\u{f036}", // fa-align_left
         // Its *Show the + button* row.
         .set_dock_plus => if (ascii) "+" else "\u{F0415}", // nf-md-plus, the tab bar's own
-        // The `Mark:` rows on the two branded chips: pick an icon.
-        .set_claude_mark, .set_terminal_mark => if (ascii) "%" else "\u{f1fc}", // fa-paint_brush
+        // The `Icon ▸` rows on the two branded chips. The row's glyph
+        // IS the icon it picks — the resolver's, not a brush: you
+        // choose by the picture, and the label only says whose it is.
+        // Straight from `bufferline`, the one place a tag becomes a
+        // codepoint, so a row can never offer a glyph the chrome
+        // would not paint. Each keeps its own `--ascii` twin.
+        .set_claude_mark => |m| blk: {
+            const mk = bufferline.claudeMark(m);
+            break :blk if (ascii) mk.fallback else mk.glyph;
+        },
+        .set_terminal_mark => |m| blk: {
+            const mk = bufferline.terminalMark(m);
+            break :blk if (ascii) mk.fallback else mk.glyph;
+        },
         .menu_bar => if (ascii) "=" else "\u{f0c9}", // fa-bars: a menu-bar menu
         .git_palette => if (ascii) "g" else "\u{e702}", // dev-git: a palette row's action
         // The chip menu's *Requests…* row: what this number cost.
@@ -204,6 +217,34 @@ pub fn forItem(it: command.MenuItem, ascii: bool) []const u8 {
 // ── tests ──
 
 const testing = std.testing;
+
+test "an `Icon ▸` row draws the icon it picks, not a generic brush — the resolver's glyph, and its own `--ascii` twin" {
+    // The user's report these rows are for: both marks drew
+    // fa-paint_brush, so the only way to tell the two choices apart
+    // was to read the label. Now the picture IS the choice.
+    const bl = @import("bufferline.zig");
+    const figure: command.MenuItem = .{ .label = "Claude Code", .action = .{ .set_claude_mark = .figure } };
+    const spark: command.MenuItem = .{ .label = "Anthropic", .action = .{ .set_claude_mark = .spark } };
+    try testing.expectEqualStrings(bl.claude_glyph, forItem(figure, false));
+    try testing.expectEqualStrings(bl.spark_glyph, forItem(spark, false));
+    try testing.expectEqualStrings(bl.claude_ascii, forItem(figure, true));
+    try testing.expectEqualStrings(bl.spark_ascii, forItem(spark, true));
+    const ghost: command.MenuItem = .{ .label = "Ghostty", .action = .{ .set_terminal_mark = .ghostty } };
+    const codicon: command.MenuItem = .{ .label = "Terminal", .action = .{ .set_terminal_mark = .terminal } };
+    try testing.expectEqualStrings(bl.ghost_glyph, forItem(ghost, false));
+    try testing.expectEqualStrings(bl.term_glyph, forItem(codicon, false));
+    try testing.expectEqualStrings(bl.ghost_ascii, forItem(ghost, true));
+    try testing.expectEqualStrings(bl.term_ascii, forItem(codicon, true));
+    // The two rows of a submenu are never the same picture — that was
+    // the whole complaint.
+    try testing.expect(!std.mem.eql(u8, forItem(figure, false), forItem(spark, false)));
+    try testing.expect(!std.mem.eql(u8, forItem(ghost, false), forItem(codicon, false)));
+    // `.custom` bakes the user's art behind the ghost's codepoint, so
+    // its row paints the same cell — the font, not the chrome, says
+    // what it looks like.
+    const custom: command.MenuItem = .{ .label = "Custom SVG…", .action = .{ .set_terminal_mark = .custom } };
+    try testing.expectEqualStrings(bl.ghost_glyph, forItem(custom, false));
+}
 
 test "Rust's rule: the action table by the last segment, the domain table by the first, the play triangle last; an icon overrides; a twin under ascii" {
     try testing.expectEqualStrings("\u{f1d3}", forCommandName("git.commit", false));

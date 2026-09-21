@@ -1,6 +1,11 @@
 //! Which mark a terminal wears in mnml's chrome, and the one command
 //! that bakes a new one.
 //!
+//! *Mark* is the word this file uses for the thing; the word the USER
+//! sees is **icon** — the chips' `Icon ▸` submenu, the `terminal icon:
+//! …` toast, Settings → UI's *Terminal icon* row. The config key stays
+//! `ui.terminal_glyph` so a config already on disk keeps working.
+//!
 //! `ui.terminal_glyph` has three values:
 //!
 //!   - `.ghostty` (the default) — Ghostty's ghost, which mnml carries in
@@ -58,7 +63,7 @@ pub fn mark(app: *const App) bufferline.Terminal {
     return .{ .label = name, .glyph = base.glyph, .fallback = base.fallback };
 }
 
-/// What a `Mark: …` menu row calls (`command.MenuAction.set_terminal_mark`):
+/// What an `Icon ▸` menu row calls (`command.MenuAction.set_terminal_mark`):
 /// the same write the two commands do, named by the value.
 pub fn setMark(app: *App, value: Config.TerminalGlyph) CommandError!void {
     return set(app, value, switch (value) {
@@ -68,10 +73,24 @@ pub fn setMark(app: *App, value: Config.TerminalGlyph) CommandError!void {
     });
 }
 
-/// What a menu row calls each value of `ui.terminal_glyph`.
+/// What a toast and Settings call each value of `ui.terminal_glyph` —
+/// the descriptive name, which has to stand on its own with no picture
+/// beside it.
 pub fn label(value: Config.TerminalGlyph) []const u8 {
     return switch (value) {
         .ghostty => "Ghostty ghost",
+        .terminal => "Terminal",
+        .custom => "Custom SVG",
+    };
+}
+
+/// What an `Icon ▸` menu row calls each value. The twin of
+/// `claude_mark.rowLabel`, and short for the same reason: the row
+/// DRAWS the glyph it picks (`ui/menu_glyph.zig`), so the picture says
+/// which mark and the word only has to say whose it is.
+pub fn rowLabel(value: Config.TerminalGlyph) []const u8 {
+    return switch (value) {
+        .ghostty => "Ghostty",
         .terminal => "Terminal",
         .custom => "Custom SVG",
     };
