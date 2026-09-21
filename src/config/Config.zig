@@ -590,7 +590,20 @@ pub const default_integration_icons = [_]IntegrationIcon{
 
 // ─── small fixed sections ────────────────────────────────────────────────
 
-pub const Session = struct { restore: bool = true };
+/// What a saved TERMINAL pane comes back as when the session restores
+/// (`app/session.zig`'s `terminalRestore`). `.running` is the default:
+/// a plain shell comes back live in the cwd it was saved in, and an AI
+/// session pane whose id was saved RESUMES that session — a restart
+/// hands the workspace back the way it was left. `.dormant` is the
+/// other way: every terminal pane comes back with its tab, its title
+/// and `[exited] — any key restarts …`, starting nothing until a key
+/// asks. Either way a pane whose command cannot be re-run safely — and
+/// a resume with no id to resume — comes back dormant.
+pub const RestoreTerminals = enum { running, dormant };
+pub const Session = struct {
+    restore: bool = true,
+    restore_terminals: RestoreTerminals = .running,
+};
 pub const Ipc = struct {
     write_screen: bool = false,
     /// Whether the file channel may drive INPUT at a live terminal —
@@ -1110,6 +1123,7 @@ test "defaults are the shipped values" {
     try std.testing.expect(!c.ui.integration_icons[1].enabled);
     // the rest
     try std.testing.expect(c.session.restore);
+    try std.testing.expectEqual(RestoreTerminals.running, c.session.restore_terminals);
     try std.testing.expect(!c.editor.persistent_undo);
     try std.testing.expect(c.ui.check_updates);
     try std.testing.expect(!c.ipc.write_screen);

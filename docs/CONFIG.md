@@ -364,7 +364,19 @@ otherwise. Copy what you need; leave the rest out.
     },
 
     // ── session / ipc ──────────────────────────────────────────────────
-    .session = .{ .restore = true },
+    .session = .{
+        .restore = true, // reopen the last session's panes, layout and chrome on launch
+        // What a saved TERMINAL pane comes back as. On .running a plain
+        // shell restarts in the cwd it was saved in, and a Claude Code
+        // pane whose session id was saved resumes it (`claude --resume
+        // <id>`) — never a second session under an id that exists, and
+        // never a new billed one, so a missing id falls through. On
+        // .dormant every terminal pane waits instead. Either way a pane
+        // whose command cannot be re-run safely — an arbitrary command
+        // line, a Codex pane (the CLI has no resume), a bare `claude`
+        // with no id — comes back dormant.
+        .restore_terminals = .running, // .running (a shell restarts, a Claude pane resumes its session) | .dormant (every terminal pane comes back `[exited] — any key restarts …`)
+    },
     .ipc = .{ .write_screen = false }, // also dump screen.txt, status.json and rects.json every frame
 
     // ── keys ───────────────────────────────────────────────────────────

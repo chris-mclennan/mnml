@@ -6,6 +6,12 @@
 //! the recent files, the recent commands, the closed-buffer list and
 //! the toast log.
 //!
+//! A terminal pane comes back the way `session.restore_terminals` says
+//! (`terminalRestore`): on the default `.running` a plain shell restarts
+//! in its cwd and an AI session pane resumes its session, while anything
+//! that cannot be re-run safely waits for a key; `.dormant` makes every
+//! one of them wait.
+//!
 //! Saved on quit (the `exit` hook) and every `autosave_ms` from `tick`;
 //! restored from the `startup` hook when `session.restore` is on. A
 //! file for another workspace, from another format version, or one
@@ -28,6 +34,8 @@ const Config = app_mod.Config;
 const layout_mod = @import("layout.zig");
 const Layout = layout_mod.Layout;
 const pty_pane = @import("pty_pane.zig");
+const launch_profiles = @import("launch_profiles.zig");
+const cli = @import("../ai/cli.zig");
 const md_preview = @import("md_preview.zig");
 const pane_accent = @import("pane_accent.zig");
 const hooks = @import("../core/hooks.zig");
@@ -87,6 +95,15 @@ pub const Pane = struct {
     /// // changed (pane-rail): every kind carries one now, not just a
     /// pty — a restored pane comes back the colour it was.
     accent: ?[]const u8 = null,
+    /// pty: the AI session this pane's command line runs, which is
+    /// what a `.running` restore RESUMES (`--resume <id>`, never a
+    /// second session under the same id). Read off the argv the way
+    /// SESSIONS reads it (`pty_pane.sessionIdOfArgv` — `Card.session_id`
+    /// is the same value), and written down here so the restore rule
+    /// does not have to re-derive it; a file from before this field
+    /// still resumes, off its argv. Null for a shell, for Codex, and
+    /// for a bare `claude`.
+    session_id: ?[]const u8 = null,
 };
 
 /// The split tree as the node pool it is in memory: leaves name pane
@@ -271,7 +288,7 @@ pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
                 // A Claude session started under `--session-id` comes
                 // back with `--resume`: the id is taken once.
                 const argv = try pty_pane.resumeArgv(arena, pt.argv);
-                break :blk .{ .kind = .pty, .argv = argv, .cwd = pt.cwd, .label = pt.label, .accent = pt.accent_color };
+                break :blk .{ .kind = .pty, .argv = argv, .cwd = pt.cwd, .label = pt.label, .accent = pt.accent_color, .session_id = pty_pane.sessionIdOfArgv(argv) };
             },
             else => null,
         };
@@ -596,6 +613,56 @@ fn openSaved(app: *App, sp: Pane, opened: []const ?PaneId) OpenError!?PaneId {
     return id;
 }
 
+/// What a saved terminal pane comes back as.
+pub const TerminalRestore = union(enum) {
+    /// Rule 1 — a plain shell: a fresh one, in the cwd it was saved in.
+    shell,
+    /// Rule 2 — an AI session pane whose id was saved: `--resume <id>`.
+    resumed: []const u8,
+    /// Rule 3 — everything else: the tab, the title and
+    /// `[exited] — any key restarts <name>`, starting nothing.
+    dormant,
+};
+
+/// Whether `argv` carries `flag` with a value after it.
+fn hasFlag(argv: []const []const u8, flag: []const u8) bool {
+    var i: usize = 0;
+    while (i + 1 < argv.len) : (i += 1) if (std.mem.eql(u8, argv[i], flag)) return true;
+    return false;
+}
+
+/// The restore rule for one saved pty pane.
+///
+/// A restart is meant to hand the workspace back the way it was left,
+/// so the default is to bring the terminals back working:
+///
+///  1. A plain shell pane (no command line) comes back RUNNING — a
+///     fresh shell in the saved cwd, which is cheap and harmless.
+///  2. A Claude Code pane whose session id was saved RESUMES that
+///     session (`claude --resume <id>`). Never a NEW one: an id that
+///     did not survive the save is rule 3, not a fresh billed session
+///     started behind the user's back. Codex has no resume in
+///     `ai/cli.zig` (`codex exec <prompt>` is the whole surface), so a
+///     Codex pane is rule 3 too.
+///  3. Anything else — an arbitrary command line, a bare `claude` with
+///     no id — comes back DORMANT, waiting for a key. Re-running
+///     someone's build, deploy or test command at launch is not a
+///     restore.
+///
+/// `session.restore_terminals = .dormant` is the one switch that puts
+/// every pane in bucket 3, which is what mnml did for the day this rule
+/// was the other way around.
+pub fn terminalRestore(app: *const App, sp: Pane) TerminalRestore {
+    if (app.cfg.session.restore_terminals == .dormant) return .dormant;
+    if (sp.argv.len == 0) return .shell;
+    // The field, or the argv it was read off — a file older than the
+    // field still carries `--resume <id>`.
+    const id = sp.session_id orelse pty_pane.sessionIdOfArgv(sp.argv) orelse return .dormant;
+    if (id.len == 0) return .dormant;
+    if (!launch_profiles.isProductArgv(app, sp.argv[0], .claude)) return .dormant;
+    return .{ .resumed = id };
+}
+
 fn openSavedPane(app: *App, sp: Pane, opened: []const ?PaneId) OpenError!?PaneId {
     switch (sp.kind) {
         .editor => {
@@ -637,20 +704,31 @@ fn openSavedPane(app: *App, sp: Pane, opened: []const ?PaneId) OpenError!?PaneId
         },
         .pty => {
             if (!pty_pane.supported) return null;
-            // Dormant: the tab, the title and `[exited]`, never a shell
-            // that started itself. Neovim's `:mksession` does not bring
-            // `:terminal` buffers back as live processes, and a restored
-            // shell runs the workspace's rc files — and whatever the
-            // last one was in the middle of — without being asked. A key
-            // on the pane starts it.
+            // The three rules, in `terminalRestore`.
+            const plan = terminalRestore(app, sp);
+            const argv: []const []const u8 = switch (plan) {
+                .shell => &.{},
+                .dormant => sp.argv,
+                .resumed => |id| blk: {
+                    // `capture` already spells a live `--session-id` as
+                    // `--resume`, so the saved line resumes as it stands
+                    // — and keeps whatever else was on it (`--model`).
+                    // A file written before it did gets the canonical
+                    // `claude --resume <id>` instead: a restore must
+                    // never start a SECOND billed session under an id
+                    // that already exists.
+                    if (hasFlag(sp.argv, "--resume")) break :blk sp.argv;
+                    break :blk try cli.claudeResumeArgv(app.frame.allocator(), id);
+                },
+            };
             return pty_pane.open(app, .{
-                .argv = sp.argv,
+                .argv = argv,
                 .cwd = sp.cwd,
                 .label = sp.label,
                 .placement = .tab,
-                .kind = if (sp.argv.len == 0) .shell else .command,
+                .kind = if (argv.len == 0) .shell else .command,
                 .accent_color = sp.accent,
-                .dormant = true,
+                .dormant = plan == .dormant,
             }) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => return null,
@@ -1065,8 +1143,10 @@ test "session: the session colours and a pty pane's accent ride in the file and 
             else => {},
         };
         try t.expectEqualStrings("red", found orelse return error.TestUnexpectedResult);
-        // The pane came back; the child did not. `sleep 30` is not
-        // running in this workspace because a session was restored.
+        // Rule 3: `/bin/sh -c "sleep 30"` is an arbitrary command line,
+        // not a shell and not a session to resume, so the pane came
+        // back and the child did not — nothing re-runs someone's
+        // command at launch.
         try t.expect(dormant);
     }
 }
@@ -1140,4 +1220,126 @@ test "session: the two profiles key the file apart — dev saves session-dev.zon
     // the stable file would toast about /elsewhere.
     try restore(&app);
     try t.expect(app.session.restored);
+}
+
+test "session: the three terminal-restore rules, and the switch that overrides them" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    var app = try f.app();
+    defer app.deinit();
+
+    // Rule 1 — no command line at all is a plain shell: cheap to start,
+    // harmless, and the pane is useless without it.
+    try t.expect(terminalRestore(&app, .{ .kind = .pty }) == .shell);
+    try t.expect(terminalRestore(&app, .{ .kind = .pty, .cwd = "/tmp" }) == .shell);
+
+    // Rule 2 — a Claude line whose id was saved resumes THAT session.
+    const claude: Pane = .{ .kind = .pty, .argv = &.{ "claude", "--resume", "sid-9" }, .session_id = "sid-9" };
+    try t.expectEqualStrings("sid-9", terminalRestore(&app, claude).resumed);
+    // The id off the argv alone — a file written before the field.
+    const older: Pane = .{ .kind = .pty, .argv = &.{ "claude", "--resume", "sid-9" } };
+    try t.expectEqualStrings("sid-9", terminalRestore(&app, older).resumed);
+    // An absolute path to the binary is still Claude, and so is a line
+    // that kept its other flags.
+    const with_model: Pane = .{ .kind = .pty, .argv = &.{ "/opt/homebrew/bin/claude", "--model", "opus", "--resume", "sid-9" }, .session_id = "sid-9" };
+    try t.expectEqualStrings("sid-9", terminalRestore(&app, with_model).resumed);
+
+    // Rule 3 — anything else waits for a key. An arbitrary command line
+    // (re-running someone's deploy at launch is not a restore); a bare
+    // `claude` with no id, because a resume must never quietly become a
+    // NEW billed session; and Codex, which has no resume in
+    // `ai/cli.zig` at all (`codex exec <prompt>` is the whole surface).
+    try t.expect(terminalRestore(&app, .{ .kind = .pty, .argv = &.{ "npm", "run", "deploy" } }) == .dormant);
+    try t.expect(terminalRestore(&app, .{ .kind = .pty, .argv = &.{"claude"} }) == .dormant);
+    try t.expect(terminalRestore(&app, .{ .kind = .pty, .argv = &.{ "codex", "--resume", "sid-9" }, .session_id = "sid-9" }) == .dormant);
+    // An empty id is no id.
+    try t.expect(terminalRestore(&app, .{ .kind = .pty, .argv = &.{ "claude", "--resume", "" }, .session_id = "" }) == .dormant);
+
+    // The one switch puts every one of them in bucket 3 — what mnml did
+    // for the day this rule was the other way around.
+    app.cfg.session.restore_terminals = .dormant;
+    try t.expect(terminalRestore(&app, .{ .kind = .pty }) == .dormant);
+    try t.expect(terminalRestore(&app, claude) == .dormant);
+    try t.expect(terminalRestore(&app, with_model) == .dormant);
+}
+
+/// The one pty pane an app has, for the round-trip tests below.
+fn solePty(app: *App) ?*pty_pane.PtyPane {
+    for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+        .pty => |*pt| return pt,
+        else => {},
+    };
+    return null;
+}
+
+test "session: a restored shell pane comes back RUNNING, and `.dormant` is the switch that keeps it waiting" {
+    // A real login shell drives the pty.
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var f = try Fixture.init();
+    defer f.deinit();
+    {
+        var app = try f.app();
+        defer app.deinit();
+        _ = try pty_pane.open(&app, .{ .argv = &.{}, .label = "sh", .kind = .shell, .placement = .tab });
+        try save(&app);
+    }
+    {
+        var app = try f.app();
+        defer app.deinit();
+        try restore(&app);
+        const p = solePty(&app) orelse return error.TestUnexpectedResult;
+        // The whole ask: a restart hands the shell back working.
+        try t.expect(!p.dormant);
+        try t.expect(p.session != null);
+        try t.expect(p.exit == null);
+        try t.expectEqual(@as(usize, 0), p.argv.len);
+    }
+    {
+        var app = try f.app();
+        defer app.deinit();
+        app.cfg.session.restore_terminals = .dormant;
+        try restore(&app);
+        const p = solePty(&app) orelse return error.TestUnexpectedResult;
+        try t.expect(p.dormant);
+        try t.expect(p.session == null);
+        try t.expect(p.exit != null);
+    }
+}
+
+test "session: a Claude pane's id rides in the file, and the restored line resumes it rather than starting a second one" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var f = try Fixture.init();
+    defer f.deinit();
+    // A fake `claude` — basename is what tells mnml the product, and
+    // the real CLI is never run by a test.
+    try f.tmp.dir.createDirPath(t.io, "bin");
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "bin/claude", .data = "#!/bin/sh\nprintf '%s ' \"$@\" >> argv.log\nsleep 30\n" });
+    try f.tmp.dir.setFilePermissions(t.io, "bin/claude", .fromMode(0o755), .{});
+    const fake = try f.abs("bin/claude");
+    defer t.allocator.free(fake);
+    {
+        var app = try f.app();
+        defer app.deinit();
+        // As `ai.claude_code_new` starts one: a NEW session under an id
+        // of mnml's own.
+        _ = try pty_pane.open(&app, .{ .argv = &.{ fake, "--session-id", "sid-9" }, .label = "claude", .kind = .command, .placement = .tab });
+        try save(&app);
+    }
+    const text = try f.tmp.dir.readFileAlloc(t.io, rel_path, t.allocator, .limited(1 << 16));
+    defer t.allocator.free(text);
+    // The id is written down, and the line already spells the resume.
+    try t.expect(std.mem.indexOf(u8, text, "sid-9") != null);
+    try t.expect(std.mem.indexOf(u8, text, "--resume") != null);
+    try t.expect(std.mem.indexOf(u8, text, "--session-id") == null);
+    {
+        var app = try f.app();
+        defer app.deinit();
+        try restore(&app);
+        const p = solePty(&app) orelse return error.TestUnexpectedResult;
+        try t.expect(!p.dormant);
+        try t.expect(p.session != null);
+        try t.expectEqual(@as(usize, 3), p.argv.len);
+        try t.expectEqualStrings("--resume", p.argv[1]);
+        try t.expectEqualStrings("sid-9", p.argv[2]);
+    }
 }

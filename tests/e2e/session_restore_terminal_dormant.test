@@ -1,14 +1,26 @@
 # requires: macos
-# Session restore brings a terminal pane back DORMANT — its tab, its
-# title and `[exited]`, waiting for a key — never a running shell.
-# Neovim's `:mksession` does not restore `:terminal` buffers as live
-# processes either, and a shell that starts itself in a workspace runs
-# that workspace's rc files (and whatever the last one was in the middle
-# of) without being asked.
+# `session.restore_terminals = .dormant` is the other way to restore a
+# terminal pane: the tab, the title and `[exited] — any key restarts
+# <label>`, starting nothing until a key asks. The default is
+# `.running` (tests/e2e/session_restore_terminal_running.test); this
+# file drives the Settings row that switches it, because the switch is
+# only real if it is reachable.
 write notes.txt "alpha\n"
 open notes.txt
-# The TERMINAL mode chip is the vim profile's reading of a focused pty
-# pane (`statusline.modeOf`), and `<leader>h` is where the shell lives.
+
+# Integrations → Restore terminals, found by search rather than by a
+# row number that moves. Enter hands the list back to the cursor, `→`
+# cycles the value, Enter saves and closes.
+command view.settings_search
+type "restore terminals"
+expect screen contains "Restore terminals:"
+expect screen contains "[running] / dormant"
+key enter
+key right
+expect screen contains "running / [dormant]"
+key enter
+expect screen lacks "Restore terminals:"
+
 command editor.use_vim
 command term.shell_bottom
 wait 2000

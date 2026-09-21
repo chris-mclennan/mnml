@@ -257,7 +257,7 @@ was: docs/research/hunt-repros/standard-12-tab-strip-no-hidden-count.test
 now: tests/e2e/tab_strip_hidden_count.test — passes
 ```
 
-### 5. Session restore re-spawns terminal panes as live shells — SEV-3 (vim #22) — **fixed (this branch)**
+### 5. Session restore re-spawns terminal panes as live shells — SEV-3 (vim #22) — **NOT A BUG (reversed 2026-09-20 on the user's word)**
 
 `src/app/session.zig:261-266` saves shell and command ptys; `:621-628`
 calls `pty_pane.open` on restore. Relaunching after a session that had a
@@ -266,13 +266,32 @@ restore `:terminal` buffers as live processes, and a shell that starts
 itself in a workspace is a surprise. Not in `PARITY.md`'s `vim-fixes`
 list; no doc or source comment defends it.
 
+**The rule changed, and this finding did not survive it.** The fix
+above shipped dormant-by-default; the user restarted onto it the same
+day, got `[exited] — any key restarts ghostty (zsh)` and `… claude`
+where a shell and a Claude session had been, and asked *"why is this
+necessary?"*. Their expectation is the other way round: a restart is
+supposed to hand the workspace back working. A hunt agent reading
+Neovim's `:mksession` as the authority was reasoning about the wrong
+product — mnml's terminal panes are workspace furniture, not `:terminal`
+buffers.
+
+So `session.restore_terminals` now defaults to `.running`, and the three
+rules are in `session.zig`'s `terminalRestore`: a plain shell comes back
+live in the cwd it was saved in; a Claude pane whose session id was
+saved comes back `--resume <id>` (never a NEW billed session — a missing
+id falls through); anything else, which is where the finding's real half
+lives, comes back dormant. Nobody's deploy command re-runs at launch,
+and nobody has to press a key to get their shell back.
+
 ```
 was: docs/research/hunt-repros/vim-22-session-restores-terminal.test
   FAIL line 11: file .mnml/session.zon unexpectedly contains "zsh"
-now: tests/e2e/session_restore_terminal_dormant.test — passes. The
-     assertion moved with the fix: the pane IS saved (losing the tab
-     would be its own bug); it comes back DORMANT, `[exited] — any key
-     restarts`, which is the half the finding was about.
+now: tests/e2e/session_restore_terminal_running.test (rule 1),
+     session_restore_claude_resume.test (rule 2),
+     session_restore_command_pane_dormant.test (rule 3) and
+     session_restore_terminal_dormant.test (the switch) — all pass.
+     The pane IS saved either way: losing the tab would be its own bug.
 ```
 
 ### 6-7. The two remaining, both SEV-3 cosmetic — **both fixed (this branch)**
@@ -339,8 +358,12 @@ One line each, in the order worth doing them. Items 1-7 shipped on
    reachable again.
 4. ✅ **Paint `+N hidden` whenever any tab is off-strip**, not only on a
    whole-tail scroll (`src/ui/bufferline.zig:465`).
-5. ✅ **Stop restoring shell ptys as running processes** — persist the pane
-   and let the user start it, or restore it exited.
+5. ~~**Stop restoring shell ptys as running processes** — persist the pane
+   and let the user start it, or restore it exited.~~ **Reversed on the
+   user's word** (`restore-running`, same day): a restart brings the
+   terminals back working. Only a command that cannot be re-run safely
+   stays dormant; `session.restore_terminals = .dormant` is the switch
+   for anyone who wants the whole of it back.
 6. ✅ **Subtract the title row from `menuSize`'s height** for titled
    context menus (`src/app/render.zig:2536`).
 7. ✅ **Anchor the palette box on open** and let only the list shrink
@@ -555,6 +578,6 @@ Plus `multilang-http-history-commands-noop` (2) — **by-design**, see above.
 | 19 | 3 | fixed-since | `28b2632e` — `u` lands on the restored text |
 | 20 | 3 | fixed-since | `ex q` leaves `"panes":[]` |
 | 21 | 3 | fixed-since | `f573a8bb` — a second Tab descends into the one directory match |
-| 22 | 3 | **fixed (this branch)** | `session.zig:261` still saves ptys; `:621` restores them dormant |
+| 22 | 3 | **not a bug** | reversed the same day on the user's word: a restart brings the terminals back RUNNING (`terminalRestore`); only a command that cannot be re-run safely is dormant |
 | once A | — | fixed-since | `b5fcbcfe` — `acceptsGhost()` guards both accept and fetch |
 | once B | — | by-design | `headless.zig:88` emits `signal` only for SIGTERM/INT/HUP — an external kill |
