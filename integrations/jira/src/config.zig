@@ -5,7 +5,8 @@
 //! `[detail_modal]`, `[[tabs]]`) and every `[[tabs]]` key (`name`,
 //! `kind`, `mode`, `jql`, `project`, `component`, `columns`,
 //! `status_order`, `bumps`, `version_name_contains`, `team`,
-//! `issue_type`, `label`, `board_id`, `filter_id`) is the same word
+//! `issue_type`, `label`, `board_id`, `filter_id`, `reported_window_days`)
+//! is the same word
 //! here, so a file converts mechanically:
 //!
 //!   jira_url = "https://x"           .jira_url = "https://x",
@@ -136,7 +137,7 @@ pub const TabKind = enum {
     pub fn defaultJql(k: TabKind) ?[]const u8 {
         return switch (k) {
             .work_assigned, .work_open => "assignee = currentUser() AND resolution = Unresolved AND status not in (\"Done\", \"Done in Staging\", \"Done in Production\") ORDER BY updated DESC",
-            .work_reported => "reporter = currentUser() AND resolution = Unresolved ORDER BY updated DESC",
+            .work_reported => reported_default_jql,
             .work_recently_done => "assignee = currentUser() AND status in (Done, Closed, Resolved) AND resolved >= -30d ORDER BY resolved DESC",
             .work_recent => "(assignee was currentUser() OR reporter = currentUser() OR worklogAuthor = currentUser() OR commentedBy = currentUser()) AND updated >= -30d ORDER BY updated DESC",
             .work_unified => "assignee = currentUser() AND (resolution is EMPTY OR resolved >= -30d) ORDER BY resolved DESC, updated DESC",
@@ -157,6 +158,52 @@ pub const TabKind = enum {
         return k == .board_active_sprint or k == .board_backlog;
     }
 };
+
+// ─── the Reported-by-me window ──────────────────────────────────────────
+
+/// How far back "Reported by me" looks, in days, before anything is
+/// widened: the reference's own filter is every ticket you ever filed,
+/// newest first, which on a long-lived account is thousands of rows and
+/// a slow tab. Two weeks is the day's worth of it.
+pub const reported_window_default: u16 = 14;
+
+/// The steps the window widens through, in order. Past the last one it
+/// widens to no window at all, and then there is nothing left to press.
+pub const reported_window_steps = [_]u16{ 14, 30, 90 };
+
+/// The unwidened query, as a literal so `defaultJql` can stay one.
+pub const reported_default_jql = "reporter = currentUser() AND created >= -14d ORDER BY created DESC";
+
+/// Jira's own "Reported by me" is `reporter = currentUser() ORDER BY
+/// created DESC` — newest FILED first, every resolution. The port's was
+/// `resolution = Unresolved ORDER BY updated DESC`, which is a
+/// different tab wearing the same name. This is the reference's, with
+/// the created window bolted on; `days` of 0 is no window, which is the
+/// reference's query exactly.
+pub fn reportedJql(arena: Allocator, days: u16) Allocator.Error![]const u8 {
+    if (days == 0) return "reporter = currentUser() ORDER BY created DESC";
+    if (days == reported_window_default) return reported_default_jql;
+    return std.fmt.allocPrint(arena, "reporter = currentUser() AND created >= -{d}d ORDER BY created DESC", .{days});
+}
+
+/// The step out from a window of `days`: the next one up the table, or
+/// 0 (no window) once past the last. Null when there is nowhere left to
+/// go — already at no window — which is what makes the row disappear.
+/// A hand-set `reported_window_days` that is not in the table lands on
+/// the first step wider than it, so a custom 45 still widens to 90.
+pub fn nextReportedWindow(days: u16) ?u16 {
+    if (days == 0) return null;
+    for (reported_window_steps) |step| if (step > days) return step;
+    return 0;
+}
+
+/// How a window reads in the row that widens it: `2 weeks`, `30 days`,
+/// `all time`. Two weeks is spelled the way the ask spelled it.
+pub fn windowLabel(buf: []u8, days: u16) []const u8 {
+    if (days == 0) return "all time";
+    if (days == reported_window_default) return "2 weeks";
+    return std.fmt.bufPrint(buf, "{d} days", .{days}) catch "a while";
+}
 
 /// One `{name}` hole in a `jql_editable` tab's JQL, and what fills it.
 ///
@@ -295,6 +342,11 @@ pub const Tab = struct {
     label: []const u8 = "",
     board_id: u64 = 0,
     filter_id: u64 = 0,
+    /// How far back a `work_reported` tab looks when it opens, in days.
+    /// 0 opens it on every ticket you ever filed. Ignored on every other
+    /// kind. The tab widens from here at runtime; this is only where it
+    /// starts, and a restart starts it here again.
+    reported_window_days: u16 = reported_window_default,
     /// A `jql_editable` tab's `{name}` holes. Ignored on every other kind.
     vars: []const Var = &.{},
 
@@ -324,6 +376,7 @@ pub const Tab = struct {
                 if (t.filter_id == 0) return null;
                 return try std.fmt.allocPrint(arena, "filter = {d} ORDER BY updated DESC", .{t.filter_id});
             }
+            if (k == .work_reported) return try reportedJql(arena, t.reported_window_days);
             return k.defaultJql();
         }
         return null;
@@ -737,7 +790,10 @@ test "the families split the tabs the way --only does, and a legacy tab is dropp
 
 test "the two new work kinds: Reported by me is the reporter query, My open work items the assigned one" {
     const reported = TabKind.work_reported.defaultJql().?;
-    try testing.expectEqualStrings("reporter = currentUser() AND resolution = Unresolved ORDER BY updated DESC", reported);
+    // Jira's own filter, windowed: newest FILED first, every
+    // resolution, two weeks back.
+    try testing.expectEqualStrings("reporter = currentUser() AND created >= -14d ORDER BY created DESC", reported);
+    try testing.expect(std.mem.indexOf(u8, reported, "resolution") == null);
     try testing.expectEqualStrings(TabKind.work_assigned.defaultJql().?, TabKind.work_open.defaultJql().?);
     try testing.expect(TabKind.work_open.isAssignedOpen() and TabKind.work_assigned.isAssignedOpen());
     try testing.expect(!TabKind.work_reported.isAssignedOpen() and !TabKind.jql_editable.isAssignedOpen());
@@ -745,6 +801,41 @@ test "the two new work kinds: Reported by me is the reporter query, My open work
     try testing.expectEqual(Family.work, TabKind.work_open.family());
     try testing.expectEqual(Family.work, TabKind.jql_editable.family());
     try testing.expect(TabKind.jql_editable.defaultJql() == null);
+}
+
+test "the Reported-by-me window: the query per step, the widen sequence 14 -> 30 -> 90 -> none, and how each step reads" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = a.allocator();
+    try testing.expectEqualStrings("reporter = currentUser() AND created >= -14d ORDER BY created DESC", try reportedJql(arena, 14));
+    try testing.expectEqualStrings("reporter = currentUser() AND created >= -30d ORDER BY created DESC", try reportedJql(arena, 30));
+    try testing.expectEqualStrings("reporter = currentUser() AND created >= -90d ORDER BY created DESC", try reportedJql(arena, 90));
+    // 0 is no window at all: the reference's filter, to the byte.
+    try testing.expectEqualStrings("reporter = currentUser() ORDER BY created DESC", try reportedJql(arena, 0));
+    try testing.expectEqualStrings(reported_default_jql, try reportedJql(arena, reported_window_default));
+
+    // The widen sequence, and the end of it.
+    try testing.expectEqual(@as(?u16, 30), nextReportedWindow(14));
+    try testing.expectEqual(@as(?u16, 90), nextReportedWindow(30));
+    try testing.expectEqual(@as(?u16, 0), nextReportedWindow(90));
+    try testing.expect(nextReportedWindow(0) == null);
+    // A hand-set window off the table lands on the first step past it.
+    try testing.expectEqual(@as(?u16, 90), nextReportedWindow(45));
+    try testing.expectEqual(@as(?u16, 0), nextReportedWindow(200));
+
+    var buf: [16]u8 = undefined;
+    try testing.expectEqualStrings("2 weeks", windowLabel(&buf, 14));
+    try testing.expectEqualStrings("30 days", windowLabel(&buf, 30));
+    try testing.expectEqualStrings("90 days", windowLabel(&buf, 90));
+    try testing.expectEqualStrings("all time", windowLabel(&buf, 0));
+
+    // The knob moves where the tab OPENS, and only on this kind.
+    const windowed: Tab = .{ .name = "R", .kind = .work_reported, .reported_window_days = 30 };
+    try testing.expectEqualStrings("reporter = currentUser() AND created >= -30d ORDER BY created DESC", (try windowed.staticJql(arena)).?);
+    const unwindowed: Tab = .{ .name = "R", .kind = .work_reported, .reported_window_days = 0 };
+    try testing.expectEqualStrings("reporter = currentUser() ORDER BY created DESC", (try unwindowed.staticJql(arena)).?);
+    const other: Tab = .{ .name = "O", .kind = .work_open, .reported_window_days = 30 };
+    try testing.expectEqualStrings(TabKind.work_open.defaultJql().?, (try other.staticJql(arena)).?);
 }
 
 test "expandVars fills {name} holes, quotes a list, and leaves an unknown name alone" {
