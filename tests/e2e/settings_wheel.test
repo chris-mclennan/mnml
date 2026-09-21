@@ -9,10 +9,12 @@ expect screen lacks "── UI ──"
 scroll 60 20 up
 expect screen contains "── UI ──"
 # A row per notch (Rust's `settings_move_row(±1)` an event): forty-two
-# notches carry the 45-row UI section past and the Editor header in,
-# at the box's height on any screen the suite runs at. The count is the
-# section's length — a row added to UI (the newest is *Claude icon*)
-# buys one more notch here.
+# notches carry the UI section past and bring the Editor header into the
+# window, at the box's height on any screen the suite runs at. The count
+# tracks the section's length, so a row added to UI can buy one more
+# notch here — 41 was exactly on the boundary until *Confirm on quit*
+# pushed it over, which is what made this the count it is.
+scroll 60 20 down
 scroll 60 20 down
 scroll 60 20 down
 scroll 60 20 down

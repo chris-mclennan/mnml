@@ -141,33 +141,59 @@ fn cutRunner(comptime reason: []const u8) CommandFn {
     }.run;
 }
 
-/// Quit — or, with unsaved changes anywhere, the Save / Discard / Cancel
-/// box (`close_prompt.test` is the spec for the box; `ConfirmPurpose.quit`
-/// routes the choice).
+/// Quit — always through the box (`quit_prompt.test` and
+/// `quit_confirm_clean.test` are its spec; `ConfirmPurpose.quit` /
+/// `.quit_clean` route the choice).
 fn quit(app: *App) CommandError!void {
     // A copy in flight is refused before the dirty check: the box's
     // Discard must not be a way past it (`transfers.quitGuard`).
     try transfers.quitGuard(app, false);
-    if (!app.anyDirty()) {
-        app.quit = true;
-        return;
-    }
+    const dirty = try app.dirtyBufferNames(app.frame.allocator());
+    // // changed (quit-confirm): the CLEAN case confirms too. Ctrl+Q
+    // sits one key from Ctrl+W and Ctrl+A, and a mis-hit used to end
+    // the session with no way back — the terminals, the layout and the
+    // AI panes all gone. `ui.confirm_quit = false` puts the old
+    // straight-through quit back for anyone who wants it.
+    if (dirty.len == 0) return confirmQuitOrQuit(app);
     // // changed (bottom-row): the box NAMES the buffers. A count alone
     // does not say whether the work about to go is a scratch note or
     // the file you have been on all morning. Its buttons are the quit's
     // own — Save all / Quit anyway / Cancel — and Cancel takes the
     // focus, so Enter on a box you did not mean to raise is always
     // safe (the same safety-first default the delete box uses).
-    const msg = try std.fmt.allocPrint(app.gpa, "Unsaved: {s}", .{try app.dirtyBufferNames(app.frame.allocator())});
+    const msg = try std.fmt.allocPrint(app.gpa, "Unsaved: {s}", .{dirty});
+    return openQuitBox(app, msg, &App.quit_choices, .quit);
+}
+
+/// Raise the quit box over `msg` (owned, the overlay takes it) with
+/// Cancel — the last choice — holding the focus.
+fn openQuitBox(app: *App, msg: []u8, choices: []const app_mod.Confirm.Choice, purpose: app_mod.ConfirmPurpose) CommandError!void {
     errdefer app.gpa.free(msg);
     app.overlay.deinit(app.gpa);
     app.overlay = .{ .confirm = .{
-        .state = .{ .title = "Quit mnml?", .message = msg, .choices = &App.quit_choices, .selected = App.quit_choices.len - 1, .buttons = .plain },
-        .purpose = .quit,
+        .state = .{ .title = "Quit mnml?", .message = msg, .choices = choices, .selected = choices.len - 1, .buttons = .plain },
+        .purpose = purpose,
         .message = msg,
     } };
     app.focus = .overlay;
     app.needs_render = true;
+}
+
+/// // changed (quit-confirm): `:q` on the last pane and `:qa` end the
+/// session, so without a bang they stop at the same box `app.quit`
+/// raises. `ConfirmPurpose` is `.quit_clean` either way — both ex
+/// verbs refuse a dirty buffer before they get here.
+pub fn confirmQuitOrQuit(app: *App) CommandError!void {
+    if (!app.cfg.ui.confirm_quit) {
+        app.quit = true;
+        return;
+    }
+    const running = try app.runningTerminalNames(app.frame.allocator());
+    const msg = if (running.len == 0)
+        try app.gpa.dupe(u8, "Nothing is unsaved. This closes mnml.")
+    else
+        try std.fmt.allocPrint(app.gpa, "Nothing is unsaved. Still running: {s}", .{running});
+    return openQuitBox(app, msg, &App.quit_clean_choices, .quit_clean);
 }
 
 /// `Ctrl+Shift+A` — take up the newest message's offer, the keyboard's
@@ -205,12 +231,45 @@ fn leader(app: *App) CommandError!void {
     app.needs_render = true;
 }
 
-test "app.quit sets quit when clean and asks first when a buffer is dirty" {
+test "app.quit asks first, clean or dirty" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
     defer app.deinit();
     _ = try app.openScratch();
+    // // changed (quit-confirm): nothing unsaved still raises the box —
+    // Quit / Cancel, Cancel focused, so Enter is safe.
     try command.run(&app, .{ .static = .@"app.quit" });
+    try t.expect(!app.quit);
+    try t.expect(app.overlay == .confirm);
+    try t.expect(app.overlay.confirm.purpose == .quit_clean);
+    try t.expectEqualStrings("Quit mnml?", app.overlay.confirm.state.title);
+    try t.expectEqualStrings("Nothing is unsaved. This closes mnml.", app.overlay.confirm.state.message);
+    try t.expectEqual(@as(usize, 2), app.overlay.confirm.state.choices.len);
+    try t.expectEqualStrings("Quit", app.overlay.confirm.state.choices[0].label);
+    try t.expectEqualStrings("Cancel", app.overlay.confirm.state.choices[1].label);
+    try t.expectEqual(@as(usize, 1), app.overlay.confirm.state.selected);
+
+    // Enter lands on Cancel: the box goes and the session stays.
+    try app.handle(.{ .key = app_mod.Key.named(.enter) });
+    try t.expect(app.overlay == .none);
+    try t.expect(!app.quit);
+    // Esc cancels the same way.
+    try command.run(&app, .{ .static = .@"app.quit" });
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+    try t.expect(app.overlay == .none);
+    try t.expect(!app.quit);
+    // A SECOND Ctrl+Q on the clean box quits anyway, as it does on the
+    // dirty one — the chord that raised it, pressed again.
+    try command.run(&app, .{ .static = .@"app.quit" });
+    try app.handle(.{ .key = app_mod.Key.ctrl('q') });
     try t.expect(app.quit);
+    try t.expect(app.overlay == .none);
+    // `q` is the quit.
+    app.quit = false;
+    try command.run(&app, .{ .static = .@"app.quit" });
+    try app.handle(.{ .key = app_mod.Key.char('q') });
+    try t.expect(app.quit);
+    try t.expect(app.overlay == .none);
+
     app.quit = false;
     const e = app.activeEditor().?;
     try e.buf.editor.setText("x");
@@ -245,6 +304,45 @@ test "app.quit sets quit when clean and asks first when a buffer is dirty" {
     try command.run(&app, .{ .static = .@"app.quit" });
     try app.handle(.{ .key = app_mod.Key.char('q') });
     try t.expect(app.quit);
+}
+
+test "ui.confirm_quit = false keeps the old quit: the box only when something is unsaved" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    app.cfg.ui.confirm_quit = false;
+    _ = try app.openScratch();
+    try command.run(&app, .{ .static = .@"app.quit" });
+    try t.expect(app.quit);
+    try t.expect(app.overlay == .none);
+    // Unsaved work still stops, whatever the key says.
+    app.quit = false;
+    const e = app.activeEditor().?;
+    try e.buf.editor.setText("x");
+    e.buf.doc.dirty = true;
+    try command.run(&app, .{ .static = .@"app.quit" });
+    try t.expect(!app.quit);
+    try t.expect(app.overlay == .confirm);
+    try t.expect(app.overlay.confirm.purpose == .quit);
+}
+
+test "the harness's exits are not gated by the box: the IPC quit and restart go straight out" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    _ = try app.openScratch();
+    // `run.sh stop` — the IPC `quit` command, the path `app.zig` takes
+    // for it. A box here would leave the harness hanging on a key
+    // nobody is there to press.
+    app.quit = false;
+    try app.handle(.{ .ipc = try event.IpcCommand.create(t.allocator, "{\"cmd\":\"quit\"}") });
+    try t.expect(app.quit);
+    try t.expect(app.overlay == .none);
+    // `run.sh restart` / `app.restart` — exit 75, same story.
+    app.quit = false;
+    app.restart = false;
+    try command.run(&app, .{ .static = .@"app.restart" });
+    try t.expect(app.quit);
+    try t.expect(app.restart);
+    try t.expect(app.overlay == .none);
 }
 
 test "the quit box's Save all writes every dirty buffer and then quits" {
@@ -853,6 +951,7 @@ pub fn onPath(app: *App, bin: []const u8) bool {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const event = @import("../core/event.zig");
 
 test "an offer runs in a VISIBLE pane, the chord takes the newest one, and an unclaimed offer is freed" {
     // A real pty and a login shell: POSIX.

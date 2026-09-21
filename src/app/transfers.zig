@@ -701,7 +701,11 @@ test "app.quit refuses while a transfer runs, like :qa; the discard box never op
     _ = cancelAll(&app);
     try settle(&app, 4000);
     try t.expectEqual(@as(usize, 0), running(&app));
+    // // changed (quit-confirm): past the guard the quit raises its box
+    // — the guard is the FIRST word, so nothing was copying when it did.
     try command.run(&app, .{ .static = .@"app.quit" });
+    try t.expect(app.overlay == .confirm);
+    try app.handle(.{ .key = app_mod.Key.char('q') });
     try t.expect(app.quit);
 }
 

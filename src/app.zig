@@ -352,6 +352,11 @@ pub const LuaBind = struct { id: []u8, title: []u8 };
 pub const ConfirmPurpose = union(enum) {
     close_pane: PaneId,
     quit,
+    /// // changed (quit-confirm): the same box raised with nothing
+    /// unsaved — two choices, so the accepted index means something
+    /// else (0 = Quit, 1 = Cancel). Payload-free like `.quit`, which
+    /// `dispatch.zig` also uses as its ownership-moved sentinel.
+    quit_clean,
     /// Run the workspace's exec-bearing config (`trust.zig`).
     trust_workspace,
     /// `workspace.review_trust` on a trusted workspace: Keep / Forget.
@@ -2453,6 +2458,12 @@ pub const App = struct {
     /// that the session ends, and `Save` reads as "save this one".
     pub const quit_choices = [_]Confirm.Choice{ .{ .key = 's', .label = "Save all" }, .{ .key = 'q', .label = "Quit anyway" }, .{ .key = 'c', .label = "Cancel" } };
 
+    /// // changed (quit-confirm): the same box with nothing to lose.
+    /// There is no work to save, so the offer is the quit itself — and
+    /// Cancel still holds the focus, because the reason to stop and ask
+    /// on a clean workspace is the mis-hit chord, not the unsaved file.
+    pub const quit_clean_choices = [_]Confirm.Choice{ .{ .key = 'q', .label = "Quit" }, .{ .key = 'c', .label = "Cancel" } };
+
     /// The dirty buffers by name, in pane order — what the quit box
     /// lists. A count alone ("2 buffer(s) have unsaved changes") does
     /// not tell the user whether the work about to go is the scratch
@@ -2460,6 +2471,21 @@ pub const App = struct {
     pub fn dirtyBufferNames(self: *App, arena: Allocator) Allocator.Error![]const u8 {
         var out: std.ArrayListUnmanaged(u8) = .empty;
         for (self.panes.slots.items) |*slot| if (slot.*) |*p| if (p.dirty()) {
+            if (out.items.len > 0) try out.appendSlice(arena, ", ");
+            try out.appendSlice(arena, p.title());
+        };
+        return out.items;
+    }
+
+    /// // changed (quit-confirm): the terminals whose child is still
+    /// alive, in pane order — what the clean quit box names. A shell
+    /// mid-`cargo build`, or a Claude session still answering, is the
+    /// one thing a clean workspace still has to lose; a dormant pane
+    /// restored from `session.zon` has no child and is not one.
+    pub fn runningTerminalNames(self: *App, arena: Allocator) Allocator.Error![]const u8 {
+        var out: std.ArrayListUnmanaged(u8) = .empty;
+        for (self.panes.slots.items) |*slot| if (slot.*) |*p| if (p.* == .pty) {
+            if (p.pty.exit != null or p.pty.dormant) continue;
             if (out.items.len > 0) try out.appendSlice(arena, ", ");
             try out.appendSlice(arena, p.title());
         };

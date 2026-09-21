@@ -212,6 +212,9 @@ pub const rows = [_]RowSpec{
     .{ .path = "ui.hover_help", .label = "Hover help", .section = .ui, .scope = .home },
     .{ .path = "ui.hover_tooltip", .label = "Hover tooltips", .section = .ui, .scope = .home },
     .{ .path = "ui.click_echo", .label = "Click echo in statusline", .section = .ui, .scope = .home },
+    // // changed (quit-confirm): `on` (the default) makes Ctrl+Q always
+    // stop and ask; `off` asks only when something is unsaved.
+    .{ .path = "ui.confirm_quit", .label = "Confirm on quit", .section = .ui, .scope = .home },
     .{ .path = "ui.highlight_word_under_cursor", .label = "Highlight word under cursor", .section = .ui, .scope = .workspace },
     .{ .path = "ui.highlight_todo_keywords", .label = "Highlight TODO keywords", .section = .ui, .scope = .workspace },
     .{ .path = "ui.render_markdown", .label = "Inline-rendered markdown", .section = .ui, .scope = .workspace },

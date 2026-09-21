@@ -1,0 +1,61 @@
+# width: 120
+# height: 40
+# `Ctrl+Q` on a CLEAN workspace stops to ask too — the fat-finger guard.
+# The box is the quit's own, with Quit / Cancel instead of the three
+# buttons unsaved work gets, and Cancel holds the focus so Enter on a box
+# nobody meant to raise is safe. Esc, Enter, `c` and a click on Cancel all
+# leave the session exactly where it was.
+
+write one.txt "one\n"
+open one.txt
+expect dirty false
+
+key ctrl+q
+expect screen contains "Quit mnml?"
+expect screen contains "Nothing is unsaved. This closes mnml."
+expect screen contains "Quit"
+expect screen contains "Cancel"
+# Nothing unsaved means nothing to save: the dirty box's buttons are not here.
+expect screen lacks "Save all"
+expect screen lacks "Quit anyway"
+
+# Esc cancels; the workspace is still open.
+key esc
+expect screen lacks "Quit mnml?"
+expect pane "one.txt"
+expect screen contains "one"
+
+# Enter lands on Cancel, because Cancel has the focus.
+key ctrl+q
+expect screen contains "Quit mnml?"
+key enter
+expect screen lacks "Quit mnml?"
+expect pane "one.txt"
+
+# `c` is Cancel's own letter.
+key ctrl+q
+expect screen contains "Quit mnml?"
+key c
+expect screen lacks "Quit mnml?"
+expect pane "one.txt"
+
+# The session is still usable after all that: the buffer still takes
+# text, and Ctrl+Z puts it back so the workspace is clean again — the
+# box below has to be the CLEAN one, not the unsaved-work box.
+type " still here"
+expect dirty true
+expect screen contains " still hereone"
+key ctrl+z
+expect dirty false
+expect screen lacks " still hereone"
+
+# And the Quit button really is a quit. A click anywhere dismisses the
+# box, so only this — the button's own row, and the app gone after it —
+# tells a hit on `Quit` apart from a click that missed. x 66 is inside
+# ` Quit `; the clean box's other button, Cancel, sits at 71..78.
+key ctrl+q
+expect screen contains "Quit mnml?"
+expect screen contains "Nothing is unsaved."
+expect status contains "\"quit\":false"
+click 66 14
+expect status contains "\"quit\":true"
