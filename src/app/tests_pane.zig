@@ -938,7 +938,12 @@ pub const Row = union(enum) {
 
 pub const TestsPane = struct {
     snapshot: alloc.SnapshotArena,
-    group: Io.Group = .init,
+    /// Heap-allocated: a pane lives in `PaneStore.slots`, which is an
+    /// ArrayList, so opening ANY other pane while a run is in flight
+    /// moves this struct. An `Io.Group` cannot be moved once it has a
+    /// task — the task holds its address — and a moved one makes
+    /// `cancel` wait forever, which is a wedged quit.
+    group: *Io.Group,
     generation: u32 = 0,
     runner: Runner = .playwright,
     /// The project root the run happens in. Owned.
@@ -954,12 +959,15 @@ pub const TestsPane = struct {
     scroll: usize = 0,
     sort: Sort = .file_line,
 
-    pub fn init(gpa: Allocator) TestsPane {
-        return .{ .snapshot = alloc.SnapshotArena.init(gpa) };
+    pub fn init(gpa: Allocator) Allocator.Error!TestsPane {
+        const grp = try gpa.create(Io.Group);
+        grp.* = .init;
+        return .{ .snapshot = alloc.SnapshotArena.init(gpa), .group = grp };
     }
 
     pub fn deinit(self: *TestsPane, gpa: Allocator, io: Io) void {
         self.group.cancel(io);
+        gpa.destroy(self.group);
         for (self.last_args) |a| gpa.free(a);
         gpa.free(self.last_args);
         if (self.cwd) |c| gpa.free(c);
@@ -1091,7 +1099,10 @@ pub fn runDotnet(app: *App, root: []const u8, extra: []const []const u8) Command
 
 fn openRun(app: *App, runner: Runner, root: []const u8, extra: []const []const u8) CommandError!PaneId {
     const id = find(app) orelse blk: {
-        const id = try app.panes.add(.{ .tests = TestsPane.init(app.gpa) });
+        var pane = try TestsPane.init(app.gpa);
+        errdefer pane.deinit(app.gpa, app.io);
+        const id = try app.panes.add(.{ .tests = pane });
+        pane = undefined; // moved into the store
         const layout = app.layouts.current();
         if (app.active) |cur| if (layout.leafOf(cur) != null) {
             _ = layout.split(cur, .horizontal, id) catch {};
@@ -1502,7 +1513,7 @@ test "parseReport flattens suites, reads status / duration / error / trace, stri
 }
 
 test "rows: grouped under file headers with error and trace rows; slowest-first drops the headers; the cursor follows its case" {
-    var p = TestsPane.init(t.allocator);
+    var p = try TestsPane.init(t.allocator);
     defer p.deinit(t.allocator, t.io);
     var arena_state = std.heap.ArenaAllocator.init(t.allocator);
     defer arena_state.deinit();
@@ -1783,4 +1794,92 @@ test "dotnet.test opens the pane on a project; a dotnet result lands with its su
         try t.expectEqualStrings("FullyQualifiedName=Acme.Tests.CalcTests.Divides", p.last_args[1]);
         p.group.cancel(t.io);
     }
+}
+
+// ─── the group must not move ────────────────────────────────────────────
+
+/// A worker parked on a pipe nobody writes to — `e2e/cancel_probe.zig`'s
+/// shape, and the worst case for `Io.Group.cancel`.
+const MoveProbe = struct {
+    io: Io,
+    fd: std.posix.fd_t,
+    /// Set once the worker is about to block.
+    entered: Io.Event = .unset,
+
+    fn run(p: *MoveProbe) Io.Cancelable!void {
+        const f: Io.File = .{ .handle = p.fd, .flags = .{ .nonblocking = false } };
+        var buf: [16]u8 = undefined;
+        p.entered.set(p.io);
+        _ = f.readStreaming(p.io, &.{&buf}) catch |e| switch (e) {
+            error.Canceled => return error.Canceled,
+            else => {},
+        };
+    }
+};
+
+/// `TestsPane.deinit` on a thread of its own, so a `cancel` that never
+/// returns is a failing test rather than a hung suite.
+const Closer = struct {
+    pane: *TestsPane,
+    gpa: Allocator,
+    io: Io,
+    done: Io.Event = .unset,
+
+    fn run(c: *Closer) void {
+        c.pane.deinit(c.gpa, c.io);
+        c.done.set(c.io);
+    }
+};
+
+// `tools/break-check.sh` cannot grade this one: with the break in
+// place the test FAILS by name (the watchdog, at ~10 s), but the
+// abandoned worker then touches the group it was started with — the
+// memory the moved pane no longer owns — and the binary dies before
+// the runner prints its per-binary summary, which is the line the
+// script counts. Break-check it by hand, under a hard timeout, and
+// read the `FAIL … (TestsGroupMovedAndCancelWedged)` verdict line.
+test "the tests pane's group survives the pane store moving it under a live worker" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const io = t.io;
+    // `NoRemap` so the store's growth really relocates the panes — the
+    // whole point of the test (`core/alloc.zig`).
+    var nr = alloc.NoRemap.init(t.allocator);
+    const gpa = nr.allocator();
+
+    const fds = try Io.Threaded.pipe2(.{});
+    const read_end: Io.File = .{ .handle = fds[0], .flags = .{ .nonblocking = false } };
+    const write_end: Io.File = .{ .handle = fds[1], .flags = .{ .nonblocking = false } };
+    defer read_end.close(io);
+    defer write_end.close(io);
+
+    // No `defer store.deinit()`: past the watchdog the pane is wedged
+    // inside the closer thread's `deinit` and must not be deinit'd twice.
+    var store = app_mod.PaneStore.init(gpa, io);
+    const id = try store.add(.{ .tests = try TestsPane.init(gpa) });
+
+    var probe: MoveProbe = .{ .io = io, .fd = fds[0] };
+    try store.get(id).?.tests.group.concurrent(io, MoveProbe.run, .{&probe});
+    try probe.entered.wait(io);
+    try io.sleep(.fromMilliseconds(50), .awake);
+
+    // Open panes until `slots` reallocates: the pane — and anything
+    // living inside it — moves, which is what opening any pane during a
+    // run does in the app.
+    const capacity_before = store.slots.capacity;
+    const addr_before = @intFromPtr(&store.slots.items[id].?.tests);
+    while (store.slots.capacity == capacity_before) _ = try store.add(.{ .git_status = .{ .repo = 0 } });
+    try t.expect(@intFromPtr(&store.slots.items[id].?.tests) != addr_before);
+
+    var closer: Closer = .{ .pane = &store.slots.items[id].?.tests, .gpa = gpa, .io = io };
+    const th = try std.Thread.spawn(.{}, Closer.run, .{&closer});
+    closer.done.waitTimeout(io, .{ .duration = .{ .raw = .fromMilliseconds(10_000), .clock = .awake } }) catch |err| switch (err) {
+        // The group moved with the pane: the running task holds the
+        // address the group had before, and `cancel` waits forever on a
+        // task the group at the new address cannot see.
+        error.Timeout => return error.TestsGroupMovedAndCancelWedged,
+        error.Canceled => return error.Canceled,
+    };
+    th.join();
+    store.slots.items[id] = null; // `Closer` has already deinit'd it
+    store.deinit();
 }
