@@ -71,7 +71,7 @@ zig build                              # the binary (`./run.sh build`)
 ./zig-out/bin/mnml-zig test            # the whole corpus at 120x40 (~2.5 min)
 ./zig-out/bin/mnml-zig test --gate     # the 47-file Phase-0 gate
 ./zig-out/bin/mnml-zig test tests/e2e/defaults.test
-./zig-out/bin/mnml-zig test --gate --sizes 80x24,120x40,200x60   # the width sweep
+./zig-out/bin/mnml-zig test --gate --sizes 80x24,120x40,200x60   # the width sweep (see below: it does NOT check content at 80x24 / 200x60)
 zig build e2e -- --filter dap_                                   # the corpus through the build, args passed on
 ```
 
@@ -89,6 +89,91 @@ A debug-UI change is tested against it, not against a hand-written reply;
 The corpus number must not go down. 393/393 is the current line
 (2026-09-07); a change that drops it is not finished. A file that is
 re-aimed at a deliberate change says so in the commit.
+
+## The sweep and what it proves
+
+`--sizes` runs each file at several screen sizes. It is easy to read a
+green sweep as "the chrome is fine at every one of these"; it is not
+that, and the report now says so out loud.
+
+**A run's content assertions count only at the size the file was written
+at.** That is 120x40 by default — every `expect screen` in the corpus was
+written there — or the file's own `# width:` / `# height:` when it names
+one. At every OTHER rung of a sweep the checks are evaluated and their
+verdict ignored, because a string that fits at 120 columns legitimately
+reflows at 80 and a file that asserted on it would fail for no reason.
+
+What a non-asserting rung *does* prove: the App started at that size,
+nothing panicked, nothing leaked, no hit rect overlaps another and no
+rect was painted outside its parent. That is worth running — it is not
+worth calling `ok`:
+
+```
+  ok   picker_width.test                          ← checks ran, checks passed
+  ok*  picker_width.test @80x24 (structure only)  ← no content was checked
+  FAIL picker_width.test @200x60 — line 12: …     ← a real miss at its own size
+
+28/30 passed (10 content, 20 structure-only)
+```
+
+The tally keeps `N/M passed` as its first bytes (scripts grep for it) and
+then splits M: `content` runs evaluated the file's assertions,
+`structure-only` runs did not. `10 content` in a 30-run sweep means
+twenty of those thirty runs said nothing about what was on the screen.
+
+### Writing a test that asserts AT a size
+
+Two ways, and they answer different questions.
+
+* **A size-specific content test** — "the dock's labels are gone at 80
+  columns", "this menu does not fit a 14-row screen". Give the file its
+  own header:
+
+  ```
+  # width: 80
+  # height: 24
+  ```
+
+  The file then runs at that size and no other, a sweep does not move it,
+  and every assertion in it counts. This is the one to reach for when the
+  bug you are pinning IS the size.
+
+* **A size-independent test you want run everywhere** — every assertion
+  in the file would hold at any width (a `status.json` flag, a file on
+  disk, a pane title, a short label that cannot reflow). Say:
+
+  ```
+  # sizes: all
+  ```
+
+  and a sweep evaluates its checks at every rung instead of only at
+  120x40, so each rung tests behaviour rather than merely proving nothing
+  crashed. Only use it when that is really true: one assertion that
+  reflows turns the whole sweep red. `# width:` wins over it — a file
+  that names its own size is already asserting at exactly one.
+
+## Quitting inside a `.test`
+
+`expect quit true` / `expect quit false` reads the App's own quit flag —
+the same one `status.json` publishes and the headless loop stops on.
+
+Once the App has quit, the runner **stops stepping it**: no more ticks,
+no more frames. It used to keep rendering, so a script that quit and then
+failed showed a screen belonging to a session that no longer existed, and
+`status.json` was the only honest oracle in the room. Any step after a
+quit, and any check that needs a fresh frame, now fails with `app has
+quit`. `expect quit`, `expect status` and `expect file` still work there —
+they read App state and the disk, neither of which needs another frame.
+
+The corpus had one of these already. `quit_prompt.test` pressed the quit
+box's **Save all**, which writes every dirty buffer *and ends the
+session*, and then went on to assert `expect screen lacks "Quit mnml?"`
+and `expect dirty false` — both read off a session that was already over.
+The file now ends on the quit, with the two checks that survive it: the
+flag, and the files on disk. A quitting action is therefore the LAST
+thing a `.test` can do; a second way out of the same box needs a second
+file (or a unit test in `cmd_app.zig`, which is where the other three
+live).
 
 ## Strings that outlive the frame
 
@@ -210,7 +295,7 @@ The verdict lines name their test, so `grep -E "FAIL|passed;"` over a
 trace reads straight. Do not attribute a failure to the `▶` start line
 nearest it in a *filtered* stream: the two can be thousands of lines
 apart in the real output. Exactly one test name contains the word FAIL
-(`runPath: skips, sizes, names, and the ok/FAIL/N-M report`), so it was
+(`runPath: skips, sizes, names, and the ok/ok*/FAIL/N-M report`), so it was
 the name every such grep window kept pairing with somebody else's
 failure.
 
@@ -375,9 +460,13 @@ step before it proved):
 3. `zig build -Doptimize=ReleaseSafe` — the binary the next two steps
    run on, the one that ships;
 4. the sweep: `./zig-out/bin/mnml-zig test --gate --sizes 80x24,120x40,200x60`
-   — the Phase-0 gate (`tools/gate.txt`, 47 files) at three sizes;
-   content assertions hold at 120x40, the other sizes assert no panic,
-   no leak, no rect painted outside its parent;
+   — the Phase-0 gate (`tools/gate.txt`, 47 files) at three sizes.
+   **A sweep rung other than the file's own size checks no content**: it
+   asserts no panic, no leak, no overlapping hit rect and no rect painted
+   outside its parent, and nothing about what was on the screen. Those
+   runs report `ok*  <name> @80x24 (structure only)`, never plain `ok`,
+   and the tally says how many of each (*The sweep and what it proves*,
+   below);
 5. the corpus: `./zig-out/bin/mnml-zig test` (393/393);
 6. the Windows gate: `zig build gate-build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSafe`
    — the exe and every test binary compiled, not run (Zig's lazy

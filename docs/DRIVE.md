@@ -208,6 +208,43 @@ The list lives in `src/e2e/runner.zig` (`ladder`), with the same reasons
 in its doc comment — that is where the next person adding a rung will
 look.
 
+### What a rung actually checks
+
+A sweep is **not** a content check at every size, and reading it as one
+has cost real time. A run's assertions count only at the size the file
+was written at — 120x40, or the file's own `# width:` / `# height:` when
+it names one. At every other rung the checks are evaluated and their
+verdict thrown away, because a label that fits at 120 columns reflows at
+80 and a file that asserted on it would fail for no reason.
+
+What the other rungs prove is real but narrow: the App started at that
+size, nothing panicked, nothing leaked, no hit rect overlaps another,
+no rect was painted outside its parent. The report names the difference
+rather than printing `ok` for both:
+
+```
+  ok   dock_labels.test                          ← checks ran, checks passed
+  ok*  dock_labels.test @80x24 (structure only)  ← nothing was checked
+
+5/6 passed (1 content, 5 structure-only)
+```
+
+So `ok* … @376x92` never means "the activity bar is fine at 376x92". It
+means "nothing crashed". To assert something AT a size, one of two
+headers:
+
+* `# width: 80` (and/or `# height: 24`) — the file runs at that size and
+  no other, a sweep does not move it, and every assertion counts. This is
+  how you pin a size-specific bug.
+* `# sizes: all` — for a file whose every assertion is size-INDEPENDENT
+  (a `status.json` flag, a file on disk, a pane title, a string that
+  cannot reflow). A sweep then evaluates its checks at every rung. One
+  assertion that reflows turns the whole sweep red, so only say it when
+  it is really true.
+
+`docs/CONTRIBUTING.md` has the same rule beside the gate's own sweep
+command.
+
 ## A notch is not an event
 
 Ghostty multiplies a wheel detent by its own scroll multiplier, so one

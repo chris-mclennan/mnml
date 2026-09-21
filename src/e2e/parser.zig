@@ -46,6 +46,11 @@
 //!                                #   that moves every time a row lands
 //! expect status lacks <text>     # …does not
 //! expect dirty <true|false>      # the active editor's dirty flag
+//! expect quit <true|false>       # has the app asked to quit? After a
+//!                                #   `true` the runner stops stepping the
+//!                                #   app, and only `expect quit`,
+//!                                #   `expect status` and `expect file`
+//!                                #   still mean anything
 //! expect pane <text>             # the active pane's title contains the substring
 //! expect highlights at_least <n> # ≥ n syntax spans on the active editor
 //! expect file <relpath> contains <text>  # the workspace file contains it
@@ -64,7 +69,9 @@
 //! `# ascii` (the App starts in `--ascii` mode),
 //! `# requires: network` (skipped unless opted in), `# width: 120` (runs
 //! at that width only), `# height: 14` (that height only — a menu taller
-//! than the screen needs a short one), `# env: NAME=value` (set in the App's environment
+//! than the screen needs a short one), `# sizes: all` (this file's
+//! assertions are size-independent, so a sweep evaluates them at every
+//! rung instead of only at 120×40), `# env: NAME=value` (set in the App's environment
 //! for this file — `MNML_NOW_PLAYING` for the statusline's cluster; at
 //! most `Header.max_env` of them, and one more is a parse error rather
 //! than a line that disappears), and
@@ -119,6 +126,12 @@ pub const Check = union(enum) {
     /// `cmdline`, whether the app's own `:` line is open.
     status_contains: []const u8,
     status_lacks: []const u8,
+    /// Has the app asked to quit? `status.json` carries the same flag,
+    /// but a script that leaned on its TEXT (`expect status contains
+    /// "\"quit\":true"`) was asserting on a spelling; and the screen is
+    /// no oracle at all here, because the runner used to keep drawing a
+    /// quit app, so its last frame looked alive.
+    quit: bool,
     /// A cell's foreground or background, as a theme resolves it: the
     /// only way a `.test` can see a colour (the screen dump carries
     /// none). `expect color X Y fg #61afef`, `… bg not #1e222a`.
@@ -163,6 +176,17 @@ pub const Header = struct {
     shared_data_root: bool = false,
     width: ?u16 = null,
     height: ?u16 = null,
+    /// `# sizes: all`: this file's content assertions hold at EVERY size
+    /// the sweep runs it at, not only at 120×40. Without it a sweep rung
+    /// other than the corpus size evaluates nothing (the runner reports
+    /// it as `ok*  … (structure only)`), because a file written for
+    /// 120×40 says things about 120×40. Use it for a file whose every
+    /// assertion is size-INDEPENDENT — a status flag, a file on disk, a
+    /// pane title, a short string that cannot reflow — so the sweep
+    /// checks behaviour at each rung instead of only proving nothing
+    /// panicked. A file that names its own `# width:` / `# height:` is
+    /// already asserting at its one size, and that wins.
+    sizes_all: bool = false,
     /// `# ascii`: the App starts with `ui.ascii_icons` on, as
     /// `mnml-zig --ascii` does. A terminal with no Nerd Font is a
     /// shipped mode, and the only way a script can prove a glyph's
@@ -332,7 +356,7 @@ const Keyword = enum { write, open, key, type, command, ex, wait, snippet, shell
 
 fn parseExpect(a: Allocator, diag: *Diagnostic, ln: usize, rest: []const u8) Error!Stmt {
     const what, const arg = split1(rest);
-    const What = enum { screen, status, dirty, pane, highlights, file, color };
+    const What = enum { screen, status, dirty, pane, highlights, file, color, quit };
     const kind = std.meta.stringToEnum(What, what) orelse return diag.set("line {d}: unknown expectation `{s}`", .{ ln, what });
     const check: Check = switch (kind) {
         .screen => blk: {
@@ -352,6 +376,12 @@ fn parseExpect(a: Allocator, diag: *Diagnostic, ln: usize, rest: []const u8) Err
             if (std.mem.eql(u8, v, "true")) break :blk .{ .dirty = true };
             if (std.mem.eql(u8, v, "false")) break :blk .{ .dirty = false };
             return diag.set("line {d}: expect dirty <true|false>", .{ln});
+        },
+        .quit => blk: {
+            const v = trim(arg);
+            if (std.mem.eql(u8, v, "true")) break :blk .{ .quit = true };
+            if (std.mem.eql(u8, v, "false")) break :blk .{ .quit = false };
+            return diag.set("line {d}: expect quit <true|false>", .{ln});
         },
         .pane => .{ .pane_title = try unescape(a, arg) },
         .highlights => blk: {
@@ -470,6 +500,9 @@ pub fn parseHeader(text: []const u8) Header {
         if (std.ascii.startsWithIgnoreCase(after_hash, "height:")) {
             h.height = std.fmt.parseInt(u16, trim(after_hash["height:".len..]), 10) catch null;
         }
+        if (std.ascii.startsWithIgnoreCase(after_hash, "sizes:")) {
+            if (std.ascii.eqlIgnoreCase(trim(after_hash["sizes:".len..]), "all")) h.sizes_all = true;
+        }
         if (std.ascii.startsWithIgnoreCase(after_hash, "width:")) {
             h.width = std.fmt.parseInt(u16, trim(after_hash["width:".len..]), 10) catch null;
         }
@@ -581,6 +614,13 @@ test "every step directive" {
     try t.expectEqualStrings("l1\nl2\ttab \"q\" \\ \\z", L[12].stmt.step.write.content);
 }
 
+test "expect quit parses both booleans and is a check, not a step" {
+    var s = try parseOk("expect quit false\nexpect quit true\n");
+    defer s.deinit();
+    try t.expectEqual(false, s.lines[0].stmt.check.quit);
+    try t.expectEqual(true, s.lines[1].stmt.check.quit);
+}
+
 test "hover is a mouse step with no button" {
     var s = try parseOk("hover 4 9\n");
     defer s.deinit();
@@ -631,6 +671,7 @@ test "errors name the line and the directive" {
     try expectErr("expect nothing\n", "line 1: unknown expectation `nothing`");
     try expectErr("expect screen equals x\n", "line 1: expect screen <contains|lacks> …");
     try expectErr("expect dirty maybe\n", "line 1: expect dirty <true|false>");
+    try expectErr("expect quit soon\n", "line 1: expect quit <true|false>");
     try expectErr("expect highlights at_most 3\n", "line 1: expect highlights at_least <N>");
     try expectErr("expect highlights at_least many\n", "line 1: expect highlights at_least <usize>");
     try expectErr("expect file\n", "line 1: expect file needs a path");
@@ -700,6 +741,14 @@ test "header directives come only from the leading comment block" {
     try t.expect(parseHeader("#  Shared-Data-Root  \nopen x\n").shared_data_root);
     try t.expect(!parseHeader("# width: 120\nopen x\n").shared_data_root);
     try t.expect(!parseHeader("open x\n# shared-data-root\n").shared_data_root);
+    // `# sizes: all`: content assertions count at every rung of a sweep.
+    // Only `all` is a value; anything else leaves the flag alone rather
+    // than half-enabling a directive nobody wrote.
+    try t.expect(parseHeader("# sizes: all\nopen x\n").sizes_all);
+    try t.expect(parseHeader("#  Sizes:  All \nopen x\n").sizes_all);
+    try t.expect(!parseHeader("# sizes: 80x24\nopen x\n").sizes_all);
+    try t.expect(!parseHeader("# width: 80\nopen x\n").sizes_all);
+    try t.expect(!parseHeader("open x\n# sizes: all\n").sizes_all);
     try t.expectEqual(@as(?u16, 120), parseHeader("# width: 120\n").width);
     try t.expectEqual(@as(?u16, null), parseHeader("# width: wide\n").width);
     try t.expectEqual(@as(?u16, 14), parseHeader("# height: 14\n").height);

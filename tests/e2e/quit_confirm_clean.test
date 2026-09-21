@@ -53,9 +53,12 @@ expect screen lacks " still hereone"
 # box, so only this — the button's own row, and the app gone after it —
 # tells a hit on `Quit` apart from a click that missed. x 66 is inside
 # ` Quit `; the clean box's other button, Cancel, sits at 71..78.
+# `expect quit` reads the App's own flag (the one the host stops on),
+# rather than a spelling inside status.json's text. Nothing follows it:
+# the runner stops stepping an App that has quit.
 key ctrl+q
 expect screen contains "Quit mnml?"
 expect screen contains "Nothing is unsaved."
-expect status contains "\"quit\":false"
+expect quit false
 click 66 14
-expect status contains "\"quit\":true"
+expect quit true

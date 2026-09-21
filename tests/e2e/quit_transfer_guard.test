@@ -17,6 +17,9 @@ expect screen contains "› out"
 key ctrl+v
 key ctrl+q
 expect screen contains "transfer(s) still running"
+# The toast is the message; the flag is the fact. A refused quit leaves
+# the App running, and this is the only check that says so directly.
+expect quit false
 wait 3000
 expect screen contains "copy finished"
 expect file out/big/f2999.bin contains ""

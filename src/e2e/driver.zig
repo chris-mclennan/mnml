@@ -250,6 +250,10 @@ pub const Stub = struct {
     highlights: ?usize = null,
     /// Ids `command` accepts; anything else is `NoSuchCommand`.
     known_commands: []const []const u8 = &.{},
+    /// The id that makes this stub QUIT, as `app.quit` does in the real
+    /// App. The runner stops stepping a quit app, and the only way to
+    /// test that is a driver a script can actually quit.
+    quit_command: ?[]const u8 = null,
     has_editor: bool = true,
     quit: bool = false,
     restart: bool = false,
@@ -272,6 +276,7 @@ pub const Stub = struct {
         title: ?[]const u8 = null,
         highlights: ?usize = null,
         known_commands: []const []const u8 = &.{},
+        quit_command: ?[]const u8 = null,
         has_editor: bool = true,
     };
 
@@ -381,6 +386,10 @@ pub const Stub = struct {
     fn vCommand(p: *anyopaque, id: []const u8) Error!void {
         const self = cast(p);
         try self.record("command {s}", .{id});
+        if (self.quit_command) |q| if (std.mem.eql(u8, q, id)) {
+            self.quit = true;
+            return;
+        };
         for (self.known_commands) |k| if (std.mem.eql(u8, k, id)) return;
         return error.NoSuchCommand;
     }
@@ -511,6 +520,7 @@ pub const StubFactory = struct {
         s.title = self.proto.title;
         s.highlights = self.proto.highlights;
         s.known_commands = self.proto.known_commands;
+        s.quit_command = self.proto.quit_command;
         s.has_editor = self.proto.has_editor;
         s.stats_out = &self.stats;
         self.made += 1;

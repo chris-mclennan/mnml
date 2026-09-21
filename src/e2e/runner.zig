@@ -15,6 +15,13 @@
 //! 3 s (a tick and a draw between tries) before it counts. `wait <ms>`
 //! ticks every 25 ms while the clock runs so background work progresses.
 //!
+//! Once the App asks to quit (`status.json`'s `quit`), the runner stops
+//! stepping it: no more ticks, no more frames. It used to keep drawing,
+//! so a failure after the quit showed a session that was already over
+//! and only `status.json` told the truth. A script that ends in a quit
+//! says `expect quit true`; a step or a screen check after one fails
+//! with `app has quit`.
+//!
 //! A file runs on its own thread under a wall-clock deadline (120 s,
 //! `MNML_E2E_FILE_TIMEOUT_SECS`); on timeout the thread is abandoned and
 //! the suite continues. Leaked memory fails the file.
@@ -128,7 +135,10 @@ pub const Options = struct {
     /// Screen sizes to SWEEP each file at. A sweep exists to prove
     /// nothing panics or leaks at an unusual size, so its assertions
     /// count only at `content_size`: a file written for 120×40 says
-    /// things about 120×40.
+    /// things about 120×40. A rung where they did not count is reported
+    /// as `ok*  <name> (structure only)`, never as plain `ok` — the same
+    /// word for both is what let a green sweep read as "the chrome is
+    /// fine at 376x92" when it meant "nothing crashed".
     sizes: []const Size = &.{content_size},
     /// The size came from the file's own `# width:` / `# height:`
     /// rather than from the sweep. Then it is the size the file was
@@ -136,6 +146,9 @@ pub const Options = struct {
     /// script whose every check is ignored is a script that proves
     /// nothing while reading green.
     sized_by_file: bool = false,
+    /// The file said `# sizes: all`: its assertions are size-independent
+    /// and count at every rung of the sweep, not only at `content_size`.
+    assert_every_size: bool = false,
     timing: Timing = .{},
     /// `$SHELL` for `shell` steps.
     shell: []const u8 = "/bin/sh",
@@ -169,6 +182,12 @@ pub const Outcome = struct {
     name: []u8,
     passed: bool,
     message: ?[]u8,
+    /// Were this run's content assertions actually evaluated? False at a
+    /// sweep rung that is not the file's own size — there the run proves
+    /// no panic, no leak and no rect outside its parent, and nothing
+    /// about what was on the screen. The report says `ok*` and
+    /// `(structure only)` for those, so a pass names what it earned.
+    asserted: bool = true,
 
     pub fn deinit(self: *Outcome, gpa: Allocator) void {
         gpa.free(self.name);
@@ -180,15 +199,30 @@ pub const Outcome = struct {
 pub const Stats = struct {
     total: usize = 0,
     failed: usize = 0,
+    /// Runs whose content assertions were NOT evaluated (a sweep rung
+    /// other than the file's own size). `total - structure_only` is how
+    /// many runs actually checked what was on the screen.
+    structure_only: usize = 0,
 };
 
 // ─── one file ───────────────────────────────────────────────────────────
+
+/// Do this run's content assertions count? Only at the size the file
+/// was WRITTEN at — `content_size` by default, the file's own
+/// `# width:` / `# height:` when it names one, every size when it says
+/// `# sizes: all`. Everywhere else the run proves no panic and no leak
+/// and its checks are evaluated but not believed.
+pub fn assertsAt(size: Size, opts: Options) bool {
+    return opts.sized_by_file or opts.assert_every_size or size.eql(content_size);
+}
 
 /// Run one file at one size. Never errors: every failure is an Outcome.
 pub fn runFile(gpa: Allocator, io: Io, factory: Factory, path: []const u8, size: Size, opts: Options) Outcome {
     const name = outcomeName(gpa, path, size) catch return oom(gpa, path);
     var run: Run = .{ .gpa = gpa, .io = io, .factory = factory, .path = path, .size = size, .opts = opts, .name = name };
-    return run.go();
+    var outcome = run.go();
+    outcome.asserted = assertsAt(size, opts);
+    return outcome;
 }
 
 fn oom(gpa: Allocator, path: []const u8) Outcome {
@@ -228,6 +262,14 @@ const Run = struct {
     /// answers live on `serve_arena`.
     servers: std.ArrayListUnmanaged(*mock.Server) = .empty,
     serve_arena: ?std.heap.ArenaAllocator = null,
+    /// The App has asked to quit. From there the runner stops stepping
+    /// it: a quit app that keeps being ticked and drawn paints a live
+    /// session, so a failure AFTER the quit showed a screen that no
+    /// longer exists and `status.json`'s `quit` was the only honest
+    /// oracle in the room. Only `expect quit`, `expect status` and
+    /// `expect file` still mean anything here; everything else fails
+    /// with `app has quit`.
+    quit: bool = false,
 
     fn fail(self: *Run, comptime fmt: []const u8, args: anytype) Outcome {
         const msg = std.fmt.allocPrint(self.gpa, fmt, args) catch null;
@@ -340,17 +382,29 @@ const Run = struct {
     }
 
     fn runScript(self: *Run, script: *const parser.Script) Outcome {
-        const asserting = self.opts.sized_by_file or self.size.eql(content_size);
+        const asserting = assertsAt(self.size, self.opts);
         if (self.renderCycle()) |msg| return self.failMsg(msg);
+        self.noteQuit();
         for (script.lines) |line| switch (line.stmt) {
             .step => |step| {
+                if (self.quit) return self.fail("line {d}: {s}", .{ line.ln, after_quit_msg });
                 if (self.runStep(step)) |msg| {
                     defer self.gpa.free(msg);
                     return self.fail("line {d}: {s}", .{ line.ln, msg });
                 }
+                // The step may BE the quit (the palette's `app.quit`, a
+                // click on the confirm box's Quit). Then nothing is
+                // ticked or drawn again: the last frame stays the frame
+                // the app quit on.
+                self.noteQuit();
+                if (self.quit) continue;
                 if (self.renderCycle()) |msg| return self.failMsg(msg);
+                self.noteQuit();
             },
             .check => |check| {
+                if (self.quit and !meaningfulAfterQuit(check)) {
+                    return self.fail("line {d}: {s}", .{ line.ln, after_quit_msg });
+                }
                 if (self.pollCheck(check, asserting)) |msg| {
                     defer self.gpa.free(msg);
                     if (std.mem.startsWith(u8, msg, "render: ")) return self.fail("{s}", .{msg});
@@ -361,6 +415,18 @@ const Run = struct {
         return .{ .name = self.name, .passed = true, .message = null };
     }
 
+    /// Ask the App whether it has quit, and latch it. `status.json`'s
+    /// `quit` is the flag the headless loop reads to stop, so it is the
+    /// same answer the real host acts on.
+    fn noteQuit(self: *Run) void {
+        if (self.quit) return;
+        const d = self.driver orelse return;
+        var arena: std.heap.ArenaAllocator = .init(self.gpa);
+        defer arena.deinit();
+        const st = d.status(arena.allocator()) catch return;
+        if (st.quit) self.quit = true;
+    }
+
     fn failMsg(self: *Run, msg: []u8) Outcome {
         return .{ .name = self.name, .passed = false, .message = msg };
     }
@@ -368,6 +434,7 @@ const Run = struct {
     /// tick → settle → expire chords → tick → draw. Returns an owned
     /// message on driver failure.
     fn renderCycle(self: *Run) ?[]u8 {
+        if (self.quit) return null;
         const d = self.driver.?;
         d.tick() catch |e| return self.errMsg("render: {s}", e);
         self.drainIpc();
@@ -423,6 +490,9 @@ const Run = struct {
     /// A failing check is retried until the budget runs out. At a
     /// non-content size the check is evaluated once and its verdict
     /// ignored — those runs exist to prove nothing panics or leaks.
+    /// Once the app has quit there is nothing left to retry AGAINST (the
+    /// runner stops ticking it), so the check is evaluated once and
+    /// answered.
     fn pollCheck(self: *Run, check: parser.Check, asserting: bool) ?[]u8 {
         const d = self.driver.?;
         const deadline = self.nowMs() + @as(i64, @intCast(self.opts.timing.expect_budget_ms));
@@ -434,7 +504,7 @@ const Run = struct {
                 self.gpa.free(err);
                 return null;
             }
-            if (self.nowMs() >= deadline) return err;
+            if (self.quit or self.nowMs() >= deadline) return err;
             self.gpa.free(err);
             d.tick() catch |e| return self.errMsg("render: {s}", e);
             self.drainIpc();
@@ -640,6 +710,16 @@ const Run = struct {
                     json,
                 }) catch null;
             },
+            .quit => |want| {
+                var arena: std.heap.ArenaAllocator = .init(gpa);
+                defer arena.deinit();
+                const st = d.status(arena.allocator()) catch return std.fmt.allocPrint(gpa, "expect quit: the driver could not build status.json", .{}) catch null;
+                if (st.quit == want) return null;
+                return std.fmt.allocPrint(gpa, "the app has {s}quit, expected {s}", .{
+                    if (st.quit) "" else "not ",
+                    if (want) "it to have quit" else "it still running",
+                }) catch null;
+            },
             .dirty => |want| {
                 const got = d.dirty() orelse false;
                 if (got == want) return null;
@@ -716,6 +796,22 @@ const Run = struct {
         return .{ .body = body };
     }
 };
+
+/// What a step or a screen check reports once the app has quit. The
+/// runner stops ticking and drawing a quit app, so the frame on screen
+/// is the one it died on and every later `expect screen` would be
+/// asserting on a ghost. A script that means to end there says so with
+/// `expect quit true` and stops.
+const after_quit_msg = "app has quit — the runner stopped stepping it here; only `expect quit`, `expect status` and `expect file` still mean anything after a quit";
+
+/// Checks that survive a quit: they read the App's own state or the
+/// disk, neither of which needs another frame.
+fn meaningfulAfterQuit(check: parser.Check) bool {
+    return switch (check) {
+        .quit, .status_contains, .status_lacks, .file_contains, .file_lacks => true,
+        else => false,
+    };
+}
 
 /// Script paths must stay inside the workspace: `write /etc/passwd …`
 /// would land verbatim because a join short-circuits on absolute input.
@@ -865,6 +961,7 @@ pub fn runFileWithTimeout(gpa: Allocator, io: Io, factory: Factory, path: []cons
             .name = name,
             .passed = false,
             .message = std.fmt.allocPrint(gpa, "TIMEOUT after {d}s (worker abandoned — a step never returned; override via MNML_E2E_FILE_TIMEOUT_SECS)", .{opts.file_timeout_secs}) catch null,
+            .asserted = assertsAt(size, opts),
         };
     }
 }
@@ -940,7 +1037,11 @@ fn lessThan(_: void, a: []u8, b: []u8) bool {
 
 /// Run a root, reporting in Rust `mnml test`'s line formats: `▶ e2e:
 /// <name>` before each file, `⊘ e2e SKIP …` for gated files, and one
-/// `  ok   <name>` / `  FAIL <name> — <message>` per outcome. Unlike
+/// `  ok   <name>` / `  ok*  <name> (structure only)` / `  FAIL <name> —
+/// <message>` per outcome. `ok*` is a run whose content assertions were
+/// never evaluated — a sweep rung that is not the size the file was
+/// written at. It passed the structural checks (no panic, no leak, no
+/// rect outside its parent) and nothing more. Unlike
 /// Rust, each verdict is printed the moment its file finishes rather
 /// than after the whole root: a 500-file corpus takes ten minutes, and
 /// a run that prints only start lines for that long reads as a hang.
@@ -1002,6 +1103,9 @@ pub fn runPath(gpa: Allocator, io: Io, factory: Factory, root: []const u8, opts:
         // written, so that is where it asserts. Only the sweep's sizes
         // are the run-it-and-see-nothing-breaks kind.
         var file_opts = opts;
+        // `# sizes: all`: the file says its assertions are
+        // size-independent, so every rung of the sweep evaluates them.
+        file_opts.assert_every_size = header.sizes_all;
         const sizes: []const Size = if (header.width != null or header.height != null) blk: {
             one[0] = .{ .cols = header.width orelse content_size.cols, .rows = header.height orelse content_size.rows };
             file_opts.sized_by_file = true;
@@ -1013,8 +1117,17 @@ pub fn runPath(gpa: Allocator, io: Io, factory: Factory, root: []const u8, opts:
             var o = runFileWithTimeout(gpa, io, factory, path, size, file_opts, out);
             defer o.deinit(gpa);
             stats.total += 1;
+            if (!o.asserted) stats.structure_only += 1;
             if (o.passed) {
-                try out.print("  ok   {s}\n", .{o.name});
+                // `ok` is what a file that PASSED ITS CHECKS gets. A
+                // sweep rung that never evaluated them gets `ok*` and
+                // says so: the same word for both is what made a green
+                // sweep indistinguishable from one that proved nothing.
+                if (o.asserted) {
+                    try out.print("  ok   {s}\n", .{o.name});
+                } else {
+                    try out.print("  ok*  {s} (structure only)\n", .{o.name});
+                }
             } else {
                 stats.failed += 1;
                 try out.print("  FAIL {s} — {s}\n", .{ o.name, o.message orelse "" });
@@ -1033,14 +1146,27 @@ fn readHeader(gpa: Allocator, io: Io, path: []const u8) parser.Header {
 
 /// Run several roots and print the `N/M passed` trailer. Returns the
 /// number of failures — the exit status is 1 when it is not zero.
+///
+/// The trailer keeps `N/M passed` as its first bytes (scripts grep for
+/// it) and then breaks M down by what the runs actually checked:
+/// `141/141 passed (141 content, 0 structure-only)`. The two numbers sum
+/// to M — content runs evaluated the file's assertions, structure-only
+/// runs (a sweep rung that is not the file's own size) proved no panic
+/// and no leak and nothing else.
 pub fn runPaths(gpa: Allocator, io: Io, factory: Factory, roots: []const []const u8, opts: Options, out: *Io.Writer) !Stats {
     var total: Stats = .{};
     for (roots) |root| {
         const s = try runPath(gpa, io, factory, root, opts, out);
         total.total += s.total;
         total.failed += s.failed;
+        total.structure_only += s.structure_only;
     }
-    try out.print("\n{d}/{d} passed\n", .{ total.total - total.failed, total.total });
+    try out.print("\n{d}/{d} passed ({d} content, {d} structure-only)\n", .{
+        total.total - total.failed,
+        total.total,
+        total.total - total.structure_only,
+        total.structure_only,
+    });
     try out.flush();
     return total;
 }
@@ -1488,7 +1614,7 @@ test "a root that is not there is an error, not a green 0/0 — including a join
     try t.expect(std.mem.indexOf(u8, out.written(), "passed") == null);
 }
 
-test "runPath: skips, sizes, names, and the ok/FAIL/N-M report" {
+test "runPath: skips, sizes, names, and the ok/ok*/FAIL/N-M report" {
     var env = try TestEnv.init();
     defer env.deinit();
     try env.tmp.dir.createDirPath(t.io, "suite/sub");
@@ -1512,15 +1638,17 @@ test "runPath: skips, sizes, names, and the ok/FAIL/N-M report" {
     const report = out.written();
     // Sorted by path; a hidden file and a non-.test file are ignored. The
     // sweep's own second size is the not-asserted one: a_fail's miss is
-    // reported at 120×40 and ignored at 80×24. e_wide names ITS OWN size,
-    // so 80 columns is where it was written and where its miss counts.
+    // reported at 120×40 and ignored at 80×24 — and the 80×24 verdict
+    // says `ok*  … (structure only)` rather than `ok`, because nothing
+    // it could have checked was checked. e_wide names ITS OWN size, so
+    // 80 columns is where it was written and where its miss counts.
     // Each verdict follows its own start line — the rendered-screen dump of
     // the miss sits between a_fail's first start and its 80x24 start.
     const expected =
         "▶ e2e: a_fail.test\n" ++
         "  FAIL a_fail.test — line 1: screen does not contain \"nope\"\n── rendered screen ──\n" ++ "SCREEN" ++
-        "\n▶ e2e: a_fail.test\n  ok   a_fail.test @80x24\n" ++
-        "▶ e2e: b_pass.test\n  ok   b_pass.test\n▶ e2e: b_pass.test\n  ok   b_pass.test @80x24\n" ++
+        "\n▶ e2e: a_fail.test\n  ok*  a_fail.test @80x24 (structure only)\n" ++
+        "▶ e2e: b_pass.test\n  ok   b_pass.test\n▶ e2e: b_pass.test\n  ok*  b_pass.test @80x24 (structure only)\n" ++
         "⊘ e2e SKIP (network opt-in): " ++ "SUITE/sub/c_net.test\n" ++
         "▶ e2e: e_wide.test\n  FAIL e_wide.test @80x40 — line 2: screen does not contain \"nope\"\n";
     // Compare piecewise around the parts that carry paths / the screen dump.
@@ -1530,7 +1658,10 @@ test "runPath: skips, sizes, names, and the ok/FAIL/N-M report" {
     try t.expect(std.mem.indexOf(u8, report, middle) != null);
     try t.expect(std.mem.indexOf(u8, report, "/suite/sub/c_net.test\n") != null);
     try t.expect(std.mem.indexOf(u8, report, "  FAIL e_wide.test @80x40 — line 2: screen does not contain \"nope\"\n") != null);
-    try t.expect(std.mem.endsWith(u8, report, "\n3/5 passed\n"));
+    // The tally keeps `N/M passed` as its first bytes — scripts grep for
+    // it — and then says how much of M actually checked anything.
+    try t.expect(std.mem.endsWith(u8, report, "\n3/5 passed (3 content, 2 structure-only)\n"));
+    try t.expectEqual(@as(usize, 2), stats.structure_only);
     try t.expectEqual(@as(usize, 5), sf.made);
 
     // A network-opted-in run includes the gated file.
@@ -1573,10 +1704,121 @@ test "a file that names its own size asserts AT that size; only a sweep's extra 
     var opts = env.opts();
     opts.sizes = &.{.{ .cols = 200, .rows = 60 }};
     _ = try runPaths(t.allocator, t.io, sf.factory(), &.{root}, opts, &out2.writer);
-    try t.expect(std.mem.indexOf(u8, out2.written(), "  ok   plain.test @200x60\n") != null);
+    try t.expect(std.mem.indexOf(u8, out2.written(), "  ok*  plain.test @200x60 (structure only)\n") != null);
     // A file with its own header keeps it even under a sweep, and keeps
     // asserting there.
     try t.expect(std.mem.indexOf(u8, out2.written(), "  FAIL narrow.test @80x40 —") != null);
+}
+
+test "`# sizes: all` makes a file's assertions count at every rung of the sweep" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+    try env.tmp.dir.createDirPath(t.io, "allsizes");
+    // The stub paints `ok` at every size, so the assertion is genuinely
+    // size-independent — which is the only kind `# sizes: all` is for.
+    try env.tmp.dir.writeFile(t.io, .{ .sub_path = "allsizes/any.test", .data = "# sizes: all\nexpect screen contains ok\n" });
+    // The same file without the header, and a miss that only the corpus
+    // size will hear.
+    try env.tmp.dir.writeFile(t.io, .{ .sub_path = "allsizes/plain.test", .data = "# sizes: all\nexpect screen contains nope\n" });
+    const root = try std.fs.path.join(t.allocator, &.{ env.root, "allsizes" });
+    defer t.allocator.free(root);
+    var sf: StubFactory = .{ .proto = .{ .text = "ok" } };
+    var out: Io.Writer.Allocating = .init(t.allocator);
+    defer out.deinit();
+    var opts = env.opts();
+    opts.sizes = &.{ content_size, .{ .cols = 80, .rows = 24 }, .{ .cols = 200, .rows = 60 } };
+    const stats = try runPaths(t.allocator, t.io, sf.factory(), &.{root}, opts, &out.writer);
+    const report = out.written();
+    // Six runs, none of them structure-only: the header opted every rung
+    // in, so every rung says plain `ok` or FAILs on its own evidence.
+    try t.expectEqual(@as(usize, 6), stats.total);
+    try t.expectEqual(@as(usize, 0), stats.structure_only);
+    try t.expectEqual(@as(usize, 3), stats.failed);
+    try t.expect(std.mem.indexOf(u8, report, "  ok   any.test\n") != null);
+    try t.expect(std.mem.indexOf(u8, report, "  ok   any.test @80x24\n") != null);
+    try t.expect(std.mem.indexOf(u8, report, "  ok   any.test @200x60\n") != null);
+    try t.expect(std.mem.indexOf(u8, report, "(structure only)") == null);
+    // The miss is reported at all three rungs, not only at 120×40.
+    try t.expect(std.mem.indexOf(u8, report, "  FAIL plain.test — line 2:") != null);
+    try t.expect(std.mem.indexOf(u8, report, "  FAIL plain.test @80x24 — line 2:") != null);
+    try t.expect(std.mem.indexOf(u8, report, "  FAIL plain.test @200x60 — line 2:") != null);
+    try t.expect(std.mem.endsWith(u8, report, "\n3/6 passed (6 content, 0 structure-only)\n"));
+
+    // And without the header the same three rungs go back to two silent
+    // ones — the header is what changed the answer.
+    try env.tmp.dir.writeFile(t.io, .{ .sub_path = "allsizes/any.test", .data = "expect screen contains ok\n" });
+    try env.tmp.dir.writeFile(t.io, .{ .sub_path = "allsizes/plain.test", .data = "expect screen contains nope\n" });
+    var out2: Io.Writer.Allocating = .init(t.allocator);
+    defer out2.deinit();
+    const s2 = try runPaths(t.allocator, t.io, sf.factory(), &.{root}, opts, &out2.writer);
+    try t.expectEqual(@as(usize, 4), s2.structure_only);
+    try t.expectEqual(@as(usize, 1), s2.failed);
+    try t.expect(std.mem.endsWith(u8, out2.written(), "\n5/6 passed (2 content, 4 structure-only)\n"));
+}
+
+test "expect quit reads the app's own flag, true and false, and retries until it lands" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+    const path = try env.script("q.test", "expect quit false\ncommand app.quit\nexpect quit true\n");
+    defer t.allocator.free(path);
+    var sf: StubFactory = .{ .proto = .{ .text = "ok", .quit_command = "app.quit" } };
+    var o = runFile(t.allocator, t.io, sf.factory(), path, content_size, env.opts());
+    try expectPassed(&o);
+
+    // The other way round: a script that says the app is still running
+    // after it quit is told what the flag actually says.
+    const bad = try env.script("q2.test", "command app.quit\nexpect quit false\n");
+    defer t.allocator.free(bad);
+    var o2 = runFile(t.allocator, t.io, sf.factory(), bad, content_size, env.opts());
+    try expectFailed(&o2, "line 2: the app has quit, expected it still running");
+
+    // And a quit that never comes is a failure naming the same flag.
+    const never = try env.script("q3.test", "expect quit true\n");
+    defer t.allocator.free(never);
+    var o3 = runFile(t.allocator, t.io, sf.factory(), never, content_size, env.opts());
+    try expectFailed(&o3, "line 1: the app has not quit, expected it to have quit");
+}
+
+test "once the app has quit the runner stops stepping it: only quit/status/file checks still mean anything" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+    var sf: StubFactory = .{ .proto = .{ .text = "ok", .quit_command = "app.quit" } };
+
+    // A screen check after the quit is the trap the runner used to set:
+    // it kept drawing, so the dead session still painted `ok`. Now it
+    // says what happened instead of answering from a ghost frame.
+    const screen_after = try env.script("after_screen.test", "command app.quit\nexpect screen contains ok\n");
+    defer t.allocator.free(screen_after);
+    var o = runFile(t.allocator, t.io, sf.factory(), screen_after, content_size, env.opts());
+    try expectFailed(&o, "line 2: " ++ after_quit_msg);
+
+    // So is another step.
+    const step_after = try env.script("after_step.test", "command app.quit\nkey ctrl+s\n");
+    defer t.allocator.free(step_after);
+    var o2 = runFile(t.allocator, t.io, sf.factory(), step_after, content_size, env.opts());
+    try expectFailed(&o2, "line 2: " ++ after_quit_msg);
+
+    // `expect status` and `expect file` read the app's state and the
+    // disk, neither of which needs another frame — they still run, and
+    // so does `expect quit`.
+    const ok_after = try env.script(
+        "after_ok.test",
+        "write notes.txt saved\ncommand app.quit\nexpect quit true\nexpect status contains \"\\\"quit\\\":true\"\nexpect file notes.txt contains saved\n",
+    );
+    defer t.allocator.free(ok_after);
+    var o3 = runFile(t.allocator, t.io, sf.factory(), ok_after, content_size, env.opts());
+    try expectPassed(&o3);
+
+    // The app is not ticked or drawn after the quit: a script that quits
+    // on its second step renders for the first step and no more.
+    var counting: StubFactory = .{ .proto = .{ .text = "ok", .quit_command = "app.quit" } };
+    const counted = try env.script("after_count.test", "command app.quit\nexpect quit true\n");
+    defer t.allocator.free(counted);
+    var o4 = runFile(t.allocator, t.io, counting.factory(), counted, content_size, env.opts());
+    try expectPassed(&o4);
+    // One render cycle before the script's first line, and none after
+    // the quit: a second render would mean the runner drew the dead app.
+    try t.expectEqual(@as(usize, 1), counting.stats.renders);
 }
 
 test "runPath: --filter keeps the matching names silently, --skip announces the cut" {

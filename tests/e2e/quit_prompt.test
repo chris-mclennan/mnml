@@ -51,16 +51,27 @@ expect screen lacks "Quit mnml?"
 expect dirty true
 
 # The arrows move the focus off Cancel and Enter fires what they land on
-# — left once from Cancel is Quit anyway, twice is Save all.
+# — left once from Cancel is Quit anyway, twice is Save all. Save all
+# writes every dirty buffer and then ENDS THE SESSION (`cmd_app.zig`,
+# "the quit box's Save all writes every dirty buffer and then quits"),
+# so it is the last thing this file can do: the runner stops stepping an
+# App that has quit, and only `expect quit` / `expect status` /
+# `expect file` mean anything after one.
+#
+# Four lines used to follow the Enter below — a screen check and a
+# `dirty` check — and they were read off a session that was already
+# over, because the runner kept ticking and drawing a quit App. What is
+# left is what survives the quit: the flag, and the files on disk.
 key ctrl+q
 key left
 key left
+expect quit false
 key enter
-expect screen lacks "Quit mnml?"
+expect quit true
 expect file one.txt contains "CHANGED"
 expect file two.txt contains "CHANGED"
-expect dirty false
 
-# (`Quit anyway`, the `q` hotkey and a SECOND `Ctrl+Q` all end the
-# session, which this harness cannot assert on — `cmd_app.zig` covers
-# all three, and that the on-disk files are untouched.)
+# (`Quit anyway`, the `q` hotkey and a SECOND `Ctrl+Q` are the other
+# three ways out of the box; each ends the session too, so each would
+# need a file of its own. `cmd_app.zig` covers all three, and that the
+# on-disk files are untouched.)
