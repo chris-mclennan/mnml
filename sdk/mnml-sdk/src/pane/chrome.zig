@@ -421,6 +421,7 @@ pub fn Painter(comptime Target: type) type {
         /// column, which at any real width read as an empty column
         /// with a stray `⋯` in it rather than as a row you can press.
         pub fn showMoreRow(p: *Self, rect: Rect, label_x: u16, hidden: usize, target: Target) Allocator.Error!void {
+            if (rect.isEmpty()) return;
             try p.foldRow(rect, label_x, p.fmt("Show more ({d})", .{hidden}), target);
         }
 
