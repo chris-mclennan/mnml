@@ -1282,6 +1282,18 @@ test "session: the two profiles key the file apart — dev saves session-dev.zon
     try t.expect(app.session.restored);
 }
 
+/// The id a restore plan resumes, spelled so a rule that regressed
+/// reads as a failed comparison rather than a panic on the union's
+/// other field — which is what `.resumed` on a `.dormant` plan does,
+/// and a panic takes the test binary down before the runner can say
+/// which test failed.
+fn resumedId(tr: TerminalRestore) []const u8 {
+    return switch (tr) {
+        .resumed => |id| id,
+        else => "<not a resume>",
+    };
+}
+
 test "session: the three terminal-restore rules, and the switch that overrides them" {
     var f = try Fixture.init();
     defer f.deinit();
@@ -1295,30 +1307,30 @@ test "session: the three terminal-restore rules, and the switch that overrides t
 
     // Rule 2 — a Claude line whose id was saved resumes THAT session.
     const claude: Pane = .{ .kind = .pty, .argv = &.{ "claude", "--resume", "sid-9" }, .session_id = "sid-9" };
-    try t.expectEqualStrings("sid-9", terminalRestore(&app, claude).resumed);
+    try t.expectEqualStrings("sid-9", resumedId(terminalRestore(&app, claude)));
     // The id off the argv alone — a file written before the field.
     const older: Pane = .{ .kind = .pty, .argv = &.{ "claude", "--resume", "sid-9" } };
-    try t.expectEqualStrings("sid-9", terminalRestore(&app, older).resumed);
+    try t.expectEqualStrings("sid-9", resumedId(terminalRestore(&app, older)));
     // An absolute path to the binary is still Claude, and so is a line
     // that kept its other flags.
     const with_model: Pane = .{ .kind = .pty, .argv = &.{ "/opt/homebrew/bin/claude", "--model", "opus", "--resume", "sid-9" }, .session_id = "sid-9" };
-    try t.expectEqualStrings("sid-9", terminalRestore(&app, with_model).resumed);
+    try t.expectEqualStrings("sid-9", resumedId(terminalRestore(&app, with_model)));
 
     // // changed (codex-resume): a Codex pane is rule 2 as well, off the
     // id `paneSessionId` looked up when the file was written — the
     // command line carries none when the session starts, and carries
     // `resume <id>` once a restore has built it.
     const codex_found: Pane = .{ .kind = .pty, .argv = &.{"codex"}, .session_id = "cdx-1" };
-    try t.expectEqualStrings("cdx-1", terminalRestore(&app, codex_found).resumed);
+    try t.expectEqualStrings("cdx-1", resumedId(terminalRestore(&app, codex_found)));
     const codex_again: Pane = .{ .kind = .pty, .argv = &.{ "codex", "resume", "cdx-1" } };
-    try t.expectEqualStrings("cdx-1", terminalRestore(&app, codex_again).resumed);
+    try t.expectEqualStrings("cdx-1", resumedId(terminalRestore(&app, codex_again)));
     const codex_abs: Pane = .{ .kind = .pty, .argv = &.{ "/opt/homebrew/bin/codex", "--search" }, .session_id = "cdx-1" };
-    try t.expectEqualStrings("cdx-1", terminalRestore(&app, codex_abs).resumed);
+    try t.expectEqualStrings("cdx-1", resumedId(terminalRestore(&app, codex_abs)));
     // A profile's shim is its product too, on either side.
     const profiles = [_]launch_profiles.Profile{.{ .name = "fast", .product = .codex, .binary = "codex", .args = &.{"--fast"} }};
     app.cfg.ai.launch_profiles = &profiles;
     const codex_shim: Pane = .{ .kind = .pty, .argv = &.{"/d/bin/mnml-ai-fast"}, .session_id = "cdx-1" };
-    try t.expectEqualStrings("cdx-1", terminalRestore(&app, codex_shim).resumed);
+    try t.expectEqualStrings("cdx-1", resumedId(terminalRestore(&app, codex_shim)));
     try t.expect(terminalRestore(&app, .{ .kind = .pty, .argv = &.{"/d/bin/mnml-ai-nope"}, .session_id = "cdx-1" }) == .dormant);
 
     // Rule 3 — anything else waits for a key. An arbitrary command line
@@ -1487,7 +1499,7 @@ test "session: a Codex pane's session is looked up from its rollout, rides in th
 
         try save(&app);
         // Learned at save time and kept: the pane knows its session now.
-        try t.expectEqualStrings(sid, pt.codex_session_id.?);
+        try t.expectEqualStrings(sid, pt.codex_session_id orelse "<not found>");
     }
     const text = try f.tmp.dir.readFileAlloc(t.io, rel_path, t.allocator, .limited(1 << 16));
     defer t.allocator.free(text);

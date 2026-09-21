@@ -278,10 +278,13 @@ test "discover: the one rollout of this cwd started after the pane is the pane's
     // Not a rollout at all.
     try tmp.dir.writeFile(t.io, .{ .sub_path = "home/.codex/sessions/2026/09/04/notes.txt", .data = "hi\n" });
 
-    try t.expectEqualStrings(mine, (try discover(t.allocator, t.io, arena, home, "/w/app", after_s)).?);
+    // `orelse` rather than `.?`: a rule that regressed should read as a
+    // failed comparison, not a panic that takes the test binary down
+    // before the runner can say which test it was.
+    try t.expectEqualStrings(mine, (try discover(t.allocator, t.io, arena, home, "/w/app", after_s)) orelse "<no match>");
     // The other directory's session is found by asking for it, which is
     // the evidence that the cwd is what separates them.
-    try t.expectEqualStrings(elsewhere, (try discover(t.allocator, t.io, arena, home, "/w/other", after_s)).?);
+    try t.expectEqualStrings(elsewhere, (try discover(t.allocator, t.io, arena, home, "/w/other", after_s)) orelse "<no match>");
     // A directory nothing ran in is no match, and so is a home with no
     // `.codex` under it at all.
     try t.expect((try discover(t.allocator, t.io, arena, home, "/w/nothing", after_s)) == null);
