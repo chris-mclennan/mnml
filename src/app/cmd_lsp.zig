@@ -26,6 +26,7 @@ pub const table = .{
     .@"lsp.format" = &format_app.formatDocument,
     .@"lsp.format_selection" = &format_app.formatSelection,
     .@"lsp.code_lens_run" = &decor.runLensAtCursor,
+    .@"editor.lsp_this_file" = &lsp.lspThisFile,
     .@"editor.format_external" = &format_app.formatExternal,
     .@"editor.lint_external" = &format_app.lintExternal,
     .@"editor.open_url_at_cursor" = &decor.openLinkAtCursor,

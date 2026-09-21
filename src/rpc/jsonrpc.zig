@@ -31,9 +31,32 @@ const builtin = @import("builtin");
 
 pub const Value = std.json.Value;
 
-/// Frames past this are refused — a bad header must not allocate the
-/// machine away.
-pub const max_body: usize = 64 * 1024 * 1024;
+/// The most one message may be. Not the memory it costs — the memory it
+/// MULTIPLIES: a JSON body parses into a `Value` tree several times its
+/// own size, so a frame this big is already the largest allocation the
+/// process will make for one message. rust-analyzer answered a 100 MB
+/// source file with a 75 MB frame and a 196 MB one; nothing a server has
+/// to say about a file mnml will even attach to (`editor.lsp_max_bytes`,
+/// 50 MiB) needs a fraction of this, and a frame that does is a server
+/// in trouble rather than an answer worth having.
+///
+/// Over it the body is READ AND THROWN AWAY rather than refused: the
+/// stream stays in step and the server stays up, where the old refusal
+/// killed the transport mid-frame and said nothing.
+pub const max_body: usize = 16 * 1024 * 1024;
+
+/// How much of an over-sized frame is kept, to name it by.
+pub const head_peek: usize = 512;
+
+/// What `readFrame` got.
+pub const Frame = union(enum) {
+    /// The body, gpa-owned.
+    body: []u8,
+    /// A frame over `max_body`, discarded. `head` is its first
+    /// `head_peek` bytes, gpa-owned, so the caller can say what was
+    /// dropped.
+    oversize: struct { len: usize, head: []u8 },
+};
 
 /// One parsed message. `parsed` owns an arena; `root()` is the document.
 pub const Incoming = struct {
@@ -68,6 +91,9 @@ pub const Sink = struct {
     /// The stream ended: EOF, a read error, or an unparseable frame.
     /// Not called when `shutdown` is what ended it.
     closed: *const fn (ctx: *anyopaque) void,
+    /// A frame over `max_body` was dropped. `head` is borrowed for the
+    /// call only. Null leaves the drop to the log alone.
+    oversize: ?*const fn (ctx: *anyopaque, len: usize, head: []const u8) void = null,
 };
 
 /// What a client remembers about a request in flight: its own method
@@ -262,12 +288,21 @@ pub const Transport = struct {
         var buf: [16 * 1024]u8 = undefined;
         var fr = self.stdout.readerStreaming(self.io, &buf);
         while (true) {
-            const body = readFrame(self.gpa, &fr.interface) catch |err| switch (err) {
+            const frame = readFrame(self.gpa, &fr.interface) catch |err| switch (err) {
                 error.OutOfMemory, error.Closed, error.BadFrame => break,
             };
-            defer self.gpa.free(body);
-            const inc = Incoming.create(self.gpa, body) catch break;
-            sink.message(sink.ctx, inc);
+            switch (frame) {
+                .body => |body| {
+                    defer self.gpa.free(body);
+                    const inc = Incoming.create(self.gpa, body) catch break;
+                    sink.message(sink.ctx, inc);
+                },
+                .oversize => |o| {
+                    defer self.gpa.free(o.head);
+                    std.log.warn("jsonrpc: dropped a {d}-byte frame (over {d}): {s}", .{ o.len, max_body, o.head });
+                    if (sink.oversize) |cb| cb(sink.ctx, o.len, o.head);
+                },
+            }
         }
         self.dead.store(true, .release);
         if (self.closing.load(.acquire)) return error.Canceled;
@@ -281,7 +316,7 @@ pub const FrameError = error{ Closed, BadFrame } || Allocator.Error;
 
 /// `Content-Length: N\r\n\r\n` then N bytes. Other headers are skipped.
 /// Returns the body, gpa-owned. `Closed` on EOF or a read failure.
-pub fn readFrame(gpa: Allocator, r: *Io.Reader) FrameError![]u8 {
+pub fn readFrame(gpa: Allocator, r: *Io.Reader) FrameError!Frame {
     var len: ?usize = null;
     while (true) {
         // `takeDelimiter` consumes the newline (its `Exclusive` sibling
@@ -303,11 +338,58 @@ pub fn readFrame(gpa: Allocator, r: *Io.Reader) FrameError![]u8 {
         }
     }
     const n = len.?;
-    if (n > max_body) return error.BadFrame;
+    if (n > max_body) {
+        // Read the whole body anyway — the next frame's header is
+        // behind it — but keep only enough to say what it was.
+        const keep = @min(n, head_peek);
+        const head = try gpa.alloc(u8, keep);
+        errdefer gpa.free(head);
+        r.readSliceAll(head) catch return error.Closed;
+        r.discardAll64(n - keep) catch return error.Closed;
+        return .{ .oversize = .{ .len = n, .head = head } };
+    }
     const body = try gpa.alloc(u8, n);
     errdefer gpa.free(body);
     r.readSliceAll(body) catch return error.Closed;
-    return body;
+    return .{ .body = body };
+}
+
+/// The `"method"` of a frame from its first bytes alone — what is left
+/// to go on when the body was too big to parse. Null when the head does
+/// not hold one (a response carries an `id` instead).
+pub fn peekMethod(head: []const u8) ?[]const u8 {
+    const key = "\"method\":\"";
+    const at = std.mem.indexOf(u8, head, key) orelse return null;
+    const rest = head[at + key.len ..];
+    const end = std.mem.indexOfScalar(u8, rest, '"') orelse return null;
+    if (end == 0 or end > 128) return null;
+    return rest[0..end];
+}
+
+/// The `"id"` of a frame from its first bytes alone, for the same
+/// reason. Only a plain integer id — the ids mnml allocates.
+pub fn peekId(head: []const u8) ?i64 {
+    const key = "\"id\":";
+    const at = std.mem.indexOf(u8, head, key) orelse return null;
+    var rest = head[at + key.len ..];
+    while (rest.len > 0 and rest[0] == ' ') rest = rest[1..];
+    var n: usize = 0;
+    while (n < rest.len and (std.ascii.isDigit(rest[n]) or (n == 0 and rest[n] == '-'))) n += 1;
+    if (n == 0) return null;
+    return std.fmt.parseInt(i64, rest[0..n], 10) catch null;
+}
+
+/// `readFrame` for a caller with no interest in the oversize case (the
+/// test fakes, which never send one): a dropped frame reads as a bad
+/// frame.
+pub fn readBody(gpa: Allocator, r: *Io.Reader) FrameError![]u8 {
+    switch (try readFrame(gpa, r)) {
+        .body => |b| return b,
+        .oversize => |o| {
+            gpa.free(o.head);
+            return error.BadFrame;
+        },
+    }
 }
 
 pub fn writeFrame(io: Io, file: Io.File, body: []const u8) Io.Writer.Error!void {
@@ -428,17 +510,43 @@ fn pipeFiles() ![2]Io.File {
 test "readFrame: the header, case-insensitive, other headers skipped; bad lengths refused" {
     const gpa = testing.allocator;
     var r = Io.Reader.fixed("Content-Type: x\r\ncontent-length: 5\r\n\r\nhelloContent-Length: 2\r\n\r\nhi");
-    const a = try readFrame(gpa, &r);
+    const a = try readBody(gpa, &r);
     defer gpa.free(a);
     try testing.expectEqualStrings("hello", a);
-    const b = try readFrame(gpa, &r);
+    const b = try readBody(gpa, &r);
     defer gpa.free(b);
     try testing.expectEqualStrings("hi", b);
-    try testing.expectError(error.Closed, readFrame(gpa, &r));
+    try testing.expectError(error.Closed, readBody(gpa, &r));
     var bad = Io.Reader.fixed("Content-Length: nope\r\n\r\n");
-    try testing.expectError(error.BadFrame, readFrame(gpa, &bad));
+    try testing.expectError(error.BadFrame, readBody(gpa, &bad));
     var short = Io.Reader.fixed("Content-Length: 9\r\n\r\nabc");
-    try testing.expectError(error.Closed, readFrame(gpa, &short));
+    try testing.expectError(error.Closed, readBody(gpa, &short));
+}
+
+test "a frame over max_body is dropped whole, named by its head, and the frame behind it still reads" {
+    const gpa = testing.allocator;
+    const n = max_body + 1;
+    // The head carries the method, as a real notification's does.
+    const head = "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"x\":\"";
+    var stream: std.ArrayListUnmanaged(u8) = .empty;
+    defer stream.deinit(gpa);
+    try stream.print(gpa, "Content-Length: {d}\r\n\r\n", .{n});
+    try stream.appendSlice(gpa, head);
+    try stream.appendNTimes(gpa, 'y', n - head.len);
+    try stream.appendSlice(gpa, "Content-Length: 2\r\n\r\nhi");
+    var r = Io.Reader.fixed(stream.items);
+    const first = try readFrame(gpa, &r);
+    try testing.expect(first == .oversize);
+    defer gpa.free(first.oversize.head);
+    try testing.expectEqual(n, first.oversize.len);
+    try testing.expectEqual(head_peek, first.oversize.head.len);
+    try testing.expectEqualStrings("textDocument/publishDiagnostics", peekMethod(first.oversize.head).?);
+    try testing.expect(peekId(first.oversize.head) == null);
+    try testing.expectEqual(@as(i64, 41), peekId("{\"jsonrpc\":\"2.0\",\"id\":41,\"result\":[").?);
+    // The stream is still in step: the next frame reads.
+    const second = try readBody(gpa, &r);
+    defer gpa.free(second);
+    try testing.expectEqualStrings("hi", second);
 }
 
 test "classify: response / request / notification" {
@@ -478,6 +586,9 @@ const Collector = struct {
     got: std.ArrayListUnmanaged(*Incoming) = .empty,
     closed: std.atomic.Value(bool) = .init(false),
     arrived: Io.Event = .unset,
+    /// The last frame the transport dropped for being over `max_body`.
+    dropped: std.atomic.Value(usize) = .init(0),
+    dropped_method: std.ArrayListUnmanaged(u8) = .empty,
 
     fn onMessage(ctx: *anyopaque, msg: *Incoming) void {
         const c: *Collector = @ptrCast(@alignCast(ctx));
@@ -491,8 +602,16 @@ const Collector = struct {
         c.closed.store(true, .release);
         c.arrived.set(testing.io);
     }
+    fn onOversize(ctx: *anyopaque, len: usize, head: []const u8) void {
+        const c: *Collector = @ptrCast(@alignCast(ctx));
+        c.lock.lockUncancelable(testing.io);
+        defer c.lock.unlock(testing.io);
+        if (peekMethod(head)) |m| c.dropped_method.appendSlice(c.gpa, m) catch {};
+        c.dropped.store(len, .release);
+        c.arrived.set(testing.io);
+    }
     fn sink(c: *Collector) Sink {
-        return .{ .ctx = c, .message = onMessage, .closed = onClosed };
+        return .{ .ctx = c, .message = onMessage, .closed = onClosed, .oversize = onOversize };
     }
     fn count(c: *Collector) usize {
         c.lock.lockUncancelable(testing.io);
@@ -502,6 +621,7 @@ const Collector = struct {
     fn deinit(c: *Collector) void {
         for (c.got.items) |m| m.destroy(c.gpa);
         c.got.deinit(c.gpa);
+        c.dropped_method.deinit(c.gpa);
     }
     /// Wait until `n` frames arrived or the stream closed.
     fn waitFor(c: *Collector, n: usize) !void {
@@ -526,7 +646,7 @@ fn fakeEchoServerPaced(io: Io, gpa: Allocator, in: Io.File, out: Io.File, pause_
     var buf: [4096]u8 = undefined;
     var fr = in.readerStreaming(io, &buf);
     while (true) {
-        const body = readFrame(gpa, &fr.interface) catch return;
+        const body = readBody(gpa, &fr.interface) catch return;
         defer gpa.free(body);
         if (pause_ms > 0) try io.sleep(.fromMilliseconds(@intCast(pause_ms)), .awake);
         var parsed = std.json.parseFromSlice(Value, gpa, body, .{}) catch return;
@@ -584,6 +704,43 @@ test "transport over a pipe pair: requests are answered by id, notifications flo
     try testing.expect(t.isDead());
     try testing.expectError(error.Closed, t.send("{}"));
     t.shutdown();
+}
+
+/// A server whose first frame is far over `max_body`, followed by one
+/// that is not.
+fn fakeFloodServer(io: Io, gpa: Allocator, out: Io.File) Io.Cancelable!void {
+    const n = max_body + 4096;
+    const head = "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":\"";
+    var body: std.ArrayListUnmanaged(u8) = .empty;
+    defer body.deinit(gpa);
+    body.appendSlice(gpa, head) catch return;
+    body.appendNTimes(gpa, 'y', n - head.len) catch return;
+    writeFrame(io, out, body.items) catch return;
+    writeFrame(io, out, "{\"jsonrpc\":\"2.0\",\"method\":\"pong\"}") catch return;
+}
+
+test "a reply over max_body is dropped and named; the server stays up and the next frame arrives" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    const s2c = try pipeFiles();
+    const c2s = try pipeFiles();
+    var server_group: Io.Group = .init;
+    try server_group.concurrent(io, fakeFloodServer, .{ io, gpa, s2c[1] });
+    const t = try Transport.initFiles(gpa, io, c2s[1], s2c[0]);
+    defer t.shutdown();
+    var col: Collector = .{ .gpa = gpa };
+    defer col.deinit();
+    try t.start(col.sink());
+    // The frame behind the dropped one lands, which is the whole point:
+    // the stream stayed in step and the reader task is still running.
+    try col.waitFor(1);
+    try testing.expectEqualStrings("pong", classify(col.got.items[0].root()).notification.method);
+    try testing.expectEqual(max_body + 4096, col.dropped.load(.acquire));
+    try testing.expectEqualStrings("textDocument/publishDiagnostics", col.dropped_method.items);
+    try testing.expect(!t.isDead());
+    try server_group.await(io);
+    s2c[1].close(io);
+    c2s[0].close(io);
 }
 
 test "the writer task: 200 frames leave in order and `send` never touches the pipe; a goodbye queued just before shutdown still lands" {

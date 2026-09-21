@@ -107,6 +107,24 @@ otherwise. Copy what you need; leave the rest out.
         // hand-written source file is still highlighted in full; what
         // the limit skips is a generated bundle or a log.
         .highlight_max_bytes = 4194304, // 4 MiB; 0 = no limit
+        // The ceiling on what a LANGUAGE SERVER is started for. A file
+        // that opens larger than this attaches none: no didOpen, no
+        // diagnostics, completion, hover or go-to — editing, search,
+        // highlighting and the git gutter are untouched. Never silent:
+        // a toast names the file and the statusline reads `LSP off ·
+        // 120 MB`; `editor.lsp_this_file` starts one for that buffer
+        // after all. Per buffer, never persisted. 0 is no limit.
+        //
+        // Why there is a ceiling: `didOpen` has to carry the whole
+        // file — the protocol offers no other way to hand a server a
+        // document — so a 100 MB buffer is a 100 MB JSON string
+        // encoded on the frame that opened it, and the answers scale
+        // with it too (a 75 MB and a 196 MB reply came back from
+        // rust-analyzer on that file). 50 MiB is VS Code's own
+        // large-file threshold; mnml's Rust predecessor has no ceiling
+        // at all. Nothing hand-written, and nothing generated that is
+        // worth a server, comes near it.
+        .lsp_max_bytes = 52428800, // 50 MiB; 0 = no limit
     },
 
     // ── ui ─────────────────────────────────────────────────────────────

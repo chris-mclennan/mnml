@@ -151,6 +151,26 @@ pub const Editor = struct {
     /// generated bundle or a log, where highlighting is worth the least
     /// and costs the most.
     highlight_max_bytes: u64 = 4 << 20,
+
+    /// The ceiling on what a language server is started for. A file that
+    /// opens larger than this many bytes attaches no server: no
+    /// `didOpen`, no diagnostics, no completion, no hover, no go-to —
+    /// editing, search, highlighting and the git gutter are untouched.
+    /// It is never silent: a toast names the file and the statusline
+    /// reads `LSP off · 120 MB` while it is up, and
+    /// `editor.lsp_this_file` attaches one anyway for that buffer. Per
+    /// buffer, never persisted. 0 is no limit.
+    ///
+    /// The limit exists because `didOpen` has to carry the whole file:
+    /// the protocol has no other way to hand a server a document, so a
+    /// 100 MB buffer is a 100 MB JSON string encoded on the frame that
+    /// opened it, and the server's answers scale with it too — a reply
+    /// of 75 MB and one of 196 MB came back from rust-analyzer on that
+    /// file. 50 MiB is VS Code's own large-file threshold and the
+    /// nearest thing to a precedent; mnml's Rust predecessor has no
+    /// ceiling at all. Every hand-written source file, and every
+    /// generated one worth a server, is far under it.
+    lsp_max_bytes: u64 = 50 << 20,
 };
 
 pub const Clipboard = enum { auto, os, internal };

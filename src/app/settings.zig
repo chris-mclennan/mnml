@@ -280,6 +280,10 @@ pub const rows = [_]RowSpec{
     // the overlay is v1 (choices only) and the sizes worth picking are a
     // short list — the raw byte count is the ZON view's to edit.
     .{ .path = "editor.highlight_max_bytes", .label = "Highlighting size limit", .section = .editor, .scope = .home },
+    // The language-server size ceiling, the same shape of row and for
+    // the same reason. Its sizes are bigger: a parse tree is held for
+    // as long as the buffer is, where `didOpen` is paid once.
+    .{ .path = "editor.lsp_max_bytes", .label = "Language server size limit", .section = .editor, .scope = .home },
     // ── AI (the model is `ai.model`, free text in the config: v1 rows are
     //    discrete choices) ──
     .{ .path = "ai.inline_suggestions", .label = "Ghost text", .section = .ai, .scope = .home },
@@ -367,17 +371,29 @@ fn isHighlightMax(comptime path: []const u8) bool {
     return std.mem.eql(u8, path, "editor.highlight_max_bytes");
 }
 
+/// `editor.lsp_max_bytes`, the same kind of row over a longer scale.
+fn isLspMax(comptime path: []const u8) bool {
+    return std.mem.eql(u8, path, "editor.lsp_max_bytes");
+}
+
 pub const highlight_max_labels = [_][]const u8{ "off", "1 MB", "4 MB", "16 MB", "64 MB" };
 pub const highlight_max_values = [_]u64{ 0, 1 << 20, 4 << 20, 16 << 20, 64 << 20 };
+
+pub const lsp_max_labels = [_][]const u8{ "off", "4 MB", "16 MB", "50 MB", "200 MB" };
+pub const lsp_max_values = [_]u64{ 0, 4 << 20, 16 << 20, 50 << 20, 200 << 20 };
 
 /// Which choice a byte count reads as. A value set by hand that is not
 /// one of the five shows as the smallest choice above it (and adjusting
 /// the row then writes that one) — the overlay never claims a file over
 /// the limit is unlimited.
 fn highlightMaxIndex(v: u64) usize {
+    return sizeIndex(&highlight_max_values, v);
+}
+
+fn sizeIndex(values: []const u64, v: u64) usize {
     if (v == 0) return 0;
-    for (highlight_max_values, 0..) |hv, i| if (i > 0 and v <= hv) return i;
-    return highlight_max_values.len - 1;
+    for (values, 0..) |hv, i| if (i > 0 and v <= hv) return i;
+    return values.len - 1;
 }
 
 /// // changed (dock-placement): `ui.dock.placement` is a two-value
@@ -417,6 +433,7 @@ pub fn options(comptime path: []const u8) []const []const u8 {
     if (comptime isTheme(path)) return &theme_names;
     if (comptime isSuggestBackend(path)) return &suggest_tokens;
     if (comptime isHighlightMax(path)) return &highlight_max_labels;
+    if (comptime isLspMax(path)) return &lsp_max_labels;
     if (comptime isDockPlacement(path)) return &dock_placement_labels;
     const T = FieldType(path);
     return switch (@typeInfo(T)) {
@@ -432,7 +449,7 @@ pub fn options(comptime path: []const u8) []const []const u8 {
 /// True for the integer fields — the rows that step instead of cycle.
 pub fn isNumber(comptime path: []const u8) bool {
     if (comptime isSuggestBackend(path)) return false;
-    if (comptime isHighlightMax(path)) return false;
+    if (comptime isHighlightMax(path) or isLspMax(path)) return false;
     return @typeInfo(FieldType(path)) == .int;
 }
 
@@ -446,6 +463,7 @@ pub fn currentIndex(cfg: *Config, comptime path: []const u8) usize {
         return 0;
     }
     if (comptime isHighlightMax(path)) return highlightMaxIndex(cfg.editor.highlight_max_bytes);
+    if (comptime isLspMax(path)) return sizeIndex(&lsp_max_values, cfg.editor.lsp_max_bytes);
     if (comptime isSuggestBackend(path)) {
         const v = cfg.ai.extra.get("suggest_backend") orelse return 0;
         return switch (v) {
@@ -477,6 +495,10 @@ pub fn setIndex(cfg: *Config, comptime path: []const u8, idx: usize) void {
     const T = FieldType(path);
     if (comptime isHighlightMax(path)) {
         cfg.editor.highlight_max_bytes = highlight_max_values[idx % highlight_max_values.len];
+        return;
+    }
+    if (comptime isLspMax(path)) {
+        cfg.editor.lsp_max_bytes = lsp_max_values[idx % lsp_max_values.len];
         return;
     }
     if (comptime isNumber(path)) {

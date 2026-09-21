@@ -1956,7 +1956,7 @@ fn fakeAdapter(io: std.Io, gpa: Allocator, in: std.Io.File, out: std.Io.File, lo
     var seq: i64 = 1000;
     var line: u32 = 3;
     while (true) {
-        const body = jsonrpc.readFrame(gpa, &fr.interface) catch return;
+        const body = jsonrpc.readBody(gpa, &fr.interface) catch return;
         defer gpa.free(body);
         var parsed = std.json.parseFromSlice(jsonrpc.Value, gpa, body, .{}) catch return;
         defer parsed.deinit();
@@ -2135,7 +2135,7 @@ fn fakeNetcoredbg(io: std.Io, gpa: Allocator, in: std.Io.File, out: std.Io.File,
     var fr = in.readerStreaming(io, &buf);
     var seq: i64 = 2000;
     while (true) {
-        const body = jsonrpc.readFrame(gpa, &fr.interface) catch return;
+        const body = jsonrpc.readBody(gpa, &fr.interface) catch return;
         defer gpa.free(body);
         var parsed = std.json.parseFromSlice(jsonrpc.Value, gpa, body, .{}) catch return;
         defer parsed.deinit();

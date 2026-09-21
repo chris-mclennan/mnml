@@ -31,12 +31,21 @@ as for a debug adapter.
   each message (relative to the server's cwd, which is the project
   root mnml started it in). A script asserts on it with
   `expect file lsp.log contains "textDocument/didClose"`.
+- `--sync incremental` — advertise RANGE sync (`textDocumentSync.change:
+  2`) instead of full, apply each `contentChanges[]` entry to the stored
+  text in order exactly as the protocol says (each change describes the
+  document the one before it left; no range means the whole text), and
+  write one extra line per change into `--log`: `didChange range
+  L:C-L:C len=N`, or `didChange full len=N`. That line is the only way
+  a script can tell a range sync from a full one. Without the flag the
+  server advertises full sync (`change: 1`) as it always has.
 - `--version`, `--help`.
 
 ## The contract
 
 `initialize` answers `positionEncoding: "utf-8"` (a byte offset is a
-character), full-document sync (`change: 1`), and the providers below.
+character), full-document sync (`change: 1`, or range sync under
+`--sync incremental`), and the providers below.
 When the root (`rootUri`, else `rootPath`) holds no `Cargo.toml`, one
 `window/showMessage` of type 1 (Error) follows the reply, with
 rust-analyzer's own wording — `Failed to discover workspace.\nConsider
@@ -51,7 +60,7 @@ An unknown request gets `-32601 method not found`.
 
 | request | answer, from the text |
 |---|---|
-| `textDocument/didOpen` / `didChange` | the document is stored (the last `contentChanges[].text` is the whole text), then `publishDiagnostics`: one warning (severity 2, source `fake-lsp`, message `unresolved TODO`) per line holding `TODO`, from the marker to the line's end |
+| `textDocument/didOpen` / `didChange` | the document is stored (the last `contentChanges[].text` is the whole text; under `--sync incremental` each change's range is applied in turn), then `publishDiagnostics`: one warning (severity 2, source `fake-lsp`, message `unresolved TODO`) per line holding `TODO`, from the marker to the line's end |
 | `textDocument/didClose` | the document is dropped and its diagnostics published empty |
 | `textDocument/hover` | the identifier under (or ending at) the position as markdown `**word**`, with its range; `null` on no word |
 | `textDocument/definition` | for word `foo`, the `foo` on the first line that starts with `fn foo` (character 3); `null` when there is none |
