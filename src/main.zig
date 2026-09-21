@@ -489,7 +489,11 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
     // paths on a cloned repo, not for explicit invocations.
     const allow_shell = std.mem.eql(u8, env.get("MNML_E2E_ALLOW_SHELL") orelse "1", "1");
     const network = std.mem.eql(u8, env.get("MNML_E2E_NETWORK") orelse "0", "1");
-    const timeout: u64 = if (env.get("MNML_E2E_FILE_TIMEOUT_SECS")) |v| std.fmt.parseInt(u64, v, 10) catch 120 else 120;
+    // The default follows the build (`e2e.runner.debug_slowdown`): an
+    // unoptimized app needs the same multiple of wall clock the expect
+    // budget now gets, or a file is cut off mid-retry.
+    const default_timeout: u64 = e2e.runner.default_file_timeout_secs;
+    const timeout: u64 = if (env.get("MNML_E2E_FILE_TIMEOUT_SECS")) |v| std.fmt.parseInt(u64, v, 10) catch default_timeout else default_timeout;
     const heartbeat: u64 = if (env.get("MNML_E2E_HEARTBEAT_SECS")) |v| std.fmt.parseInt(u64, v, 10) catch 60 else 60;
     // `TMPDIR` is the POSIX spelling, `TEMP` / `TMP` Windows's.
     const tmp_root = env.get("TMPDIR") orelse env.get("TEMP") orelse env.get("TMP") orelse "/tmp";
@@ -572,6 +576,7 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
             try env.put("MNML_FAKE_JIRA", p);
         }
     }
+    try reportHarness(env, w);
     const opts: e2e.Options = .{
         .allow_shell = allow_shell,
         .network = network,
@@ -601,7 +606,47 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
         error.PathNotFound => return 2,
         else => return err,
     };
+    if (stats.failed != 0) try reportHarness(env, w);
     return if (stats.failed == 0) 0 else 1;
+}
+
+/// The two things about the HARNESS that turn a `.test` failure into a
+/// puzzle, said before the run and again after a failing one.
+///
+/// A missing helper binary is silent otherwise: `$MNML_JIRA` expands to
+/// nothing, the manifest a script writes names no binary, no pane
+/// mounts, and the file fails on the pane's title. And a Debug build is
+/// worse than silent — the corpus passes 668/668 against a shipped
+/// build and the same files fail against an unoptimized one, because
+/// the app is an order of magnitude slower (`debug_slowdown` moves the
+/// deadlines, but a `wait <ms>` a script spells out does not move).
+fn reportHarness(env: *const std.process.Environ.Map, w: *Io.Writer) !void {
+    const helpers = [_]struct { name: []const u8, step: []const u8 }{
+        .{ .name = "MNML_JIRA", .step = "jira-integration" },
+        .{ .name = "MNML_FAKE_JIRA", .step = "jira-integration" },
+        .{ .name = "MNML_BITBUCKET_INTEGRATION", .step = "bitbucket-integration" },
+        .{ .name = "MNML_FAKE_BITBUCKET", .step = "bitbucket-integration" },
+        .{ .name = "MNML_SAMPLE_INTEGRATION", .step = "sample-integration" },
+        .{ .name = "MNML_FAKE_DAP", .step = "install" },
+        .{ .name = "MNML_FAKE_LSP", .step = "install" },
+    };
+    for (helpers) |h| {
+        // Empty counts as unset: that is what a `.binary = "$MNML_JIRA"`
+        // manifest ends up with, and it is the shape that fails silently.
+        const value: []const u8 = env.get(h.name) orelse "";
+        if (value.len != 0) continue;
+        try w.print(
+            "mnml-zig test: ${s} is unset and no binary was found beside this exe or at its install path — the scripts that need it will fail on whatever they open first. Build it: `zig build {s}`.\n",
+            .{ h.name, h.step },
+        );
+    }
+    if (@import("builtin").mode == .Debug) {
+        try w.print(
+            "mnml-zig test: this is a DEBUG build. The corpus's timings assume the shipped one; the deadlines are scaled {d}× here, but a script's own `wait <ms>` is not, so the heaviest files (an integration pane mounting, a live Lua picker) can still fail on time alone. Re-run a timing failure with `zig build e2e -Doptimize=ReleaseSafe` before believing it.\n",
+            .{e2e.runner.debug_slowdown},
+        );
+    }
+    try w.flush();
 }
 
 fn noAppDriver(_: *anyopaque, _: Allocator, _: Io, _: e2e.driver.Config) anyerror!e2e.Driver {
@@ -805,6 +850,31 @@ test "--startup-picker is MNML_STARTUP_PICKER=1 for this process" {
     try std.testing.expect(env.get("MNML_STARTUP_PICKER") == null);
     try std.testing.expect(try applyStartupPickerFlag(&env, &.{ "--startup-picker", "ws" }));
     try std.testing.expectEqualStrings("1", env.get("MNML_STARTUP_PICKER").?);
+}
+
+test "the harness report names the build step for every helper binary that is missing" {
+    // A missing helper binary is otherwise silent: `$MNML_JIRA` expands
+    // to nothing, the manifest a script writes names no binary, no pane
+    // mounts, and the file fails on the pane's title — which is a long
+    // way from "you have not built it yet".
+    var env: std.process.Environ.Map = .init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("MNML_JIRA", "/built/mnml-jira");
+    // Empty counts as missing: that is what a `.binary = "$MNML_JIRA"`
+    // manifest ends up with, and it is the shape that fails silently.
+    try env.put("MNML_FAKE_JIRA", "");
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try reportHarness(&env, &out.writer);
+    const said = out.written();
+    try std.testing.expect(std.mem.indexOf(u8, said, "$MNML_JIRA is unset") == null);
+    try std.testing.expect(std.mem.indexOf(u8, said, "$MNML_FAKE_JIRA is unset") != null);
+    try std.testing.expect(std.mem.indexOf(u8, said, "`zig build jira-integration`") != null);
+    try std.testing.expect(std.mem.indexOf(u8, said, "$MNML_BITBUCKET_INTEGRATION is unset") != null);
+    try std.testing.expect(std.mem.indexOf(u8, said, "`zig build bitbucket-integration`") != null);
+    // And a Debug build says so, because the corpus's timings are the
+    // shipped build's (`src/e2e/runner.zig`'s `debug_slowdown`).
+    try std.testing.expectEqual(@import("builtin").mode == .Debug, std.mem.indexOf(u8, said, "DEBUG build") != null);
 }
 
 test "--no-session is the flag run.sh fresh passes; --input's value is never a workspace" {

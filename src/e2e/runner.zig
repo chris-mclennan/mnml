@@ -18,6 +18,12 @@
 //! A file runs on its own thread under a wall-clock deadline (120 s,
 //! `MNML_E2E_FILE_TIMEOUT_SECS`); on timeout the thread is abandoned and
 //! the suite continues. Leaked memory fails the file.
+//!
+//! Both of those figures are the SHIPPED build's, and an unoptimized one
+//! runs the app an order of magnitude slower — so they are multiplied by
+//! `debug_slowdown` there. Without that, the corpus passed 668/668
+//! against ReleaseSafe and failed its four heaviest files against Debug,
+//! which is what `zig build e2e` produces by default.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -77,11 +83,29 @@ pub const ladder: []const Size = &.{
     .{ .cols = 200, .rows = 60 },
 };
 
+/// How much slower this build is at the work the wall-clock budgets
+/// below are waiting on — 1 for the shipped build, more for a Debug
+/// one. Set in `build.zig`, where the reasoning lives. The script
+/// budget (`src/scripting/lua.zig`) moves with the build for the same
+/// reason but not by this factor: there the Debug figure stops being a
+/// frame budget at all, so it is stated on its own terms.
+pub const debug_slowdown: u64 = build_options.debug_slowdown;
+
+/// The wall clock one file gets by default, and what
+/// `MNML_E2E_FILE_TIMEOUT_SECS` overrides. Scaled with the build for the
+/// same reason the expect budget is — a file whose every expectation now
+/// waits twenty times as long must not be cut off by a deadline that did
+/// not move — but capped, because this one is also the guard against a
+/// WEDGED file, and a wedge has to be abandoned in minutes rather than in
+/// half an hour.
+pub const default_file_timeout_secs: u64 = @min(120 * debug_slowdown, 600);
+
 pub const Timing = struct {
-    /// Sleep inside every post-step render cycle.
+    /// Sleep inside every post-step render cycle. Not scaled: it is a
+    /// settle, not a deadline — the retry below is what waits.
     step_settle_ms: u64 = 50,
     /// How long a failing expectation is retried.
-    expect_budget_ms: u64 = 3000,
+    expect_budget_ms: u64 = 3000 * debug_slowdown,
     /// Sleep between retries.
     expect_poll_ms: u64 = 40,
     /// Longest sleep between ticks inside `wait`.
@@ -94,7 +118,8 @@ pub const Options = struct {
     allow_shell: bool = false,
     /// Run files marked `# requires: network` (`MNML_E2E_NETWORK=1`).
     network: bool = false,
-    file_timeout_secs: u64 = 120,
+    /// The wall clock one file gets (`default_file_timeout_secs`).
+    file_timeout_secs: u64 = default_file_timeout_secs,
     /// While a file is in flight, every this many seconds the runner
     /// prints `⏳ <name> still running (Ns)` with the process's children,
     /// so a long file is distinguishable from a wedged one before the
@@ -954,6 +979,18 @@ pub fn runPath(gpa: Allocator, io: Io, factory: Factory, root: []const u8, opts:
             try out.flush();
             continue;
         };
+        // `# requires: optimized`: the file's deadlines are pinned
+        // outside the runner — the `wait <ms>` it spells out, and the
+        // `--life-secs` it gives the offline server it starts itself —
+        // so against an unoptimized build it fails on the clock and says
+        // nothing about the app. Skipped with the reason and the
+        // command, rather than failing `zig build e2e` (which builds
+        // Debug by default) on something the shipped build passes.
+        if (header.requires_optimized and debug_slowdown != 1) {
+            try out.print("⊘ e2e SKIP (needs an optimized build — `zig build e2e -Doptimize=ReleaseSafe`): {s}\n", .{path});
+            try out.flush();
+            continue;
+        }
         var one: [1]Size = undefined;
         // A file that names its own size is telling us where it was
         // written, so that is where it asserts. Only the sweep's sizes
@@ -1098,12 +1135,35 @@ test "shipped defaults: 120×40, 50 ms settle, 3 s expect budget at 40 ms, 25 ms
     try t.expectEqual(@as(usize, 1), o.sizes.len);
     try t.expect(o.sizes[0].eql(content_size));
     try t.expectEqual(@as(u64, 50), o.timing.step_settle_ms);
-    try t.expectEqual(@as(u64, 3000), o.timing.expect_budget_ms);
+    // The two deadlines are the shipped build's; an unoptimized one runs
+    // the app `debug_slowdown` times slower and gets that much more wall
+    // clock for the same work.
+    try t.expectEqual(@as(u64, 3000 * debug_slowdown), o.timing.expect_budget_ms);
     try t.expectEqual(@as(u64, 40), o.timing.expect_poll_ms);
     try t.expectEqual(@as(u64, 25), o.timing.wait_slice_ms);
-    try t.expectEqual(@as(u64, 120), o.file_timeout_secs);
+    try t.expectEqual(default_file_timeout_secs, o.file_timeout_secs);
     try t.expect(!o.allow_shell);
     try t.expect(!o.network);
+}
+
+test "debug_slowdown is 1 in the shipped build and scales the deadlines in Debug" {
+    try t.expectEqual(@as(u64, if (builtin.mode == .Debug) 20 else 1), debug_slowdown);
+    const o: Options = .{ .data_root = "" };
+    if (builtin.mode == .Debug) {
+        try t.expect(o.timing.expect_budget_ms > 3000);
+        try t.expect(o.file_timeout_secs > 120 and o.file_timeout_secs <= 600);
+    } else {
+        try t.expectEqual(@as(u64, 3000), o.timing.expect_budget_ms);
+        try t.expectEqual(@as(u64, 120), o.file_timeout_secs);
+    }
+    // The script budget moves with the build too, and out of the same
+    // measurement — it stops being a frame budget in a Debug build and
+    // becomes a runaway budget derived from this factor (`lua.zig`).
+    const lua_budget = @import("../scripting/lua.zig");
+    if (debug_slowdown == 1)
+        try t.expectEqual(lua_budget.frame_budget_ms, lua_budget.budget_ms)
+    else
+        try t.expect(lua_budget.budget_ms >= lua_budget.frame_budget_ms * @as(i64, @intCast(debug_slowdown)));
 }
 
 test "a passing script: every step is followed by tick/settle/expire/tick/render" {
@@ -1538,6 +1598,31 @@ test "runPath: --filter keeps the matching names silently, --skip announces the 
     try t.expectEqualStrings(expected, out.written());
     try t.expectEqualStrings("alpha_one", stemOf("/x/alpha_one.test"));
     try t.expectEqualStrings("notes", stemOf("notes"));
+}
+
+test "`# requires: optimized` runs against a shipped build and is announced as skipped against a Debug one" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+    const path = try env.script("pinned.test", "# requires: optimized\nexpect screen contains ok\n");
+    defer t.allocator.free(path);
+    var sf: StubFactory = .{ .proto = .{ .text = "ok" } };
+    var out: Io.Writer.Allocating = .init(t.allocator);
+    defer out.deinit();
+    const s = try runPath(t.allocator, t.io, sf.factory(), path, env.opts(), &out.writer);
+    if (debug_slowdown == 1) {
+        // The shipped build runs it like any other file.
+        try t.expectEqual(@as(usize, 1), s.total);
+        try t.expectEqual(@as(usize, 0), s.failed);
+        try t.expectEqualStrings("▶ e2e: pinned.test\n  ok   pinned.test\n", out.written());
+    } else {
+        // Debug: not run, not failed, and the line says why and what to
+        // type — the whole point is that it stops reading as a bug in
+        // the app.
+        try t.expectEqual(@as(usize, 0), s.total);
+        try t.expectEqual(@as(usize, 0), s.failed);
+        try t.expect(std.mem.startsWith(u8, out.written(), "⊘ e2e SKIP (needs an optimized build — `zig build e2e -Doptimize=ReleaseSafe`): "));
+        try t.expect(std.mem.endsWith(u8, out.written(), "pinned.test\n"));
+    }
 }
 
 test "runPath on a single file and on an empty directory" {

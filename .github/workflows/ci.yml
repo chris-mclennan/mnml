@@ -57,9 +57,15 @@ jobs:
         shell: bash
         run: zig build test -Doptimize=ReleaseSafe --summary failures
 
-      - name: zig build
+      # ReleaseSafe on purpose: the `--gate` sweep below runs `.test`
+      # files, and the corpus's timings are the shipped build's
+      # (docs/CONTRIBUTING.md, "Run the corpus against an optimized
+      # build") — the gate subset includes an integration file that is
+      # timing-marginal in a Debug build. The Debug compile stays covered
+      # by the `zig build test -Doptimize=Debug` step above.
+      - name: zig build (ReleaseSafe — the build the gate runs against)
         shell: bash
-        run: zig build --summary failures
+        run: zig build -Doptimize=ReleaseSafe --summary failures
 
       # A string that dies at the next frame reaching a consumer that
       # outlives the frame (a menu label, a prompt title, a confirm

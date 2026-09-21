@@ -126,6 +126,18 @@ pub fn build(b: *std.Build) void {
     // malloc) and print where a headless session's memory was as it ends.
     const mem_report = b.option(bool, "mem-report", "Count live bytes per subsystem; a headless session prints the table to stderr as it ends") orelse false;
     build_options.addOption(bool, "mem_report", mem_report);
+    // How much slower this build's HOST code is than the shipped one.
+    // The `.test` runner's deadlines — how long a failing expectation is
+    // retried, how long one file may take (`src/e2e/runner.zig`) — are
+    // written for the shipped build and bound work that is mostly Zig.
+    // Unoptimized that work is an order of magnitude slower (measured:
+    // one `mnml.commands("")` costs ≤ 0.6 ms against ReleaseSafe and
+    // 5–10 ms against Debug), so a fixed figure is not the same
+    // allowance: the corpus passed 668/668 against ReleaseSafe and
+    // failed four files against Debug, which is what `zig build e2e`
+    // builds by default. A deadline is an amount of WORK; this is what
+    // converts it to a clock.
+    build_options.addOption(u64, "debug_slowdown", if (optimize == .Debug) 20 else 1);
 
     // ── the side-by-side names: -Dinstall-names ──
     // The two names a second mnml on one machine would collide on: the

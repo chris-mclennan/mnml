@@ -418,6 +418,41 @@ A file whose screen only one platform can paint carries
 `# requires: macos` (or `linux` / `windows`) in its header block and is
 announced as skipped elsewhere, the way `# requires: network` already is.
 
+**Run the corpus against an optimized build.** `zig build e2e` and
+`zig build check` take `-Doptimize` from the command line and default to
+Debug, where the app is an order of magnitude slower — and every timing
+in the corpus is the shipped build's. The runner scales its own
+deadlines (`debug_slowdown`) and prints that it is a Debug build, but a
+script's `wait <ms>`, and the `--lifetime-secs` it gives its offline
+server, are written into the file and cannot move. A file pinned that
+way carries `# requires: optimized` and is announced as skipped against
+a Debug build rather than failing on the clock. One family carries it: the
+twenty-four `integrations_*` and `statusline_hover_*` files that mount
+real integration children against offline servers they start
+themselves. They are timing-marginal in a Debug build — the servers of
+earlier files are still alive on their own `--life-secs` while later
+ones run — and WHICH member falls over depends on what else the machine
+is doing: three Debug corpus runs failed a different member each time
+(`integrations_bitbucket_pipelines` + `integrations_pane_chrome`;
+`integrations_bitbucket_pane` + `integrations_row_buttons_wide`;
+`integrations_jira_work_tabs`), and every one of them passes against
+ReleaseSafe. Nothing outside the family has failed in Debug, so the mark
+is that family's and not a get-out for a slow file. So:
+
+```sh
+zig build e2e -Doptimize=ReleaseSafe      # the run whose green means something
+```
+
+A timing failure from a Debug run is not a finding until it reproduces
+there. It has now read as "fails only in a worktree" three times over;
+it was never the path.
+
+CI runs the corpus that way: the Linux full-corpus leg builds
+ReleaseSafe, and the macOS/Windows job now installs ReleaseSafe before
+its `--gate` sweep for the same reason (the gate subset includes a file
+from this family). The Debug compile stays covered there by `zig build
+test -Doptimize=Debug`.
+
 ## Spec dumps
 
 The same-look tracks are measured against the Rust editor's screen,

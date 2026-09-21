@@ -9,9 +9,10 @@
 //! this file and `api.zig` and is never exposed to Lua — the `mnml`
 //! table is the whole surface.
 //!
-//! Budget: a count hook every 100 000 instructions checks a 20 ms
-//! deadline armed at the outermost entry; a trip raises `mnml: script
-//! budget exceeded`, which `pcall` catches like any other error.
+//! Budget: a count hook every 100 000 instructions checks the
+//! `budget_ms` deadline armed at the outermost entry; a trip raises
+//! `mnml: script budget exceeded`, which `pcall` catches like any other
+//! error.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -27,6 +28,7 @@ const script_view = @import("../ui/script_view.zig");
 const api = @import("api.zig");
 const diag = @import("diag.zig");
 const script_list = @import("../app/script_list.zig");
+const build_options = @import("build_options");
 
 pub const State = zlua.Lua;
 pub const LuaRef = command.LuaRef;
@@ -34,8 +36,36 @@ pub const Segment = script_view.Segment;
 
 /// The count hook fires every this many VM instructions.
 pub const hook_count: i32 = 100_000;
-/// How long one outermost call may run.
-pub const budget_ms: i64 = 20;
+/// A frame's worth of work: what the budget protects in a SHIPPED
+/// build, where a script must not hold the UI thread longer than one.
+pub const frame_budget_ms: i64 = 20;
+/// The headroom a Debug build's runaway budget keeps over the work an
+/// honest script does there, on top of the slowdown itself.
+const runaway_headroom = 5;
+/// A Debug build does not get a frame budget, because a frame budget
+/// there would not be measuring a frame. The budget is wall clock, but
+/// most of what it bounds is HOST code — `mnml.commands()` walks eleven
+/// hundred command specs and builds a table per row; `callItems` then
+/// copies every row back out — and unoptimized host code, through an
+/// unoptimized allocator, is not a little slower but much slower, and
+/// not by a constant: a pure Lua loop costs the same in both builds
+/// (the VM is a C dependency, not rebuilt), while one
+/// `mnml.commands("")` costs ≤ 0.6 ms against ReleaseSafe and 5–10 ms
+/// against Debug. The repo's own `lua/recent-commands` example — one of
+/// those calls, a row per command, a sort — needs under 20 ms in a
+/// shipped build and over 400 ms in a Debug one.
+///
+/// So Debug gets a RUNAWAY budget instead: long enough that no finite
+/// script trips it, short enough that `while true do end` still costs
+/// one toast rather than the editor. It is derived from the same
+/// measured slowdown the `.test` runner scales its deadlines by
+/// (`src/e2e/runner.zig`'s `debug_slowdown`), so the two cannot drift
+/// apart, plus headroom.
+pub const runaway_budget_ms: i64 = frame_budget_ms * build_options.debug_slowdown * runaway_headroom;
+/// How long one outermost call may run. The frame guarantee is a
+/// shipped-build guarantee; `zig build check`'s Debug leg is not where
+/// it is measured.
+pub const budget_ms: i64 = if (builtin.mode == .Debug) runaway_budget_ms else frame_budget_ms;
 /// How often a statusline segment's function is asked again.
 pub const segment_poll_ms: i64 = 250;
 pub const max_init_bytes = 4 * 1024 * 1024;
@@ -1309,6 +1339,42 @@ test "budget: an infinite loop trips after the deadline and the app survives" {
     // The toast said so.
     try testing.expect(app.toasts.items.len >= 1);
     try testing.expect(std.mem.indexOf(u8, app.toasts.items[0].text, "budget") != null);
+}
+
+test "the frame budget is a shipped-build promise; Debug gets a runaway budget derived from the same slowdown" {
+    // The regression this pins. `budget_ms` was a flat 20 ms of wall
+    // clock, but most of what it bounds is HOST code — `mnml.commands()`
+    // walks eleven hundred specs and builds a table per row, `callItems`
+    // copies every row back out — and host code is far slower
+    // unoptimized. So the repo's own example sat inside the budget in a
+    // shipped build and blew it in a Debug one: `items` raised `mnml:
+    // script budget exceeded`, `callItems` turned that into an empty
+    // list, and the picker painted `(no matches)`. That is what
+    // `lua_example_recent_commands.test` failed on, only ever under
+    // `zig build e2e` (Debug by default) — which read as "fails in a
+    // worktree" three times over.
+    //
+    // Asserted as the RULE, not as a clock: a wall-clock assertion here
+    // would run on `std.testing.allocator`, which tracks every
+    // allocation and is not the allocator the frame budget is measured
+    // against — the example needs ~600 ms under it even in ReleaseSafe.
+    // The shipped build's headroom is pinned where it is real, by
+    // `lua_example_recent_commands.test` against the built binary, and
+    // the failure mode by the picker test in `api.zig`.
+    try testing.expectEqual(@as(i64, 20), frame_budget_ms);
+    if (builtin.mode == .Debug) {
+        // At least the slowdown the `.test` runner measured, or the
+        // budget is again a figure that fits whichever script was
+        // measured last.
+        try testing.expect(budget_ms >= frame_budget_ms * build_options.debug_slowdown);
+        try testing.expectEqual(runaway_budget_ms, budget_ms);
+    } else {
+        // The shipped build owes a frame, and only a frame.
+        try testing.expectEqual(frame_budget_ms, budget_ms);
+    }
+    // Runaway, not unbounded: `while true do end` still costs one toast
+    // rather than the editor, so the figure stays inside a few seconds.
+    try testing.expect(budget_ms > 0 and budget_ms <= 10_000);
 }
 
 test "a runtime error carries a traceback and leaves the stack level" {
