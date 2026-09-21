@@ -247,6 +247,10 @@ pub const App = struct {
     /// How the tab strip marks the tab that is on — the host's
     /// `ui.tab_indicator`, off `hello`.
     tab_indicator: sdk.wire.TabIndicator = .block,
+    /// `ui.ascii_icons`, off `hello`. The pane's paint reads it off the
+    /// `Ui` it is handed; the statusline chip this app republishes for
+    /// itself has no `Ui` to read, so it reads this.
+    ascii: bool = false,
     /// Sessions this pane started and wants told about, waiting to go
     /// out over the mount.
     watch_out: std.ArrayListUnmanaged(WatchRequest) = .empty,
@@ -1871,11 +1875,12 @@ pub const App = struct {
                 keep_arena = true;
                 app.values = v;
                 const a = app.effect_arena.allocator();
+                const g = app.chipGlyph();
                 if (v.error_text.len > 0) {
-                    app.effect(.{ .segment = .{ .text = chip_glyph ++ " !", .tooltip = try std.fmt.allocPrint(a, "last error: {s}", .{v.error_text}) } });
+                    app.effect(.{ .segment = .{ .text = try std.fmt.allocPrint(a, "{s} !", .{g}), .tooltip = try std.fmt.allocPrint(a, "last error: {s}", .{v.error_text}) } });
                 } else {
                     app.effect(.{ .segment = .{
-                        .text = try std.fmt.allocPrint(a, chip_glyph ++ " {d}({d})", .{ v.open_mine, v.unapproved_mine }),
+                        .text = try std.fmt.allocPrint(a, "{s} {d}({d})", .{ g, v.open_mine, v.unapproved_mine }),
                         .tooltip = chip_tooltip,
                     } });
                 }
@@ -1885,6 +1890,15 @@ pub const App = struct {
 
     /// nf-md-bitbucket, the reference's chip glyph.
     pub const chip_glyph = "\u{f00a8}";
+    /// What the chip wears on a terminal with no Nerd Font — the same
+    /// two-cell shape, so the figure beside it stays where it was.
+    /// `sdk.pane.figure`'s own tests name this twin for the forge pane.
+    pub const chip_ascii = "BB";
+
+    /// The chip glyph this pane's host can actually paint.
+    pub fn chipGlyph(app: *const App) []const u8 {
+        return if (app.ascii) chip_ascii else chip_glyph;
+    }
     pub const chip_tooltip = "Open PRs you authored (last 90 days, non-release) — parens = still-needs-review count. Click to open the mine-only PRs tab.";
 
     // ─── the filter ──────────────────────────────────────────────────
