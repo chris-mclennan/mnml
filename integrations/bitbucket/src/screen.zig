@@ -43,7 +43,6 @@ pub const split_min_cols: u16 = 100;
 pub const list_share_pct: u16 = 55;
 
 pub const marker = "▌";
-pub const filter_glyph_nerd = "\u{F0349}";
 
 pub const Box = struct { x: u16, y: u16, w: u16, h: u16 };
 

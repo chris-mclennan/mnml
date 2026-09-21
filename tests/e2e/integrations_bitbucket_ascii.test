@@ -1,0 +1,66 @@
+# requires: optimized
+# The `integrations_*` family — real integration children against
+# offline servers the files start themselves — is timing-marginal in a
+# Debug build. See `integrations_row_buttons_wide.test` for the whole
+# reason; the runner scales its deadlines, a file's `wait <ms>` cannot.
+# ascii
+# width: 140
+# height: 24
+# env: MNML_MARKETPLACE_LOCAL=market
+# env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/bitbucket.zon
+# env: BITBUCKET_BASE_URL=@${MNML_E2E_WORKSPACE}/bb.url
+# env: BITBUCKET_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/bucket.json
+# env: BITBUCKET_API_TOKEN=corpus-read-token
+# env: MNML_ASCII=1
+# The forge pane with no Nerd Font — the sibling of
+# `integrations_jira_ascii.test`, and the same two halves.
+#
+# This pane publishes THREE chips, and all three had a glyph with no
+# twin: `BB N(K)` open pull requests of mine, `RT N` review threads
+# still waiting, `RV N` waiting on YOUR review. The figures keep their
+# columns because each twin is the width of the glyph it stands in for.
+shell mkdir -p .mnml/ipc-zig
+shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --lifetime-secs 240 >/dev/null 2>&1 &
+wait 600
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 0, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs } } }"
+write market/bitbucket_prs.zon ".{ .id = \"bitbucket_prs\", .label = \"Bitbucket PRs\", .version = \"0.2.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .args = .{ \"--only\", \"prs\" }, .description = \"Bitbucket: open pull requests\", .commands = .{ .{ .id = \"bitbucket_prs.open\", .title = \"Bitbucket PRs: open\" } } }"
+command integrations.show_marketplace
+expect screen contains "Mkt (1)"
+key i
+expect screen contains "installed bitbucket_prs"
+wait 1500
+
+# ── the three chips, published with no pane open ─────────────────────
+shell "$MNML_BITBUCKET_INTEGRATION" --values --workspace "$MNML_E2E_WORKSPACE" > values.json
+wait 900
+expect screen contains "BB 2(1)"
+expect screen lacks "󰂨"
+expect screen lacks ""
+expect screen lacks ""
+
+# ── the pane ─────────────────────────────────────────────────────────
+command integrations.open_as_tab
+command bitbucket_prs.open
+command view.toggle_tree
+command view.focus_pane
+wait 9000
+expect screen contains "BITBUCKET PRS"
+key j
+key j
+# The row buttons wear their ascii kind glyphs: navigation and final.
+expect screen contains "[> Open]"
+expect screen contains "[& Merge]"
+expect screen lacks "󰂨"
+expect screen lacks ""
+expect screen lacks ""
+expect screen lacks "󰍉"
+expect screen lacks ""
+expect screen lacks "󰏌"
+expect screen lacks "󰘭"
+expect screen lacks ""
+expect screen lacks ""
+
+key q
+wait 500
+key x
+expect screen lacks "BITBUCKET PRS"

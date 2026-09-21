@@ -75,7 +75,11 @@ pub const version = "0.2.0";
 /// how much is on your plate, the other how much is waiting on you to
 /// look at it.
 pub const segment_id = "jira_work.assigned";
-pub const segment_glyph = "\u{f0303}";
+pub const segment_glyph = "\u{f0303}"; // nf-md-jira
+/// What the chip says on a terminal with no Nerd Font: the same shape,
+/// a figure a reader can still act on. `sdk.pane.figure`'s own tests
+/// name this twin for the tracker pane.
+pub const segment_ascii = "J";
 pub const segment_color = "#1B5DCF";
 pub const segment_click = "jira_work.open";
 pub const segment_priority: u8 = 60;
@@ -87,6 +91,7 @@ pub const segment_priority: u8 = 60;
 /// configured".
 pub const qa_segment_id = "jira_work.qa_actionable";
 pub const qa_segment_glyph = "\u{ed7a}"; // nf-fa-clipboard_check
+pub const qa_segment_ascii = "QA";
 pub const qa_segment_color = "#C678DD";
 pub const qa_segment_priority: u8 = 59;
 
@@ -464,7 +469,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     app.last_refresh_ms = app.nowMs();
     try repaint(&paint_arena, &frame, &app, ui);
     mount.send(&frame) catch return 0;
-    publishSide(&app, mount, if (ipc) |*i| i else null, gpa, io, &limiter);
+    publishSide(&app, mount, if (ipc) |*i| i else null, gpa, io, &limiter, ui.ascii or !ui.nerd);
 
     while (true) {
         var ended = false;
@@ -522,7 +527,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
         try app.tick(app.nowMs());
         try repaint(&paint_arena, &frame, &app, ui);
         mount.send(&frame) catch break;
-        publishSide(&app, mount, if (ipc) |*i| i else null, gpa, io, &limiter);
+        publishSide(&app, mount, if (ipc) |*i| i else null, gpa, io, &limiter, ui.ascii or !ui.nerd);
         // While a refetch is in flight the loop wakes sooner, so its
         // rows land as soon as they arrive rather than up to half a
         // second later.
@@ -540,7 +545,7 @@ fn repaint(paint_arena: *std.heap.ArenaAllocator, frame: *sdk.Frame, app: *app_m
 
 /// The toast, the statusline segment, and the sessions this pane just
 /// started and wants told about.
-fn publishSide(app: *app_mod.App, mount: *sdk.Mount, ipc: ?*const sdk.Ipc, gpa: Allocator, io: Io, limiter: *ratelimit.Limiter) void {
+fn publishSide(app: *app_mod.App, mount: *sdk.Mount, ipc: ?*const sdk.Ipc, gpa: Allocator, io: Io, limiter: *ratelimit.Limiter, ascii: bool) void {
     for (app.watch_out.items) |w| {
         mount.watchSession(w.key, .{ .cwd = w.cwd, .prompt_line = w.prompt_line }) catch {};
     }
@@ -568,7 +573,7 @@ fn publishSide(app: *app_mod.App, mount: *sdk.Mount, ipc: ?*const sdk.Ipc, gpa: 
             // the tab the figure was counted off — no second search.
             var rows_arena = std.heap.ArenaAllocator.init(gpa);
             defer rows_arena.deinit();
-            publishSegment(i, rows_arena.allocator(), app.assignedIssues(), bucketOf(gpa, io, limiter, &bucket_name)) catch {};
+            publishSegment(i, rows_arena.allocator(), app.assignedIssues(), bucketOf(gpa, io, limiter, &bucket_name), ascii) catch {};
         };
     }
 }
@@ -718,12 +723,12 @@ fn nameIsQaActionable(name: []const u8) bool {
 /// The Work chips' statusline segments: the glyph and the count, the
 /// breakdown on hover, a click opens the pane — the manifest's slots,
 /// live.
-pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: Values, bucket: ?Bucket) !void {
+pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: Values, bucket: ?Bucket, ascii: bool) !void {
     var buf: [32]u8 = undefined;
     // One figure, and no bracketed subset: a tracker has no subset of
     // "assigned to me" it can name, and `43(2)` invented to match the
     // forge pane's shape would be a number nobody could believe.
-    const label = sdk.pane.figure.text(&buf, .{ .glyph = segment_glyph, .n = v.assigned_open });
+    const label = sdk.pane.figure.text(&buf, .{ .glyph = if (ascii) segment_ascii else segment_glyph, .n = v.assigned_open });
     const lead = try std.fmt.allocPrint(arena, "Jira · {d} open item{s} assigned to me", .{ v.assigned_open, if (v.assigned_open == 1) "" else "s" });
     try ipc.statuslineSetSegment(.{
         .id = segment_id,
@@ -738,7 +743,7 @@ pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: Values, bucket:
         var qbuf: [32]u8 = undefined;
         // Its own segment, named for its own figure — which is the
         // family's answer to a pane with a second thing to say.
-        const qlabel = sdk.pane.figure.text(&qbuf, .{ .glyph = qa_segment_glyph, .n = n });
+        const qlabel = sdk.pane.figure.text(&qbuf, .{ .glyph = if (ascii) qa_segment_ascii else qa_segment_glyph, .n = n });
         const qlead = try std.fmt.allocPrint(arena, "{s} · {d} actionable now", .{ if (v.qa_tab_name.len > 0) v.qa_tab_name else "QA Actionable Now", n });
         try ipc.statuslineSetSegment(.{
             .id = qa_segment_id,
@@ -761,8 +766,8 @@ pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: Values, bucket:
 /// issues. It used to publish the figure alone, so the hover's list
 /// vanished the moment the pane opened and did not come back until the
 /// next poll five minutes later.
-pub fn publishSegment(ipc: *const sdk.Ipc, arena: Allocator, issues: []const model.Issue, bucket: ?Bucket) !void {
-    return publishSegments(ipc, arena, try assignedValues(arena, issues), bucket);
+pub fn publishSegment(ipc: *const sdk.Ipc, arena: Allocator, issues: []const model.Issue, bucket: ?Bucket, ascii: bool) !void {
+    return publishSegments(ipc, arena, try assignedValues(arena, issues), bucket, ascii);
 }
 
 /// The hover text with the shared bucket's own two lines under it:
@@ -1078,7 +1083,7 @@ fn values(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Al
         var name_buf: [64]u8 = undefined;
         var ipc = ipc_ptr.*;
         defer ipc.deinit();
-        publishSegments(&ipc, arena, v, bucketOf(gpa, io, &limiter, &name_buf)) catch |e| try err.print("mnml-jira --values: could not publish the segments: {s}\n", .{@errorName(e)});
+        publishSegments(&ipc, arena, v, bucketOf(gpa, io, &limiter, &name_buf), sdk.pane.asciiFromEnv(env)) catch |e| try err.print("mnml-jira --values: could not publish the segments: {s}\n", .{@errorName(e)});
     }
     return 0;
 }
@@ -1405,7 +1410,7 @@ test "the statusline segment is the manifest's slot, live: the exact IPC line" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    try publishSegment(&ipc, arena, &chip_issues, null);
+    try publishSegment(&ipc, arena, &chip_issues, null, false);
     const line = try tmp.dir.readFileAlloc(testing.io, "command", arena, .unlimited);
     try testing.expectEqualStrings(
         "{\"cmd\":\"statusline-set-segment\",\"id\":\"jira_work.assigned\",\"side\":\"right\",\"text\":\"\u{f0303} 3\",\"color\":\"#1B5DCF\",\"click_command\":\"jira_work.open\",\"priority\":60,\"min_width\":4,\"max_width\":30," ++
@@ -1436,7 +1441,7 @@ test "the pane's own publish is the `--values` publish for the same listing, row
     var pbuf: [std.fs.max_path_bytes]u8 = undefined;
     var pane_ipc = try sdk.Ipc.init(testing.allocator, testing.io, pbuf[0..try pane_tmp.dir.realPath(testing.io, &pbuf)]);
     defer pane_ipc.deinit();
-    try publishSegment(&pane_ipc, arena, &chip_issues, null);
+    try publishSegment(&pane_ipc, arena, &chip_issues, null, false);
     const pane_line = try pane_tmp.dir.readFileAlloc(testing.io, "command", arena, .unlimited);
 
     // …and what a `--values` run sends for the same issues. Byte for
@@ -1447,7 +1452,7 @@ test "the pane's own publish is the `--values` publish for the same listing, row
     var qbuf: [std.fs.max_path_bytes]u8 = undefined;
     var poll_ipc = try sdk.Ipc.init(testing.allocator, testing.io, qbuf[0..try poll_tmp.dir.realPath(testing.io, &qbuf)]);
     defer poll_ipc.deinit();
-    try publishSegments(&poll_ipc, arena, try assignedValues(arena, &chip_issues), null);
+    try publishSegments(&poll_ipc, arena, try assignedValues(arena, &chip_issues), null, false);
     const poll_line = try poll_tmp.dir.readFileAlloc(testing.io, "command", arena, .unlimited);
 
     try testing.expectEqualStrings(poll_line, pane_line);
@@ -1571,7 +1576,7 @@ test "both chips carry their count and their breakdown; the QA one is absent whe
         .assigned_open = 7,
         .assigned_by_status = &.{ .{ .status = "In Progress", .n = 4 }, .{ .status = "To Do", .n = 3 } },
         .assigned_items = &.{ .{ .text = "ENG-1  Checkout rewrite", .sub = "In Progress", .key = "ENG-1" }, .{ .text = "ENG-5  Basket total wrong with a voucher", .sub = "To Do", .key = "ENG-5" } },
-    }, null);
+    }, null, false);
     var got = try tmp.dir.readFileAlloc(testing.io, "command", arena, .unlimited);
     try testing.expect(std.mem.indexOf(u8, got, "\"id\":\"jira_work.assigned\"") != null);
     try testing.expect(std.mem.indexOf(u8, got, "\u{f0303} 7") != null);
@@ -1595,7 +1600,7 @@ test "both chips carry their count and their breakdown; the QA one is absent whe
         .qa_by_status = &.{.{ .status = "Ready for QA", .n = 3 }},
         .qa_tab_name = "QA Actionable Now",
         .qa_items = &.{.{ .text = "ENG-9  Voucher stacking", .sub = "Ready for QA" }},
-    }, .{ .status = .{ .tokens = 0.24, .capacity = 60, .rate = 0.33, .baseline_rate = 0.33, .throttles = 3, .cooldown_remaining_secs = 0, .last_429_age_secs = 4 * 3600 }, .draws = .{ .top = "bb.py", .top_n = 30, .total = 71 } });
+    }, .{ .status = .{ .tokens = 0.24, .capacity = 60, .rate = 0.33, .baseline_rate = 0.33, .throttles = 3, .cooldown_remaining_secs = 0, .last_429_age_secs = 4 * 3600 }, .draws = .{ .top = "bb.py", .top_n = 30, .total = 71 } }, false);
     got = try tmp.dir.readFileAlloc(testing.io, "command", arena, .unlimited);
     try testing.expect(std.mem.indexOf(u8, got, "\"id\":\"jira_work.qa_actionable\"") != null);
     try testing.expect(std.mem.indexOf(u8, got, "QA Actionable Now · 3 actionable now — 3 Ready for QA") != null);
@@ -1611,6 +1616,30 @@ test "both chips carry their count and their breakdown; the QA one is absent whe
     try testing.expect(std.mem.indexOf(u8, got, "spent by bb.py 30 of 71 draws in 10m") != null);
     // The QA chip lists its own, not the assigned chip's.
     try testing.expect(std.mem.indexOf(u8, got, "\"text\":\"ENG-9  Voucher stacking\",\"sub\":\"Ready for QA\"") != null);
+}
+
+test "--ascii: both chips publish their twin, and no Nerd Font glyph goes out" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = a.allocator();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    var ipc = try sdk.Ipc.init(testing.allocator, testing.io, dir);
+    defer ipc.deinit();
+    try publishSegments(&ipc, arena, .{
+        .assigned_open = 7,
+        .qa_actionable = 3,
+        .qa_tab_name = "QA Actionable Now",
+    }, null, true);
+    const got = try tmp.dir.readFileAlloc(testing.io, "command", arena, .unlimited);
+    try testing.expect(std.mem.indexOf(u8, got, segment_ascii ++ " 7") != null);
+    try testing.expect(std.mem.indexOf(u8, got, qa_segment_ascii ++ " 3") != null);
+    // The point of the twin: a host that cannot paint the font is sent
+    // no codepoint it would render as tofu.
+    try testing.expect(std.mem.indexOf(u8, got, segment_glyph) == null);
+    try testing.expect(std.mem.indexOf(u8, got, qa_segment_glyph) == null);
 }
 
 test "every segment this pane publishes obeys the family's figure rule" {

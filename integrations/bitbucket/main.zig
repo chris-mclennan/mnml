@@ -73,12 +73,17 @@ pub const segment_click = "bitbucket_prs.open_mine";
 /// different question from "how many are open".
 pub const review_segment_id = "bitbucket_prs.reviews_mine";
 pub const review_segment_glyph = "\u{f075}"; // nf-fa-comment
+/// `RT`, review threads: the two-cell twin for a terminal with no
+/// Nerd Font, so the figure beside it keeps its place.
+pub const review_segment_ascii = "RT";
 pub const review_segment_color = "yellow";
 
 /// The third figure: open pull requests waiting on YOUR review. Its own
 /// chip again, because it is the one of the three that is your move.
 pub const awaiting_segment_id = "bitbucket_prs.reviews_pending";
 pub const awaiting_segment_glyph = "\u{f0e5}"; // nf-fa-comment_o
+/// `RV`, reviews waiting on you — the twin of the hollow comment.
+pub const awaiting_segment_ascii = "RV";
 pub const awaiting_segment_color = "orange";
 pub const awaiting_segment_click = "bitbucket_prs.open_awaiting";
 
@@ -567,7 +572,7 @@ fn valuesCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *
     var ipc = try ipcFor(gpa, io, env, workspace);
     defer if (ipc) |*x| x.deinit();
     var bucket_name: [64]u8 = undefined;
-    if (ipc) |*x| publishSegments(x, arena_state.allocator(), v, bucketOf(gpa, io, &s.limiter, &bucket_name)) catch {};
+    if (ipc) |*x| publishSegments(x, arena_state.allocator(), v, bucketOf(gpa, io, &s.limiter, &bucket_name), sdk.pane.asciiFromEnv(env)) catch {};
     if (v.error_text.len > 0) {
         try err.print("mnml-bitbucket --values: {s}\n", .{v.error_text});
         return 1;
@@ -584,19 +589,20 @@ fn valuesCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *
 /// this pane's: the figure is the pull requests of mine that are open,
 /// and the bracket is the SUBSET of them nobody has approved yet. A
 /// pane with no such subset publishes the figure alone.
-pub fn segmentText(buf: []u8, v: fetch.ValuesResult) []const u8 {
-    if (v.error_text.len > 0) return app_mod.App.chip_glyph ++ " !";
-    return sdk.pane.figure.text(buf, .{ .glyph = app_mod.App.chip_glyph, .n = v.open_mine, .subset = v.unapproved_mine });
+pub fn segmentText(buf: []u8, v: fetch.ValuesResult, ascii: bool) []const u8 {
+    const g = if (ascii) app_mod.App.chip_ascii else app_mod.App.chip_glyph;
+    if (v.error_text.len > 0) return std.fmt.bufPrint(buf, "{s} !", .{g}) catch g;
+    return sdk.pane.figure.text(buf, .{ .glyph = g, .n = v.open_mine, .subset = v.unapproved_mine });
 }
 
 /// The review chip's text: `󰅺 3`, the threads still waiting on someone.
-pub fn reviewText(buf: []u8, unresolved: usize) []const u8 {
-    return sdk.pane.figure.text(buf, .{ .glyph = review_segment_glyph, .n = unresolved });
+pub fn reviewText(buf: []u8, unresolved: usize, ascii: bool) []const u8 {
+    return sdk.pane.figure.text(buf, .{ .glyph = if (ascii) review_segment_ascii else review_segment_glyph, .n = unresolved });
 }
 
 /// The awaiting chip's text: ` 2`, the pull requests waiting on you.
-pub fn awaitingText(buf: []u8, n: usize) []const u8 {
-    return sdk.pane.figure.text(buf, .{ .glyph = awaiting_segment_glyph, .n = n });
+pub fn awaitingText(buf: []u8, n: usize, ascii: bool) []const u8 {
+    return sdk.pane.figure.text(buf, .{ .glyph = if (ascii) awaiting_segment_ascii else awaiting_segment_glyph, .n = n });
 }
 
 /// ` — “Fix the login redirect”, “Bump the client timeout”`, or nothing
@@ -678,11 +684,11 @@ pub fn awaitingTooltip(arena: Allocator, v: fetch.ValuesResult) Allocator.Error!
 /// The review chip is published only when the count was taken — a zero
 /// there would read as "nothing outstanding" when it may mean "not
 /// counted this run".
-pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: fetch.ValuesResult, bucket: ?Bucket) !void {
+pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: fetch.ValuesResult, bucket: ?Bucket, ascii: bool) !void {
     var buf: [64]u8 = undefined;
     try ipc.statuslineSetSegment(.{
         .id = segment_id,
-        .text = segmentText(&buf, v),
+        .text = segmentText(&buf, v, ascii),
         .color = if (v.error_text.len > 0) "red" else segment_color,
         .click_command = segment_click,
         .priority = 60,
@@ -693,7 +699,7 @@ pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: fetch.ValuesRes
         var rbuf: [64]u8 = undefined;
         try ipc.statuslineSetSegment(.{
             .id = review_segment_id,
-            .text = reviewText(&rbuf, n),
+            .text = reviewText(&rbuf, n, ascii),
             .color = if (n > 0) review_segment_color else "green",
             .click_command = segment_click,
             .priority = 59,
@@ -704,7 +710,7 @@ pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: fetch.ValuesRes
     var abuf: [64]u8 = undefined;
     try ipc.statuslineSetSegment(.{
         .id = awaiting_segment_id,
-        .text = awaitingText(&abuf, v.reviews_pending),
+        .text = awaitingText(&abuf, v.reviews_pending, ascii),
         .color = if (v.reviews_pending > 0) awaiting_segment_color else "green",
         .click_command = awaiting_segment_click,
         .priority = 58,
@@ -780,7 +786,7 @@ fn refreshCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: 
     var ipc = try ipcFor(gpa, io, env, workspace);
     defer if (ipc) |*x| x.deinit();
     var bucket_name: [64]u8 = undefined;
-    if (ipc) |*x| publishSegments(x, arena_state.allocator(), v, bucketOf(gpa, io, &s.limiter, &bucket_name)) catch {};
+    if (ipc) |*x| publishSegments(x, arena_state.allocator(), v, bucketOf(gpa, io, &s.limiter, &bucket_name), sdk.pane.asciiFromEnv(env)) catch {};
     if (v.error_text.len > 0) {
         try err.print("mnml-bitbucket --refresh: {s}\n", .{v.error_text});
         return 1;
@@ -1360,6 +1366,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
     app.rows = frame.rows;
     app.now_secs = nowSecs(io);
     app.tab_indicator = mount.hello.tab_indicator;
+    app.ascii = !nerd;
 
     var progress: fetch.Progress = .{};
     app.progress = &progress;
@@ -1515,7 +1522,7 @@ fn drain(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sd
                 // chip is actually being published, and not once per
                 // pass of a loop that runs at sixty hertz.
                 var bucket_name: [64]u8 = undefined;
-                publishSegments(ipc, arena_state.allocator(), v, bucketOf(gpa, io, limiter, &bucket_name)) catch {};
+                publishSegments(ipc, arena_state.allocator(), v, bucketOf(gpa, io, limiter, &bucket_name), app.ascii) catch {};
             }
         },
         // The one destructive action either pane offers goes through a
@@ -1698,7 +1705,7 @@ test "the chip's Tier-2 lines are the exact JSON mnml reads: the segment, its ro
         .unapproved_mine = 1,
         .approved_mine = 0,
         .open_items = &.{.{ .text = "Fix the login redirect", .sub = "acme/api \u{b7} unapproved", .key = "api#1234" }},
-    }, null);
+    }, null, false);
     const got = try tmp.dir.readFileAlloc(t.io, "command", arena, .unlimited);
     try t.expectEqualStrings(
         "{\"cmd\":\"statusline-set-segment\",\"id\":\"bitbucket_prs.prs_mine\",\"side\":\"right\",\"text\":\"\u{f00a8} 1(1)\",\"color\":\"green\",\"click_command\":\"bitbucket_prs.open_mine\",\"priority\":60,\"min_width\":4,\"max_width\":30," ++
@@ -1735,7 +1742,7 @@ test "the three chips carry their counts, what they mean and WHICH; the review c
         .open_items = &.{ .{ .text = "Fix the login redirect", .sub = "acme/api · unapproved", .key = "api#1198" }, .{ .text = "Redesign the empty state", .sub = "acme/web · approved", .key = "web#820" } },
         .comment_items = &.{.{ .text = "Fix the login redirect", .sub = "acme/api · 2 waiting", .key = "api#1198" }},
         .awaiting_items = &.{ .{ .text = "Bump the client timeout to 30s", .sub = "acme/api", .key = "api#1234" }, .{ .text = "Tidy the footer links", .sub = "acme/web", .key = "web#77" } },
-    }, .{ .status = .{ .tokens = 0.24, .capacity = 40, .rate = 0.11, .baseline_rate = 0.22, .throttles = 127, .cooldown_remaining_secs = 0, .last_429_age_secs = 4 * 3600 }, .draws = .{ .top = "bb.py", .top_n = 30, .total = 83 } });
+    }, .{ .status = .{ .tokens = 0.24, .capacity = 40, .rate = 0.11, .baseline_rate = 0.22, .throttles = 127, .cooldown_remaining_secs = 0, .last_429_age_secs = 4 * 3600 }, .draws = .{ .top = "bb.py", .top_n = 30, .total = 83 } }, false);
     var got = try tmp.dir.readFileAlloc(t.io, "command", arena, .unlimited);
     try t.expect(std.mem.indexOf(u8, got, "\"id\":\"bitbucket_prs.prs_mine\"") != null);
     try t.expect(std.mem.indexOf(u8, got, "4 open pull requests you authored — 2 still unapproved, 2 approved") != null);
@@ -1768,9 +1775,14 @@ test "the three chips carry their counts, what they mean and WHICH; the review c
     // open pull requests of mine — so it is the family's `12(11)`
     // shape and the other two chips are one figure each.
     var fbuf: [32]u8 = undefined;
-    try sdk.pane.expect.statuslineFigure(segmentText(&fbuf, .{ .open_mine = 12, .unapproved_mine = 11 }));
-    try sdk.pane.expect.statuslineFigure(reviewText(&fbuf, 3));
-    try sdk.pane.expect.statuslineFigure(awaitingText(&fbuf, 2));
+    try sdk.pane.expect.statuslineFigure(segmentText(&fbuf, .{ .open_mine = 12, .unapproved_mine = 11 }, false));
+    try sdk.pane.expect.statuslineFigure(reviewText(&fbuf, 3, false));
+    try sdk.pane.expect.statuslineFigure(awaitingText(&fbuf, 2, false));
+    // And the twins keep the family's shape, so `--ascii` reads the
+    // same figure rather than a run of tofu.
+    try sdk.pane.expect.statuslineFigure(segmentText(&fbuf, .{ .open_mine = 12, .unapproved_mine = 11 }, true));
+    try sdk.pane.expect.statuslineFigure(reviewText(&fbuf, 3, true));
+    try sdk.pane.expect.statuslineFigure(awaitingText(&fbuf, 2, true));
 
     // The sentence names the first few; `items` carries every one the
     // values run had, each with where it lives and what a click on the
@@ -1790,7 +1802,7 @@ test "the three chips carry their counts, what they mean and WHICH; the review c
     // Not counted: the second chip is not published at all. A zero
     // there would read as "nothing outstanding".
     try tmp.dir.writeFile(t.io, .{ .sub_path = "command", .data = "" });
-    try publishSegments(&ipc, arena, .{ .open_mine = 1, .unapproved_mine = 0, .approved_mine = 1 }, null);
+    try publishSegments(&ipc, arena, .{ .open_mine = 1, .unapproved_mine = 0, .approved_mine = 1 }, null, false);
     got = try tmp.dir.readFileAlloc(t.io, "command", arena, .unlimited);
     try t.expect(std.mem.indexOf(u8, got, "bitbucket_prs.reviews_mine") == null);
     // One reads as one, and a figure with no names behind it simply
@@ -1804,9 +1816,41 @@ test "the three chips carry their counts, what they mean and WHICH; the review c
 
     // A failure says so on the chip it belongs to.
     try tmp.dir.writeFile(t.io, .{ .sub_path = "command", .data = "" });
-    try publishSegments(&ipc, arena, .{ .error_text = "HTTP 401: auth" }, null);
+    try publishSegments(&ipc, arena, .{ .error_text = "HTTP 401: auth" }, null, false);
     got = try tmp.dir.readFileAlloc(t.io, "command", arena, .unlimited);
     try t.expect(std.mem.indexOf(u8, got, "Bitbucket: HTTP 401: auth") != null);
+}
+
+test "--ascii: all three chips publish their twin, and no Nerd Font glyph goes out" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    var ipc = try sdk.Ipc.init(t.allocator, t.io, dir);
+    defer ipc.deinit();
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    try publishSegments(&ipc, arena, .{
+        .open_mine = 4,
+        .unapproved_mine = 2,
+        .approved_mine = 2,
+        .reviews_pending = 2,
+        .unresolved_comments = 3,
+    }, null, true);
+    const got = try tmp.dir.readFileAlloc(t.io, "command", arena, .unlimited);
+    try t.expect(std.mem.indexOf(u8, got, app_mod.App.chip_ascii ++ " 4(2)") != null);
+    try t.expect(std.mem.indexOf(u8, got, review_segment_ascii ++ " 3") != null);
+    try t.expect(std.mem.indexOf(u8, got, awaiting_segment_ascii ++ " 2") != null);
+    // The point of the twin: a host that cannot paint the font is sent
+    // no codepoint it would render as tofu.
+    try t.expect(std.mem.indexOf(u8, got, app_mod.App.chip_glyph) == null);
+    try t.expect(std.mem.indexOf(u8, got, review_segment_glyph) == null);
+    try t.expect(std.mem.indexOf(u8, got, awaiting_segment_glyph) == null);
+    // And the failure form wears it too, rather than falling back to
+    // the comptime concatenation it used to be.
+    var fbuf: [64]u8 = undefined;
+    try t.expectEqualStrings(app_mod.App.chip_ascii ++ " !", segmentText(&fbuf, .{ .error_text = "nope" }, true));
 }
 
 test "--only spells the reference's families; the last one wins; an unknown flag is refused" {

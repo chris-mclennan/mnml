@@ -68,6 +68,7 @@ const integrations = @import("integrations.zig");
 const mount_pane = @import("mount_pane.zig");
 const broker_app = @import("broker.zig");
 const manifest_mod = @import("../bridge/manifest.zig");
+const sdk_chrome = @import("mnml_sdk").pane.chrome;
 
 /// The floor a manifest's interval is clamped to, whatever the config
 /// says: polling an API faster than this buys a statusline nothing.
@@ -321,6 +322,11 @@ fn buildJob(
     try env.put("MNML_WORKSPACE", app.workspace);
     try env.put("MNML_IPC_DIR", try mount_pane.ipcDir(app));
     try env.put("MNML_THEME", app.theme.name);
+    // The chip this child publishes is painted on the same statusline
+    // the pane's is, so it has to choose the same glyph twin. A pane
+    // reads `ui.ascii_icons` off its `hello`; a `--values` child has no
+    // mount, so the environment carries it (`sdk.pane.asciiFromEnv`).
+    try env.put(sdk_chrome.ascii_env, if (app.cfg.ui.ascii_icons) "1" else "0");
     if (app.data_root.len > 0) try env.put("MNML_DATA_ROOT", app.data_root);
     // The poller's child writes to the same request log a pane does:
     // a `poll` line beside a `pane_open` one is half the point of the

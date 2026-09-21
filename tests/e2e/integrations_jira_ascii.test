@@ -1,0 +1,71 @@
+# requires: optimized
+# The `integrations_*` family — real integration children against
+# offline servers the files start themselves — is timing-marginal in a
+# Debug build. See `integrations_row_buttons_wide.test` for the whole
+# reason; the runner scales its deadlines, a file's `wait <ms>` cannot.
+# ascii
+# width: 140
+# height: 24
+# env: JIRA_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/jira-bucket.json
+# env: JIRA_API_TOKEN=fake-token
+# env: JIRA_BASE_URL=@${MNML_E2E_WORKSPACE}/jira.url
+# env: MNML_ASCII=1
+# The tracker pane with no Nerd Font. `--ascii` is a shipped mode, and
+# a glyph without its twin does not fail quietly there: it paints a
+# hollow box where the chip or the button was, and the reader loses the
+# figure rather than the icon.
+#
+# Two halves, because the twin is chosen in two different places. The
+# statusline chip is published by a run with NO pane — `--values` under
+# the poller — which has no `hello` to read, so `$MNML_ASCII` is the
+# only thing that tells it which form to send (`sdk.pane.asciiFromEnv`).
+# The pane's own chrome and its row buttons read `hello.capabilities`.
+#
+# The tofu checks are the point: every codepoint this pane would paint
+# with the font is asserted ABSENT, so a site that forgot its twin
+# fails here rather than on somebody's terminal.
+shell mkdir -p .mnml/ipc-zig
+shell "$MNML_FAKE_JIRA" --port 0 --url-file jira.url --life-secs 240 --quiet --pid-file fake-jira.pid >/dev/null 2>&1 &
+wait 600
+write sdk/mnml-sdk/build.zig ""
+write integrations/jira/build.zig ""
+write integrations/jira/manifest.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } } }"
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"https://jira.invalid\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .rate = .{ .per_sec = 1000, .burst = 1000 }, .tabs = .{ .{ .name = \"My open work items\", .kind = .work_open } } }"
+command integrations.show_in_dev
+expect screen contains "INTEGRATIONS"
+key i
+expect screen contains "installed jira_work from"
+wait 1500
+
+# ── the chip, published with no pane open ────────────────────────────
+shell "$MNML_JIRA" --values --only work --workspace "$MNML_E2E_WORKSPACE" > values.json
+wait 900
+expect screen contains "J "
+expect screen lacks "󰌃"
+
+# ── the pane ─────────────────────────────────────────────────────────
+command integrations.open_as_tab
+command jira_work.open
+wait 9000
+command view.toggle_tree
+command view.focus_pane
+expect screen contains "JIRA WORK"
+# The dispatch button wears its ascii kind glyph, not the eye.
+expect screen contains "[? Review]"
+# And nothing on the screen is a codepoint this terminal cannot draw:
+# the chip, the filter's magnifier, the refresh chip, the eye, the two
+# PR buttons and the tree's chevrons all wear their twins.
+expect screen lacks "󰌃"
+expect screen lacks "󰍉"
+expect screen lacks ""
+expect screen lacks ""
+expect screen lacks "󰏌"
+expect screen lacks "󰘭"
+expect screen lacks ""
+expect screen lacks ""
+
+key q
+wait 500
+key x
+expect screen lacks "JIRA WORK"
+shell kill "$(cat fake-jira.pid)" 2>/dev/null || true

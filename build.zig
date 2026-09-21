@@ -345,9 +345,11 @@ pub fn build(b: *std.Build) void {
     // compact codepoint/name table, then list every Nerd Font glyph
     // literal in src/ with its ASCII twin (`tools/glyph_audit.zig`);
     // `--strict` fails on a site without one. The tool's own tests walk
-    // src/ under `zig build test` and assert the same.
+    // the same three trees under `zig build unit` and assert the same.
     const glyph_opts = b.addOptions();
     glyph_opts.addOptionPath("src_root", b.path("src"));
+    glyph_opts.addOptionPath("sdk_root", b.path("sdk/mnml-sdk/src"));
+    glyph_opts.addOptionPath("integrations_root", b.path("integrations"));
     glyph_opts.addOptionPath("glyph_json", b.path("data/nerd-glyphnames.json"));
     const glyph_mod = b.createModule(.{ .root_source_file = b.path("tools/glyph_audit.zig"), .target = target, .optimize = optimize });
     glyph_mod.addOptions("build_options", glyph_opts);
@@ -379,14 +381,17 @@ pub fn build(b: *std.Build) void {
     glyph_audit.addDirectoryArg(b.path("src"));
     // The pane toolkit too: a glyph with no `--ascii` twin is exactly
     // as broken in the chrome every integration paints through as it is
-    // in mnml's own. (`integrations/` is not walked yet — the two
-    // official panes carry fourteen statusline-chip glyphs with no
-    // twin, which is its own pass.)
+    // in mnml's own.
     glyph_audit.addDirectoryArg(b.path("sdk/mnml-sdk/src"));
+    // And the official integrations, whose statusline chips and pane
+    // rows are as much of the shipped screen as mnml's own chrome: a
+    // chip that paints a Nerd Font glyph on an `--ascii` terminal is
+    // tofu there too.
+    glyph_audit.addDirectoryArg(b.path("integrations"));
     glyph_audit.addArg("--strict");
     glyph_audit.has_side_effects = true;
     glyph_audit.stdio = .inherit;
-    const glyph_step = b.step("glyph-audit", "Every Nerd Font glyph literal in src/ and the SDK against data/nerd-glyphnames.json, with its --ascii twin");
+    const glyph_step = b.step("glyph-audit", "Every Nerd Font glyph literal in src/, the SDK and integrations/ against data/nerd-glyphnames.json, with its --ascii twin");
     glyph_step.dependOn(&glyph_audit.step);
     const glyph_tests = b.addTest(.{ .root_module = glyph_mod, .filters = test_filters, .test_runner = test_runner });
     unit_step.dependOn(&b.addRunArtifact(glyph_tests).step);

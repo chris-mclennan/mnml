@@ -20,8 +20,8 @@
 //! `<x>_nerd` / `<x>_glyph` (or `<x>_codicon`) constant with an `<x>_ascii` sibling, a
 //! `.fallback = "…"` on the line, or the string an `ascii` branch
 //! yields on the line (`if (ui.ascii) "=" else "\u{…}"`). Assertion
-//! lines (`expect…`) are tests of a glyph, not sites, and are listed
-//! as such. `--strict` exits 1 on a site with no fallback or a
+//! lines (`expect…`) and anything inside a `test "…" { … }` block are
+//! tests of a glyph, not sites, and are listed as such. `--strict` exits 1 on a site with no fallback or a
 //! codepoint the catalog does not know; the unit test walks the real
 //! `src/` and asserts the same, so a new glyph without its `--ascii`
 //! twin fails `zig build test`.
@@ -153,7 +153,18 @@ pub fn extractSites(arena: Allocator, file: []const u8, text: []const u8) Alloca
     var lines: std.ArrayListUnmanaged([]const u8) = .empty;
     var it = std.mem.splitScalar(u8, text, '\n');
     while (it.next()) |l| try lines.append(arena, l);
+    var in_test = false;
     for (lines.items, 0..) |line, i| {
+        // A `test "…" {` block at column zero, to its closing `}` at
+        // column zero: everything in it is a fixture, not a painted
+        // site. `zig fmt` guarantees both, and without this a test's
+        // own expected string — or a `const x = (try colOfText(…))`
+        // helper — reads as a glyph shipped with no twin.
+        if (in_test) {
+            if (line.len > 0 and line[0] == '}') in_test = false;
+        } else if (std.mem.startsWith(u8, line, "test ")) {
+            in_test = true;
+        }
         var rest = line;
         while (std.mem.indexOf(u8, rest, "\\u{")) |at| {
             rest = rest[at + 3 ..];
@@ -162,7 +173,7 @@ pub fn extractSites(arena: Allocator, file: []const u8, text: []const u8) Alloca
             if (hex.len == 0 or hex.len > 6) continue;
             const cp = std.fmt.parseInt(u21, hex, 16) catch continue;
             if (!isPrivateUse(cp)) continue;
-            const kind: Kind = if (isAssertion(line)) .@"test" else .site;
+            const kind: Kind = if (in_test or isAssertion(line)) .@"test" else .site;
             try out.append(arena, .{
                 .file = file,
                 .line = @intCast(i + 1),
@@ -332,9 +343,12 @@ test "sites: the three fallback idioms, an assertion is a test, non-PUA and form
         \\pub const marker_glyph = "\u{258c}";
         \\            0...8 => try self.out.print("\\u{x:0>4}", .{c}),
         \\    const lonely = "\u{e0b0}";
+        \\test "a fixture is not a site" {
+        \\    const merge_x = colOf("[\u{f062d} Merge]");
+        \\}
     ;
     const sites = try extractSites(a, "x.zig", src);
-    try t.expectEqual(@as(usize, 9), sites.len);
+    try t.expectEqual(@as(usize, 10), sites.len);
     try t.expectEqualStrings("~", sites[0].fallback.?);
     try t.expectEqual(@as(u32, 1), sites[0].line);
     try t.expectEqualStrings("/", sites[1].fallback.?);
@@ -346,17 +360,21 @@ test "sites: the three fallback idioms, an assertion is a test, non-PUA and form
     try t.expectEqual(Kind.@"test", sites[7].kind);
     try t.expectEqual(@as(u21, 0xe0b0), sites[8].codepoint);
     try t.expect(sites[8].fallback == null);
+    // Inside a `test "…" { … }` block: a fixture, whatever the line
+    // looks like. Without this the assertion heuristic alone lets a
+    // `const x = …` helper in a test read as a glyph with no twin.
+    try t.expectEqual(Kind.@"test", sites[9].kind);
     var out: Io.Writer.Allocating = .init(a);
     const table = try loadTable(a, "f0dc\tfa-sort\n");
     const s = try report(&out.writer, sites, table);
     try t.expectEqual(@as(usize, 7), s.sites);
-    try t.expectEqual(@as(usize, 2), s.tests);
+    try t.expectEqual(@as(usize, 3), s.tests);
     try t.expectEqual(@as(usize, 1), s.no_fallback);
     try t.expect(std.mem.indexOf(u8, out.written(), "x.zig:1  U+F0DC  fa-sort  ascii: \"~\"") != null);
     try t.expect(std.mem.indexOf(u8, out.written(), "x.zig:11  U+E0B0  unknown  ascii: NONE") != null);
 }
 
-test "every audited site in src/ has its --ascii twin and a name the catalog knows" {
+test "every audited site in src/, the SDK and integrations/ has its --ascii twin and a name the catalog knows" {
     var arena_state = std.heap.ArenaAllocator.init(t.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
@@ -366,9 +384,15 @@ test "every audited site in src/ has its --ascii twin and a name the catalog kno
     var baked: Io.Writer.Allocating = .init(a);
     try bakeTable(&baked.writer, cat);
     const table = try loadTable(a, baked.written());
-    const sites = try walk(a, t.io, build_options.src_root);
+    // The same three trees `zig build glyph-audit` walks. A chip in an
+    // official integration is as much of the shipped screen as mnml's
+    // own chrome, so a glyph there with no twin fails the suite too.
+    var sites: std.ArrayListUnmanaged(Site) = .empty;
+    for ([_][]const u8{ build_options.src_root, build_options.sdk_root, build_options.integrations_root }) |root| {
+        try sites.appendSlice(a, try walk(a, t.io, root));
+    }
     var out: Io.Writer.Allocating = .init(a);
-    const s = try report(&out.writer, sites, table);
+    const s = try report(&out.writer, sites.items, table);
     try t.expect(s.sites > 0);
     if (s.no_fallback > 0 or s.unknown > 0) std.debug.print("\n{s}\n", .{out.written()});
     try t.expectEqual(@as(usize, 0), s.no_fallback);

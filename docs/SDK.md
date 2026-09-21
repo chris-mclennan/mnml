@@ -297,6 +297,46 @@ The hover is where the breakdown goes, and it is not rationed: the
 figure is what the reader sees from across the room, and the sentence
 under the pointer is what explains it.
 
+#### Every glyph ships with its `--ascii` twin
+
+A Nerd Font glyph on a terminal without the font is a hollow box, and
+the reader loses the chip, not just the icon. So **every glyph an
+integration paints has a twin beside it, and every paint site picks
+between them.** The naming is the codebase's: `<x>_glyph` (or
+`<x>_nerd`) with an `<x>_ascii` sibling in the same file, or a
+`.fallback = "…"` on a manifest entry.
+
+Keep the twin the same WIDTH as the glyph where the layout depends on
+it — `󰂨 12(11)` and `BB 12(11)` put the figure in the same column, and
+the reader gets the number either way.
+
+A pane reads which one to paint off its `hello`, through
+`sdk.pane.Ui`:
+
+```zig
+const ui: sdk.pane.Ui = .{ .ascii = mount.hello.capabilities.ascii, .nerd = mount.hello.capabilities.nerd_font };
+const g = ui.glyph(chip_glyph, chip_ascii); // ascii OR no font → the twin
+```
+
+A run with **no pane** — `--values` under mnml's statusline poller —
+has no `hello` to read, so the host puts the same answer in the
+environment. `sdk.pane.asciiFromEnv(env)` reads `$MNML_ASCII`; unset
+means "the terminal has the font", which is what a child run by hand
+from a shell should assume.
+
+```zig
+try publishSegments(&ipc, arena, values, bucket, sdk.pane.asciiFromEnv(env));
+```
+
+`zig build glyph-audit` is the guard. It walks `src/`, `sdk/` **and
+`integrations/`**, names every private-use codepoint against the Nerd
+Font catalogue, prints the twin it found beside each, and `--strict`
+exits 1 on a site that has none or a codepoint the catalogue does not
+know. A glyph literal inside a `test "…" { … }` block is a fixture,
+not a painted site, and is listed as such. The tool's own unit test
+walks the same three trees, so a new glyph without its twin fails
+`zig build unit` as well as the audit.
+
 ### Proving your pane CALLS the toolkit
 
 `consistency_test.zig` proves the toolkit is consistent with itself. It

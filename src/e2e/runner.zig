@@ -309,11 +309,17 @@ const Run = struct {
         self.shell_env = &file_env;
         defer self.shell_env = null;
         const outcome = blk: {
+            var cfg = driver_mod.e2e_defaults;
+            // `# ascii`: the same switch `mnml-zig --ascii` throws, so
+            // the file runs against the whole no-Nerd-Font mode rather
+            // than against one function's opinion of it.
+            if (header.ascii) cfg.ui.ascii_icons = true;
             const d = self.factory.make(dbg.allocator(), io, .{
                 .workspace = self.workspace,
                 .data_root = data_root,
                 .cols = self.size.cols,
                 .rows = self.size.rows,
+                .cfg = cfg,
                 .env = &file_env,
             }) catch |e| break :blk self.fail("App::new: {s}", .{@errorName(e)});
             self.driver = d;
