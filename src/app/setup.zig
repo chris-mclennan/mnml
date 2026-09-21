@@ -55,8 +55,8 @@ fn dirOnPath(app: *App, dir: []const u8) bool {
     return false;
 }
 
-/// `path` with `$HOME` as `~`, for the toast.
-fn tilde(app: *App, arena: Allocator, path: []const u8) Allocator.Error![]const u8 {
+/// `path` with `$HOME` as `~`, for a toast or a note.
+pub fn tilde(app: *App, arena: Allocator, path: []const u8) Allocator.Error![]const u8 {
     const home = app.env.get("HOME") orelse return path;
     if (home.len == 0 or !std.mem.startsWith(u8, path, home)) return path;
     return std.mem.concat(arena, u8, &.{ "~", path[home.len..] });

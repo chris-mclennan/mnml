@@ -31,6 +31,7 @@ const wizard = @import("../ui/wizard.zig");
 const settings = @import("settings.zig");
 const install = @import("first_launch_install.zig");
 const key_doctor = @import("key_doctor.zig");
+const setup = @import("setup.zig");
 
 pub const Section = wizard.Section;
 
@@ -178,8 +179,11 @@ fn applyKeyboardFix(app: *App) Allocator.Error!void {
     const alt_seen = st.keys_seen[2] or st.keys_seen[3];
     var applied: ?key_doctor.Applied = null;
     if (!alt_seen and key_doctor.remedy(.alt_right, term, macos).fix == .ghostty_option_as_alt) {
-        if (try key_doctor.ghosttyConfigPath(app.frame.allocator(), app.io, &app.env)) |path| {
-            applied = .{ .path = path, .outcome = key_doctor.applyGhosttyOptionAsAlt(app.gpa, app.io, path) };
+        const arena = app.frame.allocator();
+        if (try key_doctor.ghosttyConfigPath(arena, app.io, &app.env)) |path| {
+            // The note names the file as `~/…`: a long home path would
+            // otherwise push "Restart ghostty." past the note's cap.
+            applied = .{ .path = try setup.tilde(app, arena, path), .outcome = key_doctor.applyGhosttyOptionAsAlt(app.gpa, app.io, path) };
         }
     }
     const note = key_doctor.fixNote(&st.kb_note, alt_seen, term, macos, applied);
@@ -623,6 +627,8 @@ test "Space on Keyboard: in ghostty on macOS with no Option chord seen the fix i
         if (key_doctor.host_is_macos) {
             try t.expect(std.mem.startsWith(u8, note, "Added macos-option-as-alt = true to "));
             try t.expect(std.mem.endsWith(u8, note, "Restart ghostty."));
+            // The file is named under `~`, so a long HOME never truncates the note.
+            try t.expect(std.mem.indexOf(u8, note, " to ~/.config/ghostty/config ") != null);
             const text = try tmp.dir.readFileAlloc(t.io, ".config/ghostty/config", t.allocator, .limited(65536));
             defer t.allocator.free(text);
             try t.expect(std.mem.endsWith(u8, text, "macos-option-as-alt = true\n"));
