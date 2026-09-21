@@ -203,6 +203,24 @@ The rules they share:
   words' run, because the row's own centre is the workspace chip's and
   the chip never hides.
 
+## A command that reads a painter's state must be able to compute it
+
+The file tree's row list is built by its own painter: `Tree.draw` scans
+once and latches `loaded`. Anything that only PAINTS is fine with that.
+A **command** that reads `app.tree.rows` is not — it can run before any
+scan has found anything, and then it reports an empty tree rather than
+doing its job. That is how `view.context_menu_at_focus` (Shift+F10) came
+to toast `no tree row under the cursor` headless while working in the
+live app: in a `.test` the app starts before the script's `write` steps
+land, so the one scan sees an empty workspace and nothing re-scans.
+
+The rule: a command that reads state a frame produces **computes it
+first** rather than failing on its absence (here, a scan when the row
+list is empty). A behaviour that differs between the live app and a
+headless script is a bug in the app, not a fact about the harness —
+and it is the shape that makes a hunt's findings untrustworthy in both
+directions.
+
 ## The settings overlay — the family idiom (`src/ui/settings.zig`)
 
 mnml and mixr each own their settings UI; there is no shared crate, so

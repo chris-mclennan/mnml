@@ -1,0 +1,40 @@
+# width: 120
+# height: 40
+# The methodology trap behind the 2026-09-21 hunt: headless, `Shift+F10`
+# straight after `view.focus_tree` toasted `no tree row under the
+# cursor`, while the same two keys in the live app opened the menu — so
+# a hunter reading only the headless screen would file a bug that is not
+# there, and one reading only the live app would never see this one.
+#
+# It is a real ordering bug, not the harness. The tree's row list is
+# built by its own painter (`Tree.draw` scans once and latches
+# `loaded`), and in a `.test` the app starts before the script's `write`
+# steps land — so the one scan finds an empty workspace and nothing ever
+# re-scans. Every command that READS `app.tree.rows` then sees nothing.
+# `view.context_menu_at_focus` scans before giving up now, so headless
+# and live agree.
+#
+# `tree_menu_clipboard.test` is the same menu with an explicit `key r`
+# first; this file is the one that must work WITHOUT it.
+write a.txt "a"
+write b.txt "b"
+open a.txt
+
+command view.focus_tree
+command view.context_menu_at_focus
+expect screen contains "Open in split"
+expect screen contains "Rename…"
+key esc
+expect screen lacks "Open in split"
+
+# The cursor row is the one the menu names, with no refresh in between.
+key end
+command view.context_menu_at_focus
+expect screen contains "b.txt"
+key esc
+
+# And the scan is a fallback, not a re-scan on every press: a second
+# Shift+F10 on the same rows opens the same menu.
+command view.context_menu_at_focus
+expect screen contains "Open in split"
+key esc
