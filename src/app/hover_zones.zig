@@ -135,28 +135,38 @@ fn registerGeometric(app: *App, full: Rect) void {
     // `reveal_ms` instead of popping the strip up the same frame.
     const dock_band: ?Rect = if (@import("launcher_dock.zig").cmdlineBlocks(app)) null else dockBand(app, full);
     if (dock_band) |band| add(app, .{ .rect = band, .id = .launcher_dock, .dwell_ms = cfg.dock.reveal_ms, .priority = prio_dock });
-    const dock_side: ?Config.ColumnSide = if (dock_band == null) null else switch (cfg.dock.edge) {
-        .bottom => null,
-        .left => .left,
-        .right => .right,
-    };
 
     if (cfg.sidebar == .auto and !app.zen) {
         const dwell = cfg.sidebar_reveal_ms;
-        add(app, .{ .rect = sidebarEdge(full, dock_side, .left), .id = .sidebar_left, .dwell_ms = dwell, .priority = prio_sidebar });
-        add(app, .{ .rect = sidebarEdge(full, dock_side, .right), .id = .sidebar_right, .dwell_ms = dwell, .priority = prio_sidebar });
+        add(app, .{ .rect = sidebarEdge(app, full, .left), .id = .sidebar_left, .dwell_ms = dwell, .priority = prio_sidebar });
+        add(app, .{ .rect = sidebarEdge(app, full, .right), .id = .sidebar_right, .dwell_ms = dwell, .priority = prio_sidebar });
     }
 }
 
-/// The one-cell screen edge a side column reveals through. A side dock
-/// owns the outermost cell (the outer-band rule), so the column's own
-/// reveal edge is then the cell one step in — which is also where its
-/// grip goes, since the grip names the zone's own cell and never a
-/// second one (`ui/edge_grip.zig`).
-pub fn sidebarEdge(full: Rect, dock_side: ?Config.ColumnSide, side: Config.ColumnSide) Rect {
+/// The one-cell edge a side column reveals through: the outermost
+/// column of the area the column would itself occupy, which is also
+/// where its grip goes — the grip names the zone's own cell and never
+/// a second one (`ui/edge_grip.zig`).
+///
+/// // changed (side-band): that area is `frameRects(…).upper` — the
+/// editor area, with the dock's band, the bottom panel, the palette
+/// bar, the statusline and the `:` line all already taken off it — and
+/// not the whole screen column it used to be. The band a surface
+/// summons through belongs to that surface, so it can only be made of
+/// cells no other surface owns, and the old rect was made of several:
+/// its x ignored all but one cell of a side dock's three, so an
+/// `always` dock and a hidden column shared an edge and the column's
+/// grip painted over the dock's GLYPH column — blanking one dock icon
+/// and replacing another with `⋮` over hits that still opened the
+/// dock's items; and its height ran through the bottom panel and the
+/// statusline, so with a panel open at 80×24 the right column's grip
+/// landed on the panel's own header chip.
+pub fn sidebarEdge(app: *const App, full: Rect, side: Config.ColumnSide) Rect {
+    const upper = @import("render.zig").frameRects(full, @import("render.zig").chrome(app)).upper;
+    if (upper.isEmpty()) return .empty;
     return switch (side) {
-        .left => Rect.init(full.x + @as(u16, if (dock_side == .left) 1 else 0), full.y, 1, full.h),
-        .right => Rect.init(full.right() -| @as(u16, if (dock_side == .right) 2 else 1), full.y, 1, full.h),
+        .left => Rect.init(upper.x, upper.y, 1, upper.h),
+        .right => Rect.init(upper.right() -| 1, upper.y, 1, upper.h),
     };
 }
 
@@ -183,19 +193,28 @@ pub fn dockSide(app: *const App, full: Rect) ?Config.ColumnSide {
 /// in, where nothing marked it. A side band is still the bare `upper`
 /// `frameRects` would hand out with no columns and no dock at all —
 /// never the top row, which is the menu bar's.
+/// // changed (side-band): a SIDE band is the strip's own three
+/// columns, not one of them — the band a surface owns and the band it
+/// fills are the same band, so a reveal covers nothing that was not
+/// already the dock's, the grip sits in its middle column, and the
+/// zone the pointer dwells in is the whole strip rather than the one
+/// column at its edge. It is `null` where `frameRects` would refuse to
+/// carve it (`side_min_width`), so the zone, the grip and the carve
+/// can never disagree about whether the dock is on this edge at all.
 pub fn dockBand(app: *const App, full: Rect) ?Rect {
     if (app.zen or app.cfg.ui.dock.mode == .hidden or full.isEmpty()) return null;
     const render = @import("render.zig");
+    const dock = @import("launcher_dock.zig");
     if (app.cfg.ui.dock.edge == .bottom) {
         if (full.h < render.dock_bottom_min_height) return null;
         return Rect.init(full.x, full.bottom() -| 1, full.w, 1);
     }
     const upper = render.frameRects(full, .{}).upper;
-    if (upper.isEmpty()) return null;
+    if (upper.isEmpty() or upper.w < dock.side_min_width) return null;
     return switch (app.cfg.ui.dock.edge) {
         .bottom => unreachable,
-        .left => Rect.init(upper.x, upper.y, 1, upper.h),
-        .right => Rect.init(upper.right() -| 1, upper.y, 1, upper.h),
+        .left => Rect.init(upper.x, upper.y, dock.width, upper.h),
+        .right => Rect.init(upper.right() -| dock.width, upper.y, dock.width, upper.h),
     };
 }
 

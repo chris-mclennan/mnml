@@ -2,6 +2,15 @@
 # expect screen|file|dirty|pane plus editor/find/buffer commands. The
 # VIABILITY VERDICT needs ≥ 40 passing unmodified, leak-clean.
 # `mnml-zig test --gate` runs exactly these (resolved under tests/e2e/).
+#
+# // changed (side-band, 2026-09-21): plus the side-edge chrome block at
+# the foot of this file. The Phase-0 forty-seven drive the editor and
+# the keyboard and nothing else, so no configuration in them ever put a
+# launcher dock on a side edge — which is why `--gate --sizes` swept
+# three grip-over-a-control bugs without seeing one of them
+# (hunt/findings-2026-09-21/mouse-SUMMARY.md). They are listed here so
+# a sweep renders that shape; the viability count above is still the
+# forty-seven's.
 edit_and_save
 standard_ctrl_l_selects_whole_line
 bracket_match
@@ -49,3 +58,15 @@ vim_text_objects
 vim_visual_block
 vim_visual_block_change
 vim_visual_block_insert
+
+# ── side-edge chrome (the 2026-09-21 grip family) ──
+# One auto-hiding dock per edge, the activity bar and the editor's
+# scrollbar beside it, and a hidden side column stacked inside an
+# `always` dock. `edge_grip_side_sweep` carries no `# width:`, so a
+# `--sizes` run renders it at every rung; the other four are written at
+# the size their coordinates mean something at.
+edge_grip_side_sweep
+edge_grip_side_dock_rail
+edge_grip_side_dock_scrollbar
+edge_grip_side_sidebar_over_dock
+launcher_dock_side_rail_order

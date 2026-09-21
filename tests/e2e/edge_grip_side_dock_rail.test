@@ -1,0 +1,31 @@
+# width: 120
+# height: 40
+# The launcher dock on the LEFT edge, auto-hiding, beside the activity
+# bar. Two three-cell strips on one edge, and an edge band belongs to
+# ONE surface: the dock's three columns are its own whether the strip is
+# up or down, and the activity bar starts where they end.
+#
+# Before the side-band rule the dock's band was one column in name and
+# none in fact. The rail painted from column 0 and the dock's grip
+# registered a hit down column 0 of three ROWS — two of them the TODOS
+# and FINDINGS icons — and, registered last, won them: clicking the left
+# edge of the TODOS icon pinned the dock instead of opening the panel
+# (hunt/findings-2026-09-21/mouse-side-edge-grip-eats-activity-bar.md).
+write a.txt "alpha\n"
+open a.txt
+ex dock always
+ex dock left
+ex dock auto
+expect screen lacks "dock pinned"
+# The dock's own band, off its grip's cells: reserved, painted with the
+# frame's ground, answering nothing. The dwell still reveals the strip
+# — the band IS the zone — but a press there is not a second way in.
+click 0 18
+wait 300
+expect screen lacks "dock pinned"
+# The activity bar's FIRST column on the TODOS row. It is column 3 now,
+# outside the dock's band, and all three of the rail's columns are the
+# rail's.
+click 3 18
+wait 300
+expect screen contains "TODOS"

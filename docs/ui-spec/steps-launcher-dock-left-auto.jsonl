@@ -1,0 +1,4 @@
+{"cmd":"open","path":"prog.dbg"}
+{"cmd":"wait_ms","ms":400}
+{"cmd":"run-command","id":"view.dock_move"}
+{"cmd":"wait_ms","ms":600}

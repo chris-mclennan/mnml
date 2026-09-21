@@ -350,6 +350,10 @@ pub const Chrome = struct {
     /// // changed (launcher-dock): which edge the launcher dock claims
     /// this frame, or null when it is hidden or only revealed as an
     /// overlay (`launcher_dock.docked`).
+    /// // changed (side-band): a SIDE dock claims its band for as long
+    /// as it is not `hidden`, whether the strip is up or down
+    /// (`launcher_dock.banded`) — the band belongs to the surface, not
+    /// to the moment. A bottom dock is unchanged: only `.always`.
     dock: ?Config.DockEdge = null,
     /// // changed (dock-placement): where a BOTTOM dock is carved from
     /// — `.inner` (the default) off the editor area's last row, so the
@@ -383,10 +387,13 @@ pub fn chrome(app: *const App) Chrome {
         .right = if (!app.zen and !narrow and !sidebar_auto.autoHiding(app) and side_mod.shown(app, .right) != null) app.side.right_width else null,
         .bottom = if (!app.zen and bottom_mod.open(app)) app.side.bottom_height else null,
         .rail = activity_bar.shown(app),
-        // // changed (launcher-dock): only an `always` dock is carved;
-        // a revealed one is paint over the editor, as the sidebar
-        // overlay is, so nothing reflows when the pointer brushes an edge.
-        .dock = if (launcher_dock.docked(app)) app.cfg.ui.dock.edge else null,
+        // // changed (side-band): the dock's BAND is carved, which on a
+        // side edge means for as long as the dock lives there — so the
+        // strip fills a band that is already its own and a reveal
+        // reflows nothing and covers nothing. On the bottom edge the
+        // old rule stands: only an `always` strip is carved, a revealed
+        // one is paint over the `:` line's row (`launcher_dock.banded`).
+        .dock = if (launcher_dock.banded(app)) app.cfg.ui.dock.edge else null,
         .dock_placement = launcher_dock.placement(app),
     };
 }
@@ -661,8 +668,16 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     // where a revealed bottom strip now lands — so it paints AFTER
     // `drawCmdline`, and its hits are the last word on those cells.
     // An open `:` line refuses the reveal, so nothing in use is hidden.
+    // // changed (side-band): the band and the strip are two questions
+    // now. `fr.launcher_dock` is the band the frame RESERVED — on a
+    // side edge that is there whenever the dock lives on it — and the
+    // strip paints into it only while it is actually up. A reserved
+    // band with the strip down is left as the frame's own ground, with
+    // nothing in it but the grip: inert, which is exactly what the
+    // grip's contract needs.
     if (!app.zen) {
-        const strip = if (!fr.launcher_dock.isEmpty()) fr.launcher_dock else if (launcher_dock.revealed(app)) launcher_dock.overlayRect(app, screenRect(screen)) else Rect.empty;
+        const band = if (!fr.launcher_dock.isEmpty()) fr.launcher_dock else if (launcher_dock.revealed(app)) launcher_dock.overlayRect(app, screenRect(screen)) else Rect.empty;
+        const strip = if (launcher_dock.shown(app)) band else Rect.empty;
         if (!strip.isEmpty()) try launcher_dock.draw(app, ui, strip) else app.launcher_dock.rect = .empty;
     }
     // ── the edge grips ──
@@ -785,7 +800,7 @@ fn drawFullscreenMark(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
 /// line the user did not ask for.
 fn drawEdgeGrips(app: *App, ui: Ui, fr: FrameRects, full: Rect) void {
     const bg = app.theme.bg.bg;
-    const dock_side = hover_zones.dockSide(app, full);
+    const dock_band = hover_zones.dockBand(app, full);
     // ── the menu bar: the middle of the run its WORDS take ──
     // Not the middle of the row: that is the workspace chip's, and the
     // chip never hides, so a grip there would paint through its name.
@@ -799,7 +814,7 @@ fn drawEdgeGrips(app: *App, ui: Ui, fr: FrameRects, full: Rect) void {
     // ── the side columns: the middle of each one's screen edge ──
     for ([_]Config.ColumnSide{ .left, .right }) |s| {
         if (!sidebar_auto.gripShown(app, s)) continue;
-        const band = hover_zones.sidebarEdge(full, dock_side, s);
+        const band = hover_zones.sidebarEdge(app, full, s);
         const cell = edge_grip.place(band, if (s == .left) .left else .right) orelse continue;
         edge_grip.draw(ui, cell, if (s == .left) .left else .right, .{
             .bg = bg,
@@ -808,7 +823,7 @@ fn drawEdgeGrips(app: *App, ui: Ui, fr: FrameRects, full: Rect) void {
     }
     // ── the launcher dock: the middle of its band, whichever edge ──
     if (launcher_dock.gripShown(app)) {
-        if (hover_zones.dockBand(app, full)) |band| {
+        if (dock_band) |band| {
             const e: edge_grip.Edge = switch (launcher_dock.edge(app)) {
                 .bottom => .bottom,
                 .left => .left,
