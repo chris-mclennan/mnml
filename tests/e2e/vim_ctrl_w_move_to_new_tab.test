@@ -1,0 +1,47 @@
+# width: 120
+# height: 40
+# `Ctrl-W T` moves the current window to a new tab page (`:help CTRL-W_T`).
+# mnml has the whole feature — `view.move_to_new_tab`, whose own palette
+# title reads "Move active split to a new tab page (vim `Ctrl+W T`)"
+# (src/commands/specs.zig:202) and which `tests/e2e/view_move_to_new_tab.test`
+# covers — but the chord was not bound: `src/input/vim.zig`'s `.window`
+# prefix carried a `TODO(vim-slice: splits) T … once it has a runner`
+# long after the runner existed, so the press fell through to
+# `.consumed`: nothing moved and nothing was said (`vim-ctrl-w-T`).
+write a.txt "alpha\n"
+write b.txt "bravo\n"
+open a.txt
+command editor.use_vim
+command view.split_right
+open b.txt
+expect pane b.txt
+# One tab page, two splits.
+expect screen contains "TABS  1"
+
+key ctrl+w
+key T
+wait 300
+# The chord reaches the command, which says "moved to tab 2/2".
+expect screen contains "moved to tab"
+expect screen contains "TABS  1  2"
+expect pane b.txt
+# Page 1 keeps a.txt; b.txt left it.
+command tab.prev
+expect pane a.txt
+expect screen lacks "b.txt"
+command tab.next
+expect pane b.txt
+
+# A pane alone on its page is refused the same way the command is —
+# the chord reaches the runner, it does not vanish.
+key ctrl+w
+key T
+wait 300
+expect screen contains "already alone on this page"
+expect screen contains "TABS  1  2"
+
+# The which-key popup for a pending `Ctrl-W` advertises the chord.
+key ctrl+w
+wait 400
+expect screen contains "move to new tab"
+key esc
