@@ -28,6 +28,7 @@ const input = @import("../input/mod.zig");
 const dispatch = @import("dispatch.zig");
 const Config = app_mod.Config;
 const ex_verbs = @import("ex_verbs.zig");
+const cmd_app = @import("cmd_app.zig");
 const loclist = @import("loclist.zig");
 
 /// 0-based inclusive rows.
@@ -117,6 +118,10 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
         // promises a cleanup, a quit cannot.
         if (!bang and app.transfersRunning() > 0) return app.diag.fail(arena, "{d} transfer(s) still running — transfer.cancel_all, or :qa! to quit anyway", .{app.transfersRunning()});
         // ── end files ──
+        // // changed (quit-confirm): `:qa` ends the session, so it stops
+        // at the same box `app.quit` raises; `:qa!` is the way straight
+        // out, as it always was.
+        if (!bang) return cmd_app.confirmQuitOrQuit(app);
         app.quit = true;
         return;
     }
@@ -529,8 +534,11 @@ fn saveAll(app: *App) CommandError!void {
 
 /// `:q` closes the window; the buffer stays when another window shows
 /// it, and closes with the last one (a dirty one refuses without `!`).
+/// On the LAST window it would end the session, so it asks there first
+/// (`ui.confirm_quit`); `:q!` goes straight out.
 fn quit(app: *App, bang: bool) CommandError!void {
     const id = app.active orelse {
+        if (!bang) return cmd_app.confirmQuitOrQuit(app);
         app.quit = true;
         return;
     };
@@ -538,6 +546,11 @@ fn quit(app: *App, bang: bool) CommandError!void {
     if (!bang and pane.dirty() and !app.isSharedView(id)) {
         return app.diag.fail(app.frame.allocator(), "unsaved changes in {s} — use :q! to discard", .{pane.title()});
     }
+    // // changed (quit-confirm): `:q` still closes a pane — but the
+    // LAST one ends the session, and that stop is the one `app.quit`
+    // asks about. The pane stays open behind the box; Quit ends the
+    // session from there, and `:q!` never asks.
+    if (!bang and app.panes.count() == 1) return cmd_app.confirmQuitOrQuit(app);
     try app.forceClosePane(id);
     if (app.panes.count() == 0) app.quit = true;
 }

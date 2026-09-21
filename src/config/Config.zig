@@ -547,6 +547,13 @@ pub const Ui = struct {
     hover_help: bool = true,
     hover_tooltip: bool = false,
     click_echo: bool = false,
+    /// `app.quit` (Ctrl+Q, the menu bar's Quit, the palette) always
+    /// stops to ask, clean workspace or not — a fat-fingered chord is
+    /// the one way to lose a session outright, and Cancel holds the
+    /// focus so Enter on a box nobody meant to raise is safe. `false`
+    /// asks only when something is unsaved. `:q!` / `:qa!`, the IPC
+    /// `quit` and `restart` never ask either way.
+    confirm_quit: bool = true,
     first_launch_complete: bool = false,
     /// The once-per-data-root notice about a 0.2 `config.toml` beside a
     /// missing `config.zon` — a file mnml-zig never reads

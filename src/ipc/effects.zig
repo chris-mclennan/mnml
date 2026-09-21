@@ -710,7 +710,10 @@ test "apply: the five tier-2 commands land in App state; notify toasts, error pi
     try t.expectEqualStrings("build: boom", app.toasts.items[1].text);
     try t.expectEqualStrings("ci", app.toasts.items[1].id.?);
     try t.expectEqual(app_mod.ToastLevel.err, app.toasts.items[1].level);
-    // A click on the segment runs its command.
+    // A click on the segment runs its command. `app.quit` raises its
+    // box first (`ui.confirm_quit`), so the `q` on it is the quit.
     try clickSegment(&app, 0);
+    try t.expect(app.overlay == .confirm);
+    try app.handle(.{ .key = app_mod.Key.char('q') });
     try t.expect(app.quit);
 }

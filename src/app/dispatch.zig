@@ -1246,7 +1246,7 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
         // already on, and pressing it again plainly means "yes, quit" —
         // the reference editor answers it the same way, through its own
         // box's `q` hotkey.
-        .confirm => |*c| if (c.purpose == .quit and k.mods.ctrl and k.code == .char and k.code.char == 'q') {
+        .confirm => |*c| if ((c.purpose == .quit or c.purpose == .quit_clean) and k.mods.ctrl and k.code == .char and k.code.char == 'q') {
             closeOverlay(app);
             app.quit = true;
             return;
@@ -1553,6 +1553,11 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
             },
             1 => app.quit = true,
             else => {},
+        },
+        // // changed (quit-confirm): the clean box is two choices —
+        // Quit, then Cancel — so 0 is the quit and anything else stays.
+        .quit_clean => if (choice == 0) {
+            app.quit = true;
         },
         .delete_paths => |d| {
             try trash.acceptDelete(app, @ptrCast(d.paths), d.permanent_only, choice);
