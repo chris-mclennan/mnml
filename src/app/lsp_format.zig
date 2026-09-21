@@ -366,7 +366,7 @@ pub fn handleLintEvent(app: *App, ev: *event.LspEvent) Allocator.Error!void {
     defer ev.destroy(app.gpa);
     const msg = switch (ev.*) {
         .message => |m| m,
-        .closed => return,
+        .closed, .oversize => return,
     };
     switch (jsonrpc.classify(msg.root())) {
         .notification => |n| {

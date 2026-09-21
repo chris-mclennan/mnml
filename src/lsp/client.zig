@@ -21,6 +21,15 @@ const semantic = @import("semantic.zig");
 
 pub const Encoding = types.Encoding;
 
+/// A `Pending.kind` back as words, for a message about a reply that
+/// never arrived.
+pub fn reqKindName(kind: u16) ?[]const u8 {
+    inline for (@typeInfo(ReqKind).@"enum".fields) |f| {
+        if (f.value == kind) return "the " ++ f.name ++ " reply";
+    }
+    return null;
+}
+
 pub const ReqKind = enum(u16) {
     initialize,
     shutdown,
@@ -321,7 +330,7 @@ pub const Server = struct {
         const settings = try gpa.dupe(u8, o.settings);
         errdefer gpa.free(settings);
         s.* = .{ .gpa = gpa, .io = io, .events = events, .id = id, .transport = t, .name = name, .cmd = cmd, .root = root, .init_options = init_options, .settings = settings };
-        try t.start(.{ .ctx = s, .message = onMessage, .closed = onClosed });
+        try t.start(.{ .ctx = s, .message = onMessage, .closed = onClosed, .oversize = onOversize });
         return s;
     }
 
@@ -369,6 +378,23 @@ pub const Server = struct {
             return;
         };
         ev.* = .{ .message = msg };
+        self.events.post(self.io, .{ .lsp = .{ .server = self.id, .msg = ev } });
+    }
+
+    /// A frame the transport refused to parse. Said out loud, with the
+    /// method or the request id it names itself by; the pending entry
+    /// for a dropped reply is cleared on the app thread, so whatever
+    /// asked for it stops waiting.
+    fn onOversize(ctx: *anyopaque, len: usize, head: []const u8) void {
+        const self: *Server = @ptrCast(@alignCast(ctx));
+        const ev = self.gpa.create(event.LspEvent) catch return;
+        var o: event.LspEvent.Oversize = .{ .len = len, .id = jsonrpc.peekId(head) };
+        if (jsonrpc.peekMethod(head)) |m| {
+            const n = @min(m.len, o.method_buf.len);
+            @memcpy(o.method_buf[0..n], m[0..n]);
+            o.method_len = @intCast(n);
+        }
+        ev.* = .{ .oversize = o };
         self.events.post(self.io, .{ .lsp = .{ .server = self.id, .msg = ev } });
     }
 
@@ -732,7 +758,7 @@ fn fakeServer(io: Io, gpa: Allocator, in: Io.File, out: Io.File, seen: *std.Arra
     var buf: [8192]u8 = undefined;
     var fr = in.readerStreaming(io, &buf);
     while (true) {
-        const body = jsonrpc.readFrame(gpa, &fr.interface) catch return;
+        const body = jsonrpc.readBody(gpa, &fr.interface) catch return;
         defer gpa.free(body);
         var parsed = std.json.parseFromSlice(Value, gpa, body, .{}) catch return;
         defer parsed.deinit();

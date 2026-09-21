@@ -860,6 +860,21 @@ pub fn handle(app: *App, server_id: u32, ev: *event.LspEvent) Allocator.Error!vo
             adopted = try handleMessage(app, s, msg);
             if (adopted) app.gpa.destroy(ev);
         },
+        .oversize => |o| {
+            // A dropped reply leaves its asker waiting: clear the
+            // pending entry so the request is simply unanswered.
+            var kind: ?[]const u8 = null;
+            if (o.id) |id| if (s.transport.take(id)) |pend| {
+                kind = client.reqKindName(pend.kind);
+            };
+            var size_buf: [24]u8 = undefined;
+            const what = o.method() orelse kind orelse "a reply";
+            try app.toastLevel(.warn, "LSP: {s} sent {s} too big to read ({s}); dropped", .{
+                s.name,
+                what,
+                syntax.Syntax.sizeLabel(&size_buf, o.len),
+            });
+        },
     }
     app.needs_render = true;
 }
@@ -3055,7 +3070,7 @@ fn fakeLanguageServer(io: Io, gpa: Allocator, in: Io.File, out: Io.File) Io.Canc
     // one file's worth.
     var loaded = false;
     while (true) {
-        const body = jsonrpc.readFrame(gpa, &fr.interface) catch return;
+        const body = jsonrpc.readBody(gpa, &fr.interface) catch return;
         defer gpa.free(body);
         var parsed = std.json.parseFromSlice(Value, gpa, body, .{}) catch return;
         defer parsed.deinit();

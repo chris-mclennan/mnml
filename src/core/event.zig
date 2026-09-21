@@ -47,11 +47,27 @@ pub const Source = enum { todos, notes, findings, sessions, dock, git, lsp, dap,
 pub const LspEvent = union(enum) {
     message: *jsonrpc.Incoming,
     closed,
+    /// A reply or notification over `jsonrpc.max_body`, read off the
+    /// pipe and thrown away rather than parsed. Everything that is left
+    /// of it: how big it was, and whichever of the method and the
+    /// request id its first bytes carried.
+    oversize: Oversize,
+
+    pub const Oversize = struct {
+        len: usize,
+        id: ?i64 = null,
+        method_buf: [96]u8 = undefined,
+        method_len: u8 = 0,
+
+        pub fn method(self: *const Oversize) ?[]const u8 {
+            return if (self.method_len == 0) null else self.method_buf[0..self.method_len];
+        }
+    };
 
     pub fn destroy(self: *LspEvent, gpa: Allocator) void {
         switch (self.*) {
             .message => |m| m.destroy(gpa),
-            .closed => {},
+            .closed, .oversize => {},
         }
         gpa.destroy(self);
     }
