@@ -605,6 +605,14 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
     } else if (missing) {
         try push(&right, arena, Seg.init(" LSP? ", p.comment, p.bg2).withHit(SegId.lsp.raw()));
     }
+    // The buffer is over `editor.lsp_max_bytes`, so it was given no
+    // server at all. The ceiling is never silent: the toast fired once
+    // when the file opened, and this says so for as long as it is up.
+    if (editor) |e| if (lsp.limitFor(app, e)) |lim| {
+        var size_buf: [24]u8 = undefined;
+        const txt = ui.fmt(" LSP off · {s} ", .{syntax_mod.Syntax.sizeLabel(&size_buf, lim.size_bytes)});
+        try push(&right, arena, Seg.init(txt, p.comment, p.bg2).withHit(SegId.lsp.raw()));
+    };
     // RESTRICTED: the workspace's exec-bearing settings are stripped
     // until trusted — or its whole `.mnml/config.toml` is 0.2's and not
     // read at all (`App.workspace_toml`); the click says which.

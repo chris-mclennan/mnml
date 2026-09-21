@@ -1019,6 +1019,9 @@ pub const specs = [_]Spec{
     // buffer either way.
     .{ .id = "editor.highlight_this_file", .title = "Highlighting: turn it on for this file (over `editor.highlight_max_bytes`)", .group = "editor" },
     .{ .id = "editor.highlight_toggle_file", .title = "Highlighting: toggle it for this file only", .group = "editor" },
+    // The `editor.lsp_max_bytes` override, per buffer: start a server
+    // for this file after the ceiling refused it.
+    .{ .id = "editor.lsp_this_file", .title = "LSP: start a server for this file (over `editor.lsp_max_bytes`)", .group = "editor" },
     .{ .id = "view.workspace_menu", .title = "Open workspace menu", .group = "view" },
     .{ .id = "git.branch_menu", .title = "Open branch menu", .group = "git" },
     // Zig-only: the rail / status-pane row menu names these (D5: a menu

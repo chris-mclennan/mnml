@@ -28,7 +28,18 @@ pub const DocStore = struct {
         syntax: syntax.Syntax,
         /// The document's merge-conflict regions, per text generation.
         conflicts: conflict_cache.Cache = .{},
+        /// Set when the document opened over `editor.lsp_max_bytes` and
+        /// was given no language server — what the statusline chip
+        /// reports and why the toast fired. Cleared by
+        /// `editor.lsp_this_file`, which also sets `lsp_forced`.
+        lsp_limit: ?LspLimit = null,
+        /// This document gets a server whatever the ceiling says.
+        lsp_forced: bool = false,
     };
+
+    /// The size a document was refused a server at, and the limit that
+    /// refused it.
+    pub const LspLimit = struct { size_bytes: usize, limit_bytes: u64 };
 
     pub fn create(gpa: Allocator) Allocator.Error!*DocStore {
         const self = try gpa.create(DocStore);

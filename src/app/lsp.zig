@@ -26,6 +26,7 @@ const CommandError = command.CommandError;
 const event = @import("../core/event.zig");
 const hooks = @import("../core/hooks.zig");
 const lsp_sync = @import("lsp_sync.zig");
+const syntax = @import("syntax.zig");
 const key_mod = @import("../core/key.zig");
 const EditingMode = @import("../input/mod.zig").EditingMode;
 const Key = key_mod.Key;
@@ -648,6 +649,7 @@ pub fn attach(app: *App, pane: PaneId, e: *EditorPane) Allocator.Error!void {
     const path = e.buf.doc.path orelse return;
     // The external linter does not need a server.
     format_app.lintOnHook(app, path);
+    if (overLimit(app, e, path)) return;
     const s = (try ensureServer(app, path)) orelse return;
     const was_open = s.isOpen(path);
     s.didOpen(path, client.languageIdFor(path), e.buf.editor.bytes()) catch return;
@@ -656,6 +658,73 @@ pub fn attach(app: *App, pane: PaneId, e: *EditorPane) Allocator.Error!void {
         app.hooks.emit(app, .{ .lsp_attach = .{ .server = s.name, .pane = pane } });
         if (s.ready) requestSymbols(app, s, path);
     }
+}
+
+// ─── the size ceiling (`editor.lsp_max_bytes`) ──────────────────────────
+
+/// True when this buffer is too big for a language server to be worth
+/// starting on. `didOpen` has to carry the whole file — the protocol
+/// offers no other way in — so the cost of attaching scales with the
+/// buffer and is paid before anything useful comes back.
+///
+/// Said once per document: the first refusal marks the entry (the
+/// statusline chip reads it from there for as long as the buffer is up)
+/// and toasts; a later `attach` on the same document is quiet.
+fn overLimit(app: *App, e: *EditorPane, path: []const u8) bool {
+    const limit = app.cfg.editor.lsp_max_bytes;
+    if (limit == 0) return false;
+    const size = e.buf.editor.len();
+    if (size <= limit) return false;
+    const entry = app.docs.entryOf(e.buf.doc) orelse return true;
+    if (entry.lsp_forced) return false;
+    // Nothing is being refused when no server answers for this file in
+    // the first place: a 200 MB log has lost nothing, and saying so
+    // would be noise on every big file mnml never had a server for.
+    if (specFor(app, path) == null) {
+        refreshServers(app) catch return false;
+        if (specFor(app, path) == null) return false;
+    }
+    if (entry.lsp_limit == null) {
+        entry.lsp_limit = .{ .size_bytes = size, .limit_bytes = limit };
+        var size_buf: [24]u8 = undefined;
+        var limit_buf: [24]u8 = undefined;
+        app.toast("no language server for {s} ({s} > {s}); run editor.lsp_this_file to start one", .{
+            std.fs.path.basename(path),
+            syntax.Syntax.sizeLabel(&size_buf, size),
+            syntax.Syntax.sizeLabel(&limit_buf, limit),
+        });
+    }
+    return true;
+}
+
+/// The size a buffer was refused a server at, for the statusline chip.
+/// Null when it has one, or when its size is not the reason it has not.
+pub fn limitFor(app: *App, e: *const EditorPane) ?@import("doc_store.zig").DocStore.LspLimit {
+    const entry = app.docs.entryOf(e.buf.doc) orelse return null;
+    return entry.lsp_limit;
+}
+
+/// `editor.lsp_this_file`: start a server for the active buffer after
+/// all, whatever the ceiling said.
+pub fn lspThisFile(app: *App) command.CommandError!void {
+    const e = app.activeEditor() orelse {
+        app.toast("no editor", .{});
+        return;
+    };
+    const pane = app.active orelse return;
+    const path = e.buf.doc.path orelse {
+        app.toast("this buffer has no file", .{});
+        return;
+    };
+    const entry = app.docs.entryOf(e.buf.doc) orelse return;
+    if (entry.lsp_limit == null) {
+        app.toast("{s} is not over editor.lsp_max_bytes", .{std.fs.path.basename(path)});
+        return;
+    }
+    entry.lsp_forced = true;
+    entry.lsp_limit = null;
+    attach(app, pane, e) catch {};
+    app.toast("language server starting for {s}", .{std.fs.path.basename(path)});
 }
 
 /// Before the write: `willSaveWaitUntil` and the external formatter
@@ -3737,4 +3806,76 @@ test "a held command waits out the server's $/progress: sent at the last end, at
     try testing.expectEqualStrings("References", app.overlay.picker.state.title);
     try app.handle(.{ .key = Key.named(.esc) });
     try rig.stop(&app);
+}
+
+// ── the size ceiling (`editor.lsp_max_bytes`) ──
+
+test "a file over editor.lsp_max_bytes gets no server, says so once, and editor.lsp_this_file starts one anyway" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    const exe = build_options.fake_lsp_exe;
+    Io.Dir.cwd().access(io, exe, .{}) catch return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const ws = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+    // 260 bytes of `.fk` against a 64-byte ceiling, and a `.txt` of the
+    // same size that no server answers for.
+    var text: [260]u8 = undefined;
+    @memset(&text, 'x');
+    text[text.len - 1] = '\n';
+    try tmp.dir.writeFile(io, .{ .sub_path = "big.fk", .data = &text });
+    try tmp.dir.writeFile(io, .{ .sub_path = "big.txt", .data = &text });
+    try tmp.dir.createDirPath(io, ".mnml");
+    try tmp.dir.writeFile(io, .{ .sub_path = ".mnml/config.zon", .data = ".{ .lsp = .{ .fake = .{ .cmd = \"$MNML_FAKE_LSP\", .extensions = .{ \"fk\" } } } }" });
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try env.put("MNML_FAKE_LSP", exe);
+    var cfg: @import("../config/root.zig").Config = .{};
+    cfg.editor.lsp_max_bytes = 64;
+    var app = try App.initWith(gpa, io, .{ .cfg = cfg, .workspace = ws, .cols = 100, .rows = 30, .env = &env, .workspace_trusted = true });
+    defer app.deinit();
+    app.tree.visible = false;
+    try testing.expectEqual(@as(u64, 64), app.cfg.editor.lsp_max_bytes);
+
+    // A file no server answers for is not a disappointment: no toast.
+    const txt = try std.fs.path.join(gpa, &.{ ws, "big.txt" });
+    defer gpa.free(txt);
+    _ = try app.openPath(txt);
+    try testing.expect(app.lastToast() == null);
+    try testing.expect(limitFor(&app, app.activeEditor().?) == null);
+
+    const file = try std.fs.path.join(gpa, &.{ ws, "big.fk" });
+    defer gpa.free(file);
+    _ = try app.openPath(file);
+    const e = app.activeEditor().?;
+    try testing.expectEqual(@as(usize, 0), app.lsp.servers.items.len);
+    const toast = app.lastToast().?;
+    try testing.expect(std.mem.indexOf(u8, toast, "no language server for big.fk (260 B > 64 B)") != null);
+    try testing.expect(std.mem.indexOf(u8, toast, "editor.lsp_this_file") != null);
+    // And for as long as the buffer is up, the statusline says it.
+    const screen = try TestRig.screenText(&app, gpa);
+    defer gpa.free(screen);
+    try testing.expect(std.mem.indexOf(u8, screen, "LSP off · 260 B") != null);
+    // Said once: a second attach on the same document is quiet.
+    app.dismissToasts();
+    try attach(&app, app.active.?, e);
+    try testing.expect(app.lastToast() == null);
+    try testing.expectEqual(@as(usize, 0), app.lsp.servers.items.len);
+
+    // The override starts one after all, and the chip goes.
+    try command.run(&app, .{ .static = .@"editor.lsp_this_file" });
+    const Probe = struct { app: *App };
+    const ctx: Probe = .{ .app = &app };
+    const Cond = struct {
+        fn up(c: Probe) bool {
+            const servers = c.app.lsp.servers.items;
+            return servers.len == 1 and servers[0].ready and servers[0].docs.count() == 1;
+        }
+    };
+    try TestRig.pump(&app, ctx, Cond.up, 30_000);
+    try testing.expect(limitFor(&app, app.activeEditor().?) == null);
+    const after = try TestRig.screenText(&app, gpa);
+    defer gpa.free(after);
+    try testing.expect(std.mem.indexOf(u8, after, "LSP off") == null);
 }
