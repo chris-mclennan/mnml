@@ -22,3 +22,6 @@ expect pane "a.txt"
 ex q!
 expect pane "b.txt"
 expect screen lacks "R alpha"
+# A window closed is not a session ended: b.txt is still open, so the
+# App is still running.
+expect quit false
