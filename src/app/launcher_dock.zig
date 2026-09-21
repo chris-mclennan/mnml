@@ -70,6 +70,7 @@ pub const Mode = Config.DockMode;
 pub const Edge = Config.DockEdge;
 pub const Labels = Config.DockLabels;
 pub const Align = Config.DockAlign;
+pub const Placement = Config.DockPlacement;
 pub const Part = @import("../ui/hit.zig").LauncherDockPart;
 
 pub const table = .{
@@ -138,6 +139,17 @@ pub fn alignment(app: *const App) Align {
     return app.cfg.ui.dock.@"align";
 }
 
+/// // changed (dock-placement): `ui.dock.placement` — where a BOTTOM
+/// strip sits relative to the statusline and the `:` line. `.inner`
+/// (the default) is the editor area's last row, ABOVE the statusline;
+/// `.outer` is the screen's last row, UNDER the `:` line. A side dock
+/// is a column and neither row is its business, so it reads `.inner`
+/// whatever the key says — exactly as `labels` reads `.icon` there.
+pub fn placement(app: *const App) Placement {
+    if (edge(app) != .bottom) return .inner;
+    return app.cfg.ui.dock.placement;
+}
+
 /// The strip is carved out of the frame this frame — `render.chrome`'s
 /// one question.
 pub fn docked(app: *const App) bool {
@@ -163,7 +175,16 @@ pub fn shown(app: *const App) bool {
 /// bottom row takes the row back, grip and all.
 pub fn gripShown(app: *App) bool {
     return app.cfg.ui.edge_grips and !app.zen and mode(app) == .auto_hide and
-        !app.launcher_dock.open and !cmdlineBlocks(app);
+        !app.launcher_dock.open and !gripBlocked(app);
+}
+
+/// // changed (dock-placement): the grip sits on the SCREEN's last row
+/// whichever placement is in force — the edge is where a hand goes to
+/// summon a thing — so an open `:` line takes those cells back from it
+/// in BOTH placements, even under `.inner`, where the strip itself
+/// covers nothing of that row and `cmdlineBlocks` is false.
+pub fn gripBlocked(app: *App) bool {
+    return edge(app) == .bottom and mode(app) != .always and @import("cmdline.zig").anyOpen(app);
 }
 
 /// The frame needs this many columns before a side dock is worth
@@ -178,13 +199,35 @@ pub const side_min_width: u16 = width + 21;
 /// row — the toast echo and the in-flight chip with it. An open `:`
 /// line refuses the reveal outright (`cmdlineBlocks`), so the one
 /// thing that row can be mid-use is never covered.
+/// // changed (dock-placement): that is `.outer`. Under `.inner` the
+/// band the pointer reaches for is still the screen's last row, but
+/// the strip PAINTS on the editor area's last row — above the
+/// statusline, exactly the row an `always` + `.inner` dock is carved
+/// from, so the strip is in the same place whichever mode it is in.
 pub fn overlayRect(app: *const App, full: Rect) Rect {
     const band = hover_zones.dockBand(app, full) orelse return .empty;
     return switch (edge(app)) {
-        .bottom => band,
+        .bottom => switch (placement(app)) {
+            .outer => band,
+            .inner => innerRow(full) orelse .empty,
+        },
         .left => if (full.w >= side_min_width) Rect.init(band.x, band.y, width, band.h) else .empty,
         .right => if (full.w >= side_min_width) Rect.init(band.right() -| width, band.y, width, band.h) else .empty,
     };
+}
+
+/// // changed (dock-placement): the editor area's last row — where an
+/// `.inner` bottom strip lives, carved or painted. It is read off the
+/// bare frame (no columns, no dock), so the row is the same one the
+/// `always` carve takes: `frameRects` shrinks `upper` by the strip's
+/// own height and hands back its bottom row. Null when the screen is
+/// too short to hold a bottom dock at all.
+pub fn innerRow(full: Rect) ?Rect {
+    const rnd = @import("render.zig");
+    if (full.isEmpty() or full.h < rnd.dock_bottom_min_height) return null;
+    const upper = rnd.frameRects(full, .{}).upper;
+    if (upper.h < height) return null;
+    return Rect.init(upper.x, upper.bottom() -| height, upper.w, height);
 }
 
 // ─── the dwell ──────────────────────────────────────────────────────────
@@ -193,8 +236,13 @@ pub fn overlayRect(app: *const App, full: Rect) Rect {
 /// row, so an open `:` line refuses it outright — and puts one that is
 /// already up away. Typing is never covered. Only the bottom edge is
 /// in contest: a side strip covers no part of that row.
+/// // changed (dock-placement): and only `.outer`. An `.inner` strip
+/// paints above the statusline and covers nothing of that row, so the
+/// rule has nothing to protect — the line and the strip coexist, and
+/// the band goes on being watched while a line is open.
 pub fn cmdlineBlocks(app: *App) bool {
-    return edge(app) == .bottom and mode(app) != .always and @import("cmdline.zig").anyOpen(app);
+    return edge(app) == .bottom and placement(app) == .outer and
+        mode(app) != .always and @import("cmdline.zig").anyOpen(app);
 }
 
 /// Advance the reveal / hide clock. Called from `App.tick` and from the
@@ -595,6 +643,23 @@ fn appendLabelRows(app: *App, rows: *std.ArrayListUnmanaged(command.MenuItem)) A
         .action = .{ .set_dock_labels = .label },
         .checked = now == .label,
     });
+    // // changed (dock-placement): where a bottom strip sits relative
+    // to the two rows the frame keeps for itself. The words are the
+    // person's, the key's values are `.inner` / `.outer`; on a side
+    // edge the rows still write the key and say that it waits for the
+    // bottom edge, the way the *Show* rows do.
+    const place = app.cfg.ui.dock.placement;
+    try rows.append(app.gpa, .{
+        .label = if (side) "Place: above the statusline (bottom edge only)" else "Place: above the statusline",
+        .action = .{ .set_dock_placement = .inner },
+        .checked = place == .inner,
+        .separator_before = true,
+    });
+    try rows.append(app.gpa, .{
+        .label = if (side) "Place: below the command line (bottom edge only)" else "Place: below the command line",
+        .action = .{ .set_dock_placement = .outer },
+        .checked = place == .outer,
+    });
     const at = app.cfg.ui.dock.@"align";
     try rows.append(app.gpa, .{
         .label = "Align: centre",
@@ -786,7 +851,7 @@ pub fn describe(app: *App, arena: Allocator, part: Part) Allocator.Error!tooltip
     switch (part) {
         .pin => return .{
             .title = if (app.launcher_dock.pinned) "Dock pinned" else "Pin the dock",
-            .detail = "click keeps the dock open · right-click: mode, edge, settings",
+            .detail = "click keeps the dock open · right-click: mode, edge, placement, settings",
         },
         .item => |i| {
             const list = try items(app, arena);
@@ -882,6 +947,23 @@ pub fn setEdge(app: *App, next: Edge) CommandError!void {
     if (app.launcher_dock.open) close(app);
     _ = try settings.persist(app, .home, &.{ "ui", "dock", "edge" }, next);
     app.toast("dock: {s} edge", .{@tagName(next)});
+    app.needs_render = true;
+}
+
+/// `ui.dock.placement`, persisted: `:dock inner` / `:dock outer` (and
+/// their `above` / `below` spellings), the Settings row and the two
+/// *Place:* rows on the strip's own right-click menu all land here. A
+/// side dock takes the key without complaint — it is the BOTTOM
+/// strip's question, and moving back to the bottom edge answers it.
+pub fn setPlacement(app: *App, next: Placement) CommandError!void {
+    app.cfg.ui.dock.placement = next;
+    // The row moved: a strip revealed at the old one is stale.
+    if (app.launcher_dock.open) close(app);
+    _ = try settings.persist(app, .home, &.{ "ui", "dock", "placement" }, next);
+    app.toast("dock: {s}", .{switch (next) {
+        .inner => "above the statusline",
+        .outer => "below the command line",
+    }});
     app.needs_render = true;
 }
 
@@ -1049,9 +1131,10 @@ test "the dwell: auto-hide reveals after reveal_ms in the band, stays while the 
     const full = Rect.init(0, 0, 120, 40);
     const band = hover_zones.dockBand(&app, full).?;
     // // changed (edge-grip): the bottom band is the SCREEN's last row
-    // — the `:` line's row while the strip is down — so the strip is
-    // the frame's outermost edge in every mode, and a hand reaching
-    // past the statusline for it finds it.
+    // — the `:` line's row while the strip is down — so the edge a
+    // hand reaches for is the frame's own, in every mode.
+    // // changed (dock-placement): the BAND stays that row whichever
+    // placement is in force; only where the strip paints moves.
     try t.expectEqual(full.bottom() - 1, band.y);
     try t.expectEqual(@as(u16, 39), band.y);
     try t.expectEqual(full.w, band.w);
@@ -1088,7 +1171,7 @@ test "the dwell: auto-hide reveals after reveal_ms in the band, stays while the 
     try t.expect(!revealed(&app));
 }
 
-test "the `:` line owns the bottom row outright: an open one refuses the reveal and puts a revealed strip away — a side strip, which covers none of that row, is not in contest" {
+test "under `.outer` the `:` line owns the bottom row outright: an open one refuses the reveal and puts a revealed strip away — a side strip, which covers none of that row, is not in contest" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -1096,6 +1179,9 @@ test "the `:` line owns the bottom row outright: an open one refuses the reveal 
     defer app.deinit();
     const cmdline = @import("cmdline.zig");
     app.cfg.ui.dock.reveal_ms = 250;
+    // // changed (dock-placement): the rule is the `.outer` strip's —
+    // it is the one that paints on the `:` line's row.
+    try setPlacement(&app, .outer);
     const full = Rect.init(0, 0, 120, 40);
     const band = hover_zones.dockBand(&app, full).?;
     // The band IS the `:` line's row: that is the whole reason for the
@@ -1326,12 +1412,12 @@ test "`ui.dock.align`: the default is centred, the three values are written and 
     try t.expect(std.mem.indexOf(u8, text, ".align = ") == null);
 }
 
-test "the strip's Settings rows: the five discrete `ui.dock.*` choices, each reading the live config" {
+test "the strip's Settings rows: the six discrete `ui.dock.*` choices, each reading the live config" {
     // v1 Settings is discrete choices; the dock's dwells and its pins
     // stay config-only. A row whose path stopped resolving would not
     // compile, so this pins WHICH rows the overlay offers.
     const rows = @import("settings.zig").rows;
-    const want = [_][]const u8{ "ui.dock.mode", "ui.dock.edge", "ui.dock.labels", "ui.dock.align", "ui.dock.plus" };
+    const want = [_][]const u8{ "ui.dock.mode", "ui.dock.edge", "ui.dock.placement", "ui.dock.labels", "ui.dock.align", "ui.dock.plus" };
     for (want) |path| {
         var found = false;
         for (rows) |r| if (std.mem.eql(u8, r.path, path)) {
@@ -1344,6 +1430,17 @@ test "the strip's Settings rows: the five discrete `ui.dock.*` choices, each rea
     try t.expectEqual(@as(usize, 3), @import("settings.zig").options("ui.dock.align").len);
     try t.expectEqual(@as(usize, 3), @import("settings.zig").options("ui.dock.labels").len);
     try t.expectEqual(@as(usize, 2), @import("settings.zig").options("ui.dock.plus").len);
+    // // changed (dock-placement): the placement row offers the two
+    // choices in a person's words rather than the enum's tags — the
+    // list is in tag order, so `.inner` is still index 0.
+    const place_opts = @import("settings.zig").options("ui.dock.placement");
+    try t.expectEqual(@as(usize, 2), place_opts.len);
+    try t.expectEqualStrings("above statusline", place_opts[0]);
+    try t.expectEqualStrings("below command line", place_opts[1]);
+    var fresh: @import("../config/Config.zig") = .{};
+    try t.expectEqual(@as(usize, 0), @import("settings.zig").currentIndex(&fresh, "ui.dock.placement"));
+    @import("settings.zig").setIndex(&fresh, "ui.dock.placement", 1);
+    try t.expectEqual(Placement.outer, fresh.ui.dock.placement);
 }
 
 test "the `+`: its hover copy is the verb, its menu is the tab bar's own, and the keyboard reaches it first" {
@@ -1367,4 +1464,129 @@ test "the `+`: its hover copy is the verb, its menu is the tab bar's own, and th
     try focusCmd(&app);
     try app.render();
     try t.expectEqual(@as(u16, 0), app.launcher_dock.cursor);
+}
+
+test "`ui.dock.placement`: `.inner` is the default and the strip is the EDITOR AREA's last row — carved and revealed on the same row, with the statusline and the `:` line left where they are" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    const full = Rect.init(0, 0, 120, 40);
+    // The user's preference is what mnml ships.
+    try t.expectEqual(Placement.inner, placement(&app));
+    try t.expectEqual(Placement.inner, app.cfg.ui.dock.placement);
+
+    // Carved: `upper` gives up its last row and nothing else moves.
+    const none = render.frameRects(full, .{});
+    const inner = render.frameRects(full, render.chrome(&app));
+    try t.expect(inner.launcher_dock.isEmpty()); // auto_hide carves nothing
+    try setMode(&app, .always);
+    const carved = render.frameRects(full, render.chrome(&app));
+    try t.expectEqual(Rect.init(0, 37, 120, 1), carved.launcher_dock);
+    try t.expect(carved.status.eql(none.status) and carved.cmdline.eql(none.cmdline));
+
+    // Revealed: the SAME row, so the strip does not move when the mode
+    // does — the reveal is paint over the editor's last line.
+    try setMode(&app, .auto_hide);
+    try t.expectEqual(carved.launcher_dock, overlayRect(&app, full));
+    try t.expectEqual(carved.launcher_dock, innerRow(full).?);
+
+    // `.outer` is the other row, and it takes the `:` line's.
+    try setPlacement(&app, .outer);
+    try t.expectEqual(Rect.init(0, 39, 120, 1), overlayRect(&app, full));
+    try setMode(&app, .always);
+    try t.expectEqual(Rect.init(0, 39, 120, 1), render.frameRects(full, render.chrome(&app)).launcher_dock);
+    try t.expectEqual(@as(u16, 37), render.frameRects(full, render.chrome(&app)).status.y);
+
+    // A side dock is a column: it reads `.inner` whatever the key says,
+    // and neither of those two rows is its business.
+    try setEdge(&app, .left);
+    try t.expectEqual(Placement.inner, placement(&app));
+    try t.expectEqual(Placement.outer, app.cfg.ui.dock.placement);
+    try setEdge(&app, .bottom);
+    try t.expectEqual(Placement.outer, placement(&app));
+
+    // The key reached the file the settings row would write.
+    try setPlacement(&app, .inner);
+    const text = try tmp.dir.readFileAlloc(t.io, "config.zon", t.allocator, .limited(1 << 16));
+    defer t.allocator.free(text);
+    try t.expect(std.mem.indexOf(u8, text, ".placement = .inner,") != null);
+}
+
+test "the reveal band is the SCREEN's last row in both placements — an `.inner` dwell there brings the strip up above the statusline" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    app.cfg.ui.dock.reveal_ms = 250;
+    const full = Rect.init(0, 0, 120, 40);
+    // The edge is where a hand goes to summon a thing, so the band does
+    // not move with the strip.
+    const band = hover_zones.dockBand(&app, full).?;
+    try t.expectEqual(@as(u16, 39), band.y);
+    try setPlacement(&app, .outer);
+    try t.expectEqual(band, hover_zones.dockBand(&app, full).?);
+    try setPlacement(&app, .inner);
+
+    // Dwelling on the screen's last row reveals a strip that paints two
+    // rows up, above the statusline.
+    app.now_ms = 1000;
+    app.hover = .{ .x = 60, .y = band.y };
+    hover_zones.begin(&app, full, 1000);
+    tick(&app, 1000);
+    try t.expect(!revealed(&app));
+    app.now_ms = 1250;
+    hover_zones.begin(&app, full, 1250);
+    tick(&app, 1250);
+    try t.expect(revealed(&app));
+    try t.expectEqual(@as(u16, 37), overlayRect(&app, full).y);
+}
+
+test "the `:` line and an `.inner` strip coexist: the line's rule is `.outer`'s alone, but the grip on the line's own row stands down in both" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    const cmdline = @import("cmdline.zig");
+    const edge_grip = @import("../ui/edge_grip.zig");
+    const full = Rect.init(0, 0, 120, 40);
+    try t.expect(app.cfg.ui.edge_grips);
+
+    // The grip: three cells at the middle of the SCREEN's last row,
+    // whichever placement is in force.
+    try t.expect(gripShown(&app));
+    try t.expectEqual(Rect.init(58, 39, 3, 1), edge_grip.place(hover_zones.dockBand(&app, full).?, .bottom).?);
+    try setPlacement(&app, .outer);
+    try t.expectEqual(Rect.init(58, 39, 3, 1), edge_grip.place(hover_zones.dockBand(&app, full).?, .bottom).?);
+
+    // An open `:` line takes the row back from the `.outer` strip AND
+    // from the grip.
+    cmdline.open(&app);
+    try t.expect(cmdlineBlocks(&app));
+    try t.expect(!gripShown(&app));
+    cmdline.close(&app);
+
+    // Under `.inner` the strip covers none of that row, so the line's
+    // rule does not apply to it — but the grip IS on that row, so it
+    // still stands down rather than painting over what is being typed.
+    try setPlacement(&app, .inner);
+    cmdline.open(&app);
+    try t.expect(!cmdlineBlocks(&app));
+    try t.expect(gripBlocked(&app));
+    try t.expect(!gripShown(&app));
+    // And the band goes on being watched, so a dwell still reveals.
+    app.cfg.ui.dock.reveal_ms = 250;
+    app.now_ms = 3000;
+    app.hover = .{ .x = 60, .y = 39 };
+    hover_zones.begin(&app, full, 3000);
+    tick(&app, 3000);
+    app.now_ms = 3300;
+    hover_zones.begin(&app, full, 3300);
+    tick(&app, 3300);
+    try t.expect(revealed(&app));
+    try t.expectEqual(@as(u16, 37), overlayRect(&app, full).y);
+    cmdline.close(&app);
 }

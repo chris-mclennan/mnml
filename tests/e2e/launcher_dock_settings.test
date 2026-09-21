@@ -19,14 +19,32 @@ ex dock left
 command view.settings
 expect screen contains "[left]"
 key esc
-# The labels row, the same way: `[icon_label]` out of the box, `[icon]`
-# once the strip has been narrowed.
+# // changed (dock-placement): the placement row, between the edge row
+# and the labels one. Its choices are worded for a person; the key's
+# own values are `.inner` / `.outer`. The pair is too long for the
+# value column, so the row shows the live choice and a `›` for the
+# other — `choiceWindow`'s rule, the Theme row's shape.
 command view.settings
+expect screen contains "Launcher dock placement"
+expect screen contains "[above statusline]"
+key esc
+ex dock below
+command view.settings
+expect screen contains "[below command line]"
+key esc
+ex dock above
+
+# The labels row, the same way: `[icon_label]` out of the box, `[icon]`
+# once the strip has been narrowed. It sits one row lower than it did,
+# so a notch of scroll brings it into the window.
+command view.settings
+scroll 60 20 down
 expect screen contains "Launcher dock labels"
 expect screen contains "[icon_label]"
 key esc
 ex dock icons
 command view.settings
+scroll 60 20 down
 expect screen contains "[icon]"
 expect screen lacks "[icon_label]"
 key esc
@@ -35,6 +53,7 @@ key esc
 # couple of wheel notches brings it into the window. It is one row for
 # all three slide-ins' handles, and `on` out of the box.
 command view.settings
+scroll 60 20 down
 scroll 60 20 down
 scroll 60 20 down
 scroll 60 20 down

@@ -1,0 +1,12 @@
+{"cmd":"open","path":"prog.dbg"}
+{"cmd":"wait_ms","ms":400}
+{"cmd":"key","key":"ctrl+;"}
+{"cmd":"wait_ms","ms":200}
+{"cmd":"type","text":"dock outer"}
+{"cmd":"wait_ms","ms":200}
+{"cmd":"key","key":"enter"}
+{"cmd":"wait_ms","ms":300}
+{"cmd":"run-command","id":"view.dock_cycle_mode"}
+{"cmd":"wait_ms","ms":200}
+{"cmd":"run-command","id":"view.dock_cycle_mode"}
+{"cmd":"wait_ms","ms":600}

@@ -46,14 +46,18 @@ statement that paints it, and add nothing the Rust screen does not show.
 
 `zig-launcher-dock-120x40.txt` / `zig-launcher-dock-left-120x40.txt`
 are the LAUNCHER dock — `ui.dock`, macOS's Dock, not the bottom panel
-and not the dock widgets — in `always` mode at each of its two shapes
-(`tools/zig-spec.sh launcher-dock` / `launcher-dock-left`,
-`steps-launcher-dock*.jsonl`, which cycle `view.dock_cycle_mode` twice
-from the shipped `auto_hide` to `always` and then, for the second dump,
-`view.dock_move` once). On the **bottom** edge it is the SCREEN's
-last row — row 39 at 120x40, under the `:` line, which moves to 38 with
-the statusline on 37 (// changed (edge-grip): it was the editor area's
-last row, 37, two rows in from the frame's own edge) — reading `  Browser  󲀀 New terminal` with the 󰐃 pin chip at the far
+and not the dock widgets — in `always` mode at each of its three shapes
+(`tools/zig-spec.sh launcher-dock` / `launcher-dock-left` /
+`launcher-dock-outer`, `steps-launcher-dock*.jsonl`, which cycle
+`view.dock_cycle_mode` twice from the shipped `auto_hide` to `always`
+and then, for the second dump, `view.dock_move` once — and, for the
+third, run `:dock outer` before the cycle). On the **bottom** edge it is the EDITOR AREA's
+last row — row 37 at 120x40, above the statusline on 38 and the `:`
+line on 39, which is `ui.dock.placement = .inner`, the default
+(// changed (dock-placement): the edge-grip pass had put it on the
+screen's last row under the `:` line; `zig-launcher-dock-outer-120x40.txt`,
+`tools/zig-spec.sh launcher-dock-outer`, is that shape now, and it is
+opt-in) — reading `  Browser  󲀀 New terminal` with the 󰐃 pin chip at the far
 end: the enabled integration chips first (only the browser globe is on
 out of the box), then the terminals. On the **left** edge it is the
 frame's outermost three columns, glyph-only, one item per row starting

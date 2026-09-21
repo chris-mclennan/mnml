@@ -1,0 +1,82 @@
+# width: 120
+# height: 40
+# The launcher dock's edge grip (src/ui/edge_grip.zig) under
+# `ui.dock.placement = .outer`: `⋯` at the middle of the SCREEN's last
+# row — the `:` line's row, cells 58..60 with the glyph on 59 at 120
+# columns — and a strip that, revealed, PAINTS on that same row. That
+# is what makes the `:` line's claim on it a contest, which is the
+# whole subject of this file; `edge_grip_dock.test` is the default
+# `.inner` placement, where the grip is on that row and the strip is
+# not.
+#
+# The bar and the columns ship `.always`, so the only grip on this
+# screen is the dock's.
+write a.txt "alpha\n"
+open a.txt
+ex dock outer
+expect screen contains "dock: below the command line"
+# `auto_hide`, as mnml ships: nothing is drawn, and the grip says where.
+expect screen lacks "New terminal"
+expect screen contains "⋯"
+# Dwelling on it reveals the strip, because the grip is INSIDE the
+# dock's hover zone and not a second way in.
+hover 59 39
+wait 600
+expect screen contains "New terminal"
+# Away: the strip goes and the grip comes back.
+hover 60 10
+wait 800
+expect screen lacks "New terminal"
+expect screen contains "⋯"
+
+# ── the revealed strip covers that row, the toast echo with it ──
+# A toast's box fades after three seconds; its echo on the bottom row
+# does not, which is the thing the strip is painting over.
+ex dock labels
+wait 3500
+expect screen contains "dock: icons and labels"
+hover 30 39
+wait 600
+expect screen contains "New terminal"
+expect screen lacks "dock: icons and labels"
+hover 60 10
+wait 800
+
+# ── an open `:` line takes the row back ──
+# It refuses the reveal outright and the grip goes with it: typing is
+# never covered.
+key ctrl+;
+expect status contains "\"cmdline\":true"
+expect screen lacks "⋯"
+hover 59 39
+wait 600
+expect screen lacks "New terminal"
+expect status contains "\"cmdline\":true"
+key esc
+expect status contains "\"cmdline\":false"
+hover 60 10
+
+# ── a click on the grip pins, and never opens the `:` line ──
+# The grip's hit is registered after the row's own and wins its cells.
+click 59 39
+expect screen contains "dock pinned"
+expect status contains "\"cmdline\":false"
+expect screen contains "New terminal"
+expect screen lacks "⋯"
+
+# ── pinned, the strip is the outermost row and the `:` line is above it ──
+# A click on row 38 opens the line; one on the strip's own row 39 does
+# not, which is the proof the two rows really swapped places.
+click 110 38
+expect status contains "\"cmdline\":true"
+key esc
+click 100 39
+expect status contains "\"cmdline\":false"
+
+# Unpinning hands the strip back to `ui.dock.mode`, and the grip with it.
+command view.dock_pin
+expect screen contains "dock: auto_hide"
+hover 60 10
+wait 800
+expect screen lacks "New terminal"
+expect screen contains "⋯"

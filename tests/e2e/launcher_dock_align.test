@@ -4,8 +4,9 @@
 # default — macOS's Dock, centred — and the pin chip keeps the far end
 # whatever it says.
 #
-# At 120x40 the `always` strip is row 39 — the SCREEN's last row, the
-# `:` line's — and the pin chip takes 117..119, so the items have 1..117.
+# At 120x40 the `always` strip is row 37 — the editor area's last row,
+# `ui.dock.placement = .inner` being the default — and the pin chip
+# takes 117..119, so the items have 1..117.
 # The default row is ` 󰐕 New   Browser  󲀀 New terminal `,
 # 34 cells of it, which centres at column 42 and ends at 84. The `\n` in
 # each assertion anchors it to the start of a row — the only way a
@@ -33,7 +34,7 @@ expect screen contains "dock: centred"
 expect screen contains "\n                                          󰐕 New "
 # The strip's own right-click menu carries every choice, the current one
 # ticked — three label forms, three alignments, and the `+`.
-rightclick 118 39
+rightclick 118 37
 expect screen contains "Show: icons and labels"
 expect screen contains "Show: icons only"
 expect screen contains "Show: labels only"
@@ -41,4 +42,7 @@ expect screen contains "Align: centre"
 expect screen contains "Align: start"
 expect screen contains "Align: end"
 expect screen contains "Show the + button"
+# // changed (dock-placement): and the two Place rows, the same idiom.
+expect screen contains "Place: above the statusline"
+expect screen contains "Place: below the command line"
 key esc

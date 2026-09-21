@@ -1,0 +1,39 @@
+# width: 120
+# `ui.dock.mode = .always` with `ui.dock.placement = .outer`: the other
+# placement, where the strip takes the SCREEN's last row rather than the
+# editor area's. `launcher_dock_always.test` is the shipped default
+# (`.inner`, the strip above the statusline); this file keeps the row
+# arithmetic of the outer one, which nothing else pins.
+#
+# At 120x40 that row is 39, under the `:` line — which moves to 38, and
+# the statusline to 37. The click below is the proof: if the strip were
+# anywhere else it would land on the `:` row instead.
+#
+# The run is centred (`ui.dock.align`, `.center` out of the box) and the
+# `+` leads it, so at 120 the row is `󰐕 + New  Browser  New terminal `
+# from column 41: the `+` at 41..47, Browser at 48..58, New terminal at
+# 59..74. Column 62 is that last item's word.
+write a.txt "alpha\n"
+open a.txt
+expect screen lacks "New terminal"
+ex dock outer
+expect screen contains "dock: below the command line"
+ex dock always
+expect screen contains "dock: always"
+expect screen contains "󰐕 New "
+expect screen contains "Browser"
+expect screen contains "New terminal"
+expect screen contains "󰐃"
+# The `:` line is row 38 now, and the strip's own row 39 opens nothing.
+click 110 38
+expect status contains "\"cmdline\":true"
+key esc
+click 100 39
+expect status contains "\"cmdline\":false"
+# A click on New terminal opens a shell…
+click 62 39
+wait 900
+expect pane Terminal
+# …and the shell joins the strip as a running item, wearing the dot
+# macOS puts under an open app.
+expect screen contains "●"

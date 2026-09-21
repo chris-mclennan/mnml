@@ -14,17 +14,20 @@
 # key is read BACK). What this file proves is the round trip — menu →
 # config → overlay → chrome, through the real key dispatcher.
 #
-# Two PgDn from the top of the UI section reaches both rows; they sit
-# together, the terminal's above the Claude one.
+# The filter is how the rows are reached, not a count of PgDn presses:
+# they sit far enough down the UI section that any row added above them
+# moves them, and `settings_filter.test` settled that a script should
+# search for a row rather than scroll to a number that moves. `icon`
+# leaves both of them on screen, the terminal's above the Claude one.
 write a.txt "alpha alpha"
 open a.txt
-command view.settings
-key pagedown
-key pagedown
+command view.settings_search
+type icon
 expect screen contains "Terminal icon:"
 expect screen contains "Claude icon:"
 expect screen contains "[ghostty] / terminal / custom"
 expect screen contains "[figure] / spark"
+key esc
 key esc
 expect screen lacks "Claude icon:"
 # The Claude chip's `Icon ▸ Anthropic` (column 106, the strip's
@@ -35,12 +38,12 @@ key right
 key down
 key enter
 expect screen contains "Claude icon: Anthropic spark"
-command view.settings
-key pagedown
-key pagedown
+command view.settings_search
+type icon
 expect screen contains "figure / [spark]"
 # The terminal row is untouched by it — two keys, two rows.
 expect screen contains "[ghostty] / terminal / custom"
+key esc
 key esc
 # The terminal chip's `Icon ▸ Terminal`, the same shape. It sits three
 # cells left of its usual column here: the Claude chip is in front of
@@ -51,9 +54,9 @@ key right
 key down
 key enter
 expect screen contains "terminal icon: the codicon terminal"
-command view.settings
-key pagedown
-key pagedown
+command view.settings_search
+type icon
 expect screen contains "ghostty / [terminal] / custom"
 expect screen contains "figure / [spark]"
+key esc
 key esc

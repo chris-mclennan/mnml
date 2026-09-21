@@ -147,6 +147,16 @@ pointer asks for them, and they are one idiom, not three:
 |---|---|---|---|
 | the side columns | `ui.sidebar = .auto` | the column's screen edge, then the panel itself | `src/app/sidebar_auto.zig` |
 | the launcher dock | `ui.dock.mode = .auto_hide` | the edge band of `ui.dock.edge`, then the strip | `src/app/launcher_dock.zig` |
+
+A bottom launcher dock is the one of the three whose band and whose
+strip can be different rows. The band is the SCREEN's last row — the
+edge a hand reaches for — and `ui.dock.placement` settles where the
+strip lands: `.inner` (the default) above the statusline, on the
+editor area's last row, `.outer` under the `:` line, on the band's own
+row. Carved and revealed are the same row in both, so the strip never
+moves when the mode does. The grip stays on the band whichever it is,
+which is why an open `:` line puts the grip away under both while only
+`.outer` has its reveal refused.
 | the menu bar | `ui.menu_bar = .auto` | the chrome row itself | `src/app/menu_bar.zig` |
 
 The rules they share:

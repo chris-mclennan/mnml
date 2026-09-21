@@ -5,10 +5,12 @@
 #
 # At 120x40 with no launcher dock the panel is rows 26–37 with its
 # header (and its `×`) on row 26 — `bottom_dock_toggle.test` pins that.
-# The dock's row comes off the SCREEN's last row, so everything above
-# it — the `:` line, the statusline, the editor area and the panel
-# inside it — shifts up one: the panel's header row is 25, and that is
-# where its `×` answers a click.
+# The dock's row comes off the EDITOR AREA (`ui.dock.placement =
+# .inner`, the default), so the panel inside it shifts up one: the
+# panel's header row is 25, and that is where its `×` answers a click.
+# The statusline and the `:` line do not move under `.inner`; under
+# `.outer` they move up one instead and the panel lands on the same
+# rows either way.
 write a.txt "one\ntwo\nthree\n"
 open a.txt
 ex dock always
