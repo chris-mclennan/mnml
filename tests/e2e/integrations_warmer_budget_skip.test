@@ -1,15 +1,3 @@
-# requires: optimized
-# The `integrations_*` family — real integration children against
-# offline servers the files start themselves — is timing-marginal in a
-# Debug build, where the app is an order of magnitude slower and the
-# servers of earlier files are still alive on their own `--life-secs`
-# while later ones run. The runner scales its own deadlines with the
-# build; a file's `wait <ms>` and its server's lifetime are written in
-# and cannot move. Marked as a FAMILY rather than file by file because
-# which member falls over depends on what else the machine is doing:
-# three Debug corpus runs failed a different member each time, and every
-# one of them passes against ReleaseSafe. See docs/CONTRIBUTING.md, "Run
-# the corpus against an optimized build".
 # Under a quarter of the shared bucket, the poller gives way.
 #
 # Nothing is watching a `--values` run, and what is left of the budget

@@ -122,6 +122,41 @@ pub const Grid = struct {
     }
 };
 
+/// `MNML_CHILD_STDERR`: where a mounted child's stderr goes instead of
+/// `/dev/null`. Unset — which is every normal run — and nothing changes.
+///
+/// A child's stderr is discarded because a sibling that writes to the
+/// terminal would scribble over the very screen mnml is painting. That
+/// also means a child which panics, or refuses, says so into the void:
+/// all the host sees is the EOF, and all it can report is "connection
+/// closed". This is the way to hear it. Set it to a path PREFIX; each
+/// mount gets its own `<prefix>.<n>` so two children never interleave
+/// and the order is the order they were spawned.
+///
+/// ```sh
+/// MNML_CHILD_STDERR=/tmp/child zig build e2e -- tests/e2e/some.test
+/// cat /tmp/child.*
+/// ```
+const child_stderr_var = "MNML_CHILD_STDERR";
+
+/// Bumped per spawn so the files are unique and ordered within a run.
+var child_stderr_seq: std.atomic.Value(u32) = .init(0);
+
+/// The file `MNML_CHILD_STDERR` asks for, or `.ignore` — which is the
+/// default, and the only thing a run without the variable set ever
+/// gets. Never fails the spawn: a debug aid that broke a mount would be
+/// worse than no debug aid.
+fn childStderr(io: Io, env: *const std.process.Environ.Map) std.process.SpawnOptions.StdIo {
+    const prefix = env.get(child_stderr_var) orelse return .ignore;
+    if (prefix.len == 0) return .ignore;
+    const n = child_stderr_seq.fetchAdd(1, .monotonic);
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const path = std.fmt.bufPrint(&buf, "{s}.{d}", .{ prefix, n }) catch return .ignore;
+    if (std.fs.path.dirname(path)) |dir| Io.Dir.cwd().createDirPath(io, dir) catch {};
+    const file = Io.Dir.cwd().createFile(io, path, .{ .truncate = true }) catch return .ignore;
+    return .{ .file = file };
+}
+
 /// What the reader posts. `pane` routes it; `generation` lets a pane
 /// that was re-mounted drop a dead reader's last words.
 pub const Event = struct {
@@ -254,13 +289,16 @@ pub const Mount = struct {
         const wbuf = try gpa.alloc(u8, write_buffer);
         errdefer gpa.free(wbuf);
 
+        // `.ignore` unless `MNML_CHILD_STDERR` names somewhere to put it.
+        const stderr = childStderr(io, opts.env);
+        defer if (stderr == .file) stderr.file.close(io);
         shared.child = std.process.spawn(io, .{
             .argv = opts.argv,
             .cwd = .{ .path = opts.cwd },
             .environ_map = opts.env,
             .stdin = .ignore,
             .stdout = .ignore,
-            .stderr = .ignore,
+            .stderr = stderr,
         }) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => return error.SpawnFailed,

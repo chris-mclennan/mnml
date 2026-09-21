@@ -333,6 +333,20 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     defer box.deinit(io);
     var group: Io.Group = .init;
     try group.concurrent(io, inbox.Inbox.reader, .{ io, &box, mount });
+    // The reader task is parked in a read on the mount, and it has to
+    // be off that socket before `mount.destroy` closes it — a close
+    // under a read in flight fails `EBADF`, which a Debug build calls a
+    // programmer bug and panics on, so the child dies at teardown and
+    // the host can only report `[connection closed]`. Registered HERE,
+    // not with the app below, because the setup screens return out of
+    // this function long before the app exists and every one of those
+    // paths needs it too. Both halves are idempotent, so the teardown
+    // below — which has to shut down BEFORE its own cancel, since
+    // `app.deinit` follows it — does no harm by getting there first.
+    defer {
+        mount.shutdown();
+        group.cancel(io);
+    }
 
     // The setup screens first: a config or a token missing paints what
     // to do and waits for r (try again) or q. The config's strings live
@@ -441,6 +455,11 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
         // queue closes first, the group stops, and only then is
         // anything the workers were writing into freed.
         app.closeRefresh();
+        // The inbox task is parked in a read on the mount, which a
+        // cancel cannot reach into. End the stream first so the read
+        // comes back on its own; `mount.destroy`'s close would
+        // otherwise take the descriptor out from under it.
+        mount.shutdown();
         group.cancel(io);
         app.deinit();
     }
