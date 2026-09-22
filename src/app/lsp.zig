@@ -2769,6 +2769,9 @@ pub fn requestSymbols(app: *App, s: *Server, path: []const u8) void {
     const arena = app.frame.allocator();
     const uri = types.uriFromPath(arena, path) catch return;
     const pane = app.panes.findPath(path) orelse return;
+    // Over the highlight ceiling the outline says so instead
+    // (`Syntax.overCeiling`); the reply would be dropped at the frame cap.
+    if (app.panes.editor(pane)) |e| if (e.syntax.overCeiling()) return;
     _ = s.request(.document_symbol, "textDocument/documentSymbol", .{ .textDocument = .{ .uri = uri } }, .{ .pane = pane, .extra = 0 }) catch {};
 }
 
@@ -4712,4 +4715,47 @@ test "client/registerCapability for workspace/didChangeWatchedFiles marks the se
     // (the notify returns without a wire error either way).
     notifyWatched(&app, "/tmp/mnml-zig-fake-lsp-gen.ts", .created);
     notifyWatched(&app, "/nowhere/else.ts", .deleted);
+}
+
+test "over the highlight ceiling no documentSymbol is asked and the outline says `outline off`; editor.highlight_this_file asks after all" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    app.cfg.editor.highlight_max_bytes = 64;
+    var rig: TestRig = .{};
+    try rig.start(&app);
+    defer rig.stop(&app) catch {};
+    const e = try TestRig.openFile(&app, TestRig.file, "let x = 1;\nconst foo = 2;\nconst bar = 3;\nconst baz = 4;\nconst qux = 5;\nconst quux = 6;\n");
+    // The rig sets the text by hand; `openPath` applies the ceiling on open.
+    e.syntax.applyLimit(e.buf.editor.len(), app.cfg.editor.highlight_max_bytes);
+    try testing.expect(e.syntax.overCeiling());
+    const Probe = struct { app: *App };
+    const ctx: Probe = .{ .app = &app };
+    const Cond = struct {
+        fn attached(c: Probe) bool {
+            const servers = c.app.lsp.servers.items;
+            return servers.len == 1 and servers[0].ready and servers[0].docs.count() == 1;
+        }
+        fn symbols(c: Probe) bool {
+            return symbolsFor(c.app, TestRig.file) != null;
+        }
+    };
+    try TestRig.pump(&app, ctx, Cond.attached, 30_000);
+    // The server is attached (goto / references / rename work) but
+    // nothing asked it for the symbol list — a frame or two of ticks
+    // later there still is none, where an attach under the ceiling
+    // has one within the same pumping (the outline test above).
+    try testing.expectError(error.Timeout, TestRig.pump(&app, ctx, Cond.symbols, 300));
+    try command.run(&app, .{ .static = .@"outline.show" });
+    const screen = try TestRig.screenText(&app, gpa);
+    defer gpa.free(screen);
+    try testing.expect(std.mem.indexOf(u8, screen, "(outline off · 87 B)") != null);
+    try testing.expect(std.mem.indexOf(u8, screen, "(no symbols)") == null);
+    // Turned back on by hand: the symbols are asked for and land.
+    app.showPane(app.panes.findPath(TestRig.file).?);
+    try command.run(&app, .{ .static = .@"editor.highlight_this_file" });
+    try testing.expect(!e.syntax.overCeiling());
+    try TestRig.pump(&app, ctx, Cond.symbols, 30_000);
 }
