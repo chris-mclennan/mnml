@@ -704,7 +704,13 @@ pub fn attach(app: *App, pane: PaneId, e: *EditorPane) Allocator.Error!void {
     e.buf.doc.lsp_seen = e.buf.doc.edits.head();
     if (!was_open) {
         app.hooks.emit(app, .{ .lsp_attach = .{ .server = s.name, .pane = pane } });
-        if (s.ready) requestSymbols(app, s, path);
+        // Not in the same instant as the `didOpen`: a server still
+        // answering its own `workspace/configuration` round-trip
+        // (bash-language-server) says `[]` to a symbols request that
+        // arrives before the client has replied. The ask goes out once
+        // the open has settled (`symbols_debounce_ms`), and again when
+        // the configuration answer lands (`handleServerRequest`).
+        if (s.ready) scheduleSymbols(app, path);
     }
 }
 
@@ -859,6 +865,14 @@ pub fn syncPane(app: *App, pane: PaneId, e: *EditorPane) void {
 /// reads a live regex outline and never lags.
 fn markSymbolsDue(app: *App, path: []const u8) void {
     if (!app.lsp.symbols.contains(path)) return;
+    scheduleSymbols(app, path);
+}
+
+/// `documentSymbol` for `path` once `symbols_debounce_ms` have passed
+/// (`tick`), whether or not a list is cached: the first ask after an
+/// open, the re-ask after a `workspace/configuration` answer, and the
+/// outline's own refresh all go this way.
+pub fn scheduleSymbols(app: *App, path: []const u8) void {
     const due = app.now_ms + symbols_debounce_ms;
     if (app.lsp.symbols_due.getPtr(path)) |slot| {
         slot.* = due;
@@ -1035,6 +1049,12 @@ fn handleServerRequest(app: *App, s: *Server, id: i64, method: []const u8, param
         }
         try out.append(arena, ']');
         s.respond(id, out.items) catch {};
+        // The server was configuring: what it said about symbols before
+        // this answer was `[]`. Ask again for every file it has open.
+        for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+            .editor => |*e| if (e.buf.doc.path) |path| if (s.isOpen(path)) scheduleSymbols(app, path),
+            else => {},
+        };
     } else if (std.mem.eql(u8, method, "workspace/applyEdit")) {
         if (params) |p| if (jsonrpc.getObj(p, "edit")) |edit| {
             const n = try applyWorkspaceEdit(app, s, edit);
@@ -1052,9 +1072,10 @@ fn handleResponse(app: *App, s: *Server, kind: ReqKind, ctx: Ctx, result: ?Value
         .initialize => {
             try s.onInitialized(result);
             // Documents opened while the server was starting are on the
-            // wire now; symbols for the ones showing can follow.
+            // wire now; symbols for the ones showing can follow, once
+            // the open has settled (see `attach`).
             for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-                .editor => |*e| if (e.buf.doc.path) |path| if (s.isOpen(path)) requestSymbols(app, s, path),
+                .editor => |*e| if (e.buf.doc.path) |path| if (s.isOpen(path)) scheduleSymbols(app, path),
                 else => {},
             };
             // The request that arrived while this server was starting
@@ -2528,10 +2549,21 @@ fn storeSymbols(app: *App, ctx: Ctx, result: ?Value) Allocator.Error!void {
 }
 
 /// The cached symbols for `path` (the outline prefers them to the
-/// tree-sitter walk). Null when no server has answered.
+/// tree-sitter walk). Null when no server has answered — or when its
+/// answer was EMPTY: a server that is still configuring says `[]`, and
+/// a file with no symbols is what the grammar walk says too, so an
+/// empty list is never the outline's answer over the grammar's.
 pub fn symbolsFor(app: *App, path: []const u8) ?[]const types.Symbol {
     const set = app.lsp.symbols.get(path) orelse return null;
+    if (set.items.len == 0) return null;
     return set.items;
+}
+
+/// The outline's refresh (`outline.show`, `r`): ask the file's server
+/// again rather than repaint what it said last time.
+pub fn reaskSymbols(app: *App, path: []const u8) void {
+    const s = serverFor(app, path) orelse return;
+    requestSymbols(app, s, path);
 }
 
 fn dropSymbolPick(app: *App) void {
