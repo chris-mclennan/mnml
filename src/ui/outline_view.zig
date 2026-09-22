@@ -22,6 +22,7 @@ const vaxis = @import("vaxis");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
+const overlay = @import("overlay.zig");
 const list_panel = @import("list_panel.zig");
 const scrollbar = @import("scrollbar.zig");
 const ids = @import("../core/ids.zig");
@@ -72,15 +73,15 @@ const bar_min_w: u16 = 8;
 
 /// The hint for a body `w` cells wide — Rust's three tiers, so the row
 /// never clips mid-word at the right panel's default width.
-pub fn hint(ascii: bool, filter_mode: bool, w: u16) []const u8 {
+pub fn hint(filter_mode: bool, w: u16) []const u8 {
     if (filter_mode) {
-        if (w >= 52) return if (ascii) "  filter - type to narrow, enter apply, esc clear" else "  filter — type to narrow, ⏎ apply, esc clear";
-        if (w >= 30) return if (ascii) "  type - enter apply - esc clear" else "  type · ⏎ apply · esc clear";
-        return if (ascii) "  enter / esc" else "  ⏎ / esc";
+        if (w >= 52) return "  filter — type to narrow, ⏎ apply, esc clear";
+        if (w >= 30) return "  type · ⏎ apply · esc clear";
+        return "  ⏎ / esc";
     }
-    if (w >= 52) return if (ascii) "  enter jump   r refresh   / filter   esc back" else "  ⏎ jump   r refresh   / filter   esc back";
-    if (w >= 30) return if (ascii) "  enter jump - / filter - esc back" else "  ⏎ jump · / filter · esc back";
-    return if (ascii) "  enter / r / esc" else "  ⏎ / r / esc";
+    if (w >= 52) return "  ⏎ jump   r refresh   / filter   esc back";
+    if (w >= 30) return "  ⏎ jump · / filter · esc back";
+    return "  ⏎ / r / esc";
 }
 
 /// The colour a kind's column paints in — Rust's `kind_color`.
@@ -122,7 +123,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, scroll: *usize, p: Props) void {
     _ = ui.putStr(x, body.y, text_end -| x, count, Theme.onBg(t.muted, bg));
     var y = body.y + 1;
     if (y < body.bottom()) {
-        const h = hint(ui.ascii, p.filter_mode, body.w -| air);
+        const h = overlay.hintText(ui, hint(p.filter_mode, body.w -| air));
         _ = ui.putStr(body.x, y, body.w -| air, ui.clipStr(h, body.w -| air), Theme.onBg(t.muted, bg));
         y += 1;
     }
@@ -230,14 +231,17 @@ test "header, the hint, kinds right-aligned in ten cells, depth indents, the arr
 }
 
 test "the hint's three tiers, and the query line with its caret" {
-    try testing.expectEqualStrings("  ⏎ jump   r refresh   / filter   esc back", hint(false, false, 52));
-    try testing.expectEqualStrings("  ⏎ jump · / filter · esc back", hint(false, false, 51));
-    try testing.expectEqualStrings("  ⏎ jump · / filter · esc back", hint(false, false, 30));
-    try testing.expectEqualStrings("  ⏎ / r / esc", hint(false, false, 29));
-    try testing.expectEqualStrings("  filter — type to narrow, ⏎ apply, esc clear", hint(false, true, 60));
-    try testing.expectEqualStrings("  type · ⏎ apply · esc clear", hint(false, true, 31));
-    try testing.expectEqualStrings("  ⏎ / esc", hint(false, true, 12));
-    try testing.expectEqualStrings("  enter jump - / filter - esc back", hint(true, false, 40));
+    try testing.expectEqualStrings("  ⏎ jump   r refresh   / filter   esc back", hint(false, 52));
+    try testing.expectEqualStrings("  ⏎ jump · / filter · esc back", hint(false, 51));
+    try testing.expectEqualStrings("  ⏎ jump · / filter · esc back", hint(false, 30));
+    try testing.expectEqualStrings("  ⏎ / r / esc", hint(false, 29));
+    try testing.expectEqualStrings("  filter — type to narrow, ⏎ apply, esc clear", hint(true, 60));
+    try testing.expectEqualStrings("  type · ⏎ apply · esc clear", hint(true, 31));
+    try testing.expectEqualStrings("  ⏎ / esc", hint(true, 12));
+    // The `--ascii` spelling is the hint language's, not this view's.
+    const ascii = try overlay.asciiHint(testing.allocator, hint(false, 40));
+    defer testing.allocator.free(ascii);
+    try testing.expectEqualStrings("  enter jump - / filter - esc back", ascii);
 
     var f = try Fixture.init(40, 8);
     defer f.deinit();

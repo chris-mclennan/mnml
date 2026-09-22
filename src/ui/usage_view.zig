@@ -11,6 +11,7 @@ const std = @import("std");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
+const overlay = @import("overlay.zig");
 const ids = @import("../core/ids.zig");
 const usage = @import("../ai/usage.zig");
 const usage_pane = @import("../app/usage_pane.zig");
@@ -125,7 +126,7 @@ fn claudeRows(ui: Ui, rows: *std.ArrayListUnmanaged(Row), props: Props, focused:
     const red = Theme.onBg(th.error_fg, th.bg.bg);
     try rows.append(a, .{ .body = .{ .spans = try a.dupe(Span, &.{
         .{ .text = " Claude usage ", .style = head_style },
-        .{ .text = "· r refresh · L claude login · R capture · esc close", .style = hint },
+        .{ .text = overlay.hintText(ui, "· r refresh · L claude login · R capture · esc close"), .style = hint },
     }) } });
     try rows.append(a, .{ .body = .{ .spans = &.{} } });
     if (props.accounts.len == 0) {
@@ -215,7 +216,7 @@ fn codexRows(ui: Ui, rows: *std.ArrayListUnmanaged(Row), props: Props, focused: 
     head_style.bold = true;
     try rows.append(a, .{ .body = .{ .spans = try a.dupe(Span, &.{
         .{ .text = " Codex usage ", .style = head_style },
-        .{ .text = "· r refresh · esc close", .style = hint },
+        .{ .text = overlay.hintText(ui, "· r refresh · esc close"), .style = hint },
     }) } });
     try rows.append(a, .{ .body = .{ .spans = &.{} } });
     if (props.codex) |c| {

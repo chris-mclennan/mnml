@@ -10,6 +10,7 @@ const vaxis = @import("vaxis");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
+const overlay = @import("overlay.zig");
 const list_panel = @import("list_panel.zig");
 const ids = @import("../core/ids.zig");
 const flaky = @import("../app/flaky.zig");
@@ -18,7 +19,6 @@ const Style = vaxis.Style;
 const PaneId = ids.PaneId;
 
 pub const hint = "  ⏎ jump to source   r refresh   esc close";
-pub const hint_ascii = "  enter jump to source   r refresh   esc close";
 
 pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: *flaky.FlakyPane, focused: bool) void {
     const t = ui.theme;
@@ -29,7 +29,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: *flaky.FlakyPane, focused: bool
     head.bold = true;
     _ = ui.putStr(area.x, area.y, area.w, ui.clipStr(ui.fmt("  {s} {d} wobbly test{s}", .{ if (ui.ascii) "~~" else "≋", n, if (n == 1) "" else "s" }), area.w), head);
     if (area.h < 2) return;
-    _ = ui.putStr(area.x, area.y + 1, area.w, ui.clipStr(if (ui.ascii) hint_ascii else hint, area.w), Theme.onBg(t.muted, t.bg.bg));
+    _ = ui.putStr(area.x, area.y + 1, area.w, ui.clipStr(overlay.hintText(ui, hint), area.w), Theme.onBg(t.muted, t.bg.bg));
     if (area.h < 4) return;
     if (n == 0) {
         _ = ui.putStr(area.x, area.y + 3, area.w, ui.clipStr(if (ui.ascii) "  + no flaky tests in recent history" else "  ✓ no flaky tests in recent history", area.w), Theme.onBg(t.info_fg, t.bg.bg));

@@ -259,7 +259,7 @@ pub fn draw(ui: Ui, screen: Rect, s: *State, rows: []const Row) void {
     const hint_row = inner.row(inner.h - 1);
     var hint_style = Theme.onBg(t.muted, bg);
     hint_style.dim = true;
-    _ = ui.putStr(hint_row.x, hint_row.y, hint_row.w, ui.clipStr(if (s.filter_focused) hint_typing else hint_rest, hint_row.w), hint_style);
+    _ = ui.putStr(hint_row.x, hint_row.y, hint_row.w, ui.clipStr(overlay.hintText(ui, if (s.filter_focused) hint_typing else hint_rest), hint_row.w), hint_style);
 }
 
 fn spaces(ui: Ui, n: usize) []const u8 {

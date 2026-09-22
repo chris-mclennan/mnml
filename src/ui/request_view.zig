@@ -39,6 +39,7 @@ const vaxis = @import("vaxis");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
+const overlay = @import("overlay.zig");
 const parse_mod = @import("../http/parse.zig");
 const text_field = @import("text_field.zig");
 const editor_view = @import("editor_view.zig");
@@ -1085,7 +1086,7 @@ fn drawKvTable(ui: Ui, pane: PaneId, r: Rect, data: []const Pair, draft: ?Draft,
                 ui.hit(rr, .{ .script_hit = .{ .pane = pane, .id = hit_add_row } });
             }
         } else {
-            _ = ui.putStr(rr.x, rr.y, rr.w, "    (Tab \u{00B7} `:`  \u{00B7}  Enter \u{2192} add + new row  \u{00B7}  Shift+Enter \u{2192} done  \u{00B7}  Esc \u{2192} cancel)", dim(p));
+            _ = ui.putStr(rr.x, rr.y, rr.w, overlay.hintText(ui, "    (Tab \u{00B7} `:`  \u{00B7}  Enter \u{2192} add + new row  \u{00B7}  Shift+Enter \u{2192} done  \u{00B7}  Esc \u{2192} cancel)"), dim(p));
         }
         ry += 1;
     }
@@ -1200,7 +1201,7 @@ fn drawAuth(ui: Ui, pane: PaneId, r: Rect, m: Model, focused: bool) void {
             if (o.set[i]) _ = ui.putStr(x + 1, row.y, row.right() -| (x + 1), "*", .{ .fg = if (sel) p.bg_dark else p.yellow, .bg = bg, .bold = true });
             ui.hit(row, .{ .script_hit = .{ .pane = pane, .id = hit_auth_row + @as(u32, @intCast(idx)) } });
         } else if (vi == total - 1) {
-            _ = ui.putStr(r.x + 4, row.y, r.w -| 4, if (ui.ascii) "(<- -> toggle / step  -  Enter set  -  r config default  -  * set by this request)" else "(\u{2190}\u{2192} toggle / step \u{00B7} Enter set \u{00B7} r config default \u{00B7} * set by this request)", dim(p));
+            _ = ui.putStr(r.x + 4, row.y, r.w -| 4, overlay.hintText(ui, "(\u{2190}\u{2192} toggle / step \u{00B7} Enter set \u{00B7} r config default \u{00B7} * set by this request)"), dim(p));
         }
     }
 }
@@ -1220,7 +1221,7 @@ fn drawVars(ui: Ui, pane: PaneId, r: Rect, m: Model, focused: bool) void {
     var x = r.x;
     x += ui.putStr(x, r.y, r.w, "    env: ", dim(p));
     x += ui.putStr(x, r.y, r.right() -| x, ui.fmt("{s}.env", .{m.env_name orelse "dev"}), .{ .fg = p.cyan, .bg = p.bg_dark, .bold = true });
-    _ = ui.putStr(x, r.y, r.right() -| x, "   \u{00B7} click cell to edit \u{00B7} Tab commits \u{00B7} Esc cancels", dim(p));
+    _ = ui.putStr(x, r.y, r.right() -| x, overlay.hintText(ui, "   \u{00B7} click cell to edit \u{00B7} Tab commits \u{00B7} Esc cancels"), dim(p));
     if (r.h <= 2) return;
     const rows = ui.arena.alloc(Pair, m.vars.len) catch return;
     for (m.vars, 0..) |v, i| rows[i] = .{ .key = v.name, .value = v.value orelse "" };

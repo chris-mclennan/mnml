@@ -9,6 +9,7 @@ const std = @import("std");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
+const overlay = @import("overlay.zig");
 const ids = @import("../core/ids.zig");
 const grep = @import("../app/grep.zig");
 const text_field = @import("text_field.zig");
@@ -41,7 +42,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: *grep.GrepPane, focused: bool) 
     var body = area.splitTop(1).rest;
 
     const hint_row = body.row(0);
-    const hint: []const u8 = if (ui.ascii) "  enter open   n/N step   space toggle   R replace   r rerun   / filter   h/l fold   esc back" else "  ⏎ open · n/N step · space toggle · R replace · r rerun · / filter · h/l fold · esc back";
+    const hint = overlay.hintText(ui, "  ⏎ open · n/N step · space toggle · R replace · r rerun · / filter · h/l fold · esc back");
     _ = ui.putStr(hint_row.x, hint_row.y, hint_row.w, ui.clipStr(hint, hint_row.w), Theme.onBg(th.muted, th.bg.bg));
     if (body.h < 2) return;
     body = body.splitTop(1).rest;

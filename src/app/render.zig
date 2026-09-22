@@ -1919,7 +1919,7 @@ fn drawGhost(ui: Ui, rect: Rect, cursor: editor_view.Cursor, ed: *const @import(
 fn drawFlashCue(ui: Ui, rect: Rect, f: *const flash.State) void {
     if (rect.isEmpty()) return;
     var pair: [8]u8 = undefined;
-    const hint = ui.fmt(" {s} {s} press a label to jump {s} Esc cancels ", .{ flash.pairText(f.a, f.b, &pair), if (ui.ascii) "->" else "→", if (ui.ascii) "-" else "·" });
+    const hint = overlay_mod.hintText(ui, ui.fmt(" {s} → press a label to jump · Esc cancels ", .{flash.pairText(f.a, f.b, &pair)}));
     _ = ui.putStrRight(rect.right(), rect.bottom() - 1, rect.w, hint, ui.theme.current_match);
 }
 

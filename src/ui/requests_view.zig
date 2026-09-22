@@ -17,6 +17,7 @@ const vaxis = @import("vaxis");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
+const overlay = @import("overlay.zig");
 const list_panel = @import("list_panel.zig");
 const ids = @import("../core/ids.zig");
 const requests = @import("../app/requests.zig");
@@ -25,7 +26,6 @@ const Style = vaxis.Style;
 const PaneId = ids.PaneId;
 
 pub const hint = "  / filter   r reload   ⏎ full line   y copy path   esc close";
-pub const hint_ascii = "  / filter   r reload   enter full line   y copy path   esc close";
 
 /// Rows the header and the hint take before the first request.
 const head_rows: u16 = 5;
@@ -61,7 +61,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: *requests.RequestsPane, focused
             if (p.filtering) "\u{2588}" else "",
         }), area.w), pill);
     } else {
-        _ = ui.putStr(area.x, area.y + 4, area.w, ui.clipStr(if (ui.ascii) hint_ascii else hint, area.w), Theme.onBg(t.muted, t.bg.bg));
+        _ = ui.putStr(area.x, area.y + 4, area.w, ui.clipStr(overlay.hintText(ui, hint), area.w), Theme.onBg(t.muted, t.bg.bg));
     }
     if (area.h <= head_rows) return;
 
