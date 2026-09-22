@@ -829,6 +829,27 @@ pub const suggest_idle_ms_max: u16 = 5000;
 pub const suggest_timeout_ms_min: u32 = 500;
 pub const suggest_timeout_ms_max: u32 = 120_000;
 
+/// GitHub Copilot as the ghost-text backend (`suggest_backend =
+/// "copilot"`). Everything here is HOME-scope: `command` is an argv, so
+/// the trust layer strips it from a workspace layer. The per-workspace
+/// switch is `ai.copilot_here`, and it is the only one a workspace may
+/// set.
+pub const Copilot = struct {
+    /// The language server's argv. Empty means `copilot-language-server
+    /// --stdio` on `PATH`. mnml never downloads it; write
+    /// `.{ "npx", "--yes", "@github/copilot-language-server", "--stdio" }`
+    /// here if that is how you want it fetched.
+    command: []const []const u8 = &.{},
+    /// Glob patterns whose files are never sent. Empty means the
+    /// shipped list (`.env*`, `*.pem`, `*.key`, `id_*`). Setting it
+    /// REPLACES that list — the secret-name check and the gitignore
+    /// check are not negotiable either way.
+    exclude: []const []const u8 = &.{},
+    /// A GitHub Enterprise instance, passed through as
+    /// `github-enterprise.uri` in `workspace/didChangeConfiguration`.
+    github_enterprise_uri: ?[]const u8 = null,
+};
+
 pub const Ai = struct {
     /// Legacy single-backend switch; `.routing.claude.backend` wins.
     backend: ?AiBackend = null,
@@ -846,6 +867,13 @@ pub const Ai = struct {
     /// The wall-clock budget one suggestion gets. Past it the child is
     /// killed, the chip says `!`, and `:messages` says `timeout`.
     suggest_timeout_ms: u32 = 4000,
+    copilot: Copilot = .{},
+    /// THE privacy switch. False by default, and the only Copilot key a
+    /// workspace's own `.mnml/config.zon` may set — and only in a
+    /// TRUSTED workspace (`config/trust.zig`'s `copilot_share` sink), so
+    /// a repo you cloned cannot opt you in by shipping a config. It
+    /// turns sharing on for THIS workspace and no other.
+    copilot_here: bool = false,
     claude_show_all_accounts: bool = false,
     claude_meter_mode: ClaudeMeterMode = .compact,
     /// The Claude logins the usage chip and pane read; see `ClaudeAccount`.

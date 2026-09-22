@@ -36,7 +36,7 @@ pub const PtyId = u32;
 
 /// Who produced an `.err`. Workers never toast; they post this and the
 /// UI thread decides how to surface it.
-pub const Source = enum { todos, notes, findings, sessions, dock, git, lsp, dap, cdp, http, ai, pty, ipc, sonos, now_playing, marketplace, input, mount, transfer, grep };
+pub const Source = enum { todos, notes, findings, sessions, dock, git, lsp, dap, cdp, http, ai, copilot, pty, ipc, sonos, now_playing, marketplace, input, mount, transfer, grep };
 
 // Payloads for subsystems that do not exist yet. Each is an opaque
 // placeholder so the union has its final shape today; the subsystem
@@ -165,6 +165,11 @@ pub const AppEvent = union(enum) {
     focus: bool,
 
     lsp: struct { server: u32, msg: *LspEvent },
+    /// The Copilot language server's reader task (`copilot/client.zig`).
+    /// Its own variant rather than a row in `lsp`: Copilot is not
+    /// registered as a language server, and `app/lsp.zig` must never
+    /// see its frames.
+    copilot: struct { msg: *LspEvent },
     dap: struct { session: u32, msg: *DapEvent },
     /// The CDP worker: connected / a raw message / closed. Owned.
     cdp: *browser_pane.CdpEvent,
@@ -248,6 +253,7 @@ pub fn freeEvent(gpa: Allocator, ev: AppEvent) void {
         .syntax => |r| r.destroy(gpa),
         .ai => |a| freeAiMsg(gpa, a.msg),
         .lsp => |l| l.msg.destroy(gpa),
+        .copilot => |c| c.msg.destroy(gpa),
         .dap => |d| d.msg.destroy(gpa),
         .git => |r| r.destroy(gpa),
         .http => |p| p.destroy(gpa),

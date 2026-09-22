@@ -46,6 +46,7 @@ const agents = @import("agents.zig");
 const spend = @import("spend.zig");
 const usage_pane = @import("usage_pane.zig");
 const ghost_chip = @import("ghost_chip.zig");
+const copilot_app = @import("copilot.zig");
 const transcript = @import("../ai/transcript.zig");
 const ai_apply = @import("ai_apply.zig");
 const launch_profiles = @import("launch_profiles.zig");
@@ -318,6 +319,7 @@ pub fn noteEdit(app: *App) void {
     // edit to the config takes on the very next keystroke.
     app.ai.debounce.idle_ms = app.cfg.ai.suggest_idle_ms;
     app.ai.debounce.noteEdit(app.now_ms);
+    copilot_app.noteEdit(app);
 }
 
 /// Keys while a ghost is showing: Tab takes it, ctrl+→ a word,
@@ -362,6 +364,9 @@ fn acceptGhost(app: *App, e: *EditorPane, take_in: usize) Allocator.Error!bool {
     const arena = app.frame.allocator();
     const accepted = try arena.dupe(u8, ghost[0..take]);
     const remaining = try arena.dupe(u8, ghost[take..]);
+    // Before the splice, which is an edit that cancels the flight: the
+    // accept telemetry needs the item that is still on screen.
+    copilot_app.noteAccept(app, take, remaining.len);
     const at = e.buf.editor.cursor;
     try app.splice(e, at, at, accepted);
     try e.buf.editor.setGhostSuggestion(if (remaining.len > 0) remaining else null);
@@ -408,6 +413,11 @@ fn fireSuggestion(app: *App) Allocator.Error!void {
     const e = app.panes.editor(id) orelse return st.debounce.cancel();
     if (e.buf.editor.ghost_suggestion != null) return st.debounce.cancel();
     if (!acceptsGhost(e)) return st.debounce.cancel();
+    // A `.mnml/config.zon` written AFTER launch is not in `app.cfg`
+    // (`copilot.refreshConfig`, and `lsp.refreshServers` before it).
+    // Only look again when nothing has named a backend yet, so the
+    // common path — a key in the home config — costs nothing.
+    if (suggestBackend(app) == .unset) try copilot_app.refreshConfig(app);
     const backend = suggestBackend(app);
     switch (backend) {
         .unset => {
@@ -421,6 +431,10 @@ fn fireSuggestion(app: *App) Allocator.Error!void {
             }
             return st.debounce.cancel();
         },
+        // Copilot is not a worker of ours: `app/copilot.zig` owns the
+        // client, the privacy gate and the request. It settles the
+        // same debounce and posts the same `.suggestion`.
+        .copilot => return copilot_app.fireSuggestion(app, id, e),
         .claude_code, .claude_api => {},
     }
     if (e.buf.doc.path) |p| if (suggest.isSecretBearing(p)) return st.debounce.cancel();
@@ -518,6 +532,11 @@ fn suggestWorker(
     defer gpa.free(cwd);
     var raw: []u8 = undefined;
     switch (backend) {
+        // The worker only ever runs for the Claude family: the picker's
+        // other rows never reach `suggestWorker` (`fireSuggestion`
+        // returns first), and a silent `return` here would read as a
+        // request that vanished.
+        .unset, .local, .copilot => return postOutcome(events, io, gpa, pane, generation, .failed, "no worker for this backend"),
         .claude_api => {
             const body = api.completionRequest(gpa, model, suggest.system_prompt, prompt, suggest.max_tokens) catch return;
             defer gpa.free(body);
@@ -557,7 +576,6 @@ fn suggestWorker(
             }
             raw = out.text;
         },
-        .unset, .local => return,
     }
     defer gpa.free(raw);
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -1498,7 +1516,7 @@ fn toggleInline(app: *App) CommandError!void {
     app.toast("AI ghost-text: {s}", .{if (next) "on" else "off"});
 }
 
-pub const backend_rows = [_]suggest.Backend{ .claude_code, .claude_api, .local };
+pub const backend_rows = [_]suggest.Backend{ .claude_code, .claude_api, .copilot, .local };
 
 /// `ai.setup_suggestions`: the backend picker (change it any time).
 fn setupSuggestions(app: *App) CommandError!void {
@@ -1515,6 +1533,7 @@ fn setupSuggestions(app: *App) CommandError!void {
     const rows = [_]struct { b: suggest.Backend, label: []const u8, detail: []const u8 }{
         .{ .b = .claude_code, .label = "Claude Code sub", .detail = "reuses your Max/Pro plan · no separate API key · ~1s" },
         .{ .b = .claude_api, .label = "Claude API", .detail = "needs $ANTHROPIC_API_KEY · ~1s · works now" },
+        .{ .b = .copilot, .label = "GitHub Copilot", .detail = "your seat (free tier too) · opt in per workspace" },
         .{ .b = .local, .label = "Local model (embedded)", .detail = "not in this release — a migration note for now" },
     };
     for (rows) |r| {
@@ -1544,6 +1563,7 @@ pub fn setupAccept(app: *App, row: usize) CommandError!void {
     _ = try settings.persist(app, .home, &.{ "ai", "suggest_backend" }, b.token());
     _ = try settings.persist(app, .home, &.{ "ai", "inline_suggestions" }, true);
     switch (b) {
+        .copilot => try copilot_app.announcePick(app),
         .local => app.toast("{s}", .{suggest.migration_note}),
         .claude_api => app.toast("AI ghost-text: Claude API{s}", .{if (app.env.get(api.env_key) == null) " — export $ANTHROPIC_API_KEY to use it" else " · on"}),
         .claude_code => app.toast("AI ghost-text: Claude Code sub · on (run `claude` once to sign in)", .{}),
@@ -1911,8 +1931,18 @@ test "the setup picker lists the backends and Esc leaves the config alone; a pic
     const text = try tmp.dir.readFileAlloc(t.io, "config.zon", t.allocator, .unlimited);
     defer t.allocator.free(text);
     try t.expect(std.mem.indexOf(u8, text, ".suggest_backend = \"claude-api\"") != null);
-    // The local row toasts the migration note instead of enabling anything.
+    // The Copilot row (third) shares nothing by itself: the toast says
+    // what still has to happen, by name.
     try command.run(&app, .{ .static = .@"ai.setup_suggestions" });
+    try app.handle(.{ .key = Key.named(.down) });
+    try app.handle(.{ .key = Key.named(.down) });
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expectEqual(suggest.Backend.copilot, suggestBackend(&app));
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "ai.copilot_enable_here") != null);
+    // The local row (fourth) toasts the migration note instead of
+    // enabling anything.
+    try command.run(&app, .{ .static = .@"ai.setup_suggestions" });
+    try app.handle(.{ .key = Key.named(.down) });
     try app.handle(.{ .key = Key.named(.down) });
     try app.handle(.{ .key = Key.named(.down) });
     try app.handle(.{ .key = Key.named(.enter) });

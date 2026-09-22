@@ -894,6 +894,25 @@ pub fn build(b: *std.Build) void {
     corpus_run.step.dependOn(&fake_lsp_install.step);
     unit_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = fake_lsp_mod, .filters = test_filters, .test_runner = test_runner })).step);
     gate_step.dependOn(&b.addInstallArtifact(fake_lsp, .{ .dest_dir = .{ .override = gate_dir }, .dest_sub_path = fake_lsp_exe_name }).step);
+
+    // `mnml-fake-copilot` (tools/fake_copilot/) is the deterministic
+    // stand-in for GitHub Copilot's language server, reached the same
+    // two ways: `build_options.fake_copilot_exe` and
+    // `$MNML_FAKE_COPILOT`. The `copilot_*.test` scripts drive it, and
+    // its `--log` is how they prove that a workspace which has not
+    // opted in sends NOTHING.
+    const fake_copilot_mod = b.createModule(.{ .root_source_file = b.path("tools/fake_copilot/main.zig"), .target = target, .optimize = optimize });
+    const fake_copilot = b.addExecutable(.{ .name = "mnml-fake-copilot", .root_module = fake_copilot_mod });
+    const fake_copilot_install = b.addInstallArtifact(fake_copilot, .{});
+    b.getInstallStep().dependOn(&fake_copilot_install.step);
+    const fake_copilot_exe_name = b.fmt("mnml-fake-copilot{s}", .{if (target.result.os.tag == .windows) ".exe" else ""});
+    build_options.addOption([]const u8, "fake_copilot_exe", b.getInstallPath(.bin, fake_copilot_exe_name));
+    tests_run.step.dependOn(&fake_copilot_install.step);
+    e2e_run.step.dependOn(&fake_copilot_install.step);
+    gate_in_test.step.dependOn(&fake_copilot_install.step);
+    corpus_run.step.dependOn(&fake_copilot_install.step);
+    unit_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = fake_copilot_mod, .filters = test_filters, .test_runner = test_runner })).step);
+    gate_step.dependOn(&b.addInstallArtifact(fake_copilot, .{ .dest_dir = .{ .override = gate_dir }, .dest_sub_path = fake_copilot_exe_name }).step);
     // ── end sdk ──
 
 }

@@ -1,0 +1,23 @@
+# A Copilot server that is not installed is one clear toast with the
+# line that installs it — never a crash, and never the silent no-op
+# that would leave a user typing into a feature they think is on.
+# mnml never downloads it itself.
+write src/a.zig "const x = 1;\n"
+write .mnml/config.zon .{ .ai = .{ .suggest_backend = "copilot", .inline_suggestions = true, .suggest_idle_ms = 50, .copilot_here = true, .copilot = .{ .command = .{ "mnml-no-such-copilot-server", "--stdio" } } } }
+open src/a.zig
+command ai.copilot_status
+command messages.show
+expect screen contains "mnml-no-such-copilot-server not installed"
+expect screen contains "npm i -g @github"
+key esc
+
+# The app is still there and still editable.
+key end
+type "\nconst y = 2;"
+expect dirty true
+command file.save
+expect file src/a.zig contains "const y = 2;"
+
+# One toast, not one per keystroke: the backend goes quiet for the
+# session once it knows.
+expect screen contains "const y = 2;"

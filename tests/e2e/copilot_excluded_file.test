@@ -1,0 +1,37 @@
+# Opted in, and the server IS running and answering — but an excluded
+# file still sends nothing. The difference from
+# `copilot_privacy_off_by_default.test` is that here the log fills up
+# for the ordinary file, so "the excluded one is absent from it" is a
+# statement about a server that was perfectly able to receive it.
+write src/a.zig "const std = @import(\"std\");\n"
+write .env.local "TOKEN_SHAPED_THING=xxx\n"
+write .mnml/config.zon .{ .ai = .{ .suggest_backend = "copilot", .inline_suggestions = true, .suggest_idle_ms = 50, .copilot_here = true, .copilot = .{ .command = .{ "$MNML_FAKE_COPILOT", "--stdio", "--log", "copilot.log" } } } }
+
+# The ordinary file: the server starts, the document goes out, a
+# suggestion comes back.
+open src/a.zig
+key end
+type "\npub fn main() "
+wait 500
+type "void {"
+wait 700
+expect file copilot.log contains "textDocument/didOpen"
+expect file copilot.log contains "textDocument/inlineCompletion"
+
+# Now the excluded one. `.env*` is in the shipped exclude list AND the
+# name is secret-bearing, so two rules would each have stopped it.
+open .env.local
+key end
+type "\nSECOND_"
+wait 400
+type "LINE=yyy"
+wait 700
+expect screen lacks "fake_copilot_suggestion"
+
+# Its contents never reached the server: only one file was ever opened.
+expect file copilot.log lacks ".env"
+expect file copilot.log lacks "TOKEN_SHAPED_THING"
+command ai.copilot_status
+command messages.show
+expect screen contains "secret-looking file name"
+key esc

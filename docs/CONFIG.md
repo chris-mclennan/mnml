@@ -496,7 +496,9 @@ otherwise. Copy what you need; leave the rest out.
         // Which backend answers a ghost-text request. Not a typed field —
         // ai.setup_suggestions writes it and a runtime override wins for the
         // session. "claude-code" (your Max/Pro plan, via `claude -p`),
-        // "claude-api" ($ANTHROPIC_API_KEY), "local" (not in this release).
+        // "claude-api" ($ANTHROPIC_API_KEY), "copilot" (your GitHub Copilot
+        // seat, per-workspace and off until you opt in — see .copilot below),
+        // "local" (not in this release).
         .suggest_backend = "claude-code",
         // The model ghost text asks, and ONLY ghost text — the panes and the
         // agents keep .model. It defaults to a fast one: a suggestion is worth
@@ -513,6 +515,26 @@ otherwise. Copy what you need; leave the rest out.
         // says `timeout`. An answer that arrives after four seconds is for a
         // cursor that has moved on.
         .suggest_timeout_ms = 4000,
+        // GitHub Copilot as the ghost-text backend. NOTHING is sent until
+        // THIS workspace opts in: `suggest_backend = "copilot"` alone shares
+        // nothing, and there is no key that opts in on another workspace's
+        // behalf. `ai.copilot_status` says what is shared right now and why.
+        .copilot_here = false, // the opt-in, per workspace, default off
+        .copilot = .{
+            // The language server's argv. Empty = `copilot-language-server
+            // --stdio` on PATH. mnml NEVER downloads it — a missing binary is
+            // one toast with the install line. Write
+            // .{ "npx", "--yes", "@github/copilot-language-server", "--stdio" }
+            // if that is how you want it fetched (exec-bearing).
+            .command = .{},
+            // Files never sent. Empty = the shipped list (.env*, *.pem, *.key,
+            // id_*). Setting it REPLACES that list; the secret-name check and
+            // the gitignore check apply either way and cannot be turned off.
+            .exclude = .{},
+            // A GitHub Enterprise instance, passed to the server as
+            // `github-enterprise.uri`.
+            .github_enterprise_uri = null,
+        },
         .claude_show_all_accounts = false,
         // How the statusline's Claude chip shows several accounts: .off = the
         // active one alone, .compact = a sparkline block per account, .ticker =
@@ -894,11 +916,22 @@ workspace layer and everything else still applies:
 | `.startup.layout[]` with `.kind = .pty` | immediately, on open |
 | `.startup.tasks` | immediately, on open |
 | `.ai.launch_profiles[]` (`.binary` / `.args` / `.env` / `.worktree`) and `.ai.default_profile` | when you start a Claude / Codex session |
+| `.ai.copilot.command` | when you type, with Copilot ghost text on |
+| `.ai.copilot_here` | when you type, with Copilot ghost text on |
 | `.mnml/init.lua` (the script beside the config) | on open, and on `script.reload` |
 | `.mnml/integrations/*.zon` (the manifests beside the config) | when one of their commands runs |
 
 (`.tasks.<name>` bodies are not in the table: a task only runs when you
 ask for it by name.)
+
+`.ai.copilot_here` is the one row that is not an argv. It is in the
+table because its effect is the same shape: a repo you cloned could
+otherwise ship a `.mnml/config.zon` that opts *you* into sending that
+repo's files to GitHub, without you typing anything. Stripped, it reads
+as its default `false` — the safe direction — and a trusted workspace
+lists it by name: *Copilot sharing ai.copilot_here — runs `send this
+workspace's open files to GitHub Copilot` when you type, with Copilot
+ghost text on*. A layer that only turns it **off** claims nothing.
 
 ## Launchers and integration manifests
 

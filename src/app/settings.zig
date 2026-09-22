@@ -289,6 +289,12 @@ pub const rows = [_]RowSpec{
     //    discrete choices) ──
     .{ .path = "ai.inline_suggestions", .label = "Ghost text", .section = .ai, .scope = .home },
     .{ .path = "ai.suggest_backend", .label = "Ghost-text backend", .section = .ai, .scope = .home },
+    // Copilot's opt-in is the one AI row scoped to the WORKSPACE: it is
+    // consent for this project's files and must not follow the user to
+    // the next one. (Everything else Copilot needs — the argv, the
+    // exclude globs — is home-scoped and exec-bearing, so it is not a
+    // settings row at all.)
+    .{ .path = "ai.copilot_here", .label = "Copilot: share this workspace", .section = .ai, .scope = .workspace },
     .{ .path = "ai.suggest_idle_ms", .label = "Ghost-text idle (ms)", .section = .ai, .scope = .home, .number = .{ .min = config.Config.suggest_idle_ms_min, .max = config.Config.suggest_idle_ms_max, .step = 50 } },
     .{ .path = "ai.suggest_timeout_ms", .label = "Ghost-text budget (ms)", .section = .ai, .scope = .home, .number = .{ .min = config.Config.suggest_timeout_ms_min, .max = config.Config.suggest_timeout_ms_max, .step = 500 } },
     .{ .path = "ai.routing.claude.backend", .label = "Claude backend", .section = .ai, .scope = .home },
@@ -416,9 +422,10 @@ fn isSuggestBackend(comptime path: []const u8) bool {
     return std.mem.eql(u8, path, "ai.suggest_backend");
 }
 
-/// The ghost-text backend tokens, in `suggest.Backend` order.
-pub const suggest_tokens: [4][]const u8 = blk: {
-    var out: [4][]const u8 = undefined;
+/// The ghost-text backend tokens, in `suggest.Backend` order. The
+/// length follows the enum: a new backend must not need this line.
+pub const suggest_tokens: [std.enums.values(suggest.Backend).len][]const u8 = blk: {
+    var out: [std.enums.values(suggest.Backend).len][]const u8 = undefined;
     for (std.enums.values(suggest.Backend), 0..) |b, i| out[i] = b.token();
     break :blk out;
 };

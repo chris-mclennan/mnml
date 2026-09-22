@@ -1,0 +1,37 @@
+# The working path, end to end: opted in, typing produces the fake
+# server's canned ghost text, Tab accepts it into the buffer, and the
+# accept telemetry goes back carrying the ITEM'S OWN command id — the
+# thing a hand-built command would silently lose.
+write src/a.zig "const std = @import(\"std\");\n"
+write .mnml/config.zon .{ .ai = .{ .suggest_backend = "copilot", .inline_suggestions = true, .suggest_idle_ms = 50, .copilot_here = true, .copilot = .{ .command = .{ "$MNML_FAKE_COPILOT", "--stdio", "--log", "copilot.log" } } } }
+open src/a.zig
+key end
+
+# The first burst starts the server; the second asks it.
+type "\n"
+wait 500
+type "x"
+wait 700
+
+expect screen contains "fake_copilot_suggestion();"
+expect status contains "\"ghost\":\"shown\""
+
+# Tab accepts — the same key a Claude suggestion takes.
+key tab
+command file.save
+expect file src/a.zig contains "fake_copilot_suggestion();"
+
+# The handshake the README prescribes, in order, and the shown event
+# LSP has no room for.
+expect file copilot.log contains "initialize"
+expect file copilot.log contains "initialized"
+expect file copilot.log contains "textDocument/didOpen"
+expect file copilot.log contains "textDocument/didShowCompletion"
+
+# The accept, with Copilot's opaque id intact.
+expect file copilot.log contains "workspace/executeCommand github.copilot.didAcceptCompletionItem fake-op-1"
+
+# And it left the same `:messages` line every ghost-text request leaves.
+command messages.show
+expect screen contains "ghost-text: copilot"
+key esc

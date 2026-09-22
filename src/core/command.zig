@@ -121,6 +121,7 @@ const runner_tables = .{
     @import("../app/tasks.zig"),
     @import("../app/cmd_git.zig"),
     @import("../app/ai.zig"),
+    @import("../app/copilot.zig"),
     @import("../app/sessions_table.zig"),
     @import("../app/cloud_agents.zig"),
     @import("../app/spend.zig"),
@@ -837,7 +838,7 @@ test "ids round-trip through by_name and @tagName" {
     try std.testing.expectEqual(CommandId.@"app.quit", by_name.get("app.quit").?);
     try std.testing.expectEqualStrings("git.commit", name(.@"git.commit"));
     try std.testing.expect(by_name.get("nope.nope") == null);
-    try std.testing.expectEqual(@as(usize, 1104), count);
+    try std.testing.expectEqual(@as(usize, 1109), count);
     try std.testing.expectEqualStrings("Quit mnml", title(.@"app.quit"));
 }
 
