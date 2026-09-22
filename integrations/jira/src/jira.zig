@@ -141,9 +141,14 @@ pub const Client = struct {
         // not, which is every run with no mnml open.
         const gate: ratelimit.Acquired = if (c.limiter) |l| blk: {
             l.reason = @tagName(reason);
+            // The limiter writes the request's live phase — queued
+            // behind N, waiting on the bucket, sending — where the
+            // header reads it; `.idle` below is this side's to say.
+            l.live = c.notice;
             break :blk l.acquireVia(sdk.warm.classOf(reason));
         } else .{ .ok = true };
         if (c.notice) |n| n.record(gate);
+        defer if (c.notice) |n| n.setPhase(.idle, 0);
         const started = Io.Timestamp.now(c.io, .real);
         var client: std.http.Client = .{ .allocator = c.gpa, .io = c.io };
         defer client.deinit();

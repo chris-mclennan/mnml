@@ -290,30 +290,46 @@ pub const Painter = struct {
         var arena_mask = std.heap.ArenaAllocator.init(p.a.gpa);
         defer arena_mask.deinit();
         const shown = filters.countTrue(try p.a.mask(arena_mask.allocator(), t));
+        // What the fetch is doing — the live phase the worker left in
+        // `wait_notice` (queued behind N on the broker, waiting on the
+        // file bucket, on the wire), or the reason the last one failed.
+        // One wording, the toolkit's, on both panes of the family.
+        const now_ms = p.a.nowMs();
+        const busy = p.a.refresh.busy();
+        const fetch: Ch.Fetch = if (busy) blk: {
+            const live = p.a.wait_notice.live();
+            break :blk switch (live.phase) {
+                .queued => .{ .queued = live.behind },
+                .waiting => .waiting,
+                .idle, .sending => .{ .fetching = .{} },
+            };
+        } else if (t.last_error.len > 0) .{ .failed = t.last_error } else .idle;
         const sub = if (t.fetched)
             (if (shown == t.issues.len) p.fmt(" ({d})", .{t.issues.len}) else p.fmt(" ({d} of {d})", .{ shown, t.issues.len }))
-        else if (t.last_error.len > 0)
-            " (error)"
+        else if (busy or t.last_error.len > 0)
+            ""
         else
             " (loading…)";
         // A refetch runs on a worker: the rows on screen are the ones
-        // from last time, and the count says so rather than letting
-        // them read as current. Same ink as the count, so it is one
-        // phrase and the toolkit can clip the pair as one.
-        const sub_all = if (p.a.refresh.busy() and t.fetched)
-            p.fmt("{s}{s}", .{ sub, if (p.ui.ascii) " refreshing..." else " refreshing…" })
+        // from last time, and the count says what the fetch is doing
+        // beside it rather than letting them read as current. Same ink
+        // as the count, so it is one phrase and the toolkit can clip
+        // the pair as one. A failure sits in the same place.
+        const sub_all = if (busy or fetch == .failed)
+            p.fmt("{s}{s}", .{ sub, p.c.fetchSub(fetch, now_ms) })
         else
             sub;
         // The whole row from the toolkit: the title muted and bold, the
         // count dim beside it, `as of …` after that, and the ladder at
-        // the right with `?` at the very end. This pane used to paint
-        // its title in the ACCENT, which made the same header two
-        // colours depending on which integration you were looking at,
-        // and laid its own ladder beside the forge pane's copy of the
-        // same geometry.
+        // the right with `?` at the very end — the refresh chip turning
+        // the spinner while a fetch is out, where the host's own panels
+        // turn theirs. This pane used to paint its title in the
+        // ACCENT, which made the same header two colours depending on
+        // which integration you were looking at, and laid its own
+        // ladder beside the forge pane's copy of the same geometry.
         const head = try p.c.capsHeader(1, y, title, sub_all, t.fetched_at, p.a.nowSecs(), &.{
             .{ .text = help_chip_text, .target = .{ .chip = .help } },
-            .{ .text = p.c.refreshChipText(), .target = .{ .chip = .refresh } },
+            .{ .text = p.c.refreshOrBusyChipText(busy, now_ms), .target = .{ .chip = .refresh } },
         });
         if (p.a.selection.count() > 0) {
             _ = p.put(head.x + 1, y, head.edge -| (head.x + 1), p.fmt("{d} selected", .{p.a.selection.count()}), p.s.bulk);
@@ -1742,6 +1758,31 @@ test "Work: the header, the tab strip, the mode chips, the columns, the tree row
     const ar = arena.allocator();
     try paint(ar, &f, a, .{});
     const r0 = try rowText(ar, &f, 0);
+    // While a refetch is out the header says what it is doing — the
+    // forge pane's words, from the SDK — and the refresh chip turns
+    // the host's ring; queued behind the broker says how many ahead.
+    {
+        a.refresh.running = true;
+        a.wait_notice.setPhase(.queued, 2);
+        _ = arena.reset(.retain_capacity);
+        try paint(ar, &f, a, .{});
+        const busy_row = try rowText(ar, &f, 0);
+        try testing.expect(std.mem.indexOf(u8, busy_row, "queued behind 2 requests") != null);
+        try testing.expect(std.mem.indexOf(u8, busy_row, Ch.refresh_nerd) == null);
+        a.wait_notice.setPhase(.sending, 0);
+        _ = arena.reset(.retain_capacity);
+        try paint(ar, &f, a, .{});
+        const sending_row = try rowText(ar, &f, 0);
+        try testing.expect(std.mem.indexOf(u8, sending_row, "fetching\u{2026}") != null);
+        try testing.expect(std.mem.indexOf(u8, sending_row, "refreshing") == null);
+        a.refresh.running = false;
+        a.wait_notice.setPhase(.idle, 0);
+        _ = arena.reset(.retain_capacity);
+        try paint(ar, &f, a, .{});
+        const back = try rowText(ar, &f, 0);
+        try testing.expect(std.mem.indexOf(u8, back, "fetching") == null);
+        try testing.expect(std.mem.indexOf(u8, back, Ch.refresh_nerd) != null);
+    }
     try testing.expect(std.mem.startsWith(u8, r0, "▌JIRA WORK (3)"));
     try testing.expect(std.mem.endsWith(u8, r0, " ?"));
     try testing.expectEqualStrings("\u{258c} 1 Assigned   2 Recently Done", try rowText(ar, &f, 1));
