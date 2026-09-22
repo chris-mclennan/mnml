@@ -120,7 +120,7 @@ pub fn wrap(ui: Ui, s: []const u8, cap_in: u16) []const []const u8 {
         // The last line ends in the ellipsis, inside the cap.
         const last = lines.items[lines.items.len - 1];
         const keep = @min(charCount(last), cap - 1);
-        lines.items[lines.items.len - 1] = ui.fmt("{s}{s}", .{ last[0..byteAt(last, keep)], if (ui.ascii) "..." else "…" });
+        lines.items[lines.items.len - 1] = ui.fmt("{s}{s}", .{ last[0..byteAt(last, keep)], ui.ellipsisText() });
     }
     if (lines.items.len == 0) lines.append(ui.arena, "") catch {};
     return lines.items;

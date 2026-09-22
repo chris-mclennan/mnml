@@ -495,7 +495,7 @@ pub const KeyOpts = struct {
 /// strings — the state that holds them lives in `State.confirm`, which
 /// therefore needs no deinit.
 pub const reset_confirm_title = "Reset settings";
-pub const reset_confirm_message = "  Reset every setting to its default?";
+pub const reset_confirm_message = "Reset every setting to its default?";
 const reset_confirm_choices = [_]confirm_ui.Choice{
     .{ .key = 'r', .label = "Reset" },
     .{ .key = 'c', .label = "Cancel" },
@@ -741,7 +741,7 @@ pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item, subtitle: ?[]con
         .action => |a| widest = @max(widest, ui.width(a.label)),
         .section => |name| widest = @max(widest, ui.width(name) + 6),
     };
-    const hint = if (ui.ascii) hint_text_ascii else hint_text;
+    const hint = overlay.hintText(ui, hint_text);
     // ~60 % of the screen wide and ~70 % tall (the family idiom): wider
     // when the rows need it, up to `max_width`; shorter when the rows
     // fit — a long list scrolls inside the box instead of filling the
@@ -957,7 +957,7 @@ pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item, subtitle: ?[]con
 pub fn elideLeft(ui: Ui, s: []const u8, max: u16) []const u8 {
     if (max == 0) return "";
     if (ui.fitsIn(s, max)) return s;
-    const mark: []const u8 = if (ui.ascii) "..." else "…";
+    const mark = ui.ellipsisText();
     const budget = max -| @as(u16, if (ui.ascii) 3 else 1);
     if (budget == 0) return mark;
     var i: usize = s.len;
@@ -995,44 +995,23 @@ fn drawFilter(ui: Ui, r: Rect, s: *State, bg: vaxis.Color) ?Caret {
     });
 }
 
-const hint_text_ascii = "<- -> adjust - up/down move - r/R reset - Enter save - Esc cancel";
-const hint_text_sections_ascii = "<- -> adjust - up/down move - [ ] section - / search - r/R reset - Enter save - Esc cancel";
-const hint_text_search_ascii = "<- -> adjust - up/down move - / search - r/R reset - Enter save - Esc cancel";
-const hint_text_search_tight_ascii = "<- -> adjust - / search - r/R reset - Enter save - Esc cancel";
-const hint_text_tight_ascii = "<- -> adjust - r/R reset - Enter save - Esc cancel";
-const std_hint_sections_ascii = "<- -> adjust - up/down move - Tab section - type to search - ctrl+r reset - Enter save - Esc cancel";
-const std_hint_search_ascii = "<- -> adjust - up/down move - type to search - ctrl+r reset - Enter save - Esc cancel";
-const std_hint_search_tight_ascii = "<- -> adjust - type to search - ctrl+r reset - Enter save - Esc cancel";
-const std_hint_ascii = "<- -> adjust - up/down move - ctrl+r reset - Enter save - Esc cancel";
-const std_hint_tight_ascii = "<- -> adjust - ctrl+r reset - Enter save - Esc cancel";
-const filter_hint_ascii = "type to filter - <- -> caret - up/down move - Enter to the list - Esc clears";
-const filter_hint_move_ascii = "<- -> caret - up/down move - Enter to the list - Esc clears";
-const filter_hint_tight_ascii = "<- -> caret - Enter to the list - Esc clears";
-const filter_hint_tightest_ascii = "Enter to the list - Esc clears";
-
 /// The widest of the five hints that fits `room`, in descending width.
 /// Below the tightest the caller clips — and the tight form ends in
-/// `Esc cancel`, so what survives a clip is still the way out.
+/// `Esc cancel`, so what survives a clip is still the way out. The
+/// `--ascii` spelling is the hint language's (`overlay.hintText`), so
+/// the family keeps one string per form, not two.
 pub fn hintFor(ui: Ui, room: u16, typeahead: bool, filtering: bool) []const u8 {
-    if (filtering) {
-        const ff = if (ui.ascii)
-            [_][]const u8{ filter_hint_ascii, filter_hint_move_ascii, filter_hint_tight_ascii, filter_hint_tightest_ascii }
-        else
-            [_][]const u8{ filter_hint, filter_hint_move, filter_hint_tight, filter_hint_tightest };
-        for (ff) |f| if (ui.width(f) <= room) return f;
-        return ff[ff.len - 1];
-    }
-    const forms = if (typeahead)
-        (if (ui.ascii)
-            [_][]const u8{ std_hint_sections_ascii, std_hint_search_ascii, std_hint_search_tight_ascii, std_hint_ascii, std_hint_tight_ascii }
-        else
-            [_][]const u8{ std_hint_sections, std_hint_search, std_hint_search_tight, std_hint, std_hint_tight })
-    else if (ui.ascii)
-        [_][]const u8{ hint_text_sections_ascii, hint_text_search_ascii, hint_text_search_tight_ascii, hint_text_ascii, hint_text_tight_ascii }
+    const forms: []const []const u8 = if (filtering)
+        &.{ filter_hint, filter_hint_move, filter_hint_tight, filter_hint_tightest }
+    else if (typeahead)
+        &.{ std_hint_sections, std_hint_search, std_hint_search_tight, std_hint, std_hint_tight }
     else
-        [_][]const u8{ hint_text_sections, hint_text_search, hint_text_search_tight, hint_text, hint_text_tight };
-    for (forms) |f| if (ui.width(f) <= room) return f;
-    return forms[forms.len - 1];
+        &.{ hint_text_sections, hint_text_search, hint_text_search_tight, hint_text, hint_text_tight };
+    for (forms) |f| {
+        const shown = overlay.hintText(ui, f);
+        if (ui.width(shown) <= room) return shown;
+    }
+    return overlay.hintText(ui, forms[forms.len - 1]);
 }
 
 /// `12–40 of 97` while it and the hint both fit, `40/97` when they do
@@ -1044,7 +1023,7 @@ pub fn positionText(ui: Ui, scroll: usize, list_h: usize, total: usize, room: u1
     const last = @min(scroll + list_h, total);
     const dash = if (ui.ascii) "-" else "–";
     const widest = ui.width(ui.fmt("{d}{s}{d} of {d}", .{ total, dash, total, total }));
-    const hint_w = ui.width(if (ui.ascii) hint_text_ascii else hint_text);
+    const hint_w = ui.width(overlay.hintText(ui, hint_text));
     if (widest + 2 + hint_w <= room) return ui.fmt("{d}{s}{d} of {d}", .{ first, dash, last, total });
     return ui.fmt("{d}/{d}", .{ last, total });
 }
@@ -1087,7 +1066,7 @@ fn drawStrip(ui: Ui, r: Rect, s: *const State, items: []const Item, all: []const
     ui.fill(r, t.overlay_bg);
     const here = sectionOf(items, s.cursor);
     const here_name = if (here) |h| sectionName(items, h) else null;
-    const sep = if (ui.ascii) " - " else " · ";
+    const sep = overlay.hintText(ui, " · ");
     const n = sectionCount(all);
     var x = r.x + 1;
     var i: usize = 0;
@@ -1941,11 +1920,11 @@ fn boxRows(text: []const u8) BoxRows {
     var y: usize = 0;
     var seen_top = false;
     while (it.next()) |line| : (y += 1) {
-        if (std.mem.indexOf(u8, line, "\u{256d}") != null and !seen_top) {
+        if (std.mem.indexOf(u8, line, "\u{256d}") != null and !seen_top) { // chrome-audit: allow — a test helper reading the frame back
             out.top = y;
             seen_top = true;
         }
-        if (std.mem.indexOf(u8, line, "\u{2570}") != null) out.bottom = y;
+        if (std.mem.indexOf(u8, line, "\u{2570}") != null) out.bottom = y; // chrome-audit: allow — as above
     }
     return out;
 }

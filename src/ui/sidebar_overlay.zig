@@ -70,10 +70,7 @@ pub fn drawEdge(ui: Ui, edge: Rect) void {
     const pal = ui.theme.palette;
     const line = Theme.withFg(Theme.onBg(ui.theme.border, pal.bg_darker), pal.line);
     ui.fill(edge, line);
-    var y = edge.y;
-    while (y < edge.bottom()) : (y += 1) {
-        ui.canvas.put(edge.x, y, .{ .char = .{ .grapheme = if (ui.ascii) "|" else "│", .width = 1 }, .style = line });
-    }
+    ui.vrule(edge.x, edge.y, edge.h, line);
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────

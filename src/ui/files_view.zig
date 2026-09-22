@@ -376,8 +376,7 @@ fn drawPreview(ui: Ui, r: Rect, text: []const u8) void {
     const t = ui.theme;
     ui.fill(r, t.bg);
     if (r.w < 3) return;
-    var y: u16 = r.y;
-    while (y < r.bottom()) : (y += 1) ui.canvas.put(r.x, y, .{ .char = .{ .grapheme = if (ui.ascii) "|" else "│", .width = 1 }, .style = t.border });
+    ui.vrule(r.x, r.y, r.h, t.border);
     const body = Rect.init(r.x + 2, r.y, r.w -| 2, r.h);
     const style = Theme.onBg(t.muted, t.bg.bg);
     var lines = std.mem.splitScalar(u8, text, '\n');

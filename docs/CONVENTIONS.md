@@ -93,6 +93,50 @@ There is no third option, and no handler may stash the raw pointer to
 - Layout is the parent's job (`Rect.split*`); a component paints inside
   the rect it is given and clips to it.
 
+## If a thing has a component, draw it through the component
+
+The reason the component layer exists: adjust the language in the
+component and everywhere using it benefits. A painter that draws a
+frame from four corner literals, keeps its own `--ascii` twin of a hint
+string, or cuts a string with its own `"…"` has forked the drawing —
+it compiles, renders and reviews clean, and the only way it is ever
+found is two screens disagreeing. So:
+
+- **If a thing has a component, draw it through the component.**
+- **If the component lacks what you need, extend the component** — a
+  variant, a `Look`, a second entry point — **never fork the drawing.**
+  Two callers wanting the same missing variant is the signal to add it.
+- A true one-off (a glyph that is not a rule, a table's junctions, a
+  test helper reading a dump) carries `// chrome-audit: allow — <why>`
+  on its line, so the reason sits beside the shape it excuses.
+
+`zig build chrome-audit` (`tools/chrome_audit.zig`) is the guard for the
+cheap shapes — a box-drawing glyph as a whole literal outside the
+frame modules, an `if (ascii) "…" else "…"` pair a component already
+answers — and its unit test walks the real trees under `zig build
+unit`. What it cannot see (a chip painted as raw styled text, an empty
+state as a plain string) is what review is for.
+
+What each component owns (`src/ui/` unless noted):
+
+| component | owns |
+|---|---|
+| `border.zig` | every frame (`draw`, five glyph sets incl. `.ascii`) and every straight rule (`rule`, `ruleGlyph`); `Ui.hrule` / `Ui.vrule` are the short forms |
+| `overlay.zig` | the popup / menu / modal frames with their titles (`box`, `frameLook`), the hint row (`hint`) and the hint language's one `--ascii` spelling (`hintText`: `·` `←→` `↑↓` `←` `→` `⏎` `↵` `—`) |
+| `clip.zig` + `Ui.clipStr` / `Ui.ellipsisText` | cutting a string to cells and the ellipsis it leaves — `…`, or `...` under `--ascii` |
+| `header.zig` | the caps header: label, subtitle, the chip ladder on the right |
+| `chip.zig` | the `sort:` / `view:` / mode / refresh / new chips — text, styles, the hit |
+| `filter_input.zig` | the `/ filter` row: glyph, placeholder, caret, the hit |
+| `empty_state.zig` | "nothing here" copy with its glyph and its style |
+| `list_panel.zig` | the whole list panel: header + chips + filter + rows + marker + kebab + scrollbar |
+| `scrollbar.zig` | every scrollbar (`.glyph` and `.solid` looks) and its hit |
+| `render.zig`'s `drawMenu` (`src/app/`) | the context menu: rows, separator rules, the `menu_item` hits |
+| `toast.zig` · `prompt.zig` · `confirm.zig` · `tooltip.zig` · `which_key.zig` | one transient each, opened through `overlay.box` |
+| `bufferline.zig` | the file tabs (the tab strip in core) |
+| `pane_rail.zig` · `accent_color.zig` | the `▌` rail and the one accent ladder |
+| `expander.zig` · `tree_view.zig` | the `▸`/`▾` slot and the tree's connectors |
+| `sdk/mnml-sdk/src/pane/chrome.zig` | the same chrome on the integrations' side of the wire: `capsHeader`, `tabStrip`, `filterPill`, `rowGround`, `scrollbar`, `frameBox` / `frameTitled`, `vrule` / `hrule`, `confirmBox`, `hintRow`, `actionChips` — an integration supplies words and targets, never glyphs |
+
 ## Every pane wears a rail (`src/ui/pane_rail.zig`)
 
 A pane is a colour. One cell wide, down its left edge, its full height,

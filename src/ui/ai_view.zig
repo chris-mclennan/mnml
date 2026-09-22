@@ -55,8 +55,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: Props) u16 {
     }
     if (body.h > 0) {
         const r = body.row(0);
-        var x: u16 = r.x;
-        while (x < r.right()) : (x += 1) _ = ui.putStr(x, r.y, 1, if (ui.ascii) "-" else "─", Theme.onBg(th.border, th.bg.bg));
+        ui.hrule(r.x, r.y, r.w, Theme.onBg(th.border, th.bg.bg));
         body = body.splitTop(1).rest;
     }
     if (body.isEmpty()) return 0;

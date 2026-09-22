@@ -574,8 +574,7 @@ pub fn drawDetail(ui: Ui, pane: PaneId, area: Rect, p: DetailProps) void {
             hs.bold = true;
             var x = r.x + 1;
             x += u.putStr(x, r.y, r.w -| 2, u.fmt("{s} ", .{title}), hs);
-            const rule = if (u.ascii) "-" else "\u{2500}";
-            while (x < r.right() - 1) : (x += 1) _ = u.putStr(x, r.y, 1, rule, u.theme.muted);
+            u.hrule(x, r.y, (r.right() - 1) -| x, u.theme.muted);
             yy.* += 1;
             return true;
         }

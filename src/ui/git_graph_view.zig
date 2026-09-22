@@ -29,6 +29,7 @@ const vaxis = @import("vaxis");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
+const border = @import("border.zig");
 const clip = @import("clip.zig");
 const git_toolbar = @import("git_toolbar.zig");
 const overlay = @import("overlay.zig");
@@ -713,8 +714,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, view: *State, doc: Doc) Painted {
         list_area = Rect.init(body_full.x, body_full.y, body_full.w - detail_w - 1, body_full.h);
         detail_area = Rect.init(body_full.right() - detail_w, body_full.y, detail_w, body_full.h);
         const div = Rect.init(list_area.right(), body_full.y, 1, body_full.h);
-        var y: u16 = 0;
-        while (y < div.h) : (y += 1) _ = ui.putStr(div.x, div.y + y, 1, if (ui.ascii) "|" else "\u{2502}", Theme.withFg(ground, pal.grey));
+        ui.vrule(div.x, div.y, div.h, Theme.withFg(ground, pal.grey));
         ui.hit(div, .{ .script_hit = .{ .pane = pane, .id = divider_id } });
     }
     painted.list = list_area;
@@ -1156,7 +1156,7 @@ fn drawDetail(ui: Ui, pane: PaneId, area: Rect, view: *State, d: DetailDoc) void
     var lines: std.ArrayListUnmanaged(Line) = .empty;
     const head = ui.fmt(" {s} \u{B7} {s} \u{B7} {s} ", .{ d.short, d.author, d.age });
     const dashes = w -| (chars(head) + 1);
-    const dash: []const u8 = if (ui.ascii) "-" else "\u{2500}";
+    const dash = border.ruleGlyph(.h, ui.ascii);
     var dash_run: std.ArrayListUnmanaged(u8) = .empty;
     var i: usize = 0;
     while (i < dashes) : (i += 1) dash_run.appendSlice(arena, dash) catch return;
@@ -1269,7 +1269,7 @@ fn drawWipDetail(ui: Ui, pane: PaneId, area: Rect, wd: WipDoc) WipPainted {
     const head = takeChars(head_full, w -| 1);
     var hs = Theme.withFg(bg, pal.yellow);
     hs.bold = true;
-    lines.append(arena, lineOf(arena, &.{ .{ .text = if (ui.ascii) "-" else "\u{2500}", .style = Theme.withFg(bg, pal.line) }, .{ .text = head, .style = hs } }) catch return out) catch return out;
+    lines.append(arena, lineOf(arena, &.{ .{ .text = border.ruleGlyph(.h, ui.ascii), .style = Theme.withFg(bg, pal.line) }, .{ .text = head, .style = hs } }) catch return out) catch return out;
     lines.append(arena, lineOf(arena, &.{}) catch return out) catch return out;
 
     const sections = [_]struct { label: []const u8, files: []const WipFile, button: []const u8, staged: bool, accent: Color }{

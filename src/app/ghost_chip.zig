@@ -27,6 +27,7 @@ const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const suggest = @import("../ai/suggest.zig");
 const list_panel = @import("../ui/list_panel.zig");
+const clip = @import("../ui/clip.zig");
 const sl = @import("../ui/statusline.zig");
 const tooltip = @import("../ui/tooltip.zig");
 
@@ -181,7 +182,7 @@ pub fn chipText(arena: Allocator, ph: Phase, elapsed_ms: i64, now_ms: i64, ascii
     const mark = if (ascii) sl.ghost_ascii else sl.ghost_glyph;
     return switch (ph) {
         .idle, .shown => null,
-        .armed => try std.fmt.allocPrint(arena, " {s} {s} ", .{ mark, if (ascii) "..." else "…" }),
+        .armed => try std.fmt.allocPrint(arena, " {s} {s} ", .{ mark, clip.ellipsisText(ascii) }),
         .inflight => try std.fmt.allocPrint(arena, " {s} {s} {s} ", .{
             mark,
             list_panel.spinnerFrame(now_ms, ascii),

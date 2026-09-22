@@ -39,6 +39,7 @@ const vaxis = @import("vaxis");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
+const overlay = @import("overlay.zig");
 const parse_mod = @import("../http/parse.zig");
 const text_field = @import("text_field.zig");
 const editor_view = @import("editor_view.zig");
@@ -670,8 +671,7 @@ fn drawRequestBox(ui: Ui, pane: PaneId, r: Rect, m: Model) ?Caret {
     const divider = Rect.init(inner.x + left_w, inner.y, 1, inner.h);
     const right = Rect.init(inner.x + left_w + 1, inner.y, inner.w - left_w - 1, inner.h);
     const caret = drawEdit(ui, pane, left, m.edit_tab, m, focused, m.edit_scroll, false);
-    var dy = divider.y;
-    while (dy < divider.bottom()) : (dy += 1) _ = ui.putStr(divider.x, dy, 1, if (ui.ascii) "|" else "\u{2502}", .{ .fg = p.bg3, .bg = p.bg_dark });
+    ui.vrule(divider.x, divider.y, divider.h, .{ .fg = p.bg3, .bg = p.bg_dark });
     ui.hit(divider, .{ .script_hit = .{ .pane = pane, .id = hit_split_divider } });
     _ = drawEdit(ui, pane, right, split.tab, m, false, split.scroll, true);
     return caret;
@@ -694,7 +694,7 @@ fn drawEdit(ui: Ui, pane: PaneId, r: Rect, tab: EditTab, m: Model, focused: bool
         _ = ui.putStr(x, r.y, w, label, if (cur) .{ .fg = p.fg, .bg = p.bg_dark, .bold = true } else .{ .fg = p.comment, .bg = p.bg_dark });
         if (cur and r.h > 1) {
             var k: u16 = 0;
-            while (k < w) : (k += 1) _ = ui.putStr(x + k, r.y + 1, 1, if (ui.ascii) "=" else "\u{2501}", .{ .fg = p.yellow, .bg = p.bg_dark, .bold = true });
+            while (k < w) : (k += 1) _ = ui.putStr(x + k, r.y + 1, 1, if (ui.ascii) "=" else "\u{2501}", .{ .fg = p.yellow, .bg = p.bg_dark, .bold = true }); // chrome-audit: allow — the active tab's underline (a heavy bar, not a rule); core has no tab-strip component
         }
         ui.hit(Rect.init(x, r.y, w, 1), .{ .script_hit = .{ .pane = pane, .id = (if (secondary) hit_split_tab_base else hit_tab_base) + @as(u32, @intCast(i)) } });
         x += w + 2;
@@ -981,7 +981,7 @@ fn drawKvTable(ui: Ui, pane: PaneId, r: Rect, data: []const Pair, draft: ?Draft,
             if (y >= c.r.h) return;
             const row = c.r.row(y);
             var x = row.x + 2;
-            const h: []const u8 = if (c.ascii) "-" else "\u{2500}";
+            const h = border.ruleGlyph(.h, c.ascii);
             x += c.put(x, row.y, if (c.ascii) "+" else left, c.line);
             x = c.dashes(x, row.y, c.name_w + 2, h);
             x += c.put(x, row.y, if (c.ascii) "+" else sep, c.line);
@@ -1001,7 +1001,7 @@ fn drawKvTable(ui: Ui, pane: PaneId, r: Rect, data: []const Pair, draft: ?Draft,
         /// `  │ key │ value │ x │`; the cells' x for the caller's hits.
         fn cells(c: @This(), y: u16, key: []const u8, key_style: Style, value: []const u8, value_style: Style, xg: []const u8, x_style: Style) struct { key_x: u16, value_x: u16, x_x: u16 } {
             const rr = c.r.row(y);
-            const v: []const u8 = if (c.ascii) "|" else "\u{2502}";
+            const v = border.ruleGlyph(.v, c.ascii);
             var x = rr.x + 2;
             x += c.put(x, rr.y, v, c.line);
             x += 1;
@@ -1021,14 +1021,14 @@ fn drawKvTable(ui: Ui, pane: PaneId, r: Rect, data: []const Pair, draft: ?Draft,
         }
     };
     const c: Ctx = .{ .ui = ui, .r = r, .name_w = name_w, .value_w = value_w, .x_col_w = x_col_w, .line = line, .ascii = ascii };
-    c.rule(ry, "\u{250C}", "\u{252C}", "\u{2510}");
+    c.rule(ry, "\u{250C}", "\u{252C}", "\u{2510}"); // chrome-audit: allow — a table's junctions (md_view's shape); the runs are border.ruleGlyph
     ry += 1;
     if (ry < r.h) {
         const hdr: Style = .{ .fg = p.comment, .bg = p.bg_dark, .bold = true };
         _ = c.cells(ry, "Name", hdr, "Value", hdr, "   ", .{ .bg = p.bg_dark });
     }
     ry += 1;
-    c.rule(ry, "\u{251C}", "\u{253C}", "\u{2524}");
+    c.rule(ry, "\u{251C}", "\u{253C}", "\u{2524}"); // chrome-audit: allow — as above
     ry += 1;
     const key_color = switch (kind) {
         .params => p.fg,
@@ -1054,7 +1054,7 @@ fn drawKvTable(ui: Ui, pane: PaneId, r: Rect, data: []const Pair, draft: ?Draft,
         }
         ry += 1;
         if (i + 1 < data.len or draft != null) {
-            c.rule(ry, "\u{251C}", "\u{253C}", "\u{2524}");
+            c.rule(ry, "\u{251C}", "\u{253C}", "\u{2524}"); // chrome-audit: allow — as above
             ry += 1;
         }
     }
@@ -1076,7 +1076,7 @@ fn drawKvTable(ui: Ui, pane: PaneId, r: Rect, data: []const Pair, draft: ?Draft,
         }
         ry += 1;
     };
-    c.rule(ry, "\u{2514}", "\u{2534}", "\u{2518}");
+    c.rule(ry, "\u{2514}", "\u{2534}", "\u{2518}"); // chrome-audit: allow — as above
     ry += 1;
     if (ry < r.h) {
         const rr = r.row(ry);
@@ -1086,7 +1086,7 @@ fn drawKvTable(ui: Ui, pane: PaneId, r: Rect, data: []const Pair, draft: ?Draft,
                 ui.hit(rr, .{ .script_hit = .{ .pane = pane, .id = hit_add_row } });
             }
         } else {
-            _ = ui.putStr(rr.x, rr.y, rr.w, "    (Tab \u{00B7} `:`  \u{00B7}  Enter \u{2192} add + new row  \u{00B7}  Shift+Enter \u{2192} done  \u{00B7}  Esc \u{2192} cancel)", dim(p));
+            _ = ui.putStr(rr.x, rr.y, rr.w, overlay.hintText(ui, "    (Tab \u{00B7} `:`  \u{00B7}  Enter \u{2192} add + new row  \u{00B7}  Shift+Enter \u{2192} done  \u{00B7}  Esc \u{2192} cancel)"), dim(p));
         }
         ry += 1;
     }
@@ -1201,7 +1201,7 @@ fn drawAuth(ui: Ui, pane: PaneId, r: Rect, m: Model, focused: bool) void {
             if (o.set[i]) _ = ui.putStr(x + 1, row.y, row.right() -| (x + 1), "*", .{ .fg = if (sel) p.bg_dark else p.yellow, .bg = bg, .bold = true });
             ui.hit(row, .{ .script_hit = .{ .pane = pane, .id = hit_auth_row + @as(u32, @intCast(idx)) } });
         } else if (vi == total - 1) {
-            _ = ui.putStr(r.x + 4, row.y, r.w -| 4, if (ui.ascii) "(<- -> toggle / step  -  Enter set  -  r config default  -  * set by this request)" else "(\u{2190}\u{2192} toggle / step \u{00B7} Enter set \u{00B7} r config default \u{00B7} * set by this request)", dim(p));
+            _ = ui.putStr(r.x + 4, row.y, r.w -| 4, overlay.hintText(ui, "(\u{2190}\u{2192} toggle / step \u{00B7} Enter set \u{00B7} r config default \u{00B7} * set by this request)"), dim(p));
         }
     }
 }
@@ -1221,7 +1221,7 @@ fn drawVars(ui: Ui, pane: PaneId, r: Rect, m: Model, focused: bool) void {
     var x = r.x;
     x += ui.putStr(x, r.y, r.w, "    env: ", dim(p));
     x += ui.putStr(x, r.y, r.right() -| x, ui.fmt("{s}.env", .{m.env_name orelse "dev"}), .{ .fg = p.cyan, .bg = p.bg_dark, .bold = true });
-    _ = ui.putStr(x, r.y, r.right() -| x, "   \u{00B7} click cell to edit \u{00B7} Tab commits \u{00B7} Esc cancels", dim(p));
+    _ = ui.putStr(x, r.y, r.right() -| x, overlay.hintText(ui, "   \u{00B7} click cell to edit \u{00B7} Tab commits \u{00B7} Esc cancels"), dim(p));
     if (r.h <= 2) return;
     const rows = ui.arena.alloc(Pair, m.vars.len) catch return;
     for (m.vars, 0..) |v, i| rows[i] = .{ .key = v.name, .value = v.value orelse "" };
@@ -1464,7 +1464,7 @@ fn drawResponseStrip(ui: Ui, pane: PaneId, inner: Rect, m: Model) void {
         _ = ui.putStr(x, label_y, w, label, if (cur) .{ .fg = p.fg, .bg = p.bg_dark, .bold = true } else dim(p));
         if (cur) {
             var k: u16 = 0;
-            while (k < w) : (k += 1) _ = ui.putStr(x + k, bar_y, 1, if (ui.ascii) "=" else "\u{2501}", .{ .fg = p.yellow, .bg = p.bg_dark, .bold = true });
+            while (k < w) : (k += 1) _ = ui.putStr(x + k, bar_y, 1, if (ui.ascii) "=" else "\u{2501}", .{ .fg = p.yellow, .bg = p.bg_dark, .bold = true }); // chrome-audit: allow — as above
         }
         ui.hit(Rect.init(x, label_y, w, 1), .{ .script_hit = .{ .pane = pane, .id = hit_resp_tab_base + @as(u32, @intCast(i)) } });
         x += w + 2;

@@ -20,7 +20,7 @@ pub const Ellipsis = enum {
     /// Plain cut.
     none,
 
-    fn text(e: Ellipsis) []const u8 {
+    pub fn text(e: Ellipsis) []const u8 {
         return switch (e) {
             .unicode => "…",
             .ascii => "...",
@@ -28,7 +28,7 @@ pub const Ellipsis = enum {
         };
     }
 
-    fn cells(e: Ellipsis) u16 {
+    pub fn cells(e: Ellipsis) u16 {
         return switch (e) {
             .unicode => 1,
             .ascii => 3,
@@ -36,6 +36,20 @@ pub const Ellipsis = enum {
         };
     }
 };
+
+/// The ellipsis a terminal gets: the one-cell glyph where the font has
+/// it, `...` under `--ascii`. A painter that cuts a string itself — a
+/// column header, a toast's last line, a grep row's tail — asks here
+/// instead of spelling the pair again. Nine sites did spell it, which
+/// is nine chances for one to disagree with what `clipStr` paints.
+pub fn ellipsisFor(ascii: bool) Ellipsis {
+    return if (ascii) .ascii else .unicode;
+}
+
+/// `ellipsisFor(ascii).text()` — the glyph itself, for a `fmt` or a `putStr`.
+pub fn ellipsisText(ascii: bool) []const u8 {
+    return ellipsisFor(ascii).text();
+}
 
 pub const Options = struct {
     method: Method = .unicode,

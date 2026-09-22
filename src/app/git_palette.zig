@@ -1056,7 +1056,7 @@ pub fn activate(app: *App, idx: usize) Allocator.Error!void {
             },
             .tag => |t| {
                 try setSelected(app, t.name);
-                break :blk git.openConfirm(app, .{ .checkout = try gpa.dupe(u8, t.name) }, try std.fmt.allocPrint(gpa, "  Checkout tag {s}? (detached HEAD)", .{t.name}));
+                break :blk git.openConfirm(app, .{ .checkout = try gpa.dupe(u8, t.name) }, try std.fmt.allocPrint(gpa, "Checkout tag {s}? (detached HEAD)", .{t.name}));
             },
         }
     };
@@ -1169,9 +1169,9 @@ pub fn confirmRemoveWorktreeBranch(app: *App, wt: parse.Worktree) CommandError!v
     // the panels name it — workspace-relative where it is under one.
     const shown = treeLabel(app, arena, wt.path);
     const message = if (wt.dirty_files > 0)
-        try std.fmt.allocPrint(gpa, "  Remove worktree {s} and delete branch {s}? {d} uncommitted file{s} \u{2014} Force throws {s} away.", .{ shown, wt.branch, wt.dirty_files, if (wt.dirty_files == 1) "" else "s", if (wt.dirty_files == 1) "it" else "them" })
+        try std.fmt.allocPrint(gpa, "Remove worktree {s} and delete branch {s}? {d} uncommitted file{s} \u{2014} Force throws {s} away.", .{ shown, wt.branch, wt.dirty_files, if (wt.dirty_files == 1) "" else "s", if (wt.dirty_files == 1) "it" else "them" })
     else
-        try std.fmt.allocPrint(gpa, "  Remove worktree {s} and delete branch {s}? Force deletes the branch even when it is not merged.", .{ shown, wt.branch });
+        try std.fmt.allocPrint(gpa, "Remove worktree {s} and delete branch {s}? Force deletes the branch even when it is not merged.", .{ shown, wt.branch });
     errdefer gpa.free(message);
     try git.openConfirmWith(app, .{ .worktree_remove_branch = .{ .path = path, .branch = branch, .dirty_files = wt.dirty_files } }, "Remove worktree", message, &git.remove_branch_choices);
 }
@@ -1460,7 +1460,7 @@ pub fn menuAction(app: *App, a: MenuAct) Allocator.Error!void {
                         // tree on show are refused by name.
                         if (wt.main) break :blk app.diag.fail(arena, "remove worktree: {s} is the main worktree", .{wt.path});
                         if (gs.activeRepo()) |r| if (samePath(app, arena, r.path, wt.path)) break :blk app.diag.fail(arena, "remove worktree: {s} is the tree on show \u{2014} switch to another first", .{wt.path});
-                        break :blk git.openConfirm(app, .{ .worktree_remove = try gpa.dupe(u8, wt.path) }, try std.fmt.allocPrint(gpa, "  Remove worktree {s}?", .{wt.path}));
+                        break :blk git.openConfirm(app, .{ .worktree_remove = try gpa.dupe(u8, wt.path) }, try std.fmt.allocPrint(gpa, "Remove worktree {s}?", .{wt.path}));
                     },
                 }
                 break :blk;
@@ -1482,8 +1482,8 @@ pub fn menuAction(app: *App, a: MenuAct) Allocator.Error!void {
                 if (a.idx >= gs.rail_tags.len) break :blk;
                 const name = gs.rail_tags[a.idx].name;
                 switch (a.what) {
-                    .tag_checkout => break :blk git.openConfirm(app, .{ .checkout = try gpa.dupe(u8, name) }, try std.fmt.allocPrint(gpa, "  Checkout tag {s}? (detached HEAD)", .{name})),
-                    .tag_delete => break :blk git.openConfirm(app, .{ .tag_delete = try gpa.dupe(u8, name) }, try std.fmt.allocPrint(gpa, "  Delete tag {s}?", .{name})),
+                    .tag_checkout => break :blk git.openConfirm(app, .{ .checkout = try gpa.dupe(u8, name) }, try std.fmt.allocPrint(gpa, "Checkout tag {s}? (detached HEAD)", .{name})),
+                    .tag_delete => break :blk git.openConfirm(app, .{ .tag_delete = try gpa.dupe(u8, name) }, try std.fmt.allocPrint(gpa, "Delete tag {s}?", .{name})),
                     .new_branch_from => break :blk git.newBranchFrom(app, name),
                     .worktree_from => break :blk git.worktreeFrom(app, name),
                     else => {
@@ -1509,7 +1509,7 @@ pub fn menuAction(app: *App, a: MenuAct) Allocator.Error!void {
             .rebase_interactive => break :blk git.openPlanOnto(app, git.activeGraph(app) orelse break :blk app.diag.fail(arena, "rebase: open the commit graph first (git.graph)", .{}), name),
             // From the row's branch, not HEAD (the current row's is HEAD).
             .new_branch => break :blk git.newBranchFrom(app, name),
-            .delete_branch => break :blk git.openConfirm(app, .{ .delete_branch = try gpa.dupe(u8, name) }, try std.fmt.allocPrint(gpa, "  Delete branch {s}? (git branch -D)", .{name})),
+            .delete_branch => break :blk git.openConfirm(app, .{ .delete_branch = try gpa.dupe(u8, name) }, try std.fmt.allocPrint(gpa, "Delete branch {s}? (git branch -D)", .{name})),
             .diff_current => break :blk git.diffAgainstCurrent(app, repo, name),
             .reset_soft => break :blk git.resetTo(app, .soft, name),
             .reset_mixed => break :blk git.resetTo(app, .mixed, name),

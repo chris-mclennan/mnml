@@ -75,6 +75,14 @@ jobs:
         shell: bash
         run: zig build arena-audit --summary failures
 
+      # Chrome a component owns, drawn by hand somewhere else: a box
+      # glyph as a whole literal outside the frame modules, an
+      # `if (ascii) "…" else "…"` pair a component already answers.
+      # `zig build unit` runs the same walk; this step names the sites.
+      - name: zig build chrome-audit (chrome is drawn through its component)
+        shell: bash
+        run: zig build chrome-audit --summary failures
+
       # Every spec id has a runner (D5): `-Dpartial=false` turns a missing
       # runner into a compile error.
       - name: zig build -Dpartial=false (every command id has a runner)

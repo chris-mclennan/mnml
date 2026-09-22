@@ -768,11 +768,11 @@ pub fn drawCluster(ui: Ui, area: Rect, c: Cluster, id: ClusterIds) void {
     const dot: Style = .{ .fg = pal.fg, .bg = chip_bg };
     const bar: Style = .{ .fg = pal.comment, .bg = chip_bg };
     if (c.on_alt) {
-        _ = ui.putStr(x, y, 1, "\u{2501}", bar);
+        _ = ui.putStr(x, y, 1, "\u{2501}", bar); // chrome-audit: allow — the theme pill's bar is a glyph, not a rule
         _ = ui.putStr(x + 1, y, 1, dirty_dot, dot);
     } else {
         _ = ui.putStr(x, y, 1, dirty_dot, dot);
-        _ = ui.putStr(x + 1, y, 1, "\u{2501}", bar);
+        _ = ui.putStr(x + 1, y, 1, "\u{2501}", bar); // chrome-audit: allow — as above
     }
     ui.hit(pill, .{ .button = id.theme });
     x += 3;

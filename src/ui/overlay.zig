@@ -102,33 +102,59 @@ pub fn boxLook(ui: Ui, screen: Rect, w: u16, h: u16, title: ?[]const u8, anchor:
     return frameLook(ui, place(screen, w, h, anchor), title, look);
 }
 
-/// A dim hint row (`  enter to submit · esc to cancel`); `·` becomes
-/// `-` under `--ascii`.
+/// A dim hint row (`  enter to submit · esc to cancel`), in the hint
+/// language's `--ascii` spelling when the terminal needs it.
 pub fn hint(ui: Ui, r: Rect, text: []const u8) void {
     if (r.isEmpty()) return;
     const t = ui.theme;
     var s = @import("theme.zig").onBg(t.muted, t.overlay_bg.bg);
     s.dim = false;
-    const shown = if (ui.ascii) asciiDots(ui, text) else text;
-    _ = ui.putStr(r.x, r.y, r.w, ui.clipStr(shown, r.w), s);
+    _ = ui.putStr(r.x, r.y, r.w, ui.clipStr(hintText(ui, text), r.w), s);
 }
 
-fn asciiDots(ui: Ui, text: []const u8) []const u8 {
-    const out = ui.arena.alloc(u8, text.len) catch return text;
-    var n: usize = 0;
+/// The hint language's `--ascii` spelling, one pair per glyph. Every
+/// hint row in the app is written once, in the unicode form, and
+/// comes through here; before this table nine painters each kept a
+/// second string by hand, and they had drifted — `<- ->` beside
+/// `<-/->`, `enter` beside `Enter`, ` - ` beside `  -  ` — which is the
+/// thing a component exists to stop. Order matters: the two-arrow
+/// pairs go before the single arrows they contain.
+pub const ascii_pairs = [_]struct { u: []const u8, a: []const u8 }{
+    .{ .u = "\u{2190}\u{2192}", .a = "<- ->" }, // ←→
+    .{ .u = "\u{2191}\u{2193}", .a = "up/down" }, // ↑↓
+    .{ .u = "\u{2190}", .a = "<-" }, // ←
+    .{ .u = "\u{2192}", .a = "->" }, // →
+    .{ .u = "\u{23ce}", .a = "enter" }, // ⏎
+    .{ .u = "\u{21b5}", .a = "enter" }, // ↵
+    .{ .u = "\u{2014}", .a = "-" }, // —
+    .{ .u = "\u{b7}", .a = "-" }, // ·
+};
+
+/// `text` as the terminal will read it: unchanged, or its `--ascii`
+/// spelling on the frame arena. A painter that lays a hint itself (a
+/// pane's legend row, a footer) asks here rather than keeping a twin.
+pub fn hintText(ui: Ui, text: []const u8) []const u8 {
+    if (!ui.ascii) return text;
+    return asciiHint(ui.arena, text) catch text;
+}
+
+/// The `--ascii` spelling of `text`, allocated on `arena`.
+pub fn asciiHint(arena: std.mem.Allocator, text: []const u8) std.mem.Allocator.Error![]const u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    try out.ensureTotalCapacity(arena, text.len);
     var i: usize = 0;
-    while (i < text.len) {
-        if (std.mem.startsWith(u8, text[i..], "·")) {
-            out[n] = '-';
-            n += 1;
-            i += "·".len;
-        } else {
-            out[n] = text[i];
-            n += 1;
-            i += 1;
+    scan: while (i < text.len) {
+        for (ascii_pairs) |pr| {
+            if (std.mem.startsWith(u8, text[i..], pr.u)) {
+                try out.appendSlice(arena, pr.a);
+                i += pr.u.len;
+                continue :scan;
+            }
         }
+        try out.append(arena, text[i]);
+        i += 1;
     }
-    return out[0..n];
+    return out.toOwnedSlice(arena);
 }
 
 // ── tests ──
@@ -196,4 +222,25 @@ test "the menu and modal looks are square; the modal title is the accent chip" {
     ui.ascii = true;
     _ = boxLook(ui, f.full(), 14, 4, "Help", .top, .modal);
     try f.expectRow(0, "   + Help ------+");
+}
+
+test "the hint language has one ascii spelling, and a hint row paints it" {
+    var f = try Fixture.init(60, 3);
+    defer f.deinit();
+    var ui = f.ui();
+    try testing.expectEqualStrings("a · b", hintText(ui, "a · b"));
+    ui.ascii = true;
+    // The pairs the families used to keep by hand, and the two they
+    // never had (`↵`, `—`).
+    try testing.expectEqualStrings(
+        "<- -> adjust - up/down move - <- a - -> b - enter c - enter d - e - f",
+        hintText(ui, "←→ adjust · ↑↓ move · ← a · → b · ⏎ c · ↵ d · e — f"),
+    );
+    // The two-arrow pairs win over the single arrows they contain.
+    try testing.expectEqualStrings("[<- ->]", hintText(ui, "[←→]"));
+    hint(ui, Rect.init(0, 1, 60, 1), "  enter to submit · esc to cancel");
+    try f.expectRow(1, "  enter to submit - esc to cancel");
+    const owned = try asciiHint(testing.allocator, "x · y");
+    defer testing.allocator.free(owned);
+    try testing.expectEqualStrings("x - y", owned);
 }

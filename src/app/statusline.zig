@@ -34,6 +34,7 @@ const App = app_mod.App;
 const Rect = @import("../ui/rect.zig");
 const Ui = @import("../ui/context.zig");
 const Theme = @import("../ui/theme.zig");
+const overlay = @import("../ui/overlay.zig");
 const Color = Theme.Color;
 const sl = @import("../ui/statusline.zig");
 const Seg = sl.Seg;
@@ -274,8 +275,7 @@ const Lane = std.ArrayListUnmanaged(Seg);
 pub fn highlightChipText(e: *const app_mod.EditorPane, ui: Ui) []const u8 {
     var buf: [24]u8 = undefined;
     const size = syntax_mod.Syntax.sizeLabel(&buf, e.syntax.size_bytes);
-    const dot = if (ui.ascii) "-" else "·";
-    return ui.fmt(" highlight {s} {s} {s} ", .{ if (e.syntax.off) "off" else "on", dot, size });
+    return overlay.hintText(ui, ui.fmt(" highlight {s} · {s} ", .{ if (e.syntax.off) "off" else "on", size }));
 }
 
 fn push(lane: *Lane, arena: Allocator, seg: Seg) Allocator.Error!void {

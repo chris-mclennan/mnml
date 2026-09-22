@@ -309,10 +309,7 @@ fn paintBody(arena: Allocator, p: *Painter, body: Box) Allocator.Error!void {
     if (app.detail_visible) {
         const x: u16 = if (split) body.x + list_w + 1 else body.x;
         const w: u16 = if (split) body.w -| (list_w + 1) else body.w;
-        if (split) {
-            var yy = body.y;
-            while (yy < body.y + body.h) : (yy += 1) p.f.put(body.x + list_w, yy, "│", .{ .fg = p.th.border });
-        }
+        if (split) p.c.vrule(body.x + list_w, body.y, body.h, .{ .fg = p.th.border });
         try paintDetail(arena, p, .{ .x = x, .y = body.y, .w = w, .h = body.h });
     }
 }
@@ -781,24 +778,10 @@ fn paintPicker(arena: Allocator, p: *Painter) Allocator.Error!void {
     if (vis.len == 0) _ = p.text(ix, list_y, iw, "nothing matches", .{ .fg = th.muted, .bg = th.cursor_line });
 }
 
+/// The toolkit's frame (`+-+` under `--ascii`, which this pane's own
+/// copy never had).
 fn paintFrame(p: *Painter, b: Box, style: Style) void {
-    if (b.w < 2 or b.h < 2) return;
-    const right = b.x + b.w - 1;
-    const bottom = b.y + b.h - 1;
-    p.f.put(b.x, b.y, "┌", style);
-    p.f.put(right, b.y, "┐", style);
-    p.f.put(b.x, bottom, "└", style);
-    p.f.put(right, bottom, "┘", style);
-    var x = b.x + 1;
-    while (x < right) : (x += 1) {
-        p.f.put(x, b.y, "─", style);
-        p.f.put(x, bottom, "─", style);
-    }
-    var y = b.y + 1;
-    while (y < bottom) : (y += 1) {
-        p.f.put(b.x, y, "│", style);
-        p.f.put(right, y, "│", style);
-    }
+    p.c.frameBox(.{ .x = b.x, .y = b.y, .w = b.w, .h = b.h }, style);
 }
 
 /// The key sheet: mnml's help shape — a centred box, a section

@@ -32,7 +32,6 @@ pub const PaneId = ids.PaneId;
 pub const Caret = text_field.Caret;
 
 pub const hint_text = "⏎ edit · ←→ adjust · + add · x remove · J/K move · n null · / filter · e source · ^S save · esc revert";
-pub const hint_text_ascii = "Enter edit - <-/-> adjust - + add - x remove - J/K move - n null - / filter - e source - ^S save - esc revert";
 pub const max_listed_options: usize = 6;
 
 /// Paints the pane; returns the caret when a field or the filter has it.
@@ -66,7 +65,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, z: *ZonPane, focused: bool) ?Caret
     // ── the hint row ──
     if (rest.h >= 6) {
         const hr = rest.splitBottom(1);
-        const hint = if (ui.ascii) hint_text_ascii else hint_text;
+        const hint = overlay.hintText(ui, hint_text);
         _ = ui.putStr(hr.rest.x + 1, hr.rest.y, hr.rest.w -| 1, ui.clipStr(hint, hr.rest.w -| 1), Theme.onBg(t.muted, t.bg.bg));
         rest = hr.top;
     }

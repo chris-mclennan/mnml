@@ -13,6 +13,7 @@ const vaxis = @import("vaxis");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
+const overlay = @import("overlay.zig");
 const list_panel = @import("list_panel.zig");
 const ids = @import("../core/ids.zig");
 const tests_pane = @import("../app/tests_pane.zig");
@@ -66,12 +67,11 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, pr: Props) void {
                 y += 1;
                 if (y >= area.h) return;
             }
-            _ = ui.putStr(area.x, area.y + y, area.w, ui.clipStr(hint(area.w, p.sort, ui.ascii), area.w), Theme.onBg(t.muted, t.bg.bg));
+            _ = ui.putStr(area.x, area.y + y, area.w, ui.clipStr(overlay.hintText(ui, hint(area.w, p.sort)), area.w), Theme.onBg(t.muted, t.bg.bg));
             y += 1;
             if (y >= area.h) return;
             const rule = area.row(y);
-            var x = rule.x;
-            while (x < rule.right()) : (x += 1) _ = ui.putStr(x, rule.y, 1, if (ui.ascii) "-" else "─", Theme.onBg(t.muted, t.bg.bg));
+            ui.hrule(rule.x, rule.y, rule.w, Theme.onBg(t.muted, t.bg.bg));
             y += 1;
             if (y >= area.h) return;
             drawRows(ui, pane, Rect.init(area.x, area.y + y, area.w, area.h - y), p, pr.wobbly, pr.focused);
@@ -103,8 +103,7 @@ fn drawTally(ui: Ui, r: Rect, p: *const tests_pane.TestsPane, wobbly: []const bo
 }
 
 /// Width-aware: the whole legend, a shorter one, the two keys that matter.
-pub fn hint(w: u16, sort: tests_pane.Sort, ascii: bool) []const u8 {
-    _ = ascii;
+pub fn hint(w: u16, sort: tests_pane.Sort) []const u8 {
     return switch (sort) {
         .file_line => if (w >= 110) "  ↵ open · t trace · h heal (Claude) · r re-run · a all · f file · R last-failed · s sort [file:line] · esc close" else if (w >= 60) "  ↵ open · t trace · r re-run · a all · R last-failed · s [file:line]" else if (w >= 32) "  ↵ open · r re-run · esc" else "  ↵ open · r run",
         .duration_desc => if (w >= 110) "  ↵ open · t trace · h heal (Claude) · r re-run · a all · f file · R last-failed · s sort [slowest] · esc close" else if (w >= 60) "  ↵ open · t trace · r re-run · a all · R last-failed · s [slowest]" else if (w >= 32) "  ↵ open · r re-run · esc" else "  ↵ open · r run",
@@ -211,6 +210,6 @@ test "the results pane paints the command, the tally, headers, signed rows, the 
     try f.expectRow(2, "    running `npx playwright test`: FileNotFound");
     try f.expectRow(3, "    second");
     // Narrow: the short hint.
-    try testing.expectEqualStrings("  ↵ open · r re-run · esc", hint(40, .file_line, false));
-    try testing.expectEqualStrings("  ↵ open · r run", hint(20, .duration_desc, false));
+    try testing.expectEqualStrings("  ↵ open · r re-run · esc", hint(40, .file_line));
+    try testing.expectEqualStrings("  ↵ open · r run", hint(20, .duration_desc));
 }

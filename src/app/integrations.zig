@@ -2708,9 +2708,9 @@ fn removeAt(app: *App, i: usize) CommandError!void {
     const bin = std.fs.path.basename(try expandEnv(app, arena, inst.manifest.binary));
     const takes_link = !inst.manifest.isLauncher() and !binaryStillUsed(app, inst.manifest.binary, inst.id());
     const msg = if (takes_link)
-        try std.fmt.allocPrint(app.gpa, "  Remove {s}? Its manifest {s} and the link bin/{s} are deleted; the binary itself stays.", .{ inst.manifest.label, app.relPath(inst.path), bin })
+        try std.fmt.allocPrint(app.gpa, "Remove {s}? Its manifest {s} and the link bin/{s} are deleted; the binary itself stays.", .{ inst.manifest.label, app.relPath(inst.path), bin })
     else
-        try std.fmt.allocPrint(app.gpa, "  Remove {s}? Its manifest {s} is deleted; the binary stays.", .{ inst.manifest.label, app.relPath(inst.path) });
+        try std.fmt.allocPrint(app.gpa, "Remove {s}? Its manifest {s} is deleted; the binary stays.", .{ inst.manifest.label, app.relPath(inst.path) });
     errdefer app.gpa.free(msg);
     const id = try app.gpa.dupe(u8, inst.id());
     errdefer app.gpa.free(id);

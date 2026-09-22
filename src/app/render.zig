@@ -606,8 +606,7 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
             const pal = app.theme.palette;
             const line = Theme.withFg(Theme.onBg(app.theme.border, pal.bg_darker), pal.line);
             ui.canvas.fill(fr.rail_border, line);
-            var y: u16 = fr.rail_border.y;
-            while (y < fr.rail_border.bottom()) : (y += 1) ui.canvas.put(fr.rail_border.x, y, .{ .char = .{ .grapheme = if (ui.ascii) "|" else "│", .width = 1 }, .style = line });
+            ui.vrule(fr.rail_border.x, fr.rail_border.y, fr.rail_border.h, line);
         }
         // ── left column ──
         // `ui.hover_help`: the column's bottom `hover_help_height` rows
@@ -994,8 +993,7 @@ fn drawDivider(app: *App, ui: Ui, r: Rect, id: u32) void {
     } else false;
     const style = if (dragging or ui.hovered(r)) app.theme.accent else app.theme.border;
     ui.canvas.fill(r, style);
-    var y: u16 = r.y;
-    while (y < r.bottom()) : (y += 1) ui.canvas.put(r.x, y, .{ .char = .{ .grapheme = if (ui.ascii) "|" else "│", .width = 1 }, .style = style });
+    ui.vrule(r.x, r.y, r.h, style);
     ui.hit(r, .{ .divider = id });
 }
 
@@ -1006,8 +1004,7 @@ fn drawHDivider(app: *App, ui: Ui, r: Rect, id: u32) void {
     const dragging = if (app.drag) |d| d == .bottom_divider else false;
     const style = if (dragging or ui.hovered(r)) app.theme.accent else app.theme.border;
     ui.canvas.fill(r, style);
-    var x: u16 = r.x;
-    while (x < r.right()) : (x += 1) ui.canvas.put(x, r.y, .{ .char = .{ .grapheme = if (ui.ascii) "-" else "─", .width = 1 }, .style = style });
+    ui.hrule(r.x, r.y, r.w, style);
     ui.hit(r, .{ .divider = id });
 }
 
@@ -1104,8 +1101,7 @@ fn drawSidebarOverlay(app: *App, ui: Ui, fr: FrameRects) Allocator.Error!void {
     if (!geo.rail_border.isEmpty()) {
         const line = Theme.withFg(Theme.onBg(app.theme.border, pal.bg_darker), pal.line);
         clipped.fill(geo.rail_border, line);
-        var y: u16 = geo.rail_border.y;
-        while (y < geo.rail_border.bottom()) : (y += 1) clipped.canvas.put(geo.rail_border.x, y, .{ .char = .{ .grapheme = if (ui.ascii) "|" else "\u{2502}", .width = 1 }, .style = line });
+        clipped.vrule(geo.rail_border.x, geo.rail_border.y, geo.rail_border.h, line);
     }
     if (!geo.strip.isEmpty()) _ = sidebar_overlay.drawStrip(clipped, geo.strip, .{
         .title = section.meta().label,
@@ -1629,11 +1625,14 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
         const dragging = if (app.drag) |dr| dr == .divider and dr.divider.split == d.split else false;
         const style = if (dragging or ui.hovered(d.rect)) app.theme.accent else app.theme.border;
         ui.canvas.fill(d.rect, style);
-        const glyph: []const u8 = if (d.dir == .horizontal) (if (ui.ascii) "|" else "│") else (if (ui.ascii) "-" else "─");
-        var y: u16 = d.rect.y;
-        while (y < d.rect.bottom()) : (y += 1) {
+        // A horizontal split's divider stands (`│`); a vertical one lies
+        // (`─`). Either may be more than one cell thick.
+        if (d.dir == .horizontal) {
             var x: u16 = d.rect.x;
-            while (x < d.rect.right()) : (x += 1) ui.canvas.put(x, y, .{ .char = .{ .grapheme = glyph, .width = 1 }, .style = style });
+            while (x < d.rect.right()) : (x += 1) ui.vrule(x, d.rect.y, d.rect.h, style);
+        } else {
+            var y: u16 = d.rect.y;
+            while (y < d.rect.bottom()) : (y += 1) ui.hrule(d.rect.x, y, d.rect.w, style);
         }
         try ui.hits.add(ui.arena, d.rect, .{ .divider = @intCast(i) });
     }
@@ -1920,7 +1919,7 @@ fn drawGhost(ui: Ui, rect: Rect, cursor: editor_view.Cursor, ed: *const @import(
 fn drawFlashCue(ui: Ui, rect: Rect, f: *const flash.State) void {
     if (rect.isEmpty()) return;
     var pair: [8]u8 = undefined;
-    const hint = ui.fmt(" {s} {s} press a label to jump {s} Esc cancels ", .{ flash.pairText(f.a, f.b, &pair), if (ui.ascii) "->" else "→", if (ui.ascii) "-" else "·" });
+    const hint = overlay_mod.hintText(ui, ui.fmt(" {s} → press a label to jump · Esc cancels ", .{flash.pairText(f.a, f.b, &pair)}));
     _ = ui.putStrRight(rect.right(), rect.bottom() - 1, rect.w, hint, ui.theme.current_match);
 }
 
@@ -2749,8 +2748,7 @@ fn paintMenuRows(ui: Ui, inner: Rect, p: RowsProps) std.AutoHashMapUnmanaged(usi
         const selected = p.cursor != null and i == p.cursor.?.*;
         if (it.separator_before and row < inner.h) {
             const r = inner.row(row);
-            var xx: u16 = r.x;
-            while (xx < r.right()) : (xx += 1) _ = ui.putStr(xx, r.y, 1, if (ui.ascii) "-" else "\u{2500}", rule);
+            ui.hrule(r.x, r.y, r.w, rule);
             row += 1;
         }
         if (row >= inner.h) break;

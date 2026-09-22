@@ -9,6 +9,7 @@ const std = @import("std");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
+const overlay = @import("overlay.zig");
 const ids = @import("../core/ids.zig");
 const grep = @import("../app/grep.zig");
 const text_field = @import("text_field.zig");
@@ -41,7 +42,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: *grep.GrepPane, focused: bool) 
     var body = area.splitTop(1).rest;
 
     const hint_row = body.row(0);
-    const hint: []const u8 = if (ui.ascii) "  enter open   n/N step   space toggle   R replace   r rerun   / filter   h/l fold   esc back" else "  ⏎ open · n/N step · space toggle · R replace · r rerun · / filter · h/l fold · esc back";
+    const hint = overlay.hintText(ui, "  ⏎ open · n/N step · space toggle · R replace · r rerun · / filter · h/l fold · esc back");
     _ = ui.putStr(hint_row.x, hint_row.y, hint_row.w, ui.clipStr(hint, hint_row.w), Theme.onBg(th.muted, th.bg.bg));
     if (body.h < 2) return;
     body = body.splitTop(1).rest;
@@ -153,7 +154,7 @@ pub fn paintHitWith(ui: Ui, r: Rect, h: grep.Hit, disabled: bool, bg: anytype, m
     const matched = if (col < text.len) text[col..match_end] else "";
     const after = if (match_end < text.len) text[match_end..] else "";
     var w: u16 = 0;
-    if (win.cut or h.text_off > 0) w += ui.putStr(x, r.y, avail, if (ui.ascii) "..." else "…", dim);
+    if (win.cut or h.text_off > 0) w += ui.putStr(x, r.y, avail, ui.ellipsisText(), dim);
     if (w < avail) w += ui.putStr(x + w, r.y, avail - w, win.text, fg);
     if (w < avail) w += ui.putStr(x + w, r.y, avail - w, ui.clipStr(matched, avail - w), if (disabled) dim else Theme.onBg(th.match, bg));
     if (w < avail) _ = ui.putStr(x + w, r.y, avail - w, ui.clipStr(after, avail - w), fg);

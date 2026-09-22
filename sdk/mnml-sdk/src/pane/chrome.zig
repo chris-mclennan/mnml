@@ -77,6 +77,16 @@ pub const scroll_thumb = "\u{2588}"; // █
 pub const more_glyph = "\u{22ef}"; // ⋯
 pub const more_ascii = "...";
 
+/// The six glyphs a frame and a rule are laid from — the host's
+/// `single` set, or `+-|` under `--ascii`.
+pub const FrameGlyphs = struct { tl: []const u8, tr: []const u8, bl: []const u8, br: []const u8, h: []const u8, v: []const u8 };
+pub fn frameGlyphs(ascii: bool) FrameGlyphs {
+    return if (ascii)
+        .{ .tl = "+", .tr = "+", .bl = "+", .br = "+", .h = "-", .v = "|" }
+    else
+        .{ .tl = "┌", .tr = "┐", .bl = "└", .br = "┘", .h = "─", .v = "│" };
+}
+
 /// The glyphs the three tab indicators are drawn from. The heavy and
 /// light rules are box-drawing and the block is a half-block: all
 /// three are in every terminal font, and each has an ascii stand-in.
@@ -717,24 +727,57 @@ pub fn Painter(comptime Target: type) type {
 
         // ─── an overlay's frame ──────────────────────────────────────
 
+        /// The square frame every integration overlay wears — a
+        /// picker, a key sheet, a row's menu, a kanban column. `+-+`
+        /// under `--ascii`, the same as the host's popups. Two panes
+        /// drew this by hand for a while and only one of them had the
+        /// ascii half; this is the one copy now.
         pub fn frameBox(p: *Self, b: Rect, style: Style) void {
             if (b.w < 2 or b.h < 2) return;
+            const g = frameGlyphs(p.ui.ascii);
             const right = b.x + b.w - 1;
             const bottom = b.y + b.h - 1;
-            _ = p.put(b.x, b.y, 1, "┌", style);
-            _ = p.put(right, b.y, 1, "┐", style);
-            _ = p.put(b.x, bottom, 1, "└", style);
-            _ = p.put(right, bottom, 1, "┘", style);
+            _ = p.put(b.x, b.y, 1, g.tl, style);
+            _ = p.put(right, b.y, 1, g.tr, style);
+            _ = p.put(b.x, bottom, 1, g.bl, style);
+            _ = p.put(right, bottom, 1, g.br, style);
             var x = b.x + 1;
             while (x < right) : (x += 1) {
-                _ = p.put(x, b.y, 1, "─", style);
-                _ = p.put(x, bottom, 1, "─", style);
+                _ = p.put(x, b.y, 1, g.h, style);
+                _ = p.put(x, bottom, 1, g.h, style);
             }
             var y = b.y + 1;
             while (y < bottom) : (y += 1) {
-                _ = p.put(b.x, y, 1, "│", style);
-                _ = p.put(right, y, 1, "│", style);
+                _ = p.put(b.x, y, 1, g.v, style);
+                _ = p.put(right, y, 1, g.v, style);
             }
+        }
+
+        /// `frameBox` with the interior blanked first and `title` laid
+        /// into the top edge after the corner, in `title_style`. The
+        /// blank is what keeps the rows under an overlay from showing
+        /// through it.
+        pub fn frameTitled(p: *Self, b: Rect, style: Style, title: []const u8, title_style: Style) void {
+            if (b.w < 2 or b.h < 2) return;
+            p.fill(b, .none);
+            p.frameBox(b, style);
+            if (title.len > 0) _ = p.putFit(b.x + 1, b.y, b.w -| 2, title, title_style);
+        }
+
+        /// A vertical rule of `h` cells from (`x`, `y`) — the divider
+        /// between a list and the detail beside it. `|` under `--ascii`.
+        pub fn vrule(p: *Self, x: u16, y: u16, h: u16, style: Style) void {
+            const g = frameGlyphs(p.ui.ascii).v;
+            var i: u16 = 0;
+            while (i < h) : (i += 1) _ = p.put(x, y + i, 1, g, style);
+        }
+
+        /// A horizontal rule of `w` cells from (`x`, `y`). `-` under
+        /// `--ascii`.
+        pub fn hrule(p: *Self, x: u16, y: u16, w: u16, style: Style) void {
+            const g = frameGlyphs(p.ui.ascii).h;
+            var i: u16 = 0;
+            while (i < w) : (i += 1) _ = p.put(x + i, y, 1, g, style);
         }
 
         /// The `×` in a panel's top-right corner. Esc still closes the
@@ -1100,6 +1143,30 @@ test "a detail panel carries a × in its corner and a scrollbar whose track is o
     // The press maps back to a window position.
     try testing.expectEqual(@as(usize, 0), scrollAt(.{ .x = 19, .y = 0, .w = 1, .h = 6 }, 30, 6, 0));
     try testing.expectEqual(@as(usize, 24), scrollAt(.{ .x = 19, .y = 0, .w = 1, .h = 6 }, 30, 6, 5));
+}
+
+test "the frame and the rules come from one glyph set, with an ascii twin" {
+    var r = try Rig.init(8, 4);
+    defer r.deinit();
+    var p = r.painter(Theme.fromHello(null), .{});
+    p.frameTitled(.{ .x = 0, .y = 0, .w = 6, .h = 3 }, .none, "T", .none);
+    p.vrule(7, 0, 3, .none);
+    p.hrule(0, 3, 8, .none);
+    try testing.expectEqualStrings("┌T───┐ │", try r.rowText(0));
+    try testing.expectEqualStrings("│    │ │", try r.rowText(1));
+    try testing.expectEqualStrings("└────┘ │", try r.rowText(2));
+    try testing.expectEqualStrings("────────", try r.rowText(3));
+
+    var a = try Rig.init(8, 4);
+    defer a.deinit();
+    var q = a.painter(Theme.fromHello(null), .{ .ascii = true });
+    q.frameTitled(.{ .x = 0, .y = 0, .w = 6, .h = 3 }, .none, "T", .none);
+    q.vrule(7, 0, 3, .none);
+    q.hrule(0, 3, 8, .none);
+    try testing.expectEqualStrings("+T---+ |", try a.rowText(0));
+    try testing.expectEqualStrings("|    | |", try a.rowText(1));
+    try testing.expectEqualStrings("+----+ |", try a.rowText(2));
+    try testing.expectEqualStrings("--------", try a.rowText(3));
 }
 
 test "every hint entry is a hit; the front is dropped when the row will not fit" {

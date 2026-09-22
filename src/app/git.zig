@@ -2055,7 +2055,7 @@ pub fn askDiscard(app: *App, id: PaneId, dp: *DiffPane) Allocator.Error!void {
     const arena = app.frame.allocator();
     const sel = selectedLines(dp, arena) catch null;
     const msg: []const u8 = if (sel != null and sel.?.count > 0)
-        try std.fmt.allocPrint(app.gpa, "  Discard the {d} selected line{s} from the worktree? This cannot be undone.", .{ sel.?.count, if (sel.?.count == 1) "" else "s" })
+        try std.fmt.allocPrint(app.gpa, "Discard the {d} selected line{s} from the worktree? This cannot be undone.", .{ sel.?.count, if (sel.?.count == 1) "" else "s" })
     else
         try app.gpa.dupe(u8, "  Discard this hunk from the worktree? This cannot be undone.");
     try openConfirm(app, .{ .discard_hunk = .{ .pane = id } }, @constCast(msg));
@@ -2311,7 +2311,7 @@ pub fn acceptPick(app: *App, label_in: []const u8, detail_in: []const u8) Comman
         },
         .checkout_force => try checkoutForce(app, label),
         .delete_remote => try deleteRemote(app, label, null),
-        .delete_branch => try openConfirm(app, .{ .delete_branch = try gpa.dupe(u8, label) }, try std.fmt.allocPrint(gpa, "  Delete branch {s}? (git branch -D)", .{label})),
+        .delete_branch => try openConfirm(app, .{ .delete_branch = try gpa.dupe(u8, label) }, try std.fmt.allocPrint(gpa, "Delete branch {s}? (git branch -D)", .{label})),
         .graph_branch => {
             const g = activeGraph(app) orelse return;
             if (g.filter.branch) |b| gpa.free(b);
@@ -2334,7 +2334,7 @@ pub fn acceptPick(app: *App, label_in: []const u8, detail_in: []const u8) Comman
             _ = try openDiff(app, repo, .commit, rel, detail, null);
         },
         .worktree_open, .worktree_shell => app.toast("worktree: {s}", .{detail}),
-        .worktree_remove => try openConfirm(app, .{ .worktree_remove = try gpa.dupe(u8, detail) }, try std.fmt.allocPrint(gpa, "  Remove worktree {s}?", .{detail})),
+        .worktree_remove => try openConfirm(app, .{ .worktree_remove = try gpa.dupe(u8, detail) }, try std.fmt.allocPrint(gpa, "Remove worktree {s}?", .{detail})),
     }
 }
 
@@ -2913,7 +2913,7 @@ pub fn setUpstream(app: *App, name: []const u8) CommandError!void {
 /// `Force checkout…`: a confirm that says what goes.
 pub fn checkoutForce(app: *App, name: []const u8) CommandError!void {
     const gpa = app.gpa;
-    try openConfirm(app, .{ .checkout_force = try gpa.dupe(u8, name) }, try std.fmt.allocPrint(gpa, "  Force checkout {s}? Uncommitted changes in the tree are discarded (git checkout -f; undo restores them)", .{name}));
+    try openConfirm(app, .{ .checkout_force = try gpa.dupe(u8, name) }, try std.fmt.allocPrint(gpa, "Force checkout {s}? Uncommitted changes in the tree are discarded (git checkout -f; undo restores them)", .{name}));
 }
 
 /// `Delete on the remote…`: `remote/name` splits into the two; a local
@@ -2942,7 +2942,7 @@ pub fn deleteRemote(app: *App, name: []const u8, remote_hint: ?[]const u8) Comma
     errdefer gpa.free(r);
     const b = try gpa.dupe(u8, branch);
     errdefer gpa.free(b);
-    try openConfirm(app, .{ .delete_remote = .{ .remote = r, .branch = b } }, try std.fmt.allocPrint(gpa, "  Delete {s}/{s} on the remote? (git push {s} --delete {s})", .{ remote, branch, remote, branch }));
+    try openConfirm(app, .{ .delete_remote = .{ .remote = r, .branch = b } }, try std.fmt.allocPrint(gpa, "Delete {s}/{s} on the remote? (git push {s} --delete {s})", .{ remote, branch, remote, branch }));
 }
 
 /// `New branch from here…`: the prompt, the start kept for its accept.
@@ -3040,7 +3040,7 @@ pub fn pushStartPr(app: *App, name: []const u8) CommandError!void {
 pub fn pushForce(app: *App) CommandError!void {
     _ = try requireRepo(app);
     const branch = app.git.branchLabel() orelse "HEAD";
-    try openConfirm(app, .push_force, try std.fmt.allocPrint(app.gpa, "  Push {s} with --force-with-lease? The remote branch is rewritten to match this one; commits only the remote has since your last fetch would be lost (git refuses if it moved past that fetch)", .{branch}));
+    try openConfirm(app, .push_force, try std.fmt.allocPrint(app.gpa, "Push {s} with --force-with-lease? The remote branch is rewritten to match this one; commits only the remote has since your last fetch would be lost (git refuses if it moved past that fetch)", .{branch}));
 }
 
 /// A prompt or confirm box closing by any route: an AI body waiting
@@ -3067,7 +3067,7 @@ pub fn actOnRow(app: *App, row: Row, what: RowAction) CommandError!void {
         .open => _ = try openDiff(app, repo, if (row.staged) .staged else .file, row.path, null, null),
         .stage => try submitOp(app, repo, .{ .stage = try gpa.dupe(u8, row.path) }),
         .unstage => try submitOp(app, repo, .{ .unstage = try gpa.dupe(u8, row.path) }),
-        .discard => try openConfirm(app, .{ .discard = try gpa.dupe(u8, row.path) }, try std.fmt.allocPrint(gpa, "  Discard changes to {s}? This cannot be undone.", .{row.path})),
+        .discard => try openConfirm(app, .{ .discard = try gpa.dupe(u8, row.path) }, try std.fmt.allocPrint(gpa, "Discard changes to {s}? This cannot be undone.", .{row.path})),
     }
 }
 
@@ -4091,7 +4091,7 @@ pub fn resetTo(app: *App, mode: client.ResetMode, rev: []const u8) CommandError!
     const gpa = app.gpa;
     const repo = try requireRepo(app);
     if (mode == .hard) {
-        return openConfirm(app, .{ .reset_hard = try gpa.dupe(u8, rev) }, try std.fmt.allocPrint(gpa, "  reset --hard {s}? The index and the working tree follow (undo restores them).", .{rev[0..@min(12, rev.len)]}));
+        return openConfirm(app, .{ .reset_hard = try gpa.dupe(u8, rev) }, try std.fmt.allocPrint(gpa, "reset --hard {s}? The index and the working tree follow (undo restores them).", .{rev[0..@min(12, rev.len)]}));
     }
     try submitOp(app, repo, .{ .reset = .{ .mode = mode, .rev = try gpa.dupe(u8, rev) } });
 }

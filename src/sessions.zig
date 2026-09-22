@@ -3224,7 +3224,7 @@ fn specRow(y: usize) []const u8 {
     var lines = std.mem.splitScalar(u8, spec_120x40, '\n');
     var i: usize = 0;
     while (lines.next()) |line| : (i += 1) if (i == y) {
-        const bar = "│";
+        const bar = "│"; // chrome-audit: allow — reads the Rust dump, paints nothing
         const first = std.mem.indexOf(u8, line, bar).? + bar.len;
         const second = std.mem.indexOfPos(u8, line, first, bar).?;
         return std.mem.trimEnd(u8, line[first..second], " ");

@@ -18,6 +18,7 @@ const Canvas = @import("canvas.zig");
 const Theme = @import("theme.zig");
 const hit_mod = @import("hit.zig");
 const clip = @import("clip.zig");
+const border = @import("border.zig");
 const ids = @import("../core/ids.zig");
 
 const Allocator = std.mem.Allocator;
@@ -102,7 +103,27 @@ pub fn width(ui: Ui, s: []const u8) u16 {
 }
 
 pub fn ellipsis(ui: Ui) clip.Ellipsis {
-    return if (ui.ascii) .ascii else .unicode;
+    return clip.ellipsisFor(ui.ascii);
+}
+
+/// A horizontal rule of `w` cells from (`x`, `y`): `─`, or `-` under
+/// `--ascii` — the glyph `border.draw` lays a frame's top edge from.
+pub fn hrule(ui: Ui, x: u16, y: u16, w: u16, style: Style) void {
+    border.rule(ui.canvas, x, y, w, .h, ui.ascii, style);
+}
+
+/// A vertical rule of `h` cells from (`x`, `y`): `│`, or `|` under
+/// `--ascii` — a divider between two panes, the edge of a floating
+/// column.
+pub fn vrule(ui: Ui, x: u16, y: u16, h: u16, style: Style) void {
+    border.rule(ui.canvas, x, y, h, .v, ui.ascii, style);
+}
+
+/// The ellipsis glyph itself — for a painter that cuts a string on its
+/// own terms (a column header, a grep row's tail) and needs the same
+/// mark `clipStr` would have left.
+pub fn ellipsisText(ui: Ui) []const u8 {
+    return ui.ellipsis().text();
 }
 
 /// Cell width of `s` capped at `cap`: stops measuring at the first
@@ -193,4 +214,18 @@ test "hovered reads the pointer" {
     ui.hover = .{ .x = 3, .y = 1 };
     try testing.expect(ui.hovered(Rect.init(0, 1, 8, 1)));
     try testing.expect(!ui.hovered(Rect.init(0, 0, 8, 1)));
+}
+
+test "ellipsisText is the mark clipStr actually leaves, in both terminals" {
+    var f = try Fixture.init(8, 1);
+    defer f.deinit();
+    var ui = f.ui();
+    // The painters that cut a string themselves append this; if it ever
+    // disagreed with what `clipStr` paints, a row would end `\u{2026}`
+    // beside one ending `...` on the same screen.
+    try testing.expectEqualStrings("\u{2026}", ui.ellipsisText());
+    try testing.expect(std.mem.endsWith(u8, ui.clipStr("abcdefgh", 5), ui.ellipsisText()));
+    ui.ascii = true;
+    try testing.expectEqualStrings("...", ui.ellipsisText());
+    try testing.expect(std.mem.endsWith(u8, ui.clipStr("abcdefgh", 5), ui.ellipsisText()));
 }
