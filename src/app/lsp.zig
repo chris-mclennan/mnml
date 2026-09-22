@@ -571,6 +571,59 @@ pub fn missingServers(app: *const App) []const Missing {
     return app.lsp.missing.items;
 }
 
+/// The settings a server starts with: the configured ones, plus — for
+/// pyright — the project's virtualenv interpreter, so its third-party
+/// imports resolve without the venv activated in the launching shell.
+fn serverSettings(app: *App, arena: Allocator, spec: Spec, cmd: []const u8, root: []const u8) Allocator.Error![]const u8 {
+    const json = try dynamicJson(arena, spec.settings);
+    if (!isPyright(spec.name, cmd)) return json;
+    const python = (try venvPython(app.io, arena, root)) orelse
+        (if (std.mem.eql(u8, root, app.workspace)) null else try venvPython(app.io, arena, app.workspace)) orelse
+        return json;
+    return withPythonPath(arena, json, python);
+}
+
+/// The builtin python row, or any server whose binary is a pyright
+/// (`pyright-langserver`, `basedpyright-langserver`).
+fn isPyright(name: []const u8, cmd: []const u8) bool {
+    if (std.mem.eql(u8, name, "python")) return true;
+    return std.mem.indexOf(u8, std.fs.path.basename(cmd), "pyright") != null;
+}
+
+/// `<dir>/.venv` or `<dir>/venv`'s interpreter, when one is there. The
+/// path is the venv's own (a symlink to the base interpreter): run
+/// through it Python reports the venv's site-packages, resolved it
+/// would not.
+pub fn venvPython(io: Io, arena: Allocator, dir: []const u8) Allocator.Error!?[]const u8 {
+    const rel: []const []const u8 = if (builtin.os.tag == .windows) &.{ "Scripts", "python.exe" } else &.{ "bin", "python" };
+    for ([_][]const u8{ ".venv", "venv" }) |venv| {
+        const p = try std.fs.path.join(arena, &.{ dir, venv, rel[0], rel[1] });
+        if (Io.Dir.cwd().statFile(io, p, .{})) |_| return p else |_| {}
+    }
+    return null;
+}
+
+/// `settings` (a JSON object) with `python.pythonPath` set to
+/// `python` — unless the user already named an interpreter or a venv
+/// there (`pythonPath` / `venvPath` at the top or under `python`): the
+/// config wins. Settings that are not an object are left alone.
+pub fn withPythonPath(arena: Allocator, settings: []const u8, python: []const u8) Allocator.Error![]const u8 {
+    var root = std.json.parseFromSliceLeaky(Value, arena, settings, .{}) catch return settings;
+    if (root != .object) return settings;
+    const user_set = struct {
+        fn in(v: ?Value) bool {
+            const o = v orelse return false;
+            if (o != .object) return false;
+            return o.object.get("pythonPath") != null or o.object.get("venvPath") != null;
+        }
+    }.in;
+    if (user_set(root) or user_set(root.object.get("python"))) return settings;
+    var section: Value = if (root.object.get("python")) |v| (if (v == .object) v else .{ .object = .empty }) else .{ .object = .empty };
+    try section.object.put(arena, "pythonPath", .{ .string = python });
+    try root.object.put(arena, "python", section);
+    return std.json.Stringify.valueAlloc(arena, root, .{}) catch error.OutOfMemory;
+}
+
 fn dynamicJson(arena: Allocator, d: app_mod.Config.Dynamic) Allocator.Error![]const u8 {
     if (d.isEmpty()) return "{}";
     var aw: Io.Writer.Allocating = .init(arena);
@@ -717,7 +770,7 @@ pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
         .root = root,
         .env = &app.env,
         .init_options = try dynamicJson(arena, spec.init_options),
-        .settings = try dynamicJson(arena, spec.settings),
+        .settings = try serverSettings(app, arena, spec, cmd, root),
     }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => {
@@ -1104,21 +1157,47 @@ pub fn tick(app: *App, now: i64) Allocator.Error!void {
     app.lsp.deferred = null;
 }
 
+/// `workspace/configuration`'s reply: one answer per item. An item that
+/// names a `section` the settings hold (`python`, `python.analysis`, a
+/// dotted path) gets that part; any other gets the settings whole, so a
+/// config written flat (`.settings = .{ .cargo = … }`) reaches the
+/// server whatever section it asks for. No settings is `null`.
+pub fn configurationAnswer(arena: Allocator, settings: []const u8, items: []const Value) Allocator.Error![]const u8 {
+    const empty = std.mem.eql(u8, std.mem.trim(u8, settings, " \t\n"), "{}");
+    const parsed: ?Value = if (empty) null else std.json.parseFromSliceLeaky(Value, arena, settings, .{}) catch null;
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    try out.append(arena, '[');
+    for (items, 0..) |it, i| {
+        if (i > 0) try out.append(arena, ',');
+        if (empty) {
+            try out.appendSlice(arena, "null");
+            continue;
+        }
+        const part: ?Value = blk: {
+            const root = parsed orelse break :blk null;
+            const section = jsonrpc.getStr(it, "section") orelse break :blk null;
+            var cur = root;
+            var path = std.mem.splitScalar(u8, section, '.');
+            while (path.next()) |key| {
+                if (cur != .object) break :blk null;
+                cur = cur.object.get(key) orelse break :blk null;
+            }
+            break :blk cur;
+        };
+        if (part) |v| {
+            try out.appendSlice(arena, std.json.Stringify.valueAlloc(arena, v, .{}) catch return error.OutOfMemory);
+        } else try out.appendSlice(arena, settings);
+    }
+    try out.append(arena, ']');
+    return out.items;
+}
+
 /// The few requests a server makes of its client.
 fn handleServerRequest(app: *App, s: *Server, id: jsonrpc.Id, method: []const u8, params: ?Value) Allocator.Error!void {
     if (std.mem.eql(u8, method, "workspace/configuration")) {
-        // One answer per item: the configured settings, or null.
         const items: []const Value = if (params) |p| (jsonrpc.getArr(p, "items") orelse &.{}) else &.{};
-        const n: usize = items.len;
-        var out: std.ArrayListUnmanaged(u8) = .empty;
         const arena = app.frame.allocator();
-        try out.append(arena, '[');
-        for (0..n) |i| {
-            if (i > 0) try out.append(arena, ',');
-            try out.appendSlice(arena, if (std.mem.eql(u8, s.settings, "{}")) "null" else s.settings);
-        }
-        try out.append(arena, ']');
-        s.respond(id, out.items) catch {};
+        s.respond(id, try configurationAnswer(arena, s.settings, items)) catch {};
         // The server was configuring: what it said about symbols before
         // this answer was `[]`. Ask again for every file it has open.
         for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
@@ -3760,6 +3839,83 @@ test "a file outside the workspace under no project marker joins the workspace's
     try pumpUntil(&app, Probe{ .app = &app, .path = c }, Cond.open, 30_000);
     try testing.expectEqual(@as(usize, 2), app.lsp.servers.items.len);
     try testing.expectEqualStrings(other_root, serverFor(&app, c).?.root);
+}
+
+test "withPythonPath adds python.pythonPath unless the config already names an interpreter or a venv" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    try testing.expectEqualStrings("{\"python\":{\"pythonPath\":\"/p/.venv/bin/python\"}}", try withPythonPath(a, "{}", "/p/.venv/bin/python"));
+    // Other settings survive, under `python` and beside it.
+    try testing.expectEqualStrings("{\"python\":{\"analysis\":{\"typeCheckingMode\":\"strict\"},\"pythonPath\":\"/v\"},\"x\":1}", try withPythonPath(a, "{\"python\":{\"analysis\":{\"typeCheckingMode\":\"strict\"}},\"x\":1}", "/v"));
+    // The config wins, in either shape.
+    const nested = "{\"python\":{\"pythonPath\":\"/mine\"}}";
+    try testing.expectEqualStrings(nested, try withPythonPath(a, nested, "/v"));
+    try testing.expectEqualStrings("{\"pythonPath\":\"/mine\"}", try withPythonPath(a, "{\"pythonPath\":\"/mine\"}", "/v"));
+    try testing.expectEqualStrings("{\"python\":{\"venvPath\":\".\"}}", try withPythonPath(a, "{\"python\":{\"venvPath\":\".\"}}", "/v"));
+}
+
+test "configurationAnswer: a section the settings hold gets that part, any other the whole, none is null" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var parsed = try std.json.parseFromSlice(Value, testing.allocator, "[{\"section\":\"python\"},{\"section\":\"python.analysis\"},{\"section\":\"rust-analyzer\"},{}]", .{});
+    defer parsed.deinit();
+    const items = parsed.value.array.items;
+    try testing.expectEqualStrings(
+        "[{\"pythonPath\":\"/v\"},{\"python\":{\"pythonPath\":\"/v\"}},{\"python\":{\"pythonPath\":\"/v\"}},{\"python\":{\"pythonPath\":\"/v\"}}]",
+        try configurationAnswer(a, "{\"python\":{\"pythonPath\":\"/v\"}}", items),
+    );
+    // Flat settings reach every section, as they always did.
+    try testing.expectEqualStrings("[{\"cargo\":1},{\"cargo\":1},{\"cargo\":1},{\"cargo\":1}]", try configurationAnswer(a, "{\"cargo\":1}", items));
+    try testing.expectEqualStrings("[null,null,null,null]", try configurationAnswer(a, "{}", items));
+}
+
+test "a python server starts with the project's .venv interpreter in its settings; one named in the config wins" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    const exe = build_options.fake_lsp_exe;
+    Io.Dir.cwd().access(io, exe, .{}) catch return error.SkipZigTest;
+    for ([_]bool{ false, true }) |configured| {
+        var tmp = testing.tmpDir(.{});
+        defer tmp.cleanup();
+        var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+        const ws = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+        try tmp.dir.createDirPath(io, ".mnml");
+        try tmp.dir.createDirPath(io, ".venv/bin");
+        try tmp.dir.writeFile(io, .{ .sub_path = ".venv/bin/python", .data = "" });
+        try tmp.dir.writeFile(io, .{ .sub_path = "m.py", .data = "import black\n" });
+        try tmp.dir.writeFile(io, .{ .sub_path = ".mnml/config.zon", .data = if (configured)
+            ".{ .lsp = .{ .python = .{ .cmd = \"$MNML_FAKE_LSP\", .extensions = .{ \"py\" }, .settings = .{ .python = .{ .pythonPath = \"/opt/mine/python\" } } } } }"
+        else
+            ".{ .lsp = .{ .python = .{ .cmd = \"$MNML_FAKE_LSP\", .extensions = .{ \"py\" } } } }" });
+        const file = try std.fs.path.join(gpa, &.{ ws, "m.py" });
+        defer gpa.free(file);
+        var env = std.process.Environ.Map.init(gpa);
+        defer env.deinit();
+        try env.put("MNML_FAKE_LSP", exe);
+        var app = try App.initWith(gpa, io, .{ .workspace = ws, .cols = 100, .rows = 30, .env = &env, .workspace_trusted = true });
+        defer app.deinit();
+        app.tree.visible = false;
+        // The workspace `.lsp` as a launch reads it (a `.py` matches the
+        // builtin row, so the lazy re-read would never run).
+        try refreshServers(&app);
+        _ = try app.openPath(file);
+        const Cond = struct {
+            fn one(a: *App) bool {
+                return a.lsp.servers.items.len == 1;
+            }
+        };
+        try pumpUntil(&app, &app, Cond.one, 30_000);
+        const settings = app.lsp.servers.items[0].settings;
+        if (configured) {
+            try testing.expectEqualStrings("{\"python\":{\"pythonPath\":\"/opt/mine/python\"}}", settings);
+        } else {
+            const want = try std.fmt.allocPrint(gpa, "{{\"python\":{{\"pythonPath\":\"{s}/.venv/bin/python\"}}}}", .{ws});
+            defer gpa.free(want);
+            try testing.expectEqualStrings(want, settings);
+        }
+    }
 }
 
 /// Tick and render for `ms`, for a test that asserts nothing arrived.
