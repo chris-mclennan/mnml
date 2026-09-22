@@ -92,7 +92,8 @@ pub fn jar(app: *App) Allocator.Error!*cookies.Jar {
 pub fn cookieHeaderFor(app: *App, arena: Allocator, url: []const u8) Allocator.Error!?[]const u8 {
     const host = cookies.hostOf(url) orelse return null;
     const j = try jar(app);
-    return j.cookieHeaderFor(arena, host);
+    const secure = std.ascii.startsWithIgnoreCase(std.mem.trim(u8, url, " \t"), "https://");
+    return j.cookieHeaderFor(arena, host, cookies.pathOf(url), secure, cookies.nowMs(app.io));
 }
 
 fn saveJar(app: *App) void {
@@ -110,15 +111,16 @@ pub fn afterResponse(app: *App, id: PaneId, rp: *RequestPane) Allocator.Error!vo
     // A redirect hop's cookies belong to the host that set them, the
     // final response's to the host it came from.
     var jarred = false;
+    const now = cookies.nowMs(app.io);
     for (resp.hop_cookies) |c| {
-        try (try jar(app)).recordSetCookie(c.host, c.value);
+        try (try jar(app)).recordSetCookie(c.host, c.path, c.value, now);
         jarred = true;
     }
     if (cookies.hostOf(resp.final_url)) |host| {
         var arena = std.heap.ArenaAllocator.init(app.gpa);
         defer arena.deinit();
         const set = try resp.setCookies(arena.allocator());
-        for (set) |c| try (try jar(app)).recordSetCookie(host, c);
+        for (set) |c| try (try jar(app)).recordSetCookie(host, cookies.pathOf(resp.final_url), c, now);
         jarred = jarred or set.len > 0;
     }
     if (jarred) saveJar(app);
@@ -1412,8 +1414,7 @@ pub fn acceptPicker(app: *App, kind: app_mod.PickerKind, i: usize, label: []cons
             const host = parts.next() orelse return;
             const name = parts.next() orelse return;
             const j = try jar(app);
-            const inner = j.hosts.get(host) orelse return;
-            const value = inner.get(name) orelse return;
+            const value = j.valueOf(host, name) orelse return;
             const text = try std.fmt.allocPrint(app.frame.allocator(), "{s}={s}", .{ name, value });
             try app.clipboard.set(text, false);
             app.toast("cookies: copied {s}", .{text});

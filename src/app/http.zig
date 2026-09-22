@@ -3153,9 +3153,11 @@ test "send: a GET with trailing directives sends no body, and a 302's Set-Cookie
     // The hop's cookies are in the jar, keyed by the host that set them.
     const j = try @import("cmd_http.zig").jar(&app);
     try testing.expectEqual(@as(usize, 2), j.total());
-    const line = (try j.cookieHeaderFor(testing.allocator, "127.0.0.1")).?;
+    const line = (try j.cookieHeaderFor(testing.allocator, "127.0.0.1", "/cookies", false, 0)).?;
     defer testing.allocator.free(line);
-    try testing.expectEqualStrings("session=abc123; user=chris", line);
+    // `user` came with no Path from `/cookies/set`: its default path is
+    // `/cookies` (RFC 6265 §5.1.4), so it rides first there — and not to `/`.
+    try testing.expectEqualStrings("user=chris; session=abc123", line);
     const saved = try tmp.dir.readFileAlloc(testing.io, ".mnml/cookies.json", testing.allocator, .limited(1 << 16));
     defer testing.allocator.free(saved);
     try testing.expect(std.mem.indexOf(u8, saved, "abc123") != null);
