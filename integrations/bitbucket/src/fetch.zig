@@ -25,6 +25,7 @@ const api = @import("api.zig");
 const cfg = @import("config.zig");
 const model = @import("model.zig");
 const tabs = @import("tabs.zig");
+const filters = @import("filters.zig");
 const dates = @import("dates.zig");
 const review_cache = @import("review_cache.zig");
 const sdk = @import("mnml_sdk");
@@ -130,6 +131,9 @@ pub const RefreshResult = struct {
     errored: usize = 0,
     /// The scope the tree used, for the header's count.
     scope_repos: []const []const u8 = &.{},
+    /// The API states the listing was fetched with — what the Status
+    /// chip compares its ask against before deciding a refetch is due.
+    states: filters.ApiStates = .{},
 };
 
 pub const DetailResult = struct { key: PrKey, pr: ?model.PullRequest = null, comments: []const model.Comment = &.{}, error_text: []const u8 = "" };
@@ -461,17 +465,32 @@ pub const Worker = struct {
                     .ok => |r| r,
                     .failed => |why| return failed(a, tab, spec.name, try std.fmt.allocPrint(a, "scope-resolve error: {s}", .{why})),
                 };
-                const merged = spec.kind == .workspace_merged_prs;
+                // The states are the Status chip's, not the kind's: an
+                // Open tab whose chip gained Merged asks for both in the
+                // one request, which is the one fetch that chip costs.
+                var sbuf: [3][]const u8 = undefined;
+                const api_states = spec.apiStates();
+                const states = api_states.list(&sbuf);
                 var bbql: []const u8 = "";
                 var per_page: u32 = 25;
                 if (spec.mine_only) {
                     const me = w.accountId();
                     if (me.len > 0) {
-                        bbql = try std.fmt.allocPrint(a, "(state = \"OPEN\" OR state = \"MERGED\") AND author.account_id = \"{s}\"", .{me});
+                        // The mine-only ask has always peeked at the
+                        // account's merged pull requests beside its open
+                        // ones; the chip's own states join that.
+                        var want = api_states;
+                        want.open = true;
+                        want.merged = true;
+                        var mbuf: [3][]const u8 = undefined;
+                        bbql = try std.fmt.allocPrint(a, "({s}) AND author.account_id = \"{s}\"", .{ try stateClause(a, want.list(&mbuf)), me });
                         per_page = 20;
                     }
                 }
-                var rows = try w.prsByRepo(a, spec.workspace, repos, if (merged) "MERGED" else "OPEN", bbql, per_page, !merged);
+                // An empty open repo shows its last merge inline — unless
+                // merged rows are being fetched anyway.
+                const fallback_merged = spec.kind == .workspace_open_prs and !api_states.merged;
+                var rows = try w.prsByRepo(a, spec.workspace, repos, states, bbql, per_page, fallback_merged);
                 if (spec.mine_only) {
                     var kept: std.ArrayList(model.RepoPrs) = .empty;
                     for (rows) |r| if (r.prs.len > 0 or r.error_label.len > 0) try kept.append(a, r);
@@ -487,7 +506,7 @@ pub const Worker = struct {
                     try std.fmt.allocPrint(a, "{s} · {d} repos, {d} PRs ({d} errored)", .{ spec.name, rows.len, total, errored })
                 else
                     try std.fmt.allocPrint(a, "{s} · {d} repos, {d} PRs", .{ spec.name, rows.len, total });
-                return .{ .tab = tab, .data = .{ .repo_pr_tree = rows }, .repos = rows.len, .items = total, .errored = errored, .status = status, .scope_repos = try dupeList(a, repos) };
+                return .{ .tab = tab, .data = .{ .repo_pr_tree = rows }, .repos = rows.len, .items = total, .errored = errored, .status = status, .scope_repos = try dupeList(a, repos), .states = api_states };
             },
             .workspace_pipelines => {
                 const repos = switch (try w.resolveScope(scope, now_secs)) {
@@ -506,17 +525,33 @@ pub const Worker = struct {
         return .{ .tab = tab, .error_text = try a.dupe(u8, why), .status = try std.fmt.allocPrint(a, "{s}: {s}", .{ name, why }) };
     }
 
+    /// `state = "OPEN" OR state = "MERGED"` for a BBQL predicate.
+    fn stateClause(a: Allocator, states: []const []const u8) Allocator.Error![]const u8 {
+        var out: std.ArrayList(u8) = .empty;
+        for (states, 0..) |st, i| {
+            if (i > 0) try out.appendSlice(a, " OR ");
+            try out.appendSlice(a, try std.fmt.allocPrint(a, "state = \"{s}\"", .{st}));
+        }
+        return out.toOwnedSlice(a);
+    }
+
     /// A `pull_requests` tab: one repo's list, or `mode = mine` /
     /// `reviewing` fanned out over the workspace's repos.
     fn flatPrs(w: *Worker, a: Allocator, tab: usize, spec: tabs.TabSpec, scope: ScopeInputs) Allocator.Error!RefreshResult {
+        // A `pull_requests` tab with no state named lists every state
+        // (the API's own `state=` is optional); one with a state, or a
+        // Status chip set, lists those.
+        var sbuf: [3][]const u8 = undefined;
+        const api_states = spec.apiStates();
+        const states: []const []const u8 = if (spec.state.len == 0 and spec.states == null) &.{} else api_states.list(&sbuf);
         if (spec.mode == .none) {
-            var reply = try w.client.listPrs(w.gpa, spec.workspace, spec.repo, spec.state, spec.q, 50);
+            var reply = try w.client.listPrs(w.gpa, spec.workspace, spec.repo, states, spec.q, 50);
             defer reply.deinit(w.gpa);
             return switch (reply) {
                 .ok => |body| blk: {
                     const v = std.json.parseFromSliceLeaky(j.Value, a, body.bytes, .{}) catch break :blk failed(a, tab, spec.name, "the reply is not JSON");
                     const list = try model.parsePullRequests(a, v);
-                    break :blk .{ .tab = tab, .data = .{ .pull_requests = list }, .items = list.len, .status = try std.fmt.allocPrint(a, "{s} · {d} PRs", .{ spec.name, list.len }) };
+                    break :blk .{ .tab = tab, .data = .{ .pull_requests = list }, .items = list.len, .status = try std.fmt.allocPrint(a, "{s} · {d} PRs", .{ spec.name, list.len }), .states = api_states };
                 },
                 .failed => |f| blk: {
                     var buf: [256]u8 = undefined;
@@ -555,7 +590,7 @@ pub const Worker = struct {
         w.progress.set(0, @intCast(repos.len));
         for (repos, 0..) |slug, i| {
             defer w.progress.set(@intCast(i + 1), @intCast(repos.len));
-            var reply = try w.client.listPrs(w.gpa, spec.workspace, slug, spec.state, bbql, 50);
+            var reply = try w.client.listPrs(w.gpa, spec.workspace, slug, states, bbql, 50);
             defer reply.deinit(w.gpa);
             switch (reply) {
                 .ok => |body| {
@@ -568,7 +603,7 @@ pub const Worker = struct {
         if (errors > 0 and errors == repos.len) return failed(a, tab, spec.name, try std.fmt.allocPrint(a, "all {d} repo requests failed", .{errors}));
         std.mem.sort(model.PullRequest, all.items, {}, newestFirst);
         const list = try all.toOwnedSlice(a);
-        return .{ .tab = tab, .data = .{ .pull_requests = list }, .items = list.len, .errored = errors, .status = try std.fmt.allocPrint(a, "{s} · {d} PRs", .{ spec.name, list.len }) };
+        return .{ .tab = tab, .data = .{ .pull_requests = list }, .items = list.len, .errored = errors, .status = try std.fmt.allocPrint(a, "{s} · {d} PRs", .{ spec.name, list.len }), .states = api_states };
     }
 
     fn newestFirst(_: void, x: model.PullRequest, y: model.PullRequest) bool {
@@ -578,12 +613,12 @@ pub const Worker = struct {
     /// One `RepoPrs` per slug, in the slugs' order; an erroring repo
     /// keeps its row with a label, an empty open repo shows its last
     /// merge.
-    fn prsByRepo(w: *Worker, a: Allocator, workspace: []const u8, repos: []const []const u8, state: []const u8, bbql: []const u8, per_page: u32, fallback_merged: bool) Allocator.Error![]model.RepoPrs {
+    fn prsByRepo(w: *Worker, a: Allocator, workspace: []const u8, repos: []const []const u8, states: []const []const u8, bbql: []const u8, per_page: u32, fallback_merged: bool) Allocator.Error![]model.RepoPrs {
         var rows: std.ArrayList(model.RepoPrs) = .empty;
         w.progress.set(0, @intCast(repos.len));
         for (repos, 0..) |slug, i| {
             defer w.progress.set(@intCast(i + 1), @intCast(repos.len));
-            var reply = try w.client.listPrs(w.gpa, workspace, slug, state, bbql, per_page);
+            var reply = try w.client.listPrs(w.gpa, workspace, slug, states, bbql, per_page);
             defer reply.deinit(w.gpa);
             switch (reply) {
                 .ok => |body| {
@@ -598,7 +633,7 @@ pub const Worker = struct {
                         // Best effort, one request, no retry. Under a
                         // BBQL predicate the state clause has to move too.
                         const merged_q = if (bbql.len > 0) try replaceAll(a, bbql, "state = \"OPEN\"", "state = \"MERGED\"") else "";
-                        var fb = try w.client.listPrs(w.gpa, workspace, slug, "MERGED", merged_q, 1);
+                        var fb = try w.client.listPrs(w.gpa, workspace, slug, &.{"MERGED"}, merged_q, 1);
                         defer fb.deinit(w.gpa);
                         if (fb == .ok) {
                             if (std.json.parseFromSliceLeaky(j.Value, a, fb.ok.bytes, .{})) |fv| {
@@ -874,7 +909,7 @@ pub const Worker = struct {
         w.progress.set(0, @intCast(repos.len));
         for (repos, 0..) |slug, i| {
             defer w.progress.set(@intCast(i + 1), @intCast(repos.len));
-            var reply = try w.client.listPrs(w.gpa, scope.workspace, slug, "OPEN", q.written(), 50);
+            var reply = try w.client.listPrs(w.gpa, scope.workspace, slug, &.{"OPEN"}, q.written(), 50);
             defer reply.deinit(w.gpa);
             switch (reply) {
                 .ok => |body| {

@@ -19,6 +19,9 @@ pub const Participant = struct {
     approved: bool = false,
     /// `approved` / `changes_requested` / "".
     state: []const u8 = "",
+    /// `REVIEWER` / `PARTICIPANT` — asked to review, or merely
+    /// joined in (a comment, a vote of their own).
+    role: []const u8 = "",
 };
 
 pub const PullRequest = struct {
@@ -90,6 +93,10 @@ pub const PullRequest = struct {
         if (std.mem.eql(u8, pr.author_id, account_id)) return false;
         for (pr.participants) |p| {
             if (!std.mem.eql(u8, p.account_id, account_id)) continue;
+            // Someone who only commented is a PARTICIPANT, and nothing
+            // is waiting on them; a listing that sends no role at all
+            // is read as it was before roles were parsed.
+            if (p.role.len > 0 and !std.ascii.eqlIgnoreCase(p.role, "REVIEWER")) return false;
             return !p.approved and !std.ascii.eqlIgnoreCase(p.state, "changes_requested");
         }
         return false;
@@ -98,6 +105,20 @@ pub const PullRequest = struct {
     pub fn approvedBy(pr: PullRequest, account_id: []const u8) bool {
         if (account_id.len == 0) return false;
         for (pr.participants) |p| if (p.approved and std.mem.eql(u8, p.account_id, account_id)) return true;
+        return false;
+    }
+
+    /// Is `account_id` one of this pull request's REVIEWERS — asked to
+    /// review it, voted or not? The web's "Reviewing" dropdown. The
+    /// author's own row is never something they review, and a
+    /// participant who only commented is not reviewing either.
+    pub fn reviewedBy(pr: PullRequest, account_id: []const u8) bool {
+        if (account_id.len == 0) return false;
+        if (std.mem.eql(u8, pr.author_id, account_id)) return false;
+        for (pr.participants) |p| {
+            if (!std.mem.eql(u8, p.account_id, account_id)) continue;
+            return std.ascii.eqlIgnoreCase(p.role, "REVIEWER");
+        }
         return false;
     }
 
@@ -163,6 +184,28 @@ pub const Pipeline = struct {
     commit_hash: []const u8 = "",
     trigger: []const u8 = "",
     creator: []const u8 = "",
+    /// `target.type`: `pipeline_ref_target` / `pipeline_pullrequest_target`
+    /// / `pipeline_commit_target`.
+    target_type: []const u8 = "",
+    /// `target.ref_type`: `branch` / `tag` / `bookmark` / `named_branch`.
+    ref_type: []const u8 = "",
+    /// `target.selector.type`: `branches` / `default` / `custom` /
+    /// `pull-requests` / `tags` — which section of the pipelines file
+    /// the run came from.
+    selector_type: []const u8 = "",
+
+    /// The web's "Pipeline type" — one word off the three facts
+    /// Bitbucket sends: `custom` when it was run from the custom
+    /// section, `pull-request` when it ran on a pull request, `tag`
+    /// when it ran on a tag, else `branch`. A selector this pane does
+    /// not know is passed through as the API spelled it.
+    pub fn typeLabel(p: Pipeline) []const u8 {
+        if (std.ascii.eqlIgnoreCase(p.selector_type, "custom")) return "custom";
+        if (std.ascii.indexOfIgnoreCase(p.target_type, "pullrequest") != null or std.ascii.eqlIgnoreCase(p.selector_type, "pull-requests")) return "pull-request";
+        if (std.ascii.eqlIgnoreCase(p.ref_type, "tag") or std.ascii.eqlIgnoreCase(p.selector_type, "tags")) return "tag";
+        if (p.selector_type.len == 0 or std.ascii.eqlIgnoreCase(p.selector_type, "branches") or std.ascii.eqlIgnoreCase(p.selector_type, "default")) return "branch";
+        return p.selector_type;
+    }
 
     /// The result when there is one, else the state: what the flat
     /// pipelines list and the merged-PR sub-line show.
@@ -291,6 +334,7 @@ pub fn parsePullRequest(arena: Allocator, v: j.Value) Allocator.Error!PullReques
             .account_id = j.pathStr(p, "user.account_id"),
             .approved = j.boolean(p, "approved", false),
             .state = j.str(p, "state"),
+            .role = j.str(p, "role"),
         });
     }
     var repo_full = j.pathStr(v, "destination.repository.full_name");
@@ -351,6 +395,9 @@ pub fn parsePipeline(v: j.Value) Pipeline {
         .commit_hash = j.pathStr(v, "target.commit.hash"),
         .trigger = j.pathStr(v, "trigger.name"),
         .creator = j.pathStr(v, "creator.display_name"),
+        .target_type = j.pathStr(v, "target.type"),
+        .ref_type = j.pathStr(v, "target.ref_type"),
+        .selector_type = j.pathStr(v, "target.selector.type"),
     };
 }
 
@@ -495,7 +542,7 @@ const pr_json =
     \\ "destination":{"branch":{"name":"main"},"repository":{"full_name":"acme/api"}},
     \\ "description":{"raw":"body text"},
     \\ "links":{"html":{"href":"https://bitbucket.org/acme/api/pull-requests/7"}},
-    \\ "participants":[{"approved":true,"state":"approved","user":{"display_name":"Dana","account_id":"acct-dana"}},{"approved":false,"user":{"display_name":"Sam","account_id":"acct-sam"}}],
+    \\ "participants":[{"role":"REVIEWER","approved":true,"state":"approved","user":{"display_name":"Dana","account_id":"acct-dana"}},{"role":"PARTICIPANT","approved":false,"user":{"display_name":"Sam","account_id":"acct-sam"}}],
     \\ "merge_commit":{"hash":"abcdef123456"}}
 ;
 
@@ -515,6 +562,13 @@ test "a pull request reads its columns, its approvals and its repo halves" {
     try t.expect(pr.approvedBy("acct-dana"));
     try t.expect(!pr.approvedBy("acct-sam"));
     try t.expect(!pr.approvedBy(""));
+    // Reviewing is the ROLE, not the vote: Dana was asked, Sam only
+    // joined in, the author never reviews their own.
+    try t.expectEqualStrings("REVIEWER", pr.participants[0].role);
+    try t.expect(pr.reviewedBy("acct-dana"));
+    try t.expect(!pr.reviewedBy("acct-sam"));
+    try t.expect(!pr.reviewedBy("acct-chris"));
+    try t.expect(!pr.reviewedBy(""));
     try t.expectEqualStrings("body text", pr.description);
     try t.expectEqualStrings("abcdef123456", pr.merge_commit);
     try t.expectEqualStrings("abcdef123456", pr.buildCommit());
@@ -554,6 +608,15 @@ test "a pipeline's labels: result over state, a duration, a glyph" {
     try t.expectEqualStrings("✗", glyphFor("FAILED"));
     try t.expectEqualStrings("⊘", glyphFor("STOPPED"));
     try t.expectEqualStrings("?", glyphFor("odd"));
+    // The web's "Pipeline type", off the target's three facts.
+    try t.expectEqualStrings("branch", p.typeLabel());
+    const custom = try std.json.parseFromSliceLeaky(j.Value, a, "{\"build_number\":2,\"trigger\":{\"name\":\"MANUAL\"},\"target\":{\"type\":\"pipeline_ref_target\",\"ref_type\":\"branch\",\"ref_name\":\"main\",\"selector\":{\"type\":\"custom\",\"pattern\":\"deploy\"}}}", .{});
+    try t.expectEqualStrings("custom", parsePipeline(custom).typeLabel());
+    try t.expectEqualStrings("MANUAL", parsePipeline(custom).trigger);
+    const on_pr = try std.json.parseFromSliceLeaky(j.Value, a, "{\"build_number\":3,\"target\":{\"type\":\"pipeline_pullrequest_target\",\"source\":\"x\",\"destination\":\"main\",\"selector\":{\"type\":\"pull-requests\",\"pattern\":\"**\"}}}", .{});
+    try t.expectEqualStrings("pull-request", parsePipeline(on_pr).typeLabel());
+    const tagged = try std.json.parseFromSliceLeaky(j.Value, a, "{\"build_number\":4,\"target\":{\"type\":\"pipeline_ref_target\",\"ref_type\":\"tag\",\"ref_name\":\"v1.2\",\"selector\":{\"type\":\"tags\",\"pattern\":\"v*\"}}}", .{});
+    try t.expectEqualStrings("tag", parsePipeline(tagged).typeLabel());
 }
 
 test "a branch head trims `Name <email>` and takes the first message line" {

@@ -228,6 +228,8 @@ the next backfill has to come back for.
 | The app-colour left gutter, full height — under a board-shaped body too | `Painter.gutter` + `expect.gutterFullHeight` |
 | The caps header — title, count, `as of …`, and the ladder, clipped against each other | `Painter.capsHeader` |
 | Its pieces, if you need them apart | `Painter.capsTitle`, `Painter.rightChips`, `Painter.asOf`, `Painter.refreshChipText`, `chrome.help_chip_text` |
+| What a fetch is doing while it is out — `⠋ fetching… 2/13 repos`, `queued behind 3 requests`, `waiting for the API budget`, `fetch failed: …` — and the refresh chip turning the host's spinner ring meanwhile | `chrome.Fetch` / `chrome.fetchText`, `Painter.fetchSub`, `Painter.refreshOrBusyChipText`, `chrome.spinnerFrame` (the host's `list_panel` ring, pinned equal); the request's live phase comes off `ratelimit.Notice.live()` |
+| A toolbar of ` key: value ` filter chips under the strip, wrapping whole chips | `Painter.toolbarRow`, `Painter.modeChipText` |
 | The tab strip and its indicator | `Painter.tabStrip` |
 | The filter pill — glyph, placeholder, caret | `Painter.filterPill` |
 | A row's ground, its stripe and its hit, in one statement | `Painter.rowGround` |

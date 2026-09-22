@@ -115,10 +115,19 @@ pub fn ageText(ui: Ui, now_s: i64, then_s: i64) []const u8 {
     return ui.fmt("{d}y", .{@divFloor(d, 365 * 86_400)});
 }
 
-const spinner_frames = [_][]const u8{ "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" };
-const spinner_ascii = [_][]const u8{ "|", "/", "-", "\\" };
+pub const spinner_frames = [_][]const u8{ "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" };
+pub const spinner_ascii = [_][]const u8{ "|", "/", "-", "\\" };
 /// One turn of the frame ring, in ms.
 pub const spinner_step_ms: i64 = 80;
+
+test "the SDK's spinner is this ring at this step, so an integration's header turns with the host's panels" {
+    const sdk_chrome = @import("mnml_sdk").pane.chrome;
+    try std.testing.expectEqual(spinner_frames.len, sdk_chrome.spinner_frames.len);
+    for (spinner_frames, sdk_chrome.spinner_frames) |ours, theirs| try std.testing.expectEqualStrings(ours, theirs);
+    for (spinner_ascii, sdk_chrome.spinner_ascii) |ours, theirs| try std.testing.expectEqualStrings(ours, theirs);
+    try std.testing.expectEqual(spinner_step_ms, sdk_chrome.spinner_step_ms);
+    try std.testing.expectEqualStrings(spinnerFrame(240, false), sdk_chrome.spinnerFrame(240, false));
+}
 
 /// The frame the whole app's spinners are on at `now_ms`. The panel
 /// headers paint it themselves (`paintSpinner`); a statusline chip

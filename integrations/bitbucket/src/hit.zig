@@ -16,10 +16,18 @@ pub const Chip = enum {
     /// The hint row's `? keys` says the same thing, and is the first
     /// entry a narrow pane drops.
     help,
-    /// The PR family's `author:` chip (mine ↔ all).
+    /// The toolbar's chips — the web bar's filters. A left click opens
+    /// the chip's picker (`show` cycles), a right click lists every
+    /// value with the live one ticked.
+    status,
     author,
-    /// `awaiting: N` — the open pull requests waiting on YOUR review.
-    awaiting,
+    target,
+    show,
+    run_by,
+    branch,
+    ptype,
+    pstatus,
+    trigger,
     /// The pipelines family's web-page actions.
     run_pipeline,
     schedules,
@@ -62,6 +70,10 @@ pub const Target = union(enum) {
     hint: keymap.Action,
     /// A row of the open menu.
     menu_item: usize,
+    /// A chip's picker: one of its rows, and its box (a click on the
+    /// box is nothing; a click anywhere else closes it).
+    picker_row: usize,
+    picker_body,
     /// The detail panel's body (a wheel there scrolls it), its `\u{d7}`
     /// and its scrollbar (a press or a drag on the track scrolls it).
     detail,

@@ -1,0 +1,24 @@
+▌BITBUCKET PIPELINES  (2 re  run pipeline   schedules   caches   usage      ?
+▌ run by: any   branch: any   type: any   status: any   trigger: any
+▌ 󰍉 / filter
+▌ REPO / B┌─ status ─────────────────────────────────────────────────┐T
+▌  api   │ 󰍉 type to filter…▏                                       │
+▌     main│                                                          │CESSFUL
+▌     deve│▌ ✓ any                                                   │LED
+▌     rele│▌   FAILED                                                │PPED
+▌     chri│▌   IN_PROGRESS                                           │
+▌  web   │▌   PENDING                                               │
+▌     main│▌   STOPPED                                               │CESSFUL
+▌     stag│▌   SUCCESSFUL                                            │
+▌     chri│                                                          │
+▌         │                                                          │
+▌         │                                                          │
+▌         │                                                          │
+▌         │                                                          │
+▌         │                                                          │
+▌         │                                                          │
+▌         │                                                          │
+▌         └──────────────────────────────────────────────────────────┘
+▌
+▌
+ Pipelines · 2 repos              type to filter · ↑↓ move · ⏎ pick · esc cancel

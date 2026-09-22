@@ -1,0 +1,24 @@
+▌BITBUCKET PRS  (2 repos · 3 PRs)  as of 0s ago                             ?
+▌ 1 Open + Draft (3)   2 Merged (2)
+▌▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+▌ status: Open + Draft   author: all   target: any   show: all
+▌ 󰍉 / filter
+▌ REPO / #PR                   STATE      UPDATED      TITLE
+▌  api                        2 PRs      2026-09-21   #1234 · Fix the login re
+▌    #1234                    OPEN       2026-09-21   Fix the login redirec 󰏌 󰘭
+▌  web                        1 PRs      2026-09-21   #820 · Redesign the empt
+▌    #820                     OPEN       2026-09-21   Redesign the empty st 󰏌 󰘭
+▌                                                      ⋯  Show more (1)
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+ Open + Draft · 2 repos, 3 PRs       m open↔merged · r refresh · ? keys · q quit

@@ -1,0 +1,24 @@
+▌BITBUCKET PRS  (1 of 2)  as of 0s ago                                      ?
+▌ 1 Open + Draft (3)   2 Merged (2)
+▌▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+▌ status: Open + Draft   author: all   target: any   show: awaiting me (1)
+▌ 󰍉 / filter
+▌ REPO / #PR                   STATE      UPDATED      TITLE
+▌  api                        2 PRs      2026-09-21   #1234 · Fix the login re
+▌    #1198                    OPEN       2026-09-20   Bump the client timeo 󰏌 󰘭
+▌  web                        1 PRs      2026-09-21   #820 · Redesign the empt
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+ Open + Draft: awaiting my review    m open↔merged · r refresh · ? keys · q quit

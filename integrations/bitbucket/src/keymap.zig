@@ -10,9 +10,14 @@
 //! number, `e`/`c` open / close every repo, `x` hides one, `H` un-hides
 //! them all, `s` cycles the scope, `alt+↑`/`alt+↓` reorder, `ctrl+u` /
 //! `ctrl+d` scroll the detail. Added here: `?` for this sheet, `/`
-//! for the filter, `esc` to leave either.
+//! for the filter, `esc` to leave either, and the toolbar's chips —
+//! `S` `U` `T` `A` on a pull-request tab (Status, aUthor, Target
+//! branch, the All / reviewing / awaiting selector), `U` `B` `P` `S`
+//! `T` on a pipelines tab (rUn by, Branch, Pipeline type, Status,
+//! Trigger type) — so every chip has a key as well as a click.
 
 const std = @import("std");
+const cfg = @import("config.zig");
 
 pub const Action = enum {
     quit,
@@ -46,8 +51,18 @@ pub const Action = enum {
     detail_up,
     detail_down,
     toggle_approval,
-    /// The `awaiting:` chip — show only what is waiting on my review.
-    toggle_awaiting,
+    /// The `show:` chip — all → reviewing → awaiting me → all.
+    cycle_show,
+    /// The PR family's other three chips: each opens its picker.
+    filter_status,
+    filter_author,
+    filter_target,
+    /// The pipelines family's five chips: each opens its picker.
+    filter_run_by,
+    filter_branch,
+    filter_type,
+    filter_pstatus,
+    filter_trigger,
     /// Merge the focused pull request — through a Claude Code session,
     /// and only when it may.
     merge_pr,
@@ -82,6 +97,10 @@ pub const Scope = enum {
     row,
     /// While the detail is open.
     detail,
+    /// A pull-request tab (the two workspace trees, a flat PR list).
+    prs,
+    /// A pipelines tab.
+    pipelines,
 };
 
 pub const Binding = struct {
@@ -122,7 +141,15 @@ pub const table = [_]Binding{
     .{ .keys = &.{"ctrl+d"}, .action = .detail_down, .title = "scroll the detail down", .scope = .detail, .section = "row" },
     .{ .keys = &.{"ctrl+u"}, .action = .detail_up, .title = "scroll the detail up", .scope = .detail, .section = "row" },
     .{ .keys = &.{"shift+m"}, .action = .merge_pr, .title = "merge (through Claude Code)", .scope = .row, .section = "row" },
-    .{ .keys = &.{"shift+a"}, .action = .toggle_awaiting, .title = "only what is awaiting my review", .section = "tabs" },
+    .{ .keys = &.{"shift+s"}, .action = .filter_status, .title = "status: Open / Draft / Merged / Declined", .scope = .prs, .section = "filters" },
+    .{ .keys = &.{"shift+u"}, .action = .filter_author, .title = "author: all / me / one seen", .scope = .prs, .section = "filters" },
+    .{ .keys = &.{"shift+t"}, .action = .filter_target, .title = "target branch", .scope = .prs, .section = "filters" },
+    .{ .keys = &.{"shift+a"}, .action = .cycle_show, .title = "show: all → reviewing → awaiting me", .scope = .prs, .section = "filters" },
+    .{ .keys = &.{"shift+u"}, .action = .filter_run_by, .title = "run by", .scope = .pipelines, .section = "filters" },
+    .{ .keys = &.{"shift+b"}, .action = .filter_branch, .title = "branch", .scope = .pipelines, .section = "filters" },
+    .{ .keys = &.{"shift+p"}, .action = .filter_type, .title = "pipeline type", .scope = .pipelines, .section = "filters" },
+    .{ .keys = &.{"shift+s"}, .action = .filter_pstatus, .title = "status: successful / failed / …", .scope = .pipelines, .section = "filters" },
+    .{ .keys = &.{"shift+t"}, .action = .filter_trigger, .title = "trigger type", .scope = .pipelines, .section = "filters" },
     .{ .keys = &.{"m"}, .action = .toggle_merged, .title = "open ↔ merged", .hint = true, .section = "tabs" },
     .{ .keys = &.{"tab"}, .action = .next_tab, .title = "next tab", .section = "tabs" },
     .{ .keys = &.{ "backtab", "shift+tab" }, .action = .prev_tab, .title = "previous tab", .section = "tabs" },
@@ -143,13 +170,16 @@ pub const table = [_]Binding{
     .{ .keys = &.{ "q", "ctrl+c" }, .action = .quit, .title = "quit", .hint = true, .section = "pane" },
 };
 
-pub const sections = [_][]const u8{ "navigate", "tree", "row", "tabs", "pane" };
+pub const sections = [_][]const u8{ "navigate", "tree", "row", "filters", "tabs", "pane" };
 
 /// What is true of the focused row, for scope checks.
 pub const Context = struct {
     on_tree: bool = false,
     on_row: bool = false,
     detail_open: bool = false,
+    /// The active tab's family; the chip keys are per family, so `S`
+    /// is the Status chip on either and never both.
+    family: cfg.Family = .prs,
 
     pub fn allows(c: Context, scope: Scope) bool {
         return switch (scope) {
@@ -157,6 +187,8 @@ pub const Context = struct {
             .tree => c.on_tree,
             .row => c.on_row,
             .detail => c.detail_open,
+            .prs => c.family == .prs,
+            .pipelines => c.family == .pipelines,
         };
     }
 };
@@ -201,6 +233,14 @@ pub fn keyLabel(spec: []const u8) []const u8 {
         .{ "ctrl+c", "^c" },
         .{ "shift+g", "G" },
         .{ "shift+h", "H" },
+        .{ "shift+s", "S" },
+        .{ "shift+u", "U" },
+        .{ "shift+t", "T" },
+        .{ "shift+a", "A" },
+        .{ "shift+b", "B" },
+        .{ "shift+p", "P" },
+        .{ "shift+m", "M" },
+        .{ "shift+r", "R" },
         .{ "shift+tab", "⇤" },
     };
     for (pairs) |p| if (std.mem.eql(u8, p[0], spec)) return p[1];
@@ -243,9 +283,20 @@ test "the reference's keys dispatch to their actions, scoped to where they apply
     // `a` only while the detail is open, as in the reference.
     try t.expect(lookup("a", .{}) == null);
     try t.expectEqual(Action.toggle_approval, lookup("a", .{ .detail_open = true }).?);
-    // The chip and the key are the same door: a chip nobody can reach
-    // from the keyboard is half a feature.
-    try t.expectEqual(Action.toggle_awaiting, lookup("shift+a", .{}).?);
+    // The chips and the keys are the same doors: a chip nobody can
+    // reach from the keyboard is half a feature. Per family — `S` is
+    // the Status chip of whichever tab is on.
+    try t.expectEqual(Action.cycle_show, lookup("shift+a", .{}).?);
+    try t.expectEqual(Action.filter_status, lookup("shift+s", .{ .family = .prs }).?);
+    try t.expectEqual(Action.filter_pstatus, lookup("shift+s", .{ .family = .pipelines }).?);
+    try t.expectEqual(Action.filter_author, lookup("shift+u", .{}).?);
+    try t.expectEqual(Action.filter_run_by, lookup("shift+u", .{ .family = .pipelines }).?);
+    try t.expectEqual(Action.filter_target, lookup("shift+t", .{}).?);
+    try t.expectEqual(Action.filter_trigger, lookup("shift+t", .{ .family = .pipelines }).?);
+    try t.expectEqual(Action.filter_branch, lookup("shift+b", .{ .family = .pipelines }).?);
+    try t.expectEqual(Action.filter_type, lookup("shift+p", .{ .family = .pipelines }).?);
+    try t.expect(lookup("shift+b", .{}) == null);
+    try t.expect(lookup("shift+a", .{ .family = .pipelines }) == null);
     // The button is a convenience; the key is the guarantee. A pane
     // too narrow to paint `[ Merge ]` must still be able to merge.
     try t.expectEqual(Action.merge_pr, lookup("shift+m", .{ .on_row = true }).?);

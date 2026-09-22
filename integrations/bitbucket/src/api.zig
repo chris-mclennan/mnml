@@ -267,6 +267,10 @@ pub const Client = struct {
             // it is not, which is every run with no mnml open.
             const gate: ratelimit.Acquired = if (self.limiter) |l| blk: {
                 l.reason = @tagName(self.reason);
+                // The limiter writes the request's live phase — queued
+                // behind N, waiting on the bucket, sending — where the
+                // header reads it; `.idle` below is this side's to say.
+                l.live = self.notice;
                 break :blk l.acquireVia(sdk.warm.classOf(self.reason));
             } else .{ .ok = true };
             if (self.notice) |n| n.record(gate);
@@ -274,6 +278,7 @@ pub const Client = struct {
             const started = Io.Timestamp.now(self.io, .real);
             var head: Head = .{};
             var reply = try self.once(gpa, method, url, payload, side, if_none_match, &head);
+            if (self.notice) |n| n.setPhase(.idle, 0);
             defer if (head.etag.len > 0) gpa.free(head.etag);
             const ms: u64 = @intCast(@max(Io.Timestamp.now(self.io, .real).toMilliseconds() - started.toMilliseconds(), 0));
             // Nothing new. The body already held still stands, so it
@@ -479,12 +484,15 @@ pub const Client = struct {
     }
 
     /// `GET …/pullrequests?state=&pagelen=[&q=]`.
-    pub fn listPrs(self: *Client, gpa: Allocator, workspace: []const u8, repo: []const u8, state: []const u8, bbql: []const u8, page_len: u32) Allocator.Error!Reply {
+    /// `GET …/pullrequests?state=OPEN&state=MERGED…` — one `state=` per
+    /// entry of `states`, which is how Bitbucket takes more than one;
+    /// none asks for the API's default (OPEN).
+    pub fn listPrs(self: *Client, gpa: Allocator, workspace: []const u8, repo: []const u8, states: []const []const u8, bbql: []const u8, page_len: u32) Allocator.Error!Reply {
         var out: Io.Writer.Allocating = .init(gpa);
         defer out.deinit();
         const w = &out.writer;
         w.print("/repositories/{s}/{s}/pullrequests?pagelen={d}", .{ workspace, repo, page_len }) catch return error.OutOfMemory;
-        if (state.len > 0) w.print("&state={s}", .{state}) catch return error.OutOfMemory;
+        for (states) |state| if (state.len > 0) w.print("&state={s}", .{state}) catch return error.OutOfMemory;
         if (bbql.len > 0) {
             w.writeAll("&q=") catch return error.OutOfMemory;
             percentEncode(w, bbql) catch return error.OutOfMemory;
@@ -606,7 +614,7 @@ test "against the fake server: whoami, the lists, approve and unapprove, a 404 a
     try t.expect(who == .ok);
     try t.expect(std.mem.indexOf(u8, who.ok.bytes, "acct-chris") != null);
 
-    var prs = try client.listPrs(t.allocator, "acme", "api", "OPEN", "author.account_id = \"acct-chris\"", 25);
+    var prs = try client.listPrs(t.allocator, "acme", "api", &.{"OPEN"}, "author.account_id = \"acct-chris\"", 25);
     defer prs.deinit(t.allocator);
     try t.expect(prs == .ok);
     try t.expect(std.mem.indexOf(u8, prs.ok.bytes, "Fix the login redirect") != null);
@@ -629,7 +637,7 @@ test "against the fake server: whoami, the lists, approve and unapprove, a 404 a
     try t.expect(gone == .ok);
     try t.expectEqual(server.State.Vote.none, srv.snapshot().voteFor(1198));
 
-    var missing = try client.listPrs(t.allocator, "acme", "ghost", "OPEN", "", 25);
+    var missing = try client.listPrs(t.allocator, "acme", "ghost", &.{"OPEN"}, "", 25);
     defer missing.deinit(t.allocator);
     var buf: [64]u8 = undefined;
     try t.expectEqualStrings("no such repo", missing.failed.shortLabel(&buf));
@@ -735,7 +743,7 @@ test "a prefetched GET answers the first ask off the disk and the refresh goes o
     defer filler.deinit();
     filler.cache = &fill;
     filler.now_secs = 1000;
-    var warm = try filler.listPrs(t.allocator, "acme", "api", "OPEN", "", 25);
+    var warm = try filler.listPrs(t.allocator, "acme", "api", &.{"OPEN"}, "", 25);
     defer warm.deinit(t.allocator);
     try t.expect(warm == .ok);
     var voted = try filler.approve(t.allocator, "acme", "api", 1198);
@@ -750,12 +758,12 @@ test "a prefetched GET answers the first ask off the disk and the refresh goes o
     defer pane_client.deinit();
     pane_client.cache = &prime;
     pane_client.now_secs = 1010;
-    var first = try pane_client.listPrs(t.allocator, "acme", "api", "OPEN", "", 25);
+    var first = try pane_client.listPrs(t.allocator, "acme", "api", &.{"OPEN"}, "", 25);
     defer first.deinit(t.allocator);
     try t.expectEqual(@as(u32, 0), pane_client.sent);
     try t.expectEqualStrings(warm.ok.bytes, first.ok.bytes);
     // The refresh is live.
-    var second = try pane_client.listPrs(t.allocator, "acme", "api", "OPEN", "", 25);
+    var second = try pane_client.listPrs(t.allocator, "acme", "api", &.{"OPEN"}, "", 25);
     defer second.deinit(t.allocator);
     try t.expectEqual(@as(u32, 1), pane_client.sent);
     // A URL the prefetch never saw is fetched as usual.
@@ -790,7 +798,7 @@ test "a GET that already holds the server's tag goes out conditional, and a 304 
 
     // The first ask is unconditional: nothing is held, so the whole
     // listing comes back and is filed under the server's tag.
-    var first = try client.listPrs(t.allocator, "acme", "api", "OPEN", "", 25);
+    var first = try client.listPrs(t.allocator, "acme", "api", &.{"OPEN"}, "", 25);
     defer first.deinit(t.allocator);
     try t.expect(first == .ok);
     try t.expect(first.ok.bytes.len > 0);
@@ -801,7 +809,7 @@ test "a GET that already holds the server's tag goes out conditional, and a 304 
     // The second ask carries `If-None-Match`. The server says there is
     // nothing new; the client hands back the body it already had, so
     // the caller cannot tell — which is the whole point.
-    var second = try client.listPrs(t.allocator, "acme", "api", "OPEN", "", 25);
+    var second = try client.listPrs(t.allocator, "acme", "api", &.{"OPEN"}, "", 25);
     defer second.deinit(t.allocator);
     try t.expect(second == .ok);
     try t.expectEqualStrings(first.ok.bytes, second.ok.bytes);
@@ -810,7 +818,7 @@ test "a GET that already holds the server's tag goes out conditional, and a 304 
     // `R` — `conditional = false` — asks outright, so a tag that has
     // somehow gone wrong is always one keypress from being replaced.
     client.conditional = false;
-    var third = try client.listPrs(t.allocator, "acme", "api", "OPEN", "", 25);
+    var third = try client.listPrs(t.allocator, "acme", "api", &.{"OPEN"}, "", 25);
     defer third.deinit(t.allocator);
     try t.expect(third == .ok);
     try t.expectEqual(@as(u32, 1), srv.snapshot().not_modified);

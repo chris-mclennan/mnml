@@ -63,7 +63,7 @@ hint chips on the right).
 | Pipelines tree | `rust-full-pipelines` | `3` | toolbar `[ Branch ▾ ] [ Pipeline type ▾ ] [ Status: Pipelines ▾ ] [ Trigger type ▾ ]` … `[ Run pipeline ] [ Schedules ] [ Caches ] [ Usage ] [ 󰑐 Refresh ]`; columns `REPO / BRANCH · STATE · BUILD · RESULT · DATE`; ` ▼ merchant-dashboard  4 branches`; branch rows `     main  COMPLETED  #10179  SUCCESSFUL  2026-09-11` or `     bugfix/…  —`; the branches are curated to the majors (main/master/develop/staging/prod…), the newest of each `release/*` `hotfix/*` family, and the single newest feature branch, non-eternals dropped after 14 quiet days; repos sorted by their newest run |
 | tree keys | `rust-full-pipelines-right-expands`, `-left-collapses`, `-expand-all` | `l`/`→` expand-or-descend, `h`/`←` collapse-or-ascend, `e`, `c` | as named |
 | refresh | `rust-full-refresh-in-flight` → `rust-full-after-refresh` | `r` or the Refresh pill | status `refreshing <tab>…` then `<tab> · N repos, M PRs` (`(K errored)` when some repo failed); the UI freezes during the fetch |
-| the Search chip | `rust-full-click-search-chip` | click `[ 󰍉 Search ]` | status `filter not wired yet (round-1 visual)` — a dead placeholder, like Target branch / Branch / Pipeline type / Trigger type |
+| the Search chip | `rust-full-click-search-chip` | click `[ 󰍉 Search ]` | status `filter not wired yet (round-1 visual)` — a dead placeholder, like Target branch / Branch / Pipeline type / Trigger type (the port's toolbar answers all of these; see decision 1 below) |
 | the Status chip | `rust-full-click-status-chip` | click | cycles to the next tab |
 | the Author chip | `rust-full-click-author-chip` (the `…-refreshing` frame is too brief to catch offline) | click | toggles mine-only: `[ Author: Chris M ▾ ]`, refetches with `author.account_id = me` (open + one merged peek), status `<tab>: filter → Authored by me`; click again → `All` |
 | tab keys | `rust-full-tab-key` | `Tab` / `Shift+Tab` / `1`–`9` | the strip's highlight moves |
@@ -141,12 +141,48 @@ during a fetch instead of freezing.
 
 The six the user settled:
 
-1. **The four dead chips are cut.** `Target branch`, `Branch`,
-   `Pipeline type` and `Trigger type` paint in the reference and answer
-   a click with `filter not wired yet (round-1 visual)`. They are not
-   here — no paint, no hit target, no row in the key table — and a unit
-   test and `integrations_bitbucket_pane.test` both assert the screen
-   lacks all four, on both families.
+1. **The chips are back, and they work — as the web's bar.** The
+   reference's `Target branch`, `Branch`, `Pipeline type` and
+   `Trigger type` painted and answered a click with `filter not wired
+   yet (round-1 visual)`, and the first port cut them. Looking at the
+   panes beside Bitbucket Cloud's own pages, the user asked for the WEB
+   bar, working: on the PR pane `/` search, then **Status** (Open /
+   Draft / Merged / Declined, a multi-select, Open + Draft by default),
+   **Author** (all / me / everyone the loaded set names), **Target
+   branch**, and the right-hand **show:** selector (all / reviewing /
+   awaiting me — the web's *Watching* needs a watcher list the API does
+   not expose, so it is not offered; the pane's older `awaiting:` chip
+   is the third value); on the pipelines pane **Run by**, **Branch**,
+   **Pipeline type**, **Status**, **Trigger type**. They are a toolbar
+   row under the tab strip (`Painter.toolbarRow` in the SDK, the
+   tracker pane's toolbar geometry) of ` key: value ` chips: a click
+   opens the chip's picker (`show:` cycles), a right click lists every
+   value with a `✓` on the live one, and each has a key (`S` `U` `T`
+   `A` / `U` `B` `P` `S` `T`) in the sheet's `filters` section. Every
+   chip narrows the rows already loaded; only a Status that adds an
+   API state and Author `me` refetch, through the ordinary path. The
+   choices persist per tab in `<config dir>/state.zon`. The screens:
+   `zig-prs-*.txt`, `zig-prs-status-picker-*.txt`,
+   `zig-prs-show-menu-*.txt`, `zig-prs-awaiting-*.txt`,
+   `zig-pipelines-*.txt`, `zig-pipelines-status-picker-*.txt` at
+   120×40 and 80×24, cut by `tools/bitbucket-spec.sh` from the pane's
+   own `--dump` against the fake server, the way the `rust-*` set was
+   cut from the reference. `integrations_bitbucket_filters.test`,
+   `integrations_bitbucket_pipelines_filters.test` and the pane's unit
+   tests drive them.
+
+   Two more of the user's asks landed with it. **The rows fold with
+   the tree's chevron** (`` / `` — the toolkit's `open_glyph` /
+   `closed_glyph`, the host's `src/ui/expander.zig` codepoints, `v` /
+   `>` under `--ascii`) rather than the reference's `▾` / `▸`. And
+   **the header says what a fetch is doing** while one is out —
+   `⠋ fetching… 2/13 repos`, `queued behind 3 requests`, `waiting for
+   the API budget`, `fetch failed: …`, `no pull requests match` — with
+   the refresh chip turning the host's own spinner ring (the SESSIONS
+   section's frames and step, pinned equal in `src/ui/list_panel.zig`);
+   the Jira pane's header took the same treatment through the same SDK
+   function. `integrations_bitbucket_inflight.test` holds the fake with
+   `--delay-ms` to paint it.
 2. **A working `/` filter** behind the pill, the shape the sibling Jira
    integration uses: `/` opens it, typing narrows live, `⏎` commits,
    `esc` clears and leaves, the caps header reads `N of M` while it

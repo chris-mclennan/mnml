@@ -184,6 +184,11 @@ pub const Notice = struct {
     tokens_milli: std.atomic.Value(u64) = .init(0),
     /// A 429's cooldown rather than an empty bucket.
     cooldown: std.atomic.Value(bool) = .init(false),
+    /// The live `Phase`, and how many requests were ahead when it
+    /// joined the broker's queue — what the request is doing NOW, as
+    /// distinct from the wait already paid above.
+    phase: std.atomic.Value(u8) = .init(0),
+    behind: std.atomic.Value(u32) = .init(0),
 
     /// Under this, a wait is not worth a line: it is the difference
     /// between a pane that is working and a pane that is parked.
@@ -223,6 +228,36 @@ pub const Notice = struct {
             .tokens = @as(f64, @floatFromInt(n.tokens_milli.load(.acquire))) / 1000.0,
             .cooldown = n.cooldown.load(.acquire),
         };
+    }
+
+    // ─── what the request is doing RIGHT NOW ─────────────────────────
+
+    /// The live phase, as distinct from the wait already paid: `take`
+    /// answers "what was slow", this answers "what is it doing at this
+    /// moment", which is what a header has to say while the reader
+    /// waits. Written by the limiter and the client on the worker
+    /// thread; read by the paint loop.
+    pub const Phase = enum(u8) {
+        /// No request is between acquire and reply.
+        idle,
+        /// In the local broker's queue, `behind` requests ahead of it.
+        queued,
+        /// Held on the shared file bucket (no broker on this machine).
+        waiting,
+        /// The token is in hand and the request is on the wire.
+        sending,
+    };
+
+    pub fn setPhase(n: *Notice, phase: Phase, behind: u32) void {
+        n.behind.store(behind, .release);
+        n.phase.store(@intFromEnum(phase), .release);
+    }
+
+    pub const Live = struct { phase: Phase, behind: u32 };
+
+    pub fn live(n: *const Notice) Live {
+        const p: Phase = @enumFromInt(n.phase.load(.acquire));
+        return .{ .phase = p, .behind = n.behind.load(.acquire) };
     }
 };
 
@@ -306,6 +341,13 @@ pub const Limiter = struct {
     /// is most of the time, since mnml hosts it — must not pay a
     /// failed connect per request.
     broker_quiet_until: f64 = 0,
+    /// Where the request's live phase is written as it moves — queued
+    /// behind N on the broker, waiting on the file bucket, then
+    /// sending — so a pane's header can say which of those it is
+    /// looking at. Null writes nothing. The client that owns the
+    /// `Notice` points this at it; the limiter never sets `.idle`,
+    /// which is the client's to say once the reply is in.
+    live: ?*Notice = null,
 
     /// How long one failed connect keeps `acquireVia` off the socket.
     /// Short enough that a pane opened moments after mnml starts finds
@@ -434,8 +476,11 @@ pub const Limiter = struct {
     /// handling decide. It is not a reason to ask the file bucket for
     /// a second token — that would spend two.
     pub fn acquireVia(self: *Limiter, class: broker.Class) Acquired {
-        if (self.brokered(class)) |got| return got;
-        return self.acquireDetailed();
+        const got = self.brokered(class) orelse self.acquireDetailed();
+        // Token in hand (or failed open, which sends anyway): the
+        // request is on the wire from here.
+        if (self.live) |n| n.setPhase(.sending, 0);
+        return got;
     }
 
     /// The broker half of `acquireVia`. Null means "there is no broker
@@ -448,6 +493,17 @@ pub const Limiter = struct {
         // The broker's own wait is bounded by what this limiter would
         // have waited on the file: one policy, two paths.
         const timeout_ms: u32 = @intFromFloat(@min(@max(self.cfg.max_block_secs, 0) * 1000.0, 3_600_000));
+        // Who is ahead of us, before we join them: one more local
+        // round trip, only when someone is going to paint the answer.
+        // The queue may move while we ask; the number is the header's
+        // `queued behind N`, not a contract.
+        if (self.live) |n| {
+            const ahead: u32 = if (self.service.len > 0)
+                (if (broker.askStatus(self.io, self.broker_socket, self.service)) |st| st.total() else 0)
+            else
+                0;
+            n.setPhase(.queued, ahead);
+        }
         const rp = broker.ask(self.io, self.broker_socket, .{
             .op = .acquire,
             .service = self.service,
@@ -518,6 +574,9 @@ pub const Limiter = struct {
                 return got;
             }
             if (cause == .nothing) cause = if (was_cooldown) .cooldown else .tokens;
+            // The first look that found nothing is the moment the
+            // header's line changes from `fetching` to `waiting`.
+            if (self.live) |n| n.setPhase(.waiting, 0);
             jitter_seed +%= 1;
             const jittered = jitter(@min(wait, 5.0), jitter_seed);
             if (nowSecs(self.io) + jittered > deadline) return .{ .ok = false, .wait_ms = millisSince(started, nowSecs(self.io)), .waited_for = .gave_up, .tokens_after = left };
@@ -1058,6 +1117,20 @@ test "a wait a person would notice becomes one line; a wait they would not is dr
     const parked = n.take().?;
     try t.expect(parked.cooldown);
     try t.expectEqualStrings("backing off after a 429 · 30.0 s · 0.0 tokens", parked.text(&buf));
+
+    // The live phase is a separate channel from the wait already paid:
+    // it says what the request is doing NOW, and `take` leaves it alone.
+    try t.expectEqual(Notice.Phase.idle, n.live().phase);
+    n.setPhase(.queued, 3);
+    try t.expectEqual(Notice.Phase.queued, n.live().phase);
+    try t.expectEqual(@as(u32, 3), n.live().behind);
+    try t.expect(n.take() == null);
+    try t.expectEqual(Notice.Phase.queued, n.live().phase);
+    n.setPhase(.sending, 0);
+    try t.expectEqual(Notice.Phase.sending, n.live().phase);
+    try t.expectEqual(@as(u32, 0), n.live().behind);
+    n.setPhase(.idle, 0);
+    try t.expectEqual(Notice.Phase.idle, n.live().phase);
 }
 
 test "acquire says what it waited on: nothing, an empty bucket, then a 429's cooldown" {
@@ -1246,10 +1319,19 @@ test "a brokered acquire is one token off the same bucket, marked broker, with i
     l.reason = "pane_open";
     try t.expectEqualStrings(server.path(), l.broker_socket);
 
+    // The live phase a header reads: joining the queue says how many
+    // are ahead (nobody, on a fresh broker), and the token in hand
+    // says the request is on the wire. `.idle` is the client's to
+    // write once the reply is in, so it is still `.sending` here.
+    var notice: Notice = .{};
+    l.live = &notice;
+    try t.expectEqual(Notice.Phase.idle, notice.live().phase);
     const got = l.acquireVia(.interactive);
     try t.expect(got.ok);
     try t.expectEqual(Via.broker, got.via);
     try t.expectEqual(@as(u32, 1), l.acquired);
+    try t.expectEqual(Notice.Phase.sending, notice.live().phase);
+    try t.expectEqual(@as(u32, 0), notice.live().behind);
 
     // One bucket: the file says the token went.
     const text = try Io.Dir.cwd().readFileAlloc(t.io, state, t.allocator, .limited(4096));

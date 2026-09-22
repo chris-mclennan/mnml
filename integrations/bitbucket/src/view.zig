@@ -186,7 +186,7 @@ pub fn rowSpans(a: Allocator, c: RowCtx) Allocator.Error![]Span {
             .repo_pr_tree => |repos| {
                 const r = repos[h.repo];
                 const open = ts.expanded.hasRepo(r.slug);
-                cells[0] = try std.fmt.allocPrint(a, "{s} {s}", .{ expander(open), r.slug });
+                cells[0] = try std.fmt.allocPrint(a, "{s} {s}", .{ expander(open, c.ascii), r.slug });
                 styles[0] = cellStyle(c, if (r.error_label.len > 0) th.bad() else th.accentText());
                 if (r.error_label.len > 0) {
                     cells[1] = r.error_label;
@@ -219,7 +219,7 @@ pub fn rowSpans(a: Allocator, c: RowCtx) Allocator.Error![]Span {
             .repo_tree => |repos| {
                 const r = repos[h.repo];
                 const open = ts.expanded.hasRepo(r.slug);
-                cells[0] = try std.fmt.allocPrint(a, "{s} {s}", .{ expander(open), r.slug });
+                cells[0] = try std.fmt.allocPrint(a, "{s} {s}", .{ expander(open, c.ascii), r.slug });
                 styles[0] = cellStyle(c, if (r.error_label.len > 0) th.bad() else th.accentText());
                 cells[1] = if (r.error_label.len > 0) r.error_label else try std.fmt.allocPrint(a, "{d} branches", .{r.branches.len});
                 styles[1] = cellStyle(c, if (r.error_label.len > 0) th.bad() else th.mutedText());
@@ -235,7 +235,7 @@ pub fn rowSpans(a: Allocator, c: RowCtx) Allocator.Error![]Span {
             const r = ts.data.repo_pr_tree[p.repo];
             const pr = r.prs[p.idx];
             const expandable = pr.buildCommit().len > 0;
-            const caret: []const u8 = if (!expandable) "  " else if (p.open) expander(true) else expander(false);
+            const caret: []const u8 = if (!expandable) "  " else expander(p.open, c.ascii);
             cells[0] = try std.fmt.allocPrint(a, "  {s} #{d}", .{ caret, pr.id });
             styles[0] = cellStyle(c, th.number());
             cells[1] = pr.state;
@@ -369,11 +369,15 @@ fn orQ(s: []const u8) []const u8 {
     return if (s.len > 0) s else "?";
 }
 
-/// The reference's chevrons; mnml's own expander glyphs are in its
-/// font, and a mount cannot read the host's expand-indicator setting,
-/// so the triangles stand in for both.
-pub fn expander(open: bool) []const u8 {
-    return if (open) "▾" else "▸";
+/// The tree's chevron — the toolkit's `open_glyph` / `closed_glyph`,
+/// the same codepoints the host's file tree and the tracker pane's
+/// tree fold with (`src/ui/expander.zig`), and their `--ascii` twins.
+/// This pane used to paint `▾` / `▸`, the reference's triangles, so
+/// its rows folded with a different mark from every other tree on the
+/// screen.
+pub fn expander(open: bool, ascii: bool) []const u8 {
+    if (ascii) return if (open) sdk.pane.chrome.open_ascii else sdk.pane.chrome.closed_ascii;
+    return if (open) sdk.pane.chrome.open_glyph else sdk.pane.chrome.closed_glyph;
 }
 
 /// One build line under a pull-request row — the toolkit's, so this

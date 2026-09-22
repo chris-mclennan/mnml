@@ -31,7 +31,7 @@ expect screen contains "RESULT"
 expect screen contains "DATE"
 # api sorts first (its newest run is an hour old) and opens to its
 # curated branches: main, develop, release/1.2, and the newest feature.
-expect screen contains "▌ ▾ api"
+expect screen contains "▌  api"
 expect screen contains "4 branches"
 expect screen contains "main"
 expect screen contains "COMPLETED"
@@ -49,7 +49,7 @@ expect screen contains "#413"
 expect screen lacks "old/experiment"
 expect screen lacks "dana/timeout"
 # web: main, staging (no run yet: —), and its feature.
-expect screen contains "▾ web"
+expect screen contains "  web"
 expect screen contains "3 branches"
 expect screen contains "staging"
 expect screen contains "PENDING"
@@ -67,7 +67,7 @@ expect screen contains "⏎ expand"
 key l
 key h
 expect screen lacks "release/1.2"
-expect screen contains "▸ api"
+expect screen contains "  api"
 key l
 expect screen contains "release/1.2"
 # s cycles the scope and says so.

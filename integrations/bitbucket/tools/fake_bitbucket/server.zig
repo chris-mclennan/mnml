@@ -322,20 +322,24 @@ pub const PipelineFixture = struct {
     commit: []const u8,
     trigger: []const u8 = "push",
     creator: []const u8 = "Chris M",
+    /// `target.selector.type`: which section of the pipelines file.
+    selector: []const u8 = "branches",
+    /// `target.type`: a ref, a pull request, a commit.
+    target_type: []const u8 = "pipeline_ref_target",
     duration_secs: u32 = 0,
     age_hours: u32,
 };
 
 /// Newest first, the order Bitbucket's `sort=-created_on` returns.
 pub const pipelines = [_]PipelineFixture{
-    .{ .repo = "api", .build_number = 413, .state = "IN_PROGRESS", .ref_name = "chris/fix-login", .commit = "abc1234def5678", .age_hours = 1 },
+    .{ .repo = "api", .build_number = 413, .state = "IN_PROGRESS", .ref_name = "chris/fix-login", .commit = "abc1234def5678", .selector = "pull-requests", .target_type = "pipeline_pullrequest_target", .age_hours = 1 },
     .{ .repo = "api", .build_number = 412, .state = "COMPLETED", .result = "SUCCESSFUL", .ref_name = "main", .commit = "9999mergecommit", .duration_secs = 312, .age_hours = 4 },
     .{ .repo = "api", .build_number = 411, .state = "COMPLETED", .result = "FAILED", .ref_name = "develop", .commit = "1212121212", .trigger = "schedule", .duration_secs = 95, .age_hours = 20 },
     // On the OPEN pull request #1198's branch head, so an open row has
     // builds to fold out — what a reviewer wants before merging.
     .{ .repo = "api", .build_number = 410, .state = "COMPLETED", .result = "SUCCESSFUL", .ref_name = "dana/timeout", .commit = "bbb2222ccc3333", .duration_secs = 120, .age_hours = 29 },
-    .{ .repo = "api", .build_number = 405, .state = "COMPLETED", .result = "STOPPED", .ref_name = "release/1.2", .commit = "3434343434", .duration_secs = 40, .age_hours = 24 * 10 },
-    .{ .repo = "web", .build_number = 77, .state = "PENDING", .ref_name = "chris/empty-state", .commit = "ddd4444eee5555", .age_hours = 1 },
+    .{ .repo = "api", .build_number = 405, .state = "COMPLETED", .result = "STOPPED", .ref_name = "release/1.2", .commit = "3434343434", .selector = "custom", .duration_secs = 40, .age_hours = 24 * 10 },
+    .{ .repo = "web", .build_number = 77, .state = "PENDING", .ref_name = "chris/empty-state", .commit = "ddd4444eee5555", .trigger = "manual", .creator = "Dana R", .age_hours = 1 },
     .{ .repo = "web", .build_number = 70, .state = "COMPLETED", .result = "SUCCESSFUL", .ref_name = "main", .commit = "8888mergecommit", .duration_secs = 200, .age_hours = 24 * 3 },
 };
 
@@ -705,8 +709,24 @@ fn percentDecode(arena: Allocator, s: []const u8) Allocator.Error![]const u8 {
     return out.toOwnedSlice(arena);
 }
 
+/// Every value of a repeated query parameter — `state=OPEN&state=MERGED`
+/// is how Bitbucket takes more than one state.
+fn queryParams(arena: Allocator, query: []const u8, name: []const u8) Allocator.Error![]const []const u8 {
+    var out: std.ArrayList([]const u8) = .empty;
+    var it = std.mem.splitScalar(u8, query, '&');
+    while (it.next()) |pair| {
+        const eq = std.mem.indexOfScalar(u8, pair, '=') orelse continue;
+        if (!std.mem.eql(u8, pair[0..eq], name)) continue;
+        try out.append(arena, try percentDecode(arena, pair[eq + 1 ..]));
+    }
+    return out.toOwnedSlice(arena);
+}
+
 fn listPrs(arena: Allocator, st: *State, repo: []const u8, query: []const u8) Allocator.Error!Reply {
-    const want_state = (try queryParam(arena, query, "state")) orelse "OPEN";
+    const states = try queryParams(arena, query, "state");
+    const want_states: []const []const u8 = if (states.len > 0) states else &.{"OPEN"};
+    var wants_open = false;
+    for (want_states) |ws| wants_open = wants_open or std.mem.eql(u8, ws, "OPEN");
     const bbql = (try queryParam(arena, query, "q")) orelse "";
     const author_id = predicateValue(bbql, "author.account_id");
     const reviewer_id = predicateValue(bbql, "reviewers.account_id");
@@ -721,7 +741,9 @@ fn listPrs(arena: Allocator, st: *State, repo: []const u8, query: []const u8) Al
     w.writeAll("{\"pagelen\":50,\"values\":[") catch return error.OutOfMemory;
     for (&fixtures) |*f| {
         if (!std.mem.eql(u8, f.repo, repo)) continue;
-        if (!std.mem.eql(u8, effectiveState(f, st), want_state)) continue;
+        var wanted = false;
+        for (want_states) |ws| wanted = wanted or std.mem.eql(u8, effectiveState(f, st), ws);
+        if (!wanted) continue;
         const by_author = if (author_id) |a| std.mem.eql(u8, f.author_id, a) else false;
         var by_reviewer = false;
         if (reviewer_id) |r| for (f.reviewers) |rv| {
@@ -741,7 +763,7 @@ fn listPrs(arena: Allocator, st: *State, repo: []const u8, query: []const u8) Al
     // workspace the size of a real one. OPEN and on `api` only —
     // everything else about them is derived from the index, so two
     // runs of the same server answer identically.
-    if (st.extra_prs > 0 and std.mem.eql(u8, repo, "api") and std.mem.eql(u8, want_state, "OPEN")) {
+    if (st.extra_prs > 0 and std.mem.eql(u8, repo, "api") and wants_open) {
         var k: u32 = 0;
         while (k < st.extra_prs) : (k += 1) {
             const f = try syntheticPr(arena, k);
@@ -1030,8 +1052,8 @@ fn listPipelines(arena: Allocator, st: *State, repo: []const u8) Allocator.Error
         if (p.result.len > 0) w.print(",\"result\":{{\"name\":\"{s}\"}}", .{p.result}) catch return error.OutOfMemory;
         w.writeAll("},\"created_on\":\"") catch return error.OutOfMemory;
         writeIso(w, st.now_secs - @as(i64, p.age_hours) * 3600) catch return error.OutOfMemory;
-        w.print("\",\"duration_in_seconds\":{d},\"target\":{{\"ref_name\":\"{s}\",\"ref_type\":\"branch\",\"commit\":{{\"hash\":\"{s}\"}}}},\"trigger\":{{\"name\":\"{s}\"}},\"creator\":{{\"display_name\":\"{s}\"}}}}", .{
-            p.duration_secs, p.ref_name, p.commit, p.trigger, p.creator,
+        w.print("\",\"duration_in_seconds\":{d},\"target\":{{\"type\":\"{s}\",\"ref_name\":\"{s}\",\"ref_type\":\"branch\",\"selector\":{{\"type\":\"{s}\"}},\"commit\":{{\"hash\":\"{s}\"}}}},\"trigger\":{{\"name\":\"{s}\"}},\"creator\":{{\"display_name\":\"{s}\"}}}}", .{
+            p.duration_secs, p.target_type, p.ref_name, p.selector, p.commit, p.trigger, p.creator,
         }) catch return error.OutOfMemory;
         n += 1;
     }

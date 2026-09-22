@@ -1,0 +1,150 @@
+# width: 120
+# height: 40
+# env: MNML_MARKETPLACE_LOCAL=market
+# env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/bitbucket.zon
+# env: BITBUCKET_BASE_URL=@${MNML_E2E_WORKSPACE}/bb.url
+# env: BITBUCKET_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/bucket.json
+# env: BITBUCKET_API_TOKEN=corpus-read-token
+# The pipelines pane's toolbar is Bitbucket Cloud's: Run by, Branch,
+# Pipeline type, Status, Trigger type — each a picker over the values
+# the loaded runs carry, each a predicate over the tree's branch rows,
+# none of them a request. The fake's `--log-file` is the witness that
+# nothing went out.
+shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --lifetime-secs 180 --log-file wire.jsonl >/dev/null 2>&1 &
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 0, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Pipelines\", .kind = .workspace_pipelines } } }"
+write market/bitbucket_pipelines.zon ".{ .id = \"bitbucket_pipelines\", .label = \"Bitbucket Pipelines\", .version = \"0.2.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .args = .{ \"--only\", \"pipelines\" }, .description = \"Bitbucket: recent pipeline runs per repo/branch\", .commands = .{ .{ .id = \"bitbucket_pipelines.open\", .title = \"Bitbucket Pipelines: open\" } } }"
+command integrations.show_marketplace
+key i
+expect screen contains "installed bitbucket_pipelines"
+command integrations.open_as_tab
+command bitbucket_pipelines.open
+command view.toggle_tree
+command view.focus_pane
+wait 1500
+expect screen contains "BITBUCKET PIPELINES"
+expect screen contains "(2 repos)"
+# The bar: the web's five, all on `any`; the tree's chevron on the rows.
+expect screen contains " run by: any "
+expect screen contains " branch: any "
+expect screen contains " type: any "
+expect screen contains " status: any "
+expect screen contains " trigger: any"
+expect screen contains "▌  api"
+expect screen lacks "▾ api"
+expect screen contains "main"
+expect screen contains "develop"
+expect screen contains "release/1.2"
+expect screen contains "chris/fix-login"
+expect screen contains "chris/empty-state"
+shell : > wire.jsonl
+
+# Status: the values the runs carry, sorted; `failed` keeps develop
+# alone under api and empties web's branches.
+key shift+s
+expect screen contains " status "
+expect screen contains "any"
+expect screen contains "FAILED"
+expect screen contains "SUCCESSFUL"
+expect screen contains "IN_PROGRESS"
+type FAIL
+key enter
+wait 400
+expect screen contains " status: FAILED "
+expect screen contains "develop"
+expect screen contains "✗ FAILED"
+expect screen lacks "release/1.2"
+expect screen lacks "chris/fix-login"
+expect screen lacks "✓ SUCCESSFUL"
+# `any` clears it.
+key shift+s
+type any
+key enter
+wait 400
+expect screen contains " status: any "
+expect screen contains "release/1.2"
+
+# Trigger type: web's #77 was run by hand.
+key shift+t
+expect screen contains " trigger "
+expect screen contains "manual"
+expect screen contains "push"
+expect screen contains "schedule"
+type manual
+key enter
+wait 400
+expect screen contains " trigger: manual "
+expect screen contains "chris/empty-state"
+expect screen lacks "develop"
+expect screen lacks "release/1.2"
+key shift+t
+type any
+key enter
+wait 400
+expect screen contains " trigger: any"
+
+# Pipeline type: release/1.2's run came from the custom section,
+# chris/fix-login's ran on a pull request, the rest on branches.
+key shift+p
+expect screen contains " type "
+expect screen contains "branch"
+expect screen contains "custom"
+expect screen contains "pull-request"
+type custom
+key enter
+wait 400
+expect screen contains " type: custom "
+expect screen contains "release/1.2"
+expect screen lacks "develop"
+key shift+p
+type any
+key enter
+wait 400
+expect screen contains " type: any "
+
+# Branch: a branch with no run yet (web's staging) is still found by
+# its name — the one chip that does not need a run.
+key shift+b
+type staging
+key enter
+wait 400
+expect screen contains " branch: staging "
+expect screen contains "staging"
+expect screen lacks "develop"
+key shift+b
+type any
+key enter
+wait 400
+expect screen contains " branch: any "
+
+# Run by: the people who ran them.
+key shift+u
+expect screen contains " run by "
+expect screen contains "Chris M"
+expect screen contains "Dana R"
+type Dana
+key enter
+wait 400
+expect screen contains " run by: Dana R "
+expect screen contains "chris/empty-state"
+expect screen lacks "main"
+# Two at once is an AND: Dana's runs that failed — none.
+key shift+s
+type FAIL
+key enter
+wait 400
+expect screen contains "no pipelines match"
+# Nothing above cost a request, and the choices are in the state file.
+shell test ! -s wire.jsonl
+expect file state.zon contains ".run_by = \"Dana R\""
+expect file state.zon contains ".pstatus = \"FAILED\""
+
+key q
+wait 500
+key x
+expect screen lacks "BITBUCKET PIPELINES"
+command integrations.show_installed
+key x
+expect screen contains "Remove integration"
+key enter
+key r
+expect screen contains "removed bitbucket_pipelines"

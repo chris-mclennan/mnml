@@ -8,17 +8,23 @@ screens are the Rust reference's (`docs/ui-spec/bitbucket/README.md`
 is the inventory), painted in mnml-zig's own chrome.
 
 ```
-▌BITBUCKET PRS  (2 repos · 5 PRs)                                                                        author: all
+▌BITBUCKET PRS  (2 repos · 5 PRs)  as of 4m ago                                                                    ?
 ▌ 1 Open + Draft (3)   2 Merged (2)
+▌ status: Open + Draft   author: all   target: any   show: all
 ▌󰍉 / filter
 ▌ REPO / #PR                   STATE      AUTHOR         BRANCH             UPDATED      TITLE
-▌ ▾ api                        2 PRs      Chris M        chris/fix-login    2026-09-01   #1234 · Fix the login redirect
+▌  api                        2 PRs      Chris M        chris/fix-login    2026-09-01   #1234 · Fix the login redirect
 ▌      #1234                   OPEN       Chris M        chris/fix-login    2026-09-01   Fix the login redirect
 ▌      #1198                   OPEN       Dana R         dana/timeout       2026-08-31   Bump the client timeout to 30s
-▌ ▾ web                        1 PR       Chris M        chris/empty-state  2026-09-01   #820 · Redesign the empty state
+▌  web                        1 PR       Chris M        chris/empty-state  2026-09-01   #820 · Redesign the empty state
 ▌                                                                                        ⋯  Show more (1)
  Open + Draft · 2 repos, 5 PRs   ↓ move · ⏎ expand · o open on web · d detail · m open↔merged · r refresh · ? keys · q quit
 ```
+
+The row under the strip is Bitbucket Cloud's own filter bar — see
+"The filter bar" below — and the rows fold with the same chevron the
+host's file tree wears (`tools/bitbucket-spec.sh` cuts these screens
+into `docs/ui-spec/bitbucket/zig-*.txt`).
 
 Column 0 is the app-colour gutter the pane toolkit paints, off this
 chip's manifest colour (PRs blue, Pipelines green); the cursor's row
@@ -152,7 +158,9 @@ does. The keys are the reference's:
 | `d` · `^d` `^u` | the detail · scroll it |
 | `a` | approve / withdraw (with the detail open) |
 | `M` · `[ Open ]` `[ Merge ]` | merge this PR through Claude Code (only when it may) · the same two on the cursor's row, when it is wide enough |
-| `A` · `m` · `⇥` `⇤` · `1`–`9` | awaiting my review · open ↔ merged · next / previous tab · a tab |
+| `S` `U` `T` `A` | on a PR tab: the Status picker · the Author picker · the Target-branch picker · show: all → reviewing → awaiting me |
+| `U` `B` `P` `S` `T` | on a pipelines tab: Run by · Branch · Pipeline type · Status · Trigger type — each a picker |
+| `m` · `⇥` `⇤` · `1`–`9` | open ↔ merged · next / previous tab · a tab |
 | `/` `esc` | filter · clear |
 | `r` `?` `q` | refresh · keys · quit |
 
@@ -233,14 +241,76 @@ it runs, `⏸` when it stops to ask you something, `[ view ]` when it
 ends, a red `✗` with the reason when it fails. A merge that ends while
 the pane does not have the keyboard sends a notification.
 
-## Awaiting my approval
+## The filter bar
 
-The `awaiting: N` chip on the header counts the open pull requests you
-are a **reviewer** on and have not voted, and a click narrows the tab
-to exactly those. It reads `participants`, which every listing already
-carries, so the chip costs no request — and it lifts the 24-hour window
-the tree otherwise folds old rows behind, because something that has
-been waiting on you for three days is the whole point of it.
+The row under the tab strip is Bitbucket Cloud's own bar, working —
+the reference painted four of these chips as placeholders that
+answered a click with `filter not wired yet`, and the first port cut
+them. Each chip is a ` key: value ` pill in the toolkit's toolbar
+geometry (the tracker pane's), with its key beside it:
+
+| PR tab | | |
+|---|---|---|
+| `status:` | `S` | **multi-select** — Open · Draft · Merged · Declined; `␣` toggles a box, `⏎` closes. Open + Draft is the open tree's default, Merged the merged tree's |
+| `author:` | `U` | `all`, `me`, then everyone the loaded set names, sorted |
+| `target:` | `T` | the destination branch, from the set |
+| `show:` | `A` | `all` → `reviewing` (you are a REVIEWER, voted or not) → `awaiting me (N)` (a reviewer who has not voted — the pane's older `awaiting:` chip, folded in). The web's third value, *watching*, needs a watcher list Bitbucket's API does not expose, so it is not offered |
+
+| pipelines tab | | |
+|---|---|---|
+| `run by:` | `U` | the people who ran them |
+| `branch:` | `B` | the branch — the one chip that also finds a branch with no run yet |
+| `type:` | `P` | `branch` · `pull-request` · `custom` · `tag`, off `target.type` / `ref_type` / `selector.type` |
+| `status:` | `S` | `SUCCESSFUL` · `FAILED` · `IN_PROGRESS` · … — the values the runs carry |
+| `trigger:` | `T` | `push` · `manual` · `schedule` |
+
+A left click opens the chip's picker (a typed filter over its rows,
+`↑↓`, `⏎`; `show:` has three values and a click cycles it, the way
+the host's `sort:` chip does); a **right click** lists every value
+with a `✓` on the live one, and a row of that menu applies it. A chip
+off its default wears the active ink and the header reads `N of M`;
+one that hides every row reads `no pull requests match`.
+
+**Which filters cost a request.** Every chip is a predicate over the
+rows already loaded — `participants`, `dest_branch`, a run's facts all
+come with the listing — with two exceptions, both on the PR tab, both
+one refetch through the ordinary refresh path and the shared bucket:
+
+* **Status** that adds an API state the listing was not fetched with:
+  Merged (or Declined) on the open tree, Open on the merged one. The
+  refetch asks for the states together (`state=OPEN&state=MERGED`, one
+  request per repo as before). Taking a state off is client-side.
+* **Author `me`** in either direction — it is the mine-only fetch
+  (`author.account_id = me` across the workspace, with the merged
+  peek), which lists what the page did not. A named author is not.
+
+Every pipelines chip, the target branch and `show:` never fetch.
+
+A chip is an explicit ask, so it lifts the 24-hour window the tree
+otherwise folds old rows behind: something that has been waiting on
+you for three days is the whole point of `awaiting me`.
+
+The chips persist **per tab, by name**, in `<config dir>/state.zon`
+beside `config.zon` — never in the config, which stays the reference's
+keys. A state file that will not read is an empty one.
+
+## What the header says while it fetches
+
+A reader once waited a minute under `loading…` unable to tell whether
+the pane was fetching, queued behind the rate broker, or done with
+nothing. While a fetch is out the caps header says which — in the same
+words on this pane and the Jira one (`sdk.pane.chrome.fetchText`) —
+and the refresh chip turns the host's own spinner ring:
+
+| | |
+|---|---|
+| `⠋ fetching… 2/13 repos` | the first load, counting repos as they land |
+| `(2 repos · 3 PRs)  ⠋ fetching…` | a refetch: the rows and their count stay on screen |
+| `⠋ queued behind 3 requests` | held in the local broker's queue, that many ahead |
+| `⠋ waiting for the API budget` | held on the shared file bucket (no broker) |
+| `fetch failed: <why>` | the last fetch failed, and this is why |
+| `(2 repos · 3 PRs)  as of 4m ago` | done; the age the family already says |
+| `no pull requests match` | the chips or the `/` query hid every row |
 
 ## The statusline chips
 
@@ -360,7 +430,8 @@ root builds both binaries beside mnml and runs the same tests under
 loopback — `acme` with `api` and `web`: five pull requests, two merged
 with merge commits, branches and pipeline runs dated against the clock,
 approve / unapprove that land in its state, `--rate-limit-first N` to
-429 the first N requests. `tests/e2e/integrations_bitbucket_*.test`
+429 the first N requests, `--delay-ms N` to hold every reply (the only
+way to catch the pane with a fetch in flight on the loopback). `tests/e2e/integrations_bitbucket_*.test`
 drive the pane through a real mount against it; `tools/bitbucket-diff.sh`
 runs the reference and this pane on it and prints the content that
 differs per screen.
