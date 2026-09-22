@@ -1,0 +1,53 @@
+# width: 120
+# `ui.dock.plus_at` (src/app/launcher_dock.zig): which END of the strip
+# the `+` takes. `.right` is the shipped look — the `+` is the LAST item,
+# after the terminals, right before the pin chip — because a `+` that
+# led the run read as odd ("plus on the left feels weird, right side more
+# natural"); `.left` is the strip's original shape, the `+` leading.
+#
+# `:dock end` is the proof's anchor: it butts the run against the pin
+# chip, so whatever else is on the strip, the last item is the one
+# painted right before `󰐃`. A `contains` check needs no column then.
+write a.txt "alpha\n"
+open a.txt
+ex dock always
+ex dock end
+expect screen contains "󲀀 New terminal  󰐕 New  󰐃"
+# Under `.label` — the word form — the `+` is a character of its word,
+# and still the last word on the strip.
+ex dock text
+expect screen contains "New terminal  + New  󰐃"
+ex dock labels
+# `:dock plus left` moves it to the head. `:dock start` is that end's
+# anchor — the strip's first cell — so the `+` is the first thing on it.
+ex dock plus left
+expect screen contains "dock: the + at the left end"
+ex dock start
+expect screen contains "\n  󰐕 New   Browser  󱸀 Claude Code  󱸁 Codex   HTTP  󲀀 New terminal "
+# And back: the same run, the `+` behind it again.
+ex dock plus right
+expect screen contains "dock: the + at the right end"
+expect screen contains "\n   Browser  󱸀 Claude Code  󱸁 Codex   HTTP  󲀀 New terminal  󰐕 New "
+ex dock center
+# The strip's own menu lists both ends, the live one ticked, in the
+# bottom strip's words; and the three running marks, the same idiom.
+rightclick 118 37
+expect screen contains "✓ + at the right end"
+expect screen contains "+ at the left end"
+expect screen lacks "✓ + at the left end"
+expect screen contains "✓ Running mark: bright icon"
+expect screen contains "Running mark: small dot"
+expect screen contains "Running mark: none"
+key esc
+# The Settings rows read the live keys: `[right]` and `[bright]` out of
+# the box. Typing narrows the list to the rows that say the word.
+command view.settings
+type "dock +"
+expect screen contains "Launcher dock + end"
+expect screen contains "[right]"
+key esc
+command view.settings
+type "running"
+expect screen contains "Launcher dock running mark"
+expect screen contains "[bright]"
+key esc

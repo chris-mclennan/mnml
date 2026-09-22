@@ -13,29 +13,57 @@
 # strip takes the SCREEN's last row and those two move up one.
 #
 # The run is centred (`ui.dock.align`, `.center` out of the box) and the
-# `+` leads it. // changed (railmove): the four first-party surfaces
-# are on it, hidden chips and all, so at 120 the row is ` + New  Browser
-# Claude Code  Codex  HTTP  New terminal ` from column 25: the `+` at
-# 25..31, Browser at 32..42, Claude Code at 43..57, Codex at 58..66,
-# HTTP at 67..74, New terminal at 75..90. Column 78 is that last item's
-# word — and no click below may land on 43..66, which would start a
-# real `claude` / `codex`.
+# `+` ends it (dock-polish). // changed (railmove): the four first-party
+# surfaces are on it, hidden chips and all, so at 120 the row is
+# ` Browser  Claude Code  Codex  HTTP  New terminal  + New ` from
+# column 25: Browser at 25..35, Claude Code at 36..50, Codex at 51..59,
+# HTTP at 60..67, New terminal at 68..83, the `+` at 84..90. The click
+# below lands after `:dock start` slides the run to column 1 — New
+# terminal at 44..59, column 50 its word — and no click may land on
+# 12..35, which would start a real `claude` / `codex`.
 write a.txt "alpha\n"
 open a.txt
 expect screen lacks "New terminal"
 ex dock always
 expect screen contains "dock: always"
-# The `+` leads the strip — the tab bar's own. The four first-party
-# surfaces follow it; the terminals come after.
+# The four first-party surfaces lead the strip, Browser first; the
+# terminals follow them, and the `+` — the tab bar's own — ends the run.
 expect screen contains "󰐕 New "
 expect screen contains "Browser"
 expect screen contains "New terminal"
 # The pin chip lives at the strip's end.
 expect screen contains "󰐃"
+# // changed (dock-polish): the colours are the tab bar's. Anchored at
+# the start (Browser's glyph at 2, New terminal's at 45 — Browser at
+# 1..11, Claude Code 12..26, Codex 27..35, HTTP 36..43, New terminal
+# 44..59), Browser's
+# glyph is its chip's blue and the terminal's ghost is the split
+# cluster's chip colour — the terminal's own bright white, palette
+# index 15 — not the green the dock used to give it.
+ex dock start
+expect color 2 37 fg #61afef
+expect color 45 37 fg index 15
+expect color 45 37 fg not #98c379
 # A click on New terminal opens a shell…
-click 78 37
+click 50 37
 wait 900
 expect pane Terminal
-# …and the shell joins the strip as a running item, wearing the dot
-# macOS puts under an open app.
-expect screen contains "●"
+# …and the shell joins the strip as a running item at 60.. — the same
+# ghost at 61, the same colour — told from the idle ones by brightness,
+# with no dot on the row. (`●` is elsewhere on every screen — the tree's
+# dirty dot, the TABS chip — so it is the SMALL dot that is checked.)
+expect color 61 37 fg index 15
+expect screen lacks "•"
+# `:dock mark dot` brings the small dot back, in the ITEM's colour —
+# the ghost's white, never green. Under `.icon_label` it takes the cell
+# after the glyph (62; the icon and word forms put it in the padding
+# cell before); `:dock mark bright` takes it away again.
+ex dock mark dot
+expect screen contains "dock: running mark is a small dot"
+expect screen contains "•"
+expect color 61 37 fg index 15
+expect color 62 37 fg index 15
+expect color 62 37 fg not #98c379
+ex dock mark bright
+expect screen contains "dock: running mark is the bright icon"
+expect screen lacks "•"

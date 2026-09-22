@@ -290,6 +290,23 @@ pub const DockLabels = enum { icon, icon_label, label };
 /// vertically. A run too long to centre is laid from the start rather
 /// than clipped on the left.
 pub const DockAlign = enum { start, center, end };
+/// // changed (dock-polish): which END of the strip the `+` sits at.
+/// `.right` (the default) is the far end — after the last item, before
+/// the pin chip — which is where the user said a `+` reads naturally
+/// ("plus on the left feels weird"); `.left` leads the run, the strip's
+/// original shape. On a SIDE strip the words are the bottom strip's:
+/// `.right` is the bottom end of the column, `.left` the top.
+pub const DockPlusAt = enum { right, left };
+/// // changed (dock-polish): how a running item — a mounted
+/// integration, a live pty, a shown section — is marked. `.bright`
+/// (the default) paints the running item's glyph at full strength and
+/// leaves the idle ones dim, the way the tab bar tells its active tab
+/// from the rest, and spends no extra cell. `.dot` puts a small `•` in
+/// the item's own colour in the padding cell before the glyph, macOS's
+/// under-icon dot as near as a one-row strip can put it. `.none` marks
+/// nothing. The row never shuffles between the three: the cell the dot
+/// takes is the padding cell the icon and word forms already keep.
+pub const DockRunningMark = enum { bright, dot, none };
 
 /// `ui.dock` — the launcher dock (`app/launcher_dock.zig`).
 pub const Dock = struct {
@@ -304,9 +321,23 @@ pub const Dock = struct {
     /// `align` is a Zig keyword, so the field wears the quotes the key
     /// name does not: `.@"align" = .center` in the file.
     @"align": DockAlign = .center,
-    /// The `+` leads the strip — the tab bar's own `+`, opening the
+    /// The `+` is on the strip — the tab bar's own `+`, opening the
     /// same *Create…* menu. `false` takes it off.
     plus: bool = true,
+    /// // changed (dock-polish): which end the `+` sits at — `.right`,
+    /// the far end (the default), or `.left`, leading the run.
+    plus_at: DockPlusAt = .right,
+    /// // changed (dock-polish): how a running item is marked —
+    /// `.bright` (the default), `.dot`, or `.none`.
+    running_mark: DockRunningMark = .bright,
+    /// // changed (dock-polish): the strip's own order — item ids
+    /// (`browser`, `term.shell`, a pinned command's id), first to last.
+    /// Listed items lead in this order; anything unlisted — an
+    /// integration installed later, say — follows in the strip's
+    /// default order; an id nothing answers to is ignored. Written by
+    /// the item menu's *Move …* rows and `Alt+←` / `Alt+→` on a
+    /// focused item; the `+` is not in it (`plus_at` places that).
+    order: []const []const u8 = &.{},
     /// Command ids pinned onto the dock, in this order — a static id
     /// or a dynamic one (an integration's `jira.open`). An id nothing
     /// answers to is skipped rather than painted dead.

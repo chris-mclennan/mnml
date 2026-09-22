@@ -251,6 +251,16 @@ pub const Terminal = struct {
     fallback: []const u8,
 };
 
+/// // changed (dock-polish): the colour a terminal's mark wears in the
+/// chrome — the split cluster's ` term ` chip and a plain shell's tab.
+/// It is the terminal's own bright white (palette index 15), not a
+/// theme role: a terminal is not one of the integrations, whose
+/// category colours are their identity, and it does not take one.
+/// The launcher dock's terminal items read THIS constant, so the ghost
+/// is one colour on every surface — it used to be green on the dock
+/// alone, and the user saw the two ghosts disagree.
+pub const terminal_chip_fg: Color = .{ .index = 15 };
+
 /// The shipped mark: mnml's own ghost, no emulator named.
 pub const terminal_ghost: Terminal = .{ .label = "terminal", .glyph = ghost_glyph, .fallback = ghost_ascii };
 /// `ui.terminal_glyph = .terminal`: the codicon, everywhere.
@@ -609,7 +619,7 @@ fn drawSplit(ui: Ui, x0: u16, y: u16, right: u16, s: SplitIds, n_ai: usize, zoom
         buttons[n] = .{ .glyph = chip.glyph, .ascii = chip.fallback, .fg = chip.fg, .id = chip.id };
         n += 1;
     }
-    buttons[n] = .{ .glyph = s.term_mark.glyph, .ascii = s.term_mark.fallback, .fg = .{ .index = 15 }, .id = s.term };
+    buttons[n] = .{ .glyph = s.term_mark.glyph, .ascii = s.term_mark.fallback, .fg = terminal_chip_fg, .id = s.term };
     buttons[n + 1] = .{ .glyph = split_right_glyph, .ascii = split_right_ascii, .fg = p.comment, .id = s.right };
     buttons[n + 2] = .{ .glyph = split_down_glyph, .ascii = split_down_ascii, .fg = p.comment, .id = s.down };
     n += 3;

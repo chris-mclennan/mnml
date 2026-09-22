@@ -26,10 +26,21 @@
 //! centre falls back to `.start` — it is never clipped on the left.
 //!
 //! An item carries its integration's category colour, the way a pinned
-//! rail icon does, because the colour is the integration's identity. A
-//! running one wears the small dot macOS puts under an open app:
-//! beside the glyph on the bottom edge, in the padding cell before it
-//! on a side edge (there is no row underneath to put it on).
+//! rail icon does, because the colour is the integration's identity;
+//! the app resolves the role to a colour before it hands the item over
+//! (`Item.color`), so a terminal item can wear the split cluster's own
+//! chip colour rather than a role name that stands in for it.
+//!
+//! // changed (dock-polish): a running one is told from the idle ones
+//! by BRIGHTNESS (`Props.running_mark = .bright`, the default) — its
+//! glyph and its word at full strength, the idle ones dim — the way
+//! the tab bar tells its active tab from the rest, and no extra cell.
+//! macOS's under-icon dot has no row to sit on in a one-row strip, and
+//! the `●` that stood in for it read as large and out of place. `.dot`
+//! brings a small `•` back, in the ITEM's colour rather than a green
+//! of its own, in the padding cell before the glyph; `.none` marks
+//! nothing. None of the three moves the row: the cell the dot takes is
+//! the padding cell every form already keeps.
 //!
 //! The hover rule is the family's (`app/hover_zones.zig`): the item
 //! under the pointer sheds its `dim`, keeps its own colour, and its
@@ -45,7 +56,6 @@ const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const hit = @import("hit.zig");
-const paletteColor = @import("integrations_view.zig").paletteColor;
 const pin_chip = @import("pin_chip.zig");
 
 const Style = Ui.Style;
@@ -56,8 +66,10 @@ pub const width: u16 = 3;
 /// (`ui/pin_chip.zig`), the same one the sidebar and the menu bar wear.
 pub const pin_glyph = pin_chip.pin_glyph;
 pub const pin_ascii = pin_chip.pin_ascii;
-/// The dot a running item wears (macOS's under-icon dot).
-pub const running_dot = "\u{25cf}"; // ●
+/// The dot a running item wears under `.dot` — a SMALL one, macOS's
+/// under-icon dot as near as a cell grid gets; the large `●` it used to
+/// be is the dirty dot's, and it read as a second glyph on the strip.
+pub const running_dot = "\u{2022}"; // •
 pub const running_ascii = "*";
 /// The keyboard cursor.
 pub const cursor_glyph = "\u{25b8}"; // ▸
@@ -68,12 +80,15 @@ pub const Edge = enum { bottom, left, right };
 pub const Labels = enum { icon, icon_label, label };
 /// `ui.dock.align` — where the run sits along the strip.
 pub const Align = enum { start, center, end };
+/// `ui.dock.running_mark` — how a running item is told from the rest.
+pub const RunningMark = enum { bright, dot, none };
 
 pub const Item = struct {
     glyph: []const u8,
     fallback: []const u8,
-    /// A theme role or a `#RRGGBB` literal; empty takes the accent.
-    color: []const u8 = "",
+    /// The item's colour, already chosen: an integration's category
+    /// colour resolved from its role, the terminal chip's own.
+    color: vaxis.Color,
     label: []const u8,
     /// The item's thing is open: a mounted integration, a live pty.
     running: bool = false,
@@ -91,6 +106,8 @@ pub const Props = struct {
     cursor: ?u16 = null,
     /// The pin chip is lit (the dock is pinned open).
     pinned: bool = false,
+    /// How a running item is marked.
+    running_mark: RunningMark = .bright,
 };
 
 /// Where the pin chip goes on a bottom strip: the last three cells.
@@ -103,18 +120,19 @@ pub fn pinRect(area: Rect, edge: Edge) Rect {
 }
 
 /// The cells an item takes on a bottom strip. Under `.icon_label`:
-/// the glyph, its dot, a space, the label, and one cell of air either
-/// side. Under `.icon` it is the side form's three — a padding cell
-/// (the dot's, or the keyboard cursor's), the glyph, a padding cell —
-/// whether or not it is running, so the row does not shuffle when a
-/// thing opens. Under `.label` it is that same padding cell, the word,
-/// and one cell of air: the dot keeps a cell, it is just the one the
-/// glyph is not in, so this form does not shuffle either.
-fn itemWidth(ui: Ui, it: Item, labels: Labels) u16 {
+/// the glyph, its dot under `.dot`, a space, the label, and one cell
+/// of air either side. Under `.icon` it is the side form's three — a
+/// padding cell (the dot's, or the keyboard cursor's), the glyph, a
+/// padding cell — whether or not it is running, so the row does not
+/// shuffle when a thing opens. Under `.label` it is that same padding
+/// cell, the word, and one cell of air: the dot keeps a cell, it is
+/// just the one the glyph is not in, so this form does not shuffle
+/// either. `.bright` and `.none` buy no cell in any form.
+fn itemWidth(ui: Ui, it: Item, labels: Labels, mark: RunningMark) u16 {
     return switch (labels) {
         .icon => width,
         .label => 1 + ui.width(it.label) + 1,
-        .icon_label => 1 + 1 + @as(u16, if (it.running) 1 else 0) + 1 + ui.width(it.label) + 1,
+        .icon_label => 1 + 1 + @as(u16, if (it.running and mark == .dot) 1 else 0) + 1 + ui.width(it.label) + 1,
     };
 }
 
@@ -168,7 +186,7 @@ fn drawRow(ui: Ui, area: Rect, props: Props, bg: vaxis.Color, hover_bg: vaxis.Co
     {
         var x: u16 = area.x + 1;
         for (props.items) |it| {
-            const w = itemWidth(ui, it, props.labels);
+            const w = itemWidth(ui, it, props.labels, props.running_mark);
             if (x + w > right_edge) break;
             x += w;
             total += w;
@@ -177,9 +195,9 @@ fn drawRow(ui: Ui, area: Rect, props: Props, bg: vaxis.Color, hover_bg: vaxis.Co
     }
     var x = rowStart(area.x, right_edge, total, props.@"align");
     for (props.items[0..fits], 0..) |it, i| {
-        const w = itemWidth(ui, it, props.labels);
+        const w = itemWidth(ui, it, props.labels, props.running_mark);
         const cell = Rect.init(x, area.y, w, 1);
-        paintItem(ui, cell, it, props.cursor == @as(u16, @intCast(i)), bg, hover_bg, props.labels);
+        paintItem(ui, cell, it, props.cursor == @as(u16, @intCast(i)), bg, hover_bg, props.labels, props.running_mark);
         ui.hit(cell, .{ .launcher_dock = .{ .item = @intCast(i) } });
         x += w;
     }
@@ -192,7 +210,7 @@ fn drawColumn(ui: Ui, area: Rect, props: Props, bg: vaxis.Color, hover_bg: vaxis
     var y = colStart(area.y, bottom_edge, @intCast(fits), props.@"align");
     for (props.items[0..fits], 0..) |it, i| {
         const cell = Rect.init(area.x, y, area.w, 1);
-        paintItem(ui, cell, it, props.cursor == @as(u16, @intCast(i)), bg, hover_bg, .icon);
+        paintItem(ui, cell, it, props.cursor == @as(u16, @intCast(i)), bg, hover_bg, .icon, props.running_mark);
         ui.hit(cell, .{ .launcher_dock = .{ .item = @intCast(i) } });
         y += 1;
     }
@@ -202,22 +220,30 @@ fn drawColumn(ui: Ui, area: Rect, props: Props, bg: vaxis.Color, hover_bg: vaxis
 /// dock and a bottom one under `.icon` paint the glyph alone and leave
 /// the label to the tip, `.icon_label` paints both, and `.label`
 /// paints the word with no glyph at all.
-fn paintItem(ui: Ui, cell: Rect, it: Item, focused: bool, bg: vaxis.Color, hover_bg: vaxis.Color, form: Labels) void {
+fn paintItem(ui: Ui, cell: Rect, it: Item, focused: bool, bg: vaxis.Color, hover_bg: vaxis.Color, form: Labels, mark: RunningMark) void {
     const th = ui.theme;
     const pal = th.palette;
     const hot = ui.hovered(cell);
     const ground = if (hot or focused) hover_bg else bg;
     if (hot or focused) ui.fill(cell, Theme.onBg(th.fg, ground));
-    const color = paletteColor(th, it.color);
-    const base = Theme.withFg(Theme.onBg(th.fg, ground), color);
+    const base = Theme.withFg(Theme.onBg(th.fg, ground), it.color);
     // The item keeps its colour when it lights — the colour IS the
-    // integration's identity — and only sheds the `dim`.
-    const glyph_style = if (hot or focused) bold(base) else dim(base);
+    // integration's identity — and only sheds the `dim`. A running one
+    // under `.bright` has shed it already: that is the mark.
+    const lit = it.running and mark == .bright;
+    const glyph_style = if (hot or focused) bold(base) else if (lit) base else dim(base);
     const glyph = if (ui.ascii or !ui.nerd_font or it.glyph.len == 0) it.fallback else it.glyph;
+    const grey = Theme.withFg(Theme.onBg(th.fg, ground), pal.comment);
     const label_style = if (hot or focused)
         Theme.onBg(th.fg, ground)
+    else if (lit)
+        grey
     else
-        dim(Theme.withFg(Theme.onBg(th.fg, ground), pal.comment));
+        dim(grey);
+    // The dot, when there is one, is the item's own colour — never a
+    // colour of its own, which made every running thing look alike.
+    const show_dot = it.running and mark == .dot;
+    const dot = if (ui.ascii) running_ascii else running_dot;
     var x = cell.x;
     if (form == .label) {
         // The word alone. The padding cell before it is the cursor's,
@@ -225,8 +251,8 @@ fn paintItem(ui: Ui, cell: Rect, it: Item, focused: bool, bg: vaxis.Color, hover
         // so the run's width never moves when a thing opens.
         if (focused) {
             _ = ui.putStr(x, cell.y, 1, if (ui.ascii) cursor_ascii else cursor_glyph, bold(Theme.withFg(Theme.onBg(th.fg, ground), pal.blue)));
-        } else if (it.running) {
-            _ = ui.putStr(x, cell.y, 1, if (ui.ascii) running_ascii else running_dot, dotStyle(th, ground));
+        } else if (show_dot) {
+            _ = ui.putStr(x, cell.y, 1, dot, base);
         }
         x += 1;
         // The word wears the item's own colour here, not the label
@@ -244,7 +270,7 @@ fn paintItem(ui: Ui, cell: Rect, it: Item, focused: bool, bg: vaxis.Color, hover
         }
         x += 1;
         x += ui.putStr(x, cell.y, cell.right() -| x, glyph, glyph_style);
-        if (it.running) x += ui.putStr(x, cell.y, cell.right() -| x, if (ui.ascii) running_ascii else running_dot, dotStyle(th, ground));
+        if (show_dot) x += ui.putStr(x, cell.y, cell.right() -| x, dot, base);
         x += 1;
         _ = ui.putStr(x, cell.y, cell.right() -| x, it.label, label_style);
         return;
@@ -253,14 +279,10 @@ fn paintItem(ui: Ui, cell: Rect, it: Item, focused: bool, bg: vaxis.Color, hover
     // and the keyboard cursor takes it when both want it.
     if (focused) {
         _ = ui.putStr(x, cell.y, 1, if (ui.ascii) cursor_ascii else cursor_glyph, bold(Theme.withFg(Theme.onBg(th.fg, ground), pal.blue)));
-    } else if (it.running) {
-        _ = ui.putStr(x, cell.y, 1, if (ui.ascii) running_ascii else running_dot, dotStyle(th, ground));
+    } else if (show_dot) {
+        _ = ui.putStr(x, cell.y, 1, dot, base);
     }
     _ = ui.putStr(cell.x + 1, cell.y, cell.w -| 1, glyph, glyph_style);
-}
-
-fn dotStyle(th: *const Theme, ground: vaxis.Color) Style {
-    return bold(Theme.withFg(Theme.onBg(th.fg, ground), th.palette.green));
 }
 
 fn dim(s: Style) Style {
@@ -280,9 +302,11 @@ fn bold(s: Style) Style {
 const t = std.testing;
 const test_fixture = @import("test_fixture.zig");
 
+const blue = Theme.rgb(0x61afef);
+const teal = Theme.rgb(0x56b6c2);
 const sample = [_]Item{
-    .{ .glyph = "\u{EB01}", .fallback = "B", .color = "blue", .label = "Browser" },
-    .{ .glyph = "\u{F1D8}", .fallback = "H", .color = "teal", .label = "HTTP", .running = true },
+    .{ .glyph = "\u{EB01}", .fallback = "B", .color = blue, .label = "Browser" },
+    .{ .glyph = "\u{F1D8}", .fallback = "H", .color = teal, .label = "HTTP", .running = true },
 };
 
 test "bottom: the items lay left to right with their labels, each a hit; the pin chip takes the strip's last three cells" {
@@ -296,26 +320,72 @@ test "bottom: the items lay left to right with their labels, each a hit; the pin
     const row = fx.row(5, &buf);
     try t.expect(std.mem.indexOf(u8, row, "Browser") != null);
     try t.expect(std.mem.indexOf(u8, row, "HTTP") != null);
-    // The running item wears its dot; the idle one does not.
-    try t.expect(std.mem.indexOf(u8, row, running_dot) != null);
+    // // changed (dock-polish): the shipped mark is brightness, so no
+    // dot is on the row; the running item is the one whose glyph is
+    // not dim. Item 0 is ` <glyph> Browser ` from x=1 (glyph at 2),
+    // item 1 ` <glyph> HTTP ` from x=12 (glyph at 13).
+    try t.expect(std.mem.indexOf(u8, row, running_dot) == null);
+    try t.expect(fx.style(2, 5).dim);
+    try t.expect(!fx.style(13, 5).dim);
     try t.expectEqual(@as(u16, 0), fx.hits.at(1, 5).?.launcher_dock.item);
     try t.expectEqual(@as(u16, 1), fx.hits.at(12, 5).?.launcher_dock.item);
     try t.expect(fx.hits.at(57, 5).?.launcher_dock == .pin);
     try t.expect(pinRect(area, .bottom).eql(Rect.init(57, 5, 3, 1)));
 }
 
-test "side: one item per row, glyph only, the running dot in the padding cell; the pin chip sits on the last row" {
+test "the running mark: `.bright` lifts the running item's glyph and word out of the dim and spends no cell; `.dot` paints a small dot in the ITEM's colour and buys it a cell under .icon_label; `.none` marks nothing" {
+    var fx = try test_fixture.init(60, 6);
+    defer fx.deinit();
+    const area = Rect.init(0, 5, 60, 1);
+    const ui = fx.ui();
+    // `.bright` — the default: the glyph at 13 and the word at 15 shed
+    // their dim; the idle item's (2, 4) keep it. Neither is bold: bold
+    // is the pointer's and the cursor's.
+    draw(ui, area, .{ .items = &sample, .edge = .bottom, .@"align" = .start });
+    try t.expect(fx.style(2, 5).dim and fx.style(4, 5).dim);
+    try t.expect(!fx.style(13, 5).dim and !fx.style(15, 5).dim);
+    try t.expect(!fx.style(13, 5).bold);
+    try t.expect(vaxis.Color.eql(teal, fx.style(13, 5).fg));
+    try t.expectEqual(@as(u16, 8), itemWidth(ui, sample[1], .icon_label, .bright));
+    try t.expectEqual(itemWidth(ui, sample[1], .icon_label, .bright), itemWidth(ui, sample[1], .icon_label, .none));
+    // `.dot`: the dot follows the glyph, in the item's own colour —
+    // teal, not a green of its own — and the glyph goes back to dim.
+    fx.hits.reset();
+    draw(ui, area, .{ .items = &sample, .edge = .bottom, .@"align" = .start, .running_mark = .dot });
+    try t.expectEqualStrings(running_dot, fx.cell(14, 5).char.grapheme);
+    try t.expect(vaxis.Color.eql(teal, fx.style(14, 5).fg));
+    try t.expect(!vaxis.Color.eql(ui.theme.palette.green, fx.style(14, 5).fg));
+    try t.expect(fx.style(13, 5).dim);
+    try t.expectEqual(@as(u16, 9), itemWidth(ui, sample[1], .icon_label, .dot));
+    // `.none`: no dot, nothing lifted.
+    fx.hits.reset();
+    var buf: [256]u8 = undefined;
+    draw(ui, area, .{ .items = &sample, .edge = .bottom, .@"align" = .start, .running_mark = .none });
+    try t.expect(std.mem.indexOf(u8, fx.row(5, &buf), running_dot) == null);
+    try t.expect(fx.style(13, 5).dim);
+    // The idle item's width is the same under all three: the mark is
+    // the running item's business alone.
+    for ([_]RunningMark{ .bright, .dot, .none }) |m| try t.expectEqual(@as(u16, 11), itemWidth(ui, sample[0], .icon_label, m));
+}
+
+test "side: one item per row, glyph only, the running item bright — or, under `.dot`, its dot in the padding cell; the pin chip sits on the last row" {
     var fx = try test_fixture.init(10, 12);
     defer fx.deinit();
     const area = Rect.init(0, 1, width, 10);
     draw(fx.ui(), area, .{ .items = &sample, .edge = .left, .@"align" = .start });
     try t.expectEqualStrings("\u{EB01}", fx.cell(1, 1).char.grapheme);
     try t.expectEqualStrings("\u{F1D8}", fx.cell(1, 2).char.grapheme);
-    try t.expectEqualStrings(running_dot, fx.cell(0, 2).char.grapheme);
+    try t.expectEqualStrings(" ", fx.cell(0, 2).char.grapheme);
     try t.expectEqualStrings(" ", fx.cell(0, 1).char.grapheme);
+    try t.expect(fx.style(1, 1).dim);
+    try t.expect(!fx.style(1, 2).dim);
     try t.expectEqual(@as(u16, 0), fx.hits.at(1, 1).?.launcher_dock.item);
     try t.expectEqual(@as(u16, 1), fx.hits.at(2, 2).?.launcher_dock.item);
     try t.expect(fx.hits.at(1, 10).?.launcher_dock == .pin);
+    fx.hits.reset();
+    draw(fx.ui(), area, .{ .items = &sample, .edge = .left, .@"align" = .start, .running_mark = .dot });
+    try t.expectEqualStrings(running_dot, fx.cell(0, 2).char.grapheme);
+    try t.expect(vaxis.Color.eql(teal, fx.style(0, 2).fg));
 }
 
 test "the item under the pointer brightens — it sheds its dim onto a lighter ground and keeps its colour; the keyboard cursor paints ▸" {
@@ -373,23 +443,23 @@ test "itemWidth: the label form pays for its label and its dot; the icon form is
     defer fx.deinit();
     const ui = fx.ui();
     // ` ▸/pad <glyph> <label> ` — 1 + glyph + space + label + 1, plus
-    // the dot's cell when it is running.
-    try t.expectEqual(@as(u16, 11), itemWidth(ui, sample[0], .icon_label)); // "Browser" = 7
-    try t.expectEqual(@as(u16, 9), itemWidth(ui, sample[1], .icon_label)); // "HTTP" = 4, + the dot
+    // the dot's cell when it is running and the mark is the dot.
+    try t.expectEqual(@as(u16, 11), itemWidth(ui, sample[0], .icon_label, .dot)); // "Browser" = 7
+    try t.expectEqual(@as(u16, 9), itemWidth(ui, sample[1], .icon_label, .dot)); // "HTTP" = 4, + the dot
     // The icon form does not resize with the label or with the dot, so
     // the row cannot shuffle under a pointer when a thing opens.
-    try t.expectEqual(width, itemWidth(ui, sample[0], .icon));
-    try t.expectEqual(width, itemWidth(ui, sample[1], .icon));
-    const long = Item{ .glyph = "\u{EB01}", .fallback = "B", .label = "a much longer label than any of these" };
-    try t.expectEqual(width, itemWidth(ui, long, .icon));
-    try t.expect(itemWidth(ui, long, .icon_label) > itemWidth(ui, sample[0], .icon_label));
+    try t.expectEqual(width, itemWidth(ui, sample[0], .icon, .dot));
+    try t.expectEqual(width, itemWidth(ui, sample[1], .icon, .dot));
+    const long = Item{ .glyph = "\u{EB01}", .fallback = "B", .color = blue, .label = "a much longer label than any of these" };
+    try t.expectEqual(width, itemWidth(ui, long, .icon, .dot));
+    try t.expect(itemWidth(ui, long, .icon_label, .dot) > itemWidth(ui, sample[0], .icon_label, .dot));
 }
 
 test "bottom under .icon: the glyph alone in the side form's three cells, no label text, the dot in the padding cell, and the hits match the painted run" {
     var fx = try test_fixture.init(60, 6);
     defer fx.deinit();
     const area = Rect.init(0, 5, 60, 1);
-    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .labels = .icon, .@"align" = .start });
+    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .labels = .icon, .@"align" = .start, .running_mark = .dot });
     var buf: [256]u8 = undefined;
     const row = fx.row(5, &buf);
     try t.expect(std.mem.indexOf(u8, row, "Browser") == null);
@@ -438,17 +508,17 @@ test "itemWidth: the third form pays for its word and nothing else — no glyph 
     const ui = fx.ui();
     // ` <label> ` — the padding cell (the cursor's, then the dot's),
     // the word, one cell of air.
-    try t.expectEqual(@as(u16, 9), itemWidth(ui, sample[0], .label)); // "Browser" = 7
-    try t.expectEqual(@as(u16, 6), itemWidth(ui, sample[1], .label)); // "HTTP" = 4
+    try t.expectEqual(@as(u16, 9), itemWidth(ui, sample[0], .label, .dot)); // "Browser" = 7
+    try t.expectEqual(@as(u16, 6), itemWidth(ui, sample[1], .label, .dot)); // "HTTP" = 4
     // Running or not is the same width, as under `.icon` — unlike
-    // `.icon_label`, which buys the dot its own cell.
+    // `.icon_label`, which buys the dot its own cell under `.dot`.
     var idle = sample[1];
     idle.running = false;
-    try t.expectEqual(itemWidth(ui, sample[1], .label), itemWidth(ui, idle, .label));
-    try t.expect(itemWidth(ui, sample[1], .icon_label) != itemWidth(ui, idle, .icon_label));
+    try t.expectEqual(itemWidth(ui, sample[1], .label, .dot), itemWidth(ui, idle, .label, .dot));
+    try t.expect(itemWidth(ui, sample[1], .icon_label, .dot) != itemWidth(ui, idle, .icon_label, .dot));
     // The three forms in order: icons are narrowest, words next, both widest.
-    try t.expect(itemWidth(ui, sample[0], .icon) < itemWidth(ui, sample[0], .label));
-    try t.expect(itemWidth(ui, sample[0], .label) < itemWidth(ui, sample[0], .icon_label));
+    try t.expect(itemWidth(ui, sample[0], .icon, .dot) < itemWidth(ui, sample[0], .label, .dot));
+    try t.expect(itemWidth(ui, sample[0], .label, .dot) < itemWidth(ui, sample[0], .icon_label, .dot));
 }
 
 test "rowStart / colStart: the three alignments' offsets, and a run with no room clamps to the start rather than off the left edge" {
@@ -479,7 +549,7 @@ test "bottom under .label: the word alone — no glyph on the strip at all — t
     var fx = try test_fixture.init(60, 6);
     defer fx.deinit();
     const area = Rect.init(0, 5, 60, 1);
-    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .labels = .label, .@"align" = .start });
+    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .labels = .label, .@"align" = .start, .running_mark = .dot });
     var buf: [256]u8 = undefined;
     const row = fx.row(5, &buf);
     try t.expect(std.mem.indexOf(u8, row, "Browser") != null);
@@ -502,7 +572,7 @@ test "bottom under .label: the word alone — no glyph on the strip at all — t
     try t.expect(vaxis.Color.eql(cold.fg, fx.style(11, 5).fg) == false); // Browser's blue is not HTTP's teal
     fx.hits.reset();
     fx.hover = .{ .x = 3, .y = 5 };
-    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .labels = .label, .@"align" = .start });
+    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .labels = .label, .@"align" = .start, .running_mark = .dot });
     const hot = fx.style(2, 5);
     try t.expect(!hot.dim);
     try t.expect(vaxis.Color.eql(cold.fg, hot.fg));
@@ -510,7 +580,7 @@ test "bottom under .label: the word alone — no glyph on the strip at all — t
     // The keyboard cursor takes the dot's cell, the way it does under
     // `.icon` — so focusing an open thing never moves the word.
     fx.hits.reset();
-    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .labels = .label, .@"align" = .start, .cursor = 1 });
+    draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .labels = .label, .@"align" = .start, .cursor = 1, .running_mark = .dot });
     try t.expectEqualStrings(cursor_glyph, fx.cell(10, 5).char.grapheme);
     try t.expectEqualStrings("H", fx.cell(11, 5).char.grapheme);
 }
@@ -519,12 +589,13 @@ test "the run is centred by default and the alignment slides it whole — the sa
     var fx = try test_fixture.init(60, 6);
     defer fx.deinit();
     const area = Rect.init(0, 5, 60, 1);
-    // `.icon_label`: 11 + 9 = 20 cells of items, 1..57 to put them in,
-    // so the centred run is 18..38.
+    // `.icon_label`: 11 + 8 = 19 cells of items (the running mark is
+    // brightness, so no dot cell), 1..57 to put them in, so the centred
+    // run is 19..38.
     draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .@"align" = .center });
-    try t.expectEqual(@as(u16, 0), fx.hits.at(18, 5).?.launcher_dock.item);
-    try t.expect(fx.hits.at(17, 5) == null);
-    try t.expectEqual(@as(u16, 1), fx.hits.at(29, 5).?.launcher_dock.item);
+    try t.expectEqual(@as(u16, 0), fx.hits.at(19, 5).?.launcher_dock.item);
+    try t.expect(fx.hits.at(18, 5) == null);
+    try t.expectEqual(@as(u16, 1), fx.hits.at(30, 5).?.launcher_dock.item);
     try t.expect(fx.hits.at(38, 5) == null);
     // The centre is the shipped default: omitting the field is the
     // same paint.
@@ -545,8 +616,8 @@ test "the run is centred by default and the alignment slides it whole — the sa
     fx.hits.reset();
     draw(fx.ui(), area, .{ .items = &sample, .edge = .bottom, .@"align" = .end, .pinned = true });
     try t.expectEqual(@as(u16, 1), fx.hits.at(56, 5).?.launcher_dock.item);
-    try t.expectEqual(@as(u16, 0), fx.hits.at(37, 5).?.launcher_dock.item);
-    try t.expect(fx.hits.at(36, 5) == null);
+    try t.expectEqual(@as(u16, 0), fx.hits.at(38, 5).?.launcher_dock.item);
+    try t.expect(fx.hits.at(37, 5) == null);
     // The pin chip's three cells are its own whatever the run does.
     try t.expect(fx.hits.at(57, 5).?.launcher_dock == .pin);
     try t.expect(pinRect(area, .bottom).eql(Rect.init(57, 5, 3, 1)));

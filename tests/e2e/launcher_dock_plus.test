@@ -1,20 +1,23 @@
 # width: 120
-# The `+` at the head of the strip (src/app/launcher_dock.zig): it is the
-# tab bar's own `+` — the same glyph, opening the same *Create…* menu
+# The `+` on the strip (src/app/launcher_dock.zig): it is the tab bar's
+# own `+` — the same glyph, opening the same *Create…* menu
 # (`context_menus.openNewTabMenu`, never a fork of it) — and
-# `ui.dock.plus` takes it off.
+# `ui.dock.plus` takes it off. // changed (dock-polish): it ENDS the run
+# (`ui.dock.plus_at = .right`, the default; `launcher_dock_plus_right.test`
+# is that key's own proof).
 #
 # At 120x40 the `always` strip is row 37 — the editor area's last row,
-# `ui.dock.placement = .inner` being the default — and it is centred, so
-# the `+` item's run is columns 25..31 with the glyph at 26
-# (// changed (railmove): the four first-party surfaces are on the
-# strip, so the run is longer and starts further left).
+# `ui.dock.placement = .inner` being the default — and it is centred:
+# ` Browser  Claude Code  Codex  HTTP  New terminal  󰐕 New ` from
+# column 25 (// changed (railmove): the four first-party surfaces are on
+# the strip), so the `+` item's run is columns 84..90 with the glyph at
+# 85.
 write a.txt "alpha\n"
 open a.txt
 ex dock always
 expect screen contains "󰐕 New "
 # A click on it opens the tab bar's menu, rows and all.
-click 26 37
+click 85 37
 expect screen contains "Create"
 expect screen contains "Integrations"
 expect screen contains "Dock"
@@ -24,7 +27,7 @@ expect screen lacks "Integrations"
 # the `+` reads as one: `+ New`.
 ex dock text
 expect screen contains "dock: labels only"
-expect screen contains "\n                               + New "
+expect screen contains "New terminal  + New "
 expect screen contains "Browser"
 expect screen contains "New terminal"
 expect screen lacks "󰐕 New"
@@ -37,12 +40,16 @@ expect screen contains "󰐃"
 ex dock labels
 expect screen contains "󰐕 New "
 # `ui.dock.plus = false` takes the `+` off and the rest of the run
-# closes up — Browser leads it.
+# closes up — New terminal ends it, right before the pin chip once the
+# run is pushed to the end.
 ex dock plus
 expect screen contains "no + on the strip"
 expect screen lacks "󰐕 New"
 expect screen contains " Browser"
 expect screen contains "New terminal"
+ex dock end
+expect screen contains "New terminal  󰐃"
+ex dock center
 # And back.
 ex dock plus
 expect screen contains "the + is on the strip"

@@ -643,6 +643,12 @@ pub const MenuAction = union(enum) {
     set_dock_align: @import("../config/Config.zig").DockAlign,
     /// Its *Show the + button* row (`ui.dock.plus`).
     set_dock_plus: bool,
+    /// // changed (dock-polish): its `+ at the …` rows — which end
+    /// the `+` sits at (`ui.dock.plus_at`).
+    set_dock_plus_at: @import("../config/Config.zig").DockPlusAt,
+    /// Its `Running mark:` rows — brightness, a small dot, or none
+    /// (`ui.dock.running_mark`).
+    set_dock_running_mark: @import("../config/Config.zig").DockRunningMark,
     /// The Claude chip's `Icon ▸` rows — the figure or the Anthropic
     /// spark (`app/claude_mark.zig`, `ui.claude_mark`). Two drawings to
     /// choose between, so the rows are set-rows rather than commands;
@@ -852,7 +858,7 @@ test "ids round-trip through by_name and @tagName" {
     try std.testing.expectEqual(CommandId.@"app.quit", by_name.get("app.quit").?);
     try std.testing.expectEqualStrings("git.commit", name(.@"git.commit"));
     try std.testing.expect(by_name.get("nope.nope") == null);
-    try std.testing.expectEqual(@as(usize, 1112), count);
+    try std.testing.expectEqual(@as(usize, 1116), count);
     try std.testing.expectEqualStrings("Quit mnml", title(.@"app.quit"));
 }
 

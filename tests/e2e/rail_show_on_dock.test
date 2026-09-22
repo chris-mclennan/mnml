@@ -4,11 +4,13 @@
 # lists it as a pinned panel wearing the section's name; the item's
 # right-click offers "Move back to activity bar", which undoes both.
 # TODOS is at (1, 18); its menu's fifth down is the dock row. The strip
-# is `always` and laid from the start, so at 120 the row is ` + New
-# Browser  Claude Code  Codex  HTTP  New terminal  TODOs `: the `+` at
-# 1..7, Browser 8..18, Claude Code 19..33, Codex 34..42, HTTP 43..50,
-# New terminal 51..66, TODOs 67..75 — column 70 is its word. No click
-# below may land on 19..42: that would start a real `claude` / `codex`.
+# is `always` and laid from the start, and the `+` ENDS the run
+# (dock-polish: `ui.dock.plus_at = .right`), so at 120 the row is
+# ` Browser  Claude Code  Codex  HTTP  New terminal  TODOs  + `:
+# Browser 1..11, Claude Code 12..26, Codex 27..35, HTTP 36..43, New
+# terminal 44..59, TODOs 60..68 — column 63 is its word — and the `+`
+# 69..75. No click below may land on 12..35: that would start a real
+# `claude` / `codex`.
 write src/a.zig "// TODO: alpha marker\n"
 open src/a.zig
 ex dock always
@@ -31,7 +33,7 @@ rightclick 1 18
 expect screen contains "Show Findings"
 key esc
 # The dock item: its own menu, and the way home.
-rightclick 70 37
+rightclick 63 37
 expect screen contains "Move back to activity bar"
 expect screen contains "Unpin from dock"
 key enter

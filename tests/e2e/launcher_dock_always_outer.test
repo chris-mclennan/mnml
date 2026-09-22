@@ -10,10 +10,11 @@
 # anywhere else it would land on the `:` row instead.
 #
 # The run is centred (`ui.dock.align`, `.center` out of the box) and the
-# `+` leads it. // changed (railmove): the four first-party surfaces
-# are on it, so at 120 the row is ` + New  Browser  Claude Code  Codex
-# HTTP  New terminal ` from column 25: New terminal at 75..90, column
-# 78 its word (`launcher_dock_always.test` has the full arithmetic).
+# `+` ends it (dock-polish). // changed (railmove): the four first-party
+# surfaces are on it, so at 120 the row is ` Browser  Claude Code  Codex
+# HTTP  New terminal  + New ` from column 25: New terminal at 68..83,
+# column 78 its word (`launcher_dock_always.test` has the full
+# arithmetic).
 write a.txt "alpha\n"
 open a.txt
 expect screen lacks "New terminal"
@@ -35,6 +36,6 @@ expect status contains "\"cmdline\":false"
 click 78 39
 wait 900
 expect pane Terminal
-# …and the shell joins the strip as a running item, wearing the dot
-# macOS puts under an open app.
-expect screen contains "●"
+# …and the shell joins the strip as a running item, told from the rest
+# by brightness — no dot (`launcher_dock_always.test` checks the mark).
+expect screen lacks "•"

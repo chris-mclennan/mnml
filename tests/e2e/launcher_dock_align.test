@@ -7,33 +7,33 @@
 # At 120x40 the `always` strip is row 37 — the editor area's last row,
 # `ui.dock.placement = .inner` being the default — and the pin chip
 # takes 117..119, so the items have 1..117.
-# // changed (railmove): the default row is ` 󰐕 New   Browser 
-#  Claude Code  ❯_ Codex   HTTP  󲀀 New terminal ` — the four
-# first-party surfaces, hidden chips and all — 66 cells of it, which
-# centres at column 25 (the `+` glyph at 26) and ends at 90. The `\n` in
-# each assertion anchors it to the start of a row — the only way a
-# `contains` script can pin a column.
+# // changed (railmove): the default row is `  Browser   Claude Code
+# ❯_ Codex   HTTP  󲀀 New terminal  󰐕 New ` — the four first-party
+# surfaces, hidden chips and all, and the `+` ending the run
+# (dock-polish) — 66 cells of it, which centres at column 25 (Browser's
+# glyph at 26) and ends at 90. The `\n` in each assertion anchors it to
+# the start of a row — the only way a `contains` script can pin a column.
 write a.txt "alpha\n"
 open a.txt
 ex dock always
-# Centred out of the box: 26 blank cells lead the row.
-expect screen contains "\n                          󰐕 New "
+# Centred out of the box: 25 blank cells lead the run, the glyph at 26.
+expect screen contains "\n                           Browser "
 # `:dock start` slides the whole run to the strip's first cell — the
 # same items, the same widths, a different offset.
 ex dock start
 expect screen contains "dock: aligned to the start"
-expect screen contains "\n  󰐕 New "
-expect screen lacks "\n                          󰐕 New "
+expect screen contains "\n   Browser "
+expect screen lacks "\n                           Browser "
 # `:dock end` puts it against the pin chip, and never under it.
 ex dock end
 expect screen contains "dock: aligned to the end"
-expect screen contains "\n                                                    󰐕 New "
-expect screen contains "󰐃"
-expect screen lacks "\n  󰐕 New "
+expect screen contains "\n                                                     Browser "
+expect screen contains "󰐕 New  󰐃"
+expect screen lacks "\n   Browser "
 # And back to the middle.
 ex dock center
 expect screen contains "dock: centred"
-expect screen contains "\n                          󰐕 New "
+expect screen contains "\n                           Browser "
 # The strip's own right-click menu carries every choice, the current one
 # ticked — three label forms, three alignments, and the `+`.
 rightclick 118 37
@@ -44,6 +44,10 @@ expect screen contains "Align: centre"
 expect screen contains "Align: start"
 expect screen contains "Align: end"
 expect screen contains "Show the + button"
+# // changed (dock-polish): which end the `+` takes, and the running mark.
+expect screen contains "+ at the right end"
+expect screen contains "+ at the left end"
+expect screen contains "Running mark: bright icon"
 # // changed (dock-placement): and the two Place rows, the same idiom.
 expect screen contains "Place: above the statusline"
 expect screen contains "Place: below the command line"

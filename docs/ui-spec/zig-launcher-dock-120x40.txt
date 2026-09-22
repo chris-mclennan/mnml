@@ -35,6 +35,6 @@
    │ [Ctrl+K Ctrl+I] Hover ·  │▌                                                                       ┌─────────── × ┐
   │ [F2] Rename              │▌                                                                       │ dock: always │
    │                          │▌                                                                       └──────────────┘
-                                          󰐕 New   Browser  󲀀 New terminal                                            󰐃
+                           Browser  󱸀 Claude Code  󱸁 Codex   HTTP  󲀀 New terminal  󰐕 New                            󰐃
  EDIT   prog.dbg                                  F 59% ▲0.2  󱼀 󰐎  111B  Ln 1/10 Col 1   1  19:55  ws   dbg
 dock: always

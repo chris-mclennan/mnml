@@ -1304,7 +1304,7 @@ fn ptyIcon(app: *App, pane: *const pty_pane.PtyPane, ascii: bool) icons.Icon {
     const term = terminal_glyph.mark(app);
     const glyph = if (ascii) term.fallback else term.glyph;
     if (pane.argv.len > 0) return .{ .glyph = glyph, .color = p.green };
-    return .{ .glyph = glyph, .color = .{ .index = 15 } };
+    return .{ .glyph = glyph, .color = bufferline.terminal_chip_fg };
 }
 
 /// `✗N` / `⚠N` (or `●` under `dot`) for an editor with diagnostics,

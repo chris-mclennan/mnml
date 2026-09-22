@@ -201,6 +201,10 @@ pub const rows = [_]RowSpec{
     .{ .path = "ui.dock.labels", .label = "Launcher dock labels", .section = .ui, .scope = .home },
     .{ .path = "ui.dock.align", .label = "Launcher dock alignment", .section = .ui, .scope = .home },
     .{ .path = "ui.dock.plus", .label = "Launcher dock + button", .section = .ui, .scope = .home },
+    // // changed (dock-polish): which end the `+` takes, and the mark
+    // a running item wears. The order stays config-only.
+    .{ .path = "ui.dock.plus_at", .label = "Launcher dock + end", .section = .ui, .scope = .home },
+    .{ .path = "ui.dock.running_mark", .label = "Launcher dock running mark", .section = .ui, .scope = .home },
     // // changed (edge-grip): one row for all three grips — it sits
     // under the surfaces it governs, after the last of them.
     .{ .path = "ui.edge_grips", .label = "Edge grips on slide-ins", .section = .ui, .scope = .home },
