@@ -27,6 +27,7 @@ const view = @import("../ui/request_view.zig");
 const command = @import("../core/command.zig");
 const parse = @import("../http/parse.zig");
 const json_pretty = @import("../http/json_pretty.zig");
+const charset = @import("../http/charset.zig");
 const client = @import("../http/client.zig");
 const env_mod = @import("../http/env.zig");
 const syntax = @import("syntax.zig");
@@ -483,6 +484,10 @@ pub const RequestPane = struct {
             if (try json_pretty.pretty(self.gpa, resp.body)) |pretty| {
                 if (std.mem.eql(u8, pretty, resp.body)) self.gpa.free(pretty) else self.resp_pretty = pretty;
             }
+        } else if (charset.singleByte(resp.header("content-type"))) |cs| {
+            // A latin-1 body painted as bytes is torn cells; the view
+            // gets it transcoded, the stored body stays the server's.
+            if (!std.unicode.utf8ValidateSlice(resp.body)) self.resp_pretty = try charset.toUtf8(self.gpa, resp.body, cs);
         }
         self.state = .{ .done = resp };
         self.resp_view = .{};
@@ -1982,6 +1987,17 @@ test "split: toggling picks a second tab; showing the right tab swaps the halves
     try testing.expect(rp.split and rp.split_tab == .body);
     rp.split_ratio = 30;
     try testing.expectEqual(@as(u8, 30), rp.split_ratio);
+}
+
+test "a latin-1 response is transcoded for the view and keeps its bytes" {
+    var rp = try RequestPane.init(testing.allocator);
+    defer rp.deinit();
+    const gpa = testing.allocator;
+    const hs = try gpa.alloc(parse.Header, 1);
+    hs[0] = .{ .name = try gpa.dupe(u8, "content-type"), .value = try gpa.dupe(u8, "text/plain; charset=iso-8859-1") };
+    try rp.setResponse(.{ .status = 200, .status_text = try gpa.dupe(u8, "OK"), .final_url = try gpa.dupe(u8, "http://x/"), .headers = hs, .body = try gpa.dupe(u8, "caf\xe9 cr\xe8me\n") });
+    try testing.expectEqualStrings("caf\xe9 cr\xe8me\n", rp.response().?.body);
+    try testing.expectEqualStrings("caf\u{e9} cr\u{e8}me\n", rp.displayBody());
 }
 
 test "a JSON response keeps its wire body; the view text is re-indented, and goes when the response does" {
