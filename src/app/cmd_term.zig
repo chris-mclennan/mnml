@@ -25,6 +25,8 @@ pub const table = .{
     .@"term.focus_or_open_shell" = &focusOrOpen,
     .@"term.paste" = &pasteClipboard,
     .@"term.copy" = &copySelection,
+    .@"term.prev_prompt" = &prevPrompt,
+    .@"term.next_prompt" = &nextPrompt,
     .@"term.clear" = &clear,
     .@"term.restart" = &restart,
     .@"term.rename" = &rename,
@@ -77,6 +79,17 @@ fn pasteClipboard(app: *App) CommandError!void {
 fn copySelection(app: *App) CommandError!void {
     const p = try activePty(app);
     if (!try pty_pane.copySelection(app, p)) return app.diag.fail(app.frame.allocator(), "nothing is selected — drag across the text first", .{});
+}
+
+fn prevPrompt(app: *App) CommandError!void {
+    return jump(app, -1);
+}
+fn nextPrompt(app: *App) CommandError!void {
+    return jump(app, 1);
+}
+fn jump(app: *App, delta: isize) CommandError!void {
+    const p = try activePty(app);
+    if (!pty_pane.jumpPrompt(app, p, delta)) return app.diag.fail(app.frame.allocator(), "no {s} prompt — the shell marks them with OSC 133 (the mnml prompt does)", .{if (delta < 0) "earlier" else "later"});
 }
 
 fn clear(app: *App) CommandError!void {

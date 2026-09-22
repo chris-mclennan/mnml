@@ -419,7 +419,7 @@ pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
                 // A Claude session started under `--session-id` comes
                 // back with `--resume`: the id is taken once.
                 const argv = try pty_pane.resumeArgv(arena, pt.argv);
-                break :blk .{ .kind = .pty, .argv = argv, .cwd = pt.cwd, .label = pt.label, .renamed = pt.renamed, .accent = pt.accent_color, .session_id = try paneSessionId(app, arena, pt, argv) };
+                break :blk .{ .kind = .pty, .argv = argv, .cwd = (try pt.liveCwd(arena)) orelse pt.cwd, .label = pt.label, .renamed = pt.renamed, .accent = pt.accent_color, .session_id = try paneSessionId(app, arena, pt, argv) };
             },
             else => null,
         };

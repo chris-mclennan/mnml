@@ -2161,6 +2161,11 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     // not tracking the mouse (a tracking child owns its
                     // right button).
                     if (m.kind == .press and m.button == .right) return context_menus.openPtyPaneMenu(app, id, m.x, m.y);
+                    // Ctrl / Cmd + click opens an OSC 8 link the child
+                    // printed, as ghostty's does.
+                    if (m.kind == .press and m.button == .left and (m.mods.ctrl or m.mods.super)) {
+                        if (pty_pane.linkAt(p, m.x, m.y)) |url| return git_app.openExternal(app, url);
+                    }
                     // A left press anchors a text selection; the drag and
                     // the release come back through `continueDrag`.
                     if (m.kind == .press and m.button == .left) {

@@ -319,6 +319,15 @@ pub const PtyPane = struct {
         return session.term.getTitle();
     }
 
+    /// Where the shell says it is (OSC 7 — ghostty's shell integration,
+    /// macOS's `update_terminal_cwd`, starship, fish, the mnml prompt):
+    /// an absolute path on `arena`, or null when the child never said or
+    /// said something that is not a local `file://` URL.
+    pub fn liveCwd(self: *const PtyPane, arena: Allocator) Allocator.Error!?[]const u8 {
+        const session = self.session orelse return null;
+        return pwdPath(arena, session.term.getPwd() orelse return null);
+    }
+
     /// What the tab reads, in the order every terminal's tab follows:
     /// the user's rename, then the title the child set (a shell prompt's
     /// cwd, vim's file, an ssh host), then the label it opened with.
@@ -844,6 +853,60 @@ pub fn mouse(app: *App, p: *PtyPane, m: Mouse, origin: struct { x: u16, y: u16 }
     var buf: [32]u8 = undefined;
     const bytes = encodeMouse(m, m.x -| origin.x, m.y -| origin.y, enc, &buf);
     if (bytes.len > 0) p.write(bytes);
+}
+
+// ─── what the shell reports ─────────────────────────────────────────────
+
+/// `file://host/some%20dir` → `/some dir`. OSC 7 carries a URL whose
+/// host is the machine the shell runs on; the path is what a saved
+/// session reopens in, so anything else (another scheme, a relative
+/// path) is refused rather than guessed at.
+pub fn pwdPath(arena: Allocator, url: []const u8) Allocator.Error!?[]const u8 {
+    const scheme = "file://";
+    if (!std.ascii.startsWithIgnoreCase(url, scheme)) return null;
+    const rest = url[scheme.len..];
+    const slash = std.mem.indexOfScalar(u8, rest, '/') orelse return null;
+    const raw = rest[slash..];
+    var out = try arena.alloc(u8, raw.len);
+    var n: usize = 0;
+    var i: usize = 0;
+    while (i < raw.len) : (i += 1) {
+        if (raw[i] == '%' and i + 2 < raw.len) {
+            if (std.fmt.parseInt(u8, raw[i + 1 .. i + 3], 16)) |b| {
+                out[n] = b;
+                n += 1;
+                i += 2;
+                continue;
+            } else |_| {}
+        }
+        out[n] = raw[i];
+        n += 1;
+    }
+    return out[0..n];
+}
+
+/// `term.prev_prompt` / `term.next_prompt`: the view jumps to the
+/// previous / next prompt the shell marked (OSC 133), as ghostty's
+/// `jump_to_prompt` does. False when the child never marked one.
+pub fn jumpPrompt(app: *App, p: *PtyPane, delta: isize) bool {
+    const session = p.session orelse return false;
+    const screen = session.terminal().screens.active;
+    const before = screen.pages.getTopLeft(.viewport);
+    screen.scroll(.{ .delta_prompt = delta });
+    app.needs_render = true;
+    return !screen.pages.getTopLeft(.viewport).eql(before);
+}
+
+/// The URL an OSC 8 hyperlink puts under the screen cell (`x`, `y`),
+/// borrowed from the terminal; null when the cell carries none.
+pub fn linkAt(p: *PtyPane, x: u16, y: u16) ?[]const u8 {
+    const b = p.body;
+    if (x < b.x or y < b.y or x >= b.x + b.w or y >= b.y + b.h) return null;
+    const pin = pinAt(p, x, y) orelse return null;
+    const page = pin.node.page();
+    const cell = pin.rowAndCell().cell;
+    const id = page.lookupHyperlink(cell) orelse return null;
+    return page.hyperlink_set.get(page.memory, id).uri.slice(page.memory);
 }
 
 // ─── selection ──────────────────────────────────────────────────────────
@@ -1499,6 +1562,49 @@ test "selecting in a terminal pane: a drag copies the cells it crossed (a wide c
     // A key for the child lets go of it.
     try app.handle(.{ .key = Key.char('x') });
     try t.expect(!hasSelection(p));
+}
+
+test "pwdPath: OSC 7's file URL to a path, percent escapes decoded; anything else refused" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    try t.expectEqualStrings("/Users/me/deep dir/sub", (try pwdPath(arena, "file://my-mac.local/Users/me/deep%20dir/sub")).?);
+    try t.expectEqualStrings("/tmp", (try pwdPath(arena, "file:///tmp")).?);
+    try t.expect(try pwdPath(arena, "kitty-shell-cwd://host/tmp") == null);
+    try t.expect(try pwdPath(arena, "file://host-only") == null);
+}
+
+test "what a shell reports: OSC 7 is the pane's live cwd, OSC 133 prompts are jumped between, an OSC 8 link is found under its cell" {
+    // A POSIX shell script drives this one.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (!supported) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const script =
+        \\printf '\033]8;;https://example.com/x\033\\link\033]8;;\033\\\n'
+        \\printf '\033]7;file://h/tmp/some%%20where\007'
+        \\printf '\033]133;A\007$ one\n\033]133;C\007'; seq 1 40
+        \\printf '\033]133;A\007$ two\n\033]133;C\007'; seq 41 80
+        \\echo done; sleep 30
+    ;
+    const id = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", script }, .label = "report" });
+    // Each prompt line is followed by the output mark (133;C) a shell
+    // sends: a prompt left open is cleared on resize for the shell to
+    // redraw (`shell_redraws_prompt`), and printf redraws nothing.
+    try t.expect(try tickUntilScreen(&app, "done", 5000));
+    const p = app.panes.pty(id).?;
+    try t.expectEqualStrings("/tmp/some where", (try p.liveCwd(app.frame.allocator())).?);
+    // Up to "$ two", then to "$ one"; a third jump has nowhere to go.
+    try t.expect(jumpPrompt(&app, p, -1));
+    try t.expect(try tickUntilScreen(&app, "$ two", 1000));
+    try t.expect(jumpPrompt(&app, p, -1));
+    try t.expect(try tickUntilScreen(&app, "$ one", 1000));
+    // At the top the link line is in view again.
+    p.scrollTo(.top);
+    try app.render();
+    try t.expectEqualStrings("https://example.com/x", linkAt(p, p.body.x + 1, p.body.y).?);
+    try t.expect(linkAt(p, p.body.x + 6, p.body.y) == null);
 }
 
 test "the wheel over a pager: on the alternate screen with no mouse tracking the notches reach the child as arrow keys" {
