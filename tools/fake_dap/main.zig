@@ -177,7 +177,6 @@ pub const Server = struct {
                 .supportsRestartRequest = false,
                 .exceptionBreakpointFilters = filters,
             });
-            try self.event("initialized", .{});
         } else if (eql(u8, command, "launch")) {
             const path = getStr(args, "program") orelse return self.fail(rseq, command, "launch needs `program`");
             self.ensureProgram(path) catch |err| switch (err) {
@@ -186,6 +185,13 @@ pub const Server = struct {
             };
             self.launched = true;
             try self.respond(rseq, command, .{});
+            // `initialized` only now — lldb-dap's and debugpy's order
+            // (the protocol's sequence diagram): the client sends
+            // `launch` after the `initialize` reply and its breakpoints
+            // and `configurationDone` after this event. A client that
+            // waits for this event before `launch` deadlocks here, as
+            // it does against those adapters.
+            try self.event("initialized", .{});
         } else if (eql(u8, command, "attach")) {
             try self.fail(rseq, command, "mnml-fake-dap does not attach; use launch");
         } else if (eql(u8, command, "setBreakpoints")) {
@@ -657,13 +663,13 @@ test "framing: readFrame skips other headers and takes exactly Content-Length by
     try t.expectError(error.BadFrame, readFrame(t.allocator, &bad));
 }
 
-test "initialize: capabilities and the two filters, then `initialized`; an unknown request fails without a crash" {
+test "initialize: capabilities and the two filters (no `initialized` yet — that follows `launch`); an unknown request fails without a crash" {
     var h: Harness = undefined;
     h.init();
     defer h.deinit();
     const out = try h.send("initialize", "{\"clientID\":\"mnml\"}");
     defer t.allocator.free(out);
-    try t.expectEqual(@as(usize, 2), out.len);
+    try t.expectEqual(@as(usize, 1), out.len);
     try expectResponse(out[0], "initialize", true);
     const caps = getField(out[0], "body").?;
     try t.expect(caps.object.get("supportsConditionalBreakpoints").?.bool);
@@ -678,7 +684,6 @@ test "initialize: capabilities and the two filters, then `initialized`; an unkno
     try t.expect(!fl[0].object.get("default").?.bool);
     try t.expectEqualStrings("uncaught", getStr(fl[1], "filter").?);
     try t.expect(fl[1].object.get("default").?.bool);
-    _ = try expectEvent(out[1], "initialized");
     try t.expectEqual(@as(i64, 1), getInt(out[0], "seq").?);
     try t.expectEqual(@as(i64, 1), getInt(out[0], "request_seq").?);
     const bogus = try h.send("frobnicate", "{}");
@@ -689,7 +694,7 @@ test "initialize: capabilities and the two filters, then `initialized`; an unkno
     const not_json = "this is not json";
     try h.server.handle(not_json);
     try h.drain();
-    try t.expectEqual(@as(usize, 3), h.parsed.items.len);
+    try t.expectEqual(@as(usize, 2), h.parsed.items.len);
 }
 
 test "the session: breakpoints before launch verify against the file, launch + configurationDone run to the stop, inspection, steps, evaluate, setVariable, exception, exit" {
@@ -718,8 +723,10 @@ test "the session: breakpoints before launch verify against the file, launch + c
     t.allocator.free(try h.send("setExceptionBreakpoints", "{\"filters\":[\"uncaught\"]}"));
     const launch = try h.send("launch", try std.fmt.allocPrint(a, "{{\"program\":{s},\"cwd\":\"/\"}}", .{pj}));
     defer t.allocator.free(launch);
-    try t.expectEqual(@as(usize, 1), launch.len);
+    // The reply, then `initialized` — only now, as lldb-dap and debugpy have it.
+    try t.expectEqual(@as(usize, 2), launch.len);
     try expectResponse(launch[0], "launch", true);
+    _ = try expectEvent(launch[1], "initialized");
 
     // configurationDone starts the run: `hello` is printed, then the stop at 4.
     const go = try h.send("configurationDone", "{}");

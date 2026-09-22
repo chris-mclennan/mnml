@@ -92,10 +92,17 @@ pub const Session = struct {
     /// The adapter's command, for toasts. Owned.
     adapter: []u8,
     /// The substituted `launch` / `attach` arguments as JSON. Owned;
-    /// sent once `initialized` lands.
+    /// sent on the `initialize` reply.
     launch_body: []u8,
 
+    /// The adapter's `initialized` event has arrived: it is ready for
+    /// breakpoints and `configurationDone`.
     initialized: bool = false,
+    /// The `initialize` reply has landed (the capabilities are known).
+    /// netcoredbg sends `initialized` before it, lldb-dap and debugpy
+    /// only while handling `launch`; the configuration step waits for
+    /// both flags, whichever order they come in.
+    ready: bool = false,
     /// `configurationDone` has been sent.
     configured: bool = false,
     running: bool = false,

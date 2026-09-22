@@ -1,7 +1,11 @@
 //! Debugging (DAP) on the app side: the breakpoints and watches mnml
 //! keeps across sessions, the one live `Session` (`dap/client.zig`), the
-//! handshake it drives (`initialize` → `initialized` → breakpoints,
-//! exception filters, `launch`, `configurationDone`), what a `stopped`
+//! handshake it drives (`initialize` → its reply sends `launch` /
+//! `attach` → the adapter's `initialized` → breakpoints, exception
+//! filters, `configurationDone` — the protocol's own order, which
+//! lldb-dap and debugpy require: they emit `initialized` only while
+//! handling `launch`; netcoredbg emits it before the `initialize`
+//! reply, so the configuration step waits for both), what a `stopped`
 //! event sets in motion (threads, the stack, scopes, variables, the
 //! watches, the ▶ mark in the gutter), and the two panes — `Pane.debug`
 //! and the console pane — `Pane.debug`: the step toolbar and the Debug
@@ -1142,10 +1146,16 @@ fn handleResponse(app: *App, s: *Session, kind: client.ReqKind, ctx: u64, succes
     switch (kind) {
         .initialize => {
             try s.setCapabilities(body);
-            // netcoredbg sends `initialized` from inside `initialize`,
-            // before this reply: the filters were not known when the
-            // event's handler ran, so its defaults go on now.
-            if (s.initialized and s.filters.items.len > 0) s.setExceptionBreakpoints() catch {};
+            s.ready = true;
+            // `launch` / `attach` goes out on this reply, not on
+            // `initialized`: lldb-dap and debugpy send `initialized`
+            // only while handling `launch`, so a client that waited for
+            // the event first never started (hunt: dap-launch-never-sent).
+            s.launch() catch |err| app.toast("dap launch: {s}", .{@errorName(err)});
+            // netcoredbg's `initialized` came before this reply: the
+            // filters were not known then, so the configuration step
+            // runs now, with them.
+            if (s.initialized) configure(app, s);
         },
         .launch => if (success) {
             s.running = true;
@@ -1219,10 +1229,7 @@ fn handleResponse(app: *App, s: *Session, kind: client.ReqKind, ctx: u64, succes
 fn handleEvent(app: *App, s: *Session, name: []const u8, body: ?jsonrpc.Value) Allocator.Error!void {
     if (std.mem.eql(u8, name, "initialized")) {
         s.initialized = true;
-        syncAllBreakpoints(app);
-        if (s.filters.items.len > 0) s.setExceptionBreakpoints() catch {};
-        s.launch() catch |err| app.toast("dap launch: {s}", .{@errorName(err)});
-        s.configurationDone() catch {};
+        if (s.ready) configure(app, s);
     } else if (std.mem.eql(u8, name, "stopped")) {
         const b = body orelse return;
         const thread = jsonrpc.getInt(b, "threadId") orelse s.thread orelse 1;
@@ -1260,6 +1267,16 @@ fn handleEvent(app: *App, s: *Session, name: []const u8, body: ?jsonrpc.Value) A
         s.exited = true;
         endSession(app);
     }
+}
+
+/// The configuration step, once `initialized` has arrived AND the
+/// `initialize` reply has landed (either order): every file's
+/// breakpoints, the exception filters, then `configurationDone`.
+fn configure(app: *App, s: *Session) void {
+    if (s.configured) return;
+    syncAllBreakpoints(app);
+    if (s.filters.items.len > 0) s.setExceptionBreakpoints() catch {};
+    s.configurationDone() catch {};
 }
 
 /// Open (or reveal) the stopped frame's file with the cursor on `line`.
@@ -1947,7 +1964,8 @@ fn fakeEvent(io: std.Io, gpa: Allocator, out: std.Io.File, seq: *i64, name: []co
     jsonrpc.writeFrame(io, out, text) catch {};
 }
 
-/// A debugpy-shaped adapter: stops on `launch` at line 3 of the file,
+/// A debugpy-shaped adapter (`initialized` after the `launch` reply,
+/// as debugpy and lldb-dap have it): stops at line 3 of the file,
 /// steps to line 4 on `next`, answers the inspection requests with
 /// one scope / one variable, echoes evaluations as `<expr> = 42`.
 fn fakeAdapter(io: std.Io, gpa: Allocator, in: std.Io.File, out: std.Io.File, log: *FakeLog, file: []const u8) std.Io.Cancelable!void {
@@ -1966,7 +1984,6 @@ fn fakeAdapter(io: std.Io, gpa: Allocator, in: std.Io.File, out: std.Io.File, lo
         const args = jsonrpc.getField(v, "arguments") orelse jsonrpc.Value.null;
         if (std.mem.eql(u8, cmd, "initialize")) {
             fakeReply(io, gpa, out, &seq, rseq, cmd, "{\"exceptionBreakpointFilters\":[{\"filter\":\"uncaught\",\"label\":\"Uncaught Exceptions\",\"default\":true},{\"filter\":\"raised\",\"label\":\"Raised Exceptions\",\"default\":false}]}");
-            fakeEvent(io, gpa, out, &seq, "initialized", "{}");
         } else if (std.mem.eql(u8, cmd, "setBreakpoints")) {
             const lines: []const jsonrpc.Value = jsonrpc.getArr(args, "lines") orelse &.{};
             log.lock.lockUncancelable(io);
@@ -1981,6 +1998,9 @@ fn fakeAdapter(io: std.Io, gpa: Allocator, in: std.Io.File, out: std.Io.File, lo
         } else if (std.mem.eql(u8, cmd, "launch")) {
             log.note("launched", true);
             fakeReply(io, gpa, out, &seq, rseq, cmd, "{}");
+            // debugpy (and lldb-dap): `initialized` only while handling
+            // `launch` — a client waiting for it before `launch` hangs here.
+            fakeEvent(io, gpa, out, &seq, "initialized", "{}");
         } else if (std.mem.eql(u8, cmd, "configurationDone")) {
             log.note("configured", true);
             fakeReply(io, gpa, out, &seq, rseq, cmd, "{}");

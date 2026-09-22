@@ -1,0 +1,28 @@
+# DAP session — the handshake in the order the protocol draws (and
+# lldb-dap and debugpy require): `launch` goes out right after the
+# `initialize` reply; breakpoints, exception filters and
+# `configurationDone` wait for the adapter's `initialized`, which
+# mnml-fake-dap — like lldb-dap and debugpy — sends only while handling
+# `launch`. A client that waited for `initialized` before sending
+# `launch` sat at "starting" forever (hunt: dap-launch-never-sent).
+write prog.dbg "let x = 1\nlet name = \"mnml\"\nprint \"hello\"\nx = x + 1\nprint x\n"
+write .mnml/config.zon .{ .dap = .{ .dbg = .{ .cmd = "$MNML_FAKE_DAP" } } }
+open prog.dbg
+command editor.use_vim
+key j
+key j
+key j
+command dap.toggle_breakpoint
+expect screen contains "breakpoint set: line 4"
+
+command dap.run
+expect screen contains "dap: stopped (breakpoint)"
+expect screen contains "▶"
+command dap.show
+expect pane "Debug"
+expect screen contains "prog.dbg:4  main"
+expect screen contains "x: int = 1"
+expect screen contains "hello"
+
+command dap.terminate
+expect screen contains "dap: terminated"
