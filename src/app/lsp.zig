@@ -2531,16 +2531,44 @@ pub fn codeAction(app: *App) CommandError!void {
 
 pub fn quickFix(app: *App) CommandError!void {
     const t = try requireServer(app, "quick fix");
-    try requestActions(app, t, "quickfix", action_first);
+    try requestActions(app, t, "quickfix", action_first_quickfix);
 }
 
 pub fn organizeImports(app: *App) CommandError!void {
     const t = try requireServer(app, "organize imports");
-    try requestActions(app, t, "source.organizeImports", action_first);
+    try requestActions(app, t, "source.organizeImports", action_first_organize);
 }
 
+/// `Ctx.extra` of a `codeAction` request: what to do with the list.
 const action_pick: u32 = 0;
-const action_first: u32 = 1;
+/// Run the first action whose `kind` is `quickfix` (or under it).
+const action_first_quickfix: u32 = 1;
+/// Run the first action whose `kind` is `source.organizeImports`.
+const action_first_organize: u32 = 2;
+
+/// The kind an auto-run mode asked for; null for the picker.
+fn wantedKind(mode: u32) ?[]const u8 {
+    return switch (mode) {
+        action_first_quickfix => "quickfix",
+        action_first_organize => "source.organizeImports",
+        else => null,
+    };
+}
+
+/// The first action whose `kind` is `want` or a kind under it
+/// (`quickfix` takes `quickfix.import`, never `refactor.extract`).
+/// Null when none says so — `only` is a hint a server may ignore
+/// (csharp-ls answers the same sixteen kind-less actions to every
+/// request), and the spec leaves the filtering to the client; the
+/// first item of an unfiltered list is a refactor as often as a fix.
+pub fn firstOfKind(items: []const types.CodeAction, want: []const u8) ?usize {
+    for (items, 0..) |a, i| {
+        const k = a.kind orelse continue;
+        if (std.mem.eql(u8, k, want)) return i;
+        if (k.len > want.len and std.mem.startsWith(u8, k, want) and k[want.len] == '.') return i;
+    }
+    return null;
+}
 
 fn requestActions(app: *App, t: Target, only: ?[]const u8, mode: u32) CommandError!void {
     const arena = app.frame.allocator();
@@ -2618,9 +2646,13 @@ fn openActions(app: *App, s: *Server, ctx: Ctx, result: ?Value, msg: *jsonrpc.In
         return false;
     }
     app.lsp.picker_actions = set;
-    if (ctx.extra == action_first) {
-        try runAction(app, 0);
-        return true;
+    if (wantedKind(ctx.extra)) |want| {
+        if (firstOfKind(set.items, want)) |i| {
+            try runAction(app, i);
+            return true;
+        }
+        // No action of that kind: the list, never its first item.
+        app.toast("no {s} action among {d} — pick one", .{ want, set.items.len });
     }
     const gpa = app.gpa;
     var labels: std.ArrayListUnmanaged([]u8) = .empty;
@@ -4608,3 +4640,25 @@ test "a file over editor.lsp_max_bytes gets no server, says so once, and editor.
     defer gpa.free(after);
     try testing.expect(std.mem.indexOf(u8, after, "LSP off") == null);
 }
+
+test "firstOfKind: the first action of the asked kind or under it; a kind-less or foreign list gives nothing, never its first item" {
+    const raw: Value = .null;
+    const items = [_]types.CodeAction{
+        .{ .title = "Introduce constant", .kind = null, .raw = raw },
+        .{ .title = "Extract", .kind = "refactor.extract", .raw = raw },
+        .{ .title = "Add import", .kind = "quickfix.import", .raw = raw },
+        .{ .title = "Remove unused", .kind = "quickfix", .raw = raw },
+        .{ .title = "Sort imports", .kind = "source.organizeImports", .raw = raw },
+    };
+    try testing.expectEqual(@as(?usize, 2), firstOfKind(&items, "quickfix"));
+    try testing.expectEqual(@as(?usize, 4), firstOfKind(&items, "source.organizeImports"));
+    try testing.expectEqual(@as(?usize, 1), firstOfKind(&items, "refactor"));
+    // `quickfixes` is not under `quickfix`; nothing is under `source.fixAll`.
+    try testing.expectEqual(@as(?usize, null), firstOfKind(&items, "quickfixe"));
+    try testing.expectEqual(@as(?usize, null), firstOfKind(&items, "source.fixAll"));
+    // csharp-ls's list: sixteen actions, no kinds — the picker, not item 0.
+    const unkinded = [_]types.CodeAction{ .{ .title = "Introduce constant", .kind = null, .raw = raw }, .{ .title = "Remove unused variable", .kind = null, .raw = raw } };
+    try testing.expectEqual(@as(?usize, null), firstOfKind(&unkinded, "quickfix"));
+    try testing.expectEqual(@as(?usize, null), firstOfKind(&.{}, "quickfix"));
+}
+

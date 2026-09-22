@@ -68,6 +68,8 @@ const capabilities_incremental = .{
     .documentFormattingProvider = true,
 };
 
+pub const ActionsShape = enum { kinded, unkinded, refactor_first };
+
 pub const Server = struct {
     gpa: Allocator,
     io: Io,
@@ -93,6 +95,11 @@ pub const Server = struct {
     /// every `let` is a variable symbol, the shape a real server sends;
     /// the default keeps one single-line symbol per `fn`.
     rich_symbols: bool = false,
+    /// `--actions unkinded` / `--actions refactor-first`: the shape of
+    /// the `codeAction` list — csharp-ls's (every action kind-less, a
+    /// refactor first, the fix later) or a kinded list led by a
+    /// refactor — so a client's kind check can be driven.
+    actions: ActionsShape = .kinded,
     log: std.ArrayList(u8) = .empty,
     initialized: bool = false,
     shutdown: bool = false,
@@ -306,7 +313,13 @@ pub const Server = struct {
             // server scopes a quick fix. A projection gets nothing.
             if (!echoesTodo(params, todo.start.line)) return self.respondRaw(id, "[]");
             const edit = try workspaceEdit(arena, d.uri, &.{.{ .range = todo, .newText = "DONE" }});
-            const action = try std.fmt.allocPrint(arena, "[{{\"title\":\"Resolve TODO\",\"kind\":\"quickfix\",\"edit\":{s}}}]", .{edit});
+            // The refactor of the shaped lists: a comment at the top.
+            const refactor = try workspaceEdit(arena, d.uri, &.{.{ .range = .{ .start = .{ .line = 0, .character = 0 }, .end = .{ .line = 0, .character = 0 } }, .newText = "// refactored\n" }});
+            const action = switch (self.actions) {
+                .kinded => try std.fmt.allocPrint(arena, "[{{\"title\":\"Resolve TODO\",\"kind\":\"quickfix\",\"edit\":{s}}}]", .{edit}),
+                .unkinded => try std.fmt.allocPrint(arena, "[{{\"title\":\"Introduce constant for '1'\",\"edit\":{s}}},{{\"title\":\"Resolve TODO\",\"edit\":{s}}}]", .{ refactor, edit }),
+                .refactor_first => try std.fmt.allocPrint(arena, "[{{\"title\":\"Extract to method\",\"kind\":\"refactor.extract\",\"edit\":{s}}},{{\"title\":\"Resolve TODO\",\"kind\":\"quickfix\",\"edit\":{s}}}]", .{ refactor, edit }),
+            };
             try self.respondRaw(id, action);
         } else if (eql(u8, method, "textDocument/formatting")) {
             if (getObj(params, "options")) |o| try self.logLine("formatting tabSize={d} insertSpaces={}", .{ getInt(o, "tabSize") orelse -1, getBool(o, "insertSpaces") orelse false });
@@ -883,6 +896,7 @@ pub fn main(init: std.process.Init) !u8 {
     var incremental = false;
     var configure = false;
     var rich_symbols = false;
+    var actions: ActionsShape = .kinded;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const a = args[i];
@@ -896,7 +910,7 @@ pub fn main(init: std.process.Init) !u8 {
         if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) {
             var buf: [512]u8 = undefined;
             var w: Io.File.Writer = .initStreaming(.stdout(), io, &buf);
-            try w.interface.writeAll("mnml-fake-lsp [--log PATH] [--sync full|incremental] [--configure] [--symbols plain|rich]: a deterministic language server over stdio (see tools/fake_lsp/README.md)\n");
+            try w.interface.writeAll("mnml-fake-lsp [--log PATH] [--sync full|incremental] [--configure] [--symbols plain|rich] [--actions kinded|unkinded|refactor-first] [--watch]: a deterministic language server over stdio (see tools/fake_lsp/README.md)\n");
             try w.interface.flush();
             return 0;
         }
@@ -913,6 +927,10 @@ pub fn main(init: std.process.Init) !u8 {
             i += 1;
             rich_symbols = std.mem.eql(u8, args[i], "rich");
         }
+        if (std.mem.eql(u8, a, "--actions") and i + 1 < args.len) {
+            i += 1;
+            actions = if (std.mem.eql(u8, args[i], "unkinded")) .unkinded else if (std.mem.eql(u8, args[i], "refactor-first")) .refactor_first else .kinded;
+        }
     }
     var in_buf: [64 * 1024]u8 = undefined;
     var out_buf: [64 * 1024]u8 = undefined;
@@ -924,6 +942,7 @@ pub fn main(init: std.process.Init) !u8 {
     server.incremental = incremental;
     server.configure = configure;
     server.rich_symbols = rich_symbols;
+    server.actions = actions;
     while (!server.done) {
         const body = readFrame(gpa, &reader.interface) catch |err| switch (err) {
             error.Closed, error.BadFrame => break,

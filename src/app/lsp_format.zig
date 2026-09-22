@@ -148,7 +148,7 @@ pub fn externalWins(app: *App, path: []const u8) ?ExternalReason {
     var buf: [32]u8 = undefined;
     const ext = extOf(path, &buf);
     if (app.cfg.formatters.get(ext)) |f| return if (f.cmd.len == 0) null else .configured;
-    const f = tools.formatterFor(&app.cfg, ext) orelse return null;
+    const f = tools.formatterFor(&app.cfg, ext, lsp.languageOf(app, path)) orelse return null;
     const pc = tools.projectConfigFor(f.argv[0]) orelse return null;
     if (!projectHasConfig(app, path, pc)) return null;
     var where: [std.fs.max_path_bytes]u8 = undefined;
