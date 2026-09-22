@@ -473,6 +473,18 @@ pub fn build(b: *std.Build) void {
         jr.stdio = .inherit;
         arena_step.dependOn(&jr.step);
     }
+    // …and the third shape, over `src/` again: something a worker holds
+    // the ADDRESS of — an `Io.Group`, a queue, an event, a mutex —
+    // declared by value inside a `Pane` payload. Panes live in an
+    // ArrayList, so opening a pane moves them, and a moved group's
+    // `cancel` waits forever. Three panes shipped with one.
+    const pg = b.addRunArtifact(arena_exe);
+    pg.addDirectoryArg(b.path("src"));
+    pg.addArg("--pane-groups");
+    pg.addArg("--strict");
+    pg.has_side_effects = true;
+    pg.stdio = .inherit;
+    arena_step.dependOn(&pg.step);
     const arena_tests = b.addTest(.{ .root_module = arena_mod, .filters = test_filters, .test_runner = test_runner });
     unit_step.dependOn(&b.addRunArtifact(arena_tests).step);
     // ── end arena audit ─────────────────────────────────────────────────

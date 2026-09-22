@@ -51,7 +51,7 @@ pub fn main(init: std.process.Init) !u8 {
     const w = &stdout_file.interface;
     defer w.flush() catch {};
     if (args.len < 2) {
-        try w.writeAll("usage: arena-audit <dir> [--strict] [--job-results]\n");
+        try w.writeAll("usage: arena-audit <dir> [--strict] [--job-results|--pane-groups]\n");
         return 2;
     }
     const strict = for (args[2..]) |a| {
@@ -64,8 +64,25 @@ pub fn main(init: std.process.Init) !u8 {
     const job_results = for (args[2..]) |a| {
         if (std.mem.eql(u8, a, "--job-results")) break true;
     } else false;
-    const result = if (job_results) try walkJobResults(arena, init.io, args[1]) else try walk(arena, init.io, args[1]);
-    if (job_results) try jobReport(w, args[1], result) else try report(w, result);
+    // `--pane-groups` reads the third shape: something a worker holds
+    // the ADDRESS of, declared by value inside a `Pane` payload — which
+    // lives in an ArrayList and therefore moves.
+    const pane_groups = for (args[2..]) |a| {
+        if (std.mem.eql(u8, a, "--pane-groups")) break true;
+    } else false;
+    const result = if (job_results)
+        try walkJobResults(arena, init.io, args[1])
+    else if (pane_groups)
+        try walkPaneGroups(arena, init.io, args[1])
+    else
+        try walk(arena, init.io, args[1]);
+    if (job_results) {
+        try jobReport(w, args[1], result);
+    } else if (pane_groups) {
+        try paneReport(w, args[1], result);
+    } else {
+        try report(w, result);
+    }
     return if (strict and result.findings.len > 0) 1 else 0;
 }
 
@@ -107,6 +124,7 @@ pub const Rule = enum {
     stored_string,
     raw_open_menu,
     job_result,
+    pane_group,
 
     pub fn text(r: Rule) []const u8 {
         return switch (r) {
@@ -117,6 +135,7 @@ pub const Rule = enum {
             .stored_string => "stored-string",
             .raw_open_menu => "raw-open-menu",
             .job_result => "job-result",
+            .pane_group => "pane-group",
         };
     }
 };
@@ -145,6 +164,10 @@ pub const Counts = struct {
     stores: usize = 0,
     /// Switch prongs of a job-result consumer the audit read.
     prongs: usize = 0,
+    /// `Pane` payload structs the audit found and read.
+    payloads: usize = 0,
+    /// Fields of those structs it looked at.
+    pane_fields: usize = 0,
 };
 
 pub const Result = struct { findings: []const Finding, counts: Counts };
@@ -925,6 +948,238 @@ pub fn walkJobResults(arena: Allocator, io: Io, root: []const u8) !Result {
     return .{ .findings = try out.toOwnedSlice(arena), .counts = counts };
 }
 
+// ─── rule: what a task holds the address of, inside a pane ──────────────
+//
+// A running `io.concurrent` task holds its `Io.Group`'s ADDRESS. Panes
+// live in `PaneStore.slots`, an `ArrayList(?Pane)`, so opening ANY pane
+// moves every open pane — and a group that moves after it has a task
+// makes `cancel` wait forever on a task it can no longer see, which is
+// a wedged quit. `GrepPane`, `SpendPane` and `TestsPane` each shipped
+// with the group declared inline; the fix is a `*Io.Group` made in
+// `init` and destroyed after the cancel in `deinit`.
+//
+// The rule reads `app/pane.zig` for the `Pane` union's payload types,
+// resolves each to the file that declares it, and flags a by-value
+// field of one of the addressed types in one of those structs. A
+// POINTER to one never matches: the pointer may move all it likes.
+
+/// One `Pane` variant's payload type and the file that declares it
+/// (`src`-relative, `/`-separated).
+pub const PanePayload = struct { file: []const u8, name: []const u8 };
+
+/// The primitives whose address outlives the call that hands it over.
+const addressed = [_][]const u8{ "Io.Group", "Io.Queue(", "Io.Event", "Io.Mutex", "Io.Condition" };
+
+/// `<dir of from>/<rel>`, with `.` and `..` folded away.
+fn resolveImport(arena: Allocator, from: []const u8, rel: []const u8) Allocator.Error![]const u8 {
+    var parts: std.ArrayListUnmanaged([]const u8) = .empty;
+    var dirs = std.mem.splitScalar(u8, from, '/');
+    var prev: ?[]const u8 = null;
+    while (dirs.next()) |seg| {
+        if (prev) |pv| try parts.append(arena, pv);
+        prev = seg;
+    }
+    var it = std.mem.splitScalar(u8, rel, '/');
+    while (it.next()) |seg| {
+        if (std.mem.eql(u8, seg, ".") or seg.len == 0) continue;
+        if (std.mem.eql(u8, seg, "..")) {
+            _ = parts.pop();
+            continue;
+        }
+        try parts.append(arena, seg);
+    }
+    return std.mem.join(arena, "/", parts.items);
+}
+
+/// `const <alias> = @import("<path>");`
+fn importDecl(s: []const u8) ?struct { alias: []const u8, path: []const u8 } {
+    var rest = s;
+    if (std.mem.startsWith(u8, rest, "pub ")) rest = rest["pub ".len..];
+    if (!std.mem.startsWith(u8, rest, "const ")) return null;
+    rest = rest["const ".len..];
+    const eq = std.mem.indexOf(u8, rest, " = ") orelse return null;
+    const alias = rest[0..eq];
+    const tail = rest[eq + 3 ..];
+    if (!std.mem.startsWith(u8, tail, "@import(\"")) return null;
+    const open = tail["@import(\"".len..];
+    const close = std.mem.indexOfScalar(u8, open, '"') orelse return null;
+    if (!std.mem.endsWith(u8, open[close..], "\");")) return null;
+    return .{ .alias = alias, .path = open[0..close] };
+}
+
+/// `pub const <Name> = <alias>.<Type>;` — a re-export, so a bare
+/// variant type in the union still resolves to its own file.
+fn reexportDecl(s: []const u8) ?struct { name: []const u8, target: []const u8 } {
+    var rest = s;
+    if (std.mem.startsWith(u8, rest, "pub ")) rest = rest["pub ".len..];
+    if (!std.mem.startsWith(u8, rest, "const ")) return null;
+    rest = rest["const ".len..];
+    const eq = std.mem.indexOf(u8, rest, " = ") orelse return null;
+    const name = rest[0..eq];
+    if (std.mem.indexOfAny(u8, name, " (:") != null) return null;
+    var tail = rest[eq + 3 ..];
+    if (!std.mem.endsWith(u8, tail, ";")) return null;
+    tail = tail[0 .. tail.len - 1];
+    if (std.mem.indexOfScalar(u8, tail, '.') == null) return null;
+    if (std.mem.indexOfAny(u8, tail, " (\"") != null) return null;
+    return .{ .name = name, .target = tail };
+}
+
+/// `pub const <Name> = struct {` and its extern / packed spellings.
+fn structDeclName(s: []const u8) ?[]const u8 {
+    var rest = s;
+    if (std.mem.startsWith(u8, rest, "pub ")) rest = rest["pub ".len..];
+    if (!std.mem.startsWith(u8, rest, "const ")) return null;
+    rest = rest["const ".len..];
+    const eq = std.mem.indexOf(u8, rest, " = ") orelse return null;
+    const name = rest[0..eq];
+    if (name.len == 0 or std.mem.indexOfAny(u8, name, " (:") != null) return null;
+    const tail = rest[eq + 3 ..];
+    inline for (.{ "struct {", "extern struct {", "packed struct {" }) |kw| {
+        if (std.mem.startsWith(u8, tail, kw)) return name;
+    }
+    return null;
+}
+
+/// `<name>: <type>,` — the type text, default value and all. Null for
+/// anything that is not a plain field line.
+fn fieldType(s: []const u8) ?[]const u8 {
+    if (!std.mem.endsWith(u8, s, ",")) return null;
+    const colon = std.mem.indexOfScalar(u8, s, ':') orelse return null;
+    const name = s[0..colon];
+    if (name.len == 0) return null;
+    for (name) |c| if (!isIdentChar(c)) return null;
+    const rest = std.mem.trim(u8, s[colon + 1 .. s.len - 1], " \t");
+    return if (rest.len == 0) null else rest;
+}
+
+/// The field's type is one of the addressed primitives, BY VALUE.
+fn isAddressed(ty: []const u8) bool {
+    var t2 = ty;
+    if (std.mem.startsWith(u8, t2, "std.")) t2 = t2["std.".len..];
+    for (addressed) |want| {
+        if (!std.mem.startsWith(u8, t2, want)) continue;
+        if (std.mem.endsWith(u8, want, "(")) return true;
+        const after = t2[want.len..];
+        if (after.len == 0 or !isIdentChar(after[0])) return true;
+    }
+    return false;
+}
+
+/// `pub const Pane = union(enum)`, read for what each variant's payload
+/// type is and which file declares it.
+pub fn panePayloads(arena: Allocator, pane_file: []const u8, src: []const u8) Allocator.Error![]PanePayload {
+    var imports: std.StringHashMapUnmanaged([]const u8) = .empty;
+    var reexports: std.StringHashMapUnmanaged([]const u8) = .empty;
+    var out: std.ArrayListUnmanaged(PanePayload) = .empty;
+    var in_union = false;
+    var depth: i32 = 0;
+    var lines = std.mem.splitScalar(u8, src, '\n');
+    while (lines.next()) |raw| {
+        const line = stripComment(raw);
+        const s = std.mem.trim(u8, line, " \t");
+        if (!in_union) {
+            if (importDecl(s)) |imp| try imports.put(arena, imp.alias, try resolveImport(arena, pane_file, imp.path));
+            if (reexportDecl(s)) |rx| try reexports.put(arena, rx.name, rx.target);
+            if (std.mem.startsWith(u8, s, "pub const Pane = union(enum) {")) {
+                in_union = true;
+                depth = 1;
+            }
+            continue;
+        }
+        const before = depth;
+        depth += braceDelta(line);
+        if (depth <= 0) break;
+        if (before != 1) continue;
+        const ty_raw = fieldType(s) orelse continue;
+        // A variant is a bare type expression: no default, no call.
+        if (std.mem.indexOfAny(u8, ty_raw, " (") != null) continue;
+        var file = pane_file;
+        var name = ty_raw;
+        if (std.mem.lastIndexOfScalar(u8, ty_raw, '.')) |dot| {
+            file = imports.get(ty_raw[0..dot]) orelse continue;
+            name = ty_raw[dot + 1 ..];
+        } else if (reexports.get(ty_raw)) |target| {
+            const dot = std.mem.lastIndexOfScalar(u8, target, '.').?;
+            file = imports.get(target[0..dot]) orelse continue;
+            name = target[dot + 1 ..];
+        }
+        try out.append(arena, .{ .file = file, .name = name });
+    }
+    return out.toOwnedSlice(arena);
+}
+
+/// The addressed-by-value fields of the payload structs `names` lists,
+/// in one file.
+pub fn paneGroupFindings(arena: Allocator, file: []const u8, src: []const u8, names: []const []const u8, counts: *Counts) Allocator.Error![]Finding {
+    var out: std.ArrayListUnmanaged(Finding) = .empty;
+    var lines = std.mem.splitScalar(u8, src, '\n');
+    var lineno: u32 = 0;
+    var depth: i32 = 0;
+    var open: ?struct { name: []const u8, at: i32 } = null;
+    while (lines.next()) |raw| {
+        lineno += 1;
+        const line = stripComment(raw);
+        const s = std.mem.trim(u8, line, " \t");
+        const before = depth;
+        depth += braceDelta(line);
+        if (open) |o| {
+            if (depth <= o.at) {
+                open = null;
+                continue;
+            }
+            // Only the struct's own fields; a nested type has its own
+            // storage and is not what moves.
+            if (before != o.at + 1) continue;
+            const ty = fieldType(s) orelse continue;
+            counts.pane_fields += 1;
+            if (!isAddressed(ty)) continue;
+            try out.append(arena, .{ .file = file, .line = lineno, .rule = .pane_group, .origin = .unknown, .scope = o.name, .expr = s });
+            continue;
+        }
+        const decl = structDeclName(s) orelse continue;
+        for (names) |want| {
+            if (!std.mem.eql(u8, want, decl)) continue;
+            open = .{ .name = decl, .at = before };
+            counts.payloads += 1;
+            break;
+        }
+    }
+    return out.toOwnedSlice(arena);
+}
+
+/// Every file that declares a `Pane` payload, read for the rule above.
+pub fn walkPaneGroups(arena: Allocator, io: Io, root: []const u8) !Result {
+    var dir = try Io.Dir.cwd().openDir(io, root, .{ .iterate = true });
+    defer dir.close(io);
+    const pane_file = "app/pane.zig";
+    const pane_src = try dir.readFileAlloc(io, pane_file, arena, .unlimited);
+    const payloads = try panePayloads(arena, pane_file, pane_src);
+    var out: std.ArrayListUnmanaged(Finding) = .empty;
+    var counts: Counts = .{};
+    var seen: std.StringHashMapUnmanaged(void) = .empty;
+    for (payloads) |p| {
+        if (seen.contains(p.file)) continue;
+        try seen.put(arena, p.file, {});
+        var names: std.ArrayListUnmanaged([]const u8) = .empty;
+        for (payloads) |q| if (std.mem.eql(u8, q.file, p.file)) try names.append(arena, q.name);
+        const text = try dir.readFileAlloc(io, p.file, arena, .unlimited);
+        counts.files += 1;
+        try out.appendSlice(arena, try paneGroupFindings(arena, p.file, text, names.items, &counts));
+    }
+    return .{ .findings = try out.toOwnedSlice(arena), .counts = counts };
+}
+
+pub fn paneReport(w: *Io.Writer, root: []const u8, r: Result) Io.Writer.Error!void {
+    for (r.findings) |f| {
+        try w.print("{s}/{s}:{d}  {s}  in {s}  {s}\n", .{ root, f.file, f.line, f.rule.text(), f.scope, f.expr });
+    }
+    try w.print(
+        "arena-audit (pane groups): {d} findings over {d} payload structs / {d} fields in {d} files under {s}\n",
+        .{ r.findings.len, r.counts.payloads, r.counts.pane_fields, r.counts.files, root },
+    );
+}
+
 // ─── the walk ───────────────────────────────────────────────────────────
 
 /// Every `.zig` under `root`, sorted, and its findings. Paths are
@@ -1189,6 +1444,125 @@ test "integrations/ and sdk/ store nothing out of a job result they let go" {
     // would fail here rather than go quiet.
     try t.expect(files > 60);
     try t.expect(prongs >= 7);
+}
+
+const pane_union_fixture =
+    \\const std = @import("std");
+    \\const grep = @import("grep.zig");
+    \\const cheatsheet = @import("cheatsheet.zig");
+    \\const pty_pane = @import("pty_pane.zig");
+    \\const accent_color = @import("../ui/accent_color.zig");
+    \\
+    \\pub const PtyPane = pty_pane.PtyPane;
+    \\
+    \\pub const EditorPane = struct {
+    \\    view: u32 = 0,
+    \\};
+    \\
+    \\pub const Pane = union(enum) {
+    \\    editor: EditorPane,
+    \\    /// Workspace grep results.
+    \\    grep: grep.GrepPane,
+    \\    cheatsheet: cheatsheet.State,
+    \\    pty: PtyPane,
+    \\
+    \\    pub fn deinit(self: *Pane, gpa: Allocator) void {
+    \\        switch (self.*) {
+    \\            .editor => |*e| e.deinit(),
+    \\            else => {},
+    \\        }
+    \\    }
+    \\};
+;
+
+test "the Pane union resolves each payload to the file that declares it" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const got = try panePayloads(a, "app/pane.zig", pane_union_fixture);
+    try t.expectEqual(@as(usize, 4), got.len);
+    // A type declared in `pane.zig` itself.
+    try t.expectEqualStrings("app/pane.zig", got[0].file);
+    try t.expectEqualStrings("EditorPane", got[0].name);
+    // `alias.Type` through the file's imports.
+    try t.expectEqualStrings("app/grep.zig", got[1].file);
+    try t.expectEqualStrings("GrepPane", got[1].name);
+    // A payload named `State` is NOT every `State` in the tree — it is
+    // the one in the file its alias imports.
+    try t.expectEqualStrings("app/cheatsheet.zig", got[2].file);
+    try t.expectEqualStrings("State", got[2].name);
+    // A bare name that is a re-export of somebody else's type.
+    try t.expectEqualStrings("app/pty_pane.zig", got[3].file);
+    try t.expectEqualStrings("PtyPane", got[3].name);
+}
+
+test "an Io.Group inside a pane payload is a finding; a pointer to one, and a group in anything else, are not" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var counts: Counts = .{};
+    // The shape `GrepPane` shipped with, verbatim.
+    const bad = try paneGroupFindings(a, "app/grep.zig",
+        \\pub const GrepPane = struct {
+        \\    gpa: Allocator,
+        \\    group: Io.Group = .init,
+        \\    snapshot: alloc.SnapshotArena,
+        \\    abort: *Abort,
+        \\};
+    , &.{"GrepPane"}, &counts);
+    try t.expectEqual(@as(usize, 1), bad.len);
+    try t.expectEqual(Rule.pane_group, bad[0].rule);
+    try t.expectEqual(@as(u32, 3), bad[0].line);
+    try t.expectEqualStrings("GrepPane", bad[0].scope);
+
+    // The fix, and a `State` in the same file that is nobody's payload.
+    var c2: Counts = .{};
+    const good = try paneGroupFindings(a, "app/grep.zig",
+        \\pub const GrepPane = struct {
+        \\    gpa: Allocator,
+        \\    group: *Io.Group,
+        \\    abort: *Abort,
+        \\};
+        \\
+        \\pub const State = struct {
+        \\    group: Io.Group = .init,
+        \\    queue: Io.Queue(Row),
+        \\};
+    , &.{"GrepPane"}, &c2);
+    try t.expectEqual(@as(usize, 0), good.len);
+    try t.expectEqual(@as(usize, 1), c2.payloads);
+    try t.expectEqual(@as(usize, 3), c2.pane_fields);
+
+    // The other addressed primitives, and `std.`-qualified spellings.
+    var c3: Counts = .{};
+    const more = try paneGroupFindings(a, "app/x.zig",
+        \\pub const XPane = struct {
+        \\    jobs: Io.Queue(Job),
+        \\    wake: std.Io.Event = .unset,
+        \\    lock: Io.Mutex = .init,
+        \\    // Not addressed: a pointer, and a type that merely starts the same.
+        \\    group: *Io.Group,
+        \\    err: Io.QueueClosedError,
+        \\};
+    , &.{"XPane"}, &c3);
+    try t.expectEqual(@as(usize, 3), more.len);
+}
+
+test "no Pane payload keeps an Io.Group where the store can move it" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const r = try walkPaneGroups(a, t.io, build_options.src_root);
+    // An empty finding list is only evidence when the audit looked: the
+    // union has close to thirty variants and they are real structs.
+    try t.expect(r.counts.payloads > 25);
+    try t.expect(r.counts.pane_fields > 200);
+    if (r.findings.len > 0) {
+        var out: Io.Writer.Allocating = .init(a);
+        try paneReport(&out.writer, build_options.src_root, r);
+        std.debug.print("\n{s}\n", .{out.written()});
+    }
+    try t.expectEqual(@as(usize, 0), r.findings.len);
 }
 
 test "src/ has no string that dies before the consumer that keeps it" {

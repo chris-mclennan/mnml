@@ -171,7 +171,7 @@ const Fixture = @import("test_fixture.zig");
 test "the results pane paints the command, the tally, headers, signed rows, the error and the trace row, one hit per row" {
     var f = try Fixture.init(120, 14);
     defer f.deinit();
-    var p = tests_pane.TestsPane.init(testing.allocator);
+    var p = try tests_pane.TestsPane.init(testing.allocator);
     defer p.deinit(testing.allocator, testing.io);
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
