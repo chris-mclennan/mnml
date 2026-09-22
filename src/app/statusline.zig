@@ -524,7 +524,7 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
 
     // ── right lane ──
     for (try ipc.effects.pack(arena, app.ipc_fx.segments.items, .right, budget, ui.ascii)) |r| if (r.text.len > 0) try push(&right, arena, dynSeg(ui, r));
-    for (try app.script().segmentTexts(arena, .left)) |text| try push(&right, arena, Seg.init(ui.fmt(" {s} ", .{text}), p.bg_darker, p.comment));
+    for (try app.luaStates(arena)) |lua| for (try lua.segmentTexts(arena, .left)) |text| try push(&right, arena, Seg.init(ui.fmt(" {s} ", .{text}), p.bg_darker, p.comment));
     if (tests_pane.find(app)) |id| if (app.panes.get(id)) |pane| switch (pane.*) {
         .tests => |*tp| try push(&right, arena, Seg.init(ui.fmt(" {s} {s} ", .{ if (ui.ascii) "T" else "\u{1f9ea}", tp.title() }), p.bg_darker, p.yellow).withHit(SegId.test_run.raw())),
         else => {},
@@ -667,7 +667,7 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
         try push(&right, arena, seg.withHit(SegId.bell.raw()));
     }
     if (try clock_mod.segment(app, arena)) |text| try push(&right, arena, Seg.init(ui.fmt(" {s} ", .{text}), p.comment, p.bg2).withHit(SegId.clock.raw()));
-    for (try app.script().segmentTexts(arena, .right)) |text| try push(&right, arena, Seg.init(ui.fmt(" {s} ", .{text}), p.bg_darker, p.comment));
+    for (try app.luaStates(arena)) |lua| for (try lua.segmentTexts(arena, .right)) |text| try push(&right, arena, Seg.init(ui.fmt(" {s} ", .{text}), p.bg_darker, p.comment));
     // The workspace — the active repo's name when there are several.
     {
         const ws_name = std.fs.path.basename(app.workspace);

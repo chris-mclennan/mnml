@@ -2961,7 +2961,15 @@ pub const App = struct {
         try ai_app.tick(self);
         try http_app.tick(self, now);
         idle.tick(self, now);
+        // Every state ticks — an installed script's segments poll and its
+        // tasks finish as `init.lua`'s do. By index: a tick may install or
+        // remove a script.
         try self.script().tick(now);
+        var si: usize = 0;
+        while (si < self.scripts.entries.items.len) : (si += 1) if (self.scripts.entries.items[si].state) |l| {
+            l.app = self;
+            try l.tick(now);
+        };
         try cmd_picker.tick(self, now);
         try update.tick(self);
         session.tick(self, now);
@@ -3005,6 +3013,9 @@ pub const App = struct {
         if (sidebar_auto.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (launcher_dock_mod.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (self.lua) |l| if (l.nextDeadlineMs()) |d| {
+            next = @min(next orelse std.math.maxInt(i64), d);
+        };
+        for (self.scripts.entries.items) |*se| if (se.state) |l| if (l.nextDeadlineMs()) |d| {
             next = @min(next orelse std.math.maxInt(i64), d);
         };
         if (cmd_picker.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);

@@ -1460,3 +1460,53 @@ test "script.reload takes the installed scripts with init.lua, and a vim operato
         try t.expectEqual(@as(usize, 0), script_ops.count());
     }
 }
+
+test "an installed script's statusline segment polls and paints, and its picker source lists, previews and accepts — all in ITS state, not init.lua's" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, "data");
+    try writeScript(tmp.dir, t.io, "src", "peek",
+        \\.{ .name = "peek", .api = 1, .version = "1.0.0", .commands = .{ "user.peek" } }
+    ,
+        \\mnml.statusline.segment{ id = "peek", fn = function() return "PEEK-SEG" end }
+        \\mnml.picker.source{ id = "peeks", title = "Peeks",
+        \\  items = function(q) return { { label = "peek-item", data = 7 } } end,
+        \\  preview = function(row) return { "preview of " .. row.label } end,
+        \\  on_accept = function(row) mnml.toast("accepted " .. row.label .. " " .. row.data) end }
+        \\mnml.command{ id = "peek", run = function() mnml.picker.open("peeks") end }
+    );
+    const data = try std.fs.path.join(t.allocator, &.{ root, "data" });
+    defer t.allocator.free(data);
+    const src = try std.fs.path.join(t.allocator, &.{ root, "src", "peek" });
+    defer t.allocator.free(src);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .data_root = data, .cols = 120, .rows = 30 });
+    defer app.deinit();
+    try acceptInstall(&app, src);
+    try app.handle(.{ .key = app_mod.Key.char('i') });
+    const e = app.scripts.find("peek").?;
+    try t.expect(e.state != null);
+    // The registrations landed in the installed state, not init.lua's.
+    try t.expectEqual(@as(usize, 1), e.state.?.segments.items.len);
+    try t.expectEqual(@as(usize, 0), app.script().segments.items.len);
+    // The segment: polled by the App's tick and painted on the statusline.
+    try app.tick(app.now_ms + 1000);
+    try app.render();
+    const screen_mod = @import("../ipc/screen.zig");
+    const txt = try screen_mod.toTestText(t.allocator, &app.screen);
+    defer t.allocator.free(txt);
+    try t.expect(std.mem.indexOf(u8, txt, "PEEK-SEG") != null);
+    // The picker source: the row, its preview, and on_accept on Enter.
+    try command.runNamed(&app, "user.peek");
+    try t.expect(app.overlay == .picker);
+    try t.expectEqual(app_mod.PickerKind.lua, app.overlay.picker.kind);
+    try t.expectEqual(@as(usize, 1), app.overlay.picker.labels.len);
+    try t.expectEqualStrings("peek-item", app.overlay.picker.labels[0]);
+    try t.expectEqual(e.id, app.overlay.picker.lua_state);
+    try t.expect(app.overlay.picker.preview.len == 1);
+    try app.handle(.{ .key = app_mod.Key.named(.enter) });
+    try t.expect(app.overlay != .picker);
+    try t.expectEqualStrings("accepted peek-item 7", app.lastToast().?);
+}

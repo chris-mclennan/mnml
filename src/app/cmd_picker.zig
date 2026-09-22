@@ -581,7 +581,9 @@ pub fn accept(app: *App, idx: usize) Allocator.Error!void {
                 try labels.append(arena, try arena.dupe(u8, p.labels[i]));
             }
             const source_id = try arena.dupe(u8, p.lua_source);
-            const lua = app.script();
+            // The state that registered the source — an installed
+            // script's own, or `init.lua`'s — holds its rows and refs.
+            const lua = app.luaState(p.lua_state) orelse app.script();
             const source_accept: ?command.LuaRef = if (lua.findSource(source_id)) |src| src.on_accept else null;
             app.overlay.deinit(app.gpa);
             app.focus = if (app.active) |a| .{ .pane = a } else .tree;
@@ -881,7 +883,7 @@ pub fn cancel(app: *App) void {
     if (app.overlay != .picker) return;
     if (app.overlay.picker.restore_theme) |th| app.setTheme(th);
     if (app.overlay.picker.kind == .grep) grep_picker.stop(app);
-    if (app.overlay.picker.kind == .lua) app.script().pickerClosed();
+    if (app.overlay.picker.kind == .lua) if (app.luaState(app.overlay.picker.lua_state)) |lua| lua.pickerClosed();
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
