@@ -188,7 +188,11 @@ pub const Builtin = struct {
 pub const builtins = [_]Builtin{
     .{ .name = "rust", .cmd = "rust-analyzer", .args = &.{}, .extensions = &.{"rs"}, .root_markers = &.{"Cargo.toml"} },
     .{ .name = "python", .cmd = "pyright-langserver", .args = &.{"--stdio"}, .extensions = &.{"py"}, .root_markers = &.{ "pyproject.toml", "setup.py", "requirements.txt" } },
-    .{ .name = "typescript", .cmd = "typescript-language-server", .args = &.{"--stdio"}, .extensions = &.{ "ts", "tsx", "js", "jsx" }, .root_markers = &.{ "tsconfig.json", "jsconfig.json", "package.json" } },
+    // `.mjs` / `.cjs` / `.mts` / `.cts` are the same server's files
+    // (tsserver includes them through `allowJs`; `languageIdFor` already
+    // knew them) — a modern Node project's configs, loaders and dual
+    // packages live in exactly those.
+    .{ .name = "typescript", .cmd = "typescript-language-server", .args = &.{"--stdio"}, .extensions = &.{ "ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts" }, .root_markers = &.{ "tsconfig.json", "jsconfig.json", "package.json" } },
     .{ .name = "go", .cmd = "gopls", .args = &.{}, .extensions = &.{"go"}, .root_markers = &.{"go.mod"} },
     .{ .name = "c", .cmd = "clangd", .args = &.{}, .extensions = &.{ "c", "h", "cpp", "hpp", "cc" }, .root_markers = &.{ "compile_commands.json", ".clangd" } },
     .{ .name = "zig", .cmd = "zls", .args = &.{}, .extensions = &.{"zig"}, .root_markers = &.{"build.zig"} },
@@ -294,7 +298,7 @@ fn languageIdForKey(ext: []const u8) ?[]const u8 {
         .{ "sh", "shellscript" },        .{ "bash", "shellscript" },    .{ "lua", "lua" },       .{ "rb", "ruby" },             .{ "java", "java" },       .{ "kt", "kotlin" },
         .{ "swift", "swift" },           .{ "cs", "csharp" },           .{ "php", "php" },       .{ "vue", "vue" },             .{ "svelte", "svelte" },   .{ "sql", "sql" },
         .{ "jsonc", "jsonc" },           .{ "htm", "html" },            .{ "less", "less" },     .{ "csx", "csharp" },          .{ "zsh", "shellscript" }, .{ "make", "makefile" },
-        .{ "dockerfile", "dockerfile" }, .{ "ex", "elixir" },           .{ "hcl", "terraform" }, .{ "proto", "proto" },
+        .{ "dockerfile", "dockerfile" }, .{ "ex", "elixir" },           .{ "hcl", "terraform" }, .{ "proto", "proto" },         .{ "mts", "typescript" },  .{ "cts", "typescript" },
     };
     for (table) |kv| if (std.mem.eql(u8, kv[0], ext)) return kv[1];
     return null;
@@ -934,4 +938,21 @@ test "initialize reads caps and encoding; an early didOpen is queued and flushed
     lock.unlock(io);
     c2s[0].close(io);
     s2c[1].close(io);
+}
+
+test "the builtin typescript server serves the module-flavoured extensions too, with the right languageId" {
+    var found: ?Builtin = null;
+    for (builtins) |b| if (std.mem.eql(u8, b.name, "typescript")) {
+        found = b;
+    };
+    const ts = found.?;
+    for ([_][]const u8{ "ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts" }) |want| {
+        var hit = false;
+        for (ts.extensions) |e| hit = hit or std.mem.eql(u8, e, want);
+        try std.testing.expect(hit);
+    }
+    try std.testing.expectEqualStrings("javascript", languageIdFor("/p/loader.mjs"));
+    try std.testing.expectEqualStrings("javascript", languageIdFor("/p/loader.cjs"));
+    try std.testing.expectEqualStrings("typescript", languageIdFor("/p/types.mts"));
+    try std.testing.expectEqualStrings("typescript", languageIdFor("/p/types.CTS"));
 }

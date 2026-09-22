@@ -40,6 +40,10 @@ pub const builtin_formatters = [_]FmtEntry{
     .{ "tsx", .{ .argv = &.{ "prettier", "--stdin-filepath", "{file}" } } },
     .{ "js", .{ .argv = &.{ "prettier", "--stdin-filepath", "{file}" } } },
     .{ "jsx", .{ .argv = &.{ "prettier", "--stdin-filepath", "{file}" } } },
+    .{ "mjs", .{ .argv = &.{ "prettier", "--stdin-filepath", "{file}" } } },
+    .{ "cjs", .{ .argv = &.{ "prettier", "--stdin-filepath", "{file}" } } },
+    .{ "mts", .{ .argv = &.{ "prettier", "--stdin-filepath", "{file}" } } },
+    .{ "cts", .{ .argv = &.{ "prettier", "--stdin-filepath", "{file}" } } },
     .{ "json", .{ .argv = &.{ "prettier", "--stdin-filepath", "{file}" } } },
     .{ "css", .{ .argv = &.{ "prettier", "--stdin-filepath", "{file}" } } },
     .{ "scss", .{ .argv = &.{ "prettier", "--stdin-filepath", "{file}" } } },
@@ -66,6 +70,10 @@ pub const builtin_linters = [_]LintEntry{
     .{ "tsx", .{ .argv = eslint_argv, .parser = .eslint } },
     .{ "js", .{ .argv = eslint_argv, .parser = .eslint } },
     .{ "jsx", .{ .argv = eslint_argv, .parser = .eslint } },
+    .{ "mjs", .{ .argv = eslint_argv, .parser = .eslint } },
+    .{ "cjs", .{ .argv = eslint_argv, .parser = .eslint } },
+    .{ "mts", .{ .argv = eslint_argv, .parser = .eslint } },
+    .{ "cts", .{ .argv = eslint_argv, .parser = .eslint } },
     // ruff never colours a pipe and takes no `--no-color` (only
     // `--color <WHEN>`, and not on every release): no colour flag.
     .{ "py", .{ .argv = &.{ "ruff", "check", "--output-format=concise", "{file}" }, .parser = .ruff } },
@@ -481,7 +489,8 @@ test "the builtin ESLint linter asks for --format=json (ESLint 9 has no unix for
     }
     try testing.expect(json);
     try testing.expectEqual(LintParser.eslint, l.parser);
-    for ([_][]const u8{ "tsx", "js", "jsx" }) |ext| try testing.expectEqual(LintParser.eslint, linterFor(&Config{}, ext).?.parser);
+    for ([_][]const u8{ "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts" }) |ext| try testing.expectEqual(LintParser.eslint, linterFor(&Config{}, ext).?.parser);
+    for ([_][]const u8{ "mjs", "cjs", "mts", "cts" }) |ext| try testing.expectEqualStrings("prettier", formatterFor(&Config{}, ext).?.argv[0]);
 
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

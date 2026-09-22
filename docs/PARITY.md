@@ -341,6 +341,7 @@ trust sink. Each row names its file and its test.
 
 | feature | status | Zig file(s) | note |
 |---|---|---|---|
+| Builtin server table | done | `builtins` in `src/lsp/client.zig` | *2026-09-22 (tsfix):* the typescript row serves `.mjs` / `.cjs` / `.mts` / `.cts` too (tsserver takes them through `allowJs`; `languageIdFor` knew `mjs`/`cjs` and now maps `mts`/`cts` to `typescript`) — a Node project's loaders and configs opened with no server at all; the builtin prettier and ESLint rows cover the four as well; `lsp_ts_module_extensions.test` |
 | Completion popup | done | `src/app/lsp.zig` `textDocument/completion`, `src/ui/completion_view.zig` | |
 | Completion — documentation | done | `drawPopups` in `lsp.zig` | one line |
 | Completion — lazy `completionItem/resolve` | done | `lsp.zig` | |
