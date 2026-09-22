@@ -1,7 +1,10 @@
-# A non-fast-forward push is rejected by git, but the toast reads
-# "push: To /path/to/remote.git…" — git's FIRST stderr line, the
-# remote URL — and the "! [rejected] main -> main (non-fast-forward)"
-# line never reaches the screen. Truth: the remote's main is unchanged.
+# hunt/findings-2026-09-22/git-push-rejected-toast.md: a non-fast-forward
+# push is rejected by git, but the toast read "push: To /path/to/
+# remote.git…" — git's FIRST stderr line, the remote URL, which is what
+# a landed push's first line looks like too — and the "! [rejected]
+# main -> main (non-fast-forward)" line never reached the screen. The
+# toast says what happened and what to do, in one sentence, and stays
+# the error toast's four seconds. Truth: the remote's main is unchanged.
 shell git init -q -b main
 shell git config user.email "ada@example.test"
 shell git config user.name "Ada Example"
@@ -20,8 +23,17 @@ wait 1500
 expect screen contains "⇡1"
 command git.push
 wait 400
-# The toast is on screen now (it is gone again by ~1s); git said
-# "! [rejected] main -> main (non-fast-forward)".
-expect screen contains "push:"
-expect screen contains "rejected"
+# git said "! [rejected] main -> main (non-fast-forward)": the toast
+# says so, and what to do — not the remote's URL.
+expect screen contains "push rejected: the remote has commits you do not have"
+# The box wraps at 60 cells: "— pull" ends the first row, "first · log"
+# is the second — the sentence's tail and the log link both survive.
+expect screen contains "first · log"
+expect screen lacks "push: To "
 shell test "$(git --git-dir=.mnml/remote.git log -1 --format=%s main)" = "remote side"
+# Long enough to read: still on screen three seconds on (the toast's
+# life is four), gone by five.
+wait 2600
+expect screen contains "push rejected"
+wait 2200
+expect screen lacks "push rejected"

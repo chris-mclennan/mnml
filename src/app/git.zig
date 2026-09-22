@@ -1333,9 +1333,14 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
                 // The `log` link: the toast carries the id a click opens
                 // the command log through, at the child that failed.
                 st.log_link_seq = st.last_failed_seq;
-                // The box clips at `toast.max_text` chars: the reason is
-                // cut so the link at the end stays visible.
-                const cut = clipReason(op.msg, @import("../ui/toast.zig").max_text -| (op.desc.len + 8));
+                // The box wraps `toast.max_lines` rows of `max_text`
+                // chars and drops what is past them: the reason is cut
+                // (eight cells of wrap slack a row) so the link at the
+                // end stays visible. It was cut to ONE row, which lost
+                // the half of a rejected push's sentence that says what
+                // to do.
+                const toast_mod = @import("../ui/toast.zig");
+                const cut = clipReason(op.msg, (toast_mod.max_text -| 8) * toast_mod.max_lines -| (op.desc.len + 8));
                 app.toastReplace(log_toast_id, "{s}: {s}{s} \u{B7} log", .{ op.desc, cut, if (cut.len < op.msg.len) "\u{2026}" else "" });
                 if (app.toasts.items.len > 0) app.toasts.items[app.toasts.items.len - 1].level = .err;
             } else {

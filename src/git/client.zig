@@ -685,7 +685,36 @@ const Out = struct {
         return pick[0..nl];
     }
 
+    /// git's verdict line — the first `fatal:` / `error:` line with its
+    /// tag off — else `reason`. A refusal's first line is often a
+    /// `hint:` or the remote's URL, and the toast shows one line.
+    fn failLine(o: Out) []const u8 {
+        var it = std.mem.splitScalar(u8, o.stderr, '\n');
+        while (it.next()) |raw| {
+            const line = std.mem.trim(u8, raw, " \t\r");
+            inline for (.{ "fatal: ", "error: " }) |tag| if (std.mem.startsWith(u8, line, tag)) return line[tag.len..];
+        }
+        return o.reason();
+    }
 };
+
+/// A push's `.op`: `ok_desc` when it landed; else the verdict git gave.
+/// A rejected push printed its FIRST stderr line — the remote's URL,
+/// which is what a landed push's first line looks like too — and the
+/// `! [rejected] … (non-fast-forward)` line never reached the screen.
+/// Rejected pushes say so and why in one sentence; any other failure
+/// carries git's `error:` / `fatal:` line rather than a `hint:`.
+fn pushPayload(out: Out, ok_desc: []const u8, url: []const u8) Result.Payload {
+    if (out.ok) return .{ .op = .{ .desc = ok_desc, .ok = true, .url = url } };
+    const rejected = std.mem.indexOf(u8, out.stderr, "[rejected]") != null or std.mem.indexOf(u8, out.stderr, "[remote rejected]") != null;
+    const msg: []const u8 = if (std.mem.indexOf(u8, out.stderr, "non-fast-forward") != null or std.mem.indexOf(u8, out.stderr, "fetch first") != null)
+        "the remote has commits you do not have \u{2014} pull first"
+    else if (std.mem.indexOf(u8, out.stderr, "stale info") != null)
+        "the remote moved since your last fetch \u{2014} fetch, then look again"
+    else
+        out.failLine();
+    return .{ .op = .{ .desc = if (rejected) "push rejected" else "push", .ok = false, .msg = msg, .url = "" } };
+}
 
 pub const EnvPair = struct { key: []const u8, value: []const u8 };
 
@@ -1130,7 +1159,7 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             r.payload = .{ .op = .{ .desc = desc, .ok = out.ok, .msg = out.reason() } };
         },
         .delete_remote => |b| try simple(repo, io, r, &.{ "push", "-q", b.remote, "--delete", b.branch }, try std.fmt.allocPrint(arena, "deleted {s}/{s} on the remote", .{ b.remote, b.branch })),
-        .push_force => try simple(repo, io, r, &.{ "push", "-q", "--force-with-lease" }, "pushed (--force-with-lease)"),
+        .push_force => r.payload = pushPayload(try git(repo, io, arena, &.{ "push", "-q", "--force-with-lease" }, null), "pushed (--force-with-lease)", ""),
         .show_file => |s| {
             const out = try git(repo, io, arena, &.{ "show", try std.fmt.allocPrint(arena, "{s}:{s}", .{ s.rev, s.path }) }, null);
             if (!out.ok) {
@@ -1167,9 +1196,9 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             } else if (std.mem.indexOf(u8, out.stderr, "no upstream") != null or std.mem.indexOf(u8, out.stderr, "has no upstream") != null) {
                 const branch = try git(repo, io, arena, &.{ "symbolic-ref", "--short", "-q", "HEAD" }, null);
                 const again = try git(repo, io, arena, &.{ "push", "-q", "--set-upstream", "origin", trimmed(branch.stdout) }, null);
-                r.payload = .{ .op = .{ .desc = try std.fmt.allocPrint(arena, "pushed, upstream set to origin/{s}", .{trimmed(branch.stdout)}), .ok = again.ok, .msg = again.reason() } };
+                r.payload = pushPayload(again, try std.fmt.allocPrint(arena, "pushed, upstream set to origin/{s}", .{trimmed(branch.stdout)}), "");
             } else {
-                r.payload = .{ .op = .{ .desc = "push", .ok = false, .msg = out.reason() } };
+                r.payload = pushPayload(out, "pushed", "");
             }
         },
         .push_tags => try simple(repo, io, r, &.{ "push", "-q", "--tags" }, "pushed tags"),
@@ -1208,15 +1237,10 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             try simple(repo, io, r, &.{ "tag", "-a", t.name, "-m", t.name, t.start }, try std.fmt.allocPrint(arena, "tagged {s} at {s}", .{ t.name, t.start }))
         else
             try simple(repo, io, r, &.{ "tag", t.name, t.start }, try std.fmt.allocPrint(arena, "tagged {s} at {s}", .{ t.name, t.start })),
-        .push_branch => |p| try simple(repo, io, r, &.{ "push", "-u", p.remote, p.branch }, try std.fmt.allocPrint(arena, "pushed {s} to {s}", .{ p.branch, p.remote })),
+        .push_branch => |p| r.payload = pushPayload(try git(repo, io, arena, &.{ "push", "-u", p.remote, p.branch }, null), try std.fmt.allocPrint(arena, "pushed {s} to {s}", .{ p.branch, p.remote }), ""),
         .push_start_pr => |p| {
             const out = try git(repo, io, arena, &.{ "push", "-u", p.remote, p.branch }, null);
-            r.payload = .{ .op = .{
-                .desc = try std.fmt.allocPrint(arena, "pushed {s} to {s}", .{ p.branch, p.remote }),
-                .ok = out.ok,
-                .msg = out.reason(),
-                .url = if (out.ok) try arena.dupe(u8, p.url) else "",
-            } };
+            r.payload = pushPayload(out, try std.fmt.allocPrint(arena, "pushed {s} to {s}", .{ p.branch, p.remote }), if (out.ok) try arena.dupe(u8, p.url) else "");
         },
         .tag_delete => |name| try simple(repo, io, r, &.{ "tag", "-d", name }, try std.fmt.allocPrint(arena, "deleted tag {s}", .{name})),
         .cherry_pick => |sha| try simple(repo, io, r, &.{ "cherry-pick", sha }, try std.fmt.allocPrint(arena, "cherry-picked {s}", .{sha[0..@min(7, sha.len)]})),

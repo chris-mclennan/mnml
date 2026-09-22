@@ -399,7 +399,7 @@ trust sink. Each row names its file and its test.
 | Git toolbar above the diff pane and the graph | done | `src/ui/git_toolbar.zig`; `tests/e2e/git_diff_toolbar.test` | Undo · Redo · Pull · Push · Fetch · Branch · Commit · Stash (· Pop while there is one) · Reflog; buttons drop from the right, one always stays; not painted under 40 cells or 6 rows |
 | Checkout / create / delete | done | `git.checkout` / `new_branch` / `delete_branch` | |
 | Worktree management | done | `git.worktree_*` | |
-| Fetch / pull / push | done | `git.fetch` / `pull` / `push` / `push_tags` | |
+| Fetch / pull / push | done | `git.fetch` / `pull` / `push` / `push_tags` | *2026-09-22 (gitfix, `hunt/findings-2026-09-22/git-push-rejected-toast.md`, `git-pull-diverged-toast.md`):* a rejected push toasts `push rejected: the remote has commits you do not have — pull first` (`pushPayload` in `client.zig`, also under `push_force` / `push_branch` / the PR push and the set-upstream retry) where it toasted `push: To <remote-url>…` — git's first stderr line, which is what a LANDED push's first line looks like — and the `[rejected] … (non-fast-forward)` line never showed Any other failure carries git's `error:` / `fatal:` line (`Out.failLine`) rather than a `hint:`; the error toast keeps its four seconds and the reason is cut to the box's four rows, not one, so the half of the sentence that says what to do is not the half that is lost; `git_push_rejected_toast.test`, `git_pull_diverged_toast.test` |
 | Cherry-pick | done | `cmd_git.zig`, `c` in the graph | |
 | Revert | done | `cmd_git.zig`, `v` in the graph | |
 | Tags | done | `git.tag` / `tag_delete` | |
