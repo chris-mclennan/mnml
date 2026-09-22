@@ -386,6 +386,9 @@ pub const FileDiff = struct {
     new_path: ?[]const u8 = null,
     status: FileStatus = .modified,
     binary: bool = false,
+    /// A binary file's sizes before and after, off `--stat`'s
+    /// `Bin 33 -> 40 bytes`; null until `binarySizes` fills them.
+    bin_sizes: ?[2]u64 = null,
     hunks: []Hunk = &.{},
 
     /// The path the file has now (the old one for a deletion).
@@ -393,6 +396,33 @@ pub const FileDiff = struct {
         return f.new_path orelse f.old_path orelse "";
     }
 };
+
+/// Does any file of the diff say `Binary files … differ`?
+pub fn anyBinary(files: []const FileDiff) bool {
+    for (files) |f| if (f.binary) return true;
+    return false;
+}
+
+/// `git diff --stat` output → each binary file's `bin_sizes`. A stat
+/// row is ` <path> | Bin <old> -> <new> bytes`; a row that matches no
+/// file by path (a rename's `a => b`), or has no `Bin`, is skipped.
+pub fn binarySizes(files: []FileDiff, stat: []const u8) void {
+    var it = std.mem.splitScalar(u8, stat, '\n');
+    while (it.next()) |raw| {
+        const bar = std.mem.indexOf(u8, raw, " | Bin ") orelse continue;
+        const path = std.mem.trim(u8, raw[0..bar], " \t");
+        var rest = raw[bar + " | Bin ".len ..];
+        rest = std.mem.trim(u8, rest, " \t\r");
+        const arrow = std.mem.indexOf(u8, rest, " -> ") orelse continue;
+        const old = std.fmt.parseInt(u64, rest[0..arrow], 10) catch continue;
+        const tail = rest[arrow + " -> ".len ..];
+        const sp = std.mem.indexOfScalar(u8, tail, ' ') orelse tail.len;
+        const new = std.fmt.parseInt(u64, tail[0..sp], 10) catch continue;
+        for (files) |*f| if (f.binary and std.mem.eql(u8, f.path(), path)) {
+            f.bin_sizes = .{ old, new };
+        };
+    }
+}
 
 pub const HunkRange = struct { old_start: u32, old_count: u32, new_start: u32, new_count: u32 };
 
@@ -1388,6 +1418,44 @@ const sample_diff =
     "@@ -0,0 +1 @@\n" ++
     "+hello\n" ++
     "\\ No newline at end of file\n";
+
+test "binarySizes: the --stat row's `Bin old -> new bytes` lands on the binary file by path; text files and a rename row are left alone" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = a.allocator();
+    const files = try parseDiff(arena,
+        \\diff --git a/assets/logo.png b/assets/logo.png
+        \\index e5d1ed1..99a4e9c 100644
+        \\Binary files a/assets/logo.png and b/assets/logo.png differ
+        \\diff --git a/a.txt b/a.txt
+        \\index 5626abf..3bd1f0e 100644
+        \\--- a/a.txt
+        \\+++ b/a.txt
+        \\@@ -1 +1,2 @@
+        \\ one
+        \\+two
+        \\
+    );
+    try testing.expectEqual(@as(usize, 2), files.len);
+    try testing.expect(anyBinary(files));
+    try testing.expect(files[0].binary);
+    try testing.expect(files[0].bin_sizes == null);
+    binarySizes(files,
+        \\ assets/logo.png | Bin 33 -> 40 bytes
+        \\ a.txt           |   1 +
+        \\ old.bin => new.bin | Bin 5 -> 6 bytes
+        \\ 2 files changed, 1 insertion(+)
+        \\
+    );
+    // A miss is a failed expectation, not a null unwrap that takes the
+    // whole runner down with it.
+    try testing.expect(files[0].bin_sizes != null);
+    const sizes = files[0].bin_sizes orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(@as(u64, 33), sizes[0]);
+    try testing.expectEqual(@as(u64, 40), sizes[1]);
+    try testing.expect(files[1].bin_sizes == null);
+    try testing.expect(!anyBinary(files[1..]));
+}
 
 test "parseDiff: files, hunks, line kinds and side numbers; a new file has no old path" {
     var a = std.heap.ArenaAllocator.init(testing.allocator);

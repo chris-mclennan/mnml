@@ -960,6 +960,18 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
                 }
             }
             const files = try parse.parseDiff(arena, out.stdout);
+            // A binary file has no hunks, and the pane read `(no changes)`
+            // for a file the status pane had just called modified. git's
+            // `--stat` row carries the sizes (`Bin 33 -> 40 bytes`): one
+            // more call, only when a file in the diff is binary.
+            if (parse.anyBinary(files)) {
+                var stat_args: std.ArrayListUnmanaged([]const u8) = .empty;
+                try stat_args.append(arena, used_args[0]);
+                try stat_args.append(arena, "--stat=1000");
+                try stat_args.appendSlice(arena, used_args[1..]);
+                const stat = try git(repo, io, arena, stat_args.items, if (d.scope == .orig) (d.text orelse "") else null);
+                if (stat.ok) parse.binarySizes(files, stat.stdout);
+            }
             r.payload = .{ .diff = .{ .scope = d.scope, .path = if (d.path) |p| try arena.dupe(u8, p) else null, .rev = if (d.rev) |v| try arena.dupe(u8, v) else null, .files = files, .full = d.full } };
         },
         .blame => |path| {
