@@ -689,6 +689,15 @@ today. So:
 zig build e2e -Doptimize=ReleaseSafe      # the run whose green means something
 ```
 
+**Wait on a condition, not a clock.** An `expect` polls — up to 3 s,
+answering the moment it holds — and a `wait <ms>` sleeps its full
+count whether or not it was needed and then asks once. A step that is
+slow for a reason (an integration child's startup, a refetch against
+an offline server) gets `expect within <ms> <expectation>`: the same
+check with its own, longer budget, so a loaded machine gets the time
+and an idle one pays nothing. A fixed `wait` before a plain `expect`
+is only honest for something with no observable end.
+
 A timing failure from a Debug run is not a finding until it reproduces
 there. It has now read as "fails only in a worktree" three times over;
 it was never the path.

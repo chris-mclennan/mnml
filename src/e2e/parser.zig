@@ -64,6 +64,15 @@
 //!                                #   colour the terminal owns — the
 //!                                #   terminal chip's bright white is
 //!                                #   `index 15`, never an rgb
+//! expect within <ms> <expectation>  # any expectation above, polled for up
+//!                                #   to <ms> instead of the runner's 3 s
+//!                                #   budget: it answers the moment it
+//!                                #   holds, so a startup that is slow
+//!                                #   under load costs a loaded machine
+//!                                #   the time and an idle one nothing —
+//!                                #   where a `wait <ms>` before a plain
+//!                                #   expect costs both the full <ms> and
+//!                                #   still fails past it
 //! ```
 //!
 //! `<text>` may be wrapped in `"…"` (one layer stripped); inside it `\n`
@@ -160,6 +169,9 @@ pub const Line = struct {
     /// 1-based.
     ln: usize,
     stmt: Stmt,
+    /// `expect within <ms> …`: this check's own polling budget, never
+    /// shorter than the runner's. Null for every other line.
+    budget_ms: ?u64 = null,
 };
 
 /// Directives from the leading comment block.
@@ -268,6 +280,7 @@ pub fn parse(gpa: Allocator, text: []const u8, diag: *Diagnostic) Error!Script {
         const line = trim(raw);
         if (line.len == 0 or line[0] == '#') continue;
         const head, const rest = split1(line);
+        var budget: ?u64 = null;
         const stmt: Stmt = if (std.meta.stringToEnum(Keyword, head)) |kw| switch (kw) {
             .write => blk: {
                 const rel, const content = split1(rest);
@@ -357,9 +370,16 @@ pub fn parse(gpa: Allocator, text: []const u8, diag: *Diagnostic) Error!Script {
                 }
                 break :blk .{ .step = .{ .shot = try a.dupe(u8, name) } };
             },
-            .expect => try parseExpect(a, diag, ln, rest),
+            .expect => blk: {
+                const first, const after = split1(rest);
+                if (!std.mem.eql(u8, first, "within")) break :blk try parseExpect(a, diag, ln, rest);
+                const ms_text, const check_text = split1(after);
+                const ms = std.fmt.parseInt(u64, ms_text, 10) catch return diag.set("line {d}: expect within <ms> <expectation> — `{s}` is not a millisecond count", .{ ln, ms_text });
+                budget = ms;
+                break :blk try parseExpect(a, diag, ln, check_text);
+            },
         } else return diag.set("line {d}: unknown statement `{s}`", .{ ln, head });
-        try lines.append(a, .{ .ln = ln, .stmt = stmt });
+        try lines.append(a, .{ .ln = ln, .stmt = stmt, .budget_ms = budget });
     }
 
     return .{ .arena = arena, .header = header, .lines = try lines.toOwnedSlice(a) };
@@ -849,4 +869,18 @@ test "`shot` takes a bare name; a path or nothing is a parse error" {
     var d3: Diagnostic = .{};
     try t.expectError(error.Syntax, parse(t.allocator, "shot\n", &d3));
     try t.expect(std.mem.indexOf(u8, d3.message(), "needs a name") != null);
+}
+
+test "expect within <ms>: the check parses as it would bare and carries its own budget; a bad count names the line" {
+    var diag: Diagnostic = .{};
+    var s = try parse(t.allocator, "expect within 30000 screen contains \"JIRA WORK (4)\"\nexpect within 500 status lacks x\nexpect screen contains y\n", &diag);
+    defer s.deinit();
+    try t.expectEqualStrings("JIRA WORK (4)", s.lines[0].stmt.check.screen_contains);
+    try t.expectEqual(@as(?u64, 30000), s.lines[0].budget_ms);
+    try t.expectEqualStrings("x", s.lines[1].stmt.check.status_lacks);
+    try t.expectEqual(@as(?u64, 500), s.lines[1].budget_ms);
+    try t.expectEqual(@as(?u64, null), s.lines[2].budget_ms);
+    const msg = try parseErr("expect within soon screen contains y\n");
+    defer t.allocator.free(msg);
+    try t.expectEqualStrings("line 1: expect within <ms> <expectation> — `soon` is not a millisecond count", msg);
 }

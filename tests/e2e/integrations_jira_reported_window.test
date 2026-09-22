@@ -21,8 +21,9 @@
 # env: JIRA_BASE_URL=@${MNML_E2E_WORKSPACE}/jira.url
 # The fake takes port 0 and writes the URL it landed on to `jira.url`;
 # `JIRA_BASE_URL=@<file>` is how the pane reads it, so nothing here ever
-# picks a port and two runs of the corpus never collide.
-shell "$MNML_FAKE_JIRA" --port 0 --url-file jira.url --life-secs 180 --quiet --pid-file fake-jira.pid >/dev/null 2>&1 &
+# picks a port and two runs of the corpus never collide. `jira.log` is
+# one line per request it served — what the expects below wait on.
+shell "$MNML_FAKE_JIRA" --port 0 --url-file jira.url --life-secs 180 --quiet --log-file jira.log --pid-file fake-jira.pid >/dev/null 2>&1 &
 wait 500
 write sdk/mnml-sdk/build.zig ""
 write integrations/jira/build.zig ""
@@ -34,15 +35,31 @@ drag 30 5 60 5
 expect screen contains "[dev] Jira Work  0.2.0  not installed"
 key i
 expect screen contains "installed jira_work from"
-wait 1200
-expect screen lacks "installed jira_work from"
+# The toast lives 4 s; the rows under it are only trustworthy once it is
+# gone.
+expect within 10000 screen lacks "installed jira_work from"
 command integrations.open_as_tab
-command jira_work.open
-# The pane spawns, searches the offline Jira and paints; the wait covers
-# the startup an expect's own 3 s budget cannot.
-wait 8000
+# The tree goes first, so the pane spawns at the width it keeps: a
+# resize after its first paint is one more round trip the keys below
+# would race.
 command view.toggle_tree
+command jira_work.open
+# The pane is a separate process: it spawns, is handed its geometry,
+# searches the offline Jira and paints. Under load that outlasts an
+# expect's own 3 s budget — and once outlasted a fixed `wait 8000` —
+# so this expect polls for up to 30 s and answers the moment the count
+# is on screen.
+expect within 30000 screen contains "JIRA WORK ("
+# Behind the paint the pane fetches each unresolved ticket's linked PRs,
+# one at a time and under load seconds apart; the last of them (ENG-11's,
+# issue 10011) reaching the fake is the pane's queued work done, so the
+# keys below meet an idle pane however long the startup took.
+expect within 30000 file jira.log contains "issueId=10011"
 command view.focus_pane
+# An End sent in the first half-second after the pane settles does not
+# land on the last row (a `down` does; an End a moment later does) —
+# reported with this change. This pause covers that, not the startup.
+wait 1000
 # Four tickets, not three: the tab no longer excludes what is resolved,
 # so the Done sub-task I filed is on it. That is Jira's filter.
 expect screen contains "JIRA WORK (4)"
@@ -53,8 +70,8 @@ expect screen contains "Show older (2 weeks → 30 days)"
 # End lands on it; Enter widens one step and refetches.
 key end
 key enter
-wait 3000
-expect screen contains "Show older (30 days → 90 days)"
+# One refetch at the wider window: polled, as the first search was.
+expect within 15000 screen contains "Show older (30 days → 90 days)"
 expect screen lacks "Show older (2 weeks"
 # The listing is still the same four tickets — a wider window is the
 # same query with more room, not a different tab.
