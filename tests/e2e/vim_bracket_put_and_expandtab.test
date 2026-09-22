@@ -1,11 +1,12 @@
 # width: 120
 # height: 40
-# Two things the vim hunt noted but did not file, both about SILENCE.
+# Two things the vim hunt noted, both about SILENCE.
 #
 # 1. `]p` / `[p` (put with the indent adjusted to the current line,
 #    `:help ]p`) were swallowed by the `]` / `[` prefix — no put, no
-#    word. They now answer out loud through the editor's `Unsupported`
-#    path, the same way `iq` / `ii` do, so the slice is visible.
+#    word. They put now; `vim_put_indent.test` has the indent cases.
+#    Here: the chords reach the editor rather than the prefix eating
+#    them.
 # 2. `:set expandtab` toasted `— noted` for a field that did not exist.
 #    `Document.use_tabs` is its inverse, so it is wired now.
 write a.txt "aaa\n    bbb\nccc\n"
@@ -18,20 +19,26 @@ key j
 key ]
 key p
 wait 300
-expect screen contains "paste_after_indent: not supported yet"
+expect screen lacks "not supported yet"
 key ctrl+s
-# Nothing was put — the silent swallow was the complaint, not the put.
-expect file a.txt contains "aaa\n    bbb\nccc\n"
+expect file a.txt contains "aaa\n    bbb\n    aaa\nccc\n"
 
 key [
 key p
 wait 300
-expect screen contains "paste_before_indent: not supported yet"
+expect screen lacks "not supported yet"
 
 key ]
 key P
 wait 300
-expect screen contains "paste_before_indent: not supported yet"
+expect screen lacks "not supported yet"
+key ctrl+s
+expect file a.txt contains "aaa\n    bbb\n    aaa\n    aaa\n    aaa\nccc\n"
+key u
+key u
+key u
+key ctrl+s
+expect file a.txt contains "aaa\n    bbb\nccc\n"
 
 # `:set noexpandtab` makes Tab and `>>` pad with a real tab…
 ex set noexpandtab

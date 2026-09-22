@@ -193,7 +193,7 @@ pub const EditOp = union(enum) {
     paste_after_end,
     paste_before_end,
     /// `]p` / `[p`: a linewise put whose indent is adjusted to the
-    /// current line's. Refused for now — see `apply.zig`.
+    /// current line's (`register.putIndentedTimes`).
     paste_after_indent,
     paste_before_indent,
     paste,
@@ -250,7 +250,7 @@ pub const EditOp = union(enum) {
     /// these with `set_register_hint` when a `"x` is pending.
     pub fn touchesClipboard(op: EditOp) bool {
         return switch (op) {
-            .yank_line, .yank_lines_count, .yank_selection, .yank_selection_linewise, .yank_block, .paste_after, .paste_before, .paste_after_end, .paste_before_end, .paste, .cut_selection, .delete_selection, .delete_line, .delete_forward, .delete_word_left, .delete_word_right, .delete_to_line_start, .delete_to_line_end, .delete_block => true,
+            .yank_line, .yank_lines_count, .yank_selection, .yank_selection_linewise, .yank_block, .paste_after, .paste_before, .paste_after_end, .paste_before_end, .paste_after_indent, .paste_before_indent, .paste, .cut_selection, .delete_selection, .delete_line, .delete_forward, .delete_word_left, .delete_word_right, .delete_to_line_start, .delete_to_line_end, .delete_block => true,
             .repeat => |r| r.inner.touchesClipboard(),
             .atomic => |ops| for (ops) |o| {
                 if (o.touchesClipboard()) break true;
