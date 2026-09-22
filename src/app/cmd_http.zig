@@ -312,6 +312,11 @@ pub fn recordHistory(app: *App, r: HistoryFacts, rp: *RequestPane) !void {
         .err = if (rp.state == .failed) rp.state.failed else null,
         .headers = hs.items,
         .request_body = rp.request.body,
+        // The URL as written and the env it resolved against: a re-fire
+        // resolves ALL of it against that env, never an expanded URL
+        // with another env's headers.
+        .url_template = rp.request.url,
+        .env = rp.sent_env,
     });
 }
 
@@ -1344,16 +1349,26 @@ pub fn acceptPicker(app: *App, kind: app_mod.PickerKind, i: usize, label: []cons
         .http_env_pick => {
             if (app.http.env_override) |e| app.gpa.free(e);
             app.http.env_override = try app.gpa.dupe(u8, label);
+            // An explicit pick is for every pane, a re-fired one too.
+            for (app.panes.slots.items) |*slot| if (slot.*) |*pane| if (pane.asRequest()) |rp| if (rp.env_pin) |pin| {
+                app.gpa.free(pin);
+                rp.env_pin = null;
+            };
             app.toast("env: {s} (session override — :http.reset_env clears)", .{label});
         },
         .http_history => {
             const rows = app.http.history_rows;
             if (rows.len == 0) return;
             const idx = rows.len - 1 - @min(i, rows.len - 1);
-            const req = try history.rowToRequest(app.gpa, rows[idx]);
-            _ = http.openFromRequest(app, req, .{}) catch |err| switch (err) {
+            const row = rows[idx];
+            const req = try history.rowToRequest(app.gpa, row);
+            const id = http.openFromRequest(app, req, .{}) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
-                else => {},
+                else => return,
+            };
+            if (row.env) |env_name| if (row.url_template != null) if (app.panes.get(id)) |p| if (p.asRequest()) |rp| {
+                rp.env_pin = try app.gpa.dupe(u8, env_name);
+                app.toast("history: resolves against env {s}, the one it was sent with", .{env_name});
             };
         },
         .http_captured => {

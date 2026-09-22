@@ -209,6 +209,13 @@ pub const RequestPane = struct {
     prev: ?Response = null,
     /// `METHOD url` as last sent (post-expansion). Owned.
     sent_line: ?[]u8 = null,
+    /// The env the last send resolved against (history records it).
+    /// Owned.
+    sent_env: ?[]u8 = null,
+    /// A history re-fire resolves against the env its entry was sent
+    /// with, not whichever is active now; an explicit env pick clears
+    /// it. Owned.
+    env_pin: ?[]u8 = null,
     /// The headers as last sent — after the `@set-*` directives, the
     /// expansion and the `http_request` hook (the Timeline tab shows
     /// them). Owned.
@@ -297,6 +304,8 @@ pub const RequestPane = struct {
         self.state.deinit(gpa);
         if (self.prev) |*p| p.deinit(gpa);
         if (self.sent_line) |s| gpa.free(s);
+        if (self.sent_env) |s| gpa.free(s);
+        if (self.env_pin) |s| gpa.free(s);
         self.clearSentHeaders();
         self.sent_headers.deinit(gpa);
         for (self.tests.items) |t| gpa.free(t);
@@ -1773,7 +1782,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area_in: Rect) Allo
         }
         break :blk null;
     };
-    const env_name = try http.envName(app, arena);
+    const env_name = try http.paneEnvName(app, rp, arena);
     const vars = try http.varRows(app, rp, arena, env_name);
     const toks = try http.varTokens(app, rp, arena, env_name);
     var resp_model: ?view.ResponseModel = null;

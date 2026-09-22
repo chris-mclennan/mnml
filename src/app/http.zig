@@ -506,6 +506,21 @@ pub fn envSelection(app: *App, arena: Allocator) Allocator.Error!env_mod.Selecti
     return env_mod.select(arena, app.io, app.workspace, app.http.env_override, app.env.get("MNML_ENV"), app.cfg.http.default_env);
 }
 
+/// The env `rp` resolves against: its pin (a history re-fire), else
+/// the active one.
+pub fn paneEnvName(app: *App, rp: *const RequestPane, arena: Allocator) Allocator.Error!?[]const u8 {
+    if (rp.env_pin) |p| return p;
+    return envName(app, arena);
+}
+
+/// `loadEnv` for `rp`: its pinned env when it has one.
+pub fn loadEnvFor(app: *App, gpa: Allocator, rp: *const RequestPane) Allocator.Error!env_mod.EnvSet {
+    const pin = rp.env_pin orelse return loadEnv(app, gpa);
+    var set = try env_mod.EnvSet.load(gpa, app.io, app.workspace, pin);
+    set.process = &app.env;
+    return set;
+}
+
 /// The active env, loaded. `gpa` may be an arena.
 pub fn loadEnv(app: *App, gpa: Allocator) Allocator.Error!env_mod.EnvSet {
     var scratch = std.heap.ArenaAllocator.init(app.gpa);
@@ -608,7 +623,7 @@ pub fn varClick(app: *App, id: PaneId, rp: *RequestPane, idx: usize, m: @import(
     var arena = std.heap.ArenaAllocator.init(app.gpa);
     defer arena.deinit();
     const a = arena.allocator();
-    const toks = try varTokens(app, rp, a, try envName(app, a));
+    const toks = try varTokens(app, rp, a, try paneEnvName(app, rp, a));
     if (idx >= toks.all.len) return;
     const tok = toks.all[idx];
     if (m.button == .right) return openQuickFixMenu(app, tok.name, tok.dynamic, m.x, m.y);
@@ -718,7 +733,7 @@ fn currentVar(app: *App, arena: Allocator) Allocator.Error!?[]const u8 {
     };
     if (try rp.varAtCaret(arena)) |n| return try arena.dupe(u8, n);
     if (rp.edit_tab == .vars) {
-        const rows = try varRows(app, rp, arena, try envName(app, arena));
+        const rows = try varRows(app, rp, arena, try paneEnvName(app, rp, arena));
         if (rp.row_cursor < rows.len) return try arena.dupe(u8, rows[rp.row_cursor].name);
     }
     return null;
@@ -1304,8 +1319,10 @@ pub fn fire(app: *App, id: PaneId) CommandError!void {
     var arena = std.heap.ArenaAllocator.init(app.gpa);
     defer arena.deinit();
     const a = arena.allocator();
-    var set = try loadEnv(app, a);
+    var set = try loadEnvFor(app, a, rp);
     set.process = &app.env;
+    if (rp.sent_env) |old| app.gpa.free(old);
+    rp.sent_env = if (set.name) |n| try app.gpa.dupe(u8, n) else null;
     // Pre-request directives land on a copy: the editable fields stay
     // as written, the wire sees the `@set-*` values.
     var staged = try rp.request.clone(a);
@@ -1368,7 +1385,9 @@ pub fn handleStream(app: *App, c: *client.StreamChunk) Allocator.Error!void {
             app.http.sending -|= 1;
             releaseHandle(app, c.job);
             const st = rp.streaming().?;
-            const facts: cmd_http.HistoryFacts = .{ .method = rp.request.method, .url = try app.frame.allocator().dupe(u8, rp.request.url), .status = st.head.status, .elapsed_ms = d.timing.total_ms };
+            // The URL as sent (expanded), as the whole-body path records it.
+            const sent_url: []const u8 = if (rp.sent_line) |l| (if (std.mem.indexOfScalar(u8, l, ' ')) |sp| l[sp + 1 ..] else l) else rp.request.url;
+            const facts: cmd_http.HistoryFacts = .{ .method = rp.request.method, .url = try app.frame.allocator().dupe(u8, sent_url), .status = st.head.status, .elapsed_ms = d.timing.total_ms };
             try rp.finishStream(d.timing, d.truncated);
             try cmd_http.afterResponse(app, id, rp);
             cmd_http.recordHistory(app, facts, rp) catch {};
@@ -2865,6 +2884,57 @@ test "stream: an event-stream lands event by event, live, then seals into the Do
     const hist = try tmp.dir.readFileAlloc(testing.io, ".rqst/history.jsonl", testing.allocator, .limited(1 << 16));
     defer testing.allocator.free(hist);
     try testing.expect(std.mem.indexOf(u8, hist, "\"status\":200") != null);
+}
+
+test "history: a re-fire resolves the URL and the headers against the env it was sent with; an env pick moves both" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    var server = try mock.Server.start(testing.allocator, testing.io, .{ .status = 200, .status_text = "OK", .body = "ok" });
+    defer server.stop(testing.io);
+    try tmp.dir.createDirPath(testing.io, ".mnml/env");
+    const dev = try std.fmt.allocPrint(testing.allocator, "BASE=http://127.0.0.1:{d}/dev\nTOKEN=dev-token\n", .{server.port});
+    defer testing.allocator.free(dev);
+    const stg = try std.fmt.allocPrint(testing.allocator, "BASE=http://127.0.0.1:{d}/stg\nTOKEN=staging-token\n", .{server.port});
+    defer testing.allocator.free(stg);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/dev.env", .data = dev });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/staging.env", .data = stg });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "a.http", .data = "GET {{BASE}}/me\nAuthorization: Bearer {{TOKEN}}\n" });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    const path = try std.fs.path.join(testing.allocator, &.{ root, "a.http" });
+    defer testing.allocator.free(path);
+    const first = try openFile(&app, path, false);
+    try fire(&app, first);
+    const done = struct {
+        fn f(p: *RequestPane) bool {
+            return p.state == .done or p.state == .failed;
+        }
+    }.f;
+    try pumpUntil(&app, app.panes.get(first).?.asRequest().?, done, 300);
+    try testing.expect(std.mem.startsWith(u8, server.lastRequest(), "GET /dev/me "));
+    // Staging becomes the active env; the dev entry is re-fired.
+    const cmd_http = @import("cmd_http.zig");
+    try cmd_http.acceptPicker(&app, .http_env_pick, 0, "staging");
+    try command.run(&app, .{ .static = .@"http.history" });
+    try cmd_http.acceptPicker(&app, .http_history, 0, "");
+    const again = app.active.?;
+    try testing.expect(again != first);
+    const rp = app.panes.get(again).?.asRequest().?;
+    try testing.expectEqualStrings("dev", rp.env_pin.?);
+    try fire(&app, again);
+    try pumpUntil(&app, rp, done, 300);
+    // One env for all of it: dev's host AND dev's token.
+    try testing.expect(std.mem.startsWith(u8, server.lastRequest(), "GET /dev/me "));
+    try testing.expect(std.ascii.indexOfIgnoreCase(server.lastRequest(), "authorization: Bearer dev-token\r\n") != null);
+    // An explicit pick moves the whole request to the new env.
+    try cmd_http.acceptPicker(&app, .http_env_pick, 0, "staging");
+    try testing.expect(rp.env_pin == null);
+    try fire(&app, again);
+    try pumpUntil(&app, rp, done, 300);
+    try testing.expect(std.mem.startsWith(u8, server.lastRequest(), "GET /stg/me "));
+    try testing.expect(std.ascii.indexOfIgnoreCase(server.lastRequest(), "authorization: Bearer staging-token\r\n") != null);
 }
 
 test "stream: an event that shares a packet with the head shows before the server writes again" {

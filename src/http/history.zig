@@ -43,6 +43,10 @@ pub const Entry = struct {
     /// Already passed through `headerValueForHistory`.
     headers: []const Header = &.{},
     request_body: ?[]const u8 = null,
+    /// The URL as written (`{{BASE}}/me`); `url` is it expanded.
+    url_template: ?[]const u8 = null,
+    /// The env the send resolved against.
+    env: ?[]const u8 = null,
 };
 
 pub fn historyPath(alloc: Allocator, workspace: []const u8) Allocator.Error![]u8 {
@@ -83,6 +87,16 @@ pub fn renderLine(gpa: Allocator, entry: Entry, ts_ms: i64, workspace_label: ?[]
             j.endArray() catch return error.OutOfMemory;
             j.objectField("request_body") catch return error.OutOfMemory;
             j.write(e.request_body) catch return error.OutOfMemory;
+            // Two keys the Rust shape lacks, written only when known; a
+            // reader that does not know them skips them.
+            if (e.url_template) |t| if (!std.mem.eql(u8, t, e.url)) {
+                j.objectField("url_template") catch return error.OutOfMemory;
+                j.write(t) catch return error.OutOfMemory;
+            };
+            if (e.env) |n| {
+                j.objectField("env") catch return error.OutOfMemory;
+                j.write(n) catch return error.OutOfMemory;
+            }
             if (ws) |w| {
                 j.objectField("workspace") catch return error.OutOfMemory;
                 j.write(w) catch return error.OutOfMemory;
@@ -134,6 +148,8 @@ pub const Row = struct {
     headers: []const Header = &.{},
     request_body: ?[]const u8 = null,
     workspace: ?[]const u8 = null,
+    url_template: ?[]const u8 = null,
+    env: ?[]const u8 = null,
 };
 
 /// The last `n` rows of a `.jsonl` file, oldest first. Malformed lines
@@ -190,6 +206,12 @@ fn parseRow(arena: Allocator, line: []const u8) !?Row {
     if (obj.get("workspace")) |x| if (x == .string) {
         row.workspace = x.string;
     };
+    if (obj.get("url_template")) |x| if (x == .string) {
+        row.url_template = x.string;
+    };
+    if (obj.get("env")) |x| if (x == .string) {
+        row.env = x.string;
+    };
     if (obj.get("headers")) |x| if (x == .array) {
         var hs: std.ArrayListUnmanaged(Header) = .empty;
         for (x.array.items) |pair| if (pair == .array and pair.array.items.len >= 2) {
@@ -207,7 +229,9 @@ pub fn rowToRequest(gpa: Allocator, row: Row) Allocator.Error!parse.Request {
     var req = try parse.Request.init(gpa);
     errdefer req.deinit(gpa);
     try req.setMethod(gpa, row.method);
-    try req.setUrl(gpa, row.url);
+    // The URL as written when the row has it, so it resolves against the
+    // same env as the headers (which are stored as written too).
+    try req.setUrl(gpa, row.url_template orelse row.url);
     for (row.headers) |h| {
         if (std.mem.eql(u8, h.value, "<redacted>")) continue;
         try req.addHeader(gpa, h.name, h.value);
