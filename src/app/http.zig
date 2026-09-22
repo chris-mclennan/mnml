@@ -1720,6 +1720,25 @@ pub fn openBodyTypeMenu(app: *App, rp: *RequestPane, x: u16, y: u16) Allocator.E
     try app.openMenu("Body type", items, x, y);
 }
 
+/// The Response strip's ` TYPE ▼ ` chip: the format follows the
+/// content-type (the menu's title says so); the rows are what can be
+/// done with the body.
+pub fn openResponseBodyMenu(app: *App, rp: *RequestPane, x: u16, y: u16) Allocator.Error!void {
+    if (rp.response() == null) {
+        app.toast("no response yet", .{});
+        return;
+    }
+    const M = command.MenuItem;
+    const items = try app.gpa.dupe(M, &.{
+        .{ .label = "Copy body", .action = .{ .command = .@"http.copy_response_body" } },
+        .{ .label = "Save body to a file\u{2026}", .action = .{ .command = .@"http.save_response" } },
+        .{ .label = "Save as mock", .action = .{ .command = .@"http.save_mock" } },
+        .{ .label = "Wrap long lines", .action = .{ .command = .@"http.toggle_response_wrap" }, .checked = rp.body_wrap, .separator_before = true },
+    });
+    errdefer app.gpa.free(items);
+    try app.openMenu("Body \u{00B7} format follows the content-type", items, x, y);
+}
+
 fn cycleBodyTypeCmd(app: *App) CommandError!void {
     const rp = try requireRequest(app);
     try setBodyType(app, rp, parse.bodyType(&rp.request).next());
@@ -2934,6 +2953,28 @@ test "history: a re-fire resolves the URL and the headers against the env it was
     try pumpUntil(&app, rp, done, 300);
     try testing.expect(std.mem.startsWith(u8, server.lastRequest(), "GET /stg/me "));
     try testing.expect(std.ascii.indexOfIgnoreCase(server.lastRequest(), "authorization: Bearer staging-token\r\n") != null);
+}
+
+test "the Response strip's type chip opens the body menu, not a toast" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    const id = try openBlank(&app);
+    const rp = app.panes.get(id).?.asRequest().?;
+    try openResponseBodyMenu(&app, rp, 10, 10);
+    try testing.expect(app.overlay != .menu);
+    try testing.expectEqualStrings("no response yet", app.lastToast().?);
+    const gpa = testing.allocator;
+    try rp.setResponse(.{ .status = 200, .status_text = try gpa.dupe(u8, "OK"), .final_url = try gpa.dupe(u8, "http://x/"), .headers = &.{}, .body = try gpa.dupe(u8, "{}") });
+    // A press on the chip is what opens it.
+    try @import("request_pane.zig").click(&app, id, rp, @import("../ui/request_view.zig").hit_type, .{ .x = 10, .y = 10, .kind = .press, .button = .left }, null);
+    try testing.expect(app.overlay == .menu);
+    try testing.expectEqual(@as(usize, 4), app.overlay.menu.items.len);
+    try testing.expectEqual(command.CommandId.@"http.copy_response_body", app.overlay.menu.items[0].action.command);
+    try testing.expectEqual(command.CommandId.@"http.toggle_response_wrap", app.overlay.menu.items[3].action.command);
 }
 
 test "stream: an event that shares a packet with the head shows before the server writes again" {

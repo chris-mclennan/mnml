@@ -1659,10 +1659,8 @@ pub fn click(app: *App, id: PaneId, rp: *RequestPane, hit_id: u32, m: Mouse, hit
             } else app.toast("no response yet", .{});
             return;
         },
-        view.hit_type => {
-            app.toast("response format follows the content-type", .{});
-            return;
-        },
+        // The `JSON ▼` chip's caret opens what can be done with the body.
+        view.hit_type => return http.openResponseBodyMenu(app, rp, m.x, m.y),
         view.hit_add_row => {
             if (rp.edit_tab == .headers) {
                 if (rp.draft == null) try rp.startHeaderDraft(null);
