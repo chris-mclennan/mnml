@@ -479,11 +479,15 @@ otherwise. Copy what you need; leave the rest out.
     // (vscode-json-language-server --stdio, .json/.jsonc), yaml
     // (yaml-language-server --stdio), html, css (.css/.scss/.less; the
     // vscode-*-language-server pair from `npm i -g
-    // vscode-langservers-extracted`) and csharp (csharp-ls, `dotnet tool
+    // vscode-langservers-extracted`), csharp (csharp-ls, `dotnet tool
     // install -g csharp-ls`; roots at the nearest `*.sln` / `*.csproj` /
-    // global.json — a `*` marker is a glob). A default that is not
-    // installed is `.editor.lsp_missing_defaults`' business (quiet); a
-    // server named here that is missing always toasts.
+    // global.json — a `*` marker is a glob) and bash (bash-language-server
+    // start, `npm i -g bash-language-server`; .sh/.bash/.zsh, and any
+    // extension-less script or dotfile the detector reads as shell —
+    // the server runs shellcheck itself when it finds it, so the builtin
+    // `.linters` row for shell stands down while it is attached). A
+    // default that is not installed is `.editor.lsp_missing_defaults`'
+    // business (quiet); a server named here that is missing always toasts.
     .lsp = .{
         .rust = .{
             .cmd = "rust-analyzer", // null = mnml's built-in default

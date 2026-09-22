@@ -580,10 +580,18 @@ fn refreshServers(app: *App) Allocator.Error!void {
 /// spec or the binary is missing (toasted once).
 pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
     if (serverFor(app, path)) |s| return s;
-    const spec = specFor(app, path) orelse blk: {
+    var spec = specFor(app, path) orelse blk: {
         try refreshServers(app);
         break :blk specFor(app, path) orelse return null;
     };
+    // A default row answered — but the workspace's own `.lsp` may name
+    // a server for the file that the launch did not see (a `.test`
+    // writes its config after the start), and a user's row wins over a
+    // builtin's. One re-read, as when no row matched at all.
+    if (app.cfg.lsp.get(spec.name) == null and !app.lsp.servers_refreshed) {
+        try refreshServers(app);
+        spec = specFor(app, path) orelse return null;
+    }
     if (app.lsp.dead.contains(spec.name)) return null;
     const arena = app.frame.allocator();
     // `$NAME` in the command or an argument comes from the environment,

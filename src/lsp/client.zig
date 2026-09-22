@@ -197,6 +197,14 @@ pub const builtins = [_]Builtin{
     // Rust's — a solution first, then a project, then an SDK-style
     // `global.json`; `*` is a glob (`markerMatches`).
     .{ .name = "csharp", .cmd = "csharp-ls", .args = &.{}, .extensions = &.{ "cs", "csx" }, .root_markers = &.{ "*.sln", "*.csproj", "global.json" } },
+    // Shell: bash-language-server (`start` is its stdio mode) for
+    // `.sh` / `.bash` — and `.zsh`, which it opens like any other
+    // document and which no other row would ever send it. The
+    // `shellscript` languageId is `languageIdFor`'s for all three. A
+    // `bin/run-all` under `#!/usr/bin/env bash` and a `.zshrc` reach
+    // this row by the language the detector names for them
+    // (`app/lsp.zig`'s `specFor`). Rust's table has no shell row.
+    .{ .name = "bash", .cmd = "bash-language-server", .args = &.{"start"}, .extensions = &.{ "sh", "bash", "zsh" }, .root_markers = &.{".git"} },
 };
 
 /// Does the entry `name` satisfy `marker`? A literal marker is the name
@@ -748,7 +756,7 @@ test "languageIdFor and the builtin table" {
     try testing.expect(installHint("mystery-ls") == null);
     // // changed (lsp-defaults): the five rows, each with a hint, so a
     // missing one can offer its install.
-    for ([_][]const u8{ "json", "yaml", "html", "css", "csharp" }) |name| {
+    for ([_][]const u8{ "json", "yaml", "html", "css", "csharp", "bash" }) |name| {
         var found = false;
         for (builtins) |b| if (std.mem.eql(u8, b.name, name)) {
             found = true;
