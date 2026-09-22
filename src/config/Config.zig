@@ -989,6 +989,9 @@ pub const Ws = struct {
     subprotocols: []const []const u8 = &.{},
     ping_interval_secs: u32 = 30,
     reconnect_max_attempts: u32 = 3,
+    /// Reconnect after every server Close frame, not only 1001 and
+    /// 1011–1014 (a 1000 or an application 4xxx is otherwise final).
+    reconnect_on_close: bool = false,
 };
 
 pub const ChipLabel = enum { never, hover, always };

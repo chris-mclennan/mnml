@@ -3,8 +3,9 @@
 //! reader runs on its own thread and posts `.ws` events; sends go
 //! straight to the socket from the UI thread (`http.ws.Conn` serialises
 //! writers). A keepalive ping every `[ws] ping_interval_secs`, and up
-//! to `[ws] reconnect_max_attempts` reconnects on a drop with 1/2/4/8/16 s
-//! backoff. Every message is appended to
+//! to `[ws] reconnect_max_attempts` reconnects on a drop — or on a
+//! server Close of 1001 / 1011–1014 (`reconnectsAfter`) — with
+//! 1/2/4/8/16 s backoff. Every message is appended to
 //! `<data_root>/ws-history/<host>/history.jsonl`.
 
 const std = @import("std");
@@ -45,12 +46,15 @@ pub const WsEvent = struct {
         recv: []u8,
         err: []u8,
         closed: []u8,
+        /// The server sent a Close frame: its code and reason (owned).
+        server_close: struct { code: u16, reason: []u8 },
     },
 
     pub fn destroy(self: *WsEvent, gpa: Allocator) void {
         switch (self.kind) {
             .open => |p| if (p) |x| gpa.free(x),
             .recv, .err, .closed => |s| gpa.free(s),
+            .server_close => |c| gpa.free(c.reason),
         }
         gpa.destroy(self);
     }
@@ -233,7 +237,13 @@ fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, shared: *Shared, pa
                 const text = std.fmt.allocPrint(gpa, "(binary {d} bytes)", .{b.len}) catch break;
                 post(events, io, gpa, .{ .pane = pane, .attempt = attempt, .kind = .{ .recv = text } });
             },
-            .close => break,
+            .close => |c| {
+                // Our own Esc's close comes back as the server's echo.
+                if (shared.closing) break;
+                const reason = gpa.dupe(u8, c.reason) catch break;
+                post(events, io, gpa, .{ .pane = pane, .attempt = attempt, .kind = .{ .server_close = .{ .code = c.code, .reason = reason } } });
+                return;
+            },
             .ping, .pong => {},
         }
     }
@@ -264,6 +274,22 @@ pub fn handle(app: *App, ev: *WsEvent) Allocator.Error!void {
             persistHistory(app, p.url, false, text);
         },
         .err => |text| try p.push(app.now_ms, false, .err, text),
+        .server_close => |c| {
+            // A deliberate close from the server says why; it is not a
+            // network drop, and reconnecting into the same answer
+            // (1008 policy, 4001 auth) only repeats it.
+            p.state = .closed;
+            const line = if (c.reason.len > 0) try std.fmt.allocPrint(app.frame.allocator(), "closed {d} {s}", .{ c.code, c.reason }) else try std.fmt.allocPrint(app.frame.allocator(), "closed {d}", .{c.code});
+            try p.push(app.now_ms, false, if (c.code == 1000) .system else .err, line);
+            if (!p.user_closed and reconnectsAfter(c.code, app.cfg.ws.reconnect_on_close) and p.reconnects < app.cfg.ws.reconnect_max_attempts) {
+                p.reconnects += 1;
+                const backoff: i64 = @as(i64, 1) << @intCast(@min(p.reconnects - 1, 4));
+                p.reconnect_at_ms = app.now_ms + backoff * 1000;
+                p.state = .connecting;
+                try p.push(app.now_ms, false, .err, try std.fmt.allocPrint(app.frame.allocator(), "reconnecting in {d}s (attempt {d}/{d})", .{ backoff, p.reconnects, app.cfg.ws.reconnect_max_attempts }));
+            }
+            try p.refreshTitle();
+        },
         .closed => |reason| {
             const was_user = p.user_closed or std.mem.eql(u8, reason, "closed");
             p.state = .closed;
@@ -278,6 +304,19 @@ pub fn handle(app: *App, ev: *WsEvent) Allocator.Error!void {
             try p.refreshTitle();
         },
     }
+}
+
+/// Whether a server Close frame with `code` is worth a reconnect: the
+/// server going away (1001) or in trouble / restarting / asking to try
+/// later (1011–1014). A normal close (1000), a protocol or policy
+/// answer (1002–1010) and an application code (3000–4999) are final —
+/// unless `[ws] reconnect_on_close` says every close is.
+pub fn reconnectsAfter(code: u16, reconnect_on_close: bool) bool {
+    if (reconnect_on_close) return true;
+    return switch (code) {
+        1001, 1011, 1012, 1013, 1014 => true,
+        else => false,
+    };
 }
 
 /// Keepalive pings and due reconnects.
@@ -667,4 +706,53 @@ test "a pane against the echo server: connect, send, receive, history, disconnec
     }
     try testing.expect(p.state == .closed);
     try testing.expect(p.reconnect_at_ms == null);
+}
+
+test "a server Close frame is logged with its code and reason, and a 4xxx is not reconnected; a 1012 restart is" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &pbuf);
+    const root = pbuf[0..n];
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .data_root = root });
+    defer app.deinit();
+    const cases = [_]struct { ask: []const u8, line: []const u8, reconnects: bool }{
+        .{ .ask = "close:4001 token expired", .line = "closed 4001 token expired", .reconnects = false },
+        .{ .ask = "close:1012 restart", .line = "closed 1012 restart", .reconnects = true },
+    };
+    for (cases) |case| {
+        // The echo server takes one connection; one apiece.
+        var server = try ws.EchoServer.start(testing.allocator, testing.io);
+        defer server.stop();
+        const url = try std.fmt.allocPrint(testing.allocator, "ws://127.0.0.1:{d}/x", .{server.port});
+        defer testing.allocator.free(url);
+        const id = try open(&app, url);
+        const p = app.panes.get(id).?.asWebsocket().?;
+        var waited: usize = 0;
+        while (p.state != .open and waited < 300) : (waited += 1) {
+            try app.tick(App.nowMs(app.io));
+            try Io.sleep(app.io, .fromMilliseconds(10), .awake);
+        }
+        try testing.expect(p.state == .open);
+        for (case.ask) |c| try app.handle(.{ .key = Key.char(c) });
+        try app.handle(.{ .key = Key.named(.enter) });
+        waited = 0;
+        while (p.state == .open and waited < 300) : (waited += 1) {
+            try app.tick(App.nowMs(app.io));
+            try Io.sleep(app.io, .fromMilliseconds(10), .awake);
+        }
+        var saw = false;
+        var saw_dropped = false;
+        for (p.log.items) |e| {
+            if (std.mem.eql(u8, e.text, case.line)) saw = true;
+            if (std.mem.eql(u8, e.text, "dropped")) saw_dropped = true;
+        }
+        try testing.expect(saw);
+        try testing.expect(!saw_dropped);
+        try testing.expectEqual(case.reconnects, p.reconnect_at_ms != null);
+        p.reconnect_at_ms = null;
+        p.disconnect();
+    }
+    try testing.expect(reconnectsAfter(4001, true));
+    try testing.expect(!reconnectsAfter(1000, false));
 }
