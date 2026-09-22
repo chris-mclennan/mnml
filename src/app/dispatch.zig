@@ -1723,8 +1723,27 @@ pub fn paste(app: *App, text: []const u8) Allocator.Error!void {
     // The graph's commit box: a pasted message keeps its lines.
     if (try git_app.pasteIntoCommitBox(app, text)) return;
     const e = app.activeEditor() orelse return;
-    const copy = try app.frame.allocator().dupe(u8, text);
+    // A paste lands literally, as one change: no auto-indent, no pairs,
+    // no abbreviations — `insert_str` is none of those. Its line breaks
+    // are the buffer's (`\n`; the file's own ending goes back on at
+    // save): a CRLF pair or a lone CR, what most terminals send, is one.
+    const copy = try normalizePasteBreaks(app.frame.allocator(), text);
     _ = try app.applyOps(e, &.{.{ .insert_str = copy }});
+}
+
+/// `\r\n` and a lone `\r` become `\n`; everything else is kept.
+pub fn normalizePasteBreaks(arena: Allocator, text: []const u8) Allocator.Error![]u8 {
+    const out = try arena.alloc(u8, text.len);
+    var n: usize = 0;
+    var i: usize = 0;
+    while (i < text.len) : (i += 1) {
+        if (text[i] == '\r') {
+            if (i + 1 < text.len and text[i + 1] == '\n') i += 1;
+            out[n] = '\n';
+        } else out[n] = text[i];
+        n += 1;
+    }
+    return out[0..n];
 }
 
 // ─── mouse ──────────────────────────────────────────────────────────────
@@ -5094,4 +5113,28 @@ test "toasts: the transient stack keeps five and drops the oldest, a repeat coal
     app.toast("later", .{});
     try app.handle(.{ .key = key_mod.Key.named(.esc) });
     try std.testing.expectEqual(@as(usize, 0), app.toasts.items.len);
+}
+
+test "a paste into the editor lands literally in both profiles: no auto-indent cascade, every line break kept" {
+    const pasted = [_][]const u8{
+        "    a = 1\r        b = (2\rc = [3]\r", // CR: xterm, Terminal.app, iTerm2
+        "    a = 1\n        b = (2\nc = [3]\n", // LF: kitty, wezterm
+        "    a = 1\r\n        b = (2\r\nc = [3]\r\n",
+    };
+    for ([_]input.Style{ .standard, .vim }) |style| for (pasted) |p| {
+        var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
+        defer app.deinit();
+        try app.setInputStyle(style);
+        _ = try app.openScratch();
+        const e = app.activeEditor().?;
+        e.buf.doc.auto_indent = true;
+        e.buf.doc.auto_pair = true;
+        if (style == .vim) try app.handle(.{ .key = Key.char('i') });
+        try app.handle(.{ .paste = try std.testing.allocator.dupe(u8, p) });
+        try std.testing.expectEqualStrings("    a = 1\n        b = (2\nc = [3]\n", e.buf.editor.bytes());
+        // One change: one undo takes the whole paste back.
+        if (style == .vim) try app.handle(.{ .key = Key.named(.esc) });
+        _ = try app.applyOps(e, &.{.undo});
+        try std.testing.expectEqualStrings("", e.buf.editor.bytes());
+    };
 }
