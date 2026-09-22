@@ -1,6 +1,6 @@
 ▌BITBUCKET PRS  (1 of 2)  as of 0s ago                                      ?
 ▌ 1 Open + Draft (3)   2 Merged (2)
-▌▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+▌ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
 ▌ status: Open + Draft   author: all   target: any   show: awaiting me (1)
 ▌ 󰍉 / filter
 ▌ REPO / #PR                   STATE      UPDATED      TITLE

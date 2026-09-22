@@ -456,18 +456,32 @@ pub fn Painter(comptime Target: type) type {
         /// mnml's own cursor glyph, doing a second job in a place that
         /// is not a list. It reads as a browser's tabs now: the label
         /// in the pane's brand colour, and an indicator on the row
-        /// beneath spanning exactly its cells. Which of the three
-        /// shapes is the host's `ui.tab_indicator`, carried on `hello`.
+        /// beneath. Which of the shapes is the host's
+        /// `ui.tab_indicator`, carried on `hello`.
+        ///
+        /// One rule decides what the indicator row covers, for every
+        /// shape: a tab OWNS its ink — the label with its padding
+        /// trimmed — plus half of each gap beside it, so two neighbours
+        /// meet at the gap's midpoint (an odd gap gives its extra cell
+        /// to the tab on the left). Padding inside a label is gap, not
+        /// ink; the label's hit rect still covers all of it. The active
+        /// bar spans exactly what its tab owns, and a track (`rule`,
+        /// `quarter_track`) runs from the first tab's ink to the last
+        /// tab's ink and never past it — one tab wears one bar the width
+        /// of its word, with no stub after it as if a second tab
+        /// followed.
         ///
         /// Returns the rows it used — 2 normally, 1 in a pane too short
         /// to spend one on the indicator, where the active label
         /// carries the terminal's own underline attribute instead.
         pub fn tabStrip(p: *Self, x0: u16, y: u16, list: []const TabSpec) Allocator.Error!u16 {
             const ruled = p.rows() >= tab_rule_min_rows and y + 1 < p.rows();
+            const Span = struct { start: u16, end: u16 };
             var x = x0;
-            var active_x: u16 = 0;
-            var active_w: u16 = 0;
-            for (list) |t| {
+            var track: Span = .{ .start = x0, .end = x0 };
+            var active: ?Span = null;
+            var prev_end: u16 = x0;
+            for (list, 0..) |t, i| {
                 const w = width(t.label);
                 if (x + w > p.cols()) break;
                 var style: Style = if (t.active) .{ .fg = p.th.brand, .mods = .{ .bold = true } } else p.th.tabInactive();
@@ -475,20 +489,38 @@ pub fn Painter(comptime Target: type) type {
                 if (t.active and !ruled) style.mods.underline = true;
                 _ = p.put(x, y, w, t.label, style);
                 try p.mark(.{ .x = x, .y = y, .w = w, .h = 1 }, t.target);
-                if (t.active) {
-                    active_x = x;
-                    active_w = w;
+                const ink = inkSpan(t.label);
+                const ink_start = x + ink.lead;
+                const ink_end = ink_start + ink.vis;
+                // The first tab starts at its ink; every other one where
+                // its left neighbour stopped.
+                const own_start = if (i == 0) ink_start else prev_end;
+                // Half of the gap to the next tab that fits on the strip.
+                // The last tab ends at its own ink.
+                var own_end = ink_end;
+                if (i + 1 < list.len) {
+                    const next = list[i + 1];
+                    const next_x = x + w + 1;
+                    if (next_x + width(next.label) <= p.cols()) {
+                        const gap = next_x + inkSpan(next.label).lead - ink_end;
+                        own_end = ink_end + (gap + 1) / 2;
+                    }
                 }
+                if (i == 0) track.start = own_start;
+                track.end = own_end;
+                prev_end = own_end;
+                if (t.active) active = .{ .start = own_start, .end = own_end };
                 x += w + 1;
             }
             if (!ruled) return 1;
-            // Only `rule` lays a track across the strip; the other two
-            // leave the row empty either side of the active label.
+            // Only `rule` and `quarter_track` lay a track along the
+            // strip; the other shapes leave the row empty either side
+            // of the active tab.
             if (p.ui.tab_indicator == .rule or p.ui.tab_indicator == .quarter_track) {
-                const right = @min(x, p.cols());
-                var i = x0;
-                const track = if (p.ui.tab_indicator == .quarter_track) (if (p.ui.ascii) tab_quarter_ascii else tab_quarter) else (if (p.ui.ascii) tab_rule_ascii else tab_rule);
-                while (i < right) : (i += 1) _ = p.put(i, y + 1, 1, track, p.th.mutedText());
+                const right = @min(track.end, p.cols());
+                var i = track.start;
+                const glyph = if (p.ui.tab_indicator == .quarter_track) (if (p.ui.ascii) tab_quarter_ascii else tab_quarter) else (if (p.ui.ascii) tab_rule_ascii else tab_rule);
+                while (i < right) : (i += 1) _ = p.put(i, y + 1, 1, glyph, p.th.mutedText());
             }
             const glyph = switch (p.ui.tab_indicator) {
                 .block => if (p.ui.ascii) tab_block_ascii else tab_block,
@@ -496,11 +528,22 @@ pub fn Painter(comptime Target: type) type {
                 .line => if (p.ui.ascii) tab_rule_ascii else tab_rule,
                 .quarter, .quarter_track => if (p.ui.ascii) tab_quarter_ascii else tab_quarter,
             };
-            var i = active_x;
-            while (i < active_x + active_w and i < p.cols()) : (i += 1) {
-                _ = p.put(i, y + 1, 1, glyph, .{ .fg = p.th.brand });
+            if (active) |a| {
+                var i = a.start;
+                while (i < a.end and i < p.cols()) : (i += 1) {
+                    _ = p.put(i, y + 1, 1, glyph, .{ .fg = p.th.brand });
+                }
             }
             return 2;
+        }
+
+        /// Where a tab label's ink is: the cells of padding before it,
+        /// and the width of the text with its padding trimmed. A label
+        /// that is all padding is taken whole, so it still gets a bar.
+        fn inkSpan(label: []const u8) struct { lead: u16, vis: u16 } {
+            const first = std.mem.indexOfNone(u8, label, " ") orelse return .{ .lead = 0, .vis = width(label) };
+            const last = std.mem.lastIndexOfNone(u8, label, " ").? + 1;
+            return .{ .lead = @intCast(first), .vis = width(label[first..last]) };
         }
 
         // ─── the filter pill ─────────────────────────────────────────
@@ -880,10 +923,32 @@ pub fn scrollAt(bar: Rect, total: usize, visible: usize, row: u16) usize {
     return @min(max_first, (rel * total) / bar.h);
 }
 
-/// The three indicators, painted through the real `tabStrip`.
-fn stripRows(gpa: Allocator, ind: wire_mod.TabIndicator, ascii: bool, rows: u16) ![2][]const u8 {
+/// One strip painted through the real `tabStrip` onto a `cols`-wide
+/// frame `rows` high, at `x0 = 1`: `labels` in order, the one at
+/// `active` on. Two readings of the indicator row come back: the
+/// glyphs as a string, and the SHAPE — `A` where the cell is in the
+/// brand colour (the active bar), `t` where it is a muted track cell,
+/// space where it is empty — since a `quarter_track` row is one glyph
+/// end to end and only the colour says where the bar stops. Both are
+/// `""` when the pane was too short to spend the row. The hit map is
+/// probed too: `hit_first` / `hit_last` are what a press on the FIRST
+/// tab's first and last cell resolves to.
+const Strip = struct {
+    row: []const u8,
+    shape: []const u8,
+    hit_first: ?u8,
+    hit_last: ?u8,
+
+    fn deinit(s: Strip, gpa: Allocator) void {
+        gpa.free(s.row);
+        gpa.free(s.shape);
+    }
+};
+
+fn strip(gpa: Allocator, ind: wire_mod.TabIndicator, ascii: bool, cols: u16, rows: u16, labels: []const []const u8, active: usize) !Strip {
     const Target = union(enum) { tab: u8 };
-    var f = try frame_mod.Frame.init(gpa, 40, rows);
+    const brand: theme_mod.Color = .{ .index = 5 };
+    var f = try frame_mod.Frame.init(gpa, cols, rows);
     defer f.deinit();
     var hits: hit.Map(Target) = .{};
     defer hits.deinit(gpa);
@@ -894,17 +959,27 @@ fn stripRows(gpa: Allocator, ind: wire_mod.TabIndicator, ascii: bool, rows: u16)
         .gpa = gpa,
         .arena = arena.allocator(),
         .hits = &hits,
-        .th = .{ .brand = .{ .index = 5 } },
+        .th = .{ .brand = brand },
         .ui = .{ .tab_indicator = ind, .ascii = ascii },
     };
-    const used = try p.tabStrip(1, 0, &.{
-        .{ .label = " 1 One ", .target = .{ .tab = 0 }, .active = true },
-        .{ .label = " 2 Two ", .target = .{ .tab = 1 } },
-    });
-    var out: [2][]const u8 = .{ "", "" };
-    out[0] = try rowOf(gpa, &f, 0);
-    out[1] = if (used == 2) try rowOf(gpa, &f, 1) else "";
-    return out;
+    var list: std.ArrayListUnmanaged(Painter(Target).TabSpec) = .empty;
+    defer list.deinit(gpa);
+    for (labels, 0..) |l, i| try list.append(gpa, .{ .label = l, .target = .{ .tab = @intCast(i) }, .active = i == active });
+    const used = try p.tabStrip(1, 0, list.items);
+    const first_w = width(labels[0]);
+    const hit_first: ?u8 = if (hits.at(1, 0)) |t| t.tab else null;
+    const hit_last: ?u8 = if (hits.at(first_w, 0)) |t| t.tab else null;
+    if (used != 2) return .{ .row = try gpa.dupe(u8, ""), .shape = try gpa.dupe(u8, ""), .hit_first = hit_first, .hit_last = hit_last };
+    var shape: std.ArrayListUnmanaged(u8) = .empty;
+    defer shape.deinit(gpa);
+    var x: u16 = 0;
+    while (x < cols) : (x += 1) {
+        const slot = f.slots[@as(usize, 1) * cols + x];
+        const blank = std.mem.eql(u8, std.mem.trim(u8, slot.symbol(), " "), "");
+        const fg = slot.style.fg;
+        try shape.append(gpa, if (blank) ' ' else if (fg != null and std.meta.eql(fg.?, brand)) 'A' else 't');
+    }
+    return .{ .row = try rowOf(gpa, &f, 1), .shape = try shape.toOwnedSlice(gpa), .hit_first = hit_first, .hit_last = hit_last };
 }
 
 fn rowOf(gpa: Allocator, f: *frame_mod.Frame, y: u16) ![]const u8 {
@@ -914,67 +989,160 @@ fn rowOf(gpa: Allocator, f: *frame_mod.Frame, y: u16) ![]const u8 {
     return out.toOwnedSlice(gpa);
 }
 
-test "the tab indicator draws each shape under the active label, and only `rule` lays a track" {
+const two_padded = [_][]const u8{ " 1 One ", " 2 Two " };
+
+test "one tab wears one bar the width of its word — no track stub after it as if a second tab followed" {
     const gpa = std.testing.allocator;
-    // `block`: the half-block under `  1 One `, nothing either side.
+    // ` 1 One ` at x 1: the ink is `1 One`, cells 2..7. The track ends
+    // with the ink; nothing at cell 7 where the padding and the gap were.
     {
-        const r = try stripRows(gpa, .block, false, 20);
-        defer gpa.free(r[0]);
-        defer gpa.free(r[1]);
-        try std.testing.expect(std.mem.indexOf(u8, r[0], "1 One") != null);
-        try std.testing.expectEqualStrings(" " ++ (tab_block ** 7) ++ " " ** 32, r[1]);
+        const s = try strip(gpa, .quarter_track, false, 40, 20, &.{" 1 One "}, 0);
+        defer s.deinit(gpa);
+        try std.testing.expectEqualStrings("  " ++ (tab_quarter ** 5) ++ " " ** 33, s.row);
+        try std.testing.expectEqualStrings("  AAAAA" ++ " " ** 33, s.shape);
     }
-    // `rule`: heavy under the active label, a light track over the rest
-    // of the strip and nothing past its right edge.
+    // `rule`: the heavy bar and not one cell of the light track.
     {
-        const r = try stripRows(gpa, .rule, false, 20);
-        defer gpa.free(r[0]);
-        defer gpa.free(r[1]);
-        try std.testing.expectEqualStrings(" " ++ (tab_rule_active ** 7) ++ tab_rule ** 9 ++ " " ** 23, r[1]);
+        const s = try strip(gpa, .rule, false, 40, 20, &.{" 1 One "}, 0);
+        defer s.deinit(gpa);
+        try std.testing.expectEqualStrings("  " ++ (tab_rule_active ** 5) ++ " " ** 33, s.row);
+        try std.testing.expect(std.mem.indexOf(u8, s.row, tab_rule) == null);
     }
-    // `line`: the light rule under the active label only.
+}
+
+test "two tabs meet at the midpoint of the gap between their words — an odd gap gives its extra cell to the left tab" {
+    const gpa = std.testing.allocator;
+    // ` 1 One ` ` 2 Two ` at x 1: ink 2..7 and 10..15, a gap of three
+    // (padding, separator, padding). Two go left, one right: the tabs
+    // own 2..9 and 9..15, and the track is the union, 2..15.
     {
-        const r = try stripRows(gpa, .line, false, 20);
-        defer gpa.free(r[0]);
-        defer gpa.free(r[1]);
-        try std.testing.expectEqualStrings(" " ++ (tab_rule ** 7) ++ " " ** 32, r[1]);
-    }
-    // `quarter`: a quarter-height bar at the head of the row, flush under the active label only.
-    {
-        const r = try stripRows(gpa, .quarter, false, 20);
-        defer gpa.free(r[0]);
-        defer gpa.free(r[1]);
-        try std.testing.expectEqualStrings(" " ++ (tab_quarter ** 7) ++ " " ** 32, r[1]);
-    }
-    // `quarter_track`: the same bar across the strip, the active tab's stretch in colour.
-    {
-        const r = try stripRows(gpa, .quarter_track, false, 20);
-        defer gpa.free(r[0]);
-        defer gpa.free(r[1]);
-        try std.testing.expectEqualStrings(" " ++ (tab_quarter ** 16) ++ " " ** 23, r[1]);
-    }
-    // ascii: a stand-in for each, so a terminal without the font still
-    // says which tab is on.
-    {
-        const r = try stripRows(gpa, .block, true, 20);
-        defer gpa.free(r[0]);
-        defer gpa.free(r[1]);
-        try std.testing.expectEqualStrings(" " ++ ("=" ** 7) ++ " " ** 32, r[1]);
+        const s = try strip(gpa, .quarter_track, false, 40, 20, &two_padded, 0);
+        defer s.deinit(gpa);
+        try std.testing.expectEqualStrings("  " ++ (tab_quarter ** 13) ++ " " ** 25, s.row);
+        try std.testing.expectEqualStrings("  AAAAAAAtttttt" ++ " " ** 25, s.shape);
     }
     {
-        const r = try stripRows(gpa, .line, true, 20);
-        defer gpa.free(r[0]);
-        defer gpa.free(r[1]);
-        try std.testing.expectEqualStrings(" " ++ ("-" ** 7) ++ " " ** 32, r[1]);
+        const s = try strip(gpa, .quarter_track, false, 40, 20, &two_padded, 1);
+        defer s.deinit(gpa);
+        try std.testing.expectEqualStrings("  tttttttAAAAAA" ++ " " ** 25, s.shape);
     }
-    // A pane too short for the extra row spends none: the label wears
-    // the terminal's underline attribute instead.
+    // `One ` `Two` at x 1: ink 1..4 and 6..9, a gap of two (the first
+    // label's padding and the separator) — one cell each: 1..5 and 5..9.
     {
-        const r = try stripRows(gpa, .block, false, 6);
-        defer gpa.free(r[0]);
-        defer gpa.free(r[1]);
-        try std.testing.expectEqualStrings("", r[1]);
+        const s = try strip(gpa, .quarter_track, false, 40, 20, &.{ "One ", "Two" }, 0);
+        defer s.deinit(gpa);
+        try std.testing.expectEqualStrings(" AAAAtttt" ++ " " ** 31, s.shape);
     }
+    {
+        const s = try strip(gpa, .quarter_track, false, 40, 20, &.{ "One ", "Two" }, 1);
+        defer s.deinit(gpa);
+        try std.testing.expectEqualStrings(" ttttAAAA" ++ " " ** 31, s.shape);
+    }
+}
+
+test "padding inside a label is gap, not ink — the bar measures the trimmed word while the hit rect keeps the whole label" {
+    const gpa = std.testing.allocator;
+    // `   1 One   ` (three each side) and `  2 Two  ` (two each side)
+    // at x 1: ink 4..9 and 15..20, a gap of six — three each: the tabs
+    // own 4..12 and 12..20, and the track starts at 4, not at 1.
+    const s = try strip(gpa, .quarter_track, false, 40, 20, &.{ "   1 One   ", "  2 Two  " }, 0);
+    defer s.deinit(gpa);
+    try std.testing.expectEqualStrings("    AAAAAAAAtttttttt" ++ " " ** 20, s.shape);
+    // A press on the first label's first cell (x 1) and its last cell
+    // (x 11) — both padding — still lands on tab 0.
+    try std.testing.expectEqual(@as(?u8, 0), s.hit_first);
+    try std.testing.expectEqual(@as(?u8, 0), s.hit_last);
+}
+
+test "every indicator shape spans the same ownership: the word plus half the gap, and only `rule` / `quarter_track` lay a track" {
+    const gpa = std.testing.allocator;
+    // `block`: the half-block over the first tab's 2..9, nothing either side.
+    {
+        const s = try strip(gpa, .block, false, 40, 20, &two_padded, 0);
+        defer s.deinit(gpa);
+        try std.testing.expectEqualStrings("  " ++ (tab_block ** 7) ++ " " ** 31, s.row);
+        try std.testing.expectEqualStrings("  AAAAAAA" ++ " " ** 31, s.shape);
+    }
+    // `rule`: heavy over 2..9, the light track on to the last word's end
+    // at 15, and nothing past it.
+    {
+        const s = try strip(gpa, .rule, false, 40, 20, &two_padded, 0);
+        defer s.deinit(gpa);
+        try std.testing.expectEqualStrings("  " ++ (tab_rule_active ** 7) ++ (tab_rule ** 6) ++ " " ** 25, s.row);
+        try std.testing.expectEqualStrings("  AAAAAAAtttttt" ++ " " ** 25, s.shape);
+    }
+    // `line`: the light rule over the active tab only.
+    {
+        const s = try strip(gpa, .line, false, 40, 20, &two_padded, 0);
+        defer s.deinit(gpa);
+        try std.testing.expectEqualStrings("  " ++ (tab_rule ** 7) ++ " " ** 31, s.row);
+    }
+    // `quarter`: the quarter bar over the active tab only.
+    {
+        const s = try strip(gpa, .quarter, false, 40, 20, &two_padded, 0);
+        defer s.deinit(gpa);
+        try std.testing.expectEqualStrings("  " ++ (tab_quarter ** 7) ++ " " ** 31, s.row);
+    }
+    // `quarter_track`: the same bar along the track, the active stretch in colour.
+    {
+        const s = try strip(gpa, .quarter_track, false, 40, 20, &two_padded, 1);
+        defer s.deinit(gpa);
+        try std.testing.expectEqualStrings("  " ++ (tab_quarter ** 13) ++ " " ** 25, s.row);
+        try std.testing.expectEqualStrings("  tttttttAAAAAA" ++ " " ** 25, s.shape);
+    }
+}
+
+test "the ascii twins draw the same ownership, so a terminal without the font still says where a tab ends" {
+    const gpa = std.testing.allocator;
+    {
+        const s = try strip(gpa, .block, true, 40, 20, &two_padded, 0);
+        defer s.deinit(gpa);
+        try std.testing.expectEqualStrings("  " ++ ("=" ** 7) ++ " " ** 31, s.row);
+    }
+    {
+        const s = try strip(gpa, .rule, true, 40, 20, &two_padded, 0);
+        defer s.deinit(gpa);
+        try std.testing.expectEqualStrings("  " ++ ("=" ** 7) ++ ("-" ** 6) ++ " " ** 25, s.row);
+    }
+    {
+        const s = try strip(gpa, .line, true, 40, 20, &two_padded, 0);
+        defer s.deinit(gpa);
+        try std.testing.expectEqualStrings("  " ++ ("-" ** 7) ++ " " ** 31, s.row);
+    }
+    {
+        const s = try strip(gpa, .quarter, true, 40, 20, &two_padded, 0);
+        defer s.deinit(gpa);
+        try std.testing.expectEqualStrings("  " ++ ("_" ** 7) ++ " " ** 31, s.row);
+    }
+    {
+        const s = try strip(gpa, .quarter_track, true, 40, 20, &two_padded, 1);
+        defer s.deinit(gpa);
+        try std.testing.expectEqualStrings("  " ++ ("_" ** 13) ++ " " ** 25, s.row);
+        try std.testing.expectEqualStrings("  tttttttAAAAAA" ++ " " ** 25, s.shape);
+    }
+    // One tab in ascii: the same no-stub rule.
+    {
+        const s = try strip(gpa, .quarter_track, true, 40, 20, &.{" 1 One "}, 0);
+        defer s.deinit(gpa);
+        try std.testing.expectEqualStrings("  " ++ ("_" ** 5) ++ " " ** 33, s.row);
+    }
+}
+
+test "a tab that does not fit the strip is not laid out, and the track stops at the last word that did" {
+    const gpa = std.testing.allocator;
+    // Twelve columns: ` 2 Two ` would start at 9 and end at 16, so it
+    // is dropped, and the track is the first word alone — no half-gap
+    // reaching toward a tab that is not there.
+    const s = try strip(gpa, .quarter_track, false, 12, 20, &two_padded, 0);
+    defer s.deinit(gpa);
+    try std.testing.expectEqualStrings("  AAAAA" ++ " " ** 5, s.shape);
+}
+
+test "a pane too short for the indicator row spends none: the label wears the terminal's underline instead" {
+    const gpa = std.testing.allocator;
+    const s = try strip(gpa, .block, false, 40, 6, &two_padded, 0);
+    defer s.deinit(gpa);
+    try std.testing.expectEqualStrings("", s.row);
 }
 
 // ─── tests ───────────────────────────────────────────────────────────────

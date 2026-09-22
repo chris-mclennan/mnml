@@ -1,0 +1,71 @@
+# width: 120
+# height: 40
+# env: JIRA_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/jira-bucket.json
+# env: JIRA_API_TOKEN=fake-token
+# env: JIRA_BASE_URL=@${MNML_E2E_WORKSPACE}/jira.url
+# The tab strip's indicator row, under `ui.tab_indicator = .quarter_track`
+# — the setting the user runs the real Jira panes on. Two faults it had:
+# with one tab the muted track ran one cell past the word, a grey stub
+# as if a second tab followed; with two, the coloured bar covered the
+# label's padding and ran into the gap while the track began under the
+# next label's first glyph. One rule now: a tab owns its word plus half
+# of each gap beside it (an odd gap's extra cell to the left tab), the
+# bar spans exactly that, and the track runs from the first word to the
+# last and never past it. `sdk.pane.chrome` proves the cells; this file
+# proves the rule reaches the mounted pane, with each tab on in turn.
+shell "$MNML_FAKE_JIRA" --port 0 --url-file jira.url --life-secs 180 --quiet --pid-file fake-jira.pid >/dev/null 2>&1 &
+wait 500
+write sdk/mnml-sdk/build.zig ""
+write integrations/jira/build.zig ""
+write integrations/jira/manifest.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } } }"
+write .mnml/integrations/jira/config.zon ".{\n    .jira_url = \"https://jira.invalid\",\n    .email = \"fake@acme.com\",\n    .refresh_interval_secs = 0, .rate = .{ .per_sec = 1000, .burst = 1000 },\n    .tabs = .{\n        .{ .name = \"My open work items\", .kind = .work_open },\n        .{ .name = \"Reported by me\", .kind = .work_reported },\n    },\n}\n"
+command integrations.show_in_dev
+expect screen contains "INTEGRATIONS"
+key i
+expect screen contains "installed jira_work from"
+wait 1200
+# The runner starts every script on `e2e_defaults` (`.block`); the
+# setting is switched live, before the pane mounts and reads it.
+ex set ui.tab_indicator=quarter_track
+command integrations.open_as_tab
+command jira_work.open
+wait 8000
+command view.toggle_tree
+command view.focus_pane
+expect screen contains "JIRA WORK"
+expect screen contains "1 My open work items"
+expect screen contains "2 Reported by me"
+# The strip at x 1: ` 1 My open work items ` (ink at 2..22) and
+# ` 2 Reported by me ` (ink at 25..41). The gap between the words is
+# three cells — 22 (padding), 23 (the separator), 24 (padding) — so the
+# first tab owns 2..24 and the second 24..41. The track is their union:
+# thirty-nine cells from the first word to the last, a space after `me`.
+expect screen contains "▌ 🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂 "
+expect screen lacks "🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂"
+# Tab 1 on: brand from the `1` through the separator (its two cells of
+# the odd gap), the track from the second tab's padding on.
+expect color 2 4 fg #61afef
+expect color 22 4 fg #61afef
+expect color 23 4 fg #61afef
+expect color 24 4 fg #80848d
+expect color 25 4 fg #80848d
+expect color 40 4 fg #80848d
+# Tab 2 on: the bar starts at the midpoint, one cell before its `2`,
+# and the first tab's stretch is track — no cell of the gap is uncovered.
+key 2
+wait 1500
+expect screen contains "▌ 🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂🮂 "
+expect color 2 4 fg #80848d
+expect color 23 4 fg #80848d
+expect color 24 4 fg #61afef
+expect color 25 4 fg #61afef
+expect color 40 4 fg #61afef
+# And back.
+key 1
+wait 1500
+expect color 23 4 fg #61afef
+expect color 24 4 fg #80848d
+key q
+wait 500
+key x
+shell kill "$(cat fake-jira.pid)" 2>/dev/null || true
