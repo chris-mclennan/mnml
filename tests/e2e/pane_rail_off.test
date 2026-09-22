@@ -4,13 +4,24 @@
 # older look, where only an AI session pane wore one) and `off`. With
 # `off` the first column of a terminal pane is the child's own grid
 # again, and no cell of it is the rail's ▌.
+#
+# Two terminals: the first opens in white (`ui.accent_defaults.shell`),
+# the second takes the ladder's green. The colour check is on the
+# second — the child's own text is white too, so a white rail and the
+# `L` that stands in its cell with the rail off would read the same.
 command view.toggle_tree
 ex set ui.pane_rail=off
 ex term printf LL; sleep 30
 expect screen contains "LL"
 expect screen lacks "▌LL"
-expect color 0 2 fg not #98c379
+ex term printf RR; sleep 30
+expect screen contains "RR"
+expect screen lacks "▌RR"
+expect color 0 21 fg not #98c379
 
-# Back to `all` and the rail is there again.
+# Back to `all` and the rails are there again, each in its colour.
 ex set ui.pane_rail=all
-expect color 0 2 fg #98c379
+expect screen contains "▌LL"
+expect screen contains "▌RR"
+expect color 0 2 fg #abb2bf
+expect color 0 21 fg #98c379

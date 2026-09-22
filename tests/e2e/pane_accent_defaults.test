@@ -1,0 +1,39 @@
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# The first pane of a kind opens in a colour of its own, before the
+# ladder (`src/app/pane_accent.zig` `defaultFor`, `ui.accent_defaults`):
+# a plain terminal in white — the theme's text colour, onedark's
+# #abb2bf — and a Claude session in Claude's orange, #d97757, the one
+# the strip chip and the tab mark wear. The second terminal is the
+# ladder's first slot, green #98c379, as every pane used to be. The
+# rail is the first column of each pane, and its colour is the only
+# way a script can see it: the glyph is the same ▌ on all three.
+#
+# A fake `claude` on PATH (a script that sleeps) stands in for the CLI;
+# `sleep 30` keeps each terminal alive.
+command view.toggle_tree
+ex term printf LL; sleep 30
+expect screen contains "LL"
+# The first terminal's rail is white, not the ladder's green.
+expect color 0 2 fg #abb2bf
+expect color 0 2 fg not #98c379
+ex term printf RR; sleep 30
+expect screen contains "RR"
+# The second is the ladder's first slot.
+expect color 0 21 fg #98c379
+expect color 0 21 fg not #abb2bf
+# The first terminal keeps its white.
+expect color 0 2 fg #abb2bf
+# The first Claude session opens to the right of the second terminal,
+# and the SESSIONS panel comes up on the left with it, so the whole
+# layout shifts: the terminals' rails move to x 31 and the session's
+# rail is at x 76 (the same layout `sessions_second_claude_color.test`
+# right-clicks into). The session's rail is Claude's orange; the
+# terminals keep white and green.
+write bin/claude #!/bin/sh\nsleep 30
+shell chmod +x bin/claude
+command ai.claude_code_new
+wait 300
+expect color 76 21 fg #d97757
+expect color 76 21 fg not #98c379
+expect color 31 21 fg #98c379
+expect color 31 2 fg #abb2bf

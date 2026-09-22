@@ -14,11 +14,26 @@
 const std = @import("std");
 const vaxis = @import("vaxis");
 const Theme = @import("theme.zig");
+const brand = @import("brand.zig");
 
 pub const Color = vaxis.Color;
 
 /// Slot 0 is the first session's, slots 1.. rotate.
 pub const palette = [_][]const u8{ "green", "blue", "yellow", "orange", "red", "purple", "cyan", "pink" };
+
+/// // changed (accent-defaults): two named colours that are not on the
+/// ladder — nothing takes them by turn — but that a pane can wear:
+/// the theme's white (its primary text colour, what the first plain
+/// terminal opens in) and Anthropic's orange (`ui/brand.zig`, the one
+/// the Claude chip and the tab mark paint, what the first Claude
+/// session opens in). Both are first-class names: the menus list
+/// them, a session file keeps them, `resolve` reads them.
+pub const white = "white";
+pub const claude_orange = "claude_orange";
+
+/// Every name a pane can wear, in menu order: the ladder, then the
+/// two off-ladder colours.
+pub const named = palette ++ [_][]const u8{ white, claude_orange };
 
 /// What a menu row writes to clear an override.
 pub const none = "none";
@@ -54,16 +69,21 @@ pub fn firstFree(taken: []const ?[]const u8, nth: usize) []const u8 {
 }
 
 /// The palette's own literal for `name` (so a caller can keep it
-/// without owning bytes), or null for `none` / an unknown name.
+/// without owning bytes), or null for `none` / an unknown name. The
+/// two off-ladder names are names too.
 pub fn canonical(name: []const u8) ?[]const u8 {
-    for (palette) |p| if (std.mem.eql(u8, p, name)) return p;
+    for (named) |p| if (std.mem.eql(u8, p, name)) return p;
     return null;
 }
 
+/// Every name, as an enum for the switches below.
+const Slot = enum { green, blue, yellow, orange, red, purple, cyan, pink, white, claude_orange };
+
 /// The theme colour a stored name means; null for `none` / unknown.
+/// `white` is the theme's primary text colour, `claude_orange` the
+/// brand's — not the theme's — orange.
 pub fn resolve(name: []const u8, theme: *const Theme) ?Color {
     const p = &theme.palette;
-    const Slot = enum { green, blue, yellow, orange, red, purple, cyan, pink };
     const slot = std.meta.stringToEnum(Slot, name) orelse return null;
     return switch (slot) {
         .green => p.green,
@@ -74,6 +94,8 @@ pub fn resolve(name: []const u8, theme: *const Theme) ?Color {
         .purple => p.purple,
         .cyan => p.cyan,
         .pink => p.pink,
+        .white => p.fg,
+        .claude_orange => brand.claude,
     };
 }
 
@@ -81,7 +103,6 @@ pub fn resolve(name: []const u8, theme: *const Theme) ?Color {
 /// (Rust's R15 M-10: the row clears the override and re-derives the
 /// slot, so "None" read as "no colour at all" and was renamed).
 pub fn label(name: []const u8) []const u8 {
-    const Slot = enum { green, blue, yellow, orange, red, purple, cyan, pink };
     const slot = std.meta.stringToEnum(Slot, name) orelse return if (isNone(name)) "Color: Auto" else "Color: ?";
     return switch (slot) {
         .green => "Color: Green",
@@ -92,6 +113,8 @@ pub fn label(name: []const u8) []const u8 {
         .purple => "Color: Purple",
         .cyan => "Color: Cyan",
         .pink => "Color: Pink",
+        .white => "Color: White",
+        .claude_orange => "Color: Claude orange",
     };
 }
 
@@ -113,6 +136,25 @@ test "the palette is Rust's session_color.rs, in its order, and every name resol
     try testing.expect(Color.eql(resolve("green", t).?, t.palette.green));
     try testing.expect(Color.eql(resolve("pink", t).?, t.palette.pink));
     try testing.expectEqualStrings("Color: Orange", label("orange"));
+}
+
+test "white and claude_orange are names off the ladder: listed, canonical, resolved to the theme's fg and the brand's orange, never handed out by turn" {
+    const t = &Theme.default;
+    try testing.expectEqual(palette.len + 2, named.len);
+    try testing.expectEqualStrings(white, named[palette.len]);
+    try testing.expectEqualStrings(claude_orange, named[palette.len + 1]);
+    try testing.expect(canonical(white) != null and canonical(claude_orange) != null);
+    try testing.expect(Color.eql(resolve(white, t).?, t.palette.fg));
+    try testing.expect(Color.eql(resolve(claude_orange, t).?, brand.claude));
+    // The brand's orange is not the theme's: two oranges in the menu
+    // are two colours, not one twice.
+    try testing.expect(!Color.eql(resolve(claude_orange, t).?, t.palette.orange));
+    try testing.expectEqualStrings("Color: White", label(white));
+    try testing.expectEqualStrings("Color: Claude orange", label(claude_orange));
+    // Neither is on the ladder: `auto` never lands on them, and a pane
+    // wearing one holds no ladder slot.
+    for (0..named.len * 2) |i| try testing.expect(!std.mem.eql(u8, auto(i), white) and !std.mem.eql(u8, auto(i), claude_orange));
+    try testing.expectEqualStrings("green", firstFree(&.{ white, claude_orange }, 0));
 }
 
 test "none and an unknown name resolve to nothing; auto cycles the palette in order" {
