@@ -3303,6 +3303,7 @@ test {
     _ = @import("app/conflict_cache.zig");
     _ = @import("app/auto_refresh.zig");
     _ = @import("app/clock.zig");
+    _ = @import("core/localtime.zig");
     _ = @import("app/coverage.zig");
     _ = @import("app/now_playing.zig");
     _ = @import("app/integration_poll.zig");

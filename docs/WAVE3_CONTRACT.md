@@ -3073,7 +3073,8 @@ right — painted cell for cell against `docs/ui-spec/rust-git-120x40.txt`
   visible window, branch chips 8..24), rows as `▌` in the lane colour,
   `▶ `, chips, the graph cells with `lane_spacing` pads joining `─`
   runs, ` │ ` separators, the subject padded, the author and the
-  `MM/DD HH:MM` date (UTC, `TZ_OFFSET_HOURS` honoured as Rust does)
+  `MM/DD HH:MM` date (the statusline clock's zone — the machine's, or
+  UTC after `clock.utc`; Rust's `TZ_OFFSET_HOURS` knob is gone — 2026-09-22)
   right-aligned, the nine-char sha, two pad cells. `layout` is Rust's
   lane walk: rounded corners `╭╮╰╯`, a freed lane cools for five rows,
   `┼` where a `─` run crosses a passing lane, colour = lane index.

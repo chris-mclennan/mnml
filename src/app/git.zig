@@ -51,6 +51,7 @@ const cmd_view = @import("cmd_view.zig");
 const context_menus = @import("context_menus.zig");
 const git_palette = @import("git_palette.zig");
 const conflicts = @import("conflicts.zig");
+const clock = @import("clock.zig");
 
 /// A file the status pane lists (`ui/git_status_view.zig`): its
 /// porcelain letter and which section it sits in.
@@ -4791,6 +4792,7 @@ pub fn drawGraphPane(app: *App, ui: Ui, id: PaneId, g: *GraphPane, full: Rect) v
         .focused = focused,
         .lane_spacing = app.cfg.git_graph.lane_spacing,
         .now = now,
+        .utc = clock.inUtc(app),
         .sort = g.sort,
         .filter_label = filterLabel(app, g) catch null,
         .hash_filter = if (g.hash_filter_mode) g.hashFilter() else null,
