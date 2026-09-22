@@ -244,6 +244,12 @@ pub const Server = struct {
             try self.respond(rseq, command, .{ .threads = .{.{ .id = 1, .name = "main" }} });
         } else if (eql(u8, command, "stackTrace")) {
             const p = self.stoppedProgram() orelse return self.fail(rseq, command, "not stopped");
+            if (p.in_runtime) {
+                // No file behind this frame: `path` is a display
+                // string and `sourceReference` says `source` has the text.
+                try self.respond(rseq, command, .{ .stackFrames = .{runtime_frame}, .totalFrames = 1 });
+                return;
+            }
             const n = p.frames.items.len;
             const frames = try arena.alloc(FrameJson, n);
             const name = std.fs.path.basename(self.program_path.?);
@@ -254,6 +260,7 @@ pub const Server = struct {
             try self.respond(rseq, command, .{ .stackFrames = frames, .totalFrames = n });
         } else if (eql(u8, command, "scopes")) {
             const p = self.stoppedProgram() orelse return self.fail(rseq, command, "not stopped");
+            if (p.in_runtime) return self.respond(rseq, command, .{ .scopes = .{} });
             const frame = frameIndex(p, getInt(args, "frameId")) orelse return self.fail(rseq, command, "no such frameId");
             try self.respond(rseq, command, .{ .scopes = .{
                 .{ .name = "Locals", .presentationHint = "locals", .variablesReference = Program.localsRef(frame), .expensive = false },
@@ -376,10 +383,33 @@ pub const Server = struct {
             try self.respond(rseq, command, .{});
             if (!self.terminated) try self.endProgram(null);
             self.done = true;
+        } else if (eql(u8, command, "source")) {
+            const ref = getInt(args, "sourceReference") orelse (if (getObj(args, "source")) |so| getInt(so, "sourceReference") else null) orelse 0;
+            if (ref != runtime_source_ref) return self.fail(rseq, command, try std.fmt.allocPrint(arena, "no source for reference {d}", .{ref}));
+            try self.respond(rseq, command, .{ .content = runtime_source, .mimeType = "text/x-asm" });
         } else {
             try self.fail(rseq, command, try std.fmt.allocPrint(arena, "unsupported request: {s}", .{command}));
         }
     }
+
+    /// The frame after main returns, as lldb-dap reports dyld`start:
+    /// a `sourceReference` and a `path` that is not a file.
+    const runtime_source_ref: i64 = 1;
+    const runtime_frame = .{
+        .id = 1,
+        .name = "start",
+        .line = 3,
+        .column = 1,
+        .presentationHint = "deemphasize",
+        .source = .{ .name = "start", .path = "<runtime>`start", .sourceReference = runtime_source_ref, .presentationHint = "deemphasize" },
+    };
+    const runtime_source =
+        \\; runtime`start — the process's entry; no source file
+        \\start:
+        \\    call main        ; main returned here
+        \\    exit
+        \\
+    ;
 
     const FrameJson = struct { id: i64, name: []const u8, line: i64, column: i64, source: struct { name: []const u8, path: []const u8 } };
     const VariableJson = struct { name: []const u8, value: []const u8, type: []const u8, variablesReference: i64 };
@@ -1087,6 +1117,52 @@ test "attach: the program runs as a launch would; the ledger says detached after
         t.allocator.free(try h.send("terminate", "{}"));
         try t.expectEqualStrings("killed\n", try Ledger.read(a, ledger_path));
     }
+}
+
+test "stepOut from main stops in the runtime's `start` frame — a sourceReference, no scopes, its text from `source`; a resume exits" {
+    var tp = try TmpProgram.init("let n = 7\nprint n\n");
+    defer tp.deinit();
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var h: Harness = undefined;
+    h.init();
+    defer h.deinit();
+    t.allocator.free(try h.send("initialize", "{}"));
+    t.allocator.free(try h.send("setBreakpoints", try std.fmt.allocPrint(a, "{{\"source\":{{\"path\":{s}}},\"breakpoints\":[{{\"line\":2}}]}}", .{try tp.json(a)})));
+    t.allocator.free(try h.send("launch", try std.fmt.allocPrint(a, "{{\"program\":{s}}}", .{try tp.json(a)})));
+    const go = try h.send("configurationDone", "{}");
+    defer t.allocator.free(go);
+    try t.expectEqualStrings("breakpoint", getStr(try expectEvent(go[go.len - 1], "stopped"), "reason").?);
+
+    const so = try h.send("stepOut", "{\"threadId\":1}");
+    defer t.allocator.free(so);
+    try t.expectEqualStrings("7\n", getStr(try expectEvent(so[2], "output"), "output").?);
+    try t.expectEqualStrings("step", getStr(try expectEvent(so[3], "stopped"), "reason").?);
+    const stk = try h.send("stackTrace", "{\"threadId\":1}");
+    defer t.allocator.free(stk);
+    const frames = getArr(getField(stk[0], "body").?, "stackFrames").?;
+    try t.expectEqual(@as(usize, 1), frames.len);
+    try t.expectEqualStrings("start", getStr(frames[0], "name").?);
+    try t.expectEqual(@as(i64, 3), getInt(frames[0], "line").?);
+    const src = getObj(frames[0], "source").?;
+    try t.expectEqual(@as(i64, 1), getInt(src, "sourceReference").?);
+    try t.expectEqualStrings("<runtime>`start", getStr(src, "path").?);
+    const sc = try h.send("scopes", "{\"frameId\":1}");
+    defer t.allocator.free(sc);
+    try t.expectEqual(@as(usize, 0), getArr(getField(sc[0], "body").?, "scopes").?.len);
+    const text = try h.send("source", "{\"source\":{\"sourceReference\":1},\"sourceReference\":1}");
+    defer t.allocator.free(text);
+    try expectResponse(text[0], "source", true);
+    try t.expect(std.mem.indexOf(u8, getStr(getField(text[0], "body").?, "content").?, "call main") != null);
+    const none = try h.send("source", "{\"sourceReference\":7}");
+    defer t.allocator.free(none);
+    try expectResponse(none[0], "source", false);
+    // Any resume from the runtime is the exit.
+    const c = try h.send("next", "{\"threadId\":1}");
+    defer t.allocator.free(c);
+    try t.expectEqual(@as(i64, 0), getInt(try expectEvent(c[2], "exited"), "exitCode").?);
+    _ = try expectEvent(c[3], "terminated");
 }
 
 test "breakpoints for another file are unverified and not kept; conditions and hit counts reach the program" {

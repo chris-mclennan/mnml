@@ -50,8 +50,14 @@ pub const FileBreakpoints = std.ArrayListUnmanaged(Breakpoint);
 pub const StackFrame = struct {
     id: i64,
     name: []const u8,
-    /// Absolute path when the adapter named one.
+    /// Absolute path when the adapter named one — or, with a
+    /// `source_ref`, the display name (lldb-dap's `/usr/lib/dyld`start`
+    /// is not a file).
     source: ?[]const u8,
+    /// DAP's `sourceReference`: above 0, the frame's text is not on
+    /// disk and comes from a `source` request — a frame without debug
+    /// info (dyld, libc, a panic's std frames), a disassembly.
+    source_ref: i64 = 0,
     /// 1-based, as the wire has it (`linesStartAt1`).
     line: u32,
     column: u32,

@@ -45,6 +45,7 @@ pub const ReqKind = enum(u16) {
     evaluate_watch,
     evaluate_hover,
     set_variable,
+    source,
     terminate,
     disconnect,
     cancel,
@@ -423,6 +424,12 @@ pub const Session = struct {
         _ = try self.requestCtx(.variables, "variables", .{ .variablesReference = ref }, @bitCast(ref));
     }
 
+    /// The text of a frame whose source is the adapter's (`source_ref`
+    /// above 0); the reply carries the reference back as its context.
+    pub fn requestSource(self: *Session, ref: i64) SendError!void {
+        _ = try self.requestCtx(.source, "source", .{ .source = .{ .sourceReference = ref }, .sourceReference = ref }, @bitCast(ref));
+    }
+
     pub const EvalContext = enum { repl, watch, hover };
 
     /// The frame evaluations and scopes address: the selected one, else
@@ -505,11 +512,19 @@ pub const Session = struct {
         const arr = if (body) |b| jsonrpc.getArr(b, "stackFrames") orelse &.{} else &.{};
         const out = try arena.alloc(types.StackFrame, arr.len);
         for (arr, 0..) |f, i| {
-            const src = if (jsonrpc.getObj(f, "source")) |s| jsonrpc.getStr(s, "path") else null;
+            const src_obj = jsonrpc.getObj(f, "source");
+            // A `sourceReference` above 0 says the text is the
+            // adapter's to give (`source`), whatever `path` reads.
+            const ref = if (src_obj) |s| jsonrpc.getInt(s, "sourceReference") orelse 0 else 0;
+            // With a reference the `path` is only a display string
+            // (lldb-dap: `/usr/lib/dyld`start`); the name is the
+            // shorter of the two and is what the frame is called.
+            const src = if (src_obj) |s| (if (ref > 0) (jsonrpc.getStr(s, "name") orelse jsonrpc.getStr(s, "path")) else (jsonrpc.getStr(s, "path") orelse jsonrpc.getStr(s, "name"))) else null;
             out[i] = .{
                 .id = jsonrpc.getInt(f, "id") orelse 0,
                 .name = try arena.dupe(u8, jsonrpc.getStr(f, "name") orelse "?"),
                 .source = if (src) |p| try arena.dupe(u8, p) else null,
+                .source_ref = @max(ref, 0),
                 .line = @intCast(@max(jsonrpc.getInt(f, "line") orelse 1, 0)),
                 .column = @intCast(@max(jsonrpc.getInt(f, "column") orelse 1, 0)),
             };
@@ -853,6 +868,34 @@ test "classify: response / event / reverse request" {
     var q = try std.json.parseFromSlice(Value, testing.allocator, "{\"seq\":4,\"type\":\"request\",\"command\":\"runInTerminal\"}", .{});
     defer q.deinit();
     try testing.expectEqualStrings("runInTerminal", classify(q.value).request.command);
+}
+
+test "setFrames: a `sourceReference` frame keeps the reference and is named by `name`, not the display path; a file frame keeps its path" {
+    const gpa = testing.allocator;
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var events = try event.EventQueue.init(gpa, 4);
+    defer events.deinit(testing.io);
+    const fds_a = try Io.Threaded.pipe2(.{});
+    const fds_b = try Io.Threaded.pipe2(.{});
+    const in_file: Io.File = .{ .handle = fds_a[1], .flags = .{ .nonblocking = false } };
+    const out_file: Io.File = .{ .handle = fds_b[0], .flags = .{ .nonblocking = false } };
+    const s = try Session.initFiles(gpa, testing.io, &events, 1, in_file, out_file, "{}");
+    defer {
+        s.exited = true;
+        s.deinit();
+        (Io.File{ .handle = fds_a[0], .flags = .{ .nonblocking = false } }).close(testing.io);
+        (Io.File{ .handle = fds_b[1], .flags = .{ .nonblocking = false } }).close(testing.io);
+    }
+    var parsed = try std.json.parseFromSlice(Value, gpa, "{\"stackFrames\":[{\"id\":524289,\"name\":\"start\",\"line\":1749,\"column\":1,\"presentationHint\":\"deemphasize\",\"source\":{\"name\":\"start\",\"path\":\"/usr/lib/dyld`start\",\"sourceReference\":1}},{\"id\":2,\"name\":\"main\",\"line\":22,\"column\":5,\"source\":{\"name\":\"main.c\",\"path\":\"/ws/main.c\"}},{\"id\":3,\"name\":\"nowhere\",\"line\":0,\"column\":0}]}", .{});
+    defer parsed.deinit();
+    try s.setFrames(parsed.value);
+    try testing.expectEqual(@as(usize, 3), s.frames.len);
+    try testing.expectEqual(@as(i64, 1), s.frames[0].source_ref);
+    try testing.expectEqualStrings("start", s.frames[0].source.?);
+    try testing.expectEqual(@as(i64, 0), s.frames[1].source_ref);
+    try testing.expectEqualStrings("/ws/main.c", s.frames[1].source.?);
+    try testing.expect(s.frames[2].source == null);
+    try testing.expectEqual(@as(i64, 0), s.frames[2].source_ref);
 }
 
 test "variableRows flattens scopes and only the expanded composites" {

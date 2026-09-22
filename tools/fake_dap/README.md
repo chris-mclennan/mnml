@@ -24,7 +24,11 @@ statements: steps skip them and a breakpoint on one is unverified. A
 breakpoint on a line stops *before* it runs; `next` runs one line;
 `stepIn` on a `call` lands on the function's first line; `stepOut`
 returns to the line after the `call`. Reaching the end of the file is
-`exit 0`.
+`exit 0` — except by `stepOut` from main, which stops first in the
+runtime's `start` frame, as lldb-dap stops in dyld`start: a frame with
+`sourceReference: 1` and a `path` (`` <runtime>`start ``) that is no
+file, whose text only `source` gives and whose `scopes` are none. Any
+resume from there is the exit.
 
 | statement | meaning |
 |---|---|
@@ -71,8 +75,9 @@ has it — `"Error"` for a runtime error such as an unknown name) and
 | `setExceptionBreakpoints{filters}` | the enabled filter ids |
 | `configurationDone` | starts the run |
 | `threads` | one thread, id 1, `main` |
-| `stackTrace` | the frames, top first; ids count from 1 at the bottom (main); `line` is 1-based; `source.path` is the launched file |
-| `scopes{frameId}` | `Locals` (that frame's variables) and `Globals` (main's) |
+| `stackTrace` | the frames, top first; ids count from 1 at the bottom (main); `line` is 1-based; `source.path` is the launched file. In the runtime (after `stepOut` from main): one frame, `start`, line 3, `source{name: "start", path: "<runtime>`start", sourceReference: 1}` |
+| `scopes{frameId}` | `Locals` (that frame's variables) and `Globals` (main's); none in the runtime frame |
+| `source{sourceReference}` | reference 1: the runtime's text (four lines of pseudo-assembly, `call main` on line 3), `mimeType: text/x-asm`; any other reference fails |
 | `variables{variablesReference}` | the scope's variables (`name`, `value`, `type`, and a reference for a struct) or a struct's fields |
 | `evaluate{expression, frameId, context}` | the value in that frame (the top one when unset), for every context; a struct named by the expression gets a reference. With `context: "repl"` the console's extras: `name = expr` assigns to the nearest `name` (this frame, then main; an unknown name is defined here) and answers with the value, as lldb's console does; `bt` answers with one line per frame (`* frame #0: f at prog.dbg:3`, then `  frame #1: …`) and no type, and an error's message runs to two lines (`no such variable`, then `  in: <expression>`) — the shapes lldb-dap and debugpy answer with, which a console must paint whole |
 | `setVariable{variablesReference, name, value}` | `value` is an expression in the scope's frame; a scope's variable or a struct's field |

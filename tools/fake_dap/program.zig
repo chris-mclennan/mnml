@@ -151,6 +151,10 @@ pub const Program = struct {
     /// The struct refs handed out since the last resume: index + 1000.
     struct_refs: std.ArrayList(StructRef) = .empty,
     state: enum { not_started, stopped, sleeping, exited } = .not_started,
+    /// A `stepOut` from main stopped in the runtime's `start` frame —
+    /// the one a debugger shows after main returns (lldb's dyld`start),
+    /// which has no file; any resume from there is the exit.
+    in_runtime: bool = false,
     /// Set by a stop at a `throw`: the resume unwinds it first.
     pending_throw: bool = false,
     /// The line a `pause` interrupted: its `sleep` is done.
@@ -333,6 +337,7 @@ pub const Program = struct {
     pub fn run(self: *Program, mode: Mode) Allocator.Error!Outcome {
         const a = self.arena();
         if (self.state == .exited) return .{ .exited = 0 };
+        if (self.in_runtime) return self.finish(0);
         const start_depth = self.depth();
         var executed: usize = 0;
         self.struct_refs = .empty;
@@ -348,6 +353,12 @@ pub const Program = struct {
                     _ = self.frames.pop();
                     self.top().pc += 1;
                     continue;
+                }
+                // Stepping out of main: the caller is the runtime.
+                if (mode == .step_out) {
+                    self.in_runtime = true;
+                    self.state = .stopped;
+                    return .{ .stopped = .step };
                 }
                 return self.finish(0);
             }

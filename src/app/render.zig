@@ -1957,7 +1957,7 @@ fn mergeVirtual(arena: Allocator, a: []const editor_view.VirtualText, b: []const
 /// at whatever it asked for (50 by default), git's change bars last.
 /// A stable sort keeps each producer's own order within its rung.
 pub fn gutterMarksFor(app: *App, arena: Allocator, pane: PaneId, e: *EditorPane, ascii: bool) Allocator.Error![]const editor_view.GutterMark {
-    const d = try dap.marksFor(app, arena, e.buf.doc.path, &app.theme, ascii);
+    const d = try dap.marksForPane(app, arena, pane, e, &app.theme, ascii);
     const l = try lsp.marksFor(app, arena, e.buf.doc.path, &app.theme, ascii);
     const s = try script_decor.gutterMarksFor(app, arena, pane, e, &app.theme);
     const g: []const editor_view.GutterMark = if (e.buf.doc.path) |p| try git_app.viewMarks(app, p, arena) else &.{};

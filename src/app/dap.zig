@@ -59,7 +59,10 @@ pub const Session = client.Session;
 pub const Breakpoint = types.Breakpoint;
 
 /// Where execution stopped: the ▶ in the gutter. Owned path, 0-based line.
-pub const Arrow = struct { path: []u8, line: u32 };
+/// The ▶ of the stop: a file by path — or, for a frame whose text
+/// came from the adapter (`source_ref`), the read-only pane it was
+/// shown in, `path` then being the frame's display name.
+pub const Arrow = struct { path: []u8, line: u32, pane: ?PaneId = null };
 
 /// `Pane.debug`: the console pane. Its scrollback and input live in
 /// `State.console` so they outlive the pane (and land while it is closed).
@@ -147,6 +150,11 @@ pub const State = struct {
     session: ?*Session = null,
     next_session: u32 = 1,
     arrow: ?Arrow = null,
+    /// The read-only panes holding text fetched with `source` — a
+    /// frame without a file (dyld, libc, a panic's std frames) — by the
+    /// frame's display name (owned), so a second stop in the same place
+    /// reuses the pane rather than opening another.
+    source_panes: std.StringHashMapUnmanaged(PaneId) = .empty,
     /// The config layers read again by `dap.run` when the active file
     /// had no adapter (an adapter added to `.mnml/config.zon` after
     /// launch); `app.cfg.dap` borrows from it from then on.
@@ -180,6 +188,9 @@ pub const State = struct {
         while (fk.next()) |k| gpa.free(k.*);
         self.filter_overrides.deinit(gpa);
         if (self.arrow) |a| gpa.free(a.path);
+        var sk = self.source_panes.keyIterator();
+        while (sk.next()) |k| gpa.free(k.*);
+        self.source_panes.deinit(gpa);
         if (self.last_file) |f| gpa.free(f);
         self.console.deinit(gpa);
     }
@@ -495,6 +506,17 @@ pub fn acceptHitCount(app: *App, path: []const u8, line: u32, text_in: []const u
 /// The gutter marks for `path`: the ▶ of a stop wins over a
 /// breakpoint's `●` (`◐` conditional or hit-counted, `◆` a logpoint,
 /// `○` disabled); one the adapter did not verify paints muted. Frame arena.
+/// `marksFor` for a pane: a pane holding a frame's fetched text has
+/// no path, and the ▶ finds it by id.
+pub fn marksForPane(app: *App, arena: Allocator, pane: PaneId, e: *EditorPane, theme: *const Theme, ascii: bool) Allocator.Error![]editor_view.GutterMark {
+    if (app.dap.arrow) |a| if (a.pane != null and a.pane.? == pane and sourcePane(app, pane, a.path) == e) {
+        var out: std.ArrayListUnmanaged(editor_view.GutterMark) = .empty;
+        try out.append(arena, .{ .line = a.line, .kind = .sign, .glyph = if (ascii) ">" else "▶", .style = theme.warn_fg, .priority = editor_view.mark_priority.breakpoint });
+        return out.items;
+    };
+    return marksFor(app, arena, e.buf.doc.path, theme, ascii);
+}
+
 pub fn marksFor(app: *App, arena: Allocator, path: ?[]const u8, theme: *const Theme, ascii: bool) Allocator.Error![]editor_view.GutterMark {
     const p = path orelse return &.{};
     var out: std.ArrayListUnmanaged(editor_view.GutterMark) = .empty;
@@ -927,6 +949,7 @@ pub fn hoverValue(app: *App, arena: Allocator, pane: PaneId, line: u32, col: u32
 /// The debugger's current line in `e`'s file, for the row band.
 pub fn stoppedLine(app: *App, e: *EditorPane) ?u32 {
     const a = app.dap.arrow orelse return null;
+    if (a.pane) |pid| return if (sourcePane(app, pid, a.path) == e) a.line else null;
     const path = e.buf.doc.path orelse return null;
     return if (std.mem.eql(u8, a.path, path)) a.line else null;
 }
@@ -1010,7 +1033,7 @@ pub fn selectFrame(app: *App, idx: usize) CommandError!void {
     s.variables.clearRetainingCapacity();
     s.requestScopes(f.id) catch {};
     evaluateWatches(app);
-    if (f.source) |src| try jumpTo(app, src, f.line -| 1);
+    try openFrame(app, s, f);
     app.needs_render = true;
 }
 
@@ -1194,8 +1217,21 @@ fn handleResponse(app: *App, s: *Session, kind: client.ReqKind, ctx: u64, succes
                 const top = s.frames[0];
                 s.requestScopes(top.id) catch {};
                 evaluateWatches(app);
-                if (top.source) |src| try jumpTo(app, src, top.line -| 1);
+                try openFrame(app, s, top);
             }
+        },
+        .source => {
+            // The text of a frame that has no file, asked for by
+            // `openFrame`; the reference rides back as the context.
+            const ref: i64 = @bitCast(ctx);
+            if (!success) {
+                app.toast("dap: no source for the frame ({s})", .{message orelse "the adapter has none"});
+                return;
+            }
+            const b = body orelse return;
+            const content = jsonrpc.getStr(b, "content") orelse return;
+            const f = frameForSource(s, ref) orelse return;
+            try showFetchedSource(app, f.source orelse f.name, content, f.line -| 1);
         },
         .scopes => {
             try s.setScopes(body);
@@ -1333,6 +1369,71 @@ fn configure(app: *App, s: *Session) void {
     s.configurationDone() catch {};
 }
 
+/// Show where a frame is: its file — or, for a `source_ref`, the text
+/// the adapter holds for it, asked with `source` and shown read-only
+/// when it answers. lldb-dap names such a frame `/usr/lib/dyld`start`;
+/// opening that PATH made an empty file the user could `:w`
+/// (hunt: dap-sourceref-frame-opens-empty-file).
+fn openFrame(app: *App, s: *Session, f: types.StackFrame) Allocator.Error!void {
+    if (f.source_ref > 0) {
+        clearArrow(app);
+        s.requestSource(f.source_ref) catch {};
+        app.needs_render = true;
+        return;
+    }
+    if (f.source) |src| try jumpTo(app, src, f.line -| 1);
+}
+
+/// The frame a `source` reply is for: the selected one when it has
+/// that reference, else the first that does.
+fn frameForSource(s: *Session, ref: i64) ?types.StackFrame {
+    if (s.frame_id) |id| for (s.frames) |f| if (f.id == id and f.source_ref == ref) return f;
+    for (s.frames) |f| if (f.source_ref == ref) return f;
+    return null;
+}
+
+/// `content` in a read-only pane titled `name` — the one already
+/// holding it when there is one — with the ▶ on `line`.
+fn showFetchedSource(app: *App, name: []const u8, content: []const u8, line: u32) Allocator.Error!void {
+    const id: PaneId = blk: {
+        if (app.dap.source_panes.get(name)) |id| if (sourcePane(app, id, name) != null) {
+            app.showPane(id);
+            break :blk id;
+        };
+        const id = app.openScratchWith(content) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return,
+        };
+        const e = app.panes.editor(id) orelse return;
+        e.buf.doc.read_only = true;
+        e.label = try app.gpa.dupe(u8, name);
+        const gop = try app.dap.source_panes.getOrPut(app.gpa, name);
+        if (!gop.found_existing) gop.key_ptr.* = try app.gpa.dupe(u8, name);
+        gop.value_ptr.* = id;
+        break :blk id;
+    };
+    const copy = try app.gpa.dupe(u8, name);
+    clearArrow(app);
+    app.dap.arrow = .{ .path = copy, .line = line, .pane = id };
+    if (app.panes.editor(id)) |e| {
+        const ed = e.buf.editor;
+        ed.anchor = null;
+        ed.placeCursor(@min(line, @as(u32, @intCast(ed.lineCount() -| 1))), 0);
+        e.view.scroll_line = @intCast(ed.currentLine() -| app.pane_rows / 2);
+    }
+    app.needs_render = true;
+}
+
+/// The pane holding a frame's fetched text, when `id` still is that
+/// pane: pane ids are reused after a close, so an editor at the id
+/// with a path, or another label, is some other pane.
+fn sourcePane(app: *App, id: PaneId, name: []const u8) ?*EditorPane {
+    const e = app.panes.editor(id) orelse return null;
+    if (e.buf.doc.path != null) return null;
+    const label = e.label orelse return null;
+    return if (std.mem.eql(u8, label, name)) e else null;
+}
+
 /// Open (or reveal) the stopped frame's file with the cursor on `line`.
 fn jumpTo(app: *App, path: []const u8, line: u32) Allocator.Error!void {
     const copy = try app.gpa.dupe(u8, path);
@@ -1440,7 +1541,10 @@ pub fn stripPane(app: *App) ?PaneId {
         .always => {},
     }
     if (app.active) |a| if (app.panes.editor(a) != null) return a;
-    if (app.dap.arrow) |ar| return app.panes.findPath(ar.path);
+    if (app.dap.arrow) |ar| {
+        if (ar.pane) |pid| return if (sourcePane(app, pid, ar.path) != null) pid else null;
+        return app.panes.findPath(ar.path);
+    }
     return null;
 }
 
@@ -1831,6 +1935,44 @@ test "consoleLines: a result or an error of several lines is one row each, the t
     try testing.expectEqual(@as(?u32, 1), lines[6].entry);
     try testing.expectEqualStrings("  (point) { : point", lines[8].text);
     try testing.expectEqualStrings("  }", lines[11].text);
+}
+
+test "a fetched source's pane: closed and its id taken by another buffer, the ▶ and the strip leave, and the next stop there makes a new pane; the same name reuses it" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 90, .rows = 24 });
+    defer app.deinit();
+    app.tree.visible = false;
+    try showFetchedSource(&app, "start", "start:\n    call main\n    exit\n", 1);
+    const first = app.dap.arrow.?.pane.?;
+    try testing.expectEqualStrings("start", app.panes.get(first).?.title());
+    try testing.expect(app.panes.editor(first).?.buf.doc.read_only);
+    try testing.expectEqual(@as(?u32, 1), stoppedLine(&app, app.panes.editor(first).?));
+    // The strip over the editor finds the pane by the arrow when no
+    // editor is active (the console is).
+    app.cfg.ui.debug_toolbar = .always;
+    try command.run(&app, .{ .static = .@"dap.show" });
+    try testing.expectEqual(@as(?PaneId, first), stripPane(&app));
+    // The same frame again: the pane is reused, not doubled.
+    try showFetchedSource(&app, "start", "start:\n    call main\n    exit\n", 2);
+    try testing.expectEqual(first, app.dap.arrow.?.pane.?);
+    try testing.expectEqual(@as(?u32, 2), stoppedLine(&app, app.panes.editor(first).?));
+    // Closed, and a scratch buffer takes the freed id.
+    try app.closePane(first, true);
+    const taken = try app.openScratch();
+    try testing.expectEqual(first, taken);
+    const other = app.panes.editor(taken).?;
+    try testing.expectEqual(@as(?u32, null), stoppedLine(&app, other));
+    try command.run(&app, .{ .static = .@"dap.show" });
+    try testing.expectEqual(@as(?PaneId, null), stripPane(&app));
+    const marks = try marksForPane(&app, testing.allocator, taken, other, &app.theme, false);
+    defer testing.allocator.free(marks);
+    try testing.expectEqual(@as(usize, 0), marks.len);
+    // The next stop in `start` gets a pane of its own, not the scratch.
+    try showFetchedSource(&app, "start", "start:\n    call main\n    exit\n", 1);
+    const again = app.dap.arrow.?.pane.?;
+    try testing.expect(again != taken);
+    try testing.expectEqual(again, app.dap.source_panes.get("start").?);
+    try testing.expectEqualStrings("start", app.panes.get(again).?.title());
+    try testing.expectEqual(@as(?u32, null), stoppedLine(&app, other));
 }
 
 test "breakpoints: toggle on/off toasts the 1-based line, list summarises, clear counts" {
