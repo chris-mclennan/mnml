@@ -735,7 +735,9 @@ fn zigTestLine(text: []const u8, title: []const u8) ?u32 {
 /// The TRX the `trx` logger writes: every `<UnitTestResult>` with its
 /// outcome and duration, the `<Message>` / `<StackTrace>` of a failure,
 /// and the class + method from the `<UnitTest>` definitions (the
-/// console's `testName` is the display name, which NUnit shortens).
+/// console's `testName` is the display name, which NUnit shortens). A
+/// data row of a Theory / TestCase keeps its arguments from the display
+/// name (`withArguments`), so three `[InlineData]` rows are three rows.
 pub fn parseTrx(arena: Allocator, xml: []const u8, workspace: []const u8) Allocator.Error!TestRun {
     var by_id: std.StringHashMapUnmanaged([]const u8) = .empty;
     var from: usize = 0;
@@ -764,7 +766,9 @@ pub fn parseTrx(arena: Allocator, xml: []const u8, workspace: []const u8) Alloca
         const close = if (self_closing) open_end else (std.mem.indexOfPos(u8, xml, open_end, "</UnitTestResult>") orelse xml.len);
         from = close;
         const test_id = try attrValue(arena, opener, "testId");
-        const name = (if (test_id) |id| by_id.get(id) else null) orelse (try attrValue(arena, opener, "testName")) orelse "(test)";
+        const display = try attrValue(arena, opener, "testName");
+        const defined = if (test_id) |id| by_id.get(id) else null;
+        const name = if (defined) |fqn| try withArguments(arena, fqn, display) else display orelse "(test)";
         const outcome = (try attrValue(arena, opener, "outcome")) orelse "";
         const status: Status = if (std.mem.eql(u8, outcome, "Passed")) .passed else if (std.mem.eql(u8, outcome, "Failed") or std.mem.eql(u8, outcome, "Error") or std.mem.eql(u8, outcome, "Timeout") or std.mem.eql(u8, outcome, "Aborted")) .failed else .skipped;
         const body = xml[open_end..close];
@@ -793,6 +797,21 @@ pub fn parseTrx(arena: Allocator, xml: []const u8, workspace: []const u8) Alloca
         try tests.append(arena, tc);
     }
     return .{ .tests = try tests.toOwnedSlice(arena) };
+}
+
+/// `Class.Method` plus the arguments the display name gives the data
+/// row: `Acme.Tests.CalcTests.Describes(x: 1, y: 5, expected: "p")` or
+/// NUnit's `Describes(1,5,"p")` → `…CalcTests.Describes(x: 1, …)`. A
+/// display name that does not call the method by name (a `DisplayName`)
+/// adds nothing.
+fn withArguments(arena: Allocator, fqn: []const u8, display: ?[]const u8) Allocator.Error![]const u8 {
+    const d = display orelse return fqn;
+    const paren = std.mem.indexOfScalar(u8, d, '(') orelse return fqn;
+    const method = fqn[if (std.mem.lastIndexOfScalar(u8, fqn, '.')) |dot| dot + 1 else 0..];
+    const head = d[0..paren];
+    if (!std.mem.endsWith(u8, head, method)) return fqn;
+    if (head.len > method.len and head[head.len - method.len - 1] != '.') return fqn;
+    return std.fmt.allocPrint(arena, "{s}{s}", .{ fqn, d[paren..] });
 }
 
 /// `key="value"` in a tag's opener, unescaped. The key must follow
@@ -2085,6 +2104,9 @@ pub const fixture_trx =
     \\      </Output>
     \\    </UnitTestResult>
     \\    <UnitTestResult executionId="e3" testId="t3" testName="Later" computerName="box" duration="00:00:00.0000000" outcome="NotExecuted" testType="13cdc9d9" testListId="8c84fa94" relativeResultsDirectory="e3" />
+    \\    <UnitTestResult executionId="e4" testId="t4" testName="Acme.Tests.CalcTests.Describes(x: 2, y: 2, expected: &quot;diagonal 2&quot;)" computerName="box" duration="00:00:00.0000603" outcome="Passed" testType="13cdc9d9" testListId="8c84fa94" relativeResultsDirectory="e4" />
+    \\    <UnitTestResult executionId="e5" testId="t5" testName="Acme.Tests.CalcTests.Describes(x: 1, y: 5, expected: &quot;point 1,5&quot;)" computerName="box" duration="00:00:00.0000177" outcome="Passed" testType="13cdc9d9" testListId="8c84fa94" relativeResultsDirectory="e5" />
+    \\    <UnitTestResult executionId="e6" testId="t6" testName="adds two numbers" computerName="box" duration="00:00:00.0000177" outcome="Passed" testType="13cdc9d9" testListId="8c84fa94" relativeResultsDirectory="e6" />
     \\  </Results>
     \\  <TestDefinitions>
     \\    <UnitTest name="Adds" storage="/ws/tests.dll" id="t1">
@@ -2094,6 +2116,15 @@ pub const fixture_trx =
     \\    <UnitTest name="Divides" storage="/ws/tests.dll" id="t2">
     \\      <Execution id="e2" />
     \\      <TestMethod codeBase="/ws/tests.dll" adapterTypeName="executor://xunit" className="Acme.Tests.CalcTests, Tests, Version=1.0.0.0" name="Divides" />
+    \\    </UnitTest>
+    \\    <UnitTest name="Acme.Tests.CalcTests.Describes(x: 2, y: 2, expected: &quot;diagonal 2&quot;)" storage="/ws/tests.dll" id="t4">
+    \\      <TestMethod codeBase="/ws/tests.dll" adapterTypeName="executor://xunit" className="Acme.Tests.CalcTests" name="Describes" />
+    \\    </UnitTest>
+    \\    <UnitTest name="Acme.Tests.CalcTests.Describes(x: 1, y: 5, expected: &quot;point 1,5&quot;)" storage="/ws/tests.dll" id="t5">
+    \\      <TestMethod codeBase="/ws/tests.dll" adapterTypeName="executor://xunit" className="Acme.Tests.CalcTests" name="Describes" />
+    \\    </UnitTest>
+    \\    <UnitTest name="adds two numbers" storage="/ws/tests.dll" id="t6">
+    \\      <TestMethod codeBase="/ws/tests.dll" adapterTypeName="executor://xunit" className="Acme.Tests.CalcTests" name="AddsNamed" />
     \\    </UnitTest>
     \\  </TestDefinitions>
     \\</TestRun>
@@ -2291,7 +2322,7 @@ test "parseTrx: outcomes, durations to the ms, the class from the definitions, t
     defer arena_state.deinit();
     const a = arena_state.allocator();
     const r = try parseTrx(a, fixture_trx, "C:\\ws");
-    try t.expectEqual(@as(usize, 3), r.tests.len);
+    try t.expectEqual(@as(usize, 6), r.tests.len);
     try t.expectEqualStrings("Acme.Tests.CalcTests", r.tests[0].suite_path);
     try t.expectEqualStrings("Adds", r.tests[0].title);
     try t.expectEqual(Status.passed, r.tests[0].status);
@@ -2307,7 +2338,43 @@ test "parseTrx: outcomes, durations to the ms, the class from the definitions, t
     try t.expectEqualStrings("Later", r.tests[2].title);
     try t.expectEqualStrings("", r.tests[2].suite_path);
     try t.expectEqual(Status.skipped, r.tests[2].status);
+    // A Theory's data rows: one row each, named with their arguments;
+    // the method is what the sources and the re-run filter see.
+    try t.expectEqualStrings("Describes(x: 2, y: 2, expected: \"diagonal 2\")", r.tests[3].title);
+    try t.expectEqualStrings("Describes(x: 1, y: 5, expected: \"point 1,5\")", r.tests[4].title);
+    try t.expectEqualStrings("Acme.Tests.CalcTests", r.tests[4].suite_path);
+    try t.expectEqualStrings("Describes", methodOf(r.tests[4].title));
+    // A `DisplayName` that does not name the method: the method, as before.
+    try t.expectEqualStrings("AddsNamed", r.tests[5].title);
     try t.expectEqual(@as(usize, 0), (try parseTrx(a, "<TestRun/>", "/ws")).tests.len);
+}
+
+test "a Theory's data rows are separate rows with separate histories: breaking one row marks that row, not its siblings" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const row = "<UnitTestResult testId=\"{s}\" testName=\"Acme.Tests.CalcTests.Describes(x: {d}, y: {d})\" duration=\"00:00:00.001\" outcome=\"{s}\" />";
+    const def = "<UnitTest name=\"Acme.Tests.CalcTests.Describes(x: {d}, y: {d})\" id=\"{s}\"><TestMethod className=\"Acme.Tests.CalcTests\" name=\"Describes\" /></UnitTest>";
+    const Trx = struct {
+        fn of(ar: Allocator, outcomes: [3][]const u8) ![]const u8 {
+            return std.fmt.allocPrint(ar, "<TestRun><Results>" ++ row ++ row ++ row ++ "</Results><TestDefinitions>" ++ def ++ def ++ def ++ "</TestDefinitions></TestRun>", .{
+                "a", 0, 0,   outcomes[0], "b", 2,   2, outcomes[1], "c", 1, 5, outcomes[2],
+                0,   0, "a", 2,           2,   "b", 1, 5,           "c",
+            });
+        }
+    };
+    var h: flaky.History = .{};
+    defer h.deinit(t.allocator);
+    for ([_][3][]const u8{ .{ "Passed", "Passed", "Passed" }, .{ "Passed", "Failed", "Passed" } }) |outcomes| {
+        const r = try parseTrx(a, try Trx.of(a, outcomes), "/ws");
+        try t.expectEqual(@as(usize, 3), r.tests.len);
+        for (r.tests) |tc| try h.record(t.allocator, try flaky.keyOf(a, tc.file, tc.suite_path, tc.title), if (tc.status == .passed) .pass else .fail, tc.line);
+    }
+    // Three keys, not one: the broken row changed, its siblings did not.
+    try t.expectEqual(@as(usize, 3), h.entries.count());
+    try t.expect(h.get(try flaky.keyOf(a, "", "Acme.Tests.CalcTests", "Describes(x: 2, y: 2)")).?.wobbly());
+    try t.expect(!h.get(try flaky.keyOf(a, "", "Acme.Tests.CalcTests", "Describes(x: 0, y: 0)")).?.wobbly());
+    try t.expect(!h.get(try flaky.keyOf(a, "", "Acme.Tests.CalcTests", "Describes(x: 1, y: 5)")).?.wobbly());
 }
 
 test "locateSources: a passed row is found by class and method in the project's .cs files, bin/ and obj/ skipped" {
