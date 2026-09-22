@@ -150,7 +150,7 @@ pub const Buffer = struct {
         // memory once while it opens, not three times.
         const text = if (eol == .lf) raw else blk: {
             defer gpa.free(raw);
-            break :blk try normalizeEol(gpa, raw);
+            break :blk try normalizeEol(gpa, raw, eol);
         };
         var buf = initOwning(gpa, text, style, cfg) catch |err| {
             gpa.free(text);
@@ -162,23 +162,40 @@ pub const Buffer = struct {
         return buf;
     }
 
-    /// The first line break decides: `\r\n`, a lone `\r`, else LF.
+    /// The file's line ending, chosen so that saving an untouched file
+    /// writes its bytes back (Neovim's `fileformats` rule): CRLF only
+    /// when EVERY `\n` has a `\r` before it, a lone `\r` only when the
+    /// file has no `\n` at all, else LF — and under LF any `\r` is an
+    /// ordinary byte of its line, so a mixed file, a progress bar's `\r`
+    /// or a `\r\r\n` is kept exactly as it came.
     pub fn detectEol(text: []const u8) editorconfig.Eol {
-        const i = std.mem.indexOfAny(u8, text, "\r\n") orelse return .lf;
-        if (text[i] == '\n') return .lf;
-        return if (i + 1 < text.len and text[i + 1] == '\n') .crlf else .cr;
+        const first_lf = std.mem.indexOfScalar(u8, text, '\n') orelse
+            return if (std.mem.indexOfScalar(u8, text, '\r') != null) .cr else .lf;
+        if (first_lf == 0 or text[first_lf - 1] != '\r') return .lf;
+        var i = first_lf + 1;
+        while (std.mem.indexOfScalarPos(u8, text, i, '\n')) |j| : (i = j + 1) {
+            if (text[j - 1] != '\r') return .lf;
+        }
+        return .crlf;
     }
 
-    /// Every `\r\n` and lone `\r` becomes `\n`.
-    pub fn normalizeEol(gpa: Allocator, text: []const u8) Allocator.Error![]u8 {
+    /// The buffer's text for a file read as `eol`: under CRLF each
+    /// `\r\n` becomes `\n` (any other `\r` stays), under CR each `\r`
+    /// does; LF text is already the buffer's.
+    pub fn normalizeEol(gpa: Allocator, text: []const u8, eol: editorconfig.Eol) Allocator.Error![]u8 {
         var out = try std.ArrayList(u8).initCapacity(gpa, text.len);
         errdefer out.deinit(gpa);
         var i: usize = 0;
         while (i < text.len) : (i += 1) {
-            if (text[i] == '\r') {
-                out.appendAssumeCapacity('\n');
-                if (i + 1 < text.len and text[i + 1] == '\n') i += 1;
-            } else out.appendAssumeCapacity(text[i]);
+            const c = text[i];
+            switch (eol) {
+                .lf => out.appendAssumeCapacity(c),
+                .cr => out.appendAssumeCapacity(if (c == '\r') '\n' else c),
+                .crlf => if (c == '\r' and i + 1 < text.len and text[i + 1] == '\n') {
+                    out.appendAssumeCapacity('\n');
+                    i += 1;
+                } else out.appendAssumeCapacity(c),
+            }
         }
         return out.toOwnedSlice(gpa);
     }
@@ -2179,9 +2196,33 @@ test "editorconfig on a buffer: CRLF files load as LF and save back as CRLF; tri
     const cr = try Buffer.withEol(gpa, "a\nb\n", .cr);
     defer gpa.free(cr);
     try testing.expectEqualStrings("a\rb\r", cr);
-    const norm = try Buffer.normalizeEol(gpa, "a\r\nb\rc\n");
+    const norm = try Buffer.normalizeEol(gpa, "a\r\nb\rc\r\n", .crlf);
     defer gpa.free(norm);
-    try testing.expectEqualStrings("a\nb\nc\n", norm);
+    try testing.expectEqualStrings("a\nb\rc\n", norm);
+}
+
+test "buffer: a file's line breaks survive a load and a save byte for byte, mixed ones included" {
+    const gpa = testing.allocator;
+    // Every file Neovim writes back unchanged after an untouched save:
+    // the four mixed shapes and the pure ones.
+    const cases = [_]struct { raw: []const u8, eol: editorconfig.Eol }{
+        .{ .raw = "a\r\r\nb\r\r\nc\r\r\n", .eol = .crlf }, // converted twice
+        .{ .raw = "head\r\n50%\r100%\r\ntail\r\n", .eol = .crlf }, // a progress bar's \r
+        .{ .raw = "a\rb\nc\n", .eol = .lf }, // a lone \r first, LF after
+        .{ .raw = "a\r\nb\nc\r\nd\n", .eol = .lf }, // CRLF and LF mixed
+        .{ .raw = "a\r\nb\r\n", .eol = .crlf },
+        .{ .raw = "a\rb\r", .eol = .cr },
+        .{ .raw = "a\nb\n", .eol = .lf },
+        .{ .raw = "\nb\r\n", .eol = .lf },
+    };
+    for (cases) |c| {
+        try testing.expectEqual(c.eol, Buffer.detectEol(c.raw));
+        const text = try Buffer.normalizeEol(gpa, c.raw, c.eol);
+        defer gpa.free(text);
+        const back = try Buffer.withEol(gpa, text, c.eol);
+        defer gpa.free(back);
+        try testing.expectEqualStrings(c.raw, back);
+    }
 }
 
 test "buffer: the `\".` register is what the last Insert session typed, a backspace taken back; a runner's app command reaches the buffer" {
