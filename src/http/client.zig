@@ -280,9 +280,31 @@ pub const SendOptions = struct {
 /// Fire `req` and wait for the whole response. Never throws for a
 /// transport failure — that is the `.err` outcome. OOM is the one error.
 pub fn send(gpa: Allocator, io: Io, req: *const Request, opts: SendOptions) Allocator.Error!Outcome {
+    if (try urlRefusal(gpa, req.url)) |msg| return .{ .err = msg };
     const t = Transport.fromRequest(req, opts.transport);
     if (t.timeout_ms) |ms| if (ms > 0) return sendWithDeadline(gpa, io, req, opts, t, ms);
     return sendGuarded(gpa, io, req, opts, t);
+}
+
+/// A URL no server can be sent: a space or a control character would go
+/// onto the request line as it is — a malformed request line (RFC 9112
+/// §3). curl refuses such a URL ("URL rejected", exit 3), and so does
+/// the send, naming the column and the fix rather than letting a server
+/// answer 400. Owned; null for a URL that can go out.
+pub fn urlRefusal(gpa: Allocator, raw: []const u8) Allocator.Error!?[]u8 {
+    const url = std.mem.trim(u8, raw, " \t");
+    for (url, 0..) |c, i| {
+        if (c > ' ' and c != 0x7f) continue;
+        const what: []const u8 = switch (c) {
+            ' ' => "a space",
+            '\t' => "a tab",
+            '\r', '\n' => "a line break",
+            else => "a control character",
+        };
+        const fix: []const u8 = if (c == ' ') " \u{2014} write it as %20" else "";
+        return try std.fmt.allocPrint(gpa, "bad request: the URL has {s} at column {d}{s} ({s})", .{ what, i + 1, fix, url });
+    }
+    return null;
 }
 
 fn sendGuarded(gpa: Allocator, io: Io, req: *const Request, opts: SendOptions, t: Transport) Allocator.Error!Outcome {
@@ -1229,4 +1251,23 @@ test "send: -k routes an https hop through the shim (the origin sees a ClientHel
     var o3 = try send(testing.allocator, io, &req, .{ .transport = .{ .insecure = true } });
     defer o3.deinit(testing.allocator);
     try testing.expect(o3 == .err and std.mem.startsWith(u8, o3.err, "tls (insecure): "));
+}
+
+test "urlRefusal: a space or a control character in the URL is refused with its column, as curl refuses it" {
+    const msg = (try urlRefusal(testing.allocator, "http://h/search?q=new york")).?;
+    defer testing.allocator.free(msg);
+    try testing.expectEqualStrings("bad request: the URL has a space at column 22 \u{2014} write it as %20 (http://h/search?q=new york)", msg);
+    const tab = (try urlRefusal(testing.allocator, "http://h/a\tb")).?;
+    defer testing.allocator.free(tab);
+    try testing.expect(std.mem.startsWith(u8, tab, "bad request: the URL has a tab at column 11"));
+    // Encoded, or with the surrounding blanks a paste leaves: fine.
+    try testing.expect((try urlRefusal(testing.allocator, "  http://h/search?q=new%20york  ")) == null);
+    // The send says so instead of putting it on the wire.
+    var req = try Request.init(testing.allocator);
+    defer req.deinit(testing.allocator);
+    try req.setUrl(testing.allocator, "http://127.0.0.1:9/search?q=new york");
+    var out = try send(testing.allocator, testing.io, &req, .{});
+    defer out.deinit(testing.allocator);
+    try testing.expect(out == .err);
+    try testing.expect(std.mem.startsWith(u8, out.err, "bad request: the URL has a space"));
 }
