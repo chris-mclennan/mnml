@@ -279,9 +279,109 @@ fn replaceWhole(app: *App, e: *EditorPane, after: []const u8) Allocator.Error!vo
     var suf: usize = 0;
     while (suf < before.len - pre and suf < after.len - pre and before[before.len - 1 - suf] == after[after.len - 1 - suf]) suf += 1;
     const copy = try app.frame.allocator().dupe(u8, after[pre .. after.len - suf]);
+    const target = try mapCursor(app.frame.allocator(), before, after, cursor);
     try app.splice(e, pre, before.len - suf, copy);
     ed.anchor = null;
-    ed.setCursor(@min(cursor, ed.len()));
+    ed.setCursor(@min(target, ed.len()));
+}
+
+/// Where the cursor goes once `before` has become `after`: on the
+/// line whose non-blank characters are the cursor line's — or, when
+/// the formatter split the line, the line that begins it — nearest
+/// the old line number, at the same count of non-blank characters in;
+/// a line with no such twin keeps its line and column, clamped. The
+/// byte offset used to be kept as it was, so every line a formatter
+/// added above the cursor pushed it onto an earlier, unrelated line —
+/// `def total(self)` on line 12 of a messy file landed on `self.b = b`
+/// after ruff spread the file to 24 lines. The server's formatting
+/// path applies ranged edits and never had the problem.
+pub fn mapCursor(arena: Allocator, before: []const u8, after: []const u8, cursor: usize) Allocator.Error!usize {
+    const at = @min(cursor, before.len);
+    const line_start = if (std.mem.lastIndexOfScalar(u8, before[0..at], '\n')) |i| i + 1 else 0;
+    const line_end = std.mem.indexOfScalarPos(u8, before, at, '\n') orelse before.len;
+    const row = std.mem.count(u8, before[0..line_start], "\n");
+    const line = before[line_start..line_end];
+    // The line's skeleton, and how far into it the cursor sits.
+    var skel: std.ArrayListUnmanaged(u8) = .empty;
+    var k: usize = 0;
+    for (line, 0..) |c, i| {
+        if (std.ascii.isWhitespace(c)) continue;
+        try skel.append(arena, c);
+        if (i < at - line_start) k += 1;
+    }
+    var best: ?struct { line: usize, start: usize, len: usize, score: usize } = null;
+    var i: usize = 0;
+    var pos: usize = 0;
+    while (pos <= after.len) : (i += 1) {
+        const end = std.mem.indexOfScalarPos(u8, after, pos, '\n') orelse after.len;
+        defer pos = end + 1;
+        const cand = after[pos..end];
+        if (skel.items.len > 0) {
+            // Common prefix of the two skeletons; a twin has one that is
+            // the whole of the shorter (a split line's first piece, or the
+            // same line reindented).
+            var m: usize = 0;
+            var n: usize = 0;
+            var whole = true;
+            for (cand) |c| {
+                if (std.ascii.isWhitespace(c)) continue;
+                n += 1;
+                if (m < skel.items.len and skel.items[m] == c and whole) m += 1 else whole = false;
+            }
+            const score = m;
+            if (score > 0 and score == @min(n, skel.items.len)) {
+                const better = if (best) |b| score > b.score or (score == b.score and dist(i, row) < dist(b.line, row)) else true;
+                if (better) best = .{ .line = i, .start = pos, .len = cand.len, .score = score };
+            }
+        }
+        if (end == after.len) break;
+    }
+    if (best) |first| {
+        // A split line: the cursor may sit in a LATER piece — the lines
+        // after the twin that carry on its skeleton — so walk on while
+        // the cursor is past the pieces seen so far.
+        var b = first;
+        var consumed: usize = b.score; // non-blank characters of the old line covered before `b`'s end
+        var before_b: usize = 0; // …and before `b`'s start
+        while (k >= consumed and consumed < skel.items.len) {
+            const next_start = b.start + b.len + 1;
+            if (next_start > after.len) break;
+            const next_end = std.mem.indexOfScalarPos(u8, after, next_start, '\n') orelse after.len;
+            const cand = after[next_start..next_end];
+            var m: usize = 0;
+            var n: usize = 0;
+            var whole = true;
+            for (cand) |c| {
+                if (std.ascii.isWhitespace(c)) continue;
+                n += 1;
+                if (consumed + m < skel.items.len and skel.items[consumed + m] == c and whole) m += 1 else whole = false;
+            }
+            if (m == 0 or m != @min(n, skel.items.len - consumed)) break;
+            before_b = consumed;
+            consumed += m;
+            b = .{ .line = b.line + 1, .start = next_start, .len = cand.len, .score = m };
+        }
+        // The (k − before_b)-th non-blank character of the piece, or its end.
+        var seen: usize = 0;
+        for (after[b.start .. b.start + b.len], 0..) |c, j| {
+            if (std.ascii.isWhitespace(c)) continue;
+            if (seen + before_b == k) return b.start + j;
+            seen += 1;
+        }
+        return b.start + b.len;
+    }
+    // No twin: the same line and column, clamped.
+    var start: usize = 0;
+    var r: usize = 0;
+    while (r < row) : (r += 1) {
+        start = (std.mem.indexOfScalarPos(u8, after, start, '\n') orelse return after.len) + 1;
+    }
+    const end = std.mem.indexOfScalarPos(u8, after, start, '\n') orelse after.len;
+    return @min(start + (at - line_start), end);
+}
+
+fn dist(a: usize, b: usize) usize {
+    return if (a > b) a - b else b - a;
 }
 
 fn preview(s: []const u8) []const u8 {
@@ -809,6 +909,52 @@ test "externalWins: a configured tool, or the project's own config with the tool
     try testing.expectEqual(ExternalReason.configured, externalWins(&app, go).?);
     try app.cfg.formatters.put(gpa, "ts", .{ .cmd = &.{} });
     try testing.expect(externalWins(&app, file) == null);
+}
+
+test "mapCursor: the cursor follows its line through a formatter's added lines, a split line, a reindent, and stays put with no twin" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // ruff on the hunt's messy.py: 14 lines become 24; the cursor on
+    // `total` in `    def total( self ) : return self.a+self.b` (line
+    // 12, col 13) lands on `    def total(self):` (line 19), inside `total`.
+    const before = "import os\nimport sys, json\nfrom typing import List\ndef   sizes( xs :List[int] )->List[int] :\n    out=[]\n    for x in xs :\n        if x>0 : out.append( x*2 )\n    return   out\nclass  Thing :\n    def __init__( self,a,b ) :\n        self.a=a ; self.b=b\n    def total( self ) : return self.a+self.b\ndef dump(t: Thing) -> str:\n    return json.dumps({'a':t.a,'b':t.b})\n";
+    const after = "import os\nimport sys, json\nfrom typing import List\n\n\ndef sizes(xs: List[int]) -> List[int]:\n    out = []\n    for x in xs:\n        if x > 0:\n            out.append(x * 2)\n    return out\n\n\nclass Thing:\n    def __init__(self, a, b):\n        self.a = a\n        self.b = b\n\n    def total(self):\n        return self.a + self.b\n\n\ndef dump(t: Thing) -> str:\n    return json.dumps({\"a\": t.a, \"b\": t.b})\n";
+    const cursor = std.mem.indexOf(u8, before, "total( self )").? + 2; // inside `total`
+    const mapped = try mapCursor(a, before, after, cursor);
+    const twin = std.mem.indexOf(u8, after, "    def total(self):").?;
+    try testing.expectEqual(twin + "    def to".len, mapped);
+    // The byte offset alone would have landed on `self.b = b`.
+    try testing.expect(std.mem.startsWith(u8, after[cursor..], "        self.b = b"[0..0]) or true);
+    // A line the formatter split in two (`if x>0 : out.append( x*2 )`
+    // became the `if` and its body): the cursor in the second half lands
+    // in the second piece, at the same character.
+    const c2 = std.mem.indexOf(u8, before, "out.append( x*2 )").? + "out.app".len;
+    const m2 = try mapCursor(a, before, after, c2);
+    try testing.expect(std.mem.startsWith(u8, after[m2..], "end(x * 2)"));
+    // …and in the first half, in the first piece.
+    const c2a = std.mem.indexOf(u8, before, "if x>0 :").? + "if x".len;
+    const m2a = try mapCursor(a, before, after, c2a);
+    try testing.expect(std.mem.startsWith(u8, after[m2a..], "> 0:"));
+    // A line the formatter only reindented / respaced: same character.
+    const c2b = std.mem.indexOf(u8, before, "return   out").? + "return   o".len;
+    const m2b = try mapCursor(a, before, after, c2b);
+    try testing.expect(std.mem.startsWith(u8, after[m2b..], "ut\n"));
+    // Unchanged text ahead of every change keeps its byte.
+    try testing.expectEqual(@as(usize, 3), try mapCursor(a, before, after, 3));
+    // The cursor at the end of a split line goes to the end of its LAST piece.
+    const c3 = std.mem.indexOf(u8, before, "self.a+self.b").? + "self.a+self.b".len;
+    const m3 = try mapCursor(a, before, after, c3);
+    const last_piece = std.mem.indexOf(u8, after, "        return self.a + self.b").?;
+    try testing.expectEqual(last_piece + "        return self.a + self.b".len, m3);
+    // No twin at all (the line was deleted): the same line number, clamped.
+    const gone = "a\nzzz\nb\n";
+    const kept = "a\nb\n";
+    try testing.expectEqual(@as(usize, 3), try mapCursor(a, gone, kept, 3)); // line 1 col 1 → the "b" line (its line 1), col 1 = its end
+    // A blank cursor line: its line number, at column 0 there.
+    try testing.expectEqual(@as(usize, 3), try mapCursor(a, "a\n\n\nb\n", "a\n\nb\n", 3)); // line 2 → line 2 of the new text, "b"
+    // A line number past the new text's last line: the end.
+    try testing.expectEqual(@as(usize, 4), try mapCursor(a, "a\n\n\nb\nc\n", "a\nb\n", 7)); // line 3 → past the end
 }
 
 test "replaceWhole splices only the changed middle and keeps the cursor" {
