@@ -73,16 +73,21 @@ expect color 20 7 bg not #31353d
 expect color 20 8 bg #31353d
 expect color 119 8 bg #31353d
 
-# ── the Bitbucket PRs tree, the same rows, the same ground ───────────
+# ── the Bitbucket PRs tree, one row lower, the same ground ───────────
+# This pane's chrome is a row taller: the header, the strip and its
+# indicator, the filter bar (the web's chips, since 2026-09-21), the
+# `/` pill and the column header take rows 2-7, so its first tree row
+# is row 8.
 command bitbucket_prs.open
 wait 6000
 command view.focus_pane
 expect screen contains "BITBUCKET PRS"
+expect screen contains " status: Open + Draft "
 expect screen contains "REPO / #PR"
-expect color 0 7 bg #31353d
-expect color 20 7 bg #31353d
-expect color 119 7 bg #31353d
-expect color 20 8 bg not #31353d
-key j
-expect color 20 7 bg not #31353d
+expect color 0 8 bg #31353d
 expect color 20 8 bg #31353d
+expect color 119 8 bg #31353d
+expect color 20 9 bg not #31353d
+key j
+expect color 20 8 bg not #31353d
+expect color 20 9 bg #31353d
