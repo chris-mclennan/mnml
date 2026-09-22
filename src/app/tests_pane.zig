@@ -1378,10 +1378,36 @@ pub const TestsPane = struct {
         };
     }
 
-    /// The order the rows follow: natural (file, then line) or slowest first.
+    /// The order the rows follow: by file, then line (then title, then
+    /// the report's order) — a test host reports in the order tests
+    /// finish, which is not the same twice — or slowest first. A row
+    /// no file was found for goes last.
     pub fn order(self: *const TestsPane, arena: Allocator) Allocator.Error![]u32 {
         const idx = try arena.alloc(u32, self.run.tests.len);
         for (idx, 0..) |*x, i| x.* = @intCast(i);
+        if (self.sort == .file_line) {
+            const Ctx = struct {
+                tests: []const TestCase,
+                fn lt(ctx: @This(), a: u32, b: u32) bool {
+                    const x = ctx.tests[a];
+                    const y = ctx.tests[b];
+                    if ((x.file.len == 0) != (y.file.len == 0)) return y.file.len == 0;
+                    switch (std.mem.order(u8, x.file, y.file)) {
+                        .lt => return true,
+                        .gt => return false,
+                        .eq => {},
+                    }
+                    if (x.line != y.line) return x.line < y.line;
+                    switch (std.mem.order(u8, x.title, y.title)) {
+                        .lt => return true,
+                        .gt => return false,
+                        .eq => {},
+                    }
+                    return a < b;
+                }
+            };
+            std.mem.sort(u32, idx, Ctx{ .tests = self.run.tests }, Ctx.lt);
+        }
         if (self.sort == .duration_desc) {
             const Ctx = struct {
                 tests: []const TestCase,
@@ -1970,17 +1996,19 @@ test "rows: grouped under file headers with error and trace rows; slowest-first 
     p.run = try copyRun(p.snapshot.allocator(), try parseReport(arena_state.allocator(), fixture_report));
     p.state = .done;
     try p.rebuildRows();
-    // global error, login header, 3 cases (+2 error lines +1 trace), cart header, 1 case.
+    // global error, cart header, 1 case, login header, 3 cases (+2
+    // error lines +1 trace): by file, then line — not the report's order.
     try t.expectEqual(@as(usize, 10), p.rows.len);
     try t.expect(p.rows[0] == .global_err);
-    try t.expectEqualStrings("login.spec.ts", p.rows[1].file);
-    try t.expect(p.rows[2] == .case and p.rows[2].case == 0);
-    try t.expect(p.rows[3] == .case and p.rows[3].case == 1);
-    try t.expect(p.rows[4] == .err_line and p.rows[5] == .err_line);
-    try t.expect(p.rows[6] == .trace and p.rows[6].trace == 1);
-    try t.expectEqualStrings("cart.spec.ts", p.rows[8].file);
+    try t.expectEqualStrings("cart.spec.ts", p.rows[1].file);
+    try t.expect(p.rows[2] == .case and p.rows[2].case == 3);
+    try t.expectEqualStrings("login.spec.ts", p.rows[3].file);
+    try t.expect(p.rows[4] == .case and p.rows[4].case == 0);
+    try t.expect(p.rows[5] == .case and p.rows[5].case == 1);
+    try t.expect(p.rows[6] == .err_line and p.rows[7] == .err_line);
+    try t.expect(p.rows[8] == .trace and p.rows[8].trace == 1);
     try t.expectEqual(@as(usize, 2), p.cursor);
-    p.cursor = 6;
+    p.cursor = 8;
     try t.expectEqualStrings("rejects bad password", p.selected().?.title);
     p.sort = .duration_desc;
     try p.rebuildRows();
@@ -1991,6 +2019,39 @@ test "rows: grouped under file headers with error and trace rows; slowest-first 
     try t.expectEqualStrings("tests ✗", p.title());
     scrollBy(&p, 100);
     try t.expectEqual(@as(usize, 7), p.cursor);
+}
+
+test "file:line sorts a test host's finishing order: one header per file, lines ascending, the same rows whatever the order they finished in" {
+    const Case = struct {
+        fn of(title: []const u8, file: []const u8, line: u32) TestCase {
+            return .{ .title = title, .suite_path = "Acme.Tests.CalcTests", .file = file, .line = line, .status = .passed, .duration_ms = 0, .err = null, .trace_path = null };
+        }
+    };
+    const calc = "tests/Acme.Tests/CalcTests.cs";
+    const desc = "tests/Acme.Tests/Sub/DescribeTests.cs";
+    // Two runs of one solution, as xunit reported them.
+    const runs = [_][7]TestCase{
+        .{ Case.of("Later", calc, 18), Case.of("Adds", calc, 9), Case.of("Nothing", desc, 5), Case.of("Describes(x: 2)", calc, 26), Case.of("DividesWrong", calc, 12), Case.of("Positive", desc, 9), Case.of("Unfound", "", 0) },
+        .{ Case.of("Unfound", "", 0), Case.of("Positive", desc, 9), Case.of("DividesWrong", calc, 12), Case.of("Describes(x: 2)", calc, 26), Case.of("Adds", calc, 9), Case.of("Nothing", desc, 5), Case.of("Later", calc, 18) },
+    };
+    var seen: [2][]const u8 = undefined;
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    for (runs, 0..) |cases, n| {
+        var p = try TestsPane.init(t.allocator);
+        defer p.deinit(t.allocator, t.io);
+        p.run = .{ .tests = &cases };
+        try p.rebuildRows();
+        var text: std.ArrayListUnmanaged(u8) = .empty;
+        for (p.rows) |r| switch (r) {
+            .file => |f| try text.print(arena_state.allocator(), "[{s}]", .{f}),
+            .case => |c| try text.print(arena_state.allocator(), " {s}:{d}", .{ p.run.tests[c].title, p.run.tests[c].line }),
+            else => {},
+        };
+        seen[n] = text.items;
+    }
+    try t.expectEqualStrings("[tests/Acme.Tests/CalcTests.cs] Adds:9 DividesWrong:12 Later:18 Describes(x: 2):26[tests/Acme.Tests/Sub/DescribeTests.cs] Nothing:5 Positive:9[] Unfound:0", seen[0]);
+    try t.expectEqualStrings(seen[0], seen[1]);
 }
 
 test "test.run_playwright needs a package.json; a result lands in the pane and the flaky history" {
