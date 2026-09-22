@@ -65,6 +65,9 @@ const menu_glyph = @import("../ui/menu_glyph.zig");
 const settings = @import("settings.zig");
 const bufferline = @import("../ui/bufferline.zig");
 const context_menus = @import("context_menus.zig");
+const activity_bar = @import("activity_bar.zig");
+const rail = @import("../ui/activity_bar.zig");
+const side_mod = @import("side.zig");
 
 pub const Mode = Config.DockMode;
 pub const Edge = Config.DockEdge;
@@ -351,7 +354,23 @@ fn reveal(app: *App, by_key: bool) void {
 
 // ─── the model ──────────────────────────────────────────────────────────
 
-pub const Kind = enum { plus, integration, launcher, terminal_new, terminal, pin };
+/// // changed (railmove): `pinned_panel` is a section moved off the
+/// activity bar (`view.activity_*` in `ui.dock.pins`) — it wears the
+/// section's glyph and offers *Move back to activity bar*.
+pub const Kind = enum { plus, integration, launcher, terminal_new, terminal, pin, pinned_panel };
+
+/// What kind of strip item this is, in the two strips' shared words
+/// (`ui/activity_bar.zig`'s `StripKind`): the `+` and a pinned command
+/// are launchers, a pty is a terminal, a moved section is a pinned
+/// panel. A later "kinds per strip" config filters on this.
+pub fn stripKind(k: Kind) rail.StripKind {
+    return switch (k) {
+        .plus, .launcher, .pin => .launcher,
+        .integration => .integration,
+        .terminal_new, .terminal => .terminal,
+        .pinned_panel => .pinned_panel,
+    };
+}
 
 pub const Action = union(enum) {
     static: command.CommandId,
@@ -455,6 +474,25 @@ pub fn items(app: *App, arena: Allocator) Allocator.Error![]Item {
     // ── pinned commands ──
     for (app.cfg.ui.dock.pins) |id| {
         const ref = command.resolve(app, id) orelse continue;
+        // // changed (railmove): a section's own command is a PANEL on
+        // the dock — the section's glyph and name, the running dot
+        // while its column is open, and a way back to the bar.
+        if (activity_bar.sectionOfCommandName(id)) |s| {
+            try out.append(arena, .{
+                .kind = .pinned_panel,
+                .id = id,
+                .glyph = s.meta().glyph,
+                .fallback = s.meta().fallback,
+                .color = "blue",
+                .label = s.meta().label,
+                .running = side_mod.isShown(app, s),
+                .action = switch (ref) {
+                    .static => |c| .{ .static = c },
+                    .dyn => |slot| .{ .dyn = slot },
+                },
+            });
+            continue;
+        }
         const title = switch (ref) {
             .static => |c| command.title(c),
             .dyn => |slot| if (app.dyn_commands.at(slot)) |c| c.title else continue,
@@ -738,6 +776,12 @@ pub fn openItemMenu(app: *App, i: usize, x: u16, y: u16) Allocator.Error!void {
     errdefer rows.deinit(app.gpa);
     switch (it.kind) {
         .pin => try rows.append(app.gpa, .{ .label = "Unpin from dock", .action = .{ .command = .@"view.dock_unpin_item" } }),
+        // // changed (railmove): a moved section's way home, then the
+        // plain unpin (which leaves it hidden on the bar).
+        .pinned_panel => {
+            if (activity_bar.sectionOfCommandName(it.id)) |s| try rows.append(app.gpa, .{ .label = "Move back to activity bar", .action = .{ .rail_from_dock = s } });
+            try rows.append(app.gpa, .{ .label = "Unpin from dock", .action = .{ .command = .@"view.dock_unpin_item" } });
+        },
         .integration, .launcher => {
             const on = integrations.isPinnedToDock(app, commandIdOf(app, it) orelse "");
             try rows.append(app.gpa, .{
@@ -905,6 +949,7 @@ pub fn describe(app: *App, arena: Allocator, part: Part) Allocator.Error!tooltip
                     .terminal_new => "click opens a new shell",
                     .terminal => "click focuses this terminal",
                     .pin => "click runs the pinned command · right-click: unpin",
+                    .pinned_panel => "click shows the section · right-click: move it back to the activity bar / unpin",
                 },
                 // The strip clips a pin's label; the tip carries the
                 // whole command title.

@@ -658,6 +658,17 @@ pub const MenuAction = union(enum) {
     /// The rail menu's "Move to <side> side": the section the menu was
     /// opened on, not the focused one (`app/side.zig`).
     move_section: struct { section: @import("../ui/activity_bar.zig").Section, side: @import("../config/Config.zig").Side },
+    /// // changed (railmove): the rail menu's *Hide from activity bar*
+    /// — the section the menu was opened on (`ui.rail.hidden`).
+    rail_hide: @import("../ui/activity_bar.zig").Section,
+    /// The gear menu's *Show hidden sections ▸* rows: one back.
+    rail_show: @import("../ui/activity_bar.zig").Section,
+    /// The rail menu's *Show on dock instead*: hidden here, its
+    /// command pinned on the launcher dock.
+    rail_to_dock: @import("../ui/activity_bar.zig").Section,
+    /// The dock item's *Move back to activity bar*: unpinned there,
+    /// shown here.
+    rail_from_dock: @import("../ui/activity_bar.zig").Section,
     /// // right-click: the row's own text to the clipboard — a URL, a
     /// position, a language name (Rust `CopyPath` / `CopyText`). The
     /// menu's `mem` arena or a static owns the bytes.
@@ -838,7 +849,7 @@ test "ids round-trip through by_name and @tagName" {
     try std.testing.expectEqual(CommandId.@"app.quit", by_name.get("app.quit").?);
     try std.testing.expectEqualStrings("git.commit", name(.@"git.commit"));
     try std.testing.expect(by_name.get("nope.nope") == null);
-    try std.testing.expectEqual(@as(usize, 1109), count);
+    try std.testing.expectEqual(@as(usize, 1112), count);
     try std.testing.expectEqualStrings("Quit mnml", title(.@"app.quit"));
 }
 

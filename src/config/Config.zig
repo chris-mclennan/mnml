@@ -187,6 +187,25 @@ pub const MenuBar = enum { always, auto, hidden };
 /// a TODO for these three, with the menu bar's vocabulary). `auto`
 /// shows the rail while the pointer is in column 0 or on the rail.
 pub const ActivityBar = enum { always, auto, hidden };
+/// // changed (railmove): the activity bar's eleven rows as the config
+/// names them — `ui.rail.hidden` lists the ones the bar leaves out.
+/// The tags are `ui/activity_bar.zig`'s `Section.rail`, spelled here
+/// so the config layer does not import a painter; a unit test there
+/// keeps the two lists the same.
+pub const RailSection = enum { explorer, search, git, debug, integrations, sessions, http, notes, todos, findings, scripts };
+/// `ui.rail` — the activity bar's MEMBERSHIP (`app/activity_bar.zig`).
+/// The two strips are split by kind: the activity bar holds panels,
+/// the launcher dock (`ui.dock`) holds launchers. This and
+/// `ui.dock.pins` are the two knobs that move a thing between them.
+pub const Rail = struct {
+    /// Sections the activity bar does not paint. Each stays reachable
+    /// by its command and its keys. *Hide from activity bar* on a row's
+    /// menu writes here; *Show hidden sections ▸* on the gear's menu
+    /// takes one back; *Show on dock instead* writes here AND pins the
+    /// section's `view.activity_*` command onto `ui.dock.pins`, where
+    /// the dock lists it as a pinned panel.
+    hidden: []const RailSection = &.{},
+};
 /// // changed (sidebar-autohide): the side columns' own three words.
 /// `always` docks the column (the shipped look); `auto` hides it and
 /// reveals it as an OVERLAY over the editor — no relayout, no pty
@@ -508,6 +527,10 @@ pub const Ui = struct {
     projects_dir: []const u8 = "",
     menu_bar: MenuBar = .always,
     activity_bar: ActivityBar = .always,
+    /// // changed (railmove): which sections the activity bar paints
+    /// (`Rail`). Membership, not visibility — `activity_bar` above is
+    /// whether the bar is there at all.
+    rail: Rail = .{},
     debug_toolbar: DebugToolbar = .auto,
     bufferline_diag_style: DiagStyle = .count,
     coverage_chip_mode: CoverageChipMode = .feature,

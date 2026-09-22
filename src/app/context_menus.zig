@@ -449,13 +449,38 @@ pub fn openRailMenu(app: *App, s: activity_bar.Section, x: u16, y: u16) Allocato
     // is where a user goes looking for "stop doing that".
     var mode_row = sidebarModeRow(app);
     mode_row.separator_before = true;
-    const rows = try app.gpa.alloc(MenuItem, 1 + n_moves + verbs.len + 1);
+    // // changed (railmove): the membership rows — after the verbs, so
+    // every index a script has learned still holds; a script's section
+    // has no config name and gets neither.
+    const membership: []const MenuItem = if (activity_bar.toRail(s) != null) &.{
+        .{ .label = "Hide from activity bar", .action = .{ .rail_hide = s }, .separator_before = true },
+        .{ .label = "Show on dock instead", .action = .{ .rail_to_dock = s } },
+    } else &.{};
+    const rows = try app.gpa.alloc(MenuItem, 1 + n_moves + verbs.len + membership.len + 1);
     errdefer app.gpa.free(rows);
     rows[0] = show;
     @memcpy(rows[1 .. 1 + n_moves], moves[0..n_moves]);
     @memcpy(rows[1 + n_moves .. 1 + n_moves + verbs.len], verbs);
+    @memcpy(rows[1 + n_moves + verbs.len .. 1 + n_moves + verbs.len + membership.len], membership);
     rows[rows.len - 1] = mode_row;
     try app.openMenu(s.meta().label, rows, x, y);
+}
+
+/// // changed (railmove): the gear menu's *Show hidden sections ▸*
+/// children — one row per hidden section, each restoring it. The same
+/// static-buffer rule as `sidebar_mode_kids`: a submenu is a slice the
+/// open menu points at, rewritten on each open.
+var rail_hidden_kids: [activity_bar.Section.rail.len]MenuItem = undefined;
+
+fn railHiddenRow(app: *App) ?MenuItem {
+    var n: usize = 0;
+    for (activity_bar.Section.rail) |s| {
+        if (!activity_bar.isHidden(app, s)) continue;
+        rail_hidden_kids[n] = .{ .label = s.meta().label, .action = .{ .rail_show = s } };
+        n += 1;
+    }
+    if (n == 0) return null;
+    return .{ .label = "Show hidden sections", .action = .none, .submenu = rail_hidden_kids[0..n], .separator_before = true };
 }
 
 /// `Sidebar \u{25b8}` — the three words `ui.sidebar` takes, with the one
@@ -493,13 +518,20 @@ pub fn openSidebarModeMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
 /// The activity bar's gear (Rust `open_gear_context_menu`): Settings,
 /// the palette, the cheatsheet, the theme picker, About.
 pub fn openGearMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
-    const rows = try items(app, &.{
+    const fixed = [_]MenuItem{
         .{ .label = "Settings…", .action = .{ .command = .@"view.settings" } },
         .{ .label = "Command Palette…", .action = .{ .command = .palette } },
         .{ .label = "Cheatsheet…", .action = .{ .command = .@"view.help" } },
         .{ .label = "Themes…", .action = .{ .command = .@"theme.pick" } },
         .{ .label = "About mnml", .action = .{ .command = .@"view.about" } },
-    });
+    };
+    // // changed (railmove): *Show hidden sections ▸* while `ui.rail.hidden`
+    // names anything — the bar's own menu is where a hidden row is
+    // found again.
+    const rows = if (railHiddenRow(app)) |hidden_row|
+        try items(app, &(fixed ++ [_]MenuItem{hidden_row}))
+    else
+        try items(app, &fixed);
     errdefer app.gpa.free(rows);
     try app.openMenu("mnml", rows, x, y);
 }

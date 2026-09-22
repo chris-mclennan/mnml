@@ -195,6 +195,13 @@ pub fn forItem(it: command.MenuItem, ascii: bool) []const u8 {
             .left => if (ascii) "<" else "\u{f060}", // fa-arrow_left
             .bottom => if (ascii) "v" else "\u{f063}", // fa-arrow_down
         },
+        // // changed (railmove): the membership rows — a crossed eye
+        // hides, an eye shows, the dock arrow moves down onto the dock
+        // and back up off it.
+        .rail_hide => if (ascii) "-" else "\u{f070}", // fa-eye_slash
+        .rail_show => if (ascii) "+" else "\u{f06e}", // fa-eye
+        .rail_to_dock => if (ascii) "v" else "\u{f063}", // fa-arrow_down
+        .rail_from_dock => if (ascii) "^" else "\u{f062}", // fa-arrow_up
         // // changed (lua-plumbing): a script list's row menu.
         .script_list_fold => if (ascii) "+" else "\u{f0da}", // fa-caret_right
         .script_list_menu => if (ascii) "L" else "\u{f08b1}", // nf-md-language_lua

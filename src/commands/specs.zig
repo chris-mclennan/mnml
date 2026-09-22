@@ -91,6 +91,14 @@ pub const specs = [_]Spec{
     .{ .id = "view.toggle_wrap", .title = "Toggle line wrapping (vim :set wrap)", .group = "view" },
     .{ .id = "view.menu_bar_cycle", .title = "Cycle menu bar visibility (always → auto-hide → hidden)", .group = "view" },
     .{ .id = "view.activity_bar_cycle", .title = "Cycle activity bar visibility (always → auto-hide → hidden)", .group = "view" },
+    // // changed (railmove): the activity bar's membership — the bar is
+    // for panels, the launcher dock for launchers; these move one
+    // between them (`ui.rail.hidden`, `ui.dock.pins`). Each acts on the
+    // section the bar marks; the menu rows act on the row they were
+    // opened on.
+    .{ .id = "view.rail_hide_section", .title = "Activity bar: hide the marked section from the bar (its command and keys still open it)", .group = "view" },
+    .{ .id = "view.rail_show_on_dock", .title = "Activity bar: move the marked section to the launcher dock (hidden here, its command pinned there)", .group = "view" },
+    .{ .id = "view.rail_show_sections", .title = "Activity bar: show every hidden section again", .group = "view" },
     // // changed (launcher-dock): the launcher dock — integrations,
     // terminals, launchers and pinned commands along one edge. Not the
     // bottom panel (`view.toggle_bottom_panel`) and not the dock
@@ -1217,7 +1225,7 @@ pub const specs = [_]Spec{
     .{ .id = "view.keep_tab", .title = "Keep this tab (stop the next glance taking the preview over)", .group = "view", .keys = .{ .vim = &.{"space b k"}, .standard = &.{"ctrl+k enter"} } },
 };
 
-test "1109 specs, unique ids" {
+test "1112 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1248,6 +1256,6 @@ test "1109 specs, unique ids" {
     // + `integrations.update` (int-distribution)
     // + `editor.lsp_this_file` (the `editor.lsp_max_bytes` override)
     // + the five `ai.copilot_*` verbs (the Copilot ghost-text backend)
-    try std.testing.expectEqual(@as(usize, 1109), specs.len);
+    try std.testing.expectEqual(@as(usize, 1112), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

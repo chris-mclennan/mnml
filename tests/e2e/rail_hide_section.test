@@ -1,0 +1,47 @@
+# width: 120
+# // changed (railmove): a rail row's right-click menu carries "Hide
+# from activity bar" after the section's verbs. TODOS is the ninth rail
+# row — with nothing pinned the rows sit on 2, 4, … so its glyph is at
+# (1, 18) — and its menu is Show / Move right / Move to bottom dock /
+# Rescan / Hide / Show on dock / Sidebar, so four downs land on Hide.
+# Hiding a row hides a ROW: the sections after it close up (FINDINGS
+# takes row 18), and `view.activity_todos` still opens the section.
+# The gear's menu (1, 36) grows "Show hidden sections ▸" whose child
+# puts the row back.
+write src/a.zig "// TODO: alpha marker\n"
+open src/a.zig
+rightclick 1 18
+expect screen contains "Show TODOs"
+expect screen contains "Hide from activity bar"
+expect screen contains "Show on dock instead"
+key down
+key down
+key down
+key down
+key enter
+expect screen contains "TODOs: hidden from the activity bar"
+# Row 18 is FINDINGS' now.
+rightclick 1 18
+expect screen contains "Show Findings"
+expect screen lacks "Show TODOs"
+key esc
+# The command still opens it.
+command view.activity_todos
+expect screen contains "TODOS"
+expect screen contains "alpha marker"
+# The gear: the fixed five, then the hidden list; its child restores.
+rightclick 1 36
+expect screen contains "About mnml"
+expect screen contains "Show hidden sections"
+key down
+key down
+key down
+key down
+key down
+key right
+expect screen contains "TODOs"
+key enter
+expect screen contains "TODOs: back on the activity bar"
+rightclick 1 18
+expect screen contains "Show TODOs"
+key esc

@@ -69,6 +69,7 @@ const dock = @import("app/dock.zig");
 const hover_zones = @import("app/hover_zones.zig");
 const sidebar_auto = @import("app/sidebar_auto.zig");
 const launcher_dock_mod = @import("app/launcher_dock.zig");
+const activity_bar_mod = @import("app/activity_bar.zig");
 const panel_mod = @import("core/panel.zig");
 const trust_app = @import("app/trust.zig");
 const settings_app = @import("app/settings.zig");
@@ -1100,6 +1101,10 @@ pub const App = struct {
     /// (`app/launcher_dock.zig`). Neither the bottom panel (`bottom`)
     /// nor the dock widgets (`dock`).
     launcher_dock: launcher_dock_mod.State = .{},
+    /// // changed (railmove): `ui.rail.hidden` after a hide / show —
+    /// the config field points at a slice this owns until the next
+    /// reload (`app/activity_bar.zig`).
+    activity_bar: activity_bar_mod.State = .{},
     /// The mouse gesture in flight, press to release.
     drag: ?Drag = null,
     last_click: ?LastClick = null,
@@ -1723,6 +1728,7 @@ pub const App = struct {
         self.panes.deinit();
         self.docs.destroy();
         self.integrations.deinit(gpa);
+        self.activity_bar.deinit(gpa);
         self.lsp.deinit(gpa, self.io);
         self.snippets.deinit();
         self.overlay.deinit(gpa);
