@@ -2259,7 +2259,10 @@ pub fn rename(app: *App) CommandError!void {
     const seed = wordAt(t.e.buf.editor.bytes(), t.e.buf.editor.cursor);
     var state = app_mod.Prompt.init(app.gpa, "Rename symbol");
     errdefer app_mod.Prompt.deinit(&state, app.gpa);
-    try state.setText(app.gpa, seed);
+    // Seeded as a selection: typing replaces the old name, Enter keeps
+    // it. `setText` left the caret after it, so a typed name was
+    // appended (`area` + `compute_area` = `areacompute_area`).
+    try state.seed(app.gpa, seed);
     app.overlay.deinit(app.gpa);
     app.overlay = .{ .prompt = .{ .state = state, .purpose = .lsp_rename } };
     app.focus = .overlay;
