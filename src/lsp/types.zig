@@ -49,6 +49,14 @@ pub const Diagnostic = struct {
     message: []const u8,
     source: ?[]const u8,
     code: ?[]const u8,
+    /// The diagnostic exactly as the server published it (its JSON
+    /// object, re-serialised), so a `codeAction` request can hand it
+    /// back whole — `code`, `source`, `data`, `tags`,
+    /// `relatedInformation` and all. Servers key their fixes on those
+    /// (bash-language-server on `data.id`, tsserver on `code`), and the
+    /// spec has the client echo the published object untouched. Null
+    /// for a diagnostic mnml made itself (a linter's, a script's).
+    raw: ?[]const u8 = null,
 };
 
 pub const Location = struct {

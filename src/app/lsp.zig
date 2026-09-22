@@ -1300,6 +1300,7 @@ fn copyDiagnostics(arena: Allocator, list: []const types.Diagnostic) Allocator.E
         d.message = try arena.dupe(u8, d.message);
         if (d.source) |src| d.source = try arena.dupe(u8, src);
         if (d.code) |c| d.code = try arena.dupe(u8, c);
+        if (d.raw) |r| d.raw = try arena.dupe(u8, r);
         out[i] = d;
     }
     return out;
@@ -1324,7 +1325,12 @@ fn finishDiagnostics(app: *App, path: []const u8, fd: *FileDiags) Allocator.Erro
 pub fn applyDiagnostics(app: *App, path: []const u8, list: []const Value) Allocator.Error!void {
     const arena = app.frame.allocator();
     var read: std.ArrayListUnmanaged(types.Diagnostic) = .empty;
-    for (list) |v| if (types.readDiagnostic(v)) |d| try read.append(arena, d);
+    for (list) |v| if (types.readDiagnostic(v)) |d_in| {
+        var d = d_in;
+        // Kept whole for `codeAction`'s echo (`requestActions`).
+        d.raw = try jsonrpc.stringify(arena, v);
+        try read.append(arena, d);
+    };
     const fd = try fileDiags(app, path);
     fd.arena.reset();
     fd.server_items = &.{};
@@ -2546,16 +2552,50 @@ fn requestActions(app: *App, t: Target, only: ?[]const u8, mode: u32) CommandErr
     const span: [2]usize = ed.selection() orelse .{ ed.lineStart(ed.currentLine()), ed.lineEnd(ed.currentLine()) };
     const start = types.positionOf(text, span[0], t.server.encoding);
     const end = types.positionOf(text, span[1], t.server.encoding);
-    // The diagnostics on those lines give the server its context.
-    var diags: std.ArrayListUnmanaged(struct { range: types.Range, severity: u8, message: []const u8 }) = .empty;
-    for (diagnosticsFor(app, t.path)) |d| if (d.range.start.line >= start.line and d.range.start.line <= end.line) try diags.append(arena, .{ .range = d.range, .severity = @intFromEnum(d.severity), .message = d.message });
+    // The diagnostics on those lines give the server its context — each
+    // one as it was published, so a server can key a quick fix on it.
+    const diags = try echoDiagnostics(arena, diagnosticsFor(app, t.path), start.line, end.line);
     const uri = try types.uriFromPath(arena, t.path);
     const only_list: ?[]const []const u8 = if (only) |o| try arena.dupe([]const u8, &.{o}) else null;
     _ = t.server.request(.code_action, "textDocument/codeAction", .{
         .textDocument = .{ .uri = uri },
         .range = .{ .start = start, .end = end },
-        .context = .{ .diagnostics = diags.items, .only = only_list },
+        .context = .{ .diagnostics = diags, .only = only_list },
     }, .{ .pane = t.pane, .extra = mode }) catch |err| return app.diag.fail(arena, "LSP code action: {s}", .{@errorName(err)});
+}
+
+/// One diagnostic in a `codeAction` context: the server's own object,
+/// byte for byte, when it published one (`Diagnostic.raw`) — a server
+/// looks its fixes up by `code`, by `data`, by what it put there — and
+/// the fields mnml has when the diagnostic is its own (a linter's).
+/// A three-field `{range, severity, message}` projection is what made
+/// every diagnostic-keyed quick fix on tsserver, pyright and
+/// bash-language-server come back empty.
+const EchoDiag = struct {
+    d: types.Diagnostic,
+
+    pub fn jsonStringify(self: *const EchoDiag, js: *std.json.Stringify) !void {
+        if (self.d.raw) |raw| {
+            try js.beginWriteRaw();
+            try js.writer.writeAll(raw);
+            js.endWriteRaw();
+            return;
+        }
+        try js.write(.{
+            .range = self.d.range,
+            .severity = @intFromEnum(self.d.severity),
+            .message = self.d.message,
+            .source = self.d.source,
+            .code = self.d.code,
+        });
+    }
+};
+
+/// The diagnostics starting on lines `first..=last`, ready to echo.
+fn echoDiagnostics(arena: Allocator, all: []const types.Diagnostic, first: u32, last: u32) Allocator.Error![]EchoDiag {
+    var out: std.ArrayListUnmanaged(EchoDiag) = .empty;
+    for (all) |d| if (d.range.start.line >= first and d.range.start.line <= last) try out.append(arena, .{ .d = d });
+    return out.items;
 }
 
 fn dropActions(app: *App) void {
@@ -3647,6 +3687,38 @@ pub const TestRig = struct {
         return screen_mod.toTestText(gpa, &app.screen);
     }
 };
+
+test "codeAction echoes a published diagnostic whole — code, source, data, tags — and a linter's with what it has" {
+    const gpa = testing.allocator;
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    defer app.deinit();
+    const path = "/tmp/echo.ts";
+    // As tsserver / bash-language-server publish: a numeric `code`, a
+    // `source`, `tags`, `relatedInformation` and a nested `data` the
+    // server will look its fix up by. Written in std.json's own
+    // canonical spacing so the echo can be compared byte for byte.
+    const published = "{\"range\":{\"start\":{\"line\":3,\"character\":4},\"end\":{\"line\":3,\"character\":9}},\"severity\":1,\"code\":2304,\"source\":\"typescript\",\"message\":\"Cannot find name 'clamp'.\",\"tags\":[1],\"relatedInformation\":[{\"location\":{\"uri\":\"file:///tmp/echo.ts\",\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":1}}},\"message\":\"declared here\"}],\"data\":{\"id\":\"shellcheck|2086|3:4-3:9\",\"fixes\":[1,2.5,true,null,\"x\"],\"nested\":{\"k\":[]}}}";
+    var parsed = try std.json.parseFromSlice(Value, gpa, "[" ++ published ++ "]", .{});
+    defer parsed.deinit();
+    try applyDiagnostics(&app, path, parsed.value.array.items);
+    const lint = [_]types.Diagnostic{.{ .range = .{ .start = .{ .line = 3, .character = 0 }, .end = .{ .line = 3, .character = 1 } }, .severity = .warning, .message = "lint", .source = "eslint", .code = "no-var" }};
+    try applyLintDiagnostics(&app, path, &lint);
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const on_line = try echoDiagnostics(arena, diagnosticsFor(&app, path), 3);
+    try testing.expectEqual(@as(usize, 2), on_line.len);
+    const body = try jsonrpc.stringify(gpa, .{ .diagnostics = on_line });
+    defer gpa.free(body);
+    // The server's object comes back untouched, `data` and all…
+    try testing.expect(std.mem.indexOf(u8, body, published) != null);
+    try testing.expect(std.mem.indexOf(u8, body, "\"data\":{\"id\":\"shellcheck|2086|3:4-3:9\",\"fixes\":[1,2.5,true,null,\"x\"],\"nested\":{\"k\":[]}}") != null);
+    // …and the linter's carries its source and code, no invented data.
+    try testing.expect(std.mem.indexOf(u8, body, "\"message\":\"lint\",\"source\":\"eslint\",\"code\":\"no-var\"}") != null);
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, body, "\"data\""));
+    // Another line's diagnostic is not context for this one.
+    try testing.expectEqual(@as(usize, 0), (try echoDiagnostics(arena, diagnosticsFor(&app, path), 0)).len);
+}
 
 test "diagnostics from a server and a linter merge sorted, and each source replaces only its own" {
     var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
