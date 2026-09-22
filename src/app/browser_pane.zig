@@ -25,6 +25,7 @@ const Ui = @import("../ui/context.zig");
 const view = @import("../ui/browser_view.zig");
 const text_field = @import("../ui/text_field.zig");
 const cdp = @import("../cdp/client.zig");
+const child_os = @import("../core/child.zig");
 const parse = @import("../http/parse.zig");
 const captured = @import("../http/captured.zig");
 const history = @import("../http/history.zig");
@@ -238,7 +239,10 @@ pub const BrowserPane = struct {
             s.conn.close(1000, "") catch {};
             s.conn.stream.shutdown(io, .both) catch {};
         }
-        if (self.shared.launch) |*l| l.child.kill(io);
+        // `Launch.kill` — not `l.child.kill` — so the stderr drain is
+        // joined here too; it is idempotent, so `deinit`'s call after
+        // this one does nothing. // changed
+        if (self.shared.launch) |*l| l.kill(io);
     }
 
     pub fn push(self: *BrowserPane, kind: LogKind, text: []const u8) Allocator.Error!void {
@@ -1353,4 +1357,61 @@ test "hovering a DOM row highlights its node once; leaving the rows hides the hi
     try draw(&app, f.ui(), id, p, f.full());
     try testing.expectEqual(@as(usize, 4), p.queued.items.len);
     try testing.expectEqualStrings("Overlay.hideHighlight", p.queued.items[3].method);
+}
+
+/// A stand-in for Chrome: a child that stays up until it is killed.
+fn standInChrome(p: *BrowserPane) !std.process.Child.Id {
+    const child = try std.process.spawn(testing.io, .{
+        .argv = &.{ "/bin/sleep", "30" },
+        .stdin = .ignore,
+        .stdout = .ignore,
+        .stderr = .ignore,
+    });
+    p.shared.launch = .{ .child = child, .port = 9222 };
+    return child.id.?;
+}
+
+test "closing a browser pane while its Chrome runs takes the child with it — forceClosePane and the tab's ✕ both, and neither panics" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &pbuf);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = pbuf[0..n], .data_root = pbuf[0..n] });
+    defer app.deinit();
+
+    // The crash the user hit: `dispatch.mouse` → `closePane` →
+    // `forceClosePane` → `Pane.deinit` → `BrowserPane.deinit` →
+    // `Launch.kill`, with Chrome still running.
+    const id = try testPane(&app);
+    const pid = try standInChrome(app.panes.get(id).?.asBrowser().?);
+    try app.forceClosePane(id);
+    try testing.expect(app.panes.get(id) == null);
+    try testing.expect(child_os.gone(pid));
+
+    // The same close through the tab strip's ✕, which is how it was hit.
+    const id2 = try testPane(&app);
+    const pid2 = try standInChrome(app.panes.get(id2).?.asBrowser().?);
+    try app.render();
+    const spot = blk: {
+        var y: u16 = 0;
+        while (y < app.screen.height) : (y += 1) {
+            var x: u16 = 0;
+            while (x < app.screen.width) : (x += 1) {
+                const hit = app.hits.at(x, y) orelse continue;
+                if (hit != .tab_close) continue;
+                const layout = app.layouts.current();
+                const lid = (try layout.leafAt(app.frame.allocator(), hit.tab_close.leaf)) orelse continue;
+                const leaf = layout.leaf(lid) orelse continue;
+                if (hit.tab_close.idx >= leaf.tabs.items.len) continue;
+                if (leaf.tabs.items[hit.tab_close.idx] != id2) continue;
+                break :blk .{ .x = x, .y = y };
+            }
+        }
+        break :blk null;
+    };
+    try testing.expect(spot != null);
+    try app.handle(.{ .mouse = .{ .x = spot.?.x, .y = spot.?.y, .kind = .press, .button = .left } });
+    try testing.expect(app.panes.get(id2) == null);
+    try testing.expect(child_os.gone(pid2));
 }

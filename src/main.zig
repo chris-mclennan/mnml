@@ -803,6 +803,7 @@ test {
     _ = @import("core/panel.zig");
     _ = @import("core/hooks.zig");
     _ = @import("core/clipboard_os.zig");
+    _ = @import("core/child.zig");
     _ = @import("app.zig");
     _ = @import("regex/regex.zig");
     _ = @import("ipc/root.zig");

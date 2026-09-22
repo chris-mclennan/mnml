@@ -279,6 +279,30 @@ Testing it needs two things the ordinary test does not:
 `app.spend.test."the spend pane's group survives the pane store moving
 it under a live worker"` is the model.
 
+## Child processes
+
+Zig 0.16's `std.process.Child` is not the `Command` you remember from
+Rust, and the difference is a crash, not a leak. `child.kill(io)` sends
+SIGTERM, **blocks until the child is gone, reaps it**, closes its pipes
+and leaves `child.id == null`; it is idempotent. `child.wait(io)` asserts
+`child.id != null` on entry. So `kill` followed by `wait` aborts the
+process every single time — that was the browser pane's tab-close crash
+(`Launch.kill` did exactly that; `Abort trap: 6` through
+`debug.assert → Child.wait`). Three rules:
+
+- **Kill reaps. Never `wait` after `kill`.** A child you are done with
+  and never waited on is `child.kill(io)` and nothing more.
+- **`wait` only on a child you did not kill.** `defer child.kill(io)`
+  above a `wait` is fine — after the wait the kill sees a null id and
+  does nothing — and is the right shape for an early return.
+- **A cancelled `wait` reaps nothing.** It clears `child.id` and returns
+  `error.Canceled` with the process untouched, so the `kill` that looks
+  like it covers that path is a no-op. Take `child.id` before the wait
+  and hand it to `core/child.zig`'s `reapAbandoned` on the error path
+  (`integration_poll.zig`'s worker and `bridge/host.zig`'s reader are the
+  models). `core/child.zig`'s `gone(pid)` is how a test holds that a
+  child was really taken down.
+
 ## Tests
 
 - Unit tests run on `std.testing.allocator` only; a leak is a failure.
