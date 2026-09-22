@@ -9,6 +9,11 @@
 
 pub const Kind = enum { dark, light };
 
+/// The shell prompt a terminal pane's shell may source
+/// (`MNML_PROMPT_SCRIPT`, `src/app/pty_env.zig`): it reads the theme's
+/// colours from the environment, which is why it lives with the themes.
+pub const prompt_script = @embedFile("mnml-prompt.sh");
+
 /// NvChad's `base_30`: the UI chrome colours, `0xrrggbb`. Every key is
 /// optional because a few upstream palettes leave one out; the
 /// derivation in `src/ui/theme.zig` has a fallback chain per role.

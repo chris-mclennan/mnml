@@ -3163,6 +3163,7 @@ test {
     _ = @import("bridge/wire.zig");
     _ = @import("bridge/host.zig");
     _ = @import("app/pty_pane.zig");
+    _ = @import("app/pty_env.zig");
     _ = @import("app/http.zig");
     _ = @import("app/http_panel.zig");
     _ = @import("app/cmd_http.zig");

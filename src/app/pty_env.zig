@@ -1,0 +1,123 @@
+//! What a terminal pane's child is told about the app it runs in.
+//!
+//! Every child: `MNML_PANE=1` — an integration opened with `:term
+//! <binary>` keys its chrome on it (no outer border, the pane already
+//! has one) — and `MNML_WORKSPACE`, the workspace it belongs to (a
+//! session worktree's own `MNML_WORKSPACE` from `env_extra` wins).
+//!
+//! A shell additionally gets the prompt's environment: the theme's
+//! colours as `MNML_PROMPT_{BG,FG,ACCENT,BLUE,GREEN,RED,YELLOW,GREY}`
+//! (`#rrggbb`), `MNML_CONTEXT=mnml`, and `MNML_PROMPT_SCRIPT` — the path
+//! of `themes/mnml-prompt.sh`, written into the data root and kept
+//! current, which a user's rc file opts into with
+//! `[ -n "$MNML_PROMPT_SCRIPT" ] && . "$MNML_PROMPT_SCRIPT"`. With no
+//! data root (a unit test) there is no file and no `MNML_PROMPT_SCRIPT`.
+
+const std = @import("std");
+const Io = std.Io;
+const Allocator = std.mem.Allocator;
+const App = @import("../app.zig").App;
+const Theme = @import("../ui/theme.zig");
+
+pub const prompt_script = @import("themes").prompt_script;
+pub const prompt_file = "prompt.sh";
+
+/// The child's environment: the app's, the pane's `extra` `KEY=VALUE`
+/// lines over it, and the variables above. The caller owns the map.
+pub fn build(app: *App, extra: []const []const u8, shell: bool) Allocator.Error!std.process.Environ.Map {
+    var env = try app.env.clone(app.gpa);
+    errdefer env.deinit();
+    try env.put("MNML_PANE", "1");
+    try env.put("MNML_WORKSPACE", app.workspace);
+    for (extra) |kv| {
+        const eq = std.mem.indexOfScalar(u8, kv, '=') orelse continue;
+        try env.put(kv[0..eq], kv[eq + 1 ..]);
+    }
+    if (shell) try putPrompt(app, &env);
+    return env;
+}
+
+fn putPrompt(app: *App, env: *std.process.Environ.Map) Allocator.Error!void {
+    const p = app.theme.palette;
+    const pairs = [_]struct { []const u8, Theme.Color }{
+        .{ "MNML_PROMPT_BG", p.bg_darker },
+        .{ "MNML_PROMPT_FG", p.fg },
+        .{ "MNML_PROMPT_ACCENT", p.teal },
+        .{ "MNML_PROMPT_BLUE", p.blue },
+        .{ "MNML_PROMPT_GREEN", p.green },
+        .{ "MNML_PROMPT_RED", p.red },
+        .{ "MNML_PROMPT_YELLOW", p.yellow },
+        .{ "MNML_PROMPT_GREY", p.grey },
+    };
+    for (pairs) |pair| {
+        // A palette slot without an rgb is left to the script's default.
+        const rgb = switch (pair[1]) {
+            .rgb => |v| v,
+            else => continue,
+        };
+        var buf: [7]u8 = undefined;
+        const hex = std.fmt.bufPrint(&buf, "#{x:0>2}{x:0>2}{x:0>2}", .{ rgb[0], rgb[1], rgb[2] }) catch unreachable;
+        try env.put(pair[0], hex);
+    }
+    try env.put("MNML_CONTEXT", "mnml");
+    if (try installPromptScript(app)) |path| try env.put("MNML_PROMPT_SCRIPT", path);
+}
+
+/// `<data root>/prompt.sh`, rewritten when it differs from the one this
+/// build carries (an upgrade reaches it without the user deleting
+/// anything). On the frame arena; null when there is nowhere to put it.
+fn installPromptScript(app: *App) Allocator.Error!?[]const u8 {
+    if (app.data_root.len == 0) return null;
+    const arena = app.frame.allocator();
+    const path = try std.fs.path.join(arena, &.{ app.data_root, prompt_file });
+    const cwd = Io.Dir.cwd();
+    const same = if (cwd.readFileAlloc(app.io, path, arena, .limited(1024 * 1024))) |have|
+        std.mem.eql(u8, have, prompt_script)
+    else |_|
+        false;
+    if (!same) {
+        cwd.createDirPath(app.io, app.data_root) catch return null;
+        cwd.writeFile(app.io, .{ .sub_path = path, .data = prompt_script }) catch return null;
+    }
+    return path;
+}
+
+// ─── tests ──────────────────────────────────────────────────────────────
+
+const t = std.testing;
+
+test "every child gets MNML_PANE and the workspace; a shell also gets the prompt's colours, and the script once there is a data root" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    var cmd = try build(&app, &.{"MNML_WORKSPACE=/tmp/worktree"}, false);
+    defer cmd.deinit();
+    try t.expectEqualStrings("1", cmd.get("MNML_PANE").?);
+    // A session worktree's own workspace wins over the app's.
+    try t.expectEqualStrings("/tmp/worktree", cmd.get("MNML_WORKSPACE").?);
+    try t.expect(cmd.get("MNML_PROMPT_BG") == null);
+
+    var sh = try build(&app, &.{}, true);
+    defer sh.deinit();
+    try t.expectEqualStrings("/tmp", sh.get("MNML_WORKSPACE").?);
+    try t.expectEqualStrings("mnml", sh.get("MNML_CONTEXT").?);
+    const bg = sh.get("MNML_PROMPT_BG").?;
+    try t.expectEqual(@as(usize, 7), bg.len);
+    try t.expectEqual(@as(u8, '#'), bg[0]);
+    // No data root in a unit test: no file, so no variable.
+    try t.expect(sh.get("MNML_PROMPT_SCRIPT") == null);
+
+    // With one, the script is written there and named.
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmp.dir.realPathFileAlloc(t.io, ".", t.allocator);
+    defer t.allocator.free(root);
+    const old = app.data_root;
+    app.data_root = root;
+    defer app.data_root = old;
+    var sh2 = try build(&app, &.{}, true);
+    defer sh2.deinit();
+    const path = sh2.get("MNML_PROMPT_SCRIPT").?;
+    const text = try Io.Dir.cwd().readFileAlloc(t.io, path, t.allocator, .limited(1024 * 1024));
+    defer t.allocator.free(text);
+    try t.expectEqualStrings(prompt_script, text);
+}

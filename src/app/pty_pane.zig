@@ -44,6 +44,7 @@ const Theme = @import("../ui/theme.zig");
 pub const supported = true;
 const pty = @import("pty");
 const first_launch_install = @import("first_launch_install.zig");
+const pty_env = @import("pty_env.zig");
 
 pub const Session = pty.Session;
 pub const Grid = pty.Grid;
@@ -351,13 +352,10 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
     errdefer gpa.destroy(wire);
     wire.* = .{ .events = &app.events, .io = app.io, .pane = id };
 
-    // The child's environment: the app's, or a copy with the extras.
-    var env_copy: ?std.process.Environ.Map = if (opts.env_extra.len > 0) try app.env.clone(gpa) else null;
-    defer if (env_copy) |*m| m.deinit();
-    if (env_copy) |*m| for (opts.env_extra) |kv| {
-        const eq = std.mem.indexOfScalar(u8, kv, '=') orelse continue;
-        try m.put(kv[0..eq], kv[eq + 1 ..]);
-    };
+    // The child's environment: the app's, the extras, and what it is
+    // told about the pane it runs in (`pty_env.zig`).
+    var child_env = try pty_env.build(app, opts.env_extra, opts.argv.len == 0);
+    defer child_env.deinit();
     // // changed (codex-resume): read BEFORE the spawn. The child may
     // open its Codex rollout before this call returns, and a rollout
     // dated a second earlier than the pane would never match it.
@@ -365,7 +363,7 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
     const session: ?*Session = if (opts.dormant) null else pty.Session.spawn(gpa, app.io, .{
         .cols = size.cols,
         .rows = size.rows,
-        .env = if (env_copy) |*m| m else &app.env,
+        .env = &child_env,
         .argv = if (argv.len == 0) null else @ptrCast(argv),
         .cwd = cwd orelse app.workspace,
         .notify = .{ .ctx = wire, .fn_ptr = &Wire.readable },
@@ -565,10 +563,12 @@ pub fn restart(app: *App, id: PaneId) CommandError!void {
     try resumeInPlace(app.gpa, p.argv);
     // // changed (codex-resume): before the spawn, as in `open`.
     const started_at_s = Io.Timestamp.now(app.io, .real).toSeconds();
+    var child_env = try pty_env.build(app, &.{}, p.argv.len == 0);
+    defer child_env.deinit();
     const fresh = pty.Session.spawn(app.gpa, app.io, .{
         .cols = p.cols,
         .rows = p.rows,
-        .env = &app.env,
+        .env = &child_env,
         .argv = if (p.argv.len == 0) null else @ptrCast(p.argv),
         .cwd = p.cwd orelse app.workspace,
         .notify = .{ .ctx = p.wire, .fn_ptr = &Wire.readable },
