@@ -1,0 +1,34 @@
+#!/bin/sh
+# tools/shims/cargo — the `cargo` the .test corpus sees.
+#
+# `mnml-zig test` exports `MNML_SHIMS` (this directory); a script that
+# needs cargo puts it first on PATH with
+#
+#   # env: PATH=${MNML_SHIMS}:${PATH}
+#
+# and gets canned output instead of a toolchain. `test` echoes the argv
+# that reached it, then prints the libtest tally for it: a target flag
+# (`--lib` / `--bins` / `--bin x` / `--test x`) runs 3, the module
+# filter `shapes::` runs 1, any other filter runs 0 and — as the real
+# cargo does — still says `ok` (that is the shape `test.run_file` has
+# to notice). Nothing here reads the crate.
+verb=$1
+shift
+case "$verb" in
+  --version) echo "cargo 1.0.0-mnml-shim"; exit 0 ;;
+  test)
+    echo "shim cargo test: $*"
+    case " $* " in
+      *" --lib "*|*" --bins "*|*" --bin "*|*" --test "*|*" --example "*|*" --bench "*) n=3 ;;
+      *" shapes:: "*) n=1 ;;
+      *) n=0 ;;
+    esac
+    echo "running $n tests"
+    if [ "$n" = 0 ]; then
+      echo "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s"
+    else
+      echo "test result: ok. $n passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s"
+    fi
+    exit 0 ;;
+  *) echo "cargo (shim): $verb $*"; exit 0 ;;
+esac

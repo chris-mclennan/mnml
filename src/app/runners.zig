@@ -64,10 +64,21 @@ pub const table = .{
 pub const State = struct {
     last_cmdline: ?[]u8 = null,
     last_cwd: ?[]u8 = null,
+    /// A `cargo test` whose filter may match nothing: read its tally
+    /// when it exits (`onFrame`).
+    probe: ?Probe = null,
+
+    pub const Probe = struct { pane: PaneId, filter: []u8 };
 
     pub fn deinit(self: *State, gpa: Allocator) void {
         if (self.last_cmdline) |c| gpa.free(c);
         if (self.last_cwd) |c| gpa.free(c);
+        self.clearProbe(gpa);
+    }
+
+    fn clearProbe(self: *State, gpa: Allocator) void {
+        if (self.probe) |pr| gpa.free(pr.filter);
+        self.probe = null;
     }
 
     fn remember(self: *State, gpa: Allocator, cmdline: []const u8, cwd: []const u8) Allocator.Error!void {
@@ -179,12 +190,21 @@ pub fn spawn(app: *App, label: []const u8, cmdline: []const u8, cwd: []const u8,
 /// identity in the toast (`build` for `npm.build`, which runs `npm run
 /// build`); it cannot be read off `subcmd`.
 fn runManifestCommand(app: *App, manifest: []const u8, bin: []const u8, slug: []const u8, subcmd: []const u8) CommandError!void {
+    _ = try runManifestCommandId(app, manifest, bin, slug, subcmd);
+}
+
+/// `runManifestCommand`, handing back the pane it spawned (null when
+/// the tool is missing and the installer was offered instead).
+fn runManifestCommandId(app: *App, manifest: []const u8, bin: []const u8, slug: []const u8, subcmd: []const u8) CommandError!?PaneId {
     const arena = app.frame.allocator();
     const root = findManifestDir(app.io, startDir(app), &.{manifest}, app.workspace) orelse
         return app.diag.fail(arena, "{s}.{s}: no {s} found in {s} or any parent", .{ bin, slug, manifest, app.workspace });
-    if (!onPath(app, bin)) return offerInstall(app, bin);
+    if (!onPath(app, bin)) {
+        try offerInstall(app, bin);
+        return null;
+    }
     const cmdline = try std.fmt.allocPrint(arena, "{s} {s}", .{ bin, subcmd });
-    _ = try spawn(app, cmdline, cmdline, root, .runner);
+    return try spawn(app, cmdline, cmdline, root, .runner);
 }
 
 // ─── cargo ──────────────────────────────────────────────────────────────
@@ -565,13 +585,108 @@ fn testRunFile(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     const rel = try activeRel(app);
     switch (try requireProject(app)) {
-        .cargo => return runCargo(app, try std.fmt.allocPrint(arena, "test {s}", .{std.fs.path.stem(rel)})),
+        .cargo => {
+            // Relative to the crate's own manifest, not the workspace:
+            // `crates/x/src/lib.rs` is `src/lib.rs` to its `cargo`.
+            const abs = app.activeEditor().?.buf.doc.path.?;
+            const root = findManifestDir(app.io, startDir(app), &.{"Cargo.toml"}, app.workspace) orelse app.workspace;
+            const in_crate = if (abs.len > root.len + 1 and std.mem.startsWith(u8, abs, root)) abs[root.len + 1 ..] else rel;
+            const args = try cargoTestArgs(arena, in_crate);
+            const pane = (try runManifestCommandId(app, "Cargo.toml", "cargo", "test", try std.fmt.allocPrint(arena, "test {s}", .{args}))) orelse return;
+            // A name filter can match nothing and still exit 0: watch
+            // the tally.
+            if (args.len > 0 and args[0] != '-') {
+                app.runners.clearProbe(app.gpa);
+                app.runners.probe = .{ .pane = pane, .filter = try app.gpa.dupe(u8, args) };
+            }
+        },
         .npm => return runNpm(app, "test", try std.fmt.allocPrint(arena, "test -- {s}", .{rel})),
         .go => return runGo(app, try std.fmt.allocPrint(arena, "test ./{s}", .{std.fs.path.dirname(rel) orelse "."})),
         .dotnet => return tests_pane.dotnetFile(app),
         .pytest => return runPytest(app, rel),
         .zig => return tests_pane.zigFile(app),
     }
+}
+
+/// `cargo test`'s argument for "the tests in this file". cargo has no
+/// such selector: its positional is a test-NAME filter, and `cargo test
+/// main` on `src/main.rs` matched nothing, ran 0 tests and said `ok`.
+/// The file's role picks the target instead — `src/lib.rs` → `--lib`,
+/// `src/main.rs` → `--bins`, `src/bin/x.rs` → `--bin x`, `tests/x.rs`
+/// → `--test x`, `examples/x.rs` → `--example x`, `benches/x.rs` →
+/// `--bench x` — and any other `src/a/b.rs` (or `src/a/b/mod.rs`)
+/// filters on its module path, `a::b::`, which is what a `mod tests`
+/// inside it is named under. `rel` is relative to the crate's manifest.
+pub fn cargoTestArgs(arena: Allocator, rel: []const u8) Allocator.Error![]const u8 {
+    const path = try arena.dupe(u8, rel);
+    std.mem.replaceScalar(u8, path, '\\', '/');
+    const stem = std.fs.path.stem(path);
+    if (std.mem.eql(u8, path, "src/lib.rs")) return "--lib";
+    if (std.mem.eql(u8, path, "src/main.rs")) return "--bins";
+    const Target = struct { dir: []const u8, flag: []const u8 };
+    for ([_]Target{ .{ .dir = "src/bin/", .flag = "--bin" }, .{ .dir = "tests/", .flag = "--test" }, .{ .dir = "examples/", .flag = "--example" }, .{ .dir = "benches/", .flag = "--bench" } }) |tg| {
+        if (std.mem.startsWith(u8, path, tg.dir)) {
+            const inner = path[tg.dir.len..];
+            // `src/bin/x/main.rs` is the bin `x`; `tests/x/main.rs` the test `x`.
+            const name = if (std.mem.indexOfScalar(u8, inner, '/')) |slash| inner[0..slash] else stem;
+            return std.fmt.allocPrint(arena, "{s} {s}", .{ tg.flag, name });
+        }
+    }
+    var mod = path;
+    if (std.mem.startsWith(u8, mod, "src/")) mod = mod["src/".len..];
+    if (std.mem.endsWith(u8, mod, ".rs")) mod = mod[0 .. mod.len - ".rs".len];
+    if (std.mem.endsWith(u8, mod, "/mod")) mod = mod[0 .. mod.len - "/mod".len];
+    if (mod.len == 0) return "";
+    const out = try std.mem.replaceOwned(u8, arena, mod, "/", "::");
+    return std.fmt.allocPrint(arena, "{s}::", .{out});
+}
+
+/// The tally of a `test result:` line — `ok. 2 passed; 1 failed; …`.
+pub fn cargoResultCounts(line: []const u8) ?struct { passed: u64, failed: u64 } {
+    const at = std.mem.indexOf(u8, line, "test result:") orelse return null;
+    const rest = line[at + "test result:".len ..];
+    return .{ .passed = countBefore(rest, " passed") orelse return null, .failed = countBefore(rest, " failed") orelse 0 };
+}
+
+fn countBefore(s: []const u8, word: []const u8) ?u64 {
+    const at = std.mem.indexOf(u8, s, word) orelse return null;
+    var start = at;
+    while (start > 0 and std.ascii.isDigit(s[start - 1])) start -= 1;
+    if (start == at) return null;
+    return std.fmt.parseInt(u64, s[start..at], 10) catch null;
+}
+
+/// Each frame: a probed `cargo test` that has exited is read off its
+/// grid — every `test result:` row's tally — and 0 tests over a green
+/// `ok` is said out loud. The pane keeps cargo's own output; the toast
+/// is what stops "0 passed; 3 filtered out" reading as a pass.
+pub fn onFrame(app: *App) void {
+    const probe = app.runners.probe orelse return;
+    const p = app.panes.pty(probe.pane) orelse return app.runners.clearProbe(app.gpa);
+    if (p.exit == null) return;
+    var results: usize = 0;
+    var ran: u64 = 0;
+    var line: [512]u8 = undefined;
+    var y: u16 = 0;
+    while (y < p.grid.rows()) : (y += 1) {
+        var n: usize = 0;
+        var x: u16 = 0;
+        while (x < p.grid.cols() and n < line.len) : (x += 1) {
+            const cp = p.grid.cell(x, y).cp;
+            line[n] = if (cp == 0) ' ' else if (cp < 128) @intCast(cp) else '?';
+            n += 1;
+        }
+        const counts = cargoResultCounts(line[0..n]) orelse continue;
+        results += 1;
+        ran += counts.passed + counts.failed;
+    }
+    // The grid paints a frame after the exit; no tally yet means wait.
+    if (results == 0) {
+        if (app.now_ms - (p.exited_at_ms orelse app.now_ms) > 2000) app.runners.clearProbe(app.gpa);
+        return;
+    }
+    if (ran == 0) app.toast("cargo test: 0 tests matched `{s}` — nothing ran", .{probe.filter});
+    app.runners.clearProbe(app.gpa);
 }
 
 /// The nearest test name above the cursor: a Rust `fn` under a
@@ -1180,4 +1295,27 @@ test "findOnPath: the platform delimiter splits PATH; PATHEXT adds the Windows e
     defer t.allocator.free(cmd);
     try t.expect(std.ascii.eqlIgnoreCase(cmd, pathOf(t.io, &env, &where, "tool").?));
     try t.expect(pathOf(t.io, &env, &where, "nope") == null);
+}
+
+test "cargo run_file: the file's role picks the target, a module file its path filter; a tally line's counts" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try t.expectEqualStrings("--lib", try cargoTestArgs(a, "src/lib.rs"));
+    try t.expectEqualStrings("--bins", try cargoTestArgs(a, "src/main.rs"));
+    try t.expectEqualStrings("--bin tool", try cargoTestArgs(a, "src/bin/tool.rs"));
+    try t.expectEqualStrings("--bin tool", try cargoTestArgs(a, "src/bin/tool/main.rs"));
+    try t.expectEqualStrings("--test smoke", try cargoTestArgs(a, "tests/smoke.rs"));
+    try t.expectEqualStrings("--example demo", try cargoTestArgs(a, "examples/demo.rs"));
+    try t.expectEqualStrings("--bench speed", try cargoTestArgs(a, "benches/speed.rs"));
+    try t.expectEqualStrings("shapes::", try cargoTestArgs(a, "src/shapes.rs"));
+    try t.expectEqualStrings("net::http::", try cargoTestArgs(a, "src/net/http.rs"));
+    try t.expectEqualStrings("net::", try cargoTestArgs(a, "src/net/mod.rs"));
+    try t.expectEqualStrings("net::http::", try cargoTestArgs(a, "src\\net\\http.rs"));
+    const c = cargoResultCounts("test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s").?;
+    try t.expectEqual(@as(u64, 2), c.passed);
+    try t.expectEqual(@as(u64, 1), c.failed);
+    const z = cargoResultCounts("test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s").?;
+    try t.expectEqual(@as(u64, 0), z.passed + z.failed);
+    try t.expect(cargoResultCounts("running 0 tests") == null);
 }
