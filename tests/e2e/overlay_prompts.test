@@ -21,7 +21,10 @@ key esc
 command file.delete
 expect screen contains "┌ Delete "
 expect screen contains "Delete a.txt?"
-expect screen contains "  Delete    Delete permanently   Cancel  "
+# // changed (one-confirm): the delete box wears the SAME row as the
+# close box below — bracketed keys from the left edge, two cells apart.
+# It used to paint padded labels right-aligned in a box a row shorter.
+expect screen contains "│   [D]elete      Delete [P]ermanently      [C]ancel     │"
 key enter
 expect screen lacks "Delete a.txt?"
 expect file a.txt contains "one"
@@ -30,6 +33,6 @@ type x
 key ctrl+w
 expect screen contains "┌ Unsaved changes "
 expect screen contains "  a.txt has unsaved changes."
-expect screen contains "[S]ave      [D]iscard      [C]ancel"
+expect screen contains "│   [S]ave      [D]iscard      [C]ancel     │"
 key c
 expect screen lacks "Unsaved changes"

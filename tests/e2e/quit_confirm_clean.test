@@ -1,7 +1,7 @@
 # width: 120
 # height: 40
 # `Ctrl+Q` on a CLEAN workspace stops to ask too — the fat-finger guard.
-# The box is the quit's own, with Quit / Cancel instead of the three
+# The box is the quit's own, with [Q]uit / [C]ancel instead of the three
 # buttons unsaved work gets, and Cancel holds the focus so Enter on a box
 # nobody meant to raise is safe. Esc, Enter, `c` and a click on Cancel all
 # leave the session exactly where it was.
@@ -13,11 +13,14 @@ expect dirty false
 key ctrl+q
 expect screen contains "Quit mnml?"
 expect screen contains "Nothing is unsaved. This closes mnml."
-expect screen contains "Quit"
-expect screen contains "Cancel"
+expect screen contains "[Q]uit"
+expect screen contains "[C]ancel"
+# // changed (one-confirm): one button row for every confirm — bracketed
+# keys from the box's left edge, two cells apart.
+expect screen contains "│   [Q]uit      [C]ancel                │"
 # Nothing unsaved means nothing to save: the dirty box's buttons are not here.
-expect screen lacks "Save all"
-expect screen lacks "Quit anyway"
+expect screen lacks "[S]ave all"
+expect screen lacks "[Q]uit anyway"
 
 # Esc cancels; the workspace is still open.
 key esc
@@ -51,8 +54,10 @@ expect screen lacks " still hereone"
 
 # And the Quit button really is a quit. A click anywhere dismisses the
 # box, so only this — the button's own row, and the app gone after it —
-# tells a hit on `Quit` apart from a click that missed. x 66 is inside
-# ` Quit `; the clean box's other button, Cancel, sits at 71..78.
+# tells a hit on `Quit` apart from a click that missed. x 45 is inside
+# `  [Q]uit  `, which spans 41..50; the clean box's other button,
+# `  [C]ancel  `, sits at 53..64. Row 15 is the button row (row 14 until
+# the box became the one six-row shape).
 # `expect quit` reads the App's own flag (the one the host stops on),
 # rather than a spelling inside status.json's text. Nothing follows it:
 # the runner stops stepping an App that has quit.
@@ -60,5 +65,5 @@ key ctrl+q
 expect screen contains "Quit mnml?"
 expect screen contains "Nothing is unsaved."
 expect quit false
-click 66 14
+click 45 15
 expect quit true
