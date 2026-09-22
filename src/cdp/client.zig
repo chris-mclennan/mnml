@@ -9,6 +9,7 @@ const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const ws = @import("../http/ws.zig");
+const child_os = @import("../core/child.zig");
 
 /// Binaries and well-known paths tried in order by `launch`.
 pub const chrome_bins = [_][]const u8{
@@ -511,14 +512,6 @@ test "session against a fake endpoint: enables, a numbered request, an event" {
     try testing.expect(!available(gpa, io, &std.process.Environ.Map.init(gpa)) or true);
 }
 
-/// True while `pid` names a live *or* unreaped process; false once it is
-/// gone for good (`kill(pid, 0)` → ESRCH). Tests only (the browser
-/// pane's close test reads it too).
-pub fn pidGone(pid: std.process.Child.Id) bool {
-    std.posix.kill(pid, @enumFromInt(0)) catch |err| return err == error.ProcessNotFound;
-    return false;
-}
-
 test "Launch.kill kills and reaps a running child, and a second kill does nothing" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     const io = testing.io;
@@ -536,7 +529,7 @@ test "Launch.kill kills and reaps a running child, and a second kill does nothin
     // aborted the process.
     l.kill(io);
     try testing.expectEqual(@as(?std.process.Child.Id, null), l.child.id);
-    try testing.expect(pidGone(pid));
+    try testing.expect(child_os.gone(pid));
 }
 
 test "Launch.kill does not panic on a child that exited on its own" {
@@ -559,5 +552,5 @@ test "Launch.kill does not panic on a child that exited on its own" {
     l.kill(io);
     l.kill(io);
     try testing.expectEqual(@as(?std.process.Child.Id, null), l.child.id);
-    try testing.expect(pidGone(pid));
+    try testing.expect(child_os.gone(pid));
 }

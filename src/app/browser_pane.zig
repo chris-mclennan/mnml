@@ -25,6 +25,7 @@ const Ui = @import("../ui/context.zig");
 const view = @import("../ui/browser_view.zig");
 const text_field = @import("../ui/text_field.zig");
 const cdp = @import("../cdp/client.zig");
+const child_os = @import("../core/child.zig");
 const parse = @import("../http/parse.zig");
 const captured = @import("../http/captured.zig");
 const history = @import("../http/history.zig");
@@ -1386,7 +1387,7 @@ test "closing a browser pane while its Chrome runs takes the child with it — f
     const pid = try standInChrome(app.panes.get(id).?.asBrowser().?);
     try app.forceClosePane(id);
     try testing.expect(app.panes.get(id) == null);
-    try testing.expect(cdp.pidGone(pid));
+    try testing.expect(child_os.gone(pid));
 
     // The same close through the tab strip's ✕, which is how it was hit.
     const id2 = try testPane(&app);
@@ -1412,5 +1413,5 @@ test "closing a browser pane while its Chrome runs takes the child with it — f
     try testing.expect(spot != null);
     try app.handle(.{ .mouse = .{ .x = spot.?.x, .y = spot.?.y, .kind = .press, .button = .left } });
     try testing.expect(app.panes.get(id2) == null);
-    try testing.expect(cdp.pidGone(pid2));
+    try testing.expect(child_os.gone(pid2));
 }
