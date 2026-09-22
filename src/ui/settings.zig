@@ -957,7 +957,7 @@ pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item, subtitle: ?[]con
 pub fn elideLeft(ui: Ui, s: []const u8, max: u16) []const u8 {
     if (max == 0) return "";
     if (ui.fitsIn(s, max)) return s;
-    const mark: []const u8 = if (ui.ascii) "..." else "…";
+    const mark = ui.ellipsisText();
     const budget = max -| @as(u16, if (ui.ascii) 3 else 1);
     if (budget == 0) return mark;
     var i: usize = s.len;

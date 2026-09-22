@@ -60,7 +60,7 @@ pub fn paintRow(ui: Ui, r: Rect, row: Row, selected: bool) void {
         message = ui.clipStr(row.message, avail -| (2 + loc_keep));
         const loc_max = avail -| (ui.widthUpTo(message, avail) + 2);
         if (ui.widthUpTo(loc, avail) > loc_max) {
-            const ell: []const u8 = if (ui.ascii) "..." else "…";
+            const ell = ui.ellipsisText();
             var start: usize = 0;
             while (start < loc.len and ui.width(loc[start..]) > loc_max -| ui.width(ell)) start += std.unicode.utf8ByteSequenceLength(loc[start]) catch 1;
             loc_shown = ui.fmt("{s}{s}", .{ ell, loc[start..] });

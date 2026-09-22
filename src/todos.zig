@@ -989,7 +989,7 @@ fn paintRow(ui: Ui, r: Rect, row: Item, selected: bool) void {
 /// `s` cut to `max` cells keeping its END, with the ellipsis in front.
 fn clipLeft(ui: Ui, s: []const u8, max: u16) []const u8 {
     if (ui.width(s) <= max) return s;
-    const ell: []const u8 = if (ui.ascii) "..." else "…";
+    const ell = ui.ellipsisText();
     const ell_w = ui.width(ell);
     if (max <= ell_w) return "";
     var start: usize = 0;

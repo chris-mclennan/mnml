@@ -73,7 +73,7 @@ pub fn paintRow(ui: Ui, r: Rect, row: Row, selected: bool) void {
             detail = "";
             detail_w = 0;
         } else {
-            const ell: []const u8 = if (ui.ascii) "..." else "\u{2026}";
+            const ell = ui.ellipsisText();
             var start: usize = 0;
             while (start < detail.len and ui.width(detail[start..]) > budget -| ui.width(ell)) start += std.unicode.utf8ByteSequenceLength(detail[start]) catch 1;
             detail = ui.fmt("{s}{s}", .{ ell, detail[start..] });

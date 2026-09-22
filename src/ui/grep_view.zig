@@ -153,7 +153,7 @@ pub fn paintHitWith(ui: Ui, r: Rect, h: grep.Hit, disabled: bool, bg: anytype, m
     const matched = if (col < text.len) text[col..match_end] else "";
     const after = if (match_end < text.len) text[match_end..] else "";
     var w: u16 = 0;
-    if (win.cut or h.text_off > 0) w += ui.putStr(x, r.y, avail, if (ui.ascii) "..." else "…", dim);
+    if (win.cut or h.text_off > 0) w += ui.putStr(x, r.y, avail, ui.ellipsisText(), dim);
     if (w < avail) w += ui.putStr(x + w, r.y, avail - w, win.text, fg);
     if (w < avail) w += ui.putStr(x + w, r.y, avail - w, ui.clipStr(matched, avail - w), if (disabled) dim else Theme.onBg(th.match, bg));
     if (w < avail) _ = ui.putStr(x + w, r.y, avail - w, ui.clipStr(after, avail - w), fg);

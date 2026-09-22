@@ -26,6 +26,7 @@ const key_mod = @import("../core/key.zig");
 const Key = key_mod.Key;
 const editor_view = @import("../ui/editor_view.zig");
 const Theme = @import("../ui/theme.zig");
+const clip = @import("../ui/clip.zig");
 const jsonrpc = @import("../rpc/jsonrpc.zig");
 const client = @import("../lsp/client.zig");
 const types = @import("../lsp/types.zig");
@@ -320,7 +321,7 @@ pub fn virtualLinesFor(app: *App, arena: Allocator, e: *EditorPane, theme: *cons
             segs = .empty;
         }
         line = l.range.start.line;
-        const title = l.title orelse (if (ascii) "..." else "…");
+        const title = l.title orelse clip.ellipsisText(ascii);
         try segs.append(arena, .{ .text = title, .style = style, .hit = lens_hit_base + @as(u32, @intCast(i)) });
     }
     if (line) |ln| try out.append(arena, .{ .line = ln, .segments = try segs.toOwnedSlice(arena) });

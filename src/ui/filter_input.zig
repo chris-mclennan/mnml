@@ -38,7 +38,7 @@ pub fn glyph(ui: Ui) []const u8 {
 /// and `type to <noun>…` focused and empty. On the frame arena.
 pub fn placeholder(ui: Ui, focused: bool, noun: []const u8) []const u8 {
     if (!focused) return ui.fmt("/ {s}", .{noun});
-    return ui.fmt("type to {s}{s}", .{ noun, if (ui.ascii) "..." else "\u{2026}" });
+    return ui.fmt("type to {s}{s}", .{ noun, ui.ellipsisText() });
 }
 
 pub const Props = struct {
