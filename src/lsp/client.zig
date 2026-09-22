@@ -119,6 +119,9 @@ pub const Caps = struct {
     code_lens: bool = false,
     /// `codeLensProvider.resolveProvider`: a lens without a command asks.
     code_lens_resolve: bool = false,
+    /// Owned: `executeCommandProvider.commands` — the only commands
+    /// `workspace/executeCommand` may name.
+    execute_commands: [][]u8 = &.{},
     document_color: bool = false,
     document_link: bool = false,
     range_formatting: bool = false,
@@ -140,9 +143,17 @@ pub const Caps = struct {
     pub fn deinit(c: *Caps, gpa: Allocator) void {
         gpa.free(c.trigger_chars);
         gpa.free(c.on_type_triggers);
+        for (c.execute_commands) |n| gpa.free(n);
+        gpa.free(c.execute_commands);
         gpa.free(c.token_types);
         gpa.free(c.token_modifiers);
         c.* = .{};
+    }
+
+    /// Did the server list `name` in `executeCommandProvider.commands`?
+    pub fn executesCommand(c: *const Caps, name: []const u8) bool {
+        for (c.execute_commands) |n| if (std.mem.eql(u8, n, name)) return true;
+        return false;
     }
 
     pub fn semanticTokens(c: *const Caps) bool {
@@ -612,6 +623,19 @@ pub const Server = struct {
             caps.code_lens = true;
             caps.code_lens_resolve = jsonrpc.getBool(lp, "resolveProvider") orelse false;
         }
+        if (jsonrpc.getObj(c, "executeCommandProvider")) |ep| if (jsonrpc.getArr(ep, "commands")) |arr| {
+            var names: std.ArrayListUnmanaged([]u8) = .empty;
+            errdefer {
+                for (names.items) |n| self.gpa.free(n);
+                names.deinit(self.gpa);
+            }
+            for (arr) |t| if (jsonrpc.asStr(t)) |n| {
+                const owned = try self.gpa.dupe(u8, n);
+                errdefer self.gpa.free(owned);
+                try names.append(self.gpa, owned);
+            };
+            caps.execute_commands = try names.toOwnedSlice(self.gpa);
+        };
         if (jsonrpc.getObj(c, "documentOnTypeFormattingProvider")) |ot| {
             var chars: std.ArrayListUnmanaged(u8) = .empty;
             errdefer chars.deinit(self.gpa);

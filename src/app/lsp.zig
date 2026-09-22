@@ -1736,7 +1736,7 @@ fn dropLocs(app: *App) void {
 }
 
 /// A picker over locations: `rel:line:col  the line's text`.
-fn locationsPicker(app: *App, title: []const u8, locs: []const types.Location, empty_msg: []const u8) Allocator.Error!void {
+pub fn locationsPicker(app: *App, title: []const u8, locs: []const types.Location, empty_msg: []const u8) Allocator.Error!void {
     if (locs.len == 0) {
         app.toast("{s}", .{empty_msg});
         return;
