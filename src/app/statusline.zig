@@ -44,6 +44,7 @@ const ipc = @import("../ipc/root.zig");
 const remote = @import("../git/remote.zig");
 const parse = @import("../git/parse.zig");
 const lsp = @import("lsp.zig");
+const lsp_types = @import("../lsp/types.zig");
 const usage_pane = @import("usage_pane.zig");
 const ghost_chip = @import("ghost_chip.zig");
 const claude_mark = @import("claude_mark.zig");
@@ -490,17 +491,16 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
             };
             if (errors > 0) try push(&left, arena, Seg.init(ui.fmt(" {s} {d} ", .{ if (ui.ascii) sl.errors_ascii else sl.errors_glyph, errors }), p.red, p.statusline).withHit(SegId.diagnostics.raw()));
             if (warnings > 0) try push(&left, arena, Seg.init(ui.fmt(" {s} {d} ", .{ if (ui.ascii) "W" else "⚠", warnings }), p.yellow, p.statusline).withHit(SegId.diagnostics.raw()));
-            // The enclosing symbol: the last one placed at or above the
-            // cursor's line — the server's when it has sent them, else the
-            // outline's line scan, kept to files small enough to read
-            // every frame (the Rust chip regex-scanned a 13k-line file per
-            // frame and paid 45 ms for it).
+            // The enclosing symbol — the server's when it has sent
+            // them (`enclosingSymbol`), else the last one the outline's
+            // line scan places at or above the cursor's line, kept to
+            // files small enough to read every frame (the Rust chip
+            // regex-scanned a 13k-line file per frame and paid 45 ms
+            // for it).
             const row: u32 = @intCast(e.buf.editor.rowCol().row);
             var pick: ?[]const u8 = null;
-            if (app.lsp.symbols.get(pth)) |set| {
-                for (set.items) |sym| if (sym.line <= row) {
-                    pick = sym.name;
-                };
+            if (lsp.symbolsFor(app, pth)) |syms| {
+                pick = enclosingSymbol(syms, row);
             } else if (e.buf.doc.language) |key| if (e.buf.editor.bytes().len <= symbol_scan_max) {
                 for (try outline.fallback(arena, e.buf.editor.bytes(), key)) |sym| if (sym.line <= row) {
                     pick = sym.name;
@@ -681,6 +681,36 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
     }
 
     return .{ .left = left.items, .right = right.items, .middle = middle };
+}
+
+/// The symbol the ` › name ` chip names for a caret on `row`: the
+/// INNERMOST container whose range holds the row — the function around
+/// a `local`, not the local; nothing at all past the last closing
+/// brace. It used to be the last symbol that STARTED before the caret,
+/// whatever its kind and wherever it ended, which inside any function
+/// that declares a variable named the variable. A server that gives
+/// every symbol one line (no ranges to hold anything) gets the old
+/// rule, kept to containers.
+pub fn enclosingSymbol(syms: []const lsp_types.Symbol, row: u32) ?[]const u8 {
+    var best: ?lsp_types.Symbol = null;
+    var spans = false;
+    for (syms) |sym| {
+        if (!sym.isContainer()) continue;
+        if (sym.end_line > sym.line) spans = true;
+        if (!sym.holds(row)) continue;
+        if (best) |b| {
+            const inner = sym.line > b.line or (sym.line == b.line and sym.end_line < b.end_line);
+            if (!inner) continue;
+        }
+        best = sym;
+    }
+    if (best) |b| return b.name;
+    if (spans) return null;
+    var last: ?[]const u8 = null;
+    for (syms) |sym| if (sym.isContainer() and sym.line <= row) {
+        last = sym.name;
+    };
+    return last;
 }
 
 /// `render.drawStatusline`: build, then paint.
@@ -1680,4 +1710,38 @@ test "a figure's hover lists what it counts, the pointer can walk onto the list,
     const toasts = b.app.toasts.items.len;
     try b.app.handle(.{ .mouse = .{ .x = label.x, .y = label.y, .kind = .press, .button = .left } });
     try testing.expectEqual(toasts, b.app.toasts.items.len);
+}
+
+test "enclosingSymbol: the innermost container holding the row, never a variable, nothing past the last brace" {
+    const S = lsp_types.Symbol;
+    // bash-language-server's shape for deploy.sh: functions with full
+    // ranges, `local`s as variables inside them.
+    const syms = [_]S{
+        .{ .name = "usage", .kind = 12, .line = 22, .character = 0, .end_line = 30, .depth = 0 },
+        .{ .name = "deploy_one", .kind = 12, .line = 46, .character = 0, .end_line = 62, .depth = 0 },
+        .{ .name = "attempt", .kind = 13, .line = 47, .character = 8, .end_line = 47, .depth = 0 },
+        .{ .name = "main", .kind = 12, .line = 64, .character = 0, .end_line = 87, .depth = 0 },
+        .{ .name = "RETRIES", .kind = 13, .line = 69, .character = 4, .end_line = 69, .depth = 0 },
+        .{ .name = "TMPFILE", .kind = 13, .line = 79, .character = 0, .end_line = 79, .depth = 0 },
+    };
+    try testing.expectEqualStrings("usage", enclosingSymbol(&syms, 24).?);
+    try testing.expectEqualStrings("deploy_one", enclosingSymbol(&syms, 61).?);
+    try testing.expectEqualStrings("main", enclosingSymbol(&syms, 74).?);
+    try testing.expect(enclosingSymbol(&syms, 88) == null);
+    try testing.expect(enclosingSymbol(&syms, 40) == null);
+    // Nested containers: the inner one.
+    const nested = [_]S{
+        .{ .name = "Outer", .kind = 5, .line = 0, .character = 0, .end_line = 20, .depth = 0 },
+        .{ .name = "inner", .kind = 6, .line = 5, .character = 4, .end_line = 9, .depth = 1 },
+    };
+    try testing.expectEqualStrings("inner", enclosingSymbol(&nested, 7).?);
+    try testing.expectEqualStrings("Outer", enclosingSymbol(&nested, 12).?);
+    // A server that gives one line per symbol: the last container at or
+    // above the row, as before.
+    const flat = [_]S{
+        .{ .name = "foo", .kind = 12, .line = 0, .character = 3, .end_line = 0, .depth = 0 },
+        .{ .name = "bar", .kind = 12, .line = 4, .character = 3, .end_line = 4, .depth = 0 },
+    };
+    try testing.expectEqualStrings("foo", enclosingSymbol(&flat, 2).?);
+    try testing.expectEqualStrings("bar", enclosingSymbol(&flat, 9).?);
 }
