@@ -3207,6 +3207,14 @@ test {
     _ = @import("ui/pin_chip.zig");
     _ = @import("ui/edge_grip.zig");
     _ = @import("app/edge_band_audit.zig");
+    // // changed (railmove): the two strips and the section placement
+    // were in no reference block, so their tests never ran — a
+    // break-check on the dock "passed" with the break in the file.
+    _ = @import("app/activity_bar.zig");
+    _ = @import("ui/activity_bar.zig");
+    _ = @import("app/launcher_dock.zig");
+    _ = @import("ui/launcher_dock_view.zig");
+    _ = @import("app/side.zig");
     _ = @import("ui/dock_view.zig");
     _ = @import("core/dock.zig");
     _ = @import("app/git.zig");

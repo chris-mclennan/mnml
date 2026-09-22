@@ -380,6 +380,13 @@ pub const Item = struct {
 /// Every item the strip shows, in paint order, on `arena`:
 /// integrations, then launchers that declared no chip, then the
 /// terminals, then `ui.dock.pins`.
+///
+/// // changed (railmove): an integration is on the strip when it is
+/// INSTALLED and not disabled — `Chip.on_dock` — whatever its chip
+/// flags say. The strip used to read `Chip.enabled`, which for a
+/// first-party surface is the chip's visibility in the tab cluster
+/// (the Installed tab's `(hidden)`), so Claude Code, Codex and HTTP
+/// — hidden chips out of the box — were never on the dock at all.
 pub fn items(app: *App, arena: Allocator) Allocator.Error![]Item {
     var out: std.ArrayListUnmanaged(Item) = .empty;
     // ── the `+`, leading the run: the tab bar's own, opening the same
@@ -387,7 +394,7 @@ pub fn items(app: *App, arena: Allocator) Allocator.Error![]Item {
     if (app.cfg.ui.dock.plus) try out.append(arena, plusItem(app));
     // ── integrations ──
     for (try integrations.allChips(app, arena)) |c| {
-        if (!c.enabled) continue;
+        if (!c.on_dock) continue;
         try out.append(arena, .{
             .kind = .integration,
             .id = c.id,
@@ -1087,25 +1094,107 @@ test "the model: the `+` leads, then the enabled integrations, then the New term
     try t.expect(list[0].action == .menu);
     // It names no command id: the menu is not one, so nothing can pin it.
     try t.expect(commandIdOf(&app, list[0]) == null);
-    // Browser is the one first-party chip enabled out of the box.
+    // // changed (railmove): all four first-party surfaces, in the
+    // config's order. Browser is the one whose CHIP is on out of the
+    // box; the other three ship with the chip hidden, and a hidden
+    // chip is not an uninstalled surface.
     try t.expectEqualStrings("Browser", list[1].label);
     try t.expectEqual(Kind.integration, list[1].kind);
+    try t.expectEqualStrings("Claude Code", list[2].label);
+    try t.expectEqualStrings("Codex", list[3].label);
+    try t.expectEqualStrings("HTTP", list[4].label);
+    for (list[1..5]) |it| try t.expectEqual(Kind.integration, it.kind);
     // The terminals, then the pins — the unresolvable id is skipped, so
-    // the strip is exactly +, Browser, New terminal, picker.files.
-    try t.expectEqual(@as(usize, 4), list.len);
-    try t.expectEqual(Kind.terminal_new, list[2].kind);
-    try t.expectEqualStrings("New terminal", list[2].label);
-    try t.expectEqual(Kind.pin, list[3].kind);
-    try t.expectEqualStrings(shortTitle(command.title(.@"picker.files")), list[3].label);
-    try t.expectEqualStrings("picker.files", commandIdOf(&app, list[3]).?);
+    // the strip is exactly +, the four, New terminal, picker.files.
+    try t.expectEqual(@as(usize, 7), list.len);
+    try t.expectEqual(Kind.terminal_new, list[5].kind);
+    try t.expectEqualStrings("New terminal", list[5].label);
+    try t.expectEqual(Kind.pin, list[6].kind);
+    try t.expectEqualStrings(shortTitle(command.title(.@"picker.files")), list[6].label);
+    try t.expectEqualStrings("picker.files", commandIdOf(&app, list[6]).?);
     // A pin that resolves to nothing never becomes a row.
     for (list) |it| try t.expect(!std.mem.eql(u8, it.id, "no.such.command"));
     // `ui.dock.plus = false` takes the `+` off and the rest closes up.
     app.cfg.ui.dock.plus = false;
     const without = try items(&app, app.frame.allocator());
-    try t.expectEqual(@as(usize, 3), without.len);
+    try t.expectEqual(@as(usize, 6), without.len);
     try t.expectEqualStrings("Browser", without[0].label);
     for (without) |it| try t.expect(it.kind != .plus);
+}
+
+test "a hidden chip is still on the dock: the strip reads installed-and-not-disabled, never the chip's visibility — a first-party row with `enabled = false`, a manifest with `in_palette_bar = false`; a DISABLED manifest and a missing binary are off it" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, "integrations");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "tool", .data = "#!/bin/sh\n" });
+    const tool = try std.fs.path.join(t.allocator, &.{ root, "tool" });
+    defer t.allocator.free(tool);
+    // Three manifests, named to sort after the first-party four.
+    // `zeta_hid`: the chip is OFF the palette bar — hidden — and the
+    // binary is there. `zeta_off`: the chip is DISABLED. `zeta_gone`:
+    // the binary is nowhere.
+    const hid = try std.fmt.allocPrint(t.allocator, ".{{ .id = \"zeta_hid\", .label = \"Zeta hid\", .binary = \"{s}\", .chip = .{{ .glyph = \"Z\", .fallback = \"Z\", .color = \"green\", .in_palette_bar = false }}, .commands = .{{ .{{ .id = \"zeta_hid.open\", .title = \"Zeta hid: open\" }} }} }}", .{tool});
+    defer t.allocator.free(hid);
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "integrations/zeta_hid.zon", .data = hid });
+    const off = try std.fmt.allocPrint(t.allocator, ".{{ .id = \"zeta_off\", .label = \"Zeta off\", .binary = \"{s}\", .chip = .{{ .glyph = \"O\", .fallback = \"O\", .color = \"red\", .enabled = false }}, .commands = .{{ .{{ .id = \"zeta_off.open\", .title = \"Zeta off: open\" }} }} }}", .{tool});
+    defer t.allocator.free(off);
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "integrations/zeta_off.zon", .data = off });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "integrations/zeta_gone.zon", .data = ".{ .id = \"zeta_gone\", .label = \"Zeta gone\", .binary = \"/definitely/not/here/zeta\", .chip = .{ .glyph = \"G\", .fallback = \"G\", .color = \"blue\" }, .commands = .{ .{ .id = \"zeta_gone.open\", .title = \"Zeta gone: open\" } } }" });
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    try env.put("PATH", "/definitely/not/a/dir");
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .data_root = root, .cols = 120, .rows = 40, .env = &env });
+    defer app.deinit();
+    app.cfg.ui.dock.plus = false;
+    // The manifests are scanned at startup by the driver, not by
+    // `initWith`; a test asks for the scan itself.
+    try integrations.refresh(&app);
+    try app.render();
+    const list = try items(&app, app.frame.allocator());
+    // The four first-party surfaces, the hidden-chip manifest, the
+    // terminal item — and neither the disabled one nor the missing one.
+    try t.expectEqual(@as(usize, 6), list.len);
+    try t.expectEqualStrings("browser", list[0].id);
+    try t.expectEqualStrings("claude_code", list[1].id);
+    try t.expectEqualStrings("codex", list[2].id);
+    try t.expectEqualStrings("http", list[3].id);
+    try t.expectEqualStrings("zeta_hid", list[4].id);
+    try t.expectEqual(Kind.terminal_new, list[5].kind);
+    for (list) |it| {
+        try t.expect(!std.mem.eql(u8, it.id, "zeta_off"));
+        try t.expect(!std.mem.eql(u8, it.id, "zeta_gone"));
+    }
+    // The chips' own flags are exactly as they were: Claude's chip is
+    // hidden (the Installed tab's `(hidden)`), and the hidden manifest
+    // chip is not on the palette bar's strip. Both are on the dock.
+    const claude = (try integrations.findChip(&app, app.frame.allocator(), "claude_code")).?;
+    try t.expect(!claude.enabled);
+    try t.expect(claude.on_dock);
+    const strip = try integrations.chips(&app, app.frame.allocator());
+    for (strip) |c| try t.expect(!std.mem.eql(u8, c.id, "zeta_hid"));
+    const zh = (try integrations.findChip(&app, app.frame.allocator(), "zeta_hid")).?;
+    try t.expect(zh.enabled and zh.on_dock and !zh.in_palette_bar);
+    // Disabling Browser's CHIP takes it off the strip and leaves it on
+    // the dock; disabling a MANIFEST takes it off both.
+    app.cfg.ui.integration_icons = &.{ .{ .id = "browser", .command = "browser.open", .label = "Browser", .enabled = false, .in_palette_bar = false }, .{ .id = "claude_code", .command = "ai.claude_code", .label = "Claude Code", .enabled = false, .in_palette_bar = false }, .{ .id = "codex", .command = "ai.codex", .label = "Codex", .enabled = false, .in_palette_bar = false }, .{ .id = "http", .command = "view.activity_http", .label = "HTTP", .enabled = false, .in_palette_bar = false } };
+    const again = try items(&app, app.frame.allocator());
+    try t.expectEqual(@as(usize, 6), again.len);
+    try t.expectEqualStrings("browser", again[0].id);
+    // The strip lost the four (`in_palette_bar = false`); the two
+    // manifests whose chips never left the bar are still there, dim.
+    for (try integrations.chips(&app, app.frame.allocator())) |c| {
+        try t.expect(integrations.firstPartyIndex(c.id) == null);
+        try t.expect(!std.mem.eql(u8, c.id, "zeta_hid"));
+    }
+    // A custom icon (no first-party row behind it) has the one flag and
+    // keeps reading it.
+    app.cfg.ui.integration_icons = &.{ .{ .id = "mine", .command = "picker.files", .label = "Mine", .enabled = false, .in_palette_bar = false }, .{ .id = "ours", .command = "picker.files", .label = "Ours", .enabled = true, .in_palette_bar = false } };
+    const custom = try items(&app, app.frame.allocator());
+    try t.expectEqualStrings("ours", custom[0].id);
+    for (custom) |it| try t.expect(!std.mem.eql(u8, it.id, "mine"));
 }
 
 test "a pinned command wears the part of its title before the first parenthetical or dash, clipped to the strip's own width" {

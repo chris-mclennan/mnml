@@ -7,31 +7,33 @@
 # At 120x40 the `always` strip is row 37 — the editor area's last row,
 # `ui.dock.placement = .inner` being the default — and the pin chip
 # takes 117..119, so the items have 1..117.
-# The default row is ` 󰐕 New   Browser  󲀀 New terminal `,
-# 34 cells of it, which centres at column 42 and ends at 84. The `\n` in
+# // changed (railmove): the default row is ` 󰐕 New   Browser 
+#  Claude Code  ❯_ Codex   HTTP  󲀀 New terminal ` — the four
+# first-party surfaces, hidden chips and all — 66 cells of it, which
+# centres at column 25 (the `+` glyph at 26) and ends at 90. The `\n` in
 # each assertion anchors it to the start of a row — the only way a
 # `contains` script can pin a column.
 write a.txt "alpha\n"
 open a.txt
 ex dock always
-# Centred out of the box: 42 blank cells lead the row.
-expect screen contains "\n                                          󰐕 New "
+# Centred out of the box: 26 blank cells lead the row.
+expect screen contains "\n                          󰐕 New "
 # `:dock start` slides the whole run to the strip's first cell — the
 # same items, the same widths, a different offset.
 ex dock start
 expect screen contains "dock: aligned to the start"
 expect screen contains "\n  󰐕 New "
-expect screen lacks "\n                                          󰐕 New "
+expect screen lacks "\n                          󰐕 New "
 # `:dock end` puts it against the pin chip, and never under it.
 ex dock end
 expect screen contains "dock: aligned to the end"
-expect screen contains "\n                                                                                    󰐕 New "
+expect screen contains "\n                                                    󰐕 New "
 expect screen contains "󰐃"
 expect screen lacks "\n  󰐕 New "
 # And back to the middle.
 ex dock center
 expect screen contains "dock: centred"
-expect screen contains "\n                                          󰐕 New "
+expect screen contains "\n                          󰐕 New "
 # The strip's own right-click menu carries every choice, the current one
 # ticked — three label forms, three alignments, and the `+`.
 rightclick 118 37

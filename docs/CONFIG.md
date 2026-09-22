@@ -988,10 +988,21 @@ a chip's menu or the icon's own writes the list to the home config.
 ## The launcher dock
 
 `ui.dock` is mnml-zig's own Dock: a strip of the things you *start* —
-the `+`, the enabled integrations, a *New terminal* item plus one per
+the `+`, the installed integrations, a *New terminal* item plus one per
 open terminal (a click focuses it), the installed launchers, and any
 command `ui.dock.pins` names — along one edge of the editor area,
 centred on it the way macOS's Dock is.
+
+An integration is on the strip when it is **installed and not
+disabled** — a manifest whose binary resolves and whose chip *Disable*
+has not been pressed, and every first-party surface (Browser, Claude
+Code, Codex, HTTP: the Installed tab's `Inst (4)`). Its chip's
+visibility is a different question: `.enabled = false` on a
+`ui.integration_icons` row, or `.in_palette_bar = false` on a manifest
+chip, hides the CHIP — the tab cluster's, the palette bar's — and the
+Installed tab paints `(hidden)`; the launcher stays on the dock. So
+Claude Code, Codex and HTTP, whose chips ship hidden, are on the dock
+out of the box.
 
 The `+` leads the run. It is the tab bar's own `+`, and it opens the
 same *Create…* menu — the one `ui.plus_menu_pinned` /

@@ -72,7 +72,9 @@ wait 800
 expect screen lacks "New terminal"
 
 # ── and the strip's hits really are on row 37 ──
+# (column 78 is New terminal's word — `launcher_dock_always.test` has
+# the arithmetic; 43..66 would start a real `claude` / `codex`)
 ex dock always
-click 62 37
+click 78 37
 wait 900
 expect pane Terminal

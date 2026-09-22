@@ -1,0 +1,27 @@
+# width: 120
+# // changed (railmove): the launcher dock lists every INSTALLED, not
+# disabled integration whatever its chip flags say. Claude Code, Codex
+# and HTTP ship with their chip hidden — the `(hidden)` the Installed
+# tab paints, which is the tab cluster's question — and the strip used
+# to read that flag as "not enabled", so none of the three was ever on
+# the dock. "Hide the chip" and "not on the dock" are two wishes.
+write a.txt "alpha\n"
+open a.txt
+ex dock always
+ex dock start
+expect screen contains "Browser"
+expect screen contains "Claude Code"
+expect screen contains "Codex"
+expect screen contains "HTTP"
+expect screen contains "New terminal"
+# The chips are exactly as hidden as they were: the Installed tab
+# still says so (the column clips the badge; a drag reads the row).
+command view.activity_integrations
+expect screen contains "Inst (4)"
+drag 30 5 70 5
+expect screen contains "Claude Code (hidden)  first-party"
+expect screen contains "Codex (hidden)  first-party"
+expect screen contains "HTTP (hidden)  first-party"
+# Still on the strip, in the same breath.
+expect screen contains "New terminal"
+expect screen contains "Codex"

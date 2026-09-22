@@ -6,13 +6,15 @@
 #
 # At 120x40 the `always` strip is row 37 — the editor area's last row,
 # `ui.dock.placement = .inner` being the default — and it is centred, so
-# the `+` item's run is columns 41..47 with the glyph at 42.
+# the `+` item's run is columns 25..31 with the glyph at 26
+# (// changed (railmove): the four first-party surfaces are on the
+# strip, so the run is longer and starts further left).
 write a.txt "alpha\n"
 open a.txt
 ex dock always
 expect screen contains "󰐕 New "
 # A click on it opens the tab bar's menu, rows and all.
-click 42 37
+click 26 37
 expect screen contains "Create"
 expect screen contains "Integrations"
 expect screen contains "Dock"
@@ -22,7 +24,7 @@ expect screen lacks "Integrations"
 # the `+` reads as one: `+ New`.
 ex dock text
 expect screen contains "dock: labels only"
-expect screen contains "\n                                            + New "
+expect screen contains "\n                               + New "
 expect screen contains "Browser"
 expect screen contains "New terminal"
 expect screen lacks "󰐕 New"
