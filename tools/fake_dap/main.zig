@@ -41,6 +41,12 @@ pub const Server = struct {
     /// Owned copies of the enabled filter ids.
     enabled_filters: std.ArrayList([]u8) = .empty,
     launched: bool = false,
+    /// The session came in through `attach`: the program stands in
+    /// for somebody else's process, and `<program>.debuggee` beside
+    /// it records what the goodbye did to it (`attached` → `killed` /
+    /// `detached`), since a fake has no real process a test could
+    /// probe with `kill -0`.
+    attached: bool = false,
     /// `terminated` has been sent; the program is over.
     terminated: bool = false,
     /// `disconnect` landed: the loop ends.
@@ -201,7 +207,19 @@ pub const Server = struct {
             // it does against those adapters.
             try self.event("initialized", .{});
         } else if (eql(u8, command, "attach")) {
-            try self.fail(rseq, command, "mnml-fake-dap does not attach; use launch");
+            // The same program, "already running": it starts on
+            // `configurationDone` like a launch. What differs is the
+            // goodbye, written to the ledger.
+            const path = getStr(args, "program") orelse return self.fail(rseq, command, "attach needs `program` (the file that stands in for the process)");
+            self.ensureProgram(path) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return self.fail(rseq, command, try std.fmt.allocPrint(arena, "cannot read {s}: {s}", .{ path, @errorName(err) })),
+            };
+            self.launched = true;
+            self.attached = true;
+            try self.ledger(arena, "attached");
+            try self.respond(rseq, command, .{});
+            try self.event("initialized", .{});
         } else if (eql(u8, command, "setBreakpoints")) {
             try self.setBreakpoints(arena, rseq, command, args);
         } else if (eql(u8, command, "setExceptionBreakpoints")) {
@@ -310,9 +328,19 @@ pub const Server = struct {
             try self.respond(rseq, command, .{});
             try self.report(outcome);
         } else if (eql(u8, command, "terminate")) {
+            // Ends the debuggee whatever the session — the client
+            // must not send it for an attached one.
+            if (self.attached) try self.ledger(arena, "killed");
             try self.respond(rseq, command, .{});
             try self.endProgram(null);
         } else if (eql(u8, command, "disconnect")) {
+            // `terminateDebuggee` decides an attached process's fate;
+            // absent, DAP leaves it to the adapter, and this one keeps
+            // the process it did not start.
+            if (self.attached and !self.terminated) {
+                const kill = if (getField(args, "terminateDebuggee")) |v| (v == .bool and v.bool) else false;
+                try self.ledger(arena, if (kill) "killed" else "detached");
+            }
             try self.respond(rseq, command, .{});
             if (!self.terminated) try self.endProgram(null);
             self.done = true;
@@ -373,6 +401,14 @@ pub const Server = struct {
         if (self.program_path) |old| self.gpa.free(old);
         self.prog = p;
         self.program_path = owned;
+    }
+
+    /// `<program>.debuggee` ← `word`, the attached process's ledger.
+    fn ledger(self: *Server, arena: Allocator, word: []const u8) !void {
+        const path = self.program_path orelse return;
+        const ledger_path = try std.fmt.allocPrint(arena, "{s}.debuggee", .{path});
+        const text = try std.fmt.allocPrint(arena, "{s}\n", .{word});
+        Io.Dir.cwd().writeFile(self.io, .{ .sub_path = ledger_path, .data = text }) catch {};
     }
 
     fn stoppedProgram(self: *Server) ?*Program {
@@ -961,6 +997,55 @@ test "sleep runs until pause; terminate ends a running program; a missing progra
     const nx = try h.send("next", "{\"threadId\":1}");
     defer t.allocator.free(nx);
     try expectResponse(nx[0], "next", false);
+}
+
+test "attach: the program runs as a launch would; the ledger says detached after disconnect{terminateDebuggee:false}, killed after terminate" {
+    var tp = try TmpProgram.init("let n = 7\nprint n\nsleep\n");
+    defer tp.deinit();
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const pj = try tp.json(a);
+    const ledger_path = try std.fmt.allocPrint(a, "{s}.debuggee", .{tp.path});
+    const Ledger = struct {
+        fn read(alloc_: Allocator, path: []const u8) ![]u8 {
+            return Io.Dir.cwd().readFileAlloc(t.io, path, alloc_, .limited(64));
+        }
+    };
+    {
+        var h: Harness = undefined;
+        h.init();
+        defer h.deinit();
+        t.allocator.free(try h.send("initialize", "{}"));
+        const no_program = try h.send("attach", "{\"request\":\"attach\"}");
+        defer t.allocator.free(no_program);
+        try expectResponse(no_program[0], "attach", false);
+        const at = try h.send("attach", try std.fmt.allocPrint(a, "{{\"request\":\"attach\",\"program\":{s}}}", .{pj}));
+        defer t.allocator.free(at);
+        try t.expectEqual(@as(usize, 2), at.len);
+        try expectResponse(at[0], "attach", true);
+        _ = try expectEvent(at[1], "initialized");
+        try t.expectEqualStrings("attached\n", try Ledger.read(a, ledger_path));
+        const go = try h.send("configurationDone", "{}");
+        defer t.allocator.free(go);
+        try t.expectEqualStrings("7\n", getStr(try expectEvent(go[1], "output"), "output").?);
+        // Detach: the process outlives the session.
+        const dc = try h.send("disconnect", "{\"terminateDebuggee\":false}");
+        defer t.allocator.free(dc);
+        try expectResponse(dc[0], "disconnect", true);
+        try t.expect(h.server.done);
+        try t.expectEqualStrings("detached\n", try Ledger.read(a, ledger_path));
+    }
+    {
+        var h: Harness = undefined;
+        h.init();
+        defer h.deinit();
+        t.allocator.free(try h.send("initialize", "{}"));
+        t.allocator.free(try h.send("attach", try std.fmt.allocPrint(a, "{{\"request\":\"attach\",\"program\":{s}}}", .{pj})));
+        t.allocator.free(try h.send("configurationDone", "{}"));
+        t.allocator.free(try h.send("terminate", "{}"));
+        try t.expectEqualStrings("killed\n", try Ledger.read(a, ledger_path));
+    }
 }
 
 test "breakpoints for another file are unverified and not kept; conditions and hit counts reach the program" {

@@ -94,6 +94,11 @@ pub const Session = struct {
     /// The substituted `launch` / `attach` arguments as JSON. Owned;
     /// sent on the `initialize` reply.
     launch_body: []u8,
+    /// The body's `request` is `attach`: the debuggee is somebody
+    /// else's process. Stop then DETACHES — `disconnect` with
+    /// `terminateDebuggee: false` and no `terminate` — where a launched
+    /// session ends its program (hunt: dap-stop-kills-attached-process).
+    is_attach: bool,
 
     /// The adapter's `initialized` event has arrived: it is ready for
     /// breakpoints and `configurationDone`.
@@ -159,6 +164,7 @@ pub const Session = struct {
             .transport = t,
             .adapter = adapter,
             .launch_body = body,
+            .is_attach = isAttachBody(gpa, body),
             .snapshot = alloc.SnapshotArena.init(gpa),
             .vars = alloc.SnapshotArena.init(gpa),
         };
@@ -185,6 +191,7 @@ pub const Session = struct {
             .transport = t,
             .adapter = adapter,
             .launch_body = body,
+            .is_attach = isAttachBody(gpa, body),
             .snapshot = alloc.SnapshotArena.init(gpa),
             .vars = alloc.SnapshotArena.init(gpa),
         };
@@ -192,12 +199,18 @@ pub const Session = struct {
         return s;
     }
 
+    /// How long the adapter gets to act on `disconnect` — end or
+    /// release its debuggee and exit — before it is killed.
+    pub const exit_grace_ms: u32 = 500;
+
     /// Say goodbye (best effort), stop the reader, kill the adapter,
-    /// free everything.
+    /// free everything. A launched program is ended with the session
+    /// (`terminateDebuggee: true`); an attached one is released and
+    /// keeps running, as VS Code's Stop-as-Disconnect does.
     pub fn deinit(self: *Session) void {
         const gpa = self.gpa;
-        if (!self.transport.isDead() and !self.exited) _ = self.request(.disconnect, "disconnect", .{ .terminateDebuggee = true }) catch 0;
-        self.transport.shutdown();
+        if (!self.transport.isDead() and !self.exited) _ = self.request(.disconnect, "disconnect", .{ .terminateDebuggee = !self.is_attach }) catch 0;
+        self.transport.shutdownWithin(exit_grace_ms);
         if (self.stopped) |*s| s.deinit(gpa);
         for (self.filters.items) |*f| f.deinit(gpa);
         self.filters.deinit(gpa);
@@ -460,7 +473,11 @@ pub const Session = struct {
         _ = try self.request(.set_variable, "setVariable", .{ .variablesReference = parent_ref, .name = name, .value = value });
     }
 
+    /// `terminate` ends a LAUNCHED program. For an attached one it is
+    /// not sent — the process is not the session's to end; the
+    /// `disconnect` in `deinit` releases it instead.
     pub fn terminate(self: *Session) SendError!void {
+        if (self.is_attach) return;
         _ = try self.request(.terminate, "terminate", .{});
     }
 
@@ -645,6 +662,14 @@ pub const Session = struct {
     }
 };
 
+/// Whether a launch body names `"request": "attach"`.
+fn isAttachBody(gpa: Allocator, body: []const u8) bool {
+    var parsed = std.json.parseFromSlice(Value, gpa, body, .{}) catch return false;
+    defer parsed.deinit();
+    const req = jsonrpc.getStr(parsed.value, "request") orelse return false;
+    return std.mem.eql(u8, req, "attach");
+}
+
 /// `{"seq":N,"type":"request","command":C,"arguments":A}`; `raw`
 /// supplies the arguments as JSON text when set.
 fn envelope(gpa: Allocator, seq: i64, command: []const u8, args: anytype, raw: ?[]const u8) Allocator.Error![]u8 {
@@ -790,6 +815,13 @@ test "envelope: seq/type/command/arguments; a raw body is spliced in verbatim; `
     defer gpa.free(e);
     try testing.expect(std.mem.endsWith(u8, e, "\"arguments\":{}}"));
     try testing.expect(std.mem.indexOf(u8, e, "[]") == null);
+}
+
+test "isAttachBody: only a body whose `request` is attach" {
+    try testing.expect(isAttachBody(testing.allocator, "{\"request\":\"attach\",\"listen\":{\"port\":5678}}"));
+    try testing.expect(!isAttachBody(testing.allocator, "{\"request\":\"launch\",\"program\":\"x\"}"));
+    try testing.expect(!isAttachBody(testing.allocator, "{\"program\":\"x\"}"));
+    try testing.expect(!isAttachBody(testing.allocator, "not json"));
 }
 
 test "substitute: file / workspace variables, unknown names kept, quotes escaped" {

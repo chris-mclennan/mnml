@@ -63,6 +63,7 @@ A throw at the top level ends the program with exit code 1 on resume
 |---|---|
 | `initialize` | the capabilities (conditional + hit-conditional breakpoints, set-variable, evaluate-for-hovers, terminate; no step-back) and the filters — and NOT the `initialized` event, which follows `launch` |
 | `launch{program}` | loads the file; a missing file is `success:false` with `cannot read <path>: <error>`. The reply, then the `initialized` event — lldb-dap's and debugpy's order (the protocol's sequence diagram), so a client that waits for `initialized` before sending `launch` deadlocks here as it does against them |
+| `attach{program}` | the same program, "already running" — it starts on `configurationDone` like a launch, and the reply is followed by `initialized` too. What differs is the goodbye: a fake has no real process a test could `kill -0`, so `<program>.debuggee` beside the file is the ledger — `attached` on attach, then `killed` after `terminate` or `disconnect{terminateDebuggee: true}`, `detached` after a `disconnect` without it (what a client must send for a process it did not start) |
 | `setBreakpoints{source, breakpoints[{line, condition, hitCondition}]}` | replaces the list; `verified` per breakpoint (a statement line of the launched program). Sent before `launch`, the source file is read then so `verified` is real. Hit counts start over on every set |
 | `setExceptionBreakpoints{filters}` | the enabled filter ids |
 | `configurationDone` | starts the run |
@@ -74,8 +75,8 @@ A throw at the top level ends the program with exit code 1 on resume
 | `setVariable{variablesReference, name, value}` | `value` is an expression in the scope's frame; a scope's variable or a struct's field |
 | `continue` / `next` / `stepIn` / `stepOut` | the response, a `continued` event, then the run: `output` events in order, then `stopped{reason}` (`breakpoint`, `step`, `exception`, `pause`) or `exited` + `terminated`. A resume invalidates every struct reference |
 | `pause` | ends a `sleep`: `stopped{reason: "pause"}`; `success:false` when nothing is running |
-| `terminate` | `terminated` (once); the program is over |
-| `disconnect` | the loop ends |
+| `terminate` | `terminated` (once); the program is over (an attached one: the ledger says `killed`) |
+| `disconnect` | the loop ends (an attached program's ledger says `detached`, or `killed` when `terminateDebuggee` is true) |
 | anything else | `success:false` with `unsupported request: <command>`; a frame that is not JSON is ignored |
 | any request whose `arguments` is not an object (or absent) | `success:false` with `` <command>: `arguments` must be an object, not <kind> `` — debugpy's strictness, so a client that writes `[]` for an argument-less request fails here as it does there |
 

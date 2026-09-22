@@ -854,6 +854,8 @@ pub fn restart(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     const file = if (app.dap.last_file) |f| try arena.dupe(u8, f) else (try editorWithPath(app)).path;
     const found = adapterFor(app, file) orelse (try builtinAdapterFor(app, file)) orelse return app.diag.fail(arena, "dap: no adapter for {s}", .{std.fs.path.basename(file)});
+    // `Session.terminate` is a no-op for an attached session; the
+    // `disconnect` inside `startSession`'s `endSession` releases it.
     if (app.dap.session) |s| s.terminate() catch {};
     try startSession(app, found.cfg, file, found.body);
     app.toast("dap: restarted", .{});
@@ -1036,11 +1038,15 @@ pub fn threadCommand(app: *App, kind: client.ReqKind, verb: []const u8) CommandE
     s.threadRequest(kind, verb) catch |err| return app.diag.fail(app.frame.allocator(), "dap {s}: {s}", .{ verb, @errorName(err) });
 }
 
+/// `dap.terminate` (Stop): a launched program is ended; an attached one
+/// is detached from and keeps running — `terminate` is not sent and
+/// the `disconnect` says `terminateDebuggee: false`.
 pub fn terminate(app: *App) CommandError!void {
     const s = app.dap.session orelse return app.diag.fail(app.frame.allocator(), "no DAP session", .{});
+    const attached = s.is_attach;
     s.terminate() catch {};
     endSession(app);
-    app.toast("dap: terminated", .{});
+    if (attached) app.toast("dap: detached (the process keeps running)", .{}) else app.toast("dap: terminated", .{});
 }
 
 pub fn exceptionsPicker(app: *App) CommandError!void {
@@ -1942,6 +1948,10 @@ const FakeLog = struct {
     launched: bool = false,
     configured: bool = false,
     set_variable: bool = false,
+    /// What the goodbye looked like: whether `terminate` came, and
+    /// `disconnect`'s `terminateDebuggee`.
+    terminate_seen: bool = false,
+    disconnect_terminate: ?bool = null,
 
     fn note(self: *FakeLog, comptime field: []const u8, value: anytype) void {
         self.lock.lockUncancelable(testing.io);
@@ -1995,11 +2005,11 @@ fn fakeAdapter(io: std.Io, gpa: Allocator, in: std.Io.File, out: std.Io.File, lo
             const filters: []const jsonrpc.Value = jsonrpc.getArr(args, "filters") orelse &.{};
             log.note("filters_count", filters.len);
             fakeReply(io, gpa, out, &seq, rseq, cmd, "{}");
-        } else if (std.mem.eql(u8, cmd, "launch")) {
+        } else if (std.mem.eql(u8, cmd, "launch") or std.mem.eql(u8, cmd, "attach")) {
             log.note("launched", true);
             fakeReply(io, gpa, out, &seq, rseq, cmd, "{}");
             // debugpy (and lldb-dap): `initialized` only while handling
-            // `launch` — a client waiting for it before `launch` hangs here.
+            // `launch` / `attach` — a client waiting for it first hangs here.
             fakeEvent(io, gpa, out, &seq, "initialized", "{}");
         } else if (std.mem.eql(u8, cmd, "configurationDone")) {
             log.note("configured", true);
@@ -2029,9 +2039,13 @@ fn fakeAdapter(io: std.Io, gpa: Allocator, in: std.Io.File, out: std.Io.File, lo
             fakeEvent(io, gpa, out, &seq, "continued", "{\"threadId\":1}");
             line += 1;
             fakeEvent(io, gpa, out, &seq, "stopped", "{\"reason\":\"step\",\"threadId\":1}");
-        } else if (std.mem.eql(u8, cmd, "disconnect") or std.mem.eql(u8, cmd, "terminate")) {
+        } else if (std.mem.eql(u8, cmd, "terminate")) {
+            log.note("terminate_seen", true);
             fakeReply(io, gpa, out, &seq, rseq, cmd, "{}");
-            if (std.mem.eql(u8, cmd, "disconnect")) return;
+        } else if (std.mem.eql(u8, cmd, "disconnect")) {
+            log.note("disconnect_terminate", jsonrpc.getBool(args, "terminateDebuggee"));
+            fakeReply(io, gpa, out, &seq, rseq, cmd, "{}");
+            return;
         } else {
             fakeReply(io, gpa, out, &seq, rseq, cmd, "{}");
         }
@@ -2138,10 +2152,59 @@ test "a scripted adapter: the handshake, a stop with frames/scopes/variables/wat
     try testing.expectEqual(@as(u32, 3), app.dap.arrow.?.line);
 
     // Goodbye: terminate drops the session; the fake leaves on disconnect.
+    // A LAUNCHED program is ended with it: `terminate`, then
+    // `disconnect { terminateDebuggee: true }`.
+    try testing.expect(!s.is_attach);
     try command.run(&app, .{ .static = .@"dap.terminate" });
+    try testing.expectEqualStrings("dap: terminated", app.lastToast().?);
     try testing.expect(app.dap.session == null);
     try testing.expect(app.dap.arrow == null);
     try group.await(io);
+    try testing.expect(log.terminate_seen);
+    try testing.expectEqual(@as(?bool, true), log.disconnect_terminate);
+    (F{ .handle = c2s[0], .flags = flags }).close(io);
+    (F{ .handle = s2c[1], .flags = flags }).close(io);
+}
+
+test "an attach session: Stop detaches — no `terminate`, `disconnect { terminateDebuggee: false }` — and the process is not mnml's to end" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var app = try App.initWith(gpa, io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const file = "/tmp/mnml-zig-fake-dap-attach.py";
+    _ = try app.openScratch();
+    const ed_pane = app.activeEditor().?;
+    try ed_pane.buf.setPath(file);
+    try ed_pane.buf.editor.setText("import x\n\nx = 1\ny = 2\n");
+
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const c2s = try std.Io.Threaded.pipe2(.{});
+    const s2c = try std.Io.Threaded.pipe2(.{});
+    const F = std.Io.File;
+    const flags: F.Flags = .{ .nonblocking = false };
+    var log: FakeLog = .{};
+    var group: std.Io.Group = .init;
+    try group.concurrent(io, fakeAdapter, .{ io, gpa, F{ .handle = c2s[0], .flags = flags }, F{ .handle = s2c[1], .flags = flags }, &log, file });
+    const s = try Session.initFiles(gpa, io, &app.events, app.dap.next_session, F{ .handle = c2s[1], .flags = flags }, F{ .handle = s2c[0], .flags = flags }, "{\"request\":\"attach\",\"listen\":{\"host\":\"127.0.0.1\",\"port\":5678}}");
+    app.dap.next_session += 1;
+    app.dap.session = s;
+    try testing.expect(s.is_attach);
+    try s.initialize();
+    const Cond = struct {
+        fn stopped(a: *App) bool {
+            const ss = a.dap.session orelse return false;
+            return ss.stopped != null and ss.frames.len > 0;
+        }
+    };
+    try pumpUntil(&app, &app, Cond.stopped, 5000);
+    try testing.expect(log.launched and log.configured);
+    try command.run(&app, .{ .static = .@"dap.terminate" });
+    try testing.expectEqualStrings("dap: detached (the process keeps running)", app.lastToast().?);
+    try testing.expect(app.dap.session == null);
+    try group.await(io);
+    try testing.expect(!log.terminate_seen);
+    try testing.expectEqual(@as(?bool, false), log.disconnect_terminate);
     (F{ .handle = c2s[0], .flags = flags }).close(io);
     (F{ .handle = s2c[1], .flags = flags }).close(io);
 }
