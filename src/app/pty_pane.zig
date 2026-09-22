@@ -734,19 +734,29 @@ pub fn feedKey(app: *App, p: *PtyPane, k: Key) void {
 }
 
 /// Paste: bracketed when the child asked for it, else the text with
-/// newlines as carriage returns (what a keyboard would have sent).
+/// newlines as carriage returns (what a keyboard would have sent) —
+/// sanitized either way (`encodePaste`).
 pub fn paste(app: *App, p: *PtyPane, text: []const u8) Allocator.Error!void {
-    const enc = p.encoding();
-    if (enc.bracketed_paste) {
-        const wrapped = try std.mem.concat(app.frame.allocator(), u8, &.{ "\x1b[200~", text, "\x1b[201~" });
-        p.write(wrapped);
-        return;
-    }
-    const copy = try app.frame.allocator().dupe(u8, text);
-    for (copy) |*c| if (c.* == '\n') {
-        c.* = '\r';
+    p.write(try encodePaste(app.frame.allocator(), text, p.encoding().bracketed_paste));
+}
+
+/// The bytes a paste sends. Pasted text is data, never commands: ESC and
+/// every other C0 control but tab, CR and LF (and DEL) become spaces
+/// BEFORE the bracketed-paste fences go on, so an `ESC[201~` hidden in
+/// copied text cannot close the bracket early and type the rest at the
+/// prompt, and an embedded ^C / ^U / ^W never reaches the line
+/// discipline. xterm's rule (ghostty's `input/paste.zig` strips the same
+/// family); the framing and the newline conversion are ghostty's own
+/// encoder's.
+pub fn encodePaste(arena: Allocator, text: []const u8, bracketed: bool) Allocator.Error![]u8 {
+    const copy = try arena.dupe(u8, text);
+    for (copy) |*b| switch (b.*) {
+        '\t', '\n', '\r' => {},
+        0...0x08, 0x0b, 0x0c, 0x0e...0x1f, 0x7f => b.* = ' ',
+        else => {},
     };
-    p.write(copy);
+    const parts = pty.vt.input.encodePaste(copy, .{ .bracketed = bracketed });
+    return std.mem.concat(arena, u8, &parts);
 }
 
 /// A mouse event inside the pane's rect: a report to the child when it
@@ -1196,6 +1206,23 @@ test "vim: <C-\\><C-n> leaves the child for terminal-normal, where the leader an
     try t.expect(!p.ctrl_backslash_pending and !p.term_normal);
     try app.handle(.{ .key = Key.named(.enter) });
     try t.expect(try tickUntilScreen(&app, "#Q", 5000));
+}
+
+test "encodePaste: ESC and the tty controls become spaces before the fences go on; tab, CR and LF survive" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    // The paste-jacking payload: a fence closer, then a command line.
+    const evil = "echo harmless\x1b[201~\necho PWNED > pwned.txt\n";
+    const out = try encodePaste(arena, evil, true);
+    try t.expectEqualStrings("\x1b[200~echo harmless [201~\necho PWNED > pwned.txt\n\x1b[201~", out);
+    // Exactly one closer, and it is the last thing sent.
+    try t.expectEqual(@as(usize, 1), std.mem.count(u8, out, "\x1b[201~"));
+    // ^C ^U ^W ^Z NUL DEL are spaces — and ^A, which xterm's own list
+    // leaves alone and readline reads as "start of line"; tab is kept.
+    try t.expectEqualStrings("\x1b[200~a b c d e f g\th\x1b[201~", try encodePaste(arena, "a\x03b\x15c\x17d\x1ae\x00f\x01g\th", true));
+    // Unbracketed: the same strip, and LF as CR.
+    try t.expectEqualStrings("one\rtwo  x\r", try encodePaste(arena, "one\ntwo\x1b\x03x\n", false));
 }
 
 test "paste is bracketed only when the child asked; a newline becomes a carriage return otherwise" {

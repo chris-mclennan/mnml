@@ -1,0 +1,22 @@
+# env: SHELL=/bin/zsh
+# env: HOME=${MNML_E2E_WORKSPACE}/zdot
+# env: ZDOTDIR=${MNML_E2E_WORKSPACE}/zdot
+# A paste cannot run commands on its own. Pasted text is data: ESC and
+# the other C0 controls (bar tab, CR, LF) become spaces before the
+# bracketed-paste fences go on, so a copied snippet that hides an
+# `ESC [201~` cannot close the bracket early and type the rest at the
+# prompt — the paste-jacking bracketed paste exists to stop.
+#
+# A real zsh (its line editor turns bracketed paste on) with a scratch
+# ZDOTDIR; the snippet would create `pwned.txt` if its second line ran.
+shell mkdir -p zdot && printf 'PS1="%%# "\nunset HISTFILE\n' > zdot/.zshrc
+shell printf 'echo harmless\033[201~\necho PWNED > pwned.txt\n' > snippet.txt
+open snippet.txt
+command editor.use_vim
+type "yj"
+command term.shell_bottom
+wait 2500
+command term.paste
+wait 1500
+expect screen contains "harmless [201~"
+shell test ! -e pwned.txt
