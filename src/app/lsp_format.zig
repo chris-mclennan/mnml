@@ -31,6 +31,7 @@ const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const event = @import("../core/event.zig");
 const jsonrpc = @import("../rpc/jsonrpc.zig");
+const runners = @import("runners.zig");
 const client = @import("../lsp/client.zig");
 const types = @import("../lsp/types.zig");
 const tools = @import("../lsp/tools.zig");
@@ -232,8 +233,12 @@ const RunOut = struct { ok: bool, stdout: []const u8, stderr: []const u8 };
 
 /// Spawn `argv` in the workspace with `stdin` on its input; both output
 /// streams land on `arena`.
-fn runTool(app: *App, arena: Allocator, argv: []const []const u8, stdin: []const u8) !RunOut {
+fn runTool(app: *App, arena: Allocator, argv_in: []const []const u8, stdin: []const u8) !RunOut {
     const io = app.io;
+    // Resolved on the App's PATH (see `lintWorker`).
+    const argv = try arena.dupe([]const u8, argv_in);
+    var where: [std.fs.max_path_bytes]u8 = undefined;
+    if (runners.pathOf(io, &app.env, &where, argv[0])) |abs| argv[0] = try arena.dupe(u8, abs);
     var child = try std.process.spawn(io, .{
         .argv = argv,
         .cwd = .{ .path = app.workspace },
@@ -352,12 +357,24 @@ const WireDiag = struct {
     severity: u8,
     message: []const u8,
     source: ?[]const u8,
+    code: ?[]const u8,
 };
 
 /// Run the tool, parse its output, post the findings as a
 /// `publishDiagnostics` from `linter_server_id`.
 fn lintWorker(events: *event.EventQueue, io: Io, gpa: Allocator, job: *Job, env: *const std.process.Environ.Map) Io.Cancelable!void {
     defer job.destroy(gpa);
+    // The App's PATH, not this process's, decides which tool runs — a
+    // spawn looks argv[0] up on the environment mnml was started in,
+    // which is not the one the user configured (`runners.pathOf`, as
+    // the tests pane's worker does).
+    var where: [std.fs.max_path_bytes]u8 = undefined;
+    if (runners.pathOf(io, env, &where, job.argv[0])) |abs| {
+        if (gpa.dupe(u8, abs)) |owned| {
+            gpa.free(job.argv[0]);
+            job.argv[0] = owned;
+        } else |_| {}
+    }
     const result = std.process.run(gpa, io, .{
         .argv = job.argv,
         .cwd = .{ .path = job.cwd },
@@ -391,7 +408,7 @@ fn lintWorker(events: *event.EventQueue, io: Io, gpa: Allocator, job: *Job, env:
         return;
     }
     const wire = a.alloc(WireDiag, diags.len) catch return;
-    for (diags, 0..) |d, i| wire[i] = .{ .range = d.range, .severity = @intFromEnum(d.severity), .message = d.message, .source = d.source };
+    for (diags, 0..) |d, i| wire[i] = .{ .range = d.range, .severity = @intFromEnum(d.severity), .message = d.message, .source = d.source, .code = d.code };
     const uri = types.uriFromPath(a, job.path) catch return;
     const body = jsonrpc.stringify(gpa, .{
         .jsonrpc = "2.0",

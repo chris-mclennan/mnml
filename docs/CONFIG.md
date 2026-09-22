@@ -737,7 +737,7 @@ otherwise. Copy what you need; leave the rest out.
     // runs regardless, as does `editor.lint_external`.
     .linters = .{
         .sh = .{ .cmd = .{ "shellcheck", "-f", "gcc" }, .parser = .shellcheck },
-        // .parser: .vimgrep (default, path:line:col: msg) | .eslint | .tsc | .ruff | .shellcheck | .pattern
+        // .parser: .vimgrep (default, path:line:col: msg) | .eslint (its --format=json, or the unix lines) | .tsc | .ruff | .shellcheck | .pattern
         // .pattern matches a line template of placeholders literally between them:
         .log = .{ .cmd = .{ "mylint", "{file}" }, .parser = .pattern, .pattern = "{file}:{line}:{col}: {severity}: {message}" },
     },
