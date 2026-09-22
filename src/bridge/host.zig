@@ -707,5 +707,10 @@ test "close: a sibling that never connected and outlives goodbye is killed, not 
     // takes it down.
     m.close();
     m.destroy();
-    try testing.expect(child_os.gone(pid));
+    // `reapAbandoned` returns reaped, so `gone` holds the instant `close`
+    // does; the deadline is what a wrong answer costs. The one this test
+    // gave under load — one run in twenty, "still there" a full ten
+    // seconds after the kill — was a zombie: the cancel's SIGIO had
+    // landed in the reap's `waitpid` (`core/child.zig`, `reap`).
+    try testing.expect(child_os.goneWithin(io, pid, .fromSeconds(10)));
 }

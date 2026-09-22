@@ -300,8 +300,30 @@ process every single time — that was the browser pane's tab-close crash
   like it covers that path is a no-op. Take `child.id` before the wait
   and hand it to `core/child.zig`'s `reapAbandoned` on the error path
   (`integration_poll.zig`'s worker and `bridge/host.zig`'s reader are the
-  models). `core/child.zig`'s `gone(pid)` is how a test holds that a
-  child was really taken down.
+  models). `core/child.zig`'s `goneWithin(io, pid, deadline)` is how a
+  test holds that a child was really taken down.
+
+A cancelled task is still being signalled. `Io.Group.cancel` keeps
+sending SIGIO to a worker's thread until the task is seen to finish —
+`Io.Threaded`'s no-op handler turns each into an EINTR in whatever
+syscall the thread is in — and one of them lands after the `wait` has
+already come back `Canceled`, in the `waitpid` of the reap that
+follows. `reapAbandoned` took that EINTR for done: the SIGKILL had been
+sent, the child died, nobody reaped it, and a zombie is a pid
+`kill(pid, 0)` still calls there. Two tests failed on it only under
+load (`integration_poll.zig`'s "reaps its child" and `bridge/host.zig`'s
+"outlives goodbye"), one run in twenty at a load average past 20, and
+a 10 s deadline on the check did not help — the child was dead the
+whole time. Any raw `waitpid` on this path retries EINTR
+(`core/child.zig`'s `reap`); `Child.kill` already does.
+
+A test that holds a child was taken down asserts through
+`core/child.zig`'s `goneWithin(io, pid, .fromSeconds(10))`, not `gone`
+after a fixed sleep. `Child.kill` and `reapAbandoned` both return
+reaped, so a healthy run pays nothing — `gone` is true the instant they
+return — and the deadline is only what a wrong answer costs: a real
+orphan, or a zombie, is still there when it runs out. Do not tune the
+deadline down to make a test faster; it is not the cost.
 
 ## Tests
 

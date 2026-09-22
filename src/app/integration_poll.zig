@@ -799,9 +799,12 @@ test "stopping the poller cancels the worker and reaps its child: nothing outliv
     app.integration_poll.stop(app.gpa, app.io);
     try testing.expect(!app.integration_poll.running);
     try testing.expectEqual(@as(usize, 0), app.integration_poll.jobs.items.len);
-    var settle: usize = 0;
-    while (settle < 40 and processAlive(pid)) : (settle += 1) testing.io.sleep(.fromMilliseconds(50), .awake) catch {};
-    try testing.expect(!processAlive(pid));
+    // `stop` returns after the worker has, and the worker after the
+    // reap, so `gone` holds at once; the deadline is what a wrong answer
+    // costs. The one this test gave under load — "still there" a full
+    // ten seconds after the kill — was a zombie: the cancel's SIGIO had
+    // landed in the reap's `waitpid` (`core/child.zig`, `reap`).
+    try testing.expect(child_os.goneWithin(testing.io, pid, .fromSeconds(10)));
 }
 
 /// Whether that process is still there. A child the worker failed to
