@@ -1,0 +1,20 @@
+# The find bar's replace-all over 80,000 matches is one pass: the new text
+# is built once and lands in one splice, the way `:%s` does it. An op per
+# match spliced the whole buffer per match and took ~6 s here (a 20 MB
+# log froze the UI for minutes); the budget below is generous for a busy
+# machine and still far under that.
+shell python3 -c "import sys; sys.stdout.write(''.join('line %d worker-%d took 5ms\n' % (i, i%17) for i in range(80000)))" > a.log
+open a.log
+key ctrl+h
+type "worker-"
+key enter
+expect screen contains "Replace 80000"
+type "w-"
+shell python3 -c 'import time; open("t0","w").write(str(time.time()))'
+key enter
+shell python3 -c 'import time,sys; e=time.time()-float(open("t0").read()); print("replace-all took %.2fs" % e, file=sys.stderr); sys.exit(0 if e < 3.0 else 1)'
+expect screen contains "replaced 80000"
+command file.save
+wait 100
+expect file a.log lacks "worker-"
+expect file a.log contains "line 79999 w-14 took 5ms\n"

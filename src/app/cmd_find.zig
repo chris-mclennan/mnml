@@ -18,7 +18,6 @@ const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const find_mod = @import("find.zig");
 const regex = @import("../regex/regex.zig");
-const EditOp = @import("../editor/edit_op.zig").EditOp;
 
 pub const table = .{
     .@"find.find" = &open,
@@ -389,26 +388,32 @@ pub fn replaceAll(app: *App, replacement: []const u8) Allocator.Error!void {
         return;
     }
     const arena = app.frame.allocator();
-    var ops: std.ArrayListUnmanaged(EditOp) = .empty;
     // In regex mode the replacement may name groups (`\1`, `&`), so
     // each match is found again for its groups and expanded.
     var re: ?regex.Regex = if (e.find.regex) regex.Regex.compile(e.find.query.items, .{ .ignore_case = !e.find.case_sensitive }) catch null else null;
     defer if (re) |*r| r.deinit();
     const text = e.buf.editor.bytes();
-    var i = n;
-    while (i > 0) {
-        i -= 1;
-        const m = e.find.matches.items[i];
-        var rep: []const u8 = replacement;
+    const matches = e.find.matches.items;
+    // One pass builds the text from the first match to the last and one
+    // splice lands it — one undo entry, one change for the server, as
+    // `:%s` does. An op per match spliced the whole buffer per match.
+    const lo = matches[0].start;
+    const hi = matches[n - 1].end;
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    try out.ensureTotalCapacity(arena, hi - lo);
+    var copied = lo;
+    var first_end: usize = lo;
+    for (matches, 0..) |m, mi| {
+        try out.appendSlice(arena, text[copied..m.start]);
         if (re) |*r| if (r.find(text, m.start)) |full| {
-            var out: std.ArrayListUnmanaged(u8) = .empty;
             try regex.expandReplacement(arena, &out, replacement, text, full);
-            rep = out.items;
-        };
-        try ops.append(arena, .{ .replace_range = .{ .start = m.start, .end = m.end, .text = rep } });
+        } else try out.appendSlice(arena, replacement) else try out.appendSlice(arena, replacement);
+        copied = m.end;
+        if (mi == 0) first_end = lo + out.items.len;
     }
-    const atomic: EditOp = .{ .atomic = ops.items };
-    _ = try app.applyOps(e, &.{atomic});
+    _ = try app.applyOps(e, &.{.{ .replace_range = .{ .start = lo, .end = hi, .text = out.items } }});
+    // The cursor ends after the first replacement, where it always has.
+    e.buf.editor.setCursor(@min(first_end, e.buf.editor.len()));
     try e.find.recompute(e.buf.editor.bytes());
     app.toast("replaced {d}", .{n});
 }
@@ -720,4 +725,23 @@ test "find: Esc restores the previous find state; replace prompts and splices ev
     // One undo step for the whole run.
     _ = try app.applyOps(e, &.{.undo});
     try t.expectEqualStrings("alpha beta alpha gamma alpha", e.buf.editor.bytes());
+}
+
+test "find: replace-all lands every match in one splice, cursor after the first replacement" {
+    var app = try appWith("x worker-1 y worker-2 z worker-3\n");
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"find.find" });
+    for ("worker-") |c| try app.handle(.{ .key = Key.char(c) });
+    try app.handle(.{ .key = Key.named(.enter) });
+    const e = app.activeEditor().?;
+    try t.expectEqual(@as(usize, 3), e.find.matches.items.len);
+    const seq0 = e.buf.doc.edits.next_seq;
+    try command.run(&app, .{ .static = .@"find.replace" });
+    for ("w-") |c| try app.handle(.{ .key = Key.char(c) });
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expectEqualStrings("x w-1 y w-2 z w-3\n", e.buf.editor.bytes());
+    // One splice (so one change for the server and O(file) work), where
+    // an op per match spliced the whole buffer once per match.
+    try t.expectEqual(seq0 + 1, e.buf.doc.edits.next_seq);
+    try t.expectEqual(@as(usize, 4), e.buf.editor.cursor);
 }
