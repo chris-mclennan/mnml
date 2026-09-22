@@ -4,11 +4,18 @@
 //! Enter applies what is ticked, Esc walks away. A single-file rename
 //! still applies at once (`lsp.zig`).
 //!
-//! Applying goes two ways: a file open in an editor takes its edits
-//! through `EditOp` (one undo step, the buffer marked dirty, the server
-//! synced on the next frame); a closed file is read, edited and written
-//! back. A closed file whose text on disk no longer holds the edit's
-//! positions is refused with a toast rather than mangled.
+//! Applying is one way for every file: a file open in an editor takes
+//! its edits through `EditOp` (one undo step, the buffer marked dirty,
+//! the server synced on the next frame), and a file that is not open is
+//! opened first — in the background, the active pane kept — and takes
+//! them the same way. Nothing touches the disk until the user saves, so
+//! the rename is never half on disk and half in buffers (a closed file
+//! written at once beside an open one left dirty meant `./deploy.sh`
+//! failed with `join_by: command not found` until the dot was noticed,
+//! and `:q!` on the open buffer left the others renamed for good); one
+//! `file.save_all` lands the whole edit, one undo per buffer takes it
+//! back. VS Code and Neovim do the same. The box says how many files it
+//! will open.
 //!
 //! The box is `app.lsp` state like the peek overlay, not an `Overlay`
 //! variant: its rows register `.overlay_item(row)` while no overlay is
@@ -225,70 +232,44 @@ pub fn click(app: *App, i: usize) void {
 
 // ─── apply ──────────────────────────────────────────────────────────────
 
-/// The ticked files: open buffers through `EditOp`, closed files
-/// written directly. The box closes either way.
+/// The ticked files, every one through `EditOp` in a buffer: an open
+/// file's, or one opened here for it (the active pane kept). Nothing
+/// is written; the toast says how many buffers were opened unsaved.
+/// The box closes either way.
 pub fn apply(app: *App) Allocator.Error!void {
     var p = app.lsp.rename.preview orelse return;
     app.lsp.rename.preview = null;
     defer p.deinit();
     var files_done: usize = 0;
     var edits_done: usize = 0;
+    var opened: usize = 0;
     var refused: usize = 0;
+    const keep_active = app.active;
     for (p.files) |f| {
         if (!f.enabled) continue;
-        if (app.panes.findPath(f.path)) |id| {
-            if (app.panes.editor(id)) |e| {
-                try lsp.applyEditsToPane(app, e, f.edits, p.server.encoding);
-                files_done += 1;
-                edits_done += f.edits.len;
-            }
-            continue;
-        }
-        switch (try writeClosed(app, f, p.server.encoding)) {
-            .written => {
-                files_done += 1;
-                edits_done += f.edits.len;
-            },
-            .refused => |why| {
+        const was_open = app.panes.findPath(f.path) != null;
+        const id = app.panes.findPath(f.path) orelse (app.openEditor(f.path) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {
                 refused += 1;
-                app.toast("rename: {s} skipped — {s}", .{ app.relPath(f.path), why });
+                app.toast("rename: {s} skipped — cannot open it", .{app.relPath(f.path)});
+                continue;
             },
-        }
+        });
+        const e = app.panes.editor(id) orelse {
+            refused += 1;
+            continue;
+        };
+        try lsp.applyEditsToPane(app, e, f.edits, p.server.encoding);
+        files_done += 1;
+        edits_done += f.edits.len;
+        if (!was_open) opened += 1;
     }
-    if (refused == 0) app.toast("renamed in {d} file(s) · {d} edit(s)", .{ files_done, edits_done }) else app.toast("renamed in {d} file(s), {d} skipped", .{ files_done, refused });
+    if (keep_active) |k| if (app.panes.get(k) != null) app.setActive(k);
+    const arena = app.frame.allocator();
+    const opened_note: []const u8 = if (opened > 0) try std.fmt.allocPrint(arena, " · {d} opened unsaved", .{opened}) else "";
+    if (refused == 0) app.toast("renamed in {d} file(s) · {d} edit(s){s}", .{ files_done, edits_done, opened_note }) else app.toast("renamed in {d} file(s), {d} skipped{s}", .{ files_done, refused, opened_note });
     app.needs_render = true;
-}
-
-const Written = union(enum) { written, refused: []const u8 };
-
-/// Edit a file that is not open: read, splice last-first, write.
-fn writeClosed(app: *App, f: File, enc: types.Encoding) Allocator.Error!Written {
-    const gpa = app.gpa;
-    const text = Io.Dir.cwd().readFileAlloc(app.io, f.path, gpa, .limited(64 * 1024 * 1024)) catch return .{ .refused = "cannot read it" };
-    defer gpa.free(text);
-    // Every edit must land inside the text as it is now: its end line
-    // exists and its end column is within that line.
-    var line_count: u32 = 1;
-    for (text) |c| if (c == '\n') {
-        line_count += 1;
-    };
-    for (f.edits) |te| {
-        if (te.range.end.line >= line_count) return .{ .refused = "it changed on disk" };
-        if (types.units(lineSlice(text, te.range.end.line), enc) < te.range.end.character) return .{ .refused = "it changed on disk" };
-    }
-    var out: std.ArrayListUnmanaged(u8) = .empty;
-    defer out.deinit(gpa);
-    try out.appendSlice(gpa, text);
-    var i = f.edits.len;
-    while (i > 0) {
-        i -= 1;
-        const te = f.edits[i];
-        const start = types.byteOf(out.items, te.range.start, enc);
-        const end = @max(types.byteOf(out.items, te.range.end, enc), start);
-        try out.replaceRange(gpa, start, end - start, te.new_text);
-    }
-    Io.Dir.cwd().writeFile(app.io, .{ .sub_path = f.path, .data = out.items }) catch return .{ .refused = "cannot write it" };
-    return .written;
 }
 
 // ─── draw ───────────────────────────────────────────────────────────────
@@ -309,7 +290,15 @@ pub fn draw(app: *App, ui: Ui, area: Rect) void {
         edits += f.edits.len;
         if (f.enabled) on += 1;
     }
-    const title = ui.fmt("{s} rename · {d} of {d} files · {d} edits", .{ if (ui.ascii) "*" else "✦", on, p.files.len, edits });
+    // How many ticked files are not open: Enter opens those, unsaved.
+    var closed: usize = 0;
+    for (p.files) |f| if (f.enabled and app.panes.findPath(f.path) == null) {
+        closed += 1;
+    };
+    const title = if (closed == 0)
+        ui.fmt("{s} rename · {d} of {d} files · {d} edits", .{ if (ui.ascii) "*" else "✦", on, p.files.len, edits })
+    else
+        ui.fmt("{s} rename · {d} of {d} files · {d} edits · {d} closed file{s} opens unsaved", .{ if (ui.ascii) "*" else "✦", on, p.files.len, edits, closed, if (closed == 1) "" else "s" });
     const inner = overlay.frame(ui, Rect.init(x, y, w, h), title);
     if (inner.isEmpty() or inner.h < 2) return;
     const rows: usize = inner.h - 1;
@@ -351,7 +340,7 @@ const testing = std.testing;
 const builtin = @import("builtin");
 const command = @import("../core/command.zig");
 
-test "through the fake server: a rename over two files opens the preview; an unticked file is skipped, a ticked closed file is written, a changed closed file is refused, Esc walks away" {
+test "through the fake server: a rename over two files opens the preview; an unticked file is skipped, a ticked closed file opens as a dirty buffer and the disk waits for the save, Esc walks away" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const gpa = testing.allocator;
     const io = testing.io;
@@ -377,8 +366,10 @@ test "through the fake server: a rename over two files opens the preview; an unt
     try lsp.TestRig.pump(&app, &app, Cond.ready, 5000);
     const ed = e.buf.editor;
     ed.setCursor(17); // `foo` on line 1
+    const source_pane = app.active.?;
 
-    // Two files: the box lists both, sorted by path, hunks under each.
+    // Two files: the box lists both, sorted by path, hunks under each;
+    // the hint says the closed one will be opened.
     try lsp.acceptRename(&app, "multiOne");
     try lsp.TestRig.pump(&app, &app, Cond.preview, 5000);
     {
@@ -391,49 +382,56 @@ test "through the fake server: a rename over two files opens the preview; an unt
     }
     const txt = try lsp.TestRig.screenText(&app, gpa);
     defer gpa.free(txt);
-    try testing.expect(std.mem.indexOf(u8, txt, "✦ rename · 2 of 2 files · 2 edits") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "✦ rename · 2 of 2 files · 2 edits · 1 closed file opens unsaved") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "const foo = 2; → multiOne") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "[✓] mnml-zig-fake-lsp-other.ts  (1)") != null);
     // Space on the first header unticks the closed file; Enter applies
-    // only the open buffer's edit.
+    // only the open buffer's edit, and opens nothing.
     try app.handle(.{ .key = Key.char(' ') });
     try testing.expect(!app.lsp.rename.preview.?.files[0].enabled);
     const one = try lsp.TestRig.screenText(&app, gpa);
     defer gpa.free(one);
-    try testing.expect(std.mem.indexOf(u8, one, "1 of 2 files") != null);
+    try testing.expect(std.mem.indexOf(u8, one, "1 of 2 files · 2 edits") != null);
+    try testing.expect(std.mem.indexOf(u8, one, "opens unsaved") == null);
     try app.handle(.{ .key = Key.named(.enter) });
     try testing.expect(app.lsp.rename.preview == null);
     try testing.expect(std.mem.indexOf(u8, ed.bytes(), "const multiOne = 2;") != null);
     try testing.expectEqualStrings("renamed in 1 file(s) · 1 edit(s)", app.lastToast().?);
+    try testing.expect(app.panes.findPath(other) == null);
     var disk = try Io.Dir.cwd().readFileAlloc(io, other, gpa, .limited(4096));
     try testing.expectEqualStrings("foo();\nfoo();\n", disk);
     gpa.free(disk);
 
-    // Both ticked: the closed file is written on disk, last edit first.
+    // Both ticked: the closed file is opened behind the active pane,
+    // edited in memory and dirty; the disk still says `foo` until a
+    // save-all writes both.
     try lsp.acceptRename(&app, "multiTwo");
     try lsp.TestRig.pump(&app, &app, Cond.preview, 5000);
     try app.handle(.{ .key = Key.named(.enter) });
-    try testing.expectEqualStrings("renamed in 2 file(s) · 2 edit(s)", app.lastToast().?);
+    try testing.expectEqualStrings("renamed in 2 file(s) · 2 edit(s) · 1 opened unsaved", app.lastToast().?);
     try testing.expect(std.mem.indexOf(u8, ed.bytes(), "multiTwo") != null);
+    try testing.expectEqual(source_pane, app.active.?);
+    const other_id = app.panes.findPath(other).?;
+    const oe = app.panes.editor(other_id).?;
+    try testing.expectEqualStrings("foo();\nmultiTwo();\n", oe.buf.editor.bytes());
+    try testing.expect(oe.buf.doc.dirty);
+    disk = try Io.Dir.cwd().readFileAlloc(io, other, gpa, .limited(4096));
+    try testing.expectEqualStrings("foo();\nfoo();\n", disk);
+    gpa.free(disk);
+    try oe.buf.save(io);
     disk = try Io.Dir.cwd().readFileAlloc(io, other, gpa, .limited(4096));
     try testing.expectEqualStrings("foo();\nmultiTwo();\n", disk);
     gpa.free(disk);
 
-    // The closed file changed under the box: refused, not mangled.
+    // Now that it is open, the next rename edits the buffer it has.
     try lsp.acceptRename(&app, "multiThree");
     try lsp.TestRig.pump(&app, &app, Cond.preview, 5000);
-    try Io.Dir.cwd().writeFile(io, .{ .sub_path = other, .data = "x" });
+    const both_open = try lsp.TestRig.screenText(&app, gpa);
+    defer gpa.free(both_open);
+    try testing.expect(std.mem.indexOf(u8, both_open, "opens unsaved") == null);
     try app.handle(.{ .key = Key.named(.enter) });
-    try testing.expectEqualStrings("renamed in 1 file(s), 1 skipped", app.lastToast().?);
-    disk = try Io.Dir.cwd().readFileAlloc(io, other, gpa, .limited(4096));
-    try testing.expectEqualStrings("x", disk);
-    gpa.free(disk);
-    // A line that exists but is too short is refused the same way.
-    try Io.Dir.cwd().writeFile(io, .{ .sub_path = other, .data = "a\nb\n" });
-    try lsp.acceptRename(&app, "multiShort");
-    try lsp.TestRig.pump(&app, &app, Cond.preview, 5000);
-    try app.handle(.{ .key = Key.named(.enter) });
-    try testing.expectEqualStrings("renamed in 1 file(s), 1 skipped", app.lastToast().?);
+    try testing.expectEqualStrings("renamed in 2 file(s) · 2 edit(s)", app.lastToast().?);
+    try testing.expect(std.mem.startsWith(u8, oe.buf.editor.bytes(), "foo();\nmultiThree"));
 
     // Esc: nothing changes. `a` toggles every file; a click toggles a row's.
     const before = try gpa.dupe(u8, ed.bytes());
