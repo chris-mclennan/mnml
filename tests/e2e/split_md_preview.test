@@ -1,0 +1,44 @@
+# width: 120
+# Splitting a rendered markdown tab. A markdown file opens rendered
+# (`ui.markdown_opens_rendered`), and its split's companion is the
+# file's SOURCE editor beside the rendering. Before 2026-09-22 the
+# companion came back as the rendered tab itself — `openPath` routes a
+# markdown file to its rendered tab — so the split took the only tab
+# out of its leaf and then had no leaf to split: the layout emptied and
+# the file was gone from both halves. This is the user's "I split and
+# end up with nothing loaded", as a glance and as a kept tab.
+write README.md "# hi\nsecond line\n"
+write notes.md "# notes\nthird line\n"
+command tree.refresh
+
+# Rows (case-folded order): the workspace header 1, notes.md 2,
+# README.md 3. One click: a rendered glance — the heading loses its #.
+click 14 3
+expect pane "README.md"
+expect screen contains "second line"
+expect screen lacks "# hi"
+expect status contains "\"panes\":[{\"title\":\"README.md\",\"dirty\":false,\"preview\":true}]"
+
+# The strip's split-right button (column 112 at 120 wide): the
+# rendering stays, the source editor shows the raw heading beside it,
+# and both tabs are kept.
+click 112 1
+expect pane "README.md"
+expect screen contains "second line"
+expect screen contains "# hi"
+expect status contains "\"panes\":[{\"title\":\"README.md\",\"dirty\":false,\"preview\":false},{\"title\":\"README.md\",\"dirty\":false,\"preview\":false}]"
+command view.close_split
+expect pane "README.md"
+expect screen contains "second line"
+
+# A kept open of a markdown file (the double-click) splits down the
+# same way: rendering above, source below, nothing lost.
+doubleclick 14 2
+expect pane "notes.md"
+expect screen contains "third line"
+expect screen lacks "# notes"
+click 115 1
+expect pane "notes.md"
+expect screen contains "third line"
+expect screen contains "# notes"
+expect status lacks "\"preview\":true"

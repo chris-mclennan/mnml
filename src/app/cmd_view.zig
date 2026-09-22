@@ -340,17 +340,30 @@ pub fn splitWith(app: *App, dir: layout_mod.SplitDir, pane: ?PaneId) CommandErro
     const layout = app.layouts.current();
     if (layout.leafOf(cur) == null) return error.NoActivePane;
     const id: PaneId = pane orelse try splitCompanion(app, cur);
+    // Never the pane itself: taking it out of its leaf below would
+    // empty the leaf, and a pane in no leaf cannot be split — the file
+    // gone from both halves (a rendered markdown tab did this on
+    // 2026-09-22, its companion having come back as the tab itself).
+    if (id == cur) return app.diag.fail(app.frame.allocator(), "split: {s} has nothing to split with", .{app.panes.get(cur).?.title()});
     // A companion that was shown on its way in leaves the leaf it
     // landed in; the split puts it in the new one.
     _ = layout.removePane(id);
     _ = try layout.split(cur, dir, id);
+    // Splitting a preview tab keeps it (VS Code promotes the tab a
+    // split is made from), and the companion is a kept tab too — a
+    // glance elsewhere takes over neither half. A pane the caller
+    // hands in (a drag, `files.open_split`) is left as it came.
+    if (pane == null) {
+        if (app.panes.get(cur)) |p| p.setPreview(false);
+        if (app.panes.get(id)) |p| p.setPreview(false);
+    }
     app.afterSplitChange();
     app.setActive(id);
 }
 
 /// What the other half of a split starts as, by the active pane's
 /// kind — Rust's `split_active`: an editor is duplicated (the same
-/// document, its own cursor); a markdown preview opens its file as an
+/// document, its own cursor); a markdown preview gets its file's source
 /// editor; a request pane gets a blank request beside it, the caret on
 /// the URL; anything else (a terminal, a graph, a list…) gets a scratch
 /// editor, so the split is never refused.
@@ -358,9 +371,14 @@ fn splitCompanion(app: *App, cur: PaneId) CommandError!PaneId {
     const p = app.panes.get(cur) orelse return error.NoActivePane;
     switch (p.*) {
         .editor => return app.duplicatePane(cur) catch |err| splitFail(app, err),
+        // The source, not `openPath`: a markdown file routes back to
+        // its rendered tab — this one — and the split would have had
+        // nothing to put beside it. An editor already open on the file
+        // is duplicated rather than pulled out of its own leaf.
         .md_preview => |*m| {
             const path = try app.frame.allocator().dupe(u8, m.path);
-            return app.openPath(path) catch |err| splitFail(app, err);
+            if (app.panes.findPath(path)) |eid| return app.duplicatePane(eid) catch |err| splitFail(app, err);
+            return app.openEditor(path) catch |err| splitFail(app, err);
         },
         .request => return http_app.openBlank(app),
         else => return app.openScratch() catch |err| splitFail(app, err),
@@ -1947,6 +1965,70 @@ test "preview tabs: an edit keeps the tab, `view.keep_tab` keeps it, and a dirty
     // Neither tab is a preview now, so the next glance opens beside them.
     _ = try app.openPreview(c);
     try t.expectEqual(@as(usize, 3), app.panes.count());
+}
+
+test "splitting a preview tab promotes it: both halves are kept tabs of one document with their own ids; a rendered markdown glance splits into its source editor and the layout never empties" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try previewWs(&tmp, &.{ "a.txt", "b.txt" });
+    defer t.allocator.free(root);
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "notes.md", .data = "# Title\n" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 100, .rows = 24 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const a = try std.fs.path.join(t.allocator, &.{ root, "a.txt" });
+    defer t.allocator.free(a);
+    const b = try std.fs.path.join(t.allocator, &.{ root, "b.txt" });
+    defer t.allocator.free(b);
+    const md = try std.fs.path.join(t.allocator, &.{ root, "notes.md" });
+    defer t.allocator.free(md);
+
+    // A glance, then the split: the glanced tab is kept, its twin is a
+    // kept tab of the same document, and each half holds one of them.
+    const glanced = try app.openPreview(a);
+    try t.expect(app.panes.get(glanced).?.preview());
+    try command.run(&app, .{ .static = .@"view.split_right" });
+    const twin = app.active.?;
+    try t.expect(twin != glanced);
+    const layout = app.layouts.current();
+    try t.expectEqual(@as(usize, 2), (try layout.leaves(app.frame.allocator())).len);
+    try t.expect(layout.leafOf(glanced) != null);
+    try t.expect(layout.leafOf(twin) != null);
+    try t.expect(layout.leafOf(glanced).? != layout.leafOf(twin).?);
+    try t.expect(!app.panes.get(glanced).?.preview());
+    try t.expect(!app.panes.get(twin).?.preview());
+    try t.expect(app.panes.editor(glanced).?.buf.doc == app.panes.editor(twin).?.buf.doc);
+    // One document, two cursors: moving the twin's leaves the glanced
+    // tab's where it was.
+    app.panes.editor(twin).?.buf.editor.setCursor(1);
+    try t.expectEqual(@as(usize, 1), app.panes.editor(twin).?.buf.editor.cursor);
+    try t.expectEqual(@as(usize, 0), app.panes.editor(glanced).?.buf.editor.cursor);
+    // Neither half is a glance any more: a glance at another file
+    // opens beside the twin instead of taking it over.
+    _ = try app.openPreview(b);
+    try t.expect(app.panes.get(twin) != null);
+    try t.expectEqual(@as(usize, 3), app.panes.count());
+
+    // A rendered markdown glance: its companion is the file's source
+    // editor, not the rendered tab itself — which `removePane` would
+    // have emptied the leaf of, leaving the file in no half at all.
+    const rendered = try app.openPreview(md);
+    try t.expect(app.panes.get(rendered).?.* == .md_preview);
+    try t.expect(app.panes.get(rendered).?.preview());
+    try command.run(&app, .{ .static = .@"view.split_down" });
+    const source = app.active.?;
+    try t.expect(source != rendered);
+    try t.expect(layout.root != null);
+    try t.expect(layout.leafOf(rendered) != null);
+    try t.expect(layout.leafOf(source) != null);
+    try t.expect(app.panes.get(source).?.* == .editor);
+    try t.expectEqualStrings(md, app.panes.editor(source).?.buf.doc.path.?);
+    try t.expect(!app.panes.get(rendered).?.preview());
+    try t.expect(!app.panes.get(source).?.preview());
+    // A pane in its own leaf is what `close_split` needs: the file
+    // stays up in the other half.
+    try command.run(&app, .{ .static = .@"view.close_split" });
+    try t.expect(layout.leafOf(rendered) != null);
 }
 
 test "preview tabs: `ui.preview_tabs = false` and the vim profile open every file pinned" {
