@@ -94,7 +94,6 @@ pub const table = .{
     .@"pr.refresh" = cutRunner(cut_forge),
     .@"integrations.glyph_builder" = cutRunner(cut_glyph_svg),
     .@"integrations.patch_nerd_font_svg" = cutRunner(cut_glyph_svg),
-    .@"integrations.edit_claude_glyph" = cutRunner(cut_glyph_svg),
     .@"integrations.edit_codex_glyph" = cutRunner(cut_glyph_svg),
     .@"integrations.check_updates_now" = cutRunner(cut_integration_updates),
     .@"integrations.fire_auto_updates_now" = cutRunner(cut_integration_updates),
@@ -1007,11 +1006,10 @@ test "keys.doctor opens the wizard on its Keyboard section" {
     try t.expect(app.focus == .overlay);
 }
 
-test "the glyph editors and the integration auto-updater are cut: each fails with the ledger toast" {
+test "the Codex glyph editor and the integration auto-updater are cut: each fails with the ledger toast" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
     defer app.deinit();
     const ids = [_]command.CommandId{
-        .@"integrations.edit_claude_glyph",
         .@"integrations.edit_codex_glyph",
         .@"integrations.check_updates_now",
         .@"integrations.fire_auto_updates_now",

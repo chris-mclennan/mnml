@@ -15,10 +15,11 @@
 //!     `zig build` from the SVGs under `data/glyphs/` (`tools/
 //!     build_font.zig` is the `zig build font` entry point);
 //!   - the user's own, `<data root>/fonts/MnmlSymbols.ttf`, which the
-//!     same code writes when the terminal icon is set to a custom SVG.
-//!     Same family name, same codepoints — only the terminal mark
-//!     differs — so a terminal already routed at `MnmlSymbols` picks
-//!     the new one up with nothing to reconfigure.
+//!     same code writes when the terminal icon or the Claude icon is
+//!     set to a custom SVG (`Sources` names those two slots). Same
+//!     family name, same codepoints — only the replaced mark differs —
+//!     so a terminal already routed at `MnmlSymbols` picks the new one
+//!     up with nothing to reconfigure.
 //!
 //! `merge` is the third path: the face this build bakes folded INTO an
 //! already-installed one, so `run.sh install-font` keeps whatever
@@ -85,16 +86,29 @@ pub const claude_spark_svg = data.claude_spark_svg;
 pub const codex_svg = data.codex_svg;
 pub const ghostty_svg = data.ghostty_svg;
 
-/// The shipped set, in codepoint order. `terminal_svg` replaces the
-/// ghost when the user has named their own. Both Claude marks are
-/// baked: which one the chrome paints is `ui.claude_mark`'s to say,
-/// and a face that carried only one would turn the other into tofu.
-pub fn defaultSpecs(terminal_svg: []const u8) [4]Spec {
+/// The art behind the two marks a user may replace. Each field
+/// defaults to the shipped drawing, so a build that only swaps one
+/// names only that one — and a bake of either keeps the other, which is
+/// the whole reason this is a struct and not two entry points.
+pub const Sources = struct {
+    /// `U+F1E00`, the Claude Code figure (`ui.claude_mark = .custom`).
+    claude: []const u8 = claude_svg,
+    /// `U+F2000`, Ghostty's ghost (`ui.terminal_glyph = .custom`).
+    terminal: []const u8 = ghostty_svg,
+};
+
+/// The shipped set, in codepoint order, with `src`'s art in the two
+/// replaceable slots. Both Claude marks are baked: which one the chrome
+/// paints is `ui.claude_mark`'s to say, and a face that carried only
+/// one would turn the other into tofu. The spark is not replaceable —
+/// it is Anthropic's mark, offered as the alternate rather than as a
+/// slot.
+pub fn defaultSpecs(src: Sources) [4]Spec {
     return .{
-        .{ .codepoint = claude, .name = "claude-mark", .source = claude_svg },
+        .{ .codepoint = claude, .name = "claude-mark", .source = src.claude },
         .{ .codepoint = codex, .name = "codex-mark", .source = codex_svg },
         .{ .codepoint = claude_spark, .name = "claude-spark", .source = claude_spark_svg },
-        .{ .codepoint = terminal, .name = "terminal-mark", .source = terminal_svg },
+        .{ .codepoint = terminal, .name = "terminal-mark", .source = src.terminal },
     };
 }
 
@@ -210,15 +224,14 @@ pub fn build(arena: Allocator, specs: []const Spec) Error![]u8 {
     return ttf.build(arena, glyphs, family, version);
 }
 
-/// The face as it ships: the Ghostty ghost as the terminal mark.
+/// The face as it ships: every mark the repo's own drawing.
 pub fn buildDefault(arena: Allocator) Error![]u8 {
-    const specs = defaultSpecs(ghostty_svg);
-    return build(arena, &specs);
+    return buildWith(arena, .{});
 }
 
-/// The face with `terminal_svg` in place of the ghost.
-pub fn buildWithTerminal(arena: Allocator, terminal_svg: []const u8) Error![]u8 {
-    const specs = defaultSpecs(terminal_svg);
+/// The face with the user's art in whichever slots `src` names.
+pub fn buildWith(arena: Allocator, src: Sources) Error![]u8 {
+    const specs = defaultSpecs(src);
     return build(arena, &specs);
 }
 
@@ -250,8 +263,8 @@ pub const MergeReport = struct {
 /// the ones it bakes and they lack are added; and an outline the
 /// installed `cmap` does not point at is dropped, since nothing could
 /// ever have rendered it.
-pub fn merge(arena: Allocator, installed: []const u8, terminal_svg: []const u8, report: ?*MergeReport) MergeError![]u8 {
-    const specs = defaultSpecs(terminal_svg);
+pub fn merge(arena: Allocator, installed: []const u8, src: Sources, report: ?*MergeReport) MergeError![]u8 {
+    const specs = defaultSpecs(src);
     const own = try ownGlyphs(arena, &specs);
     var mine: std.AutoHashMapUnmanaged(u21, void) = .empty;
     for (own) |g| try mine.put(arena, g.codepoint, {});
@@ -337,7 +350,7 @@ test "a custom terminal SVG replaces the ghost at the same codepoint; the rest o
     var arena_state = std.heap.ArenaAllocator.init(t.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const custom = try buildWithTerminal(arena, "<svg viewBox=\"0 0 10 10\"><path d=\"M1 1 L9 1 L9 9 L1 9 Z\"/></svg>");
+    const custom = try buildWith(arena, .{ .terminal = "<svg viewBox=\"0 0 10 10\"><path d=\"M1 1 L9 1 L9 9 L1 9 Z\"/></svg>" });
     try t.expect(!std.mem.eql(u8, custom, try buildDefault(arena)));
     for ([_]u21{ claude, claude_spark, codex, tree_vertical, tree_corner, terminal }) |cp| try t.expect(cmapHas(custom, cp));
 }
@@ -346,9 +359,9 @@ test "a broken SVG fails the build rather than baking an empty mark" {
     var arena_state = std.heap.ArenaAllocator.init(t.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    try t.expectError(error.NoViewBox, buildWithTerminal(arena, "<svg><path d=\"M0 0 L1 0 L1 1 Z\"/></svg>"));
-    try t.expectError(error.Empty, buildWithTerminal(arena, "<svg viewBox=\"0 0 1 1\"></svg>"));
-    try t.expectError(error.Malformed, buildWithTerminal(arena, "not an svg at all"));
+    try t.expectError(error.NoViewBox, buildWith(arena, .{ .terminal = "<svg><path d=\"M0 0 L1 0 L1 1 Z\"/></svg>" }));
+    try t.expectError(error.Empty, buildWith(arena, .{ .terminal = "<svg viewBox=\"0 0 1 1\"></svg>" }));
+    try t.expectError(error.Malformed, buildWith(arena, .{ .terminal = "not an svg at all" }));
 }
 
 test "the connectors are the cell-edge rectangles the tree draws, not scaled art" {
@@ -449,7 +462,7 @@ test "merge: the installed face keeps its own codepoints, this build replaces an
     }, family, version);
 
     var report: MergeReport = .{};
-    const merged = try merge(arena, installed, ghostty_svg, &report);
+    const merged = try merge(arena, installed, .{}, &report);
     // Kept: the two chips. Replaced: space, claude, terminal — and
     // nothing else of this build's was in there, the spark included,
     // which is why it counts as added.
@@ -500,7 +513,7 @@ test "merge: an outline no cmap points at does not survive" {
     std.mem.writeInt(u32, orphaned[sub + 12 ..][0..4], groups - 1, .big);
 
     var report: MergeReport = .{};
-    const merged = try merge(arena, orphaned, ghostty_svg, &report);
+    const merged = try merge(arena, orphaned, .{}, &report);
     try t.expectEqual(@as(usize, 1), report.stripped);
     try t.expect(cmapHas(merged, 0xF1C03));
     try t.expect(!cmapHas(merged, 0xF1C05));
@@ -593,7 +606,7 @@ test "U+F1E02 is the Anthropic spark — the other art, at its own codepoint, so
     // face: the figure the default, the spark the alternate the
     // `Icon ▸` menu offers. Read off the spec list rather than the
     // cmap, so a swap of the two sources fails here.
-    const specs = defaultSpecs(ghostty_svg);
+    const specs = defaultSpecs(.{});
     var figure_src: ?[]const u8 = null;
     var spark_src: ?[]const u8 = null;
     for (specs) |s| {

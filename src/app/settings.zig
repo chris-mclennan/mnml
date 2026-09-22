@@ -232,9 +232,9 @@ pub const rows = [_]RowSpec{
     // config keys keep the older *mark* / *glyph* spelling so a config
     // already on disk keeps working.
     .{ .path = "ui.terminal_glyph", .label = "Terminal icon", .section = .ui, .scope = .home },
-    // The Claude chip's two branded icons, the twin of the row above
-    // (`app/claude_mark.zig`); the cluster chip's right-click `Icon ▸`
-    // menu is the other way in.
+    // The Claude chip's icons, the twin of the row above
+    // (`app/claude_mark.zig`) down to its third *custom* value; the
+    // cluster chip's right-click `Icon ▸` menu is the other way in.
     .{ .path = "ui.claude_mark", .label = "Claude icon", .section = .ui, .scope = .home },
     .{ .path = "ui.ai_layout_mode", .label = "AI session layout", .section = .ui, .scope = .home },
     .{ .path = "ui.coverage_chip_mode", .label = "Coverage chip", .section = .ui, .scope = .home },
@@ -1364,6 +1364,32 @@ test "the UI section's Terminal icon row: three choices, the ghost the shipped o
     const text = try Io.Dir.cwd().readFileAlloc(app.io, home, t.allocator, .limited(64 * 1024));
     defer t.allocator.free(text);
     try t.expect(std.mem.indexOf(u8, text, ".terminal_glyph = .terminal") != null);
+}
+
+test "the UI section's Claude icon row: three choices, the figure the shipped one, `←→` writes the key to the home config" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .data_root = root, .cols = 100, .rows = 40 });
+    defer app.deinit();
+    try open(&app);
+    // The twin of the Terminal icon row above, and it grew the same
+    // third choice: the user's own SVG, baked at the figure's
+    // codepoint (`app/mark_bake.zig`).
+    const opts = options("ui.claude_mark");
+    try t.expectEqual(@as(usize, 3), opts.len);
+    try t.expectEqualStrings("figure", opts[0]);
+    try t.expectEqualStrings("spark", opts[1]);
+    try t.expectEqualStrings("custom", opts[2]);
+    // The shipped value is the one the row opens on.
+    try t.expectEqual(@as(usize, 0), rowIndex(&app, "ui.claude_mark"));
+    try setRow(&app, rowId("ui.claude_mark"), 1);
+    try t.expectEqual(Config.ClaudeMark.spark, app.cfg.ui.claude_mark);
+    const home = (try configPath(&app, .home)).?;
+    const text = try Io.Dir.cwd().readFileAlloc(app.io, home, t.allocator, .limited(64 * 1024));
+    defer t.allocator.free(text);
+    try t.expect(std.mem.indexOf(u8, text, ".claude_mark = .spark") != null);
 }
 
 // ─── opening on a section ────────────────────────────────────────────────

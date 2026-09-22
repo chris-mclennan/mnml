@@ -1585,14 +1585,18 @@ fn terminalIconRows(app: *App, arena: Allocator) Allocator.Error![]const MenuIte
     return rows;
 }
 
-/// The Claude chip's `Icon ▸` submenu: the two values of
+/// The Claude chip's `Icon ▸` submenu: the two branded values of
 /// `ui.claude_mark`, the current one ticked, each row drawing the mark
-/// it picks. Its twin above.
+/// it picks — and the bake below them, exactly as the terminal's twin
+/// above offers it.
 fn claudeIconRows(app: *App, arena: Allocator) Allocator.Error![]const MenuItem {
     const cur = app.cfg.ui.claude_mark;
-    const rows = try arena.alloc(MenuItem, 2);
+    const rows = try arena.alloc(MenuItem, 3);
     rows[0] = .{ .label = claude_mark.rowLabel(.figure), .action = .{ .set_claude_mark = .figure }, .checked = cur == .figure };
     rows[1] = .{ .label = claude_mark.rowLabel(.spark), .action = .{ .set_claude_mark = .spark }, .checked = cur == .spark };
+    // Not a third drawing — the bake that puts your own art behind the
+    // figure's codepoint, so it keeps its own row and its prompt.
+    rows[2] = .{ .label = "Custom SVG…", .action = .{ .command = .@"view.claude_mark_custom" }, .checked = cur == .custom, .separator_before = true };
     return rows;
 }
 
@@ -1678,9 +1682,11 @@ fn openAiLauncherMenu(app: *App, codex: bool, x: u16, y: u16) Allocator.Error!vo
         .{ .label = "Layout: Grid (splits)", .action = .{ .command = .@"view.ai_layout_grid" }, .checked = grid, .separator_before = true },
         .{ .label = "Layout: Tabs (stack in leaf)", .action = .{ .command = .@"view.ai_layout_tabs" }, .checked = !grid },
         .{ .label = "Bake AI glyphs into MnmlSymbols", .action = .{ .command = .@"integrations.bake_ai_glyphs" }, .separator_before = true },
-        .{ .label = "Edit Claude Code glyph…", .action = .{ .command = .@"integrations.edit_claude_glyph" } },
-        // Which of the two branded marks Claude wears, everywhere the
-        // chrome draws one (`app/claude_mark.zig`).
+        // Which mark Claude wears, everywhere the chrome draws one
+        // (`app/claude_mark.zig`). The row that used to sit above this
+        // one — *Edit Claude Code glyph…* — fired a command that only
+        // toasted the reason it was cut; `Icon ▸ Custom SVG…` is the
+        // offer it was pretending to be.
         .{ .label = "Icon", .action = .none, .separator_before = true, .submenu = try claudeIconRows(app, mem.allocator()) },
     });
     errdefer app.gpa.free(rows);
@@ -1920,17 +1926,18 @@ test "right-click: the terminal chip's `Icon` submenu — the ghost first and ti
     closeMenu(&app);
 }
 
-test "right-click: the Claude chip's `Icon` submenu — the figure and the spark drawn as themselves, the current one ticked, and the rows write the key" {
+test "right-click: the Claude chip's `Icon` submenu — the figure and the spark drawn as themselves, the bake below them, the current one ticked, and the rows write the key" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
     defer app.deinit();
     const render = @import("render.zig");
     try t.expect(try openButtonMenu(&app, @intFromEnum(render.Button.ai_claude), 3, 3));
     const row = app.overlay.menu.items[app.overlay.menu.items.len - 1];
     try t.expectEqualStrings("Icon", row.label);
-    try t.expectEqual(@as(usize, 2), row.submenu.len);
+    try t.expectEqual(@as(usize, 3), row.submenu.len);
     // The word says whose the icon is; the row's glyph says which.
     try t.expectEqualStrings("Claude Code", row.submenu[0].label);
     try t.expectEqualStrings("Anthropic", row.submenu[1].label);
+    try t.expectEqualStrings("Custom SVG…", row.submenu[2].label);
     const menu_glyph = @import("../ui/menu_glyph.zig");
     const bufferline = @import("../ui/bufferline.zig");
     try t.expectEqualStrings(bufferline.claude_glyph, menu_glyph.forItem(row.submenu[0], false));
@@ -1942,13 +1949,31 @@ test "right-click: the Claude chip's `Icon` submenu — the figure and the spark
     // The shipped default is the figure; exactly one tick.
     try t.expect(row.submenu[0].checked);
     try t.expect(!row.submenu[1].checked);
+    try t.expect(!row.submenu[2].checked);
+    // The bake is a command — a row that names one the registry does
+    // not have compiles and renders, and only a click would find it.
+    // (The row this replaced named `integrations.edit_claude_glyph`,
+    // which existed but only toasted that it was cut.)
+    try t.expectEqual(command.CommandId.@"view.claude_mark_custom", row.submenu[2].action.command);
+    try t.expect(command.by_name.get(command.name(row.submenu[2].action.command)) != null);
     closeMenu(&app);
-    // The tick follows the key.
+    // The tick follows the key — the bake's row included, which is how
+    // a user who baked their own art sees which one is on.
     app.cfg.ui.claude_mark = .spark;
     try t.expect(try openButtonMenu(&app, @intFromEnum(render.Button.ai_claude), 3, 3));
     const after = app.overlay.menu.items[app.overlay.menu.items.len - 1];
     try t.expect(!after.submenu[0].checked);
     try t.expect(after.submenu[1].checked);
+    closeMenu(&app);
+    app.cfg.ui.claude_mark = .custom;
+    try t.expect(try openButtonMenu(&app, @intFromEnum(render.Button.ai_claude), 3, 3));
+    const baked = app.overlay.menu.items[app.overlay.menu.items.len - 1];
+    try t.expect(!baked.submenu[0].checked);
+    try t.expect(baked.submenu[2].checked);
+    closeMenu(&app);
+    // And the dead row is gone from the launcher menu it sat in.
+    try t.expect(try openButtonMenu(&app, @intFromEnum(render.Button.ai_claude), 3, 3));
+    for (app.overlay.menu.items) |it| try t.expect(!std.mem.eql(u8, it.label, "Edit Claude Code glyph…"));
     closeMenu(&app);
     // The Codex chip has no `Icon` row: Codex has one mark.
     try t.expect(try openButtonMenu(&app, @intFromEnum(render.Button.ai_codex), 3, 3));

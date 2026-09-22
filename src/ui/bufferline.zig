@@ -213,16 +213,21 @@ pub const spark_ascii = "*";
 /// on every surface at once.
 pub const Mark = struct { glyph: []const u8, fallback: []const u8 };
 
-/// Which mark Claude Code wears — `ui.claude_mark`. Two choices and no
-/// picker: the product's own figure, or the Anthropic spark.
-pub const ClaudeMark = enum { figure, spark };
+/// Which mark Claude Code wears — `ui.claude_mark`, whose type this is
+/// (`config/Config.zig` aliases it, so there is one definition). Two
+/// drawings mnml ships — the product's own figure and the Anthropic
+/// spark — and `.custom`, the user's own SVG baked at the figure's
+/// codepoint, so it resolves to the same string: which art is behind it
+/// is the font's business, not the chrome's. The twin of `TerminalMark`
+/// below, down to that last part.
+pub const ClaudeMark = enum { figure, spark, custom };
 
 /// The ONE answer to "which mark is Claude's right now". The app side
 /// reads the config and calls this (`app/claude_mark.zig`); no painter
 /// names `claude_glyph` itself.
 pub fn claudeMark(which: ClaudeMark) Mark {
     return switch (which) {
-        .figure => .{ .glyph = claude_glyph, .fallback = claude_ascii },
+        .figure, .custom => .{ .glyph = claude_glyph, .fallback = claude_ascii },
         .spark => .{ .glyph = spark_glyph, .fallback = spark_ascii },
     };
 }
