@@ -246,16 +246,49 @@ pub fn scopeChain(arena: Allocator, root: ts.Node, at: u32, line: u32) Allocator
     var node = root.descendantForByteRange(at, at);
     // Collect innermost-first, then reverse.
     while (!node.isNull()) : (node = node.parent()) {
-        const k = kindOf(node) orelse continue;
-        if (!k.isScope()) continue;
+        // The root is the file, never a header: Python's `module` is
+        // in the kind table (Ruby's `module` is a real scope), and it
+        // used to paint the `def` on line 0 twice.
+        if (node.parent().isNull()) continue;
+        const k = node.kind();
+        const is_scope = if (kindOf(node)) |kind| kind.isScope() else context_kinds.has(k);
+        if (!is_scope) continue;
         const pt = node.startPoint();
         if (pt.row >= line) continue;
         if (node.endPoint().row == pt.row) continue;
+        // A decorated definition and its definition share nothing, but
+        // a compound statement's clause can start on the statement's
+        // own line (`if x:` and its consequence in one); one row each.
+        if (out.items.len > 0 and out.items[out.items.len - 1] == pt.row) continue;
         try out.append(arena, pt.row);
     }
     std.mem.reverse(u32, out.items);
     return out.items;
 }
+
+/// The compound statements the sticky context pins besides the
+/// definitions — the loop or branch the cursor is forty lines into,
+/// which Python's indentation makes hard to see — the list Neovim's
+/// treesitter-context uses. Never in the outline: `symbols` reads the
+/// kind table, not this.
+const context_kinds = std.StaticStringMap(void).initComptime(.{
+    // python
+    .{"for_statement"},          .{"while_statement"},  .{"if_statement"},      .{"elif_clause"},
+    .{"else_clause"},            .{"with_statement"},   .{"try_statement"},     .{"except_clause"},
+    .{"finally_clause"},         .{"match_statement"},  .{"case_clause"},
+    // javascript / typescript / c / c++ / java / c# / go
+          .{"for_in_statement"},
+    .{"for_of_statement"},       .{"do_statement"},     .{"switch_statement"},  .{"switch_case"},
+    .{"switch_default"},         .{"catch_clause"},     .{"foreach_statement"}, .{"for_range_loop"},
+    .{"enhanced_for_statement"},
+    // rust / zig
+    .{"for_expression"},   .{"while_expression"},  .{"loop_expression"},
+    .{"if_expression"},          .{"match_expression"}, .{"for_statement_zig"},
+    // ruby / lua
+    .{"for"},
+    .{"while"},                  .{"if"},               .{"unless"},            .{"until"},
+    .{"case"},                   .{"begin"},
+});
 
 pub const Object = enum { function, class };
 
@@ -462,6 +495,27 @@ test "scope chain: the enclosing definitions that start above a line, outermost 
     try testing.expectEqualSlices(u32, &.{ 0, 1 }, chain);
     // Nothing starts above line 0.
     try testing.expectEqual(@as(usize, 0), (try scopeChain(arena.allocator(), p.tree.rootNode(), at, 0)).len);
+}
+
+test "scope chain: python's def › for › if pins the loop and the branch, and the module root is not a header" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    // Line 0 def, 2 for, 3 if, 4.. the body; the `module` root spans it all.
+    const text = "def walk(items):\n    total = 0\n    for item in items:\n        if item > 0:\n            total += 1\n            total += 2\n            total += 3\n    return total\n";
+    var p = try Parsed.init("py", text);
+    defer p.deinit();
+    const at: u32 = @intCast(std.mem.indexOf(u8, text, "total += 3").?);
+    // Before: `{0, 0}` — the module and the def, both painted as `def walk`
+    // — and neither the for nor the if.
+    try testing.expectEqualSlices(u32, &.{ 0, 2, 3 }, try scopeChain(arena.allocator(), p.tree.rootNode(), at, 6));
+    // With the top line on the `if` itself, only what starts above it.
+    try testing.expectEqualSlices(u32, &.{ 0, 2 }, try scopeChain(arena.allocator(), p.tree.rootNode(), at, 3));
+    // A class › def › for chain: three distinct rows.
+    const cls = "class Walker:\n    def walk(self, items):\n        for item in items:\n            a = 1\n            b = 2\n            c = 3\n";
+    var q = try Parsed.init("py", cls);
+    defer q.deinit();
+    const at2: u32 = @intCast(std.mem.indexOf(u8, cls, "c = 3").?);
+    try testing.expectEqualSlices(u32, &.{ 0, 1, 2 }, try scopeChain(arena.allocator(), q.tree.rootNode(), at2, 5));
 }
 
 test "objectAt: inner function is the body between the braces, around is the whole item; classes likewise" {

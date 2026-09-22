@@ -1,0 +1,16 @@
+# Sticky context forty lines into a Python `def › for › if` suite pins
+# the def, the loop AND the branch — one row each, the way Neovim's
+# treesitter-context and VS Code's sticky scroll do. Before, the tree
+# walk counted Python's `module` root as a scope on line 0, so the header
+# painted `def walk(items):` twice and never the `for` / `if` the cursor
+# was inside; the loop line was the one scope it did not show.
+# env: PATH=
+write loop.py "def walk(items):\n    total = 0\n    for item in items:\n        if item > 0:\n            total += 1\n            total += 2\n            total += 3\n            total += 4\n            total += 5\n            total += 6\n            total += 7\n            total += 8\n            total += 9\n            total += 10\n            total += 11\n            total += 12\n            total += 13\n            total += 14\n            total += 15\n            total += 16\n            total += 17\n            total += 18\n            total += 19\n            total += 20\n            total += 21\n            total += 22\n            total += 23\n            total += 24\n            total += 25\n            total += 26\n            total += 27\n            total += 28\n            total += 29\n            total += 30\n            total += 31\n            total += 32\n            total += 33\n            total += 34\n            total += 35\n            total += 36\n            total += 37\n            total += 38\n            total += 39\n            total += 40\n    return total\n"
+open loop.py
+command view.toggle_tree
+command view.toggle_sticky_context
+ex 44
+wait 500
+expect screen contains "1 def walk(items):"
+expect screen contains "3     for item in items:"
+expect screen contains "4         if item > 0:"
