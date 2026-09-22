@@ -451,6 +451,57 @@ test "through the fake server: a rename over two files opens the preview; an unt
     try rig.stop(&app);
 }
 
+test "csharp-ls's rename shape — `documentChanges`, the open file versioned and the closed one not — edits both in buffers and writes neither until the save" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var app = try App.initWith(gpa, io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    var rig: lsp.TestRig = .{};
+    try rig.start(&app);
+    const file = lsp.TestRig.file;
+    // Warn.cs's call of `Calc.Add`, closed, on disk.
+    const warn = "/tmp/mnml-zig-fake-lsp-warn.ts";
+    const warn_text = "public static class Warn\n{\n    public static int Noisy() => Calc.Add(1, 2);\n}\n";
+    const e = try lsp.TestRig.openFile(&app, file, "public static int Add(int a, int b) => a + b;\n");
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = warn, .data = warn_text });
+    defer Io.Dir.cwd().deleteFile(io, warn) catch {};
+    const Cond = struct {
+        fn ready(a: *App) bool {
+            const s = a.lsp.servers.items[0];
+            return s.ready and s.isOpen(lsp.TestRig.file);
+        }
+    };
+    try lsp.TestRig.pump(&app, &app, Cond.ready, 5000);
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // The reply csharp-ls 0.28 sent for `Add` → `Plus` (the hunt's wire
+    // capture), with this test's URIs.
+    const json = try std.fmt.allocPrint(a, "{{\"documentChanges\":[{{\"textDocument\":{{\"uri\":\"{s}\",\"version\":1}},\"edits\":[{{\"range\":{{\"start\":{{\"line\":0,\"character\":18}},\"end\":{{\"line\":0,\"character\":21}}}},\"newText\":\"Plus\"}}]}},{{\"textDocument\":{{\"uri\":\"{s}\"}},\"edits\":[{{\"range\":{{\"start\":{{\"line\":2,\"character\":38}},\"end\":{{\"line\":2,\"character\":41}}}},\"newText\":\"Plus\"}}]}}]}}", .{ try types.uriFromPath(a, file), try types.uriFromPath(a, warn) });
+    const edit = try std.json.parseFromSliceLeaky(Value, a, json, .{});
+    try testing.expectEqual(@as(usize, 2), fileCount(edit));
+    try open(&app, rig.server, edit);
+    try testing.expectEqual(@as(usize, 2), app.lsp.rename.preview.?.files.len);
+    try app.handle(.{ .key = Key.named(.enter) });
+    try testing.expectEqualStrings("renamed in 2 file(s) · 2 edit(s) · 1 opened unsaved", app.lastToast().?);
+    // Both halves are in buffers, both dirty; the disk has neither.
+    try testing.expectEqualStrings("public static int Plus(int a, int b) => a + b;\n", e.buf.editor.bytes());
+    const warn_pane = app.panes.editor(app.panes.findPath(warn).?).?;
+    try testing.expect(std.mem.indexOf(u8, warn_pane.buf.editor.bytes(), "Calc.Plus(1, 2)") != null);
+    try testing.expect(warn_pane.buf.doc.dirty);
+    var disk = try Io.Dir.cwd().readFileAlloc(io, warn, gpa, .limited(4096));
+    try testing.expectEqualStrings(warn_text, disk);
+    gpa.free(disk);
+    // One save of the opened file lands its half.
+    try warn_pane.buf.save(io);
+    disk = try Io.Dir.cwd().readFileAlloc(io, warn, gpa, .limited(4096));
+    defer gpa.free(disk);
+    try testing.expect(std.mem.indexOf(u8, disk, "Calc.Plus(1, 2)") != null);
+    try rig.stop(&app);
+}
+
 test "fileCount reads both WorkspaceEdit shapes" {
     var p = try std.json.parseFromSlice(Value, testing.allocator, "{\"changes\":{\"file:///a\":[],\"file:///b\":[]}}", .{});
     defer p.deinit();
