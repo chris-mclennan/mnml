@@ -1384,11 +1384,18 @@ fn cancelCmd(app: *App) CommandError!void {
     own.group.cancel(app.io);
     _ = app.http.handles.swapRemove(job);
     app.gpa.destroy(own);
-    const was_streaming = rp.state == .streaming;
-    const got: usize = if (rp.streaming()) |st| st.body.items.len else 0;
-    try rp.setFailed(if (was_streaming) "canceled mid-stream" else "canceled");
     app.http.sending -|= 1;
-    if (was_streaming) app.toast("http.cancel: stopped after {d} bytes", .{got}) else app.toast("http.cancel: stopped", .{});
+    // A stream stopped by hand keeps what arrived: it seals into the
+    // response, marked truncated, as the server closing it would.
+    if (rp.streaming()) |st| {
+        const got = st.body.items.len;
+        const elapsed: u64 = @intCast(@max(app.now_ms - st.started_ms, 0));
+        try rp.finishStream(.{ .total_ms = elapsed, .receive_ms = elapsed }, true);
+        app.toast("http.cancel: stopped after {d} bytes \u{00B7} what arrived is kept", .{got});
+        return;
+    }
+    try rp.setFailed("canceled");
+    app.toast("http.cancel: stopped", .{});
 }
 
 /// D1: the result is ours to adopt or destroy. A job no pane is waiting
@@ -2854,6 +2861,16 @@ test "stream: an event-stream lands event by event, live, then seals into the Do
     }.f, 300);
     try testing.expect(rp.state == .streaming);
     try testing.expectEqual(@as(usize, 2), rp.streaming().?.events);
+    // And the SCREEN shows them while the stream is open — not a
+    // `sending…` spinner over events that have already arrived.
+    {
+        try app.render();
+        const txt = try @import("../ipc/screen.zig").toTestText(testing.allocator, &app.screen);
+        defer testing.allocator.free(txt);
+        try testing.expect(std.mem.indexOf(u8, txt, "sending\u{2026}") == null);
+        try testing.expect(std.mem.indexOf(u8, txt, "streaming \u{00B7} 2 events") != null);
+        try testing.expect(std.mem.indexOf(u8, txt, "data: two") != null);
+    }
     try testing.expect(std.mem.indexOf(u8, rp.streaming().?.body.items, "data: two") != null);
     try testing.expect(std.mem.indexOf(u8, rp.streaming().?.body.items, "three") == null);
     try testing.expectEqual(@as(u32, 1), app.http.sending);
@@ -2872,6 +2889,34 @@ test "stream: an event-stream lands event by event, live, then seals into the Do
     const hist = try tmp.dir.readFileAlloc(testing.io, ".rqst/history.jsonl", testing.allocator, .limited(1 << 16));
     defer testing.allocator.free(hist);
     try testing.expect(std.mem.indexOf(u8, hist, "\"status\":200") != null);
+}
+
+test "stream: an event that shares a packet with the head shows before the server writes again" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    const chunks = [_][]const u8{ "id: 1\ndata: first-event\n\n", "data: second\n\n" };
+    var server = try mock.Server.start(testing.allocator, testing.io, .{ .headers = &.{.{ .name = "content-type", .value = "text/event-stream" }}, .chunks = &chunks, .chunk_delay_ms = 3000, .first_with_head = true });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    const id = try openBlank(&app);
+    const rp = app.panes.get(id).?.asRequest().?;
+    const url = try std.fmt.allocPrint(testing.allocator, "http://127.0.0.1:{d}/events", .{server.port});
+    defer testing.allocator.free(url);
+    try rp.url.appendSlice(testing.allocator, url);
+    try command.run(&app, .{ .static = .@"http.send" });
+    // Well inside the server's 3 s pause before the second event.
+    try pumpUntil(&app, rp, struct {
+        fn f(p: *RequestPane) bool {
+            return p.state != .sending and (p.state != .streaming or p.streaming().?.events >= 1);
+        }
+    }.f, 100);
+    try testing.expect(rp.state == .streaming);
+    try testing.expectEqual(@as(usize, 1), rp.streaming().?.events);
+    try testing.expect(std.mem.indexOf(u8, rp.streaming().?.body.items, "first-event") != null);
+    try command.run(&app, .{ .static = .@"http.cancel" });
+    server.stop(testing.io);
 }
 
 test "stream: http.cancel stops a stream where it is; a chunked body of any type streams with a byte count" {
@@ -2899,13 +2944,15 @@ test "stream: http.cancel stops a stream where it is; a chunked body of any type
     const before = App.nowMs(app.io);
     try command.run(&app, .{ .static = .@"http.cancel" });
     try testing.expect(App.nowMs(app.io) - before < 300);
-    try testing.expect(rp.state == .failed);
-    try testing.expectEqualStrings("canceled mid-stream", rp.state.failed);
+    // What arrived before the cancel is kept, marked truncated.
+    try testing.expect(rp.state == .done);
+    try testing.expectEqualStrings("data: first\n\n", rp.response().?.body);
+    try testing.expect(rp.response().?.truncated);
     try testing.expectEqual(@as(usize, 0), app.http.handles.count());
     try testing.expectEqual(@as(u32, 0), app.http.sending);
     // A late chunk for the dead job is dropped, not appended.
     try app.tick(App.nowMs(app.io));
-    try testing.expect(rp.state == .failed);
+    try testing.expectEqualStrings("data: first\n\n", rp.response().?.body);
     server.stop(testing.io);
 
     // Chunked framing on a plain body streams too, counting bytes.

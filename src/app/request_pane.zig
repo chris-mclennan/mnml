@@ -1847,7 +1847,9 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area_in: Rect) Allo
         .env_name = env_name,
         .env_override = app.http.env_override != null,
         .edit_scroll = &rp.edit_scroll,
-        .sending = rp.isSending(),
+        // Only before the head: once it lands the pane is streaming and
+        // shows what has arrived (`.stream`), not a spinner over it.
+        .sending = rp.state == .sending,
         .failed = if (rp.state == .failed) rp.state.failed else null,
         .response = resp_model,
         .stream = stream_info,

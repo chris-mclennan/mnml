@@ -643,7 +643,12 @@ fn sendInner(gpa: Allocator, io: Io, req: *const Request, opts: SendOptions, t: 
             var total: usize = 0;
             var truncated = false;
             while (true) {
-                reader.fillMore() catch |err| switch (err) {
+                // What the head's read already pulled in goes first: a
+                // close-delimited body reads straight off the
+                // connection, whose buffer can hold the first event
+                // behind the head — reading more before handing that
+                // over parks it until the server's NEXT write.
+                if (reader.buffered().len == 0) reader.fillMore() catch |err| switch (err) {
                     error.EndOfStream => break,
                     error.ReadFailed => return response.bodyErr() orelse error.ReadFailed,
                 };

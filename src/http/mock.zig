@@ -160,6 +160,9 @@ pub const Canned = struct {
     chunks: ?[]const []const u8 = null,
     chunk_delay_ms: u32 = 0,
     chunked: bool = false,
+    /// The first chunk goes out in the head's own write, no delay — a
+    /// server whose first event shares a packet with its head.
+    first_with_head: bool = false,
     /// The answer to the request after this one (a redirect hop, then
     /// its target). The last link of the chain answers every request
     /// from then on.
@@ -282,10 +285,10 @@ pub const Server = struct {
         if (canned.chunks) |chunks| {
             if (canned.chunked) try w.writeAll("transfer-encoding: chunked\r\n");
             try w.writeAll("connection: close\r\n\r\n");
-            try w.flush();
-            for (chunks) |c| {
+            if (!canned.first_with_head) try w.flush();
+            for (chunks, 0..) |c, ci| {
                 if (self.stopping.load(.acquire)) return;
-                if (canned.chunk_delay_ms > 0) Io.sleep(io, .fromMilliseconds(canned.chunk_delay_ms), .awake) catch {};
+                if (canned.chunk_delay_ms > 0 and !(ci == 0 and canned.first_with_head)) Io.sleep(io, .fromMilliseconds(canned.chunk_delay_ms), .awake) catch {};
                 if (canned.chunked) try w.print("{x}\r\n{s}\r\n", .{ c.len, c }) else try w.writeAll(c);
                 try w.flush();
             }

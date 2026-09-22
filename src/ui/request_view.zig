@@ -598,7 +598,7 @@ fn drawTopBar(ui: Ui, pane: PaneId, z: Zones, m: Model) ?Caret {
     // `⟳  Abort` in yellow while a send is out.
     {
         const url_empty = std.mem.trim(u8, m.url, " \t").len == 0;
-        const text: []const u8 = if (m.sending) " \u{27F3}  Abort " else if (ui.ascii) " > Send " else " \u{25B6} Send ";
+        const text: []const u8 = if (m.sending or m.stream != null) " \u{27F3}  Abort " else if (ui.ascii) " > Send " else " \u{25B6} Send ";
         const color = if (m.sending) p.yellow else if (m.stream != null) p.cyan else if (url_empty) p.comment else p.green;
         labelBox(ui, pane, Rect.init(x, y, send_w, r.h), "Send", text, color, hit_send);
         x += send_w;
