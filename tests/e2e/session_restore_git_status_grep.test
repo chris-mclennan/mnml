@@ -1,0 +1,51 @@
+# Session restore brings a REVIEW back, not just the editors
+# (`session-kinds`). A git status pane and a workspace Search pane were
+# not session kinds at all, so the two panes someone has a review open
+# in were the one thing a restart threw away. Both are kinds now, and
+# both come back by RE-RUNNING their query — the status against today's
+# worktree, the search against today's files — never by replaying a
+# saved result.
+shell git init -q
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write src/a.zig "const needle = 1;\nconst beta = needle;\n"
+shell git add src/a.zig
+shell git commit -q -m "initial"
+# Something for the status pane to have found.
+write scratch.txt "untracked"
+
+open src/a.zig
+command find.grep
+type needle
+key enter
+expect screen contains "src/a.zig (2)"
+command git.status_pane
+expect pane "git status"
+# All three leaves paint at once — that is the layout the restore has
+# to rebuild.
+expect screen contains "src/a.zig (2)"
+
+command session.save
+# The file names the two kinds and the search's SUBJECT — its query and
+# its options — rather than a single one of its hits.
+expect file .mnml/session.zon contains ".git_status"
+expect file .mnml/session.zon contains ".grep"
+expect file .mnml/session.zon contains "needle"
+expect file .mnml/session.zon lacks "const beta"
+
+# Back to the editor, and close everything else. Without this the
+# restore would find both panes already open and re-use them, and this
+# script would pass whether or not either kind was ever saved.
+open src/a.zig
+command view.close_others
+expect pane "a.zig"
+expect screen lacks "src/a.zig (2)"
+
+command session.restore
+wait 1500
+expect screen contains "session restored"
+# Both are back, in the leaves they were in, and both RE-RAN: the
+# Search counted its matches again and the status pane is the one the
+# file said was active.
+expect screen contains "src/a.zig (2)"
+expect pane "git status"

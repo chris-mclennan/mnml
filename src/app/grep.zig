@@ -172,7 +172,15 @@ pub const Row = union(enum) { file: u32, hit: u32 };
 /// `Pane.grep`.
 pub const GrepPane = struct {
     gpa: Allocator,
-    group: Io.Group = .init,
+    /// Heap-allocated, like `abort` and for the same reason: a pane
+    /// lives in `PaneStore.slots`, which is an ArrayList, so opening
+    /// ANY other pane while a run is in flight moves this struct. An
+    /// `Io.Group` cannot be moved once it has a task — the task holds
+    /// its address — and a moved one made `cancel` wait forever, which
+    /// is a wedged quit. // changed (session-kinds): a session restore
+    /// opens a Search pane and then keeps opening panes behind it, so
+    /// the move is the ordinary case rather than a rare race.
+    group: *Io.Group,
     snapshot: alloc.SnapshotArena,
     /// Owned. The worker reads it; a rerun cancels the worker first.
     query: []u8,
@@ -199,21 +207,30 @@ pub const GrepPane = struct {
     /// Heap-allocated: the worker holds it past the pane's moves.
     abort: *Abort,
     generation: u32 = 0,
+    /// // changed (session-kinds): the row a restored Search pane was
+    /// on. The hits arrive batch by batch long after the pane opens,
+    /// and every batch clamps the cursor to the rows it has, so the
+    /// saved row is put back once — when the run says it is done.
+    restore_cursor: ?usize = null,
 
     pub fn init(gpa: Allocator, root: []const u8, query: []const u8) Allocator.Error!GrepPane {
         const abort = try gpa.create(Abort);
         errdefer gpa.destroy(abort);
         abort.* = .{};
+        const grp = try gpa.create(Io.Group);
+        errdefer gpa.destroy(grp);
+        grp.* = .init;
         const q = try gpa.dupe(u8, query);
         errdefer gpa.free(q);
         const r = try gpa.dupe(u8, root);
         errdefer gpa.free(r);
-        return .{ .gpa = gpa, .snapshot = alloc.SnapshotArena.init(gpa), .abort = abort, .query = q, .root = r };
+        return .{ .gpa = gpa, .snapshot = alloc.SnapshotArena.init(gpa), .abort = abort, .group = grp, .query = q, .root = r };
     }
 
     pub fn deinit(self: *GrepPane, io: Io) void {
         self.abort.generation.store(std.math.maxInt(u32), .release);
         self.group.cancel(io);
+        self.gpa.destroy(self.group);
         self.gpa.destroy(self.abort);
         self.gpa.free(self.query);
         self.gpa.free(self.root);
@@ -438,6 +455,41 @@ pub fn runGrep(app: *App, query: []const u8) CommandError!void {
     app.showPane(id);
     app.focus = .{ .pane = id };
     try refresh(app, id);
+}
+
+/// A saved Search pane back (`session.zig`): the query re-run with the
+/// options it was run with, landing on the row it was on. One pane per
+/// app as `runGrep` has it, so a restore into a live app re-uses the
+/// Search pane that is already open rather than opening a second.
+/// Placement is not this function's business — the restore replaces
+/// every split tree wholesale once the panes are back.
+/// // changed (session-kinds).
+pub fn restorePane(app: *App, query: []const u8, flags: Flags, cursor: usize) Allocator.Error!?PaneId {
+    if (query.len == 0) return null;
+    const id = if (find(app)) |existing| blk: {
+        const p = &app.panes.get(existing).?.grep;
+        // The worker reads `query`: stop it before the swap.
+        p.abort.generation.store(std.math.maxInt(u32), .release);
+        p.group.cancel(app.io);
+        const q = try app.gpa.dupe(u8, query);
+        app.gpa.free(p.query);
+        p.query = q;
+        break :blk existing;
+    } else blk: {
+        var pane = try GrepPane.init(app.gpa, app.workspace, query);
+        errdefer pane.deinit(app.io);
+        const fresh = try app.panes.add(.{ .grep = pane });
+        pane = undefined; // moved into the store
+        break :blk fresh;
+    };
+    const p = &app.panes.get(id).?.grep;
+    p.flags = flags;
+    p.restore_cursor = cursor;
+    refresh(app, id) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {},
+    };
+    return id;
 }
 
 /// Restart the worker for the pane's query.
@@ -919,6 +971,10 @@ pub fn handle(app: *App, result: *Result) Allocator.Error!void {
     try p.rebuild();
     if (result.done) {
         p.loading = false;
+        if (p.restore_cursor) |row| {
+            p.restore_cursor = null;
+            p.cursor = @min(row, p.rows.items.len -| 1);
+        }
         const n = p.hits.items.len;
         if (p.err) |e| {
             app.toast("{s}: {s}", .{ result.backend.label(), e });

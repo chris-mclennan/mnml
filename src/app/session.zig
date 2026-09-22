@@ -6,6 +6,19 @@
 //! the recent files, the recent commands, the closed-buffer list and
 //! the toast log.
 //!
+//! // changed (session-kinds): a review in progress survives a restart
+//! too. Beside the editors, the previews and the terminals, the file
+//! keeps the QUERY-SHAPED panes — a git status, a workspace Search
+//! (its query, its case / whole-word / regex options and the row it
+//! was on), a commit graph, a worktree / HEAD / staged / per-file diff
+//! and an image. None of them stores a RESULT: each comes back by
+//! re-running its query against today's repo and today's files, so a
+//! restored Search shows what matches now and a restored status shows
+//! what is changed now. A pane whose subject is gone — the directory
+//! is not a repo any more, the file was deleted — is skipped, quietly:
+//! no toast, and never an empty shell pane. What each kind writes
+//! down is on `Pane` below.
+//!
 //! A terminal pane comes back the way `session.restore_terminals` says
 //! (`terminalRestore`): on the default `.running` a plain shell restarts
 //! in its cwd and an AI session pane resumes its session — Claude off
@@ -50,6 +63,10 @@ const zen = @import("zen.zig");
 const command = @import("../core/command.zig");
 const dock = @import("dock.zig");
 const config_profile = @import("../config/profile.zig");
+const git_app = @import("git.zig");
+const git_client = @import("../git/client.zig");
+const grep = @import("grep.zig");
+const image_pane = @import("image_pane.zig");
 const Profile = config_profile.Profile;
 
 pub const format_version: u32 = 1;
@@ -77,7 +94,17 @@ const sentinel: PaneId = std.math.maxInt(PaneId);
 pub const Level = enum { info, warn, err };
 pub const Mark = struct { letter: u8, row: usize, col: usize };
 pub const Fold = struct { start: usize, end: usize };
-pub const PaneKind = enum { editor, md_preview, pty };
+/// // changed (session-kinds): the query-shaped panes joined the
+/// three original kinds — a git status, a workspace Search, a commit
+/// graph, a diff and an image all come back by RE-RUNNING what made
+/// them, never by replaying a saved result.
+///
+/// Adding a variant here is one-way: an older build reading a file
+/// that names one cannot parse the enum, so it ignores the whole file
+/// with the "does not parse" toast rather than crashing. Every other
+/// change to `Pane` stays additive — new fields carry defaults, and
+/// `ignore_unknown_fields` lets an older field set read a newer file.
+pub const PaneKind = enum { editor, md_preview, pty, git_status, grep, git_graph, diff, image };
 
 pub const Pane = struct {
     kind: PaneKind = .editor,
@@ -110,6 +137,28 @@ pub const Pane = struct {
     /// `claude`, and for a Codex pane whose session could not be named
     /// without guessing.
     session_id: ?[]const u8 = null,
+
+    // ─── the query-shaped kinds (session-kinds) ──────────────────────
+    // Each names its SUBJECT, not its answer: a repo root, a search
+    // query, a diff's scope. The restore re-runs the query; a subject
+    // that is gone (the repo is not a repo any more, the file was
+    // deleted) is skipped without a pane and without a toast.
+
+    /// git_status / git_graph / diff: the repo's absolute root, which
+    /// is what survives a restart — `Repo.id` is per-process.
+    repo: ?[]const u8 = null,
+    /// grep: the Search pane's query. An empty one is not saved.
+    query: ?[]const u8 = null,
+    /// grep: the three search options, as `grep.Flags`.
+    grep_case: bool = false,
+    grep_word: bool = false,
+    grep_regex: bool = false,
+    /// diff: which diff this is. The scopes whose subject cannot be
+    /// checked without asking git (`.commit`, `.range`, `.orig`,
+    /// `.conflict`) are not saved.
+    diff_scope: ?git_client.DiffScope = null,
+    /// diff: the revision the scope names, when it names one.
+    rev: ?[]const u8 = null,
 };
 
 /// The split tree as the node pool it is in memory: leaves name pane
@@ -324,6 +373,43 @@ pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
                 };
             },
             .md_preview => |*m| .{ .kind = .md_preview, .path = m.path, .accent = app.panes.accent(@intCast(i)) },
+            // // changed (session-kinds): the query-shaped panes. Each
+            // writes down what it was ASKED, never what came back — a
+            // restore re-runs the query against today's repo and
+            // today's files.
+            .image => |*im| .{ .kind = .image, .path = im.path, .accent = app.panes.accent(@intCast(i)) },
+            .git_status => |*st| blk: {
+                const repo = app.git.repoById(st.repo) orelse break :blk null;
+                break :blk .{ .kind = .git_status, .repo = repo.path, .cursor = st.cursor, .scroll_line = @intCast(@min(st.scroll, std.math.maxInt(u32))), .accent = app.panes.accent(@intCast(i)) };
+            },
+            .git_graph => |*g| blk: {
+                const repo = app.git.repoById(g.repo) orelse break :blk null;
+                break :blk .{ .kind = .git_graph, .repo = repo.path, .accent = app.panes.accent(@intCast(i)) };
+            },
+            .diff => |*d| blk: {
+                const repo = app.git.repoById(d.repo) orelse break :blk null;
+                // A scope whose subject is a revision cannot be checked
+                // for reachability without running git, and a diff pane
+                // that opens onto an error is worse than one that does
+                // not come back at all.
+                switch (d.scope) {
+                    .file, .worktree, .head, .staged => {},
+                    .commit, .range, .orig, .conflict => break :blk null,
+                }
+                break :blk .{ .kind = .diff, .repo = repo.path, .diff_scope = d.scope, .path = d.path orelse "", .rev = d.rev, .accent = app.panes.accent(@intCast(i)) };
+            },
+            .grep => |*g| blk: {
+                if (g.query.len == 0) break :blk null;
+                break :blk .{
+                    .kind = .grep,
+                    .query = g.query,
+                    .grep_case = g.flags.case_sensitive,
+                    .grep_word = g.flags.whole_word,
+                    .grep_regex = g.flags.regex,
+                    .cursor = g.cursor,
+                    .accent = app.panes.accent(@intCast(i)),
+                };
+            },
             .pty => |*pt| blk: {
                 // Runner and task ptys are re-created by their owners.
                 if (pt.kind != .shell and pt.kind != .command) break :blk null;
@@ -753,6 +839,73 @@ fn openSavedPane(app: *App, sp: Pane, opened: []const ?PaneId) OpenError!?PaneId
                 error.OutOfMemory => return error.OutOfMemory,
             };
         },
+        // // changed (session-kinds): the query-shaped kinds. Each one
+        // checks its subject first and returns null — quietly, no
+        // toast, no empty shell — when the subject is gone.
+        .image => {
+            if (sp.path.len == 0) return null;
+            Io.Dir.cwd().access(app.io, sp.path, .{}) catch return null;
+            const id = image_pane.open(app, sp.path) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+            };
+            // A saved image tab is one the user kept, so it is not a
+            // preview the next glance may take over.
+            if (app.panes.get(id)) |p| if (p.* == .image) {
+                p.image.is_preview = false;
+            };
+            return id;
+        },
+        .grep => {
+            const q = sp.query orelse return null;
+            return grep.restorePane(app, q, .{
+                .case_sensitive = sp.grep_case,
+                .whole_word = sp.grep_word,
+                .regex = sp.grep_regex,
+            }, sp.cursor);
+        },
+        .git_status => {
+            const root = sp.repo orelse return null;
+            const repo = (try git_app.repoByPath(app, root)) orelse return null;
+            const id = git_app.openStatusPane(app, repo) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return null,
+            };
+            if (app.panes.get(id)) |p| if (p.* == .git_status) {
+                p.git_status.cursor = sp.cursor;
+                p.git_status.scroll = sp.scroll_line;
+            };
+            return id;
+        },
+        .git_graph => {
+            const root = sp.repo orelse return null;
+            const repo = (try git_app.repoByPath(app, root)) orelse return null;
+            return git_app.ensureGraphPane(app, repo) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return null,
+            };
+        },
+        .diff => {
+            const root = sp.repo orelse return null;
+            const scope = sp.diff_scope orelse return null;
+            switch (scope) {
+                .file, .worktree, .head, .staged => {},
+                // Written by a newer build, or by hand: a revision
+                // whose reachability this restore cannot check.
+                .commit, .range, .orig, .conflict => return null,
+            }
+            const repo = (try git_app.repoByPath(app, root)) orelse return null;
+            const rel: ?[]const u8 = if (sp.path.len > 0) sp.path else null;
+            // A per-file diff of a file that went away is not a diff.
+            if (scope == .file) {
+                if (rel == null) return null;
+                const abs = try std.fs.path.join(app.frame.allocator(), &.{ repo.path, rel.? });
+                Io.Dir.cwd().access(app.io, abs, .{}) catch return null;
+            }
+            return git_app.openDiff(app, repo, scope, rel, sp.rev, null) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return null,
+            };
+        },
         .pty => {
             if (!pty_pane.supported) return null;
             // The three rules, in `terminalRestore`.
@@ -902,6 +1055,41 @@ const Fixture = struct {
 
     fn abs(f: *Fixture, rel: []const u8) ![]u8 {
         return std.fs.path.join(t.allocator, &.{ f.root, rel });
+    }
+
+    /// `git <args>` in the fixture's workspace (the test's own git, not
+    /// the app's worker) — as `git.zig`'s fixture runs it.
+    fn sh(f: *Fixture, args: []const []const u8) !void {
+        var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+        defer argv.deinit(t.allocator);
+        try argv.appendSlice(t.allocator, &.{ "git", "-c", "user.email=t@mnml.dev", "-c", "user.name=tester" });
+        try argv.appendSlice(t.allocator, args);
+        const res = try std.process.run(t.allocator, t.io, .{ .argv = argv.items, .cwd = .{ .path = f.root } });
+        defer t.allocator.free(res.stdout);
+        defer t.allocator.free(res.stderr);
+        if (res.term != .exited or res.term.exited != 0) return error.GitFailed;
+    }
+
+    /// Tick until every git job and every grep run has landed (or `max`
+    /// ticks pass) — the restored panes are all asynchronous.
+    fn settle(a: *App, max: usize) !void {
+        var i: usize = 0;
+        while (i < max) : (i += 1) {
+            try a.tick(App.nowMs(t.io));
+            if (!busy(a)) return;
+            t.io.sleep(.fromMilliseconds(5), .awake) catch {};
+        }
+    }
+
+    fn busy(a: *App) bool {
+        if (a.git.status_pending or a.git.busy != 0 or a.git.rail_pending) return true;
+        for (a.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+            .diff => |*d| if (d.pending) return true,
+            .git_graph => |*g| if (g.pending or g.detail_pending) return true,
+            .grep => |*g| if (g.loading) return true,
+            else => {},
+        };
+        return false;
     }
 };
 
@@ -1569,4 +1757,200 @@ test "session: a Codex pane whose session cannot be named uniquely comes back do
         try t.expect(p.session == null);
         try t.expectEqual(@as(usize, 1), p.argv.len);
     }
+}
+
+// ─── the query-shaped kinds (session-kinds) ─────────────────────────────
+
+test "session: git status, Search, the commit graph, a worktree diff and an image come back, each by re-running its query" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "a.txt", .data = "one needle two\nplain\n" });
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "shot.png", .data = "\x89PNG\r\n\x1a\n" });
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    try f.sh(&.{ "add", "." });
+    try f.sh(&.{ "commit", "-q", "-m", "first" });
+    // A worktree diff needs something to diff; two hits give the
+    // Search a third row, so a cursor of 2 is a row and not a clamp.
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "a.txt", .data = "one needle two\nneedle again\n" });
+    const png = try f.abs("shot.png");
+    defer t.allocator.free(png);
+    const txt = try f.abs("a.txt");
+    defer t.allocator.free(txt);
+
+    var leaves_before: usize = 0;
+    {
+        var app = try f.app();
+        defer app.deinit();
+        _ = try app.openPath(txt);
+        const repo = (try git_app.repoByPath(&app, f.root)).?;
+        const sid = try git_app.openStatusPane(&app, repo);
+        app.panes.get(sid).?.git_status.cursor = 1;
+        app.showPane(try git_app.ensureGraphPane(&app, repo));
+        _ = try git_app.openDiff(&app, repo, .worktree, null, null, null);
+        const gid = (try grep.restorePane(&app, "needle", .{ .regex = true, .whole_word = true }, 0)).?;
+        app.showPane(gid);
+        // The image opens AFTER the Search: adding a pane grows the
+        // store, which moves every pane in it, and a run in flight has
+        // to survive that (`GrepPane.group`).
+        const iid = try image_pane.open(&app, png);
+        app.panes.get(iid).?.image.is_preview = false;
+        try Fixture.settle(&app, 400);
+        // The row the review was ON, not the first one.
+        app.panes.get(gid).?.grep.cursor = 2;
+        leaves_before = (try app.layouts.current().leaves(app.frame.allocator())).len;
+        try save(&app);
+    }
+    {
+        var app = try f.app();
+        defer app.deinit();
+        try restore(&app);
+        try t.expect(app.session.restored);
+        try Fixture.settle(&app, 400);
+
+        const sid = app.panes.findKind(.git_status).?;
+        const st = &app.panes.get(sid).?.git_status;
+        try t.expectEqualStrings(f.root, app.git.repoById(st.repo).?.path);
+        try t.expectEqual(@as(usize, 1), st.cursor);
+
+        const gid = app.panes.findKind(.grep).?;
+        const g = &app.panes.get(gid).?.grep;
+        try t.expectEqualStrings("needle", g.query);
+        try t.expect(g.flags.regex);
+        try t.expect(g.flags.whole_word);
+        // The query really ran against today's files, and the cursor
+        // came back on the row it was on — which can only be put back
+        // once the run says it is done, since the hits arrive in
+        // batches and every batch clamps the cursor to what it has.
+        try t.expect(g.hits.items.len > 0);
+        try t.expectEqual(@as(usize, 2), g.cursor);
+        try t.expect(g.restore_cursor == null);
+
+        const graph = app.panes.findKind(.git_graph).?;
+        try t.expectEqualStrings(f.root, app.git.repoById(app.panes.get(graph).?.git_graph.repo).?.path);
+
+        const did = app.panes.findKind(.diff).?;
+        try t.expectEqual(git_client.DiffScope.worktree, app.panes.get(did).?.diff.scope);
+
+        const iid = app.panes.findKind(.image).?;
+        try t.expectEqualStrings(png, app.panes.get(iid).?.image.path);
+
+        // Each came back in a leaf of its own, as many as there were.
+        const layout = app.layouts.current();
+        try t.expectEqual(leaves_before, (try layout.leaves(app.frame.allocator())).len);
+        for ([_]PaneId{ sid, gid, graph, did, iid }) |id| try t.expect(layout.leafOf(id) != null);
+    }
+}
+
+test "session: a query-shaped pane whose subject is gone is skipped — no pane, no toast" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "a.txt", .data = "one needle two\n" });
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "shot.png", .data = "\x89PNG\r\n\x1a\n" });
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    try f.sh(&.{ "add", "." });
+    try f.sh(&.{ "commit", "-q", "-m", "first" });
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "a.txt", .data = "one needle three\n" });
+    const png = try f.abs("shot.png");
+    defer t.allocator.free(png);
+    const txt = try f.abs("a.txt");
+    defer t.allocator.free(txt);
+    {
+        var app = try f.app();
+        defer app.deinit();
+        _ = try app.openPath(txt);
+        const repo = (try git_app.repoByPath(&app, f.root)).?;
+        _ = try git_app.openStatusPane(&app, repo);
+        _ = try git_app.ensureGraphPane(&app, repo);
+        _ = try git_app.openDiff(&app, repo, .file, "a.txt", null, null);
+        _ = (try grep.restorePane(&app, "needle", .{}, 0)).?;
+        const iid = try image_pane.open(&app, png);
+        app.panes.get(iid).?.image.is_preview = false;
+        try Fixture.settle(&app, 400);
+        try save(&app);
+    }
+    // The workspace stops being a repo, the diffed file and the image go.
+    try f.tmp.dir.deleteTree(t.io, ".git");
+    try f.tmp.dir.deleteFile(t.io, "shot.png");
+    try f.tmp.dir.deleteFile(t.io, "a.txt");
+    // A Search pane with no query is a pane with no subject.
+    {
+        var app = try f.app();
+        defer app.deinit();
+        var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        try apply(&app, arena, .{
+            .workspace = f.root,
+            .panes = &.{.{ .kind = .grep, .query = "" }},
+        });
+        try t.expect(app.panes.findKind(.grep) == null);
+    }
+    {
+        var app = try f.app();
+        defer app.deinit();
+        try restore(&app);
+        try t.expect(app.session.restored);
+        try Fixture.settle(&app, 400);
+        // Every git pane's repo is gone, the image's file is gone, and
+        // the per-file diff has no file: none of them came back, and
+        // nothing was said about it.
+        try t.expect(app.panes.findKind(.git_status) == null);
+        try t.expect(app.panes.findKind(.git_graph) == null);
+        try t.expect(app.panes.findKind(.diff) == null);
+        try t.expect(app.panes.findKind(.image) == null);
+        for (app.toasts.items) |tt| {
+            try t.expect(std.mem.indexOf(u8, tt.text, "git status") == null);
+            try t.expect(std.mem.indexOf(u8, tt.text, "shot.png") == null);
+        }
+        // The Search pane's subject is the query, which cannot vanish:
+        // it comes back and finds nothing, which is an answer.
+        try t.expect(app.panes.findKind(.grep) != null);
+    }
+}
+
+test "session: a file from the old field set still loads; an unknown pane kind is one toast, not a crash" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "a.txt", .data = "hello\n" });
+    const a = try f.abs("a.txt");
+    defer t.allocator.free(a);
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Written before the query-shaped kinds existed: no `repo`, no
+    // `query`, no `grep_*`, no `diff_scope`, no `rev`.
+    const old = try std.fmt.allocPrintSentinel(arena, ".{{ .version = 1, .workspace = \"{s}\", .panes = .{{ .{{ .kind = .editor, .path = \"{s}\", .cursor = 2 }} }}, .tabs = .{{ .{{ .nodes = .{{ .{{ .leaf = .{{ .active = 0, .tabs = .{{0}} }} }} }}, .root = 0 }} }} }}", .{ f.root, a }, 0);
+    const parsed = try parse(arena, old);
+    try t.expectEqual(@as(usize, 1), parsed.panes.len);
+    try t.expectEqual(PaneKind.editor, parsed.panes[0].kind);
+    try t.expect(parsed.panes[0].repo == null);
+    try t.expect(parsed.panes[0].query == null);
+    try t.expect(parsed.panes[0].diff_scope == null);
+    {
+        var app = try f.app();
+        defer app.deinit();
+        try apply(&app, arena, parsed);
+        try t.expectEqual(@as(usize, 2), app.activeEditor().?.buf.editor.cursor);
+    }
+
+    // A kind a later build added: the whole file is ignored with the
+    // "does not parse" toast — never a crash, never half a layout.
+    const newer = try std.fmt.allocPrintSentinel(arena, ".{{ .version = 1, .workspace = \"{s}\", .panes = .{{ .{{ .kind = .hologram, .path = \"{s}\" }} }} }}", .{ f.root, a }, 0);
+    try t.expectError(error.ParseZon, parse(arena, newer));
+    {
+        var app = try f.app();
+        defer app.deinit();
+        const file = try path(&app, arena);
+        try f.tmp.dir.createDirPath(t.io, ".mnml");
+        try Io.Dir.cwd().writeFile(app.io, .{ .sub_path = file, .data = newer });
+        try restore(&app);
+        try t.expect(!app.session.restored);
+        try t.expect(std.mem.indexOf(u8, app.lastToast().?, "does not parse") != null);
+    }
+
+    // And a field a later build added is ignored, not a parse failure.
+    const extra = try std.fmt.allocPrintSentinel(arena, ".{{ .version = 1, .workspace = \"{s}\", .panes = .{{ .{{ .kind = .editor, .path = \"{s}\", .telepathy = true }} }} }}", .{ f.root, a }, 0);
+    const ok = try parse(arena, extra);
+    try t.expectEqual(@as(usize, 1), ok.panes.len);
 }

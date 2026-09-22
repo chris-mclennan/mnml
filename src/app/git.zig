@@ -1864,6 +1864,17 @@ pub fn refreshGraph(app: *App, g: *GraphPane) CommandError!void {
     try submit(app, repo, .{ .log = .{ .n = graph_limit, .filter = filter } });
 }
 
+/// The repo whose root is `root`, discovering them first if nothing
+/// has yet (a session restore runs before anything asks git anything).
+/// Null when that directory is not one of this workspace's repos any
+/// more — the "subject gone" answer for every saved git pane.
+/// // changed (session-kinds).
+pub fn repoByPath(app: *App, root: []const u8) Allocator.Error!?*client.Repo {
+    if (!app.git.discovered) try discover(app);
+    for (app.git.repos.items) |r| if (std.mem.eql(u8, r.path, root)) return r;
+    return null;
+}
+
 pub fn openStatusPane(app: *App, repo: *client.Repo) CommandError!PaneId {
     for (app.panes.slots.items, 0..) |*slot, i| if (slot.*) |*p| switch (p.*) {
         .git_status => |*s| {
