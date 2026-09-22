@@ -1,6 +1,9 @@
 //! What both pty backends hand the pane: the reader's wakeup and how the
 //! child ended. `session_posix.zig` and `session_windows.zig` re-export
 //! these so `pty.session.Exit` names one type whichever backend is in.
+//! Both also take their thread-shared locks from here.
+
+const std = @import("std");
 
 /// Called from the reader thread: once when the ring goes from empty to
 /// readable (see `Ring.commit`), and once when the child's output ends.
@@ -32,5 +35,22 @@ pub const Exit = union(enum) {
 
     pub fn ok(self: Exit) bool {
         return self == .code and self.code == 0;
+    }
+};
+
+/// A test-and-set lock for the short critical sections the backends
+/// share with their threads (the notify callback, the outbox). A
+/// spinlock because the other side is a raw thread with no `Io` to
+/// park on, and every section is a handful of instructions or a
+/// bounded memcpy.
+pub const SpinLock = struct {
+    held: std.atomic.Value(bool) = .init(false),
+
+    pub fn lock(self: *SpinLock) void {
+        while (self.held.swap(true, .acquire)) std.atomic.spinLoopHint();
+    }
+
+    pub fn unlock(self: *SpinLock) void {
+        self.held.store(false, .release);
     }
 };

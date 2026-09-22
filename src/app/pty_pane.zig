@@ -244,11 +244,16 @@ pub const PtyPane = struct {
         self.rows = rows;
     }
 
+    /// Queue bytes for the child. Never blocks: the session's own thread
+    /// writes them as the child reads (`pty/outbox.zig`), so a paste into
+    /// a build that is not reading its input leaves the app responsive.
     pub fn write(self: *PtyPane, bytes: []const u8) void {
         if (self.exit != null) return;
         const session = self.session orelse return;
         // Typing brings the live screen back.
         session.terminal().scrollViewport(.bottom);
+        // Ctrl+C must not wait behind input the child is not reading.
+        if (bytes.len == 1 and bytes[0] == 0x03) return session.interrupt();
         session.write(bytes);
     }
 

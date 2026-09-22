@@ -18,17 +18,26 @@
 //! copies out the one thing it needs afterwards (the pid, to reap a child
 //! nobody else will) before its release, and touches nothing shared after
 //! it. Everything the reader touches lives in `Shared`; it never
-//! dereferences `Session`.
+//! dereferences `Session`. The one allocation the two share — the outbox
+//! buffer — is only ever grown by the UI side; the reader copies out of it.
 //!
-//! Query replies (DSR, DA, XTVERSION, mode 2048 …)
-//! ---------------------------------------------
-//! The terminal answers those through `Handler.effects.write_pty`. The
-//! callback fires in the middle of `stream.nextSlice`, while the parser is
-//! mid-flight, so the bytes are only *stashed* there and written to the
-//! master once the drain finishes. The handler has no userdata pointer: the
-//! `Stream` is stored by value in the `Session`, and the callback walks
-//! `handler → stream → Session` with `@fieldParentPtr` — the reason a
-//! `Session` is always heap-allocated and never moved.
+//! Input: the outbox
+//! -----------------
+//! Nothing on the UI thread writes to the master. `write` (keys, pastes)
+//! and the terminal's query replies (DSR, DA, XTVERSION, mode 2048 …,
+//! answered through `Handler.effects.write_pty` in the middle of
+//! `stream.nextSlice`) all `push` onto the shared `Outbox` and return; the
+//! reader thread, which already sleeps in `poll` on the master, asks for
+//! POLLOUT while the box is pending and writes what the child has room
+//! for. The master is non-blocking, so neither side ever waits on a child
+//! that stopped reading — the UI thread would otherwise freeze on the
+//! first kilobyte of a paste into `sleep`, Ctrl+C included. A push that
+//! finds the box empty pops the reader's poll through the wake pipe.
+//!
+//! The handler has no userdata pointer: the `Stream` is stored by value in
+//! the `Session`, and the callback walks `handler → stream → Session` with
+//! `@fieldParentPtr` — the reason a `Session` is always heap-allocated and
+//! never moved.
 //!
 //! TERM
 //! ----
@@ -49,6 +58,7 @@ const Io = std.Io;
 const vt = @import("ghostty-vt");
 const Ring = @import("ring.zig").Ring;
 const common = @import("common.zig");
+const Outbox = @import("outbox.zig").Outbox;
 
 const log = std.log.scoped(.pty);
 
@@ -72,6 +82,11 @@ const T = switch (builtin.os.tag) {
 // this is our own extern. It lives in libc on macOS and glibc ≥ 2.34; older
 // glibc keeps it in libutil (build.zig can add `linkSystemLibrary("util")`
 // if a cross target ever needs it).
+extern "c" fn tcflush(fd: posix.fd_t, queue: c_int) c_int;
+extern "c" fn tcgetpgrp(fd: posix.fd_t) posix.pid_t;
+/// Both queues — the BSD and Linux values differ.
+const TCIOFLUSH: c_int = if (builtin.os.tag.isDarwin()) 3 else 2;
+
 extern "c" fn openpty(
     amaster: *posix.fd_t,
     aslave: *posix.fd_t,
@@ -112,30 +127,23 @@ pub const SpawnError = error{
     ArgvEmpty,
 } || Allocator.Error || std.Thread.SpawnError || Io.Cancelable;
 
-/// A test-and-set lock for the two-line critical sections in `Shared`.
-const SpinLock = struct {
-    held: std.atomic.Value(bool) = .init(false),
-
-    fn lock(self: *SpinLock) void {
-        while (self.held.swap(true, .acquire)) std.atomic.spinLoopHint();
-    }
-
-    fn unlock(self: *SpinLock) void {
-        self.held.store(false, .release);
-    }
-};
+const SpinLock = common.SpinLock;
 
 /// State the reader thread and the session both reach. Refcounted; see the
 /// module doc for why it is not simply owned by the session.
 const Shared = struct {
     ring: Ring,
-    /// Closed with the block, not at EOF: the session may still `write`
-    /// to it after the child is gone (the bytes are dropped), and an fd
-    /// closed early could be reused under it.
+    /// What the session wants written to the child; the reader drains it.
+    outbox: Outbox = .{},
+    /// Non-blocking. Closed with the block, not at EOF: the session may
+    /// still ioctl it after the child is gone, and an fd closed early
+    /// could be reused under it.
     master: posix.fd_t,
-    /// The pipe `deinit` writes a byte to so the reader's poll returns at
-    /// once. `[0]` is polled by the reader; `[1]` is written by `deinit`.
-    /// Closed with the block.
+    /// The pipe that pops the reader's poll: a byte from `deinit`
+    /// (`closing` is set), or from a push onto an empty outbox. Both ends
+    /// non-blocking — a full pipe already means the reader has a wakeup
+    /// waiting. `[0]` is polled and drained by the reader. Closed with
+    /// the block.
     wake: [2]posix.fd_t,
     child: posix.pid_t,
     notify: Notify,
@@ -169,11 +177,12 @@ const Shared = struct {
         _ = c.close(self.wake[0]);
         _ = c.close(self.wake[1]);
         self.ring.deinit();
+        self.outbox.deinit(gpa);
         gpa.destroy(self);
     }
 
-    /// Session side: pop the reader's poll. One byte is enough; the pipe
-    /// is written exactly once, so this never blocks.
+    /// Session side: pop the reader's poll. One byte is enough; a full
+    /// pipe (EAGAIN) means a wakeup is already waiting, so it never blocks.
     fn wakeReader(self: *Shared) void {
         const byte = [_]u8{0};
         _ = c.write(self.wake[1], &byte, 1);
@@ -210,8 +219,6 @@ pub const Session = struct {
     /// By value: the write_pty callback recovers `Session` from
     /// `&stream.handler` via `@fieldParentPtr`. Never move a Session.
     stream: vt.TerminalStream,
-    /// Query replies stashed by `onWritePty`, flushed at the end of `pump`.
-    responses: std.ArrayList(u8) = .empty,
     shared: *Shared,
     master: posix.fd_t,
     child: posix.pid_t,
@@ -282,11 +289,16 @@ pub const Session = struct {
         }
         setCloexec(wake[0]);
         setCloexec(wake[1]);
+        setNonblock(wake[0]);
+        setNonblock(wake[1]);
 
         const pid = c.fork();
         if (pid < 0) return error.ForkFailed;
         if (pid == 0) childExec(master, slave, exe, argvp, envp, cwd_z, path_z);
         _ = c.close(slave);
+        // After the fork: the child's stdio is the slave, and must stay
+        // blocking; only our end is polled.
+        setNonblock(master);
 
         // ── wire the session ──
         shared.* = .{
@@ -341,7 +353,6 @@ pub const Session = struct {
         shared.wakeReader();
         self.stream.deinit();
         self.term.deinit(gpa);
-        self.responses.deinit(gpa);
         shared.awaitReader();
         // The reader is gone from the block. If neither side has claimed
         // the reap — the reader reached EOF on its own before `closing`
@@ -357,10 +368,10 @@ pub const Session = struct {
         gpa.destroy(self);
     }
 
-    /// Feed everything the reader has ringed into the terminal, then send
-    /// any query replies back to the child. Call from the UI thread on
-    /// every `.pty_readable` and once per frame. Returns true when the
-    /// terminal state changed (something to render).
+    /// Feed everything the reader has ringed into the terminal (its query
+    /// replies go onto the outbox as they are parsed). Call from the UI
+    /// thread on every `.pty_readable` and once per frame. Returns true
+    /// when the terminal state changed (something to render).
     pub fn pump(self: *Session) bool {
         const ring = &self.shared.ring;
         ring.beginDrain();
@@ -372,17 +383,52 @@ pub const Session = struct {
             ring.consume(chunk.len);
             fed = true;
         }
-        if (self.responses.items.len > 0) {
-            writeAll(self.master, self.responses.items);
-            self.responses.clearRetainingCapacity();
-        }
         self.reap(false);
         return fed;
     }
 
-    /// Bytes from the user (keystrokes, paste) to the child.
+    /// Bytes from the user (keystrokes, paste) to the child. Queued, never
+    /// written here: returns at once whether or not the child is reading.
+    /// Bytes to a child that has gone away are dropped.
     pub fn write(self: *Session, bytes: []const u8) void {
-        writeAll(self.master, bytes);
+        self.queue(bytes);
+    }
+
+    /// Ctrl+C. A ^C queued behind input the child is not reading would
+    /// never reach the line discipline — the tty's input queue is full —
+    /// so while input is pending this does what the line discipline does
+    /// on its interrupt character: drop the queued input (ours, and the
+    /// tty's queues unless `NOFLSH`) and signal the foreground process
+    /// group. With nothing pending, or a child that has `ISIG` off (vim,
+    /// a raw-mode TUI), the byte is simply sent.
+    pub fn interrupt(self: *Session) void {
+        if (self.shared.outbox.pending() > 0 and !self.eof()) {
+            self.shared.outbox.discard();
+            var tio: c.termios = undefined;
+            if (c.tcgetattr(self.master, &tio) == 0 and tio.lflag.ISIG and
+                tio.cc[@intFromEnum(posix.V.INTR)] == 0x03)
+            {
+                if (!tio.lflag.NOFLSH) _ = tcflush(self.master, TCIOFLUSH);
+                const pgrp = tcgetpgrp(self.master);
+                if (pgrp > 0) _ = c.kill(-pgrp, .INT);
+                return;
+            }
+        }
+        self.queue("\x03");
+    }
+
+    /// Bytes still waiting for the child to read them.
+    pub fn pendingInput(self: *Session) usize {
+        return self.shared.outbox.pending();
+    }
+
+    fn queue(self: *Session, bytes: []const u8) void {
+        if (self.eof()) return;
+        const edge = self.shared.outbox.push(self.gpa, bytes) catch |err| {
+            log.warn("dropping {d} bytes of input: {t}", .{ bytes.len, err });
+            return;
+        };
+        if (edge) self.shared.wakeReader();
     }
 
     /// Resize both the pty (SIGWINCH to the child) and the terminal grid.
@@ -425,11 +471,8 @@ pub const Session = struct {
     }
 
     fn onWritePty(handler: *vt.TerminalStream.Handler, data: []const u8) void {
-        const self = fromHandler(handler);
-        // Mid-parse: stash only. `pump` flushes after the drain.
-        self.responses.appendSlice(self.gpa, data) catch |err| {
-            log.warn("dropping {d}-byte query reply: {t}", .{ data.len, err });
-        };
+        // Mid-parse is fine: a push only copies.
+        fromHandler(handler).queue(data);
     }
 
     /// The session's side of the reap. Only the session waits while it
@@ -459,38 +502,48 @@ fn readerMain(shared: *Shared, gpa: Allocator) void {
         .{ .fd = shared.master, .events = posix.POLL.IN, .revents = 0 },
         .{ .fd = shared.wake[0], .events = posix.POLL.IN, .revents = 0 },
     };
-    outer: while (!shared.closing.load(.acquire)) {
+    // What one drain step copies out of the outbox; the tty takes about
+    // a kilobyte at a time anyway.
+    var chunk: [16 * 1024]u8 = undefined;
+    while (!shared.closing.load(.acquire)) {
+        // Back-pressure: a full ring means the UI is more than 256 KiB
+        // behind. Stop asking for input and look again in a moment; the
+        // outbox keeps draining meanwhile.
+        const room = shared.ring.writable().len > 0;
+        const out = shared.outbox.pending() > 0;
+        const want_in: i16 = if (room) posix.POLL.IN else 0;
+        const want_out: i16 = if (out) posix.POLL.OUT else 0;
+        fds[0].events = want_in | want_out;
         fds[0].revents = 0;
         fds[1].revents = 0;
-        const n = posix.poll(&fds, shared.poll_interval_ms) catch break;
+        const n = posix.poll(&fds, if (room) shared.poll_interval_ms else 1) catch break;
+        if (fds[1].revents != 0) drainWake(shared.wake[0]);
+        // `deinit`'s byte: there is no reason to touch the pty again.
+        if (shared.closing.load(.acquire)) break;
         if (n == 0) continue;
-        // `deinit`'s byte: `closing` is set, and the loop condition would
-        // see it, but there is no reason to read the pty first.
-        if (fds[1].revents != 0) break;
-        if (fds[0].revents & (posix.POLL.ERR | posix.POLL.NVAL) != 0) break;
-        // HUP without IN means the slave side is gone; with IN, drain first.
-        if (fds[0].revents & posix.POLL.IN == 0) {
-            if (fds[0].revents & posix.POLL.HUP != 0) break;
+        const rev = fds[0].revents;
+        if (rev & (posix.POLL.ERR | posix.POLL.NVAL) != 0) break;
+        if (rev & posix.POLL.OUT != 0) flushOutbox(shared, &chunk);
+        if (rev & posix.POLL.IN != 0) {
+            const got = posix.read(shared.master, shared.ring.writable()) catch |err| switch (err) {
+                // macOS delivers EIO (mapped to InputOutput) once the slave is
+                // closed; Linux too. Either way the child is finished with us.
+                error.InputOutput => break,
+                error.WouldBlock => continue,
+                else => break,
+            };
+            if (got == 0) break;
+            if (shared.ring.commit(got)) shared.callNotify();
             continue;
         }
-        // Back-pressure: a full ring means the UI is more than 256 KiB
-        // behind; give it a moment rather than spinning.
-        var dst = shared.ring.writable();
-        while (dst.len == 0) {
-            if (shared.closing.load(.acquire)) break :outer;
+        // HUP without IN means the slave side is gone — but only when IN
+        // was asked for: with the ring full, output may still be waiting.
+        if (rev & posix.POLL.HUP != 0) {
+            if (room) break;
             sleepMs(1);
-            dst = shared.ring.writable();
         }
-        const got = posix.read(shared.master, dst) catch |err| switch (err) {
-            // macOS delivers EIO (mapped to InputOutput) once the slave is
-            // closed; Linux too. Either way the child is finished with us.
-            error.InputOutput => break,
-            error.WouldBlock => continue,
-            else => break,
-        };
-        if (got == 0) break;
-        if (shared.ring.commit(got)) shared.callNotify();
     }
+    shared.outbox.close();
     shared.eof.store(true, .release);
     shared.callNotify();
     // Everything needed after the release is decided and copied out here.
@@ -580,23 +633,38 @@ fn setCloexec(fd: posix.fd_t) void {
     _ = c.fcntl(fd, posix.F.SETFD, flags | posix.FD_CLOEXEC);
 }
 
-/// Blocking write that rides out EINTR/EAGAIN. Bytes to a child that has
-/// gone away are dropped silently; the reader will report EOF.
-fn writeAll(fd: posix.fd_t, bytes: []const u8) void {
-    var off: usize = 0;
-    while (off < bytes.len) {
-        const rc = c.write(fd, bytes.ptr + off, bytes.len - off);
-        if (rc < 0) {
-            switch (c.errno(rc)) {
-                .INTR => continue,
-                .AGAIN => {
-                    sleepMs(1);
-                    continue;
-                },
-                else => return,
-            }
-        }
-        off += @intCast(rc);
+fn setNonblock(fd: posix.fd_t) void {
+    const flags = c.fcntl(fd, posix.F.GETFL);
+    if (flags < 0) return;
+    _ = c.fcntl(fd, posix.F.SETFL, flags | @as(c_int, @bitCast(posix.O{ .NONBLOCK = true })));
+}
+
+/// Reader side: empty the wake pipe (non-blocking) so the next poll
+/// sleeps again.
+fn drainWake(fd: posix.fd_t) void {
+    var sink: [64]u8 = undefined;
+    while (c.read(fd, &sink, sink.len) > 0) {}
+}
+
+/// Reader side: write what the child has room for, never waiting. A
+/// write the kernel refuses for good (the slave is gone) closes the box,
+/// so nothing keeps asking for POLLOUT on a dead pty.
+fn flushOutbox(shared: *Shared, chunk: []u8) void {
+    while (true) {
+        const taken = shared.outbox.peek(chunk);
+        if (taken.n == 0) return;
+        const rc = c.write(shared.master, chunk.ptr, taken.n);
+        if (rc < 0) switch (c.errno(rc)) {
+            .INTR => continue,
+            .AGAIN => return,
+            else => {
+                shared.outbox.close();
+                return;
+            },
+        };
+        const wrote: usize = @intCast(rc);
+        shared.outbox.consume(wrote, taken.gen);
+        if (wrote < taken.n) return;
     }
 }
 
@@ -854,4 +922,78 @@ test "stress: the reader has let go of the block by the time deinit returns" {
         s.deinit();
         try testing.expectEqual(std.heap.Check.ok, dbg.deinit());
     }
+}
+
+fn nowMs(io: Io) i64 {
+    return Io.Timestamp.now(io, .awake).toMilliseconds();
+}
+
+test "1 MiB written to a child that never reads returns at once; the child lives and an interrupt still reaches it" {
+    var env = try testEnv();
+    defer env.deinit();
+    const s = try Session.spawn(testing.allocator, testing.io, .{
+        .cols = 40,
+        .rows = 4,
+        .env = &env,
+        .argv = &.{ "/bin/sh", "-c", "sleep 30" },
+        .poll_interval_ms = 20,
+    });
+    defer s.deinit();
+    const payload = try testing.allocator.alloc(u8, 1024 * 1024);
+    defer testing.allocator.free(payload);
+    @memset(payload, 'x');
+    for (0..payload.len / 64) |i| payload[i * 64 + 63] = '\n';
+
+    const t0 = nowMs(testing.io);
+    s.write(payload);
+    const took = nowMs(testing.io) - t0;
+    // A blocking write would sit here until `sleep` exits, 30 s from now.
+    try testing.expect(took < 500);
+    sleepMs(200);
+    _ = s.pump();
+    try testing.expectEqual(@as(?Exit, null), s.exited());
+    // The tty took its kilobyte; the rest waits in the outbox.
+    try testing.expect(s.pendingInput() > 0);
+
+    // Ctrl+C: behind a full tty queue the ^C byte could never be read,
+    // so the interrupt is delivered as the line discipline would.
+    s.interrupt();
+    const exit = pumpUntilExit(s, 5000) orelse return error.ChildDidNotExit;
+    try testing.expect(exit == .signal or exit.code != 0);
+}
+
+test "type-ahead a child reads later arrives whole and in order" {
+    var env = try testEnv();
+    defer env.deinit();
+    const s = try Session.spawn(testing.allocator, testing.io, .{
+        .cols = 60,
+        .rows = 4,
+        .env = &env,
+        // Not reading for a while, then all of it: 256 KiB and a marker.
+        .argv = &.{ "/bin/sh", "-c", "stty -echo -icanon min 1; echo ready; sleep 0.5; head -c 262150 | tail -c 6; echo; echo got" },
+        .poll_interval_ms = 20,
+    });
+    defer s.deinit();
+    // Raw input first, or the tty's canonical line limit eats the bytes.
+    var waited: u32 = 0;
+    while (waited < 5000) : (waited += 10) {
+        _ = s.pump();
+        const t = try s.terminal().plainString(testing.allocator);
+        defer testing.allocator.free(t);
+        if (std.mem.indexOf(u8, t, "ready") != null) break;
+        sleepMs(10);
+    }
+    const payload = try testing.allocator.alloc(u8, 262144);
+    defer testing.allocator.free(payload);
+    for (payload, 0..) |*b, i| b.* = 'a' + @as(u8, @intCast(i % 26));
+    const t0 = nowMs(testing.io);
+    s.write(payload);
+    s.write("<END>!");
+    try testing.expect(nowMs(testing.io) - t0 < 500);
+    const exit = pumpUntilExit(s, 10_000) orelse return error.ChildDidNotExit;
+    try testing.expectEqual(Exit{ .code = 0 }, exit);
+    const text = try s.terminal().plainString(testing.allocator);
+    defer testing.allocator.free(text);
+    try testing.expect(std.mem.indexOf(u8, text, "<END>!") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "got") != null);
 }

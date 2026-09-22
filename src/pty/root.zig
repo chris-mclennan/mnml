@@ -2,7 +2,8 @@
 //!
 //! Layout (each file is one concern):
 //!   ring.zig             — SPSC byte ring between the reader thread and the UI thread
-//!   common.zig           — `Notify` and `Exit`, shared by both backends
+//!   common.zig           — `Notify`, `Exit` and `SpinLock`, shared by both backends
+//!   outbox.zig           — the queue the UI thread writes the child's input into
 //!   session_posix.zig    — openpty + fork + reader thread + pump/resize
 //!   session_windows.zig  — ConPTY + CreateProcessW + reader/watcher threads
 //!   win_cmdline.zig      — the Windows session's host-neutral, tested pieces
@@ -17,6 +18,7 @@ pub const vt = @import("ghostty-vt");
 pub const ring = @import("ring.zig");
 pub const Ring = ring.Ring;
 pub const common = @import("common.zig");
+pub const outbox = @import("outbox.zig");
 pub const win_cmdline = @import("win_cmdline.zig");
 pub const is_windows = builtin.os.tag == .windows;
 pub const session = if (is_windows) @import("session_windows.zig") else @import("session_posix.zig");
