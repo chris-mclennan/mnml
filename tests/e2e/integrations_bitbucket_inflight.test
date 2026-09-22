@@ -1,0 +1,57 @@
+# width: 120
+# height: 40
+# env: MNML_MARKETPLACE_LOCAL=market
+# env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/bitbucket.zon
+# env: BITBUCKET_BASE_URL=@${MNML_E2E_WORKSPACE}/bb.url
+# env: BITBUCKET_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/bucket.json
+# env: BITBUCKET_API_TOKEN=corpus-read-token
+# The in-flight header. A reader waited a minute under `loading…` and
+# could not tell whether the pane was fetching, queued behind the rate
+# broker, or done with nothing. While a fetch is out the caps header
+# says what it is doing — `fetching… 1/2 repos` on a first load, the
+# count plus `fetching…` on a refetch — and the refresh chip turns the
+# host's own spinner ring. The fake holds every reply two seconds, so
+# the state paints for long enough to read.
+shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --lifetime-secs 180 --delay-ms 2000 >/dev/null 2>&1 &
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 0, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs } } }"
+write market/bitbucket_prs.zon ".{ .id = \"bitbucket_prs\", .label = \"Bitbucket PRs\", .version = \"0.2.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .args = .{ \"--only\", \"prs\" }, .description = \"Bitbucket pull requests\", .commands = .{ .{ .id = \"bitbucket_prs.open\", .title = \"Bitbucket PRs: open\" } } }"
+command integrations.show_marketplace
+key i
+expect screen contains "installed bitbucket_prs"
+command integrations.open_as_tab
+command bitbucket_prs.open
+command view.toggle_tree
+command view.focus_pane
+# The first load: whoami, then two repos, each two seconds behind the
+# fake. The header names the fetch and counts the repos as they land.
+wait 2500
+expect screen contains "BITBUCKET PRS"
+expect screen contains "fetching…"
+expect screen lacks "as of"
+# Landed: the count, the age, the rows, and no fetch line.
+wait 7000
+expect screen contains "(2 repos · 3 PRs)"
+expect screen contains "as of"
+expect screen lacks "fetching"
+expect screen contains "#1234"
+# A refetch keeps the rows and the count on screen and says
+# `fetching…` beside them, in the same place. (It queues behind the
+# statusline figure's own five requests, each two seconds behind the
+# fake, so the line stands for a while.)
+key r
+wait 1200
+expect screen contains "(2 repos · 3 PRs)"
+expect screen contains "fetching…"
+expect screen contains "#1234"
+wait 14000
+expect screen lacks "fetching"
+expect screen contains "as of"
+key q
+wait 500
+key x
+command integrations.show_installed
+key x
+expect screen contains "Remove integration"
+key enter
+key r
+expect screen contains "removed bitbucket_prs"

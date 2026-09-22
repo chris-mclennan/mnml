@@ -1,0 +1,24 @@
+▌BITBUCKET PRS  (2 repos · 3 PRs)  as of 0s ago                             ?
+▌ 1 Open + Draft (3)   2 Merged (2)
+▌▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+▌ status: ┌─ status ─────────────────────────────────────────────────┐
+▌ 󰍉 / filt│ 󰍉 type to filter…▏                                       │
+▌ REPO / #│                                                          │
+▌  api   │▌ [x] Open                                                │ login re
+▌    #123│▌ [x] Draft                                               │edirec 󰏌 󰘭
+▌  web   │▌ [ ] Merged                                              │ the empt
+▌    #820│▌ [ ] Declined                                            │pty st 󰏌 󰘭
+▌         │                                                          │)
+▌         │                                                          │
+▌         │                                                          │
+▌         │                                                          │
+▌         │                                                          │
+▌         │                                                          │
+▌         │                                                          │
+▌         │                                                          │
+▌         │                                                          │
+▌         │                                                          │
+▌         └──────────────────────────────────────────────────────────┘
+▌
+▌
+ Open + Draft · 2 repos, 3 PRs  type to filter · ↑↓ move · ␣ toggle · ⏎ close ·

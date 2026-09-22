@@ -1,0 +1,198 @@
+# width: 120
+# height: 40
+# env: MNML_MARKETPLACE_LOCAL=market
+# env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/bitbucket.zon
+# env: BITBUCKET_BASE_URL=@${MNML_E2E_WORKSPACE}/bb.url
+# env: BITBUCKET_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/bucket.json
+# env: BITBUCKET_API_TOKEN=corpus-read-token
+# env: MNML_WORKSPACE=${MNML_E2E_WORKSPACE}
+# The PR pane's toolbar is Bitbucket Cloud's own filter bar, working:
+# search, then Status (Open / Draft / Merged / Declined, several at
+# once), then Author (all / me / anyone the loaded set names), then
+# Target branch, then the right-hand Reviewing / All selector (with
+# `awaiting me` — the pane's older awaiting chip — as its third value;
+# "watching" needs a watcher list the API does not expose). Every chip
+# is a key as well as a click; every one persists per tab in state.zon
+# beside the config. Only two changes cost a request: a Status that
+# adds an API state the listing was not fetched with (Merged on the
+# open tree here), and Author me / not-me. The rest narrow the rows
+# already loaded. The fake's `--log-file` is the witness.
+shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --lifetime-secs 180 --log-file wire.jsonl >/dev/null 2>&1 &
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 0, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs }, .{ .name = \"Merged\", .kind = .workspace_merged_prs } } }"
+write market/bitbucket_prs.zon ".{ .id = \"bitbucket_prs\", .label = \"Bitbucket PRs\", .version = \"0.2.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .args = .{ \"--only\", \"prs\" }, .description = \"Bitbucket: open + merged pull requests across the workspace\", .chip = .{ .glyph = \"\u{f00a8}\", .fallback = \"BP\", .color = \"blue\", .in_palette_bar = false }, .commands = .{ .{ .id = \"bitbucket_prs.open\", .title = \"Bitbucket PRs: open\" } } }"
+command integrations.show_marketplace
+key i
+expect screen contains "installed bitbucket_prs"
+command integrations.open_as_tab
+command bitbucket_prs.open
+command view.toggle_tree
+command view.focus_pane
+wait 1500
+expect screen contains "BITBUCKET PRS"
+expect screen contains "(2 repos · 3 PRs)"
+
+# The bar, under the strip: the web's chips with their live values.
+expect screen contains " status: Open + Draft "
+expect screen contains " author: all "
+expect screen contains " target: any "
+expect screen contains " show: all"
+# The rows fold with the tree's chevron — the toolkit's glyph, the one
+# the host's file tree wears — not the reference's triangles.
+expect screen contains "▌  api"
+expect screen lacks "▾ api"
+expect screen lacks "▸"
+
+# ─── Status: a multi-select picker; Merged costs the one fetch ────────
+# `S` opens the Status picker with the four boxes, Open and Draft
+# ticked; Space on Merged adds it and the tree refetches with both
+# states in ONE request per repo (`state=OPEN&state=MERGED`).
+shell : > wire.jsonl
+key shift+s
+expect screen contains " status "
+expect screen contains "[x] Open"
+expect screen contains "[x] Draft"
+expect screen contains "[ ] Merged"
+expect screen contains "[ ] Declined"
+key down
+key down
+key space
+wait 1200
+expect screen contains "[x] Merged"
+key enter
+wait 800
+expect screen contains " status: Open + Draft + Merged "
+# The merged #1100 is on the open tree now, beside the open rows.
+expect screen contains "#1100"
+expect screen contains "Drop the legacy"
+expect screen contains "#1234"
+expect file wire.jsonl contains "state=OPEN&state=MERGED"
+# The choice is in the pane's state file, per tab by name (the Merged
+# tab's own entry says `.merged = true` too, so the author below is
+# the distinctive witness).
+expect file state.zon contains ".name = \"Open + Draft\""
+# Taking Merged off again is client-side: no request goes out.
+shell : > wire.jsonl
+key shift+s
+key down
+key down
+key space
+key enter
+wait 600
+expect screen contains " status: Open + Draft "
+expect screen lacks "#1100"
+shell test ! -s wire.jsonl
+
+# ─── Author: a picker of everyone the loaded set names ────────────────
+# `U` lists all, me, then every author seen — sorted, each once. A
+# name is a predicate over the rows already there: no request.
+shell : > wire.jsonl
+key shift+u
+expect screen contains " author "
+expect screen contains "all"
+expect screen contains "me (Chris M)"
+expect screen contains "Dana R"
+expect screen contains "Sam K"
+type Dana
+key enter
+wait 600
+expect screen contains " author: Dana R "
+# Dana's #1198 is a day old — a chip is an explicit ask, so the
+# 24-hour fold is lifted rather than hiding what was asked for.
+expect screen contains "#1198"
+expect screen contains "Bump the client"
+expect screen lacks "Fix the login redir"
+expect screen contains "(1 of 2)"
+shell test ! -s wire.jsonl
+expect file state.zon contains ".author = \"Dana R\""
+# `me` is the mine-only fetch — the one Author value that costs a
+# request, and the chip says so with the account's name.
+shell : > wire.jsonl
+key shift+u
+type me
+key enter
+wait 1200
+expect screen contains " author: Chris M "
+expect screen contains "#1234"
+expect screen contains "#820"
+expect screen lacks "#1198"
+expect file wire.jsonl contains "author.account_id"
+# Back to all: a refetch too, since the mine-only listing is not the
+# whole workspace's.
+key shift+u
+type all
+key enter
+wait 1200
+expect screen contains " author: all "
+expect screen contains "#1234"
+
+# ─── Target branch: the destination, from the set ─────────────────────
+key shift+t
+expect screen contains " target "
+expect screen contains "any"
+expect screen contains "main"
+key esc
+expect screen contains " target: any "
+
+# ─── Show: all → reviewing → awaiting me, on `A` ──────────────────────
+# Reviewing is what I am a REVIEWER on, voted or not — #1198 only.
+shell : > wire.jsonl
+key shift+a
+wait 400
+expect screen contains " show: reviewing"
+expect screen contains "#1198"
+expect screen lacks "Fix the login redir"
+expect screen contains "(1 of 2)"
+# Awaiting me is that minus what I have voted on, with its count.
+key shift+a
+wait 400
+expect screen contains " show: awaiting me (1)"
+expect screen contains "#1198"
+key shift+a
+wait 400
+expect screen contains " show: all"
+expect screen contains "Fix the login redir"
+shell test ! -s wire.jsonl
+
+# ─── Nothing matches: the header says so ──────────────────────────────
+# Dana's one open pull request is not a draft: Draft alone with her
+# name empties the list, and the header names that rather than
+# counting to zero. (Both are client-side — Open off needs no fetch.)
+key shift+s
+key space
+key enter
+wait 400
+expect screen contains " status: Draft "
+key shift+u
+type Dana
+key enter
+wait 400
+expect screen contains " author: Dana R "
+expect screen contains "no pull requests match"
+expect screen lacks "Bump the client"
+key shift+u
+type all
+key enter
+key shift+s
+key up
+key space
+key enter
+wait 400
+expect screen contains " status: Open + Draft "
+expect screen contains "(2 repos · 3 PRs)"
+# The key sheet lists the chip keys under their own heading.
+type ?
+expect screen contains "── filters ──"
+expect screen contains "status: Open / Draft / Merged / Declined"
+expect screen contains "show: all → reviewing → awaiting me"
+key esc
+
+key q
+wait 500
+key x
+expect screen lacks "BITBUCKET PRS"
+command integrations.show_installed
+key x
+expect screen contains "Remove integration"
+key enter
+key r
+expect screen contains "removed bitbucket_prs"

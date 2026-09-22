@@ -53,25 +53,26 @@ expect screen contains "REPO / #PR"
 expect screen contains "AUTHOR"
 expect screen contains "UPDATED"
 expect screen contains "TITLE"
-expect screen contains "▌ ▾ api"
+# The rows fold with the tree's chevron — the toolkit's glyph, the one
+# the host's file tree and the tracker pane's tree wear.
+expect screen contains "▌  api"
 expect screen contains "2 PRs"
 expect screen contains "#1234"
 expect screen contains "Fix the login redir"
 expect screen contains "chris/fix-login"
-expect screen contains "▾ web"
+expect screen contains "  web"
 expect screen contains "#820"
 expect screen contains "Redesign the em"
 expect screen contains "Show more (1)"
-expect screen contains "author: all"
+# The web bar's chips, as a toolbar row under the strip
+# (integrations_bitbucket_filters.test drives them).
+expect screen contains " status: Open + Draft "
+expect screen contains " author: all "
+expect screen contains " target: any "
+expect screen contains " show: all"
 expect screen contains "Open + Draft · 2 repos, 3 PRs"
 expect screen contains "⏎ expand"
 expect screen contains "q quit"
-# The reference's four dead placeholder chips are not painted — the
-# ones whose click only says `filter not wired yet (round-1 visual)`.
-expect screen lacks "Target branch"
-expect screen lacks "Pipeline type"
-expect screen lacks "Trigger type"
-expect screen lacks "[ Branch"
 
 # The footer lifts the 24-hour window: the day-old #1198 appears.
 key G
@@ -82,7 +83,7 @@ expect screen lacks "Show more ("
 # c collapses every repo (the header keeps its preview), e opens them.
 key c
 expect screen lacks "Fix the login redir"
-expect screen contains "▸ api"
+expect screen contains "  api"
 key e
 expect screen contains "Fix the login redir"
 
@@ -133,15 +134,18 @@ wait 800
 expect screen contains "✓ SUCCESSFUL · main · "
 expect screen contains "· #412"
 
-# Back to Open, and the awaiting chip: what is waiting on MY review.
-# It narrows rows that are already loaded, so it costs no request, and
-# it lifts the 24-hour window the tree folds old rows behind.
+# Back to Open, and the show chip: `A` walks all → reviewing →
+# awaiting me, what is waiting on MY review. It narrows rows that are
+# already loaded, so it costs no request, and it lifts the 24-hour
+# window the tree folds old rows behind.
 key 1
 wait 400
-expect screen contains "awaiting: 1"
+expect screen contains " show: all"
+key shift+a
 key shift+a
 wait 400
-expect screen contains "(1 of 3 awaiting my review)"
+expect screen contains " show: awaiting me (1)"
+expect screen contains "(1 of 3)"
 expect screen contains "#1198"
 expect screen lacks "Fix the login redir"
 key shift+a
@@ -163,7 +167,7 @@ key g
 key x
 wait 800
 expect screen contains "hid api (H to un-hide all)"
-expect screen lacks "▾ api"
+expect screen lacks " api"
 expect file bitbucket.zon contains "hidden_repos"
 expect file bitbucket.zon contains "api"
 key H
@@ -171,7 +175,7 @@ wait 800
 expect screen contains "un-hid 1 repo(s)"
 # Back in the tree — collapsed, as the reference re-adds it (the open
 # set carries over the refetch; api was not in it).
-expect screen contains "▸ api"
+expect screen contains "  api"
 
 # q ends the pane; the exit banner sits under the next key, which closes it.
 key q

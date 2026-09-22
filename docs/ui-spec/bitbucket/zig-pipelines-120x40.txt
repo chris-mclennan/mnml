@@ -1,0 +1,40 @@
+▌BITBUCKET PIPELINES  (2 repos)  as of 0s ago                        run pipeline   schedules   caches   usage      ?
+▌ run by: any   branch: any   type: any   status: any   trigger: any
+▌ 󰍉 / filter
+▌ REPO / BRANCH                          STATE          BUILD    RESULT        DATE
+▌  api                                  4 branches
+▌     main                               COMPLETED      #412     ✓ SUCCESSFUL  2026-09-21
+▌     develop                            COMPLETED      #411     ✗ FAILED      2026-09-21
+▌     release/1.2                        COMPLETED      #405     ⊘ STOPPED     2026-09-12
+▌     chris/fix-login                    IN_PROGRESS    #413                   2026-09-22
+▌  web                                  3 branches
+▌     main                               COMPLETED      #70      ✓ SUCCESSFUL  2026-09-19
+▌     staging                            —
+▌     chris/empty-state                  PENDING        #77                    2026-09-22
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+▌
+ Pipelines · 2 repos          ↓ move · ⏎ expand · o open on web · d detail · m open↔merged · r refresh · ? keys · q quit
