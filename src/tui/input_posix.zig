@@ -36,6 +36,10 @@ buffer: [common.queue_len]Event = undefined,
 queue: Io.Queue(Event),
 group: Io.Group = .init,
 cache: vaxis.GraphemeCache = .{},
+/// How this terminal spells a shifted function key when it does not use
+/// xterm's modifier parameter (`legacy_fkeys.zig`); the terminal sets it
+/// from `$TERM_PROGRAM` / `$TERM` before `start`.
+fkeys: common.legacy_fkeys.Style = .xterm,
 winch_pipe: [2]posix.fd_t = .{ -1, -1 },
 old_winch: ?posix.Sigaction = null,
 started: bool = false,

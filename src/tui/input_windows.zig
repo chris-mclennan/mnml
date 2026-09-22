@@ -52,6 +52,10 @@ out: Io.File,
 buffer: [common.queue_len]Event = undefined,
 queue: Io.Queue(Event),
 cache: vaxis.GraphemeCache = .{},
+/// How this terminal spells a shifted function key when it does not use
+/// xterm's modifier parameter (`legacy_fkeys.zig`); the terminal sets it
+/// from `$TERM_PROGRAM` / `$TERM` before `start`.
+fkeys: common.legacy_fkeys.Style = .xterm,
 /// Manual-reset event `stop` sets so the reader leaves its wait.
 stop_event: ?win32.HANDLE = null,
 thread: ?std.Thread = null,
