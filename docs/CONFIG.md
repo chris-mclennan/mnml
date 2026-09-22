@@ -451,6 +451,11 @@ otherwise. Copy what you need; leave the rest out.
         .restore_terminals = .running, // .running (a shell restarts, a Claude / Codex pane resumes its session) | .dormant (every terminal pane comes back `[exited] — any key restarts …`)
     },
     .ipc = .{ .write_screen = false }, // also dump screen.txt, status.json and rects.json every frame
+    // ── terminal panes ─────────────────────────────────────────────────
+    // Read when a pane starts; a pane already open keeps what it began with.
+    .terminal = .{
+        .scrollback_lines = 10000, // lines kept above the screen per pane (Shift+PageUp, the wheel)
+    },
 
     // ── keys ───────────────────────────────────────────────────────────
     // One line per binding: chord → command id. "" / "none" / "unbound"

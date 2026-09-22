@@ -4,6 +4,23 @@
 //! Both also take their thread-shared locks from here.
 
 const std = @import("std");
+const vt = @import("ghostty-vt");
+
+/// `terminal.scrollback_lines`' default: what a build log needs to keep
+/// its first error. The library's own default is 10 KB — about 500 lines.
+pub const default_scrollback_lines: usize = 10_000;
+
+/// The `Terminal` every session runs, whichever backend. Scrollback is
+/// bounded by lines, not bytes (ghostty's `scrollback-limit-lines`), so
+/// the number the user sets is the number they get.
+pub fn terminalOptions(cols: u16, rows: u16, scrollback_lines: usize) vt.Terminal.Options {
+    return .{
+        .cols = cols,
+        .rows = rows,
+        .max_scrollback_bytes = null,
+        .max_scrollback_lines = scrollback_lines,
+    };
+}
 
 /// Called from the reader thread: once when the ring goes from empty to
 /// readable (see `Ring.commit`), and once when the child's output ends.

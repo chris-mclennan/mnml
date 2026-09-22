@@ -85,6 +85,8 @@ pub const Options = struct {
     notify: Notify = .none,
     /// Ring size; must be a power of two.
     ring_capacity: usize = Ring.default_capacity,
+    /// Scrollback kept above the screen, in lines.
+    scrollback_lines: usize = common.default_scrollback_lines,
     /// Accepted for symmetry with the POSIX options; the Windows reader
     /// blocks in `ReadFile` and needs no poll interval.
     poll_interval_ms: i32 = 250,
@@ -285,7 +287,7 @@ pub const Session = struct {
         var ring = try Ring.init(opts.ring_capacity);
         errdefer ring.deinit();
 
-        var term: vt.Terminal = try .init(io, gpa, .{ .cols = opts.cols, .rows = opts.rows });
+        var term: vt.Terminal = try .init(io, gpa, common.terminalOptions(opts.cols, opts.rows, opts.scrollback_lines));
         errdefer term.deinit(gpa);
 
         // ── pipes + pseudoconsole ──

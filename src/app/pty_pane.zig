@@ -342,6 +342,7 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
         .argv = if (argv.len == 0) null else @ptrCast(argv),
         .cwd = cwd orelse app.workspace,
         .notify = .{ .ctx = wire, .fn_ptr = &Wire.readable },
+        .scrollback_lines = app.cfg.terminal.scrollback_lines,
     }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.Canceled => return error.Canceled,
@@ -543,6 +544,7 @@ pub fn restart(app: *App, id: PaneId) CommandError!void {
         .argv = if (p.argv.len == 0) null else @ptrCast(p.argv),
         .cwd = p.cwd orelse app.workspace,
         .notify = .{ .ctx = p.wire, .fn_ptr = &Wire.readable },
+        .scrollback_lines = app.cfg.terminal.scrollback_lines,
     }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.Canceled => return error.Canceled,

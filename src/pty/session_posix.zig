@@ -114,6 +114,8 @@ pub const Options = struct {
     notify: Notify = .none,
     /// Ring size; must be a power of two.
     ring_capacity: usize = Ring.default_capacity,
+    /// Scrollback kept above the screen, in lines.
+    scrollback_lines: usize = common.default_scrollback_lines,
     /// How long the reader blocks in poll before re-checking `closing` on
     /// its own. `deinit` wakes it directly; this is the fallback cadence.
     poll_interval_ms: i32 = 250,
@@ -268,7 +270,7 @@ pub const Session = struct {
         var ring = try Ring.init(opts.ring_capacity);
         errdefer ring.deinit();
 
-        var term: vt.Terminal = try .init(io, gpa, .{ .cols = opts.cols, .rows = opts.rows });
+        var term: vt.Terminal = try .init(io, gpa, common.terminalOptions(opts.cols, opts.rows, opts.scrollback_lines));
         errdefer term.deinit(gpa);
 
         // ── pty + child ──
@@ -996,4 +998,24 @@ test "type-ahead a child reads later arrives whole and in order" {
     defer testing.allocator.free(text);
     try testing.expect(std.mem.indexOf(u8, text, "<END>!") != null);
     try testing.expect(std.mem.indexOf(u8, text, "got") != null);
+}
+
+test "the scrollback keeps what the line limit says: 3000 lines of seq, line 1 still at the top" {
+    var env = try testEnv();
+    defer env.deinit();
+    const s = try Session.spawn(testing.allocator, testing.io, .{
+        .cols = 40,
+        .rows = 10,
+        .env = &env,
+        .argv = &.{ "/bin/sh", "-c", "seq 1 3000" },
+    });
+    defer s.deinit();
+    _ = pumpUntilExit(s, 10_000) orelse return error.ChildDidNotExit;
+    s.terminal().scrollViewport(.top);
+    var g: @import("grid.zig").Grid = .{};
+    defer g.deinit(testing.allocator);
+    try g.update(testing.allocator, s.terminal());
+    try testing.expectEqual(@as(u21, '1'), g.cell(0, 0).cp);
+    try testing.expect(g.cell(1, 0).isEmpty());
+    try testing.expectEqual(@as(u21, '2'), g.cell(0, 1).cp);
 }

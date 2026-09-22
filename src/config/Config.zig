@@ -26,6 +26,7 @@ editor: Editor = .{},
 ui: Ui = .{},
 session: Session = .{},
 ipc: Ipc = .{},
+terminal: Terminal = .{},
 cloud_run: CloudRun = .{},
 jira: Jira = .{},
 cloud_agents: CloudAgents = .{},
@@ -727,6 +728,14 @@ pub const RestoreTerminals = enum { running, dormant };
 pub const Session = struct {
     restore: bool = true,
     restore_terminals: RestoreTerminals = .running,
+};
+/// Terminal panes (`:term`, the shells, AI sessions): what each pty's
+/// emulator keeps and lets its child do. Read when a pane starts; a pane
+/// already open keeps what it started with.
+pub const Terminal = struct {
+    /// Lines kept above the screen for Shift+PageUp / the wheel. The
+    /// oldest go first once a pane has this many.
+    scrollback_lines: u32 = 10_000,
 };
 pub const Ipc = struct {
     write_screen: bool = false,
