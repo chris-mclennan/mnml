@@ -62,7 +62,14 @@ pub fn main(init: std.process.Init) !u8 {
     }
     if (args.len >= 2 and std.mem.eql(u8, args[1], "profile")) return profileSubcommand(gpa, io, env, args[2..], w);
     if (args.len >= 2 and std.mem.eql(u8, args[1], "test")) return testSubcommand(gpa, io, env, args[2..], w);
-    if (args.len >= 2 and std.mem.eql(u8, args[1], "hover-audit")) return @import("app/info_view_audit.zig").main(gpa, io, env, args[2..], w);
+    // The audit's table runs past the writer's buffer: flush, or its
+    // summary and the NEW-uncovered list — the lines `--strict` fails
+    // on — never reach the terminal.
+    if (args.len >= 2 and std.mem.eql(u8, args[1], "hover-audit")) {
+        const code = try @import("app/info_view_audit.zig").main(gpa, io, env, args[2..], w);
+        try w.flush();
+        return code;
+    }
     // `broker acquire` is how a shell script queues behind the panes
     // rather than taking a token out from under one.
     if (args.len >= 2 and std.mem.eql(u8, args[1], "broker")) return brokerSubcommand(gpa, io, env, args[2..], w);
