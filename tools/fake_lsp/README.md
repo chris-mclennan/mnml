@@ -39,7 +39,26 @@ as for a debug adapter.
   L:C-L:C len=N`, or `didChange full len=N`. That line is the only way
   a script can tell a range sync from a full one. Without the flag the
   server advertises full sync (`change: 1`) as it always has.
+- `--configure` — after `initialized`, send the client a
+  `workspace/configuration` request and answer `documentSymbol` with
+  `[]` until the client has replied; the reply writes
+  `workspace/configuration answered` into `--log`. This is what
+  bash-language-server does while it is still configuring, and what
+  left mnml's outline empty when the first symbols request went out in
+  the same instant as `didOpen`.
+- `--symbols rich` — a function's `range` runs to the first later line
+  that starts with `}` (a one-liner that holds its own `}` ends where
+  it is), and every `let <name>` line is a variable symbol (kind 13) on
+  its line — the shape a real server sends, which the breadcrumb chip
+  has to place a caret inside. Without it a symbol is one line, as it
+  always was.
 - `--version`, `--help`.
+
+Two more lines go into `--log` under the method that carried them,
+whatever the flags: `didOpen languageId=<id>` (what the client called
+the file — `shellscript` for a `bin/run-all` under a bash shebang) and
+`formatting tabSize=<n> insertSpaces=<bool>` (the options a formatting
+request carried).
 
 ## The contract
 
@@ -67,7 +86,7 @@ An unknown request gets `-32601 method not found`.
 | `textDocument/references` | every whole-word occurrence of the word in the document, in order |
 | `textDocument/completion` | the document's identifiers, unique, sorted bytewise; a name with a `fn name` line is kind 3 (function, detail `fn`), the rest kind 6 (variable, detail `identifier`) |
 | `textDocument/rename` | a `WorkspaceEdit` whose `changes[uri]` replaces every whole-word occurrence of the word with `newName` |
-| `textDocument/documentSymbol` | one symbol per `fn <name>` line: kind 12 (Function), `range` the line, `selectionRange` the name |
+| `textDocument/documentSymbol` | one symbol per `fn <name>` line: kind 12 (Function), `range` the line, `selectionRange` the name (`--symbols rich`: the range through the closing `}`, plus a variable per `let`); `[]` under `--configure` until the client has answered `workspace/configuration` |
 | `textDocument/codeAction` | when the line at `range.start` holds `TODO`: one `quickfix` titled `Resolve TODO` whose edit replaces the marker with `DONE`; else `[]` |
 | `textDocument/formatting` | one edit replacing the whole document with trailing blanks trimmed on every line and exactly one newline at the end; `[]` when already so |
 

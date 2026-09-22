@@ -77,6 +77,16 @@ pub const Server = struct {
     /// the change was into the log — the only way a script can tell a
     /// range sync from a full one.
     incremental: bool = false,
+    /// `--configure`: after `initialized`, ask the client for
+    /// `workspace/configuration` and answer `documentSymbol` with `[]`
+    /// until it has replied — what bash-language-server does while it
+    /// is still configuring, and what left mnml's outline empty.
+    configure: bool = false,
+    configured: bool = false,
+    /// `--symbols rich`: a function's range runs to its closing `}` and
+    /// every `let` is a variable symbol, the shape a real server sends;
+    /// the default keeps one single-line symbol per `fn`.
+    rich_symbols: bool = false,
     log: std.ArrayList(u8) = .empty,
     initialized: bool = false,
     shutdown: bool = false,
@@ -162,6 +172,25 @@ pub const Server = struct {
         try self.emit(aw.written());
     }
 
+    /// A request of the server's own (`workspace/configuration`); its
+    /// id is one the client never issues.
+    fn request_out(self: *Server, method: []const u8, params: anytype) !void {
+        var aw: Io.Writer.Allocating = .init(self.gpa);
+        defer aw.deinit();
+        var js: std.json.Stringify = .{ .writer = &aw.writer, .options = .{ .emit_null_optional_fields = false } };
+        try js.beginObject();
+        try js.objectField("jsonrpc");
+        try js.write("2.0");
+        try js.objectField("id");
+        try js.write(@as(i64, 900_000));
+        try js.objectField("method");
+        try js.write(method);
+        try js.objectField("params");
+        try js.write(params);
+        try js.endObject();
+        try self.emit(aw.written());
+    }
+
     // ─── messages ───
 
     /// One frame's body: parse, dispatch, answer. Not JSON: ignored. A
@@ -173,7 +202,14 @@ pub const Server = struct {
         };
         defer parsed.deinit();
         const v = parsed.value;
-        const method = getStr(v, "method") orelse return; // a response to us: nothing asks
+        const method = getStr(v, "method") orelse {
+            // A response to a request of ours: only `--configure` asks.
+            if (self.configure and !self.configured and getField(v, "id") != null) {
+                self.configured = true;
+                try self.logLine("workspace/configuration answered", .{});
+            }
+            return;
+        };
         try self.logMethod(method);
         const params = getField(v, "params") orelse Value.null;
         var arena_state = std.heap.ArenaAllocator.init(self.gpa);
@@ -242,7 +278,8 @@ pub const Server = struct {
             try self.respondRaw(id, try workspaceEdit(arena, d.uri, edits));
         } else if (eql(u8, method, "textDocument/documentSymbol")) {
             const d = self.doc(params) orelse return self.respondRaw(id, "[]");
-            try self.respond(id, try symbols(arena, d.text));
+            if (self.configure and !self.configured) return self.respondRaw(id, "[]");
+            try self.respond(id, try symbols(arena, d.text, self.rich_symbols));
         } else if (eql(u8, method, "textDocument/codeAction")) {
             const d = self.doc(params) orelse return self.respondRaw(id, "[]");
             const range = getObj(params, "range") orelse return self.respondRaw(id, "[]");
@@ -253,6 +290,7 @@ pub const Server = struct {
             const action = try std.fmt.allocPrint(arena, "[{{\"title\":\"Resolve TODO\",\"kind\":\"quickfix\",\"edit\":{s}}}]", .{edit});
             try self.respondRaw(id, action);
         } else if (eql(u8, method, "textDocument/formatting")) {
+            if (getObj(params, "options")) |o| try self.logLine("formatting tabSize={d} insertSpaces={}", .{ getInt(o, "tabSize") orelse -1, getBool(o, "insertSpaces") orelse false });
             const d = self.doc(params) orelse return self.respondRaw(id, "null");
             const tidy = try formatted(arena, d.text);
             if (std.mem.eql(u8, tidy, d.text)) return self.respondRaw(id, "[]");
@@ -266,6 +304,8 @@ pub const Server = struct {
         const eql = std.mem.eql;
         if (eql(u8, method, "exit")) {
             self.done = true;
+        } else if (eql(u8, method, "initialized")) {
+            if (self.configure) try self.request_out("workspace/configuration", .{ .items = &[_]struct { section: []const u8 }{.{ .section = "fakeIde" }} });
         } else if (eql(u8, method, "textDocument/didOpen")) {
             const td = getObj(params, "textDocument") orelse return;
             const uri = getStr(td, "uri") orelse return;
@@ -512,21 +552,48 @@ fn identifiers(arena: Allocator, text: []const u8) ![]CompletionItem {
 }
 
 /// One symbol per `fn <name>` line (kind 12, Function).
-fn symbols(arena: Allocator, text: []const u8) ![]DocSymbol {
+fn symbols(arena: Allocator, text: []const u8, rich: bool) ![]DocSymbol {
     var out: std.ArrayList(DocSymbol) = .empty;
     var it = std.mem.splitScalar(u8, text, '\n');
     var line: u32 = 0;
     while (it.next()) |raw| : (line += 1) {
         const l = std.mem.trimEnd(u8, raw, "\r");
-        if (!std.mem.startsWith(u8, l, "fn ")) continue;
-        var e: usize = 3;
-        while (e < l.len and isIdent(l[e])) e += 1;
-        if (e == 3) continue;
-        const whole: Range = .{ .start = .{ .line = line, .character = 0 }, .end = .{ .line = line, .character = @intCast(l.len) } };
-        const sel: Range = .{ .start = .{ .line = line, .character = 3 }, .end = .{ .line = line, .character = @intCast(e) } };
-        try out.append(arena, .{ .name = l[3..e], .kind = 12, .range = whole, .selectionRange = sel });
+        if (std.mem.startsWith(u8, l, "fn ")) {
+            var e: usize = 3;
+            while (e < l.len and isIdent(l[e])) e += 1;
+            if (e == 3) continue;
+            // Rich: the function runs to the first later line that starts
+            // with `}` (a one-liner holding its own `}` ends where it is).
+            const end_line: u32 = if (rich and std.mem.indexOfScalar(u8, l, '}') == null) closingBrace(text, line) orelse line else line;
+            const end_len: usize = if (end_line == line) l.len else (lineAt(text, end_line) orelse @as([]const u8, "")).len;
+            const whole: Range = .{ .start = .{ .line = line, .character = 0 }, .end = .{ .line = end_line, .character = @intCast(end_len) } };
+            const sel: Range = .{ .start = .{ .line = line, .character = 3 }, .end = .{ .line = line, .character = @intCast(e) } };
+            try out.append(arena, .{ .name = l[3..e], .kind = 12, .range = whole, .selectionRange = sel });
+        } else if (rich) {
+            // `let <name>` → a Variable (13) on its line.
+            const lead = std.mem.trimStart(u8, l, " \t");
+            if (!std.mem.startsWith(u8, lead, "let ")) continue;
+            const at: usize = l.len - lead.len + 4;
+            var e: usize = at;
+            while (e < l.len and isIdent(l[e])) e += 1;
+            if (e == at) continue;
+            const whole: Range = .{ .start = .{ .line = line, .character = 0 }, .end = .{ .line = line, .character = @intCast(l.len) } };
+            const sel: Range = .{ .start = .{ .line = line, .character = @intCast(at) }, .end = .{ .line = line, .character = @intCast(e) } };
+            try out.append(arena, .{ .name = l[at..e], .kind = 13, .range = whole, .selectionRange = sel });
+        }
     }
     return out.items;
+}
+
+/// The first line after `from` that starts with `}`.
+fn closingBrace(text: []const u8, from: u32) ?u32 {
+    var it = std.mem.splitScalar(u8, text, '\n');
+    var line: u32 = 0;
+    while (it.next()) |raw| : (line += 1) {
+        if (line <= from) continue;
+        if (std.mem.startsWith(u8, std.mem.trimEnd(u8, raw, "\r"), "}")) return line;
+    }
+    return null;
 }
 
 /// The `TODO` marker on `line`, if the line holds one.
@@ -632,6 +699,14 @@ fn getInt(v: Value, key: []const u8) ?i64 {
     };
 }
 
+fn getBool(v: Value, key: []const u8) ?bool {
+    const f = getField(v, key) orelse return null;
+    return switch (f) {
+        .bool => |b| b,
+        else => null,
+    };
+}
+
 fn getArr(v: Value, key: []const u8) ?[]const Value {
     const f = getField(v, key) orelse return null;
     return switch (f) {
@@ -686,6 +761,8 @@ pub fn main(init: std.process.Init) !u8 {
     const args = try init.minimal.args.toSlice(arena_state.allocator());
     var log_path: ?[]const u8 = null;
     var incremental = false;
+    var configure = false;
+    var rich_symbols = false;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const a = args[i];
@@ -699,7 +776,7 @@ pub fn main(init: std.process.Init) !u8 {
         if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) {
             var buf: [512]u8 = undefined;
             var w: Io.File.Writer = .initStreaming(.stdout(), io, &buf);
-            try w.interface.writeAll("mnml-fake-lsp [--log PATH] [--sync full|incremental]: a deterministic language server over stdio (see tools/fake_lsp/README.md)\n");
+            try w.interface.writeAll("mnml-fake-lsp [--log PATH] [--sync full|incremental] [--configure] [--symbols plain|rich]: a deterministic language server over stdio (see tools/fake_lsp/README.md)\n");
             try w.interface.flush();
             return 0;
         }
@@ -711,6 +788,11 @@ pub fn main(init: std.process.Init) !u8 {
             i += 1;
             incremental = std.mem.eql(u8, args[i], "incremental");
         }
+        if (std.mem.eql(u8, a, "--configure")) configure = true;
+        if (std.mem.eql(u8, a, "--symbols") and i + 1 < args.len) {
+            i += 1;
+            rich_symbols = std.mem.eql(u8, args[i], "rich");
+        }
     }
     var in_buf: [64 * 1024]u8 = undefined;
     var out_buf: [64 * 1024]u8 = undefined;
@@ -720,6 +802,8 @@ pub fn main(init: std.process.Init) !u8 {
     defer server.deinit();
     server.log_path = log_path;
     server.incremental = incremental;
+    server.configure = configure;
+    server.rich_symbols = rich_symbols;
     while (!server.done) {
         const body = readFrame(gpa, &reader.interface) catch |err| switch (err) {
             error.Closed, error.BadFrame => break,
