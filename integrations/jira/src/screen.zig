@@ -1765,9 +1765,13 @@ test "Work: the header, the tab strip, the mode chips, the columns, the tree row
     try testing.expect(std.mem.endsWith(u8, r0, " ?"));
     try testing.expectEqualStrings("\u{258c} 1 Assigned   2 Recently Done", try rowText(ar, &f, 1));
     // The strip's indicator: the default `block` under the tab that
-    // is on, and no `▌` mark beside the label any more.
-    const rule = try rowText(ar, &f, 2);
-    try testing.expect(std.mem.startsWith(u8, rule, "\u{258c}\u{2580}\u{2580}"));
+    // is on, and no `▌` mark beside the label any more. The bar owns
+    // the word — from under the `1`, not under the label's leading
+    // pad — plus half of the three-cell gap to `2`, so twelve cells
+    // from column 2; nothing before it and nothing after it, since
+    // `block` lays no track.
+    const rule = std.mem.trimEnd(u8, try rowText(ar, &f, 2), " ");
+    try testing.expectEqualStrings("\u{258c} " ++ ("\u{2580}" ** 12), rule);
     try testing.expect(std.mem.indexOf(u8, rule, "\u{2501}") == null);
     const r2 = try rowText(ar, &f, 3);
     try testing.expect(std.mem.indexOf(u8, r2, " basic ") != null);
