@@ -364,6 +364,8 @@ trust sink. Each row names its file and its test.
 | Code actions — refactors + picker | done | `codeAction` → picker | the range is the selection's — an *Extract* of a marked span works on that span (`lsp-fixes`) |
 | Organize imports | done | `lsp.zig` | |
 | Rename | done | `lsp.zig` → `applyWorkspaceEdit` | *2026-09-22 (`lsp-fixes`):* the prompt's seed starts selected, so typing replaces the old name; `tests/e2e/lsp_fake_rename_seed_replaces.test` |
+| Rename — inline preview + confirmation pane | done | `src/app/lsp_rename.zig` | per-file toggles, hunk rows `Lnn  before → after`; a single-file rename applies at once |
+| Rename | done | `lsp.zig` → `applyWorkspaceEdit` | |
 | Rename — inline preview + confirmation pane | done | `src/app/lsp_rename.zig` | per-file toggles, hunk rows `Lnn  before → after`; a single-file rename applies at once. *2026-09-22 (tsfix):* a ticked file that is not open is OPENED (behind the active pane) and edited as a dirty buffer, like the open ones and like `applyWorkspaceEdit`'s code-action path — it was written to disk at once, which left the project half renamed on disk between the rename and the save and made `:q!` on the open buffer leave the closed files renamed for good; the hint and the toast say how many were opened unsaved; `lsp_fake_rename_closed_file.test`, the fake server renames across sibling files |
 | Hover | done | `src/ui/hover_view.zig` | *2026-09-10 (mouse-fixes):* the box registers `.hover_popup` over itself; the wheel scrolls it two lines an event (Rust's ±2) instead of the editor under it, a press puts it away — markdown emphasis and code spans paint as such through `md_view.inlineSegs`, the markers dropped |
 | Signature help | done | `lsp.signature_help*` | |
