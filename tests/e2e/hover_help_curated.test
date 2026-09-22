@@ -6,8 +6,9 @@
 # Settings row each show their entry's title, and a target with no
 # entry shows the tooltip's line marked `no help written yet`. The
 # coordinates are 120x40's: the statusline is row 38, an `always` dock
-# with `.inner` placement is row 37 with the `+ New` item at 26..31 (the
-# launchers Browser / Claude Code / Codex / HTTP sit to its right), and the
+# with `.inner` placement is row 37 with the `+ New` item at the END of the
+# run (84..91; `ui.dock.plus_at = right` since dock-polish — Browser /
+# Claude Code / Codex / HTTP / New terminal sit to its left), and the
 # Settings overlay's first row (`Line numbers`) sits where it sits.
 write a.txt "alpha\n"
 open a.txt
@@ -18,7 +19,7 @@ expect screen lacks "no help written yet"
 # The launcher dock's `+` item.
 ex dock always
 expect screen contains "New terminal"
-hover 28 37
+hover 87 37
 expect screen contains "+ New…"
 expect screen lacks "no help written yet"
 # A Settings row: the overlay's first row, `Line numbers`.

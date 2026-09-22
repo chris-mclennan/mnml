@@ -467,7 +467,6 @@ fn dockItemMove(comptime word: []const u8, comptime how: []const u8, comptime id
     return .{
         .title = "Move " ++ word,
         .body = "Moves this item " ++ how ++ " and writes the strip's order to `ui.dock.order` in the home config, so it holds across launches and workspaces. Items the list does not name follow in the strip's default order; the `+` keeps its end (*+ at the … end*) whatever the order says. `Alt+←` / `Alt+→` on a focused item step the same way.",
-        .keys = &.{.{ .command = id, .label = "Move " ++ word }},
         .links = &.{ .{ .command = .{ .id = id, .label = "Move it" } }, .{ .command = .{ .id = .@"view.focus_dock", .label = "Focus the dock" } }, copy.docsSection("The launcher dock") },
     };
 }
