@@ -4,15 +4,20 @@
 //! permanently / Cancel. One primitive so every confirmation in the app
 //! reads and answers alike.
 //!
-//! Two button rows, as the Rust editor has them. `.bracket` (the close
-//! prompt): each choice paints as `  [S]ave  ` from the left edge with a
-//! two-cell gap, the box six rows tall. `.plain` (a delete, any other
-//! destructive confirm): the choices are `  Delete  `, then
-//! ` Delete permanently ` and ` Cancel ` one cell apart, right-aligned,
-//! the box five rows tall. In both the key letter is underlined and the
-//! focused choice is the accent chip; ←/→, tab and h/l move it, enter
-//! fires it, the letter fires its choice directly, esc cancels. Every
-//! choice registers `.overlay_item(i)`. The frame is Rust's square
+//! // changed (one-confirm): ONE button row, in every box. Rust drew
+//! its close prompt one way — `  [S]ave  ` from the left edge — and its
+//! delete another — ` Delete permanently `, right-aligned, a box a row
+//! shorter — and the two read on screen as two different widgets. The
+//! user's call is one look, so the `.plain` row is gone and the
+//! bracketed one is the only one there is.
+//!
+//! Each choice paints as `  [S]ave  ` from the left edge with a two-cell
+//! gap: the key letter bracketed where it occurs in the label, prefixed
+//! as `  [K] Label  ` when it does not occur there, and underlined
+//! either way. The focused choice is the accent chip; ←/→, tab and h/l
+//! move it, enter fires it, the letter fires its choice directly, esc
+//! cancels. Every choice registers `.overlay_item(i)`. The box is six
+//! rows tall (one more per extra message line), its frame Rust's square
 //! `popup_menu`, centred on the whole screen a third of the way down.
 
 const std = @import("std");
@@ -29,25 +34,20 @@ pub const Key = key_mod.Key;
 
 pub const Choice = struct { key: u8, label: []const u8 };
 
-/// How the choices paint — see the module doc.
-pub const Buttons = enum { bracket, plain };
-
 pub const State = struct {
     title: []const u8,
     message: []const u8,
     choices: []const Choice,
     selected: usize = 0,
-    buttons: Buttons = .bracket,
 };
 
 pub const Outcome = union(enum) { consumed, cancel, choose: usize };
 
 /// The box for a one-line message; each further `\n` in the message
-/// adds a row.
+/// adds a row. // changed (one-confirm): one height, one floor — there
+/// is no second button row to size for any more.
 pub const height: u16 = 6;
-pub const height_plain: u16 = 5;
 pub const min_inner_width: u16 = 28;
-pub const min_inner_width_plain: u16 = 40;
 
 fn lineCount(s: []const u8) u16 {
     return @intCast(std.mem.count(u8, s, "\n") + 1);
@@ -90,12 +90,6 @@ pub fn buttonText(ui: Ui, c: Choice) []const u8 {
     return ui.fmt("  [{c}] {s}  ", .{ std.ascii.toUpper(c.key), c.label });
 }
 
-/// `  Delete  ` for the first choice, ` Cancel ` for the rest — Rust's
-/// button labels carry their own padding, wider on the primary.
-pub fn plainText(ui: Ui, c: Choice, first: bool) []const u8 {
-    return if (first) ui.fmt("  {s}  ", .{c.label}) else ui.fmt(" {s} ", .{c.label});
-}
-
 /// The byte of the key letter inside a painted button, for the
 /// underline: the bracketed letter, or the key's first occurrence.
 fn keyByte(text: []const u8, key: u8) ?usize {
@@ -110,18 +104,16 @@ fn keyByte(text: []const u8, key: u8) ?usize {
 /// per choice.
 pub fn draw(ui: Ui, area: Rect, s: *const State) void {
     const t = ui.theme;
-    const plain = s.buttons == .plain;
-    const gap: u16 = if (plain) 1 else 2;
-    const indent: u16 = if (plain) 1 else 2;
+    const gap: u16 = 2;
     var buttons_w: u16 = 0;
-    for (s.choices, 0..) |c, i| buttons_w += ui.width(if (plain) plainText(ui, c, i == 0) else buttonText(ui, c)) + gap;
+    for (s.choices) |c| buttons_w += ui.width(buttonText(ui, c)) + gap;
     var msg_w: u16 = 0;
     var lines = std.mem.splitScalar(u8, s.message, '\n');
-    while (lines.next()) |line| msg_w = @max(msg_w, ui.width(line) + indent);
-    const floor: u16 = if (plain) min_inner_width_plain else @max(min_inner_width, ui.width(s.title) + 4);
+    while (lines.next()) |line| msg_w = @max(msg_w, ui.width(line) + 2);
+    const floor: u16 = @max(min_inner_width, ui.width(s.title) + 4);
     const inner_w = @max(@max(msg_w, buttons_w + 2), floor);
     const w = @min(inner_w + 2, area.w -| 2);
-    const h = (if (plain) height_plain else height) + lineCount(s.message) - 1;
+    const h = height + lineCount(s.message) - 1;
     const inner = overlay.boxLook(ui, area, @max(w, @min(area.w, 8)), h, s.title, .third, .menu);
     if (inner.isEmpty() or inner.h < 2) return;
 
@@ -130,14 +122,14 @@ pub fn draw(ui: Ui, area: Rect, s: *const State) void {
     while (lines.next()) |line| : (row += 1) {
         if (row + 1 >= inner.h) break;
         const msg_row = inner.row(row);
-        const text = if (plain) ui.fmt(" {s}", .{line}) else ui.fmt("  {s}", .{line});
+        const text = ui.fmt("  {s}", .{line});
         _ = ui.putStr(msg_row.x, msg_row.y, msg_row.w, ui.clipStr(text, msg_row.w), Theme.onBg(t.fg, t.overlay_bg.bg));
     }
 
     const by = inner.bottom() - 1;
-    var bx = if (plain) inner.x + (inner.w -| buttons_w) else inner.x + 1;
+    var bx = inner.x + 1;
     for (s.choices, 0..) |c, i| {
-        const text = if (plain) plainText(ui, c, i == 0) else buttonText(ui, c);
+        const text = buttonText(ui, c);
         const bw = ui.width(text);
         if (bx + bw > inner.right()) break;
         const style = if (i == s.selected) t.chip_active else t.chip;
@@ -244,32 +236,60 @@ test "a key that is not in its label is prefixed; narrow screens drop what does 
     draw(h.ui(), Rect.empty, &s);
 }
 
-test "the plain row: Rust's delete confirm — square frame, right-aligned buttons, the key underlined" {
+test "the one style: the delete confirm wears the close prompt's row, left-aligned, six rows tall" {
     var f = try Fixture.init(120, 40);
     defer f.deinit();
     const choices = [_]Choice{ .{ .key = 'd', .label = "Delete" }, .{ .key = 'p', .label = "Delete permanently" }, .{ .key = 'c', .label = "Cancel" } };
-    var s: State = .{ .title = "Delete", .message = "Delete .gitignore?", .choices = &choices, .selected = 2, .buttons = .plain };
+    var s: State = .{ .title = "Delete", .message = "Delete .gitignore?", .choices = &choices, .selected = 2 };
     draw(f.ui(), f.full(), &s);
-    // Rust: inner 43 (buttons 11 + 21 + 9 = 41, + 2), 45 wide at x 37, y (40-5)/3 = 11.
-    try f.expectRow(11, " " ** 37 ++ "┌ Delete ───────────────────────────────────┐");
-    try f.expectRow(12, " " ** 37 ++ "│ Delete .gitignore?                        │");
-    try f.expectRow(13, " " ** 37 ++ "│                                           │");
-    try f.expectRow(14, " " ** 37 ++ "│    Delete    Delete permanently   Cancel  │");
-    try f.expectRow(15, " " ** 37 ++ "└───────────────────────────────────────────┘");
+    // // changed (one-confirm): the buttons are bracketed and start from
+    // the left edge, not padded labels right-aligned; the box is six
+    // rows tall like every other confirm, not five.
+    try f.expectRow(11, " " ** 31 ++ "\u{250c} Delete " ++ "\u{2500}" ** 48 ++ "\u{2510}");
+    try f.expectRow(12, " " ** 31 ++ "\u{2502}  Delete .gitignore?" ++ " " ** 36 ++ "\u{2502}");
+    try f.expectRow(13, " " ** 31 ++ "\u{2502}" ++ " " ** 56 ++ "\u{2502}");
+    try f.expectRow(14, " " ** 31 ++ "\u{2502}" ++ " " ** 56 ++ "\u{2502}");
+    try f.expectRow(15, " " ** 31 ++ "\u{2502}   [D]elete      Delete [P]ermanently      [C]ancel     \u{2502}");
+    try f.expectRow(16, " " ** 31 ++ "\u{2514}" ++ "\u{2500}" ** 56 ++ "\u{2518}");
     try testing.expectEqual(@as(usize, 3), f.hits.items.items.len);
-    try testing.expectEqual(@as(u32, 0), f.hits.at(42, 14).?.overlay_item);
-    try testing.expectEqual(@as(u32, 1), f.hits.at(60, 14).?.overlay_item);
-    try testing.expectEqual(@as(u32, 2), f.hits.at(75, 14).?.overlay_item);
-    // Cancel is the focused chip; the underlines sit on D, p and C.
-    try testing.expect(f.bgEql(75, 14, f.theme.chip_active));
-    try testing.expect(f.bgEql(42, 14, f.theme.chip));
-    try testing.expect(f.style(42, 14).ul_style == .single);
-    try testing.expect(f.style(43, 14).ul_style == .off);
-    try testing.expect(f.style(59, 14).ul_style == .single);
-    try testing.expect(f.style(73, 14).ul_style == .single);
+    try testing.expectEqual(@as(u32, 0), f.hits.at(33, 15).?.overlay_item);
+    try testing.expectEqual(@as(u32, 1), f.hits.at(47, 15).?.overlay_item);
+    try testing.expectEqual(@as(u32, 2), f.hits.at(73, 15).?.overlay_item);
+    // Cancel is the focused chip; the underlines sit on D, P and C.
+    try testing.expect(f.bgEql(73, 15, f.theme.chip_active));
+    try testing.expect(f.bgEql(33, 15, f.theme.chip));
+    try testing.expect(f.style(36, 15).ul_style == .single);
+    try testing.expect(f.style(37, 15).ul_style == .off);
+    try testing.expect(f.style(57, 15).ul_style == .single);
+    try testing.expect(f.style(76, 15).ul_style == .single);
 }
 
-test "the bracket row is Rust's close prompt: two-space gaps from the left edge, six rows, centred on the screen" {
+test "one style: a delete box and a close box agree — same row, same inset, same six rows" {
+    var f = try Fixture.init(120, 40);
+    defer f.deinit();
+    const del = [_]Choice{ .{ .key = 'd', .label = "Delete" }, .{ .key = 'c', .label = "Cancel" } };
+    var d: State = .{ .title = "Delete", .message = "Delete a.txt?", .choices = &del };
+    draw(f.ui(), f.full(), &d);
+    var g = try Fixture.init(120, 40);
+    defer g.deinit();
+    var c = closeState();
+    draw(g.ui(), g.full(), &c);
+    // The boxes are different widths, so compare each row against its
+    // OWN frame: the left border, then three cells, then the first
+    // bracket — and the same row, because both are six rows tall under
+    // the one third-of-the-way-down anchor.
+    try testing.expectEqual(f.hits.items.items[0].rect.y, g.hits.items.items[0].rect.y);
+    var dbuf: [256]u8 = undefined;
+    var cbuf: [256]u8 = undefined;
+    const drow = f.row(f.hits.items.items[0].rect.y, &dbuf);
+    const crow = g.row(g.hits.items.items[0].rect.y, &cbuf);
+    const d_edge = std.mem.indexOf(u8, drow, "\u{2502}").?;
+    const c_edge = std.mem.indexOf(u8, crow, "\u{2502}").?;
+    try testing.expectEqualStrings(drow[d_edge..][0.."\u{2502}   [D]".len], "\u{2502}   [D]");
+    try testing.expectEqualStrings(crow[c_edge..][0.."\u{2502}   [S]".len], "\u{2502}   [S]");
+}
+
+test "the one row: two-space gaps from the left edge, six rows, centred on the screen" {
     var f = try Fixture.init(120, 40);
     defer f.deinit();
     var s = closeState();

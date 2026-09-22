@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
+   │  ● /pri…            │  prog.dbg 󰅖   󰐕                                                          󱸀  󲀀      
+▌ │     .mnml              │▌prog.dbg
+   │       ipc-zig          │▌  1 let x = 1
+ 󰍉 │▌     prog.dbg           │▌  2 let p = struct{a=1,b="two"}
+   │                          │▌  3 print "hello"
+ 󰊢 │         󰐙 Add workspace  │▌  4 x = x + 1
+   │                          │▌  5 fn f
+  │                          │▌  6   let y = 10
+   │                          │▌  7   x = x * y
+ 󰐱 │                          │▌  8 end
+   │                          │┌ Delete ────────────────────────────────────────────────┐
+ 󰎒 │                          ││  Delete prog.dbg?                                      │
+   │                          ││                                                        │
+  │                          ││                                                        │
+   │                          ││   [D]elete      Delete [P]ermanently      [C]ancel     │
+  │                          │└────────────────────────────────────────────────────────┘
+   │                          │▌
+  │                          │▌
+   │                          │▌
+ 󱘣 │                          │▌
+   │                          │▌
+ 󰢱 │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │──────────────────────────│▌
+   │ prog.dbg               ⋮ │▌
+   │                          │▌
+   │ File. Enter opens it in  │▌
+   │ a new tab. Right-click   │▌
+   │ for cut / copy / paste / │▌
+  │ rename.                  │▌
+   │                          │▌
+ TREE   prog.dbg                                      F 58% ▲0.2  󱼀 󰐎  111B  Ln 1/10 Col 1    21:36  ws   dbg
+                                                           ⋯

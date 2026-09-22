@@ -234,7 +234,6 @@ pub fn confirmDelete(app: *App, paths: []const []const u8) Allocator.Error!void 
                 // Cancel is the focus, as in Rust: a destructive box's
                 // Enter must not be the destructive act.
                 .selected = choices.len - 1,
-                .buttons = .plain,
             },
             .purpose = .{ .delete_paths = .{ .paths = owned, .permanent_only = permanent_only } },
             .message = msg,
@@ -685,7 +684,6 @@ test "the confirm: Cancel is the default (Rust's), d trashes with a toast, p ski
     try t.expect(app.overlay == .confirm);
     try t.expectEqual(@as(usize, 2), app.overlay.confirm.state.selected);
     try t.expectEqual(@as(usize, 3), app.overlay.confirm.state.choices.len);
-    try t.expect(app.overlay.confirm.state.buttons == .plain);
     try t.expectEqualStrings("Delete a.txt?", app.overlay.confirm.state.message);
     // Esc is the silent way out; `d` trashes and says so.
     try app.handle(.{ .key = Key.named(.esc) });

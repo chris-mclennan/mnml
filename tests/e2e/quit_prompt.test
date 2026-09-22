@@ -1,7 +1,8 @@
 # width: 120
 # height: 40
 # `Ctrl+Q` with unsaved work raises a box that NAMES what is unsaved and
-# offers Save all / Quit anyway / Cancel. Cancel has the focus, so Enter
+# offers [S]ave all / [Q]uit anyway / [C]ancel — the one confirm row every
+# box in the app wears. Cancel has the focus, so Enter
 # on a box you did not mean to raise is safe. Esc cancels, a second
 # `Ctrl+Q` quits anyway, and a clean workspace never sees the box.
 
@@ -19,9 +20,17 @@ expect dirty true
 key ctrl+q
 expect screen contains "Quit mnml?"
 expect screen contains "Unsaved: two.txt"
-expect screen contains "Save all"
-expect screen contains "Quit anyway"
-expect screen contains "Cancel"
+expect screen contains "[S]ave all"
+expect screen contains "[Q]uit anyway"
+expect screen contains "[C]ancel"
+# // changed (one-confirm): the buttons are bracketed and start from the
+# box's left edge. The quit box used to paint padded labels right-aligned
+# in a five-row box, the close box `[S]ave` from the left in a six-row
+# one, and the two read as two different widgets.
+# The whole row, borders included: a `contains` without them passes on a
+# row-aligned box too (the buttons are only a cell or two narrower than
+# the frame), so it would not catch a return of the right-aligned form.
+expect screen contains "│   [S]ave all      [Q]uit anyway      [C]ancel     │"
 
 # Esc cancels; the work is still there.
 key esc
@@ -36,10 +45,12 @@ type CHANGED
 key ctrl+q
 expect screen contains "Unsaved: one.txt, two.txt"
 
-# A click on Cancel answers it too. Row 14 is the button row — row 15 is
+# A click on Cancel answers it too. Row 15 is the button row — row 16 is
 # the box's bottom border, and a click there dismisses the box like any
-# click that misses, so it would have proved nothing.
-click 74 14
+# click that misses, so it would have proved nothing. (Both moved down a
+# row when the box grew from five rows to the one six-row shape; x 74 is
+# still inside `  [C]ancel  `, which spans 69..80.)
+click 74 15
 expect screen lacks "Quit mnml?"
 expect dirty true
 

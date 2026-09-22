@@ -171,7 +171,7 @@ fn openQuitBox(app: *App, msg: []u8, choices: []const app_mod.Confirm.Choice, pu
     errdefer app.gpa.free(msg);
     app.overlay.deinit(app.gpa);
     app.overlay = .{ .confirm = .{
-        .state = .{ .title = "Quit mnml?", .message = msg, .choices = choices, .selected = choices.len - 1, .buttons = .plain },
+        .state = .{ .title = "Quit mnml?", .message = msg, .choices = choices, .selected = choices.len - 1 },
         .purpose = purpose,
         .message = msg,
     } };

@@ -8,7 +8,7 @@ key r
 key end
 command file.delete
 expect screen contains "Delete a.txt?"
-expect screen contains "Delete permanently"
+expect screen contains "Delete [P]ermanently"
 key enter
 expect screen lacks "a.txt?"
 expect screen contains "cancelled — a.txt kept"

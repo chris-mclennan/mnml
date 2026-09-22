@@ -12,7 +12,7 @@ expect screen contains "out/"
 key j
 command file.delete
 expect screen contains "Delete a.txt?"
-expect screen contains "Delete permanently"
+expect screen contains "Delete [P]ermanently"
 key d
 expect screen contains "deleted a.txt"
 expect screen contains "(2)"
