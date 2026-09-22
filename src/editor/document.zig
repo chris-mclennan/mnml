@@ -211,6 +211,10 @@ pub const Document = struct {
     eol: editorconfig.Eol = .lf,
     /// The indent unit the handler types on Tab.
     indent_unit: usize = 4,
+    /// A `.editorconfig` named the indent: a formatting request sends
+    /// `indent_unit` / `use_tabs` rather than what the text looks like
+    /// (`editor/indent.zig`).
+    indent_pinned: bool = false,
     /// The file's mtime + size when it was last read or written; the
     /// watcher compares against it. Null for a scratch document.
     disk: ?DiskStamp = null,

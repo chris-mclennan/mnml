@@ -36,6 +36,7 @@ const types = @import("../lsp/types.zig");
 const tools = @import("../lsp/tools.zig");
 const Config = @import("../config/Config.zig");
 const lsp = @import("lsp.zig");
+const indent = @import("../editor/indent.zig");
 
 const Server = client.Server;
 const ReqKind = client.ReqKind;
@@ -44,6 +45,27 @@ const Value = jsonrpc.Value;
 
 /// The "server" a linter's findings arrive from. Real servers start at 1.
 pub const linter_server_id: u32 = 0;
+
+/// LSP `FormattingOptions` for a buffer: the indent its text is
+/// written in (`editor/indent.zig`) — a two-space script asks for
+/// `tabSize: 2`, a tab-indented one for `insertSpaces: false` — the
+/// document's own settings when a `.editorconfig` pinned them or the
+/// text says nothing. It used to be the config's `tab_width` for every
+/// file, so bash-language-server handed shfmt `-i 4` and re-indented a
+/// two-space script whole.
+pub const FormattingOptions = struct {
+    tabSize: usize,
+    insertSpaces: bool,
+    trimTrailingWhitespace: bool = true,
+};
+
+pub fn formattingOptions(e: *const EditorPane) FormattingOptions {
+    const doc = e.buf.doc;
+    if (!doc.indent_pinned) if (indent.detect(e.buf.editor.bytes())) |d| {
+        return .{ .tabSize = if (d.use_tabs) doc.tab_width else d.unit, .insertSpaces = !d.use_tabs };
+    };
+    return .{ .tabSize = doc.indent_unit, .insertSpaces = !doc.use_tabs };
+}
 
 const save_flag: u32 = 1;
 
@@ -75,7 +97,7 @@ pub fn onTyped(app: *App, pane: PaneId, e: *EditorPane, s: *Server, c: u21) void
         .textDocument = pos.textDocument,
         .position = pos.position,
         .ch = &ch,
-        .options = .{ .tabSize = app.cfg.editor.tab_width, .insertSpaces = true },
+        .options = formattingOptions(e),
     }, .{ .pane = pane }) catch {};
 }
 
@@ -127,7 +149,7 @@ pub fn formatSelection(app: *App) CommandError!void {
     _ = t.server.request(.range_formatting, "textDocument/rangeFormatting", .{
         .textDocument = .{ .uri = uri },
         .range = range,
-        .options = .{ .tabSize = app.cfg.editor.tab_width, .insertSpaces = true },
+        .options = formattingOptions(t.e),
     }, .{ .pane = t.pane }) catch |err| return app.diag.fail(arena, "LSP format selection: {s}", .{@errorName(err)});
 }
 

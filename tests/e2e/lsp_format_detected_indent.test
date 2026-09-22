@@ -1,0 +1,22 @@
+# `lsp.format` sent `options.tabSize` as the config's tab width — 4 —
+# for every file, so bash-language-server handed shfmt `-i 4` and a
+# two-space script came back re-indented whole, where the builtin
+# `shfmt -i 2` row and `shfmt -d` by hand changed one `case` arm (hunt
+# finding sh-lsp-format-tabsize). The request carries the buffer's OWN
+# indent now: the width its lines are indented by (`editor/indent.zig`),
+# `insertSpaces` false when they are tab-indented; the config's width
+# only when the text says nothing. The fake logs the options it was
+# sent.
+write src/main.fk "fn foo() {\n  let x = 1;  \n  if x {\n    foo(x);\n  }\n}\n"
+write src/tabs.fk "fn bar() {\n\tlet y = 2;  \n\tif y {\n\t\tbar(y);\n\t}\n}\n"
+write Cargo.toml ""
+write .mnml/config.zon .{ .lsp = .{ .fake = .{ .cmd = "$MNML_FAKE_LSP", .args = .{ "--log", "lsp.log" }, .extensions = .{ "fk" }, .root_markers = .{ "Cargo.toml" } } } }
+open src/main.fk
+expect screen contains "LSP 1"
+command lsp.format
+expect screen contains "formatted src/main.fk"
+expect file lsp.log contains "formatting tabSize=2 insertSpaces=true"
+open src/tabs.fk
+command lsp.format
+expect screen contains "formatted src/tabs.fk"
+expect file lsp.log contains "formatting tabSize=4 insertSpaces=false"

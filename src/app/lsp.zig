@@ -2268,7 +2268,7 @@ fn requestFormatting(app: *App, s: *Server, pane: PaneId, e: *EditorPane, then_s
     const arena = app.frame.allocator();
     const path = e.buf.doc.path orelse return;
     const uri = try types.uriFromPath(arena, path);
-    _ = s.request(.formatting, "textDocument/formatting", .{ .textDocument = .{ .uri = uri }, .options = .{ .tabSize = app.cfg.editor.tab_width, .insertSpaces = true, .trimTrailingWhitespace = true } }, .{ .pane = pane, .extra = if (then_save) format_save_flag else 0 }) catch |err| return app.diag.fail(arena, "LSP format: {s}", .{@errorName(err)});
+    _ = s.request(.formatting, "textDocument/formatting", .{ .textDocument = .{ .uri = uri }, .options = format_app.formattingOptions(e) }, .{ .pane = pane, .extra = if (then_save) format_save_flag else 0 }) catch |err| return app.diag.fail(arena, "LSP format: {s}", .{@errorName(err)});
 }
 
 fn applyFormatting(app: *App, s: *Server, ctx: Ctx, result: ?Value) Allocator.Error!void {

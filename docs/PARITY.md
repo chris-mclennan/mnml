@@ -357,7 +357,7 @@ trust sink. Each row names its file and its test.
 | Document links | done | `linkUnderlinesFor` / `linkAtCursor` in `lsp_decor.zig`, `editor.open_url_at_cursor` (`gx`) | |
 | Call hierarchy | done | `lsp.incoming_calls` / `outgoing_calls` | |
 | Type hierarchy | done | `lsp.supertypes` / `subtypes` | |
-| Formatting — LSP | done | `lsp.format`, `editor.format` aliases it; `formatSelection` in `lsp_format.zig` → `lsp.format_selection` | whole document, or the visual selection |
+| Formatting — LSP | done | `lsp.format`, `editor.format` aliases it; `formatSelection` in `lsp_format.zig` → `lsp.format_selection` | whole document, or the visual selection. *2026-09-22 (sh-hunt):* every request's `FormattingOptions` carry the buffer's OWN indent (`formattingOptions` in `lsp_format.zig` over `src/editor/indent.zig`: the width its lines step by, `insertSpaces` false for a tab-indented text; a `.editorconfig` that named the indent pins the document's values instead) — it was the config's `tab_width` for every file, so bash-language-server handed shfmt `-i 4` and re-indented a two-space script whole where the builtin `shfmt -i 2` row moved one `case` arm (`sh-lsp-format-tabsize`). `tests/e2e/lsp_format_detected_indent.test` reads the options off the fake's log |
 | Format-on-save | done | `onSavePre` in `lsp_format.zig` | the external tool when no server formats |
 | On-type formatting | done | `onTyped` in `lsp_format.zig` | the server's trigger characters, behind `editor.format_on_type` |
 | `willSaveWaitUntil` | done | `onSavePre` / `handleResponse` in `lsp_format.zig` | behind `editor.will_save_wait_until`; the reply's edits are applied and the buffer written again (D3) |
