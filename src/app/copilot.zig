@@ -482,7 +482,7 @@ fn handleNotification(app: *App, params: ?jsonrpc.Value, method: []const u8) All
     }
 }
 
-fn handleServerRequest(app: *App, c: *Client, id: i64, method: []const u8, params: ?jsonrpc.Value) Allocator.Error!void {
+fn handleServerRequest(app: *App, c: *Client, id: jsonrpc.Id, method: []const u8, params: ?jsonrpc.Value) Allocator.Error!void {
     // `window/showDocument`: the sign-in URL. mnml opens it through the
     // same external-open path `gx` uses, so `ui.external_browser`
     // applies and the trust layer still owns that key.

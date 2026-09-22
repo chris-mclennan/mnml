@@ -1,0 +1,21 @@
+# zl: a language server's request to the client with a STRING id is
+# never answered. zls 0.16.0 asks `workspace/configuration` with
+# `"id":"i_haz_configuration"`; `rpc/jsonrpc.zig classify` reads the id
+# with getInt, gets null, and files the request as a NOTIFICATION — no
+# reply ever goes out. zls then never resolves zig_lib_path, so every
+# definition / hover / completion into std answers null (proved with a
+# stdio client: answer the request → std/testing.zig; leave it → null).
+# This server does the same: it asks with a string id and its hover says
+# whether the reply arrived. Expected `cfg-ok`; the box says `cfg-missing`.
+write srv.py "import sys, json, os\nconfigured = False\ndef send(o):\n    b = json.dumps(o).encode(); sys.stdout.buffer.write(b\"Content-Length: %d\\r\\n\\r\\n\" % len(b) + b); sys.stdout.buffer.flush()\ndef read():\n    n = 0\n    while True:\n        line = sys.stdin.buffer.readline()\n        if not line: sys.exit(0)\n        if line.lower().startswith(b\"content-length:\"): n = int(line.split(b\":\")[1])\n        if line in (b\"\\r\\n\", b\"\\n\"): break\n    return json.loads(sys.stdin.buffer.read(n))\nwhile True:\n    m = read(); mid = m.get(\"id\"); meth = m.get(\"method\")\n    if meth is None and mid == \"cfg-1\":\n        configured = True; continue\n    if meth == \"initialize\":\n        send({\"jsonrpc\":\"2.0\",\"id\":mid,\"result\":{\"capabilities\":{\"textDocumentSync\":1,\"hoverProvider\":True,\"inlayHintProvider\":True}}})\n    elif meth == \"initialized\":\n        send({\"jsonrpc\":\"2.0\",\"id\":\"cfg-1\",\"method\":\"workspace/configuration\",\"params\":{\"items\":[{\"section\":\"srv\"}]}})\n    elif meth == \"textDocument/hover\":\n        send({\"jsonrpc\":\"2.0\",\"id\":mid,\"result\":{\"contents\":{\"kind\":\"plaintext\",\"value\":\"cfg-ok\" if configured else \"cfg-missing\"}}})\n    elif meth == \"textDocument/inlayHint\":\n        send({\"jsonrpc\":\"2.0\",\"id\":mid,\"result\":[{\"position\":{\"line\":0,\"character\":6},\"label\":\": hint\",\"kind\":1}]})\n    elif meth == \"shutdown\":\n        send({\"jsonrpc\":\"2.0\",\"id\":mid,\"result\":None})\n    elif meth == \"exit\":\n        sys.exit(0)\n    elif mid is not None:\n        send({\"jsonrpc\":\"2.0\",\"id\":mid,\"result\":None})\n"
+write .fkroot ""
+write .mnml/config.zon .{ .lsp = .{ .srv = .{ .cmd = "python3", .args = .{ "$MNML_E2E_WORKSPACE/srv.py" }, .extensions = .{ "fk" } } } }
+write src/a.fk "fn foo() {}\n"
+open src/a.fk
+expect screen contains "LSP 1"
+wait 1500
+key right
+key right
+key right
+command lsp.hover
+expect screen contains "cfg-ok"

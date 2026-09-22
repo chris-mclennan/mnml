@@ -449,8 +449,11 @@ pub const Server = struct {
     }
 
     /// Answer a server→client request with `result` (JSON text; `null`).
-    pub fn respond(self: *Server, id: i64, result_json: []const u8) SendError!void {
-        const body = try std.fmt.allocPrint(self.gpa, "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"result\":{s}}}", .{ id, result_json });
+    pub fn respond(self: *Server, id: jsonrpc.Id, result_json: []const u8) SendError!void {
+        // The id goes back as the server sent it — zls's are strings.
+        const id_json = try id.json(self.gpa);
+        defer self.gpa.free(id_json);
+        const body = try std.fmt.allocPrint(self.gpa, "{{\"jsonrpc\":\"2.0\",\"id\":{s},\"result\":{s}}}", .{ id_json, result_json });
         defer self.gpa.free(body);
         try self.transport.send(body);
     }
@@ -794,14 +797,14 @@ fn fakeServer(io: Io, gpa: Allocator, in: Io.File, out: Io.File, seen: *std.Arra
         switch (jsonrpc.classify(parsed.value)) {
             .request => |rq| {
                 if (std.mem.eql(u8, rq.method, "initialize")) {
-                    const reply = std.fmt.allocPrint(gpa, "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"result\":{{\"capabilities\":{{\"positionEncoding\":\"utf-8\",\"textDocumentSync\":{{\"change\":2}},\"hoverProvider\":true,\"completionProvider\":{{\"triggerCharacters\":[\".\",\"::\"]}},\"definitionProvider\":{{}}}}}}}}", .{rq.id}) catch return;
+                    const reply = std.fmt.allocPrint(gpa, "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"result\":{{\"capabilities\":{{\"positionEncoding\":\"utf-8\",\"textDocumentSync\":{{\"change\":2}},\"hoverProvider\":true,\"completionProvider\":{{\"triggerCharacters\":[\".\",\"::\"]}},\"definitionProvider\":{{}}}}}}}}", .{rq.id.int}) catch return;
                     defer gpa.free(reply);
                     jsonrpc.writeFrame(io, out, reply) catch return;
                 } else if (std.mem.eql(u8, rq.method, "shutdown")) {
                     // The client may have closed its read end already
                     // (deinit does not wait for the reply): keep reading
                     // for the `exit` that follows.
-                    const reply = std.fmt.allocPrint(gpa, "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"result\":null}}", .{rq.id}) catch return;
+                    const reply = std.fmt.allocPrint(gpa, "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"result\":null}}", .{rq.id.int}) catch return;
                     defer gpa.free(reply);
                     jsonrpc.writeFrame(io, out, reply) catch {};
                 }

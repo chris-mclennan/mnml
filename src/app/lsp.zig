@@ -1035,7 +1035,7 @@ pub fn tick(app: *App, now: i64) Allocator.Error!void {
 }
 
 /// The few requests a server makes of its client.
-fn handleServerRequest(app: *App, s: *Server, id: i64, method: []const u8, params: ?Value) Allocator.Error!void {
+fn handleServerRequest(app: *App, s: *Server, id: jsonrpc.Id, method: []const u8, params: ?Value) Allocator.Error!void {
     if (std.mem.eql(u8, method, "workspace/configuration")) {
         // One answer per item: the configured settings, or null.
         const items: []const Value = if (params) |p| (jsonrpc.getArr(p, "items") orelse &.{}) else &.{};
@@ -3144,8 +3144,10 @@ test {
 
 // ─── a scripted language server, in process ─────────────────────────────
 
-fn lspReply(io: Io, gpa: Allocator, out: Io.File, id: i64, result: []const u8) void {
-    const text = std.fmt.allocPrint(gpa, "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"result\":{s}}}", .{ id, result }) catch return;
+fn lspReply(io: Io, gpa: Allocator, out: Io.File, id: jsonrpc.Id, result: []const u8) void {
+    const id_json = id.json(gpa) catch return;
+    defer gpa.free(id_json);
+    const text = std.fmt.allocPrint(gpa, "{{\"jsonrpc\":\"2.0\",\"id\":{s},\"result\":{s}}}", .{ id_json, result }) catch return;
     defer gpa.free(text);
     jsonrpc.writeFrame(io, out, text) catch {};
 }
@@ -3280,6 +3282,80 @@ fn fakeLanguageServer(io: Io, gpa: Allocator, in: Io.File, out: Io.File) Io.Canc
             else => {},
         }
     }
+}
+
+/// zls's shape: right after `initialized`, `workspace/configuration`
+/// with a STRING id. The reply's arrival — and whether it carried the
+/// configured settings — is announced as an Error-level `showMessage`,
+/// the one kind the app toasts.
+fn stringIdServer(io: Io, gpa: Allocator, in: Io.File, out: Io.File) Io.Cancelable!void {
+    var buf: [16384]u8 = undefined;
+    var fr = in.readerStreaming(io, &buf);
+    while (true) {
+        const body = jsonrpc.readBody(gpa, &fr.interface) catch return;
+        defer gpa.free(body);
+        var parsed = std.json.parseFromSlice(Value, gpa, body, .{}) catch return;
+        defer parsed.deinit();
+        const v = parsed.value;
+        if (jsonrpc.getStr(v, "method") == null) {
+            // A reply. The string-id one is ours; an integer id is a
+            // request this fake never made.
+            if (jsonrpc.getStr(v, "id")) |sid| {
+                const result = jsonrpc.getArr(v, "result") orelse &.{};
+                const on = result.len == 1 and (jsonrpc.getBool(result[0], "enable_build_on_save") orelse false);
+                const note = std.fmt.allocPrint(gpa, "{{\"jsonrpc\":\"2.0\",\"method\":\"window/showMessage\",\"params\":{{\"type\":1,\"message\":\"cfg {s} {s}\"}}}}", .{ sid, if (on) "on" else "off" }) catch return;
+                defer gpa.free(note);
+                jsonrpc.writeFrame(io, out, note) catch return;
+            }
+            continue;
+        }
+        switch (jsonrpc.classify(v)) {
+            .request => |rq| {
+                if (std.mem.eql(u8, rq.method, "initialize")) {
+                    lspReply(io, gpa, out, rq.id, "{\"capabilities\":{\"textDocumentSync\":1}}");
+                } else lspReply(io, gpa, out, rq.id, "null");
+            },
+            .notification => |n| {
+                if (std.mem.eql(u8, n.method, "exit")) return;
+                if (std.mem.eql(u8, n.method, "initialized")) {
+                    jsonrpc.writeFrame(io, out, "{\"jsonrpc\":\"2.0\",\"id\":\"i_haz_configuration\",\"method\":\"workspace/configuration\",\"params\":{\"items\":[{\"section\":\"zls\"}]}}") catch return;
+                }
+            },
+            else => {},
+        }
+    }
+}
+
+test "a server's string-id `workspace/configuration` (zls's) is answered under the same id, with the configured settings" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    const io = app.io;
+    const c2s = try Io.Threaded.pipe2(.{});
+    const s2c = try Io.Threaded.pipe2(.{});
+    const F = Io.File;
+    const flags: F.Flags = .{ .nonblocking = false };
+    const in_r = F{ .handle = c2s[0], .flags = flags };
+    const out_w = F{ .handle = s2c[1], .flags = flags };
+    var group: Io.Group = .init;
+    try group.concurrent(io, stringIdServer, .{ io, gpa, in_r, out_w });
+    const s = try Server.initFiles(gpa, io, &app.events, app.lsp.next_id, F{ .handle = c2s[1], .flags = flags }, F{ .handle = s2c[0], .flags = flags }, .{ .name = "zls", .argv = &.{"fake-zls"}, .root = "/tmp", .settings = "{\"enable_build_on_save\":true}" });
+    app.lsp.next_id += 1;
+    try app.lsp.servers.append(gpa, s);
+    try s.initialize();
+    const Cond = struct {
+        fn answered(a: *App) bool {
+            return std.mem.eql(u8, a.lastToast() orelse return false, "LSP: cfg i_haz_configuration on");
+        }
+    };
+    // Read as an integer the id was null, the request a notification,
+    // and this wait ran out: nothing ever went back.
+    try pumpUntil(&app, &app, Cond.answered, 5000);
+    retireServer(&app, s);
+    try group.await(io);
+    in_r.close(io);
+    out_w.close(io);
 }
 
 fn pumpUntil(app: *App, ctx: anytype, comptime cond: fn (@TypeOf(ctx)) bool, budget_ms: u32) !void {
