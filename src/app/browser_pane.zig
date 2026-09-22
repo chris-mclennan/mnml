@@ -120,11 +120,14 @@ pub const CdpEvent = struct {
         connected: []u8,
         message: []u8,
         closed: []u8,
+        /// A message too large to take, skipped (`ws.Conn.max_message`).
+        too_long: struct { id: ?i64, method: ?[]u8, len: u64 },
     },
 
     pub fn destroy(self: *CdpEvent, gpa: Allocator) void {
         switch (self.kind) {
             .connected, .message, .closed => |s| gpa.free(s),
+            .too_long => |t| if (t.method) |m| gpa.free(m),
         }
         gpa.destroy(self);
     }
@@ -165,6 +168,9 @@ pub const BrowserPane = struct {
     perf: std.ArrayListUnmanaged([]u8) = .empty,
     dom: std.ArrayListUnmanaged(Row) = .empty,
     dom_sel: usize = 0,
+    /// The `depth` the last `DOM.getDocument` asked for: -1 (all), fewer
+    /// once the whole tree came back too large to take.
+    dom_depth: i32 = -1,
     snapshots: std.ArrayListUnmanaged(Snapshot) = .empty,
     /// URLs visited, oldest first. Owned.
     visited: std.ArrayListUnmanaged([]u8) = .empty,
@@ -466,14 +472,22 @@ fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, env: *const std.pro
     const connected = std.fmt.allocPrint(gpa, "{s}\n{d}", .{ ws_url, port }) catch return;
     post(events, io, gpa, .{ .pane = pane, .kind = .{ .connected = connected } });
     while (true) {
-        const text = shared.session.?.next() catch |err| {
+        const next = shared.session.?.next() catch |err| {
             const msg = std.fmt.allocPrint(gpa, "WebSocket error: {s}", .{@errorName(err)}) catch break;
             defer gpa.free(msg);
             postClosed(events, io, gpa, pane, msg);
             return;
         } orelse break;
-        const copy = gpa.dupe(u8, text) catch break;
-        post(events, io, gpa, .{ .pane = pane, .kind = .{ .message = copy } });
+        switch (next) {
+            .text => |text| {
+                const copy = gpa.dupe(u8, text) catch break;
+                post(events, io, gpa, .{ .pane = pane, .kind = .{ .message = copy } });
+            },
+            .too_long => |t| {
+                const method = if (t.method) |m| gpa.dupe(u8, m) catch null else null;
+                post(events, io, gpa, .{ .pane = pane, .kind = .{ .too_long = .{ .id = t.id, .method = method, .len = t.len } } });
+            },
+        }
     }
     postClosed(events, io, gpa, pane, if (shared.closing) "closed" else "page closed");
 }
@@ -546,7 +560,48 @@ pub fn handle(app: *App, ev: *CdpEvent) Allocator.Error!void {
             try p.refreshTitle();
         },
         .message => |text| try onMessage(app, ev.pane, p, text),
+        .too_long => |t| try onTooLong(app, p, t.id, t.method, t.len),
     }
+}
+
+/// The fewest levels the DOM panel asks for before it gives up.
+const dom_min_depth = 2;
+
+/// What a request was for, as the log says it.
+fn purposeLabel(purpose: Pending) []const u8 {
+    return switch (purpose) {
+        .eval => "eval",
+        .screenshot, .screenshot_clip => "screenshot",
+        .pdf => "pdf",
+        .cookies => "cookies",
+        .storage => "storage",
+        .perf => "perf",
+        .dom => "DOM",
+        .box_model => "node box",
+        .quiet => "request",
+    };
+}
+
+/// A reply or event over the WebSocket cap was skipped; the session
+/// lives on. A reply fails the request it answers, with a note that
+/// says how large it was; the DOM panel asks again for fewer levels.
+fn onTooLong(app: *App, p: *BrowserPane, id: ?i64, method: ?[]const u8, len: u64) Allocator.Error!void {
+    const arena = app.frame.allocator();
+    const mb = @divFloor(len + (1 << 19), 1 << 20);
+    const rid = id orelse {
+        try p.push(.console_err, try std.fmt.allocPrint(arena, "skipped a {s} event of {d} MB (too large to show)", .{ method orelse "CDP", mb }));
+        return;
+    };
+    const purpose = p.pending.get(rid) orelse return;
+    _ = p.pending.remove(rid);
+    const fewer: i32 = if (p.dom_depth < 0) 8 else @divFloor(p.dom_depth, 2);
+    if (purpose == .dom and fewer >= dom_min_depth) {
+        p.dom_depth = fewer;
+        try p.push(.system, try std.fmt.allocPrint(arena, "DOM: the whole tree is {d} MB — asking for {d} levels", .{ mb, p.dom_depth }));
+        try send(app, p, "DOM.getDocument", try std.fmt.allocPrint(arena, "{{\"depth\":{d}}}", .{p.dom_depth}), .dom);
+        return;
+    }
+    try p.push(.console_err, try std.fmt.allocPrint(arena, "{s}: reply too large ({d} MB) — not shown", .{ purposeLabel(purpose), mb }));
 }
 
 fn onMessage(app: *App, id: PaneId, p: *BrowserPane, text: []const u8) Allocator.Error!void {
@@ -1706,4 +1761,38 @@ test "wipe_profile in workspace mode clears the profile and its -N siblings, not
     try command.run(&app, .{ .static = .@"browser.wipe_profile" });
     for ([_][]const u8{ "chrome-profile", "chrome-profile-1", "chrome-profile-12" }) |name| try testing.expectError(error.FileNotFound, Io.Dir.cwd().access(testing.io, try std.fs.path.join(arena, &.{ mn, name }), .{}));
     for ([_][]const u8{ "chrome-profile-ephemeral-ab12", "chrome-profile-proxy-99" }) |name| try Io.Dir.cwd().access(testing.io, try std.fs.path.join(arena, &.{ mn, name }), .{});
+}
+
+test "a reply too large to take fails its own request with a note, the session stays up, and the DOM panel asks for fewer levels" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &pbuf);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = pbuf[0..n], .data_root = pbuf[0..n] });
+    defer app.deinit();
+    const gpa = testing.allocator;
+    const id = try testPane(&app);
+    const p = app.panes.get(id).?.asBrowser().?;
+    p.state = .connected;
+    const tooLong = struct {
+        fn ev(g: Allocator, pid: PaneId, rid: ?i64, len: u64) !*CdpEvent {
+            const box = try g.create(CdpEvent);
+            box.* = .{ .pane = pid, .kind = .{ .too_long = .{ .id = rid, .method = null, .len = len } } };
+            return box;
+        }
+    };
+    try p.pending.put(gpa, 120, .eval);
+    try handle(&app, try tooLong.ev(gpa, id, 120, 73_523_893));
+    try testing.expectEqualStrings("eval: reply too large (70 MB) — not shown", p.log.items[p.log.items.len - 1].text);
+    try testing.expect(p.state == .connected);
+    try testing.expect(p.pending.get(120) == null);
+    // The DOM: the whole tree was too large, so it asks again with a depth.
+    try p.pending.put(gpa, 121, .dom);
+    try handle(&app, try tooLong.ev(gpa, id, 121, 73_523_893));
+    try testing.expectEqual(@as(i32, 8), p.dom_depth);
+    try testing.expectEqualStrings("DOM.getDocument", p.queued.items[p.queued.items.len - 1].method);
+    try testing.expectEqualStrings("{\"depth\":8}", p.queued.items[p.queued.items.len - 1].params);
+    // A skipped event says so.
+    try handle(&app, try tooLong.ev(gpa, id, null, 80 << 20));
+    try testing.expect(std.mem.startsWith(u8, p.log.items[p.log.items.len - 1].text, "skipped a CDP event of 80 MB"));
 }

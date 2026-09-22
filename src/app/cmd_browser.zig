@@ -324,6 +324,7 @@ fn domCmd(app: *App) CommandError!void {
         b.panel = .log;
         return;
     }
+    b.dom_depth = -1;
     try browser.send(app, b, "DOM.getDocument", "{\"depth\":-1}", .dom);
 }
 

@@ -446,13 +446,28 @@ pub const Session = struct {
         return id;
     }
 
-    /// The next text message, or null once closed. Borrowed until the
-    /// next read.
-    pub fn next(self: *Session) !?[]const u8 {
+    /// What `next` read: a message's text (borrowed until the next
+    /// read), or a message too large to take, skipped.
+    pub const Next = union(enum) {
+        text: []const u8,
+        too_long: TooLong,
+    };
+
+    pub const TooLong = struct {
+        /// The reply's id, when the skipped message was one.
+        id: ?i64,
+        /// The event's method, when it was one.
+        method: ?[]const u8,
+        len: u64,
+    };
+
+    /// The next message, or null once closed.
+    pub fn next(self: *Session) !?Next {
         while (true) {
             const m = (try self.conn.readMessage()) orelse return null;
             switch (m) {
-                .text => |t| return t,
+                .text => |t| return .{ .text = t },
+                .too_long => |t| return .{ .too_long = .{ .id = headId(t.head), .method = headMethod(t.head), .len = t.len } },
                 .close => return null,
                 else => continue,
             }
@@ -460,9 +475,37 @@ pub const Session = struct {
     }
 };
 
+/// `{"id":123,…` → 123: the id of a reply from its first bytes, which
+/// is all there is of a message too large to parse.
+pub fn headId(head: []const u8) ?i64 {
+    const at = std.mem.indexOf(u8, head, "\"id\":") orelse return null;
+    var i = at + "\"id\":".len;
+    while (i < head.len and head[i] == ' ') i += 1;
+    const start = i;
+    while (i < head.len and std.ascii.isDigit(head[i])) i += 1;
+    if (i == start or i == head.len) return null;
+    return std.fmt.parseInt(i64, head[start..i], 10) catch null;
+}
+
+/// `{"method":"X",…` → `X`.
+pub fn headMethod(head: []const u8) ?[]const u8 {
+    const key = "\"method\":\"";
+    const at = std.mem.indexOf(u8, head, key) orelse return null;
+    const rest = head[at + key.len ..];
+    const end = std.mem.indexOfScalar(u8, rest, '"') orelse return null;
+    return rest[0..end];
+}
+
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+
+test "headId / headMethod name a message from its first bytes" {
+    try testing.expectEqual(@as(?i64, 1234), headId("{\"id\":1234,\"result\":{\"result\":{\"type\":\"string\",\"value\":\"www"));
+    try testing.expectEqual(@as(?i64, null), headId("{\"method\":\"DOM.setChildNodes\",\"params\":{"));
+    try testing.expectEqual(@as(?i64, null), headId("{\"id\":12"));
+    try testing.expectEqualStrings("DOM.setChildNodes", headMethod("{\"method\":\"DOM.setChildNodes\",\"params\":{").?);
+}
 
 test "rpc framing and message parsing" {
     const gpa = testing.allocator;
@@ -574,7 +617,7 @@ test "session against a fake endpoint: enables, a numbered request, an event" {
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     while (replies < enable_domains.len + 2 or !got_event) {
-        const text = (try session.next()) orelse break;
+        const text = ((try session.next()) orelse break).text;
         const m = try parseMessage(arena.allocator(), text);
         if (m.isEvent()) {
             got_event = true;
@@ -586,7 +629,7 @@ test "session against a fake endpoint: enables, a numbered request, an event" {
     }
     const id = try session.send("Page.navigate", "{\"url\":\"https://x\"}", null);
     try testing.expectEqual(@as(i64, 100), id);
-    const text = (try session.next()).?;
+    const text = (try session.next()).?.text;
     const m = try parseMessage(arena.allocator(), text);
     try testing.expectEqual(@as(?i64, 100), m.id);
     try session.conn.close(1000, "");

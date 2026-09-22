@@ -157,6 +157,41 @@ pub fn decodeFrame(bytes: []u8) DecodeError!Decoded {
     return .{ .frame = .{ .fin = fin, .opcode = opcode, .payload = payload }, .consumed = pos + plen };
 }
 
+pub const Header = struct { fin: bool, opcode: Opcode, masked: bool, key: [4]u8, len: u64 };
+
+/// A frame's header, read off `r`.
+pub fn readHeader(r: *Io.Reader) !Header {
+    var b: [2]u8 = undefined;
+    try r.readSliceAll(&b);
+    if (b[0] & 0x70 != 0) return error.ReservedBits;
+    var len: u64 = b[1] & 0x7F;
+    if (len == 126) {
+        var e: [2]u8 = undefined;
+        try r.readSliceAll(&e);
+        len = std.mem.readInt(u16, &e, .big);
+    } else if (len == 127) {
+        var e: [8]u8 = undefined;
+        try r.readSliceAll(&e);
+        len = std.mem.readInt(u64, &e, .big);
+    }
+    const masked = b[1] & 0x80 != 0;
+    var key: [4]u8 = .{ 0, 0, 0, 0 };
+    if (masked) try r.readSliceAll(&key);
+    return .{ .fin = b[0] & 0x80 != 0, .opcode = @enumFromInt(@as(u4, @truncate(b[0]))), .masked = masked, .key = key, .len = len };
+}
+
+/// The payload `h` announces, into `buf`, unmasked.
+fn readPayload(r: *Io.Reader, alloc: Allocator, buf: *std.ArrayListUnmanaged(u8), h: Header) !Frame {
+    if (h.len > 64 * 1024 * 1024) return error.TooLong;
+    buf.clearRetainingCapacity();
+    try buf.resize(alloc, @intCast(h.len));
+    try r.readSliceAll(buf.items);
+    if (h.masked) for (buf.items, 0..) |*c, i| {
+        c.* ^= h.key[i % 4];
+    };
+    return .{ .fin = h.fin, .opcode = h.opcode, .payload = buf.items };
+}
+
 /// Read exactly one frame from `r` into `buf` (grown as needed).
 pub fn readFrame(r: *Io.Reader, alloc: Allocator, buf: *std.ArrayListUnmanaged(u8)) !Frame {
     buf.clearRetainingCapacity();
@@ -276,7 +311,14 @@ pub const Message = union(enum) {
     /// Ping arrived and a pong was sent; the payload is theirs.
     ping: []const u8,
     pong: []const u8,
+    /// A message over `Conn.max_message`, skipped whole so the stream
+    /// stays in step: `len` bytes of it arrived, `head` is its first
+    /// `head_len` bytes (unmasked), enough to name what it was.
+    too_long: struct { len: u64, head: []const u8 },
 };
+
+/// How much of an oversized message `Message.too_long` keeps.
+pub const head_len = 256;
 
 pub const ConnectOptions = struct {
     subprotocols: []const []const u8 = &.{},
@@ -310,6 +352,12 @@ pub const Conn = struct {
     last: std.ArrayListUnmanaged(u8) = .empty,
     closed: bool = false,
     close_sent: bool = false,
+    /// A text / binary message longer than this is skipped rather than
+    /// buffered, and reported as `too_long`; the connection lives on.
+    max_message: u64 = 64 * 1024 * 1024,
+    /// Skipping the rest of a fragmented message that went over the cap:
+    /// its bytes so far.
+    skipping: ?u64 = null,
 
     /// Open a socket to `url`'s host, TLS when `wss`, and upgrade.
     pub fn connect(gpa: Allocator, io: Io, url_text: []const u8, opts: ConnectOptions) !*Conn {
@@ -471,13 +519,43 @@ pub const Conn = struct {
         const gpa = self.gpa;
         while (true) {
             if (self.closed) return null;
-            const frame = readFrame(self.reader(), gpa, &self.frame_buf) catch |err| switch (err) {
+            const head = readHeader(self.reader()) catch |err| switch (err) {
                 error.EndOfStream => {
                     self.closed = true;
                     return null;
                 },
                 else => return err,
             };
+            const data = head.opcode == .text or head.opcode == .binary or head.opcode == .continuation;
+            if (head.opcode == .text or head.opcode == .binary) self.skipping = null;
+            const so_far: u64 = if (head.opcode == .continuation) (self.skipping orelse self.assembling.items.len) else 0;
+            if (data and (self.skipping != null and head.opcode == .continuation or so_far + head.len > self.max_message)) {
+                if (head.opcode != .continuation) self.assembling_op = head.opcode;
+                const total = so_far + head.len;
+                if (self.skipping == null) {
+                    // The first bytes of the message: what is already
+                    // assembled, then this frame's.
+                    self.last.clearRetainingCapacity();
+                    const keep_old = @min(self.assembling.items.len, head_len);
+                    try self.last.appendSlice(gpa, self.assembling.items[0..keep_old]);
+                    self.assembling.clearRetainingCapacity();
+                    const want: usize = @intCast(@min(head.len, head_len - keep_old));
+                    const at = self.last.items.len;
+                    try self.last.resize(gpa, at + want);
+                    try self.reader().readSliceAll(self.last.items[at..]);
+                    if (head.masked) for (self.last.items[at..], 0..) |*c, i| {
+                        c.* ^= head.key[i % 4];
+                    };
+                    try self.reader().discardAll64(head.len - want);
+                } else try self.reader().discardAll64(head.len);
+                if (!head.fin) {
+                    self.skipping = total;
+                    continue;
+                }
+                self.skipping = null;
+                return .{ .too_long = .{ .len = total, .head = self.last.items } };
+            }
+            const frame = try readPayload(self.reader(), gpa, &self.frame_buf, head);
             switch (frame.opcode) {
                 .ping => {
                     self.sendFrame(.pong, frame.payload) catch {};
@@ -741,4 +819,43 @@ test "a client round trip over a local socket: handshake, echo, fragments, ping/
     try testing.expectEqual(@as(u16, 1000), m5.close.code);
     try testing.expect((try conn.readMessage()) == null);
     try testing.expectEqualStrings("hello there\nsplit:abcdefgh", server.received.items);
+}
+
+test "a message over the cap is skipped whole and reported, and the connection reads on" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    var server = try EchoServer.start(gpa, io);
+    defer server.stop();
+    const url = try std.fmt.allocPrint(gpa, "ws://127.0.0.1:{d}/", .{server.port});
+    defer gpa.free(url);
+    const conn = try Conn.connect(gpa, io, url, .{});
+    defer conn.deinit();
+    conn.max_message = 1000;
+    // One frame over the cap: its head and its length, no error.
+    const big = try gpa.alloc(u8, 5000);
+    defer gpa.free(big);
+    @memset(big, 'z');
+    @memcpy(big[0..10], "{\"id\":107,");
+    try conn.sendText(big);
+    const m1 = (try conn.readMessage()).?;
+    try testing.expectEqual(@as(u64, 5000), m1.too_long.len);
+    try testing.expectEqual(@as(usize, head_len), m1.too_long.head.len);
+    try testing.expectEqualStrings("{\"id\":107,", m1.too_long.head[0..10]);
+    // The stream is still in step.
+    try conn.sendText("after");
+    try testing.expectEqualStrings("after", (try conn.readMessage()).?.text);
+    // A fragmented message that crosses the cap in its second fragment:
+    // skipped as one message, the head from the first.
+    const split = try gpa.alloc(u8, "split:".len + 1800);
+    defer gpa.free(split);
+    @memcpy(split[0.."split:".len], "split:");
+    @memset(split["split:".len..], 'y');
+    try conn.sendText(split);
+    const m2 = (try conn.readMessage()).?;
+    try testing.expectEqual(@as(u64, 1800), m2.too_long.len);
+    try testing.expectEqual(@as(u8, 'y'), m2.too_long.head[0]);
+    try conn.sendText("still here");
+    try testing.expectEqualStrings("still here", (try conn.readMessage()).?.text);
+    try conn.close(1000, "");
+    _ = try conn.readMessage();
 }

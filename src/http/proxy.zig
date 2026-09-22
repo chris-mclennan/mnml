@@ -85,7 +85,12 @@ fn readerLoop(gpa: Allocator, io: Io, session: *cdp.Session, shared: *Shared, lo
         shared.lock.unlock(io);
     }
     while (true) {
-        const text = session.next() catch return orelse return;
+        const text = switch (session.next() catch return orelse return) {
+            .text => |t| t,
+            // A reply too large to take (a huge eval, a DOM dump) is not
+            // a request line; skip it and keep reading.
+            .too_long => continue,
+        };
         var arena = std.heap.ArenaAllocator.init(gpa);
         defer arena.deinit();
         const a = arena.allocator();
