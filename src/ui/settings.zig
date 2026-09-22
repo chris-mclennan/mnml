@@ -495,7 +495,7 @@ pub const KeyOpts = struct {
 /// strings — the state that holds them lives in `State.confirm`, which
 /// therefore needs no deinit.
 pub const reset_confirm_title = "Reset settings";
-pub const reset_confirm_message = "  Reset every setting to its default?";
+pub const reset_confirm_message = "Reset every setting to its default?";
 const reset_confirm_choices = [_]confirm_ui.Choice{
     .{ .key = 'r', .label = "Reset" },
     .{ .key = 'c', .label = "Cancel" },

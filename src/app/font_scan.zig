@@ -717,7 +717,7 @@ pub fn openUpdateConfirm(app: *App, idx: u16) CommandError!void {
     if (idx >= st.families.len) return;
     const f = st.families[idx];
     const cmd = (try updateCommand(app.frame.allocator(), f.name)) orelse return app.diag.fail(app.frame.allocator(), "{s}: no update command on this platform", .{f.name});
-    const msg = try std.fmt.allocPrint(app.gpa, "  {s} is at v{s}; the latest Nerd Fonts release is {s}.\n  {s}", .{ f.name, f.version orelse "?", st.latest orelse "?", cmd });
+    const msg = try std.fmt.allocPrint(app.gpa, "{s} is at v{s}; the latest Nerd Fonts release is {s}.\n{s}", .{ f.name, f.version orelse "?", st.latest orelse "?", cmd });
     errdefer app.gpa.free(msg);
     app.overlay.deinit(app.gpa);
     app.overlay = .{ .confirm = .{

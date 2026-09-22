@@ -330,7 +330,7 @@ pub fn cancelRun(app: *App, it: Item) CommandError!void {
     const arn = (if (it.cloud) |c| c.task_arn else null) orelse return app.diag.fail(arena, "sessions: run {s} has no task to stop (it may already be done)", .{it.session_id});
     const owned = try app.gpa.dupe(u8, arn);
     errdefer app.gpa.free(owned);
-    const msg = try std.fmt.allocPrint(app.gpa, "  Stop cloud run {s}?", .{sessions.displayName(app, it)});
+    const msg = try std.fmt.allocPrint(app.gpa, "Stop cloud run {s}?", .{sessions.displayName(app, it)});
     errdefer app.gpa.free(msg);
     app.overlay.deinit(app.gpa);
     app.overlay = .{ .confirm = .{

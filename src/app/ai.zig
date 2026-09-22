@@ -962,7 +962,7 @@ fn executeTool(arena: Allocator, io: Io, gpa: Allocator, events: *event.EventQue
         if (!write_tools) return fail.f(arena, "write_file: disabled (set [ai] api_write_tools = true to enable it)", .{});
         const rel = safeRel(api.inputStr(input, "path") orelse "") orelse return fail.f(arena, "write_file: bad path", .{});
         const content = api.inputStr(input, "content") orelse "";
-        const detail = std.fmt.allocPrint(gpa, "  write {s} ({d} bytes)?", .{ rel, content.len }) catch return fail.f(arena, "write_file: out of memory", .{});
+        const detail = std.fmt.allocPrint(gpa, "write {s} ({d} bytes)?", .{ rel, content.len }) catch return fail.f(arena, "write_file: out of memory", .{});
         events.post(io, .{ .ai = .{ .job = j.id, .msg = .{ .confirm = detail } } });
         // D3: park on the job's queue until the confirm box answers.
         const yes = j.confirm.getOne(io) catch |err| switch (err) {
@@ -1850,7 +1850,7 @@ test "the confirm channel: a worker parks on the job's queue; the UI's answer re
     const Worker = struct {
         var answer: ?bool = null;
         fn run(events: *event.EventQueue, io: Io, a: Allocator, job: *Job) Io.Cancelable!void {
-            const detail = a.dupe(u8, "  write a.txt (3 bytes)?") catch return;
+            const detail = a.dupe(u8, "write a.txt (3 bytes)?") catch return;
             events.post(io, .{ .ai = .{ .job = job.id, .msg = .{ .confirm = detail } } });
             answer = job.confirm.getOne(io) catch null;
             events.post(io, .{ .ai = .{ .job = job.id, .msg = .done } });

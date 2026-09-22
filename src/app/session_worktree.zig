@@ -475,7 +475,7 @@ fn openConfirm(app: *App, title: []const u8, msg: []u8, choices: []const app_mod
     app.needs_render = true;
 }
 
-/// *Merge into <branch>…*: `  Merge feat into main? (N commits)`.
+/// *Merge into <branch>…*: `Merge feat into main? (N commits)`.
 pub fn confirmMerge(app: *App, e: Entry) CommandError!void {
     const arena = app.frame.allocator();
     if (!exists(app.io, e.path) and !(try branchExists(app, arena, e.repo, e.branch))) return app.diag.fail(arena, "merge {s}: the worktree and its branch are gone", .{e.name});
@@ -483,7 +483,7 @@ pub fn confirmMerge(app: *App, e: Entry) CommandError!void {
     const n = (try commitsAhead(app, arena, e.repo, e.branch)) orelse 0;
     const path = try app.gpa.dupe(u8, e.path);
     errdefer app.gpa.free(path);
-    const msg = try std.fmt.allocPrint(app.gpa, "  Merge {s} into {s}? ({d} commit{s})", .{ e.branch, into, n, if (n == 1) "" else "s" });
+    const msg = try std.fmt.allocPrint(app.gpa, "Merge {s} into {s}? ({d} commit{s})", .{ e.branch, into, n, if (n == 1) "" else "s" });
     errdefer app.gpa.free(msg);
     openConfirm(app, "Merge worktree", msg, &merge_choices, .{ .session_worktree_merge = path });
 }
@@ -494,15 +494,15 @@ pub fn acceptMerge(app: *App, path: []const u8) CommandError!void {
     return merge(app, arena, e.*);
 }
 
-/// *Remove worktree…*: `  Remove worktree feat and branch feat?`; with
+/// *Remove worktree…*: `Remove worktree feat and branch feat?`; with
 /// `force`, the second confirm past an unmerged branch.
 pub fn confirmRemove(app: *App, e: Entry, force: bool) CommandError!void {
     const path = try app.gpa.dupe(u8, e.path);
     errdefer app.gpa.free(path);
     const msg = if (force)
-        try std.fmt.allocPrint(app.gpa, "  Branch {s} is not merged — remove worktree {s} and delete the branch anyway?", .{ e.branch, e.name })
+        try std.fmt.allocPrint(app.gpa, "Branch {s} is not merged — remove worktree {s} and delete the branch anyway?", .{ e.branch, e.name })
     else
-        try std.fmt.allocPrint(app.gpa, "  Remove worktree {s} and branch {s}?", .{ e.name, e.branch });
+        try std.fmt.allocPrint(app.gpa, "Remove worktree {s} and branch {s}?", .{ e.name, e.branch });
     errdefer app.gpa.free(msg);
     openConfirm(app, if (force) "Remove unmerged worktree" else "Remove worktree", msg, if (force) &force_choices else &remove_choices, .{ .session_worktree_remove = .{ .path = path, .force = force } });
 }
@@ -837,7 +837,7 @@ test "merge / remove go through a named confirm; an unmerged branch asks a secon
     try confirmRemove(app, e, false);
     try t.expect(app.overlay == .confirm);
     try t.expectEqualStrings("Remove worktree", app.overlay.confirm.state.title);
-    try t.expectEqualStrings("  Remove worktree feat and branch feat?", app.overlay.confirm.message);
+    try t.expectEqualStrings("Remove worktree feat and branch feat?", app.overlay.confirm.message);
     try t.expect(!app.overlay.confirm.purpose.session_worktree_remove.force);
     try acceptRemove(app, path, false);
     try t.expect(app.overlay == .confirm);
@@ -850,7 +850,7 @@ test "merge / remove go through a named confirm; an unmerged branch asks a secon
     // Merge: the confirm counts the commits; its yes lands them.
     try confirmMerge(app, e);
     try t.expect(app.overlay == .confirm);
-    try t.expectEqualStrings("  Merge feat into main? (1 commit)", app.overlay.confirm.message);
+    try t.expectEqualStrings("Merge feat into main? (1 commit)", app.overlay.confirm.message);
     try t.expectEqualStrings(path, app.overlay.confirm.purpose.session_worktree_merge);
     app.overlay.deinit(app.gpa);
     app.overlay = .none;
