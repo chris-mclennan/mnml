@@ -1,0 +1,62 @@
+# width: 120
+# The strip's other two cluster buttons with a preview tab up — the
+# maximize (column 118 at 120 wide) and the terminal (109). The split
+# buttons between them promote the tab they split
+# (`split_preview_tab.test`, `split_md_preview.test`); these two leave
+# it as it came, and lose nothing: the zoom paints only the tab's leaf
+# and keeps the chrome, the second click brings the rest back; the
+# terminal opens as a shell BESIDE the file (`pty_pane.place` goes
+# through `arrange`), not as a tab over it, so the file's own cluster
+# moves left — terminal 64, splits 67 / 70, maximize 73 — and a zoomed
+# leaf's strip spans the frame, its cluster back at 118. Checked for a
+# rendered markdown glance and an editor's, the two kinds a tree click
+# opens. (Two clicks on one tree row inside 450 ms are a double-click,
+# which KEEPS the tab on purpose — so no row here is clicked twice.)
+write a.txt "alpha alpha"
+write README.md "# hi\nsecond line\n"
+command tree.refresh
+
+# Rows: the workspace header is 1, a.txt 2, README.md 3. A rendered
+# glance first: the heading loses its #.
+click 14 3
+expect pane "README.md"
+expect screen contains "second line"
+expect status contains "\"panes\":[{\"title\":\"README.md\",\"dirty\":false,\"preview\":true}]"
+click 118 1
+expect screen contains "second line"
+expect screen contains "Add workspace"
+expect status contains "\"title\":\"README.md\",\"dirty\":false,\"preview\":true"
+click 118 1
+expect screen contains "second line"
+expect status contains "\"title\":\"README.md\",\"dirty\":false,\"preview\":true"
+
+# An editor's glance takes the rendered tab over — still one pane.
+click 14 2
+expect pane "a.txt"
+expect screen contains "alpha alpha"
+expect status contains "\"panes\":[{\"title\":\"a.txt\",\"dirty\":false,\"preview\":true}]"
+click 118 1
+expect screen contains "alpha alpha"
+expect screen contains "Add workspace"
+expect status contains "\"panes\":[{\"title\":\"a.txt\",\"dirty\":false,\"preview\":true}]"
+click 118 1
+expect screen contains "alpha alpha"
+
+# The terminal: a shell beside the file, the glance untouched in its
+# own leaf.
+click 109 1
+expect screen contains "alpha alpha"
+expect screen contains "Terminal"
+expect status contains "\"panes\":[{\"title\":\"a.txt\",\"dirty\":false,\"preview\":true},{\"title\":\"Terminal"
+
+# The file's own maximize zooms its leaf: the shell is off screen, the
+# file up and still a glance; the zoomed strip's button is at 118, and
+# it brings the shell back.
+click 73 1
+expect screen contains "alpha alpha"
+expect screen lacks "Terminal"
+expect status contains "\"title\":\"a.txt\",\"dirty\":false,\"preview\":true"
+click 118 1
+expect screen contains "alpha alpha"
+expect screen contains "Terminal"
+expect status contains "\"title\":\"a.txt\",\"dirty\":false,\"preview\":true"
