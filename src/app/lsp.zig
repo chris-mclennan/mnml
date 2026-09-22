@@ -56,6 +56,7 @@ const config = @import("../config/root.zig");
 const dap_client = @import("../dap/client.zig");
 const build_options = @import("build_options");
 const cmd_view = @import("cmd_view.zig");
+const runners = @import("runners.zig");
 const side = @import("side.zig");
 const layout_mod = @import("layout.zig");
 const find_mod = @import("find.zig");
@@ -616,7 +617,14 @@ pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
     // as for a debug adapter: `$MNML_FAKE_LSP` is how the tests name
     // the fake server.
     const cmd = try dap_client.expandEnv(arena, spec.cmd, &app.env);
-    if (!try onPath(app, arena, cmd)) {
+    // Resolved ONCE, on the App's PATH, and the spawn gets what the walk
+    // found: `std.process.spawn` looks a bare argv[0] up on the
+    // process's own PATH, not on the map it is handed, so a server on
+    // the App's PATH alone (a `# env: PATH=…` header, an in-app env
+    // edit) was found here and then `FileNotFound` there.
+    var where: [std.fs.max_path_bytes]u8 = undefined;
+    const found = runners.pathOf(app.io, &app.env, &where, cmd);
+    if (found == null) {
         try markDead(app, spec.name);
         // // changed (lsp-defaults): a row from the default table the
         // user never named is `.editor.lsp_missing_defaults`' business —
@@ -656,7 +664,7 @@ pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
     const root = try findRoot(app, arena, path, spec.root_markers);
     for (app.lsp.servers.items) |s| if (std.mem.eql(u8, s.name, spec.name) and std.mem.eql(u8, s.root, root) and !s.transport.isDead()) return s;
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
-    try argv.append(arena, try resolveOnPath(app, arena, cmd));
+    try argv.append(arena, try arena.dupe(u8, found.?));
     for (spec.args) |a| try argv.append(arena, try dap_client.expandEnv(arena, a, &app.env));
     const id = app.lsp.next_id;
     const s = Server.spawn(app.gpa, app.io, &app.events, id, .{
@@ -3665,6 +3673,50 @@ test "mnml-fake-lsp: a `.lsp` entry written AFTER launch for an extension a defa
     try testing.expect(!app.lsp.dead.contains("zig"));
     try testing.expectEqual(@as(usize, 0), app.lsp.missing.items.len);
     try testing.expectEqualStrings(ws, app.lsp.servers.items[0].root);
+}
+
+test "mnml-fake-lsp: a server found on the App's PATH is the one spawned — a shim dir the process's own PATH never had" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    const io = testing.io;
+    const exe = build_options.fake_lsp_exe;
+    Io.Dir.cwd().access(io, exe, .{}) catch return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const ws = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+    try tmp.dir.createDirPath(io, "shim");
+    try tmp.dir.writeFile(io, .{ .sub_path = "shim/fakelsp-shim", .data = "#!/bin/sh\nexec \"$MNML_FAKE_LSP\" --log lsp.log \"$@\"\n" });
+    const shim = try std.fs.path.join(gpa, &.{ ws, "shim", "fakelsp-shim" });
+    defer gpa.free(shim);
+    try Io.Dir.cwd().setFilePermissions(io, shim, .fromMode(0o755), .{});
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.fk", .data = "fn foo() {}\n" });
+    try tmp.dir.createDirPath(io, ".mnml");
+    try tmp.dir.writeFile(io, .{ .sub_path = ".mnml/config.zon", .data = ".{ .lsp = .{ .fake = .{ .cmd = \"fakelsp-shim\", .extensions = .{ \"fk\" } } } }" });
+    const file = try std.fs.path.join(gpa, &.{ ws, "a.fk" });
+    defer gpa.free(file);
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try env.put("MNML_FAKE_LSP", exe);
+    const shim_dir = try std.fs.path.join(gpa, &.{ ws, "shim" });
+    defer gpa.free(shim_dir);
+    try env.put("PATH", shim_dir);
+    var app = try App.initWith(gpa, io, .{ .workspace = ws, .cols = 100, .rows = 30, .env = &env, .workspace_trusted = true });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openPath(file);
+    // `onPath` said yes and the spawn said `FileNotFound` before: the
+    // bare name was looked up again, on this process's PATH.
+    const Cond = struct {
+        fn fakeUp(a: *App) bool {
+            return oneReadyServer(a, "fake");
+        }
+    };
+    try pumpUntil(&app, &app, Cond.fakeUp, 30_000);
+    try testing.expect(!app.lsp.dead.contains("fake"));
+    if (app.lastToast()) |toast| try testing.expect(std.mem.indexOf(u8, toast, "unavailable") == null);
+    // What was spawned is the shim's full path, not the bare name.
+    try testing.expectEqualStrings(shim, app.lsp.servers.items[0].cmd);
 }
 
 test "mnml-fake-lsp: a rename's three edits undo with one `u` and redo with one ctrl+r; the undo opens no popup; a motion left of the last edit still renders (hunt-vim-2026-09-09 #1, #2)" {

@@ -493,6 +493,18 @@ otherwise. Copy what you need; leave the rest out.
     // `.linters` row for shell stands down while it is attached). A
     // default that is not installed is `.editor.lsp_missing_defaults`'
     // business (quiet); a server named here that is missing always toasts.
+    // An entry written to this file AFTER launch is found on the next
+    // open of a matching file, for a default-owned extension too (a
+    // `.lsp.zig.cmd` pointing at a zls off PATH takes over from the
+    // default without a restart); a trust change re-reads the table and
+    // forgets which servers were missing. `.cmd` is resolved once, on
+    // mnml's own PATH (a `# env: PATH=…` header in a `.test`, an in-app
+    // env edit), and that path is what is spawned. A server's requests
+    // to mnml carry whichever id kind the server chose — zls asks
+    // `workspace/configuration` with a string id — and `.settings` go
+    // back under that same id, which is how zls learns its
+    // `zig_lib_path` (definition / hover / completion into std) and
+    // `enable_build_on_save`.
     .lsp = .{
         .rust = .{
             .cmd = "rust-analyzer", // null = mnml's built-in default
