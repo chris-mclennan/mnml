@@ -1,0 +1,51 @@
+# DAP session — exception filters survive a restart. The adapter
+# advertises `error` (off by default) and `uncaught` (on); switching
+# `All errors` on in dap.exceptions sends `setExceptionBreakpoints
+# {filters: [error, uncaught]}` and ticks its box under BREAKPOINTS.
+# dap.restart is a NEW session, whose filters used to fall back to the
+# adapter's defaults (`[ ] All errors` again, `filters: []` on the
+# wire) — "break on throw" is switched on precisely for the next run
+# (hunt: dap-restart-drops-exception-filters). Now the user's choices
+# are re-applied over the defaults: a filter switched on stays on, and a
+# default-on filter switched off stays off. Line breakpoints already
+# behaved this way.
+write prog.dbg "let x = 1\nlet y = 2\nprint x\n"
+write .mnml/config.zon .{ .dap = .{ .dbg = .{ .cmd = "$MNML_FAKE_DAP" } } }
+open prog.dbg
+command editor.use_vim
+key j
+command dap.toggle_breakpoint
+expect screen contains "breakpoint set: line 2"
+
+command dap.run
+expect screen contains "dap: stopped (breakpoint)"
+expect screen contains "▶"
+
+command dap.exceptions
+expect screen contains "Toggle exception breakpoint"
+type "All errors"
+key enter
+expect screen contains "exception error: on"
+command view.activity_debug
+expect screen contains "[x] All errors"
+expect screen contains "[x] Uncaught errors"
+
+command dap.restart
+expect screen contains "dap: restarted"
+expect screen contains "[x] All errors"
+expect screen contains "[x] Uncaught errors"
+expect screen contains "prog.dbg:2  main"
+
+# The other way round: the default-on filter switched off stays off.
+command dap.exceptions
+type "Uncaught errors"
+key enter
+expect screen contains "exception uncaught: off"
+expect screen contains "[ ] Uncaught errors"
+command dap.restart
+expect screen contains "prog.dbg:2  main"
+expect screen contains "[ ] Uncaught errors"
+expect screen contains "[x] All errors"
+
+command dap.terminate
+expect screen contains "dap: terminated"

@@ -140,6 +140,10 @@ pub const State = struct {
     breakpoints: std.StringHashMapUnmanaged(types.FileBreakpoints) = .empty,
     /// Owned expressions, in the order they were added.
     watches: std.ArrayListUnmanaged([]u8) = .empty,
+    /// Exception filters the user switched, by id (owned keys) → on.
+    /// Like the breakpoints and the watches, these outlive a session:
+    /// a restart re-applies them over the adapter's defaults.
+    filter_overrides: Session.FilterOverrides = .empty,
     session: ?*Session = null,
     next_session: u32 = 1,
     arrow: ?Arrow = null,
@@ -172,6 +176,9 @@ pub const State = struct {
         self.breakpoints.deinit(gpa);
         for (self.watches.items) |w| gpa.free(w);
         self.watches.deinit(gpa);
+        var fk = self.filter_overrides.keyIterator();
+        while (fk.next()) |k| gpa.free(k.*);
+        self.filter_overrides.deinit(gpa);
         if (self.arrow) |a| gpa.free(a.path);
         if (self.last_file) |f| gpa.free(f);
         self.console.deinit(gpa);
@@ -1016,12 +1023,26 @@ pub fn selectThread(app: *App, id: i64) CommandError!void {
 }
 
 /// An exception filter row's checkbox.
+/// Flip an exception filter on the live session, and remember the
+/// choice for the sessions after it.
 pub fn toggleFilter(app: *App, id: []const u8) CommandError!void {
     const s = app.dap.session orelse return app.diag.fail(app.frame.allocator(), "no DAP session", .{});
     const on = try s.toggleFilter(id);
+    try rememberFilter(app, id, on);
     s.setExceptionBreakpoints() catch |err| app.toast("dap setExceptionBreakpoints: {s}", .{@errorName(err)});
     app.toast("exception {s}: {s}", .{ id, if (on) "on" else "off" });
     app.needs_render = true;
+}
+
+fn rememberFilter(app: *App, id: []const u8, on: bool) Allocator.Error!void {
+    const gop = try app.dap.filter_overrides.getOrPut(app.gpa, id);
+    if (!gop.found_existing) {
+        gop.key_ptr.* = app.gpa.dupe(u8, id) catch |err| {
+            _ = app.dap.filter_overrides.remove(id);
+            return err;
+        };
+    }
+    gop.value_ptr.* = on;
 }
 
 fn requireStopped(app: *App) CommandError!*Session {
@@ -1095,11 +1116,11 @@ pub fn pickerAccept(app: *App, kind: app_mod.PickerKind, label: []const u8, deta
     switch (kind) {
         .dap_remove_watch => removeWatch(app, label),
         .dap_exceptions => {
-            const s = app.dap.session orelse return;
             const id = if (std.mem.indexOf(u8, detail, " · ")) |i| detail[0..i] else detail;
-            const on = try s.toggleFilter(id);
-            s.setExceptionBreakpoints() catch |err| app.toast("dap setExceptionBreakpoints: {s}", .{@errorName(err)});
-            app.toast("exception {s}: {s}", .{ id, if (on) "on" else "off" });
+            toggleFilter(app, id) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {},
+            };
         },
         .dap_threads => {
             const s = app.dap.session orelse return;
@@ -1151,7 +1172,7 @@ fn handleResponse(app: *App, s: *Session, kind: client.ReqKind, ctx: u64, succes
     }
     switch (kind) {
         .initialize => {
-            try s.setCapabilities(body);
+            try s.setCapabilities(body, &app.dap.filter_overrides);
             s.ready = true;
             // `launch` / `attach` goes out on this reply, not on
             // `initialized`: lldb-dap and debugpy send `initialized`

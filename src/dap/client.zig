@@ -551,8 +551,16 @@ pub const Session = struct {
         try self.variables.put(self.gpa, ref, out);
     }
 
-    /// The filters from `initialize`'s reply; the defaults go on.
-    pub fn setCapabilities(self: *Session, body: ?Value) Allocator.Error!void {
+    /// The user's word on a filter, kept by the app across sessions:
+    /// filter id → on. A filter with no entry takes the adapter's default.
+    pub const FilterOverrides = std.StringHashMapUnmanaged(bool);
+
+    /// The filters from `initialize`'s reply; each goes on when the
+    /// user last switched it on (`overrides`), else when the adapter
+    /// says it is on by default. A restart is a new session, and
+    /// "break on throw" was switched on for exactly the next run
+    /// (hunt: dap-restart-drops-exception-filters).
+    pub fn setCapabilities(self: *Session, body: ?Value, overrides: ?*const FilterOverrides) Allocator.Error!void {
         const b = body orelse return;
         const arr = jsonrpc.getArr(b, "exceptionBreakpointFilters") orelse return;
         for (arr) |f| {
@@ -566,7 +574,8 @@ pub const Session = struct {
             filter.label = try self.gpa.dupe(u8, jsonrpc.getStr(f, "label") orelse id);
             errdefer self.gpa.free(filter.label);
             try self.filters.append(self.gpa, filter);
-            if (filter.default and !self.enabled_filters.contains(id)) {
+            const on = if (overrides) |o| (o.get(id) orelse filter.default) else filter.default;
+            if (on and !self.enabled_filters.contains(id)) {
                 const key = try self.gpa.dupe(u8, id);
                 errdefer self.gpa.free(key);
                 try self.enabled_filters.put(self.gpa, key, {});
@@ -890,6 +899,37 @@ test "variableRows flattens scopes and only the expanded composites" {
     // A resume drops the cache and the expansion state.
     s.onResumed();
     try testing.expectEqual(@as(usize, 0), (try s.variableRows(arena.allocator())).len);
+}
+
+test "setCapabilities: a filter goes on by the user's override first, the adapter's default second" {
+    const gpa = testing.allocator;
+    var events = try event.EventQueue.init(gpa, 4);
+    defer events.deinit(testing.io);
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const fds_a = try Io.Threaded.pipe2(.{});
+    const fds_b = try Io.Threaded.pipe2(.{});
+    const in_file: Io.File = .{ .handle = fds_a[1], .flags = .{ .nonblocking = false } };
+    const out_file: Io.File = .{ .handle = fds_b[0], .flags = .{ .nonblocking = false } };
+    const s = try Session.initFiles(gpa, testing.io, &events, 1, in_file, out_file, "{}");
+    defer {
+        s.exited = true;
+        s.deinit();
+        (Io.File{ .handle = fds_a[0], .flags = .{ .nonblocking = false } }).close(testing.io);
+        (Io.File{ .handle = fds_b[1], .flags = .{ .nonblocking = false } }).close(testing.io);
+    }
+    var caps = try std.json.parseFromSlice(Value, gpa, "{\"exceptionBreakpointFilters\":[{\"filter\":\"cpp_throw\",\"label\":\"C++ Throw\"},{\"filter\":\"uncaught\",\"label\":\"Uncaught\",\"default\":true},{\"filter\":\"all\",\"label\":\"All\"}]}", .{});
+    defer caps.deinit();
+    var overrides: Session.FilterOverrides = .empty;
+    defer overrides.deinit(gpa);
+    // The user switched cpp_throw ON and the default-on uncaught OFF last session.
+    try overrides.put(gpa, "cpp_throw", true);
+    try overrides.put(gpa, "uncaught", false);
+    try s.setCapabilities(caps.value, &overrides);
+    try testing.expectEqual(@as(usize, 3), s.filters.items.len);
+    try testing.expect(s.enabled_filters.contains("cpp_throw"));
+    try testing.expect(!s.enabled_filters.contains("uncaught"));
+    try testing.expect(!s.enabled_filters.contains("all"));
+    try testing.expectEqual(@as(usize, 1), s.enabled_filters.count());
 }
 
 test "expandEnv: $NAME and ${NAME} from the map; unknown names and bare dollars stay" {
