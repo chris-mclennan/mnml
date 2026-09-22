@@ -276,7 +276,7 @@ fn family(arena: Allocator, menu: []const u8, label: []const u8) Allocator.Error
             .title = try std.fmt.allocPrint(arena, "Theme — {s}", .{label}),
             .body = try std.fmt.allocPrint(arena, "Recolours mnml with the `{s}` theme at once and writes `ui.theme = {s}` to the home config, so it holds in every workspace; the tick marks the one in use. A theme only recolours — glyphs and layout stay the same. `theme.toggle` swaps between the configured pair, and *Auto* follows the terminal's light or dark instead of a fixed name.", .{ label, label }),
             .keys = &.{.{ .command = .@"theme.toggle", .label = "Toggle the configured pair" }},
-            .links = &.{ .{ .command = .{ .id = .@"theme.pick", .label = "The theme picker (with preview)" } }, .{ .settings = .{ .row = copy.settingsRow("ui.theme"), .label = "Theme in Settings" } } },
+            .links = &.{ .{ .command = .{ .id = .@"theme.pick", .label = "The theme picker (with preview)" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.theme"), .label = "Theme in Settings" } } },
         };
     }
     return null;

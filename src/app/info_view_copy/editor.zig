@@ -57,7 +57,7 @@ pub fn gutter(app: *App, arena: Allocator, g: hit.GutterRef) Allocator.Error!?En
         else
             "The line number and the sign cell beside it. Click the sign cell to set or clear a breakpoint on this line — kept without a debug session and listed in the Debug column; right-click is the breakpoint menu: conditional, hit count, a log message instead of a stop. A diagnostic or a git change paints its sign here, and the pane's colour rail takes the cell when nothing else does.",
         .keys = &.{ .{ .command = .@"dap.toggle_breakpoint", .label = "Toggle a breakpoint" }, .{ .command = .@"dap.toggle_breakpoint_conditional", .label = "Conditional breakpoint" } },
-        .links = &.{ .{ .command = .{ .id = .@"dap.toggle_breakpoint", .label = "Toggle a breakpoint" } }, .{ .command = .{ .id = .@"dap.list_breakpoints", .label = "List the breakpoints" } }, .{ .settings = .{ .row = copy.settingsRow("ui.line_numbers"), .label = "Line numbers" } } },
+        .links = &.{ .{ .command = .{ .id = .@"dap.toggle_breakpoint", .label = "Toggle a breakpoint" } }, .{ .command = .{ .id = .@"dap.list_breakpoints", .label = "List the breakpoints" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.line_numbers"), .label = "Line numbers" } } },
     };
 }
 
@@ -70,7 +70,7 @@ pub fn foldArrow(app: *App, arena: Allocator, g: hit.GutterRef) Allocator.Error!
         else
             "The chevron marks a block that can fold — a function, a bracket pair, a heading's section. Click it to close the fold: the lines under this one hide behind it and a marker at the line's end counts them. `zc` / `zo` under vim, `editor.toggle_fold` under either profile; `ui.always_show_fold_arrows` keeps the chevrons visible instead of on hover.",
         .keys = &.{ .{ .command = .@"editor.toggle_fold", .label = "Toggle the fold" }, .{ .command = .@"editor.unfold_all", .label = "Open every fold" } },
-        .links = &.{ .{ .command = .{ .id = .@"editor.toggle_fold", .label = "Toggle it" } }, .{ .command = .{ .id = .@"editor.unfold_all", .label = "Open every fold" } }, .{ .settings = .{ .row = copy.settingsRow("ui.always_show_fold_arrows"), .label = "Always show the chevrons" } } },
+        .links = &.{ .{ .command = .{ .id = .@"editor.toggle_fold", .label = "Toggle it" } }, .{ .command = .{ .id = .@"editor.unfold_all", .label = "Open every fold" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.always_show_fold_arrows"), .label = "Always show the chevrons" } } },
     };
 }
 

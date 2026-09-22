@@ -21,7 +21,7 @@ pub fn launcher(app: *App, arena: Allocator, part: hit.LauncherDockPart) Allocat
         .pin => return .{
             .title = if (app.launcher_dock.pinned) "Launcher dock — pinned" else "Pin the launcher dock",
             .body = if (app.launcher_dock.pinned) "The dock is pinned: it stays up and the frame is carved out for it, as under `ui.dock.mode = always`. Click lets it go — it slides away when the pointer leaves the edge again. Right-click is the dock's menu: its mode, which edge it lives on, inner or outer placement, icons or labels, the settings row. The pin is remembered in the session; the mode is the config's." else "The chip at the end of the strip. Click keeps the dock open for the session — it stops sliding away and the frame is carved out for it; click again to let it go. Right-click is the dock's menu: its mode (always, auto-hide, hidden), which edge it lives on, inner or outer placement, icons or labels. The pin is remembered in the session, unlike the mode.",
-            .links = &.{ .{ .command = .{ .id = .@"view.dock_pin", .label = "Pin / unpin" } }, .{ .settings = .{ .row = copy.settingsRow("ui.dock.mode"), .label = "Launcher dock in Settings" } }, .{ .settings = .{ .row = copy.settingsRow("ui.dock.edge"), .label = "Its edge" } } },
+            .links = &.{ .{ .command = .{ .id = .@"view.dock_pin", .label = "Pin / unpin" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.dock.mode"), .label = "Launcher dock in Settings" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.dock.edge"), .label = "Its edge" } } },
         },
         .item => |i| {
             const list = try launcher_dock.items(app, arena);
@@ -41,13 +41,13 @@ pub fn itemKind(kind: launcher_dock.Kind, label: ?[]const u8, running: bool) Ent
             .title = "+ New…",
             .body = "The first item on the strip is the tab bar's own *Create…* menu, opened here where the click landed: a new file, a shell, a Claude or Codex session, a panel, a tool, an integration. Rows can be pinned to the top of that menu or hidden from it with their kebab. `ui.dock.plus` takes the button off the strip.",
             .keys = &.{.{ .command = .@"term.shell", .label = "New shell" }},
-            .links = &.{ .{ .command = .{ .id = .@"file.new", .label = "New file…" } }, .{ .settings = .{ .row = copy.settingsRow("ui.dock.plus"), .label = "Show the + button" } } },
+            .links = &.{ .{ .command = .{ .id = .@"file.new", .label = "New file…" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.dock.plus"), .label = "Show the + button" } } },
         },
         .integration => .{
             .title = "Integration on the dock",
             .body = "An installed integration, on the strip because its manifest marks it for the dock or because you pinned it from its chip's menu. Click opens it — its pane, or its tool in a terminal split; right-click offers pin / unpin and its menu. The strip clips a long label; the tooltip carries the whole one. A disabled integration is dimmed and the click toasts.",
             .keys = &.{.{ .command = .@"view.activity_integrations", .label = "Integrations" }},
-            .links = &.{ .{ .command = .{ .id = .@"integrations.unpin_from_dock", .label = "Take it off the dock" } }, .{ .command = .{ .id = .@"integrations.configure_picker", .label = "Configure it" } }, .{ .settings = .{ .row = copy.settingsRow("ui.dock.labels"), .label = "Icons or labels" } } },
+            .links = &.{ .{ .command = .{ .id = .@"integrations.unpin_from_dock", .label = "Take it off the dock" } }, .{ .command = .{ .id = .@"integrations.configure_picker", .label = "Configure it" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.dock.labels"), .label = "Icons or labels" } } },
         },
         .launcher => .{
             .title = "Launcher",

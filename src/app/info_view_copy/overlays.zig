@@ -95,13 +95,13 @@ fn quitChoice(app: *App, arena: Allocator, label: []const u8, clean: bool) Alloc
         .title = "Quit",
         .body = "Nothing is unsaved, so this is the quit itself — the box is here because `ui.confirm_quit` asks once even then, with Cancel focused so an Enter on reflex does nothing. The session is written on the way out and restored at the next start.",
         .keys = &.{ .{ .chord = "q", .label = "Quit" }, .{ .command = .@"app.quit", .label = "Quit" } },
-        .links = &.{ .{ .settings = .{ .row = copy.settingsRow("ui.confirm_quit"), .label = "Confirm on quit" } }, .{ .command = .{ .id = .@"session.save", .label = "Save the session now" } } },
+        .links = &.{ .{ .settings = .{ .row = comptime copy.settingsRow("ui.confirm_quit"), .label = "Confirm on quit" } }, .{ .command = .{ .id = .@"session.save", .label = "Save the session now" } } },
     };
     return .{
         .title = "Cancel — stay in mnml",
         .body = if (clean) "Closes the box and nothing else happens. Esc and a click outside the box are the same answer. `ui.confirm_quit` off skips this box when nothing is unsaved." else "Closes the box and nothing else happens — the unsaved buffers stay open and dirty, and the file chip's ● shows which. Esc and a click outside the box are the same answer. Save all is the row that quits without losing anything.",
         .keys = &.{ .{ .chord = "c", .label = "Cancel" }, .{ .chord = "Esc", .label = "Cancel" } },
-        .links = &.{ .{ .command = .{ .id = .@"file.save_all", .label = "Save all" } }, .{ .settings = .{ .row = copy.settingsRow("ui.confirm_quit"), .label = "Confirm on quit" } } },
+        .links = &.{ .{ .command = .{ .id = .@"file.save_all", .label = "Save all" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.confirm_quit"), .label = "Confirm on quit" } } },
     };
 }
 
@@ -151,7 +151,7 @@ fn picker(app: *App, arena: Allocator, kind: app_mod.PickerKind, idx: u32) Alloc
         .title = if (label.len > 0) try std.fmt.allocPrint(arena, "{s}", .{label}) else try std.fmt.allocPrint(arena, "{s} picker row", .{@tagName(kind)}),
         .body = try std.fmt.allocPrint(arena, "A row of the {s} picker: {s}. Type to narrow the rows; ↑↓ walk them and the cursor row is the one Enter takes. Click a row to pick it. `ui.picker_position` is whether the box sits at the top or the centre.", .{ @tagName(kind), what }),
         .keys = &.{ .{ .chord = "Enter", .label = "Pick" }, .{ .chord = "Esc", .label = "Close" }, .{ .chord = "↑ / ↓", .label = "Walk the rows" } },
-        .links = &.{.{ .settings = .{ .row = copy.settingsRow("ui.picker_position"), .label = "Picker position" } }},
+        .links = &.{.{ .settings = .{ .row = comptime copy.settingsRow("ui.picker_position"), .label = "Picker position" } }},
     };
 }
 

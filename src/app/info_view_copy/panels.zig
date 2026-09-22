@@ -49,7 +49,7 @@ pub fn chip(panel: PanelId, kind: hit.ChipKind) Entry {
         } else .{
             .title = "sort: chip",
             .body = "Click cycles the row order — newest first, oldest first, name A–Z, name Z–A; right-click picks one directly, each mode beside its reverse. The order is per panel and persisted, so notes sorted A–Z does not reorder findings. On a narrow column the chip shrinks to its icon; the menu is the same.",
-            .links = &.{.{ .settings = .{ .row = copy.settingsRow("ui.todos_sort"), .label = "TODOS sort in Settings" } }},
+            .links = &.{.{ .settings = .{ .row = comptime copy.settingsRow("ui.todos_sort"), .label = "TODOS sort in Settings" } }},
         },
         .refresh => .{
             .title = "⟳ refresh",
@@ -251,7 +251,7 @@ pub fn http(part: http_panel.Part) Entry {
             .capture => .{
                 .title = "HTTP: start a capture",
                 .body = "Launches the browser pane and starts recording its network log into the CAPTURED section — every request the page makes, with its response, replayable as a request of your own. Stop it from the same chip or `http.capture_now` for a one-shot. Needs Chrome; the browser settings pick headless or not.",
-                .links = &.{ .{ .command = .{ .id = .@"http.capture_start", .label = "Start a capture" } }, .{ .command = .{ .id = .@"http.view_captured", .label = "View the captured log" } }, .{ .settings = .{ .row = copy.settingsRow("browser.headless"), .label = "Headless browser" } } },
+                .links = &.{ .{ .command = .{ .id = .@"http.capture_start", .label = "Start a capture" } }, .{ .command = .{ .id = .@"http.view_captured", .label = "View the captured log" } }, .{ .settings = .{ .row = comptime copy.settingsRow("browser.headless"), .label = "Headless browser" } } },
             },
             .clear => switch (c.section) {
                 .recent => .{
@@ -357,7 +357,7 @@ pub fn fontUpdate() Entry {
     return .{
         .title = "↑ Update the font",
         .body = "This Nerd Font family has a newer release than the one installed. Click runs the Homebrew command that brings it to the latest, in a terminal pane below — read the command before it runs. The terminal needs a relaunch to read the new face; mnml's glyph audit is what noticed.",
-        .links = &.{ .{ .command = .{ .id = .@"integrations.audit_glyphs", .label = "Audit the glyphs" } }, .{ .settings = .{ .row = copy.settingsRow("ui.ascii_icons"), .label = "ASCII icons instead" } } },
+        .links = &.{ .{ .command = .{ .id = .@"integrations.audit_glyphs", .label = "Audit the glyphs" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.ascii_icons"), .label = "ASCII icons instead" } } },
     };
 }
 
@@ -365,7 +365,7 @@ pub fn aiPlaceholder() Entry {
     return .{
         .title = "+ Add Claude Code",
         .body = "An empty slot of the AI grid — the layout that shows several sessions at once as splits. Click starts the next Claude Code session here; the card becomes the session's pane. `ui.ai_layout_mode = tabs` stacks sessions in one leaf instead and has no slots.",
-        .links = &.{ .{ .command = .{ .id = .@"ai.claude_code_new", .label = "Start a session here" } }, .{ .settings = .{ .row = copy.settingsRow("ui.ai_layout_mode"), .label = "AI session layout" } } },
+        .links = &.{ .{ .command = .{ .id = .@"ai.claude_code_new", .label = "Start a session here" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.ai_layout_mode"), .label = "AI session layout" } } },
     };
 }
 
@@ -417,12 +417,12 @@ pub fn infoView(part: hit.InfoPart) Entry {
             .title = "Info panel",
             .body = "This box: what the pointer rests on — a chip, a row, a button, a menu row — or, when the pointer is elsewhere, what the keyboard focus is on, then the active pane. The `→` rows run the command they name, `⚙` opens a Settings row, `↗` a web page and `✦` asks the AI session about the thing with its state attached. The wheel scrolls a long entry; a dim *no help written yet* is a control without an entry.",
             .keys = &.{.{ .chord = "Wheel", .label = "Scroll the entry" }},
-            .links = &.{ .{ .settings = .{ .row = copy.settingsRow("ui.hover_help_height"), .label = "Its height" } }, .{ .command = .{ .id = .@"view.discovery", .label = "The click-discovery panel" } } },
+            .links = &.{ .{ .settings = .{ .row = comptime copy.settingsRow("ui.hover_help_height"), .label = "Its height" } }, .{ .command = .{ .id = .@"view.discovery", .label = "The click-discovery panel" } } },
         },
         .kebab => .{
             .title = "Info panel menu",
             .body = "Click opens the panel's one row: turn it off. Settings → UI → Hover help brings it back — the kebab goes with the panel, so the menu cannot undo itself. The panel's height is `ui.hover_help_height`.",
-            .links = &.{ .{ .settings = .{ .row = copy.settingsRow("ui.hover_help"), .label = "Hover help in Settings" } }, .{ .settings = .{ .row = copy.settingsRow("ui.hover_help_height"), .label = "Its height" } } },
+            .links = &.{ .{ .settings = .{ .row = comptime copy.settingsRow("ui.hover_help"), .label = "Hover help in Settings" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.hover_help_height"), .label = "Its height" } } },
         },
         .try_it => .{
             .title = "A link row",

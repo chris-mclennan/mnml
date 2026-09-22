@@ -209,7 +209,15 @@ pub fn empty() Entry {
 
 /// A header chip's copy (Rust `TreeIcon`), with a `Run it` link.
 pub fn chip(c: tree_view.Chip) Entry {
-    const id = tree_mod.chipCommand(c);
+    return switch (c) {
+        inline else => |cc| chipEntry(cc),
+    };
+}
+
+/// The chip's entry with `id` comptime-known, so the links array is
+/// static data rather than a stack temporary the caller would outlive.
+fn chipEntry(comptime c: tree_view.Chip) Entry {
+    const id = comptime tree_mod.chipCommand(c);
     return switch (c) {
         .new_file => .{ .title = "New file", .body = "Creates an empty file in the workspace root and opens it in a fresh tab, prompting for a name first. A name with a slash makes the folders on the way; a name that exists opens that file instead.", .links = &.{ .{ .command = .{ .id = id, .label = "Run it" } }, .{ .command = .{ .id = .@"file.new_folder", .label = "New folder instead" } } } },
         .new_folder => .{ .title = "New folder", .body = "Creates a new directory in the workspace root after prompting for a name. The tree jumps to show it; a name with a slash makes every folder on the way.", .links = &.{ .{ .command = .{ .id = id, .label = "Run it" } }, .{ .command = .{ .id = .@"file.new", .label = "New file instead" } } } },

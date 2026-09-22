@@ -30,7 +30,7 @@ pub fn entry(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Entry {
             .title = if (App.profileOf(app.input_style) == .vim) "Mode chip — vim keymap" else "Mode chip — standard keymap",
             .body = "The leftmost chip is the keymap's state: under vim it reads NORMAL / INSERT / VISUAL / REPLACE as you edit, and under either profile it names the surface the keys go to when that is not an editor (TREE, a section, a terminal). Click swaps the profile — vim to standard and back, written to `editor.input_style` — and right-click lists both plus the keymap doctor. The swap rebuilds every chord at once, so a chord you learned under one profile may not exist under the other.",
             .keys = &.{.{ .command = .@"focus.cycle", .label = "Cycle keyboard focus" }},
-            .links = &.{ .{ .command = .{ .id = .@"editor.toggle_keymap", .label = "Swap vim ↔ standard" } }, .{ .settings = .{ .row = copy.settingsRow("editor.input_style"), .label = "Input style in Settings" } }, .{ .command = .{ .id = .@"keys.doctor", .label = "Keymap doctor" } } },
+            .links = &.{ .{ .command = .{ .id = .@"editor.toggle_keymap", .label = "Swap vim ↔ standard" } }, .{ .settings = .{ .row = comptime copy.settingsRow("editor.input_style"), .label = "Input style in Settings" } }, .{ .command = .{ .id = .@"keys.doctor", .label = "Keymap doctor" } } },
         },
         sl.seg_file => return .{
             .title = "File chip",
@@ -98,7 +98,7 @@ pub fn entry(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Entry {
         .coverage => .{
             .title = "Coverage chip",
             .body = "Feature coverage (F) and code coverage (C) from the workspace's trends files, each with the move since last week or the last commit — a number that goes down is the one to look at. Click toasts both figures in full; right-click picks what the chip shows: both, feature only, code only, or a ticker that alternates. The chip only appears when the trends files exist, so a workspace without them never shows it.",
-            .links = &.{ .{ .command = .{ .id = .@"coverage.toast", .label = "Show both figures" } }, .{ .settings = .{ .row = copy.settingsRow("ui.coverage_chip_mode"), .label = "Coverage chip mode" } } },
+            .links = &.{ .{ .command = .{ .id = .@"coverage.toast", .label = "Show both figures" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.coverage_chip_mode"), .label = "Coverage chip mode" } } },
         },
         .np_brand => .{
             .title = "Now playing — the player",
@@ -129,18 +129,18 @@ pub fn entry(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Entry {
         .wrap => .{
             .title = "WRAP — soft wrap is on",
             .body = "Lines longer than the pane fold at its right edge instead of scrolling sideways, and the horizontal scroll is pinned to 0 while they do. Click turns wrapping off for the workspace (`ui.wrap`); right-click lists on and off. Wrapping is visual only — the file's line breaks are untouched — and `:set wrap` / `:set nowrap` do the same from the command line.",
-            .links = &.{ .{ .command = .{ .id = .@"view.toggle_wrap", .label = "Turn wrapping off" } }, .{ .settings = .{ .row = copy.settingsRow("ui.wrap"), .label = "Soft wrap in Settings" } } },
+            .links = &.{ .{ .command = .{ .id = .@"view.toggle_wrap", .label = "Turn wrapping off" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.wrap"), .label = "Soft wrap in Settings" } } },
         },
         .autosave => .{
             .title = try std.fmt.allocPrint(arena, "Autosave every {d}s", .{app.cfg.editor.autosave_secs}),
             .body = "`editor.autosave_secs` is set, so a dirty buffer is written to disk that many seconds after the last keystroke — the ● on the file chip clears by itself. Click restates the interval in a toast; there is no menu because the number lives in config.zon. A file that a formatter rewrites on save is formatted on every autosave too, which can move the cursor mid-thought.",
-            .links = &.{ .{ .command = .{ .id = .@"file.open_settings", .label = "Open config.zon" } }, .{ .settings = .{ .row = copy.settingsRow("editor.format_on_save"), .label = "Format on save" } } },
+            .links = &.{ .{ .command = .{ .id = .@"file.open_settings", .label = "Open config.zon" } }, .{ .settings = .{ .row = comptime copy.settingsRow("editor.format_on_save"), .label = "Format on save" } } },
         },
         .highlight => try highlight(app, arena),
         .filesize => .{
             .title = "File size",
             .body = "The active buffer's size in memory, bytes rather than the on-disk size, so unsaved edits count. Click toasts the exact bytes and the line count; right-click offers the file's stats. Past `editor.highlight_max_bytes` the highlighter stands down for the file and the HL chip says so — this chip is where the number that tripped it comes from.",
-            .links = &.{ .{ .command = .{ .id = .@"editor.file_stats", .label = "Show the stats" } }, .{ .settings = .{ .row = copy.settingsRow("editor.highlight_max_bytes"), .label = "Highlight size limit" } } },
+            .links = &.{ .{ .command = .{ .id = .@"editor.file_stats", .label = "Show the stats" } }, .{ .settings = .{ .row = comptime copy.settingsRow("editor.highlight_max_bytes"), .label = "Highlight size limit" } } },
         },
         .sel => .{
             .title = "Selection",
@@ -152,7 +152,7 @@ pub fn entry(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Entry {
         .clock => .{
             .title = if (app.clock.mode == .utc) "Clock — UTC" else "Clock — local time",
             .body = "Wall-clock time, redrawn with the frame so it lags a render tick at most. A trailing Z means it is UTC. Click flips local ↔ UTC; right-click lists local, UTC and hide, and `ui.clock` in Settings is the same three. It is the statusline's rightmost chip, so a narrow terminal drops it first.",
-            .links = &.{ .{ .command = .{ .id = if (app.clock.mode == .utc) .@"clock.local" else .@"clock.utc", .label = if (app.clock.mode == .utc) "Show local time" else "Show UTC" } }, .{ .settings = .{ .row = copy.settingsRow("ui.clock"), .label = "Clock in Settings" } } },
+            .links = if (app.clock.mode == .utc) &.{ .{ .command = .{ .id = .@"clock.local", .label = "Show local time" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.clock"), .label = "Clock in Settings" } } } else &.{ .{ .command = .{ .id = .@"clock.utc", .label = "Show UTC" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.clock"), .label = "Clock in Settings" } } },
         },
         .workspace => .{
             .title = try std.fmt.allocPrint(arena, "Workspace — {s}", .{std.fs.path.basename(app.workspace)}),
@@ -244,7 +244,7 @@ fn ghost(app: *App, arena: Allocator) Allocator.Error!Entry {
             .empty => "The backend answered with nothing to suggest — not an error, just no completion for this spot. The chip clears on its own after a moment. Click opens the suggestion setup if empty answers are the rule rather than the exception.",
             .err => "The last suggestion request FAILED — the backend is unreachable, the key is missing, or the CLI is not on PATH. Nothing else in the editor is affected; suggestions stay off until a request succeeds. Click opens the suggestion setup, which names the backend and where its credential comes from; the statistics row in the right-click menu has the last error's text.",
         },
-        .links = &.{ .{ .command = .{ .id = .@"ai.setup_suggestions", .label = "Suggestion setup" } }, .{ .settings = .{ .row = copy.settingsRow("ai.suggest_backend"), .label = "Suggestion backend" } }, ask },
+        .links = &.{ .{ .command = .{ .id = .@"ai.setup_suggestions", .label = "Suggestion setup" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ai.suggest_backend"), .label = "Suggestion backend" } }, ask },
     };
 }
 
@@ -257,7 +257,7 @@ fn lsp(app: *App, arena: Allocator) Allocator.Error!Entry {
         .title = if (live == 0) "Language servers — none running" else try std.fmt.allocPrint(arena, "Language servers — {d} running", .{live}),
         .body = "How many language servers mnml has started for the open files, each on the root it found the project at; the hover lists them by name and root. Click opens the status pane with the same list and each server's state; right-click is the LSP menu — restart, the log, the missing-server defaults. A server that is installed but not running usually means the file's language is not one `lsp` in config.zon names.",
         .keys = &.{ .{ .command = .@"lsp.hover", .label = "Hover at the cursor" }, .{ .command = .@"lsp.goto_definition", .label = "Go to definition" } },
-        .links = &.{ .{ .command = .{ .id = .@"lsp.status", .label = "Open the status pane" } }, .{ .settings = .{ .row = copy.settingsRow("editor.lsp_missing_defaults"), .label = "Missing-server defaults" } }, ask },
+        .links = &.{ .{ .command = .{ .id = .@"lsp.status", .label = "Open the status pane" } }, .{ .settings = .{ .row = comptime copy.settingsRow("editor.lsp_missing_defaults"), .label = "Missing-server defaults" } }, ask },
     };
 }
 
@@ -265,7 +265,7 @@ fn highlight(app: *App, arena: Allocator) Allocator.Error!Entry {
     const e = app.activeEditor() orelse return .{
         .title = "Highlighting",
         .body = "Whether syntax highlighting is on for the active file — the chip paints when it is off, by hand or because the file is larger than `editor.highlight_max_bytes`. Click toggles it for that buffer only; the setting itself is untouched. Focus an editor to see which of the two this is.",
-        .links = &.{.{ .settings = .{ .row = copy.settingsRow("editor.highlight_max_bytes"), .label = "Highlight size limit" } }},
+        .links = &.{.{ .settings = .{ .row = comptime copy.settingsRow("editor.highlight_max_bytes"), .label = "Highlight size limit" } }},
     };
     var size_buf: [24]u8 = undefined;
     var limit_buf: [24]u8 = undefined;
@@ -277,7 +277,7 @@ fn highlight(app: *App, arena: Allocator) Allocator.Error!Entry {
             try std.fmt.allocPrint(arena, "This file is over `editor.highlight_max_bytes` ({s}), so the highlighter stood down for it — a tree-sitter parse of a file this size costs more per keystroke than the colours are worth. Click turns highlighting on for this buffer anyway, just for this session; raise the limit in Settings if your files are routinely this size. Colours in a file over the limit can make the editor stutter on every edit.", .{limit})
         else
             "Highlighting was switched off for this buffer by hand (the chip, or `editor.highlight_toggle_file`). The file is under the size limit, so nothing forces this; click puts the colours back. `ui.syntax` in Settings is the switch for every file.",
-        .links = &.{ .{ .command = .{ .id = .@"editor.highlight_toggle_file", .label = "Toggle for this buffer" } }, .{ .settings = .{ .row = copy.settingsRow("editor.highlight_max_bytes"), .label = "Highlight size limit" } }, .{ .settings = .{ .row = copy.settingsRow("ui.syntax"), .label = "Syntax highlighting" } } },
+        .links = &.{ .{ .command = .{ .id = .@"editor.highlight_toggle_file", .label = "Toggle for this buffer" } }, .{ .settings = .{ .row = comptime copy.settingsRow("editor.highlight_max_bytes"), .label = "Highlight size limit" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.syntax"), .label = "Syntax highlighting" } } },
     };
 }
 
@@ -286,7 +286,7 @@ fn stress(app: *App, arena: Allocator) Allocator.Error!Entry {
     return .{
         .title = if (st) |s| try std.fmt.allocPrint(arena, "Frame time — p50 {d}.{d}ms · p95 {d}.{d}ms", .{ s.p50_us / 1000, (s.p50_us % 1000) / 100, s.p95_us / 1000, (s.p95_us % 1000) / 100 }) else "Frame time — no frames sampled yet",
         .body = "A four-block meter that fills as the 95th-percentile frame time climbs — a full bar means a redraw is taking longer than the terminal's own frame, which you feel as typing lag. The usual causes are a very large buffer with highlighting on, a pane painting a big terminal, or an integration republishing every tick. Click toasts the numbers; right-click copies them, resets the samples, or hides the meter (`ui.stress_meter`).",
-        .links = &.{ .{ .command = .{ .id = .@"perf.copy_stress", .label = "Copy the numbers" } }, .{ .settings = .{ .row = copy.settingsRow("ui.stress_meter"), .label = "Stress meter in Settings" } }, ask },
+        .links = &.{ .{ .command = .{ .id = .@"perf.copy_stress", .label = "Copy the numbers" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.stress_meter"), .label = "Stress meter in Settings" } }, ask },
     };
 }
 

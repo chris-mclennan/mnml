@@ -36,7 +36,7 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
     if (id == menu_bar.overflow_button) return .{
         .title = "More menus",
         .body = "The menu bar is wider than the terminal, so the words that did not fit are behind this `»`. Click lists them; each row opens that menu where it would have been. Widen the terminal and the words come back onto the bar on their own.",
-        .links = &.{.{ .settings = .{ .row = copy.settingsRow("ui.menu_bar"), .label = "Menu bar in Settings" } }},
+        .links = &.{.{ .settings = .{ .row = comptime copy.settingsRow("ui.menu_bar"), .label = "Menu bar in Settings" } }},
     };
     if (Button.tabPageOf(id)) |page| return try tabPage(app, arena, page);
     if (Button.tabPageCloseOf(id) != null) return .{
@@ -59,12 +59,12 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
     if (id == md_preview.button_edit) return .{
         .title = "Edit the markdown",
         .body = "Swaps the raw editor in for this rendered preview — the same document, so the cursor lands at the top of the source and edits show in the preview when you come back. With `ui.markdown_opens_rendered` on, opening a `.md` lands here first; `:e` on the path opens the source directly.",
-        .links = &.{ .{ .command = .{ .id = .@"markdown.edit_raw", .label = "Edit the source" } }, .{ .settings = .{ .row = copy.settingsRow("ui.markdown_opens_rendered"), .label = "Markdown opens rendered" } } },
+        .links = &.{ .{ .command = .{ .id = .@"markdown.edit_raw", .label = "Edit the source" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.markdown_opens_rendered"), .label = "Markdown opens rendered" } } },
     };
     if (id == md_preview.button_preview) return .{
         .title = "Preview the markdown",
         .body = "Opens the rendered view of this markdown file beside the source — headings, lists, code blocks, and images where the terminal can draw them (`ui.md_image_rows` sets their height). Links are clickable in the preview; the source stays where it was and the two follow each other on save.",
-        .links = &.{ .{ .command = .{ .id = .@"markdown.preview", .label = "Open the preview" } }, .{ .settings = .{ .row = copy.settingsRow("ui.auto_md_preview"), .label = "Auto markdown preview" } } },
+        .links = &.{ .{ .command = .{ .id = .@"markdown.preview", .label = "Open the preview" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.auto_md_preview"), .label = "Auto markdown preview" } } },
     };
     if (id == zon_pane.button_view) return .{
         .title = "View the ZON as a tree",
@@ -112,13 +112,13 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
             .title = if (app.tree.visible) "Left column — open" else "Left column — hidden",
             .body = "Shows or hides the left column: the file tree, or whichever section is on that side, with this info box under it. Click toggles; right-click lists the column's modes — always, auto (slides in when the pointer rests at the edge), hidden — which is `ui.sidebar` in Settings. Hidden, the edge grip `⋮` at the column's edge is the way back with the mouse.",
             .keys = &.{ .{ .command = .@"view.toggle_tree", .label = "Toggle the left column" }, .{ .command = .@"view.focus_tree", .label = "Focus the tree" } },
-            .links = &.{ .{ .command = .{ .id = .@"view.toggle_tree", .label = "Toggle it" } }, .{ .settings = .{ .row = copy.settingsRow("ui.sidebar"), .label = "Side columns in Settings" } }, .{ .settings = .{ .row = copy.settingsRow("ui.tree_width"), .label = "Tree width" } } },
+            .links = &.{ .{ .command = .{ .id = .@"view.toggle_tree", .label = "Toggle it" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.sidebar"), .label = "Side columns in Settings" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.tree_width"), .label = "Tree width" } } },
         },
         .toggle_right_panel => .{
             .title = if (side.shown(app, .right) != null) "Right column — open" else "Right column — hidden",
             .body = "Shows or hides the right column — the outline, diagnostics, or any section moved to that side from its rail menu. Click toggles; right-click lists what can go there. Its width is `ui.right_panel_width`; whether it opens at start is `ui.right_panel_visible`, both per workspace.",
             .keys = &.{ .{ .command = .@"view.toggle_right_panel", .label = "Toggle the right column" }, .{ .command = .@"view.focus_right_panel", .label = "Focus it" } },
-            .links = &.{ .{ .command = .{ .id = .@"view.toggle_right_panel", .label = "Toggle it" } }, .{ .settings = .{ .row = copy.settingsRow("ui.right_panel_width"), .label = "Right panel width" } } },
+            .links = &.{ .{ .command = .{ .id = .@"view.toggle_right_panel", .label = "Toggle it" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.right_panel_width"), .label = "Right panel width" } } },
         },
         .ai_claude => try aiLauncher(app, .claude),
         .ai_codex => try aiLauncher(app, .codex),
@@ -149,25 +149,25 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
         .tabs_label => .{
             .title = if (app.layouts.layouts.items.len <= 1) "TABS — one tab page" else try std.fmt.allocPrint(arena, "TABS — {d} tab pages", .{app.layouts.layouts.items.len}),
             .body = "The cluster's label for the tab pages; the numbered chips after it are the pages, the active one lit. Click switches page; right-click is the cluster's menu — how much of the cluster shows (`ui.top_bar_cluster_mode`: expanded, compact, auto), the AI chips, the theme pill. On a narrow terminal the cluster compacts to the chips alone.",
-            .links = &.{ .{ .command = .{ .id = .@"tab.picker", .label = "Pick a page" } }, .{ .settings = .{ .row = copy.settingsRow("ui.top_bar_cluster_mode"), .label = "Top bar cluster" } } },
+            .links = &.{ .{ .command = .{ .id = .@"tab.picker", .label = "Pick a page" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.top_bar_cluster_mode"), .label = "Top bar cluster" } } },
         },
         .theme_toggle => .{
             .title = try std.fmt.allocPrint(arena, "Theme — {s}", .{app.theme.name}),
             .body = "The theme pill names the active theme. Click toggles between the configured pair (`theme.toggle`); right-click is the theme menu — pick from every shipped and user theme, follow the system's light/dark, reset. Picking one writes `ui.theme` to the home config, so it holds across workspaces.",
             .keys = &.{.{ .command = .@"theme.toggle", .label = "Toggle the theme" }},
-            .links = &.{ .{ .command = .{ .id = .@"theme.pick", .label = "Pick a theme" } }, .{ .command = .{ .id = .@"theme.auto_system", .label = "Follow the system" } }, .{ .settings = .{ .row = copy.settingsRow("ui.theme"), .label = "Theme in Settings" } } },
+            .links = &.{ .{ .command = .{ .id = .@"theme.pick", .label = "Pick a theme" } }, .{ .command = .{ .id = .@"theme.auto_system", .label = "Follow the system" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.theme"), .label = "Theme in Settings" } } },
         },
         .window_close => .{
             .title = "Quit mnml",
             .body = "Closes the app. With unsaved buffers the quit box asks — Save all, Quit anyway, Cancel — and with nothing to lose it still confirms once when `ui.confirm_quit` is on. The session (tabs, splits, the cursor in each file) is written on the way out and restored at the next start, so quitting is cheap. Right-click is the Window menu.",
             .keys = &.{.{ .command = .@"app.quit", .label = "Quit" }},
-            .links = &.{ .{ .command = .{ .id = .@"file.save_all", .label = "Save everything" } }, .{ .settings = .{ .row = copy.settingsRow("ui.confirm_quit"), .label = "Confirm on quit" } }, .{ .command = .{ .id = .@"app.quit", .label = "Quit" } } },
+            .links = &.{ .{ .command = .{ .id = .@"file.save_all", .label = "Save everything" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.confirm_quit"), .label = "Confirm on quit" } }, .{ .command = .{ .id = .@"app.quit", .label = "Quit" } } },
         },
         .split_term => .{
             .title = "Terminal chip",
             .body = "Opens a shell in a split beside the active pane — your `$SHELL`, in the workspace directory, driven by libghostty-vt so it renders like ghostty does. Right-click picks where it goes (left, right, top, bottom half), toggles the scratch terminal, and has the *Icon* submenu: whether this chip and every terminal tab wear the ghost or the plain terminal mark (`ui.terminal_glyph`). Closing the tab ends the shell.",
             .keys = &.{ .{ .command = .@"term.shell", .label = "New shell" }, .{ .command = .@"term.scratch_toggle", .label = "Scratch terminal" } },
-            .links = &.{ .{ .command = .{ .id = .@"term.shell", .label = "Open a shell" } }, .{ .command = .{ .id = .@"term.scratch_toggle", .label = "The scratch terminal" } }, .{ .settings = .{ .row = copy.settingsRow("ui.terminal_glyph"), .label = "Terminal icon" } } },
+            .links = &.{ .{ .command = .{ .id = .@"term.shell", .label = "Open a shell" } }, .{ .command = .{ .id = .@"term.scratch_toggle", .label = "The scratch terminal" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.terminal_glyph"), .label = "Terminal icon" } } },
         },
         .split_right => .{
             .title = "Split right",
@@ -185,7 +185,7 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
             .title = "Restore",
             .body = if (app.zen) "Full screen is on: the chrome — the rail, the columns, the bars — is hidden and the panes have the whole terminal. Click brings the frame back; so does Esc Esc, or the corner mark at the top right. Right-click lists the two maximize modes." else "This pane is zoomed: it has its leaf's whole area and the other splits are hidden, not closed. Click restores the splits; right-click lists the two maximize modes. The zoom is per tab page.",
             .keys = &.{ .{ .command = .@"view.fullscreen", .label = "Full screen" }, .{ .command = .@"view.toggle_zoom", .label = "Zoom this pane" } },
-            .links = &.{ .{ .command = .{ .id = zen.clickCommand(app), .label = "Bring the frame back" } }, .{ .settings = .{ .row = copy.settingsRow("ui.maximize_click"), .label = "Maximize button in Settings" } } },
+            .links = if (app.zen) &.{ .{ .command = .{ .id = .@"view.fullscreen", .label = "Bring the frame back" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.maximize_click"), .label = "Maximize button in Settings" } } } else &.{ .{ .command = .{ .id = .@"view.toggle_zoom", .label = "Bring the splits back" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.maximize_click"), .label = "Maximize button in Settings" } } },
         } else .{
             .title = try std.fmt.allocPrint(arena, "Maximize — {s}", .{zen.modeLabel(app.cfg.ui.maximize_click)}),
             .body = switch (app.cfg.ui.maximize_click) {
@@ -193,7 +193,10 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
                 .fullscreen => "One button, two modes; `ui.maximize_click` picks which a left click runs, and here it is *Full screen*: the rail, the columns and the bars hide and the panes take the whole terminal, Esc Esc or the corner mark to come back. Right-click lists both modes and runs the one you pick once, without re-pointing the button; Settings → UI re-points it. Zoom is the other mode — one pane over its splits, chrome kept.",
             },
             .keys = &.{ .{ .command = .@"view.toggle_zoom", .label = "Zoom this pane" }, .{ .command = .@"view.fullscreen", .label = "Full screen" } },
-            .links = &.{ .{ .command = .{ .id = zen.clickCommand(app), .label = "Maximize" } }, .{ .settings = .{ .row = copy.settingsRow("ui.maximize_click"), .label = "Maximize button in Settings" } } },
+            .links = switch (app.cfg.ui.maximize_click) {
+                .zoom_pane => &.{ .{ .command = .{ .id = .@"view.toggle_zoom", .label = "Zoom this pane" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.maximize_click"), .label = "Maximize button in Settings" } } },
+                .fullscreen => &.{ .{ .command = .{ .id = .@"view.fullscreen", .label = "Full screen" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.maximize_click"), .label = "Maximize button in Settings" } } },
+            },
         },
         .hidden_tabs => .{
             .title = "Hidden tabs",
@@ -229,7 +232,7 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
             .title = "Hide the bottom panel",
             .body = "The `×` on the bottom panel's header hides the panel — the sections and panes hosted under the editor (`ui.bottom_panel_*`), not the launcher dock. Its rows are `ui.bottom_panel_height`; whether it opens at start is `ui.bottom_panel_visible`. `view.toggle_bottom_panel` brings it back.",
             .keys = &.{.{ .command = .@"view.toggle_bottom_panel", .label = "Toggle the bottom panel" }},
-            .links = &.{ .{ .command = .{ .id = .@"view.toggle_bottom_panel", .label = "Toggle it" } }, .{ .settings = .{ .row = copy.settingsRow("ui.bottom_panel_height"), .label = "Bottom dock rows" } } },
+            .links = &.{ .{ .command = .{ .id = .@"view.toggle_bottom_panel", .label = "Toggle it" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.bottom_panel_height"), .label = "Bottom dock rows" } } },
         },
         .cmdline_bar => .{
             .title = "The command line",
@@ -251,34 +254,34 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
             .title = "A side column, slid in",
             .body = "The column is set to `auto` and the pointer at its edge brought it out over the editor — painted over, so no pane moved. It slides back when the pointer leaves, unless the keyboard is in it. Click keeps the press from falling through to the editor; right-click lists the column's modes; the pin chip at its edge docks it for the session.",
             .keys = &.{ .{ .command = .@"view.sidebar_pin", .label = "Pin the column" }, .{ .command = .@"view.toggle_tree", .label = "Toggle the left column" } },
-            .links = &.{ .{ .command = .{ .id = .@"view.sidebar_pin", .label = "Pin it for the session" } }, .{ .settings = .{ .row = copy.settingsRow("ui.sidebar"), .label = "Side columns in Settings" } } },
+            .links = &.{ .{ .command = .{ .id = .@"view.sidebar_pin", .label = "Pin it for the session" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.sidebar"), .label = "Side columns in Settings" } } },
         },
         .sidebar_pin => .{
             .title = "Pin the column",
             .body = "The chip at the edge of a slid-in column. Click docks the column for the session — it stops sliding away and the frame is carved out for it as under `always`; click again to let it go. The pin, unlike the mode, is remembered in the session, so a pinned column is pinned again at the next start. Right-click lists the modes.",
             .keys = &.{.{ .command = .@"view.sidebar_pin", .label = "Pin / unpin" }},
-            .links = &.{ .{ .command = .{ .id = .@"view.sidebar_pin", .label = "Pin / unpin" } }, .{ .command = .{ .id = .@"view.sidebar_mode_always", .label = "Always show it" } }, .{ .settings = .{ .row = copy.settingsRow("ui.sidebar"), .label = "Side columns in Settings" } } },
+            .links = &.{ .{ .command = .{ .id = .@"view.sidebar_pin", .label = "Pin / unpin" } }, .{ .command = .{ .id = .@"view.sidebar_mode_always", .label = "Always show it" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.sidebar"), .label = "Side columns in Settings" } } },
         },
         .menu_bar_pin => .{
             .title = if (app.menu_bar.pinned) "Menu bar — pinned" else "Pin the menu bar",
             .body = "The chip past the menu bar's words, painted only while `ui.menu_bar` lets the bar hide. Click keeps the words up for this session so the bar stops sliding away; click again to let it go. Right-click lists the bar's modes — always, auto, hidden. The pin is remembered in the session; the mode is the config's.",
-            .links = &.{ .{ .command = .{ .id = .@"view.menu_bar_pin", .label = "Pin / unpin" } }, .{ .settings = .{ .row = copy.settingsRow("ui.menu_bar"), .label = "Menu bar in Settings" } } },
+            .links = &.{ .{ .command = .{ .id = .@"view.menu_bar_pin", .label = "Pin / unpin" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.menu_bar"), .label = "Menu bar in Settings" } } },
         },
         .edge_grip_menu_bar => .{
             .title = "The menu bar hides here",
             .body = "The `⋯` at the top centre marks the band that brings the menu bar back: rest the pointer on it and the words slide in over the top row. Click reveals AND pins the bar for the session — the same pin the chip past its words toggles — and right-click lists the bar's modes. `ui.edge_grips` turns all three grips off if you know the bands by heart.",
-            .links = &.{ .{ .command = .{ .id = .@"view.menu_bar_pin", .label = "Reveal and pin the bar" } }, .{ .settings = .{ .row = copy.settingsRow("ui.menu_bar"), .label = "Menu bar in Settings" } }, .{ .settings = .{ .row = copy.settingsRow("ui.edge_grips"), .label = "Edge grips" } } },
+            .links = &.{ .{ .command = .{ .id = .@"view.menu_bar_pin", .label = "Reveal and pin the bar" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.menu_bar"), .label = "Menu bar in Settings" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.edge_grips"), .label = "Edge grips" } } },
         },
         .edge_grip_sidebar_left, .edge_grip_sidebar_right => .{
             .title = "The side column hides here",
             .body = "The `⋮` at the middle of this edge marks the band that slides the column in: rest the pointer on it and the column paints over the editor, going back when the pointer leaves. Click reveals AND pins it for the session — the pin chip at the column's edge lets it go — and right-click lists the column's modes. The grip is not painted while the column is pinned: there is nothing left to summon.",
             .keys = &.{ .{ .command = .@"view.sidebar_pin", .label = "Reveal and pin" }, .{ .command = .@"view.toggle_tree", .label = "Toggle the left column" } },
-            .links = &.{ .{ .command = .{ .id = .@"view.sidebar_pin", .label = "Reveal and pin the column" } }, .{ .settings = .{ .row = copy.settingsRow("ui.sidebar"), .label = "Side columns in Settings" } }, .{ .settings = .{ .row = copy.settingsRow("ui.edge_grips"), .label = "Edge grips" } } },
+            .links = &.{ .{ .command = .{ .id = .@"view.sidebar_pin", .label = "Reveal and pin the column" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.sidebar"), .label = "Side columns in Settings" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.edge_grips"), .label = "Edge grips" } } },
         },
         .edge_grip_dock => .{
             .title = "The launcher dock hides here",
             .body = "The three dots at the middle of this edge mark the band that brings the launcher dock up: rest the pointer on it and the strip — integrations, terminals, launchers, pinned commands — paints over the editor's edge. Click reveals AND pins it for the session; right-click is the dock's menu — its mode, its edge, placement, labels, settings. A pinned dock shows no grip.",
-            .links = &.{ .{ .command = .{ .id = .@"view.dock_pin", .label = "Reveal and pin the dock" } }, .{ .settings = .{ .row = copy.settingsRow("ui.dock.mode"), .label = "Launcher dock in Settings" } }, .{ .settings = .{ .row = copy.settingsRow("ui.edge_grips"), .label = "Edge grips" } } },
+            .links = &.{ .{ .command = .{ .id = .@"view.dock_pin", .label = "Reveal and pin the dock" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.dock.mode"), .label = "Launcher dock in Settings" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.edge_grips"), .label = "Edge grips" } } },
         },
         else => null,
     };
@@ -304,7 +307,7 @@ fn menuWord(app: *App, arena: Allocator, m: menu_bar.Menu) Allocator.Error!Entry
         .body = body,
         .keys = &.{ .{ .chord = "→ / ←", .label = "The next / previous menu" }, .{ .chord = "Esc", .label = "Close" } },
         .aside = if (accel != 0) try std.fmt.allocPrint(arena, "Alt+{c} opens it from the keyboard.", .{accel}) else null,
-        .links = &.{ .{ .command = .{ .id = .@"view.menu_bar_open", .label = "Open a menu by key" } }, .{ .settings = .{ .row = copy.settingsRow("ui.menu_bar"), .label = "Menu bar in Settings" } } },
+        .links = &.{ .{ .command = .{ .id = .@"view.menu_bar_open", .label = "Open a menu by key" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.menu_bar"), .label = "Menu bar in Settings" } } },
     };
 }
 
@@ -323,12 +326,12 @@ fn aiLauncher(app: *App, product: enum { claude, codex }) Allocator.Error!Entry 
         .claude => .{
             .title = "Claude Code chip",
             .body = if (ai_app.findSession(app, .claude) != null) "A Claude Code session is running. Click shows the SESSIONS section, where its card is; the session's own tab is in the editor area. Right-click is the launcher menu — toggle the existing pane, a new session in a named half, the grid-or-tabs layout for several sessions, and the *Icon* submenu: whether the chip and the session tabs wear the Claude figure or the Anthropic spark (`ui.claude_mark`)." else "No Claude Code session is running. Click shows the SESSIONS section and starts one in the workspace — the `claude` CLI in a terminal pane, on the account it is signed in as. Right-click is the launcher menu — a new session in a named half, the grid-or-tabs layout for several, and the *Icon* submenu: the Claude figure or the Anthropic spark (`ui.claude_mark`).",
-            .links = &.{ .{ .command = .{ .id = .@"ai.claude_code_new", .label = "New Claude session" } }, .{ .command = .{ .id = .@"ai.claude_usage", .label = "Usage" } }, .{ .settings = .{ .row = copy.settingsRow("ui.claude_mark"), .label = "Claude icon in Settings" } } },
+            .links = &.{ .{ .command = .{ .id = .@"ai.claude_code_new", .label = "New Claude session" } }, .{ .command = .{ .id = .@"ai.claude_usage", .label = "Usage" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.claude_mark"), .label = "Claude icon in Settings" } } },
         },
         .codex => .{
             .title = "Codex chip",
             .body = if (ai_app.findSession(app, .codex) != null) "A Codex session is running. Click shows the SESSIONS section, where its card is; the session's tab is in the editor area. Right-click is the launcher menu — toggle the existing pane, a new session in a named half, the grid-or-tabs layout for several sessions, and the glyph rows." else "No Codex session is running. Click shows the SESSIONS section and starts one — the `codex` CLI in a terminal pane, in the workspace. Right-click is the launcher menu — a new session in a named half, the grid-or-tabs layout for several, and the glyph rows. `ui.tab_bar_ai_icon` picks which AI chips the bar shows.",
-            .links = &.{ .{ .command = .{ .id = .@"ai.codex_new", .label = "New Codex session" } }, .{ .command = .{ .id = .@"ai.codex_usage", .label = "Usage" } }, .{ .settings = .{ .row = copy.settingsRow("ui.tab_bar_ai_icon"), .label = "AI icons in the bar" } } },
+            .links = &.{ .{ .command = .{ .id = .@"ai.codex_new", .label = "New Codex session" } }, .{ .command = .{ .id = .@"ai.codex_usage", .label = "Usage" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.tab_bar_ai_icon"), .label = "AI icons in the bar" } } },
         },
     };
 }
@@ -350,14 +353,14 @@ pub fn tab(app: *App, arena: Allocator, tb: hit.TabRef) Allocator.Error!?Entry {
                 .title = try std.fmt.allocPrint(arena, "Tab: {s} — {s}", .{ p.title(), if (claude) "a Claude Code session" else "a terminal" }),
                 .body = if (claude) "A Claude Code session in a terminal pane, driven by libghostty-vt; its card in SESSIONS shows the branch, cwd and what it is doing, and the colour on its rail matches. Click shows it; middle-click closes it (which ends the session — the transcript stays on disk); drag reorders. Right-click has Rename, Restart, Clear, the accent colour and the *Icon* submenu for the mark it wears." else "A shell in a terminal pane, driven by libghostty-vt so it renders as ghostty would — in the workspace directory, with mnml's environment. Click shows it; middle-click closes it, which ends the shell; drag reorders. Right-click has Rename, Restart, Clear, the accent colour and the *Icon* submenu — the ghost or the plain terminal mark for every terminal tab.",
                 .keys = &.{.{ .command = .@"buffer.close", .label = "Close" }},
-                .links = &.{ .{ .command = .{ .id = .@"term.rename", .label = "Rename it" } }, .{ .command = .{ .id = if (claude) .@"ai.claude_code_new" else .@"term.shell", .label = if (claude) "Another Claude session" else "Another shell" } }, .{ .settings = .{ .row = if (claude) copy.settingsRow("ui.claude_mark") else copy.settingsRow("ui.terminal_glyph"), .label = if (claude) "Claude icon in Settings" else "Terminal icon in Settings" } } },
+                .links = if (claude) &.{ .{ .command = .{ .id = .@"term.rename", .label = "Rename it" } }, .{ .command = .{ .id = .@"ai.claude_code_new", .label = "Another Claude session" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.claude_mark"), .label = "Claude icon in Settings" } } } else &.{ .{ .command = .{ .id = .@"term.rename", .label = "Rename it" } }, .{ .command = .{ .id = .@"term.shell", .label = "Another shell" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.terminal_glyph"), .label = "Terminal icon in Settings" } } },
             };
         },
         else => .{
             .title = try std.fmt.allocPrint(arena, "Tab: {s}{s}", .{ p.title(), if (dirty) " — unsaved" else "" }),
             .body = if (dirty) "One tab per open pane; the ● means this buffer has edits not on disk, and closing it will ask. Click shows it; middle-click closes it; drag moves it along the strip or into another split. Right-click has Save, the close rows, pin, split, reveal in the tree, copy the path. A preview tab (`ui.preview_tabs`, italic) is replaced by the next single-click open until you edit it." else "One tab per open pane. Click shows it; middle-click closes it; drag moves it along the strip or into another split. Right-click has the close rows, pin (a pinned tab stays at the front), split right and down, reveal in the tree, copy the path. A preview tab (`ui.preview_tabs`, italic) is replaced by the next single-click open until you edit or pin it.",
             .keys = &.{ .{ .command = .@"buffer.close", .label = "Close" }, .{ .command = .@"buffer.next", .label = "Next tab" } },
-            .links = &.{ .{ .command = .{ .id = .@"buffer.pin_toggle", .label = "Pin / unpin it" } }, .{ .command = .{ .id = .@"view.reveal_in_tree", .label = "Reveal in the tree" } }, .{ .settings = .{ .row = copy.settingsRow("ui.preview_tabs"), .label = "Preview tabs" } } },
+            .links = &.{ .{ .command = .{ .id = .@"buffer.pin_toggle", .label = "Pin / unpin it" } }, .{ .command = .{ .id = .@"view.reveal_in_tree", .label = "Reveal in the tree" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.preview_tabs"), .label = "Preview tabs" } } },
         },
     };
 }
@@ -367,7 +370,7 @@ pub fn tabClose() Entry {
         .title = "Close tab",
         .body = "The badge at the tab's right edge: a `×`, or the diagnostics count when `ui.bufferline_diag_style` puts it there, or the ● of unsaved edits. Click closes the pane — a dirty buffer asks first; a terminal's shell ends. Middle-click anywhere on the tab does the same, and the last closed one can be reopened.",
         .keys = &.{ .{ .command = .@"buffer.close", .label = "Close" }, .{ .command = .@"buffer.reopen", .label = "Reopen the last closed" } },
-        .links = &.{ .{ .command = .{ .id = .@"buffer.reopen", .label = "Reopen the last closed" } }, .{ .settings = .{ .row = copy.settingsRow("ui.bufferline_diag_style"), .label = "Diag chip on tabs" } } },
+        .links = &.{ .{ .command = .{ .id = .@"buffer.reopen", .label = "Reopen the last closed" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.bufferline_diag_style"), .label = "Diag chip on tabs" } } },
     };
 }
 
@@ -379,7 +382,7 @@ pub fn breadcrumb(app: *App, arena: Allocator, pane_id: PaneId, idx: u16) Alloca
     return .{
         .title = try std.fmt.allocPrint(arena, "Breadcrumb: {s}", .{names[idx]}),
         .body = "The row over the editor spells the file's path from the workspace root, one segment per folder, then the symbol the cursor is in when a language server knows it. Click a segment to open a Files pane at that folder (the file's own segment opens its parent); right-click offers the folder's rows. `editor.breadcrumb` in Settings hides the row.",
-        .links = &.{ .{ .command = .{ .id = .@"view.reveal_in_tree", .label = "Reveal in the tree" } }, .{ .settings = .{ .row = copy.settingsRow("editor.breadcrumb"), .label = "Breadcrumb in Settings" } } },
+        .links = &.{ .{ .command = .{ .id = .@"view.reveal_in_tree", .label = "Reveal in the tree" } }, .{ .settings = .{ .row = comptime copy.settingsRow("editor.breadcrumb"), .label = "Breadcrumb in Settings" } } },
     };
 }
 
@@ -388,7 +391,7 @@ pub fn divider() Entry {
         .title = "Divider",
         .body = "The line between two panes, or between a column and the editor area. Drag it to resize; the column widths are per workspace (`ui.tree_width`, `ui.right_panel_width`) and the split ratios live in the session. The keyboard resizes too: grow and shrink width or height from the Window menu, or equalize every split at once.",
         .keys = &.{.{ .chord = "Drag", .label = "Resize" }},
-        .links = &.{ .{ .command = .{ .id = .@"view.equalize_splits", .label = "Equalize the splits" } }, .{ .settings = .{ .row = copy.settingsRow("ui.tree_width"), .label = "Tree width" } } },
+        .links = &.{ .{ .command = .{ .id = .@"view.equalize_splits", .label = "Equalize the splits" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.tree_width"), .label = "Tree width" } } },
     };
 }
 
@@ -401,7 +404,7 @@ pub fn scrollbar(s: anytype) Entry {
         },
         .body = "The thumb is where you are in the content and how much of it shows. Drag it, click the track to jump, or use the wheel over the content — `ui.wheel_lines` is how many lines a notch moves. `ui.scrollbar` turns the bars off for people who navigate by keyboard; the wheel still works.",
         .keys = &.{ .{ .chord = "Drag", .label = "Scroll" }, .{ .chord = "Wheel", .label = "Scroll by lines" } },
-        .links = &.{ .{ .settings = .{ .row = copy.settingsRow("ui.scrollbar"), .label = "Scrollbar in Settings" } }, .{ .settings = .{ .row = copy.settingsRow("ui.wheel_lines"), .label = "Lines per wheel notch" } } },
+        .links = &.{ .{ .settings = .{ .row = comptime copy.settingsRow("ui.scrollbar"), .label = "Scrollbar in Settings" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.wheel_lines"), .label = "Lines per wheel notch" } } },
     };
 }
 
@@ -432,18 +435,18 @@ pub fn paneKind(kind: std.meta.Tag(app_mod.Pane)) Entry {
             .title = "editor",
             .body = "A text buffer. Click places the cursor, drag selects, the wheel scrolls; right-click is the editor menu — the clipboard, go to definition, the AI rows, format. The colour stripe down the left edge is the pane rail: it says which pane this is, and a Claude session's card wears the same colour. Ctrl+S saves; the file chip in the statusline shows ● while it is dirty.",
             .keys = &.{ .{ .command = .@"file.save", .label = "Save" }, .{ .command = .palette, .label = "Command palette" }, .{ .command = .@"lsp.code_action", .label = "Code actions" } },
-            .links = &.{ .{ .command = .{ .id = .@"lsp.code_action", .label = "Code actions" } }, .{ .command = .{ .id = .@"ai.explain", .label = "Explain the selection" } }, .{ .settings = .{ .row = copy.settingsRow("ui.pane_rail"), .label = "Pane colour rail" } } },
+            .links = &.{ .{ .command = .{ .id = .@"lsp.code_action", .label = "Code actions" } }, .{ .command = .{ .id = .@"ai.explain", .label = "Explain the selection" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.pane_rail"), .label = "Pane colour rail" } } },
         },
         .pty => .{
             .title = "terminal",
             .body = "A shell, or a program started as one, in a libghostty-vt terminal: keys go straight to it while it is focused, so mnml's own chords need the pane unfocused (F6 cycles). Click focuses and places nothing; the wheel scrolls its history; right-click is the pane menu — rename, restart, clear, paste, the accent colour. Closing the tab ends the child.",
             .keys = &.{.{ .command = .@"focus.cycle", .label = "Cycle focus out" }},
-            .links = &.{ .{ .command = .{ .id = .@"term.restart", .label = "Restart the shell" } }, .{ .command = .{ .id = .@"term.rename", .label = "Rename" } }, .{ .settings = .{ .row = copy.settingsRow("ui.pty_cursor.blink"), .label = "Terminal cursor blinks" } } },
+            .links = &.{ .{ .command = .{ .id = .@"term.restart", .label = "Restart the shell" } }, .{ .command = .{ .id = .@"term.rename", .label = "Rename" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.pty_cursor.blink"), .label = "Terminal cursor blinks" } } },
         },
         .ai => .{
             .title = "AI pane",
             .body = "A Claude job's transcript — the question at the top, the answer streaming under it, and for an action (explain, fix, refactor) an Apply row that puts the result into the buffer it came from. Type at the bottom prompt to continue; right-click is the pane menu — re-ask, cancel, copy. The pane is the API or CLI route `ai.routing` picks, not a session tab.",
-            .links = &.{ .{ .command = .{ .id = .@"ai.reask", .label = "Ask again" } }, .{ .command = .{ .id = .@"ai.apply", .label = "Apply the result" } }, .{ .settings = .{ .row = copy.settingsRow("ai.routing.claude.backend"), .label = "Claude backend" } } },
+            .links = &.{ .{ .command = .{ .id = .@"ai.reask", .label = "Ask again" } }, .{ .command = .{ .id = .@"ai.apply", .label = "Apply the result" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ai.routing.claude.backend"), .label = "Claude backend" } } },
         },
         .request => .{
             .title = "HTTP request",
@@ -453,7 +456,7 @@ pub fn paneKind(kind: std.meta.Tag(app_mod.Pane)) Entry {
         .md_preview => .{
             .title = "markdown preview",
             .body = "The rendered view of a markdown file — headings, lists, code, images where the terminal can draw them. Links open on click; the header chip swaps the raw editor in. The preview follows the source on save, so keep both open to see edits land. `ui.render_markdown` is the inline renderer inside the editor, a different thing.",
-            .links = &.{ .{ .command = .{ .id = .@"markdown.edit_raw", .label = "Edit the source" } }, .{ .settings = .{ .row = copy.settingsRow("ui.md_image_rows"), .label = "Markdown image rows" } } },
+            .links = &.{ .{ .command = .{ .id = .@"markdown.edit_raw", .label = "Edit the source" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.md_image_rows"), .label = "Markdown image rows" } } },
         },
         .zon => .{
             .title = "ZON tree",
@@ -512,7 +515,7 @@ pub fn paneKind(kind: std.meta.Tag(app_mod.Pane)) Entry {
         .browser => .{
             .title = "browser",
             .body = "A Chrome page driven over CDP: navigate, back and forward, a screenshot or a DOM snapshot into a pane, the network log captured into the HTTP panel's CAPTURED section. Headless or headed is `browser.headless`; the profile is `browser.profile_mode`. Devtools opens Chrome's own.",
-            .links = &.{ .{ .command = .{ .id = .@"browser.navigate", .label = "Go to a URL" } }, .{ .command = .{ .id = .@"http.capture_start", .label = "Capture the network" } }, .{ .settings = .{ .row = copy.settingsRow("browser.headless"), .label = "Headless browser" } } },
+            .links = &.{ .{ .command = .{ .id = .@"browser.navigate", .label = "Go to a URL" } }, .{ .command = .{ .id = .@"http.capture_start", .label = "Capture the network" } }, .{ .settings = .{ .row = comptime copy.settingsRow("browser.headless"), .label = "Headless browser" } } },
         },
         .outline => .{
             .title = "outline",
@@ -534,7 +537,7 @@ pub fn paneKind(kind: std.meta.Tag(app_mod.Pane)) Entry {
         .image => .{
             .title = "image",
             .body = "A raster image drawn with the terminal's own image protocol (kitty or sixel) where it has one; elsewhere the pane names the file and its size. The wheel pans a large one. `ui.md_image_rows` is the height images take inside a markdown preview.",
-            .links = &.{.{ .settings = .{ .row = copy.settingsRow("ui.md_image_rows"), .label = "Markdown image rows" } }},
+            .links = &.{.{ .settings = .{ .row = comptime copy.settingsRow("ui.md_image_rows"), .label = "Markdown image rows" } }},
         },
         .spend_report, .ai_usage => .{
             .title = "AI usage",

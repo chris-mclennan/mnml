@@ -46,7 +46,7 @@ fn section(app: *App, arena: Allocator, s: Section) Allocator.Error!?Entry {
             .title = "Explorer — the file tree",
             .body = try std.fmt.allocPrint(arena, "The workspace's files as a tree, with the header chips for a new file or folder, pull, fold-all and rescan. Click shows it in its column (and leaves git mode if that is on); right-click offers the section's menu — move it to the other side, hide it. Arrows or j/k walk rows, Enter opens, right-click on a row is the file menu.{s}", .{marked(app, .explorer)}),
             .keys = &.{.{ .command = .@"picker.files", .label = "Fuzzy-open a file" }},
-            .links = &.{ .{ .command = .{ .id = .@"view.activity_explorer", .label = "Show the tree" } }, .{ .command = .{ .id = .@"picker.files", .label = "Fuzzy-open a file" } }, .{ .settings = .{ .row = copy.settingsRow("ui.sidebar_side"), .label = "Default sidebar side" } } },
+            .links = &.{ .{ .command = .{ .id = .@"view.activity_explorer", .label = "Show the tree" } }, .{ .command = .{ .id = .@"picker.files", .label = "Fuzzy-open a file" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.sidebar_side"), .label = "Default sidebar side" } } },
         },
         .search => .{
             .title = "Search — ripgrep across the workspace",

@@ -264,11 +264,11 @@ test "every Settings row has an entry — hand-written or generated — that nam
         try t.expect(e.aside != null);
     }
     // The hover-help row is hand-written and says what the box is.
-    const hh = (try entry(&app, a, copy.settingsRow("ui.hover_help"))).?;
+    const hh = (try entry(&app, a, comptime copy.settingsRow("ui.hover_help"))).?;
     try t.expect(std.mem.indexOf(u8, hh.body, "This box") != null);
     try t.expect(std.mem.indexOf(u8, hh.body, "It is `on` now") != null);
     // A generated row reads the CONFIG.md comment and the current choice.
-    const gen = (try entry(&app, a, copy.settingsRow("ui.picker_position"))).?;
+    const gen = (try entry(&app, a, comptime copy.settingsRow("ui.picker_position"))).?;
     try t.expect(std.mem.indexOf(u8, gen.body, "`ui.picker_position`") != null);
     try t.expect(std.mem.indexOf(u8, gen.body, "now") != null);
     // The option chip says it is one; the section names, the filter,
@@ -279,7 +279,7 @@ test "every Settings row has an entry — hand-written or generated — that nam
     try t.expectEqualStrings("Settings", (try entry(&app, a, ui_settings.surface_id)).?.title);
     try t.expectEqualStrings("Reset all to defaults", (try entry(&app, a, settings.reset_id)).?.title);
     // Every hand-written path is a real row.
-    inline for (hand_written) |hw| _ = copy.settingsRow(hw.path);
+    inline for (hand_written) |hw| _ = comptime copy.settingsRow(hw.path);
     app.overlay.deinit(app.gpa);
     app.overlay = .none;
 }
