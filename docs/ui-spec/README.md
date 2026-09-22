@@ -239,7 +239,17 @@ matching `steps-<name>.jsonl`, on the fixture workspace (which now has
 - `rename` / `delete` — three arrows down the tree (Rust previews the
   row under the cursor, so `.gitignore` is open behind the box), then
   `file.rename` / `file.delete`. The delete steps only OPEN the
-  confirm; nothing in the fixture is ever deleted.
+  confirm; nothing in the fixture is ever deleted. *// changed
+  (one-confirm), 2026-09-21:* the Zig delete box no longer matches
+  `rust-delete-120x40.txt` and is not meant to — Rust paints its
+  delete confirm as padded labels right-aligned in a five-row box,
+  and the Zig side draws every confirm the one bracketed way (the
+  row `rust-close-120x40.txt` shows, `   [D]elete      Delete
+  [P]ermanently      [C]ancel`, six rows). A `ui-diff` on `delete`
+  reports those five rows; `docs/PARITY.md` (`one-confirm`) is the
+  record, and `zig-delete-120x40.txt` (`tools/zig-spec.sh delete`, so
+  the box is over `prog.dbg` on the throwaway workspace) is the Zig
+  dump of the one look.
 - `goto` — `src/main.rs` open, `ctrl+g`: the go-to-line prompt.
 - `whichkey` — `ctrl+k`: the leader popup (standard profile).
 - `help` — `f1`: the help overlay (the keymap reference).

@@ -265,7 +265,8 @@ the idiom is written down instead. A settings screen is:
   searching user would act on.
 - **Reset-all asks first**, in both profiles, in the app's own confirm
   box (`src/ui/confirm.zig`) with Cancel focused — Enter on reflex is
-  the harmless answer.
+  the harmless answer. It wears the one confirm row like every other
+  box (see *The confirm box* below); it never grows its own.
 - v1 rows are **discrete choices**. (Zig also ships the minimal number
   row, `‹ [32] ›`.) The overlay never edits arrays of complex things —
   those stay ZON-edited.
@@ -331,6 +332,38 @@ Anything that moves the **view** rather than the cursor — the wheel, a
 bar drag, a section jump — goes through `State.scrollTo`, which pulls the
 cursor into the new window. `draw` scrolls back to the cursor, so a
 cursor left behind drags the window straight back on the next frame.
+
+## The confirm box — one look, every time (`src/ui/confirm.zig`)
+
+Every yes/no in the app goes through the one primitive, and the
+primitive paints the one row. There is no second style to pick.
+
+- **One button row.** Each choice is `  [S]ave  `: the key letter
+  bracketed where it occurs in the label, `  [K] Label  ` when it does
+  not occur there, underlined either way, painted as a chip — the
+  focused one `chip_active`, the rest `chip`. The row starts one cell
+  in from the frame's left edge, the choices two cells apart.
+- **One height.** Six rows for a one-line message, one more per extra
+  `\n`, centred a third of the way down the whole screen (`.third`).
+- **One frame.** Rust's square `popup_menu` with the title as plain
+  bold text — the same frame the prompt and the which-key popup wear.
+- **Cancel is the last choice, and on anything destructive it holds the
+  focus** (`.selected = choices.len - 1`), so Enter on a box nobody
+  meant to raise is the harmless answer. A cancel that undoes nothing
+  still SAYS so where the act would have been visible (the delete box
+  toasts `cancelled — a.txt kept`); Esc is the one quiet exit.
+- **Labels are verbs, not Yes / No**, wherever the verb is known —
+  `Delete` / `Delete permanently` / `Cancel`, `Save all` / `Quit
+  anyway` / `Cancel`. The key letter is the verb's own first letter
+  where it can be.
+
+// changed (one-confirm), 2026-09-21, on the user's call: the Rust
+editor had TWO rows — a bracketed one for its close prompt and a plain
+right-aligned one, in a box a row shorter, for its delete confirm — and
+`confirm.zig` inherited both behind a `Buttons` enum. Seen side by side
+(the quit box against the close box) they read as two different widgets.
+The enum and the `.plain` path are gone rather than left as a dead
+branch, so there is nothing to pick and nothing to drift.
 
 ## Keys reach the editor before the keymap in vim's modal states
 
