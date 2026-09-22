@@ -55,7 +55,10 @@ level, default on). A throw inside a function is caught by its caller:
 the function returns early and the caller continues after the `call`.
 A throw at the top level ends the program with exit code 1 on resume
 (`uncaught: msg` on stderr first). The `stopped` event carries
-`reason: "exception"` and `text: "<msg>"`.
+`reason: "exception"`, `text: "Throw"` (the exception's TYPE, as DAP
+has it — `"Error"` for a runtime error such as an unknown name) and
+`description: "<msg>"`, the shape debugpy sends (`text:
+"ZeroDivisionError"`, `description: "division by zero"`).
 
 ## The requests
 

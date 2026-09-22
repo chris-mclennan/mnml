@@ -574,10 +574,8 @@ pub const Session = struct {
         }
     }
 
-    pub fn setStopped(self: *Session, thread_id: i64, reason: []const u8, description: ?[]const u8) Allocator.Error!void {
-        var st: types.Stopped = .{ .thread_id = thread_id, .reason = try self.gpa.dupe(u8, reason), .description = null };
-        errdefer self.gpa.free(st.reason);
-        if (description) |d| st.description = try self.gpa.dupe(u8, d);
+    pub fn setStopped(self: *Session, thread_id: i64, reason: []const u8, description: ?[]const u8, text: ?[]const u8) Allocator.Error!void {
+        const st = try types.Stopped.init(self.gpa, thread_id, reason, description, text);
         if (self.stopped) |*old| old.deinit(self.gpa);
         self.stopped = st;
         self.thread = thread_id;

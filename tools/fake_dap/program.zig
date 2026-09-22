@@ -158,8 +158,11 @@ pub const Program = struct {
     /// A stop was just reported at this line: its breakpoint does not
     /// fire again on resume.
     resume_line: ?usize = null,
-    /// The last exception's message, for `stopped.text`.
+    /// The last exception's message, for `stopped.description`.
     last_throw: []const u8 = "",
+    /// Its type, for `stopped.text`: `Throw` for a `throw` line,
+    /// `Error` for a runtime error.
+    last_throw_type: []const u8 = "",
 
     const FnEntry = struct { name: []const u8, body: usize, end_index: usize };
     pub const StructRef = struct { frame: usize, name: []const u8 };
@@ -413,6 +416,7 @@ pub const Program = struct {
                 },
                 .throw => |msg| {
                     self.last_throw = msg;
+                    self.last_throw_type = "Throw";
                     try self.pending_output.append(a, .{ .category = "stderr", .text = try std.fmt.allocPrint(a, "throw: {s}\n", .{msg}) });
                     const uncaught = self.frames.items.len == 1;
                     if (self.stop_on_error or (uncaught and self.stop_on_uncaught)) {
@@ -453,6 +457,7 @@ pub const Program = struct {
         const a = self.arena();
         const msg = try std.fmt.allocPrint(a, fmt, args);
         self.last_throw = msg;
+        self.last_throw_type = "Error";
         try self.pending_output.append(a, .{ .category = "stderr", .text = try std.fmt.allocPrint(a, "error: {s}\n", .{msg}) });
         _ = pc;
         self.pending_throw = true;

@@ -442,11 +442,14 @@ pub const Server = struct {
         const p = &self.prog.?;
         for (p.takeOutput()) |o| try self.event("output", .{ .category = o.category, .output = o.text });
         switch (outcome) {
+            // An exception stop carries DAP's two fields: `text` is the
+            // exception's type, `description` its message.
             .stopped => |reason| try self.event("stopped", .{
                 .reason = @tagName(reason),
                 .threadId = 1,
                 .allThreadsStopped = true,
-                .text = if (reason == .exception) p.last_throw else null,
+                .text = if (reason == .exception) p.last_throw_type else null,
+                .description = if (reason == .exception) p.last_throw else null,
             }),
             .sleeping => {},
             .exited => |code| try self.endProgram(code),
@@ -799,6 +802,7 @@ test "the session: breakpoints before launch verify against the file, launch + c
     try t.expectEqual(@as(i64, 1), getInt(st, "threadId").?);
     try t.expect(st.object.get("allThreadsStopped").?.bool);
     try t.expect(st.object.get("text") == null);
+    try t.expect(st.object.get("description") == null);
 
     // threads / stackTrace / scopes / variables.
     const th = try h.send("threads", "{}");
@@ -941,7 +945,8 @@ test "the session: breakpoints before launch verify against the file, launch + c
     try t.expectEqualStrings("throw: boom\n", getStr(eo, "output").?);
     const ex = try expectEvent(c1[4], "stopped");
     try t.expectEqualStrings("exception", getStr(ex, "reason").?);
-    try t.expectEqualStrings("boom", getStr(ex, "text").?);
+    try t.expectEqualStrings("Throw", getStr(ex, "text").?);
+    try t.expectEqualStrings("boom", getStr(ex, "description").?);
     // pause while stopped is a failure, not a crash.
     const pz = try h.send("pause", "{\"threadId\":1}");
     defer t.allocator.free(pz);

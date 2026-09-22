@@ -1,0 +1,26 @@
+# DAP session — an exception stop names the exception's TYPE. The
+# `stopped` event's `text` is the type (DAP: "the exception name") and
+# `description` the message — debugpy: `text: "ZeroDivisionError"`,
+# `description: "division by zero"`; the fake: `Error` with the runtime
+# error's message. The toast and the console note say `type: message`.
+# A client that showed `description` alone said "stopped (division by
+# zero)" and never the class, which is the first thing anyone reads
+# (hunt: dap-exception-stop-drops-type). The program text deliberately
+# does not contain the word `Error`, so only the stop can put it on
+# screen.
+write prog.dbg "let x = 1\nprint nope\nprint x\n"
+write .mnml/config.zon .{ .dap = .{ .dbg = .{ .cmd = "$MNML_FAKE_DAP" } } }
+open prog.dbg
+command editor.use_vim
+
+command dap.run
+expect screen contains "dap: stopped (Error: cannot print `nope`: no such variable)"
+expect screen contains "▶"
+command dap.show
+expect pane "Debug"
+# (the note is clipped by the pane's width; the toast above carried it whole)
+expect screen contains "exception — Error: cannot print `nope`"
+expect screen contains "prog.dbg:2  main"
+
+command dap.terminate
+expect screen contains "dap: terminated"

@@ -1240,10 +1240,16 @@ fn handleEvent(app: *App, s: *Session, name: []const u8, body: ?jsonrpc.Value) A
         const b = body orelse return;
         const thread = jsonrpc.getInt(b, "threadId") orelse s.thread orelse 1;
         const reason = jsonrpc.getStr(b, "reason") orelse "stopped";
-        try s.setStopped(thread, reason, jsonrpc.getStr(b, "description"));
+        // `text` is the exception's type (`ZeroDivisionError`),
+        // `description` its message: the label says both (hunt:
+        // dap-exception-stop-drops-type).
+        try s.setStopped(thread, reason, jsonrpc.getStr(b, "description"), jsonrpc.getStr(b, "text"));
         s.requestStackTrace(thread) catch {};
         s.requestThreads() catch {};
         app.toast("dap: stopped ({s})", .{s.stopped.?.label()});
+        // The toast goes; an exception's type and message stay in the
+        // console, where the program's own last words are.
+        if (std.mem.eql(u8, reason, "exception")) try consoleNote(app, "exception \u{2014} {s}", .{s.stopped.?.label()});
     } else if (std.mem.eql(u8, name, "continued")) {
         try debug_panel.snapshotValues(app);
         s.onResumed();
