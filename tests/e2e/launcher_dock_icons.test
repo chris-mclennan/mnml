@@ -6,11 +6,14 @@
 #
 # At 120x40 the `always` strip is row 37 — the editor area's last row,
 # `ui.dock.placement = .inner` being the default — and
-# the centred run of three three-cell items (`ui.dock.align` is
-# `.center` out of the box) starts at column 54: the `+` at 54..56,
-# Browser at 57..59, New terminal at 60..62, each ` padding glyph
-# padding `. So the Browser chip's glyph is at x=58, and the hover there
-# is the proof the tooltip still names it.
+# the centred run of six three-cell items (`ui.dock.align` is
+# `.center` out of the box) starts at column 49: the `+` at 49..51,
+# Browser at 52..54, Claude Code at 55..57, Codex at 58..60, HTTP at
+# 61..63, New terminal at 64..66, each ` padding glyph padding `
+# (// changed (railmove): the four first-party surfaces are on the
+# strip, hidden chips and all). So the Browser chip's glyph is at x=53,
+# and the hover there is the proof the tooltip still names it. No click
+# may land on 55..60 — that would start a real `claude` / `codex`.
 write a.txt "alpha\n"
 open a.txt
 ex dock always
@@ -23,7 +26,7 @@ expect screen lacks "Browser"
 expect screen lacks "New terminal"
 # The tooltip carries the name the row no longer paints.
 command view.toggle_hover_tooltip
-hover 58 37
+hover 53 37
 wait 200
 expect screen contains "Browser"
 hover 60 10
@@ -31,7 +34,7 @@ wait 200
 command view.toggle_hover_tooltip
 # A click on the New terminal item's three cells still opens a shell —
 # the hit rects moved with the paint.
-click 61 37
+click 65 37
 wait 900
 expect pane Terminal
 # And back: `:dock labels` gives the row its labels again, unchanged.

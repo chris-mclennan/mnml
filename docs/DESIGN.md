@@ -286,6 +286,34 @@ pub const Ui = struct { canvas: Canvas, hits: *HitMap, theme: *const Theme, aren
 ```
 A component = `State` (persistent transient: scroll, hover_row, filter buf — owned by its subsystem's state in App) + `fn draw(state: *State, ui: Ui, area: Rect, props: Props) void`. Layout is the parent's job (`Rect.split*`); paint via `ui.canvas`; **hit-test registered in the same statement as the paint** (`ui.hits.add(rr, .{.row = …})`) — painted-but-unregistered rects become impossible. Mouse dispatch = one `switch (app.hits.at(x, y))` in `tui/mouse.zig`. Keyboard reaches a panel via `handleKey` on its state. Generic containers are comptime: `ListPanel(Row)` (caps header + sort/refresh chip ladder + filter row + scroll window + scrollbar + kebab-on-hover) — written once, called by TODOS/NOTES/FINDINGS/SESSIONS. vaxis: `Screen` as cell store, `Vaxis.render(tty)` for diff/output, `Window` NOT used (Canvas carries clip + theme). `theme::cur()` (global by-value, 1600 sites) → `ui.theme: *const Theme`.
 
+### D6b. Strips — the activity bar is for panels, the launcher dock for launchers (added 2026-09-21)
+
+Two strips, split by **kind**, never by taste. `ui/activity_bar.zig`'s
+`StripKind = enum { panel, launcher, integration, terminal, pinned_panel }`
+is the vocabulary: every rail row is `.panel` (`Section.kind`), every
+dock item is `.launcher` / `.integration` / `.terminal`
+(`launcher_dock.stripKind(Item.kind)`), and a section moved onto the
+dock is `.pinned_panel` — still a panel, listed on the other strip.
+
+Membership is two config knobs and nothing else. `ui.rail.hidden`
+(`[]const Config.RailSection`, the eleven rail tags spelled in the config
+layer so it does not import a painter; a unit test holds the two lists
+together) is what the bar leaves out — the painter drops those rows
+(`railOrder` / `defaultRows`) and lays out what it paints
+(`layoutRows`), so the grip and band arithmetic never moves: hiding a
+row hides a row, in the same three columns. `ui.dock.pins` is what the
+dock carries besides its launchers, and a section's `view.activity_*`
+command there is what "on the dock" means. The four menu rows (*Hide
+from activity bar*, *Show on dock instead*, *Show hidden sections ▸*,
+*Move back to activity bar*) are `MenuAction.rail_*` carrying the
+section the menu was opened on; the three `view.rail_*` commands act on
+the marked section. A hidden section keeps its command and keys.
+
+A later "kinds per strip" config (say, terminals on the bar) is a
+filter over `StripKind` at the two `items` / `props` builders — a small
+step, which is why the kinds are on the model now with no behaviour
+hanging off them.
+
 ### D7. App state — grouped by subsystem
 
 ```zig

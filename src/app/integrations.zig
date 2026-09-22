@@ -225,6 +225,19 @@ pub const Chip = struct {
     enabled: bool,
     /// On the palette bar's strip (`chips`), or only pinnable / listed.
     in_palette_bar: bool = true,
+    /// // changed (railmove): the launcher dock lists it. This is the
+    /// INSTALLED-and-not-disabled bit, and it is not `enabled`. For a
+    /// manifest the two agree: `chip.enabled` is what *Disable*
+    /// rewrites and `binary_found` is whether the thing is there to
+    /// launch. For a first-party surface `enabled` is the CHIP's
+    /// visibility — the `(hidden)` the Installed tab paints, the tab
+    /// cluster's and the statusline's question — and the surface is
+    /// installed by definition (the tab counts all four as `Inst (4)`
+    /// on a fresh data root), so hiding Claude's chip must not take
+    /// Claude off the dock: "hide the chip" and "not on the dock" are
+    /// two different wishes. A custom `ui.integration_icons` row has
+    /// only the one flag and keeps reading it.
+    on_dock: bool = true,
     /// What a click runs.
     action: union(enum) { dyn: u32, named: []const u8, none },
     /// The row in `State.list`, for the context menu.
@@ -1270,6 +1283,7 @@ pub fn allChips(app: *App, arena: Allocator) Allocator.Error![]Chip {
             .tooltip = icon.label orelse icon.id,
             .enabled = icon.enabled,
             .in_palette_bar = icon.in_palette_bar,
+            .on_dock = firstPartyIndex(icon.id) != null or icon.enabled,
             .action = if (icon.command.len > 0) .{ .named = icon.command } else .none,
             .installed = null,
         });
@@ -1284,6 +1298,7 @@ pub fn allChips(app: *App, arena: Allocator) Allocator.Error![]Chip {
             .tooltip = if (c.tooltip.len > 0) c.tooltip else inst.manifest.label,
             .enabled = c.enabled and inst.binary_found,
             .in_palette_bar = c.in_palette_bar,
+            .on_dock = c.enabled and inst.binary_found,
             .action = if (inst.slots.len > 0) .{ .dyn = inst.slots[0] } else .none,
             .installed = i,
         });

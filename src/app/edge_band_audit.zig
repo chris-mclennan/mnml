@@ -255,6 +255,65 @@ test "the edge-band audit: no grip ever takes another surface's cell, and no con
     }
 }
 
+test "the audit holds with sections hidden from the activity bar: the rail's rows close up inside the same band, and a moved section on the dock is one more item, never one more band" {
+    // // changed (railmove): `ui.rail.hidden` changes which ROWS the
+    // rail paints, never its columns, so every grip and control rule
+    // above must hold unchanged — including a side dock beside a
+    // shortened rail, and a dock carrying a pinned panel.
+    const sizes = [_]struct { cols: u16, rows: u16 }{
+        .{ .cols = 80, .rows = 24 },
+        .{ .cols = 120, .rows = 40 },
+        .{ .cols = 376, .rows = 92 },
+    };
+    const hidden_sets = [_][]const Config.RailSection{
+        &.{ .explorer, .git, .todos, .scripts },
+        &.{ .explorer, .search, .git, .debug, .integrations, .sessions, .http, .notes, .todos, .findings, .scripts },
+    };
+    for (sizes) |size| {
+        var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = size.cols, .rows = size.rows });
+        defer app.deinit();
+        _ = try app.openScratch();
+        app.cfg.ui.dock.pins = &.{ "view.activity_todos", "view.activity_git" };
+        for (hidden_sets) |hidden| {
+            app.cfg.ui.rail.hidden = hidden;
+            for ([_]Config.DockEdge{ .bottom, .left, .right }) |dock_edge| {
+                for ([_]Config.DockMode{ .always, .auto_hide }) |dock_mode| {
+                    for ([_]bool{ false, true }) |dock_open| {
+                        if (dock_open and dock_mode != .auto_hide) continue;
+                        for ([_]Config.ActivityBar{ .always, .auto }) |rail| {
+                            for ([_]Config.Sidebar{ .always, .auto }) |sidebar| {
+                                const c: Case = .{
+                                    .dock_edge = dock_edge,
+                                    .dock_mode = dock_mode,
+                                    .dock_open = dock_open,
+                                    .sidebar = sidebar,
+                                    .sidebar_pinned = false,
+                                    .menu_bar = .always,
+                                    .rail = rail,
+                                    .right_column = false,
+                                    .bottom_panel = false,
+                                };
+                                apply(&app, c);
+                                try app.render();
+                                if (audit(&app)) |b| {
+                                    describe(c);
+                                    std.debug.print("  {s} at ({d},{d}): {s} — {d}x{d}, {d} hidden\n", .{ @tagName(b.kind), b.x, b.y, b.what, size.cols, size.rows, hidden.len });
+                                    return error.EdgeBandBroken;
+                                }
+                                if (stripsDisjoint(render.frameRects(Rect.init(0, 0, size.cols, size.rows), render.chrome(&app)))) |b| {
+                                    describe(c);
+                                    std.debug.print("  {s} at ({d},{d}): {s} — {d}x{d}, {d} hidden\n", .{ @tagName(b.kind), b.x, b.y, b.what, size.cols, size.rows, hidden.len });
+                                    return error.TwoStripsOneBand;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 test "a side dock's band is the strip's own columns, reserved up or down, and everything else starts where it ends" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
     defer app.deinit();

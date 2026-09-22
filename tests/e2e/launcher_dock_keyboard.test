@@ -21,9 +21,15 @@ click 60 2
 type "hl"
 key ctrl+s
 expect file a.txt contains "hl"
-# The cursor starts on the `+`, which leads the strip: two `l` steps
-# walk it past Browser onto New terminal, and Enter opens the shell.
+# The cursor starts on the `+`, which leads the strip: five `l` steps
+# walk it past Browser, Claude Code, Codex and HTTP onto New terminal
+# (// changed (railmove): the four first-party surfaces are on the
+# strip), and Enter opens the shell. Four or fewer would start a real
+# `claude` / `codex` — the count is load-bearing.
 command view.focus_dock
+key l
+key l
+key l
 key l
 key l
 key enter

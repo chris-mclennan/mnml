@@ -1116,6 +1116,23 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
             error.OutOfMemory => return error.OutOfMemory,
             else => {},
         },
+        // // changed (railmove): the membership rows.
+        .rail_hide => |s| activity_bar.setHidden(app, s, true) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {},
+        },
+        .rail_show => |s| activity_bar.setHidden(app, s, false) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {},
+        },
+        .rail_to_dock => |s| activity_bar.showOnDock(app, s) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {},
+        },
+        .rail_from_dock => |s| activity_bar.moveBackFromDock(app, s) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {},
+        },
         .set_panel_sort => |s| switch (s.panel) {
             .todos => try todos.setSort(app, s.sort),
             .notes => try notes.setSort(app, s.sort),

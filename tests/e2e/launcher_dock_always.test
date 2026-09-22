@@ -13,23 +13,27 @@
 # strip takes the SCREEN's last row and those two move up one.
 #
 # The run is centred (`ui.dock.align`, `.center` out of the box) and the
-# `+` leads it, so at 120 the row is ` + New  Browser  New terminal `
-# from column 41: the `+` at 41..47, Browser at 48..58, New terminal at
-# 59..74. Column 62 is that last item's word.
+# `+` leads it. // changed (railmove): the four first-party surfaces
+# are on it, hidden chips and all, so at 120 the row is ` + New  Browser
+# Claude Code  Codex  HTTP  New terminal ` from column 25: the `+` at
+# 25..31, Browser at 32..42, Claude Code at 43..57, Codex at 58..66,
+# HTTP at 67..74, New terminal at 75..90. Column 78 is that last item's
+# word — and no click below may land on 43..66, which would start a
+# real `claude` / `codex`.
 write a.txt "alpha\n"
 open a.txt
 expect screen lacks "New terminal"
 ex dock always
 expect screen contains "dock: always"
-# The `+` leads the strip — the tab bar's own. Browser is the one
-# integration chip enabled out of the box; the terminals follow it.
+# The `+` leads the strip — the tab bar's own. The four first-party
+# surfaces follow it; the terminals come after.
 expect screen contains "󰐕 New "
 expect screen contains "Browser"
 expect screen contains "New terminal"
 # The pin chip lives at the strip's end.
 expect screen contains "󰐃"
 # A click on New terminal opens a shell…
-click 62 37
+click 78 37
 wait 900
 expect pane Terminal
 # …and the shell joins the strip as a running item, wearing the dot

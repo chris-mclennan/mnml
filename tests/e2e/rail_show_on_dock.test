@@ -1,0 +1,42 @@
+# width: 120
+# // changed (railmove): "Show on dock instead" on a rail row hides the
+# row AND pins the section's command onto the launcher dock, which
+# lists it as a pinned panel wearing the section's name; the item's
+# right-click offers "Move back to activity bar", which undoes both.
+# TODOS is at (1, 18); its menu's fifth down is the dock row. The strip
+# is `always` and laid from the start, so at 120 the row is ` + New
+# Browser  Claude Code  Codex  HTTP  New terminal  TODOs `: the `+` at
+# 1..7, Browser 8..18, Claude Code 19..33, Codex 34..42, HTTP 43..50,
+# New terminal 51..66, TODOs 67..75 — column 70 is its word. No click
+# below may land on 19..42: that would start a real `claude` / `codex`.
+write src/a.zig "// TODO: alpha marker\n"
+open src/a.zig
+ex dock always
+ex dock start
+expect screen contains "New terminal"
+expect screen lacks " TODOs "
+rightclick 1 18
+expect screen contains "Show on dock instead"
+key down
+key down
+key down
+key down
+key down
+key enter
+# The item paints as ` TODOs ` (the toast says `TODOs:`).
+expect screen contains "TODOs: on the launcher dock now"
+expect screen contains " TODOs "
+# Row 18 is FINDINGS' now.
+rightclick 1 18
+expect screen contains "Show Findings"
+key esc
+# The dock item: its own menu, and the way home.
+rightclick 70 37
+expect screen contains "Move back to activity bar"
+expect screen contains "Unpin from dock"
+key enter
+expect screen contains "TODOs: back on the activity bar"
+expect screen lacks " TODOs "
+rightclick 1 18
+expect screen contains "Show TODOs"
+key esc

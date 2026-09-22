@@ -10,9 +10,10 @@
 # anywhere else it would land on the `:` row instead.
 #
 # The run is centred (`ui.dock.align`, `.center` out of the box) and the
-# `+` leads it, so at 120 the row is `󰐕 + New  Browser  New terminal `
-# from column 41: the `+` at 41..47, Browser at 48..58, New terminal at
-# 59..74. Column 62 is that last item's word.
+# `+` leads it. // changed (railmove): the four first-party surfaces
+# are on it, so at 120 the row is ` + New  Browser  Claude Code  Codex
+# HTTP  New terminal ` from column 25: New terminal at 75..90, column
+# 78 its word (`launcher_dock_always.test` has the full arithmetic).
 write a.txt "alpha\n"
 open a.txt
 expect screen lacks "New terminal"
@@ -31,7 +32,7 @@ key esc
 click 100 39
 expect status contains "\"cmdline\":false"
 # A click on New terminal opens a shell…
-click 62 39
+click 78 39
 wait 900
 expect pane Terminal
 # …and the shell joins the strip as a running item, wearing the dot

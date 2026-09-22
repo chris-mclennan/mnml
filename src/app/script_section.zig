@@ -271,7 +271,7 @@ test "a script section is a rail row after the one it names, a column like TODOS
     try t.expectEqual(@as(usize, 1), app.script_sections.items.items.len);
     // The rail row sits directly after TODOS' — the place `after` names.
     try app.render();
-    const order = try rail_mod.railOrder(app.frame.allocator(), try railRows(&app, app.frame.allocator()));
+    const order = try rail_mod.railOrder(app.frame.allocator(), try railRows(&app, app.frame.allocator()), &.{});
     var at: usize = 0;
     for (order, 0..) |rr, i| if (rr == .section and rr.section == .todos) {
         at = i;

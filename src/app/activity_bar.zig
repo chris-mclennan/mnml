@@ -19,6 +19,17 @@
 //! gone; `view.activity_agents` opens the sessions table and
 //! `view.activity_cloud_agents` the SESSIONS section, so scripts naming
 //! them keep working.
+//!
+//! // changed (railmove): **the activity bar is for panels, the launcher
+//! dock is for launchers** — two strips split by kind
+//! (`ui/activity_bar.zig`'s `StripKind`), with two membership knobs.
+//! `ui.rail.hidden` is the sections the bar leaves out (`setHidden`);
+//! `ui.dock.pins` is what the dock carries besides its launchers, and
+//! a section's `view.activity_*` command pinned there is what *Show on
+//! dock instead* means (`showOnDock`) — the dock lists it as a
+//! `.pinned_panel`, and *Move back to activity bar* (`moveBackFromDock`)
+//! is the way home. A hidden section keeps its command and its keys:
+//! hiding a row hides a ROW.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -49,7 +60,155 @@ pub const table = .{
     .@"view.activity_agents" = &activityAgents,
     .@"view.activity_cloud_agents" = &activityCloudAgents,
     .@"view.activity_bar_cycle" = &cycleCmd,
+    .@"view.rail_hide_section" = &hideSectionCmd,
+    .@"view.rail_show_on_dock" = &showOnDockCmd,
+    .@"view.rail_show_sections" = &showSectionsCmd,
 };
+
+/// // changed (railmove): `ui.rail.hidden` after a hide / show, owned
+/// here so the config field cannot dangle — `integrations.State`'s
+/// `dock_pins_owned` is the pattern.
+pub const State = struct {
+    hidden_owned: ?[]Config.RailSection = null,
+
+    pub fn deinit(self: *State, gpa: Allocator) void {
+        if (self.hidden_owned) |h| gpa.free(h);
+        self.hidden_owned = null;
+    }
+};
+
+// ─── membership: ui.rail.hidden ─────────────────────────────────────────
+
+/// A rail section as the config spells it — null for the two that
+/// have no rail row and for a script's section.
+pub fn toRail(s: Section) ?Config.RailSection {
+    return std.meta.stringToEnum(Config.RailSection, @tagName(s));
+}
+
+pub fn fromRail(r: Config.RailSection) Section {
+    // Every `RailSection` tag is a `Section.rail` tag — the test below
+    // holds the two lists together — so this cannot miss.
+    return std.meta.stringToEnum(Section, @tagName(r)).?;
+}
+
+/// Whether `ui.rail.hidden` names `s`.
+pub fn isHidden(app: *const App, s: Section) bool {
+    const r = toRail(s) orelse return false;
+    for (app.cfg.ui.rail.hidden) |h| if (h == r) return true;
+    return false;
+}
+
+/// The hidden sections, in the rail's own order, on `arena`.
+pub fn hiddenSections(app: *const App, arena: Allocator) Allocator.Error![]const Section {
+    var out: std.ArrayListUnmanaged(Section) = .empty;
+    for (Section.rail) |s| if (isHidden(app, s)) try out.append(arena, s);
+    return out.toOwnedSlice(arena);
+}
+
+/// The section a `view.activity_*` command id opens — how the dock
+/// knows a pin is a section (`launcher_dock.Kind.pinned_panel`).
+pub fn sectionOfCommandName(id: []const u8) ?Section {
+    for (Section.rail) |s| {
+        const c = commandOf(s) orelse continue;
+        if (std.mem.eql(u8, command.name(c), id)) return s;
+    }
+    return null;
+}
+
+/// Put `s` into, or take it out of, `ui.rail.hidden`; write it home.
+/// A hidden section's column stays exactly as it was — hiding a row
+/// hides a row, and the section's command and keys still open it.
+pub fn setHidden(app: *App, s: Section, hide: bool) CommandError!void {
+    const arena = app.frame.allocator();
+    if (toRail(s) == null) return app.diag.fail(arena, "activity bar: {s} has no rail row to hide", .{s.meta().label});
+    if (isHidden(app, s) == hide) {
+        app.toast("{s}: already {s} the activity bar", .{ s.meta().label, if (hide) "hidden from" else "on" });
+        return;
+    }
+    var next: std.ArrayListUnmanaged(Config.RailSection) = .empty;
+    // Kept in the rail's order, so the file reads top to bottom.
+    for (Section.rail) |sec| {
+        const sr = toRail(sec) orelse continue;
+        const was = isHidden(app, sec);
+        if (if (sec == s) hide else was) try next.append(arena, sr);
+    }
+    try setHiddenList(app, next.items);
+    if (hide) {
+        const cmd = if (commandOf(s)) |c| command.name(c) else "its command";
+        app.toast("{s}: hidden from the activity bar — {s} still opens it", .{ s.meta().label, cmd });
+    } else {
+        app.toast("{s}: back on the activity bar", .{s.meta().label});
+    }
+}
+
+/// The new `ui.rail.hidden`, gpa-owned by `App.activity_bar` and
+/// persisted home.
+fn setHiddenList(app: *App, list: []const Config.RailSection) Allocator.Error!void {
+    const gpa = app.gpa;
+    const owned = try gpa.dupe(Config.RailSection, list);
+    app.activity_bar.deinit(gpa);
+    app.activity_bar.hidden_owned = owned;
+    app.cfg.ui.rail.hidden = owned;
+    _ = try settings.persist(app, .home, &.{ "ui", "rail", "hidden" }, app.cfg.ui.rail.hidden);
+    app.needs_render = true;
+}
+
+/// *Show on dock instead*: pin the section's command onto the launcher
+/// dock, then hide its rail row. The pin goes first, so a section with
+/// no command (a script's) is refused before anything is hidden.
+pub fn showOnDock(app: *App, s: Section) CommandError!void {
+    const arena = app.frame.allocator();
+    const c = commandOf(s) orelse return app.diag.fail(arena, "activity bar: {s} has no command to pin", .{s.meta().label});
+    const id = command.name(c);
+    if (!integrations.isPinnedToDock(app, id)) try integrations.pinDockId(app, id);
+    if (!isHidden(app, s)) try setHidden(app, s, true);
+    app.toast("{s}: on the launcher dock now — its row is off the activity bar", .{s.meta().label});
+}
+
+/// *Move back to activity bar*: the reverse — the row back, the pin off.
+pub fn moveBackFromDock(app: *App, s: Section) CommandError!void {
+    if (commandOf(s)) |c| {
+        const id = command.name(c);
+        if (integrations.isPinnedToDock(app, id)) try integrations.unpinDockId(app, id);
+    }
+    if (isHidden(app, s)) try setHidden(app, s, false);
+    app.toast("{s}: back on the activity bar", .{s.meta().label});
+}
+
+/// `view.rail_hide_section`: the marked section leaves the bar.
+fn hideSectionCmd(app: *App) CommandError!void {
+    return setHidden(app, active(app), true);
+}
+
+/// `view.rail_show_on_dock`: the marked section moves to the dock.
+fn showOnDockCmd(app: *App) CommandError!void {
+    return showOnDock(app, active(app));
+}
+
+/// `view.rail_show_sections`: every hidden section back on the bar.
+/// The dock keeps whatever was pinned there — a pin is the dock's own
+/// business, and *Move back* on the item takes it off.
+fn showSectionsCmd(app: *App) CommandError!void {
+    if (app.cfg.ui.rail.hidden.len == 0) {
+        app.toast("activity bar: nothing is hidden", .{});
+        return;
+    }
+    try setHiddenList(app, &.{});
+    app.toast("activity bar: every section is shown", .{});
+}
+
+/// The screen row section `s` sits on at the last frame's geometry, or
+/// null when it is hidden or off the bottom — for the tests, which can
+/// no longer take a row off `Section`'s ordinal.
+pub fn rowY(app: *App, area: Rect, s: Section) Allocator.Error!?u16 {
+    const arena = app.frame.allocator();
+    const p = try props(app, arena);
+    var buf: [Section.rail.len]rail.RailRow = undefined;
+    const rows: []const rail.RailRow = if (p.rows.len > 0) p.rows else rail.defaultRows(&buf, p.hidden);
+    const lay = rail.layoutRows(area, rows.len + p.pins.len);
+    for (rows, 0..) |rr, i| if (rr == .section and rr.section == s) return lay.ordinalY(i);
+    return null;
+}
 
 /// The badge pulse (Rust): the glyph for four seconds, the count for one.
 const pulse_icon_ms: i64 = 4000;
@@ -150,13 +309,16 @@ pub fn props(app: *App, arena: Allocator) Allocator.Error!rail.Props {
     for (pinned, 0..) |pc, i| pins[i] = .{ .glyph = pc.chip.glyph, .fallback = pc.chip.fallback, .color = pc.chip.color };
     // // changed (lua-plumbing): the script sections' own rail rows,
     // spliced into the built-in order at the place their `after` names.
+    // // changed (railmove): both orders drop `ui.rail.hidden`.
+    const hidden = try hiddenSections(app, arena);
     const scripts = try script_section.railRows(app, arena);
-    const rows = if (scripts.len == 0) &.{} else try rail.railOrder(arena, scripts);
+    const rows = if (scripts.len == 0) &.{} else try rail.railOrder(arena, scripts, hidden);
     var p: rail.Props = .{
         .active = active(app),
         .active_script = app.script_sections.active,
         .scripts = scripts,
         .rows = rows,
+        .hidden = hidden,
         .pins = pins,
         .show_counts = @mod(app.now_ms, pulse_period_ms) >= pulse_icon_ms,
     };
@@ -288,6 +450,7 @@ const t = std.testing;
 const screen_mod = @import("../ipc/screen.zig");
 const render = @import("render.zig");
 const Rect = @import("../ui/rect.zig");
+const config_mod = @import("../config/root.zig");
 
 fn testApp(tmp: *std.testing.TmpDir, buf: []u8) !App {
     const n = try tmp.dir.realPath(t.io, buf);
@@ -436,6 +599,129 @@ test "ui.activity_bar: hidden gives the tree the columns back; auto paints the r
     const text = try std.Io.Dir.cwd().readFileAlloc(app.io, home, t.allocator, .limited(64 * 1024));
     defer t.allocator.free(text);
     try t.expect(std.mem.indexOf(u8, text, ".activity_bar = .always") != null);
+}
+
+test "Config.RailSection spells exactly the rail's rows — the config layer and the painter cannot drift" {
+    try t.expectEqual(Section.rail.len, std.enums.values(Config.RailSection).len);
+    for (Section.rail, std.enums.values(Config.RailSection)) |s, r| {
+        try t.expectEqualStrings(@tagName(s), @tagName(r));
+        try t.expectEqual(s, fromRail(r));
+        try t.expectEqual(r, toRail(s).?);
+    }
+    try t.expect(toRail(.script) == null);
+    try t.expect(toRail(.outline) == null);
+    try t.expectEqual(Section.todos, sectionOfCommandName("view.activity_todos").?);
+    try t.expect(sectionOfCommandName("picker.files") == null);
+}
+
+test "ui.rail.hidden: a hidden section has no rail row and the rows close up; it persists and reloads; its command still opens it; Show on dock pins it and the dock lists a pinned panel; Move back restores; the menus carry the rows" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    const launcher_dock = @import("launcher_dock.zig");
+    try app.render();
+    const todos_y = sectionRow(&app, .todos);
+    const findings_y = sectionRow(&app, .findings);
+    try t.expectEqual(todos_y, (try rowY(&app, railRect(&app), .todos)).?);
+    // Hide TODOs: no row, no hit; FINDINGS moves up into its row.
+    try setHidden(&app, .todos, true);
+    try t.expect(isHidden(&app, .todos));
+    try app.render();
+    try t.expect((try rowY(&app, railRect(&app), .todos)) == null);
+    try t.expectEqual(todos_y, (try rowY(&app, railRect(&app), .findings)).?);
+    try t.expectEqual(Section.findings, app.hits.at(1, todos_y).?.rail.section);
+    try t.expect(app.hits.at(1, findings_y) == null or app.hits.at(1, findings_y).? != .rail or app.hits.at(1, findings_y).?.rail != .section or app.hits.at(1, findings_y).?.rail.section != .todos);
+    for (app.hits.items.items) |e| if (e.target == .rail and e.target.rail == .section) try t.expect(e.target.rail.section != .todos);
+    // Persisted home, and a fresh App on the same root reads it back.
+    const home = (try settings.configPath(&app, .home)).?;
+    const text = try std.Io.Dir.cwd().readFileAlloc(app.io, home, t.allocator, .limited(64 * 1024));
+    defer t.allocator.free(text);
+    try t.expect(std.mem.indexOf(u8, text, ".hidden = ") != null);
+    try t.expect(std.mem.indexOf(u8, text, ".todos") != null);
+    // The real loader reads it back — the enum slice survives the
+    // layer parse and the patch overlay (`config/patch.zig`).
+    {
+        var vars = std.process.Environ.Map.init(t.allocator);
+        defer vars.deinit();
+        try vars.put("MNML_DATA_ROOT", app.data_root);
+        var loaded = try config_mod.load.load(t.allocator, t.io, .{ .workspace = app.workspace, .env = .{ .vars = &vars } });
+        defer loaded.deinit();
+        try t.expectEqualStrings(home, loaded.home_path.?);
+        try t.expectEqual(@as(usize, 1), loaded.config.ui.rail.hidden.len);
+        try t.expectEqual(Config.RailSection.todos, loaded.config.ui.rail.hidden[0]);
+    }
+    // The command still opens it — hiding a row hides a row.
+    try command.run(&app, .{ .static = .@"view.activity_todos" });
+    try t.expect(side.isShown(&app, .todos));
+    try t.expectEqual(Section.todos, active(&app));
+    // Hiding twice is a toast, not a second entry.
+    try setHidden(&app, .todos, true);
+    try t.expectEqual(@as(usize, 1), app.cfg.ui.rail.hidden.len);
+    // Show on dock: NOTES leaves the bar and its command is pinned; the
+    // dock lists it as a pinned panel wearing the section's glyph.
+    try showOnDock(&app, .notes);
+    try t.expect(isHidden(&app, .notes));
+    try t.expect(integrations.isPinnedToDock(&app, "view.activity_notes"));
+    try app.render();
+    const items = try launcher_dock.items(&app, app.frame.allocator());
+    var found = false;
+    for (items) |it| if (it.kind == .pinned_panel) {
+        found = true;
+        try t.expectEqualStrings("Notes", it.label);
+        try t.expectEqualStrings(Section.notes.meta().glyph, it.glyph);
+        try t.expectEqualStrings("view.activity_notes", launcher_dock.commandIdOf(&app, it).?);
+        try t.expectEqual(rail.StripKind.pinned_panel, launcher_dock.stripKind(it.kind));
+    };
+    try t.expect(found);
+    // The hidden set is in the rail's order whatever the order of asking.
+    try t.expectEqual(Config.RailSection.notes, app.cfg.ui.rail.hidden[0]);
+    try t.expectEqual(Config.RailSection.todos, app.cfg.ui.rail.hidden[1]);
+    // Move back: unpinned, row restored; TODOs still hidden.
+    try moveBackFromDock(&app, .notes);
+    try t.expect(!isHidden(&app, .notes));
+    try t.expect(!integrations.isPinnedToDock(&app, "view.activity_notes"));
+    try t.expectEqual(@as(usize, 1), app.cfg.ui.rail.hidden.len);
+    try app.render();
+    try t.expect((try rowY(&app, railRect(&app), .notes)) != null);
+    // The rail menu's two rows sit after the section's verbs, before
+    // the Sidebar row; the gear menu grows the submenu while anything
+    // is hidden, and its child restores the section.
+    try press(&app, 1, sectionRow(&app, .git), .right);
+    const m = app.overlay.menu;
+    try t.expectEqualStrings("Hide from activity bar", m.items[m.items.len - 3].label);
+    try t.expectEqual(Section.git, m.items[m.items.len - 3].action.rail_hide);
+    try t.expectEqualStrings("Show on dock instead", m.items[m.items.len - 2].label);
+    try t.expectEqual(Section.git, m.items[m.items.len - 2].action.rail_to_dock);
+    try t.expectEqualStrings("Sidebar", m.items[m.items.len - 1].label);
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+    try press(&app, 1, 36, .right);
+    const g = app.overlay.menu;
+    try t.expectEqualStrings("Show hidden sections", g.items[g.items.len - 1].label);
+    try t.expectEqual(@as(usize, 1), g.items[g.items.len - 1].submenu.len);
+    try t.expectEqualStrings("TODOs", g.items[g.items.len - 1].submenu[0].label);
+    try t.expectEqual(Section.todos, g.items[g.items.len - 1].submenu[0].action.rail_show);
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+    // `view.rail_show_sections` clears the set; the gear menu loses the row.
+    try command.run(&app, .{ .static = .@"view.rail_show_sections" });
+    try t.expectEqual(@as(usize, 0), app.cfg.ui.rail.hidden.len);
+    try press(&app, 1, 36, .right);
+    try t.expectEqualStrings("About mnml", app.overlay.menu.items[app.overlay.menu.items.len - 1].label);
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+    // The two commands act on the marked section: back on the tree,
+    // Explorer is marked, so Explorer goes — and comes back.
+    try command.run(&app, .{ .static = .@"view.activity_explorer" });
+    try t.expectEqual(Section.explorer, active(&app));
+    try command.run(&app, .{ .static = .@"view.rail_hide_section" });
+    try t.expect(isHidden(&app, .explorer));
+    try command.run(&app, .{ .static = .@"view.rail_show_sections" });
+    try command.run(&app, .{ .static = .@"view.rail_show_on_dock" });
+    try t.expect(isHidden(&app, .explorer));
+    try t.expect(integrations.isPinnedToDock(&app, "view.activity_explorer"));
+    try moveBackFromDock(&app, .explorer);
+    try t.expect(!isHidden(&app, .explorer));
+    try t.expect(!integrations.isPinnedToDock(&app, "view.activity_explorer"));
 }
 
 test "describe: every rail part has words, and the section's says what a click shows" {

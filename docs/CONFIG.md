@@ -263,6 +263,9 @@ otherwise. Copy what you need; leave the rest out.
         // written here — unpinning is one click.
         .menu_bar = .always, // .always | .auto | .hidden
         .activity_bar = .always, // .always | .auto (pointer in column 0 reveals) | .hidden
+        .rail = .{ // the activity bar's MEMBERSHIP — which rows it paints; `.activity_bar` above is whether it is there at all
+            .hidden = .{}, // sections the bar leaves out: .explorer | .search | .git | .debug | .integrations | .sessions | .http | .notes | .todos | .findings | .scripts. A hidden section keeps its command and its keys. "Hide from activity bar" on a row's right-click writes here; "Show hidden sections ▸" on the gear's menu takes one back; "Show on dock instead" writes here AND pins the section's `view.activity_*` command onto `.dock.pins`
+        },
         .debug_toolbar = .auto, // the step toolbar strip over the editor: .auto (while a debug session is live) | .always | .hidden
         .bufferline_diag_style = .count, // .count | .dot | .off
         // The coverage chip reads `.tattle-claude-artifacts` under
@@ -985,13 +988,56 @@ pane, no side panel), a right click opens the chip's menu. *Add to
 activity bar* / *Remove from activity bar* on an Installed row's menu,
 a chip's menu or the icon's own writes the list to the home config.
 
+## The two strips — the activity bar is for panels, the launcher dock for launchers
+
+The activity bar holds **panels** (every rail row is a section with a
+column or a pane); the launcher dock holds **launchers** (the
+integrations, the terminals, pinned commands). The split is by kind
+and it is deliberate; what is editable is membership, through two
+keys:
+
+| key | what it moves |
+|---|---|
+| `ui.rail.hidden = .{ .todos, .findings }` | sections the activity bar does not paint. The rows after a hidden one close up; the section's command (`view.activity_todos`) and its keys still open it — hiding a row hides a row |
+| `ui.dock.pins = .{ "view.activity_todos" }` | a section's own command pinned on the dock is listed there as a **pinned panel**: the section's glyph and name, the running dot while its column is open |
+
+The menus are the surface (there is no Settings row: the settings
+overlay's v1 idiom is one discrete choice per row, and a set of eleven
+is not that):
+
+| where | row | what it does |
+|---|---|---|
+| a rail row's right-click, after the section's verbs | *Hide from activity bar* | adds the section to `ui.rail.hidden` |
+| the same menu | *Show on dock instead* | adds it to `ui.rail.hidden` **and** pins its command onto `ui.dock.pins` |
+| the gear's right-click, while anything is hidden | *Show hidden sections ▸* | one child per hidden section; choosing it takes the section out of `ui.rail.hidden` |
+| a pinned panel's right-click on the dock | *Move back to activity bar* | unpins it from `ui.dock.pins` and takes it out of `ui.rail.hidden` |
+| the same menu | *Unpin from dock* | the plain unpin — the section stays hidden on the bar until the gear menu restores it |
+
+The palette has the same three verbs for the keyboard, each acting on
+the section the bar marks: `view.rail_hide_section`,
+`view.rail_show_on_dock`, `view.rail_show_sections` (every hidden
+section back; the dock keeps its pins). Both keys persist to the home
+config. A script's section (`mnml.section{}`) has no config name and
+gets none of the rows.
+
 ## The launcher dock
 
 `ui.dock` is mnml-zig's own Dock: a strip of the things you *start* —
-the `+`, the enabled integrations, a *New terminal* item plus one per
+the `+`, the installed integrations, a *New terminal* item plus one per
 open terminal (a click focuses it), the installed launchers, and any
 command `ui.dock.pins` names — along one edge of the editor area,
 centred on it the way macOS's Dock is.
+
+An integration is on the strip when it is **installed and not
+disabled** — a manifest whose binary resolves and whose chip *Disable*
+has not been pressed, and every first-party surface (Browser, Claude
+Code, Codex, HTTP: the Installed tab's `Inst (4)`). Its chip's
+visibility is a different question: `.enabled = false` on a
+`ui.integration_icons` row, or `.in_palette_bar = false` on a manifest
+chip, hides the CHIP — the tab cluster's, the palette bar's — and the
+Installed tab paints `(hidden)`; the launcher stays on the dock. So
+Claude Code, Codex and HTTP, whose chips ship hidden, are on the dock
+out of the box.
 
 The `+` leads the run. It is the tab bar's own `+`, and it opens the
 same *Create…* menu — the one `ui.plus_menu_pinned` /
@@ -1015,6 +1061,7 @@ outermost row and the panel sits inside it, as the editor does.
 | take the `+` off | `:dock plus`, the *Launcher dock + button* row in Settings, or the *Show the + button* row on the strip's right-click menu. `ui.dock.plus` is the file form |
 | use the keyboard | `view.focus_dock` (vim `Ctrl-W D`, or `:dock focus`): `h` / `l` walk a bottom strip, `j` / `k` a side one, Enter runs, Esc leaves |
 | pin a command | a chip's right-click menu grows *Pin to dock*, and a pinned row's own menu takes it off again; `ui.dock.pins` is the file form |
+| put a section on it | *Show on dock instead* on the section's rail row — its `view.activity_*` command lands in `ui.dock.pins` and the item wears the section's glyph and name; *Move back to activity bar* on the item undoes it (see "The two strips" above) |
 | find it when it is hidden | the `⋯` grip at the middle of its band (`ui.edge_grips`) — a click there reveals and pins in one gesture |
 
 **The outer-band rule.** A dock on a side edge always owns the
