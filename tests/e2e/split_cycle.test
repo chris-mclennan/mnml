@@ -40,6 +40,13 @@ expect pane c.txt
 key ctrl+w
 key W
 expect pane b.txt
+# The popup for a pending Ctrl-W lists the pair.
+key ctrl+w
+wait 400
+expect screen contains "next split"
+expect screen contains "previous split"
+key esc
+expect pane b.txt
 # standard: ctrl+alt+shift+→ / ← (what the ghostty line in
 # docs/CONFIG.md puts on Shift+Cmd+→ / ←).
 command editor.use_standard

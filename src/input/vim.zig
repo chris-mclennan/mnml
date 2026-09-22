@@ -348,11 +348,11 @@ pub const Vim = struct {
                 .{ .key = 'R', .label = "open all" },    .{ .key = 'M', .label = "close all" }, .{ .key = 'z', .label = "center" },
             } },
             .window => .{ .prefix = "ctrl+w", .items = &.{
-                .{ .key = 's', .label = "split down" },      .{ .key = 'v', .label = "split right" }, .{ .key = 'w', .label = "next split" },
-                .{ .key = 'q', .label = "close split" },     .{ .key = 'o', .label = "only" },        .{ .key = 'H', .label = "move far left" },
-                .{ .key = 'J', .label = "move bottom" },     .{ .key = 'K', .label = "move top" },    .{ .key = 'L', .label = "move far right" },
-                .{ .key = 'r', .label = "rotate" },          .{ .key = '=', .label = "equalize" },    .{ .key = 'n', .label = "new scratch" },
-                .{ .key = 'T', .label = "move to new tab" },
+                .{ .key = 's', .label = "split down" },     .{ .key = 'v', .label = "split right" },     .{ .key = 'w', .label = "next split" },
+                .{ .key = 'W', .label = "previous split" }, .{ .key = 'q', .label = "close split" },     .{ .key = 'o', .label = "only" },
+                .{ .key = 'H', .label = "move far left" },  .{ .key = 'J', .label = "move bottom" },     .{ .key = 'K', .label = "move top" },
+                .{ .key = 'L', .label = "move far right" }, .{ .key = 'r', .label = "rotate" },          .{ .key = '=', .label = "equalize" },
+                .{ .key = 'n', .label = "new scratch" },    .{ .key = 'T', .label = "move to new tab" },
             } },
             else => null,
         };
