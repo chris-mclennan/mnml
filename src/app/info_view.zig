@@ -63,7 +63,38 @@ pub const State = struct {
     /// pointer is on the box, so the links stay under the hand. A
     /// `.link` target carries an arena slice and is never kept.
     sticky: ?HitTarget = null,
+    /// The target under the pointer for this frame, read by
+    /// `snapshotHover` BEFORE the frame arena resets — the hits live on
+    /// that arena, and the ladder allocates on it.
+    hover_target: ?HitTarget = null,
+    /// A hovered link's url, copied out of the dying frame.
+    link_url: [512]u8 = undefined,
 };
+
+/// Read the previous frame's hits while they are still whole: what the
+/// pointer rests on, with the box's own cells resolving to the last
+/// target (`State.sticky`). `render` calls this before `frame.begin`.
+pub fn snapshotHover(app: *App) void {
+    const st = &app.info_view;
+    st.hover_target = null;
+    if (!app.hover_live) return;
+    const h = app.hover orelse return;
+    const target = app.hits.at(h.x, h.y) orelse return;
+    if (target == .info_view) {
+        st.hover_target = st.sticky;
+        return;
+    }
+    st.sticky = if (target == .link) null else target;
+    // A link's url is an arena slice about to die: copy it into the
+    // state's own buffer (a longer one is cut — the copy names it).
+    if (target == .link) {
+        const n = @min(target.link.url.len, st.link_url.len);
+        @memcpy(st.link_url[0..n], target.link.url[0..n]);
+        st.hover_target = .{ .link = .{ .url = st.link_url[0..n] } };
+        return;
+    }
+    st.hover_target = target;
+}
 
 /// The copy for this frame — and the state it implies: the links the
 /// rows will run, the scroll reset when the topic changed.
@@ -81,13 +112,7 @@ pub fn pick(app: *App, arena: Allocator) Allocator.Error!Copy {
 fn pickCopy(app: *App, arena: Allocator) Allocator.Error!Copy {
     const st = &app.info_view;
     st.links = @splat(null);
-    if (app.hover_live) if (app.hover) |h| if (app.hits.at(h.x, h.y)) |target| {
-        const resolved = if (target == .info_view) (st.sticky orelse target) else blk: {
-            st.sticky = if (target == .link) null else target;
-            break :blk target;
-        };
-        if (try hoverCopy(app, arena, resolved)) |c| return c;
-    };
+    if (st.hover_target) |target| if (try hoverCopy(app, arena, target)) |c| return c;
     if (try focusCopy(app, arena)) |c| return c;
     if (try activePaneCopy(app, arena)) |c| return c;
     return emptyCopy(app);
@@ -489,8 +514,10 @@ test "the ladder under an overlay: the surface beneath, as Rust's focus never le
     };
     app.hover = .{ .x = chip_at.?.x, .y = chip_at.?.y };
     app.hover_live = true;
+    snapshotHover(&app);
     try t.expectEqualStrings("Refresh tree", (try pick(&app, arena)).title);
     app.hover_live = false;
+    snapshotHover(&app);
     // A file open with the tree focused at its first row: Rust's focus
     // rung says nothing there and the active pane's summary shows —
     // walked past it, the row's doc wins over the open file.
@@ -533,6 +560,7 @@ test "hover: a chip's copy carries a Run it link the app resolves; the kebab men
     };
     app.hover = .{ .x = chip_at.?.x, .y = chip_at.?.y };
     app.hover_live = true;
+    snapshotHover(&app);
     const hovered = try pick(&app, arena);
     try t.expectEqualStrings("New file", hovered.title);
     try t.expectEqual(command.CommandId.@"file.new", app.info_view.links[0].?.command);
@@ -558,6 +586,7 @@ test "hover: a chip's copy carries a Run it link the app resolves; the kebab men
     try t.expectEqual(@as(u16, 1), app.info_view.scroll);
     // A new topic scrolls back to the top.
     app.hover_live = false;
+    snapshotHover(&app);
     _ = try pick(&app, arena);
     try t.expectEqual(@as(u16, 0), app.info_view.scroll);
 }
@@ -576,6 +605,7 @@ test "the box is sticky under the pointer: the entry and its links stay while th
     }
     app.hover = .{ .x = seg_at.?.x, .y = seg_at.?.y };
     app.hover_live = true;
+    snapshotHover(&app);
     const chip = try pick(&app, arena);
     try t.expectEqualStrings("Mode chip — standard keymap", chip.title);
     try t.expect(chip.aside == null);
@@ -583,6 +613,7 @@ test "the box is sticky under the pointer: the entry and its links stay while th
     try t.expectEqual(view.LinkKind.settings, chip.try_it[1].kind);
     // The pointer moves onto the box: the same entry, the same links.
     app.hover = .{ .x = box_at.?.x, .y = box_at.?.y };
+    snapshotHover(&app);
     const still = try pick(&app, arena);
     try t.expectEqualStrings("Mode chip — standard keymap", still.title);
     try t.expect(app.info_view.links[1].? == .settings);
