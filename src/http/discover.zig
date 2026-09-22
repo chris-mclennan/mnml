@@ -70,7 +70,7 @@ pub fn generate(arena: Allocator, spec: Value, opts: Options) Error![]Stub {
     const root = spec.object;
     const base_url = blk: {
         if (opts.base_url) |b| break :blk std.mem.trimEnd(u8, b, "/");
-        if (root.get("servers")) |s| if (s == .array and s.array.items.len > 0) if (str(s.array.items[0], "url")) |u| break :blk std.mem.trimEnd(u8, u, "/");
+        if (root.get("servers")) |s| if (s == .array and s.array.items.len > 0) if (str(s.array.items[0], "url")) |u| break :blk std.mem.trimEnd(u8, try serverUrl(arena, u, get(s.array.items[0], &.{"variables"})), "/");
         if (str(spec, "host")) |host| {
             const base = str(spec, "basePath") orelse "";
             var scheme: []const u8 = "https";
@@ -239,7 +239,53 @@ fn flat(arena: Allocator, v: Value) Allocator.Error![]const u8 {
     };
 }
 
+/// An OpenAPI 3 server URL with its `{variable}`s filled: each one's
+/// `default`, or a `{{variable}}` an env can fill when the spec gives
+/// none — never the braces as written, which no request can be sent to.
+fn serverUrl(arena: Allocator, url: []const u8, variables: ?Value) Allocator.Error![]const u8 {
+    if (std.mem.indexOfScalar(u8, url, '{') == null) return url;
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var i: usize = 0;
+    while (i < url.len) : (i += 1) {
+        if (url[i] == '{' and !(i + 1 < url.len and url[i + 1] == '{')) {
+            if (std.mem.indexOfScalarPos(u8, url, i, '}')) |close| {
+                const name = url[i + 1 .. close];
+                const def: ?Value = if (variables) |v| get(v, &.{ name, "default" }) else null;
+                if (def) |d| try out.appendSlice(arena, try flat(arena, d)) else try appendFmt(arena, &out, "{{{{{s}}}}}", .{name});
+                i = close;
+                continue;
+            }
+        }
+        try out.append(arena, url[i]);
+    }
+    return out.items;
+}
+
+/// A query value as it goes into the stub's URL: percent-encoded (an
+/// example like `red widgets` would otherwise put a space on the
+/// request line), a `{{VAR}}` left whole for the env.
+fn queryValue(arena: Allocator, v: []const u8) Allocator.Error![]const u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var i: usize = 0;
+    while (i < v.len) {
+        if (std.mem.startsWith(u8, v[i..], "{{")) if (std.mem.indexOfPos(u8, v, i + 2, "}}")) |close| {
+            try out.appendSlice(arena, v[i .. close + 2]);
+            i = close + 2;
+            continue;
+        };
+        const c = v[i];
+        if (std.ascii.isAlphanumeric(c) or c == '-' or c == '.' or c == '_' or c == '~' or c == ',' or c == ':') {
+            try out.append(arena, c);
+        } else try appendFmt(arena, &out, "%{X:0>2}", .{c});
+        i += 1;
+    }
+    return out.items;
+}
+
 fn placeholder(arena: Allocator, param: Value, name: []const u8) Allocator.Error![]const u8 {
+    // OpenAPI 3 puts `example` on the Parameter itself, beside `schema`.
+    if (get(param, &.{"example"})) |e| return flat(arena, e);
+    if (get(param, &.{"examples"})) |ex| if (ex == .object and ex.object.count() > 0) if (get(ex.object.values()[0], &.{"value"})) |v| return flat(arena, v);
     const schema = get(param, &.{"schema"}) orelse param;
     if (get(schema, &.{"example"})) |e| return flat(arena, e);
     if (get(schema, &.{"default"})) |d| return flat(arena, d);
@@ -407,7 +453,7 @@ fn renderCurl(arena: Allocator, base_url: []const u8, path: []const u8, method: 
         try url_path.append(arena, '?');
         for (params.req_q, 0..) |p, k| {
             if (k > 0) try url_path.append(arena, '&');
-            try appendFmt(arena, &url_path, "{s}={s}", .{ p.name, p.value });
+            try appendFmt(arena, &url_path, "{s}={s}", .{ p.name, try queryValue(arena, p.value) });
         }
     }
     const method_upper = try std.ascii.allocUpperString(arena, method);
@@ -519,6 +565,21 @@ test "generate: one stub per operation, tags as folders, params, refs, named exa
     try testing.expectEqualStrings("Get-By-Id", try sanitize(a, "Get/By Id"));
     const norm = try normalizeDynamic(a, "{\"id\":\"123e4567-e89b-42d3-a456-426614174000\",\"t\":\"2024-01-02T03:04:05.123+02:00\",\"keep\":\"123E4567-E89B-42D3-A456-426614174000\"}");
     try testing.expectEqualStrings("{\"id\":\"{{$uuid}}\",\"t\":\"{{$isoTimestamp}}\",\"keep\":\"123E4567-E89B-42D3-A456-426614174000\"}", norm);
+}
+
+test "generate: server variables take their defaults; a parameter's own example is its value" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const spec = try parseSpec(a,
+        \\{"openapi":"3.0.0","servers":[{"url":"http://{host}:{port}/{region}/v2","variables":{"host":{"default":"127.0.0.1"},"port":{"default":"8080"},"region":{"enum":["eu","us"]}}}],
+        \\ "paths":{"/things":{"get":{"operationId":"listThings","parameters":[{"name":"q","in":"query","required":true,"example":"red widgets","schema":{"type":"string"}},{"name":"n","in":"query","required":true,"examples":{"small":{"value":3}}}]}}}}
+    );
+    const stubs = try generate(a, spec, .{ .spec = "x", .out = "o" });
+    try testing.expectEqual(@as(usize, 1), stubs.len);
+    // A variable with no default becomes a `{{var}}` an env can fill.
+    try testing.expect(std.mem.indexOf(u8, stubs[0].text, "curl 'http://127.0.0.1:8080/{{region}}/v2/things?q=red%20widgets&n=3' \\\n") != null);
+    try testing.expect(std.mem.indexOf(u8, stubs[0].text, "{host}") == null);
 }
 
 test "swagger 2 host/basePath and a YAML spec; run writes and skips existing" {
