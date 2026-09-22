@@ -102,6 +102,69 @@ pub const placeholder_unfocused = "/ filter";
 pub const placeholder_focused = "type to filter\u{2026}";
 pub const placeholder_focused_ascii = "type to filter...";
 
+/// The in-flight spinner: the frames the host's SESSIONS section turns
+/// while it scans (`src/ui/list_panel.zig`, `spinner_frames` /
+/// `spinner_step_ms`), so a pane that is fetching turns the SAME glyph
+/// at the SAME cadence as the host's own panels — one ring, wherever
+/// the reader looks. `--ascii` gets the four-stroke wheel.
+pub const spinner_frames = [_][]const u8{ "\u{280b}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}", "\u{2826}", "\u{2827}", "\u{2807}", "\u{280f}" };
+pub const spinner_ascii = [_][]const u8{ "|", "/", "-", "\\" };
+/// One turn of the frame ring, in ms.
+pub const spinner_step_ms: i64 = 80;
+
+/// The frame the ring is on at `now_ms`.
+pub fn spinnerFrame(now_ms: i64, ascii: bool) []const u8 {
+    const frames: []const []const u8 = if (ascii) &spinner_ascii else &spinner_frames;
+    const idx: usize = @intCast(@mod(@divFloor(now_ms, spinner_step_ms), @as(i64, @intCast(frames.len))));
+    return frames[idx];
+}
+
+/// What a listing's fetch is doing right now — the one line a caps
+/// header owes the reader while the rows are on their way. A pane that
+/// waited a minute under `loading…` could not tell whether it was
+/// fetching, queued behind the broker, or done with nothing; these are
+/// the states it can be in, and `fetchText` is the one wording.
+pub const Fetch = union(enum) {
+    /// Nothing in flight.
+    idle,
+    /// A request is out. `done` / `total` when the pane counts repos
+    /// on the way; 0 / 0 says only that it is fetching.
+    fetching: struct { done: u32 = 0, total: u32 = 0 },
+    /// Held in the local broker's queue, this many requests ahead.
+    queued: u32,
+    /// Held on the shared file bucket (no broker on this machine).
+    waiting,
+    /// The last fetch failed, and this is why.
+    failed: []const u8,
+
+    pub fn busy(f: Fetch) bool {
+        return switch (f) {
+            .fetching, .queued, .waiting => true,
+            .idle, .failed => false,
+        };
+    }
+};
+
+/// `fetching…` / `fetching… 2/13 repos` / `queued behind 3 requests` /
+/// `waiting for the API budget` / `fetch failed: <why>`; "" when idle.
+/// Written into `buf`.
+pub fn fetchText(buf: []u8, f: Fetch, ascii: bool) []const u8 {
+    const ell: []const u8 = if (ascii) "..." else "\u{2026}";
+    return switch (f) {
+        .idle => "",
+        .fetching => |x| if (x.total > 0)
+            std.fmt.bufPrint(buf, "fetching{s} {d}/{d} repos", .{ ell, x.done, x.total }) catch "fetching"
+        else
+            std.fmt.bufPrint(buf, "fetching{s}", .{ell}) catch "fetching",
+        .queued => |n| if (n == 0)
+            std.fmt.bufPrint(buf, "fetching{s}", .{ell}) catch "fetching"
+        else
+            std.fmt.bufPrint(buf, "queued behind {d} request{s}", .{ n, if (n == 1) "" else "s" }) catch "queued",
+        .waiting => "waiting for the API budget",
+        .failed => |why| std.fmt.bufPrint(buf, "fetch failed: {s}", .{why}) catch "fetch failed",
+    };
+}
+
 /// What a caps header left behind: the cell its left-hand run ended
 /// at, and the first cell the right-hand ladder took. Anything else a
 /// pane wants on the row goes between them and is clipped at `edge`.
@@ -307,6 +370,71 @@ pub fn Painter(comptime Target: type) type {
         /// The refresh glyph as a chip's text, for the ladder.
         pub fn refreshChipText(p: *const Self) []const u8 {
             return if (p.ui.ascii or !p.ui.nerd) " " ++ refresh_ascii ++ " " else " " ++ refresh_nerd ++ " ";
+        }
+
+        /// The refresh chip's text while a fetch is in flight: the
+        /// spinner, in the refresh chip's cells — where the host's own
+        /// panels turn theirs (`list_panel.paintSpinner` overpaints the
+        /// refresh chip). A pane passes `now_ms` off its clock; the
+        /// ring is the same one at the same step on every pane.
+        pub fn busyChipText(p: *Self, now_ms: i64) []const u8 {
+            const g = spinnerFrame(now_ms, p.ui.ascii or !p.ui.nerd);
+            return p.fmt(" {s} ", .{g});
+        }
+
+        /// The refresh chip's text: the spinner while `busy`, the glyph
+        /// at rest — so a pane never has to choose.
+        pub fn refreshOrBusyChipText(p: *Self, busy: bool, now_ms: i64) []const u8 {
+            return if (busy) p.busyChipText(now_ms) else p.refreshChipText();
+        }
+
+        /// The header's fetch line as a subtitle fragment: two cells of
+        /// air, the spinner, the words — `  ⠋ fetching…`; "" when idle,
+        /// and a failure in the same place without a spinner.
+        pub fn fetchSub(p: *Self, f: Fetch, now_ms: i64) []const u8 {
+            const ascii = p.ui.ascii or !p.ui.nerd;
+            var buf: [256]u8 = undefined;
+            const words = fetchText(&buf, f, ascii);
+            if (words.len == 0) return "";
+            if (f.busy()) return p.fmt("  {s} {s}", .{ spinnerFrame(now_ms, ascii), words });
+            return p.fmt("  {s}", .{words});
+        }
+
+        // ─── the toolbar row ─────────────────────────────────────────
+
+        /// ` key: value ` — the mode chip's text, the same shape on
+        /// every pane (`sort: Newest first` on the host's panels,
+        /// `status: Open + Draft` on a forge pane).
+        pub fn modeChipText(p: *Self, key: []const u8, value: []const u8) []const u8 {
+            return p.fmt(" {s}: {s} ", .{ key, value });
+        }
+
+        /// A row of filter chips under the header: left to right from
+        /// `x0` with a one-cell gap, wrapping to the next row when the
+        /// next chip would clip at `max_x`, at most `max_rows` rows —
+        /// the tracker pane's toolbar geometry, so the forge pane's
+        /// filters sit where the tracker pane's do. Every chip is a
+        /// hit over exactly its cells. Returns the rows used.
+        pub fn toolbarRow(p: *Self, x0: u16, y0: u16, max_x: u16, max_rows: u16, chips: []const ChipSpec) Allocator.Error!u16 {
+            if (max_rows == 0 or y0 >= p.rows()) return 0;
+            var x = x0;
+            var y = y0;
+            var used: u16 = 1;
+            for (chips) |c| {
+                const w = width(c.text);
+                if (x + w > max_x and x > x0) {
+                    if (used >= max_rows or y + 1 >= p.rows()) break;
+                    y += 1;
+                    used += 1;
+                    x = x0;
+                }
+                const cw = @min(w, max_x -| x);
+                if (cw == 0) break;
+                _ = p.put(x, y, cw, c.text, if (c.active) p.th.chipActive() else p.th.chip());
+                try p.mark(.{ .x = x, .y = y, .w = cw, .h = 1 }, c.target);
+                x += w + 1;
+            }
+            return used;
         }
 
         // ─── the tab strip ───────────────────────────────────────────
@@ -1010,4 +1138,67 @@ test "every listing in the family says how old it is, in the same words and the 
     const x0 = p.capsTitle(1, 1, "JIRA WORK", " (loading\u{2026})");
     try testing.expectEqual(x0, p.asOf(x0, 1, 0, now));
     try testing.expect(std.mem.indexOf(u8, try r.rowText(1), "as of") == null);
+}
+
+test "the fetch line names every state a listing can be in, and the spinner is the host's ring at the host's step" {
+    var buf: [256]u8 = undefined;
+    try testing.expectEqualStrings("", fetchText(&buf, .idle, false));
+    try testing.expectEqualStrings("fetching\u{2026}", fetchText(&buf, .{ .fetching = .{} }, false));
+    try testing.expectEqualStrings("fetching...", fetchText(&buf, .{ .fetching = .{} }, true));
+    try testing.expectEqualStrings("fetching\u{2026} 2/13 repos", fetchText(&buf, .{ .fetching = .{ .done = 2, .total = 13 } }, false));
+    try testing.expectEqualStrings("queued behind 3 requests", fetchText(&buf, .{ .queued = 3 }, false));
+    try testing.expectEqualStrings("queued behind 1 request", fetchText(&buf, .{ .queued = 1 }, false));
+    // Queued behind nobody is not a queue worth a word.
+    try testing.expectEqualStrings("fetching\u{2026}", fetchText(&buf, .{ .queued = 0 }, false));
+    try testing.expectEqualStrings("waiting for the API budget", fetchText(&buf, .waiting, false));
+    try testing.expectEqualStrings("fetch failed: 401 auth failed", fetchText(&buf, .{ .failed = "401 auth failed" }, false));
+    try testing.expect(Fetch.busy(.{ .queued = 2 }));
+    try testing.expect(!Fetch.busy(.{ .failed = "x" }));
+    try testing.expect(!Fetch.busy(.idle));
+    // The ring: ten braille frames, 80 ms a step, wrapping.
+    try testing.expectEqual(@as(usize, 10), spinner_frames.len);
+    try testing.expectEqual(@as(i64, 80), spinner_step_ms);
+    try testing.expectEqualStrings(spinner_frames[0], spinnerFrame(0, false));
+    try testing.expectEqualStrings(spinner_frames[1], spinnerFrame(80, false));
+    try testing.expectEqualStrings(spinner_frames[0], spinnerFrame(800, false));
+    try testing.expectEqualStrings("/", spinnerFrame(80, true));
+
+    // Through the painter: the refresh chip becomes the spinner while
+    // busy and the subtitle fragment carries the words behind it.
+    var r = try Rig.init(60, 2);
+    defer r.deinit();
+    var p = r.painter(Theme.fromHello(null), .{ .nerd = true });
+    try testing.expectEqualStrings(" " ++ refresh_nerd ++ " ", p.refreshOrBusyChipText(false, 160));
+    try testing.expectEqualStrings(" \u{2839} ", p.refreshOrBusyChipText(true, 160));
+    try testing.expectEqualStrings("  \u{2839} fetching\u{2026}", p.fetchSub(.{ .fetching = .{} }, 160));
+    try testing.expectEqualStrings("  fetch failed: no", p.fetchSub(.{ .failed = "no" }, 160));
+    try testing.expectEqualStrings("", p.fetchSub(.idle, 160));
+}
+
+test "the toolbar row lays chips left to right, wraps whole chips, and every chip is a hit over its cells" {
+    var r = try Rig.init(30, 3);
+    defer r.deinit();
+    var p = r.painter(Theme.fromHello(null), .{});
+    const chips = [_]P.ChipSpec{
+        .{ .text = p.modeChipText("status", "Open + Draft"), .target = .{ .chip = 0 }, .active = true },
+        .{ .text = p.modeChipText("author", "all"), .target = .{ .chip = 1 } },
+        .{ .text = p.modeChipText("target", "any"), .target = .{ .chip = 2 } },
+    };
+    // 1 + 21 + 1 + 13 = 36 > 30: the second chip wraps whole.
+    const used = try p.toolbarRow(1, 0, 30, 2, &chips);
+    try testing.expectEqual(@as(u16, 2), used);
+    try testing.expectEqualStrings("  status: Open + Draft", try r.rowText(0));
+    try testing.expectEqualStrings("  author: all   target: any", try r.rowText(1));
+    try testing.expectEqual(@as(u16, 1), r.hits.rectOf(.{ .chip = 1 }).?.x);
+    try testing.expectEqual(@as(u16, 1), r.hits.rectOf(.{ .chip = 1 }).?.y);
+    try testing.expectEqual(@as(u16, 13), r.hits.rectOf(.{ .chip = 1 }).?.w);
+    try testing.expectEqual(@as(u16, 15), r.hits.rectOf(.{ .chip = 2 }).?.x);
+    // One row allowed: what does not fit is dropped whole, not clipped.
+    r.hits.reset();
+    var r2 = try Rig.init(30, 3);
+    defer r2.deinit();
+    var p2 = r2.painter(Theme.fromHello(null), .{});
+    try testing.expectEqual(@as(u16, 1), try p2.toolbarRow(1, 0, 30, 1, &chips));
+    try testing.expect(r2.hits.rectOf(.{ .chip = 1 }) == null);
+    try testing.expect(std.mem.indexOf(u8, try r2.rowText(0), "author") == null);
 }
