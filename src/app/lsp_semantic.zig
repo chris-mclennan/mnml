@@ -37,8 +37,8 @@ pub const SemFile = struct {
     data: []u32 = &.{},
     result_id: ?[]u8 = null,
     tokens: []semantic.Token = &.{},
-    /// The edit-log seq the tokens describe; 0 = stale.
-    seq: u64 = 0,
+    /// The edit-log seq the tokens describe; null = stale or never landed.
+    seq: ?u64 = null,
     /// A `range` reply: the tokens cover only the lines asked for, and
     /// the next request must not be a delta.
     partial: bool = false,
@@ -104,7 +104,7 @@ pub fn handleResponse(app: *App, s: *Server, kind: ReqKind, ctx: Ctx, result: ?V
     const r = result orelse {
         // `null`: the server has nothing — keep painting nothing.
         replaceData(gpa, f, try gpa.alloc(u32, 0));
-        f.seq = 0;
+        f.seq = null;
         return;
     };
     const head = e.buf.doc.edits.head();
@@ -124,7 +124,7 @@ pub fn handleResponse(app: *App, s: *Server, kind: ReqKind, ctx: Ctx, result: ?V
     const decoded = try semantic.decode(arena.allocator(), f.data, s.caps.token_types);
     gpa.free(f.tokens);
     f.tokens = try gpa.dupe(semantic.Token, decoded);
-    f.seq = if (fresh) head else 0;
+    f.seq = if (fresh) head else null;
     app.needs_render = true;
 }
 
@@ -152,7 +152,7 @@ pub fn spansFor(app: *App, arena: Allocator, e: *EditorPane, theme: *const Theme
     const path = e.buf.doc.path orelse return &.{};
     const f = app.lsp.semantic.get(path) orelse return &.{};
     const ed = e.buf.editor;
-    if (f.seq == 0 or f.seq != ed.doc.edits.head()) return &.{};
+    if (f.seq == null or f.seq.? != ed.doc.edits.head()) return &.{};
     const s = lsp.serverFor(app, path) orelse return &.{};
     const text = ed.bytes();
     const lines = ed.lineCount();
@@ -208,7 +208,7 @@ test "through the fake server: a full reply's tokens layer over the grammar's sp
     const Cond = struct {
         fn landed(a: *App, id: []const u8) bool {
             const f = a.lsp.semantic.get(lsp.TestRig.file) orelse return false;
-            return f.seq != 0 and f.result_id != null and std.mem.eql(u8, f.result_id.?, id);
+            return f.seq != null and f.result_id != null and std.mem.eql(u8, f.result_id.?, id);
         }
         fn full(a: *App) bool {
             return landed(a, "1");

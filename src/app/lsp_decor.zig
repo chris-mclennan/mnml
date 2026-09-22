@@ -11,6 +11,12 @@
 //! the frame asks again once the buffer has been idle for `idle_ms`.
 //! Requests carry the seq's low word in `Ctx.extra` so a reply for an
 //! older text is stored as stale rather than trusted.
+//!
+//! The seq is an optional, not a zero: an untouched document's head IS
+//! 0 (`EditLog.head` is `next_seq - 1`), so a `0 = never landed`
+//! sentinel made every reply for a file nobody had edited yet stale on
+//! arrival — zls's hints on open painted only after the first
+//! keystroke, and the toggle painted nothing.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -49,8 +55,8 @@ fn Set(comptime T: type) type {
     return struct {
         arena: alloc.SnapshotArena,
         items: []T = &.{},
-        /// The edit-log seq the items describe; 0 = stale or never landed.
-        seq: u64 = 0,
+        /// The edit-log seq the items describe; null = stale or never landed.
+        seq: ?u64 = null,
         /// The reply the items borrow (a lens keeps its raw `Value`).
         incoming: ?*jsonrpc.Incoming = null,
 
@@ -61,7 +67,7 @@ fn Set(comptime T: type) type {
             self.incoming = null;
             self.arena.reset();
             self.items = &.{};
-            self.seq = 0;
+            self.seq = null;
         }
 
         fn deinit(self: *Self, gpa: Allocator) void {
@@ -99,13 +105,13 @@ pub const FileDecor = struct {
 
 /// Per pane: when the sets were last asked for, and for which text.
 pub const Track = struct {
-    /// The seq every set was requested at.
-    seq: u64 = 0,
+    /// The seq every set was requested at; null = never asked.
+    seq: ?u64 = null,
     /// When the buffer first differed from `seq`; the debounce clock.
     dirty_since: ?i64 = null,
     /// The line window the hints were requested for, and at which seq.
     hint_lines: [2]u32 = .{ 0, 0 },
-    hint_seq: u64 = 0,
+    hint_seq: ?u64 = null,
 };
 
 fn seqLow(seq: u64) u32 {
@@ -152,9 +158,9 @@ pub fn onFrame(app: *App, pane: PaneId, e: *EditorPane, first: u32, last: u32) A
     const tr = gop.value_ptr;
     const now = app.now_ms;
     var fire = false;
-    if (tr.seq != head) {
+    if (tr.seq == null or tr.seq.? != head) {
         if (tr.dirty_since == null) tr.dirty_since = now;
-        if (tr.seq == 0 or now - tr.dirty_since.? >= idle_ms) fire = true;
+        if (tr.seq == null or now - tr.dirty_since.? >= idle_ms) fire = true;
     }
     const rows = last -| first + 1;
     const window: [2]u32 = .{ first -| rows, last + rows };
@@ -168,7 +174,7 @@ pub fn onFrame(app: *App, pane: PaneId, e: *EditorPane, first: u32, last: u32) A
         if (app.cfg.editor.semantic_tokens and s.caps.semanticTokens()) semantic_app.request(app, s, pane, e, first, last);
         return;
     }
-    const hints_out = first < tr.hint_lines[0] or last > tr.hint_lines[1] or tr.hint_seq != head;
+    const hints_out = first < tr.hint_lines[0] or last > tr.hint_lines[1] or tr.hint_seq == null or tr.hint_seq.? != head;
     if (hints_out and app.cfg.editor.inlay_hints and s.caps.inlay_hint) requestHints(app, s, pane, e, path, window, tr);
 }
 
@@ -199,7 +205,7 @@ pub fn inlayHintsToggle(app: *App) CommandError!void {
     while (it.next()) |fd| fd.*.hints.clear(app.gpa);
     // Every pane asks again on its next idle frame.
     var tk = app.lsp.decor_track.valueIterator();
-    while (tk.next()) |tr| tr.hint_seq = 0;
+    while (tk.next()) |tr| tr.hint_seq = null;
     app.toast("inlay hints: {s}", .{if (app.cfg.editor.inlay_hints) "on" else "off"});
     app.needs_render = true;
 }
@@ -217,7 +223,7 @@ pub fn handleResponse(app: *App, s: *Server, kind: ReqKind, ctx: Ctx, result: ?V
     const path = e.buf.doc.path orelse return false;
     const fd = (try fileDecor(app, path, true)).?;
     const head = e.buf.doc.edits.head();
-    const seq: u64 = if (seqLow(head) == ctx.extra) head else 0;
+    const seq: ?u64 = if (seqLow(head) == ctx.extra) head else null;
     var adopted = false;
     switch (kind) {
         .inlay_hint => {
@@ -259,7 +265,7 @@ pub fn handleResponse(app: *App, s: *Server, kind: ReqKind, ctx: Ctx, result: ?V
 // ─── the paint data (frame arena) ───────────────────────────────────────
 
 fn setFresh(comptime T: type, set: *const Set(T), head: u64) bool {
-    return set.seq != 0 and set.seq == head;
+    return set.seq != null and set.seq.? == head;
 }
 
 /// Hints and colour swatches as virtual text, sorted by byte.
@@ -517,11 +523,11 @@ test "through the fake server: hints and swatches paint as virtual text, lenses 
     const Cond = struct {
         fn decorated(a: *App) bool {
             const fd = a.lsp.decor.get(lsp.TestRig.file) orelse return false;
-            return fd.hints.seq != 0 and fd.lenses.seq != 0 and fd.colors.seq != 0 and fd.links.seq != 0;
+            return fd.hints.seq != null and fd.lenses.seq != null and fd.colors.seq != null and fd.links.seq != null;
         }
         fn hintsFresh(a: *App) bool {
             const fd = a.lsp.decor.get(lsp.TestRig.file) orelse return false;
-            return fd.hints.seq != 0 and fd.hints.seq == a.activeEditor().?.buf.doc.edits.head();
+            return fd.hints.seq != null and fd.hints.seq.? == a.activeEditor().?.buf.doc.edits.head();
         }
         fn ranOne(a: *App) bool {
             return std.mem.indexOf(u8, a.lastToast() orelse return false, "ran refs #1") != null;
@@ -597,6 +603,43 @@ test "through the fake server: hints and swatches paint as virtual text, lenses 
     const fresh = try lsp.TestRig.screenText(&app, gpa);
     defer gpa.free(fresh);
     try testing.expect(std.mem.indexOf(u8, fresh, ": number") != null);
+    try rig.stop(&app);
+}
+
+test "hints answering the request sent on OPEN paint on an untouched document (its head is 0), and the toggle paints them again without an edit" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    var rig: lsp.TestRig = .{};
+    try rig.start(&app);
+    // From disk, through the open hook: nothing has edited the buffer,
+    // so the edit log's head is 0 — the value the old `0 = never
+    // landed` sentinel could not tell from "stale".
+    const path = "/tmp/mnml-zig-fake-lsp-open.ts";
+    try std.Io.Dir.cwd().writeFile(testing.io, .{ .sub_path = path, .data = lsp.TestRig.text });
+    defer std.Io.Dir.cwd().deleteFile(testing.io, path) catch {};
+    const pane = try app.openPath(path);
+    const e = app.panes.editor(pane).?;
+    try testing.expectEqual(@as(u64, 0), e.buf.doc.edits.head());
+    const Cond = struct {
+        fn painted(a: *App) bool {
+            const txt = lsp.TestRig.screenText(a, a.gpa) catch return false;
+            defer a.gpa.free(txt);
+            return std.mem.indexOf(u8, txt, "let x: number") != null;
+        }
+    };
+    try lsp.TestRig.pump(&app, &app, Cond.painted, 5000);
+    try testing.expectEqual(@as(u64, 0), e.buf.doc.edits.head());
+    // Off clears them; on asks again and the reply paints — still no edit.
+    try command.run(&app, .{ .static = .@"lsp.inlay_hints_toggle" });
+    const off = try lsp.TestRig.screenText(&app, gpa);
+    defer gpa.free(off);
+    try testing.expect(std.mem.indexOf(u8, off, ": number") == null);
+    try command.run(&app, .{ .static = .@"lsp.inlay_hints_toggle" });
+    try lsp.TestRig.pump(&app, &app, Cond.painted, 5000);
+    try testing.expectEqual(@as(u64, 0), e.buf.doc.edits.head());
     try rig.stop(&app);
 }
 

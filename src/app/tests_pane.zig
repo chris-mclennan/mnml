@@ -17,6 +17,15 @@
 //! test is found in the project's sources so Enter still jumps. `R`
 //! re-runs the failures by name (`--filter FullyQualifiedName=…`).
 //!
+//! And `zig` (`Runner.zig`: the `test.*` ids on a project with a
+//! `build.zig`): `test.run_all` is `zig build test`, `run_file` is
+//! `zig test <file>`, `run_at_cursor` is `zig build test
+//! -Dtest-filter=<name>` when the build.zig declares that option (as
+//! this repo's does) and `zig test <file> --test-filter <name>`
+//! otherwise. `parseZig` reads both the default test runner's lines and
+//! the build runner's failure report; a failure's file:line is its own
+//! frame, a passed test is found by its `test "…"` line.
+//!
 //!   D1  the run lives on the pane's snapshot arena, replaced wholesale
 //!       when the next result lands; `last_args` is gpa-owned;
 //!   D3  one `Io.Group` per pane; a re-run bumps the generation and a
@@ -32,6 +41,7 @@ const Key = app_mod.Key;
 const key_mod = @import("../core/key.zig");
 const Mouse = key_mod.Mouse;
 const command = @import("../core/command.zig");
+const builtin = @import("builtin");
 const CommandError = command.CommandError;
 const event = @import("../core/event.zig");
 const alloc = @import("../core/alloc.zig");
@@ -75,11 +85,13 @@ pub const Status = enum {
 pub const Runner = enum {
     playwright,
     dotnet,
+    zig,
 
     pub fn label(r: Runner) []const u8 {
         return switch (r) {
             .playwright => "playwright",
             .dotnet => "dotnet test",
+            .zig => "zig test",
         };
     }
 };
@@ -98,6 +110,9 @@ pub const TestCase = struct {
     err: ?[]const u8,
     /// A retained `trace.zip`, absolute.
     trace_path: ?[]const u8,
+    /// `parseZig`: the location is the test's own frame, not a
+    /// caller's — a later `in test.<name>` frame must not be replaced.
+    frame_own: bool = false,
 };
 
 pub const TestRun = struct {
@@ -107,11 +122,19 @@ pub const TestRun = struct {
     global_errors: []const []const u8 = &.{},
     /// The tool's own tally line, when it prints one (`Failed!  - Failed: 1, …`).
     summary: []const u8 = "",
+    /// Passes the tool counted but never named: `zig build test` reports
+    /// only the failures and a `4/5 tests passed` tally.
+    passed_unlisted: usize = 0,
 
     pub fn count(r: TestRun, status: Status) usize {
         var n: usize = 0;
         for (r.tests) |tc| n += @intFromBool(tc.status == status);
         return n;
+    }
+
+    /// Every pass: the named rows plus the tally's unnamed ones.
+    pub fn passed(r: TestRun) usize {
+        return r.count(.passed) + r.passed_unlisted;
     }
 };
 
@@ -470,6 +493,245 @@ pub fn trxPathIn(text: []const u8) ?[]const u8 {
     return if (std.mem.endsWith(u8, path, ".trx")) path else null;
 }
 
+// ─── zig test / zig build test ─────────────────────────────────────────
+
+/// The output of `zig test` and of `zig build test`, both on stderr.
+/// The default test runner names each test `<module>.test.<name>` and
+/// prints a line per test, the failure's message on its line, then
+/// `FAIL (<error>)`, its frames, and a tally:
+///
+///     1/4 shapes.test.rect area...OK
+///     3/4 shapes.test.deliberately failing...expected 5, found 4
+///     FAIL (TestExpectedEqual)
+///     /…/src/shapes.zig:67:5: 0x… in test.deliberately failing (test)
+///     3 passed; 0 skipped; 1 failed.
+///
+/// The build runner reports only the failures, indented under
+/// `error: '<name>' failed:`, and a `Build Summary` whose `N/M tests
+/// passed` is where the passes come from (`passed_unlisted`):
+///
+///     error: 'shapes.test.deliberately failing' failed:
+///            expected 5, found 4
+///            /…/src/shapes.zig:67:5: 0x… in test.deliberately failing (test)
+///     Build Summary: 1/3 steps succeeded (1 failed); 4/5 tests passed (1 failed)
+///
+/// A failure's file:line is the frame in its own test (`in test.<name>`),
+/// else the first frame under `workspace`; a compile error
+/// (`src/a.zig:3:5: error: …`) is a global error.
+pub fn parseZig(arena: Allocator, text: []const u8, workspace: []const u8) Allocator.Error!TestRun {
+    var tests: std.ArrayListUnmanaged(TestCase) = .empty;
+    var errors: std.ArrayListUnmanaged([]const u8) = .empty;
+    var summary: []const u8 = "";
+    var tally_passed: ?usize = null;
+    var cur: ?usize = null;
+    var in_frames = false;
+    var msg: std.ArrayListUnmanaged(u8) = .empty;
+    var msg_lines: usize = 0;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        const trimmed = std.mem.trim(u8, try stripAnsi(arena, raw), " \t\r");
+        if (zigCaseLine(trimmed)) |c| {
+            try finishZigCase(arena, &tests, cur, &msg);
+            msg_lines = 0;
+            in_frames = false;
+            const split = splitZigName(c.name);
+            try tests.append(arena, .{
+                .title = split.title,
+                .suite_path = split.suite,
+                .file = "",
+                .line = 0,
+                .status = c.status,
+                .duration_ms = 0,
+                .err = null,
+                .trace_path = null,
+            });
+            cur = tests.items.len - 1;
+            if (c.status == .failed and c.message.len > 0) {
+                try msg.appendSlice(arena, c.message);
+                msg_lines = 1;
+            }
+            continue;
+        }
+        if (zigTally(trimmed)) |tl| {
+            try finishZigCase(arena, &tests, cur, &msg);
+            cur = null;
+            summary = try arena.dupe(u8, trimmed);
+            tally_passed = tl.passed;
+            continue;
+        }
+        if (std.mem.startsWith(u8, trimmed, "Build Summary:")) {
+            try finishZigCase(arena, &tests, cur, &msg);
+            cur = null;
+            summary = try arena.dupe(u8, trimmed);
+            if (buildSummaryPassed(trimmed)) |n| tally_passed = n;
+            continue;
+        }
+        if (zigCompileError(trimmed)) {
+            var dup = false;
+            for (errors.items) |e| if (std.mem.eql(u8, e, trimmed)) {
+                dup = true;
+            };
+            if (!dup and errors.items.len < 20) try errors.append(arena, try arena.dupe(u8, trimmed));
+            continue;
+        }
+        const i = cur orelse continue;
+        if (tests.items[i].status != .failed) continue;
+        if (zigFrame(trimmed)) |fr| {
+            in_frames = true;
+            const own = std.mem.startsWith(u8, fr.func, "test.") or std.mem.startsWith(u8, fr.func, "decltest.");
+            const here = workspace.len > 0 and std.mem.startsWith(u8, fr.path, workspace);
+            const tc = &tests.items[i];
+            if (tc.file.len == 0 or (own and !tc.frame_own)) {
+                if (own or (here and !tc.frame_own)) {
+                    tc.file = try relativeTo(arena, fr.path, workspace);
+                    tc.line = fr.line;
+                    tc.frame_own = own;
+                }
+            }
+            continue;
+        }
+        if (in_frames) continue; // the frame's source echo and its caret
+        if (std.mem.startsWith(u8, trimmed, "FAIL (") or std.mem.startsWith(u8, trimmed, "SKIP")) {
+            if (msg.items.len > 0) try msg.append(arena, '\n');
+            try msg.appendSlice(arena, trimmed);
+            continue;
+        }
+        if (trimmed.len > 0 and msg_lines < 6 and !std.mem.startsWith(u8, trimmed, "failed command:")) {
+            if (msg.items.len > 0) try msg.append(arena, '\n');
+            try msg.appendSlice(arena, trimmed);
+            msg_lines += 1;
+        }
+    }
+    try finishZigCase(arena, &tests, cur, &msg);
+    var out: TestRun = .{ .tests = try tests.toOwnedSlice(arena), .global_errors = try errors.toOwnedSlice(arena), .summary = summary };
+    if (tally_passed) |n| out.passed_unlisted = n -| out.count(.passed);
+    return out;
+}
+
+fn finishZigCase(arena: Allocator, tests: *std.ArrayListUnmanaged(TestCase), cur: ?usize, msg: *std.ArrayListUnmanaged(u8)) Allocator.Error!void {
+    const i = cur orelse return;
+    if (msg.items.len > 0) tests.items[i].err = try msg.toOwnedSlice(arena);
+    msg.* = .empty;
+}
+
+const ZigCase = struct { name: []const u8, status: Status, message: []const u8 };
+
+/// `3/4 shapes.test.x...OK` (the test runner) or `error: 'shapes.test.x'
+/// failed:` (the build runner). A test-runner line whose tail is neither
+/// `OK` nor `SKIP` is a failure and the tail is its message.
+fn zigCaseLine(line: []const u8) ?ZigCase {
+    if (std.mem.startsWith(u8, line, "error: '")) {
+        const rest = line["error: '".len..];
+        const close = std.mem.indexOf(u8, rest, "' failed") orelse return null;
+        return .{ .name = rest[0..close], .status = .failed, .message = "" };
+    }
+    var n: usize = 0;
+    while (n < line.len and std.ascii.isDigit(line[n])) n += 1;
+    if (n == 0 or n >= line.len or line[n] != '/') return null;
+    var m = n + 1;
+    while (m < line.len and std.ascii.isDigit(line[m])) m += 1;
+    if (m == n + 1 or m >= line.len or line[m] != ' ') return null;
+    const rest = line[m + 1 ..];
+    const dots = std.mem.indexOf(u8, rest, "...") orelse return null;
+    const name = rest[0..dots];
+    const tail = std.mem.trim(u8, rest[dots + 3 ..], " ");
+    if (name.len == 0) return null;
+    if (std.mem.eql(u8, tail, "OK")) return .{ .name = name, .status = .passed, .message = "" };
+    if (std.mem.eql(u8, tail, "SKIP")) return .{ .name = name, .status = .skipped, .message = "" };
+    return .{ .name = name, .status = .failed, .message = tail };
+}
+
+/// `shapes.test.rect area` → suite `shapes`, title `rect area`; a
+/// doctest is `shapes.decltest.Rect`; a bare name is all title.
+fn splitZigName(name: []const u8) struct { suite: []const u8, title: []const u8 } {
+    for ([_][]const u8{ ".test.", ".decltest." }) |sep| if (std.mem.indexOf(u8, name, sep)) |at| {
+        return .{ .suite = name[0..at], .title = name[at + sep.len ..] };
+    };
+    for ([_][]const u8{ "test.", "decltest." }) |sep| if (std.mem.startsWith(u8, name, sep)) {
+        return .{ .suite = "", .title = name[sep.len..] };
+    };
+    return .{ .suite = "", .title = name };
+}
+
+const ZigTally = struct { passed: usize, skipped: usize, failed: usize };
+
+/// `3 passed; 0 skipped; 1 failed.`
+fn zigTally(line: []const u8) ?ZigTally {
+    var it = std.mem.splitSequence(u8, std.mem.trimEnd(u8, line, "."), "; ");
+    var out: ZigTally = .{ .passed = 0, .skipped = 0, .failed = 0 };
+    var seen: u8 = 0;
+    while (it.next()) |part| {
+        const sp = std.mem.indexOfScalar(u8, part, ' ') orelse return null;
+        const n = std.fmt.parseInt(usize, part[0..sp], 10) catch return null;
+        const word = part[sp + 1 ..];
+        if (std.mem.eql(u8, word, "passed")) {
+            out.passed = n;
+            seen |= 1;
+        } else if (std.mem.eql(u8, word, "skipped")) {
+            out.skipped = n;
+            seen |= 2;
+        } else if (std.mem.eql(u8, word, "failed")) {
+            out.failed = n;
+            seen |= 4;
+        } else return null;
+    }
+    return if (seen == 7) out else null;
+}
+
+/// The `N` of `N/M tests passed` in a `Build Summary:` line.
+fn buildSummaryPassed(line: []const u8) ?usize {
+    const at = std.mem.indexOf(u8, line, " tests passed") orelse return null;
+    const head = line[0..at];
+    const slash = std.mem.lastIndexOfScalar(u8, head, '/') orelse return null;
+    var pos = slash;
+    while (pos > 0 and std.ascii.isDigit(head[pos - 1])) pos -= 1;
+    return std.fmt.parseInt(usize, head[pos..slash], 10) catch null;
+}
+
+/// `src/a.zig:3:5: error: expected ';'` — the compiler, not a test.
+fn zigCompileError(line: []const u8) bool {
+    const at = std.mem.indexOf(u8, line, ": error: ") orelse return false;
+    const loc = line[0..at];
+    // `<path>:<line>:<col>` — two numbers behind the last two colons.
+    const c1 = std.mem.lastIndexOfScalar(u8, loc, ':') orelse return false;
+    const c2 = std.mem.lastIndexOfScalar(u8, loc[0..c1], ':') orelse return false;
+    _ = std.fmt.parseInt(u32, loc[c1 + 1 ..], 10) catch return false;
+    _ = std.fmt.parseInt(u32, loc[c2 + 1 .. c1], 10) catch return false;
+    return std.mem.endsWith(u8, loc[0..c2], ".zig");
+}
+
+const ZigFrame = struct { path: []const u8, line: u32, func: []const u8 };
+
+/// `/ws/src/a.zig:67:5: 0x1024764db in test.deliberately failing (test)`.
+fn zigFrame(line: []const u8) ?ZigFrame {
+    const at = std.mem.indexOf(u8, line, ": 0x") orelse return null;
+    const loc = line[0..at];
+    const c1 = std.mem.lastIndexOfScalar(u8, loc, ':') orelse return null;
+    const c2 = std.mem.lastIndexOfScalar(u8, loc[0..c1], ':') orelse return null;
+    _ = std.fmt.parseInt(u32, loc[c1 + 1 ..], 10) catch return null;
+    const ln = std.fmt.parseInt(u32, loc[c2 + 1 .. c1], 10) catch return null;
+    const rest = line[at + 4 ..];
+    const in_at = std.mem.indexOf(u8, rest, " in ") orelse return null;
+    var func = rest[in_at + 4 ..];
+    if (std.mem.lastIndexOf(u8, func, " (")) |p| func = func[0..p];
+    return .{ .path = loc[0..c2], .line = ln, .func = func };
+}
+
+/// The 1-based line of `test "<title>"` in `text`.
+fn zigTestLine(text: []const u8, title: []const u8) ?u32 {
+    if (title.len == 0) return null;
+    var from: usize = 0;
+    while (std.mem.indexOfPos(u8, text, from, "test \"")) |at| {
+        from = at + 6;
+        if (at > 0 and !(text[at - 1] == '\n' or text[at - 1] == ' ' or text[at - 1] == '\t')) continue;
+        const rest = text[from..];
+        if (!std.mem.startsWith(u8, rest, title)) continue;
+        if (rest.len <= title.len or rest[title.len] != '"') continue;
+        return @intCast(std.mem.count(u8, text[0..at], "\n") + 1);
+    }
+    return null;
+}
+
 /// The TRX the `trx` logger writes: every `<UnitTestResult>` with its
 /// outcome and duration, the `<Message>` / `<StackTrace>` of a failure,
 /// and the class + method from the `<UnitTest>` definitions (the
@@ -611,17 +873,21 @@ fn firstLines(s: []const u8, n: usize) []const u8 {
 /// prints a stack — is looked for in the `.cs` sources under `root`: a
 /// file naming its class with a line calling out `Method(`. Bounded;
 /// a test that is not found keeps no file.
-pub fn locateSources(arena: Allocator, io: Io, root: []const u8, workspace: []const u8, tests: []TestCase) Allocator.Error!void {
+/// Which sources a row without a file is looked for in: `.cs` by class
+/// and method, `.zig` by its `test "…"` line.
+pub const SourceLang = enum { cs, zig };
+
+pub fn locateSources(arena: Allocator, io: Io, root: []const u8, workspace: []const u8, tests: []TestCase, lang: SourceLang) Allocator.Error!void {
     var pending: usize = 0;
     for (tests) |tc| pending += @intFromBool(tc.file.len == 0);
     if (pending == 0) return;
     var budget: usize = 3000;
-    try locateIn(arena, io, root, workspace, tests, &pending, &budget, 0);
+    try locateIn(arena, io, root, workspace, tests, lang, &pending, &budget, 0);
 }
 
-const skip_dirs = [_][]const u8{ "bin", "obj", ".git", "node_modules", "TestResults", ".mnml" };
+const skip_dirs = [_][]const u8{ "bin", "obj", ".git", "node_modules", "TestResults", ".mnml", "zig-out", ".zig-cache", "zig-cache" };
 
-fn locateIn(arena: Allocator, io: Io, dir: []const u8, workspace: []const u8, tests: []TestCase, pending: *usize, budget: *usize, depth: u8) Allocator.Error!void {
+fn locateIn(arena: Allocator, io: Io, dir: []const u8, workspace: []const u8, tests: []TestCase, lang: SourceLang, pending: *usize, budget: *usize, depth: u8) Allocator.Error!void {
     if (pending.* == 0 or budget.* == 0 or depth > 12) return;
     var d = Io.Dir.cwd().openDir(io, dir, .{ .iterate = true }) catch return;
     defer d.close(io);
@@ -635,16 +901,24 @@ fn locateIn(arena: Allocator, io: Io, dir: []const u8, workspace: []const u8, te
             };
             if (skip) continue;
             const sub = try std.fs.path.join(arena, &.{ dir, entry.name });
-            try locateIn(arena, io, sub, workspace, tests, pending, budget, depth + 1);
+            try locateIn(arena, io, sub, workspace, tests, lang, pending, budget, depth + 1);
             continue;
         }
-        if (!std.ascii.endsWithIgnoreCase(entry.name, ".cs")) continue;
+        const ext: []const u8 = switch (lang) {
+            .cs => ".cs",
+            .zig => ".zig",
+        };
+        if (!std.ascii.endsWithIgnoreCase(entry.name, ext)) continue;
         budget.* -= 1;
         const path = try std.fs.path.join(arena, &.{ dir, entry.name });
         const text = Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(1 << 20)) catch continue;
         for (tests) |*tc| {
             if (tc.file.len > 0) continue;
-            if (methodLine(text, classOf(tc.suite_path), methodOf(tc.title))) |line| {
+            const found: ?u32 = switch (lang) {
+                .cs => methodLine(text, classOf(tc.suite_path), methodOf(tc.title)),
+                .zig => zigTestLine(text, tc.title),
+            };
+            if (found) |line| {
                 tc.file = try relativeTo(arena, path, workspace);
                 tc.line = line;
                 pending.* -= 1;
@@ -739,11 +1013,14 @@ pub const Result = struct {
 
 pub const base_argv = [_][]const u8{ "npx", "playwright", "test", "--reporter=json", "--trace=retain-on-failure" };
 pub const dotnet_argv = [_][]const u8{ "dotnet", "test", "--nologo", "--logger", "console;verbosity=normal", "--logger", "trx" };
+/// The verb is the pane's argument: `build test` or `test <file>`.
+pub const zig_argv = [_][]const u8{"zig"};
 
 fn baseArgv(runner: Runner) []const []const u8 {
     return switch (runner) {
         .playwright => &base_argv,
         .dotnet => &dotnet_argv,
+        .zig => &zig_argv,
     };
 }
 
@@ -820,6 +1097,7 @@ fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, runner: Runner, cwd
             result.err = switch (runner) {
                 .playwright => std.fmt.allocPrint(arena, "running `npx playwright test`: {s} — is Playwright installed here?", .{@errorName(err)}) catch null,
                 .dotnet => std.fmt.allocPrint(arena, "running `dotnet test`: {s} — is the .NET SDK on PATH?", .{@errorName(err)}) catch null,
+                .zig => std.fmt.allocPrint(arena, "running `zig`: {s} — is Zig on PATH?", .{@errorName(err)}) catch null,
             };
             events.post(io, .{ .tests = result });
             return;
@@ -829,6 +1107,14 @@ fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, runner: Runner, cwd
     defer gpa.free(proc.stderr);
     if (runner == .dotnet) {
         dotnetResult(io, arena, result, cwd, workspace, proc.stdout, proc.stderr, extra) catch {
+            result.destroy(gpa);
+            return;
+        };
+        events.post(io, .{ .tests = result });
+        return;
+    }
+    if (runner == .zig) {
+        zigResult(io, arena, result, cwd, workspace, proc.stdout, proc.stderr, extra) catch {
             result.destroy(gpa);
             return;
         };
@@ -891,9 +1177,46 @@ fn dotnetResult(io: Io, arena: Allocator, result: *Result, cwd: []const u8, work
         return;
     }
     const tests = try arena.dupe(TestCase, r.tests);
-    try locateSources(arena, io, cwd, workspace, tests);
+    try locateSources(arena, io, cwd, workspace, tests, .cs);
     r.tests = tests;
     r.command = try cmdlineFor(arena, .dotnet, extra);
+    result.run = r;
+}
+
+/// `zig` writes its test report on stderr; stdout (a `zig build`'s own
+/// prints) is read behind it. No rows, no compile error and no tally is
+/// the tool's own words, four lines.
+fn zigResult(io: Io, arena: Allocator, result: *Result, cwd: []const u8, workspace: []const u8, stdout: []const u8, stderr: []const u8, extra: []const []const u8) Allocator.Error!void {
+    const text = try std.mem.concat(arena, u8, &.{ stderr, "\n", stdout });
+    var r = try parseZig(arena, text, workspace);
+    if (r.tests.len == 0 and r.global_errors.len == 0 and r.summary.len == 0) {
+        const trimmed = std.mem.trim(u8, text, " \t\r\n");
+        const msg: []const u8 = if (trimmed.len == 0) "zig printed no test results" else trimmed;
+        var lines = std.mem.splitScalar(u8, msg, '\n');
+        var kept: std.ArrayListUnmanaged(u8) = .empty;
+        var n: usize = 0;
+        while (lines.next()) |l| : (n += 1) {
+            if (n == 4) break;
+            if (n > 0) try kept.append(arena, '\n');
+            try kept.appendSlice(arena, try stripAnsi(arena, l));
+        }
+        result.err = kept.items;
+        return;
+    }
+    const tests = try arena.dupe(TestCase, r.tests);
+    // `zig` prints a frame's path as the shell saw it — the cwd's
+    // REAL path (`/private/var/…` for a workspace named `/var/…` on
+    // macOS) — so a frame under the resolved workspace is made
+    // relative too, or the row's header is an absolute path clipped to
+    // nothing and Enter still opens it.
+    if (std.Io.Dir.realPathFileAbsoluteAlloc(io, workspace, arena)) |real| {
+        if (!std.mem.eql(u8, real, workspace)) for (tests) |*tc| {
+            if (std.fs.path.isAbsolute(tc.file)) tc.file = try relativeTo(arena, tc.file, real);
+        };
+    } else |_| {}
+    try locateSources(arena, io, cwd, workspace, tests, .zig);
+    r.tests = tests;
+    r.command = try cmdlineFor(arena, .zig, extra);
     result.run = r;
 }
 
@@ -1176,7 +1499,7 @@ pub fn handle(app: *App, result: *Result) Allocator.Error!void {
             break;
         };
         const f = p.run.count(.failed);
-        const ok = p.run.count(.passed);
+        const ok = p.run.passed();
         const s = p.run.count(.skipped);
         const arena = app.frame.allocator();
         if (f > 0) {
@@ -1210,7 +1533,7 @@ fn copyRun(a: Allocator, src: TestRun) Allocator.Error!TestRun {
     };
     const errs = try a.alloc([]const u8, src.global_errors.len);
     for (src.global_errors, 0..) |e, i| errs[i] = try a.dupe(u8, e);
-    return .{ .command = try a.dupe(u8, src.command), .tests = tests, .global_errors = errs, .summary = try a.dupe(u8, src.summary) };
+    return .{ .command = try a.dupe(u8, src.command), .tests = tests, .global_errors = errs, .summary = try a.dupe(u8, src.summary), .passed_unlisted = src.passed_unlisted };
 }
 
 // ─── commands ───────────────────────────────────────────────────────────
@@ -1249,6 +1572,7 @@ fn runAllFor(app: *App, runner: Runner) CommandError!void {
     return switch (runner) {
         .playwright => runAll(app),
         .dotnet => dotnetAll(app),
+        .zig => zigAll(app),
     };
 }
 
@@ -1256,6 +1580,7 @@ fn runFileFor(app: *App, runner: Runner) CommandError!void {
     return switch (runner) {
         .playwright => runFile(app),
         .dotnet => dotnetFile(app),
+        .zig => zigFile(app),
     };
 }
 
@@ -1263,6 +1588,7 @@ fn rerunFailedFor(app: *App, runner: Runner) CommandError!void {
     return switch (runner) {
         .playwright => rerunFailed(app),
         .dotnet => dotnetRerunFailed(app),
+        .zig => zigRerunFailed(app),
     };
 }
 
@@ -1325,6 +1651,84 @@ pub fn dotnetRerunFailed(app: *App) CommandError!void {
     _ = try runDotnet(app, root, &.{ "--filter", filter });
 }
 
+// ─── zig test, the commands ─────────────────────────────────────────────
+
+/// `zig <extra>` at `root` in the one tests pane.
+pub fn runZig(app: *App, root: []const u8, extra: []const []const u8) CommandError!PaneId {
+    return openRun(app, .zig, root, extra);
+}
+
+/// The nearest `build.zig` at or above the file, and `zig` on PATH.
+fn zigRoot(app: *App) CommandError![]const u8 {
+    const arena = app.frame.allocator();
+    const root = runners.findManifestDir(app.io, runners.startDir(app), &.{"build.zig"}, app.workspace) orelse
+        return app.diag.fail(arena, "zig.test: no build.zig found in {s} or any parent", .{app.workspace});
+    if (!runners.onPath(app, "zig")) {
+        try runners.offerInstall(app, "zig");
+        return error.Failed;
+    }
+    return root;
+}
+
+/// The active `.zig` file, relative to `root` (the run's cwd).
+fn zigFileRel(app: *App, root: []const u8) CommandError![]const u8 {
+    const arena = app.frame.allocator();
+    const e = app.activeEditor() orelse return app.diag.fail(arena, "open a .zig test file first", .{});
+    const path = e.buf.doc.path orelse return app.diag.fail(arena, "open a saved .zig test file first", .{});
+    if (!std.ascii.eqlIgnoreCase(std.fs.path.extension(path), ".zig")) return app.diag.fail(arena, "{s} is not a .zig file", .{app.relPath(path)});
+    return relativeTo(arena, path, root);
+}
+
+/// Does `<root>/build.zig` declare a `test-filter` option (as this
+/// repo's does, `b.option([]const u8, "test-filter", …)`)? Then
+/// `zig build test -Dtest-filter=<name>` runs one test through the
+/// project's own module wiring; without it a single file is tested
+/// directly.
+pub fn buildExposesTestFilter(io: Io, arena: Allocator, root: []const u8) bool {
+    const path = std.fs.path.join(arena, &.{ root, "build.zig" }) catch return false;
+    const text = Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(1 << 20)) catch return false;
+    return std.mem.indexOf(u8, text, "\"test-filter\"") != null;
+}
+
+/// `test.run_all` on a Zig project: `zig build test`.
+pub fn zigAll(app: *App) CommandError!void {
+    const root = try zigRoot(app);
+    _ = try runZig(app, root, &.{ "build", "test" });
+}
+
+/// `test.run_file`: `zig test <file>`, every test the file declares.
+pub fn zigFile(app: *App) CommandError!void {
+    const root = try zigRoot(app);
+    const rel = try zigFileRel(app, root);
+    _ = try runZig(app, root, &.{ "test", rel });
+}
+
+/// `test.run_at_cursor`: the `test "…"` above the cursor, through the
+/// build's filter when it has one, else the file's.
+pub fn zigAtCursor(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const root = try zigRoot(app);
+    const rel = try zigFileRel(app, root);
+    const e = app.activeEditor().?;
+    const name = runners.testNameAt(e.buf.editor.bytes(), e.buf.editor.cursor) orelse
+        return app.diag.fail(arena, "no test above the cursor", .{});
+    if (buildExposesTestFilter(app.io, arena, root)) {
+        _ = try runZig(app, root, &.{ "build", "test", try std.fmt.allocPrint(arena, "-Dtest-filter={s}", .{name}) });
+    } else {
+        _ = try runZig(app, root, &.{ "test", rel, "--test-filter", name });
+    }
+}
+
+/// `test.rerun_failed` / `R`: the last Zig run again — `zig` keeps no
+/// "last failed" of its own and a build's filter takes one name.
+pub fn zigRerunFailed(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const id = find(app) orelse return app.diag.fail(arena, "no Zig test run to re-run yet", .{});
+    const p = &app.panes.get(id).?.tests;
+    if (p.runner != .zig or p.state == .running) return app.diag.fail(arena, "no Zig test run to re-run yet", .{});
+    try start(app, id, p);
+}
+
 fn sortCmd(app: *App) CommandError!void {
     const at = activeTests(app) orelse return error.NoActivePane;
     at.p.sort = at.p.sort.next();
@@ -1376,10 +1780,12 @@ fn healCmd(app: *App) CommandError!void {
     const tool: []const u8 = switch (at.p.runner) {
         .playwright => "Playwright",
         .dotnet => ".NET",
+        .zig => "Zig",
     };
     const fence: []const u8 = switch (at.p.runner) {
         .playwright => "ts",
         .dotnet => "cs",
+        .zig => "zig",
     };
     const prompt = try std.fmt.allocPrint(arena,
         \\This {s} test is failing. Work out why and propose a fix — change the test or the code under test as appropriate. Be concise; reply with the patch in a fenced block plus a short note.
@@ -1693,6 +2099,193 @@ pub const fixture_trx =
     \\</TestRun>
 ;
 
+const fixture_zig_test =
+    \\1/4 shapes.test.rect area...OK
+    \\2/4 shapes.test.stack push pop...OK
+    \\3/4 shapes.test.deliberately failing...expected 5, found 4
+    \\FAIL (TestExpectedEqual)
+    \\/opt/homebrew/Cellar/zig/0.16.0_1/lib/zig/std/testing.zig:118:17: 0x104e49fab in expectEqualInner__anon_36368 (test)
+    \\                return error.TestExpectedEqual;
+    \\                ^
+    \\/opt/homebrew/Cellar/zig/0.16.0_1/lib/zig/std/testing.zig:83:5: 0x104e4a04f in expectEqual (test)
+    \\    return expectEqualInner(T, expected, actual);
+    \\    ^
+    \\/ws/src/shapes.zig:67:5: 0x104e4a08f in test.deliberately failing (test)
+    \\    try std.testing.expectEqual(@as(u64, 5), r.area()); // wrong on purpose: 4 != 5
+    \\    ^
+    \\4/4 shapes.test.comptime sum...SKIP
+    \\2 passed; 1 skipped; 1 failed.
+    \\error: the following test command failed with exit code 1:
+    \\.zig-cache/o/375fcc04b36b3a995783ff1c41e515fe/test --seed=0x4939d863
+    \\
+;
+
+const fixture_zig_build =
+    \\test
+    \\+- run test 4 pass, 1 fail (5 total)
+    \\error: 'shapes.test.deliberately failing' failed:
+    \\       expected 5, found 4
+    \\       /opt/homebrew/Cellar/zig/0.16.0_1/lib/zig/std/testing.zig:118:17: 0x1024763f7 in expectEqualInner__anon_36444 (test)
+    \\                       return error.TestExpectedEqual;
+    \\                       ^
+    \\       /ws/src/shapes.zig:67:5: 0x1024764db in test.deliberately failing (test)
+    \\           try std.testing.expectEqual(@as(u64, 5), r.area()); // wrong on purpose: 4 != 5
+    \\           ^
+    \\failed command: ./.zig-cache/o/60b5aa4b2908258e4b89e25782dcc59d/test --cache-dir=./.zig-cache --seed=0xee704cf3 --listen=-
+    \\
+    \\Build Summary: 1/3 steps succeeded (1 failed); 4/5 tests passed (1 failed)
+    \\test transitive failure
+    \\+- run test 4 pass, 1 fail (5 total)
+    \\
+    \\error: the following build command failed with exit code 1:
+    \\.zig-cache/o/bacf93cf55cce9d7fda50453218d86ac/build /opt/homebrew/bin/zig /opt/homebrew/lib/zig /ws .zig-cache /Users/x/.cache/zig --seed 0xee704cf3 -Z7bcad6dd5908b9d7 test
+    \\
+;
+
+test "parseZig: the test runner's lines are rows with the failure's message and its OWN frame; the build runner's report names the failures and the tally supplies the passes; a compile error is global" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const tr = try parseZig(a, fixture_zig_test, "/ws");
+    try t.expectEqual(@as(usize, 4), tr.tests.len);
+    try t.expectEqualStrings("rect area", tr.tests[0].title);
+    try t.expectEqualStrings("shapes", tr.tests[0].suite_path);
+    try t.expectEqual(Status.passed, tr.tests[0].status);
+    try t.expectEqual(Status.passed, tr.tests[1].status);
+    const f = tr.tests[2];
+    try t.expectEqual(Status.failed, f.status);
+    try t.expectEqualStrings("deliberately failing", f.title);
+    try t.expectEqualStrings("expected 5, found 4\nFAIL (TestExpectedEqual)", f.err.?);
+    // std's frames come first; the test's own is the location.
+    try t.expectEqualStrings("src/shapes.zig", f.file);
+    try t.expectEqual(@as(u32, 67), f.line);
+    try t.expectEqual(Status.skipped, tr.tests[3].status);
+    try t.expectEqualStrings("2 passed; 1 skipped; 1 failed.", tr.summary);
+    try t.expectEqual(@as(usize, 0), tr.passed_unlisted);
+    try t.expectEqual(@as(usize, 2), tr.passed());
+    try t.expectEqual(@as(usize, 0), tr.global_errors.len);
+
+    const build = try parseZig(a, fixture_zig_build, "/ws");
+    try t.expectEqual(@as(usize, 1), build.tests.len);
+    try t.expectEqual(Status.failed, build.tests[0].status);
+    try t.expectEqualStrings("deliberately failing", build.tests[0].title);
+    try t.expectEqualStrings("expected 5, found 4", build.tests[0].err.?);
+    try t.expectEqualStrings("src/shapes.zig", build.tests[0].file);
+    try t.expectEqual(@as(u32, 67), build.tests[0].line);
+    try t.expectEqualStrings("Build Summary: 1/3 steps succeeded (1 failed); 4/5 tests passed (1 failed)", build.summary);
+    try t.expectEqual(@as(usize, 4), build.passed_unlisted);
+    try t.expectEqual(@as(usize, 4), build.passed());
+    try t.expectEqual(@as(usize, 1), build.count(.failed));
+
+    const broken = try parseZig(a, "src/a.zig:3:5: error: expected ';', found '}'\n    x\n    ^\nerror: the following command failed\n", "/ws");
+    try t.expectEqual(@as(usize, 0), broken.tests.len);
+    try t.expectEqual(@as(usize, 1), broken.global_errors.len);
+    try t.expectEqualStrings("src/a.zig:3:5: error: expected ';', found '}'", broken.global_errors[0]);
+    // A doctest, and a bare name.
+    try t.expectEqualStrings("Rect", splitZigName("shapes.decltest.Rect").title);
+    try t.expectEqualStrings("shapes", splitZigName("shapes.decltest.Rect").suite);
+    try t.expectEqualStrings("x", splitZigName("test.x").title);
+    try t.expectEqualStrings("plain", splitZigName("plain").title);
+}
+
+test "locateSources (.zig): a passed row is found by its `test \"…\"` line; zig-out/ and .zig-cache/ are skipped" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    try tmp.dir.createDirPath(t.io, "src");
+    try tmp.dir.createDirPath(t.io, "zig-out/bin");
+    try tmp.dir.createDirPath(t.io, ".zig-cache/o");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "zig-out/bin/a.zig", .data = "test \"rect area\" {}\n" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = ".zig-cache/o/a.zig", .data = "test \"rect area\" {}\n" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "src/shapes.zig", .data = "const std = @import(\"std\");\n\ntest \"rect area\" {\n    try std.testing.expect(true);\n}\n\ntest \"rect\" {}\n" });
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tests = [_]TestCase{
+        .{ .title = "rect area", .suite_path = "shapes", .file = "", .line = 0, .status = .passed, .duration_ms = 0, .err = null, .trace_path = null },
+        .{ .title = "rect", .suite_path = "shapes", .file = "", .line = 0, .status = .passed, .duration_ms = 0, .err = null, .trace_path = null },
+        .{ .title = "nowhere", .suite_path = "shapes", .file = "", .line = 0, .status = .passed, .duration_ms = 0, .err = null, .trace_path = null },
+    };
+    try locateSources(a, t.io, root, root, &tests, .zig);
+    try t.expectEqualStrings("src/shapes.zig", tests[0].file);
+    try t.expectEqual(@as(u32, 3), tests[0].line);
+    try t.expectEqualStrings("src/shapes.zig", tests[1].file);
+    try t.expectEqual(@as(u32, 7), tests[1].line);
+    try t.expectEqualStrings("", tests[2].file);
+}
+
+test "test.run_at_cursor on a Zig project: `zig build test -Dtest-filter=<name>` when build.zig declares the option, `zig test <file> --test-filter <name>` when it does not; run_file and run_all" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    try tmp.dir.createDirPath(t.io, "src");
+    try tmp.dir.createDirPath(t.io, "bin");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "build.zig", .data = "const std = @import(\"std\");\npub fn build(b: *std.Build) void {\n    _ = b.option([]const u8, \"test-filter\", \"only these\");\n}\n" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "src/a.zig", .data = "const std = @import(\"std\");\ntest \"one\" {\n    try std.testing.expect(true);\n}\ntest \"two\" {\n    try std.testing.expect(true);\n}\n" });
+    // A `zig` of our own on the App's PATH, so the pane opens.
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "bin/zig", .data = "#!/bin/sh\necho \"1 passed; 0 skipped; 0 failed.\" >&2\n" });
+    const bin_path = try std.fs.path.join(t.allocator, &.{ root, "bin", "zig" });
+    defer t.allocator.free(bin_path);
+    try Io.Dir.cwd().setFilePermissions(t.io, bin_path, .fromMode(0o755), .{});
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    const bin = try std.fs.path.join(t.allocator, &.{ root, "bin" });
+    defer t.allocator.free(bin);
+    try env.put("PATH", bin);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 120, .rows = 30, .env = &env });
+    defer app.deinit();
+    app.tree.visible = false;
+    const file = try std.fs.path.join(t.allocator, &.{ root, "src", "a.zig" });
+    defer t.allocator.free(file);
+    const ed = try app.openPath(file);
+    try t.expectEqual(runners.Project.zig, runners.detectProject(&app).?);
+    // Inside `two` (line 6, 0-based 5).
+    app.activeEditor().?.buf.editor.placeCursor(5, 4);
+    try command.run(&app, .{ .static = .@"test.run_at_cursor" });
+    const id = find(&app).?;
+    const p = &app.panes.get(id).?.tests;
+    try t.expectEqual(Runner.zig, p.runner);
+    try t.expectEqualStrings(root, p.cwd.?);
+    try t.expectEqual(@as(usize, 3), p.last_args.len);
+    try t.expectEqualStrings("build", p.last_args[0]);
+    try t.expectEqualStrings("test", p.last_args[1]);
+    try t.expectEqualStrings("-Dtest-filter=two", p.last_args[2]);
+    p.group.cancel(t.io);
+    // Without the option: the file, filtered.
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "build.zig", .data = "const std = @import(\"std\");\npub fn build(b: *std.Build) void {\n    _ = b;\n}\n" });
+    app.showPane(ed);
+    try command.run(&app, .{ .static = .@"test.run_at_cursor" });
+    try t.expectEqual(@as(usize, 4), p.last_args.len);
+    try t.expectEqualStrings("test", p.last_args[0]);
+    try t.expectEqualStrings("src/a.zig", p.last_args[1]);
+    try t.expectEqualStrings("--test-filter", p.last_args[2]);
+    try t.expectEqualStrings("two", p.last_args[3]);
+    p.group.cancel(t.io);
+    app.showPane(ed);
+    try command.run(&app, .{ .static = .@"test.run_file" });
+    try t.expectEqual(@as(usize, 2), p.last_args.len);
+    try t.expectEqualStrings("test", p.last_args[0]);
+    try t.expectEqualStrings("src/a.zig", p.last_args[1]);
+    p.group.cancel(t.io);
+    app.showPane(ed);
+    try command.run(&app, .{ .static = .@"test.run_all" });
+    try t.expectEqual(@as(usize, 2), p.last_args.len);
+    try t.expectEqualStrings("build", p.last_args[0]);
+    try t.expectEqualStrings("test", p.last_args[1]);
+    p.group.cancel(t.io);
+    // A result lands: the build format's tally is the pass count.
+    p.generation +%= 1;
+    const r = try Result.create(t.allocator, p.generation, id);
+    r.run = try parseZig(r.arena.allocator(), fixture_zig_build, "/ws");
+    try handle(&app, r);
+    try t.expectEqual(State.done, p.state);
+    try t.expectEqualStrings("tests: 1 failed, 4 passed", app.lastToast().?);
+    try t.expectEqualStrings("deliberately failing", p.selected().?.title);
+}
+
 test "parseTrx: outcomes, durations to the ms, the class from the definitions, the message and the frame unescaped" {
     var arena_state = std.heap.ArenaAllocator.init(t.allocator);
     defer arena_state.deinit();
@@ -1735,7 +2328,7 @@ test "locateSources: a passed row is found by class and method in the project's 
         .{ .title = "Gone", .suite_path = "Acme.CalcTests", .file = "", .line = 0, .status = .passed, .duration_ms = 1, .err = null, .trace_path = null },
         .{ .title = "Kept", .suite_path = "", .file = "x.cs", .line = 3, .status = .failed, .duration_ms = 1, .err = null, .trace_path = null },
     };
-    try locateSources(a, t.io, root, root, &tests);
+    try locateSources(a, t.io, root, root, &tests, .cs);
     try t.expectEqualStrings("Tests/CalcTests.cs", tests[0].file);
     try t.expectEqual(@as(u32, 6), tests[0].line);
     try t.expectEqualStrings("Tests/CalcTests.cs", tests[1].file);

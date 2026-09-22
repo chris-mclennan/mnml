@@ -1,0 +1,15 @@
+# zl: a `.lsp` server written to the workspace config AFTER launch is
+# found for an extension no default owns (`.fk`, every lsp_fake_* file)
+# but NOT for one a default owns. `app/lsp.zig ensureServer` re-reads the
+# config (`refreshServers`) only when `specFor` matched nothing — and the
+# built-in `zig` spec always matches `.zig` — so the user's server is never
+# consulted: the default `zls` is tried, is not on PATH, and the chip reads
+# `LSP?`. The same `.fake` entry with `.extensions = .{ "fk" }` starts.
+# A user who adds `.lsp.zed` (or `.lsp.zig.cmd`) to a workspace config
+# while mnml runs gets the same: the file must be reopened after a restart.
+write build.zig "const std = @import(\"std\");\n"
+write src/a.zig "const Rect = struct { w: u32, h: u32 };\n"
+write .mnml/config.zon .{ .lsp = .{ .fake = .{ .cmd = "$MNML_FAKE_LSP", .args = .{ "--log", "lsp.log" }, .extensions = .{ "zig" }, .root_markers = .{ "build.zig" } } } }
+open src/a.zig
+expect screen contains "LSP 1"
+expect file lsp.log contains "initialize"

@@ -89,7 +89,7 @@ fn drawTally(ui: Ui, r: Rect, p: *const tests_pane.TestsPane, wobbly: []const bo
     var bold_err = Theme.onBg(t.error_fg, t.bg.bg);
     bold_err.bold = true;
     const cells = [_]Cell{
-        .{ .n = run.count(.passed), .glyph = tests_pane.Status.passed.glyph(ui.ascii), .style = Theme.onBg(t.info_fg, t.bg.bg) },
+        .{ .n = run.passed(), .glyph = tests_pane.Status.passed.glyph(ui.ascii), .style = Theme.onBg(t.info_fg, t.bg.bg) },
         .{ .n = run.count(.failed), .glyph = tests_pane.Status.failed.glyph(ui.ascii), .style = bold_err },
         .{ .n = run.count(.flaky), .glyph = tests_pane.Status.flaky.glyph(ui.ascii), .style = Theme.onBg(t.warn_fg, t.bg.bg) },
         .{ .n = run.count(.skipped), .glyph = tests_pane.Status.skipped.glyph(ui.ascii), .style = Theme.onBg(t.muted, t.bg.bg) },
@@ -99,7 +99,7 @@ fn drawTally(ui: Ui, r: Rect, p: *const tests_pane.TestsPane, wobbly: []const bo
         if (c.n == 0) continue;
         x += ui.putStr(x, r.y, r.right() -| x, ui.fmt("{s} {d} ", .{ c.glyph, c.n }), c.style);
     }
-    if (run.tests.len == 0) _ = ui.putStr(x, r.y, r.right() -| x, "(no tests)", Theme.onBg(t.muted, t.bg.bg));
+    if (run.tests.len == 0 and run.passed_unlisted == 0) _ = ui.putStr(x, r.y, r.right() -| x, "(no tests)", Theme.onBg(t.muted, t.bg.bg));
 }
 
 /// Width-aware: the whole legend, a shorter one, the two keys that matter.

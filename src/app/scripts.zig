@@ -43,6 +43,7 @@ const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const command = @import("../core/command.zig");
+const script_list = @import("script_list.zig");
 const alloc_mod = @import("../core/alloc.zig");
 const CommandError = command.CommandError;
 const lua_mod = @import("../scripting/lua.zig");
@@ -1195,6 +1196,58 @@ test "install from a directory: the trust dialog lists the claims, Cancel runs n
     try t.expect(app.scripts.find("greeter") == null);
     try t.expect(app.dyn_commands.get("user.greet") == null);
     try t.expectError(error.FileNotFound, tmp.dir.access(t.io, "data/scripts/greeter/script.zon", .{}));
+}
+
+test "an installed script's `mnml.list{}` asks ITS state for the rows — the install lands, the rows are there, `l:refresh()` and the row menu reach the same state" {
+    // The shipped `todo-list` does this and aborted the process at
+    // `script_list.refresh` (`pushRef` asserted the ref's state), because
+    // the rows fn was called through `init.lua`'s state.
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, "data");
+    try writeScript(tmp.dir, t.io, "src", "lister",
+        \\.{ .name = "lister", .api = 1, .version = "1.0.0", .commands = .{ "user.lister" } }
+    ,
+        \\calls = 0
+        \\lst = mnml.list{ title = "L (lua)", sort = { "Name" }, rows = function(sort)
+        \\  calls = calls + 1
+        \\  return { { label = "row " .. calls, detail = "x:1" } }
+        \\end, on_enter = function(row) mnml.toast("enter " .. row.label) end,
+        \\on_menu = function(row) return { { label = "Act", run = function() mnml.toast("act " .. row.label) end } } end }
+        \\mnml.section{ id = "lister", title = "L (lua)", glyph = "+", ascii = "L", list = lst, side = "left", after = "todos" }
+        \\mnml.command{ id = "lister", run = function() lst:refresh() end }
+    );
+    const data = try std.fs.path.join(t.allocator, &.{ root, "data" });
+    defer t.allocator.free(data);
+    const src = try std.fs.path.join(t.allocator, &.{ root, "src", "lister" });
+    defer t.allocator.free(src);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .data_root = data, .cols = 100, .rows = 30 });
+    defer app.deinit();
+    try acceptInstall(&app, src);
+    try app.handle(.{ .key = app_mod.Key.char('i') });
+    const e = app.scripts.find("lister").?;
+    try t.expect(e.state != null);
+    try t.expectEqualStrings("scripts: installed lister", app.lastToast().?);
+    // The list is registered in the installed state and its rows landed.
+    try t.expectEqual(@as(usize, 1), app.script_lists.lists.items.len);
+    const l = &app.script_lists.lists.items[0];
+    try t.expectEqual(e.id, l.rows_fn.state);
+    try t.expectEqual(@as(usize, 1), l.cache.len);
+    try t.expectEqualStrings("row 1", l.cache[0].label);
+    // `l:refresh()` from the script's own command, and the app's refresh
+    // (the chip, the sort change), both call the rows fn where it lives.
+    try command.runNamed(&app, "user.lister");
+    try t.expectEqualStrings("row 2", l.cache[0].label);
+    try script_list.refresh(&app, l);
+    try t.expectEqualStrings("row 3", l.cache[0].label);
+    // Enter reaches `on_enter` there too.
+    try script_list.activate(&app, l, 0);
+    try t.expectEqualStrings("enter row 3", app.lastToast().?);
+    // The state is untouched: `init.lua`'s registry never held the ref.
+    try t.expectEqual(@as(i32, 0), e.state.?.L.getTop());
 }
 
 test "a manifest whose api is higher than this build's is a row that says so, and never runs" {

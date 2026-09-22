@@ -56,6 +56,7 @@ const config = @import("../config/root.zig");
 const dap_client = @import("../dap/client.zig");
 const build_options = @import("build_options");
 const cmd_view = @import("cmd_view.zig");
+const runners = @import("runners.zig");
 const side = @import("side.zig");
 const layout_mod = @import("layout.zig");
 const find_mod = @import("find.zig");
@@ -576,6 +577,24 @@ fn refreshServers(app: *App) Allocator.Error!void {
     app.cfg.lsp = fresh.config.lsp;
 }
 
+/// `App.reloadConfig` landed a fresh `.lsp` table: the one-shot re-read
+/// is armed again and the servers that could not start are forgotten,
+/// so a server the reload just named is tried on the next open instead
+/// of staying dead behind the miss recorded against the old config.
+pub fn configReloaded(app: *App) void {
+    app.lsp.servers_refreshed = false;
+    if (app.lsp.servers_loaded) |*l| {
+        l.deinit();
+        app.lsp.servers_loaded = null;
+    }
+    var dk = app.lsp.dead.keyIterator();
+    while (dk.next()) |k| app.gpa.free(k.*);
+    app.lsp.dead.clearRetainingCapacity();
+    for (app.lsp.missing.items) |m| m.deinit(app.gpa);
+    app.lsp.missing.clearRetainingCapacity();
+    app.needs_render = true;
+}
+
 /// The server for `path`, started if need be. Null when there is no
 /// spec or the binary is missing (toasted once).
 pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
@@ -598,7 +617,14 @@ pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
     // as for a debug adapter: `$MNML_FAKE_LSP` is how the tests name
     // the fake server.
     const cmd = try dap_client.expandEnv(arena, spec.cmd, &app.env);
-    if (!try onPath(app, arena, cmd)) {
+    // Resolved ONCE, on the App's PATH, and the spawn gets what the walk
+    // found: `std.process.spawn` looks a bare argv[0] up on the
+    // process's own PATH, not on the map it is handed, so a server on
+    // the App's PATH alone (a `# env: PATH=…` header, an in-app env
+    // edit) was found here and then `FileNotFound` there.
+    var where: [std.fs.max_path_bytes]u8 = undefined;
+    const found = runners.pathOf(app.io, &app.env, &where, cmd);
+    if (found == null) {
         try markDead(app, spec.name);
         // // changed (lsp-defaults): a row from the default table the
         // user never named is `.editor.lsp_missing_defaults`' business —
@@ -638,7 +664,7 @@ pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
     const root = try findRoot(app, arena, path, spec.root_markers);
     for (app.lsp.servers.items) |s| if (std.mem.eql(u8, s.name, spec.name) and std.mem.eql(u8, s.root, root) and !s.transport.isDead()) return s;
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
-    try argv.append(arena, try resolveOnPath(app, arena, cmd));
+    try argv.append(arena, try arena.dupe(u8, found.?));
     for (spec.args) |a| try argv.append(arena, try dap_client.expandEnv(arena, a, &app.env));
     const id = app.lsp.next_id;
     const s = Server.spawn(app.gpa, app.io, &app.events, id, .{
@@ -1035,7 +1061,7 @@ pub fn tick(app: *App, now: i64) Allocator.Error!void {
 }
 
 /// The few requests a server makes of its client.
-fn handleServerRequest(app: *App, s: *Server, id: i64, method: []const u8, params: ?Value) Allocator.Error!void {
+fn handleServerRequest(app: *App, s: *Server, id: jsonrpc.Id, method: []const u8, params: ?Value) Allocator.Error!void {
     if (std.mem.eql(u8, method, "workspace/configuration")) {
         // One answer per item: the configured settings, or null.
         const items: []const Value = if (params) |p| (jsonrpc.getArr(p, "items") orelse &.{}) else &.{};
@@ -3144,8 +3170,10 @@ test {
 
 // ─── a scripted language server, in process ─────────────────────────────
 
-fn lspReply(io: Io, gpa: Allocator, out: Io.File, id: i64, result: []const u8) void {
-    const text = std.fmt.allocPrint(gpa, "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"result\":{s}}}", .{ id, result }) catch return;
+fn lspReply(io: Io, gpa: Allocator, out: Io.File, id: jsonrpc.Id, result: []const u8) void {
+    const id_json = id.json(gpa) catch return;
+    defer gpa.free(id_json);
+    const text = std.fmt.allocPrint(gpa, "{{\"jsonrpc\":\"2.0\",\"id\":{s},\"result\":{s}}}", .{ id_json, result }) catch return;
     defer gpa.free(text);
     jsonrpc.writeFrame(io, out, text) catch {};
 }
@@ -3280,6 +3308,80 @@ fn fakeLanguageServer(io: Io, gpa: Allocator, in: Io.File, out: Io.File) Io.Canc
             else => {},
         }
     }
+}
+
+/// zls's shape: right after `initialized`, `workspace/configuration`
+/// with a STRING id. The reply's arrival — and whether it carried the
+/// configured settings — is announced as an Error-level `showMessage`,
+/// the one kind the app toasts.
+fn stringIdServer(io: Io, gpa: Allocator, in: Io.File, out: Io.File) Io.Cancelable!void {
+    var buf: [16384]u8 = undefined;
+    var fr = in.readerStreaming(io, &buf);
+    while (true) {
+        const body = jsonrpc.readBody(gpa, &fr.interface) catch return;
+        defer gpa.free(body);
+        var parsed = std.json.parseFromSlice(Value, gpa, body, .{}) catch return;
+        defer parsed.deinit();
+        const v = parsed.value;
+        if (jsonrpc.getStr(v, "method") == null) {
+            // A reply. The string-id one is ours; an integer id is a
+            // request this fake never made.
+            if (jsonrpc.getStr(v, "id")) |sid| {
+                const result = jsonrpc.getArr(v, "result") orelse &.{};
+                const on = result.len == 1 and (jsonrpc.getBool(result[0], "enable_build_on_save") orelse false);
+                const note = std.fmt.allocPrint(gpa, "{{\"jsonrpc\":\"2.0\",\"method\":\"window/showMessage\",\"params\":{{\"type\":1,\"message\":\"cfg {s} {s}\"}}}}", .{ sid, if (on) "on" else "off" }) catch return;
+                defer gpa.free(note);
+                jsonrpc.writeFrame(io, out, note) catch return;
+            }
+            continue;
+        }
+        switch (jsonrpc.classify(v)) {
+            .request => |rq| {
+                if (std.mem.eql(u8, rq.method, "initialize")) {
+                    lspReply(io, gpa, out, rq.id, "{\"capabilities\":{\"textDocumentSync\":1}}");
+                } else lspReply(io, gpa, out, rq.id, "null");
+            },
+            .notification => |n| {
+                if (std.mem.eql(u8, n.method, "exit")) return;
+                if (std.mem.eql(u8, n.method, "initialized")) {
+                    jsonrpc.writeFrame(io, out, "{\"jsonrpc\":\"2.0\",\"id\":\"i_haz_configuration\",\"method\":\"workspace/configuration\",\"params\":{\"items\":[{\"section\":\"zls\"}]}}") catch return;
+                }
+            },
+            else => {},
+        }
+    }
+}
+
+test "a server's string-id `workspace/configuration` (zls's) is answered under the same id, with the configured settings" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    const io = app.io;
+    const c2s = try Io.Threaded.pipe2(.{});
+    const s2c = try Io.Threaded.pipe2(.{});
+    const F = Io.File;
+    const flags: F.Flags = .{ .nonblocking = false };
+    const in_r = F{ .handle = c2s[0], .flags = flags };
+    const out_w = F{ .handle = s2c[1], .flags = flags };
+    var group: Io.Group = .init;
+    try group.concurrent(io, stringIdServer, .{ io, gpa, in_r, out_w });
+    const s = try Server.initFiles(gpa, io, &app.events, app.lsp.next_id, F{ .handle = c2s[1], .flags = flags }, F{ .handle = s2c[0], .flags = flags }, .{ .name = "zls", .argv = &.{"fake-zls"}, .root = "/tmp", .settings = "{\"enable_build_on_save\":true}" });
+    app.lsp.next_id += 1;
+    try app.lsp.servers.append(gpa, s);
+    try s.initialize();
+    const Cond = struct {
+        fn answered(a: *App) bool {
+            return std.mem.eql(u8, a.lastToast() orelse return false, "LSP: cfg i_haz_configuration on");
+        }
+    };
+    // Read as an integer the id was null, the request a notification,
+    // and this wait ran out: nothing ever went back.
+    try pumpUntil(&app, &app, Cond.answered, 5000);
+    retireServer(&app, s);
+    try group.await(io);
+    in_r.close(io);
+    out_w.close(io);
 }
 
 fn pumpUntil(app: *App, ctx: anytype, comptime cond: fn (@TypeOf(ctx)) bool, budget_ms: u32) !void {
@@ -3525,6 +3627,96 @@ fn pumpQuiet(app: *App, ms: u32) !void {
         try app.tick(App.nowMs(app.io));
         try app.render();
     }
+}
+
+/// One server named `name`, ready, for the fake-lsp tests below.
+fn oneReadyServer(app: *App, name: []const u8) bool {
+    const servers = app.lsp.servers.items;
+    return servers.len == 1 and servers[0].ready and std.mem.eql(u8, servers[0].name, name);
+}
+
+test "mnml-fake-lsp: a `.lsp` entry written AFTER launch for an extension a default owns (`.zig`) is the server that starts, not the default" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    const exe = build_options.fake_lsp_exe;
+    Io.Dir.cwd().access(io, exe, .{}) catch return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const ws = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+    try tmp.dir.createDirPath(io, "src");
+    try tmp.dir.writeFile(io, .{ .sub_path = "build.zig", .data = "const std = @import(\"std\");\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "src/a.zig", .data = "const Rect = struct { w: u32 };\n" });
+    const file = try std.fs.path.join(gpa, &.{ ws, "src", "a.zig" });
+    defer gpa.free(file);
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try env.put("MNML_FAKE_LSP", exe);
+    // No zls anywhere: the default would be a miss.
+    try env.put("PATH", "");
+    var app = try App.initWith(gpa, io, .{ .workspace = ws, .cols = 100, .rows = 30, .env = &env, .workspace_trusted = true });
+    defer app.deinit();
+    app.tree.visible = false;
+    try testing.expect(app.cfg.lsp.get("fake") == null);
+    // Written after launch — the config in memory knows nothing of it.
+    try tmp.dir.createDirPath(io, ".mnml");
+    try tmp.dir.writeFile(io, .{ .sub_path = ".mnml/config.zon", .data = ".{ .lsp = .{ .fake = .{ .cmd = \"$MNML_FAKE_LSP\", .args = .{ \"--log\", \"lsp.log\" }, .extensions = .{ \"zig\" }, .root_markers = .{ \"build.zig\" } } } }" });
+    _ = try app.openPath(file);
+    // The built-in `zig` row matched first before, the fresh config
+    // was never read, and the reader got `LSP?` plus `brew install zls`.
+    const Cond = struct {
+        fn fakeUp(a: *App) bool {
+            return oneReadyServer(a, "fake");
+        }
+    };
+    try pumpUntil(&app, &app, Cond.fakeUp, 30_000);
+    try testing.expect(!app.lsp.dead.contains("zig"));
+    try testing.expectEqual(@as(usize, 0), app.lsp.missing.items.len);
+    try testing.expectEqualStrings(ws, app.lsp.servers.items[0].root);
+}
+
+test "mnml-fake-lsp: a server found on the App's PATH is the one spawned — a shim dir the process's own PATH never had" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    const io = testing.io;
+    const exe = build_options.fake_lsp_exe;
+    Io.Dir.cwd().access(io, exe, .{}) catch return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const ws = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+    try tmp.dir.createDirPath(io, "shim");
+    try tmp.dir.writeFile(io, .{ .sub_path = "shim/fakelsp-shim", .data = "#!/bin/sh\nexec \"$MNML_FAKE_LSP\" --log lsp.log \"$@\"\n" });
+    const shim = try std.fs.path.join(gpa, &.{ ws, "shim", "fakelsp-shim" });
+    defer gpa.free(shim);
+    try Io.Dir.cwd().setFilePermissions(io, shim, .fromMode(0o755), .{});
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.fk", .data = "fn foo() {}\n" });
+    try tmp.dir.createDirPath(io, ".mnml");
+    try tmp.dir.writeFile(io, .{ .sub_path = ".mnml/config.zon", .data = ".{ .lsp = .{ .fake = .{ .cmd = \"fakelsp-shim\", .extensions = .{ \"fk\" } } } }" });
+    const file = try std.fs.path.join(gpa, &.{ ws, "a.fk" });
+    defer gpa.free(file);
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try env.put("MNML_FAKE_LSP", exe);
+    const shim_dir = try std.fs.path.join(gpa, &.{ ws, "shim" });
+    defer gpa.free(shim_dir);
+    try env.put("PATH", shim_dir);
+    var app = try App.initWith(gpa, io, .{ .workspace = ws, .cols = 100, .rows = 30, .env = &env, .workspace_trusted = true });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openPath(file);
+    // `onPath` said yes and the spawn said `FileNotFound` before: the
+    // bare name was looked up again, on this process's PATH.
+    const Cond = struct {
+        fn fakeUp(a: *App) bool {
+            return oneReadyServer(a, "fake");
+        }
+    };
+    try pumpUntil(&app, &app, Cond.fakeUp, 30_000);
+    try testing.expect(!app.lsp.dead.contains("fake"));
+    if (app.lastToast()) |toast| try testing.expect(std.mem.indexOf(u8, toast, "unavailable") == null);
+    // What was spawned is the shim's full path, not the bare name.
+    try testing.expectEqualStrings(shim, app.lsp.servers.items[0].cmd);
 }
 
 test "mnml-fake-lsp: a rename's three edits undo with one `u` and redo with one ctrl+r; the undo opens no popup; a motion left of the last edit still renders (hunt-vim-2026-09-09 #1, #2)" {

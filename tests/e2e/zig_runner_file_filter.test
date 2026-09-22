@@ -1,0 +1,33 @@
+# zl: a Zig project whose build.zig declares NO `test-filter` option
+# cannot run one test through `zig build`, so `test.run_at_cursor`
+# tests the file directly: `zig test <file> --test-filter <name>`.
+# `test.run_all` is `zig build test` either way; the build runner names
+# only the failures, so the passes come from its `Build Summary` tally
+# (`✓ 1 ✗ 1`, not `✗ 1` alone) and the failure's row carries its own
+# frame's file:line. The `zig` is the corpus shim (tools/shims/zig).
+# width: 160
+# env: PATH=${MNML_SHIMS}:${PATH}
+write build.zig "const std = @import(\"std\");\npub fn build(b: *std.Build) void {\n    _ = b;\n}\n"
+write src/a.zig "const std = @import(\"std\");\ntest \"one\" {\n    try std.testing.expect(true);\n}\ntest \"two\" {\n    try std.testing.expectEqual(5, 4);\n}\n"
+open src/a.zig
+command view.toggle_tree
+command editor.use_vim
+
+ex 6
+command test.run_at_cursor
+expect pane tests
+expect screen contains "zig test src/a.zig --test-filter two"
+key esc
+expect pane a.zig
+
+command test.run_all
+expect pane tests
+expect screen contains "zig build test"
+expect screen contains "1/2 tests passed (1 failed)"
+expect screen contains "two"
+expect screen contains "expected 5, found 4"
+expect screen contains "tests: 1 failed, 1 passed"
+expect screen contains "src/a.zig"
+key enter
+expect pane a.zig
+expect screen contains "Ln 6/"

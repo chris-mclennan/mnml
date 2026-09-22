@@ -1,0 +1,15 @@
+# zl: a language server found on the App's PATH is not the one spawned.
+# `onPath` resolves a bare `.cmd` against `app.env`'s PATH (what a
+# `# env: PATH=…` header or any in-app env edit sets) and says yes; the
+# spawn then resolves the same bare name against the PROCESS environment,
+# misses, and toasts `LSP: fakelsp-shim unavailable (FileNotFound)` for a
+# binary the same App just found. `.fk` has no default server, so the
+# workspace `.lsp.fake` is read (see zl-e2e-lsp-config-refresh-default-ext).
+# env: PATH=${MNML_E2E_WORKSPACE}/shim:${PATH}
+shell mkdir -p shim && printf '#!/bin/sh\nexec "$MNML_FAKE_LSP" --log lsp.log "$@"\n' > shim/fakelsp-shim && chmod +x shim/fakelsp-shim
+write .fkroot ""
+write .mnml/config.zon .{ .lsp = .{ .fake = .{ .cmd = "fakelsp-shim", .extensions = .{ "fk" }, .root_markers = .{ ".fkroot" } } } }
+write src/a.fk "fn foo() {}\n"
+open src/a.fk
+expect screen contains "LSP 1"
+expect screen lacks "FileNotFound"

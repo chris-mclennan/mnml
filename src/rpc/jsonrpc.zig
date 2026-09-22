@@ -471,11 +471,55 @@ pub fn asInt(v: Value) ?i64 {
     };
 }
 
-/// A JSON-RPC 2.0 envelope classified. `id` is the integer id when
-/// there is one (string ids are not something we send).
+/// A request id as the wire carries it: JSON-RPC allows `integer |
+/// string`, and zls asks its client with strings (`workspace/
+/// configuration` comes as `"id":"i_haz_configuration"`). The ids WE
+/// send are integers, so a response is matched on those alone; a
+/// server's request keeps whichever kind it used, and the reply echoes
+/// it back verbatim — a request answered under a different id is a
+/// request never answered.
+pub const Id = union(enum) {
+    int: i64,
+    str: []const u8,
+
+    /// The id as JSON: the integer, or the string quoted and escaped.
+    pub fn json(self: Id, gpa: Allocator) Allocator.Error![]u8 {
+        switch (self) {
+            .int => |i| return std.fmt.allocPrint(gpa, "{d}", .{i}),
+            .str => |s| {
+                var w: Io.Writer.Allocating = .init(gpa);
+                errdefer w.deinit();
+                std.json.Stringify.encodeJsonString(s, .{}, &w.writer) catch return error.OutOfMemory;
+                return w.toOwnedSlice();
+            },
+        }
+    }
+
+    pub fn eql(a: Id, b: Id) bool {
+        return switch (a) {
+            .int => |x| b == .int and b.int == x,
+            .str => |x| b == .str and std.mem.eql(u8, b.str, x),
+        };
+    }
+};
+
+/// `key` as a request id: an integer (a float that is one), or a
+/// string. Anything else — `null`, an object — is no id.
+pub fn getId(v: Value, key: []const u8) ?Id {
+    const f = getField(v, key) orelse return null;
+    return switch (f) {
+        .integer => |i| .{ .int = i },
+        .float => |x| .{ .int = @intFromFloat(x) },
+        .string => |s| .{ .str = s },
+        else => null,
+    };
+}
+
+/// A JSON-RPC 2.0 envelope classified. A response's `id` is the integer
+/// we sent; a server's request carries its own `Id`, string or integer.
 pub const Kind = union(enum) {
     response: struct { id: i64, result: ?Value, err: ?Value },
-    request: struct { id: i64, method: []const u8, params: ?Value },
+    request: struct { id: Id, method: []const u8, params: ?Value },
     notification: struct { method: []const u8, params: ?Value },
     unknown,
 };
@@ -484,7 +528,7 @@ pub fn classify(v: Value) Kind {
     const id = getInt(v, "id");
     const method = getStr(v, "method");
     if (method) |m| {
-        if (id) |i| return .{ .request = .{ .id = i, .method = m, .params = getField(v, "params") } };
+        if (getId(v, "id")) |i| return .{ .request = .{ .id = i, .method = m, .params = getField(v, "params") } };
         return .{ .notification = .{ .method = m, .params = getField(v, "params") } };
     }
     if (id) |i| {
@@ -558,9 +602,41 @@ test "classify: response / request / notification" {
     var p2 = try std.json.parseFromSlice(Value, testing.allocator, "{\"id\":7,\"method\":\"window/showMessageRequest\",\"params\":{}}", .{});
     defer p2.deinit();
     try testing.expectEqualStrings("window/showMessageRequest", classify(p2.value).request.method);
+    try testing.expectEqual(@as(i64, 7), classify(p2.value).request.id.int);
     var p3 = try std.json.parseFromSlice(Value, testing.allocator, "{\"method\":\"textDocument/publishDiagnostics\"}", .{});
     defer p3.deinit();
     try testing.expectEqualStrings("textDocument/publishDiagnostics", classify(p3.value).notification.method);
+}
+
+test "classify: a server's request with a STRING id is a request, not a notification, and the id echoes back as JSON" {
+    // zls asks `workspace/configuration` with `"id":"i_haz_configuration"`;
+    // read as an integer it was null, so the request was filed as a
+    // notification and never answered — and zls, waiting on that reply
+    // for its `zig_lib_path`, answered null for everything in std.
+    var p = try std.json.parseFromSlice(Value, testing.allocator, "{\"jsonrpc\":\"2.0\",\"id\":\"i_haz_configuration\",\"method\":\"workspace/configuration\",\"params\":{\"items\":[{\"section\":\"zls\"}]}}", .{});
+    defer p.deinit();
+    const k = classify(p.value);
+    try testing.expect(k == .request);
+    try testing.expectEqualStrings("workspace/configuration", k.request.method);
+    try testing.expectEqualStrings("i_haz_configuration", k.request.id.str);
+    const echoed = try k.request.id.json(testing.allocator);
+    defer testing.allocator.free(echoed);
+    try testing.expectEqualStrings("\"i_haz_configuration\"", echoed);
+    // The escape is JSON's: a quote or a backslash in the id survives.
+    const tricky: Id = .{ .str = "a\"b\\c" };
+    const esc = try tricky.json(testing.allocator);
+    defer testing.allocator.free(esc);
+    try testing.expectEqualStrings("\"a\\\"b\\\\c\"", esc);
+    const num: Id = .{ .int = 41 };
+    const plain = try num.json(testing.allocator);
+    defer testing.allocator.free(plain);
+    try testing.expectEqualStrings("41", plain);
+    try testing.expect(Id.eql(.{ .str = "x" }, .{ .str = "x" }));
+    try testing.expect(!Id.eql(.{ .str = "1" }, .{ .int = 1 }));
+    // A null id with a method is still a notification.
+    var q = try std.json.parseFromSlice(Value, testing.allocator, "{\"jsonrpc\":\"2.0\",\"id\":null,\"method\":\"x\"}", .{});
+    defer q.deinit();
+    try testing.expect(classify(q.value) == .notification);
 }
 
 test "pending map: ids climb, take answers once, forget drops" {
@@ -653,7 +729,7 @@ fn fakeEchoServerPaced(io: Io, gpa: Allocator, in: Io.File, out: Io.File, pause_
         defer parsed.deinit();
         switch (classify(parsed.value)) {
             .request => |rq| {
-                const reply = std.fmt.allocPrint(gpa, "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"result\":{{\"echo\":\"{s}\"}}}}", .{ rq.id, rq.method }) catch return;
+                const reply = std.fmt.allocPrint(gpa, "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"result\":{{\"echo\":\"{s}\"}}}}", .{ rq.id.int, rq.method }) catch return;
                 defer gpa.free(reply);
                 writeFrame(io, out, reply) catch return;
             },

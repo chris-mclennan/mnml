@@ -166,8 +166,10 @@ pub const Client = struct {
 
     /// Answer a server→client request. `window/showMessageRequest` and
     /// `window/showDocument` are the two that arrive.
-    pub fn respond(self: *Client, id: i64, result_json: []const u8) SendError!void {
-        const body = try std.fmt.allocPrint(self.gpa, "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"result\":{s}}}", .{ id, result_json });
+    pub fn respond(self: *Client, id: jsonrpc.Id, result_json: []const u8) SendError!void {
+        const id_json = try id.json(self.gpa);
+        defer self.gpa.free(id_json);
+        const body = try std.fmt.allocPrint(self.gpa, "{{\"jsonrpc\":\"2.0\",\"id\":{s},\"result\":{s}}}", .{ id_json, result_json });
         defer self.gpa.free(body);
         try self.transport.send(body);
     }
