@@ -469,7 +469,7 @@ test "leader tree: root groups, descend, leaves, dead ends" {
     try std.testing.expectEqual(CommandId.@"view.split_right", lookup("sv").?.cmd.id);
     try std.testing.expect(lookup("zz") == null);
     try std.testing.expect(lookup("svx") == null);
-    try std.testing.expect(continuations(std.testing.allocator, "s", true).len == 12);
+    try std.testing.expect(continuations(std.testing.allocator, "s", true).len == 13);
     try std.testing.expect(continuations(std.testing.allocator, "sv", true).len == 0);
     // `+debug` and `+lsp` on `r` are the vim profile's — nvim-dap's
     // door and NvChad's `<leader>ra`; the standard popup keeps the
@@ -574,7 +574,7 @@ test "every group in both profiles has a glyph with an ascii twin, and the count
     // The numbers the popup paints today, so a chord added or dropped
     // shows up here rather than silently on screen.
     try t.expectEqual(@as(u16, 7), chordCount(lookup("f").?, true));
-    try t.expectEqual(@as(u16, 12), chordCount(lookup("s").?, true));
+    try t.expectEqual(@as(u16, 13), chordCount(lookup("s").?, true));
     try t.expectEqual(@as(u16, 5), chordCount(lookup("Lc").?, true));
     try t.expectEqual(@as(u16, 19), chordCount(lookup("L").?, true));
     try t.expectEqual(@as(u16, 15), chordCount(lookup("d").?, true));
