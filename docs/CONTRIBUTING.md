@@ -552,7 +552,14 @@ step before it proved):
    — the exe and every test binary compiled, not run (Zig's lazy
    analysis only checks target-gated code when that target is built);
 7. `zig build glyph-audit` — every Nerd Font literal in `src/` against
-   `data/nerd-glyphnames.json`, with its `--ascii` twin;
+   `data/nerd-glyphnames.json`, with its `--ascii` twin — and `zig build
+   chrome-audit` — chrome a component owns, drawn by hand somewhere
+   else: a box-drawing glyph as a whole literal outside the frame
+   modules, an `if (ascii) "…" else "…"` pair `clip` / `border` /
+   `overlay.hintText` already answers (`docs/CONVENTIONS.md` → *If a
+   thing has a component, draw it through the component*; the same
+   walk is a unit test, so `zig build test` fails on a new fork before
+   this step names it);
 8. `tools/pty-mouse-check.py` — the real binary in a pty answering the
    probes like ghostty; one click opens a file, a right-click opens the
    row menu, a wheel notch reaches the app;
@@ -592,7 +599,7 @@ filesystem, and four more.
 Linux:
 
 ```sh
-tools/linux/run.sh all        # build · -Dpartial=false · glyph-audit · arena-audit
+tools/linux/run.sh all        # build · -Dpartial=false · glyph-audit · arena-audit · chrome-audit
                               #   · ReleaseSafe · the unit suite · the gate · the corpus
 tools/linux/run.sh build      # the four builds
 tools/linux/run.sh unit       # zig build test -Doptimize=ReleaseSafe

@@ -63,6 +63,12 @@ if [ "$PHASE" = build ] || [ "$PHASE" = all ]; then
   else
     hr "zig build arena-audit"; echo "[skipped — no such step in this tree]"
   fi
+  # `chrome-audit` likewise: chrome a component owns, drawn by hand.
+  if zig build --help 2>/dev/null | grep -q '^ *chrome-audit'; then
+    step "zig build chrome-audit" zig build chrome-audit
+  else
+    hr "zig build chrome-audit"; echo "[skipped — no such step in this tree]"
+  fi
   step "zig build -Doptimize=ReleaseSafe" zig build -Doptimize=ReleaseSafe --summary failures
 fi
 
