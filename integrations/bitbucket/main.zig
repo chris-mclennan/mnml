@@ -833,7 +833,7 @@ fn listPrsCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: 
     for (s.loaded.config.tabs) |tab| {
         if (tab.kind != .pull_requests or tab.repo.len == 0) continue;
         const ws = s.loaded.config.tabWorkspace(tab);
-        var reply = try s.client.listPrs(gpa, ws, tab.repo, @tagName(tab.state), tab.q, 50);
+        var reply = try s.client.listPrs(gpa, ws, tab.repo, &.{@tagName(tab.state)}, tab.q, 50);
         defer reply.deinit(gpa);
         switch (reply) {
             .ok => |body| {
@@ -1206,6 +1206,9 @@ const Event = union(enum) {
     host: HostEvent,
     result: *fetch.Result,
     tick,
+    /// One turn of the spinner: a repaint and nothing else, sent only
+    /// while a fetch is out.
+    frame,
     host_gone,
 };
 
@@ -1269,10 +1272,22 @@ fn workerThread(gpa: Allocator, io: Io, worker: *fetch.Worker, jobs: *JobQueue, 
     }
 }
 
-fn tickerThread(io: Io, q: *EventQueue) void {
+/// The clock: a `tick` every second for the auto-refresh, and — while
+/// `busy` says a fetch is out — a `frame` every step of the spinner
+/// ring, so the header's glyph turns at the host's cadence and the
+/// loop sleeps the rest of the time.
+fn tickerThread(io: Io, q: *EventQueue, busy: *std.atomic.Value(bool)) void {
+    var since_tick: i64 = 0;
     while (true) {
-        io.sleep(.fromMilliseconds(1000), .awake) catch return;
-        q.putOneUncancelable(io, .tick) catch return;
+        const step = sdk.pane.chrome.spinner_step_ms;
+        io.sleep(.fromMilliseconds(step), .awake) catch return;
+        since_tick += step;
+        if (since_tick >= 1000) {
+            since_tick = 0;
+            q.putOneUncancelable(io, .tick) catch return;
+        } else if (busy.load(.acquire)) {
+            q.putOneUncancelable(io, .frame) catch return;
+        }
     }
 }
 
@@ -1385,7 +1400,12 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
     reader.detach();
     const worker_thread = try std.Thread.spawn(.{}, workerThread, .{ gpa, io, &worker, &jobs, &events });
     worker_thread.detach();
-    const ticker = try std.Thread.spawn(.{}, tickerThread, .{ io, &events });
+    // `busy` is a static: the ticker is detached and outlives this
+    // frame's locals on the way out.
+    const Busy = struct {
+        var flag: std.atomic.Value(bool) = .init(false);
+    };
+    const ticker = try std.Thread.spawn(.{}, tickerThread, .{ io, &events, &Busy.flag });
     ticker.detach();
 
     try app.startup();
@@ -1444,6 +1464,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
                 gpa.destroy(r);
             },
             .tick => try app.tick(nowSecs(io)),
+            .frame => {},
             .host_gone => running = false,
         }
         // Before the paint: if a request has been sitting on the
@@ -1451,6 +1472,8 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
         app.noteWait();
         try dispatchJobs(gpa, io, &app, &jobs);
         running = drain(gpa, io, env, mount, &ipc_opt, &app, &session.limiter) and running;
+        app.now_ms = Io.Timestamp.now(io, .real).toMilliseconds();
+        Busy.flag.store(app.anyLoading(), .release);
         _ = arena.reset(.retain_capacity);
         try screen.paint(arena.allocator(), &frame, &app, nerd);
         try mount.send(&frame);

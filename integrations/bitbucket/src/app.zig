@@ -27,6 +27,8 @@ const keymap = @import("keymap.zig");
 const hit = @import("hit.zig");
 const theme_mod = @import("theme.zig");
 const dates = @import("dates.zig");
+const filters = @import("filters.zig");
+const state_mod = @import("state.zig");
 
 pub const Action = keymap.Action;
 pub const Theme = theme_mod.Theme;
@@ -57,7 +59,98 @@ pub const Effect = union(enum) {
     quit,
 };
 
-pub const Mode = enum { list, filter, help, menu, confirm };
+pub const Mode = enum { list, filter, help, menu, confirm, picker };
+
+/// The toolbar's chips — one per filter of the two families.
+pub const FilterKind = enum {
+    status,
+    author,
+    target,
+    show,
+    run_by,
+    branch,
+    ptype,
+    pstatus,
+    trigger,
+
+    /// The chip's key word, as it paints: ` status: Open + Draft `.
+    pub fn word(k: FilterKind) []const u8 {
+        return switch (k) {
+            .status, .pstatus => "status",
+            .author => "author",
+            .target => "target",
+            .show => "show",
+            .run_by => "run by",
+            .branch => "branch",
+            .ptype => "type",
+            .trigger => "trigger",
+        };
+    }
+
+    /// The Status chip picks several; every other chip picks one.
+    pub fn multi(k: FilterKind) bool {
+        return k == .status;
+    }
+
+    pub fn family(k: FilterKind) cfg.Family {
+        return switch (k) {
+            .status, .author, .target, .show => .prs,
+            .run_by, .branch, .ptype, .pstatus, .trigger => .pipelines,
+        };
+    }
+};
+
+/// One row of a chip's picker (and of its right-click menu): the value
+/// as the reader sees it, whether it is on now. Row 0 is the clearing
+/// row on every single-select chip (`all` / `any`).
+pub const PickItem = struct { label: []const u8, checked: bool = false };
+
+/// A chip's picker, up over the list: the rows the loaded set offers,
+/// a typed filter over them, the cursor. The Status picker toggles a
+/// row with Space and commits with Enter; the rest commit the row
+/// under the cursor.
+pub const Picker = struct {
+    kind: FilterKind,
+    /// Owns `items` and their labels.
+    arena: std.heap.ArenaAllocator,
+    items: []PickItem = &.{},
+    selected: usize = 0,
+    query: std.ArrayList(u8) = .empty,
+
+    pub fn deinit(p: *Picker, gpa: Allocator) void {
+        p.query.deinit(gpa);
+        p.arena.deinit();
+        p.* = undefined;
+    }
+
+    /// The rows the typed filter keeps, as indices into `items`.
+    pub fn visible(p: *const Picker, a: Allocator) Allocator.Error![]const usize {
+        var out: std.ArrayList(usize) = .empty;
+        for (p.items, 0..) |it, i| {
+            if (p.query.items.len == 0 or std.ascii.indexOfIgnoreCase(it.label, p.query.items) != null) try out.append(a, i);
+        }
+        return out.toOwnedSlice(a);
+    }
+
+    /// Move the cursor by `delta` over the visible rows.
+    pub fn move(p: *Picker, a: Allocator, delta: isize) Allocator.Error!void {
+        const vis = try p.visible(a);
+        if (vis.len == 0) return;
+        var pos: usize = 0;
+        for (vis, 0..) |i, k| if (i == p.selected) {
+            pos = k;
+        };
+        const next = std.math.clamp(@as(isize, @intCast(pos)) + delta, 0, @as(isize, @intCast(vis.len)) - 1);
+        p.selected = vis[@intCast(next)];
+    }
+};
+
+/// A row of a right-click menu: an action of the keymap, or one value
+/// of a chip.
+pub const MenuItem = union(enum) {
+    action: Action,
+    pick: struct { kind: FilterKind, idx: usize },
+};
 
 /// What one readiness look found, and the `updated_on` it was true at.
 pub const ReadinessEntry = struct { updated_on: []const u8, readiness: sdk.pane.merge.Readiness };
@@ -101,16 +194,52 @@ pub const TabState = struct {
     repos: usize = 0,
     items: usize = 0,
     errored: usize = 0,
+    /// The toolbar's chips for this tab. Its strings are owned
+    /// (`setFilterText`); the struct is copied into a `VisibleCtx`
+    /// every frame, which borrows them.
+    filters: filters.Filters = .{},
+    /// The API states the rows on screen were fetched with — what a
+    /// Status change is compared against to decide whether it costs a
+    /// fetch (`ApiStates.covers`).
+    loaded_states: filters.ApiStates = .{},
 
     fn deinit(ts: *TabState, gpa: Allocator) void {
         if (ts.data_arena) |*a| a.deinit();
         ts.expanded.deinit();
         gpa.free(ts.error_text);
         gpa.free(ts.status);
+        ts.freeFilterTexts(gpa);
         ts.* = undefined;
     }
 
-    fn setText(gpa: Allocator, slot: *[]u8, text: []const u8) Allocator.Error!void {
+    fn freeFilterTexts(ts: *TabState, gpa: Allocator) void {
+        if (ts.filters.author == .named) gpa.free(ts.filters.author.named);
+        gpa.free(ts.filters.target);
+        gpa.free(ts.filters.run_by);
+        gpa.free(ts.filters.branch);
+        gpa.free(ts.filters.ptype);
+        gpa.free(ts.filters.pstatus);
+        gpa.free(ts.filters.trigger);
+    }
+
+    /// Take `f` as this tab's filters, copying every string it borrows.
+    fn adoptFilters(ts: *TabState, gpa: Allocator, f: filters.Filters) Allocator.Error!void {
+        var owned = f;
+        owned.author = switch (f.author) {
+            .named => |n| .{ .named = try gpa.dupe(u8, n) },
+            else => f.author,
+        };
+        owned.target = try gpa.dupe(u8, f.target);
+        owned.run_by = try gpa.dupe(u8, f.run_by);
+        owned.branch = try gpa.dupe(u8, f.branch);
+        owned.ptype = try gpa.dupe(u8, f.ptype);
+        owned.pstatus = try gpa.dupe(u8, f.pstatus);
+        owned.trigger = try gpa.dupe(u8, f.trigger);
+        ts.freeFilterTexts(gpa);
+        ts.filters = owned;
+    }
+
+    pub fn setText(gpa: Allocator, slot: *[]u8, text: []const u8) Allocator.Error!void {
         const copy = try gpa.dupe(u8, text);
         gpa.free(slot.*);
         slot.* = copy;
@@ -136,13 +265,17 @@ pub const PrPipelines = struct {
     updated_on: []const u8 = "",
 };
 
-/// A right-click menu over a row: the actions that apply to it.
+/// A right-click menu over a row (the actions that apply to it) or over
+/// a chip (every value it can take, the live one ticked).
 pub const Menu = struct {
-    row: usize,
+    /// The row the menu is about; unused by a chip's menu.
+    row: usize = 0,
     col: u16,
     y: u16,
-    items: []const Action,
+    items: []const MenuItem,
     selected: usize = 0,
+    /// A chip's menu carries the values its rows name, for the paint.
+    values: []const PickItem = &.{},
 };
 
 pub const Options = struct {
@@ -205,8 +338,15 @@ pub const App = struct {
     filter_total: usize = 0,
     mode: Mode = .list,
     menu: ?Menu = null,
-    menu_items: [12]Action = undefined,
+    /// The open menu's rows live here: a row menu's actions, a chip
+    /// menu's values. Reset when a menu opens.
+    menu_arena: std.heap.ArenaAllocator,
+    /// A chip's picker, while one is up.
+    picker: ?Picker = null,
     help_scroll: usize = 0,
+    /// The wall clock in milliseconds, for the spinner's frame. Set by
+    /// the loop before every paint; 0 in a test, which is frame 0.
+    now_ms: i64 = 0,
     /// The transient line the hint row shows on the left, owned.
     status: std.ArrayList(u8) = .empty,
     /// Where a wait long enough for a person to notice is left by the
@@ -220,9 +360,6 @@ pub const App = struct {
     frame_arena: std.heap.ArenaAllocator,
     hits: hit.HitMap,
     last_refresh_secs: i64 = 0,
-    /// The `awaiting:` chip is on: the PR tabs show only what is
-    /// waiting on this account's review.
-    awaiting_only: bool = false,
     /// May each open pull request merge, keyed `slug#id`. Filled for
     /// the row the cursor lands on, one cached look each.
     readiness: std.StringHashMapUnmanaged(ReadinessEntry) = .empty,
@@ -291,12 +428,12 @@ pub const App = struct {
             .config_path = config_path,
             .scope = config.scope,
             .workspace_dir = opts.workspace_dir,
-            .awaiting_only = opts.awaiting,
             .focus_key_len = @min(focus.len, 256),
             .tabs = &.{},
             .only = opts.only,
             .effect_arena = std.heap.ArenaAllocator.init(gpa),
             .frame_arena = std.heap.ArenaAllocator.init(gpa),
+            .menu_arena = std.heap.ArenaAllocator.init(gpa),
             .hits = hit.HitMap.init(gpa),
             .actions = sdk.pane.ActionStore.init(gpa),
             .watch_arena = std.heap.ArenaAllocator.init(gpa),
@@ -323,11 +460,59 @@ pub const App = struct {
             try list.append(gpa, newTab(gpa, .{ .kind = .workspace_open_prs, .name = "Mine", .workspace = config.workspace, .mine_only = true }));
         }
         app.tabs = try list.toOwnedSlice(gpa);
+        try app.loadFilterState(opts);
         return app;
     }
 
     fn newTab(gpa: Allocator, spec: tabs.TabSpec) TabState {
-        return .{ .spec = spec, .data = tabs.TabData.emptyFor(spec.kind), .expanded = tabs.Expanded.init(gpa) };
+        return .{
+            .spec = spec,
+            .data = tabs.TabData.emptyFor(spec.kind),
+            .expanded = tabs.Expanded.init(gpa),
+            .filters = filters.Filters.defaultFor(spec.kind, spec.state, spec.mine_only),
+            .loaded_states = spec.apiStates(),
+        };
+    }
+
+    /// `<config dir>/state.zon`: what the toolbar's chips were set to
+    /// last time, per tab by name. Applied over the kinds' defaults;
+    /// `--only prs-mine` / `prs-awaiting` then set what they asked for
+    /// on top, since a launch flag is an ask made now.
+    fn loadFilterState(app: *App, opts: Options) Allocator.Error!void {
+        const gpa = app.gpa;
+        const path = try state_mod.pathBeside(gpa, app.config_path);
+        defer gpa.free(path);
+        var arena = std.heap.ArenaAllocator.init(gpa);
+        defer arena.deinit();
+        const saved = state_mod.load(arena.allocator(), app.io, path);
+        for (app.tabs) |*ts| {
+            var f = ts.filters;
+            if (saved.entryFor(ts.spec.name)) |e| {
+                f = e.toFilters();
+                // A per-tab file cannot turn a kind into another: a
+                // saved Merged on a pipelines tab is noise.
+                if (ts.spec.kind.family() != .prs) f.status = ts.filters.status;
+            }
+            if (opts.mine) f.author = .me;
+            if (opts.awaiting and ts.spec.kind.family() == .prs) f.show = .awaiting;
+            try ts.adoptFilters(gpa, f);
+            ts.spec.mine_only = f.author == .me and ts.spec.kind.isWorkspaceWide();
+            ts.spec.states = f.status.apiStates();
+            ts.loaded_states = f.status.apiStates();
+        }
+    }
+
+    /// Write every tab's chips to `state.zon`. Best effort, said once.
+    fn persistFilters(app: *App) void {
+        const gpa = app.gpa;
+        const path = state_mod.pathBeside(gpa, app.config_path) catch return;
+        defer gpa.free(path);
+        const entries = gpa.alloc(state_mod.Entry, app.tabs.len) catch return;
+        defer gpa.free(entries);
+        for (app.tabs, entries) |*ts, *e| e.* = state_mod.Entry.fromFilters(ts.spec.name, ts.filters);
+        state_mod.save(gpa, app.io, path, .{ .tabs = entries }) catch {
+            app.say(.err, "could not write {s}", .{path});
+        };
     }
 
     pub fn deinit(app: *App) void {
@@ -365,6 +550,8 @@ pub const App = struct {
         while (fit.next()) |k| gpa.free(k.*);
         app.readiness_in_flight.deinit(gpa);
         if (app.merge_confirm) |*c| c.deinit();
+        if (app.picker) |*p| p.deinit(gpa);
+        app.menu_arena.deinit();
         app.actions.deinit();
         app.watch_out.deinit(gpa);
         app.watch_arena.deinit();
@@ -559,19 +746,36 @@ pub const App = struct {
     /// footer are chrome and count as neither).
     pub fn visible(app: *App, a: Allocator) Allocator.Error!tabs.View {
         const ts = app.activeTab();
+        const builds = try app.buildsFor(a, ts);
+        // `M` of the header's `N of M` is what the tab would show with
+        // its chips on their defaults: a chip is a narrowing like the
+        // `/` query, and the count owes the reader the same honesty.
+        if (app.chipsNarrowed()) {
+            const whole = try tabs.visibleRows(a, .{
+                .spec = ts.spec,
+                .data = ts.data,
+                .expanded = &ts.expanded,
+                .show_all = ts.show_all,
+                .now_secs = app.now_secs,
+                .builds = builds,
+                .filters = filters.Filters.defaultFor(ts.spec.kind, ts.spec.state, ts.spec.mine_only),
+                .me = app.meId(),
+            });
+            app.filter_total = countContent(whole.rows);
+        }
         const all = try tabs.visibleRows(a, .{
             .spec = ts.spec,
             .data = ts.data,
             .expanded = &ts.expanded,
             .show_all = ts.show_all,
             .now_secs = app.now_secs,
-            .builds = try app.buildsFor(a, ts),
-            .awaiting_only = app.awaiting_only,
+            .builds = builds,
+            .filters = ts.filters,
             .me = app.meId(),
         });
-        app.filter_total = countContent(all.rows);
+        if (!app.chipsNarrowed()) app.filter_total = countContent(all.rows);
         if (app.filter.items.len == 0) {
-            app.filter_shown = app.filter_total;
+            app.filter_shown = countContent(all.rows);
             return all;
         }
         var kept: std.ArrayList(tabs.VisibleRow) = .empty;
@@ -615,10 +819,46 @@ pub const App = struct {
         return n;
     }
 
-    /// True while the `/` query is hiding something — what the header's
-    /// `N of M` and the hint row's context both key off.
-    pub fn narrowed(app: *const App) bool {
-        return app.filter.items.len > 0;
+    /// True while the `/` query or a chip is hiding something — what
+    /// the header's `N of M` and the hint row's context both key off.
+    pub fn narrowed(app: *App) bool {
+        return app.filter.items.len > 0 or app.chipsNarrowed();
+    }
+
+    /// Is any chip of the active tab off its kind's default?
+    pub fn chipsNarrowed(app: *App) bool {
+        const ts = app.activeTab();
+        return switch (ts.spec.kind.family()) {
+            .prs => ts.filters.prNarrowedFrom(filters.Filters.defaultFor(ts.spec.kind, ts.spec.state, ts.spec.mine_only)),
+            .pipelines => ts.filters.pipelinesNarrowed(),
+            .branches => false,
+        };
+    }
+
+    /// Is any tab's fetch in flight? The loop animates the spinner
+    /// while one is.
+    pub fn anyLoading(app: *const App) bool {
+        for (app.tabs) |*ts| if (ts.loading) return true;
+        return false;
+    }
+
+    /// What the active tab's fetch is doing, for the header: the live
+    /// phase the worker left in `wait_notice` while a request is out —
+    /// queued behind N on the broker, waiting on the file bucket, on
+    /// the wire — the repo count of a first load, the reason the last
+    /// one failed, or nothing.
+    pub fn fetchState(app: *App) sdk.pane.chrome.Fetch {
+        const ts = app.activeTab();
+        if (ts.loading) {
+            const live = app.wait_notice.live();
+            return switch (live.phase) {
+                .queued => .{ .queued = live.behind },
+                .waiting => .waiting,
+                .idle, .sending => .{ .fetching = .{ .done = if (ts.fetched) 0 else app.progressDone(), .total = if (ts.fetched) 0 else app.progressTotal() } },
+            };
+        }
+        if (ts.error_text.len > 0) return .{ .failed = ts.error_text };
+        return .idle;
     }
 
     fn rowMatches(app: *App, r: tabs.VisibleRow) bool {
@@ -767,7 +1007,7 @@ pub const App = struct {
     pub fn keyContext(app: *App, rows: []const tabs.VisibleRow) keymap.Context {
         const ts = app.activeTab();
         const on_row = ts.selected < rows.len and rows[ts.selected] != .show_more;
-        return .{ .on_tree = ts.spec.isTree(), .on_row = on_row, .detail_open = app.detail_visible };
+        return .{ .on_tree = ts.spec.isTree(), .on_row = on_row, .detail_open = app.detail_visible, .family = ts.spec.kind.family() };
     }
 
     // ─── input ───────────────────────────────────────────────────────
@@ -800,6 +1040,7 @@ pub const App = struct {
                 return true;
             },
             .menu => return app.menuKey(a, spec),
+            .picker => return app.pickerKey(a, spec),
             .list => {},
         }
         const view = try app.visible(a);
@@ -870,7 +1111,15 @@ pub const App = struct {
             .detail_up => app.detail_scroll -|= 4,
             .detail_down => app.detail_scroll += 4,
             .toggle_approval => try app.toggleApproval(rows),
-            .toggle_awaiting => try app.toggleAwaiting(),
+            .cycle_show => try app.cycleShow(),
+            .filter_status => try app.openPicker(.status),
+            .filter_author => try app.openPicker(.author),
+            .filter_target => try app.openPicker(.target),
+            .filter_run_by => try app.openPicker(.run_by),
+            .filter_branch => try app.openPicker(.branch),
+            .filter_type => try app.openPicker(.ptype),
+            .filter_pstatus => try app.openPicker(.pstatus),
+            .filter_trigger => try app.openPicker(.trigger),
             .merge_pr => if (app.focusedPr(rows)) |f| try app.pressMerge(f.slug, f.pr),
             .filter => {
                 app.mode = .filter;
@@ -1634,36 +1883,357 @@ pub const App = struct {
         return n;
     }
 
-    /// The `awaiting:` chip: show only what is waiting on your review,
-    /// or everything again. It narrows rows that are already loaded, so
-    /// there is nothing to refetch and nothing to pay for.
-    pub fn toggleAwaiting(app: *App) Allocator.Error!void {
+    // ─── the toolbar's chips ─────────────────────────────────────────
+
+    /// The `show:` chip: all → reviewing → awaiting me → all. It
+    /// narrows rows that are already loaded (`participants` come with
+    /// the listing), so there is nothing to refetch and nothing to pay.
+    pub fn cycleShow(app: *App) Allocator.Error!void {
         const ts = app.activeTab();
-        if (ts.spec.kind == .workspace_pipelines or ts.spec.kind == .branches or ts.spec.kind == .pipelines) {
-            app.say(.warn, "Awaiting-my-review is a pull-request filter", .{});
+        try app.setShow(ts.filters.show.next());
+    }
+
+    pub fn setShow(app: *App, want: filters.Show) Allocator.Error!void {
+        const ts = app.activeTab();
+        if (ts.spec.kind.family() != .prs) {
+            app.say(.warn, "show: is a pull-request filter", .{});
             return;
         }
-        if (app.meId().len == 0) {
+        if (want != .all and app.meId().len == 0) {
             app.say(.warn, "no account to match reviewers against — set `account_id` in config.zon", .{});
             return;
         }
-        app.awaiting_only = !app.awaiting_only;
+        ts.filters.show = want;
         ts.selected = 0;
         ts.scroll = 0;
-        app.say(.info, "{s}: {s}", .{ ts.spec.name, if (app.awaiting_only) "awaiting my approval" else "every pull request" });
+        app.persistFilters();
+        app.say(.info, "{s}: {s}", .{ ts.spec.name, want.sentence() });
     }
 
-    /// The `author:` chip: mine ↔ all on a workspace PR tab.
-    pub fn toggleMineOnly(app: *App) Allocator.Error!void {
+    /// The `status:` chip's set. Client-side over the loaded rows
+    /// unless it names an API state the listing was not fetched with
+    /// (Merged on an open listing, say) — then ONE refetch, through the
+    /// ordinary refresh path, with the states joined in one request.
+    pub fn setStatusSet(app: *App, want: filters.PrStatus) Allocator.Error!void {
         const ts = app.activeTab();
-        if (!ts.spec.kind.isWorkspaceWide() or ts.spec.kind == .workspace_pipelines) {
-            app.say(.warn, "Author filter not supported on this tab", .{});
+        if (ts.spec.kind.family() != .prs) return;
+        ts.filters.status = want;
+        ts.selected = 0;
+        ts.scroll = 0;
+        app.persistFilters();
+        var buf: [64]u8 = undefined;
+        const wanted = want.apiStates();
+        // The spec follows the chip whether or not this change fetches:
+        // the next refetch, whatever asks for it, lists what the chip
+        // wants and no more.
+        ts.spec.states = wanted;
+        if (!ts.loaded_states.covers(wanted)) {
+            try app.refreshTab(app.active);
+            app.say(.info, "{s}: status → {s} (fetching)", .{ ts.spec.name, want.label(&buf) });
+        } else {
+            app.say(.info, "{s}: status → {s}", .{ ts.spec.name, want.label(&buf) });
+        }
+    }
+
+    /// The `author:` chip. `me` is the pane's mine-only fetch (the
+    /// account's pull requests across the workspace, whatever the
+    /// page held), so going to or from it is the one change here that
+    /// refetches; a name seen in the set, or `all` from a name, is a
+    /// predicate over the rows already there.
+    pub fn setAuthor(app: *App, want: filters.Author) Allocator.Error!void {
+        const ts = app.activeTab();
+        if (ts.spec.kind.family() != .prs) return;
+        if (want == .me and app.meId().len == 0) {
+            app.say(.warn, "author: me needs Account:Read on the token (or `account_id` in config.zon)", .{});
             return;
         }
-        ts.spec.mine_only = !ts.spec.mine_only;
-        ts.fetched = false;
-        try app.refreshTab(app.active);
-        app.say(.info, "{s}: filter → {s}", .{ ts.spec.name, if (ts.spec.mine_only) "Authored by me" else "All" });
+        const was_mine = ts.spec.mine_only;
+        var f = ts.filters;
+        f.author = want;
+        try ts.adoptFilters(app.gpa, f);
+        ts.selected = 0;
+        ts.scroll = 0;
+        app.persistFilters();
+        const now_mine = want == .me and ts.spec.kind.isWorkspaceWide();
+        const label = ts.filters.author.label(app.me_display_name);
+        if (now_mine != was_mine) {
+            ts.spec.mine_only = now_mine;
+            ts.fetched = false;
+            try app.refreshTab(app.active);
+            app.say(.info, "{s}: author → {s} (fetching)", .{ ts.spec.name, label });
+        } else {
+            app.say(.info, "{s}: author → {s}", .{ ts.spec.name, label });
+        }
+    }
+
+    /// One of the text-valued chips: Target branch, and the pipelines
+    /// family's five. "" clears. Always client-side.
+    pub fn setTextFilter(app: *App, kind: FilterKind, value: []const u8) Allocator.Error!void {
+        const ts = app.activeTab();
+        var f = ts.filters;
+        switch (kind) {
+            .target => f.target = value,
+            .run_by => f.run_by = value,
+            .branch => f.branch = value,
+            .ptype => f.ptype = value,
+            .pstatus => f.pstatus = value,
+            .trigger => f.trigger = value,
+            .status, .author, .show => return,
+        }
+        try ts.adoptFilters(app.gpa, f);
+        ts.selected = 0;
+        ts.scroll = 0;
+        app.persistFilters();
+        app.say(.info, "{s}: {s} → {s}", .{ ts.spec.name, kind.word(), if (value.len > 0) value else "any" });
+    }
+
+    /// The chip's text on the toolbar, on the frame arena.
+    pub fn chipLabel(app: *App, a: Allocator, kind: FilterKind) Allocator.Error![]const u8 {
+        const ts = app.activeTab();
+        const f = ts.filters;
+        var buf: [64]u8 = undefined;
+        const value: []const u8 = switch (kind) {
+            .status => f.status.label(&buf),
+            .author => f.author.label(app.me_display_name),
+            .target => if (f.target.len > 0) f.target else "any",
+            .show => if (f.show == .awaiting) try std.fmt.allocPrint(a, "awaiting me ({d})", .{app.awaitingCount()}) else f.show.label(),
+            .run_by => if (f.run_by.len > 0) f.run_by else "any",
+            .branch => if (f.branch.len > 0) f.branch else "any",
+            .ptype => if (f.ptype.len > 0) f.ptype else "any",
+            .pstatus => if (f.pstatus.len > 0) f.pstatus else "any",
+            .trigger => if (f.trigger.len > 0) f.trigger else "any",
+        };
+        return std.fmt.allocPrint(a, " {s}: {s} ", .{ kind.word(), value });
+    }
+
+    /// Is the chip off its default — painted active?
+    pub fn chipActive(app: *App, kind: FilterKind) bool {
+        const ts = app.activeTab();
+        const f = ts.filters;
+        return switch (kind) {
+            .status => !f.status.eql(filters.PrStatus.defaultFor(ts.spec.kind, ts.spec.state)),
+            .author => f.author != .all,
+            .target => f.target.len > 0,
+            .show => f.show != .all,
+            .run_by => f.run_by.len > 0,
+            .branch => f.branch.len > 0,
+            .ptype => f.ptype.len > 0,
+            .pstatus => f.pstatus.len > 0,
+            .trigger => f.trigger.len > 0,
+        };
+    }
+
+    /// The chips the active tab's family paints, in the web bar's order.
+    pub fn chipKinds(app: *App) []const FilterKind {
+        return switch (app.family()) {
+            .prs => &.{ .status, .author, .target, .show },
+            .pipelines => &.{ .run_by, .branch, .ptype, .pstatus, .trigger },
+            .branches => &.{},
+        };
+    }
+
+    /// The values a chip can take right now, off the loaded set: the
+    /// clearing row first on a single-select chip, then every distinct
+    /// value seen, sorted. On `a`.
+    pub fn pickValues(app: *App, a: Allocator, kind: FilterKind) Allocator.Error![]PickItem {
+        const ts = app.activeTab();
+        const f = ts.filters;
+        var out: std.ArrayList(PickItem) = .empty;
+        switch (kind) {
+            .status => {
+                for (filters.PrStatus.all) |w| try out.append(a, .{ .label = filters.PrStatus.wordOf(w), .checked = f.status.has(w) });
+            },
+            .show => {
+                for (filters.Show.cycle) |sh| try out.append(a, .{ .label = sh.label(), .checked = f.show == sh });
+            },
+            .author => {
+                try out.append(a, .{ .label = "all", .checked = f.author == .all });
+                try out.append(a, .{ .label = if (app.me_display_name.len > 0) try std.fmt.allocPrint(a, "me ({s})", .{app.me_display_name}) else "me", .checked = f.author == .me });
+                var seen: filters.Seen = .{ .arena = a };
+                switch (ts.data) {
+                    .repo_pr_tree => |repos| for (repos) |r| {
+                        for (r.prs) |pr| try seen.add(pr.author);
+                    },
+                    .pull_requests => |list| for (list) |pr| try seen.add(pr.author),
+                    else => {},
+                }
+                for (seen.sorted()) |name| try out.append(a, .{ .label = name, .checked = f.author == .named and std.mem.eql(u8, f.author.named, name) });
+            },
+            .target => {
+                try out.append(a, .{ .label = "any", .checked = f.target.len == 0 });
+                var seen: filters.Seen = .{ .arena = a };
+                switch (ts.data) {
+                    .repo_pr_tree => |repos| for (repos) |r| {
+                        for (r.prs) |pr| try seen.add(pr.dest_branch);
+                    },
+                    .pull_requests => |list| for (list) |pr| try seen.add(pr.dest_branch),
+                    else => {},
+                }
+                for (seen.sorted()) |name| try out.append(a, .{ .label = name, .checked = std.mem.eql(u8, f.target, name) });
+            },
+            .run_by, .branch, .ptype, .pstatus, .trigger => {
+                const current: []const u8 = switch (kind) {
+                    .run_by => f.run_by,
+                    .branch => f.branch,
+                    .ptype => f.ptype,
+                    .pstatus => f.pstatus,
+                    else => f.trigger,
+                };
+                try out.append(a, .{ .label = "any", .checked = current.len == 0 });
+                var seen: filters.Seen = .{ .arena = a };
+                switch (ts.data) {
+                    .repo_tree => |repos| for (repos) |r| {
+                        for (r.branches) |b| {
+                            if (kind == .branch) try seen.add(b.name);
+                            if (b.latest) |pl| try seen.add(runFact(pl, kind));
+                        }
+                    },
+                    .pipelines => |list| for (list) |pl| try seen.add(runFact(pl, kind)),
+                    else => {},
+                }
+                for (seen.sorted()) |v| try out.append(a, .{ .label = v, .checked = std.ascii.eqlIgnoreCase(current, v) });
+            },
+        }
+        return out.toOwnedSlice(a);
+    }
+
+    /// The one fact of a run a pipelines chip is about.
+    fn runFact(pl: model.Pipeline, kind: FilterKind) []const u8 {
+        return switch (kind) {
+            .run_by => pl.creator,
+            .branch => pl.ref_name,
+            .ptype => pl.typeLabel(),
+            .pstatus => pl.stateLabel(),
+            .trigger => pl.trigger,
+            else => "",
+        };
+    }
+
+    /// Apply row `idx` of `kind`'s values: toggle it on the Status
+    /// chip, take it on every other.
+    pub fn applyPick(app: *App, kind: FilterKind, idx: usize) Allocator.Error!void {
+        var scratch = std.heap.ArenaAllocator.init(app.gpa);
+        defer scratch.deinit();
+        const items = try app.pickValues(scratch.allocator(), kind);
+        if (idx >= items.len) return;
+        const label = items[idx].label;
+        switch (kind) {
+            .status => {
+                var want = app.activeTab().filters.status;
+                want.toggle(filters.PrStatus.all[idx]);
+                try app.setStatusSet(want);
+            },
+            .show => try app.setShow(filters.Show.cycle[idx]),
+            .author => try app.setAuthor(if (idx == 0) .all else if (idx == 1) .me else .{ .named = label }),
+            .target, .run_by, .branch, .ptype, .pstatus, .trigger => try app.setTextFilter(kind, if (idx == 0) "" else label),
+        }
+    }
+
+    // ─── a chip's picker ─────────────────────────────────────────────
+
+    /// Open `kind`'s picker over the list: the values the loaded set
+    /// offers, the cursor on the live one.
+    pub fn openPicker(app: *App, kind: FilterKind) Allocator.Error!void {
+        if (kind.family() != app.family()) return;
+        app.closePicker();
+        var pk: Picker = .{ .kind = kind, .arena = std.heap.ArenaAllocator.init(app.gpa) };
+        errdefer pk.arena.deinit();
+        pk.items = try app.pickValues(pk.arena.allocator(), kind);
+        for (pk.items, 0..) |it, i| if (it.checked) {
+            pk.selected = i;
+            break;
+        };
+        app.picker = pk;
+        app.mode = .picker;
+    }
+
+    pub fn closePicker(app: *App) void {
+        if (app.picker) |*p| p.deinit(app.gpa);
+        app.picker = null;
+        if (app.mode == .picker) app.mode = .list;
+    }
+
+    fn pickerKey(app: *App, a: Allocator, spec: []const u8) Allocator.Error!bool {
+        const pk = &(app.picker orelse {
+            app.mode = .list;
+            return true;
+        });
+        if (std.mem.eql(u8, spec, "esc")) {
+            app.closePicker();
+        } else if (std.mem.eql(u8, spec, "down") or std.mem.eql(u8, spec, "ctrl+n")) {
+            try pk.move(a, 1);
+        } else if (std.mem.eql(u8, spec, "up") or std.mem.eql(u8, spec, "ctrl+p")) {
+            try pk.move(a, -1);
+        } else if (std.mem.eql(u8, spec, "space") and pk.kind.multi()) {
+            try app.togglePickerRow();
+        } else if (std.mem.eql(u8, spec, "enter")) {
+            try app.commitPicker();
+        } else if (std.mem.eql(u8, spec, "backspace")) {
+            if (pk.query.items.len > 0) {
+                const cut = prevBoundary(pk.query.items, pk.query.items.len);
+                pk.query.shrinkRetainingCapacity(cut);
+            }
+        } else if (blk: {
+            var cbuf: [1]u8 = undefined;
+            break :blk typedChar(spec, &cbuf);
+        }) |ch| {
+            try pk.query.appendSlice(app.gpa, ch);
+            // The cursor follows the narrowing onto a row that is
+            // still there.
+            const vis = try pk.visible(a);
+            if (vis.len > 0) {
+                var on = false;
+                for (vis) |i| if (i == pk.selected) {
+                    on = true;
+                };
+                if (!on) pk.selected = vis[0];
+            }
+        }
+        return true;
+    }
+
+    /// Space on the Status picker: the row under the cursor flips,
+    /// the list narrows at once, the picker stays up.
+    fn togglePickerRow(app: *App) Allocator.Error!void {
+        const pk = &(app.picker orelse return);
+        const kind = pk.kind;
+        const idx = pk.selected;
+        try app.applyPick(kind, idx);
+        // Re-read the ticks off the live filters; the picker's rows
+        // are the same set in the same order.
+        if (app.picker) |*p| if (idx < p.items.len) {
+            p.items[idx].checked = !p.items[idx].checked;
+        };
+    }
+
+    /// Enter: take the row under the cursor (a multi-select picker
+    /// has already applied its toggles) and close.
+    pub fn commitPicker(app: *App) Allocator.Error!void {
+        const pk = &(app.picker orelse return);
+        const kind = pk.kind;
+        const idx = pk.selected;
+        const multi = kind.multi();
+        app.closePicker();
+        if (!multi) try app.applyPick(kind, idx);
+    }
+
+    /// The right-click menu on a chip: every value, the live one(s)
+    /// ticked, a click on a row applying it the way the picker would.
+    fn openChipMenu(app: *App, kind: FilterKind, col: u16, y: u16) Allocator.Error!void {
+        _ = app.menu_arena.reset(.retain_capacity);
+        const a = app.menu_arena.allocator();
+        const values = try app.pickValues(a, kind);
+        // A menu is a short list; a long set of authors has the picker.
+        const n = @min(values.len, 12);
+        const items = try a.alloc(MenuItem, n);
+        for (items, 0..) |*it, i| it.* = .{ .pick = .{ .kind = kind, .idx = i } };
+        var selected: usize = 0;
+        for (values[0..n], 0..) |v, i| if (v.checked) {
+            selected = i;
+            break;
+        };
+        app.menu = .{ .col = col, .y = y, .items = items, .values = values[0..n], .selected = selected };
+        app.mode = .menu;
     }
 
     // ─── the detail and approve ──────────────────────────────────────
@@ -1751,6 +2321,7 @@ pub const App = struct {
                     ts.repos = r.repos;
                     ts.items = r.items;
                     ts.errored = r.errored;
+                    ts.loaded_states = r.states;
                     try TabState.setText(app.gpa, &ts.error_text, "");
                     try TabState.setText(app.gpa, &ts.status, r.status);
                     // The trees open every repo on their first fetch and
@@ -1964,6 +2535,18 @@ pub const App = struct {
         app.filter_caret += clean.items.len;
     }
 
+    /// The character a key spec types, if it types one: a printable
+    /// spec as itself, and `shift+f` — how mnml spells a capital — as
+    /// `F`. Null for a chord that types nothing.
+    fn typedChar(spec: []const u8, buf: *[1]u8) ?[]const u8 {
+        if (printable(spec)) return spec;
+        if (std.mem.startsWith(u8, spec, "shift+") and spec.len == 7 and std.ascii.isLower(spec[6])) {
+            buf[0] = std.ascii.toUpper(spec[6]);
+            return buf[0..1];
+        }
+        return null;
+    }
+
     fn printable(spec: []const u8) bool {
         if (spec.len == 0) return false;
         if (std.mem.indexOfScalar(u8, spec, '+') != null and spec.len > 1) return false;
@@ -1990,56 +2573,66 @@ pub const App = struct {
     // ─── the row menu ────────────────────────────────────────────────
 
     /// The actions a right-click offers on a row.
-    pub fn menuFor(app: *App, rows: []const tabs.VisibleRow, idx: usize) []const Action {
-        var n: usize = 0;
+    pub fn menuFor(app: *App, rows: []const tabs.VisibleRow, idx: usize) []const MenuItem {
+        _ = app.menu_arena.reset(.retain_capacity);
+        const a = app.menu_arena.allocator();
+        var list: std.ArrayList(MenuItem) = .empty;
         const ts = app.activeTab();
-        if (idx >= rows.len) return app.menu_items[0..0];
+        if (idx >= rows.len) return &.{};
         const push = struct {
-            fn f(items: *[12]Action, count: *usize, a: Action) void {
-                if (count.* < items.len) {
-                    items[count.*] = a;
-                    count.* += 1;
-                }
+            fn f(arena: Allocator, items: *std.ArrayList(MenuItem), act: Action) void {
+                items.append(arena, .{ .action = act }) catch {};
             }
         }.f;
         switch (rows[idx]) {
             .repo_header => {
-                push(&app.menu_items, &n, .activate);
-                push(&app.menu_items, &n, .open_web);
-                push(&app.menu_items, &n, .yank_url);
-                push(&app.menu_items, &n, .hide_repo);
-                push(&app.menu_items, &n, .reorder_up);
-                push(&app.menu_items, &n, .reorder_down);
+                push(a, &list, .activate);
+                push(a, &list, .open_web);
+                push(a, &list, .yank_url);
+                push(a, &list, .hide_repo);
+                push(a, &list, .reorder_up);
+                push(a, &list, .reorder_down);
             },
             .pr => |p| {
-                push(&app.menu_items, &n, .toggle_detail);
-                push(&app.menu_items, &n, .open_web);
-                push(&app.menu_items, &n, .yank_url);
+                push(a, &list, .toggle_detail);
+                push(a, &list, .open_web);
+                push(a, &list, .yank_url);
                 const pr = ts.data.repo_pr_tree[p.repo].prs[p.idx];
-                if (pr.buildCommit().len > 0) push(&app.menu_items, &n, .activate);
+                if (pr.buildCommit().len > 0) push(a, &list, .activate);
                 // The inline `[ Merge ]` only fits a wide pane, so the
                 // menu carries it at every width.
-                if (pr.isOpen()) push(&app.menu_items, &n, .merge_pr);
-                if (app.detail_visible) push(&app.menu_items, &n, .toggle_approval);
+                if (pr.isOpen()) push(a, &list, .merge_pr);
+                if (app.detail_visible) push(a, &list, .toggle_approval);
             },
             // A build line offers its own page and nothing else — the
             // row menu must never fire an action the row cannot do.
             .build, .build_note => {
-                push(&app.menu_items, &n, .open_web);
-                push(&app.menu_items, &n, .yank_url);
+                push(a, &list, .open_web);
+                push(a, &list, .yank_url);
             },
             .branch => {
-                push(&app.menu_items, &n, .open_web);
-                push(&app.menu_items, &n, .yank_url);
+                push(a, &list, .open_web);
+                push(a, &list, .yank_url);
             },
-            .show_more => push(&app.menu_items, &n, .activate),
+            .show_more => push(a, &list, .activate),
             .flat => {
-                if (ts.data == .pull_requests) push(&app.menu_items, &n, .toggle_detail);
-                push(&app.menu_items, &n, .open_web);
-                push(&app.menu_items, &n, .yank_url);
+                if (ts.data == .pull_requests) push(a, &list, .toggle_detail);
+                push(a, &list, .open_web);
+                push(a, &list, .yank_url);
             },
         }
-        return app.menu_items[0..n];
+        return list.toOwnedSlice(a) catch &.{};
+    }
+
+    /// The actions of a row menu, for a test that reads them.
+    pub fn menuActions(app: *App, a: Allocator) Allocator.Error![]const Action {
+        const m = app.menu orelse return &.{};
+        var out: std.ArrayList(Action) = .empty;
+        for (m.items) |it| switch (it) {
+            .action => |act| try out.append(a, act),
+            .pick => {},
+        };
+        return out.toOwnedSlice(a);
     }
 
     fn menuKey(app: *App, a: Allocator, spec: []const u8) Allocator.Error!bool {
@@ -2067,9 +2660,17 @@ pub const App = struct {
         app.menu = null;
         app.mode = .list;
         if (item >= m.items.len) return true;
-        const view = try app.visible(a);
-        app.select(view.rows, m.row);
-        return app.run(a, m.items[item], view.rows);
+        switch (m.items[item]) {
+            .action => |act| {
+                const view = try app.visible(a);
+                app.select(view.rows, m.row);
+                return app.run(a, act, view.rows);
+            },
+            .pick => |pk| {
+                try app.applyPick(pk.kind, pk.idx);
+                return true;
+            },
+        }
     }
 
     // ─── the mouse ───────────────────────────────────────────────────
@@ -2100,6 +2701,21 @@ pub const App = struct {
             app.mode = .list;
             return true;
         }
+        if (app.mode == .picker) {
+            // A row of the picker takes it; the box is inert; anywhere
+            // else closes it, the way the tracker pane's pickers do.
+            if (target) |tg| switch (tg) {
+                .picker_row => |i| {
+                    if (app.picker) |*pk| pk.selected = i;
+                    if (app.picker.?.kind.multi()) try app.togglePickerRow() else try app.commitPicker();
+                    return true;
+                },
+                .picker_body => return true,
+                else => {},
+            };
+            app.closePicker();
+            return true;
+        }
         if (app.mode == .filter and (target == null or target.? != .chip)) app.mode = .list;
         const tg = target orelse return true;
         const view = try app.visible(a);
@@ -2111,8 +2727,28 @@ pub const App = struct {
                     app.mode = .help;
                     app.help_scroll = 0;
                 },
-                .author => try app.toggleMineOnly(),
-                .awaiting => try app.toggleAwaiting(),
+                // The toolbar's chips: a right click lists every
+                // value with the live one ticked; a left click opens
+                // the chip's picker — except `show`, three values a
+                // click cycles the way the host's `sort:` chip does.
+                .status, .author, .target, .show, .run_by, .branch, .ptype, .pstatus, .trigger => {
+                    const kind: FilterKind = switch (c) {
+                        .status => .status,
+                        .author => .author,
+                        .target => .target,
+                        .show => .show,
+                        .run_by => .run_by,
+                        .branch => .branch,
+                        .ptype => .ptype,
+                        .pstatus => .pstatus,
+                        else => .trigger,
+                    };
+                    if (button == .right) {
+                        try app.openChipMenu(kind, col, row);
+                    } else if (kind == .show) {
+                        try app.cycleShow();
+                    } else try app.openPicker(kind);
+                },
                 .filter => {
                     app.mode = .filter;
                     app.filter_caret = app.filter.items.len;
@@ -2210,7 +2846,7 @@ pub const App = struct {
                 const r = app.hits.rectOf(hit.Target.detail_bar) orelse return true;
                 app.detail_scroll = sdk.pane.scrollAt(r, app.detail_lines, app.detail_rows, row);
             },
-            .menu_item, .sheet, .detail => {},
+            .menu_item, .sheet, .detail, .picker_row, .picker_body => {},
         }
         return true;
     }
@@ -2757,7 +3393,7 @@ test "a ready PR opens a named confirm, and confirming dispatches a Claude Code 
     try t.expectEqual(sdk.pane.ActionState.failed, r.app.actions.state("api#1234", "merge"));
 }
 
-test "the awaiting chip counts and filters what is waiting on MY review, off the rows already loaded" {
+test "the show chip: reviewing, then awaiting me, count and filter what is waiting on MY review, off the rows already loaded" {
     const r = try Rig.init(acme, .{});
     defer r.deinit();
     // #1198 (Dana's, me a reviewer, no vote) is the one waiting on me;
@@ -2766,9 +3402,13 @@ test "the awaiting chip counts and filters what is waiting on MY review, off the
 
     const served = r.srv.state.served;
     _ = try r.key("esc"); // nothing open; just a keystroke that changes nothing
-    try r.app.toggleAwaiting();
-    try t.expect(r.app.awaiting_only);
-    // The filter narrows rows that are already there: not one request.
+    // `A` walks all → reviewing → awaiting me → all, the web's
+    // dropdown; each is a predicate over rows already there: not one
+    // request.
+    _ = try r.key("shift+a");
+    try t.expectEqual(filters.Show.reviewing, r.app.activeTab().filters.show);
+    _ = try r.key("shift+a");
+    try t.expectEqual(filters.Show.awaiting, r.app.activeTab().filters.show);
     try t.expectEqual(@as(u32, 0), r.srv.state.served - served);
     var rows = try r.rows();
     var prs: usize = 0;
@@ -2782,12 +3422,20 @@ test "the awaiting chip counts and filters what is waiting on MY review, off the
     // deliberately keeping out.
     for (rows) |row| try t.expect(row != .show_more);
 
-    try r.app.toggleAwaiting();
-    try t.expect(!r.app.awaiting_only);
+    _ = try r.key("shift+a");
+    try t.expectEqual(filters.Show.all, r.app.activeTab().filters.show);
     rows = try r.rows();
     prs = 0;
     for (rows) |row| prs += @intFromBool(row == .pr);
     try t.expect(prs > 1);
+    // The choice is in the state file, per tab by name.
+    try r.app.setShow(.reviewing);
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const state_path = try state_mod.pathBeside(t.allocator, r.config_path);
+    defer t.allocator.free(state_path);
+    const saved = state_mod.load(arena.allocator(), t.io, state_path);
+    try t.expectEqual(filters.Show.reviewing, saved.entryFor("Open + Draft").?.show);
 
     // The statusline's third figure is the same question, counted out
     // of the same listing the other two come from.
@@ -2832,7 +3480,7 @@ test "the chip keeps its own copy of the rows: nothing it lists points into a fi
     try t.expectEqualStrings("Fix the login redirect", r.app.values.?.open_items[0].text);
 }
 
-test "a click selects the row it lands on, a right-click opens its menu, the author chip toggles mine-only" {
+test "a click selects the row it lands on, a right-click opens its menu, the author chip opens its picker and `me` refetches" {
     const r = try Rig.init(acme, .{});
     defer r.deinit();
     // The hit map is the painter's; stand in for one frame here.
@@ -2851,17 +3499,43 @@ test "a click selects the row it lands on, a right-click opens its menu, the aut
     try t.expect(r.app.tabs[0].expanded.hasRepo("api"));
     _ = try r.app.click(5, 5, .right);
     try t.expectEqual(Mode.menu, r.app.mode);
-    try t.expectEqual(Action.toggle_detail, r.app.menu.?.items[0]);
+    try t.expectEqual(MenuItem{ .action = .toggle_detail }, r.app.menu.?.items[0]);
     _ = try r.key("esc");
     try t.expectEqual(Mode.list, r.app.mode);
     _ = try r.app.click(35, 1, .left);
     try t.expectEqual(@as(usize, 1), r.app.active);
     _ = try r.app.click(31, 1, .left);
+    // The author chip opens its picker: all, me, then every author the
+    // loaded set names, sorted — no request to build it.
+    const served = r.srv.state.served;
     _ = try r.app.click(105, 0, .left);
-    try t.expectEqualStrings("Merged: filter → Authored by me", r.app.status.items);
+    try t.expectEqual(Mode.picker, r.app.mode);
+    const pk = &r.app.picker.?;
+    try t.expectEqual(FilterKind.author, pk.kind);
+    try t.expectEqualStrings("all", pk.items[0].label);
+    try t.expect(pk.items[0].checked);
+    try t.expectEqualStrings("me (Chris M)", pk.items[1].label);
+    try t.expectEqualStrings("Dana R", pk.items[2].label);
+    try t.expectEqualStrings("Sam K", pk.items[3].label);
+    try t.expectEqual(@as(u32, 0), r.srv.state.served - served);
+    // A name is a predicate over the rows there: still no request.
+    _ = try r.key("down");
+    _ = try r.key("down");
+    _ = try r.key("enter");
+    try r.drain();
+    try t.expectEqual(Mode.list, r.app.mode);
+    try t.expect(r.app.tabs[1].filters.author == .named);
+    try t.expectEqualStrings("Dana R", r.app.tabs[1].filters.author.named);
+    try t.expectEqual(@as(u32, 0), r.srv.state.served - served);
+    try t.expectEqualStrings("Merged: author → Dana R", r.app.status.items);
+    // `me` is the mine-only fetch: the one author value that costs a
+    // request, and says so.
+    try r.app.setAuthor(.me);
+    try t.expectEqualStrings("Merged: author → Chris M (fetching)", r.app.status.items);
     try r.drain();
     try t.expect(r.app.tabs[1].spec.mine_only);
-    _ = try r.app.click(105, 0, .left);
+    try t.expect(r.srv.state.served > served);
+    try r.app.setAuthor(.all);
     try r.drain();
     try t.expect(!r.app.tabs[1].spec.mine_only);
 }

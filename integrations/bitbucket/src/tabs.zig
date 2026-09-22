@@ -20,6 +20,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const cfg = @import("config.zig");
 const model = @import("model.zig");
+const filters = @import("filters.zig");
 
 pub const TabSpec = struct {
     kind: cfg.Kind,
@@ -31,6 +32,11 @@ pub const TabSpec = struct {
     mode: cfg.Mode = .none,
     q: []const u8 = "",
     mine_only: bool = false,
+    /// The API states a PR listing is fetched with — the Status chip's
+    /// `apiStates()` at the time the refresh was queued. Null is the
+    /// kind's own (`apiStates`); the app sets it before a refetch the
+    /// chip asked for.
+    states: ?filters.ApiStates = null,
 
     pub fn resolve(c: cfg.Config, tab: cfg.Tab) TabSpec {
         return .{
@@ -43,6 +49,12 @@ pub const TabSpec = struct {
             .q = if (tab.kind == .pull_requests) tab.q else "",
             .mine_only = tab.mine_only and tab.kind.isWorkspaceWide(),
         };
+    }
+
+    /// The states this spec asks the API for: what the chip set, else
+    /// what the kind lists on its own.
+    pub fn apiStates(s: TabSpec) filters.ApiStates {
+        return s.states orelse filters.PrStatus.defaultFor(s.kind, s.state).apiStates();
     }
 
     /// The PR state this tab advertises, or null when it lists
@@ -236,12 +248,20 @@ pub const VisibleCtx = struct {
     /// One entry per expanded pull request; an expanded PR missing from
     /// it is still being fetched.
     builds: []const BuildsOf = &.{},
-    /// The `awaiting:` chip is on: only the open pull requests `me` is
-    /// a reviewer on and has not voted. Read off `participants`, which
-    /// the listing already carries — the chip costs no request.
-    awaiting_only: bool = false,
-    /// The account the awaiting filter is about.
+    /// The toolbar's chips — Status, Author, Target branch, Show on a
+    /// PR tab; Run by, Branch, Pipeline type, Status, Trigger type on a
+    /// pipelines tab. Every one a predicate over `participants`,
+    /// `dest_branch`, a run's facts — what the listing already
+    /// carries, so none of them costs a request here. Null is the
+    /// spec's kind on its own defaults.
+    filters: ?filters.Filters = null,
+    /// The account the `me` author and the Show values are about.
     me: []const u8 = "",
+
+    /// The chips in force: what was given, else the kind's own.
+    pub fn effective(c: VisibleCtx) filters.Filters {
+        return c.filters orelse filters.Filters.defaultFor(c.spec.kind, c.spec.state, c.spec.mine_only);
+    }
 
     pub fn buildsOf(c: VisibleCtx, slug: []const u8, id: i64) ?BuildsOf {
         for (c.builds) |b| if (b.id == id and std.mem.eql(u8, b.slug, slug)) return b;
@@ -253,21 +273,26 @@ pub const VisibleCtx = struct {
 /// `prs`, per the tab's policy. `hidden` gets the count the policy hid.
 pub fn visiblePrs(arena: Allocator, c: VisibleCtx, prs: []const model.PullRequest, hidden: *usize) Allocator.Error![]const usize {
     var out: std.ArrayList(usize) = .empty;
-    const want = c.spec.impliedPrState();
     var eligible: usize = 0;
     var merged_kept: usize = 0;
     var merged_peeked = false;
+    const f = c.effective();
+    // A chip is an explicit ask, so it lifts the 24-hour window the
+    // tree otherwise hides old rows behind: what has been waiting on
+    // you for three days is exactly what `awaiting me` is for, and a
+    // target branch nobody merged to this week is still the one asked
+    // for. The kind's own scope (`me` on a mine-only tab) is not a
+    // chip and keeps the window.
+    const lifted = f.prNarrowedFrom(filters.Filters.defaultFor(c.spec.kind, c.spec.state, c.spec.mine_only));
     for (prs, 0..) |pr, i| {
-        if (want) |s| if (!std.ascii.eqlIgnoreCase(pr.state, s)) continue;
-        // The awaiting filter narrows before anything else counts: a
-        // row it hides was never eligible, so the fold row does not
-        // offer to reveal rows the chip is deliberately keeping out.
-        if (c.awaiting_only and !pr.awaitingApproval(c.me)) continue;
+        // The chips narrow before anything else counts: a row they
+        // hide was never eligible, so the fold row does not offer to
+        // reveal rows a chip is deliberately keeping out. The Status
+        // chip is what keeps an Open tab from leaking a merged row in
+        // through a mine-only peek.
+        if (!f.prMatches(pr, c.me)) continue;
         eligible += 1;
-        // The chip is an explicit ask, so it lifts the 24-hour window
-        // the tree otherwise hides old rows behind: something that has
-        // been waiting on you for three days is exactly what it is for.
-        if (c.awaiting_only) {
+        if (lifted) {
             try out.append(arena, i);
         } else if (c.show_all) {
             if (pr.isMerged()) {
@@ -294,6 +319,7 @@ pub fn visiblePrs(arena: Allocator, c: VisibleCtx, prs: []const model.PullReques
 pub fn visibleRows(arena: Allocator, c: VisibleCtx) Allocator.Error!View {
     var out: std.ArrayList(VisibleRow) = .empty;
     var cells: usize = 0;
+    const f = c.effective();
     switch (c.data) {
         .repo_pr_tree => |repos| {
             var hidden: usize = 0;
@@ -340,13 +366,28 @@ pub fn visibleRows(arena: Allocator, c: VisibleCtx) Allocator.Error!View {
                 try out.append(arena, .{ .repo_header = .{ .repo = ri } });
                 cells += 1;
                 if (!c.expanded.hasRepo(r.slug)) continue;
-                for (r.branches, 0..) |_, bi| {
+                for (r.branches, 0..) |b, bi| {
+                    if (!f.branchMatches(b.name, b.latest)) continue;
                     try out.append(arena, .{ .branch = .{ .repo = ri, .idx = bi } });
                     cells += 1;
                 }
             }
         },
-        inline .pull_requests, .pipelines, .branches => |list| {
+        .pull_requests => |list| {
+            for (list, 0..) |pr, i| {
+                if (!f.prMatches(pr, c.me)) continue;
+                try out.append(arena, .{ .flat = i });
+                cells += 1;
+            }
+        },
+        .pipelines => |list| {
+            for (list, 0..) |run, i| {
+                if (!f.runMatches(run)) continue;
+                try out.append(arena, .{ .flat = i });
+                cells += 1;
+            }
+        },
+        .branches => |list| {
             for (list, 0..) |_, i| try out.append(arena, .{ .flat = i });
             cells += list.len;
         },
@@ -418,7 +459,8 @@ test "a workspace Open tab drops merged rows even with a mine peek, and hides th
     const repos = [_]model.RepoPrs{.{ .slug = "api", .prs = &prs }};
     const spec: TabSpec = .{ .kind = .workspace_open_prs, .name = "Open", .workspace = "acme" };
     const v = try visibleRows(a, .{ .spec = spec, .data = .{ .repo_pr_tree = &repos }, .expanded = &ex, .show_all = false, .now_secs = now });
-    // header, #1, footer (the stale #2 hidden; the merged never eligible).
+    // header, #1, footer (the stale #2 hidden; the merged never
+    // eligible: the Status chip starts on Open + Draft).
     try t.expectEqual(@as(usize, 3), v.rows.len);
     try t.expectEqual(@as(usize, 0), v.rows[1].pr.idx);
     try t.expectEqual(@as(usize, 1), v.rows[2].show_more.hidden);
@@ -449,7 +491,8 @@ test "a mine tab shows every open PR and one merged peek; show_all caps merged a
     // An Open tab: the merged peek is not eligible, so 3 open rows and no footer.
     const v = try visibleRows(a, .{ .spec = spec, .data = .{ .repo_pr_tree = &repos }, .expanded = &ex, .show_all = false, .now_secs = now });
     try t.expectEqual(@as(usize, 4), v.rows.len);
-    // A per-repo tab with no state: 3 open + 1 peek + a `Show more (26)` footer.
+    // A per-repo tab with no state — its Status chip starts with every
+    // box ticked: 3 open + 1 peek + a `Show more (26)` footer.
     const any: TabSpec = .{ .kind = .pull_requests, .name = "Mine", .workspace = "acme", .state = "", .mine_only = true };
     const peek = try visibleRows(a, .{ .spec = any, .data = .{ .repo_pr_tree = &repos }, .expanded = &ex, .show_all = false, .now_secs = now });
     try t.expectEqual(@as(usize, 6), peek.rows.len);

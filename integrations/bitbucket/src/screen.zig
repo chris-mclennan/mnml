@@ -3,13 +3,19 @@
 //! mnml's own panel shape, so it looks native inside mnml-zig rather
 //! than like a transplanted table:
 //!
-//!   row 0   the caps header — `BITBUCKET PRS  (4 repos · 64 PRs)` and,
-//!           right-anchored, the chips: `author: all` (the PR family),
-//!           the pipelines pages (the pipelines family), the refresh glyph
+//!   row 0   the caps header — `BITBUCKET PRS  (4 repos · 64 PRs)`, what
+//!           the fetch is doing while one is out (`⠋ fetching… 2/13 repos`,
+//!           `queued behind 3 requests`, `fetch failed: …`) and,
+//!           right-anchored, the chips: the pipelines pages (the pipelines
+//!           family), the refresh glyph — the spinner while busy — and `?`
 //!   row 1   the tab strip, when the launch kept more than one tab —
 //!           `1 Open + Draft (47)  2 Merged (32)  3 Pipelines (18)`
-//!   row 2   the filter pill — `󰍉 / filter`
-//!   row 3   the column header
+//!   row 2   the toolbar — the web bar's filters as ` key: value ` chips,
+//!           `status: Open + Draft  author: all  target: any  show: all`
+//!           on a PR tab, `run by · branch · type · status · trigger` on a
+//!           pipelines tab; wrapping to a second row when they must
+//!   row 3   the filter pill — `󰍉 / filter`
+//!   row 4   the column header
 //!   rows    the list: the `▌` marker on the cursor's row, the reference's
 //!           columns, a merged PR's pipeline sub-line, the show-more footer,
 //!           a scrollbar when the list is longer than the pane; with `d`, the
@@ -18,8 +24,8 @@
 //!           keys that apply to the focused row, generated from the one
 //!           keymap table so nothing here can drift from what a key does
 //!
-//! Overlays paint last, so they win the click: a row's right-click
-//! menu, and the `?` key sheet.
+//! Overlays paint last, so they win the click: a row's or a chip's
+//! right-click menu, a chip's picker, and the `?` key sheet.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -106,17 +112,23 @@ pub fn paint(arena: Allocator, f: *sdk.Frame, app: *App, nerd_font: bool) Alloca
     if (app.showTabStrip() and y < f.rows) {
         y += try paintTabStrip(arena, &p, y);
     }
+    const hint_y = f.rows - 1;
+    // The toolbar may take two rows; it never takes the pill's or the
+    // body's last one.
+    if (y + 3 < hint_y) {
+        y += try paintToolbar(arena, &p, y, if (y + 5 < hint_y) 2 else 1);
+    }
     if (y < f.rows) {
         try paintFilter(&p, y);
         y += 1;
     }
-    const hint_y = f.rows - 1;
     if (y < hint_y) {
         const body: Box = .{ .x = 0, .y = y, .w = f.cols, .h = hint_y - y };
         try paintBody(arena, &p, body);
     }
     try paintHintRow(arena, &p, hint_y);
     if (app.mode == .menu) try paintMenu(arena, &p);
+    if (app.mode == .picker) try paintPicker(arena, &p);
     if (app.mode == .help) try paintSheet(arena, &p);
     if (app.mode == .confirm) try paintMergeConfirm(&p);
 }
@@ -131,67 +143,72 @@ fn familyLabel(app: *App) []const u8 {
     };
 }
 
+/// What the header says when the chips or the query hide every row.
+fn nothingMatches(kind: cfg.Kind) []const u8 {
+    return switch (kind.family()) {
+        .prs => "no pull requests match",
+        .pipelines => "no pipelines match",
+        .branches => "no branches match",
+    };
+}
+
 fn paintHeader(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
     const app = p.app;
     const ts = app.activeTab();
     const label = familyLabel(app);
+    // What the fetch is doing — the live phase the worker left behind
+    // (queued behind N on the broker, waiting on the file bucket, on
+    // the wire), the repo count of a first load, the reason the last
+    // one failed. One wording, the toolkit's, on both families.
+    const fetch = app.fetchState();
+    const busy = fetch.busy();
     // The subtitle: the reference's status count, dim.
     var sub: []const u8 = "";
-    if (ts.loading and !ts.fetched) {
-        const done = app.progressDone();
-        const total = app.progressTotal();
-        sub = if (total > 0) try std.fmt.allocPrint(arena, "  loading… {d}/{d} repos", .{ done, total }) else "  loading…";
-    } else if (app.awaiting_only) {
-        // The chip is narrowing the tab: say so, or the header goes on
-        // claiming a count the rows plainly do not add up to.
-        sub = try std.fmt.allocPrint(arena, "  ({d} of {d} awaiting my review)", .{ app.awaitingCount(), ts.items });
-    } else if (app.narrowed()) {
-        // Narrowed: the count says how much of the tab is hidden, the
-        // way the sibling integrations' caps headers do.
-        sub = try std.fmt.allocPrint(arena, "  ({d} of {d})", .{ app.filter_shown, app.filter_total });
-    } else if (ts.fetched) {
-        sub = switch (ts.data) {
-            .repo_pr_tree => try std.fmt.allocPrint(arena, "  ({d} repos · {d} PRs{s})", .{ ts.repos, ts.items, if (ts.errored > 0) " · some errored" else "" }),
-            .repo_tree => try std.fmt.allocPrint(arena, "  ({d} repos)", .{ts.repos}),
-            .pull_requests => try std.fmt.allocPrint(arena, "  ({d} PRs)", .{ts.items}),
-            .pipelines => try std.fmt.allocPrint(arena, "  ({d} pipelines)", .{ts.items}),
-            .branches => try std.fmt.allocPrint(arena, "  ({d} branches)", .{ts.items}),
-        };
-    }
-    // A refetch over rows that are already there keeps the count and
-    // says it is refreshing beside it, rather than replacing what is on
-    // screen with `loading…`: the rows below are last time's, and they
-    // stay readable while the new ones are fetched.
-    if (ts.loading and ts.fetched) {
-        sub = try std.fmt.allocPrint(arena, "{s}{s}", .{ sub, if (p.nerd) "  refreshing…" else "  refreshing..." });
+    if (!ts.fetched and busy) {
+        // Nothing to count yet: the line is the fetch alone —
+        // `⠋ fetching… 2/13 repos`.
+        sub = p.c.fetchSub(fetch, app.now_ms);
+    } else {
+        if (ts.fetched and app.filter_shown == 0 and app.filter_total > 0 and app.narrowed()) {
+            // The chips or the query hid every row: say so, rather than
+            // leave `(0 of 3)` to explain an empty list.
+            sub = try std.fmt.allocPrint(arena, "  {s}", .{nothingMatches(ts.spec.kind)});
+        } else if (app.narrowed()) {
+            // Narrowed: the count says how much of the tab is hidden, the
+            // way the sibling integrations' caps headers do.
+            sub = try std.fmt.allocPrint(arena, "  ({d} of {d})", .{ app.filter_shown, app.filter_total });
+        } else if (ts.fetched) {
+            sub = switch (ts.data) {
+                .repo_pr_tree => try std.fmt.allocPrint(arena, "  ({d} repos · {d} PRs{s})", .{ ts.repos, ts.items, if (ts.errored > 0) " · some errored" else "" }),
+                .repo_tree => try std.fmt.allocPrint(arena, "  ({d} repos)", .{ts.repos}),
+                .pull_requests => try std.fmt.allocPrint(arena, "  ({d} PRs)", .{ts.items}),
+                .pipelines => try std.fmt.allocPrint(arena, "  ({d} pipelines)", .{ts.items}),
+                .branches => try std.fmt.allocPrint(arena, "  ({d} branches)", .{ts.items}),
+            };
+        }
+        // A refetch over rows that are already there keeps the count
+        // and says what the fetch is doing beside it, rather than
+        // replacing what is on screen with `loading…`: the rows below
+        // are last time's, and they stay readable while the new ones
+        // are fetched. A failure sits in the same place.
+        if (busy or fetch == .failed) {
+            sub = try std.fmt.allocPrint(arena, "{s}{s}", .{ sub, p.c.fetchSub(fetch, app.now_ms) });
+        }
     }
     // The chips, laid right to left by the toolkit, each dropped whole
     // when it would cross the title, each a hit registered with its
     // cells. `?` first, so it lands at the very end — it is the one
-    // chip that applies on every family and in every state.
+    // chip that applies on every family and in every state. The
+    // refresh chip is the spinner while a fetch is out, where the
+    // host's own panels turn theirs.
     var chips: [8]Chrome.ChipSpec = undefined;
     var n: usize = 0;
     chips[n] = .{ .text = chrome.help_chip_text, .target = .{ .chip = .help } };
     n += 1;
-    chips[n] = .{ .text = p.c.refreshChipText(), .target = .{ .chip = .refresh } };
+    chips[n] = .{ .text = p.c.refreshOrBusyChipText(busy, app.now_ms), .target = .{ .chip = .refresh } };
     n += 1;
     switch (app.family()) {
-        .prs => {
-            const kind_ok = ts.spec.kind == .workspace_open_prs or ts.spec.kind == .workspace_merged_prs;
-            // What is waiting on YOU, beside what you authored. The
-            // count is off the participants already on screen, so the
-            // chip costs nothing and can say its number at rest.
-            const waiting = app.awaitingCount();
-            if (waiting > 0 or app.awaiting_only) {
-                chips[n] = .{ .text = try std.fmt.allocPrint(arena, " awaiting: {d} ", .{waiting}), .target = .{ .chip = .awaiting }, .active = app.awaiting_only };
-                n += 1;
-            }
-            if (kind_ok) {
-                const who = if (ts.spec.mine_only) (if (app.me_display_name.len > 0) app.me_display_name else "me") else "all";
-                chips[n] = .{ .text = try std.fmt.allocPrint(arena, " author: {s} ", .{who}), .target = .{ .chip = .author }, .active = ts.spec.mine_only };
-                n += 1;
-            }
-        },
+        .prs => {},
         .pipelines => {
             chips[n] = .{ .text = " usage ", .target = .{ .chip = .usage }, .active = false };
             n += 1;
@@ -231,6 +248,36 @@ fn tabCount(ts: *const app_mod.TabState) usize {
         .repo_pr_tree => ts.items,
         .repo_tree => ts.repos,
         else => ts.items,
+    };
+}
+
+// ─── the toolbar ─────────────────────────────────────────────────────────
+
+/// The web bar's filters as the toolkit's ` key: value ` chips, left to
+/// right under the strip, wrapping to a second row when the pane is
+/// too narrow for one — the tracker pane's toolbar geometry, so the
+/// two families' filters sit in the same place. A chip off its default
+/// wears the active ink. Returns the rows used.
+fn paintToolbar(arena: Allocator, p: *Painter, y: u16, max_rows: u16) Allocator.Error!u16 {
+    const app = p.app;
+    const kinds = app.chipKinds();
+    if (kinds.len == 0) return 0;
+    const chips = try arena.alloc(Chrome.ChipSpec, kinds.len);
+    for (kinds, chips) |k, *c| c.* = .{ .text = try app.chipLabel(arena, k), .target = .{ .chip = chipOf(k) }, .active = app.chipActive(k) };
+    return p.c.toolbarRow(1, y, p.f.cols -| 1, max_rows, chips);
+}
+
+fn chipOf(k: app_mod.FilterKind) hit.Chip {
+    return switch (k) {
+        .status => .status,
+        .author => .author,
+        .target => .target,
+        .show => .show,
+        .run_by => .run_by,
+        .branch => .branch,
+        .ptype => .ptype,
+        .pstatus => .pstatus,
+        .trigger => .trigger,
     };
 }
 
@@ -584,6 +631,7 @@ fn modeHint(app: *App) ?[]const u8 {
         .list => null,
         .filter => "type to filter · ⏎ commit · esc clear · ^u wipe · ↑↓ leave",
         .menu => "↑↓ / jk move · ⏎ run · esc close",
+        .picker => if (app.picker) |pk| (if (pk.kind.multi()) "type to filter · ↑↓ move · ␣ toggle · ⏎ close · esc cancel" else "type to filter · ↑↓ move · ⏎ pick · esc cancel") else null,
         .help => "j k scroll · any other key closes",
         .confirm => "⏎ merge through Claude Code · ←→ strategy · esc cancel",
     };
@@ -625,33 +673,112 @@ fn paintHintRow(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
 
 // ─── overlays ────────────────────────────────────────────────────────────
 
+/// The tick a chip's menu puts on its live value — the host's `sort:`
+/// menu's, so the two read the same.
+pub const tick_glyph = "\u{2713}";
+pub const tick_ascii = "*";
+
 fn paintMenu(arena: Allocator, p: *Painter) Allocator.Error!void {
     const app = p.app;
     const th = p.th;
     const m = app.menu orelse return;
+    const tick: []const u8 = if (p.nerd) tick_glyph else tick_ascii;
     var w: u16 = 0;
-    for (m.items) |a| {
-        const b = keymap.bindingOf(a) orelse continue;
-        w = @max(w, Painter.width(b.title) + Painter.width(keymap.keyLabel(b.keys[0])) + 5);
-    }
+    for (m.items, 0..) |it, i| switch (it) {
+        .action => |a| {
+            const b = keymap.bindingOf(a) orelse continue;
+            w = @max(w, Painter.width(b.title) + Painter.width(keymap.keyLabel(b.keys[0])) + 5);
+        },
+        .pick => w = @max(w, Painter.width(if (i < m.values.len) m.values[i].label else "") + 4),
+    };
     const h: u16 = @intCast(m.items.len + 2);
     const x: u16 = if (m.col + w + 2 <= p.f.cols) m.col else p.f.cols -| (w + 2);
     const y: u16 = if (m.y + 1 + h <= p.f.rows) m.y + 1 else m.y -| h;
     const box: Box = .{ .x = x, .y = y, .w = w + 2, .h = h };
     p.fill(box, .{ .fg = th.fg, .bg = th.cursor_line });
     paintFrame(p, box, th.overlayBorder());
-    for (m.items, 0..) |a, i| {
-        const b = keymap.bindingOf(a) orelse continue;
+    for (m.items, 0..) |it, i| {
         const row_y = y + 1 + @as(u16, @intCast(i));
         const selected = i == m.selected;
         const style: Style = if (selected) th.chipActive() else .{ .fg = th.fg, .bg = th.cursor_line };
         p.fill(.{ .x = x + 1, .y = row_y, .w = w, .h = 1 }, style);
-        const line = try std.fmt.allocPrint(arena, " {s}", .{b.title});
-        _ = p.text(x + 1, row_y, w, line, style);
-        const key = keymap.keyLabel(b.keys[0]);
-        _ = p.text(x + 1 + w -| (Painter.width(key) + 1), row_y, Painter.width(key), key, .{ .fg = if (selected) style.fg else th.muted, .bg = style.bg });
+        switch (it) {
+            .action => |a| {
+                const b = keymap.bindingOf(a) orelse continue;
+                const line = try std.fmt.allocPrint(arena, " {s}", .{b.title});
+                _ = p.text(x + 1, row_y, w, line, style);
+                const key = keymap.keyLabel(b.keys[0]);
+                _ = p.text(x + 1 + w -| (Painter.width(key) + 1), row_y, Painter.width(key), key, .{ .fg = if (selected) style.fg else th.muted, .bg = style.bg });
+            },
+            // A chip's value: the tick on the live one(s), a blank of
+            // the same width on the rest so the words line up.
+            .pick => {
+                const v: app_mod.PickItem = if (i < m.values.len) m.values[i] else .{ .label = "" };
+                const line = try std.fmt.allocPrint(arena, " {s} {s}", .{ if (v.checked) tick else " ", v.label });
+                _ = p.text(x + 1, row_y, w, line, style);
+            },
+        }
         p.app.hits.add(.{ .x = x, .y = row_y, .w = w + 2, .h = 1 }, .{ .menu_item = i });
     }
+}
+
+/// A chip's picker over the list: the tracker pane's picker shape — a
+/// centred box titled with the chip's word, a typed filter on its
+/// first line, the rows on the toolkit's row ground, `[x]` on a
+/// multi-select's rows and a tick on a single-select's live one.
+fn paintPicker(arena: Allocator, p: *Painter) Allocator.Error!void {
+    const app = p.app;
+    const th = p.th;
+    const pk = &(app.picker orelse return);
+    const w: u16 = @min(p.f.cols -| 2, 60);
+    const h: u16 = @min(p.f.rows -| 2, 18);
+    if (w < 16 or h < 6) return;
+    const x = (p.f.cols - w) / 2;
+    const y = (p.f.rows - h) / 2;
+    const box: Box = .{ .x = x, .y = y, .w = w, .h = h };
+    p.fill(box, .{ .fg = th.fg, .bg = th.cursor_line });
+    paintFrame(p, box, th.overlayBorder());
+    const title = try std.fmt.allocPrint(arena, " {s} ", .{pk.kind.word()});
+    _ = p.text(x + 2, y, w -| 4, title, .{ .fg = th.accent, .bg = th.cursor_line, .mods = .{ .bold = true } });
+    p.app.hits.add(.{ .x = x, .y = y, .w = w, .h = h }, .picker_body);
+    const ix = x + 2;
+    const iw = w -| 4;
+    // The filter line: the search glyph, the query, a caret.
+    var fx = ix;
+    fx += p.text(fx, y + 1, iw, if (p.nerd) chrome.search_nerd else chrome.search_ascii, .{ .fg = th.accent, .bg = th.cursor_line }) + 1;
+    if (pk.query.items.len > 0) {
+        fx += p.text(fx, y + 1, iw -| (fx - ix), pk.query.items, .{ .fg = th.fg, .bg = th.cursor_line });
+    } else {
+        fx += p.text(fx, y + 1, iw -| (fx - ix), if (p.nerd) chrome.placeholder_focused else chrome.placeholder_focused_ascii, .{ .fg = th.muted, .bg = th.cursor_line });
+    }
+    _ = p.text(fx, y + 1, 1, chrome.caret_glyph, .{ .fg = th.accent, .bg = th.cursor_line });
+    const vis = try pk.visible(arena);
+    const list_y = y + 3;
+    const list_h: usize = h -| 5;
+    var pos: usize = 0;
+    for (vis, 0..) |i, k| if (i == pk.selected) {
+        pos = k;
+    };
+    const start = if (pos >= list_h) pos + 1 - list_h else 0;
+    const tick: []const u8 = if (p.nerd) tick_glyph else tick_ascii;
+    var k = start;
+    var ry = list_y;
+    while (k < vis.len and ry < list_y + list_h) : ({
+        k += 1;
+        ry += 1;
+    }) {
+        const it = pk.items[vis[k]];
+        const is_cur = vis[k] == pk.selected;
+        try p.c.rowGround(.{ .x = x + 1, .y = ry, .w = w -| 2, .h = 1 }, is_cur, .{ .picker_row = vis[k] });
+        var rx = ix + 1;
+        if (pk.kind.multi()) {
+            rx += p.text(rx, ry, 4, if (it.checked) "[x] " else "[ ] ", if (it.checked) .{ .fg = th.accent, .bg = if (is_cur) th.cursor_line else null } else .{ .fg = th.muted, .bg = if (is_cur) th.cursor_line else null });
+        } else {
+            rx += p.text(rx, ry, 2, if (it.checked) tick else " ", .{ .fg = th.accent, .bg = if (is_cur) th.cursor_line else null }) + 1;
+        }
+        _ = p.text(rx, ry, iw -| (rx - ix), it.label, .{ .fg = th.fg, .bg = if (is_cur) th.cursor_line else null, .mods = .{ .bold = is_cur } });
+    }
+    if (vis.len == 0) _ = p.text(ix, list_y, iw, "nothing matches", .{ .fg = th.muted, .bg = th.cursor_line });
 }
 
 fn paintFrame(p: *Painter, b: Box, style: Style) void {
@@ -719,6 +846,8 @@ fn paintSheet(arena: Allocator, p: *Painter) Allocator.Error!void {
                     .tree => "  (tree)",
                     .row => "  (row)",
                     .detail => "  (detail open)",
+                    .prs => "  (PR tab)",
+                    .pipelines => "  (pipelines tab)",
                 };
                 const line = try std.fmt.allocPrint(arena, "{s}{s}", .{ b.title, scope });
                 _ = p.text(x + 19, ry, w -| 21, line, .{ .fg = th.fg, .bg = th.cursor_line });
@@ -762,6 +891,10 @@ const t = std.testing;
 const Rig = app_mod.Rig;
 
 const acme: cfg.Config = .{ .email = "me@x.com", .workspace = "acme", .repos = &.{ "api", "web" }, .refresh_interval_secs = 0, .tabs = &cfg.default_tabs };
+
+/// The tree's chevrons, as every other tree on the screen folds.
+const open_ch = chrome.open_glyph;
+const closed_ch = chrome.closed_glyph;
 
 const Screen = struct {
     rig: *Rig,
@@ -828,13 +961,25 @@ test "the pane paints the header, the strip, the pill, the reference's columns, 
     try t.expect(has(scr, "BRANCH"));
     try t.expect(has(scr, "UPDATED"));
     try t.expect(has(scr, "TITLE"));
-    try t.expect(has(scr, "▌ ▾ api"));
+    try t.expect(has(scr, "▌ " ++ open_ch ++ " api"));
+    // The reference's `▾` / `▸` triangles are gone: the rows fold with
+    // the toolkit's chevron, the one the host's file tree and the
+    // tracker pane's tree wear.
+    try t.expect(!has(scr, "▾"));
+    try t.expect(!has(scr, "▸"));
     try t.expect(has(scr, "2 PRs"));
     try t.expect(has(scr, "#1234"));
     try t.expect(has(scr, "Fix the login redir"));
     try t.expect(has(scr, "chris/fix-login"));
     try t.expect(has(scr, "Show more (1)"));
-    try t.expect(has(scr, "author: all"));
+    // The web bar, as a toolbar row under the strip: Status, Author,
+    // Target branch, the Reviewing / All selector — every one a chip
+    // with its live value, every one a hit.
+    try t.expect(has(scr, " status: Open + Draft "));
+    try t.expect(has(scr, " author: all "));
+    try t.expect(has(scr, " target: any "));
+    try t.expect(has(scr, " show: all"));
+    for ([_]hit.Chip{ .status, .author, .target, .show }) |c| try t.expect(s.rig.app.hits.rectOf(.{ .chip = c }) != null);
     // The caps header is the TOOLKIT's, not a copy of it: the title in
     // `label()` and the ladder ending in the refresh chip then `?`,
     // both on the chip ground. Asserted through `sdk.pane.expect`, the
@@ -849,25 +994,22 @@ test "the pane paints the header, the strip, the pill, the reference's columns, 
     try t.expect(has(scr, "Open + Draft · 2 repos, 3 PRs"));
     try t.expect(has(scr, "⏎ expand"));
     try t.expect(has(scr, "q quit"));
-    // The reference paints four chips that do nothing when clicked
-    // (`filter not wired yet (round-1 visual)`). None of them is here,
-    // on either family — the `/` pill is what replaced the fifth, its
-    // Search chip.
-    // `draw` resets the screen arena, so the first screen has to be
-    // taken out of it before the second one is drawn.
-    const first = try t.allocator.dupe(u8, scr);
-    defer t.allocator.free(first);
+    // The reference painted four chips that did nothing when clicked
+    // (`filter not wired yet (round-1 visual)`); the pane cut them.
+    // They are back, and they work: the pipelines family's bar is the
+    // web's — Run by, Branch, Pipeline type, Status, Trigger type.
     try s.key("3");
     const pipelines = try s.draw();
-    for ([_][]const u8{ "Target branch", "Pipeline type", "Trigger type" }) |dead_chip| {
-        try t.expect(!has(first, dead_chip));
-        try t.expect(!has(pipelines, dead_chip));
-    }
-    // `Branch ▾` was the fourth; the pipelines tree's column header is
-    // the only `BRANCH` on the screen.
-    try t.expect(!has(pipelines, "Branch ▾"));
-    try t.expect(!has(pipelines, "[ Branch"));
+    try t.expect(has(pipelines, " run by: any "));
+    try t.expect(has(pipelines, " branch: any "));
+    try t.expect(has(pipelines, " type: any "));
+    try t.expect(has(pipelines, " status: any "));
+    try t.expect(has(pipelines, " trigger: any"));
+    for ([_]hit.Chip{ .run_by, .branch, .ptype, .pstatus, .trigger }) |c| try t.expect(s.rig.app.hits.rectOf(.{ .chip = c }) != null);
     try t.expect(has(pipelines, "REPO / BRANCH"));
+    // A PR chip is not on a pipelines tab, and the other way round.
+    try t.expect(!has(pipelines, "show:"));
+    try t.expect(s.rig.app.hits.rectOf(.{ .chip = .show }) == null);
 }
 
 test "an open PR's chevron folds its builds under the mouse" {
@@ -882,18 +1024,18 @@ test "an open PR's chevron folds its builds under the mouse" {
     // folded, so the pointer cannot lose a row by brushing it.
     try s.click(40, y, .left);
     var scr = try s.draw();
-    try t.expect(has(scr, "▸ #1234"));
+    try t.expect(has(scr, closed_ch ++ " #1234"));
     try t.expect(!has(scr, "fetching builds"));
     // A click on the chevron folds them out. It used to do nothing at
     // all on an open pull request: the click path folded a MERGED one
     // and nothing else, while the row painted a chevron either way.
     try s.click(4, y, .left);
     scr = try s.draw();
-    try t.expect(has(scr, "▾ #1234"));
+    try t.expect(has(scr, open_ch ++ " #1234"));
     // …and again folds them back.
     try s.click(4, y, .left);
     scr = try s.draw();
-    try t.expect(has(scr, "▸ #1234"));
+    try t.expect(has(scr, closed_ch ++ " #1234"));
 }
 
 test "the fold row is one phrase: the ellipsis is punctuation and only its words are bright" {
@@ -922,11 +1064,11 @@ test "a click on a row selects that row and toggles a header; the strip switches
     var scr = try s.draw();
     // The cursor's marker, the row's own chevron (every PR has builds
     // to fold out now), then its number.
-    try t.expect(has(scr, "▌   \u{25b8} #1234"));
-    const y_api = try s.rowOf("▾ api");
+    try t.expect(has(scr, "▌   " ++ closed_ch ++ " #1234"));
+    const y_api = try s.rowOf(open_ch ++ " api");
     try s.click(3, y_api, .left);
     scr = try s.draw();
-    try t.expect(has(scr, "▸ api"));
+    try t.expect(has(scr, closed_ch ++ " api"));
     // The header keeps its preview of #1234; the PR row itself is gone.
     try t.expect(has(scr, "#1234 · Fix the login"));
     try t.expect(!has(scr, "Fix the login redir"));
@@ -949,10 +1091,10 @@ test "a PR folds out to its builds under enter, one row per run, and the detail 
     try s.key("2");
     try s.key("j");
     var scr = try s.draw();
-    try t.expect(has(scr, "▸ #1100"));
+    try t.expect(has(scr, closed_ch ++ " #1100"));
     try s.key("enter");
     scr = try s.draw();
-    try t.expect(has(scr, "\u{25be} #1100"));
+    try t.expect(has(scr, open_ch ++ " #1100"));
     // The toolkit's build line, the same one the Jira pane paints:
     // state, branch, age, number.
     try t.expect(has(scr, "\u{2713} SUCCESSFUL \u{b7} main \u{b7} "));
@@ -1076,35 +1218,61 @@ test "every PR row carries its buttons, the Merge is dim, and hovering it says w
     try t.expect(!has(scr, "Merge acme/api/pull-requests/1234"));
 }
 
-test "the awaiting chip says its count, narrows the tab, and the header says what it narrowed" {
+test "the show chip cycles all → reviewing → awaiting me, says its count, narrows the tab, and the header says so" {
     const s = try Screen.init(120, 40, acme, .{});
     defer s.deinit();
     var scr = try s.draw();
-    // At rest: the chip carries its number beside `author:`.
-    try t.expect(has(scr, "awaiting: 1"));
-    try t.expect(has(scr, "author: all"));
+    try t.expect(has(scr, " show: all"));
     try t.expect(has(scr, "(2 repos \u{b7} 3 PRs)"));
     try t.expect(has(scr, "#1234"));
 
     // `A` is the same door the chip is — a chip nobody can reach from
     // the keyboard is half a feature. (mnml spells it `shift+a`.)
+    // Reviewing: what I am a reviewer on, voted or not — #1198 only
+    // (#1100 is merged, off the open tab; my own two are not mine to
+    // review).
     try s.key("shift+a");
     scr = try s.draw();
-    try t.expect(has(scr, "(1 of 3 awaiting my review)"));
-    // Only Dana's #1198, which I am a reviewer on and have not voted.
+    try t.expect(has(scr, " show: reviewing"));
+    // `N of M` the way the `/` filter says it: of the rows the tab
+    // shows unnarrowed (two — the day-old #1198 sits behind the fold).
+    try t.expect(has(scr, "(1 of 2)"));
     try t.expect(has(scr, "#1198"));
     try t.expect(!has(scr, "Fix the login redir"));
+    // Awaiting me: the chip carries its count, and the header still
+    // says how much of the tab is hidden.
+    try s.key("shift+a");
+    scr = try s.draw();
+    try t.expect(has(scr, " show: awaiting me (1)"));
+    try t.expect(has(scr, "(1 of 2)"));
+    try t.expect(has(scr, "#1198"));
     // …and it is 30 hours old, so the 24-hour window the tree usually
     // folds it behind is lifted rather than hiding the very thing the
     // chip is for.
     try t.expect(!has(scr, "Show more"));
 
-    // The chip itself toggles it back.
-    const chip = s.rig.app.hits.rectOf(.{ .chip = .awaiting }).?;
+    // A click on the chip cycles it round to all — three values, so it
+    // cycles the way the host's `sort:` chip does.
+    const chip = s.rig.app.hits.rectOf(.{ .chip = .show }).?;
     try s.click(chip.x + 1, chip.y, .left);
     scr = try s.draw();
+    try t.expect(has(scr, " show: all"));
     try t.expect(has(scr, "(2 repos \u{b7} 3 PRs)"));
     try t.expect(has(scr, "Fix the login redir"));
+
+    // A right click lists every value with the live one ticked, and a
+    // row of that menu applies it.
+    try s.click(chip.x + 1, chip.y, .right);
+    scr = try s.draw();
+    try t.expectEqual(app_mod.Mode.menu, s.rig.app.mode);
+    try t.expect(has(scr, tick_glyph ++ " all"));
+    try t.expect(has(scr, "  reviewing"));
+    try t.expect(has(scr, "  awaiting me"));
+    const row = s.rig.app.hits.rectOf(.{ .menu_item = 2 }).?;
+    try s.click(row.x + 2, row.y, .left);
+    scr = try s.draw();
+    try t.expectEqual(app_mod.Mode.list, s.rig.app.mode);
+    try t.expect(has(scr, " show: awaiting me (1)"));
 }
 
 test "an OPEN PR folds out to the builds on its branch head; a second open costs nothing while it has not moved" {
@@ -1113,12 +1281,12 @@ test "an OPEN PR folds out to the builds on its branch head; a second open costs
     // The cursor onto #1234, the open pull request the account authored.
     try s.key("j");
     var scr = try s.draw();
-    try t.expect(has(scr, "▸ #1234"));
+    try t.expect(has(scr, closed_ch ++ " #1234"));
     const served = s.rig.srv.state.served;
     try s.key("enter");
     try s.rig.drain();
     scr = try s.draw();
-    try t.expect(has(scr, "▾ #1234"));
+    try t.expect(has(scr, open_ch ++ " #1234"));
     // One run on `chris/fix-login`'s head, in the toolkit's words.
     try t.expect(has(scr, "\u{23f5} IN_PROGRESS \u{b7} chris/fix-login \u{b7} "));
     try t.expect(has(scr, "\u{b7} #413"));
@@ -1178,7 +1346,7 @@ test "the pipelines tree paints the reference's columns and glyphs; the pipeline
     try t.expect(has(scr, "REPO / BRANCH"));
     try t.expect(has(scr, "BUILD"));
     try t.expect(has(scr, "RESULT"));
-    try t.expect(has(scr, "▾ api"));
+    try t.expect(has(scr, open_ch ++ " api"));
     try t.expect(has(scr, "4 branches"));
     try t.expect(has(scr, "main"));
     try t.expect(has(scr, "COMPLETED"));
@@ -1225,6 +1393,83 @@ test "the key sheet, the row menu and the filter paint as overlays that take the
     try t.expect(has(scr, "login▏"));
     try t.expect(has(scr, "Fix the login redir"));
     try t.expect(!has(scr, "Redesign the empty"));
+}
+
+test "the header says what a fetch is doing: queued behind N, waiting, fetching, failed, nothing matches — and the refresh chip turns the ring" {
+    const s = try Screen.init(120, 40, acme, .{});
+    defer s.deinit();
+    const app = &s.rig.app;
+    // The refresh chip's glyph, read off the cell its hit registered
+    // — the chip is ` <glyph> `, so the glyph is one cell in.
+    const chipGlyph = struct {
+        fn f(scr_: *Screen) []const u8 {
+            const r = scr_.rig.app.hits.rectOf(.{ .chip = .refresh }) orelse return "";
+            return scr_.frame.slots[@as(usize, r.y) * scr_.frame.cols + r.x + 1].symbol();
+        }
+    }.f;
+    // At rest: the count, the age, the refresh glyph, no fetch line.
+    var scr = try s.draw();
+    try t.expect(has(scr, "(2 repos · 3 PRs)"));
+    try t.expect(has(scr, "as of"));
+    try t.expect(!has(scr, "fetching"));
+    try t.expectEqualStrings(chrome.refresh_nerd, chipGlyph(s));
+
+    // A refetch over rows already there: the count stays, the fetch
+    // line joins it, and the refresh chip is the spinner's frame for
+    // this clock — the host's ring at the host's step.
+    app.tabs[0].loading = true;
+    app.now_ms = 160;
+    app.wait_notice.setPhase(.sending, 0);
+    scr = try s.draw();
+    // The count, then the fetch, then the age the toolkit lays after
+    // the subtitle: `(2 repos · 3 PRs)  ⠹ fetching…  as of 0s ago`.
+    try t.expect(has(scr, "(2 repos · 3 PRs)  \u{2839} fetching\u{2026}"));
+    try t.expect(has(scr, "as of"));
+    try t.expectEqualStrings("\u{2839}", chipGlyph(s));
+    try t.expect(!has(scr, chrome.refresh_nerd));
+    try t.expect(has(scr, "#1234"));
+    // Queued behind the broker: the number the reader was missing —
+    // and the ring has turned a step with the clock.
+    app.wait_notice.setPhase(.queued, 3);
+    app.now_ms = 240;
+    scr = try s.draw();
+    try t.expect(has(scr, "\u{2838} queued behind 3 requests"));
+    try t.expectEqualStrings("\u{2838}", chipGlyph(s));
+    try t.expect(!has(scr, "fetching"));
+    // Held on the file bucket, with no broker to say how many.
+    app.wait_notice.setPhase(.waiting, 0);
+    scr = try s.draw();
+    try t.expect(has(scr, "waiting for the API budget"));
+    // A first load counts the repos as they land and has no count of
+    // its own to keep.
+    app.wait_notice.setPhase(.sending, 0);
+    app.tabs[0].fetched = false;
+    app.now_ms = 160;
+    scr = try s.draw();
+    try t.expect(has(scr, "BITBUCKET PRS  \u{2839} fetching\u{2026}"));
+    try t.expect(!has(scr, "(2 repos"));
+    app.tabs[0].fetched = true;
+    // Landed: the line is gone and the glyph is back.
+    app.tabs[0].loading = false;
+    app.wait_notice.setPhase(.idle, 0);
+    scr = try s.draw();
+    try t.expect(!has(scr, "fetching"));
+    try t.expectEqualStrings(chrome.refresh_nerd, chipGlyph(s));
+    // A failure sits in the same place, in words, with no spinner.
+    try app_mod.TabState.setText(app.gpa, &app.tabs[0].error_text, "401 auth failed");
+    scr = try s.draw();
+    try t.expect(has(scr, "fetch failed: 401 auth failed"));
+    try t.expect(!has(scr, "\u{2839}"));
+    try app_mod.TabState.setText(app.gpa, &app.tabs[0].error_text, "");
+    // The chips hid every row: the header names that rather than
+    // counting to zero.
+    try app.setTextFilter(.target, "nobody/merges/here");
+    scr = try s.draw();
+    try t.expect(has(scr, "no pull requests match"));
+    try t.expect(!has(scr, "(0 of"));
+    try app.setTextFilter(.target, "");
+    scr = try s.draw();
+    try t.expect(has(scr, "(2 repos · 3 PRs)"));
 }
 
 test "the pane paints at every size the gate runs, and at one below them" {
@@ -1318,7 +1563,8 @@ fn rightClickRow(s: *Screen, i: usize) !void {
 }
 
 fn menuItems(s: *Screen) []const app_mod.Action {
-    return if (s.rig.app.menu) |m| m.items else &.{};
+    _ = s.arena.reset(.retain_capacity);
+    return s.rig.app.menuActions(s.arena.allocator()) catch &.{};
 }
 
 test "a right-click offers the actions of the row kind under it — every kind, off the painted hit map" {
