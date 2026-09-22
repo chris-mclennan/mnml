@@ -342,7 +342,7 @@ trust sink. Each row names its file and its test.
 | Diagnostics — gutter signs | done | `lsp.zig`, `src/ui/editor_view.zig` | |
 | Diagnostics — Problems pane | done | `src/ui/diagnostics_view.zig`, `PanelId.diagnostics` / `Section.diagnostics`, `lsp.drawPanel` | a section with a side, right by default; `lsp.diagnostics` places it |
 | `]d` / `[d` | done | `lsp.next_diagnostic` / `prev_diagnostic` | |
-| External linters | done | `src/lsp/tools.zig`, `lintOnHook` / `lintPath` / `lintWorker` in `src/app/lsp_format.zig` | on open and on save, a worker per run; findings merge beside the server's as server id 0 |
+| External linters | done | `src/lsp/tools.zig`, `lintOnHook` / `lintPath` / `lintWorker` in `src/app/lsp_format.zig` | on open and on save, a worker per run; findings merge beside the server's as server id 0. *2026-09-22 (sh-hunt):* a BUILTIN row stands down for a file a language server is attached to (`lintOnHook`'s `has_server`) — bash-language-server runs shellcheck itself, and the tool's copy of every finding doubled the panel, the badges and `]d` (`sh-lsp-diagnostics-doubled`); a row named in `.linters` and `editor.lint_external` run regardless. A server's `code` now follows its message in the panel (`messageWithCode`), the way the tool's gcc line reads. The tables answer for the extension, then for the language `highlight.detect` names (`bin/run-all` under a bash shebang, a `.zshrc`). `tests/e2e/lsp_lint_yields_to_server.test` |
 | Code actions — quick-fix | done | `quickFix` in `lsp.zig` | |
 | Code actions — refactors + picker | done | `codeAction` → picker | |
 | Organize imports | done | `lsp.zig` | |

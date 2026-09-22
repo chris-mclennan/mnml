@@ -256,14 +256,22 @@ pub fn lintExternal(app: *App) CommandError!void {
 }
 
 /// A file opened or saved: lint it when a tool is configured. Quiet
-/// when there is none.
-pub fn lintOnHook(app: *App, path: []const u8) void {
+/// when there is none. `has_server` says a language server is attached
+/// to the file: the BUILTIN row then stands down — the server lints
+/// (bash-language-server runs shellcheck itself), and the tool's copy
+/// of every finding doubled the panel, the badges and `]d`. A tool the
+/// config names in `.linters` was asked for and runs regardless, as
+/// does `editor.lint_external`.
+pub fn lintOnHook(app: *App, path: []const u8, has_server: bool) void {
     var buf: [32]u8 = undefined;
     const ext = extOf(path, &buf);
     const key = lsp.languageOf(app, path);
     const l = tools.linterFor(&app.cfg, ext, key) orelse return;
-    // A builtin tool that is not installed is not worth a spawn per save.
-    if (!tools.linterConfigured(&app.cfg, ext, key) and !(lsp.onPath(app, app.frame.allocator(), l.argv[0]) catch false)) return;
+    if (!tools.linterConfigured(&app.cfg, ext, key)) {
+        if (has_server) return;
+        // A builtin tool that is not installed is not worth a spawn per save.
+        if (!(lsp.onPath(app, app.frame.allocator(), l.argv[0]) catch false)) return;
+    }
     lintPath(app, path, l) catch {};
 }
 
@@ -541,7 +549,7 @@ test "an external linter runs on a worker and its findings land in the diagnosti
             return lsp.diagnosticsFor(a, "/tmp/mnml-zig-lint-test.txt").len == 2;
         }
     };
-    lintOnHook(&app, path);
+    lintOnHook(&app, path, false);
     try lsp.TestRig.pump(&app, &app, Cond.two, 5000);
     const list = lsp.diagnosticsFor(&app, path);
     try testing.expectEqualStrings("meh", list[0].message);

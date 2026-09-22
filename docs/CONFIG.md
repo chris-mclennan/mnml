@@ -685,6 +685,12 @@ otherwise. Copy what you need; leave the rest out.
         // on {file} (the workspace-relative path), the result is read back.
         .go = .{ .cmd = .{ "gofmt", "-w", "{file}" }, .in_place = true },
     },
+    // Linters run on open and on save, beside a language server's
+    // diagnostics (source id 0 in the panel). A BUILTIN row stands down
+    // for a file a server is attached to — bash-language-server runs
+    // shellcheck itself, and the tool's copy of each finding doubled the
+    // panel, the badges and `]d`. A row written here was asked for and
+    // runs regardless, as does `editor.lint_external`.
     .linters = .{
         .sh = .{ .cmd = .{ "shellcheck", "-f", "gcc" }, .parser = .shellcheck },
         // .parser: .vimgrep (default, path:line:col: msg) | .eslint | .tsc | .ruff | .shellcheck | .pattern

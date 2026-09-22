@@ -692,10 +692,13 @@ pub fn onOpen(app: *App, args: hooks.HookArgs) void {
 
 pub fn attach(app: *App, pane: PaneId, e: *EditorPane) Allocator.Error!void {
     const path = e.buf.doc.path orelse return;
-    // The external linter does not need a server.
-    format_app.lintOnHook(app, path);
-    if (overLimit(app, e, path)) return;
-    const s = (try ensureServer(app, path)) orelse return;
+    const server: ?*Server = if (overLimit(app, e, path)) null else try ensureServer(app, path);
+    // The external linter does not need a server — and the builtin
+    // row stands down for a file that has one (`lintOnHook`), since a
+    // server that lints (bash-language-server runs shellcheck itself)
+    // listed every finding twice beside it.
+    format_app.lintOnHook(app, path, server != null);
+    const s = server orelse return;
     const was_open = s.isOpen(path);
     s.didOpen(path, client.languageIdFor(path, e.buf.doc.firstLine()), e.buf.editor.bytes()) catch return;
     e.buf.doc.lsp_seen = e.buf.doc.edits.head();
@@ -791,7 +794,7 @@ pub fn onSavePre(app: *App, args: hooks.HookArgs) void {
 pub fn onSavePost(app: *App, args: hooks.HookArgs) void {
     const e = app.panes.editor(args.save_post.pane) orelse return;
     const path = e.buf.doc.path orelse return;
-    format_app.lintOnHook(app, path);
+    format_app.lintOnHook(app, path, serverFor(app, path) != null);
     const s = serverFor(app, path) orelse return;
     syncPane(app, args.save_post.pane, e);
     s.didSave(path, e.buf.editor.bytes()) catch {};
@@ -1246,6 +1249,17 @@ pub fn marksFor(app: *App, arena: Allocator, path: ?[]const u8, theme: *const Th
     return out.items;
 }
 
+/// The panel's text for a diagnostic: the message, then the server's
+/// `code` in brackets when it sent one the message does not already
+/// carry — `Double quote to prevent globbing. [SC2086]`, the way
+/// shellcheck's own gcc output reads, so a server's row and the
+/// tool's are the same words.
+pub fn messageWithCode(arena: Allocator, d: types.Diagnostic) Allocator.Error![]const u8 {
+    const code = d.code orelse return d.message;
+    if (code.len == 0 or std.mem.indexOf(u8, d.message, code) != null) return d.message;
+    return std.fmt.allocPrint(arena, "{s} [{s}]", .{ d.message, code });
+}
+
 /// `lsp.next_diagnostic` / `lsp.prev_diagnostic`: the cursor goes to
 /// the next start after it (wrapping), with the message toasted.
 pub fn gotoDiagnostic(app: *App, forward: bool) CommandError!void {
@@ -1303,7 +1317,7 @@ fn panelRows(app: *App, arena: Allocator) Allocator.Error![]DiagRow {
         if (!app.lsp.severity_filter.admits(d.severity)) continue;
         const rel = app.relPath(p);
         if (q.len > 0 and fuzzy.score(q, d.message) == null and fuzzy.score(q, rel) == null) continue;
-        try out.append(arena, .{ .path = p, .rel = rel, .line = d.range.start.line, .character = d.range.start.character, .severity = d.severity, .message = d.message, .source = d.source });
+        try out.append(arena, .{ .path = p, .rel = rel, .line = d.range.start.line, .character = d.range.start.character, .severity = d.severity, .message = try messageWithCode(arena, d), .source = d.source });
     };
     return out.items;
 }
@@ -3347,6 +3361,20 @@ test "diagnostics from a server and a linter merge sorted, and each source repla
     // The linter runs clean: nothing left.
     try applyLintDiagnostics(&app, path, &.{});
     try testing.expectEqual(@as(usize, 0), diagnosticsFor(&app, path).len);
+}
+
+test "messageWithCode: the server's code follows the message unless the message already carries it" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const base: types.Diagnostic = .{ .range = .{ .start = .{ .line = 0, .character = 0 }, .end = .{ .line = 0, .character = 1 } }, .severity = .warning, .message = "Double quote to prevent globbing.", .source = "shellcheck", .code = "SC2086" };
+    try testing.expectEqualStrings("Double quote to prevent globbing. [SC2086]", try messageWithCode(a, base));
+    var same = base;
+    same.message = "Double quote to prevent globbing. [SC2086]";
+    try testing.expectEqualStrings(same.message, try messageWithCode(a, same));
+    var none = base;
+    none.code = null;
+    try testing.expectEqualStrings(base.message, try messageWithCode(a, none));
 }
 
 test "mnml-fake-lsp end to end: a `.lsp` written to .mnml/config.zon starts on open (one live server), its Error toasts as `LSP: …`, didOpen/didClose go out, deinit says shutdown + exit" {
