@@ -147,10 +147,24 @@ pub fn parseLine(raw: []const u8) ?KeyValue {
     var value = std.mem.trim(u8, line[eq + 1 ..], " \t");
     if (value.len >= 2 and (value[0] == '"' or value[0] == '\'') and value[value.len - 1] == value[0]) {
         value = value[1 .. value.len - 1];
+    } else if (quotedThenComment(value)) |inner| {
+        // `KEY="v w" # note`: the quotes close before the comment.
+        value = inner;
     } else if (std.mem.indexOf(u8, value, " #")) |c| {
         value = std.mem.trimEnd(u8, value[0..c], " \t");
     }
     return .{ .key = key, .value = value };
+}
+
+/// The inside of `"…" # comment` / `'…' # comment`: a quoted value whose
+/// closing quote is followed only by blanks and a `#` comment.
+fn quotedThenComment(value: []const u8) ?[]const u8 {
+    if (value.len < 2 or (value[0] != '"' and value[0] != '\'')) return null;
+    const close = std.mem.indexOfScalarPos(u8, value, 1, value[0]) orelse return null;
+    const rest = std.mem.trimStart(u8, value[close + 1 ..], " \t");
+    if (rest.len == 0 or rest[0] != '#') return null;
+    if (close + 1 < value.len and value[close + 1] != ' ' and value[close + 1] != '\t') return null;
+    return value[1..close];
 }
 
 pub fn isValidName(s: []const u8) bool {
@@ -504,6 +518,11 @@ test "parseLine: quotes, export, comments, invalid keys" {
     try testing.expectEqualStrings("v w", parseLine("K=\"v w\"").?.value);
     try testing.expectEqualStrings("v", parseLine("export K='v'").?.value);
     try testing.expectEqualStrings("v", parseLine("K=v # note").?.value);
+    // Quoted AND commented: the quotes close before the comment.
+    try testing.expectEqualStrings("hello world", parseLine("GREETING=\"hello world\" # shown to users").?.value);
+    try testing.expectEqualStrings("a # b", parseLine("K='a # b'   # note").?.value);
+    // A `#` inside the quotes, no comment after, is the value's own.
+    try testing.expectEqualStrings("a # b", parseLine("K=\"a # b\"").?.value);
     try testing.expect(parseLine("# K=v") == null);
     try testing.expect(parseLine("bad key=v") == null);
     try testing.expect(parseLine("") == null);
