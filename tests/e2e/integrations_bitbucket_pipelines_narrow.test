@@ -1,0 +1,45 @@
+# width: 80
+# height: 24
+# env: MNML_MARKETPLACE_LOCAL=market
+# env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/bitbucket.zon
+# env: BITBUCKET_BASE_URL=@${MNML_E2E_WORKSPACE}/bb.url
+# env: BITBUCKET_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/bucket.json
+# env: BITBUCKET_API_TOKEN=corpus-read-token
+# The Bitbucket Pipelines header at 80x24. The four page chips' words
+# (`run pipeline` `schedules` `caches` `usage`) pushed the repo count
+# under the ladder and it clipped mid-word — `BITBUCKET PIPELINES  (2 re`.
+# The header's narrow rung is the chips' icons, and the count stays
+# whole; the filter chips fold onto the rows under it rather than clip.
+# integrations_bitbucket_pipelines.test is the same pane at 120x40, with
+# the chips' words.
+shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --lifetime-secs 180 >/dev/null 2>&1 &
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 0, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Pipelines\", .kind = .workspace_pipelines } } }"
+write market/bitbucket_pipelines.zon ".{ .id = \"bitbucket_pipelines\", .label = \"Bitbucket Pipelines\", .version = \"0.2.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .args = .{ \"--only\", \"pipelines\" }, .description = \"Bitbucket: recent pipeline runs per repo/branch\", .commands = .{ .{ .id = \"bitbucket_pipelines.open\", .title = \"Bitbucket Pipelines: open\" } } }"
+command integrations.show_marketplace
+key i
+expect screen contains "installed bitbucket_pipelines"
+command integrations.open_as_tab
+command view.toggle_tree
+command bitbucket_pipelines.open
+expect within 20000 screen contains "BITBUCKET PIPELINES  (2 repos)"
+command view.focus_pane
+# The count whole, the chips' words gone to their icons.
+expect screen lacks "(2 re "
+expect screen lacks "run pipeline"
+expect screen lacks "schedules"
+# The filter chips, every one.
+expect screen contains "run by: any"
+expect screen contains "branch: any"
+expect screen contains "trigger: any"
+expect screen contains "REPO / BRANCH"
+key q
+wait 500
+key x
+expect screen lacks "BITBUCKET PIPELINES"
+command integrations.show_installed
+key x
+expect screen contains "Remove integration"
+key enter
+expect screen contains "Remove Bitbucket Pipelines?"
+key r
+expect screen contains "removed bitbucket_pipelines"

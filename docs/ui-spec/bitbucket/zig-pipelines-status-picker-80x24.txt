@@ -1,4 +1,4 @@
-▌BITBUCKET PIPELINES  (2 re  run pipeline   schedules   caches   usage      ?
+▌BITBUCKET PIPELINES  (2 repos)  as of 0s ago                           ?
 ▌ run by: any   branch: any   type: any   status: any   trigger: any
 ▌ 󰍉 / filter
 ▌ REPO / B┌─ status ─────────────────────────────────────────────────┐T

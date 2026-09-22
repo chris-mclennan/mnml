@@ -152,6 +152,18 @@ fn nothingMatches(kind: cfg.Kind) []const u8 {
     };
 }
 
+/// The pipelines pages' chips on their narrow rung (`Chip.icon`): the
+/// header drops to these before it gives up the repo count. Codicons,
+/// the refresh chip's font; each with its `--ascii` twin.
+pub const run_nerd = "\u{eb2c}"; // cod-play
+pub const run_ascii = ">";
+pub const schedules_nerd = "\u{eab0}"; // cod-calendar
+pub const schedules_ascii = "@";
+pub const caches_nerd = "\u{eace}"; // cod-database
+pub const caches_ascii = "#";
+pub const usage_nerd = "\u{eb03}"; // cod-graph
+pub const usage_ascii = "%";
+
 fn paintHeader(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
     const app = p.app;
     const ts = app.activeTab();
@@ -210,13 +222,14 @@ fn paintHeader(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
     switch (app.family()) {
         .prs => {},
         .pipelines => {
-            chips[n] = .{ .text = " usage ", .target = .{ .chip = .usage }, .active = false };
+            const nerd = p.nerd;
+            chips[n] = .{ .text = " usage ", .target = .{ .chip = .usage }, .active = false, .icon = if (nerd) " " ++ usage_nerd ++ " " else " " ++ usage_ascii ++ " " };
             n += 1;
-            chips[n] = .{ .text = " caches ", .target = .{ .chip = .caches }, .active = false };
+            chips[n] = .{ .text = " caches ", .target = .{ .chip = .caches }, .active = false, .icon = if (nerd) " " ++ caches_nerd ++ " " else " " ++ caches_ascii ++ " " };
             n += 1;
-            chips[n] = .{ .text = " schedules ", .target = .{ .chip = .schedules }, .active = false };
+            chips[n] = .{ .text = " schedules ", .target = .{ .chip = .schedules }, .active = false, .icon = if (nerd) " " ++ schedules_nerd ++ " " else " " ++ schedules_ascii ++ " " };
             n += 1;
-            chips[n] = .{ .text = " run pipeline ", .target = .{ .chip = .run_pipeline }, .active = false };
+            chips[n] = .{ .text = " run pipeline ", .target = .{ .chip = .run_pipeline }, .active = false, .icon = if (nerd) " " ++ run_nerd ++ " " else " " ++ run_ascii ++ " " };
             n += 1;
         },
         .branches => {},
@@ -1340,6 +1353,44 @@ test "the pipelines tree paints the reference's columns and glyphs; the pipeline
     try t.expect(has(scr, "run pipeline"));
     try t.expect(has(scr, "usage"));
     try t.expect(s.rig.app.hits.rectOf(.{ .chip = .usage }) != null);
+}
+
+test "the pipelines header at 80x24: the chips drop to their icons and the repo count stays whole; at 120x40 they say their words" {
+    // At 80 columns the four page chips' words pushed the count under
+    // the ladder and it clipped mid-word: `BITBUCKET PIPELINES  (2 re`.
+    {
+        const s = try Screen.init(80, 24, acme, .{ .only = .pipelines });
+        defer s.deinit();
+        const scr = try s.draw();
+        const head = scr[0 .. std.mem.indexOfScalar(u8, scr, '\n') orelse scr.len];
+        try t.expect(has(head, "BITBUCKET PIPELINES  (2 repos)"));
+        try t.expect(!has(head, "run pipeline"));
+        try t.expect(!has(head, "schedules"));
+        try t.expect(has(head, run_nerd));
+        try t.expect(has(head, schedules_nerd));
+        try t.expect(has(head, caches_nerd));
+        try t.expect(has(head, usage_nerd));
+        // Every page is still a door: one hit per chip, three cells
+        // each, right of the count.
+        for ([_]hit.Chip{ .run_pipeline, .schedules, .caches, .usage, .refresh, .help }) |c| {
+            const r = s.rig.app.hits.rectOf(.{ .chip = c }).?;
+            try t.expectEqual(@as(u16, 0), r.y);
+            try t.expectEqual(@as(u16, 3), r.w);
+            try t.expect(r.x > 1 + sdk.pane.text.width("BITBUCKET PIPELINES  (2 repos)"));
+        }
+        // The filter chips fold onto the rows under the header rather
+        // than clip: every one is on screen.
+        for ([_][]const u8{ "run by:", "branch:", "type:", "status:", "trigger:" }) |w| try t.expect(has(scr, w));
+    }
+    {
+        const s = try Screen.init(120, 40, acme, .{ .only = .pipelines });
+        defer s.deinit();
+        const scr = try s.draw();
+        const head = scr[0 .. std.mem.indexOfScalar(u8, scr, '\n') orelse scr.len];
+        try t.expect(has(head, "BITBUCKET PIPELINES  (2 repos)"));
+        for ([_][]const u8{ " run pipeline ", " schedules ", " caches ", " usage " }) |w| try t.expect(has(head, w));
+        try t.expect(!has(head, run_nerd));
+    }
 }
 
 test "the key sheet, the row menu and the filter paint as overlays that take the click" {

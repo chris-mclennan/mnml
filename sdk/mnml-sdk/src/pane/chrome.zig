@@ -180,9 +180,13 @@ pub fn fetchText(buf: []u8, f: Fetch, ascii: bool) []const u8 {
 /// pane wants on the row goes between them and is clipped at `edge`.
 pub const CapsHeader = struct { x: u16, edge: u16 };
 
-/// A chip on the header's right-hand ladder.
+/// A chip on the header's right-hand ladder. `icon` is its narrow
+/// rung — a glyph in its own air (a codicon, or its `--ascii` twin)
+/// that `capsHeader` paints instead of `text` when the full ladder
+/// would push the title's count off the row. A chip without one keeps
+/// its words on every rung.
 pub fn Chip(comptime Target: type) type {
-    return struct { text: []const u8, target: Target, active: bool = false };
+    return struct { text: []const u8, target: Target, active: bool = false, icon: ?[]const u8 = null };
 }
 
 /// One `key label` entry of the hint row. `target` makes it clickable.
@@ -300,12 +304,37 @@ pub fn Painter(comptime Target: type) type {
         /// dropped whole when it would cross `left_edge`. Returns the
         /// leftmost cell a chip took.
         pub fn rightChips(p: *Self, y: u16, left_edge: u16, chips: []const ChipSpec) Allocator.Error!u16 {
+            return p.rightChipsIn(y, left_edge, chips, .full);
+        }
+
+        /// Which rung of the ladder: every chip's words, or its icon
+        /// where it has one.
+        pub const Rung = enum { full, icon };
+
+        fn chipText(c: ChipSpec, rung: Rung) []const u8 {
+            return if (rung == .icon) c.icon orelse c.text else c.text;
+        }
+
+        /// Would every chip land, on `rung`, with nothing left of
+        /// `left_edge`? The same arithmetic `rightChipsIn` paints with.
+        fn ladderFits(p: *const Self, left_edge: u16, chips: []const ChipSpec, rung: Rung) bool {
             var right = p.cols();
             for (chips) |c| {
-                const w = width(c.text);
+                const w = width(chipText(c, rung));
+                if (right < left_edge + w + 2) return false;
+                right -= w + 1;
+            }
+            return true;
+        }
+
+        pub fn rightChipsIn(p: *Self, y: u16, left_edge: u16, chips: []const ChipSpec, rung: Rung) Allocator.Error!u16 {
+            var right = p.cols();
+            for (chips) |c| {
+                const text = chipText(c, rung);
+                const w = width(text);
                 if (right < left_edge + w + 2) break;
                 right -= w + 1;
-                _ = p.put(right, y, w, c.text, if (c.active) p.th.chipActive() else p.th.chip());
+                _ = p.put(right, y, w, text, if (c.active) p.th.chipActive() else p.th.chip());
                 try p.mark(.{ .x = right, .y = y, .w = w, .h = 1 }, c.target);
             }
             return right;
@@ -351,6 +380,12 @@ pub fn Painter(comptime Target: type) type {
         /// `as of …` is dropped whole rather than clipped: half of an
         /// age is worse than no age, and the count beside the title is
         /// the line that must survive.
+        ///
+        /// Narrower, the ladder degrades before the count does, the way
+        /// the host's panel headers do: first every chip that has an
+        /// `icon` drops to it; only when even that ladder would cross
+        /// the count is the count given up — WHOLE, never `(2 re` — and
+        /// the icon ladder may then take everything past the title.
         pub fn capsHeader(
             p: *Self,
             x0: u16,
@@ -361,13 +396,19 @@ pub fn Painter(comptime Target: type) type {
             now_secs: i64,
             chips: []const ChipSpec,
         ) Allocator.Error!CapsHeader {
-            // The ladder may take everything past the title; the count
-            // gives way to it before the title does.
-            const right = try p.rightChips(y, x0 + width(title) + 1, chips);
+            // The rungs, widest first: the words beside the title and
+            // its count; the icons beside them; the icons with the count
+            // dropped, where the ladder may take everything past the
+            // title. The title is never given up to the ladder.
+            const title_end = x0 + width(title);
+            const count_end = title_end + width(sub);
+            const rung: Rung = if (p.ladderFits(count_end + 1, chips, .full)) .full else .icon;
+            const keep_count = rung == .full or p.ladderFits(count_end + 1, chips, .icon);
+            const right = try p.rightChipsIn(y, if (keep_count) count_end + 1 else title_end + 1, chips, rung);
             const edge = right -| 1;
             var x = x0;
             x += p.put(x, y, edge -| x, title, p.th.label());
-            if (sub.len > 0) x += p.put(x, y, edge -| x, sub, p.th.dimText());
+            if (sub.len > 0 and keep_count) x += p.put(x, y, edge -| x, sub, p.th.dimText());
             var buf: [32]u8 = undefined;
             const age = warm_mod.asOfText(&buf, fetched_at, now_secs);
             if (age.len > 0 and x + 2 + width(age) <= edge) {
@@ -1260,6 +1301,53 @@ test "the caps header's two runs never land on each other: the ladder is laid fi
         try testing.expect(std.mem.startsWith(u8, row, " FORGE PRS"));
         try testing.expect(r.hits.rectOf(.{ .chip = 0 }) != null);
         try testing.expect(r.hits.rectOf(.{ .chip = 2 }) == null);
+    }
+}
+
+test "the caps header's narrow rung: chips drop to their icons before the count goes, and the count goes whole" {
+    const now: i64 = 1_789_526_218;
+    const chips = [_]P.ChipSpec{
+        .{ .text = help_chip_text, .target = .{ .chip = 0 } },
+        .{ .text = " \u{21ba} ", .target = .{ .chip = 1 } },
+        .{ .text = " usage ", .target = .{ .chip = 2 }, .icon = " % " },
+        .{ .text = " run pipeline ", .target = .{ .chip = 3 }, .icon = " > " },
+    };
+    // Wide: every word, the count, the age.
+    {
+        var r = try Rig.init(80, 1);
+        defer r.deinit();
+        var p = r.painter(Theme.fromHello(null), .{});
+        _ = try p.capsHeader(1, 0, "PIPES", "  (2 repos)", now - 9, now, &chips);
+        const row = try r.rowText(0);
+        try testing.expect(std.mem.indexOf(u8, row, "PIPES  (2 repos)  as of 9s ago") != null);
+        try testing.expect(std.mem.indexOf(u8, row, " run pipeline ") != null);
+        try testing.expect(std.mem.indexOf(u8, row, " usage ") != null);
+    }
+    // The words would cross the count: the icons, and the count whole.
+    {
+        var r = try Rig.init(36, 1);
+        defer r.deinit();
+        var p = r.painter(Theme.fromHello(null), .{});
+        const head = try p.capsHeader(1, 0, "PIPES", "  (2 repos)", now - 9, now, &chips);
+        const row = try r.rowText(0);
+        try testing.expect(std.mem.indexOf(u8, row, "PIPES  (2 repos)") != null);
+        try testing.expect(std.mem.indexOf(u8, row, "run pipeline") == null);
+        try testing.expect(std.mem.indexOf(u8, row, " > ") != null);
+        try testing.expect(std.mem.indexOf(u8, row, " % ") != null);
+        try testing.expectEqual(@as(u16, 3), r.hits.rectOf(.{ .chip = 3 }).?.w);
+        try testing.expect(head.x <= head.edge);
+    }
+    // Even the icons would cross it: the count is dropped WHOLE — never
+    // `(2 re` — and the ladder keeps every chip.
+    {
+        var r = try Rig.init(28, 1);
+        defer r.deinit();
+        var p = r.painter(Theme.fromHello(null), .{});
+        _ = try p.capsHeader(1, 0, "PIPES", "  (2 repos)", now - 9, now, &chips);
+        const row = try r.rowText(0);
+        try testing.expect(std.mem.startsWith(u8, row, " PIPES"));
+        try testing.expect(std.mem.indexOf(u8, row, "(2") == null);
+        for (0..4) |i| try testing.expect(r.hits.rectOf(.{ .chip = @intCast(i) }) != null);
     }
 }
 
