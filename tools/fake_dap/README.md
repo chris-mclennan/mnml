@@ -77,6 +77,7 @@ A throw at the top level ends the program with exit code 1 on resume
 | `terminate` | `terminated` (once); the program is over |
 | `disconnect` | the loop ends |
 | anything else | `success:false` with `unsupported request: <command>`; a frame that is not JSON is ignored |
+| any request whose `arguments` is not an object (or absent) | `success:false` with `` <command>: `arguments` must be an object, not <kind> `` — debugpy's strictness, so a client that writes `[]` for an argument-less request fails here as it does there |
 
 Hit conditions: `5`, `== 5`, `>= 5`, `> 5`, `< 5`, `<= 5`, `% 5`; one
 that does not parse matches every hit. A condition that fails to

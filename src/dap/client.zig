@@ -668,13 +668,28 @@ fn envelopeInto(js: *std.json.Stringify, seq: i64, command: []const u8, args: an
         try js.beginWriteRaw();
         try js.writer.writeAll(r);
         js.endWriteRaw();
-    } else if (@TypeOf(args) == void) {
+    } else if (@TypeOf(args) == void or isEmptyStruct(@TypeOf(args))) {
+        // DAP types `arguments` as an object. `std.json` writes the
+        // empty tuple `.{}` — what every argument-less call passes —
+        // as the list `[]`, which debugpy (pydevd's schema) rejects:
+        // "argument after ** must be a mapping, not list", and the
+        // session never starts (hunt: dap-debugpy-configurationdone-
+        // arguments-list). lldb-dap tolerated it, which hid this.
         try js.beginObject();
         try js.endObject();
     } else {
         try js.write(args);
     }
     try js.endObject();
+}
+
+/// `.{}` — a tuple with no fields; a struct with none is the same to
+/// the wire.
+fn isEmptyStruct(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .@"struct" => |st| st.fields.len == 0,
+        else => false,
+    };
 }
 
 /// `${file}`, `${fileBasename}`, `${fileDirname}`, `${workspaceFolder}`
@@ -754,7 +769,7 @@ pub fn expandEnv(gpa: Allocator, text: []const u8, env: *const std.process.Envir
 
 const testing = std.testing;
 
-test "envelope: seq/type/command/arguments; a raw body is spliced in verbatim" {
+test "envelope: seq/type/command/arguments; a raw body is spliced in verbatim; `.{}` is the object `{}`, never the list `[]`" {
     const gpa = testing.allocator;
     const a = try envelope(gpa, 7, "next", .{ .threadId = 3 }, null);
     defer gpa.free(a);
@@ -765,6 +780,16 @@ test "envelope: seq/type/command/arguments; a raw body is spliced in verbatim" {
     const c = try envelope(gpa, 9, "configurationDone", {}, null);
     defer gpa.free(c);
     try testing.expect(std.mem.endsWith(u8, c, "\"arguments\":{}}"));
+    // What the callers pass — `request(.configuration_done, "configurationDone", .{})`,
+    // `threads`, `terminate` — is the empty TUPLE, which std.json would
+    // write as `[]`. debugpy refuses a list; the wire must say `{}`.
+    const d = try envelope(gpa, 10, "configurationDone", .{}, null);
+    defer gpa.free(d);
+    try testing.expectEqualStrings("{\"seq\":10,\"type\":\"request\",\"command\":\"configurationDone\",\"arguments\":{}}", d);
+    const e = try envelope(gpa, 11, "threads", .{}, null);
+    defer gpa.free(e);
+    try testing.expect(std.mem.endsWith(u8, e, "\"arguments\":{}}"));
+    try testing.expect(std.mem.indexOf(u8, e, "[]") == null);
 }
 
 test "substitute: file / workspace variables, unknown names kept, quotes escaped" {

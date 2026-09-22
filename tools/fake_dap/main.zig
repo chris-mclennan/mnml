@@ -160,6 +160,14 @@ pub const Server = struct {
         var arena_state = std.heap.ArenaAllocator.init(self.gpa);
         defer arena_state.deinit();
         const arena = arena_state.allocator();
+        // DAP types `arguments` as an object (or absent). debugpy's
+        // schema refuses anything else — `[]` for an argument-less
+        // request once cost every Python session its start — so this
+        // adapter is as strict, and the corpus catches the shape.
+        switch (args) {
+            .object, .null => {},
+            else => return self.fail(rseq, command, try std.fmt.allocPrint(arena, "{s}: `arguments` must be an object, not {s}", .{ command, @tagName(args) })),
+        }
         try self.dispatch(arena, rseq, command, args);
     }
 
@@ -695,6 +703,12 @@ test "initialize: capabilities and the two filters (no `initialized` yet — tha
     try h.server.handle(not_json);
     try h.drain();
     try t.expectEqual(@as(usize, 2), h.parsed.items.len);
+    // `arguments` as a list — the shape a client's empty tuple once took
+    // on the wire — is refused as debugpy refuses it, not answered.
+    const listed = try h.send("configurationDone", "[]");
+    defer t.allocator.free(listed);
+    try expectResponse(listed[0], "configurationDone", false);
+    try t.expectEqualStrings("configurationDone: `arguments` must be an object, not array", getStr(listed[0], "message").?);
 }
 
 test "the session: breakpoints before launch verify against the file, launch + configurationDone run to the stop, inspection, steps, evaluate, setVariable, exception, exit" {
