@@ -24,8 +24,31 @@ pub const Part = hit.InfoPart;
 
 pub const Shortcut = struct { chord: []const u8, label: []const u8 };
 
+/// What a link row does when pressed — the painter only picks the
+/// glyph by it; the app keeps the action, by position
+/// (`app/info_view.zig`'s `State.links`).
+pub const LinkKind = enum {
+    /// `→ label`: runs a palette command.
+    command,
+    /// `⚙ label`: opens the Settings overlay on a row.
+    settings,
+    /// `↗ label`: a web page, through the OS browser.
+    url,
+    /// `✦ label`: asks the AI session about the thing under the pointer.
+    ask,
+
+    pub fn glyph(k: LinkKind, ascii: bool) []const u8 {
+        return switch (k) {
+            .command => if (ascii) "->" else "→",
+            .settings => if (ascii) "*" else "⚙",
+            .url => if (ascii) "^" else "↗",
+            .ask => if (ascii) "?" else "✦",
+        };
+    }
+};
+
 /// A `→ label` row; the app keeps what it runs, by position.
-pub const Link = struct { label: []const u8 };
+pub const Link = struct { label: []const u8, kind: LinkKind = .command };
 
 /// What the box says (Rust `InfoViewCopy`).
 pub const Copy = struct {
@@ -35,6 +58,10 @@ pub const Copy = struct {
     body: []const u8 = "",
     /// One italic caveat after the body.
     aside: ?[]const u8 = null,
+    /// The aside paints BEFORE the body: the ladder's mark on a
+    /// control without an entry, which has to be on screen whatever the
+    /// body's length.
+    aside_first: bool = false,
     shortcuts: []const Shortcut = &.{},
     try_it: []const Link = &.{},
 };
@@ -167,8 +194,9 @@ fn buildLines(ui: Ui, p: Props, content_w: u16, max_body_rows: usize) ?std.Array
     link_style.bold = true;
     link_style.ul_style = .single;
     lines.append(arena, .{ .segs = &.{} }) catch return null;
+    if (p.copy.aside_first) if (p.copy.aside) |a| for (wrapWords(arena, a, content_w) catch return null) |l| lines.append(arena, .{ .segs = seg1(arena, l, aside_style) catch return null }) catch return null;
     for (wrapWords(arena, p.copy.body, content_w) catch return null) |l| lines.append(arena, .{ .segs = seg1(arena, l, fg) catch return null }) catch return null;
-    if (p.copy.aside) |a| for (wrapWords(arena, a, content_w) catch return null) |l| lines.append(arena, .{ .segs = seg1(arena, l, aside_style) catch return null }) catch return null;
+    if (!p.copy.aside_first) if (p.copy.aside) |a| for (wrapWords(arena, a, content_w) catch return null) |l| lines.append(arena, .{ .segs = seg1(arena, l, aside_style) catch return null }) catch return null;
     var rows_left = max_body_rows -| lines.items.len;
     if (rows_left > 0 and p.copy.shortcuts.len > 0) {
         lines.append(arena, .{ .segs = &.{} }) catch return null;
@@ -183,7 +211,7 @@ fn buildLines(ui: Ui, p: Props, content_w: u16, max_body_rows: usize) ?std.Array
     if (rows_left > 0 and p.copy.try_it.len > 0) {
         lines.append(arena, .{ .segs = &.{} }) catch return null;
         for (p.copy.try_it[0..@min(p.copy.try_it.len, rows_left -| 1)], 0..) |l, i| {
-            lines.append(arena, .{ .segs = seg1(arena, ui.fmt("{s} {s}", .{ if (ui.ascii) "->" else "→", l.label }), link_style) catch return null, .link = @intCast(i) }) catch return null;
+            lines.append(arena, .{ .segs = seg1(arena, ui.fmt("{s} {s}", .{ l.kind.glyph(ui.ascii), l.label }), link_style) catch return null, .link = @intCast(i) }) catch return null;
         }
     }
     return lines;
