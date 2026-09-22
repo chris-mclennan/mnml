@@ -52,6 +52,36 @@ fn cell(g: []const u8, style: Style) vaxis.Cell {
     return .{ .char = .{ .grapheme = g, .width = 1 }, .style = style };
 }
 
+/// A rule's direction: `─` across a row, `│` down a column.
+pub const Axis = enum { h, v };
+
+/// The one-cell rule glyph a terminal gets — `─` / `│`, or `-` / `|`
+/// under `--ascii`. The same glyphs `draw` lays a frame's edges from,
+/// so a divider between two panes and the frame around a popup never
+/// disagree. Eleven painters spelled the pair inline before this
+/// existed (and one forgot the ascii half).
+pub fn ruleGlyph(axis: Axis, ascii: bool) []const u8 {
+    const g = glyphs(if (ascii) .ascii else .single);
+    return switch (axis) {
+        .h => g.horizontal,
+        .v => g.vertical,
+    };
+}
+
+/// Paints a straight rule of `len` cells from (`x`, `y`) along `axis`.
+/// A divider between two panes, the line under a column header, the
+/// edge of a floating column — every rule that is not part of a frame.
+pub fn rule(c: Canvas, x: u16, y: u16, len: u16, axis: Axis, ascii: bool, style: Style) void {
+    const g = ruleGlyph(axis, ascii);
+    var i: u16 = 0;
+    while (i < len) : (i += 1) {
+        switch (axis) {
+            .h => c.put(x + i, y, cell(g, style)),
+            .v => c.put(x, y + i, cell(g, style)),
+        }
+    }
+}
+
 /// Paints the frame of `r` and returns the inner rect.
 pub fn draw(c: Canvas, r: Rect, kind: Kind, style: Style, title: ?[]const Segment) Rect {
     if (r.isEmpty()) return r.inset(1);
@@ -191,6 +221,28 @@ test "degenerate rects paint what fits and yield an empty inner" {
     try testing.expect(draw(h.c(), Rect.init(0, 0, 4, 1), .single, .{}, &t).isEmpty());
     try h.expectRows(&.{"┌xy┐"});
     try testing.expect(draw(h.c(), Rect.empty, .single, .{}, null).isEmpty());
+}
+
+test "a rule is laid from the frame's own glyphs, in both terminals" {
+    var f = try Fixture.init(5, 3);
+    defer f.deinit();
+    rule(f.c(), 0, 0, 5, .h, false, .{});
+    rule(f.c(), 2, 1, 2, .v, false, .{});
+    try f.expectRows(&.{ "─────", "  │", "  │" });
+    try testing.expectEqualStrings(glyphs(.single).horizontal, ruleGlyph(.h, false));
+    try testing.expectEqualStrings(glyphs(.single).vertical, ruleGlyph(.v, false));
+
+    var g = try Fixture.init(5, 3);
+    defer g.deinit();
+    rule(g.c(), 0, 0, 5, .h, true, .{});
+    rule(g.c(), 2, 1, 2, .v, true, .{});
+    try g.expectRows(&.{ "-----", "  |", "  |" });
+
+    // A rule past the canvas edge stops at it.
+    var h = try Fixture.init(3, 1);
+    defer h.deinit();
+    rule(h.c(), 1, 0, 10, .h, false, .{});
+    try h.expectRows(&.{" ──"});
 }
 
 test "frame respects the canvas clip" {

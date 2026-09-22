@@ -331,8 +331,7 @@ fn drawSummary(ui: Ui, pane: PaneId, area: Rect, props: Props) void {
     const bg = th.panel_bg;
     ui.fill(area, bg);
     const head = area.row(0);
-    var x = head.x;
-    while (x < head.right()) : (x += 1) _ = ui.putStr(x, head.y, 1, if (ui.ascii) "-" else "─", Theme.withFg(bg, th.border.fg));
+    ui.hrule(head.x, head.y, head.w, Theme.withFg(bg, th.border.fg));
     _ = ui.putStr(head.x + 2, head.y, head.w -| 2, " summary ", Theme.withFg(bg, th.accent.fg));
     ui.hit(area, .{ .script_hit = .{ .pane = pane, .id = table.hit_summary } });
     if (area.h < 2) return;

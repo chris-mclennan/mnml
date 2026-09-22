@@ -70,8 +70,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, pr: Props) void {
             y += 1;
             if (y >= area.h) return;
             const rule = area.row(y);
-            var x = rule.x;
-            while (x < rule.right()) : (x += 1) _ = ui.putStr(x, rule.y, 1, if (ui.ascii) "-" else "─", Theme.onBg(t.muted, t.bg.bg));
+            ui.hrule(rule.x, rule.y, rule.w, Theme.onBg(t.muted, t.bg.bg));
             y += 1;
             if (y >= area.h) return;
             drawRows(ui, pane, Rect.init(area.x, area.y + y, area.w, area.h - y), p, pr.wobbly, pr.focused);

@@ -18,6 +18,7 @@ const Canvas = @import("canvas.zig");
 const Theme = @import("theme.zig");
 const hit_mod = @import("hit.zig");
 const clip = @import("clip.zig");
+const border = @import("border.zig");
 const ids = @import("../core/ids.zig");
 
 const Allocator = std.mem.Allocator;
@@ -103,6 +104,19 @@ pub fn width(ui: Ui, s: []const u8) u16 {
 
 pub fn ellipsis(ui: Ui) clip.Ellipsis {
     return clip.ellipsisFor(ui.ascii);
+}
+
+/// A horizontal rule of `w` cells from (`x`, `y`): `─`, or `-` under
+/// `--ascii` — the glyph `border.draw` lays a frame's top edge from.
+pub fn hrule(ui: Ui, x: u16, y: u16, w: u16, style: Style) void {
+    border.rule(ui.canvas, x, y, w, .h, ui.ascii, style);
+}
+
+/// A vertical rule of `h` cells from (`x`, `y`): `│`, or `|` under
+/// `--ascii` — a divider between two panes, the edge of a floating
+/// column.
+pub fn vrule(ui: Ui, x: u16, y: u16, h: u16, style: Style) void {
+    border.rule(ui.canvas, x, y, h, .v, ui.ascii, style);
 }
 
 /// The ellipsis glyph itself — for a painter that cuts a string on its

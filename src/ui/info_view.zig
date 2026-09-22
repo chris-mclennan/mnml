@@ -89,8 +89,7 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
     // Row 0: the rule.
     var sep = Theme.onBg(Theme.withFg(t.fg, pal.comment), body_bg);
     sep.dim = true;
-    var x: u16 = area.x;
-    while (x < area.right()) : (x += 1) _ = ui.putStr(x, area.y, 1, if (ui.ascii) "-" else "─", sep);
+    ui.hrule(area.x, area.y, area.w, sep);
     if (area.h <= 1) return out;
     // Row 1: the title band, from the second cell (the first keeps the
     // panel's ground so the band never touches the activity bar), the

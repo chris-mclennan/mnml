@@ -670,8 +670,7 @@ fn drawRequestBox(ui: Ui, pane: PaneId, r: Rect, m: Model) ?Caret {
     const divider = Rect.init(inner.x + left_w, inner.y, 1, inner.h);
     const right = Rect.init(inner.x + left_w + 1, inner.y, inner.w - left_w - 1, inner.h);
     const caret = drawEdit(ui, pane, left, m.edit_tab, m, focused, m.edit_scroll, false);
-    var dy = divider.y;
-    while (dy < divider.bottom()) : (dy += 1) _ = ui.putStr(divider.x, dy, 1, if (ui.ascii) "|" else "\u{2502}", .{ .fg = p.bg3, .bg = p.bg_dark });
+    ui.vrule(divider.x, divider.y, divider.h, .{ .fg = p.bg3, .bg = p.bg_dark });
     ui.hit(divider, .{ .script_hit = .{ .pane = pane, .id = hit_split_divider } });
     _ = drawEdit(ui, pane, right, split.tab, m, false, split.scroll, true);
     return caret;
@@ -981,7 +980,7 @@ fn drawKvTable(ui: Ui, pane: PaneId, r: Rect, data: []const Pair, draft: ?Draft,
             if (y >= c.r.h) return;
             const row = c.r.row(y);
             var x = row.x + 2;
-            const h: []const u8 = if (c.ascii) "-" else "\u{2500}";
+            const h = border.ruleGlyph(.h, c.ascii);
             x += c.put(x, row.y, if (c.ascii) "+" else left, c.line);
             x = c.dashes(x, row.y, c.name_w + 2, h);
             x += c.put(x, row.y, if (c.ascii) "+" else sep, c.line);
@@ -1001,7 +1000,7 @@ fn drawKvTable(ui: Ui, pane: PaneId, r: Rect, data: []const Pair, draft: ?Draft,
         /// `  │ key │ value │ x │`; the cells' x for the caller's hits.
         fn cells(c: @This(), y: u16, key: []const u8, key_style: Style, value: []const u8, value_style: Style, xg: []const u8, x_style: Style) struct { key_x: u16, value_x: u16, x_x: u16 } {
             const rr = c.r.row(y);
-            const v: []const u8 = if (c.ascii) "|" else "\u{2502}";
+            const v = border.ruleGlyph(.v, c.ascii);
             var x = rr.x + 2;
             x += c.put(x, rr.y, v, c.line);
             x += 1;
@@ -1021,7 +1020,7 @@ fn drawKvTable(ui: Ui, pane: PaneId, r: Rect, data: []const Pair, draft: ?Draft,
         }
     };
     const c: Ctx = .{ .ui = ui, .r = r, .name_w = name_w, .value_w = value_w, .x_col_w = x_col_w, .line = line, .ascii = ascii };
-    c.rule(ry, "\u{250C}", "\u{252C}", "\u{2510}");
+    c.rule(ry, "\u{250C}", "\u{252C}", "\u{2510}"); // chrome-audit: allow — a table's junctions (md_view's shape); the runs are border.ruleGlyph
     ry += 1;
     if (ry < r.h) {
         const hdr: Style = .{ .fg = p.comment, .bg = p.bg_dark, .bold = true };

@@ -367,8 +367,7 @@ pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item) ?Caret {
             const split = body.splitRight(want + 1);
             body = split.left;
             const rule = split.rest.splitLeft(1);
-            var ry: u16 = 0;
-            while (ry < rule.left.h) : (ry += 1) _ = ui.putStr(rule.left.x, rule.left.y + ry, 1, "\u{2502}", Theme.onBg(t.border, bg));
+            ui.vrule(rule.left.x, rule.left.y, rule.left.h, Theme.onBg(t.border, bg));
             drawPreview(ui, rule.rest, s, bg);
         } else s.preview_h = 0;
     } else s.preview_h = 0;
