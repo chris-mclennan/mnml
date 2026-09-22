@@ -226,9 +226,9 @@ pub fn materialize(app: *App, arena: Allocator, entry: Entry) Allocator.Error!Ma
 /// reads the shared ones first (`Ctrl+P` over its own `Ctrl+O`).
 pub fn chordOf(app: *const App, arena: Allocator, id: CommandId) Allocator.Error!?[]const u8 {
     const keys = command.spec(id).keys;
-    const lists: [2][]const []const u8 = switch (App.profileOf(app.input_style)) {
-        .vim => .{ keys.vim, keys.both },
-        .standard => .{ keys.both, keys.standard },
+    const lists: [3][]const []const u8 = switch (App.profileOf(app.input_style)) {
+        .vim => .{ keys.vim, keys.both, keys.vim_handler },
+        .standard => .{ keys.both, keys.standard, &.{} },
     };
     for (lists) |list| if (list.len > 0) return try chordDisplay(arena, list[0]);
     return null;
@@ -348,7 +348,7 @@ pub fn lint(arena: Allocator, entry: Entry, out: *std.ArrayListUnmanaged(Problem
     for (entry.keys) |k| {
         if (k.command) |id| {
             const keys = command.spec(id).keys;
-            if (keys.vim.len + keys.standard.len + keys.both.len == 0) try out.append(arena, .{ .entry = entry.title, .what = try std.fmt.allocPrint(arena, "key names `{s}`, which no profile binds", .{command.name(id)}) });
+            if (keys.vim.len + keys.standard.len + keys.both.len + keys.vim_handler.len == 0) try out.append(arena, .{ .entry = entry.title, .what = try std.fmt.allocPrint(arena, "key names `{s}`, which no profile binds", .{command.name(id)}) });
         } else {
             const ok = for (literal_chords) |c| {
                 if (std.mem.eql(u8, c, k.chord)) break true;

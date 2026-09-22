@@ -24,6 +24,11 @@ pub const Keys = struct {
     vim: []const []const u8 = &.{},
     standard: []const []const u8 = &.{},
     both: []const []const u8 = &.{},
+    /// Chords the vim handler answers itself — its `Ctrl-W` prefix, which
+    /// the keymap must never bind (rule 1 of `docs/KEYMAP_PROFILES.md`).
+    /// Shown by the cheatsheet, the palette and the hover copy in the vim
+    /// profile; never bound. `input/vim.zig` pins each to its command.
+    vim_handler: []const []const u8 = &.{},
 };
 
 pub const Spec = struct {
@@ -1027,8 +1032,14 @@ pub const specs = [_]Spec{
     .{ .id = "view.focus_right", .title = "Focus split right", .group = "view", .keys = .{ .vim = &.{"ctrl+l"}, .standard = &.{"ctrl+k ctrl+right"} } },
     .{ .id = "view.focus_up", .title = "Focus split up", .group = "view", .keys = .{ .vim = &.{"ctrl+k"}, .standard = &.{"ctrl+k ctrl+up"} } },
     .{ .id = "view.focus_down", .title = "Focus split down", .group = "view", .keys = .{ .vim = &.{"ctrl+j"}, .standard = &.{"ctrl+k ctrl+down"} } },
-    .{ .id = "view.focus_next_split", .title = "Focus next split", .group = "view" },
-    .{ .id = "view.focus_prev_split", .title = "Focus previous split (the next-split walk backwards)", .group = "view" },
+    // The split walk, both ways (Terminal.app's `Shift+Cmd+←/→` between
+    // tabs). vim: Neovim's `Ctrl-W w` / `Ctrl-W W`, answered by the
+    // handler. standard: `ctrl+alt+shift+→/←` — `ctrl+shift+→/←` and
+    // `alt+shift+→/←` are the handler's select-word, `ctrl+alt+→/←` is
+    // `buffer.next` / `buffer.prev`. `docs/CONFIG.md` has the ghostty
+    // line that puts the walk on `Shift+Cmd+←/→`.
+    .{ .id = "view.focus_next_split", .title = "Focus next split", .group = "view", .keys = .{ .standard = &.{"ctrl+alt+shift+right"}, .vim_handler = &.{"ctrl+w w"} } },
+    .{ .id = "view.focus_prev_split", .title = "Focus previous split (the next-split walk backwards)", .group = "view", .keys = .{ .standard = &.{"ctrl+alt+shift+left"}, .vim_handler = &.{"ctrl+w W"} } },
     .{ .id = "view.focus_top", .title = "Focus the top split (vim Ctrl-W t)", .group = "view" },
     .{ .id = "view.focus_bottom", .title = "Focus the bottom split (vim Ctrl-W b)", .group = "view" },
     .{ .id = "view.focus_previous", .title = "Focus the previously focused window (vim Ctrl-W p)", .group = "view" },

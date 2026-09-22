@@ -71,7 +71,9 @@ pub const State = struct {
                 .vim => spec.keys.vim,
                 .standard => spec.keys.standard,
             };
-            if (spec.keys.both.len == 0 and own.len == 0) continue;
+            // The vim handler's own chords (`Ctrl-W w`) are listed too.
+            const handler: []const []const u8 = if (profile == .vim) spec.keys.vim_handler else &.{};
+            if (spec.keys.both.len == 0 and own.len == 0 and handler.len == 0) continue;
             var gi: usize = groups.items.len;
             for (groups.items, 0..) |g, k| if (std.mem.eql(u8, g, spec.group)) {
                 gi = k;
@@ -80,7 +82,7 @@ pub const State = struct {
                 try groups.append(gpa, spec.group);
                 try rows.append(gpa, .empty);
             }
-            inline for (.{ spec.keys.both, own }) |list| {
+            inline for (.{ spec.keys.both, own, handler }) |list| {
                 for (list) |k| {
                     var buf: [64]u8 = undefined;
                     const canon = keymap.normalizeSpec(k, &buf) orelse k;
@@ -409,4 +411,24 @@ test "cheatsheet: C collapses the focused section, X collapses the rest; a filte
     try t.expectEqual(id, app.active.?);
     try t.expectEqual(@as(usize, 2), app.panes.count());
     try app.render();
+}
+
+test "cheatsheet: the split walk's pair in each profile — vim the handler's Ctrl-W w / W, standard ctrl+alt+shift+→ / ←" {
+    const Want = struct { profile: keymap.Profile, next: []const u8, prev: []const u8 };
+    for ([_]Want{
+        .{ .profile = .vim, .next = "ctrl+w w", .prev = "ctrl+w W" },
+        .{ .profile = .standard, .next = "ctrl+alt+shift+right", .prev = "ctrl+alt+shift+left" },
+    }) |w| {
+        var st = try State.init(t.allocator, w.profile);
+        defer st.deinit();
+        var next: ?[]const u8 = null;
+        var prev: ?[]const u8 = null;
+        for (st.sections) |s| for (s.rows) |r| switch (r.cmd) {
+            .@"view.focus_next_split" => next = r.chord,
+            .@"view.focus_prev_split" => prev = r.chord,
+            else => {},
+        };
+        try t.expectEqualStrings(w.next, next.?);
+        try t.expectEqualStrings(w.prev, prev.?);
+    }
 }

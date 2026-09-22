@@ -465,6 +465,7 @@ pub fn ctrlWCommand(k: Key) ?command.CommandId {
     return switch (k.code) {
         .char => |c| switch (if (k.mods.ctrl and c < 0x80) @as(u21, std.ascii.toLower(@intCast(c))) else c) {
             'w' => .@"view.focus_next_split",
+            'W' => .@"view.focus_prev_split",
             'p' => .@"view.focus_previous",
             't' => .@"view.focus_top",
             'b' => .@"view.focus_bottom",
@@ -870,6 +871,7 @@ test "ctrlWCommand: the vim window family from a column, H / L the section moves
     try t.expectEqual(command.CommandId.@"view.move_section_left", ctrlWCommand(Key.char('H')).?);
     try t.expectEqual(command.CommandId.@"view.move_section_right", ctrlWCommand(Key.char('L')).?);
     try t.expectEqual(command.CommandId.@"view.focus_next_split", ctrlWCommand(Key.char('w')).?);
+    try t.expectEqual(command.CommandId.@"view.focus_prev_split", ctrlWCommand(Key.char('W')).?);
     try t.expectEqual(command.CommandId.@"view.focus_up", ctrlWCommand(Key.named(.up)).?);
     try t.expect(ctrlWCommand(Key.char('x')) == null);
 }

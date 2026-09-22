@@ -1166,6 +1166,8 @@ pub const Vim = struct {
                 }
                 return switch (c) {
                     'w' => runCmd(.@"view.focus_next_split"),
+                    // `:help CTRL-W_W` — the same walk backwards.
+                    'W' => runCmd(.@"view.focus_prev_split"),
                     't' => runCmd(.@"view.focus_top"),
                     'b' => runCmd(.@"view.focus_bottom"),
                     'p' => runCmd(.@"view.focus_previous"),
@@ -2464,6 +2466,27 @@ test "cmdline: typing, caret edits, history walk, enter emits ex_command" {
     try testing.expectEqualStrings("b", v.exHistory()[1]);
 }
 
+test "every chord a spec lists as the vim handler's own reaches that spec's command through the handler" {
+    const specs = @import("../commands/specs.zig");
+    const keymap = @import("../core/keymap.zig");
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var listed: usize = 0;
+    for (specs.specs) |s| for (s.keys.vim_handler) |spec| {
+        var v = Vim.init(testing.allocator, .{});
+        defer v.deinit();
+        var it = std.mem.tokenizeScalar(u8, spec, ' ');
+        var last: InputResult = .ignored;
+        while (it.next()) |tok| last = try v.handleKey(keymap.parseKeySpec(tok).?, .{}, a);
+        try testing.expect(last == .app);
+        try testing.expectEqualStrings(s.id, @tagName(last.app.run_command));
+        listed += 1;
+    };
+    // `Ctrl-W w` and `Ctrl-W W` at least.
+    try testing.expect(listed >= 2);
+}
+
 test "ctrl+w H/J/K/L move the split; = r _ | + - > < n o w h d f T reach their runners" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
@@ -2487,6 +2510,7 @@ test "ctrl+w H/J/K/L move the split; = r _ | + - > < n o w h d f T reach their r
         .{ .key = 'n', .id = .@"view.split_new_scratch" },
         .{ .key = 'o', .id = .@"view.only" },
         .{ .key = 'w', .id = .@"view.focus_next_split" },
+        .{ .key = 'W', .id = .@"view.focus_prev_split" },
         .{ .key = 'h', .id = .@"view.focus_left" },
         .{ .key = 'd', .id = .@"view.split_goto_definition" },
         .{ .key = 'f', .id = .@"view.split_open_file_under_cursor" },

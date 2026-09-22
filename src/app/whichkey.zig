@@ -105,6 +105,7 @@ pub const root: Node = .{
                 cmd('k', .@"view.focus_up", "focus up"),
                 cmd('l', .@"view.focus_right", "focus right"),
                 cmd('w', .@"view.focus_next_split", "focus next"),
+                cmd('W', .@"view.focus_prev_split", "focus previous"),
                 cmd('c', .@"view.close_split", "close split"),
                 cmd('o', .@"view.close_others", "close others"),
                 cmd('H', .@"view.move_section_left", "section → left side"),

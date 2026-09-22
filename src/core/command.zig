@@ -230,7 +230,7 @@ comptime {
             }
         }
         // Every default chord parses.
-        for (.{ s.keys.vim, s.keys.standard, s.keys.both }) |list| {
+        for (.{ s.keys.vim, s.keys.standard, s.keys.both, s.keys.vim_handler }) |list| {
             for (list) |k| {
                 if (keymap.parseKeySeqComptime(k) == null)
                     @compileError("command `" ++ s.id ++ "` declares key `" ++ k ++ "` that does not parse");
