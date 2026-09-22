@@ -1229,10 +1229,11 @@ fn firstComment(text: []const u8) ?[]const u8 {
     return null;
 }
 
-/// The block holding `line` (0-based), else the first block.
+/// The block holding `line` (0-based); null when the line is in none
+/// of them — a comment-only `### notes` block is dropped from `list`,
+/// and a send from inside it must not fire some other block.
 pub fn blockAtLine(list: []const Block, line: usize) ?Block {
     for (list) |b| if (line >= b.start_line and line <= b.end_line) return b;
-    if (list.len > 0) return list[0];
     return null;
 }
 
@@ -1702,7 +1703,7 @@ test "blocks: separators, names, line ranges, the leading unnamed block, the cur
     try testing.expectEqual(@as(usize, 5), list[2].start_line);
     try testing.expectEqualStrings("two", std.mem.trim(u8, blockAtLine(list, 7).?.text, "\n")[15..18]);
     try testing.expectEqualStrings("one", blockAtLine(list, 3).?.name.?);
-    try testing.expect(blockAtLine(list, 99).?.name == null);
+    try testing.expect(blockAtLine(list, 99) == null);
     try testing.expectEqual(@as(u32, 2), list[2].index);
     // a .curl multi-block file
     const curls = try blocks(arena.allocator(), "curl 'http://a/1'\n\n### GetB\ncurl 'http://a/2'\n");

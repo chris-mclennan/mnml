@@ -1074,7 +1074,8 @@ pub fn parseActive(app: *App, arena: Allocator) CommandError!Active {
     }
     const list = try parse.blocks(arena, text);
     const line = e.buf.editor.currentLine();
-    const block = parse.blockAtLine(list, line) orelse return app.diag.fail(app.frame.allocator(), "http: the buffer has no request", .{});
+    if (list.len == 0) return app.diag.fail(app.frame.allocator(), "http: the buffer has no request", .{});
+    const block = parse.blockAtLine(list, line) orelse return app.diag.fail(app.frame.allocator(), "http: the block under the cursor is empty", .{});
     const req = parse.parse(gpa, block.text) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.Empty => return app.diag.fail(app.frame.allocator(), "http: the block under the cursor is empty", .{}),
@@ -2784,6 +2785,31 @@ test "save: two bare ### blocks each keep their own pane, and saving block two l
     const out = try tmp.dir.readFileAlloc(testing.io, "bare.http", testing.allocator, .limited(1 << 16));
     defer testing.allocator.free(out);
     try testing.expectEqualStrings("###\nGET http://127.0.0.1:9/items?n=first\n\n###\nGET http://127.0.0.1:9/items?n=second&edited=1\n", out);
+}
+
+test "send: the cursor on a comment-only block is refused, not block one fired" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "c.http", .data = "### one\nDELETE http://127.0.0.1:9/items/1\n\n### notes\n# a comment, no request yet\n\n### two\nGET http://127.0.0.1:9/items\n" });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    const path = try std.fs.path.join(testing.allocator, &.{ root, "c.http" });
+    defer testing.allocator.free(path);
+    _ = try app.openEditor(path);
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    for ([_]usize{ 3, 4 }) |line| {
+        app.activeEditor().?.buf.editor.placeCursor(line, 0);
+        try testing.expectError(error.Failed, parseActive(&app, arena.allocator()));
+        try testing.expectEqualStrings("http: the block under the cursor is empty", app.diag.msg.?);
+        app.diag.clear();
+    }
+    app.activeEditor().?.buf.editor.placeCursor(7, 0);
+    var active = try parseActive(&app, arena.allocator());
+    defer active.req.deinit(testing.allocator);
+    try testing.expectEqualStrings("two", active.block_name.?);
 }
 
 fn pumpUntil(app: *App, rp: *RequestPane, comptime pred: fn (*RequestPane) bool, max_ticks: usize) !void {
