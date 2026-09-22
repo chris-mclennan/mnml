@@ -21,7 +21,7 @@ pub fn launcher(app: *App, arena: Allocator, part: hit.LauncherDockPart) Allocat
         .pin => return .{
             .title = if (app.launcher_dock.pinned) "Launcher dock — pinned" else "Pin the launcher dock",
             .body = if (app.launcher_dock.pinned) "The dock is pinned: it stays up and the frame is carved out for it, as under `ui.dock.mode = always`. Click lets it go — it slides away when the pointer leaves the edge again. Right-click is the dock's menu: its mode, which edge it lives on, inner or outer placement, icons or labels, the settings row. The pin is remembered in the session; the mode is the config's." else "The chip at the end of the strip. Click keeps the dock open for the session — it stops sliding away and the frame is carved out for it; click again to let it go. Right-click is the dock's menu: its mode (always, auto-hide, hidden), which edge it lives on, inner or outer placement, icons or labels. The pin is remembered in the session, unlike the mode.",
-            .links = &.{ .{ .command = .{ .id = .@"view.dock_pin", .label = "Pin / unpin" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.dock.mode"), .label = "Launcher dock in Settings" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.dock.edge"), .label = "Its edge" } } },
+            .links = &.{ .{ .command = .{ .id = .@"view.dock_pin", .label = "Pin / unpin" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.dock.mode"), .label = "Launcher dock in Settings" } }, comptime copy.docsSection("The launcher dock") },
         },
         .item => |i| {
             const list = try launcher_dock.items(app, arena);
@@ -52,7 +52,7 @@ pub fn itemKind(kind: launcher_dock.Kind, label: ?[]const u8, running: bool) Ent
         .launcher => .{
             .title = "Launcher",
             .body = "A launcher from `launchers` in config.zon — a program mnml starts for you in a terminal pane, with its own glyph and colour. Click runs it (a second click focuses the pane already running it); right-click offers pin / unpin. `launcher.add_local` makes one from a binary on this machine.",
-            .links = &.{ .{ .command = .{ .id = .@"launcher.add_local", .label = "Add a launcher" } }, .{ .command = .{ .id = .@"file.open_settings", .label = "Open config.zon" } } },
+            .links = &.{ .{ .command = .{ .id = .@"launcher.add_local", .label = "Add a launcher" } }, .{ .command = .{ .id = .@"file.open_settings", .label = "Open config.zon" } }, comptime copy.docsSection("Launchers and integration manifests") },
         },
         .terminal_new => .{
             .title = "New terminal",

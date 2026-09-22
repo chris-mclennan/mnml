@@ -25,6 +25,7 @@ const Ui = @import("../ui/context.zig");
 const md_view = @import("../ui/md_view.zig");
 const dispatch = @import("dispatch.zig");
 const image = @import("../image/root.zig");
+const docs = @import("docs.zig");
 
 pub const table = .{
     .@"markdown.preview" = &previewCmd,
@@ -125,7 +126,11 @@ pub fn open(app: *App, path: []const u8, placement: Placement, near: ?PaneId) Al
         return id;
     }
     const gpa = app.gpa;
-    const text: []u8 = if (app.panes.findPath(path)) |eid|
+    // A manual section (`app/docs.zig`) is embedded text on a virtual
+    // path — the session restores it by that path, so it reads here.
+    const text: []u8 = if (docs.textFor(path)) |embedded|
+        try gpa.dupe(u8, embedded)
+    else if (app.panes.findPath(path)) |eid|
         try gpa.dupe(u8, app.panes.editor(eid).?.buf.editor.bytes())
     else
         Io.Dir.cwd().readFileAlloc(app.io, path, gpa, .limited(1 << 30)) catch try gpa.dupe(u8, "");
@@ -167,6 +172,11 @@ pub fn sourceText(app: *App, m: *const MdPreviewPane) []const u8 {
 pub fn swapToEditor(app: *App, preview: PaneId) Allocator.Error!PaneId {
     const pane = app.panes.get(preview) orelse return error.OutOfMemory;
     const m = pane.asMdPreview() orelse return error.OutOfMemory;
+    // The manual has no file behind it: nothing to swap in.
+    if (docs.isVirtual(m.path)) {
+        app.toast("the manual is read-only \u{2014} its source is docs/CONFIG.md in the repo", .{});
+        return preview;
+    }
     const path = try app.frame.allocator().dupe(u8, m.path);
     app.showPane(preview);
     const eid = app.openEditor(path) catch |err| switch (err) {
@@ -237,12 +247,14 @@ pub fn handleKey(app: *App, id: PaneId, k: Key) Allocator.Error!bool {
             ' ' => scrollBy(app, m, page),
             'e' => _ = try swapToEditor(app, id),
             else => {
-                _ = try swapToEditor(app, id);
+                // No editor came (the manual, a file that would not
+                // open): the key stops here rather than looping back.
+                if (try swapToEditor(app, id) == id) return true;
                 try dispatch.key(app, k);
             },
         },
         .enter, .backspace, .delete, .tab => {
-            _ = try swapToEditor(app, id);
+            if (try swapToEditor(app, id) == id) return true;
             try dispatch.key(app, k);
         },
         else => return false,

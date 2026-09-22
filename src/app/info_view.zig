@@ -18,7 +18,8 @@
 //! new — so while the pointer rests on the box the ladder keeps the
 //! last target it resolved from (`State.sticky`), and a link's press
 //! re-resolves that target: the command it runs, the Settings row it
-//! opens, the URL, or the prompt an `Ask about this` link sends
+//! opens, the URL, the manual section a `docs` link renders
+//! (`app/docs.zig`), or the prompt an `Ask about this` link sends
 //! (`info_view_copy.askPrompt`), built at press time from the state of
 //! that moment. Nothing from the frame arena is kept between frames.
 //!
@@ -40,6 +41,7 @@ const discovery = @import("discovery.zig");
 const copy = @import("info_view_copy.zig");
 const settings_app = @import("settings.zig");
 const git_app = @import("git.zig");
+const docs = @import("docs.zig");
 
 pub const Copy = view.Copy;
 pub const Part = view.Part;
@@ -360,6 +362,7 @@ fn runLink(app: *App, action: copy.LinkAction) Allocator.Error!void {
         },
         .settings => |row| try openSettingsRow(app, row),
         .url => |url| git_app.openExternal(app, url),
+        .docs => |d| _ = try docs.open(app, d.doc, d.section),
         .ask => {
             const target = app.info_view.sticky orelse return;
             const arena = app.frame.allocator();
@@ -624,6 +627,16 @@ test "the box is sticky under the pointer: the entry and its links stay while th
     try t.expectEqual(copy.settingsRow("editor.input_style"), list[app.overlay.settings.ui.cursor].row.id);
     app.overlay.deinit(app.gpa);
     app.overlay = .none;
+    app.focus = .tree;
+    // A docs link: the manual's section opens as a preview and takes
+    // the focus.
+    app.info_view.links[0] = .{ .docs = .{ .doc = .config, .section = "The launcher dock" } };
+    try mouse(&app, .{ .try_it = 0 }, .{ .x = 0, .y = 0, .kind = .press, .button = .left }, 1);
+    try t.expect(app.active != null);
+    const manual = app.panes.get(app.active.?).?;
+    try t.expect(manual.* == .md_preview);
+    try t.expectEqualStrings("CONFIG.md \u{2014} The launcher dock", manual.title());
+    try t.expect(app.focus == .pane);
     app.focus = .tree;
     // A target the dictionary has nothing for (an overlay row with no
     // overlay open): the tooltip's line, marked as a fallback.

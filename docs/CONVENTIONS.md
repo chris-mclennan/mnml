@@ -495,7 +495,11 @@ data — a title, a body of two to four sentences, an optional aside,
 - **`links` are typed.** `.command` carries a `CommandId` — a wrong id is
   a compile error; `.settings` carries a row from `settingsRow("ui.x")` —
   a wrong path is a compile error; `.url` a web page through the OS
-  browser; `.ask` sends a prompt to the Claude session with the target's
+  browser; `.docs` a section of the embedded manual (`docsSection("The
+  launcher dock")` — docs/CONFIG.md ships inside the binary, and the
+  section opens as a read-only markdown preview on a virtual
+  `mnml-docs://` path, `src/app/docs.zig`; the lint fails a heading the
+  manual does not have); `.ask` sends a prompt to the Claude session with the target's
   state in it (`askPrompt`: the diagnostics, the branch's files, the
   unread messages, the config key and value), gated on `ai.route` — off,
   the row becomes a Settings link that says why.

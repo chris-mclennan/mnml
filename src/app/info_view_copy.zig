@@ -31,6 +31,7 @@ const HitTarget = hit_mod.HitTarget;
 const view = @import("../ui/info_view.zig");
 const settings = @import("settings.zig");
 const ai_app = @import("ai.zig");
+const docs = @import("docs.zig");
 
 pub const statusline = @import("info_view_copy/statusline.zig");
 pub const rail = @import("info_view_copy/rail.zig");
@@ -68,6 +69,9 @@ pub const Link = union(enum) {
     /// The label; the prompt is built from the target when clicked
     /// (`askPrompt`), so it carries the state of that moment.
     ask: []const u8,
+    /// A section of the embedded manual (`app/docs.zig`), opened as a
+    /// markdown preview — build it with `docsSection`.
+    docs: struct { doc: docs.Doc, section: []const u8, label: []const u8 },
 };
 
 pub const Entry = struct {
@@ -86,6 +90,13 @@ pub fn settingsRow(comptime path: []const u8) u16 {
         for (settings.rows, 0..) |r, i| if (std.mem.eql(u8, r.path, path)) break :blk @as(u16, @intCast(i));
         @compileError("info_view_copy: no Settings row for `" ++ path ++ "`");
     };
+}
+
+/// A section of the embedded manual — `docsSection("The launcher
+/// dock")` names it by its heading; the lint reports a heading the
+/// manual does not have.
+pub fn docsSection(comptime name: []const u8) Link {
+    return .{ .docs = .{ .doc = .config, .section = name, .label = "The manual: " ++ name } };
 }
 
 /// `Ask about this`, the way most entries spell it.
@@ -146,6 +157,7 @@ pub const LinkAction = union(enum) {
     settings: u16,
     url: []const u8,
     ask,
+    docs: struct { doc: docs.Doc, section: []const u8 },
 };
 
 pub const max_links = 3;
@@ -189,6 +201,10 @@ pub fn materialize(app: *App, arena: Allocator, entry: Entry) Allocator.Error!Ma
             .url => |u| {
                 out.actions[i] = .{ .url = u.url };
                 try links.append(arena, .{ .label = u.label, .kind = .url });
+            },
+            .docs => |d| {
+                out.actions[i] = .{ .docs = .{ .doc = d.doc, .section = d.section } };
+                try links.append(arena, .{ .label = d.label, .kind = .docs });
             },
             .ask => |label| if (ai_app.route(app, .claude) == .off) {
                 out.actions[i] = .{ .settings = settingsRow("ai.routing.claude.backend") };
@@ -324,7 +340,8 @@ pub const Problem = struct {
 /// no binding in either profile (the row would never paint — the
 /// copy names a chord that does not exist), a literal chord outside
 /// `literal_chords`, an empty body, a title that is a bare restatement
-/// of nothing. Command and Settings links are checked by the compiler.
+/// of nothing, a docs link to a heading the manual does not have.
+/// Command and Settings links are checked by the compiler.
 pub fn lint(arena: Allocator, entry: Entry, out: *std.ArrayListUnmanaged(Problem)) Allocator.Error!void {
     if (entry.title.len == 0) try out.append(arena, .{ .entry = "?", .what = "empty title" });
     if (entry.body.len < 40) try out.append(arena, .{ .entry = entry.title, .what = "body under 40 characters — say what it is, what a click does, the caveat" });
@@ -340,6 +357,7 @@ pub fn lint(arena: Allocator, entry: Entry, out: *std.ArrayListUnmanaged(Problem
         }
     }
     if (entry.links.len > max_links) try out.append(arena, .{ .entry = entry.title, .what = "more links than the box shows" });
+    for (entry.links) |l| if (l == .docs) if (docs.section(l.docs.doc, l.docs.section) == null) try out.append(arena, .{ .entry = entry.title, .what = try std.fmt.allocPrint(arena, "docs link names `{s}`, which {s} has no heading for", .{ l.docs.section, l.docs.doc.file() }) });
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
@@ -369,13 +387,19 @@ test "the lint can fail: a key on an unbound command, a chord outside the litera
     try t.expect(std.mem.indexOf(u8, problems.items[0].what, "under 40") != null);
     try t.expect(std.mem.indexOf(u8, problems.items[1].what, "app.restart") != null);
     try t.expect(std.mem.indexOf(u8, problems.items[2].what, "Ctrl+Shift+Alt+Q") != null);
+    // A docs link to a heading the manual does not have.
+    problems.clearRetainingCapacity();
+    try lint(a, .{ .title = "Bad docs link", .body = "A body long enough for the lint to be quiet about it, which is forty characters.", .links = &.{comptime docsSection("No such heading")} }, &problems);
+    try t.expectEqual(@as(usize, 1), problems.items.len);
+    try t.expect(std.mem.indexOf(u8, problems.items[0].what, "No such heading") != null);
+    try t.expect(std.mem.indexOf(u8, problems.items[0].what, "CONFIG.md") != null);
     // A good one passes clean.
     problems.clearRetainingCapacity();
     const good: Entry = .{
         .title = "Good entry",
         .body = "A body that says what the control is, what a click does and the one caveat a user hits.",
         .keys = &.{ .{ .command = .@"app.quit", .label = "Quit" }, .{ .chord = "Enter", .label = "Open" } },
-        .links = &.{ .{ .command = .{ .id = .@"app.quit", .label = "Quit" } }, ask_link },
+        .links = &.{ .{ .command = .{ .id = .@"app.quit", .label = "Quit" } }, ask_link, comptime docsSection("The launcher dock") },
     };
     try lint(a, good, &problems);
     try t.expectEqual(@as(usize, 0), problems.items.len);
@@ -411,6 +435,11 @@ test "materialize: a command key becomes the profile's chord, an unbound one is 
     const off = try materialize(&app, a, .{ .title = "T", .links = &.{ask_link} });
     try t.expect(off.actions[0].? == .settings);
     try t.expect(std.mem.indexOf(u8, off.copy.try_it[0].label, "AI is off") != null);
+    // A docs link: the section by name, the `§` kind.
+    const manual = try materialize(&app, a, .{ .title = "T", .links = &.{comptime docsSection("Workspace trust")} });
+    try t.expectEqual(view.LinkKind.docs, manual.copy.try_it[0].kind);
+    try t.expectEqualStrings("The manual: Workspace trust", manual.copy.try_it[0].label);
+    try t.expectEqualStrings("Workspace trust", manual.actions[0].?.docs.section);
 }
 
 test "chordDisplay spells a spec for prose; chordOf reads the active profile" {

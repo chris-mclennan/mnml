@@ -52,11 +52,11 @@ pub fn entry(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Entry {
         sl.seg_restricted => return if (app.workspace_toml != null and (app.loaded == null or app.loaded.?.trust_prompt == null)) .{
             .title = "RESTRICTED — an mnml 0.2 config.toml",
             .body = "This workspace carries a `.mnml/config.toml` from mnml 0.2, which this build does not read — the chip is here so the silence is not mistaken for the settings being applied. Run `mnml export-config-zon --out .mnml/config.zon` from the 0.2.22 binary in the workspace to convert it, then reopen. Click opens the trust review, which explains the same thing in place.",
-            .links = &.{ .{ .command = .{ .id = .@"workspace.review_trust", .label = "Review the workspace's trust" } }, ask },
+            .links = &.{ .{ .command = .{ .id = .@"workspace.review_trust", .label = "Review the workspace's trust" } }, comptime copy.docsSection("Coming from 0.2.x (TOML)"), ask },
         } else .{
             .title = "RESTRICTED — exec-bearing settings are off",
             .body = "This workspace's `.mnml/config.zon` names things that would run a program — a formatter, a task, an LSP command — and you have not trusted it yet, so those settings are held back while the rest apply. Click opens the review: it lists exactly what the file wants to run, and Trust turns it on for this workspace and remembers the choice. A file you did not write deserves the read before the click.",
-            .links = &.{ .{ .command = .{ .id = .@"workspace.review_trust", .label = "Review what it wants to run" } }, .{ .command = .{ .id = .@"trusted.forget", .label = "Forget a trusted workspace" } }, ask },
+            .links = &.{ .{ .command = .{ .id = .@"workspace.review_trust", .label = "Review what it wants to run" } }, comptime copy.docsSection("Workspace trust"), ask },
         },
         else => {},
     }

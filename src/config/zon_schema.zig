@@ -397,7 +397,9 @@ pub const Docs = struct {
     }
 };
 
-const config_md = @embedFile("config_md");
+/// docs/CONFIG.md, embedded — the Settings rows read their comments
+/// from it and `app/docs.zig` opens its sections as previews.
+pub const config_md = @embedFile("config_md");
 
 pub fn configDocs(alloc: Allocator) Allocator.Error!Docs {
     return parseDocs(alloc, config_md);

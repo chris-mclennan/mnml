@@ -69,7 +69,7 @@ fn section(app: *App, arena: Allocator, s: Section) Allocator.Error!?Entry {
             .title = "Integrations",
             .body = try std.fmt.allocPrint(arena, "The installed integrations — Jira, Bitbucket, the browser, the tools — on the Installed tab, with the Marketplace beside it; a row's Enter opens the integration and its right-click offers configure, disable, pin to the rail or the dock, uninstall. Click shows the section; right-click is its menu. An integration's own settings land in Settings → Integrations once it is installed.{s}", .{marked(app, .integrations)}),
             .keys = &.{.{ .command = .@"view.activity_integrations", .label = "Integrations" }},
-            .links = &.{ .{ .command = .{ .id = .@"view.activity_integrations", .label = "Show integrations" } }, .{ .command = .{ .id = .@"integrations.show_marketplace", .label = "The marketplace" } }, .{ .command = .{ .id = .@"integrations.configure_picker", .label = "Configure an integration" } } },
+            .links = &.{ .{ .command = .{ .id = .@"view.activity_integrations", .label = "Show integrations" } }, .{ .command = .{ .id = .@"integrations.show_marketplace", .label = "The marketplace" } }, comptime copy.docsSection("Launchers and integration manifests") },
         },
         .sessions => .{
             .title = "Sessions — Claude Code and Codex",

@@ -34,7 +34,7 @@ pub fn entry(app: *App, arena: Allocator, h: u32) Allocator.Error!?Entry {
             .title = "Settings",
             .body = "The everyday settings as rows, sectioned UI / Editor / AI / Integrations: `←→` (or `h` `l`) change the focused row, `↑↓` walk, `r` resets a row and `R` all of them, `/` filters by label, Enter saves and closes, Esc closes and puts back exactly the config you opened with. A `*` marks a row that differs from the shipped default. Each row says where it is written — the home config or this workspace's.",
             .keys = &.{ .{ .chord = "/", .label = "Filter the rows" }, .{ .chord = "Enter", .label = "Save and close" }, .{ .chord = "Esc", .label = "Cancel" } },
-            .links = &.{ .{ .command = .{ .id = .@"view.settings_search", .label = "Search the settings" } }, .{ .command = .{ .id = .@"file.open_settings", .label = "Open config.zon instead" } } },
+            .links = &.{ .{ .command = .{ .id = .@"view.settings_search", .label = "Search the settings" } }, .{ .command = .{ .id = .@"file.open_settings", .label = "Open config.zon instead" } }, comptime copy.docsSection("The settings overlay") },
         },
         .filter => .{
             .title = "Settings filter",

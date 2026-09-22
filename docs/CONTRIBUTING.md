@@ -800,8 +800,13 @@ menu row or a Settings row:
    …). Title, two to four sentences about this control in this state, the
    click and the right button, the caveat; `keys` as `CommandId`s (the
    lint rejects an unbound one); one to three typed `links` — the next
-   command, a `settingsRow("…")`, a URL, or `copy.ask_link` where a user is
-   likely stuck (a failure, a conflict, a rate limit).
+   command, a `settingsRow("…")`, a URL, `comptime copy.docsSection("…")`
+   for the docs/CONFIG.md section that explains the thing (the lint
+   rejects a heading the manual lacks), or `copy.ask_link` where a user is
+   likely stuck (a failure, a conflict, a rate limit). Every `&.{ … }`
+   links array must be comptime-known — a runtime call in one is a stack
+   temporary the entry outlives, which is why the helpers are called with
+   `comptime`.
 3. A Settings row needs nothing: its entry is generated from its label,
    docs/CONFIG.md's comment for the key, its choices and its value. Add a
    `hand_written` row in `info_view_copy/settings.zig` when the generated

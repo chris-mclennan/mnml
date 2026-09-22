@@ -36,6 +36,8 @@ pub const LinkKind = enum {
     url,
     /// `✦ label`: asks the AI session about the thing under the pointer.
     ask,
+    /// `§ label`: opens a section of the embedded manual as a preview.
+    docs,
 
     pub fn glyph(k: LinkKind, ascii: bool) []const u8 {
         return switch (k) {
@@ -43,6 +45,7 @@ pub const LinkKind = enum {
             .settings => if (ascii) "*" else "⚙",
             .url => if (ascii) "^" else "↗",
             .ask => if (ascii) "?" else "✦",
+            .docs => if (ascii) "#" else "\u{00a7}",
         };
     }
 };
