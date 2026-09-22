@@ -67,6 +67,11 @@ pub const CompletionItem = struct {
     kind: u8,
     detail: ?[]const u8,
     documentation: ?[]const u8,
+    /// LSP 3.17 `labelDetails.detail` — shown right after the label
+    /// (a signature, `(x, y)`) — and `labelDetails.description` — the
+    /// item's origin (`re`, `typing`), shown in place of `detail`.
+    label_detail: ?[]const u8 = null,
+    label_description: ?[]const u8 = null,
     /// What accepting inserts: `textEdit.newText` > `insertText` > `label`.
     insert_text: []const u8,
     format: InsertFormat,
@@ -330,6 +335,8 @@ pub fn readCompletionItem(v: Value) ?CompletionItem {
         .kind = @intCast(std.math.clamp(jsonrpc.getInt(v, "kind") orelse 0, 0, 255)),
         .detail = jsonrpc.getStr(v, "detail"),
         .documentation = doc,
+        .label_detail = if (jsonrpc.getObj(v, "labelDetails")) |ld| jsonrpc.getStr(ld, "detail") else null,
+        .label_description = if (jsonrpc.getObj(v, "labelDetails")) |ld| jsonrpc.getStr(ld, "description") else null,
         .insert_text = insert,
         .format = if ((jsonrpc.getInt(v, "insertTextFormat") orelse 1) == 2) .snippet else .plain,
         .edit_range = edit_range,
@@ -687,6 +694,15 @@ test "readers: diagnostics, completion items, hover shapes, nested symbols" {
     try testing.expectEqual(@as(u32, 4), items[0].edit_range.?.start.character);
     try testing.expectEqualStrings("Calls fn", items[0].documentation.?);
     try testing.expectEqualStrings("x", items[1].insert_text);
+    try testing.expect(items[1].label_description == null and items[1].label_detail == null);
+    // LSP 3.17 `labelDetails`, as pyright sends an auto-import.
+    var ld = try std.json.parseFromSlice(Value, a, "[{\"label\":\"Pattern\",\"kind\":7,\"detail\":\"Auto-import\",\"labelDetails\":{\"description\":\"re\"}},{\"label\":\"run\",\"labelDetails\":{\"detail\":\"(main)\"}}]", .{});
+    defer ld.deinit();
+    const auto = try readCompletions(a, ld.value);
+    try testing.expectEqualStrings("re", auto[0].label_description.?);
+    try testing.expect(auto[0].label_detail == null);
+    try testing.expectEqualStrings("Auto-import", auto[0].detail.?);
+    try testing.expectEqualStrings("(main)", auto[1].label_detail.?);
     var h = try std.json.parseFromSlice(Value, a, "{\"contents\":{\"kind\":\"markdown\",\"value\":\"```rust\\nfn main()\\n```\\n\\nEntry.\\n\"}}", .{});
     defer h.deinit();
     const lines = try readHover(a, h.value);

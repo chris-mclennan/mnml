@@ -2156,6 +2156,8 @@ pub fn openLocalCompletion(app: *App, pane: PaneId, start: usize, items: []const
         copy[i].insert_text = try a.dupe(u8, it.insert_text);
         if (it.detail) |d| copy[i].detail = try a.dupe(u8, d);
         if (it.documentation) |d| copy[i].documentation = try a.dupe(u8, d);
+        if (it.label_detail) |d| copy[i].label_detail = try a.dupe(u8, d);
+        if (it.label_description) |d| copy[i].label_description = try a.dupe(u8, d);
         if (it.sort_text) |d| copy[i].sort_text = try a.dupe(u8, d);
         if (it.filter_text) |d| copy[i].filter_text = try a.dupe(u8, d);
     }
@@ -3031,7 +3033,16 @@ pub fn drawPopups(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             const rows = try ui.arena.alloc(completion_view.Row, vis.len);
             for (vis, 0..) |idx, i| {
                 const it = comp.items[idx];
-                rows[i] = .{ .label = it.label, .kind = types.completionKindLabel(it.kind), .detail = it.detail orelse "" };
+                // LSP 3.17 label details: the signature beside the
+                // label, the origin (`re`, `typing`) in a column of its
+                // own — what tells three `Pattern` rows apart.
+                rows[i] = .{
+                    .label = it.label,
+                    .label_detail = it.label_detail orelse "",
+                    .kind = types.completionKindLabel(it.kind),
+                    .description = it.label_description orelse "",
+                    .detail = it.detail orelse "",
+                };
             }
             const doc: ?[]const u8 = if (comp.items[vis[comp.selected]].documentation) |d| firstLine(d) else null;
             completion_view.draw(ui, body, cursor, &comp.scroll, .{ .rows = rows, .selected = comp.selected, .doc = doc });
@@ -3916,6 +3927,36 @@ test "a python server starts with the project's .venv interpreter in its setting
             try testing.expectEqualStrings(want, settings);
         }
     }
+}
+
+test "completion rows show labelDetails: the origin in a column before the detail, the signature after the label" {
+    const gpa = testing.allocator;
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    const pane = app.active.?;
+    const e = app.activeEditor().?;
+    try e.buf.editor.setText("Pa\n");
+    e.buf.editor.setCursor(2);
+    const base: types.CompletionItem = .{ .label = "Pattern", .kind = 7, .detail = "Auto-import", .documentation = null, .insert_text = "Pattern", .format = .plain, .edit_range = null, .sort_text = null, .filter_text = null, .raw = .null };
+    var re = base;
+    re.label_description = "re";
+    var typing = base;
+    typing.label_description = "typing";
+    typing.sort_text = "b";
+    var sig = base;
+    sig.label = "Parser";
+    sig.label_detail = "(src)";
+    sig.sort_text = "c";
+    re.sort_text = "a";
+    const items = [_]types.CompletionItem{ re, typing, sig };
+    try openLocalCompletion(&app, pane, 0, &items, true);
+    const text = try TestRig.screenText(&app, gpa);
+    defer gpa.free(text);
+    try testing.expect(std.mem.indexOf(u8, text, "Pattern      class  re      Auto-import") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "Pattern      class  typing  Auto-import") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "Parser(src)  class          Auto-import") != null);
 }
 
 /// Tick and render for `ms`, for a test that asserts nothing arrived.
