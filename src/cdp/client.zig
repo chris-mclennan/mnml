@@ -143,9 +143,17 @@ pub const Launch = struct {
     /// Drains Chrome's stderr so it never blocks on a full pipe.
     drain: ?std.Thread = null,
 
+    /// Terminate Chrome, reap it, and join the stderr drain.
+    /// Idempotent: the browser pane's `shutdown` calls it, and its
+    /// `deinit` calls it again.
+    ///
+    /// // changed: this was `kill` then `wait` — the shape a child needs
+    /// where `kill` only signals, and the shape the Rust prototype's
+    /// `Command` had. Zig 0.16's `Child.kill` reaps the child itself and
+    /// leaves `id == null`, while `Child.wait` asserts `id != null` on
+    /// entry, so the `wait` aborted the process every single time.
     pub fn kill(self: *Launch, io: Io) void {
-        self.child.kill(io);
-        _ = self.child.wait(io) catch {};
+        if (self.child.id != null) self.child.kill(io);
         if (self.drain) |t| t.join();
         self.drain = null;
     }
@@ -232,14 +240,13 @@ pub fn launch(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, opts:
         if (opts.headless) try argv.appendSlice(a, &.{ "--headless=new", "--no-sandbox", "--disable-gpu" });
         try argv.append(a, url);
         var child = std.process.spawn(io, .{ .argv = argv.items, .stdin = .ignore, .stdout = .ignore, .stderr = .pipe, .environ_map = env }) catch continue;
+        // `kill` reaps; a `wait` after it would assert. // changed
         const stderr = child.stderr orelse {
             child.kill(io);
-            _ = child.wait(io) catch {};
             continue;
         };
         const port = readDebugPort(io, stderr) orelse {
             child.kill(io);
-            _ = child.wait(io) catch {};
             return error.NoDevToolsPort;
         };
         var out: Launch = .{ .child = child, .port = port };
@@ -502,4 +509,55 @@ test "session against a fake endpoint: enables, a numbered request, an event" {
     try testing.expect(std.mem.indexOf(u8, fake.methods.items, "Target.setAutoAttach\n") != null);
     try testing.expect(std.mem.indexOf(u8, fake.methods.items, "Page.navigate\n") != null);
     try testing.expect(!available(gpa, io, &std.process.Environ.Map.init(gpa)) or true);
+}
+
+/// True while `pid` names a live *or* unreaped process; false once it is
+/// gone for good (`kill(pid, 0)` → ESRCH). Tests only (the browser
+/// pane's close test reads it too).
+pub fn pidGone(pid: std.process.Child.Id) bool {
+    std.posix.kill(pid, @enumFromInt(0)) catch |err| return err == error.ProcessNotFound;
+    return false;
+}
+
+test "Launch.kill kills and reaps a running child, and a second kill does nothing" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const io = testing.io;
+    const child = try std.process.spawn(io, .{
+        .argv = &.{ "/bin/sleep", "30" },
+        .stdin = .ignore,
+        .stdout = .ignore,
+        .stderr = .ignore,
+    });
+    const pid = child.id.?;
+    var l: Launch = .{ .child = child, .port = 0 };
+    l.kill(io);
+    // The pane's `shutdown` kills, then its `deinit` kills again. Before
+    // the 0.16 fix the second call was a `wait` on a reaped child and
+    // aborted the process.
+    l.kill(io);
+    try testing.expectEqual(@as(?std.process.Child.Id, null), l.child.id);
+    try testing.expect(pidGone(pid));
+}
+
+test "Launch.kill does not panic on a child that exited on its own" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const io = testing.io;
+    const child = try std.process.spawn(io, .{
+        .argv = &.{"/usr/bin/true"},
+        .stdin = .ignore,
+        .stdout = .ignore,
+        .stderr = .ignore,
+    });
+    const pid = child.id.?;
+    var l: Launch = .{ .child = child, .port = 0 };
+    // Give it time to exit: by the kill it is a zombie, not a live
+    // process — the Chrome-crashed-before-we-killed-it path. (A zombie
+    // still answers `kill(pid, 0)`, so there is nothing to poll for;
+    // and an early kill is the *other* test, so a short sleep is
+    // enough either way.)
+    io.sleep(.fromMilliseconds(150), .awake) catch {};
+    l.kill(io);
+    l.kill(io);
+    try testing.expectEqual(@as(?std.process.Child.Id, null), l.child.id);
+    try testing.expect(pidGone(pid));
 }
