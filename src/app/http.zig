@@ -1311,8 +1311,13 @@ pub fn fire(app: *App, id: PaneId) CommandError!void {
     var staged = try rp.request.clone(a);
     const script = try script_mod.parse(a, rp.request.script orelse "");
     try script_mod.applyPre(a, &staged, &set, script);
-    const missing = try env_mod.unresolved(a, staged.url, &set);
-    if (missing.len > 0) app.toast("http: unresolved {{{{{s}}}}} — env: {s}", .{ missing[0], set.name orelse "?" });
+    // The URL, the headers and the body — a `{{VAR}}` an env value
+    // names counts too (`BASE=http://{{HOST}}` with no HOST).
+    var missing: std.ArrayListUnmanaged([]const u8) = .empty;
+    try missing.appendSlice(a, try env_mod.unresolved(a, staged.url, &set));
+    for (staged.headers.items) |h| try missing.appendSlice(a, try env_mod.unresolved(a, h.value, &set));
+    if (staged.body) |b| try missing.appendSlice(a, try env_mod.unresolved(a, b, &set));
+    if (missing.items.len > 0) app.toast("http: unresolved {{{{{s}}}}} — env: {s}", .{ missing.items[0], set.name orelse "?" });
     var expanded = try expandWith(app.gpa, app.io, &staged, &set);
     var handed = false;
     errdefer if (!handed) expanded.deinit(app.gpa);
