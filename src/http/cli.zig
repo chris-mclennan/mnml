@@ -15,6 +15,7 @@ const discover = @import("discover.zig");
 const sources = @import("sources.zig");
 const proxy = @import("proxy.zig");
 const body = @import("body.zig");
+const config_load = @import("../config/load.zig");
 
 pub const Std = struct { out: *Io.Writer, err: *Io.Writer };
 
@@ -78,6 +79,20 @@ fn parseFileArgs(argv: []const []const u8, std_: Std, verb: []const u8) !?FileAr
     return out;
 }
 
+/// The `.http` settings the subcommands share with the app — read from
+/// the same config layers (`config.zon` in the data root, then the
+/// workspace's `.mnml/config.zon`), so the env ladder and the body
+/// formatting are the pane's. Strings live on `arena`.
+const HttpConfig = struct { default_env: ?[]const u8 = null, format_json: bool = true };
+
+fn httpConfig(arena: Allocator, io: Io, env: *const std.process.Environ.Map, ws: []const u8) Allocator.Error!HttpConfig {
+    // Untrusted: nothing exec-bearing is read, and none of it is used.
+    var loaded = try config_load.load(arena, io, .{ .workspace = ws, .trust = .untrusted, .env = .{ .vars = env } });
+    defer loaded.deinit();
+    const h = loaded.config.http;
+    return .{ .default_env = if (h.default_env) |d| try arena.dupe(u8, d) else null, .format_json = h.auto_format_body };
+}
+
 // ─── run ────────────────────────────────────────────────────────────────
 
 pub fn run(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, argv: []const []const u8, std_: Std) !u8 {
@@ -100,7 +115,8 @@ pub fn run(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, argv: []
         return 1;
     };
     const ws = args.workspace orelse try findWorkspace(a, io, std.fs.path.dirname(file) orelse ".");
-    const sel = try env_mod.select(a, io, ws, args.env, env.get("MNML_ENV"), null);
+    const cfg = try httpConfig(a, io, env, ws);
+    const sel = try env_mod.select(a, io, ws, args.env, env.get("MNML_ENV"), cfg.default_env);
     var set = try env_mod.EnvSet.load(a, io, ws, sel.name);
     set.process = env;
     try std_.err.print("env: {s}\n", .{sel.name});
@@ -124,7 +140,7 @@ pub fn run(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, argv: []
     // The pane's encoder: `# @body-type form-urlencoded` / `multipart`
     // put the same bytes on the wire from here as from the pane.
     var missing: ?[]const u8 = null;
-    body.encode(a, io, &req, .{ .base_dir = std.fs.path.dirname(file) orelse ws }, &missing) catch |err| switch (err) {
+    body.encode(a, io, &req, .{ .format_json = cfg.format_json, .base_dir = std.fs.path.dirname(file) orelse ws }, &missing) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.FileNotFound => {
             try std_.err.print("mnml-zig run: multipart: no file at {s} (relative to {s})\n", .{ missing orelse "?", std.fs.path.dirname(file) orelse ws });
@@ -173,7 +189,8 @@ pub fn chainRun(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arg
     const a = arena_state.allocator();
     const file = try absolute(a, io, file_rel);
     const ws = args.workspace orelse try findWorkspace(a, io, std.fs.path.dirname(file) orelse ".");
-    const sel = try env_mod.select(a, io, ws, args.env, env.get("MNML_ENV"), null);
+    const cfg = try httpConfig(a, io, env, ws);
+    const sel = try env_mod.select(a, io, ws, args.env, env.get("MNML_ENV"), cfg.default_env);
     var result = chain.run(gpa, io, file, ws, sel.name) catch |err| {
         try std_.err.print("mnml-zig chain: {s}\n", .{@errorName(err)});
         return 1;
@@ -477,6 +494,43 @@ test "run: `# @body-type form-urlencoded` / `multipart` put the pane's bytes on 
     try testing.expect(std.ascii.indexOfIgnoreCase(server.lastRequest(), "content-type: multipart/form-data; boundary=") != null);
     try testing.expect(std.mem.indexOf(u8, server.lastRequest(), "filename=\"data.txt\"") != null);
     try testing.expect(std.mem.indexOf(u8, server.lastRequest(), "hello file") != null);
+}
+
+test "run: the config's `.http.default_env` picks the env, as it does in the app; --env and MNML_ENV still win" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &pbuf);
+    const ws = pbuf[0..n];
+    var server = try mock.Server.start(testing.allocator, testing.io, .{ .status = 200, .status_text = "OK", .body = "ok" });
+    defer server.stop(testing.io);
+    try tmp.dir.createDirPath(testing.io, ".mnml/env");
+    try tmp.dir.createDirPath(testing.io, "root");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "root/config.zon", .data = ".{ .http = .{ .default_env = \"staging\" } }\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/dev.env", .data = "WHO=dev\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/staging.env", .data = "WHO=staging\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/qa.env", .data = "WHO=qa\n" });
+    const req = try std.fmt.allocPrint(testing.allocator, "GET http://127.0.0.1:{d}/x\nX-Who: {{{{WHO}}}}\n", .{server.port});
+    defer testing.allocator.free(req);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "a.http", .data = req });
+    const root = try std.fs.path.join(testing.allocator, &.{ ws, "root" });
+    defer testing.allocator.free(root);
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    try env.put("MNML_DATA_ROOT", root);
+    const file = try std.fs.path.join(testing.allocator, &.{ ws, "a.http" });
+    defer testing.allocator.free(file);
+    var out: Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    var err: Io.Writer.Allocating = .init(testing.allocator);
+    defer err.deinit();
+    try testing.expectEqual(@as(u8, 0), try run(testing.allocator, testing.io, &env, &.{file}, .{ .out = &out.writer, .err = &err.writer }));
+    try testing.expect(std.mem.startsWith(u8, err.written(), "env: staging\n"));
+    try testing.expect(std.ascii.indexOfIgnoreCase(server.lastRequest(), "x-who: staging\r\n") != null);
+    var err2: Io.Writer.Allocating = .init(testing.allocator);
+    defer err2.deinit();
+    try testing.expectEqual(@as(u8, 0), try run(testing.allocator, testing.io, &env, &.{ file, "--env", "qa" }, .{ .out = &out.writer, .err = &err2.writer }));
+    try testing.expect(std.mem.startsWith(u8, err2.written(), "env: qa\n"));
 }
 
 test "discover then sync-check from the CLI" {
