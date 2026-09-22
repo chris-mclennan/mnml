@@ -1097,6 +1097,7 @@ fn handleResponse(app: *App, s: *Server, kind: ReqKind, ctx: Ctx, result: ?Value
     switch (kind) {
         .initialize => {
             try s.onInitialized(result);
+            decor.onServerReady(app, s);
             // Documents opened while the server was starting are on the
             // wire now; symbols for the ones showing can follow, once
             // the open has settled (see `attach`).
@@ -2258,7 +2259,10 @@ pub fn rename(app: *App) CommandError!void {
     const seed = wordAt(t.e.buf.editor.bytes(), t.e.buf.editor.cursor);
     var state = app_mod.Prompt.init(app.gpa, "Rename symbol");
     errdefer app_mod.Prompt.deinit(&state, app.gpa);
-    try state.setText(app.gpa, seed);
+    // Seeded as a selection: typing replaces the old name, Enter keeps
+    // it. `setText` left the caret after it, so a typed name was
+    // appended (`area` + `compute_area` = `areacompute_area`).
+    try state.seed(app.gpa, seed);
     app.overlay.deinit(app.gpa);
     app.overlay = .{ .prompt = .{ .state = state, .purpose = .lsp_rename } };
     app.focus = .overlay;
@@ -2406,12 +2410,17 @@ fn requestActions(app: *App, t: Target, only: ?[]const u8, mode: u32) CommandErr
     const arena = app.frame.allocator();
     const ed = t.e.buf.editor;
     const text = ed.bytes();
-    const line = ed.currentLine();
-    const start = types.positionOf(text, ed.lineStart(line), t.server.encoding);
-    const end = types.positionOf(text, ed.lineEnd(line), t.server.encoding);
-    // The diagnostics on the line give the server its context.
+    // The range is what the server judges the assists by — a fill-match-
+    // arms fix is offered when the range spans the match, an extract
+    // refactor works on the span the user marked. A selection is sent as
+    // it stands (a linewise one already covers whole lines); without one
+    // the cursor's line, as before.
+    const span: [2]usize = ed.selection() orelse .{ ed.lineStart(ed.currentLine()), ed.lineEnd(ed.currentLine()) };
+    const start = types.positionOf(text, span[0], t.server.encoding);
+    const end = types.positionOf(text, span[1], t.server.encoding);
+    // The diagnostics on those lines give the server its context.
     var diags: std.ArrayListUnmanaged(struct { range: types.Range, severity: u8, message: []const u8 }) = .empty;
-    for (diagnosticsFor(app, t.path)) |d| if (d.range.start.line == line) try diags.append(arena, .{ .range = d.range, .severity = @intFromEnum(d.severity), .message = d.message });
+    for (diagnosticsFor(app, t.path)) |d| if (d.range.start.line >= start.line and d.range.start.line <= end.line) try diags.append(arena, .{ .range = d.range, .severity = @intFromEnum(d.severity), .message = d.message });
     const uri = try types.uriFromPath(arena, t.path);
     const only_list: ?[]const []const u8 = if (only) |o| try arena.dupe([]const u8, &.{o}) else null;
     _ = t.server.request(.code_action, "textDocument/codeAction", .{

@@ -143,6 +143,24 @@ pub fn forgetPane(app: *App, pane: PaneId) void {
     _ = app.lsp.decor_track.remove(pane);
 }
 
+/// `s` became ready (a start, or a restart): every pane it serves asks
+/// for its sets on the next frame, whatever text it last asked at.
+/// Before this, a buffer open across a restart kept the old server's
+/// answer and never asked the new one. Panes another server serves
+/// keep their marks.
+pub fn onServerReady(app: *App, s: *const Server) void {
+    var it = app.lsp.decor_track.iterator();
+    while (it.next()) |kv| {
+        const e = app.panes.editor(kv.key_ptr.*) orelse continue;
+        const path = e.buf.doc.path orelse continue;
+        if (lsp.serverFor(app, path) != s) continue;
+        kv.value_ptr.seq = null;
+        kv.value_ptr.hint_seq = null;
+        kv.value_ptr.dirty_since = null;
+    }
+    app.needs_render = true;
+}
+
 // ─── requests, from the frame ───────────────────────────────────────────
 
 /// Called by the frame after the pane synced: refresh every set once
@@ -664,4 +682,47 @@ test "mergeUnderlines: the prime list wins where it overlaps the other" {
     try testing.expectEqual(@as(usize, 4), out[0].end);
     try testing.expect(out[1].style.ul_style == .curly);
     try testing.expectEqual(@as(usize, 8), out[2].start);
+}
+
+/// A `.ts` under the rig's `/tmp` root that `openPath` reads from disk,
+/// so its edit-log head is 0 — the state a file has when it is only read.
+const readonly_file = "/tmp/mnml-zig-fake-lsp-readonly.ts";
+
+test "a file only READ (edit-log head 0) has its lenses and tokens asked for on open and painted with no edit; a server that comes up again asks afresh" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    var rig: lsp.TestRig = .{};
+    try rig.start(&app);
+    try std.Io.Dir.cwd().writeFile(testing.io, .{ .sub_path = readonly_file, .data = lsp.TestRig.text });
+    defer std.Io.Dir.cwd().deleteFile(testing.io, readonly_file) catch {};
+    const pane = try app.openPath(readonly_file);
+    const e = app.panes.editor(pane).?;
+    try testing.expectEqual(@as(u64, 0), e.buf.doc.edits.head());
+    const Cond = struct {
+        fn painted(a: *App) bool {
+            const fd = a.lsp.decor.get(readonly_file) orelse return false;
+            const sf = a.lsp.semantic.get(readonly_file) orelse return false;
+            return setFresh(types.InlayHint, &fd.hints, 0) and setFresh(types.CodeLens, &fd.lenses, 0) and sf.seq != null and sf.seq.? == 0;
+        }
+        fn asked(a: *App) bool {
+            const tr = a.lsp.decor_track.get(a.active.?) orelse return false;
+            return tr.seq != null;
+        }
+    };
+    try lsp.TestRig.pump(&app, &app, Cond.painted, 5000);
+    // Still untouched: nothing here edited the buffer to get there.
+    try testing.expectEqual(@as(u64, 0), e.buf.doc.edits.head());
+    const txt = try lsp.TestRig.screenText(&app, gpa);
+    defer gpa.free(txt);
+    try testing.expect(std.mem.indexOf(u8, txt, "let x: number") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "2 references") != null);
+    // A server that comes up again (a restart) asks for every pane's
+    // sets afresh, whatever text they last asked at.
+    onServerReady(&app, app.lsp.servers.items[0]);
+    try testing.expect(!Cond.asked(&app));
+    try lsp.TestRig.pump(&app, &app, Cond.asked, 5000);
+    try rig.stop(&app);
 }

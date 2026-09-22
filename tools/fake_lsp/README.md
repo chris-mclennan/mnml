@@ -87,7 +87,7 @@ An unknown request gets `-32601 method not found`.
 | `textDocument/completion` | the document's identifiers, unique, sorted bytewise; a name with a `fn name` line is kind 3 (function, detail `fn`), the rest kind 6 (variable, detail `identifier`) |
 | `textDocument/rename` | a `WorkspaceEdit` whose `changes[uri]` replaces every whole-word occurrence of the word with `newName` |
 | `textDocument/documentSymbol` | one symbol per `fn <name>` line: kind 12 (Function), `range` the line, `selectionRange` the name (`--symbols rich`: the range through the closing `}`, plus a variable per `let`); `[]` under `--configure` until the client has answered `workspace/configuration` |
-| `textDocument/codeAction` | when the line at `range.start` holds `TODO`: one `quickfix` titled `Resolve TODO` whose edit replaces the marker with `DONE`; else `[]` |
+| `textDocument/codeAction` | when a line in `range.start.line..=range.end.line` holds `TODO` (the first one): one `quickfix` titled `Resolve TODO` whose edit replaces the marker with `DONE`; else `[]` |
 | `textDocument/formatting` | one edit replacing the whole document with trailing blanks trimmed on every line and exactly one newline at the end; `[]` when already so |
 
 Identifiers are `[A-Za-z0-9_]+` runs not starting with a digit. Lines

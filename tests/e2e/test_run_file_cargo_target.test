@@ -1,0 +1,28 @@
+# env: PATH=${MNML_SHIMS}:${PATH}
+# `test.run_file` on a Cargo crate runs the file's TARGET, not its stem
+# as a test-name filter. Before, `src/main.rs` ran `cargo test main`,
+# which cargo takes as a name filter: `running 0 tests … test result:
+# ok` — a green nothing. Now `src/main.rs` → `--bins`, `src/lib.rs` →
+# `--lib`, `tests/x.rs` → `--test x`, a module file → its path filter
+# (`shapes::`, what its `mod tests` is named under). And a filter that
+# matched nothing is said out loud: 0 tests over `ok` is not a pass.
+write Cargo.toml "[package]\nname = \"x\"\nversion = \"0.1.0\"\n"
+write src/main.rs "mod shapes;\nmod empty;\nfn main() {}\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn passes() {}\n}\n"
+write src/shapes.rs "pub fn area() -> u32 { 4 }\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn area_is_four() { assert_eq!(super::area(), 4); }\n}\n"
+write src/empty.rs "pub fn nothing() {}\n"
+write tests/smoke.rs "#[test]\nfn smoke() {}\n"
+open src/main.rs
+command test.run_file
+expect screen contains "shim cargo test: --bins"
+expect screen contains "3 passed"
+open src/shapes.rs
+command test.run_file
+expect screen contains "shim cargo test: shapes::"
+expect screen contains "1 passed"
+open tests/smoke.rs
+command test.run_file
+expect screen contains "shim cargo test: --test smoke"
+open src/empty.rs
+command test.run_file
+expect screen contains "shim cargo test: empty::"
+expect screen contains "0 tests matched `empty::`"

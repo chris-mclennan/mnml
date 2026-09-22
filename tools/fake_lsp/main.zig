@@ -284,8 +284,11 @@ pub const Server = struct {
             const d = self.doc(params) orelse return self.respondRaw(id, "[]");
             const range = getObj(params, "range") orelse return self.respondRaw(id, "[]");
             const start = getObj(range, "start") orelse return self.respondRaw(id, "[]");
-            const line: u32 = @intCast(@max(getInt(start, "line") orelse 0, 0));
-            const todo = todoOn(d.text, line) orelse return self.respondRaw(id, "[]");
+            const first: u32 = @intCast(@max(getInt(start, "line") orelse 0, 0));
+            // The range is what the client asked about — a selection
+            // spans lines — so the first TODO anywhere in it answers.
+            const last: u32 = if (getObj(range, "end")) |e| @intCast(@max(getInt(e, "line") orelse first, first)) else first;
+            const todo = todoIn(d.text, first, last) orelse return self.respondRaw(id, "[]");
             const edit = try workspaceEdit(arena, d.uri, &.{.{ .range = todo, .newText = "DONE" }});
             const action = try std.fmt.allocPrint(arena, "[{{\"title\":\"Resolve TODO\",\"kind\":\"quickfix\",\"edit\":{s}}}]", .{edit});
             try self.respondRaw(id, action);
@@ -592,6 +595,16 @@ fn closingBrace(text: []const u8, from: u32) ?u32 {
     while (it.next()) |raw| : (line += 1) {
         if (line <= from) continue;
         if (std.mem.startsWith(u8, std.mem.trimEnd(u8, raw, "\r"), "}")) return line;
+    }
+    return null;
+}
+
+/// The first `TODO` on lines `first..=last`.
+fn todoIn(text: []const u8, first: u32, last: u32) ?Range {
+    var line = first;
+    while (line <= last) : (line += 1) {
+        if (todoOn(text, line)) |r| return r;
+        if (line == std.math.maxInt(u32)) break;
     }
     return null;
 }
@@ -995,6 +1008,10 @@ test "hover, definition, references, completion, rename, symbols, code action an
     try t.expectEqualStrings("DONE", getStr(fix[0], "newText").?);
     const no_act = try h.send(10, "textDocument/codeAction", "{\"textDocument\":{\"uri\":\"file:///ws/a.fk\"},\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":0}},\"context\":{\"diagnostics\":[]}}");
     defer t.allocator.free(no_act);
+    // A range that spans down onto the TODO's line (a selection) finds it.
+    const span_act = try h.send(14, "textDocument/codeAction", "{\"textDocument\":{\"uri\":\"file:///ws/a.fk\"},\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":3,\"character\":0}},\"context\":{\"diagnostics\":[]}}");
+    defer t.allocator.free(span_act);
+    try t.expectEqual(@as(usize, 1), resultOf(span_act[0]).array.items.len);
     try t.expectEqual(@as(usize, 0), resultOf(no_act[0]).array.items.len);
 
     const fmt = try h.send(11, "textDocument/formatting", "{\"textDocument\":{\"uri\":\"file:///ws/a.fk\"},\"options\":{\"tabSize\":2,\"insertSpaces\":true}}");

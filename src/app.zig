@@ -2941,6 +2941,7 @@ pub const App = struct {
         try dispatch.finishDeferredInserts(self);
         if (self.theme_auto_poll_ms) |at| if (now >= at) try @import("app/cmd_view.zig").pollSystemTheme(self);
         pty_pane.tickAll(self);
+        runners.onFrame(self);
         dap.pollPendingLaunch(self);
         ws_pane.tickAll(self);
         try watch.tick(self, now);
