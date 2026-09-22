@@ -65,7 +65,11 @@ pub fn draw(app: *App, ui: Ui, pane: PaneId, sp: *ScriptPane, area: Rect) Alloca
         if (caret) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
         return;
     }
-    const rows = try app.script().callRender(sp.render.?, area.w, area.h);
+    // The pane's refs belong to the state that opened it (an installed
+    // script's own, or `init.lua`'s): `App.luaState`, never `script()`.
+    const render = sp.render.?;
+    const lua = app.luaState(render.state) orelse return;
+    const rows = try lua.callRender(render, area.w, area.h);
     script_view.draw(ui, pane, area, rows);
 }
 
@@ -82,7 +86,8 @@ pub fn handleKey(app: *App, sp: *ScriptPane, k: Key) Allocator.Error!bool {
     };
     const r = sp.on_key orelse return false;
     const name = try keyName(app.frame.allocator(), k);
-    return app.script().callKey(r, name);
+    const lua = app.luaState(r.state) orelse return false;
+    return lua.callKey(r, name);
 }
 
 /// A click on a segment with a `hit`: `on_hit(id, button)`. A
@@ -100,7 +105,8 @@ pub fn click(app: *App, pane: PaneId, sp: *ScriptPane, id: u32, m: Mouse) Alloca
         .middle => "middle",
         else => return,
     };
-    app.script().callHit(r, id, button);
+    const lua = app.luaState(r.state) orelse return;
+    lua.callHit(r, id, button);
 }
 
 /// The `ListHit` targets of a list-backed pane (or a rail section).
@@ -142,8 +148,9 @@ pub fn wheel(app: *App, sp: *ScriptPane, down: bool, n: usize) void {
         return;
     }
     const r = sp.on_key orelse return;
+    const lua = app.luaState(r.state) orelse return;
     var i: usize = 0;
-    while (i < n) : (i += 1) _ = app.script().callKey(r, if (down) "wheel_down" else "wheel_up");
+    while (i < n) : (i += 1) _ = lua.callKey(r, if (down) "wheel_down" else "wheel_up");
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────

@@ -149,8 +149,15 @@ pub fn add(app: *App, title: []u8, rows_fn: LuaRef, on_enter: ?LuaRef, on_menu: 
 /// Ask the script for its rows again. A failing call leaves the rows
 /// that were there — a script that errors mid-edit does not blank the
 /// panel the reader is looking at.
+///
+/// The rows fn lives in the state that registered the list — an
+/// installed script's own, not `init.lua`'s (`App.luaState`, as a
+/// script-owned command is run). Asking `init.lua`'s state to call a
+/// ref from another registry tripped `pushRef`'s assert and took the
+/// process down the moment the shipped `todo-list` was installed.
 pub fn refresh(app: *App, l: *List) Allocator.Error!void {
-    const fresh = try app.script().callListRows(l.rows_fn, l.sortLabel()) orelse return;
+    const lua = app.luaState(l.rows_fn.state) orelse return;
+    const fresh = try lua.callListRows(l.rows_fn, l.sortLabel()) orelse return;
     freeRows(app.gpa, l.cache);
     l.cache = fresh;
     // A header the script no longer answers with stops being folded.
@@ -255,7 +262,8 @@ pub fn activate(app: *App, l: *List, idx: usize) Allocator.Error!void {
     const row = rows[idx];
     if (row.header) return toggleFold(app, l, row.label);
     const on_enter = l.on_enter orelse return;
-    app.script().callRow(on_enter, l, row.index);
+    const lua = app.luaState(on_enter.state) orelse return;
+    lua.callRow(on_enter, l, row.index);
     app.needs_render = true;
 }
 
@@ -329,7 +337,8 @@ pub fn openRowMenu(app: *App, l: *List, idx: u32, x: u16, y: u16) Allocator.Erro
             .action = .{ .script_list_fold = .{ .list = l.id, .row = idx } },
         });
     } else if (l.on_menu) |fnref| {
-        for (try app.script().callMenu(fnref, l, row.index, arena)) |label| {
+        const labels: []const []const u8 = if (app.luaState(fnref.state)) |lua| try lua.callMenu(fnref, l, row.index, arena) else &.{};
+        for (labels) |label| {
             try out.append(app.gpa, .{
                 .label = label,
                 .action = .{ .script_list_menu = .{ .list = l.id, .item = @intCast(out.items.len) } },

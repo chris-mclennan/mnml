@@ -1,0 +1,20 @@
+# zl: installing a script whose init.lua registers an `mnml.list{}` ABORTS
+# THE PROCESS: `reached unreachable code` at
+# src/app/script_list.zig:153 callListRows, reached from api.zig listRegister
+# → script_list.refresh while the script is still inside `loadInit` (the
+# install's `commit`). The shipped `todo-list` (Marketplace tab, `i`) does
+# exactly this, so the curated set crashes mnml on install; the corpus never
+# installs it (lua_example_todo_list.test copies the file into .mnml/init.lua
+# instead). `install` from a directory with the same shape is the minimal case.
+# env: MNML_SCRIPTS_ROOT=installed
+shell mkdir -p src/lister
+write src/lister/script.zon ".{ .name = \"lister\", .api = 1, .version = \"1.0.0\", .commands = .{ \"user.lister\" } }\n"
+write src/lister/init.lua "local l = mnml.list{ title = 'L (lua)', rows = function(sort) return { { label = 'row', detail = 'x:1' } } end }\nmnml.section{ id = 'lister', title = 'L (lua)', glyph = '+', ascii = 'L', list = l, side = 'left', after = 'todos' }\n"
+command script.install
+type "src/lister"
+key enter
+expect screen contains "Install this script?"
+key i
+expect screen contains "scripts: installed lister"
+command user.lister
+expect screen contains "L (lua)"

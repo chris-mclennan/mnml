@@ -1,0 +1,19 @@
+# zl: the shipped todo-list script, installed from the SCRIPTS section's
+# Marketplace tab, aborts the process with `reached unreachable code`
+# (src/app/script_list.zig:153). See zl-lua-install-list-script-panics for
+# the minimal shape; this is the path a user takes.
+# env: MNML_SCRIPTS_ROOT=installed
+command view.activity_scripts
+command script.show_marketplace
+key /
+type "todo"
+key esc
+key down
+key down
+key down
+key down
+command script.marketplace_install
+expect screen contains "Install this script?"
+expect screen contains "todo-list 1.0.0 by mnml"
+key i
+expect screen contains "scripts: installed todo-list"
