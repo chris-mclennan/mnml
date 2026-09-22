@@ -367,6 +367,10 @@ pub fn build(b: *std.Build) void {
     // registered and not written down — or written down and not
     // registered — fails the suite rather than shipping.
     root_module.addAnonymousImport("lua_md", .{ .root_source_file = b.path("docs/LUA.md") });
+    // The hover-help audit's allow-list (`src/app/info_view_audit.zig`):
+    // the targets known to have no curated entry yet, so the audit
+    // fails only on a NEW one.
+    root_module.addAnonymousImport("hover_help_todo", .{ .root_source_file = b.path("docs/hover-help-todo.txt") });
     root_module.addAnonymousImport("ui_spec_rust_120x40", .{ .root_source_file = b.path("docs/ui-spec/rust-120x40.txt") });
     root_module.addAnonymousImport("ui_spec_rust_80x24", .{ .root_source_file = b.path("docs/ui-spec/rust-80x24.txt") });
     root_module.addAnonymousImport("ui_spec_rust_sessions_120x40", .{ .root_source_file = b.path("docs/ui-spec/rust-sessions-120x40.txt") });
@@ -436,6 +440,19 @@ pub fn build(b: *std.Build) void {
     const merge_step = b.step("font-merge", "Merge this build's MnmlSymbols glyphs into an installed face (-Dfont-in, -Dfont-out)");
     merge_step.dependOn(&merge_run.step);
     // ── end the symbols font ────────────────────────────────────────────
+
+    // ── the hover-help audit ────────────────────────────────────────────
+    // `zig build hover-audit`: every hoverable target the app can produce
+    // against the info view's dictionary (`src/app/info_view_copy/`),
+    // failing on a new target without an entry (the backlog lives in
+    // docs/hover-help-todo.txt). It runs inside the app, so it is a
+    // subcommand of the exe rather than a tool of its own.
+    const hover_run = b.addRunArtifact(exe);
+    hover_run.addArgs(&.{ "hover-audit", "--strict" });
+    hover_run.has_side_effects = true;
+    hover_run.stdio = .inherit;
+    const hover_step = b.step("hover-audit", "Every hoverable target against the info view's curated entries; fails on a new target without one");
+    hover_step.dependOn(&hover_run.step);
 
     // ── the arena audit ─────────────────────────────────────────────────
     // `zig build arena-audit`: every place a string that dies at the next
