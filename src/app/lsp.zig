@@ -442,22 +442,24 @@ fn specFor(app: *App, path: []const u8) ?Spec {
     return null;
 }
 
-/// Walk up from the file's directory to the first directory holding a
-/// marker. Without one the root is the file's own directory, as Rust's
-/// `find_root` falls back — the server still starts (rust-analyzer then
-/// says so itself: `Failed to discover workspace…`), so a lone `.rs`
-/// outside a crate gets the same server and the same toast as under
-/// Rust. A spec with no markers roots at the workspace. `ranked`
-/// markers are walked one at a time: the first marker anywhere up the
-/// tree beats the second one nearer the file.
+/// The server's root for `path`: the nearest directory above it that
+/// holds one of `markers` (`ranked`: each marker searched all the way up
+/// before the next — a `.sln` above a `.csproj` wins), else the file's
+/// own directory; no markers means the workspace.
 fn findRoot(app: *App, arena: Allocator, path: []const u8, markers: []const []const u8, ranked: bool) Allocator.Error![]const u8 {
     if (markers.len == 0) return app.workspace;
+    return (try markedRoot(app, arena, path, markers, ranked)) orelse std.fs.path.dirname(path) orelse app.workspace;
+}
+
+/// The nearest directory above `path` holding one of `markers`, or null
+/// when nothing marks it — the case a file outside every project is in.
+fn markedRoot(app: *App, arena: Allocator, path: []const u8, markers: []const []const u8, ranked: bool) Allocator.Error!?[]const u8 {
     const start = std.fs.path.dirname(path) orelse app.workspace;
     if (ranked) {
         for (markers) |m| if (try walkUp(app, arena, start, &.{m})) |d| return d;
-        return start;
+        return null;
     }
-    return (try walkUp(app, arena, start, markers)) orelse start;
+    return try walkUp(app, arena, start, markers);
 }
 
 /// The first directory from `start` up holding any of `markers`.
@@ -477,6 +479,24 @@ fn walkUp(app: *App, arena: Allocator, start: []const u8, markers: []const []con
         if (d.len <= 1) break;
     }
     return null;
+}
+
+/// Is `path` `dir` or somewhere below it?
+fn pathUnder(path: []const u8, dir: []const u8) bool {
+    if (!std.mem.startsWith(u8, path, dir)) return false;
+    return path.len == dir.len or path[dir.len] == '/' or (dir.len > 0 and dir[dir.len - 1] == '/');
+}
+
+/// A live server of `name` to lend a file that has no project of its
+/// own: the one rooted in the workspace if there is one, else any.
+fn serverToLend(app: *App, name: []const u8) ?*Server {
+    var any: ?*Server = null;
+    for (app.lsp.servers.items) |s| {
+        if (s.transport.isDead() or !std.mem.eql(u8, s.name, name)) continue;
+        if (pathUnder(s.root, app.workspace) or pathUnder(app.workspace, s.root)) return s;
+        if (any == null) any = s;
+    }
+    return any;
 }
 
 /// Any entry of `dir_path` matching the glob `marker`. An unreadable
@@ -564,8 +584,9 @@ fn dynamicJson(arena: Allocator, d: app_mod.Config.Dynamic) Allocator.Error![]co
 pub fn serverFor(app: *App, path: []const u8) ?*Server {
     for (app.lsp.servers.items) |s| {
         if (s.transport.isDead()) continue;
-        if (!std.mem.startsWith(u8, path, s.root)) continue;
+        // A file lent to a server outside its root is still its own.
         if (s.isOpen(path)) return s;
+        if (!std.mem.startsWith(u8, path, s.root)) continue;
         const spec = specFor(app, path) orelse continue;
         if (std.mem.eql(u8, spec.name, s.name)) return s;
     }
@@ -676,7 +697,15 @@ pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
         }
         return null;
     }
-    const root = try findRoot(app, arena, path, spec.root_markers, spec.root_markers_ranked);
+    const marked = if (spec.root_markers.len == 0) app.workspace else try markedRoot(app, arena, path, spec.root_markers, spec.root_markers_ranked);
+    // A file outside the workspace under no project marker of its own —
+    // the standard library, site-packages, a toolchain's sources — is
+    // one the running server already reaches (it answered the jump that
+    // opened it): it joins that server as a plain open document instead
+    // of rooting a second one at its own directory. Only a file under a
+    // different project's marker gets a server of its own.
+    if (marked == null and !pathUnder(path, app.workspace)) if (serverToLend(app, spec.name)) |s| return s;
+    const root = marked orelse std.fs.path.dirname(path) orelse app.workspace;
     for (app.lsp.servers.items) |s| if (std.mem.eql(u8, s.name, spec.name) and std.mem.eql(u8, s.root, root) and !s.transport.isDead()) return s;
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
     try argv.append(arena, try arena.dupe(u8, found.?));
@@ -3669,6 +3698,68 @@ test "mnml-fake-lsp end to end: a `.lsp` written to .mnml/config.zon starts on o
     live = false;
     app.deinit();
     try testing.expect(Cond.logHas(ctx, "shutdown\nexit\n"));
+}
+
+test "a file outside the workspace under no project marker joins the workspace's server; one under another project's marker gets its own" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    const exe = build_options.fake_lsp_exe;
+    Io.Dir.cwd().access(io, exe, .{}) catch return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const top = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+    // ws/ (the workspace, a project), lib/ (a standard library: no
+    // marker anywhere above it), other/ (a second project).
+    try tmp.dir.createDirPath(io, "ws/.mnml");
+    try tmp.dir.createDirPath(io, "lib/asyncio");
+    try tmp.dir.createDirPath(io, "other");
+    try tmp.dir.writeFile(io, .{ .sub_path = "ws/.fkroot", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "other/.fkroot", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "ws/a.fk", .data = "fn a() {}\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "lib/asyncio/runners.fk", .data = "fn run() {}\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "other/c.fk", .data = "fn c() {}\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "ws/.mnml/config.zon", .data = ".{ .lsp = .{ .fake = .{ .cmd = \"$MNML_FAKE_LSP\", .extensions = .{ \"fk\" }, .root_markers = .{ \".fkroot\" } } } }" });
+    const ws = try std.fs.path.join(gpa, &.{ top, "ws" });
+    defer gpa.free(ws);
+    const a = try std.fs.path.join(gpa, &.{ ws, "a.fk" });
+    defer gpa.free(a);
+    const lib = try std.fs.path.join(gpa, &.{ top, "lib", "asyncio", "runners.fk" });
+    defer gpa.free(lib);
+    const other_root = try std.fs.path.join(gpa, &.{ top, "other" });
+    defer gpa.free(other_root);
+    const c = try std.fs.path.join(gpa, &.{ other_root, "c.fk" });
+    defer gpa.free(c);
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try env.put("MNML_FAKE_LSP", exe);
+    var app = try App.initWith(gpa, io, .{ .workspace = ws, .cols = 100, .rows = 30, .env = &env, .workspace_trusted = true });
+    defer app.deinit();
+    app.tree.visible = false;
+    const Probe = struct { app: *App, path: []const u8 };
+    const Cond = struct {
+        fn open(p: Probe) bool {
+            for (p.app.lsp.servers.items) |x| if (x.ready and x.isOpen(p.path)) return true;
+            return false;
+        }
+    };
+    _ = try app.openPath(a);
+    try pumpUntil(&app, Probe{ .app = &app, .path = a }, Cond.open, 30_000);
+    try testing.expectEqual(@as(usize, 1), app.lsp.servers.items.len);
+    const first = app.lsp.servers.items[0];
+    try testing.expectEqualStrings(ws, first.root);
+    // The jump into the library: the same server, the file open on it,
+    // and every later request for it answered by that server.
+    _ = try app.openPath(lib);
+    try pumpUntil(&app, Probe{ .app = &app, .path = lib }, Cond.open, 30_000);
+    try testing.expectEqual(@as(usize, 1), app.lsp.servers.items.len);
+    try testing.expect(first.isOpen(lib));
+    try testing.expectEqual(first, serverFor(&app, lib).?);
+    // Another project is another root.
+    _ = try app.openPath(c);
+    try pumpUntil(&app, Probe{ .app = &app, .path = c }, Cond.open, 30_000);
+    try testing.expectEqual(@as(usize, 2), app.lsp.servers.items.len);
+    try testing.expectEqualStrings(other_root, serverFor(&app, c).?.root);
 }
 
 /// Tick and render for `ms`, for a test that asserts nothing arrived.
