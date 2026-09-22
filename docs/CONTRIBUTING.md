@@ -576,6 +576,11 @@ step before it proved):
    thing has a component, draw it through the component*; the same
    walk is a unit test, so `zig build test` fails on a new fork before
    this step names it);
+   `data/nerd-glyphnames.json`, with its `--ascii` twin;
+7b. `zig build hover-audit` — every hoverable target against the info
+   view's dictionary; fails on a new target with no entry that
+   `docs/hover-help-todo.txt` does not list, and on a shortcut row naming
+   an unbound command (*Adding hover help for a control*, below);
 8. `tools/pty-mouse-check.py` — the real binary in a pty answering the
    probes like ghostty; one click opens a file, a right-click opens the
    row menu, a wheel notch reaches the app;
@@ -595,7 +600,7 @@ step before it proved):
     check and runs on the Windows guest
     (`docs/INSTALL-CHECKLIST.md` → *Windows 11*, step W-0).
 
-`./run.sh check` runs 1–5, 7, 11 and 12 in one line, on the ReleaseSafe
+`./run.sh check` runs 1–5, 7, 7b, 11 and 12 in one line, on the ReleaseSafe
 binary it builds at step 3, with `MNML_E2E_ALLOW_SHELL=1` for the corpus;
 6, 8, 9 and 10 are run by hand. `zig build check` is the older one-step form (1, 2, the
 gate, the sweep, `tests/e2e/defaults.test` and the corpus on the exe of that
@@ -779,6 +784,37 @@ name, installs each binary to `PREFIX/bin`, runs `--install` and
 relinks `<data root>/bin/<name>`. Nothing there needs editing; an entry
 whose `.category` is `sample` is installed as a binary but not
 registered (a fixture is not a chip on anyone's rail).
+
+## Adding hover help for a control
+
+Every hoverable control has an entry in the info view's dictionary
+(`docs/CONVENTIONS.md` → *Hover help*). When you add a chip, a button, a
+menu row or a Settings row:
+
+1. Run `zig build hover-audit`. It walks every target and fails with the
+   new one's key — `button:my_chip`, `menu:tests/Run twice`,
+   `settings:row:ui.my_flag`.
+2. Write the entry in the area module under `src/app/info_view_copy/`
+   (`chrome.zig` for a `render.Button`, `menus.zig` for a menu row keyed by
+   the menu's title and the row's label, `statusline.zig` for a segment,
+   …). Title, two to four sentences about this control in this state, the
+   click and the right button, the caveat; `keys` as `CommandId`s (the
+   lint rejects an unbound one); one to three typed `links` — the next
+   command, a `settingsRow("…")`, a URL, or `copy.ask_link` where a user is
+   likely stuck (a failure, a conflict, a rate limit).
+3. A Settings row needs nothing: its entry is generated from its label,
+   docs/CONFIG.md's comment for the key, its choices and its value. Add a
+   `hand_written` row in `info_view_copy/settings.zig` when the generated
+   words are not enough.
+4. Run `zig build hover-audit` again (and `zig build unit
+   -Dtest-filter="the audit"`). If the entry is deliberately deferred,
+   add the key to `docs/hover-help-todo.txt` instead — the audit then
+   passes and the backlog shows it.
+
+Check the words in the app: hover the control and read the box; hover a
+`✦ Ask Claude about this` row and read the prompt it sends
+(`info_view_copy.askPrompt`) — it should name the state, not define the
+control.
 
 ## Subagents
 
