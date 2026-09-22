@@ -353,8 +353,16 @@ pub fn build(arena: Allocator, glyphs: []const Glyph, family: []const u8, versio
     // zero, and the real glyphs follow.
     try loca.append(arena, 0);
     try loca.append(arena, 0);
+    // Each glyph's left side bearing: its outline's own xMin. `head`'s
+    // flag 1 promises the bearing point sits at x=0, so a rasteriser
+    // slides the outline until xMin meets the bearing — with a bearing
+    // of 0 for every glyph, the tree's centred bar landed on the cell's
+    // left edge and every mark that bleeds left crept right.
+    var lsb: std.ArrayListUnmanaged(i16) = .empty;
+    try lsb.append(arena, 0); // .notdef
     for (glyphs) |g| {
         const b = try glyfEntry(arena, &glyf, g.contours);
+        try lsb.append(arena, if (g.contours.len > 0) b.x_min else 0);
         try pad4(&glyf, arena);
         try loca.append(arena, @intCast(glyf.items.len));
         var pts: usize = 0;
@@ -423,9 +431,9 @@ pub fn build(arena: Allocator, glyphs: []const Glyph, family: []const u8, versio
     try u16At(&hhea, arena, n_glyphs);
 
     var hmtx: Buf = .empty;
-    for (0..n_glyphs) |_| {
+    for (lsb.items) |left| {
         try u16At(&hmtx, arena, @intCast(advance_width));
-        try i16At(&hmtx, arena, 0);
+        try i16At(&hmtx, arena, left);
     }
 
     var maxp: Buf = .empty;
@@ -1006,6 +1014,28 @@ test "the reader lifts back exactly what the writer wrote" {
     }
     // Three glyphs plus `.notdef`: nothing unmapped rides along.
     try t.expectEqual(back.len, glyphCount(bytes) - 1);
+}
+
+test "each glyph's left side bearing is its own xMin, so a centred outline stays centred on screen" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    // A bar in the middle of the cell (the tree's vertical), a mark
+    // that bleeds left of the cell, and a blank.
+    const bar = [_]svg.Contour{try square(arena, 350, -400, 450, 1120)};
+    const bleed = [_]svg.Contour{try square(arena, -90, 0, 690, 500)};
+    const bytes = try build(arena, &.{
+        .{ .codepoint = 0x20, .name = "space", .contours = Glyph.empty },
+        .{ .codepoint = 0xF1F04, .name = "bar", .contours = &bar },
+        .{ .codepoint = 0xF1E00, .name = "bleed", .contours = &bleed },
+    }, "MnmlSymbols", "1.0");
+    const hmtx = (try tableOf(bytes, "hmtx")).?;
+    // .notdef, space, bar, bleed — four longHorMetric of advance + lsb.
+    try t.expectEqual(@as(usize, 16), hmtx.len);
+    try t.expectEqual(@as(i16, 0), try rdI16(hmtx, 2));
+    try t.expectEqual(@as(i16, 0), try rdI16(hmtx, 6));
+    try t.expectEqual(@as(i16, 350), try rdI16(hmtx, 10));
+    try t.expectEqual(@as(i16, -90), try rdI16(hmtx, 14));
 }
 
 test "the reader flattens a quadratic into the straight edges the writer needs" {
