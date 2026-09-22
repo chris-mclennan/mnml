@@ -42,6 +42,7 @@ key esc
 rightclick 76 38
 expect screen contains "Go to line…"
 hover 80 36
+expect screen contains "Asks for a line"
 expect screen lacks "Cursor: Go to line"
 expect screen lacks "no help written yet"
 key esc
