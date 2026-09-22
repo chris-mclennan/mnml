@@ -129,12 +129,17 @@ pub const CdpEvent = struct {
     }
 };
 
+/// Heap-owned, so the worker's pointer survives the pane store moving
+/// the pane. `launch` is published the moment Chrome is spawned — not
+/// once it reports a port — so `shutdown` can always reach the child.
 const Shared = struct {
     io: Io,
     lock: Io.Mutex = .init,
     session: ?cdp.Session = null,
-    launch: ?cdp.Launch = null,
+    launch: ?*cdp.Launch = null,
     closing: bool = false,
+    /// `closing`, readable without the lock: ends the `/json` retries.
+    stop: std.atomic.Value(bool) = .init(false),
 };
 
 pub const BrowserPane = struct {
@@ -179,7 +184,7 @@ pub const BrowserPane = struct {
         self.shutdown();
         if (self.thread) |t| t.join();
         if (self.shared.session) |*s| s.deinit();
-        if (self.shared.launch) |*l| l.kill(self.shared.io);
+        if (self.shared.launch) |l| l.destroy(self.shared.io);
         gpa.destroy(self.shared);
         for (self.log.items) |l| gpa.free(l.text);
         self.log.deinit(gpa);
@@ -235,14 +240,16 @@ pub const BrowserPane = struct {
         self.shared.lock.lockUncancelable(io);
         defer self.shared.lock.unlock(io);
         self.shared.closing = true;
+        self.shared.stop.store(true, .release);
         if (self.shared.session) |*s| {
             s.conn.close(1000, "") catch {};
             s.conn.stream.shutdown(io, .both) catch {};
         }
-        // `Launch.kill` — not `l.child.kill` — so the stderr drain is
-        // joined here too; it is idempotent, so `deinit`'s call after
-        // this one does nothing. // changed
-        if (self.shared.launch) |*l| l.kill(io);
+        // `Launch.kill` — not `l.child.kill` — so the stderr reader is
+        // cancelled here too, and a worker still waiting for the port
+        // wakes; it is idempotent, so `deinit`'s `destroy` after this
+        // one only frees.
+        if (self.shared.launch) |l| l.kill(io);
     }
 
     pub fn push(self: *BrowserPane, kind: LogKind, text: []const u8) Allocator.Error!void {
@@ -297,10 +304,13 @@ pub fn countBrowsers(app: *App) usize {
 /// Tests: pretend no Chrome is installed, so `open` fails with its diag
 /// instead of launching the one on this machine.
 pub var test_no_chrome: bool = false;
+/// Tests: launch this stand-in instead of looking for Chrome.
+pub var test_binary: ?[]const u8 = null;
 
 pub fn open(app: *App, url_in: []const u8) CommandError!PaneId {
     const gpa = app.gpa;
-    const no_chrome = (builtin.is_test and test_no_chrome) or !cdp.available(gpa, app.io, &app.env);
+    const binary: ?[]const u8 = if (builtin.is_test) test_binary else null;
+    const no_chrome = (builtin.is_test and test_no_chrome) or (binary == null and !cdp.available(gpa, app.io, &app.env));
     if (no_chrome) return app.diag.fail(app.frame.allocator(), "no Chrome found — run `:browser.install_cft` to install Chrome for Testing", .{});
     const url = std.mem.trim(u8, url_in, " \t");
     const shared = try gpa.create(Shared);
@@ -331,7 +341,7 @@ pub fn open(app: *App, url_in: []const u8) CommandError!PaneId {
     errdefer gpa.free(url_owned);
     const dir_owned = try gpa.dupe(u8, p.profile_dir);
     errdefer gpa.free(dir_owned);
-    p.thread = std.Thread.spawn(.{}, worker, .{ &app.events, app.io, gpa, &app.env, shared, id, url_owned, dir_owned, p.headless }) catch |err| {
+    p.thread = std.Thread.spawn(.{}, worker, .{ &app.events, app.io, gpa, &app.env, shared, id, url_owned, dir_owned, p.headless, binary }) catch |err| {
         return app.diag.fail(app.frame.allocator(), "browser: could not start the worker: {s}", .{@errorName(err)});
     };
     if (p.device) |d| _ = d;
@@ -349,28 +359,42 @@ fn postClosed(events: *event.EventQueue, io: Io, gpa: Allocator, pane: PaneId, r
     post(events, io, gpa, .{ .pane = pane, .kind = .{ .closed = copy } });
 }
 
-fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, env: *const std.process.Environ.Map, shared: *Shared, pane: PaneId, url: []u8, profile_dir: []u8, headless: bool) void {
+fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, env: *const std.process.Environ.Map, shared: *Shared, pane: PaneId, url: []u8, profile_dir: []u8, headless: bool, binary: ?[]const u8) void {
     defer gpa.free(url);
     defer gpa.free(profile_dir);
-    var launch = cdp.launch(gpa, io, env, .{ .url = url, .profile_dir = profile_dir, .headless = headless }) catch |err| {
+    const launch = cdp.spawn(gpa, io, env, .{ .url = url, .profile_dir = profile_dir, .headless = headless, .binary = binary }) catch |err| {
         const msg: []const u8 = switch (err) {
             error.ChromeNotFound => "Chrome not found. Install Chrome for Testing:\n    npx @puppeteer/browsers install chrome@stable\nor run `:browser.install_cft`.",
             error.NoDevToolsPort => "couldn't find Chrome's DevTools port — did it start?",
             error.OutOfMemory => "out of memory launching Chrome",
+            error.ConcurrencyUnavailable => "could not start Chrome's stderr reader",
         };
         postClosed(events, io, gpa, pane, msg);
         return;
     };
+    // Published before anything waits on it: from here on the pane's
+    // `shutdown` can kill Chrome, which wakes the wait below.
     {
         shared.lock.lockUncancelable(io);
         defer shared.lock.unlock(io);
         if (shared.closing) {
-            launch.kill(io);
+            launch.destroy(io);
             return;
         }
         shared.launch = launch;
     }
-    const ws_url = cdp.pageWsUrl(gpa, io, launch.port) catch |err| {
+    const port = launch.waitPort(io, cdp.port_timeout) orelse {
+        shared.lock.lockUncancelable(io);
+        const closing = shared.closing;
+        shared.lock.unlock(io);
+        if (closing) return;
+        postClosed(events, io, gpa, pane, if (launch.port_ready.isSet())
+            "Chrome exited before reporting its DevTools port — is another Chrome using this profile?"
+        else
+            "Chrome did not report a DevTools port within 20 s");
+        return;
+    };
+    const ws_url = cdp.pageWsUrl(gpa, io, port, &shared.stop) catch |err| {
         const msg = std.fmt.allocPrint(gpa, "couldn't reach Chrome's /json endpoint: {s}", .{@errorName(err)}) catch return;
         defer gpa.free(msg);
         postClosed(events, io, gpa, pane, msg);
@@ -393,7 +417,7 @@ fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, env: *const std.pro
         }
         shared.session = session;
     }
-    const connected = std.fmt.allocPrint(gpa, "{s}\n{d}", .{ ws_url, launch.port }) catch return;
+    const connected = std.fmt.allocPrint(gpa, "{s}\n{d}", .{ ws_url, port }) catch return;
     post(events, io, gpa, .{ .pane = pane, .kind = .{ .connected = connected } });
     while (true) {
         const text = shared.session.?.next() catch |err| {
@@ -1359,16 +1383,27 @@ test "hovering a DOM row highlights its node once; leaving the rows hides the hi
     try testing.expectEqualStrings("Overlay.hideHighlight", p.queued.items[3].method);
 }
 
-/// A stand-in for Chrome: a child that stays up until it is killed.
-fn standInChrome(p: *BrowserPane) !std.process.Child.Id {
-    const child = try std.process.spawn(testing.io, .{
-        .argv = &.{ "/bin/sleep", "30" },
-        .stdin = .ignore,
-        .stdout = .ignore,
-        .stderr = .ignore,
-    });
-    p.shared.launch = .{ .child = child, .port = 9222 };
-    return child.id.?;
+/// A stand-in Chrome script in `root` that runs `body`, for `test_binary`
+/// or `cdp.spawn`. Its path is on `arena`.
+fn standInScript(arena: Allocator, root: []const u8, name: []const u8, body: []const u8) ![]const u8 {
+    const path = try std.fs.path.join(arena, &.{ root, name });
+    const text = try std.fmt.allocPrint(arena, "#!/bin/sh\n{s}\n", .{body});
+    try Io.Dir.cwd().writeFile(testing.io, .{ .sub_path = path, .data = text });
+    const f = try Io.Dir.cwd().openFile(testing.io, path, .{ .mode = .read_write });
+    defer f.close(testing.io);
+    try f.setPermissions(testing.io, .fromMode(0o755));
+    return path;
+}
+
+/// A stand-in for Chrome: a child that stays up until it is killed,
+/// owned by the pane the way a real launch is.
+fn standInChrome(p: *BrowserPane, root: []const u8) !std.process.Child.Id {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const bin = try standInScript(arena.allocator(), root, "stand-in-chrome", "exec /bin/sleep 30");
+    const l = try cdp.spawn(testing.allocator, testing.io, &std.process.Environ.Map.init(testing.allocator), .{ .profile_dir = root, .binary = bin });
+    p.shared.launch = l;
+    return l.child.id.?;
 }
 
 test "closing a browser pane while its Chrome runs takes the child with it — forceClosePane and the tab's ✕ both, and neither panics" {
@@ -1384,14 +1419,14 @@ test "closing a browser pane while its Chrome runs takes the child with it — f
     // `forceClosePane` → `Pane.deinit` → `BrowserPane.deinit` →
     // `Launch.kill`, with Chrome still running.
     const id = try testPane(&app);
-    const pid = try standInChrome(app.panes.get(id).?.asBrowser().?);
+    const pid = try standInChrome(app.panes.get(id).?.asBrowser().?, pbuf[0..n]);
     try app.forceClosePane(id);
     try testing.expect(app.panes.get(id) == null);
-    try testing.expect(child_os.gone(pid));
+    try testing.expect(child_os.goneWithin(testing.io, pid, .fromSeconds(10)));
 
     // The same close through the tab strip's ✕, which is how it was hit.
     const id2 = try testPane(&app);
-    const pid2 = try standInChrome(app.panes.get(id2).?.asBrowser().?);
+    const pid2 = try standInChrome(app.panes.get(id2).?.asBrowser().?, pbuf[0..n]);
     try app.render();
     const spot = blk: {
         var y: u16 = 0;
@@ -1413,5 +1448,81 @@ test "closing a browser pane while its Chrome runs takes the child with it — f
     try testing.expect(spot != null);
     try app.handle(.{ .mouse = .{ .x = spot.?.x, .y = spot.?.y, .kind = .press, .button = .left } });
     try testing.expect(app.panes.get(id2) == null);
-    try testing.expect(child_os.gone(pid2));
+    try testing.expect(child_os.goneWithin(testing.io, pid2, .fromSeconds(10)));
+}
+
+/// Runs the half of a pane's close that can block — `shutdown`, then
+/// the join of the worker — on its own thread and says when it came
+/// back: a close that hangs then fails the test at the watchdog instead
+/// of hanging the suite. The rest of the close (`forceClosePane`, which
+/// must run on the UI thread) follows on the test's thread.
+const Closer = struct {
+    p: *BrowserPane,
+    done: Io.Event = .unset,
+
+    fn run(self: *Closer) void {
+        self.p.shutdown();
+        if (self.p.thread) |t| t.join();
+        self.p.thread = null;
+        self.done.set(testing.io);
+    }
+};
+
+test "closing a browser pane whose Chrome has not reported its DevTools port comes back at once and takes that Chrome with it" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &pbuf);
+    const root = pbuf[0..n];
+    // No `defer app.deinit()`: past the watchdog the close is wedged in
+    // the closer thread and must not be raced by a second teardown.
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .data_root = root });
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    // A wedged start: running, no DevTools line, and a grandchild that
+    // keeps stderr open — so neither a port nor an EOF ever arrives.
+    const body = try std.fmt.allocPrint(arena.allocator(), "/bin/sleep 30 & echo $! > '{s}/grandchild.pid'; exec /bin/sleep 30", .{root});
+    test_binary = try standInScript(arena.allocator(), root, "wedged-chrome", body);
+    defer test_binary = null;
+    defer {
+        var gbuf: [32]u8 = undefined;
+        if (tmp.dir.readFile(testing.io, "grandchild.pid", &gbuf)) |txt| {
+            if (std.fmt.parseInt(std.posix.pid_t, std.mem.trim(u8, txt, " \n"), 10)) |g| std.posix.kill(g, .KILL) catch {} else |_| {}
+        } else |_| {}
+    }
+    const id = try open(&app, "http://127.0.0.1:9/");
+    const p = app.panes.get(id).?.asBrowser().?;
+    // The launch is the pane's as soon as Chrome is spawned.
+    var pid: ?std.process.Child.Id = null;
+    var tries: usize = 0;
+    while (pid == null and tries < 500) : (tries += 1) {
+        p.shared.lock.lockUncancelable(testing.io);
+        if (p.shared.launch) |l| pid = l.child.id;
+        p.shared.lock.unlock(testing.io);
+        if (pid == null) testing.io.sleep(.fromMilliseconds(10), .awake) catch {};
+    }
+    try testing.expect(pid != null);
+    testing.io.sleep(.fromMilliseconds(300), .awake) catch {};
+    try testing.expect(p.state == .launching);
+    var closer: Closer = .{ .p = p };
+    const t = try std.Thread.spawn(.{}, Closer.run, .{&closer});
+    // A regression leaves the close parked on the worker; leave it there.
+    if (!waitSet(&closer.done, .fromSeconds(10))) return error.CloseWaitedOnAWedgedChrome;
+    t.join();
+    try app.forceClosePane(id);
+    try testing.expect(app.panes.get(id) == null);
+    try testing.expect(child_os.goneWithin(testing.io, pid.?, .fromSeconds(10)));
+    app.deinit();
+}
+
+/// `ev` set within `limit` (spurious wakeups ride out the deadline).
+fn waitSet(ev: *Io.Event, limit: Io.Duration) bool {
+    const start = Io.Timestamp.now(testing.io, .awake);
+    while (!ev.isSet()) {
+        const elapsed = start.durationTo(Io.Timestamp.now(testing.io, .awake));
+        if (elapsed.nanoseconds >= limit.nanoseconds) return false;
+        ev.waitTimeout(testing.io, .{ .duration = .{ .raw = .fromMilliseconds(100), .clock = .awake } }) catch {};
+    }
+    return true;
 }

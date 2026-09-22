@@ -42,13 +42,13 @@ pub fn run(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, opts: Op
     const profile = try std.fmt.allocPrint(a, "{s}/.mnml/chrome-profile-proxy-{d}", .{ opts.workspace, Io.Timestamp.now(io, .real).toMilliseconds() });
     Io.Dir.cwd().createDirPath(io, profile) catch {};
     defer Io.Dir.cwd().deleteTree(io, profile) catch {};
-    var launch = cdp.launch(gpa, io, env, .{ .url = opts.url, .profile_dir = profile, .headless = true, .binary = opts.binary }) catch |err| return switch (err) {
+    const launch = cdp.launch(gpa, io, env, .{ .url = opts.url, .profile_dir = profile, .headless = true, .binary = opts.binary }) catch |err| return switch (err) {
         error.OutOfMemory => error.OutOfMemory,
         error.ChromeNotFound => error.ChromeNotFound,
-        error.NoDevToolsPort => error.NoDevToolsPort,
+        error.NoDevToolsPort, error.ConcurrencyUnavailable => error.NoDevToolsPort,
     };
-    defer launch.kill(io);
-    const ws_url = cdp.pageWsUrl(gpa, io, launch.port) catch return error.NoPageTarget;
+    defer launch.destroy(io);
+    const ws_url = cdp.pageWsUrl(gpa, io, launch.port, null) catch return error.NoPageTarget;
     defer gpa.free(ws_url);
     var session = cdp.Session.connect(gpa, io, ws_url) catch return error.ConnectFailed;
     defer session.deinit();

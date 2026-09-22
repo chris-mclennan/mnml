@@ -138,29 +138,76 @@ pub const LaunchOptions = struct {
     binary: ?[]const u8 = null,
 };
 
+/// A Chrome the launcher owns from the moment it is spawned. Heap
+/// allocated and never moved: the stderr reader, a task in `reader`,
+/// holds its address. The reader looks for `DevTools listening on
+/// ws://…:PORT/…`, publishes the port through `port_ready`, then
+/// drains stderr until Chrome closes it, so Chrome never blocks on a
+/// full pipe.
+///
+/// Whoever holds a `*Launch` can `kill` it at any point after `spawn`
+/// returns — before the port line, while a worker is waiting for it,
+/// or long after. A Chrome wedged before its DevTools line (a keychain
+/// prompt, a hung GPU start, a profile lock) used to be out of reach
+/// until that line arrived: the only reference to the child lived on
+/// the stack of a worker blocked reading its stderr, so closing the
+/// pane joined that worker and froze the UI until Chrome exited.
 pub const Launch = struct {
+    gpa: Allocator,
     child: std.process.Child,
-    port: u16,
-    /// Drains Chrome's stderr so it never blocks on a full pipe.
-    drain: ?std.Thread = null,
+    /// Owned by the reader task, which closes it; taken out of `child`
+    /// so `Child.kill` never closes a file another thread is reading.
+    stderr: Io.File,
+    reader: Io.Group = .init,
+    /// Set by the reader once `port` is known, or once it gave up
+    /// (`port` stays 0): EOF, cancel, or no DevTools line in 200 lines.
+    port_ready: Io.Event = .unset,
+    port: u16 = 0,
+    killed: bool = false,
 
-    /// Terminate Chrome, reap it, and join the stderr drain.
-    /// Idempotent: the browser pane's `shutdown` calls it, and its
-    /// `deinit` calls it again.
+    /// Terminate Chrome, reap it, and stop the stderr reader. Idempotent.
+    /// Not thread-safe against itself: one owner calls it (the browser
+    /// pane under its lock; the proxy on its own thread).
     ///
-    /// // changed: this was `kill` then `wait` — the shape a child needs
-    /// where `kill` only signals, and the shape the Rust prototype's
-    /// `Command` had. Zig 0.16's `Child.kill` reaps the child itself and
-    /// leaves `id == null`, while `Child.wait` asserts `id != null` on
-    /// entry, so the `wait` aborted the process every single time.
+    /// Zig 0.16's `Child.kill` sends SIGTERM, reaps and leaves
+    /// `id == null`; a `wait` after it would assert. The cancel comes
+    /// after the reap because a helper Chrome started can keep the
+    /// stderr pipe open past its parent, and then the read would never
+    /// see EOF.
     pub fn kill(self: *Launch, io: Io) void {
         if (self.child.id != null) self.child.kill(io);
-        if (self.drain) |t| t.join();
-        self.drain = null;
+        self.reader.cancel(io);
+        self.killed = true;
+    }
+
+    /// `kill`, then free. For the owner that is done with it.
+    pub fn destroy(self: *Launch, io: Io) void {
+        self.kill(io);
+        self.gpa.destroy(self);
+    }
+
+    /// Block until the reader found the port, gave up, or `timeout`
+    /// passed. Null when there is no port (yet). Uncancelable, and
+    /// wakes as soon as `kill` has stopped the reader.
+    pub fn waitPort(self: *Launch, io: Io, timeout: Io.Duration) ?u16 {
+        const start = Io.Timestamp.now(io, .awake);
+        while (!self.port_ready.isSet()) {
+            const elapsed = start.durationTo(Io.Timestamp.now(io, .awake));
+            if (elapsed.nanoseconds >= timeout.nanoseconds) return null;
+            const left: Io.Duration = .{ .nanoseconds = timeout.nanoseconds - elapsed.nanoseconds };
+            self.port_ready.waitTimeout(io, .{ .duration = .{ .raw = left, .clock = .awake } }) catch |err| switch (err) {
+                error.Timeout => continue,
+                error.Canceled => return null,
+            };
+        }
+        return if (self.port == 0) null else self.port;
     }
 };
 
-pub const LaunchError = error{ ChromeNotFound, NoDevToolsPort } || Allocator.Error;
+pub const LaunchError = error{ ChromeNotFound, NoDevToolsPort } || Allocator.Error || Io.ConcurrentError;
+
+/// How long a launch waits for Chrome's DevTools line.
+pub const port_timeout: Io.Duration = .fromSeconds(20);
 
 /// Every candidate binary, the puppeteer cache first.
 pub fn candidates(arena: Allocator, io: Io, home: ?[]const u8) Allocator.Error![]const []const u8 {
@@ -218,63 +265,98 @@ pub fn resolveBinary(arena: Allocator, io: Io, env: *const std.process.Environ.M
     return null;
 }
 
-/// Spawn Chrome and read `DevTools listening on ws://127.0.0.1:PORT/…`.
-pub fn launch(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, opts: LaunchOptions) LaunchError!Launch {
+/// The argv `spawn` runs for `bin`.
+pub fn chromeArgv(a: Allocator, bin: []const u8, opts: LaunchOptions) Allocator.Error![]const []const u8 {
+    const url = if (std.mem.trim(u8, opts.url, " \t").len == 0) "about:blank" else opts.url;
+    var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+    try argv.appendSlice(a, &.{
+        bin,
+        "--remote-debugging-port=0",
+        try std.fmt.allocPrint(a, "--user-data-dir={s}", .{opts.profile_dir}),
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-background-networking",
+        "--disable-component-update",
+        "--disable-default-apps",
+    });
+    if (opts.headless) try argv.appendSlice(a, &.{ "--headless=new", "--no-sandbox", "--disable-gpu" });
+    try argv.append(a, url);
+    return argv.items;
+}
+
+/// Spawn Chrome and start its stderr reader; the port comes later
+/// (`Launch.waitPort`). The caller owns the result from this return on
+/// and `destroy`s it.
+pub fn spawn(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, opts: LaunchOptions) LaunchError!*Launch {
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     const a = arena.allocator();
     const list: []const []const u8 = if (opts.binary) |b| &.{b} else try candidates(a, io, env.get("HOME"));
-    const url = if (std.mem.trim(u8, opts.url, " \t").len == 0) "about:blank" else opts.url;
     for (list) |cand| {
         const bin = resolveBinary(a, io, env, cand) orelse continue;
-        var argv: std.ArrayListUnmanaged([]const u8) = .empty;
-        try argv.appendSlice(a, &.{
-            bin,
-            "--remote-debugging-port=0",
-            try std.fmt.allocPrint(a, "--user-data-dir={s}", .{opts.profile_dir}),
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--disable-background-networking",
-            "--disable-component-update",
-            "--disable-default-apps",
-        });
-        if (opts.headless) try argv.appendSlice(a, &.{ "--headless=new", "--no-sandbox", "--disable-gpu" });
-        try argv.append(a, url);
-        var child = std.process.spawn(io, .{ .argv = argv.items, .stdin = .ignore, .stdout = .ignore, .stderr = .pipe, .environ_map = env }) catch continue;
-        // `kill` reaps; a `wait` after it would assert. // changed
+        const argv = try chromeArgv(a, bin, opts);
+        var child = std.process.spawn(io, .{ .argv = argv, .stdin = .ignore, .stdout = .ignore, .stderr = .pipe, .environ_map = env }) catch continue;
         const stderr = child.stderr orelse {
             child.kill(io);
             continue;
         };
-        const port = readDebugPort(io, stderr) orelse {
+        child.stderr = null;
+        const self = gpa.create(Launch) catch |err| {
+            stderr.close(io);
             child.kill(io);
-            return error.NoDevToolsPort;
+            return err;
         };
-        var out: Launch = .{ .child = child, .port = port };
-        out.drain = std.Thread.spawn(.{}, drainStderr, .{ io, stderr }) catch null;
-        return out;
+        self.* = .{ .gpa = gpa, .child = child, .stderr = stderr };
+        self.reader.concurrent(io, readStderr, .{ self, io }) catch |err| {
+            stderr.close(io);
+            self.child.kill(io);
+            gpa.destroy(self);
+            return err;
+        };
+        return self;
     }
     return error.ChromeNotFound;
 }
 
-fn readDebugPort(io: Io, stderr: Io.File) ?u16 {
-    var rbuf: [8192]u8 = undefined;
-    var r: Io.File.Reader = .init(stderr, io, &rbuf);
-    var lines: usize = 0;
-    while (lines < 200) : (lines += 1) {
-        const line = r.interface.takeDelimiterInclusive('\n') catch return null;
-        const at = std.mem.indexOf(u8, line, "ws://") orelse continue;
-        const rest = line[at + "ws://".len ..];
-        const hostport = std.mem.sliceTo(rest, '/');
-        const colon = std.mem.lastIndexOfScalar(u8, hostport, ':') orelse continue;
-        return std.fmt.parseInt(u16, std.mem.trim(u8, hostport[colon + 1 ..], " \r\n"), 10) catch continue;
+/// `spawn`, then wait for the port: for a caller with nothing else to
+/// do meanwhile (the proxy). The pane spawns and waits separately so
+/// the child is reachable while it waits.
+pub fn launch(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, opts: LaunchOptions) LaunchError!*Launch {
+    const self = try spawn(gpa, io, env, opts);
+    if (self.waitPort(io, port_timeout) == null) {
+        self.destroy(io);
+        return error.NoDevToolsPort;
     }
-    return null;
+    return self;
 }
 
-fn drainStderr(io: Io, stderr: Io.File) void {
-    var rbuf: [4096]u8 = undefined;
-    var r: Io.File.Reader = .init(stderr, io, &rbuf);
+/// The port off one line of Chrome's stderr: `DevTools listening on
+/// ws://127.0.0.1:PORT/devtools/browser/…`.
+pub fn parsePortLine(line: []const u8) ?u16 {
+    const at = std.mem.indexOf(u8, line, "ws://") orelse return null;
+    const rest = line[at + "ws://".len ..];
+    const hostport = std.mem.sliceTo(rest, '/');
+    const colon = std.mem.lastIndexOfScalar(u8, hostport, ':') orelse return null;
+    return std.fmt.parseInt(u16, std.mem.trim(u8, hostport[colon + 1 ..], " \r\n"), 10) catch null;
+}
+
+/// The reader task: the port line, then drain. Every read error —
+/// `Canceled` from `kill` included — ends the task; nothing here loops
+/// on an error, so a cancel is never swallowed into another block.
+fn readStderr(self: *Launch, io: Io) void {
+    defer self.stderr.close(io);
+    defer self.port_ready.set(io);
+    var rbuf: [8192]u8 = undefined;
+    var r: Io.File.Reader = .init(self.stderr, io, &rbuf);
+    var lines: usize = 0;
+    while (lines < 200) : (lines += 1) {
+        const line = r.interface.takeDelimiterInclusive('\n') catch return;
+        if (parsePortLine(line)) |p| {
+            self.port = p;
+            break;
+        }
+    } else return;
+    self.port_ready.set(io);
     var sink: [4096]u8 = undefined;
     while (true) {
         const n = r.interface.readSliceShort(&sink) catch return;
@@ -284,11 +366,13 @@ fn drainStderr(io: Io, stderr: Io.File) void {
 
 /// `http://127.0.0.1:PORT/json` → the first `page` target's
 /// `webSocketDebuggerUrl`, retried while the endpoint warms up.
-pub fn pageWsUrl(gpa: Allocator, io: Io, port: u16) ![]u8 {
+/// `stop`, when given, ends the retries early (the pane closed).
+pub fn pageWsUrl(gpa: Allocator, io: Io, port: u16, stop: ?*const std.atomic.Value(bool)) ![]u8 {
     const url = try std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}/json", .{port});
     defer gpa.free(url);
     var attempt: usize = 0;
     while (attempt < 25) : (attempt += 1) {
+        if (stop) |st| if (st.load(.acquire)) return error.NoPageTarget;
         if (try fetchJsonTargets(gpa, io, url)) |ws_url| return ws_url;
         try Io.sleep(io, .fromMilliseconds(150), .awake);
     }
@@ -512,45 +596,141 @@ test "session against a fake endpoint: enables, a numbered request, an event" {
     try testing.expect(!available(gpa, io, &std.process.Environ.Map.init(gpa)) or true);
 }
 
+/// A stand-in Chrome in `dir`: a script that runs `body` (after
+/// `#!/bin/sh`), ignoring the Chrome flags `spawn` passes. Returns its
+/// absolute path on `arena`.
+fn standIn(arena: Allocator, io: Io, dir: Io.Dir, root: []const u8, name: []const u8, body: []const u8) ![]const u8 {
+    const text = try std.fmt.allocPrint(arena, "#!/bin/sh\n{s}\n", .{body});
+    try dir.writeFile(io, .{ .sub_path = name, .data = text });
+    const f = try dir.openFile(io, name, .{ .mode = .read_write });
+    defer f.close(io);
+    try f.setPermissions(io, .fromMode(0o755));
+    return std.fs.path.join(arena, &.{ root, name });
+}
+
+fn tmpRoot(tmp: *testing.TmpDir, buf: []u8) ![]const u8 {
+    const n = try tmp.dir.realPath(testing.io, buf);
+    return buf[0..n];
+}
+
 test "Launch.kill kills and reaps a running child, and a second kill does nothing" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
     const io = testing.io;
-    const child = try std.process.spawn(io, .{
-        .argv = &.{ "/bin/sleep", "30" },
-        .stdin = .ignore,
-        .stdout = .ignore,
-        .stderr = .ignore,
-    });
-    const pid = child.id.?;
-    var l: Launch = .{ .child = child, .port = 0 };
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = try tmpRoot(&tmp, &pbuf);
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const bin = try standIn(arena.allocator(), io, tmp.dir, root, "chrome", "exec /bin/sleep 30");
+    const l = try spawn(gpa, io, &std.process.Environ.Map.init(gpa), .{ .profile_dir = root, .binary = bin });
+    const pid = l.child.id.?;
     l.kill(io);
     // The pane's `shutdown` kills, then its `deinit` kills again. Before
     // the 0.16 fix the second call was a `wait` on a reaped child and
     // aborted the process.
     l.kill(io);
     try testing.expectEqual(@as(?std.process.Child.Id, null), l.child.id);
-    try testing.expect(child_os.gone(pid));
+    try testing.expect(child_os.goneWithin(io, pid, .fromSeconds(10)));
+    l.destroy(io);
 }
 
 test "Launch.kill does not panic on a child that exited on its own" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
     const io = testing.io;
-    const child = try std.process.spawn(io, .{
-        .argv = &.{"/usr/bin/true"},
-        .stdin = .ignore,
-        .stdout = .ignore,
-        .stderr = .ignore,
-    });
-    const pid = child.id.?;
-    var l: Launch = .{ .child = child, .port = 0 };
-    // Give it time to exit: by the kill it is a zombie, not a live
-    // process — the Chrome-crashed-before-we-killed-it path. (A zombie
-    // still answers `kill(pid, 0)`, so there is nothing to poll for;
-    // and an early kill is the *other* test, so a short sleep is
-    // enough either way.)
-    io.sleep(.fromMilliseconds(150), .awake) catch {};
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = try tmpRoot(&tmp, &pbuf);
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const bin = try standIn(arena.allocator(), io, tmp.dir, root, "chrome", "exit 0");
+    const l = try spawn(gpa, io, &std.process.Environ.Map.init(gpa), .{ .profile_dir = root, .binary = bin });
+    const pid = l.child.id.?;
+    // The reader sees EOF and gives up: no port, and a zombie to reap —
+    // the Chrome-crashed-before-we-killed-it path.
+    try testing.expectEqual(@as(?u16, null), l.waitPort(io, .fromSeconds(10)));
     l.kill(io);
     l.kill(io);
     try testing.expectEqual(@as(?std.process.Child.Id, null), l.child.id);
-    try testing.expect(child_os.gone(pid));
+    try testing.expect(child_os.goneWithin(io, pid, .fromSeconds(10)));
+    l.destroy(io);
+}
+
+test "the port comes off the DevTools line, and the reader keeps draining after it" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = try tmpRoot(&tmp, &pbuf);
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const bin = try standIn(arena.allocator(), io, tmp.dir, root, "chrome", "echo noise >&2; echo 'DevTools listening on ws://127.0.0.1:4567/devtools/browser/abc' >&2; i=0; while [ $i -lt 2000 ]; do echo 'more stderr after the port line' >&2; i=$((i+1)); done; exec /bin/sleep 30");
+    const l = try launch(gpa, io, &std.process.Environ.Map.init(gpa), .{ .profile_dir = root, .binary = bin });
+    try testing.expectEqual(@as(u16, 4567), l.port);
+    const pid = l.child.id.?;
+    l.destroy(io);
+    try testing.expect(child_os.goneWithin(io, pid, .fromSeconds(10)));
+    try testing.expectEqual(@as(?u16, 4567), parsePortLine("DevTools listening on ws://127.0.0.1:4567/devtools/browser/x\n"));
+    try testing.expectEqual(@as(?u16, null), parsePortLine("[1234:ERROR] something\n"));
+}
+
+/// Waits on `l.waitPort` from its own thread, the way the pane's worker
+/// does, and says when it came back.
+const PortWaiter = struct {
+    l: *Launch,
+    got: ?u16 = 1,
+    done: Io.Event = .unset,
+
+    fn run(self: *PortWaiter) void {
+        self.got = self.l.waitPort(testing.io, .fromSeconds(60));
+        self.done.set(testing.io);
+    }
+};
+
+test "a Chrome that never prints its DevTools line is killed while a worker waits for the port, and the worker wakes at once" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = try tmpRoot(&tmp, &pbuf);
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    // The wedge: started, never reports a port, and a grandchild holds
+    // stderr open past its parent — so EOF alone would never end the read.
+    const body = try std.fmt.allocPrint(arena.allocator(), "/bin/sleep 30 & echo $! > '{s}/grandchild.pid'; exec /bin/sleep 30", .{root});
+    const bin = try standIn(arena.allocator(), io, tmp.dir, root, "chrome", body);
+    const l = try spawn(gpa, io, &std.process.Environ.Map.init(gpa), .{ .profile_dir = root, .binary = bin });
+    const pid = l.child.id.?;
+    defer {
+        // The grandchild is the script's, not the Launch's: take it down.
+        var gbuf: [32]u8 = undefined;
+        if (tmp.dir.readFile(io, "grandchild.pid", &gbuf)) |txt| {
+            if (std.fmt.parseInt(std.posix.pid_t, std.mem.trim(u8, txt, " \n"), 10)) |g| std.posix.kill(g, .KILL) catch {} else |_| {}
+        } else |_| {}
+    }
+    var waiter: PortWaiter = .{ .l = l };
+    const t = try std.Thread.spawn(.{}, PortWaiter.run, .{&waiter});
+    io.sleep(.fromMilliseconds(200), .awake) catch {};
+    try testing.expect(!waiter.done.isSet());
+    // What the pane's close does: kill through the Launch it already has.
+    l.kill(io);
+    const start = Io.Timestamp.now(io, .awake);
+    while (!waiter.done.isSet() and start.durationTo(Io.Timestamp.now(io, .awake)).nanoseconds < std.time.ns_per_s * 10) {
+        waiter.done.waitTimeout(io, .{ .duration = .{ .raw = .fromMilliseconds(100), .clock = .awake } }) catch {};
+    }
+    if (!waiter.done.isSet()) {
+        // Leave the waiter parked rather than free what it reads.
+        return error.TestUnexpectedResult;
+    }
+    t.join();
+    try testing.expectEqual(@as(?u16, null), waiter.got);
+    try testing.expect(child_os.goneWithin(io, pid, .fromSeconds(10)));
+    l.destroy(io);
 }
