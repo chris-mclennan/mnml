@@ -1,0 +1,48 @@
+# width: 120
+# Splitting the tab you are on keeps it. A glance (one click on a tree
+# row) opens a preview tab; the strip's split-right button — the
+# cluster at 120 wide: terminal 109, split right 112, split down 115,
+# maximize 118 — puts a twin of it beside it. Both halves are KEPT tabs
+# of the same file (VS Code promotes the tab a split is made from), so
+# the next glance takes over neither; a kept tab splits as it always
+# did. Before 2026-09-22 the glanced half stayed a preview.
+write a.txt "alpha alpha"
+write b.txt "beta beta"
+command tree.refresh
+
+# Rows: the workspace header is 1, a.txt 2, b.txt 3.
+click 14 2
+expect pane "a.txt"
+expect screen contains "alpha alpha"
+expect status contains "\"panes\":[{\"title\":\"a.txt\",\"dirty\":false,\"preview\":true}]"
+
+# The split: the active tab is still a.txt, the file is on screen, and
+# status.json shows two kept a.txt tabs.
+click 112 1
+expect pane "a.txt"
+expect screen contains "alpha alpha"
+expect status contains "\"panes\":[{\"title\":\"a.txt\",\"dirty\":false,\"preview\":false},{\"title\":\"a.txt\",\"dirty\":false,\"preview\":false}]"
+
+# Each half holds one: closing the left split leaves the file up in
+# the right one.
+command view.focus_left
+expect pane "a.txt"
+command view.close_split
+expect pane "a.txt"
+expect screen contains "alpha alpha"
+expect status contains "\"panes\":[{\"title\":\"a.txt\",\"dirty\":false,\"preview\":false}]"
+
+# A kept open (the double-click) splits down the same way: two kept
+# tabs, the file in both halves, no preview anywhere.
+doubleclick 14 3
+expect pane "b.txt"
+expect screen contains "beta beta"
+click 115 1
+expect pane "b.txt"
+expect screen contains "beta beta"
+expect status lacks "\"preview\":true"
+command view.focus_up
+expect pane "b.txt"
+command view.close_split
+expect pane "b.txt"
+expect screen contains "beta beta"
