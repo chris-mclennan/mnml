@@ -115,6 +115,13 @@ pub const Grid = struct {
         return self.state.row_data.items(.dirty)[y];
     }
 
+    /// The columns of row `y` the screen's selection covers, both ends
+    /// inclusive; null when the row has none.
+    pub fn rowSelection(self: *const Grid, y: u16) ?[2]u16 {
+        const sel = self.state.row_data.items(.selection)[y] orelse return null;
+        return .{ sel[0], sel[1] };
+    }
+
     pub fn cell(self: *const Grid, x: u16, y: u16) Cell {
         const row_cells = self.state.row_data.items(.cells)[y];
         const rc: vt.RenderState.Cell = row_cells.get(x);

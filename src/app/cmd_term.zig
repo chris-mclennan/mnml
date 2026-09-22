@@ -24,6 +24,7 @@ pub const table = .{
     .@"term.shell_bottom" = &shellBottom,
     .@"term.focus_or_open_shell" = &focusOrOpen,
     .@"term.paste" = &pasteClipboard,
+    .@"term.copy" = &copySelection,
     .@"term.clear" = &clear,
     .@"term.restart" = &restart,
     .@"term.rename" = &rename,
@@ -69,6 +70,13 @@ fn pasteClipboard(app: *App) CommandError!void {
     const text = app.clipboard.text();
     if (text.len == 0) return app.diag.fail(app.frame.allocator(), "clipboard is empty", .{});
     try pty_pane.paste(app, p, text);
+}
+
+/// The mouse selection (drag, double-click a word, triple a line) to
+/// the clipboard — what a release already did, again from the menu.
+fn copySelection(app: *App) CommandError!void {
+    const p = try activePty(app);
+    if (!try pty_pane.copySelection(app, p)) return app.diag.fail(app.frame.allocator(), "nothing is selected — drag across the text first", .{});
 }
 
 fn clear(app: *App) CommandError!void {

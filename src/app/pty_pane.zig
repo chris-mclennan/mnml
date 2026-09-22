@@ -164,6 +164,12 @@ pub const PtyPane = struct {
     /// The grid size the session was last fitted to.
     cols: u16,
     rows: u16,
+    /// Where the grid was last painted, in screen cells — what a mouse
+    /// position is read against.
+    body: Body = .{},
+    /// A mouse selection in flight (the press's anchor); the selection
+    /// itself lives on the terminal's screen, where the grid reads it.
+    select: ?Select = null,
     /// Restored from a saved session and never started: `session` is
     /// null, `exit` is set so every live-pane path already skips it, and
     /// the footer says a key restarts rather than closes.
@@ -250,8 +256,10 @@ pub const PtyPane = struct {
     pub fn write(self: *PtyPane, bytes: []const u8) void {
         if (self.exit != null) return;
         const session = self.session orelse return;
-        // Typing brings the live screen back.
+        // Typing brings the live screen back, and lets go of a
+        // selection (ghostty's `selection-clear-on-typing`).
         session.terminal().scrollViewport(.bottom);
+        clearSelection(self);
         // Ctrl+C must not wait behind input the child is not reading.
         if (bytes.len == 1 and bytes[0] == 0x03) return session.interrupt();
         session.write(bytes);
@@ -553,6 +561,8 @@ pub fn restart(app: *App, id: PaneId) CommandError!void {
     if (p.session) |old| old.deinit();
     p.grid.deinit(app.gpa);
     p.grid = .{};
+    // The anchor was tracked in the old terminal's pages.
+    p.select = null;
     p.session = fresh;
     p.exit = null;
     p.exited_at_ms = null;
@@ -713,6 +723,11 @@ pub fn termNormalKey(app: *App, p: *PtyPane, k: Key) Allocator.Error!bool {
                 app.needs_render = true;
                 return true;
             },
+            // A mouse selection yanks, as `y` does in an editor's Visual.
+            'y' => {
+                if (!try copySelection(app, p)) app.toast("nothing is selected — drag across the text first", .{});
+                return true;
+            },
             else => return false,
         },
         else => return false,
@@ -800,6 +815,150 @@ pub fn mouse(app: *App, p: *PtyPane, m: Mouse, origin: struct { x: u16, y: u16 }
     var buf: [32]u8 = undefined;
     const bytes = encodeMouse(m, m.x -| origin.x, m.y -| origin.y, enc, &buf);
     if (bytes.len > 0) p.write(bytes);
+}
+
+// ─── selection ──────────────────────────────────────────────────────────
+
+/// A cell rectangle on the screen.
+pub const Body = struct { x: u16 = 0, y: u16 = 0, w: u16 = 0, h: u16 = 0 };
+
+/// A drag-select in flight: the pressed cell, tracked in the page list
+/// of the screen it was pressed on (so output scrolling past keeps it on
+/// its character), and the granularity the click count chose.
+pub const Select = struct {
+    anchor: *pty.vt.Pin,
+    screen: pty.vt.ScreenSet.Key,
+    generation: usize,
+    unit: app_mod.SelectUnit,
+};
+
+/// What a double-click treats as the edge of a word — ghostty's default
+/// `selection-word-chars`, so a path or a URL comes out whole.
+const word_boundaries = [_]u21{ 0, ' ', '\t', '\'', '"', '│', '`', '|', ':', ';', ',', '(', ')', '[', ']', '{', '}', '<', '>', '$' };
+
+/// The press still belongs to the screen on show: the child has not
+/// switched screens (a pager starting, vim quitting) since.
+fn anchorLive(term: *pty.vt.Terminal, s: Select) bool {
+    return s.screen == term.screens.active_key and term.screens.generation(s.screen) == s.generation;
+}
+
+/// Let go of the press. The pin is untracked only while its screen is
+/// the one it was tracked in; a recycled screen already freed it.
+fn endGesture(p: *PtyPane) void {
+    const s = p.select orelse return;
+    p.select = null;
+    const session = p.session orelse return;
+    const term = session.terminal();
+    if (term.screens.generation(s.screen) != s.generation) return;
+    const screen = term.screens.get(s.screen) orelse return;
+    screen.pages.untrackPin(s.anchor);
+}
+
+pub fn clearSelection(p: *PtyPane) void {
+    const session = p.session orelse return;
+    session.terminal().screens.active.clearSelection();
+}
+
+pub fn hasSelection(p: *const PtyPane) bool {
+    const session = p.session orelse return false;
+    return session.term.screens.active.selection != null;
+}
+
+/// The viewport cell under the screen position (`x`, `y`), clamped into
+/// the pane so a drag past an edge still selects to that edge.
+fn pinAt(p: *PtyPane, x: u16, y: u16) ?pty.vt.Pin {
+    const session = p.session orelse return null;
+    const b = p.body;
+    if (b.w == 0 or b.h == 0) return null;
+    const cx = std.math.clamp(x, b.x, b.x + b.w - 1) - b.x;
+    const cy = std.math.clamp(y, b.y, b.y + b.h - 1) - b.y;
+    return session.terminal().screens.active.pages.pin(.{ .viewport = .{ .x = cx, .y = cy } });
+}
+
+/// The selection `unit` makes of the one cell at `pin`: nothing for a
+/// char (a click is not a selection), the word under it, its line.
+fn unitAt(screen: *pty.vt.Screen, unit: app_mod.SelectUnit, pin: pty.vt.Pin) ?pty.vt.Selection {
+    return switch (unit) {
+        .char => null,
+        .word => screen.selectWord(pin, &word_boundaries),
+        .line => screen.selectLine(.{ .pin = pin }),
+    };
+}
+
+/// A left press in the pane (the child is not tracking the mouse, or
+/// Shift overrides it): any old selection goes, and the cell anchors a
+/// drag. Two presses select the word, three the line, as in ghostty.
+pub fn selectPress(app: *App, p: *PtyPane, x: u16, y: u16, clicks: u8) Allocator.Error!void {
+    endGesture(p);
+    clearSelection(p);
+    app.needs_render = true;
+    const session = p.session orelse return;
+    const term = session.terminal();
+    const pin = pinAt(p, x, y) orelse return;
+    const screen = term.screens.active;
+    const unit: app_mod.SelectUnit = switch (clicks) {
+        0, 1 => .char,
+        2 => .word,
+        else => .line,
+    };
+    p.select = .{
+        .anchor = try screen.pages.trackPin(pin),
+        .screen = term.screens.active_key,
+        .generation = term.screens.generation(term.screens.active_key),
+        .unit = unit,
+    };
+    if (unitAt(screen, unit, pin)) |sel| try screen.select(sel);
+}
+
+/// The pointer moved with the button down: the selection runs from the
+/// anchor to the cell under it, both ends included (a word or line press
+/// extends by words or lines). Past the top or bottom edge the view
+/// scrolls a row, so a drag can reach into the scrollback.
+pub fn selectDrag(app: *App, p: *PtyPane, x: u16, y: u16) Allocator.Error!void {
+    const s = p.select orelse return;
+    const session = p.session orelse return;
+    const term = session.terminal();
+    if (!anchorLive(term, s)) return endGesture(p);
+    app.needs_render = true;
+    if (y < p.body.y) term.scrollViewport(.{ .delta = -1 }) else if (y >= p.body.y + p.body.h) term.scrollViewport(.{ .delta = 1 });
+    const cur = pinAt(p, x, y) orelse return;
+    const screen = term.screens.active;
+    const anchor = s.anchor.*;
+    if (s.unit == .char) {
+        if (cur.eql(anchor)) return screen.clearSelection();
+        return screen.select(.init(anchor, cur, false));
+    }
+    const a = unitAt(screen, s.unit, anchor) orelse pty.vt.Selection.init(anchor, anchor, false);
+    const b = unitAt(screen, s.unit, cur) orelse pty.vt.Selection.init(cur, cur, false);
+    const a_tl = a.topLeft(screen);
+    const b_tl = b.topLeft(screen);
+    const a_br = a.bottomRight(screen);
+    const b_br = b.bottomRight(screen);
+    try screen.select(.init(if (b_tl.before(a_tl)) b_tl else a_tl, if (a_br.before(b_br)) b_br else a_br, false));
+}
+
+/// The button came up: a selection that has text is copied, and stays
+/// on show until a click or a key.
+pub fn selectRelease(app: *App, p: *PtyPane, x: u16, y: u16) Allocator.Error!void {
+    if (p.select == null) return;
+    try selectDrag(app, p, x, y);
+    endGesture(p);
+    _ = try copySelection(app, p);
+}
+
+/// The selection's text to the clipboard: the unnamed register (a `p`
+/// in an editor pastes it) and the OS clipboard, the way the standard
+/// profile's copy goes (`"+`). False when nothing is selected.
+pub fn copySelection(app: *App, p: *PtyPane) Allocator.Error!bool {
+    const session = p.session orelse return false;
+    const screen = session.terminal().screens.active;
+    const sel = screen.selection orelse return false;
+    const text = try screen.selectionString(app.frame.allocator(), .{ .sel = sel, .trim = true });
+    if (text.len == 0) return false;
+    app.clipboard.setPendingRegister('+');
+    try app.clipboard.setYank(text, false);
+    app.toast("copied the selection", .{});
+    return true;
 }
 
 // ─── encoders ───────────────────────────────────────────────────────────
@@ -1265,6 +1424,52 @@ test "paste is bracketed only when the child asked; a newline becomes a carriage
     const text = try app.gpa.dupe(u8, "ab");
     try app.handle(.{ .paste = text });
     try t.expect(try tickUntilScreen(&app, "2   0   0   ~   a   b", 5000));
+}
+
+test "selecting in a terminal pane: a drag copies the cells it crossed (a wide char whole), two clicks a word, three the line; a key lets go" {
+    // A POSIX shell script drives this one.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (!supported) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const id = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "printf 'COPYME-alpha-beta \\344\\275\\240\\345\\245\\275 end\\n'; sleep 30" }, .label = "sel" });
+    try t.expect(try tickUntilScreen(&app, "COPYME-alpha-beta", 5000));
+    const p = app.panes.pty(id).?;
+    const b = p.body;
+    try t.expect(b.w > 0);
+    const row = b.y; // the line the child printed
+    const press = struct {
+        fn at(a: *App, x: u16, y: u16, kind: key_mod.MouseKind) !void {
+            try a.handle(.{ .mouse = .{ .x = x, .y = y, .kind = kind, .button = .left } });
+        }
+    }.at;
+    // Cells 0..16 are `COPYME-alpha-beta`; 18..21 the two wide chars.
+    try press(&app, b.x, row, .press);
+    try press(&app, b.x + 21, row, .drag);
+    try press(&app, b.x + 21, row, .release);
+    try t.expect(app.drag == null);
+    try t.expectEqualStrings("COPYME-alpha-beta \u{4f60}\u{597d}", app.clipboard.text());
+    // The painted cells carry the selection's ground.
+    try app.render();
+    try t.expect(p.grid.rowSelection(0) != null);
+    try t.expectEqual(app.theme.selection.bg, app.screen.readCell(b.x + 3, row).?.style.bg);
+
+    // A press elsewhere lets it go; a second one on the spot is a word.
+    app.now_ms += 5000;
+    try press(&app, b.x + 8, row, .press);
+    try press(&app, b.x + 8, row, .release);
+    try press(&app, b.x + 8, row, .press);
+    try press(&app, b.x + 8, row, .release);
+    try t.expectEqualStrings("COPYME-alpha-beta", app.clipboard.text());
+    // A third is the line.
+    try press(&app, b.x + 8, row, .press);
+    try press(&app, b.x + 8, row, .release);
+    try t.expectEqualStrings("COPYME-alpha-beta \u{4f60}\u{597d} end", app.clipboard.text());
+    try t.expect(hasSelection(p));
+    // A key for the child lets go of it.
+    try app.handle(.{ .key = Key.char('x') });
+    try t.expect(!hasSelection(p));
 }
 
 test "the wheel over a pager: on the alternate screen with no mouse tracking the notches reach the child as arrow keys" {

@@ -1792,6 +1792,7 @@ fn drawPty(app: *App, ui: Ui, id: PaneId, p: *pty_pane.PtyPane, rect: Rect) Allo
     // column taken off. What the child sees is exactly this rect.
     const body = rect;
     p.fit(body.w, body.h);
+    p.body = .{ .x = body.x, .y = body.y, .w = body.w, .h = body.h };
     if (p.session) |session| try p.grid.update(app.gpa, session.terminal());
     const cursor = pty_view.draw(ui, body, &p.grid, .{
         .focused = focused,

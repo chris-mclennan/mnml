@@ -805,6 +805,9 @@ pub const Drag = union(enum) {
     /// A diff pane's row press: the rows dragged over select
     /// (`git.dragDiffSelect`); `anchor` is the pressed row.
     diff_select: struct { pane: PaneId, anchor: usize },
+    /// A terminal pane's text: the pane keeps the anchor
+    /// (`pty_pane.selectDrag`).
+    pty_select: PaneId,
 };
 pub const DockDrag = struct { id: u32, x: u16, y: u16, moved: bool = false };
 pub const SelectUnit = enum { char, word, line };

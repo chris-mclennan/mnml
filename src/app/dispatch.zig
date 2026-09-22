@@ -2153,12 +2153,20 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     if (app.overlay != .none) closeOverlay(app);
                     if (app.active != id or app.focus != .pane) app.showPane(id);
                 }
-                if (p.encoding().mouse == .none) {
+                // Shift overrides a child's mouse tracking for selecting,
+                // as in ghostty and xterm.
+                if (p.encoding().mouse == .none or (m.mods.shift and !wheel)) {
                     if (wheel) return wheelOnPane(app, id, m, count);
                     // right-click: Rust's dock menu, when the child is
                     // not tracking the mouse (a tracking child owns its
                     // right button).
                     if (m.kind == .press and m.button == .right) return context_menus.openPtyPaneMenu(app, id, m.x, m.y);
+                    // A left press anchors a text selection; the drag and
+                    // the release come back through `continueDrag`.
+                    if (m.kind == .press and m.button == .left) {
+                        try pty_pane.selectPress(app, p, m.x, m.y, clickCount(app, m));
+                        app.drag = .{ .pty_select = id };
+                    }
                     return;
                 }
                 const r = hitRect(app, m.x, m.y) orelse return;
@@ -3237,6 +3245,9 @@ fn continueDrag(app: *App, m: Mouse) Allocator.Error!void {
         .bottom_divider => if (m.kind == .drag) bottom.dragTo(app, m.y),
         .graph_divider => |id| if (m.kind == .drag) git_app.dragGraphDivider(app, id, m.x),
         .diff_select => |ds| git_app.dragDiffSelect(app, ds.pane, ds.anchor, m),
+        .pty_select => |id| if (app.panes.pty(id)) |p| {
+            if (m.kind == .release) try pty_pane.selectRelease(app, p, m.x, m.y) else try pty_pane.selectDrag(app, p, m.x, m.y);
+        },
         .select => |sel| {
             extendSelection(app, sel, m.x, m.y);
             // A press-and-release on one cell is a click: no selection.

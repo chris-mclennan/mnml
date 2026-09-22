@@ -252,7 +252,13 @@ pub fn draw(ui: Ui, area: Rect, grid: *const pty.Grid, props: Props) ?Cursor {
                 .spacer_tail, .spacer_head => continue,
                 .narrow, .wide => {},
             }
-            const style = styleOf(cell, th);
+            var style = styleOf(cell, th);
+            if (grid.rowSelection(y)) |sel| if (x >= sel[0] and x <= sel[1]) {
+                // A selection reads the way the editor's does: the
+                // theme's selection ground under the cell's own ink.
+                style.bg = th.selection.bg;
+                style.reverse = false;
+            };
             const g = graphemeOf(ui, cell) orelse {
                 ui.canvas.put(area.x + x, area.y + y, .{ .char = .{ .grapheme = " ", .width = 1 }, .style = style });
                 continue;
