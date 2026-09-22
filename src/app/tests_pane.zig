@@ -26,6 +26,16 @@
 //! the build runner's failure report; a failure's file:line is its own
 //! frame, a passed test is found by its `test "…"` line.
 //!
+//! And vitest (`Runner.vitest`: the `test.*` ids on an npm project whose
+//! package.json names vitest — `npx vitest run --reporter=json
+//! --includeTaskLocation`, the Jest-shaped report) and pytest
+//! (`Runner.pytest`: `pytest.run` / `pytest.failed` and the `test.*` ids
+//! on a Python project — `pytest -q -rA` with a JUnit file under
+//! `.mnml/`, the `-rA` lines when the file is missing). Each runner is
+//! one arm of the `Runner` switches: its argv, its parser, the shape of
+//! a re-run of the failures — vitest's `-t '^(a|b)$'` with the failing
+//! files, pytest's node ids — and the rest of the pane is shared.
+//!
 //!   D1  the run lives on the pane's snapshot arena, replaced wholesale
 //!       when the next result lands; `last_args` is gpa-owned;
 //!   D3  one `Io.Group` per pane; a re-run bumps the generation and a
@@ -86,12 +96,38 @@ pub const Runner = enum {
     playwright,
     dotnet,
     zig,
+    /// `npx vitest run --reporter=json` — the Jest-shaped report.
+    vitest,
+    /// `pytest -q -rA --junitxml=…` — the JUnit file, the console as a fallback.
+    pytest,
 
     pub fn label(r: Runner) []const u8 {
         return switch (r) {
             .playwright => "playwright",
             .dotnet => "dotnet test",
             .zig => "zig test",
+            .vitest => "vitest",
+            .pytest => "pytest",
+        };
+    }
+
+    /// The tool's name in a heal prompt, and the fence its sources take.
+    pub fn healTool(r: Runner) []const u8 {
+        return switch (r) {
+            .playwright => "Playwright",
+            .dotnet => ".NET",
+            .vitest => "vitest",
+            .pytest => "pytest",
+            .zig => "Zig",
+        };
+    }
+
+    pub fn fence(r: Runner) []const u8 {
+        return switch (r) {
+            .playwright, .vitest => "ts",
+            .dotnet => "cs",
+            .pytest => "py",
+            .zig => "zig",
         };
     }
 };
@@ -506,6 +542,27 @@ fn realRelative(arena: Allocator, io: Io, workspace: []const u8, tests: []TestCa
         const rel = try relativeTo(arena, buf[0..n], ws_real.?);
         if (!std.fs.path.isAbsolute(rel)) tc.file = rel;
     }
+}
+
+/// `relativeTo`, against the workspace as mnml names it and as the
+/// tool's own cwd names it: a tool started under `/var/folders/…` prints
+/// `/private/var/folders/…` (node's `process.cwd()`, a shell's `$PWD`
+/// resolve the symlink), and a row's path must still be short and its
+/// flaky key stable. `real` is the workspace's real path, or empty.
+fn relativeToEither(arena: Allocator, path: []const u8, workspace: []const u8, real: []const u8) Allocator.Error![]const u8 {
+    const rel = try relativeTo(arena, path, workspace);
+    if (rel.len != path.len or real.len == 0) return rel;
+    return relativeTo(arena, path, real);
+}
+
+/// The workspace's real path (symlinks resolved), or empty when it
+/// cannot be read.
+fn realWorkspace(io: Io, arena: Allocator, workspace: []const u8) Allocator.Error![]const u8 {
+    var dir = Io.Dir.cwd().openDir(io, workspace, .{}) catch return "";
+    defer dir.close(io);
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = dir.realPath(io, &buf) catch return "";
+    return arena.dupe(u8, buf[0..n]);
 }
 
 /// The `Results File: <path>.trx` line, when the trx logger ran.
@@ -1032,6 +1089,377 @@ pub fn failedFilter(arena: Allocator, tr: TestRun) Allocator.Error!?[]const u8 {
     return try out.toOwnedSlice(arena);
 }
 
+// ─── vitest: the Jest-shaped JSON report ────────────────────────────────
+
+/// `vitest run --reporter=json --includeTaskLocation` (Jest's `--json`
+/// is the same shape): `testResults[]` is one file (`name`, absolute),
+/// its `assertionResults[]` one test each — `ancestorTitles` are the
+/// describes, `status` passed / failed / pending / skipped / todo,
+/// `duration` in ms, `location.line` the `it(` (with the flag), and a
+/// failure's `failureMessages[0]` with its `at <file>:L:C` frames. A
+/// file that failed with no tests (a syntax error, an import that is
+/// not there) is one global error. The tally is composed as vitest's
+/// own `Tests  1 failed | 3 passed (4)` line.
+pub fn parseVitest(arena: Allocator, text: []const u8, workspace: []const u8, real: []const u8) ParseError!TestRun {
+    const root = std.json.parseFromSliceLeaky(std.json.Value, arena, std.mem.trim(u8, text, " \t\r\n"), .{}) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return error.NotJson,
+    };
+    if (root != .object) return error.NotJson;
+    const files = root.object.get("testResults") orelse return error.NotJson;
+    if (files != .array) return error.NotJson;
+    var tests: std.ArrayListUnmanaged(TestCase) = .empty;
+    var errors: std.ArrayListUnmanaged([]const u8) = .empty;
+    for (files.array.items) |f| {
+        if (f != .object) continue;
+        const abs = str(f.object.get("name")) orelse "";
+        const file = try relativeToEither(arena, abs, workspace, real);
+        const before = tests.items.len;
+        if (f.object.get("assertionResults")) |cases| if (cases == .array) for (cases.array.items) |c| {
+            if (c != .object) continue;
+            const o = c.object;
+            const st = str(o.get("status")) orelse "";
+            const status: Status = if (std.mem.eql(u8, st, "passed")) .passed else if (std.mem.eql(u8, st, "failed")) .failed else .skipped;
+            var suite: std.ArrayListUnmanaged(u8) = .empty;
+            if (o.get("ancestorTitles")) |anc| if (anc == .array) for (anc.array.items) |a| {
+                if (a != .string) continue;
+                if (suite.items.len > 0) try suite.appendSlice(arena, " › ");
+                try suite.appendSlice(arena, a.string);
+            };
+            var line: u32 = 0;
+            if (o.get("location")) |loc| if (loc == .object) if (int(loc.object.get("line"))) |l| {
+                line = @intCast(@min(l, std.math.maxInt(u32)));
+            };
+            var err: ?[]const u8 = null;
+            if (o.get("failureMessages")) |fm| if (fm == .array and fm.array.items.len > 0 and fm.array.items[0] == .string) {
+                const plain = try stripAnsi(arena, fm.array.items[0].string);
+                if (line == 0) line = frameLineIn(plain, abs) orelse 0;
+                const msg = messageLines(plain, 6);
+                if (msg.len > 0) err = msg;
+            };
+            const dur: u64 = if (o.get("duration")) |d| switch (d) {
+                .float => |v| if (v > 0) @intFromFloat(v) else 0,
+                .integer => |v| if (v > 0) @intCast(v) else 0,
+                else => 0,
+            } else 0;
+            try tests.append(arena, .{
+                .title = str(o.get("title")) orelse str(o.get("fullName")) orelse "(test)",
+                .suite_path = try suite.toOwnedSlice(arena),
+                .file = file,
+                .line = line,
+                .status = status,
+                .duration_ms = dur,
+                .err = err,
+                .trace_path = null,
+            });
+        };
+        if (tests.items.len == before and std.mem.eql(u8, str(f.object.get("status")) orelse "", "failed")) {
+            const m = firstLine(try stripAnsi(arena, str(f.object.get("message")) orelse ""));
+            if (errors.items.len < 20) try errors.append(arena, try std.fmt.allocPrint(arena, "{s}: {s}", .{ file, if (m.len > 0) m else "failed" }));
+        }
+    }
+    const failed = int(root.object.get("numFailedTests")) orelse 0;
+    const passed = int(root.object.get("numPassedTests")) orelse 0;
+    const pending = int(root.object.get("numPendingTests")) orelse 0;
+    const total = int(root.object.get("numTotalTests")) orelse 0;
+    var summary: std.ArrayListUnmanaged(u8) = .empty;
+    if (total > 0) {
+        try summary.appendSlice(arena, "Tests  ");
+        const parts = [_]struct { u64, []const u8 }{ .{ failed, "failed" }, .{ passed, "passed" }, .{ pending, "skipped" } };
+        var n: usize = 0;
+        for (parts) |part| {
+            if (part[0] == 0) continue;
+            if (n > 0) try summary.appendSlice(arena, " | ");
+            try summary.print(arena, "{d} {s}", .{ part[0], part[1] });
+            n += 1;
+        }
+        try summary.print(arena, " ({d})", .{total});
+    }
+    return .{ .tests = try tests.toOwnedSlice(arena), .global_errors = try errors.toOwnedSlice(arena), .summary = try summary.toOwnedSlice(arena) };
+}
+
+/// The lines of a failure message before its first `at …` frame, at
+/// most `n`; the assertion, its expected / received, not the stack.
+fn messageLines(s: []const u8, n: usize) []const u8 {
+    var end: usize = 0;
+    var lines: usize = 0;
+    var it = std.mem.splitScalar(u8, s, '\n');
+    while (it.next()) |l| : (lines += 1) {
+        if (lines == n) break;
+        if (std.mem.startsWith(u8, std.mem.trimStart(u8, l, " \t"), "at ")) break;
+        end = @intFromPtr(l.ptr) - @intFromPtr(s.ptr) + l.len;
+    }
+    return std.mem.trimEnd(u8, s[0..end], " \t\r\n");
+}
+
+/// The line of the first `<abs>:L:C` in a stack — the frame inside the
+/// test's own file — else null.
+fn frameLineIn(text: []const u8, abs: []const u8) ?u32 {
+    if (abs.len == 0) return null;
+    var from: usize = 0;
+    while (std.mem.indexOfPos(u8, text, from, abs)) |at| {
+        from = at + abs.len;
+        if (from >= text.len or text[from] != ':') continue;
+        var end = from + 1;
+        while (end < text.len and std.ascii.isDigit(text[end])) end += 1;
+        if (end == from + 1) continue;
+        return std.fmt.parseInt(u32, text[from + 1 .. end], 10) catch continue;
+    }
+    return null;
+}
+
+/// `-t '^(a|b)$'` and the failing files, for a re-run of a vitest run's
+/// failures: the full names (the describes and the title, space-joined,
+/// what vitest matches `-t` against) as one anchored regex, its
+/// metacharacters escaped. Null when nothing failed.
+pub fn vitestFailedArgs(arena: Allocator, tr: TestRun) Allocator.Error!?[]const []const u8 {
+    var re: std.ArrayListUnmanaged(u8) = .empty;
+    var files: std.ArrayListUnmanaged([]const u8) = .empty;
+    var n: usize = 0;
+    for (tr.tests) |tc| {
+        if (tc.status != .failed) continue;
+        try re.appendSlice(arena, if (n == 0) "^(" else "|");
+        var parts = std.mem.splitSequence(u8, tc.suite_path, " › ");
+        while (parts.next()) |part| {
+            if (part.len == 0) continue;
+            try regexEscape(arena, &re, part);
+            try re.append(arena, ' ');
+        }
+        try regexEscape(arena, &re, tc.title);
+        n += 1;
+        var seen = false;
+        for (files.items) |f| seen = seen or std.mem.eql(u8, f, tc.file);
+        if (!seen and tc.file.len > 0) try files.append(arena, tc.file);
+    }
+    if (n == 0) return null;
+    try re.appendSlice(arena, ")$");
+    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    try out.append(arena, "-t");
+    try out.append(arena, try re.toOwnedSlice(arena));
+    try out.appendSlice(arena, files.items);
+    return try out.toOwnedSlice(arena);
+}
+
+fn regexEscape(arena: Allocator, out: *std.ArrayListUnmanaged(u8), s: []const u8) Allocator.Error!void {
+    for (s) |c| {
+        if (std.mem.indexOfScalar(u8, "\\^$.|?*+()[]{}/", c) != null) try out.append(arena, '\\');
+        try out.append(arena, c);
+    }
+}
+
+// ─── pytest: the JUnit file, the -rA lines ──────────────────────────────
+
+/// Where pytest writes its report, relative to the run's cwd.
+pub const pytest_junit = ".mnml/pytest-junit.xml";
+
+/// pytest's `--junitxml` (with `junit_family=xunit1`, which carries
+/// `file` and `line`): one `<testcase>` per test — `name` with its
+/// parametrize id, `classname` the module and the class, `file` relative
+/// to the run's cwd, `line` 0-based at the `def`, `time` in seconds —
+/// with a `<failure>` / `<error>` (its `message`, and the traceback whose
+/// last `<file>:<n>:` line inside the test's file is where it broke) or
+/// a `<skipped>`. Paths are made workspace-relative.
+pub fn parseJunit(arena: Allocator, xml: []const u8, cwd: []const u8, workspace: []const u8, real: []const u8) Allocator.Error!TestRun {
+    var tests: std.ArrayListUnmanaged(TestCase) = .empty;
+    var from: usize = 0;
+    while (std.mem.indexOfPos(u8, xml, from, "<testcase ")) |at| {
+        const open_end = std.mem.indexOfScalarPos(u8, xml, at, '>') orelse break;
+        const opener = xml[at..open_end];
+        const self_closing = opener.len > 0 and opener[opener.len - 1] == '/';
+        const close = if (self_closing) open_end else (std.mem.indexOfPos(u8, xml, open_end, "</testcase>") orelse xml.len);
+        from = close;
+        const name = (try attrValue(arena, opener, "name")) orelse "(test)";
+        const classname = (try attrValue(arena, opener, "classname")) orelse "";
+        const file_attr = (try attrValue(arena, opener, "file")) orelse "";
+        const file: []const u8 = if (file_attr.len == 0)
+            try moduleFile(arena, classname)
+        else if (std.fs.path.isAbsolute(file_attr))
+            try relativeToEither(arena, file_attr, workspace, real)
+        else
+            try relativeTo(arena, try std.fs.path.join(arena, &.{ cwd, file_attr }), workspace);
+        var line: u32 = if (try attrValue(arena, opener, "line")) |l| (std.fmt.parseInt(u32, l, 10) catch 0) +| 1 else 0;
+        const secs = std.fmt.parseFloat(f64, (try attrValue(arena, opener, "time")) orelse "0") catch 0;
+        var status: Status = .passed;
+        var err: ?[]const u8 = null;
+        const body = xml[open_end..close];
+        const fail_at = std.mem.indexOf(u8, body, "<failure") orelse std.mem.indexOf(u8, body, "<error");
+        if (fail_at) |fa| {
+            status = .failed;
+            const tag_end = std.mem.indexOfScalarPos(u8, body, fa, '>') orelse body.len;
+            const tag = body[fa..tag_end];
+            const text_end = std.mem.indexOfPos(u8, body, tag_end, "</") orelse body.len;
+            const text = if (tag_end < text_end) try xmlUnescape(arena, body[tag_end + 1 .. text_end]) else "";
+            const msg = (try attrValue(arena, tag, "message")) orelse firstLine(std.mem.trim(u8, text, " \t\r\n"));
+            if (msg.len > 0) err = firstLines(msg, 6);
+            if (junitFrameLine(text, file_attr)) |l| line = l;
+        } else if (std.mem.indexOf(u8, body, "<skipped") != null) {
+            status = .skipped;
+        }
+        try tests.append(arena, .{
+            .title = name,
+            .suite_path = junitSuite(classname, file_attr),
+            .file = file,
+            .line = line,
+            .status = status,
+            .duration_ms = if (secs > 0) @intFromFloat(secs * 1000.0) else 0,
+            .err = err,
+            .trace_path = null,
+        });
+    }
+    return .{ .tests = try tests.toOwnedSlice(arena) };
+}
+
+/// `tests.test_models` → `tests/test_models.py`, for a report without
+/// `file` (xunit2 — never asked for, but a config may insist).
+fn moduleFile(arena: Allocator, classname: []const u8) Allocator.Error![]const u8 {
+    if (classname.len == 0) return "";
+    const out = try arena.alloc(u8, classname.len + 3);
+    for (classname, 0..) |c, i| out[i] = if (c == '.') '/' else c;
+    @memcpy(out[classname.len..], ".py");
+    return out;
+}
+
+/// The class part of `classname` past the module the file names:
+/// `tests.test_models.TestShelf` with `tests/test_models.py` → `TestShelf`;
+/// the bare module → nothing.
+fn junitSuite(classname: []const u8, file_attr: []const u8) []const u8 {
+    if (file_attr.len == 0) return classname;
+    const stem = file_attr[0 .. std.mem.lastIndexOfScalar(u8, file_attr, '.') orelse file_attr.len];
+    // The module's dotted path is the file's with `/` → `.`; compare char by char.
+    if (classname.len < stem.len) return classname;
+    for (stem, 0..) |c, i| {
+        const want: u8 = if (c == '/' or c == '\\') '.' else c;
+        if (classname[i] != want) return classname;
+    }
+    if (classname.len == stem.len) return "";
+    if (classname[stem.len] != '.') return classname;
+    return classname[stem.len + 1 ..];
+}
+
+/// The line of the last `<file>:<n>:` in a traceback that names the
+/// test's own file — pytest prints the test's frame with its assertion
+/// and the source lines it called into after it.
+fn junitFrameLine(text: []const u8, file_attr: []const u8) ?u32 {
+    if (file_attr.len == 0) return null;
+    var found: ?u32 = null;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        const l = std.mem.trim(u8, raw, " \t\r");
+        if (!std.mem.startsWith(u8, l, file_attr)) continue;
+        const rest = l[file_attr.len..];
+        if (rest.len < 2 or rest[0] != ':') continue;
+        var end: usize = 1;
+        while (end < rest.len and std.ascii.isDigit(rest[end])) end += 1;
+        if (end == 1 or end >= rest.len or rest[end] != ':') continue;
+        found = std.fmt.parseInt(u32, rest[1..end], 10) catch continue;
+    }
+    return found;
+}
+
+/// The `-rA` short summary — `PASSED tests/x.py::name[id]`, `FAILED
+/// tests/x.py::name - message`, `ERROR …`, `SKIPPED [1] tests/x.py:20:
+/// reason` — for a run whose JUnit file did not land.
+pub fn parsePytestConsole(arena: Allocator, text: []const u8, workspace: []const u8) Allocator.Error!TestRun {
+    _ = workspace;
+    var tests: std.ArrayListUnmanaged(TestCase) = .empty;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        const l = std.mem.trim(u8, try stripAnsi(arena, raw), " \t\r");
+        const heads = [_]struct { []const u8, Status }{ .{ "PASSED ", .passed }, .{ "FAILED ", .failed }, .{ "ERROR ", .failed }, .{ "XFAIL ", .skipped }, .{ "XPASS ", .passed } };
+        var matched = false;
+        for (heads) |h| if (std.mem.startsWith(u8, l, h[0])) {
+            matched = true;
+            const rest = l[h[0].len..];
+            const dash = std.mem.indexOf(u8, rest, " - ");
+            const nodeid = std.mem.trim(u8, rest[0 .. dash orelse rest.len], " ");
+            const err: ?[]const u8 = if (dash) |d| std.mem.trim(u8, rest[d + 3 ..], " ") else null;
+            const sep = std.mem.indexOf(u8, nodeid, "::") orelse nodeid.len;
+            const file = nodeid[0..sep];
+            const tail = if (sep < nodeid.len) nodeid[sep + 2 ..] else "";
+            const last = if (std.mem.lastIndexOf(u8, tail, "::")) |i| i else null;
+            var suite: []const u8 = "";
+            if (last) |i| {
+                const s = try arena.dupe(u8, tail[0..i]);
+                std.mem.replaceScalar(u8, s, ':', '.');
+                var out: std.ArrayListUnmanaged(u8) = .empty;
+                var parts = std.mem.tokenizeScalar(u8, s, '.');
+                while (parts.next()) |part| {
+                    if (out.items.len > 0) try out.append(arena, '.');
+                    try out.appendSlice(arena, part);
+                }
+                suite = try out.toOwnedSlice(arena);
+            }
+            try tests.append(arena, .{
+                .title = if (last) |i| tail[i + 2 ..] else tail,
+                .suite_path = suite,
+                .file = file,
+                .line = 0,
+                .status = h[1],
+                .duration_ms = 0,
+                .err = if (err) |e| (if (e.len > 0) e else null) else null,
+                .trace_path = null,
+            });
+            break;
+        };
+        if (matched) continue;
+        if (std.mem.startsWith(u8, l, "SKIPPED ")) {
+            var rest = l["SKIPPED ".len..];
+            if (std.mem.startsWith(u8, rest, "[")) rest = rest[(std.mem.indexOfScalar(u8, rest, ']') orelse 0) + 1 ..];
+            rest = std.mem.trimStart(u8, rest, " ");
+            // `tests/x.py:20: reason`
+            const colon = std.mem.indexOfScalar(u8, rest, ':') orelse rest.len;
+            const file = rest[0..colon];
+            var line: u32 = 0;
+            var reason: []const u8 = "";
+            if (colon < rest.len) {
+                const after = rest[colon + 1 ..];
+                var end: usize = 0;
+                while (end < after.len and std.ascii.isDigit(after[end])) end += 1;
+                line = std.fmt.parseInt(u32, after[0..end], 10) catch 0;
+                reason = std.mem.trim(u8, if (end < after.len) after[end + 1 ..] else "", " ");
+            }
+            try tests.append(arena, .{ .title = if (reason.len > 0) reason else "(skipped)", .suite_path = "", .file = file, .line = line, .status = .skipped, .duration_ms = 0, .err = null, .trace_path = null });
+        }
+    }
+    return .{ .tests = try tests.toOwnedSlice(arena) };
+}
+
+/// pytest's last line — `1 failed, 13 passed, 1 skipped in 0.04s`,
+/// `no tests ran in 0.01s` — without the `=` rule around it.
+pub fn pytestSummary(text: []const u8) []const u8 {
+    var lines = std.mem.splitBackwardsScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        const l = std.mem.trim(u8, raw, " =\t\r");
+        if (l.len == 0) continue;
+        const words = [_][]const u8{ " passed", " failed", " skipped", " error", "no tests ran", " xfailed", " xpassed", " deselected" };
+        var hit = false;
+        for (words) |w| hit = hit or std.mem.indexOf(u8, l, w) != null;
+        if (hit and std.mem.indexOf(u8, l, " in ") != null and l[l.len - 1] == 's') return l;
+    }
+    return "";
+}
+
+/// The node ids of a run's failures — `tests/x.py::Class::name[id]` —
+/// for a re-run of exactly those. Null when nothing failed.
+pub fn pytestFailedArgs(arena: Allocator, tr: TestRun) Allocator.Error!?[]const []const u8 {
+    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    for (tr.tests) |tc| {
+        if (tc.status != .failed or tc.file.len == 0) continue;
+        var id: std.ArrayListUnmanaged(u8) = .empty;
+        try id.appendSlice(arena, tc.file);
+        var parts = std.mem.tokenizeScalar(u8, tc.suite_path, '.');
+        while (parts.next()) |part| {
+            try id.appendSlice(arena, "::");
+            try id.appendSlice(arena, part);
+        }
+        try id.appendSlice(arena, "::");
+        try id.appendSlice(arena, tc.title);
+        try out.append(arena, try id.toOwnedSlice(arena));
+    }
+    if (out.items.len == 0) return null;
+    return try out.toOwnedSlice(arena);
+}
+
 // ─── the worker ─────────────────────────────────────────────────────────
 
 /// A finished run — the report parsed, or why it could not be.
@@ -1058,12 +1486,21 @@ pub const base_argv = [_][]const u8{ "npx", "playwright", "test", "--reporter=js
 pub const dotnet_argv = [_][]const u8{ "dotnet", "test", "--nologo", "--logger", "console;verbosity=normal", "--logger", "trx" };
 /// The verb is the pane's argument: `build test` or `test <file>`.
 pub const zig_argv = [_][]const u8{"zig"};
+/// `--includeTaskLocation` puts each `it(`'s line in the report, so a
+/// passed row jumps too; `run` keeps vitest from watching.
+pub const vitest_argv = [_][]const u8{ "npx", "vitest", "run", "--reporter=json", "--includeTaskLocation" };
+/// `-rA` lists every test's outcome for the console fallback; the JUnit
+/// file (xunit1: with `file` and `line`) is the report. `-q` keeps the
+/// progress dots off the error text.
+pub const pytest_argv = [_][]const u8{ "pytest", "-q", "-rA", "-o", "junit_family=xunit1", "--junitxml=" ++ pytest_junit };
 
 fn baseArgv(runner: Runner) []const []const u8 {
     return switch (runner) {
         .playwright => &base_argv,
         .dotnet => &dotnet_argv,
         .zig => &zig_argv,
+        .vitest => &vitest_argv,
+        .pytest => &pytest_argv,
     };
 }
 
@@ -1141,6 +1578,8 @@ fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, runner: Runner, cwd
                 .playwright => std.fmt.allocPrint(arena, "running `npx playwright test`: {s} — is Playwright installed here?", .{@errorName(err)}) catch null,
                 .dotnet => std.fmt.allocPrint(arena, "running `dotnet test`: {s} — is the .NET SDK on PATH?", .{@errorName(err)}) catch null,
                 .zig => std.fmt.allocPrint(arena, "running `zig`: {s} — is Zig on PATH?", .{@errorName(err)}) catch null,
+                .vitest => std.fmt.allocPrint(arena, "running `npx vitest run`: {s} — is Node on PATH?", .{@errorName(err)}) catch null,
+                .pytest => std.fmt.allocPrint(arena, "running `pytest`: {s} — is pytest installed here?", .{@errorName(err)}) catch null,
             };
             events.post(io, .{ .tests = result });
             return;
@@ -1148,21 +1587,40 @@ fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, runner: Runner, cwd
     };
     defer gpa.free(proc.stdout);
     defer gpa.free(proc.stderr);
-    if (runner == .dotnet) {
-        dotnetResult(io, arena, result, cwd, workspace, proc.stdout, proc.stderr, extra) catch {
-            result.destroy(gpa);
+    switch (runner) {
+        .dotnet => {
+            dotnetResult(io, arena, result, cwd, workspace, proc.stdout, proc.stderr, extra) catch {
+                result.destroy(gpa);
+                return;
+            };
+            events.post(io, .{ .tests = result });
             return;
-        };
-        events.post(io, .{ .tests = result });
-        return;
-    }
-    if (runner == .zig) {
-        zigResult(io, arena, result, cwd, workspace, proc.stdout, proc.stderr, extra) catch {
-            result.destroy(gpa);
+        },
+        .pytest => {
+            pytestResult(io, arena, result, cwd, workspace, proc.stdout, proc.stderr, extra) catch {
+                result.destroy(gpa);
+                return;
+            };
+            events.post(io, .{ .tests = result });
             return;
-        };
-        events.post(io, .{ .tests = result });
-        return;
+        },
+        .vitest => {
+            vitestResult(io, arena, result, workspace, proc.stdout, proc.stderr, extra) catch {
+                result.destroy(gpa);
+                return;
+            };
+            events.post(io, .{ .tests = result });
+            return;
+        },
+        .zig => {
+            zigResult(io, arena, result, cwd, workspace, proc.stdout, proc.stderr, extra) catch {
+                result.destroy(gpa);
+                return;
+            };
+            events.post(io, .{ .tests = result });
+            return;
+        },
+        .playwright => {},
     }
     if (parseReport(arena, proc.stdout)) |parsed| {
         var r = parsed;
@@ -1262,6 +1720,54 @@ fn zigResult(io: Io, arena: Allocator, result: *Result, cwd: []const u8, workspa
     r.tests = tests;
     r.command = try cmdlineFor(arena, .zig, extra);
     result.run = r;
+}
+
+/// The report on stdout; anything else (vitest died before one — no
+/// config, a bad flag) is the tool's own words, four lines.
+fn vitestResult(io: Io, arena: Allocator, result: *Result, workspace: []const u8, stdout: []const u8, stderr: []const u8, extra: []const []const u8) Allocator.Error!void {
+    if (parseVitest(arena, stdout, workspace, try realWorkspace(io, arena, workspace))) |parsed| {
+        var r = parsed;
+        r.command = try cmdlineFor(arena, .vitest, extra);
+        result.run = r;
+    } else |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.NotJson => result.err = try toolWords(arena, stdout, stderr, "vitest printed no JSON report"),
+    }
+}
+
+/// The JUnit file under the run's cwd; the `-rA` lines when it is not
+/// there (or holds no test); the console's tally either way. Nothing
+/// at all is the tool's own words.
+fn pytestResult(io: Io, arena: Allocator, result: *Result, cwd: []const u8, workspace: []const u8, stdout: []const u8, stderr: []const u8, extra: []const []const u8) Allocator.Error!void {
+    var r: TestRun = .{};
+    const junit = try std.fs.path.join(arena, &.{ cwd, pytest_junit });
+    if (Io.Dir.cwd().readFileAlloc(io, junit, arena, .limited(32 << 20))) |xml| {
+        r = try parseJunit(arena, xml, cwd, workspace, try realWorkspace(io, arena, workspace));
+    } else |_| {}
+    if (r.tests.len == 0) r = try parsePytestConsole(arena, stdout, workspace);
+    r.summary = try arena.dupe(u8, pytestSummary(try stripAnsi(arena, stdout)));
+    if (r.tests.len == 0) {
+        result.err = try toolWords(arena, stdout, stderr, "pytest printed no test results");
+        return;
+    }
+    r.command = try cmdlineFor(arena, .pytest, extra);
+    result.run = r;
+}
+
+/// The tool's stderr (else stdout), ANSI stripped, four lines; `none`
+/// when it said nothing.
+fn toolWords(arena: Allocator, stdout: []const u8, stderr: []const u8, none: []const u8) Allocator.Error![]const u8 {
+    const text = std.mem.trim(u8, if (stderr.len > 0) stderr else stdout, " \t\r\n");
+    const msg: []const u8 = if (text.len == 0) none else text;
+    var lines = std.mem.splitScalar(u8, msg, '\n');
+    var kept: std.ArrayListUnmanaged(u8) = .empty;
+    var n: usize = 0;
+    while (lines.next()) |l| : (n += 1) {
+        if (n == 4) break;
+        if (n > 0) try kept.append(arena, '\n');
+        try kept.appendSlice(arena, try stripAnsi(arena, l));
+    }
+    return kept.items;
 }
 
 // ─── the pane ───────────────────────────────────────────────────────────
@@ -1524,6 +2030,11 @@ fn start(app: *App, id: PaneId, p: *TestsPane) CommandError!void {
     env.* = try app.env.clone(gpa);
     errdefer env.deinit();
     try env.put("PW_TEST_HTML_REPORT_OPEN", "never");
+    // The project's own venv pytest wins over the one on PATH.
+    if (p.runner == .pytest) if (pytestVenvBin(app, root)) |venv| {
+        const path = try std.fmt.allocPrint(app.frame.allocator(), "{s}{c}{s}", .{ venv, std.fs.path.delimiter, env.get("PATH") orelse "" });
+        try env.put("PATH", path);
+    };
     const extra = try gpa.alloc([]const u8, p.last_args.len);
     var n: usize = 0;
     errdefer {
@@ -1643,6 +2154,8 @@ fn runAllFor(app: *App, runner: Runner) CommandError!void {
         .playwright => runAll(app),
         .dotnet => dotnetAll(app),
         .zig => zigAll(app),
+        .vitest => vitestAll(app),
+        .pytest => pytestAll(app),
     };
 }
 
@@ -1651,6 +2164,8 @@ fn runFileFor(app: *App, runner: Runner) CommandError!void {
         .playwright => runFile(app),
         .dotnet => dotnetFile(app),
         .zig => zigFile(app),
+        .vitest => vitestFile(app),
+        .pytest => pytestFile(app),
     };
 }
 
@@ -1659,7 +2174,126 @@ fn rerunFailedFor(app: *App, runner: Runner) CommandError!void {
         .playwright => rerunFailed(app),
         .dotnet => dotnetRerunFailed(app),
         .zig => zigRerunFailed(app),
+        .vitest => vitestRerunFailed(app),
+        .pytest => pytestRerunFailed(app),
     };
+}
+
+// ─── vitest, the commands ───────────────────────────────────────────────
+
+/// The nearest package.json at or above the active file names vitest —
+/// in its dependencies, or as the first word of its `test` script — and
+/// the tests pane runs it in place of `npm test`'s pty. Null otherwise,
+/// and `test.*` keep the pty.
+pub fn vitestProject(app: *App) ?[]const u8 {
+    const arena = app.frame.allocator();
+    const dir = runners.findManifestDir(app.io, runners.startDir(app), &.{"package.json"}, app.workspace) orelse return null;
+    const path = std.fs.path.join(arena, &.{ dir, "package.json" }) catch return null;
+    const src = Io.Dir.cwd().readFileAlloc(app.io, path, arena, .limited(4 << 20)) catch return null;
+    return if (packageNamesVitest(arena, src)) dir else null;
+}
+
+/// `vitest` under `devDependencies` / `dependencies`, or a `scripts.test`
+/// that starts with it.
+pub fn packageNamesVitest(arena: Allocator, src: []const u8) bool {
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, src, .{}) catch return false;
+    if (parsed != .object) return false;
+    for ([_][]const u8{ "devDependencies", "dependencies" }) |key| if (parsed.object.get(key)) |deps| if (deps == .object and deps.object.get("vitest") != null) return true;
+    if (parsed.object.get("scripts")) |scripts| if (scripts == .object) if (scripts.object.get("test")) |t_| if (t_ == .string) {
+        const cmd = std.mem.trimStart(u8, t_.string, " ");
+        if (std.mem.startsWith(u8, cmd, "vitest") and (cmd.len == "vitest".len or cmd["vitest".len] == ' ')) return true;
+    };
+    return false;
+}
+
+fn vitestRoot(app: *App) CommandError![]const u8 {
+    return vitestProject(app) orelse app.diag.fail(app.frame.allocator(), "vitest: no package.json naming vitest in {s} or any parent", .{app.workspace});
+}
+
+/// `test.run_all` on a vitest project: `npx vitest run` in the pane.
+pub fn vitestAll(app: *App) CommandError!void {
+    _ = try openRun(app, .vitest, try vitestRoot(app), &.{});
+}
+
+/// `test.run_file`: the active file as vitest's filter.
+pub fn vitestFile(app: *App) CommandError!void {
+    const rel = try activeTestRel(app, "test");
+    _ = try openRun(app, .vitest, try vitestRoot(app), &.{rel});
+}
+
+/// `test.run_at_cursor`: the file and `-t <name>` (the title from
+/// `runners.testNameAt`; `-t` is a substring match on the full name).
+pub fn vitestAtCursor(app: *App, rel: []const u8, name: []const u8) CommandError!void {
+    _ = try openRun(app, .vitest, try vitestRoot(app), &.{ rel, "-t", name });
+}
+
+/// `test.rerun_failed` / `R`: the last run's failures by full name and
+/// file (`vitestFailedArgs`) — never the whole suite again.
+pub fn vitestRerunFailed(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const id = find(app) orelse return app.diag.fail(arena, "no vitest run to re-run yet — run the suite first", .{});
+    const p = &app.panes.get(id).?.tests;
+    if (p.runner != .vitest or p.state != .done) return app.diag.fail(arena, "no vitest run to re-run yet — run the suite first", .{});
+    const args = (try vitestFailedArgs(arena, p.run)) orelse return app.diag.fail(arena, "no failed test to re-run", .{});
+    const root = try arena.dupe(u8, p.cwd orelse app.workspace);
+    _ = try openRun(app, .vitest, root, args);
+}
+
+/// The active file, workspace-relative; `what` names the kind of file
+/// the toast asks for.
+fn activeTestRel(app: *App, what: []const u8) CommandError![]const u8 {
+    const e = app.activeEditor() orelse return app.diag.fail(app.frame.allocator(), "open a {s} file first", .{what});
+    const path = e.buf.doc.path orelse return app.diag.fail(app.frame.allocator(), "open a saved {s} file first", .{what});
+    return app.relPath(path);
+}
+
+// ─── pytest, the commands ───────────────────────────────────────────────
+
+/// `<root>/.venv/bin` (or `venv`, or the Windows `Scripts`) when it holds
+/// a pytest: put first on the worker's PATH.
+fn pytestVenvBin(app: *App, root: []const u8) ?[]const u8 {
+    const arena = app.frame.allocator();
+    const dirs = [_][]const u8{ ".venv/bin", ".venv/Scripts", "venv/bin", "venv/Scripts" };
+    for (dirs) |d| {
+        const dir = std.fs.path.join(arena, &.{ root, d }) catch return null;
+        for ([_][]const u8{ "pytest", "pytest.exe" }) |bin| {
+            const full = std.fs.path.join(arena, &.{ dir, bin }) catch return null;
+            _ = Io.Dir.cwd().statFile(app.io, full, .{}) catch continue;
+            return dir;
+        }
+    }
+    return null;
+}
+
+/// `pytest.run` / `test.run_all` on a Python project: the whole suite.
+pub fn pytestAll(app: *App) CommandError!void {
+    _ = try openRun(app, .pytest, try runners.pytestRoot(app), &.{});
+}
+
+/// `test.run_file`: the active file.
+pub fn pytestFile(app: *App) CommandError!void {
+    const rel = try activeTestRel(app, "test");
+    _ = try openRun(app, .pytest, try runners.pytestRoot(app), &.{rel});
+}
+
+/// `test.run_at_cursor`: the file and `-k <name>`.
+pub fn pytestAtCursor(app: *App, rel: []const u8, name: []const u8) CommandError!void {
+    _ = try openRun(app, .pytest, try runners.pytestRoot(app), &.{ rel, "-k", name });
+}
+
+/// `pytest.failed` / `test.rerun_failed` / `R`: the last run's failures
+/// by node id (`pytestFailedArgs`); before any run in this pane,
+/// pytest's own `--lf` (its cache remembers the last session's).
+pub fn pytestRerunFailed(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const pane: ?*TestsPane = if (find(app)) |id| &app.panes.get(id).?.tests else null;
+    if (pane) |p| if (p.runner == .pytest and p.state == .done) {
+        const args = (try pytestFailedArgs(arena, p.run)) orelse return app.diag.fail(arena, "no failed test to re-run", .{});
+        const root = try arena.dupe(u8, p.cwd orelse app.workspace);
+        _ = try openRun(app, .pytest, root, args);
+        return;
+    };
+    _ = try openRun(app, .pytest, try runners.pytestRoot(app), &.{"--lf"});
 }
 
 fn rerunSame(app: *App, id: PaneId, p: *TestsPane) CommandError!void {
@@ -1847,16 +2481,8 @@ fn healCmd(app: *App) CommandError!void {
     const path = if (std.fs.path.isAbsolute(tc.file)) tc.file else try std.fs.path.join(arena, &.{ app.workspace, tc.file });
     const src = Io.Dir.cwd().readFileAlloc(app.io, path, arena, .limited(512 * 1024)) catch "";
     const where = if (tc.suite_path.len == 0) try std.fmt.allocPrint(arena, "{s}:{d}", .{ tc.file, tc.line }) else try std.fmt.allocPrint(arena, "{s} › {s}  ({s}:{d})", .{ tc.suite_path, tc.title, tc.file, tc.line });
-    const tool: []const u8 = switch (at.p.runner) {
-        .playwright => "Playwright",
-        .dotnet => ".NET",
-        .zig => "Zig",
-    };
-    const fence: []const u8 = switch (at.p.runner) {
-        .playwright => "ts",
-        .dotnet => "cs",
-        .zig => "zig",
-    };
+    const tool = at.p.runner.healTool();
+    const fence = at.p.runner.fence();
     const prompt = try std.fmt.allocPrint(arena,
         \\This {s} test is failing. Work out why and propose a fix — change the test or the code under test as appropriate. Be concise; reply with the patch in a fenced block plus a short note.
         \\
@@ -2570,6 +3196,237 @@ test "dotnet.test opens the pane on a project; a dotnet result lands with its su
         try t.expectEqualStrings("FullyQualifiedName=Acme.Tests.CalcTests.Divides", p.last_args[1]);
         p.group.cancel(t.io);
     }
+}
+
+pub const fixture_vitest =
+    \\{"numTotalTestSuites":3,"numPassedTestSuites":1,"numFailedTestSuites":2,"numPendingTestSuites":0,"numTotalTests":4,"numPassedTests":3,"numFailedTests":1,"numPendingTests":0,"numTodoTests":0,"startTime":1790089422084,"success":false,"testResults":[
+    \\{"assertionResults":[
+    \\{"ancestorTitles":["clamp"],"fullName":"clamp clamps below","status":"passed","title":"clamps below","duration":0.7033329999999864,"failureMessages":[],"location":{"line":5,"column":3},"meta":{}},
+    \\{"ancestorTitles":["clamp"],"fullName":"clamp clamps above","status":"passed","title":"clamps above","duration":1.5,"failureMessages":[],"location":{"line":8,"column":3},"meta":{}},
+    \\{"ancestorTitles":["clamp"],"fullName":"clamp is wrong on purpose","status":"failed","title":"is wrong on purpose","duration":4.518791999999962,"failureMessages":["\u001b[31mAssertionError\u001b[39m: expected 50 to be 51 // Object.is equality\n    at /ws/tests/math.test.ts:12:23\n    at file:///ws/node_modules/@vitest/runner/dist/chunk-hooks.js:155:11"],"meta":{}},
+    \\{"ancestorTitles":["area"],"fullName":"area square","status":"passed","title":"square","duration":0.14045800000002373,"failureMessages":[],"location":{"line":17,"column":3},"meta":{}}
+    \\],"startTime":1790089422500,"endTime":1790089422600,"status":"failed","message":"","name":"/ws/tests/math.test.ts"},
+    \\{"assertionResults":[],"startTime":1790089422500,"endTime":1790089422600,"status":"failed","message":"Error: Failed to resolve import \"./gone\" from \"tests/broken.test.ts\". Does the file exist?\n    at x","name":"/ws/tests/broken.test.ts"},
+    \\{"assertionResults":[{"ancestorTitles":[],"fullName":"later","status":"pending","title":"later","duration":0,"failureMessages":[],"meta":{}}],"status":"passed","message":"","name":"/ws/tests/todo.test.ts"}
+    \\]}
+;
+
+test "parseVitest: the Jest-shaped report — describes, statuses, ms, the `it(` line or the frame's, the message without its stack, a broken file, vitest's own tally" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const r = try parseVitest(a, fixture_vitest, "/ws", "");
+    try t.expectEqual(@as(usize, 5), r.tests.len);
+    try t.expectEqual(@as(usize, 3), r.count(.passed));
+    try t.expectEqual(@as(usize, 1), r.count(.failed));
+    try t.expectEqual(@as(usize, 1), r.count(.skipped));
+    const below = r.tests[0];
+    try t.expectEqualStrings("clamps below", below.title);
+    try t.expectEqualStrings("clamp", below.suite_path);
+    try t.expectEqualStrings("tests/math.test.ts", below.file);
+    try t.expectEqual(@as(u32, 5), below.line);
+    try t.expectEqual(@as(u64, 0), below.duration_ms);
+    try t.expectEqual(@as(u64, 1), r.tests[1].duration_ms);
+    const bad = r.tests[2];
+    try t.expectEqual(Status.failed, bad.status);
+    // No location: the frame inside the test's file names the line; the stack stays out of the message.
+    try t.expectEqual(@as(u32, 12), bad.line);
+    try t.expectEqualStrings("AssertionError: expected 50 to be 51 // Object.is equality", bad.err.?);
+    try t.expectEqual(@as(u64, 4), bad.duration_ms);
+    try t.expectEqualStrings("area", r.tests[3].suite_path);
+    try t.expectEqualStrings("", r.tests[4].suite_path);
+    try t.expectEqual(Status.skipped, r.tests[4].status);
+    try t.expectEqual(@as(usize, 1), r.global_errors.len);
+    try t.expectEqualStrings("tests/broken.test.ts: Error: Failed to resolve import \"./gone\" from \"tests/broken.test.ts\". Does the file exist?", r.global_errors[0]);
+    try t.expectEqualStrings("Tests  1 failed | 3 passed (4)", r.summary);
+    try t.expectError(error.NotJson, parseVitest(a, "vitest: no config", "/ws", ""));
+    try t.expectError(error.NotJson, parseVitest(a, "{\"ok\":true}", "/ws", ""));
+    // The tool names the workspace by its real path: the row is still relative.
+    const via_real = try parseVitest(a, "{\"numTotalTests\":1,\"testResults\":[{\"name\":\"/private/ws/a.test.ts\",\"status\":\"passed\",\"assertionResults\":[{\"title\":\"x\",\"status\":\"passed\",\"ancestorTitles\":[]}]}]}", "/ws", "/private/ws");
+    try t.expectEqualStrings("a.test.ts", via_real.tests[0].file);
+    // The re-run: the failures' full names as one anchored regex (metacharacters escaped), then their files.
+    const args = (try vitestFailedArgs(a, r)).?;
+    try t.expectEqual(@as(usize, 3), args.len);
+    try t.expectEqualStrings("-t", args[0]);
+    try t.expectEqualStrings("^(clamp is wrong on purpose)$", args[1]);
+    try t.expectEqualStrings("tests/math.test.ts", args[2]);
+    const two = TestRun{ .tests = &.{
+        .{ .title = "adds (1+1)", .suite_path = "math › sum", .file = "a.test.ts", .line = 1, .status = .failed, .duration_ms = 0, .err = null, .trace_path = null },
+        .{ .title = "fine", .suite_path = "", .file = "a.test.ts", .line = 2, .status = .passed, .duration_ms = 0, .err = null, .trace_path = null },
+        .{ .title = "x.y", .suite_path = "", .file = "b.test.ts", .line = 3, .status = .failed, .duration_ms = 0, .err = null, .trace_path = null },
+    } };
+    const args2 = (try vitestFailedArgs(a, two)).?;
+    try t.expectEqualStrings("^(math sum adds \\(1\\+1\\)|x\\.y)$", args2[1]);
+    try t.expectEqualStrings("a.test.ts", args2[2]);
+    try t.expectEqualStrings("b.test.ts", args2[3]);
+    try t.expect((try vitestFailedArgs(a, .{})) == null);
+    try t.expectEqualStrings("npx vitest run --reporter=json --includeTaskLocation -t \"^(a b)$\" a.test.ts", try cmdlineFor(a, .vitest, &.{ "-t", "^(a b)$", "a.test.ts" }));
+    // A package.json names vitest by dependency or by its test script.
+    try t.expect(packageNamesVitest(a, "{\"devDependencies\":{\"vitest\":\"^3\"}}"));
+    try t.expect(packageNamesVitest(a, "{\"scripts\":{\"test\":\"vitest run --coverage\"}}"));
+    try t.expect(packageNamesVitest(a, "{\"scripts\":{\"test\":\"vitest\"}}"));
+    try t.expect(!packageNamesVitest(a, "{\"scripts\":{\"test\":\"jest\"},\"devDependencies\":{\"vitest-fetch-mock\":\"1\"}}"));
+    try t.expect(!packageNamesVitest(a, "not json"));
+}
+
+pub const fixture_junit =
+    \\<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="1" tests="5" time="0.037">
+    \\<testcase classname="tests.test_cli" name="test_classify[item0-heavy]" file="tests/test_cli.py" line="6" time="0.001" />
+    \\<testcase classname="tests.test_models" name="test_total_weight_is_wrong_on_purpose" file="tests/test_models.py" line="14" time="0.0025"><failure message="AssertionError: assert 40.201 == 41.0&#10; +  where 40.201 = total_weight()">shelf = Shelf(name='bench')
+    \\
+    \\    def test_total_weight_is_wrong_on_purpose(shelf):
+    \\&gt;       assert shelf.total_weight() == 41.0
+    \\E       AssertionError: assert 40.201 == 41.0
+    \\
+    \\tests/test_models.py:17: AssertionError</failure></testcase>
+    \\<testcase classname="tests.test_models" name="test_shelf_sorting" file="tests/test_models.py" line="19" time="0.000"><skipped type="pytest.skip" message="not implemented yet">/ws/tests/test_models.py:20: not implemented yet</skipped></testcase>
+    \\<testcase classname="tests.test_models.TestBox" name="test_take[first]" file="tests/test_models.py" line="34" time="1.5" />
+    \\<testcase classname="" name="tests/test_broken.py" time="0.0"><error message="collection failure">ImportError while importing test module '/ws/tests/test_broken.py'.
+    \\tests/test_broken.py:1: in &lt;module&gt;
+    \\    import nope
+    \\E   ModuleNotFoundError: No module named 'nope'</error></testcase>
+    \\</testsuite></testsuites>
+;
+
+test "parseJunit: pytest's xunit1 — parametrize ids, the class past the module, the def line 1-based or the failing frame's, seconds to ms, a collection error" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const r = try parseJunit(a, fixture_junit, "/ws", "/ws", "");
+    try t.expectEqual(@as(usize, 5), r.tests.len);
+    try t.expectEqualStrings("test_classify[item0-heavy]", r.tests[0].title);
+    try t.expectEqualStrings("", r.tests[0].suite_path);
+    try t.expectEqualStrings("tests/test_cli.py", r.tests[0].file);
+    try t.expectEqual(@as(u32, 7), r.tests[0].line);
+    try t.expectEqual(@as(u64, 1), r.tests[0].duration_ms);
+    const bad = r.tests[1];
+    try t.expectEqual(Status.failed, bad.status);
+    try t.expectEqual(@as(u32, 17), bad.line);
+    try t.expectEqualStrings("AssertionError: assert 40.201 == 41.0\n +  where 40.201 = total_weight()", bad.err.?);
+    try t.expectEqual(@as(u64, 2), bad.duration_ms);
+    try t.expectEqual(Status.skipped, r.tests[2].status);
+    try t.expectEqual(@as(u32, 20), r.tests[2].line);
+    try t.expectEqualStrings("TestBox", r.tests[3].suite_path);
+    try t.expectEqual(@as(u64, 1500), r.tests[3].duration_ms);
+    try t.expectEqual(Status.failed, r.tests[4].status);
+    try t.expectEqualStrings("tests/test_broken.py", r.tests[4].title);
+    try t.expectEqualStrings("collection failure", r.tests[4].err.?);
+    // A run at a project below the workspace: the file is made workspace-relative.
+    const deep = try parseJunit(a, fixture_junit, "/ws/py", "/ws", "");
+    try t.expectEqualStrings("py/tests/test_cli.py", deep.tests[0].file);
+    // The re-run: node ids of the failures, the class in the middle.
+    const ids = (try pytestFailedArgs(a, r)).?;
+    try t.expectEqual(@as(usize, 1), ids.len);
+    try t.expectEqualStrings("tests/test_models.py::test_total_weight_is_wrong_on_purpose", ids[0]);
+    const cls = TestRun{ .tests = &.{.{ .title = "test_take[first]", .suite_path = "TestBox", .file = "tests/test_models.py", .line = 35, .status = .failed, .duration_ms = 0, .err = null, .trace_path = null }} };
+    try t.expectEqualStrings("tests/test_models.py::TestBox::test_take[first]", (try pytestFailedArgs(a, cls)).?[0]);
+    try t.expect((try pytestFailedArgs(a, .{})) == null);
+    try t.expectEqualStrings("pytest -q -rA -o junit_family=xunit1 --junitxml=.mnml/pytest-junit.xml tests/a.py -k test_x", try cmdlineFor(a, .pytest, &.{ "tests/a.py", "-k", "test_x" }));
+}
+
+test "parsePytestConsole and pytestSummary: the -rA lines when no JUnit file landed, and the tally line without its rule" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const text = "........Fs.....                                                          [100%]\n=================================== FAILURES ===================================\n=========================== short test summary info ============================\nPASSED tests/test_cli.py::test_classify[item0-heavy]\nPASSED tests/test_models.py::TestBox::test_take[first]\nSKIPPED [1] tests/test_models.py:20: not implemented yet\nFAILED tests/test_models.py::test_total_weight_is_wrong_on_purpose - AssertionError: assert 40.201 == 41.0\nERROR tests/test_broken.py - ImportError\n=========== 1 failed, 2 passed, 1 skipped, 1 error in 0.04s ============\n";
+    const r = try parsePytestConsole(a, text, "/ws");
+    try t.expectEqual(@as(usize, 5), r.tests.len);
+    try t.expectEqualStrings("test_classify[item0-heavy]", r.tests[0].title);
+    try t.expectEqualStrings("tests/test_cli.py", r.tests[0].file);
+    try t.expectEqualStrings("TestBox", r.tests[1].suite_path);
+    try t.expectEqualStrings("test_take[first]", r.tests[1].title);
+    try t.expectEqual(Status.skipped, r.tests[2].status);
+    try t.expectEqual(@as(u32, 20), r.tests[2].line);
+    try t.expectEqualStrings("not implemented yet", r.tests[2].title);
+    try t.expectEqual(Status.failed, r.tests[3].status);
+    try t.expectEqualStrings("AssertionError: assert 40.201 == 41.0", r.tests[3].err.?);
+    try t.expectEqual(Status.failed, r.tests[4].status);
+    try t.expectEqualStrings("tests/test_broken.py", r.tests[4].file);
+    try t.expectEqualStrings("1 failed, 2 passed, 1 skipped, 1 error in 0.04s", pytestSummary(text));
+    try t.expectEqualStrings("no tests ran in 0.01s", pytestSummary("\n============================ no tests ran in 0.01s =============================\n"));
+    try t.expectEqualStrings("", pytestSummary("usage: pytest [options]\npytest: error: unrecognized arguments\n"));
+}
+
+test "test.run_all on a vitest project opens the pane; a vitest result lands and R re-runs the failure by name; a pytest result likewise by node id" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 100, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    // A package.json without vitest is not a vitest project; one naming it is.
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "package.json", .data = "{\"scripts\":{\"test\":\"jest\"}}\n" });
+    try t.expect(vitestProject(&app) == null);
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "package.json", .data = "{\"devDependencies\":{\"vitest\":\"^3\"}}\n" });
+    try t.expectEqualStrings(root, vitestProject(&app).?);
+    try tmp.dir.createDirPath(t.io, "tests");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "tests/math.test.ts", .data = "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n" });
+    try vitestAll(&app);
+    const id = find(&app).?;
+    const p = &app.panes.get(id).?.tests;
+    try t.expectEqual(Runner.vitest, p.runner);
+    try t.expectEqual(State.running, p.state);
+    p.group.cancel(t.io);
+    p.generation +%= 1;
+    const r = try Result.create(t.allocator, p.generation, id);
+    r.run = try parseVitest(r.arena.allocator(), fixture_vitest, "/ws", "");
+    try handle(&app, r);
+    try t.expectEqual(State.done, p.state);
+    try t.expectEqualStrings("Tests  1 failed | 3 passed (4)", p.run.summary);
+    try t.expectEqualStrings("is wrong on purpose", p.selected().?.title);
+    // Enter: the frame's line in the test file. (Opening a pane moves the
+    // store, so the pane is fetched again after each.)
+    app.showPane(id);
+    _ = try handleKey(&app, id, p, .{ .code = .enter });
+    const e = app.activeEditor().?;
+    try t.expectEqualStrings("tests/math.test.ts", app.relPath(e.buf.doc.path.?));
+    try t.expectEqual(@as(usize, 11), e.buf.editor.rowCol().row);
+    // R: `-t` with the failure's full name and its file — not the whole suite.
+    try vitestRerunFailed(&app);
+    const p2 = &app.panes.get(id).?.tests;
+    try t.expectEqualStrings("-t", p2.last_args[0]);
+    try t.expectEqualStrings("^(clamp is wrong on purpose)$", p2.last_args[1]);
+    try t.expectEqualStrings("tests/math.test.ts", p2.last_args[2]);
+    p2.group.cancel(t.io);
+    // The pane switches to pytest on a Python project's run; its R is the node ids.
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "pyproject.toml", .data = "[project]\nname = \"x\"\n" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "tests/test_models.py", .data = "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n" });
+    if (!runners.onPath(&app, "pytest")) {
+        // No pytest anywhere: the install box, no run.
+        try t.expectError(error.Failed, pytestAll(&app));
+        try t.expect(app.overlay == .confirm);
+        app.overlay.deinit(app.gpa);
+        app.overlay = .none;
+        try tmp.dir.createDirPath(t.io, ".venv/bin");
+        try tmp.dir.writeFile(t.io, .{ .sub_path = ".venv/bin/pytest", .data = "#!/bin/sh\nexit 1\n" });
+    }
+    try pytestAll(&app);
+    const p3 = &app.panes.get(id).?.tests;
+    try t.expectEqual(Runner.pytest, p3.runner);
+    p3.group.cancel(t.io);
+    p3.generation +%= 1;
+    const r2 = try Result.create(t.allocator, p3.generation, id);
+    r2.run = try parseJunit(r2.arena.allocator(), fixture_junit, root, root, "");
+    r2.run.?.summary = "1 failed, 2 passed, 1 skipped, 1 error in 0.04s";
+    try handle(&app, r2);
+    try t.expectEqual(State.done, p3.state);
+    try t.expectEqualStrings("test_total_weight_is_wrong_on_purpose", p3.selected().?.title);
+    app.showPane(id);
+    _ = try handleKey(&app, id, p3, .{ .code = .enter });
+    const e2 = app.activeEditor().?;
+    try t.expectEqualStrings("tests/test_models.py", app.relPath(e2.buf.doc.path.?));
+    try t.expectEqual(@as(usize, 16), e2.buf.editor.rowCol().row);
+    try pytestRerunFailed(&app);
+    const p4 = &app.panes.get(id).?.tests;
+    try t.expectEqualStrings("tests/test_models.py::test_total_weight_is_wrong_on_purpose", p4.last_args[0]);
+    try t.expectEqual(@as(usize, 1), p4.last_args.len);
+    p4.group.cancel(t.io);
+    // The venv's bin goes first on the worker's PATH.
+    try tmp.dir.createDirPath(t.io, ".venv/bin");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = ".venv/bin/pytest", .data = "#!/bin/sh\nexit 1\n" });
+    const venv = pytestVenvBin(&app, root).?;
+    try t.expect(std.mem.endsWith(u8, venv, ".venv/bin"));
 }
 
 // ─── the group must not move ────────────────────────────────────────────

@@ -1,4 +1,5 @@
-//! The results pane's paint (`Pane.tests`, Playwright or `dotnet test`):
+//! The results pane's paint (`Pane.tests`: Playwright, `dotnet test`,
+//! vitest, pytest):
 //! the command on the first row, then — running — `⟳ running…`; failed
 //! — the error; done — a `✓ ✗ ≈ ⊘ ≋` tally, the tool's own tally line
 //! when it printed one, a width-aware key hint, a rule, and the

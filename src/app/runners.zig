@@ -355,9 +355,11 @@ fn hasPytestFiles(io: Io, root: []const u8) bool {
     return false;
 }
 
-/// `pytest <args>`: needs a manifest or real test files at the root. The
-/// project's own venv pytest wins over the one on PATH.
-fn runPytest(app: *App, args: []const u8) CommandError!void {
+/// The Python project's root for the tests pane (`tests_pane.Runner.pytest`):
+/// the nearest manifest's directory, else the workspace when it holds
+/// real test files; and a pytest to run — the project's own venv (the
+/// pane puts it first on PATH) or one on PATH, else the install box.
+pub fn pytestRoot(app: *App) CommandError![]const u8 {
     const arena = app.frame.allocator();
     const root = findManifestDir(app.io, startDir(app), &py_manifests, app.workspace) orelse app.workspace;
     var buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -368,21 +370,22 @@ fn runPytest(app: *App, args: []const u8) CommandError!void {
     if (!has_manifest and !hasPytestFiles(app.io, root))
         return app.diag.fail(arena, "pytest: no pyproject.toml / setup.py / requirements.txt / test files at {s}", .{app.workspace});
     const venvs = [_][]const u8{ ".venv/bin/pytest", ".venv/Scripts/pytest.exe", "venv/bin/pytest", "venv/Scripts/pytest.exe" };
-    var bin: []const u8 = "pytest";
+    var in_venv = false;
     for (venvs) |v| if (exists(app.io, root, v, &buf)) {
-        bin = try std.fmt.allocPrint(arena, "'{s}/{s}'", .{ root, v });
-        break;
+        in_venv = true;
     };
-    if (std.mem.eql(u8, bin, "pytest") and !onPath(app, "pytest")) return offerInstall(app, "pytest");
-    const cmdline = if (args.len == 0) bin else try std.fmt.allocPrint(arena, "{s} {s}", .{ bin, args });
-    _ = try spawn(app, cmdline, cmdline, root, .runner);
+    if (!in_venv and !onPath(app, "pytest")) {
+        try offerInstall(app, "pytest");
+        return error.Failed;
+    }
+    return root;
 }
 
 fn pytestRun(app: *App) CommandError!void {
-    return runPytest(app, "");
+    return tests_pane.pytestAll(app);
 }
 fn pytestFailed(app: *App) CommandError!void {
-    return runPytest(app, "--lf");
+    return tests_pane.pytestRerunFailed(app);
 }
 
 // ─── go ─────────────────────────────────────────────────────────────────
@@ -563,13 +566,15 @@ fn requireProject(app: *App) CommandError!Project {
     return detectProject(app) orelse app.diag.fail(app.frame.allocator(), "test: no Cargo.toml / package.json / go.mod / *.csproj / build.zig / Python project at {s}", .{app.workspace});
 }
 
+/// `test.run_all`: the project's own runner — in the results pane when
+/// it is one the pane parses (dotnet, vitest, pytest), a pty otherwise.
 fn testRunAll(app: *App) CommandError!void {
     switch (try requireProject(app)) {
         .cargo => return runCargo(app, "test"),
-        .npm => return runNpm(app, "test", "test"),
+        .npm => return if (tests_pane.vitestProject(app) != null) tests_pane.vitestAll(app) else runNpm(app, "test", "test"),
         .go => return runGo(app, "test ./..."),
         .dotnet => return tests_pane.dotnetAll(app),
-        .pytest => return runPytest(app, ""),
+        .pytest => return tests_pane.pytestAll(app),
         .zig => return tests_pane.zigAll(app),
     }
 }
@@ -600,10 +605,10 @@ fn testRunFile(app: *App) CommandError!void {
                 app.runners.probe = .{ .pane = pane, .filter = try app.gpa.dupe(u8, args) };
             }
         },
-        .npm => return runNpm(app, "test", try std.fmt.allocPrint(arena, "test -- {s}", .{rel})),
+        .npm => return if (tests_pane.vitestProject(app) != null) tests_pane.vitestFile(app) else runNpm(app, "test", try std.fmt.allocPrint(arena, "test -- {s}", .{rel})),
         .go => return runGo(app, try std.fmt.allocPrint(arena, "test ./{s}", .{std.fs.path.dirname(rel) orelse "."})),
         .dotnet => return tests_pane.dotnetFile(app),
-        .pytest => return runPytest(app, rel),
+        .pytest => return tests_pane.pytestFile(app),
         .zig => return tests_pane.zigFile(app),
     }
 }
@@ -755,21 +760,23 @@ fn testRunAtCursor(app: *App) CommandError!void {
         return app.diag.fail(arena, "no test above the cursor", .{});
     switch (project) {
         .cargo => return runCargo(app, try std.fmt.allocPrint(arena, "test {s}", .{name})),
-        .npm => return runNpm(app, "test", try std.fmt.allocPrint(arena, "test -- -t '{s}'", .{name})),
+        .npm => return if (tests_pane.vitestProject(app) != null) tests_pane.vitestAtCursor(app, rel, name) else runNpm(app, "test", try std.fmt.allocPrint(arena, "test -- -t '{s}'", .{name})),
         .go => return runGo(app, try std.fmt.allocPrint(arena, "test ./{s} -run '^{s}$'", .{ std.fs.path.dirname(rel) orelse ".", name })),
-        .pytest => return runPytest(app, try std.fmt.allocPrint(arena, "{s} -k '{s}'", .{ rel, name })),
+        .pytest => return tests_pane.pytestAtCursor(app, rel, name),
         .dotnet, .zig => unreachable,
     }
 }
 
-/// pytest re-runs its last failures, dotnet the results pane's failures
-/// by name; the others re-run the last command.
+/// The results pane's runners re-run the last run's failures by name
+/// (dotnet's `--filter`, vitest's `-t` regex, pytest's node ids — `--lf`
+/// before a run); the others re-run the last command.
 fn testRerunFailed(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     const project = detectProject(app);
-    if (project == .pytest) return runPytest(app, "--lf");
+    if (project == .pytest) return tests_pane.pytestRerunFailed(app);
     if (project == .dotnet) return tests_pane.dotnetRerunFailed(app);
     if (project == .zig) return tests_pane.zigRerunFailed(app);
+    if (project == .npm and tests_pane.vitestProject(app) != null) return tests_pane.vitestRerunFailed(app);
     const cmdline = app.runners.last_cmdline orelse return app.diag.fail(arena, "nothing has run yet", .{});
     const cwd = app.runners.last_cwd orelse app.workspace;
     const c = try arena.dupe(u8, cmdline);

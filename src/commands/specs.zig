@@ -1003,8 +1003,8 @@ pub const specs = [_]Spec{
     .{ .id = "npm.start", .title = "npm: run `npm start` in a pty pane", .group = "test" },
     .{ .id = "npm.install", .title = "npm: run `npm install` in a pty pane", .group = "test" },
     .{ .id = "npm.lint", .title = "npm: run `npm run lint` in a pty pane", .group = "test" },
-    .{ .id = "pytest.run", .title = "pytest: run the suite in a pty pane", .group = "test" },
-    .{ .id = "pytest.failed", .title = "pytest: re-run only last-failed (`--lf`)", .group = "test" },
+    .{ .id = "pytest.run", .title = "pytest: run the suite (results pane)", .group = "test" },
+    .{ .id = "pytest.failed", .title = "pytest: re-run the last run's failures by node id (`--lf` before a run)", .group = "test" },
     .{ .id = "go.test", .title = "Go: run `go test ./...` in a pty pane", .group = "test" },
     .{ .id = "go.build", .title = "Go: run `go build ./...` in a pty pane", .group = "test" },
     .{ .id = "go.vet", .title = "Go: run `go vet ./...` in a pty pane", .group = "test" },
@@ -1016,10 +1016,10 @@ pub const specs = [_]Spec{
     .{ .id = "dotnet.restore", .title = ".NET: run `dotnet restore` at the nearest .sln / .csproj in a pty pane", .group = "test" },
     .{ .id = "dotnet.watch", .title = ".NET: run `dotnet watch run` at the nearest .csproj in a pty pane", .group = "test" },
     .{ .id = "dotnet.debug", .title = ".NET: `dotnet build`, then debug the active .cs file's project (netcoredbg)", .group = "dap" },
-    .{ .id = "test.run_all", .title = "Tests: run the whole Playwright suite", .group = "test" },
+    .{ .id = "test.run_all", .title = "Tests: run the whole suite with the project's runner (vitest / pytest / dotnet in the results pane)", .group = "test" },
     .{ .id = "test.run_file", .title = "Tests: run this spec file", .group = "test" },
     .{ .id = "test.run_at_cursor", .title = "Tests: run the test at the cursor", .group = "test" },
-    .{ .id = "test.rerun_failed", .title = "Tests: re-run last-failed (Playwright --last-failed)", .group = "test" },
+    .{ .id = "test.rerun_failed", .title = "Tests: re-run only the last run's failures, by name from the results pane (vitest / pytest / dotnet)", .group = "test" },
     .{ .id = "test.heal", .title = "Tests: ask Claude to fix the highlighted failing test", .group = "test" },
     // Zig-only: Rust's `test.run_*` are the Playwright runner; here they
     // are the project-agnostic runners, so Playwright gets its own ids.

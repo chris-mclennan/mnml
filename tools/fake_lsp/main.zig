@@ -344,6 +344,10 @@ pub const Server = struct {
             self.done = true;
         } else if (eql(u8, method, "initialized")) {
             if (self.configure) try self.request_out("workspace/configuration", .{ .items = &[_]struct { section: []const u8 }{.{ .section = "fakeIde" }} });
+            // A server that wants to hear about files it does not have
+            // open asks for a watcher; the client answers the request
+            // (`null`) and nothing here reads the answer.
+            if (self.watch) try self.emit("{\"jsonrpc\":\"2.0\",\"id\":9001,\"method\":\"client/registerCapability\",\"params\":{\"registrations\":[{\"id\":\"watch-1\",\"method\":\"workspace/didChangeWatchedFiles\",\"registerOptions\":{\"watchers\":[{\"globPattern\":\"**/*\"}]}}]}}");
         } else if (eql(u8, method, "textDocument/didOpen")) {
             const td = getObj(params, "textDocument") orelse return;
             const uri = getStr(td, "uri") orelse return;
@@ -372,11 +376,6 @@ pub const Server = struct {
                 self.gpa.free(kv.value);
             }
             try self.notify("textDocument/publishDiagnostics", .{ .uri = uri, .diagnostics = &[_]Diagnostic{} });
-        } else if (eql(u8, method, "initialized")) {
-            // A server that wants to hear about files it does not have
-            // open asks for a watcher; the client answers the request
-            // (`null`) and nothing here reads the answer.
-            if (self.watch) try self.emit("{\"jsonrpc\":\"2.0\",\"id\":9001,\"method\":\"client/registerCapability\",\"params\":{\"registrations\":[{\"id\":\"watch-1\",\"method\":\"workspace/didChangeWatchedFiles\",\"registerOptions\":{\"watchers\":[{\"globPattern\":\"**/*\"}]}}]}}");
         } else if (eql(u8, method, "workspace/didChangeWatchedFiles")) {
             const changes = getArr(params, "changes") orelse return;
             for (changes) |ch| {
@@ -387,7 +386,7 @@ pub const Server = struct {
                     3 => "deleted",
                     else => "?",
                 };
-                try self.logLine(try std.fmt.allocPrint(arena, "didChangeWatchedFiles {s} {s}", .{ kind, std.fs.path.basename(uri) }));
+                try self.logLine("didChangeWatchedFiles {s} {s}", .{ kind, std.fs.path.basename(uri) });
             }
         }
         // `didSave`, `$/cancelRequest`…: nothing to do.
@@ -448,13 +447,6 @@ pub const Server = struct {
     fn logLine(self: *Server, comptime fmt: []const u8, args: anytype) !void {
         const path = self.log_path orelse return;
         try self.log.print(self.gpa, fmt ++ "\n", args);
-        Io.Dir.cwd().writeFile(self.io, .{ .sub_path = path, .data = self.log.items }) catch {};
-    }
-
-    /// One extra line in the log, when there is one.
-    fn logLine(self: *Server, line: []const u8) !void {
-        const path = self.log_path orelse return;
-        try self.log.print(self.gpa, "{s}\n", .{line});
         Io.Dir.cwd().writeFile(self.io, .{ .sub_path = path, .data = self.log.items }) catch {};
     }
 
@@ -597,7 +589,6 @@ fn definitionOf(text: []const u8, name: []const u8) ?Range {
     return null;
 }
 
-/// Every whole-word occurrence of `name`, in document order.
 /// The `data.id` a TODO diagnostic on `line` is published with.
 fn todoId(arena: Allocator, line: u32) ![]const u8 {
     return std.fmt.allocPrint(arena, "todo|{d}", .{line});
@@ -620,6 +611,7 @@ fn echoesTodo(params: Value, line: u32) bool {
     return false;
 }
 
+/// Every whole-word occurrence of `name`, in document order.
 fn occurrences(arena: Allocator, text: []const u8, name: []const u8) ![]Range {
     var out: std.ArrayList(Range) = .empty;
     var it = std.mem.splitScalar(u8, text, '\n');
@@ -1178,8 +1170,9 @@ test "hover, definition, references, completion, rename, symbols, code action an
     try t.expectEqualStrings("DONE", getStr(fix[0], "newText").?);
     const no_act = try h.send(10, "textDocument/codeAction", "{\"textDocument\":{\"uri\":\"file:///ws/a.fk\"},\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":0}},\"context\":{\"diagnostics\":[{\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":1}},\"severity\":2,\"code\":\"fk/todo\",\"message\":\"unresolved TODO\",\"data\":{\"id\":\"todo|0\"}}]}}");
     defer t.allocator.free(no_act);
-    // A range that spans down onto the TODO's line (a selection) finds it.
-    const span_act = try h.send(14, "textDocument/codeAction", "{\"textDocument\":{\"uri\":\"file:///ws/a.fk\"},\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":3,\"character\":0}},\"context\":{\"diagnostics\":[]}}");
+    // A range that spans down onto the TODO's line (a selection) finds
+    // it, the diagnostic echoed as the client does for every line it spans.
+    const span_act = try h.send(14, "textDocument/codeAction", "{\"textDocument\":{\"uri\":\"file:///ws/a.fk\"},\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":3,\"character\":0}},\"context\":{\"diagnostics\":[{\"range\":{\"start\":{\"line\":2,\"character\":13},\"end\":{\"line\":2,\"character\":23}},\"severity\":2,\"source\":\"fake-lsp\",\"code\":\"fk/todo\",\"message\":\"unresolved TODO\",\"data\":{\"id\":\"todo|2\"}}]}}");
     defer t.allocator.free(span_act);
     try t.expectEqual(@as(usize, 1), resultOf(span_act[0]).array.items.len);
     try t.expectEqual(@as(usize, 0), resultOf(no_act[0]).array.items.len);

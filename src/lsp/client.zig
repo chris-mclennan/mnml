@@ -974,8 +974,8 @@ test "the builtin typescript server serves the module-flavoured extensions too, 
         for (ts.extensions) |e| hit = hit or std.mem.eql(u8, e, want);
         try std.testing.expect(hit);
     }
-    try std.testing.expectEqualStrings("javascript", languageIdFor("/p/loader.mjs"));
-    try std.testing.expectEqualStrings("javascript", languageIdFor("/p/loader.cjs"));
-    try std.testing.expectEqualStrings("typescript", languageIdFor("/p/types.mts"));
-    try std.testing.expectEqualStrings("typescript", languageIdFor("/p/types.CTS"));
+    try std.testing.expectEqualStrings("javascript", languageIdFor("/p/loader.mjs", ""));
+    try std.testing.expectEqualStrings("javascript", languageIdFor("/p/loader.cjs", ""));
+    try std.testing.expectEqualStrings("typescript", languageIdFor("/p/types.mts", ""));
+    try std.testing.expectEqualStrings("typescript", languageIdFor("/p/types.CTS", ""));
 }

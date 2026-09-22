@@ -1,0 +1,45 @@
+# A Python project runs `pytest.run` and the `test.*` ids in the results
+# pane: `pytest -q -rA` with a JUnit file under `.mnml/`, one row per
+# test with its parametrize id, the failure's assertion beneath it,
+# pytest's own tally, Enter on the failure at the line that raised —
+# and `pytest.failed` / `test.rerun_failed` re-run the failures by node
+# id. Before, every pytest id opened a raw pty and the pane never saw a
+# Python test. The `pytest` here is a shim that writes the JUnit file
+# pytest 9 writes for these tests and prints its console, and echoes
+# its argv first so a script can read what reached the tool.
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+write bin/pytest #!/bin/sh\nout=""\nfor a in "$@"; do case "$a" in --junitxml=*) out=${a#--junitxml=} ;; esac; done\necho "$*" >> shim-args.txt\necho "pytest (shim) argv: $*"\nmkdir -p "$(dirname "$out")"\ncat > "$out" <<'XML'\n<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="1" tests="4" time="0.037">\n<testcase classname="tests.test_models" name="test_heavier_than_apple[anvil-heavy]" file="tests/test_models.py" line="8" time="0.001" />\n<testcase classname="tests.test_models" name="test_heavier_than_apple[feather-light]" file="tests/test_models.py" line="8" time="0.000" />\n<testcase classname="tests.test_models" name="test_total_weight_is_wrong_on_purpose" file="tests/test_models.py" line="14" time="0.002"><failure message="AssertionError: assert 40.201 == 41.0&#10; +  where 40.201 = total_weight()">shelf = Shelf(name='bench')\n\n    def test_total_weight_is_wrong_on_purpose(shelf):\n&gt;       assert shelf.total_weight() == 41.0\nE       AssertionError: assert 40.201 == 41.0\n\ntests/test_models.py:17: AssertionError</failure></testcase>\n<testcase classname="tests.test_models" name="test_shelf_sorting" file="tests/test_models.py" line="19" time="0.000"><skipped type="pytest.skip" message="not implemented yet">tests/test_models.py:20: not implemented yet</skipped></testcase>\n</testsuite></testsuites>\nXML\nprintf '..Fs                                                                     [100%%]\\n=========================== short test summary info ============================\\nPASSED tests/test_models.py::test_heavier_than_apple[anvil-heavy]\\nPASSED tests/test_models.py::test_heavier_than_apple[feather-light]\\nSKIPPED [1] tests/test_models.py:20: not implemented yet\\nFAILED tests/test_models.py::test_total_weight_is_wrong_on_purpose - AssertionError: assert 40.201 == 41.0\\n1 failed, 2 passed, 1 skipped in 0.04s\\n'\nexit 1\n
+shell /bin/chmod +x bin/pytest
+write pyproject.toml [project]\nname = "wombat"\n\n[tool.pytest.ini_options]\ntestpaths = ["tests"]\n
+write tests/test_models.py import pytest\n\nfrom wombat.models import Item, Shelf\n\n\n@pytest.fixture\ndef shelf():\n    return Shelf(name="bench")\n\n\n@pytest.mark.parametrize("name,expected", [("anvil", "heavy"), ("feather", "light")], ids=["anvil-heavy", "feather-light"])\ndef test_heavier_than_apple(shelf, name, expected):\n    assert shelf.classify(name) == expected\n\n\ndef test_total_weight_is_wrong_on_purpose(shelf):\n    # Deliberately failing: the real total is 40.201.\n    assert shelf.total_weight() == 41.0\n\n\ndef test_shelf_sorting(shelf):\n    pytest.skip("not implemented yet")\n
+open tests/test_models.py
+command view.toggle_tree
+command test.run_all
+expect pane tests
+expect screen contains "pytest -q -rA -o junit_family=xunit1"
+expect file shim-args.txt contains "-q -rA -o junit_family=xunit1 --junitxml=.mnml/pytest-junit.xml"
+expect screen contains "1 failed, 2 passed, 1 skipped in 0.04s"
+expect screen contains "tests/test_models.py"
+expect screen contains "test_heavier_than_apple[anvil-heavy]"
+expect screen contains "test_total_weight_is_wrong_on_purpose"
+expect screen contains "assert 40.201 == 41.0"
+expect screen contains "tests: 1 failed, 2 passed, 1 skipped"
+expect file .mnml/pytest-junit.xml contains "<testcase"
+# The cursor lands on the failure; Enter opens the file where it raised.
+key enter
+expect pane test_models.py
+expect screen contains "Ln 17/"
+# `pytest.failed`: the failure's node id, nothing else (the shim logs
+# its argv; the pane's header is clipped in a split).
+command pytest.failed
+expect pane tests
+expect file shim-args.txt contains "--junitxml=.mnml/pytest-junit.xml tests/test_models.py::test_total_weight_is_wrong_on_purpose"
+expect file shim-args.txt lacks "--lf"
+open tests/test_models.py
+expect pane test_models.py
+# `test.rerun_failed` goes the same way on a Python project (from the
+# editor; the pane still holds the run).
+shell rm shim-args.txt
+command test.rerun_failed
+expect pane tests
+expect file shim-args.txt contains "--junitxml=.mnml/pytest-junit.xml tests/test_models.py::test_total_weight_is_wrong_on_purpose"

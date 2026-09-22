@@ -3769,7 +3769,7 @@ test "codeAction echoes a published diagnostic whole — code, source, data, tag
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const on_line = try echoDiagnostics(arena, diagnosticsFor(&app, path), 3);
+    const on_line = try echoDiagnostics(arena, diagnosticsFor(&app, path), 3, 3);
     try testing.expectEqual(@as(usize, 2), on_line.len);
     const body = try jsonrpc.stringify(gpa, .{ .diagnostics = on_line });
     defer gpa.free(body);
@@ -3780,7 +3780,7 @@ test "codeAction echoes a published diagnostic whole — code, source, data, tag
     try testing.expect(std.mem.indexOf(u8, body, "\"message\":\"lint\",\"source\":\"eslint\",\"code\":\"no-var\"}") != null);
     try testing.expectEqual(@as(usize, 1), std.mem.count(u8, body, "\"data\""));
     // Another line's diagnostic is not context for this one.
-    try testing.expectEqual(@as(usize, 0), (try echoDiagnostics(arena, diagnosticsFor(&app, path), 0)).len);
+    try testing.expectEqual(@as(usize, 0), (try echoDiagnostics(arena, diagnosticsFor(&app, path), 0, 0)).len);
 }
 
 test "diagnostics from a server and a linter merge sorted, and each source replaces only its own" {
@@ -4705,11 +4705,11 @@ test "client/registerCapability for workspace/didChangeWatchedFiles marks the se
     // Another method's registration is not a watcher.
     var other = try std.json.parseFromSlice(Value, gpa, "{\"registrations\":[{\"id\":\"1\",\"method\":\"textDocument/formatting\"}]}", .{});
     defer other.deinit();
-    try handleServerRequest(&app, s, 7, "client/registerCapability", other.value);
+    try handleServerRequest(&app, s, .{ .int = 7 }, "client/registerCapability", other.value);
     try testing.expect(!s.watches_files);
     var reg = try std.json.parseFromSlice(Value, gpa, "{\"registrations\":[{\"id\":\"2\",\"method\":\"workspace/didChangeWatchedFiles\",\"registerOptions\":{\"watchers\":[{\"globPattern\":\"**/*.cs\"}]}}]}", .{});
     defer reg.deinit();
-    try handleServerRequest(&app, s, 8, "client/registerCapability", reg.value);
+    try handleServerRequest(&app, s, .{ .int = 8 }, "client/registerCapability", reg.value);
     try testing.expect(s.watches_files);
     // A path under the server's root is announced; one outside it is not
     // (the notify returns without a wire error either way).

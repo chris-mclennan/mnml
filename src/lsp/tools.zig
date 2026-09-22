@@ -502,7 +502,7 @@ test "the five parsers and the pattern template read their line shapes" {
 }
 
 test "the builtin ESLint linter asks for --format=json (ESLint 9 has no unix formatter), and the JSON parser reads it" {
-    const l = linterFor(&Config{}, "ts").?;
+    const l = linterFor(&Config{}, "ts", "ts").?;
     try testing.expectEqualStrings("eslint", l.argv[0]);
     var json = false;
     for (l.argv) |a| {
@@ -511,8 +511,8 @@ test "the builtin ESLint linter asks for --format=json (ESLint 9 has no unix for
     }
     try testing.expect(json);
     try testing.expectEqual(LintParser.eslint, l.parser);
-    for ([_][]const u8{ "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts" }) |ext| try testing.expectEqual(LintParser.eslint, linterFor(&Config{}, ext).?.parser);
-    for ([_][]const u8{ "mjs", "cjs", "mts", "cts" }) |ext| try testing.expectEqualStrings("prettier", formatterFor(&Config{}, ext).?.argv[0]);
+    for ([_][]const u8{ "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts" }) |ext| try testing.expectEqual(LintParser.eslint, linterFor(&Config{}, ext, ext).?.parser);
+    for ([_][]const u8{ "mjs", "cjs", "mts", "cts" }) |ext| try testing.expectEqualStrings("prettier", formatterFor(&Config{}, ext, ext).?.argv[0]);
 
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
