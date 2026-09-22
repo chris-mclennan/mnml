@@ -64,23 +64,48 @@ pub const builtin_linters = [_]LintEntry{
     .{ "bash", .{ .argv = &.{ "shellcheck", "--format=gcc", "{file}" }, .parser = .shellcheck } },
 };
 
-/// The config's formatter for `ext`, else the builtin, else null.
-pub fn formatterFor(cfg: *const Config, ext: []const u8) ?Formatter {
-    if (cfg.formatters.get(ext)) |f| {
-        if (f.cmd.len == 0) return null;
-        return .{ .argv = f.cmd, .in_place = f.in_place };
+/// The config's formatter for the file, else the builtin, else null.
+/// `ext` is the file's extension (empty for `bin/run-all`) and `key`
+/// the language `highlight.detect` named for it (`sh` for that script,
+/// by its shebang; empty when no grammar knows the file): a
+/// `.formatters.sh` row — or the builtin `shfmt` — answers for both. A
+/// row for the exact extension wins over the language's.
+pub fn formatterFor(cfg: *const Config, ext: []const u8, key: []const u8) ?Formatter {
+    for ([_][]const u8{ ext, key }) |name| {
+        if (name.len == 0) continue;
+        if (cfg.formatters.get(name)) |f| {
+            if (f.cmd.len == 0) return null;
+            return .{ .argv = f.cmd, .in_place = f.in_place };
+        }
     }
-    for (builtin_formatters) |e| if (std.ascii.eqlIgnoreCase(e[0], ext)) return e[1];
+    for ([_][]const u8{ ext, key }) |name| {
+        if (name.len == 0) continue;
+        for (builtin_formatters) |e| if (std.ascii.eqlIgnoreCase(e[0], name)) return e[1];
+    }
     return null;
 }
 
-pub fn linterFor(cfg: *const Config, ext: []const u8) ?Linter {
-    if (cfg.linters.get(ext)) |l| {
-        if (l.cmd.len == 0) return null;
-        return .{ .argv = l.cmd, .parser = l.parser, .pattern = l.pattern };
+/// `formatterFor`, for the linter tables.
+pub fn linterFor(cfg: *const Config, ext: []const u8, key: []const u8) ?Linter {
+    for ([_][]const u8{ ext, key }) |name| {
+        if (name.len == 0) continue;
+        if (cfg.linters.get(name)) |l| {
+            if (l.cmd.len == 0) return null;
+            return .{ .argv = l.cmd, .parser = l.parser, .pattern = l.pattern };
+        }
     }
-    for (builtin_linters) |e| if (std.ascii.eqlIgnoreCase(e[0], ext)) return e[1];
+    for ([_][]const u8{ ext, key }) |name| {
+        if (name.len == 0) continue;
+        for (builtin_linters) |e| if (std.ascii.eqlIgnoreCase(e[0], name)) return e[1];
+    }
     return null;
+}
+
+/// Is the tool for the file one the config named (`.formatters.<ext>` /
+/// `.linters.<ext>`, by extension or by language key), as opposed to a
+/// builtin row?
+pub fn linterConfigured(cfg: *const Config, ext: []const u8, key: []const u8) bool {
+    return (ext.len > 0 and cfg.linters.get(ext) != null) or (key.len > 0 and cfg.linters.get(key) != null);
 }
 
 /// `argv` with every `{file}` replaced by `file` (an argument that is
@@ -294,15 +319,36 @@ test "formatterFor / linterFor: the config wins over the builtin table; an empty
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     var cfg: Config = .{};
-    try testing.expectEqualStrings("rustfmt", formatterFor(&cfg, "rs").?.argv[0]);
-    try testing.expectEqualStrings("eslint", linterFor(&cfg, "TS").?.argv[0]);
-    try testing.expect(formatterFor(&cfg, "unobtanium") == null);
+    try testing.expectEqualStrings("rustfmt", formatterFor(&cfg, "rs", "rs").?.argv[0]);
+    try testing.expectEqualStrings("eslint", linterFor(&cfg, "TS", "ts").?.argv[0]);
+    try testing.expect(formatterFor(&cfg, "unobtanium", "") == null);
     try cfg.formatters.put(arena.allocator(), "rs", .{ .cmd = &.{"my-fmt"}, .in_place = true });
     try cfg.linters.put(arena.allocator(), "ts", .{ .cmd = &.{} });
-    const f = formatterFor(&cfg, "rs").?;
+    const f = formatterFor(&cfg, "rs", "rs").?;
     try testing.expectEqualStrings("my-fmt", f.argv[0]);
     try testing.expect(f.in_place);
-    try testing.expect(linterFor(&cfg, "ts") == null);
+    try testing.expect(linterFor(&cfg, "ts", "ts") == null);
+    try testing.expect(linterConfigured(&cfg, "ts", "ts"));
+    try testing.expect(!linterConfigured(&cfg, "sh", "sh"));
+}
+
+test "an extension-less script and a dotfile take the tools of the language the detector named" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var cfg: Config = .{};
+    // `bin/run-all` under `#!/usr/bin/env bash`: no extension, key `sh`.
+    try testing.expectEqualStrings("shfmt", formatterFor(&cfg, "", "sh").?.argv[0]);
+    try testing.expectEqualStrings("shellcheck", linterFor(&cfg, "", "sh").?.argv[0]);
+    // A `.zshrc` is the same; a `Makefile` (key `make`) has no tool row.
+    try testing.expect(formatterFor(&cfg, "", "make") == null);
+    try testing.expect(formatterFor(&cfg, "", "") == null);
+    // A `.linters.sh` in the config reaches the script too, and a row
+    // for the exact extension wins over the language's.
+    try cfg.linters.put(arena.allocator(), "sh", .{ .cmd = &.{ "my-sh-lint", "{file}" } });
+    try cfg.linters.put(arena.allocator(), "bash", .{ .cmd = &.{ "my-bash-lint", "{file}" } });
+    try testing.expectEqualStrings("my-sh-lint", linterFor(&cfg, "", "sh").?.argv[0]);
+    try testing.expectEqualStrings("my-bash-lint", linterFor(&cfg, "bash", "sh").?.argv[0]);
+    try testing.expect(linterConfigured(&cfg, "", "sh"));
 }
 
 test "expandArgv splices {file} and leaves the rest" {

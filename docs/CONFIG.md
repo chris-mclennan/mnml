@@ -479,11 +479,15 @@ otherwise. Copy what you need; leave the rest out.
     // (vscode-json-language-server --stdio, .json/.jsonc), yaml
     // (yaml-language-server --stdio), html, css (.css/.scss/.less; the
     // vscode-*-language-server pair from `npm i -g
-    // vscode-langservers-extracted`) and csharp (csharp-ls, `dotnet tool
+    // vscode-langservers-extracted`), csharp (csharp-ls, `dotnet tool
     // install -g csharp-ls`; roots at the nearest `*.sln` / `*.csproj` /
-    // global.json — a `*` marker is a glob). A default that is not
-    // installed is `.editor.lsp_missing_defaults`' business (quiet); a
-    // server named here that is missing always toasts.
+    // global.json — a `*` marker is a glob) and bash (bash-language-server
+    // start, `npm i -g bash-language-server`; .sh/.bash/.zsh, and any
+    // extension-less script or dotfile the detector reads as shell —
+    // the server runs shellcheck itself when it finds it, so the builtin
+    // `.linters` row for shell stands down while it is attached). A
+    // default that is not installed is `.editor.lsp_missing_defaults`'
+    // business (quiet); a server named here that is missing always toasts.
     .lsp = .{
         .rust = .{
             .cmd = "rust-analyzer", // null = mnml's built-in default
@@ -668,6 +672,12 @@ otherwise. Copy what you need; leave the rest out.
     },
 
     // ── formatters / linters (exec-bearing) ────────────────────────────
+    // A row is keyed by a file extension OR by a language key — the one
+    // `mnml` detects from the file's name, its extension or its shebang
+    // (`src/highlight/detect.zig`): `.sh` answers for `run.sh`, for a
+    // `bin/run-all` that starts `#!/usr/bin/env bash`, and for a `.zshrc`.
+    // A row for the exact extension wins over the language's. The builtin
+    // tables (`src/lsp/tools.zig`) are read the same way.
     .formatters = .{
         .rs = .{ .cmd = .{ "rustfmt", "--edition", "2024" } }, // stdin → stdout
         .zig = .{ .cmd = .{ "zig", "fmt", "--stdin" } },
@@ -675,6 +685,12 @@ otherwise. Copy what you need; leave the rest out.
         // on {file} (the workspace-relative path), the result is read back.
         .go = .{ .cmd = .{ "gofmt", "-w", "{file}" }, .in_place = true },
     },
+    // Linters run on open and on save, beside a language server's
+    // diagnostics (source id 0 in the panel). A BUILTIN row stands down
+    // for a file a server is attached to — bash-language-server runs
+    // shellcheck itself, and the tool's copy of each finding doubled the
+    // panel, the badges and `]d`. A row written here was asked for and
+    // runs regardless, as does `editor.lint_external`.
     .linters = .{
         .sh = .{ .cmd = .{ "shellcheck", "-f", "gcc" }, .parser = .shellcheck },
         // .parser: .vimgrep (default, path:line:col: msg) | .eslint | .tsc | .ruff | .shellcheck | .pattern

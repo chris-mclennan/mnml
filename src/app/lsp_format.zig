@@ -36,6 +36,7 @@ const types = @import("../lsp/types.zig");
 const tools = @import("../lsp/tools.zig");
 const Config = @import("../config/Config.zig");
 const lsp = @import("lsp.zig");
+const indent = @import("../editor/indent.zig");
 
 const Server = client.Server;
 const ReqKind = client.ReqKind;
@@ -45,12 +46,40 @@ const Value = jsonrpc.Value;
 /// The "server" a linter's findings arrive from. Real servers start at 1.
 pub const linter_server_id: u32 = 0;
 
+/// LSP `FormattingOptions` for a buffer: the indent its text is
+/// written in (`editor/indent.zig`) — a two-space script asks for
+/// `tabSize: 2`, a tab-indented one for `insertSpaces: false` — the
+/// document's own settings when a `.editorconfig` pinned them or the
+/// text says nothing. It used to be the config's `tab_width` for every
+/// file, so bash-language-server handed shfmt `-i 4` and re-indented a
+/// two-space script whole.
+pub const FormattingOptions = struct {
+    tabSize: usize,
+    insertSpaces: bool,
+    trimTrailingWhitespace: bool = true,
+};
+
+pub fn formattingOptions(e: *const EditorPane) FormattingOptions {
+    const doc = e.buf.doc;
+    if (!doc.indent_pinned) if (indent.detect(e.buf.editor.bytes())) |d| {
+        return .{ .tabSize = if (d.use_tabs) doc.tab_width else d.unit, .insertSpaces = !d.use_tabs };
+    };
+    return .{ .tabSize = doc.indent_unit, .insertSpaces = !doc.use_tabs };
+}
+
 const save_flag: u32 = 1;
 
 fn extOf(path: []const u8, buf: []u8) []const u8 {
     const ext = std.fs.path.extension(path);
     if (ext.len < 2 or ext.len - 1 > buf.len) return "";
     return std.ascii.lowerString(buf[0 .. ext.len - 1], ext[1..]);
+}
+
+/// What a "no tool for …" toast names: `.sh` for a file with an
+/// extension, the file's own name for one without (`run-all`) — a
+/// toast reading `no linter for .` named nothing.
+fn toolSubject(path: []const u8, ext: []const u8) []const u8 {
+    return if (ext.len > 0) path[path.len - ext.len - 1 ..] else std.fs.path.basename(path);
 }
 
 // ─── on-type formatting ─────────────────────────────────────────────────
@@ -68,7 +97,7 @@ pub fn onTyped(app: *App, pane: PaneId, e: *EditorPane, s: *Server, c: u21) void
         .textDocument = pos.textDocument,
         .position = pos.position,
         .ch = &ch,
-        .options = .{ .tabSize = app.cfg.editor.tab_width, .insertSpaces = true },
+        .options = formattingOptions(e),
     }, .{ .pane = pane }) catch {};
 }
 
@@ -120,7 +149,7 @@ pub fn formatSelection(app: *App) CommandError!void {
     _ = t.server.request(.range_formatting, "textDocument/rangeFormatting", .{
         .textDocument = .{ .uri = uri },
         .range = range,
-        .options = .{ .tabSize = app.cfg.editor.tab_width, .insertSpaces = true },
+        .options = formattingOptions(t.e),
     }, .{ .pane = t.pane }) catch |err| return app.diag.fail(arena, "LSP format selection: {s}", .{@errorName(err)});
 }
 
@@ -149,11 +178,12 @@ pub fn formatExternalPane(app: *App, e: *EditorPane, explicit: bool) CommandErro
     const path = e.buf.doc.path orelse return app.diag.fail(arena, "format needs a saved file", .{});
     var buf: [32]u8 = undefined;
     const ext = extOf(path, &buf);
-    const f = tools.formatterFor(&app.cfg, ext) orelse {
-        if (explicit) return app.diag.fail(arena, "no formatter for .{s} (no server formats it, nothing in .formatters)", .{ext});
+    const f = tools.formatterFor(&app.cfg, ext, lsp.languageOf(app, path)) orelse {
+        if (explicit) return app.diag.fail(arena, "no formatter for {s} (no server formats it, nothing in .formatters)", .{toolSubject(path, ext)});
         return;
     };
-    const argv = try tools.expandArgv(arena, f.argv, app.relPath(path));
+    const argv = try arena.dupe([]const u8, try tools.expandArgv(arena, f.argv, app.relPath(path)));
+    argv[0] = try lsp.resolveOnPath(app, arena, argv[0]);
     const ed = e.buf.editor;
     const before = ed.bytes();
     if (f.in_place) {
@@ -242,19 +272,28 @@ pub fn lintExternal(app: *App) CommandError!void {
     if (e.buf.doc.dirty) return app.diag.fail(arena, "lint runs on the saved file — save first", .{});
     var buf: [32]u8 = undefined;
     const ext = extOf(path, &buf);
-    const l = tools.linterFor(&app.cfg, ext) orelse return app.diag.fail(arena, "no linter for .{s} (nothing in .linters)", .{ext});
+    const l = tools.linterFor(&app.cfg, ext, lsp.languageOf(app, path)) orelse return app.diag.fail(arena, "no linter for {s} (nothing in .linters)", .{toolSubject(path, ext)});
     lintPath(app, path, l) catch |err| return app.diag.fail(arena, "lint: {s}", .{@errorName(err)});
     app.toast("linting {s} with {s}…", .{ app.relPath(path), std.fs.path.basename(l.argv[0]) });
 }
 
 /// A file opened or saved: lint it when a tool is configured. Quiet
-/// when there is none.
-pub fn lintOnHook(app: *App, path: []const u8) void {
+/// when there is none. `has_server` says a language server is attached
+/// to the file: the BUILTIN row then stands down — the server lints
+/// (bash-language-server runs shellcheck itself), and the tool's copy
+/// of every finding doubled the panel, the badges and `]d`. A tool the
+/// config names in `.linters` was asked for and runs regardless, as
+/// does `editor.lint_external`.
+pub fn lintOnHook(app: *App, path: []const u8, has_server: bool) void {
     var buf: [32]u8 = undefined;
     const ext = extOf(path, &buf);
-    const l = tools.linterFor(&app.cfg, ext) orelse return;
-    // A builtin tool that is not installed is not worth a spawn per save.
-    if (app.cfg.linters.get(ext) == null and !(lsp.onPath(app, app.frame.allocator(), l.argv[0]) catch false)) return;
+    const key = lsp.languageOf(app, path);
+    const l = tools.linterFor(&app.cfg, ext, key) orelse return;
+    if (!tools.linterConfigured(&app.cfg, ext, key)) {
+        if (has_server) return;
+        // A builtin tool that is not installed is not worth a spawn per save.
+        if (!(lsp.onPath(app, app.frame.allocator(), l.argv[0]) catch false)) return;
+    }
     lintPath(app, path, l) catch {};
 }
 
@@ -291,7 +330,7 @@ fn lintPath(app: *App, path: []const u8, l: tools.Linter) !void {
         for (argv.items) |a| gpa.free(a);
         argv.deinit(gpa);
     }
-    for (expanded) |a| try argv.append(gpa, try gpa.dupe(u8, a));
+    for (expanded, 0..) |a, i| try argv.append(gpa, try gpa.dupe(u8, if (i == 0) try lsp.resolveOnPath(app, arena, a) else a));
     job.argv = try argv.toOwnedSlice(gpa);
     errdefer {
         for (job.argv) |a| gpa.free(a);
@@ -532,7 +571,7 @@ test "an external linter runs on a worker and its findings land in the diagnosti
             return lsp.diagnosticsFor(a, "/tmp/mnml-zig-lint-test.txt").len == 2;
         }
     };
-    lintOnHook(&app, path);
+    lintOnHook(&app, path, false);
     try lsp.TestRig.pump(&app, &app, Cond.two, 5000);
     const list = lsp.diagnosticsFor(&app, path);
     try testing.expectEqualStrings("meh", list[0].message);

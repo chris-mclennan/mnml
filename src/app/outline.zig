@@ -182,8 +182,17 @@ fn findSplit(app: *App, source: PaneId) ?PaneId {
     return id;
 }
 
+/// `outline.show` and `r` ask the source's language server for its
+/// symbols again: the list a server gave while it was still
+/// configuring was empty, and a repaint of that is still empty.
+fn reask(app: *App, source: PaneId) void {
+    const src = app.panes.editor(source) orelse return;
+    if (src.buf.doc.path) |p| lsp.reaskSymbols(app, p);
+}
+
 fn show(app: *App) CommandError!void {
     const source = try sourceOf(app);
+    reask(app, source);
     if (findSplit(app, source)) |id| {
         try refresh(app, id);
         app.showPane(id);
@@ -207,6 +216,7 @@ pub fn showInColumn(app: *App, focus: bool) CommandError!void {
         else => null,
     };
     if (source) |src| {
+        reask(app, src);
         if (app.outline_panel) |id| {
             const same = if (app.panes.get(id)) |p| (if (p.asOutline()) |o| o.source == src else false) else false;
             if (same) {
@@ -352,7 +362,10 @@ pub fn handleKey(app: *App, id: PaneId, k: Key) Allocator.Error!bool {
             'g' => o.cursor = 0,
             'G' => o.cursor = n -| 1,
             '/' => o.filter_mode = true,
-            'r' => try refresh(app, id),
+            'r' => {
+                reask(app, o.source);
+                try refresh(app, id);
+            },
             'q' => try close(app, id),
             else => return false,
         },

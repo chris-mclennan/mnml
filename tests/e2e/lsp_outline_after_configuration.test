@@ -1,0 +1,22 @@
+# bash-language-server answers `documentSymbol` with `[]` until the
+# client has answered its `workspace/configuration` request, and mnml
+# asked in the same instant as `didOpen` — before answering — then kept
+# the empty list and never asked again from `outline.show` or `r`: a
+# 90-line script with five functions read `(no symbols)` until the
+# first edit (hunt finding sh-lsp-outline-empty). Three things changed:
+# the first request waits for the open to settle (`symbols_debounce_ms`,
+# and a `workspace/configuration` answer re-asks for every open file);
+# an empty reply is never the outline's answer (`symbolsFor` hands it
+# to the grammar walk instead); and `outline.show` / `r` ask the server
+# again. `--configure` makes the fake behave as bash-language-server
+# does.
+write src/main.fk "fn foo() {\n  let x = 1;\n}\nfn bar() { foo(); }\n"
+write Cargo.toml ""
+write .mnml/config.zon .{ .lsp = .{ .fake = .{ .cmd = "$MNML_FAKE_LSP", .args = .{ "--log", "lsp.log", "--configure" }, .extensions = .{ "fk" }, .root_markers = .{ "Cargo.toml" } } } }
+open src/main.fk
+expect screen contains "LSP 1"
+expect file lsp.log contains "workspace/configuration answered"
+command outline.show
+expect screen contains "fn foo"
+expect screen contains "fn bar"
+expect screen lacks "(no symbols)"

@@ -85,9 +85,29 @@ pub const Symbol = struct {
     /// Where the name sits (`selectionRange.start`, or `range.start`).
     line: u32,
     character: u32,
+    /// The last line of the symbol's full `range` — the closing brace
+    /// of a function, not its name — so a caret can be placed inside
+    /// it. `line` when the server gave one line.
+    end_line: u32 = 0,
     depth: u8,
     /// Set for `SymbolInformation` (workspace symbols).
     path: ?[]const u8 = null,
+
+    /// A kind that holds other code: module, namespace, package,
+    /// class, method, constructor, enum, interface, function, struct.
+    /// A variable, a constant, a field — what `local` declares inside
+    /// a function — is not one, and never names the breadcrumb.
+    pub fn isContainer(self: Symbol) bool {
+        return switch (self.kind) {
+            2, 3, 4, 5, 6, 9, 10, 11, 12, 23 => true,
+            else => false,
+        };
+    }
+
+    /// Does the symbol's range hold `row`?
+    pub fn holds(self: Symbol, row: u32) bool {
+        return self.line <= row and row <= @max(self.end_line, self.line);
+    }
 };
 
 pub const CodeAction = struct {
@@ -379,11 +399,12 @@ fn symbolInto(arena: Allocator, out: *std.ArrayListUnmanaged(Symbol), v: Value, 
         // SymbolInformation.
         const range = readRange(jsonrpc.getObj(loc, "range") orelse return) orelse return;
         const path: ?[]u8 = if (jsonrpc.getStr(loc, "uri")) |u| try pathFromUri(arena, u) else null;
-        try out.append(arena, .{ .name = name, .kind = kind, .line = range.start.line, .character = range.start.character, .depth = depth, .path = path });
+        try out.append(arena, .{ .name = name, .kind = kind, .line = range.start.line, .character = range.start.character, .end_line = range.end.line, .depth = depth, .path = path });
         return;
     }
+    const full = readRange(jsonrpc.getObj(v, "range") orelse return) orelse return;
     const sel = readRange(jsonrpc.getObj(v, "selectionRange") orelse jsonrpc.getObj(v, "range") orelse return) orelse return;
-    try out.append(arena, .{ .name = name, .kind = kind, .line = sel.start.line, .character = sel.start.character, .depth = depth });
+    try out.append(arena, .{ .name = name, .kind = kind, .line = sel.start.line, .character = sel.start.character, .end_line = @max(full.end.line, sel.start.line), .depth = depth });
     if (jsonrpc.getArr(v, "children")) |kids| for (kids) |k| try symbolInto(arena, out, k, depth +| 1);
 }
 

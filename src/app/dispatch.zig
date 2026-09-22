@@ -7,6 +7,7 @@
 //! its own fires when the wait runs out (`expireChords`).
 
 const std = @import("std");
+const highlight = @import("highlight");
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
@@ -2287,8 +2288,12 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 // button; a left click does nothing, as in Rust.
                 statusline.seg_file => if (right) try context_menus.openFileChipMenu(app, m.x, m.y),
                 statusline.seg_language => if (right) try context_menus.openLanguageMenu(app, m.x, m.y) else {
+                    // The detector's rule — file name, extension or
+                    // shebang — so a `bin/run-all` painted as shell says
+                    // why it is.
                     const lang: []const u8 = if (app.activeEditor()) |e| (e.buf.doc.language orelse "—") else "—";
-                    app.toast("language: {s} (via file extension)", .{lang});
+                    const via: []const u8 = if (app.activeEditor()) |e| (highlight.detect.Detected{ .key = lang, .how = e.buf.doc.language_how }).viaLabel() else "file extension";
+                    app.toast("language: {s} (via {s})", .{ lang, via });
                 },
                 statusline.seg_restricted => try runCmd(app, .@"workspace.review_trust"),
                 else => if (statusline_app.SegId.of(seg)) |id| switch (id) {

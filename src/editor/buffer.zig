@@ -275,6 +275,7 @@ pub const Buffer = struct {
             const unit = r.indentUnit() orelse self.doc.tab_width;
             const display = r.tabDisplayWidth() orelse self.doc.tab_width;
             self.setIndent(display, unit, use_tabs);
+            self.doc.indent_pinned = true;
         }
         if (r.end_of_line) |e| self.doc.eol = e;
         if (r.trim_trailing_whitespace) |v| self.doc.trim_trailing_ws_on_save = v;

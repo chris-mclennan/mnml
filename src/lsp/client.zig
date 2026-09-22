@@ -18,6 +18,7 @@ const Value = jsonrpc.Value;
 const event = @import("../core/event.zig");
 const types = @import("types.zig");
 const semantic = @import("semantic.zig");
+const highlight = @import("highlight");
 
 pub const Encoding = types.Encoding;
 
@@ -196,6 +197,14 @@ pub const builtins = [_]Builtin{
     // Rust's — a solution first, then a project, then an SDK-style
     // `global.json`; `*` is a glob (`markerMatches`).
     .{ .name = "csharp", .cmd = "csharp-ls", .args = &.{}, .extensions = &.{ "cs", "csx" }, .root_markers = &.{ "*.sln", "*.csproj", "global.json" } },
+    // Shell: bash-language-server (`start` is its stdio mode) for
+    // `.sh` / `.bash` — and `.zsh`, which it opens like any other
+    // document and which no other row would ever send it. The
+    // `shellscript` languageId is `languageIdFor`'s for all three. A
+    // `bin/run-all` under `#!/usr/bin/env bash` and a `.zshrc` reach
+    // this row by the language the detector names for them
+    // (`app/lsp.zig`'s `specFor`). Rust's table has no shell row.
+    .{ .name = "bash", .cmd = "bash-language-server", .args = &.{"start"}, .extensions = &.{ "sh", "bash", "zsh" }, .root_markers = &.{".git"} },
 };
 
 /// Does the entry `name` satisfy `marker`? A literal marker is the name
@@ -238,25 +247,38 @@ pub fn installHint(cmd: []const u8) ?[]const u8 {
     return null;
 }
 
-/// The LSP `languageId` for a file, by extension.
-pub fn languageIdFor(path: []const u8) []const u8 {
+/// The LSP `languageId` for a file: by extension, else by what
+/// `highlight.detect` makes of the name and the first line of `text`
+/// (`bin/run-all` under `#!/usr/bin/env bash` is `shellscript`, a
+/// `.zshrc` too), else `plaintext`.
+pub fn languageIdFor(path: []const u8, text: []const u8) []const u8 {
     const ext_full = std.fs.path.extension(path);
-    if (ext_full.len < 2) return "plaintext";
     var lower: [16]u8 = undefined;
-    if (ext_full.len - 1 > lower.len) return "plaintext";
-    const ext = std.ascii.lowerString(&lower, ext_full[1..]);
+    if (ext_full.len >= 2 and ext_full.len - 1 <= lower.len) {
+        const ext = std.ascii.lowerString(&lower, ext_full[1..]);
+        if (languageIdForKey(ext)) |id| return id;
+    }
+    if (highlight.detect.keyFor(path, text)) |key| return languageIdForKey(key) orelse key;
+    if (ext_full.len >= 2) return ext_full[1..];
+    return "plaintext";
+}
+
+/// The `languageId` for an extension or a table key, or null when the
+/// table has no row for it.
+fn languageIdForKey(ext: []const u8) ?[]const u8 {
     const KV = struct { []const u8, []const u8 };
     const table = [_]KV{
-        .{ "rs", "rust" },        .{ "py", "python" },           .{ "ts", "typescript" }, .{ "tsx", "typescriptreact" }, .{ "js", "javascript" }, .{ "mjs", "javascript" },
-        .{ "cjs", "javascript" }, .{ "jsx", "javascriptreact" }, .{ "go", "go" },         .{ "c", "c" },                 .{ "h", "c" },           .{ "cpp", "cpp" },
-        .{ "cc", "cpp" },         .{ "hpp", "cpp" },             .{ "cxx", "cpp" },       .{ "zig", "zig" },             .{ "json", "json" },     .{ "md", "markdown" },
-        .{ "html", "html" },      .{ "css", "css" },             .{ "scss", "scss" },     .{ "yaml", "yaml" },           .{ "yml", "yaml" },      .{ "toml", "toml" },
-        .{ "sh", "shellscript" }, .{ "bash", "shellscript" },    .{ "lua", "lua" },       .{ "rb", "ruby" },             .{ "java", "java" },     .{ "kt", "kotlin" },
-        .{ "swift", "swift" },    .{ "cs", "csharp" },           .{ "php", "php" },       .{ "vue", "vue" },             .{ "svelte", "svelte" }, .{ "sql", "sql" },
-        .{ "jsonc", "jsonc" },    .{ "htm", "html" },            .{ "less", "less" },     .{ "csx", "csharp" },
+        .{ "rs", "rust" },               .{ "py", "python" },           .{ "ts", "typescript" }, .{ "tsx", "typescriptreact" }, .{ "js", "javascript" },   .{ "mjs", "javascript" },
+        .{ "cjs", "javascript" },        .{ "jsx", "javascriptreact" }, .{ "go", "go" },         .{ "c", "c" },                 .{ "h", "c" },             .{ "cpp", "cpp" },
+        .{ "cc", "cpp" },                .{ "hpp", "cpp" },             .{ "cxx", "cpp" },       .{ "zig", "zig" },             .{ "json", "json" },       .{ "md", "markdown" },
+        .{ "html", "html" },             .{ "css", "css" },             .{ "scss", "scss" },     .{ "yaml", "yaml" },           .{ "yml", "yaml" },        .{ "toml", "toml" },
+        .{ "sh", "shellscript" },        .{ "bash", "shellscript" },    .{ "lua", "lua" },       .{ "rb", "ruby" },             .{ "java", "java" },       .{ "kt", "kotlin" },
+        .{ "swift", "swift" },           .{ "cs", "csharp" },           .{ "php", "php" },       .{ "vue", "vue" },             .{ "svelte", "svelte" },   .{ "sql", "sql" },
+        .{ "jsonc", "jsonc" },           .{ "htm", "html" },            .{ "less", "less" },     .{ "csx", "csharp" },          .{ "zsh", "shellscript" }, .{ "make", "makefile" },
+        .{ "dockerfile", "dockerfile" }, .{ "ex", "elixir" },           .{ "hcl", "terraform" }, .{ "proto", "proto" },
     };
     for (table) |kv| if (std.mem.eql(u8, kv[0], ext)) return kv[1];
-    return ext;
+    return null;
 }
 
 /// One content change of an incremental `didChange`.
@@ -720,14 +742,21 @@ fn pipeFiles() ![2]Io.File {
 }
 
 test "languageIdFor and the builtin table" {
-    try testing.expectEqualStrings("typescriptreact", languageIdFor("/a/b.tsx"));
-    try testing.expectEqualStrings("python", languageIdFor("x.PY"));
-    try testing.expectEqualStrings("plaintext", languageIdFor("README"));
+    try testing.expectEqualStrings("typescriptreact", languageIdFor("/a/b.tsx", ""));
+    try testing.expectEqualStrings("python", languageIdFor("x.PY", ""));
+    try testing.expectEqualStrings("plaintext", languageIdFor("README", "# readme\n"));
+    // The detector's word for what the extension does not say: an
+    // extension-less script by its shebang, a dotfile by its name.
+    try testing.expectEqualStrings("shellscript", languageIdFor("/x/bin/run-all", "#!/usr/bin/env bash\nset -e\n"));
+    try testing.expectEqualStrings("shellscript", languageIdFor("/home/me/.zshrc", "export X=1\n"));
+    try testing.expectEqualStrings("shellscript", languageIdFor("/x/report.zsh", ""));
+    try testing.expectEqualStrings("makefile", languageIdFor("/x/Makefile", ""));
+    try testing.expectEqualStrings("python", languageIdFor("/x/tool", "#!/usr/bin/env python3\n"));
     try testing.expectEqualStrings("npm i -g pyright", installHint("/usr/local/bin/pyright-langserver").?);
     try testing.expect(installHint("mystery-ls") == null);
     // // changed (lsp-defaults): the five rows, each with a hint, so a
     // missing one can offer its install.
-    for ([_][]const u8{ "json", "yaml", "html", "css", "csharp" }) |name| {
+    for ([_][]const u8{ "json", "yaml", "html", "css", "csharp", "bash" }) |name| {
         var found = false;
         for (builtins) |b| if (std.mem.eql(u8, b.name, name)) {
             found = true;

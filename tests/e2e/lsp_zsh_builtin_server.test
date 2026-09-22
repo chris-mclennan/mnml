@@ -1,0 +1,17 @@
+# The builtin server table has a `bash` row now — bash-language-server
+# `start`, for `.sh`, `.bash` AND `.zsh` — so a `.zsh` reaches the server
+# with `languageId: shellscript` (bash-language-server opens any document
+# the client sends; a `.zsh` was simply never sent — hunt finding
+# sh-SUMMARY, "not reached"). The row is overridable field by field like
+# every builtin: `.lsp.bash = .{ .cmd = … }` with no `.extensions` keeps
+# the builtin's three. Before the row, that entry named no extension
+# and matched nothing; a `report.zsh` had no server at all. The fixture
+# has no shebang on purpose: the extension row is what attaches it.
+write report.zsh "setopt ERR_EXIT\nprint hi # TODO later\n"
+write Cargo.toml ""
+write .mnml/config.zon .{ .lsp = .{ .bash = .{ .cmd = "$MNML_FAKE_LSP", .args = .{ "--log", "lsp.log" } } } }
+open report.zsh
+expect screen contains "LSP 1"
+expect file lsp.log contains "didOpen languageId=shellscript"
+# The server's diagnostics reach the file like any other's.
+expect screen contains "⚠ 1"

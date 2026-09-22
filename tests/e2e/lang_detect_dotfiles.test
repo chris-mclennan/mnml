@@ -1,0 +1,29 @@
+# env: PATH=${MNML_SHIMS}:${PATH}
+# The shell's own dotfiles — `.zshrc`, `.zshenv`, `.bashrc`,
+# `.bash_profile`, `.profile` and their family — have no extension and
+# no shebang, and shellcheck parses every one of them. The file-name
+# table knew `.env` and `.envrc` only, so a `.zshrc` painted plain
+# beside a green `.env` with a chip of `—` (hunt finding
+# sh-dotfile-zshrc-unhighlighted). They resolve by name now, through the
+# same detector everything else reads; a `Makefile`'s chip is its
+# grammar rather than `—`; and a file nothing knows keeps the bare chip
+# with a toast that names the file — `no formatter for README`, where it
+# used to read `no formatter for .`.
+write .zshrc "export PATH=\"$HOME/bin:$PATH\"\nsetopt AUTO_CD\nalias ll='ls -la'\ngreet() {\n  echo \"hi $1\"\n}\n[[ -f ~/.zsh_local ]] && source ~/.zsh_local\n"
+open .zshrc
+expect highlights at_least 3
+expect screen contains "  sh "
+click 117 38
+expect screen contains "language: sh (via file name)"
+write Makefile "all:\n\t@echo hi\n"
+open Makefile
+expect screen contains "  make "
+click 117 38
+expect screen contains "language: make (via file name)"
+write README "plain words\n"
+open README
+expect screen contains "  — "
+command editor.format_external
+expect screen contains "no formatter for README"
+command editor.lint_external
+expect screen contains "no linter for README"

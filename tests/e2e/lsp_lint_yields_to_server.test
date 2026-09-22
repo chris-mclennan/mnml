@@ -1,0 +1,27 @@
+# env: PATH=${MNML_SHIMS}:${PATH}
+# A `.sh` with a language server attached AND shellcheck on PATH — the
+# common install, since bash-language-server runs shellcheck itself —
+# listed every finding twice: the server's copy and the builtin `.sh`
+# linter row's, which still ran on open and save (hunt finding
+# sh-lsp-diagnostics-doubled: DIAGNOSTICS (10) for five findings, the
+# tab badge and the statusline count doubled). The builtin row now
+# stands down for a file a server is attached to; `editor.lint_external`
+# still runs the tool when asked, and a tool named in `.linters` runs
+# regardless. The fake server flags the `TODO` line; so does
+# `tools/shims/shellcheck`.
+write a.sh "#!/bin/sh\necho hi # TODO later\n"
+write Cargo.toml ""
+write .mnml/config.zon .{ .lsp = .{ .fake = .{ .cmd = "$MNML_FAKE_LSP", .args = .{ "--log", "lsp.log" }, .extensions = .{ "sh" }, .root_markers = .{ "Cargo.toml" } } } }
+open a.sh
+expect screen contains "LSP 1"
+command lsp.diagnostics
+expect screen contains "unresolved TODO"
+# Time enough for a linter run to land, had one started.
+wait 1500
+expect screen contains "DIAGNOSTICS (1)"
+expect screen lacks "(shim)"
+expect screen contains "⚠ 1"
+# Asked for by name, the tool runs beside the server.
+command editor.lint_external
+expect screen contains "(shim)"
+expect screen contains "DIAGNOSTICS (2)"

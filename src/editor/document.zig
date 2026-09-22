@@ -9,6 +9,7 @@
 //! index is always current and the other views are always told.
 
 const std = @import("std");
+const detect = @import("highlight").detect;
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const editor_mod = @import("editor.zig");
@@ -137,7 +138,7 @@ pub const change_list_max = 100;
 pub fn commentTokenFor(ext: ?[]const u8) [2][]const u8 {
     const e = ext orelse return .{ "", "" };
     const slash = [_][]const u8{ "zig", "rs", "ts", "tsx", "js", "jsx", "cjs", "mjs", "c", "cpp", "h", "hpp", "cs", "go", "java", "kt", "swift", "php", "scss", "less" };
-    const hash = [_][]const u8{ "py", "rb", "sh", "bash", "zsh", "toml", "yaml", "yml", "ini", "conf" };
+    const hash = [_][]const u8{ "py", "rb", "sh", "bash", "zsh", "toml", "yaml", "yml", "ini", "conf", "make", "dockerfile", "nix", "hcl", "ex" };
     const dash = [_][]const u8{ "lua", "sql" };
     const angle = [_][]const u8{ "html", "htm", "xml", "vue", "svelte", "astro", "md", "markdown" };
     for (slash) |x| if (std.mem.eql(u8, e, x)) return .{ "// ", "" };
@@ -191,8 +192,13 @@ pub const Document = struct {
     /// window passes, so an app-level splice keeps them right as surely
     /// as a keystroke does.
     marks: std.AutoHashMapUnmanaged(u8, usize) = .empty,
-    /// File extension used for language-specific behaviour. Owned.
+    /// The language key used for language-specific behaviour — what
+    /// `highlight.detect` says (the file name, the extension, the
+    /// shebang), else the bare extension of a file no grammar knows.
+    /// Owned. The statusline chip shows it.
     language: ?[]u8 = null,
+    /// Which rule named `language`; the chip's click says so.
+    language_how: detect.How = .extension,
     read_only: bool = false,
     /// Rust mnml's `[editor] ensure_trailing_newline`: a file gets its
     /// terminating newline on save.
@@ -205,6 +211,10 @@ pub const Document = struct {
     eol: editorconfig.Eol = .lf,
     /// The indent unit the handler types on Tab.
     indent_unit: usize = 4,
+    /// A `.editorconfig` named the indent: a formatting request sends
+    /// `indent_unit` / `use_tabs` rather than what the text looks like
+    /// (`editor/indent.zig`).
+    indent_pinned: bool = false,
     /// The file's mtime + size when it was last read or written; the
     /// watcher compares against it. Null for a scratch document.
     disk: ?DiskStamp = null,
@@ -596,19 +606,35 @@ pub const Document = struct {
 
     // ─── the file ───────────────────────────────────────────────────
 
-    /// Name the file: the path, the language (its extension) and the
-    /// comment tokens that go with it.
+    /// Name the file: the path, the language (the detector's key from
+    /// the name, the extension or the shebang on the text's first line,
+    /// else the extension) and the comment tokens that go with it.
     pub fn setPath(self: *Document, path: []const u8) Allocator.Error!void {
         const copy = try self.gpa.dupe(u8, path);
         if (self.path) |p| self.gpa.free(p);
         self.path = copy;
         if (self.language) |l| self.gpa.free(l);
         self.language = null;
-        const ext = std.fs.path.extension(path);
-        if (ext.len > 1) self.language = try self.gpa.dupe(u8, ext[1..]);
+        self.language_how = .extension;
+        if (detect.detect(path, self.firstLine())) |d| {
+            self.language = try self.gpa.dupe(u8, d.key);
+            self.language_how = d.how;
+        } else {
+            const ext = std.fs.path.extension(path);
+            if (ext.len > 1) self.language = try self.gpa.dupe(u8, ext[1..]);
+        }
         const tok = commentTokenFor(self.language);
         self.comment_token = tok[0];
         self.comment_token_close = tok[1];
+    }
+
+    /// The text's first line (a shebang, if it has one), capped so a
+    /// one-line megabyte is not scanned for a `#!`.
+    pub fn firstLine(self: *const Document) []const u8 {
+        const text = self.text.items;
+        const cap = @min(text.len, 256);
+        const nl = std.mem.indexOfScalar(u8, text[0..cap], '\n') orelse cap;
+        return text[0..nl];
     }
 
     /// Record the current text as the on-disk text.

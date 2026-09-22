@@ -382,6 +382,24 @@ fn extOf(path: []const u8, buf: []u8) []const u8 {
     return std.ascii.lowerString(buf[0 .. ext.len - 1], ext[1..]);
 }
 
+/// The language `highlight.detect` names for `path`: the open
+/// document's (its name, its extension, or the shebang on its first
+/// line — `sh` for a `bin/run-all` that starts `#!/usr/bin/env bash`,
+/// or for a `.zshrc`), else what the path alone says. Empty when no
+/// grammar knows the file. `.lsp.<name>.extensions`, `.formatters` and
+/// `.linters` rows match this as well as the bare extension, so a
+/// script with no extension gets the tools of the language it is in.
+pub fn languageOf(app: *App, path: []const u8) []const u8 {
+    if (app.panes.findPath(path)) |id| if (app.panes.editor(id)) |e| if (e.buf.doc.language) |l| return l;
+    return syntax.keyForPath(path) orelse "";
+}
+
+/// Does `list` (a server's `.extensions`) name the file, by its
+/// extension or by the language the detector gave it?
+fn matches(list: []const []const u8, ext: []const u8, key: []const u8) bool {
+    return (ext.len > 0 and hasExt(list, ext)) or (key.len > 0 and hasExt(list, key));
+}
+
 fn hasExt(list: []const []const u8, ext: []const u8) bool {
     for (list) |e| if (std.ascii.eqlIgnoreCase(e, ext)) return true;
     return false;
@@ -390,10 +408,11 @@ fn hasExt(list: []const []const u8, ext: []const u8) bool {
 fn specFor(app: *App, path: []const u8) ?Spec {
     var buf: [32]u8 = undefined;
     const ext = extOf(path, &buf);
-    if (ext.len == 0) return null;
+    const key = languageOf(app, path);
+    if (ext.len == 0 and key.len == 0) return null;
     // Config entries first: a user server for the extension wins.
     for (app.cfg.lsp.keys(), app.cfg.lsp.values()) |name, cfg| {
-        if (!hasExt(cfg.extensions, ext)) continue;
+        if (!matches(cfg.extensions, ext, key)) continue;
         const cmd = cfg.cmd orelse blk: {
             for (client.builtins) |b| if (std.mem.eql(u8, b.name, name)) break :blk b.cmd;
             break :blk null;
@@ -401,7 +420,7 @@ fn specFor(app: *App, path: []const u8) ?Spec {
         return .{ .name = name, .cmd = cmd, .args = cfg.args, .root_markers = cfg.root_markers, .settings = cfg.settings, .init_options = cfg.initialization_options };
     }
     for (client.builtins) |b| {
-        if (!hasExt(b.extensions, ext)) continue;
+        if (!matches(b.extensions, ext, key)) continue;
         // `.lsp.<name>` without extensions still overrides the command.
         if (app.cfg.lsp.get(b.name)) |cfg| {
             return .{
@@ -471,6 +490,26 @@ pub fn onPath(app: *App, arena: Allocator, cmd: []const u8) Allocator.Error!bool
     return false;
 }
 
+/// `cmd` as the OS will find it under the App's OWN `PATH` (`app.env`
+/// — a launch profile's, a `.test`'s `# env:`), made absolute. A spawn
+/// resolves a bare name against the PROCESS environment, which is not
+/// this map: a tool first on the App's PATH and not on the process's
+/// was `FileNotFound` at the spawn — `onPath` had just said it was
+/// there. A name with a slash, or one on neither, comes back as is.
+pub fn resolveOnPath(app: *App, arena: Allocator, cmd: []const u8) Allocator.Error![]const u8 {
+    if (std.fs.path.isAbsolute(cmd) or std.mem.indexOfScalar(u8, cmd, '/') != null) return cmd;
+    const path_var = app.env.get("PATH") orelse return cmd;
+    var it = std.mem.splitScalar(u8, path_var, ':');
+    while (it.next()) |d| {
+        if (d.len == 0) continue;
+        const p = try std.fs.path.join(arena, &.{ d, cmd });
+        if (Io.Dir.cwd().statFile(app.io, p, .{})) |st| {
+            if (st.kind != .directory) return p;
+        } else |_| {}
+    }
+    return cmd;
+}
+
 fn markDead(app: *App, name: []const u8) Allocator.Error!void {
     if (app.lsp.dead.contains(name)) return;
     const key = try app.gpa.dupe(u8, name);
@@ -507,14 +546,12 @@ fn dynamicJson(arena: Allocator, d: app_mod.Config.Dynamic) Allocator.Error![]co
 /// The running server for `path`, if one is attached to its language
 /// and root.
 pub fn serverFor(app: *App, path: []const u8) ?*Server {
-    var buf: [32]u8 = undefined;
-    const ext = extOf(path, &buf);
     for (app.lsp.servers.items) |s| {
         if (s.transport.isDead()) continue;
         if (!std.mem.startsWith(u8, path, s.root)) continue;
         if (s.isOpen(path)) return s;
         const spec = specFor(app, path) orelse continue;
-        if (std.mem.eql(u8, spec.name, s.name) and ext.len > 0) return s;
+        if (std.mem.eql(u8, spec.name, s.name)) return s;
     }
     return null;
 }
@@ -543,10 +580,18 @@ fn refreshServers(app: *App) Allocator.Error!void {
 /// spec or the binary is missing (toasted once).
 pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
     if (serverFor(app, path)) |s| return s;
-    const spec = specFor(app, path) orelse blk: {
+    var spec = specFor(app, path) orelse blk: {
         try refreshServers(app);
         break :blk specFor(app, path) orelse return null;
     };
+    // A default row answered — but the workspace's own `.lsp` may name
+    // a server for the file that the launch did not see (a `.test`
+    // writes its config after the start), and a user's row wins over a
+    // builtin's. One re-read, as when no row matched at all.
+    if (app.cfg.lsp.get(spec.name) == null and !app.lsp.servers_refreshed) {
+        try refreshServers(app);
+        spec = specFor(app, path) orelse return null;
+    }
     if (app.lsp.dead.contains(spec.name)) return null;
     const arena = app.frame.allocator();
     // `$NAME` in the command or an argument comes from the environment,
@@ -593,7 +638,7 @@ pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
     const root = try findRoot(app, arena, path, spec.root_markers);
     for (app.lsp.servers.items) |s| if (std.mem.eql(u8, s.name, spec.name) and std.mem.eql(u8, s.root, root) and !s.transport.isDead()) return s;
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
-    try argv.append(arena, cmd);
+    try argv.append(arena, try resolveOnPath(app, arena, cmd));
     for (spec.args) |a| try argv.append(arena, try dap_client.expandEnv(arena, a, &app.env));
     const id = app.lsp.next_id;
     const s = Server.spawn(app.gpa, app.io, &app.events, id, .{
@@ -647,16 +692,25 @@ pub fn onOpen(app: *App, args: hooks.HookArgs) void {
 
 pub fn attach(app: *App, pane: PaneId, e: *EditorPane) Allocator.Error!void {
     const path = e.buf.doc.path orelse return;
-    // The external linter does not need a server.
-    format_app.lintOnHook(app, path);
-    if (overLimit(app, e, path)) return;
-    const s = (try ensureServer(app, path)) orelse return;
+    const server: ?*Server = if (overLimit(app, e, path)) null else try ensureServer(app, path);
+    // The external linter does not need a server — and the builtin
+    // row stands down for a file that has one (`lintOnHook`), since a
+    // server that lints (bash-language-server runs shellcheck itself)
+    // listed every finding twice beside it.
+    format_app.lintOnHook(app, path, server != null);
+    const s = server orelse return;
     const was_open = s.isOpen(path);
-    s.didOpen(path, client.languageIdFor(path), e.buf.editor.bytes()) catch return;
+    s.didOpen(path, client.languageIdFor(path, e.buf.doc.firstLine()), e.buf.editor.bytes()) catch return;
     e.buf.doc.lsp_seen = e.buf.doc.edits.head();
     if (!was_open) {
         app.hooks.emit(app, .{ .lsp_attach = .{ .server = s.name, .pane = pane } });
-        if (s.ready) requestSymbols(app, s, path);
+        // Not in the same instant as the `didOpen`: a server still
+        // answering its own `workspace/configuration` round-trip
+        // (bash-language-server) says `[]` to a symbols request that
+        // arrives before the client has replied. The ask goes out once
+        // the open has settled (`symbols_debounce_ms`), and again when
+        // the configuration answer lands (`handleServerRequest`).
+        if (s.ready) scheduleSymbols(app, path);
     }
 }
 
@@ -746,7 +800,7 @@ pub fn onSavePre(app: *App, args: hooks.HookArgs) void {
 pub fn onSavePost(app: *App, args: hooks.HookArgs) void {
     const e = app.panes.editor(args.save_post.pane) orelse return;
     const path = e.buf.doc.path orelse return;
-    format_app.lintOnHook(app, path);
+    format_app.lintOnHook(app, path, serverFor(app, path) != null);
     const s = serverFor(app, path) orelse return;
     syncPane(app, args.save_post.pane, e);
     s.didSave(path, e.buf.editor.bytes()) catch {};
@@ -811,6 +865,14 @@ pub fn syncPane(app: *App, pane: PaneId, e: *EditorPane) void {
 /// reads a live regex outline and never lags.
 fn markSymbolsDue(app: *App, path: []const u8) void {
     if (!app.lsp.symbols.contains(path)) return;
+    scheduleSymbols(app, path);
+}
+
+/// `documentSymbol` for `path` once `symbols_debounce_ms` have passed
+/// (`tick`), whether or not a list is cached: the first ask after an
+/// open, the re-ask after a `workspace/configuration` answer, and the
+/// outline's own refresh all go this way.
+pub fn scheduleSymbols(app: *App, path: []const u8) void {
     const due = app.now_ms + symbols_debounce_ms;
     if (app.lsp.symbols_due.getPtr(path)) |slot| {
         slot.* = due;
@@ -987,6 +1049,12 @@ fn handleServerRequest(app: *App, s: *Server, id: i64, method: []const u8, param
         }
         try out.append(arena, ']');
         s.respond(id, out.items) catch {};
+        // The server was configuring: what it said about symbols before
+        // this answer was `[]`. Ask again for every file it has open.
+        for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+            .editor => |*e| if (e.buf.doc.path) |path| if (s.isOpen(path)) scheduleSymbols(app, path),
+            else => {},
+        };
     } else if (std.mem.eql(u8, method, "workspace/applyEdit")) {
         if (params) |p| if (jsonrpc.getObj(p, "edit")) |edit| {
             const n = try applyWorkspaceEdit(app, s, edit);
@@ -1004,9 +1072,10 @@ fn handleResponse(app: *App, s: *Server, kind: ReqKind, ctx: Ctx, result: ?Value
         .initialize => {
             try s.onInitialized(result);
             // Documents opened while the server was starting are on the
-            // wire now; symbols for the ones showing can follow.
+            // wire now; symbols for the ones showing can follow, once
+            // the open has settled (see `attach`).
             for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-                .editor => |*e| if (e.buf.doc.path) |path| if (s.isOpen(path)) requestSymbols(app, s, path),
+                .editor => |*e| if (e.buf.doc.path) |path| if (s.isOpen(path)) scheduleSymbols(app, path),
                 else => {},
             };
             // The request that arrived while this server was starting
@@ -1201,6 +1270,17 @@ pub fn marksFor(app: *App, arena: Allocator, path: ?[]const u8, theme: *const Th
     return out.items;
 }
 
+/// The panel's text for a diagnostic: the message, then the server's
+/// `code` in brackets when it sent one the message does not already
+/// carry — `Double quote to prevent globbing. [SC2086]`, the way
+/// shellcheck's own gcc output reads, so a server's row and the
+/// tool's are the same words.
+pub fn messageWithCode(arena: Allocator, d: types.Diagnostic) Allocator.Error![]const u8 {
+    const code = d.code orelse return d.message;
+    if (code.len == 0 or std.mem.indexOf(u8, d.message, code) != null) return d.message;
+    return std.fmt.allocPrint(arena, "{s} [{s}]", .{ d.message, code });
+}
+
 /// `lsp.next_diagnostic` / `lsp.prev_diagnostic`: the cursor goes to
 /// the next start after it (wrapping), with the message toasted.
 pub fn gotoDiagnostic(app: *App, forward: bool) CommandError!void {
@@ -1258,7 +1338,7 @@ fn panelRows(app: *App, arena: Allocator) Allocator.Error![]DiagRow {
         if (!app.lsp.severity_filter.admits(d.severity)) continue;
         const rel = app.relPath(p);
         if (q.len > 0 and fuzzy.score(q, d.message) == null and fuzzy.score(q, rel) == null) continue;
-        try out.append(arena, .{ .path = p, .rel = rel, .line = d.range.start.line, .character = d.range.start.character, .severity = d.severity, .message = d.message, .source = d.source });
+        try out.append(arena, .{ .path = p, .rel = rel, .line = d.range.start.line, .character = d.range.start.character, .severity = d.severity, .message = try messageWithCode(arena, d), .source = d.source });
     };
     return out.items;
 }
@@ -2188,7 +2268,7 @@ fn requestFormatting(app: *App, s: *Server, pane: PaneId, e: *EditorPane, then_s
     const arena = app.frame.allocator();
     const path = e.buf.doc.path orelse return;
     const uri = try types.uriFromPath(arena, path);
-    _ = s.request(.formatting, "textDocument/formatting", .{ .textDocument = .{ .uri = uri }, .options = .{ .tabSize = app.cfg.editor.tab_width, .insertSpaces = true, .trimTrailingWhitespace = true } }, .{ .pane = pane, .extra = if (then_save) format_save_flag else 0 }) catch |err| return app.diag.fail(arena, "LSP format: {s}", .{@errorName(err)});
+    _ = s.request(.formatting, "textDocument/formatting", .{ .textDocument = .{ .uri = uri }, .options = format_app.formattingOptions(e) }, .{ .pane = pane, .extra = if (then_save) format_save_flag else 0 }) catch |err| return app.diag.fail(arena, "LSP format: {s}", .{@errorName(err)});
 }
 
 fn applyFormatting(app: *App, s: *Server, ctx: Ctx, result: ?Value) Allocator.Error!void {
@@ -2469,10 +2549,21 @@ fn storeSymbols(app: *App, ctx: Ctx, result: ?Value) Allocator.Error!void {
 }
 
 /// The cached symbols for `path` (the outline prefers them to the
-/// tree-sitter walk). Null when no server has answered.
+/// tree-sitter walk). Null when no server has answered — or when its
+/// answer was EMPTY: a server that is still configuring says `[]`, and
+/// a file with no symbols is what the grammar walk says too, so an
+/// empty list is never the outline's answer over the grammar's.
 pub fn symbolsFor(app: *App, path: []const u8) ?[]const types.Symbol {
     const set = app.lsp.symbols.get(path) orelse return null;
+    if (set.items.len == 0) return null;
     return set.items;
+}
+
+/// The outline's refresh (`outline.show`, `r`): ask the file's server
+/// again rather than repaint what it said last time.
+pub fn reaskSymbols(app: *App, path: []const u8) void {
+    const s = serverFor(app, path) orelse return;
+    requestSymbols(app, s, path);
 }
 
 fn dropSymbolPick(app: *App) void {
@@ -3302,6 +3393,20 @@ test "diagnostics from a server and a linter merge sorted, and each source repla
     // The linter runs clean: nothing left.
     try applyLintDiagnostics(&app, path, &.{});
     try testing.expectEqual(@as(usize, 0), diagnosticsFor(&app, path).len);
+}
+
+test "messageWithCode: the server's code follows the message unless the message already carries it" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const base: types.Diagnostic = .{ .range = .{ .start = .{ .line = 0, .character = 0 }, .end = .{ .line = 0, .character = 1 } }, .severity = .warning, .message = "Double quote to prevent globbing.", .source = "shellcheck", .code = "SC2086" };
+    try testing.expectEqualStrings("Double quote to prevent globbing. [SC2086]", try messageWithCode(a, base));
+    var same = base;
+    same.message = "Double quote to prevent globbing. [SC2086]";
+    try testing.expectEqualStrings(same.message, try messageWithCode(a, same));
+    var none = base;
+    none.code = null;
+    try testing.expectEqualStrings(base.message, try messageWithCode(a, none));
 }
 
 test "mnml-fake-lsp end to end: a `.lsp` written to .mnml/config.zon starts on open (one live server), its Error toasts as `LSP: …`, didOpen/didClose go out, deinit says shutdown + exit" {
