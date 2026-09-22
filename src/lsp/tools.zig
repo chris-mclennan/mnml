@@ -59,7 +59,9 @@ pub const builtin_linters = [_]LintEntry{
     .{ "tsx", .{ .argv = &.{ "eslint", "--no-color", "--format=unix", "{file}" }, .parser = .eslint } },
     .{ "js", .{ .argv = &.{ "eslint", "--no-color", "--format=unix", "{file}" }, .parser = .eslint } },
     .{ "jsx", .{ .argv = &.{ "eslint", "--no-color", "--format=unix", "{file}" }, .parser = .eslint } },
-    .{ "py", .{ .argv = &.{ "ruff", "check", "--no-color", "--output-format=concise", "{file}" }, .parser = .ruff } },
+    // ruff never colours a pipe and takes no `--no-color` (only
+    // `--color <WHEN>`, and not on every release): no colour flag.
+    .{ "py", .{ .argv = &.{ "ruff", "check", "--output-format=concise", "{file}" }, .parser = .ruff } },
     .{ "sh", .{ .argv = &.{ "shellcheck", "--format=gcc", "{file}" }, .parser = .shellcheck } },
     .{ "bash", .{ .argv = &.{ "shellcheck", "--format=gcc", "{file}" }, .parser = .shellcheck } },
 };
