@@ -576,6 +576,24 @@ fn refreshServers(app: *App) Allocator.Error!void {
     app.cfg.lsp = fresh.config.lsp;
 }
 
+/// `App.reloadConfig` landed a fresh `.lsp` table: the one-shot re-read
+/// is armed again and the servers that could not start are forgotten,
+/// so a server the reload just named is tried on the next open instead
+/// of staying dead behind the miss recorded against the old config.
+pub fn configReloaded(app: *App) void {
+    app.lsp.servers_refreshed = false;
+    if (app.lsp.servers_loaded) |*l| {
+        l.deinit();
+        app.lsp.servers_loaded = null;
+    }
+    var dk = app.lsp.dead.keyIterator();
+    while (dk.next()) |k| app.gpa.free(k.*);
+    app.lsp.dead.clearRetainingCapacity();
+    for (app.lsp.missing.items) |m| m.deinit(app.gpa);
+    app.lsp.missing.clearRetainingCapacity();
+    app.needs_render = true;
+}
+
 /// The server for `path`, started if need be. Null when there is no
 /// spec or the binary is missing (toasted once).
 pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
@@ -3601,6 +3619,52 @@ fn pumpQuiet(app: *App, ms: u32) !void {
         try app.tick(App.nowMs(app.io));
         try app.render();
     }
+}
+
+/// One server named `name`, ready, for the fake-lsp tests below.
+fn oneReadyServer(app: *App, name: []const u8) bool {
+    const servers = app.lsp.servers.items;
+    return servers.len == 1 and servers[0].ready and std.mem.eql(u8, servers[0].name, name);
+}
+
+test "mnml-fake-lsp: a `.lsp` entry written AFTER launch for an extension a default owns (`.zig`) is the server that starts, not the default" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    const exe = build_options.fake_lsp_exe;
+    Io.Dir.cwd().access(io, exe, .{}) catch return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const ws = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+    try tmp.dir.createDirPath(io, "src");
+    try tmp.dir.writeFile(io, .{ .sub_path = "build.zig", .data = "const std = @import(\"std\");\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "src/a.zig", .data = "const Rect = struct { w: u32 };\n" });
+    const file = try std.fs.path.join(gpa, &.{ ws, "src", "a.zig" });
+    defer gpa.free(file);
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try env.put("MNML_FAKE_LSP", exe);
+    // No zls anywhere: the default would be a miss.
+    try env.put("PATH", "");
+    var app = try App.initWith(gpa, io, .{ .workspace = ws, .cols = 100, .rows = 30, .env = &env, .workspace_trusted = true });
+    defer app.deinit();
+    app.tree.visible = false;
+    try testing.expect(app.cfg.lsp.get("fake") == null);
+    // Written after launch — the config in memory knows nothing of it.
+    try tmp.dir.createDirPath(io, ".mnml");
+    try tmp.dir.writeFile(io, .{ .sub_path = ".mnml/config.zon", .data = ".{ .lsp = .{ .fake = .{ .cmd = \"$MNML_FAKE_LSP\", .args = .{ \"--log\", \"lsp.log\" }, .extensions = .{ \"zig\" }, .root_markers = .{ \"build.zig\" } } } }" });
+    _ = try app.openPath(file);
+    // The built-in `zig` row matched first before, the fresh config
+    // was never read, and the reader got `LSP?` plus `brew install zls`.
+    const Cond = struct {
+        fn fakeUp(a: *App) bool {
+            return oneReadyServer(a, "fake");
+        }
+    };
+    try pumpUntil(&app, &app, Cond.fakeUp, 30_000);
+    try testing.expect(!app.lsp.dead.contains("zig"));
+    try testing.expectEqual(@as(usize, 0), app.lsp.missing.items.len);
+    try testing.expectEqualStrings(ws, app.lsp.servers.items[0].root);
 }
 
 test "mnml-fake-lsp: a rename's three edits undo with one `u` and redo with one ctrl+r; the undo opens no popup; a motion left of the last edit still renders (hunt-vim-2026-09-09 #1, #2)" {

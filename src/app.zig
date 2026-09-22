@@ -1548,6 +1548,7 @@ pub const App = struct {
         self.cfg = fresh.config;
         old.deinit();
         self.loaded = fresh;
+        lsp.configReloaded(self);
         self.keymap.deinit();
         self.keymap = km;
         self.chord.clear(self.gpa);
