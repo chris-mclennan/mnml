@@ -276,3 +276,39 @@ test "rail: every row of every section's menu resolves to a curated entry" {
     try t.expect(menus.lookupItem("Search", null, "Refresh", .{ .command = .@"git.refresh" }) == null or !std.mem.eql(u8, menus.lookupItem("Search", null, "Refresh", .{ .command = .@"git.refresh" }).?.title, "Refresh the search"));
     try t.expectEqualStrings("Find in files…", menus.lookup("Search", null, "Find in files…").?.title);
 }
+
+/// `Hide from activity bar` — the section's row leaves the bar; the
+/// section and its command stay.
+pub fn hide(app: *App, arena: Allocator, s: Section) Allocator.Error!Entry {
+    _ = app;
+    const label = s.meta().label;
+    return .{
+        .title = try std.fmt.allocPrint(arena, "Hide {s} from the activity bar", .{label}),
+        .body = try std.fmt.allocPrint(arena, "Takes the {s} row off the activity bar — `ui.rail.hidden` in the home config holds the list, so it stays off in every workspace — without closing the section if it is open now; its command still runs from the palette and any chord it has. *Activity bar: show every hidden section again* brings every hidden row back at once, and *Show on dock instead* is the other way to clear a row: the section goes onto the launcher dock, where it can be moved back.", .{label}),
+        .links = &.{ .{ .command = .{ .id = .@"view.rail_show_sections", .label = "Show the hidden sections again" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.dock.mode"), .label = "Launcher dock in Settings" } } },
+    };
+}
+
+/// `Show on dock instead` — the row moves from the bar onto the dock,
+/// both halves of the move written to the home config.
+pub fn toDock(app: *App, arena: Allocator, s: Section) Allocator.Error!Entry {
+    _ = app;
+    const label = s.meta().label;
+    return .{
+        .title = try std.fmt.allocPrint(arena, "Show {s} on the dock instead", .{label}),
+        .body = try std.fmt.allocPrint(arena, "Moves the {s} section from the activity bar onto the launcher dock: its row is hidden on the bar (`ui.rail.hidden`) and its command pinned onto the strip (`ui.dock.pins`), where the dock draws it as a pinned panel wearing the section's glyph — a click opens the section the way the rail row did. Right-click the dock item for *Move back to activity bar*, which undoes both halves. With the dock hidden (`ui.dock.mode = hidden`) the pin waits on the strip until the dock shows.", .{label}),
+        .links = &.{ .{ .settings = .{ .row = comptime copy.settingsRow("ui.dock.mode"), .label = "Launcher dock in Settings" } }, .{ .command = .{ .id = .@"view.rail_show_sections", .label = "Show the hidden sections again" } } },
+    };
+}
+
+/// `Move back to activity bar` — a pinned panel's row on the dock: the
+/// reverse of *Show on dock instead*, in one row.
+pub fn fromDock(app: *App, arena: Allocator, s: Section) Allocator.Error!Entry {
+    _ = app;
+    const label = s.meta().label;
+    return .{
+        .title = try std.fmt.allocPrint(arena, "Move {s} back to the activity bar", .{label}),
+        .body = try std.fmt.allocPrint(arena, "Puts the {s} section back on the activity bar: its row is unhidden (`ui.rail.hidden`) and the pin taken off the dock (`ui.dock.pins`) — *Show on dock instead* undone in one row. The section itself is untouched; open, it stays open, and its rail row marks it again.", .{label}),
+        .links = &.{ .{ .command = .{ .id = .@"view.rail_show_sections", .label = "Show every hidden section" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.dock.mode"), .label = "Launcher dock in Settings" } } },
+    };
+}

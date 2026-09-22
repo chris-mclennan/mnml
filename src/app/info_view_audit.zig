@@ -146,7 +146,7 @@ const Walk = struct {
         const items = try w.arena.dupe(command.MenuItem, m.items);
         for (items, 0..) |it, i| {
             try w.probe(try w.fmtKey("menu:{s}/{s}", .{ family, it.label }), .{ .menu_item = .{ .menu = 0, .idx = @intCast(i) } });
-            for (it.submenu) |sub| try w.probeEntry(try w.fmtKey("menu:{s}/{s}/{s}", .{ family, it.label, sub.label }), copy.menus.lookup(title, it.label, sub.label));
+            for (it.submenu) |sub| try w.probeEntry(try w.fmtKey("menu:{s}/{s}/{s}", .{ family, it.label, sub.label }), try copy.menus.resolve(w.app, w.arena, title, it.label, sub));
         }
         w.closeOverlay();
     }

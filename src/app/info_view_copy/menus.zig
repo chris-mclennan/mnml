@@ -3,10 +3,16 @@
 //! rows). A row without an entry falls back to `Menu: <label>` and
 //! the command's title — the audit lists every such row, menu by menu.
 //!
-//! Phase one covers the menus the chrome's chips open: the Claude and
-//! Codex chips on the tab strip and in the statusline, the terminal
-//! chip, the two `Icon ▸` submenus, the keymap chip, the tab menu and
-//! the info panel's own kebab.
+//! The rows are split by the surface that opens the menu, one module
+//! each under `menus/` — the menu bar's dropdowns, the rail's section
+//! menus, the chrome's chip menus, the statusline chips, the panes and
+//! the tree, the curated `+` menu — and concatenated here in the order
+//! `lookupItem` searches: a row qualified by its menu, its command or
+//! its action kind comes before a bare label, so a label two menus
+//! share (`Rename…` on a terminal tab and on a tree row) resolves to
+//! the entry written for the menu it is in. Rows whose label carries
+//! state (`Show Explorer`, `Move to right side`, a recent file's name,
+//! `Toggle → dark`) are `family` entries built at lookup time.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -19,15 +25,38 @@ const command = @import("../../core/command.zig");
 const ask = copy.ask_link;
 
 /// One curated row: `menu` null matches any menu; `parent` is the
-/// submenu's parent row when the row is in one.
+/// submenu's parent row when the row is in one. `prefix` matches a
+/// label that carries a value (`Copy position (12:4)`) by its start.
+/// `command` and `kind` tell two menus' same-labelled rows apart by
+/// what the row does — a row that names one is skipped for an item
+/// that runs something else.
 pub const Row = struct {
     menu: ?[]const u8 = null,
     parent: ?[]const u8 = null,
     label: []const u8,
+    prefix: bool = false,
+    command: ?command.CommandId = null,
+    kind: ?ActionKind = null,
     entry: Entry,
 };
 
-pub const rows = [_]Row{
+pub const ActionKind = std.meta.Tag(command.MenuAction);
+
+pub const menu_bar = @import("menus/menu_bar.zig");
+pub const rail = @import("menus/rail.zig");
+pub const chrome = @import("menus/chrome.zig");
+pub const chips = @import("menus/chips.zig");
+pub const panes = @import("menus/panes.zig");
+pub const plus = @import("menus/plus.zig");
+
+/// Every curated row, in lookup order.
+pub const rows = phase_one ++ menu_bar.rows ++ rail.rows ++ chrome.rows ++ chips.rows ++ plus.rows ++ panes.rows;
+
+/// Phase one: the menus the chrome's chips open — the Claude and Codex
+/// chips on the tab strip and in the statusline, the terminal chip,
+/// the two `Icon ▸` submenus, the keymap chip, the tab menu and the
+/// info panel's own kebab.
+const phase_one = [_]Row{
     // ── the info panel's own kebab ──
     .{ .menu = "Sidebar", .label = "Turn off info panel (Settings → UI to bring back)", .entry = .{
         .title = "Turn off the info panel",
@@ -150,7 +179,7 @@ pub const rows = [_]Row{
     } },
     .{ .label = "Session only", .entry = chipDetail("Session only", "the five-hour session window alone — its percentage and reset time", .@"ai.chip_show_session") },
     .{ .label = "Weekly only", .entry = chipDetail("Weekly only", "the weekly window alone — its percentage and reset time", .@"ai.chip_show_weekly") },
-    .{ .label = "Both", .entry = chipDetail("Both", "the five-hour window and the weekly one side by side", .@"ai.chip_show_both") },
+    .{ .label = "Both", .command = .@"ai.chip_show_both", .entry = chipDetail("Both", "the five-hour window and the weekly one side by side", .@"ai.chip_show_both") },
     .{ .label = "Reset countdown", .entry = .{
         .title = "Reset countdown on the chip",
         .body = "Adds the time until the window resets after the percentage — `42% 1h20m` — so the chip says when a full window opens again without a hover. Off, the percentage stands alone and the hover has the time.",
@@ -191,12 +220,12 @@ pub const rows = [_]Row{
         .body = "Opens the folder in Finder (macOS), the file manager `xdg-open` picks (Linux) or Explorer (Windows) with this file selected. `view.reveal_in_tree` is the in-app twin — the tree row rather than a window outside mnml.",
         .links = &.{ .{ .command = .{ .id = .@"view.reveal_active", .label = "Reveal it" } }, .{ .command = .{ .id = .@"file.copy_path", .label = "Copy the path" } } },
     } },
-    .{ .label = "Rename…", .entry = .{
+    .{ .label = "Rename…", .command = .@"term.rename", .entry = .{
         .title = "Rename the terminal",
         .body = "Gives this terminal tab a name of your own — `tests`, `server` — instead of the shell and command it shows; the SESSIONS card and the dock item take the same name. The name lives in the session, so it comes back with the tab.",
         .links = &.{.{ .command = .{ .id = .@"term.rename", .label = "Rename it" } }},
     } },
-    .{ .label = "Restart", .entry = .{
+    .{ .label = "Restart", .command = .@"term.restart", .entry = .{
         .title = "Restart the terminal",
         .body = "Ends the child — the shell, or the session it is running — and starts it again in the same tab with the same command and directory. For a Claude session that is a new session, not a resume: the transcript stays on disk and `sessions.open_transcript` reads it.",
         .links = &.{ .{ .command = .{ .id = .@"term.restart", .label = "Restart it" } }, .{ .command = .{ .id = .@"term.clear", .label = "Just clear the screen" } } },
@@ -263,22 +292,49 @@ fn chipsAll(comptime mode: []const u8, comptime what: []const u8, comptime id: c
     };
 }
 
-/// Rows whose entry is generated from the label — a family rather
-/// than a row: the theme menu's one row per theme.
-fn family(arena: Allocator, menu: []const u8, label: []const u8) Allocator.Error!?Entry {
+/// Rows whose entry is generated from the row rather than written for
+/// it — a family: the theme menu's one row per theme; the rail's
+/// `Show <section>` and `Move to <side>` rows, whose words are the
+/// section's; the File menu's recent files; the `+` menu's Integrations
+/// group, one row per enabled integration; the theme chip's `Toggle →
+/// <name>`. Each family's body names the thing the row is about, so no
+/// two rows of a family read the same.
+fn family(app: *App, arena: Allocator, menu: []const u8, parent: ?[]const u8, item: command.MenuItem) Allocator.Error!?Entry {
+    const label = item.label;
     if (std.mem.eql(u8, menu, "Theme")) {
-        // The four verbs above the names have entries of their own or
-        // are the backlog's; a bare name is a theme.
-        const verbs = [_][]const u8{ "Auto: match system (light / dark)", "Pick theme…  (fuzzy)", "Reset to config default", "Toggle (set ui.theme_toggle first)" };
-        for (verbs) |v| if (std.mem.eql(u8, v, label)) return null;
-        return .{
+        if (item.action == .set_theme) return .{
             .title = try std.fmt.allocPrint(arena, "Theme — {s}", .{label}),
             .body = try std.fmt.allocPrint(arena, "Recolours mnml with the `{s}` theme at once and writes `ui.theme = {s}` to the home config, so it holds in every workspace; the tick marks the one in use. A theme only recolours — glyphs and layout stay the same. `theme.toggle` swaps between the configured pair, and *Auto* follows the terminal's light or dark instead of a fixed name.", .{ label, label }),
             .keys = &.{.{ .command = .@"theme.toggle", .label = "Toggle the configured pair" }},
             .links = &.{ .{ .command = .{ .id = .@"theme.pick", .label = "The theme picker (with preview)" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.theme"), .label = "Theme in Settings" } } },
         };
+        // `Toggle → dark` / `Toggle (primary ⇄ alt)` / `Toggle (set
+        // ui.theme_toggle first)`: the label says whether there is a
+        // pair to swap between.
+        if (item.action == .command and item.action.command == .@"theme.toggle") return chips.themeToggle(app, arena, label);
     }
+    // The rail's section menus: the title is the section's label.
+    if (rail.sectionOf(menu)) |section| {
+        if (std.mem.startsWith(u8, label, "Show ") and std.mem.eql(u8, label[5..], menu)) return try rail.show(app, arena, section);
+        if (item.action == .move_section) return try rail.move(app, arena, section, item.action.move_section.side);
+        if (item.action == .rail_hide) return try rail.hide(app, arena, item.action.rail_hide);
+        if (item.action == .rail_to_dock) return try rail.toDock(app, arena, item.action.rail_to_dock);
+    }
+    // A pinned panel's row on the dock: the menu is the item's, the action names the section.
+    if (item.action == .rail_from_dock) return try rail.fromDock(app, arena, item.action.rail_from_dock);
+    if (std.mem.eql(u8, menu, "File")) if (parent) |p| if (std.mem.eql(u8, p, "Open recent file") and item.action == .command and menu_bar.isRecentId(item.action.command)) return try menu_bar.recentFile(app, arena, label);
+    if (std.mem.eql(u8, menu, "Create…")) if (parent) |p| if (std.mem.eql(u8, p, "Integrations")) return try plus.integration(arena, label);
     return null;
+}
+
+/// The entry for a row of a menu titled `menu` (under `parent` when the
+/// row is in a submenu): a curated row first, then a family. The
+/// ladder and the audit resolve every row through this one function,
+/// so a submenu row the audit reads off its parent is resolved the way
+/// the pointer resolves it.
+pub fn resolve(app: *App, arena: Allocator, menu: []const u8, parent: ?[]const u8, item: command.MenuItem) Allocator.Error!?Entry {
+    if (lookupItem(menu, parent, item.label, item.action)) |e| return e;
+    return try family(app, arena, menu, parent, item);
 }
 
 /// The on-screen fallback for a row the dictionary has nothing for:
@@ -316,7 +372,7 @@ pub fn rowFallback(app: *App, arena: Allocator, menu: u32, idx: u16) Allocator.E
 }
 
 /// The entry for a row of the open menu, by the menu's title, the
-/// parent row (for a submenu) and the row's label.
+/// parent row (for a submenu), the row's label and what it does.
 pub fn entry(app: *App, arena: Allocator, menu: u32, idx: u16) Allocator.Error!?Entry {
     if (app.overlay != .menu) return null;
     const m = &app.overlay.menu;
@@ -324,18 +380,46 @@ pub fn entry(app: *App, arena: Allocator, menu: u32, idx: u16) Allocator.Error!?
     const list = if (sub) (if (m.sub) |s| s.items else return null) else m.items;
     if (idx >= list.len) return null;
     const parent: ?[]const u8 = if (sub) (if (m.sub) |s| (if (s.parent < m.items.len) m.items[s.parent].label else null) else null) else null;
-    if (lookup(m.title, parent, list[idx].label)) |e| return e;
-    return try family(arena, m.title, list[idx].label);
+    return try resolve(app, arena, m.title, parent, list[idx]);
 }
 
+/// By label alone — a submenu row the audit reads off its parent.
 pub fn lookup(menu: []const u8, parent: ?[]const u8, label: []const u8) ?Entry {
+    return lookupItem(menu, parent, label, null);
+}
+
+/// The label of the first row — or `parent/child` for a submenu row —
+/// of the open menu the dictionary has nothing for; null when every
+/// row is curated. The per-family tests open each menu for real and
+/// ask this.
+pub fn firstUncovered(app: *App, arena: Allocator) Allocator.Error!?[]const u8 {
+    if (app.overlay != .menu) return "(no menu open)";
+    const m = &app.overlay.menu;
+    for (m.items, 0..) |it, i| {
+        if ((try entry(app, arena, 0, @intCast(i))) == null) return it.label;
+        for (it.submenu) |sub| if ((try resolve(app, arena, m.title, it.label, sub)) == null) return try std.fmt.allocPrint(arena, "{s}/{s}", .{ it.label, sub.label });
+    }
+    return null;
+}
+
+/// The first row that fits: its menu (or any), its parent (or none),
+/// its label (whole, or as a prefix), and — when the row names one —
+/// the command the item runs or the kind of action it is. `action`
+/// null matches a row whatever it names.
+pub fn lookupItem(menu: []const u8, parent: ?[]const u8, label: []const u8, action: ?command.MenuAction) ?Entry {
     for (rows) |r| {
         if (r.menu) |want| if (!std.mem.eql(u8, want, menu)) continue;
         if (r.parent) |want| {
             const have = parent orelse continue;
             if (!std.mem.eql(u8, want, have)) continue;
         }
-        if (!std.mem.eql(u8, r.label, label)) continue;
+        if (r.prefix) {
+            if (!std.mem.startsWith(u8, label, r.label)) continue;
+        } else if (!std.mem.eql(u8, r.label, label)) continue;
+        if (action) |a| {
+            if (r.command) |want| if (a != .command or a.command != want) continue;
+            if (r.kind) |want| if (a != want) continue;
+        }
         return r.entry;
     }
     return null;
@@ -376,4 +460,17 @@ test "menu rows resolve by title, parent and label; the Icon submenu rows are cu
     for (rows) |r| try copy.lint(a, r.entry, &problems);
     for (problems.items) |p| std.debug.print("menus lint: {s}: {s}\n", .{ p.entry, p.what });
     try t.expectEqual(@as(usize, 0), problems.items.len);
+}
+
+test "no two curated menu rows share a body — a row differing only by its target comes from one template with the target's word in it" {
+    var seen: std.StringHashMapUnmanaged([]const u8) = .empty;
+    defer seen.deinit(t.allocator);
+    var dupes: usize = 0;
+    for (rows) |r| {
+        if (seen.get(r.entry.body)) |other| {
+            std.debug.print("menus: `{s}` and `{s}` share a body: {s}\n", .{ other, r.label, r.entry.body[0..@min(60, r.entry.body.len)] });
+            dupes += 1;
+        } else try seen.put(t.allocator, r.entry.body, r.label);
+    }
+    try t.expectEqual(@as(usize, 0), dupes);
 }
