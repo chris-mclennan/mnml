@@ -40,41 +40,17 @@ pub const idle_ms: i64 = 120;
 pub const sync_parse_max_bytes: usize = 32 * 1024;
 
 /// Table key for a file, or null when mnml-zig has no grammar for it.
-/// `text` supplies the shebang for extension-less scripts.
+/// `text` supplies the shebang for extension-less scripts. The rules
+/// are `highlight.detect`'s — the one detector the language servers,
+/// the tools and the statusline chip read too.
 pub fn keyFor(path: ?[]const u8, text: []const u8) ?[]const u8 {
-    if (path) |p| {
-        const base = std.fs.path.basename(p);
-        if (grammars.keyForFilename(base)) |k| return k;
-        const ext = std.fs.path.extension(base);
-        if (ext.len > 1 and ext.len - 1 <= 32) {
-            var lower: [32]u8 = undefined;
-            const e = std.ascii.lowerString(&lower, ext[1..]);
-            if (grammars.keyForExtension(e)) |k| return k;
-            if (grammars.find(e)) |i| return grammars.entries[i].key;
-        }
-    }
-    return keyForShebang(text);
+    return highlight.detect.keyFor(path, text);
 }
 
 /// `#!/usr/bin/env python3` → `py`, and the other interpreters a
 /// script file names.
 pub fn keyForShebang(text: []const u8) ?[]const u8 {
-    if (!std.mem.startsWith(u8, text, "#!")) return null;
-    const nl = std.mem.indexOfScalar(u8, text, '\n') orelse text.len;
-    const line = text[2..nl];
-    const interpreters = [_]struct { []const u8, []const u8 }{
-        .{ "python", "py" }, .{ "node", "js" }, .{ "deno", "ts" },   .{ "bash", "sh" },
-        .{ "zsh", "sh" },    .{ "fish", "sh" }, .{ "sh", "sh" },     .{ "ruby", "rb" },
-        .{ "lua", "lua" },   .{ "php", "php" }, .{ "elixir", "ex" }, .{ "swift", "swift" },
-    };
-    // The interpreter is the last path segment of the first word, or the
-    // word after `env`.
-    var it = std.mem.tokenizeAny(u8, line, " \t");
-    var word = it.next() orelse return null;
-    if (std.mem.endsWith(u8, word, "/env")) word = it.next() orelse return null;
-    const name = std.fs.path.basename(word);
-    for (interpreters) |i| if (std.mem.startsWith(u8, name, i[0])) return i[1];
-    return null;
+    return highlight.detect.keyForShebang(text);
 }
 
 /// Kept for callers that only have a path (the outline's fallback).

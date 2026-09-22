@@ -1,0 +1,34 @@
+# env: PATH=${MNML_SHIMS}:${PATH}
+# A `bin/run-all` that opens with `#!/usr/bin/env bash` and has no
+# extension is shell to every tool, not only to the highlighter. The
+# shebang always picked the grammar; the language server table, the
+# builtin linter and formatter rows and the statusline chip keyed on
+# `std.fs.path.extension` alone, so the script painted as shell got no
+# server, toasts reading `no linter for .` / `no formatter for .`, and
+# a chip of `—` (hunt finding sh-shebang-script-no-tools). One detector
+# (`src/highlight/detect.zig`: file name, extension, shebang) now feeds
+# all of them: `.lsp.<name>.extensions = .{ "sh" }` matches the
+# DETECTED language, the `sh` rows of `src/lsp/tools.zig` answer, and
+# the chip says `sh` — and, clicked, says why. `tools/shims/shellcheck`
+# and `tools/shims/shfmt` stand in for the tools; the fake server logs
+# the `languageId` the client sent.
+write bin/run-all "#!/usr/bin/env bash\nset -euo pipefail\nmain() {\n  echo hi # TODO later\n}\nmain \"x\"\n"
+write Cargo.toml ""
+write .mnml/config.zon .{ .lsp = .{ .fake = .{ .cmd = "$MNML_FAKE_LSP", .args = .{ "--log", "lsp.log" }, .extensions = .{ "sh" }, .root_markers = .{ "Cargo.toml" } } } }
+open bin/run-all
+expect highlights at_least 3
+# The server attached by the detected language, and was told the file
+# is shell.
+expect screen contains "LSP 1"
+expect file lsp.log contains "didOpen languageId=shellscript"
+# The chip names the detected language; its click says which rule.
+expect screen contains "  sh "
+click 117 38
+expect screen contains "language: sh (via shebang)"
+# The builtin shellcheck and shfmt rows answer for it.
+command editor.lint_external
+expect screen contains "linting bin/run-all with shellcheck"
+command lsp.diagnostics
+expect screen contains "unresolved TODO (shim)"
+command editor.format_external
+expect screen contains "formatted bin/run-all with shfmt"

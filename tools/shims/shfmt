@@ -1,0 +1,6 @@
+#!/bin/sh
+# tools/shims/shfmt — the `shfmt` the .test corpus sees
+# (`# env: PATH=${MNML_SHIMS}:${PATH}`): stdin to stdout unchanged, so
+# a script can see the formatter ROW was reached (`formatted x with
+# shfmt`) without the tool installed. Flags (`-i 2`) are ignored.
+exec cat

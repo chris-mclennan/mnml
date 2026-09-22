@@ -53,6 +53,13 @@ fn extOf(path: []const u8, buf: []u8) []const u8 {
     return std.ascii.lowerString(buf[0 .. ext.len - 1], ext[1..]);
 }
 
+/// What a "no tool for …" toast names: `.sh` for a file with an
+/// extension, the file's own name for one without (`run-all`) — a
+/// toast reading `no linter for .` named nothing.
+fn toolSubject(path: []const u8, ext: []const u8) []const u8 {
+    return if (ext.len > 0) path[path.len - ext.len - 1 ..] else std.fs.path.basename(path);
+}
+
 // ─── on-type formatting ─────────────────────────────────────────────────
 
 /// A character typed in `e`: when it is one of the server's on-type
@@ -149,11 +156,12 @@ pub fn formatExternalPane(app: *App, e: *EditorPane, explicit: bool) CommandErro
     const path = e.buf.doc.path orelse return app.diag.fail(arena, "format needs a saved file", .{});
     var buf: [32]u8 = undefined;
     const ext = extOf(path, &buf);
-    const f = tools.formatterFor(&app.cfg, ext) orelse {
-        if (explicit) return app.diag.fail(arena, "no formatter for .{s} (no server formats it, nothing in .formatters)", .{ext});
+    const f = tools.formatterFor(&app.cfg, ext, lsp.languageOf(app, path)) orelse {
+        if (explicit) return app.diag.fail(arena, "no formatter for {s} (no server formats it, nothing in .formatters)", .{toolSubject(path, ext)});
         return;
     };
-    const argv = try tools.expandArgv(arena, f.argv, app.relPath(path));
+    const argv = try arena.dupe([]const u8, try tools.expandArgv(arena, f.argv, app.relPath(path)));
+    argv[0] = try lsp.resolveOnPath(app, arena, argv[0]);
     const ed = e.buf.editor;
     const before = ed.bytes();
     if (f.in_place) {
@@ -242,7 +250,7 @@ pub fn lintExternal(app: *App) CommandError!void {
     if (e.buf.doc.dirty) return app.diag.fail(arena, "lint runs on the saved file — save first", .{});
     var buf: [32]u8 = undefined;
     const ext = extOf(path, &buf);
-    const l = tools.linterFor(&app.cfg, ext) orelse return app.diag.fail(arena, "no linter for .{s} (nothing in .linters)", .{ext});
+    const l = tools.linterFor(&app.cfg, ext, lsp.languageOf(app, path)) orelse return app.diag.fail(arena, "no linter for {s} (nothing in .linters)", .{toolSubject(path, ext)});
     lintPath(app, path, l) catch |err| return app.diag.fail(arena, "lint: {s}", .{@errorName(err)});
     app.toast("linting {s} with {s}…", .{ app.relPath(path), std.fs.path.basename(l.argv[0]) });
 }
@@ -252,9 +260,10 @@ pub fn lintExternal(app: *App) CommandError!void {
 pub fn lintOnHook(app: *App, path: []const u8) void {
     var buf: [32]u8 = undefined;
     const ext = extOf(path, &buf);
-    const l = tools.linterFor(&app.cfg, ext) orelse return;
+    const key = lsp.languageOf(app, path);
+    const l = tools.linterFor(&app.cfg, ext, key) orelse return;
     // A builtin tool that is not installed is not worth a spawn per save.
-    if (app.cfg.linters.get(ext) == null and !(lsp.onPath(app, app.frame.allocator(), l.argv[0]) catch false)) return;
+    if (!tools.linterConfigured(&app.cfg, ext, key) and !(lsp.onPath(app, app.frame.allocator(), l.argv[0]) catch false)) return;
     lintPath(app, path, l) catch {};
 }
 
@@ -291,7 +300,7 @@ fn lintPath(app: *App, path: []const u8, l: tools.Linter) !void {
         for (argv.items) |a| gpa.free(a);
         argv.deinit(gpa);
     }
-    for (expanded) |a| try argv.append(gpa, try gpa.dupe(u8, a));
+    for (expanded, 0..) |a, i| try argv.append(gpa, try gpa.dupe(u8, if (i == 0) try lsp.resolveOnPath(app, arena, a) else a));
     job.argv = try argv.toOwnedSlice(gpa);
     errdefer {
         for (job.argv) |a| gpa.free(a);

@@ -270,6 +270,7 @@ pub const Server = struct {
             const td = getObj(params, "textDocument") orelse return;
             const uri = getStr(td, "uri") orelse return;
             const text = getStr(td, "text") orelse "";
+            try self.logLine("didOpen languageId={s}", .{getStr(td, "languageId") orelse "?"});
             try self.setDoc(uri, text);
             try self.publish(arena, uri);
         } else if (eql(u8, method, "textDocument/didChange")) {
@@ -343,8 +344,15 @@ pub const Server = struct {
     /// how many bytes it carried, so a script can tell a range sync from
     /// a full one and see it never grew to the file's size.
     fn logChange(self: *Server, what: []const u8, bytes: usize) !void {
+        try self.logLine("didChange {s} len={d}", .{ what, bytes });
+    }
+
+    /// One more line in the log, under the method that carried it: the
+    /// facts of a request the client's side cannot otherwise show — a
+    /// `didOpen`'s `languageId`, a `formatting`'s options.
+    fn logLine(self: *Server, comptime fmt: []const u8, args: anytype) !void {
         const path = self.log_path orelse return;
-        try self.log.print(self.gpa, "didChange {s} len={d}\n", .{ what, bytes });
+        try self.log.print(self.gpa, fmt ++ "\n", args);
         Io.Dir.cwd().writeFile(self.io, .{ .sub_path = path, .data = self.log.items }) catch {};
     }
 

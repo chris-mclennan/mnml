@@ -1,0 +1,18 @@
+#!/bin/sh
+# tools/shims/shellcheck — the `shellcheck` the .test corpus sees
+# (`# env: PATH=${MNML_SHIMS}:${PATH}`). One gcc-format finding per line
+# holding `TODO` in each file named on the command line — the same
+# lines the fake language server flags — so a script can count what the
+# builtin linter adds beside a server's diagnostics. Flags (`--format=gcc`)
+# are ignored. Exit 1 when it found something, as shellcheck does.
+found=0
+for f in "$@"; do
+  case "$f" in -*) continue ;; esac
+  [ -f "$f" ] || continue
+  n=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    n=$((n+1))
+    case "$line" in *TODO*) printf '%s:%d:1: warning: unresolved TODO (shim) [SC2000]\n' "$f" "$n"; found=1 ;; esac
+  done < "$f"
+done
+exit $found

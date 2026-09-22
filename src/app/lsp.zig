@@ -382,6 +382,24 @@ fn extOf(path: []const u8, buf: []u8) []const u8 {
     return std.ascii.lowerString(buf[0 .. ext.len - 1], ext[1..]);
 }
 
+/// The language `highlight.detect` names for `path`: the open
+/// document's (its name, its extension, or the shebang on its first
+/// line — `sh` for a `bin/run-all` that starts `#!/usr/bin/env bash`,
+/// or for a `.zshrc`), else what the path alone says. Empty when no
+/// grammar knows the file. `.lsp.<name>.extensions`, `.formatters` and
+/// `.linters` rows match this as well as the bare extension, so a
+/// script with no extension gets the tools of the language it is in.
+pub fn languageOf(app: *App, path: []const u8) []const u8 {
+    if (app.panes.findPath(path)) |id| if (app.panes.editor(id)) |e| if (e.buf.doc.language) |l| return l;
+    return syntax.keyForPath(path) orelse "";
+}
+
+/// Does `list` (a server's `.extensions`) name the file, by its
+/// extension or by the language the detector gave it?
+fn matches(list: []const []const u8, ext: []const u8, key: []const u8) bool {
+    return (ext.len > 0 and hasExt(list, ext)) or (key.len > 0 and hasExt(list, key));
+}
+
 fn hasExt(list: []const []const u8, ext: []const u8) bool {
     for (list) |e| if (std.ascii.eqlIgnoreCase(e, ext)) return true;
     return false;
@@ -390,10 +408,11 @@ fn hasExt(list: []const []const u8, ext: []const u8) bool {
 fn specFor(app: *App, path: []const u8) ?Spec {
     var buf: [32]u8 = undefined;
     const ext = extOf(path, &buf);
-    if (ext.len == 0) return null;
+    const key = languageOf(app, path);
+    if (ext.len == 0 and key.len == 0) return null;
     // Config entries first: a user server for the extension wins.
     for (app.cfg.lsp.keys(), app.cfg.lsp.values()) |name, cfg| {
-        if (!hasExt(cfg.extensions, ext)) continue;
+        if (!matches(cfg.extensions, ext, key)) continue;
         const cmd = cfg.cmd orelse blk: {
             for (client.builtins) |b| if (std.mem.eql(u8, b.name, name)) break :blk b.cmd;
             break :blk null;
@@ -401,7 +420,7 @@ fn specFor(app: *App, path: []const u8) ?Spec {
         return .{ .name = name, .cmd = cmd, .args = cfg.args, .root_markers = cfg.root_markers, .settings = cfg.settings, .init_options = cfg.initialization_options };
     }
     for (client.builtins) |b| {
-        if (!hasExt(b.extensions, ext)) continue;
+        if (!matches(b.extensions, ext, key)) continue;
         // `.lsp.<name>` without extensions still overrides the command.
         if (app.cfg.lsp.get(b.name)) |cfg| {
             return .{
@@ -471,6 +490,26 @@ pub fn onPath(app: *App, arena: Allocator, cmd: []const u8) Allocator.Error!bool
     return false;
 }
 
+/// `cmd` as the OS will find it under the App's OWN `PATH` (`app.env`
+/// — a launch profile's, a `.test`'s `# env:`), made absolute. A spawn
+/// resolves a bare name against the PROCESS environment, which is not
+/// this map: a tool first on the App's PATH and not on the process's
+/// was `FileNotFound` at the spawn — `onPath` had just said it was
+/// there. A name with a slash, or one on neither, comes back as is.
+pub fn resolveOnPath(app: *App, arena: Allocator, cmd: []const u8) Allocator.Error![]const u8 {
+    if (std.fs.path.isAbsolute(cmd) or std.mem.indexOfScalar(u8, cmd, '/') != null) return cmd;
+    const path_var = app.env.get("PATH") orelse return cmd;
+    var it = std.mem.splitScalar(u8, path_var, ':');
+    while (it.next()) |d| {
+        if (d.len == 0) continue;
+        const p = try std.fs.path.join(arena, &.{ d, cmd });
+        if (Io.Dir.cwd().statFile(app.io, p, .{})) |st| {
+            if (st.kind != .directory) return p;
+        } else |_| {}
+    }
+    return cmd;
+}
+
 fn markDead(app: *App, name: []const u8) Allocator.Error!void {
     if (app.lsp.dead.contains(name)) return;
     const key = try app.gpa.dupe(u8, name);
@@ -507,14 +546,12 @@ fn dynamicJson(arena: Allocator, d: app_mod.Config.Dynamic) Allocator.Error![]co
 /// The running server for `path`, if one is attached to its language
 /// and root.
 pub fn serverFor(app: *App, path: []const u8) ?*Server {
-    var buf: [32]u8 = undefined;
-    const ext = extOf(path, &buf);
     for (app.lsp.servers.items) |s| {
         if (s.transport.isDead()) continue;
         if (!std.mem.startsWith(u8, path, s.root)) continue;
         if (s.isOpen(path)) return s;
         const spec = specFor(app, path) orelse continue;
-        if (std.mem.eql(u8, spec.name, s.name) and ext.len > 0) return s;
+        if (std.mem.eql(u8, spec.name, s.name)) return s;
     }
     return null;
 }
@@ -593,7 +630,7 @@ pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
     const root = try findRoot(app, arena, path, spec.root_markers);
     for (app.lsp.servers.items) |s| if (std.mem.eql(u8, s.name, spec.name) and std.mem.eql(u8, s.root, root) and !s.transport.isDead()) return s;
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
-    try argv.append(arena, cmd);
+    try argv.append(arena, try resolveOnPath(app, arena, cmd));
     for (spec.args) |a| try argv.append(arena, try dap_client.expandEnv(arena, a, &app.env));
     const id = app.lsp.next_id;
     const s = Server.spawn(app.gpa, app.io, &app.events, id, .{
@@ -652,7 +689,7 @@ pub fn attach(app: *App, pane: PaneId, e: *EditorPane) Allocator.Error!void {
     if (overLimit(app, e, path)) return;
     const s = (try ensureServer(app, path)) orelse return;
     const was_open = s.isOpen(path);
-    s.didOpen(path, client.languageIdFor(path), e.buf.editor.bytes()) catch return;
+    s.didOpen(path, client.languageIdFor(path, e.buf.doc.firstLine()), e.buf.editor.bytes()) catch return;
     e.buf.doc.lsp_seen = e.buf.doc.edits.head();
     if (!was_open) {
         app.hooks.emit(app, .{ .lsp_attach = .{ .server = s.name, .pane = pane } });

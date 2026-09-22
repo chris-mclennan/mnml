@@ -308,7 +308,7 @@ fn syncDoc(app: *App, c: *Client, e: *EditorPane) Allocator.Error!bool {
     const ed = e.buf.editor;
     const text = ed.bytes();
     if (!c.isOpen(path)) {
-        c.didOpen(path, lsp_client.languageIdFor(path), text) catch return false;
+        c.didOpen(path, lsp_client.languageIdFor(path, text), text) catch return false;
         ed.doc.copilot_seen = ed.doc.edits.head();
         c.didFocus(path) catch {};
         return true;

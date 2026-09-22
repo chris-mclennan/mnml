@@ -230,6 +230,14 @@ const filename_aliases = std.StaticStringMap([]const u8).initComptime(.{
     .{ "Brewfile", "rb" },           .{ "Podfile", "rb" },               .{ "Fastfile", "rb" },
     .{ ".env", "sh" },               .{ ".envrc", "sh" },                .{ "Dockerfile", "dockerfile" },
     .{ "dockerfile", "dockerfile" }, .{ "Containerfile", "dockerfile" }, .{ "containerfile", "dockerfile" },
+    // The shell's own dotfiles: no extension, no shebang, shell to
+    // every tool (shellcheck parses a `.zshrc`; it only asks for a
+    // shebang). Without these rows they painted plain beside a green
+    // `.env`.
+    .{ ".zshrc", "sh" },             .{ ".zshenv", "sh" },               .{ ".zprofile", "sh" },
+    .{ ".zlogin", "sh" },            .{ ".zlogout", "sh" },              .{ ".bashrc", "sh" },
+    .{ ".bash_profile", "sh" },      .{ ".bash_login", "sh" },           .{ ".bash_logout", "sh" },
+    .{ ".bash_aliases", "sh" },      .{ ".profile", "sh" },              .{ ".shrc", "sh" },
 });
 
 /// An injection language name — a code-fence info string (`rust`, `console`) or a literal

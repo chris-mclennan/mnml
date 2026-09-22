@@ -12,6 +12,7 @@ pub const role = @import("role.zig");
 pub const predicate = @import("predicate.zig");
 pub const pattern = @import("pattern.zig");
 pub const structure = @import("structure.zig");
+pub const detect = @import("detect.zig");
 pub const Highlighter = engine.Highlighter;
 pub const Role = role.Role;
 

@@ -668,6 +668,12 @@ otherwise. Copy what you need; leave the rest out.
     },
 
     // ── formatters / linters (exec-bearing) ────────────────────────────
+    // A row is keyed by a file extension OR by a language key — the one
+    // `mnml` detects from the file's name, its extension or its shebang
+    // (`src/highlight/detect.zig`): `.sh` answers for `run.sh`, for a
+    // `bin/run-all` that starts `#!/usr/bin/env bash`, and for a `.zshrc`.
+    // A row for the exact extension wins over the language's. The builtin
+    // tables (`src/lsp/tools.zig`) are read the same way.
     .formatters = .{
         .rs = .{ .cmd = .{ "rustfmt", "--edition", "2024" } }, // stdin → stdout
         .zig = .{ .cmd = .{ "zig", "fmt", "--stdin" } },
