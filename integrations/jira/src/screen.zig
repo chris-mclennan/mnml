@@ -988,8 +988,8 @@ pub const Painter = struct {
         const h = p.lay.status_y -| y0;
         const w = p.cols() -| dx;
         if (w < 8 or h < 2) return;
+        p.c.vrule(dx, y0, h, p.s.border);
         var y = y0;
-        while (y < y0 + h) : (y += 1) _ = p.put(dx, y, 1, "│", p.s.border);
         const panel: hit.Rect = .{ .x = dx, .y = y0, .w = w, .h = h };
         const x = dx + 1;
         const iw = w -| 3;
@@ -1148,32 +1148,10 @@ pub const Painter = struct {
     // ─── the overlays ────────────────────────────────────────────────
 
     /// A bordered box with its title in the top edge; the inside is
-    /// blanked so what was under it does not show through.
+    /// blanked so what was under it does not show through. The
+    /// toolkit's frame, so it is the same box the bitbucket pane opens.
     fn box(p: *Painter, r: Rect, title: []const u8, style: Style) Allocator.Error!void {
-        if (r.w < 2 or r.h < 2) return;
-        p.f.fill(r.x, r.y, r.w, r.h, .none);
-        const ascii = p.ui.ascii;
-        const tl = if (ascii) "+" else "┌";
-        const tr = if (ascii) "+" else "┐";
-        const bl = if (ascii) "+" else "└";
-        const br = if (ascii) "+" else "┘";
-        const hz = if (ascii) "-" else "─";
-        const vt = if (ascii) "|" else "│";
-        var x = r.x;
-        while (x < r.right()) : (x += 1) {
-            _ = p.put(x, r.y, 1, hz, style);
-            _ = p.put(x, r.bottom() - 1, 1, hz, style);
-        }
-        var y = r.y;
-        while (y < r.bottom()) : (y += 1) {
-            _ = p.put(r.x, y, 1, vt, style);
-            _ = p.put(r.right() - 1, y, 1, vt, style);
-        }
-        _ = p.put(r.x, r.y, 1, tl, style);
-        _ = p.put(r.right() - 1, r.y, 1, tr, style);
-        _ = p.put(r.x, r.bottom() - 1, 1, bl, style);
-        _ = p.put(r.right() - 1, r.bottom() - 1, 1, br, style);
-        if (title.len > 0) _ = p.putFit(r.x + 1, r.y, r.w -| 2, title, p.s.accent);
+        p.c.frameTitled(.{ .x = r.x, .y = r.y, .w = r.w, .h = r.h }, style, title, p.s.accent);
     }
 
     fn centred(p: *const Painter, w: u16, h: u16) Rect {
