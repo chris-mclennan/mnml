@@ -92,6 +92,9 @@ pub const OpenOptions = struct {
     /// app's environment for this child only (`MNML_WORKSPACE` pointing
     /// at a session worktree).
     env_extra: []const []const u8 = &.{},
+    /// The label is the user's own (a restored rename): the child's
+    /// title does not replace it.
+    renamed: bool = false,
     /// Open the pane WITHOUT starting anything: the tab, the title and
     /// `[exited]`, waiting for a key to start it. What a restored
     /// session uses, so relaunching an editor never runs a shell (and
@@ -127,8 +130,12 @@ pub const PtyPane = struct {
     session: ?*Session,
     grid: Grid = .{},
     wire: *Wire,
-    /// The tab label. Owned.
+    /// The tab label. Owned. What the tab reads until the child names
+    /// itself (OSC 0 / 2), and for good once the user renamed it.
     label: []u8,
+    /// The label came from the user (`term.rename`, `:rename`): the
+    /// child's own title no longer replaces it.
+    renamed: bool = false,
     /// The command line, owned, for `term.restart`; empty = the shell.
     argv: [][]u8,
     cwd: ?[]u8,
@@ -303,6 +310,18 @@ pub const PtyPane = struct {
         const session = self.session orelse return null;
         return session.term.getTitle();
     }
+
+    /// What the tab reads, in the order every terminal's tab follows:
+    /// the user's rename, then the title the child set (a shell prompt's
+    /// cwd, vim's file, an ssh host), then the label it opened with.
+    /// Borrowed from the terminal — valid until the child retitles.
+    pub fn tabTitle(self: *const PtyPane) []const u8 {
+        if (!self.renamed) if (self.childTitle()) |title| {
+            const trimmed = std.mem.trim(u8, title, " \t");
+            if (trimmed.len > 0) return trimmed;
+        };
+        return self.label;
+    }
 };
 
 // ─── open / close ───────────────────────────────────────────────────────
@@ -370,6 +389,7 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
             .session = session,
             .wire = wire,
             .label = label,
+            .renamed = opts.renamed,
             .argv = argv,
             .cwd = cwd,
             .kind = opts.kind,

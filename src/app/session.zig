@@ -122,6 +122,9 @@ pub const Pane = struct {
     argv: []const []const u8 = &.{},
     cwd: ?[]const u8 = null,
     label: ?[]const u8 = null,
+    /// pty: the label is the user's rename, which a restored child's own
+    /// title does not replace.
+    renamed: bool = false,
     /// The pane rail's colour, a palette name (`ui/accent_color.zig`).
     /// // changed (pane-rail): every kind carries one now, not just a
     /// pty — a restored pane comes back the colour it was.
@@ -416,7 +419,7 @@ pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
                 // A Claude session started under `--session-id` comes
                 // back with `--resume`: the id is taken once.
                 const argv = try pty_pane.resumeArgv(arena, pt.argv);
-                break :blk .{ .kind = .pty, .argv = argv, .cwd = pt.cwd, .label = pt.label, .accent = pt.accent_color, .session_id = try paneSessionId(app, arena, pt, argv) };
+                break :blk .{ .kind = .pty, .argv = argv, .cwd = pt.cwd, .label = pt.label, .renamed = pt.renamed, .accent = pt.accent_color, .session_id = try paneSessionId(app, arena, pt, argv) };
             },
             else => null,
         };
@@ -938,6 +941,7 @@ fn openSavedPane(app: *App, sp: Pane, opened: []const ?PaneId) OpenError!?PaneId
                 .argv = argv,
                 .cwd = sp.cwd,
                 .label = sp.label,
+                .renamed = sp.renamed,
                 .placement = .tab,
                 .kind = if (argv.len == 0) .shell else .command,
                 .accent_color = sp.accent,

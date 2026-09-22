@@ -1,0 +1,13 @@
+# A child's window title (OSC 0 / OSC 2) names its tab, as it does in
+# every terminal's tab: zsh and bash prompts, vim, ssh and htop all set
+# it, and with ten shells open it is what tells them apart. The user's
+# own `:rename` outranks it; the label the pane opened with is the
+# fallback.
+command view.toggle_tree
+ex term printf '\033]2;build-watch\007'; sleep 30
+wait 1500
+expect screen contains "build-watch"
+expect pane build-watch
+ex rename mine
+expect screen contains "mine"
+expect screen lacks "build-watch"

@@ -98,7 +98,7 @@ fn rename(app: *App) CommandError!void {
     const p = app.panes.pty(id) orelse return app.diag.fail(app.frame.allocator(), "not a terminal pane", .{});
     var state = app_mod.Prompt.init(app.gpa, "Rename session");
     errdefer app_mod.Prompt.deinit(&state, app.gpa);
-    try state.setText(app.gpa, p.label);
+    try state.setText(app.gpa, p.tabTitle());
     app.overlay.deinit(app.gpa);
     app.overlay = .{ .prompt = .{ .state = state, .purpose = .{ .term_rename = id } } };
     app.focus = .overlay;
@@ -121,6 +121,8 @@ pub fn renameAccept(app: *App, id: PaneId, text: []const u8) CommandError!void {
     const copy = try app.gpa.dupe(u8, name);
     app.gpa.free(p.label);
     p.label = copy;
+    // The user's name outranks the one the child sets.
+    p.renamed = true;
     app.needs_render = true;
 }
 
@@ -220,6 +222,32 @@ test "term.shell opens the login shell beside the active pane; focus_or_open_she
     try command.run(&app, .{ .static = .@"term.focus_or_open_shell" });
     try t.expectEqual(sh, app.active.?);
     try t.expectEqual(@as(usize, 2), app.panes.count());
+}
+
+test "a child's OSC 2 title names its tab until the user renames it" {
+    // `printf` and a login shell: POSIX.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    try app.runEx("term printf '\\033]2;build-watch\\007'; read x; printf '\\033]0;second\\007'; sleep 30");
+    const id = app.active.?;
+    try t.expect(try pty_pane.tickUntilScreen(&app, "build-watch", 5000));
+    try t.expectEqualStrings("build-watch", app.panes.get(id).?.title());
+    // The user's name wins from here on, whatever the child sets next.
+    try app.runEx("rename mine");
+    try t.expectEqualStrings("mine", app.panes.get(id).?.title());
+    try app.handle(.{ .key = @import("../core/key.zig").Key.named(.enter) });
+    try t.expect(try pty_pane.tickUntilScreen(&app, "mine", 5000));
+    var waited: u32 = 0;
+    while (waited < 2000) : (waited += 20) {
+        try app.tick(App.nowMs(app.io));
+        const p = app.panes.pty(id).?;
+        if (p.childTitle()) |ct| if (std.mem.eql(u8, ct, "second")) break;
+        app.io.sleep(.fromMilliseconds(20), .awake) catch {};
+    }
+    try t.expectEqualStrings("second", app.panes.pty(id).?.childTitle().?);
+    try t.expectEqualStrings("mine", app.panes.get(id).?.title());
 }
 
 test "term.rename relabels the tab through the prompt and through :rename" {
