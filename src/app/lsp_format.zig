@@ -106,19 +106,78 @@ pub fn onTyped(app: *App, pane: PaneId, e: *EditorPane, s: *Server, c: u21) void
 
 /// From `lsp.onSavePre`, before the write: the server's
 /// `willSaveWaitUntil` edits (applied when they land), and the external
-/// formatter when format-on-save has no server to format with.
-pub fn onSavePre(app: *App, pane: PaneId, e: *EditorPane, s: ?*Server) void {
-    const path = e.buf.doc.path orelse return;
+/// formatter when it is the one that formats this file — configured,
+/// or the project's own (`externalWins`) — or when format-on-save has
+/// no server to format with. Returns true when the external tool
+/// formatted, so the caller does not also ask the server.
+pub fn onSavePre(app: *App, pane: PaneId, e: *EditorPane, s: ?*Server) bool {
+    const path = e.buf.doc.path orelse return false;
     if (s) |srv| if (app.cfg.editor.will_save_wait_until and srv.caps.will_save_wait_until and srv.ready and srv.isOpen(path)) {
         const arena = app.frame.allocator();
         if (types.uriFromPath(arena, path)) |uri| {
             _ = srv.request(.will_save_wait_until, "textDocument/willSaveWaitUntil", .{ .textDocument = .{ .uri = uri }, .reason = 1 }, .{ .pane = pane, .extra = save_flag }) catch {};
         } else |_| {}
     };
-    if (!app.cfg.editor.format_on_save) return;
+    if (!app.cfg.editor.format_on_save) return false;
     const lsp_formats = if (s) |srv| srv.ready and srv.caps.formatting else false;
-    if (lsp_formats) return; // `lsp.onSavePre` asked the server
+    if (lsp_formats and externalWins(app, path) == null) return false; // `lsp.onSavePre` asks the server
     formatExternalPane(app, e, false) catch {};
+    return true;
+}
+
+// ─── who formats: the precedence ────────────────────────────────────────
+
+/// Why the external tool formats a file ahead of its language server.
+pub const ExternalReason = enum {
+    /// `.formatters.<ext>` names a tool: the user chose.
+    configured,
+    /// The builtin tool's own config is in the project (a `.prettierrc`,
+    /// a `rustfmt.toml`, a `ruff.toml`; `tools.projectConfigFor`) and
+    /// the tool is on the App's PATH: the project chose.
+    project_config,
+};
+
+/// The external tool wins over the server for `path` when the user
+/// configured one for its extension, or when the project carries the
+/// builtin tool's config and the tool is installed. Otherwise the
+/// server formats when it can (`lsp.format`, format-on-save), and the
+/// builtin tool is the fallback. `editor.format_external` ignores all
+/// of this and always runs the tool. Documented in docs/CONFIG.md under
+/// `.formatters`.
+pub fn externalWins(app: *App, path: []const u8) ?ExternalReason {
+    var buf: [32]u8 = undefined;
+    const ext = extOf(path, &buf);
+    if (app.cfg.formatters.get(ext)) |f| return if (f.cmd.len == 0) null else .configured;
+    const f = tools.formatterFor(&app.cfg, ext) orelse return null;
+    const pc = tools.projectConfigFor(f.argv[0]) orelse return null;
+    if (!projectHasConfig(app, path, pc)) return null;
+    var where: [std.fs.max_path_bytes]u8 = undefined;
+    if (runners.pathOf(app.io, &app.env, &where, f.argv[0]) == null) return null;
+    return .project_config;
+}
+
+/// Walk from the file's directory up to the workspace root looking for
+/// one of the tool's config files, or a `package.json` holding its key.
+fn projectHasConfig(app: *App, path: []const u8, pc: tools.ProjectConfig) bool {
+    const arena = app.frame.allocator();
+    var dir: ?[]const u8 = std.fs.path.dirname(path);
+    while (dir) |d| : (dir = if (std.mem.eql(u8, d, app.workspace) or std.fs.path.dirname(d) == null) null else std.fs.path.dirname(d)) {
+        for (pc.files) |name| {
+            const full = std.fs.path.join(arena, &.{ d, name }) catch return false;
+            if (Io.Dir.cwd().access(app.io, full, .{})) |_| return true else |_| {}
+        }
+        if (pc.package_json_key) |key| {
+            const full = std.fs.path.join(arena, &.{ d, "package.json" }) catch return false;
+            if (Io.Dir.cwd().readFileAlloc(app.io, full, arena, .limited(4 << 20))) |src| {
+                if (std.json.parseFromSliceLeaky(std.json.Value, arena, src, .{})) |v| {
+                    if (v == .object and v.object.get(key) != null) return true;
+                } else |_| {}
+            } else |_| {}
+        }
+        // Never above the workspace.
+        if (!std.mem.startsWith(u8, d, app.workspace)) return false;
+    }
+    return false;
 }
 
 pub fn handleResponse(app: *App, s: *Server, kind: ReqKind, ctx: Ctx, result: ?Value) Allocator.Error!void {
@@ -156,11 +215,13 @@ pub fn formatSelection(app: *App) CommandError!void {
 
 // ─── external formatters ────────────────────────────────────────────────
 
-/// `lsp.format`: the server when it formats, else the external tool.
+/// `lsp.format`: the external tool when it is this file's formatter
+/// (`externalWins`), else the server when it formats, else the tool.
 pub fn formatDocument(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     const e = try app.requireEditor();
     const path = e.buf.doc.path orelse return app.diag.fail(arena, "format needs a saved file", .{});
+    if (externalWins(app, path) != null) return formatExternalPane(app, e, true);
     if (lsp.serverFor(app, path)) |s| if (s.ready and s.caps.formatting) return lsp.format(app);
     try formatExternalPane(app, e, true);
 }
@@ -699,6 +760,55 @@ test "the builtin Python linter's argv is one current ruff accepts" {
     const l = tools.linterFor(&Config{}, "py", "py").?;
     try testing.expectEqualStrings("ruff", l.argv[0]);
     for (l.argv) |a| try testing.expect(!std.mem.eql(u8, a, "--no-color"));
+}
+
+test "externalWins: a configured tool, or the project's own config with the tool on the App's PATH, beats the server; otherwise the server formats" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+    var app = try App.initWith(gpa, io, .{ .workspace = root, .cols = 80, .rows = 20 });
+    defer app.deinit();
+    try tmp.dir.createDirPath(io, "src/deep");
+    try tmp.dir.createDirPath(io, "bin");
+    const file = try std.fs.path.join(gpa, &.{ root, "src", "deep", "a.ts" });
+    defer gpa.free(file);
+    // No config anywhere: the server formats (null).
+    try testing.expect(externalWins(&app, file) == null);
+    // A `.prettierrc` at the root, but no prettier on the App's PATH: still the server.
+    try tmp.dir.writeFile(io, .{ .sub_path = ".prettierrc", .data = "{ \"semi\": false }\n" });
+    try app.env.put("PATH", "");
+    try testing.expect(externalWins(&app, file) == null);
+    // The tool appears on the App's PATH (not this process's): the project chose.
+    try tmp.dir.writeFile(io, .{ .sub_path = "bin/prettier", .data = "#!/bin/sh\ncat\n" });
+    const bin = try std.fs.path.join(gpa, &.{ root, "bin" });
+    defer gpa.free(bin);
+    try app.env.put("PATH", bin);
+    try testing.expectEqual(ExternalReason.project_config, externalWins(&app, file).?);
+    // The config may sit in a directory between the file and the root.
+    try tmp.dir.deleteFile(io, ".prettierrc");
+    try testing.expect(externalWins(&app, file) == null);
+    try tmp.dir.writeFile(io, .{ .sub_path = "src/prettier.config.js", .data = "module.exports = {}\n" });
+    try testing.expectEqual(ExternalReason.project_config, externalWins(&app, file).?);
+    try tmp.dir.deleteFile(io, "src/prettier.config.js");
+    // A `prettier` key in package.json counts; a package.json without one does not.
+    try tmp.dir.writeFile(io, .{ .sub_path = "package.json", .data = "{ \"name\": \"x\" }\n" });
+    try testing.expect(externalWins(&app, file) == null);
+    try tmp.dir.writeFile(io, .{ .sub_path = "package.json", .data = "{ \"name\": \"x\", \"prettier\": { \"semi\": false } }\n" });
+    try testing.expectEqual(ExternalReason.project_config, externalWins(&app, file).?);
+    // An extension whose builtin tool has no project config shape (gofmt) never wins this way.
+    const go = try std.fs.path.join(gpa, &.{ root, "src", "a.go" });
+    defer gpa.free(go);
+    try testing.expect(externalWins(&app, go) == null);
+    // `.formatters.<ext>` wins outright; an empty cmd disables the tool.
+    defer app.cfg.formatters.deinit(gpa);
+    try app.cfg.formatters.put(gpa, "go", .{ .cmd = &.{"my-fmt"} });
+    try testing.expectEqual(ExternalReason.configured, externalWins(&app, go).?);
+    try app.cfg.formatters.put(gpa, "ts", .{ .cmd = &.{} });
+    try testing.expect(externalWins(&app, file) == null);
 }
 
 test "replaceWhole splices only the changed middle and keeps the cursor" {

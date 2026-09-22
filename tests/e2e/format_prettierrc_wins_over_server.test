@@ -1,0 +1,33 @@
+# The project's formatter beats the server's: with a `.prettierrc` in
+# the workspace and prettier on PATH, `lsp.format` and format-on-save
+# run prettier, not the language server's `textDocument/formatting`.
+# Before, the server was preferred whenever it formats — tsserver
+# always does — so on every TS/JS project the repo's own prettier config
+# was ignored by the default format path and a save rewrote the file in
+# a style the repo's `prettier --check` rejects.
+#
+# The fake server formats too (it trims trailing blanks); `prettier` is
+# a shim on the App's PATH that answers with one recognisable line.
+# Only the shim's directory is on PATH, so nothing else starts.
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+write bin/prettier #!/bin/sh\ncat > /dev/null\nprintf 'const x = 1 // prettier was here\\n'\n
+shell /bin/chmod +x bin/prettier
+write .prettierrc { "semi": false, "singleQuote": true }\n
+write package.json { "name": "acme" }\n
+write .fkroot ""
+write .mnml/config.zon .{ .lsp = .{ .fake = .{ .cmd = "$MNML_FAKE_LSP", .args = .{ "--log", "lsp.log" }, .extensions = .{ "js" }, .root_markers = .{ ".fkroot" } } } }
+write src/a.js "const  x=1;  \n"
+open src/a.js
+expect screen contains "LSP 1"
+command lsp.format
+expect screen contains "formatted src/a.js with prettier"
+expect screen contains "const x = 1 // prettier was here"
+# Format-on-save goes the same way: the file on disk is prettier's text,
+# not the server's trim of the buffer. (A `.test` cannot change the
+# config the App booted with; `:set` flips the switch live.)
+ex set editor.format_on_save=true
+type "// edited"
+key ctrl+s
+wait 500
+expect file src/a.js contains "const x = 1 // prettier was here"
+expect file src/a.js lacks "edited"

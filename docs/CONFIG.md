@@ -53,7 +53,7 @@ otherwise. Copy what you need; leave the rest out.
         .breadcrumb = true,
         .auto_pair = true,
         .auto_indent = true,
-        .format_on_save = false,
+        .format_on_save = false, // who formats: see `.formatters` below
         .will_save_wait_until = false,
         .format_on_type = false,
         .autosave_on_focus_loss = false, // save every dirty buffer when the terminal loses focus
@@ -722,6 +722,16 @@ otherwise. Copy what you need; leave the rest out.
     // `bin/run-all` that starts `#!/usr/bin/env bash`, and for a `.zshrc`.
     // A row for the exact extension wins over the language's. The builtin
     // tables (`src/lsp/tools.zig`) are read the same way.
+    // Who formats a file (`lsp.format`, `editor.format`, format-on-save):
+    //   1. `.formatters.<ext>` below — you chose the tool; it wins.
+    //   2. the builtin tool for the extension (prettier / rustfmt / ruff /
+    //      stylua …) when the PROJECT carries its config — a `.prettierrc`
+    //      (or a `prettier` key in package.json), `rustfmt.toml`,
+    //      `ruff.toml`, `stylua.toml` — and the tool is on PATH; the
+    //      project chose, whatever the language server would do.
+    //   3. the language server, when it formats.
+    //   4. the builtin tool, without a project config.
+    // `editor.format_external` skips the list and always runs the tool.
     .formatters = .{
         .rs = .{ .cmd = .{ "rustfmt", "--edition", "2024" } }, // stdin → stdout
         .zig = .{ .cmd = .{ "zig", "fmt", "--stdin" } },

@@ -916,7 +916,9 @@ pub fn onSavePre(app: *App, args: hooks.HookArgs) void {
     // An autosave is not a save the user asked for: nothing reformats
     // the text under them.
     if (args.save_pre.auto) return;
-    format_app.onSavePre(app, pane, e, s);
+    // The external tool formatted (configured, or the project's own):
+    // the server is not asked as well.
+    if (format_app.onSavePre(app, pane, e, s)) return;
     if (!app.cfg.editor.format_on_save) return;
     const srv = s orelse return;
     if (!srv.caps.formatting or !srv.ready) return;

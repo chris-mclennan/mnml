@@ -81,6 +81,28 @@ pub const builtin_linters = [_]LintEntry{
     .{ "bash", .{ .argv = &.{ "shellcheck", "--format=gcc", "{file}" }, .parser = .shellcheck } },
 };
 
+/// The files a project carries when a builtin tool is THE formatter
+/// there: a `.prettierrc` beside `package.json` means the repo's
+/// `prettier --check` is the law, whatever the language server's own
+/// formatter would do. Keyed by the tool's binary name. A `package_json_key`
+/// is a top-level key of `package.json` that says the same.
+pub const ProjectConfig = struct {
+    files: []const []const u8,
+    package_json_key: ?[]const u8 = null,
+};
+
+pub fn projectConfigFor(bin: []const u8) ?ProjectConfig {
+    const name = std.fs.path.basename(bin);
+    if (std.mem.eql(u8, name, "prettier")) return .{
+        .files = &.{ ".prettierrc", ".prettierrc.json", ".prettierrc.yaml", ".prettierrc.yml", ".prettierrc.json5", ".prettierrc.js", ".prettierrc.cjs", ".prettierrc.mjs", ".prettierrc.toml", "prettier.config.js", "prettier.config.cjs", "prettier.config.mjs", "prettier.config.ts" },
+        .package_json_key = "prettier",
+    };
+    if (std.mem.eql(u8, name, "rustfmt")) return .{ .files = &.{ "rustfmt.toml", ".rustfmt.toml" } };
+    if (std.mem.eql(u8, name, "ruff")) return .{ .files = &.{ "ruff.toml", ".ruff.toml" } };
+    if (std.mem.eql(u8, name, "stylua")) return .{ .files = &.{ "stylua.toml", ".stylua.toml" } };
+    return null;
+}
+
 /// The config's formatter for the file, else the builtin, else null.
 /// `ext` is the file's extension (empty for `bin/run-all`) and `key`
 /// the language `highlight.detect` named for it (`sh` for that script,
@@ -520,4 +542,14 @@ test "the builtin ESLint linter asks for --format=json (ESLint 9 has no unix for
     try testing.expectEqual(@as(usize, 0), (try parseOutput(a, .eslint, "", "[]", "/ws/x.ts")).len);
     try testing.expectEqual(@as(usize, 0), (try parseOutput(a, .eslint, "", "[not json", "/ws/x.ts")).len);
     try testing.expectEqual(@as(usize, 0), (try parseOutput(a, .eslint, "", "The unix formatter is no longer part of core ESLint.", "/ws/x.ts")).len);
+}
+
+test "projectConfigFor names the files that make a builtin tool the project's formatter" {
+    const pr = projectConfigFor("prettier").?;
+    try testing.expectEqualStrings(".prettierrc", pr.files[0]);
+    try testing.expectEqualStrings("prettier", pr.package_json_key.?);
+    try testing.expectEqualStrings("rustfmt.toml", projectConfigFor("/usr/local/bin/rustfmt").?.files[0]);
+    try testing.expect(projectConfigFor("ruff").?.package_json_key == null);
+    try testing.expect(projectConfigFor("gofmt") == null);
+    try testing.expect(projectConfigFor("zig") == null);
 }
