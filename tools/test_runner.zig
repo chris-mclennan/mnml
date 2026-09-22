@@ -28,6 +28,14 @@ const testing = std.testing;
 
 pub const std_options: std.Options = .{ .logFn = log };
 
+/// How a test tells it is running under this runner: `@import("root")`
+/// is the runner in a test build. A test that has a table worth
+/// printing (`src/glyph/builder.zig`'s placed boxes) prints it here,
+/// where stderr is already streaming names, and stays quiet under the
+/// default runner, where any output makes the build runner report
+/// `failed command:` beside a step that passed.
+pub const traces = true;
+
 var log_err_count: usize = 0;
 var fba_buffer: [8192]u8 = undefined;
 var fba: std.heap.FixedBufferAllocator = .init(&fba_buffer);

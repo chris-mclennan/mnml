@@ -86,6 +86,35 @@ pub const claude_spark_svg = data.claude_spark_svg;
 pub const codex_svg = data.codex_svg;
 pub const ghostty_svg = data.ghostty_svg;
 
+/// How the two marks the user sized by eye are placed. `place` scales
+/// each SVG uniformly — aspect kept, always — to the tighter of a
+/// height band and a width cap, and centres it on `Fit.center`; the
+/// art decides which of the two binds.
+///
+/// One `Fit` used to serve every mark. The ghost is TALLER than it is
+/// wide (a 27 × 32 viewBox), so it stopped at the height band — 0.80
+/// em — and landed 1.114 advances across. The Claude figure's art is
+/// 24 × 15, WIDER than tall, so it ran into the width cap instead and
+/// took the whole 1.25 advances, which made it 0.47 em tall: as wide
+/// as the ghost and not much more than half its height. On the real
+/// tab cluster that read as the figure being the smaller mark and the
+/// ghost slightly too tall — and the figure's shape is not up for
+/// change, so its footprint is what moves.
+///
+/// So the ghost comes down a tenth, to a 0.72 em band (`ghost_fit`),
+/// and the figure goes up to a 1.30-advance cap (`figure_fit`) — the
+/// rough tenth it was asked for stops at the cap, +4 %, because past
+/// 1.3 advances a mark is more in its neighbours' cells than its own.
+/// Both keep the shared centre (0.36 em), so nothing sits lower than
+/// anything else. The square pair — the spark and the Codex mark —
+/// keep the default `Fit` they always had: 0.75 em, the figure's width
+/// give or take, and they were not what the eye caught. `Sources`'
+/// custom art takes its slot's fit, so a user's own ghost or figure is
+/// placed the same way. The placed-box test below prints every box
+/// and pins each one to ±3 %.
+pub const ghost_fit: ttf.Fit = .{ .height = 0.72 };
+pub const figure_fit: ttf.Fit = .{ .width = 1.30 };
+
 /// The art behind the two marks a user may replace. Each field
 /// defaults to the shipped drawing, so a build that only swaps one
 /// names only that one — and a bake of either keeps the other, which is
@@ -105,11 +134,55 @@ pub const Sources = struct {
 /// slot.
 pub fn defaultSpecs(src: Sources) [4]Spec {
     return .{
-        .{ .codepoint = claude, .name = "claude-mark", .source = src.claude },
+        .{ .codepoint = claude, .name = "claude-mark", .source = src.claude, .fit = figure_fit },
         .{ .codepoint = codex, .name = "codex-mark", .source = codex_svg },
         .{ .codepoint = claude_spark, .name = "claude-spark", .source = claude_spark_svg },
-        .{ .codepoint = terminal, .name = "terminal-mark", .source = src.terminal },
+        .{ .codepoint = terminal, .name = "terminal-mark", .source = src.terminal, .fit = ghost_fit },
     };
+}
+
+/// The box `place` puts a spec's art in, in font units: the extent of
+/// the placed outline, which is what the eye compares between two marks
+/// in the same row of chips. `advances` is that width in cells — above
+/// 1.0 the mark bleeds into its neighbour.
+pub const Placed = struct {
+    w: f64,
+    h: f64,
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+
+    pub fn advances(b: Placed) f64 {
+        return b.w / @as(f64, @floatFromInt(ttf.advance_width));
+    }
+
+    /// The box's vertical middle, in font units above the baseline —
+    /// `Fit.center` × the em when `place` has done its job.
+    pub fn centerY(b: Placed) f64 {
+        return (b.y0 + b.y1) / 2.0;
+    }
+
+    /// The height as a fraction of the em — the other half of the
+    /// `Fit`, and the number `Fit.height` caps.
+    pub fn emHeight(b: Placed) f64 {
+        return b.h / @as(f64, @floatFromInt(ttf.units_per_em));
+    }
+};
+
+/// Where `spec`'s art lands once `place` has scaled and centred it.
+pub fn placedBox(arena: Allocator, spec: Spec) Error!Placed {
+    const placed = try ttf.place(arena, try svg.parse(arena, spec.source), spec.fit);
+    var b: Placed = .{ .w = 0, .h = 0, .x0 = std.math.floatMax(f64), .x1 = -std.math.floatMax(f64), .y0 = std.math.floatMax(f64), .y1 = -std.math.floatMax(f64) };
+    for (placed) |c| for (c) |p| {
+        b.x0 = @min(b.x0, p.x);
+        b.x1 = @max(b.x1, p.x);
+        b.y0 = @min(b.y0, p.y);
+        b.y1 = @max(b.y1, p.y);
+    };
+    b.w = b.x1 - b.x0;
+    b.h = b.y1 - b.y0;
+    return b;
 }
 
 // ─── the connectors ─────────────────────────────────────────────────────
@@ -532,7 +605,10 @@ test "U+F1E00 is the Claude Code figure, with its two eye holes — not the old 
     // ratio is what tells the two apart after `place` has scaled
     // whichever one it got to fill the cell.
     try t.expectEqual(@as(f64, 24), img.view.w);
-    const placed = try ttf.place(arena, img, .{});
+    // The SHIPPED fit, not the default: the figure is baked at
+    // `figure_fit`, and a test that measured `.{}` would keep passing
+    // while the face carried something else.
+    const placed = try ttf.place(arena, img, figure_fit);
     try t.expectEqual(@as(usize, 3), placed.len);
     var min_x: f64 = 1e30;
     var max_x: f64 = -1e30;
@@ -544,8 +620,8 @@ test "U+F1E00 is the Claude Code figure, with its two eye holes — not the old 
         min_y = @min(min_y, p.y);
         max_y = @max(max_y, p.y);
     };
-    // Width-limited, so it fills `Fit.width` × the advance exactly…
-    try t.expectApproxEqAbs(@as(f64, @floatFromInt(ttf.advance_width)) * 1.25, max_x - min_x, 0.01);
+    // Width-limited, so it fills `figure_fit.width` × the advance exactly…
+    try t.expectApproxEqAbs(@as(f64, @floatFromInt(ttf.advance_width)) * figure_fit.width, max_x - min_x, 0.01);
     // …and is 15/24 as tall. The spark came out square (ratio ~1.0).
     try t.expectApproxEqAbs(15.0 / 24.0, (max_y - min_y) / (max_x - min_x), 0.01);
 
@@ -585,8 +661,9 @@ test "U+F1E02 is the Anthropic spark — the other art, at its own codepoint, so
     try t.expectEqual(@as(f64, 94), img.view.w);
     try t.expectEqual(@as(f64, 94), img.view.h);
     // One contour and no holes: a star, where the figure is a body
-    // with two eyes cut out of it.
-    const placed = try ttf.place(arena, img, .{});
+    // with two eyes cut out of it. The shipped fit — the spark's spec
+    // carries the default — as the figure's test measures its own.
+    const placed = try ttf.place(arena, img, specFit(claude_spark));
     try t.expectEqual(@as(usize, 1), placed.len);
     var min_x: f64 = 1e30;
     var max_x: f64 = -1e30;
@@ -615,4 +692,118 @@ test "U+F1E02 is the Anthropic spark — the other art, at its own codepoint, so
     }
     try t.expectEqualStrings(claude_svg, figure_src.?);
     try t.expectEqualStrings(claude_spark_svg, spark_src.?);
+}
+
+/// The fit `defaultSpecs` gives `cp` — what the face is actually
+/// baked with, so a test measures the shipped placement and not one
+/// it named itself.
+fn specFit(cp: u21) ttf.Fit {
+    for (defaultSpecs(.{})) |s| if (s.codepoint == cp) return s.fit;
+    unreachable;
+}
+
+/// One shipped mark's placed box, in em: the numbers the user sized by
+/// eye, pinned so a new SVG or a `Fit` edit fails loudly rather than
+/// quietly reshaping the tab cluster.
+const Pin = struct { cp: u21, w: f64, h: f64 };
+
+/// The shipped boxes. The ghost is height-limited by `ghost_fit` (0.72
+/// em, so 0.601 em — 1.00 advances — across from its 27 × 32 art); the
+/// figure is width-limited by `figure_fit` (1.30 advances is 0.780 em,
+/// and its 24 × 15 art makes that 0.4875 em tall); the square pair sit
+/// on the default `Fit`'s 1.25-advance cap, 0.75 em each way.
+const pins = [_]Pin{
+    .{ .cp = claude, .w = 0.780, .h = 0.4875 },
+    .{ .cp = codex, .w = 0.750, .h = 0.750 },
+    .{ .cp = claude_spark, .w = 0.750, .h = 0.750 },
+    .{ .cp = terminal, .w = 0.6014, .h = 0.720 },
+};
+
+/// The band a pinned number may drift in: ±3 %, wide enough for a
+/// redrawn SVG that keeps its proportions, tight enough that a `Fit`
+/// change of a tenth (the size of the ones the user asks for) fails.
+const pin_tolerance = 0.03;
+
+test "every shipped mark's placed box is pinned: the ghost's 0.72 em band, the figure's 1.30-advance cap, the square pair on the default — all on one centre" {
+    // The table these numbers come from, for a human. It prints under
+    // `-Dtest-trace` (whose runner is `root` and streams every test's
+    // name anyway — `tools/test_runner.zig`):
+    //   MNML_TEST_FILTER="placed box is pinned" zig build unit -Dtest-trace
+    // or with `MNML_GLYPH_BOXES=1` set under the default runner.
+    // (Printing unconditionally would make the build runner report
+    // `failed command:` beside a step that passed.)
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const specs = defaultSpecs(.{});
+    const show = @hasDecl(@import("root"), "traces") or std.c.getenv("MNML_GLYPH_BOXES") != null;
+    const em: f64 = @floatFromInt(ttf.units_per_em);
+
+    var seen: usize = 0;
+    for (specs) |s| {
+        const b = try placedBox(arena, s);
+        if (show) std.debug.print(
+            "{s:<14} w={d:7.2} h={d:7.2}  {d:5.3} advances  {d:5.3} em wide  {d:5.3} em tall  x {d:7.2}..{d:7.2}  y {d:7.2}..{d:7.2}  centre {d:6.2}\n",
+            .{ s.name, b.w, b.h, b.advances(), b.w / em, b.emHeight(), b.x0, b.x1, b.y0, b.y1, b.centerY() },
+        );
+        // Every mark shares the centre — `Fit.center`, 0.36 em, 360
+        // units up — so a shorter mark sits ON the line the others sit
+        // on, not on the baseline below them.
+        try t.expectApproxEqAbs(@as(f64, 360), b.centerY(), 0.01);
+        for (pins) |pin| {
+            if (pin.cp != s.codepoint) continue;
+            seen += 1;
+            errdefer std.debug.print("{s}: placed {d:.4} × {d:.4} em, pinned {d:.4} × {d:.4}\n", .{ s.name, b.w / em, b.emHeight(), pin.w, pin.h });
+            try t.expectApproxEqRel(pin.w, b.w / em, pin_tolerance);
+            try t.expectApproxEqRel(pin.h, b.emHeight(), pin_tolerance);
+        }
+    }
+    // Every shipped mark has a pin; a fifth spec would need its own.
+    try t.expectEqual(specs.len, seen);
+    try t.expectEqual(pins.len, seen);
+}
+
+test "the placed boxes stand in the relation the user asked for: the figure as wide as the ghost and more, the ghost a tenth under its old band, aspects untouched" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var by_cp = std.AutoHashMapUnmanaged(u21, Placed).empty;
+    for (defaultSpecs(.{})) |s| try by_cp.put(arena, s.codepoint, try placedBox(arena, s));
+    const ghost = by_cp.get(terminal).?;
+    const figure = by_cp.get(claude).?;
+    // The ghost was 0.80 em; it is 0.72 now — the "slightly too tall"
+    // taken off it — and it stays taller than it is wide, as its art is.
+    try t.expectApproxEqAbs(@as(f64, 0.72), ghost.emHeight(), 0.001);
+    try t.expectApproxEqAbs(@as(f64, 27.0 / 32.0), ghost.w / ghost.h, 0.01);
+    // The figure was 1.25 advances (as wide as the ghost's 1.114 and
+    // then some); it is 1.30 now, and still 15/24 as tall as it is
+    // wide: a uniform scale, never a stretch.
+    try t.expectApproxEqAbs(@as(f64, 1.30), figure.advances(), 0.001);
+    try t.expectApproxEqAbs(@as(f64, 15.0 / 24.0), figure.h / figure.w, 0.001);
+    try t.expect(figure.w > ghost.w);
+    // The square pair are square and match each other exactly, which
+    // is what lets the spark stand in for the figure and the two AI
+    // chips sit side by side.
+    const spark = by_cp.get(claude_spark).?;
+    const cdx = by_cp.get(codex).?;
+    try t.expectApproxEqAbs(@as(f64, 1.0), spark.w / spark.h, 0.001);
+    try t.expectApproxEqAbs(spark.w, cdx.w, 0.01);
+    try t.expectApproxEqAbs(spark.h, cdx.h, 0.01);
+}
+
+test "a custom SVG in either slot is placed with that slot's fit — the user's ghost gets the ghost's band, their figure the figure's cap" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const square = "<svg viewBox=\"0 0 10 10\"><path d=\"M1 1 L9 1 L9 9 L1 9 Z\"/></svg>";
+    var by_cp = std.AutoHashMapUnmanaged(u21, Placed).empty;
+    for (defaultSpecs(.{ .terminal = square, .claude = square })) |s| try by_cp.put(arena, s.codepoint, try placedBox(arena, s));
+    // A square in the terminal slot stops at the ghost's 0.72 em band…
+    try t.expectApproxEqAbs(@as(f64, 0.72), by_cp.get(terminal).?.emHeight(), 0.001);
+    try t.expectApproxEqAbs(@as(f64, 1.20), by_cp.get(terminal).?.advances(), 0.001);
+    // …and the same square in Claude's slot at the figure's 1.30-advance
+    // cap (0.78 em, under the default 0.80 band), so the two slots
+    // place the same art differently and each as its own mark is.
+    try t.expectApproxEqAbs(@as(f64, 1.30), by_cp.get(claude).?.advances(), 0.001);
+    try t.expectApproxEqAbs(@as(f64, 0.78), by_cp.get(claude).?.emHeight(), 0.001);
 }

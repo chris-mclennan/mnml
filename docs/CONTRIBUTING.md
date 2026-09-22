@@ -468,7 +468,23 @@ chips around `U+F1C03…F1F00` — so the file is read back
 (`src/glyph/ttf.zig`'s reader), folded into what this build bakes
 (`builder.merge`: keep theirs, replace ours, add the new, drop an
 outline no cmap reaches), and written through a temp file, with the old
-one copied to `~/Backups/mnml-zig/fonts/` first. Terminals read the
+one copied to `~/Backups/mnml-zig/fonts/` first.
+
+**A mark is placed by its own `Fit`, and the shipped boxes are pinned.**
+`place` scales each SVG uniformly — aspect always kept — to the tighter
+of a height band and a width cap, centred on 0.36 em; the art decides
+which binds. One `Fit` for every mark did not work: the ghost is taller
+than it is wide, so it stops at the height band, while the wide Claude
+figure runs into the width cap and comes out not much over half the
+ghost's height. So the ghost carries `builder.ghost_fit` (a 0.72 em
+band) and the figure `builder.figure_fit` (a 1.30-advance cap); the
+square marks keep the default. `builder.placedBox` measures where a
+mark lands and `builder.pins` holds every shipped box in em to ±3 % —
+run `MNML_TEST_FILTER="placed box is pinned" zig build unit -Dtest-trace`
+to print the table (the trace runner is what turns the print on;
+`MNML_GLYPH_BOXES=1` does the same under the default runner). A new
+mark needs a pin of its own, and a `Fit` edit needs its pins moved on
+purpose. Terminals read the
 font directory at launch, so restart yours. Without the face the
 affected glyphs fall back — the hollow cursor to `▯` — rather than
 rendering as `?`; `:integrations.audit_glyphs` says which are at risk.
