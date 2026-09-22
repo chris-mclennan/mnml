@@ -27,6 +27,7 @@ const Allocator = std.mem.Allocator;
 const wire = @import("wire.zig");
 const event = @import("../core/event.zig");
 const ids = @import("../core/ids.zig");
+const child_os = @import("../core/child.zig");
 
 pub const PaneId = ids.PaneId;
 pub const supported = Io.net.has_unix_sockets;
@@ -411,15 +412,18 @@ fn reader(events: *event.EventQueue, io: Io, gpa: Allocator, shared: *Shared, se
     defer shared.done.store(true, .release);
     readLoop(events, io, gpa, shared, server, pane, generation);
     // Reap: the child exits on `goodbye` or its own `bye`; a cancel
-    // while we wait (the pane closed) kills it instead.
+    // while we wait (the pane closed) kills it instead. // changed: the
+    // kill goes by pid, taken first — a cancelled `Child.wait` clears
+    // `child.id` without killing anything, so the `c.kill` that used
+    // to sit here saw a null id and did nothing, and a bridge child
+    // that ignored `goodbye` outlived its pane.
     shared.lock.lockUncancelable(io);
     var child = shared.child;
     shared.child = null;
     shared.lock.unlock(io);
     if (child) |*c| {
-        _ = c.wait(io) catch {
-            c.kill(io);
-        };
+        const pid = c.id;
+        _ = c.wait(io) catch child_os.reapAbandoned(pid);
     }
 }
 
@@ -667,4 +671,41 @@ test "envFor carries the mount contract; socketPath stays short enough for socka
     defer gpa.free(fallback);
     try testing.expect(fallback.len < Io.net.UnixAddress.max_len);
     try testing.expect(std.mem.startsWith(u8, fallback, "/tmp/mnml-mount-"));
+}
+
+test "close: a sibling that never connected and outlives goodbye is killed, not orphaned — the reader's cancelled wait reaps it by pid" {
+    if (!supported or builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var events = try event.EventQueue.init(gpa, 64);
+    defer events.deinit(io);
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // Relative to the build root, where `.zig-cache` is: short enough
+    // for `sockaddr_un` on every platform, and inside the tree.
+    var pbuf: [128]u8 = undefined;
+    const dir = try std.fmt.bufPrint(&pbuf, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    var sbuf: [160]u8 = undefined;
+    const sock = try std.fmt.bufPrint(&sbuf, "{s}/m.sock", .{dir});
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+
+    // A "sibling" that never connects to the socket and ignores every
+    // goodbye — a hung integration binary.
+    const m = try Mount.spawn(gpa, io, &events, .{ .argv = &.{ "/bin/sleep", "30" }, .cwd = dir, .env = &env, .socket_path = sock, .pane = 1, .generation = 0 });
+    const pid = blk: {
+        m.shared.lock.lockUncancelable(io);
+        defer m.shared.lock.unlock(io);
+        break :blk m.shared.child.?.id.?;
+    };
+    try testing.expect(!child_os.gone(pid));
+
+    // `close` wakes the reader out of `accept`; the reader takes the
+    // child and blocks in `wait`; `grace_ms` later the group is
+    // cancelled and that wait comes back `Canceled` with `id` cleared
+    // and the child untouched. The pid taken before the wait is what
+    // takes it down.
+    m.close();
+    m.destroy();
+    try testing.expect(child_os.gone(pid));
 }
