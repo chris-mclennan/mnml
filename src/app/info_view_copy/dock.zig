@@ -136,7 +136,13 @@ test "every dock item kind, the pin chip and every widget part have entries" {
     const a = app.frame.allocator();
     inline for (comptime std.enums.values(launcher_dock.Kind)) |k| try t.expect(itemKind(k, null, false).body.len >= 40);
     try t.expectEqualStrings("Pin the launcher dock", (try launcher(&app, a, .pin)).?.title);
-    // Item 0 on a fresh app is the `+`.
-    try t.expectEqualStrings("+ New…", (try launcher(&app, a, .{ .item = 0 })).?.title);
+    // The `+` is on a fresh app's strip — at whichever end `ui.dock.plus_at` puts it.
+    const list = try launcher_dock.items(&app, a);
+    var plus_seen = false;
+    for (list, 0..) |it, i| if (it.kind == .plus) {
+        try t.expectEqualStrings("+ New…", (try launcher(&app, a, .{ .item = @intCast(i) })).?.title);
+        plus_seen = true;
+    };
+    try t.expect(plus_seen);
     inline for (comptime std.enums.values(hit.DockPart)) |p| try t.expect((try widget(&app, a, 999, p)) != null);
 }

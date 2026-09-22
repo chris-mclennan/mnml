@@ -49,6 +49,19 @@ pub const rows = [_]Row{
     .{ .label = "Align: centre", .kind = .set_dock_align, .entry = dockAlign("centre", "center", "centred in the band, the run growing out from the middle as items are added") },
     .{ .label = "Align: start", .kind = .set_dock_align, .entry = dockAlign("start", "start", "packed against the start of the band — the left of a bottom strip, the top of a side one") },
     .{ .label = "Align: end", .kind = .set_dock_align, .entry = dockAlign("end", "end", "packed against the end of the band — the right of a bottom strip, the foot of a side one") },
+    .{ .label = "+ at the right end", .kind = .set_dock_plus_at, .entry = dockPlusAt("right end", "right", "the end of the run — the right of a bottom strip") },
+    .{ .label = "+ at the bottom end", .kind = .set_dock_plus_at, .entry = dockPlusAt("bottom end", "right", "the end of the run — the foot of a side strip") },
+    .{ .label = "+ at the left end", .kind = .set_dock_plus_at, .entry = dockPlusAt("left end", "left", "the head of the run — the left of a bottom strip") },
+    .{ .label = "+ at the top end", .kind = .set_dock_plus_at, .entry = dockPlusAt("top end", "left", "the head of the run — the top of a side strip") },
+    .{ .label = "Running mark: bright icon", .kind = .set_dock_running_mark, .entry = dockRunningMark("bright icon", "bright", "paints the item's glyph in its full colour while a session or shell of its kind is running, and dims it otherwise") },
+    .{ .label = "Running mark: small dot", .kind = .set_dock_running_mark, .entry = dockRunningMark("small dot", "dot", "adds a small dot beside the item while a session or shell of its kind is running, the glyph itself unchanged") },
+    .{ .label = "Running mark: none", .kind = .set_dock_running_mark, .entry = dockRunningMark("none", "none", "shows nothing on the strip about what is running — the SESSIONS section and the tab strip still do") },
+    .{ .label = "Move left", .command = .@"view.dock_item_move_prev", .entry = dockItemMove("left", "one place earlier along a bottom strip", .@"view.dock_item_move_prev") },
+    .{ .label = "Move up", .command = .@"view.dock_item_move_prev", .entry = dockItemMove("up", "one place earlier along a side strip", .@"view.dock_item_move_prev") },
+    .{ .label = "Move right", .command = .@"view.dock_item_move_next", .entry = dockItemMove("right", "one place later along a bottom strip", .@"view.dock_item_move_next") },
+    .{ .label = "Move down", .command = .@"view.dock_item_move_next", .entry = dockItemMove("down", "one place later along a side strip", .@"view.dock_item_move_next") },
+    .{ .label = "Move to start", .command = .@"view.dock_item_move_first", .entry = dockItemMove("to start", "to the head of the run", .@"view.dock_item_move_first") },
+    .{ .label = "Move to end", .command = .@"view.dock_item_move_last", .entry = dockItemMove("to end", "to the foot of the run", .@"view.dock_item_move_last") },
     .{ .label = "Show the + button", .kind = .set_dock_plus, .entry = .{
         .title = "Show the + button",
         .body = "Puts the `+` at the head of the strip — the same *Create…* menu the tab bar's `+` opens, one reach away from the dock. The row ticks while it is on and the press writes `ui.dock.plus` to the home config. Off, the strip starts straight at the first integration and the `+` is the tab bar's alone.",
@@ -281,8 +294,8 @@ pub const rows = [_]Row{
         .keys = &.{.{ .command = .@"tab.new", .label = "New tab page" }},
         .links = &.{ .{ .command = .{ .id = .@"tab.new", .label = "Add a page" } }, .{ .command = .{ .id = .@"view.move_to_new_tab", .label = "Move this pane to a new page" } }, .{ .command = .{ .id = .@"tab.picker", .label = "Tab pages…" } } },
     } },
-    .{ .label = "Move left", .entry = tabPageMove("left", "one place earlier", .@"tab.move_left", .@"tab.move_right") },
-    .{ .label = "Move right", .entry = tabPageMove("right", "one place later", .@"tab.move_right", .@"tab.move_left") },
+    .{ .label = "Move left", .command = .@"tab.move_left", .entry = tabPageMove("left", "one place earlier", .@"tab.move_left", .@"tab.move_right") },
+    .{ .label = "Move right", .command = .@"tab.move_right", .entry = tabPageMove("right", "one place later", .@"tab.move_right", .@"tab.move_left") },
 
     // ── a strip tab's own menu ──
     .{ .label = "Close", .command = .@"buffer.close", .entry = .{
@@ -423,6 +436,39 @@ fn dockPlacement(comptime where: []const u8, comptime value: []const u8, comptim
         .title = "Place: " ++ where,
         .body = "Puts a bottom strip " ++ what ++ ", written to the home config as `ui.dock.placement = " ++ value ++ "`. A revealed strip is put down as the row moves, since the one that is up is at the old place. On a side edge the row reads *(bottom edge only)* and still writes the key — it is the bottom strip's question, and moving back answers it.",
         .links = &.{ .{ .settings = .{ .row = copy.settingsRow("ui.dock.placement"), .label = "Dock placement in Settings" } }, .{ .command = .{ .id = .@"view.dock_move", .label = "Move it to the bottom edge" } }, copy.docsSection("The launcher dock") },
+    };
+}
+
+/// Its two *+ at the … end* rows — which end of the run the `+` sits
+/// at; the words follow the edge (right / left on a bottom strip, bottom
+/// / top on a side one).
+fn dockPlusAt(comptime where: []const u8, comptime value: []const u8, comptime what: []const u8) Entry {
+    return .{
+        .title = "+ at the " ++ where,
+        .body = "Puts the strip's `+` at " ++ what ++ ", written home as `ui.dock.plus_at = " ++ value ++ "`; the tick marks the end in force. The `+` stays out of the item order — *Move …* rows and `Alt+←` / `Alt+→` reorder the items around it, never it. With the `+` off (*Show the + button*) the row still writes the key for the next time it is on.",
+        .links = &.{ .{ .settings = .{ .row = copy.settingsRow("ui.dock.plus_at"), .label = "The +'s end in Settings" } }, .{ .settings = .{ .row = copy.settingsRow("ui.dock.plus"), .label = "The + itself" } }, copy.docsSection("The launcher dock") },
+    };
+}
+
+/// Its three *Running mark:* rows — how an item whose thing is running
+/// (a shell, a Claude or Codex session, an integration's pane) is told
+/// apart from one that is not.
+fn dockRunningMark(comptime form: []const u8, comptime value: []const u8, comptime what: []const u8) Entry {
+    return .{
+        .title = "Running mark: " ++ form,
+        .body = "Marks a running item by " ++ form ++ ": " ++ what ++ ". Written home as `ui.dock.running_mark = " ++ value ++ "`; the tick marks the form in use, and `:dock mark bright|dot|none` is the same switch from the command line. The mark reads the same state the SESSIONS section and the tab strip's chips do, so the three never disagree.",
+        .links = &.{ .{ .settings = .{ .row = copy.settingsRow("ui.dock.running_mark"), .label = "Running mark in Settings" } }, .{ .command = .{ .id = .@"view.activity_sessions", .label = "The sessions section" } }, copy.docsSection("The launcher dock") },
+    };
+}
+
+/// A dock item's own *Move …* rows — the item's place in the run, kept
+/// in `ui.dock.order`.
+fn dockItemMove(comptime word: []const u8, comptime how: []const u8, comptime id: command.CommandId) Entry {
+    return .{
+        .title = "Move " ++ word,
+        .body = "Moves this item " ++ how ++ " and writes the strip's order to `ui.dock.order` in the home config, so it holds across launches and workspaces. Items the list does not name follow in the strip's default order; the `+` keeps its end (*+ at the … end*) whatever the order says. `Alt+←` / `Alt+→` on a focused item step the same way.",
+        .keys = &.{.{ .command = id, .label = "Move " ++ word }},
+        .links = &.{ .{ .command = .{ .id = id, .label = "Move it" } }, .{ .command = .{ .id = .@"view.focus_dock", .label = "Focus the dock" } }, copy.docsSection("The launcher dock") },
     };
 }
 
