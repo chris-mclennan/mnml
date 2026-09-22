@@ -29,6 +29,10 @@ pub const Server = struct {
     /// Where `--log-file` appends one JSON line per request served;
     /// null is no log. Borrowed from the argv, which outlives us.
     log_path: ?[]const u8 = null,
+    /// `--delay-ms`: hold every reply this long before it goes out, so
+    /// a pane can be caught with its fetch in flight — the one screen
+    /// the loopback is otherwise too fast to paint.
+    delay_ms: u32 = 0,
 
     pub fn start(gpa: Allocator, io: Io, port: u16) !*Server {
         const self = try gpa.create(Server);
@@ -187,6 +191,7 @@ pub const Server = struct {
             n_extra += 1;
         }
         self.logRequest(method, target, reply.status, reply.body.len);
+        if (self.delay_ms > 0) self.io.sleep(.fromMilliseconds(self.delay_ms), .awake) catch {};
         request.respond(reply.body, .{
             .status = @enumFromInt(reply.status),
             .extra_headers = extra[0..n_extra],
