@@ -485,8 +485,10 @@ otherwise. Copy what you need; leave the rest out.
     // (yaml-language-server --stdio), html, css (.css/.scss/.less; the
     // vscode-*-language-server pair from `npm i -g
     // vscode-langservers-extracted`), csharp (csharp-ls, `dotnet tool
-    // install -g csharp-ls`; roots at the nearest `*.sln` / `*.csproj` /
-    // global.json — a `*` marker is a glob) and bash (bash-language-server
+    // install -g csharp-ls`; roots at the nearest `*.sln` / `*.slnx`
+    // anywhere above the file, else the nearest `*.csproj`, else
+    // global.json — ranked, so every project of a solution shares one
+    // server; a `*` marker is a glob) and bash (bash-language-server
     // start, `npm i -g bash-language-server`; .sh/.bash/.zsh, and any
     // extension-less script or dotfile the detector reads as shell —
     // the server runs shellcheck itself when it finds it, so the builtin

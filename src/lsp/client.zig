@@ -168,6 +168,10 @@ pub const Builtin = struct {
     args: []const []const u8,
     extensions: []const []const u8,
     root_markers: []const []const u8,
+    /// The markers rank: the walk looks for the first one all the way
+    /// up before it looks for the second. Off, the nearest directory
+    /// holding any marker wins.
+    root_markers_ranked: bool = false,
 };
 
 pub const builtins = [_]Builtin{
@@ -193,10 +197,14 @@ pub const builtins = [_]Builtin{
     .{ .name = "html", .cmd = "vscode-html-language-server", .args = &.{"--stdio"}, .extensions = &.{ "html", "htm" }, .root_markers = &.{ "package.json", ".git" } },
     .{ .name = "css", .cmd = "vscode-css-language-server", .args = &.{"--stdio"}, .extensions = &.{ "css", "scss", "less" }, .root_markers = &.{ "package.json", ".git" } },
     // C#: `csharp-ls` (a dotnet tool; stdio is its only transport, no
-    // flag) where Rust's table runs OmniSharp `-lsp`. The markers are
-    // Rust's — a solution first, then a project, then an SDK-style
-    // `global.json`; `*` is a glob (`markerMatches`).
-    .{ .name = "csharp", .cmd = "csharp-ls", .args = &.{}, .extensions = &.{ "cs", "csx" }, .root_markers = &.{ "*.sln", "*.csproj", "global.json" } },
+    // flag) where Rust's table runs OmniSharp `-lsp`. A solution first
+    // (`.sln`, then the XML `.slnx`), then a project, then an SDK-style
+    // `global.json`; `*` is a glob (`markerMatches`). Ranked: a file in
+    // `tests/Acme.Tests/` roots at the `Acme.sln` above its `.csproj`,
+    // so every project of the solution shares one Roslyn host and
+    // definition, references and rename cross projects — as Neovim's
+    // `root_pattern('*.sln')(f) or root_pattern('*.csproj')(f)`.
+    .{ .name = "csharp", .cmd = "csharp-ls", .args = &.{}, .extensions = &.{ "cs", "csx" }, .root_markers = &.{ "*.sln", "*.slnx", "*.csproj", "global.json" }, .root_markers_ranked = true },
     // Shell: bash-language-server (`start` is its stdio mode) for
     // `.sh` / `.bash` — and `.zsh`, which it opens like any other
     // document and which no other row would ever send it. The

@@ -373,6 +373,9 @@ const Spec = struct {
     cmd: []const u8,
     args: []const []const u8,
     root_markers: []const []const u8,
+    /// `client.Builtin.root_markers_ranked`: a builtin's, kept when the
+    /// config overrides the marker list.
+    root_markers_ranked: bool = false,
     settings: app_mod.Config.Dynamic,
     init_options: app_mod.Config.Dynamic,
 };
@@ -429,11 +432,12 @@ fn specFor(app: *App, path: []const u8) ?Spec {
                 .cmd = cfg.cmd orelse b.cmd,
                 .args = if (cfg.cmd != null) cfg.args else b.args,
                 .root_markers = if (cfg.root_markers.len > 0) cfg.root_markers else b.root_markers,
+                .root_markers_ranked = b.root_markers_ranked,
                 .settings = cfg.settings,
                 .init_options = cfg.initialization_options,
             };
         }
-        return .{ .name = b.name, .cmd = b.cmd, .args = b.args, .root_markers = b.root_markers, .settings = .empty_object, .init_options = .empty_object };
+        return .{ .name = b.name, .cmd = b.cmd, .args = b.args, .root_markers = b.root_markers, .root_markers_ranked = b.root_markers_ranked, .settings = .empty_object, .init_options = .empty_object };
     }
     return null;
 }
@@ -443,10 +447,21 @@ fn specFor(app: *App, path: []const u8) ?Spec {
 /// `find_root` falls back — the server still starts (rust-analyzer then
 /// says so itself: `Failed to discover workspace…`), so a lone `.rs`
 /// outside a crate gets the same server and the same toast as under
-/// Rust. A spec with no markers roots at the workspace.
-fn findRoot(app: *App, arena: Allocator, path: []const u8, markers: []const []const u8) Allocator.Error![]const u8 {
+/// Rust. A spec with no markers roots at the workspace. `ranked`
+/// markers are walked one at a time: the first marker anywhere up the
+/// tree beats the second one nearer the file.
+fn findRoot(app: *App, arena: Allocator, path: []const u8, markers: []const []const u8, ranked: bool) Allocator.Error![]const u8 {
     if (markers.len == 0) return app.workspace;
     const start = std.fs.path.dirname(path) orelse app.workspace;
+    if (ranked) {
+        for (markers) |m| if (try walkUp(app, arena, start, &.{m})) |d| return d;
+        return start;
+    }
+    return (try walkUp(app, arena, start, markers)) orelse start;
+}
+
+/// The first directory from `start` up holding any of `markers`.
+fn walkUp(app: *App, arena: Allocator, start: []const u8, markers: []const []const u8) Allocator.Error!?[]const u8 {
     var dir: ?[]const u8 = start;
     while (dir) |d| : (dir = std.fs.path.dirname(d)) {
         for (markers) |m| {
@@ -461,7 +476,7 @@ fn findRoot(app: *App, arena: Allocator, path: []const u8, markers: []const []co
         }
         if (d.len <= 1) break;
     }
-    return start;
+    return null;
 }
 
 /// Any entry of `dir_path` matching the glob `marker`. An unreadable
@@ -661,7 +676,7 @@ pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
         }
         return null;
     }
-    const root = try findRoot(app, arena, path, spec.root_markers);
+    const root = try findRoot(app, arena, path, spec.root_markers, spec.root_markers_ranked);
     for (app.lsp.servers.items) |s| if (std.mem.eql(u8, s.name, spec.name) and std.mem.eql(u8, s.root, root) and !s.transport.isDead()) return s;
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
     try argv.append(arena, try arena.dupe(u8, found.?));
@@ -3027,7 +3042,7 @@ test "a missing DEFAULT server is recorded once per session with no toast and no
     }
 }
 
-test "the root walk takes a glob marker: `*.sln` above `*.csproj` above the file, the nearest directory wins" {
+test "the root walk takes a glob marker: `*.sln` above `*.csproj` above the file — unranked the nearest directory wins, ranked (csharp) the solution does" {
     var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
     defer app.deinit();
     var tmp = testing.tmpDir(.{});
@@ -3036,26 +3051,50 @@ test "the root walk takes a glob marker: `*.sln` above `*.csproj` above the file
     const n = try tmp.dir.realPath(testing.io, &buf);
     const root = buf[0..n];
     try tmp.dir.createDirPath(testing.io, "src/Web");
+    try tmp.dir.createDirPath(testing.io, "tests/Web.Tests");
+    try tmp.dir.createDirPath(testing.io, "lone/Tool");
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "Acme.sln", .data = "" });
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "src/Web/Web.csproj", .data = "" });
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "src/Web/Foo.cs", .data = "class Foo {}\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "tests/Web.Tests/Web.Tests.csproj", .data = "" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "tests/Web.Tests/FooTests.cs", .data = "class FooTests {}\n" });
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     const file = try std.fs.path.join(arena, &.{ root, "src", "Web", "Foo.cs" });
+    const test_file = try std.fs.path.join(arena, &.{ root, "tests", "Web.Tests", "FooTests.cs" });
     const web = try std.fs.path.join(arena, &.{ root, "src", "Web" });
+    const markers: []const []const u8 = &.{ "*.sln", "*.slnx", "*.csproj", "global.json" };
     // Rust's `find_root`: the first directory up the walk holding ANY
     // marker — the project's own, here.
-    try testing.expectEqualStrings(web, try findRoot(&app, arena, file, &.{ "*.sln", "*.csproj", "global.json" }));
+    try testing.expectEqualStrings(web, try findRoot(&app, arena, file, markers, false));
+    // Ranked, the solution above beats the project beside the file, so
+    // both projects' files root at one directory: one server.
+    try testing.expectEqualStrings(root, try findRoot(&app, arena, file, markers, true));
+    try testing.expectEqualStrings(root, try findRoot(&app, arena, test_file, markers, true));
     // Asked for the solution alone, the walk climbs past the project.
-    try testing.expectEqualStrings(root, try findRoot(&app, arena, file, &.{"*.sln"}));
+    try testing.expectEqualStrings(root, try findRoot(&app, arena, file, &.{"*.sln"}, false));
     // No `.slnx` matches `*.sln`; nothing matches → the file's own directory.
-    try testing.expectEqualStrings(web, try findRoot(&app, arena, file, &.{"*.slnx"}));
-    // The csharp row's spec resolves to these markers and its binary.
+    try testing.expectEqualStrings(web, try findRoot(&app, arena, file, &.{"*.slnx"}, false));
+    // The csharp row's spec resolves to these markers, ranked, and its binary.
     const spec = specFor(&app, file).?;
     try testing.expectEqualStrings("csharp", spec.name);
     try testing.expectEqualStrings("csharp-ls", spec.cmd);
-    try testing.expectEqual(@as(usize, 3), spec.root_markers.len);
+    try testing.expectEqual(@as(usize, 4), spec.root_markers.len);
+    try testing.expect(spec.root_markers_ranked);
+    try testing.expectEqualStrings(root, try findRoot(&app, arena, test_file, spec.root_markers, spec.root_markers_ranked));
+    // A solution in the XML format ranks as a solution; a project with
+    // no solution above falls back to its `.csproj`.
+    var sub = try tmp.dir.openDir(testing.io, "lone", .{});
+    defer sub.close(testing.io);
+    try sub.writeFile(testing.io, .{ .sub_path = "Tool/Tool.csproj", .data = "" });
+    try sub.writeFile(testing.io, .{ .sub_path = "Tool/Main.cs", .data = "" });
+    const lone_file = try std.fs.path.join(arena, &.{ root, "lone", "Tool", "Main.cs" });
+    const lone = try std.fs.path.join(arena, &.{ root, "lone" });
+    try tmp.dir.deleteFile(testing.io, "Acme.sln");
+    try testing.expectEqualStrings(try std.fs.path.join(arena, &.{ lone, "Tool" }), try findRoot(&app, arena, lone_file, markers, true));
+    try sub.writeFile(testing.io, .{ .sub_path = "Lone.slnx", .data = "" });
+    try testing.expectEqualStrings(lone, try findRoot(&app, arena, lone_file, markers, true));
 }
 
 test "a symbols reply refreshes the outline without marking the syntax dirty (no reparse for a repaint)" {
