@@ -20,6 +20,7 @@ const bottom_dock = @import("bottom.zig");
 const http_panel = @import("http_panel.zig");
 const http_app = @import("http.zig");
 const git_palette = @import("git_palette.zig");
+const pty_pane = @import("pty_pane.zig");
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const Rect = @import("../ui/rect.zig");
@@ -515,6 +516,7 @@ fn focusDown(app: *App) CommandError!void {
 /// `Ctrl-W w`: the next leaf, and past the last one the sidebar when it
 /// is open (vim cycles every window, nvim-tree included).
 fn focusNextSplit(app: *App) CommandError!void {
+    if (try stepSessionTab(app, .next)) return;
     const cur = app.active orelse return error.NoActivePane;
     const layout = app.layouts.current();
     const leaves = try layout.leaves(app.frame.allocator());
@@ -541,6 +543,7 @@ fn focusNextSplit(app: *App) CommandError!void {
 /// the first one the sidebar when it is open; from the sidebar the last
 /// leaf.
 fn focusPrevSplit(app: *App) CommandError!void {
+    if (try stepSessionTab(app, .prev)) return;
     const cur = app.active orelse return error.NoActivePane;
     const layout = app.layouts.current();
     const leaves = try layout.leaves(app.frame.allocator());
@@ -561,6 +564,37 @@ fn focusPrevSplit(app: *App) CommandError!void {
     if (leaves.len < 2) return;
     const prev = leaves[(idx + leaves.len - 1) % leaves.len];
     app.setActive(layout.leaf(prev).?.active);
+}
+
+/// Claude / Codex sessions laid out as tabs (`ui.ai_layout_mode = tabs`)
+/// share one leaf, where the split walk has nowhere to go: from a
+/// session pane on a one-leaf page the pair steps through that leaf's
+/// session tabs instead, in strip order, with wrap. False — the split
+/// walk runs — anywhere else, and with fewer than two sessions there.
+fn stepSessionTab(app: *App, dir: enum { next, prev }) CommandError!bool {
+    if (app.focus != .pane) return false;
+    const cur = app.active orelse return false;
+    if (!isSessionPane(app, cur)) return false;
+    const layout = app.layouts.current();
+    const leaves = try layout.leaves(app.frame.allocator());
+    if (leaves.len != 1) return false;
+    const leaf = layout.leaf(leaves[0]) orelse return false;
+    var ring: std.ArrayListUnmanaged(PaneId) = .empty;
+    for (leaf.tabs.items) |id| if (isSessionPane(app, id)) try ring.append(app.frame.allocator(), id);
+    if (ring.items.len < 2) return false;
+    const at = std.mem.indexOfScalar(PaneId, ring.items, cur) orelse return false;
+    const n = ring.items.len;
+    const to = ring.items[if (dir == .next) (at + 1) % n else (at + n - 1) % n];
+    // What a SESSIONS card's Enter does (`sessions.openCmd`).
+    app.showPane(to);
+    app.focus = .{ .pane = to };
+    app.needs_render = true;
+    return true;
+}
+
+fn isSessionPane(app: *App, id: PaneId) bool {
+    const p = app.panes.pty(id) orelse return false;
+    return pty_pane.productOf(app, p) != null;
 }
 
 /// `Ctrl-W t` / `Ctrl-W b` (`:help CTRL-W_t`): the first / last leaf in
@@ -2132,4 +2166,62 @@ test "preview tabs: `ui.preview_tabs = false` and the vim profile open every fil
     app.cfg.ui.preview_tabs = true;
     app.input_style = .vim;
     try t.expect(!app.previewTabs());
+}
+
+test "sessions stacked as tabs in one leaf: from a session pane the walk steps the session tabs both ways with wrap, skipping other tabs; off a session or with two splits it is the split walk" {
+    if (builtin.os.tag == .windows or !pty_pane.supported) return error.SkipZigTest;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    // A stand-in `claude` (the basename is what makes it a session).
+    try tmp.dir.createDirPath(t.io, "bin");
+    const perms: std.Io.File.Permissions = .fromMode(0o755);
+    {
+        const f = try tmp.dir.createFile(t.io, "bin/claude", .{ .truncate = true, .permissions = perms });
+        defer f.close(t.io);
+        try f.writeStreamingAll(t.io, "#!/bin/sh\nsleep 30\n");
+    }
+    const claude = try std.fs.path.join(t.allocator, &.{ root, "bin", "claude" });
+    defer t.allocator.free(claude);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root });
+    defer app.deinit();
+    app.cfg.ui.ai_layout_mode = .tabs;
+    app.tree.visible = true;
+    const ed = try app.openScratch();
+    const s1 = try pty_pane.open(&app, .{ .argv = &.{claude}, .label = "claude", .kind = .command, .placement = .tab });
+    const s2 = try pty_pane.open(&app, .{ .argv = &.{claude}, .label = "claude", .kind = .command, .placement = .tab });
+    const s3 = try pty_pane.open(&app, .{ .argv = &.{claude}, .label = "claude", .kind = .command, .placement = .tab });
+    try t.expectEqual(@as(usize, 1), (try app.layouts.current().leaves(app.frame.allocator())).len);
+    app.showPane(s1);
+    app.focus = .{ .pane = s1 };
+    // Forward s1 → s2 → s3 → s1, the editor tab skipped, the sidebar
+    // never entered.
+    for ([_]PaneId{ s2, s3, s1 }) |want| {
+        try command.run(&app, .{ .static = .@"view.focus_next_split" });
+        try t.expect(app.focus == .pane and app.focus.pane == want);
+        try t.expectEqual(want, app.active.?);
+        try t.expectEqual(want, app.layouts.current().leaf(app.layouts.current().leafOf(want).?).?.active);
+    }
+    // Backward s1 → s3 → s2 → s1.
+    for ([_]PaneId{ s3, s2, s1 }) |want| {
+        try command.run(&app, .{ .static = .@"view.focus_prev_split" });
+        try t.expect(app.focus == .pane and app.focus.pane == want);
+        try t.expectEqual(want, app.active.?);
+    }
+    // From the editor tab it is the split walk: one leaf, the sidebar next.
+    app.showPane(ed);
+    app.focus = .{ .pane = ed };
+    try command.run(&app, .{ .static = .@"view.focus_next_split" });
+    try t.expect(app.focus == .tree);
+    // Two splits: the split walk again, even from a session.
+    app.showPane(s1);
+    app.focus = .{ .pane = s1 };
+    try splitWith(&app, .horizontal, ed);
+    try t.expectEqual(@as(usize, 2), (try app.layouts.current().leaves(app.frame.allocator())).len);
+    app.setActive(s1);
+    app.focus = .{ .pane = s1 };
+    app.tree.visible = false;
+    try command.run(&app, .{ .static = .@"view.focus_next_split" });
+    try t.expectEqual(ed, app.active.?);
 }
