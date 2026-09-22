@@ -52,6 +52,26 @@ pub const EditingMode = enum {
     }
 };
 
+/// Which Insert-entering command a `<count>` is riding on (`:help count`).
+/// `o` / `O` replicate as whole new lines; the other four replicate the
+/// typed run in place at the insertion point.
+pub const RepeatInsertKind = enum {
+    open_below,
+    open_above,
+    /// `i` — insert where the cursor is.
+    at_cursor,
+    /// `I` — at the line's first non-blank.
+    line_first_non_ws,
+    /// `a` — one char on.
+    after_cursor,
+    /// `A` — at the line end.
+    line_end,
+
+    pub fn opensLine(self: RepeatInsertKind) bool {
+        return self == .open_below or self == .open_above;
+    }
+};
+
 /// A small, closed set of buffer/app-level intents the editor cannot
 /// express. Bigger features are registered commands; this stays tiny.
 /// String payloads live in the frame arena.
@@ -74,7 +94,7 @@ pub const AppCommand = union(enum) {
     block_replace_with: struct { ch: u21 },
     filter_lines_from_cursor: struct { count: u32 },
     filter_paragraph_from_cursor: struct { around: bool },
-    repeat_insert_start: struct { count: u32, above: bool },
+    repeat_insert_start: struct { count: u32, kind: RepeatInsertKind },
     /// `d`/`y`/`c` + `G` / `gg` / `<n>G`: `target` null = buffer end,
     /// 0 = buffer start, n = 1-based line.
     operator_linewise_to: struct { op: u8, target: ?u32 },

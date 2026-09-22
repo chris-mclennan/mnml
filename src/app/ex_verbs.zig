@@ -92,10 +92,18 @@ pub fn global(app: *App, range: ?Range, spec_in: []const u8, invert: bool) Comma
     const e = try editor(app, label);
     const pane_id = app.active.?;
     const spec = std.mem.trimStart(u8, spec_in, " \t");
-    const parts = splitDelimited(spec) orelse return app.diag.fail(arena, "{s} — usage: {s}/pattern/command", .{ label, label });
-    if (parts.pattern.len == 0) return app.diag.fail(arena, "{s} — E35: no pattern", .{label});
+    var parts = splitDelimited(spec) orelse return app.diag.fail(arena, "{s} — usage: {s}/pattern/command", .{ label, label });
+    if (parts.pattern.len == 0) {
+        // `:g//cmd` reuses the last search pattern, as `:s//new/` does.
+        const last = app.last_search_pattern orelse return app.diag.fail(arena, "{s} — E35: no pattern", .{label});
+        parts.pattern = try arena.dupe(u8, last);
+    }
     if (app.in_global) return app.diag.fail(arena, "{s} — E147: cannot do :global recursive", .{label});
     const needle = try ex.unescapeDelim(arena, parts.pattern, spec[0]);
+    // `:g/pat/` writes the last search pattern, so the `s//` inside it
+    // — the everyday `:g/pat/s//new/g` — finds it. The still-escaped
+    // form, as `:s` stores: the reader rebuilds a `/…/` spec from it.
+    try app.noteSearchPattern(parts.pattern);
     var re = try ex.compilePattern(app, label, needle, caseFor(app, needle));
     defer re.deinit();
     var cmd = std.mem.trim(u8, parts.tail, " \t");
@@ -698,8 +706,11 @@ pub fn substituteEntry(app: *App, range: ?Range, spec: []const u8, whole: bool) 
     const label: []const u8 = if (whole) ":%s" else ":s";
     var parts = splitSub(spec) orelse return app.diag.fail(arena, "{s} — usage: {s}/old/new/[flags]", .{ label, label });
     if (parts.pattern.len == 0) {
-        const last = app.last_substitute orelse return app.diag.fail(arena, "{s} — E35: no previous regular expression", .{label});
-        parts.pattern = last.pattern;
+        // An empty search part reuses vim's ONE last search pattern —
+        // whichever of `/` `?` `*` `#` `:s` `:g` wrote it last, not just
+        // a previous `:s` (`:help :s`, `:help E35`).
+        const last = app.last_search_pattern orelse return app.diag.fail(arena, "{s} — E35: no previous regular expression", .{label});
+        parts.pattern = try arena.dupe(u8, last);
     }
     try remember(app, parts);
     // `remember` freed the previous spec — an empty pattern borrowed from it.
@@ -722,6 +733,7 @@ fn remember(app: *App, parts: SubParts) Allocator.Error!void {
     for (parts.flags) |f| if (f != 'c' and f != 'n' and f != '&') try flags.append(gpa, f);
     if (app.last_substitute) |old| old.deinit(gpa);
     app.last_substitute = .{ .delim = parts.delim, .pattern = pattern, .replacement = replacement, .flags = try flags.toOwnedSlice(gpa) };
+    try app.noteSearchPattern(pattern);
 }
 
 /// `:&[&][flags]` and a bare `:s [flags]`: the last substitute again on
@@ -965,6 +977,7 @@ fn finishConfirm(app: *App) void {
 pub fn deinitState(app: *App) void {
     if (app.last_shell_cmd) |s| app.gpa.free(s);
     if (app.last_substitute) |s| s.deinit(app.gpa);
+    if (app.last_search_pattern) |s| app.gpa.free(s);
     if (app.replace_confirm) |c| c.deinit(app.gpa);
     deinitCommands(app);
 }

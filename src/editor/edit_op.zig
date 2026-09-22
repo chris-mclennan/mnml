@@ -192,6 +192,10 @@ pub const EditOp = union(enum) {
     paste_before,
     paste_after_end,
     paste_before_end,
+    /// `]p` / `[p`: a linewise put whose indent is adjusted to the
+    /// current line's. Refused for now — see `apply.zig`.
+    paste_after_indent,
+    paste_before_indent,
     paste,
 
     // ── history / grouping ──
@@ -201,7 +205,7 @@ pub const EditOp = union(enum) {
     atomic: []const EditOp,
 
     comptime {
-        std.debug.assert(@typeInfo(EditOp).@"union".fields.len == 143);
+        std.debug.assert(@typeInfo(EditOp).@"union".fields.len == 145);
     }
 
     /// Whether the op can change buffer text (vs. move / select / yank / meta).

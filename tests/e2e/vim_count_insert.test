@@ -1,0 +1,196 @@
+# width: 120
+# height: 40
+# vim: a count before `i` / `I` / `a` / `A` repeats the inserted text that
+# many times (`:help v_b_I` / `:help count`). Neovim 0.12.5 (the isolated
+# NvChad reference on this machine) on "x\n":
+#   normal 3Aab -> xababab      normal 3iab -> abababx
+#   normal 3aab -> xababab      normal 3Iab -> abababx
+# mnml honours the count on `o` / `O` (tests/e2e/vim_repeat_insert.test)
+# and now on the other four too (`vim-count-insert`).
+write a.txt "x\n"
+open a.txt
+command editor.use_vim
+
+# 3A — the count used to be dropped: the file read "xab".
+key 3
+key A
+type "ab"
+key esc
+key ctrl+s
+expect file a.txt contains "xababab"
+
+# 3i, the `80i-<Esc>` rule-drawing idiom.
+write b.txt "\n"
+open b.txt
+key 2
+key 0
+key i
+type "-"
+key esc
+key ctrl+s
+expect file b.txt contains "--------------------"
+
+# 3a and 3I, for completeness.
+write c.txt "x\n"
+open c.txt
+key 3
+key a
+type "ab"
+key esc
+key ctrl+s
+expect file c.txt contains "xababab"
+
+write d.txt "x\n"
+open d.txt
+key 3
+key I
+type "ab"
+key esc
+key ctrl+s
+expect file d.txt contains "abababx"
+
+# Neovim records the count with the change, so `.` repeats it:
+# `3ix<Esc>` then `.` on "y" gives xxx + xxx + y, and a count on `.`
+# REPLACES the insert's own (`2.` -> two more), probe-verified:
+#   nvim -c 'normal 3ix' -c 'normal .'  on "y"  ->  xxxxxxy
+#   nvim -c 'normal 3ix' -c 'normal 2.' on "y"  ->  xxxxxy
+write e.txt "y\n"
+open e.txt
+key 3
+key i
+type "x"
+key esc
+key .
+key ctrl+s
+expect file e.txt contains "xxxxxxy"
+
+write f.txt "y\n"
+open f.txt
+key 3
+key i
+type "x"
+key esc
+key 2
+key .
+key ctrl+s
+expect file f.txt contains "xxxxxy"
+expect file f.txt lacks "xxxxxxy"
+
+# `3A` keeps the count on `.` too, appending at the line end each time.
+write g.txt "x\n"
+open g.txt
+key 3
+key A
+type "!"
+key esc
+key .
+key ctrl+s
+expect file g.txt contains "x!!!!!!"
+
+# The count repeats the whole typed run, newlines included:
+#   nvim -c 'execute "normal 3ia\<CR>b"' on "z"  ->  a / ba / ba / bz
+write h.txt "z\n"
+open h.txt
+key 3
+key i
+type "a"
+key enter
+type "b"
+key esc
+key ctrl+s
+expect file h.txt contains "a\nba\nba\nbz\n"
+
+# `1i` is the bare form — one copy, no deferred repeat.
+write i.txt "x\n"
+open i.txt
+key 1
+key i
+type "Q"
+key esc
+key ctrl+s
+expect file i.txt contains "Qx"
+expect file i.txt lacks "QQ"
+
+# Esc leaves the cursor on the LAST inserted char, as after a bare
+# insert: `3Iab` on "  x" is "  abababx" with the cursor on col 8.
+write j.txt "  x\n"
+open j.txt
+key 3
+key I
+type "ab"
+key esc
+key ctrl+s
+expect file j.txt contains "  abababx"
+expect screen contains "Col 8"
+
+# `<count>o` / `<count>O` keep working, and now carry the count on `.`.
+write k.txt "top\n"
+open k.txt
+key 3
+key o
+type "n"
+key esc
+key ctrl+s
+expect file k.txt contains "top\nn\nn\nn\n"
+key .
+key ctrl+s
+expect file k.txt contains "top\nn\nn\nn\nn\nn\nn\n"
+
+# `2O` above, then `.`: four lines above the one that had the cursor.
+#   nvim -c 'normal 2G2OQ' -c 'normal .'  on "top / bot"  ->  top Q Q Q Q bot
+write l.txt "top\nbot\n"
+open l.txt
+key G
+key 2
+key O
+type "Q"
+key esc
+key .
+key ctrl+s
+expect file l.txt contains "top\nQ\nQ\nQ\nQ\nbot\n"
+
+# Multi-char runs put the `.` copies at the insertion point, not woven
+# through the first one. Probe-verified on Neovim 0.12.5:
+#   3iab then .  on "x"    ->  ababaabababbx   (Esc parks on the last b)
+#   3Aab then .  on "x"    ->  xabababababab
+#   2aPQ then .  on "x"    ->  xPQPQPQPQ
+#   2Iab then .  on "  x"  ->  "  ababababx"
+write m.txt "x\n"
+open m.txt
+key 3
+key i
+type "ab"
+key esc
+key .
+key ctrl+s
+expect file m.txt contains "ababaabababbx"
+
+write n.txt "x\n"
+open n.txt
+key 3
+key A
+type "ab"
+key esc
+key .
+key ctrl+s
+expect file n.txt contains "xabababababab"
+
+write o.txt "x\n"
+open o.txt
+key 2
+key a
+type "PQ"
+key esc
+key .
+key ctrl+s
+expect file o.txt contains "xPQPQPQPQ"
+
+write p.txt "  x\n"
+open p.txt
+key 2
+key I
+type "ab"
+key esc
+key .
+key ctrl+s
+expect file p.txt contains "  ababababx"

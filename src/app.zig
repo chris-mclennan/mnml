@@ -740,8 +740,10 @@ pub const FindBarState = struct {
 /// row is replayed on the others once Insert mode ends.
 /// `eol`: `$A` — the typed run goes to every row's end, whatever its length.
 pub const BlockInsert = struct { pane: PaneId, first_row: usize, last_row: usize, col: usize, start_byte: usize, len_before: usize, eol: bool = false };
-/// `<count>o` / `<count>O` in flight.
-pub const RepeatInsert = struct { pane: PaneId, count: u32, above: bool, start_byte: usize, len_before: usize };
+/// `<count>i` / `I` / `a` / `A` / `o` / `O` in flight: what was typed
+/// replicates on Esc — as whole new lines for `o` / `O`, in place for
+/// the other four (`:help count`).
+pub const RepeatInsert = struct { pane: PaneId, count: u32, kind: input.RepeatInsertKind, start_byte: usize, len_before: usize };
 
 pub const ClosedBuffer = struct { path: []u8, cursor: usize };
 
@@ -1260,6 +1262,10 @@ pub const App = struct {
     shell_pane: ?PaneId = null,
     /// What `:&` / a bare `:s` repeat.
     last_substitute: ?ex_verbs.LastSub = null,
+    /// Vim's ONE "last search pattern" (`:help last-pattern`): `/`, `?`,
+    /// `*`, `#`, `:s/pat/` and `:g/pat/` all write it, and an empty
+    /// pattern in `:s//new/` or `:g//cmd` reads it back. Owned.
+    last_search_pattern: ?[]u8 = null,
     /// A `:s///c` walking its matches.
     replace_confirm: ?ex_verbs.ReplaceConfirm = null,
     /// `:g` → user command → `:norm` → `:`… nesting, bounded by `ex_verbs.max_depth`.
@@ -1913,6 +1919,20 @@ pub const App = struct {
     /// Queue a toast. Formatting failure drops the toast rather than the frame.
     pub fn toast(self: *App, comptime fmt: []const u8, args: anytype) void {
         self.toastLevel(.info, fmt, args) catch {};
+    }
+
+    /// One slot for vim's last search pattern (`:help last-pattern`) —
+    /// `/`, `?`, `*`, `#`, `:s/pat/` and `:g/pat/` all write it, so
+    /// `:%s//new/g` after a `/pat` substitutes what was just searched.
+    /// An empty pattern never clears it, as in vim.
+    pub fn noteSearchPattern(self: *App, pattern: []const u8) Allocator.Error!void {
+        if (pattern.len == 0) return;
+        if (self.last_search_pattern) |old| {
+            if (std.mem.eql(u8, old, pattern)) return;
+        }
+        const copy = try self.gpa.dupe(u8, pattern);
+        if (self.last_search_pattern) |old| self.gpa.free(old);
+        self.last_search_pattern = copy;
     }
 
     pub fn toastLevel(self: *App, level: ToastLevel, comptime fmt: []const u8, args: anytype) Allocator.Error!void {

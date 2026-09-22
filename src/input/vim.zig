@@ -348,10 +348,11 @@ pub const Vim = struct {
                 .{ .key = 'R', .label = "open all" },    .{ .key = 'M', .label = "close all" }, .{ .key = 'z', .label = "center" },
             } },
             .window => .{ .prefix = "ctrl+w", .items = &.{
-                .{ .key = 's', .label = "split down" },  .{ .key = 'v', .label = "split right" }, .{ .key = 'w', .label = "next split" },
-                .{ .key = 'q', .label = "close split" }, .{ .key = 'o', .label = "only" },        .{ .key = 'H', .label = "move far left" },
-                .{ .key = 'J', .label = "move bottom" }, .{ .key = 'K', .label = "move top" },    .{ .key = 'L', .label = "move far right" },
-                .{ .key = 'r', .label = "rotate" },      .{ .key = '=', .label = "equalize" },    .{ .key = 'n', .label = "new scratch" },
+                .{ .key = 's', .label = "split down" },      .{ .key = 'v', .label = "split right" }, .{ .key = 'w', .label = "next split" },
+                .{ .key = 'q', .label = "close split" },     .{ .key = 'o', .label = "only" },        .{ .key = 'H', .label = "move far left" },
+                .{ .key = 'J', .label = "move bottom" },     .{ .key = 'K', .label = "move top" },    .{ .key = 'L', .label = "move far right" },
+                .{ .key = 'r', .label = "rotate" },          .{ .key = '=', .label = "equalize" },    .{ .key = 'n', .label = "new scratch" },
+                .{ .key = 'T', .label = "move to new tab" },
             } },
             else => null,
         };
@@ -1086,6 +1087,10 @@ pub const Vim = struct {
                     '[' => runCmd(.@"editor.section_prev_start"),
                     ']' => runCmd(.@"editor.section_prev_end"),
                     'm' => runCmd(.@"editor.method_prev"),
+                    // `[p` / `[P` / `]P` all put BEFORE with the indent
+                    // adjusted (`:help [p`). Refused out loud rather
+                    // than swallowed while the put slice is pending.
+                    'p', 'P' => ops(arena, &.{.paste_before_indent}),
                     else => .consumed,
                 };
             },
@@ -1101,6 +1106,10 @@ pub const Vim = struct {
                     ']' => runCmd(.@"editor.section_next_start"),
                     '[' => runCmd(.@"editor.section_next_end"),
                     'm' => runCmd(.@"editor.method_next"),
+                    // `]p` puts AFTER with the indent adjusted; `]P` is
+                    // vim's synonym for `[P` (`:help ]p`).
+                    'p' => ops(arena, &.{.paste_after_indent}),
+                    'P' => ops(arena, &.{.paste_before_indent}),
                     else => .consumed,
                 };
             },
@@ -1183,7 +1192,9 @@ pub const Vim = struct {
                     'n' => runCmd(.@"view.split_new_scratch"),
                     'd' => runCmd(.@"view.split_goto_definition"),
                     'f' => runCmd(.@"view.split_open_file_under_cursor"),
-                    // TODO(vim-slice: splits) `T` (view.move_to_new_tab) once it has a runner
+                    // `:help CTRL-W_T` — the split leaves its tab page for
+                    // a new one, the partner of `Ctrl-W s` / `v`.
+                    'T' => runCmd(.@"view.move_to_new_tab"),
                     else => .consumed,
                 };
             },
@@ -1328,28 +1339,30 @@ pub const Vim = struct {
                         self.resetPending();
                         return runCmd(.@"view.move_cursor_view_bottom");
                     },
-                    'i' => {
-                        self.enterInsert();
-                        return .consumed;
-                    },
-                    'I' => {
-                        self.enterInsert();
-                        return ops(arena, &.{.move_line_first_non_ws});
-                    },
-                    'a' => {
-                        self.enterInsert();
-                        return ops(arena, &.{.move_right});
-                    },
-                    'A' => {
-                        self.enterInsert();
-                        return ops(arena, &.{.move_line_end});
-                    },
-                    'o', 'O' => {
+                    // `<count>i I a A o O`: the typed run repeats `count`
+                    // times when Insert is left (`:help count`) — the
+                    // `80i-<Esc>` rule and `3A;<Esc>`. The app arms the
+                    // deferred half; the bare form stays a plain key.
+                    'i', 'I', 'a', 'A', 'o', 'O' => {
                         self.resetPending();
-                        const above = c == 'O';
-                        if (n > 1) return .{ .app = .{ .repeat_insert_start = .{ .count = n, .above = above } } };
+                        const kind: input.RepeatInsertKind = switch (c) {
+                            'i' => .at_cursor,
+                            'I' => .line_first_non_ws,
+                            'a' => .after_cursor,
+                            'A' => .line_end,
+                            'O' => .open_above,
+                            else => .open_below,
+                        };
+                        if (n > 1) return .{ .app = .{ .repeat_insert_start = .{ .count = n, .kind = kind } } };
                         self.enterInsert();
-                        return ops(arena, &.{if (above) .insert_newline_above else .insert_newline_below});
+                        return switch (kind) {
+                            .at_cursor => .consumed,
+                            .line_first_non_ws => ops(arena, &.{.move_line_first_non_ws}),
+                            .after_cursor => ops(arena, &.{.move_right}),
+                            .line_end => ops(arena, &.{.move_line_end}),
+                            .open_above => ops(arena, &.{.insert_newline_above}),
+                            .open_below => ops(arena, &.{.insert_newline_below}),
+                        };
                     },
                     'x', 'X' => {
                         // `x` is `dl`, `X` is `dh`: a real delete, so the
@@ -2450,7 +2463,7 @@ test "cmdline: typing, caret edits, history walk, enter emits ex_command" {
     try testing.expectEqualStrings("b", v.exHistory()[1]);
 }
 
-test "ctrl+w H/J/K/L move the split; = r _ | + - > < n o w h d f reach their runners; T is still pending" {
+test "ctrl+w H/J/K/L move the split; = r _ | + - > < n o w h d f T reach their runners" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
@@ -2479,6 +2492,9 @@ test "ctrl+w H/J/K/L move the split; = r _ | + - > < n o w h d f reach their run
         .{ .key = 't', .id = .@"view.focus_top" },
         .{ .key = 'b', .id = .@"view.focus_bottom" },
         .{ .key = 'p', .id = .@"view.focus_previous" },
+        // `:help CTRL-W_T`: the palette title and `docs/commands.md`
+        // advertised this chord long before it was bound.
+        .{ .key = 'T', .id = .@"view.move_to_new_tab" },
     };
     for (cases) |c| {
         try testing.expect((try v.handleKey(Key.ctrl('w'), .{}, a)) == .consumed);
@@ -2487,9 +2503,9 @@ test "ctrl+w H/J/K/L move the split; = r _ | + - > < n o w h d f reach their run
         try testing.expectEqual(c.id, r.app.run_command);
         try testing.expect(!v.isOpPending());
     }
-    // `T` has no runner yet: the prefix is consumed and nothing runs.
+    // A chord the prefix does not claim is still swallowed, not passed on.
     try testing.expect((try v.handleKey(Key.ctrl('w'), .{}, a)) == .consumed);
-    try testing.expect((try v.handleKey(Key.char('T'), .{}, a)) == .consumed);
+    try testing.expect((try v.handleKey(Key.char('Z'), .{}, a)) == .consumed);
 }
 
 test "gt / gT run tab.next / tab.prev; with a count they name the page (3gt) or the distance back (2gT)" {

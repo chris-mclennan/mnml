@@ -1,0 +1,112 @@
+# width: 120
+# height: 40
+# `:s//new/` — an EMPTY search part reuses the last search pattern
+# (`:help :s`, `:help E35`). In vim `/`, `?`, `*`, `#`, `:g/pat/` and a
+# previous `:s/pat/` all write the same "last search pattern"; mnml
+# remembered only the one a previous `:substitute` used
+# (`vim-empty-substitute-pattern`).
+#
+# Neovim 0.12.5 (the isolated NvChad reference on this machine):
+#   :g/foo/s//X/g   on "foo1 / bar / foo2"  ->  "X1 / bar / X2"
+#
+# This is not a corner: `:g/pat/s//new/g` is the everyday vim refactor,
+# and `/pat` then `:%s//new/g` is the other half of it — search first to
+# see what you are about to hit, then substitute without retyping.
+write a.txt "foo1\nbar\nfoo2\n"
+open a.txt
+command editor.use_vim
+
+# `/foo` really did search — the statusline carries `/foo 1/2`.
+key /
+type "foo"
+key enter
+expect screen contains "/foo"
+
+# …and `:%s//X/g` reads it back; it used to answer E35 here.
+ex %s//X/g
+expect screen lacks "E35: no previous regular expression"
+key ctrl+s
+expect file a.txt contains "X1\nbar\nX2\n"
+
+# The same through `:g`, which is where a vim user meets it first;
+# it used to report "ran on 0 line(s), 2 failed".
+write b.txt "foo1\nbar\nfoo2\n"
+open b.txt
+ex g/foo/s//X/g
+expect screen lacks "failed"
+key ctrl+s
+expect file b.txt contains "X1\nbar\nX2\n"
+
+# For contrast, the case mnml DOES handle: an empty pattern after a
+# previous `:s` reuses it. (This one passes; it is here to show the
+# missing half is the search pattern, not the empty-pattern parsing.)
+write c.txt "foo1\nfoo2\n"
+open c.txt
+ex 1s/foo/X/
+ex 2s//Y/
+key ctrl+s
+expect file c.txt contains "X1\nY2\n"
+
+# ONE slot, and the most recent writer wins. Probed on Neovim 0.12.5
+# over "foo1 / bar2 / foo3":
+#   :1s/foo/A/  then /bar  then :%s//B/g   ->  A1 / B2 / foo3
+#   /bar  then :1s/foo/A/  then :%s//B/g   ->  A1 / bar2 / B3
+write d.txt "foo1\nbar2\nfoo3\n"
+open d.txt
+ex 1s/foo/A/
+key /
+type "bar"
+key enter
+ex %s//B/g
+key ctrl+s
+expect file d.txt contains "A1\nB2\nfoo3\n"
+
+write e.txt "foo1\nbar2\nfoo3\n"
+open e.txt
+key /
+type "bar"
+key enter
+ex 1s/foo/A/
+ex %s//B/g
+key ctrl+s
+expect file e.txt contains "A1\nbar2\nB3\n"
+
+# `?` writes it too (`nvim -c 'normal ?foo<CR>' -c '%s//R/g'` -> R1 / bar2 / R3).
+write f.txt "foo1\nbar2\nfoo3\n"
+open f.txt
+key G
+key ?
+type "foo"
+key enter
+ex %s//R/g
+key ctrl+s
+expect file f.txt contains "R1\nbar2\nR3\n"
+
+# `*` writes it (`nvim -c 'normal *' -c '%s//Z/g'` -> Z / bar2 / foo3).
+write g.txt "foo1\nbar2\nfoo1\n"
+open g.txt
+key *
+ex %s//Z/g
+key ctrl+s
+expect file g.txt contains "Z\nbar2\nZ\n"
+
+# `:g` writes it, so a later `:s//` sees the `:g` pattern
+# (`nvim -c 'g/bar/d' -c '%s//Q/g'` leaves foo1 / foo3 untouched).
+write h.txt "foo1\nbar2\nfoo3\n"
+open h.txt
+ex g/bar/d
+ex %s//Q/g
+key ctrl+s
+expect file h.txt contains "foo1\nfoo3\n"
+expect file h.txt lacks "Q"
+
+# And `:g//cmd` reads it back (`nvim -c '/bar' -c 'g//d'` -> foo1 / foo3).
+write i.txt "foo1\nbar2\nfoo3\n"
+open i.txt
+key /
+type "bar"
+key enter
+ex g//d
+key ctrl+s
+expect file i.txt contains "foo1\nfoo3\n"
+expect file i.txt lacks "bar2"

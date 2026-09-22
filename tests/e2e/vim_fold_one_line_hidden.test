@@ -1,0 +1,35 @@
+# width: 120
+# height: 40
+# The closed-fold marker pluralises: `zfj` hides exactly one line, so it
+# has to read `⋯ folded · 1 line hidden` (`vim-fold-one-lines-hidden`;
+# it read `1 lines hidden`). Neovim's own foldtext
+# says `+--  2 lines: …` and gets the singular right when it is one
+# (`:help fold-foldtext` / `foldtext()`); mnml's tail was the bare
+# constant `" lines hidden"` with the count printed in front of it, so
+# there was no singular form at all — `foldTail` picks one now.
+write a.txt "l1\nl2\nl3\nl4\n"
+open a.txt
+command editor.use_vim
+
+# zfj folds l1..l2 — one line goes under the marker.
+type zfj
+expect screen contains "folded"
+expect screen lacks "1 lines hidden"
+expect screen contains "1 line hidden"
+
+# Two hidden lines keep the plural.
+key z
+key R
+key j
+type "zf2j"
+expect screen contains "2 lines hidden"
+expect screen lacks "2 line hidden"
+
+# …and back to one on a two-line fold elsewhere in the buffer.
+key z
+key R
+key G
+key k
+type "zfj"
+expect screen contains "1 line hidden"
+expect screen lacks "1 lines hidden"

@@ -1,0 +1,126 @@
+# width: 120
+# height: 40
+# `:[range]d[elete] [x] [count]` — vim's `:help :d`. The optional
+# register takes the deleted lines; the optional count makes the range
+# `count` lines starting at the range's last line. mnml's `deleteLines`
+# was called with the range alone and `args` dropped, so BOTH were
+# silently ignored — no error, the wrong number of lines went, and the
+# register the user named stayed empty (`vim-ex-delete-args`).
+#
+# Neovim 0.12.5 (the isolated NvChad reference on this machine):
+#   :1d 2      on "one two three four"  -> "three four"
+#   :1d a  then G"ap  on "one two three" -> "two three one"
+write a.txt "one\ntwo\nthree\nfour\n"
+open a.txt
+command editor.use_vim
+
+# The count: two lines should go, not one.
+ex 1d 2
+key ctrl+s
+# `contains` is a substring test, so assert what must be GONE as well.
+expect file a.txt lacks "two"
+expect file a.txt contains "three\nfour\n"
+
+# The register: `:1d a` must fill register a, so `"ap` pastes it back.
+write b.txt "one\ntwo\nthree\n"
+open b.txt
+ex 1d a
+key G
+key "
+key a
+key p
+key ctrl+s
+expect file b.txt contains "two\nthree\none\n"
+
+# The count starts at the range's LAST line, not its first — probed on
+# Neovim 0.12.5 over "one two three four five six":
+#   :2,3d 2   -> one two five six      (lines 3-4 go, not 2-3)
+#   :1,2d 3   -> one five six          (lines 2-4 go)
+#   :1d2      -> three four five six   (no space between verb and count)
+write c.txt "one\ntwo\nthree\nfour\nfive\nsix\n"
+open c.txt
+ex 2,3d 2
+key ctrl+s
+expect file c.txt contains "one\ntwo\nfive\nsix\n"
+
+write d.txt "one\ntwo\nthree\nfour\nfive\nsix\n"
+open d.txt
+ex 1,2d 3
+key ctrl+s
+expect file d.txt contains "one\nfive\nsix\n"
+
+write e.txt "one\ntwo\nthree\nfour\nfive\nsix\n"
+open e.txt
+ex 1d2
+key ctrl+s
+expect file e.txt contains "three\nfour\nfive\nsix\n"
+expect file e.txt lacks "one"
+
+# Register AND count together: `:1d a 2` fills a with two lines.
+#   nvim -c '1d a 2' -c 'normal G"ap'  ->  three four five six one two
+write f.txt "one\ntwo\nthree\nfour\nfive\nsix\n"
+open f.txt
+ex 1d a 2
+key G
+key "
+key a
+key p
+key ctrl+s
+expect file f.txt contains "three\nfour\nfive\nsix\none\ntwo\n"
+
+# An UPPERCASE register appends (`:help quote_alpha`):
+#   nvim -c 'normal "ayy' -c '2d A' -c 'normal G"ap'  ->  one three … one two
+write g.txt "one\ntwo\nthree\n"
+open g.txt
+key "
+key a
+key y
+key y
+ex 2d A
+key G
+key "
+key a
+key p
+key ctrl+s
+expect file g.txt contains "one\nthree\none\ntwo\n"
+
+# `:[range]y[ank] [x] [count]` — the verb the hunter found missing.
+#   nvim -c '1,2y a' -c 'normal G"ap'  ->  one two three one two
+write h.txt "one\ntwo\nthree\n"
+open h.txt
+ex 1,2y a
+key G
+key "
+key a
+key p
+key ctrl+s
+expect file h.txt contains "one\ntwo\nthree\none\ntwo\n"
+
+# `:1y 3` with no register goes to the unnamed one.
+write i.txt "one\ntwo\nthree\n"
+open i.txt
+ex 1y 3
+key G
+key p
+key ctrl+s
+expect file i.txt contains "one\ntwo\nthree\none\ntwo\nthree\n"
+
+# `:2,3y a 2` counts from the range's last line too.
+#   nvim -c '2,3y a 2' -c 'normal G"ap'  ->  … three four
+write j.txt "one\ntwo\nthree\nfour\nfive\nsix\n"
+open j.txt
+ex 2,3y a 2
+key G
+key "
+key a
+key p
+key ctrl+s
+expect file j.txt contains "six\nthree\nfour\n"
+
+# A count of 0 is vim's E939, not a silent no-op.
+write k.txt "one\ntwo\n"
+open k.txt
+ex 1d 0
+expect screen contains "E939"
+key ctrl+s
+expect file k.txt contains "one\ntwo\n"
