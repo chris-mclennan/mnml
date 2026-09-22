@@ -624,7 +624,24 @@ fn importPostmanCmd(app: *App) CommandError!void {
         else => return app.diag.fail(app.frame.allocator(), "postman: no item[] (not a v2.1 collection?)", .{}),
     };
     const n = try writeStubs(app, imported);
-    app.toast("postman: wrote {d} curls → .rqst/captured/{s}/", .{ n, imported.dir });
+    // The collection's variables become an env of their own, picked
+    // like any other; an existing file is the user's and is kept.
+    var env_note: []const u8 = "";
+    if (imported.vars.len > 0) {
+        const fa = app.frame.allocator();
+        const env_path = try std.fs.path.join(fa, &.{ app.workspace, ".mnml", "env", try std.fmt.allocPrint(fa, "{s}.env", .{imported.dir}) });
+        if (Io.Dir.cwd().access(app.io, env_path, .{})) |_| {
+            env_note = try std.fmt.allocPrint(fa, " · {s}.env exists, kept", .{imported.dir});
+        } else |_| {
+            var text: std.ArrayListUnmanaged(u8) = .empty;
+            for (imported.vars) |v| if (env_mod.isValidName(v.key)) try text.print(fa, "{s}={s}\n", .{ v.key, v.value });
+            if (std.fs.path.dirname(env_path)) |d| Io.Dir.cwd().createDirPath(app.io, d) catch {};
+            Io.Dir.cwd().writeFile(app.io, .{ .sub_path = env_path, .data = text.items }) catch {};
+            env_note = try std.fmt.allocPrint(fa, " · {d} variables → env {s}", .{ imported.vars.len, imported.dir });
+        }
+    }
+    const auth_note: []const u8 = if (imported.unimported_auth > 0) try std.fmt.allocPrint(app.frame.allocator(), " · {d} with an auth type not imported", .{imported.unimported_auth}) else "";
+    app.toast("postman: wrote {d} curls → .rqst/captured/{s}/{s}{s}", .{ n, imported.dir, env_note, auth_note });
 }
 
 // ─── fan out ────────────────────────────────────────────────────────────
