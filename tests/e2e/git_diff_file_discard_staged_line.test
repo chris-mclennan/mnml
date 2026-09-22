@@ -1,0 +1,51 @@
+# hunt/findings-2026-09-22/git-diff-file-base-is-head.md, second repro:
+# with the pane diffed against HEAD, `x` on a row whose change was
+# already STAGED offered "Discard … from the worktree" and wrote HEAD's
+# line back into the worktree while the index kept the edit — `git
+# status` turned MM with an inverse hunk nobody wrote. The pane is
+# index → worktree now, so a staged row is not on it to discard; a
+# line discard drops the worktree change relative to the index and the
+# staged edit stays exactly as it was.
+shell git init -q -b main
+shell git config user.email "ada@example.test"
+shell git config user.name "Ada Example"
+write .gitignore ".mnml/\n"
+write steps.rs "pub fn step1() {}\npub fn step2() {}\npub fn step3() {}\npub fn step4() {}\npub fn step5() {}\npub fn step6() {}\npub fn step7() {}\npub fn step8() {}\npub fn step9() {}\npub fn step10() {}\npub fn step11() {}\npub fn step12() {}\n"
+shell git add .gitignore steps.rs
+shell git commit -q -m "initial"
+write steps.rs "pub fn step1() {}\npub fn step2x() {}\npub fn step3x() {}\npub fn step4() {}\npub fn step5() {}\npub fn step6() {}\npub fn step7() {}\npub fn step8() {}\npub fn step9() {}\npub fn step10() {}\npub fn step11() {}\npub fn step12() {}\n"
+shell git add steps.rs
+write steps.rs "pub fn step1() {}\npub fn step2x() {}\npub fn step3x() {}\npub fn step4() {}\npub fn step5() {}\npub fn step6() {}\npub fn step7() {}\npub fn step8() {}\npub fn step9() {}\npub fn step10() {}\npub fn step11x() {}\npub fn step12() {}\n"
+open steps.rs
+command git.diff_file
+wait 1500
+expect screen contains "Hunk 1/1  steps.rs"
+# The staged rows are not there to discard.
+expect screen lacks "- pub fn step2() {}"
+# The hunk's rows end ` step12`, `+ pub fn step11x() {}` above it and
+# `- pub fn step11() {}` above that: G then k k lands on the deleted
+# line, whatever context width the pane paints; v j takes the pair —
+# the one worktree change, both of its rows.
+key G
+key k
+key k
+key v
+key j
+key x
+expect screen contains "Discard the 2 selected lines from the worktree?"
+key y
+wait 2000
+expect screen contains "discarded 2 lines of steps.rs"
+shell mkdir -p .mnml && git status --porcelain > .mnml/st.out
+shell git diff -- steps.rs > .mnml/wt.out
+shell git diff --cached -- steps.rs > .mnml/idx.out
+# The worktree change is gone, the index untouched: `M ` (staged only),
+# no inverse hunk, the four staged lines still staged, step2 not back.
+shell git status --porcelain -- steps.rs && git diff -- steps.rs && test "$(git status --porcelain -- steps.rs)" = "M  steps.rs"
+expect file .mnml/wt.out lacks "+pub fn step2() {}"
+expect file .mnml/wt.out lacks "step11"
+expect file steps.rs lacks "pub fn step2() {}"
+expect file steps.rs contains "pub fn step2x() {}"
+expect file steps.rs contains "pub fn step11() {}"
+expect file steps.rs lacks "step11x"
+shell test "$(git diff --cached -- steps.rs | grep -c '^[-+][^-+]')" = 4

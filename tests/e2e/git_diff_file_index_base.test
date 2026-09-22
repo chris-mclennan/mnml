@@ -1,0 +1,49 @@
+# hunt/findings-2026-09-22/git-diff-file-base-is-head.md: `git.diff_file`
+# diffed the file against HEAD, so with four lines staged and two
+# unstaged the pane printed all six as the worktree diff — "what is left
+# to stage" could not be read off it. The pane is `git diff -- <rel>`
+# (index → worktree, as the Rust host's `diff_file`): only the unstaged
+# change; a fully staged file reads `(no changes)`, not the whole file
+# as an addition; an untracked file still shows as new.
+shell git init -q -b main
+shell git config user.email "ada@example.test"
+shell git config user.name "Ada Example"
+write .gitignore ".mnml/\n"
+write steps.rs "pub fn step1() {}\npub fn step2() {}\npub fn step3() {}\npub fn step4() {}\npub fn step5() {}\npub fn step6() {}\npub fn step7() {}\npub fn step8() {}\npub fn step9() {}\npub fn step10() {}\npub fn step11() {}\npub fn step12() {}\n"
+shell git add .gitignore steps.rs
+shell git commit -q -m "initial"
+write steps.rs "pub fn step1() {}\npub fn step2x() {}\npub fn step3x() {}\npub fn step4() {}\npub fn step5() {}\npub fn step6() {}\npub fn step7() {}\npub fn step8() {}\npub fn step9() {}\npub fn step10() {}\npub fn step11() {}\npub fn step12() {}\n"
+shell git add steps.rs
+write steps.rs "pub fn step1() {}\npub fn step2x() {}\npub fn step3x() {}\npub fn step4() {}\npub fn step5() {}\npub fn step6() {}\npub fn step7() {}\npub fn step8() {}\npub fn step9() {}\npub fn step10() {}\npub fn step11x() {}\npub fn step12() {}\n"
+shell test "$(git diff -- steps.rs | grep -c '^[-+][^-+]')" = 2
+shell test "$(git diff --cached -- steps.rs | grep -c '^[-+][^-+]')" = 4
+open steps.rs
+command git.diff_file
+wait 1500
+expect screen contains "Hunk 1/1  steps.rs"
+# `git diff -- steps.rs` (index → worktree) has only the step11 change;
+# the staged step2/step3 lines are not the worktree diff.
+expect screen lacks "- pub fn step2() {}"
+expect screen lacks "+ pub fn step3x() {}"
+expect screen contains "- pub fn step11() {}"
+expect screen contains "+ pub fn step11x() {}"
+# Staging the hunk from this pane stages exactly what it showed: the
+# index gains the step11 change on top of the four lines it held.
+key s
+wait 1500
+expect screen contains "staged hunk 1 of steps.rs"
+shell test "$(git diff -- steps.rs | grep -c '^[-+][^-+]')" = 0
+shell test "$(git diff --cached -- steps.rs | grep -c '^[-+][^-+]')" = 6
+shell test "$(git status --porcelain -- steps.rs)" = "M  steps.rs"
+# Nothing unstaged is left: the pane says so instead of painting the
+# whole file as an addition (the untracked fallback must not fire for
+# a tracked file).
+expect screen contains "(no changes)"
+expect screen lacks "+ pub fn step1() {}"
+# An untracked file still reads as new.
+write fresh.rs "pub fn fresh() {}\n"
+open fresh.rs
+command git.diff_file
+wait 1500
+expect screen contains "Hunk 1/1  fresh.rs"
+expect screen contains "+ pub fn fresh() {}"

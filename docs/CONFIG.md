@@ -197,7 +197,7 @@ otherwise. Copy what you need; leave the rest out.
         .scrollbar = true,
         .wheel_lines = 3, // lines per wheel EVENT in a text body (the editor, a markdown preview, a diff — Rust's editor gain); lists move a row an event; ghostty reports a notched detent as three events
         .highlight_trailing_ws = false,
-        .clock = true,
+        .clock = true, // the statusline clock, HH:MM in the machine's zone; `clock.utc` switches it (a session choice) and the git graph's DATE / TIME column follows it, so the two clocks on one screen agree
         .stress_meter = false,
         .check_updates = true, // ask GitHub for the newest release once per launch; MNML_NO_UPDATE_CHECK=1 also skips it
         .activity_bar_pinned_integrations = .{}, // chip ids painted as launcher icons after the rail's sections; "Add to activity bar" on a row / chip menu writes here

@@ -1,7 +1,9 @@
 # Walkthrough finding 1.3: the graph's DATE / TIME column at the widths
 # where it is eleven cells (the pane at 120 columns with the tree open)
 # painted eleven U+FFFD per row — the formatted date lived on the stack.
-# Fixed committer dates so the column reads the same on every run.
+# Fixed committer dates so the column reads the same on every run —
+# and the clock switched to UTC first (2026-09-22, gitfix), since the
+# column follows the statusline clock and these dates are `+0000`.
 shell git init -q -b main
 shell git config user.email "test@mnml.dev"
 shell git config user.name "mnml test"
@@ -11,6 +13,7 @@ shell GIT_AUTHOR_DATE=2026-09-06T20:00:00+0000 GIT_COMMITTER_DATE=2026-09-06T20:
 write a.txt "one\ntwo\n"
 shell git add a.txt
 shell GIT_AUTHOR_DATE=2026-09-07T08:30:00+0000 GIT_COMMITTER_DATE=2026-09-07T08:30:00+0000 git commit -q -m "second"
+command clock.utc
 command git.graph
 wait 1500
 expect screen contains "second"

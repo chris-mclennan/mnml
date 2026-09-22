@@ -1,0 +1,44 @@
+# hunt/findings-2026-09-22/git-commit-box-enter-is-space.md: the graph's
+# commit box says "Enter newline" on its hint row, but every Enter landed
+# as a SPACE — subject and body ran together into one line and git never
+# saw a body (`%s` was the whole thing, `%b` empty). Enter and
+# Shift+Enter break the line; Ctrl+Enter commits. Truth is what git
+# stored: `%s` the first line alone, `%b` the body with its blank line
+# and trailer intact.
+shell git init -q -b main
+shell git config user.email "ada@example.test"
+shell git config user.name "Ada Example"
+write .gitignore ".mnml/\n"
+write a.txt "one\n"
+shell git add .gitignore a.txt
+shell git commit -q -m "first"
+write a.txt "one\ntwo\n"
+shell git add a.txt
+command git.graph
+wait 1500
+expect screen contains "1 change(s) · 1 staged"
+command git.commit
+wait 800
+expect screen contains "Enter newline"
+type feat: subject
+key enter
+key enter
+type Body line.
+key shift+enter
+type Second body line.
+key enter
+key enter
+type Fixes: #123
+# The box paints the lines it holds, not one long row.
+expect screen contains "feat: subject"
+expect screen contains "Fixes: #123"
+key ctrl+enter
+wait 2500
+shell mkdir -p .mnml && git log -1 --format=%B > .mnml/msg.out
+expect file .mnml/msg.out contains "feat: subject"
+expect file .mnml/msg.out contains "Body line."
+# The subject is the first line alone; the body keeps its two lines and
+# the trailer paragraph after a blank line.
+shell test "$(git log -1 --format=%s)" = "feat: subject"
+shell test "$(git log -1 --format=%b)" = "$(printf 'Body line.\nSecond body line.\n\nFixes: #123')"
+shell test "$(git log -1 --format='%(trailers:key=Fixes,valueonly)')" = "#123"

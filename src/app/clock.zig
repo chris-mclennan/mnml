@@ -4,9 +4,11 @@
 //! again on the next minute boundary while the clock shows.
 //!
 //! // changed: the std library has no time-zone reader, so local time
-//! comes from libc's `localtime_r` on POSIX; Windows shows UTC (the
-//! chip says so). `clock.utc` is a session choice — the config carries
-//! `ui.clock` (on / off) and no zone key, as the Rust config did not.
+//! comes from libc's `localtime_r` on POSIX (`core/localtime.zig`);
+//! Windows shows UTC (the chip says so). `clock.utc` is a session choice
+//! — the config carries `ui.clock` (on / off) and no zone key, as the
+//! Rust config did not. The git graph's DATE / TIME column follows the
+//! same choice (`utc`), so the two clocks on one screen agree.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -16,6 +18,7 @@ const App = app_mod.App;
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const settings = @import("settings.zig");
+const localtime = @import("../core/localtime.zig");
 
 pub const Mode = enum { local, utc, hidden };
 
@@ -44,30 +47,14 @@ pub fn seed(app: *App) void {
 
 // ─── time ────────────────────────────────────────────────────────────────
 
-const Tm = extern struct {
-    tm_sec: c_int,
-    tm_min: c_int,
-    tm_hour: c_int,
-    tm_mday: c_int,
-    tm_mon: c_int,
-    tm_year: c_int,
-    tm_wday: c_int,
-    tm_yday: c_int,
-    tm_isdst: c_int,
-    tm_gmtoff: c_long,
-    tm_zone: ?[*:0]const u8,
-};
-
-extern "c" fn localtime_r(timep: *const i64, result: *Tm) ?*Tm;
-
 /// Seconds east of UTC for `secs`, per libc; 0 where there is no libc
 /// zone reader (Windows).
-pub fn localOffset(secs: i64) i64 {
-    if (builtin.os.tag == .windows) return 0;
-    var tm: Tm = undefined;
-    const at: i64 = secs;
-    if (localtime_r(&at, &tm) == null) return 0;
-    return @intCast(tm.tm_gmtoff);
+pub const localOffset = localtime.offset;
+
+/// Is the clock reading UTC — by choice, or because the platform has no
+/// zone reader? Every wall clock the app paints asks this one question.
+pub fn inUtc(app: *const App) bool {
+    return app.clock.mode == .utc or builtin.os.tag == .windows;
 }
 
 /// Wall-clock seconds now.
@@ -88,9 +75,9 @@ pub fn format(arena: Allocator, secs: i64, offset: i64, utc: bool) Allocator.Err
 pub fn segment(app: *App, arena: Allocator) Allocator.Error!?[]const u8 {
     if (app.clock.mode == .hidden) return null;
     const secs = wallSecs(app);
-    const utc = app.clock.mode == .utc or builtin.os.tag == .windows;
-    app.clock.shown_minute = @divTrunc(secs + (if (utc) 0 else localOffset(secs)), 60);
-    return try format(arena, secs, if (utc) 0 else localOffset(secs), utc);
+    const in_utc = inUtc(app);
+    app.clock.shown_minute = @divTrunc(secs + (if (in_utc) 0 else localOffset(secs)), 60);
+    return try format(arena, secs, if (in_utc) 0 else localOffset(secs), in_utc);
 }
 
 /// The next minute boundary, on the loop's clock, while the clock shows.
@@ -105,8 +92,7 @@ pub fn nextDeadlineMs(app: *const App) ?i64 {
 pub fn tick(app: *App) void {
     if (app.clock.mode == .hidden) return;
     const secs = wallSecs(app);
-    const utc = app.clock.mode == .utc or builtin.os.tag == .windows;
-    const minute = @divTrunc(secs + (if (utc) 0 else localOffset(secs)), 60);
+    const minute = @divTrunc(secs + (if (inUtc(app)) 0 else localOffset(secs)), 60);
     if (minute != app.clock.shown_minute) app.needs_render = true;
 }
 

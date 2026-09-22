@@ -1,0 +1,32 @@
+# hunt/findings-2026-09-22/git-graph-time-utc.md: the graph's DATE / TIME
+# column printed commit times in UTC (an undocumented TZ_OFFSET_HOURS,
+# default 0) while the statusline clock on the same screen was local —
+# a 19:01 -0400 commit read 23:01, and `git log` never prints that. The
+# column follows the statusline clock now: the machine's zone, or UTC
+# when the clock is switched to it.
+#
+# The commit is dated WITHOUT a zone, so git files it at 19:01 in the
+# machine's zone wherever this runs, and the graph — reading the same
+# zone — prints 19:01 there too; `git log --date=format-local` is the
+# oracle for that.
+shell git init -q -b main
+shell git config user.email "ada@example.test"
+shell git config user.name "Ada Example"
+write .gitignore ".mnml/\n"
+shell git add .gitignore
+shell GIT_AUTHOR_DATE="2026-02-16T19:01:00" GIT_COMMITTER_DATE="2026-02-16T19:01:00" git commit -q -m "tz probe"
+shell test "$(git log -1 --date=format-local:'%m/%d %H:%M' --format=%cd)" = "02/16 19:01"
+# A second commit dated in UTC, for the clock's other setting.
+shell GIT_AUTHOR_DATE="2026-06-01T12:34:00+0000" GIT_COMMITTER_DATE="2026-06-01T12:34:00+0000" git commit -q --allow-empty -m "utc probe"
+command view.toggle_tree
+command git.graph
+wait 1500
+expect screen contains "tz probe"
+expect screen contains "02/16 19:01"
+expect screen contains "utc probe"
+# The clock switched to UTC takes the column with it: the `+0000`
+# commit reads as dated, wherever this runs.
+command clock.utc
+wait 300
+expect screen contains "clock: UTC"
+expect screen contains "06/01 12:34"

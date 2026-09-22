@@ -36,6 +36,7 @@ const overlay = @import("overlay.zig");
 const text_field = @import("text_field.zig");
 const parse = @import("../git/parse.zig");
 const ids = @import("../core/ids.zig");
+const localtime = @import("../core/localtime.zig");
 
 const Allocator = std.mem.Allocator;
 const Style = vaxis.Style;
@@ -387,6 +388,10 @@ pub const Doc = struct {
     lane_spacing: u16 = 1,
     /// Unix seconds, for the ages.
     now: i64,
+    /// The DATE / TIME column reads UTC when the statusline clock does
+    /// (`clock.utc`), else the machine's zone — the same reader, so the
+    /// two clocks on one screen agree.
+    utc: bool = false,
     sort: Sort = .{},
     /// The active filters, chipped over the subject header; null = none.
     filter_label: ?[]const u8 = null,
@@ -526,10 +531,14 @@ pub fn rightAlign(arena: Allocator, s: []const u8, width: usize, ascii: bool) Al
     return std.fmt.allocPrint(arena, "{s}{s}", .{ ell, skipChars(s, n - (width - 1)) });
 }
 
-/// Rust `format_commit_datetime`: `MM/DD HH:MM` in UTC, shifted by
-/// `TZ_OFFSET_HOURS` when the environment sets it.
-pub fn commitDateTime(buf: []u8, secs: i64, offset_hours: i64) []const u8 {
-    const local = secs +| offset_hours * 3600;
+/// Rust `format_commit_datetime`: `MM/DD HH:MM` for `secs` shifted by
+/// `offset_secs` (the zone's seconds east of UTC). // changed: Rust
+/// read the shift from an undocumented `TZ_OFFSET_HOURS` (default 0 —
+/// UTC, unmarked, while its clock read the same knob); here the caller
+/// hands in the zone the statusline clock uses, so a commit made at
+/// 19:01 -0400 reads `19:01` on that machine, as `git log` prints it.
+pub fn commitDateTime(buf: []u8, secs: i64, offset_secs: i64) []const u8 {
+    const local = secs +| offset_secs;
     const days = @divFloor(local, 86_400);
     const day_secs = @mod(local, 86_400);
     const hh: u32 = @intCast(@divFloor(day_secs, 3600));
@@ -761,7 +770,6 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, view: *State, doc: Doc) Painted {
     const suffix_used = (if (cols.author > 0) cols.author + 3 else 0) + (if (cols.age > 0) cols.age + 3 else 0) + (if (cols.sha > 0) cols.sha + 3 else 0) + sha_right_pad;
     const prefix_used = 1 + 2 + branch_section + graph_col_w + 3;
     const subject_w = @as(usize, body.w) -| (prefix_used + suffix_used);
-    const offset_hours: i64 = if (std.c.getenv("TZ_OFFSET_HOURS")) |p| (std.fmt.parseInt(i64, std.mem.span(p), 10) catch 0) else 0;
     v = first;
     var y: u16 = 0;
     while (v < last) : ({
@@ -864,7 +872,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, view: *State, doc: Doc) Painted {
             // arena: `rightAlign` hands an 11-cell column the formatted
             // text itself, and a stack buffer would be gone by then.
             var buf: [16]u8 = undefined;
-            const date = arena.dupe(u8, commitDateTime(&buf, c.time, offset_hours)) catch "";
+            const date = arena.dupe(u8, commitDateTime(&buf, c.time, if (doc.utc) 0 else localtime.offset(c.time))) catch "";
             pen.put(" \u{2502} ", sep);
             pen.put(rightAlign(arena, date, cols.age, ui.ascii) catch "", Theme.withFg(base, pal.comment));
         }
@@ -1569,6 +1577,9 @@ test "the spec's rows at 95 wide: the toolbar, the column header, the WIP row, t
         .cursor = 0,
         .focused = true,
         .now = 1757260800,
+        // The pins are +0000 instants: the column follows the clock's
+        // zone, so the test asks for UTC as git_graph_dates.test does.
+        .utc = true,
         .has_wip = true,
         .wip = .{ .branch = "main", .summary = "1 change(s) \u{B7} 1 new", .unstaged = &files },
     });
@@ -1636,7 +1647,7 @@ test "the date column at the walk's pane widths — 96 cells (120 columns) and 5
         var f = try Fixture.init(case.w, 12);
         defer f.deinit();
         var st: State = .{};
-        _ = draw(f.ui(), 1, f.full(), &st, .{ .commits = &cs, .lanes = &lanes, .order = try identity(arena, 2), .cursor = 0, .focused = true, .now = 1757260800 });
+        _ = draw(f.ui(), 1, f.full(), &st, .{ .commits = &cs, .lanes = &lanes, .order = try identity(arena, 2), .cursor = 0, .focused = true, .now = 1757260800, .utc = true });
         clobberStack();
         var buf: [1024]u8 = undefined;
         const header = try arena.dupe(u8, f.row(1, &buf));
@@ -1714,7 +1725,8 @@ test "helpers: padOrTruncate and rightAlign by code points, the UTC date, the ag
     try testing.expectEqualStrings("\u{B7}\u{B7}  ", try padOrTruncate(arena, "\u{B7}\u{B7}", 4, false));
     var buf: [16]u8 = undefined;
     try testing.expectEqualStrings("09/06 20:00", commitDateTime(&buf, 1757188800, 0));
-    try testing.expectEqualStrings("09/06 22:00", commitDateTime(&buf, 1757188800, 2));
+    try testing.expectEqualStrings("09/06 22:00", commitDateTime(&buf, 1757188800, 2 * 3600));
+    try testing.expectEqualStrings("09/06 16:00", commitDateTime(&buf, 1757188800, -4 * 3600));
     try testing.expectEqualStrings("01/01 00:00", commitDateTime(&buf, 0, 0));
     try testing.expectEqualStrings("now", humanizeAge(&buf, 5));
     try testing.expectEqualStrings("3m", humanizeAge(&buf, 200));

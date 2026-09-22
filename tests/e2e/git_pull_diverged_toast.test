@@ -1,0 +1,34 @@
+# hunt/findings-2026-09-22/git-pull-diverged-toast.md: `git.pull` on a
+# diverged branch is refused by git (ff-only), which is right — but the
+# toast read "pulled (ff-only): hint: Diverging branches can't be f…":
+# past tense, then git's FIRST hint line cut before its verb, while the
+# `fatal: Not possible to fast-forward` line that is the answer was not
+# shown. The toast names the refusal in one sentence. HEAD did not move.
+shell git init -q -b main
+shell git config user.email "ada@example.test"
+shell git config user.name "Ada Example"
+write .gitignore ".mnml/\n"
+write a.txt "one\n"
+shell git add .gitignore a.txt
+shell git commit -q -m "first"
+shell git init -q --bare .mnml/remote.git
+shell git remote add origin "$PWD/.mnml/remote.git"
+shell git push -q -u origin main
+shell git clone -q .mnml/remote.git .mnml/other && cd .mnml/other && git config user.email "bob@example.test" && git config user.name "Bob Example" && printf "theirs\n" > b.txt && git add b.txt && git commit -q -m "remote side" && git push -q origin main
+write a.txt "one\ntwo\n"
+shell git commit -q -am "local side"
+shell git fetch -q origin
+command git.refresh
+wait 1500
+expect screen contains "⇡1 ⇣1"
+command git.pull
+wait 400
+expect screen contains "pull: branches have diverged — merge or rebase"
+expect screen lacks "pulled (ff-only)"
+expect screen lacks "hint:"
+# Nothing was pulled: HEAD is still the local commit, no merge started.
+shell test "$(git log -1 --format=%s)" = "local side"
+shell test ! -e .git/MERGE_HEAD
+# Long enough to read: still on screen three seconds on.
+wait 2600
+expect screen contains "branches have diverged"

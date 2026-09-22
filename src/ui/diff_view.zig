@@ -533,7 +533,13 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, view: *State, doc: Doc) Painted {
     var hunks: usize = 0;
     for (doc.files) |f| hunks += f.hunks.len;
     if (hunks == 0) {
-        const msg: []const u8 = if (doc.pending) "  loading\u{2026}" else "  (no changes)";
+        // A binary file has no hunks; `(no changes)` is what the pane
+        // says about a clean file, and the status pane had just called
+        // this one modified. git's own line, with `--stat`'s sizes.
+        const msg: []const u8 = if (doc.pending) "  loading\u{2026}" else if (binaryFile(doc.files)) |f| (if (f.bin_sizes) |sz|
+            ui.fmt("  Binary file changed ({d} {s} {d} bytes)", .{ sz[0], if (ui.ascii) "->" else "\u{2192}", sz[1] })
+        else
+            "  Binary file changed") else "  (no changes)";
         _ = ui.putStr(body.x, body.y, body.w, msg, .{ .fg = p.comment, .bg = p.bg_dark });
         return painted;
     }
@@ -1217,6 +1223,35 @@ test "flatten lists hunk, lines and spacer; the Hunk view paints the header with
     try g.expectRow(5, try padTo(arena, "        \u{258F}  bbbbbbbbbbbbbb", 28, "\u{258E}"));
     try testing.expectEqual(@as(u32, 2), g.hits.at(10, 5).?.script_hit.id);
     try testing.expectEqual(@as(u32, 1), g.hits.at(10, 3).?.script_hit.id);
+}
+
+/// The first file git called binary, or null.
+fn binaryFile(files: []const parse.FileDiff) ?parse.FileDiff {
+    for (files) |f| if (f.binary) return f;
+    return null;
+}
+
+test "no hunks on a binary file: `Binary file changed (old → new bytes)`, the sizes off --stat; without them the line alone; `->` in ascii" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = a.allocator();
+    var f = try Fixture.init(50, 10);
+    defer f.deinit();
+    var st: State = .{};
+    const files = try parse.parseDiff(arena,
+        \\diff --git a/logo.png b/logo.png
+        \\index e5d1ed1..99a4e9c 100644
+        \\Binary files a/logo.png and b/logo.png differ
+        \\
+    );
+    _ = draw(f.ui(), 1, f.full(), &st, .{ .files = files, .rows = &.{}, .shown = &.{}, .cursor = 0, .focused = true });
+    try f.expectRow(2, "  Binary file changed");
+    files[0].bin_sizes = .{ 33, 40 };
+    _ = draw(f.ui(), 1, f.full(), &st, .{ .files = files, .rows = &.{}, .shown = &.{}, .cursor = 0, .focused = true });
+    try f.expectRow(2, "  Binary file changed (33 \u{2192} 40 bytes)");
+    f.ascii = true;
+    _ = draw(f.ui(), 1, f.full(), &st, .{ .files = files, .rows = &.{}, .shown = &.{}, .cursor = 0, .focused = true });
+    try f.expectRow(2, "  Binary file changed (33 -> 40 bytes)");
 }
 
 test "no hunks: `(no changes)`, or `loading…` while pending; a staged scope offers Unstage; a commit none" {
