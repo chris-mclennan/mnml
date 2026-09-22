@@ -684,6 +684,7 @@ const Out = struct {
         const nl = std.mem.indexOfScalar(u8, pick, '\n') orelse pick.len;
         return pick[0..nl];
     }
+
 };
 
 pub const EnvPair = struct { key: []const u8, value: []const u8 };
@@ -889,7 +890,12 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
                 return;
             }
             switch (d.scope) {
-                .file => try args.appendSlice(arena, &.{ "diff", "--no-ext-diff", ctx, "HEAD", "--", d.path orelse "" }),
+                // One file, index → worktree (`git diff -- <rel>`, Rust's
+                // `diff_file`): the unstaged change, what stage / discard
+                // act on. Against HEAD the staged lines painted as if
+                // unstaged, and a discard on one wrote HEAD's line back
+                // over an index that kept the edit.
+                .file => try args.appendSlice(arena, &.{ "diff", "--no-ext-diff", ctx, "--", d.path orelse "" }),
                 .head => try args.appendSlice(arena, &.{ "diff", "--no-ext-diff", ctx, "HEAD", "--" }),
                 .worktree => try args.appendSlice(arena, &.{ "diff", "--no-ext-diff", ctx, "--" }),
                 .staged => {
@@ -911,11 +917,18 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
                 },
                 .conflict => unreachable,
             }
-            var out = try git(repo, io, arena, args.items, if (d.scope == .orig) (d.text orelse "") else null);
-            // `diff HEAD -- untracked` is empty; show the file as new so
-            // the pane has something to say.
+            var used_args: []const []const u8 = args.items;
+            var out = try git(repo, io, arena, used_args, if (d.scope == .orig) (d.text orelse "") else null);
+            // `diff -- untracked` is empty; show the file as new so the
+            // pane has something to say. A TRACKED file with nothing
+            // unstaged (all of it staged) stays empty — `(no changes)`,
+            // not the whole file as an addition.
             if (d.scope == .file and out.ok and trimmed(out.stdout).len == 0) {
-                out = try git(repo, io, arena, &.{ "diff", "--no-ext-diff", ctx, "--no-index", "--", "/dev/null", d.path orelse "" }, null);
+                const tracked = try git(repo, io, arena, &.{ "ls-files", "--error-unmatch", "--", d.path orelse "" }, null);
+                if (!tracked.ok) {
+                    used_args = &.{ "diff", "--no-ext-diff", ctx, "--no-index", "--", "/dev/null", d.path orelse "" };
+                    out = try git(repo, io, arena, used_args, null);
+                }
             }
             const files = try parse.parseDiff(arena, out.stdout);
             r.payload = .{ .diff = .{ .scope = d.scope, .path = if (d.path) |p| try arena.dupe(u8, p) else null, .rev = if (d.rev) |v| try arena.dupe(u8, v) else null, .files = files, .full = d.full } };

@@ -1,8 +1,11 @@
-# Same setup as git-diff-file-base-is-head.test; `x` on the staged
-# "- pub fn step2() {}" row (the first change row under the cursor)
-# offers "Discard … from the worktree" and, on y, writes step2 BACK into
-# the worktree while the index still records its deletion: `git status`
-# turns MM, `git diff` now shows +step2 — a hunk the user never authored.
+# hunt/findings-2026-09-22/git-diff-file-base-is-head.md, second repro:
+# with the pane diffed against HEAD, `x` on a row whose change was
+# already STAGED offered "Discard … from the worktree" and wrote HEAD's
+# line back into the worktree while the index kept the edit — `git
+# status` turned MM with an inverse hunk nobody wrote. The pane is
+# index → worktree now, so a staged row is not on it to discard; a
+# line discard drops the worktree change relative to the index and the
+# staged edit stays exactly as it was.
 shell git init -q -b main
 shell git config user.email "ada@example.test"
 shell git config user.name "Ada Example"
@@ -17,17 +20,32 @@ open steps.rs
 command git.diff_file
 wait 1500
 expect screen contains "Hunk 1/1  steps.rs"
-key j
+# The staged rows are not there to discard.
+expect screen lacks "- pub fn step2() {}"
+# The hunk's rows end ` step12`, `+ pub fn step11x() {}` above it and
+# `- pub fn step11() {}` above that: G then k k lands on the deleted
+# line, whatever context width the pane paints; v j takes the pair —
+# the one worktree change, both of its rows.
+key G
+key k
+key k
 key v
+key j
 key x
-expect screen contains "Discard the 1 selected line from the worktree?"
+expect screen contains "Discard the 2 selected lines from the worktree?"
 key y
 wait 2000
-expect screen contains "discarded 1 line of steps.rs"
+expect screen contains "discarded 2 lines of steps.rs"
 shell mkdir -p .mnml && git status --porcelain > .mnml/st.out
 shell git diff -- steps.rs > .mnml/wt.out
-# A discard must not create a change: the index → worktree diff should
-# still be just the step11 line, and step2 must not be back in the file
-# while its deletion is staged.
+shell git diff --cached -- steps.rs > .mnml/idx.out
+# The worktree change is gone, the index untouched: `M ` (staged only),
+# no inverse hunk, the four staged lines still staged, step2 not back.
+shell git status --porcelain -- steps.rs && git diff -- steps.rs && test "$(git status --porcelain -- steps.rs)" = "M  steps.rs"
 expect file .mnml/wt.out lacks "+pub fn step2() {}"
+expect file .mnml/wt.out lacks "step11"
 expect file steps.rs lacks "pub fn step2() {}"
+expect file steps.rs contains "pub fn step2x() {}"
+expect file steps.rs contains "pub fn step11() {}"
+expect file steps.rs lacks "step11x"
+shell test "$(git diff --cached -- steps.rs | grep -c '^[-+][^-+]')" = 4
