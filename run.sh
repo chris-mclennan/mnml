@@ -525,6 +525,7 @@ case "${1:-start}" in
     step "mnml-zig test --gate --sizes 80x24,120x40,200x60" ./zig-out/bin/mnml-zig test --gate --sizes 80x24,120x40,200x60
     step "mnml-zig test (the corpus, MNML_E2E_ALLOW_SHELL=$MNML_E2E_ALLOW_SHELL)" ./zig-out/bin/mnml-zig test
     step "zig build glyph-audit"                          "$ZIG" build glyph-audit
+    step "zig build chrome-audit"                         "$ZIG" build chrome-audit
     step "tools/run-sh-check.sh"                          bash tools/run-sh-check.sh
     # run.ps1's structure: balance, quoting, the 5.1-incompatible
     # spellings, every verb reachable, the refusals and plan phrases

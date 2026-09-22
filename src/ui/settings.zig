@@ -1920,11 +1920,11 @@ fn boxRows(text: []const u8) BoxRows {
     var y: usize = 0;
     var seen_top = false;
     while (it.next()) |line| : (y += 1) {
-        if (std.mem.indexOf(u8, line, "\u{256d}") != null and !seen_top) {
+        if (std.mem.indexOf(u8, line, "\u{256d}") != null and !seen_top) { // chrome-audit: allow — a test helper reading the frame back
             out.top = y;
             seen_top = true;
         }
-        if (std.mem.indexOf(u8, line, "\u{2570}") != null) out.bottom = y;
+        if (std.mem.indexOf(u8, line, "\u{2570}") != null) out.bottom = y; // chrome-audit: allow — as above
     }
     return out;
 }

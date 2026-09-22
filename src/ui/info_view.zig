@@ -143,7 +143,7 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
         var i: usize = 0;
         while (i < track_h) : (i += 1) {
             const is_thumb = i >= thumb_y and i < thumb_y + thumb_h;
-            _ = ui.putStr(sx, body.y + @as(u16, @intCast(i)), 1, if (is_thumb) (if (ui.ascii) "#" else "┃") else (if (ui.ascii) "|" else "│"), Theme.onBg(Theme.withFg(t.fg, if (is_thumb) pal.cyan else pal.comment), body_bg));
+            _ = ui.putStr(sx, body.y + @as(u16, @intCast(i)), 1, if (is_thumb) (if (ui.ascii) "#" else "┃") else (if (ui.ascii) "|" else "│"), Theme.onBg(Theme.withFg(t.fg, if (is_thumb) pal.cyan else pal.comment), body_bg)); // chrome-audit: allow — Rust's info-view bar (cyan thumb on a comment track, no hit); scrollbar.zig is the candidate once hit.Owner has an info-view variant
         }
     }
     return out;

@@ -489,6 +489,33 @@ pub fn build(b: *std.Build) void {
     unit_step.dependOn(&b.addRunArtifact(arena_tests).step);
     // ── end arena audit ─────────────────────────────────────────────────
 
+    // ── the chrome audit ────────────────────────────────────────────────
+    // `zig build chrome-audit`: chrome a component already owns, drawn by
+    // hand somewhere else — a box-drawing glyph as a whole literal
+    // outside `ui/border.zig` / the SDK's `chrome.zig`, an
+    // `if (ascii) "..." else "…"` pair a component already answers.
+    // Its unit test walks the three real trees under `zig build unit`, so
+    // the next fork fails the suite rather than shipping.
+    const chrome_opts = b.addOptions();
+    chrome_opts.addOptionPath("src_root", b.path("src"));
+    chrome_opts.addOptionPath("sdk_root", b.path("sdk"));
+    chrome_opts.addOptionPath("integrations_root", b.path("integrations"));
+    const chrome_mod = b.createModule(.{ .root_source_file = b.path("tools/chrome_audit.zig"), .target = target, .optimize = optimize });
+    chrome_mod.addOptions("build_options", chrome_opts);
+    const chrome_exe = b.addExecutable(.{ .name = "chrome-audit", .root_module = chrome_mod });
+    const chrome_run = b.addRunArtifact(chrome_exe);
+    chrome_run.addDirectoryArg(b.path("src"));
+    chrome_run.addDirectoryArg(b.path("sdk"));
+    chrome_run.addDirectoryArg(b.path("integrations"));
+    chrome_run.addArg("--strict");
+    chrome_run.has_side_effects = true;
+    chrome_run.stdio = .inherit;
+    const chrome_step = b.step("chrome-audit", "Chrome a component owns, drawn by hand somewhere else (box literals, ascii twins)");
+    chrome_step.dependOn(&chrome_run.step);
+    const chrome_tests = b.addTest(.{ .root_module = chrome_mod, .filters = test_filters, .test_runner = test_runner });
+    unit_step.dependOn(&b.addRunArtifact(chrome_tests).step);
+    // ── end chrome audit ────────────────────────────────────────────────
+
     // ── mnml-drive: the real-terminal harness (tools/drive/) ────────────
     // A dev-only program that launches its OWN ghostty window, drives it
     // with CoreGraphics events posted AT that process, and reads pixels
