@@ -1028,6 +1028,7 @@ pub const specs = [_]Spec{
     .{ .id = "view.focus_up", .title = "Focus split up", .group = "view", .keys = .{ .vim = &.{"ctrl+k"}, .standard = &.{"ctrl+k ctrl+up"} } },
     .{ .id = "view.focus_down", .title = "Focus split down", .group = "view", .keys = .{ .vim = &.{"ctrl+j"}, .standard = &.{"ctrl+k ctrl+down"} } },
     .{ .id = "view.focus_next_split", .title = "Focus next split", .group = "view" },
+    .{ .id = "view.focus_prev_split", .title = "Focus previous split (the next-split walk backwards)", .group = "view" },
     .{ .id = "view.focus_top", .title = "Focus the top split (vim Ctrl-W t)", .group = "view" },
     .{ .id = "view.focus_bottom", .title = "Focus the bottom split (vim Ctrl-W b)", .group = "view" },
     .{ .id = "view.focus_previous", .title = "Focus the previously focused window (vim Ctrl-W p)", .group = "view" },
@@ -1237,7 +1238,7 @@ pub const specs = [_]Spec{
     .{ .id = "view.keep_tab", .title = "Keep this tab (stop the next glance taking the preview over)", .group = "view", .keys = .{ .vim = &.{"space b k"}, .standard = &.{"ctrl+k enter"} } },
 };
 
-test "1116 specs, unique ids" {
+test "1117 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1273,6 +1274,7 @@ test "1116 specs, unique ids" {
     // row still fired — a swap, so the count did not move.
     // + the three `view.rail_*` membership commands (railmove)
     // + the four `view.dock_item_move_*` reorder commands (dock-polish)
-    try std.testing.expectEqual(@as(usize, 1116), specs.len);
+    // + `view.focus_prev_split`, the split walk backwards (splitcycle)
+    try std.testing.expectEqual(@as(usize, 1117), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

@@ -42,6 +42,7 @@ pub const table = .{
     .@"view.focus_up" = &focusUp,
     .@"view.focus_down" = &focusDown,
     .@"view.focus_next_split" = &focusNextSplit,
+    .@"view.focus_prev_split" = &focusPrevSplit,
     .@"view.focus_top" = &focusTop,
     .@"view.focus_bottom" = &focusBottom,
     .@"view.focus_previous" = &focusPrevious,
@@ -534,6 +535,32 @@ fn focusNextSplit(app: *App) CommandError!void {
     if (leaves.len < 2) return;
     const next = leaves[(idx + 1) % leaves.len];
     app.setActive(layout.leaf(next).?.active);
+}
+
+/// `Ctrl-W W`: the same cycle backwards — the previous leaf, and before
+/// the first one the sidebar when it is open; from the sidebar the last
+/// leaf.
+fn focusPrevSplit(app: *App) CommandError!void {
+    const cur = app.active orelse return error.NoActivePane;
+    const layout = app.layouts.current();
+    const leaves = try layout.leaves(app.frame.allocator());
+    // From the sidebar the cycle continues into the last window.
+    if (app.focus == .tree and leaves.len > 0) {
+        app.setActive(layout.leaf(leaves[leaves.len - 1]).?.active);
+        app.focus = .{ .pane = app.active orelse cur };
+        app.needs_render = true;
+        return;
+    }
+    const mine = layout.leafOf(cur) orelse return;
+    const idx = std.mem.indexOfScalar(layout_mod.NodeId, leaves, mine) orelse return;
+    if (idx == 0 and app.tree.visible) {
+        app.focus = .tree;
+        app.needs_render = true;
+        return;
+    }
+    if (leaves.len < 2) return;
+    const prev = leaves[(idx + leaves.len - 1) % leaves.len];
+    app.setActive(layout.leaf(prev).?.active);
 }
 
 /// `Ctrl-W t` / `Ctrl-W b` (`:help CTRL-W_t`): the first / last leaf in
@@ -1155,6 +1182,55 @@ test "the sidebar is the leftmost window: focus_left from the leftmost split ent
     app.tree.visible = false;
     try command.run(&app, .{ .static = .@"view.focus_left" });
     try t.expect(app.focus == .pane);
+}
+
+test "focus_prev_split is focus_next_split backwards: three splits wrap both ways, prev undoes next, and the open sidebar sits before the first split" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    const a = try app.openScratch();
+    try command.run(&app, .{ .static = .@"view.split_right" });
+    const b = app.active.?;
+    try command.run(&app, .{ .static = .@"view.split_right" });
+    const c = app.active.?;
+    try t.expectEqual(@as(usize, 3), (try app.layouts.current().leaves(app.frame.allocator())).len);
+    try t.expect(a != b and b != c and a != c);
+    // The sidebar hidden: a pure ring of three, either way.
+    app.tree.visible = false;
+    app.setActive(a);
+    for ([_]PaneId{ b, c, a }) |want| {
+        try command.run(&app, .{ .static = .@"view.focus_next_split" });
+        try t.expectEqual(want, app.active.?);
+    }
+    for ([_]PaneId{ c, b, a }) |want| {
+        try command.run(&app, .{ .static = .@"view.focus_prev_split" });
+        try t.expectEqual(want, app.active.?);
+    }
+    // Back after forth lands where it started, from every split.
+    for ([_]PaneId{ a, b, c }) |from| {
+        app.setActive(from);
+        try command.run(&app, .{ .static = .@"view.focus_next_split" });
+        try command.run(&app, .{ .static = .@"view.focus_prev_split" });
+        try t.expectEqual(from, app.active.?);
+    }
+    // The sidebar open: next runs a → b → c → tree, prev the mirror
+    // a → tree → c → b → a.
+    app.tree.visible = true;
+    app.focus = .{ .pane = a };
+    app.setActive(a);
+    try command.run(&app, .{ .static = .@"view.focus_prev_split" });
+    try t.expect(app.focus == .tree);
+    try command.run(&app, .{ .static = .@"view.focus_prev_split" });
+    try t.expect(app.focus == .pane and app.active.? == c);
+    try command.run(&app, .{ .static = .@"view.focus_prev_split" });
+    try t.expectEqual(b, app.active.?);
+    try command.run(&app, .{ .static = .@"view.focus_prev_split" });
+    try t.expectEqual(a, app.active.?);
+    // And prev undoes next across the sidebar too.
+    app.setActive(c);
+    try command.run(&app, .{ .static = .@"view.focus_next_split" });
+    try t.expect(app.focus == .tree);
+    try command.run(&app, .{ .static = .@"view.focus_prev_split" });
+    try t.expect(app.focus == .pane and app.active.? == c);
 }
 
 test "view.only keeps this window and its tabs; the other leaves' panes become background tabs here, a twin window closes" {
