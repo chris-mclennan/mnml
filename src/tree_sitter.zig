@@ -383,6 +383,10 @@ pub const Query = opaque {
         const p = ts_query_predicates_for_pattern(q, pattern, &len);
         return p[0..len];
     }
+    /// The byte range of `pattern` in the query source it was compiled from.
+    pub fn patternSourceRange(q: *const Query, pattern: u32) struct { u32, u32 } {
+        return .{ ts_query_start_byte_for_pattern(q, pattern), ts_query_end_byte_for_pattern(q, pattern) };
+    }
 };
 
 pub const QueryCursor = opaque {
@@ -492,6 +496,8 @@ pub extern fn ts_query_string_count(self: *const Query) u32;
 pub extern fn ts_query_capture_name_for_id(self: *const Query, index: u32, length: *u32) [*]const u8;
 pub extern fn ts_query_string_value_for_id(self: *const Query, index: u32, length: *u32) [*]const u8;
 pub extern fn ts_query_predicates_for_pattern(self: *const Query, pattern_index: u32, step_count: *u32) [*]const QueryPredicateStep;
+pub extern fn ts_query_start_byte_for_pattern(self: *const Query, pattern_index: u32) u32;
+pub extern fn ts_query_end_byte_for_pattern(self: *const Query, pattern_index: u32) u32;
 
 pub extern fn ts_query_cursor_new() ?*QueryCursor;
 pub extern fn ts_query_cursor_delete(self: *QueryCursor) void;

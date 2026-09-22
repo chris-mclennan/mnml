@@ -46,6 +46,9 @@ const Lang = struct {
     hl_preds: predicate.Table,
     /// Per capture index.
     roles: []Role,
+    /// Per pattern: a bare catch-all (`isCatchAll`), which never takes a
+    /// node from a pattern that said more about it.
+    catch_all: []bool,
     injections: ?*ts.Query = null,
     inj_preds: ?predicate.Table = null,
     inj_language: ?u32 = null,
@@ -64,9 +67,16 @@ const Lang = struct {
         const roles = try gpa.alloc(Role, hl.captureCount());
         errdefer gpa.free(roles);
         for (roles, 0..) |*r, i| r.* = role_mod.roleFor(hl.captureName(@intCast(i)));
+        const source = table.highlightSource(entry);
+        const catch_all = try gpa.alloc(bool, hl.patternCount());
+        errdefer gpa.free(catch_all);
+        for (catch_all, 0..) |*c, i| {
+            const lo, const hi = hl.patternSourceRange(@intCast(i));
+            c.* = hi <= source.len and lo < hi and isCatchAll(source[lo..hi]);
+        }
         const self = try gpa.create(Lang);
         errdefer gpa.destroy(self);
-        self.* = .{ .parser = parser, .highlights = hl, .hl_preds = hl_preds, .roles = roles };
+        self.* = .{ .parser = parser, .highlights = hl, .hl_preds = hl_preds, .roles = roles, .catch_all = catch_all };
         if (e.injections.len > 0) {
             if (ts.Query.init(language, e.injections, null)) |inj| {
                 self.injections = inj;
@@ -87,6 +97,7 @@ const Lang = struct {
         if (self.injections) |q| q.deinit();
         self.hl_preds.deinit();
         gpa.free(self.roles);
+        gpa.free(self.catch_all);
         self.highlights.deinit();
         self.parser.deinit();
         gpa.destroy(self);
@@ -193,9 +204,11 @@ pub const Highlighter = struct {
     clock: u64 = 0,
     /// Per-byte role of the window being built; reused across windows.
     paint: std.ArrayListUnmanaged(Role) = .empty,
-    /// Per-byte length of the node that painted it — an inner (shorter)
-    /// node overrides an outer one; the first pattern to capture a node
-    /// keeps it, as under tree-sitter-highlight.
+    /// Per byte, who painted it: `ownerKey` of the capture — an inner
+    /// (shorter) node overrides an outer one; for one node a later
+    /// pattern overrides an earlier one, as under tree-sitter-highlight
+    /// and Neovim, except that a bare catch-all never takes a node from a
+    /// pattern that said more about it (see `isCatchAll`).
     owner: std.ArrayListUnmanaged(u32) = .empty,
     cursor: ?*ts.QueryCursor = null,
     /// A highlights query behind the last window built ran into the
@@ -424,12 +437,13 @@ pub const Highlighter = struct {
             if (to <= from) continue;
             if (!l.hl_preds.pass(&m, text)) continue;
             // The node's whole length decides who wins, in or out of
-            // the window.
-            const size: u32 = @intCast(e - s);
+            // the window; for one node, the later capture — captures of
+            // a node come in pattern order.
+            const key = ownerKey(e - s, l.catch_all[m.pattern_index]);
             for (from - base..to - base) |b| {
-                if (size < self.owner.items[b]) {
+                if (key <= self.owner.items[b]) {
                     self.paint.items[b] = role;
-                    self.owner.items[b] = size;
+                    self.owner.items[b] = key;
                 }
             }
         }
@@ -582,6 +596,50 @@ pub fn layerSpans(comptime T: type, arena: Allocator, base: []const T, over: []c
 
 const testing = std.testing;
 
+/// A capture's claim on a byte: twice its node's length, plus one for a
+/// bare catch-all. A claim at or below the byte's current one repaints
+/// it, so a shorter node always wins, a later pattern on the same node
+/// wins, and a catch-all loses a node a more specific pattern has.
+fn ownerKey(len: usize, catch_all: bool) u32 {
+    const capped: u32 = @intCast(@min(len, std.math.maxInt(u32) / 2 - 1));
+    return capped * 2 + @intFromBool(catch_all);
+}
+
+/// A pattern that names one node kind and nothing else — `(identifier)
+/// @variable`, `(_) @x`, `[(a) (b)] @y` — no parent, field, child,
+/// anchor, quantifier or predicate. Queries put these at either end:
+/// Neovim-style ones (c_sharp, python, c, java, javascript, ruby, zig)
+/// open with the catch-all and let every later, specific pattern
+/// override it; older ones (go, json) close with it after the specific
+/// ones, meaning "whatever is left". A catch-all that loses a node to a
+/// more specific pattern whichever side it sits on reads both as meant.
+pub fn isCatchAll(pattern: []const u8) bool {
+    var depth: usize = 0;
+    var i: usize = 0;
+    var saw_node = false;
+    while (i < pattern.len) : (i += 1) {
+        const c = pattern[i];
+        switch (c) {
+            ';' => while (i < pattern.len and pattern[i] != '\n') : (i += 1) {},
+            '@' => while (i + 1 < pattern.len and isNameByte(pattern[i + 1])) : (i += 1) {},
+            '(' => {
+                depth += 1;
+                if (depth > 1) return false;
+                saw_node = true;
+            },
+            ')' => depth -|= 1,
+            '[', ']', ' ', '\t', '\n', '\r' => {},
+            ':', '#', '"', '.', '*', '+', '?', '!' => return false,
+            else => if (!isNameByte(c)) return false,
+        }
+    }
+    return saw_node;
+}
+
+fn isNameByte(c: u8) bool {
+    return std.ascii.isAlphanumeric(c) or c == '_' or c == '.' or c == '-';
+}
+
 fn roleAt(spans: []const Span, off: usize) Role {
     for (spans) |s| if (off >= s.start and off < s.end) return s.role;
     return .none;
@@ -642,17 +700,138 @@ test "rust: keywords, functions, types, strings and numbers each get their role"
     }
 }
 
-test "predicates hold: a capitalised identifier is a constructor, a plain one is not; the first pattern keeps a node" {
+test "predicates hold: a capitalised identifier is a constructor, a plain one is not; a later catch-all does not take the node" {
     var h = Highlighter.init(testing.allocator);
     defer h.deinit();
     h.setLanguage(table.find("rs").?);
     const text = "let Zed = limit;\n";
     const spans = try h.highlightAll(text);
     // `((identifier) @constructor (#match? "^[A-Z]"))` precedes the plain
-    // `(identifier) @variable` in the shipped query; the earlier pattern
-    // keeps the node (tree-sitter-highlight's rule), the predicate gates it.
+    // `(identifier) @variable` in the shipped query; the catch-all comes
+    // later but says less about the node, so the constructor keeps it,
+    // and the predicate gates it.
     try testing.expectEqual(Role.special, roleAt(spans, std.mem.indexOf(u8, text, "Zed").?));
     try testing.expect(roleAt(spans, std.mem.indexOf(u8, text, "limit").?) != .special);
+}
+
+/// The role painted on the first byte of the `nth` (0-based) occurrence
+/// of `needle` in `text`.
+fn roleOf(spans: []const Span, text: []const u8, needle: []const u8, nth: usize) Role {
+    var at: usize = 0;
+    var k: usize = 0;
+    while (std.mem.indexOfPos(u8, text, at, needle)) |i| : (k += 1) {
+        if (k == nth) return roleAt(spans, i);
+        at = i + 1;
+    }
+    unreachable;
+}
+
+test "c_sharp: the query opens with `(identifier) @variable`; the specific captures after it paint class, record, method, attribute, base, new and call names" {
+    var h = Highlighter.init(testing.allocator);
+    defer h.deinit();
+    h.setLanguage(table.find("cs").?);
+    const text =
+        \\using System;
+        \\
+        \\namespace Acme.Core;
+        \\
+        \\public record Point(int X, int Y);
+        \\
+        \\[AttributeUsage(AttributeTargets.Method)]
+        \\public sealed class AuditedAttribute : Attribute
+        \\{
+        \\    public string? Tag { get; init; }
+        \\}
+        \\
+        \\public static class Calc
+        \\{
+        \\    public static int Add(int a, int b) => a + b;
+        \\
+        \\    [Audited(Tag = "div")]
+        \\    public static int Divide(int a, int b)
+        \\    {
+        \\        if (b == 0) throw new DivideByZeroException("b is zero");
+        \\        return a / b;
+        \\    }
+        \\
+        \\    public static string Describe(object? o) => Calc.Add(1, 2).ToString();
+        \\}
+        \\
+    ;
+    const spans = try h.highlightAll(text);
+    try testing.expectEqual(Role.type, roleOf(spans, text, "Calc", 0)); // class_declaration name
+    try testing.expectEqual(Role.type, roleOf(spans, text, "Point", 0)); // record_declaration
+    try testing.expectEqual(Role.type, roleOf(spans, text, "AuditedAttribute", 0)); // class name
+    try testing.expectEqual(Role.type, roleOf(spans, text, "Attribute\n", 0)); // base_list
+    try testing.expectEqual(Role.function, roleOf(spans, text, "Add(int", 0)); // method_declaration name
+    try testing.expectEqual(Role.function, roleOf(spans, text, "Divide", 0));
+    try testing.expectEqual(Role.type, roleOf(spans, text, "AttributeUsage", 0)); // attribute name (@attribute)
+    try testing.expectEqual(Role.type, roleOf(spans, text, "Audited(", 0));
+    try testing.expectEqual(Role.type, roleOf(spans, text, "DivideByZeroException", 0)); // object_creation type
+    try testing.expectEqual(Role.function, roleOf(spans, text, "Add(1", 0)); // invocation member name
+    try testing.expectEqual(Role.function, roleOf(spans, text, "ToString", 0));
+    // What the catch-all is for: a plain identifier stays plain.
+    try testing.expectEqual(Role.default, roleOf(spans, text, "a / b", 0));
+    // And what already coloured still does.
+    try testing.expectEqual(Role.keyword, roleOf(spans, text, "public", 0));
+    try testing.expectEqual(Role.type, roleOf(spans, text, "int X", 0)); // predefined_type
+    try testing.expectEqual(Role.string, roleOf(spans, text, "\"div\"", 0));
+}
+
+test "python: the query opens with `(identifier) @variable`; def and class names, calls, decorators, builtins and type hints take the later captures" {
+    var h = Highlighter.init(testing.allocator);
+    defer h.deinit();
+    h.setLanguage(table.find("py").?);
+    const text =
+        \\import os
+        \\
+        \\@decorator
+        \\class Foo(Base):
+        \\    def bar(self, x: int) -> str:
+        \\        return str(len(x))
+        \\
+        \\total = helper(1)
+        \\MAX = None
+        \\print(os.path)
+        \\
+    ;
+    const spans = try h.highlightAll(text);
+    try testing.expectEqual(Role.function, roleOf(spans, text, "decorator", 0));
+    try testing.expectEqual(Role.function, roleOf(spans, text, "bar", 0)); // function_definition name
+    try testing.expectEqual(Role.function, roleOf(spans, text, "len", 0)); // a builtin call
+    try testing.expectEqual(Role.function, roleOf(spans, text, "helper", 0)); // a call
+    try testing.expectEqual(Role.function, roleOf(spans, text, "print", 0));
+    try testing.expectEqual(Role.type, roleOf(spans, text, "int", 0)); // type hint
+    try testing.expectEqual(Role.type, roleOf(spans, text, "str:", 0));
+    try testing.expectEqual(Role.constant, roleOf(spans, text, "MAX", 0));
+    try testing.expect(roleOf(spans, text, "Foo", 0) != .default); // class name: constructor / type
+    try testing.expectEqual(Role.default, roleOf(spans, text, "total", 0)); // a plain name stays plain
+    try testing.expectEqual(Role.keyword, roleOf(spans, text, "class", 0));
+}
+
+test "go: the query closes with `(identifier) @variable`; a catch-all after the specific patterns leaves function and call names alone" {
+    var h = Highlighter.init(testing.allocator);
+    defer h.deinit();
+    h.setLanguage(table.find("go").?);
+    const text = "package main\n\nfunc (p *Point) Move(dx int) int {\n\treturn p.X + dx\n}\n\nfunc main() {\n\tfmt.Println(helper(2))\n}\n";
+    const spans = try h.highlightAll(text);
+    try testing.expectEqual(Role.function, roleOf(spans, text, "Move", 0)); // method_declaration name
+    try testing.expectEqual(Role.function, roleOf(spans, text, "main", 1)); // function_declaration name
+    try testing.expectEqual(Role.function, roleOf(spans, text, "Println", 0)); // selector call
+    try testing.expectEqual(Role.function, roleOf(spans, text, "helper", 0)); // plain call
+    try testing.expectEqual(Role.type, roleOf(spans, text, "Point", 0));
+}
+
+test "isCatchAll: one node kind and captures, nothing else" {
+    try testing.expect(isCatchAll("(identifier) @variable"));
+    try testing.expect(isCatchAll("(_) @x"));
+    try testing.expect(isCatchAll("[\n  (string_expression)\n  (indented_string_expression)\n] @string"));
+    try testing.expect(isCatchAll("; a comment: with (parens)\n(identifier) @variable.member"));
+    try testing.expect(!isCatchAll("(method_declaration name: (identifier) @function)"));
+    try testing.expect(!isCatchAll("((identifier) @constant (#match? @constant \"^[A-Z]\"))"));
+    try testing.expect(!isCatchAll("(base_list (identifier) @type)"));
+    try testing.expect(!isCatchAll("[\"fn\" \"let\"] @keyword"));
+    try testing.expect(!isCatchAll("(identifier)? @x"));
 }
 
 test "injections: markdown fences carry the fenced grammar, inline emphasis and headings paint" {
