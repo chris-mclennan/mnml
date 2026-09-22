@@ -18,6 +18,7 @@ const key_mod = @import("../core/key.zig");
 const Key = key_mod.Key;
 const Chord = key_mod.Chord;
 const cmdline_mod = @import("cmdline.zig");
+const cmdline_popup = @import("cmdline_popup.zig");
 const cmdline_bar_mod = @import("../ui/cmdline_bar.zig");
 const Mouse = key_mod.Mouse;
 const input = @import("../input/mod.zig");
@@ -166,7 +167,16 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
     // would otherwise swallow `Ctrl+;` into `app.chord` and the line
     // would never appear (the bug Rust's own `Ctrl+;` was moved up to
     // fix: it worked in tree focus and failed in pane focus).
-    if (app.cmdline != null and try cmdline_mod.key(app, k)) return;
+    if (app.cmdline != null) {
+        // The completion popup's keys first (`app/cmdline_popup.zig`):
+        // the arrows and Esc while it shows, Tab / Shift+Tab always.
+        if (try cmdline_popup.appLineKey(app, k)) return;
+        if (try cmdline_mod.key(app, k)) {
+            // The line may have changed: the popup follows it.
+            try cmdline_popup.refresh(app);
+            return;
+        }
+    }
     if (opensCommandLine(app, k)) {
         app.chord.clear(app.gpa);
         cmdline_mod.open(app);
@@ -434,9 +444,17 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
         if (try chordChain(app, k)) return;
     }
     const e = ed orelse return;
+    // The vim `:` line's completion popup owns the arrows and Esc while
+    // it shows (`app/cmdline_popup.zig`); Tab reaches it through the
+    // handler's own seams.
+    if (cmdline_open and try cmdline_popup.interceptKey(app, k)) return;
     if (try snippets.interceptKey(app, pane_id.?, e, k)) return;
     const consumed = try feedEditor(app, pane_id.?, e, k);
     if (!consumed and editor_first) _ = try chordChain(app, k);
+    // The line the key went to may have changed — or closed: the popup
+    // follows it. `e` is stale after an app command; ask afresh.
+    const now_open = if (app.activeEditor()) |still| still.buf.input.isCmdlineOpen() else false;
+    if (cmdline_open or now_open) try cmdline_popup.refresh(app);
 }
 
 /// The list panes: j/k move, enter acts, esc closes the pane.
@@ -2111,7 +2129,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .wizard => try first_launch.click(app, i),
                 // The find bar's chips, the rename preview and the completion
                 // popup register their rows here with no overlay up.
-                else => if (app.find_bar != null) try cmd_find.chipClick(app, i) else if (app.lsp.rename.preview != null) rename_app.click(app, i) else if (app.lsp.completion != null) try lsp.clickCompletion(app, i) else if (app.http.completion != null) try http_app.clickVarCompletion(app, i),
+                else => if (cmdline_popup.showing(app)) try cmdline_popup.click(app, i) else if (app.find_bar != null) try cmd_find.chipClick(app, i) else if (app.lsp.rename.preview != null) rename_app.click(app, i) else if (app.lsp.completion != null) try lsp.clickCompletion(app, i) else if (app.http.completion != null) try http_app.clickVarCompletion(app, i),
             }
         },
         .pane => |id| {
@@ -3842,33 +3860,43 @@ fn filterThroughShell(app: *App, cmd: []const u8) Allocator.Error!void {
 
 // ── the `:` line ──
 
-const ex_names = [_][]const u8{ "write", "wq", "quit", "edit", "bdelete", "bnext", "bprev", "sort", "retab", "substitute", "delete", "yank", "set", "registers", "marks", "abbreviate", "unabbreviate", "noh", "tabclose", "tabnew", "tabnext", "tabprev", "tabfirst", "tablast", "global", "vglobal", "normal", "command", "delcommand", "read" };
+const ex_names = [_][]const u8{ "write", "wq", "quit", "edit", "bdelete", "bnext", "bprev", "sort", "retab", "substitute", "delete", "yank", "set", "registers", "marks", "abbreviate", "unabbreviate", "noh", "tabclose", "tabnew", "tabnext", "tabprev", "tabfirst", "tablast", "global", "vglobal", "normal", "command", "delcommand", "read", "dock", "sidebar" };
 const path_commands = [_][]const u8{ "e", "edit", "w", "write", "sp", "split", "vs", "vsplit", "tabe", "tabedit", "r", "read", "cd", "saveas" };
 
-/// Tab on the `:` line. First press builds the candidates for the text
-/// so far (registry ids score: prefix 300 / contains 200, ex names 150,
-/// ties alphabetical); later presses cycle.
+/// Tab on the `:` line: the ring for the text so far (built by the
+/// popup as the text was typed, or here if it was not), then the next
+/// candidate written into the line — the first press writes the
+/// selection itself, later presses cycle (`cmdline_popup.cycle`).
 fn cmdlineTabComplete(app: *App, e: *EditorPane) Allocator.Error!void {
     const line = e.buf.input.cmdlineGet() orelse return;
+    try cmdline_popup.refresh(app);
     if (app.cmd_complete) |*c| {
         // The one match was a directory and the line is it now: the next
         // Tab lists what is inside (vim's `wildmode=full` on `:e src/`),
         // rather than cycling a list of one.
         const descend = c.candidates.len == 1 and std.mem.eql(u8, c.candidates[0], line) and std.mem.endsWith(u8, line, "/");
-        if (!descend and (std.mem.eql(u8, c.prefix, line) or (c.candidates.len > 0 and std.mem.eql(u8, c.candidates[c.idx], line)))) {
-            return cmdlineCycle(app, e, 1);
+        if (descend) {
+            dropComplete(app);
+            try cmdline_popup.refresh(app);
         }
-        c.deinit(app.gpa);
-        app.cmd_complete = null;
     }
-    const gpa = app.gpa;
+    try cmdline_popup.cycle(app, 1);
+}
+
+/// The candidates for `line` on the `:` line, owned by `gpa` (the slice
+/// and each string; empty when nothing matches). `<cmd> <partial>`
+/// completes what the command takes — `:set` its options, a path
+/// command the workspace's entries — spelled as whole lines
+/// (`e apple.md`); a lone token completes registry ids (prefix 300 /
+/// contains 200), the ex names (150) and the user's own `:command`s
+/// (400), ties alphabetical.
+pub fn cmdlineCandidates(app: *App, gpa: Allocator, line: []const u8) Allocator.Error![][]u8 {
     var cands: std.ArrayListUnmanaged([]u8) = .empty;
     errdefer {
         for (cands.items) |c| gpa.free(c);
         cands.deinit(gpa);
     }
     if (std.mem.indexOfScalar(u8, line, ' ')) |sp| {
-        // `<cmd> <partial path>` → workspace entries.
         const head = line[0..sp];
         const partial = line[sp + 1 ..];
         if (std.mem.eql(u8, head, "set") or std.mem.eql(u8, head, "se")) {
@@ -3879,18 +3907,13 @@ fn cmdlineTabComplete(app: *App, e: *EditorPane) Allocator.Error!void {
                 gpa.free(names);
             }
             for (names) |n| try cands.append(gpa, try std.mem.concat(gpa, u8, &.{ head, " ", n }));
-            if (cands.items.len == 0) return;
-            const prefix = try gpa.dupe(u8, line);
-            errdefer gpa.free(prefix);
-            app.cmd_complete = .{ .prefix = prefix, .candidates = try cands.toOwnedSlice(gpa), .idx = 0 };
-            try e.buf.input.cmdlineSet(app.cmd_complete.?.candidates[0]);
-            return;
+            return cands.toOwnedSlice(gpa);
         }
         var is_path_cmd = false;
         for (path_commands) |p| if (std.mem.eql(u8, p, head)) {
             is_path_cmd = true;
         };
-        if (!is_path_cmd) return;
+        if (!is_path_cmd) return cands.toOwnedSlice(gpa);
         var paths: std.ArrayListUnmanaged([]u8) = .empty;
         defer {
             for (paths.items) |c| gpa.free(c);
@@ -3898,35 +3921,31 @@ fn cmdlineTabComplete(app: *App, e: *EditorPane) Allocator.Error!void {
         }
         try pathCandidates(app, gpa, partial, false, &paths);
         for (paths.items) |rel| try cands.append(gpa, try std.mem.concat(gpa, u8, &.{ head, " ", rel }));
-    } else {
-        const Scored = struct { name: []const u8, score: u32 };
-        var scored: std.ArrayListUnmanaged(Scored) = .empty;
-        defer scored.deinit(gpa);
-        var i: usize = 0;
-        while (i < command.count) : (i += 1) {
-            const id = command.name(@enumFromInt(i));
-            if (std.mem.startsWith(u8, id, line)) {
-                try scored.append(gpa, .{ .name = id, .score = 300 });
-            } else if (std.mem.indexOf(u8, id, line) != null) {
-                try scored.append(gpa, .{ .name = id, .score = 200 });
-            }
-        }
-        for (ex_names) |n| if (std.mem.startsWith(u8, n, line)) try scored.append(gpa, .{ .name = n, .score = 150 });
-        // User `:command`s outrank the registry: they are the user's own words.
-        for (try ex_verbs.sortedNames(app, app.frame.allocator(), line)) |n| try scored.append(gpa, .{ .name = n, .score = 400 });
-        std.mem.sort(Scored, scored.items, {}, struct {
-            fn lt(_: void, a: Scored, b: Scored) bool {
-                if (a.score != b.score) return a.score > b.score;
-                return std.mem.lessThan(u8, a.name, b.name);
-            }
-        }.lt);
-        for (scored.items) |s| try cands.append(gpa, try gpa.dupe(u8, s.name));
+        return cands.toOwnedSlice(gpa);
     }
-    if (cands.items.len == 0) return;
-    const prefix = try gpa.dupe(u8, line);
-    errdefer gpa.free(prefix);
-    app.cmd_complete = .{ .prefix = prefix, .candidates = try cands.toOwnedSlice(gpa), .idx = 0 };
-    try e.buf.input.cmdlineSet(app.cmd_complete.?.candidates[0]);
+    const Scored = struct { name: []const u8, score: u32 };
+    var scored: std.ArrayListUnmanaged(Scored) = .empty;
+    defer scored.deinit(gpa);
+    var i: usize = 0;
+    while (i < command.count) : (i += 1) {
+        const id = command.name(@enumFromInt(i));
+        if (std.mem.startsWith(u8, id, line)) {
+            try scored.append(gpa, .{ .name = id, .score = 300 });
+        } else if (std.mem.indexOf(u8, id, line) != null) {
+            try scored.append(gpa, .{ .name = id, .score = 200 });
+        }
+    }
+    for (ex_names) |n| if (std.mem.startsWith(u8, n, line)) try scored.append(gpa, .{ .name = n, .score = 150 });
+    // User `:command`s outrank the registry: they are the user's own words.
+    for (try ex_verbs.sortedNames(app, app.frame.allocator(), line)) |n| try scored.append(gpa, .{ .name = n, .score = 400 });
+    std.mem.sort(Scored, scored.items, {}, struct {
+        fn lt(_: void, a: Scored, b: Scored) bool {
+            if (a.score != b.score) return a.score > b.score;
+            return std.mem.lessThan(u8, a.name, b.name);
+        }
+    }.lt);
+    for (scored.items) |sc| try cands.append(gpa, try gpa.dupe(u8, sc.name));
+    return cands.toOwnedSlice(gpa);
 }
 
 /// Every entry whose name starts with the last segment of `partial`,
@@ -4005,11 +4024,8 @@ pub fn promptPathComplete(app: *App, st: *Prompt.State, first_word: bool) Alloca
 }
 
 fn cmdlineCycle(app: *App, e: *EditorPane, delta: i8) Allocator.Error!void {
-    const c = &(app.cmd_complete orelse return);
-    if (c.candidates.len == 0) return;
-    const n: i64 = @intCast(c.candidates.len);
-    c.idx = @intCast(@mod(@as(i64, @intCast(c.idx)) + delta, n));
-    try e.buf.input.cmdlineSet(c.candidates[c.idx]);
+    _ = e;
+    try cmdline_popup.cycle(app, delta);
 }
 
 fn cmdlineInsertWord(app: *App, e: *EditorPane, big: bool) Allocator.Error!void {

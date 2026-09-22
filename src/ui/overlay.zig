@@ -39,6 +39,24 @@ pub fn place(screen: Rect, w_in: u16, h_in: u16, anchor: Anchor) Rect {
     return .{ .x = x, .y = y, .w = w, .h = h };
 }
 
+/// The rect a `w`×`h` box takes when it hangs from a cell — its
+/// bottom-left corner at (`x`, `bottom`), growing UP — clamped so its
+/// top never rises above `top` and its right edge never leaves
+/// `screen`. The `:` line's completion popup is placed this way: it
+/// stands directly above the command line, its left edge on the first
+/// typed character, where the eyes and the typing are, and never in
+/// the middle of the screen. A box that cannot hold three rows or
+/// three columns there comes back empty, as `frame` would leave it.
+pub fn placeAbove(screen: Rect, x: u16, bottom: u16, top: u16, w_in: u16, h_in: u16) Rect {
+    if (bottom < top or bottom >= screen.bottom() or x >= screen.right()) return Rect.empty;
+    const room_h = bottom + 1 - top;
+    const room_w = screen.right() - x;
+    const w = @min(w_in, room_w);
+    const h = @min(h_in, room_h);
+    if (w < 3 or h < 3) return Rect.empty;
+    return .{ .x = x, .y = bottom + 1 - h, .w = w, .h = h };
+}
+
 /// The three frames the Rust editor draws. `popup` is the rounded
 /// transient one (a tooltip, a context menu, a hover card); `menu` is
 /// the square dialog frame with the title as plain bold text (a
@@ -126,6 +144,24 @@ test "place clamps to the screen and honours the anchor" {
     try testing.expect(place(screen, 20, 4, .above_bottom).eql(Rect.init(10, 5, 20, 4)));
     try testing.expect(place(screen, 90, 40, .center).eql(screen));
     try testing.expect(place(Rect.init(5, 5, 3, 3), 90, 40, .above_bottom).eql(Rect.init(5, 5, 3, 3)));
+}
+
+test "placeAbove hangs the box from its bottom-left cell and clamps at the top edge" {
+    const screen = Rect.init(0, 0, 40, 10);
+    // Bottom row 8, four rows tall: rows 5..8, left edge on x = 1.
+    try testing.expect(placeAbove(screen, 1, 8, 2, 20, 4).eql(Rect.init(1, 5, 20, 4)));
+    // Taller than the room between `top` and `bottom`: the top is clamped.
+    try testing.expect(placeAbove(screen, 1, 8, 2, 20, 30).eql(Rect.init(1, 2, 20, 7)));
+    // Wider than what is right of `x`: the width is clamped.
+    try testing.expect(placeAbove(screen, 30, 8, 2, 20, 4).eql(Rect.init(30, 5, 10, 4)));
+    // The screen's last row is a fine bottom; one past it is not.
+    try testing.expect(placeAbove(screen, 1, 9, 2, 20, 4).eql(Rect.init(1, 6, 20, 4)));
+    try testing.expect(placeAbove(screen, 1, 10, 2, 20, 4).isEmpty());
+    // No room for a frame at all — a bottom above the top, or two rows
+    // of room — is an empty rect.
+    try testing.expect(placeAbove(screen, 1, 1, 2, 20, 4).isEmpty());
+    try testing.expect(placeAbove(screen, 1, 3, 2, 20, 4).isEmpty());
+    try testing.expect(placeAbove(screen, 39, 8, 2, 20, 4).isEmpty());
 }
 
 test "box paints the frame with its title and returns the inner rect" {

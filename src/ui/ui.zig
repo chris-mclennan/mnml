@@ -47,6 +47,7 @@ pub const Prompt = prompt;
 pub const confirm = @import("confirm.zig");
 pub const Confirm = confirm;
 pub const which_key = @import("which_key.zig");
+pub const cmdline_popup = @import("cmdline_popup.zig");
 pub const whichkey_glyph = @import("whichkey_glyph.zig");
 pub const find_bar = @import("find_bar.zig");
 pub const FindBar = find_bar;

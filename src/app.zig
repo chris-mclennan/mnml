@@ -954,6 +954,9 @@ pub const CmdComplete = struct {
     prefix: []u8,
     candidates: [][]u8,
     idx: usize,
+    /// Esc on the `:` line put the popup away for this prefix
+    /// (`app/cmdline_popup.zig`); the ring still serves Tab.
+    dismissed: bool = false,
 
     pub fn deinit(self: *CmdComplete, gpa: Allocator) void {
         gpa.free(self.prefix);
@@ -3250,6 +3253,8 @@ test {
     _ = @import("app/info_view.zig");
     _ = @import("app/cmd_lsp.zig");
     _ = @import("ui/completion_view.zig");
+    _ = @import("ui/cmdline_popup.zig");
+    _ = @import("app/cmdline_popup.zig");
     _ = @import("ui/hover_view.zig");
     _ = @import("ui/peek_view.zig");
     _ = @import("ui/diagnostics_view.zig");
