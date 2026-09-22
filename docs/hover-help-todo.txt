@@ -326,9 +326,11 @@ menu:now_playing/○ Beatport: not signed in
 menu:position/Copy position (1:1)
 menu:position/Go to line…
 menu:rail:debug/Debug console
+menu:rail:debug/Hide from activity bar
 menu:rail:debug/Move to bottom dock
 menu:rail:debug/Move to right side
 menu:rail:debug/Show Run and debug
+menu:rail:debug/Show on dock instead
 menu:rail:debug/Sidebar
 menu:rail:debug/Sidebar/Always (docked)
 menu:rail:debug/Sidebar/Auto-hide (reveal on the edge)
@@ -342,54 +344,66 @@ menu:rail:diagnostics/Sidebar
 menu:rail:diagnostics/Sidebar/Always (docked)
 menu:rail:diagnostics/Sidebar/Auto-hide (reveal on the edge)
 menu:rail:diagnostics/Sidebar/Hidden (keyboard only)
+menu:rail:explorer/Hide from activity bar
 menu:rail:explorer/Move to bottom dock
 menu:rail:explorer/Move to right side
 menu:rail:explorer/Refresh tree
 menu:rail:explorer/Reveal active file
 menu:rail:explorer/Show Explorer
+menu:rail:explorer/Show on dock instead
 menu:rail:explorer/Sidebar
 menu:rail:explorer/Sidebar/Always (docked)
 menu:rail:explorer/Sidebar/Auto-hide (reveal on the edge)
 menu:rail:explorer/Sidebar/Hidden (keyboard only)
+menu:rail:findings/Hide from activity bar
 menu:rail:findings/Move to bottom dock
 menu:rail:findings/Move to right side
 menu:rail:findings/Show Findings
+menu:rail:findings/Show on dock instead
 menu:rail:findings/Sidebar
 menu:rail:findings/Sidebar/Always (docked)
 menu:rail:findings/Sidebar/Auto-hide (reveal on the edge)
 menu:rail:findings/Sidebar/Hidden (keyboard only)
 menu:rail:git/Commit…
 menu:rail:git/Fetch
+menu:rail:git/Hide from activity bar
 menu:rail:git/Move to bottom dock
 menu:rail:git/Move to right side
 menu:rail:git/Open git graph
 menu:rail:git/Show Source control
+menu:rail:git/Show on dock instead
 menu:rail:git/Sidebar
 menu:rail:git/Sidebar/Always (docked)
 menu:rail:git/Sidebar/Auto-hide (reveal on the edge)
 menu:rail:git/Sidebar/Hidden (keyboard only)
 menu:rail:http/+ New request
+menu:rail:http/Hide from activity bar
 menu:rail:http/Move to bottom dock
 menu:rail:http/Move to right side
 menu:rail:http/Paste curl from clipboard
 menu:rail:http/Show HTTP
+menu:rail:http/Show on dock instead
 menu:rail:http/Sidebar
 menu:rail:http/Sidebar/Always (docked)
 menu:rail:http/Sidebar/Auto-hide (reveal on the edge)
 menu:rail:http/Sidebar/Hidden (keyboard only)
+menu:rail:integrations/Hide from activity bar
 menu:rail:integrations/Move to bottom dock
 menu:rail:integrations/Move to right side
 menu:rail:integrations/Refresh binary cache
 menu:rail:integrations/Refresh integrations
 menu:rail:integrations/Show Integrations
+menu:rail:integrations/Show on dock instead
 menu:rail:integrations/Sidebar
 menu:rail:integrations/Sidebar/Always (docked)
 menu:rail:integrations/Sidebar/Auto-hide (reveal on the edge)
 menu:rail:integrations/Sidebar/Hidden (keyboard only)
 menu:rail:notes/+ New note
+menu:rail:notes/Hide from activity bar
 menu:rail:notes/Move to bottom dock
 menu:rail:notes/Move to right side
 menu:rail:notes/Show Notes
+menu:rail:notes/Show on dock instead
 menu:rail:notes/Sidebar
 menu:rail:notes/Sidebar/Always (docked)
 menu:rail:notes/Sidebar/Auto-hide (reveal on the edge)
@@ -408,21 +422,25 @@ menu:rail:script/Sidebar
 menu:rail:script/Sidebar/Always (docked)
 menu:rail:script/Sidebar/Auto-hide (reveal on the edge)
 menu:rail:script/Sidebar/Hidden (keyboard only)
+menu:rail:scripts/Hide from activity bar
 menu:rail:scripts/Move to bottom dock
 menu:rail:scripts/Move to right side
 menu:rail:scripts/New workspace init.lua
 menu:rail:scripts/Reload init.lua
 menu:rail:scripts/Show Scripts
+menu:rail:scripts/Show on dock instead
 menu:rail:scripts/Sidebar
 menu:rail:scripts/Sidebar/Always (docked)
 menu:rail:scripts/Sidebar/Auto-hide (reveal on the edge)
 menu:rail:scripts/Sidebar/Hidden (keyboard only)
 menu:rail:search/Find in files…
+menu:rail:search/Hide from activity bar
 menu:rail:search/Move to bottom dock
 menu:rail:search/Move to right side
 menu:rail:search/Open as pane
 menu:rail:search/Refresh
 menu:rail:search/Show Search
+menu:rail:search/Show on dock instead
 menu:rail:search/Sidebar
 menu:rail:search/Sidebar/Always (docked)
 menu:rail:search/Sidebar/Auto-hide (reveal on the edge)
@@ -431,18 +449,22 @@ menu:rail:sessions/+ New Claude Code session
 menu:rail:sessions/+ New Codex session
 menu:rail:sessions/+ New cloud run…
 menu:rail:sessions/+ New session in a worktree…
+menu:rail:sessions/Hide from activity bar
 menu:rail:sessions/Move to bottom dock
 menu:rail:sessions/Move to right side
 menu:rail:sessions/Open as a table
 menu:rail:sessions/Show Sessions
+menu:rail:sessions/Show on dock instead
 menu:rail:sessions/Sidebar
 menu:rail:sessions/Sidebar/Always (docked)
 menu:rail:sessions/Sidebar/Auto-hide (reveal on the edge)
 menu:rail:sessions/Sidebar/Hidden (keyboard only)
+menu:rail:todos/Hide from activity bar
 menu:rail:todos/Move to bottom dock
 menu:rail:todos/Move to right side
 menu:rail:todos/Rescan
 menu:rail:todos/Show TODOs
+menu:rail:todos/Show on dock instead
 menu:rail:todos/Sidebar
 menu:rail:todos/Sidebar/Always (docked)
 menu:rail:todos/Sidebar/Auto-hide (reveal on the edge)

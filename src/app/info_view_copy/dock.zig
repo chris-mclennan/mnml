@@ -43,6 +43,11 @@ pub fn itemKind(kind: launcher_dock.Kind, label: ?[]const u8, running: bool) Ent
             .keys = &.{.{ .command = .@"term.shell", .label = "New shell" }},
             .links = &.{ .{ .command = .{ .id = .@"file.new", .label = "New file…" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.dock.plus"), .label = "Show the + button" } } },
         },
+        .pinned_panel => .{
+            .title = "Panel on the dock",
+            .body = "A sidebar section moved onto the strip from its activity-bar menu (*Show on dock instead*). Click opens the section as it always did; right-click offers *Move back to activity bar*, which unhides its row on the bar and takes it off the strip. `ui.rail.hidden` and `ui.dock.pins` hold the two halves of that move.",
+            .links = &.{ .{ .command = .{ .id = .@"view.rail_show_sections", .label = "Hidden sections" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.dock.mode"), .label = "Launcher dock in Settings" } } },
+        },
         .integration => .{
             .title = "Integration on the dock",
             .body = "An installed integration, on the strip because its manifest marks it for the dock or because you pinned it from its chip's menu. Click opens it — its pane, or its tool in a terminal split; right-click offers pin / unpin and its menu. The strip clips a long label; the tooltip carries the whole one. A disabled integration is dimmed and the click toasts.",

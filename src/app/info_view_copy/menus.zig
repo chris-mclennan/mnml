@@ -88,7 +88,6 @@ pub const rows = [_]Row{
         .body = "Rebuilds the MnmlSymbols font with the Claude and Codex marks — the figure, the spark, the Codex glyph — and installs it for the terminal, so the chips draw the branded marks rather than a box. Needs the font tools the build ships; the terminal reads the new face on its next launch.",
         .links = &.{ .{ .command = .{ .id = .@"integrations.bake_ai_glyphs", .label = "Bake them" } }, .{ .command = .{ .id = .@"integrations.glyph_builder", .label = "The glyph builder" } } },
     } },
-    .{ .label = "Edit Claude Code glyph…", .entry = glyphEdit(.claude) },
     .{ .label = "Edit Codex glyph…", .entry = glyphEdit(.codex) },
     // ── the Icon submenus ──
     .{ .parent = "Icon", .label = "Claude Code", .entry = .{
@@ -231,12 +230,12 @@ fn newSession(comptime product: enum { claude, codex }, comptime half: []const u
     };
 }
 
-fn glyphEdit(comptime product: enum { claude, codex }) Entry {
-    const claude = product == .claude;
+fn glyphEdit(comptime product: enum { codex }) Entry {
+    _ = product;
     return .{
-        .title = if (claude) "Edit the Claude Code glyph" else "Edit the Codex glyph",
+        .title = "Edit the Codex glyph",
         .body = "Opens the glyph builder on this mark — the SVG that is baked into the MnmlSymbols font at the codepoint the chip draws — so the art can be replaced with your own. Bake afterwards to rebuild the font; the terminal reads the new face on its next launch.",
-        .links = &.{ .{ .command = .{ .id = if (claude) .@"integrations.edit_claude_glyph" else .@"integrations.edit_codex_glyph", .label = "Edit it" } }, .{ .command = .{ .id = .@"integrations.bake_ai_glyphs", .label = "Bake the glyphs" } } },
+        .links = &.{ .{ .command = .{ .id = .@"integrations.edit_codex_glyph", .label = "Edit it" } }, .{ .command = .{ .id = .@"integrations.bake_ai_glyphs", .label = "Bake the glyphs" } } },
     };
 }
 
