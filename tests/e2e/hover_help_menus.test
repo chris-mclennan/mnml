@@ -1,0 +1,69 @@
+# width: 120
+# height: 40
+# Phase two of the info view's curated help: every context-menu row
+# has an entry, one module per surface under
+# `src/app/info_view_copy/menus/`. Six menus, one per module, opened
+# for real at 120x40 and a row of each hovered — the box at the bottom
+# of the left column (24 columns wide, so a body's first words are the
+# line to read) shows the entry's body, never `no help written yet`
+# and never the `<Menu>: <row>` fallback that carries only the
+# command's title. (hover_help_curated.test has the Keymap chip's menu
+# and the position chip's `Copy position (1:1)` prefix row.)
+write a.txt "hello\n"
+open a.txt
+# menu_bar.zig — the File dropdown (click 12 0 opens it, its rows from
+# y 2); `New file` is the first row.
+click 12 0
+expect screen contains "New file"
+hover 20 2
+expect screen contains "With the tree focused"
+expect screen lacks "File: New file"
+expect screen lacks "no help written yet"
+key esc
+# rail.zig — the TODOS section's rail menu (the ninth rail row is at
+# (1, 18) with no pinned launchers); its first row is the `Show TODOs`
+# family row (the label is the section's), whose words say the section is closed and name the host.
+rightclick 1 18
+expect screen contains "Show TODOs"
+hover 8 19
+expect screen contains "Opens the TODOs"
+expect screen lacks "no help written yet"
+key esc
+# chrome.zig — the theme pill (column 114 of row 0) opens the Theme
+# menu; `Pick theme…  (fuzzy)` is its fourth row.
+rightclick 114 0
+expect screen contains "Pick theme…"
+hover 100 4
+expect screen contains "Opens the theme picker"
+expect screen lacks "no help written yet"
+key esc
+# chips.zig — the Ln/Col chip (column 76 of the statusline, row 38)
+# opens the Cursor menu above itself; `Go to line…` is its first row.
+rightclick 76 38
+expect screen contains "Go to line…"
+hover 80 36
+expect screen contains "Asks for a line"
+expect screen lacks "Cursor: Go to line"
+expect screen lacks "no help written yet"
+key esc
+# plus.zig — the strip's `󰐕` (column 44 of row 1 with ` a.txt 󰅖 `
+# before it — the tree is 30 wide) drops the `Create…` menu; `New ▸`
+# is its first row, a group.
+rightclick 44 1
+expect screen contains "┌ Create…"
+hover 47 3
+expect screen contains "Opens the group of the"
+expect screen contains "things made from"
+expect screen lacks "no help written yet"
+key esc
+# panes.zig — a right press on the editor body (row 5, past the tree)
+# opens the Editor menu at the pointer, its rows from row 6: the six
+# edit verbs, a rule, then `Go to definition` on row 13.
+rightclick 60 5
+expect screen contains "Go to definition"
+hover 64 13
+expect screen contains "Follows the symbol"
+expect screen lacks "Editor: Go to definition"
+expect screen lacks "no help written yet"
+key esc
+expect screen lacks "Go to definition"
