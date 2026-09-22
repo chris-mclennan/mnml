@@ -484,6 +484,30 @@ fn relativeTo(arena: Allocator, path: []const u8, workspace: []const u8) Allocat
     return arena.dupe(u8, path);
 }
 
+/// A stack frame names the file by its real path (the compiler records
+/// it resolved), so under a workspace reached through a symlink —
+/// macOS's `/var` and `/tmp`, a `~/work` link — a failure's file is
+/// `/private/var/…/CalcTests.cs` where the workspace is `/var/…`, the
+/// prefix test misses and the row keeps an absolute path. Compare the
+/// real paths: a file inside the real workspace becomes relative to it,
+/// so it heads the same group as its passing siblings and Enter opens
+/// the editor already open on it.
+fn realRelative(arena: Allocator, io: Io, workspace: []const u8, tests: []TestCase) Allocator.Error!void {
+    var ws_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var ws_real: ?[]const u8 = null;
+    for (tests) |*tc| {
+        if (!std.fs.path.isAbsolute(tc.file)) continue;
+        if (ws_real == null) {
+            const n = Io.Dir.cwd().realPathFile(io, workspace, &ws_buf) catch return;
+            ws_real = ws_buf[0..n];
+        }
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        const n = Io.Dir.cwd().realPathFile(io, tc.file, &buf) catch continue;
+        const rel = try relativeTo(arena, buf[0..n], ws_real.?);
+        if (!std.fs.path.isAbsolute(rel)) tc.file = rel;
+    }
+}
+
 /// The `Results File: <path>.trx` line, when the trx logger ran.
 pub fn trxPathIn(text: []const u8) ?[]const u8 {
     const at = std.mem.indexOf(u8, text, "Results File:") orelse return null;
@@ -1196,6 +1220,7 @@ fn dotnetResult(io: Io, arena: Allocator, result: *Result, cwd: []const u8, work
         return;
     }
     const tests = try arena.dupe(TestCase, r.tests);
+    try realRelative(arena, io, workspace, tests);
     try locateSources(arena, io, cwd, workspace, tests, .cs);
     r.tests = tests;
     r.command = try cmdlineFor(arena, .dotnet, extra);
@@ -2375,6 +2400,36 @@ test "a Theory's data rows are separate rows with separate histories: breaking o
     try t.expect(h.get(try flaky.keyOf(a, "", "Acme.Tests.CalcTests", "Describes(x: 2, y: 2)")).?.wobbly());
     try t.expect(!h.get(try flaky.keyOf(a, "", "Acme.Tests.CalcTests", "Describes(x: 0, y: 0)")).?.wobbly());
     try t.expect(!h.get(try flaky.keyOf(a, "", "Acme.Tests.CalcTests", "Describes(x: 1, y: 5)")).?.wobbly());
+}
+
+test "a failure's frame under a symlinked workspace: the real path becomes workspace-relative, as its passing siblings are" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const real = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    try tmp.dir.createDirPath(t.io, "ws/tests/Acme.Tests");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "ws/tests/Acme.Tests/CalcTests.cs", .data = "class CalcTests {}\n" });
+    try tmp.dir.symLink(t.io, "ws", "link", .{ .is_directory = true });
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    // The workspace is the link; the compiler wrote the real path.
+    const workspace = try std.fs.path.join(a, &.{ real, "link" });
+    const frame_path = try std.fs.path.join(a, &.{ real, "ws", "tests", "Acme.Tests", "CalcTests.cs" });
+    const outside = try std.fs.path.join(a, &.{ real, "elsewhere.cs" });
+    var tests = [_]TestCase{
+        .{ .title = "DividesWrong", .suite_path = "Acme.Tests.CalcTests", .file = frame_path, .line = 14, .status = .failed, .duration_ms = 0, .err = null, .trace_path = null },
+        .{ .title = "Gone", .suite_path = "", .file = outside, .line = 1, .status = .failed, .duration_ms = 0, .err = null, .trace_path = null },
+        .{ .title = "Adds", .suite_path = "Acme.Tests.CalcTests", .file = "tests/Acme.Tests/CalcTests.cs", .line = 9, .status = .passed, .duration_ms = 0, .err = null, .trace_path = null },
+    };
+    // The prefix test alone keeps it absolute.
+    try t.expect(std.fs.path.isAbsolute(try relativeTo(a, frame_path, workspace)));
+    try realRelative(a, t.io, workspace, &tests);
+    try t.expectEqualStrings("tests/Acme.Tests/CalcTests.cs", tests[0].file);
+    // A file that is not there (or not inside) stays as the frame said.
+    try t.expectEqualStrings(outside, tests[1].file);
+    try t.expectEqualStrings("tests/Acme.Tests/CalcTests.cs", tests[2].file);
 }
 
 test "locateSources: a passed row is found by class and method in the project's .cs files, bin/ and obj/ skipped" {
