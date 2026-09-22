@@ -1,6 +1,9 @@
-# `git.pull` on a diverged branch is refused by git (ff-only), but the
-# toast starts with "pulled (ff-only): hint: …" — success-shaped, then
-# the FIRST hint line, truncated. HEAD did not move.
+# hunt/findings-2026-09-22/git-pull-diverged-toast.md: `git.pull` on a
+# diverged branch is refused by git (ff-only), which is right — but the
+# toast read "pulled (ff-only): hint: Diverging branches can't be f…":
+# past tense, then git's FIRST hint line cut before its verb, while the
+# `fatal: Not possible to fast-forward` line that is the answer was not
+# shown. The toast names the refusal in one sentence. HEAD did not move.
 shell git init -q -b main
 shell git config user.email "ada@example.test"
 shell git config user.name "Ada Example"
@@ -20,7 +23,12 @@ wait 1500
 expect screen contains "⇡1 ⇣1"
 command git.pull
 wait 400
-expect screen contains "ff-only"
-# Nothing was pulled: HEAD is still the local commit.
-shell test "$(git log -1 --format=%s)" = "local side"
+expect screen contains "pull: branches have diverged — merge or rebase"
 expect screen lacks "pulled (ff-only)"
+expect screen lacks "hint:"
+# Nothing was pulled: HEAD is still the local commit, no merge started.
+shell test "$(git log -1 --format=%s)" = "local side"
+shell test ! -e .git/MERGE_HEAD
+# Long enough to read: still on screen three seconds on.
+wait 2600
+expect screen contains "branches have diverged"

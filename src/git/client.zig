@@ -1200,7 +1200,19 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
         .merge => |b| try simple(repo, io, r, &.{ "merge", "--no-edit", b }, try std.fmt.allocPrint(arena, "merged {s}", .{b})),
         .rebase => |b| try simple(repo, io, r, &.{ "rebase", b }, try std.fmt.allocPrint(arena, "rebased onto {s}", .{b})),
         .fetch => try simple(repo, io, r, &.{ "fetch", "--all", "--prune", "-q" }, "fetched"),
-        .pull => try simple(repo, io, r, &.{ "pull", "--ff-only", "-q" }, "pulled (ff-only)"),
+        .pull => {
+            const out = try git(repo, io, arena, &.{ "pull", "--ff-only", "-q" }, null);
+            // A refused fast-forward is git's `hint:` paragraph and then
+            // the `fatal:` line; the toast read "pulled (ff-only): hint:
+            // Diverging branches can't be f…" — past tense, the verb cut
+            // off. One sentence that says what happened.
+            const diverged = std.mem.indexOf(u8, out.stderr, "Not possible to fast-forward") != null or std.mem.indexOf(u8, out.stderr, "Diverging branches") != null;
+            r.payload = .{ .op = .{
+                .desc = if (out.ok) "pulled (ff-only)" else "pull",
+                .ok = out.ok,
+                .msg = if (!out.ok and diverged) "branches have diverged \u{2014} merge or rebase" else out.failLine(),
+            } };
+        },
         .push => {
             const out = try git(repo, io, arena, &.{ "push", "-q" }, null);
             if (out.ok) {
