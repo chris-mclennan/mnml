@@ -3228,6 +3228,7 @@ test {
     _ = @import("http/bench.zig");
     _ = @import("http/ws.zig");
     _ = @import("cdp/client.zig");
+    _ = @import("cdp/profile.zig");
     _ = @import("app/ws_pane.zig");
     _ = @import("app/browser_pane.zig");
     _ = @import("app/cmd_browser.zig");

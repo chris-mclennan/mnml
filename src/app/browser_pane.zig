@@ -25,6 +25,7 @@ const Ui = @import("../ui/context.zig");
 const view = @import("../ui/browser_view.zig");
 const text_field = @import("../ui/text_field.zig");
 const cdp = @import("../cdp/client.zig");
+const profile = @import("../cdp/profile.zig");
 const child_os = @import("../core/child.zig");
 const parse = @import("../http/parse.zig");
 const captured = @import("../http/captured.zig");
@@ -282,22 +283,41 @@ pub const BrowserPane = struct {
 
 // ─── open / worker ──────────────────────────────────────────────────────
 
-/// The Chrome profile dir for `[browser] profile_mode`.
-fn profileDir(app: *App, arena: Allocator, index: usize) Allocator.Error![]u8 {
-    const suffix = if (index == 0) "" else try std.fmt.allocPrint(arena, "-{d}", .{index});
-    return switch (app.cfg.browser.profile_mode) {
-        .shared => if (app.data_root.len > 0) try std.fmt.allocPrint(arena, "{s}/chrome-profile{s}", .{ app.data_root, suffix }) else try std.fmt.allocPrint(arena, "{s}/.mnml/chrome-profile{s}", .{ app.workspace, suffix }),
-        .ephemeral => try std.fmt.allocPrint(arena, "{s}/.mnml/chrome-profile-ephemeral-{d}", .{ app.workspace, app.now_ms }),
-        .workspace => try std.fmt.allocPrint(arena, "{s}/.mnml/chrome-profile{s}", .{ app.workspace, suffix }),
-    };
+/// The profile directory for `[browser] profile_mode`, before any
+/// suffix: `<data root>/chrome-profile` when shared (and there is a data
+/// root), else `<workspace>/.mnml/chrome-profile`.
+pub fn profileBase(app: *App, arena: Allocator) Allocator.Error![]u8 {
+    if (app.cfg.browser.profile_mode == .shared and app.data_root.len > 0) return std.fmt.allocPrint(arena, "{s}/chrome-profile", .{app.data_root});
+    return std.fmt.allocPrint(arena, "{s}/.mnml/chrome-profile", .{app.workspace});
 }
 
-pub fn countBrowsers(app: *App) usize {
-    var n: usize = 0;
-    for (app.panes.slots.items) |*slot| if (slot.*) |*p| if (p.* == .browser) {
-        n += 1;
+pub const Picked = struct { dir: []u8, note: ?[]u8 = null };
+
+fn inUse(app: *App, dir: []const u8) bool {
+    for (app.panes.slots.items) |*slot| if (slot.*) |*p| if (p.asBrowser()) |b| {
+        if (std.mem.eql(u8, b.profile_dir, dir)) return true;
     };
-    return n;
+    return false;
+}
+
+/// A profile directory for a new pane that no open pane uses and no
+/// live Chrome holds. The base first, then `-1`, `-2`…: a suffix is
+/// taken from what is free, not from how many panes are open, so a
+/// closed pane's suffix is reused and a live one's never is. A profile
+/// a live Chrome holds is left alone and the next suffix is tried.
+pub fn pickProfile(app: *App, arena: Allocator) Allocator.Error!Picked {
+    if (app.cfg.browser.profile_mode == .ephemeral) return .{ .dir = try std.fmt.allocPrint(arena, "{s}/.mnml/chrome-profile-ephemeral-{d}", .{ app.workspace, app.now_ms }) };
+    const base = try profileBase(app, arena);
+    var i: usize = 0;
+    while (i < 64) : (i += 1) {
+        const dir = if (i == 0) base else try std.fmt.allocPrint(arena, "{s}-{d}", .{ base, i });
+        if (inUse(app, dir)) continue;
+        switch (profile.probe(app.gpa, app.io, dir)) {
+            .free, .stale => return .{ .dir = dir },
+            .orphan, .held => continue,
+        }
+    }
+    return .{ .dir = base };
 }
 
 /// Launch Chrome at `url` in a new pane beside the active one.
@@ -316,7 +336,8 @@ pub fn open(app: *App, url_in: []const u8) CommandError!PaneId {
     const shared = try gpa.create(Shared);
     errdefer gpa.destroy(shared);
     shared.* = .{ .io = app.io };
-    const pdir = try profileDir(app, app.frame.allocator(), countBrowsers(app));
+    const picked = try pickProfile(app, app.frame.allocator());
+    const pdir = picked.dir;
     Io.Dir.cwd().createDirPath(app.io, pdir) catch {};
     var pane: BrowserPane = .{
         .gpa = gpa,
@@ -328,6 +349,7 @@ pub fn open(app: *App, url_in: []const u8) CommandError!PaneId {
     };
     errdefer pane.deinit(gpa);
     try pane.refreshTitle();
+    if (picked.note) |note| try pane.push(.system, note);
     try pane.push(.system, "launching Chrome…");
     const id = try app.panes.add(.{ .browser = pane });
     // Beside the active pane (the "watch the network while editing the request" layout).
@@ -1525,4 +1547,59 @@ fn waitSet(ev: *Io.Event, limit: Io.Duration) bool {
         ev.waitTimeout(testing.io, .{ .duration = .{ .raw = .fromMilliseconds(100), .clock = .awake } }) catch {};
     }
     return true;
+}
+
+/// `testPane`, on a given profile directory.
+fn testPaneAt(app: *App, dir: []const u8) !PaneId {
+    const id = try testPane(app);
+    const p = app.panes.get(id).?.asBrowser().?;
+    testing.allocator.free(p.profile_dir);
+    p.profile_dir = try testing.allocator.dupe(u8, dir);
+    return id;
+}
+
+test "a new pane's profile suffix is one no open pane uses: A, B, close A, then C does not land on B's profile" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &pbuf);
+    const root = pbuf[0..n];
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .data_root = root });
+    defer app.deinit();
+    const arena = app.frame.allocator();
+    const first = try pickProfile(&app, arena);
+    try testing.expect(std.mem.endsWith(u8, first.dir, "/.mnml/chrome-profile"));
+    const a = try testPaneAt(&app, first.dir);
+    const second = try pickProfile(&app, arena);
+    try testing.expect(std.mem.endsWith(u8, second.dir, "/.mnml/chrome-profile-1"));
+    _ = try testPaneAt(&app, second.dir);
+    try app.forceClosePane(a);
+    // One pane open, on `-1`: the count says 1, the free suffix is the base.
+    const third = try pickProfile(&app, arena);
+    try testing.expectEqualStrings(first.dir, third.dir);
+    try testing.expect(third.note == null);
+}
+
+test "a profile a live Chrome holds is skipped for the next free suffix" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &pbuf);
+    const root = pbuf[0..n];
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .data_root = root });
+    defer app.deinit();
+    const arena = app.frame.allocator();
+    const base = try profileBase(&app, arena);
+    try Io.Dir.cwd().createDirPath(testing.io, base);
+    // Another mnml's pane, say: alive, and our child, so not an orphan.
+    var holder = try std.process.spawn(testing.io, .{ .argv = &.{ "/bin/sleep", "30" }, .stdin = .ignore, .stdout = .ignore, .stderr = .ignore });
+    defer holder.kill(testing.io);
+    var d = try Io.Dir.cwd().openDir(testing.io, base, .{});
+    defer d.close(testing.io);
+    const target = try std.fmt.allocPrint(arena, "host-{d}", .{holder.id.?});
+    try d.symLink(testing.io, target, "SingletonLock", .{});
+    const picked = try pickProfile(&app, arena);
+    try testing.expect(std.mem.endsWith(u8, picked.dir, "/.mnml/chrome-profile-1"));
+    try testing.expect(!child_os.gone(holder.id.?));
 }
