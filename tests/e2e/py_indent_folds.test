@@ -1,0 +1,29 @@
+# Python folds on its indented suites: `za` inside a def folds the def,
+# on a class header the class, and a server with no folding ranges (the
+# fake one here, pyright in life) leaves `lsp.fold_all` to the editor's
+# own blocks instead of a JSON-RPC error. (The `.fk` file opens first so
+# the config written after launch is read: a `.py` alone would match
+# the builtin python row and never look.)
+write .fkroot ""
+write .mnml/config.zon .{ .lsp = .{ .fake = .{ .cmd = "$MNML_FAKE_LSP", .extensions = .{ "fk", "py" }, .root_markers = .{ ".fkroot" } } } }
+write src/app.py "class Holder:\n    def one(self):\n        a = 1\n        return a\n\n    def two(self):\n        b = 2\n        return b\n\nprint('end')\n"
+write src/seed.fk "x\n"
+open src/seed.fk
+expect screen contains "LSP 1"
+open src/app.py
+expect screen contains "LSP 1"
+key down
+key down
+command editor.toggle_fold
+expect screen contains "folded 2 lines"
+expect screen contains "hidden"
+expect screen lacks "a = 1"
+expect screen contains "b = 2"
+command editor.unfold_all
+expect screen contains "a = 1"
+command lsp.fold_all
+expect screen contains "folded 3 block(s)"
+expect screen lacks "Unhandled method"
+expect screen lacks "a = 1"
+expect screen lacks "b = 2"
+expect screen contains "print('end')"

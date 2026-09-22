@@ -19,6 +19,7 @@ const dispatch = @import("dispatch.zig");
 const ex_verbs = @import("ex_verbs.zig");
 const context_menus = @import("context_menus.zig");
 const statusline = @import("../ui/statusline.zig");
+const syntax = @import("syntax.zig");
 
 pub const table = .{
     .@"editor.goto_line" = &gotoLine,
@@ -264,7 +265,7 @@ fn foldAtCursor(app: *App, action: FoldAction) CommandError!void {
         return;
     };
     if (action == .open) return;
-    const best = foldRangeAt(ed, row) orelse {
+    const best = foldRangeAt(ed, foldRulesFor(e), row) orelse {
         app.toast("nothing to fold here", .{});
         return;
     };
@@ -281,26 +282,57 @@ fn foldAtCursor(app: *App, action: FoldAction) CommandError!void {
     app.needs_render = true;
 }
 
-/// The smallest multi-line bracket block around `row`: the pair that
-/// encloses the cursor, or an unmatched opener on the cursor's own line
-/// (vim folds the block a header line starts, not its parent).
-pub fn foldRangeAt(ed: *const Editor, row: usize) ?[2]usize {
-    return foldRangeFrom(ed, row, ed.cursor);
+/// How a file's blocks are delimited, for every fold the editor makes
+/// itself (`za`, `zM`, `zj`/`zk`, the gutter chevron). Bracket pairs
+/// always fold; an indentation-structured language also folds a header
+/// line together with the more-indented lines under it — for Python or
+/// YAML that is the only block there is.
+pub const FoldRules = struct {
+    indent: bool = false,
+};
+
+/// Languages whose blocks are indented suites rather than bracket
+/// pairs, by extension; a grammar key (a `#!/usr/bin/env python`
+/// script) counts too.
+const indent_block_exts = [_][]const u8{ "py", "pyi", "pyw", "yaml", "yml", "nim", "nims", "coffee" };
+
+pub fn foldRulesFor(e: *const EditorPane) FoldRules {
+    const text = e.buf.editor.bytes();
+    const key = syntax.keyFor(e.buf.doc.path, text[0..@min(text.len, 256)]);
+    const ext: []const u8 = if (e.buf.doc.path) |p| blk: {
+        const x = std.fs.path.extension(p);
+        break :blk if (x.len > 1) x[1..] else "";
+    } else "";
+    for (indent_block_exts) |i| {
+        if (key) |k| if (std.mem.eql(u8, k, i)) return .{ .indent = true };
+        if (std.ascii.eqlIgnoreCase(ext, i)) return .{ .indent = true };
+    }
+    return .{};
+}
+
+/// The smallest multi-line block around `row`: the bracket pair that
+/// encloses the cursor, an unmatched opener on the cursor's own line
+/// (vim folds the block a header line starts, not its parent), and —
+/// when the rules say so — the indented block the line heads or sits in.
+pub fn foldRangeAt(ed: *const Editor, rules: FoldRules, row: usize) ?[2]usize {
+    return foldRangeFrom(ed, rules, row, ed.cursor);
 }
 
 /// Does a fold START on `row`? What the gutter's hover chevron asks —
 /// the same rule `editor.toggle_fold` applies, read from the line
 /// itself rather than from the cursor, so the chevron never offers a
 /// fold the command would refuse to make.
-pub fn foldStartsAt(ed: *const Editor, row: usize) bool {
+pub fn foldStartsAt(ed: *const Editor, rules: FoldRules, row: usize) bool {
     // The cheap half first. `foldRangeFrom`'s other candidate — the pair
     // that ENCLOSES the line's start — always opens on an earlier line,
     // so a fold can only begin here if this line has an opener nothing
     // on it closes. The whole-file scan is skipped for every line that
     // has none, which is what lets `ui.always_show_fold_arrows` ask this
     // of every visible line instead of just the hovered one.
-    if (!hasUnmatchedOpener(ed, row)) return false;
-    const r = foldRangeFrom(ed, row, ed.lineStart(row)) orelse return false;
+    // An indented block likewise only starts on a line the next
+    // non-blank line is indented past.
+    if (!hasUnmatchedOpener(ed, row) and !(rules.indent and headsIndentedLines(ed, row))) return false;
+    const r = foldRangeFrom(ed, rules, row, ed.lineStart(row)) orelse return false;
     return r[0] == row;
 }
 
@@ -324,7 +356,7 @@ fn hasUnmatchedOpener(ed: *const Editor, row: usize) bool {
 /// `foldRangeAt` from an explicit byte: `from` is where the search for
 /// an enclosing pair starts. A fold that starts on `row` comes from the
 /// unmatched opener on `row`'s own line either way.
-pub fn foldRangeFrom(ed: *const Editor, row: usize, from: usize) ?[2]usize {
+pub fn foldRangeFrom(ed: *const Editor, rules: FoldRules, row: usize, from: usize) ?[2]usize {
     const text = ed.bytes();
     const pairs = [_][2]u8{ .{ '{', '}' }, .{ '[', ']' }, .{ '(', ')' } };
     var best: ?[2]usize = null;
@@ -340,7 +372,87 @@ pub fn foldRangeFrom(ed: *const Editor, row: usize, from: usize) ?[2]usize {
         }
         if (open_pos) |o| if (matchForward(text, o, pr[0], pr[1])) |c| consider(ed, &best, o, c);
     }
+    if (rules.indent) {
+        if (indentBlockHeadedBy(ed, row)) |b| considerRows(&best, b);
+        if (indentBlockAround(ed, row)) |b| considerRows(&best, b);
+    }
     return best;
+}
+
+fn considerRows(best: *?[2]usize, b: [2]usize) void {
+    if (b[1] <= b[0]) return;
+    if (best.* == null or (best.*.?[1] - best.*.?[0]) > (b[1] - b[0])) best.* = b;
+}
+
+// ─── indented blocks ────────────────────────────────────────────────────
+
+/// `row`'s indentation in columns (a tab to the next multiple of 8), or
+/// null for a line that is only whitespace — blank lines belong to
+/// whatever block surrounds them.
+fn lineIndent(ed: *const Editor, row: usize) ?usize {
+    const text = ed.bytes();
+    var col: usize = 0;
+    for (text[ed.lineStart(row)..ed.lineEnd(row)]) |ch| switch (ch) {
+        ' ' => col += 1,
+        '\t' => col = (col / 8 + 1) * 8,
+        '\r' => {},
+        else => return col,
+    };
+    return null;
+}
+
+fn nextNonBlank(ed: *const Editor, row: usize) ?usize {
+    var r = row + 1;
+    while (r < ed.lineCount()) : (r += 1) if (lineIndent(ed, r) != null) return r;
+    return null;
+}
+
+/// Is the next non-blank line after `row` indented past it?
+fn headsIndentedLines(ed: *const Editor, row: usize) bool {
+    const ind = lineIndent(ed, row) orelse return false;
+    const next = nextNonBlank(ed, row) orelse return false;
+    return lineIndent(ed, next).? > ind;
+}
+
+/// The block `row` heads: `row` through the last non-blank line before
+/// one back at `row`'s indentation or less. A header whose line leaves
+/// a bracket open is that bracket's block, not an indented one — the
+/// continuation lines of a call are its arguments.
+fn indentBlockHeadedBy(ed: *const Editor, row: usize) ?[2]usize {
+    if (!headsIndentedLines(ed, row) or hasUnmatchedOpener(ed, row)) return null;
+    const ind = lineIndent(ed, row).?;
+    var last = row;
+    var r = row + 1;
+    while (r < ed.lineCount()) : (r += 1) {
+        const i = lineIndent(ed, r) orelse continue;
+        if (i <= ind) break;
+        last = r;
+    }
+    return .{ row, last };
+}
+
+/// The indented block `row` sits inside: the nearest line above that is
+/// indented less, and the block it heads.
+fn indentBlockAround(ed: *const Editor, row: usize) ?[2]usize {
+    const ind = lineIndent(ed, row) orelse blk: {
+        const next = nextNonBlank(ed, row) orelse return null;
+        break :blk lineIndent(ed, next).?;
+    };
+    var r = row;
+    while (r > 0) {
+        r -= 1;
+        const i = lineIndent(ed, r) orelse continue;
+        if (i >= ind) continue;
+        const b = indentBlockHeadedBy(ed, r) orelse return null;
+        return if (row <= b[1]) b else null;
+    }
+    return null;
+}
+
+/// Every indented block in the file, as `(header row, last row)`.
+fn appendIndentBlocks(ed: *const Editor, arena: std.mem.Allocator, out: *std.ArrayListUnmanaged([2]usize)) std.mem.Allocator.Error!void {
+    var r: usize = 0;
+    while (r < ed.lineCount()) : (r += 1) if (indentBlockHeadedBy(ed, r)) |b| try out.append(arena, b);
 }
 
 fn consider(ed: *const Editor, best: *?[2]usize, open_byte: usize, close_byte: usize) void {
@@ -402,10 +514,11 @@ fn matchBackward(text: []const u8, close_byte: usize, open: u8, close: u8) ?usiz
 }
 
 /// `editor.fold_all_brackets` (`zM` without a server): one stack scan
-/// per bracket family closes every multi-line pair. The first fold to
-/// claim a start line keeps it; the cursor lands on the fold that
-/// swallowed it.
-fn foldAllBrackets(app: *App) CommandError!void {
+/// per bracket family closes every multi-line pair, then — for an
+/// indentation-structured language — every indented block. The first
+/// fold to claim a start line keeps it; the cursor lands on the fold
+/// that swallowed it.
+pub fn foldAllBrackets(app: *App) CommandError!void {
     const e = try app.requireEditor();
     const ed = e.buf.editor;
     const text = ed.bytes();
@@ -427,6 +540,15 @@ fn foldAllBrackets(app: *App) CommandError!void {
             }
         }
     }
+    if (foldRulesFor(e).indent) {
+        var blocks: std.ArrayListUnmanaged([2]usize) = .empty;
+        try appendIndentBlocks(ed, arena, &blocks);
+        for (blocks.items) |b| {
+            if (e.buf.editor.folds.contains(b[0])) continue;
+            try e.buf.editor.folds.put(app.gpa, b[0], b[1]);
+            added += 1;
+        }
+    }
     if (added == 0) {
         app.toast("nothing to fold", .{});
         return;
@@ -443,9 +565,10 @@ fn foldAllBrackets(app: *App) CommandError!void {
 }
 
 /// Every bracket block spanning more than one line — `{}`, `[]`, `()`
-/// — as `(first row, last row)`, innermost pairs included; what `zj` /
-/// `zk` step between and `zM` closes. Frame arena.
-pub fn allFoldRanges(ed: *const Editor, arena: std.mem.Allocator) std.mem.Allocator.Error![]const [2]usize {
+/// — as `(first row, last row)`, innermost pairs included, and the
+/// indented blocks when the rules fold those; what `zj` / `zk` step
+/// between and `zM` closes. Frame arena.
+pub fn allFoldRanges(ed: *const Editor, rules: FoldRules, arena: std.mem.Allocator) std.mem.Allocator.Error![]const [2]usize {
     const text = ed.bytes();
     var stack: std.ArrayListUnmanaged(usize) = .empty;
     var out: std.ArrayListUnmanaged([2]usize) = .empty;
@@ -462,6 +585,7 @@ pub fn allFoldRanges(ed: *const Editor, arena: std.mem.Allocator) std.mem.Alloca
             }
         }
     }
+    if (rules.indent) try appendIndentBlocks(ed, arena, &out);
     return out.items;
 }
 
@@ -812,12 +936,12 @@ test "foldStartsAt answers for the line, not the cursor — what the gutter's ch
     // The cursor deep inside the nested block does not change the
     // answer for any other line: only the two header lines start a fold.
     ed.placeCursor(2, 8);
-    try t.expect(foldStartsAt(ed, 0));
-    try t.expect(foldStartsAt(ed, 1));
-    try t.expect(!foldStartsAt(ed, 2));
-    try t.expect(!foldStartsAt(ed, 3));
-    try t.expect(!foldStartsAt(ed, 4));
-    try t.expect(!foldStartsAt(ed, 5));
+    try t.expect(foldStartsAt(ed, .{}, 0));
+    try t.expect(foldStartsAt(ed, .{}, 1));
+    try t.expect(!foldStartsAt(ed, .{}, 2));
+    try t.expect(!foldStartsAt(ed, .{}, 3));
+    try t.expect(!foldStartsAt(ed, .{}, 4));
+    try t.expect(!foldStartsAt(ed, .{}, 5));
     // And the answer is the command's: folding line 1 gives 1..3.
     ed.placeCursor(1, 0);
     try command.run(&app, .{ .static = .@"editor.toggle_fold" });
@@ -832,12 +956,12 @@ test "a line whose brackets all close on it starts no fold — foldStartsAt's ch
     // A call whose `(` closes on the line, and a body whose `{}` does
     // too: neither can start a fold, and neither pays for a scan of the
     // file to learn it.
-    try t.expect(!foldStartsAt(ed, 0));
-    try t.expect(!foldStartsAt(ed, 1));
+    try t.expect(!foldStartsAt(ed, .{}, 0));
+    try t.expect(!foldStartsAt(ed, .{}, 1));
     // The one line with an opener nothing on it closes does start one.
-    try t.expect(foldStartsAt(ed, 2));
-    try t.expect(!foldStartsAt(ed, 3));
-    try t.expect(!foldStartsAt(ed, 5));
+    try t.expect(foldStartsAt(ed, .{}, 2));
+    try t.expect(!foldStartsAt(ed, .{}, 3));
+    try t.expect(!foldStartsAt(ed, .{}, 5));
 }
 
 test "folds: toggle picks the smallest enclosing block, zo/zc are idempotent, unfold_all clears" {
@@ -866,6 +990,83 @@ test "folds: toggle picks the smallest enclosing block, zo/zc are idempotent, un
     e.buf.editor.placeCursor(5, 0);
     try command.run(&app, .{ .static = .@"editor.toggle_fold" });
     try t.expectEqualStrings("nothing to fold here", app.lastToast().?);
+}
+
+test "Python folds on its indented suites: a def or class folds its body, a bracket inside still folds as a bracket" {
+    const py =
+        \\class Holder:
+        \\    def one(self):
+        \\        a = 1
+        \\
+        \\        return a
+        \\
+        \\    def two(self):
+        \\        x = {
+        \\            "k": 1,
+        \\        }
+        \\        return x
+        \\top = 1
+        \\
+    ;
+    var app = try appWith(py);
+    defer app.deinit();
+    const e = app.activeEditor().?;
+    try e.buf.setPath("/tmp/mnml-zig-fold-test.py");
+    const ed = e.buf.editor;
+    const rules = foldRulesFor(e);
+    try t.expect(rules.indent);
+    // A body line folds the def it sits in, blank lines inside included,
+    // the trailing blank line before the next def not.
+    ed.placeCursor(2, 8);
+    try command.run(&app, .{ .static = .@"editor.toggle_fold" });
+    try t.expectEqualSlices(usize, &.{1}, ed.folds.keys());
+    try t.expectEqualSlices(usize, &.{4}, ed.folds.values());
+    try t.expectEqualStrings("folded 3 lines", app.lastToast().?);
+    try command.run(&app, .{ .static = .@"editor.unfold_all" });
+    // A header folds its own block; the class header folds the class.
+    try t.expectEqual(@as(?[2]usize, .{ 6, 10 }), foldRangeFrom(ed, rules, 6, ed.lineStart(6)));
+    try t.expectEqual(@as(?[2]usize, .{ 0, 10 }), foldRangeFrom(ed, rules, 0, ed.lineStart(0)));
+    // Inside the dict the bracket pair is the smaller block; the dict's
+    // own opener line is the bracket's, not an indented header.
+    try t.expectEqual(@as(?[2]usize, .{ 7, 9 }), foldRangeFrom(ed, rules, 8, ed.lineStart(8) + 12));
+    try t.expectEqual(@as(?[2]usize, .{ 7, 9 }), foldRangeFrom(ed, rules, 7, ed.lineStart(7)));
+    try t.expectEqual(@as(?[2]usize, null), foldRangeFrom(ed, rules, 11, ed.lineStart(11)));
+    // The gutter's chevron offers exactly the header lines.
+    for (0..12) |r| try t.expectEqual(r == 0 or r == 1 or r == 6 or r == 7, foldStartsAt(ed, rules, r));
+    // `zM`: the dict, then every indented block.
+    ed.placeCursor(2, 8);
+    try command.run(&app, .{ .static = .@"editor.fold_all_brackets" });
+    try t.expectEqualSlices(usize, &.{ 0, 1, 6, 7 }, ed.folds.keys());
+    try t.expectEqualSlices(usize, &.{ 10, 4, 10, 9 }, ed.folds.values());
+    try t.expectEqualStrings("folded 4 block(s)", app.lastToast().?);
+    try t.expectEqual(@as(usize, 0), ed.currentLine());
+    // `zj` / `zk` see the same blocks.
+    const all = try allFoldRanges(ed, rules, app.frame.allocator());
+    try t.expectEqual(@as(usize, 4), all.len);
+    // A brace language keeps its bracket-only rules: the same text as
+    // Rust has nothing to fold on a body line.
+    try command.run(&app, .{ .static = .@"editor.unfold_all" });
+    try e.buf.setPath("/tmp/mnml-zig-fold-test.rs");
+    try t.expect(!foldRulesFor(e).indent);
+    ed.placeCursor(2, 8);
+    try command.run(&app, .{ .static = .@"editor.toggle_fold" });
+    try t.expectEqualStrings("nothing to fold here", app.lastToast().?);
+}
+
+test "indent folds: tabs, a comment at its indent, and a YAML mapping" {
+    var app = try appWith("a:\n  b: 1\n  c:\n    - x\n    - y\nd: 2\n");
+    defer app.deinit();
+    const e = app.activeEditor().?;
+    try e.buf.setPath("/tmp/mnml-zig-fold-test.yaml");
+    const ed = e.buf.editor;
+    const rules = foldRulesFor(e);
+    try t.expect(rules.indent);
+    try t.expectEqual(@as(?[2]usize, .{ 0, 4 }), foldRangeFrom(ed, rules, 1, ed.lineStart(1)));
+    try t.expectEqual(@as(?[2]usize, .{ 2, 4 }), foldRangeFrom(ed, rules, 3, ed.lineStart(3)));
+    try t.expectEqual(@as(?[2]usize, null), foldRangeFrom(ed, rules, 5, ed.lineStart(5)));
+    try ed.setText("if x:\n\tone()\n\t# note\n\ttwo()\nend()\n");
+    try e.buf.setPath("/tmp/mnml-zig-fold-test.py");
+    try t.expectEqual(@as(?[2]usize, .{ 0, 3 }), foldRangeFrom(ed, rules, 2, ed.lineStart(2)));
 }
 
 test "bracket match jumps both ways, nested pairs, and to the first bracket on the line" {

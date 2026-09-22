@@ -473,7 +473,7 @@ test "C#: the grammar loads for .cs — highlights, the outline, if/af, the stic
     try testing.expectEqualSlices(u32, &.{ 4, 8 }, try s.scopeChain(ed, arena.allocator(), 11));
     // A fold on the method's opening brace covers its block.
     ed.placeCursor(9, 4);
-    const fold = @import("cmd_editor.zig").foldRangeAt(ed, 9).?;
+    const fold = @import("cmd_editor.zig").foldRangeAt(ed, .{}, 9).?;
     try testing.expectEqual(@as(usize, 9), fold[0]);
     try testing.expectEqual(@as(usize, 12), fold[1]);
 }

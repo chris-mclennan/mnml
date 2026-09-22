@@ -1978,8 +1978,9 @@ pub fn gutterMarksFor(app: *App, arena: Allocator, pane: PaneId, e: *EditorPane,
 /// reached through the `Doc` so the view keeps knowing nothing about
 /// brackets.
 fn foldStartsAt(ctx: *const anyopaque, line: u32) bool {
-    const ed: *const @import("../editor/editor.zig").Editor = @ptrCast(@alignCast(ctx));
-    return @import("cmd_editor.zig").foldStartsAt(ed, line);
+    const e: *const EditorPane = @ptrCast(@alignCast(ctx));
+    const folds = @import("cmd_editor.zig");
+    return folds.foldStartsAt(e.buf.editor, folds.foldRulesFor(e), line);
 }
 
 /// `ui.highlight_word_under_cursor`: every whole-word occurrence of the
@@ -2242,7 +2243,7 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .anchor = e.buf.editor.anchor,
         .extra_cursors = e.buf.editor.extra_cursors.items,
         .folds = folds,
-        .foldable = .{ .ctx = e.buf.editor, .startsFold = &foldStartsAt },
+        .foldable = .{ .ctx = e, .startsFold = &foldStartsAt },
         .always_show_fold_arrows = app.cfg.ui.always_show_fold_arrows,
         .spans = spans,
         .matches = matches,

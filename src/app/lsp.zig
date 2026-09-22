@@ -2879,6 +2879,10 @@ fn applyLadder(app: *App, s: *Server, ctx: Ctx, result: ?Value) Allocator.Error!
 
 pub fn foldAll(app: *App) CommandError!void {
     const t = try requireServer(app, "folding");
+    // A server that offers no folding ranges (pyright) leaves the
+    // editor's own blocks — brackets, and indented suites where the
+    // language has them — rather than a JSON-RPC error.
+    if (!t.server.caps.folding_range) return @import("cmd_editor.zig").foldAllBrackets(app);
     const arena = app.frame.allocator();
     const uri = try types.uriFromPath(arena, t.path);
     _ = t.server.request(.folding_range, "textDocument/foldingRange", .{ .textDocument = .{ .uri = uri } }, .{ .pane = t.pane }) catch |err| return app.diag.fail(arena, "LSP fold: {s}", .{@errorName(err)});
