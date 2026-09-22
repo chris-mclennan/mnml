@@ -197,6 +197,9 @@ pub const RequestPane = struct {
     /// The `### name` it came from; `""` for a bare `###`; null for a
     /// single-block file or the leading block.
     block_name: ?[]u8 = null,
+    /// Its position among the file's blocks (`parse.Block.index`) —
+    /// what tells two same-named blocks apart; null for a scratch.
+    block_index: ?u32 = null,
     /// A leading `# …` comment, shown as the tab label.
     summary: ?[]u8 = null,
     /// `METHOD  url` for the tab; rebuilt when either changes.

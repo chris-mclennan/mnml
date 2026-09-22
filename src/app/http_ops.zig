@@ -76,7 +76,7 @@ pub fn resolveTarget(app: *App) CommandError!Target {
         const text = Io.Dir.cwd().readFileAlloc(app.io, p, arena, .limited(16 << 20)) catch return app.diag.fail(arena, "http: cannot read {s}", .{app.relPath(p)});
         const list = try parse.blocks(arena, text);
         if (list.len >= 2) {
-            const idx = parse.blockIndex(list, rp.block_name) orelse return app.diag.fail(arena, "http: the pane's block is not in {s} any more", .{app.relPath(p)});
+            const idx = parse.resolveBlock(list, rp.block_index, rp.block_name) orelse return app.diag.fail(arena, "http: the pane's block is not in {s} any more", .{app.relPath(p)});
             return .{ .path = try gpa.dupe(u8, p), .block = @intCast(idx) };
         }
         return .{ .path = try gpa.dupe(u8, p), .block = null };
@@ -157,7 +157,7 @@ pub fn acceptRename(app: *App, t: Target, text: []const u8) Allocator.Error!void
             const list = parse.blocks(arena, src) catch break :blk null;
             break :blk if (idx < list.len) list[idx].name else null;
         };
-        if (http.findSource(app, t.path, old_name)) |id| if (app.panes.get(id)) |p| if (p.asRequest()) |rp| {
+        if (http.findSource(app, t.path, idx, old_name)) |id| if (app.panes.get(id)) |p| if (p.asRequest()) |rp| {
             if (rp.block_name) |b| gpa.free(b);
             rp.block_name = try gpa.dupe(u8, name);
             try rp.refreshTitle();

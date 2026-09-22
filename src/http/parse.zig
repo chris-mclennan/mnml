@@ -1152,6 +1152,10 @@ pub const Block = struct {
     text: []const u8,
     /// The first `# …` comment's text, for a tab label.
     summary: ?[]const u8,
+    /// Its position in `blocks`' result — the block's identity. Two
+    /// bare `###` blocks share the name `""`, and two `### get` blocks
+    /// share `get`, so a name alone cannot say which one a pane is on.
+    index: u32 = 0,
 
     /// Whether this block came after a `###` line.
     pub fn hasSeparator(b: Block) bool {
@@ -1195,7 +1199,7 @@ pub fn blocks(arena: Allocator, input: []const u8) Allocator.Error![]Block {
         const to = if (r.end + 1 < line_count) starts.items[r.end + 1] -| 1 else input.len;
         const text = if (body_first > r.end) "" else input[from..@max(from, to)];
         if (!hasRealContent(text)) continue;
-        try out.append(arena, .{ .name = r.name, .start_line = r.start, .end_line = r.end, .text = text, .summary = firstComment(text) });
+        try out.append(arena, .{ .name = r.name, .start_line = r.start, .end_line = r.end, .text = text, .summary = firstComment(text), .index = @intCast(out.items.len) });
     }
     return out.items;
 }
@@ -1356,14 +1360,31 @@ pub fn extractBlock(alloc: Allocator, text: []const u8, idx: usize) Allocator.Er
     return try std.mem.join(alloc, "\n", out.items);
 }
 
+fn sameName(a: ?[]const u8, b: ?[]const u8) bool {
+    if (a == null or b == null) return a == null and b == null;
+    return std.mem.eql(u8, a.?, b.?);
+}
+
 /// The index in `blocks(text)` of the block named `name` (null = the
 /// leading nameless one).
 pub fn blockIndex(list: []const Block, name: ?[]const u8) ?usize {
-    for (list, 0..) |b, i| {
-        const hit = if (name) |want| (b.name != null and std.mem.eql(u8, b.name.?, want)) else b.name == null;
-        if (hit) return i;
-    }
+    for (list, 0..) |b, i| if (sameName(b.name, name)) return i;
     return null;
+}
+
+/// Which block of `list` a pane on block `index` named `name` is on:
+/// that position while the block there still has that name; else the
+/// one block of that name when the name is unique; else null. A name
+/// shared by two blocks (two bare `###`) never resolves by name — a
+/// guess there would rewrite a different request.
+pub fn resolveBlock(list: []const Block, index: ?u32, name: ?[]const u8) ?usize {
+    if (index) |i| if (i < list.len and sameName(list[i].name, name)) return i;
+    var found: ?usize = null;
+    for (list, 0..) |b, i| if (sameName(b.name, name)) {
+        if (found != null) return null;
+        found = i;
+    };
+    return found;
 }
 
 // ─── serialisation ──────────────────────────────────────────────────────
@@ -1476,25 +1497,23 @@ pub fn toHttpBlock(a: Allocator, req: *const Request, name: ?[]const u8) Allocat
     return out.toOwnedSlice(a);
 }
 
-/// Replace the block named `name` (null = the leading, separator-less
-/// block) of a multi-block file with `new_block`. Null when the file has
-/// fewer than two blocks or no such block — the caller overwrites or
-/// refuses.
-pub fn splice(a: Allocator, existing: []const u8, name: ?[]const u8, new_block: []const u8) Allocator.Error!?[]u8 {
+pub const SpliceError = Allocator.Error || error{NoSuchBlock};
+
+/// Replace block `index` (named `name`; see `resolveBlock`) of a
+/// multi-block file with `new_block`. Null when the file has fewer than
+/// two blocks and the pane is on its only one — the caller overwrites.
+/// `error.NoSuchBlock` when the block cannot be told apart any more:
+/// the caller refuses rather than write over a different request.
+pub fn splice(a: Allocator, existing: []const u8, index: ?u32, name: ?[]const u8, new_block: []const u8) SpliceError!?[]u8 {
     var scratch = std.heap.ArenaAllocator.init(a);
     defer scratch.deinit();
     const sa = scratch.allocator();
     const list = try blocks(sa, existing);
-    if (list.len < 2) return null;
-    var target: ?Block = null;
-    for (list) |b| {
-        const hit = if (name) |want| (b.name != null and std.mem.eql(u8, b.name.?, want)) else b.name == null;
-        if (hit) {
-            target = b;
-            break;
-        }
+    if (list.len < 2) {
+        if ((index orelse 0) != 0) return error.NoSuchBlock;
+        return null;
     }
-    const t = target orelse return null;
+    const t = list[resolveBlock(list, index, name) orelse return error.NoSuchBlock];
     var lines: std.ArrayListUnmanaged([]const u8) = .empty;
     var it = std.mem.splitScalar(u8, existing, '\n');
     while (it.next()) |l| try lines.append(sa, l);
@@ -1510,7 +1529,11 @@ pub fn splice(a: Allocator, existing: []const u8, name: ?[]const u8, new_block: 
     const removed_blank = std.mem.trim(u8, lines.items[end], " \t\r").len == 0;
     const next_is_sep = end + 1 < lines.items.len and std.mem.startsWith(u8, std.mem.trimStart(u8, lines.items[end + 1], " \t"), "###");
     if (removed_blank and next_is_sep) try out.append(sa, "");
-    if (end + 1 < lines.items.len) try out.appendSlice(sa, lines.items[end + 1 ..]);
+    // The last block's range runs to the file's end, its final newline
+    // included; a save keeps the newline the file ended in.
+    if (end + 1 < lines.items.len) {
+        try out.appendSlice(sa, lines.items[end + 1 ..]);
+    } else if (std.mem.endsWith(u8, existing, "\n")) try out.append(sa, "");
     return try std.mem.join(a, "\n", out.items);
 }
 
@@ -1680,6 +1703,7 @@ test "blocks: separators, names, line ranges, the leading unnamed block, the cur
     try testing.expectEqualStrings("two", std.mem.trim(u8, blockAtLine(list, 7).?.text, "\n")[15..18]);
     try testing.expectEqualStrings("one", blockAtLine(list, 3).?.name.?);
     try testing.expect(blockAtLine(list, 99).?.name == null);
+    try testing.expectEqual(@as(u32, 2), list[2].index);
     // a .curl multi-block file
     const curls = try blocks(arena.allocator(), "curl 'http://a/1'\n\n### GetB\ncurl 'http://a/2'\n");
     try testing.expectEqual(@as(usize, 2), curls.len);
@@ -1708,9 +1732,32 @@ test "toCurl round-trips through parseCurl; toHttpBlock names the block" {
     try testing.expectEqualStrings("### two\nPATCH https://x/it's\nAuthorization: Bearer tok\n\n{\"a\":'q'}\n", block);
 }
 
+test "two bare ### blocks are told apart by position: splice rewrites the one asked for" {
+    const src = "###\nGET http://h/items?n=first\n\n###\nGET http://h/items?n=second\n";
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const list = try blocks(arena.allocator(), src);
+    try testing.expectEqual(@as(usize, 2), list.len);
+    // Same name, different blocks: the name alone resolves to neither.
+    try testing.expect(resolveBlock(list, null, "") == null);
+    try testing.expectEqual(@as(?usize, 1), resolveBlock(list, 1, ""));
+    const out = (try splice(testing.allocator, src, 1, "", "###\nGET http://h/items?n=second&edited=1\n")).?;
+    defer testing.allocator.free(out);
+    try testing.expectEqualStrings("###\nGET http://h/items?n=first\n\n###\nGET http://h/items?n=second&edited=1\n", out);
+    // A position that no longer holds a block of that name, with the
+    // name shared: refused, never a guess.
+    try testing.expectError(error.NoSuchBlock, splice(testing.allocator, src, 5, "", "x"));
+    // A unique name still follows its block when the position moved.
+    const named = "### a\nGET http://h/a\n\n### b\nGET http://h/b\n";
+    const moved = (try splice(testing.allocator, named, 0, "b", "### b\nGET http://h/b2\n")).?;
+    defer testing.allocator.free(moved);
+    try testing.expect(std.mem.indexOf(u8, moved, "GET http://h/a\n") != null);
+    try testing.expect(std.mem.indexOf(u8, moved, "GET http://h/b2") != null);
+}
+
 test "splice rewrites one block and keeps the others byte for byte" {
     const src = "### one\nGET https://example.com/one\n\n### two\nPOST https://example.com/two\nContent-Type: application/json\n\n{\"a\": 1}\n\n### three\nGET https://example.com/three\n";
-    const out = (try splice(testing.allocator, src, "two", "### two\nPUT https://example.com/two-EDITED\n")).?;
+    const out = (try splice(testing.allocator, src, 1, "two", "### two\nPUT https://example.com/two-EDITED\n")).?;
     defer testing.allocator.free(out);
     try testing.expect(std.mem.indexOf(u8, out, "### one\nGET https://example.com/one\n") != null);
     try testing.expect(std.mem.indexOf(u8, out, "\n### three\nGET https://example.com/three\n") != null);
@@ -1718,11 +1765,11 @@ test "splice rewrites one block and keeps the others byte for byte" {
     try testing.expect(std.mem.indexOf(u8, out, "two\nContent-Type") == null);
     // the leading block keeps its blank separator
     const lead = "GET https://x/lead\n\n### one\nGET https://x/one\n";
-    const out2 = (try splice(testing.allocator, lead, null, "GET https://x/lead2\n")).?;
+    const out2 = (try splice(testing.allocator, lead, 0, null, "GET https://x/lead2\n")).?;
     defer testing.allocator.free(out2);
     try testing.expectEqualStrings("GET https://x/lead2\n\n### one\nGET https://x/one\n", out2);
-    try testing.expect((try splice(testing.allocator, "GET https://x/only\n", null, "x")) == null);
-    try testing.expect((try splice(testing.allocator, src, "nope", "x")) == null);
+    try testing.expect((try splice(testing.allocator, "GET https://x/only\n", 0, null, "x")) == null);
+    try testing.expectError(error.NoSuchBlock, splice(testing.allocator, src, 7, "nope", "x"));
 }
 
 test "params: add, list, clear; headers text round-trip; blank detection" {

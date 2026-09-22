@@ -928,6 +928,7 @@ pub const OpenOptions = struct {
     /// Absolute. Duped.
     source_path: ?[]const u8 = null,
     block_name: ?[]const u8 = null,
+    block_index: ?u32 = null,
     summary: ?[]const u8 = null,
     /// The keyboard starts in the Response block (a send from a file).
     focus_response: bool = false,
@@ -943,6 +944,7 @@ pub fn openFromRequest(app: *App, req: Request, opts: OpenOptions) CommandError!
     errdefer rp.deinit();
     if (opts.source_path) |p| rp.source_path = try gpa.dupe(u8, p);
     if (opts.block_name) |b| rp.block_name = try gpa.dupe(u8, b);
+    rp.block_index = opts.block_index;
     if (opts.summary) |s| rp.summary = try gpa.dupe(u8, s);
     try rp.load(incoming);
     incoming = undefined;
@@ -973,13 +975,17 @@ fn findPreview(app: *App) ?PaneId {
     return null;
 }
 
-/// The request pane already showing `path`'s block `block_name`.
-pub fn findSource(app: *App, path: []const u8, block_name: ?[]const u8) ?PaneId {
+/// The request pane already showing `path`'s block `index` (named
+/// `block_name`). The position is the identity: two bare `###` blocks
+/// share the name `""`, and keying on it put block two into block one's
+/// pane — whose save then rewrote block one.
+pub fn findSource(app: *App, path: []const u8, index: ?u32, block_name: ?[]const u8) ?PaneId {
     for (app.panes.slots.items, 0..) |*slot, i| if (slot.*) |*p| switch (p.*) {
         .request => |*rp| if (rp.source_path) |sp| {
             if (!std.mem.eql(u8, sp, path)) continue;
-            const same_block = if (block_name) |b| (rp.block_name != null and std.mem.eql(u8, rp.block_name.?, b)) else rp.block_name == null;
-            if (same_block) return @intCast(i);
+            if ((rp.block_index orelse 0) != (index orelse 0)) continue;
+            const same_name = if (block_name) |b| (rp.block_name != null and std.mem.eql(u8, rp.block_name.?, b)) else rp.block_name == null;
+            if (same_name) return @intCast(i);
         },
         else => {},
     };
@@ -991,10 +997,6 @@ pub const OpenFileError = CommandError || parse.ParseError || error{ ReadFailed,
 /// Open `path` (absolute) as a request pane on its first block. The
 /// error tells `App.openPath` to fall back to an editor.
 pub fn openFile(app: *App, path: []const u8, preview: bool) OpenFileError!PaneId {
-    if (findSource(app, path, null)) |id| {
-        app.showPane(id);
-        return id;
-    }
     var arena = std.heap.ArenaAllocator.init(app.gpa);
     defer arena.deinit();
     const a = arena.allocator();
@@ -1002,11 +1004,15 @@ pub fn openFile(app: *App, path: []const u8, preview: bool) OpenFileError!PaneId
     const list = try parse.blocks(a, text);
     if (list.len == 0) return error.EmptyFile;
     const first = list[0];
+    if (findSource(app, path, 0, first.name)) |id| {
+        app.showPane(id);
+        return id;
+    }
     var req = try parse.parse(app.gpa, first.text);
     errdefer req.deinit(app.gpa);
     // The leading block of a multi-block file is addressed as `null`;
     // a `### name` block by its name.
-    const id = try openFromRequest(app, req, .{ .source_path = path, .block_name = first.name, .summary = first.summary, .focus_response = false, .preview = preview });
+    const id = try openFromRequest(app, req, .{ .source_path = path, .block_name = first.name, .block_index = 0, .summary = first.summary, .focus_response = false, .preview = preview });
     req = undefined;
     if (app.panes.get(id)) |p| if (p.asRequest()) |rp| {
         rp.edited = false;
@@ -1026,13 +1032,13 @@ pub fn openFileBlock(app: *App, path: []const u8, idx: u32) OpenFileError!PaneId
     const list = try parse.blocks(a, text);
     if (idx >= list.len) return error.EmptyFile;
     const b = list[idx];
-    if (findSource(app, path, b.name)) |id| {
+    if (findSource(app, path, idx, b.name)) |id| {
         app.showPane(id);
         return id;
     }
     var req = try parse.parse(app.gpa, b.text);
     errdefer req.deinit(app.gpa);
-    const id = try openFromRequest(app, req, .{ .source_path = path, .block_name = b.name, .summary = b.summary });
+    const id = try openFromRequest(app, req, .{ .source_path = path, .block_name = b.name, .block_index = idx, .summary = b.summary });
     req = undefined;
     if (app.panes.get(id)) |p| if (p.asRequest()) |rp| {
         rp.edited = false;
@@ -1047,6 +1053,7 @@ pub const Active = struct {
     req: Request,
     source_path: ?[]const u8 = null,
     block_name: ?[]const u8 = null,
+    block_index: ?u32 = null,
     summary: ?[]const u8 = null,
     /// The request pane it came from, when it did.
     pane: ?PaneId = null,
@@ -1057,7 +1064,7 @@ pub fn parseActive(app: *App, arena: Allocator) CommandError!Active {
     const gpa = app.gpa;
     if (activeRequest(app)) |rp| {
         try rp.commit();
-        return .{ .req = try rp.request.clone(gpa), .source_path = rp.source_path, .block_name = rp.block_name, .summary = rp.summary, .pane = app.active };
+        return .{ .req = try rp.request.clone(gpa), .source_path = rp.source_path, .block_name = rp.block_name, .block_index = rp.block_index, .summary = rp.summary, .pane = app.active };
     }
     const e = app.activeEditor() orelse return app.diag.fail(app.frame.allocator(), "http: no active .http/.curl/.rest editor or Request pane", .{});
     const path = e.buf.doc.path;
@@ -1074,7 +1081,7 @@ pub fn parseActive(app: *App, arena: Allocator) CommandError!Active {
         error.NoUrl => return app.diag.fail(app.frame.allocator(), "http: no URL in the block under the cursor", .{}),
         error.UnterminatedQuote => return app.diag.fail(app.frame.allocator(), "http: unterminated quote in the curl command", .{}),
     };
-    return .{ .req = req, .source_path = if (path) |p| try arena.dupe(u8, p) else null, .block_name = block.name, .summary = block.summary };
+    return .{ .req = req, .source_path = if (path) |p| try arena.dupe(u8, p) else null, .block_name = block.name, .block_index = block.index, .summary = block.summary };
 }
 
 // ─── the send ───────────────────────────────────────────────────────────
@@ -1441,7 +1448,12 @@ pub fn saveToSource(app: *App) CommandError!void {
             const curl = try parse.toCurl(arena, &rp.request);
             break :blk if (rp.block_name) |n| try std.fmt.allocPrint(arena, "### {s}\n{s}\n", .{ n, curl }) else try std.fmt.allocPrint(arena, "{s}\n", .{curl});
         };
-        if (try parse.splice(gpa, text, rp.block_name, block_text)) |fresh| {
+        const spliced = parse.splice(gpa, text, rp.block_index, rp.block_name, block_text) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            // Writing the whole file here would drop every other block.
+            error.NoSuchBlock => return app.diag.fail(arena, "save: the pane's block is not in {s} any more (Save As writes it elsewhere)", .{rel}),
+        };
+        if (spliced) |fresh| {
             defer gpa.free(fresh);
             Io.Dir.cwd().writeFile(app.io, .{ .sub_path = path, .data = fresh }) catch |err| return app.diag.fail(arena, "save failed: {s}: {s}", .{ rel, @errorName(err) });
             rp.edited = false;
@@ -1935,7 +1947,7 @@ fn sendCmd(app: *App) CommandError!void {
     errdefer req.deinit(app.gpa);
     // A pane already on this block re-fires; otherwise a new one opens
     // beside the source.
-    if (active.source_path) |p| if (findSource(app, p, active.block_name)) |id| {
+    if (active.source_path) |p| if (findSource(app, p, active.block_index, active.block_name)) |id| {
         const rp = app.panes.get(id).?.asRequest().?;
         try rp.load(req);
         req = undefined;
@@ -1944,7 +1956,7 @@ fn sendCmd(app: *App) CommandError!void {
         rp.block = .response;
         return fire(app, id);
     };
-    const id = try openFromRequest(app, req, .{ .source_path = active.source_path, .block_name = active.block_name, .summary = active.summary, .focus_response = true });
+    const id = try openFromRequest(app, req, .{ .source_path = active.source_path, .block_name = active.block_name, .block_index = active.block_index, .summary = active.summary, .focus_response = true });
     req = undefined;
     if (app.panes.get(id)) |p| if (p.asRequest()) |rp| {
         rp.edited = false;
@@ -2738,6 +2750,40 @@ test "save: a multi-block .http writes back one block; a scratch prompts" {
     try testing.expectEqualStrings("params: cleared 1", app.lastToast().?);
     try command.run(&app, .{ .static = .@"http.copy_curl" });
     try testing.expect(std.mem.startsWith(u8, app.clipboard.text(), "curl 'https://example.com/two EDIT'"));
+}
+
+test "save: two bare ### blocks each keep their own pane, and saving block two leaves block one" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    const src = "###\nGET http://127.0.0.1:9/items?n=first\n\n###\nGET http://127.0.0.1:9/items?n=second\n";
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "bare.http", .data = src });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    const path = try std.fs.path.join(testing.allocator, &.{ root, "bare.http" });
+    defer testing.allocator.free(path);
+    const first = try openFileBlock(&app, path, 0);
+    const second = try openFileBlock(&app, path, 1);
+    // Both are named "" — the position keeps them apart.
+    try testing.expect(first != second);
+    try testing.expectEqual(@as(?PaneId, second), findSource(&app, path, 1, ""));
+    try testing.expectEqual(@as(?PaneId, first), findSource(&app, path, 0, ""));
+    // The editor's cursor on block two finds block two.
+    _ = try app.openEditor(path);
+    app.activeEditor().?.buf.editor.placeCursor(4, 0);
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var active = try parseActive(&app, arena.allocator());
+    defer active.req.deinit(testing.allocator);
+    try testing.expectEqual(@as(?u32, 1), active.block_index);
+    app.showPane(second);
+    const rp = app.panes.get(second).?.asRequest().?;
+    try rp.url.appendSlice(testing.allocator, "&edited=1");
+    try saveToSource(&app);
+    const out = try tmp.dir.readFileAlloc(testing.io, "bare.http", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(out);
+    try testing.expectEqualStrings("###\nGET http://127.0.0.1:9/items?n=first\n\n###\nGET http://127.0.0.1:9/items?n=second&edited=1\n", out);
 }
 
 fn pumpUntil(app: *App, rp: *RequestPane, comptime pred: fn (*RequestPane) bool, max_ticks: usize) !void {
