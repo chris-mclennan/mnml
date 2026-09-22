@@ -64,6 +64,7 @@ const App = app_mod.App;
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const event = @import("../core/event.zig");
+const child_os = @import("../core/child.zig");
 const integrations = @import("integrations.zig");
 const mount_pane = @import("mount_pane.zig");
 const broker_app = @import("broker.zig");
@@ -461,11 +462,11 @@ fn spawnAndWait(io: Io, argv: []const []u8, cwd: []const u8, env: *const std.pro
     const pid = child.id;
     const term = child.wait(io) catch |err| switch (err) {
         error.Canceled => {
-            reap(pid);
+            child_os.reapAbandoned(pid);
             return error.Canceled;
         },
         else => {
-            reap(pid);
+            child_os.reapAbandoned(pid);
             return -1;
         },
     };
@@ -473,16 +474,6 @@ fn spawnAndWait(io: Io, argv: []const []u8, cwd: []const u8, env: *const std.pro
         .exited => |c| @intCast(c),
         else => -1,
     };
-}
-
-/// Kill a child the wait gave up on, and reap it so it is not left a
-/// zombie. A no-op where there is no pid or no signals.
-fn reap(pid: ?std.process.Child.Id) void {
-    if (@import("builtin").os.tag == .windows) return;
-    const p = pid orelse return;
-    std.posix.kill(p, .KILL) catch return;
-    var status: u32 = undefined;
-    _ = std.c.waitpid(p, @ptrCast(&status), 0);
 }
 
 // ─── the tick ────────────────────────────────────────────────────────────
@@ -813,11 +804,8 @@ test "stopping the poller cancels the worker and reaps its child: nothing outliv
     try testing.expect(!processAlive(pid));
 }
 
-/// `kill(pid, 0)`: whether that process is still there. A child the
-/// worker failed to kill would answer yes, which is exactly what this
-/// is looking for.
+/// Whether that process is still there. A child the worker failed to
+/// kill would answer yes, which is exactly what this is looking for.
 fn processAlive(pid: i32) bool {
-    if (@import("builtin").os.tag == .windows) return false;
-    std.posix.kill(pid, @enumFromInt(0)) catch return false;
-    return true;
+    return !child_os.gone(pid);
 }
