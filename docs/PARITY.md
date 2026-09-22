@@ -22,7 +22,7 @@ line), not by hand.
 
 | section | done | partial | cut | missing | rows |
 |---|---|---|---|---|---|
-| Editing & input | 49 | 0 | 0 | 0 | 49 |
+| Editing & input | 54 | 0 | 0 | 0 | 54 |
 | Panes, splits & tab pages | 23 | 0 | 0 | 0 | 23 |
 | File manager | 22 | 0 | 0 | 0 | 22 |
 | Navigation & search | 31 | 0 | 0 | 0 | 31 |
@@ -186,7 +186,7 @@ trust sink. Each row names its file and its test.
 | Tree-sitter objects `if` / `ic` / `ia` | done | `src/editor/select.zig` `object()`, provider at `src/app.zig` `objectLookup` | |
 | Indent objects | done | `src/editor/select.zig` | |
 | Registers — named, numbered ring, `0`, blackhole | done | `src/editor/clipboard.zig`, `:reg` in `ex.zig`, `picker.clipboard` in `src/app/cmd_app.zig` | `"+` / `"*` are the OS clipboard (below); a write lands in the unnamed register first, then the sink |
-| `]p` / `[p` / `[P` / `]P` — put with the indent adjusted | partial | `paste_after_indent` / `paste_before_indent` in `src/editor/edit_op.zig`, refused in `src/editor/apply.zig` (`TODO(vim-slice: put)`), bound in the `[` / `]` prongs of `src/input/vim.zig` | *2026-09-21:* the chords were swallowed by the bracket prefix — no put, no word. They now answer `not supported yet` through the editor's `Unsupported` path, as `iq` / `ii` do, so the gap is visible rather than silent. `tests/e2e/vim_bracket_put_and_expandtab.test` |
+| `]p` / `[p` / `[P` / `]P` — put with the indent adjusted | done | `putIndentedTimes` in `src/editor/register.zig` (through `Editor.apply`: `paste_after_indent` / `paste_before_indent`), bound with their count in the `[` / `]` prongs of `src/input/vim.zig` | *2026-09-22 (`vimput`):* a linewise register's first non-empty line takes the cursor line's indent and the rest keep theirs relative to it (never below column 0; empty lines stay empty); the indent is rebuilt from columns — tabs at `tab_width` under `use_tabs`, else spaces. A charwise register is a plain `p` / `P`; `[P` and `]P` are `[p`; a count puts that many copies, all shifted alike; `.` re-indents to its own line. Probed against Neovim 0.12.5. Not done: Neovim's smartindent rule that leaves a `#` line at column 0 — mnml-zig has no smartindent. Unit tests `put-indent …` in `src/editor/register.zig`; `tests/e2e/vim_put_indent.test`, `tests/e2e/vim_bracket_put_and_expandtab.test` |
 | Macros — named, persisted | done | `putMacro` / `macro` on `src/editor/clipboard.zig` (replays in any buffer), `src/app/macros_store.zig` (`<data root>/macros.zon`) | `vim.macro_*` ids are keymap-only |
 | Marks — buffer-local, persisted | done | `src/editor/buffer.zig`, `src/app/session.zig` `Pane.marks`, `:marks` / `:delm`, `picker.marks` | |
 | Global (uppercase) marks | done | `src/app/marks_store.zig` (`mA`–`mZ` on the App, `<data root>/marks.zon`), `'A` as an ex address | `'A` opens the file when it is not |
