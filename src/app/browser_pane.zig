@@ -286,8 +286,14 @@ pub const BrowserPane = struct {
         return &self.net.items[self.net_sel];
     }
 
+    /// The newest entry for `request_id`: a redirect chain shares one id,
+    /// and the response that arrives belongs to its last hop.
     fn findNet(self: *BrowserPane, request_id: []const u8) ?*NetEntry {
-        for (self.net.items) |*n| if (std.mem.eql(u8, n.request_id, request_id)) return n;
+        var i = self.net.items.len;
+        while (i > 0) {
+            i -= 1;
+            if (std.mem.eql(u8, self.net.items[i].request_id, request_id)) return &self.net.items[i];
+        }
         return null;
     }
 };
@@ -794,6 +800,15 @@ fn onEvent(app: *App, p: *BrowserPane, method: []const u8, m: cdp.Message) Alloc
         const request_id = cdp.str(m.params, &.{"requestId"}) orelse return;
         const url = cdp.str(m.params, &.{ "request", "url" }) orelse return;
         const meth = cdp.str(m.params, &.{ "request", "method" }) orelse "GET";
+        // A redirect hop: Chrome reuses the request id and hands the
+        // previous hop's response over here, never as a responseReceived.
+        if (cdp.get(m.params, &.{"redirectResponse"})) |rr| if (p.findNet(request_id)) |prev| {
+            prev.status = cdp.int(rr, &.{"status"});
+            if (cdp.str(rr, &.{"mimeType"})) |mt| {
+                if (prev.mime) |old| app.gpa.free(old);
+                prev.mime = try app.gpa.dupe(u8, mt);
+            }
+        };
         var entry: NetEntry = .{ .request_id = try app.gpa.dupe(u8, request_id), .method = undefined, .url = undefined };
         errdefer app.gpa.free(entry.request_id);
         entry.method = try app.gpa.dupe(u8, meth);
@@ -1795,4 +1810,33 @@ test "a reply too large to take fails its own request with a note, the session s
     // A skipped event says so.
     try handle(&app, try tooLong.ev(gpa, id, null, 80 << 20));
     try testing.expect(std.mem.startsWith(u8, p.log.items[p.log.items.len - 1].text, "skipped a CDP event of 80 MB"));
+}
+
+test "a redirect: the 302 lands on the hop that answered it, the 200 on the URL that returned it" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &pbuf);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = pbuf[0..n], .data_root = pbuf[0..n] });
+    defer app.deinit();
+    const gpa = testing.allocator;
+    const id = try testPane(&app);
+    const p = app.panes.get(id).?.asBrowser().?;
+    const msg = struct {
+        fn ev(g: Allocator, pid: PaneId, text: []const u8) !*CdpEvent {
+            const box = try g.create(CdpEvent);
+            box.* = .{ .pane = pid, .kind = .{ .message = try g.dupe(u8, text) } };
+            return box;
+        }
+    };
+    // The wire, as Chrome sends it for GET /start → 302 → /landed → 200.
+    try handle(&app, try msg.ev(gpa, id, "{\"method\":\"Network.requestWillBeSent\",\"params\":{\"requestId\":\"56311.2\",\"type\":\"Document\",\"request\":{\"url\":\"http://127.0.0.1:18801/start\",\"method\":\"GET\"}}}"));
+    try handle(&app, try msg.ev(gpa, id, "{\"method\":\"Network.requestWillBeSent\",\"params\":{\"requestId\":\"56311.2\",\"type\":\"Document\",\"request\":{\"url\":\"http://127.0.0.1:18802/landed\",\"method\":\"GET\"},\"redirectResponse\":{\"status\":302,\"mimeType\":\"text/plain\"}}}"));
+    try handle(&app, try msg.ev(gpa, id, "{\"method\":\"Network.responseReceived\",\"params\":{\"requestId\":\"56311.2\",\"type\":\"Document\",\"response\":{\"status\":200,\"mimeType\":\"text/html\"}}}"));
+    try testing.expectEqual(@as(usize, 2), p.net.items.len);
+    try testing.expectEqualStrings("http://127.0.0.1:18801/start", p.net.items[0].url);
+    try testing.expectEqual(@as(?i64, 302), p.net.items[0].status);
+    try testing.expectEqualStrings("http://127.0.0.1:18802/landed", p.net.items[1].url);
+    try testing.expectEqual(@as(?i64, 200), p.net.items[1].status);
+    try testing.expectEqualStrings("text/html", p.net.items[1].mime.?);
 }
