@@ -106,6 +106,13 @@ out=$("$ROOT/run.sh" stale 2>&1); rc=$?
 check "stale: a binary touched now is current (exit 1)" '[ $rc -eq 1 ]' "$out"
 check "stale: says so" 'echo "$out" | grep -q "is current"' "$out"
 
+# ── 1b. the check sequence carries every audit ─────────────────────────
+# `./run.sh check` is the gate in one line; a step dropped from it is a
+# gate that silently stopped running. The two source audits are the ones
+# with no other caller.
+check "check: the sequence runs the glyph audit" 'grep -q "\"\$ZIG\" build glyph-audit" "$ROOT/run.sh"'
+check "check: the sequence runs the hover-help audit" 'grep -q "\"\$ZIG\" build hover-audit" "$ROOT/run.sh"'
+
 # ── 2. nothing running ─────────────────────────────────────────────────
 rm -f "$MARKER"
 out=$("$ROOT/run.sh" status 2>&1)

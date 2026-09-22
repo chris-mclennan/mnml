@@ -470,6 +470,51 @@ branch, so there is nothing to pick and nothing to drift.
   the test fail, grep that the break really landed.
 - Test the shipped default, not values around it.
 
+## Hover help: every control ships with its entry; the audit enforces it
+
+The info view (`src/ui/info_view.zig`, the help box at the bottom of the
+left column) reads a curated dictionary before the tooltip's one-liner:
+`src/app/info_view_copy.zig` is the one switch from a `HitTarget` to an
+area module under `src/app/info_view_copy/` (statusline, rail, chrome,
+dock, settings, menus, overlays, panels, editor, tree). An `Entry` is
+data — a title, a body of two to four sentences, an optional aside,
+`keys` and `links`:
+
+- **The body is about THIS control in THIS state.** A git chip's entry
+  names the branch and its dirty counts; a diagnostics chip's counts the
+  errors; a Settings row's reads its current value and where it is
+  written. Never a restatement of the label (`opens more rows` is the
+  shape to reject). What a click and the right button do, then the one
+  caveat a user hits.
+- **`keys` name commands, not chords.** The chord is read off the keymap
+  under the active profile when the entry paints (`chordOf`), so a rebind
+  moves the copy and an unbound command's row is dropped rather than
+  lie. A literal chord (`Enter`, `Esc`, `→ / ←`) is allowed only from
+  `literal_chords`. `info_view_copy.lint` fails a key whose command no
+  profile binds.
+- **`links` are typed.** `.command` carries a `CommandId` — a wrong id is
+  a compile error; `.settings` carries a row from `settingsRow("ui.x")` —
+  a wrong path is a compile error; `.url` a web page through the OS
+  browser; `.docs` a section of the embedded manual (`docsSection("The
+  launcher dock")` — docs/CONFIG.md ships inside the binary, and the
+  section opens as a read-only markdown preview on a virtual
+  `mnml-docs://` path, `src/app/docs.zig`; the lint fails a heading the
+  manual does not have); `.ask` sends a prompt to the Claude session with the target's
+  state in it (`askPrompt`: the diagnostics, the branch's files, the
+  unread messages, the config key and value), gated on `ai.route` — off,
+  the row becomes a Settings link that says why.
+- **A control without an entry is visible.** The ladder paints the
+  tooltip's line with a dim *no help written yet* aside first; `zig build
+  hover-audit` (`src/app/info_view_audit.zig`) walks every target family
+  — every menu opened for real — and fails on an uncovered target that
+  `docs/hover-help-todo.txt` does not list. That file is the backlog: a
+  new control cannot land without help, and a line that is covered now
+  is reported stale. `mnml-zig hover-audit --write-todo
+  docs/hover-help-todo.txt` regenerates it.
+- **The box is sticky under the pointer.** Crossing onto the box to
+  click a link keeps the last target's entry (`State.sticky`); a link's
+  press re-resolves that target, so nothing from the frame arena is kept.
+
 ## Reverse channels (D3) — `src/app/ai.zig`
 
 A worker that needs an answer from the UI owns the channel: `ai.Job.confirm`

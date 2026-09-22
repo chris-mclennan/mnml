@@ -543,6 +543,11 @@ fn screenRect(screen: *vaxis.Screen) Rect {
 }
 
 pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
+    // What the pointer rests on, read off the previous frame's hits
+    // BEFORE `begin` hands their memory back: the info view's dictionary
+    // allocates on the new frame, and a hit list read after that is a
+    // hit list being overwritten (a segfault in `entryAt`).
+    info_view_app.snapshotHover(app);
     app.frame.begin();
     // The frame's dwell zones, before anything asks whether an `auto`
     // surface is showing: `begin` swaps in what the previous frame's
@@ -554,8 +559,8 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     // both are idempotent at one `now`).
     sidebar_auto.tick(app, app.now_ms);
     launcher_dock.tick(app, app.now_ms);
-    // The info view reads the previous frame's hits: they are what the
-    // pointer is resting on until this frame replaces them.
+    // The info view reads the target snapshotted above: what the
+    // pointer is resting on until this frame replaces it.
     const help_copy: ?info_view_ui.Copy = if (app.cfg.ui.hover_help and side_mod.shown(app, .left) != null and !app.zen) try info_view_app.pick(app, app.frame.allocator()) else null;
     // The frame's rects read the previous frame's hits too (an `auto`
     // rail stays while the pointer rests on it).

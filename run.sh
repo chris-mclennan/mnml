@@ -26,7 +26,8 @@
 #                                 docs/CONTRIBUTING.md: fmt, the unit tests in
 #                                 Debug and ReleaseSafe, a ReleaseSafe build,
 #                                 the gate at three sizes, the corpus, the
-#                                 glyph audit, tools/run-sh-check.sh and
+#                                 glyph audit, the hover-help audit,
+#                                 tools/run-sh-check.sh and
 #                                 tools/run-ps1-check.py (run.ps1's structure
 #                                 — the real ps1 check needs a PowerShell).
 #   ./run.sh stale                Say whether the binary is behind the sources
@@ -526,6 +527,7 @@ case "${1:-start}" in
     step "mnml-zig test (the corpus, MNML_E2E_ALLOW_SHELL=$MNML_E2E_ALLOW_SHELL)" ./zig-out/bin/mnml-zig test
     step "zig build glyph-audit"                          "$ZIG" build glyph-audit
     step "zig build chrome-audit"                         "$ZIG" build chrome-audit
+    step "zig build hover-audit"                          "$ZIG" build hover-audit
     step "tools/run-sh-check.sh"                          bash tools/run-sh-check.sh
     # run.ps1's structure: balance, quoting, the 5.1-incompatible
     # spellings, every verb reachable, the refusals and plan phrases

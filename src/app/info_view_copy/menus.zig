@@ -1,0 +1,380 @@
+//! Hover help for a context menu's rows, keyed by the open menu's title
+//! and the row's label (and the parent row's label for a submenu's
+//! rows). A row without an entry falls back to `Menu: <label>` and
+//! the command's title — the audit lists every such row, menu by menu.
+//!
+//! Phase one covers the menus the chrome's chips open: the Claude and
+//! Codex chips on the tab strip and in the statusline, the terminal
+//! chip, the two `Icon ▸` submenus, the keymap chip, the tab menu and
+//! the info panel's own kebab.
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const app_mod = @import("../../app.zig");
+const App = app_mod.App;
+const copy = @import("../info_view_copy.zig");
+const Entry = copy.Entry;
+const command = @import("../../core/command.zig");
+
+const ask = copy.ask_link;
+
+/// One curated row: `menu` null matches any menu; `parent` is the
+/// submenu's parent row when the row is in one.
+pub const Row = struct {
+    menu: ?[]const u8 = null,
+    parent: ?[]const u8 = null,
+    label: []const u8,
+    entry: Entry,
+};
+
+pub const rows = [_]Row{
+    // ── the info panel's own kebab ──
+    .{ .menu = "Sidebar", .label = "Turn off info panel (Settings → UI to bring back)", .entry = .{
+        .title = "Turn off the info panel",
+        .body = "Removes this help box from the bottom of the left column and gives its rows to the section above; the tooltip near the pointer (`ui.hover_tooltip`) is unaffected. Settings → UI → Hover help, or `view.toggle_hover_help`, brings it back — the kebab goes with the panel, so this row cannot undo itself.",
+        .links = &.{ .{ .command = .{ .id = .@"view.toggle_hover_help", .label = "Turn it off" } }, .{ .settings = .{ .row = copy.settingsRow("ui.hover_help"), .label = "Hover help in Settings" } } },
+    } },
+    // ── the keymap chip ──
+    .{ .menu = "Keymap", .label = "vim keymap", .entry = .{
+        .title = "vim keymap",
+        .body = "Switches the input style to the vim profile: modal editing — NORMAL, INSERT, VISUAL, REPLACE — with the NvChad chords and Space as the leader; the mode chip reads the mode. The switch is written to `editor.input_style` in the home config and every chord is rebuilt at once. The standard profile's Ctrl chords are gone under it, so learn the leader menu (Space) first.",
+        .keys = &.{.{ .command = .@"whichkey.leader", .label = "The leader menu" }},
+        .links = &.{ .{ .command = .{ .id = .@"editor.use_vim", .label = "Switch to vim" } }, .{ .command = .{ .id = .@"view.cheatsheet", .label = "The cheatsheet" } } },
+    } },
+    .{ .menu = "Keymap", .label = "standard keymap", .entry = .{
+        .title = "standard keymap",
+        .body = "Switches the input style to the standard profile: modeless editing with VS Code's chords — Ctrl+S, Ctrl+P, Ctrl+Shift+P, F12. The switch is written to `editor.input_style` in the home config and every chord is rebuilt at once; the mode chip then names the focused surface rather than a mode.",
+        .keys = &.{.{ .command = .palette, .label = "The command palette" }},
+        .links = &.{ .{ .command = .{ .id = .@"editor.use_standard", .label = "Switch to standard" } }, .{ .command = .{ .id = .@"view.cheatsheet", .label = "The cheatsheet" } } },
+    } },
+    .{ .menu = "Keymap", .label = "Open the cheatsheet", .entry = .{
+        .title = "The cheatsheet",
+        .body = "A pane listing every chord in the active profile with the command it runs, grouped by area, your rebinds included — the reference for the keymap you have rather than the one the docs describe. `/` filters, Enter runs the row. F1 opens the same list as an overlay.",
+        .keys = &.{ .{ .command = .@"view.cheatsheet", .label = "The cheatsheet" }, .{ .command = .@"view.help", .label = "The keymap reference" } },
+        .links = &.{ .{ .command = .{ .id = .@"view.cheatsheet", .label = "Open it" } }, .{ .command = .{ .id = .@"keys.edit", .label = "Rebind keys" } } },
+    } },
+    // ── the Claude / Codex chips on the tab strip ──
+    .{ .menu = "Claude Code launcher", .label = "Toggle existing Claude Code pane", .entry = .{
+        .title = "Toggle the Claude Code pane",
+        .body = "Shows the running Claude Code session's pane if it is hidden, hides it if it is on screen, and starts a session when there is none — one row for the everyday case. The session is the `claude` CLI in a terminal pane, in the workspace, on the account it is signed in as.",
+        .links = &.{ .{ .command = .{ .id = .@"ai.claude_code", .label = "Toggle it" } }, .{ .command = .{ .id = .@"view.activity_sessions", .label = "The sessions section" } } },
+    } },
+    .{ .menu = "Claude Code launcher", .label = "New Claude Code session in left half", .entry = newSession(.claude, "left") },
+    .{ .menu = "Claude Code launcher", .label = "New Claude Code session in right half", .entry = newSession(.claude, "right") },
+    .{ .menu = "Claude Code launcher", .label = "New Claude Code session in top half", .entry = newSession(.claude, "top") },
+    .{ .menu = "Claude Code launcher", .label = "New Claude Code session in bottom half", .entry = newSession(.claude, "bottom") },
+    .{ .menu = "Codex launcher", .label = "Toggle existing Codex pane", .entry = .{
+        .title = "Toggle the Codex pane",
+        .body = "Shows the running Codex session's pane if it is hidden, hides it if it is on screen, and starts a session when there is none. The session is the `codex` CLI in a terminal pane, in the workspace; Codex has no API route in this build, so the CLI must be on PATH.",
+        .links = &.{ .{ .command = .{ .id = .@"ai.codex", .label = "Toggle it" } }, .{ .command = .{ .id = .@"view.activity_sessions", .label = "The sessions section" } } },
+    } },
+    .{ .menu = "Codex launcher", .label = "New Codex session in left half", .entry = newSession(.codex, "left") },
+    .{ .menu = "Codex launcher", .label = "New Codex session in right half", .entry = newSession(.codex, "right") },
+    .{ .menu = "Codex launcher", .label = "New Codex session in top half", .entry = newSession(.codex, "top") },
+    .{ .menu = "Codex launcher", .label = "New Codex session in bottom half", .entry = newSession(.codex, "bottom") },
+    .{ .label = "Layout: Grid (splits)", .entry = .{
+        .title = "AI layout — grid",
+        .body = "Several sessions at once as a grid of splits — two side by side, four in a two-by-two — each visible, with the `+ Add Claude Code` card in an empty slot. `ui.ai_layout_mode = grid`. The alternative stacks them as tabs in one leaf, which suits a narrow terminal.",
+        .links = &.{ .{ .command = .{ .id = .@"view.ai_layout_grid", .label = "Use the grid" } }, .{ .settings = .{ .row = copy.settingsRow("ui.ai_layout_mode"), .label = "AI session layout" } } },
+    } },
+    .{ .label = "Layout: Tabs (stack in leaf)", .entry = .{
+        .title = "AI layout — tabs",
+        .body = "Several sessions stacked as tabs in one leaf, one visible at a time — the SESSIONS cards and the dock's terminal items switch between them. `ui.ai_layout_mode = tabs`. The grid shows them all at once instead, which wants a wide terminal.",
+        .keys = &.{.{ .command = .@"view.activity_sessions", .label = "Sessions" }},
+        .links = &.{ .{ .command = .{ .id = .@"view.ai_layout_tabs", .label = "Use tabs" } }, .{ .settings = .{ .row = copy.settingsRow("ui.ai_layout_mode"), .label = "AI session layout" } } },
+    } },
+    .{ .label = "Bake AI glyphs into MnmlSymbols", .entry = .{
+        .title = "Bake the AI glyphs",
+        .body = "Rebuilds the MnmlSymbols font with the Claude and Codex marks — the figure, the spark, the Codex glyph — and installs it for the terminal, so the chips draw the branded marks rather than a box. Needs the font tools the build ships; the terminal reads the new face on its next launch.",
+        .links = &.{ .{ .command = .{ .id = .@"integrations.bake_ai_glyphs", .label = "Bake them" } }, .{ .command = .{ .id = .@"integrations.glyph_builder", .label = "The glyph builder" } } },
+    } },
+    .{ .label = "Edit Claude Code glyph…", .entry = glyphEdit(.claude) },
+    .{ .label = "Edit Codex glyph…", .entry = glyphEdit(.codex) },
+    // ── the Icon submenus ──
+    .{ .parent = "Icon", .label = "Claude Code", .entry = .{
+        .title = "Icon — the Claude Code figure",
+        .body = "Claude wears the Claude Code figure everywhere the chrome draws a mark for it — the tab bar's chip, a session's tab, its SESSIONS card, the dock. Picking it writes `ui.claude_mark = figure` to the home config; the tick shows the current choice. The glyph is in the MnmlSymbols font; a box instead of a figure means the font is not installed.",
+        .links = &.{ .{ .settings = .{ .row = copy.settingsRow("ui.claude_mark"), .label = "Claude icon in Settings" } }, .{ .command = .{ .id = .@"integrations.bake_ai_glyphs", .label = "Bake the glyphs" } } },
+    } },
+    .{ .parent = "Icon", .label = "Anthropic", .entry = .{
+        .title = "Icon — the Anthropic spark",
+        .body = "Claude wears the Anthropic spark everywhere the chrome draws a mark for it — the tab bar's chip, a session's tab, its SESSIONS card, the dock. Picking it writes `ui.claude_mark = spark` to the home config; the tick shows the current choice. The glyph is in the MnmlSymbols font; a box instead of a spark means the font is not installed.",
+        .links = &.{ .{ .settings = .{ .row = copy.settingsRow("ui.claude_mark"), .label = "Claude icon in Settings" } }, .{ .command = .{ .id = .@"integrations.bake_ai_glyphs", .label = "Bake the glyphs" } } },
+    } },
+    .{ .parent = "Icon", .label = "Ghostty", .entry = .{
+        .title = "Icon — the ghost",
+        .body = "The terminal chip and every terminal tab wear ghostty's ghost — the default. Picking it writes `ui.terminal_glyph = ghostty` to the home config; the tick shows the current choice. A custom SVG baked behind the ghost's codepoint keeps its own row below.",
+        .links = &.{ .{ .command = .{ .id = .@"view.terminal_glyph_ghostty", .label = "Use the ghost" } }, .{ .settings = .{ .row = copy.settingsRow("ui.terminal_glyph"), .label = "Terminal icon in Settings" } } },
+    } },
+    .{ .parent = "Icon", .label = "Terminal", .entry = .{
+        .title = "Icon — the plain terminal",
+        .body = "The terminal chip and every terminal tab wear the plain terminal codicon instead of the ghost. Picking it writes `ui.terminal_glyph = terminal` to the home config; the tick shows the current choice. It is a Nerd Font glyph, so it draws on any patched font.",
+        .links = &.{ .{ .command = .{ .id = .@"view.terminal_glyph_terminal", .label = "Use the plain terminal" } }, .{ .settings = .{ .row = copy.settingsRow("ui.terminal_glyph"), .label = "Terminal icon in Settings" } } },
+    } },
+    .{ .parent = "Icon", .label = "Custom SVG…", .entry = .{
+        .title = "Icon — a custom SVG",
+        .body = "Asks for an SVG file and bakes it into the MnmlSymbols font behind the ghost's codepoint, so the terminal chip and every terminal tab wear your own art (`ui.terminal_glyph = custom`). Needs the font tools the build ships; the terminal reads the rebuilt face on its next launch. The ghost row puts the shipped glyph back.",
+        .links = &.{ .{ .command = .{ .id = .@"view.terminal_glyph_custom", .label = "Pick an SVG" } }, .{ .command = .{ .id = .@"integrations.patch_nerd_font_svg", .label = "Patch a Nerd Font with an SVG" } } },
+    } },
+    // ── the terminal chip ──
+    .{ .menu = "Terminal", .label = "Open shell (beside)", .entry = .{
+        .title = "Open a shell beside the active pane",
+        .body = "A new `$SHELL` in a split beside the active pane, in the workspace directory with mnml's environment, rendered by libghostty-vt. The chip's left click is this row; the half rows below place the shell explicitly. Closing the tab ends the shell.",
+        .keys = &.{.{ .command = .@"term.shell", .label = "New shell" }},
+        .links = &.{ .{ .command = .{ .id = .@"term.shell", .label = "Open a shell" } }, .{ .command = .{ .id = .@"term.scratch_toggle", .label = "The scratch terminal" } } },
+    } },
+    .{ .menu = "Terminal", .label = "Open shell in left half", .entry = shellHalf("left", .@"term.shell_left") },
+    .{ .menu = "Terminal", .label = "Open shell in right half", .entry = shellHalf("right", .@"term.shell_right") },
+    .{ .menu = "Terminal", .label = "Open shell in top half", .entry = shellHalf("top", .@"term.shell_top") },
+    .{ .menu = "Terminal", .label = "Open shell in bottom half", .entry = shellHalf("bottom", .@"term.shell_bottom") },
+    .{ .menu = "Terminal", .label = "Scratch terminal", .entry = .{
+        .title = "The scratch terminal",
+        .body = "One shell that toggles: the first call opens it in a split at the bottom, the next hides it, the next shows it again with its history intact — a place for the one-off command without a tab per command. It is per workspace and restarts with the session when `session.restore_terminals` is on.",
+        .keys = &.{.{ .command = .@"term.scratch_toggle", .label = "Toggle the scratch terminal" }},
+        .links = &.{ .{ .command = .{ .id = .@"term.scratch_toggle", .label = "Toggle it" } }, .{ .settings = .{ .row = copy.settingsRow("session.restore_terminals"), .label = "Restore terminals" } } },
+    } },
+    // ── the Claude / Codex chips in the statusline ──
+    .{ .label = "Open usage pane", .entry = .{
+        .title = "The usage pane",
+        .body = "The full figures behind the chip: for Claude the five-hour and weekly windows of every linked account with their reset times; for Codex the tokens and sessions today. Refresh asks the account's endpoint again. The pane is where an account is linked or renamed.",
+        .links = &.{ .{ .command = .{ .id = .@"ai.claude_usage", .label = "Claude usage" } }, .{ .command = .{ .id = .@"ai.link_claude_token", .label = "Link an account" } } },
+    } },
+    .{ .label = "Refresh usage now", .entry = .{
+        .title = "Refresh the usage",
+        .body = "Asks the account's usage endpoint again instead of waiting for the next poll — the thing to do when a chip reads stale after a reset. A chip stuck at 0% on a linked account is a token that needs re-linking, which a refresh does not fix.",
+        .links = &.{ .{ .command = .{ .id = .@"ai.refresh_usage", .label = "Refresh now" } }, .{ .command = .{ .id = .@"ai.link_claude_token", .label = "Re-link the token" } } },
+    } },
+    .{ .label = "Show last response", .entry = .{
+        .title = "The last usage response",
+        .body = "Opens the raw answer the usage endpoint gave last time, as text — for reading exactly what the account reports when the chip's figure looks wrong. A 401 here is an expired token; re-link it.",
+        .links = &.{ .{ .command = .{ .id = .@"ai.show_last_response", .label = "Show it" } }, ask },
+    } },
+    .{ .label = "Session only", .entry = chipDetail("Session only", "the five-hour session window alone — its percentage and reset time", .@"ai.chip_show_session") },
+    .{ .label = "Weekly only", .entry = chipDetail("Weekly only", "the weekly window alone — its percentage and reset time", .@"ai.chip_show_weekly") },
+    .{ .label = "Both", .entry = chipDetail("Both", "the five-hour window and the weekly one side by side", .@"ai.chip_show_both") },
+    .{ .label = "Reset countdown", .entry = .{
+        .title = "Reset countdown on the chip",
+        .body = "Adds the time until the window resets after the percentage — `42% 1h20m` — so the chip says when a full window opens again without a hover. Off, the percentage stands alone and the hover has the time.",
+        .links = &.{.{ .command = .{ .id = .@"ai.chip_toggle_reset", .label = "Toggle it" } }},
+    } },
+    .{ .label = "All AI chips: off", .entry = chipsAll("off", "hides every AI chip from the statusline — the usage pane and the sessions section still have the figures", .@"ai.chip_show_all_off") },
+    .{ .label = "All AI chips: compact", .entry = chipsAll("compact", "one short chip per product with the percentage — the default", .@"ai.chip_show_all_compact") },
+    .{ .label = "All AI chips: ticker", .entry = chipsAll("ticker", "a single chip that alternates between the products and their windows, for a narrow statusline", .@"ai.chip_show_all_ticker") },
+    // ── the tab menu ──
+    .{ .label = "Close others", .entry = .{
+        .title = "Close the other tabs",
+        .body = "Closes every other tab in this leaf and keeps this one; a dirty buffer among them asks, one box per buffer, and Cancel on any of them stops the run there. Pinned tabs are kept. The undo chip offers the batch back for a few seconds.",
+        .keys = &.{.{ .command = .@"buffer.reopen", .label = "Reopen the last closed" }},
+        .links = &.{ .{ .command = .{ .id = .@"buffer.close_others", .label = "Close the others" } }, .{ .command = .{ .id = .@"buffer.pin_toggle", .label = "Pin this one first" } } },
+    } },
+    .{ .label = "Close to the right", .entry = .{
+        .title = "Close the tabs to the right",
+        .body = "Closes every tab after this one in the strip and keeps this one and those before it; a dirty buffer among them asks. Pinned tabs sit at the front, so they are never to the right of anything.",
+        .links = &.{.{ .command = .{ .id = .@"buffer.close_right", .label = "Close them" } }},
+    } },
+    .{ .label = "Pin tab", .entry = .{
+        .title = "Pin the tab",
+        .body = "A pinned tab stays at the front of the strip, is kept by *Close others*, and is never a preview tab. The pin is per tab and survives the session. The same row reads *Unpin tab* once it is pinned.",
+        .links = &.{ .{ .command = .{ .id = .@"buffer.pin_toggle", .label = "Pin it" } }, .{ .settings = .{ .row = copy.settingsRow("ui.preview_tabs"), .label = "Preview tabs" } } },
+    } },
+    .{ .label = "Unpin tab", .entry = .{
+        .title = "Unpin the tab",
+        .body = "Lets the tab back into the strip's normal order — it can be closed by *Close others* again and takes its place after the pinned ones. The pin is per tab and was surviving the session.",
+        .links = &.{.{ .command = .{ .id = .@"buffer.pin_toggle", .label = "Unpin it" } }},
+    } },
+    .{ .label = "Reveal in tree", .entry = .{
+        .title = "Reveal in the tree",
+        .body = "Expands the file tree down to this file and puts the cursor on its row, opening the left column if it was hidden. The row's own menu then has the file verbs — rename, cut, copy, a new file beside it.",
+        .links = &.{ .{ .command = .{ .id = .@"view.reveal_in_tree", .label = "Reveal it" } }, .{ .command = .{ .id = .@"file.copy_path", .label = "Copy the path" } } },
+    } },
+    .{ .label = "Reveal in Finder", .entry = .{
+        .title = "Reveal in the OS file manager",
+        .body = "Opens the folder in Finder (macOS), the file manager `xdg-open` picks (Linux) or Explorer (Windows) with this file selected. `view.reveal_in_tree` is the in-app twin — the tree row rather than a window outside mnml.",
+        .links = &.{ .{ .command = .{ .id = .@"view.reveal_active", .label = "Reveal it" } }, .{ .command = .{ .id = .@"file.copy_path", .label = "Copy the path" } } },
+    } },
+    .{ .label = "Rename…", .entry = .{
+        .title = "Rename the terminal",
+        .body = "Gives this terminal tab a name of your own — `tests`, `server` — instead of the shell and command it shows; the SESSIONS card and the dock item take the same name. The name lives in the session, so it comes back with the tab.",
+        .links = &.{.{ .command = .{ .id = .@"term.rename", .label = "Rename it" } }},
+    } },
+    .{ .label = "Restart", .entry = .{
+        .title = "Restart the terminal",
+        .body = "Ends the child — the shell, or the session it is running — and starts it again in the same tab with the same command and directory. For a Claude session that is a new session, not a resume: the transcript stays on disk and `sessions.open_transcript` reads it.",
+        .links = &.{ .{ .command = .{ .id = .@"term.restart", .label = "Restart it" } }, .{ .command = .{ .id = .@"term.clear", .label = "Just clear the screen" } } },
+    } },
+    // ── submenu parents ──
+    .{ .label = "Icon", .entry = .{
+        .title = "Icon ▸ — the mark this chip wears",
+        .body = "Opens the two (or three) marks to choose from: for the Claude chip and Claude session tabs the Claude Code figure or the Anthropic spark (`ui.claude_mark`); for the terminal chip and every terminal tab the ghost, the plain terminal codicon, or a custom SVG baked into the MnmlSymbols font (`ui.terminal_glyph`). The tick marks the one in use; picking writes the home config, so the mark is the same in every workspace.",
+        .keys = &.{.{ .chord = "→ / ←", .label = "Open / close the submenu" }},
+        .links = &.{ .{ .settings = .{ .row = copy.settingsRow("ui.claude_mark"), .label = "Claude icon in Settings" } }, .{ .settings = .{ .row = copy.settingsRow("ui.terminal_glyph"), .label = "Terminal icon in Settings" } } },
+    } },
+    .{ .label = "Color", .entry = .{
+        .title = "Color ▸ — the accent",
+        .body = "Opens the palette of accents for this terminal or session: the colour goes on the tab, on the pane's rail down its left edge, and on the SESSIONS card, so two shells side by side stop being two identical grey rectangles. The tick marks the current one; *Auto* lets mnml pick. The choice lives in the session, so it comes back with the tab.",
+        .keys = &.{.{ .chord = "→ / ←", .label = "Open / close the submenu" }},
+        .links = &.{.{ .settings = .{ .row = copy.settingsRow("ui.pane_rail"), .label = "Pane colour rail" } }},
+    } },
+    .{ .label = "Clear (Ctrl+L)", .entry = .{
+        .title = "Clear the terminal",
+        .body = "Clears the screen and the scrollback of this terminal, as Ctrl+L in the shell does — the child keeps running. A restart is the row above when the child itself is stuck.",
+        .links = &.{.{ .command = .{ .id = .@"term.clear", .label = "Clear it" } }},
+    } },
+};
+
+fn newSession(comptime product: enum { claude, codex }, comptime half: []const u8) Entry {
+    const claude = product == .claude;
+    return .{
+        .title = if (claude) "New Claude Code session — " ++ half ++ " half" else "New Codex session — " ++ half ++ " half",
+        .body = (if (claude) "Starts another Claude Code session — the `claude` CLI in a terminal pane — in the " ++ half ++ " half of the active pane's leaf, so the code and the session sit side by side or stacked. Each session has its own SESSIONS card and rail colour. The grid rows below lay out two or four at once." else "Starts another Codex session — the `codex` CLI in a terminal pane — in the " ++ half ++ " half of the active pane's leaf, so the code and the session sit side by side or stacked. Each session has its own SESSIONS card and rail colour."),
+        .links = &.{ .{ .command = .{ .id = if (claude) .@"ai.claude_code_new" else .@"ai.codex_new", .label = "New session beside the pane" } }, .{ .command = .{ .id = .@"ai.new_session_worktree", .label = "New session in a worktree" } } },
+    };
+}
+
+fn glyphEdit(comptime product: enum { claude, codex }) Entry {
+    const claude = product == .claude;
+    return .{
+        .title = if (claude) "Edit the Claude Code glyph" else "Edit the Codex glyph",
+        .body = "Opens the glyph builder on this mark — the SVG that is baked into the MnmlSymbols font at the codepoint the chip draws — so the art can be replaced with your own. Bake afterwards to rebuild the font; the terminal reads the new face on its next launch.",
+        .links = &.{ .{ .command = .{ .id = if (claude) .@"integrations.edit_claude_glyph" else .@"integrations.edit_codex_glyph", .label = "Edit it" } }, .{ .command = .{ .id = .@"integrations.bake_ai_glyphs", .label = "Bake the glyphs" } } },
+    };
+}
+
+fn shellHalf(comptime half: []const u8, comptime id: command.CommandId) Entry {
+    return .{
+        .title = "Open a shell in the " ++ half ++ " half",
+        .body = "A new `$SHELL` in the " ++ half ++ " half of the active pane's leaf — the leaf is split that way and the shell takes the new side, focused. It runs in the workspace directory with mnml's environment. The tab menu's Rename gives it a name for the strip and the dock.",
+        .links = &.{ .{ .command = .{ .id = id, .label = "Open it here" } }, .{ .command = .{ .id = .@"term.scratch_toggle", .label = "The scratch terminal" } } },
+    };
+}
+
+fn chipDetail(comptime label: []const u8, comptime what: []const u8, comptime id: command.CommandId) Entry {
+    return .{
+        .title = "Claude chip — " ++ label,
+        .body = "Picks the figure the statusline's Claude chip carries — this row is " ++ what ++ ". The tick marks the current one; the usage pane has every window whichever is picked. A chip at 100% means new turns queue until that window resets.",
+        .links = &.{ .{ .command = .{ .id = id, .label = "Show this" } }, .{ .command = .{ .id = .@"ai.claude_usage", .label = "The usage pane" } } },
+    };
+}
+
+fn chipsAll(comptime mode: []const u8, comptime what: []const u8, comptime id: command.CommandId) Entry {
+    return .{
+        .title = "All AI chips — " ++ mode,
+        .body = "Sets `ai.claude_meter_mode` for every AI chip in the statusline at once: this row is " ++ what ++ ". The tick marks the current mode; Settings → AI has the same row. The usage pane keeps the full figures whichever mode the chips are in.",
+        .links = &.{ .{ .command = .{ .id = id, .label = "Use this mode" } }, .{ .settings = .{ .row = copy.settingsRow("ai.claude_meter_mode"), .label = "Meter mode in Settings" } } },
+    };
+}
+
+/// Rows whose entry is generated from the label — a family rather
+/// than a row: the theme menu's one row per theme.
+fn family(arena: Allocator, menu: []const u8, label: []const u8) Allocator.Error!?Entry {
+    if (std.mem.eql(u8, menu, "Theme")) {
+        // The four verbs above the names have entries of their own or
+        // are the backlog's; a bare name is a theme.
+        const verbs = [_][]const u8{ "Auto: match system (light / dark)", "Pick theme…  (fuzzy)", "Reset to config default", "Toggle (set ui.theme_toggle first)" };
+        for (verbs) |v| if (std.mem.eql(u8, v, label)) return null;
+        return .{
+            .title = try std.fmt.allocPrint(arena, "Theme — {s}", .{label}),
+            .body = try std.fmt.allocPrint(arena, "Recolours mnml with the `{s}` theme at once and writes `ui.theme = {s}` to the home config, so it holds in every workspace; the tick marks the one in use. A theme only recolours — glyphs and layout stay the same. `theme.toggle` swaps between the configured pair, and *Auto* follows the terminal's light or dark instead of a fixed name.", .{ label, label }),
+            .keys = &.{.{ .command = .@"theme.toggle", .label = "Toggle the configured pair" }},
+            .links = &.{ .{ .command = .{ .id = .@"theme.pick", .label = "The theme picker (with preview)" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.theme"), .label = "Theme in Settings" } } },
+        };
+    }
+    return null;
+}
+
+/// The on-screen fallback for a row the dictionary has nothing for:
+/// the command's title and its chord under the active profile, rather
+/// than the tooltip's `opens more rows`. Still a gap — the ladder
+/// marks it — but a useful one.
+pub fn rowFallback(app: *App, arena: Allocator, menu: u32, idx: u16) Allocator.Error!?struct { title: []const u8, body: []const u8 } {
+    if (app.overlay != .menu) return null;
+    const m = &app.overlay.menu;
+    const sub = menu == 1 or menu == 3;
+    const list = if (sub) (if (m.sub) |s| s.items else return null) else m.items;
+    if (idx >= list.len) return null;
+    const it = list[idx];
+    return switch (it.action) {
+        .command => |c| .{
+            .title = try std.fmt.allocPrint(arena, "{s}: {s}", .{ m.title, it.label }),
+            .body = if (try copy.chordOf(app, arena, c)) |chord|
+                try std.fmt.allocPrint(arena, "Runs `{s}` — {s}. {s} does the same from the keyboard; the palette lists it under its group.", .{ command.name(c), command.title(c), chord })
+            else
+                try std.fmt.allocPrint(arena, "Runs `{s}` — {s}. No chord binds it in this profile; the palette lists it under its group.", .{ command.name(c), command.title(c) }),
+        },
+        .copy_text => .{
+            .title = try std.fmt.allocPrint(arena, "{s}: {s}", .{ m.title, it.label }),
+            .body = "Copies the row's own text to the clipboard — the value in the label, so the label is the preview.",
+        },
+        .open_url, .open_path => .{
+            .title = try std.fmt.allocPrint(arena, "{s}: {s}", .{ m.title, it.label }),
+            .body = if (it.action == .open_url) "Opens the URL in the label in the OS browser (`ui.external_browser` names which)." else "Opens the path in the label in the editor.",
+        },
+        else => .{
+            .title = try std.fmt.allocPrint(arena, "{s}: {s}", .{ m.title, it.label }),
+            .body = if (it.submenu.len > 0) try std.fmt.allocPrint(arena, "Opens a submenu of {d} rows — → or a click opens it, ← closes it.", .{it.submenu.len}) else "A row that sets one thing rather than running a command — the tick shows the current choice.",
+        },
+    };
+}
+
+/// The entry for a row of the open menu, by the menu's title, the
+/// parent row (for a submenu) and the row's label.
+pub fn entry(app: *App, arena: Allocator, menu: u32, idx: u16) Allocator.Error!?Entry {
+    if (app.overlay != .menu) return null;
+    const m = &app.overlay.menu;
+    const sub = menu == 1 or menu == 3;
+    const list = if (sub) (if (m.sub) |s| s.items else return null) else m.items;
+    if (idx >= list.len) return null;
+    const parent: ?[]const u8 = if (sub) (if (m.sub) |s| (if (s.parent < m.items.len) m.items[s.parent].label else null) else null) else null;
+    if (lookup(m.title, parent, list[idx].label)) |e| return e;
+    return try family(arena, m.title, list[idx].label);
+}
+
+pub fn lookup(menu: []const u8, parent: ?[]const u8, label: []const u8) ?Entry {
+    for (rows) |r| {
+        if (r.menu) |want| if (!std.mem.eql(u8, want, menu)) continue;
+        if (r.parent) |want| {
+            const have = parent orelse continue;
+            if (!std.mem.eql(u8, want, have)) continue;
+        }
+        if (!std.mem.eql(u8, r.label, label)) continue;
+        return r.entry;
+    }
+    return null;
+}
+
+/// For the AI: the menu, the row and the command it runs with its title.
+pub fn askContext(app: *App, arena: Allocator, menu: u32, idx: u16) Allocator.Error!?[]const u8 {
+    if (app.overlay != .menu) return null;
+    const m = &app.overlay.menu;
+    const sub = menu == 1 or menu == 3;
+    const list = if (sub) (if (m.sub) |s| s.items else return null) else m.items;
+    if (idx >= list.len) return null;
+    const it = list[idx];
+    return switch (it.action) {
+        .command => |c| try std.fmt.allocPrint(arena, "- menu \"{s}\", row \"{s}\": runs `{s}` — {s}\n", .{ m.title, it.label, command.name(c), command.title(c) }),
+        else => try std.fmt.allocPrint(arena, "- menu \"{s}\", row \"{s}\"{s}\n", .{ m.title, it.label, if (it.submenu.len > 0) " (opens a submenu)" else "" }),
+    };
+}
+
+// ─── tests ──────────────────────────────────────────────────────────────
+
+const t = std.testing;
+
+test "menu rows resolve by title, parent and label; the Icon submenu rows are curated; an unknown row is not" {
+    var arena_state: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    try t.expectEqualStrings("vim keymap", lookup("Keymap", null, "vim keymap").?.title);
+    try t.expect(lookup("Other", null, "vim keymap") == null);
+    try t.expectEqualStrings("Icon — the Anthropic spark", lookup("Claude Code launcher", "Icon", "Anthropic").?.title);
+    try t.expectEqualStrings("Icon — the ghost", lookup("Terminal", "Icon", "Ghostty").?.title);
+    try t.expect(lookup("Terminal", null, "Ghostty") == null);
+    try t.expect(lookup("Terminal", null, "No such row") == null);
+    try t.expectEqualStrings("Open a shell in the left half", lookup("Terminal", null, "Open shell in left half").?.title);
+    try t.expect(std.mem.indexOf(u8, lookup("Claude", null, "Weekly only").?.body, "the weekly window alone") != null);
+    // Every curated row passes the lint.
+    var problems: std.ArrayListUnmanaged(copy.Problem) = .empty;
+    for (rows) |r| try copy.lint(a, r.entry, &problems);
+    for (problems.items) |p| std.debug.print("menus lint: {s}: {s}\n", .{ p.entry, p.what });
+    try t.expectEqual(@as(usize, 0), problems.items.len);
+}

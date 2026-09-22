@@ -1,0 +1,47 @@
+# width: 120
+# height: 40
+# The info view (the help box at the bottom of the left column) reads
+# the curated dictionary (`src/app/info_view_copy/`) before the
+# tooltip's one-liner: a statusline segment, a launcher-dock item and a
+# Settings row each show their entry's title, and a target with no
+# entry shows the tooltip's line marked `no help written yet`. The
+# coordinates are 120x40's: the statusline is row 38, an `always` dock
+# with `.inner` placement is row 37 with the `+` at 41..47, and the
+# Settings overlay's first row (`Line numbers`) sits where it sits.
+write a.txt "alpha\n"
+open a.txt
+# The mode chip, leftmost on the statusline.
+hover 1 38
+expect screen contains "Mode chip — standard"
+expect screen lacks "no help written yet"
+# The launcher dock's `+` item.
+ex dock always
+expect screen contains "New terminal"
+hover 44 37
+expect screen contains "+ New…"
+expect screen lacks "no help written yet"
+# A Settings row: the overlay's first row, `Line numbers`.
+command view.settings
+expect screen contains "Line numbers"
+hover 40 10
+expect screen contains "The line-number"
+expect screen lacks "no help written yet"
+key esc
+# A menu row the dictionary has nothing for yet: the fallback carries
+# the command's title, marked as a gap.
+# A curated menu row: the Keymap chip's menu opens above the statusline
+# (rows 33..38 at this size); its last row is `Open the cheatsheet`.
+rightclick 1 38
+expect screen contains "Open the cheatsheet"
+hover 4 37
+expect screen contains "The cheatsheet"
+key esc
+# A menu row the dictionary has nothing for yet: the fallback carries
+# the command's title, marked as a gap.
+rightclick 72 38
+expect screen contains "Copy position"
+hover 76 37
+expect screen contains "Cursor: Copy position"
+expect screen contains "no help written yet"
+key esc
+expect screen lacks "no help written yet"

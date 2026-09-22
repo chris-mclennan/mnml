@@ -6,12 +6,24 @@
 //! first), else the active pane, else the one-liner for the focused
 //! surface — `Sidebar` / `Editor` / `Right panel`. An overlay is not a
 //! surface: the ladder reads the one the keys go back to (`focusUnder`).
-//! The curated entries (`treeRowCopy`, `chipCopy`) are the Rust
-//! dictionary's tree and chip sections.
 //!
-//! The kebab's menu is the one row Rust has: turn the panel off. A
-//! `→ Run it` link runs the command the copy names; the app keeps the
-//! ids by position because the painter's `Copy` is plain data.
+//! The hover rung reads the dictionary first (`app/info_view_copy.zig`
+//! — a curated `Entry` per target, split by area) and only then
+//! `discovery.describe`, the one-line tooltip; a fallback is marked on
+//! screen with a dim *no help written yet* aside so the gap is visible
+//! where it is, not only in `zig build hover-audit`.
+//!
+//! **The box is sticky under the pointer.** The pointer has to cross
+//! onto the box to click a link row, and the box itself says nothing
+//! new — so while the pointer rests on the box the ladder keeps the
+//! last target it resolved from (`State.sticky`), and a link's press
+//! re-resolves that target: the command it runs, the Settings row it
+//! opens, the URL, the manual section a `docs` link renders
+//! (`app/docs.zig`), or the prompt an `Ask about this` link sends
+//! (`info_view_copy.askPrompt`), built at press time from the state of
+//! that moment. Nothing from the frame arena is kept between frames.
+//!
+//! The kebab's menu is the one row Rust has: turn the panel off.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -24,14 +36,22 @@ const hit_mod = @import("../ui/hit.zig");
 const HitTarget = hit_mod.HitTarget;
 const view = @import("../ui/info_view.zig");
 const tree_view = @import("../ui/tree_view.zig");
-const tree_mod = @import("tree.zig");
 const icons = @import("../ui/icons.zig");
 const discovery = @import("discovery.zig");
+const copy = @import("info_view_copy.zig");
+const settings_app = @import("settings.zig");
+const git_app = @import("git.zig");
+const docs = @import("docs.zig");
 
 pub const Copy = view.Copy;
 pub const Part = view.Part;
+pub const Entry = copy.Entry;
 
-pub const max_links = 3;
+pub const max_links = copy.max_links;
+
+/// The aside a fallback carries — the on-screen mark of a control
+/// without an entry.
+pub const no_help_aside = "no help written yet";
 
 pub const State = struct {
     scroll: u16 = 0,
@@ -39,59 +59,93 @@ pub const State = struct {
     max_scroll: u16 = 0,
     /// A hash of the last copy's title: a new topic scrolls back to the top.
     topic: u64 = 0,
-    /// What the `→` rows run, by position.
-    links: [max_links]?CommandId = @splat(null),
+    /// What the `→` rows do, by position.
+    links: [max_links]?copy.LinkAction = @splat(null),
+    /// The last hover target the ladder resolved from — kept while the
+    /// pointer is on the box, so the links stay under the hand. A
+    /// `.link` target carries an arena slice and is never kept.
+    sticky: ?HitTarget = null,
+    /// The target under the pointer for this frame, read by
+    /// `snapshotHover` BEFORE the frame arena resets — the hits live on
+    /// that arena, and the ladder allocates on it.
+    hover_target: ?HitTarget = null,
+    /// A hovered link's url, copied out of the dying frame.
+    link_url: [512]u8 = undefined,
 };
+
+/// Read the previous frame's hits while they are still whole: what the
+/// pointer rests on, with the box's own cells resolving to the last
+/// target (`State.sticky`). `render` calls this before `frame.begin`.
+pub fn snapshotHover(app: *App) void {
+    const st = &app.info_view;
+    st.hover_target = null;
+    if (!app.hover_live) return;
+    const h = app.hover orelse return;
+    const target = app.hits.at(h.x, h.y) orelse return;
+    if (target == .info_view) {
+        st.hover_target = st.sticky;
+        return;
+    }
+    st.sticky = if (target == .link) null else target;
+    // A link's url is an arena slice about to die: copy it into the
+    // state's own buffer (a longer one is cut — the copy names it).
+    if (target == .link) {
+        const n = @min(target.link.url.len, st.link_url.len);
+        @memcpy(st.link_url[0..n], target.link.url[0..n]);
+        st.hover_target = .{ .link = .{ .url = st.link_url[0..n] } };
+        return;
+    }
+    st.hover_target = target;
+}
 
 /// The copy for this frame — and the state it implies: the links the
 /// rows will run, the scroll reset when the topic changed.
 pub fn pick(app: *App, arena: Allocator) Allocator.Error!Copy {
-    const copy = try pickCopy(app, arena);
+    const c = try pickCopy(app, arena);
     const st = &app.info_view;
-    const topic = std.hash.Wyhash.hash(0, copy.title);
+    const topic = std.hash.Wyhash.hash(0, c.title);
     if (topic != st.topic) {
         st.topic = topic;
         st.scroll = 0;
     }
-    return copy;
+    return c;
 }
 
 fn pickCopy(app: *App, arena: Allocator) Allocator.Error!Copy {
     const st = &app.info_view;
     st.links = @splat(null);
-    if (app.hover_live) if (app.hover) |h| if (app.hits.at(h.x, h.y)) |target| if (try hoverCopy(app, arena, target)) |c| return c;
+    if (st.hover_target) |target| if (try hoverCopy(app, arena, target)) |c| return c;
     if (try focusCopy(app, arena)) |c| return c;
     if (try activePaneCopy(app, arena)) |c| return c;
     return emptyCopy(app);
 }
 
-/// What the pointer rests on. The box itself says nothing new.
+/// What the pointer rests on: the dictionary's entry, else the
+/// tooltip's line marked as a fallback. The box itself says nothing
+/// new.
 fn hoverCopy(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!?Copy {
-    switch (target) {
-        .info_view => return null,
-        .tree_chip => |c| return chipCopy(app, c),
-        .tree_root => |r| {
-            if (r == 0) return .{
-                .title = "Workspace root",
-                .body = "Names the folder the tree is rooted at — click to collapse or expand the whole tree. The chips on the row make a folder or a file, pull, fold every directory, and rescan.",
-            };
-            if (r - 1 < app.tree.roots.items.len) return .{
-                .title = try std.fmt.allocPrint(arena, "Workspace: {s}", .{app.tree.roots.items[r - 1].name}),
-                .body = "An extra workspace root from `workspaces` in config.zon. Click to open or fold its tree; view.switch_workspace makes it the one open.",
-            };
-            return null;
-        },
-        .tree_node => |idx| {
-            if (idx >= app.tree.rows.items.len) return null;
-            const row = app.tree.rows.items[idx];
-            if (row.header) return null;
-            return try rowCopy(arena, row.name(), row.is_dir);
-        },
-        else => {
-            const tip = (try discovery.describe(app, arena, target)) orelse return null;
-            return .{ .title = tip.title, .body = tip.detail orelse "" };
-        },
+    if (target == .info_view) return null;
+    if (try copy.lookup(app, arena, target)) |entry| {
+        const m = try copy.materialize(app, arena, entry);
+        app.info_view.links = m.actions;
+        return m.copy;
     }
+    // A menu row without an entry: the command's title and chord,
+    // rather than the tooltip's `opens more rows` — marked all the same.
+    if (target == .menu_item) if (try copy.menus.rowFallback(app, arena, target.menu_item.menu, target.menu_item.idx)) |f| return .{ .title = f.title, .body = f.body, .aside = no_help_aside, .aside_first = true };
+    const tip = (try discovery.describe(app, arena, target)) orelse return null;
+    return .{ .title = tip.title, .body = tip.detail orelse "", .aside = no_help_aside, .aside_first = true };
+}
+
+/// Whether `target` resolves to a curated entry, the tooltip's fallback,
+/// or nothing — what the audit tallies.
+pub const Resolution = enum { curated, fallback, none };
+
+pub fn resolve(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!Resolution {
+    if (target == .info_view) return .curated;
+    if (try copy.lookup(app, arena, target) != null) return .curated;
+    if (try discovery.describe(app, arena, target) != null) return .fallback;
+    return .none;
 }
 
 /// The surface the keys go back to under an overlay: the prompt's, the
@@ -125,20 +179,8 @@ fn focusCopy(app: *App, arena: Allocator) Allocator.Error!?Copy {
     var first: usize = 0;
     while (first < rows.len and rows[first].header) : (first += 1) {}
     if (app.tree.cursor == first) return null;
-    return try view.flatten(arena, try rowCopy(arena, row.name(), row.is_dir));
-}
-
-/// The curated entry for a tree row, else the generic line.
-fn rowCopy(arena: Allocator, name: []const u8, is_dir: bool) Allocator.Error!Copy {
-    if (try treeRowCopy(arena, name, is_dir)) |c| return c;
-    if (is_dir) return .{
-        .title = try std.fmt.allocPrint(arena, "{s}/", .{name}),
-        .body = "Directory. Enter or Right expands / opens. j/k walks rows.",
-    };
-    return .{
-        .title = name,
-        .body = "File. Enter opens it in a new tab. Right-click for cut / copy / paste / rename.",
-    };
+    const m = try copy.materialize(app, arena, try copy.tree.rowOrGeneric(arena, row.name(), row.is_dir));
+    return try view.flatten(arena, m.copy);
 }
 
 /// The active pane's summary (Rust `describe_active_pane`).
@@ -153,10 +195,10 @@ fn activePaneCopy(app: *App, arena: Allocator) Allocator.Error!?Copy {
         // are the active profile's, read off the keymap. Rust's copy
         // named a detach and a kill chord; mnml binds neither, and
         // closing the tab is what ends the child.
-        .pty => .{ .title = p.title(), .body = try std.fmt.allocPrint(arena, "Terminal pane \u{2014} {s}.", .{try chordLine(app, arena, &.{
-            .{ .id = .@"term.restart", .label = "Restart" },
-            .{ .id = .@"term.rename", .label = "Rename" },
-            .{ .id = .@"buffer.close", .label = "Close" },
+        .pty => .{ .title = p.title(), .body = try std.fmt.allocPrint(arena, "Terminal pane \u{2014} {s}.", .{try copy.chordLine(app, arena, &.{
+            .{ .command = .@"term.restart", .label = "Restart" },
+            .{ .command = .@"term.rename", .label = "Rename" },
+            .{ .command = .@"buffer.close", .label = "Close" },
         })}) },
         .md_preview => .{ .title = p.title(), .body = "Rendered markdown preview — click header chip to jump back to source." },
         // The ZON tree: the focused field's doc line (docs/CONFIG.md's
@@ -187,95 +229,28 @@ fn editorCopy(app: *App, arena: Allocator, p: *const app_mod.Pane, e: *const app
     const sym = wordUnderCursor(ed.doc.bytes(), ed.cursor);
     if (sym.len > 0 and sym.len <= 48) return .{
         .title = try std.fmt.allocPrint(arena, "{s}  ·  {s}  ·  {s}  ·  L{d}:{d}", .{ sym, lang, title, pos.row + 1, pos.col + 1 }),
-        .body = try chordLine(app, arena, &.{
-            .{ .id = .@"lsp.goto_definition", .label = "Definition" },
-            .{ .id = .@"lsp.references", .label = "References" },
-            .{ .id = .@"lsp.hover", .label = "Hover" },
-            .{ .id = .@"lsp.rename", .label = "Rename" },
+        .body = try copy.chordLine(app, arena, &.{
+            .{ .command = .@"lsp.goto_definition", .label = "Definition" },
+            .{ .command = .@"lsp.references", .label = "References" },
+            .{ .command = .@"lsp.hover", .label = "Hover" },
+            .{ .command = .@"lsp.rename", .label = "Rename" },
         }),
     };
     const lines = @max(ed.lineCount(), 1);
     return .{
         .title = try std.fmt.allocPrint(arena, "{s}  ·  {s}  ·  L{d}:{d}  ·  {d} lines{s}", .{ title, lang, pos.row + 1, pos.col + 1, lines, if (p.dirty()) " · unsaved" else "" }),
-        .body = if (e.pinned) "Pinned — stays at the front of the bufferline." else try chordLine(app, arena, &.{
-            .{ .id = .@"lsp.goto_definition", .label = "Definition" },
-            .{ .id = .@"lsp.references", .label = "References" },
-            .{ .id = .@"lsp.code_action", .label = "Code actions" },
-            .{ .id = .@"picker.files", .label = "Files" },
+        .body = if (e.pinned) "Pinned — stays at the front of the bufferline." else try copy.chordLine(app, arena, &.{
+            .{ .command = .@"lsp.goto_definition", .label = "Definition" },
+            .{ .command = .@"lsp.references", .label = "References" },
+            .{ .command = .@"lsp.code_action", .label = "Code actions" },
+            .{ .command = .@"picker.files", .label = "Files" },
         }),
     };
 }
 
-const ChordRow = struct { id: command.CommandId, label: []const u8 };
-
-/// `[chord] label · [chord] label …` — each command's chord under the
-/// active profile in the copy's spelling; a command the profile leaves
-/// unbound contributes its label alone.
-fn chordLine(app: *const App, arena: Allocator, rows: []const ChordRow) Allocator.Error![]const u8 {
-    var out: std.ArrayListUnmanaged(u8) = .empty;
-    for (rows, 0..) |row, i| {
-        if (i > 0) try out.appendSlice(arena, " \u{00B7} ");
-        if (try chordOf(app, arena, row.id)) |c| {
-            try out.append(arena, '[');
-            try out.appendSlice(arena, c);
-            try out.appendSlice(arena, "] ");
-        }
-        try out.appendSlice(arena, row.label);
-    }
-    return out.items;
-}
-
-/// The chord the copy shows for `id` under the active profile, spelled
-/// for prose: `g d` → `gd`, `f12` → `F12`, `ctrl+k ctrl+i` → `Ctrl+K
-/// Ctrl+I`. The vim profile's own chords come before the shared ones
-/// (`gd` over `F12`, the idiom a vim user knows); the standard profile
-/// reads the shared ones first (`Ctrl+P` over its own `Ctrl+O`).
-pub fn chordOf(app: *const App, arena: Allocator, id: command.CommandId) Allocator.Error!?[]const u8 {
-    const keys = command.spec(id).keys;
-    const lists: [2][]const []const u8 = switch (App.profileOf(app.input_style)) {
-        .vim => .{ keys.vim, keys.both },
-        .standard => .{ keys.both, keys.standard },
-    };
-    for (lists) |list| if (list.len > 0) return try chordDisplay(arena, list[0]);
-    return null;
-}
-
-/// A key spec in the copy's spelling.
-fn chordDisplay(arena: Allocator, spec: []const u8) Allocator.Error![]const u8 {
-    var out: std.ArrayListUnmanaged(u8) = .empty;
-    // A run of bare keys (`g d`) reads as one word; anything with a
-    // modifier keeps a space between chords.
-    var bare_run = true;
-    var probe = std.mem.splitScalar(u8, spec, ' ');
-    while (probe.next()) |c| if (c.len != 1) {
-        bare_run = false;
-    };
-    var it = std.mem.splitScalar(u8, spec, ' ');
-    var first = true;
-    while (it.next()) |chord| {
-        if (chord.len == 0) continue;
-        if (!first and !bare_run) try out.append(arena, ' ');
-        first = false;
-        var parts = std.mem.splitScalar(u8, chord, '+');
-        var first_part = true;
-        var modified = false;
-        while (parts.next()) |part| {
-            if (part.len == 0) continue;
-            if (!first_part) try out.append(arena, '+');
-            first_part = false;
-            const is_mod = std.mem.eql(u8, part, "ctrl") or std.mem.eql(u8, part, "shift") or std.mem.eql(u8, part, "alt") or std.mem.eql(u8, part, "super");
-            if (is_mod) modified = true;
-            const named = is_mod or (part.len > 1 and (part[0] == 'f' and std.ascii.isDigit(part[1]))) or std.mem.eql(u8, part, "space") or std.mem.eql(u8, part, "enter") or std.mem.eql(u8, part, "esc") or std.mem.eql(u8, part, "tab");
-            if (named) {
-                try out.append(arena, std.ascii.toUpper(part[0]));
-                try out.appendSlice(arena, part[1..]);
-            } else if (part.len == 1 and modified) {
-                try out.append(arena, std.ascii.toUpper(part[0]));
-            } else try out.appendSlice(arena, part);
-        }
-    }
-    return out.items;
-}
+/// The chord the copy shows for `id` under the active profile
+/// (`info_view_copy.chordOf`).
+pub const chordOf = copy.chordOf;
 
 /// The identifier the cursor is in or on; empty between tokens.
 pub fn wordUnderCursor(text: []const u8, cursor: usize) []const u8 {
@@ -339,167 +314,24 @@ fn emptyCopy(app: *App) Copy {
     };
 }
 
-// ─── the dictionary ─────────────────────────────────────────────────────
+// ─── the dictionary, re-exported for its callers ────────────────────────
 
-const open_shortcuts = [_]view.Shortcut{
-    .{ .chord = "Enter", .label = "Open in the active pane" },
-    .{ .chord = "Ctrl+Enter", .label = "Open in a horizontal split" },
-};
-
-const dir_shortcuts = [_]view.Shortcut{
-    .{ .chord = "Enter", .label = "Expand / collapse" },
-    .{ .chord = "→ / ←", .label = "Expand / collapse (arrows)" },
-};
-
-const Row = struct { key: []const u8, lang: []const u8, body: []const u8 };
-
-/// Whole-filename rows (Rust `filename_row_copy`), lower-cased.
-const by_name = [_]Row{
-    .{ .key = "package.json", .lang = "npm manifest", .body = "Declares this package's dependencies, scripts, and metadata for npm / pnpm / yarn. Syntax-only highlighting; no schema validation. `npm run <script>` from a terminal pane runs anything listed under `scripts`." },
-    .{ .key = "dockerfile", .lang = "Dockerfile", .body = "Defines how `docker build` assembles an image — base layer, copied files, entrypoint. Syntax-only highlighting. `:!docker build .` from the cmdline works if docker is on PATH." },
-    .{ .key = ".env", .lang = "Environment variables", .body = "Untracked key=value pairs the process reads at startup. This is separate from mnml's own `{{VAR}}` substitution, which reads `.mnml/env/<name>.env` in Request panes. Treat this file as secrets — keep it out of git." },
-    .{ .key = "makefile", .lang = "Build recipes", .body = "Defines named targets (`make build`, `make test`, …) as shell recipes. Tab-indentation is significant — a space where a tab is expected is the #1 Makefile syntax error. No LSP; syntax-only highlighting." },
-    .{ .key = "package-lock.json", .lang = "npm lockfile", .body = "Exact dependency-tree snapshot npm resolved from `package.json`. Generated by `npm install` — don't hand-edit; a mismatch with `package.json` triggers a warning on the next install." },
-    .{ .key = "pnpm-lock.yaml", .lang = "pnpm lockfile", .body = "Exact dependency-tree snapshot pnpm resolved from `package.json`. Generated by `pnpm install` — don't hand-edit." },
-    .{ .key = "tsconfig.json", .lang = "TypeScript project config", .body = "Compiler options, path aliases, and `include`/`exclude` globs that tsserver reads to resolve module paths. A wrong `baseUrl` or `paths` entry here is the usual cause of false 'cannot find module' errors in the editor." },
-    .{ .key = ".gitignore", .lang = "Git ignore rules", .body = "Path patterns excluded from `git status` / `git add`. mnml's own file picker excludes `.git/` unconditionally regardless of what's listed here." },
-    .{ .key = ".gitattributes", .lang = "Git attributes", .body = "Per-path git behavior — line-ending normalization, diff drivers, merge strategies, archive export-ignore. Affects what `git` does with the file, not how mnml renders it." },
-    .{ .key = ".gitconfig", .lang = "Git config", .body = "INI-style git settings — user identity, aliases, remotes. A repo's `.git/config` takes precedence over this one when both set the same key." },
-    .{ .key = ".eslintrc", .lang = "ESLint config", .body = "Lint rules and plugin config for ESLint. mnml doesn't run ESLint itself — pair with a terminal pane (`eslint .`) or an LSP that surfaces its diagnostics." },
-    .{ .key = ".prettierrc", .lang = "Prettier config", .body = "Formatting rules — quote style, semicolons, line width — for Prettier. mnml doesn't format on save from this file; run `prettier --write` from a terminal pane." },
-    .{ .key = ".editorconfig", .lang = "EditorConfig", .body = "Cross-editor whitespace rules (indent size, tabs vs spaces, trailing newline) keyed by glob. mnml reads it for the indentation of the files it covers." },
-    .{ .key = ".dockerignore", .lang = "Docker ignore rules", .body = "Paths excluded from the build context `docker build` sends to the daemon — same glob syntax as `.gitignore`. Keeping it tight speeds up builds and keeps secrets out of the image." },
-    .{ .key = ".npmrc", .lang = "npm config", .body = "Per-project npm settings — registry URL, auth tokens, save-exact behavior. Treat auth-token lines as secrets and keep them out of git." },
-    .{ .key = ".nvmrc", .lang = "Node version pin", .body = "A single line naming the Node version this project expects. `nvm use` (or an nvm-aware shell hook) reads it automatically on `cd`." },
-    .{ .key = "docker-compose.yml", .lang = "Compose file", .body = "Defines the multi-container stack — services, networks, volumes — for `docker compose up`. Indentation-sensitive YAML, same as any other `.yml`; syntax-only highlighting." },
-    .{ .key = "docker-compose.yaml", .lang = "Compose file", .body = "Defines the multi-container stack — services, networks, volumes — for `docker compose up`. Indentation-sensitive YAML, same as any other `.yml`; syntax-only highlighting." },
-    .{ .key = "compose.yml", .lang = "Compose file", .body = "Defines the multi-container stack — services, networks, volumes — for `docker compose up`. Indentation-sensitive YAML, same as any other `.yml`; syntax-only highlighting." },
-    .{ .key = "compose.yaml", .lang = "Compose file", .body = "Defines the multi-container stack — services, networks, volumes — for `docker compose up`. Indentation-sensitive YAML, same as any other `.yml`; syntax-only highlighting." },
-    .{ .key = "readme", .lang = "Project readme", .body = "The first thing a visitor to this repo or folder reads. mnml renders it like any other Markdown file when `ui.render_markdown` is on; `:e` opens the raw source." },
-    .{ .key = "readme.md", .lang = "Project readme", .body = "The first thing a visitor to this repo or folder reads. mnml renders it like any other Markdown file when `ui.render_markdown` is on; `:e` opens the raw source." },
-    .{ .key = "license", .lang = "License text", .body = "The legal terms this project is distributed under. Plain text or Markdown depending on the project; mnml applies syntax-only highlighting either way." },
-    .{ .key = "copying", .lang = "License text (GNU convention)", .body = "Same role as LICENSE — the GNU-project convention for the license filename, common on GPL-licensed code. Plain text; no highlighting." },
-};
-
-/// Extension rows (Rust `tree_row_copy`), lower-cased.
-const by_ext = [_]Row{
-    .{ .key = "rs", .lang = "Rust source", .body = "Compiled with cargo. Hover a symbol in the buffer for LSP info (once the LSP has warmed up)." },
-    .{ .key = "ts", .lang = "TypeScript source", .body = "TypeScript / TSX. LSP fires once tsserver is up — takes a few seconds on first open of the workspace." },
-    .{ .key = "tsx", .lang = "TypeScript source", .body = "TypeScript / TSX. LSP fires once tsserver is up — takes a few seconds on first open of the workspace." },
-    .{ .key = "py", .lang = "Python source", .body = "Python. LSP via pyright once mnml detects a Python interpreter." },
-    .{ .key = "md", .lang = "Markdown", .body = "Rendered inline by default when `ui.render_markdown` is on. `:e path.md` opens the raw editor instead." },
-    .{ .key = "mdx", .lang = "Markdown", .body = "Rendered inline by default when `ui.render_markdown` is on. `:e path.md` opens the raw editor instead." },
-    .{ .key = "toml", .lang = "TOML config", .body = "TOML config file. No LSP; syntax-only highlighting." },
-    .{ .key = "json", .lang = "JSON data", .body = "JSON file. Syntax-only highlighting; use a `.http` or `.curl` file to send this as a request body." },
-    .{ .key = "go", .lang = "Go source", .body = "Go. LSP fires once gopls is on PATH; module boundary comes from the nearest `go.mod`." },
-    .{ .key = "sh", .lang = "Shell script", .body = "POSIX / bash / zsh script. No LSP by default; `:!chmod +x` on a new script makes it executable." },
-    .{ .key = "bash", .lang = "Shell script", .body = "POSIX / bash / zsh script. No LSP by default; `:!chmod +x` on a new script makes it executable." },
-    .{ .key = "zsh", .lang = "Shell script", .body = "POSIX / bash / zsh script. No LSP by default; `:!chmod +x` on a new script makes it executable." },
-    .{ .key = "yaml", .lang = "YAML config", .body = "YAML config file. Indentation-sensitive — mnml paints trailing whitespace red when `ui.highlight_trailing_ws` is on." },
-    .{ .key = "yml", .lang = "YAML config", .body = "YAML config file. Indentation-sensitive — mnml paints trailing whitespace red when `ui.highlight_trailing_ws` is on." },
-    .{ .key = "js", .lang = "JavaScript", .body = "JavaScript / JSX. tsserver handles both TS and JS when it warms up, so LSP hover works even without types." },
-    .{ .key = "jsx", .lang = "JavaScript", .body = "JavaScript / JSX. tsserver handles both TS and JS when it warms up, so LSP hover works even without types." },
-    .{ .key = "html", .lang = "HTML markup", .body = "HTML. No LSP; syntax-only highlighting. Pair with a `.http` file next to it if this is a request-body template." },
-    .{ .key = "htm", .lang = "HTML markup", .body = "HTML. No LSP; syntax-only highlighting. Pair with a `.http` file next to it if this is a request-body template." },
-    .{ .key = "css", .lang = "Stylesheet", .body = "CSS / SCSS / SASS. Syntax-only highlighting; no LSP." },
-    .{ .key = "scss", .lang = "Stylesheet", .body = "CSS / SCSS / SASS. Syntax-only highlighting; no LSP." },
-    .{ .key = "sass", .lang = "Stylesheet", .body = "CSS / SCSS / SASS. Syntax-only highlighting; no LSP." },
-    .{ .key = "sql", .lang = "SQL", .body = "SQL script. Syntax-only highlighting; no linter. Run against a live connection through your usual client — mnml doesn't execute." },
-    .{ .key = "vue", .lang = "Vue single-file component", .body = "Vue 3 SFC — `<template>` / `<script>` / `<style>` blocks in one file. Syntax-only highlighting; no dedicated LSP yet." },
-    .{ .key = "svelte", .lang = "Svelte component", .body = "Svelte single-file component — markup, script, and scoped styles together. Syntax-only highlighting; no LSP." },
-    .{ .key = "c", .lang = "C source", .body = "C source file. Syntax-only highlighting; no LSP wired in yet." },
-    .{ .key = "cpp", .lang = "C++ source", .body = "C++ source file. Syntax-only highlighting; no LSP wired in yet." },
-    .{ .key = "h", .lang = "C/C++ header", .body = "Declarations only, no implementation. Syntax-only highlighting; no LSP." },
-    .{ .key = "hpp", .lang = "C/C++ header", .body = "Declarations only, no implementation. Syntax-only highlighting; no LSP." },
-    .{ .key = "java", .lang = "Java source", .body = "Java source file. Syntax-only highlighting; no LSP (jdtls isn't wired in yet)." },
-    .{ .key = "kt", .lang = "Kotlin source", .body = "Kotlin source file. Syntax-only highlighting; no LSP." },
-    .{ .key = "swift", .lang = "Swift source", .body = "Swift source file. Syntax-only highlighting; no LSP." },
-    .{ .key = "cs", .lang = "C# source", .body = "C# source file. Syntax-only highlighting; no LSP wired in yet." },
-    .{ .key = "csproj", .lang = "MSBuild project file", .body = "References, target framework, and package refs for a .NET project. XML under the hood; syntax-only highlighting." },
-    .{ .key = "sln", .lang = "Visual Studio solution", .body = "Groups one or more `.csproj` projects for Visual Studio or `dotnet build`. Plain-text format; syntax-only highlighting." },
-    .{ .key = "cshtml", .lang = "Razor page", .body = "ASP.NET Razor page — HTML markup with embedded C# `@` blocks. Syntax-only highlighting." },
-    .{ .key = "razor", .lang = "Razor component", .body = "Blazor Razor component — HTML markup with embedded C#. Syntax-only highlighting." },
-    .{ .key = "fs", .lang = "F# source", .body = "F# source file. Syntax-only highlighting; no LSP." },
-    .{ .key = "xml", .lang = "XML data", .body = "XML markup. Syntax-only highlighting; no schema validation." },
-    .{ .key = "svg", .lang = "SVG image", .body = "Scalable vector graphic — technically XML, but mnml treats it as an image. No inline preview; open it in a browser to see it rendered." },
-    .{ .key = "png", .lang = "Image", .body = "Raster image. mnml shows it in an image pane when the terminal can draw one." },
-    .{ .key = "jpg", .lang = "Image", .body = "Raster image. mnml shows it in an image pane when the terminal can draw one." },
-    .{ .key = "jpeg", .lang = "Image", .body = "Raster image. mnml shows it in an image pane when the terminal can draw one." },
-    .{ .key = "gif", .lang = "Image", .body = "Raster image. mnml shows it in an image pane when the terminal can draw one." },
-    .{ .key = "webp", .lang = "Image", .body = "Raster image. mnml shows it in an image pane when the terminal can draw one." },
-    .{ .key = "http", .lang = "HTTP request file", .body = "mnml's own request format — method, URL, headers, and body in one file. Opening it launches the Request pane UI instead of a plain-text editor." },
-    .{ .key = "curl", .lang = "HTTP request file", .body = "mnml's own request format — method, URL, headers, and body in one file. Opening it launches the Request pane UI instead of a plain-text editor." },
-    .{ .key = "rest", .lang = "HTTP request file", .body = "mnml's own request format — method, URL, headers, and body in one file. Opening it launches the Request pane UI instead of a plain-text editor." },
-    .{ .key = "request", .lang = "HTTP request file", .body = "mnml's own request format — method, URL, headers, and body in one file. Opening it launches the Request pane UI instead of a plain-text editor." },
-    .{ .key = "cjs", .lang = "CommonJS module", .body = "Explicit CommonJS (`require` / `module.exports`) — same JS runtime as plain `.js`, but the extension forces CommonJS even inside a `\"type\": \"module\"` package. Syntax-only highlighting." },
-    .{ .key = "mjs", .lang = "ES module", .body = "Explicit ES module (`import` / `export`) — the extension forces ESM even inside a package that defaults to CommonJS. Syntax-only highlighting." },
-    .{ .key = "less", .lang = "Less stylesheet", .body = "Variables, nesting, and mixins that precompile to plain CSS. Syntax-only highlighting; no LSP." },
-    .{ .key = "csv", .lang = "CSV data", .body = "Comma-separated tabular data. mnml renders it as plain text, not a spreadsheet grid — no column alignment or sorting." },
-    .{ .key = "ini", .lang = "INI config", .body = "Key=value settings grouped into `[section]` blocks. No LSP; syntax-only highlighting." },
-    .{ .key = "conf", .lang = "INI config", .body = "Key=value settings grouped into `[section]` blocks. No LSP; syntax-only highlighting." },
-    .{ .key = "rb", .lang = "Ruby source", .body = "Ruby source file. Syntax-only highlighting; no LSP (solargraph isn't wired in yet)." },
-    .{ .key = "php", .lang = "PHP source", .body = "PHP source file. Syntax-only highlighting; no LSP (intelephense isn't wired in yet)." },
-    .{ .key = "lua", .lang = "Lua source", .body = "Lua source file. Syntax-only highlighting; no LSP." },
-    .{ .key = "ps1", .lang = "PowerShell script", .body = "PowerShell script. Syntax-only highlighting; no LSP." },
-    .{ .key = "txt", .lang = "Plain text", .body = "No syntax highlighting applied — mnml opens it exactly as written." },
-    .{ .key = "lock", .lang = "Dependency lockfile", .body = "Pins exact resolved dependency versions (Cargo.lock-style). Generated by the package manager — hand-editing it is unusual and gets overwritten on the next install." },
-    .{ .key = "log", .lang = "Log file", .body = "Append-only runtime output, not source. `Ctrl+F` (find) is usually the fastest way to jump around a large one." },
-    .{ .key = "exe", .lang = "Windows executable", .body = "Binary Windows executable. mnml doesn't render binary content — opening it shows raw bytes, not source." },
-    .{ .key = "dll", .lang = "Windows library", .body = "Binary Windows dynamic-link library. mnml doesn't render binary content — opening it shows raw bytes, not source." },
-    .{ .key = "zip", .lang = "Compressed archive", .body = "mnml doesn't unpack it inline — extract with a terminal pane (`tar` / `unzip`) to browse the contents." },
-    .{ .key = "gz", .lang = "Compressed archive", .body = "mnml doesn't unpack it inline — extract with a terminal pane (`tar` / `unzip`) to browse the contents." },
-    .{ .key = "tgz", .lang = "Compressed archive", .body = "mnml doesn't unpack it inline — extract with a terminal pane (`tar` / `unzip`) to browse the contents." },
-};
-
-/// The curated copy for a tree row: a directory, a `.d.ts`, a known
-/// filename, a known extension — else null.
-pub fn treeRowCopy(arena: Allocator, label: []const u8, is_dir: bool) Allocator.Error!?Copy {
-    if (is_dir) return .{
-        .title = try std.fmt.allocPrint(arena, "{s}/", .{label}),
-        .body = "Directory. Enter or click to expand; walk the tree with arrows or j/k. Right-click for rename / cut / copy / new file.",
-        .shortcuts = &dir_shortcuts,
-    };
-    var buf: [256]u8 = undefined;
-    if (label.len > buf.len) return null;
-    const lower = std.ascii.lowerString(&buf, label);
-    if (std.mem.endsWith(u8, lower, ".d.ts")) return .{
-        .title = try std.fmt.allocPrint(arena, "{s} — TypeScript declarations", .{label}),
-        .body = "`.d.ts` — TypeScript type declarations. No runtime code; describes the shape of a JS module for tsserver to consume. Editing here changes types, not behavior.",
-        .shortcuts = &open_shortcuts,
-    };
-    for (by_name) |r| if (std.mem.eql(u8, r.key, lower)) return .{
-        .title = try std.fmt.allocPrint(arena, "{s} — {s}", .{ label, r.lang }),
-        .body = r.body,
-        .shortcuts = &open_shortcuts,
-    };
-    const ext = icons.extensionOf(lower) orelse return null;
-    for (by_ext) |r| if (std.mem.eql(u8, r.key, ext)) return .{
-        .title = try std.fmt.allocPrint(arena, "{s} — {s}", .{ label, r.lang }),
-        .body = r.body,
-        .shortcuts = &open_shortcuts,
-    };
-    return null;
+/// The curated copy for a tree row (`info_view_copy/tree.zig`).
+pub fn treeRowCopy(arena: Allocator, label: []const u8, is_dir: bool) Allocator.Error!?Entry {
+    return copy.tree.rowEntry(arena, label, is_dir);
 }
 
-const run_it = [_]view.Link{.{ .label = "Run it" }};
-
-/// A header chip's copy (Rust `TreeIcon`), with a `Run it` link.
-pub fn chipCopy(app: *App, c: tree_view.Chip) Copy {
-    app.info_view.links[0] = tree_mod.chipCommand(c);
-    return switch (c) {
-        .new_file => .{ .title = "New file", .body = "Creates an empty file in the workspace root and opens it in a fresh tab, prompting for a name first.", .try_it = &run_it },
-        .new_folder => .{ .title = "New folder", .body = "Creates a new directory in the workspace root after prompting for a name. The tree jumps to show it.", .try_it = &run_it },
-        .refresh => .{ .title = "Refresh tree", .body = "Re-scans the workspace root from disk and repaints the tree — use it after external changes mnml's file-watcher might have missed (bulk git operations, another process writing files).", .try_it = &run_it },
-        .collapse => .{ .title = "Collapse / expand all", .body = "Folds every open directory in the tree closed, or opens every directory when the tree is already fully collapsed. One click toggles the whole rail.", .try_it = &run_it },
-        .pull => .{ .title = "Pull (workspace header)", .body = "Runs `git pull --ff-only` against the repo that owns this workspace root, right from the tree header.", .try_it = &run_it },
-        .add_workspace => .{ .title = "Add workspace folder", .body = "Opens a path prompt to add another folder as an extra workspace root alongside the current one — the tree grows a second top-level section instead of replacing what's open. Type a path (`~` expands); missing intermediate folders are NOT created here.", .try_it = &run_it },
-    };
+/// A header chip's copy, with its links resolved into the app's state.
+pub fn chipCopy(app: *App, c: tree_view.Chip) Allocator.Error!Copy {
+    const m = try copy.materialize(app, app.frame.allocator(), copy.tree.chip(c));
+    app.info_view.links = m.actions;
+    return m.copy;
 }
 
 // ─── mouse ──────────────────────────────────────────────────────────────
 
 /// A press or wheel on the box: the kebab drops its menu, a link row
-/// runs its command, the wheel scrolls, anything else is swallowed.
+/// does what it names, the wheel scrolls, anything else is swallowed.
 pub fn mouse(app: *App, part: Part, m: Mouse, count: u16) Allocator.Error!void {
     const st = &app.info_view;
     switch (m.kind) {
@@ -512,18 +344,48 @@ pub fn mouse(app: *App, part: Part, m: Mouse, count: u16) Allocator.Error!void {
             if (m.button != .left) return;
             switch (part) {
                 .kebab => try openKebabMenu(app, m.x, m.y + 1),
-                .try_it => |i| if (i < max_links) if (st.links[i]) |id| {
-                    command.run(app, .{ .static = id }) catch |err| switch (err) {
-                        error.OutOfMemory => return error.OutOfMemory,
-                        else => {},
-                    };
-                },
+                .try_it => |i| if (i < max_links) if (st.links[i]) |action| try runLink(app, action),
                 .body => {},
             }
         },
         else => {},
     }
     app.needs_render = true;
+}
+
+/// What a link row does when pressed.
+fn runLink(app: *App, action: copy.LinkAction) Allocator.Error!void {
+    switch (action) {
+        .command => |id| command.run(app, .{ .static = id }) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {},
+        },
+        .settings => |row| try openSettingsRow(app, row),
+        .url => |url| git_app.openExternal(app, url),
+        .docs => |d| _ = try docs.open(app, d.doc, d.section),
+        .ask => {
+            const target = app.info_view.sticky orelse return;
+            const arena = app.frame.allocator();
+            const entry = (try copy.lookup(app, arena, target)) orelse return;
+            try copy.ask(app, arena, target, entry);
+        },
+    }
+}
+
+/// The Settings overlay, opened with the cursor on the row `row`
+/// (an index into `settings.rows`) — the search-jump a `⚙` link does.
+pub fn openSettingsRow(app: *App, row: u16) Allocator.Error!void {
+    try settings_app.open(app);
+    const list = try settings_app.items(app, app.frame.allocator());
+    const st = &app.overlay.settings;
+    for (list, 0..) |it, i| switch (it) {
+        .row => |r| if (r.id == row) {
+            st.ui.cursor = i;
+            st.ui.settle(list);
+            return;
+        },
+        else => {},
+    };
 }
 
 /// The sidebar menu: the one row Rust has.
@@ -655,8 +517,10 @@ test "the ladder under an overlay: the surface beneath, as Rust's focus never le
     };
     app.hover = .{ .x = chip_at.?.x, .y = chip_at.?.y };
     app.hover_live = true;
+    snapshotHover(&app);
     try t.expectEqualStrings("Refresh tree", (try pick(&app, arena)).title);
     app.hover_live = false;
+    snapshotHover(&app);
     // A file open with the tree focused at its first row: Rust's focus
     // rung says nothing there and the active pane's summary shows —
     // walked past it, the row's doc wins over the open file.
@@ -683,43 +547,14 @@ test "the ladder under an overlay: the surface beneath, as Rust's focus never le
     try t.expect(std.mem.startsWith(u8, (try pick(&app, arena)).title, "fn  ·  RS  ·  main.rs"));
 }
 
-test "the dictionary: five targets — a directory, package.json, a .d.ts, a plain .txt, and an unknown extension" {
-    var arena_state: std.heap.ArenaAllocator = .init(t.allocator);
-    defer arena_state.deinit();
-    const a = arena_state.allocator();
-    const dir = (try treeRowCopy(a, "src", true)).?;
-    try t.expectEqualStrings("src/", dir.title);
-    try t.expectEqual(@as(usize, 2), dir.shortcuts.len);
-    try t.expectEqualStrings("Enter", dir.shortcuts[0].chord);
-    const pkg = (try treeRowCopy(a, "Package.JSON", false)).?;
-    try t.expectEqualStrings("Package.JSON — npm manifest", pkg.title);
-    const dts = (try treeRowCopy(a, "types.d.ts", false)).?;
-    try t.expectEqualStrings("types.d.ts — TypeScript declarations", dts.title);
-    const txt = (try treeRowCopy(a, "notes.txt", false)).?;
-    try t.expectEqualStrings("notes.txt — Plain text", txt.title);
-    try t.expectEqualStrings("Ctrl+Enter", txt.shortcuts[1].chord);
-    try t.expect((try treeRowCopy(a, "weird.xyz", false)) == null);
-    try t.expect((try treeRowCopy(a, "Makefile", false)) != null);
-    // Every dictionary key is lower-case and unique within its table.
-    inline for (.{ by_name, by_ext }) |table| for (table, 0..) |r, i| {
-        for (r.key) |c| try t.expect(!std.ascii.isUpper(c));
-        for (table[0..i]) |prev| try t.expect(!std.mem.eql(u8, prev.key, r.key));
-        try t.expect(r.body.len > 20);
-    };
-    try t.expectEqualStrings("main", wordUnderCursor("fn main() {}", 4));
-    try t.expectEqualStrings("", wordUnderCursor("fn main() {}", 2));
-    try t.expectEqualStrings("", wordUnderCursor("", 0));
-    try t.expectEqualStrings("x_1", wordUnderCursor("x_1", 3));
-}
-
 test "hover: a chip's copy carries a Run it link the app resolves; the kebab menu offers the toggle; the wheel scrolls within the paint's bound" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
     defer app.deinit();
     const arena = app.frame.allocator();
-    const c = chipCopy(&app, .refresh);
+    const c = try chipCopy(&app, .refresh);
     try t.expectEqualStrings("Refresh tree", c.title);
-    try t.expectEqual(@as(usize, 1), c.try_it.len);
-    try t.expectEqual(command.CommandId.@"tree.refresh", app.info_view.links[0].?);
+    try t.expectEqual(@as(usize, 2), c.try_it.len);
+    try t.expectEqual(command.CommandId.@"tree.refresh", app.info_view.links[0].?.command);
     // A hovered chip through the hits.
     try app.render();
     var chip_at: ?struct { x: u16, y: u16 } = null;
@@ -728,9 +563,10 @@ test "hover: a chip's copy carries a Run it link the app resolves; the kebab men
     };
     app.hover = .{ .x = chip_at.?.x, .y = chip_at.?.y };
     app.hover_live = true;
+    snapshotHover(&app);
     const hovered = try pick(&app, arena);
     try t.expectEqualStrings("New file", hovered.title);
-    try t.expectEqual(command.CommandId.@"file.new", app.info_view.links[0].?);
+    try t.expectEqual(command.CommandId.@"file.new", app.info_view.links[0].?.command);
     // The link row runs it: a prompt opens.
     try mouse(&app, .{ .try_it = 0 }, .{ .x = 0, .y = 0, .kind = .press, .button = .left }, 1);
     try t.expect(app.overlay == .prompt);
@@ -753,30 +589,62 @@ test "hover: a chip's copy carries a Run it link the app resolves; the kebab men
     try t.expectEqual(@as(u16, 1), app.info_view.scroll);
     // A new topic scrolls back to the top.
     app.hover_live = false;
+    snapshotHover(&app);
     _ = try pick(&app, arena);
     try t.expectEqual(@as(u16, 0), app.info_view.scroll);
 }
 
-test "chordDisplay spells a spec for prose; chordOf reads the active profile" {
-    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
-    defer arena_state.deinit();
-    const a = arena_state.allocator();
-    try t.expectEqualStrings("gd", try chordDisplay(a, "g d"));
-    try t.expectEqualStrings("K", try chordDisplay(a, "K"));
-    try t.expectEqualStrings("F12", try chordDisplay(a, "f12"));
-    try t.expectEqualStrings("Shift+F12", try chordDisplay(a, "shift+f12"));
-    try t.expectEqualStrings("Ctrl+K Ctrl+I", try chordDisplay(a, "ctrl+k ctrl+i"));
-    try t.expectEqualStrings("Ctrl+.", try chordDisplay(a, "ctrl+."));
-    try t.expectEqualStrings("Space f f", try chordDisplay(a, "space f f"));
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+test "the box is sticky under the pointer: the entry and its links stay while the pointer crosses onto the box; a fallback carries the no-help aside; a Settings link opens the overlay on its row" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
     defer app.deinit();
-    try t.expectEqualStrings("F12", (try chordOf(&app, a, .@"lsp.goto_definition")).?);
-    try t.expectEqualStrings("Ctrl+K Ctrl+I", (try chordOf(&app, a, .@"lsp.hover")).?);
-    try t.expectEqualStrings("Ctrl+P", (try chordOf(&app, a, .@"picker.files")).?);
-    try app.setInputStyle(.vim);
-    try t.expectEqualStrings("gd", (try chordOf(&app, a, .@"lsp.goto_definition")).?);
-    try t.expectEqualStrings("K", (try chordOf(&app, a, .@"lsp.hover")).?);
-    try t.expectEqualStrings("Ctrl+P", (try chordOf(&app, a, .@"picker.files")).?);
+    const arena = app.frame.allocator();
+    try app.render();
+    // Hover the statusline's mode chip: a curated entry with links.
+    var seg_at: ?struct { x: u16, y: u16 } = null;
+    var box_at: ?struct { x: u16, y: u16 } = null;
+    for (app.hits.items.items) |e| {
+        if (e.target == .statusline_seg and e.target.statusline_seg == 0) seg_at = .{ .x = e.rect.x, .y = e.rect.y };
+        if (e.target == .info_view and e.target.info_view == .body) box_at = .{ .x = e.rect.x + 2, .y = e.rect.y + 3 };
+    }
+    app.hover = .{ .x = seg_at.?.x, .y = seg_at.?.y };
+    app.hover_live = true;
+    snapshotHover(&app);
+    const chip = try pick(&app, arena);
+    try t.expectEqualStrings("Mode chip — standard keymap", chip.title);
+    try t.expect(chip.aside == null);
+    try t.expect(chip.try_it.len >= 2);
+    try t.expectEqual(view.LinkKind.settings, chip.try_it[1].kind);
+    // The pointer moves onto the box: the same entry, the same links.
+    app.hover = .{ .x = box_at.?.x, .y = box_at.?.y };
+    snapshotHover(&app);
+    const still = try pick(&app, arena);
+    try t.expectEqualStrings("Mode chip — standard keymap", still.title);
+    try t.expect(app.info_view.links[1].? == .settings);
+    // The Settings link: the overlay opens on the input-style row.
+    try mouse(&app, .{ .try_it = 1 }, .{ .x = 0, .y = 0, .kind = .press, .button = .left }, 1);
+    try t.expect(app.overlay == .settings);
+    const list = try settings_app.items(&app, arena);
+    try t.expectEqual(copy.settingsRow("editor.input_style"), list[app.overlay.settings.ui.cursor].row.id);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    app.focus = .tree;
+    // A docs link: the manual's section opens as a preview and takes
+    // the focus.
+    app.info_view.links[0] = .{ .docs = .{ .doc = .config, .section = "The launcher dock" } };
+    try mouse(&app, .{ .try_it = 0 }, .{ .x = 0, .y = 0, .kind = .press, .button = .left }, 1);
+    try t.expect(app.active != null);
+    const manual = app.panes.get(app.active.?).?;
+    try t.expect(manual.* == .md_preview);
+    try t.expectEqualStrings("CONFIG.md \u{2014} The launcher dock", manual.title());
+    try t.expect(app.focus == .pane);
+    app.focus = .tree;
+    // A target the dictionary has nothing for (an overlay row with no
+    // overlay open): the tooltip's line, marked as a fallback.
+    app.hover_live = true;
+    try t.expectEqual(Resolution.fallback, try resolve(&app, arena, .{ .overlay_item = 0 }));
+    try t.expectEqual(Resolution.none, try resolve(&app, arena, .{ .tree_node = 9999 }));
+    try t.expectEqual(Resolution.curated, try resolve(&app, arena, .{ .statusline_seg = 0 }));
+    try t.expectEqual(Resolution.curated, try resolve(&app, arena, .{ .rail = .gear }));
 }
 
 test "a pty pane's copy: the title names the terminal and the shell, and the chords under it are the profile's, not prose" {
@@ -792,15 +660,15 @@ test "a pty pane's copy: the title names the terminal and the shell, and the cho
     const id = try @import("pty_pane.zig").open(&app, .{ .placement = .tab });
     app.focus = .{ .pane = id };
     const arena = app.frame.allocator();
-    const copy = try pick(&app, arena);
+    const c = try pick(&app, arena);
     // The title is the pane's label: the terminal mnml runs inside,
     // then the child — the same pair the tab shows.
-    try t.expectEqualStrings("ghostty (sh)", copy.title);
-    try t.expect(std.mem.startsWith(u8, copy.body, "Terminal pane \u{2014} "));
+    try t.expectEqualStrings("ghostty (sh)", c.title);
+    try t.expect(std.mem.startsWith(u8, c.body, "Terminal pane \u{2014} "));
     // The close chord comes off the keymap (standard profile here), so
     // a rebind moves the copy with it; `term.restart` is unbound and
     // contributes its label alone.
-    try t.expect(std.mem.indexOf(u8, copy.body, "[Ctrl+W] Close") != null);
-    try t.expect(std.mem.indexOf(u8, copy.body, "Restart") != null);
-    try t.expect(std.mem.indexOf(u8, copy.body, "Ctrl+Alt+") == null);
+    try t.expect(std.mem.indexOf(u8, c.body, "[Ctrl+W] Close") != null);
+    try t.expect(std.mem.indexOf(u8, c.body, "Restart") != null);
+    try t.expect(std.mem.indexOf(u8, c.body, "Ctrl+Alt+") == null);
 }
