@@ -303,8 +303,10 @@ fn inUse(app: *App, dir: []const u8) bool {
 /// A profile directory for a new pane that no open pane uses and no
 /// live Chrome holds. The base first, then `-1`, `-2`…: a suffix is
 /// taken from what is free, not from how many panes are open, so a
-/// closed pane's suffix is reused and a live one's never is. A profile
-/// a live Chrome holds is left alone and the next suffix is tried.
+/// closed pane's suffix is reused and a live one's never is. A lock
+/// held by a Chrome that an earlier mnml started and left behind
+/// (`cdp/profile.zig`'s `orphan`) is cleared by stopping that Chrome;
+/// any other live holder is left alone and the next suffix is tried.
 pub fn pickProfile(app: *App, arena: Allocator) Allocator.Error!Picked {
     if (app.cfg.browser.profile_mode == .ephemeral) return .{ .dir = try std.fmt.allocPrint(arena, "{s}/.mnml/chrome-profile-ephemeral-{d}", .{ app.workspace, app.now_ms }) };
     const base = try profileBase(app, arena);
@@ -314,7 +316,11 @@ pub fn pickProfile(app: *App, arena: Allocator) Allocator.Error!Picked {
         if (inUse(app, dir)) continue;
         switch (profile.probe(app.gpa, app.io, dir)) {
             .free, .stale => return .{ .dir = dir },
-            .orphan, .held => continue,
+            .orphan => |pid| {
+                if (!profile.stopOrphan(app.io, pid, .fromSeconds(3))) continue;
+                return .{ .dir = dir, .note = try std.fmt.allocPrint(arena, "stopped a Chrome an earlier session left running on {s} (pid {d})", .{ app.relPath(dir), pid }) };
+            },
+            .held => continue,
         }
     }
     return .{ .dir = base };
@@ -1602,4 +1608,38 @@ test "a profile a live Chrome holds is skipped for the next free suffix" {
     const picked = try pickProfile(&app, arena);
     try testing.expect(std.mem.endsWith(u8, picked.dir, "/.mnml/chrome-profile-1"));
     try testing.expect(!child_os.gone(holder.id.?));
+}
+
+test "a Chrome an earlier mnml left running on the profile (after a kill -9) is stopped, and the pane gets that profile with a note saying so" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &pbuf);
+    const root = pbuf[0..n];
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .data_root = root });
+    defer app.deinit();
+    const arena = app.frame.allocator();
+    const base = try profileBase(&app, arena);
+    try Io.Dir.cwd().createDirPath(testing.io, base);
+    // The orphan: a launch line on `base`, adopted by launchd.
+    const script = try std.fs.path.join(arena, &.{ root, "orphan-chrome" });
+    try Io.Dir.cwd().writeFile(testing.io, .{ .sub_path = script, .data = "#!/bin/sh\nwhile :; do /bin/sleep 1; done\n" });
+    const pidfile = try std.fs.path.join(arena, &.{ root, "orphan.pid" });
+    const line = try std.fmt.allocPrint(arena, "/bin/sh '{s}' --remote-debugging-port=0 '--user-data-dir={s}' </dev/null >/dev/null 2>&1 & echo $! > '{s}'", .{ script, base, pidfile });
+    var launcher = try std.process.spawn(testing.io, .{ .argv = &.{ "/bin/sh", "-c", line }, .stdin = .ignore, .stdout = .ignore, .stderr = .ignore });
+    _ = try launcher.wait(testing.io);
+    var nbuf: [32]u8 = undefined;
+    const orphan = try std.fmt.parseInt(profile.Pid, std.mem.trim(u8, try Io.Dir.cwd().readFile(testing.io, pidfile, &nbuf), " \n"), 10);
+    defer std.posix.kill(orphan, .KILL) catch {};
+    var d = try Io.Dir.cwd().openDir(testing.io, base, .{});
+    defer d.close(testing.io);
+    try d.symLink(testing.io, try std.fmt.allocPrint(arena, "host-{d}", .{orphan}), "SingletonLock", .{});
+    // launchd adopts it asynchronously.
+    var tries: usize = 0;
+    while (profile.probe(testing.allocator, testing.io, base) != .orphan and tries < 100) : (tries += 1) testing.io.sleep(.fromMilliseconds(20), .awake) catch {};
+    const picked = try pickProfile(&app, arena);
+    try testing.expectEqualStrings(base, picked.dir);
+    try testing.expect(std.mem.indexOf(u8, picked.note.?, "stopped a Chrome an earlier session left running") != null);
+    try testing.expect(child_os.goneWithin(testing.io, orphan, .fromSeconds(10)));
 }

@@ -14,7 +14,7 @@
 //!   test wrapper too), and it was reparented to pid 1. That is what a
 //!   `kill -9` or a panic of mnml leaves behind: a headless Chrome with
 //!   no window to close, holding the profile and a debugging port
-//!   forever.
+//!   forever. `stopOrphan` takes it down.
 //! - `held` — anything else alive: another mnml's live pane, the user's
 //!   own Chrome. Never touched; the pane picks another directory.
 //!
@@ -91,6 +91,26 @@ pub fn probe(gpa: Allocator, io: Io, dir: []const u8) State {
     return .{ .held = pid };
 }
 
+/// SIGTERM an orphan, wait up to `grace` for it to go, then SIGKILL.
+/// It is not our child — launchd reaps it — so gone means `kill(pid, 0)`
+/// says so. True once it is gone.
+pub fn stopOrphan(io: Io, pid: Pid, grace: Io.Duration) bool {
+    if (builtin.os.tag == .windows) return true;
+    std.posix.kill(pid, .TERM) catch return !alive(pid);
+    if (waitGone(io, pid, grace)) return true;
+    std.posix.kill(pid, .KILL) catch {};
+    return waitGone(io, pid, .fromSeconds(5));
+}
+
+fn waitGone(io: Io, pid: Pid, limit: Io.Duration) bool {
+    const start = Io.Timestamp.now(io, .awake);
+    while (alive(pid)) {
+        if (start.durationTo(Io.Timestamp.now(io, .awake)).nanoseconds >= limit.nanoseconds) return false;
+        io.sleep(.fromMilliseconds(20), .awake) catch return !alive(pid);
+    }
+    return true;
+}
+
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
@@ -114,7 +134,7 @@ fn lockTo(io: Io, dir: []const u8, pid: Pid) !void {
     try d.symLink(io, target, "SingletonLock", .{});
 }
 
-test "probe: no lock is free, a dead pid is stale, our own live child is held, an orphaned launch on the dir is an orphan" {
+test "probe: no lock is free, a dead pid is stale, our own live child is held, an orphaned launch on the dir is an orphan and stopOrphan takes it down" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const gpa = testing.allocator;
     const io = testing.io;
@@ -170,4 +190,6 @@ test "probe: no lock is free, a dead pid is stale, our own live child is held, a
     }
     try testing.expect(state == .orphan);
     try testing.expectEqual(orphan_pid, state.orphan);
+    try testing.expect(stopOrphan(io, orphan_pid, .fromSeconds(3)));
+    try testing.expect(!alive(orphan_pid));
 }
