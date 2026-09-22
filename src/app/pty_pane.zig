@@ -213,6 +213,13 @@ pub const PtyPane = struct {
         const session = self.session orelse return;
         const fed = session.pump();
         if (fed) self.fed_gen +%= 1;
+        // The child copied (OSC 52): the text takes the path any copy
+        // takes — the unnamed register and the OS clipboard.
+        if (session.takeClipboard()) |text| {
+            defer app.gpa.free(text);
+            app.clipboard.setPendingRegister('+');
+            app.clipboard.setYank(text, false) catch {};
+        }
         if (self.exit == null) {
             self.exit = exitOf(session.exited());
             if (self.exit != null) {
@@ -368,6 +375,7 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
         .cwd = cwd orelse app.workspace,
         .notify = .{ .ctx = wire, .fn_ptr = &Wire.readable },
         .scrollback_lines = app.cfg.terminal.scrollback_lines,
+        .clipboard_write = app.cfg.terminal.osc52,
     }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.Canceled => return error.Canceled,
@@ -573,6 +581,7 @@ pub fn restart(app: *App, id: PaneId) CommandError!void {
         .cwd = p.cwd orelse app.workspace,
         .notify = .{ .ctx = p.wire, .fn_ptr = &Wire.readable },
         .scrollback_lines = app.cfg.terminal.scrollback_lines,
+        .clipboard_write = app.cfg.terminal.osc52,
     }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.Canceled => return error.Canceled,

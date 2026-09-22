@@ -455,6 +455,7 @@ otherwise. Copy what you need; leave the rest out.
     // Read when a pane starts; a pane already open keeps what it began with.
     .terminal = .{
         .scrollback_lines = 10000, // lines kept above the screen per pane (Shift+PageUp, the wheel)
+        .osc52 = true, // a program in a pane may copy to the clipboard (OSC 52; neovim, tmux, ssh); reads are never answered
     },
 
     // ── keys ───────────────────────────────────────────────────────────

@@ -736,6 +736,10 @@ pub const Terminal = struct {
     /// Lines kept above the screen for Shift+PageUp / the wheel. The
     /// oldest go first once a pane has this many.
     scrollback_lines: u32 = 10_000,
+    /// A program in a pane may copy to the clipboard (OSC 52 — neovim's
+    /// osc52 provider, tmux, helix, anything over ssh): the text lands in
+    /// the unnamed register and the OS clipboard. Reads are never served.
+    osc52: bool = true,
 };
 pub const Ipc = struct {
     write_screen: bool = false,

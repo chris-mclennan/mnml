@@ -87,6 +87,9 @@ pub const Options = struct {
     ring_capacity: usize = Ring.default_capacity,
     /// Scrollback kept above the screen, in lines.
     scrollback_lines: usize = common.default_scrollback_lines,
+    /// Take the child's clipboard writes (OSC 52 and the kitty protocol)
+    /// for `takeClipboard`. Off: they are dropped, as before.
+    clipboard_write: bool = false,
     /// Accepted for symmetry with the POSIX options; the Windows reader
     /// blocks in `ReadFile` and needs no poll interval.
     poll_interval_ms: i32 = 250,
@@ -254,6 +257,8 @@ pub const Session = struct {
     /// `&stream.handler` via `@fieldParentPtr`. Never move a Session.
     stream: vt.TerminalStream,
     shared: *Shared,
+    /// The child's last clipboard write, until `takeClipboard`.
+    clipboard: ?[]u8 = null,
     exit: ?Exit = null,
     cols: u16,
     rows: u16,
@@ -388,6 +393,7 @@ pub const Session = struct {
         var handler = self.term.vtHandler();
         handler.effects = .readonly;
         handler.effects.write_pty = onWritePty;
+        if (opts.clipboard_write) handler.effects.clipboard_write = onClipboardWrite;
         self.stream = .init(.{ .handler = handler, .allocator = gpa });
 
         // Watcher and writer first: they only wait, so if a later thread
@@ -432,6 +438,7 @@ pub const Session = struct {
         _ = kernel32.SetEvent(shared.stop);
         self.stream.deinit();
         self.term.deinit(gpa);
+        if (self.clipboard) |text| gpa.free(text);
         shared.awaitThreads();
         shared.release(gpa);
         self.* = undefined;
@@ -518,6 +525,23 @@ pub const Session = struct {
     fn fromHandler(handler: *vt.TerminalStream.Handler) *Session {
         const stream: *vt.TerminalStream = @fieldParentPtr("handler", handler);
         return @alignCast(@fieldParentPtr("stream", stream));
+    }
+
+    /// The text the child last copied, gpa-owned — the caller frees it.
+    /// Null when it copied nothing since the last call.
+    pub fn takeClipboard(self: *Session) ?[]u8 {
+        const text = self.clipboard orelse return null;
+        self.clipboard = null;
+        return text;
+    }
+
+    fn onClipboardWrite(handler: *vt.TerminalStream.Handler, w: vt.clipboard.Write) void {
+        const self = fromHandler(handler);
+        const text = common.clipboardText(w) orelse return w.reply(.unsupported);
+        const copy = self.gpa.dupe(u8, text) catch return w.reply(.io_error);
+        if (self.clipboard) |old| self.gpa.free(old);
+        self.clipboard = copy;
+        w.reply(.{ .success = .{} });
     }
 
     fn onWritePty(handler: *vt.TerminalStream.Handler, data: []const u8) void {

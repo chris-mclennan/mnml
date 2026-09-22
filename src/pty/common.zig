@@ -55,6 +55,14 @@ pub const Exit = union(enum) {
     }
 };
 
+/// The text a child's clipboard write carries (OSC 52, or the first
+/// text representation of an OSC 5522 one); null for a clear or a write
+/// with no text in it.
+pub fn clipboardText(w: vt.clipboard.Write) ?[]const u8 {
+    for (w.contents) |c| if (vt.clipboard.isTextMime(c.mime)) return c.data;
+    return null;
+}
+
 /// A test-and-set lock for the short critical sections the backends
 /// share with their threads (the notify callback, the outbox). A
 /// spinlock because the other side is a raw thread with no `Io` to

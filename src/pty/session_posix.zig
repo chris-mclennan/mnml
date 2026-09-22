@@ -116,6 +116,9 @@ pub const Options = struct {
     ring_capacity: usize = Ring.default_capacity,
     /// Scrollback kept above the screen, in lines.
     scrollback_lines: usize = common.default_scrollback_lines,
+    /// Take the child's clipboard writes (OSC 52 and the kitty protocol)
+    /// for `takeClipboard`. Off: they are dropped, as before.
+    clipboard_write: bool = false,
     /// How long the reader blocks in poll before re-checking `closing` on
     /// its own. `deinit` wakes it directly; this is the fallback cadence.
     poll_interval_ms: i32 = 250,
@@ -222,6 +225,8 @@ pub const Session = struct {
     /// `&stream.handler` via `@fieldParentPtr`. Never move a Session.
     stream: vt.TerminalStream,
     shared: *Shared,
+    /// The child's last clipboard write, until `takeClipboard`.
+    clipboard: ?[]u8 = null,
     master: posix.fd_t,
     child: posix.pid_t,
     exit: ?Exit = null,
@@ -324,6 +329,7 @@ pub const Session = struct {
         var handler = self.term.vtHandler();
         handler.effects = .readonly;
         handler.effects.write_pty = onWritePty;
+        if (opts.clipboard_write) handler.effects.clipboard_write = onClipboardWrite;
         self.stream = .init(.{ .handler = handler, .allocator = gpa });
 
         // 1 MiB, not the 256 KiB this once asked for: glibc rejects a
@@ -355,6 +361,7 @@ pub const Session = struct {
         shared.wakeReader();
         self.stream.deinit();
         self.term.deinit(gpa);
+        if (self.clipboard) |text| gpa.free(text);
         shared.awaitReader();
         // The reader is gone from the block. If neither side has claimed
         // the reap — the reader reached EOF on its own before `closing`
@@ -470,6 +477,23 @@ pub const Session = struct {
     fn fromHandler(handler: *vt.TerminalStream.Handler) *Session {
         const stream: *vt.TerminalStream = @fieldParentPtr("handler", handler);
         return @alignCast(@fieldParentPtr("stream", stream));
+    }
+
+    /// The text the child last copied, gpa-owned — the caller frees it.
+    /// Null when it copied nothing since the last call.
+    pub fn takeClipboard(self: *Session) ?[]u8 {
+        const text = self.clipboard orelse return null;
+        self.clipboard = null;
+        return text;
+    }
+
+    fn onClipboardWrite(handler: *vt.TerminalStream.Handler, w: vt.clipboard.Write) void {
+        const self = fromHandler(handler);
+        const text = common.clipboardText(w) orelse return w.reply(.unsupported);
+        const copy = self.gpa.dupe(u8, text) catch return w.reply(.io_error);
+        if (self.clipboard) |old| self.gpa.free(old);
+        self.clipboard = copy;
+        w.reply(.{ .success = .{} });
     }
 
     fn onWritePty(handler: *vt.TerminalStream.Handler, data: []const u8) void {
@@ -1018,4 +1042,27 @@ test "the scrollback keeps what the line limit says: 3000 lines of seq, line 1 s
     try testing.expectEqual(@as(u21, '1'), g.cell(0, 0).cp);
     try testing.expect(g.cell(1, 0).isEmpty());
     try testing.expectEqual(@as(u21, '2'), g.cell(0, 1).cp);
+}
+
+test "a child's OSC 52 copy is taken when clipboard writes are on, dropped when off" {
+    var env = try testEnv();
+    defer env.deinit();
+    for ([_]bool{ true, false }) |on| {
+        const s = try Session.spawn(testing.allocator, testing.io, .{
+            .cols = 40,
+            .rows = 4,
+            .env = &env,
+            // "osc52-payload", base64.
+            .argv = &.{ "/bin/sh", "-c", "printf '\\033]52;c;b3NjNTItcGF5bG9hZA==\\007'" },
+            .clipboard_write = on,
+        });
+        defer s.deinit();
+        _ = pumpUntilExit(s, 5000) orelse return error.ChildDidNotExit;
+        const got = s.takeClipboard();
+        defer if (got) |g| testing.allocator.free(g);
+        if (on) {
+            try testing.expectEqualStrings("osc52-payload", got.?);
+            try testing.expect(s.takeClipboard() == null);
+        } else try testing.expect(got == null);
+    }
 }
