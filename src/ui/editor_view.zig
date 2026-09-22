@@ -933,7 +933,9 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
             // The pointer anywhere on the line arms its fold chevron, as
             // it does in the Rust gutter — the affordance follows the
             // row, not the one cell.
-            const line_rect = Rect.init(area.x, y, area.w, @min(@as(u16, @intCast(rows.len)), area.bottom() - y));
+            // Clamped before the cast: one minified line can wrap to more
+            // rows than a u16 holds.
+            const line_rect = Rect.init(area.x, y, area.w, @intCast(@min(rows.len, area.bottom() - y)));
             const picked: ?Sign = if (ri == 0 and gutter_w > 0) signFor(ui, doc, line, fold != null, ui.hovered(line_rect)) else null;
 
             // Gutter: the number on the line's first row, blank after.
@@ -1808,6 +1810,21 @@ test "wrap breaks after spaces, keeps the cursor row visible and clears scroll_c
     _ = draw(g.ui(), 0, g.full(), &v2, d);
     try g.expectRows(&.{ "AAA BBB", "CCC DDD" });
     try testing.expectEqual(@as(u32, 8), g.hits.at(0, 1).?.editor_cell.col);
+}
+
+test "one line that wraps to more rows than a u16 holds draws its top rows" {
+    // A minified bundle: a single line far past 65,535 visual rows.
+    const text = try testing.allocator.alloc(u8, 300_000);
+    defer testing.allocator.free(text);
+    @memset(text, 'a');
+    var f = try Fixture.init(3, 2);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc(text);
+    d.line_numbers = false;
+    d.wrap = true;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRows(&.{ "aaa", "aaa" });
 }
 
 test "the gate's wrap case: the tail is clipped without wrap and shown with it" {

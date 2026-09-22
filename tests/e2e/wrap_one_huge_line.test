@@ -1,0 +1,9 @@
+# Soft wrap over one very long line (a minified bundle) draws instead of
+# aborting: the line wraps to far more than 65,535 visual rows at 120
+# columns, and the painter clamps the row count before narrowing it.
+shell python3 -c "import sys; sys.stdout.write('abcdefghij' * 600000 + '\n')" > min.js
+open min.js
+command view.toggle_wrap
+wait 100
+expect screen contains "min.js"
+expect screen contains "abcdefghijabcdefghij"
