@@ -1,0 +1,33 @@
+# Same setup as git-diff-file-base-is-head.test; `x` on the staged
+# "- pub fn step2() {}" row (the first change row under the cursor)
+# offers "Discard … from the worktree" and, on y, writes step2 BACK into
+# the worktree while the index still records its deletion: `git status`
+# turns MM, `git diff` now shows +step2 — a hunk the user never authored.
+shell git init -q -b main
+shell git config user.email "ada@example.test"
+shell git config user.name "Ada Example"
+write .gitignore ".mnml/\n"
+write steps.rs "pub fn step1() {}\npub fn step2() {}\npub fn step3() {}\npub fn step4() {}\npub fn step5() {}\npub fn step6() {}\npub fn step7() {}\npub fn step8() {}\npub fn step9() {}\npub fn step10() {}\npub fn step11() {}\npub fn step12() {}\n"
+shell git add .gitignore steps.rs
+shell git commit -q -m "initial"
+write steps.rs "pub fn step1() {}\npub fn step2x() {}\npub fn step3x() {}\npub fn step4() {}\npub fn step5() {}\npub fn step6() {}\npub fn step7() {}\npub fn step8() {}\npub fn step9() {}\npub fn step10() {}\npub fn step11() {}\npub fn step12() {}\n"
+shell git add steps.rs
+write steps.rs "pub fn step1() {}\npub fn step2x() {}\npub fn step3x() {}\npub fn step4() {}\npub fn step5() {}\npub fn step6() {}\npub fn step7() {}\npub fn step8() {}\npub fn step9() {}\npub fn step10() {}\npub fn step11x() {}\npub fn step12() {}\n"
+open steps.rs
+command git.diff_file
+wait 1500
+expect screen contains "Hunk 1/1  steps.rs"
+key j
+key v
+key x
+expect screen contains "Discard the 1 selected line from the worktree?"
+key y
+wait 2000
+expect screen contains "discarded 1 line of steps.rs"
+shell mkdir -p .mnml && git status --porcelain > .mnml/st.out
+shell git diff -- steps.rs > .mnml/wt.out
+# A discard must not create a change: the index → worktree diff should
+# still be just the step11 line, and step2 must not be back in the file
+# while its deletion is staged.
+expect file .mnml/wt.out lacks "+pub fn step2() {}"
+expect file steps.rs lacks "pub fn step2() {}"

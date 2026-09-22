@@ -1,0 +1,21 @@
+# A modified binary file: the status pane lists it as M (correct), but
+# Enter on the row opens "diff: logo.png" reading "(no changes)". git
+# says "Binary files a/… and b/… differ". A user reading the pane
+# concludes the file is clean.
+shell git init -q -b main
+shell git config user.email "ada@example.test"
+shell git config user.name "Ada Example"
+write .gitignore ".mnml/\n"
+shell printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89' > logo.png
+shell git add .gitignore logo.png
+shell git commit -q -m "initial"
+shell printf 'garbage' >> logo.png
+shell git diff --stat -- logo.png | grep -q 'Bin'
+command git.status_pane
+wait 1500
+expect screen contains "▶ M logo.png"
+key enter
+wait 1500
+expect screen contains "diff: logo.png"
+expect screen lacks "(no changes)"
+expect screen contains "Binary"

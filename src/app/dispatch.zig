@@ -1713,6 +1713,8 @@ pub fn paste(app: *App, text: []const u8) Allocator.Error!void {
     if (app.active) |id| if (app.panes.get(id)) |p| if (p.asZon()) |z| {
         if (app.focus == .pane) return zon_pane.paste(app, z, text);
     };
+    // The graph's commit box: a pasted message keeps its lines.
+    if (try git_app.pasteIntoCommitBox(app, text)) return;
     const e = app.activeEditor() orelse return;
     const copy = try app.frame.allocator().dupe(u8, text);
     _ = try app.applyOps(e, &.{.{ .insert_str = copy }});

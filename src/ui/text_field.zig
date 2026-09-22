@@ -120,6 +120,16 @@ pub fn handleKey(buf: *Buf, caret: *usize, gpa: Allocator, key: Key) Allocator.E
 /// than tab are dropped and newlines become spaces: a single-line
 /// field must never hold a line break.
 pub fn insert(buf: *Buf, caret: *usize, gpa: Allocator, text: []const u8) Allocator.Error!void {
+    return insertWith(buf, caret, gpa, text, ' ');
+}
+
+/// `insert` for a field that holds lines (the graph's commit box):
+/// a line break stays a line break, a CRLF pair is one.
+pub fn insertMultiline(buf: *Buf, caret: *usize, gpa: Allocator, text: []const u8) Allocator.Error!void {
+    return insertWith(buf, caret, gpa, text, '\n');
+}
+
+fn insertWith(buf: *Buf, caret: *usize, gpa: Allocator, text: []const u8, newline: u8) Allocator.Error!void {
     if (caret.* > buf.items.len) caret.* = buf.items.len;
     try buf.ensureUnusedCapacity(gpa, text.len);
     var cleaned: [256]u8 = undefined;
@@ -131,7 +141,7 @@ pub fn insert(buf: *Buf, caret: *usize, gpa: Allocator, text: []const u8) Alloca
             if (c == '\n' or c == '\r') {
                 // A CRLF pair is one break.
                 if (c == '\r' and i + 1 < text.len and text[i + 1] == '\n') continue;
-                cleaned[n] = ' ';
+                cleaned[n] = newline;
                 n += 1;
             } else if (c < 0x20 and c != '\t') {
                 continue;
@@ -357,6 +367,16 @@ test "paste inserts at the caret, folds line breaks, drops control bytes" {
     try insert(&f.buf, &f.caret, testing.allocator, &big);
     try testing.expectEqual(@as(usize, 708), f.text().len);
     try testing.expectEqual(@as(usize, 707), f.caret);
+}
+
+test "insertMultiline keeps line breaks (CRLF as one), still drops control bytes" {
+    var f: Field = .{};
+    defer f.deinit();
+    try f.type_("ac");
+    _ = try f.key(Key.named(.left));
+    try insertMultiline(&f.buf, &f.caret, testing.allocator, "b\r\nx\x01y\n\nz");
+    try testing.expectEqualStrings("ab\nxy\n\nzc", f.text());
+    try testing.expectEqual(@as(usize, 8), f.caret);
 }
 
 test "draw paints the text, the placeholder, and keeps the caret in view" {

@@ -4096,15 +4096,18 @@ pub fn resetTo(app: *App, mode: client.ResetMode, rev: []const u8) CommandError!
     try submitOp(app, repo, .{ .reset = .{ .mode = mode, .rev = try gpa.dupe(u8, rev) } });
 }
 
-/// The commit box has the keys: text edits, Enter a newline, Esc
-/// blurs, Ctrl+Enter commits.
+/// The commit box has the keys: text edits, Enter (Shift+Enter too) a
+/// newline as its hint row says, Esc blurs, Ctrl+Enter commits. The
+/// break goes in through `insertMultiline`: the single-line field's
+/// `insert` turns a newline into a space, and every Enter landed as one
+/// — `git log --format=%b` never saw a body.
 fn textareaKey(app: *App, g: *GraphPane, k: Key) Allocator.Error!bool {
     switch (k.code) {
         .esc => g.wip_focused = false,
         .enter => {
             if (k.mods.ctrl) {
                 runToast(app, commitFromTextarea(app, g));
-            } else try text_field.insert(&g.wip_text, &g.wip_cursor, app.gpa, "\n");
+            } else try text_field.insertMultiline(&g.wip_text, &g.wip_cursor, app.gpa, "\n");
         },
         .tab => g.wip_focused = false,
         .up, .down => {
@@ -4123,6 +4126,20 @@ fn textareaKey(app: *App, g: *GraphPane, k: Key) Allocator.Error!bool {
             if (try text_field.handleKey(&g.wip_text, &g.wip_cursor, app.gpa, k) == .ignored) return false;
         },
     }
+    app.needs_render = true;
+    return true;
+}
+
+/// A paste while the graph's commit box has the keys lands in the box,
+/// line breaks kept; false when no focused box takes it.
+pub fn pasteIntoCommitBox(app: *App, text: []const u8) Allocator.Error!bool {
+    const id = app.active orelse return false;
+    if (app.focus != .pane) return false;
+    const pane = app.panes.get(id) orelse return false;
+    if (pane.* != .git_graph) return false;
+    const g = &pane.git_graph;
+    if (!g.wip_focused) return false;
+    try text_field.insertMultiline(&g.wip_text, &g.wip_cursor, app.gpa, text);
     app.needs_render = true;
     return true;
 }

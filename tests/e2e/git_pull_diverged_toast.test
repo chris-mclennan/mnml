@@ -1,0 +1,26 @@
+# `git.pull` on a diverged branch is refused by git (ff-only), but the
+# toast starts with "pulled (ff-only): hint: …" — success-shaped, then
+# the FIRST hint line, truncated. HEAD did not move.
+shell git init -q -b main
+shell git config user.email "ada@example.test"
+shell git config user.name "Ada Example"
+write .gitignore ".mnml/\n"
+write a.txt "one\n"
+shell git add .gitignore a.txt
+shell git commit -q -m "first"
+shell git init -q --bare .mnml/remote.git
+shell git remote add origin "$PWD/.mnml/remote.git"
+shell git push -q -u origin main
+shell git clone -q .mnml/remote.git .mnml/other && cd .mnml/other && git config user.email "bob@example.test" && git config user.name "Bob Example" && printf "theirs\n" > b.txt && git add b.txt && git commit -q -m "remote side" && git push -q origin main
+write a.txt "one\ntwo\n"
+shell git commit -q -am "local side"
+shell git fetch -q origin
+command git.refresh
+wait 1500
+expect screen contains "⇡1 ⇣1"
+command git.pull
+wait 400
+expect screen contains "ff-only"
+# Nothing was pulled: HEAD is still the local commit.
+shell test "$(git log -1 --format=%s)" = "local side"
+expect screen lacks "pulled (ff-only)"

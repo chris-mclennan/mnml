@@ -1,0 +1,27 @@
+# A non-fast-forward push is rejected by git, but the toast reads
+# "push: To /path/to/remote.git…" — git's FIRST stderr line, the
+# remote URL — and the "! [rejected] main -> main (non-fast-forward)"
+# line never reaches the screen. Truth: the remote's main is unchanged.
+shell git init -q -b main
+shell git config user.email "ada@example.test"
+shell git config user.name "Ada Example"
+write .gitignore ".mnml/\n"
+write a.txt "one\n"
+shell git add .gitignore a.txt
+shell git commit -q -m "first"
+shell git init -q --bare .mnml/remote.git
+shell git remote add origin "$PWD/.mnml/remote.git"
+shell git push -q -u origin main
+shell git clone -q .mnml/remote.git .mnml/other && cd .mnml/other && git config user.email "bob@example.test" && git config user.name "Bob Example" && printf "theirs\n" > b.txt && git add b.txt && git commit -q -m "remote side" && git push -q origin main
+write a.txt "one\ntwo\n"
+shell git commit -q -am "local side"
+command git.refresh
+wait 1500
+expect screen contains "⇡1"
+command git.push
+wait 400
+# The toast is on screen now (it is gone again by ~1s); git said
+# "! [rejected] main -> main (non-fast-forward)".
+expect screen contains "push:"
+expect screen contains "rejected"
+shell test "$(git --git-dir=.mnml/remote.git log -1 --format=%s main)" = "remote side"

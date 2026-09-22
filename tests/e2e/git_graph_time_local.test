@@ -1,0 +1,17 @@
+# The graph's DATE / TIME column prints commit times in UTC (offset 0
+# unless the undocumented TZ_OFFSET_HOURS is set): a commit recorded at
+# 19:01 -0400 shows as 23:01, while `git log` prints 19:01 and the
+# statusline clock on the same screen is local time.
+shell git init -q -b main
+shell git config user.email "ada@example.test"
+shell git config user.name "Ada Example"
+write .gitignore ".mnml/\n"
+shell git add .gitignore
+shell GIT_AUTHOR_DATE="2026-02-16T19:01:00 -0400" GIT_COMMITTER_DATE="2026-02-16T19:01:00 -0400" git commit -q -m "tz probe"
+shell git log -1 --format=%cd | grep -q "19:01:00 2026 -0400"
+command view.toggle_tree
+command git.graph
+wait 1500
+expect screen contains "tz probe"
+expect screen lacks "02/16 23:01"
+expect screen contains "02/16 19:01"

@@ -1,0 +1,29 @@
+# Status pane cursor order vs screen order with a conflict AND another
+# change: the Conflicts section is drawn FIRST, but the cursor starts on
+# the Unstaged row below it, `g`/`k`/Home cannot reach the conflict row,
+# and `j` (down) moves the cursor UP onto it; `G` (bottom) lands on the
+# top-most row. Enter on the pane's default row therefore opens the
+# .gitignore diff instead of the conflict the header points at.
+shell git init -q -b main
+shell git config user.email "ada@example.test"
+shell git config user.name "Ada Example"
+write .gitignore ".mnml/\n"
+write c.txt "one\ntwo\nthree\n"
+shell git add .gitignore c.txt
+shell git commit -q -m "initial"
+shell git checkout -q -b feature
+write c.txt "one\ntwo-theirs\nthree\n"
+shell git commit -q -am "theirs"
+shell git checkout -q main
+write c.txt "one\ntwo-ours\nthree\n"
+shell git commit -q -am "ours"
+shell git merge -q feature || true
+write .gitignore ".mnml/\ntarget/\n"
+command git.status_pane
+wait 1500
+expect screen contains "Conflicts (1)  ⏎ resolve in the editor"
+expect screen contains "U c.txt"
+expect screen contains "Unstaged changes (1)"
+key g
+# The first row on screen is the conflict; g must land there.
+expect screen contains "▶ U c.txt"

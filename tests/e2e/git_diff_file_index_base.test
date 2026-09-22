@@ -1,0 +1,26 @@
+# git.diff_file shows the file against HEAD, not the index: with three
+# changes staged and one unstaged, `git diff -- steps.rs` prints ONE
+# changed line but the pane prints FOUR, all labelled as the worktree
+# diff. Discarding one of the staged lines from that view ("Discard …
+# from the worktree") then leaves the index holding the deletion and the
+# worktree holding the line — a change the user never made.
+shell git init -q -b main
+shell git config user.email "ada@example.test"
+shell git config user.name "Ada Example"
+write .gitignore ".mnml/\n"
+write steps.rs "pub fn step1() {}\npub fn step2() {}\npub fn step3() {}\npub fn step4() {}\npub fn step5() {}\npub fn step6() {}\npub fn step7() {}\npub fn step8() {}\npub fn step9() {}\npub fn step10() {}\npub fn step11() {}\npub fn step12() {}\n"
+shell git add .gitignore steps.rs
+shell git commit -q -m "initial"
+write steps.rs "pub fn step1() {}\npub fn step2x() {}\npub fn step3x() {}\npub fn step4() {}\npub fn step5() {}\npub fn step6() {}\npub fn step7() {}\npub fn step8() {}\npub fn step9() {}\npub fn step10() {}\npub fn step11() {}\npub fn step12() {}\n"
+shell git add steps.rs
+write steps.rs "pub fn step1() {}\npub fn step2x() {}\npub fn step3x() {}\npub fn step4() {}\npub fn step5() {}\npub fn step6() {}\npub fn step7() {}\npub fn step8() {}\npub fn step9() {}\npub fn step10() {}\npub fn step11x() {}\npub fn step12() {}\n"
+shell test "$(git diff -- steps.rs | grep -c '^[-+][^-+]')" = 2
+shell test "$(git diff --cached -- steps.rs | grep -c '^[-+][^-+]')" = 4
+open steps.rs
+command git.diff_file
+wait 1500
+expect screen contains "Hunk 1/1  steps.rs"
+# `git diff -- steps.rs` (index → worktree) has only the step11 change;
+# the pane shows the staged step2/step3 lines as if they were unstaged.
+expect screen lacks "- pub fn step2() {}"
+expect screen contains "+ pub fn step11x() {}"
