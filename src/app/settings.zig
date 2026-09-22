@@ -242,6 +242,11 @@ pub const rows = [_]RowSpec{
     .{ .path = "ui.pty_cursor.unfocused", .label = "Terminal cursor, other panes", .section = .ui, .scope = .home },
     .{ .path = "ui.pty_cursor.blink", .label = "Terminal cursor blinks", .section = .ui, .scope = .home },
     .{ .path = "ui.pane_rail", .label = "Pane colour rail", .section = .ui, .scope = .home },
+    // // changed (accent-defaults): the colour the first pane of each
+    // kind opens in, under the rail they paint.
+    .{ .path = "ui.accent_defaults.shell", .label = "First terminal colour", .section = .ui, .scope = .home },
+    .{ .path = "ui.accent_defaults.claude", .label = "First Claude colour", .section = .ui, .scope = .home },
+    .{ .path = "ui.accent_defaults.codex", .label = "First Codex colour", .section = .ui, .scope = .home },
     .{ .path = "ui.right_panel_visible", .label = "Right panel at start", .section = .ui, .scope = .workspace },
     .{ .path = "ui.right_panel_width", .label = "Right panel width", .section = .ui, .scope = .workspace, .number = .{ .min = 8, .max = 120, .step = 2 } },
     // // changed (bottom-dock): the dock's pair, beside the column's.

@@ -33,11 +33,11 @@ expect screen contains "SESSIONS"
 # The report behind this: "when I click the claude code icon it lights
 # up blue afterwards". It was never the cluster's mark — that one is
 # fixed above at every step. It is the TAB the click opened: a Claude
-# pane's glyph wears its slot colour off `ui/accent_color`'s ladder,
-# and the ladder is shared — every pane takes the first free slot
-# (`PaneStore.assignAccent`), not sessions alone. `a.txt`'s editor is
-# already open here, so it holds green and this session takes blue;
-# a second session would be yellow. Before this change a click opened
-# a session every time, so a click with one already up put a
-# differently-marked tab on the strip under the icon.
-expect color 77 1 fg #61afef
+# pane's glyph wears its accent (`ui/accent_color`), and the first
+# Claude session's accent is Claude's orange — the same #d97757 the
+# cluster's mark wears (`ui.accent_defaults.claude`,
+# `pane_accent.defaultFor`); a second session would take the first
+# free ladder slot after `a.txt`'s editor's green, blue. Before this
+# change a click opened a session every time, so a click with one
+# already up put a differently-marked tab on the strip under the icon.
+expect color 77 1 fg #d97757

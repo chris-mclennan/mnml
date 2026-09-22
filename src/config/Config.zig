@@ -327,6 +327,23 @@ pub const ExpandIndicator = enum { chevron, triangle };
 /// side are never the same colour; `sessions` is the older look, where
 /// only an AI session pane wore one; `off` paints none.
 pub const PaneRail = enum { all, sessions, off };
+/// A colour a pane can open in (`ui/accent_color.zig`'s names): the
+/// eight ladder colours, `white` (the theme's text colour) and
+/// `claude_orange` (Anthropic's, the one the Claude chip wears), or
+/// `auto` — the next free ladder slot, as every later pane takes.
+pub const AccentName = enum { auto, white, claude_orange, green, blue, yellow, orange, red, purple, cyan, pink };
+/// // changed (accent-defaults): the colour the FIRST pane of a kind
+/// opens in — a plain terminal in white, a Claude session in Claude's
+/// orange, a Codex session in the cyan its chip wears. "First" is by
+/// the live set: while a pane of that kind holds the default, the next
+/// of its kind takes a free ladder slot instead; once it closes, the
+/// default is free again. A pick from the tab's or the session card's
+/// Color menu always wins over this.
+pub const AccentDefaults = struct {
+    shell: AccentName = .white,
+    claude: AccentName = .claude_orange,
+    codex: AccentName = .cyan,
+};
 pub const TabIndicator = enum { block, rule, line, quarter, quarter_track };
 pub const TopBarClusterMode = enum { auto, expanded, compact };
 /// `terminal` = follow the editing mode (see `ui.cursor_shape`).
@@ -549,6 +566,8 @@ pub const Ui = struct {
     pty_cursor: PtyCursor = .{},
     /// Which panes wear a colour rail down their left edge.
     pane_rail: PaneRail = .all,
+    /// The colour the first pane of each kind opens in (`AccentDefaults`).
+    accent_defaults: AccentDefaults = .{},
     /// The shape of the cursor mnml puts on the focused editor or text
     /// field. `terminal` — the default — follows the editing mode, as
     /// vim does: a block in NORMAL and VISUAL, a bar in INSERT (and in

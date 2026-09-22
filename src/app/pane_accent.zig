@@ -18,6 +18,17 @@
 //! session file have read it since the sessions work), everything else
 //! in `PaneStore.accents`. `nameOf` / `setName` are the accessor over
 //! both, so nothing else has to know which side a pane is on.
+//!
+//! // changed (accent-defaults, the user's call 2026-09-22): the FIRST
+//! pane of a kind opens in a colour of its own before the ladder — a
+//! plain terminal in white, a Claude session in Claude's orange, a
+//! Codex session in its chip's cyan (`ui.accent_defaults`). "First" is
+//! by the live set, not by count: while a pane of the kind holds the
+//! default, the next of its kind takes a free ladder slot as before,
+//! and once it closes the default is free for the next one. A pick
+//! from the tab's or the session card's Color menu wins over the rule
+//! and rides in the session file as it always has; a restored pane
+//! with no remembered colour goes through the rule like a new one.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -27,6 +38,7 @@ const PaneId = app_mod.PaneId;
 const pane_mod = @import("pane.zig");
 const pty_pane = @import("pty_pane.zig");
 const git_palette = @import("git_palette.zig");
+const Config = @import("../config/Config.zig");
 const accent_color = @import("../ui/accent_color.zig");
 const integrations_view = @import("../ui/integrations_view.zig");
 const Theme = @import("../ui/theme.zig");
@@ -66,12 +78,69 @@ pub fn setName(app: *App, id: PaneId, name: []const u8) Allocator.Error!void {
     app.needs_render = true;
 }
 
-/// Hand a pane with no colour the next free slot. `PaneStore.add` does
-/// this for every pane it opens; this is the way back after a name was
-/// cleared.
+/// Hand a pane with no colour its kind's default while that is free,
+/// else the next free ladder slot. `PaneStore.add` hands out the slot
+/// for every pane it opens (`pty_pane.open` asks `defaultFor` first);
+/// this is the way back after a name was cleared to Auto, and it asks
+/// the same rule, so a cleared first terminal is white again.
 pub fn assign(app: *App, id: PaneId) Allocator.Error!void {
     const p = app.panes.get(id) orelse return;
+    if (p.* == .pty and p.pty.accent_color == null) {
+        if (defaultFor(app, kindOfArgv(app, p.pty.argv))) |name| {
+            p.pty.accent_color = try app.gpa.dupe(u8, name);
+            return;
+        }
+    }
     try app.panes.assignAccent(id, p);
+}
+
+// ─── the kind defaults (accent-defaults) ────────────────────────────────
+
+/// The kinds of pane that open in a colour of their own: what a pty
+/// runs, by its command line. Every other pane is on the ladder alone.
+pub const Kind = enum { shell, claude, codex };
+
+/// The kind a command line makes a pty: Claude's binary or one of its
+/// profile shims, Codex's, or — anything else, the user's shell
+/// included — a plain terminal.
+pub fn kindOfArgv(app: *const App, argv: []const []const u8) Kind {
+    return switch (pty_pane.productOfArgv(app, argv) orelse return .shell) {
+        .claude => .claude,
+        .codex => .codex,
+    };
+}
+
+fn kindOf(app: *const App, p: *const pane_mod.Pane) ?Kind {
+    if (p.* != .pty) return null;
+    return kindOfArgv(app, p.pty.argv);
+}
+
+/// The colour `ui.accent_defaults` names for a kind, a palette name;
+/// null for `auto`.
+pub fn configuredDefault(app: *const App, kind: Kind) ?[]const u8 {
+    const d = app.cfg.ui.accent_defaults;
+    const choice: Config.AccentName = switch (kind) {
+        .shell => d.shell,
+        .claude => d.claude,
+        .codex => d.codex,
+    };
+    if (choice == .auto) return null;
+    return accent_color.canonical(@tagName(choice));
+}
+
+/// The colour a pane of `kind` opens in, or null to take a ladder
+/// slot: the kind's default while no live pane of the same kind is
+/// wearing it — whether it took it by this rule or the user picked it.
+/// A closed pane is out of the live set, so the default comes back
+/// with the next one of its kind.
+pub fn defaultFor(app: *const App, kind: Kind) ?[]const u8 {
+    const want = configuredDefault(app, kind) orelse return null;
+    for (app.panes.slots.items) |*slot| if (slot.*) |*other| {
+        if (kindOf(app, other) != kind) continue;
+        const worn = other.pty.accent_color orelse continue;
+        if (std.mem.eql(u8, worn, want)) return null;
+    };
+    return want;
 }
 
 /// The colour a pane's rail is painted in: the owner's when it has one
@@ -206,4 +275,111 @@ test "the three settings: all paints every pane, sessions only an AI session pan
     // back on does not re-roll it.
     app.cfg.ui.pane_rail = .all;
     try t.expect(Color.eql(railColorOf(&app, ed, &app.theme).?, app.theme.palette.green));
+}
+
+// ─── the kind defaults (accent-defaults) ────────────────────────────────
+
+/// A pane that runs `argv` without starting anything (`dormant`), so a
+/// test can open a "Claude session" or a "terminal" with no binary.
+fn openDormant(app: *App, argv: []const []const u8, label: []const u8) !PaneId {
+    return pty_pane.open(app, .{ .argv = argv, .label = label, .kind = .command, .placement = .tab, .dormant = true });
+}
+
+const brand = @import("../ui/brand.zig");
+
+test "accent defaults: the first terminal opens in white, the first Claude pane in Claude's orange, the first Codex pane in cyan; the next of each kind takes a ladder slot; an editor is on the ladder alone" {
+    if (!pty_pane.supported) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .cols = 80, .rows = 24 });
+    defer app.deinit();
+    const sh1 = try openDormant(&app, &.{}, "sh");
+    const cl1 = try openDormant(&app, &.{"claude"}, "claude");
+    const sh2 = try openDormant(&app, &.{ "/bin/sh", "-c", "sleep 30" }, "sh");
+    const cl2 = try openDormant(&app, &.{ "claude", "--session-id", "x" }, "claude");
+    const cx1 = try openDormant(&app, &.{"codex"}, "codex");
+    const cx2 = try openDormant(&app, &.{"codex"}, "codex");
+    try t.expectEqualStrings(accent_color.white, nameOf(&app, sh1).?);
+    try t.expectEqualStrings(accent_color.claude_orange, nameOf(&app, cl1).?);
+    try t.expectEqualStrings("cyan", nameOf(&app, cx1).?);
+    // The second of each kind: the ladder, in its order, skipping the
+    // worn — cyan is cx1's, so cx2 steps past it.
+    try t.expectEqualStrings("green", nameOf(&app, sh2).?);
+    try t.expectEqualStrings("blue", nameOf(&app, cl2).?);
+    try t.expectEqualStrings("yellow", nameOf(&app, cx2).?);
+    // The rail is that colour: the theme's text colour, the brand's orange.
+    try t.expect(Color.eql(colorOf(&app, sh1, &app.theme).?, app.theme.palette.fg));
+    try t.expect(Color.eql(colorOf(&app, cl1, &app.theme).?, brand.claude));
+    try t.expect(Color.eql(colorOf(&app, cx1, &app.theme).?, app.theme.palette.cyan));
+    // The kinds, as the rule sees them.
+    try t.expectEqual(Kind.shell, kindOfArgv(&app, &.{}));
+    try t.expectEqual(Kind.shell, kindOfArgv(&app, &.{ "/bin/sh", "-c", "x" }));
+    try t.expectEqual(Kind.claude, kindOfArgv(&app, &.{ "/usr/local/bin/claude", "--resume" }));
+    try t.expectEqual(Kind.codex, kindOfArgv(&app, &.{"codex"}));
+    // An editor has no kind with a default: it takes the next slot.
+    const ed = try app.openScratch();
+    try t.expectEqualStrings("orange", nameOf(&app, ed).?);
+}
+
+test "accent defaults: closing the white terminal frees white for the next one; a pick wins and holds the kind's default; Auto asks the rule again" {
+    if (!pty_pane.supported) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .cols = 80, .rows = 24 });
+    defer app.deinit();
+    const sh1 = try openDormant(&app, &.{}, "sh");
+    const sh2 = try openDormant(&app, &.{}, "sh");
+    try t.expectEqualStrings(accent_color.white, nameOf(&app, sh1).?);
+    try t.expectEqualStrings("green", nameOf(&app, sh2).?);
+    // The white one closes: the next terminal is the first again.
+    try app.closePane(sh1, true);
+    const sh3 = try openDormant(&app, &.{}, "sh");
+    try t.expectEqualStrings(accent_color.white, nameOf(&app, sh3).?);
+    // A pick wins, and a picked white counts as the default worn: the
+    // next terminal goes to the ladder, and so does one cleared to
+    // Auto while another terminal still wears white.
+    try setName(&app, sh2, accent_color.white);
+    try t.expectEqualStrings(accent_color.white, nameOf(&app, sh2).?);
+    const sh4 = try openDormant(&app, &.{}, "sh");
+    try t.expectEqualStrings("green", nameOf(&app, sh4).?);
+    try setName(&app, sh4, accent_color.none);
+    try t.expectEqualStrings("green", nameOf(&app, sh4).?);
+    // Both whites gone, Auto is white again.
+    try app.closePane(sh2, true);
+    try app.closePane(sh3, true);
+    try setName(&app, sh4, accent_color.none);
+    try t.expectEqualStrings(accent_color.white, nameOf(&app, sh4).?);
+    // A Claude pane's orange is a pick another kind may take too — the
+    // rule is per kind, so a terminal in Claude's orange leaves the
+    // first Claude pane its default.
+    try setName(&app, sh4, accent_color.claude_orange);
+    const cl1 = try openDormant(&app, &.{"claude"}, "claude");
+    try t.expectEqualStrings(accent_color.claude_orange, nameOf(&app, cl1).?);
+    // A remembered colour — a restored pane's — wins over the rule; a
+    // restored pane with none goes through it.
+    const cl2 = try pty_pane.open(&app, .{ .argv = &.{"claude"}, .label = "claude", .kind = .command, .placement = .tab, .dormant = true, .accent_color = "pink" });
+    try t.expectEqualStrings("pink", nameOf(&app, cl2).?);
+    try app.closePane(cl1, true);
+    const cl3 = try pty_pane.open(&app, .{ .argv = &.{"claude"}, .label = "claude", .kind = .command, .placement = .tab, .dormant = true });
+    try t.expectEqualStrings(accent_color.claude_orange, nameOf(&app, cl3).?);
+}
+
+test "accent defaults: `ui.accent_defaults` is the rule — auto puts a kind on the ladder, a ladder colour by name is that kind's first" {
+    if (!pty_pane.supported) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .cols = 80, .rows = 24 });
+    defer app.deinit();
+    try t.expectEqualStrings(accent_color.white, configuredDefault(&app, .shell) orelse return error.TestUnexpectedResult);
+    try t.expectEqualStrings(accent_color.claude_orange, configuredDefault(&app, .claude) orelse return error.TestUnexpectedResult);
+    try t.expectEqualStrings("cyan", configuredDefault(&app, .codex) orelse return error.TestUnexpectedResult);
+    app.cfg.ui.accent_defaults = .{ .shell = .auto, .claude = .pink, .codex = .auto };
+    try t.expect(configuredDefault(&app, .shell) == null);
+    try t.expectEqualStrings("pink", configuredDefault(&app, .claude) orelse return error.TestUnexpectedResult);
+    const sh1 = try openDormant(&app, &.{}, "sh");
+    const cl1 = try openDormant(&app, &.{"claude"}, "claude");
+    const cl2 = try openDormant(&app, &.{"claude"}, "claude");
+    const cx1 = try openDormant(&app, &.{"codex"}, "codex");
+    try t.expectEqualStrings("green", nameOf(&app, sh1).?);
+    try t.expectEqualStrings("pink", nameOf(&app, cl1).?);
+    try t.expectEqualStrings("blue", nameOf(&app, cl2).?);
+    try t.expectEqualStrings("yellow", nameOf(&app, cx1).?);
+    // A ladder colour as a default is worn, so the ladder skips it for
+    // everything else while the pane lives.
+    const ed = try app.openScratch();
+    try t.expectEqualStrings("orange", nameOf(&app, ed).?);
 }

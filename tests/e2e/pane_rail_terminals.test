@@ -5,11 +5,12 @@
 # (`ui/pane_rail.zig`). The colour is the point: before this, two
 # ghostty panes side by side were two identical grey rectangles.
 #
-# The ladder hands out its slots in order and skips what is already
-# worn, so the first pane is onedark's green #98c379 and the second its
-# blue #61afef — never the same colour while both are open. The colour
-# is the only way a script can see the rail at all: the glyph is the
-# same ▌ on both.
+# The first terminal opens in white — onedark's text colour #abb2bf,
+# `ui.accent_defaults.shell` (`pane_accent.defaultFor`) — and the second
+# takes the first free slot off the ladder, onedark's green #98c379:
+# never the same colour while both are open. The colour is the only
+# way a script can see the rail at all: the glyph is the same ▌ on
+# both.
 #
 # `sleep 30` keeps each child alive; an exited pane paints its banner
 # over the pane and the rail is all that is left of it.
@@ -20,10 +21,10 @@ ex term printf RR; sleep 30
 expect screen contains "RR"
 
 # The rail is the first column of each pane, in that pane's colour.
-expect color 0 2 fg #98c379
-expect color 0 21 fg #61afef
+expect color 0 2 fg #abb2bf
+expect color 0 21 fg #98c379
 # And the two are not each other's.
-expect color 0 2 fg not #61afef
-expect color 0 21 fg not #98c379
+expect color 0 2 fg not #98c379
+expect color 0 21 fg not #abb2bf
 # It runs the pane's full height, not just its first row.
-expect color 0 17 fg #98c379
+expect color 0 17 fg #abb2bf

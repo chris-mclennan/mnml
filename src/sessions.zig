@@ -1192,17 +1192,18 @@ pub fn colorNameOf(app: *App, sid: []const u8) ?[]const u8 {
 }
 
 /// The `Color: …` rows of a session's menu (Rust's
-/// `session_color_menu_items_with_active`): one per palette entry in
-/// the palette's order, then `Color: Auto`, the current one checked.
-/// On `arena` — the menu's own.
+/// `session_color_menu_items_with_active`): one per named colour in
+/// the menu's order — the ladder, then white and Claude's orange
+/// (`accent_color.named`) — then `Color: Auto`, the current one
+/// checked. On `arena` — the menu's own.
 pub fn colorMenuRows(arena: Allocator, target: command.SessionColorAct, active: ?[]const u8) Allocator.Error![]command.MenuItem {
-    const rows = try arena.alloc(command.MenuItem, accent_color.palette.len + 1);
-    for (accent_color.palette, 0..) |name, i| rows[i] = .{
+    const rows = try arena.alloc(command.MenuItem, accent_color.named.len + 1);
+    for (accent_color.named, 0..) |name, i| rows[i] = .{
         .label = accent_color.label(name),
         .action = .{ .session_color = .{ .target = target.target, .name = name } },
         .checked = if (active) |c| std.mem.eql(u8, c, name) else false,
     };
-    rows[accent_color.palette.len] = .{
+    rows[accent_color.named.len] = .{
         .label = accent_color.label(accent_color.none),
         .action = .{ .session_color = .{ .target = target.target, .name = accent_color.none } },
         .checked = active == null,
@@ -3146,7 +3147,7 @@ test "headless: a card owning a scanned transcript reads it; w widens ENDED; J a
     var color_rows: usize = 0;
     for (app.overlay.menu.items) |it| {
         if (it.submenu.len > 0) {
-            try testing.expectEqual(accent_color.palette.len + 1, it.submenu.len);
+            try testing.expectEqual(accent_color.named.len + 1, it.submenu.len);
             color_rows += 1;
         } else try testing.expect(it.action == .command);
     }
@@ -3444,8 +3445,9 @@ test "the summary rows: the ticket chip from ui.ticket_prefixes, hidden by an al
     try testing.expect(v.ticket == null);
     // The pane just opened is the active one.
     try testing.expect(!v.pinned and v.active);
-    // The auto slot is the card's colour; a pick overrides it.
-    try testing.expectEqualStrings("green", v.color.?);
+    // The pane's own colour is the card's — the first Claude session's
+    // is Claude's orange (accent-defaults); a pick overrides it.
+    try testing.expectEqualStrings(accent_color.claude_orange, v.color.?);
     try app.sessions.setColor(testing.allocator, "plain-9", "pink");
     v = try cardView(app, arena, c);
     try testing.expectEqualStrings("pink", v.color.?);
@@ -3773,9 +3775,13 @@ test "colors: a card's `▌` takes the session's chosen colour over the cursor a
     var mem = std.heap.ArenaAllocator.init(testing.allocator);
     defer mem.deinit();
     const items = try colorMenuRows(mem.allocator(), .{ .target = .row, .name = "" }, "yellow");
-    try testing.expectEqual(accent_color.palette.len + 1, items.len);
+    try testing.expectEqual(accent_color.named.len + 1, items.len);
     try testing.expectEqualStrings("Color: Green", items[0].label);
     try testing.expect(items[2].checked and !items[0].checked and !items[items.len - 1].checked);
+    // The two off-ladder colours are rows too, after the ladder.
+    try testing.expectEqualStrings("Color: White", items[accent_color.palette.len].label);
+    try testing.expectEqualStrings("Color: Claude orange", items[accent_color.palette.len + 1].label);
+    try testing.expectEqualStrings(accent_color.claude_orange, items[accent_color.palette.len + 1].action.session_color.name);
     try testing.expectEqualStrings("Color: Auto", items[items.len - 1].label);
     try testing.expectEqualStrings(accent_color.none, items[items.len - 1].action.session_color.name);
 }

@@ -319,6 +319,24 @@ otherwise. Copy what you need; leave the rest out.
         //              rail was a rule
         //   .off       none
         .pane_rail = .all, // .all | .sessions | .off
+        // The colour the FIRST pane of a kind opens in. A plain
+        // terminal opens in white (the theme's text colour), a Claude
+        // session in Claude's orange (the chip's), a Codex session in
+        // the cyan its chip wears; every further pane of that kind
+        // takes the next free ladder slot, as before. "First" is by
+        // what is open: while a pane of the kind still holds the
+        // default, the next of its kind goes to the ladder, and once
+        // it closes the default is free again. A colour picked from
+        // the tab's or the session card's Color menu always wins.
+        //   .auto           the next free ladder slot, no default
+        //   .white          the theme's text colour
+        //   .claude_orange  Anthropic's orange, as the Claude chip wears it
+        //   .green … .pink  a ladder colour by name
+        .accent_defaults = .{
+            .shell = .white, // .auto | .white | .claude_orange | .green | .blue | .yellow | .orange | .red | .purple | .cyan | .pink
+            .claude = .claude_orange, // the same names; .claude_orange is the chip's
+            .codex = .cyan, // the same names; .cyan is the chip's
+        },
         // The shape of the cursor mnml puts on the focused editor or
         // text field. .terminal follows the editing mode, as vim does:
         //   NORMAL / VISUAL  a block

@@ -1,7 +1,8 @@
 # env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
-# colors (src/app/pty_pane.zig `assignAutoAccent`): a new Claude session
-# takes the next palette slot — the first green, the second blue — and
-# the pane's right-click menu lists `Color: …` rows with the current one
+# colors (src/app/pane_accent.zig `defaultFor`): the first Claude session
+# opens in Claude's orange — the chip's — and the second takes the first
+# free ladder slot, green; the pane's right-click menu lists `Color: …`
+# rows — the ladder, then White and Claude orange — with the current one
 # ticked and `Color: Auto` last. A fake `claude` on PATH (a script that
 # sleeps) stands in for the CLI; the second session splits to the right,
 # so a right-click at (100, 20) lands on it. The Color row is the
@@ -28,13 +29,16 @@ key down
 key down
 key down
 key right
-expect screen contains "Color: Green"
-expect screen contains "✓ Color: Blue"
+expect screen contains "✓ Color: Green"
+expect screen contains "Color: Blue"
 expect screen contains "Color: Pink"
+expect screen contains "Color: White"
+expect screen contains "Color: Claude orange"
+expect screen lacks "✓ Color: Claude orange"
 expect screen contains "Color: Auto"
 key esc
 key esc
-# The first session's menu ticks green.
+# The first session's menu ticks Claude orange, and not the second's green.
 rightclick 40 20
 key down
 key down
@@ -49,7 +53,7 @@ key down
 key down
 key down
 key right
-expect screen contains "✓ Color: Green"
-expect screen lacks "✓ Color: Blue"
+expect screen contains "✓ Color: Claude orange"
+expect screen lacks "✓ Color: Green"
 key esc
 key esc
