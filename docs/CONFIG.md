@@ -660,6 +660,18 @@ otherwise. Copy what you need; leave the rest out.
     .git = .{ .repo_colors = .{ .mnml = "green", .@"mnml-zig" = "blue" } },
 
     // ── tasks / startup ────────────────────────────────────────────────
+    // The project runners need no entry here: `test.run_all` /
+    // `run_file` / `run_at_cursor` / `rerun_failed` pick the project
+    // from the nearest manifest at or above the open file — Cargo.toml
+    // (`cargo test`), package.json (`npm test`), go.mod (`go test`),
+    // *.csproj / *.sln (`dotnet test`, in the TESTS pane), build.zig
+    // (`zig build test` / `zig test <file>` / `zig build test
+    // -Dtest-filter=<name>` when the build.zig declares that option, else
+    // `zig test <file> --test-filter <name>`; the TESTS pane, rows from
+    // `zig`'s own report), or a Python layout (`pytest`). A `.cs` / `.zig`
+    // file asks for its own project first, so a `package.json` at the
+    // root of a mixed repo does not take it. `.tasks` is for everything
+    // else — a task runs only when you name it.
     .tasks = .{
         .build = .{ .cmd = "zig build", .cwd = null },
         .@"test" = .{ .cmd = "zig build test" }, // keywords need @"…"

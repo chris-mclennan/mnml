@@ -1,0 +1,43 @@
+# zl: the `test.*` runners did not know a Zig project. With `build.zig`
+# beside `src/` and the cursor inside a `test "…" {}` block,
+# `test.run_at_cursor` / `test.run_file` / `test.run_all` refused with
+# `test: no Cargo.toml / package.json / go.mod / *.csproj / Python
+# project` — `runners.zig Project` had no Zig kind. Now: a `.zig` file
+# under a `build.zig` is a Zig project; `run_at_cursor` is `zig build
+# test -Dtest-filter=<name>` when the build.zig declares that option
+# (this one does, as mnml-zig's own), `run_file` is `zig test <file>`,
+# `run_all` is `zig build test` — all in the TESTS pane, whose rows come
+# from the tool's own report. The `zig` is the corpus shim
+# (tools/shims/zig), which echoes its argv and prints canned output.
+# width: 160
+# env: PATH=${MNML_SHIMS}:${PATH}
+write build.zig "const std = @import(\"std\");\npub fn build(b: *std.Build) void {\n    const f = b.option([]const u8, \"test-filter\", \"only these\");\n    _ = f;\n}\n"
+write src/a.zig "const std = @import(\"std\");\ntest \"one\" {\n    try std.testing.expect(true);\n}\ntest \"two\" {\n    try std.testing.expectEqual(5, 4);\n}\n"
+open src/a.zig
+command view.toggle_tree
+command editor.use_vim
+
+# Line 3 is inside `one`: the build's filter, the name as given.
+ex 3
+command test.run_at_cursor
+expect screen lacks "no Cargo.toml"
+expect pane tests
+expect screen contains "zig build test -Dtest-filter=one"
+expect screen contains "1/1 tests passed"
+key esc
+expect pane a.zig
+
+# The file: every test it declares, one row each, the failure's
+# message and its own frame's line; Enter opens a.zig at line 6.
+command test.run_file
+expect pane tests
+expect screen contains "zig test src/a.zig"
+expect screen contains "1 passed; 0 skipped; 1 failed."
+expect screen contains "one"
+expect screen contains "two"
+expect screen contains "expected 5, found 4"
+expect screen contains "FAIL (TestExpectedEqual)"
+expect screen contains "tests: 1 failed, 1 passed"
+key enter
+expect pane a.zig
+expect screen contains "Ln 6/"

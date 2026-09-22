@@ -1,6 +1,7 @@
 //! Project runners: `cargo.*`, `npm.*`, `pytest.*`, `go.*`, `dotnet.*`,
-//! the project-agnostic `test.*`, and the tools picker. Each runs its command
-//! in a pty pane below the active one.
+//! the project-agnostic `test.*` (Rust / npm / Go / .NET / pytest / Zig),
+//! and the tools picker. Each runs its command in a pty pane below the
+//! active one — .NET and Zig in the TESTS pane (`tests_pane.zig`).
 //!
 //! Detection walks UP from the active editor's directory — so a file in
 //! `packages/app/` finds `packages/app/package.json` before the root's —
@@ -504,23 +505,34 @@ pub fn dotnetFileFilter(app: *App) CommandError!?[]const u8 {
 
 // ─── test.* — whichever project this is ─────────────────────────────────
 
-pub const Project = enum { cargo, npm, go, dotnet, pytest };
+pub const Project = enum { cargo, npm, go, dotnet, pytest, zig };
 
 /// The project kind at or above the active file: the nearest manifest
 /// decides, a Python layout without one counts when it has test files.
 /// A `.cs` file asks for its project first, so a repo with a frontend's
-/// `package.json` at the root still tests with `dotnet`.
+/// `package.json` at the root still tests with `dotnet`; a `.zig` file
+/// asks for its `build.zig` the same way (this repo has a `package.json`
+/// under `site/`, and mnml-zig's own tests are `zig build test`).
 pub fn detectProject(app: *App) ?Project {
     const start = startDir(app);
-    const is_cs = if (app.last_editor) |id| (if (app.panes.editor(id)) |e| (if (e.buf.doc.path) |p| std.ascii.eqlIgnoreCase(std.fs.path.extension(p), ".cs") else false) else false) else false;
-    if (is_cs and hasDotnetProject(app, start)) return .dotnet;
+    if (activeExtIs(app, ".cs") and hasDotnetProject(app, start)) return .dotnet;
+    if (activeExtIs(app, ".zig") and findManifestDir(app.io, start, &.{"build.zig"}, app.workspace) != null) return .zig;
     if (findManifestDir(app.io, start, &.{"Cargo.toml"}, app.workspace) != null) return .cargo;
     if (findManifestDir(app.io, start, &.{"package.json"}, app.workspace) != null) return .npm;
     if (findManifestDir(app.io, start, &.{"go.mod"}, app.workspace) != null) return .go;
     if (hasDotnetProject(app, start)) return .dotnet;
+    if (findManifestDir(app.io, start, &.{"build.zig"}, app.workspace) != null) return .zig;
     if (findManifestDir(app.io, start, &py_manifests, app.workspace) != null) return .pytest;
     if (hasPytestFiles(app.io, app.workspace)) return .pytest;
     return null;
+}
+
+/// The last editor's file has this extension (case-insensitive).
+fn activeExtIs(app: *App, ext: []const u8) bool {
+    const id = app.last_editor orelse return false;
+    const e = app.panes.editor(id) orelse return false;
+    const p = e.buf.doc.path orelse return false;
+    return std.ascii.eqlIgnoreCase(std.fs.path.extension(p), ext);
 }
 
 fn hasDotnetProject(app: *App, start: []const u8) bool {
@@ -528,7 +540,7 @@ fn hasDotnetProject(app: *App, start: []const u8) bool {
 }
 
 fn requireProject(app: *App) CommandError!Project {
-    return detectProject(app) orelse app.diag.fail(app.frame.allocator(), "test: no Cargo.toml / package.json / go.mod / *.csproj / Python project at {s}", .{app.workspace});
+    return detectProject(app) orelse app.diag.fail(app.frame.allocator(), "test: no Cargo.toml / package.json / go.mod / *.csproj / build.zig / Python project at {s}", .{app.workspace});
 }
 
 fn testRunAll(app: *App) CommandError!void {
@@ -538,6 +550,7 @@ fn testRunAll(app: *App) CommandError!void {
         .go => return runGo(app, "test ./..."),
         .dotnet => return tests_pane.dotnetAll(app),
         .pytest => return runPytest(app, ""),
+        .zig => return tests_pane.zigAll(app),
     }
 }
 
@@ -557,12 +570,13 @@ fn testRunFile(app: *App) CommandError!void {
         .go => return runGo(app, try std.fmt.allocPrint(arena, "test ./{s}", .{std.fs.path.dirname(rel) orelse "."})),
         .dotnet => return tests_pane.dotnetFile(app),
         .pytest => return runPytest(app, rel),
+        .zig => return tests_pane.zigFile(app),
     }
 }
 
 /// The nearest test name above the cursor: a Rust `fn` under a
 /// `#[test]`-style attribute, `def test_x`, `func TestX`, `it("x"` /
-/// `test("x"`.
+/// `test("x"`, Zig's `test "x" {`.
 pub fn testNameAt(text: []const u8, cursor: usize) ?[]const u8 {
     const at = @min(cursor, text.len);
     // The cursor's own line, whole.
@@ -589,6 +603,12 @@ fn identAt(s: []const u8) ?[]const u8 {
 }
 
 fn testNameIn(line: []const u8, above: []const u8) ?[]const u8 {
+    // Zig: `test "rect area" {` — the string is the name.
+    if (std.mem.startsWith(u8, line, "test \"")) {
+        const rest = line["test \"".len..];
+        const close = std.mem.indexOfScalar(u8, rest, '"') orelse return null;
+        return if (close > 0) rest[0..close] else null;
+    }
     // Rust: the attribute names the test, the fn carries the name.
     if (std.mem.startsWith(u8, above, "#[") and std.mem.indexOf(u8, above, "test") != null) {
         for ([_][]const u8{ "pub async fn ", "pub fn ", "async fn ", "fn " }) |p| if (std.mem.startsWith(u8, line, p)) return identAt(line[p.len..]);
@@ -614,6 +634,7 @@ fn testRunAtCursor(app: *App) CommandError!void {
     const rel = try activeRel(app);
     const project = try requireProject(app);
     if (project == .dotnet) return tests_pane.dotnetAtCursor(app);
+    if (project == .zig) return tests_pane.zigAtCursor(app);
     const e = app.activeEditor().?;
     const name = testNameAt(e.buf.editor.bytes(), e.buf.editor.cursor) orelse
         return app.diag.fail(arena, "no test above the cursor", .{});
@@ -622,7 +643,7 @@ fn testRunAtCursor(app: *App) CommandError!void {
         .npm => return runNpm(app, "test", try std.fmt.allocPrint(arena, "test -- -t '{s}'", .{name})),
         .go => return runGo(app, try std.fmt.allocPrint(arena, "test ./{s} -run '^{s}$'", .{ std.fs.path.dirname(rel) orelse ".", name })),
         .pytest => return runPytest(app, try std.fmt.allocPrint(arena, "{s} -k '{s}'", .{ rel, name })),
-        .dotnet => unreachable,
+        .dotnet, .zig => unreachable,
     }
 }
 
@@ -633,6 +654,7 @@ fn testRerunFailed(app: *App) CommandError!void {
     const project = detectProject(app);
     if (project == .pytest) return runPytest(app, "--lf");
     if (project == .dotnet) return tests_pane.dotnetRerunFailed(app);
+    if (project == .zig) return tests_pane.zigRerunFailed(app);
     const cmdline = app.runners.last_cmdline orelse return app.diag.fail(arena, "nothing has run yet", .{});
     const cwd = app.runners.last_cwd orelse app.workspace;
     const c = try arena.dupe(u8, cmdline);
@@ -700,6 +722,7 @@ pub const known_tools = [_]Tool{
     .{ .name = "golangci-lint", .kind = .linter, .bin = "golangci-lint", .description = "Go linter aggregator", .brew = "brew install golangci-lint", .apt = "go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest" },
     .{ .name = "shellcheck", .kind = .linter, .bin = "shellcheck", .description = "Shell script linter", .brew = "brew install shellcheck", .apt = "sudo apt install -y shellcheck" },
     .{ .name = "cargo", .kind = .runner, .bin = "cargo", .description = "Rust build tool", .brew = "brew install rustup && rustup-init -y", .apt = "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y" },
+    .{ .name = "zig", .kind = .runner, .bin = "zig", .description = "Zig compiler + build system (`zig build test`)", .brew = "brew install zig", .apt = "sudo snap install zig --classic --beta" },
     .{ .name = "npm", .kind = .runner, .bin = "npm", .description = "Node package manager", .brew = "brew install node", .apt = "sudo apt install -y nodejs npm" },
     .{ .name = "go", .kind = .runner, .bin = "go", .description = "Go toolchain", .brew = "brew install go", .apt = "sudo apt install -y golang-go" },
     .{ .name = "pytest", .kind = .runner, .bin = "pytest", .description = "Python test runner", .brew = "pip install pytest", .apt = "pip install pytest" },
@@ -952,20 +975,44 @@ test "go run: one cmd/ dir is picked, two open the picker, none means the litera
     try t.expect(f.app.overlay == .none);
 }
 
-test "test.* picks the project; the test name above the cursor is found for four languages" {
+test "test.* picks the project; the test name above the cursor is found for five languages" {
     try t.expectEqualStrings("adds", testNameAt("fn other() {}\n#[test]\nfn adds() {\n  x\n}", 30).?);
     try t.expectEqualStrings("test_it", testNameAt("def test_it():\n    assert True\n", 20).?);
     try t.expectEqualStrings("TestSum", testNameAt("func TestSum(t *testing.T) {\n}", 10).?);
     try t.expectEqualStrings("adds up", testNameAt("describe('x', () => {\n  it('adds up', () => {\n  });\n});", 40).?);
+    try t.expectEqualStrings("rect area", testNameAt("const std = @import(\"std\");\ntest \"rect area\" {\n    try std.testing.expect(true);\n}\n", 50).?);
+    try t.expect(testNameAt("test \"\" {}", 5) == null);
     try t.expect(testNameAt("nothing here", 5) == null);
     var f = try Fixture.init();
     defer f.deinit();
     f.run(.@"test.run_all");
-    try t.expect(std.mem.startsWith(u8, f.toast(), "test: no Cargo.toml / package.json / go.mod / *.csproj / Python project at "));
+    try t.expect(std.mem.startsWith(u8, f.toast(), "test: no Cargo.toml / package.json / go.mod / *.csproj / build.zig / Python project at "));
     try f.file("Cargo.toml", "[package]\nname = \"x\"\n");
     try t.expectEqual(Project.cargo, detectProject(&f.app).?);
     f.run(.@"test.rerun_failed");
     try t.expectEqualStrings("nothing has run yet", f.toast());
+}
+
+test "a build.zig makes test.* a Zig project; a .zig file asks for it first, past a package.json at the root" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    try f.file("build.zig", "const std = @import(\"std\");\npub fn build(b: *std.Build) void { _ = b; }\n");
+    try f.file("src/a.zig", "test \"one\" {}\n");
+    // Compared as optionals: a missing kind is a failed assertion, not
+    // an unwrap panic (so `tools/break-check.sh` can read the verdict).
+    try t.expectEqual(@as(?Project, .zig), detectProject(&f.app));
+    // A frontend's manifest at the root does not take a .zig file away
+    // from its build.zig; a .txt file is the manifest's.
+    try f.file("package.json", "{}");
+    try f.open("src/a.zig");
+    try t.expectEqual(@as(?Project, .zig), detectProject(&f.app));
+    try f.file("notes.txt", "x");
+    try f.open("notes.txt");
+    try t.expectEqual(@as(?Project, .npm), detectProject(&f.app));
+    // `test.rerun_failed` on a Zig project with no pane yet says so.
+    try f.open("src/a.zig");
+    f.run(.@"test.rerun_failed");
+    try t.expectEqualStrings("no Zig test run to re-run yet", f.toast());
 }
 
 test "dotnet: the toast names the id when no project is found; the sln builds and the csproj runs; a .cs file makes test.* a dotnet project" {

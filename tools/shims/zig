@@ -1,0 +1,90 @@
+#!/bin/sh
+# tools/shims/zig — the `zig` the .test corpus sees.
+#
+# `mnml-zig test` exports `MNML_SHIMS` (this directory); a script that
+# needs a Zig toolchain puts it first on PATH with
+#
+#   # env: PATH=${MNML_SHIMS}:${PATH}
+#
+# and gets canned output instead of a compiler — the two shapes the
+# TESTS pane parses, on stderr where the real tool writes them:
+#
+#   zig test <file> [--test-filter NAME]   the default test runner's lines
+#       (`1/2 a.test.one...OK`, the failure's message + `FAIL (…)` + a
+#       frame under $PWD/<file>, the `N passed; …` tally)
+#   zig build test [-Dtest-filter=NAME]    the build runner's report
+#       (`error: 'a.test.two' failed:` + frames, the `Build Summary`)
+#
+# Every argument is echoed first (`zig (shim): …`) so a script can see
+# the argv that reached the tool. Nothing here reads the project.
+echo "zig (shim): $*" >&2
+verb=$1
+shift
+case "$verb" in
+  version) echo "0.16.0-mnml-shim"; exit 0 ;;
+  test)
+    file=$1
+    shift
+    filter=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --test-filter) filter=$2; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    if [ -n "$filter" ]; then
+      echo "1/1 a.test.$filter...OK" >&2
+      echo "1 passed; 0 skipped; 0 failed." >&2
+      exit 0
+    fi
+    echo "1/2 a.test.one...OK" >&2
+    echo "2/2 a.test.two...expected 5, found 4" >&2
+    echo "FAIL (TestExpectedEqual)" >&2
+    echo "/opt/zig/lib/zig/std/testing.zig:118:17: 0x1001 in expectEqualInner (test)" >&2
+    echo "                return error.TestExpectedEqual;" >&2
+    echo "                ^" >&2
+    echo "$PWD/$file:6:5: 0x1002 in test.two (test)" >&2
+    echo "    try std.testing.expectEqual(5, 4);" >&2
+    echo "    ^" >&2
+    echo "1 passed; 0 skipped; 1 failed." >&2
+    echo "error: the following test command failed with exit code 1:" >&2
+    echo ".zig-cache/o/abc/test --seed=0x1" >&2
+    exit 1 ;;
+  build)
+    step=$1
+    shift
+    filter=""
+    for a in "$@"; do
+      case "$a" in
+        -Dtest-filter=*) filter=${a#-Dtest-filter=} ;;
+      esac
+    done
+    if [ "$step" != "test" ]; then
+      echo "zig (shim): build $step" >&2
+      exit 0
+    fi
+    if [ -n "$filter" ]; then
+      echo "Build Summary: 3/3 steps succeeded; 1/1 tests passed" >&2
+      exit 0
+    fi
+    echo "test" >&2
+    echo "+- run test 1 pass, 1 fail (2 total)" >&2
+    echo "error: 'a.test.two' failed:" >&2
+    echo "       expected 5, found 4" >&2
+    echo "       /opt/zig/lib/zig/std/testing.zig:118:17: 0x1001 in expectEqualInner (test)" >&2
+    echo "                       return error.TestExpectedEqual;" >&2
+    echo "                       ^" >&2
+    echo "       $PWD/src/a.zig:6:5: 0x1002 in test.two (test)" >&2
+    echo "           try std.testing.expectEqual(5, 4);" >&2
+    echo "           ^" >&2
+    echo "failed command: ./.zig-cache/o/abc/test --cache-dir=./.zig-cache --seed=0x1 --listen=-" >&2
+    echo "" >&2
+    echo "Build Summary: 1/3 steps succeeded (1 failed); 1/2 tests passed (1 failed)" >&2
+    echo "test transitive failure" >&2
+    echo "+- run test 1 pass, 1 fail (2 total)" >&2
+    echo "" >&2
+    echo "error: the following build command failed with exit code 1:" >&2
+    echo ".zig-cache/o/def/build /opt/zig/bin/zig /opt/zig/lib/zig $PWD .zig-cache /home/x/.cache/zig --seed 0x1 -Zabc test" >&2
+    exit 1 ;;
+  *) echo "zig (shim): unknown verb $verb" >&2; exit 2 ;;
+esac
