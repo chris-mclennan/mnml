@@ -729,10 +729,44 @@ otherwise. Copy what you need; leave the rest out.
 
     // ── dap (exec-bearing) ─────────────────────────────────────────────
     .dap = .{
+        // The key is the file extension `dap.run` (F5) looks the adapter
+        // up by. `.launch` is the request body, verbatim, after
+        // `${file}` / `${fileBasename}` / `${fileDirname}` /
+        // `${workspaceFolder}` are filled in; left out, it is
+        // `{ program: ${file}, cwd: ${workspaceFolder} }`.
         .lldb = .{
             .cmd = "lldb-dap",
             .args = .{},
             .launch = .{ .program = "${workspaceFolder}/zig-out/bin/mnml-zig" }, // verbatim
+        },
+        // lldb-dap (Xcode: `xcrun -f lldb-dap`; LLVM: on PATH) on a
+        // `cc -g` binary. The client sends `launch` on the `initialize`
+        // reply and configures on `initialized`, the order lldb-dap and
+        // debugpy need.
+        .c = .{
+            .cmd = "lldb-dap",
+            .launch = .{ .program = "${workspaceFolder}/prog", .cwd = "${workspaceFolder}" },
+        },
+        // Attaching is the same table with `.request = "attach"` and the
+        // adapter's own keys — lldb-dap takes a `.pid`; `dap.run` then
+        // attaches. Stop on an attached session DETACHES (`disconnect {
+        // terminateDebuggee: false }`) — the process you attached to
+        // keeps running.
+        .cpp = .{
+            .cmd = "lldb-dap",
+            .launch = .{ .request = "attach", .pid = 12345 },
+        },
+        // debugpy: `python3 -m debugpy.adapter` over stdio. `.console =
+        // "internalConsole"` keeps the program's output in the Debug
+        // Console (mnml answers a `runInTerminal` reverse request with
+        // a failure). To attach, start the program with `python3 -m
+        // debugpy --connect 127.0.0.1:5678 script.py` and use the
+        // `.listen` shape below instead of `.program`.
+        .py = .{
+            .cmd = "python3",
+            .args = .{ "-m", "debugpy.adapter" },
+            .launch = .{ .program = "${file}", .cwd = "${workspaceFolder}", .console = "internalConsole" },
+            // .launch = .{ .request = "attach", .listen = .{ .host = "127.0.0.1", .port = 5678 } },
         },
         // `$NAME` / `${NAME}` in .cmd or an argument expands from the
         // environment when the adapter is spawned; dap.run re-reads
