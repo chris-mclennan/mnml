@@ -1,0 +1,81 @@
+# width: 120
+# height: 40
+# `]p` / `[p` / `[P` / `]P` (`:help ]p`): put a linewise register with
+# its indent shifted so the first line takes the cursor line's indent,
+# the others keeping theirs relative to it. A charwise register is a
+# plain `p` / `P`. Each case is Neovim 0.12.5's result (ts=4 sw=4 et).
+
+# 1. A 2-space block, `]p` under an 8-space line: every line gains six.
+#    The cursor lands on the first put line's first non-blank — `r#`
+#    marks it.
+write a.txt "  if x {\n    y();\n  }\n        target\n"
+open a.txt
+command editor.use_vim
+type "3yy"
+key G
+type "]p"
+type "r#"
+key ctrl+s
+expect file a.txt contains "        target\n        #f x {\n          y();\n        }\n"
+
+# `u` takes the whole put back in one step.
+key u
+key u
+key ctrl+s
+expect file a.txt contains "  }\n        target\n"
+expect file a.txt lacks "if x {\n          y"
+
+# 2. `[p` above a tab-indented line: the tab counts to its stop, and the
+#    rebuilt indent is spaces under expandtab.
+write b.txt "  a\n    b\n\tfoo\n"
+open b.txt
+type "2yy"
+key G
+type "[p"
+key ctrl+s
+expect file b.txt contains "  a\n    b\n    a\n      b\n\tfoo\n"
+# `[P` and `]P` are both `[p`.
+key G
+type "[P"
+key G
+type "]P"
+key ctrl+s
+expect file b.txt contains "    a\n      b\n    a\n      b\n    a\n      b\n\tfoo\n"
+
+# 3. A charwise register: `]p` is `p`, `[p` is `P`.
+write c.txt "  hello world\n        target\n"
+open c.txt
+type "wye"
+key G
+type "^]p"
+key ctrl+s
+expect file c.txt contains "        thelloarget\n"
+type "^[p"
+key ctrl+s
+expect file c.txt contains "        hellothelloarget\n"
+
+# 4. A count puts the register that many times, every copy shifted
+#    alike; `.` repeats the put re-indented to ITS cursor line.
+write d.txt "  a\n    b\n      t\nx\n"
+open d.txt
+type "2yy"
+key j
+key j
+type "2]p"
+key ctrl+s
+expect file d.txt contains "      t\n      a\n        b\n      a\n        b\nx\n"
+key G
+type "."
+key ctrl+s
+expect file d.txt contains "\nx\na\n  b\na\n  b\n"
+
+# 5. A named register: `"a]p` reads `a`, not the last yank.
+write e.txt "one\n    two\n  three\n"
+open e.txt
+type "\"ayy"
+key j
+type "yy"
+key G
+type "\"a]p"
+key ctrl+s
+expect file e.txt contains "  three\n  one\n"
