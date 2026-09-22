@@ -816,6 +816,9 @@ otherwise. Copy what you need; leave the rest out.
         // names this profile and it was adopted by pid 1) is cleared by
         // stopping that Chrome, and the pane's log says so; any other
         // holder — another mnml's pane, your own Chrome — is left alone.
+        // .ephemeral gives every open its own
+        // <ws>/.mnml/chrome-profile-ephemeral-<random>, deleted when the
+        // pane closes; browser.wipe_profile clears any a crash left.
     },
     .ci = .{
         .provider = null, // "codebuild" …

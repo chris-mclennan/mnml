@@ -180,12 +180,17 @@ pub const BrowserPane = struct {
     port: ?u16 = null,
     profile_dir: []u8,
     headless: bool,
+    /// `profile_mode = .ephemeral`: the profile is this pane's alone and
+    /// goes with it.
+    ephemeral: bool = false,
 
     pub fn deinit(self: *BrowserPane, gpa: Allocator) void {
         self.shutdown();
         if (self.thread) |t| t.join();
         if (self.shared.session) |*s| s.deinit();
         if (self.shared.launch) |l| l.destroy(self.shared.io);
+        // After the kill: Chrome no longer writes into it.
+        if (self.ephemeral) Io.Dir.cwd().deleteTree(self.shared.io, self.profile_dir) catch {};
         gpa.destroy(self.shared);
         for (self.log.items) |l| gpa.free(l.text);
         self.log.deinit(gpa);
@@ -291,6 +296,11 @@ pub fn profileBase(app: *App, arena: Allocator) Allocator.Error![]u8 {
     return std.fmt.allocPrint(arena, "{s}/.mnml/chrome-profile", .{app.workspace});
 }
 
+/// Where ephemeral profiles go: `<workspace>/.mnml/`, one directory per
+/// open (`chrome-profile-ephemeral-<random>`), removed when its pane
+/// closes; `browser.wipe_profile` removes any a crash left behind.
+pub const ephemeral_prefix = "chrome-profile-ephemeral-";
+
 pub const Picked = struct { dir: []u8, note: ?[]u8 = null };
 
 fn inUse(app: *App, dir: []const u8) bool {
@@ -308,7 +318,14 @@ fn inUse(app: *App, dir: []const u8) bool {
 /// (`cdp/profile.zig`'s `orphan`) is cleared by stopping that Chrome;
 /// any other live holder is left alone and the next suffix is tried.
 pub fn pickProfile(app: *App, arena: Allocator) Allocator.Error!Picked {
-    if (app.cfg.browser.profile_mode == .ephemeral) return .{ .dir = try std.fmt.allocPrint(arena, "{s}/.mnml/chrome-profile-ephemeral-{d}", .{ app.workspace, app.now_ms }) };
+    if (app.cfg.browser.profile_mode == .ephemeral) {
+        while (true) {
+            var raw: [6]u8 = undefined;
+            app.io.random(&raw);
+            const dir = try std.fmt.allocPrint(arena, "{s}/.mnml/{s}{x}", .{ app.workspace, ephemeral_prefix, &raw });
+            Io.Dir.cwd().access(app.io, dir, .{}) catch return .{ .dir = dir };
+        }
+    }
     const base = try profileBase(app, arena);
     var i: usize = 0;
     while (i < 64) : (i += 1) {
@@ -352,6 +369,7 @@ pub fn open(app: *App, url_in: []const u8) CommandError!PaneId {
         .title_buf = try gpa.dupe(u8, "browser"),
         .profile_dir = try gpa.dupe(u8, pdir),
         .headless = app.cfg.browser.headless,
+        .ephemeral = app.cfg.browser.profile_mode == .ephemeral,
     };
     errdefer pane.deinit(gpa);
     try pane.refreshTitle();
@@ -1556,11 +1574,12 @@ fn waitSet(ev: *Io.Event, limit: Io.Duration) bool {
 }
 
 /// `testPane`, on a given profile directory.
-fn testPaneAt(app: *App, dir: []const u8) !PaneId {
+fn testPaneAt(app: *App, dir: []const u8, ephemeral: bool) !PaneId {
     const id = try testPane(app);
     const p = app.panes.get(id).?.asBrowser().?;
     testing.allocator.free(p.profile_dir);
     p.profile_dir = try testing.allocator.dupe(u8, dir);
+    p.ephemeral = ephemeral;
     return id;
 }
 
@@ -1575,10 +1594,10 @@ test "a new pane's profile suffix is one no open pane uses: A, B, close A, then 
     const arena = app.frame.allocator();
     const first = try pickProfile(&app, arena);
     try testing.expect(std.mem.endsWith(u8, first.dir, "/.mnml/chrome-profile"));
-    const a = try testPaneAt(&app, first.dir);
+    const a = try testPaneAt(&app, first.dir, false);
     const second = try pickProfile(&app, arena);
     try testing.expect(std.mem.endsWith(u8, second.dir, "/.mnml/chrome-profile-1"));
-    _ = try testPaneAt(&app, second.dir);
+    _ = try testPaneAt(&app, second.dir, false);
     try app.forceClosePane(a);
     // One pane open, on `-1`: the count says 1, the free suffix is the base.
     const third = try pickProfile(&app, arena);
@@ -1642,4 +1661,49 @@ test "a Chrome an earlier mnml left running on the profile (after a kill -9) is 
     try testing.expectEqualStrings(base, picked.dir);
     try testing.expect(std.mem.indexOf(u8, picked.note.?, "stopped a Chrome an earlier session left running") != null);
     try testing.expect(child_os.goneWithin(testing.io, orphan, .fromSeconds(10)));
+}
+
+test "ephemeral profiles: each open gets its own, a closed pane takes its profile with it, and wipe_profile clears what a crash left" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &pbuf);
+    const root = pbuf[0..n];
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .data_root = root });
+    defer app.deinit();
+    app.cfg.browser.profile_mode = .ephemeral;
+    const arena = app.frame.allocator();
+    const one = try pickProfile(&app, arena);
+    const two = try pickProfile(&app, arena);
+    try testing.expect(!std.mem.eql(u8, one.dir, two.dir));
+    try testing.expect(std.mem.indexOf(u8, one.dir, "/.mnml/" ++ ephemeral_prefix) != null);
+    try Io.Dir.cwd().createDirPath(testing.io, one.dir);
+    try Io.Dir.cwd().writeFile(testing.io, .{ .sub_path = try std.fs.path.join(arena, &.{ one.dir, "Cookies" }), .data = "sid=secret" });
+    const id = try testPaneAt(&app, one.dir, true);
+    try app.forceClosePane(id);
+    try testing.expectError(error.FileNotFound, Io.Dir.cwd().access(testing.io, one.dir, .{}));
+    // Left by a crash: no pane will close it. wipe_profile does, and
+    // leaves the workspace-mode profile alone.
+    try Io.Dir.cwd().createDirPath(testing.io, two.dir);
+    const kept = try std.fs.path.join(arena, &.{ root, ".mnml", "chrome-profile" });
+    try Io.Dir.cwd().createDirPath(testing.io, kept);
+    try command.run(&app, .{ .static = .@"browser.wipe_profile" });
+    try testing.expectError(error.FileNotFound, Io.Dir.cwd().access(testing.io, two.dir, .{}));
+    try Io.Dir.cwd().access(testing.io, kept, .{});
+}
+
+test "wipe_profile in workspace mode clears the profile and its -N siblings, not the ephemeral or proxy ones" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &pbuf);
+    const root = pbuf[0..n];
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .data_root = root });
+    defer app.deinit();
+    const arena = app.frame.allocator();
+    const mn = try std.fs.path.join(arena, &.{ root, ".mnml" });
+    for ([_][]const u8{ "chrome-profile", "chrome-profile-1", "chrome-profile-12", "chrome-profile-ephemeral-ab12", "chrome-profile-proxy-99" }) |name| try Io.Dir.cwd().createDirPath(testing.io, try std.fs.path.join(arena, &.{ mn, name }));
+    try command.run(&app, .{ .static = .@"browser.wipe_profile" });
+    for ([_][]const u8{ "chrome-profile", "chrome-profile-1", "chrome-profile-12" }) |name| try testing.expectError(error.FileNotFound, Io.Dir.cwd().access(testing.io, try std.fs.path.join(arena, &.{ mn, name }), .{}));
+    for ([_][]const u8{ "chrome-profile-ephemeral-ab12", "chrome-profile-proxy-99" }) |name| try Io.Dir.cwd().access(testing.io, try std.fs.path.join(arena, &.{ mn, name }), .{});
 }

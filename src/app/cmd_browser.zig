@@ -327,13 +327,33 @@ fn domCmd(app: *App) CommandError!void {
     try browser.send(app, b, "DOM.getDocument", "{\"depth\":-1}", .dom);
 }
 
+/// Deletes the profile — the base directory and every `-N` sibling a
+/// second pane opened — or, in ephemeral mode, every ephemeral profile
+/// a crash left behind (a pane that closes removes its own).
 fn wipeProfileCmd(app: *App) CommandError!void {
     if (activeBrowser(app) != null) return app.diag.fail(app.frame.allocator(), "close the browser pane first — Chrome has the profile locked", .{});
-    if (app.cfg.browser.profile_mode == .ephemeral) return app.diag.fail(app.frame.allocator(), "profile_mode = ephemeral — every open already starts fresh", .{});
-    const dir = if (app.cfg.browser.profile_mode == .shared and app.data_root.len > 0) try std.fs.path.join(app.frame.allocator(), &.{ app.data_root, "chrome-profile" }) else try std.fs.path.join(app.frame.allocator(), &.{ app.workspace, ".mnml", "chrome-profile" });
-    Io.Dir.cwd().access(app.io, dir, .{}) catch return app.diag.fail(app.frame.allocator(), "no profile to wipe", .{});
-    Io.Dir.cwd().deleteTree(app.io, dir) catch |err| return app.diag.fail(app.frame.allocator(), "wipe failed: {s}", .{@errorName(err)});
-    app.toast("wiped {s}", .{app.relPath(dir)});
+    const arena = app.frame.allocator();
+    const ephemeral = app.cfg.browser.profile_mode == .ephemeral;
+    const base = if (ephemeral) try std.fmt.allocPrint(arena, "{s}/.mnml/{s}", .{ app.workspace, browser.ephemeral_prefix }) else try browser.profileBase(app, arena);
+    const parent = std.fs.path.dirname(base) orelse return app.diag.fail(arena, "no profile to wipe", .{});
+    const stem = std.fs.path.basename(base);
+    var dir = Io.Dir.cwd().openDir(app.io, parent, .{ .iterate = true }) catch return app.diag.fail(arena, "no profile to wipe", .{});
+    defer dir.close(app.io);
+    var victims: std.ArrayListUnmanaged([]const u8) = .empty;
+    var it = dir.iterate();
+    while (it.next(app.io) catch null) |e| {
+        if (e.kind != .directory or !std.mem.startsWith(u8, e.name, stem)) continue;
+        const rest = e.name[stem.len..];
+        const ours = if (ephemeral) rest.len > 0 else rest.len == 0 or (rest[0] == '-' and rest.len > 1 and for (rest[1..]) |c| {
+            if (!std.ascii.isDigit(c)) break false;
+        } else true);
+        if (ours) try victims.append(arena, try arena.dupe(u8, e.name));
+    }
+    if (victims.items.len == 0) return app.diag.fail(arena, "no profile to wipe", .{});
+    for (victims.items) |name| dir.deleteTree(app.io, name) catch |err| return app.diag.fail(arena, "wipe failed: {s}", .{@errorName(err)});
+    if (victims.items.len == 1) {
+        app.toast("wiped {s}", .{app.relPath(try std.fs.path.join(arena, &.{ parent, victims.items[0] }))});
+    } else app.toast("wiped {d} profiles under {s}", .{ victims.items.len, app.relPath(parent) });
 }
 
 fn toggleHeadlessCmd(app: *App) CommandError!void {
