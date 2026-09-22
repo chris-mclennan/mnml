@@ -1,0 +1,22 @@
+# A file that is only READ gets its decorations: the semantic-token and
+# code-lens requests go out once the server is ready, with no edit.
+# Before, `lsp_decor.zig::onFrame` fired the per-file requests when
+# `tr.seq != head` with 0 as "never asked" — and an unedited buffer's
+# edit-log head IS 0, so the first request rode the first edit (seen on
+# rust-analyzer: 0 semanticTokens requests in 89 s of reading, the first
+# one on the same frame as the first didChange; csharp-ls and zls the
+# same). This inline server advertises the three providers and logs
+# every method it receives; the log is read with the buffer untouched.
+write srv.py "import sys, json\nlog = open(\"lsp.log\", \"a\")\ndef send(o):\n    b = json.dumps(o).encode(); sys.stdout.buffer.write(b\"Content-Length: %d\\r\\n\\r\\n\" % len(b) + b); sys.stdout.buffer.flush()\ndef read():\n    n = 0\n    while True:\n        line = sys.stdin.buffer.readline()\n        if not line: sys.exit(0)\n        if line.lower().startswith(b\"content-length:\"): n = int(line.split(b\":\")[1])\n        if line in (b\"\\r\\n\", b\"\\n\"): break\n    return json.loads(sys.stdin.buffer.read(n))\nwhile True:\n    m = read(); mid = m.get(\"id\"); meth = m.get(\"method\")\n    if meth: log.write(meth + \"\\n\"); log.flush()\n    if meth == \"initialize\":\n        send({\"jsonrpc\":\"2.0\",\"id\":mid,\"result\":{\"capabilities\":{\"textDocumentSync\":1,\"hoverProvider\":True,\"inlayHintProvider\":True,\"codeLensProvider\":{},\"semanticTokensProvider\":{\"legend\":{\"tokenTypes\":[\"keyword\",\"function\"],\"tokenModifiers\":[]},\"full\":True}}}})\n    elif meth == \"textDocument/semanticTokens/full\":\n        send({\"jsonrpc\":\"2.0\",\"id\":mid,\"result\":{\"resultId\":\"1\",\"data\":[0,0,2,0,0,0,3,3,1,0]}})\n    elif meth == \"textDocument/inlayHint\":\n        send({\"jsonrpc\":\"2.0\",\"id\":mid,\"result\":[{\"position\":{\"line\":0,\"character\":6},\"label\":\": hint\",\"kind\":1}]})\n    elif meth == \"textDocument/codeLens\":\n        send({\"jsonrpc\":\"2.0\",\"id\":mid,\"result\":[]})\n    elif meth == \"shutdown\":\n        send({\"jsonrpc\":\"2.0\",\"id\":mid,\"result\":None})\n    elif meth == \"exit\":\n        sys.exit(0)\n    elif mid is not None:\n        send({\"jsonrpc\":\"2.0\",\"id\":mid,\"result\":None})\n"
+write .fkroot ""
+write .mnml/config.zon .{ .lsp = .{ .srv = .{ .cmd = "python3", .args = .{ "$MNML_E2E_WORKSPACE/srv.py" }, .extensions = .{ "fk" } } } }
+write src/a.fk "fn foo() {}\nfn bar() {}\n"
+open src/a.fk
+expect screen contains "LSP 1"
+wait 1000
+wait 1000
+wait 1000
+expect dirty false
+expect file lsp.log contains "textDocument/inlayHint"
+expect file lsp.log contains "textDocument/semanticTokens/full"
+expect file lsp.log contains "textDocument/codeLens"

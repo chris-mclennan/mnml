@@ -1097,6 +1097,7 @@ fn handleResponse(app: *App, s: *Server, kind: ReqKind, ctx: Ctx, result: ?Value
     switch (kind) {
         .initialize => {
             try s.onInitialized(result);
+            decor.onServerReady(app, s);
             // Documents opened while the server was starting are on the
             // wire now; symbols for the ones showing can follow, once
             // the open has settled (see `attach`).
