@@ -26,6 +26,7 @@ const Key = app_mod.Key;
 const config = @import("../config/root.zig");
 const suggest = @import("../ai/suggest.zig");
 const ai_app = @import("ai.zig");
+const setup = @import("setup.zig");
 const Config = config.Config;
 const command = @import("../core/command.zig");
 const side = @import("side.zig");
@@ -659,10 +660,18 @@ pub fn footer(app: *App, arena: Allocator, list: []const Item) Allocator.Error!?
         .row => |r| r,
         else => return null,
     };
-    if (row.id >= integ_base) return try std.fmt.allocPrint(arena, "→ {s}/{s}", .{ app.data_root, integrations.settings_file });
+    // // changed (settings-title-path): a home-scope row used to put the
+    // RAW absolute path here, which the box then chopped from the right
+    // — so the file name, the one thing this line exists to say, was
+    // what got thrown away. `~` for `$HOME` fixes the common case; the
+    // box's `elideLeft` fixes the rest.
+    if (row.id >= integ_base) {
+        const p = try std.fmt.allocPrint(arena, "{s}/{s}", .{ app.data_root, integrations.settings_file });
+        return try std.fmt.allocPrint(arena, "→ {s}", .{try setup.tilde(app, arena, p)});
+    }
     const scope = rows[row.id].scope;
     const path = (try configPath(app, scope)) orelse return "no config file to write";
-    return try std.fmt.allocPrint(arena, "→ {s}", .{if (scope == .workspace) app.relPath(path) else path});
+    return try std.fmt.allocPrint(arena, "→ {s}", .{if (scope == .workspace) app.relPath(path) else try setup.tilde(app, arena, path)});
 }
 
 pub fn key(app: *App, k: Key) Allocator.Error!void {
@@ -671,7 +680,7 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
     const st = &app.overlay.settings;
     // `/` is the filter everywhere; the standard profile takes Ctrl+F
     // for it too, the way VS Code's settings screen does.
-    const opts: ui_settings.KeyOpts = .{ .gpa = app.gpa, .ctrl_f = app.input_style != .vim };
+    const opts: ui_settings.KeyOpts = .{ .gpa = app.gpa, .ctrl_f = app.input_style != .vim, .typeahead = app.input_style != .vim };
     switch (try ui_settings.handleKey(&st.ui, k, list, opts)) {
         .consumed => {},
         .refilter => try refocus(app, list),
@@ -680,7 +689,9 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
         .adjust => |a| try adjust(app, list[a.item].row.id, a.delta),
         .reset_row => |i| try resetRow(app, list[i].row.id),
         .reset_all => try resetAll(app),
-        .activate => |i| if (list[i].action.id == reset_id) try resetAll(app),
+        // // changed (settings-reset-confirm): the Reset row asks first,
+        // the same box `R` raises in the vim profile.
+        .activate => |i| if (list[i].action.id == reset_id) st.ui.askResetAll(),
     }
     app.needs_render = true;
 }
@@ -734,9 +745,17 @@ pub fn barJump(app: *App, off: usize, track_h: usize) Allocator.Error!void {
 /// row to the option under the pointer.
 pub fn click(app: *App, hit: u32) Allocator.Error!void {
     const arena = app.frame.allocator();
+    const st = &app.overlay.settings;
+    // // changed (settings-reset-confirm): the ask paints last, so its
+    // two choices are the hits a click lands on and `hit` is the index.
+    if (st.ui.confirm != null) {
+        st.ui.confirm = null;
+        app.needs_render = true;
+        if (hit == 0) try resetAll(app);
+        return;
+    }
     const both = try lists(app, arena);
     const list = both.visible;
-    const st = &app.overlay.settings;
     switch (ui_settings.decodeHit(hit)) {
         .surface => {},
         // The pill: the keys go back to it, query and all.
@@ -751,7 +770,7 @@ pub fn click(app: *App, hit: u32) Allocator.Error!void {
             st.ui.jumpTo(list, k);
         },
         .row => |id| {
-            if (id == reset_id) return resetAll(app);
+            if (id == reset_id) return st.ui.askResetAll();
             st.ui.cursor = itemIndexOf(list, id) orelse return;
             st.ui.filter.focused = false;
         },
@@ -925,6 +944,7 @@ pub fn cancel(app: *App) Allocator.Error!void {
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const Fixture = @import("../ui/test_fixture.zig");
 
 fn readOrNull(dir: std.testing.TmpDir, rel: []const u8) !?[]u8 {
     return dir.dir.readFileAlloc(t.io, rel, t.allocator, .unlimited) catch |e| switch (e) {
@@ -1066,7 +1086,7 @@ test "adjust writes the row's file live; Esc restores bytes (and absence); Enter
         theme_item = i;
     };
     app.overlay.settings.ui.cursor = theme_item;
-    try app.handle(.{ .key = Key.char('l') });
+    try app.handle(.{ .key = Key.named(.right) });
     try t.expect(!std.mem.eql(u8, app.cfg.ui.theme, "onedark"));
     try t.expectEqualStrings(app.cfg.ui.theme, app.theme.name);
     {
@@ -1078,13 +1098,16 @@ test "adjust writes the row's file live; Esc restores bytes (and absence); Enter
     try t.expectEqualStrings("onedark", app.theme.name);
     try t.expect((try readOrNull(tmp, "home/config.zon")) == null);
 
-    // r resets the row; the `*` marker follows; R resets everything.
+    // Ctrl+R resets the row; the `*` marker follows. // changed
+    // (settings-typeahead): this app is in the standard profile, where
+    // a bare `r` is a query character — Ctrl+R is the reset the footer
+    // advertises there, and it works in both profiles.
     try command.run(&app, .{ .static = .@"view.settings" });
     {
         const l = try items(&app, app.frame.allocator());
         try t.expect(l[1].row.modified); // line_numbers is off, default on
     }
-    try app.handle(.{ .key = Key.char('r') });
+    try app.handle(.{ .key = Key.ctrl('r') });
     try t.expect(app.cfg.ui.line_numbers);
     {
         const l = try items(&app, app.frame.allocator());
@@ -1094,6 +1117,20 @@ test "adjust writes the row's file live; Esc restores bytes (and absence); Enter
     try app.handle(.{ .key = Key.named(.down) });
     try app.handle(.{ .key = Key.named(.right) });
     try t.expect(!app.cfg.ui.line_numbers and app.cfg.ui.relative_line_numbers);
+    // // changed (settings-reset-confirm): reset-all is the Reset
+    // section's action row here, and it asks first. Enter takes the
+    // focused Cancel and changes nothing; the `R` letter answers Reset.
+    {
+        const l = try items(&app, app.frame.allocator());
+        app.overlay.settings.ui.cursor = l.len - 1;
+    }
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expect(app.overlay.settings.ui.confirm != null);
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expect(app.overlay.settings.ui.confirm == null);
+    try t.expect(!app.cfg.ui.line_numbers and app.cfg.ui.relative_line_numbers);
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expect(app.overlay.settings.ui.confirm != null);
     try app.handle(.{ .key = Key.char('R') });
     try t.expect(app.cfg.ui.line_numbers and !app.cfg.ui.relative_line_numbers);
     try app.handle(.{ .key = Key.named(.enter) });
@@ -1130,9 +1167,41 @@ test "the overlay renders the sections and the footer names the target file" {
     defer t.allocator.free(scrolled);
     try t.expect(std.mem.indexOf(u8, scrolled, "── Editor ──") != null);
     try t.expect(std.mem.indexOf(u8, scrolled, "▸ Input style:") != null);
+    // // changed (settings-title-path): a home-scope row's file is shown
+    // under `~`, and when it still does not fit the box cuts the path
+    // from the LEFT so the file name — the fact the line exists to
+    // carry — survives.
+    try app.env.put("HOME", "/tmp");
+    try openAt(&app, .ui);
+    for ((try items(&app, app.frame.allocator())), 0..) |it, i| if (it == .row and std.mem.eql(u8, it.row.label, "Theme")) {
+        app.overlay.settings.ui.cursor = i;
+    };
+    {
+        const sub = (try footer(&app, app.frame.allocator(), try items(&app, app.frame.allocator()))).?;
+        try t.expectEqualStrings("→ ~/home/config.zon", sub);
+    }
+    try app.render();
+    const home_title = try @import("../ipc/screen.zig").toTestText(t.allocator, &app.screen);
+    defer t.allocator.free(home_title);
+    try t.expect(std.mem.indexOf(u8, home_title, " Settings · → ~/home/config.zon ") != null);
     // click outside closes and keeps
     try app.handle(.{ .mouse = .{ .x = 1, .y = 1, .kind = .press, .button = .left } });
     try t.expect(app.overlay == .none);
+}
+
+test "// changed (settings-title-path): a subtitle too long for the box is cut from the LEFT, so the file name survives" {
+    var f = try Fixture.init(60, 10);
+    defer f.deinit();
+    const ui = f.ui();
+    const long = "→ /var/folders/md/rtcqqnkn661bgwnl4h__tgz80000gn/T/mnml-e2e/config.zon";
+    try t.expectEqualStrings(long, ui_settings.elideLeft(ui, long, @intCast(long.len)));
+    const cut = ui_settings.elideLeft(ui, long, 20);
+    try t.expect(std.mem.startsWith(u8, cut, "…"));
+    try t.expect(std.mem.endsWith(u8, cut, "config.zon"));
+    try t.expect(ui.fitsIn(cut, 20));
+    // Never past the cut: one cell of room is the mark alone.
+    try t.expectEqualStrings("…", ui_settings.elideLeft(ui, long, 1));
+    try t.expectEqualStrings("", ui_settings.elideLeft(ui, long, 0));
 }
 
 test "number rows: → steps the right panel width, writes it, and the config seeds the slot" {

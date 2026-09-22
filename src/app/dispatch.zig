@@ -1313,22 +1313,28 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
                 },
             }
         },
-        .picker => |*p| switch (try Picker.handleKey(&p.state, gpa, k, p.filtered.items.len)) {
-            .consumed => cmd_picker.preview(app),
-            // The icon picker's Ctrl+C (the codepoint) before the keymap.
-            .ignored => if (!(p.kind == .icon_glyphs and try icon_picker.chord(app, k))) try widgetFallthrough(app, k),
-            .cancel => {
-                cmd_picker.cancel(app);
-                closeOverlay(app);
-            },
-            .changed => {
-                try refilterPicker(app);
-                @import("../scripting/api.zig").noteQueryChanged(app, app.now_ms);
-                @import("grep_picker.zig").noteQueryChanged(app, app.now_ms);
-                cmd_picker.preview(app);
-            },
-            .accept => |i| try cmd_picker.accept(app, i),
-            .toggle => |i| cmd_picker.toggleMark(app, i),
+        .picker => |*p| {
+            // // changed (quickopen-prefixes): `>` `@` `:` `?` as the
+            // FIRST character of quick open's query are VS Code's four
+            // modes, not a filename.
+            if (k.typed()) |c| if (c < 0x80 and try cmd_picker.quickOpenPrefix(app, &[_]u8{@intCast(c)})) return;
+            switch (try Picker.handleKey(&p.state, gpa, k, p.filtered.items.len)) {
+                .consumed => cmd_picker.preview(app),
+                // The icon picker's Ctrl+C (the codepoint) before the keymap.
+                .ignored => if (!(p.kind == .icon_glyphs and try icon_picker.chord(app, k))) try widgetFallthrough(app, k),
+                .cancel => {
+                    cmd_picker.cancel(app);
+                    closeOverlay(app);
+                },
+                .changed => {
+                    try refilterPicker(app);
+                    @import("../scripting/api.zig").noteQueryChanged(app, app.now_ms);
+                    @import("grep_picker.zig").noteQueryChanged(app, app.now_ms);
+                    cmd_picker.preview(app);
+                },
+                .accept => |i| try cmd_picker.accept(app, i),
+                .toggle => |i| cmd_picker.toggleMark(app, i),
+            }
         },
         .settings => try settings_app.key(app, k),
         .wizard => try first_launch.key(app, k),
@@ -1634,6 +1640,10 @@ pub fn paste(app: *App, text: []const u8) Allocator.Error!void {
     switch (app.overlay) {
         .prompt => |*p| return Prompt.paste(&p.state, app.gpa, text),
         .picker => |*p| {
+            // // changed (quickopen-prefixes): a paste that STARTS with
+            // one of quick open's four prefixes switches mode and
+            // carries the rest in as the query.
+            if (try cmd_picker.quickOpenPrefix(app, text)) return;
             try Picker.paste(&p.state, app.gpa, text);
             return refilterPicker(app);
         },
@@ -1732,7 +1742,15 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 closeOverlay(app);
                 return;
             },
-            .settings => if (target != .overlay_item and target != .scrollbar) settings_app.close(app),
+            // // changed (settings-reset-confirm): while the ask is up a
+            // press off it answers "no" rather than saving and closing
+            // the whole box.
+            .settings => |*st| if (target != .overlay_item and target != .scrollbar) {
+                if (st.ui.confirm != null) {
+                    st.ui.confirm = null;
+                    app.needs_render = true;
+                } else settings_app.close(app);
+            },
             .picker => if (target != .overlay_item and target != .scrollbar) {
                 cmd_picker.cancel(app);
                 closeOverlay(app);

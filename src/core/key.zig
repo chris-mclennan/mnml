@@ -61,6 +61,28 @@ pub const Key = struct {
         return .{ .code = code };
     }
 
+    /// The one spelling of a shifted Tab. A terminal never sends
+    /// `.tab` with shift: it reports its own back-tab code and drops the
+    /// modifier, and `tui/loop.zig`'s `translateKey` folds vaxis's form
+    /// the same way. So every other spelling — `shift+tab`, `<S-Tab>`,
+    /// `ctrl+shift+tab`, `shift+backtab` — folds onto `.backtab` here,
+    /// and a key spec can no longer name a key no terminal will send.
+    pub fn canonical(k: Key) Key {
+        var mods = k.mods;
+        const code: KeyCode = switch (k.code) {
+            .tab => if (mods.shift) blk: {
+                mods.shift = false;
+                break :blk .backtab;
+            } else .tab,
+            .backtab => blk: {
+                mods.shift = false;
+                break :blk .backtab;
+            },
+            else => k.code,
+        };
+        return .{ .code = code, .mods = mods };
+    }
+
     /// The character this key would type, if any: a plain or shift-only
     /// char. `ctrl+a` types nothing.
     pub fn typed(k: Key) ?u21 {
@@ -76,7 +98,8 @@ pub const Chord = struct {
     code: KeyCode,
     mods: Mods,
 
-    pub fn of(k: Key) Chord {
+    pub fn of(k_in: Key) Chord {
+        const k = k_in.canonical();
         var mods = k.mods;
         const code: KeyCode = switch (k.code) {
             .char => |c| if (c >= 'A' and c <= 'Z') blk: {

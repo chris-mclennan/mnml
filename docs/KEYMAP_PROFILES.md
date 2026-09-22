@@ -221,6 +221,46 @@ reference editor's popup, which has neither (`docs/PARITY.md`).
   ctrl table), and `ctrl+tab` does on every terminal. The choice follows
   NvChad because that is what a vim user's hands expect on `Tab`.
 
+## A shifted Tab has one spelling
+
+No terminal sends Tab with a shift modifier: it sends its own back-tab
+code and drops the modifier, and `tui/loop.zig`'s `translateKey` folds
+vaxis's form the same way. So `Key.canonical` (`src/core/key.zig`) is the
+one place the spelling is settled, and `keymap.parseKeySpec` goes through
+it — `shift+tab`, `<S-Tab>`, `shift+backtab` and `backtab` are one chord,
+and `ctrl+shift+tab` is `ctrl+backtab`. That holds for the spec table, a
+`[keys.*]` line in the config, a `.test` script's `key` directive and the
+IPC `key` verb alike, so a script can no longer synthesise a key a
+terminal never sends. Before it did, and `buffer.prev` was dead on
+`Ctrl+Shift+Tab` and on NvChad's `<S-Tab>` in every terminal while the
+corpus reported it working.
+
+## Quick open's prefixes — and the non-kitty route to the palette
+
+`Ctrl+P` opens *Open file*, and the FIRST character typed picks a mode,
+the way VS Code's one quick-open widget does:
+
+| prefix | mode |
+|---|---|
+| `>` | the command palette, with the rest of what you type as its query |
+| `@` | the symbols of the active buffer (`lsp.symbols`) |
+| `:` | go to line — `:12`, or `:12:4` for a column |
+| `?` | the list of these four; a row is a way into its mode |
+
+Only a **leading** prefix counts, so `src/a>b.txt` stays a path.
+
+`>` is load-bearing rather than decorative. `palette` is bound to
+`ctrl+shift+p` and nothing else, and a terminal without the kitty
+keyboard protocol cannot tell `Ctrl+Shift+P` from `Ctrl+P` — both are
+byte `0x10` — so on Terminal.app, Alacritty's default config or plain
+tmux without passthrough, `Ctrl+Shift+P` arrives as `ctrl+p` and opens
+the file picker. `>` there is the door to every command that has no
+chord of its own (`view.focus_dock`, `view.dock_cycle_mode`,
+`editor.highlight_this_file`, `view.reveal_in_tree`, …). `keys.doctor`
+does not probe this family — its `Probe` set is
+`{ ctrl_right, alt_right, cmd_right, end }` — so nothing tells the user;
+`>` is what makes that survivable.
+
 ## Known tension to resolve in Phase 1
 
 - `ctrl+h` / `ctrl+j` are on the vim side as NvChad window nav (rule 5 of the

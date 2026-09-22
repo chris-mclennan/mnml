@@ -1,0 +1,29 @@
+# width: 120
+# height: 40
+# daily: the Settings overlay names the focused row's destination file
+# in its title — a genuinely good idea in an app that splits settings
+# between a workspace file and a home file. A workspace-scope row got
+# the tidy relative form (`→ .mnml/config.zon`); a home-scope row got
+# the RAW ABSOLUTE path, which the box then chopped mid-path with no
+# ellipsis, so the one thing the title exists to say — which file this
+# row writes — is the part that got cut
+# (hunt/findings-2026-09-21/daily-settings-title-truncated.md).
+#
+# `$HOME` reads as `~` now, and a subtitle that still does not fit is
+# cut from the LEFT so the file name survives.
+write a.txt "alpha\n"
+open a.txt
+command view.settings
+# A workspace-scope row: the title names the file, and it fits.
+expect screen contains "Settings · → .mnml/config.zon"
+
+# A home-scope row. `Launcher dock edge` is `ui.dock.edge`, home scope.
+key /
+type "dock edge"
+key enter
+expect screen contains "▸ Launcher dock edge:"
+# The title still ends in the file it writes, whatever the path's head
+# had to give up to fit.
+expect screen contains "config.zon"
+expect screen contains "Settings · → "
+key esc

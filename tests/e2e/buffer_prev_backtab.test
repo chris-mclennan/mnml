@@ -1,0 +1,64 @@
+# width: 120
+# height: 40
+# Ctrl+Shift+Tab is "previous editor" in VS Code and `buffer.prev`
+# claims it in both profiles (`src/commands/specs.zig`). A terminal
+# never sends `.tab` with shift, though: it sends its own back-tab code
+# with the modifier dropped, and `tui/loop.zig`'s `translateKey` folds
+# vaxis's form the same way. The spec parser used to build `.tab` +
+# ctrl + shift, so the binding could not fire on any terminal — and the
+# corpus could not see it, because a `.test` `key ctrl+shift+tab` went
+# through `parseKeySpec` and synthesised the key a terminal never sends
+# (hunt/findings-2026-09-21/kbd-ctrl-shift-tab-dead.md).
+#
+# `Key.canonical` is now the one place a shifted Tab is spelled, and
+# `parseKeySpec` goes through it — so the two spellings below are the
+# same chord, and both are the one the terminal delivers.
+write a.txt "alpha\n"
+write b.txt "bravo\n"
+write c.txt "charlie\n"
+open a.txt
+open b.txt
+open c.txt
+expect pane "c.txt"
+
+# Ctrl+Tab is fine — an unshifted Tab survives `translateKey` intact —
+# so this is not "the harness cannot send a ctrl chord".
+key ctrl+tab
+expect pane "b.txt"
+key ctrl+tab
+expect pane "c.txt"
+
+# The chord a VS Code user reaches for, as the terminal sends it.
+key ctrl+backtab
+expect pane "b.txt"
+# …and as the spec spells it. Same chord now, so it walks on.
+key ctrl+shift+tab
+expect pane "a.txt"
+# Wrapping back round proves it is `buffer.prev` and not a one-shot.
+key ctrl+backtab
+expect pane "c.txt"
+
+# The vim profile's NvChad `<S-Tab>` bufferline-prev, revived by the
+# same fold: bare backtab, no modifier.
+command editor.use_vim
+key backtab
+expect pane "b.txt"
+key shift+tab
+expect pane "a.txt"
+command editor.use_standard
+
+# The Settings overlay is the same hole seen from the other side: it
+# reads `.backtab` for "previous section", so before the fold a script's
+# `shift+tab` stepped the section FORWARD. Both spellings step back now.
+command view.settings
+expect screen contains "UI · Editor · AI · Integrations · Reset"
+expect screen contains "▸ Line numbers:"
+key tab
+expect screen contains "▸ Input style:"
+key shift+tab
+expect screen contains "▸ Line numbers:"
+key tab
+expect screen contains "▸ Input style:"
+key backtab
+expect screen contains "▸ Line numbers:"
+key esc

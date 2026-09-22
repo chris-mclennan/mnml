@@ -37,6 +37,7 @@ const overlay = @import("overlay.zig");
 const scrollbar = @import("scrollbar.zig");
 const text_field = @import("text_field.zig");
 const filter_input = @import("filter_input.zig");
+const confirm_ui = @import("confirm.zig");
 const ids = @import("../core/ids.zig");
 const key_mod = @import("../core/key.zig");
 
@@ -167,6 +168,10 @@ pub const State = struct {
     /// // changed (settings-search): `/` (and Ctrl+F in the standard
     /// profile) opens this.
     filter: Filter = .{},
+    /// // changed (settings-reset-confirm): the "reset everything?" box,
+    /// painted over the list while it is up and holding every key. Its
+    /// strings are static, so there is nothing to free.
+    confirm: ?confirm_ui.State = null,
 
     pub fn deinit(s: *State, gpa: Allocator) void {
         s.filter.deinit(gpa);
@@ -178,6 +183,18 @@ pub const State = struct {
     pub fn openFilter(s: *State) void {
         s.filter.open = true;
         s.filter.focused = true;
+    }
+
+    /// // changed (settings-reset-confirm): `R`, and the Reset section's
+    /// action row, ask before they throw away every setting. Cancel is
+    /// focused, so Enter on reflex is the harmless answer.
+    pub fn askResetAll(s: *State) void {
+        s.confirm = .{
+            .title = reset_confirm_title,
+            .message = reset_confirm_message,
+            .choices = &reset_confirm_choices,
+            .selected = 1,
+        };
     }
 
     /// Move the cursor onto a focusable item (the first at or after it).
@@ -465,6 +482,23 @@ pub const KeyOpts = struct {
     /// The standard profile binds Ctrl+F to the filter too (VS Code's
     /// habit); vim gets `/` alone.
     ctrl_f: bool = false,
+    /// // changed (settings-typeahead): the standard profile's box is
+    /// type-to-filter, the way VS Code's settings screen is — a
+    /// printable key that is not one of the documented controls opens
+    /// the pill and goes into the query. The vim profile keeps its
+    /// `h j k l r R q g G [ ]` set, which is what a vim user expects
+    /// and what the family convention documents.
+    typeahead: bool = false,
+};
+
+/// // changed (settings-reset-confirm): the reset-everything box. Static
+/// strings — the state that holds them lives in `State.confirm`, which
+/// therefore needs no deinit.
+pub const reset_confirm_title = "Reset settings";
+pub const reset_confirm_message = "  Reset every setting to its default?";
+const reset_confirm_choices = [_]confirm_ui.Choice{
+    .{ .key = 'r', .label = "Reset" },
+    .{ .key = 'c', .label = "Cancel" },
 };
 
 /// The filter pill's keys, while it has them. Esc clears and hands the
@@ -500,12 +534,32 @@ fn filterKey(s: *State, key: Key, items: []const Item, opts: KeyOpts) Allocator.
     };
 }
 
-/// ←→ / h l adjust · ↑↓ / j k move · `]` / `[` (Tab / Shift-Tab) next
-/// and previous section · g / G top and bottom · r reset the row ·
-/// R reset all · `/` filter · Enter save · Esc cancel (a live filter
-/// first) · Home/End/PgUp/PgDn move further.
+/// ←→ adjust · ↑↓ move · Tab / Shift-Tab next and previous section ·
+/// `/` filter · Ctrl+R reset the focused row · Enter save · Esc cancel
+/// (a live filter first) · Home/End/PgUp/PgDn move further.
+///
+/// The vim profile adds its own letters on top: `h l` adjust, `j k`
+/// move, `[` `]` section, `g G` the ends, `r` reset the row, `R` reset
+/// all, `q` save. // changed (settings-typeahead): the standard
+/// profile has none of them — there every other printable key opens
+/// the filter pill and goes into the query, because that is what a VS
+/// Code user's hands do on a settings screen, and because a `q` that
+/// silently saved and closed dropped the rest of the word into the
+/// buffer underneath.
 pub fn handleKey(s: *State, key: Key, items: []const Item, opts: KeyOpts) Allocator.Error!Outcome {
     s.settle(items);
+    // // changed (settings-reset-confirm): the box on top owns the keys.
+    if (s.confirm) |*c| switch (confirm_ui.handleKey(c, key)) {
+        .consumed => return .consumed,
+        .cancel => {
+            s.confirm = null;
+            return .consumed;
+        },
+        .choose => |i| {
+            s.confirm = null;
+            return if (i == 0) .reset_all else .consumed;
+        },
+    };
     if (s.filter.focused) if (try filterKey(s, key, items, opts)) |o| return o;
     const page: isize = @intCast(@max(1, s.rows));
     switch (key.code) {
@@ -532,12 +586,28 @@ pub fn handleKey(s: *State, key: Key, items: []const Item, opts: KeyOpts) Alloca
         .page_up => s.moveBy(items, -page),
         .page_down => s.moveBy(items, page),
         .char => |c| {
-            if (key.mods.ctrl or key.mods.alt) {
-                if (opts.ctrl_f and key.mods.ctrl and !key.mods.alt and (c == 'f' or c == 'F')) s.openFilter();
+            if (key.mods.ctrl or key.mods.alt or key.mods.super) {
+                if (key.mods.ctrl and !key.mods.alt and !key.mods.super) {
+                    if (opts.ctrl_f and (c == 'f' or c == 'F')) s.openFilter();
+                    // The reset that is reachable without a letter, so
+                    // the type-to-filter box still has one.
+                    if (c == 'r' or c == 'R') return resetFocused(s, items);
+                }
                 return .consumed;
             }
+            // `/` is the family's filter chord in both profiles, and it
+            // is the one printable the standard box does not type: a
+            // query cannot begin with a slash, which no setting's label
+            // does either.
+            if (c == '/') {
+                s.openFilter();
+                return .consumed;
+            }
+            // Space stays the row's toggle in both profiles — a leading
+            // space matches nothing, so it is no loss as a query.
+            if (c == ' ') return if (s.cursor < items.len and items[s.cursor] == .action) .{ .activate = s.cursor } else adjustFocused(s, items, 1);
+            if (opts.typeahead) return try typeInto(s, c, opts);
             switch (c) {
-                '/' => s.openFilter(),
                 'k' => s.move(items, -1),
                 'j' => s.move(items, 1),
                 'h' => return adjustFocused(s, items, -1),
@@ -546,9 +616,11 @@ pub fn handleKey(s: *State, key: Key, items: []const Item, opts: KeyOpts) Alloca
                 '[' => s.jumpSection(items, -1),
                 'g' => s.toTop(items),
                 'G' => s.toBottom(items),
-                ' ' => return if (s.cursor < items.len and items[s.cursor] == .action) .{ .activate = s.cursor } else adjustFocused(s, items, 1),
-                'r' => return if (s.cursor < items.len and items[s.cursor] == .row) .{ .reset_row = s.cursor } else .consumed,
-                'R' => return .reset_all,
+                'r' => return resetFocused(s, items),
+                'R' => {
+                    s.askResetAll();
+                    return .consumed;
+                },
                 'q' => return .save,
                 else => {},
             }
@@ -556,6 +628,21 @@ pub fn handleKey(s: *State, key: Key, items: []const Item, opts: KeyOpts) Alloca
         else => {},
     }
     return .consumed;
+}
+
+/// // changed (settings-typeahead): a printable key in the standard
+/// profile opens the pill and extends the query, so the box behaves the
+/// way a search field does from the first keystroke.
+fn typeInto(s: *State, c: u21, opts: KeyOpts) Allocator.Error!Outcome {
+    var buf: [4]u8 = undefined;
+    const n = std.unicode.utf8Encode(c, &buf) catch return .consumed;
+    s.openFilter();
+    try s.filter.insert(opts.gpa, buf[0..n]);
+    return .refilter;
+}
+
+fn resetFocused(s: *State, items: []const Item) Outcome {
+    return if (s.cursor < items.len and items[s.cursor] == .row) .{ .reset_row = s.cursor } else .consumed;
 }
 
 fn adjustFocused(s: *State, items: []const Item, delta: i8) Outcome {
@@ -582,6 +669,27 @@ pub const hint_text_search = "←→ adjust · ↑↓ move · / search · r/R re
 /// key nobody has to be told, and `/` is the one nobody guesses.
 pub const hint_text_search_tight = "←→ adjust · / search · r/R reset · Enter save · Esc cancel";
 pub const hint_text_tight = "←→ adjust · r/R reset · Enter save · Esc cancel";
+
+/// // changed (settings-typeahead): the standard profile's five, in the
+/// same descending order. They advertise what actually works there —
+/// no letter commands, the sections on Tab rather than `[ ]`, typing
+/// as the search, and `ctrl+r` as the reset that needs no letter.
+pub const std_hint_sections = "←→ adjust · ↑↓ move · Tab section · type to search · ctrl+r reset · Enter save · Esc cancel";
+pub const std_hint_search = "←→ adjust · ↑↓ move · type to search · ctrl+r reset · Enter save · Esc cancel";
+pub const std_hint_search_tight = "←→ adjust · type to search · ctrl+r reset · Enter save · Esc cancel";
+pub const std_hint = "←→ adjust · ↑↓ move · ctrl+r reset · Enter save · Esc cancel";
+pub const std_hint_tight = "←→ adjust · ctrl+r reset · Enter save · Esc cancel";
+
+/// // changed (settings-filter-hint): the box has TWO key states and
+/// used to paint one footer for both. While the filter field has the
+/// keys, `←→` move the text caret and Enter only hands the list back —
+/// so a reader who took the list's `←→ adjust · … · Enter save` at its
+/// word changed nothing, silently. These four are what the FIELD does,
+/// and they are the same in both profiles because the field is.
+pub const filter_hint = "type to filter · ←→ caret · ↑↓ move · Enter to the list · Esc clears";
+pub const filter_hint_move = "←→ caret · ↑↓ move · Enter to the list · Esc clears";
+pub const filter_hint_tight = "←→ caret · Enter to the list · Esc clears";
+pub const filter_hint_tightest = "Enter to the list · Esc clears";
 pub const max_width: u16 = 84;
 pub const min_width: u16 = 40;
 /// A row with more choices than this paints `[current] ‹ i/n ›` instead
@@ -594,7 +702,12 @@ pub const max_listed_options: usize = 6;
 /// click still jumps), the footer counts against it, and so does the
 /// box's own geometry, so the box does not breathe as a query narrows
 /// the rows under it. Empty means "the same list".
-pub const DrawOpts = struct { all: []const Item = &.{} };
+pub const DrawOpts = struct {
+    all: []const Item = &.{},
+    /// // changed (settings-typeahead): the standard profile's footer,
+    /// which advertises a different set because a different set works.
+    typeahead: bool = false,
+};
 
 /// Paint the box. `subtitle` (the focused row's target file, say) joins
 /// the title: `Settings · → .mnml/config.zon`. Rows scroll to keep the
@@ -648,7 +761,16 @@ pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item, subtitle: ?[]con
     // inside it rather than resizing it.
     const pill_rows: usize = if (s.filter.open) 1 else 0;
     const want_h: u16 = @intCast(@min(@as(usize, cap_h), all.len + 5 + pill_rows));
-    const full_title = if (subtitle) |sub| ui.fmt("{s} · {s}", .{ title, sub }) else title;
+    // // changed (settings-title-path): the subtitle is the focused
+    // row's destination file and the name is what it is for, so it is
+    // cut from the LEFT when the box is too narrow — the border clips
+    // from the right, which threw the name away.
+    const full_title = if (subtitle) |sub| blk: {
+        // The `→` stays put: it is what says the rest is a destination.
+        const arrow: []const u8 = if (std.mem.startsWith(u8, sub, "→ ")) "→ " else "";
+        const room = (w -| 4) -| ui.width(title) -| ui.width(" · ") -| ui.width(arrow);
+        break :blk ui.fmt("{s} · {s}{s}", .{ title, arrow, elideLeft(ui, sub[arrow.len..], room) });
+    } else title;
     const box_rect = overlay.place(area, w, want_h, .center);
     const inner = overlay.frame(ui, box_rect, full_title);
     if (inner.isEmpty() or inner.h < 2) return null;
@@ -815,8 +937,37 @@ pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item, subtitle: ?[]con
         _ = ui.putStr(foot.x + 1, foot.y, room, p, Theme.onBg(t.accent, bg));
         hint_room = room -| (ui.width(p) + 2);
     }
-    if (hint_room >= 10) _ = ui.putStrRight(foot.right() -| 1, foot.y, hint_room, ui.clipStr(hintFor(ui, hint_room), hint_room), hint_style);
+    if (hint_room >= 10) _ = ui.putStrRight(foot.right() -| 1, foot.y, hint_room, ui.clipStr(hintFor(ui, hint_room, opts.typeahead, s.filter.focused), hint_room), hint_style);
+    // // changed (settings-reset-confirm): the ask goes on top of the
+    // box, last, so its choices are the hits a click lands on and the
+    // caret is not left blinking in a pill that no longer has the keys.
+    if (s.confirm) |*c| {
+        confirm_ui.draw(ui, area, c);
+        return null;
+    }
     return caret;
+}
+
+/// // changed (settings-title-path): `s` cut to `max` cells from the
+/// LEFT — `…/mnml/config.zon`. The box's title carries the focused
+/// row's destination file, and the FILE NAME is the fact it exists to
+/// carry ("did I just change this project, or every project?"). The
+/// border clips from the right, so a long absolute path lost exactly
+/// that half; this keeps the tail and drops the head.
+pub fn elideLeft(ui: Ui, s: []const u8, max: u16) []const u8 {
+    if (max == 0) return "";
+    if (ui.fitsIn(s, max)) return s;
+    const mark: []const u8 = if (ui.ascii) "..." else "…";
+    const budget = max -| @as(u16, if (ui.ascii) 3 else 1);
+    if (budget == 0) return mark;
+    var i: usize = s.len;
+    while (i > 0) {
+        var j = i - 1;
+        while (j > 0 and (s[j] & 0xc0) == 0x80) j -= 1;
+        if (!ui.fitsIn(s[j..], budget)) break;
+        i = j;
+    }
+    return ui.fmt("{s}{s}", .{ mark, s[i..] });
 }
 
 /// The family filter pill, in the box instead of on a panel: a cell of
@@ -849,12 +1000,34 @@ const hint_text_sections_ascii = "<- -> adjust - up/down move - [ ] section - / 
 const hint_text_search_ascii = "<- -> adjust - up/down move - / search - r/R reset - Enter save - Esc cancel";
 const hint_text_search_tight_ascii = "<- -> adjust - / search - r/R reset - Enter save - Esc cancel";
 const hint_text_tight_ascii = "<- -> adjust - r/R reset - Enter save - Esc cancel";
+const std_hint_sections_ascii = "<- -> adjust - up/down move - Tab section - type to search - ctrl+r reset - Enter save - Esc cancel";
+const std_hint_search_ascii = "<- -> adjust - up/down move - type to search - ctrl+r reset - Enter save - Esc cancel";
+const std_hint_search_tight_ascii = "<- -> adjust - type to search - ctrl+r reset - Enter save - Esc cancel";
+const std_hint_ascii = "<- -> adjust - up/down move - ctrl+r reset - Enter save - Esc cancel";
+const std_hint_tight_ascii = "<- -> adjust - ctrl+r reset - Enter save - Esc cancel";
+const filter_hint_ascii = "type to filter - <- -> caret - up/down move - Enter to the list - Esc clears";
+const filter_hint_move_ascii = "<- -> caret - up/down move - Enter to the list - Esc clears";
+const filter_hint_tight_ascii = "<- -> caret - Enter to the list - Esc clears";
+const filter_hint_tightest_ascii = "Enter to the list - Esc clears";
 
 /// The widest of the five hints that fits `room`, in descending width.
 /// Below the tightest the caller clips — and the tight form ends in
 /// `Esc cancel`, so what survives a clip is still the way out.
-pub fn hintFor(ui: Ui, room: u16) []const u8 {
-    const forms = if (ui.ascii)
+pub fn hintFor(ui: Ui, room: u16, typeahead: bool, filtering: bool) []const u8 {
+    if (filtering) {
+        const ff = if (ui.ascii)
+            [_][]const u8{ filter_hint_ascii, filter_hint_move_ascii, filter_hint_tight_ascii, filter_hint_tightest_ascii }
+        else
+            [_][]const u8{ filter_hint, filter_hint_move, filter_hint_tight, filter_hint_tightest };
+        for (ff) |f| if (ui.width(f) <= room) return f;
+        return ff[ff.len - 1];
+    }
+    const forms = if (typeahead)
+        (if (ui.ascii)
+            [_][]const u8{ std_hint_sections_ascii, std_hint_search_ascii, std_hint_search_tight_ascii, std_hint_ascii, std_hint_tight_ascii }
+        else
+            [_][]const u8{ std_hint_sections, std_hint_search, std_hint_search_tight, std_hint, std_hint_tight })
+    else if (ui.ascii)
         [_][]const u8{ hint_text_sections_ascii, hint_text_search_ascii, hint_text_search_tight_ascii, hint_text_ascii, hint_text_tight_ascii }
     else
         [_][]const u8{ hint_text_sections, hint_text_search, hint_text_search_tight, hint_text, hint_text_tight };
@@ -1167,6 +1340,44 @@ test "the wheel slides the window and carries the cursor with it" {
     try testing.expect(items[s.cursor].focusable());
 }
 
+test "// changed (settings-typeahead): in the standard profile every printable key is the query, not a command" {
+    var s: State = .{};
+    defer s.deinit(testing.allocator);
+    const items = sample();
+    const std_opts: KeyOpts = .{ .gpa = testing.allocator, .ctrl_f = true, .typeahead = true };
+    // `quit` — the query a VS Code user types for the Confirm-on-quit
+    // row. Before, `q` saved and closed and `uit` fell into the buffer
+    // underneath (hunt/findings-2026-09-21/kbd-settings-typeahead.md).
+    for ("quit") |c| try testing.expect(try handleKey(&s, Key.char(c), &items, std_opts) == .refilter);
+    try testing.expectEqualStrings("quit", s.filter.text());
+    try testing.expect(s.filter.focused);
+    s.filter.clear();
+    // The letters that were commands are now just letters.
+    for ("hjklrRgG[]") |c| {
+        const out = try handleKey(&s, Key.char(c), &items, std_opts);
+        try testing.expect(out == .refilter);
+        try testing.expect(s.confirm == null);
+    }
+    try testing.expectEqualStrings("hjklrRgG[]", s.filter.text());
+    s.filter.clear();
+    // The controls that stay: the arrows adjust and move, Tab steps a
+    // section, Ctrl+R resets the focused row, Enter saves, Esc cancels.
+    s.cursor = 3;
+    try testing.expectEqual(@as(i8, 1), (try handleKey(&s, Key.named(.right), &items, std_opts)).adjust.delta);
+    try testing.expectEqual(@as(i8, -1), (try handleKey(&s, Key.named(.left), &items, std_opts)).adjust.delta);
+    try testing.expectEqual(@as(usize, 3), (try handleKey(&s, Key.ctrl('r'), &items, std_opts)).reset_row);
+    try testing.expect(try handleKey(&s, Key.named(.backtab), &items, std_opts) == .consumed);
+    try testing.expectEqual(@as(usize, 1), s.cursor);
+    try testing.expect(try handleKey(&s, Key.named(.tab), &items, std_opts) == .consumed);
+    try testing.expectEqual(@as(usize, 3), s.cursor);
+    try testing.expect(try handleKey(&s, Key.named(.enter), &items, std_opts) == .save);
+    try testing.expect(try handleKey(&s, Key.named(.esc), &items, std_opts) == .cancel);
+    // `/` is still the family's filter chord rather than a query byte.
+    try testing.expect(try handleKey(&s, Key.char('/'), &items, std_opts) == .consumed);
+    try testing.expectEqualStrings("", s.filter.text());
+    try testing.expect(s.filter.focused);
+}
+
 test "keys: move skips headers, adjust/reset/save/cancel come back as outcomes" {
     var s: State = .{};
     const items = sample();
@@ -1175,7 +1386,23 @@ test "keys: move skips headers, adjust/reset/save/cancel come back as outcomes" 
     try testing.expectEqual(@as(i8, 1), (try tkey(&s, Key.named(.right), &items)).adjust.delta);
     try testing.expectEqual(@as(i8, -1), (try tkey(&s, Key.char('h'), &items)).adjust.delta);
     try testing.expectEqual(@as(usize, 3), (try tkey(&s, Key.char('r'), &items)).reset_row);
-    try testing.expect(try tkey(&s, Key.char('R'), &items) == .reset_all);
+    // // changed (settings-reset-confirm): `R` raises the ask; Cancel
+    // is focused, so Enter on reflex is the harmless answer and only
+    // the Reset choice comes back as `.reset_all`.
+    try testing.expect(try tkey(&s, Key.char('R'), &items) == .consumed);
+    try testing.expect(s.confirm != null);
+    try testing.expectEqual(@as(usize, 1), s.confirm.?.selected);
+    try testing.expect(try tkey(&s, Key.named(.enter), &items) == .consumed);
+    try testing.expect(s.confirm == null);
+    try testing.expect(try tkey(&s, Key.char('R'), &items) == .consumed);
+    try testing.expect(try tkey(&s, Key.named(.esc), &items) == .consumed);
+    try testing.expect(s.confirm == null);
+    try testing.expect(try tkey(&s, Key.char('R'), &items) == .consumed);
+    try testing.expect(try tkey(&s, Key.char('r'), &items) == .reset_all);
+    try testing.expect(s.confirm == null);
+    // Ctrl+R is the reset that needs no letter — it is what the
+    // standard profile's footer advertises, and it works in both.
+    try testing.expectEqual(@as(usize, 3), (try tkey(&s, Key.ctrl('r'), &items)).reset_row);
     try testing.expect(try tkey(&s, Key.named(.enter), &items) == .save);
     try testing.expect(try tkey(&s, Key.named(.esc), &items) == .cancel);
     _ = try tkey(&s, Key.char('j'), &items);
@@ -1410,12 +1637,38 @@ test "the footer carries the position, in the long form when the hint leaves roo
     // The hint shrinks in four named steps and always ends in the way
     // out. `/ search` rides the two widest forms, so the key is on
     // screen wherever the footer can carry it.
-    try testing.expectEqualStrings(hint_text_sections, hintFor(ui, ui.width(hint_text_sections)));
-    try testing.expectEqualStrings(hint_text_search, hintFor(ui, ui.width(hint_text_sections) - 1));
-    try testing.expectEqualStrings(hint_text_search_tight, hintFor(ui, ui.width(hint_text_search) - 1));
-    try testing.expectEqualStrings(hint_text, hintFor(ui, ui.width(hint_text)));
-    try testing.expectEqualStrings(hint_text_tight, hintFor(ui, ui.width(hint_text) - 1));
-    try testing.expectEqualStrings(hint_text_tight, hintFor(ui, 0));
+    try testing.expectEqualStrings(hint_text_sections, hintFor(ui, ui.width(hint_text_sections), false, false));
+    try testing.expectEqualStrings(hint_text_search, hintFor(ui, ui.width(hint_text_sections) - 1, false, false));
+    try testing.expectEqualStrings(hint_text_search_tight, hintFor(ui, ui.width(hint_text_search) - 1, false, false));
+    try testing.expectEqualStrings(hint_text, hintFor(ui, ui.width(hint_text), false, false));
+    try testing.expectEqualStrings(hint_text_tight, hintFor(ui, ui.width(hint_text) - 1, false, false));
+    try testing.expectEqualStrings(hint_text_tight, hintFor(ui, 0, false, false));
+    // // changed (settings-typeahead): the standard profile's own five,
+    // which never name a letter command the box no longer has.
+    try testing.expectEqualStrings(std_hint_sections, hintFor(ui, ui.width(std_hint_sections), true, false));
+    try testing.expectEqualStrings(std_hint_search, hintFor(ui, ui.width(std_hint_sections) - 1, true, false));
+    try testing.expectEqualStrings(std_hint_search_tight, hintFor(ui, ui.width(std_hint_search) - 1, true, false));
+    try testing.expectEqualStrings(std_hint, hintFor(ui, ui.width(std_hint), true, false));
+    try testing.expectEqualStrings(std_hint_tight, hintFor(ui, ui.width(std_hint) - 1, true, false));
+    try testing.expectEqualStrings(std_hint_tight, hintFor(ui, 0, true, false));
+    for ([_][]const u8{ std_hint_sections, std_hint_search, std_hint_search_tight, std_hint, std_hint_tight }) |form| {
+        try testing.expect(std.mem.indexOf(u8, form, "r/R") == null);
+        try testing.expect(std.mem.indexOf(u8, form, "ctrl+r reset") != null);
+    }
+    // // changed (settings-filter-hint): while the field has the keys
+    // the footer is the FIELD's, in either profile — it never promises
+    // `adjust` or `save`, neither of which the arrows or Enter do there.
+    try testing.expectEqualStrings(filter_hint, hintFor(ui, ui.width(filter_hint), false, true));
+    try testing.expectEqualStrings(filter_hint, hintFor(ui, ui.width(filter_hint), true, true));
+    try testing.expectEqualStrings(filter_hint_move, hintFor(ui, ui.width(filter_hint) - 1, true, true));
+    try testing.expectEqualStrings(filter_hint_tight, hintFor(ui, ui.width(filter_hint_move) - 1, true, true));
+    try testing.expectEqualStrings(filter_hint_tightest, hintFor(ui, ui.width(filter_hint_tight) - 1, true, true));
+    try testing.expectEqualStrings(filter_hint_tightest, hintFor(ui, 0, false, true));
+    for ([_][]const u8{ filter_hint, filter_hint_move, filter_hint_tight, filter_hint_tightest }) |form| {
+        try testing.expect(std.mem.indexOf(u8, form, "adjust") == null);
+        try testing.expect(std.mem.indexOf(u8, form, "save") == null);
+        try testing.expect(std.mem.indexOf(u8, form, "Esc clears") != null);
+    }
     try testing.expect(std.mem.indexOf(u8, hint_text_sections, "/ search") != null);
     try testing.expect(std.mem.indexOf(u8, hint_text_search, "/ search") != null);
     try testing.expect(std.mem.indexOf(u8, hint_text_search_tight, "/ search") != null);

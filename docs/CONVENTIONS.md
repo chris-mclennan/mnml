@@ -203,6 +203,24 @@ The rules they share:
   words' run, because the row's own centre is the workspace chip's and
   the chip never hides.
 
+## A command that reads a painter's state must be able to compute it
+
+The file tree's row list is built by its own painter: `Tree.draw` scans
+once and latches `loaded`. Anything that only PAINTS is fine with that.
+A **command** that reads `app.tree.rows` is not — it can run before any
+scan has found anything, and then it reports an empty tree rather than
+doing its job. That is how `view.context_menu_at_focus` (Shift+F10) came
+to toast `no tree row under the cursor` headless while working in the
+live app: in a `.test` the app starts before the script's `write` steps
+land, so the one scan sees an empty workspace and nothing re-scans.
+
+The rule: a command that reads state a frame produces **computes it
+first** rather than failing on its absence (here, a scan when the row
+list is empty). A behaviour that differs between the live app and a
+headless script is a bug in the app, not a fact about the harness —
+and it is the shape that makes a hunt's findings untrustworthy in both
+directions.
+
 ## The settings overlay — the family idiom (`src/ui/settings.zig`)
 
 mnml and mixr each own their settings UI; there is no shared crate, so
@@ -214,11 +232,40 @@ the idiom is written down instead. A settings screen is:
 - One row per setting: `▸ <label>:  [active] / other1 / other2  *` — `▸`
   is focus, `[brackets]` the current choice, `*` modified from the
   shipped default. The labels pad so the colons line up.
-- Keys: `←→` / `h l` adjust · `↑↓` / `j k` move · `/` filter (Ctrl+F
-  too in the standard profile) · `r` reset the row · `R` reset all ·
-  Enter save + close · Esc cancel (back to the opened-state config,
-  including the bytes of every file written since) — a live filter
-  first, see below.
+- Keys, in **both** profiles: `←→` adjust · `↑↓` move · Tab /
+  Shift-Tab step a section · Home/End/PgUp/PgDn move further · `/`
+  filter (Ctrl+F too in the standard profile) · `Ctrl+R` reset the
+  focused row · Enter save + close · Esc cancel (back to the
+  opened-state config, including the bytes of every file written
+  since) — a live filter first, see below.
+- **The vim profile adds its letters**: `h l` adjust, `j k` move, `[`
+  `]` section, `g` `G` the ends, `r` reset the row, `R` reset all, `q`
+  save. **The standard profile has none of them and is type-to-filter
+  instead**: any printable key opens the pill and goes into the query,
+  the way VS Code's settings screen behaves, because a settings box
+  whose first letter is a command turns `quit` into "save, close, and
+  drop `uit` into the buffer underneath". `/` and space are the two
+  printables the standard box still spends on a control (the family
+  filter chord and the row's toggle), so a query cannot *begin* with
+  either. The footer says which set is live (`hintFor`'s two families
+  of five forms), and reset-all is the Reset section's action row
+  there rather than a letter.
+- **The title names the focused row's destination file** (`Settings · →
+  .mnml/config.zon`), under `~` for a home-scope one. The FILE NAME is
+  the fact it carries — "this project, or every project?" — so a
+  subtitle too long for the box is cut from the LEFT
+  (`→ …/mnml/config.zon`, `elideLeft`); the border clips from the right,
+  which threw exactly that half away.
+- **The footer is state-aware.** The box has two key states and the
+  footer says which one it is in: the list's set above, or — while the
+  filter field has the keys — the FIELD's (`type to filter · ←→ caret ·
+  ↑↓ move · Enter to the list · Esc clears`). There `←→` move the text
+  caret and Enter only hands the list back, so a footer that still
+  promised `adjust` and `save` was wrong about every clause a
+  searching user would act on.
+- **Reset-all asks first**, in both profiles, in the app's own confirm
+  box (`src/ui/confirm.zig`) with Cancel focused — Enter on reflex is
+  the harmless answer.
 - v1 rows are **discrete choices**. (Zig also ships the minimal number
   row, `‹ [32] ›`.) The overlay never edits arrays of complex things —
   those stay ZON-edited.
@@ -230,8 +277,9 @@ know exists. Three affordances, all in `draw`, none of them optional:
 
 - A **section strip** under the title — `UI · Editor · AI · Integrations
   · Reset`, the cursor's section in the active-chip colour, each name its
-  own `.overlay_item(sectionHit(n))` click target. `]` / `[` (and Tab /
-  Shift-Tab) step sections, `g` / `G` are the ends. A jump puts the
+  own `.overlay_item(sectionHit(n))` click target. Tab / Shift-Tab step
+  sections (`]` / `[` too in the vim profile), Home / End are the ends
+  (`g` / `G` too in vim). A jump puts the
   section's header on the *top* row of the window, so the name jumped to
   is on screen. A box too narrow for the names falls back to the
   initials (`U · E · A · I · R`) and then to no strip at all

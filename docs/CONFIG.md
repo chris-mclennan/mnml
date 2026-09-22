@@ -413,6 +413,10 @@ otherwise. Copy what you need; leave the rest out.
     // One line per binding: chord → command id. "" / "none" / "unbound"
     // removes a default. .global applies to both profiles; .vim and
     // .standard on top of it. ZonGen rejects a chord written twice.
+    // A shifted Tab has ONE chord however it is written: "shift+tab",
+    // "<S-Tab>", "shift+backtab" and "backtab" are all `backtab`, and
+    // "ctrl+shift+tab" is "ctrl+backtab" — that is what a terminal
+    // sends, so a spec cannot name a key that never arrives.
     .keys = .{
         .global = .{
             .@"ctrl+p" = "picker.files",
@@ -1178,16 +1182,32 @@ next to it, keeping the newest 50.
 ```
 
 `▸` marks focus, `[brackets]` the current choice, a trailing `*` a value
-that is not the shipped default. `←→` / `h l` adjust, `↑↓` / `j k` move,
-`r` resets the row, `R` everything, `Enter` (or a click outside) keeps
-and closes, `Esc` cancels.
+that is not the shipped default. `←→` adjust, `↑↓` move, Tab /
+Shift-Tab step a section, `Ctrl+R` resets the focused row, `Enter` (or
+a click outside) keeps and closes, `Esc` cancels — a live filter first.
+
+The two profiles differ in one place. **Vim** keeps its letters: `h l`
+adjust, `j k` move, `[` `]` section, `g` `G` the ends, `r` reset the
+row, `R` reset all, `q` save. **Standard** has none of them and is
+type-to-filter: any printable key opens the search pill and goes into
+the query, so typing the name of the row you came for finds it instead
+of running five commands (`/` and space are the exceptions — the
+family's filter chord and the row's toggle). The footer advertises
+whichever set is live — and while the search pill has the keys it
+advertises the pill's own (`←→` move the caret, Enter hands the list
+back, Esc clears the query), because none of `adjust`, `move` or `save`
+is true there. Reset-all is the `Reset all to defaults` row
+under `── Reset ──` there, and in both profiles it asks before it
+throws anything away.
 
 **The file follows the row.** Adjusting a row applies at once and writes
 the value to the row's file, so what you see is what is on disk. Which
 file depends on the row: a per-project view setting (line numbers, wrap,
 format on save, …) goes to the workspace's `.mnml/config.zon`; a
 preference (theme, input style, ASCII icons, AI, Sonos, …) goes to the
-home config. The title names the focused row's file. `Esc` puts back
+home config. The title names the focused row's file — under `~` for a home-scope
+row, and cut from the LEFT when it is longer than the box, so the file
+name is the half that survives. `Esc` puts back
 the config, the input style, the theme, and the exact bytes of every
 file written since the overlay opened — a file that did not exist is
 removed again.

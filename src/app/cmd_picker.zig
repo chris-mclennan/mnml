@@ -27,6 +27,7 @@ const context_menus = @import("context_menus.zig");
 const picker_preview = @import("picker_preview.zig");
 const grep_picker = @import("grep_picker.zig");
 const MenuItem = command.MenuItem;
+const text_field = @import("../ui/text_field.zig");
 
 pub const table = .{
     .@"picker.buffers" = &buffers,
@@ -767,6 +768,114 @@ pub fn nextDeadlineMs(app: *const App) ?i64 {
     return @min(lua.?, gp.?);
 }
 
+// ─── quick open's prefixes ──────────────────────────────────────────────
+
+/// // changed (quickopen-prefixes): VS Code's quick open is ONE widget
+/// with four modes, and the mode is the FIRST character typed — `>` the
+/// command palette, `@` the symbols of this file, `:` a line number,
+/// `?` the list of the four. It is how a keyboard-only user gets
+/// anywhere, and here it matters more than an affordance: `palette` is
+/// bound to `ctrl+shift+p` and nothing else, and a terminal without the
+/// kitty keyboard protocol cannot tell that from `ctrl+p` — both are
+/// byte 0x10 — so on Terminal.app, Alacritty's default config or plain
+/// tmux, `>` in the file picker is the last door to every command with
+/// no chord of its own.
+pub const QuickOpenPrefix = struct { c: u8, what: []const u8 };
+pub const quick_open_prefixes = [_]QuickOpenPrefix{
+    .{ .c = '>', .what = "Command palette" },
+    .{ .c = '@', .what = "Symbols in this file" },
+    .{ .c = ':', .what = "Go to line — :12 or :12:4" },
+    .{ .c = '?', .what = "This list" },
+};
+
+/// True when `text` opened one of the four modes, so the caller does not
+/// also type it into the query. Only a LEADING prefix counts: the router
+/// answers false unless the box is the files picker with an empty query,
+/// so `src/a>b.txt` stays a path.
+pub fn quickOpenPrefix(app: *App, text: []const u8) Allocator.Error!bool {
+    if (app.overlay != .picker or text.len == 0) return false;
+    const p = &app.overlay.picker;
+    if (p.kind != .files or p.state.query.items.len != 0) return false;
+    const rest = text[1..];
+    switch (text[0]) {
+        '>' => try switchTo(app, .palette, rest),
+        '@' => try switchTo(app, .@"lsp.symbols", rest),
+        ':' => try gotoLinePrefix(app, rest),
+        '?' => try prefixHelp(app),
+        else => return false,
+    }
+    return true;
+}
+
+/// Swap quick open for the picker `id` opens, carrying `rest` in as its
+/// query. A command that cannot run (no LSP behind `@`) says so through
+/// the diagnostic and the box closes, rather than being left holding a
+/// prefix nothing will ever match.
+fn switchTo(app: *App, id: command.CommandId, rest: []const u8) Allocator.Error!void {
+    if (!try runOrToast(app, id)) return;
+    if (rest.len == 0 or app.overlay != .picker) return;
+    const st = &app.overlay.picker.state;
+    try text_field.insert(&st.query, &st.caret, app.gpa, rest);
+    try dispatch.refilterPicker(app);
+}
+
+/// `:12` / `:12:4` — the app's own Go-to-line prompt, seeded with the
+/// digits already typed, so Enter is the only key left.
+fn gotoLinePrefix(app: *App, rest: []const u8) Allocator.Error!void {
+    if (!try runOrToast(app, .@"editor.goto_line")) return;
+    if (rest.len == 0 or app.overlay != .prompt) return;
+    try app.overlay.prompt.state.setText(app.gpa, rest);
+}
+
+/// Run `id`, reporting a failure the way every other command does.
+/// False when it did not run — `@` on a file with no language server
+/// says so and leaves quick open exactly as it was, rather than closing
+/// the box or typing the prefix in as a filename.
+fn runOrToast(app: *App, id: command.CommandId) Allocator.Error!bool {
+    command.run(app, .{ .static = id }) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {
+            if (app.diag.msg) |m| app.toast("{s}", .{m}) else app.toast("{s}", .{@errorName(err)});
+            return false;
+        },
+    };
+    return true;
+}
+
+/// The `?` list: every prefix with what it does, and picking a row puts
+/// quick open into that mode.
+fn prefixHelp(app: *App) Allocator.Error!void {
+    const gpa = app.gpa;
+    var labels: std.ArrayListUnmanaged([]u8) = .empty;
+    var details: std.ArrayListUnmanaged([]u8) = .empty;
+    errdefer {
+        for (labels.items) |l| gpa.free(l);
+        labels.deinit(gpa);
+        for (details.items) |d| gpa.free(d);
+        details.deinit(gpa);
+    }
+    for (quick_open_prefixes) |pf| {
+        try labels.append(gpa, try std.fmt.allocPrint(gpa, "{c}  ·  {s}", .{ pf.c, pf.what }));
+        try details.append(gpa, try std.fmt.allocPrint(gpa, "{c} in Open file", .{pf.c}));
+    }
+    openPickerWith(app, "Quick open prefixes", .custom, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0), try details.toOwnedSlice(gpa), &.{}) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return,
+    };
+    app.overlay.picker.on_accept = &acceptPrefixHelp;
+}
+
+fn acceptPrefixHelp(app: *App, idx: usize, _: []const u8) Allocator.Error!void {
+    if (idx >= quick_open_prefixes.len) return;
+    const c = quick_open_prefixes[idx].c;
+    // Back to quick open, then straight into the mode the row names.
+    files(app) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return,
+    };
+    _ = try quickOpenPrefix(app, &[_]u8{c});
+}
+
 /// The picker is closing without a pick: put a previewed theme back.
 pub fn cancel(app: *App) void {
     if (app.overlay != .picker) return;
@@ -779,6 +888,52 @@ pub fn cancel(app: *App) void {
 
 const t = std.testing;
 const Key = app_mod.Key;
+
+test "// changed (quickopen-prefixes): only a LEADING > @ : ? switches quick open's mode" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, t.allocator);
+    defer t.allocator.free(root);
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "a>b.txt", .data = "x" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root });
+    defer app.deinit();
+    const path = try std.fs.path.join(t.allocator, &.{ root, "a>b.txt" });
+    defer t.allocator.free(path);
+    _ = try app.openPath(path);
+
+    // `>` on an empty query is the palette, with the rest as its query.
+    try command.run(&app, .{ .static = .@"picker.files" });
+    try t.expectEqualStrings("Open file", app.overlay.picker.state.title);
+    try t.expect(try quickOpenPrefix(&app, ">git"));
+    try t.expectEqualStrings("Command palette", app.overlay.picker.state.title);
+    try t.expectEqualStrings("git", app.overlay.picker.state.query.items);
+
+    // `?` is the list of the four, and it names every one of them.
+    try command.run(&app, .{ .static = .@"picker.files" });
+    try t.expect(try quickOpenPrefix(&app, "?"));
+    try t.expectEqualStrings("Quick open prefixes", app.overlay.picker.state.title);
+    try t.expectEqual(quick_open_prefixes.len, app.overlay.picker.labels.len);
+
+    // `:` is the app's own Go-to-line prompt, seeded with the digits.
+    try command.run(&app, .{ .static = .@"picker.files" });
+    try t.expect(try quickOpenPrefix(&app, ":12:4"));
+    try t.expect(app.overlay == .prompt);
+    try t.expectEqualStrings("12:4", app.overlay.prompt.state.text());
+    try app.handle(.{ .key = Key.named(.esc) });
+
+    // A prefix that is not leading is a path character: the router says
+    // no, so `a>b.txt` is still typeable and still findable.
+    try command.run(&app, .{ .static = .@"picker.files" });
+    try Picker.paste(&app.overlay.picker.state, app.gpa, "a");
+    try t.expect(!try quickOpenPrefix(&app, ">b"));
+    try t.expectEqualStrings("Open file", app.overlay.picker.state.title);
+    // And a character that is not a prefix at all is never the router's.
+    try command.run(&app, .{ .static = .@"picker.files" });
+    try t.expect(!try quickOpenPrefix(&app, "a"));
+    // Nor is any of the four in a picker that is not quick open.
+    try command.run(&app, .{ .static = .palette });
+    try t.expect(!try quickOpenPrefix(&app, ">"));
+}
 
 test "picker.buffers lists every open buffer, filters, and Enter switches; picker.files walks the workspace" {
     var tmp = t.tmpDir(.{});

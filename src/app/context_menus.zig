@@ -902,6 +902,15 @@ fn contextMenuAtFocus(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     switch (app.focus) {
         .tree => {
+            // // changed (tree-menu-unscanned): the tree's rows are built
+            // by its own painter (`Tree.draw` scans once, then latches
+            // `loaded`), so a command that reads them can run before any
+            // scan has found anything — in a `.test` script, whose files
+            // land after the app started, `Shift+F10` straight after
+            // `view.focus_tree` said "no tree row under the cursor"
+            // while the live app opened the menu. Scan before giving up,
+            // so the two agree; it costs nothing when rows exist.
+            if (app.tree.rows.items.len == 0) try app.tree.refresh(app);
             const idx = app.tree.cursor;
             if (idx >= app.tree.rows.items.len) return app.diag.fail(arena, "no tree row under the cursor", .{});
             const r = rectOf(app, .{ .tree_node = @intCast(idx) });

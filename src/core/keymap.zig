@@ -52,7 +52,10 @@ pub fn parseKeySpec(spec_in: []const u8) ?Key {
         } else break;
     }
     const code = keyCode(rest) orelse return null;
-    return .{ .code = code, .mods = mods };
+    // `Key.canonical` is the one place a chord's spelling is settled, so
+    // a spec, a `.test` `key` directive and an IPC `key` verb all name
+    // exactly what a terminal sends (`shift+tab` → `backtab`).
+    return (Key{ .code = code, .mods = mods }).canonical();
 }
 
 /// Strip the first of `prefixes` that matches case-insensitively.
@@ -435,6 +438,45 @@ test "punctuation names agree with the literal form" {
         const b = parseKeySpec(p[1]).?;
         try std.testing.expect(a.code.eql(b.code));
     }
+}
+
+test "a shifted Tab has one spelling: shift+tab, <S-Tab>, backtab and ctrl+shift+tab all fold onto backtab" {
+    // `tui/loop.zig`'s `translateKey` hands the app `.backtab` with the
+    // shift modifier cleared; a spec that kept `.tab` + shift could
+    // never match it, which is what killed `buffer.prev` (hunt
+    // 2026-09-21, kbd-ctrl-shift-tab-dead).
+    const bt = parseKeySpec("backtab").?;
+    for ([_][]const u8{ "shift+tab", "s-tab", "SHIFT+TAB", "shift+backtab" }) |spec| {
+        const k = parseKeySpec(spec).?;
+        try std.testing.expect(k.code.eql(bt.code));
+        try std.testing.expect(!k.mods.shift);
+    }
+    const cst = parseKeySpec("ctrl+shift+tab").?;
+    try std.testing.expect(cst.code.eql(.backtab));
+    try std.testing.expect(cst.mods.ctrl and !cst.mods.shift);
+    try std.testing.expect(Chord.of(cst).eql(Chord.of(parseKeySpec("ctrl+backtab").?)));
+    // A plain Tab is untouched, with or without ctrl.
+    try std.testing.expect(parseKeySpec("tab").?.code.eql(.tab));
+    try std.testing.expect(parseKeySpec("ctrl+tab").?.code.eql(.tab));
+}
+
+test "buffer.prev answers the chord a terminal really sends for Ctrl+Shift+Tab and <S-Tab>" {
+    const gpa = std.testing.allocator;
+    var vim = try Keymap.build(gpa, .vim, .{});
+    defer vim.deinit();
+    var standard = try Keymap.build(gpa, .standard, .{});
+    defer standard.deinit();
+    var buf: [max_seq]Chord = undefined;
+    // What `translateKey` produces for Ctrl+Shift+Tab: `.backtab` + ctrl.
+    const terminal_cst = [_]Chord{Chord.of(.{ .code = .backtab, .mods = .{ .ctrl = true } })};
+    try std.testing.expectEqual(command.CommandId.@"buffer.prev", vim.resolveSeq(&terminal_cst).run.static);
+    try std.testing.expectEqual(command.CommandId.@"buffer.prev", standard.resolveSeq(&terminal_cst).run.static);
+    // NvChad's `<S-Tab>` bufferline-prev: `.backtab`, no modifier.
+    const terminal_st = [_]Chord{Chord.of(.{ .code = .backtab })};
+    try std.testing.expectEqual(command.CommandId.@"buffer.prev", vim.resolveSeq(&terminal_st).run.static);
+    try std.testing.expectEqual(command.CommandId.@"buffer.prev", vim.resolveSeq(parseKeySeqBuf("<S-Tab>", &buf).?).run.static);
+    // Standard keeps `<S-Tab>` free — it is a vim-profile mapping.
+    try std.testing.expect(standard.resolveSeq(&terminal_st) == .none);
 }
 
 test "P is shift+p; <C-p> is ctrl+p; <leader>ia is space i a" {

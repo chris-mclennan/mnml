@@ -104,7 +104,7 @@ pub const specs = [_]Spec{
     // `Ctrl-W` away from the editor's own window handler and break every
     // other chord in it. `input/vim.zig` emits this id for `Ctrl-W D`,
     // and `side.ctrlWCommand` does the same from a column.
-    .{ .id = "view.focus_dock", .title = "Launcher dock: put the keyboard in it (vim `Ctrl-W D`; h/l or j/k walk, Enter runs, Esc leaves)", .group = "view" },
+    .{ .id = "view.focus_dock", .title = "Focus the launcher dock (vim `Ctrl-W D`; h/l or j/k walk, Enter runs, Esc leaves)", .group = "view" },
     .{ .id = "view.dock_unpin_item", .title = "Launcher dock: take the focused pinned command off the dock", .group = "view" },
     .{ .id = "view.toggle_todo_highlight", .title = "Toggle TODO/FIXME/HACK/XXX keyword highlight", .group = "view" },
     .{ .id = "view.toggle_render_markdown", .title = "Toggle inline-rendered markdown (render-markdown.nvim style)", .group = "view" },
