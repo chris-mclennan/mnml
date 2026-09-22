@@ -282,6 +282,56 @@ fn queryValue(arena: Allocator, v: []const u8) Allocator.Error![]const u8 {
     return out.items;
 }
 
+/// What an operation's security requirement puts on the stub: header
+/// lines (`Name: value`) and query pairs (`name=value`).
+const Auth = struct { headers: []const []const u8 = &.{}, query: []const []const u8 = &.{} };
+
+/// The operation's `security` (the spec's when it has none of its own)
+/// against `components.securitySchemes` (Swagger 2:
+/// `securityDefinitions`): bearer / oauth2 / openIdConnect →
+/// `Authorization: Bearer {{TOKEN}}`, basic → `Authorization: Basic
+/// {{BASIC_AUTH}}`, apiKey → its own header, query parameter or cookie
+/// named `{{NAME}}`. `security: []` (or no requirement anywhere) is a
+/// public operation: nothing. Of several alternatives the first is used.
+fn authFor(arena: Allocator, op: Value, spec: Value) Allocator.Error!Auth {
+    const reqs = get(op, &.{"security"}) orelse get(spec, &.{"security"}) orelse return .{};
+    if (reqs != .array or reqs.array.items.len == 0) return .{};
+    const first = reqs.array.items[0];
+    if (first != .object) return .{};
+    var headers: std.ArrayListUnmanaged([]const u8) = .empty;
+    var query: std.ArrayListUnmanaged([]const u8) = .empty;
+    for (first.object.keys()) |name| {
+        const scheme = get(spec, &.{ "components", "securitySchemes", name }) orelse get(spec, &.{ "securityDefinitions", name }) orelse {
+            try headers.append(arena, "Authorization: Bearer {{TOKEN}}");
+            continue;
+        };
+        const kind = str(scheme, "type") orelse "";
+        if (std.mem.eql(u8, kind, "apiKey")) {
+            const key = str(scheme, "name") orelse continue;
+            const loc = str(scheme, "in") orelse "header";
+            const var_name = try envName(arena, key);
+            if (std.mem.eql(u8, loc, "query")) {
+                try query.append(arena, try std.fmt.allocPrint(arena, "{s}={{{{{s}}}}}", .{ key, var_name }));
+            } else if (std.mem.eql(u8, loc, "cookie")) {
+                try headers.append(arena, try std.fmt.allocPrint(arena, "Cookie: {s}={{{{{s}}}}}", .{ key, var_name }));
+            } else try headers.append(arena, try std.fmt.allocPrint(arena, "{s}: {{{{{s}}}}}", .{ key, var_name }));
+        } else if (std.mem.eql(u8, kind, "basic") or (std.mem.eql(u8, kind, "http") and std.ascii.eqlIgnoreCase(str(scheme, "scheme") orelse "", "basic"))) {
+            try headers.append(arena, "Authorization: Basic {{BASIC_AUTH}}");
+        } else {
+            // http bearer, oauth2, openIdConnect.
+            try headers.append(arena, "Authorization: Bearer {{TOKEN}}");
+        }
+    }
+    return .{ .headers = headers.items, .query = query.items };
+}
+
+/// `X-API-Key` → `X_API_KEY`: a header name as an env key.
+fn envName(arena: Allocator, s: []const u8) Allocator.Error![]const u8 {
+    const out = try arena.alloc(u8, s.len);
+    for (s, 0..) |c, i| out[i] = if (std.ascii.isAlphanumeric(c)) std.ascii.toUpper(c) else '_';
+    return out;
+}
+
 fn placeholder(arena: Allocator, param: Value, name: []const u8) Allocator.Error![]const u8 {
     // OpenAPI 3 puts `example` on the Parameter itself, beside `schema`.
     if (get(param, &.{"example"})) |e| return flat(arena, e);
@@ -456,6 +506,11 @@ fn renderCurl(arena: Allocator, base_url: []const u8, path: []const u8, method: 
             try appendFmt(arena, &url_path, "{s}={s}", .{ p.name, try queryValue(arena, p.value) });
         }
     }
+    // An `apiKey` scheme `in: query` rides on the URL.
+    for ((try authFor(arena, op, spec)).query) |q| {
+        try url_path.append(arena, if (std.mem.indexOfScalar(u8, url_path.items, '?') == null) '?' else '&');
+        try url_path.appendSlice(arena, q);
+    }
     const method_upper = try std.ascii.allocUpperString(arena, method);
     var out: std.ArrayListUnmanaged(u8) = .empty;
     if (str(op, "summary")) |s| try appendFmt(arena, &out, "# {s}\n", .{s});
@@ -490,7 +545,8 @@ fn renderCurl(arena: Allocator, base_url: []const u8, path: []const u8, method: 
     if (body != null and normalize) body = try normalizeDynamic(arena, body.?);
     var headers: std.ArrayListUnmanaged([]const u8) = .empty;
     try headers.append(arena, "  -H 'accept: application/json'");
-    try headers.append(arena, "  -H 'Authorization: Bearer {{TOKEN}}'");
+    const auth = try authFor(arena, op, spec);
+    for (auth.headers) |h| try headers.append(arena, try std.fmt.allocPrint(arena, "  -H '{s}'", .{h}));
     for (params.req_h) |h| try headers.append(arena, try std.fmt.allocPrint(arena, "  -H '{s}: {s}'", .{ h.name, h.value }));
     if (body != null) try headers.append(arena, "  -H 'content-type: application/json'");
     try appendFmt(arena, &out, "curl '{s}{s}' \\\n", .{ base_url, url_path.items });
@@ -580,6 +636,32 @@ test "generate: server variables take their defaults; a parameter's own example 
     // A variable with no default becomes a `{{var}}` an env can fill.
     try testing.expect(std.mem.indexOf(u8, stubs[0].text, "curl 'http://127.0.0.1:8080/{{region}}/v2/things?q=red%20widgets&n=3' \\\n") != null);
     try testing.expect(std.mem.indexOf(u8, stubs[0].text, "{host}") == null);
+}
+
+test "generate: auth follows the security schemes — apiKey in its header, bearer where asked, nothing on a public operation" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const spec = try parseSpec(a,
+        \\{"openapi":"3.0.0","servers":[{"url":"http://127.0.0.1:8080"}],"security":[{"key":[]}],
+        \\ "components":{"securitySchemes":{"key":{"type":"apiKey","in":"header","name":"X-API-Key"},"jwt":{"type":"http","scheme":"bearer"},"qk":{"type":"apiKey","in":"query","name":"api_key"}}},
+        \\ "paths":{"/things":{"get":{"operationId":"listThings"}},"/health":{"get":{"operationId":"health","security":[]}},
+        \\  "/me":{"get":{"operationId":"me","security":[{"jwt":[]}]}},"/q":{"get":{"operationId":"q","security":[{"qk":[]}]}}}}
+    );
+    const stubs = try generate(a, spec, .{ .spec = "x", .out = "o" });
+    var by: std.StringArrayHashMapUnmanaged([]const u8) = .empty;
+    for (stubs) |st| try by.put(a, st.rel, st.text);
+    const things = by.get("untagged/listThings.curl").?;
+    try testing.expect(std.mem.indexOf(u8, things, "  -H 'X-API-Key: {{X_API_KEY}}'") != null);
+    try testing.expect(std.mem.indexOf(u8, things, "Authorization") == null);
+    try testing.expect(std.mem.indexOf(u8, by.get("untagged/health.curl").?, "Authorization") == null);
+    try testing.expect(std.mem.indexOf(u8, by.get("untagged/health.curl").?, "X-API-Key") == null);
+    try testing.expect(std.mem.indexOf(u8, by.get("untagged/me.curl").?, "  -H 'Authorization: Bearer {{TOKEN}}'") != null);
+    try testing.expect(std.mem.indexOf(u8, by.get("untagged/q.curl").?, "curl 'http://127.0.0.1:8080/q?api_key={{API_KEY}}'") != null);
+    // A spec that declares no security at all sends none.
+    const bare = try parseSpec(a, "{\"openapi\":\"3.0.0\",\"paths\":{\"/p\":{\"get\":{\"operationId\":\"p\"}}}}");
+    const bare_stubs = try generate(a, bare, .{ .spec = "x", .out = "o" });
+    try testing.expect(std.mem.indexOf(u8, bare_stubs[0].text, "Authorization") == null);
 }
 
 test "swagger 2 host/basePath and a YAML spec; run writes and skips existing" {
