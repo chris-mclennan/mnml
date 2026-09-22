@@ -294,9 +294,27 @@ pub const Server = struct {
             const p = self.stoppedProgram() orelse return self.fail(rseq, command, "not stopped");
             const expr = getStr(args, "expression") orelse "";
             const frame = frameIndex(p, getInt(args, "frameId")) orelse p.frames.items.len - 1;
+            const repl = if (getStr(args, "context")) |c| eql(u8, c, "repl") else false;
+            // The console runs debugger commands as well as expressions,
+            // as lldb-dap's does: `bt` answers with one line per frame —
+            // a result a console must paint whole.
+            if (repl and eql(u8, std.mem.trim(u8, expr, " \t"), "bt")) {
+                var text: std.ArrayList(u8) = .empty;
+                const n = p.frames.items.len;
+                const name = std.fs.path.basename(self.program_path.?);
+                for (0..n) |i| {
+                    const f = p.frames.items[n - 1 - i];
+                    try text.print(arena, "{s} frame #{d}: {s} at {s}:{d}\n", .{ if (i == 0) "*" else " ", i, f.name, name, f.pc + 1 });
+                }
+                try self.respond(rseq, command, .{ .result = text.items, .type = @as(?[]const u8, null), .variablesReference = 0 });
+                return;
+            }
             const v = p.evaluate(expr, frame) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
-                else => return self.fail(rseq, command, program.errName(err)),
+                // A console error names the expression on a second
+                // line, as lldb's and Python's diagnostics run to
+                // several; a watch or a hover keeps the one line.
+                else => return self.fail(rseq, command, if (repl) try std.fmt.allocPrint(arena, "{s}\n  in: {s}", .{ program.errName(err), std.mem.trim(u8, expr, " \t") }) else program.errName(err)),
             };
             const trimmed = std.mem.trim(u8, expr, " \t");
             const ref: i64 = if (v == .strct and p.lookup(frame, trimmed) != null) try p.structRef(frame, trimmed) else 0;
@@ -865,7 +883,8 @@ test "the session: breakpoints before launch verify against the file, launch + c
     const bad = try h.send("evaluate", "{\"expression\":\"nope\",\"context\":\"repl\"}");
     defer t.allocator.free(bad);
     try expectResponse(bad[0], "evaluate", false);
-    try t.expectEqualStrings("no such variable", getStr(bad[0], "message").?);
+    // A console error runs to two lines: the message, then the expression.
+    try t.expectEqualStrings("no such variable\n  in: nope", getStr(bad[0], "message").?);
 
     // setVariable on Locals, then on the struct's field.
     const sv = try h.send("setVariable", "{\"variablesReference\":1,\"name\":\"x\",\"value\":\"x + 4\"}");

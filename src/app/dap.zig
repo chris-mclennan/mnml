@@ -1461,14 +1461,29 @@ fn consoleLines(app: *App, arena: Allocator) Allocator.Error![]dap_view.Line {
                 if (ev.pending) {
                     try out.append(arena, .{ .kind = .pending, .text = "  (evaluating\u{2026})", .entry = idx });
                 } else if (ev.err) |err| {
-                    try out.append(arena, .{ .kind = .err, .text = try std.fmt.allocPrint(arena, "  err: {s}", .{err}), .entry = idx });
+                    // Every line: lldb's diagnostic is on the second
+                    // line of its message, a Python traceback's last
+                    // (hunt: dap-repl-multiline-result).
+                    var lines = std.mem.splitScalar(u8, std.mem.trimEnd(u8, err, "\n"), '\n');
+                    var first = true;
+                    while (lines.next()) |line| : (first = false) {
+                        const text = if (first) try std.fmt.allocPrint(arena, "  err: {s}", .{line}) else try std.fmt.allocPrint(arena, "  {s}", .{std.mem.trimEnd(u8, line, "\r")});
+                        try out.append(arena, .{ .kind = .err, .text = text, .entry = idx });
+                    }
                 } else {
                     // A foldable result carries its expander; the view
-                    // paints it before the text.
+                    // paints it before the text. A result of several
+                    // lines (`bt`, `frame variable`, `p` of a struct)
+                    // is one row each, the type after the first.
                     const folds = ev.variables_ref > 0;
                     const indent: []const u8 = if (folds) "" else "  ";
-                    const text = if (ev.ty) |ty| try std.fmt.allocPrint(arena, "{s}{s} : {s}", .{ indent, ev.value, ty }) else try std.fmt.allocPrint(arena, "{s}{s}", .{ indent, ev.value });
+                    var lines = std.mem.splitScalar(u8, std.mem.trimEnd(u8, ev.value, "\n"), '\n');
+                    const head = lines.next() orelse "";
+                    const text = if (ev.ty) |ty| try std.fmt.allocPrint(arena, "{s}{s} : {s}", .{ indent, head, ty }) else try std.fmt.allocPrint(arena, "{s}{s}", .{ indent, head });
                     try out.append(arena, .{ .kind = .result, .text = text, .entry = idx, .fold = if (folds) ev.expanded else null });
+                    while (lines.next()) |line| {
+                        try out.append(arena, .{ .kind = .result, .text = try std.fmt.allocPrint(arena, "  {s}", .{std.mem.trimEnd(u8, line, "\r")}), .entry = idx });
+                    }
                     if (ev.expanded and ev.variables_ref > 0) {
                         if (app.dap.session) |s| if (s.variables.get(ev.variables_ref)) |kids| {
                             for (kids) |k| {
@@ -1770,6 +1785,36 @@ const screen_mod = @import("../ipc/screen.zig");
 fn screenText(app: *App) ![]u8 {
     try app.render();
     return screen_mod.toTestText(testing.allocator, &app.screen);
+}
+
+test "consoleLines: a result or an error of several lines is one row each, the type after the first line, all rows the entry's" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    defer app.deinit();
+    var bt: types.ReplEntry = .{ .expression = try app.gpa.dupe(u8, "bt") };
+    try bt.setResult(app.gpa, "* thread #1, stop reason = breakpoint 1.1\n  * frame #0: main at main.c:22\n    frame #1: start\n", null, null, 0);
+    try consoleAppend(&app, .{ .eval = bt });
+    var nope: types.ReplEntry = .{ .expression = try app.gpa.dupe(u8, "nope") };
+    try nope.setResult(app.gpa, "", null, "Expression evaluation in pure C not supported.\nerror: use of undeclared identifier 'nope'", 0);
+    try consoleAppend(&app, .{ .eval = nope });
+    var typed: types.ReplEntry = .{ .expression = try app.gpa.dupe(u8, "p") };
+    try typed.setResult(app.gpa, "(point) {\n  x = 1\n  y = 2\n}", "point", null, 0);
+    try consoleAppend(&app, .{ .eval = typed });
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const lines = try consoleLines(&app, arena.allocator());
+    try testing.expectEqual(@as(usize, 4 + 3 + 5), lines.len);
+    try testing.expectEqualStrings("bt", lines[0].text);
+    try testing.expectEqualStrings("  * thread #1, stop reason = breakpoint 1.1", lines[1].text);
+    try testing.expectEqualStrings("    * frame #0: main at main.c:22", lines[2].text);
+    try testing.expectEqualStrings("      frame #1: start", lines[3].text);
+    try testing.expectEqual(@as(?u32, 0), lines[3].entry);
+    try testing.expectEqual(dap_view.Line.Kind.result, lines[3].kind);
+    try testing.expectEqualStrings("  err: Expression evaluation in pure C not supported.", lines[5].text);
+    try testing.expectEqualStrings("  error: use of undeclared identifier 'nope'", lines[6].text);
+    try testing.expectEqual(dap_view.Line.Kind.err, lines[6].kind);
+    try testing.expectEqual(@as(?u32, 1), lines[6].entry);
+    try testing.expectEqualStrings("  (point) { : point", lines[8].text);
+    try testing.expectEqualStrings("  }", lines[11].text);
 }
 
 test "breakpoints: toggle on/off toasts the 1-based line, list summarises, clear counts" {
@@ -2629,7 +2674,8 @@ test "mnml-fake-dap end to end: spawn, initialize → launch → stop at a break
         }
     };
     try pumpUntil(&app, &app, Cond2.replied2, 10_000);
-    try testing.expectEqualStrings("no such variable", app.dap.console.lastEval().?.err.?);
+    // The fake's console error runs to two lines, as lldb's and Python's do.
+    try testing.expectEqualStrings("no such variable\n  in: nope", app.dap.console.lastEval().?.err.?);
 
     // setVariable: the Locals scope's `x` becomes 7; the parent is
     // re-fetched and the watch follows.
