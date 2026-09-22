@@ -32,6 +32,7 @@ const statusline = @import("../ui/statusline.zig");
 const cmdline_bar = @import("../ui/cmdline_bar.zig");
 const edge_grip = @import("../ui/edge_grip.zig");
 const cmdline_mod = @import("cmdline.zig");
+const cmdline_popup_app = @import("cmdline_popup.zig");
 const cursor_mod = @import("cursor.zig");
 const statusline_app = @import("statusline.zig");
 const messages = @import("messages.zig");
@@ -710,6 +711,11 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     const wizard_up = app.overlay == .wizard;
     if (wizard_up) try drawOverlay(app, ui, panes_area);
     toast_mod.draw(ui, toast_area, try app.visibleToasts(arena));
+    // The `:` line's completion popup: above the line, over the toasts
+    // (it is what the user is typing into), under the overlays. Its
+    // ceiling is the row under the tab bar — the panes' first row is
+    // the bufferline's.
+    try cmdline_popup_app.draw(app, ui, fr.cmdline, panes_area.y + 1);
     if (!wizard_up) try drawOverlay(app, ui, panes_area);
     try lsp.drawPopups(app, ui, panes_area);
     // A context menu is the topmost layer — over the toasts too, whose

@@ -42,6 +42,11 @@ expect screen lacks "CMD"
 click 40 39
 type w
 expect screen contains ":w▏"
+# The completion popup `w` summons stands over the statusline's left
+# end (`cmdline_popup_standard.test`); Esc puts it away and keeps the
+# line, so the chip is readable again.
+key esc
+expect screen contains ":w▏"
 click 60 10
 expect status contains "\"cmdline\":true"
 expect screen contains ":w▏"

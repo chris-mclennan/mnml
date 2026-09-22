@@ -1,0 +1,69 @@
+# The `:` line's completion popup — vim profile. Typing on the line
+# shows the candidates for the token in a framed list DIRECTLY ABOVE
+# the line, its left edge on the first typed cell (column 1, after the
+# `:`), growing upward: at 120x40 the `:` line is row 39, so the frame's
+# bottom border is row 38 and its rows climb from there. Down / Up walk
+# the list and write the selection into the line, Enter runs it; Esc
+# over the typed text puts the popup away first and the line second
+# (on a written candidate it closes the line, as vim's does); one
+# candidate is no popup, and Tab still completes it.
+
+write data.txt "alpha"
+open data.txt
+command editor.use_vim
+
+# ── `:do` — dozens of candidates, `dock` among them ──
+# The `dock.*` ids (prefix matches) head the list; the bare `dock` ex
+# verb scores under them and is the last row. Eight rows show, then
+# the hint says how many more there are.
+key :
+type "do"
+expect screen contains ":do▏"
+expect screen contains "│ dock.add_preset"
+expect screen contains "│ dock.close_all"
+expect screen contains "more — Tab to cycle)"
+expect screen contains "┌─"
+
+# Down writes the first row into the line; the popup stays up on the
+# same list. Up from there wraps to the last row — `dock`.
+key down
+expect screen contains ":dock.add_preset▏"
+expect screen contains "│ dock.close_all"
+key up
+expect screen contains ":dock▏"
+# Enter runs the line: `:dock` alone toggles the launcher dock.
+key enter
+expect screen lacks ":dock▏"
+expect screen contains "New terminal"
+expect screen lacks "│ dock.add_preset"
+command view.dock_toggle
+
+# ── Esc closes the popup first, then the line ──
+key :
+type "do"
+expect screen contains "│ dock.add_preset"
+key esc
+expect screen lacks "│ dock.add_preset"
+expect screen lacks "┌─"
+expect screen contains ":do▏"
+key esc
+expect screen lacks ":do▏"
+
+# ── one candidate: no popup, Tab still completes ──
+key :
+type "tabclos"
+expect screen contains ":tabclos▏"
+expect screen lacks "┌─"
+key tab
+expect screen contains ":tabclose▏"
+expect screen lacks "┌─"
+key esc
+
+# ── typing re-filters ──
+key :
+type "ta"
+expect screen contains "│ tab.close "
+type "bn"
+expect screen lacks "│ tab.close "
+expect screen contains "│ tabnew "
+key esc

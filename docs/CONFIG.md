@@ -130,7 +130,7 @@ otherwise. Copy what you need; leave the rest out.
     // ── ui ─────────────────────────────────────────────────────────────
     .ui = .{
         .theme = "onedark", // any theme name; an open set
-        .cmdline_popup_border_color = "", // "" = the theme's
+        .cmdline_popup_border_color = "", // "#RRGGBB" for the `:` line's completion popup; "" = the theme's overlay border
         .theme_toggle = null, // a second theme for ui.toggle_theme
         .theme_auto_system = false,
         .ascii_icons = false,

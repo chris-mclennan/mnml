@@ -1,0 +1,64 @@
+# The `:` line's completion popup — standard profile, over the app's
+# own `:` line (`Ctrl+;`, or a click on the bottom row), which has no
+# vim handler under it: the same popup, the same keys, and a click on a
+# row writes it into the line. At 120x40 the `:` line is row 39, the
+# frame's bottom border row 38, its left edge column 1. Esc over the
+# typed text puts the popup away and keeps the line; on a written
+# candidate it closes the line.
+
+write data.txt "alpha"
+open data.txt
+command editor.use_standard
+
+key ctrl+;
+expect screen contains ":▏"
+expect screen lacks "┌─"
+type "do"
+expect screen contains ":do▏"
+expect screen contains "│ dock.add_preset"
+expect screen contains "┌─"
+
+# Tab writes the first row; Shift+Tab walks back, and from the first
+# row that wraps to the last — `dock`, the ex verb under the ids.
+key tab
+expect screen contains ":dock.add_preset▏"
+expect screen contains "│ dock.close_all"
+key shift+tab
+expect screen contains ":dock▏"
+key enter
+expect screen lacks ":dock▏"
+expect screen contains "New terminal"
+command view.dock_toggle
+
+# ── a click on a row writes it ──
+# The frame is rows 28..38 (eight rows, the hint, the border); row 0
+# is on 29, its text from column 2.
+key ctrl+;
+type "do"
+expect screen contains "│ dock.add_preset"
+click 4 29
+expect screen contains ":dock.add_preset▏"
+expect screen contains "│ dock.close_all"
+
+# On a written candidate Esc is the line's own: one press closes it.
+key esc
+expect status contains "\"cmdline\":false"
+
+# ── over the typed text, Esc puts the popup away, then the line ──
+key ctrl+;
+type "do"
+expect screen contains "│ dock.add_preset"
+key esc
+expect screen lacks "│ dock.add_preset"
+expect screen contains ":do▏"
+expect screen contains "CMD"
+key esc
+expect status contains "\"cmdline\":false"
+
+# ── one candidate: no popup ──
+key ctrl+;
+type "tabclos"
+expect screen lacks "┌─"
+key tab
+expect screen contains ":tabclose▏"
+key esc
