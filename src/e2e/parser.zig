@@ -59,6 +59,11 @@
 //!                                # the cell's resolved colour — the only
 //!                                #   way a script can see one, since the
 //!                                #   screen dump carries no style
+//! expect color <x> <y> <fg|bg> [not] index <N>
+//!                                # …or its palette index (0..255), for a
+//!                                #   colour the terminal owns — the
+//!                                #   terminal chip's bright white is
+//!                                #   `index 15`, never an rgb
 //! ```
 //!
 //! `<text>` may be wrapped in `"…"` (one layer stripped); inside it `\n`
@@ -111,6 +116,13 @@ pub const Step = union(enum) {
     shot: []const u8,
 };
 
+/// What `expect color` compares against: an rgb triple, or a palette
+/// index.
+pub const ColorWant = union(enum) {
+    rgb: [3]u8,
+    index: u8,
+};
+
 pub const Check = union(enum) {
     screen_contains: []const u8,
     screen_lacks: []const u8,
@@ -134,8 +146,9 @@ pub const Check = union(enum) {
     quit: bool,
     /// A cell's foreground or background, as a theme resolves it: the
     /// only way a `.test` can see a colour (the screen dump carries
-    /// none). `expect color X Y fg #61afef`, `… bg not #1e222a`.
-    color: struct { x: u16, y: u16, bg: bool, rgb: [3]u8, negated: bool },
+    /// none). `expect color X Y fg #61afef`, `… bg not #1e222a`,
+    /// `… fg index 15` for a palette-indexed colour.
+    color: struct { x: u16, y: u16, bg: bool, want: ColorWant, negated: bool },
 };
 
 pub const Stmt = union(enum) {
@@ -394,20 +407,27 @@ fn parseExpect(a: Allocator, diag: *Diagnostic, ln: usize, rest: []const u8) Err
             const xs, const r1 = split1(arg);
             const ys, const r2 = split1(r1);
             const which, const r3 = split1(r2);
-            var hex, _ = split1(r3);
+            var hex, var after = split1(r3);
             var negated = false;
             if (std.mem.eql(u8, hex, "not")) {
                 negated = true;
-                hex, _ = split1(r3["not".len..]);
+                hex, after = split1(r3["not".len..]);
             }
-            const x = std.fmt.parseInt(u16, xs, 10) catch return diag.set("line {d}: expect color <X> <Y> <fg|bg> [not] #RRGGBB", .{ln});
-            const y = std.fmt.parseInt(u16, ys, 10) catch return diag.set("line {d}: expect color <X> <Y> <fg|bg> [not] #RRGGBB", .{ln});
+            const x = std.fmt.parseInt(u16, xs, 10) catch return diag.set("line {d}: expect color <X> <Y> <fg|bg> [not] #RRGGBB | index <N>", .{ln});
+            const y = std.fmt.parseInt(u16, ys, 10) catch return diag.set("line {d}: expect color <X> <Y> <fg|bg> [not] #RRGGBB | index <N>", .{ln});
             const is_bg = if (std.mem.eql(u8, which, "bg")) true else if (std.mem.eql(u8, which, "fg")) false else return diag.set("line {d}: expect color … <fg|bg> …", .{ln});
             const spelt = trim(hex);
-            if (spelt.len != 7 or spelt[0] != '#') return diag.set("line {d}: expect color … #RRGGBB (a `#` and six hex digits)", .{ln});
+            // // changed (dock-polish): `index <N>` — a colour the
+            // terminal's palette owns, which no `#RRGGBB` can name.
+            if (std.mem.eql(u8, spelt, "index")) {
+                const ns, _ = split1(after);
+                const n = std.fmt.parseInt(u8, trim(ns), 10) catch return diag.set("line {d}: expect color … index <N> (0..255)", .{ln});
+                break :blk .{ .color = .{ .x = x, .y = y, .bg = is_bg, .want = .{ .index = n }, .negated = negated } };
+            }
+            if (spelt.len != 7 or spelt[0] != '#') return diag.set("line {d}: expect color … #RRGGBB (a `#` and six hex digits) or index <N>", .{ln});
             const body = spelt[1..];
             const v = std.fmt.parseInt(u24, body, 16) catch return diag.set("line {d}: expect color … #RRGGBB (six hex digits)", .{ln});
-            break :blk .{ .color = .{ .x = x, .y = y, .bg = is_bg, .rgb = .{ @intCast((v >> 16) & 0xff), @intCast((v >> 8) & 0xff), @intCast(v & 0xff) }, .negated = negated } };
+            break :blk .{ .color = .{ .x = x, .y = y, .bg = is_bg, .want = .{ .rgb = .{ @intCast((v >> 16) & 0xff), @intCast((v >> 8) & 0xff), @intCast(v & 0xff) } }, .negated = negated } };
         },
         .file => blk: {
             const rel, const rest1 = split1(arg);
@@ -791,16 +811,27 @@ test "expect color takes a cell, fg or bg, and an optional `not`" {
     try t.expectEqual(@as(u16, 39), a.y);
     try t.expect(a.bg);
     try t.expect(!a.negated);
-    try t.expectEqualSlices(u8, &.{ 0x1e, 0x22, 0x2a }, &a.rgb);
+    try t.expectEqualSlices(u8, &.{ 0x1e, 0x22, 0x2a }, &a.want.rgb);
     const b = s.lines[1].stmt.check.color;
     try t.expect(!b.bg);
     try t.expect(b.negated);
-    try t.expectEqualSlices(u8, &.{ 0xff, 0xff, 0xff }, &b.rgb);
+    try t.expectEqualSlices(u8, &.{ 0xff, 0xff, 0xff }, &b.want.rgb);
+    // // changed (dock-polish): `index <N>` names a palette colour.
+    var ix = try parseOk("expect color 5 6 fg index 15\nexpect color 5 6 fg not index 2\n");
+    defer ix.deinit();
+    const c = ix.lines[0].stmt.check.color;
+    try t.expectEqual(@as(u8, 15), c.want.index);
+    try t.expect(!c.negated);
+    const d = ix.lines[1].stmt.check.color;
+    try t.expectEqual(@as(u8, 2), d.want.index);
+    try t.expect(d.negated);
     // A malformed one is a parse error, not a silently-passing check.
     for ([_][]const u8{
         "expect color 10 39 bg 1e222a\n",
         "expect color 10 39 middle #1e222a\n",
         "expect color x 39 bg #1e222a\n",
+        "expect color 5 6 fg index\n",
+        "expect color 5 6 fg index 300\n",
     }) |bad| t.allocator.free(try parseErr(bad));
 }
 
