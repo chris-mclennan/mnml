@@ -14,6 +14,7 @@ const chain = @import("chain.zig");
 const discover = @import("discover.zig");
 const sources = @import("sources.zig");
 const proxy = @import("proxy.zig");
+const body = @import("body.zig");
 
 pub const Std = struct { out: *Io.Writer, err: *Io.Writer };
 
@@ -120,6 +121,16 @@ pub fn run(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, argv: []
     req.url = try env_mod.expand(a, io, try parse.substitutePath(a, req.url, try parse.pathParams(a, &req)), &set);
     for (req.headers.items) |*h| h.value = try env_mod.expand(a, io, h.value, &set);
     if (req.body) |b| req.body = try env_mod.expand(a, io, b, &set);
+    // The pane's encoder: `# @body-type form-urlencoded` / `multipart`
+    // put the same bytes on the wire from here as from the pane.
+    var missing: ?[]const u8 = null;
+    body.encode(a, io, &req, .{ .base_dir = std.fs.path.dirname(file) orelse ws }, &missing) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.FileNotFound => {
+            try std_.err.print("mnml-zig run: multipart: no file at {s} (relative to {s})\n", .{ missing orelse "?", std.fs.path.dirname(file) orelse ws });
+            return 1;
+        },
+    };
     try std_.err.print("{s} {s}\n", .{ req.method, req.url });
     try std_.err.flush();
     var outcome = try client.send(a, io, &req, .{});
@@ -432,6 +443,40 @@ test "run: a GET with trailing directives goes out without a body; a POST's body
     const want_len = try std.fmt.allocPrint(testing.allocator, "content-length: {d}\r\n", .{json.len});
     defer testing.allocator.free(want_len);
     try testing.expect(std.ascii.indexOfIgnoreCase(seen_post, want_len) != null);
+}
+
+test "run: `# @body-type form-urlencoded` / `multipart` put the pane's bytes on the wire" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &pbuf);
+    const ws = pbuf[0..n];
+    var server = try mock.Server.start(testing.allocator, testing.io, .{ .status = 200, .status_text = "OK", .body = "ok" });
+    defer server.stop(testing.io);
+    const form = try std.fmt.allocPrint(testing.allocator, "# @body-type form-urlencoded\nPOST http://127.0.0.1:{d}/echo\n\nname = alice\ncity = new york\n", .{server.port});
+    defer testing.allocator.free(form);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "form.http", .data = form });
+    const mp = try std.fmt.allocPrint(testing.allocator, "# @body-type multipart\nPOST http://127.0.0.1:{d}/up\n\nname = alice\nfile = @data.txt\n", .{server.port});
+    defer testing.allocator.free(mp);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "up.http", .data = mp });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "data.txt", .data = "hello file\n" });
+    var out: Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    var err: Io.Writer.Allocating = .init(testing.allocator);
+    defer err.deinit();
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    const form_path = try std.fs.path.join(testing.allocator, &.{ ws, "form.http" });
+    defer testing.allocator.free(form_path);
+    try testing.expectEqual(@as(u8, 0), try run(testing.allocator, testing.io, &env, &.{form_path}, .{ .out = &out.writer, .err = &err.writer }));
+    try testing.expect(std.ascii.indexOfIgnoreCase(server.lastRequest(), "content-type: application/x-www-form-urlencoded\r\n") != null);
+    try testing.expect(std.mem.endsWith(u8, server.lastRequest(), "\r\n\r\nname=alice&city=new+york"));
+    const up_path = try std.fs.path.join(testing.allocator, &.{ ws, "up.http" });
+    defer testing.allocator.free(up_path);
+    try testing.expectEqual(@as(u8, 0), try run(testing.allocator, testing.io, &env, &.{up_path}, .{ .out = &out.writer, .err = &err.writer }));
+    try testing.expect(std.ascii.indexOfIgnoreCase(server.lastRequest(), "content-type: multipart/form-data; boundary=") != null);
+    try testing.expect(std.mem.indexOf(u8, server.lastRequest(), "filename=\"data.txt\"") != null);
+    try testing.expect(std.mem.indexOf(u8, server.lastRequest(), "hello file") != null);
 }
 
 test "discover then sync-check from the CLI" {

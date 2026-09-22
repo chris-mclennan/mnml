@@ -21,6 +21,7 @@ const CommandError = command.CommandError;
 const event = @import("../core/event.zig");
 const parse = @import("../http/parse.zig");
 const multipart = @import("../http/multipart.zig");
+const body_mod = @import("../http/body.zig");
 const client = @import("../http/client.zig");
 const env_mod = @import("../http/env.zig");
 const history = @import("../http/history.zig");
@@ -1664,43 +1665,13 @@ pub fn openOptionPrompt(app: *App, rp: *RequestPane, kind: OptionKind) Allocator
 /// read relative to the source file's directory (the workspace for a
 /// scratch). A `Content-Type` the request already carries is kept.
 pub fn applyBodyType(app: *App, rp: *RequestPane, req: *Request) CommandError!void {
-    const gpa = app.gpa;
-    const kind = parse.bodyType(req);
-    if (kind == .raw) return;
-    const body = req.body orelse return;
-    var arena = std.heap.ArenaAllocator.init(gpa);
-    defer arena.deinit();
-    const a = arena.allocator();
-    switch (kind) {
-        .raw => {},
-        .json => {
-            if (app.http.auto_format_body) {
-                if (std.json.parseFromSliceLeaky(std.json.Value, a, body, .{})) |v| {
-                    const pretty = std.json.Stringify.valueAlloc(a, v, .{ .whitespace = .indent_2 }) catch return error.OutOfMemory;
-                    try req.setBody(gpa, pretty);
-                } else |_| {}
-            }
-            if (req.header("content-type") == null) try req.addHeader(gpa, "Content-Type", "application/json");
-        },
-        .form => {
-            const rows = try multipart.parseRows(a, body);
-            try req.setBody(gpa, try multipart.urlencode(a, rows));
-            if (req.header("content-type") == null) try req.addHeader(gpa, "Content-Type", multipart.form_content_type);
-        },
-        .multipart => {
-            const rows = try multipart.parseRows(a, body);
-            const base = if (rp.source_path) |p| (std.fs.path.dirname(p) orelse app.workspace) else app.workspace;
-            var missing: ?[]const u8 = null;
-            const parts = multipart.resolve(a, app.io, rows, base, &missing) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
-                error.FileNotFound => return app.diag.fail(app.frame.allocator(), "multipart: no file at {s} (relative to {s})", .{ missing orelse "?", app.relPath(base) }),
-            };
-            var bbuf: [multipart.boundary_len]u8 = undefined;
-            const boundary = multipart.makeBoundary(&bbuf, app.io);
-            try req.setBody(gpa, try multipart.encode(a, parts, boundary));
-            if (req.header("content-type") == null) try req.addHeader(gpa, "Content-Type", try multipart.contentType(a, boundary));
-        },
-    }
+    const base = if (rp.source_path) |p| (std.fs.path.dirname(p) orelse app.workspace) else app.workspace;
+    var missing: ?[]const u8 = null;
+    defer if (missing) |m| app.gpa.free(m);
+    body_mod.encode(app.gpa, app.io, req, .{ .format_json = app.http.auto_format_body, .base_dir = base }, &missing) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.FileNotFound => return app.diag.fail(app.frame.allocator(), "multipart: no file at {s} (relative to {s})", .{ missing orelse "?", app.relPath(base) }),
+    };
 }
 
 /// The chip's pick: the block's line follows, and a toast names it.

@@ -13,6 +13,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const parse_mod = @import("parse.zig");
 const client = @import("client.zig");
+const body_mod = @import("body.zig");
 const env_mod = @import("env.zig");
 const script_mod = @import("script.zig");
 
@@ -158,6 +159,12 @@ pub fn run(gpa: Allocator, io: Io, chain_path: []const u8, workspace: []const u8
         const script = try script_mod.parse(a, raw.script orelse "");
         try script_mod.applyPre(a, &raw, &set, script);
         var req = try expandWith(a, io, &raw, &set);
+        // The same wire body the pane and `mnml-zig run` send.
+        var missing: ?[]const u8 = null;
+        body_mod.encode(a, io, &req, .{ .base_dir = std.fs.path.dirname(path) orelse chain_dir }, &missing) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.FileNotFound => return finish(gpa, false, try std.fmt.allocPrint(gpa, "step {d}: multipart: no file at {s}", .{ i + 1, missing orelse "?" }), &trace, &captured),
+        };
         var outcome = try client.send(a, io, &req, .{});
         switch (outcome) {
             .err => |e| {
