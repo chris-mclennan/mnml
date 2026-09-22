@@ -1,0 +1,44 @@
+# The launcher dock and the activity bar both want the left edge, and
+# both must have it — in whatever order the two commands ran.
+#
+# Before the side-band rule only one of them survived, and which one
+# depended on the order (hunt/findings-2026-09-21/daily-dock-left-eats-activity-bar.md):
+#
+#   `ex dock left` then reveal (view.dock_toggle)  -> the ACTIVITY BAR
+#                                                     disappeared entirely
+#   reveal then `ex dock left`                     -> the DOCK disappeared
+#   `ex dock always` then `ex dock left`           -> both painted, side
+#                                                     by side (the shape
+#                                                     the corpus asserts in
+#                                                     tests/e2e/launcher_dock_move_edge.test)
+#
+# A side dock's band is its own three columns whether the strip is up or
+# down, so the activity bar is laid out INSIDE it and a reveal fills a
+# band that was already the dock's — it covers nothing. And `:dock left`
+# moves a revealed strip instead of dismissing it, so the two commands
+# commute.
+#
+# In ascii mode the activity bar is a column of section letters with `>`
+# on the focused one (`>E` = Explorer); the dock's toast names the edge.
+# width: 120
+# height: 40
+# ascii
+write a.txt "alpha\n"
+open a.txt
+# ── order one: move, then reveal ──
+ex dock left
+command view.dock_toggle
+expect screen contains "dock"
+expect screen contains ">E"
+# ── order two: reveal, then move ── (back to the bottom first, so the
+# move is a real one)
+ex dock bottom
+command view.dock_toggle
+ex dock left
+expect screen contains "dock"
+expect screen contains ">E"
+# ── order three: pin it, then move ──
+ex dock always
+ex dock left
+expect screen contains "dock"
+expect screen contains ">E"

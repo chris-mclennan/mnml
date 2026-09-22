@@ -3193,6 +3193,7 @@ test {
     _ = @import("ui/sidebar_overlay.zig");
     _ = @import("ui/pin_chip.zig");
     _ = @import("ui/edge_grip.zig");
+    _ = @import("app/edge_band_audit.zig");
     _ = @import("ui/dock_view.zig");
     _ = @import("core/dock.zig");
     _ = @import("app/git.zig");

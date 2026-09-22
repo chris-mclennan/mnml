@@ -85,16 +85,24 @@ pub const Props = struct {
 
 /// Where the grip goes in `band` — three cells at its middle — or null
 /// when the band is too short to hold one. `band` is the zone's own
-/// rect: the bar's row, the screen's last row, the column's one-cell
-/// screen edge.
+/// rect: the bar's row, the screen's last row, a side dock's own
+/// reserved columns, a side column's one-cell screen edge.
+///
+/// // changed (side-band): the run is centred on BOTH axes of the band
+/// rather than only along it. A one-cell-thick band is unmoved — the
+/// middle of one cell is that cell — so the bar's row and a side
+/// column's edge place exactly where they always did; a side dock's
+/// band is three columns wide and the glyph now lands in its MIDDLE
+/// column, the very one its items paint their glyphs in (` glyph `),
+/// so the handle stands where the things it summons stand.
 pub fn place(band: Rect, edge: Edge) ?Rect {
     if (band.isEmpty()) return null;
     if (edge.horizontal()) {
         if (band.w < len) return null;
-        return Rect.init(band.x + (band.w - len) / 2, band.y, len, 1);
+        return Rect.init(band.x + (band.w - len) / 2, band.y + (band.h - 1) / 2, len, 1);
     }
     if (band.h < len) return null;
-    return Rect.init(band.x, band.y + (band.h - len) / 2, 1, len);
+    return Rect.init(band.x + (band.w - 1) / 2, band.y + (band.h - len) / 2, 1, len);
 }
 
 /// Paint the grip into `cell` (a `place` rect; any other size is

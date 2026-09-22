@@ -1,0 +1,33 @@
+# A side-edge auto-hiding dock in the SWEPT set, one configuration per
+# edge, so a size sweep (`mnml-zig test --gate --sizes …`) renders the
+# shape the 2026-09-21 grip family lived in. The gate's other files
+# drive the editor and the keyboard: none of them puts a dock on a side
+# edge, which is why nothing caught three grip-over-a-control bugs
+# (hunt/findings-2026-09-21/mouse-SUMMARY.md). Content assertions count
+# at 120x40, where they were written; the other rungs prove the frame
+# renders, survives the clicks and leaks nothing.
+#
+# The structural guard proper is `src/app/edge_band_audit.zig` — a hit
+# map is not a thing a `.test` can ask about.
+write a.txt "alpha\n"
+open a.txt
+command view.sidebar_mode_auto
+# ── the left edge ──
+ex dock left
+ex dock auto
+# Row 19 is the middle of the band at 120x40 — the grip's own rows.
+# The grip is in the band's MIDDLE column, so the outermost column is
+# band-but-not-grip: inert. Before the side-band rule the grip sat in
+# the outermost column instead, on cells that belonged to the activity
+# bar and to the editor's scrollbar, and this press pinned the dock.
+click 0 19
+wait 300
+expect screen lacks "dock pinned"
+# ── the right edge ──
+ex dock right
+click 119 19
+wait 300
+expect screen lacks "dock pinned"
+# ── and back to the bottom, where the band is one row and shared ──
+ex dock bottom
+expect screen contains "alpha"

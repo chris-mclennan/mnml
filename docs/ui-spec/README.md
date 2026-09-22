@@ -44,6 +44,19 @@ not a template. Build on the component system (`Ui`, `HitMap`,
 `Canvas`, `ListPanel`), register every click target in the same
 statement that paints it, and add nothing the Rust screen does not show.
 
+`zig-launcher-dock-left-auto-120x40.txt` is the side-band shape —
+// changed (side-band, 2026-09-21): a LEFT dock in the shipped
+`auto_hide` mode with the strip DOWN (`tools/zig-spec.sh
+launcher-dock-left-auto`, `steps-launcher-dock-left-auto.jsonl`, which
+only runs `view.dock_move`). The dock's three columns are reserved
+whether the strip is up or down, so columns 0-2 are empty ground with
+the `⋮` grip in the middle one — column 1, where the strip's own item
+glyphs paint — and the activity bar starts at column 3, its icons on
+column 4. Before this the band was one column in name and none in
+fact: the rail painted from column 0, the grip's three-row run sat on
+its icons, and revealing the strip painted the rail out of existence
+(`docs/PARITY.md`, the edge-grip row).
+
 `zig-launcher-dock-120x40.txt` / `zig-launcher-dock-left-120x40.txt`
 are the LAUNCHER dock — `ui.dock`, macOS's Dock, not the bottom panel
 and not the dock widgets — in `always` mode at each of its three shapes

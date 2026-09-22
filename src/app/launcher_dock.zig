@@ -156,6 +156,36 @@ pub fn docked(app: *const App) bool {
     return !app.zen and mode(app) == .always;
 }
 
+/// // changed (side-band): whether the frame RESERVES the dock's band
+/// this frame — `render.chrome`'s question now, `docked` having become
+/// the narrower "does it carry items".
+///
+/// **An edge band belongs to one surface.** A SIDE dock's band is its
+/// own three columns and is reserved for as long as the dock is not
+/// `hidden`: everything else — the activity bar, the side columns, the
+/// panes, every hit — is laid out INSIDE it, so the strip occupies the
+/// same columns down, revealed and pinned. Revealing then relayouts
+/// nothing and covers nothing (it fills a band that was already its
+/// own), and the columns the grip marks are inert, which is what the
+/// grip's whole contract needs: it names the band, it is never a
+/// second way in, and it must never answer for a control underneath.
+/// Before this the band was reserved in name only — `hover_zones`
+/// pushed an auto-hiding side column's reveal edge one cell in and
+/// nothing else honoured it, so the grip sat on the editor's scrollbar
+/// and on the activity bar's first column, and a revealed strip
+/// painted the activity bar out of existence.
+///
+/// A BOTTOM band is one ROW of a frame that may only have twenty-four,
+/// and a row is too dear to hold empty for a strip that is down — so
+/// the bottom edge is unchanged: carved only under `.always`, shared
+/// with the `:` line otherwise, which is the case `gripBlocked`
+/// already governs (the grip stands down while a line is open).
+pub fn banded(app: *const App) bool {
+    if (app.zen or mode(app) == .hidden) return false;
+    if (edge(app) == .bottom) return mode(app) == .always;
+    return true;
+}
+
 /// The strip is painted as an overlay over the editor this frame.
 pub fn revealed(app: *const App) bool {
     return !app.zen and mode(app) != .always and app.launcher_dock.open;
@@ -943,8 +973,15 @@ fn moveCmd(app: *App) CommandError!void {
 
 pub fn setEdge(app: *App, next: Edge) CommandError!void {
     app.cfg.ui.dock.edge = next;
-    // The band moved: whatever was revealed at the old edge is stale.
-    if (app.launcher_dock.open) close(app);
+    // // changed (side-band): the strip MOVES with the edge rather than
+    // being dismissed by it. It used to close here — "whatever was
+    // revealed at the old edge is stale" — which made the pair of
+    // settings order-dependent: `:dock left` then `view.dock_toggle`
+    // left the strip up, the reverse order put it away, and a user who
+    // had summoned the dock lost it by changing where it lives. The
+    // band is well defined at every edge, so the strip simply paints
+    // in the new one; the hide clock starts again from here.
+    app.launcher_dock.left_at_ms = null;
     _ = try settings.persist(app, .home, &.{ "ui", "dock", "edge" }, next);
     app.toast("dock: {s} edge", .{@tagName(next)});
     app.needs_render = true;
@@ -1250,7 +1287,7 @@ test "under `.outer` the `:` line owns the bottom row outright: an open one refu
     try t.expect(docked(&app));
 }
 
-test "zone arbitration: a left dock owns the outermost column and pushes the auto-hiding sidebar's reveal edge one cell in; hidden gives the edge back" {
+test "zone arbitration: a left dock owns its WHOLE band and the auto-hiding sidebar's reveal edge starts where that band ends; hidden gives the edge back" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -1260,11 +1297,19 @@ test "zone arbitration: a left dock owns the outermost column and pushes the aut
     app.cfg.ui.dock.edge = .left;
     app.now_ms = 1000;
     const full = Rect.init(0, 0, 120, 40);
-    // Column 0 is the dock's; column 1 summons the sidebar.
-    app.hover = .{ .x = 0, .y = 10 };
-    hover_zones.begin(&app, full, 1000);
-    try t.expectEqual(@as(?hover_zones.Id, .launcher_dock), hover_zones.winner(&app));
-    app.hover = .{ .x = 1, .y = 10 };
+    // // changed (side-band): the band is the strip's own three
+    // columns, not one of them, and all three are the dock's. It used
+    // to be column 0 alone, with the sidebar's edge one cell in — so
+    // an `always` dock's three columns and the hidden column's reveal
+    // edge overlapped, and the column's grip painted over the dock's
+    // own glyphs.
+    for ([_]u16{ 0, 1, 2 }) |x| {
+        app.hover = .{ .x = x, .y = 10 };
+        hover_zones.begin(&app, full, 1000);
+        try t.expectEqual(@as(?hover_zones.Id, .launcher_dock), hover_zones.winner(&app));
+    }
+    // The first column outside the band summons the sidebar.
+    app.hover = .{ .x = width, .y = 10 };
     hover_zones.begin(&app, full, 1000);
     try t.expectEqual(@as(?hover_zones.Id, .sidebar_left), hover_zones.winner(&app));
     // A hidden dock claims nothing, and column 0 is the sidebar's again.
@@ -1275,7 +1320,9 @@ test "zone arbitration: a left dock owns the outermost column and pushes the aut
     // The top row stays the menu bar's whatever the dock's edge is:
     // the band never reaches it.
     app.cfg.ui.dock.mode = .always;
-    try t.expect(hover_zones.dockBand(&app, full).?.y > 0);
+    const band = hover_zones.dockBand(&app, full).?;
+    try t.expect(band.y > 0);
+    try t.expectEqual(width, band.w);
 }
 
 test "the keyboard: h / l walk a bottom strip and wrap, j / k do not; Enter runs and leaves; Esc leaves" {
