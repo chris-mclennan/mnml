@@ -1423,11 +1423,26 @@ fn drawStatusTitle(ui: Ui, r: Rect, m: Model) void {
             else => p.bg3,
         };
         const sep: vaxis.Segment = .{ .text = " \u{00B7} ", .style = .{ .fg = p.comment, .bg = ground } };
-        segs.append(ui.arena, .{ .text = ui.fmt(" {d} {s} ", .{ resp.status, resp.status_text }), .style = .{ .fg = color, .bg = ground, .bold = true } }) catch return;
-        segs.append(ui.arena, sep) catch return;
-        segs.append(ui.arena, .{ .text = ui.fmt("{d}ms", .{resp.timing.total_ms}), .style = .{ .fg = p.comment, .bg = ground } }) catch return;
-        segs.append(ui.arena, sep) catch return;
-        segs.append(ui.arena, .{ .text = ui.fmt("{s} ", .{humanBytes(ui, resp.body_bytes)}), .style = .{ .fg = p.comment, .bg = ground } }) catch return;
+        const ms = ui.fmt("{d}ms", .{resp.timing.total_ms});
+        const size = ui.fmt("{s} ", .{humanBytes(ui, resp.body_bytes)});
+        const code = ui.fmt(" {d} ", .{resp.status});
+        // The code is the one fact that always shows: a reason phrase
+        // too long for the edge is cut to what is left (a verbose
+        // `400 Bad request syntax ('GET …')` took the whole chip with
+        // it), then the size and the time go before the code does.
+        const room: u16 = r.w -| 2;
+        const tail_w = 2 * ui.width(sep.text) + ui.width(ms) + ui.width(size);
+        const with_tail = ui.width(code) + tail_w <= room;
+        const reason_room: u16 = room -| ui.width(code) -| (if (with_tail) tail_w else 0) -| 1;
+        const reason = if (resp.status_text.len == 0 or reason_room < 2) "" else ui.clipStr(resp.status_text, reason_room);
+        const head = if (reason.len == 0) code else ui.fmt(" {d} {s} ", .{ resp.status, reason });
+        segs.append(ui.arena, .{ .text = head, .style = .{ .fg = color, .bg = ground, .bold = true } }) catch return;
+        if (with_tail) {
+            segs.append(ui.arena, sep) catch return;
+            segs.append(ui.arena, .{ .text = ms, .style = .{ .fg = p.comment, .bg = ground } }) catch return;
+            segs.append(ui.arena, sep) catch return;
+            segs.append(ui.arena, .{ .text = size, .style = .{ .fg = p.comment, .bg = ground } }) catch return;
+        }
     } else return;
     var total: u16 = 0;
     for (segs.items) |s| total += ui.width(s.text);
@@ -1898,6 +1913,17 @@ test "after a send: the status title on the Response border, the Headers count, 
     const ui = fx.ui();
     _ = draw(ui, 3, ui.canvas.full(), m);
     try fx.expectRow(18, "\u{250C}" ++ "\u{2500}" ** 65 ++ " 200 OK  \u{00B7} 2ms \u{00B7} 49 B \u{2510}");
+    // A reason phrase longer than the edge is cut; the code, the time
+    // and the size stay.
+    {
+        const saved = m.response.?;
+        m.response.?.status = 400;
+        m.response.?.status_text = "Bad request syntax ('GET /search?q=new york&and=a-very-long-query-string-that-goes-on HTTP/1.1')";
+        _ = draw(ui, 3, ui.canvas.full(), m);
+        try fx.expectRow(18, "\u{250C}" ++ " 400 Bad request syntax ('GET /search?q=new york&and=a-very-long-query-\u{2026}  \u{00B7} 2ms \u{00B7} 49 B \u{2510}");
+        m.response = saved;
+        _ = draw(ui, 3, ui.canvas.full(), m);
+    }
     try fx.expectRow(19, "\u{2502}  Body  Headers 5  Cookies  Timeline  Tests                      wrap   copy   JSON \u{25BC}  \u{2502}");
     try fx.expectRow(21, "\u{2502}" ++ " " ** 87 ++ "\u{2502}");
     try fx.expectRow(22, "\u{2502} 1 {" ++ " " ** 83 ++ "\u{2502}");
