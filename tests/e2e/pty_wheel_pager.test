@@ -1,0 +1,26 @@
+# The wheel scrolls a pager — less, man, git's, bat, top: a program on
+# the alternate screen that does not track the mouse. There the notches
+# reach it as ↑ / ↓ keys (alternate scroll, DEC 1007, on by default in
+# ghostty, xterm, iTerm2, Terminal.app and VS Code); the alternate
+# screen has no scrollback of its own for the wheel to move.
+# (`wheel_pty_pane.test` is the primary screen, where it does.)
+#
+# `less` on 200 numbered lines; ten notches down bring line 60 in.
+write nums.txt ""
+shell seq 1 200 | sed 's/^/row-/' > nums.txt
+command view.toggle_tree
+ex term less nums.txt
+wait 1200
+expect screen contains "row-1"
+scroll 20 20 down
+scroll 20 20 down
+scroll 20 20 down
+scroll 20 20 down
+scroll 20 20 down
+scroll 20 20 down
+scroll 20 20 down
+scroll 20 20 down
+scroll 20 20 down
+scroll 20 20 down
+wait 400
+expect screen contains "row-60"

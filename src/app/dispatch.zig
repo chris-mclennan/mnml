@@ -2967,7 +2967,10 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         },
         .md_preview => |*mp| md_preview.scrollBy(app, mp, signed(down, @intCast(n * gain))),
         .zon => |*z| zon_pane.wheel(app, z, down, n),
-        .pty => |*p| p.scrollBy(signed(down, @intCast(n))),
+        // A row of scrollback a notch (Rust's `scroll_history`); a pager
+        // on the alternate screen gets `wheel_lines` arrows, a text
+        // body's gain (`pty_pane.wheel`).
+        .pty => |*p| pty_pane.wheel(app, p, down, n, n * gain),
         .git_status => |*s| git_app.statusPaneWheel(app, s, down, n),
         .diff => |*d| git_app.stepDiff(d, signed(down, @intCast(n * gain))),
         .git_graph => |*g| g.cursor = if (down) @min(g.cursor + n, g.totalRows() -| 1) else g.cursor -| n,

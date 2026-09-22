@@ -761,17 +761,40 @@ pub fn encodePaste(arena: Allocator, text: []const u8, bracketed: bool) Allocato
     return std.mem.concat(arena, u8, &parts);
 }
 
+/// The wheel over a pane whose child is not tracking the mouse, in
+/// ghostty's order: on the alternate screen with alternate scroll (DEC
+/// 1007, on by default) the notches become ↑ / ↓ keys, `lines` of them,
+/// so a pager — less, man, git's, bat — scrolls; anywhere else the
+/// wheel moves the scrollback `rows` rows. (A child tracking the mouse
+/// gets the reports instead, `mouse`.)
+pub fn wheel(app: *App, p: *PtyPane, down: bool, rows: usize, lines: usize) void {
+    app.needs_render = true;
+    const session = p.session orelse return;
+    const term = session.terminal();
+    if (p.exit == null and term.screens.active_key == .alternate and term.modes.get(.mouse_alternate_scroll)) {
+        const app_keys = term.modes.get(.cursor_keys);
+        const seq: []const u8 = if (down)
+            (if (app_keys) "\x1bOB" else "\x1b[B")
+        else
+            (if (app_keys) "\x1bOA" else "\x1b[A");
+        var i: usize = 0;
+        while (i < lines) : (i += 1) session.write(seq);
+        return;
+    }
+    const delta: isize = @intCast(rows);
+    p.scrollBy(if (down) delta else -delta);
+}
+
 /// A mouse event inside the pane's rect: a report to the child when it
-/// tracks the mouse, else the wheel scrolls the scrollback.
+/// tracks the mouse, else the wheel follows `wheel`'s rule.
 pub fn mouse(app: *App, p: *PtyPane, m: Mouse, origin: struct { x: u16, y: u16 }) void {
     const enc = p.encoding();
     if (enc.mouse == .none) {
         switch (m.kind) {
-            .scroll_up => p.scrollBy(-3),
-            .scroll_down => p.scrollBy(3),
+            .scroll_up => wheel(app, p, false, 3, 3),
+            .scroll_down => wheel(app, p, true, 3, 3),
             else => {},
         }
-        app.needs_render = true;
         return;
     }
     var buf: [32]u8 = undefined;
@@ -1242,6 +1265,28 @@ test "paste is bracketed only when the child asked; a newline becomes a carriage
     const text = try app.gpa.dupe(u8, "ab");
     try app.handle(.{ .paste = text });
     try t.expect(try tickUntilScreen(&app, "2   0   0   ~   a   b", 5000));
+}
+
+test "the wheel over a pager: on the alternate screen with no mouse tracking the notches reach the child as arrow keys" {
+    // A POSIX shell script drives this one.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (!supported) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    // What less does: the alternate screen, no mouse mode. The child
+    // dumps the next six bytes it reads as octal.
+    const id = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "printf '\\033[?1049h'; stty raw -echo; echo ready; dd bs=1 count=6 2>/dev/null | od -An -c; sleep 30" }, .label = "pager" });
+    try t.expect(try tickUntilScreen(&app, "ready", 5000));
+    try t.expect(app.panes.pty(id).?.encoding().mouse == .none);
+    var rect: ?Rect = null;
+    for (app.hits.items.items) |h| if (h.target == .pane and h.target.pane == id) {
+        rect = h.rect;
+    };
+    const r = rect.?;
+    app.now_ms += 1000;
+    try app.handle(.{ .mouse = .{ .x = r.x + 5, .y = r.y + 3, .kind = .scroll_down } });
+    try t.expect(try tickUntilScreen(&app, "033   [   B 033   [   B", 5000));
 }
 
 test "the wheel over a pty: a child tracking the mouse gets every event of a batch as its report; one that is not scrolls the scrollback a line per event" {
