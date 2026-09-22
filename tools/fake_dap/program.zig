@@ -641,6 +641,16 @@ pub const Program = struct {
         return error.NoSuchField;
     }
 
+    /// A console line `name = expr` (lldb's `x = 41`): the value goes
+    /// to the nearest `name` — this frame, then main — or defines it
+    /// here, and comes back as the result.
+    pub fn assign(self: *Program, frame: usize, name: []const u8, expr: []const u8) EvalError!Value {
+        const v = try self.evaluate(expr, frame);
+        const f = &self.frames.items[@min(frame, self.frames.items.len - 1)];
+        self.assignIn(f, name, v) catch try self.define(f, name, v);
+        return v;
+    }
+
     // ─── expressions ───
 
     /// Evaluate `expr` as seen from frame `frame`. Ints, names, `a.b`,
@@ -834,7 +844,7 @@ fn isIdentChar(c: u8) bool {
     return std.ascii.isAlphanumeric(c) or c == '_';
 }
 
-fn isIdent(s: []const u8) bool {
+pub fn isIdent(s: []const u8) bool {
     if (s.len == 0 or !isIdentStart(s[0])) return false;
     for (s) |c| if (!isIdentChar(c)) return false;
     return true;

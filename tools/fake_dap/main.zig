@@ -309,7 +309,16 @@ pub const Server = struct {
                 try self.respond(rseq, command, .{ .result = text.items, .type = @as(?[]const u8, null), .variablesReference = 0 });
                 return;
             }
-            const v = p.evaluate(expr, frame) catch |err| switch (err) {
+            // `name = expr` in the console assigns, as lldb's does.
+            const assignment: ?struct { name: []const u8, rhs: []const u8 } = if (repl) blk: {
+                const eq = std.mem.indexOfScalar(u8, expr, '=') orelse break :blk null;
+                if (eq + 1 < expr.len and expr[eq + 1] == '=') break :blk null;
+                if (eq > 0 and (expr[eq - 1] == '!' or expr[eq - 1] == '<' or expr[eq - 1] == '>')) break :blk null;
+                const name = std.mem.trim(u8, expr[0..eq], " \t");
+                if (!program.isIdent(name)) break :blk null;
+                break :blk .{ .name = name, .rhs = std.mem.trim(u8, expr[eq + 1 ..], " \t") };
+            } else null;
+            const v = (if (assignment) |as| p.assign(frame, as.name, as.rhs) else p.evaluate(expr, frame)) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 // A console error names the expression on a second
                 // line, as lldb's and Python's diagnostics run to

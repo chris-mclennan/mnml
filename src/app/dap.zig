@@ -1209,6 +1209,14 @@ fn handleResponse(app: *App, s: *Session, kind: client.ReqKind, ctx: u64, succes
             const expr = s.takeEval(ctx) orelse return;
             defer app.gpa.free(expr);
             try consoleResult(app, expr, success, message, body);
+            // A console line may have changed the program (`total = 7`,
+            // a call with side effects): the DAP guidance for
+            // `context: "repl"` is to re-fetch what the panel shows.
+            // Variable references stay valid until the next resume,
+            // so the expanded nodes are asked again in place, the
+            // watches re-evaluated, and the inline values — read off
+            // the same scopes — follow (hunt: dap-repl-assignment-stale).
+            if (success) refreshAfterEvaluate(app, s);
         },
         .evaluate_watch => {
             const expr = s.takeEval(ctx) orelse return;
@@ -1305,6 +1313,14 @@ fn handleEvent(app: *App, s: *Session, name: []const u8, body: ?jsonrpc.Value) A
         s.exited = true;
         endSession(app);
     }
+}
+
+/// Ask again for every expanded scope and composite, and the watches.
+fn refreshAfterEvaluate(app: *App, s: *Session) void {
+    if (s.stopped == null) return;
+    var it = s.expanded.keyIterator();
+    while (it.next()) |ref| s.requestVariables(ref.*) catch {};
+    evaluateWatches(app);
 }
 
 /// The configuration step, once `initialized` has arrived AND the
@@ -2029,6 +2045,10 @@ const FakeLog = struct {
     /// `disconnect`'s `terminateDebuggee`.
     terminate_seen: bool = false,
     disconnect_terminate: ?bool = null,
+    /// How many `variables` requests, and how many `evaluate`s with
+    /// `context: "watch"`, have come — a REPL line re-asks for both.
+    variables_count: u32 = 0,
+    watch_evals: u32 = 0,
 
     fn note(self: *FakeLog, comptime field: []const u8, value: anytype) void {
         self.lock.lockUncancelable(testing.io);
@@ -2102,9 +2122,17 @@ fn fakeAdapter(io: std.Io, gpa: Allocator, in: std.Io.File, out: std.Io.File, lo
         } else if (std.mem.eql(u8, cmd, "scopes")) {
             fakeReply(io, gpa, out, &seq, rseq, cmd, "{\"scopes\":[{\"name\":\"Locals\",\"variablesReference\":10,\"expensive\":false}]}");
         } else if (std.mem.eql(u8, cmd, "variables")) {
+            log.lock.lockUncancelable(io);
+            log.variables_count += 1;
+            log.lock.unlock(io);
             fakeReply(io, gpa, out, &seq, rseq, cmd, "{\"variables\":[{\"name\":\"a\",\"value\":\"1\",\"type\":\"int\",\"variablesReference\":0}]}");
         } else if (std.mem.eql(u8, cmd, "evaluate")) {
             const expr = jsonrpc.getStr(args, "expression") orelse "";
+            if (jsonrpc.getStr(args, "context")) |c| if (std.mem.eql(u8, c, "watch")) {
+                log.lock.lockUncancelable(io);
+                log.watch_evals += 1;
+                log.lock.unlock(io);
+            };
             const b = std.fmt.allocPrint(gpa, "{{\"result\":\"{s} = 42\",\"type\":\"int\",\"variablesReference\":0}}", .{expr}) catch return;
             defer gpa.free(b);
             fakeReply(io, gpa, out, &seq, rseq, cmd, b);
@@ -2209,13 +2237,28 @@ test "a scripted adapter: the handshake, a stop with frames/scopes/variables/wat
     const marks = try marksFor(&app, arena.allocator(), file, &app.theme, false);
     try testing.expectEqualStrings("▶", marks[0].glyph);
 
-    // The REPL evaluates against the stop.
+    // The REPL evaluates against the stop — and the panel is asked
+    // again afterwards: the scope's variables and the watch.
+    const vars_before = log.variables_count;
+    const watch_before = log.watch_evals;
     try command.run(&app, .{ .static = .@"dap.repl" });
     for ("a + 1") |c| try app.handle(.{ .key = Key.char(c) });
     try app.handle(.{ .key = Key.named(.enter) });
     try pumpUntil(&app, &app, Cond.replied, 5000);
     try testing.expectEqualStrings("a + 1 = 42", app.dap.console.lastEval().?.value);
     try testing.expectEqualStrings("int", app.dap.console.lastEval().?.ty.?);
+    const Refreshed = struct {
+        log: *FakeLog,
+        vars: u32,
+        watches: u32,
+        fn done(r: *const @This()) bool {
+            r.log.lock.lockUncancelable(testing.io);
+            defer r.log.lock.unlock(testing.io);
+            return r.log.variables_count > r.vars and r.log.watch_evals > r.watches;
+        }
+    };
+    const refreshed: Refreshed = .{ .log = &log, .vars = vars_before, .watches = watch_before };
+    try pumpUntil(&app, &refreshed, Refreshed.done, 5000);
 
     // setVariable round-trips and re-fetches the parent.
     try acceptSetVariable(&app, 10, "a", "7");
