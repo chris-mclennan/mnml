@@ -1,0 +1,69 @@
+# width: 120
+# Reordering the launcher dock (src/app/launcher_dock.zig, `moveItem`):
+# an item's right-click menu carries *Move left* / *Move right* / *Move
+# to start* / *Move to end* (up / down on a side strip), and the same
+# four are `Alt+←` / `Alt+→` / `Alt+Home` / `Alt+End` while the item
+# has the keyboard cursor. The order is written to `ui.dock.order` as
+# the whole strip, `+` left out, so it survives a restart.
+#
+# `:dock start` anchors the run at the strip's first cell, so a row can
+# be pinned by its leading `\n`. Out of the box it reads ` Browser
+# Claude Code  Codex  HTTP  󲀀 New terminal  󰐕 New ` (// changed
+# (railmove): the four first-party surfaces are on the strip): Browser
+# at 1..11 (the glyph at 2, the word from 4), Claude Code at 12..26,
+# Codex at 27..35, HTTP at 36..43, New terminal at 44..59, the `+` at
+# 60..66. No click below may land on 12..35 — that would start a real
+# `claude` / `codex`.
+write a.txt "alpha\n"
+open a.txt
+ex dock always
+ex dock start
+expect screen contains "\n   Browser  󱸀 Claude Code  󱸁 Codex   HTTP  󲀀 New terminal  󰐕 New "
+# Browser's menu: the four rows, worded for a bottom strip.
+rightclick 5 37
+expect screen contains "Move left"
+expect screen contains "Move right"
+expect screen contains "Move to start"
+expect screen contains "Move to end"
+expect screen lacks "Move up"
+# *Pin to dock* is row 0, *Move left* row 1, *Move right* row 2.
+key down
+key down
+key enter
+expect screen contains "dock: Browser moved"
+expect screen contains "\n  󱸀 Claude Code   Browser  󱸁 Codex   HTTP  󲀀 New terminal  󰐕 New "
+# The keyboard: the cursor followed Browser to its new place, so
+# `Alt+←` from `view.focus_dock` moves it straight back — and the keys
+# stay in the strip, so `Alt+End` then sends it to the end of the run,
+# where the `+` is still behind it. The `▸` is the cursor, in the
+# padding cell before the item's glyph; it travels with Browser.
+command view.focus_dock
+key alt+left
+expect screen contains "dock: Browser moved"
+expect screen contains "\n ▸ Browser  󱸀 Claude Code  󱸁 Codex   HTTP  󲀀 New terminal  󰐕 New "
+key alt+end
+expect screen contains "\n  󱸀 Claude Code  󱸁 Codex   HTTP  󲀀 New terminal ▸ Browser  󰐕 New "
+# Past the end is a toast, not a write.
+key alt+right
+expect screen contains "Browser is already at the end"
+# The `+` does not move: its end is `ui.dock.plus_at`'s to give.
+key end
+key alt+left
+expect screen contains "the + keeps its end"
+expect screen contains "\n  󱸀 Claude Code  󱸁 Codex   HTTP  󲀀 New terminal   Browser ▸󰐕 New "
+key esc
+expect screen contains "\n  󱸀 Claude Code  󱸁 Codex   HTTP  󲀀 New terminal   Browser  󰐕 New "
+# The `+`'s own menu offers no move rows at all. With Browser moved to
+# the end the `+` is at 60..66, its glyph at 61.
+rightclick 61 37
+expect screen lacks "Move left"
+expect screen contains "Show the + button"
+key esc
+# `Alt+Home` from the keys: back to the start.
+command view.focus_dock
+key end
+key left
+key alt+home
+expect screen contains "\n ▸ Browser  󱸀 Claude Code  󱸁 Codex   HTTP  󲀀 New terminal  󰐕 New "
+key esc
+expect screen contains "\n   Browser  󱸀 Claude Code  󱸁 Codex   HTTP  󲀀 New terminal  󰐕 New "

@@ -762,9 +762,15 @@ const Run = struct {
                 }
                 const cell = scr.buf[@as(usize, c.y) * scr.width + c.x];
                 const got = if (c.bg) cell.style.bg else cell.style.fg;
-                const hit = switch (got) {
-                    .rgb => |v| std.mem.eql(u8, &v, &c.rgb),
-                    else => false,
+                const hit = switch (c.want) {
+                    .rgb => |want| switch (got) {
+                        .rgb => |v| std.mem.eql(u8, &v, &want),
+                        else => false,
+                    },
+                    .index => |want| switch (got) {
+                        .index => |i| i == want,
+                        else => false,
+                    },
                 };
                 if (hit != c.negated) return null;
                 var got_buf: [32]u8 = undefined;
@@ -773,7 +779,12 @@ const Run = struct {
                     .index => |i| std.fmt.bufPrint(&got_buf, "index {d}", .{i}) catch "?",
                     .default => "default",
                 };
-                return std.fmt.allocPrint(gpa, "cell {d},{d} {s} is {s}, expected {s}#{x:0>2}{x:0>2}{x:0>2}", .{ c.x, c.y, if (c.bg) "bg" else "fg", got_text, if (c.negated) "not " else "", c.rgb[0], c.rgb[1], c.rgb[2] }) catch null;
+                var want_buf: [32]u8 = undefined;
+                const want_text = switch (c.want) {
+                    .rgb => |v| std.fmt.bufPrint(&want_buf, "#{x:0>2}{x:0>2}{x:0>2}", .{ v[0], v[1], v[2] }) catch "?",
+                    .index => |i| std.fmt.bufPrint(&want_buf, "index {d}", .{i}) catch "?",
+                };
+                return std.fmt.allocPrint(gpa, "cell {d},{d} {s} is {s}, expected {s}{s}", .{ c.x, c.y, if (c.bg) "bg" else "fg", got_text, if (c.negated) "not " else "", want_text }) catch null;
             },
             .highlights_at_least => |min| {
                 const count = d.highlightCount() orelse return gpa.dupe(u8, "expect highlights: no active editor pane") catch null;

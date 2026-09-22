@@ -21,13 +21,28 @@ ex dock auto
 # the outermost column instead, on cells that belonged to the activity
 # bar and to the editor's scrollbar, and this press pinned the dock.
 click 0 19
-wait 300
 expect screen lacks "dock pinned"
+expect screen contains "alpha"
+# That `wait` is the reveal dwell: the pointer is resting in the band,
+# so the strip comes up — which is fine here, and is the trap below.
+wait 300
 # ── the right edge ──
+# `:dock right` moves a REVEALED dock to the right edge still revealed,
+# and a revealed side strip's outermost column is its items' padding
+# cell — a click there runs the item on that row, not the grip. The
+# row's item is whatever the strip's order puts there (// changed
+# (dock-polish): HTTP, once the `+` ended the run; Codex before it,
+# which only passed for want of a `codex` binary). The press below is
+# about the band-but-not-grip column of a HIDDEN dock, so the pointer
+# leaves the edge and the strip is given `hide_ms` to go away first;
+# `alpha` still on screen afterwards is the proof the click ran nothing.
 ex dock right
+hover 60 10
+wait 600
 click 119 19
 wait 300
 expect screen lacks "dock pinned"
+expect screen contains "alpha"
 # ── and back to the bottom, where the band is one row and shared ──
 ex dock bottom
 expect screen contains "alpha"

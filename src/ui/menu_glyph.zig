@@ -169,8 +169,10 @@ pub fn forItem(it: command.MenuItem, ascii: bool) []const u8 {
         .set_dock_placement => if (ascii) "^" else "\u{f07d}", // fa-arrows_v
         // Its *Align* rows: where the run sits.
         .set_dock_align => if (ascii) "|" else "\u{f036}", // fa-align_left
-        // Its *Show the + button* row.
-        .set_dock_plus => if (ascii) "+" else "\u{F0415}", // nf-md-plus, the tab bar's own
+        // Its *Show the + button* row, and the two `+ at the …` rows.
+        .set_dock_plus, .set_dock_plus_at => if (ascii) "+" else "\u{F0415}", // nf-md-plus, the tab bar's own
+        // Its `Running mark:` rows — the mark a running item wears.
+        .set_dock_running_mark => if (ascii) "*" else "\u{f111}", // fa-circle
         // The `Icon ▸` rows on the two branded chips. The row's glyph
         // IS the icon it picks — the resolver's, not a brush: you
         // choose by the picture, and the label only says whose it is.

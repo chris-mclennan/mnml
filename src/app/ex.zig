@@ -1292,8 +1292,11 @@ pub fn completeSet(gpa: Allocator, partial: []const u8) Allocator.Error![][]u8 {
 /// (`:sidebar bottom`) and not the widgets. `icons` / `labels` /
 /// `text` is `ui.dock.labels`, the bottom strip's three forms, and
 /// `start` / `center` / `end` is `ui.dock.align`; `plus` flips
-/// `ui.dock.plus`, the `+` at the head of the run; `l` stays `left`, so
+/// `ui.dock.plus`, the `+` on the strip; `l` stays `left`, so
 /// the label words are spelled out.
+/// // changed (dock-polish): `plus left|right` is `ui.dock.plus_at`,
+/// which end the `+` takes, and `mark bright|dot|none` is
+/// `ui.dock.running_mark`.
 /// // changed (dock-placement): `inner` / `outer` is
 /// `ui.dock.placement` — a bottom strip above the statusline or under
 /// the `:` line. `above` and `below` say the same thing in the words
@@ -1318,10 +1321,15 @@ fn launcherDock(app: *App, args: []const u8) CommandError!void {
     if (eqAny(a, &.{"start"})) return launcher_dock.setAlign(app, .start);
     if (eqAny(a, &.{"end"})) return launcher_dock.setAlign(app, .end);
     if (eqAny(a, &.{"plus"})) return launcher_dock.setPlus(app, !app.cfg.ui.dock.plus);
+    if (eqAny(a, &.{ "plus right", "plus end" })) return launcher_dock.setPlusAt(app, .right);
+    if (eqAny(a, &.{ "plus left", "plus start" })) return launcher_dock.setPlusAt(app, .left);
+    if (eqAny(a, &.{ "mark bright", "mark" })) return launcher_dock.setRunningMark(app, .bright);
+    if (eqAny(a, &.{"mark dot"})) return launcher_dock.setRunningMark(app, .dot);
+    if (eqAny(a, &.{ "mark none", "mark off" })) return launcher_dock.setRunningMark(app, .none);
     if (eqAny(a, &.{"pin"})) return command.run(app, .{ .static = .@"view.dock_pin" });
     if (eqAny(a, &.{ "focus", "f" })) return command.run(app, .{ .static = .@"view.focus_dock" });
     if (a.len == 0 or eqAny(a, &.{"toggle"})) return command.run(app, .{ .static = .@"view.dock_toggle" });
-    return app.diag.fail(app.frame.allocator(), ":dock bottom|left|right|inner|outer|always|auto|hidden|icons|labels|text|start|center|end|plus|pin|focus|toggle", .{});
+    return app.diag.fail(app.frame.allocator(), ":dock bottom|left|right|inner|outer|always|auto|hidden|icons|labels|text|start|center|end|plus [left|right]|mark bright|dot|none|pin|focus|toggle", .{});
 }
 
 fn sidebar(app: *App, args: []const u8) CommandError!void {

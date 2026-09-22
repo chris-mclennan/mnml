@@ -2,7 +2,7 @@
 # The keyboard path: `view.focus_dock` (vim `Ctrl-W D`) puts the keys in
 # the strip, `h` / `l` walk a bottom dock, Enter runs the item and hands
 # the keys back, Esc leaves without running anything. The run starts on
-# the `+` — the strip's first item.
+# Browser — the strip's first item; the `+` ends it (dock-polish).
 write a.txt "alpha\n"
 open a.txt
 ex dock always
@@ -21,13 +21,13 @@ click 60 2
 type "hl"
 key ctrl+s
 expect file a.txt contains "hl"
-# The cursor starts on the `+`, which leads the strip: five `l` steps
-# walk it past Browser, Claude Code, Codex and HTTP onto New terminal
+# The cursor starts on Browser, which leads the strip: four `l` steps
+# walk it past Claude Code, Codex and HTTP onto New terminal
 # (// changed (railmove): the four first-party surfaces are on the
-# strip), and Enter opens the shell. Four or fewer would start a real
-# `claude` / `codex` — the count is load-bearing.
+# strip), and Enter opens the shell. Three or fewer would start a real
+# `claude` / `codex`; five would land on the `+`, which ends the run —
+# the count is load-bearing.
 command view.focus_dock
-key l
 key l
 key l
 key l

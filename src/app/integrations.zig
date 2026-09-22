@@ -412,6 +412,9 @@ pub const State = struct {
     /// // changed (launcher-dock): `ui.dock.pins` after a pin / unpin,
     /// owned the same way `pins_owned` owns the activity bar's.
     dock_pins_owned: ?[][]u8 = null,
+    /// // changed (dock-polish): `ui.dock.order` after a move, owned
+    /// the same way.
+    dock_order_owned: ?[][]u8 = null,
     /// `ui.integration_icons` after a first-party row's Enable /
     /// Disable or Show in palette bar: the array AND its strings, so
     /// the config field cannot dangle on the next reload of the file
@@ -485,6 +488,7 @@ pub const State = struct {
             self.pins_owned = null;
         }
         self.freeDockPins(gpa);
+        self.freeDockOrder(gpa);
     }
 
     fn freeDockPins(self: *State, gpa: Allocator) void {
@@ -492,6 +496,13 @@ pub const State = struct {
         for (owned) |p| gpa.free(p);
         gpa.free(owned);
         self.dock_pins_owned = null;
+    }
+
+    fn freeDockOrder(self: *State, gpa: Allocator) void {
+        const owned = self.dock_order_owned orelse return;
+        for (owned) |p| gpa.free(p);
+        gpa.free(owned);
+        self.dock_order_owned = null;
     }
 
     fn setMenuChip(self: *State, gpa: Allocator, id: ?[]const u8) Allocator.Error!void {
@@ -1611,6 +1622,30 @@ pub fn setDockPins(app: *App, ids: []const []const u8) Allocator.Error!void {
     st.dock_pins_owned = owned;
     app.cfg.ui.dock.pins = @ptrCast(owned);
     _ = try settings.persist(app, .home, &.{ "ui", "dock", "pins" }, app.cfg.ui.dock.pins);
+    app.needs_render = true;
+}
+
+/// // changed (dock-polish): the new `ui.dock.order` — the strip's
+/// item ids first to last — gpa-owned by the state and persisted home,
+/// exactly as `setDockPins` keeps the pins. `launcher_dock.moveItem`
+/// is the one writer.
+pub fn setDockOrder(app: *App, ids: []const []const u8) Allocator.Error!void {
+    const st = &app.integrations;
+    const gpa = app.gpa;
+    const owned = try gpa.alloc([]u8, ids.len);
+    var n: usize = 0;
+    errdefer {
+        for (owned[0..n]) |p| gpa.free(p);
+        gpa.free(owned);
+    }
+    for (ids) |id| {
+        owned[n] = try gpa.dupe(u8, id);
+        n += 1;
+    }
+    st.freeDockOrder(gpa);
+    st.dock_order_owned = owned;
+    app.cfg.ui.dock.order = @ptrCast(owned);
+    _ = try settings.persist(app, .home, &.{ "ui", "dock", "order" }, app.cfg.ui.dock.order);
     app.needs_render = true;
 }
 

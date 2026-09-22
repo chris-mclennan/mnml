@@ -52,7 +52,11 @@ key esc
 # // changed (edge-grip): the grips row sits under the three, so a
 # couple of wheel notches brings it into the window. It is one row for
 # all three slide-ins' handles, and `on` out of the box.
+# // changed (dock-polish): two more dock rows above it (`+ end`, the
+# running mark), so one more notch.
 command view.settings
+scroll 60 20 down
+scroll 60 20 down
 scroll 60 20 down
 scroll 60 20 down
 scroll 60 20 down

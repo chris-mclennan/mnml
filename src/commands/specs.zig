@@ -99,6 +99,15 @@ pub const specs = [_]Spec{
     .{ .id = "view.rail_hide_section", .title = "Activity bar: hide the marked section from the bar (its command and keys still open it)", .group = "view" },
     .{ .id = "view.rail_show_on_dock", .title = "Activity bar: move the marked section to the launcher dock (hidden here, its command pinned there)", .group = "view" },
     .{ .id = "view.rail_show_sections", .title = "Activity bar: show every hidden section again", .group = "view" },
+    // // changed (dock-polish): reordering the launcher dock. Each
+    // moves the item the dock's cursor is on — the row a menu was
+    // opened on, or the keyboard's — and writes `ui.dock.order`. The
+    // item menu's rows say *left* / *right* on a bottom strip and
+    // *up* / *down* on a side one; the ids say neither.
+    .{ .id = "view.dock_item_move_prev", .title = "Launcher dock: move the focused item one step towards the start (Alt+← / Alt+↑ in the dock)", .group = "view" },
+    .{ .id = "view.dock_item_move_next", .title = "Launcher dock: move the focused item one step towards the end (Alt+→ / Alt+↓ in the dock)", .group = "view" },
+    .{ .id = "view.dock_item_move_first", .title = "Launcher dock: move the focused item to the start (Alt+Home in the dock)", .group = "view" },
+    .{ .id = "view.dock_item_move_last", .title = "Launcher dock: move the focused item to the end (Alt+End in the dock)", .group = "view" },
     // // changed (launcher-dock): the launcher dock — integrations,
     // terminals, launchers and pinned commands along one edge. Not the
     // bottom panel (`view.toggle_bottom_panel`) and not the dock
@@ -1228,7 +1237,7 @@ pub const specs = [_]Spec{
     .{ .id = "view.keep_tab", .title = "Keep this tab (stop the next glance taking the preview over)", .group = "view", .keys = .{ .vim = &.{"space b k"}, .standard = &.{"ctrl+k enter"} } },
 };
 
-test "1112 specs, unique ids" {
+test "1116 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1262,6 +1271,8 @@ test "1112 specs, unique ids" {
     // + `view.claude_mark_custom` (claude-icon) in place of
     // `integrations.edit_claude_glyph`, which was a cut command a menu
     // row still fired — a swap, so the count did not move.
-    try std.testing.expectEqual(@as(usize, 1112), specs.len);
+    // + the three `view.rail_*` membership commands (railmove)
+    // + the four `view.dock_item_move_*` reorder commands (dock-polish)
+    try std.testing.expectEqual(@as(usize, 1116), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

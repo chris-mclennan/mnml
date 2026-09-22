@@ -4,10 +4,10 @@
 # paints the glyph alone, so the label moves into the hover tooltip.
 #
 # A side dock centres its items down the column too (`ui.dock.align`),
-# so at 120x40 the six of them — the `+`, Browser, Claude Code, Codex,
-# HTTP, New terminal (// changed (railmove): the four first-party
-# surfaces are on the strip) — sit on rows 16..21, with the pin chip on
-# row 37.
+# so at 120x40 the six of them — Browser, Claude Code, Codex, HTTP, New
+# terminal, the `+` (which ends the run — dock-polish; // changed
+# (railmove): the four first-party surfaces are on the strip) — sit on
+# rows 16..21, with the pin chip on row 37.
 write a.txt "alpha\n"
 open a.txt
 ex dock always
@@ -17,7 +17,7 @@ expect screen contains "dock: left edge"
 expect screen lacks "New terminal"
 # The tooltip is where a side dock's names live (`ui.hover_tooltip`).
 command view.toggle_hover_tooltip
-hover 1 17
+hover 1 16
 wait 200
 expect screen contains "Browser"
 # Back to the bottom, labels and all.

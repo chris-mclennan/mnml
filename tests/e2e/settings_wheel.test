@@ -8,13 +8,16 @@ scroll 60 20 down
 expect screen lacks "── UI ──"
 scroll 60 20 up
 expect screen contains "── UI ──"
-# A row per notch (Rust's `settings_move_row(±1)` an event): forty-six
+# A row per notch (Rust's `settings_move_row(±1)` an event): forty-eight
 # notches carry the UI section past and bring the Editor header into the
 # window, at the box's height on any screen the suite runs at. The count
 # tracks the section's length, so a row added to UI buys one more notch
 # here — 41 was exactly on the boundary until *Confirm on quit* pushed it
-# over, and the three *First … colour* rows (accent-defaults) took the
-# block from 43 to 46; at 45 the header is still one row below the window.
+# over, the three *First … colour* rows (accent-defaults) took the block
+# from 43 to 46, and the two dock-polish rows (*+ end*, *running mark*)
+# from 46 to 48; one fewer and the header is still off the bottom.
+scroll 60 20 down
+scroll 60 20 down
 scroll 60 20 down
 scroll 60 20 down
 scroll 60 20 down

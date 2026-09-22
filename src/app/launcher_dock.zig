@@ -68,12 +68,16 @@ const context_menus = @import("context_menus.zig");
 const activity_bar = @import("activity_bar.zig");
 const rail = @import("../ui/activity_bar.zig");
 const side_mod = @import("side.zig");
+const Theme = @import("../ui/theme.zig");
+const paletteColor = @import("../ui/integrations_view.zig").paletteColor;
 
 pub const Mode = Config.DockMode;
 pub const Edge = Config.DockEdge;
 pub const Labels = Config.DockLabels;
 pub const Align = Config.DockAlign;
 pub const Placement = Config.DockPlacement;
+pub const PlusAt = Config.DockPlusAt;
+pub const RunningMark = Config.DockRunningMark;
 pub const Part = @import("../ui/hit.zig").LauncherDockPart;
 
 pub const table = .{
@@ -83,6 +87,10 @@ pub const table = .{
     .@"view.dock_move" = &moveCmd,
     .@"view.focus_dock" = &focusCmd,
     .@"view.dock_unpin_item" = &unpinItemCmd,
+    .@"view.dock_item_move_prev" = &moveItemPrevCmd,
+    .@"view.dock_item_move_next" = &moveItemNextCmd,
+    .@"view.dock_item_move_first" = &moveItemFirstCmd,
+    .@"view.dock_item_move_last" = &moveItemLastCmd,
 };
 
 /// A side dock's width in cells — the activity bar's, so the two rails
@@ -140,6 +148,19 @@ pub fn labels(app: *const App) Labels {
 /// pin chip keeps the far end whatever it says.
 pub fn alignment(app: *const App) Align {
     return app.cfg.ui.dock.@"align";
+}
+
+/// // changed (dock-polish): `ui.dock.plus_at` — which end of the run
+/// the `+` takes. `.right` is the far end on either axis (the bottom
+/// of a side strip); `.left` leads.
+pub fn plusAt(app: *const App) PlusAt {
+    return app.cfg.ui.dock.plus_at;
+}
+
+/// // changed (dock-polish): `ui.dock.running_mark` — how a running
+/// item is told from the rest.
+pub fn runningMark(app: *const App) RunningMark {
+    return app.cfg.ui.dock.running_mark;
 }
 
 /// // changed (dock-placement): `ui.dock.placement` — where a BOTTOM
@@ -383,14 +404,28 @@ pub const Action = union(enum) {
     none,
 };
 
+/// // changed (dock-polish): an item's colour as the model names it.
+/// An integration wears its category colour, which the manifest and
+/// the first-party table spell as a ROLE (`"blue"`, `"#RRGGBB"`) for
+/// `integrations_view.paletteColor` to resolve — the same resolver the
+/// chip in the tab cluster and the pinned rail icon go through, so the
+/// dock's Jira is the tab's Jira. A terminal wears the colour the
+/// split cluster's own terminal chip and a shell tab already picked
+/// (`bufferline.terminal_chip_fg`), as is: the dock used to give the
+/// ghost a green of its own, and the user saw two ghosts disagree.
+pub const Color = union(enum) {
+    role: []const u8,
+    fixed: Theme.Color,
+};
+
 pub const Item = struct {
     kind: Kind,
-    /// The chip id, the command id, or the pane's title — what the
-    /// menu and `dock.pins` name this row by.
+    /// The chip id, the command id, or `term` for a pty — what the
+    /// menu, `dock.pins` and `dock.order` name this row by.
     id: []const u8,
     glyph: []const u8,
     fallback: []const u8,
-    color: []const u8,
+    color: Color,
     label: []const u8,
     running: bool,
     action: Action,
@@ -398,7 +433,9 @@ pub const Item = struct {
 
 /// Every item the strip shows, in paint order, on `arena`:
 /// integrations, then launchers that declared no chip, then the
-/// terminals, then `ui.dock.pins`.
+/// terminals, then `ui.dock.pins` — that run reordered by
+/// `ui.dock.order` — and the `+` at whichever end `ui.dock.plus_at`
+/// says.
 ///
 /// // changed (railmove): an integration is on the strip when it is
 /// INSTALLED and not disabled — `Chip.on_dock` — whatever its chip
@@ -408,9 +445,6 @@ pub const Item = struct {
 /// — hidden chips out of the box — were never on the dock at all.
 pub fn items(app: *App, arena: Allocator) Allocator.Error![]Item {
     var out: std.ArrayListUnmanaged(Item) = .empty;
-    // ── the `+`, leading the run: the tab bar's own, opening the same
-    //    *Create…* menu. `ui.dock.plus = false` takes it off ──
-    if (app.cfg.ui.dock.plus) try out.append(arena, plusItem(app));
     // ── integrations ──
     for (try integrations.allChips(app, arena)) |c| {
         if (!c.on_dock) continue;
@@ -419,7 +453,7 @@ pub fn items(app: *App, arena: Allocator) Allocator.Error![]Item {
             .id = c.id,
             .glyph = c.glyph,
             .fallback = c.fallback,
-            .color = c.color,
+            .color = .{ .role = c.color },
             .label = c.tooltip,
             .running = integrationOpen(app, c.id),
             .action = switch (c.action) {
@@ -438,20 +472,21 @@ pub fn items(app: *App, arena: Allocator) Allocator.Error![]Item {
             .id = inst.id(),
             .glyph = launcher_glyph,
             .fallback = launcher_ascii,
-            .color = "purple",
+            .color = .{ .role = "purple" },
             .label = if (inst.manifest.label.len > 0) inst.manifest.label else inst.id(),
             .running = integrationOpen(app, inst.id()),
             .action = .{ .dyn = inst.slots[0] },
         });
     }
-    // ── terminals: a new one, then every open pty ──
+    // ── terminals: a new one, then every open pty — in the colour the
+    //    tab cluster's terminal chip wears, never one of their own ──
     const term = terminal_glyph.mark(app);
     try out.append(arena, .{
         .kind = .terminal_new,
         .id = "term.shell",
         .glyph = term.glyph,
         .fallback = term.fallback,
-        .color = "green",
+        .color = terminal_color,
         .label = "New terminal",
         .running = false,
         .action = .{ .static = .@"term.shell" },
@@ -465,7 +500,7 @@ pub fn items(app: *App, arena: Allocator) Allocator.Error![]Item {
             .id = "term",
             .glyph = term.glyph,
             .fallback = term.fallback,
-            .color = "green",
+            .color = terminal_color,
             .label = p.title(),
             .running = true,
             .action = .{ .pane = pid },
@@ -483,7 +518,7 @@ pub fn items(app: *App, arena: Allocator) Allocator.Error![]Item {
                 .id = id,
                 .glyph = s.meta().glyph,
                 .fallback = s.meta().fallback,
-                .color = "blue",
+                .color = .{ .role = "blue" },
                 .label = s.meta().label,
                 .running = side_mod.isShown(app, s),
                 .action = switch (ref) {
@@ -502,7 +537,7 @@ pub fn items(app: *App, arena: Allocator) Allocator.Error![]Item {
             .id = id,
             .glyph = menu_glyph.forCommandName(id, false),
             .fallback = menu_glyph.forCommandName(id, true),
-            .color = "blue",
+            .color = .{ .role = "blue" },
             .label = shortTitle(title),
             .running = false,
             .action = switch (ref) {
@@ -511,7 +546,117 @@ pub fn items(app: *App, arena: Allocator) Allocator.Error![]Item {
             },
         });
     }
-    return out.toOwnedSlice(arena);
+    const ordered = try applyOrder(app, arena, out.items);
+    // ── the `+`: the tab bar's own, opening the same *Create…* menu,
+    //    at the end `ui.dock.plus_at` names. `ui.dock.plus = false`
+    //    takes it off. It is never in `ui.dock.order`: an end is a
+    //    place, not a rank ──
+    if (!app.cfg.ui.dock.plus) return ordered;
+    const with = try arena.alloc(Item, ordered.len + 1);
+    switch (plusAt(app)) {
+        .left => {
+            with[0] = plusItem(app);
+            @memcpy(with[1..], ordered);
+        },
+        .right => {
+            @memcpy(with[0..ordered.len], ordered);
+            with[ordered.len] = plusItem(app);
+        },
+    }
+    return with;
+}
+
+/// The terminal items' colour: the split cluster's chip's, shared.
+pub const terminal_color: Color = .{ .fixed = bufferline.terminal_chip_fg };
+
+/// // changed (dock-polish): `ui.dock.order` applied to the run — the
+/// listed ids lead, in the list's order; everything unlisted follows
+/// in the order it was built (so an integration installed after the
+/// list was written lands after it, not nowhere); an id nothing on the
+/// strip answers to is ignored. Stable, so two items with one id —
+/// every open pty is `term` — keep their own order.
+fn applyOrder(app: *const App, arena: Allocator, list: []const Item) Allocator.Error![]Item {
+    const order = app.cfg.ui.dock.order;
+    const out = try arena.dupe(Item, list);
+    if (order.len == 0) return out;
+    const Keyed = struct {
+        rank: usize,
+        idx: usize,
+        fn lessThan(_: void, a: @This(), b: @This()) bool {
+            return if (a.rank != b.rank) a.rank < b.rank else a.idx < b.idx;
+        }
+    };
+    const keys = try arena.alloc(Keyed, list.len);
+    for (list, 0..) |it, i| keys[i] = .{ .rank = rankOf(order, it.id), .idx = i };
+    std.sort.insertion(Keyed, keys, {}, Keyed.lessThan);
+    for (keys, 0..) |k, i| out[i] = list[k.idx];
+    return out;
+}
+
+/// Where `id` sits in `order`; past the end when it is not listed.
+fn rankOf(order: []const []const u8, id: []const u8) usize {
+    for (order, 0..) |o, i| if (std.mem.eql(u8, o, id)) return i;
+    return order.len;
+}
+
+fn indexOfId(ids: []const []const u8, id: []const u8) ?usize {
+    for (ids, 0..) |o, i| if (std.mem.eql(u8, o, id)) return i;
+    return null;
+}
+
+/// How far an item moves along the strip.
+pub const Move = enum { prev, next, first, last };
+
+/// // changed (dock-polish): move the item at `i` along the strip —
+/// the item menu's *Move …* rows and `Alt+←` / `Alt+→` (`Alt+↑` /
+/// `Alt+↓`, `Alt+Home` / `Alt+End`) while it has the keyboard cursor.
+/// The strip's ids, first to last and the `+` left out, are written
+/// to `ui.dock.order` as one list, so the order survives a restart
+/// and an integration installed later simply follows it. Two items
+/// with one id (the open ptys, all `term`) move as one. The `+` does
+/// not move: `ui.dock.plus_at` places it. The cursor follows the item.
+pub fn moveItem(app: *App, i: usize, how: Move) CommandError!void {
+    const arena = app.frame.allocator();
+    const list = try items(app, arena);
+    if (i >= list.len) return app.diag.fail(arena, "dock: nothing focused to move", .{});
+    const it = list[i];
+    if (it.kind == .plus) {
+        app.toast("the + keeps its end — `ui.dock.plus_at` moves it", .{});
+        return;
+    }
+    var ids: std.ArrayListUnmanaged([]const u8) = .empty;
+    var at: usize = 0;
+    for (list, 0..) |other, k| {
+        if (other.kind == .plus) continue;
+        const seen = indexOfId(ids.items, other.id);
+        if (k == i) at = seen orelse ids.items.len;
+        if (seen == null) try ids.append(arena, other.id);
+    }
+    const n = ids.items.len;
+    const to: usize = switch (how) {
+        .prev => at -| 1,
+        .next => @min(at + 1, n - 1),
+        .first => 0,
+        .last => n - 1,
+    };
+    if (to == at) {
+        app.toast("{s} is already at the {s}", .{ it.label, if (to == 0) "start" else "end" });
+        return;
+    }
+    const id = ids.items[at];
+    if (to < at) {
+        std.mem.copyBackwards([]const u8, ids.items[to + 1 .. at + 1], ids.items[to..at]);
+    } else {
+        std.mem.copyForwards([]const u8, ids.items[at..to], ids.items[at + 1 .. to + 1]);
+    }
+    ids.items[to] = id;
+    try integrations.setDockOrder(app, ids.items);
+    // The cursor follows the thing it moved.
+    for (try items(app, arena), 0..) |after, k| if (after.kind != .plus and std.mem.eql(u8, after.id, id)) {
+        app.launcher_dock.cursor = @intCast(k);
+        break;
+    };
+    app.toast("dock: {s} moved", .{it.label});
 }
 
 /// The `+` item. It is the tab bar's `+` (`ui/bufferline.zig`'s glyph
@@ -525,7 +670,7 @@ fn plusItem(app: *const App) Item {
         .id = plus_id,
         .glyph = bufferline.plus_glyph,
         .fallback = bufferline.plus_ascii,
-        .color = "green",
+        .color = .{ .role = "green" },
         .label = if (labels(app) == .label) "+ New" else "New",
         .running = false,
         .action = .menu,
@@ -642,7 +787,7 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     for (list, props_items) |it, *v| v.* = .{
         .glyph = it.glyph,
         .fallback = it.fallback,
-        .color = it.color,
+        .color = resolveColor(ui.theme, it.color),
         .label = it.label,
         .running = it.running,
     };
@@ -665,6 +810,11 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         },
         .cursor = if (st.kb) st.cursor else null,
         .pinned = st.pinned,
+        .running_mark = switch (runningMark(app)) {
+            .bright => .bright,
+            .dot => .dot,
+            .none => .none,
+        },
     });
     if (mode(app) != .always) hover_zones.register(app, .{
         .rect = area,
@@ -672,6 +822,15 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         .dwell_ms = app.cfg.ui.dock.reveal_ms,
         .priority = hover_zones.prio_dock,
     });
+}
+
+/// The colour an item paints in: a role through the one resolver the
+/// tab cluster's chips use, a fixed colour as is.
+pub fn resolveColor(th: *const Theme, c: Color) Theme.Color {
+    return switch (c) {
+        .role => |r| paletteColor(th, r),
+        .fixed => |v| v,
+    };
 }
 
 // ─── the mouse ──────────────────────────────────────────────────────────
@@ -750,6 +909,29 @@ fn appendLabelRows(app: *App, rows: *std.ArrayListUnmanaged(command.MenuItem)) A
         .checked = app.cfg.ui.dock.plus,
         .separator_before = true,
     });
+    // // changed (dock-polish): which end the `+` takes, in the words
+    // of the edge the strip is on — `.right` is the bottom of a side
+    // strip — and the running mark.
+    const plus_end = plusAt(app);
+    try rows.append(app.gpa, .{
+        .label = if (side) "+ at the bottom end" else "+ at the right end",
+        .action = .{ .set_dock_plus_at = .right },
+        .checked = plus_end == .right,
+    });
+    try rows.append(app.gpa, .{
+        .label = if (side) "+ at the top end" else "+ at the left end",
+        .action = .{ .set_dock_plus_at = .left },
+        .checked = plus_end == .left,
+    });
+    const mark = runningMark(app);
+    try rows.append(app.gpa, .{
+        .label = "Running mark: bright icon",
+        .action = .{ .set_dock_running_mark = .bright },
+        .checked = mark == .bright,
+        .separator_before = true,
+    });
+    try rows.append(app.gpa, .{ .label = "Running mark: small dot", .action = .{ .set_dock_running_mark = .dot }, .checked = mark == .dot });
+    try rows.append(app.gpa, .{ .label = "Running mark: none", .action = .{ .set_dock_running_mark = .none }, .checked = mark == .none });
 }
 
 /// The strip's own menu (the pin chip's right click): the three modes,
@@ -791,6 +973,16 @@ pub fn openItemMenu(app: *App, i: usize, x: u16, y: u16) Allocator.Error!void {
             try integrations.setDockMenuChip(app, it.id);
         },
         else => {},
+    }
+    // // changed (dock-polish): the four *Move* rows, worded for the
+    // edge the strip is on — left / right along a bottom strip, up /
+    // down a side one — and never for the `+`, whose end is a setting.
+    if (it.kind != .plus) {
+        const side = edge(app) != .bottom;
+        try rows.append(app.gpa, .{ .label = if (side) "Move up" else "Move left", .action = .{ .command = .@"view.dock_item_move_prev" }, .separator_before = rows.items.len > 0 });
+        try rows.append(app.gpa, .{ .label = if (side) "Move down" else "Move right", .action = .{ .command = .@"view.dock_item_move_next" } });
+        try rows.append(app.gpa, .{ .label = "Move to start", .action = .{ .command = .@"view.dock_item_move_first" } });
+        try rows.append(app.gpa, .{ .label = "Move to end", .action = .{ .command = .@"view.dock_item_move_last" } });
     }
     try rows.append(app.gpa, .{ .label = if (app.launcher_dock.pinned) "Unpin dock" else "Pin dock open", .action = .{ .command = .@"view.dock_pin" }, .separator_before = true });
     try rows.append(app.gpa, .{ .label = "Cycle mode (always / auto-hide / hidden)", .action = .{ .command = .@"view.dock_cycle_mode" } });
@@ -846,12 +1038,23 @@ pub fn interceptKey(app: *App, k: Key) Allocator.Error!bool {
             try activate(app, at);
             return true;
         },
+        // // changed (dock-polish): with Alt, an arrow MOVES the item
+        // instead of stepping the cursor; Home / End jump, and with Alt
+        // they move the item to that end.
         .left, .up => {
-            step(app, -1);
+            if (k.mods.alt) try moveCursorItem(app, .prev) else step(app, -1);
             return true;
         },
         .right, .down => {
-            step(app, 1);
+            if (k.mods.alt) try moveCursorItem(app, .next) else step(app, 1);
+            return true;
+        },
+        .home => {
+            if (k.mods.alt) try moveCursorItem(app, .first) else jump(app, 0);
+            return true;
+        },
+        .end => {
+            if (k.mods.alt) try moveCursorItem(app, .last) else jump(app, st.count -| 1);
             return true;
         },
         .char => |c| {
@@ -917,6 +1120,22 @@ fn step(app: *App, by: i32) void {
     app.needs_render = true;
 }
 
+fn jump(app: *App, to: u16) void {
+    const st = &app.launcher_dock;
+    if (st.count == 0) return;
+    st.cursor = @min(to, st.count - 1);
+    app.needs_render = true;
+}
+
+/// A move from the keys: the strip keeps the keyboard, and a refused
+/// move (the `+`, an end) is a toast rather than an error.
+fn moveCursorItem(app: *App, how: Move) Allocator.Error!void {
+    moveItem(app, app.launcher_dock.cursor, how) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {},
+    };
+}
+
 fn leave(app: *App) void {
     const st = &app.launcher_dock;
     st.kb = false;
@@ -944,12 +1163,12 @@ pub fn describe(app: *App, arena: Allocator, part: Part) Allocator.Error!tooltip
                 .title = try std.fmt.allocPrint(arena, "{s}{s}", .{ it.label, if (it.running) " · running" else "" }),
                 .detail = switch (it.kind) {
                     .plus => "click opens the new-thing menu — the tab bar's own",
-                    .integration => "click opens the integration · right-click: pin / unpin",
-                    .launcher => "click runs the launcher · right-click: pin / unpin",
-                    .terminal_new => "click opens a new shell",
-                    .terminal => "click focuses this terminal",
-                    .pin => "click runs the pinned command · right-click: unpin",
-                    .pinned_panel => "click shows the section · right-click: move it back to the activity bar / unpin",
+                    .integration => "click opens the integration · right-click: pin / unpin / move",
+                    .launcher => "click runs the launcher · right-click: pin / unpin / move",
+                    .terminal_new => "click opens a new shell · right-click: move",
+                    .terminal => "click focuses this terminal · right-click: move",
+                    .pin => "click runs the pinned command · right-click: unpin / move",
+                    .pinned_panel => "click shows the section · right-click: move it back to the activity bar / unpin / move",
                 },
                 // The strip clips a pin's label; the tip carries the
                 // whole command title.
@@ -1095,6 +1314,47 @@ pub fn setPlus(app: *App, on: bool) CommandError!void {
     app.needs_render = true;
 }
 
+/// // changed (dock-polish): `ui.dock.plus_at`, persisted: `:dock plus
+/// left|right`, the Settings row and the two `+ at the …` rows on the
+/// strip's menu all land here.
+pub fn setPlusAt(app: *App, next: PlusAt) CommandError!void {
+    app.cfg.ui.dock.plus_at = next;
+    _ = try settings.persist(app, .home, &.{ "ui", "dock", "plus_at" }, next);
+    app.toast("dock: the + at the {s} end", .{switch (next) {
+        .right => if (edge(app) == .bottom) "right" else "bottom",
+        .left => if (edge(app) == .bottom) "left" else "top",
+    }});
+    app.needs_render = true;
+}
+
+/// `ui.dock.running_mark`, persisted: `:dock mark bright|dot|none`,
+/// the Settings row and the `Running mark:` rows on the strip's menu.
+pub fn setRunningMark(app: *App, next: RunningMark) CommandError!void {
+    app.cfg.ui.dock.running_mark = next;
+    _ = try settings.persist(app, .home, &.{ "ui", "dock", "running_mark" }, next);
+    app.toast("dock: running mark {s}", .{switch (next) {
+        .bright => "is the bright icon",
+        .dot => "is a small dot",
+        .none => "off",
+    }});
+    app.needs_render = true;
+}
+
+/// `view.dock_item_move_*`: the item the cursor is on — the row a menu
+/// was opened on, or the keyboard's — moves along the strip.
+fn moveItemPrevCmd(app: *App) CommandError!void {
+    return moveItem(app, app.launcher_dock.cursor, .prev);
+}
+fn moveItemNextCmd(app: *App) CommandError!void {
+    return moveItem(app, app.launcher_dock.cursor, .next);
+}
+fn moveItemFirstCmd(app: *App) CommandError!void {
+    return moveItem(app, app.launcher_dock.cursor, .first);
+}
+fn moveItemLastCmd(app: *App) CommandError!void {
+    return moveItem(app, app.launcher_dock.cursor, .last);
+}
+
 /// `view.focus_dock`: the keys go into the strip, revealing it first
 /// when it is not already up.
 fn focusCmd(app: *App) CommandError!void {
@@ -1123,7 +1383,7 @@ fn testApp(tmp: *std.testing.TmpDir, buf: []u8) !App {
     return App.initWith(t.allocator, t.io, .{ .workspace = buf[0..n], .data_root = buf[0..n], .cols = 120, .rows = 40 });
 }
 
-test "the model: the `+` leads, then the enabled integrations, then the New terminal item, then `ui.dock.pins` — an id nothing answers to is skipped rather than painted dead" {
+test "the model: the enabled integrations, then the New terminal item, then `ui.dock.pins`, then the `+` at the far end — an id nothing answers to is skipped rather than painted dead" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -1132,33 +1392,44 @@ test "the model: the `+` leads, then the enabled integrations, then the New term
     app.cfg.ui.dock.pins = &.{ "picker.files", "no.such.command" };
     try app.render();
     const list = try items(&app, app.frame.allocator());
-    // The `+` leads the run — the tab bar's own, opening its menu.
-    try t.expectEqual(Kind.plus, list[0].kind);
-    try t.expectEqualStrings("New", list[0].label);
-    try t.expectEqualStrings(@import("../ui/bufferline.zig").plus_glyph, list[0].glyph);
-    try t.expect(list[0].action == .menu);
-    // It names no command id: the menu is not one, so nothing can pin it.
-    try t.expect(commandIdOf(&app, list[0]) == null);
     // // changed (railmove): all four first-party surfaces, in the
     // config's order. Browser is the one whose CHIP is on out of the
     // box; the other three ship with the chip hidden, and a hidden
     // chip is not an uninstalled surface.
-    try t.expectEqualStrings("Browser", list[1].label);
-    try t.expectEqual(Kind.integration, list[1].kind);
-    try t.expectEqualStrings("Claude Code", list[2].label);
-    try t.expectEqualStrings("Codex", list[3].label);
-    try t.expectEqualStrings("HTTP", list[4].label);
-    for (list[1..5]) |it| try t.expectEqual(Kind.integration, it.kind);
-    // The terminals, then the pins — the unresolvable id is skipped, so
-    // the strip is exactly +, the four, New terminal, picker.files.
+    try t.expectEqualStrings("Browser", list[0].label);
+    try t.expectEqual(Kind.integration, list[0].kind);
+    try t.expectEqualStrings("Claude Code", list[1].label);
+    try t.expectEqualStrings("Codex", list[2].label);
+    try t.expectEqualStrings("HTTP", list[3].label);
+    for (list[0..4]) |it| try t.expectEqual(Kind.integration, it.kind);
+    // The terminals, then the pins — the unresolvable id is skipped —
+    // then the `+`, so the strip is exactly the four, New terminal,
+    // picker.files, +.
     try t.expectEqual(@as(usize, 7), list.len);
-    try t.expectEqual(Kind.terminal_new, list[5].kind);
-    try t.expectEqualStrings("New terminal", list[5].label);
-    try t.expectEqual(Kind.pin, list[6].kind);
-    try t.expectEqualStrings(shortTitle(command.title(.@"picker.files")), list[6].label);
-    try t.expectEqualStrings("picker.files", commandIdOf(&app, list[6]).?);
+    try t.expectEqual(Kind.terminal_new, list[4].kind);
+    try t.expectEqualStrings("New terminal", list[4].label);
+    try t.expectEqual(Kind.pin, list[5].kind);
+    try t.expectEqualStrings(shortTitle(command.title(.@"picker.files")), list[5].label);
+    try t.expectEqualStrings("picker.files", commandIdOf(&app, list[5]).?);
+    // // changed (dock-polish): the `+` ENDS the run — the tab bar's
+    // own, opening its menu — where a `+` reads naturally.
+    try t.expectEqual(Kind.plus, list[6].kind);
+    try t.expectEqualStrings("New", list[6].label);
+    try t.expectEqualStrings(@import("../ui/bufferline.zig").plus_glyph, list[6].glyph);
+    try t.expect(list[6].action == .menu);
+    // It names no command id: the menu is not one, so nothing can pin it.
+    try t.expect(commandIdOf(&app, list[6]) == null);
     // A pin that resolves to nothing never becomes a row.
     for (list) |it| try t.expect(!std.mem.eql(u8, it.id, "no.such.command"));
+    // `ui.dock.plus_at = .left` puts it back at the head, the rest
+    // unchanged behind it.
+    app.cfg.ui.dock.plus_at = .left;
+    const led = try items(&app, app.frame.allocator());
+    try t.expectEqual(@as(usize, 7), led.len);
+    try t.expectEqual(Kind.plus, led[0].kind);
+    try t.expectEqualStrings("Browser", led[1].label);
+    try t.expectEqual(Kind.pin, led[6].kind);
+    app.cfg.ui.dock.plus_at = .right;
     // `ui.dock.plus = false` takes the `+` off and the rest closes up.
     app.cfg.ui.dock.plus = false;
     const without = try items(&app, app.frame.allocator());
@@ -1240,6 +1511,218 @@ test "a hidden chip is still on the dock: the strip reads installed-and-not-disa
     const custom = try items(&app, app.frame.allocator());
     try t.expectEqualStrings("ours", custom[0].id);
     for (custom) |it| try t.expect(!std.mem.eql(u8, it.id, "mine"));
+}
+
+test "colours: an integration wears its chip's role through the one resolver the tab cluster uses; a terminal wears the split cluster's chip colour as is, never a green of its own" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    try app.render();
+    const list = try items(&app, app.frame.allocator());
+    const th = &app.theme;
+    // Browser's chip says `blue`; the dock item says the same role and
+    // resolves to the same colour the chip does.
+    const browser = (try integrations.findChip(&app, app.frame.allocator(), "browser")).?;
+    try t.expectEqualStrings(browser.color, list[0].color.role);
+    try t.expect(Theme.Color.eql(paletteColor(th, browser.color), resolveColor(th, list[0].color)));
+    // The terminal item — after the four first-party surfaces
+    // (railmove) — is the cluster chip's constant, exactly.
+    try t.expectEqual(Kind.terminal_new, list[4].kind);
+    try t.expect(list[4].color == .fixed);
+    try t.expect(Theme.Color.eql(bufferline.terminal_chip_fg, resolveColor(th, list[4].color)));
+    try t.expect(!Theme.Color.eql(th.palette.green, resolveColor(th, list[4].color)));
+    // And a shell tab's icon is that same colour (`render.ptyIcon`), so
+    // the ghost is one colour on the tab bar, in the cluster and on the
+    // dock.
+    try t.expect(Theme.Color.eql(bufferline.terminal_chip_fg, @as(Theme.Color, .{ .index = 15 })));
+}
+
+test "the running mark: the view is handed `ui.dock.running_mark`, `.bright` out of the box" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    try t.expectEqual(RunningMark.bright, runningMark(&app));
+    try setRunningMark(&app, .dot);
+    try t.expectEqual(RunningMark.dot, app.cfg.ui.dock.running_mark);
+    try setRunningMark(&app, .none);
+    try t.expectEqual(RunningMark.none, runningMark(&app));
+    try setRunningMark(&app, .bright);
+    // The plus end, the same way.
+    try t.expectEqual(PlusAt.right, plusAt(&app));
+    try setPlusAt(&app, .left);
+    try t.expectEqual(PlusAt.left, app.cfg.ui.dock.plus_at);
+    try setPlusAt(&app, .right);
+}
+
+test "order: `ui.dock.order` leads the strip with the listed ids, keeps the unlisted in their default order after them, ignores an id nothing answers to, and never moves the `+`" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    app.cfg.ui.dock.pins = &.{ "picker.files", "app.quit" };
+    try app.render();
+    // The default: the four first-party surfaces (railmove), New
+    // terminal, picker.files, app.quit, +.
+    const base = try items(&app, app.frame.allocator());
+    try t.expectEqual(@as(usize, 8), base.len);
+    try t.expectEqualStrings("browser", base[0].id);
+    try t.expectEqualStrings("claude_code", base[1].id);
+    try t.expectEqualStrings("codex", base[2].id);
+    try t.expectEqualStrings("http", base[3].id);
+    try t.expectEqualStrings("term.shell", base[4].id);
+    try t.expectEqualStrings("picker.files", base[5].id);
+    try t.expectEqualStrings("app.quit", base[6].id);
+    try t.expectEqual(Kind.plus, base[7].kind);
+    // A partial list: the listed lead in that order, the rest follow
+    // as they were, the unknown id changes nothing, the `+` stays put.
+    app.cfg.ui.dock.order = &.{ "app.quit", "nope.nope", "term.shell" };
+    const some = try items(&app, app.frame.allocator());
+    try t.expectEqual(@as(usize, 8), some.len);
+    try t.expectEqualStrings("app.quit", some[0].id);
+    try t.expectEqualStrings("term.shell", some[1].id);
+    try t.expectEqualStrings("browser", some[2].id);
+    try t.expectEqualStrings("claude_code", some[3].id);
+    try t.expectEqualStrings("codex", some[4].id);
+    try t.expectEqualStrings("http", some[5].id);
+    try t.expectEqualStrings("picker.files", some[6].id);
+    try t.expectEqual(Kind.plus, some[7].kind);
+    // The `+` is not a rank: naming it in the list is ignored, and the
+    // left end is still `plus_at`'s to give.
+    app.cfg.ui.dock.order = &.{ plus_id, "picker.files" };
+    const named = try items(&app, app.frame.allocator());
+    try t.expectEqualStrings("picker.files", named[0].id);
+    try t.expectEqual(Kind.plus, named[7].kind);
+    app.cfg.ui.dock.order = &.{};
+}
+
+test "the item menu: the four Move rows say left / right on a bottom strip and up / down on a side one, from the edge — and the `+` gets none" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    try app.render();
+    const Rows = struct {
+        fn has(items_: []const command.MenuItem, label: []const u8) bool {
+            for (items_) |it| if (std.mem.eql(u8, it.label, label)) return true;
+            return false;
+        }
+    };
+    // Item 0 is Browser on a bottom strip.
+    try openItemMenu(&app, 0, 10, 37);
+    var rows = app.overlay.menu.items;
+    try t.expect(Rows.has(rows, "Move left"));
+    try t.expect(Rows.has(rows, "Move right"));
+    try t.expect(Rows.has(rows, "Move to start"));
+    try t.expect(Rows.has(rows, "Move to end"));
+    try t.expect(!Rows.has(rows, "Move up"));
+    try t.expect(Rows.has(rows, "+ at the right end"));
+    try t.expect(Rows.has(rows, "Running mark: bright icon"));
+    // On a side edge the same rows read up / down, and the `+` rows
+    // say bottom / top.
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    app.cfg.ui.dock.edge = .left;
+    try openItemMenu(&app, 0, 1, 10);
+    rows = app.overlay.menu.items;
+    try t.expect(Rows.has(rows, "Move up"));
+    try t.expect(Rows.has(rows, "Move down"));
+    try t.expect(!Rows.has(rows, "Move left"));
+    try t.expect(Rows.has(rows, "Move to start"));
+    try t.expect(Rows.has(rows, "+ at the bottom end"));
+    try t.expect(Rows.has(rows, "+ at the top end"));
+    // The `+` — the last item — offers no move at all.
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    app.cfg.ui.dock.edge = .bottom;
+    const list = try items(&app, app.frame.allocator());
+    try t.expectEqual(Kind.plus, list[list.len - 1].kind);
+    try openItemMenu(&app, list.len - 1, 10, 37);
+    rows = app.overlay.menu.items;
+    try t.expect(!Rows.has(rows, "Move left"));
+    try t.expect(!Rows.has(rows, "Move to end"));
+    try t.expect(Rows.has(rows, "Show the + button"));
+}
+
+test "moveItem: prev / next / first / last rewrite `ui.dock.order` as the whole strip, the cursor follows the item, an end is a toast, and the `+` refuses" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    app.cfg.ui.dock.pins = &.{"picker.files"};
+    try app.render();
+    // Browser, Claude Code, Codex, HTTP (railmove), New terminal,
+    // picker.files, +. Move New terminal right.
+    try moveItem(&app, 4, .next);
+    var list = try items(&app, app.frame.allocator());
+    try t.expectEqualStrings("browser", list[0].id);
+    try t.expectEqualStrings("http", list[3].id);
+    try t.expectEqualStrings("picker.files", list[4].id);
+    try t.expectEqualStrings("term.shell", list[5].id);
+    try t.expectEqual(Kind.plus, list[6].kind);
+    try t.expectEqual(@as(u16, 5), app.launcher_dock.cursor);
+    // The whole run was written, `+` left out, so the order survives
+    // a reload and an item installed later follows it.
+    try t.expectEqual(@as(usize, 6), app.cfg.ui.dock.order.len);
+    try t.expectEqualStrings("browser", app.cfg.ui.dock.order[0]);
+    try t.expectEqualStrings("claude_code", app.cfg.ui.dock.order[1]);
+    try t.expectEqualStrings("codex", app.cfg.ui.dock.order[2]);
+    try t.expectEqualStrings("http", app.cfg.ui.dock.order[3]);
+    try t.expectEqualStrings("picker.files", app.cfg.ui.dock.order[4]);
+    try t.expectEqualStrings("term.shell", app.cfg.ui.dock.order[5]);
+    for (app.cfg.ui.dock.order) |id| try t.expect(!std.mem.eql(u8, id, plus_id));
+    // Past the end is a toast and no write.
+    try moveItem(&app, 5, .next);
+    try t.expectEqualStrings("term.shell", app.cfg.ui.dock.order[5]);
+    // First and last.
+    try moveItem(&app, 5, .first);
+    list = try items(&app, app.frame.allocator());
+    try t.expectEqualStrings("term.shell", list[0].id);
+    try t.expectEqual(@as(u16, 0), app.launcher_dock.cursor);
+    // The order is READ BACK, not only written: a second app on the
+    // same data root — a restart, loaded the way `main` loads, through
+    // `config.load` with `$MNML_DATA_ROOT` naming the home file — builds
+    // its strip from the file, and New terminal still leads Browser
+    // there. (The pins were set in memory above, so the fresh strip is
+    // the four first-party surfaces and the terminal — six with the `+`.)
+    {
+        var vars = std.process.Environ.Map.init(t.allocator);
+        defer vars.deinit();
+        try vars.put("MNML_DATA_ROOT", app.data_root);
+        var loaded = try @import("../config/load.zig").load(t.allocator, t.io, .{ .workspace = app.data_root, .env = .{ .vars = &vars } });
+        var again = try App.initWith(t.allocator, t.io, .{ .cfg = loaded.config, .loaded = loaded, .workspace = app.data_root, .data_root = app.data_root, .cols = 120, .rows = 40 });
+        loaded = undefined; // the app owns it now
+        defer again.deinit();
+        try again.render();
+        try t.expectEqual(@as(usize, 6), again.cfg.ui.dock.order.len);
+        try t.expectEqualStrings("term.shell", again.cfg.ui.dock.order[0]);
+        const reloaded = try items(&again, again.frame.allocator());
+        try t.expectEqual(@as(usize, 6), reloaded.len);
+        try t.expectEqualStrings("term.shell", reloaded[0].id);
+        try t.expectEqualStrings("browser", reloaded[1].id);
+        try t.expectEqual(Kind.plus, reloaded[5].kind);
+    }
+    try moveItem(&app, 0, .last);
+    list = try items(&app, app.frame.allocator());
+    try t.expectEqualStrings("term.shell", list[5].id);
+    try t.expectEqual(Kind.plus, list[6].kind);
+    try moveItem(&app, 5, .prev);
+    list = try items(&app, app.frame.allocator());
+    try t.expectEqualStrings("term.shell", list[4].id);
+    // The `+` does not move — its end is `plus_at`'s — and is never
+    // written into the order.
+    try moveItem(&app, 6, .prev);
+    list = try items(&app, app.frame.allocator());
+    try t.expectEqual(Kind.plus, list[6].kind);
+    for (app.cfg.ui.dock.order) |id| try t.expect(!std.mem.eql(u8, id, plus_id));
+    // Nothing focused is an error, not a crash.
+    try t.expectError(error.Failed, moveItem(&app, 99, .next));
 }
 
 test "a pinned command wears the part of its title before the first parenthetical or dash, clipped to the strip's own width" {
@@ -1546,12 +2029,14 @@ test "the third label form: `.label` is written and read back, and a side edge s
     try t.expectEqual(Labels.label, app.cfg.ui.dock.labels);
     try t.expectEqual(Labels.label, labels(&app));
     // Under `.label` the `+` wears its plus as a character of the word
-    // — the form paints no glyphs at all.
+    // — the form paints no glyphs at all. // changed (dock-polish): the
+    // `+` is the LAST item now.
     try app.render();
     const worded = try items(&app, app.frame.allocator());
-    try t.expectEqualStrings("+ New", worded[0].label);
+    try t.expectEqualStrings("+ New", worded[worded.len - 1].label);
     try setLabels(&app, .icon_label);
-    try t.expectEqualStrings("New", (try items(&app, app.frame.allocator()))[0].label);
+    const iconed = try items(&app, app.frame.allocator());
+    try t.expectEqualStrings("New", iconed[iconed.len - 1].label);
     // A side dock reads `.icon` without touching the key, as it does
     // for `.icon_label`.
     try setLabels(&app, .label);
@@ -1559,7 +2044,7 @@ test "the third label form: `.label` is written and read back, and a side edge s
     try t.expectEqual(Labels.icon, labels(&app));
     try t.expectEqual(Labels.label, app.cfg.ui.dock.labels);
     const side = try items(&app, app.frame.allocator());
-    try t.expectEqualStrings("New", side[0].label);
+    try t.expectEqualStrings("New", side[side.len - 1].label);
     try setEdge(&app, .bottom);
     try t.expectEqual(Labels.label, labels(&app));
     const text = try tmp.dir.readFileAlloc(t.io, "config.zon", t.allocator, .limited(1 << 16));
@@ -1624,27 +2109,35 @@ test "the strip's Settings rows: the six discrete `ui.dock.*` choices, each read
     try t.expectEqual(Placement.outer, fresh.ui.dock.placement);
 }
 
-test "the `+`: its hover copy is the verb, its menu is the tab bar's own, and the keyboard reaches it first" {
+test "the `+`: its hover copy is the verb, its menu is the tab bar's own, and the keyboard's End reaches it — it ends the run" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     var app = try testApp(&tmp, &buf);
     defer app.deinit();
     try app.render();
-    const tip = try describe(&app, app.frame.allocator(), .{ .item = 0 });
+    // // changed (dock-polish): the `+` is the last item.
+    const last = (try items(&app, app.frame.allocator())).len - 1;
+    const tip = try describe(&app, app.frame.allocator(), .{ .item = @intCast(last) });
     try t.expectEqualStrings("New\u{2026}", tip.title);
     // Running it opens the `+` menu — `Create\u{2026}`, the one
     // `context_menus.openNewTabMenu` builds for the tab bar.
-    try activateAt(&app, 0, 4, 37);
+    try activateAt(&app, last, 4, 37);
     try t.expect(app.overlay == .menu);
     try t.expectEqualStrings("Create\u{2026}", app.overlay.menu.title);
     try t.expect(app.overlay.menu.items.len > 0);
-    // It is the keyboard's first item too: `view.focus_dock` parks on it.
+    // `view.focus_dock` parks on the first item — Browser — and End
+    // jumps to the `+`.
     app.overlay.deinit(app.gpa);
     app.overlay = .none;
     try focusCmd(&app);
     try app.render();
     try t.expectEqual(@as(u16, 0), app.launcher_dock.cursor);
+    try t.expect(try interceptKey(&app, .{ .code = .end }));
+    try t.expectEqual(@as(u16, @intCast(last)), app.launcher_dock.cursor);
+    try t.expect(try interceptKey(&app, .{ .code = .home }));
+    try t.expectEqual(@as(u16, 0), app.launcher_dock.cursor);
+    leave(&app);
 }
 
 test "`ui.dock.placement`: `.inner` is the default and the strip is the EDITOR AREA's last row — carved and revealed on the same row, with the statusline and the `:` line left where they are" {
