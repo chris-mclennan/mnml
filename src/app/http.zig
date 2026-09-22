@@ -1929,9 +1929,8 @@ pub fn formatBody(app: *App, rp: *RequestPane) CommandError!void {
     const gpa = app.gpa;
     const body = std.mem.trim(u8, rp.body.items, " \t\r\n");
     if (body.len == 0) return app.diag.fail(app.frame.allocator(), "body: empty", .{});
-    var parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return app.diag.fail(app.frame.allocator(), "body: not JSON", .{});
-    defer parsed.deinit();
-    const pretty = std.json.Stringify.valueAlloc(gpa, parsed.value, .{ .whitespace = .indent_2 }) catch return error.OutOfMemory;
+    // Re-indented token by token: the numbers keep the digits typed.
+    const pretty = (try @import("../http/json_pretty.zig").pretty(gpa, body)) orelse return app.diag.fail(app.frame.allocator(), "body: not JSON", .{});
     defer gpa.free(pretty);
     try rp.body.replaceRange(gpa, 0, rp.body.items.len, pretty);
     rp.body_caret = @min(rp.body_caret, rp.body.items.len);

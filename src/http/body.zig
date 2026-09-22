@@ -11,6 +11,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const parse = @import("parse.zig");
 const multipart = @import("multipart.zig");
+const json_pretty = @import("json_pretty.zig");
 
 pub const Options = struct {
     /// `http.auto_format_body`: re-indent a JSON body on the way out.
@@ -35,12 +36,8 @@ pub fn encode(gpa: Allocator, io: Io, req: *parse.Request, opts: Options, missin
     switch (kind) {
         .raw => {},
         .json => {
-            if (opts.format_json) {
-                if (std.json.parseFromSliceLeaky(std.json.Value, a, body, .{})) |v| {
-                    const pretty = std.json.Stringify.valueAlloc(a, v, .{ .whitespace = .indent_2 }) catch return error.OutOfMemory;
-                    try req.setBody(gpa, pretty);
-                } else |_| {}
-            }
+            // Re-indented, never re-printed: `10.50` goes out as `10.50`.
+            if (opts.format_json) if (try json_pretty.pretty(a, body)) |pretty| try req.setBody(gpa, pretty);
             if (req.header("content-type") == null) try req.addHeader(gpa, "Content-Type", "application/json");
         },
         .form => {
@@ -87,4 +84,13 @@ test "encode: form rows urlencode with their content-type; multipart gets a boun
     try encode(testing.allocator, testing.io, &raw, .{}, &missing);
     try testing.expectEqualStrings("name = alice", std.mem.trimEnd(u8, raw.body.?, "\n"));
     try testing.expect(raw.header("content-type") == null);
+}
+
+test "encode: a json body is re-indented with its numbers as written" {
+    var req = try parse.parse(testing.allocator, "# @body-type json\nPOST http://h/pay\n\n{\"amount\": 10.50, \"qty\": 5.0, \"rate\": 1E-3}\n");
+    defer req.deinit(testing.allocator);
+    var missing: ?[]const u8 = null;
+    try encode(testing.allocator, testing.io, &req, .{}, &missing);
+    try testing.expectEqualStrings("{\n  \"amount\": 10.50,\n  \"qty\": 5.0,\n  \"rate\": 1E-3\n}", req.body.?);
+    try testing.expectEqualStrings("application/json", req.header("content-type").?);
 }

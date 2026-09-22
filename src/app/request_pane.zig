@@ -26,6 +26,7 @@ const editor_view = @import("../ui/editor_view.zig");
 const view = @import("../ui/request_view.zig");
 const command = @import("../core/command.zig");
 const parse = @import("../http/parse.zig");
+const json_pretty = @import("../http/json_pretty.zig");
 const client = @import("../http/client.zig");
 const env_mod = @import("../http/env.zig");
 const syntax = @import("syntax.zig");
@@ -478,12 +479,10 @@ pub const RequestPane = struct {
         self.keepAsPrev();
         const resp = resp_in;
         if (resp.kind() == .json) {
-            if (std.json.parseFromSlice(std.json.Value, self.gpa, resp.body, .{})) |parsed| {
-                defer parsed.deinit();
-                if (std.json.Stringify.valueAlloc(self.gpa, parsed.value, .{ .whitespace = .indent_2 })) |pretty| {
-                    if (std.mem.eql(u8, pretty, resp.body)) self.gpa.free(pretty) else self.resp_pretty = pretty;
-                } else |_| {}
-            } else |_| {}
+            // Re-indented, never re-printed: a `5.0` stays `5.0`.
+            if (try json_pretty.pretty(self.gpa, resp.body)) |pretty| {
+                if (std.mem.eql(u8, pretty, resp.body)) self.gpa.free(pretty) else self.resp_pretty = pretty;
+            }
         }
         self.state = .{ .done = resp };
         self.resp_view = .{};
