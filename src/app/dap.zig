@@ -1252,6 +1252,11 @@ fn handleEvent(app: *App, s: *Session, name: []const u8, body: ?jsonrpc.Value) A
     } else if (std.mem.eql(u8, name, "output")) {
         const b = body orelse return;
         const category = jsonrpc.getStr(b, "category") orelse "console";
+        // `telemetry` is the adapter reporting on itself (debugpy sends
+        // `ptvsd` / `debugpy` with a package version at every start),
+        // not something the program said: VS Code drops it, and so does
+        // the console (hunt: dap-console-shows-telemetry-output).
+        if (std.mem.eql(u8, category, "telemetry")) return;
         const text = jsonrpc.getStr(b, "output") orelse "";
         try s.appendOutput(category, text);
         try consoleOutput(app, category, text);

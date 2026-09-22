@@ -61,7 +61,7 @@ A throw at the top level ends the program with exit code 1 on resume
 
 | request | answer |
 |---|---|
-| `initialize` | the capabilities (conditional + hit-conditional breakpoints, set-variable, evaluate-for-hovers, terminate; no step-back) and the filters — and NOT the `initialized` event, which follows `launch` |
+| `initialize` | the capabilities (conditional + hit-conditional breakpoints, set-variable, evaluate-for-hovers, terminate; no step-back) and the filters, then one `output` event with `category: "telemetry"` (`fake-dap-telemetry`, a version in `data`) — debugpy's habit, which a console must not paint — and NOT the `initialized` event, which follows `launch` |
 | `launch{program}` | loads the file; a missing file is `success:false` with `cannot read <path>: <error>`. The reply, then the `initialized` event — lldb-dap's and debugpy's order (the protocol's sequence diagram), so a client that waits for `initialized` before sending `launch` deadlocks here as it does against them |
 | `attach{program}` | the same program, "already running" — it starts on `configurationDone` like a launch, and the reply is followed by `initialized` too. What differs is the goodbye: a fake has no real process a test could `kill -0`, so `<program>.debuggee` beside the file is the ledger — `attached` on attach, then `killed` after `terminate` or `disconnect{terminateDebuggee: true}`, `detached` after a `disconnect` without it (what a client must send for a process it did not start) |
 | `setBreakpoints{source, breakpoints[{line, condition, hitCondition}]}` | replaces the list; `verified` per breakpoint (a statement line of the launched program). Sent before `launch`, the source file is read then so `verified` is real. Hit counts start over on every set |

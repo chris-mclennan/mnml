@@ -191,6 +191,11 @@ pub const Server = struct {
                 .supportsRestartRequest = false,
                 .exceptionBreakpointFilters = filters,
             });
+            // debugpy's habit: an `output` event about the adapter itself
+            // (`category: telemetry`, `output: <package>`, a version in
+            // `data`) right after the reply. Not program output; a
+            // console that paints it shows a stray word every session.
+            try self.event("output", .{ .category = "telemetry", .output = "fake-dap-telemetry", .data = .{ .packageVersion = version } });
         } else if (eql(u8, command, "launch")) {
             const path = getStr(args, "program") orelse return self.fail(rseq, command, "launch needs `program`");
             self.ensureProgram(path) catch |err| switch (err) {
@@ -707,14 +712,17 @@ test "framing: readFrame skips other headers and takes exactly Content-Length by
     try t.expectError(error.BadFrame, readFrame(t.allocator, &bad));
 }
 
-test "initialize: capabilities and the two filters (no `initialized` yet — that follows `launch`); an unknown request fails without a crash" {
+test "initialize: capabilities and the two filters, then a telemetry output event (no `initialized` yet — that follows `launch`); an unknown request fails without a crash" {
     var h: Harness = undefined;
     h.init();
     defer h.deinit();
     const out = try h.send("initialize", "{\"clientID\":\"mnml\"}");
     defer t.allocator.free(out);
-    try t.expectEqual(@as(usize, 1), out.len);
+    try t.expectEqual(@as(usize, 2), out.len);
     try expectResponse(out[0], "initialize", true);
+    const tele = try expectEvent(out[1], "output");
+    try t.expectEqualStrings("telemetry", getStr(tele, "category").?);
+    try t.expectEqualStrings("fake-dap-telemetry", getStr(tele, "output").?);
     const caps = getField(out[0], "body").?;
     try t.expect(caps.object.get("supportsConditionalBreakpoints").?.bool);
     try t.expect(caps.object.get("supportsHitConditionalBreakpoints").?.bool);
@@ -738,7 +746,7 @@ test "initialize: capabilities and the two filters (no `initialized` yet — tha
     const not_json = "this is not json";
     try h.server.handle(not_json);
     try h.drain();
-    try t.expectEqual(@as(usize, 2), h.parsed.items.len);
+    try t.expectEqual(@as(usize, 3), h.parsed.items.len);
     // `arguments` as a list — the shape a client's empty tuple once took
     // on the wire — is refused as debugpy refuses it, not answered.
     const listed = try h.send("configurationDone", "[]");
