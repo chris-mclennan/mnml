@@ -1549,17 +1549,25 @@ pub const Files = struct {
 /// on both sides in both lists. The graph's detail column (`wipFiles`)
 /// wants the same split with the untracked directory's slash dropped,
 /// `!` on a conflict and each list A–Z.
+///
+/// // changed: the pane's conflicts LEAD the unstaged list. The pane
+/// draws them first, in a section of their own, and the flat index the
+/// cursor walks is this list's — when the two disagreed (a conflict
+/// after `.gitignore` in porcelain order, drawn above it) the cursor
+/// opened on the row below the conflict, `g` / `k` / Home could not
+/// reach it, `j` moved UP onto it and Enter opened the wrong diff.
 fn collectFiles(app: *App, arena: Allocator, for_graph: bool) Allocator.Error!Files {
     var un: std.ArrayListUnmanaged(Row) = .empty;
     var st: std.ArrayListUnmanaged(Row) = .empty;
-    if (app.git.status) |status| for (status.entries) |e| {
-        switch (e.group) {
+    if (app.git.status) |status| {
+        if (!for_graph) for (status.entries) |e| if (e.group == .conflicted) try un.append(arena, .{ .path = e.path, .letter = 'U', .staged = false });
+        for (status.entries) |e| switch (e.group) {
             .staged => try st.append(arena, .{ .path = e.path, .letter = e.code, .staged = true }),
             .unstaged => try un.append(arena, .{ .path = e.path, .letter = e.code, .staged = false }),
             .untracked => try un.append(arena, .{ .path = if (for_graph) std.mem.trimEnd(u8, e.path, "/") else e.path, .letter = '?', .staged = false }),
-            .conflicted => try un.append(arena, .{ .path = e.path, .letter = if (for_graph) '!' else 'U', .staged = false }),
-        }
-    };
+            .conflicted => if (for_graph) try un.append(arena, .{ .path = e.path, .letter = '!', .staged = false }),
+        };
+    }
     if (for_graph) {
         std.mem.sort(Row, un.items, {}, byPath);
         std.mem.sort(Row, st.items, {}, byPath);
@@ -4970,7 +4978,10 @@ const Fixture = struct {
 fn seedConflict(f: *Fixture) !void {
     try f.sh(&.{ "init", "-q", "-b", "main" });
     try f.write("c.txt", "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n");
-    try f.sh(&.{ "add", "c.txt" });
+    // A tracked file that sorts BEFORE the conflict in porcelain order,
+    // clean until a test dirties it.
+    try f.write("a.txt", "alpha\n");
+    try f.sh(&.{ "add", "a.txt", "c.txt" });
     try f.sh(&.{ "commit", "-q", "-m", "initial" });
     try f.sh(&.{ "checkout", "-q", "-b", "feature" });
     try f.write("c.txt", "one\ntwo-theirs\nthree\nfour\nfive\nsix\nseven\neight\nnine-theirs\nten\n");
@@ -4983,6 +4994,38 @@ fn seedConflict(f: *Fixture) !void {
     f.app.tree.visible = false;
     try command.run(&f.app, .{ .static = .@"git.refresh" });
     try f.settle(2000);
+}
+
+test "conflicts: with another change that sorts before it, the conflict still leads the flat list — the cursor opens on it and Enter opens the editor on it, not the other file's diff" {
+    var f = try Fixture.init(100, 30);
+    defer f.deinit();
+    try seedConflict(&f);
+    // ` M a.txt` comes before `UU c.txt` in `git status --porcelain`.
+    try f.write("a.txt", "alpha changed\n");
+    try command.run(&f.app, .{ .static = .@"git.refresh" });
+    try f.settle(2000);
+    const files = try statusFiles(&f.app, f.app.frame.allocator());
+    try testing.expectEqual(@as(usize, 2), files.unstaged.len);
+    try testing.expectEqual(@as(u8, 'U'), files.unstaged[0].letter);
+    try testing.expectEqualStrings("c.txt", files.unstaged[0].path);
+    try testing.expectEqualStrings("a.txt", files.unstaged[1].path);
+    // The graph's detail column keeps its A–Z order with `!` on the conflict.
+    const wip = try collectFiles(&f.app, f.app.frame.allocator(), true);
+    try testing.expectEqualStrings("a.txt", wip.unstaged[0].path);
+    try testing.expectEqual(@as(u8, '!'), wip.unstaged[1].letter);
+    try command.run(&f.app, .{ .static = .@"git.status_pane" });
+    try f.settle(2000);
+    const sp = &f.app.panes.get(f.app.active.?).?.git_status;
+    try testing.expectEqual(@as(usize, 0), sp.cursor);
+    const txt = try f.screen();
+    defer testing.allocator.free(txt);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{25B6} U c.txt") != null);
+    try statusAct(&f.app, sp, .diff);
+    try testing.expect(f.app.activeEditor() != null);
+    const after = try f.screen();
+    defer testing.allocator.free(after);
+    try testing.expect(std.mem.indexOf(u8, after, "c.txt: 2 conflict blocks") != null);
+    try testing.expect(std.mem.indexOf(u8, after, "diff: a.txt") == null);
 }
 
 test "conflicts: the status pane lists the file under Conflicts; its row opens the editor with a header of chips per block, each chip a hit; the picks rewrite the blocks; the save stages the file" {

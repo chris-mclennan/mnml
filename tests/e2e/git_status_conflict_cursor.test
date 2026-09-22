@@ -1,9 +1,12 @@
-# Status pane cursor order vs screen order with a conflict AND another
-# change: the Conflicts section is drawn FIRST, but the cursor starts on
-# the Unstaged row below it, `g`/`k`/Home cannot reach the conflict row,
-# and `j` (down) moves the cursor UP onto it; `G` (bottom) lands on the
-# top-most row. Enter on the pane's default row therefore opens the
-# .gitignore diff instead of the conflict the header points at.
+# hunt/findings-2026-09-22/git-status-conflict-row-cursor-order.md: with
+# a conflict AND another change, the Conflicts section is drawn first
+# but the flat list the cursor walks was porcelain order — so the cursor
+# opened on the Unstaged row below the conflict, `g` / `k` / Home could
+# not reach it, `j` (down) moved UP onto it, `G` (bottom) landed on the
+# top row, and Enter on the default row opened the .gitignore diff the
+# header's "⏎ resolve in the editor" did not point at. The conflict
+# leads the list now: the cursor opens on it and the keys move the way
+# the screen reads.
 shell git init -q -b main
 shell git config user.email "ada@example.test"
 shell git config user.name "Ada Example"
@@ -19,11 +22,32 @@ write c.txt "one\ntwo-ours\nthree\n"
 shell git commit -q -am "ours"
 shell git merge -q feature || true
 write .gitignore ".mnml/\ntarget/\n"
+shell test "$(git status --porcelain | head -1)" = " M .gitignore"
 command git.status_pane
 wait 1500
 expect screen contains "Conflicts (1)  ⏎ resolve in the editor"
-expect screen contains "U c.txt"
 expect screen contains "Unstaged changes (1)"
-key g
-# The first row on screen is the conflict; g must land there.
+# The cursor opens on the first row on screen — the conflict.
 expect screen contains "▶ U c.txt"
+expect screen lacks "▶ M .gitignore"
+# Down is down, up is up, G is the bottom, g is the top.
+key j
+expect screen contains "▶ M .gitignore"
+expect screen lacks "▶ U c.txt"
+key k
+expect screen contains "▶ U c.txt"
+key G
+expect screen contains "▶ M .gitignore"
+key g
+expect screen contains "▶ U c.txt"
+key home
+expect screen contains "▶ U c.txt"
+key end
+expect screen contains "▶ M .gitignore"
+key g
+# Enter opens the row under the marker: the conflict, in the editor.
+key enter
+wait 1500
+expect screen contains "c.txt: 1 conflict block"
+expect screen contains "<<<<<<< HEAD"
+expect screen lacks "diff: .gitignore"
