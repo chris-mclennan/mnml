@@ -1186,6 +1186,9 @@ const LocalQuery = struct {
 
 const local_queries = [_]LocalQuery{
     .{ .out = "haskell/highlights.scm", .src = "src/highlight/queries/haskell.scm" },
+    // The crate's JavaScript query paints no decorator; this one, listed
+    // after it for js / jsx / ts / tsx, does.
+    .{ .out = "javascript/highlights-extra.scm", .src = "src/highlight/queries/javascript.extra.scm" },
     .{ .out = "hcl/highlights.scm", .src = "src/highlight/queries/hcl.scm" },
     .{ .out = "proto/highlights.scm", .src = "src/highlight/queries/proto.scm" },
     .{ .out = "vue/highlights.scm", .src = "src/highlight/queries/vue.scm" },

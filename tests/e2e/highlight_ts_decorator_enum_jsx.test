@@ -1,0 +1,41 @@
+# The TS / JS / TSX captures a reader scans a file by, painted:
+# a decorator (`@logged` on a class, `@bound` on a method — mnml's own
+# `javascript.extra.scm`, listed after the crate's query for js / jsx /
+# ts / tsx), an enum's name, `require`, and a JSX tag's name. Before,
+# the crate's query opened with `(identifier) @variable` and mnml's
+# engine kept the FIRST pattern that claimed a node, so every later,
+# specific capture of the same identifier lost — `Shape`, `require` and
+# `button` were the default fg — and no query named a decorator at all.
+# onedark: attribute / type / tag #e5c07b, function #61afef, keyword
+# #c678dd, default fg #abb2bf. The tree is off: text starts at x=5,
+# line N is screen row N+1.
+# env: PATH=
+write deco.ts function logged<T>(target: T) { return target; }\nfunction bound(_t: unknown, _c: unknown) {}\n\n@logged\nexport class WidgetService {\n  @bound\n  add(name: string): number {\n    return name.length;\n  }\n}\n\nexport enum Shape {\n  Square,\n  Circle,\n}\n\nconst fs = require('fs');\n
+open deco.ts
+command view.toggle_tree
+expect screen contains "export class WidgetService"
+expect highlights at_least 20
+# `@logged` — the `@` and the name (line 4, cols 5-6).
+expect color 5 5 fg #e5c07b
+expect color 6 5 fg #e5c07b
+# `@bound` on the method (line 6, indented two).
+expect color 7 7 fg #e5c07b
+expect color 8 7 fg #e5c07b
+# `class` keyword, `WidgetService` a type — the crate's own captures still land.
+expect color 12 6 fg #c678dd
+expect color 18 6 fg #e5c07b
+# `enum` keyword and the enum's name `Shape` (line 12: `export enum Shape {`) —
+# the JS layer's `@constructor` for a capitalised identifier, cyan; the TS
+# layer's `@type` for the same node comes later and a coloured capture keeps
+# its node. Coloured, where it was the default fg.
+expect color 12 13 fg #c678dd
+expect color 17 13 fg #56b6c2
+# `require` (line 17: `const fs = require('fs');`, col 16).
+expect color 16 18 fg #61afef
+write Button.tsx export function Button() {\n  return <button className="a">hi</button>;\n}\n
+open Button.tsx
+expect screen contains "className"
+# `<button` — the tag's name (line 2, `  return <button …`: `<` at col 14, `button` from col 15).
+expect color 15 3 fg #e5c07b
+# `className` is a JSX attribute.
+expect color 22 3 fg #e06c75
