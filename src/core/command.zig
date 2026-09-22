@@ -173,6 +173,7 @@ const runner_tables = .{
     @import("../app/search_section.zig"),
     @import("../app/syntax.zig"),
     @import("../app/terminal_glyph.zig"),
+    @import("../app/claude_mark.zig"),
     @import("../app/sidebar_auto.zig"),
     @import("../app/launcher_dock.zig"),
 };
@@ -642,11 +643,13 @@ pub const MenuAction = union(enum) {
     set_dock_align: @import("../config/Config.zig").DockAlign,
     /// Its *Show the + button* row (`ui.dock.plus`).
     set_dock_plus: bool,
-    /// The Claude chip's `Mark:` rows — the figure or the Anthropic
-    /// spark (`app/claude_mark.zig`, `ui.claude_mark`). Two choices and
-    /// no picker, so the rows are set-rows rather than commands.
+    /// The Claude chip's `Icon ▸` rows — the figure or the Anthropic
+    /// spark (`app/claude_mark.zig`, `ui.claude_mark`). Two drawings to
+    /// choose between, so the rows are set-rows rather than commands;
+    /// `.custom` is not a row here, exactly as below — baking an SVG is
+    /// its own prompt (`view.claude_mark_custom`).
     set_claude_mark: @import("../config/Config.zig").ClaudeMark,
-    /// The terminal chip's `Mark:` rows — the ghost or the codicon
+    /// The terminal chip's `Icon ▸` rows — the ghost or the codicon
     /// (`app/terminal_glyph.zig`, `ui.terminal_glyph`). `.custom` is
     /// not a row here: baking an SVG is its own prompt.
     set_terminal_mark: @import("../config/Config.zig").TerminalGlyph,

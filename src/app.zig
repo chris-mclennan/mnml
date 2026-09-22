@@ -326,6 +326,10 @@ pub const PromptPurpose = union(enum) {
     /// `view.terminal_glyph_custom`: the SVG to bake as the terminal
     /// mark (`app/terminal_glyph.zig`).
     terminal_glyph_svg,
+    /// `view.claude_mark_custom`: the SVG to bake as Claude's mark
+    /// (`app/claude_mark.zig`). Its twin above; both are
+    /// `app/mark_bake.zig`.
+    claude_mark_svg,
 
     pub const BpTarget = struct { path: []u8, line: u32 };
     pub const SessionWorktreeName = struct { product: Config.AiProduct, profile: []u8 };

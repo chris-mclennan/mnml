@@ -298,7 +298,6 @@ pub const specs = [_]Spec{
     .{ .id = "integrations.bake_all_glyphs", .title = "Integrations: bake ALL mnml glyphs (AI + AWS + Dev) into MnmlSymbols", .group = "integrations" },
     .{ .id = "integrations.bake_integration_glyphs", .title = "Integrations: bake integration-shipped SVGs from ~/.config/mnml/glyphs/ into MnmlSymbols", .group = "integrations" },
     .{ .id = "debug.toggle_click_inspector", .title = "Debug: toggle click inspector (toast rect names on each click)", .group = "debug" },
-    .{ .id = "integrations.edit_claude_glyph", .title = "Integrations: open glyph builder for Claude Code (F1E00)", .group = "integrations" },
     .{ .id = "integrations.edit_codex_glyph", .title = "Integrations: open glyph builder for Codex (F1E01)", .group = "integrations" },
     .{ .id = "editor.jump_next_edit", .title = "Jump to next edit position (vim `g,`)", .group = "editor" },
     .{ .id = "editor.open_at_cursor", .title = "Open path under cursor (supports `:line:col`) — palette / vim `gf`", .group = "editor" },
@@ -1195,6 +1194,10 @@ pub const specs = [_]Spec{
     .{ .id = "view.terminal_glyph_ghostty", .title = "Terminal icon: the Ghostty ghost (mnml's own mark)", .group = "view" },
     .{ .id = "view.terminal_glyph_terminal", .title = "Terminal icon: the plain codicon terminal", .group = "view" },
     .{ .id = "view.terminal_glyph_custom", .title = "Terminal icon: bake a custom SVG…", .group = "view" },
+    // ── the Claude icon (claude-icon) — the same offer, one prompt ──
+    // The two branded values are `MenuAction` set-rows, so only the
+    // bake needs an id (`app/claude_mark.zig`).
+    .{ .id = "view.claude_mark_custom", .title = "Claude icon: bake a custom SVG…", .group = "view" },
     .{ .id = "harpoon.clear", .title = "Harpoon: unpin every slot", .group = "harpoon" },
     // The file manager (Zig-only ids): the Files pane's own verbs.
     .{ .id = "files.up", .title = "Files: go to the parent directory", .group = "files" },
@@ -1256,6 +1259,9 @@ test "1112 specs, unique ids" {
     // + `integrations.update` (int-distribution)
     // + `editor.lsp_this_file` (the `editor.lsp_max_bytes` override)
     // + the five `ai.copilot_*` verbs (the Copilot ghost-text backend)
+    // + `view.claude_mark_custom` (claude-icon) in place of
+    // `integrations.edit_claude_glyph`, which was a cut command a menu
+    // row still fired — a swap, so the count did not move.
     try std.testing.expectEqual(@as(usize, 1112), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

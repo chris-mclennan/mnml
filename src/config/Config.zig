@@ -346,7 +346,7 @@ pub const AiLayoutMode = enum { grid, tabs };
 /// the glyphs they pick cannot drift apart.
 pub const TerminalGlyph = bufferline.TerminalMark;
 /// Which mark Claude Code wears (`app/claude_mark.zig`) — same idea,
-/// same file.
+/// same file, `.custom` included.
 pub const ClaudeMark = bufferline.ClaudeMark;
 
 /// How a terminal pane draws the cursor its child asked for.
@@ -573,9 +573,14 @@ pub const Ui = struct {
     /// bar's right cluster, a Claude pty tab, the statusline meter, the
     /// launcher dock, a SESSIONS card. `.figure` is the Claude Code
     /// figure mnml bakes at U+F1E00; `.spark` is the Anthropic spark,
-    /// one codepoint along. The cluster chip's right-click menu is the
+    /// one codepoint along; `.custom` is the SVG below, baked at the
+    /// figure's codepoint. The cluster chip's right-click menu is the
     /// other way to set it (`app/claude_mark.zig`).
     claude_mark: ClaudeMark = .figure,
+    /// The SVG behind `.custom` — `view.claude_mark_custom` sets both
+    /// keys and bakes `<data root>/fonts/MnmlSymbols.ttf`, the twin of
+    /// `terminal_glyph_svg` above.
+    claude_mark_svg: []const u8 = "",
     top_bar_cluster_mode: TopBarClusterMode = .auto,
     /// The tab strip's maximize button, left click. The default is the
     /// zoom, not full screen: with the frame split, a click on it is
@@ -1209,6 +1214,8 @@ test "defaults are the shipped values" {
     try std.testing.expectEqual(MaximizeClick.zoom_pane, c.ui.maximize_click);
     try std.testing.expectEqual(TerminalGlyph.ghostty, c.ui.terminal_glyph);
     try std.testing.expectEqualStrings("", c.ui.terminal_glyph_svg);
+    try std.testing.expectEqual(ClaudeMark.figure, c.ui.claude_mark);
+    try std.testing.expectEqualStrings("", c.ui.claude_mark_svg);
     try std.testing.expectEqual(AiLayoutMode.grid, c.ui.ai_layout_mode);
     try std.testing.expect(c.ui.hover_help);
     try std.testing.expect(c.ui.show_workspace_dots);

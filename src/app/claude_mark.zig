@@ -5,15 +5,21 @@
 //! toast, Settings → UI's *Claude icon* row. The config key stays
 //! `ui.claude_mark` so a config already on disk keeps working.
 //!
-//! `ui.claude_mark` has two values and no picker:
+//! `ui.claude_mark` has three values:
 //!
 //!   - `.figure` (the default) — the Claude Code figure, which mnml
 //!     carries in its own block at `U+F1E00` and bakes into
 //!     `MnmlSymbols`.
 //!   - `.spark` — the Anthropic spark, one codepoint along at
 //!     `U+F1E02` (`ui/bufferline.zig`'s `spark_glyph`). The mark Claude
-//!     Code wore before the figure; some people want it back, and that
-//!     is the whole of the choice.
+//!     Code wore before the figure; some people want it back.
+//!   - `.custom` — the user's own SVG, named by `ui.claude_mark_svg`
+//!     and baked at the figure's own `U+F1E00`. Same codepoint on
+//!     purpose: nothing in the chrome and nothing in the terminal's
+//!     `font-codepoint-map` has to change when the art does. The bake
+//!     is `app/mark_bake.zig`, shared with the terminal icon's
+//!     `.custom` — the two differ in their words and their keys and in
+//!     nothing else.
 //!
 //! `mark` is the ONE place the choice is read. Every surface that draws
 //! the mark — the tab bar's right cluster, a Claude pty tab, the
@@ -27,7 +33,14 @@ const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const Config = @import("../config/Config.zig");
 const bufferline = @import("../ui/bufferline.zig");
+const command = @import("../core/command.zig");
+const CommandError = command.CommandError;
+const mark_bake = @import("mark_bake.zig");
 const settings = @import("settings.zig");
+
+pub const table = .{
+    .@"view.claude_mark_custom" = &openCustomPrompt,
+};
 
 /// The mark, per `ui.claude_mark`.
 pub fn mark(app: *const App) bufferline.Mark {
@@ -55,6 +68,7 @@ pub fn label(value: Config.ClaudeMark) []const u8 {
     return switch (value) {
         .figure => "Claude Code figure",
         .spark => "Anthropic spark",
+        .custom => "Custom SVG",
     };
 }
 
@@ -66,7 +80,20 @@ pub fn rowLabel(value: Config.ClaudeMark) []const u8 {
     return switch (value) {
         .figure => "Claude Code",
         .spark => "Anthropic",
+        .custom => "Custom SVG",
     };
+}
+
+// ─── the custom bake ────────────────────────────────────────────────────
+
+/// `view.claude_mark_custom`: the path of an SVG to bake at `U+F1E00`.
+fn openCustomPrompt(app: *App) CommandError!void {
+    return mark_bake.openPrompt(app, .claude);
+}
+
+/// The prompt's Enter: bake `text` into the user's own MnmlSymbols.
+pub fn customAccept(app: *App, text: []const u8) CommandError!void {
+    return mark_bake.accept(app, .claude, text);
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
@@ -132,6 +159,55 @@ test "set writes the key to the home config and says which mark is on" {
     try t.expect(std.mem.indexOf(u8, text, ".claude_mark = .spark") != null);
     try set(app, .figure);
     try t.expectEqualStrings("Claude icon: Claude Code figure", app.lastToast().?);
+}
+
+test "a custom SVG bakes the whole face into the data root, sets both keys, and offers the restart" {
+    var fx: Fx = undefined;
+    try fx.init();
+    defer fx.deinit();
+    const app = &fx.app;
+    try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "mine.svg", .data = "<svg viewBox=\"0 0 10 10\"><path d=\"M1 1 L9 1 L9 9 L1 9 Z\"/></svg>" });
+    try command.run(app, .{ .static = .@"view.claude_mark_custom" });
+    try t.expect(app.overlay == .prompt);
+    try t.expectEqual(app_mod.PromptPurpose.claude_mark_svg, app.overlay.prompt.purpose);
+    try customAccept(app, "mine.svg");
+    try t.expectEqual(Config.ClaudeMark.custom, app.cfg.ui.claude_mark);
+    // `.custom` paints the figure's own codepoint: only the art moved,
+    // so nothing in the chrome or in ghostty's codepoint map changes.
+    try t.expectEqualStrings(bufferline.claude_glyph, mark(app).glyph);
+    // Both keys reached the config file; the in-memory copy follows
+    // only when there is a loader arena to hold it.
+    const home = try std.fs.path.join(app.frame.allocator(), &.{ fx.root, "config.zon" });
+    const conf = try std.Io.Dir.cwd().readFileAlloc(app.io, home, app.frame.allocator(), .limited(64 * 1024));
+    try t.expect(std.mem.indexOf(u8, conf, "mine.svg") != null);
+    try t.expect(std.mem.indexOf(u8, conf, ".claude_mark = .custom") != null);
+    // The face, not a patch: the marks that are not Claude's came with
+    // it, and the figure's codepoint is in the cmap rather than missing
+    // because the bake replaced the spec rather than the art.
+    const out = try mark_bake.userFontPath(app, app.frame.allocator());
+    const builder = @import("../glyph/builder.zig");
+    var cps = (try @import("font_scan.zig").cmapCodepoints(t.allocator, app.io, out)).?;
+    defer cps.deinit(t.allocator);
+    for ([_]u21{ builder.claude, builder.claude_spark, builder.codex, builder.terminal, builder.tree_vertical, builder.tree_corner }) |cp| {
+        errdefer std.debug.print("missing U+{X}\n", .{cp});
+        try t.expect(cps.contains(cp));
+    }
+    // The toast carries the button — a rasteriser holds a font open for
+    // the life of its process, so a bake is only visible after one.
+    try t.expectEqualStrings("Restart", app.toasts.items[app.toasts.items.len - 1].action.?.label());
+}
+
+test "a path that is not an SVG fails loudly and leaves the mark alone" {
+    var fx: Fx = undefined;
+    try fx.init();
+    defer fx.deinit();
+    const app = &fx.app;
+    try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "notes.txt", .data = "not an svg\n" });
+    try t.expectError(error.Failed, customAccept(app, "notes.txt"));
+    try t.expectEqual(Config.ClaudeMark.figure, app.cfg.ui.claude_mark);
+    try t.expectError(error.Failed, customAccept(app, "nothing-here.svg"));
+    try t.expectError(error.Failed, customAccept(app, "   "));
+    try t.expectEqual(Config.ClaudeMark.figure, app.cfg.ui.claude_mark);
 }
 
 test "the mark survives a restart: the loader reads the persisted key back off the home config" {

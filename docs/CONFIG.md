@@ -349,13 +349,20 @@ otherwise. Copy what you need; leave the rest out.
         // the tab bar's right cluster, a Claude pty tab, the statusline
         // meter, the launcher dock, a SESSIONS card. .figure is the
         // Claude Code figure mnml bakes at U+F1E00; .spark is the
-        // Anthropic spark, one codepoint along at U+F1E02. Two choices
-        // and no picker: right-click the cluster's Claude chip (or a
-        // Claude pty tab) -> Icon, or the Settings overlay's
+        // Anthropic spark, one codepoint along at U+F1E02; .custom is
+        // claude_mark_svg, baked at the figure's own codepoint. Right-
+        // click the cluster's Claude chip (or a Claude pty tab) -> Icon
+        // (each row draws the icon it picks), or the Settings overlay's
         // "Claude icon" row. The KEY keeps the older "mark" spelling so
         // a config already on disk keeps working; "icon" is the word
         // the UI uses.
-        .claude_mark = .figure, // .figure | .spark
+        .claude_mark = .figure, // .figure | .spark | .custom
+        // The SVG behind .custom. view.claude_mark_custom prompts for
+        // it, bakes <data root>/fonts/MnmlSymbols.ttf and sets both
+        // keys — the twin of terminal_glyph_svg above, and the same
+        // bake: one face carries both, so replacing one icon never
+        // takes the other one back to the shipped drawing.
+        .claude_mark_svg = "",
         .top_bar_cluster_mode = .auto, // .auto | .expanded | .compact
         // .none hides the AI chips; otherwise an enabled integration icon
         // shows its chip, and a CLI found on PATH shows its chip when named

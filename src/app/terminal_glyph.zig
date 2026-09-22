@@ -27,7 +27,10 @@
 //! whole face, not a patch, so the Claude and Codex marks and the two
 //! tree connectors come with it. Install that file (it is the one the
 //! terminal's font list has to find) and restart the terminal: a
-//! rasteriser holds a font open for the life of its process.
+//! rasteriser holds a font open for the life of its process. The bake
+//! itself is `app/mark_bake.zig`, which the Claude icon's `.custom`
+//! shares: the two differ in their words and their config keys and in
+//! nothing else.
 
 const std = @import("std");
 const Io = std.Io;
@@ -37,9 +40,9 @@ const App = app_mod.App;
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const Config = @import("../config/Config.zig");
-const Prompt = @import("../ui/prompt.zig");
 const bufferline = @import("../ui/bufferline.zig");
 const builder = @import("../glyph/builder.zig");
+const mark_bake = @import("mark_bake.zig");
 const settings = @import("settings.zig");
 
 pub const table = .{
@@ -49,9 +52,7 @@ pub const table = .{
 };
 
 /// `<data root>/fonts/MnmlSymbols.ttf` — where a custom bake lands.
-pub fn userFontPath(app: *const App, arena: Allocator) Allocator.Error![]const u8 {
-    return std.fs.path.join(arena, &.{ app.data_root, builder.user_dir, builder.file_name });
-}
+pub const userFontPath = mark_bake.userFontPath;
 
 /// The mark a terminal wears, per `ui.terminal_glyph`. `.ghostty` and
 /// `.custom` are the same string — both are mnml's own `U+F2000`, and
@@ -115,49 +116,12 @@ fn setTerminal(app: *App) CommandError!void {
 
 /// `view.terminal_glyph_custom`: the path of an SVG to bake.
 fn openCustomPrompt(app: *App) CommandError!void {
-    app.overlay.deinit(app.gpa);
-    var state = Prompt.init(app.gpa, "Terminal icon: path to an SVG");
-    // The SVG already in use is the seed, so a re-bake after an edit is
-    // Enter.
-    if (app.cfg.ui.terminal_glyph_svg.len > 0) try state.setText(app.gpa, app.cfg.ui.terminal_glyph_svg);
-    app.overlay = .{ .prompt = .{ .state = state, .purpose = .terminal_glyph_svg } };
-    app.focus = .overlay;
-    app.needs_render = true;
+    return mark_bake.openPrompt(app, .terminal);
 }
 
 /// The prompt's Enter: bake `text` into the user's own MnmlSymbols.
 pub fn customAccept(app: *App, text: []const u8) CommandError!void {
-    const arena = app.frame.allocator();
-    const raw = std.mem.trim(u8, text, " \t\r\n");
-    if (raw.len == 0) return app.diag.fail(arena, "terminal icon: no path given", .{});
-    const expanded = try app.expandTilde(raw);
-    const path = if (std.fs.path.isAbsolute(expanded)) expanded else try std.fs.path.join(arena, &.{ app.workspace, expanded });
-    const source = Io.Dir.cwd().readFileAlloc(app.io, path, arena, .limited(builder.max_svg_bytes)) catch |err|
-        return app.diag.fail(arena, "terminal icon: {s}: {s}", .{ path, @errorName(err) });
-    const bytes = builder.buildWithTerminal(arena, source) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        // The reader's own words: an SVG with no viewBox, no filled
-        // shape, or a transform that would mis-place it.
-        else => return app.diag.fail(arena, "terminal icon: {s} is not a glyph mnml can bake ({s})", .{ path, @errorName(err) }),
-    };
-    const out = try userFontPath(app, arena);
-    Io.Dir.cwd().createDirPath(app.io, std.fs.path.dirname(out).?) catch {};
-    Io.Dir.cwd().writeFile(app.io, .{ .sub_path = out, .data = bytes }) catch |err|
-        return app.diag.fail(arena, "terminal icon: could not write {s}: {s}", .{ out, @errorName(err) });
-
-    // The config's strings live on the loader's arena, not the gpa
-    // (`App.loaded` owns it). With no loaded config there is nowhere to
-    // put it — the file below still has it, and the next start reads it
-    // back.
-    if (app.loaded) |*l| app.cfg.ui.terminal_glyph_svg = try l.allocator().dupe(u8, path);
-    app.cfg.ui.terminal_glyph = .custom;
-    _ = try settings.persist(app, .home, &.{ "ui", "terminal_glyph_svg" }, path);
-    _ = try settings.persist(app, .home, &.{ "ui", "terminal_glyph" }, Config.TerminalGlyph.custom);
-    app.needs_render = true;
-
-    const action: app_mod.ToastAction = .{ .restart = .{ .label = try app.gpa.dupe(u8, "Restart") } };
-    errdefer action.deinit(app.gpa);
-    try app.toastWithAction(.info, action, "baked {s} — install it and restart the terminal to load the new face", .{out});
+    return mark_bake.accept(app, .terminal, text);
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────

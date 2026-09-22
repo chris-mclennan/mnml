@@ -26,7 +26,7 @@ type icon
 expect screen contains "Terminal icon:"
 expect screen contains "Claude icon:"
 expect screen contains "[ghostty] / terminal / custom"
-expect screen contains "[figure] / spark"
+expect screen contains "[figure] / spark / custom"
 key esc
 key esc
 expect screen lacks "Claude icon:"

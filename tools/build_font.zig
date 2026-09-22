@@ -49,7 +49,7 @@ pub fn main(init: std.process.Init) !u8 {
             try err.print("build-font: cannot read {s}: {s}\n", .{ args[2], @errorName(e) });
             return 1;
         };
-        break :blk builder.merge(arena, installed, builder.ghostty_svg, &report) catch |e| {
+        break :blk builder.merge(arena, installed, .{}, &report) catch |e| {
             try err.print("build-font: cannot merge {s}: {s}\n", .{ args[2], @errorName(e) });
             return 1;
         };
