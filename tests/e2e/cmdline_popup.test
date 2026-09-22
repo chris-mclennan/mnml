@@ -22,7 +22,6 @@ expect screen contains ":do▏"
 expect screen contains "│ dock.add_preset"
 expect screen contains "│ dock.close_all"
 expect screen contains "more — Tab to cycle)"
-expect screen contains "┌─"
 
 # Down writes the first row into the line; the popup stays up on the
 # same list. Up from there wraps to the last row — `dock`.
@@ -44,7 +43,7 @@ type "do"
 expect screen contains "│ dock.add_preset"
 key esc
 expect screen lacks "│ dock.add_preset"
-expect screen lacks "┌─"
+expect screen lacks "more — Tab to cycle)"
 expect screen contains ":do▏"
 key esc
 expect screen lacks ":do▏"
@@ -53,10 +52,10 @@ expect screen lacks ":do▏"
 key :
 type "tabclos"
 expect screen contains ":tabclos▏"
-expect screen lacks "┌─"
+expect screen lacks "│ tabclose"
 key tab
 expect screen contains ":tabclose▏"
-expect screen lacks "┌─"
+expect screen lacks "│ tabclose"
 key esc
 
 # ── typing re-filters ──

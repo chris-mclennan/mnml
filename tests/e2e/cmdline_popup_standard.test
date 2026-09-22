@@ -10,13 +10,15 @@ write data.txt "alpha"
 open data.txt
 command editor.use_standard
 
+# An empty line is no popup (every id matches an empty token; a wall
+# of the whole registry is not a suggestion). The checks below name
+# the popup's own rows — a toast's box shares the frame glyphs.
 key ctrl+;
 expect screen contains ":▏"
-expect screen lacks "┌─"
+expect screen lacks "│ dock"
 type "do"
 expect screen contains ":do▏"
 expect screen contains "│ dock.add_preset"
-expect screen contains "┌─"
 
 # Tab writes the first row; Shift+Tab walks back, and from the first
 # row that wraps to the last — `dock`, the ex verb under the ids.
@@ -55,10 +57,12 @@ expect screen contains "CMD"
 key esc
 expect status contains "\"cmdline\":false"
 
-# ── one candidate: no popup ──
+# ── one candidate: no popup, Tab still completes ──
 key ctrl+;
 type "tabclos"
-expect screen lacks "┌─"
+expect screen contains ":tabclos▏"
+expect screen lacks "│ tabclose"
 key tab
 expect screen contains ":tabclose▏"
+expect screen lacks "│ tabclose"
 key esc
