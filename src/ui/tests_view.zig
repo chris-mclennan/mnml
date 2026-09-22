@@ -179,23 +179,24 @@ test "the results pane paints the command, the tally, headers, signed rows, the 
     p.run = run;
     p.state = .done;
     try p.rebuildRows();
-    p.cursor = 3;
+    p.cursor = 5;
     const wobbly = [_]bool{ false, true, false, false };
     draw(f.ui(), 7, f.full(), .{ .p = &p, .focused = true, .wobbly = &wobbly, .command = "" });
     try f.expectRow(0, "▸ npx playwright test --reporter=json --trace=retain-on-failure");
     try f.expectRow(1, "  ✓ 1 ✗ 1 ≈ 1 ⊘ 1 ≋ 1");
     try f.expectContains("s sort [file:line]");
     try f.expectRow(4, "  ! Error: config broke");
-    try f.expectRow(5, "login.spec.ts");
-    try f.expectRow(6, "   ✓ auth › logs in  120 ms");
-    try f.expectRow(7, " ▶ ✗ ≋ auth › rejects bad password  30 ms");
-    try f.expectRow(8, "      Error: expect(received).toBe(expected)");
-    try f.expectRow(10, "      ▸ open trace (npx playwright show-trace)");
-    try f.expectRow(12, "cart.spec.ts");
-    try f.expectRow(13, "   ≈ adds  410 ms");
-    try testing.expectEqual(@as(u32, 3), f.hits.at(5, 7).?.script_hit.id);
-    try testing.expectEqual(@as(u32, 6), f.hits.at(5, 10).?.script_hit.id);
-    try testing.expect(f.bgEql(2, 7, f.theme.cursor_line));
+    // By file, then line: cart.spec.ts before login.spec.ts.
+    try f.expectRow(5, "cart.spec.ts");
+    try f.expectRow(6, "   ≈ adds  410 ms");
+    try f.expectRow(7, "login.spec.ts");
+    try f.expectRow(8, "   ✓ auth › logs in  120 ms");
+    try f.expectRow(9, " ▶ ✗ ≋ auth › rejects bad password  30 ms");
+    try f.expectRow(10, "      Error: expect(received).toBe(expected)");
+    try f.expectRow(12, "      ▸ open trace (npx playwright show-trace)");
+    try testing.expectEqual(@as(u32, 5), f.hits.at(5, 9).?.script_hit.id);
+    try testing.expectEqual(@as(u32, 8), f.hits.at(5, 12).?.script_hit.id);
+    try testing.expect(f.bgEql(2, 9, f.theme.cursor_line));
     try testing.expect(f.hits.at(5, 3) == null);
 
     // Running and errored states.
