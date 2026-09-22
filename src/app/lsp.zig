@@ -929,6 +929,7 @@ pub fn onSavePost(app: *App, args: hooks.HookArgs) void {
     const e = app.panes.editor(args.save_post.pane) orelse return;
     const path = e.buf.doc.path orelse return;
     format_app.lintOnHook(app, path, serverFor(app, path) != null);
+    notifyWatched(app, path, .changed);
     const s = serverFor(app, path) orelse return;
     syncPane(app, args.save_post.pane, e);
     s.didSave(path, e.buf.editor.bytes()) catch {};
@@ -1215,9 +1216,34 @@ fn handleServerRequest(app: *App, s: *Server, id: jsonrpc.Id, method: []const u8
             app.toast("LSP: applied {d} edit(s)", .{n});
         };
         s.respond(id, "{\"applied\":true}") catch {};
-    } else {
-        // `client/registerCapability`, `window/workDoneProgress/create`…
+    } else if (std.mem.eql(u8, method, "client/registerCapability")) {
+        // The one registration mnml honours: a file watcher. The globs
+        // are not kept — every change under the workspace is reported.
+        const regs: []const Value = if (params) |p| (jsonrpc.getArr(p, "registrations") orelse &.{}) else &.{};
+        for (regs) |r| if (jsonrpc.getStr(r, "method")) |m| if (std.mem.eql(u8, m, "workspace/didChangeWatchedFiles")) {
+            s.watches_files = true;
+        };
         s.respond(id, "null") catch {};
+    } else {
+        // `window/workDoneProgress/create`…
+        s.respond(id, "null") catch {};
+    }
+}
+
+/// A file mnml itself wrote, created, moved or deleted: every ready
+/// server that registered a watcher hears of it, whether or not it has
+/// the file open — a server's references / rename / diagnostics come
+/// from what it has read, and a file it never opened is what it read
+/// last. Its own `didSave` tells the owning server about an open
+/// buffer; this is for the rest (`Cargo.toml` for rust-analyzer, a
+/// sibling `.cs` for csharp-ls, a generated file), as VS Code's
+/// watcher reports every write, its own included.
+pub fn notifyWatched(app: *App, path: []const u8, kind: client.FileChangeKind) void {
+    if (!std.fs.path.isAbsolute(path)) return;
+    for (app.lsp.servers.items) |s| {
+        if (!s.ready or !s.watches_files) continue;
+        if (!std.mem.startsWith(u8, path, s.root)) continue;
+        s.didChangeWatchedFile(path, kind) catch {};
     }
 }
 
@@ -4662,3 +4688,28 @@ test "firstOfKind: the first action of the asked kind or under it; a kind-less o
     try testing.expectEqual(@as(?usize, null), firstOfKind(&.{}, "quickfix"));
 }
 
+test "client/registerCapability for workspace/didChangeWatchedFiles marks the server; a save then reports the file to it" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    var rig: TestRig = .{};
+    try rig.start(&app);
+    defer rig.stop(&app) catch {};
+    const s = app.lsp.servers.items[0];
+    try testing.expect(!s.watches_files);
+    // Another method's registration is not a watcher.
+    var other = try std.json.parseFromSlice(Value, gpa, "{\"registrations\":[{\"id\":\"1\",\"method\":\"textDocument/formatting\"}]}", .{});
+    defer other.deinit();
+    try handleServerRequest(&app, s, 7, "client/registerCapability", other.value);
+    try testing.expect(!s.watches_files);
+    var reg = try std.json.parseFromSlice(Value, gpa, "{\"registrations\":[{\"id\":\"2\",\"method\":\"workspace/didChangeWatchedFiles\",\"registerOptions\":{\"watchers\":[{\"globPattern\":\"**/*.cs\"}]}}]}", .{});
+    defer reg.deinit();
+    try handleServerRequest(&app, s, 8, "client/registerCapability", reg.value);
+    try testing.expect(s.watches_files);
+    // A path under the server's root is announced; one outside it is not
+    // (the notify returns without a wire error either way).
+    notifyWatched(&app, "/tmp/mnml-zig-fake-lsp-gen.ts", .created);
+    notifyWatched(&app, "/nowhere/else.ts", .deleted);
+}

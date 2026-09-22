@@ -28,6 +28,7 @@ const Ui = context;
 const files_pane = @import("files_pane.zig");
 const file_clipboard = @import("file_clipboard.zig");
 const trash = @import("trash.zig");
+const lsp = @import("lsp.zig");
 const watch = @import("watch.zig");
 const gitignore = @import("gitignore.zig");
 const tree_view = @import("../ui/tree_view.zig");
@@ -1480,6 +1481,7 @@ pub fn acceptNewFile(app: *App, dir: []const u8, text: []const u8) Allocator.Err
             app.toast("create {s}: {s}", .{ full, @errorName(err) });
             return;
         };
+        lsp.notifyWatched(app, abs, .created);
     };
     try files_pane.refreshAfterFsChange(app);
     _ = app.openPath(abs) catch |err| app.toast("open {s}: {s}", .{ full, @errorName(err) });
@@ -1570,6 +1572,8 @@ fn movePath(app: *App, from: []const u8, to: []const u8) Allocator.Error!void {
         app.toast("move {s}: {s}", .{ from, @errorName(err) });
         return;
     };
+    lsp.notifyWatched(app, from_abs, .deleted);
+    lsp.notifyWatched(app, to_abs, .created);
     try retargetBuffers(app, from_abs, to_abs);
     try files_pane.refreshAfterFsChange(app);
     if (app.tree.rowOf(to)) |i| app.tree.cursor = i;

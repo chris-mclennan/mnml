@@ -310,6 +310,9 @@ pub const Change = struct { range: ?types.Range, text: []const u8 };
 const OpenDoc = struct { version: i64 };
 const QueuedOpen = struct { path: []u8, language_id: []u8, text: []u8 };
 
+/// `FileChangeType` of `workspace/didChangeWatchedFiles`.
+pub const FileChangeKind = enum(u8) { created = 1, changed = 2, deleted = 3 };
+
 pub const Server = struct {
     gpa: Allocator,
     io: Io,
@@ -324,6 +327,13 @@ pub const Server = struct {
     root: []u8,
     /// `initialize` replied and `initialized` went out.
     ready: bool = false,
+    /// The server registered a `workspace/didChangeWatchedFiles`
+    /// watcher (`client/registerCapability`): every file mnml writes,
+    /// creates, moves or deletes is reported to it whether or not it is
+    /// open. The registration's globs are not matched — every change
+    /// under the workspace goes, and a server ignores what it did not
+    /// ask for, as it must (VS Code's watcher is no narrower).
+    watches_files: bool = false,
     /// `$/progress` begins without their end — the server is loading
     /// or indexing, and answers it gives meanwhile are partial.
     progress_open: u32 = 0,
@@ -533,7 +543,7 @@ pub const Server = struct {
         try js.objectField("capabilities");
         try js.write(.{
             .general = .{ .positionEncodings = &[_][]const u8{ "utf-8", "utf-16" } },
-            .workspace = .{ .applyEdit = true, .workspaceEdit = .{ .documentChanges = true }, .configuration = true, .workspaceFolders = true, .didChangeConfiguration = .{ .dynamicRegistration = false } },
+            .workspace = .{ .applyEdit = true, .workspaceEdit = .{ .documentChanges = true }, .configuration = true, .workspaceFolders = true, .didChangeConfiguration = .{ .dynamicRegistration = false }, .didChangeWatchedFiles = .{ .dynamicRegistration = true, .relativePatternSupport = false } },
             .window = .{ .workDoneProgress = true },
             .textDocument = .{
                 .synchronization = .{ .didSave = true, .willSave = false, .willSaveWaitUntil = true },
@@ -745,6 +755,14 @@ pub const Server = struct {
         try self.notify("textDocument/didChange", .{ .textDocument = .{ .uri = uri, .version = doc.version }, .contentChanges = list });
     }
 
+    /// `workspace/didChangeWatchedFiles`: one change, by path.
+    pub fn didChangeWatchedFile(self: *Server, path: []const u8, kind: FileChangeKind) SendError!void {
+        var buf: [std.fs.max_path_bytes + 32]u8 = undefined;
+        var fba = std.heap.FixedBufferAllocator.init(&buf);
+        const uri = types.uriFromPath(fba.allocator(), path) catch return error.OutOfMemory;
+        try self.notify("workspace/didChangeWatchedFiles", .{ .changes = &[_]struct { uri: []const u8, type: u8 }{.{ .uri = uri, .type = @intFromEnum(kind) }} });
+    }
+
     pub fn didSave(self: *Server, path: []const u8, text: []const u8) SendError!void {
         if (!self.docs.contains(path)) return;
         var arena = std.heap.ArenaAllocator.init(self.gpa);
@@ -874,6 +892,11 @@ test "initialize's capabilities are all objects: an empty struct would serialize
     try testing.expect(std.mem.indexOf(u8, body, "\"references\":{\"dynamicRegistration\":false}") != null);
     try testing.expect(std.mem.indexOf(u8, body, "\"formatting\":{") != null);
     try testing.expect(std.mem.indexOf(u8, body, "\"rootUri\":\"file:///ws/src\"") != null);
+    // A server registers its file watcher only when the client says it
+    // can take one; without this line csharp-ls, rust-analyzer and
+    // tsserver never learn of a file mnml wrote that they did not have
+    // open (the closed half of a rename, a generated file).
+    try testing.expect(std.mem.indexOf(u8, body, "\"didChangeWatchedFiles\":{\"dynamicRegistration\":true") != null);
 }
 
 test "initialize reads caps and encoding; an early didOpen is queued and flushed; the server's notification arrives as an event" {

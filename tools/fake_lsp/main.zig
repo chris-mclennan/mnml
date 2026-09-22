@@ -100,6 +100,12 @@ pub const Server = struct {
     /// refactor first, the fix later) or a kinded list led by a
     /// refactor — so a client's kind check can be driven.
     actions: ActionsShape = .kinded,
+    /// `--watch`: on `initialized`, register a `workspace/didChangeWatchedFiles`
+    /// watcher for everything (`client/registerCapability`), the way
+    /// rust-analyzer, tsserver, csharp-ls and gopls do; each change the
+    /// client then reports lands in the log as
+    /// `didChangeWatchedFiles <created|changed|deleted> <basename>`.
+    watch: bool = false,
     log: std.ArrayList(u8) = .empty,
     initialized: bool = false,
     shutdown: bool = false,
@@ -366,8 +372,25 @@ pub const Server = struct {
                 self.gpa.free(kv.value);
             }
             try self.notify("textDocument/publishDiagnostics", .{ .uri = uri, .diagnostics = &[_]Diagnostic{} });
+        } else if (eql(u8, method, "initialized")) {
+            // A server that wants to hear about files it does not have
+            // open asks for a watcher; the client answers the request
+            // (`null`) and nothing here reads the answer.
+            if (self.watch) try self.emit("{\"jsonrpc\":\"2.0\",\"id\":9001,\"method\":\"client/registerCapability\",\"params\":{\"registrations\":[{\"id\":\"watch-1\",\"method\":\"workspace/didChangeWatchedFiles\",\"registerOptions\":{\"watchers\":[{\"globPattern\":\"**/*\"}]}}]}}");
+        } else if (eql(u8, method, "workspace/didChangeWatchedFiles")) {
+            const changes = getArr(params, "changes") orelse return;
+            for (changes) |ch| {
+                const uri = getStr(ch, "uri") orelse continue;
+                const kind: []const u8 = switch (getInt(ch, "type") orelse 0) {
+                    1 => "created",
+                    2 => "changed",
+                    3 => "deleted",
+                    else => "?",
+                };
+                try self.logLine(try std.fmt.allocPrint(arena, "didChangeWatchedFiles {s} {s}", .{ kind, std.fs.path.basename(uri) }));
+            }
         }
-        // `initialized`, `didSave`, `$/cancelRequest`…: nothing to do.
+        // `didSave`, `$/cancelRequest`…: nothing to do.
     }
 
     /// Apply an incremental `didChange`, in order, exactly as the
@@ -425,6 +448,13 @@ pub const Server = struct {
     fn logLine(self: *Server, comptime fmt: []const u8, args: anytype) !void {
         const path = self.log_path orelse return;
         try self.log.print(self.gpa, fmt ++ "\n", args);
+        Io.Dir.cwd().writeFile(self.io, .{ .sub_path = path, .data = self.log.items }) catch {};
+    }
+
+    /// One extra line in the log, when there is one.
+    fn logLine(self: *Server, line: []const u8) !void {
+        const path = self.log_path orelse return;
+        try self.log.print(self.gpa, "{s}\n", .{line});
         Io.Dir.cwd().writeFile(self.io, .{ .sub_path = path, .data = self.log.items }) catch {};
     }
 
@@ -897,6 +927,7 @@ pub fn main(init: std.process.Init) !u8 {
     var configure = false;
     var rich_symbols = false;
     var actions: ActionsShape = .kinded;
+    var watch = false;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const a = args[i];
@@ -927,6 +958,7 @@ pub fn main(init: std.process.Init) !u8 {
             i += 1;
             rich_symbols = std.mem.eql(u8, args[i], "rich");
         }
+        if (std.mem.eql(u8, a, "--watch")) watch = true;
         if (std.mem.eql(u8, a, "--actions") and i + 1 < args.len) {
             i += 1;
             actions = if (std.mem.eql(u8, args[i], "unkinded")) .unkinded else if (std.mem.eql(u8, args[i], "refactor-first")) .refactor_first else .kinded;
@@ -943,6 +975,7 @@ pub fn main(init: std.process.Init) !u8 {
     server.configure = configure;
     server.rich_symbols = rich_symbols;
     server.actions = actions;
+    server.watch = watch;
     while (!server.done) {
         const body = readFrame(gpa, &reader.interface) catch |err| switch (err) {
             error.Closed, error.BadFrame => break,
