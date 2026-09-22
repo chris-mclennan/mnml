@@ -2407,12 +2407,17 @@ fn requestActions(app: *App, t: Target, only: ?[]const u8, mode: u32) CommandErr
     const arena = app.frame.allocator();
     const ed = t.e.buf.editor;
     const text = ed.bytes();
-    const line = ed.currentLine();
-    const start = types.positionOf(text, ed.lineStart(line), t.server.encoding);
-    const end = types.positionOf(text, ed.lineEnd(line), t.server.encoding);
-    // The diagnostics on the line give the server its context.
+    // The range is what the server judges the assists by — a fill-match-
+    // arms fix is offered when the range spans the match, an extract
+    // refactor works on the span the user marked. A selection is sent as
+    // it stands (a linewise one already covers whole lines); without one
+    // the cursor's line, as before.
+    const span: [2]usize = ed.selection() orelse .{ ed.lineStart(ed.currentLine()), ed.lineEnd(ed.currentLine()) };
+    const start = types.positionOf(text, span[0], t.server.encoding);
+    const end = types.positionOf(text, span[1], t.server.encoding);
+    // The diagnostics on those lines give the server its context.
     var diags: std.ArrayListUnmanaged(struct { range: types.Range, severity: u8, message: []const u8 }) = .empty;
-    for (diagnosticsFor(app, t.path)) |d| if (d.range.start.line == line) try diags.append(arena, .{ .range = d.range, .severity = @intFromEnum(d.severity), .message = d.message });
+    for (diagnosticsFor(app, t.path)) |d| if (d.range.start.line >= start.line and d.range.start.line <= end.line) try diags.append(arena, .{ .range = d.range, .severity = @intFromEnum(d.severity), .message = d.message });
     const uri = try types.uriFromPath(arena, t.path);
     const only_list: ?[]const []const u8 = if (only) |o| try arena.dupe([]const u8, &.{o}) else null;
     _ = t.server.request(.code_action, "textDocument/codeAction", .{

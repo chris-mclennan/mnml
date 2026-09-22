@@ -1,0 +1,22 @@
+# The codeAction request carries the visual SELECTION's range when there
+# is one. Before, `requestActions` always sent the cursor's line: a
+# selection over the match expression never reached the server, so a
+# construct-scoped fix (rust-analyzer's "Add missing match arm") came and
+# went with the line the cursor stopped on. The fake offers its quickfix
+# for a TODO on any line of the range; the cursor ends on line 2, which
+# has none — only the selection's reach down to line 3 finds it.
+write src/main.fk "fn foo() {\n  let x = 1;  \n  foo(x); // TODO later\n}\nfn bar() { foo(); }\n"
+write .fkroot ""
+write .mnml/config.zon .{ .lsp = .{ .fake = .{ .cmd = "$MNML_FAKE_LSP", .args = .{ "--log", "lsp.log" }, .extensions = .{ "fk" }, .root_markers = .{ ".fkroot" } } } }
+open src/main.fk
+expect screen contains "LSP 1"
+command editor.use_vim
+# Line 3 (the TODO), then V k: lines 2..3 selected, cursor on line 2.
+type 3G
+type Vk
+expect screen contains "V-LINE"
+command lsp.code_action
+expect screen contains "Code actions"
+expect screen contains "Resolve TODO"
+key enter
+expect screen contains "foo(x); // DONE later"
