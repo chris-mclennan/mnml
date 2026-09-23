@@ -1,0 +1,10 @@
+# The budget is a count hook on VM instructions, and one `string.find`
+# is one instruction however long it runs: a quadratic pattern over a
+# 100 KB string held the UI thread for many seconds with no toast. The
+# matcher now checks the budget itself, so the call is cut like a loop.
+write .mnml/init.lua "mnml.command{ id = 'slow', run = function() local s = string.rep('a', 100000); return s:find('.-b') end }\nmnml.command{ id = 'ok', run = function() mnml.toast('STILL-ALIVE') end }\n"
+command script.reload
+command user.slow
+expect screen contains "script budget exceeded"
+command user.ok
+expect screen contains "STILL-ALIVE"

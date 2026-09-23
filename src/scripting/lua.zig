@@ -16,6 +16,20 @@
 //! `pcall` / `xpcall` a script sees rethrow instead of returning false
 //! — so the raise climbs all the way out to the host's own `pcall`,
 //! however many protected calls the script stacked in its way.
+//!
+//! A hook only runs between VM instructions, and one call into a C
+//! function is one instruction however long it takes. The C function
+//! that can take long on a short input is the pattern matcher —
+//! `('a'):rep(1e5):find('.-b')` is quadratic, seconds of UI thread — so
+//! Lua's `lstrlib.c` is built from a patched copy
+//! (`vendor/lua54/lstrlib.c`) whose matcher asks `spent()` every few
+//! thousand steps. What a single C call can still cost past the budget
+//! is bounded by its input rather than cut: a `table.sort`, `concat`,
+//! `rep` or `utf8` walk is linear (or n log n) in data a budgeted loop
+//! had to build first, or in a size the script names (`string.rep('x',
+//! 1e9)` allocates and fills a gigabyte before the next instruction
+//! checks the clock). Host `mnml.*` functions are ours and do bounded
+//! work per call.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -34,6 +48,12 @@ const script_list = @import("../app/script_list.zig");
 const build_options = @import("build_options");
 
 pub const State = zlua.Lua;
+
+/// The patched `lstrlib.c`'s question to the host: is the budget of the
+/// call running on this state spent? Nonzero raises the budget error
+/// from inside the match. Set once per process; a state not inside a
+/// budgeted call answers no.
+extern var mnml_lstr_budget: ?*const fn (?*zlua.LuaState) callconv(.c) c_int;
 pub const LuaRef = command.LuaRef;
 pub const Segment = script_view.Segment;
 
@@ -290,6 +310,7 @@ pub const Lua = struct {
         const L = try State.init(self.gpa);
         self.L = L;
         attach(L, self);
+        mnml_lstr_budget = &strBudget;
         L.openBase();
         L.openString();
         L.openTable();
@@ -523,6 +544,11 @@ pub const Lua = struct {
         const self = of(L);
         if (self.tripped) L.raiseErrorStr(budget_msg, .{});
         if (self.spent()) L.raiseErrorStr(budget_msg, .{});
+    }
+
+    fn strBudget(state: ?*zlua.LuaState) callconv(.c) c_int {
+        const L: *State = @ptrCast(state.?);
+        return @intFromBool(of(L).spent());
     }
 
     /// Whether the budget of the call running now is gone — and if it
@@ -1633,6 +1659,30 @@ test "budget: a trip cannot be caught — pcall and xpcall rethrow it, loops aro
     try lua.runString("local ok, err = pcall(error, 'plain'); assert(not ok and err == 'plain')");
     try lua.runString("local ok = xpcall(function() return 1 end, print); assert(ok)");
     try testing.expectEqual(top, lua.L.getTop());
+}
+
+test "budget: a long pattern match is cut inside the C call, not after it" {
+    // The budget is a count hook, and a hook runs between VM
+    // instructions — one `string.find` is one instruction. A quadratic
+    // pattern over a long subject held the UI thread for seconds with
+    // the deadline long past and nothing looking at it.
+    var app = try App.init(testing.allocator, testing.io);
+    defer app.deinit();
+    const lua = app.script();
+    const cases = [_][]const u8{
+        "local s = string.rep('a', 100000); return s:find('.-b')",
+        "local s = string.rep('a', 100000); return (s:gsub('a-b', ''))",
+        "local s = string.rep('a', 100000); for _ in s:gmatch('a*b') do end",
+        "local s = string.rep('(', 100000); return s:find('%b()')",
+    };
+    for (cases, 1..) |src, n| {
+        try testing.expectError(error.Failed, lua.runString(src));
+        try testing.expect(std.mem.indexOf(u8, lua.last_error.?, budget_msg) != null);
+        try testing.expectEqual(@as(u32, @intCast(n)), lua.budget_hits);
+    }
+    // An honest match is untouched, and a match is not the budget's
+    // outside a budgeted call.
+    try lua.runString("assert(('hello world'):find('o w') == 5 and ('a,b'):gsub(',', ';') == 'a;b')");
 }
 
 test "a metatable with __gc is refused, so no finalizer ever runs unbudgeted" {

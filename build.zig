@@ -1030,12 +1030,12 @@ fn deriveVersion(b: *std.Build) []const u8 {
 const LuaLanguage = enum { lua51, lua52, lua53, lua54, lua55, luajit, luau };
 
 const lua54_sources = [_][]const u8{
-    "src/lapi.c",     "src/lcode.c",    "src/lctype.c",  "src/ldebug.c",   "src/ldo.c",      "src/ldump.c",
-    "src/lfunc.c",    "src/lgc.c",      "src/llex.c",    "src/lmem.c",     "src/lobject.c",  "src/lopcodes.c",
-    "src/lparser.c",  "src/lstate.c",   "src/lstring.c", "src/ltable.c",   "src/ltm.c",      "src/lundump.c",
-    "src/lvm.c",      "src/lzio.c",     "src/lauxlib.c", "src/lbaselib.c", "src/lcorolib.c", "src/ldblib.c",
-    "src/liolib.c",   "src/lmathlib.c", "src/loadlib.c", "src/loslib.c",   "src/lstrlib.c",  "src/ltablib.c",
-    "src/lutf8lib.c", "src/linit.c",
+    "src/lapi.c",    "src/lcode.c",    "src/lctype.c",  "src/ldebug.c",   "src/ldo.c",      "src/ldump.c",
+    "src/lfunc.c",   "src/lgc.c",      "src/llex.c",    "src/lmem.c",     "src/lobject.c",  "src/lopcodes.c",
+    "src/lparser.c", "src/lstate.c",   "src/lstring.c", "src/ltable.c",   "src/ltm.c",      "src/lundump.c",
+    "src/lvm.c",     "src/lzio.c",     "src/lauxlib.c", "src/lbaselib.c", "src/lcorolib.c", "src/ldblib.c",
+    "src/liolib.c",  "src/lmathlib.c", "src/loadlib.c", "src/loslib.c",   "src/ltablib.c",  "src/lutf8lib.c",
+    "src/linit.c",
 };
 
 fn addLua(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *std.Build.Module {
@@ -1066,6 +1066,13 @@ fn addLua(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin
         .flags = &.{ "-std=gnu99", os_flag, apicheck },
     });
     lib.root_module.addIncludePath(lua_root.path(b, "src"));
+    // `lstrlib.c` is the one patched file: the pattern matcher checks
+    // the script budget (`vendor/lua54/README.md`). Its `#include`s
+    // resolve against the tarball's `src/` above.
+    lib.root_module.addCSourceFile(.{
+        .file = b.path("vendor/lua54/lstrlib.c"),
+        .flags = &.{ "-std=gnu99", os_flag, apicheck },
+    });
 
     // The headers as Zig: zlua's `lua_all.h` includes lua/lualib/lauxlib.
     const tc = b.addTranslateC(.{

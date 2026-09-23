@@ -91,6 +91,12 @@ rather than returning `false`, and from the moment it trips every further
 instruction raises it again, so `while true do pcall(loop) end` ends the
 same way the bare loop does. An `xpcall` message handler is not run for it.
 
+A pattern match is covered too: the matcher behind `string.find`, `match`,
+`gmatch` and `gsub` checks the budget itself, so a quadratic pattern over
+a long string is cut inside the call rather than after it. Other library
+calls are cut at the next instruction after they return; their cost is
+linear (or n log n) in data the script built or a size it named.
+
 The 20 ms is the SHIPPED build's, and it is a frame budget. Most of what
 it bounds is host code — `mnml.commands()` walks eleven hundred command
 specs and builds a table per row — and unoptimized host code is not a
