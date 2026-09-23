@@ -1,0 +1,46 @@
+# env: HOME=home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# env: TERM_PROGRAM=e2e-term
+# Two Claude sessions; the second stops on a permission prompt while
+# the first is the one being looked at. It needs you: its tab wears the
+# raised hand, its SESSIONS card leads the list with the same mark, the
+# jump lands on it, and the terminal was asked for a desktop
+# notification (OSC 777 and OSC 9 — `$TERM_PROGRAM` names no terminal
+# mnml knows, so both), which headless records in status.json.
+# A fake `claude` on PATH stands in for the CLI: its first run is quiet,
+# its second asks after a second and a half. Both stay up for ten
+# minutes; the runner ends them with the file.
+
+write bin/claude #!/bin/bash\nmkdir -p "$HOME"\nn=$(cat "$HOME/runs" 2>/dev/null || echo 0)\nn=$((n+1))\necho $n > "$HOME/runs"\nif [ "$n" = 2 ]; then\n  printf '\\033]0;\\342\\234\\263 deploy the fix\\007'\n  printf 'Claude Code v9 (fake)\\n'\n  sleep 1.5\n  printf 'Bash command\\n  ./deploy.sh\\nDo you want to proceed?\\n\\342\\235\\257 1. Yes\\n  2. No\\n'\nelse\n  printf '\\033]0;\\342\\234\\263 write the docs\\007'\n  printf 'Claude Code v9 (fake)\\n'\nfi\nexec -a claude /bin/sh -c 'i=0; while [ $i -lt 600 ]; do sleep 1; i=$((i+1)); done'
+shell chmod +x bin/claude
+command ai.claude_code_new
+wait 400
+command ai.claude_code_new
+wait 200
+# Back on the first session before the second one asks.
+command view.focus_left
+expect status contains "\"activePane\":0"
+command view.activity_sessions
+wait 2500
+expect screen contains "session needs input: deploy the fix"
+# The tab (named by the child's title): the raised hand after its name.
+expect screen contains "deploy the fix 󰹇 "
+expect screen lacks "write the docs 󰹇"
+# The card: the same mark before the name; the quiet one has none.
+expect screen contains "▌ 󰹇 deploy the fix"
+expect screen contains "▌ write the docs"
+expect screen lacks "󰹇 write the docs"
+# The notification the terminal was asked for, both dialects.
+expect status contains "u001b]777;notify;mnml — needs you;deploy the fix"
+expect status contains "u001b]9;mnml — needs you: deploy the fix"
+# The State sort puts it first: Enter on the top card lands on it.
+key home
+key enter
+expect status contains "\"activePane\":1"
+# Back to the first session; the jump finds the waiting one again.
+command view.focus_left
+expect status contains "\"activePane\":0"
+command sessions.next_waiting
+expect status contains "\"activePane\":1"
+command sessions.prev_waiting
+expect status contains "\"activePane\":1"

@@ -264,7 +264,7 @@ fn paintRow(ui: Ui, r: Rect, row: Row, selected: bool) void {
             x += ui.putStr(x, r.y, r.right() -| x, sourceGlyph(ui.ascii, it.source), Theme.withFg(style, th.accent.fg));
             x += ui.putStr(x, r.y, r.right() -| x, " ", style);
             const badge_style = switch (it.state) {
-                .waiting => Theme.withFg(style, th.warn_fg.fg),
+                .waiting => Theme.withFg(style, th.attention_fg.fg),
                 .streaming => Theme.withFg(style, th.info_fg.fg),
                 .tool_call => Theme.withFg(style, th.palette.yellow),
                 .idle => Theme.withFg(style, th.muted.fg),

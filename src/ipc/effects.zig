@@ -404,21 +404,76 @@ pub const Notify = struct {
     level: Level = .info,
     sound: bool = false,
     source: ?[]const u8 = null,
+    /// The in-app toast. A caller that has toasted already (a session's
+    /// edge) says no.
+    toast: bool = true,
+    /// Through the terminal mnml runs in rather than a spawned notifier:
+    /// OSC 777 / OSC 9 (`terminalEscapes`), then the bell under `sound`,
+    /// out through `App.hostWrite`. The terminal owns the notification —
+    /// it knows whether its window is in front, and it clicks back to
+    /// the right tab.
+    terminal: bool = false,
 };
 
-/// The in-app half, always; the native half when `app.native_notify`
-/// (the terminal loop sets it — headless and the tests never spawn).
+/// Which desktop-notification escape a terminal reads: OSC 777
+/// (`ESC ] 777 ; notify ; title ; body BEL`) for ghostty and WezTerm,
+/// OSC 9 (`ESC ] 9 ; text BEL`) for iTerm2, both where `$TERM_PROGRAM`
+/// says nothing we know — a terminal ignores the OSC it does not speak,
+/// and one that speaks both would show the same notification twice.
+pub const TermNotify = enum { osc777, osc9, both };
+
+pub fn termNotifyFor(term_program: ?[]const u8) TermNotify {
+    const tp = term_program orelse return .both;
+    if (std.ascii.eqlIgnoreCase(tp, "ghostty") or std.ascii.eqlIgnoreCase(tp, "WezTerm")) return .osc777;
+    if (std.ascii.eqlIgnoreCase(tp, "iTerm.app")) return .osc9;
+    return .both;
+}
+
+/// A field's text as an OSC can carry it: a control byte would end or
+/// corrupt the sequence and becomes a space; `;` would end the field in
+/// OSC 777 and becomes `,`; cut at `max` bytes on a UTF-8 boundary.
+pub fn oscText(arena: Allocator, s: []const u8, max: usize) Allocator.Error![]const u8 {
+    var end = @min(s.len, max);
+    while (end > 0 and end < s.len and (s[end] & 0xC0) == 0x80) end -= 1;
+    const out = try arena.alloc(u8, end);
+    for (s[0..end], out) |c, *o| o.* = if (c < 0x20 or c == 0x7f) ' ' else if (c == ';') ',' else c;
+    return out;
+}
+
+/// The notification escapes for `kind`, on `arena`, in the order they
+/// are written.
+pub fn terminalEscapes(arena: Allocator, kind: TermNotify, title: []const u8, body: []const u8) Allocator.Error![]const []const u8 {
+    const head = try oscText(arena, title, 120);
+    const text = try oscText(arena, body, 240);
+    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    if (kind != .osc9) try out.append(arena, try std.fmt.allocPrint(arena, "\x1b]777;notify;{s};{s}\x07", .{ head, text }));
+    if (kind != .osc777) try out.append(arena, try std.fmt.allocPrint(arena, "\x1b]9;{s}: {s}\x07", .{ head, text }));
+    return out.items;
+}
+
+/// The in-app half unless the caller has toasted already; then the
+/// terminal's escapes (`terminal`), or the native half when
+/// `app.native_notify` (the terminal loop sets it — headless and the
+/// tests never spawn).
 pub fn notify(app: *App, n: Notify) Allocator.Error!void {
-    if (n.level == .@"error") {
-        const id = n.source orelse try std.fmt.allocPrint(app.frame.allocator(), "notify:{s}", .{n.title});
-        const text = try std.fmt.allocPrint(app.frame.allocator(), "{s}: {s}", .{ n.title, n.body });
-        try app.toastPersistent(id, text, .err);
-    } else {
-        try app.toastLevel(switch (n.level) {
-            .info => .info,
-            .warn => .warn,
-            .@"error" => .err,
-        }, "{s}: {s}", .{ n.title, n.body });
+    if (n.toast) {
+        if (n.level == .@"error") {
+            const id = n.source orelse try std.fmt.allocPrint(app.frame.allocator(), "notify:{s}", .{n.title});
+            const text = try std.fmt.allocPrint(app.frame.allocator(), "{s}: {s}", .{ n.title, n.body });
+            try app.toastPersistent(id, text, .err);
+        } else {
+            try app.toastLevel(switch (n.level) {
+                .info => .info,
+                .warn => .warn,
+                .@"error" => .err,
+            }, "{s}: {s}", .{ n.title, n.body });
+        }
+    }
+    if (n.terminal) {
+        const arena = app.frame.allocator();
+        for (try terminalEscapes(arena, termNotifyFor(app.env.get("TERM_PROGRAM")), n.title, n.body)) |e| try app.hostWrite(e);
+        if (n.sound) try app.hostWrite("\x07");
+        return;
     }
     if (!app.native_notify) return;
     const argv = try nativeArgv(app.frame.allocator(), hostOs(), n.title, n.body, n.level, n.sound) orelse return;
@@ -669,6 +724,50 @@ test "nativeArgv: osascript / notify-send / powershell shapes; other has none" {
     try t.expect(std.mem.indexOf(u8, win[3], "silent") != null);
     try t.expect(std.mem.indexOf(u8, (try nativeArgv(a, .windows, "T", "B", .info, true)).?[3], "silent") == null);
     try t.expectEqual(@as(?[]const []const u8, null), try nativeArgv(a, .other, "T", "B", .info, false));
+}
+
+test "terminal notifications: OSC 777 for ghostty and WezTerm, OSC 9 for iTerm2, both elsewhere; a field cannot end the sequence" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    try t.expectEqual(TermNotify.osc777, termNotifyFor("ghostty"));
+    try t.expectEqual(TermNotify.osc777, termNotifyFor("WezTerm"));
+    try t.expectEqual(TermNotify.osc9, termNotifyFor("iTerm.app"));
+    try t.expectEqual(TermNotify.both, termNotifyFor("Apple_Terminal"));
+    try t.expectEqual(TermNotify.both, termNotifyFor(null));
+    const both = try terminalEscapes(a, .both, "mnml — needs you", "fix the tests");
+    try t.expectEqual(@as(usize, 2), both.len);
+    try t.expectEqualStrings("\x1b]777;notify;mnml — needs you;fix the tests\x07", both[0]);
+    try t.expectEqualStrings("\x1b]9;mnml — needs you: fix the tests\x07", both[1]);
+    try t.expectEqual(@as(usize, 1), (try terminalEscapes(a, .osc777, "T", "B")).len);
+    try t.expectEqualStrings("\x1b]9;T: B\x07", (try terminalEscapes(a, .osc9, "T", "B"))[0]);
+    // A `;`, a BEL, an ESC in a name: none of them reach the terminal raw.
+    const hostile = try terminalEscapes(a, .osc777, "a;b", "x\x07y\x1b]0;z");
+    try t.expectEqualStrings("\x1b]777;notify;a,b;x y ]0,z\x07", hostile[0]);
+    // A long body is cut on a UTF-8 boundary.
+    try t.expectEqualStrings("ab", try oscText(a, "ab—cd", 3));
+    try t.expectEqualStrings("ab—", try oscText(a, "ab—cd", 5));
+}
+
+test "notify through the terminal: the escapes go to App.hostWrite, the bell after them under `sound`; no toast when the caller has one" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 20 });
+    defer app.deinit();
+    try app.env.put("TERM_PROGRAM", "ghostty");
+    const toasts = app.toasts.items.len;
+    try notify(&app, .{ .title = "mnml — needs you", .body = "claude", .level = .warn, .sound = true, .toast = false, .terminal = true });
+    try t.expectEqual(toasts, app.toasts.items.len);
+    try t.expectEqual(@as(usize, 2), app.host_log.items.len);
+    try t.expectEqualStrings("\x1b]777;notify;mnml — needs you;claude\x07", app.host_log.items[0]);
+    try t.expectEqualStrings("\x07", app.host_log.items[1]);
+    // No terminal loop: nothing queued for one.
+    try t.expectEqual(@as(usize, 0), app.host_out.items.len);
+    // With one, the same bytes queue for it; the log keeps the newest.
+    app.host_tty = true;
+    try notify(&app, .{ .title = "T", .body = "B", .terminal = true, .toast = false });
+    try t.expectEqualStrings("\x1b]777;notify;T;B\x07", app.host_out.items);
+    var i: usize = 0;
+    while (i < App.host_log_max + 3) : (i += 1) try app.hostWrite("x");
+    try t.expectEqual(App.host_log_max, app.host_log.items.len);
 }
 
 test "apply: the five tier-2 commands land in App state; notify toasts, error pins" {

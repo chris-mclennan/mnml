@@ -502,7 +502,7 @@ test "the loop dumps every frame, acks every command byte-for-byte, and exits on
     // strip, the statusline and the `:` line leave the editor no rows,
     // so no surface has a caret to give.
     try t.expectEqualStrings(
-        "{\"focus\":\"pane\",\"activePane\":0,\"activeFile\":\"hello.txt\",\"cursor\":{\"line\":1,\"col\":1},\"mode\":\"none\",\"treeCursor\":0,\"treeSelection\":\"\",\"treeVisible\":true,\"rightPanelVisible\":false,\"rightPanelPanes\":[],\"rightPanelActiveIdx\":0,\"panes\":[{\"title\":\"hello.txt\",\"dirty\":false,\"preview\":false}],\"quit\":true,\"cursorShape\":\"hidden\",\"cmdline\":false,\"ghost\":\"idle\",\"cols\":20,\"rows\":3,\"cellWidthPx\":0,\"cellHeightPx\":0,\"settings\":null}",
+        "{\"focus\":\"pane\",\"activePane\":0,\"activeFile\":\"hello.txt\",\"cursor\":{\"line\":1,\"col\":1},\"mode\":\"none\",\"treeCursor\":0,\"treeSelection\":\"\",\"treeVisible\":true,\"rightPanelVisible\":false,\"rightPanelPanes\":[],\"rightPanelActiveIdx\":0,\"panes\":[{\"title\":\"hello.txt\",\"dirty\":false,\"preview\":false}],\"quit\":true,\"cursorShape\":\"hidden\",\"cmdline\":false,\"ghost\":\"idle\",\"cols\":20,\"rows\":3,\"cellWidthPx\":0,\"cellHeightPx\":0,\"settings\":null,\"hostEscapes\":[]}",
         status,
     );
     const rects = try tmp.dir.readFileAlloc(t.io, ".mnml/ipc-zig/rects.json", t.allocator, .unlimited);

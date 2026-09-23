@@ -334,6 +334,12 @@ pub const rows = [_]RowSpec{
     .{ .path = "ai.routing.claude.backend", .label = "Claude backend", .section = .ai, .scope = .home },
     .{ .path = "ai.routing.codex.backend", .label = "Codex backend", .section = .ai, .scope = .home },
     .{ .path = "ai.claude_meter_mode", .label = "Claude meter", .section = .ai, .scope = .home },
+    // A session that needs you, or ends: the desktop notification and
+    // the bell that rides with it (`sessions.notifySession`). `ui.`
+    // keys in the AI section: they are about sessions, which is where
+    // someone looking for them looks.
+    .{ .path = "ui.session_notify", .label = "Session notifications", .section = .ai, .scope = .home },
+    .{ .path = "ui.session_bell", .label = "Session bell", .section = .ai, .scope = .home },
     // ── Integrations ──
     .{ .path = "sonos.enabled", .label = "Sonos", .section = .integrations, .scope = .home },
     .{ .path = "sonos.chip_label", .label = "Sonos chip label", .section = .integrations, .scope = .home },

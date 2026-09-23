@@ -25,6 +25,7 @@ const md_preview = @import("../md_preview.zig");
 const zon_pane = @import("../zon_pane.zig");
 const command = @import("../../core/command.zig");
 const pty_pane = @import("../pty_pane.zig");
+const sessions = @import("../../sessions.zig");
 const icons = @import("../../ui/icons.zig");
 
 const ask = copy.ask_link;
@@ -349,6 +350,13 @@ pub fn tab(app: *App, arena: Allocator, tb: hit.TabRef) Allocator.Error!?Entry {
     return switch (p.*) {
         .pty => |*pt| blk: {
             const claude = if (pty_pane.productOf(app, pt)) |prod| prod == .claude else false;
+            // The raised hand: this tab's child is blocked on the user.
+            if (sessions.needsYou(app, id)) break :blk .{
+                .title = try std.fmt.allocPrint(arena, "Tab: {s} — needs you", .{p.title()}),
+                .body = "The raised hand after the name: the program in this pane is stopped on a question — a permission prompt, a `(y/n)`, a numbered choice — or its session's transcript says it is waiting. It stays up until the screen stops asking. Click shows it so you can answer; the jump keys walk every tab wearing it, the SESSIONS card wears the same mark, and the Waiting sort puts every such session first.",
+                .keys = &.{ .{ .command = .@"sessions.next_waiting", .label = "Next that needs you" }, .{ .command = .@"sessions.prev_waiting", .label = "Previous that needs you" } },
+                .links = &.{ .{ .command = .{ .id = .@"sessions.sort_waiting", .label = "Sort SESSIONS waiting first" } }, .{ .command = .{ .id = .@"view.activity_sessions", .label = "The SESSIONS section" } } },
+            };
             break :blk .{
                 .title = try std.fmt.allocPrint(arena, "Tab: {s} — {s}", .{ p.title(), if (claude) "a Claude Code session" else "a terminal" }),
                 .body = if (claude) "A Claude Code session in a terminal pane, driven by libghostty-vt; its card in SESSIONS shows the branch, cwd and what it is doing, and the colour on its rail matches. Click shows it; middle-click closes it (which ends the session — the transcript stays on disk); drag reorders. Right-click has Rename, Restart, Clear, the accent colour and the *Icon* submenu for the mark it wears." else "A shell in a terminal pane, driven by libghostty-vt so it renders as ghostty would — in the workspace directory, with mnml's environment. Click shows it; middle-click closes it, which ends the shell; drag reorders. Right-click has Rename, Restart, Clear, the accent colour and the *Icon* submenu — the ghost or the plain terminal mark for every terminal tab.",

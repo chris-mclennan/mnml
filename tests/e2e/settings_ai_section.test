@@ -1,15 +1,27 @@
 # Settings has an AI section — ghost text, its backend, the Claude and
-# Codex backends, the meter — below Editor; End scrolls the box there.
+# Codex backends, the meter, the session notifications and their bell —
+# below Editor; End scrolls the box there, and the filter keeps the
+# section's header over the rows it matched.
 write a.txt alpha
 open a.txt
 command view.settings
 expect screen contains "── UI ──"
 expect screen contains "▸ Line numbers:"
 key end
-expect screen contains "── AI ──"
+expect screen contains "Ghost text:"
 expect screen contains "Ghost-text backend:"
 expect screen contains "Claude backend:"
 expect screen contains "[unset]"
+expect screen contains "Session notifications:"
+expect screen contains "off / [unfocused] / always"
+expect screen contains "Session bell:"
 expect screen contains "▸ Reset all to defaults"
+key /
+type notif
+expect screen contains "── AI ──"
+expect screen contains "Session notifications:"
+expect screen lacks "── Editor ──"
+key esc
 key esc
 expect screen lacks "── AI ──"
+expect screen lacks "Session notifications:"

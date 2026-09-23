@@ -96,6 +96,9 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
     // clipboard tool `$PATH` has. `editor.clipboard` picks between them;
     // `App.initWith` alone leaves the sink `.none` (headless, `.test`).
     app.clipboard.attach(io, term.writer(), clipboard_os.probe(io, env), app.cfg.editor.clipboard);
+    // The escapes meant for the terminal itself (a session notification)
+    // are this loop's to write.
+    app.host_tty = true;
     // The IPC channel at `<ws>/.mnml/<ipc>/`: `command` is tailed for the
     // lifecycle lines `run.sh stop` / `restart` drop (`ipcTask`), and with
     // `ipc.write_screen` every frame is mirrored into `screen.txt` — the
@@ -175,6 +178,10 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
         if (app.bell_pending) {
             app.bell_pending = false;
             term.writeRaw("\x07") catch {};
+        }
+        if (app.host_out.items.len > 0) {
+            term.writeRaw(app.host_out.items) catch {};
+            app.host_out.clearRetainingCapacity();
         }
         if (app.needs_render) {
             try app.renderInto(term.screen());

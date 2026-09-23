@@ -71,6 +71,9 @@ pub const Tab = struct {
     /// `✗3` / `⚠2` / `●` from the diagnostics, or empty.
     diag: []const u8 = "",
     diag_severity: Severity = .none,
+    /// The pane's child is blocked on the user (`sessions.needsYou`):
+    /// the needs-you mark after the name, in the attention role.
+    needs_you: bool = false,
 };
 
 /// The markdown mode chip left of the split buttons: `  Preview ` on
@@ -188,6 +191,10 @@ pub const maximize_ascii = "[";
 pub const restore_glyph = "\u{F066}";
 pub const restore_ascii = "]";
 pub const dirty_dot = "\u{25CF}";
+/// The needs-you mark (nf-md-hand_back_right — a raised hand): a tab,
+/// a SESSIONS card and nothing else wear it, in `Theme.attention_fg`.
+pub const needs_you_glyph = "\u{F0E47}";
+pub const needs_you_ascii = "!";
 
 // ─── the marks a pty tab wears ──────────────────────────────────────────
 
@@ -321,13 +328,20 @@ fn chipName(ui: Ui, tab: Tab) []const u8 {
 }
 
 /// The chip's natural width: ` glyph ` (or one cell without one), the
-/// method pill and its gap, the name and a cell, the diagnostics and a
-/// cell, the badge and a cell.
+/// method pill and its gap, the name and a cell, the needs-you mark and
+/// a cell, the diagnostics and a cell, the badge and a cell.
 pub fn chipWidth(ui: Ui, tab: Tab) u16 {
     const icon: u16 = if (tab.glyph.len == 0) 1 else 2 + ui.width(tab.glyph);
     const verb: u16 = if (tab.verb) |v| ui.width(v) + 3 else 0;
+    const mark: u16 = if (tab.needs_you) ui.width(needsYouMark(ui)) + 1 else 0;
     const diag: u16 = if (tab.diag.len == 0) 0 else ui.width(tab.diag) + 1;
-    return icon + verb + ui.width(chipName(ui, tab)) + 1 + diag + 2;
+    return icon + verb + ui.width(chipName(ui, tab)) + 1 + mark + diag + 2;
+}
+
+/// The needs-you mark as this frame paints it (the `--ascii` twin when
+/// asked for) — the tab's and the SESSIONS card's alike.
+pub fn needsYouMark(ui: Ui) []const u8 {
+    return if (ui.ascii) needs_you_ascii else needs_you_glyph;
 }
 
 const Badge = struct { text: []const u8, fg: Color, closes: bool };
@@ -377,6 +391,10 @@ fn paintChip(ui: Ui, x: u16, y: u16, avail: u16, tab: Tab, leaf: u32, idx: u16, 
     const name_style = if (tab.active) focus_cue.words(ui.theme, ui.focus_cue, focused, plain) else plain;
     cx += ui.putStr(cx, y, end - cx, chipName(ui, tab), name_style);
     cx += ui.putStr(cx, y, end - cx, " ", .{ .bg = bg });
+    if (tab.needs_you) {
+        cx += ui.putStr(cx, y, end - cx, needsYouMark(ui), Theme.onBg(ui.theme.attention_fg, bg));
+        cx += ui.putStr(cx, y, end - cx, " ", .{ .bg = bg });
+    }
     if (tab.diag.len > 0) {
         const fg = if (tab.diag_severity == .err) p.red else p.yellow;
         cx += ui.putStr(cx, y, end - cx, tab.diag, .{ .fg = fg, .bg = bg });
@@ -924,6 +942,32 @@ test "a request tab has no glyph and a method pill; a dirty tab a dot the pointe
     _ = draw(h.ui(), h.full(), &tabs, .{ .new_tab = 9, .split = split_ids });
     try h.expectRow(0, " x a.txt " ++ dirty_dot ++ "   x b.txt " ++ pin_ascii ++ "   " ++ plus_ascii ++ " " ** 17 ++ arrow_left_ascii ++ "  " ++ arrow_right_ascii ++ "  " ++ term_ascii ++ "  " ++ split_right_ascii ++ "  " ++ split_down_ascii ++ "  " ++ maximize_ascii);
     try testing.expectEqual(@as(u32, 9), h.hits.at(25, 0).?.button);
+}
+
+test "a tab whose child needs you wears the mark after its name, in the attention role; the chip grows by the mark and a cell; --ascii has its twin" {
+    var f = try Fixture.init(40, 1);
+    defer f.deinit();
+    const tabs = [_]Tab{
+        .{ .id = 1, .title = "claude", .glyph = "x", .active = true, .needs_you = true },
+        .{ .id = 2, .title = "sh", .glyph = "x" },
+    };
+    _ = draw(f.ui(), f.full(), &tabs, .{});
+    var buf: [256]u8 = undefined;
+    const row = f.row(0, &buf);
+    try testing.expect(std.mem.startsWith(u8, row, " x claude " ++ needs_you_glyph ++ " " ++ close_glyph ++ "   x sh " ++ close_glyph));
+    try testing.expect(f.fgEql(10, 0, .{ .fg = f.theme.attention_fg.fg }));
+    try testing.expect(f.theme.attention_fg.bold);
+    var plain = tabs[0];
+    plain.needs_you = false;
+    try testing.expectEqual(chipWidth(f.ui(), plain) + 2, chipWidth(f.ui(), tabs[0]));
+    // The whole chip is still the tab's hit, the close its last two cells.
+    try testing.expect(f.hits.at(10, 0).? == .tab);
+    try testing.expect(f.hits.at(12, 0).? == .tab_close);
+    var g = try Fixture.init(40, 1);
+    defer g.deinit();
+    g.ascii = true;
+    _ = draw(g.ui(), g.full(), &tabs, .{});
+    try testing.expect(std.mem.startsWith(u8, g.row(0, &buf), " x claude " ++ needs_you_ascii ++ " " ++ close_ascii));
 }
 
 test "a long name is cut to name_cap; a chip cut by the edge keeps its tab hit and loses its close" {

@@ -255,6 +255,9 @@ pub const AppDriver = struct {
             st.mode = e.buf.input.mode().label() orelse "none";
         }
         st.settings = try settingsList(app, a);
+        // What the terminal itself was sent (a session notification):
+        // headless has no terminal, so this is the only place it shows.
+        st.host_escapes = try a.dupe([]const u8, app.host_log.items);
         return st;
     }
 

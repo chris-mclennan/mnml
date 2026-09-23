@@ -51,6 +51,12 @@ fn group(key: u8, label: []const u8, kids: []const Entry) Entry {
     return .{ .key = key, .node = .{ .group = .{ .label = label, .kids = kids } } };
 }
 
+/// A leaf the vim profile alone shows — its standard twin is a chord
+/// of its own, not a row in the `Ctrl+K` popup.
+fn cmdVim(key: u8, id: CommandId, label: []const u8) Entry {
+    return .{ .key = key, .vim_only = true, .node = .{ .cmd = .{ .id = id, .label = label } } };
+}
+
 /// A group the vim profile alone shows — nvim-dap's `<leader>d` is a
 /// Neovim door; the standard profile's `Ctrl+K` popup keeps Rust's rows.
 fn groupVim(key: u8, label: []const u8, kids: []const Entry) Entry {
@@ -112,6 +118,10 @@ pub const root: Node = .{
                 cmd('H', .@"view.move_section_left", "section → left side"),
                 cmd('L', .@"view.move_section_right", "section → right side"),
                 cmd('r', .@"script.run_selection", "run Lua selection"),
+                // The sessions that need you (`sessions.needsYou`); the
+                // standard profile has Ctrl+Alt+N / Ctrl+Alt+Shift+N.
+                cmdVim('n', .@"sessions.next_waiting", "next session needing you"),
+                cmdVim('N', .@"sessions.prev_waiting", "previous session needing you"),
             }),
             // nvim-dap's leader chords (`docs/KEYMAP_PROFILES.md` → Debugger).
             groupVim('d', "+debug", &.{
@@ -477,7 +487,10 @@ test "leader tree: root groups, descend, leaves, dead ends" {
     try std.testing.expectEqual(CommandId.@"view.split_right", lookup("sv").?.cmd.id);
     try std.testing.expect(lookup("zz") == null);
     try std.testing.expect(lookup("svx") == null);
-    try std.testing.expect(continuations(std.testing.allocator, "s", true).len == 14);
+    try std.testing.expect(continuations(std.testing.allocator, "s", true).len == 16);
+    try std.testing.expectEqual(CommandId.@"sessions.next_waiting", lookupIn("sn", true).?.cmd.id);
+    try std.testing.expectEqual(CommandId.@"sessions.prev_waiting", lookupIn("sN", true).?.cmd.id);
+    try std.testing.expect(lookupIn("sn", false) == null);
     try std.testing.expect(continuations(std.testing.allocator, "sv", true).len == 0);
     // `+debug` and `+lsp` on `r` are the vim profile's — nvim-dap's
     // door and NvChad's `<leader>ra`; the standard popup keeps the
@@ -582,14 +595,16 @@ test "every group in both profiles has a glyph with an ascii twin, and the count
     // The numbers the popup paints today, so a chord added or dropped
     // shows up here rather than silently on screen.
     try t.expectEqual(@as(u16, 7), chordCount(lookup("f").?, true));
-    try t.expectEqual(@as(u16, 14), chordCount(lookup("s").?, true));
+    try t.expectEqual(@as(u16, 16), chordCount(lookup("s").?, true));
+    try t.expectEqual(@as(u16, 14), chordCount(lookup("s").?, false));
     try t.expectEqual(@as(u16, 5), chordCount(lookup("Lc").?, true));
     try t.expectEqual(@as(u16, 19), chordCount(lookup("L").?, true));
     try t.expectEqual(@as(u16, 15), chordCount(lookup("d").?, true));
     try t.expectEqual(@as(u16, 1), chordCount(lookup("Pp").?, true));
-    // The root: the vim profile carries `+debug`'s fifteen and
-    // `<leader>ra`'s one more than the standard one.
-    try t.expectEqual(chordCount(&root, false) + 16, chordCount(&root, true));
+    // The root: the vim profile carries `+debug`'s fifteen,
+    // `<leader>ra`'s one and `<leader>sn` / `sN` more than the standard
+    // one.
+    try t.expectEqual(chordCount(&root, false) + 18, chordCount(&root, true));
 }
 
 /// An independent counter for the test: every leaf beneath `n`, found

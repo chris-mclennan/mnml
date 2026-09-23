@@ -94,6 +94,8 @@ const cli = @import("ai/cli.zig");
 const pty_pane = @import("app/pty_pane.zig");
 const pty_mod = @import("pty");
 const pty_view = @import("ui/pty_view.zig");
+const bufferline = @import("ui/bufferline.zig");
+const effects = @import("ipc/effects.zig");
 const settings = @import("app/settings.zig");
 const Config = @import("config/Config.zig");
 const accent_color = @import("ui/accent_color.zig");
@@ -227,6 +229,9 @@ pub const RowView = struct {
     /// // changed (sessions-worktree): the session worktree's name — the
     /// `⑂ <name>` tag after the label.
     worktree: ?[]const u8 = null,
+    /// The pane's child is blocked on the user (`needsYou`): the
+    /// needs-you mark before the name, as the tab wears it.
+    needs_you: bool = false,
 };
 
 pub const Summary = enum { exited, none, text };
@@ -259,6 +264,9 @@ pub const table = .{
     .@"sessions.sort" = &sortCmd,
     .@"sessions.sort_auto" = &sortAutoCmd,
     .@"sessions.sort_manual" = &sortManualCmd,
+    .@"sessions.sort_waiting" = &sortWaitingCmd,
+    .@"sessions.next_waiting" = &nextWaitingCmd,
+    .@"sessions.prev_waiting" = &prevWaitingCmd,
     .@"sessions.cycle_state" = &cycleStateCmd,
     .@"sessions.open" = &openCmd,
     .@"sessions.open_transcript" = &openTranscriptCmd,
@@ -359,6 +367,9 @@ pub const Derived = struct {
     at_ms: i64,
     prio: u8,
     thinking: bool,
+    /// The last rows read as a question waiting on the user
+    /// (`promptShape`).
+    prompt: bool = false,
     /// Owned by the gpa, most-recent-first, up to `grid_lines_max`.
     /// The card outlives the frame, so the bytes AND the colours are
     /// the cache's own — never the frame arena's, never the grid's.
@@ -409,6 +420,9 @@ pub const State = struct {
     /// session file (`app/session_worktree.zig`). Owned.
     worktrees: session_worktree.Registry = .{},
     generation: u32 = 0,
+    /// Listings adopted so far (`handle`): a pane's needs-you answer is
+    /// read again when a new one lands.
+    adoptions: u32 = 0,
     scanning: bool = false,
     scanned_once: bool = false,
     last_scan_ms: i64 = 0,
@@ -698,6 +712,13 @@ pub fn handle(app: *App, result: *ScanResult) Allocator.Error!void {
     st.items = items;
     // A session listed on one of the worktrees takes the tree's row.
     for (st.items) |it| _ = try st.worktrees.learn(app.gpa, it.session_id, it.cwd);
+    // A listing's `waiting` speaks for a pane only until the pane prints
+    // again (`evalNeedsYou`): note where each one's output stands now.
+    st.adoptions +%= 1;
+    for (app.panes.slots.items) |*slot| if (slot.*) |*pane| switch (pane.*) {
+        .pty => |*p| p.needs_you_snap_gen = p.fed_gen,
+        else => {},
+    };
     try refilter(app);
     // The selection follows its card across a rescan.
     if (keep) |key| selectKey(app, key);
@@ -724,18 +745,17 @@ pub fn stateEdges(arena: Allocator, old: []const Item, new: []const Item) Alloca
     return out.items;
 }
 
-/// Once per edge: a session that starts `waiting` toasts (warn), badges
-/// its pty tab and rings the bell under `ui.session_bell`; one that
-/// `failed` toasts (err). The other edges are quiet — the rows show them.
+/// Once per edge: a session no pane here runs that starts `waiting`
+/// toasts (warn) and rings the bell under `ui.session_bell` — a pane's
+/// session is `trackNeedsYou`'s to announce, since its listing is only
+/// one of the two ways it can be seen waiting; one that `failed` toasts
+/// (err). The other edges are quiet — the rows show them.
 fn announceEdges(app: *App, edges: []const Edge) Allocator.Error!void {
     for (edges) |e| {
         const it = findItem(app, e.session_id) orelse continue;
         switch (e.to) {
-            .waiting => {
+            .waiting => if (ptyPaneOf(app, e.session_id) == null) {
                 try app.toastLevel(.warn, "session needs input: {s}", .{displayName(app, it)});
-                if (ptyPaneOf(app, e.session_id)) |id| if (app.panes.get(id)) |pane| if (pane.* == .pty) {
-                    pane.pty.attention = true;
-                };
                 if (app.cfg.ui.session_bell) app.bell_pending = true;
             },
             .failed => try app.toastLevel(.err, "session failed: {s}", .{displayName(app, it)}),
@@ -782,14 +802,207 @@ pub fn findItem(app: *App, session_id: []const u8) ?Item {
     return null;
 }
 
-/// Rust's `session_state_priority`: 0 = action needed (the pane's
-/// summary mentions an approval), 1 = thinking, 2 = idle, 3 = exited,
-/// 4 = no such pane.
+/// Rust's `session_state_priority`: 0 = action needed (the pane needs
+/// you, or its screen shows a prompt), 1 = thinking, 2 = idle, 3 =
+/// exited, 4 = no such pane.
 pub fn priority(app: *App, pid: app_mod.PaneId) u8 {
     const p = app.panes.pty(pid) orelse return 4;
     if (p.exit != null) return 3;
+    if (p.needs_you) return 0;
     const d = derive(app, pid) orelse return 4;
     return d.prio;
+}
+
+// ─── needs you ──────────────────────────────────────────────────────────
+
+/// A pane's answer is read again at most this often: a busy child's
+/// output would otherwise walk its grid on every tick.
+pub const needs_you_ttl_ms: i64 = 250;
+
+/// THE answer to "is this pane's child blocked on you?" — the tab
+/// strip's mark, the SESSIONS card's, the `needs_you` sort, the dock's
+/// running mark and `sessions.next_waiting` all ask here. It reads what
+/// `trackNeedsYou` last found (`evalNeedsYou`), so every surface agrees
+/// within a frame and none walks a grid of its own.
+pub fn needsYou(app: *App, pid: app_mod.PaneId) bool {
+    const p = app.panes.pty(pid) orelse return false;
+    return p.exit == null and p.needs_you;
+}
+
+/// Read the pane afresh. Sources, in order: the session's own state as
+/// the scan lists it — a transcript whose tool use has no result and
+/// has gone quiet is `waiting` — for as long as the pane has printed
+/// nothing since that listing; then the last rows of its screen, for
+/// any pty (a session the scan does not know, a CLI started in a
+/// shell): a permission question, `(y/n)`, `Allow …?`, or a numbered
+/// choice under a `❯` / `›` / `>` cursor (`promptShape`).
+pub fn evalNeedsYou(app: *App, pid: app_mod.PaneId) bool {
+    const p = app.panes.pty(pid) orelse return false;
+    if (p.exit != null or p.session == null) return false;
+    const sid = p.sessionId() orelse p.codex_session_id;
+    if (sid) |id| if (app.sessions.itemOf(id)) |it| {
+        if (it.state == .waiting and p.fed_gen == p.needs_you_snap_gen) return true;
+    };
+    const d = derive(app, pid) orelse return false;
+    return d.prompt;
+}
+
+/// Every tick: each live pty pane re-read when its output or the
+/// listing moved and the throttle allows; a rising edge announces
+/// itself (`announceNeedsYou`).
+pub fn trackNeedsYou(app: *App) Allocator.Error!void {
+    var i: usize = 0;
+    while (i < app.panes.slots.items.len) : (i += 1) {
+        const pid: app_mod.PaneId = @intCast(i);
+        const p = app.panes.pty(pid) orelse continue;
+        if (p.exit) |e| {
+            p.needs_you = false;
+            // An AI session that ends is announced once; a pane restored
+            // dormant never ran, so it has nothing to say.
+            if (!p.needs_you_ended) {
+                p.needs_you_ended = true;
+                if (!p.dormant and pty_pane.productOf(app, p) != null) try notifySession(app, pid, if (e.ok()) .finished else .failed);
+            }
+            continue;
+        }
+        p.needs_you_ended = false;
+        const moved = p.fed_gen != p.needs_you_gen or app.sessions.adoptions != p.needs_you_adopted;
+        if (!moved and p.needs_you_at_ms != 0) continue;
+        if (p.needs_you_at_ms != 0 and app.now_ms - p.needs_you_at_ms < needs_you_ttl_ms) continue;
+        p.needs_you_gen = p.fed_gen;
+        p.needs_you_adopted = app.sessions.adoptions;
+        p.needs_you_at_ms = @max(app.now_ms, 1);
+        const was = p.needs_you;
+        p.needs_you = evalNeedsYou(app, pid);
+        if (p.needs_you and !was) try announceNeedsYou(app, pid);
+        if (p.needs_you != was) app.needs_render = true;
+    }
+}
+
+/// When a pane whose output moved inside the throttle is due a re-read.
+fn needsYouDeadlineMs(app: *const App) ?i64 {
+    var next: ?i64 = null;
+    for (app.panes.slots.items) |*slot| if (slot.*) |*pane| switch (pane.*) {
+        .pty => |*p| {
+            if (p.exit != null) continue;
+            if (p.fed_gen == p.needs_you_gen and app.sessions.adoptions == p.needs_you_adopted) continue;
+            const at = p.needs_you_at_ms + needs_you_ttl_ms;
+            next = @min(next orelse at, at);
+        },
+        else => {},
+    };
+    return next;
+}
+
+/// The waiting pane to land on from `from`: the first of `waiting`
+/// (ascending pane ids) past it — or before it, `forward = false` —
+/// wrapping round; `from` itself when it is the only one. Null when
+/// nothing waits.
+pub fn waitingStep(waiting: []const app_mod.PaneId, from: ?app_mod.PaneId, forward: bool) ?app_mod.PaneId {
+    if (waiting.len == 0) return null;
+    const at = from orelse return if (forward) waiting[0] else waiting[waiting.len - 1];
+    if (forward) {
+        for (waiting) |id| if (id > at) return id;
+        return waiting[0];
+    }
+    var i = waiting.len;
+    while (i > 0) {
+        i -= 1;
+        if (waiting[i] < at) return waiting[i];
+    }
+    return waiting[waiting.len - 1];
+}
+
+/// Every pane that needs you, in pane order, on `arena`.
+pub fn waitingPanes(app: *App, arena: Allocator) Allocator.Error![]app_mod.PaneId {
+    var out: std.ArrayListUnmanaged(app_mod.PaneId) = .empty;
+    var i: usize = 0;
+    while (i < app.panes.slots.items.len) : (i += 1) {
+        const pid: app_mod.PaneId = @intCast(i);
+        if (needsYou(app, pid)) try out.append(arena, pid);
+    }
+    return out.items;
+}
+
+fn nextWaitingCmd(app: *App) CommandError!void {
+    return jumpWaiting(app, true);
+}
+
+fn prevWaitingCmd(app: *App) CommandError!void {
+    return jumpWaiting(app, false);
+}
+
+/// `sessions.next_waiting` / `prev_waiting`: focus the next / previous
+/// pane that needs you after the active one, wrapping; a toast when
+/// none does.
+fn jumpWaiting(app: *App, forward: bool) CommandError!void {
+    const waiting = try waitingPanes(app, app.frame.allocator());
+    const to = waitingStep(waiting, app.active, forward) orelse {
+        app.toast("no session needs you", .{});
+        return;
+    };
+    app.showPane(to);
+    app.focus = .{ .pane = to };
+    app.needs_render = true;
+    if (waiting.len > 1) app.toast("needs you: {s} ({d} waiting)", .{ announcedName(app, to), waiting.len });
+}
+
+/// What a pane is called when it is announced: the session name its
+/// tab shows (`paneName`, the card's), else the pane's own title.
+pub fn announcedName(app: *App, pid: app_mod.PaneId) []const u8 {
+    if (paneName(app, pid)) |n| return n.text;
+    const pane = app.panes.get(pid) orelse return "";
+    return pane.title();
+}
+
+/// The rising edge: a warn toast naming the pane, and the desktop
+/// notification (`notifySession`) with its bell. The mark on its tab
+/// and card is `needsYou` itself.
+fn announceNeedsYou(app: *App, pid: app_mod.PaneId) Allocator.Error!void {
+    try app.toastLevel(.warn, "session needs input: {s}", .{announcedName(app, pid)});
+    try notifySession(app, pid, .waiting);
+}
+
+pub const NotifyWhat = enum { waiting, finished, failed };
+
+/// The pane is the one being looked at: the active pane, the keyboard
+/// on it, and the terminal window in front (`App.host_focused`).
+pub fn paneFocused(app: *const App, pid: app_mod.PaneId) bool {
+    return app.host_focused and app.active == pid and app.focus == .pane;
+}
+
+/// `ui.session_notify` for a pane that is (or is not) being looked at.
+pub fn notifyWanted(mode: Config.SessionNotify, focused: bool) bool {
+    return switch (mode) {
+        .off => false,
+        .unfocused => !focused,
+        .always => true,
+    };
+}
+
+/// A session pane started needing you, or ended: the desktop
+/// notification through the terminal (the IPC `notify` path,
+/// `effects.notify` with `.terminal`), and the bell after it under
+/// `ui.session_bell` — when `ui.session_notify` wants one for a pane
+/// in this state of focus. The toast is the caller's.
+pub fn notifySession(app: *App, pid: app_mod.PaneId, what: NotifyWhat) Allocator.Error!void {
+    if (!notifyWanted(app.cfg.ui.session_notify, paneFocused(app, pid))) return;
+    try effects.notify(app, .{
+        .title = switch (what) {
+            .waiting => "mnml — needs you",
+            .finished => "mnml — session finished",
+            .failed => "mnml — session failed",
+        },
+        .body = announcedName(app, pid),
+        .level = switch (what) {
+            .waiting => .warn,
+            .finished => .info,
+            .failed => .@"error",
+        },
+        .sound = app.cfg.ui.session_bell,
+        .toast = false,
+        .terminal = true,
+    });
 }
 
 /// The card's state for the `f` filter and the stand-in row: the exit
@@ -893,7 +1106,12 @@ pub fn refilter(app: *App) Allocator.Error!void {
                     const rb = priority(ctx.app, cb.pane);
                     if (ra != rb) return ra < rb;
                 },
-                .manual => {
+                .manual, .waiting => {
+                    if (st_.sort == .waiting) {
+                        const wa = needsYou(ctx.app, ca.pane);
+                        const wb = needsYou(ctx.app, cb.pane);
+                        if (wa != wb) return wa;
+                    }
                     const oa = st_.orderIndex(ca.key);
                     const ob = st_.orderIndex(cb.key);
                     if (oa != null and ob != null) return oa.? < ob.?;
@@ -1065,9 +1283,11 @@ pub fn wantsScan(app: *const App) bool {
     return sessions_table.wantsScan(app);
 }
 
-/// Every tick: a shown view rescans on the cadence.
+/// Every tick: the panes' needs-you answers; a shown view rescans on
+/// the cadence.
 pub fn tick(app: *App, now: i64) void {
     const st = &app.sessions;
+    trackNeedsYou(app) catch {};
     if (st.scanning or !st.scanned_once or !wantsScan(app)) return;
     if (now - st.last_scan_ms < refresh_ms) return;
     refresh(app) catch {};
@@ -1075,9 +1295,10 @@ pub fn tick(app: *App, now: i64) void {
 
 pub fn nextDeadlineMs(app: *const App) ?i64 {
     const st = &app.sessions;
-    if (!st.scanned_once or !wantsScan(app)) return null;
-    if (st.scanning) return app.now_ms + 80;
-    return st.last_scan_ms + refresh_ms;
+    const pane_due = needsYouDeadlineMs(app);
+    if (!st.scanned_once or !wantsScan(app)) return pane_due;
+    const scan_due = if (st.scanning) app.now_ms + 80 else st.last_scan_ms + refresh_ms;
+    return @min(scan_due, pane_due orelse scan_due);
 }
 
 // ─── commands (D2, D5) ──────────────────────────────────────────────────
@@ -1086,12 +1307,18 @@ fn refreshCmd(app: *App) CommandError!void {
     return refresh(app);
 }
 
-/// The chip's click: the other axis, persisted as `ui.sessions_sort`.
+/// The chip's click: the next axis — State, Manual, Waiting, round —
+/// persisted as `ui.sessions_sort`.
 fn sortCmd(app: *App) CommandError!void {
     return applySort(app, switch (app.sessions.sort) {
         .auto => .manual,
-        .manual => .auto,
+        .manual => .waiting,
+        .waiting => .auto,
     });
+}
+
+fn sortWaitingCmd(app: *App) CommandError!void {
+    return applySort(app, .waiting);
 }
 
 fn sortAutoCmd(app: *App) CommandError!void {
@@ -1113,10 +1340,11 @@ pub fn sortLabel(s: SessionsSort) []const u8 {
     return switch (s) {
         .auto => "State",
         .manual => "Manual",
+        .waiting => "Waiting",
     };
 }
 
-pub const sort_widest: usize = 6;
+pub const sort_widest: usize = 7;
 
 /// `f`: the state filter cycles every → waiting → live → tool → idle
 /// → failed → done → every. The table has its own filter.
@@ -1907,11 +2135,12 @@ fn openHistoryMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     try app.openMenu("Ended sessions", items, x, y);
 }
 
-/// SESSIONS' own axis: the two modes name their commands directly.
+/// SESSIONS' own axis: the three modes name their commands directly.
 fn openSortMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     const items = try app.gpa.dupe(command.MenuItem, &.{
         .{ .label = "State", .action = .{ .command = .@"sessions.sort_auto" }, .checked = app.sessions.sort == .auto },
         .{ .label = "Manual", .action = .{ .command = .@"sessions.sort_manual" }, .checked = app.sessions.sort == .manual },
+        .{ .label = "Waiting", .action = .{ .command = .@"sessions.sort_waiting" }, .checked = app.sessions.sort == .waiting },
     });
     errdefer app.gpa.free(items);
     try app.openMenu("Sort by", items, x, y);
@@ -2095,6 +2324,7 @@ pub fn cardView(app: *App, arena: Allocator, c: Card) Allocator.Error!RowView {
         .ticket = if (aliased) null else detectTicket(app.cfg.ui.ticket_prefixes, &.{ name, cardBranch(app, c) orelse "", label }),
         .color = cardColor(app, c),
         .worktree = if (cardWorktree(app, c)) |e| try arena.dupe(u8, e.name) else null,
+        .needs_you = needsYou(app, c.pane),
     };
 }
 
@@ -2233,9 +2463,10 @@ pub fn derive(app: *App, pid: app_mod.PaneId) ?*const Derived {
     return gop.value_ptr;
 }
 
-/// Rust's priority off the walk: an approval prompt in the summary is
-/// 0, thinking 1, else 2.
+/// Rust's priority off the walk: a prompt on screen (`promptShape`) or
+/// an approval in the summary is 0, thinking 1, else 2.
 fn prioOf(d: Derived) u8 {
+    if (d.prompt) return 0;
     if (d.summary) |m| {
         var buf: [256]u8 = undefined;
         const lower = std.ascii.lowerString(buf[0..@min(m.len, buf.len)], m[0..@min(m.len, buf.len)]);
@@ -2332,6 +2563,7 @@ fn walkGrid(gpa: Allocator, grid: *const pty_pane.Grid) Allocator.Error!Derived 
         .at_ms = 0,
         .prio = 2,
         .thinking = isClaudeThinking(rows) or detectCodexThinking(rows),
+        .prompt = promptShape(rows),
         .lines = owned,
         .summary = summary,
     };
@@ -2436,6 +2668,68 @@ pub fn isFooterChip(s: []const u8) bool {
     };
     for (markers) |m| if (std.mem.indexOf(u8, lower, m) != null) return true;
     return false;
+}
+
+/// How far up from the bottom `promptShape` looks for a choice cursor:
+/// Claude Code's permission box (the question, three choices, the
+/// footer) fits well inside it.
+pub const prompt_rows_max: usize = 12;
+
+/// The last screen rows read as a question the child is blocked on:
+///   * the last content row (blank rows, rules and footer chips
+///     skipped) asks — `Do you want to …`, `(y/n)` / `[Y/n]` /
+///     `(yes/no)`, or `Allow …?`;
+///   * or one of the last `prompt_rows_max` non-blank rows is a choice
+///     under a cursor — `❯ 1. Yes` (Claude Code), `› 1. …` (Codex),
+///     `> 1. …` — a numbered option with the selection glyph before it.
+/// A shell's `❯` prompt alone is not a question: the cursor has to sit
+/// on a numbered choice.
+pub fn promptShape(rows: []const GridRow) bool {
+    var y = rows.len;
+    var seen: usize = 0;
+    var last_content = true;
+    while (y > 0 and seen < prompt_rows_max) {
+        y -= 1;
+        const trimmed = std.mem.trim(u8, rows[y].text, " \t");
+        if (trimmed.len == 0) continue;
+        seen += 1;
+        if (isChoiceCursorRow(trimmed)) return true;
+        if (isChromeLine(trimmed) or isFooterChip(trimmed)) continue;
+        if (last_content) {
+            if (isQuestionRow(trimmed)) return true;
+            last_content = false;
+        }
+    }
+    return false;
+}
+
+/// `Do you want to …`, a `y/n` pair in brackets, `(yes/no)`, or a row
+/// that says `allow` and asks with a `?`.
+pub fn isQuestionRow(s: []const u8) bool {
+    var buf: [512]u8 = undefined;
+    const n = @min(s.len, buf.len);
+    const lower = std.ascii.lowerString(buf[0..n], s[0..n]);
+    if (std.mem.indexOf(u8, lower, "do you want to") != null) return true;
+    for ([_][]const u8{ "(y/n)", "[y/n]", "(yes/no)", "[yes/no]" }) |m| if (std.mem.indexOf(u8, lower, m) != null) return true;
+    return std.mem.indexOf(u8, lower, "allow") != null and std.mem.indexOfScalar(u8, lower, '?') != null;
+}
+
+/// `❯ 1. Yes` / `› 2) No` / `> 3. …`: a selection glyph, blanks, digits,
+/// then `.` or `)`.
+pub fn isChoiceCursorRow(s: []const u8) bool {
+    var rest: []const u8 = undefined;
+    if (std.mem.startsWith(u8, s, "❯")) {
+        rest = s["❯".len..];
+    } else if (std.mem.startsWith(u8, s, "›")) {
+        rest = s["›".len..];
+    } else if (std.mem.startsWith(u8, s, ">")) {
+        rest = s[1..];
+    } else return false;
+    rest = std.mem.trimStart(u8, rest, " \t");
+    var digits: usize = 0;
+    while (digits < rest.len and std.ascii.isDigit(rest[digits])) digits += 1;
+    if (digits == 0 or digits == rest.len) return false;
+    return rest[digits] == '.' or rest[digits] == ')';
 }
 
 /// The composer prompt row: `>`, `)` or `❯` first.
@@ -2576,6 +2870,10 @@ fn paintRow(ui: Ui, r: Rect, row: RowView, selected: bool) void {
     var x = r.x + 2;
     x += ui.putStr(x, r.y, end -| x, " ", bg);
     if (row.pinned) x += ui.putStr(x, r.y, end -| x, if (ui.ascii) "📌 " else "\u{F0403} ", Theme.withFg(bg, t.palette.orange));
+    if (row.needs_you) {
+        x += ui.putStr(x, r.y, end -| x, bufferline.needsYouMark(ui), Theme.onBg(t.attention_fg, bg.bg));
+        x += ui.putStr(x, r.y, end -| x, " ", bg);
+    }
     var name_style = Theme.withFg(bg, t.fg.fg);
     name_style.bold = row.active;
     x += ui.putStr(x, r.y, end -| x, row.name, name_style);
@@ -2726,6 +3024,23 @@ const Fixture = struct {
             testing.io.sleep(.fromMilliseconds(10), .awake) catch {};
         }
         return false;
+    }
+
+    /// Ticks until the tracker's answer for the pane is `want`, or `ms`
+    /// pass.
+    fn waitNeedsYou(f: *Fixture, pid: app_mod.PaneId, want: bool, ms: u32) !bool {
+        var waited: u32 = 0;
+        while (waited <= ms) : (waited += 10) {
+            try f.app.tick(App.nowMs(testing.io));
+            if (needsYou(&f.app, pid) == want) return true;
+            testing.io.sleep(.fromMilliseconds(10), .awake) catch {};
+        }
+        return false;
+    }
+
+    /// A plain pty (no AI product on its command line) running `script`.
+    fn openShell(f: *Fixture, script: []const u8) !app_mod.PaneId {
+        return pty_pane.open(&f.app, .{ .argv = &.{ "/bin/sh", "-c", script }, .label = "sh", .kind = .command, .placement = .tab });
     }
 
     /// Ticks until the pane's child has exited, or `ms` pass.
@@ -2976,6 +3291,302 @@ test "the caches: a frame walks a pane's grid once per output generation, the pr
     try app.forceClosePane(pid);
     try app.render();
     try testing.expectEqual(@as(usize, 0), st.derived.count());
+}
+
+/// Rows for `promptShape`, bottom row last.
+fn promptRows(texts: []const []const u8) ![]GridRow {
+    const rows = try testing.allocator.alloc(GridRow, texts.len);
+    for (texts, rows) |s, *r| r.* = .{ .text = s, .colors = &.{}, .dim = false };
+    return rows;
+}
+
+fn expectPrompt(want: bool, texts: []const []const u8) !void {
+    const rows = try promptRows(texts);
+    defer testing.allocator.free(rows);
+    testing.expectEqual(want, promptShape(rows)) catch |err| {
+        std.debug.print("promptShape on {d} rows, want {}\n", .{ texts.len, want });
+        for (texts) |s| std.debug.print("  |{s}|\n", .{s});
+        return err;
+    };
+}
+
+test "promptShape: a question on the last content row, or a numbered choice under a cursor; a shell prompt, an answered question and a plain line are not" {
+    // Claude Code's permission box: the cursor row is the tell, the
+    // footer chip under it is skipped.
+    try expectPrompt(true, &.{
+        " Bash command",
+        "   zig build test",
+        " Do you want to proceed?",
+        " ❯ 1. Yes",
+        "   2. Yes, and don't ask again for zig build commands",
+        "   3. No, and tell Claude what to do differently (esc)",
+        "",
+        " Esc to cancel",
+        "",
+    });
+    // Codex's cursor, and a `>` one.
+    try expectPrompt(true, &.{ "Allow the command to run?", "› 1. Yes, proceed", "  2. No" });
+    try expectPrompt(true, &.{ "Pick one", "> 2) the other" });
+    // The question alone on the last content row.
+    try expectPrompt(true, &.{ "Claude Code v9 (fake)", "Do you want to proceed?" });
+    try expectPrompt(true, &.{ "$ ./install.sh", "Overwrite /etc/thing? (y/N)", "" });
+    try expectPrompt(true, &.{"Remove 3 files? [Y/n] "});
+    try expectPrompt(true, &.{"Allow network access for this tool?"});
+    // A shell prompt is a cursor with no numbered choice.
+    try expectPrompt(false, &.{ "~/Projects/mnml", "❯ " });
+    try expectPrompt(false, &.{ "❯ ls", "a.txt  b.txt", "❯" });
+    try expectPrompt(false, &.{"> 1"});
+    // A question already answered: newer output under it.
+    try expectPrompt(false, &.{ "Overwrite? (y/n) y", "wrote 3 files", "$ " });
+    // Plain output, and nothing at all.
+    try expectPrompt(false, &.{ "Compiling mnml", "Finished in 3.2s" });
+    try expectPrompt(false, &.{});
+    try expectPrompt(false, &.{ "", "   ", "" });
+    // A choice cursor above the window is out of reach.
+    var many: [prompt_rows_max + 2][]const u8 = undefined;
+    many[0] = "❯ 1. Yes";
+    for (many[1..]) |*s| s.* = "output line";
+    try expectPrompt(false, &many);
+}
+
+test "needsYou: a pane whose screen asks is waiting, one that does not is not; a listing's `waiting` speaks for the pane until it prints again; the rising edge toasts once" {
+    var f = try Fixture.init(100, 30);
+    defer f.deinit();
+    try f.fakeClaude();
+    const app = &f.app;
+    const ask = try f.openCard("ask-2");
+    const plain = try f.openCard("plain-2");
+    try f.adopt(&.{});
+    try testing.expect(try f.waitGrid(ask, "Do you want", 5000));
+    try testing.expect(try f.waitGrid(plain, "Claude Code v9", 5000));
+    try testing.expect(try f.waitNeedsYou(ask, true, 3000));
+    try testing.expect(!needsYou(app, plain));
+    try testing.expectEqual(@as(u8, 0), priority(app, ask));
+    // One toast for the edge, naming the pane — the tracker re-reading
+    // an unchanged pane says nothing more.
+    var toasts: usize = 0;
+    for (app.messages.items.items) |m| if (std.mem.indexOf(u8, m.text, "session needs input") != null) {
+        toasts += 1;
+    };
+    try testing.expectEqual(@as(usize, 1), toasts);
+    // The scan lists plain-2 as waiting: it needs you while the pane is
+    // quiet …
+    const now = Io.Timestamp.now(testing.io, .real).toSeconds();
+    try f.adopt(&.{wsItem(&f, "plain-2", .waiting, now, "run the tests")});
+    try testing.expect(try f.waitNeedsYou(plain, true, 3000));
+    try testing.expectEqual(@as(u8, 0), priority(app, plain));
+    // … and once it prints, its screen decides (a banner is no question).
+    app.panes.pty(plain).?.fed_gen +%= 1;
+    try testing.expect(try f.waitNeedsYou(plain, false, 3000));
+    // A plain pty is read the same way; an exited pane never waits.
+    const sh = try f.openShell("printf 'Overwrite it? (y/n) '; sleep 30");
+    try testing.expect(try f.waitNeedsYou(sh, true, 5000));
+    const quiet = try f.openShell("printf 'nothing to ask\\n'; sleep 30");
+    try testing.expect(try f.waitGrid(quiet, "nothing to ask", 5000));
+    try testing.expect(try f.waitNeedsYou(quiet, false, 1000));
+    try testing.expect(!needsYou(app, 999));
+    const gone = try f.openShell("printf 'Continue? (y/n) '; exit 0");
+    try testing.expect(try f.waitExit(gone, 5000));
+    try testing.expect(try f.waitNeedsYou(gone, false, 1000));
+    try testing.expect(!evalNeedsYou(app, gone));
+}
+
+test "the Waiting sort: the sessions that need you lead, the manual order under them; the card wears the mark before its name and the tab after; s cycles State → Manual → Waiting and the chip's menu ticks it" {
+    var f = try Fixture.init(120, 30);
+    defer f.deinit();
+    try f.fakeClaude();
+    const app = &f.app;
+    const st = &app.sessions;
+    const a = try f.openCard("plain-5");
+    const b = try f.openCard("plain-6");
+    const ask = try f.openCard("ask-5");
+    try f.adopt(&.{});
+    try testing.expect(try f.waitGrid(a, "Claude Code v9", 5000));
+    try testing.expect(try f.waitGrid(b, "Claude Code v9", 5000));
+    try testing.expect(try f.waitGrid(ask, "Do you want", 5000));
+    try testing.expect(try f.waitNeedsYou(ask, true, 3000));
+    // The manual list puts the waiting one last …
+    for ([_][]const u8{ "plain-6", "plain-5", "ask-5" }) |id| try st.order.append(testing.allocator, try testing.allocator.dupe(u8, id));
+    try setSort(app, .manual);
+    try testing.expectEqual(b, f.cardAt(0).pane);
+    try testing.expectEqual(a, f.cardAt(1).pane);
+    try testing.expectEqual(ask, f.cardAt(2).pane);
+    // … Waiting lifts it over the list and keeps the list's order below.
+    try setSort(app, .waiting);
+    try testing.expectEqual(ask, f.cardAt(0).pane);
+    try testing.expectEqual(b, f.cardAt(1).pane);
+    try testing.expectEqual(a, f.cardAt(2).pane);
+    // A pin still leads.
+    _ = try st.togglePin(testing.allocator, "plain-5");
+    try refilter(app);
+    try testing.expectEqual(a, f.cardAt(0).pane);
+    try testing.expectEqual(ask, f.cardAt(1).pane);
+    _ = try st.togglePin(testing.allocator, "plain-5");
+    try refilter(app);
+    // The card carries the mark; the others do not.
+    const v = try cardView(app, app.frame.allocator(), f.cardAt(0));
+    try testing.expect(v.needs_you);
+    try testing.expect(!(try cardView(app, app.frame.allocator(), f.cardAt(1))).needs_you);
+    try f.showSection(40);
+    const scr = try f.screen();
+    defer testing.allocator.free(scr);
+    // The card: the mark before the name (the tab wears it after).
+    try testing.expect(std.mem.indexOf(u8, scr, bufferline.needs_you_glyph ++ " claude") != null);
+    try testing.expect(std.mem.indexOf(u8, scr, "claude " ++ bufferline.needs_you_glyph) != null);
+    // The chip names the axis; s walks the three and persists each.
+    try testing.expect(std.mem.indexOf(u8, scr, "Waiting") != null);
+    try setSort(app, .auto);
+    for ([_]SessionsSort{ .manual, .waiting, .auto }) |want| {
+        try sortCmd(app);
+        try testing.expectEqual(want, st.sort);
+        try testing.expectEqual(want, app.cfg.ui.sessions_sort);
+    }
+    try testing.expectEqualStrings("sessions: State", app.lastToast().?);
+    try openSortMenu(app, 1, 1);
+    const menu = app.overlay.menu;
+    try testing.expectEqual(@as(usize, 3), menu.items.len);
+    try testing.expectEqualStrings("Waiting", menu.items[2].label);
+    try testing.expect(menu.items[2].action.command == .@"sessions.sort_waiting");
+    try testing.expect(menu.items[0].checked and !menu.items[2].checked);
+}
+
+test "notifyWanted: off never, unfocused only while the pane is not being looked at, always always" {
+    try testing.expect(!notifyWanted(.off, false));
+    try testing.expect(!notifyWanted(.off, true));
+    try testing.expect(notifyWanted(.unfocused, false));
+    try testing.expect(!notifyWanted(.unfocused, true));
+    try testing.expect(notifyWanted(.always, false));
+    try testing.expect(notifyWanted(.always, true));
+}
+
+/// How many of the host log's escapes contain `needle`.
+fn hostCount(app: *const App, needle: []const u8) usize {
+    var n: usize = 0;
+    for (app.host_log.items) |e| {
+        if (std.mem.indexOf(u8, e, needle) != null) n += 1;
+    }
+    return n;
+}
+
+test "a session pane that starts needing you, or ends, notifies through the terminal under ui.session_notify — not the pane you are looking at unless the window is not in front; the bell rides along under ui.session_bell" {
+    var f = try Fixture.init(100, 30);
+    defer f.deinit();
+    try f.fakeClaude();
+    const app = &f.app;
+    try app.env.put("TERM_PROGRAM", "xterm-ish");
+    try testing.expectEqual(Config.SessionNotify.unfocused, app.cfg.ui.session_notify);
+    // Looked at: the default says nothing (the toast still does).
+    const seen = try f.openCard("ask-9");
+    app.showPane(seen);
+    try testing.expect(paneFocused(app, seen));
+    try testing.expect(try f.waitNeedsYou(seen, true, 5000));
+    try testing.expectEqual(@as(usize, 0), hostCount(app, "]777;"));
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "session needs input") != null);
+    // Behind another pane: OSC 777 and OSC 9, naming it; no bell yet.
+    const plain = try f.openCard("plain-9");
+    const behind = try f.openCard("ask-10");
+    app.showPane(plain);
+    try testing.expect(try f.waitNeedsYou(behind, true, 5000));
+    try testing.expectEqual(@as(usize, 1), hostCount(app, "\x1b]777;notify;mnml — needs you;"));
+    try testing.expectEqual(@as(usize, 1), hostCount(app, "\x1b]9;mnml — needs you: "));
+    try testing.expectEqual(@as(usize, 0), hostCount(app, "\x07\x07"));
+    for (app.host_log.items) |e| try testing.expect(!std.mem.eql(u8, e, "\x07"));
+    // The window in the background counts as not looking, even at the
+    // active pane; the bell follows under ui.session_bell.
+    app.cfg.ui.session_bell = true;
+    app.host_focused = false;
+    const third = try f.openCard("ask-11");
+    app.showPane(third);
+    try testing.expect(try f.waitNeedsYou(third, true, 5000));
+    try testing.expectEqual(@as(usize, 2), hostCount(app, "]777;notify;mnml — needs you;"));
+    try testing.expectEqualStrings("\x07", app.host_log.items[app.host_log.items.len - 1]);
+    // `off` sends nothing; `always` sends while looking.
+    app.host_focused = true;
+    app.cfg.ui.session_notify = .off;
+    const quiet = try f.openCard("ask-12");
+    try testing.expect(try f.waitNeedsYou(quiet, true, 5000));
+    try testing.expectEqual(@as(usize, 2), hostCount(app, "]777;notify;mnml — needs you;"));
+    app.cfg.ui.session_notify = .always;
+    const loud = try f.openCard("ask-13");
+    app.showPane(loud);
+    try testing.expect(try f.waitNeedsYou(loud, true, 5000));
+    try testing.expectEqual(@as(usize, 3), hostCount(app, "]777;notify;mnml — needs you;"));
+    // An AI session that ends: once, finished or failed by its exit.
+    app.cfg.ui.session_notify = .unfocused;
+    app.cfg.ui.session_bell = false;
+    const done = try f.openCard("exit-9");
+    const bad = try f.openCard("fail-9");
+    app.showPane(plain);
+    try testing.expect(try f.waitExit(done, 5000));
+    try testing.expect(try f.waitExit(bad, 5000));
+    try f.app.tick(App.nowMs(testing.io));
+    try testing.expectEqual(@as(usize, 1), hostCount(app, "]777;notify;mnml — session finished;"));
+    try testing.expectEqual(@as(usize, 1), hostCount(app, "]777;notify;mnml — session failed;"));
+    try f.app.tick(App.nowMs(testing.io));
+    try testing.expectEqual(@as(usize, 1), hostCount(app, "]777;notify;mnml — session finished;"));
+    // A plain shell's exit is no session's end.
+    const sh = try f.openShell("exit 0");
+    try testing.expect(try f.waitExit(sh, 5000));
+    try f.app.tick(App.nowMs(testing.io));
+    try testing.expectEqual(@as(usize, 1), hostCount(app, "]777;notify;mnml — session finished;"));
+    try testing.expectEqual(@as(usize, 1), hostCount(app, "\x1b]9;mnml — session finished: "));
+}
+
+test "waitingStep: the next waiting pane past the active one, or the one before it, wrapping; the only one is itself; none is null" {
+    const w = [_]app_mod.PaneId{ 2, 5, 9 };
+    try testing.expectEqual(@as(?app_mod.PaneId, 5), waitingStep(&w, 2, true));
+    try testing.expectEqual(@as(?app_mod.PaneId, 5), waitingStep(&w, 3, true));
+    try testing.expectEqual(@as(?app_mod.PaneId, 2), waitingStep(&w, 9, true));
+    try testing.expectEqual(@as(?app_mod.PaneId, 2), waitingStep(&w, 12, true));
+    try testing.expectEqual(@as(?app_mod.PaneId, 2), waitingStep(&w, 5, false));
+    try testing.expectEqual(@as(?app_mod.PaneId, 9), waitingStep(&w, 2, false));
+    try testing.expectEqual(@as(?app_mod.PaneId, 9), waitingStep(&w, 0, false));
+    try testing.expectEqual(@as(?app_mod.PaneId, 2), waitingStep(&w, null, true));
+    try testing.expectEqual(@as(?app_mod.PaneId, 9), waitingStep(&w, null, false));
+    const one = [_]app_mod.PaneId{4};
+    try testing.expectEqual(@as(?app_mod.PaneId, 4), waitingStep(&one, 4, true));
+    try testing.expectEqual(@as(?app_mod.PaneId, 4), waitingStep(&one, 4, false));
+    try testing.expectEqual(@as(?app_mod.PaneId, null), waitingStep(&.{}, 4, true));
+}
+
+test "sessions.next_waiting / prev_waiting focus the panes that need you in pane order, wrapping, past panes that do not; none waiting toasts" {
+    var f = try Fixture.init(100, 30);
+    defer f.deinit();
+    try f.fakeClaude();
+    const app = &f.app;
+    const plain = try f.openCard("plain-7");
+    const ask_a = try f.openCard("ask-7");
+    const other = try f.openCard("plain-8");
+    const ask_b = try f.openCard("ask-8");
+    try f.adopt(&.{});
+    try testing.expect(try f.waitNeedsYou(ask_a, true, 5000));
+    try testing.expect(try f.waitNeedsYou(ask_b, true, 5000));
+    try testing.expect(try f.waitGrid(plain, "Claude Code v9", 5000));
+    try testing.expect(!needsYou(app, plain) and !needsYou(app, other));
+    const next: command.CommandRef = .{ .static = .@"sessions.next_waiting" };
+    const prev: command.CommandRef = .{ .static = .@"sessions.prev_waiting" };
+    app.showPane(plain);
+    try command.run(app, next);
+    try testing.expectEqual(@as(?app_mod.PaneId, ask_a), app.active);
+    try testing.expect(app.focus == .pane and app.focus.pane == ask_a);
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "2 waiting") != null);
+    try command.run(app, next);
+    try testing.expectEqual(@as(?app_mod.PaneId, ask_b), app.active);
+    try command.run(app, next);
+    try testing.expectEqual(@as(?app_mod.PaneId, ask_a), app.active);
+    try command.run(app, prev);
+    try testing.expectEqual(@as(?app_mod.PaneId, ask_b), app.active);
+    app.showPane(other);
+    try command.run(app, prev);
+    try testing.expectEqual(@as(?app_mod.PaneId, ask_a), app.active);
+    // Nothing waits: the focus stays and a toast says so.
+    for ([_]app_mod.PaneId{ ask_a, ask_b }) |id| app.panes.pty(id).?.needs_you = false;
+    app.showPane(plain);
+    try command.run(app, next);
+    try testing.expectEqual(@as(?app_mod.PaneId, plain), app.active);
+    try testing.expectEqualStrings("no session needs you", app.lastToast().?);
+    try command.run(app, prev);
+    try testing.expectEqual(@as(?app_mod.PaneId, plain), app.active);
 }
 
 test "the sort is Rust's priority: an approval prompt first, then thinking, idle, exited; pins lead; Manual follows the order list then the pane order" {
@@ -3291,7 +3902,9 @@ test "headless: a card owning a scanned transcript reads it; w widens ENDED; J a
     try testing.expectEqualStrings(first, f.cardAt(1).key);
     try testing.expectEqual(@as(usize, 1), st.list.cursor);
     try testing.expectEqual(@as(usize, 2), st.order.items.len);
-    // The chip toggles back to State and persists.
+    // The chip walks on through Waiting back to State and persists.
+    try app.handle(.{ .key = Key.char('s') });
+    try testing.expectEqual(SessionsSort.waiting, st.sort);
     try app.handle(.{ .key = Key.char('s') });
     try testing.expectEqual(SessionsSort.auto, st.sort);
     const cfg = try f.tmp.dir.readFileAlloc(testing.io, ".mnml/config.zon", testing.allocator, .limited(1 << 16));
@@ -3337,7 +3950,7 @@ test "headless: a card owning a scanned transcript reads it; w widens ENDED; J a
     try app.handle(.{ .key = Key.named(.esc) });
     try app.handle(.{ .mouse = .{ .x = sort_chip.?.x + 1, .y = sort_chip.?.y, .kind = .press, .button = .right } });
     try testing.expect(app.overlay == .menu);
-    try testing.expectEqual(@as(usize, 2), app.overlay.menu.items.len);
+    try testing.expectEqual(@as(usize, 3), app.overlay.menu.items.len);
     try testing.expect(app.overlay.menu.items[0].checked);
     try app.handle(.{ .key = Key.named(.esc) });
     // Rename through the prompt: the alias lands on the card's key and

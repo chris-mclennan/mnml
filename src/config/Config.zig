@@ -194,7 +194,15 @@ pub const Clipboard = enum { auto, os, internal };
 // ─── ui ──────────────────────────────────────────────────────────────────
 
 pub const ListSort = enum { newest, oldest, name, name_desc };
-pub const SessionsSort = enum { auto, manual };
+/// SESSIONS' own axis: `auto` is State (action needed, thinking, idle,
+/// ended), `manual` the order `J` / `K` build, `waiting` the sessions
+/// that need you first and the manual order under them.
+pub const SessionsSort = enum { auto, manual, waiting };
+/// When a session that starts needing you, or ends, sends a desktop
+/// notification through the terminal (OSC 777 / OSC 9): never, only
+/// while its pane is not the one you are looking at (or the terminal
+/// window is not focused), or every time.
+pub const SessionNotify = enum { off, unfocused, always };
 pub const PickerPosition = enum { center, top };
 pub const NowPlayingSource = enum { auto, mixr, macos };
 pub const MusicApp = enum { mixr, music, spotify };
@@ -574,8 +582,14 @@ pub const Ui = struct {
     auto_refresh_off: []const []const u8 = &.{},
     sessions_sort: SessionsSort = .auto,
     /// // changed (sessions-merge): ring the terminal bell when a session
-    /// starts waiting for input.
+    /// starts waiting for input. // changed (needsyou): the bell rides
+    /// with a session notification, so `session_notify` gates it too; a
+    /// session no pane here runs still rings it on its own.
     session_bell: bool = false,
+    /// A desktop notification when a session pane starts needing you or
+    /// ends: `.off`, `.unfocused` (its pane is not the focused one, or
+    /// the terminal window is not), `.always`.
+    session_notify: SessionNotify = .unfocused,
     /// // changed (sessions-card): a session that ended within this many
     /// minutes stays listed (its card, or an ENDED row) before the
     /// history chip hides it — so the ended toast and a worktree offer
