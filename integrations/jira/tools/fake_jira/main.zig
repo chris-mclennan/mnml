@@ -339,6 +339,19 @@ pub const Store = struct {
     }
 
     fn searchAnswer(s: *Store, arena: Allocator, jql: []const u8, v3: bool, only_sprint: ?u64) Allocator.Error!Response {
+        // Jira refuses a `key in (…)` naming a ticket that does not
+        // exist (deleted, or moved to a project the account cannot see)
+        // rather than ignoring it.
+        if (findList(jql, "key in (")) |list| {
+            var rest = list;
+            while (std.mem.indexOfScalar(u8, rest, '"')) |open| {
+                const after = rest[open + 1 ..];
+                const close = std.mem.indexOfScalar(u8, after, '"') orelse break;
+                const k = after[0..close];
+                if (s.find(k) == null) return err(arena, 400, try std.fmt.allocPrint(arena, "An issue with key '{s}' does not exist for field 'key'.", .{k}));
+                rest = after[close + 1 ..];
+            }
+        }
         var out: Io.Writer.Allocating = .init(arena);
         var w = &out.writer;
         var n: usize = 0;
@@ -781,6 +794,9 @@ fn matches(i: *const Issue, jql: []const u8) bool {
     // The delta window: only what this run has moved.
     if (std.mem.indexOf(u8, jql, "updated >= -") != null and !i.moved) return false;
     if (std.mem.indexOf(u8, jql, "issuekey = ''") != null) return false;
+    // `key in ("ENG-1", "ENG-2")` — a delta's question about the rows
+    // already on screen.
+    if (findList(jql, "key in (")) |list| if (!inQuotedList(list, i.key)) return false;
     if (std.mem.indexOf(u8, jql, "assignee = currentUser()") != null and !std.mem.eql(u8, i.assignee, account_me)) return false;
     if (std.mem.indexOf(u8, jql, "reporter = currentUser()") != null and !std.mem.eql(u8, i.reporter, account_me)) return false;
     if (std.mem.indexOf(u8, jql, "resolution = Unresolved") != null and std.mem.eql(u8, i.category, "done")) return false;

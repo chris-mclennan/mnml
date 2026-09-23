@@ -128,6 +128,11 @@ pub const TabState = struct {
 /// sure one happens.
 pub const max_delta_generations: usize = 8;
 
+/// A delta also asks which of the rows on screen moved OUT of the
+/// query (`key in (…) AND updated >= <window>`): above this many rows
+/// that list is too long a question, and the refetch is whole instead.
+pub const max_departure_keys: usize = 200;
+
 /// What a refetch is allowed to be.
 pub const RefreshMode = enum {
     /// A delta where one is possible, a full listing otherwise. What
@@ -156,6 +161,11 @@ pub const RefreshJob = struct {
     /// sync, empty when the whole listing is being asked for. Already
     /// spliced into `jql`; kept so the result can say which it was.
     delta_since: []const u8 = "",
+    /// On a delta: the keys on screen, so the window can also learn
+    /// which of them LEFT the query (closed, reassigned away) — a
+    /// window onto the query alone cannot see a ticket that no longer
+    /// matches it. On the job's arena.
+    shown_keys: []const []const u8 = &.{},
     /// What the request log calls this fetch — the first load of a tab
     /// and a refetch of one cost the same requests and mean different
     /// things when the log is read back.
@@ -178,6 +188,9 @@ pub const RefreshResult = struct {
     delta: bool = false,
     /// The query this asked, window excluded. Owned by `arena`.
     base_jql: []const u8 = "",
+    /// On a delta: rows on screen that moved in the window and no
+    /// longer match the query. Owned by `arena`.
+    departed: []const []const u8 = &.{},
     /// Empty when the search answered.
     error_text: []const u8 = "",
 
@@ -876,10 +889,13 @@ pub const App = struct {
             // query is a list of clauses rather than one JQL string, so
             // a window is not offered there rather than offered and
             // silently ignored.
-            if (mode == .delta) {
+            if (mode == .delta and t.issues.len <= max_departure_keys) {
                 if (try a.deltaWindow(arena, t, base)) |since| {
                     job.delta_since = since;
                     job.reason = .delta;
+                    const keys = try arena.alloc([]const u8, t.issues.len);
+                    for (t.issues, keys) |iss, *k| k.* = try arena.dupe(u8, iss.key);
+                    job.shown_keys = keys;
                 }
             }
             job.base_jql = base;
@@ -913,9 +929,31 @@ pub const App = struct {
                 return .{ .idx = job.idx, .arena = arena, .error_text = msg };
             },
             .ok => |vals| {
-                const issues = jira.parseIssues(ar, vals, job.team_field_id) catch {
+                var issues = jira.parseIssues(ar, vals, job.team_field_id) catch {
                     return .{ .idx = job.idx, .arena = arena, .error_text = "out of memory" };
                 };
+                var delta = job.delta_since.len > 0;
+                var departed: []const []const u8 = &.{};
+                if (delta and job.shown_keys.len > 0) {
+                    switch (departures(&client, ar, job, issues)) {
+                        .ok => |d| departed = d,
+                        // The site would not answer the key list (a
+                        // ticket on screen was deleted, and Jira refuses
+                        // a `key in` naming one): ask for the whole
+                        // listing instead, which cannot be wrong.
+                        .failed => {
+                            const whole = jira.search(&client, ar, job.base_jql, job.extra_fields, job.reason) catch
+                                jira.Answer([]const Value){ .failed = .{ .status = 0, .message = "the site did not answer" } };
+                            switch (whole) {
+                                .failed => |f| return .{ .idx = job.idx, .arena = arena, .error_text = ar.dupe(u8, f.message) catch "out of memory" },
+                                .ok => |all| issues = jira.parseIssues(ar, all, job.team_field_id) catch {
+                                    return .{ .idx = job.idx, .arena = arena, .error_text = "out of memory" };
+                                },
+                            }
+                            delta = false;
+                        },
+                    }
+                }
                 // The linked PRs are NOT fetched here. One dev-status
                 // call per unresolved ticket used to happen before the
                 // first paint — twenty-five of them on a real tab, each
@@ -924,9 +962,37 @@ pub const App = struct {
                 // seeded from the cache and queued behind the paint
                 // instead (`applyRefresh`, `pumpPrs`).
                 const base = ar.dupe(u8, job.base_jql) catch "";
-                return .{ .idx = job.idx, .arena = arena, .issues = issues, .delta = job.delta_since.len > 0, .base_jql = base };
+                return .{ .idx = job.idx, .arena = arena, .issues = issues, .delta = delta, .base_jql = base, .departed = departed };
             },
         }
+    }
+
+    /// The rows on screen that moved in the window and are not in the
+    /// window's answer to the query: they left it. One search, keys
+    /// only in effect — `key in (…) AND updated >= <window>`.
+    fn departures(client: *jira.Client, ar: Allocator, job: RefreshJob, still: []const Issue) union(enum) { ok: []const []const u8, failed } {
+        var q: Io.Writer.Allocating = .init(ar);
+        q.writer.writeAll("key in (") catch return .failed;
+        for (job.shown_keys, 0..) |k, i| {
+            if (i > 0) q.writer.writeAll(", ") catch return .failed;
+            q.writer.print("\"{s}\"", .{k}) catch return .failed;
+        }
+        q.writer.writeAll(")") catch return .failed;
+        const jql = jira.withUpdatedSince(ar, q.written(), job.delta_since) catch return .failed;
+        const answer = jira.search(client, ar, jql, job.extra_fields, job.reason) catch return .failed;
+        const vals = switch (answer) {
+            .failed => return .failed,
+            .ok => |v| v,
+        };
+        const moved = jira.parseIssues(ar, vals, job.team_field_id) catch return .failed;
+        var out: std.ArrayList([]const u8) = .empty;
+        for (moved) |m| {
+            const kept = for (still) |s_| {
+                if (std.mem.eql(u8, s_.key, m.key)) break true;
+            } else false;
+            if (!kept) out.append(ar, m.key) catch return .failed;
+        }
+        return .{ .ok = out.items };
     }
 
     /// The worker task. Everything it needs is in the job; the only
@@ -1114,10 +1180,15 @@ pub const App = struct {
     /// The slice is built on `arena` (the delta generation's own);
     /// every string in it still lives on whichever arena it came from,
     /// which is why those are kept until a full refetch.
-    fn mergeDelta(arena: Allocator, old: []const Issue, moved: []const Issue) Allocator.Error![]const Issue {
+    fn mergeDelta(arena: Allocator, old: []const Issue, moved: []const Issue, departed: []const []const u8) Allocator.Error![]const Issue {
         var out: std.ArrayListUnmanaged(Issue) = .empty;
         try out.ensureTotalCapacity(arena, old.len + moved.len);
         for (old) |o| {
+            // Moved out of the query since the last look: gone.
+            const left = for (departed) |d| {
+                if (std.mem.eql(u8, d, o.key)) break true;
+            } else false;
+            if (left) continue;
             var replaced = o;
             for (moved) |m| {
                 if (m.key.len > 0 and std.mem.eql(u8, m.key, o.key)) replaced = m;
@@ -1159,7 +1230,7 @@ pub const App = struct {
             // A window: what came back is what MOVED, and the rest is
             // still on the arenas already held. Merge by key onto the
             // new arena and keep the old ones alive under it.
-            t.issues = try mergeDelta(res.arena.allocator(), t.issues, res.issues);
+            t.issues = try mergeDelta(res.arena.allocator(), t.issues, res.issues, res.departed);
             try t.deltas.append(a.gpa, res.arena);
         } else {
             t.issues = res.issues;
@@ -4918,7 +4989,7 @@ test "a ticket that has not moved costs no dev-status call, this run or the next
     }
 }
 
-test "`r` asks only about what has moved since the last whole listing; `R` asks for the listing again" {
+test "`r` asks only about what has moved since the last whole listing — and which rows LEFT the query; `R` asks for the listing again" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     var pbuf: [std.fs.max_path_bytes]u8 = undefined;
@@ -4941,11 +5012,13 @@ test "`r` asks only about what has moved since the last whole listing; `R` asks 
     try testing.expect(a.tab().fetched_at > 0);
     try testing.expectEqual(@as(usize, 0), a.tab().deltas.items.len);
 
-    // Nothing has moved. `r` is a window, it comes back empty, and the
-    // rows on screen are the rows that were on screen.
+    // Nothing has moved. `r` is a window — two searches: what moved in
+    // the query, and which rows on screen moved out of it — both come
+    // back empty, and the rows on screen are the rows that were on
+    // screen.
     var before = h.store.requests;
     _ = try a.onKey("r");
-    try testing.expectEqual(@as(usize, 1), h.store.requests - before);
+    try testing.expectEqual(@as(usize, 2), h.store.requests - before);
     try testing.expectEqual(all, a.tab().issues.len);
     try testing.expectEqual(@as(usize, 1), a.tab().deltas.items.len);
 
@@ -4957,7 +5030,7 @@ test "`r` asks only about what has moved since the last whole listing; `R` asks 
     h.store.issues.items[1].moved = true;
     before = h.store.requests;
     _ = try a.onKey("r");
-    try testing.expectEqual(@as(usize, 1), h.store.requests - before);
+    try testing.expectEqual(@as(usize, 2), h.store.requests - before);
     try testing.expectEqual(all, a.tab().issues.len);
     try testing.expectEqual(@as(usize, 2), a.tab().deltas.items.len);
     var done: usize = 0;
@@ -4969,6 +5042,33 @@ test "`r` asks only about what has moved since the last whole listing; `R` asks 
     }
     // Merged in place: one row, not a duplicate beside the old one.
     try testing.expectEqual(@as(usize, 1), done);
+
+    // A teammate closes a ticket on this tab
+    // (hunt/findings-2026-09-23/integ-jira-r-keeps-closed-ticket.md): it
+    // no longer matches the query, so the window onto the query cannot
+    // see it — the second search can, and `r` drops it.
+    const gone = a.tab().issues[0].key;
+    const fake_issue = h.store.find(gone).?;
+    fake_issue.status = "Done";
+    fake_issue.category = "done";
+    fake_issue.moved = true;
+    _ = try a.onKey("r");
+    try testing.expectEqual(all - 1, a.tab().issues.len);
+    for (a.tab().issues) |iss| try testing.expect(!std.mem.eql(u8, iss.key, fake_issue.key));
+
+    // A ticket on screen is deleted: Jira refuses a `key in` naming it,
+    // so the window cannot be trusted and `r` asks for the whole
+    // listing instead — which does not have it either.
+    const deleted = a.tab().issues[0].key;
+    for (h.store.issues.items, 0..) |iss, i| if (std.mem.eql(u8, iss.key, deleted)) {
+        var dead = h.store.issues.orderedRemove(i);
+        dead.comments.deinit(h.store.gpa);
+        dead.watchers.deinit(h.store.gpa);
+        break;
+    };
+    _ = try a.onKey("r");
+    try testing.expectEqual(all - 2, a.tab().issues.len);
+    try testing.expectEqual(@as(usize, 0), a.tab().deltas.items.len);
 
     // `R` throws the generations away and asks for the listing again.
     before = h.store.requests;

@@ -175,7 +175,8 @@ the next step and waits for `r`.
 |---|---|---|
 | any | `q`, `Ctrl+C` | quit |
 | any | `Esc` | clear the selection → clear the filter → close the detail pane → quit |
-| any | `r` | refresh (the cursor stays on its ticket) |
+| any | `r` | refresh (the cursor stays on its ticket) — after the first whole listing, a window onto what moved since, plus one search for which rows on screen moved OUT of the query (closed, reassigned away), which are dropped |
+| any | `R` | full refresh: the whole listing again |
 | any | `↑` `k` / `↓` `j`, PageUp / PageDown, `g` / `G`, Home / End | move |
 | detail open | `Ctrl+U` / `Ctrl+D` | scroll the detail pane |
 | tree | `Enter`, `Space` | fold a group · expand a ticket · open a PR · uncap a show-all row |
