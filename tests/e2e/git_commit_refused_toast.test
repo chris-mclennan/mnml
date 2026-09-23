@@ -1,0 +1,23 @@
+# width: 200
+# A commit git refuses is toasted as a failure, with git's own reason —
+# the LAST line of its report, not the `On branch main` that opens it:
+#   $ git commit -m "my message"     (working tree clean)
+#   On branch main
+#   nothing to commit, working tree clean       exit=1
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write seed.txt "seed\n"
+shell git add seed.txt
+shell git commit -q -m "initial"
+command git.status_pane
+wait 800
+expect screen contains "working tree clean"
+key c
+wait 500
+type my message
+key enter
+wait 700
+shell test "$(git log --format=%s -1)" = "initial"
+expect screen lacks "committed: my message"
+expect screen contains "commit failed: nothing to commit, working tree clean"
