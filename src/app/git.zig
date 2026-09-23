@@ -3455,25 +3455,34 @@ pub fn diffKey(app: *App, id: PaneId, dp: *DiffPane, k: Key) Allocator.Error!boo
     return true;
 }
 
-/// True when the shown row at `pos` starts a change: a hunk header in
-/// the Hunk view, the first changed row after a context row in the
-/// Inline and Split views (which have no hunk rows).
+/// True when the shown row at `pos` starts a hunk: its header in the
+/// Hunk view, the hunk's first changed row in the Inline and Split
+/// views (which paint no hunk rows). The hunks are git's own in every
+/// view (`parse.cutAtRealHunks`), so `n` / `]c` step the hunks the
+/// banner counts, not each run of changed lines.
 fn startsChange(dp: *const DiffPane, pos: usize) bool {
     const shown = dp.shownRows();
-    const ri = shown[pos];
-    switch (dp.mode) {
-        .hunk => return dp.rows[ri] == .hunk,
-        .flat => {
-            if (diff_view.rowKind(dp.files, dp.rows[ri]) == .none) return false;
-            if (pos == 0) return true;
-            return diff_view.rowKind(dp.files, dp.rows[shown[pos - 1]]) == .none;
-        },
-        .split => {
-            if (diff_view.splitRowKind(dp.files, dp.split_rows[ri]) == .none) return false;
-            if (pos == 0) return true;
-            return diff_view.splitRowKind(dp.files, dp.split_rows[shown[pos - 1]]) == .none;
-        },
+    if (dp.mode == .hunk) return dp.rows[shown[pos]] == .hunk;
+    const here = changedHunk(dp, shown[pos]) orelse return false;
+    var i = pos;
+    while (i > 0) {
+        i -= 1;
+        const prev = changedHunk(dp, shown[i]) orelse continue;
+        return prev.file != here.file or prev.hunk != here.hunk;
     }
+    return true;
+}
+
+/// The hunk of row `ri` when the row is a change (Inline / Split).
+fn changedHunk(dp: *const DiffPane, ri: u32) ?diff_view.HunkRef {
+    if (dp.mode == .split) {
+        const r = dp.split_rows[ri];
+        if (diff_view.splitRowKind(dp.files, r) == .none) return null;
+        return diff_view.splitRowHunk(r);
+    }
+    const r = dp.rows[ri];
+    if (diff_view.rowKind(dp.files, r) == .none) return null;
+    return diff_view.rowHunk(r);
 }
 
 fn cursorPos(dp: *const DiffPane) usize {

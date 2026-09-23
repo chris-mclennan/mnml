@@ -967,6 +967,18 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
                 }
             }
             const files = try parse.parseDiff(arena, out.stdout);
+            // Full context paints the whole file as ONE hunk; the hunks the
+            // banner counts and the verbs patch are git's own, so the same
+            // diff at the default context says where each one starts.
+            // (`--no-index` exits 1 on a difference: the text is read either way.)
+            if (d.full and files.len > 0) {
+                const real_args = try arena.dupe([]const u8, used_args);
+                for (real_args) |*a| if (std.mem.eql(u8, a.*, ctx)) {
+                    a.* = "-U3";
+                };
+                const real = try git(repo, io, arena, real_args, if (d.scope == .orig) (d.text orelse "") else null);
+                try parse.cutAtRealHunks(arena, files, try parse.parseDiff(arena, real.stdout));
+            }
             // A binary file has no hunks, and the pane read `(no changes)`
             // for a file the status pane had just called modified. git's
             // `--stat` row carries the sizes (`Bin 33 -> 40 bytes`): one
