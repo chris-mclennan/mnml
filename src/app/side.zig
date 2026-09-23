@@ -99,6 +99,9 @@ pub fn sectionOfPanel(p: PanelId) Section {
         .scripts => .scripts,
         .search => .search,
         .script => .script,
+        // Never a focus: the JOBS list is an overlay's, and an overlay
+        // holds `.overlay`. Named for the switch, not for a column.
+        .jobs => .explorer,
     };
 }
 

@@ -32,6 +32,7 @@ const tooltip = @import("../ui/tooltip.zig");
 const statusline = @import("../ui/statusline.zig");
 const statusline_app = @import("statusline.zig");
 const ghost_chip = @import("ghost_chip.zig");
+const jobs_app = @import("jobs.zig");
 const syntax = @import("syntax.zig");
 const toast_mod = @import("../ui/toast.zig");
 const integrations_view = @import("../ui/integrations_view.zig");
@@ -446,6 +447,7 @@ fn describeSegment(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Tip {
         .np_next => .{ .title = "Next track", .detail = "click skips ahead · right-click: the player menu" },
         .np_track => .{ .title = "Now playing", .detail = "the track and its player · click opens the player · right-click: the player menu" },
         .ghost => try ghost_chip.tip(app, arena),
+        .jobs => try jobs_app.tip(app, arena),
         .coverage => .{ .title = "Coverage", .detail = "feature (F) and code (C) coverage from the trends files, with the move since last week / last commit · click toasts both · right-click picks the mode" },
         .transfer => blk: {
             var rows: std.ArrayListUnmanaged(Row) = .empty;

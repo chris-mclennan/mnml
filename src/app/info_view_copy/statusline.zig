@@ -95,6 +95,7 @@ pub fn entry(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Entry {
         .ai_claude => try aiChip(app, arena, .claude),
         .ai_codex => try aiChip(app, arena, .codex),
         .ghost => try ghost(app, arena),
+        .jobs => try jobsChip(app, arena),
         .coverage => .{
             .title = "Coverage chip",
             .body = "Feature coverage (F) and code coverage (C) from the workspace's trends files, each with the move since last week or the last commit — a number that goes down is the one to look at. Click toasts both figures in full; right-click picks what the chip shows: both, feature only, code only, or a ticker that alternates. The chip only appears when the trends files exist, so a workspace without them never shows it.",
@@ -234,6 +235,15 @@ fn aiChip(app: *App, arena: Allocator, product: enum { claude, codex }) Allocato
             .body = "The Codex CLI's usage today — tokens spent and sessions run — for the account it is signed in as. Click opens the Codex usage pane; right-click picks what the chip shows and can turn all AI chips off or make them a ticker. Codex has no API route in this build, so the chip is empty until a Codex CLI session has run at least once.",
             .links = &.{ .{ .command = .{ .id = .@"ai.codex_usage", .label = "Open the usage pane" } }, .{ .command = .{ .id = .@"ai.dashboard", .label = "The sessions dashboard" } } },
         },
+    };
+}
+
+fn jobsChip(app: *App, arena: Allocator) Allocator.Error!Entry {
+    const tip = try @import("../jobs.zig").tip(app, arena);
+    return .{
+        .title = tip.title,
+        .body = "What mnml is doing in the background — a language server starting or indexing, a git fetch / pull / push, a test run, an HTTP send, chain or bench, a linter, a search walk, Chrome coming up, a session spawning. A spinner and a count while any runs; for ten seconds after one fails, its words, dimmed; nothing when idle. Either click opens the JOBS list: the running ones with a Cancel row where they can be stopped, the last fifty finished with how they ended.",
+        .links = &.{ .{ .command = .{ .id = .@"jobs.show", .label = "Open the jobs list" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.jobs_chip"), .label = "Jobs chip in Settings" } }, .{ .command = .{ .id = .@"messages.show", .label = "The messages log" } } },
     };
 }
 

@@ -353,6 +353,11 @@ pub const Dock = struct {
 
 pub const DiagStyle = enum { count, dot, off };
 pub const CoverageChipMode = enum { both, feature, code, ticker };
+/// The statusline's background-jobs chip (`app/jobs.zig`). `auto` shows
+/// it while a job runs and for ten seconds after one fails; `always`
+/// keeps an idle face too; `hidden` never paints it (the JOBS list is
+/// still `jobs.show`).
+pub const JobsChip = enum { always, auto, hidden };
 pub const ExpandIndicator = enum { chevron, triangle };
 /// Which panes wear the one-cell colour rail down their left edge
 /// (`ui/pane_rail.zig`). `all` is every pane, so two terminals side by
@@ -588,6 +593,7 @@ pub const Ui = struct {
     debug_toolbar: DebugToolbar = .auto,
     bufferline_diag_style: DiagStyle = .count,
     coverage_chip_mode: CoverageChipMode = .feature,
+    jobs_chip: JobsChip = .auto,
     expand_indicator: ExpandIndicator = .chevron,
     /// How a mounted integration's tab strip marks the tab that is on
     /// — one row under the labels, in the pane's brand colour, over

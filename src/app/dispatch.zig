@@ -31,6 +31,7 @@ const auto_refresh = @import("auto_refresh.zig");
 const clock_mod = @import("clock.zig");
 const coverage = @import("coverage.zig");
 const ghost_chip = @import("ghost_chip.zig");
+const jobs_app = @import("jobs.zig");
 const now_playing = @import("now_playing.zig");
 const menu_bar = @import("menu_bar.zig");
 const sidebar_auto = @import("sidebar_auto.zig");
@@ -263,6 +264,8 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
             .script => try script_section.handleKey(app, k),
             .search => try search_section.handleKey(app, k),
             .outline => if (app.outline_panel) |id| try outline.handleKey(app, id, k) else false,
+            // The JOBS list lives in an overlay, which has the keys.
+            .jobs => false,
         };
         if (took) return;
         _ = try chordChain(app, k);
@@ -1179,7 +1182,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
             .notes => try notes.setSort(app, s.sort),
             .findings => try findings.setSort(app, s.sort),
             .integrations => try integrations.setSort(app, s.sort),
-            .sessions, .git, .diagnostics, .http, .outline, .debug, .scripts, .search, .script => {},
+            .sessions, .git, .diagnostics, .http, .outline, .debug, .scripts, .search, .script, .jobs => {},
         },
         .ai_profile => |a| launch_profiles.menuAction(app, a) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
@@ -1408,6 +1411,7 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
         // The discovery panel: F1 and Esc close it, as Rust's does.
         .discovery => if (k.code == .esc or (k.code == .f and k.code.f == 1)) closeOverlay(app),
         .help => try help_app.key(app, k),
+        .jobs => |*st| try jobs_app.handleKey(app, st, k),
         .menu => |*m| {
             // A menu-bar menu: ← / → step to the neighbouring menu.
             if (try menu_bar.menuKey(app, k)) return;
@@ -1865,6 +1869,10 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 cmd_picker.cancel(app);
                 closeOverlay(app);
             },
+            // The JOBS list: a press off its rows and bar closes it and
+            // goes on to what it landed on (the chip that opened it
+            // opens it again).
+            .jobs => if (!(target == .row and target.row.panel == .jobs) and !(target == .scrollbar and target.scrollbar.owner == .panel and target.scrollbar.owner.panel == .jobs)) closeOverlay(app),
             else => {},
         }
     }
@@ -1927,6 +1935,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .scripts => try scripts_panel.rowMouse(app, pr.idx, m),
             .script => try script_section.rowMouse(app, pr.idx, m),
             .search => try search_section.rowMouse(app, pr.idx, m),
+            .jobs => try jobs_app.rowMouse(app, pr.idx, m),
             .outline => {},
         },
         .kebab => |pr| switch (pr.panel) {
@@ -1941,7 +1950,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .scripts => try scripts_panel.kebabMouse(app, pr.idx, m),
             .script => try script_section.kebabMouse(app, pr.idx, m),
             .search => try search_section.kebabMouse(app, pr.idx, m),
-            .diagnostics, .outline => {},
+            .diagnostics, .outline, .jobs => {},
         },
         .chip => |c| switch (c.panel) {
             .todos => try todos.chipMouse(app, c.kind, m),
@@ -1956,7 +1965,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .scripts => try scripts_panel.chipMouse(app, c.kind, m),
             .script => try script_section.chip(app, c.kind, m),
             .search => try search_section.chipMouse(app, c.kind, m),
-            .outline => {},
+            .outline, .jobs => {},
         },
         .filter_input => |p| switch (p) {
             .todos => todos.filterMouse(app, m),
@@ -1971,7 +1980,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .scripts => scripts_panel.filterMouse(app, m),
             .script => script_section.filterFocus(app),
             .search => search_section.filterMouse(app, m),
-            .outline => {},
+            .outline, .jobs => {},
         },
         .scrollbar => |sb| {
             // A press on a bar lands the view at the pointer's row and
@@ -2402,6 +2411,9 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     // is the first thing to check.
                     .ghost => if (right) try ghost_chip.openMenu(app, m.x, m.y) else try runCmd(app, .@"ai.setup_suggestions"),
                     .coverage => if (right) try coverage.openModeMenu(app, m.x, m.y) else try runCmd(app, .@"coverage.toast"),
+                    // Background jobs: either button opens the list —
+                    // the chip is a count, the list is what it counts.
+                    .jobs => try runCmd(app, .@"jobs.show"),
                     // The now-playing cluster: the right button is the player
                     // menu on every chip; the left drives the player.
                     .np_brand, .np_track => if (right) try now_playing.openMenu(app, m.x, m.y) else try now_playing.click(app, .label),
@@ -2838,7 +2850,7 @@ fn runCmd(app: *App, id: command.CommandId) Allocator.Error!void {
 /// preview back (the themes picker) and closes.
 fn pressOutside(app: *App) void {
     switch (app.overlay) {
-        .menu, .info, .discovery, .help => closeOverlay(app),
+        .menu, .info, .discovery, .help, .jobs => closeOverlay(app),
         .settings => settings_app.close(app),
         .picker => {
             cmd_picker.cancel(app);
@@ -3072,6 +3084,7 @@ fn panelWheel(app: *App, panel: hit_mod.PanelId, down: bool, count: u16) Allocat
         .scripts => try scripts_panel.wheel(app, down, rows),
         .script => try script_section.wheel(app, down, rows),
         .search => search_section.wheel(app, down, rows),
+        .jobs => jobs_app.wheel(app, down, rows),
         .outline => if (app.outline_panel) |id| try wheelOnPane(app, id, .{ .x = 0, .y = 0, .kind = if (down) .scroll_down else .scroll_up }, count),
     }
 }
@@ -3099,6 +3112,7 @@ fn panelScrollbar(app: *App, panel: hit_mod.PanelId, track: Rect, m: Mouse) void
         .scripts => scripts_panel.scrollbarMouse(app, track, m),
         .script => {},
         .search => search_section.scrollbarMouse(app, track, m),
+        .jobs => jobs_app.scrollbarMouse(app, track, m),
         .outline => {},
     }
 }

@@ -35,6 +35,7 @@ fn panelName(p: PanelId) []const u8 {
         .scripts => "SCRIPTS",
         .search => "SEARCH",
         .script => "the script's section",
+        .jobs => "JOBS",
     };
 }
 
@@ -80,6 +81,7 @@ pub fn row(app: *App, arena: Allocator, r: hit.PanelRow) Allocator.Error!?Entry 
     if (r.panel == .sessions) if (try sessions.hoverTip(app, arena, r.idx)) |tip| return fromTip(arena, tip, "A session's card: Enter or a click opens its pane; the kebab has rename, pin, the colour, kill, the transcript, the worktree rows. Drag reorders under the Manual sort.", &.{ .{ .command = .@"sessions.open", .label = "Open the pane" }, .{ .command = .@"sessions.open_transcript", .label = "The transcript" }, .{ .command = .@"sessions.kill", .label = "Kill" } }, &.{ .{ .command = .{ .id = .@"sessions.open_transcript", .label = "Read the transcript" } }, ask });
     if (r.panel == .git) if (try git_palette.hoverTip(app, arena, r.idx)) |tip| return fromTip(arena, tip, "A git palette row: Enter acts on it — checkout a branch, open a commit, apply a stash; right-click is its menu with the rest.", &.{}, &.{ .{ .command = .{ .id = .@"git.status_pane", .label = "The status pane" } }, .{ .command = .{ .id = .@"git.checkout", .label = "Checkout" } }, ask });
     return switch (r.panel) {
+        .jobs => try jobsRow(app, arena, r.idx),
         .todos => .{
             .title = try std.fmt.allocPrint(arena, "TODO row {d}", .{r.idx + 1}),
             .body = "A marker found in the code — TODO / FIXME / XXX / HACK / REVIEW — with its file and line. Enter or double-click jumps there; the kebab on the focused row hands it to a Claude or Codex session with the file and line filled in, or marks it done. Right-click has copy the path and ignore this file.",
@@ -156,6 +158,34 @@ pub fn row(app: *App, arena: Allocator, r: hit.PanelRow) Allocator.Error!?Entry 
             .body = "A row a Lua script put in its section — what Enter and the kebab do are the script's own handlers. A reload of the script rebuilds the section. The Scripts section names the script and the line the section came from.",
             .keys = &.{.{ .chord = "Enter", .label = "The script's action" }},
             .links = &.{.{ .command = .{ .id = .@"view.activity_scripts", .label = "The scripts section" } }},
+        },
+    };
+}
+
+/// A row of the JOBS overlay: a section header, a job, or the Cancel
+/// row under a running one.
+fn jobsRow(app: *App, arena: Allocator, idx: u32) Allocator.Error!?Entry {
+    const jobs = @import("../jobs.zig");
+    const list = try jobs.buildRows(&app.jobs.reg, arena, app.now_ms, app.cfg.ui.ascii_icons);
+    const kind: @import("../../ui/jobs_view.zig").Row.Kind = if (idx < list.len) list[idx].kind else .finished;
+    const links: []const copy.Link = &.{ .{ .command = .{ .id = .@"jobs.show", .label = "The jobs list" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.jobs_chip"), .label = "Jobs chip in Settings" } } };
+    return switch (kind) {
+        .section => .{
+            .title = "Jobs — a section",
+            .body = "RUNNING lists what is going on now, oldest first, each with how long it has been at it; FINISHED the last fifty that ended, newest first, with how they ended and how long they took. The chip in the statusline counts the first and holds the latest failure of the second for ten seconds.",
+            .links = links,
+        },
+        .cancel => .{
+            .title = "Cancel this job",
+            .body = "Stops the job on the row above through its own subsystem — the test run's worker, the send in flight, the search walk. Enter or a click runs it; the job moves to FINISHED as cancelled once the subsystem has stopped it. A job with no way to stop from here has no Cancel row.",
+            .keys = &.{ .{ .chord = "Enter", .label = "Cancel it" }, .{ .chord = "c", .label = "Cancel the job under the cursor" } },
+            .links = links,
+        },
+        .running, .finished => .{
+            .title = if (idx < list.len) try std.fmt.allocPrint(arena, "{s} — {s}", .{ list[idx].what, list[idx].label }) else "A background job",
+            .body = "One background job: what started it, what it is doing or how it ended, and how long it took. Enter or a click opens the pane it belongs to — the tests pane, the request, the browser, the session — or, for a job with no pane, says its words in a toast. `c` cancels a running one that can be stopped.",
+            .keys = &.{ .{ .chord = "Enter", .label = "Open its pane" }, .{ .chord = "c", .label = "Cancel it" } },
+            .links = links,
         },
     };
 }

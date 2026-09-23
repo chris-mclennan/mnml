@@ -2421,6 +2421,7 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
         .info => |kind| cmd_view.drawInfo(app, ui, ui.canvas.full(), kind),
         .discovery => discovery.drawOverlay(app, ui, ui.canvas.full()),
         .help => |*h| help_ui.draw(ui, ui.canvas.full(), h, try help_app.rows(app, ui.arena)),
+        .jobs => |*j| try @import("jobs.zig").drawOverlay(app, ui, j),
     }
 }
 

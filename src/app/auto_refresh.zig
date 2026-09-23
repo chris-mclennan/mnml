@@ -57,6 +57,7 @@ fn label(panel: PanelId) []const u8 {
         .scripts => "SCRIPTS",
         .script => "SCRIPT SECTION",
         .search => "SEARCH",
+        .jobs => "JOBS",
     };
 }
 
@@ -76,6 +77,8 @@ fn refreshId(panel: PanelId) command.CommandId {
         // A script section refreshes through its list, not a command.
         .script => .@"script.reload",
         .search => .@"search.refresh",
+        // The JOBS list is live; there is nothing to refresh.
+        .jobs => .@"jobs.show",
     };
 }
 

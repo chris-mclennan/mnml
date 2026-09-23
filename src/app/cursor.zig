@@ -75,7 +75,7 @@ pub fn blocks(overlay: std.meta.Tag(Overlay), menu_bar_open: bool, operator_popu
     if (menu_bar_open or operator_popup) return true;
     return switch (overlay) {
         .none, .prompt, .picker => false,
-        .confirm, .which_key, .menu, .settings, .wizard, .info, .discovery, .help => true,
+        .confirm, .which_key, .menu, .settings, .wizard, .info, .discovery, .help, .jobs => true,
     };
 }
 
