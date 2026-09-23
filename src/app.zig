@@ -749,7 +749,9 @@ pub const FindBarState = struct {
 /// Visual-block `I` / `A` / `c` in flight: the typed run on the first
 /// row is replayed on the others once Insert mode ends.
 /// `eol`: `$A` — the typed run goes to every row's end, whatever its length.
-pub const BlockInsert = struct { pane: PaneId, first_row: usize, last_row: usize, col: usize, start_byte: usize, len_before: usize, eol: bool = false };
+/// A visual-block `I` / `A` / `c` in flight. `col` is a display column:
+/// where `I` / `c` type, or the column after the block for `A`.
+pub const BlockInsert = struct { pane: PaneId, first_row: usize, last_row: usize, col: usize, start_byte: usize, len_before: usize, eol: bool = false, append: bool = false };
 /// `<count>i` / `I` / `a` / `A` / `o` / `O` in flight: what was typed
 /// replicates on Esc — as whole new lines for `o` / `O`, in place for
 /// the other four (`:help count`).

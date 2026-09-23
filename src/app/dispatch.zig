@@ -81,6 +81,7 @@ const render = @import("render.zig");
 const statusline_app = @import("statusline.zig");
 const layout_mod = @import("layout.zig");
 const select = @import("../editor/select.zig");
+const block = @import("../editor/block.zig");
 const Editor = @import("../editor/editor.zig").Editor;
 const scrollbar = @import("../ui/scrollbar.zig");
 const scroll_mod = @import("scroll.zig");
@@ -3658,12 +3659,39 @@ pub fn runExLine(app: *App, line: []const u8) Allocator.Error!void {
 
 // ── visual block ──
 
-fn blockRect(e: *const EditorPane) ?struct { r0: usize, r1: usize, c0: usize, c1: usize } {
+fn blockRect(e: *const EditorPane) ?block.Rect {
     const ed = e.buf.editor;
     const anchor = ed.block_anchor orelse e.block_anchor orelse return null;
-    const a = ed.rowColAt(anchor);
-    const b = ed.rowCol();
-    return .{ .r0 = @min(a.row, b.row), .r1 = @max(a.row, b.row), .c0 = @min(a.col, b.col), .c1 = @max(a.col, b.col) };
+    return block.rectFrom(ed, anchor);
+}
+
+/// Where a block `I` (`append` false: at display column `col`) or `A`
+/// (`col` is the column after the block) types on `row`, padding the
+/// row with spaces first when it has to be reached: an `A` past a short
+/// row's end pads out to the column (`:help v_b_A`), and a wide glyph
+/// the column cuts through gets the typed text after spaces, before it.
+/// Null: an `I` on a row that ends before the column is not touched
+/// (`:help v_b_I`). A ragged `$A` types at each row's end.
+fn blockInsertAt(ed: *Editor, row: usize, col: usize, append: bool, ragged: bool) Allocator.Error!?usize {
+    const end = ed.lineEnd(row);
+    if (ragged) return end;
+    const width = ed.doc.lineVcols(row);
+    if (width < col) {
+        if (!append) return null;
+        var pad: [256]u8 = @splat(' ');
+        const n = @min(col - width, pad.len);
+        try ed.splice(end, end, pad[0..n]);
+        return end + n;
+    }
+    const at = ed.byteAtVcol(row, col);
+    const start = ed.vcolAtByte(at);
+    if (at < end and start < col) {
+        var pad: [8]u8 = @splat(' ');
+        const n = @min(col - start, pad.len);
+        try ed.splice(at, at, pad[0..n]);
+        return at + n;
+    }
+    return at;
 }
 
 /// `I` / `A` / `c` on a visual block: (for `c`) cut the rectangle, put
@@ -3681,29 +3709,27 @@ fn beginBlockInsert(app: *App, pane_id: PaneId, e: *EditorPane, append: bool, ch
     e.block_anchor = null;
     ed.block_anchor = null;
     var col = if (append) rect.c1 + 1 else rect.c0;
+    try ed.checkpoint();
     if (change) {
-        // Delete the rectangle bottom-up so earlier offsets stay valid.
-        var row = rect.r1 + 1;
-        try ed.checkpoint();
-        while (row > rect.r0) {
-            row -= 1;
-            const s = ed.byteAtCol(row, rect.c0);
-            const en = if (eol) ed.lineEnd(row) else @min(ed.byteAtCol(row, rect.c1 + 1), ed.lineEnd(row));
-            if (en > s) try ed.splice(s, en, "");
-        }
+        try block.cutRows(ed, rect, eol);
         col = rect.c0;
         e.syntax.dirty = true;
     }
     // `$A`: append at every row's own end.
     const ragged = eol and append and !change;
-    const start = if (ragged) ed.lineEnd(rect.r0) else @min(ed.byteAtCol(rect.r0, col), ed.lineEnd(rect.r0));
+    const as_append = append and !change;
+    const start = try blockInsertAt(ed, rect.r0, col, as_append, ragged) orelse ed.lineEnd(rect.r0);
     ed.setCursor(start);
     ed.anchor = null;
+    // The cut, the padding and what is typed undo as one change.
+    ed.in_insert_run = true;
+    ed.doc.insert_run_owner = ed;
     e.buf.input.requestInsertMode();
-    app.block_insert = .{ .pane = pane_id, .first_row = rect.r0, .last_row = rect.r1, .col = col, .start_byte = start, .len_before = ed.len(), .eol = ragged };
+    app.block_insert = .{ .pane = pane_id, .first_row = rect.r0, .last_row = rect.r1, .col = col, .start_byte = start, .len_before = ed.len(), .eol = ragged, .append = as_append };
 }
 
-/// `r<ch>` on a visual block: every cell in the rectangle becomes `ch`.
+/// `r<ch>` on a visual block: every character in the rectangle becomes
+/// `ch`.
 fn blockReplace(app: *App, e: *EditorPane, ch: u21) Allocator.Error!void {
     const ed = e.buf.editor;
     const eol = ed.block_eol;
@@ -3718,21 +3744,22 @@ fn blockReplace(app: *App, e: *EditorPane, ch: u21) Allocator.Error!void {
     var row = rect.r1 + 1;
     while (row > rect.r0) {
         row -= 1;
-        // A ragged block replaces to each row's last char.
-        var c = if (eol) ed.colAtByte(ed.lineEnd(row)) else rect.c1 + 1;
-        if (eol and c <= rect.c0) continue;
-        while (c > rect.c0) {
-            c -= 1;
-            const s = ed.byteAtCol(row, c);
-            if (s >= ed.lineEnd(row)) continue;
-            const cp_len = std.unicode.utf8ByteSequenceLength(ed.bytes()[s]) catch 1;
-            try ed.splice(s, s + cp_len, glyph[0..n]);
+        if (row >= ed.lineCount()) continue;
+        const sp = block.span(ed, row, rect.c0, rect.c1, eol);
+        // Right to left, so the earlier offsets stay put.
+        var chars: std.ArrayList(usize) = .empty;
+        var b = sp.inner_s;
+        while (b < sp.inner_e) : (b = ed.nextBoundary(b)) try chars.append(app.frame.allocator(), b);
+        var i = chars.items.len;
+        while (i > 0) {
+            i -= 1;
+            const s = chars.items[i];
+            try ed.splice(s, ed.nextBoundary(s), glyph[0..n]);
         }
     }
-    ed.setCursor(ed.byteAtCol(rect.r0, rect.c0));
+    ed.setCursor(ed.byteAtVcol(rect.r0, rect.c0));
     e.buf.doc.recomputeDirty();
     e.syntax.dirty = true;
-    _ = app;
 }
 
 /// `<count>i` / `I` / `a` / `A` / `o` / `O`: enter Insert where the
@@ -3777,7 +3804,7 @@ pub fn finishDeferredInserts(app: *App) Allocator.Error!void {
         while (row > b.first_row + 1) {
             row -= 1;
             if (row >= ed.lineCount()) continue;
-            const at = if (b.eol) ed.lineEnd(row) else @min(ed.byteAtCol(row, b.col), ed.lineEnd(row));
+            const at = try blockInsertAt(ed, row, b.col, b.append, b.eol) orelse continue;
             try ed.splice(at, at, typed);
         }
         ed.setCursor(b.start_byte);
