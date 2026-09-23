@@ -1,0 +1,42 @@
+# A Visual-block yank or delete puts back as a block (`:help
+# blockwise-register`): each row into its own line at the cursor's
+# column, new lines past the end, short lines padded to the column, a
+# ragged row padded to the block's width when text follows it.
+# Neovim 0.12.5 (`nvim --clean`) on abcd / efgh / ijkl / mnop:
+#   l<C-v>jjlyP      -> abcbcd / efgfgh / ijkjkl / mnop
+#   l<C-v>jjldG0lp   -> ad / eh / il / mnbcop / "  fg" / "  jk"
+#   l<C-v>jly3G0l2p  -> abcd / efgh / ijbcbckl / mnfgfgop
+# and on abcd / ef / ghij / xxxx / yyyy / zzzz:
+#   l<C-v>jjly4G0lP  -> … / xbcxxx / "yf yyy" / zhizzz
+command editor.use_vim
+write a.txt "abcd\nefgh\nijkl\nmnop\n"
+open a.txt
+type l
+key ctrl+v
+type jjlyP
+command file.save
+expect file a.txt contains "abcbcd\nefgfgh\nijkjkl\nmnop\n"
+
+write b.txt "abcd\nefgh\nijkl\nmnop\n"
+open b.txt
+type l
+key ctrl+v
+type jjldG0lp
+command file.save
+expect file b.txt contains "ad\neh\nil\nmnbcop\n  fg\n  jk\n"
+
+write c.txt "abcd\nefgh\nijkl\nmnop\n"
+open c.txt
+type l
+key ctrl+v
+type jly3G0l2p
+command file.save
+expect file c.txt contains "abcd\nefgh\nijbcbckl\nmnfgfgop\n"
+
+write d.txt "abcd\nef\nghij\nxxxx\nyyyy\nzzzz\n"
+open d.txt
+type l
+key ctrl+v
+type jjly4G0lP
+command file.save
+expect file d.txt contains "xbcxxx\nyf yyy\nzhizzz\n"

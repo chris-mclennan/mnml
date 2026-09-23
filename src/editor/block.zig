@@ -180,7 +180,7 @@ pub fn yankBlock(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocator.Err
     defer ed.gpa.free(rs);
     const text = try joined(ed, r);
     defer ed.gpa.free(text);
-    try clip.setYank(text, false);
+    try clip.setYankBlock(text);
     out.clipboard_set = clip.lastWritten();
     out.yanked_range = .{ rs[0][0], rs[rs.len - 1][1] };
     ed.cursor = ed.byteAtVcol(r.r0, r.c0);
@@ -194,7 +194,7 @@ pub fn deleteBlock(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocator.E
     remember(ed);
     const text = try joined(ed, r);
     defer ed.gpa.free(text);
-    try clip.pushDelete(text, false);
+    try clip.pushDeleteBlock(text);
     out.clipboard_set = clip.lastWritten();
     try ed.checkpoint();
     try cutRows(ed, r, ed.block_eol);
@@ -270,4 +270,36 @@ test "a block is display columns: a wide glyph cut by an edge splits the way Neo
     ed.cursor = ed.byteAtVcol(2, 3);
     try deleteBlock(ed, &clip, &out);
     try testing.expectEqualStrings("abef\n中字\nx z", ed.doc.text.items);
+}
+
+test "a block yank or delete is a blockwise register: p / P lay its rows out as a column" {
+    const register = @import("register.zig");
+    var clip = Clipboard.init(testing.allocator);
+    defer clip.deinit();
+    const ed = try Editor.init(testing.allocator, "abcd\nefgh\nijkl\nmnop\n");
+    defer ed.deinit();
+    var out: EditOutcome = .{};
+    // `l<C-v>jjly` then `P`: the column goes back in front of itself.
+    ed.cursor = 1;
+    selectStart(ed);
+    ed.placeCursor(2, 2);
+    try yankBlock(ed, &clip, &out);
+    try register.pasteBefore(ed, &clip, &out);
+    try testing.expectEqualStrings("abcbcd\nefgfgh\nijkjkl\nmnop\n", ed.doc.text.items);
+    try testing.expectEqual(@as(usize, 1), ed.cursor);
+    // `l<C-v>jjld`, then `p` after the `n` of the last line: rows past the
+    // end open new lines, padded out to the column.
+    try ed.setText("abcd\nefgh\nijkl\nmnop\n");
+    ed.cursor = 1;
+    selectStart(ed);
+    ed.placeCursor(2, 2);
+    try deleteBlock(ed, &clip, &out);
+    try testing.expectEqualStrings("ad\neh\nil\nmnop\n", ed.doc.text.items);
+    ed.placeCursor(3, 1);
+    try register.pasteAfter(ed, &clip, &out);
+    try testing.expectEqualStrings("ad\neh\nil\nmnbcop\n  fg\n  jk\n", ed.doc.text.items);
+    // A charwise yank after it puts inline again.
+    try clip.setYank("Q", false);
+    try register.pasteAfter(ed, &clip, &out);
+    try testing.expect(!clip.isBlockwise());
 }

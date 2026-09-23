@@ -93,6 +93,7 @@ fn put(ed: *Editor, clip: *Clipboard, where: Where, land: Land, out: *EditOutcom
 pub fn putTimes(ed: *Editor, clip: *Clipboard, where: Where, land: Land, times: u32, out: *EditOutcome) Allocator.Error!void {
     const one = clip.text();
     if (one.len == 0 or times == 0) return;
+    if (clip.isBlockwise() and !mc.hasExtras(ed)) return putBlock(ed, one, where, land, times, out);
     const repeated: ?[]u8 = if (times > 1) blk: {
         const buf = try ed.gpa.alloc(u8, one.len * times);
         for (0..times) |i| @memcpy(buf[i * one.len ..][0..one.len], one);
@@ -119,6 +120,77 @@ pub fn putTimes(ed: *Editor, clip: *Clipboard, where: Where, land: Land, times: 
     }
     ed.anchor = null;
     out.buffer_changed = true;
+}
+
+/// A blockwise register (`:help blockwise-register`): its rows go into
+/// the cursor's line and the ones below, all at one display column —
+/// after the cursor's char (`p`) or at it (`P`) — with lines added past
+/// the end of the buffer and a line too short for the column padded out
+/// with spaces. A row narrower than the block is padded to its width
+/// when text follows it, so the column stays straight; `{count}p` puts
+/// each row `count` times side by side. The cursor lands on the block's
+/// top-left (`gp`: just after its bottom-right).
+fn putBlock(ed: *Editor, s: []const u8, where: Where, land: Land, times: u32, out: *EditOutcome) Allocator.Error!void {
+    const gpa = ed.gpa;
+    var rows: std.ArrayList([]const u8) = .empty;
+    defer rows.deinit(gpa);
+    var it = std.mem.splitScalar(u8, s, '\n');
+    while (it.next()) |r| try rows.append(gpa, r);
+    var width: usize = 0;
+    for (rows.items) |r| width = @max(width, textCells(r));
+    const row0 = ed.currentLine();
+    const on_char = ed.cursor < ed.lineEnd(row0);
+    const cur_v = ed.vcolAtByte(ed.cursor);
+    const col = if (where == .after and on_char) cur_v + ed.doc.cellsAt(ed.cursor, cur_v) else cur_v;
+    try ed.checkpoint();
+    // Enough lines below for every row. `lineCount` leaves out the
+    // phantom line after a final `\n`, so each `\n` appended adds one
+    // (the first only ends the last line when there was no final `\n`).
+    const last_needed = row0 + rows.items.len - 1;
+    while (ed.lineCount() <= last_needed) {
+        const n = ed.len();
+        try ed.splice(n, n, "\n");
+    }
+    var piece: std.ArrayList(u8) = .empty;
+    defer piece.deinit(gpa);
+    var top_left: usize = 0;
+    var end_at: usize = 0;
+    for (rows.items, 0..) |r, i| {
+        const line = row0 + i;
+        const have = ed.doc.lineVcols(line);
+        const eol = ed.lineEnd(line);
+        piece.clearRetainingCapacity();
+        const at = if (have < col) eol else ed.byteAtVcol(line, col);
+        if (have < col) try piece.appendNTimes(gpa, ' ', col - have);
+        const lead = piece.items.len;
+        const w = textCells(r);
+        const text_after = at < eol;
+        for (0..times) |k| {
+            try piece.appendSlice(gpa, r);
+            if (k + 1 < times or text_after) try piece.appendNTimes(gpa, ' ', width -| w);
+        }
+        try ed.splice(at, at, piece.items);
+        if (i == 0) top_left = at + lead;
+        end_at = at + piece.items.len;
+    }
+    ed.cursor = if (land == .start) top_left else @min(end_at, ed.len());
+    ed.anchor = null;
+    ed.goal_col = null;
+    out.buffer_changed = true;
+}
+
+/// Display cells a register row takes (no tabs expand: a block yank
+/// already took the cells it cut as spaces).
+fn textCells(r: []const u8) usize {
+    var n: usize = 0;
+    var i: usize = 0;
+    while (i < r.len) {
+        const len = std.unicode.utf8ByteSequenceLength(r[i]) catch 1;
+        const end = @min(i + len, r.len);
+        n += if (r[i] < 0x80) 1 else @min(@import("vaxis").gwidth.gwidth(r[i..end], .unicode), 2);
+        i = end;
+    }
+    return n;
 }
 
 /// A linewise payload `s` below (`after`) or above the cursor's line;

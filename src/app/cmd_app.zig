@@ -869,7 +869,7 @@ fn pickRegisters(app: *App) CommandError!void {
     }
     if (app.clipboard.unnamed) |u| {
         try labels.append(gpa, try std.fmt.allocPrint(gpa, "\"  {s}", .{try preview(app.frame.allocator(), u.text)}));
-        try details.append(gpa, try gpa.dupe(u8, if (u.linewise) "linewise" else ""));
+        try details.append(gpa, try gpa.dupe(u8, if (u.linewise) "linewise" else if (u.block) "blockwise" else ""));
     }
     var regs: std.ArrayListUnmanaged(u8) = .empty;
     defer regs.deinit(gpa);
@@ -879,7 +879,7 @@ fn pickRegisters(app: *App) CommandError!void {
     for (regs.items) |r| {
         const entry = app.clipboard.named.get(r).?;
         try labels.append(gpa, try std.fmt.allocPrint(gpa, "{c}  {s}", .{ r, try preview(app.frame.allocator(), entry.text) }));
-        try details.append(gpa, try gpa.dupe(u8, if (entry.linewise) "linewise" else ""));
+        try details.append(gpa, try gpa.dupe(u8, if (entry.linewise) "linewise" else if (entry.block) "blockwise" else ""));
     }
     if (labels.items.len == 0) return app.diag.fail(app.frame.allocator(), "no registers hold anything yet", .{});
     try cmd_picker.openPickerWith(app, "Registers", .custom, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0), try details.toOwnedSlice(gpa), &.{});
