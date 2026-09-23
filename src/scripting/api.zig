@@ -768,6 +768,10 @@ fn bufApply(L: *State) !i32 {
     const arena = c.app.frame.allocator();
     const op = try decodeOp(L, arena, 1);
     const changed = try c.app.applyOps(e, &.{op});
+    // The change is the last change, as the same op from a key would
+    // be: `.` repeats it. (`App.applyOps` leaves dot to its caller —
+    // the key path records itself.)
+    if (changed) try e.buf.trackAppOps(&.{op}, arena);
     L.pushBoolean(changed);
     return 1;
 }
@@ -2199,6 +2203,22 @@ test "mnml.command registers user.<id>, binds its keys, runs, and a reload unreg
     try testing.expect(app.dyn_commands.get("user.hello") == null);
     try testing.expect(app.keymap.resolveSeq(keymap.parseKeySeqBuf("ctrl+shift+h", &buf).?) == .none);
     try testing.expectEqual(@as(i32, 0), lua.L.getTop());
+}
+
+test "mnml.buf.apply's change is the last change: vim's `.` repeats it" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    const lua = app.script();
+    _ = try app.openScratchWith("abc");
+    try lua.runString("assert(mnml.buf.apply{ op = 'insert_str', text = 'X' })");
+    const e = app.activeEditor().?;
+    try testing.expectEqualStrings("Xabc", e.buf.editor.bytes());
+    try command.run(&app, .{ .static = .@"vim.dot_repeat" });
+    try testing.expectEqualStrings("XXabc", e.buf.editor.bytes());
+    // A move is not a change: `.` still repeats the insert.
+    try lua.runString("assert(not mnml.buf.apply{ op = 'move_to_line', line = 1 })");
+    try command.run(&app, .{ .static = .@"vim.dot_repeat" });
+    try testing.expectEqualStrings("XXXabc", e.buf.editor.bytes());
 }
 
 test "mnml.on fires with the marshalled args; mnml.buf.apply goes through EditOp and undo works" {

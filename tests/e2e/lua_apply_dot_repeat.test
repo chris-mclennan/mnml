@@ -1,0 +1,16 @@
+# docs/LUA.md: mnml.buf.apply goes through the EditOp the keys produce, so
+# "undo, dot-repeat, the change list … all see it". A script's change is
+# the last change: `.` after it repeats it (vim profile) — it used to
+# repeat nothing.
+write .mnml/init.lua "mnml.command{ id = 'ins', keys = { 'ctrl+shift+i' }, run = function() mnml.buf.apply{ op = 'insert_str', text = 'X' } end }\n"
+write a.txt "abc"
+command script.reload
+command editor.use_vim
+open a.txt
+expect dirty false
+key ctrl+shift+i
+expect file a.txt contains "abc"
+expect screen contains "Xabc"
+expect dirty true
+key .
+expect screen contains "XXabc"
