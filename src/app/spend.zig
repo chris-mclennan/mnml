@@ -536,6 +536,39 @@ test "compute: sums the transcripts inside the window, buckets by workspace, sto
     try t.expectEqual(@as(usize, 0), r2.claude_sessions);
 }
 
+test "compute: Opus 4.7 at its own $5 / $25, and a session that switched models priced message by message" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const home = buf[0..n];
+    try tmp.dir.createDirPath(t.io, ".claude/projects/-tmp-demo");
+    // 1M input + 100k output on Opus 4.7: $5.00 + $2.50.
+    try tmp.dir.writeFile(t.io, .{ .sub_path = ".claude/projects/-tmp-demo/opus.jsonl", .data =
+        \\{"type":"user","cwd":"/tmp/demo","message":{"role":"user","content":"hi"}}
+        \\{"type":"assistant","message":{"id":"msg_1","model":"claude-opus-4-7","usage":{"input_tokens":1000000,"output_tokens":100000},"content":[{"type":"text","text":"ok"}]}}
+        \\
+    });
+    var abort: Abort = .{};
+    const r = try Result.create(t.allocator, 1, null);
+    defer r.destroy(t.allocator);
+    try compute(t.io, t.allocator, home, r, &abort);
+    try t.expectApproxEqAbs(@as(f64, 7.50), r.total_cost_usd, 0.0001);
+    // 1M input on Haiku 4.5 ($1.00), then one token on Opus 4.7: the
+    // session is $1.00 and change, not all of it at the last model's price.
+    try tmp.dir.deleteFile(t.io, ".claude/projects/-tmp-demo/opus.jsonl");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = ".claude/projects/-tmp-demo/mixed.jsonl", .data =
+        \\{"type":"user","cwd":"/tmp/demo","message":{"role":"user","content":"hi"}}
+        \\{"type":"assistant","message":{"id":"msg_1","model":"claude-haiku-4-5-20251001","usage":{"input_tokens":1000000,"output_tokens":0},"content":[{"type":"text","text":"ok"}]}}
+        \\{"type":"assistant","message":{"id":"msg_2","model":"claude-opus-4-7","usage":{"input_tokens":1,"output_tokens":0},"content":[{"type":"text","text":"ok"}]}}
+        \\
+    });
+    const r2 = try Result.create(t.allocator, 1, null);
+    defer r2.destroy(t.allocator);
+    try compute(t.io, t.allocator, home, r2, &abort);
+    try t.expectApproxEqAbs(@as(f64, 1.000005), r2.total_cost_usd, 0.0001);
+}
+
 test "ai.spend_today opens the pane beside the editor, toasts, and a stale result is dropped while the live one lands" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/w", .cols = 120, .rows = 30 });
     defer app.deinit();
