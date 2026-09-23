@@ -1,0 +1,14 @@
+# A 16-deep folder chain at the stock tree width keeps every row's
+# name readable: the outermost levels fold into a `…` instead of the
+# indent pushing the name out of the column.
+shell mkdir -p l01/l02/l03/l04/l05/l06/l07/l08/l09/l10/l11/l12/l13/l14/l15/l16 && echo x > l01/l02/l03/l04/l05/l06/l07/l08/l09/l10/l11/l12/l13/l14/l15/l16/Leaf.java
+command view.focus_tree
+key r
+command tree.expand_all
+wait 300
+key end
+wait 200
+expect status contains "Leaf.java"
+expect screen contains "l16"
+expect screen contains "Leaf.java"
+expect screen contains "…"

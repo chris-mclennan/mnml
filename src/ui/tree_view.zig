@@ -365,11 +365,17 @@ fn drawEntry(ui: Ui, r: Rect, sb_w: u16, items: []const Item, i: usize, e: Entry
     const right = r.x + w;
     const trace_style = Theme.onBg(Theme.withFg(t.fg, trace), bg);
     const cont: []const u8 = if (ui.ascii) cont_ascii ++ " " else cont_glyph ++ " ";
-    // Indent: two cells under the root, then the ancestor levels.
-    x += ui.putStr(x, r.y, right -| x, "  ", trace_style);
-    var level: u8 = 1;
+    // Indent: two cells under the root, then the ancestor levels. A row
+    // too deep for the column drops its outermost levels (nvim-tree's
+    // left truncation) behind a `…`, so the chevron, the icon and ~10
+    // cells of name always fit: past depth ~11 at the stock width the
+    // rows painted as blanks.
+    const keep_levels: u8 = @intCast(@min(255, ((right -| x) -| (2 + 4 + 10)) / 2));
+    const skip: u8 = e.depth -| keep_levels;
+    x += ui.putStr(x, r.y, right -| x, if (skip > 0) (if (ui.ascii) "< " else "\u{2026} ") else "  ", trace_style);
+    var level: u16 = @as(u16, skip) + 1;
     while (level < e.depth) : (level += 1) {
-        x += ui.putStr(x, r.y, right -| x, if (level >= 2 and hasLaterSibling(items, i, level)) cont else "  ", trace_style);
+        x += ui.putStr(x, r.y, right -| x, if (level >= 2 and hasLaterSibling(items, i, @intCast(level))) cont else "  ", trace_style);
     }
     // The row's own level: bars from level two, spaces at level one.
     if (e.depth >= 1) x += ui.putStr(x, r.y, right -| x, if (e.depth >= 2) cont else "  ", trace_style);
