@@ -52,6 +52,7 @@ const context_menus = @import("context_menus.zig");
 const git_palette = @import("git_palette.zig");
 const conflicts = @import("conflicts.zig");
 const clock = @import("clock.zig");
+const jobs = @import("jobs.zig");
 
 /// A file the status pane lists (`ui/git_status_view.zig`): its
 /// porcelain letter and which section it sits in.
@@ -543,6 +544,11 @@ pub const State = struct {
     awaiting: Pick = .none,
     /// Mutating jobs in flight (a spinner on the rail).
     busy: u32 = 0,
+    /// The mutating jobs in flight, in the order they were queued: a
+    /// repo has one worker, so its `.op` results land in that order and
+    /// the first entry for the repo is the one a result finishes. `job`
+    /// is the JOBS list's entry — null for an op it does not show.
+    op_jobs: std.ArrayListUnmanaged(OpJob) = .empty,
     last_click: ?struct { idx: u32, at_ms: i64 } = null,
     /// The view the last diff pane was switched to; new panes open in it.
     diff_mode: diff_view.Mode = .flat,
@@ -613,6 +619,7 @@ pub const State = struct {
     pub fn deinit(self: *State, gpa: Allocator, io: Io) void {
         for (self.repos.items) |r| r.destroy(io);
         self.repos.deinit(gpa);
+        self.op_jobs.deinit(gpa);
         var it = self.blames.valueIterator();
         while (it.next()) |b| b.arena.deinit();
         self.blames.deinit(gpa);
@@ -919,9 +926,53 @@ pub fn submit(app: *App, repo: *client.Repo, job: client.Job) CommandError!void 
 }
 
 /// A mutating job: counted for the spinner; its `op` result refreshes.
+/// The network ones — fetch, pull, push — are background jobs too.
 pub fn submitOp(app: *App, repo: *client.Repo, job: client.Job) CommandError!void {
+    // Named before the submit: the job's strings are the worker's after.
+    const label = try opLabel(app.frame.allocator(), repo, job);
     try submit(app, repo, job);
     app.git.busy += 1;
+    const id: ?jobs.JobId = if (label) |l| try jobs.begin(app, .{ .kind = .git, .label = l }) else null;
+    app.git.op_jobs.append(app.gpa, .{ .repo = repo.id, .job = id }) catch |err| {
+        if (id) |j| jobs.endJob(app, j, jobs.Outcome.fail("out of memory"));
+        return err;
+    };
+}
+
+pub const OpJob = struct { repo: u32, job: ?jobs.JobId };
+
+/// What the JOBS list calls a network op, or null for one it leaves out
+/// (a stage, a commit — instant, local, and already toasted).
+pub fn opLabel(arena: Allocator, repo: *const client.Repo, job: client.Job) Allocator.Error!?[]const u8 {
+    const what: []const u8 = switch (job) {
+        .fetch => "fetch --all",
+        .pull => "pull",
+        .push => "push",
+        .push_tags => "push --tags",
+        .push_force => "push --force-with-lease",
+        .push_branch => |p| try std.fmt.allocPrint(arena, "push {s} to {s}", .{ p.branch, p.remote }),
+        .push_start_pr => |p| try std.fmt.allocPrint(arena, "push {s} to {s} (new PR)", .{ p.branch, p.remote }),
+        .fast_forward => |f| try std.fmt.allocPrint(arena, "fast-forward {s}", .{f.branch}),
+        else => return null,
+    };
+    return try std.fmt.allocPrint(arena, "{s}: {s}", .{ repo.name, what });
+}
+
+/// An `.op` result for `repo` ends the first job queued there.
+fn finishOp(app: *App, repo: u32, ok: bool, desc: []const u8, msg: []const u8) void {
+    for (app.git.op_jobs.items, 0..) |o, i| if (o.repo == repo) {
+        _ = app.git.op_jobs.orderedRemove(i);
+        const id = o.job orelse return;
+        jobs.endJob(app, id, if (ok) jobs.Outcome.done(desc) else jobs.Outcome.fail(if (msg.len > 0) msg else desc));
+        return;
+    };
+}
+
+/// A worker `.err` stands for the op it was running: the oldest.
+pub fn onWorkerErr(app: *App, msg: []const u8) void {
+    if (app.git.op_jobs.items.len == 0) return;
+    const o = app.git.op_jobs.orderedRemove(0);
+    if (o.job) |id| jobs.endJob(app, id, jobs.Outcome.fail(msg));
 }
 
 /// Ask the active repo for its status, unless one is already on the way.
@@ -1328,6 +1379,7 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
         },
         .op => |op| {
             if (st.busy > 0) st.busy -= 1;
+            finishOp(app, repo.id, op.ok, op.desc, op.msg);
             if (op.ok) {
                 app.toast("{s}", .{op.desc});
             } else if (op.msg.len > 0) {

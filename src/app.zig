@@ -2967,6 +2967,7 @@ pub const App = struct {
                 if (e.source == .git) {
                     self.git.status_pending = false;
                     if (self.git.busy > 0) self.git.busy -= 1;
+                    git_app.onWorkerErr(self, e.msg);
                 }
                 try self.toastLevel(.err, "{s}: {s}", .{ @tagName(e.source), e.msg });
             },
