@@ -48,6 +48,9 @@ pub const Doc = struct {
     cursor: usize,
     /// An AI commit message is on its way: the hint row says so.
     ai_pending: bool = false,
+    /// The vim profile: Space is the leader there, so the toggle is
+    /// fugitive's `-` and the hint row says so.
+    vim: bool = false,
 };
 
 /// What a hint word does; the keys share the table.
@@ -162,6 +165,7 @@ const hint_segs = [_]Seg{
     .{ .text = "r refresh", .action = .refresh },
 };
 const ascii_enter = "enter diff";
+const vim_toggle = "- toggle";
 const ai_hint = "  \u{2726} asking Claude for a commit message\u{2026}";
 const ai_hint_ascii = "  * asking Claude for a commit message...";
 const clean_note = "  \u{2713} working tree clean";
@@ -238,7 +242,7 @@ fn paintLine(ui: Ui, pane: PaneId, r: Rect, doc: Doc, l: Line) void {
             }
             for (hint_segs) |seg| {
                 if (x >= end) break;
-                const text = if (ui.ascii and seg.action == .diff) ascii_enter else seg.text;
+                const text = if (ui.ascii and seg.action == .diff) ascii_enter else if (doc.vim and seg.action == .toggle) vim_toggle else seg.text;
                 const w = ui.putStr(x, r.y, end -| x, text, comment);
                 if (seg.action) |a| ui.hit(Rect.init(x, r.y, w, 1), .{ .script_hit = .{ .pane = pane, .id = hintId(a) } });
                 x += w;

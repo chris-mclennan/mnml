@@ -3594,7 +3594,16 @@ pub fn statusPaneKey(app: *App, id: PaneId, sp: *StatusPane, k: Key) Allocator.E
                 'k' => moveStatusCursor(sp, n, -1),
                 'g' => moveStatusCursor(sp, n, top),
                 'G' => moveStatusCursor(sp, n, bottom),
-                ' ' => runToast(app, statusAct(app, sp, .toggle)),
+                // Space is the vim profile's leader in every window
+                // (NvChad's `<leader>` maps are global): `Space g c` must
+                // reach the which-key menu, never unstage the row. The
+                // toggle is fugitive's `-` there; the standard profile
+                // keeps Space and takes `-` too.
+                ' ' => {
+                    if (app.input_style == .vim) return false;
+                    runToast(app, statusAct(app, sp, .toggle));
+                },
+                '-' => runToast(app, statusAct(app, sp, .toggle)),
                 's' => runToast(app, statusAct(app, sp, .stage)),
                 'u' => runToast(app, statusAct(app, sp, .unstage)),
                 'a' => runToast(app, statusAct(app, sp, .stage_all)),
@@ -5091,6 +5100,7 @@ pub fn drawStatusPane(app: *App, ui: Ui, id: PaneId, sp: *StatusPane, full: Rect
         .staged = files.staged,
         .cursor = sp.cursor,
         .ai_pending = if (st.ai_wait) |w| w.what == .commit else false,
+        .vim = app.input_style == .vim,
     }, &sp.scroll);
     if (app.active == id) app.pane_rows = @max(area.h, 1);
 }
