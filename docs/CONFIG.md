@@ -504,7 +504,7 @@ otherwise. Copy what you need; leave the rest out.
     // ── terminal panes ─────────────────────────────────────────────────
     // Read when a pane starts; a pane already open keeps what it began with.
     .terminal = .{
-        .scrollback_lines = 10000, // lines kept above the screen per pane (Shift+PageUp, the wheel)
+        .scrollback_lines = 10000, // lines kept above the screen per pane (Shift+PageUp, the wheel) — and what the terminal's search (`term.search`: `/` in terminal-normal, Ctrl+F under standard) reaches
         .osc52 = true, // a program in a pane may copy to the clipboard (OSC 52; neovim, tmux, ssh); reads are never answered
     },
 
