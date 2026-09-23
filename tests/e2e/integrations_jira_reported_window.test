@@ -56,10 +56,6 @@ expect within 30000 screen contains "JIRA WORK ("
 # keys below meet an idle pane however long the startup took.
 expect within 30000 file jira.log contains "issueId=10011"
 command view.focus_pane
-# An End sent in the first half-second after the pane settles does not
-# land on the last row (a `down` does; an End a moment later does) —
-# reported with this change. This pause covers that, not the startup.
-wait 1000
 # Four tickets, not three: the tab no longer excludes what is resolved,
 # so the Done sub-task I filed is on it. That is Jira's filter.
 expect screen contains "JIRA WORK (4)"
@@ -67,8 +63,15 @@ expect screen contains "ENG-4"
 expect screen contains "ENG-11"
 # The step out of the window, below the last group.
 expect screen contains "Show older (2 weeks → 30 days)"
-# End lands on it; Enter widens one step and refetches.
+# End lands on it, at once — while ENG-11's `… fetching linked PRs`
+# row may still be on screen: its answer reached the fake but not yet
+# the pane. When it lands the loading row goes and every row below it
+# moves up one; the cursor stays on the row it was on, not on the index
+# (`applyPrResult`). The expect waits for that landing, so the Enter
+# below is the press after the list has moved.
 key end
+expect within 5000 screen lacks "fetching linked PRs"
+# Enter widens one step and refetches.
 key enter
 # One refetch at the wider window: polled, as the first search was.
 expect within 15000 screen contains "Show older (30 days → 90 days)"

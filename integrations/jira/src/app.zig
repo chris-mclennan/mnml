@@ -1085,7 +1085,16 @@ pub const App = struct {
         defer res.drop();
         const t = a.tab();
         const st = &(t.tree orelse return);
+        // The ticket's `loading…` row becomes its PRs, or nothing, and
+        // every row under it moves. The result lands behind the paint,
+        // after whatever keys came first — an End that reached the
+        // `Show older` row a moment ago must still be on it, not on the
+        // row that slid into its index or past the end of the list.
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const was = try a.focusedRow(scratch.allocator());
         try st.putPrs(res.key, res.list);
+        if (was) |row| try a.keepCursorOn(scratch.allocator(), row);
         // A failure is never cached: it must cost one retry, not a run.
         if (res.body.len > 0 and res.updated.len > 0) {
             if (a.pr_store) |store| {
@@ -1652,6 +1661,27 @@ pub const App = struct {
     fn keyIndex(t: *const TabState, want: []const u8) ?usize {
         for (t.issues, 0..) |iss, i| if (std.ascii.eqlIgnoreCase(iss.key, want)) return i;
         return null;
+    }
+
+    /// Put the tree cursor back on `row` after the rows were rebuilt
+    /// around it: the same row where it is still listed, else the row of
+    /// the ticket it hung from, else the nearest row that exists.
+    fn keepCursorOn(a: *App, arena: Allocator, row: tree.Row) Allocator.Error!void {
+        const r = (try a.treeRows(arena)) orelse return;
+        const t = a.tab();
+        if (r.rows.len == 0) {
+            t.selected = 0;
+            return;
+        }
+        for (r.rows, 0..) |now, i| if (now.same(row)) {
+            t.selected = i;
+            return;
+        };
+        if (row.issueIdx()) |ii| if (rowOfIssue(r.rows, ii)) |ri| {
+            t.selected = ri;
+            return;
+        };
+        t.selected = @min(t.selected, r.rows.len - 1);
     }
 
     /// The row a ticket is painted on, by its place in the issues —
@@ -4497,6 +4527,64 @@ test "a refetch on the group keeps the old rows, the keys and the cursor, and la
     try testing.expectEqualStrings("ENG-2", (try a.focusedKey(arena.allocator())).?);
     // The PRs came with the search: the tree has them without another call.
     try testing.expect(a.tab().tree.?.prs("ENG-2") != null);
+}
+
+const reported_tabs = [_]config.Tab{.{ .name = "Reported by me", .kind = .work_reported }};
+
+test "an End pressed before a ticket's linked PRs land is still on the last row once they have" {
+    // The pane's order of events: the listing paints with a `loading…`
+    // row under each open ticket, the PR fetches run on workers behind
+    // the paint, and a key can arrive before any of them is drained.
+    // Each result then takes its ticket's loading row away, and every
+    // row below moves up one.
+    const h = try Harness.start(.{ .tabs = &reported_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    var group: Io.Group = .init;
+    a.setGroup(&group);
+    defer {
+        a.closeRefresh();
+        group.cancel(testing.io);
+        a.group = null;
+    }
+    try a.refreshActive();
+    var spins: usize = 0;
+    while (a.refresh.busy() and spins < 2000) : (spins += 1) {
+        try a.drainRefresh();
+        if (!a.refresh.busy()) break;
+        testing.io.sleep(.fromMilliseconds(2), .awake) catch break;
+    }
+    try testing.expect(!a.refresh.busy());
+    try a.pumpPrs();
+    try testing.expect(a.prs.busy());
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const ar = arena.allocator();
+    const before = (try a.treeRows(ar)).?;
+    var loading: usize = 0;
+    for (before.rows) |r| if (r == .pr_loading) {
+        loading += 1;
+    };
+    try testing.expect(loading >= 2);
+    try testing.expect(before.rows[before.rows.len - 1] == .show_older);
+
+    _ = try a.onKey("end");
+    try testing.expect((try a.focusedRow(ar)).? == .show_older);
+
+    // Every fetch lands after the key, one at a time.
+    spins = 0;
+    while ((a.prs.busy() or a.pr_queue.items.len > 0) and spins < 5000) : (spins += 1) {
+        try a.drainPrs();
+        try a.pumpPrs();
+        testing.io.sleep(.fromMilliseconds(1), .awake) catch break;
+    }
+    try testing.expect(!a.prs.busy() and a.pr_queue.items.len == 0);
+    const after = (try a.treeRows(ar)).?;
+    try testing.expect(after.rows.len < before.rows.len);
+    const focused = try a.focusedRow(ar);
+    try testing.expect(focused != null and focused.? == .show_older);
+    try testing.expectEqual(after.rows.len - 1, a.tab().selected);
 }
 
 test "the Work family's three kinds: open work counts for the chip, reported is the reporter query, the editable tab interpolates its vars" {

@@ -256,6 +256,26 @@ pub const Row = union(enum) {
         };
     }
 
+    /// The same row in a list rebuilt around it: the same kind, on the
+    /// same ticket, PR and build (a group by its status). What the cursor
+    /// holds on to when a ticket's rows change under it — an index would
+    /// land on whatever moved into its place.
+    pub fn same(r: Row, o: Row) bool {
+        if (std.meta.activeTag(r) != std.meta.activeTag(o)) return false;
+        return switch (r) {
+            .group => |g| std.mem.eql(u8, g.status, o.group.status),
+            .ticket => |x| x.issue_idx == o.ticket.issue_idx,
+            .pr => |x| x.issue_idx == o.pr.issue_idx and x.pr_idx == o.pr.pr_idx,
+            .pr_loading => |x| x.issue_idx == o.pr_loading.issue_idx,
+            .pipeline_loading => |x| x.issue_idx == o.pipeline_loading.issue_idx and x.pr_idx == o.pipeline_loading.pr_idx,
+            .pipeline_empty => |x| x.issue_idx == o.pipeline_empty.issue_idx and x.pr_idx == o.pipeline_empty.pr_idx,
+            .pipeline_error => |x| x.issue_idx == o.pipeline_error.issue_idx and x.pr_idx == o.pipeline_error.pr_idx,
+            .pipeline => |x| x.issue_idx == o.pipeline.issue_idx and x.pr_idx == o.pipeline.pr_idx and x.pipeline_idx == o.pipeline.pipeline_idx,
+            .show_more => |x| x.issue_idx == o.show_more.issue_idx,
+            .show_older => true,
+        };
+    }
+
     /// A row that hangs under a ticket (any PR-level row).
     pub fn isChild(r: Row) bool {
         return switch (r) {
