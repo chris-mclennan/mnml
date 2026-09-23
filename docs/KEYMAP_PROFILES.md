@@ -2,8 +2,8 @@
 
 mnml-zig binds every default chord to a profile. `both` chords fire in
 either profile; `vim` chords only when `editor.input_style = .vim`;
-`standard` only under `.standard`. `[keys.global]` still applies to both
-and `[keys.vim]` / `[keys.standard]` overlay their profile.
+`standard` only under `.standard`. `.keys.global` in `config.zon` still
+applies to both and `.keys.vim` / `.keys.standard` overlay their profile.
 
 This is the **spike-scope** split: Rust defaults into `both`, a small set of
 mechanical rules, and the NvChad leader menus a vim user reaches for first.
@@ -121,9 +121,9 @@ Pinned by the `ctrlWCommand` and `vim:` tests in `src/app/side.zig`.
 |---|---|---|
 | `view.move_section_left` | `Ctrl-W H` in a section or the tree; `<leader>sH` | — (`:sidebar left`, the rail menu, the palette) |
 | `view.move_section_right` | `Ctrl-W L` in a section or the tree; `<leader>sL` | — (`:sidebar right`) |
-| `view.toggle_tree` (the left column) | `Ctrl-N`, `<leader>e` | `Ctrl+B` |
+| `view.toggle_tree` (the left column) | `Ctrl-N`, `<leader>te` (`<leader>e` is `view.focus_tree`) | `Ctrl+B` |
 | `view.toggle_right_panel` (the right column) | `<leader>tr` | `Ctrl+Shift+B` (both) |
-| `view.focus_right_panel` | — | `Ctrl+K R` |
+| `view.focus_right_panel` | — | `Ctrl+K r` |
 | `view.right_panel_next_tab` / `prev_tab` | `<leader>t]` / `<leader>t[` | — |
 | `view.right_panel_close_tab` | `<leader>tx` | `Ctrl+Alt+W` (both) |
 | `view.toggle_bottom_panel` (the dock) | `Ctrl+Shift+J` (both) | `Ctrl+Shift+J` (both) |
@@ -234,7 +234,7 @@ vaxis's form the same way. So `Key.canonical` (`src/core/key.zig`) is the
 one place the spelling is settled, and `keymap.parseKeySpec` goes through
 it — `shift+tab`, `<S-Tab>`, `shift+backtab` and `backtab` are one chord,
 and `ctrl+shift+tab` is `ctrl+backtab`. That holds for the spec table, a
-`[keys.*]` line in the config, a `.test` script's `key` directive and the
+`.keys.*` line in the config, a `.test` script's `key` directive and the
 IPC `key` verb alike, so a script can no longer synthesise a key a
 terminal never sends. Before it did, and `buffer.prev` was dead on
 `Ctrl+Shift+Tab` and on NvChad's `<S-Tab>` in every terminal while the
