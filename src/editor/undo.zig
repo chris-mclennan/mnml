@@ -178,6 +178,14 @@ pub const History = struct {
     /// Re-spelling it through the hop instead would fold two changes at
     /// opposite ends of a file into one hull the size of the file.
     hopping: enum { none, undo, redo } = .none,
+    /// The document's marks when each state was pushed, by the entry's
+    /// `seq` (vim's `uh_namedm`): `u` / Ctrl-R put them back, so a mark
+    /// whose line an edit deleted is where it was once the undo brings
+    /// the line back. Only states pushed with marks set have one.
+    mark_saves: std.AutoHashMapUnmanaged(u64, []MarkAt) = .empty,
+
+    pub const MarkAt = struct { letter: u8, byte: usize };
+    pub const Marks = std.AutoHashMapUnmanaged(u8, usize);
 
     pub const default_limit = 2000;
 
@@ -188,6 +196,47 @@ pub const History = struct {
     pub fn deinit(self: *History) void {
         self.undo.deinit(self.gpa);
         self.redo.deinit(self.gpa);
+        var it = self.mark_saves.valueIterator();
+        while (it.next()) |v| self.gpa.free(v.*);
+        self.mark_saves.deinit(self.gpa);
+    }
+
+    /// Remember `marks` for the state just pushed (`seq`).
+    pub fn saveMarks(self: *History, marks: *const Marks) Allocator.Error!void {
+        if (marks.count() == 0) return;
+        const copy = try self.gpa.alloc(MarkAt, marks.count());
+        errdefer self.gpa.free(copy);
+        var it = marks.iterator();
+        var i: usize = 0;
+        while (it.next()) |kv| : (i += 1) copy[i] = .{ .letter = kv.key_ptr.*, .byte = kv.value_ptr.* };
+        const gop = try self.mark_saves.getOrPut(self.gpa, self.seq);
+        if (gop.found_existing) self.gpa.free(gop.value_ptr.*);
+        gop.value_ptr.* = copy;
+        if (self.mark_saves.count() > 2 * self.limit + 64) self.pruneMarkSaves();
+    }
+
+    /// Put back the marks saved with state `seq`; marks set since stay.
+    pub fn restoreMarks(self: *const History, seq: u64, marks: *Marks, gpa: Allocator, text_len: usize) Allocator.Error!void {
+        const saved = self.mark_saves.get(seq) orelse return;
+        for (saved) |m| try marks.put(gpa, m.letter, @min(m.byte, text_len));
+    }
+
+    /// Drop the saves whose state has left both stacks.
+    fn pruneMarkSaves(self: *History) void {
+        var it = self.mark_saves.iterator();
+        var dead: std.ArrayList(u64) = .empty;
+        defer dead.deinit(self.gpa);
+        while (it.next()) |kv| {
+            if (self.holds(kv.key_ptr.*)) continue;
+            dead.append(self.gpa, kv.key_ptr.*) catch return;
+        }
+        for (dead.items) |seq| if (self.mark_saves.fetchRemove(seq)) |kv| self.gpa.free(kv.value);
+    }
+
+    fn holds(self: *const History, seq: u64) bool {
+        for (self.undo.items.items[self.undo.head..]) |e| if (e.seq == seq) return true;
+        for (self.redo.items.items[self.redo.head..]) |e| if (e.seq == seq) return true;
+        return false;
     }
 
     fn liveText(self: *const History) []const u8 {
@@ -519,11 +568,13 @@ pub fn undoOp(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
     const h = &ed.doc.history;
     if (h.undoLen() == 0) return;
     try h.pushRedo(.{ .text = ed.doc.text.items, .cursor = ed.cursor, .anchor = ed.anchor });
+    try h.saveMarks(&ed.doc.marks);
     const e = h.takeToRestore(&h.undo).?;
     defer h.gpa.free(e.mid);
     h.hopping = .undo;
     defer h.hopping = .none;
     try hop(ed, e);
+    try h.restoreMarks(e.seq, &ed.doc.marks, ed.doc.gpa, ed.doc.text.items.len);
     out.buffer_changed = true;
 }
 
@@ -531,11 +582,13 @@ pub fn redoOp(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
     const h = &ed.doc.history;
     if (h.redoLen() == 0) return;
     try h.pushUndo(.{ .text = ed.doc.text.items, .cursor = ed.cursor, .anchor = ed.anchor });
+    try h.saveMarks(&ed.doc.marks);
     const e = h.takeToRestore(&h.redo).?;
     defer h.gpa.free(e.mid);
     h.hopping = .redo;
     defer h.hopping = .none;
     try hop(ed, e);
+    try h.restoreMarks(e.seq, &ed.doc.marks, ed.doc.gpa, ed.doc.text.items.len);
     out.buffer_changed = true;
 }
 

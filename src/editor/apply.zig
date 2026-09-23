@@ -294,6 +294,33 @@ test "apply: repeat + atomic collapse to one undo step; undo/redo round-trip" {
     try std.testing.expectEqualStrings("def", ed.doc.text.items);
 }
 
+test "apply: undo puts a mark back where it was before the change, redo where it was after" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var clip = Clipboard.init(gpa);
+    defer clip.deinit();
+    const ed = try Editor.init(gpa, "l1\nl2\nl3\nl4\nl5\nl6\n");
+    defer ed.deinit();
+    try ed.doc.setMarkPos('a', .{ .row = 3, .col = 0 });
+    // Every line from the top through the marked one goes (vim's `dG`
+    // from line 1 would take them all): the mark lands at the cut.
+    _ = try ed.apply(.{ .replace_range = .{ .start = 0, .end = ed.doc.text.items.len, .text = "" } }, 10, &clip, arena);
+    try std.testing.expectEqual(@as(usize, 0), ed.doc.markPos('a').?.row);
+    _ = try ed.apply(.undo, 10, &clip, arena);
+    try std.testing.expectEqual(@as(usize, 3), ed.doc.markPos('a').?.row);
+    _ = try ed.apply(.redo, 10, &clip, arena);
+    try std.testing.expectEqual(@as(usize, 0), ed.doc.markPos('a').?.row);
+    _ = try ed.apply(.undo, 10, &clip, arena);
+    try std.testing.expectEqual(@as(usize, 3), ed.doc.markPos('a').?.row);
+    // A mark set after the change is not the undo's to move back.
+    _ = try ed.apply(.{ .replace_range = .{ .start = 0, .end = 3, .text = "" } }, 10, &clip, arena);
+    try ed.doc.setMarkPos('b', .{ .row = 1, .col = 0 });
+    _ = try ed.apply(.undo, 10, &clip, arena);
+    try std.testing.expectEqual(@as(usize, 2), ed.doc.markPos('b').?.row);
+}
+
 test "apply: outcome flags, text edit inference, changelist, goal col" {
     const gpa = std.testing.allocator;
     var arena_state = std.heap.ArenaAllocator.init(gpa);
