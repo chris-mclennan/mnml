@@ -1386,6 +1386,14 @@ pub const App = struct {
     /// When a plain Esc last armed the way out of full screen; a
     /// second within the chord timeout leaves (`zen.escKey`).
     zen_esc_ms: ?i64 = null,
+    /// The `@a` replay in progress (`app/macro_replay.zig`), if any.
+    macro_run: ?*@import("app/macro_replay.zig").Run = null,
+    /// How deeply `dispatch.keyUnrecorded` is nested: a replay feeds its
+    /// keys one level down from the key that started it.
+    key_depth: u16 = 0,
+    /// The key just dispatched failed the way vim beeps — a motion that
+    /// could not move, a search with no match — which ends a replay.
+    key_failed: bool = false,
     /// Nine pinned files (`harpoon.*`).
     harpoon: harpoon.State = .{},
     /// Render durations for the statusline stress meter.
@@ -2781,6 +2789,7 @@ pub const App = struct {
     /// the way into every key and op).
     pub fn attachSeams(self: *App, e: *EditorPane) void {
         e.buf.editor.objects = .{ .ctx = self, .lookup = &objectLookup };
+        e.buf.macros_by_app = true;
     }
 
     /// Which mnml this is — the installed one or the one being worked

@@ -1,0 +1,32 @@
+# A macro replays every key it recorded, wherever the key went: the
+# `/foo⏎` typed into the find bar and the `:s…⏎` typed into the command
+# line replay too. A key that fails — a search with no match, `j` on
+# the last line — ends the replay (`:help q`); here the search's E486
+# ends the `@a` of each `:norm` line once no foo is left.
+# Neovim 0.12.5 (`nvim --clean`, feedkeys):
+#   qa0/foo<CR>ciwbar<Esc>q @a @@ :2,$norm @a  -> x bar 1 … x bar 5
+#   qa:s/x/y/<CR>jq @a on x1 / x2 / x3          -> y1 / y2 / x3
+command editor.use_vim
+write s.txt "x foo 1\nx foo 2\nx foo 3\nx foo 4\nx foo 5\n"
+open s.txt
+type qa0/foo
+key enter
+type ciwbar
+key esc
+type q
+type @a
+type @@
+type :2,$norm @a
+key enter
+command file.save
+expect file s.txt contains "x bar 1\nx bar 2\nx bar 3\nx bar 4\nx bar 5\n"
+
+write x.txt "x1\nx2\nx3\n"
+open x.txt
+type qa:s/x/y/
+key enter
+type jq
+type @a
+command file.save
+expect file x.txt contains "y1\ny2\nx3\n"
+

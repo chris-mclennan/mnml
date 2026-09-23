@@ -46,6 +46,7 @@ const cmd_find = @import("cmd_find.zig");
 const cmd_file = @import("cmd_file.zig");
 const cmd_tab = @import("cmd_tab.zig");
 const macros_store = @import("macros_store.zig");
+const macro_replay = @import("macro_replay.zig");
 const marks_store = @import("marks_store.zig");
 const cmd_picker = @import("cmd_picker.zig");
 const icon_picker = @import("icon_picker.zig");
@@ -149,6 +150,23 @@ const flash = @import("flash.zig");
 /// One key. The cursor is snapshotted around it so a big jump lands on
 /// the jumplist (`jumplist.afterKey`).
 pub fn key(app: *App, k: Key) Allocator.Error!void {
+    // A recording takes every typed key, wherever it goes: the buffer
+    // records the ones it is fed; one the find bar, the `:` line or an
+    // overlay took is added here. The `q` that stops a recording and
+    // the `q<reg>` that starts one are nobody's.
+    app.key_failed = false;
+    const rec: ?PaneId = if (app.active) |id| (if (app.panes.editor(id)) |e| (if (e.buf.isRecording()) id else null) else null) else null;
+    const fed_before: u64 = if (rec) |id| app.panes.editor(id).?.buf.keys_fed else 0;
+    try keyUnrecorded(app, k);
+    if (rec) |id| if (app.panes.editor(id)) |e| {
+        if (e.buf.isRecording() and e.buf.keys_fed == fed_before) try e.buf.recordKey(k);
+    };
+}
+
+/// One key, as typed, minus the macro recording — what a replay feeds.
+pub fn keyUnrecorded(app: *App, k: Key) Allocator.Error!void {
+    app.key_depth += 1;
+    defer app.key_depth -= 1;
     const before = try jumplist.snapshot(app);
     try keyInner(app, k);
     try jumplist.afterKey(app, before);
@@ -630,6 +648,9 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
     const wrap_width = try beforeBufferInput(app, e);
 
     const ev = try e.buf.feedKey(k, &app.clipboard, app.pane_rows, wrap_width, arena);
+    // A motion that could not move, a text object that found nothing:
+    // a replaying macro stops here (`:help q`).
+    if (e.buf.key_failed) app.key_failed = true;
     switch (ev) {
         .unhandled => {
             try afterBufferEvent(app, pane_id, e, ev, was_recording);
@@ -3639,7 +3660,8 @@ pub fn handleAppCommand(app: *App, pane_id: PaneId, e: *EditorPane, cmd: input.A
         .jump_to_mark_line => |c| if (marks_store.isGlobal(c)) try marks_store.jump(app, c, false),
         .jump_to_mark_exact => |c| if (marks_store.isGlobal(c)) try marks_store.jump(app, c, true),
         // Buffer-local; the buffer answered them before we got here.
-        .dot_repeat, .macro_record_into, .macro_replay_from, .operator_to_mark => {},
+        .dot_repeat, .macro_record_into, .operator_to_mark => {},
+        .macro_replay_from => |m| try macro_replay.run(app, pane_id, m.reg, m.count, m.recorded),
         .block_insert_start => |b| try beginBlockInsert(app, pane_id, e, b.append, false),
         .block_change_start => try beginBlockInsert(app, pane_id, e, false, true),
         .block_replace_with => |r| try blockReplace(app, e, r.ch),

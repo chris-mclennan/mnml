@@ -77,6 +77,19 @@ pub const Buffer = struct {
     /// The macro being recorded; the finished keys go to the clipboard.
     recording: ?Recording = null,
     replay_depth: u8 = 0,
+    /// Keys `feedKey` has taken, ever. The app compares it across a key
+    /// to tell a key that went elsewhere (the find bar's `/foo⏎`) from
+    /// one the buffer recorded itself (`recordKey`).
+    keys_fed: u64 = 0,
+    /// The app replays macros through its own key dispatch, so a
+    /// register's `/foo<CR>` or `:s…<CR>` reaches the find bar or the
+    /// command line as it did when recorded; `@a` is then handed to it
+    /// (`.app = macro_replay_from`). A buffer alone replays into itself.
+    macros_by_app: bool = false,
+    /// The last key failed the way vim beeps: a motion that could not
+    /// move (`j` on the last line, `f` finding nothing) or an operator's
+    /// object that found nothing. A replaying macro stops on it.
+    key_failed: bool = false,
 
     /// vim's `".` register: what the last Insert session typed, derived
     /// from its ops when it closed (a backspace takes a char back).
@@ -386,6 +399,7 @@ pub const Buffer = struct {
     /// `arena` is the frame arena.
     pub fn feedKey(self: *Buffer, key: Key, clip: *Clipboard, viewport_rows: usize, wrap_width: ?usize, arena: Allocator) Allocator.Error!BufferEvent {
         if (self.doc.read_only) return .{ .unhandled = key };
+        self.keys_fed +%= 1;
         if (self.recording) |*r| try r.keys.append(self.gpa, key);
         const ctx = self.makeCtx(wrap_width, clip);
         // What a visual operator would act on, before the key resolves —
@@ -396,6 +410,7 @@ pub const Buffer = struct {
         const undo_before = self.editor.doc.history.undoLen();
         const cursor_before = self.editor.cursor;
         self.syncInsertSession(undo_before);
+        self.key_failed = false;
         const result = try self.input.handleKey(key, ctx, arena);
         const ev: BufferEvent = switch (result) {
             .ops => |list| try self.applyHandlerOps(list, visual, clip, viewport_rows, arena),
@@ -935,6 +950,13 @@ pub const Buffer = struct {
         return self.recording != null;
     }
 
+    /// A key typed while recording that the buffer never saw — one the
+    /// find bar or an overlay took — joins the register all the same
+    /// (`:help q`: the typed characters, wherever they went).
+    pub fn recordKey(self: *Buffer, key: Key) Allocator.Error!void {
+        if (self.recording) |*r| try r.keys.append(self.gpa, key);
+    }
+
     // ─── app commands handled here ───
 
     /// An `AppCommand` from a runner rather than a key (the palette's
@@ -978,7 +1000,10 @@ pub const Buffer = struct {
                 return .redraw;
             },
             .macro_record_into => |reg| return self.macroToggle(reg, clip, true),
-            .macro_replay_from => |m| return self.macroReplay(m.reg, m.count, m.recorded, clip, viewport_rows, wrap_width, arena),
+            .macro_replay_from => |m| {
+                if (self.macros_by_app) return .{ .app = cmd };
+                return self.macroReplay(m.reg, m.count, m.recorded, clip, viewport_rows, wrap_width, arena);
+            },
             .operator_to_mark => |m| return self.operatorToMark(m.op, m.mark, m.exact, clip, viewport_rows, arena),
             else => return .{ .app = cmd },
         }

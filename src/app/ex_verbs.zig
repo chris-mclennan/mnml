@@ -244,7 +244,12 @@ pub fn normal(app: *App, range: ?Range, keys_spec: []const u8) CommandError!void
         if (row >= pane.buf.editor.lineCount()) break;
         pane.buf.editor.placeCursor(row, 0);
         pane.buf.editor.anchor = null;
-        for (keys) |k| try app.handle(.{ .key = k });
+        // A key that fails (`j` on the last line, a search with no
+        // match) ends this line's keys, as it ends a macro.
+        for (keys) |k| {
+            try app.handle(.{ .key = k });
+            if (app.key_failed) break;
+        }
         try app.handle(.{ .key = Key.named(.esc) });
         n += 1;
     }

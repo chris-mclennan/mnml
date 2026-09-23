@@ -292,6 +292,8 @@ fn acceptAndClose(app: *App) Allocator.Error!void {
     if (f.matches.items.len == 0) {
         if (f.bad_pattern) |err| app.toast("{s}: \"{s}\"", .{ patternProblem(err), pattern }) else app.toast("no matches for \"{s}\"", .{pattern});
         app.closeFindBar(false);
+        // E486: a replaying macro stops here.
+        app.key_failed = true;
         return;
     }
     const idx = (if (reverse) f.indexBefore(tg.cursor()) else f.indexAtOrAfter(tg.cursor())) orelse 0;
@@ -309,10 +311,12 @@ pub fn stepFind(app: *App, delta: i32) Allocator.Error!void {
     const f = tg.find();
     if (!f.isActive()) {
         app.toast("no active find — use / or Ctrl+F first", .{});
+        app.key_failed = true;
         return;
     }
     if (f.matches.items.len == 0) {
         app.toast("no matches for \"{s}\"", .{f.query.items});
+        app.key_failed = true;
         return;
     }
     // Without a current match (a cleared cursor jump), step from the cursor.
@@ -532,6 +536,7 @@ fn selectionBackward(app: *App) CommandError!void {
 fn stepFromCurrent(app: *App, e: *EditorPane) Allocator.Error!void {
     const idx = e.find.current orelse {
         app.toast("no matches for \"{s}\"", .{e.find.query.items});
+        app.key_failed = true;
         return;
     };
     e.buf.editor.setCursor(e.find.matches.items[idx].start);
