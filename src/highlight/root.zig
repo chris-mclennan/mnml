@@ -36,9 +36,9 @@ test "every highlights query compiles" {
 }
 
 test "every injections query compiles" {
-    for (table.entries) |e| {
+    for (table.entries, 0..) |e, i| {
         if (e.injections.len == 0) continue;
-        try expectQueryCompiles(e.key, "injections", e.language(), e.injections);
+        try expectQueryCompiles(e.key, "injections", e.language(), table.injectionSource(i));
     }
 }
 

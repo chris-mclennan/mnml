@@ -77,7 +77,7 @@ pub const entries = [_]Entry{
     .{ .key = "proto", .language = tree_sitter_proto, .highlights = &.{q.proto_highlights}, .fixture = "syntax = \"proto3\";\nmessage A {\n  int32 id = 1;\n}\n" },
     .{ .key = "diff", .language = tree_sitter_diff, .highlights = &.{q.diff_highlights}, .fixture = "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-old\n+new\n" },
     .{ .key = "vue", .language = tree_sitter_vue, .highlights = &.{q.vue_highlights}, .injections = q.vue_injections, .fixture = "<template>\n  <div>{{ msg }}</div>\n</template>\n" },
-    .{ .key = "svelte", .language = tree_sitter_svelte, .highlights = &.{q.svelte_highlights}, .injections = q.svelte_injections, .fixture = "<script>\n  let n = 1;\n</script>\n<p>{n}</p>\n" },
+    .{ .key = "svelte", .language = tree_sitter_svelte, .highlights = &.{q.svelte_highlights}, .injections = svelte_injections, .fixture = "<script>\n  let n = 1;\n</script>\n<p>{n}</p>\n" },
     .{ .key = "astro", .language = tree_sitter_astro, .highlights = &.{q.astro_highlights}, .injections = q.astro_injections, .fixture = "---\nconst x = 1;\n---\n<p>{x}</p>\n" },
 };
 
@@ -93,14 +93,30 @@ const ocaml_interface_highlights: []const u8 = blk: {
     break :blk q.ocaml_highlights[0..i] ++ q.ocaml_highlights[i + needle.len ..];
 };
 
-/// `entries[i].highlights` joined with newlines, computed once at compile time.
+/// svelte-ng's injections inject EVERY `raw_text` as JavaScript — the
+/// `<style>` body included, and ahead of the `lang="ts"` pattern — where
+/// nvim-treesitter's query, which it follows otherwise, injects the
+/// template's `{…}` expressions (`svelte_raw_text`) and leaves `<script>`
+/// and `<style>` to the inherited HTML layer and the `lang` patterns.
+/// Patched here to nvim's pattern.
+const svelte_injections: []const u8 = blk: {
+    @setEvalBranchQuota(100_000);
+    const needle = "((raw_text) @injection.content\n  (#set! injection.language \"javascript\"))";
+    const i = std.mem.indexOf(u8, q.svelte_injections, needle) orelse
+        @compileError("svelte injections.scm no longer has the raw_text catch-all — drop this patch");
+    break :blk q.svelte_injections[0..i] ++ "((svelte_raw_text) @injection.content\n  (#set! injection.language \"javascript\"))" ++ q.svelte_injections[i + needle.len ..];
+};
+
+/// `entries[i].highlights` joined with newlines, each layer's `; inherits:`
+/// resolved, computed once at compile time.
 pub const highlight_sources: [entries.len][]const u8 = blk: {
+    @setEvalBranchQuota(2_000_000);
     var out: [entries.len][]const u8 = undefined;
     for (entries, 0..) |e, i| {
         var joined: []const u8 = "";
         for (e.highlights, 0..) |layer, li| {
             if (li > 0) joined = joined ++ "\n";
-            joined = joined ++ layer;
+            joined = joined ++ withInherited(.highlights, layer);
         }
         out[i] = joined;
     }
@@ -109,6 +125,63 @@ pub const highlight_sources: [entries.len][]const u8 = blk: {
 
 pub fn highlightSource(index: usize) []const u8 {
     return highlight_sources[index];
+}
+
+/// `entries[i].injections` with its `; inherits:` resolved; empty when
+/// the entry has none.
+pub const injection_sources: [entries.len][]const u8 = blk: {
+    @setEvalBranchQuota(2_000_000);
+    var out: [entries.len][]const u8 = undefined;
+    for (entries, 0..) |e, i| out[i] = if (e.injections.len == 0) "" else withInherited(.injections, e.injections);
+    break :blk out;
+};
+
+pub fn injectionSource(index: usize) []const u8 {
+    return injection_sources[index];
+}
+
+pub const QueryKind = enum { highlights, injections };
+
+/// nvim-treesitter's `; inherits: a,b` modeline, in the comment lines
+/// that open a query: the file is only the delta over the named
+/// languages' queries of the same kind. Those come first, in the order
+/// named and each resolved in turn, then the file itself — so its own
+/// patterns, later, win a node both capture (the engine's rule, and
+/// Neovim's). Read as a comment, the line dropped the whole base: Vue
+/// and Svelte had no tag, attribute or `<style>` layer at all.
+pub fn withInherited(comptime kind: QueryKind, comptime src: []const u8) []const u8 {
+    @setEvalBranchQuota(2_000_000);
+    comptime var base: []const u8 = "";
+    comptime var lines = std.mem.splitScalar(u8, src, '\n');
+    inline while (lines.next()) |raw| {
+        const line = comptime std.mem.trim(u8, raw, " \t\r");
+        if (line.len == 0) continue;
+        if (line[0] != ';') break;
+        const body = comptime std.mem.trimStart(u8, std.mem.trimStart(u8, line, ";"), " \t");
+        if (!comptime std.mem.startsWith(u8, body, "inherits:")) continue;
+        comptime var names = std.mem.splitScalar(u8, body["inherits:".len..], ',');
+        inline while (names.next()) |n| {
+            // `(name)` is nvim's "only when named explicitly"; the table
+            // always names it.
+            const name = comptime std.mem.trim(u8, n, " \t()");
+            if (name.len == 0) continue;
+            base = base ++ withInherited(kind, inheritedQuery(kind, name)) ++ "\n";
+        }
+    }
+    return base ++ src;
+}
+
+/// The query a `; inherits:` name stands for. nvim-treesitter splits
+/// HTML into `html_tags` (tags, attributes, `<script>` / `<style>`) and
+/// `html` (that plus the document); the grammar's own queries are the
+/// first, so both names are them. A name this table does not carry is a
+/// compile error, never a silently missing layer.
+fn inheritedQuery(comptime kind: QueryKind, comptime name: []const u8) []const u8 {
+    if (std.mem.eql(u8, name, "html") or std.mem.eql(u8, name, "html_tags")) return switch (kind) {
+        .highlights => q.html_highlights,
+        .injections => q.html_injections,
+    };
+    @compileError("`; inherits: " ++ name ++ "` names a query this table does not carry");
 }
 
 /// Index of the entry whose `key` matches, or null.

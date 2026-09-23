@@ -1,0 +1,14 @@
+# Svelte: the HTML layer is inherited (tags, <style> → css), the `{…}`
+# expressions are JavaScript, and <script lang="ts"> is TypeScript.
+# width: 160
+# height: 60
+# env: PATH=/usr/bin:/bin
+write Counter.svelte "<script lang=\"ts\">\n  export let start: number = 0;\n  let count = start;\n  $: doubled = count * 2;\n  function inc() { count += 1; }\n</script>\n\n<button on:click={inc} class:active={count > 3}>\n  Clicked {count} {count === 1 ? \"time\" : \"times\"}\n</button>\n{#if doubled > 10}\n  <p>big</p>\n{:else}\n  <p>small</p>\n{/if}\n{#each [1, 2] as n (n)}<i>{n}</i>{/each}\n\n<style>\n  button { color: blue; }\n</style>\n"
+open Counter.svelte
+wait 400
+expect screen contains "export let start: number = 0;"
+# <style> button { color: blue; } — css: tag selector (#e5c07b) and property (#e06c75)
+expect color 38 20 fg #e5c07b
+expect color 47 20 fg #e06c75
+# <script lang="ts"> export let start: number — `number` is a TS predefined type (#e5c07b)
+expect color 56 3 fg #e5c07b

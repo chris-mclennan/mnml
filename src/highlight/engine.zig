@@ -77,8 +77,9 @@ const Lang = struct {
         const self = try gpa.create(Lang);
         errdefer gpa.destroy(self);
         self.* = .{ .parser = parser, .highlights = hl, .hl_preds = hl_preds, .roles = roles, .catch_all = catch_all };
-        if (e.injections.len > 0) {
-            if (ts.Query.init(language, e.injections, null)) |inj| {
+        const inj_source = table.injectionSource(entry);
+        if (inj_source.len > 0) {
+            if (ts.Query.init(language, inj_source, null)) |inj| {
                 self.injections = inj;
                 self.inj_preds = try predicate.Table.build(gpa, inj);
                 var i: u32 = 0;
@@ -858,6 +859,37 @@ test "injections: html routes <style> to css and <script> to javascript" {
     try testing.expectEqual(Role.constant, roleAt(spans, std.mem.indexOf(u8, text, "42").?));
     try testing.expect(roleAt(spans, std.mem.indexOf(u8, text, "color").?) != .none);
     try testing.expect(spans.len >= 6);
+}
+
+test "inherits: Vue and Svelte take HTML's tags, attributes and <style> as css under their own patterns; Svelte's <script lang=\"ts\"> is TypeScript" {
+    var h = Highlighter.init(testing.allocator);
+    defer h.deinit();
+    h.setLanguage(table.find("vue").?);
+    const vue = "<template>\n  <div class=\"app\">{{ count + 1 }}</div>\n</template>\n<script setup lang=\"ts\">\nconst n: number = 1;\n</script>\n<style scoped>\n.app { color: red; }\n</style>\n";
+    const vs = try h.highlightAll(vue);
+    try testing.expectEqual(Role.type, roleAt(vs, std.mem.indexOf(u8, vue, "div").?));
+    try testing.expectEqual(Role.string, roleAt(vs, std.mem.indexOf(u8, vue, "app\"").?));
+    try testing.expectEqual(Role.variable, roleAt(vs, std.mem.indexOf(u8, vue, "color").?));
+    try testing.expectEqual(Role.type, roleAt(vs, std.mem.indexOf(u8, vue, "number").?));
+    try testing.expectEqual(Role.constant, roleAt(vs, std.mem.indexOf(u8, vue, "1 }}").?));
+    h.setLanguage(table.find("svelte").?);
+    const sv = "<script lang=\"ts\">\n  export let start: number = 0;\n</script>\n<button class:active={start > 3}>go</button>\n<style>\n  button { color: blue; }\n</style>\n";
+    const ss = try h.highlightAll(sv);
+    try testing.expectEqual(Role.type, roleAt(ss, std.mem.indexOf(u8, sv, "button").?));
+    try testing.expectEqual(Role.type, roleAt(ss, std.mem.indexOf(u8, sv, "number").?));
+    try testing.expectEqual(Role.constant, roleAt(ss, std.mem.indexOf(u8, sv, "3}").?));
+    const style = std.mem.indexOf(u8, sv, "<style>").?;
+    try testing.expectEqual(Role.type, roleAt(ss, std.mem.indexOfPos(u8, sv, style, "button").?));
+    try testing.expectEqual(Role.variable, roleAt(ss, std.mem.indexOfPos(u8, sv, style, "color").?));
+}
+
+test "inherits: the base query comes first, the file's own patterns after it, and every name resolves" {
+    const src = "; inherits: html_tags\n\n(foo) @bar\n";
+    const got = comptime table.withInherited(.highlights, src);
+    try testing.expect(std.mem.startsWith(u8, got, @import("ts_queries").html_highlights));
+    try testing.expect(std.mem.endsWith(u8, got, src));
+    // No modeline, nothing added; a later comment line saying `inherits:` is not one.
+    try testing.expectEqualStrings("(a) @b\n; inherits: html\n", comptime table.withInherited(.highlights, "(a) @b\n; inherits: html\n"));
 }
 
 test "incremental: an edit told to the tree reparses to the same spans as a fresh parse" {
