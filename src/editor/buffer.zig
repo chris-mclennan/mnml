@@ -2277,3 +2277,16 @@ test "vim / standard: motions and deletes step over whole grapheme clusters (an 
     // Unicode, never to a line): `$` lands on it and `x` takes only it.
     try vim("$x", "|ab\r\ncd\n", "a|b\ncd\n");
 }
+
+test "vim / standard: j / k keep the display column across tabs and wide glyphs" {
+    // Neovim 0.12.5 `--clean`, `ts=4` (the harness's tab width), each row.
+    try vim("fbjx", "|a\tb\n1234567890", "a\tb\n1234|67890");
+    try vim("5ljx", "|1234567890\n\t\tz", "1234567890\n\t|z");
+    try vim("3ljx", "|中文字abc\n1234567890", "中文字abc\n123456|890");
+    try vim("3ljx", "|1234567890\n中文字abc", "1234567890\n中|字abc");
+    try vim("8ljkx", "|abcdefghij\na\tb", "abcdefgh|j\na\tb");
+    try vim("$jx", "|x\t\ty\nabcdefghijkl", "x\t\ty\nabcdefghij|k");
+    // VS Code: three rights put the caret after `b` (screen column 5);
+    // Down lands under it, before the `6`.
+    try std_("<right><right><right><down>X", "|a\tb\n1234567890", "a\tb\n12345X|67890");
+}

@@ -110,14 +110,14 @@ pub fn addCursorBelow(ed: *Editor) Allocator.Error!void {
     const bottom = bottomRow(ed);
     if (bottom + 1 >= ed.lineCount()) return;
     const gc = ed.goalCol();
-    try addExtra(ed, ed.byteAtCol(bottom + 1, gc));
+    try addExtra(ed, ed.byteAtVcol(bottom + 1, gc));
 }
 
 pub fn addCursorAbove(ed: *Editor) Allocator.Error!void {
     const top = topRow(ed);
     if (top == 0) return;
     const gc = ed.goalCol();
-    try addExtra(ed, ed.byteAtCol(top - 1, gc));
+    try addExtra(ed, ed.byteAtVcol(top - 1, gc));
 }
 
 fn isId(b: u8) bool {

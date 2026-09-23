@@ -324,11 +324,22 @@ pub const Editor = struct {
         self.goal_col = null;
     }
 
+    /// The display column `j` / `k` aim for: the cells before the
+    /// cursor, tabs and wide glyphs at their width, so the cursor keeps
+    /// its place on screen from line to line.
     pub fn goalCol(self: *Editor) usize {
         if (self.goal_col) |c| return c;
-        const c = self.colAtByte(self.cursor);
+        const c = self.doc.vcolAtByte(self.cursor);
         self.goal_col = c;
         return c;
+    }
+
+    pub fn byteAtVcol(self: *const Editor, line: usize, vcol: usize) usize {
+        return self.doc.byteAtVcol(line, vcol);
+    }
+
+    pub fn vcolAtByte(self: *const Editor, b: usize) usize {
+        return self.doc.vcolAtByte(b);
     }
 
     pub fn firstNonWs(self: *const Editor, line: usize) usize {
@@ -494,6 +505,9 @@ pub const Editor = struct {
         if (self.extra_cursors.items.len != 0) self.normalizeExtras();
         if (out.buffer_changed and !is_undo_redo) try self.recordChange();
         if (!keep_goal) self.goal_col = null;
+        // `$` sticks to the end: the `j` / `k` after it land on each
+        // line's last character (`:help $`, curswant = MAXCOL).
+        if (op == .move_line_last_char) self.goal_col = std.math.maxInt(usize);
 
         if (out.buffer_changed and !had_multi and self.extra_cursors.items.len == 0 and out.text_edits.len == 0) {
             const edit: ?TextEdit = if (replace_range_info) |r| blk: {

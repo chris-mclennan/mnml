@@ -10,8 +10,9 @@
 
 const std = @import("std");
 const detect = @import("highlight").detect;
-// Extended grapheme clusters (uucode, through vaxis).
+// Extended grapheme clusters and their cell widths (uucode, through vaxis).
 const graphemes = @import("vaxis").unicode;
+const gwidth = @import("vaxis").gwidth;
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const editor_mod = @import("editor.zig");
@@ -611,6 +612,53 @@ pub const Document = struct {
         var c: usize = 0;
         while (i < b) : (c += 1) i = self.nextBoundary(i);
         return c;
+    }
+
+    /// Cells the character at `b` takes when it starts at display column
+    /// `vcol` — what the editor view paints: a tab runs to the next stop,
+    /// a wide cluster (CJK, most emoji) is two, a zero-width one none.
+    pub fn cellsAt(self: *const Document, b: usize, vcol: usize) usize {
+        const t = self.text.items;
+        if (b >= t.len or t[b] == '\n') return 1;
+        if (t[b] == '\t') {
+            const tw = @max(self.tab_width, 1);
+            return tw - vcol % tw;
+        }
+        if (t[b] >= 0x20 and t[b] < 0x7f) return 1;
+        return @min(gwidth.gwidth(t[b..self.nextBoundary(b)], .unicode), 2);
+    }
+
+    /// The display column the character at `b` starts on (`b` clamped).
+    pub fn vcolAtByte(self: *const Document, b_in: usize) usize {
+        const b = @min(b_in, self.text.items.len);
+        var i = self.lineStart(self.lineOfByte(b));
+        var v: usize = 0;
+        while (i < b) {
+            v += self.cellsAt(i, v);
+            i = self.nextBoundary(i);
+        }
+        return v;
+    }
+
+    /// The character whose cells cover display column `vcol` on `line`
+    /// (a tab or a wide glyph under it), the line end when the line is
+    /// narrower — where `j` / `k` land, as in Neovim and VS Code.
+    pub fn byteAtVcol(self: *const Document, line: usize, vcol: usize) usize {
+        const end = self.lineEnd(line);
+        var b = self.lineStart(line);
+        var v: usize = 0;
+        while (b < end) {
+            const w = self.cellsAt(b, v);
+            if (v + w > vcol) return b;
+            v += w;
+            b = self.nextBoundary(b);
+        }
+        return b;
+    }
+
+    /// Display cells `line` takes.
+    pub fn lineVcols(self: *const Document, line: usize) usize {
+        return self.vcolAtByte(self.lineEnd(line));
     }
 
     pub fn rowColAt(self: *const Document, b: usize) Pos {
