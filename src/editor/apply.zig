@@ -207,6 +207,8 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .block_shift => |s| try block.shift(ed, s.left, s.count, out),
         .block_join => |j| try block.join(ed, j.keep_space, out),
         .block_other_end_of_row => block.otherEndOfRow(ed),
+        .replace_chars_with_newline => |n| try line.replaceCharsWithNewline(ed, n, out),
+        .undo_line => try line.undoLine(ed, out),
         .delete_to_line_start_in_insert => try delete.deleteBackInInsert(ed, .line, out),
         .delete_word_right => try delete.deleteWordRight(ed, out),
         .delete_to_line_start => try delete.deleteToLineStart(ed, out),
@@ -384,7 +386,8 @@ test "property: cursor stays on a boundary and text stays valid UTF-8" {
         .toggle_line_comment,                                                   .{ .change_number_at_cursor = .{ .delta = 3 } },        .{ .reflow_paragraph = .{ .width = 12 } },                                                                       .{ .align_selection = .{ .on_char = '(' } },
         .{ .restore_last_selection = .linewise },                               .{ .restore_last_selection = .block },                  .{ .change_numbers_in_selection = .{ .delta = -2, .progressive = true } },                                       .{ .move_to_line_keep_col = 2 },
         .delete_word_left_in_insert,                                            .delete_to_line_start_in_insert,                        .{ .block_case = .upper },                                                                                       .{ .block_shift = .{ .left = false, .count = 2 } },
-        .{ .block_shift = .{ .left = true, .count = 1 } },                      .{ .block_join = .{ .keep_space = true } },             .block_other_end_of_row,
+        .{ .block_shift = .{ .left = true, .count = 1 } },                      .{ .block_join = .{ .keep_space = true } },             .block_other_end_of_row,                                                                                         .{ .replace_chars_with_newline = 2 },
+        .undo_line,
     };
     for (0..3000) |_| {
         const op = ops[rnd.uintLessThan(usize, ops.len)];

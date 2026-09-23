@@ -949,6 +949,9 @@ pub const Vim = struct {
             .replace => {
                 const n = self.count1();
                 self.resetPending();
+                // `r<CR>` splits the line; `5r<CR>` replaces five
+                // characters with ONE line break (`:help r`).
+                if (key.code == .enter and !key.mods.ctrl and !key.mods.alt) return ops(arena, &.{.{ .replace_chars_with_newline = n }});
                 const c = ch orelse return .consumed;
                 var b = Builder.init(arena);
                 for (0..n) |i| {
@@ -1556,6 +1559,10 @@ pub const Vim = struct {
                     'u' => {
                         self.resetPending();
                         return repeated(arena, .undo, n);
+                    },
+                    'U' => {
+                        self.resetPending();
+                        return ops(arena, &.{.undo_line});
                     },
                     'd', 'c', 'y', '>', '<', '=', '!' => {
                         self.op = switch (c) {

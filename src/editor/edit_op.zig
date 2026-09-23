@@ -216,6 +216,14 @@ pub const EditOp = union(enum) {
     block_join: struct { keep_space: bool },
     /// Visual block `O`: the cursor to the other end of its row.
     block_other_end_of_row,
+    /// vim's `{n}r<CR>`: the `n` characters from the cursor become one
+    /// line break (the new line takes the indent); fewer than `n` left
+    /// on the line and nothing changes.
+    replace_chars_with_newline: u32,
+    /// vim's `U` (`:help U`): the line the latest changes were made on
+    /// back as it was before them — itself a change, so `U` again puts
+    /// them back.
+    undo_line,
     toggle_case_char,
     change_number_at_cursor: struct { delta: i64 },
     /// `v_CTRL-A` / `v_CTRL-X`: the first number on every selected line;
@@ -248,7 +256,7 @@ pub const EditOp = union(enum) {
     atomic: []const EditOp,
 
     comptime {
-        std.debug.assert(@typeInfo(EditOp).@"union".fields.len == 156);
+        std.debug.assert(@typeInfo(EditOp).@"union".fields.len == 158);
     }
 
     /// Whether the op can change buffer text (vs. move / select / yank / meta).
