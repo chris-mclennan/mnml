@@ -334,6 +334,11 @@ pub const PromptPurpose = union(enum) {
     /// (`app/claude_mark.zig`). Its twin above; both are
     /// `app/mark_bake.zig`.
     claude_mark_svg,
+    /// `layout.save` / `layout.load` / `layout.delete`: the layout's
+    /// name (`app/named_layouts.zig`).
+    layout_save,
+    layout_load,
+    layout_delete,
 
     pub const BpTarget = struct { path: []u8, line: u32 };
     pub const SessionWorktreeName = struct { product: Config.AiProduct, profile: []u8 };
@@ -421,6 +426,9 @@ pub const ConfirmPurpose = union(enum) {
     script_install: ScriptInstall,
     /// // changed (lua-install): `script.remove` — the script's name.
     remove_script: []u8,
+    /// A named layout's load over a page with unsaved panes: the name
+    /// (owned). Load keeps them as background tabs (`named_layouts.zig`).
+    layout_load: []u8,
 
     pub const DeletePaths = struct { paths: [][]u8, permanent_only: bool };
     pub const ScriptInstall = struct { dir: []u8, name: []u8, url: []u8, source: @import("scripting/manifest.zig").Source };
@@ -428,7 +436,7 @@ pub const ConfirmPurpose = union(enum) {
 
     pub fn deinit(c: ConfirmPurpose, gpa: Allocator) void {
         switch (c) {
-            .delete_path, .remove_integration, .delete_session, .session_worktree_merge, .remove_script => |s| gpa.free(s),
+            .delete_path, .remove_integration, .delete_session, .session_worktree_merge, .remove_script, .layout_load => |s| gpa.free(s),
             .script_install => |i| {
                 gpa.free(i.dir);
                 gpa.free(i.name);
@@ -3439,6 +3447,7 @@ test {
     _ = @import("input/script_ops.zig");
     _ = @import("app/messages.zig");
     _ = @import("app/zen.zig");
+    _ = @import("app/named_layouts.zig");
     _ = @import("app/harpoon.zig");
     _ = @import("app/cmd_harpoon.zig");
     _ = @import("app/stress.zig");

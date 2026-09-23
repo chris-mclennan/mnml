@@ -1055,6 +1055,13 @@ pub const specs = [_]Spec{
     .{ .id = "view.close_split", .title = "Close split / buffer", .group = "view" },
     .{ .id = "layout.merge_to_tabs", .title = "Layout: merge splits into tabs (splits→tabs)", .group = "view" },
     .{ .id = "layout.spread_to_splits", .title = "Layout: spread tabs into splits (tabs→splits)", .group = "view" },
+    // Named layouts (`app/named_layouts.zig`): one tab page under a
+    // name in `.mnml/layouts/<name>.zon`. Palette, `:layout`, View →
+    // Layouts and which-key `space W`; no chord of their own.
+    .{ .id = "layout.save", .title = "Layout: save this tab page as a named layout…", .group = "view" },
+    .{ .id = "layout.load", .title = "Layout: load a named layout by name (replaces this tab page)…", .group = "view" },
+    .{ .id = "layout.delete", .title = "Layout: delete a named layout…", .group = "view" },
+    .{ .id = "layout.pick", .title = "Layout: pick a saved layout to load…", .group = "view" },
     .{ .id = "editor.input_mode_menu", .title = "Open mode menu (vim / standard)", .group = "editor" },
     // The `editor.highlight_max_bytes` override, per buffer: turn this
     // file's highlighting on after the limit skipped it, or switch any
@@ -1258,7 +1265,7 @@ pub const specs = [_]Spec{
     .{ .id = "view.keep_tab", .title = "Keep this tab (stop the next glance taking the preview over)", .group = "view", .keys = .{ .vim = &.{"space b k"}, .standard = &.{"ctrl+k enter"} } },
 };
 
-test "1122 specs, unique ids" {
+test "1126 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1295,6 +1302,8 @@ test "1122 specs, unique ids" {
     // + the three `view.rail_*` membership commands (railmove)
     // + the four `view.dock_item_move_*` reorder commands (dock-polish)
     // + `view.focus_prev_split`, the split walk backwards (splitcycle)
-    try std.testing.expectEqual(@as(usize, 1122), specs.len);
+    try std.testing.expectEqual(@as(usize, 1126), specs.len);
+    // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
+    try std.testing.expectEqual(@as(usize, 1126), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

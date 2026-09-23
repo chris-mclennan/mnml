@@ -224,6 +224,13 @@ const selection_rows = [_]MenuItem{
 /// `view.commands_reference` has no runner yet, and a row that toasts
 /// "not implemented" is dead. // changed (bottom-dock): "Toggle bottom
 /// panel" was left out for the same reason and is back — the dock runs.
+const layouts_rows = [_]MenuItem{
+    .{ .icon = "\u{F0193}", .icon_ascii = "s", .label = "Save this tab page as…", .action = .{ .command = .@"layout.save" } },
+    .{ .icon = "\u{F115}", .icon_ascii = "/", .label = "Load layout…", .action = .{ .command = .@"layout.pick" } },
+    .{ .icon = "\u{F292}", .icon_ascii = "#", .label = "Load layout by name…", .action = .{ .command = .@"layout.load" } },
+    sep(.{ .icon = "\u{F1F8}", .icon_ascii = "x", .label = "Delete layout…", .action = .{ .command = .@"layout.delete" } }),
+};
+
 const view_rows = [_]MenuItem{
     .{ .icon = "\u{F0770}", .icon_ascii = "/", .label = "File browser pane", .action = .{ .command = .@"files.open" } },
     .{ .icon = "\u{F0770}", .icon_ascii = "/", .label = "Dual file panes (commander)", .action = .{ .command = .@"files.open_split" } },
@@ -237,6 +244,10 @@ const view_rows = [_]MenuItem{
     .{ .icon = "\u{F06E}", .icon_ascii = "o", .label = "Enter full screen", .action = .{ .command = .@"view.fullscreen" } },
     .{ .icon = "\u{F02D6}", .icon_ascii = "?", .label = "Toggle hover-help", .action = .{ .command = .@"view.toggle_hover_help" } },
     .{ .icon = "\u{F0130}", .icon_ascii = "o", .label = "Toggle workspace dots", .action = .{ .command = .@"view.toggle_workspace_dots" } },
+    // Named layouts: this tab page under a name, and back
+    // (`app/named_layouts.zig`). The rows are the four commands; the
+    // saved names are the picker's.
+    sep(.{ .icon = "\u{F0DB}", .icon_ascii = "#", .label = "Layouts", .action = .none, .submenu = &layouts_rows }),
     sep(.{ .icon = "\u{F1FC}", .icon_ascii = "p", .label = "Pick theme…", .action = .{ .command = .@"theme.pick" } }),
     .{ .icon = "\u{F042}", .icon_ascii = "t", .label = "Toggle theme", .action = .{ .command = .@"theme.toggle" } },
     // The way back when the frame has been hidden piece by piece: full
@@ -621,7 +632,8 @@ fn forEachRow(comptime f: fn (Menu, MenuItem) anyerror!void) !void {
 test "menu rows: ten menus with Rust's row counts; every row is a registered command with a runner, or the recent-files parent" {
     try t.expectEqual(@as(usize, 10), Menu.count);
     // // changed (bottom-dock): View grew "Toggle bottom panel" (14).
-    const counts = [Menu.count]usize{ 3, 10, 6, 7, 14, 6, 6, 3, 15, 3 };
+    // // changed (layouts): View grew the "Layouts" submenu row (15).
+    const counts = [Menu.count]usize{ 3, 10, 6, 7, 15, 6, 6, 3, 15, 3 };
     for (Menu.all, counts) |m, n| try t.expectEqual(n, rowsOf(m).len);
     const Check = struct {
         var missing: usize = 0;
@@ -631,7 +643,11 @@ test "menu rows: ten menus with Rust's row counts; every row is a registered com
                     std.debug.print("menu row without a runner: {s} -> {s}\n", .{ row.label, command.name(id) });
                     missing += 1;
                 },
-                .none => {
+                // The two parents of a submenu: File's recent files, View's layouts.
+                .none => if (m == .view) {
+                    try t.expectEqualStrings("Layouts", row.label);
+                    try t.expectEqual(@as(usize, 4), row.submenu.len);
+                } else {
                     try t.expectEqual(Menu.file, m);
                     try t.expectEqualStrings("Open recent file", row.label);
                 },

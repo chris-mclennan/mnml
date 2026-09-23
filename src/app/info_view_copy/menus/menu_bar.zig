@@ -251,6 +251,33 @@ pub const rows = [_]Row{
         .body = "The way back when the frame has gone piece by piece: leaves full screen and the zoom, shows the tree, the menu bar, the bufferline and the statusline, puts the tree width back to `ui.tree_width`, and turns a hidden menu bar or activity bar back on. The open tabs and the split structure stay — only the sizes go back to equal halves.",
         .links = &.{ .{ .command = .{ .id = .@"view.reset_layout", .label = "Reset the view" } }, .{ .command = .{ .id = .@"view.equalize_splits", .label = "Equalize the splits" } }, .{ .settings = .{ .row = copy.settingsRow("ui.tree_width"), .label = "Tree width" } } },
     } },
+    // ── View → Layouts (`app/named_layouts.zig`) ──
+    .{ .menu = "View", .label = "Layouts", .entry = .{
+        .title = "Layouts",
+        .body = "Named layouts: this tab page written down under a name in `.mnml/layouts/<name>.zon` — its splits and their ratios, the focus, the zoom, and what reopens each pane (a file, a terminal's cwd and command, an AI session, an `.http` block, a browser URL, a git view, a search). Loading one replaces the current tab page. The same four commands are `:layout save|load|delete|list` and which-key `space W`.",
+        .keys = &.{.{ .chord = "→ / ←", .label = "Open / close the submenu" }},
+        .links = &.{ .{ .command = .{ .id = .@"layout.save", .label = "Save this page" } }, .{ .command = .{ .id = .@"layout.pick", .label = "Load one" } }, copy.docsSection("Named layouts") },
+    } },
+    .{ .menu = "View", .parent = "Layouts", .label = "Save this tab page as…", .entry = .{
+        .title = "Save this tab page as…",
+        .body = "Asks for a name and writes this tab page to `.mnml/layouts/<name>.zon`, workspace paths relative so the file can be committed; the same name again overwrites it. Scratch buffers and list panes are left out — nothing reopens them. A layout with terminal commands is also recorded as this mnml's own, so it loads its commands even in an untrusted workspace.",
+        .links = &.{ .{ .command = .{ .id = .@"layout.save", .label = "Save it" } }, copy.docsSection("Named layouts") },
+    } },
+    .{ .menu = "View", .parent = "Layouts", .label = "Load layout…", .entry = .{
+        .title = "Load layout…",
+        .body = "A picker over the saved layouts, each row saying how many panes and splits it holds and what they are; Enter replaces this tab page with it. Panes with unsaved changes ask first and then stay open as background tabs, and a terminal command from a file this mnml did not write only runs in a trusted workspace — refused otherwise, with a toast.",
+        .links = &.{ .{ .command = .{ .id = .@"layout.pick", .label = "Pick one" } }, .{ .command = .{ .id = .@"tab.reopen", .label = "Bring the replaced page back" } }, .{ .command = .{ .id = .@"workspace.review_trust", .label = "Workspace trust" } } },
+    } },
+    .{ .menu = "View", .parent = "Layouts", .label = "Load layout by name…", .entry = .{
+        .title = "Load layout by name…",
+        .body = "Asks for a layout's name and loads it over this tab page — the typed twin of Load layout…, for a name you already know; `:layout load <name>` is the same from the `:` line and `:layout load!` skips the unsaved-changes question. An unknown name says so and leaves the page alone.",
+        .links = &.{ .{ .command = .{ .id = .@"layout.load", .label = "Load by name" } }, .{ .command = .{ .id = .@"layout.pick", .label = "Pick from the list instead" } } },
+    } },
+    .{ .menu = "View", .parent = "Layouts", .label = "Delete layout…", .entry = .{
+        .title = "Delete layout…",
+        .body = "Asks for a layout's name and deletes its file from `.mnml/layouts/`, along with this mnml's record of having written it — a later file under the same name is treated as someone else's. The panes on screen are untouched.",
+        .links = &.{ .{ .command = .{ .id = .@"layout.delete", .label = "Delete one" } }, .{ .command = .{ .id = .@"layout.pick", .label = "See the saved ones" } } },
+    } },
     // ── Go ──
     .{ .menu = "Go", .label = "Go to file…", .entry = .{
         .title = "Go to file…",

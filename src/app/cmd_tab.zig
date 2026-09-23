@@ -201,7 +201,7 @@ fn shownElsewhere(app: *App, gone: *const Layout, id: PaneId) bool {
 /// A page's panes when the page goes: one another page still shows is
 /// left to that page; of the rest, clean ones close and dirty ones
 /// become background tabs of `home` (the page that stays).
-fn retirePage(app: *App, gone: *Layout, home: *Layout) CommandError!void {
+pub fn retirePage(app: *App, gone: *Layout, home: *Layout) CommandError!void {
     const arena = app.frame.allocator();
     try rememberPage(app, gone);
     const panes = try gone.allPanes(arena);

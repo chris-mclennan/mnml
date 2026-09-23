@@ -182,6 +182,7 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     // the vim profile's way in and out (`app/zen.zig`).
     if (eqAny(verb, &.{ "fullscreen", "zen" })) return command.run(app, .{ .static = .@"view.fullscreen" });
     if (eqAny(verb, &.{"resetview"})) return command.run(app, .{ .static = .@"view.reset_layout" });
+    if (eqAny(verb, &.{"layout"})) return @import("named_layouts.zig").ex(app, args);
     if (eqAny(verb, &.{ "mes", "messages", "Messages" })) {
         if (bang) return @import("messages.zig").dump(app);
         return command.run(app, .{ .static = .@"messages.show" });

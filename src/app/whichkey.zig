@@ -268,6 +268,13 @@ pub const root: Node = .{
                 cmd('s', .@"snippet.pick", "snippet…"),
                 cmd('x', .@"snippet.expand", "expand snippet at cursor"),
             }),
+            // Named layouts — the tab page under a name (`app/named_layouts.zig`).
+            group('W', "+layouts", &.{
+                cmd('s', .@"layout.save", "save this tab page as…"),
+                cmd('l', .@"layout.pick", "load a layout…"),
+                cmd('n', .@"layout.load", "load by name…"),
+                cmd('d', .@"layout.delete", "delete a layout…"),
+            }),
             group('H', "+harpoon", &.{
                 cmd('a', .@"harpoon.add", "pin active file"),
                 cmd('m', .@"harpoon.menu", "menu / picker"),
@@ -566,7 +573,7 @@ test "every group in both profiles has a glyph with an ascii twin, and the count
     }
     // The count is a walk of the tree, not a literal: an iterative
     // sweep of every leaf beneath a node agrees with `chordCount`.
-    for ([_][]const u8{ "", "f", "s", "g", "L", "Lc", "t", "a", "l", "d", "T", "h", "i", "H", "I", "P", "b", "c", "r" }) |path| {
+    for ([_][]const u8{ "", "f", "s", "g", "L", "Lc", "t", "a", "l", "d", "T", "h", "i", "H", "I", "P", "b", "c", "r", "W" }) |path| {
         for ([_]bool{ true, false }) |vim| {
             const n = lookupIn(path, vim) orelse continue;
             try t.expectEqual(leavesUnder(n, vim), chordCount(n, vim));

@@ -1288,6 +1288,54 @@ screen (`view.fullscreen`) composes with it: full screen hides the
 chrome, the zoom hides the sibling splits, and with both on one pane has
 the window.
 
+## Named layouts
+
+A named layout is one tab page written down under a name and put back
+on demand. `:layout save <name>` (or `layout.save`, which prompts) writes
+the current page to `.mnml/layouts/<name>.zon`: its split tree with the
+ratios, which pane is focused, its zoom, and for every pane its kind and
+what reopens it — a file's path (editor, markdown preview, image), a
+terminal's cwd and command line, an AI session's CLI and id (it comes
+back resumed), an `.http` file and its `### block`, a browser pane's
+URL, a git status / graph / worktree diff by repo, a Search by its query
+and options. It is the same shape `.mnml/session.zon` uses for a page,
+plus the request and browser panes the session leaves out. Paths under
+the workspace are written relative to it, so a layout can be committed
+and used from another clone. Scratch buffers and list panes are left
+out; a page with nothing else is refused.
+
+| | |
+|---|---|
+| `:layout save <name>` · `layout.save` | write this tab page under `<name>` (letters, digits, `-` `_` `.`, not first; 64 at most); the same name overwrites |
+| `:layout load <name>` · `layout.load` | replace this tab page with the layout |
+| `:layout load! <name>` | the same without the unsaved-changes question |
+| `layout.pick` | a picker over the saved layouts, each with its pane / split count and what it holds; the pick loads |
+| `:layout delete <name>` · `layout.delete` | delete the file |
+| `:layout list` (or a bare `:layout`) | toast the saved names |
+
+The View menu's *Layouts* submenu and which-key `space W` (`s` save,
+`l` pick, `n` load by name, `d` delete) carry the same four commands.
+
+Loading replaces the current tab page. Its panes that no other page
+shows close; when any of them has unsaved changes the confirm box asks
+first (Cancel holds the focus), and on Load those stay open as
+background tabs of the new page — nothing is lost, and `tab.reopen`
+brings the replaced page's files back. A pane whose subject went away
+(a deleted file, a directory that is no longer a repo, no Chrome for a
+browser pane) is skipped and counted in the toast. A terminal with a
+command line comes back running it — unlike a session restore, a load
+is the user asking for it.
+
+**Trust.** A layout file is workspace content, so its terminal commands
+and AI sessions are exec-bearing: in an untrusted workspace they are
+refused with a toast (the rest of the layout opens), as `.startup.layout`'s
+pty entries are (Workspace trust above). The exception is a file this
+mnml wrote: `save` records a fingerprint of the file's command lines and
+their cwds in `<data root>/written_layouts.zon`, and a file whose commands
+still match it loads them anywhere — edit a command by hand and it is
+someone else's again. A plain shell (no command) runs nothing the file
+chose and is never refused.
+
 ## Session worktrees
 
 A Claude / Codex session can start in a git worktree of its own —

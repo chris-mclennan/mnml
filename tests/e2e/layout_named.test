@@ -1,0 +1,95 @@
+# width: 120
+# height: 40
+# Named layouts: this tab page under a name in `.mnml/layouts/<name>.zon`
+# and back — `:layout save|load|delete|list`, the `layout.save` prompt,
+# the `layout.pick` picker, which-key `space W`. Loading replaces the
+# current tab page; unsaved changes ask first through the confirm box.
+write a.txt "alpha alpha\n"
+write b.txt "bravo bravo\n"
+write c.txt "charlie charlie\n"
+open a.txt
+command view.split_right
+open b.txt
+expect screen contains "alpha alpha"
+expect screen contains "bravo bravo"
+ex layout save two
+expect screen contains "layout two saved"
+expect file .mnml/layouts/two.zon contains "b.txt"
+expect file .mnml/layouts/two.zon contains ".split"
+
+# A different page: one split, another file.
+command view.close_split
+open c.txt
+expect screen contains "charlie charlie"
+expect screen lacks "bravo bravo"
+ex layout load two
+expect screen contains "layout two loaded"
+expect screen contains "alpha alpha"
+expect screen contains "bravo bravo"
+expect screen lacks "charlie charlie"
+ex layout list
+expect screen contains "layouts (1): two"
+
+# The zoom rides in the layout too.
+command view.toggle_zoom
+expect screen contains " zoom "
+ex layout save zoomed
+command view.toggle_zoom
+expect screen lacks " zoom "
+ex layout load zoomed
+expect screen contains " zoom "
+command view.toggle_zoom
+
+# layout.save prompts through the prompt; layout.pick lists each
+# layout with what it holds, and the pick loads.
+command layout.save
+expect screen contains "Save this tab page as layout"
+type "three"
+key enter
+expect screen contains "layout three saved"
+command layout.pick
+expect screen contains "Load layout"
+expect screen contains "zoomed"
+expect screen contains "3 panes · 2 splits · zoomed"
+key esc
+
+# which-key: the `+layouts` group under the leader.
+command editor.use_vim
+key space
+wait 300
+expect screen contains "+layouts"
+key W
+wait 300
+expect screen contains "save this tab page as"
+expect screen contains "load a layout"
+key esc
+
+# Unsaved changes on the page: the confirm box asks, Cancel (focused)
+# keeps the page, Load keeps the dirty buffer open as a tab. A file the
+# layout reopens itself is not asked about — c.txt is not in `two`.
+open c.txt
+key i
+type "zz"
+key esc
+expect dirty true
+ex layout load two
+expect screen contains "Load layout?"
+expect screen contains "Unsaved:"
+key enter
+expect screen contains "not loaded"
+ex layout load two
+expect screen contains "Load layout?"
+key l
+expect screen contains "layout two loaded"
+expect screen contains "alpha alpha"
+command picker.buffers
+expect screen contains "c.txt ●"
+key esc
+
+# Delete; a name that is not one is refused.
+ex layout delete three
+expect screen contains "layout three deleted"
+ex layout save ../up
+expect screen contains "is not a name"
+ex layout load three
+expect screen contains "no layout named three"
