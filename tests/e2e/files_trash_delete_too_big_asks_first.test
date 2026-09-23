@@ -1,0 +1,19 @@
+# A folder too large for the trash (256 MB+): the delete confirm says
+# so before the choice and offers only the permanent form — `d` (the
+# trash) is not on offer, so pressing it deletes nothing.
+write keep.txt "k"
+shell mkdir data && dd if=/dev/zero of=data/big.bin bs=1 count=0 seek=300m 2>/dev/null && echo x > data/notes.txt
+command view.focus_tree
+key r
+key home
+command file.delete
+expect screen contains "Delete data recursively?"
+expect screen contains "too large"
+key d
+wait 300
+shell test -d data && echo KEPT > kept.out || echo GONE > kept.out
+expect file kept.out contains "KEPT"
+key p
+wait 300
+shell test -d data && echo KEPT > gone.out || echo GONE > gone.out
+expect file gone.out contains "GONE"

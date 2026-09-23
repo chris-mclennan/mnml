@@ -171,6 +171,25 @@ pub fn measure(io: Io, gpa: Allocator, path: []const u8) u64 {
     return total;
 }
 
+/// Whether `path` holds at least `limit` bytes — `measure`, stopping
+/// as soon as the answer is yes.
+pub fn atLeast(io: Io, gpa: Allocator, path: []const u8, limit: u64) bool {
+    const st = Io.Dir.cwd().statFile(io, path, .{ .follow_symlinks = false }) catch return false;
+    if (st.kind != .directory) return st.size >= limit;
+    var root = Io.Dir.cwd().openDir(io, path, .{ .iterate = true }) catch return false;
+    defer root.close(io);
+    var walker = root.walk(gpa) catch return false;
+    defer walker.deinit();
+    var total: u64 = 0;
+    while (walker.next(io) catch null) |entry| {
+        if (entry.kind == .directory) continue;
+        const s = entry.dir.statFile(io, entry.basename, .{ .follow_symlinks = false }) catch continue;
+        total += s.size;
+        if (total >= limit) return true;
+    }
+    return false;
+}
+
 /// The editor panes with unsaved edits on `path` — or under it, a
 /// folder — and the first such file's path.
 fn dirtyUnder(app: *App, path: []const u8) struct { n: usize, first: ?[]const u8 } {
@@ -247,7 +266,14 @@ pub fn confirmDelete(app: *App, paths: []const []const u8) Allocator.Error!void 
         n += 1;
     }
     const in_trash = isTrashEntry(app, paths[0]);
-    const permanent_only = in_trash;
+    // Too large for the trash: the delete can only be permanent, and
+    // the box says so BEFORE the choice — never an undoable-looking
+    // Delete that turns out permanent afterwards.
+    var too_big = false;
+    if (!in_trash) for (paths) |p| {
+        if (atLeast(app.io, app.gpa, p, app.trash.bounds.skip_above_bytes)) too_big = true;
+    };
+    const permanent_only = in_trash or too_big;
     var dirty_n: usize = 0;
     var dirty_first: ?[]const u8 = null;
     for (paths) |p| {
@@ -263,18 +289,19 @@ pub fn confirmDelete(app: *App, paths: []const []const u8) Allocator.Error!void 
     else
         try std.fmt.allocPrint(arena, "  — unsaved changes in {s}: the trash keeps them", .{if (dirty_n == 1) app.relPath(dirty_first.?) else try std.fmt.allocPrint(arena, "{d} open files", .{dirty_n})});
     const trash_note = if (in_trash) "  (permanent — already in the trash)" else "";
+    const big_note = if (too_big) try std.fmt.allocPrint(arena, "  — too large for the trash ({d} MB+): permanent", .{app.trash.bounds.skip_above_bytes / (1024 * 1024)}) else "";
     const first_dir = if (Io.Dir.cwd().statFile(app.io, paths[0], .{})) |st| st.kind == .directory else |_| false;
     // Rust's question: `Delete <rel>?`, a directory's with its entry
     // count, an entry already in the trash flagged permanent. The
     // buttons say where it goes.
     const msg = if (paths.len > 1)
-        try std.fmt.allocPrint(gpa, "Delete {d} items?{s}{s}", .{ paths.len, trash_note, dirty_note })
+        try std.fmt.allocPrint(gpa, "Delete {d} items?{s}{s}{s}", .{ paths.len, trash_note, big_note, dirty_note })
     else if (first_dir) blk: {
         const n_entries = entryCount(app, paths[0], 500);
         var nb: [24]u8 = undefined;
         const hint = if (n_entries >= 500) "500+ entries" else std.fmt.bufPrint(&nb, "{d} entr{s}", .{ n_entries, if (n_entries == 1) "y" else "ies" }) catch "entries";
-        break :blk try std.fmt.allocPrint(gpa, "Delete {s} recursively? ({s}){s}{s}", .{ app.relPath(paths[0]), hint, trash_note, dirty_note });
-    } else try std.fmt.allocPrint(gpa, "Delete {s}?{s}{s}", .{ app.relPath(paths[0]), trash_note, dirty_note });
+        break :blk try std.fmt.allocPrint(gpa, "Delete {s} recursively? ({s}){s}{s}{s}", .{ app.relPath(paths[0]), hint, trash_note, big_note, dirty_note });
+    } else try std.fmt.allocPrint(gpa, "Delete {s}?{s}{s}{s}", .{ app.relPath(paths[0]), trash_note, big_note, dirty_note });
     errdefer gpa.free(msg);
     const choices: []const app_mod.Confirm.Choice = if (permanent_only) &permanent_choices else &delete_choices;
     app.overlay.deinit(gpa);
@@ -293,6 +320,34 @@ pub fn confirmDelete(app: *App, paths: []const []const u8) Allocator.Error!void 
             .return_focus = if (app.focus == .tree) .tree else null,
         },
     };
+    app.focus = .overlay;
+    app.needs_render = true;
+}
+
+/// A trash delete that could not go to the trash: ask again, naming
+/// why, with only the permanent form (and Cancel, the default) on offer.
+fn confirmPermanent(app: *App, paths: []const []const u8, why: []const u8) Allocator.Error!void {
+    const gpa = app.gpa;
+    const owned = try gpa.alloc([]u8, paths.len);
+    var n: usize = 0;
+    errdefer {
+        for (owned[0..n]) |p| gpa.free(p);
+        gpa.free(owned);
+    }
+    for (paths) |p| {
+        owned[n] = try gpa.dupe(u8, p);
+        n += 1;
+    }
+    const what = if (paths.len == 1) app.relPath(paths[0]) else try std.fmt.allocPrint(app.frame.allocator(), "{d} items", .{paths.len});
+    const msg = try std.fmt.allocPrint(gpa, "{s} was not deleted — {s}. Delete it permanently?", .{ what, why });
+    errdefer gpa.free(msg);
+    app.overlay.deinit(gpa);
+    app.overlay = .{ .confirm = .{
+        .state = .{ .title = "Delete permanently", .message = msg, .choices = &permanent_choices, .selected = permanent_choices.len - 1 },
+        .purpose = .{ .delete_paths = .{ .paths = owned, .permanent_only = true } },
+        .message = msg,
+        .return_focus = if (app.focus == .tree) .tree else null,
+    } };
     app.focus = .overlay;
     app.needs_render = true;
 }
@@ -342,13 +397,23 @@ pub fn deletePaths(app: *App, paths: []const []const u8, permanent: bool) Alloca
     var last_note: []const u8 = "";
     const trash_dir = try dir(app, arena);
     const stamp = nowUnix(app);
+    // What the trash could not take — too large, or the move into it
+    // failed (another volume, a read-only data root). The user picked
+    // the undoable delete, so these are NOT removed: the box asks again.
+    var kept: std.ArrayListUnmanaged([]const u8) = .empty;
+    var kept_why: []const u8 = "";
     for (paths) |path| {
         const is_dir = if (Io.Dir.cwd().statFile(app.io, path, .{ .follow_symlinks = false })) |st| st.kind == .directory else |_| false;
         const name = std.fs.path.basename(path);
         const already = isTrashEntry(app, path);
-        const too_big = !permanent and !already and measure(app.io, app.gpa, path) >= bounds.skip_above_bytes;
+        const too_big = !permanent and !already and atLeast(app.io, app.gpa, path, bounds.skip_above_bytes);
         var moved = false;
-        if (!permanent and !already and !too_big) {
+        if (!permanent and !already) {
+            if (too_big) {
+                try kept.append(arena, path);
+                kept_why = try std.fmt.allocPrint(arena, "too large for the trash ({d} MB+)", .{bounds.skip_above_bytes / (1024 * 1024)});
+                continue;
+            }
             Io.Dir.cwd().createDirPath(app.io, trash_dir) catch {};
             const entry = try freeEntryName(app, arena, trash_dir, name, stamp);
             const dest = try std.fs.path.join(arena, &.{ trash_dir, entry });
@@ -356,7 +421,11 @@ pub fn deletePaths(app: *App, paths: []const []const u8, permanent: bool) Alloca
                 moved = true;
                 try recordOrigin(app, entry, path, stamp);
                 try keepUnsaved(app, path, dest);
-            } else |_| {}
+            } else |err| {
+                try kept.append(arena, path);
+                kept_why = try std.fmt.allocPrint(arena, "the trash could not take it: {s}", .{@errorName(err)});
+                continue;
+            }
         }
         if (!moved) {
             removeOutright(app, path) catch |err| {
@@ -365,7 +434,7 @@ pub fn deletePaths(app: *App, paths: []const []const u8, permanent: bool) Alloca
                 continue;
             };
             removed += 1;
-            last_note = if (already or permanent) "permanently" else if (too_big) "no undo — too large to keep" else "no undo — trash unavailable";
+            last_note = "permanently";
         } else trashed += 1;
         try closeBuffersUnder(app, path, is_dir);
         dropRecent(app, path, is_dir);
@@ -376,6 +445,10 @@ pub fn deletePaths(app: *App, paths: []const []const u8, permanent: bool) Alloca
     if (failed > 0) {
         app.toast("delete failed: {s}", .{last_note});
         return;
+    }
+    if (kept.items.len > 0) {
+        if (trashed > 0) app.toast("deleted {d} item{s} — files.trash restores {s}", .{ trashed, if (trashed == 1) "" else "s", if (trashed == 1) "it" else "them" });
+        return confirmPermanent(app, kept.items, kept_why);
     }
     if (paths.len == 1) {
         const rel = app.relPath(paths[0]);
@@ -729,7 +802,7 @@ test "a directory round-trips through the trash into its own parent; restore ref
     try t.expect(std.mem.indexOf(u8, app.diag.msg.?, "no record") != null);
 }
 
-test "bounds: age prunes by the stamp, the size cap evicts oldest first, an oversize delete skips the trash" {
+test "bounds: age prunes by the stamp, the size cap evicts oldest first, an oversize delete is permanent only when asked" {
     var env = try Env.init();
     defer env.deinit();
     var app = try env.app();
@@ -759,15 +832,28 @@ test "bounds: age prunes by the stamp, the size cap evicts oldest first, an over
     prune(&app, now, .{ .max_total_bytes = 150 });
     try t.expect(!exists(&app, try std.fs.path.join(arena, &.{ td, names[1] })));
     try t.expect(exists(&app, try std.fs.path.join(arena, &.{ td, names[2] })));
-    // A delete of something at or above the per-entry bound skips the trash.
+    // Something at or above the per-entry bound cannot go to the trash:
+    // the confirm says so up front and offers only the permanent form;
+    // a trash delete that meets it anyway (it grew, or the confirm was
+    // skipped) removes nothing and asks again.
     app.trash.bounds.skip_above_bytes = 50;
     try env.tmp.dir.writeFile(t.io, .{ .sub_path = "ws/huge.bin", .data = "h" ** 64 });
     const huge = try std.fs.path.join(t.allocator, &.{ env.root, "huge.bin" });
     defer t.allocator.free(huge);
+    try confirmDelete(&app, &.{huge});
+    try t.expect(std.mem.indexOf(u8, app.overlay.confirm.state.message, "too large for the trash") != null);
+    try t.expectEqual(@as(usize, 2), app.overlay.confirm.state.choices.len);
+    try app.handle(.{ .key = Key.char('d') }); // not a choice here
+    try t.expect(exists(&app, huge));
+    try app.handle(.{ .key = Key.named(.esc) });
     try deletePaths(&app, &.{huge}, false);
+    try t.expect(exists(&app, huge));
+    try t.expect(app.overlay == .confirm);
+    try t.expect(std.mem.indexOf(u8, app.overlay.confirm.state.message, "huge.bin was not deleted — too large for the trash") != null);
+    try app.handle(.{ .key = Key.char('p') });
     try t.expect(!exists(&app, huge));
     try t.expectEqual(@as(usize, 2), count(&app)); // new.txt + notes
-    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "too large") != null);
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "permanently") != null);
     // The first tick prunes; the next one within ten minutes does not run again.
     app.trash.bounds = .{};
     tick(&app, 1000);
@@ -776,6 +862,31 @@ test "bounds: age prunes by the stamp, the size cap evicts oldest first, an over
     try t.expectEqual(@as(i64, 1000), app.trash.last_prune_ms);
     tick(&app, 1000 + prune_every_ms);
     try t.expectEqual(@as(i64, 1000 + prune_every_ms), app.trash.last_prune_ms);
+}
+
+test "a trash delete the trash cannot take is not removed: the box asks again, naming why" {
+    var env = try Env.init();
+    defer env.deinit();
+    var app = try env.app();
+    defer app.deinit();
+    try env.tmp.dir.writeFile(t.io, .{ .sub_path = "ws/a.txt", .data = "a" });
+    const a = try std.fs.path.join(t.allocator, &.{ env.root, "a.txt" });
+    defer t.allocator.free(a);
+    // A file where the trash directory should be: every move into it fails.
+    const td = try dir(&app, app.frame.allocator());
+    if (std.fs.path.dirname(td)) |parent| try Io.Dir.cwd().createDirPath(t.io, parent);
+    try Io.Dir.cwd().writeFile(t.io, .{ .sub_path = td, .data = "not a directory" });
+    try confirmDelete(&app, &.{a});
+    try app.handle(.{ .key = Key.char('d') });
+    try t.expect(exists(&app, a));
+    try t.expect(app.overlay == .confirm);
+    try t.expect(std.mem.indexOf(u8, app.overlay.confirm.state.message, "a.txt was not deleted — the trash could not take it") != null);
+    // Cancel is the default; Enter keeps the file.
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expect(exists(&app, a));
+    try deletePaths(&app, &.{a}, false);
+    try app.handle(.{ .key = Key.char('p') });
+    try t.expect(!exists(&app, a));
 }
 
 test "the confirm: Cancel is the default (Rust's), d trashes with a toast, p skips the trash; inside the trash only the permanent form is offered" {

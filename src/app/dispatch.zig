@@ -1635,7 +1635,10 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
         },
         .delete_paths => |d| {
             try trash.acceptDelete(app, @ptrCast(d.paths), d.permanent_only, choice);
+            // Only what is really gone: a path the trash could not take
+            // is still there (the box asks again about it).
             if (choice == 0) for (d.paths) |p| {
+                if (std.Io.Dir.cwd().access(app.io, p, .{})) continue else |_| {}
                 notes.onPathRemoved(app, p);
                 findings.onPathRemoved(app, p);
             };
