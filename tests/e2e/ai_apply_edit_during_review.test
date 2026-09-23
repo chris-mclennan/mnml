@@ -1,0 +1,28 @@
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# `ai.fix` on a whole file, `a` opens the ai.apply review, and the user
+# adds a line above the code while the review is open. Enter must apply
+# the proposal to the text it was made for, wherever that text now sits
+# — not to the byte range the job started with, which would destroy the
+# new line and duplicate the file's tail.
+# The fake `claude` answers every prompt with one fenced block.
+write bin/claude #!/bin/sh\ncat >/dev/null\nprintf 'Here:\\n\\n```\\nALPHA\\nb\\nc\\n```\\n'
+shell chmod +x bin/claude
+write a.txt "a\nb\nc\n"
+open a.txt
+command ai.fix
+wait 1200
+expect screen contains "ALPHA"
+key a
+expect screen contains "1 of 1 hunk accepted"
+# Back to the editor (the review stays open beside it) and add a line.
+open a.txt
+key ctrl+home
+type "ZZZ\n"
+expect screen contains "ZZZ"
+command view.focus_right
+expect screen contains "1 of 1 hunk accepted"
+key enter
+command file.save
+expect file a.txt contains "ZZZ\nALPHA\nb\nc\n"
+expect file a.txt lacks "c\nb\nc"
+

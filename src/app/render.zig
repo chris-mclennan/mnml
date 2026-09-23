@@ -2175,6 +2175,9 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
     // So are the document's conflict regions: a marker can only appear
     // where the log says the text changed.
     try conflicts.sync(app, e);
+    // And so are the AI panes' apply targets and the open reviews: the
+    // range a proposal replaces moves with the edits made behind it.
+    ai_apply.followAll(app, e.buf.doc);
     ed.doc.edits.trim(@min(e.syntax.trimFloor(), script_decor.minSeen(app, e.buf.doc) orelse std.math.maxInt(u64)));
     // Spans around the viewport and around the cursor — the view may
     // scroll to the cursor inside `draw`, so both are covered. Two

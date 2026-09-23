@@ -491,7 +491,7 @@ pub fn aiContextReady(app: *App, path: []const u8, base: []const u8, ours: []con
         \\{s}```
     , .{ path, block, if (base.len > 0) "The common base (the whole file, `:1:`):\n```\n" else "", capped(base), if (base.len > 0) "```\n\n" else "", capped(ours), capped(theirs) });
     const title = try std.fmt.allocPrint(arena, "ai: resolve conflict {d} of {s}", .{ w.region + 1, std.fs.path.basename(path) });
-    _ = ai_app.askProduct(app, st.ai_product, title, prompt, .git, .{ .pane = w.pane, .start = range[0], .end = range[1] }) catch |err| {
+    _ = ai_app.askProduct(app, st.ai_product, title, prompt, .git, .take(w.pane, e.buf.doc, range[0], range[1])) catch |err| {
         if (err == error.OutOfMemory) return error.OutOfMemory;
         git.runToast(app, err);
         return;

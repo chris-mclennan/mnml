@@ -205,7 +205,9 @@ pub const State = struct {
 pub const AiPane = struct {
     pub const Status = enum { running, done, failed };
     pub const Kind = enum { ask, action, chat, git };
-    pub const ApplyTarget = struct { pane: PaneId, start: usize, end: usize };
+    /// What `ai.apply` replaces: the range the action was run on,
+    /// followed along the editor's edits (`ai_apply.Anchor`).
+    pub const ApplyTarget = ai_apply.Anchor;
 
     gpa: Allocator,
     /// Owned; the tab label.
@@ -222,10 +224,15 @@ pub const AiPane = struct {
     has_session: bool = false,
     /// What `ai.apply` replaces.
     apply: ?ApplyTarget = null,
+    /// Owned: the text `apply` covered when the job started. A range the
+    /// edit log could not follow (an undo, a reload) is still the right
+    /// one if it reads exactly this.
+    apply_original: ?[]u8 = null,
 
     pub fn deinit(self: *AiPane) void {
         self.gpa.free(self.title);
         self.gpa.free(self.prompt);
+        if (self.apply_original) |o| self.gpa.free(o);
         self.answer.deinit(self.gpa);
         if (self.err) |e| self.gpa.free(e);
     }
@@ -768,6 +775,11 @@ pub fn askProduct(app: *App, product: Product, title: []const u8, prompt: []cons
     errdefer gpa.free(pane.title);
     pane.prompt = try gpa.dupe(u8, prompt);
     errdefer gpa.free(pane.prompt);
+    if (apply) |an| if (app.panes.editor(an.pane)) |e| {
+        const bytes = e.buf.editor.bytes();
+        if (an.start <= an.end and an.end <= bytes.len) pane.apply_original = try gpa.dupe(u8, bytes[an.start..an.end]);
+    };
+    errdefer if (pane.apply_original) |o| gpa.free(o);
 
     const prompt_owned = try gpa.dupe(u8, prompt);
     errdefer gpa.free(prompt_owned);
@@ -1135,10 +1147,10 @@ fn actionTarget(app: *App) CommandError!struct { code: []const u8, lang: []const
     const ed = e.buf.editor;
     const lang = suggest.languageOf(e.buf.doc.path);
     if (ed.selection()) |sel| if (sel[1] > sel[0]) {
-        return .{ .code = try app.frame.allocator().dupe(u8, ed.bytes()[sel[0]..sel[1]]), .lang = lang, .apply = .{ .pane = id, .start = sel[0], .end = sel[1] } };
+        return .{ .code = try app.frame.allocator().dupe(u8, ed.bytes()[sel[0]..sel[1]]), .lang = lang, .apply = .take(id, e.buf.doc, sel[0], sel[1]) };
     };
     if (ed.len() == 0) return error.NoSelection;
-    return .{ .code = try app.frame.allocator().dupe(u8, ed.bytes()), .lang = lang, .apply = .{ .pane = id, .start = 0, .end = ed.len() } };
+    return .{ .code = try app.frame.allocator().dupe(u8, ed.bytes()), .lang = lang, .apply = .take(id, e.buf.doc, 0, ed.len()) };
 }
 
 fn action(app: *App, what: []const u8) CommandError!void {
@@ -1207,12 +1219,12 @@ fn applyCmd(app: *App) CommandError!void {
         const id = app.last_editor orelse return app.diag.fail(arena, "no editor to apply to", .{});
         const e = app.panes.editor(id) orelse return app.diag.fail(arena, "no editor to apply to", .{});
         const sel = e.buf.editor.selection() orelse [2]usize{ 0, e.buf.editor.len() };
-        break :blk AiPane.ApplyTarget{ .pane = id, .start = sel[0], .end = sel[1] };
+        break :blk AiPane.ApplyTarget.take(id, e.buf.doc, sel[0], sel[1]);
     };
     // The block's own trailing newline is part of the proposal; the
     // fence's is not.
     const proposal = try std.fmt.allocPrint(arena, "{s}\n", .{code});
-    _ = try ai_apply.open(app, source, target.pane, target.start, target.end, proposal);
+    _ = try ai_apply.open(app, source, target, p.apply_original, proposal);
 }
 
 /// `ai.session_view`: the transcript file of this pane's session, live
