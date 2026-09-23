@@ -500,6 +500,10 @@ pub const LogLine = struct {
     exit: ?u8,
     ms: u32,
     stderr: []const u8,
+    /// Run by the idle poll (the status, an edited buffer's gutter),
+    /// not by anything the user did: the log keeps one row per such
+    /// command rather than letting them push the user's out.
+    background: bool = false,
 };
 
 /// The commands a log row's Enter may run again: they read the repo
@@ -618,6 +622,8 @@ pub const Repo = struct {
     events: ?*event.EventQueue = null,
     /// Worker-owned: the command log's sequence number.
     log_seq: u32 = 0,
+    /// Worker-owned: the job running now is the idle poll's.
+    log_background: bool = false,
 
     pub fn create(gpa: Allocator, path: []const u8, name: []const u8, id: u32, is_workspace_root: bool) Allocator.Error!*Repo {
         const r = try gpa.create(Repo);
@@ -869,6 +875,7 @@ fn postLogLine(repo: *Repo, io: Io, argv: []const []const u8, args: []const []co
         .exit = exit,
         .ms = @intCast(std.math.clamp(elapsed, 0, std.math.maxInt(u32))),
         .stderr = try arena.dupe(u8, e[0..nl]),
+        .background = repo.log_background,
     } };
     events.post(io, .{ .git = r });
 }
@@ -936,6 +943,8 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
     const r = try Result.create(gpa, repo.id);
     errdefer r.destroy(gpa);
     const arena = r.arena.allocator();
+    repo.log_background = job == .status or job == .buffer_signs;
+    defer repo.log_background = false;
     switch (job) {
         .status => {
             // git's own untracked mode, as Rust reads it: a new directory is one
@@ -957,7 +966,9 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
                 const d = try git(repo, io, arena, &.{ "diff", "--no-ext-diff", "-U0", "HEAD", "--" }, null);
                 if (d.ok) signs = try parse.parseDiff(arena, d.stdout);
             }
-            const remote = try git(repo, io, arena, &.{ "config", "--get", "remote.origin.url" }, null);
+            // `--default ""`: no origin is an empty answer, not exit 1 —
+            // every third row of the log read as a failure that was not.
+            const remote = try git(repo, io, arena, &.{ "config", "--get", "--default", "", "remote.origin.url" }, null);
             r.payload = .{ .status = .{ .status = status, .signs = signs, .remote = if (remote.ok) trimmed(remote.stdout) else "" } };
         },
         .diff => |d| {
@@ -1407,7 +1418,9 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             }
         },
         .browse => |b| {
-            const remote = try git(repo, io, arena, &.{ "config", "--get", "remote.origin.url" }, null);
+            // `--default ""`: no origin is an empty answer, not exit 1 —
+            // every third row of the log read as a failure that was not.
+            const remote = try git(repo, io, arena, &.{ "config", "--get", "--default", "", "remote.origin.url" }, null);
             if (!remote.ok or trimmed(remote.stdout).len == 0) {
                 r.payload = .{ .op = .{ .desc = "browse: no origin remote", .ok = false, .refresh = false } };
             } else switch (b.kind) {

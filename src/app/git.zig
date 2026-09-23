@@ -168,6 +168,10 @@ pub const LogEntry = struct {
     exit: ?u8,
     ms: u32,
     stderr: []u8,
+    /// The idle poll's (`client.LogLine.background`), and how many runs
+    /// of the same command this one row stands for.
+    background: bool = false,
+    repeats: u32 = 1,
 
     pub fn deinit(e: LogEntry, gpa: Allocator) void {
         gpa.free(e.argv);
@@ -184,8 +188,20 @@ pub const LogRing = struct {
     pub const cap: usize = 200;
     items: std.ArrayListUnmanaged(LogEntry) = .empty,
 
-    pub fn push(self: *LogRing, gpa: Allocator, e: LogEntry) Allocator.Error!void {
+    /// A background line (the idle poll's: status, the gutter) takes
+    /// the place of the same command's earlier row, counting it: a poll
+    /// every three seconds pushed the user's own pull / push / commit
+    /// out of a 200-row log in a few idle minutes.
+    pub fn push(self: *LogRing, gpa: Allocator, e_in: LogEntry) Allocator.Error!void {
+        var e = e_in;
         errdefer e.deinit(gpa);
+        if (e.background) {
+            for (self.items.items, 0..) |old, i| if (old.background and old.repo == e.repo and std.mem.eql(u8, old.argv, e.argv)) {
+                e.repeats = old.repeats +| 1;
+                self.items.orderedRemove(i).deinit(gpa);
+                break;
+            };
+        }
         try self.items.append(gpa, e);
         while (self.items.items.len > cap) self.items.orderedRemove(0).deinit(gpa);
     }
@@ -1612,7 +1628,7 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
             // One sequence over every repo, in the order the lines land.
             const seq = st.log_next_seq;
             st.log_next_seq +%= 1;
-            try st.log.push(gpa, .{ .seq = seq, .repo = repo.id, .argv = argv, .args = args, .cwd = cwd, .ok = l.ok, .exit = l.exit, .ms = l.ms, .stderr = stderr });
+            try st.log.push(gpa, .{ .seq = seq, .repo = repo.id, .argv = argv, .args = args, .cwd = cwd, .ok = l.ok, .exit = l.exit, .ms = l.ms, .stderr = stderr, .background = l.background });
             if (!l.ok) st.last_failed_seq = seq;
             try refillLogPane(app, null);
         },
@@ -3117,9 +3133,12 @@ fn clipReason(msg: []const u8, max: usize) []const u8 {
 
 fn logEntryText(arena: Allocator, e: LogEntry) Allocator.Error![]u8 {
     const mark: []const u8 = if (e.ok) "\u{2713}" else "\u{2717}";
-    if (e.stderr.len > 0 and !e.ok) return std.fmt.allocPrint(arena, "{s} {d: >5}ms  {s}  \u{2014} {s}", .{ mark, e.ms, e.argv, e.stderr });
-    if (e.exit != null and e.exit.? != 0) return std.fmt.allocPrint(arena, "{s} {d: >5}ms  {s}  \u{2014} exit {d}", .{ mark, e.ms, e.argv, e.exit.? });
-    return std.fmt.allocPrint(arena, "{s} {d: >5}ms  {s}", .{ mark, e.ms, e.argv });
+    // A collapsed background row says how many runs it stands for.
+    var count_buf: [24]u8 = undefined;
+    const count: []const u8 = if (e.repeats > 1) std.fmt.bufPrint(&count_buf, "  (\u{00D7}{d})", .{e.repeats}) catch "" else "";
+    if (e.stderr.len > 0 and !e.ok) return std.fmt.allocPrint(arena, "{s} {d: >5}ms  {s}{s}  \u{2014} {s}", .{ mark, e.ms, e.argv, count, e.stderr });
+    if (e.exit != null and e.exit.? != 0) return std.fmt.allocPrint(arena, "{s} {d: >5}ms  {s}{s}  \u{2014} exit {d}", .{ mark, e.ms, e.argv, count, e.exit.? });
+    return std.fmt.allocPrint(arena, "{s} {d: >5}ms  {s}{s}", .{ mark, e.ms, e.argv, count });
 }
 
 /// The log pane's rows, newest first; `line` carries the entry's seq.
@@ -7228,4 +7247,29 @@ test "changeStart: ]c / [c step runs of marked lines, the way gitsigns steps hun
     try std.testing.expectEqual(@as(?u32, 0), changeStart(&marks, 7, false));
     try std.testing.expectEqual(@as(?u32, 0), changeStart(&marks, 2, false));
     try std.testing.expectEqual(@as(?u32, null), changeStart(&marks, 0, false));
+}
+
+test "LogRing: the idle poll's repeats collapse onto one row each, so a user's command outlives 200 polls" {
+    const gpa = std.testing.allocator;
+    var ring: LogRing = .{};
+    defer ring.deinit(gpa);
+    const mk = struct {
+        fn entry(a: Allocator, seq: u32, argv: []const u8, bg: bool) !LogEntry {
+            return .{ .seq = seq, .repo = 1, .argv = try a.dupe(u8, argv), .args = try a.alloc([]u8, 0), .cwd = try a.dupe(u8, "/r"), .ok = true, .exit = 0, .ms = 1, .stderr = try a.dupe(u8, ""), .background = bg };
+        }
+    };
+    try ring.push(gpa, try mk.entry(gpa, 1, "git push", false));
+    var seq: u32 = 2;
+    for (0..300) |_| {
+        inline for (.{ "git status --porcelain=v2 -b", "git diff --no-ext-diff -U0 HEAD --", "git config --get --default  remote.origin.url" }) |cmd| {
+            try ring.push(gpa, try mk.entry(gpa, seq, cmd, true));
+            seq += 1;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 4), ring.items.items.len);
+    try std.testing.expectEqualStrings("git push", ring.items.items[0].argv);
+    try std.testing.expectEqual(@as(u32, 300), ring.items.items[1].repeats);
+    // The same command run by the user is its own row.
+    try ring.push(gpa, try mk.entry(gpa, seq, "git status --porcelain=v2 -b", false));
+    try std.testing.expectEqual(@as(usize, 5), ring.items.items.len);
 }

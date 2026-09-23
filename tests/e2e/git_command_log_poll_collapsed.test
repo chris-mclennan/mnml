@@ -1,0 +1,26 @@
+# The command log keeps the user's commands: the idle status poll runs
+# three git commands every three seconds, and each of them now holds ONE
+# row that counts its runs (`(×N)`) instead of a new row per run — at
+# 200 rows the poll used to push a failed push out of the log within a
+# few idle minutes. No origin is not a failure: `config --get` asks with
+# `--default ""`, so the poll's rows are all ✓.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write .gitignore ".mnml/\n"
+write a.txt "one\n"
+shell git add a.txt .gitignore
+shell git commit -q -m "first"
+command git.refresh
+wait 500
+command git.push
+expect screen contains "· log"
+wait 7000
+command git.command_log
+command view.only
+command view.toggle_tree
+expect screen contains "git command log"
+expect screen contains "push"
+expect screen contains "status --porcelain=v2 -b  (×"
+expect screen contains "remote.origin.url  (×"
+expect screen lacks "remote.origin.url  — exit 1"
