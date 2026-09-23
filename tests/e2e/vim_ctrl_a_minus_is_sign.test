@@ -1,0 +1,12 @@
+# Ctrl-A: a `-` right before the digits is the sign whatever precedes
+# it (Neovim 0.12.5, default nrformats): `val-3` → `val-2`, `x_-7` →
+# `x_-6`.
+write f.txt "val-3 abc\nx_-7\n"
+open f.txt
+command editor.use_vim
+key ctrl+a
+key j
+key 0
+key ctrl+a
+ex w
+expect file f.txt contains "val-2 abc\nx_-6\n"

@@ -1776,7 +1776,11 @@ test "vim ctrl+a / ctrl+x, gA align, gq reflow" {
     try vim("<c-x><c-x>", "|value = 41", "value = 3|9");
     try vim("5<c-a>", "|x 9", "x 1|4");
     try vim("10<c-x>", "|5", "-|5");
-    try vim("<c-a>", "|a-1", "a-|2"); // a minus glued to an identifier is not a sign
+    // A `-` before the digits is the sign whatever precedes it — Neovim
+    // 0.12.5: `a-1` → `a0`, `val-3 abc` → `val-2 abc`, `x_-7` → `x_-6`.
+    try vim("<c-a>", "|a-1", "a|0");
+    try vim("<c-a>", "|val-3 abc", "val-|2 abc");
+    try vim("<c-a>", "|x_-7", "x_-|6");
     try vim("<c-a>", "|x -1", "x |0");
     try vim("<c-a>", "|none", "|none");
     try vim("<c-a>u", "|41", "|41");
