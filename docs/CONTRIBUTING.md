@@ -58,9 +58,9 @@ wrote the change.
 
 `tests/e2e` is the `.test` corpus: the scripts inherited from the Rust
 repo and the ones written here, one real folder (a copy, not a symlink):
-394 `.test` files at the time of writing, 393 of which run at 120×40
-(`http/http-bench-running-toast.test` is `# requires: network`), plus
-three parked `.test.*-skip` beside them. The corpus is a regression net,
+825 `.test` files at the time of writing, every one of which runs at
+120×40 but `http/http-bench-running-toast.test` (`# requires: network`),
+plus three parked `.test.*-skip` beside them. The corpus is a regression net,
 not a pixel oracle: `expect screen contains`
 is substring-tolerant, so a re-skin survives it, and a script that
 breaks on a deliberate cosmetic change is updated as normal maintenance
@@ -68,8 +68,8 @@ breaks on a deliberate cosmetic change is updated as normal maintenance
 
 ```sh
 zig build                              # the binary (`./run.sh build`)
-./zig-out/bin/mnml-zig test            # the whole corpus at 120x40 (~2.5 min)
-./zig-out/bin/mnml-zig test --gate     # the 47-file Phase-0 gate
+./zig-out/bin/mnml-zig test            # the whole corpus at 120x40
+./zig-out/bin/mnml-zig test --gate     # the 52-file Phase-0 gate (tools/gate.txt)
 ./zig-out/bin/mnml-zig test tests/e2e/defaults.test
 ./zig-out/bin/mnml-zig test --gate --sizes 80x24,120x40,200x60   # the width sweep (see below: it does NOT check content at 80x24 / 200x60)
 zig build e2e -- --filter dap_                                   # the corpus through the build, args passed on
@@ -86,8 +86,8 @@ real client and panes — no toolchain, the same events on every platform.
 A debug-UI change is tested against it, not against a hand-written reply;
 `tools/debug-demo.sh [vim|standard]` opens the same seed on a real screen.
 
-The corpus number must not go down. 393/393 is the current line
-(2026-09-07); a change that drops it is not finished. A file that is
+The corpus number must not go down: a file that passed before a change
+passes after it, and a change that drops one is not finished. A file that is
 re-aimed at a deliberate change says so in the commit.
 
 ## The sweep and what it proves
@@ -340,8 +340,9 @@ deadline down to make a test faster; it is not the cost.
   is `unit` plus the e2e gate.
 - One test: `MNML_TEST_FILTER=<substring> zig build unit -Dtest-trace`
   — see "Running one test" below for why not `-Dtest-filter`.
-- `zig build test --summary all` prints one line per test binary; the
-  total is 1205 tests (1203 pass, 2 skip) at the time of writing.
+- `zig build test --summary all` prints one line per test binary and
+  the total — read the count there rather than from a page that
+  cannot keep up with it.
 - `docs/CONFIG.md`'s `zon` block is decoded by a test
   (`docs config example parses clean`), so a new `Config` field goes
   into the block in the same commit, at its default with one line of
@@ -570,62 +571,91 @@ platform backend.
 
 ## The gate — the verification sequence
 
-Before a branch is offered, in this order (each step runs on what the
-step before it proved):
+Before a branch is offered, in this order. The maintainer's chain runs
+exactly these steps, one after the other, before every merge:
 
-1. `zig fmt --check src build.zig tools`;
-2. `zig build test -Doptimize=Debug`, then `zig build test -Doptimize=ReleaseSafe`;
-3. `zig build -Doptimize=ReleaseSafe` — the binary the next two steps
+1. `tools/work-data-audit.sh` — no tracked file holds text from anyone's
+   day job (the patterns live outside the repo; with none configured it
+   says so and passes);
+2. `zig fmt --check build.zig build.zig.zon src themes tools integrations sdk`;
+3. `zig build arena-audit` — three walks, all `--strict`: frame-arena
+   and stack strings reaching a consumer that outlives the frame, over
+   `src/`; a job result's arena let go by a consumer that kept a slice
+   out of it, over `integrations/` and `sdk/`; and an `Io.Group` /
+   `Io.Queue` / `Io.Event` / `Io.Mutex` declared by value in a `Pane`
+   payload, over `src/` (*Strings that outlive the frame* and *Things a
+   task holds the address of*, above);
+4. `zig build -Dpartial=false` — every command id has a runner (a spec
+   without one is a compile error);
+5. `zig build test -Doptimize=ReleaseSafe -Dtest-trace` — every unit
+   test binary plus the e2e gate, in the mode that ships, naming each
+   test as it runs so a hang names its test (only the exit code is
+   evidence; `-Doptimize=Debug` is worth a run too — a test that passes
+   in one mode and not the other is a bug in the code);
+6. the Windows compile: `zig build -Dtarget=x86_64-windows-gnu` — Zig's
+   lazy analysis only checks target-gated code when that target is
+   built. `zig build gate-build -Dtarget=x86_64-windows-gnu` compiles
+   every test binary for it as well;
+7. `zig build glyph-audit` — every Nerd Font literal in `src/`, the SDK
+   and `integrations/` against `data/nerd-glyphnames.json`, with its
+   `--ascii` twin;
+8. `zig build -Doptimize=ReleaseSafe` — the binary the next three steps
    run on, the one that ships;
-4. the sweep: `./zig-out/bin/mnml-zig test --gate --sizes 80x24,120x40,200x60`
-   — the Phase-0 gate (`tools/gate.txt`, 47 files) at three sizes.
+9. the sweep: `./zig-out/bin/mnml-zig test --gate --sizes 80x24,120x40,200x60`
+   — the Phase-0 gate (`tools/gate.txt`) at three sizes.
    **A sweep rung other than the file's own size checks no content**: it
    asserts no panic, no leak, no overlapping hit rect and no rect painted
    outside its parent, and nothing about what was on the screen. Those
    runs report `ok*  <name> @80x24 (structure only)`, never plain `ok`,
    and the tally says how many of each (*The sweep and what it proves*,
    below);
-5. the corpus: `./zig-out/bin/mnml-zig test` (393/393);
-6. the Windows gate: `zig build gate-build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSafe`
-   — the exe and every test binary compiled, not run (Zig's lazy
-   analysis only checks target-gated code when that target is built);
-7. `zig build glyph-audit` — every Nerd Font literal in `src/` against
-   `data/nerd-glyphnames.json`, with its `--ascii` twin — and `zig build
-   chrome-audit` — chrome a component owns, drawn by hand somewhere
-   else: a box-drawing glyph as a whole literal outside the frame
-   modules, an `if (ascii) "…" else "…"` pair `clip` / `border` /
-   `overlay.hintText` already answers (`docs/CONVENTIONS.md` → *If a
-   thing has a component, draw it through the component*; the same
-   walk is a unit test, so `zig build test` fails on a new fork before
-   this step names it);
-   `data/nerd-glyphnames.json`, with its `--ascii` twin;
-7b. `zig build hover-audit` — every hoverable target against the info
-   view's dictionary; fails on a new target with no entry that
-   `docs/hover-help-todo.txt` does not list, and on a shortcut row naming
-   an unbound command (*Adding hover help for a control*, below);
-8. `tools/pty-mouse-check.py` — the real binary in a pty answering the
-   probes like ghostty; one click opens a file, a right-click opens the
-   row menu, a wheel notch reaches the app;
-9. `tools/pty-cursor-check.py` (and `MNML_INPUT_STYLE=vim` again) when
-   the change touches the cursor — the same pty, reading the show/hide,
-   the DECSCUSR and the CUP mnml writes: headless draws no cursor, so
-   nothing in the corpus can see those bytes;
-10. `tools/ui-diff.sh` on every `docs/ui-spec/steps-*.jsonl` when the
-    change touches chrome (see *Spec dumps* below) — the diff counts must
-    not grow;
-11. `tools/run-sh-check.sh` — the launcher's verbs on a throwaway
+10. the corpus: `./zig-out/bin/mnml-zig test` — no file that passed
+    before may fail;
+11. `tools/pty-mouse-check.py` — the real binary in a pty answering the
+    probes like ghostty; one click opens a file, a right-click opens the
+    row menu, a wheel notch reaches the app;
+12. the two integrations' own suites: `zig build test` inside
+    `integrations/bitbucket` and inside `integrations/jira`;
+13. `tools/run-sh-check.sh` — the launcher's verbs on a throwaway
     workspace, the marker and the IPC lifecycle included;
-12. `tools/run-ps1-check.py` — what can be checked about `run.ps1`
-    without a PowerShell: balance, quoting, the 5.1-incompatible
-    spellings, every verb reachable, and the refusals, build lines and
-    plan phrases present by name. `tools/run-ps1-check.ps1` is the real
-    check and runs on the Windows guest
-    (`docs/INSTALL-CHECKLIST.md` → *Windows 11*, step W-0).
+14. `zig build docs` leaves `docs/commands.md` unchanged — a new or
+    renamed command id is committed with the regenerated file.
 
-`./run.sh check` runs 1–5, 7, 7b, 11 and 12 in one line, on the ReleaseSafe
-binary it builds at step 3, with `MNML_E2E_ALLOW_SHELL=1` for the corpus;
-6, 8, 9 and 10 are run by hand. `zig build check` is the older one-step form (1, 2, the
-gate, the sweep, `tests/e2e/defaults.test` and the corpus on the exe of that
+Beyond the chain, run these when the change reaches what they check:
+
+- `zig build chrome-audit` — chrome a component owns, drawn by hand
+  somewhere else: a box-drawing glyph as a whole literal outside the
+  frame modules, an `if (ascii) "…" else "…"` pair `clip` / `border` /
+  `overlay.hintText` already answers, over `src/`, `sdk/` and
+  `integrations/` (`docs/CONVENTIONS.md` → *If a thing has a component,
+  draw it through the component*; the same walk is a unit test, so
+  step 5 fails on a new fork before this names it);
+- `zig build hover-audit` — every hoverable target against the info
+  view's dictionary; fails on a new target with no entry that
+  `docs/hover-help-todo.txt` does not list, on a shortcut row naming an
+  unbound command, and on a `docsSection` link to a heading
+  `docs/CONFIG.md` lacks (*Adding hover help for a control*, below);
+- `tools/pty-cursor-check.py` (and `MNML_INPUT_STYLE=vim` again) when
+  the change touches the cursor — the same pty, reading the show/hide,
+  the DECSCUSR and the CUP mnml writes: headless draws no cursor, so
+  nothing in the corpus can see those bytes;
+- `tools/ui-diff.sh` on every `docs/ui-spec/steps-*.jsonl` when the
+  change touches chrome (see *Spec dumps* below) — the diff counts must
+  not grow;
+- `tools/run-ps1-check.py` — what can be checked about `run.ps1`
+  without a PowerShell: balance, quoting, the 5.1-incompatible
+  spellings, every verb reachable, and the refusals, build lines and
+  plan phrases present by name. `tools/run-ps1-check.ps1` is the real
+  check and runs on the Windows guest
+  (`docs/INSTALL-CHECKLIST.md` → *Windows 11*, step W-0).
+
+`./run.sh check` is a one-line subset on this machine: `zig fmt --check
+src build.zig tools`, the unit suite in Debug and in ReleaseSafe, the
+ReleaseSafe build, the sweep, the corpus (with `MNML_E2E_ALLOW_SHELL=1`),
+glyph-audit, chrome-audit, hover-audit, `tools/run-sh-check.sh` and
+`tools/run-ps1-check.py`. `zig build check` is the older one-step form
+(fmt, Debug + ReleaseSafe unit tests, the gate, the sweep,
+`tests/e2e/defaults.test` and the whole corpus on the exe of that
 invocation).
 
 ## Running the gate on Linux

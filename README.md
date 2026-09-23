@@ -114,12 +114,18 @@ app writes on start and removes on a clean exit — `run.sh` finds the instance
 through it).
 
 Before offering a change, the sequence in `docs/CONTRIBUTING.md` → *The
-gate*: fmt, the unit tests in Debug and ReleaseSafe, a ReleaseSafe build,
-the width sweep and the corpus on that build, the Windows gate-build, the
-glyph audit, `tools/run-sh-check.sh`, `tools/pty-mouse-check.py`, and
-`tools/ui-diff.sh` on every `docs/ui-spec/steps-*.jsonl` when chrome
-changed. `./run.sh check` runs all of it but the Windows gate-build and the
-two pty scripts. `tools/linux/run.sh all` runs the same sequence inside a
+gate*: the work-data audit, fmt, the arena audit, `-Dpartial=false`,
+the unit tests in ReleaseSafe, the Windows compile, the glyph audit, a
+ReleaseSafe build, the width sweep and the corpus on that build,
+`tools/pty-mouse-check.py`, the two integrations' own suites,
+`tools/run-sh-check.sh`, and `zig build docs` leaving
+`docs/commands.md` unchanged — plus the chrome and hover audits, the
+cursor pty check and `tools/ui-diff.sh` when the change reaches them.
+`./run.sh check` is a subset in one line: fmt, the unit tests in Debug
+and ReleaseSafe, the ReleaseSafe build, the sweep, the corpus, the
+glyph, chrome and hover audits, `tools/run-sh-check.sh` and
+`tools/run-ps1-check.py`. `tools/linux/run.sh all` runs the build, the
+audits, the unit suite, the gate and the corpus inside a
 Linux container — do that for anything touching a process, a thread, a
 path, a filesystem assumption or a spawned tool.
 
@@ -186,13 +192,13 @@ The end-to-end suite is a line-based script format — `write`, `open`, `key`,
 `type`, then `expect screen | status | file | dirty | pane` — run headlessly against the
 same `App` the terminal drives. The corpus in `tests/e2e` is the Rust
 repo's suite, copied here when Rust froze, plus the scripts written for this
-codebase; it is the definition of parity: 394 `.test` files, 393 of 393
-green at 120x40 (the one left out is `# requires: network`). The unit suite
-is 1205 tests (`zig build test --summary all`).
+codebase; it is the definition of parity: 825 `.test` files, every one
+run at 120x40 but the `# requires: network` file. `zig build test
+--summary all` prints the unit suite's count.
 
 ```sh
 ./zig-out/bin/mnml-zig test                          # the whole corpus
-./zig-out/bin/mnml-zig test --gate                   # the 47-file Phase-0 gate (tools/gate.txt)
+./zig-out/bin/mnml-zig test --gate                   # the 52-file Phase-0 gate (tools/gate.txt)
 ./zig-out/bin/mnml-zig test --gate --sizes 80x24,120x40,200x60
 ./zig-out/bin/mnml-zig test tests/e2e/edit_and_save.test
 ```

@@ -1232,6 +1232,8 @@ sdk/mnml-sdk/src/
   ratelimit.zig  one cross-process token bucket per service
   request_log.zig  one JSON line per request, with its reason
   store.zig      bodies kept between runs, keyed by the server's stamp
+  zon_edit.zig   saving a hand-written ZON file in place, comments kept —
+                 the splice the host's settings write through too
   warm.zig       the warmer: pacing with priority, one warmer per
                  service, delta windows, intervals, the budget floor
   testing.zig    test allocators a suite borrows — Scribble, which
@@ -1242,6 +1244,13 @@ sdk/mnml-sdk/src/
   pane/chrome.zig  Painter: header, tabs, pill, gutter, rows, detail, hints
   pane/hit.zig     Rect + Map(Target), generic over your own union
   pane/text.zig    widths and fitting, counted the way Frame paints
+  pane/action.zig  a row's action button and what a press leaves behind
+  pane/build.zig   the build lines under a pull-request row
+  pane/merge.zig   whether a pull request may merge, and the button's state
+  pane/figure.zig  what a statusline segment is allowed to say
+  pane/work.zig    a pane's slow work off its event loop
+  pane/expect.zig  the assertions your own tests make about the chrome
+  pane/consistency_test.zig  the toolkit painted from both panes' vocabularies, cell for cell
 sdk/clients/ratelimit_broker.py   the broker's twenty-line Python client
 sdk/examples/hello/   the small list the host's mount test spawns (`zig build sdk-example`)
 integrations/sample/  the official sample (`zig build sample-integration`, or its own build.zig)

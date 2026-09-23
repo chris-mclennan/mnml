@@ -185,7 +185,7 @@ otherwise. Copy what you need; leave the rest out.
             .mode = .auto_hide, // .always (the strip is carved out of the frame) | .auto_hide (nothing until the pointer rests at the edge, then it is painted OVER the editor) | .hidden (never on hover; `view.dock_toggle` still gives a one-shot reveal)
             .edge = .bottom, // .bottom (one row, icon + label) | .left | .right (three cells, icon only — the label moves into the tooltip). There is no .top: that row is the menu bar's
             .placement = .inner, // where a BOTTOM strip goes: .inner (the default — the editor area's last row, ABOVE the statusline, so neither it nor the `:` line moves) | .outer (the SCREEN's last row, UNDER the `:` line; everything else moves up one and a revealed strip covers that row). A side edge ignores it
-            .labels = .icon_label, // how much of an item a BOTTOM strip paints: .icon_label (` glyph label `, today's row) | .icon (the glyph alone in the side form's three cells — padding, glyph, padding — with the name in the tooltip). A side edge is icon-only by geometry and ignores this
+            .labels = .icon_label, // how much of an item a BOTTOM strip paints: .icon_label (` glyph label `, today's row) | .icon (the glyph alone in the side form's three cells — padding, glyph, padding — with the name in the tooltip) | .label (the word alone, no glyph; the running dot sits in the one padding cell before it). A side edge is icon-only by geometry and ignores this
             .@"align" = .center, // where the run sits along the strip: .center (macOS's Dock) | .start | .end. The pin chip keeps the far end whatever it says
             .plus = true, // the tab bar's own `+` is on the strip, opening the same Create… menu; false takes it off
             .plus_at = .right, // which END the `+` takes: .right (the last item, right before the pin chip — the bottom of a side strip) | .left (leading the run). `:dock plus left|right`
@@ -430,7 +430,7 @@ otherwise. Copy what you need; leave the rest out.
         // .none hides the AI chips; otherwise an enabled integration icon
         // shows its chip, and a CLI found on PATH shows its chip when named
         // here (.claude_code | .codex | .both). view.tab_bar_ai_* set it.
-        .tab_bar_ai_icon = .claude_code,
+        .tab_bar_ai_icon = .claude_code, // .none | .claude_code | .codex | .both
         // What the tab strip's maximize button does on a LEFT click.
         // .zoom_pane is the leaf zoom: the active pane's leaf alone
         // fills the editor area, the other splits hide, the chrome
@@ -492,12 +492,44 @@ otherwise. Copy what you need; leave the rest out.
         // comes back dormant.
         .restore_terminals = .running, // .running (a shell restarts, a Claude / Codex pane resumes its session) | .dormant (every terminal pane comes back `[exited] — any key restarts …`)
     },
-    .ipc = .{ .write_screen = false }, // also dump screen.txt, status.json and rects.json every frame
+    .ipc = .{
+        .write_screen = false, // also dump screen.txt, status.json and rects.json every frame
+        // Whether the file channel may drive INPUT at a live terminal
+        // (key, type, click, scroll, drag, mouse_*, hover). The set an
+        // integration needs (segments, badges, toasts, progress,
+        // notify, register-command, open-pty, run-command) is always
+        // taken; the headless loop takes everything regardless.
+        .allow_input = false,
+    },
     // ── terminal panes ─────────────────────────────────────────────────
     // Read when a pane starts; a pane already open keeps what it began with.
     .terminal = .{
         .scrollback_lines = 10000, // lines kept above the screen per pane (Shift+PageUp, the wheel)
         .osc52 = true, // a program in a pane may copy to the clipboard (OSC 52; neovim, tmux, ssh); reads are never answered
+    },
+
+    // ── cloud ──────────────────────────────────────────────────────────
+    .cloud_run = .{
+        .defaults = .{ .agent_id = "", .env_id = "", .sandbox = "", .model = "" },
+    },
+    .jira = .{
+        .domain = "", // MNML_JIRA_DOMAIN overrides
+        .ticket_prefix = "", // MNML_JIRA_TICKET_PREFIX overrides
+    },
+    .cloud_agents = .{
+        .label = "",
+        .short_id = "",
+        .region = "", // MNML_CLOUD_AGENTS_REGION overrides
+        .account_id = "",
+        .runs_table = "",
+        .cluster = "",
+        .task_definition = "",
+        .sg_export_name = "",
+        .log_group = "",
+        .aws_profile_fallback = "", // MNML_AWS_PROFILE overrides
+        .s3_artifacts_bucket = "",
+        .default_workspace_label = "", // "" reads as "cloud"
+        .managed_agents_enabled = false,
     },
 
     // ── keys ───────────────────────────────────────────────────────────
@@ -918,6 +950,14 @@ otherwise. Copy what you need; leave the rest out.
             // poller's own 30-second floor still applies underneath.
             .min_interval_secs = 60,
         },
+        // Every integration's requests, one JSON line each, in
+        // <data root>/requests/<service>.jsonl (integrations.requests
+        // opens the view). Integrations mnml starts are handed both as
+        // MNML_REQUEST_LOG / MNML_REQUEST_LOG_MAX_MB.
+        .request_log = .{
+            .enabled = true,
+            .max_mb = 4, // the ceiling before a file rotates; one older generation is kept
+        },
         // Host the API broker while mnml runs: one queue per service
         // in front of the shared token bucket, so the pane you are
         // looking at gets the next token before a warmer or a batch
@@ -1030,31 +1070,7 @@ otherwise. Copy what you need; leave the rest out.
         .show_dev_tab = false,
     },
 
-    // ── cloud ──────────────────────────────────────────────────────────
-    .cloud_run = .{
-        .defaults = .{ .agent_id = "", .env_id = "", .sandbox = "", .model = "" },
-    },
-    .jira = .{
-        .domain = "", // MNML_JIRA_DOMAIN overrides
-        .ticket_prefix = "", // MNML_JIRA_TICKET_PREFIX overrides
-    },
-    .cloud_agents = .{
-        .label = "",
-        .short_id = "",
-        .region = "", // MNML_CLOUD_AGENTS_REGION overrides
-        .account_id = "",
-        .runs_table = "",
-        .cluster = "",
-        .task_definition = "",
-        .sg_export_name = "",
-        .log_group = "",
-        .aws_profile_fallback = "", // MNML_AWS_PROFILE overrides
-        .s3_artifacts_bucket = "",
-        .default_workspace_label = "", // "" reads as "cloud"
-        .managed_agents_enabled = false,
-    },
-
-    // ── statusline ─────────────────────────────────────────────────
+    // ── statusline ─────────────────────────────────────────────────────
     .statusline = .{
         .hover_items = 8, // how many things a figure's hover lists before `… and N more`; 0 lists none
     },
@@ -1062,7 +1078,10 @@ otherwise. Copy what you need; leave the rest out.
 ```
 
 The block above is parsed by a test (`docs config example parses clean`
-in `src/config/load.zig`) — it cannot drift from the schema.
+in `src/config/load.zig`): a key the schema lacks, or a section left
+out, fails it. The values beside the keys are not compared by that test
+— they are the defaults because the file is kept that way. Sections
+appear in `Config.zig`'s field order.
 
 ## Workspace trust
 
@@ -1437,6 +1456,7 @@ In the vim profile, bind the same chords to the commands under
 "view.focus_prev_split"`). `src/tui/loop.zig`'s test reads the two
 sequences through the terminal parser into the standard profile's
 chords.
+
 ## Terminal panes
 
 A terminal pane's child is told it runs inside mnml. Every child gets
@@ -1638,6 +1658,8 @@ Rows are discrete choices (bools, enums, the theme) and numbers
 (`tree_width`, `right_panel_width`, `bottom_panel_height`, `wheel_lines`, `md_image_rows`,
 `hover_help_height`, `color_column`, `tab_width`, `text_width`,
 `chord_timeout_ms`, `focus_follows_mouse_delay_ms` — 106 rows in all); text (`projects_dir`, the
+`chord_timeout_ms`, `suggest_idle_ms`, `suggest_timeout_ms` — 104 rows
+in all, plus the Reset row); text (`projects_dir`, the
 labels) stays a file edit.
 
 ### Themes

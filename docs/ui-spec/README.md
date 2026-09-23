@@ -325,6 +325,16 @@ matching `steps-<name>.jsonl`, on the fixture workspace (which now has
   Font install row and the macOS note show; sections 4–6 with the
   not-installed badges; section 7 is below the fold at 40 rows.
 
+Four more from the same fixture, cut in the same commit as `palette`
+and `picker`:
+
+- `editor` — `src/main.rs` open: the editor at rest.
+- `diff` — `src/main.rs` open, then `git.diff`.
+- `outline` — `src/main.rs` open, `view.toggle_right_panel`, then
+  `outline.show`.
+- `rust-request-120x40.txt` — the one dump whose steps file has another
+  name: `steps-http.jsonl`, `requests/demo.http` open, the request pane.
+
 Every dump with `src/main.rs` open (`goto`, `close`, `editor`, `diff`,
 `delete`, `rename`, `outline`) also shows rust-analyzer started on it:
 the `LSP 1` statusline chip and, bottom-right, the toast `LSP: Failed to
