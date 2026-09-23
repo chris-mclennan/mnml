@@ -303,6 +303,8 @@ fn walkEditor(w: *Walk) Allocator.Error!void {
     } else try w.results.append(w.arena, .{ .key = "tab:(no tab painted)", .res = .none, .title = "" });
     try w.probe("script_hit:row", .{ .script_hit = .{ .pane = eid, .id = hit.ListHit.row(0) } });
     try w.probe("script_hit:chip", .{ .script_hit = .{ .pane = eid, .id = hit.ListHit.chip(.sort) } });
+    // The current-line blame's text (`app/line_blame.zig`).
+    try w.probe("script_hit:line_blame", .{ .script_hit = .{ .pane = eid, .id = @import("line_blame.zig").hit_id } });
 }
 
 fn walkOverlays(w: *Walk) Allocator.Error!void {

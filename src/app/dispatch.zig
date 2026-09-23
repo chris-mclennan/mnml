@@ -14,6 +14,7 @@ const App = app_mod.App;
 const PaneId = app_mod.PaneId;
 const EditorPane = app_mod.EditorPane;
 const command = @import("../core/command.zig");
+const line_blame = @import("line_blame.zig");
 const keymap = @import("../core/keymap.zig");
 const key_mod = @import("../core/key.zig");
 const Key = key_mod.Key;
@@ -2324,6 +2325,8 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 // The debug toolbar strip's buttons sit above both.
                 .editor => |*e| if (debug_toolbar.actionOf(sh.id) != null) {
                     if (m.button == .left) try dap.click(app, sh.pane, sh.id);
+                } else if (sh.id == line_blame.hit_id) {
+                    if (m.button == .left) git_app.runToast(app, line_blame.click(app, sh.pane));
                 } else if (conflicts.actionOf(sh.id) != null) {
                     if (m.button == .left) try conflicts.click(app, sh.pane, sh.id);
                 } else if (sh.id >= decor.lens_hit_base) {

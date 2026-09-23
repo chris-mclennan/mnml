@@ -29,6 +29,7 @@ const context = @import("../ui/context.zig");
 const Ui = context;
 const editor_view = @import("../ui/editor_view.zig");
 const indent_mod = @import("../editor/indent.zig");
+const line_blame = @import("line_blame.zig");
 const statusline = @import("../ui/statusline.zig");
 const cmdline_bar = @import("../ui/cmdline_bar.zig");
 const edge_grip = @import("../ui/edge_grip.zig");
@@ -2157,7 +2158,7 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .var_spans = try http_app.editorVarSpans(app, arena, e),
         .labels = labels,
         .echo = if (app.click_echo) |ce| (if (ce.pane == id and ce.until_ms > app.now_ms) editor_view.Range{ .start = ce.start, .end = ce.end } else null) else null,
-        .virtual_text = try mergeVirtual(arena, try mergeVirtual(arena, try decor.virtualTextFor(app, arena, e, &app.theme, ui.ascii), try dap.inlineValuesFor(app, arena, e, &app.theme)), try script_decor.virtualTextFor(app, arena, id, e, &app.theme)),
+        .virtual_text = try mergeVirtual(arena, try mergeVirtual(arena, try mergeVirtual(arena, try decor.virtualTextFor(app, arena, e, &app.theme, ui.ascii), try dap.inlineValuesFor(app, arena, e, &app.theme)), try script_decor.virtualTextFor(app, arena, id, e, &app.theme)), try line_blame.virtualTextFor(app, arena, id, e, &app.theme)),
         .stopped_line = dap.stoppedLine(app, e),
         .virtual_lines = try conflicts.mergeVirtualLines(arena, try conflicts.mergeVirtualLines(arena, try decor.virtualLinesFor(app, arena, e, &app.theme, ui.ascii), try conflicts.virtualLinesFor(app, arena, e, &app.theme, ui.ascii)), try script_decor.virtualLinesFor(app, arena, id, e, &app.theme)),
         .line_grounds = try script_decor.lineGroundsFor(app, arena, id, e, &app.theme),

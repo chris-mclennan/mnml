@@ -15,6 +15,7 @@ const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const PaneId = app_mod.PaneId;
 const hooks = @import("../core/hooks.zig");
+const line_blame = @import("line_blame.zig");
 
 /// How long the cursor must sit still before `cursor_idle`.
 pub const cursor_idle_ms: i64 = 300;
@@ -56,12 +57,14 @@ pub fn tick(app: *App, now: i64) void {
     } else if (!st.cursor_fired and now - st.moved_at_ms >= cursor_idle_ms) {
         st.cursor_fired = true;
         app.hooks.emit(app, .{ .cursor_idle = .{ .pane = pane.?, .line = @intCast(ed.currentLine() + 1) } });
+        line_blame.onCursorIdle(app, pane.?);
     }
     const head = e.?.buf.doc.edits.head();
     if (st.seq != head) {
         st.seq = head;
         st.edited_at_ms = now;
         st.change_fired = false;
+        line_blame.dropStale(app, pane.?);
     } else if (!st.change_fired and now - st.edited_at_ms >= buffer_change_ms) {
         st.change_fired = true;
         app.hooks.emit(app, .{ .buffer_change = .{ .pane = pane.?, .line_count = @intCast(ed.lineCount()) } });

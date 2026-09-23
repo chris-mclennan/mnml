@@ -123,6 +123,11 @@ pub const Editor = struct {
     /// of the block the cursor is in is brighter. `.active` paints only
     /// that one.
     indent_guides: IndentGuides = .on,
+    /// Dim text at the end of the cursor's line naming who last changed
+    /// it, how long ago and the commit's summary (`git blame -L`, on the
+    /// git worker when the cursor rests). Nothing while the buffer has
+    /// unsaved changes. Off by default — GitLens's opt-in.
+    line_blame: bool = false,
     text_width: u16 = 80,
     ensure_trailing_newline: bool = true,
     /// Vim's `timeoutlen`; clamped to `chord_timeout_ms_min..max` on load.
@@ -1276,6 +1281,7 @@ test "defaults are the shipped values" {
     try std.testing.expect(c.editor.semantic_tokens);
     try std.testing.expect(c.editor.code_lens);
     try std.testing.expectEqual(IndentGuides.on, c.editor.indent_guides);
+    try std.testing.expect(!c.editor.line_blame);
     try std.testing.expect(!c.editor.format_on_type);
     try std.testing.expect(!c.editor.will_save_wait_until);
     try std.testing.expectEqual(@as(usize, 0), c.formatters.count());

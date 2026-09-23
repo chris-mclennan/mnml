@@ -140,6 +140,9 @@ pub const Job = union(enum) {
     /// instead of three lines of context.
     diff: struct { scope: DiffScope, path: ?[]u8 = null, rev: ?[]u8 = null, text: ?[]u8 = null, full: bool = false },
     blame: []u8,
+    /// `blame -L n,n --porcelain -- path`: one line (1-based), for the
+    /// current-line blame at the end of the cursor's line.
+    blame_line: struct { path: []u8, line: u32 },
     log: struct { n: u32, filter: LogFilter },
     branches,
     list: ListKind,
@@ -287,6 +290,7 @@ pub const Job = union(enum) {
                 if (d.text) |t| gpa.free(t);
             },
             .log => |l| l.filter.deinit(gpa),
+            .blame_line => |b| gpa.free(b.path),
             .apply_patch => |a| {
                 gpa.free(a.patch);
                 gpa.free(a.desc);
@@ -410,6 +414,9 @@ pub const Result = struct {
         status: struct { status: parse.Status, signs: []parse.FileDiff, remote: []const u8 = "" },
         diff: struct { scope: DiffScope, path: ?[]const u8, rev: ?[]const u8, files: []parse.FileDiff, full: bool = false },
         blame: struct { path: []const u8, lines: []parse.BlameLine },
+        /// The one line a `blame_line` asked about; null when git had no
+        /// answer (an untracked file, a line past the end).
+        blame_line: struct { path: []const u8, line: u32, blame: ?parse.BlameLine },
         log: struct { commits: []parse.Commit, path: ?[]const u8 },
         branches: []parse.Branch,
         list: struct { kind: ListKind, items: []const []const u8 },
@@ -978,6 +985,12 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             const out = try git(repo, io, arena, &.{ "blame", "--porcelain", "--", path }, null);
             const lines: []parse.BlameLine = if (out.ok) try parse.parseBlame(arena, out.stdout) else &.{};
             r.payload = .{ .blame = .{ .path = try arena.dupe(u8, path), .lines = lines } };
+        },
+        .blame_line => |b| {
+            const range = try std.fmt.allocPrint(arena, "-L{d},{d}", .{ b.line, b.line });
+            const out = try git(repo, io, arena, &.{ "blame", range, "--porcelain", "--", b.path }, null);
+            const one: ?parse.BlameLine = if (out.ok) try parse.parseBlameOne(arena, out.stdout) else null;
+            r.payload = .{ .blame_line = .{ .path = try arena.dupe(u8, b.path), .line = b.line, .blame = one } };
         },
         .log => |l| {
             var args: std.ArrayListUnmanaged([]const u8) = .empty;

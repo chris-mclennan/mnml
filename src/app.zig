@@ -3261,6 +3261,7 @@ test {
     _ = @import("app/cmdline.zig");
     _ = @import("app/flash.zig");
     _ = @import("app/settings.zig");
+    _ = @import("app/line_blame.zig");
     _ = @import("app/first_launch.zig");
     _ = @import("app/key_doctor.zig");
     _ = @import("app/icon_picker.zig");

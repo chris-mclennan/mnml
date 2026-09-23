@@ -289,6 +289,7 @@ pub const rows = [_]RowSpec{
     .{ .path = "editor.breadcrumb", .label = "Breadcrumb", .section = .editor, .scope = .home },
     .{ .path = "editor.inline_values", .label = "Inline debugger values", .section = .editor, .scope = .workspace },
     .{ .path = "editor.indent_guides", .label = "Indent guides", .section = .editor, .scope = .home },
+    .{ .path = "editor.line_blame", .label = "Current-line blame", .section = .editor, .scope = .home },
     // The gutter's fold chevron is an offer made under the pointer; on
     // `on` every foldable line wears one whether the pointer is there
     // or not, so the offer is findable without hunting for it

@@ -80,6 +80,12 @@ otherwise. Copy what you need; leave the rest out.
         // that one. Never on a wrapped row's continuation or over a
         // selection. Toggle: editor.toggle_indent_guides.
         .indent_guides = .on, // .on | .off | .active
+        // Dim text after the cursor's line: who last changed it, how long
+        // ago and the commit's summary (git blame -L, run on the git
+        // worker once the cursor rests). Nothing while the buffer has
+        // unsaved changes or for a line not committed yet; a click on it
+        // opens the commit in the graph. Toggle: git.toggle_line_blame.
+        .line_blame = false,
         .text_width = 80,
         .ensure_trailing_newline = true,
         .chord_timeout_ms = 500, // vim's timeoutlen; clamped to 100..5000

@@ -86,7 +86,15 @@ pub const Label = struct { byte: usize, text: []const u8 };
 
 /// Text painted before the grapheme at `byte` (`byte == line end` paints
 /// after the last grapheme). Sorted by `byte`.
-pub const VirtualText = struct { byte: usize, text: []const u8, style: Style };
+pub const VirtualText = struct {
+    byte: usize,
+    text: []const u8,
+    style: Style,
+    /// A `.script_hit{pane, hit}` over the text, above the cell's own
+    /// `.editor_cell` — for virtual text a press does something with
+    /// (the current-line blame opens its commit).
+    hit: ?u32 = null,
+};
 /// One clickable piece of a virtual line.
 pub const VirtualSeg = struct { text: []const u8, style: Style, hit: ?u32 = null };
 /// A row above `line` (0-based) — or below it when `below`. Sorted by
@@ -1033,6 +1041,7 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
                     const vsx: u16 = text_x + @as(u16, @intCast(at));
                     const used = ui.putStr(vsx, y, text_w - @as(u16, @intCast(at)), vt.text, Theme.onBg(vt.style, row_style.bg));
                     ui.hit(Rect.init(vsx, y, used, 1), .{ .editor_cell = .{ .pane = pane, .line = line, .col = c.off } });
+                    if (vt.hit) |id| ui.hit(Rect.init(vsx, y, used, 1), .{ .script_hit = .{ .pane = pane, .id = id } });
                     vx += used;
                 }
                 cx += vx;
@@ -1150,6 +1159,7 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
                     if (vt.byte < line_start or painted_x >= text_x + text_w) continue;
                     const used = ui.putStr(painted_x, y, text_x + text_w - painted_x, vt.text, Theme.onBg(vt.style, row_style.bg));
                     ui.hit(Rect.init(painted_x, y, used, 1), .{ .editor_cell = .{ .pane = pane, .line = line, .col = eol_off } });
+                    if (vt.hit) |id| ui.hit(Rect.init(painted_x, y, used, 1), .{ .script_hit = .{ .pane = pane, .id = id } });
                     painted_x += used;
                 }
                 if (painted_x >= text_x + text_w) {
