@@ -40,6 +40,9 @@ cache: vaxis.GraphemeCache = .{},
 /// xterm's modifier parameter (`legacy_fkeys.zig`); the terminal sets it
 /// from `$TERM_PROGRAM` / `$TERM` before `start`.
 fkeys: common.legacy_fkeys.Style = .xterm,
+/// A bracketed paste being collected (`input_common.fold`): the bytes
+/// between the terminal's paste fences, delivered as one `.paste`.
+paste: common.PasteBuffer = .{},
 winch_pipe: [2]posix.fd_t = .{ -1, -1 },
 old_winch: ?posix.Sigaction = null,
 started: bool = false,
@@ -95,6 +98,7 @@ pub fn stop(self: *Input) void {
         if (fd >= 0) (Io.File{ .handle = fd, .flags = .{ .nonblocking = false } }).close(self.io);
     }
     self.winch_pipe = .{ -1, -1 };
+    self.paste.deinit(self.gpa);
 }
 
 /// Called by the fold for every event it decides to deliver.

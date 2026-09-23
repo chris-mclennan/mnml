@@ -81,6 +81,7 @@ const render = @import("render.zig");
 const statusline_app = @import("statusline.zig");
 const layout_mod = @import("layout.zig");
 const select = @import("../editor/select.zig");
+const block = @import("../editor/block.zig");
 const Editor = @import("../editor/editor.zig").Editor;
 const scrollbar = @import("../ui/scrollbar.zig");
 const scroll_mod = @import("scroll.zig");
@@ -1617,6 +1618,21 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
         .quit_clean => if (choice == 0) {
             app.quit = true;
         },
+        .restart => switch (choice) {
+            0 => {
+                cmd_file.saveAll(app) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => return, // toasted; the restart is off
+                };
+                app.restart = true;
+                app.quit = true;
+            },
+            1 => {
+                app.restart = true;
+                app.quit = true;
+            },
+            else => {},
+        },
         .delete_paths => |d| {
             try trash.acceptDelete(app, @ptrCast(d.paths), d.permanent_only, choice);
             if (choice == 0) for (d.paths) |p| {
@@ -1723,8 +1739,27 @@ pub fn paste(app: *App, text: []const u8) Allocator.Error!void {
     // The graph's commit box: a pasted message keeps its lines.
     if (try git_app.pasteIntoCommitBox(app, text)) return;
     const e = app.activeEditor() orelse return;
-    const copy = try app.frame.allocator().dupe(u8, text);
+    // A paste lands literally, as one change: no auto-indent, no pairs,
+    // no abbreviations — `insert_str` is none of those. Its line breaks
+    // are the buffer's (`\n`; the file's own ending goes back on at
+    // save): a CRLF pair or a lone CR, what most terminals send, is one.
+    const copy = try normalizePasteBreaks(app.frame.allocator(), text);
     _ = try app.applyOps(e, &.{.{ .insert_str = copy }});
+}
+
+/// `\r\n` and a lone `\r` become `\n`; everything else is kept.
+pub fn normalizePasteBreaks(arena: Allocator, text: []const u8) Allocator.Error![]u8 {
+    const out = try arena.alloc(u8, text.len);
+    var n: usize = 0;
+    var i: usize = 0;
+    while (i < text.len) : (i += 1) {
+        if (text[i] == '\r') {
+            if (i + 1 < text.len and text[i + 1] == '\n') i += 1;
+            out[n] = '\n';
+        } else out[n] = text[i];
+        n += 1;
+    }
+    return out[0..n];
 }
 
 // ─── mouse ──────────────────────────────────────────────────────────────
@@ -3554,7 +3589,7 @@ pub fn handleAppCommand(app: *App, pane_id: PaneId, e: *EditorPane, cmd: input.A
             try openFilterPrompt(app, range[0], range[1]);
         },
         .repeat_insert_start => |r| try beginRepeatInsert(app, pane_id, e, r.count, r.kind),
-        .operator_linewise_to => |o| try linewiseOp(app, e, o.op, o.target),
+        .operator_linewise_to => |o| try linewiseOp(app, e, o.op, o.target, o.register),
         .cmdline_tab_complete => try cmdlineTabComplete(app, e),
         .cmdline_popup_move => |d| try cmdlineCycle(app, e, d),
         .cmdline_insert_cursor_word => |big| try cmdlineInsertWord(app, e, big),
@@ -3624,12 +3659,39 @@ pub fn runExLine(app: *App, line: []const u8) Allocator.Error!void {
 
 // ── visual block ──
 
-fn blockRect(e: *const EditorPane) ?struct { r0: usize, r1: usize, c0: usize, c1: usize } {
+fn blockRect(e: *const EditorPane) ?block.Rect {
     const ed = e.buf.editor;
     const anchor = ed.block_anchor orelse e.block_anchor orelse return null;
-    const a = ed.rowColAt(anchor);
-    const b = ed.rowCol();
-    return .{ .r0 = @min(a.row, b.row), .r1 = @max(a.row, b.row), .c0 = @min(a.col, b.col), .c1 = @max(a.col, b.col) };
+    return block.rectFrom(ed, anchor);
+}
+
+/// Where a block `I` (`append` false: at display column `col`) or `A`
+/// (`col` is the column after the block) types on `row`, padding the
+/// row with spaces first when it has to be reached: an `A` past a short
+/// row's end pads out to the column (`:help v_b_A`), and a wide glyph
+/// the column cuts through gets the typed text after spaces, before it.
+/// Null: an `I` on a row that ends before the column is not touched
+/// (`:help v_b_I`). A ragged `$A` types at each row's end.
+fn blockInsertAt(ed: *Editor, row: usize, col: usize, append: bool, ragged: bool) Allocator.Error!?usize {
+    const end = ed.lineEnd(row);
+    if (ragged) return end;
+    const width = ed.doc.lineVcols(row);
+    if (width < col) {
+        if (!append) return null;
+        var pad: [256]u8 = @splat(' ');
+        const n = @min(col - width, pad.len);
+        try ed.splice(end, end, pad[0..n]);
+        return end + n;
+    }
+    const at = ed.byteAtVcol(row, col);
+    const start = ed.vcolAtByte(at);
+    if (at < end and start < col) {
+        var pad: [8]u8 = @splat(' ');
+        const n = @min(col - start, pad.len);
+        try ed.splice(at, at, pad[0..n]);
+        return at + n;
+    }
+    return at;
 }
 
 /// `I` / `A` / `c` on a visual block: (for `c`) cut the rectangle, put
@@ -3647,29 +3709,27 @@ fn beginBlockInsert(app: *App, pane_id: PaneId, e: *EditorPane, append: bool, ch
     e.block_anchor = null;
     ed.block_anchor = null;
     var col = if (append) rect.c1 + 1 else rect.c0;
+    try ed.checkpoint();
     if (change) {
-        // Delete the rectangle bottom-up so earlier offsets stay valid.
-        var row = rect.r1 + 1;
-        try ed.checkpoint();
-        while (row > rect.r0) {
-            row -= 1;
-            const s = ed.byteAtCol(row, rect.c0);
-            const en = if (eol) ed.lineEnd(row) else @min(ed.byteAtCol(row, rect.c1 + 1), ed.lineEnd(row));
-            if (en > s) try ed.splice(s, en, "");
-        }
+        try block.cutRows(ed, rect, eol);
         col = rect.c0;
         e.syntax.dirty = true;
     }
     // `$A`: append at every row's own end.
     const ragged = eol and append and !change;
-    const start = if (ragged) ed.lineEnd(rect.r0) else @min(ed.byteAtCol(rect.r0, col), ed.lineEnd(rect.r0));
+    const as_append = append and !change;
+    const start = try blockInsertAt(ed, rect.r0, col, as_append, ragged) orelse ed.lineEnd(rect.r0);
     ed.setCursor(start);
     ed.anchor = null;
+    // The cut, the padding and what is typed undo as one change.
+    ed.in_insert_run = true;
+    ed.doc.insert_run_owner = ed;
     e.buf.input.requestInsertMode();
-    app.block_insert = .{ .pane = pane_id, .first_row = rect.r0, .last_row = rect.r1, .col = col, .start_byte = start, .len_before = ed.len(), .eol = ragged };
+    app.block_insert = .{ .pane = pane_id, .first_row = rect.r0, .last_row = rect.r1, .col = col, .start_byte = start, .len_before = ed.len(), .eol = ragged, .append = as_append };
 }
 
-/// `r<ch>` on a visual block: every cell in the rectangle becomes `ch`.
+/// `r<ch>` on a visual block: every character in the rectangle becomes
+/// `ch`.
 fn blockReplace(app: *App, e: *EditorPane, ch: u21) Allocator.Error!void {
     const ed = e.buf.editor;
     const eol = ed.block_eol;
@@ -3684,21 +3744,22 @@ fn blockReplace(app: *App, e: *EditorPane, ch: u21) Allocator.Error!void {
     var row = rect.r1 + 1;
     while (row > rect.r0) {
         row -= 1;
-        // A ragged block replaces to each row's last char.
-        var c = if (eol) ed.colAtByte(ed.lineEnd(row)) else rect.c1 + 1;
-        if (eol and c <= rect.c0) continue;
-        while (c > rect.c0) {
-            c -= 1;
-            const s = ed.byteAtCol(row, c);
-            if (s >= ed.lineEnd(row)) continue;
-            const cp_len = std.unicode.utf8ByteSequenceLength(ed.bytes()[s]) catch 1;
-            try ed.splice(s, s + cp_len, glyph[0..n]);
+        if (row >= ed.lineCount()) continue;
+        const sp = block.span(ed, row, rect.c0, rect.c1, eol);
+        // Right to left, so the earlier offsets stay put.
+        var chars: std.ArrayList(usize) = .empty;
+        var b = sp.inner_s;
+        while (b < sp.inner_e) : (b = ed.nextBoundary(b)) try chars.append(app.frame.allocator(), b);
+        var i = chars.items.len;
+        while (i > 0) {
+            i -= 1;
+            const s = chars.items[i];
+            try ed.splice(s, ed.nextBoundary(s), glyph[0..n]);
         }
     }
-    ed.setCursor(ed.byteAtCol(rect.r0, rect.c0));
+    ed.setCursor(ed.byteAtVcol(rect.r0, rect.c0));
     e.buf.doc.recomputeDirty();
     e.syntax.dirty = true;
-    _ = app;
 }
 
 /// `<count>i` / `I` / `a` / `A` / `o` / `O`: enter Insert where the
@@ -3743,7 +3804,7 @@ pub fn finishDeferredInserts(app: *App) Allocator.Error!void {
         while (row > b.first_row + 1) {
             row -= 1;
             if (row >= ed.lineCount()) continue;
-            const at = if (b.eol) ed.lineEnd(row) else @min(ed.byteAtCol(row, b.col), ed.lineEnd(row));
+            const at = try blockInsertAt(ed, row, b.col, b.append, b.eol) orelse continue;
             try ed.splice(at, at, typed);
         }
         ed.setCursor(b.start_byte);
@@ -3803,7 +3864,7 @@ pub fn finishDeferredInserts(app: *App) Allocator.Error!void {
 
 /// `dG` / `dgg` / `<n>dG` / `yG`…: `target` null = last line, 0 = first,
 /// n = 1-based line. Whole lines, inclusive, into the unnamed register.
-fn linewiseOp(app: *App, e: *EditorPane, op: u8, target: ?u32) Allocator.Error!void {
+fn linewiseOp(app: *App, e: *EditorPane, op: u8, target: ?u32, register: ?u21) Allocator.Error!void {
     const ed = e.buf.editor;
     const total = ed.lineCount();
     const cur = ed.currentLine();
@@ -3816,6 +3877,8 @@ fn linewiseOp(app: *App, e: *EditorPane, op: u8, target: ?u32) Allocator.Error!v
     var copy = try app.frame.allocator().alloc(u8, text.len + 1);
     @memcpy(copy[0..text.len], text);
     copy[text.len] = '\n';
+    // The register a `"x` named goes with the write it routes.
+    if (register) |r| app.clipboard.setPendingRegister(r);
     switch (op) {
         'y' => {
             try app.clipboard.setYank(copy, true);
@@ -5094,4 +5157,28 @@ test "toasts: the transient stack keeps five and drops the oldest, a repeat coal
     app.toast("later", .{});
     try app.handle(.{ .key = key_mod.Key.named(.esc) });
     try std.testing.expectEqual(@as(usize, 0), app.toasts.items.len);
+}
+
+test "a paste into the editor lands literally in both profiles: no auto-indent cascade, every line break kept" {
+    const pasted = [_][]const u8{
+        "    a = 1\r        b = (2\rc = [3]\r", // CR: xterm, Terminal.app, iTerm2
+        "    a = 1\n        b = (2\nc = [3]\n", // LF: kitty, wezterm
+        "    a = 1\r\n        b = (2\r\nc = [3]\r\n",
+    };
+    for ([_]input.Style{ .standard, .vim }) |style| for (pasted) |p| {
+        var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
+        defer app.deinit();
+        try app.setInputStyle(style);
+        _ = try app.openScratch();
+        const e = app.activeEditor().?;
+        e.buf.doc.auto_indent = true;
+        e.buf.doc.auto_pair = true;
+        if (style == .vim) try app.handle(.{ .key = Key.char('i') });
+        try app.handle(.{ .paste = try std.testing.allocator.dupe(u8, p) });
+        try std.testing.expectEqualStrings("    a = 1\n        b = (2\nc = [3]\n", e.buf.editor.bytes());
+        // One change: one undo takes the whole paste back.
+        if (style == .vim) try app.handle(.{ .key = Key.named(.esc) });
+        _ = try app.applyOps(e, &.{.undo});
+        try std.testing.expectEqualStrings("", e.buf.editor.bytes());
+    };
 }

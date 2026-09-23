@@ -431,6 +431,57 @@ pub const History = struct {
         return out;
     }
 
+    /// One entry as a persisted history stores it: the hull and the
+    /// cursor, spelled against the live text (the newest entry) or the
+    /// state above it (every older one) — the stack as it is in memory.
+    pub const Hull = struct { p: usize = 0, s: usize = 0, mid: []const u8 = "", cursor: usize = 0, anchor: ?usize = null };
+
+    /// The newest entries of a stack, oldest first, holding no more than
+    /// `max` entries and `max_bytes` of hull text between them — a
+    /// suffix of the stack, so each still spells its state against the
+    /// one above it. Borrowed from the history; valid until it changes.
+    pub fn tailHulls(self: *const History, arena: Allocator, which: enum { undo, redo }, max: usize, max_bytes: usize) Allocator.Error![]Hull {
+        const ring = if (which == .undo) &self.undo else &self.redo;
+        const items = ring.items.items[ring.head..];
+        var n: usize = 0;
+        var bytes_used: usize = 0;
+        while (n < @min(max, items.len)) : (n += 1) {
+            const e = items[items.len - 1 - n];
+            if (bytes_used + e.mid.len > max_bytes) break;
+            bytes_used += e.mid.len;
+        }
+        const out = try arena.alloc(Hull, n);
+        for (items[items.len - n ..], out) |e, *o| o.* = .{ .p = e.p, .s = e.s, .mid = e.mid, .cursor = e.cursor, .anchor = e.anchor };
+        return out;
+    }
+
+    /// Put persisted `hulls` (oldest first, as `tailHulls` gave them) on
+    /// an EMPTY stack. False, and nothing changed, when the stack is not
+    /// empty or the hulls do not spell states of the live text — each
+    /// must fit inside the state above it, the newest inside the text.
+    pub fn restoreHulls(self: *History, which: enum { undo, redo }, hulls: []const Hull) Allocator.Error!bool {
+        const ring = if (which == .undo) &self.undo else &self.redo;
+        if (ring.len() != 0) return false;
+        var base_len = self.liveText().len;
+        var k = hulls.len;
+        while (k > 0) {
+            k -= 1;
+            const h = hulls[k];
+            if (h.p > base_len or h.s > base_len - h.p) return false;
+            const state_len = h.p + h.mid.len + h.s;
+            if (h.cursor > state_len) return false;
+            if (h.anchor) |a| if (a > state_len) return false;
+            base_len = state_len;
+        }
+        for (hulls) |h| {
+            const mid = try self.gpa.dupe(u8, h.mid);
+            errdefer self.gpa.free(mid);
+            try ring.push(self.gpa, .{ .p = h.p, .s = h.s, .mid = mid, .cursor = h.cursor, .anchor = h.anchor, .seq = self.seq + 1 }, self.limit);
+            self.seq += 1;
+        }
+        return true;
+    }
+
     /// Re-stamp the cursor of undo entry `index` (oldest first). The
     /// buffer uses it once per key: the snapshot an op took mid-way —
     /// after the handler's own motions — remembers the cursor the key

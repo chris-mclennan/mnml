@@ -1,0 +1,12 @@
+# Standard profile: Down keeps the screen column. Right x3 on `a<TAB>b`
+# puts the caret after `b` at cell 5 (tab width 4); Down lands under it,
+# so X goes in after the 5: `12345X67890`, as in VS Code.
+write f.txt "a\tb\n1234567890\n"
+open f.txt
+key right
+key right
+key right
+key down
+type "X"
+command file.save
+expect file f.txt contains "12345X67890\n"

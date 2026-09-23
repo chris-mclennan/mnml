@@ -88,7 +88,9 @@ pub const AppCommand = union(enum) {
     jump_to_mark_exact: u8,
     /// `q<reg>`; `'@'` = anonymous. Idle ⇒ start; recording ⇒ stop.
     macro_record_into: u8,
-    macro_replay_from: struct { reg: u8, count: u32 },
+    /// `@x` / `@@` (`reg` '@': the last one executed); `recorded`: `Q`,
+    /// the last one recorded (`:help Q`).
+    macro_replay_from: struct { reg: u8, count: u32, recorded: bool = false },
     block_insert_start: struct { append: bool },
     block_change_start,
     block_replace_with: struct { ch: u21 },
@@ -96,8 +98,9 @@ pub const AppCommand = union(enum) {
     filter_paragraph_from_cursor: struct { around: bool },
     repeat_insert_start: struct { count: u32, kind: RepeatInsertKind },
     /// `d`/`y`/`c` + `G` / `gg` / `<n>G`: `target` null = buffer end,
-    /// 0 = buffer start, n = 1-based line.
-    operator_linewise_to: struct { op: u8, target: ?u32 },
+    /// 0 = buffer start, n = 1-based line. `register` is a pending `"x`
+    /// the op writes (`"+yG`), null for the unnamed one.
+    operator_linewise_to: struct { op: u8, target: ?u32, register: ?u21 = null },
     cmdline_tab_complete,
     cmdline_popup_move: i8,
     /// Enter on the cmdline while a completion popup is showing.

@@ -47,6 +47,8 @@ pub const Buffer = struct {
     /// `@tagName` of the last op the editor refused with `Unsupported`,
     /// for the app to toast. Static string.
     last_unsupported: ?[]const u8 = null,
+    /// Set by `applyOps` when an `abort_unless_selection` cut a list short.
+    ops_aborted: bool = false,
     /// The find matches nearest the cursor (`gn` / `gN`), byte ranges.
     /// The find state lives with the app; it seeds these before a key.
     find_next: ?[2]usize = null,
@@ -150,7 +152,7 @@ pub const Buffer = struct {
         // memory once while it opens, not three times.
         const text = if (eol == .lf) raw else blk: {
             defer gpa.free(raw);
-            break :blk try normalizeEol(gpa, raw);
+            break :blk try normalizeEol(gpa, raw, eol);
         };
         var buf = initOwning(gpa, text, style, cfg) catch |err| {
             gpa.free(text);
@@ -162,23 +164,40 @@ pub const Buffer = struct {
         return buf;
     }
 
-    /// The first line break decides: `\r\n`, a lone `\r`, else LF.
+    /// The file's line ending, chosen so that saving an untouched file
+    /// writes its bytes back (Neovim's `fileformats` rule): CRLF only
+    /// when EVERY `\n` has a `\r` before it, a lone `\r` only when the
+    /// file has no `\n` at all, else LF — and under LF any `\r` is an
+    /// ordinary byte of its line, so a mixed file, a progress bar's `\r`
+    /// or a `\r\r\n` is kept exactly as it came.
     pub fn detectEol(text: []const u8) editorconfig.Eol {
-        const i = std.mem.indexOfAny(u8, text, "\r\n") orelse return .lf;
-        if (text[i] == '\n') return .lf;
-        return if (i + 1 < text.len and text[i + 1] == '\n') .crlf else .cr;
+        const first_lf = std.mem.indexOfScalar(u8, text, '\n') orelse
+            return if (std.mem.indexOfScalar(u8, text, '\r') != null) .cr else .lf;
+        if (first_lf == 0 or text[first_lf - 1] != '\r') return .lf;
+        var i = first_lf + 1;
+        while (std.mem.indexOfScalarPos(u8, text, i, '\n')) |j| : (i = j + 1) {
+            if (text[j - 1] != '\r') return .lf;
+        }
+        return .crlf;
     }
 
-    /// Every `\r\n` and lone `\r` becomes `\n`.
-    pub fn normalizeEol(gpa: Allocator, text: []const u8) Allocator.Error![]u8 {
+    /// The buffer's text for a file read as `eol`: under CRLF each
+    /// `\r\n` becomes `\n` (any other `\r` stays), under CR each `\r`
+    /// does; LF text is already the buffer's.
+    pub fn normalizeEol(gpa: Allocator, text: []const u8, eol: editorconfig.Eol) Allocator.Error![]u8 {
         var out = try std.ArrayList(u8).initCapacity(gpa, text.len);
         errdefer out.deinit(gpa);
         var i: usize = 0;
         while (i < text.len) : (i += 1) {
-            if (text[i] == '\r') {
-                out.appendAssumeCapacity('\n');
-                if (i + 1 < text.len and text[i + 1] == '\n') i += 1;
-            } else out.appendAssumeCapacity(text[i]);
+            const c = text[i];
+            switch (eol) {
+                .lf => out.appendAssumeCapacity(c),
+                .cr => out.appendAssumeCapacity(if (c == '\r') '\n' else c),
+                .crlf => if (c == '\r' and i + 1 < text.len and text[i + 1] == '\n') {
+                    out.appendAssumeCapacity('\n');
+                    i += 1;
+                } else out.appendAssumeCapacity(c),
+            }
         }
         return out.toOwnedSlice(gpa);
     }
@@ -431,7 +450,15 @@ pub const Buffer = struct {
     /// The record keeps the handler's own list, so `.` on another fold
     /// re-expands against that fold.
     fn applyHandlerOps(self: *Buffer, list: []const EditOp, visual: ?VisualShape, clip: *Clipboard, viewport_rows: usize, arena: Allocator) Allocator.Error!BufferEvent {
+        self.ops_aborted = false;
         const changed = try self.applyOps(try self.foldAwareOps(list, arena), clip, viewport_rows, arena);
+        if (self.ops_aborted) {
+            // A text object that found nothing: the operator is dropped
+            // whole — Normal again, nothing for `.` (`:help ci(`).
+            self.ops_aborted = false;
+            if (self.input.mode() == .insert or self.input.mode() == .replace) self.input.onBlur();
+            return if (changed) .edited else .redraw;
+        }
         try self.trackDot(list, visual, arena);
         return if (changed) .edited else .redraw;
     }
@@ -480,6 +507,10 @@ pub const Buffer = struct {
                 const delta: isize = @as(isize, @intCast(self.editor.lineCount())) - @as(isize, @intCast(lines_before));
                 if (delta != 0) try self.shiftFoldsAfter(cursor_line_before, delta);
                 changed = true;
+            }
+            if (out.aborted) {
+                self.ops_aborted = true;
+                break;
             }
         }
         if (changed) self.doc.recomputeDirty();
@@ -846,7 +877,7 @@ pub const Buffer = struct {
                 defer self.gpa.free(joined);
                 try clip.putMacro(r.reg, joined);
             } else try clip.putMacro(r.reg, spec);
-            clip.last_macro = r.reg;
+            clip.last_recorded = r.reg;
             r.keys.deinit(self.gpa);
             self.recording = null;
             return .redraw;
@@ -862,8 +893,8 @@ pub const Buffer = struct {
     /// `@reg`: the register's text as keys. A register yanked back with
     /// `yy` ends in a newline, which replays as Enter — vim executes it
     /// the same way.
-    fn macroReplay(self: *Buffer, reg_in: u8, count: u32, clip: *Clipboard, viewport_rows: usize, wrap_width: ?usize, arena: Allocator) Allocator.Error!BufferEvent {
-        const reg = if (reg_in == '@') (clip.last_macro orelse return .noop) else reg_in;
+    fn macroReplay(self: *Buffer, reg_in: u8, count: u32, recorded: bool, clip: *Clipboard, viewport_rows: usize, wrap_width: ?usize, arena: Allocator) Allocator.Error!BufferEvent {
+        const reg = if (recorded) (clip.last_recorded orelse return .noop) else if (reg_in == '@') (clip.last_macro orelse return .noop) else reg_in;
         const spec = clip.macro(reg) orelse return .noop;
         if (self.replay_depth >= max_replay_depth) return .noop;
         self.replay_depth += 1;
@@ -931,7 +962,7 @@ pub const Buffer = struct {
                 return .redraw;
             },
             .macro_record_into => |reg| return self.macroToggle(reg, clip, true),
-            .macro_replay_from => |m| return self.macroReplay(m.reg, m.count, clip, viewport_rows, wrap_width, arena),
+            .macro_replay_from => |m| return self.macroReplay(m.reg, m.count, m.recorded, clip, viewport_rows, wrap_width, arena),
             .operator_to_mark => |m| return self.operatorToMark(m.op, m.mark, m.exact, clip, viewport_rows, arena),
             else => return .{ .app = cmd },
         }
@@ -1551,7 +1582,13 @@ test "vim marks, macros and visual mode" {
     try vim("majj'a", "  |a\nb\nc", "  |a\nb\nc");
     try vim("qaA!<esc>jq@a", "|a\nb\nc", "a!\nb!\n|c");
     try vim("qaA!<esc>jq@a@@", "|a\nb\nc", "a!\nb!\nc|!");
-    try vim("qqA!<esc>jq@@", "|a\nb\nc", "a!\nb!\n|c");
+    // `qq` records into register q; `@@` repeats the last EXECUTED
+    // register, so straight after a recording it has nothing to repeat
+    // (Neovim 0.12.5: `qqAX<Esc>jq@q@@` on five `a` lines → three `aX`;
+    // `qqA!<Esc>jq@@` → only the recorded line). `Q` is the last recorded.
+    try vim("qqA!<esc>jq@@", "|a\nb\nc", "a!\n|b\nc");
+    try vim("qqAX<esc>jq@q@@", "|a\na\na\na\na", "aX\naX\naX\n|a\na");
+    try vim("qqA!<esc>jqQ", "|a\nb\nc", "a!\nb!\n|c");
     try vim("qaxq2@a", "|abcd", "|d");
     try vim("qaIX<esc>jqqbA!<esc>jq@a@b", "|a\nb\nc\nd", "Xa\nb!\nXc\nd|!");
     try vim("@z", "|a", "|a");
@@ -1626,7 +1663,7 @@ test "macro registers are shared through the clipboard: `qa` in one buffer, `@a`
     try testing.expectEqualStrings("one!\ntwo", a.editor.bytes());
     try testing.expect(!a.isRecording());
     try testing.expectEqualStrings("A!<esc>j", clip.macro('a').?);
-    try testing.expectEqual(@as(?u8, 'a'), clip.last_macro);
+    try testing.expectEqual(@as(?u8, 'a'), clip.last_recorded);
     // A different buffer, the same clipboard: the register replays.
     try feed(&b, &clip, arena.allocator(), "@a");
     try testing.expectEqualStrings("three!\nfour", b.editor.bytes());
@@ -1759,7 +1796,11 @@ test "vim ctrl+a / ctrl+x, gA align, gq reflow" {
     try vim("<c-x><c-x>", "|value = 41", "value = 3|9");
     try vim("5<c-a>", "|x 9", "x 1|4");
     try vim("10<c-x>", "|5", "-|5");
-    try vim("<c-a>", "|a-1", "a-|2"); // a minus glued to an identifier is not a sign
+    // A `-` before the digits is the sign whatever precedes it — Neovim
+    // 0.12.5: `a-1` → `a0`, `val-3 abc` → `val-2 abc`, `x_-7` → `x_-6`.
+    try vim("<c-a>", "|a-1", "a|0");
+    try vim("<c-a>", "|val-3 abc", "val-|2 abc");
+    try vim("<c-a>", "|x_-7", "x_-|6");
     try vim("<c-a>", "|x -1", "x |0");
     try vim("<c-a>", "|none", "|none");
     try vim("<c-a>u", "|41", "|41");
@@ -2179,9 +2220,33 @@ test "editorconfig on a buffer: CRLF files load as LF and save back as CRLF; tri
     const cr = try Buffer.withEol(gpa, "a\nb\n", .cr);
     defer gpa.free(cr);
     try testing.expectEqualStrings("a\rb\r", cr);
-    const norm = try Buffer.normalizeEol(gpa, "a\r\nb\rc\n");
+    const norm = try Buffer.normalizeEol(gpa, "a\r\nb\rc\r\n", .crlf);
     defer gpa.free(norm);
-    try testing.expectEqualStrings("a\nb\nc\n", norm);
+    try testing.expectEqualStrings("a\nb\rc\n", norm);
+}
+
+test "buffer: a file's line breaks survive a load and a save byte for byte, mixed ones included" {
+    const gpa = testing.allocator;
+    // Every file Neovim writes back unchanged after an untouched save:
+    // the four mixed shapes and the pure ones.
+    const cases = [_]struct { raw: []const u8, eol: editorconfig.Eol }{
+        .{ .raw = "a\r\r\nb\r\r\nc\r\r\n", .eol = .crlf }, // converted twice
+        .{ .raw = "head\r\n50%\r100%\r\ntail\r\n", .eol = .crlf }, // a progress bar's \r
+        .{ .raw = "a\rb\nc\n", .eol = .lf }, // a lone \r first, LF after
+        .{ .raw = "a\r\nb\nc\r\nd\n", .eol = .lf }, // CRLF and LF mixed
+        .{ .raw = "a\r\nb\r\n", .eol = .crlf },
+        .{ .raw = "a\rb\r", .eol = .cr },
+        .{ .raw = "a\nb\n", .eol = .lf },
+        .{ .raw = "\nb\r\n", .eol = .lf },
+    };
+    for (cases) |c| {
+        try testing.expectEqual(c.eol, Buffer.detectEol(c.raw));
+        const text = try Buffer.normalizeEol(gpa, c.raw, c.eol);
+        defer gpa.free(text);
+        const back = try Buffer.withEol(gpa, text, c.eol);
+        defer gpa.free(back);
+        try testing.expectEqualStrings(c.raw, back);
+    }
 }
 
 test "buffer: the `\".` register is what the last Insert session typed, a backspace taken back; a runner's app command reaches the buffer" {
@@ -2211,4 +2276,48 @@ test "buffer: a runner-stopped recording keeps its last key (no `q` to drop)" {
     _ = try h.buf.runApp(.{ .macro_record_into = '@' }, &h.clip, 10, null, h.arena.allocator());
     try testing.expect(!h.buf.isRecording());
     try testing.expectEqualStrings("A!<esc>", h.clip.macro('@').?);
+}
+
+test "vim / standard: motions and deletes step over whole grapheme clusters (an emoji family, e + a combining accent)" {
+    const fam = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+    const e_acute = "e\u{301}";
+    const line = "a" ++ fam ++ "b " ++ e_acute ++ "x 中文z\n";
+    // Neovim 0.12.5 (`exe "normal …"` on the same line) for every row.
+    try vim("lx", "|" ++ line, "a|b " ++ e_acute ++ "x 中文z\n");
+    try vim("3lx", "|" ++ line, "a" ++ fam ++ "b|" ++ e_acute ++ "x 中文z\n");
+    try vim("5lx", "|" ++ line, "a" ++ fam ++ "b " ++ e_acute ++ "| 中文z\n");
+    try vim("2lvlld", "|" ++ line, "a" ++ fam ++ "|x 中文z\n");
+    try vim("$hhx", "|" ++ line, "a" ++ fam ++ "b " ++ e_acute ++ "x |文z\n");
+    try vim("A<bs><bs><esc>", "|a" ++ e_acute ++ "z\n", "|a\n");
+    try vim("hx", "a" ++ e_acute ++ "|z\n", "a|z\n");
+    // Standard: two rights land after the family; Backspace takes all of it.
+    try std_("<right><right><bs><del>", "|" ++ line, "a| " ++ e_acute ++ "x 中文z\n");
+    try std_("<left><bs>", "a" ++ e_acute ++ "z|\n", "a|z\n");
+    // A CR before the LF is its own character (CR LF is one cluster to
+    // Unicode, never to a line): `$` lands on it and `x` takes only it.
+    try vim("$x", "|ab\r\ncd\n", "a|b\ncd\n");
+}
+
+test "vim / standard: j / k keep the display column across tabs and wide glyphs" {
+    // Neovim 0.12.5 `--clean`, `ts=4` (the harness's tab width), each row.
+    try vim("fbjx", "|a\tb\n1234567890", "a\tb\n1234|67890");
+    try vim("5ljx", "|1234567890\n\t\tz", "1234567890\n\t|z");
+    try vim("3ljx", "|中文字abc\n1234567890", "中文字abc\n123456|890");
+    try vim("3ljx", "|1234567890\n中文字abc", "1234567890\n中|字abc");
+    try vim("8ljkx", "|abcdefghij\na\tb", "abcdefgh|j\na\tb");
+    try vim("$jx", "|x\t\ty\nabcdefghijkl", "x\t\ty\nabcdefghij|k");
+    // VS Code: three rights put the caret after `b` (screen column 5);
+    // Down lands under it, before the `6`.
+    try std_("<right><right><right><down>X", "|a\tb\n1234567890", "a\tb\n12345X|67890");
+}
+
+test "vim: an operator on a text object that finds nothing is abandoned — Normal, nothing for `.`" {
+    // Neovim 0.12.5 `--clean`, keys typed (`feedkeys(…, "xt")`).
+    try vim("$ci(X<esc>", "|foo(bar) baz qux", "foo(bar) baz q|x");
+    try vim("$ci\"X<esc>", "|foo(bar) baz qux", "foo(bar) baz q|x");
+    try vim("4lci(X<esc>ww.", "|foo(bar) baz qux", "foo(X) |baz qux");
+    try vim("$ci(X<esc>0.", "|foo(bar) baz qux", "|foo(bar) baz qx");
+    try vim("$di(", "|foo(bar) baz qux", "foo(bar) baz qu|x");
+    // An empty object is still an object: Insert opens between the pair.
+    try vim("ci(X<esc>", "foo(|) z", "foo(|X) z");
 }

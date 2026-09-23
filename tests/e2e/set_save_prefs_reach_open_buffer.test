@@ -1,0 +1,16 @@
+# `:set editor.trim_trailing_ws_on_save=true` reaches the file already
+# open, not only the ones opened after it: the per-buffer copy follows
+# the config when it changes, so the save does what the toast said.
+shell printf 'a  \nb\t\nc' > a.txt
+open a.txt
+ex set editor.trim_trailing_ws_on_save=true
+expect screen contains "trim_trailing_ws_on_save=on"
+key ctrl+end
+type "X"
+command file.save
+expect file a.txt contains "a\nb\ncX\n"
+# And back off: the next save keeps what is typed, blanks and all.
+ex set editor.trim_trailing_ws_on_save=false
+type "  "
+command file.save
+expect file a.txt contains "cX  \n"

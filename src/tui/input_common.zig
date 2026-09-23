@@ -61,6 +61,30 @@ pub fn parse(in: anytype, parser: *vaxis.Parser, buf: []u8, total: usize) !usize
 /// copied into the grapheme ring before the event leaves this thread.
 pub fn fold(in: anytype, event: Event) !void {
     const vx = in.vx;
+    // Inside a bracketed paste every key is a byte of the pasted text,
+    // not a keystroke: collected here and posted once at the closing
+    // fence as a `.paste`, so Enter never becomes an auto-indented line
+    // break and an LF is never read as ctrl+j.
+    if (in.paste.active) switch (event) {
+        .key_press => |key| return in.paste.addKey(in.gpa, key),
+        .key_release => return,
+        else => {},
+    };
+    switch (event) {
+        .paste_start => {
+            in.paste.begin();
+            return;
+        },
+        .paste_end => {
+            const text = try in.paste.finish(in.gpa) orelse return;
+            in.postEvent(.{ .paste = text }) catch |err| {
+                in.gpa.free(text);
+                return err;
+            };
+            return;
+        },
+        else => {},
+    }
     switch (event) {
         .key_press => |key| {
             // The explicit-width / scaled-text probes end in a cursor
@@ -84,7 +108,8 @@ pub fn fold(in: anytype, event: Event) !void {
         },
         .key_release => |key| try in.postEvent(.{ .key_release = cacheText(in, key) }),
         .mouse => |mouse| try in.postEvent(.{ .mouse = vx.translateMouse(mouse) }),
-        .mouse_leave, .focus_in, .focus_out, .paste_start, .paste_end => try in.postEvent(event),
+        .mouse_leave, .focus_in, .focus_out => try in.postEvent(event),
+        .paste_start, .paste_end => unreachable, // answered above
         // Owned by the event; the consumer frees it.
         .paste => try in.postEvent(event),
         .color_report, .color_scheme => try in.postEvent(event),
@@ -111,6 +136,53 @@ pub fn fold(in: anytype, event: Event) !void {
         },
     }
 }
+
+/// The text of one bracketed paste, collected key by key. The parser
+/// has already cut the bytes into keys; this puts the bytes back: a CR
+/// is a CR and an LF an LF (the parser spells them Enter and ctrl+j),
+/// a tab a tab, a legacy control byte itself, a grapheme its text.
+/// Nothing is normalised here — each consumer knows what a newline is
+/// to it (the editor's buffer, a child's pty).
+pub const PasteBuffer = struct {
+    bytes: std.ArrayList(u8) = .empty,
+    active: bool = false,
+
+    pub fn begin(self: *PasteBuffer) void {
+        self.bytes.clearRetainingCapacity();
+        self.active = true;
+    }
+
+    pub fn addKey(self: *PasteBuffer, gpa: std.mem.Allocator, key: Key) std.mem.Allocator.Error!void {
+        if (key.text) |t| return self.bytes.appendSlice(gpa, t);
+        const cp = key.codepoint;
+        // An ESC the parser glued to the next byte reads as alt+<byte>.
+        if (key.mods.alt and cp >= 0x20 and cp < 0x7f) return self.bytes.appendSlice(gpa, &.{ 0x1b, @intCast(cp) });
+        const byte: ?u8 = switch (cp) {
+            Key.enter => '\r',
+            Key.tab => '\t',
+            // A legacy control byte arrives as ctrl+<letter> (0x0a is ctrl+j).
+            'a'...'z' => if (key.mods.ctrl) @intCast(cp - 0x60) else @intCast(cp),
+            // Backspace / DEL, a lone ESC and NUL (ctrl+@) are dropped.
+            Key.backspace, Key.escape, '@' => null,
+            // Anything else without text is a named key: no byte to paste.
+            else => if (cp < 0x80) @intCast(cp) else null,
+        };
+        if (byte) |b| try self.bytes.append(gpa, b);
+    }
+
+    /// The collected text, gpa-owned, or null when no paste was open.
+    pub fn finish(self: *PasteBuffer, gpa: std.mem.Allocator) std.mem.Allocator.Error!?[]u8 {
+        if (!self.active) return null;
+        self.active = false;
+        defer self.bytes.clearRetainingCapacity();
+        return try gpa.dupe(u8, self.bytes.items);
+    }
+
+    pub fn deinit(self: *PasteBuffer, gpa: std.mem.Allocator) void {
+        self.bytes.deinit(gpa);
+        self.* = .{};
+    }
+};
 
 fn cacheText(in: anytype, key: Key) Key {
     var out = key;
@@ -349,6 +421,37 @@ test "parse: a shifted F-key reaches the keymap as `shift+fN` whichever way the 
             try testing.expectEqualStrings(want, keyName(ev.key_press, &nb));
         }
     }
+}
+
+test "parse: a bracketed paste arrives as ONE paste event holding the bytes between the fences" {
+    var env: std.process.Environ.Map = .init(testing.allocator);
+    defer env.deinit();
+    var vx = try vaxis.init(testing.io, testing.allocator, &env, .{});
+    var sink_buf: [256]u8 = undefined;
+    var sink: Io.Writer.Discarding = .init(&sink_buf);
+    defer vx.deinit(testing.allocator, &sink.writer);
+    const in = try testInput(&vx);
+    defer testing.allocator.destroy(in);
+    defer in.paste.deinit(testing.allocator);
+    vx.queries_done.store(true, .unordered);
+
+    var parser: vaxis.Parser = .{};
+    // CR and LF line breaks, a tab, a form feed, a wide char, then a
+    // key typed after the paste closed.
+    const body = "    a = 1\r        b = (2\nc = [3]\t\x0c中\r\n";
+    const stream = "\x1b[200~" ++ body ++ "\x1b[201~" ++ "x";
+    var buf: [128]u8 = undefined;
+    @memcpy(buf[0..stream.len], stream);
+    try testing.expectEqual(@as(usize, 0), try parse(in, &parser, &buf, stream.len));
+
+    var out: [8]Event = undefined;
+    const n = try in.drain(&out);
+    try testing.expectEqual(@as(usize, 2), n);
+    defer testing.allocator.free(out[0].paste);
+    // Not one key per byte (an Enter the editor auto-indents, an LF read
+    // as ctrl+j): the literal text, as one event.
+    try testing.expectEqualStrings(body, out[0].paste);
+    try testing.expectEqual(@as(u21, 'x'), out[1].key_press.codepoint);
 }
 
 test "parser distinguishes chords the legacy encoding folds together" {

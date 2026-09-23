@@ -1,0 +1,21 @@
+# `:sort` flags as Neovim 0.12.5 reads them: `iu` drops lines equal
+# ignoring case; `/pat/` sorts on what follows the match, `/pat/ r` on
+# the match itself (`r` is not reverse — only `!` is).
+write f1.txt "b\na\nB\na\nb\n"
+open f1.txt
+command editor.use_vim
+ex sort iu
+ex w
+expect file f1.txt lacks "B"
+write f2.txt "x3 b\nx1 c\nx2 a\n"
+open f2.txt
+command editor.use_vim
+ex sort /x. /
+ex w
+expect file f2.txt contains "x2 a\nx3 b\nx1 c\n"
+write f3.txt "x3 b\nx1 c\nx2 a\n"
+open f3.txt
+command editor.use_vim
+ex sort /x\d/ r
+ex w
+expect file f3.txt contains "x1 c\nx2 a\nx3 b\n"

@@ -1,0 +1,39 @@
+# A file's line breaks survive an edit that is taken back and a save, byte
+# for byte (Neovim writes all four back unchanged): CRLF is the ending only
+# when every LF has a CR, and any other CR is an ordinary byte of its line.
+
+shell printf 'a\r\r\nb\r\r\nc\r\r\n' > crcrlf.txt; cp crcrlf.txt crcrlf.orig
+open crcrlf.txt
+key down
+key end
+type "X"
+key backspace
+command file.save
+shell xxd crcrlf.txt >&2; cmp crcrlf.orig crcrlf.txt
+
+shell printf 'head\r\n50%%\r100%%\r\ntail\r\n' > log.txt; cp log.txt log.orig
+open log.txt
+key down
+key down
+key end
+type "X"
+key backspace
+command file.save
+shell xxd log.txt >&2; cmp log.orig log.txt
+
+shell printf 'a\rb\nc\n' > m.txt; cp m.txt m.orig
+open m.txt
+key end
+type "X"
+key backspace
+command file.save
+shell xxd m.txt >&2; cmp m.orig m.txt
+
+shell printf 'a\r\nb\nc\r\nd\n' > m2.txt; cp m2.txt m2.orig
+open m2.txt
+key down
+key end
+type "X"
+key backspace
+command file.save
+shell xxd m2.txt >&2; cmp m2.orig m2.txt

@@ -1,0 +1,15 @@
+# The change list remembers where the last change happened; for an
+# append that is the last inserted char. Neovim 0.12.5 (keys typed):
+# `2GAX<Esc>5GAY<Esc>gg g; g; iZ<Esc>` -> line 2 = "l2ZX" (g; lands ON
+# the X).
+write f.txt "l1\nl2\nl3\nl4\nl5\nl6\n"
+open f.txt
+command editor.use_vim
+type "2GAX"
+key escape
+type "5GAY"
+key escape
+type "ggg;g;iZ"
+key escape
+ex w
+expect file f.txt contains "l2ZX\n"

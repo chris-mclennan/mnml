@@ -1,0 +1,28 @@
+# width: 120
+# height: 40
+# `app.restart` (the palette's "Restart mnml", the window × menu's
+# "Restart" row) relaunches from the files on disk, so with unsaved work
+# it stops at the quit box's answers first — [S]ave all / [R]estart
+# anyway / [C]ancel, Cancel focused — instead of dropping the edit.
+write a.txt "keep me\n"
+open a.txt
+key end
+type " UNSAVED"
+expect dirty true
+command app.restart
+expect quit false
+expect screen contains "Restart mnml?"
+expect screen contains "Unsaved: a.txt"
+expect screen contains "[S]ave all"
+expect screen contains "[R]estart anyway"
+expect screen contains "[C]ancel"
+# Enter lands on Cancel: nothing lost, no restart.
+key enter
+expect screen lacks "Restart mnml?"
+expect quit false
+expect dirty true
+# Save all writes the buffer and then restarts.
+command app.restart
+key s
+expect quit true
+expect file a.txt contains "keep me UNSAVED"

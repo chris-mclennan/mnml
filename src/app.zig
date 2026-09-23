@@ -98,6 +98,7 @@ const dap = @import("app/dap.zig");
 const lsp = @import("app/lsp.zig");
 const script_decor = @import("app/script_decor.zig");
 const idle = @import("app/idle.zig");
+const autosave = @import("app/autosave.zig");
 const script_task = @import("app/script_task.zig");
 const syntax_jobs = @import("app/syntax_jobs.zig");
 const http_app = @import("app/http.zig");
@@ -363,6 +364,9 @@ pub const ConfirmPurpose = union(enum) {
     /// else (0 = Quit, 1 = Cancel). Payload-free like `.quit`, which
     /// `dispatch.zig` also uses as its ownership-moved sentinel.
     quit_clean,
+    /// `app.restart` with unsaved work: Save all / Restart anyway /
+    /// Cancel, the quit box's answers for a relaunch.
+    restart,
     /// Run the workspace's exec-bearing config (`trust.zig`).
     trust_workspace,
     /// `workspace.review_trust` on a trusted workspace: Keep / Forget.
@@ -745,7 +749,9 @@ pub const FindBarState = struct {
 /// Visual-block `I` / `A` / `c` in flight: the typed run on the first
 /// row is replayed on the others once Insert mode ends.
 /// `eol`: `$A` — the typed run goes to every row's end, whatever its length.
-pub const BlockInsert = struct { pane: PaneId, first_row: usize, last_row: usize, col: usize, start_byte: usize, len_before: usize, eol: bool = false };
+/// A visual-block `I` / `A` / `c` in flight. `col` is a display column:
+/// where `I` / `c` type, or the column after the block for `A`.
+pub const BlockInsert = struct { pane: PaneId, first_row: usize, last_row: usize, col: usize, start_byte: usize, len_before: usize, eol: bool = false, append: bool = false };
 /// `<count>i` / `I` / `a` / `A` / `o` / `O` in flight: what was typed
 /// replicates on Esc — as whole new lines for `o` / `O`, in place for
 /// the other four (`:help count`).
@@ -1064,6 +1070,7 @@ pub const App = struct {
     script_tasks: script_task.State = .{},
     /// The two debounced hooks the tick fires (`app/idle.zig`).
     idle: idle.State = .{},
+    autosave: autosave.State = .{},
     /// What the scripts painted into the editors and published as
     /// diagnostics (`app/script_decor.zig`); dropped by a reload.
     script_decor: script_decor.State = .{},
@@ -1560,6 +1567,7 @@ pub const App = struct {
         self.chord.clear(self.gpa);
         const style = styleOf(self.cfg.editor.input_style);
         if (style != self.input_style) try self.setInputStyle(style);
+        try self.syncBufferPrefs();
         self.tree.width = self.cfg.ui.tree_width;
         try self.seedPlusMenu();
         auto_refresh.seed(self);
@@ -1709,6 +1717,7 @@ pub const App = struct {
         self.syntax_jobs.deinit(self.io);
         self.transfers.deinit(gpa, self.io);
         self.update.deinit(gpa, self.io);
+        self.autosave.deinit(gpa);
         self.ai.deinit(gpa, self.io);
         self.copilot.deinit(gpa);
         self.now_playing.deinit(self.io);
@@ -2183,9 +2192,26 @@ pub const App = struct {
     /// a markdown file gets the editor AND a preview split beside it.
     /// `editor.auto_indent` changed (`:set ai`, the settings row): every
     /// open buffer follows.
-    pub fn syncAutoIndent(self: *App) void {
+    /// The per-buffer copies of `editor.auto_indent`,
+    /// `trim_trailing_ws_on_save` and `ensure_trailing_newline` follow
+    /// the config when it changes (`:set`, Settings, a reload), so the
+    /// file already open obeys the toast — a file's `.editorconfig`
+    /// still has the last word on the two save-time rules.
+    pub fn syncBufferPrefs(self: *App) Allocator.Error!void {
+        var arena_state = std.heap.ArenaAllocator.init(self.gpa);
+        defer arena_state.deinit();
         for (self.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-            .editor => |*e| e.buf.doc.auto_indent = self.cfg.editor.auto_indent,
+            .editor => |*e| {
+                const doc = e.buf.doc;
+                doc.auto_indent = self.cfg.editor.auto_indent;
+                doc.trim_trailing_ws_on_save = self.cfg.editor.trim_trailing_ws_on_save;
+                doc.ensure_trailing_newline = self.cfg.editor.ensure_trailing_newline;
+                const path = doc.path orelse continue;
+                _ = arena_state.reset(.retain_capacity);
+                const r = try editorconfig.resolveFor(self.io, arena_state.allocator(), path, self.workspace);
+                if (r.trim_trailing_whitespace) |v| doc.trim_trailing_ws_on_save = v;
+                if (r.insert_final_newline) |v| doc.ensure_trailing_newline = v;
+            },
             else => {},
         };
     }
@@ -2512,6 +2538,10 @@ pub const App = struct {
     /// on a clean workspace is the mis-hit chord, not the unsaved file.
     pub const quit_clean_choices = [_]Confirm.Choice{ .{ .key = 'q', .label = "Quit" }, .{ .key = 'c', .label = "Cancel" } };
 
+    /// `app.restart` over unsaved work: the relaunch starts from the
+    /// files on disk, so the dirty buffers are saved or given up first.
+    pub const restart_choices = [_]Confirm.Choice{ .{ .key = 's', .label = "Save all" }, .{ .key = 'r', .label = "Restart anyway" }, .{ .key = 'c', .label = "Cancel" } };
+
     /// The dirty buffers by name, in pane order — what the quit box
     /// lists. A count alone ("2 buffer(s) have unsaved changes") does
     /// not tell the user whether the work about to go is the scratch
@@ -2792,8 +2822,12 @@ pub const App = struct {
                 try dispatch.paste(self, text);
             },
             // The host window's focus: a focused terminal pane's child
-            // hears it too (DEC 1004, `pty_pane.tickAll`).
-            .focus => |f| self.host_focused = f,
+            // hears it too (DEC 1004, `pty_pane.tickAll`), and a dirty
+            // buffer autosaves when the window loses it.
+            .focus => |f| {
+                self.host_focused = f;
+                if (!f) autosave.onFocusLost(self);
+            },
             // D1: the payload is the handler's to adopt or free.
             .todos => |result| try todos.handle(self, result),
             .notes => |result| try notes.handle(self, result),
@@ -2969,6 +3003,7 @@ pub const App = struct {
         try ai_app.tick(self);
         try http_app.tick(self, now);
         idle.tick(self, now);
+        autosave.tick(self, now);
         // Every state ticks — an installed script's segments poll and its
         // tasks finish as `init.lua`'s do. By index: a tick may install or
         // remove a script.
@@ -3017,6 +3052,7 @@ pub const App = struct {
         if (self.click_echo) |e| next = @min(next orelse std.math.maxInt(i64), e.until_ms);
         if (ws_pane.nextDeadline(@constCast(self))) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (idle.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
+        if (autosave.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (hover_zones.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (sidebar_auto.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (launcher_dock_mod.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
@@ -3107,6 +3143,7 @@ pub const App = struct {
 
 test {
     _ = @import("app/trust.zig");
+    _ = @import("app/autosave.zig");
     _ = @import("app/cmdline.zig");
     _ = @import("app/flash.zig");
     _ = @import("app/settings.zig");

@@ -1,0 +1,19 @@
+# `:retab` follows Neovim 0.12.5: columns are display cells (`é<TAB>x`
+# with et, ts=4 gets three spaces), and under noexpandtab `:retab!` turns
+# a run of spaces into tabs rather than the other way round.
+write f1.txt "é\tx\n"
+open f1.txt
+command editor.use_vim
+ex set ts=4
+ex set et
+ex retab
+ex w
+expect file f1.txt contains "é   x\n"
+write f2.txt "\tfoo\n        bar\n"
+open f2.txt
+command editor.use_vim
+ex set ts=8
+ex set noet
+ex retab!
+ex w
+expect file f2.txt contains "\tfoo\n\tbar\n"

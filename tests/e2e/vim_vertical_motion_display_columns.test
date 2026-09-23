@@ -1,0 +1,17 @@
+# j / k keep a DISPLAY column — Neovim's virtual column — so across a
+# tab or a wide glyph the cursor stays under the same screen cell.
+# `fbjx` on `a<TAB>b` / `1234567890` (ts=4) deletes the 5; `3ljx` from
+# `中文字abc` (on the a, cell 6) deletes the 7 — Neovim 0.12.5 both.
+write f1.txt "a\tb\n1234567890\n"
+open f1.txt
+command editor.use_vim
+ex set ts=4
+type "fbjx"
+ex w
+expect file f1.txt contains "123467890\n"
+write f2.txt "中文字abc\n1234567890\n"
+open f2.txt
+command editor.use_vim
+type "3ljx"
+ex w
+expect file f2.txt contains "123456890\n"

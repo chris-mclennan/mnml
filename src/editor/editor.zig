@@ -324,11 +324,22 @@ pub const Editor = struct {
         self.goal_col = null;
     }
 
+    /// The display column `j` / `k` aim for: the cells before the
+    /// cursor, tabs and wide glyphs at their width, so the cursor keeps
+    /// its place on screen from line to line.
     pub fn goalCol(self: *Editor) usize {
         if (self.goal_col) |c| return c;
-        const c = self.colAtByte(self.cursor);
+        const c = self.doc.vcolAtByte(self.cursor);
         self.goal_col = c;
         return c;
+    }
+
+    pub fn byteAtVcol(self: *const Editor, line: usize, vcol: usize) usize {
+        return self.doc.byteAtVcol(line, vcol);
+    }
+
+    pub fn vcolAtByte(self: *const Editor, b: usize) usize {
+        return self.doc.vcolAtByte(b);
     }
 
     pub fn firstNonWs(self: *const Editor, line: usize) usize {
@@ -450,8 +461,13 @@ pub const Editor = struct {
         }
     }
 
-    fn recordChange(self: *Editor) Allocator.Error!void {
-        const pos = self.rowCol();
+    /// `typed`: a typed character just went in before the cursor — the
+    /// change is AT that character, where `g;` lands (Neovim: `AX<Esc>`
+    /// then `g;` is on the `X`, not past it).
+    fn recordChange(self: *Editor, typed: bool) Allocator.Error!void {
+        const at = if (typed and self.cursor > 0) self.prevBoundary(self.cursor) else self.cursor;
+        const pos = self.rowColAt(at);
+        if (typed) self.doc.last_insert = self.rowCol();
         const list = &self.doc.change_list;
         if (list.items.len > 0) {
             const last = &list.items[list.items.len - 1];
@@ -492,8 +508,11 @@ pub const Editor = struct {
             if (self.block_anchor) |a| self.block_anchor = self.snapBoundary(a);
         }
         if (self.extra_cursors.items.len != 0) self.normalizeExtras();
-        if (out.buffer_changed and !is_undo_redo) try self.recordChange();
+        if (out.buffer_changed and !is_undo_redo) try self.recordChange(op.isInsertChar() and self.doc.text.items.len > before_len);
         if (!keep_goal) self.goal_col = null;
+        // `$` sticks to the end: the `j` / `k` after it land on each
+        // line's last character (`:help $`, curswant = MAXCOL).
+        if (op == .move_line_last_char) self.goal_col = std.math.maxInt(usize);
 
         if (out.buffer_changed and !had_multi and self.extra_cursors.items.len == 0 and out.text_edits.len == 0) {
             const edit: ?TextEdit = if (replace_range_info) |r| blk: {

@@ -43,7 +43,7 @@ pub fn vertical(ed: *Editor, dir: i2) void {
         break :blk line + 1;
     };
     const gc = ed.goalCol();
-    ed.cursor = ed.byteAtCol(target, gc);
+    ed.cursor = ed.byteAtVcol(target, gc);
 }
 
 /// `vertical` as unary motions — the shape a multi-cursor fan-out takes.

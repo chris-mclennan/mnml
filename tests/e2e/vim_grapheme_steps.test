@@ -1,0 +1,18 @@
+# Motions and deletes step over whole grapheme clusters, as Neovim 0.12.5
+# does: `lx` takes the whole emoji family, `5lx` counts it and e+U+0301 as
+# one character each and lands on the x.
+shell printf 'a\360\237\221\250\342\200\215\360\237\221\251\342\200\215\360\237\221\247b e\314\201x \344\270\255\346\226\207z\n' > u.txt
+open u.txt
+command editor.use_vim
+key l
+key x
+ex w
+shell xxd u.txt >&2; printf 'ab e\314\201x \344\270\255\346\226\207z\n' | cmp - u.txt
+shell printf 'a\360\237\221\250\342\200\215\360\237\221\251\342\200\215\360\237\221\247b e\314\201x \344\270\255\346\226\207z\n' > u2.txt
+open u2.txt
+command editor.use_vim
+key 5
+key l
+key x
+ex w
+shell xxd u2.txt >&2; printf 'a\360\237\221\250\342\200\215\360\237\221\251\342\200\215\360\237\221\247b e\314\201 \344\270\255\346\226\207z\n' | cmp - u2.txt

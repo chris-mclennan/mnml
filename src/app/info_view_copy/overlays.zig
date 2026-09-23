@@ -65,6 +65,7 @@ fn confirm(app: *App, arena: Allocator, purpose: app_mod.ConfirmPurpose, choices
     return switch (purpose) {
         .quit => try quitChoice(app, arena, label, false),
         .quit_clean => try quitChoice(app, arena, label, true),
+        .restart => try restartChoice(app, arena, label),
         .close_pane => closeChoice(label),
         else => .{
             .title = try std.fmt.allocPrint(arena, "{s}", .{label}),
@@ -102,6 +103,31 @@ fn quitChoice(app: *App, arena: Allocator, label: []const u8, clean: bool) Alloc
         .body = if (clean) "Closes the box and nothing else happens. Esc and a click outside the box are the same answer. `ui.confirm_quit` off skips this box when nothing is unsaved." else "Closes the box and nothing else happens — the unsaved buffers stay open and dirty, and the file chip's ● shows which. Esc and a click outside the box are the same answer. Save all is the row that quits without losing anything.",
         .keys = &.{ .{ .chord = "c", .label = "Cancel" }, .{ .chord = "Esc", .label = "Cancel" } },
         .links = &.{ .{ .command = .{ .id = .@"file.save_all", .label = "Save all" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.confirm_quit"), .label = "Confirm on quit" } } },
+    };
+}
+
+fn restartChoice(app: *App, arena: Allocator, label: []const u8) Allocator.Error!Entry {
+    var dirty: usize = 0;
+    for (app.panes.slots.items) |*slot| if (slot.*) |*p| if (p.dirty()) {
+        dirty += 1;
+    };
+    if (std.mem.eql(u8, label, "Save all")) return .{
+        .title = "Save all, then restart",
+        .body = try std.fmt.allocPrint(arena, "Writes every dirty buffer to disk — {d} of them — and then relaunches; the relaunch reads each file back from disk, so this is the answer that keeps the edits. A buffer that has never been saved asks for a path first, and Cancel on that prompt stops the restart.", .{dirty}),
+        .keys = &.{.{ .chord = "s", .label = "Save all" }},
+        .links = &.{ .{ .command = .{ .id = .@"file.save_all", .label = "Save all and stay" } }, .{ .command = .{ .id = .@"buffer.next_dirty", .label = "Go to the next dirty buffer" } } },
+    };
+    if (std.mem.eql(u8, label, "Restart anyway")) return .{
+        .title = "Restart without saving",
+        .body = try std.fmt.allocPrint(arena, "Relaunches and discards the unsaved edits in {d} buffer{s}. The session reopens the same files, but from what is on disk — the edits are gone for good.", .{ dirty, if (dirty == 1) "" else "s" }),
+        .keys = &.{.{ .chord = "r", .label = "Restart anyway" }},
+        .links = &.{ .{ .command = .{ .id = .@"buffer.next_dirty", .label = "Show me the dirty buffers" } }, .{ .command = .{ .id = .@"file.save_all", .label = "Save all instead" } } },
+    };
+    return .{
+        .title = "Cancel — no restart",
+        .body = "Closes the box and nothing else happens — the unsaved buffers stay open and dirty, and the file chip's ● shows which. Esc and a click outside the box are the same answer.",
+        .keys = &.{ .{ .chord = "c", .label = "Cancel" }, .{ .chord = "Esc", .label = "Cancel" } },
+        .links = &.{.{ .command = .{ .id = .@"file.save_all", .label = "Save all" } }},
     };
 }
 
@@ -181,6 +207,11 @@ test "the quit box's buttons, the close box's, a picker row and the other overla
     app.overlay.confirm.purpose = .quit_clean;
     app.overlay.confirm.state.choices = &App.quit_clean_choices;
     try t.expectEqualStrings("Quit", (try entry(&app, a, 0)).?.title);
+    app.overlay.confirm.purpose = .restart;
+    app.overlay.confirm.state.choices = &App.restart_choices;
+    try t.expectEqualStrings("Save all, then restart", (try entry(&app, a, 0)).?.title);
+    try t.expectEqualStrings("Restart without saving", (try entry(&app, a, 1)).?.title);
+    try t.expectEqualStrings("Cancel — no restart", (try entry(&app, a, 2)).?.title);
     app.overlay.confirm.purpose = .{ .close_pane = 0 };
     app.overlay.confirm.state.choices = &App.close_choices;
     try t.expectEqualStrings("Discard the edits and close", (try entry(&app, a, 1)).?.title);

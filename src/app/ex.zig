@@ -165,7 +165,7 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     if (eqAny(verb, &.{ "ls", "buffers", "files" })) return command.run(app, .{ .static = .@"picker.buffers" });
     if (eqAny(verb, &.{"A"})) return alternate(app);
     if (eqAny(verb, &.{ "sor", "sort" })) return sort(app, range, args, bang);
-    if (eqAny(verb, &.{ "ret", "retab" })) return retab(app);
+    if (eqAny(verb, &.{ "ret", "retab" })) return retab(app, range, args, bang);
     if (eqAny(verb, &.{ "d", "de", "del", "delete" })) return deleteLines(app, range, args);
     if (eqAny(verb, &.{ "y", "ya", "yan", "yank" })) return yankLines(app, range, args);
     if (eqAny(verb, &.{ "ab", "abb", "abbreviate", "iab", "iabbrev" })) return abbreviate(app, args);
@@ -715,120 +715,266 @@ pub fn unescapeDelim(arena: Allocator, s: []const u8, delim: u8) Allocator.Error
     return out.items;
 }
 
-/// `:sort [u] [r] [i] [n]`; `:sort!` reverses.
+/// `:[range]sort[!] [b][f][i][n][o][r][u][x] [/{pattern}/]` (`:help
+/// :sort`). `!` reverses; `i` ignores case; `n` / `x` / `o` / `b` sort
+/// on the first decimal / hex / octal / binary number and `f` on the
+/// first float (a line without one sorts first); `u` keeps the first of
+/// equal lines (case folded under `i`). A pattern sorts on what follows
+/// its match — on the match itself with `r` — and a line it misses
+/// sorts first, in its own order. The sort is stable.
 fn sort(app: *App, range: ?Range, flags: []const u8, bang: bool) CommandError!void {
     const arena = app.frame.allocator();
     const e = try editor(app, ":sort");
     const ed = e.buf.editor;
     var unique = false;
-    var reverse = bang;
     var icase = false;
-    var numeric = false;
-    for (flags) |f| switch (f) {
-        'u' => unique = true,
-        'r' => reverse = true,
-        'i' => icase = true,
-        'n' => numeric = true,
-        else => {},
-    };
+    var on_match = false;
+    var kind: SortKind = .text;
+    var pattern: ?[]const u8 = null;
+    var i: usize = 0;
+    while (i < flags.len) : (i += 1) {
+        const f = flags[i];
+        switch (f) {
+            ' ', '\t' => {},
+            'u' => unique = true,
+            'i' => icase = true,
+            'r' => on_match = true,
+            'l' => {}, // locale collation: byte order here
+            'n' => kind = .decimal,
+            'x' => kind = .hex,
+            'o' => kind = .octal,
+            'b' => kind = .binary,
+            'f' => kind = .float,
+            else => {
+                if (std.ascii.isAlphabetic(f) or f == '"' or f == '\\') return app.diag.fail(arena, ":sort — E474: invalid argument: {s}", .{flags[i..]});
+                // Any other character opens the pattern and closes it.
+                var j = i + 1;
+                while (j < flags.len and flags[j] != f) : (j += 1) {
+                    if (flags[j] == '\\' and j + 1 < flags.len) j += 1;
+                }
+                pattern = try unescapeDelim(arena, flags[i + 1 .. j], f);
+                i = j;
+            },
+        }
+    }
+    if (pattern) |p| if (p.len == 0) return app.diag.fail(arena, ":sort — E35: no previous regular expression", .{});
+    var re: ?regex.Regex = if (pattern) |p| try compilePattern(app, ":sort", p, true) else null;
+    defer if (re) |*r| r.deinit();
+
     const r = range orelse Range{ .first = 0, .last = ed.lineCount() - 1 };
     const first = @min(r.first, ed.lineCount() - 1);
     const last = @min(r.last, ed.lineCount() - 1);
-    var lines: std.ArrayListUnmanaged([]const u8) = .empty;
+    const Line = struct { text: []const u8, key: []const u8, has_num: bool = false, num: i64 = 0, flt: f64 = 0 };
+    var lines: std.ArrayListUnmanaged(Line) = .empty;
     var row = first;
-    while (row <= last) : (row += 1) try lines.append(arena, ed.lineSlice(row));
-    const Ctx = struct {
-        icase: bool,
-        numeric: bool,
-        fn num(s: []const u8) ?i64 {
-            var i: usize = 0;
-            while (i < s.len and !std.ascii.isDigit(s[i]) and !(s[i] == '-' and i + 1 < s.len and std.ascii.isDigit(s[i + 1]))) i += 1;
-            if (i == s.len) return null;
-            var j = i + 1;
-            while (j < s.len and std.ascii.isDigit(s[j])) j += 1;
-            return std.fmt.parseInt(i64, s[i..j], 10) catch null;
+    while (row <= last) : (row += 1) {
+        const text = ed.lineSlice(row);
+        var key = text;
+        if (re) |*rx| {
+            if (rx.find(text, 0)) |m| {
+                key = if (on_match) text[m.start..m.end] else text[m.end..];
+            } else key = text[0..0];
         }
-        fn lt(c: @This(), a: []const u8, b: []const u8) bool {
-            if (c.numeric) {
-                const na = num(a);
-                const nb = num(b);
-                if (na == null and nb == null) return false;
-                if (na == null) return true;
-                if (nb == null) return false;
-                return na.? < nb.?;
+        var l: Line = .{ .text = text, .key = key };
+        if (kind != .text) sortNumber(&l, kind);
+        try lines.append(arena, l);
+    }
+    const Ctx = struct {
+        kind: SortKind,
+        icase: bool,
+        fn lt(c: @This(), a: Line, b: Line) bool {
+            switch (c.kind) {
+                .text => {
+                    if (!c.icase) return std.mem.lessThan(u8, a.key, b.key);
+                    return std.ascii.orderIgnoreCase(a.key, b.key) == .lt;
+                },
+                else => {
+                    if (a.has_num != b.has_num) return !a.has_num;
+                    if (c.kind == .float) return a.flt < b.flt;
+                    return a.num < b.num;
+                },
             }
-            if (c.icase) {
-                const n = @min(a.len, b.len);
-                for (a[0..n], b[0..n]) |x, y| {
-                    const lx = std.ascii.toLower(x);
-                    const ly = std.ascii.toLower(y);
-                    if (lx != ly) return lx < ly;
-                }
-                return a.len < b.len;
-            }
-            return std.mem.lessThan(u8, a, b);
         }
     };
-    std.mem.sort([]const u8, lines.items, Ctx{ .icase = icase, .numeric = numeric }, Ctx.lt);
-    if (reverse) std.mem.reverse([]const u8, lines.items);
+    // Stable, so equal keys keep their order (and `!` reverses it all).
+    std.mem.sort(Line, lines.items, Ctx{ .kind = kind, .icase = icase }, Ctx.lt);
+    if (bang) std.mem.reverse(Line, lines.items);
     var out: std.ArrayListUnmanaged(u8) = .empty;
     var kept: usize = 0;
     var prev: ?[]const u8 = null;
     for (lines.items) |l| {
-        if (unique and prev != null and std.mem.eql(u8, prev.?, l)) continue;
+        if (unique and prev != null) {
+            const same = if (icase) std.ascii.eqlIgnoreCase(prev.?, l.text) else std.mem.eql(u8, prev.?, l.text);
+            if (same) continue;
+        }
         if (kept > 0) try out.append(arena, '\n');
-        try out.appendSlice(arena, l);
+        try out.appendSlice(arena, l.text);
         kept += 1;
-        prev = l;
+        prev = l.text;
     }
     try app.splice(e, ed.lineStart(first), ed.lineEnd(last), out.items);
     ed.setCursor(ed.lineStart(first));
     ed.goal_col = null;
-    app.toast(":sort{s}{s}{s}{s} — {d} line(s)", .{
+    app.toast(":sort{s}{s}{s}{s}{s}{s}{s}{s} — {d} line(s)", .{
+        if (bang) "!" else "",
         if (unique) " u" else "",
-        if (reverse) " r" else "",
         if (icase) " i" else "",
-        if (numeric) " n" else "",
+        switch (kind) {
+            .text => "",
+            .decimal => " n",
+            .hex => " x",
+            .octal => " o",
+            .binary => " b",
+            .float => " f",
+        },
+        if (on_match) " r" else "",
+        if (pattern != null) " /" else "",
+        pattern orelse "",
+        if (pattern != null) "/" else "",
         kept,
     });
 }
 
-/// `:retab` — every TAB becomes spaces to the next tab stop.
-fn retab(app: *App) CommandError!void {
+const SortKind = enum { text, decimal, hex, octal, binary, float };
+
+/// The number `:sort n` / `x` / `o` / `b` / `f` sorts a line on: the
+/// first one in its key, a `-` right before it the sign (Neovim's
+/// `ex_sort`). No number leaves `has_num` false.
+fn sortNumber(l: anytype, kind: SortKind) void {
+    const k = l.key;
+    const isDig = struct {
+        fn f(kd: SortKind, c: u8) bool {
+            return switch (kd) {
+                .hex => std.ascii.isHex(c),
+                .binary => c == '0' or c == '1',
+                .octal => c >= '0' and c <= '7',
+                else => std.ascii.isDigit(c),
+            };
+        }
+    }.f;
+    var i: usize = 0;
+    while (i < k.len and !isDig(kind, k[i]) and !(kind == .float and k[i] == '.' and i + 1 < k.len and std.ascii.isDigit(k[i + 1]))) i += 1;
+    if (i == k.len) return;
+    const neg = i > 0 and k[i - 1] == '-';
+    var start = i;
+    var base: u8 = 10;
+    switch (kind) {
+        .hex => {
+            base = 16;
+            if (k[i] == '0' and i + 2 < k.len and (k[i + 1] == 'x' or k[i + 1] == 'X') and std.ascii.isHex(k[i + 2])) start = i + 2;
+        },
+        .binary => {
+            base = 2;
+            if (k[i] == '0' and i + 2 < k.len and (k[i + 1] == 'b' or k[i + 1] == 'B')) start = i + 2;
+        },
+        .octal => base = 8,
+        else => {},
+    }
+    var end = start;
+    if (kind == .float) {
+        while (end < k.len and (std.ascii.isDigit(k[end]) or k[end] == '.' or k[end] == 'e' or k[end] == 'E')) end += 1;
+        while (end > start) : (end -= 1) {
+            if (std.fmt.parseFloat(f64, k[start..end])) |v| {
+                l.flt = if (neg) -v else v;
+                l.has_num = true;
+                return;
+            } else |_| {}
+        }
+        return;
+    }
+    while (end < k.len and isDig(kind, k[end])) end += 1;
+    const v = std.fmt.parseInt(i64, k[start..end], base) catch std.math.maxInt(i64);
+    l.num = if (neg) -v else v;
+    l.has_num = true;
+}
+
+/// `:[range]retab[!] [N]` (`:help :retab`): every run of blanks that
+/// holds a TAB is rewritten for tab stop `N` (default: the current
+/// one) — as spaces under `expandtab`, else as tabs and the spaces left
+/// over. `!` rewrites runs of spaces too. Columns are display cells
+/// (`é` is one, `中` two), measured at the old tab stop; `N` becomes the
+/// buffer's tab stop.
+fn retab(app: *App, range: ?Range, args: []const u8, bang: bool) CommandError!void {
     const arena = app.frame.allocator();
     const e = try editor(app, ":retab");
     const ed = e.buf.editor;
-    const tw: usize = @max(ed.doc.tab_width, 1);
+    const doc = ed.doc;
+    const trimmed = std.mem.trim(u8, args, " \t");
+    const old_ts: usize = @max(doc.tab_width, 1);
+    const new_ts: usize = if (trimmed.len == 0) old_ts else std.fmt.parseInt(u8, trimmed, 10) catch return app.diag.fail(arena, ":retab — E475: invalid argument: {s}", .{trimmed});
+    if (new_ts == 0) return app.diag.fail(arena, ":retab — E487: argument must be positive", .{});
+    const expand = !doc.use_tabs;
+    const r = range orelse Range{ .first = 0, .last = ed.lineCount() - 1 };
+    const first = @min(r.first, ed.lineCount() - 1);
+    const last = @min(r.last, ed.lineCount() - 1);
+    const from = ed.lineStart(first);
+    const to = ed.lineEnd(last);
     const text = ed.bytes();
     var out: std.ArrayListUnmanaged(u8) = .empty;
-    var col: usize = 0;
-    var tabs: usize = 0;
-    for (text) |c| {
-        switch (c) {
-            '\t' => {
-                const n = tw - (col % tw);
-                try out.appendNTimes(arena, ' ', n);
-                col += n;
-                tabs += 1;
-            },
-            '\n' => {
-                try out.append(arena, c);
-                col = 0;
-            },
-            else => {
-                try out.append(arena, c);
-                col += 1;
-            },
+    var runs: usize = 0;
+    var row = first;
+    while (row <= last) : (row += 1) {
+        if (row > first) try out.append(arena, '\n');
+        const ls = ed.lineStart(row);
+        const le = ed.lineEnd(row);
+        var b = ls;
+        var vcol: usize = 0;
+        while (b <= le) {
+            if (b < le and (text[b] == ' ' or text[b] == '\t')) {
+                // A run of blanks: measure it at the old tab stop.
+                const run_s = b;
+                const start_vcol = vcol;
+                var got_tab = false;
+                var spaces: usize = 0;
+                while (b < le and (text[b] == ' ' or text[b] == '\t')) : (b += 1) {
+                    if (text[b] == '\t') {
+                        got_tab = true;
+                        vcol += old_ts - vcol % old_ts;
+                    } else {
+                        spaces += 1;
+                        vcol += 1;
+                    }
+                }
+                const len = vcol - start_vcol;
+                if (got_tab or (bang and spaces > 1)) {
+                    var tabs: usize = 0;
+                    var sp: usize = len;
+                    if (!expand) {
+                        // Neovim's `tabstop_fromto`: the first tab reaches
+                        // the next stop, the rest are whole stops.
+                        const init = new_ts - start_vcol % new_ts;
+                        if (sp >= init) {
+                            sp -= init;
+                            tabs = 1 + sp / new_ts;
+                            sp %= new_ts;
+                        }
+                    }
+                    if (expand or got_tab or tabs + sp < len) {
+                        try out.appendNTimes(arena, '\t', tabs);
+                        try out.appendNTimes(arena, ' ', sp);
+                        runs += 1;
+                        continue;
+                    }
+                }
+                try out.appendSlice(arena, text[run_s..b]);
+                continue;
+            }
+            if (b == le) break;
+            const nb = ed.nextBoundary(b);
+            vcol += doc.cellsAt(b, vcol);
+            try out.appendSlice(arena, text[b..nb]);
+            b = nb;
         }
     }
-    if (tabs == 0) {
-        app.toast(":retab — no tabs", .{});
+    doc.tab_width = new_ts;
+    if (std.mem.eql(u8, out.items, text[from..to])) {
+        app.toast(":retab — nothing to change", .{});
         return;
     }
     const cursor = ed.cursor;
-    try app.splice(e, 0, text.len, out.items);
-    ed.setCursor(cursor);
-    app.toast(":retab — {d} tab(s)", .{tabs});
+    try app.splice(e, from, to, out.items);
+    ed.setCursor(@min(cursor, ed.len()));
+    app.toast(":retab{s} — {d} run(s){s}", .{ if (bang) "!" else "", runs, if (expand) " to spaces" else "" });
 }
 
 /// The tail of `:[range]d[elete] [x] [count]` and
@@ -1213,8 +1359,8 @@ fn setOption(app: *App, opt: []const u8, name_in: []const u8, value: ?[]const u8
             try app.setInputStyle(if (app.cfg.editor.input_style == .vim) .vim else .standard);
         } else if (comptime std.mem.eql(u8, cp, "editor.clipboard")) {
             app.clipboard.selectMode(app.cfg.editor.clipboard);
-        } else if (comptime std.mem.eql(u8, cp, "editor.auto_indent")) {
-            app.syncAutoIndent();
+        } else if (comptime std.mem.eql(u8, cp, "editor.auto_indent") or std.mem.eql(u8, cp, "editor.trim_trailing_ws_on_save") or std.mem.eql(u8, cp, "editor.ensure_trailing_newline")) {
+            try app.syncBufferPrefs();
         }
         app.needs_render = true;
         app.toast("{s}={s}", .{ cp, opts[idx] });
@@ -1460,10 +1606,54 @@ test "ex: sort, sort u, retab, ranged delete with marks and a bare line jump" {
     try e.buf.editor.setText("\tfoo\nx\ty");
     try f.ex("retab");
     try testing.expectEqualStrings("    foo\nx   y", f.text());
+    // Neovim 0.12.5: `:set ts=8 noet` then `:retab!` makes the eight
+    // spaces a tab and leaves the tab; `:set ts=4 et`, `é\tx` → three
+    // spaces (é is one cell); `:retab 8` re-stops a tab-indented line.
+    try e.buf.editor.setText("\tfoo\n        bar");
+    e.buf.setIndent(8, 8, true);
+    try f.ex("retab!");
+    try testing.expectEqualStrings("\tfoo\n\tbar", f.text());
+    e.buf.setIndent(4, 4, false);
+    try e.buf.editor.setText("é\tx\n中\ty");
+    try f.ex("retab");
+    try testing.expectEqualStrings("é   x\n中  y", f.text());
+    try e.buf.editor.setText("\t\tx\n    y");
+    e.buf.setIndent(4, 4, true);
+    try f.ex("retab 8");
+    try testing.expectEqualStrings("\tx\n    y", f.text());
+    try testing.expectEqual(@as(usize, 8), e.buf.doc.tab_width);
+    // A range: only line 2.
+    e.buf.setIndent(4, 4, false);
+    try e.buf.editor.setText("\ta\n\tb");
+    try f.ex("2retab");
+    try testing.expectEqualStrings("\ta\n    b", f.text());
     try f.ex("2");
     try testing.expectEqual(@as(usize, 1), e.buf.editor.currentLine());
     try f.ex("$");
     try testing.expectEqual(@as(usize, 1), e.buf.editor.currentLine());
+}
+
+test "ex: :sort takes a pattern, r, i with u, and the number kinds as Neovim does" {
+    // Neovim 0.12.5 `--clean`, each row.
+    var f = try Fixture.init("x3 b\nx1 c\nx2 a");
+    defer f.deinit();
+    try f.ex("sort /x. /");
+    try testing.expectEqualStrings("x2 a\nx3 b\nx1 c", f.text());
+    try f.ex("sort /x\\d/ r");
+    try testing.expectEqualStrings("x1 c\nx2 a\nx3 b", f.text());
+    const e = f.app.activeEditor().?;
+    try e.buf.editor.setText("b\na\nB\na\nb");
+    try f.ex("sort iu");
+    try testing.expectEqualStrings("a\nb", f.text());
+    // A line with no number sorts first, in its own order; `-` is a sign.
+    try e.buf.editor.setText("v10\nnone\nv-2\nv3\nalso");
+    try f.ex("sort n");
+    try testing.expectEqualStrings("none\nalso\nv-2\nv3\nv10", f.text());
+    try e.buf.editor.setText("0x1f\n0xa\n0x2");
+    try f.ex("sort x");
+    try testing.expectEqualStrings("0x2\n0xa\n0x1f", f.text());
+    // A letter that is not a flag is refused, not ignored.
+    try testing.expectError(error.Failed, f.ex("sort q"));
 }
 
 test "ex: a Visual `:` range covers the cursor's line and the command leaves Visual behind" {

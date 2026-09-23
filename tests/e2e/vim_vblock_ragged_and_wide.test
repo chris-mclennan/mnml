@@ -1,0 +1,92 @@
+# A visual block is a rectangle of DISPLAY columns, and its I / A / d
+# treat rows the block does not fully cover as Neovim 0.12.5 does:
+# `I` leaves a row that ends before the block alone (`:help v_b_I`),
+# `A` pads a short row out to the block's right edge (`:help v_b_A`),
+# and `d` over a wide glyph the edge cuts leaves its outside half as a
+# space. Each `expect` is Neovim's own result for the same keys.
+write f1.txt "abcdef\nab\nabcdefgh\n\nabcd\n"
+open f1.txt
+command editor.use_vim
+key l
+key ctrl+v
+key 4
+key j
+key I
+type "X"
+key escape
+wait 60
+ex w
+expect file f1.txt contains "aXbcdef\naXb\naXbcdefgh\n\naXbcd\n"
+write f2.txt "abcdef\nab\nabcdefgh\n\nabcd\n"
+open f2.txt
+command editor.use_vim
+key l
+key ctrl+v
+key 4
+key j
+key l
+key A
+type "Y"
+key escape
+wait 60
+ex w
+expect file f2.txt contains "abcYdef\nab Y\nabcYdefgh\n   Y\nabcYd\n"
+write f3.txt "abcdef\n中文字\nx中yz\n"
+open f3.txt
+command editor.use_vim
+key 2
+key l
+key ctrl+v
+key 2
+key j
+key l
+key d
+ex w
+expect file f3.txt contains "abef\n中字\nx z\n"
+# `I` / `A` / `c` where the block edge cuts a wide glyph: the text goes
+# after spaces, before the glyph (Neovim: `x Q中yz`); `c` skips the
+# empty row as `I` does.
+write f4.txt "abcdef\n中文字\nx中yz\n"
+open f4.txt
+command editor.use_vim
+key 2
+key l
+key ctrl+v
+key 2
+key j
+key l
+key I
+type "Q"
+key escape
+wait 60
+ex w
+expect file f4.txt contains "abQcdef\n中Q文字\nx Q中yz\n"
+write f5.txt "abcdef\nab\nabcdefgh\n\nabcd\n"
+open f5.txt
+command editor.use_vim
+key l
+key ctrl+v
+key 4
+key j
+key l
+key c
+type "ZZ"
+key escape
+wait 60
+ex w
+expect file f5.txt contains "aZZdef\naZZ\naZZdefgh\n\naZZd\n"
+write f6.txt "abcdef\n中文字\nx中yz\n"
+open f6.txt
+command editor.use_vim
+key 2
+key l
+key ctrl+v
+key 2
+key j
+key l
+key A
+type "Q"
+key escape
+wait 60
+ex w
+expect file f6.txt contains "abcdQef\n中文Q字\nx中yQz\n"

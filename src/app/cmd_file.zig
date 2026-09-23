@@ -26,12 +26,28 @@ pub fn saveCurrent(app: *App) CommandError!void {
     // A ZON tree writes its working text.
     if (app.active) |id| if (app.panes.get(id)) |p| if (p.* == .zon) return @import("zon_pane.zig").save(app, id);
     const e = try app.requireEditor();
+    if (e.buf.doc.path == null) return app.diag.fail(arena, "no file name — use :w <path>", .{});
+    return savePane(app, app.active.?, e, .{});
+}
+
+pub const SaveOpts = struct {
+    /// An autosave (`autosave.zig`): no format-on-save, no toast.
+    auto: bool = false,
+};
+
+/// Write editor pane `id` to its path — the hooks either side, the
+/// conflict check after. What `file.save` and autosave both run.
+pub fn savePane(app: *App, id: app_mod.PaneId, e: *app_mod.EditorPane, opts: SaveOpts) CommandError!void {
+    const arena = app.frame.allocator();
     const path = e.buf.doc.path orelse return app.diag.fail(arena, "no file name — use :w <path>", .{});
     const rel = app.relPath(path);
-    app.hooks.emit(app, .{ .save_pre = .{ .path = rel, .pane = app.active.? } });
-    e.buf.save(app.io) catch |err| return app.diag.fail(arena, "save failed: {s}: {s}", .{ rel, @errorName(err) });
-    app.hooks.emit(app, .{ .save_post = .{ .path = rel, .pane = app.active.?, .bytes = e.buf.editor.len() } });
-    app.toast("saved {s}", .{rel});
+    app.hooks.emit(app, .{ .save_pre = .{ .path = rel, .pane = id, .auto = opts.auto } });
+    e.buf.save(app.io) catch |err| {
+        if (opts.auto) app.toast("autosave failed: {s}: {s}", .{ rel, @errorName(err) });
+        return app.diag.fail(arena, "save failed: {s}: {s}", .{ rel, @errorName(err) });
+    };
+    app.hooks.emit(app, .{ .save_post = .{ .path = rel, .pane = id, .bytes = e.buf.editor.len() } });
+    if (!opts.auto) app.toast("saved {s}", .{rel});
     // A conflicted file saved with no marker left is resolved: git add.
     @import("conflicts.zig").afterSave(app, e) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,

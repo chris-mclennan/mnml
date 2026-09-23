@@ -1,0 +1,26 @@
+# Standard profile: with the find bar's regex (.*) on, the pattern a VS
+# Code user types means what it says there — `|` alternates, `\d+`
+# counts digits, `{3}` repeats and `$` anchors at each line's end — the
+# way the workspace grep's rg already reads it. The vim profile keeps
+# vim's own syntax.
+write a.log "INFO took 12ms\nWARN took 345ms\nERROR took 6789ms\n"
+open a.log
+key ctrl+f
+key ctrl+r
+type "ERROR|WARN"
+wait 100
+expect screen contains "match 1/2"
+# Esc gives the pane its find state back (regex off); a fresh bar
+# starts blank, so each pattern turns the chip on again.
+key esc
+key ctrl+f
+key ctrl+r
+type "took \\d{3}ms"
+wait 100
+expect screen contains "match 1/1"
+key esc
+key ctrl+f
+key ctrl+r
+type "\\d+ms$"
+wait 100
+expect screen contains "match 1/3"

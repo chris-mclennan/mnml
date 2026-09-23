@@ -351,7 +351,7 @@ pub fn toggleLineComment(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
 }
 
 /// Ctrl+A / Ctrl+X: the number under or after the cursor on this line,
-/// with a leading `-` when it is not glued to an identifier. The cursor
+/// a `-` right before it its sign. The cursor
 /// lands on the number's last digit (vim).
 const NumberKind = enum { decimal, hex, bin };
 const NumberSpan = struct { start: usize, end: usize, kind: NumberKind };
@@ -363,8 +363,8 @@ fn isBinDigit(b: u8) bool {
 /// The number under or after `from` on the line `[bol, eol)`: the first
 /// one that ends past `from`. Neovim's `nrformats=bin,hex`: `0x1f` /
 /// `0b101` are read whole from any of their chars; anything else is
-/// decimal, a `-` right before the digits part of it unless glued to a
-/// word (`a-1`). Leading zeros make a decimal, not octal.
+/// decimal, a `-` right before the digits part of it (`a-1` is `a` and
+/// `-1`). Leading zeros make a decimal, not octal.
 fn numberAfter(t: []const u8, bol: usize, eol: usize, from: usize) ?NumberSpan {
     var i = bol;
     while (i < eol) {
@@ -382,11 +382,11 @@ fn numberAfter(t: []const u8, bol: usize, eol: usize, from: usize) ?NumberSpan {
             while (end < eol and isBinDigit(t[end])) end += 1;
             span = .{ .start = i, .end = end, .kind = .bin };
         } else {
+            // Neovim's `nrformats` without `unsigned` / `blank`: a `-`
+            // right before the digits is the sign, whatever precedes it
+            // (`val-3` Ctrl-A is `val-2`).
             var start = i;
-            if (start > bol and t[start - 1] == '-') {
-                const glued = start - 1 > bol and (std.ascii.isAlphanumeric(t[start - 2]) or t[start - 2] == '_');
-                if (!glued) start -= 1;
-            }
+            if (start > bol and t[start - 1] == '-') start -= 1;
             var end = i;
             while (end < eol and std.ascii.isDigit(t[end])) end += 1;
             span = .{ .start = start, .end = end, .kind = .decimal };
@@ -680,14 +680,14 @@ test "change number: under or after the cursor, a free minus, counts, saturation
     try std.testing.expectEqual(@as(usize, 9), ed.cursor);
     try changeNumberAtCursor(ed, -3, &out);
     try std.testing.expectEqualStrings("value = 39 x-1 y -1", ed.doc.text.items);
-    ed.cursor = 12; // on `-` glued to `x`: the number is `1`
+    ed.cursor = 12; // on the `-` after `x`: it is the sign (Neovim: `x0`)
     try changeNumberAtCursor(ed, 1, &out);
-    try std.testing.expectEqualStrings("value = 39 x-2 y -1", ed.doc.text.items);
-    ed.cursor = 16; // `-1` stands alone
+    try std.testing.expectEqualStrings("value = 39 x0 y -1", ed.doc.text.items);
+    ed.cursor = 15; // `-1` stands alone
     try changeNumberAtCursor(ed, -1, &out);
-    try std.testing.expectEqualStrings("value = 39 x-2 y -2", ed.doc.text.items);
+    try std.testing.expectEqualStrings("value = 39 x0 y -2", ed.doc.text.items);
     try changeNumberAtCursor(ed, 2, &out);
-    try std.testing.expectEqualStrings("value = 39 x-2 y 0", ed.doc.text.items);
+    try std.testing.expectEqualStrings("value = 39 x0 y 0", ed.doc.text.items);
     try ed.setText("no digits");
     ed.cursor = 0;
     try changeNumberAtCursor(ed, 1, &out);

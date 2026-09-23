@@ -483,6 +483,14 @@ pub const Vim = struct {
             .visual_block => try self.handleVisualBlock(key, arena),
         };
         if (isVisual(before) and !isVisual(self.vmode)) self.last_visual = before;
+        // `"+yG` / `"adgg`: the linewise-to-an-end ops run in the app, so
+        // the pending register rides along with the command.
+        if (result == .app and result.app == .operator_linewise_to and self.pending_register != null) {
+            var cmd = result.app;
+            cmd.operator_linewise_to.register = self.pending_register;
+            self.pending_register = null;
+            return .{ .app = cmd };
+        }
         // A pending `"x` routes the next register-touching op list.
         if (result == .ops and self.pending_register != null) {
             var touches = false;
@@ -1073,6 +1081,9 @@ pub const Vim = struct {
                 const linewise = select_op == .select_inner_paragraph or select_op == .select_around_paragraph;
                 var b = Builder.init(arena);
                 try b.push(select_op);
+                // No object under the cursor (`ci(` outside parens): the
+                // operator is abandoned, not run on nothing.
+                try b.push(.abort_unless_selection);
                 return self.finishOperator(&b, op, ctx, linewise);
             },
             .bracket_open => {
@@ -1126,10 +1137,7 @@ pub const Vim = struct {
                 self.prefix = .none;
                 const c = ch orelse return .consumed;
                 if (c == ':') return runCmd(.@"view.cmdline_history");
-                if (c == 'q') {
-                    self.is_recording_macro = true;
-                    return .{ .app = .{ .macro_record_into = '@' } };
-                }
+                // `qq` is register q like any other letter (`:help q`).
                 // `qA` appends to `a` (`:help q`); the buffer folds the case.
                 if ((c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9')) {
                     self.is_recording_macro = true;
@@ -1419,7 +1427,7 @@ pub const Vim = struct {
                     'Q' => {
                         const count = self.count1();
                         self.count = null;
-                        return .{ .app = .{ .macro_replay_from = .{ .reg = '@', .count = count } } };
+                        return .{ .app = .{ .macro_replay_from = .{ .reg = '@', .count = count, .recorded = true } } };
                     },
                     '@' => {
                         self.prefix = .macro_replay_target;

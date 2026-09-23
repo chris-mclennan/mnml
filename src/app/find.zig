@@ -78,6 +78,9 @@ pub const FindState = struct {
     matches: std.ArrayListUnmanaged(Range) = .empty,
     current: ?usize = null,
     regex: bool = false,
+    /// How a regex query is written: vim's syntax, or the Perl-style one
+    /// the standard profile's find bar takes (`cmd_find.dialectFor`).
+    dialect: regex.Dialect = .vim,
     case_sensitive: bool = false,
     /// The last regex query did not compile; `matches` is empty.
     bad_pattern: ?regex.Error = null,
@@ -100,6 +103,7 @@ pub const FindState = struct {
         try out.matches.appendSlice(self.gpa, self.matches.items);
         out.current = self.current;
         out.regex = self.regex;
+        out.dialect = self.dialect;
         out.case_sensitive = self.case_sensitive;
         out.bad_pattern = self.bad_pattern;
         out.offset = self.offset;
@@ -133,7 +137,7 @@ pub const FindState = struct {
         self.bad_pattern = null;
         if (self.query.items.len == 0) return;
         if (self.regex) {
-            var re = regex.Regex.compile(self.query.items, .{ .ignore_case = !self.case_sensitive }) catch |err| switch (err) {
+            var re = regex.Regex.compile(self.query.items, .{ .ignore_case = !self.case_sensitive, .dialect = self.dialect }) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => {
                     self.bad_pattern = err;

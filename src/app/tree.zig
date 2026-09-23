@@ -680,6 +680,13 @@ pub const Tree = struct {
                     if (app.input_style != .vim) return false;
                     try runCmd(app, .@"file.paste");
                 },
+                // The tree is a window like any other to a vim user: `:`
+                // opens the command line (`:e file`, `:w`, `:q`), and the
+                // letters typed next go to it, never to the tree's verbs.
+                ':' => {
+                    if (app.input_style != .vim) return false;
+                    try runCmd(app, .@"app.command_line");
+                },
                 else => return false,
             },
             else => return false,

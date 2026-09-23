@@ -1,0 +1,13 @@
+# `@@` repeats the last register executed. Record `qqAX<Esc>jq`, then
+# `@q` then `@@`: Neovim 0.12.5 (keys typed) leaves three lines ending in
+# X — the first `@@` after `@q` runs.
+write f.txt "a\na\na\na\na\n"
+open f.txt
+command editor.use_vim
+type "qqAX"
+key escape
+type "jq"
+type "@q"
+type "@@"
+ex w
+expect file f.txt contains "aX\naX\naX\na\na\n"
