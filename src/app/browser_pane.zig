@@ -193,6 +193,10 @@ pub const BrowserPane = struct {
     /// `profile_mode = .ephemeral`: the profile is this pane's alone and
     /// goes with it.
     ephemeral: bool = false,
+    /// Set by `open`: the id the worker posts under.
+    pane_id: ?PaneId = null,
+    /// Tests: the stand-in Chrome the worker runs.
+    binary: ?[]const u8 = null,
     /// What an eval returned, as its preview, for when the by-value copy
     /// (`eval_json`) fails: keyed by that request's id.
     eval_fallback: std.AutoHashMapUnmanaged(i64, []u8) = .empty,
@@ -387,26 +391,33 @@ pub fn open(app: *App, url_in: []const u8) CommandError!PaneId {
     const no_chrome = (builtin.is_test and test_no_chrome) or (binary == null and !cdp.available(gpa, app.io, &app.env));
     if (no_chrome) return app.diag.fail(app.frame.allocator(), "no Chrome found — run `:browser.install_cft` to install Chrome for Testing", .{});
     const url = try cdp.normalizeUrl(app.frame.allocator(), url_in);
-    const shared = try gpa.create(Shared);
-    errdefer gpa.destroy(shared);
-    shared.* = .{ .io = app.io };
     const picked = try pickProfile(app, app.frame.allocator());
     const pdir = picked.dir;
     Io.Dir.cwd().createDirPath(app.io, pdir) catch {};
+    const shared = try gpa.create(Shared);
+    shared.* = .{ .io = app.io };
     var pane: BrowserPane = .{
         .gpa = gpa,
-        .url = try gpa.dupe(u8, url),
+        .url = &.{},
         .shared = shared,
-        .title_buf = try gpa.dupe(u8, "browser"),
-        .profile_dir = try gpa.dupe(u8, pdir),
+        .title_buf = &.{},
+        .profile_dir = &.{},
         .headless = app.cfg.browser.headless,
-        .ephemeral = app.cfg.browser.profile_mode == .ephemeral,
+        .binary = binary,
     };
-    errdefer pane.deinit(gpa);
+    // The pane (and `shared` in it) is ours until the store takes it.
+    var owned = true;
+    errdefer if (owned) pane.deinit(gpa);
+    pane.url = try gpa.dupe(u8, url);
+    pane.title_buf = try gpa.dupe(u8, "browser");
+    pane.profile_dir = try gpa.dupe(u8, pdir);
+    // Only with its directory set: `deinit` deletes an ephemeral one.
+    pane.ephemeral = app.cfg.browser.profile_mode == .ephemeral;
     try pane.refreshTitle();
     if (picked.note) |note| try pane.push(.system, note);
     try pane.push(.system, "launching Chrome…");
     const id = try app.panes.add(.{ .browser = pane });
+    owned = false;
     // Beside the active pane (the "watch the network while editing the request" layout).
     if (app.active) |cur| {
         if (app.layouts.current().split(cur, .horizontal, id) catch null) |_| {
@@ -414,15 +425,25 @@ pub fn open(app: *App, url_in: []const u8) CommandError!PaneId {
         } else app.showPane(id);
     } else app.showPane(id);
     const p = app.panes.get(id).?.asBrowser().?;
-    const url_owned = try gpa.dupe(u8, p.url);
-    errdefer gpa.free(url_owned);
+    p.pane_id = id;
+    try startWorker(app, p);
+    return id;
+}
+
+/// Chrome starts on `about:blank`, and the page is loaded by a
+/// `Page.navigate` queued behind the domain enables — so its document
+/// request is in the network list (Chrome replays nothing from before
+/// `Network.enable`).
+fn startWorker(app: *App, p: *BrowserPane) CommandError!void {
+    const gpa = app.gpa;
+    if (!std.mem.eql(u8, p.url, "about:blank")) try navigate(app, p, p.url);
     const dir_owned = try gpa.dupe(u8, p.profile_dir);
     errdefer gpa.free(dir_owned);
-    p.thread = std.Thread.spawn(.{}, worker, .{ &app.events, app.io, gpa, &app.env, shared, id, url_owned, dir_owned, p.headless, binary }) catch |err| {
+    p.thread = std.Thread.spawn(.{}, worker, .{ &app.events, app.io, gpa, &app.env, p.shared, p.pane_id.?, dir_owned, p.headless, p.binary }) catch |err| {
+        p.state = .closed;
+        try p.refreshTitle();
         return app.diag.fail(app.frame.allocator(), "browser: could not start the worker: {s}", .{@errorName(err)});
     };
-    if (p.device) |d| _ = d;
-    return id;
 }
 
 fn post(events: *event.EventQueue, io: Io, gpa: Allocator, ev: CdpEvent) void {
@@ -436,10 +457,9 @@ fn postClosed(events: *event.EventQueue, io: Io, gpa: Allocator, pane: PaneId, r
     post(events, io, gpa, .{ .pane = pane, .kind = .{ .closed = copy } });
 }
 
-fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, env: *const std.process.Environ.Map, shared: *Shared, pane: PaneId, url: []u8, profile_dir: []u8, headless: bool, binary: ?[]const u8) void {
-    defer gpa.free(url);
+fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, env: *const std.process.Environ.Map, shared: *Shared, pane: PaneId, profile_dir: []u8, headless: bool, binary: ?[]const u8) void {
     defer gpa.free(profile_dir);
-    const launch = cdp.spawn(gpa, io, env, .{ .url = url, .profile_dir = profile_dir, .headless = headless, .binary = binary }) catch |err| {
+    const launch = cdp.spawn(gpa, io, env, .{ .url = "about:blank", .profile_dir = profile_dir, .headless = headless, .binary = binary }) catch |err| {
         const msg: []const u8 = switch (err) {
             error.ChromeNotFound => "Chrome not found. Install Chrome for Testing:\n    npx @puppeteer/browsers install chrome@stable\nor run `:browser.install_cft`.",
             error.NoDevToolsPort => "couldn't find Chrome's DevTools port — did it start?",
@@ -2105,6 +2125,39 @@ test "a schemeless address typed into navigate is sent with http://" {
     try testing.expectEqualStrings("Page.navigate", tb.lastQueued());
     try testing.expectEqualStrings("{\"url\":\"http://localhost:18808/first\"}", p.queued.items[p.queued.items.len - 1].params);
     try testing.expectEqualStrings("→ http://localhost:18808/first", tb.last());
+}
+
+test "Chrome starts on about:blank and the page is loaded by a navigate queued behind the domain enables" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var tb: TestBed = .{};
+    _ = try tb.init();
+    defer tb.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const args = try std.fs.path.join(arena.allocator(), &.{ tb.root, "argv.txt" });
+    const body = try std.fmt.allocPrint(arena.allocator(), "echo \"$@\" > '{s}'; exec /bin/sleep 30", .{args});
+    test_binary = try standInScript(arena.allocator(), tb.root, "chrome-argv", body);
+    defer test_binary = null;
+    const id = try open(&tb.app, "127.0.0.1:9/first");
+    const p = tb.app.panes.get(id).?.asBrowser().?;
+    try testing.expectEqualStrings("http://127.0.0.1:9/first", p.url);
+    try testing.expectEqualStrings("Page.navigate", p.queued.items[0].method);
+    try testing.expectEqualStrings("{\"url\":\"http://127.0.0.1:9/first\"}", p.queued.items[0].params);
+    var buf: [4096]u8 = undefined;
+    var tries: usize = 0;
+    const line = while (tries < 500) : (tries += 1) {
+        if (Io.Dir.cwd().readFile(testing.io, args, &buf)) |txt| {
+            if (std.mem.endsWith(u8, txt, "\n")) break txt;
+        } else |_| {}
+        testing.io.sleep(.fromMilliseconds(10), .awake) catch {};
+    } else return error.StandInNeverRan;
+    try testing.expect(std.mem.endsWith(u8, line, " about:blank\n"));
+    var pid: ?std.process.Child.Id = null;
+    p.shared.lock.lockUncancelable(testing.io);
+    if (p.shared.launch) |l| pid = l.child.id;
+    p.shared.lock.unlock(testing.io);
+    try tb.app.forceClosePane(id);
+    if (pid) |x| try testing.expect(child_os.goneWithin(testing.io, x, .fromSeconds(10)));
 }
 
 test "scrolled back, the log holds still while lines arrive; at the tail it follows" {
