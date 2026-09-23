@@ -26,6 +26,7 @@ const view = @import("../ui/browser_view.zig");
 const text_field = @import("../ui/text_field.zig");
 const cdp = @import("../cdp/client.zig");
 const profile = @import("../cdp/profile.zig");
+const console = @import("../cdp/console.zig");
 const child_os = @import("../core/child.zig");
 const parse = @import("../http/parse.zig");
 const captured = @import("../http/captured.zig");
@@ -772,15 +773,10 @@ fn onEvent(app: *App, p: *BrowserPane, method: []const u8, m: cdp.Message) Alloc
     const arena = app.frame.allocator();
     if (std.mem.eql(u8, method, "Runtime.consoleAPICalled")) {
         const kind = cdp.str(m.params, &.{"type"}) orelse "log";
-        var text: std.ArrayListUnmanaged(u8) = .empty;
-        if (cdp.get(m.params, &.{"args"})) |args| if (args == .array) {
-            for (args.array.items, 0..) |a, i| {
-                if (i > 0) try text.append(arena, ' ');
-                try text.appendSlice(arena, try cdp.remoteObjectText(arena, a));
-            }
-        };
+        const args: []const std.json.Value = if (cdp.get(m.params, &.{"args"})) |a| (if (a == .array) a.array.items else &.{}) else &.{};
+        const text = try console.formatArgs(arena, args);
         const is_err = std.mem.eql(u8, kind, "error") or std.mem.eql(u8, kind, "warning") or std.mem.eql(u8, kind, "assert");
-        try p.push(if (is_err) .console_err else .console, try std.fmt.allocPrint(arena, "console.{s}: {s}", .{ kind, text.items }));
+        try p.push(if (is_err) .console_err else .console, try std.fmt.allocPrint(arena, "console.{s}: {s}", .{ console.callName(kind), text }));
     } else if (std.mem.eql(u8, method, "Log.entryAdded")) {
         const level = cdp.str(m.params, &.{ "entry", "level" }) orelse "info";
         const text = cdp.str(m.params, &.{ "entry", "text" }) orelse "";
@@ -1176,10 +1172,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, p: *BrowserPane, area: Rect) Allocato
     var net: []view.NetRow = &.{};
     var rows: [][]const u8 = &.{};
     switch (p.panel) {
-        .log => {
-            log = try arena.alloc(view.LogLine, visible.len);
-            for (visible, 0..) |idx, i| log[i] = .{ .kind = p.log.items[idx].kind, .text = p.log.items[idx].text };
-        },
+        .log => log = try logRows(arena, p, visible),
         .net => {
             net = try arena.alloc(view.NetRow, visible.len);
             for (visible, 0..) |idx, i| {
@@ -1242,6 +1235,37 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, p: *BrowserPane, area: Rect) Allocato
         };
     }
     try syncHighlight(app, p, if (p.panel == .dom) out.hovered_row else null);
+}
+
+/// A log entry of several lines paints as that many rows, up to
+/// `max_entry_rows`; the rest is one `⏎ +N more lines` row, so nothing
+/// is cut without a mark.
+pub const max_entry_rows = 50;
+
+/// The rows one log entry paints as.
+pub fn entryRows(text: []const u8) usize {
+    const lines = std.mem.count(u8, text, "\n") + 1;
+    return if (lines > max_entry_rows) max_entry_rows + 1 else lines;
+}
+
+fn logRows(arena: Allocator, p: *const BrowserPane, visible: []const usize) Allocator.Error![]view.LogLine {
+    var out: std.ArrayListUnmanaged(view.LogLine) = .empty;
+    for (visible) |idx| {
+        const l = p.log.items[idx];
+        var it = std.mem.splitScalar(u8, l.text, '\n');
+        var shown: usize = 0;
+        while (it.next()) |line| {
+            if (shown == max_entry_rows) {
+                const rest = std.mem.count(u8, it.rest(), "\n") + 2;
+                try out.append(arena, .{ .kind = .system, .text = try std.fmt.allocPrint(arena, "  ⏎ +{d} more lines", .{rest}) });
+                break;
+            }
+            // Continuation lines are indented under the entry's first.
+            try out.append(arena, .{ .kind = l.kind, .text = if (shown == 0) line else try std.fmt.allocPrint(arena, "  {s}", .{line}) });
+            shown += 1;
+        }
+    }
+    return out.items;
 }
 
 /// Chrome's overlay follows the pointer over the DOM rows: one
@@ -1839,4 +1863,43 @@ test "a redirect: the 302 lands on the hop that answered it, the 200 on the URL 
     try testing.expectEqualStrings("http://127.0.0.1:18802/landed", p.net.items[1].url);
     try testing.expectEqual(@as(?i64, 200), p.net.items[1].status);
     try testing.expectEqualStrings("text/html", p.net.items[1].mime.?);
+}
+
+test "console: every line of a multi-line message paints, objects read from their preview, format specifiers apply, warn is warn" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &pbuf);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = pbuf[0..n], .data_root = pbuf[0..n] });
+    defer app.deinit();
+    const gpa = testing.allocator;
+    const id = try testPane(&app);
+    const p = app.panes.get(id).?.asBrowser().?;
+    const msg = struct {
+        fn ev(g: Allocator, pid: PaneId, text: []const u8) !*CdpEvent {
+            const box = try g.create(CdpEvent);
+            box.* = .{ .pane = pid, .kind = .{ .message = try g.dupe(u8, text) } };
+            return box;
+        }
+    };
+    try handle(&app, try msg.ev(gpa, id, "{\"method\":\"Runtime.consoleAPICalled\",\"params\":{\"type\":\"log\",\"args\":[{\"type\":\"string\",\"value\":\"multi\\nline\\nmessage\"}]}}"));
+    try handle(&app, try msg.ev(gpa, id, "{\"method\":\"Runtime.consoleAPICalled\",\"params\":{\"type\":\"log\",\"args\":[{\"type\":\"object\",\"className\":\"Object\",\"description\":\"Object\",\"preview\":{\"type\":\"object\",\"description\":\"Object\",\"overflow\":false,\"properties\":[{\"name\":\"a\",\"type\":\"number\",\"value\":\"1\"},{\"name\":\"s\",\"type\":\"string\",\"value\":\"str\"}]}}]}}"));
+    try handle(&app, try msg.ev(gpa, id, "{\"method\":\"Runtime.consoleAPICalled\",\"params\":{\"type\":\"warning\",\"args\":[{\"type\":\"string\",\"value\":\"%s is %d%%\"},{\"type\":\"string\",\"value\":\"rate\"},{\"type\":\"number\",\"value\":5}]}}"));
+    try testing.expectEqualStrings("console.log: {a: 1, s: \"str\"}", p.log.items[p.log.items.len - 2].text);
+    try testing.expectEqualStrings("console.warn: rate is 5%", p.log.items[p.log.items.len - 1].text);
+    var f = try @import("../ui/test_fixture.zig").init(80, 20);
+    defer f.deinit();
+    try draw(&app, f.ui(), id, p, f.full());
+    const screen = try f.text();
+    try testing.expect(std.mem.indexOf(u8, screen, "console.log: multi") != null);
+    try testing.expect(std.mem.indexOf(u8, screen, "  line") != null);
+    try testing.expect(std.mem.indexOf(u8, screen, "  message") != null);
+    // A long one is cut with a mark that says how much is left.
+    var long: std.ArrayListUnmanaged(u8) = .empty;
+    defer long.deinit(gpa);
+    for (0..60) |i| try long.print(gpa, "row{d}\n", .{i});
+    try p.push(.console, long.items[0 .. long.items.len - 1]);
+    const rows = try logRows(app.frame.allocator(), p, &.{p.log.items.len - 1});
+    try testing.expectEqual(@as(usize, max_entry_rows + 1), rows.len);
+    try testing.expectEqualStrings("  ⏎ +10 more lines", rows[rows.len - 1].text);
 }

@@ -43,6 +43,8 @@ pub const Panel = enum {
     }
 };
 
+/// One painted row of the log: the pane splits a multi-line entry into
+/// several of these (`browser_pane.logRows`), so `text` has no newline.
 pub const LogLine = struct { kind: LogKind, text: []const u8 };
 pub const NetRow = struct {
     /// Position in the pane's unfiltered network list.
@@ -160,7 +162,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, m: Model) Outcome {
                     .net => t.info_fg,
                     .eval => t.warn_fg,
                 };
-                _ = ui.putStr(r.x + 1, r.y, r.w -| 1, ui.clipStr(std.mem.sliceTo(l.text, '\n'), r.w -| 1), style);
+                _ = ui.putStr(r.x + 1, r.y, r.w -| 1, ui.clipStr(l.text, r.w -| 1), style);
                 y += 1;
             }
         },
