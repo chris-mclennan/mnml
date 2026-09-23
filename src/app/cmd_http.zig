@@ -34,6 +34,7 @@ const chain_mod = @import("../http/chain.zig");
 const bench_mod = @import("../http/bench.zig");
 const sources = @import("../http/sources.zig");
 const hooks = @import("../core/hooks.zig");
+const jobs = @import("jobs.zig");
 
 pub const table = .{
     .@"http.edit_env" = &editEnvCmd,
@@ -720,6 +721,7 @@ fn benchCmd(app: *App) CommandError!void {
         _ = try http.spawn(app, null, .bench, copy, null, null);
     }
     owned.deinit(app.gpa);
+    _ = try jobs.begin(app, .{ .kind = .http, .key = http.bench_job_key, .label = try std.fmt.allocPrint(app.frame.allocator(), "bench {s} ×{d}", .{ url_copy, n }) });
     app.toast("http.bench: firing {d}× ({d} concurrent)…", .{ n, conc });
 }
 
@@ -736,15 +738,25 @@ pub fn onJobResult(app: *App, r: *client.JobResult) Allocator.Error!void {
                 },
                 .moved => {},
             }
+            jobs.progress(app, .http, http.bench_job_key, try std.fmt.allocPrint(app.frame.allocator(), "{d}/{d}", .{ b.samples.items.len, b.total }));
             if (b.samples.items.len < b.total) return;
             const report = try bench_mod.report(app.frame.allocator(), b.url, b.samples.items, b.errors.items, @intCast(@max(app.now_ms - b.started_ms, 0)));
             try app.clipboard.set(report, false);
             const stats = bench_mod.stats(b.samples.items);
             app.toast("bench: {d}× · p50 {d}ms · p95 {d}ms · max {d}ms · {d} ok · (full trace → clipboard)", .{ b.total, stats.p50, stats.p95, stats.max, stats.ok });
+            const words = try std.fmt.allocPrint(app.frame.allocator(), "{d} of {d} ok · p50 {d}ms", .{ stats.ok, b.total, stats.p50 });
+            jobs.endKeyed(app, .http, http.bench_job_key, if (stats.ok < b.total) jobs.Outcome.fail(words) else jobs.Outcome.done(words));
             b.deinit(gpa);
             app.http.bench = null;
         },
         .chain, .lookup => {
+            if (r.kind == .chain) {
+                const key = if (std.mem.eql(u8, r.method, "CHAIN")) http.chain_job_key else http.sync_job_key;
+                jobs.endKeyed(app, .http, key, switch (r.outcome) {
+                    .err => |e| jobs.Outcome.fail(e),
+                    else => .{},
+                });
+            }
             app.http.chain_running = false;
             app.http.sync_running = false;
             if (r.label) |trace| {
@@ -825,6 +837,7 @@ pub fn runChainNamed(app: *App, name: []const u8) CommandError!void {
         app.http.chain_running = false;
         return app.diag.fail(arena, "http.run_chain: could not start: {s}", .{@errorName(err)});
     };
+    _ = try jobs.begin(app, .{ .kind = .http, .key = http.chain_job_key, .label = try std.fmt.allocPrint(arena, "chain {s}", .{name}) });
     app.toast("chain: running {s}…", .{name});
 }
 
@@ -853,6 +866,7 @@ fn startSync(app: *App, check_only: bool) CommandError!void {
         app.http.sync_running = false;
         return app.diag.fail(app.frame.allocator(), "http.sync: could not start: {s}", .{@errorName(err)});
     };
+    _ = try jobs.begin(app, .{ .kind = .http, .key = http.sync_job_key, .label = if (check_only) "sources sync (check)" else "sources sync" });
     app.toast("{s}: running…", .{if (check_only) "http.sync_check" else "http.sync"});
 }
 

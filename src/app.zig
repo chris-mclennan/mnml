@@ -2969,6 +2969,8 @@ pub const App = struct {
                     if (self.git.busy > 0) self.git.busy -= 1;
                     git_app.onWorkerErr(self, e.msg);
                 }
+                // A chain whose worker could not even read its file.
+                if (e.source == .http) jobs_mod.endKeyed(self, .http, http_app.chain_job_key, jobs_mod.Outcome.fail(e.msg));
                 try self.toastLevel(.err, "{s}: {s}", .{ @tagName(e.source), e.msg });
             },
             .timer => {},
