@@ -442,6 +442,8 @@ pub fn askAi(app: *App, pane: PaneId, e: *const EditorPane, region: usize) Comma
     const st = &app.git;
     const repo = try git.requireRepo(app);
     const abs = e.buf.doc.path orelse return app.diag.fail(app.frame.allocator(), "no file", .{});
+    if (@import("../ai/suggest.zig").isSecretBearing(abs))
+        return app.diag.fail(app.frame.allocator(), "AI resolve: {s} not sent — it looks like it holds secrets", .{git.relToRepo(repo, abs)});
     switch (ai_app.route(app, if (st.ai_product == .claude) .claude else .codex)) {
         .off => return app.diag.fail(app.frame.allocator(), "AI is routed off", .{}),
         .api, .cli => {},

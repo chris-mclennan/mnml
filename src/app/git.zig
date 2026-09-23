@@ -31,6 +31,7 @@ const parse = @import("../git/parse.zig");
 const sequence_editor = @import("../git/sequence_editor.zig");
 const remote_mod = @import("../git/remote.zig");
 const ai_app = @import("ai.zig");
+const suggest = @import("../ai/suggest.zig");
 const api = @import("../ai/api_client.zig");
 const cmd_app = @import("cmd_app.zig");
 const builtin = @import("builtin");
@@ -1290,8 +1291,11 @@ fn aiContextReady(app: *App, repo: *client.Repo, what: client.AiContext, diff: [
         app.toast("{s}", .{if (what == .staged) "nothing staged — stage some changes first" else "HEAD has no patch to summarise"});
         return;
     }
-    const cut = diff[0..@min(diff.len, ai_diff_cap)];
-    const tail: []const u8 = if (diff.len > ai_diff_cap) "\n…(diff truncated)…" else "";
+    // A secret-bearing file's changes never go (`suggest.isSecretBearing`).
+    const kept = try suggest.withholdSecretDiffs(arena, diff);
+    ai_app.toastWithheld(app, kept.withheld);
+    const cut = kept.text[0..@min(kept.text.len, ai_diff_cap)];
+    const tail: []const u8 = if (kept.text.len > ai_diff_cap) "\n…(diff truncated)…" else "";
     const prompt = switch (what) {
         .staged => try std.fmt.allocPrint(arena, "Write a git commit message for the staged changes below. First line: imperative mood, ≤72 chars, no trailing period. Then a blank line and a short body ONLY if it adds something. Output ONLY the commit message — no preamble, no code fences.\n\n```diff\n{s}{s}\n```", .{ cut, tail }),
         .head => try std.fmt.allocPrint(arena, "Rewrite this commit's message based on what actually changed. First line: imperative mood, ≤72 chars, no trailing period. Then a blank line and a short body ONLY if it adds something the subject doesn't. Output ONLY the new message — no preamble, no code fences.\n\n{s}{s}{s}```diff\n{s}{s}\n```", .{ if (message.len > 0) "Current message:\n```\n" else "", message, if (message.len > 0) "\n```\n\n" else "", cut, tail }),

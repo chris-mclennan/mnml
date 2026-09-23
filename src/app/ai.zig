@@ -1040,6 +1040,7 @@ fn executeTool(arena: Allocator, io: Io, gpa: Allocator, events: *event.EventQue
     defer root.close(io);
     if (std.mem.eql(u8, name, "read_file")) {
         const rel = safeRel(api.inputStr(input, "path") orelse "") orelse return fail.f(arena, "read_file: bad path", .{});
+        if (suggest.isSecretBearing(rel)) return fail.f(arena, "read_file {s}: refused — it looks like it holds secrets, and those are never sent", .{rel});
         const text = root.readFileAlloc(io, rel, arena, .limited(tool_read_cap)) catch |err| return fail.f(arena, "read_file {s}: {s}", .{ rel, @errorName(err) });
         return .{ .text = text, .note = std.fmt.allocPrint(arena, "read {s} ({d} bytes)", .{ rel, text.len }) catch "read" };
     }
@@ -1114,6 +1115,8 @@ fn grepWorkspace(arena: Allocator, io: Io, gpa: Allocator, root: Io.Dir, pattern
             continue;
         }
         if (entry.kind != .file) continue;
+        // A secret-bearing file's lines are never sent, matched or not.
+        if (suggest.isSecretBearing(entry.basename)) continue;
         try io.checkCancel();
         const st = entry.dir.statFile(io, entry.basename, .{}) catch continue;
         if (st.size > 1024 * 1024) continue;
@@ -1219,7 +1222,13 @@ pub fn chatAccept(app: *App, text: []const u8) CommandError!void {
     if (q.len == 0) return;
     const arena = app.frame.allocator();
     var prompt: std.ArrayListUnmanaged(u8) = .empty;
-    if (app.activeEditor()) |e| {
+    const active = app.activeEditor();
+    if (active) |e| if (e.buf.doc.path) |p| if (suggest.isSecretBearing(p)) {
+        // The question still goes; the file never does (the one
+        // never-send list, `suggest.isSecretBearing`).
+        app.toast("ai.chat: {s} not attached — it looks like it holds secrets; the question went alone", .{app.relPath(p)});
+    };
+    if (active) |e| if (e.buf.doc.path == null or !suggest.isSecretBearing(e.buf.doc.path.?)) {
         const path = if (e.buf.doc.path) |p| app.relPath(p) else "[scratch]";
         const lang = suggest.languageOf(e.buf.doc.path);
         if (e.buf.editor.selection()) |sel| if (sel[1] > sel[0]) {
@@ -1229,7 +1238,7 @@ pub fn chatAccept(app: *App, text: []const u8) CommandError!void {
             const body = e.buf.editor.bytes();
             try prompt.print(arena, "File {s}:\n\n```{s}\n{s}\n```\n\n", .{ path, lang, body[0..@min(body.len, 12_000)] });
         }
-    }
+    };
     try prompt.appendSlice(arena, q);
     _ = try ask(app, "ai: chat", prompt.items, .chat, null);
 }
@@ -1238,6 +1247,8 @@ pub fn chatAccept(app: *App, text: []const u8) CommandError!void {
 fn actionTarget(app: *App) CommandError!struct { code: []const u8, lang: []const u8, apply: AiPane.ApplyTarget } {
     const id = app.active orelse return error.NoActivePane;
     const e = app.panes.editor(id) orelse return error.NotAnEditor;
+    if (e.buf.doc.path) |p| if (suggest.isSecretBearing(p))
+        return app.diag.fail(app.frame.allocator(), "ai: {s} not sent — it looks like it holds secrets", .{app.relPath(p)});
     const ed = e.buf.editor;
     const lang = suggest.languageOf(e.buf.doc.path);
     if (ed.selection()) |sel| if (sel[1] > sel[0]) {
@@ -1739,8 +1750,18 @@ fn explainDiff(app: *App) CommandError!void {
     var diff = try gitOut(app, &.{ "git", "diff", "--cached" });
     if (std.mem.trim(u8, diff, " \n").len == 0) diff = try gitOut(app, &.{ "git", "diff" });
     if (std.mem.trim(u8, diff, " \n").len == 0) return app.diag.fail(app.frame.allocator(), "nothing to explain: the working tree is clean", .{});
-    const prompt = try std.fmt.allocPrint(app.frame.allocator(), "Explain this diff, walking through what changed and why it might have:\n\n```diff\n{s}\n```\n", .{diff[0..@min(diff.len, 60_000)]});
+    const kept = try suggest.withholdSecretDiffs(app.frame.allocator(), diff);
+    toastWithheld(app, kept.withheld);
+    const prompt = try std.fmt.allocPrint(app.frame.allocator(), "Explain this diff, walking through what changed and why it might have:\n\n```diff\n{s}\n```\n", .{kept.text[0..@min(kept.text.len, 60_000)]});
     _ = try ask(app, "ai: explain diff", prompt, .git, null);
+}
+
+/// Say which files a diff going to a model left out, by name.
+pub fn toastWithheld(app: *App, withheld: []const []const u8) void {
+    if (withheld.len == 0) return;
+    if (withheld.len == 1) {
+        app.toast("ai: {s} not sent — it looks like it holds secrets", .{withheld[0]});
+    } else app.toast("ai: {s} and {d} more not sent — they look like they hold secrets", .{ withheld[0], withheld.len - 1 });
 }
 
 fn writePrDescription(app: *App) CommandError!void {
@@ -2334,4 +2355,29 @@ test "an AI job's CLI child past [ai] cli_timeout_ms is killed and reaped, the p
     defer t.allocator.free(pid_text);
     const pid = try std.fmt.parseInt(std.posix.pid_t, std.mem.trim(u8, pid_text, " \n"), 10);
     try t.expectError(error.ProcessNotFound, std.posix.kill(pid, @enumFromInt(0)));
+}
+
+test "the API agent's read_file refuses a secret-bearing file, and grep never reads one" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    try tmp.dir.writeFile(t.io, .{ .sub_path = ".env", .data = "DB_PASSWORD=hunter2-fake-value\n" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "config.txt", .data = "DB_PASSWORD is read from the env\n" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = dir, .cols = 80, .rows = 10 });
+    defer app.deinit();
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var j: Job = .{ .id = 1, .confirm = undefined };
+    j.confirm = .init(&j.confirm_buf);
+    const read_in = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"path\":\".env\"}", .{});
+    const r = try executeTool(arena, t.io, t.allocator, &app.events, &j, dir, "read_file", read_in, false);
+    try t.expect(r.is_error);
+    try t.expect(std.mem.indexOf(u8, r.text, "hunter2") == null);
+    try t.expect(std.mem.indexOf(u8, r.text, "refused") != null);
+    const grep_in = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"pattern\":\"DB_PASSWORD\"}", .{});
+    const g = try executeTool(arena, t.io, t.allocator, &app.events, &j, dir, "grep", grep_in, false);
+    try t.expect(std.mem.indexOf(u8, g.text, "config.txt") != null);
+    try t.expect(std.mem.indexOf(u8, g.text, "hunter2") == null);
 }
