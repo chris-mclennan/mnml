@@ -1,0 +1,60 @@
+# The split walk, both ways (Terminal.app's Shift+Cmd+←/→ between tabs):
+# three files in three splits, `view.focus_next_split` a → b → c → a and
+# `view.focus_prev_split` back again, by command, by vim's Ctrl-W w /
+# Ctrl-W W, and by the standard profile's ctrl+alt+shift+→ / ←. The
+# sidebar is hidden, so the walk is a ring of the three splits (with it
+# open, the sidebar sits before the first split — cmd_view.zig's tests).
+write a.txt "alpha file\n"
+write b.txt "bravo file\n"
+write c.txt "charlie file\n"
+command view.toggle_tree
+open a.txt
+command view.split_right
+open b.txt
+command view.split_right
+open c.txt
+expect screen contains "alpha file"
+expect screen contains "bravo file"
+expect screen contains "charlie file"
+expect pane c.txt
+command view.focus_next_split
+expect pane a.txt
+command view.focus_next_split
+expect pane b.txt
+command view.focus_next_split
+expect pane c.txt
+command view.focus_prev_split
+expect pane b.txt
+command view.focus_prev_split
+expect pane a.txt
+command view.focus_prev_split
+expect pane c.txt
+# vim: Neovim's own pair through the handler's Ctrl-W prefix.
+command editor.use_vim
+key ctrl+w
+key w
+expect pane a.txt
+key ctrl+w
+key W
+expect pane c.txt
+key ctrl+w
+key W
+expect pane b.txt
+# The popup for a pending Ctrl-W lists the pair.
+key ctrl+w
+wait 400
+expect screen contains "next split"
+expect screen contains "previous split"
+key esc
+expect pane b.txt
+# standard: ctrl+alt+shift+→ / ← (what the ghostty line in
+# docs/CONFIG.md puts on Shift+Cmd+→ / ←).
+command editor.use_standard
+key ctrl+alt+shift+right
+expect pane c.txt
+key ctrl+alt+shift+right
+expect pane a.txt
+key ctrl+alt+shift+left
+expect pane c.txt
+key ctrl+alt+shift+left
+expect pane b.txt

@@ -1244,6 +1244,54 @@ and carries the same two verbs. The trees mnml made are remembered in
 is stripped with the profile from an untrusted workspace config
 (Workspace trust above).
 
+## Walking the splits
+
+`view.focus_next_split` / `view.focus_prev_split` step through the
+page's splits in layout order, with wrap — the way Terminal.app's
+`Shift+Cmd+→` / `Shift+Cmd+←` step through its tabs
+(`src/app/cmd_view.zig`). With the sidebar open it sits before the
+first split: previous from the first split lands on it, previous from
+it on the last split, and next runs the same ring the other way.
+
+| profile | next | previous |
+|---|---|---|
+| vim | `Ctrl-W w` | `Ctrl-W W` (Neovim's own pair; the handler's `Ctrl-W` prefix) |
+| standard | `ctrl+alt+shift+right` | `ctrl+alt+shift+left` |
+
+The standard pair has three modifiers because the two-modifier arrows
+are taken: `ctrl+shift+→/←` and `alt+shift+→/←` extend a selection by a
+word, and `ctrl+alt+→/←` are `buffer.next` / `buffer.prev`. Either
+command rebinds under `.keys.standard` / `.keys.vim` like any other.
+
+With Claude / Codex sessions laid out as tabs (`.ui.ai_layout_mode =
+.tabs`) they share one leaf, and the split walk would have nowhere to
+go: from a session pane on a one-leaf page the pair steps through that
+leaf's session tabs instead, in strip order with wrap, skipping its
+other tabs — what a SESSIONS card's Enter does. Anywhere else, and with
+fewer than two sessions there, it is the split walk.
+
+**`Shift+Cmd+←/→` itself.** Terminal.app keeps Cmd for itself — those
+two are its own previous / next tab — and sends no Cmd chord to a
+program at all, so a TUI cannot bind them there. ghostty can hand them
+on: these two lines in its config send what `ctrl+alt+shift+→ / ←`
+sends (`CSI 1;8C` / `CSI 1;8D`; 8 is 1 + shift 1 + alt 2 + ctrl 4,
+the same bytes with or without the kitty keyboard protocol, which keeps
+the legacy form for the arrows), so the standard profile's walk runs
+on `Shift+Cmd+→ / ←`. ghostty 1.3 binds neither by default
+(`ghostty +list-keybinds --default`).
+
+```
+keybind = super+shift+arrow_right=text:\x1b[1;8C
+keybind = super+shift+arrow_left=text:\x1b[1;8D
+```
+
+In the vim profile, bind the same chords to the commands under
+`.keys.vim` first (`.@"ctrl+alt+shift+right" =
+"view.focus_next_split"`, `.@"ctrl+alt+shift+left" =
+"view.focus_prev_split"`). `src/tui/loop.zig`'s test reads the two
+sequences through the terminal parser into the standard profile's
+chords.
+
 ## Bookmarks
 
 `bookmarks.open` is a picker over your web bookmarks, grouped by

@@ -364,13 +364,12 @@ fn palette(app: *App) CommandError!void {
 /// The default chords of a spec under the active profile (`both` and
 /// the profile's own), joined by ` / ` — Rust's `key_hint`.
 pub fn chordHint(app: *App, gpa: Allocator, keys: command.Keys) Allocator.Error![]u8 {
-    const own = switch (App.profileOf(app.input_style)) {
-        .vim => keys.vim,
-        .standard => keys.standard,
-    };
+    const vim = App.profileOf(app.input_style) == .vim;
+    const own = if (vim) keys.vim else keys.standard;
+    const handler: []const []const u8 = if (vim) keys.vim_handler else &.{};
     var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(gpa);
-    for ([_][]const []const u8{ keys.both, own }) |list| for (list) |spec| {
+    for ([_][]const []const u8{ keys.both, own, handler }) |list| for (list) |spec| {
         if (out.items.len > 0) try out.appendSlice(gpa, " / ");
         var buf: [64]u8 = undefined;
         try out.appendSlice(gpa, keymap.normalizeSpec(spec, &buf) orelse spec);

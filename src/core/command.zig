@@ -230,7 +230,7 @@ comptime {
             }
         }
         // Every default chord parses.
-        for (.{ s.keys.vim, s.keys.standard, s.keys.both }) |list| {
+        for (.{ s.keys.vim, s.keys.standard, s.keys.both, s.keys.vim_handler }) |list| {
             for (list) |k| {
                 if (keymap.parseKeySeqComptime(k) == null)
                     @compileError("command `" ++ s.id ++ "` declares key `" ++ k ++ "` that does not parse");
@@ -858,7 +858,7 @@ test "ids round-trip through by_name and @tagName" {
     try std.testing.expectEqual(CommandId.@"app.quit", by_name.get("app.quit").?);
     try std.testing.expectEqualStrings("git.commit", name(.@"git.commit"));
     try std.testing.expect(by_name.get("nope.nope") == null);
-    try std.testing.expectEqual(@as(usize, 1116), count);
+    try std.testing.expectEqual(@as(usize, 1117), count);
     try std.testing.expectEqualStrings("Quit mnml", title(.@"app.quit"));
 }
 

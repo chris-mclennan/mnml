@@ -38,8 +38,8 @@ pub fn render(arena: std.mem.Allocator, w: *std.Io.Writer) !void {
             try w.print("| `{s}` | {s} | {s} | {s} |\n", .{
                 s.id,
                 try escape(arena, s.title),
-                try chords(arena, s.keys.vim, s.keys.both),
-                try chords(arena, s.keys.standard, s.keys.both),
+                try chords(arena, s.keys.vim, s.keys.both, s.keys.vim_handler),
+                try chords(arena, s.keys.standard, s.keys.both, &.{}),
             });
         }
         try w.writeAll("\n");
@@ -63,11 +63,12 @@ fn sortedIn(arena: std.mem.Allocator, group: []const u8) ![]const Spec {
     return rows.items;
 }
 
-/// The profile's own chords, then the shared ones, as `` `a`, `b` ``.
-fn chords(arena: std.mem.Allocator, own: []const []const u8, both: []const []const u8) ![]const u8 {
+/// The profile's own chords, then the shared ones, then the ones the vim
+/// handler answers itself (`Ctrl-W w`), as `` `a`, `b` ``.
+fn chords(arena: std.mem.Allocator, own: []const []const u8, both: []const []const u8, handler: []const []const u8) ![]const u8 {
     var out: std.Io.Writer.Allocating = .init(arena);
     var first = true;
-    for ([_][]const []const u8{ own, both }) |list| for (list) |k| {
+    for ([_][]const []const u8{ own, both, handler }) |list| for (list) |k| {
         if (!first) try out.writer.writeAll(", ");
         first = false;
         try out.writer.print("`{s}`", .{k});

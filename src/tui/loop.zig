@@ -387,6 +387,31 @@ test "translateKey: named keys, shifted text, legacy control bytes, kitty chords
     try t.expect(translateKey(.{ .codepoint = vaxis.Key.left_shift, .mods = .{ .shift = true } }) == null);
 }
 
+test "the ghostty line for Shift+Cmd+←/→ (`docs/CONFIG.md`): `CSI 1;8C` / `CSI 1;8D` read as ctrl+alt+shift+→/←, the standard profile's split walk" {
+    const keymap = @import("../core/keymap.zig");
+    const command = @import("../core/command.zig");
+    var km = try keymap.Keymap.build(t.allocator, .standard, .{});
+    defer km.deinit();
+    // Kitty's protocol keeps the legacy `CSI 1;<mods>` form for the
+    // arrows, so the bytes are the same with or without it; 8 is
+    // 1 + shift 1 + alt 2 + ctrl 4.
+    const Case = struct { bytes: []const u8, spec: []const u8, id: command.CommandId };
+    for ([_]Case{
+        .{ .bytes = "\x1b[1;8C", .spec = "ctrl+alt+shift+right", .id = .@"view.focus_next_split" },
+        .{ .bytes = "\x1b[1;8D", .spec = "ctrl+alt+shift+left", .id = .@"view.focus_prev_split" },
+    }) |c| {
+        var parser: vaxis.Parser = .{};
+        const r = try parser.parse(c.bytes, null);
+        try t.expectEqual(c.bytes.len, r.n);
+        const k = translateKey(r.event.?.key_press).?;
+        const want = keymap.parseKeySpec(c.spec).?;
+        try t.expect(k.code.eql(want.code) and k.mods.eql(want.mods));
+        const res = km.resolveSeq(&.{key_mod.Chord.of(k)});
+        try t.expect(res == .run);
+        try t.expectEqual(c.id, res.run.static);
+    }
+}
+
 test "translateMouse: wheel buttons become scroll kinds, coordinates clamp at zero" {
     const up = translateMouse(.{ .col = 3, .row = 4, .button = .wheel_up, .mods = .{}, .type = .press });
     try t.expect(up.kind == .scroll_up);
