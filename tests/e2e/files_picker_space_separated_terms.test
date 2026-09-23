@@ -1,0 +1,10 @@
+# Ctrl+P reads a spaced query as terms in any order (fzf, VS Code):
+# `src main` lists src/main.rs first.
+write src/main.rs "x"
+write src/domain/manager.rs "x"
+write docs/readme.md "x"
+key ctrl+p
+type src main
+wait 200
+expect screen lacks "(no matches)"
+expect screen contains "▌src/main.rs"
