@@ -1,0 +1,25 @@
+# width: 120
+# A toast from the command that raised the one still on screen replaces
+# it instead of stacking a second box (`App.toastLevel`; the source key
+# is the command run): cycling the launcher dock twice reads one
+# `dock: always` box where it used to read `dock: hidden` above
+# `dock: always`. The proof is the stack's cap — five transient boxes,
+# the oldest dropped for a sixth: `first word` goes up before the
+# first cycle and four toasts follow it, so a second box for the dock
+# would push `first word` off, and a replacement leaves it up.
+# (A `lacks` on a toast proves nothing: the check polls, and the box
+# it looks for expires on its own.)
+write a.txt "alpha\n"
+open a.txt
+ex echo first word
+command view.dock_cycle_mode
+expect screen contains "dock: hidden"
+ex echo second word
+ex echo third word
+ex echo fourth word
+command view.dock_cycle_mode
+expect screen contains "dock: always"
+expect screen contains "first word"
+expect screen contains "second word"
+expect screen contains "third word"
+expect screen contains "fourth word"

@@ -530,8 +530,14 @@ pub fn resolve(app: *const App, id: []const u8) ?CommandRef {
 pub fn run(app: *App, ref: CommandRef) CommandError!void {
     app.diag.clear();
     const outer = app.running_cmd;
+    const outer_serial = app.running_serial;
+    app.cmd_runs +%= 1;
     app.running_cmd = ref;
-    defer app.running_cmd = outer;
+    app.running_serial = app.cmd_runs;
+    defer {
+        app.running_cmd = outer;
+        app.running_serial = outer_serial;
+    }
     const result: CommandError!void = switch (ref) {
         .static => |id| if (runners.get(id)) |f| f(app) else app.diag.fail(app.frame.allocator(), "{s}: not implemented yet", .{name(id)}),
         .dyn => |slot| runDyn(app, slot),

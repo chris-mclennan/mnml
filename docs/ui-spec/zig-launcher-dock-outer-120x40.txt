@@ -29,12 +29,12 @@
    │                          │▌
    │──────────────────────────│▌
    │ let  ·  DBG  ·  prog.d ⋮ │▌
-   │                          │▌                                                                       ┌─────────── × ┐
-   │ [F12] Definition ·       │▌                                                                       │ dock: hidden │
-   │ [Shift+F12] References · │▌                                                                       └──────────────┘
+   │                          │▌
+   │ [F12] Definition ·       │▌
+   │ [Shift+F12] References · │▌
    │ [Ctrl+K Ctrl+I] Hover ·  │▌                                                                       ┌─────────── × ┐
   │ [F2] Rename              │▌                                                                       │ dock: always │
    │                          │▌                                                                       └──────────────┘
- EDIT   prog.dbg                                  F 59% ▲0.2  󱼀 󰐎  111B  Ln 1/10 Col 1   1  19:55  ws   dbg
+ EDIT   prog.dbg                                      F 57% ▼1.6  󱼀 󰐎  111B  Ln 1/10 Col 1    00:34  ws   dbg
 dock: always
                            Browser  󱸀 Claude Code  󱸁 Codex   HTTP  󲀀 New terminal  󰐕 New                            󰐃

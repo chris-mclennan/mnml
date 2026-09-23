@@ -1,0 +1,33 @@
+# env: HOME=home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# A Claude session's tab goes by the session's name, the same one its
+# SESSIONS card reads (`sessions.nameOf`): the user's rename, else the
+# title the child set (OSC 0 / 2) with the spinner stripped, else the
+# session's first prompt, else the CLI's label — so three sessions in a
+# leaf are not `claude ✕  claude ✕  claude ✕`. A long name is cut by
+# the tab component to eighteen cells. The fake `claude` on PATH takes
+# the pane's --session-id and writes a transcript for its cwd; its
+# first run sets no title, its second titles its window.
+write bin/claude #!/bin/bash\nsid=""\nwhile [ $# -gt 0 ]; do case "$1" in --session-id|--resume) sid=$2; shift 2;; *) shift;; esac; done\nn=$(cat "$HOME/runs" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$HOME/runs"\nENC=$(printf '%s' "$PWD" | sed 's/[\/.]/-/g')\nmkdir -p "$HOME/.claude/projects/$ENC"\nprintf '{"type":"user","cwd":"%s","message":{"role":"user","content":"write the release notes for 0.3"}}\\n{"type":"assistant","cwd":"%s","message":{"role":"assistant","content":[{"type":"text","text":"Drafting."}]}}\\n{"type":"user","cwd":"%s","message":{"role":"user","content":"and the changelog"}}\\n' "$PWD" "$PWD" "$PWD" > "$HOME/.claude/projects/$ENC/$sid.jsonl"\nif [ $n -ge 2 ]; then printf '\\033]0;\\342\\234\\263 fix the failing tests\\007'; fi\nprintf 'Claude Code v9 (fake)\\n'\nexec -a claude /bin/sh -c 'i=0; while [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done' --resume "$sid"
+shell chmod +x bin/claude && mkdir -p home
+command ai.claude_code_new
+wait 500
+# No title and no scan yet: the CLI's label.
+expect screen contains "󱸀 claude"
+# The scan lists the transcript: its FIRST prompt names the tab, cut.
+command sessions.refresh
+wait 1500
+expect screen contains "󱸀 write the release…"
+expect screen lacks "󱸀 and the changelog"
+# The second session titles its window: the title wins, spinner off.
+command ai.claude_code_new
+wait 800
+expect screen contains "󱸀 fix the failing t…"
+expect screen lacks "✳ fix"
+# The user's rename outranks the title, on the tab and the card alike.
+ex rename release train
+expect screen contains "󱸀 release train"
+command view.activity_sessions
+wait 300
+expect screen contains "▌ release train"
+expect screen contains "▌ write the release notes"

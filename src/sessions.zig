@@ -141,6 +141,8 @@ pub const Item = struct {
     cost_usd: f64 = 0,
     /// Unix seconds of the last transcript change.
     last_activity_s: i64,
+    /// The session's first prompt (`transcript.Stats.first_user_msg`).
+    first_user_msg: ?[]const u8 = null,
     last_user_msg: ?[]const u8,
     last_assistant_msg: ?[]const u8,
     current_tool: ?[]const u8 = null,
@@ -182,6 +184,7 @@ pub fn dupeItem(arena: Allocator, it: Item) Allocator.Error!Item {
     out.cwd = if (it.cwd) |c| try arena.dupe(u8, c) else null;
     out.model = if (it.model) |m| try arena.dupe(u8, m) else null;
     out.transcript_path = try arena.dupe(u8, it.transcript_path);
+    out.first_user_msg = if (it.first_user_msg) |m| try arena.dupe(u8, m) else null;
     out.last_user_msg = if (it.last_user_msg) |m| try arena.dupe(u8, m) else null;
     out.last_assistant_msg = if (it.last_assistant_msg) |m| try arena.dupe(u8, m) else null;
     out.current_tool = if (it.current_tool) |c| try arena.dupe(u8, c) else null;
@@ -946,17 +949,58 @@ pub fn cardWorktree(app: *App, c: Card) ?*const session_worktree.Entry {
     return app.sessions.worktrees.of(c.session_id orelse c.key, p.cwd);
 }
 
-/// Rust's `tab_label_with_prefixes` for the card: the alias the user
-/// gave the session, else the child's window title with Claude's
-/// spinner glyph stripped off the front, else the pane's label.
-pub fn cardName(app: *App, c: Card) []const u8 {
-    if (app.sessions.alias(c.key)) |a| return a;
-    const p = app.panes.pty(c.pane) orelse return c.key;
+/// Where a session's name came from — the order `nameOf` looks.
+pub const NameSource = enum { rename, title, prompt, cli };
+
+pub const SessionName = struct {
+    /// Borrowed from storage that outlives the frame: the alias (gpa),
+    /// the terminal's title, the scan's snapshot or the pane's label.
+    text: []const u8,
+    from: NameSource,
+};
+
+/// The one name a session goes by — its SESSIONS card and its pane's
+/// tab both read it, so the two never disagree: the user's rename
+/// (`sessions.rename`, or `term.rename` on the pane), then the title
+/// the child set (OSC 0 / 2 — Claude Code titles its window with a
+/// summary of the conversation) with the spinner stripped off the
+/// front, then the session's first prompt, then the CLI's label.
+/// Rust's `tab_label_with_prefixes`, plus the prompt.
+pub fn nameOf(app: *App, p: *const pty_pane.PtyPane, key: []const u8, session_id: ?[]const u8) SessionName {
+    if (app.sessions.alias(key)) |a| return .{ .text = a, .from = .rename };
     if (p.childTitle()) |t| {
-        const clean = stripLeadingSpinner(t);
-        if (clean.len > 0) return clean;
+        const clean = std.mem.trimEnd(u8, stripLeadingSpinner(t), " \t");
+        if (clean.len > 0) return .{ .text = clean, .from = .title };
     }
-    return p.label;
+    if (session_id) |sid| if (app.sessions.itemOf(sid)) |it| if (it.first_user_msg) |m| {
+        const line = std.mem.trim(u8, m, " \t\r\n");
+        if (line.len > 0) return .{ .text = line, .from = .prompt };
+    };
+    return .{ .text = p.label, .from = .cli };
+}
+
+/// The card's name (`nameOf`).
+pub fn cardName(app: *App, c: Card) []const u8 {
+    const p = app.panes.pty(c.pane) orelse return c.key;
+    return nameOf(app, p, c.key, c.session_id).text;
+}
+
+/// The key a pane's session is kept under — the card's: the session id,
+/// or `pane:<n>` for a pane without one (Codex). `buf` holds the
+/// latter; null when `pid` is not an AI session pane.
+pub fn paneKey(app: *App, pid: app_mod.PaneId, buf: []u8) ?[]const u8 {
+    const p = app.panes.pty(pid) orelse return null;
+    if (pty_pane.productOf(app, p) == null) return null;
+    return p.sessionId() orelse (std.fmt.bufPrint(buf, "pane:{d}", .{pid}) catch null);
+}
+
+/// The name on an AI session pane's tab — the card's (`nameOf`); null
+/// for any other pane, whose tab keeps its own title.
+pub fn paneName(app: *App, pid: app_mod.PaneId) ?SessionName {
+    var buf: [32]u8 = undefined;
+    const key = paneKey(app, pid, &buf) orelse return null;
+    const p = app.panes.pty(pid).?;
+    return nameOf(app, p, key, p.sessionId());
 }
 
 /// The scan's row for the card, or a stand-in carrying what the pane
@@ -1297,7 +1341,28 @@ fn openTranscriptCmd(app: *App) CommandError!void {
 /// A prompt seeded with the current name; empty resets to the default.
 fn renameCmd(app: *App) CommandError!void {
     const it = try currentOrFail(app);
-    const key = currentKey(app) orelse it.session_id;
+    return openRenamePrompt(app, currentKey(app) orelse it.session_id);
+}
+
+/// `term.rename` on an AI session pane: the session's rename — the
+/// alias the card and the tab both read — rather than the pty's label,
+/// which the child's own title would outrank. False for any other pane.
+pub fn renamePane(app: *App, pid: app_mod.PaneId) CommandError!bool {
+    var buf: [32]u8 = undefined;
+    const key = paneKey(app, pid, &buf) orelse return false;
+    try openRenamePrompt(app, key);
+    return true;
+}
+
+/// `:rename <name>` on an AI session pane: the alias outright.
+pub fn renamePaneTo(app: *App, pid: app_mod.PaneId, name: []const u8) Allocator.Error!bool {
+    var buf: [32]u8 = undefined;
+    const key = paneKey(app, pid, &buf) orelse return false;
+    try acceptRename(app, key, name);
+    return true;
+}
+
+fn openRenamePrompt(app: *App, key: []const u8) CommandError!void {
     const id = try app.gpa.dupe(u8, key);
     errdefer app.gpa.free(id);
     const seed = try app.frame.allocator().dupe(u8, app.sessions.alias(key) orelse "");
@@ -2114,6 +2179,17 @@ pub fn stripLeadingSpinner(s: []const u8) []const u8 {
     return std.mem.trimStart(u8, s[i..], " \t");
 }
 
+/// `stripLeadingSpinner` only when the text starts with a spinner glyph
+/// — a title that is a name already (`~/proj`, `vim main.zig`) is
+/// returned untouched.
+pub fn stripLeadingSpinnerOnly(s: []const u8) []const u8 {
+    if (s.len == 0) return s;
+    const len = std.unicode.utf8ByteSequenceLength(s[0]) catch return s;
+    if (len > s.len) return s;
+    const cp = std.unicode.utf8Decode(s[0..len]) catch return s;
+    return if (isSpinnerCp(cp)) stripLeadingSpinner(s) else s;
+}
+
 /// Claude Code's spinner set (`is_claude_thinking`).
 fn isSpinnerCp(cp: u21) bool {
     return switch (cp) {
@@ -2578,6 +2654,7 @@ const fake_claude =
     \\  fail-*) exit 3 ;;
     \\  think-*) printf 'Claude Code v9 (fake)\n\342\234\273 Thinking\342\200\246\n'; sleep 30 ;;
     \\  ask-*) printf 'Do you want to proceed?\n'; sleep 30 ;;
+    \\  title-*) printf '\033]0;\342\234\263 ship the parser\007Claude Code v9 (fake)\n'; sleep 30 ;;
     \\  *) printf 'Claude Code v9 (fake)\nOpus 5 (fake) \302\267 Claude Max\n~/Projects/fake\n'; sleep 30 ;;
     \\esac
     \\
@@ -2799,6 +2876,70 @@ test "the cards are this app's AI panes: a fresh one reads its banner off the gr
     try testing.expectEqualStrings("Claude Code v9 (fake)", tip_fresh.lines[2]);
     try testing.expectEqualStrings("exited", (try hoverTip(app, app.frame.allocator(), 2)).?.lines[2]);
     try testing.expect((try hoverTip(app, app.frame.allocator(), 9)) == null);
+}
+
+test "one name per session: the tab and the card both read nameOf — the rename, the child's title, the first prompt, the CLI — and term.rename on the pane is the session's rename" {
+    var f = try Fixture.init(100, 30);
+    defer f.deinit();
+    try f.fakeClaude();
+    const app = &f.app;
+    app.tree.visible = false;
+    const now = Io.Timestamp.now(testing.io, .real).toSeconds();
+    const titled = try f.openCard("title-1");
+    const prompted = try f.openCard("plain-1");
+    const bare = try f.openCard("plain-2");
+    var it = wsItem(&f, "plain-1", .idle, now, "and the changelog");
+    it.first_user_msg = "write the release notes for 0.3";
+    try f.adopt(&.{it});
+    try testing.expect(try f.waitGrid(titled, "Claude Code v9", 5000));
+    try testing.expect(try f.waitGrid(prompted, "Claude Code v9", 5000));
+    // The child's title, the spinner off the front; the first prompt
+    // (not the last); the CLI's label when there is nothing else.
+    const n_titled = paneName(app, titled).?;
+    try testing.expectEqualStrings("ship the parser", n_titled.text);
+    try testing.expectEqual(NameSource.title, n_titled.from);
+    const n_prompted = paneName(app, prompted).?;
+    try testing.expectEqualStrings("write the release notes for 0.3", n_prompted.text);
+    try testing.expectEqual(NameSource.prompt, n_prompted.from);
+    const n_bare = paneName(app, bare).?;
+    try testing.expectEqualStrings("claude", n_bare.text);
+    try testing.expectEqual(NameSource.cli, n_bare.from);
+    // The card reads the same function.
+    for ([_]struct { pid: app_mod.PaneId, sid: []const u8 }{ .{ .pid = titled, .sid = "title-1" }, .{ .pid = prompted, .sid = "plain-1" }, .{ .pid = bare, .sid = "plain-2" } }) |c|
+        try testing.expectEqualStrings(paneName(app, c.pid).?.text, cardName(app, .{ .pane = c.pid, .session_id = c.sid, .key = c.sid }));
+    // The strip: each tab by its session's name, a long one cut to the
+    // component's eighteen cells.
+    const txt = try f.screen();
+    defer testing.allocator.free(txt);
+    var rows = std.mem.splitScalar(u8, txt, '\n');
+    _ = rows.next();
+    const strip = rows.next().?;
+    try testing.expect(std.mem.indexOf(u8, strip, "ship the parser") != null);
+    try testing.expect(std.mem.indexOf(u8, strip, "write the release\u{2026}") != null);
+    try testing.expect(std.mem.indexOf(u8, strip, " claude ") != null);
+    // term.rename on a session pane is the session's rename: the prompt
+    // lands the alias, and the tab and the card follow it.
+    app.setActive(bare);
+    try command.run(app, .{ .static = .@"term.rename" });
+    try testing.expect(app.overlay == .prompt);
+    try testing.expect(app.overlay.prompt.purpose == .sessions_rename);
+    for ("nightly") |ch| try app.handle(.{ .key = Key.char(ch) });
+    try app.handle(.{ .key = Key.named(.enter) });
+    try testing.expectEqualStrings("nightly", app.sessions.alias("plain-2").?);
+    try testing.expectEqual(NameSource.rename, paneName(app, bare).?.from);
+    // `:rename` names it outright, and outranks the child's title too.
+    app.setActive(titled);
+    try app.runEx("rename parser work");
+    try testing.expectEqualStrings("parser work", paneName(app, titled).?.text);
+    try testing.expectEqualStrings("parser work", cardName(app, .{ .pane = titled, .session_id = "title-1", .key = "title-1" }));
+    const txt2 = try f.screen();
+    defer testing.allocator.free(txt2);
+    try testing.expect(std.mem.indexOf(u8, txt2, "nightly") != null);
+    try testing.expect(std.mem.indexOf(u8, txt2, "parser work") != null);
+    try testing.expect(std.mem.indexOf(u8, txt2, "ship the parser") == null);
+    // A plain shell is no session: its tab keeps its own title.
+    const shell = try pty_pane.open(app, .{ .argv = &.{ "/bin/sh", "-c", "sleep 30" }, .label = "build", .kind = .command, .placement = .tab });
+    try testing.expect(paneName(app, shell) == null);
 }
 
 test "the caches: a frame walks a pane's grid once per output generation, the priority is re-read after 500 ms, and no frame starts a scan" {

@@ -946,7 +946,32 @@ pub const Toast = struct {
     /// What to do about the message. Owned — never the frame arena: the
     /// toast outlives the frame it was made on.
     action: ?ToastAction = null,
+    /// The command invocation that raised it, when a command did — what
+    /// a later toast from the same command replaces (`toastLevel`).
+    source: ?ToastSource = null,
+    /// `now_ms` when it was raised (or last replaced).
+    raised_ms: i64 = 0,
 };
+
+/// Who raised a toast: the command (`App.running_cmd`) and which run of
+/// it (`App.running_serial`), so a command's second run replaces its
+/// first run's toast while the toasts of one run still stack.
+pub const ToastSource = struct {
+    cmd: command.CommandRef,
+    run: u64,
+
+    pub fn sameCommand(a: ToastSource, b: ToastSource) bool {
+        return switch (a.cmd) {
+            .static => |id| b.cmd == .static and b.cmd.static == id,
+            .dyn => |slot| b.cmd == .dyn and b.cmd.dyn == slot,
+        };
+    }
+};
+
+/// A toast from the same command within this long of the last one
+/// replaces it rather than stacking (`dock: hidden` then `dock: always`
+/// is one box that changed, not two).
+pub const toast_coalesce_ms: i64 = 4000;
 
 /// How long the Undo chip stays offered.
 pub const undo_chip_ttl_ms: i64 = 10_000;
@@ -992,6 +1017,10 @@ pub const App = struct {
     /// The command `command.run` is inside, for a runner that has to
     /// come back to it later (an LSP request that waited for its server).
     running_cmd: ?command.CommandRef = null,
+    /// Which run of `running_cmd` this is — `command.run` numbers every
+    /// run (`cmd_runs`); a toast keeps it (`ToastSource`).
+    running_serial: u64 = 0,
+    cmd_runs: u64 = 0,
     cfg: Config,
     /// Owns the arena `cfg` borrows from; null when `cfg` is `Config{}`.
     loaded: ?config.Loaded = null,
@@ -1998,14 +2027,54 @@ pub const App = struct {
             var again = self.toasts.orderedRemove(i);
             again.repeats +|= 1;
             again.expires_ms = self.now_ms + toast_ttl_ms;
+            again.raised_ms = self.now_ms;
             self.toasts.appendAssumeCapacity(again);
             self.gpa.free(s);
             self.needs_render = true;
             return;
         };
+        // A toast from the command whose earlier run raised the one on
+        // screen replaces it: one command, one box. The new text takes
+        // the newest slot, as a coalesced repeat does, so `lastToast`
+        // and the box nearest the statusline are still the latest word
+        // (and `toasts.items[len - 1]` still the toast just raised). An
+        // error never replaces a non-error: the failure stacks.
+        const source = self.toastSource();
+        if (source) |src| if (self.replaceableToast(src, level)) |i| {
+            freeToast(self.gpa, self.toasts.orderedRemove(i));
+            self.toasts.appendAssumeCapacity(.{ .text = s, .level = level, .expires_ms = self.now_ms + toast_ttl_ms, .source = src, .raised_ms = self.now_ms });
+            self.needs_render = true;
+            return;
+        };
         self.capTransient();
-        try self.toasts.append(self.gpa, .{ .text = s, .level = level, .expires_ms = self.now_ms + toast_ttl_ms });
+        try self.toasts.append(self.gpa, .{ .text = s, .level = level, .expires_ms = self.now_ms + toast_ttl_ms, .source = source, .raised_ms = self.now_ms });
         self.needs_render = true;
+    }
+
+    /// The command run raising a toast right now, if any.
+    fn toastSource(self: *const App) ?ToastSource {
+        const cmd = self.running_cmd orelse return null;
+        return .{ .cmd = cmd, .run = self.running_serial };
+    }
+
+    /// The index of the transient toast a new one from `src` at `level`
+    /// replaces: the
+    /// newest up from an EARLIER run of the same command, raised within
+    /// `toast_coalesce_ms`. Persistent and id'd (progress) toasts are
+    /// never touched, and an error never lands on a non-error.
+    fn replaceableToast(self: *const App, src: ToastSource, level: ToastLevel) ?usize {
+        var i = self.toasts.items.len;
+        while (i > 0) {
+            i -= 1;
+            const t = &self.toasts.items[i];
+            if (t.id != null or !isTransient(t.*)) continue;
+            const old = t.source orelse continue;
+            if (!old.sameCommand(src) or old.run == src.run) continue;
+            if (self.now_ms - t.raised_ms > toast_coalesce_ms) continue;
+            if (level == .err and t.level != .err) return null;
+            return i;
+        }
+        return null;
     }
 
     /// A toast that expires — everything but the sticky ones an owner
@@ -3535,6 +3604,63 @@ test "an identical toast while its twin is up coalesces into one box with a coun
     try std.testing.expectEqual(@as(usize, 3), app.toasts.items.len);
     try std.testing.expectEqualStrings("LSP: Failed to discover workspace.", app.lastToast().?);
     try std.testing.expectEqual(@as(u32, 3), app.toasts.items[app.toasts.items.len - 1].repeats);
+}
+
+test "a command's next run replaces its last run's toast, the new text in the newest slot; one run's toasts stack; sticky, id'd, stale and unsourced ones are left; an error never lands on a non-error" {
+    const t = std.testing;
+    var app = try App.init(t.allocator, t.io);
+    defer app.deinit();
+    app.toast("unrelated", .{});
+    // `wrap on` then `wrap off`: the second run's toast takes the first's box.
+    try command.run(&app, .{ .static = .@"view.toggle_wrap" });
+    try command.run(&app, .{ .static = .@"view.toggle_wrap" });
+    try t.expectEqual(@as(usize, 2), app.toasts.items.len);
+    try t.expectEqualStrings("unrelated", app.toasts.items[0].text);
+    try t.expectEqualStrings("wrap off", app.toasts.items[1].text);
+    try t.expectEqual(@as(u32, 1), app.toasts.items[1].repeats);
+    // With another toast since, the replacement is still one box, and
+    // it is the newest: `lastToast` is the latest word.
+    app.toast("newer", .{});
+    try command.run(&app, .{ .static = .@"view.toggle_wrap" });
+    try t.expectEqual(@as(usize, 3), app.toasts.items.len);
+    try t.expectEqualStrings("newer", app.toasts.items[1].text);
+    try t.expectEqualStrings("wrap on", app.lastToast().?);
+    // Past the window it stacks again.
+    app.toasts.items[2].raised_ms -= toast_coalesce_ms + 1;
+    try command.run(&app, .{ .static = .@"view.toggle_wrap" });
+    try t.expectEqual(@as(usize, 4), app.toasts.items.len);
+    app.dismissToasts();
+    // One run that says two things says both.
+    app.running_cmd = .{ .static = .@"view.toggle_wrap" };
+    app.running_serial = 1000;
+    app.toast("first half", .{});
+    app.toast("second half", .{});
+    try t.expectEqual(@as(usize, 2), app.toasts.items.len);
+    // The next run's error does not land on them; its success after it
+    // replaces the error.
+    app.running_serial = 1001;
+    try app.toastLevel(.err, "it broke", .{});
+    try t.expectEqual(@as(usize, 3), app.toasts.items.len);
+    app.running_serial = 1002;
+    app.toast("fixed", .{});
+    try t.expectEqual(@as(usize, 3), app.toasts.items.len);
+    try t.expectEqualStrings("fixed", app.lastToast().?);
+    try t.expectEqual(ToastLevel.info, app.toasts.items[2].level);
+    // Sticky and id'd toasts are never replaced, nor do they replace.
+    try app.toastPersistent("job", "indexing…", .info);
+    app.toastReplace("nav", "tab 1/2", .{});
+    app.running_serial = 1003;
+    app.toast("again", .{});
+    try t.expectEqualStrings("indexing…", app.toasts.items[2].text);
+    try t.expectEqualStrings("tab 1/2", app.toasts.items[3].text);
+    try t.expectEqualStrings("again", app.lastToast().?);
+    try t.expectEqual(@as(usize, 5), app.toasts.items.len);
+    for (app.toasts.items) |x| try t.expect(!std.mem.eql(u8, x.text, "fixed"));
+    // Outside a command there is no source: nothing is replaced.
+    app.running_cmd = null;
+    app.toast("free one", .{});
+    app.toast("free two", .{});
+    try t.expectEqual(@as(usize, 6), app.toasts.items.len);
 }
 
 test "editorconfig reaches an opened buffer; a scratch takes the config's save prefs; the dead config fields are read" {

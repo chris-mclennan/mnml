@@ -1,14 +1,14 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │  ● /pri…            │ 󱸀 claude 󰅖   󱸀 claude 󰅖   󱸀 claude 󰅖   󰎒 Sessions 󰅖   󰐕             󰅁  󰅂  󱸀  󲀀      
+   │  ● /pri…            │ 󱸀 write the release… 󰅖   󰎒 Sessions 󰅖   󰐕  +2 hidden                󰅁  󰅂  󱸀  󲀀      
   │                          │▌ SESSIONS (3 of 4)                  ended: hidden   ⏸ pause   ? help   sort: state    
    │         󰐙 Add workspace  │▌  󰍉 / filter
  󰍉 │                          │▌
    │                          │▌  + New session
  󰊢 │                          │▌
    │                          │▌   ws (3 · 1 hidden)                                    id  tokens     cost   age dirty
-  │                          │▌▌  ✦ ⚠ wait run the release build                  5e551011    1.4k    $0.01    2m
-   │                          │▌ ▌ ✦ ● live fix the failing tests in src/main.rs   5e551011    1.0k    $0.00   now
- 󰐱 │                          │▌ ▌ ✦ ○ idle release train                          5e551011    1.0k    $0.00    2h
+  │                          │▌▌  󱸀 ⚠ wait run the release build                  5e551011    1.4k    $0.01    2m
+   │                          │▌ ▌ 󱸀 ● live fix the failing tests in src/main.rs   5e551011    1.0k    $0.00   now
+ 󰐱 │                          │▌ ▌ 󱸀 ○ idle release train                          5e551011    1.0k    $0.00    2h
    │                          │▌
 ▌󰎒 │                          │▌
    │                          │▌
@@ -33,8 +33,8 @@
    │                          │▌
    │                          │▌── summary ─────────────────────────────────────────────────────────────────────────────
    │                          │▌  ⚠ 1 waiting · ● 1 live · ▸ 0 tool · ○ 1 idle · ✗ 0 failed · · 1 done · 1 hidden · 4.4…
-   │                          │▌  run the release build · ✦ claude · claude-sonnet-4-5-20250929 · pid 17618 · 󰘬 main · …
+   │                          │▌  run the release build · 󱸀 claude · claude-sonnet-4-5-20250929 · pid 30219 · 󰘬 main · …
   │                          │▌  you: run the release build
    │                          │▌  claude: Running it.
- VIEW  [no file]                                                                            󱼀 󰐎    00:40  ws   —
-
+ VIEW  [no file]                                                                            󱼀 󰐎    00:34  ws   —
+                                                           ⋯

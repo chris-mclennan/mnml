@@ -15,6 +15,7 @@ const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const pty_pane = @import("pty_pane.zig");
 const pty = @import("pty");
+const sessions = @import("../sessions.zig");
 
 pub const table = .{
     .@"term.shell" = &shellRight,
@@ -109,6 +110,8 @@ fn restart(app: *App) CommandError!void {
 fn rename(app: *App) CommandError!void {
     const id = app.active orelse return error.NoActivePane;
     const p = app.panes.pty(id) orelse return app.diag.fail(app.frame.allocator(), "not a terminal pane", .{});
+    // A Claude / Codex pane's name is its session's: the card and the tab.
+    if (try sessions.renamePane(app, id)) return;
     var state = app_mod.Prompt.init(app.gpa, "Rename session");
     errdefer app_mod.Prompt.deinit(&state, app.gpa);
     try state.setText(app.gpa, p.tabTitle());
@@ -123,6 +126,7 @@ pub fn renameEx(app: *App, args: []const u8) CommandError!void {
     const name = std.mem.trim(u8, args, " \t");
     if (name.len == 0) return rename(app);
     const id = app.active orelse return error.NoActivePane;
+    if (try sessions.renamePaneTo(app, id, name)) return;
     return renameAccept(app, id, name);
 }
 
