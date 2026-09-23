@@ -1173,6 +1173,13 @@ pub fn singleChip(arena: Allocator, u: *const Usage, letter: ?u8, o: ChipOpts) A
 
 pub const Compact = struct {
     text: []const u8,
+    /// `text` in its parts: the blocks (with any `↺`), and what follows
+    /// them (the stale `!`, the arrow or the countdown, the last space).
+    spark: []const u8 = "",
+    rest: []const u8 = "",
+    /// The worst state across the accounts read (the endpoint's own
+    /// severity where it gave one).
+    tier: Tier = .ok,
     /// The worst session % across the accounts read.
     worst: u16 = 0,
     any_error: bool = false,
@@ -1193,6 +1200,9 @@ pub fn compactChip(arena: Allocator, accounts: []const ChipAccount, o: ChipOpts)
         const u = &a.usage;
         if (u.fetched_at > 0) {
             try spark.appendSlice(arena, sparklineChar(u.percent));
+            // A limit-reset offer on this account, still open.
+            if (u.offer) |of| if (of.expires_at == 0 or of.expires_at > o.now) try spark.appendSlice(arena, offer_mark);
+            out.tier = worseTier(out.tier, accountTier(u));
             out.worst = @max(out.worst, u.percent);
             out.any_fetched = true;
             if (u.percent < 90) all_near_empty = false;
@@ -1224,8 +1234,23 @@ pub fn compactChip(arena: Allocator, accounts: []const ChipAccount, o: ChipOpts)
             suffix = if (h == 0) " ⟳<1h" else if (h < 100) try std.fmt.allocPrint(arena, " ⟳{d}h", .{h}) else " ⟳soon";
         }
     }
-    out.text = try std.fmt.allocPrint(arena, " {s} {s}{s}{s} ", .{ o.glyph, spark.items, if (any_stale) "!" else "", suffix });
+    out.spark = spark.items;
+    out.rest = try std.fmt.allocPrint(arena, "{s}{s} ", .{ if (any_stale) "!" else "", suffix });
+    out.text = try std.fmt.allocPrint(arena, " {s} {s}{s}", .{ o.glyph, out.spark, out.rest });
     return out;
+}
+
+/// The chip's mark for an account with a limit-reset offer open.
+pub const offer_mark = "↺";
+
+/// An account's worst window: the session or the week, by the endpoint's
+/// grade where it gave one.
+pub fn accountTier(u: *const Usage) Tier {
+    return worseTier(tierOfWire(u.percent, u.severity), tierOfWire(u.weekly_percent, u.weekly_severity));
+}
+
+pub fn worseTier(a: Tier, b: Tier) Tier {
+    return if (@intFromEnum(a) >= @intFromEnum(b)) a else b;
 }
 
 /// `remaining % / hours to reset`: how much of an account the next reset

@@ -568,6 +568,11 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
         var seg = Seg.init(parts.head, claude_ink, iconColor(ui, ic, claude_brand)).withHit(SegId.ai_claude.raw());
         if (parts.accent.len > 0 or parts.tail.len > 0) {
             seg.accent = .{ .text = parts.accent, .fg = claude_ink, .underline = parts.underline };
+            // The worst account in warning / critical: its colour on ink.
+            if (parts.tier) |tier| {
+                seg.accent.?.fg = if (tier == .hot) ui.theme.palette.red else ui.theme.palette.yellow;
+                seg.accent.?.bg = claude_ink;
+            }
             seg.tail = parts.tail;
         }
         try push(&right, arena, seg);

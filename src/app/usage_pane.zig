@@ -1135,6 +1135,11 @@ pub const ChipParts = struct {
     accent: []const u8 = "",
     tail: []const u8 = "",
     underline: bool = false,
+    /// Set when the worst account is in warning or critical: the accent
+    /// run paints as a dark mini-pill in that colour inside the brand
+    /// chip (the percent on the coral itself was unreadable — Rust's
+    /// #1139 took it off for that).
+    tier: ?usage.Tier = null,
 
     pub fn joined(c: ChipParts, arena: Allocator) Allocator.Error![]const u8 {
         return std.mem.concat(arena, u8, &.{ c.head, c.accent, c.tail });
@@ -1166,7 +1171,9 @@ pub fn claudeChipParts(app: *App, arena: Allocator, glyph: []const u8) Allocator
         .compact => {
             const rows = try arena.alloc(usage.ChipAccount, n);
             for (s.accounts.items, 0..) |*a, i| rows[i] = a.chip();
-            return .{ .head = (try usage.compactChip(arena, rows, opts)).text };
+            const c = try usage.compactChip(arena, rows, opts);
+            if (c.spark.len == 0) return .{ .head = c.text };
+            return .{ .head = c.text[0 .. c.text.len - c.spark.len - c.rest.len], .accent = c.spark, .tail = c.rest, .tier = alarm(c.tier) };
         },
         .ticker => {
             const a = &s.accounts.items[usage.tickerIndex(now, n)];
@@ -1178,9 +1185,48 @@ pub fn claudeChipParts(app: *App, arena: Allocator, glyph: []const u8) Allocator
         },
         .off => {
             const a = s.active() orelse return .{ .head = try std.fmt.allocPrint(arena, " {s} … ", .{glyph}) };
-            return .{ .head = try usage.singleChip(arena, &a.usage, null, opts) };
+            const full = try usage.singleChip(arena, &a.usage, null, opts);
+            const tier = if (a.usage.fetched_at > 0) alarm(usage.accountTier(&a.usage)) else null;
+            const t_ = tier orelse return .{ .head = full };
+            // ` G 95% 52% `: the figures are the pill, the spaces the chip's.
+            const cut = 1 + glyph.len + 1;
+            return .{ .head = full[0..cut], .accent = full[cut .. full.len - 1], .tail = " ", .tier = t_ };
         },
     }
+}
+
+/// One account as the chip's hover lists it: its name (and whether it is
+/// the active one, or has a reset offer open), then its two percents and
+/// the next reset.
+pub const TipLine = struct { text: []const u8, sub: []const u8 };
+
+pub fn chipTipLines(app: *App, arena: Allocator) Allocator.Error![]TipLine {
+    const s = st(app);
+    const now = nowSecs(app);
+    const out = try arena.alloc(TipLine, s.accounts.items.len);
+    for (s.accounts.items, 0..) |*a, i| {
+        const u = &a.usage;
+        const offer = if (u.offer) |o| o.expires_at == 0 or o.expires_at > now else false;
+        const text = try std.fmt.allocPrint(arena, "{s}{s}{s}", .{ a.name, if (a.is_active) " (active)" else "", if (offer) " " ++ usage.offer_mark ++ " reset available" else "" });
+        const sub = if (u.fetched_at == 0)
+            try std.fmt.allocPrint(arena, "{s}", .{if (u.last_error) |e| e else "not read yet"})
+        else blk: {
+            var next: u64 = 0;
+            for ([_]u64{ u.resets_at, u.weekly_resets_at }) |at| if (at > now and (next == 0 or at < next)) {
+                next = at;
+            };
+            var buf: [32]u8 = undefined;
+            const when: []const u8 = if (next == 0) "" else if (next - now < 86_400) usage.fmtShortTime(&buf, next, tzOffset(app, next)) else usage.fmtLongTime(&buf, next, tzOffset(app, next));
+            break :blk try std.fmt.allocPrint(arena, "{d}% session · {d}% week{s}{s}{s}", .{ u.percent, u.weekly_percent, if (next == 0) "" else " · resets ", when, if (u.last_error != null) " (stale)" else "" });
+        };
+        out[i] = .{ .text = text, .sub = sub };
+    }
+    return out;
+}
+
+/// A tier worth painting: warning or critical.
+fn alarm(tier: usage.Tier) ?usage.Tier {
+    return if (tier == .ok) null else tier;
 }
 
 /// The chip as one string.
@@ -1815,4 +1861,59 @@ test "the wire's severity colours the bar over the thresholds; unknown keys are 
         break;
     }
     try t.expect(found);
+}
+
+test "the chip at a glance: the worst account's colour as a pill, a ↺ on the account with a reset offer; the hover lists every account" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "accounts", .data = "*personal\nwork\nspare\n" });
+    // `spare`: 88 % and 30 %, graded warning, with an offer open.
+    try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "spare.json", .data = usage.usage_wide_fixture });
+    var app = try fx.app();
+    defer app.deinit();
+    const icons = [_]app_mod.Config.IntegrationIcon{
+        .{ .id = "claude_code", .glyph = "\u{F1E00}", .fallback = "\u{2733}", .command = "ai.claude_code", .color = @import("../ui/brand.zig").claude_hex, .label = "Claude Code", .enabled = true, .in_palette_bar = false },
+    };
+    app.cfg.ui.integration_icons = &icons;
+    app.cfg.ai.claude_meter_mode = .compact;
+    try refreshAll(&app);
+    try settle(&app);
+    const arena = app.frame.allocator();
+    const parts = try claudeChipParts(&app, arena, "G");
+    // A block per account; `spare` carries the offer mark; personal's 95 % critical is the worst.
+    try t.expectEqualStrings("▇!▇↺", parts.accent);
+    try t.expectEqual(usage.Tier.hot, parts.tier.?);
+    // Painted: the blocks as a dark pill in red inside the coral chip.
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    try app.render();
+    const r = for (app.hits.items.items) |h| {
+        if (h.target == .statusline_seg and h.target.statusline_seg == @import("statusline.zig").SegId.ai_claude.raw()) break h.rect;
+    } else return error.NoClaudeChip;
+    var x = r.x;
+    var seen = false;
+    while (x < r.x + r.w) : (x += 1) {
+        const c = app.screen.readCell(x, r.y) orelse continue;
+        if (!std.mem.eql(u8, c.char.grapheme, "↺")) continue;
+        try t.expect(@import("vaxis").Color.eql(c.style.fg, app.theme.palette.red));
+        try t.expect(!@import("vaxis").Color.eql(c.style.bg, app.screen.readCell(r.x, r.y).?.style.bg));
+        seen = true;
+    }
+    try t.expect(seen);
+    // The hover: every account, its two percents and the next reset.
+    const tip = (try @import("discovery.zig").describe(&app, arena, .{ .statusline_seg = @import("statusline.zig").SegId.ai_claude.raw() })).?;
+    try t.expectEqual(@as(usize, 3), tip.rows.len);
+    try t.expectEqualStrings("personal (active)", tip.rows[0].text);
+    try t.expectEqualStrings("95% session · 52% week · resets 8:20pm", tip.rows[0].sub);
+    try t.expectEqualStrings("work", tip.rows[1].text);
+    try t.expect(std.mem.indexOf(u8, tip.rows[1].sub, "429") != null);
+    try t.expectEqualStrings("spare ↺ reset available", tip.rows[2].text);
+    try t.expectEqualStrings("88% session · 61% week · resets 10pm", tip.rows[2].sub);
+    // Nothing alarming: the chip is Rust's, ink on coral, no pill.
+    try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "accounts", .data = "*calm\nquiet\n" });
+    try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "calm.json", .data = usage.usage_limits_only_fixture });
+    try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "quiet.json", .data = usage.usage_limits_only_fixture });
+    try refreshAll(&app);
+    try settle(&app);
+    try t.expect((try claudeChipParts(&app, arena, "G")).tier == null);
 }
