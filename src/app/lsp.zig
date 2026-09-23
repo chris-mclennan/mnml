@@ -442,22 +442,24 @@ fn specFor(app: *App, path: []const u8) ?Spec {
     return null;
 }
 
-/// Walk up from the file's directory to the first directory holding a
-/// marker. Without one the root is the file's own directory, as Rust's
-/// `find_root` falls back — the server still starts (rust-analyzer then
-/// says so itself: `Failed to discover workspace…`), so a lone `.rs`
-/// outside a crate gets the same server and the same toast as under
-/// Rust. A spec with no markers roots at the workspace. `ranked`
-/// markers are walked one at a time: the first marker anywhere up the
-/// tree beats the second one nearer the file.
+/// The server's root for `path`: the nearest directory above it that
+/// holds one of `markers` (`ranked`: each marker searched all the way up
+/// before the next — a `.sln` above a `.csproj` wins), else the file's
+/// own directory; no markers means the workspace.
 fn findRoot(app: *App, arena: Allocator, path: []const u8, markers: []const []const u8, ranked: bool) Allocator.Error![]const u8 {
     if (markers.len == 0) return app.workspace;
+    return (try markedRoot(app, arena, path, markers, ranked)) orelse std.fs.path.dirname(path) orelse app.workspace;
+}
+
+/// The nearest directory above `path` holding one of `markers`, or null
+/// when nothing marks it — the case a file outside every project is in.
+fn markedRoot(app: *App, arena: Allocator, path: []const u8, markers: []const []const u8, ranked: bool) Allocator.Error!?[]const u8 {
     const start = std.fs.path.dirname(path) orelse app.workspace;
     if (ranked) {
         for (markers) |m| if (try walkUp(app, arena, start, &.{m})) |d| return d;
-        return start;
+        return null;
     }
-    return (try walkUp(app, arena, start, markers)) orelse start;
+    return try walkUp(app, arena, start, markers);
 }
 
 /// The first directory from `start` up holding any of `markers`.
@@ -477,6 +479,24 @@ fn walkUp(app: *App, arena: Allocator, start: []const u8, markers: []const []con
         if (d.len <= 1) break;
     }
     return null;
+}
+
+/// Is `path` `dir` or somewhere below it?
+fn pathUnder(path: []const u8, dir: []const u8) bool {
+    if (!std.mem.startsWith(u8, path, dir)) return false;
+    return path.len == dir.len or path[dir.len] == '/' or (dir.len > 0 and dir[dir.len - 1] == '/');
+}
+
+/// A live server of `name` to lend a file that has no project of its
+/// own: the one rooted in the workspace if there is one, else any.
+fn serverToLend(app: *App, name: []const u8) ?*Server {
+    var any: ?*Server = null;
+    for (app.lsp.servers.items) |s| {
+        if (s.transport.isDead() or !std.mem.eql(u8, s.name, name)) continue;
+        if (pathUnder(s.root, app.workspace) or pathUnder(app.workspace, s.root)) return s;
+        if (any == null) any = s;
+    }
+    return any;
 }
 
 /// Any entry of `dir_path` matching the glob `marker`. An unreadable
@@ -551,6 +571,59 @@ pub fn missingServers(app: *const App) []const Missing {
     return app.lsp.missing.items;
 }
 
+/// The settings a server starts with: the configured ones, plus — for
+/// pyright — the project's virtualenv interpreter, so its third-party
+/// imports resolve without the venv activated in the launching shell.
+fn serverSettings(app: *App, arena: Allocator, spec: Spec, cmd: []const u8, root: []const u8) Allocator.Error![]const u8 {
+    const json = try dynamicJson(arena, spec.settings);
+    if (!isPyright(spec.name, cmd)) return json;
+    const python = (try venvPython(app.io, arena, root)) orelse
+        (if (std.mem.eql(u8, root, app.workspace)) null else try venvPython(app.io, arena, app.workspace)) orelse
+        return json;
+    return withPythonPath(arena, json, python);
+}
+
+/// The builtin python row, or any server whose binary is a pyright
+/// (`pyright-langserver`, `basedpyright-langserver`).
+fn isPyright(name: []const u8, cmd: []const u8) bool {
+    if (std.mem.eql(u8, name, "python")) return true;
+    return std.mem.indexOf(u8, std.fs.path.basename(cmd), "pyright") != null;
+}
+
+/// `<dir>/.venv` or `<dir>/venv`'s interpreter, when one is there. The
+/// path is the venv's own (a symlink to the base interpreter): run
+/// through it Python reports the venv's site-packages, resolved it
+/// would not.
+pub fn venvPython(io: Io, arena: Allocator, dir: []const u8) Allocator.Error!?[]const u8 {
+    const rel: []const []const u8 = if (builtin.os.tag == .windows) &.{ "Scripts", "python.exe" } else &.{ "bin", "python" };
+    for ([_][]const u8{ ".venv", "venv" }) |venv| {
+        const p = try std.fs.path.join(arena, &.{ dir, venv, rel[0], rel[1] });
+        if (Io.Dir.cwd().statFile(io, p, .{})) |_| return p else |_| {}
+    }
+    return null;
+}
+
+/// `settings` (a JSON object) with `python.pythonPath` set to
+/// `python` — unless the user already named an interpreter or a venv
+/// there (`pythonPath` / `venvPath` at the top or under `python`): the
+/// config wins. Settings that are not an object are left alone.
+pub fn withPythonPath(arena: Allocator, settings: []const u8, python: []const u8) Allocator.Error![]const u8 {
+    var root = std.json.parseFromSliceLeaky(Value, arena, settings, .{}) catch return settings;
+    if (root != .object) return settings;
+    const user_set = struct {
+        fn in(v: ?Value) bool {
+            const o = v orelse return false;
+            if (o != .object) return false;
+            return o.object.get("pythonPath") != null or o.object.get("venvPath") != null;
+        }
+    }.in;
+    if (user_set(root) or user_set(root.object.get("python"))) return settings;
+    var section: Value = if (root.object.get("python")) |v| (if (v == .object) v else .{ .object = .empty }) else .{ .object = .empty };
+    try section.object.put(arena, "pythonPath", .{ .string = python });
+    try root.object.put(arena, "python", section);
+    return std.json.Stringify.valueAlloc(arena, root, .{}) catch error.OutOfMemory;
+}
+
 fn dynamicJson(arena: Allocator, d: app_mod.Config.Dynamic) Allocator.Error![]const u8 {
     if (d.isEmpty()) return "{}";
     var aw: Io.Writer.Allocating = .init(arena);
@@ -564,8 +637,9 @@ fn dynamicJson(arena: Allocator, d: app_mod.Config.Dynamic) Allocator.Error![]co
 pub fn serverFor(app: *App, path: []const u8) ?*Server {
     for (app.lsp.servers.items) |s| {
         if (s.transport.isDead()) continue;
-        if (!std.mem.startsWith(u8, path, s.root)) continue;
+        // A file lent to a server outside its root is still its own.
         if (s.isOpen(path)) return s;
+        if (!std.mem.startsWith(u8, path, s.root)) continue;
         const spec = specFor(app, path) orelse continue;
         if (std.mem.eql(u8, spec.name, s.name)) return s;
     }
@@ -676,7 +750,15 @@ pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
         }
         return null;
     }
-    const root = try findRoot(app, arena, path, spec.root_markers, spec.root_markers_ranked);
+    const marked = if (spec.root_markers.len == 0) app.workspace else try markedRoot(app, arena, path, spec.root_markers, spec.root_markers_ranked);
+    // A file outside the workspace under no project marker of its own —
+    // the standard library, site-packages, a toolchain's sources — is
+    // one the running server already reaches (it answered the jump that
+    // opened it): it joins that server as a plain open document instead
+    // of rooting a second one at its own directory. Only a file under a
+    // different project's marker gets a server of its own.
+    if (marked == null and !pathUnder(path, app.workspace)) if (serverToLend(app, spec.name)) |s| return s;
+    const root = marked orelse std.fs.path.dirname(path) orelse app.workspace;
     for (app.lsp.servers.items) |s| if (std.mem.eql(u8, s.name, spec.name) and std.mem.eql(u8, s.root, root) and !s.transport.isDead()) return s;
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
     try argv.append(arena, try arena.dupe(u8, found.?));
@@ -688,7 +770,7 @@ pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
         .root = root,
         .env = &app.env,
         .init_options = try dynamicJson(arena, spec.init_options),
-        .settings = try dynamicJson(arena, spec.settings),
+        .settings = try serverSettings(app, arena, spec, cmd, root),
     }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => {
@@ -1075,21 +1157,47 @@ pub fn tick(app: *App, now: i64) Allocator.Error!void {
     app.lsp.deferred = null;
 }
 
+/// `workspace/configuration`'s reply: one answer per item. An item that
+/// names a `section` the settings hold (`python`, `python.analysis`, a
+/// dotted path) gets that part; any other gets the settings whole, so a
+/// config written flat (`.settings = .{ .cargo = … }`) reaches the
+/// server whatever section it asks for. No settings is `null`.
+pub fn configurationAnswer(arena: Allocator, settings: []const u8, items: []const Value) Allocator.Error![]const u8 {
+    const empty = std.mem.eql(u8, std.mem.trim(u8, settings, " \t\n"), "{}");
+    const parsed: ?Value = if (empty) null else std.json.parseFromSliceLeaky(Value, arena, settings, .{}) catch null;
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    try out.append(arena, '[');
+    for (items, 0..) |it, i| {
+        if (i > 0) try out.append(arena, ',');
+        if (empty) {
+            try out.appendSlice(arena, "null");
+            continue;
+        }
+        const part: ?Value = blk: {
+            const root = parsed orelse break :blk null;
+            const section = jsonrpc.getStr(it, "section") orelse break :blk null;
+            var cur = root;
+            var path = std.mem.splitScalar(u8, section, '.');
+            while (path.next()) |key| {
+                if (cur != .object) break :blk null;
+                cur = cur.object.get(key) orelse break :blk null;
+            }
+            break :blk cur;
+        };
+        if (part) |v| {
+            try out.appendSlice(arena, std.json.Stringify.valueAlloc(arena, v, .{}) catch return error.OutOfMemory);
+        } else try out.appendSlice(arena, settings);
+    }
+    try out.append(arena, ']');
+    return out.items;
+}
+
 /// The few requests a server makes of its client.
 fn handleServerRequest(app: *App, s: *Server, id: jsonrpc.Id, method: []const u8, params: ?Value) Allocator.Error!void {
     if (std.mem.eql(u8, method, "workspace/configuration")) {
-        // One answer per item: the configured settings, or null.
         const items: []const Value = if (params) |p| (jsonrpc.getArr(p, "items") orelse &.{}) else &.{};
-        const n: usize = items.len;
-        var out: std.ArrayListUnmanaged(u8) = .empty;
         const arena = app.frame.allocator();
-        try out.append(arena, '[');
-        for (0..n) |i| {
-            if (i > 0) try out.append(arena, ',');
-            try out.appendSlice(arena, if (std.mem.eql(u8, s.settings, "{}")) "null" else s.settings);
-        }
-        try out.append(arena, ']');
-        s.respond(id, out.items) catch {};
+        s.respond(id, try configurationAnswer(arena, s.settings, items)) catch {};
         // The server was configuring: what it said about symbols before
         // this answer was `[]`. Ask again for every file it has open.
         for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
@@ -2048,6 +2156,8 @@ pub fn openLocalCompletion(app: *App, pane: PaneId, start: usize, items: []const
         copy[i].insert_text = try a.dupe(u8, it.insert_text);
         if (it.detail) |d| copy[i].detail = try a.dupe(u8, d);
         if (it.documentation) |d| copy[i].documentation = try a.dupe(u8, d);
+        if (it.label_detail) |d| copy[i].label_detail = try a.dupe(u8, d);
+        if (it.label_description) |d| copy[i].label_description = try a.dupe(u8, d);
         if (it.sort_text) |d| copy[i].sort_text = try a.dupe(u8, d);
         if (it.filter_text) |d| copy[i].filter_text = try a.dupe(u8, d);
     }
@@ -2879,6 +2989,10 @@ fn applyLadder(app: *App, s: *Server, ctx: Ctx, result: ?Value) Allocator.Error!
 
 pub fn foldAll(app: *App) CommandError!void {
     const t = try requireServer(app, "folding");
+    // A server that offers no folding ranges (pyright) leaves the
+    // editor's own blocks — brackets, and indented suites where the
+    // language has them — rather than a JSON-RPC error.
+    if (!t.server.caps.folding_range) return @import("cmd_editor.zig").foldAllBrackets(app);
     const arena = app.frame.allocator();
     const uri = try types.uriFromPath(arena, t.path);
     _ = t.server.request(.folding_range, "textDocument/foldingRange", .{ .textDocument = .{ .uri = uri } }, .{ .pane = t.pane }) catch |err| return app.diag.fail(arena, "LSP fold: {s}", .{@errorName(err)});
@@ -2919,7 +3033,16 @@ pub fn drawPopups(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             const rows = try ui.arena.alloc(completion_view.Row, vis.len);
             for (vis, 0..) |idx, i| {
                 const it = comp.items[idx];
-                rows[i] = .{ .label = it.label, .kind = types.completionKindLabel(it.kind), .detail = it.detail orelse "" };
+                // LSP 3.17 label details: the signature beside the
+                // label, the origin (`re`, `typing`) in a column of its
+                // own — what tells three `Pattern` rows apart.
+                rows[i] = .{
+                    .label = it.label,
+                    .label_detail = it.label_detail orelse "",
+                    .kind = types.completionKindLabel(it.kind),
+                    .description = it.label_description orelse "",
+                    .detail = it.detail orelse "",
+                };
             }
             const doc: ?[]const u8 = if (comp.items[vis[comp.selected]].documentation) |d| firstLine(d) else null;
             completion_view.draw(ui, body, cursor, &comp.scroll, .{ .rows = rows, .selected = comp.selected, .doc = doc });
@@ -3665,6 +3788,175 @@ test "mnml-fake-lsp end to end: a `.lsp` written to .mnml/config.zon starts on o
     live = false;
     app.deinit();
     try testing.expect(Cond.logHas(ctx, "shutdown\nexit\n"));
+}
+
+test "a file outside the workspace under no project marker joins the workspace's server; one under another project's marker gets its own" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    const exe = build_options.fake_lsp_exe;
+    Io.Dir.cwd().access(io, exe, .{}) catch return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const top = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+    // ws/ (the workspace, a project), lib/ (a standard library: no
+    // marker anywhere above it), other/ (a second project).
+    try tmp.dir.createDirPath(io, "ws/.mnml");
+    try tmp.dir.createDirPath(io, "lib/asyncio");
+    try tmp.dir.createDirPath(io, "other");
+    try tmp.dir.writeFile(io, .{ .sub_path = "ws/.fkroot", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "other/.fkroot", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "ws/a.fk", .data = "fn a() {}\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "lib/asyncio/runners.fk", .data = "fn run() {}\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "other/c.fk", .data = "fn c() {}\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "ws/.mnml/config.zon", .data = ".{ .lsp = .{ .fake = .{ .cmd = \"$MNML_FAKE_LSP\", .extensions = .{ \"fk\" }, .root_markers = .{ \".fkroot\" } } } }" });
+    const ws = try std.fs.path.join(gpa, &.{ top, "ws" });
+    defer gpa.free(ws);
+    const a = try std.fs.path.join(gpa, &.{ ws, "a.fk" });
+    defer gpa.free(a);
+    const lib = try std.fs.path.join(gpa, &.{ top, "lib", "asyncio", "runners.fk" });
+    defer gpa.free(lib);
+    const other_root = try std.fs.path.join(gpa, &.{ top, "other" });
+    defer gpa.free(other_root);
+    const c = try std.fs.path.join(gpa, &.{ other_root, "c.fk" });
+    defer gpa.free(c);
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try env.put("MNML_FAKE_LSP", exe);
+    var app = try App.initWith(gpa, io, .{ .workspace = ws, .cols = 100, .rows = 30, .env = &env, .workspace_trusted = true });
+    defer app.deinit();
+    app.tree.visible = false;
+    const Probe = struct { app: *App, path: []const u8 };
+    const Cond = struct {
+        fn open(p: Probe) bool {
+            for (p.app.lsp.servers.items) |x| if (x.ready and x.isOpen(p.path)) return true;
+            return false;
+        }
+    };
+    _ = try app.openPath(a);
+    try pumpUntil(&app, Probe{ .app = &app, .path = a }, Cond.open, 30_000);
+    try testing.expectEqual(@as(usize, 1), app.lsp.servers.items.len);
+    const first = app.lsp.servers.items[0];
+    try testing.expectEqualStrings(ws, first.root);
+    // The jump into the library: the same server, the file open on it,
+    // and every later request for it answered by that server.
+    _ = try app.openPath(lib);
+    try pumpUntil(&app, Probe{ .app = &app, .path = lib }, Cond.open, 30_000);
+    try testing.expectEqual(@as(usize, 1), app.lsp.servers.items.len);
+    try testing.expect(first.isOpen(lib));
+    try testing.expectEqual(first, serverFor(&app, lib).?);
+    // Another project is another root.
+    _ = try app.openPath(c);
+    try pumpUntil(&app, Probe{ .app = &app, .path = c }, Cond.open, 30_000);
+    try testing.expectEqual(@as(usize, 2), app.lsp.servers.items.len);
+    try testing.expectEqualStrings(other_root, serverFor(&app, c).?.root);
+}
+
+test "withPythonPath adds python.pythonPath unless the config already names an interpreter or a venv" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    try testing.expectEqualStrings("{\"python\":{\"pythonPath\":\"/p/.venv/bin/python\"}}", try withPythonPath(a, "{}", "/p/.venv/bin/python"));
+    // Other settings survive, under `python` and beside it.
+    try testing.expectEqualStrings("{\"python\":{\"analysis\":{\"typeCheckingMode\":\"strict\"},\"pythonPath\":\"/v\"},\"x\":1}", try withPythonPath(a, "{\"python\":{\"analysis\":{\"typeCheckingMode\":\"strict\"}},\"x\":1}", "/v"));
+    // The config wins, in either shape.
+    const nested = "{\"python\":{\"pythonPath\":\"/mine\"}}";
+    try testing.expectEqualStrings(nested, try withPythonPath(a, nested, "/v"));
+    try testing.expectEqualStrings("{\"pythonPath\":\"/mine\"}", try withPythonPath(a, "{\"pythonPath\":\"/mine\"}", "/v"));
+    try testing.expectEqualStrings("{\"python\":{\"venvPath\":\".\"}}", try withPythonPath(a, "{\"python\":{\"venvPath\":\".\"}}", "/v"));
+}
+
+test "configurationAnswer: a section the settings hold gets that part, any other the whole, none is null" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var parsed = try std.json.parseFromSlice(Value, testing.allocator, "[{\"section\":\"python\"},{\"section\":\"python.analysis\"},{\"section\":\"rust-analyzer\"},{}]", .{});
+    defer parsed.deinit();
+    const items = parsed.value.array.items;
+    try testing.expectEqualStrings(
+        "[{\"pythonPath\":\"/v\"},{\"python\":{\"pythonPath\":\"/v\"}},{\"python\":{\"pythonPath\":\"/v\"}},{\"python\":{\"pythonPath\":\"/v\"}}]",
+        try configurationAnswer(a, "{\"python\":{\"pythonPath\":\"/v\"}}", items),
+    );
+    // Flat settings reach every section, as they always did.
+    try testing.expectEqualStrings("[{\"cargo\":1},{\"cargo\":1},{\"cargo\":1},{\"cargo\":1}]", try configurationAnswer(a, "{\"cargo\":1}", items));
+    try testing.expectEqualStrings("[null,null,null,null]", try configurationAnswer(a, "{}", items));
+}
+
+test "a python server starts with the project's .venv interpreter in its settings; one named in the config wins" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    const exe = build_options.fake_lsp_exe;
+    Io.Dir.cwd().access(io, exe, .{}) catch return error.SkipZigTest;
+    for ([_]bool{ false, true }) |configured| {
+        var tmp = testing.tmpDir(.{});
+        defer tmp.cleanup();
+        var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+        const ws = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+        try tmp.dir.createDirPath(io, ".mnml");
+        try tmp.dir.createDirPath(io, ".venv/bin");
+        try tmp.dir.writeFile(io, .{ .sub_path = ".venv/bin/python", .data = "" });
+        try tmp.dir.writeFile(io, .{ .sub_path = "m.py", .data = "import black\n" });
+        try tmp.dir.writeFile(io, .{ .sub_path = ".mnml/config.zon", .data = if (configured)
+            ".{ .lsp = .{ .python = .{ .cmd = \"$MNML_FAKE_LSP\", .extensions = .{ \"py\" }, .settings = .{ .python = .{ .pythonPath = \"/opt/mine/python\" } } } } }"
+        else
+            ".{ .lsp = .{ .python = .{ .cmd = \"$MNML_FAKE_LSP\", .extensions = .{ \"py\" } } } }" });
+        const file = try std.fs.path.join(gpa, &.{ ws, "m.py" });
+        defer gpa.free(file);
+        var env = std.process.Environ.Map.init(gpa);
+        defer env.deinit();
+        try env.put("MNML_FAKE_LSP", exe);
+        var app = try App.initWith(gpa, io, .{ .workspace = ws, .cols = 100, .rows = 30, .env = &env, .workspace_trusted = true });
+        defer app.deinit();
+        app.tree.visible = false;
+        // The workspace `.lsp` as a launch reads it (a `.py` matches the
+        // builtin row, so the lazy re-read would never run).
+        try refreshServers(&app);
+        _ = try app.openPath(file);
+        const Cond = struct {
+            fn one(a: *App) bool {
+                return a.lsp.servers.items.len == 1;
+            }
+        };
+        try pumpUntil(&app, &app, Cond.one, 30_000);
+        const settings = app.lsp.servers.items[0].settings;
+        if (configured) {
+            try testing.expectEqualStrings("{\"python\":{\"pythonPath\":\"/opt/mine/python\"}}", settings);
+        } else {
+            const want = try std.fmt.allocPrint(gpa, "{{\"python\":{{\"pythonPath\":\"{s}/.venv/bin/python\"}}}}", .{ws});
+            defer gpa.free(want);
+            try testing.expectEqualStrings(want, settings);
+        }
+    }
+}
+
+test "completion rows show labelDetails: the origin in a column before the detail, the signature after the label" {
+    const gpa = testing.allocator;
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    const pane = app.active.?;
+    const e = app.activeEditor().?;
+    try e.buf.editor.setText("Pa\n");
+    e.buf.editor.setCursor(2);
+    const base: types.CompletionItem = .{ .label = "Pattern", .kind = 7, .detail = "Auto-import", .documentation = null, .insert_text = "Pattern", .format = .plain, .edit_range = null, .sort_text = null, .filter_text = null, .raw = .null };
+    var re = base;
+    re.label_description = "re";
+    var typing = base;
+    typing.label_description = "typing";
+    typing.sort_text = "b";
+    var sig = base;
+    sig.label = "Parser";
+    sig.label_detail = "(src)";
+    sig.sort_text = "c";
+    re.sort_text = "a";
+    const items = [_]types.CompletionItem{ re, typing, sig };
+    try openLocalCompletion(&app, pane, 0, &items, true);
+    const text = try TestRig.screenText(&app, gpa);
+    defer gpa.free(text);
+    try testing.expect(std.mem.indexOf(u8, text, "Pattern      class  re      Auto-import") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "Pattern      class  typing  Auto-import") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "Parser(src)  class          Auto-import") != null);
 }
 
 /// Tick and render for `ms`, for a test that asserts nothing arrived.

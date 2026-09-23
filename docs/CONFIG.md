@@ -477,7 +477,13 @@ otherwise. Copy what you need; leave the rest out.
     // ── lsp ────────────────────────────────────────────────────────────
     // One entry per server. .cmd/.args are exec-bearing (stripped from an
     // untrusted workspace; .extensions etc. still apply). .settings and
-    // .initialization_options are forwarded verbatim as JSON.
+    // .initialization_options are forwarded verbatim as JSON; a server's
+    // `workspace/configuration` for a section the settings hold (`python`,
+    // `python.analysis`) gets that part, any other gets them whole.
+    // pyright (the python row, or any *pyright* binary) starts with
+    // `.python.pythonPath` = `<root>/.venv/bin/python` (else `venv/`, else
+    // the workspace's) when one exists; a `pythonPath` / `venvPath` in
+    // .settings, flat or under `.python`, wins.
     // Built-in defaults (`src/lsp/client.zig`), each overridable field by
     // field under its name: rust (rust-analyzer), python (pyright),
     // typescript, go (gopls), c (clangd), zig (zls), lua, json

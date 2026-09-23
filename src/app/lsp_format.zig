@@ -381,6 +381,15 @@ fn lintWorker(events: *event.EventQueue, io: Io, gpa: Allocator, job: *Job, env:
     // Most linters exit non-zero on findings: parse whatever came out.
     const text = if (result.stdout.len > 0) result.stdout else result.stderr;
     const diags = tools.parseOutput(a, job.parser, job.pattern, text, job.path) catch return;
+    // A non-zero exit that yielded no finding is the tool failing (a
+    // rejected flag, a broken config, a crash), not a clean file: say
+    // so, and leave the file's last findings alone.
+    if (lintFailed(result.term, diags.len, result.stdout, result.stderr)) |why| {
+        var reason: [160]u8 = undefined;
+        const msg = std.fmt.allocPrint(gpa, "linter `{s}` failed — {s}", .{ std.fs.path.basename(job.argv[0]), summarize(&reason, why) }) catch return;
+        events.post(io, .{ .err = .{ .source = .lsp, .msg = msg } });
+        return;
+    }
     const wire = a.alloc(WireDiag, diags.len) catch return;
     for (diags, 0..) |d, i| wire[i] = .{ .range = d.range, .severity = @intFromEnum(d.severity), .message = d.message, .source = d.source };
     const uri = types.uriFromPath(a, job.path) catch return;
@@ -397,6 +406,50 @@ fn lintWorker(events: *event.EventQueue, io: Io, gpa: Allocator, job: *Job, env:
     };
     ev.* = .{ .message = inc };
     events.post(io, .{ .lsp = .{ .server = linter_server_id, .msg = ev } });
+}
+
+/// The output to report when a lint run failed: the process did not
+/// exit 0, nothing parsed as a finding, and it said something (stderr
+/// first, else stdout). A zero exit, or any finding, is a real result.
+fn lintFailed(term: std.process.Child.Term, findings: usize, stdout: []const u8, stderr: []const u8) ?[]const u8 {
+    if (findings > 0) return null;
+    const clean = switch (term) {
+        .exited => |code| code == 0,
+        else => false,
+    };
+    if (clean) return null;
+    const err_text = std.mem.trim(u8, stderr, " \t\r\n");
+    if (err_text.len > 0) return err_text;
+    const out_text = std.mem.trim(u8, stdout, " \t\r\n");
+    if (out_text.len > 0) return out_text;
+    // Silent and non-zero is a `grep`-style "no match", i.e. clean;
+    // only a signal is a failure without words.
+    return switch (term) {
+        .exited => null,
+        else => "terminated by a signal",
+    };
+}
+
+/// A tool's complaint on one line: its first few non-blank lines joined
+/// with ` · ` (ruff's first line is only "ruff failed"; the reason is
+/// on the next), cut to `buf`.
+fn summarize(buf: []u8, text: []const u8) []const u8 {
+    var n: usize = 0;
+    var lines: usize = 0;
+    var it = std.mem.splitScalar(u8, text, '\n');
+    while (it.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (line.len == 0) continue;
+        if (lines == 3) break;
+        const sep: []const u8 = if (lines == 0) "" else " · ";
+        for ([_][]const u8{ sep, line }) |part| {
+            const take = @min(part.len, buf.len - n);
+            @memcpy(buf[n..][0..take], part[0..take]);
+            n += take;
+        }
+        lines += 1;
+    }
+    return buf[0..n];
 }
 
 /// The linter lane of `lsp.handle`: the findings go to the store as
@@ -589,6 +642,46 @@ test "an external linter runs on a worker and its findings land in the diagnosti
     try command.run(&app, .{ .static = .@"editor.lint_external" });
     try testing.expectEqualStrings("linting mnml-zig-lint-test.txt with sh…", app.lastToast().?);
     try lsp.TestRig.pump(&app, &app, Cond.two, 5000);
+    // A tool that rejects its argv (exit 2, usage on stderr, nothing
+    // parseable) is reported as a failure, never as a clean file, and
+    // the file keeps its last findings.
+    const bad = try writeScript(io, gpa, "lint-bad", "echo \"error: unexpected argument '--no-color' found\" >&2\nexit 2\n");
+    defer gpa.free(bad);
+    defer Io.Dir.cwd().deleteFile(io, bad) catch {};
+    const argv_bad = [_][]const u8{ "sh", bad, "{file}" };
+    try app.cfg.linters.put(gpa, "txt", .{ .cmd = &argv_bad, .parser = .vimgrep });
+    const Failed = struct {
+        fn toast(a: *App) bool {
+            const t = a.lastToast() orelse return false;
+            return std.mem.indexOf(u8, t, "linter `sh` failed") != null;
+        }
+    };
+    lintOnHook(&app, path, false);
+    try lsp.TestRig.pump(&app, &app, Failed.toast, 5000);
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "unexpected argument '--no-color'") != null);
+    try testing.expectEqual(@as(usize, 2), lsp.diagnosticsFor(&app, path).len);
+}
+
+test "lintFailed: a non-zero exit with words and no finding is a failure; findings, a zero exit or a silent exit are results" {
+    const two: std.process.Child.Term = .{ .exited = 2 };
+    try testing.expectEqualStrings("usage", lintFailed(two, 0, "", "  usage\n").?);
+    try testing.expectEqualStrings("junk", lintFailed(two, 0, "junk\n", "").?);
+    try testing.expect(lintFailed(two, 3, "", "noise") == null);
+    try testing.expect(lintFailed(.{ .exited = 0 }, 0, "", "warning: cache") == null);
+    try testing.expect(lintFailed(.{ .exited = 1 }, 0, "", "") == null);
+    try testing.expect(lintFailed(.{ .signal = .KILL }, 0, "", "") != null);
+}
+
+test "summarize joins a tool's first non-blank lines and fits its buffer" {
+    var buf: [40]u8 = undefined;
+    try testing.expectEqualStrings("ruff failed · Cause: bad toml · x", summarize(&buf, "ruff failed\n  Cause: bad toml\n\n x\n y\n"));
+    try testing.expectEqual(@as(usize, 40), summarize(&buf, "a" ** 100).len);
+}
+
+test "the builtin Python linter's argv is one current ruff accepts" {
+    const l = tools.linterFor(&Config{}, "py", "py").?;
+    try testing.expectEqualStrings("ruff", l.argv[0]);
+    for (l.argv) |a| try testing.expect(!std.mem.eql(u8, a, "--no-color"));
 }
 
 test "replaceWhole splices only the changed middle and keeps the cursor" {

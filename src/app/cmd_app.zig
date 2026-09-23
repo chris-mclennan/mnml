@@ -545,7 +545,8 @@ fn foldStep(app: *App, forward: bool) CommandError!void {
     const from_start = if (here) |f| f[0] else row;
     const from_end = if (here) |f| f[1] else row;
     var best: ?usize = null;
-    const ranges = try @import("cmd_editor.zig").allFoldRanges(ed, app.frame.allocator());
+    const folds = @import("cmd_editor.zig");
+    const ranges = try folds.allFoldRanges(ed, folds.foldRulesFor(e), app.frame.allocator());
     for (ranges) |r| consider(e, r, forward, from_start, from_end, &best);
     for (e.buf.editor.folds.keys(), e.buf.editor.folds.values()) |st, en| consider(e, .{ st, en }, forward, from_start, from_end, &best);
     var target = best orelse return app.diag.fail(app.frame.allocator(), "no fold {s}", .{if (forward) "below" else "above"});
