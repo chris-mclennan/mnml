@@ -1439,6 +1439,16 @@ pub fn acceptCopy(app: *App, from: []const u8, into: []const u8) Allocator.Error
 fn movePath(app: *App, from: []const u8, to: []const u8) Allocator.Error!void {
     const from_abs = try app.absPath(from);
     const to_abs = try app.absPath(to);
+    // A taken name is refused — a rename never replaces what is already
+    // there. The one exception is the same file under another spelling
+    // (a case-only rename on a case-insensitive volume): same inode.
+    if (std.Io.Dir.cwd().statFile(app.io, to_abs, .{ .follow_symlinks = false })) |to_st| {
+        const same = if (std.Io.Dir.cwd().statFile(app.io, from_abs, .{ .follow_symlinks = false })) |from_st| from_st.inode == to_st.inode else |_| false;
+        if (!same) {
+            app.toast("already exists: {s} — nothing moved", .{app.relPath(to)});
+            return;
+        }
+    } else |_| {}
     if (std.fs.path.dirname(to)) |parent| std.Io.Dir.cwd().createDirPath(app.io, try app.absPath(parent)) catch {};
     std.Io.Dir.rename(std.Io.Dir.cwd(), from_abs, std.Io.Dir.cwd(), to_abs, app.io) catch |err| {
         app.toast("move {s}: {s}", .{ from, @errorName(err) });
@@ -1631,6 +1641,37 @@ test "tree, vim profile: nvim-tree's a / r / d / x / R / E / W — create, renam
     try t.expect(!try app.tree.handleKey(&app, Key.char('E')));
     try t.expect(try app.tree.handleKey(&app, Key.char('r')));
     try t.expect(app.overlay == .none);
+}
+
+test "rename / move onto a taken name is refused — the existing bytes survive" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    try tmp.dir.createDirPath(t.io, "sub");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "a.txt", .data = "AAA" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "b.txt", .data = "BBB" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "sub/a.txt", .data = "SUBA" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = buf[0..n] });
+    defer app.deinit();
+    try app.tree.refresh(&app);
+    var got: [16]u8 = undefined;
+    // F2 onto a sibling's name.
+    try acceptRename(&app, "a.txt", "b.txt");
+    try t.expectEqualStrings("BBB", try tmp.dir.readFile(t.io, "b.txt", &got));
+    try t.expectEqualStrings("AAA", try tmp.dir.readFile(t.io, "a.txt", &got));
+    try t.expect(std.mem.startsWith(u8, app.lastToast().?, "already exists: b.txt"));
+    // Into a folder that holds the same name (the rename prompt and `file.move_to`).
+    try acceptRename(&app, "a.txt", "sub");
+    try t.expectEqualStrings("SUBA", try tmp.dir.readFile(t.io, "sub/a.txt", &got));
+    // A drag-move onto the same folder.
+    try acceptMove(&app, "a.txt", "sub");
+    try t.expectEqualStrings("SUBA", try tmp.dir.readFile(t.io, "sub/a.txt", &got));
+    try t.expectEqualStrings("AAA", try tmp.dir.readFile(t.io, "a.txt", &got));
+    // A free name still moves.
+    try acceptRename(&app, "a.txt", "c.txt");
+    try t.expectEqualStrings("AAA", try tmp.dir.readFile(t.io, "c.txt", &got));
+    try t.expect(std.mem.startsWith(u8, app.lastToast().?, "moved"));
 }
 
 test "tree file verbs: new file, new folder, rename into a folder, move by drag-confirm, delete" {

@@ -1,0 +1,14 @@
+# The Files pane's rename refuses a taken name the same way the tree's
+# does: renaming b.txt to a.txt leaves a.txt's bytes alone.
+write a.txt "AAA"
+write b.txt "BBB"
+command files.open
+expect screen contains "(2)"
+key j
+command file.rename
+key ctrl+u
+type a.txt
+key enter
+wait 300
+expect file a.txt contains "AAA"
+expect file b.txt contains "BBB"
