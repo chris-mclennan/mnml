@@ -482,7 +482,7 @@ pub fn items(app: *App, arena: Allocator) Allocator.Error![]Item {
             .fallback = c.fallback,
             .color = .{ .role = c.color },
             .label = c.tooltip,
-            .running = attention or integrationOpen(app, c.id),
+            .running = attention or integrationOpen(app, c.id) or productLive(app, c.id),
             .attention = attention,
             .action = switch (c.action) {
                 .dyn => |slot| .{ .dyn = slot },
@@ -530,7 +530,9 @@ pub fn items(app: *App, arena: Allocator) Allocator.Error![]Item {
             .fallback = term.fallback,
             .color = terminal_color,
             .label = p.title(),
-            .running = true,
+            // The dot says what runs: an exited child's pane is open,
+            // not running.
+            .running = p.pty.exit == null,
             .attention = sessions.needsYou(app, pid),
             .action = .{ .pane = pid },
         });
@@ -752,6 +754,19 @@ fn integrationOpen(app: *App, id: []const u8) bool {
             .browser => if (std.mem.eql(u8, id, "browser")) return true,
             else => {},
         }
+    }
+    return false;
+}
+
+/// Whether the Claude Code / Codex item's product has a live session:
+/// those items stand for every session of their kind, which are pty
+/// panes, not mounts. False for every other id.
+fn productLive(app: *App, id: []const u8) bool {
+    const product: launch_profiles.Product = if (std.mem.eql(u8, id, "claude_code")) .claude else if (std.mem.eql(u8, id, "codex")) .codex else return false;
+    var pid: PaneId = 0;
+    while (pid < app.panes.capacity()) : (pid += 1) {
+        const p = app.panes.pty(pid) orelse continue;
+        if (p.exit == null and pty_pane.productOf(app, p) == product) return true;
     }
     return false;
 }
@@ -2293,4 +2308,53 @@ test "the `:` line and an `.inner` strip coexist: the line's rule is `.outer`'s 
     try t.expect(revealed(&app));
     try t.expectEqual(@as(u16, 37), overlayRect(&app, full).y);
     cmdline.close(&app);
+}
+
+test "the running mark follows real state: a session whose child exited loses it, and the Claude Code item is lit while any Claude session lives" {
+    // sess-dock-running-dot.
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    const path = try std.fmt.allocPrint(t.allocator, "{s}/ai:{s}", .{ @import("build_options").shims_dir, app.env.get("PATH") orelse "/usr/bin:/bin" });
+    defer t.allocator.free(path);
+    try app.env.put("PATH", path);
+    const Probe = struct {
+        fn item(list: []const Item, id: []const u8) Item {
+            for (list) |it| if (it.kind == .integration and std.mem.eql(u8, it.id, id)) return it;
+            unreachable;
+        }
+        fn terminals(list: []const Item, out: *[2]bool) usize {
+            var n: usize = 0;
+            for (list) |it| if (it.kind == .terminal) {
+                if (n < out.len) out[n] = it.running;
+                n += 1;
+            };
+            return n;
+        }
+    };
+    // Nothing running: the Claude Code item is dark.
+    try t.expect(!Probe.item(try items(&app, app.frame.allocator()), "claude_code").running);
+    try command.run(&app, .{ .static = .@"ai.claude_code_new" });
+    const first = app.active.?;
+    try command.run(&app, .{ .static = .@"ai.claude_code_new" });
+    var marks: [2]bool = undefined;
+    var list = try items(&app, app.frame.allocator());
+    try t.expect(Probe.item(list, "claude_code").running);
+    try t.expect(!Probe.item(list, "codex").running);
+    try t.expectEqual(@as(usize, 2), Probe.terminals(list, &marks));
+    try t.expect(marks[0] and marks[1]);
+    // One exits: its item keeps its place and loses the mark; the other
+    // still lights the Claude Code item.
+    app.panes.pty(first).?.exit = .{ .code = 3 };
+    list = try items(&app, app.frame.allocator());
+    try t.expectEqual(@as(usize, 2), Probe.terminals(list, &marks));
+    try t.expect(!marks[0] and marks[1]);
+    try t.expect(Probe.item(list, "claude_code").running);
+    // Both gone: dark again.
+    app.panes.pty(app.active.?).?.exit = .{ .code = 0 };
+    list = try items(&app, app.frame.allocator());
+    try t.expect(!Probe.item(list, "claude_code").running);
 }
