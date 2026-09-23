@@ -1,0 +1,16 @@
+# width: 120
+# height: 30
+# env: PATH=
+# `daf` on a decorated Python function deletes the decorator with the def
+# (nvim-treesitter-textobjects' @function.outer is the decorated_definition),
+# never leaving `@cache` to decorate the next statement.
+write a.py "@cache\ndef f():\n    x = 1\n\nZ = 2\n"
+open a.py
+command editor.use_vim
+ex 3
+key d
+key a
+key f
+expect screen contains "Z = 2"
+expect screen lacks "def f"
+expect screen lacks "@cache"

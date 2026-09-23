@@ -31,6 +31,8 @@ pub const Kind = enum {
     field,
     /// C#'s `int X { get; set; }` and indexers.
     property,
+    /// Zig's `test "name" {}`.
+    @"test",
 
     /// The outline's kind column.
     pub fn label(k: Kind) []const u8 {
@@ -49,6 +51,7 @@ pub const Kind = enum {
             .constant => "const",
             .field => "field",
             .property => "prop",
+            .@"test" => "test",
         };
     }
 
@@ -61,7 +64,7 @@ pub const Kind = enum {
     }
 
     pub fn isFunction(k: Kind) bool {
-        return k == .function or k == .method;
+        return k == .function or k == .method or k == .@"test";
     }
 
     pub fn isClass(k: Kind) bool {
@@ -107,6 +110,11 @@ const kinds = std.StaticStringMap(Kind).initComptime([_]KindEntry{
     .{ "indexer_declaration", .property },
     .{ "event_declaration", .field },
     .{ "class_declaration", .class },
+    // TypeScript's `abstract class` and its abstract members.
+    .{ "abstract_class_declaration", .class },
+    .{ "abstract_method_signature", .method },
+    // Kotlin's `object Registry {}`.
+    .{ "object_declaration", .class },
     .{ "class_definition", .class },
     .{ "class_specifier", .class },
     .{ "class", .class },
@@ -127,8 +135,13 @@ const kinds = std.StaticStringMap(Kind).initComptime([_]KindEntry{
     .{ "object_definition", .module },
     .{ "namespace_definition", .namespace },
     .{ "namespace_declaration", .namespace },
+    // TypeScript's `namespace Util {}`.
+    .{ "internal_module", .namespace },
+    .{ "test_declaration", .@"test" },
     .{ "type_item", .type },
     .{ "type_alias_declaration", .type },
+    // Go's `type ID = int`, Kotlin's `typealias`.
+    .{ "type_alias", .type },
     .{ "type_spec", .type },
     .{ "type_definition", .type },
     .{ "const_item", .constant },
@@ -145,8 +158,42 @@ fn isTransparent(kind: []const u8) bool {
 }
 
 /// `kind` is a `Kind`, or null for anything that is not a definition.
+/// Besides the table, two shapes only the node's children tell apart:
+/// Zig's `const Point = struct {…}` (a variable whose value is a
+/// container), and Kotlin's `interface` / `enum class`, which its
+/// grammar calls a class.
 pub fn kindOf(node: ts.Node) ?Kind {
-    return kinds.get(node.kind());
+    const k = node.kind();
+    if (kinds.get(k)) |kind| {
+        if (kind == .class and std.mem.eql(u8, k, "class_declaration")) return kotlinClassKind(node);
+        return kind;
+    }
+    if (std.mem.eql(u8, k, "variable_declaration")) return zigContainerKind(node);
+    return null;
+}
+
+/// Kotlin names every class-like declaration `class_declaration`; the
+/// keyword and the body say which it is.
+fn kotlinClassKind(node: ts.Node) Kind {
+    var i: u32 = 0;
+    while (i < node.childCount()) : (i += 1) {
+        const c = node.child(i);
+        const ck = c.kind();
+        if (std.mem.eql(u8, ck, "interface")) return .interface;
+        if (std.mem.eql(u8, ck, "enum_class_body")) return .@"enum";
+    }
+    return .class;
+}
+
+/// Zig's `const X = struct / enum / union / opaque {…}`.
+fn zigContainerKind(node: ts.Node) ?Kind {
+    var i: u32 = 0;
+    while (i < node.namedChildCount()) : (i += 1) {
+        const ck = node.namedChild(i).kind();
+        if (std.mem.eql(u8, ck, "struct_declaration") or std.mem.eql(u8, ck, "union_declaration") or std.mem.eql(u8, ck, "opaque_declaration")) return .@"struct";
+        if (std.mem.eql(u8, ck, "enum_declaration")) return .@"enum";
+    }
+    return null;
 }
 
 /// Anonymous function nodes `if` / `af` treat as functions too.
@@ -163,6 +210,7 @@ pub fn nameOf(node: ts.Node, text: []const u8) ?[]const u8 {
     var n = node.childByFieldName("name");
     if (n.isNull()) n = node.childByFieldName("declarator");
     if (n.isNull() and std.mem.eql(u8, node.kind(), "impl_item")) n = node.childByFieldName("type");
+    if (n.isNull()) return leadingName(node, text);
     var guard: usize = 0;
     while (!n.isNull() and guard < 8) : (guard += 1) {
         const k = n.kind();
@@ -174,6 +222,31 @@ pub fn nameOf(node: ts.Node, text: []const u8) ?[]const u8 {
     }
     if (n.isNull()) return null;
     return slice(n, text);
+}
+
+/// What may stand before a declaration's name: Kotlin's `modifiers`,
+/// its `fun <T> String.ext()` type parameters and receiver, comments.
+const leading_skip = std.StaticStringMap(void).initComptime(.{ .{"modifiers"}, .{"comment"}, .{"type_parameters"}, .{"receiver_type"}, .{"annotation"} });
+
+/// The name of a definition whose grammar gives it no `name` field —
+/// Kotlin's declarations, Zig's variables and tests: the first named
+/// child past the modifiers, when that is an identifier (or, for a Zig
+/// test, its string, unquoted).
+fn leadingName(node: ts.Node, text: []const u8) ?[]const u8 {
+    if (node.parent().isNull()) return null;
+    var i: u32 = 0;
+    while (i < node.namedChildCount()) : (i += 1) {
+        const c = node.namedChild(i);
+        const ck = c.kind();
+        if (leading_skip.has(ck)) continue;
+        if (std.mem.eql(u8, ck, "identifier") or std.mem.eql(u8, ck, "type_identifier") or std.mem.eql(u8, ck, "simple_identifier")) return slice(c, text);
+        if (std.mem.eql(u8, ck, "string") and std.mem.eql(u8, node.kind(), "test_declaration")) {
+            const raw = slice(c, text) orelse return null;
+            return std.mem.trim(u8, raw, "\"");
+        }
+        return null;
+    }
+    return null;
 }
 
 fn slice(node: ts.Node, text: []const u8) ?[]const u8 {
@@ -305,8 +378,13 @@ pub fn objectAt(root: ts.Node, text: []const u8, which: Object, byte: usize, aro
             .class => if (kindOf(node)) |k| k.isClass() else false,
         };
         if (!hit) continue;
-        const s: usize = node.startByte();
+        var s: usize = node.startByte();
         const e: usize = node.endByte();
+        // Python's decorators belong to what they decorate: `daf` takes
+        // `@cache` with the `def` (nvim-treesitter-textobjects'
+        // @function.outer), never leaving it on the next statement.
+        const parent = node.parent();
+        if (!parent.isNull() and std.mem.eql(u8, parent.kind(), "decorated_definition")) s = parent.startByte();
         if (around) return .{ s, e };
         var body = node.childByFieldName("body");
         if (body.isNull()) {
@@ -531,4 +609,68 @@ test "objectAt: inner function is the body between the braces, around is the who
     const cx = std.mem.indexOf(u8, text, "x: u32").?;
     try testing.expectEqualStrings("\n    x: u32,\n", text[objectAt(root, text, .class, cx, false).?[0]..objectAt(root, text, .class, cx, false).?[1]]);
     try testing.expect(objectAt(root, text, .function, cx, true) == null);
+}
+
+test "one fixture per language: the outline names every definition the table knows" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const Case = struct { key: []const u8, text: []const u8, want: []const u8 };
+    const cases = [_]Case{
+        .{ .key = "rs", .text = "mod m {\n    pub fn f() {}\n}\ntrait T {}\nenum E { A }\n", .want = "m f T E" },
+        .{ .key = "ts", .text = "export abstract class Store {\n  private items: number[] = [];\n  abstract load(): void;\n  save(): void {}\n}\nnamespace Util {\n  export function helper() {}\n}\nexport class Plain {}\ntype ID = string;\n", .want = "Store items load save Util helper Plain ID" },
+        .{ .key = "kt", .text = "package demo\n\nobject Registry {\n    fun register() {}\n}\n\ndata class User(val id: Int)\n\ninterface Repo {\n    fun find(id: Int): User?\n}\n\nenum class Color { RED }\n\nfun String.shout() = uppercase()\n\nfun main() {\n    println(\"hi\")\n}\n", .want = "Registry register User Repo find Color shout main" },
+        .{ .key = "zig", .text = "const std = @import(\"std\");\n\npub const Point = struct {\n    x: i32,\n    pub fn len(self: Point) i32 {\n        return self.x;\n    }\n};\n\nconst Color = enum { red, green };\n\npub fn main() !void {}\n\ntest \"adds\" {\n    try std.testing.expect(true);\n}\n", .want = "Point len Color main adds" },
+        .{ .key = "py", .text = "@cache\ndef f():\n    return 1\n\n@dataclass\nclass A:\n    @property\n    def g(self):\n        pass\n", .want = "f A g" },
+        .{ .key = "go", .text = "package p\n\ntype ID = int\n\nfunc F() {}\n", .want = "ID F" },
+    };
+    for (cases) |c| {
+        var p = try Parsed.init(c.key, c.text);
+        defer p.deinit();
+        const syms = try symbols(a, p.tree.rootNode(), c.text);
+        testing.expectEqualStrings(c.want, try names(a, syms)) catch |err| {
+            std.debug.print("in {s}\n", .{c.key});
+            return err;
+        };
+    }
+}
+
+test "kinds the children decide: Zig containers and tests, Kotlin interfaces and enums" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const zig = "pub const Point = struct {\n    pub fn len() void {}\n};\nconst Color = enum { red };\ntest \"adds\" {}\n";
+    var z = try Parsed.init("zig", zig);
+    defer z.deinit();
+    const zs = try symbols(a, z.tree.rootNode(), zig);
+    try testing.expectEqual(Kind.@"struct", zs[0].kind);
+    try testing.expectEqual(@as(u8, 1), zs[1].depth);
+    try testing.expectEqual(Kind.@"enum", zs[2].kind);
+    try testing.expectEqual(Kind.@"test", zs[3].kind);
+    try testing.expectEqual(@as(u32, 4), zs[3].line);
+    const kt = "interface Repo {}\nenum class Color { RED }\nobject O {}\n";
+    var k = try Parsed.init("kt", kt);
+    defer k.deinit();
+    const ks = try symbols(a, k.tree.rootNode(), kt);
+    try testing.expectEqual(Kind.interface, ks[0].kind);
+    try testing.expectEqual(Kind.@"enum", ks[1].kind);
+    try testing.expectEqual(Kind.class, ks[2].kind);
+}
+
+test "text objects: `af` on a decorated Python def takes its decorators; `ac` finds a TypeScript abstract class and a namespace" {
+    const py = "@cache\ndef f():\n    x = 1\n\nZ = 2\n";
+    var p = try Parsed.init("py", py);
+    defer p.deinit();
+    const r = objectAt(p.tree.rootNode(), py, .function, std.mem.indexOf(u8, py, "x = 1").?, true).?;
+    try testing.expectEqualStrings("@cache\ndef f():\n    x = 1", py[r[0]..r[1]]);
+    const inner = objectAt(p.tree.rootNode(), py, .function, std.mem.indexOf(u8, py, "x = 1").?, false).?;
+    try testing.expectEqualStrings("x = 1", py[inner[0]..inner[1]]);
+    const ts_text = "export abstract class Store {\n  load(): void {\n    go();\n  }\n}\nnamespace Util {\n  export function helper() {}\n}\n";
+    var t = try Parsed.init("ts", ts_text);
+    defer t.deinit();
+    const root = t.tree.rootNode();
+    const c = objectAt(root, ts_text, .class, std.mem.indexOf(u8, ts_text, "go()").?, true).?;
+    try testing.expect(std.mem.startsWith(u8, ts_text[c[0]..c[1]], "abstract class Store"));
+    const n = objectAt(root, ts_text, .class, std.mem.indexOf(u8, ts_text, "export function").?, true).?;
+    try testing.expect(std.mem.startsWith(u8, ts_text[n[0]..n[1]], "namespace Util"));
 }

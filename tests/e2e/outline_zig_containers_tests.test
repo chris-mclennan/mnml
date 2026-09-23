@@ -1,0 +1,13 @@
+# width: 160
+# height: 40
+# env: PATH=
+# Zig: `pub const Point = struct {…}`, `const Color = enum {…}` and
+# `test "adds"` are outline rows, and `fn len` nests under Point.
+write main.zig "const std = @import(\"std\");\n\npub const Point = struct {\n    x: i32,\n    pub fn len(self: Point) i32 {\n        return self.x;\n    }\n};\n\nconst Color = enum { red, green };\n\npub fn main() !void {}\n\ntest \"adds\" {\n    try std.testing.expect(true);\n}\n"
+open main.zig
+command outline.show
+wait 300
+expect screen contains "fn main:12"
+expect screen contains "Point:3"
+expect screen contains "Color:10"
+expect screen contains "adds:14"
