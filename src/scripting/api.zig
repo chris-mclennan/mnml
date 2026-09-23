@@ -1805,11 +1805,21 @@ pub fn callHttpHook(self: *Lua, r: LuaRef, args: hooks.HookArgs) void {
             L.setField(-2, "headers");
             if (a.body) |b| setStrField(L, "body", b);
             if (a.env) |e| setStrField(L, "env", e);
-            self.pcall(1, 1) catch return toastHookError(self);
-            defer L.pop(1);
-            if (L.isTable(-1)) readRewrite(L, -1, a.rewrite) catch {
-                self.app.toastLevel(.err, "hook: out of memory reading the http_request result", .{}) catch {};
+            // The result is read inside the protected call: its fields
+            // may be behind an `__index`, its header values behind a
+            // `__tostring` — the script's own code either way.
+            const Ctx = struct {
+                rewrite: *hooks.HttpRewrite,
+                oom: bool = false,
+                pub fn decode(c: *@This(), lua: *Lua) void {
+                    if (lua.L.isTable(-1)) readRewrite(lua.L, -1, c.rewrite) catch {
+                        c.oom = true;
+                    };
+                }
             };
+            var rw_ctx: Ctx = .{ .rewrite = a.rewrite };
+            self.pcallThen(1, 1, &rw_ctx) catch return toastHookError(self);
+            if (rw_ctx.oom) self.app.toastLevel(.err, "hook: out of memory reading the http_request result", .{}) catch {};
         },
         .http_response => |a| {
             L.newTable();

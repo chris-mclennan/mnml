@@ -1,0 +1,10 @@
+# A statusline segment's value becomes text inside the protected call
+# that ran its function, so a returned table's `__tostring` is covered
+# by it: an error there is the segment's error toast, and the editor
+# keeps running.
+write .mnml/init.lua "mnml.statusline.segment{ id = 's', fn = function() return setmetatable({}, { __tostring = function() error('TOSTR-BOOM') end }) end }\nmnml.command{ id = 'ok', run = function() mnml.toast('STILL-ALIVE') end }\n"
+command script.reload
+wait 600
+expect screen contains "TOSTR-BOOM"
+command user.ok
+expect screen contains "STILL-ALIVE"

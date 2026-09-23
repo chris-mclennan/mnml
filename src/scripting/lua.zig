@@ -554,6 +554,39 @@ pub const Lua = struct {
         };
     }
 
+    /// `pcall`, and then read what the function returned INSIDE the same
+    /// protected call and the same budget.
+    ///
+    /// Reading a returned value is not passive: `lua_getfield` honours
+    /// `__index`, `luaL_tolstring` honours `__tostring`, and either runs
+    /// the script's own code. Run after `pcall` returned, that code is
+    /// outside every boundary — an `error()` in it has no `pcall` to land
+    /// in, and an unprotected Lua error aborts the process. So the call
+    /// and the decode are one protected call: a trampoline closure calls
+    /// the function, then hands its results to `ctx.decode(lua)` with the
+    /// results as the whole of its stack (index 1 up to the top).
+    ///
+    /// The decode can be cut short by a Lua error at any read. Whatever
+    /// it builds must therefore be owned by `ctx` (the caller frees it on
+    /// either outcome), never by a local an `errdefer` would free — a Lua
+    /// error unwinds by longjmp and runs no Zig `defer`.
+    pub fn pcallThen(self: *Lua, nargs: i32, comptime nresults: i32, ctx: anytype) error{Failed}!void {
+        const Ctx = @TypeOf(ctx.*);
+        const T = struct {
+            fn run(L: *State) i32 {
+                const c = L.toUserdata(Ctx, State.upvalueIndex(1)) catch unreachable;
+                L.call(.{ .args = L.getTop() - 1, .results = nresults });
+                c.decode(of(L));
+                return 0;
+            }
+        };
+        const L = self.L;
+        L.pushLightUserdata(ctx);
+        L.pushClosure(zlua.wrap(T.run), 1);
+        L.insert(-(nargs + 2));
+        return self.pcall(nargs + 1, 0);
+    }
+
     /// The error `pcall` (or the loader) just caught: a diagnostic on
     /// the `init.lua` it names, when it names one, and its toast —
     /// persistent and clickable then, plain otherwise (`diag.zig`).
@@ -655,7 +688,6 @@ pub const Lua = struct {
         const L = self.L;
         const arena = self.app.frame.allocator();
         const as_expr = try std.fmt.allocPrint(arena, "return {s}", .{src});
-        const base = L.getTop();
         L.loadBuffer(as_expr, "=selection", .text) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             error.LuaSyntax => {
@@ -671,15 +703,35 @@ pub const Lua = struct {
                 };
             },
         };
-        try self.pcall(0, zlua.mult_return);
-        const n: usize = @intCast(L.getTop() - base);
-        defer L.setTop(base);
+        // The values' string forms are taken inside the protected call —
+        // a returned table's `__tostring` is the script's code.
+        const Ctx = struct {
+            arena: Allocator,
+            out: ?[]const u8 = null,
+            err: ?Allocator.Error = null,
+            pub fn decode(c: *@This(), lua: *Lua) void {
+                c.out = joinResults(lua.L, c.arena) catch |e| {
+                    c.err = e;
+                    return;
+                };
+            }
+        };
+        var ctx: Ctx = .{ .arena = arena };
+        try self.pcallThen(0, zlua.mult_return, &ctx);
+        if (ctx.err) |e| return e;
+        return ctx.out;
+    }
+
+    /// Every value on the stack, `tostring`ed and tab-joined; null when
+    /// there are none.
+    fn joinResults(L: *State, arena: Allocator) Allocator.Error!?[]const u8 {
+        const n = L.getTop();
         if (n == 0) return null;
         var out: std.ArrayListUnmanaged(u8) = .empty;
-        var i: usize = 0;
-        while (i < n) : (i += 1) {
-            if (i > 0) try out.append(arena, '\t');
-            try out.appendSlice(arena, L.toStringEx(base + 1 + @as(i32, @intCast(i))));
+        var i: i32 = 1;
+        while (i <= n) : (i += 1) {
+            if (i > 1) try out.append(arena, '\t');
+            try out.appendSlice(arena, L.toStringEx(i));
             L.pop(1);
         }
         return out.items;
@@ -722,14 +774,27 @@ pub const Lua = struct {
 
     /// `render(w, h)` → rows of segments on the frame arena. A failing
     /// render paints its message in the pane instead of toasting every
-    /// frame.
+    /// frame. The rows are decoded inside the protected call
+    /// (`pcallThen`): a row's `__index` is the script's code too.
     pub fn callRender(self: *Lua, r: LuaRef, w: u16, h: u16) Allocator.Error![]const []const Segment {
         const arena = self.app.frame.allocator();
         const L = self.L;
+        const Ctx = struct {
+            arena: Allocator,
+            rows: []const []const Segment = &.{},
+            err: ?Allocator.Error = null,
+            pub fn decode(c: *@This(), lua: *Lua) void {
+                c.rows = lua.decodeRows(c.arena, -1) catch |e| {
+                    c.err = e;
+                    return;
+                };
+            }
+        };
+        var ctx: Ctx = .{ .arena = arena };
         self.pushRef(r);
         L.pushInteger(w);
         L.pushInteger(h);
-        self.pcall(2, 1) catch {
+        self.pcallThen(2, 1, &ctx) catch {
             _ = diag.report(self, self.last_error orelse "") catch {};
             const row = try arena.alloc(Segment, 1);
             row[0] = .{ .text = self.last_error orelse "script error", .style = self.app.theme.error_fg };
@@ -737,8 +802,8 @@ pub const Lua = struct {
             rows[0] = row;
             return rows;
         };
-        defer L.pop(1);
-        return self.decodeRows(arena, -1);
+        if (ctx.err) |e| return e;
+        return ctx.rows;
     }
 
     fn decodeRows(self: *Lua, arena: Allocator, index: i32) Allocator.Error![]const []const Segment {
@@ -800,11 +865,16 @@ pub const Lua = struct {
         return segs;
     }
 
+    /// `t[name]` when it is a string, copied onto the frame arena. The
+    /// read may run an `__index` (the callers are all inside a protected
+    /// call), and a string that metamethod made is anchored by nothing
+    /// once it is popped — so the slice handed back is never Lua's.
     fn stringField(L: *State, t: i32, name: [:0]const u8) ?[]const u8 {
         _ = L.getField(t, name);
         defer L.pop(1);
         if (L.typeOf(-1) != .string) return null;
-        return L.toString(-1) catch null;
+        const s = L.toString(-1) catch return null;
+        return of(L).app.frame.allocator().dupe(u8, s) catch L.raiseErrorStr("out of memory", .{});
     }
 
     fn boolField(L: *State, t: i32, name: [:0]const u8) bool {
@@ -852,19 +922,26 @@ pub const Lua = struct {
     }
 
     /// A statusline segment's function → its text on the frame arena,
-    /// null to hide it.
+    /// null to hide it. The value's string form is taken inside the
+    /// protected call: a returned table's `__tostring` is script code.
     fn callSegment(self: *Lua, r: LuaRef) ?[]const u8 {
-        const L = self.L;
+        const Ctx = struct {
+            text: ?[]const u8 = null,
+            pub fn decode(c: *@This(), lua: *Lua) void {
+                const L = lua.L;
+                if (L.isNoneOrNil(-1)) return;
+                const s = L.toStringEx(-1);
+                c.text = lua.app.frame.allocator().dupe(u8, s) catch null;
+                L.pop(1);
+            }
+        };
+        var ctx: Ctx = .{};
         self.pushRef(r);
-        self.pcall(0, 1) catch {
+        self.pcallThen(0, 1, &ctx) catch {
             self.toastError("statusline segment");
             return null;
         };
-        defer L.pop(1);
-        if (L.isNoneOrNil(-1)) return null;
-        const s = L.toStringEx(-1);
-        defer L.pop(1);
-        return self.app.frame.allocator().dupe(u8, s) catch null;
+        return ctx.text;
     }
 
     /// A picker source's `items(query)` → labels and details (gpa, the
@@ -873,14 +950,35 @@ pub const Lua = struct {
     /// on_accept? }`.
     pub fn callItems(self: *Lua, r: LuaRef, query: []const u8, labels: *std.ArrayList([]u8), details: *std.ArrayList([]u8), icons: *std.ArrayList([]u8)) Allocator.Error!void {
         const L = self.L;
-        const gpa = self.gpa;
+        const Ctx = struct {
+            labels: *std.ArrayList([]u8),
+            details: *std.ArrayList([]u8),
+            icons: *std.ArrayList([]u8),
+            err: ?Allocator.Error = null,
+            pub fn decode(c: *@This(), lua: *Lua) void {
+                lua.decodeItems(c.labels, c.details, c.icons) catch |e| {
+                    c.err = e;
+                };
+            }
+        };
+        var ctx: Ctx = .{ .labels = labels, .details = details, .icons = icons };
         self.pushRef(r);
         _ = L.pushString(query);
-        self.pcall(1, 1) catch {
+        self.pcallThen(1, 1, &ctx) catch {
             self.toastError("picker items");
             return;
         };
-        defer L.pop(1);
+        if (ctx.err) |e| return e;
+    }
+
+    /// The items table at the top of the stack → the three lists and
+    /// `picker_items`. Runs inside `callItems`' protected call: every
+    /// read that can reach a metamethod happens before the row's strings
+    /// are duplicated, and each duplicate is owned by its list the moment
+    /// it exists, so an error mid-row leaks nothing.
+    fn decodeItems(self: *Lua, labels: *std.ArrayList([]u8), details: *std.ArrayList([]u8), icons: *std.ArrayList([]u8)) Allocator.Error!void {
+        const L = self.L;
+        const gpa = self.gpa;
         self.pickerClosed();
         if (!L.isTable(-1)) return;
         const n = L.lenRaw(-1);
@@ -904,22 +1002,25 @@ pub const Lua = struct {
             } else {
                 label = L.toString(-1) catch "";
             }
-            const l = try gpa.dupe(u8, label);
-            errdefer gpa.free(l);
-            const d = try gpa.dupe(u8, detail);
-            errdefer gpa.free(d);
-            const g = try gpa.dupe(u8, icon);
-            errdefer gpa.free(g);
             // The row table itself is kept, so `data` reaches `on_accept`
             // and `preview` exactly as the script wrote it.
             if (L.isTable(-1)) {
                 L.pushValue(-1);
                 row_ref = self.ref();
             }
-            try labels.append(gpa, l);
-            try details.append(gpa, d);
-            try icons.append(gpa, g);
-            try self.picker_items.append(gpa, .{ .on_accept = on_accept, .row = row_ref });
+            try self.picker_items.ensureUnusedCapacity(gpa, 1);
+            try labels.ensureUnusedCapacity(gpa, 1);
+            try details.ensureUnusedCapacity(gpa, 1);
+            try icons.ensureUnusedCapacity(gpa, 1);
+            const l = try gpa.dupe(u8, label);
+            errdefer gpa.free(l);
+            const d = try gpa.dupe(u8, detail);
+            errdefer gpa.free(d);
+            const g = try gpa.dupe(u8, icon);
+            labels.appendAssumeCapacity(l);
+            details.appendAssumeCapacity(d);
+            icons.appendAssumeCapacity(g);
+            self.picker_items.appendAssumeCapacity(.{ .on_accept = on_accept, .row = row_ref });
         }
     }
 
@@ -956,49 +1057,83 @@ pub const Lua = struct {
     pub fn callListRows(self: *Lua, r: LuaRef, sort: ?[]const u8) Allocator.Error!?[]script_list.Row {
         const L = self.L;
         const gpa = self.gpa;
+        // The rows are built inside the protected call and owned by the
+        // context, so a row whose read errors part-way leaves nothing
+        // behind: whatever was built is freed unless it is handed out.
+        const Ctx = struct {
+            gpa: Allocator,
+            out: std.ArrayListUnmanaged(script_list.Row) = .empty,
+            err: ?Allocator.Error = null,
+            pub fn decode(c: *@This(), lua: *Lua) void {
+                lua.decodeListRows(c.gpa, &c.out) catch |e| {
+                    c.err = e;
+                };
+            }
+        };
+        var ctx: Ctx = .{ .gpa = gpa };
+        defer {
+            for (ctx.out.items) |row| freeListRow(gpa, row);
+            ctx.out.deinit(gpa);
+        }
         self.pushRef(r);
         if (sort) |s| _ = L.pushString(s) else L.pushNil();
-        self.pcall(1, 1) catch {
+        self.pcallThen(1, 1, &ctx) catch {
             self.toastError("list rows");
             return null;
         };
-        defer L.pop(1);
-        if (!L.isTable(-1)) return try gpa.alloc(script_list.Row, 0);
+        if (ctx.err) |e| return e;
+        return try ctx.out.toOwnedSlice(gpa);
+    }
+
+    fn freeListRow(gpa: Allocator, row: script_list.Row) void {
+        gpa.free(row.label);
+        gpa.free(row.detail);
+        gpa.free(row.icon);
+        gpa.free(row.state);
+    }
+
+    /// The rows table at the top of the stack → `out`. Every read that
+    /// can reach a metamethod is done (onto the frame arena) before the
+    /// row's strings are duplicated onto the gpa and appended.
+    fn decodeListRows(self: *Lua, gpa: Allocator, out: *std.ArrayListUnmanaged(script_list.Row)) Allocator.Error!void {
+        const L = self.L;
+        if (!L.isTable(-1)) return;
         const n = L.lenRaw(-1);
-        var out: std.ArrayListUnmanaged(script_list.Row) = .empty;
-        errdefer {
-            @import("../app/script_list.zig").freeRows(gpa, out.items);
-            out = .empty;
-        }
         try out.ensureTotalCapacity(gpa, n);
         var i: usize = 1;
         while (i <= n) : (i += 1) {
             _ = L.getIndex(-1, @intCast(i));
             defer L.pop(1);
-            var row: script_list.Row = .{ .index = @intCast(i - 1) };
+            var header = false;
+            var label: []const u8 = "";
+            var detail: []const u8 = "";
+            var icon: []const u8 = "";
+            var state: []const u8 = "";
+            var count: u32 = 0;
             if (L.isTable(-1)) {
                 if (stringField(L, -1, "header")) |h| {
-                    row.header = true;
-                    row.label = try gpa.dupe(u8, h);
-                } else row.label = try gpa.dupe(u8, stringField(L, -1, "label") orelse "");
-                errdefer gpa.free(row.label);
-                row.detail = try gpa.dupe(u8, stringField(L, -1, "detail") orelse "");
-                errdefer gpa.free(row.detail);
-                row.icon = try gpa.dupe(u8, stringField(L, -1, "icon") orelse "");
-                errdefer gpa.free(row.icon);
-                row.state = try gpa.dupe(u8, stringField(L, -1, "state") orelse "");
+                    header = true;
+                    label = h;
+                } else label = stringField(L, -1, "label") orelse "";
+                detail = stringField(L, -1, "detail") orelse "";
+                icon = stringField(L, -1, "icon") orelse "";
+                state = stringField(L, -1, "state") orelse "";
                 _ = L.getField(-1, "count");
-                row.count = if (L.toInteger(-1)) |c| @intCast(@max(c, 0)) else |_| 0;
+                count = if (L.toInteger(-1)) |c| @intCast(std.math.clamp(c, 0, std.math.maxInt(u32))) else |_| 0;
                 L.pop(1);
             } else {
-                row.label = try gpa.dupe(u8, L.toString(-1) catch "");
-                row.detail = try gpa.dupe(u8, "");
-                row.icon = try gpa.dupe(u8, "");
-                row.state = try gpa.dupe(u8, "");
+                label = L.toString(-1) catch "";
             }
-            try out.append(gpa, row);
+            var row: script_list.Row = .{ .index = @intCast(i - 1), .header = header, .count = count };
+            row.label = try gpa.dupe(u8, label);
+            errdefer gpa.free(row.label);
+            row.detail = try gpa.dupe(u8, detail);
+            errdefer gpa.free(row.detail);
+            row.icon = try gpa.dupe(u8, icon);
+            errdefer gpa.free(row.icon);
+            row.state = try gpa.dupe(u8, state);
+            out.appendAssumeCapacity(row);
         }
-        return try out.toOwnedSlice(gpa);
     }
 
     /// Push row `index` of `l`'s last `rows()` answer as a table — what
@@ -1036,34 +1171,49 @@ pub const Lua = struct {
     /// `arena` (the menu's own); the `run` refs are kept until the next
     /// menu opens, so a click can reach them.
     pub fn callMenu(self: *Lua, r: LuaRef, l: *const script_list.List, index: u32, arena: Allocator) Allocator.Error![]const []const u8 {
-        const L = self.L;
+        const Ctx = struct {
+            arena: Allocator,
+            labels: std.ArrayListUnmanaged([]const u8) = .empty,
+            err: ?Allocator.Error = null,
+            pub fn decode(c: *@This(), lua: *Lua) void {
+                lua.decodeMenu(c.arena, &c.labels) catch |e| {
+                    c.err = e;
+                };
+            }
+        };
+        var ctx: Ctx = .{ .arena = arena };
         self.dropMenuItems();
         self.pushRef(r);
         self.pushListRow(l, index);
-        self.pcall(1, 1) catch {
+        self.pcallThen(1, 1, &ctx) catch {
             self.toastError("list on_menu");
             return &.{};
         };
-        defer L.pop(1);
-        if (!L.isTable(-1)) return &.{};
+        if (ctx.err) |e| return e;
+        return ctx.labels.items;
+    }
+
+    /// `{ { label, run }, … }` at the top of the stack → labels on
+    /// `arena`, the `run` refs into `menu_items` (one per label, in step).
+    fn decodeMenu(self: *Lua, arena: Allocator, labels: *std.ArrayListUnmanaged([]const u8)) Allocator.Error!void {
+        const L = self.L;
+        if (!L.isTable(-1)) return;
         const n = L.lenRaw(-1);
-        var labels: std.ArrayListUnmanaged([]const u8) = .empty;
         var i: usize = 1;
         while (i <= n) : (i += 1) {
             _ = L.getIndex(-1, @intCast(i));
             defer L.pop(1);
             if (!L.isTable(-1)) continue;
             const label = stringField(L, -1, "label") orelse continue;
-            const owned = try arena.dupe(u8, label);
             _ = L.getField(-1, "run");
             if (!L.isFunction(-1)) {
                 L.pop(1);
                 continue;
             }
-            try self.menu_items.append(self.gpa, self.ref());
-            try labels.append(arena, owned);
+            try self.menu_items.ensureUnusedCapacity(self.gpa, 1);
+            try labels.append(arena, label);
+            self.menu_items.appendAssumeCapacity(self.ref());
         }
-        return labels.items;
     }
 
     /// A row menu's entry was clicked: its `run()`.
@@ -1116,17 +1266,29 @@ pub const Lua = struct {
     /// preview column, gpa-owned (the overlay holds them across frames,
     /// and the frame arena does not survive one).
     pub fn callPreview(self: *Lua, r: LuaRef, i: usize, label: []const u8) Allocator.Error![][]Segment {
-        const L = self.L;
+        // The decode's scratch arena is the context's, so it is released
+        // whether the decode finished or a read inside it errored.
+        const Ctx = struct {
+            arena_state: std.heap.ArenaAllocator,
+            rows: []const []const Segment = &.{},
+            err: ?Allocator.Error = null,
+            pub fn decode(c: *@This(), lua: *Lua) void {
+                c.rows = lua.decodeRows(c.arena_state.allocator(), -1) catch |e| {
+                    c.err = e;
+                    return;
+                };
+            }
+        };
+        var ctx: Ctx = .{ .arena_state = std.heap.ArenaAllocator.init(self.gpa) };
+        defer ctx.arena_state.deinit();
         self.pushRef(r);
         self.pushRow(i, label);
-        self.pcall(1, 1) catch {
+        self.pcallThen(1, 1, &ctx) catch {
             self.toastError("picker preview");
             return &.{};
         };
-        defer L.pop(1);
-        var arena_state = std.heap.ArenaAllocator.init(self.gpa);
-        defer arena_state.deinit();
-        const rows = try self.decodeRows(arena_state.allocator(), -1);
+        if (ctx.err) |e| return e;
+        const rows = ctx.rows;
         // Onto the gpa: the preview outlives this frame.
         const out = try self.gpa.alloc([]Segment, rows.len);
         var made: usize = 0;
@@ -1375,6 +1537,61 @@ test "the frame budget is a shipped-build promise; Debug gets a runaway budget d
     // Runaway, not unbounded: `while true do end` still costs one toast
     // rather than the editor, so the figure stays inside a few seconds.
     try testing.expect(budget_ms > 0 and budget_ms <= 10_000);
+}
+
+fn globalRef(lua: *Lua, name: [:0]const u8) LuaRef {
+    _ = lua.L.getGlobal(name);
+    return lua.ref();
+}
+
+test "a returned value's metamethods run inside the protected call: an error there is a message, not an abort" {
+    // Reading what a script returned runs the script's code when the
+    // value has a metatable — `__index` on a row's field, `__tostring`
+    // on a segment's text. Those reads used to happen after `pcall` had
+    // returned, where a Lua error has nowhere to land and the process
+    // aborts; each call below would take the test runner down with it.
+    var app = try App.init(testing.allocator, testing.io);
+    defer app.deinit();
+    const lua = app.script();
+    const top = lua.L.getTop();
+    try lua.runString(
+        \\local boom = function(what) return setmetatable({}, { __index = function() error(what) end, __tostring = function() error(what) end }) end
+        \\function render() return { boom('ROW-BOOM') } end
+        \\function segment() return boom('SEG-BOOM') end
+        \\function rows() return { boom('LIST-BOOM') } end
+        \\function items() return { boom('ITEM-BOOM') } end
+        \\function preview() return { boom('PREVIEW-BOOM') } end
+    );
+    const rows = try lua.callRender(globalRef(lua, "render"), 20, 4);
+    try testing.expectEqual(@as(usize, 1), rows.len);
+    try testing.expect(std.mem.indexOf(u8, rows[0][0].text, "ROW-BOOM") != null);
+    try testing.expect(lua.callSegment(globalRef(lua, "segment")) == null);
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "SEG-BOOM") != null);
+    try testing.expect((try lua.callListRows(globalRef(lua, "rows"), null)) == null);
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "LIST-BOOM") != null);
+    var labels: std.ArrayList([]u8) = .empty;
+    var details: std.ArrayList([]u8) = .empty;
+    var icons: std.ArrayList([]u8) = .empty;
+    defer {
+        for (labels.items) |x| testing.allocator.free(x);
+        for (details.items) |x| testing.allocator.free(x);
+        for (icons.items) |x| testing.allocator.free(x);
+        labels.deinit(testing.allocator);
+        details.deinit(testing.allocator);
+        icons.deinit(testing.allocator);
+    }
+    try lua.callItems(globalRef(lua, "items"), "", &labels, &details, &icons);
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "ITEM-BOOM") != null);
+    try testing.expectEqual(@as(usize, 0), (try lua.callPreview(globalRef(lua, "preview"), 0, "x")).len);
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "PREVIEW-BOOM") != null);
+    try testing.expectError(error.Failed, lua.eval("setmetatable({}, { __tostring = function() error('EVAL-BOOM') end })"));
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "EVAL-BOOM") != null);
+    // A well-behaved metatable still reads: the decode is protected, not raw.
+    try lua.runString("function proxy() return { setmetatable({}, { __index = function(_, k) if k == 'text' then return 'VIA-INDEX' end end }) } end");
+    const via = try lua.callRender(globalRef(lua, "proxy"), 20, 4);
+    try testing.expectEqualStrings("VIA-INDEX", via[0][0].text);
+    try testing.expectEqual(top, lua.L.getTop());
+    try lua.runString("assert(1 + 1 == 2)");
 }
 
 test "a runtime error carries a traceback and leaves the stack level" {
