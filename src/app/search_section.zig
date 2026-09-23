@@ -381,6 +381,7 @@ pub fn openHit(app: *App, h: grep.Hit, beside: bool) CommandError!void {
     // The hit borrows the snapshot; hold frame copies past the open.
     const path = try arena.dupe(u8, h.path);
     const rel = try arena.dupe(u8, h.rel);
+    const text = try arena.dupe(u8, h.text);
     const line = h.line;
     const col = h.col;
     try app.noteRecent(path);
@@ -396,8 +397,11 @@ pub fn openHit(app: *App, h: grep.Hit, beside: bool) CommandError!void {
     if (app.panes.editor(eid)) |e| {
         const ed = e.buf.editor;
         ed.anchor = null;
-        ed.placeCursorByte(@min(@as(usize, line) -| 1, ed.lineCount() -| 1), col);
+        // Found again by its text: an edit since the search moves it.
+        const w = grep.relocate(ed, line, text, h.text_off, false);
+        ed.placeCursorByte(w.row, col);
         ed.goal_col = null;
+        grep.noteRelocation(app, w, line);
         e.view.scroll_line = @intCast(ed.currentLine() -| app.pane_rows / 2);
     }
     app.showPane(eid);

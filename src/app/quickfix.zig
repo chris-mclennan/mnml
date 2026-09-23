@@ -265,8 +265,11 @@ pub fn go(app: *App, where: Where) CommandError!void {
         else => return app.diag.fail(arena, "open {s}: {s}", .{ rel, @errorName(err) }),
     };
     if (app.panes.editor(id)) |ed| {
-        ed.buf.editor.placeCursor(line -| 1, col -| 1);
+        // A grep's entry is found again by its line's text.
+        const w: grep.Where = if (q.grep_pane != null) grep.relocate(ed.buf.editor, line, text, 0, true) else .{ .row = line -| 1 };
+        ed.buf.editor.placeCursor(w.row, col -| 1);
         ed.buf.editor.goal_col = null;
+        grep.noteRelocation(app, w, line);
     }
     if (listPane(app)) |lp| lp.list.cursor = idx;
     app.toast("({d} of {d}) {s}", .{ idx + 1, n, text });
