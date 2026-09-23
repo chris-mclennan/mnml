@@ -74,6 +74,14 @@ pub fn refreshStyle(t: *const Theme, bg: vaxis.Color) Style {
     return .{ .fg = t.chip_active.bg, .bg = bg };
 }
 
+/// A count on a card — ` 3 files ` on a SESSIONS card (sessiondiff):
+/// yellow ink (the status pane's "modified") on the card's own ground,
+/// no fill and no bold, so it reads as a thing to click without
+/// shouting over the name beside it.
+pub fn countStyle(t: *const Theme, bg: vaxis.Color) Style {
+    return .{ .fg = t.palette.yellow, .bg = bg };
+}
+
 /// The ` + ` chip: green on the panel ground.
 pub fn newStyle(t: *const Theme, bg: vaxis.Color) Style {
     return .{ .fg = t.palette.green, .bg = bg, .bold = true };

@@ -2886,6 +2886,11 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             if (app.overlay != .none) closeOverlay(app);
             try runCmd(app, .@"ai.claude_code_new");
         },
+        // sessiondiff: a card's `N files` chip opens what it changed.
+        .session_changes => |pane| if (m.kind == .press and m.button == .left) {
+            if (app.overlay != .none) closeOverlay(app);
+            try session_changes.chipMouse(app, pane, m);
+        },
     }
 }
 
@@ -5195,6 +5200,7 @@ pub const right_click_of = std.EnumArray(HitTag, RightClick).init(.{
     .font_update = .{ .none = "one-verb" },
     .ai_placeholder = .{ .none = "one-verb" },
     .search_chip = .{ .none = "one-verb" },
+    .session_changes = .{ .none = "one-verb" },
 });
 
 /// The source of `mouse`'s arm for `tag`: from `        .tag => ` (the

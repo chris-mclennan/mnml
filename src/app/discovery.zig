@@ -130,6 +130,7 @@ pub fn describe(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!
         .scrollbar => .{ .title = "Scrollbar", .detail = "drag the thumb · wheel scrolls" },
         .hover_popup => .{ .title = "Hover", .detail = "wheel scrolls two lines · click closes" },
         .ai_placeholder => .{ .title = "Add Claude Code", .detail = "click opens the next session in this slot" },
+        .session_changes => .{ .title = "What this session changed", .detail = "click opens its files since it started" },
         .button => |id| try describeButton(app, arena, id),
         .link => |l| .{ .title = try f.fmt(arena, "Link: {s}", .{l.url}), .detail = "click opens it" },
         .menu_item => |mi| blk: {

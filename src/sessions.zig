@@ -240,6 +240,10 @@ pub const RowView = struct {
     /// The pane's child is blocked on the user (`needsYou`): the
     /// needs-you mark before the name, as the tab wears it.
     needs_you: bool = false,
+    /// // changed (sessiondiff): how many files the session changed since
+    /// it started (`app/session_changes.zig`) — the ` N files ` chip after
+    /// the name, when not zero.
+    changes: usize = 0,
 };
 
 pub const Summary = enum { exited, none, text };
@@ -2122,6 +2126,8 @@ pub fn openRowMenuFor(app: *App, host: MenuHost, x: u16, y: u16) Allocator.Error
         try items.append(app.gpa, .{ .label = "Cancel run…", .action = .{ .command = .@"sessions.cloud_cancel" }, .separator_before = true });
     } else {
         try items.append(app.gpa, .{ .label = if (card != null) "Focus session" else "Resume in a terminal", .action = .{ .command = .@"sessions.open" }, .separator_before = true });
+        // sessiondiff: the review step, for a card whose session has a base.
+        if (card) |c| if (session_changes.recordOf(app, c.pane) != null) try items.append(app.gpa, .{ .label = "What did this session change", .action = .{ .command = .@"sessions.changes" } });
         try items.append(app.gpa, .{ .label = "Open transcript", .action = .{ .command = .@"sessions.open_transcript" } });
         try items.append(app.gpa, .{ .label = "Copy session id", .action = .{ .command = .@"sessions.copy_id" } });
         try items.append(app.gpa, .{ .label = "Copy working directory", .action = .{ .command = .@"sessions.copy_cwd" } });
@@ -2364,6 +2370,7 @@ pub fn cardView(app: *App, arena: Allocator, c: Card) Allocator.Error!RowView {
         .color = cardColor(app, c),
         .worktree = if (cardWorktree(app, c)) |e| try arena.dupe(u8, e.name) else null,
         .needs_you = needsYou(app, c.pane),
+        .changes = if (session_changes.recordOf(app, c.pane)) |r| r.count() else 0,
     };
 }
 
@@ -2919,8 +2926,14 @@ fn paintRow(ui: Ui, r: Rect, row: RowView, selected: bool) void {
     if (row.worktree) |wt| {
         const tag = worktreeTag(ui.arena, wt, ui.ascii) catch "";
         x += ui.putStr(x, r.y, end -| x, " ", bg);
-        _ = ui.putStr(x, r.y, end -| x, tag, Theme.withFg(bg, t.palette.cyan));
+        x += ui.putStr(x, r.y, end -| x, tag, Theme.withFg(bg, t.palette.cyan));
     }
+    // sessiondiff: ` 3 files ` after the name — a click is the review.
+    // Left of the name's end, so the kebab a hover adds never moves it.
+    if (row.pane) |pid| if (session_changes.chipText(ui.arena, row.changes) catch null) |text| if (end > x + 1) {
+        x += ui.putStr(x, r.y, end -| x, " ", bg);
+        _ = chip_mod.paintTarget(ui, x, r.y, end -| x, text, chip_mod.countStyle(t, bg.bg), .{ .session_changes = pid });
+    };
     const max_cells: u16 = @max(4, r.w -| 6);
     const color = switch (row.kind) {
         .exited => t.palette.red,
@@ -4267,6 +4280,36 @@ test "the card at 30 and 34 cells: the name clips hard at the edge, the summary 
     _ = Panel.draw(&st, i.ui(), i.full(), p);
     try testing.expectEqual(@as(usize, 1), st.visible);
     try testing.expectEqual(@as(u16, 10), st.end_y);
+}
+
+test "sessiondiff: a card whose session changed files wears ` N files ` after its name, a hit that names the pane; none at zero, none without a pane" {
+    var rows = specCards();
+    rows[1].name = "fix tests";
+    rows[1].pane = 7;
+    rows[1].changes = 3;
+    rows[2].pane = 8;
+    rows[2].changes = 0;
+    var f = try UiFixture.init(30, 20);
+    defer f.deinit();
+    var st: Panel.State = .{};
+    defer st.deinit(testing.allocator);
+    _ = Panel.draw(&st, f.ui(), f.full(), cardProps(&rows));
+    try f.expectRow(10, " \u{258c} fix tests  3 files");
+    const h = f.hits.at(15, 10).?;
+    try testing.expect(h == .session_changes);
+    try testing.expectEqual(@as(app_mod.PaneId, 7), h.session_changes);
+    try testing.expect(f.fgEql(15, 10, .{ .fg = f.theme.palette.yellow }));
+    // Zero changes: the name alone; the card's own row under the pointer.
+    try f.expectRow(15, " \u{258c} release train");
+    try testing.expect(f.hits.at(20, 15).? == .row);
+    // A card a painter fixture built without a pane carries none.
+    rows[1].pane = null;
+    var g = try UiFixture.init(30, 20);
+    defer g.deinit();
+    _ = Panel.draw(&st, g.ui(), g.full(), cardProps(&rows));
+    try g.expectRow(10, " \u{258c} fix tests");
+    try testing.expectEqualStrings(" 1 file ", (try session_changes.chipText(g.arena_state.allocator(), 1)).?);
+    try testing.expect((try session_changes.chipText(g.arena_state.allocator(), 0)) == null);
 }
 
 test "the summary rows: the ticket chip from ui.ticket_prefixes, hidden by an alias; the pin; the colour off the pane" {

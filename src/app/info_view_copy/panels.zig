@@ -18,6 +18,8 @@ const git_palette_ui = @import("../../ui/git_palette.zig");
 const sessions = @import("../../sessions.zig");
 const git_palette = @import("../git_palette.zig");
 const line_blame = @import("../line_blame.zig");
+const session_changes = @import("../session_changes.zig");
+const status_view = @import("../../ui/git_status_view.zig");
 
 const ask = copy.ask_link;
 
@@ -397,6 +399,15 @@ pub fn aiPlaceholder() Entry {
         .title = "+ Add Claude Code",
         .body = "An empty slot of the AI grid — the layout that shows several sessions at once as splits. Click starts the next Claude Code session here; the card becomes the session's pane. `ui.ai_layout_mode = tabs` stacks sessions in one leaf instead and has no slots.",
         .links = &.{ .{ .command = .{ .id = .@"ai.claude_code_new", .label = "Start a session here" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.ai_layout_mode"), .label = "AI session layout" } } },
+    };
+}
+
+/// sessiondiff: the `N files` chip on a SESSIONS card.
+pub fn sessionChangesChip() Entry {
+    return .{
+        .title = "Files this session changed",
+        .body = "How many files this Claude or Codex session has changed since it started — dirty now and not before it, written after it began, or in a commit it made (`ui.session_changes` picks the rules). Click opens them as a git status pane scoped to the session: diff, stage, and commit with the session's title as the message. The count follows the repo's status; the refresh chip reads git again.",
+        .links = &.{ .{ .command = .{ .id = .@"sessions.changes", .label = "What did this session change" } }, .{ .command = .{ .id = .@"sessions.refresh", .label = "Refresh the sessions" } } },
     };
 }
 
