@@ -1,0 +1,44 @@
+# The background-jobs chip and the JOBS list. A language server
+# starting is a job until `initialize` answers; a test run is a job
+# until its result lands. While one runs the statusline says so — a
+# spinner and a count — and a run that FAILS leaves its words on the
+# chip for ten seconds, where before it finished without a word.
+#
+# The server is the fake one; the `dotnet` is the corpus shim, held two
+# seconds by `MNML_SHIM_DOTNET_TEST_SLEEP` so the run can be caught in
+# flight. It reports one pass and one failure.
+# env: PATH=${MNML_SHIMS}:${PATH}
+# env: MNML_SHIM_DOTNET_TEST_SLEEP=2
+write src/main.fk "fn foo() {\n  foo();\n}\n"
+write .fkroot ""
+write .mnml/config.zon .{ .lsp = .{ .fake = .{ .cmd = "$MNML_FAKE_LSP", .extensions = .{ "fk" }, .root_markers = .{ ".fkroot" } } } }
+write Tests/Tests.csproj "<Project Sdk=\"Microsoft.NET.Sdk\" />\n"
+write Tests/CalcTests.cs "public class CalcTests\n{\n    public void Adds() { }\n}\n"
+open src/main.fk
+command view.toggle_tree
+expect screen contains "LSP 1"
+# The server answered: its start is over, and nothing else runs, so the
+# chip is gone (`ui.jobs_chip = auto`).
+expect screen lacks " job "
+
+open Tests/CalcTests.cs
+command dotnet.test
+expect pane tests
+# In flight: the spinner, then the count.
+expect screen contains " 1 job "
+wait 3000
+# Landed: one failed, so the job failed, and the chip holds its words.
+expect screen lacks " 1 job "
+expect screen contains "✗ tests: 1 failed, 1 passed"
+
+# The list: both jobs, newest first, with how each ended.
+command jobs.show
+expect screen contains "JOBS"
+expect screen contains "(0 running · 2 finished)"
+expect screen contains "FINISHED (2)"
+expect screen contains "✗ tests    dotnet test · 1 failed, 1 passed"
+expect screen contains "✓ lsp      start fake · ready"
+# Opening the list is reading the failure: the chip lets it go.
+expect screen lacks "✗ tests: 1 failed"
+key esc
+expect screen lacks "FINISHED (2)"
