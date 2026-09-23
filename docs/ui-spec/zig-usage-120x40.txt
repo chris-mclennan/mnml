@@ -1,8 +1,8 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │  ● /pri…            │ 󱸀 Claude usage 󰅖   󰐕                                                      󱸀  󲀀      
-▌ │▌    .mnml              │▌ Claude usage · r refresh · L claude login · R capture · esc close
+   │  ● /pri…            │ 󱸀 Claude Usage 󰅖   󰐕                                                      󱸀  󲀀      
+▌ │▌    .mnml              │▌ Claude usage · r refresh · a add · L claude login · R capture · esc close            ⋯
    │       ipc-zig          │▌
- 󰍉 │      prog.dbg           │▌ (active) personal · sam@example.com · sam@example.com's Organization
+ 󰍉 │      prog.dbg           │▌ (active) personal  · sam@example.com · sam@example.com's Organization
    │                          │▌
  󰊢 │         󰐙 Add workspace  │▌ Current session
    │                          │▌                                                              95% used
@@ -17,7 +17,7 @@
   │                          │▌   Resets Sep 19 at 5am
    │                          │▌
   │                          │▌
-   │                          │▌ work · sam@work.example · Example Co
+   │                          │▌ work  · sam@work.example · Example Co
  󱘣 │                          │▌
    │                          │▌ Current session
  󰢱 │                          │▌                                                              24% used
@@ -28,13 +28,13 @@
    │                          │▌   Resets Sep 16 at 9am
    │                          │▌
    │                          │▌
-   │──────────────────────────│▌ consulting
-   │ Claude usage           ⋮ │▌
+   │──────────────────────────│▌ consulting 
+   │ Claude Usage           ⋮ │▌
    │                          │▌ Current session
    │                          │▌                                                              0% used
    │                          │▌   (reset time not available)
    │                          │▌
   │                          │▌ Current week (all models)
    │                          │▌                                                              0% used
- VIEW  [no file]                                                              F 57% ▼1.6  󱼀 󰐎    23:31  ws   —
+ VIEW  [no file]                                                                            󱼀 󰐎    17:48  ws   —
                                                            ⋯

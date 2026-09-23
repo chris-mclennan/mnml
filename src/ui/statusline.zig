@@ -155,7 +155,8 @@ pub const Seg = struct {
     accent: ?Accent = null,
     tail: []const u8 = "",
 
-    pub const Accent = struct { text: []const u8, fg: Color };
+    /// `underline` marks the run (the ticker's active account letter).
+    pub const Accent = struct { text: []const u8, fg: Color, underline: bool = false };
 
     pub fn init(text: []const u8, fg: Color, bg: Color) Seg {
         return .{ .text = text, .fg = fg, .bg = bg };
@@ -299,6 +300,7 @@ fn paintSeg(ui: Ui, x: u16, y: u16, max_w: u16, s: Seg) u16 {
     if (s.accent) |a| {
         var st = s.style();
         st.fg = a.fg;
+        if (a.underline) st.ul_style = .single;
         used += ui.putStr(x + used, y, max_w -| used, a.text, st);
     }
     used += ui.putStr(x + used, y, max_w -| used, s.tail, s.style());

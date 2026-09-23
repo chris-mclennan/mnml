@@ -13,7 +13,7 @@ write placeholder.txt x
 open placeholder.txt
 command ai.claude_usage
 wait 800
-expect pane "Claude usage"
+expect pane "Claude Usage"
 # Same-day session reset: EDT is right.
 expect screen contains "Resets 11am"
 expect screen contains "Resets Nov 3 at 12am"

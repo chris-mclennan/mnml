@@ -45,10 +45,11 @@ pub const UsagePane = struct {
     product: Product,
     scroll: usize = 0,
 
+    /// The tab's words — Rust's `tab_title`.
     pub fn title(p: *const UsagePane) []const u8 {
         return switch (p.product) {
-            .claude => "Claude usage",
-            .codex => "Codex usage",
+            .claude => "Claude Usage",
+            .codex => "Codex Usage",
         };
     }
 };
@@ -1084,14 +1085,27 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, p: *UsagePane, area: Rect) Allocator.
 
 // ─── the chip ───────────────────────────────────────────────────────────
 
-pub const ClaudeChip = struct { text: []const u8 };
+/// The Claude chip in three runs, so the statusline can paint the middle
+/// one differently: `head`, then `accent` (underlined when `underline`),
+/// then `tail`. `joined` is the whole text.
+pub const ChipParts = struct {
+    head: []const u8,
+    accent: []const u8 = "",
+    tail: []const u8 = "",
+    underline: bool = false,
+
+    pub fn joined(c: ChipParts, arena: Allocator) Allocator.Error![]const u8 {
+        return std.mem.concat(arena, u8, &.{ c.head, c.accent, c.tail });
+    }
+};
 
 /// The statusline's Claude chip: one account (`ai.chip_show_*` picks
 /// the detail, `ai.chip_toggle_reset` the countdown), or every account
 /// as `claude_meter_mode` says — compact (the sparkline) or ticker
-/// (one at a time, 4 s each, its letter first). One account configured
-/// is always the single chip.
-pub fn claudeChip(app: *App, arena: Allocator, glyph: []const u8) Allocator.Error![]const u8 {
+/// (one at a time, 4 s each, its letter first, underlined when it is
+/// the active account, as Rust's). One account configured is always the
+/// single chip.
+pub fn claudeChipParts(app: *App, arena: Allocator, glyph: []const u8) Allocator.Error!ChipParts {
     const s = st(app);
     const now = nowSecs(app);
     const opts: usage.ChipOpts = .{
@@ -1110,17 +1124,26 @@ pub fn claudeChip(app: *App, arena: Allocator, glyph: []const u8) Allocator.Erro
         .compact => {
             const rows = try arena.alloc(usage.ChipAccount, n);
             for (s.accounts.items, 0..) |*a, i| rows[i] = a.chip();
-            return (try usage.compactChip(arena, rows, opts)).text;
+            return .{ .head = (try usage.compactChip(arena, rows, opts)).text };
         },
         .ticker => {
             const a = &s.accounts.items[usage.tickerIndex(now, n)];
-            return usage.singleChip(arena, &a.usage, usage.abbrev(a.name), opts);
+            // ` G 95% 52% ` cut after the glyph: the letter goes between.
+            const full = try usage.singleChip(arena, &a.usage, null, opts);
+            const cut = 1 + glyph.len + 1;
+            const letter = try arena.dupe(u8, &.{usage.abbrev(a.name)});
+            return .{ .head = full[0..cut], .accent = letter, .tail = try std.fmt.allocPrint(arena, " {s}", .{full[cut..]}), .underline = a.is_active };
         },
         .off => {
-            const a = s.active() orelse return std.fmt.allocPrint(arena, " {s} … ", .{glyph});
-            return usage.singleChip(arena, &a.usage, null, opts);
+            const a = s.active() orelse return .{ .head = try std.fmt.allocPrint(arena, " {s} … ", .{glyph}) };
+            return .{ .head = try usage.singleChip(arena, &a.usage, null, opts) };
         },
     }
+}
+
+/// The chip as one string.
+pub fn claudeChip(app: *App, arena: Allocator, glyph: []const u8) Allocator.Error![]const u8 {
+    return (try claudeChipParts(app, arena, glyph)).joined(arena);
 }
 
 pub const CodexChip = struct { text: []const u8, has_data: bool };
@@ -1364,6 +1387,23 @@ test "the chip reads the same accounts: single, compact and ticker, the detail a
     defer t.allocator.free(txt);
     try t.expect(std.mem.indexOf(u8, txt, " P 95% 52% ") != null);
     try t.expect(std.mem.indexOf(u8, txt, " 1.2M ") != null);
+    // Rust's ticker underlines the letter of the active account.
+    const hit_rect = for (app.hits.items.items) |h| {
+        if (h.target == .statusline_seg and h.target.statusline_seg == @import("statusline.zig").SegId.ai_claude.raw()) break h.rect;
+    } else return error.NoClaudeChip;
+    var letter_x: ?u16 = null;
+    var x = hit_rect.x;
+    while (x < hit_rect.x + hit_rect.w) : (x += 1) {
+        const c = app.screen.readCell(x, hit_rect.y) orelse continue;
+        if (std.mem.eql(u8, c.char.grapheme, "P")) letter_x = x;
+    }
+    try t.expect(app.screen.readCell(letter_x.?, hit_rect.y).?.style.ul_style == .single);
+    try t.expect(app.screen.readCell(letter_x.? + 2, hit_rect.y).?.style.ul_style == .off);
+}
+
+test "the usage panes' tabs read as Rust's: Claude Usage, Codex Usage" {
+    try t.expectEqualStrings("Claude Usage", (UsagePane{ .product = .claude }).title());
+    try t.expectEqualStrings("Codex Usage", (UsagePane{ .product = .codex }).title());
 }
 
 test "the 0.2.x [[ai.claude.accounts]] blocks, migrated verbatim under .ai.claude.accounts, are the account list" {

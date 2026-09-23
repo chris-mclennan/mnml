@@ -15,7 +15,7 @@ open placeholder.txt
 
 command ai.claude_usage
 wait 600
-expect pane "Claude usage"
+expect pane "Claude Usage"
 key a
 expect screen contains "Name the Claude account to add"
 type client
