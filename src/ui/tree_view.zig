@@ -124,7 +124,11 @@ const chip_reserve: u16 = 5 * chip_w + 1;
 const add_label = " Add workspace";
 
 /// A file's git state (Rust `FileState`), for the badge and the name's colour.
-pub const GitState = enum { modified, staged, untracked, conflicted };
+/// A row's git badge. The staged states keep the index's letter — a
+/// staged modification is `M`, a staged new file `A`, a staged rename
+/// `R`, as the status pane on the same screen says (every staged file
+/// read `A`, a modified one included).
+pub const GitState = enum { modified, staged, added, renamed, untracked, conflicted };
 
 /// A repo row's marker: lit when the repo is the active one; `accent` —
 /// the repo's colour (`app/git_palette.zig`) — paints the dot when set.
@@ -404,7 +408,7 @@ fn drawEntry(ui: Ui, r: Rect, sb_w: u16, items: []const Item, i: usize, e: Entry
     // The name.
     const name_fg = if (e.repo != null) pal.yellow else if (e.is_dir) pal.blue else if (e.git) |g| switch (g) {
         .modified => pal.yellow,
-        .staged, .untracked => pal.green,
+        .staged, .added, .renamed, .untracked => pal.green,
         .conflicted => pal.red,
     } else pal.fg;
     var name_style = Theme.onBg(Theme.withFg(t.fg, name_fg), bg);
@@ -416,14 +420,15 @@ fn drawEntry(ui: Ui, r: Rect, sb_w: u16, items: []const Item, i: usize, e: Entry
     _ = ui.putStr(x, r.y, name_end -| x, e.name, name_style);
     if (badge_w > 0 and right >= r.x + 1 + badge_w) {
         const badge: []const u8 = if (e.dirty) (if (ui.ascii) "*" else "●") else switch (e.git.?) {
-            .modified => "M",
-            .staged => "A",
+            .modified, .staged => "M",
+            .added => "A",
+            .renamed => "R",
             .untracked => "?",
             .conflicted => "!",
         };
         const badge_fg = if (e.dirty) pal.orange else switch (e.git.?) {
             .modified => pal.yellow,
-            .staged, .untracked => pal.green,
+            .staged, .added, .renamed, .untracked => pal.green,
             .conflicted => pal.red,
         };
         _ = ui.putStr(right - badge_w, r.y, badge_w, badge, Theme.onBg(Theme.withFg(t.fg, badge_fg), bg));
@@ -588,7 +593,7 @@ test "badges: M / A / ? / ! right-aligned, the unsaved dot beating git, a repo r
     const items = [_]Item{
         section(0, "/w/", true),
         .{ .entry = .{ .idx = 0, .name = "m.rs", .depth = 0, .is_dir = false, .git = .modified } },
-        .{ .entry = .{ .idx = 1, .name = "a.rs", .depth = 0, .is_dir = false, .git = .staged } },
+        .{ .entry = .{ .idx = 1, .name = "a.rs", .depth = 0, .is_dir = false, .git = .added } },
         .{ .entry = .{ .idx = 2, .name = "c.rs", .depth = 0, .is_dir = false, .git = .conflicted } },
         .{ .entry = .{ .idx = 3, .name = "d.rs", .depth = 0, .is_dir = false, .git = .modified, .dirty = true } },
         .{ .entry = .{ .idx = 4, .name = "repo", .depth = 0, .is_dir = true, .repo = .{ .active = false } } },
@@ -606,6 +611,22 @@ test "badges: M / A / ? / ! right-aligned, the unsaved dot beating git, a repo r
     try testing.expect(vaxis.Color.eql(f.style(18, 4).fg, f.theme.palette.orange));
     try testing.expect(vaxis.Color.eql(f.style(9, 5).fg, f.theme.palette.yellow));
     try testing.expect(f.style(9, 5).dim);
+}
+
+test "badges: a staged file keeps the index's letter — M for a modification, R for a rename, A only for a new file" {
+    const items = [_]Item{
+        section(0, "/w/", true),
+        .{ .entry = .{ .idx = 0, .name = "m.rs", .depth = 0, .is_dir = false, .git = .staged } },
+        .{ .entry = .{ .idx = 1, .name = "r.rs", .depth = 0, .is_dir = false, .git = .renamed } },
+        .{ .entry = .{ .idx = 2, .name = "a.rs", .depth = 0, .is_dir = false, .git = .added } },
+    };
+    var f = try Fixture.init(20, 4);
+    defer f.deinit();
+    _ = draw(f.ui(), f.full(), .{ .items = &items, .show_dots = true });
+    try f.expectRow(1, "     \u{E68B} m.rs       M");
+    try f.expectRow(2, "     \u{E68B} r.rs       R");
+    try f.expectRow(3, "     \u{E68B} a.rs       A");
+    try testing.expect(vaxis.Color.eql(f.style(18, 1).fg, f.theme.palette.green));
 }
 
 test "scroll and overflow: the rows from `scroll`, a scrollbar in the last column that the badges keep clear of; the add row only when it fits" {

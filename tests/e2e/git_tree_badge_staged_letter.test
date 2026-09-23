@@ -1,0 +1,19 @@
+# The tree's git badge keeps the index's letter for a staged file: a
+# staged modification is `M` and a staged new file `A`, as `git status`
+# and the status pane say — every staged file used to read `A`.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write feat.txt "one\n"
+shell git add feat.txt
+shell git commit -q -m "first"
+write feat.txt "two\n"
+write zzz-new.txt "new\n"
+shell git add feat.txt zzz-new.txt
+shell git status --porcelain > st.out
+expect file st.out contains "M  feat.txt"
+expect file st.out contains "A  zzz-new.txt"
+command git.refresh
+wait 1500
+expect screen contains "feat.txt         M │"
+expect screen contains "zzz-new.txt      A │"

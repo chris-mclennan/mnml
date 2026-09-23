@@ -1062,7 +1062,11 @@ fn gitStates(app: *App, arena: Allocator) Allocator.Error!std.StringHashMapUnman
         const state: tree_view.GitState = switch (e.group) {
             .conflicted => .conflicted,
             .unstaged => .modified,
-            .staged => .staged,
+            .staged => switch (e.code) {
+                'A' => .added,
+                'R', 'C' => .renamed,
+                else => .staged,
+            },
             .untracked => .untracked,
         };
         const gop = try map.getOrPut(arena, abs);
@@ -1074,7 +1078,7 @@ fn gitStates(app: *App, arena: Allocator) Allocator.Error!std.StringHashMapUnman
 fn foldState(a: tree_view.GitState, b: tree_view.GitState) tree_view.GitState {
     if (a == .conflicted or b == .conflicted) return .conflicted;
     if (a == .modified or b == .modified) return .modified;
-    if (a == .staged or b == .staged) return .staged;
+    inline for (.{ .staged, .added, .renamed }) |k| if (a == k or b == k) return k;
     return .untracked;
 }
 
