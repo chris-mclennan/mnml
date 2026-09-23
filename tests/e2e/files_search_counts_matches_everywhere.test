@@ -1,0 +1,14 @@
+# A hit is a match on every backend: three `alpha`s on one line are
+# "3 hits (git grep)" in the section, as the walk counts them and as the
+# grep pane beside it says "3 matches in 1 file".
+shell git init -q -b main && git config user.email t@e.st && git config user.name t
+write a.txt "alpha one alpha two alpha\n"
+shell git add -A && git commit -qm seed
+command view.activity_search
+type alpha
+key enter
+wait 1500
+command search.open_pane
+wait 1500
+expect screen contains "3 matches in 1 file"
+expect screen contains "3 hits (git grep)"

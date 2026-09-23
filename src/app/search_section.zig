@@ -789,18 +789,19 @@ test "view.activity_search: the section takes the column with the query focused;
     try f.settle(400);
     const st = &app.search_section;
     try t.expectEqual(grep.Backend.git_grep, st.backend.?);
-    // One hit per line (Rust counts the same way): 2 in src/a.zig, 1 in
-    // b.txt, 1 in notes.md; the log and the scratch never.
-    try t.expectEqual(@as(usize, 4), st.hits.items.len);
+    // One hit per MATCH, as the walk and rg count (Rust's git grep
+    // counts lines): 3 in src/a.zig, 1 in b.txt, 1 in notes.md; the log
+    // and the scratch never.
+    try t.expectEqual(@as(usize, 5), st.hits.items.len);
     try t.expectEqual(@as(usize, 3), st.groups.items.len);
-    try t.expectEqual(@as(usize, 7), st.rows.items.len);
+    try t.expectEqual(@as(usize, 8), st.rows.items.len);
     for (st.hits.items) |h| {
         try t.expect(std.mem.indexOf(u8, h.rel, ".log") == null);
         try t.expect(std.mem.indexOf(u8, h.rel, "scratch") == null);
     }
     txt = try f.screen();
     defer t.allocator.free(txt);
-    try t.expect(std.mem.indexOf(u8, txt, " 4 hits (git grep)") != null);
+    try t.expect(std.mem.indexOf(u8, txt, " 5 hits (git grep)") != null);
     try t.expect(std.mem.indexOf(u8, txt, "\u{F0349} alpha") != null);
     try t.expect(std.mem.indexOf(u8, txt, "src/a.zig") != null);
     try t.expect(std.mem.indexOf(u8, txt, "1:7  const alpha = 1;") != null);
@@ -824,7 +825,7 @@ test "view.activity_search: the section takes the column with the query focused;
             try t.expect(std.mem.indexOf(u8, l, "\u{F0349}") == null);
             try t.expect(std.mem.indexOf(u8, l, "hits (") == null);
         } else if (y == header_y.? + 3) {
-            try t.expect(std.mem.indexOf(u8, l, "4 hits (git grep)") != null);
+            try t.expect(std.mem.indexOf(u8, l, "5 hits (git grep)") != null);
         } else if (y == header_y.? + 5) {
             try t.expect(std.mem.indexOf(u8, l, "src/a.zig") != null or std.mem.indexOf(u8, l, "notes.md") != null or std.mem.indexOf(u8, l, "b.txt") != null);
         }
@@ -911,7 +912,7 @@ test "keys: Esc clears the query then leaves it; ↓ and Enter open the hit at i
     try app.handle(.{ .key = Key.named(.enter) });
     try f.settle(400);
     const st = &app.search_section;
-    try t.expectEqual(@as(usize, 7), st.rows.items.len);
+    try t.expectEqual(@as(usize, 8), st.rows.items.len);
     // The selection starts on the first hit (row 1, under its file
     // header — Rust's `search_selected = 0`); ↓ ↓ from the query moves
     // it past the next file header onto the second hit (row 3). Enter
@@ -937,11 +938,11 @@ test "keys: Esc clears the query then leaves it; ↓ and Enter open the hit at i
     try t.expect(!st.query_focused);
     st.list.cursor = 1;
     try app.handle(.{ .key = Key.char('h') });
-    try t.expectEqual(@as(usize, 7 - st.groups.items[0].count), st.rows.items.len);
+    try t.expectEqual(@as(usize, 8 - st.groups.items[0].count), st.rows.items.len);
     try t.expectEqual(@as(usize, 0), st.list.cursor);
     try t.expect(st.rows.items[0] == .file);
     try app.handle(.{ .key = Key.char('l') });
-    try t.expectEqual(@as(usize, 7), st.rows.items.len);
+    try t.expectEqual(@as(usize, 8), st.rows.items.len);
     // `/` focuses the query again; typing edits it (the caret moves with ←).
     try app.handle(.{ .key = Key.char('/') });
     try t.expect(st.query_focused);
@@ -960,20 +961,20 @@ test "keys: Esc clears the query then leaves it; ↓ and Enter open the hit at i
     try f.typeQuery("alph");
     try app.handle(.{ .key = Key.named(.enter) });
     try f.settle(400);
-    try t.expectEqual(@as(usize, 4), st.hits.items.len);
+    try t.expectEqual(@as(usize, 5), st.hits.items.len);
     try command.run(app, .{ .static = .@"search.toggle_whole_word" });
     try t.expect(st.flags.whole_word);
     try f.settle(400);
     try t.expectEqual(@as(usize, 0), st.hits.items.len);
     try command.run(app, .{ .static = .@"search.toggle_whole_word" });
     try f.settle(400);
-    try t.expectEqual(@as(usize, 4), st.hits.items.len);
+    try t.expectEqual(@as(usize, 5), st.hits.items.len);
     // The case flag: `Aa` on with a lower-case query finds nothing upper.
     try command.run(app, .{ .static = .@"search.toggle_case_sensitive" });
     try t.expect(st.flags.case_sensitive);
     try t.expectEqual(true, app.search_case.?);
     try f.settle(400);
-    try t.expectEqual(@as(usize, 3), st.hits.items.len);
+    try t.expectEqual(@as(usize, 4), st.hits.items.len);
     try command.run(app, .{ .static = .@"search.toggle_case_sensitive" });
     try f.settle(400);
     // A click on a hit row opens it; a right click opens the row menu titled by the hit.

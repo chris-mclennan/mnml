@@ -1,0 +1,15 @@
+# The SEARCH section's `.*` regex is one language whichever backend
+# answers: `\d+` means digits under git grep (a repo) exactly as under
+# the walk (a plain folder, files_search_regex_one_language_walk.test) —
+# not a literal `d` (git's ERE) or a literal `+` (vim magic).
+shell git init -q -b main && git config user.email t@e.st && git config user.name t
+write a.txt "v1 = 42\nno digits\n"
+shell git add -A && git commit -qm seed
+command view.activity_search
+command search.toggle_regex
+type \d+
+key enter
+wait 1500
+expect screen contains "(git grep)"
+expect screen contains "1:2  v1 = 42"
+expect screen lacks "no digits"

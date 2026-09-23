@@ -81,8 +81,15 @@ pub const Flags = struct {
     /// Off = smart case (upper-case in the query turns it on).
     case_sensitive: bool = false,
     whole_word: bool = false,
-    /// On: the query is a pattern (rg's syntax under rg, a vim pattern
-    /// under the walk). Off: a literal.
+    /// On: the query is a regular expression in ONE language on every
+    /// backend — the ERE / PCRE spelling people type (`\d+`, `[0-9]+`,
+    /// `foo.+bar`, `(a|b)`, `x{2,3}`, `\b`, `\<word\>`, `\.` a literal
+    /// dot), read as vim's very-magic pattern (`eregexToVim`). A query
+    /// that starts with `\v` `\m` `\M` or `\V` is a vim pattern as
+    /// typed. `git grep` gets the Oniguruma translation as PCRE (`-P`),
+    /// `rg` the same, and each line they report is matched again by the
+    /// in-process engine, so a row is shown only where the pattern
+    /// matches — whichever backend answered. Off: a literal.
     regex: bool = false,
 };
 
@@ -524,23 +531,115 @@ const WorkerError = Io.Cancelable || Allocator.Error;
 /// then the in-process walk.
 pub fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, root: []const u8, query: []const u8, flags: Flags, generation: u32, pane: PaneId, abort: *Abort, git_first: bool) Io.Cancelable!void {
     var ctx: Ctx = .{ .events = events, .io = io, .gpa = gpa, .generation = generation, .pane = pane, .abort = abort };
-    if (git_first) {
-        const git = runGitGrep(&ctx, root, query, flags) catch |err| switch (err) {
-            error.Canceled => return error.Canceled,
-            error.OutOfMemory => return postOom(events, io, gpa),
-        };
-        if (git == .ran) return;
-    }
-    const outcome = runRg(&ctx, root, query, flags) catch |err| switch (err) {
+    runBackends(&ctx, root, query, flags, git_first) catch |err| switch (err) {
         error.Canceled => return error.Canceled,
         error.OutOfMemory => return postOom(events, io, gpa),
     };
-    switch (outcome) {
+}
+
+/// The query as the one pattern every backend answers to: the vim
+/// pattern (a literal as `\V`, whole word as `\<…\>`), compiled for
+/// the in-process engine, and its Oniguruma translation for `git grep
+/// -P` / `rg`.
+const Pattern = struct {
+    re: regex.Regex,
+    /// The translation (PCRE-compatible for what vim patterns use).
+    external: []const u8,
+    buf: [regex.max_pattern]u8 = undefined,
+};
+
+fn runBackends(c: *Ctx, root: []const u8, query: []const u8, flags: Flags, git_first: bool) WorkerError!void {
+    var p: Pattern = .{ .re = undefined, .external = "" };
+    if (!try compilePattern(c, query, flags, &p)) return;
+    defer p.re.deinit();
+    if (git_first) {
+        if (try runGitGrep(c, root, query, flags, &p) == .ran) return;
+    }
+    switch (try runRg(c, root, query, flags, &p)) {
         .ran => {},
-        .no_rg => runWalk(&ctx, root, query, flags) catch |err| switch (err) {
-            error.Canceled => return error.Canceled,
-            error.OutOfMemory => return postOom(events, io, gpa),
-        },
+        .no_rg => try runWalk(c, root, &p),
+    }
+}
+
+/// Fill `p` for `query`; false (the run already finished with the
+/// reason) when the pattern does not compile.
+fn compilePattern(c: *Ctx, query: []const u8, flags: Flags, p: *Pattern) WorkerError!bool {
+    const gpa = c.gpa;
+    var pat: std.ArrayListUnmanaged(u8) = .empty;
+    defer pat.deinit(gpa);
+    // Whole word wraps the query in a group between word edges, spelled
+    // in magic mode so it holds whatever mode the query switches to.
+    if (flags.whole_word) try pat.appendSlice(gpa, "\\m\\<\\%(");
+    if (!flags.regex) {
+        // A literal query is a `\V` (very nomagic) pattern: only `\` is
+        // special, so the user's text means itself.
+        try pat.appendSlice(gpa, "\\V");
+        for (query) |ch| {
+            if (ch == '\\') try pat.append(gpa, '\\');
+            try pat.append(gpa, ch);
+        }
+    } else try eregexToVim(gpa, &pat, query);
+    if (flags.whole_word) try pat.appendSlice(gpa, "\\m\\)\\>");
+    const why: []const u8 = blk: {
+        p.re = regex.Regex.compile(pat.items, .{ .ignore_case = !flags.case_sensitive }) catch |err| break :blk switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.InvalidPattern => "invalid pattern",
+            error.Unsupported => "pattern uses an item this build does not support",
+            error.TooLong => "pattern too long",
+        };
+        const tr = regex.translate(pat.items, &p.buf) catch {
+            p.re.deinit();
+            break :blk "invalid pattern";
+        };
+        p.external = tr.pattern;
+        return true;
+    };
+    try c.finish(.walk, why);
+    return false;
+}
+
+/// The SEARCH regex (`Flags.regex`) as a vim pattern: `\v` (very
+/// magic, where `+ ? | ( ) { }` are operators as in ERE) with the few
+/// characters that are operators ONLY in very magic — `< > = @ %` —
+/// made literal, `\<` / `\>` kept as the word edges GNU grep reads
+/// them as, and PCRE's `\b` as either edge. Other escapes pass through
+/// (`\d` `\w` `\s` classes, `\.` a literal dot). A query that starts
+/// with a vim mode switch is copied as typed.
+pub fn eregexToVim(gpa: Allocator, out: *std.ArrayListUnmanaged(u8), query: []const u8) Allocator.Error!void {
+    if (query.len >= 2 and query[0] == '\\' and std.mem.indexOfScalar(u8, "vmMV", query[1]) != null) {
+        return out.appendSlice(gpa, query);
+    }
+    try out.appendSlice(gpa, "\\v");
+    var i: usize = 0;
+    while (i < query.len) : (i += 1) {
+        const ch = query[i];
+        if (ch == '\\' and i + 1 < query.len) {
+            const e = query[i + 1];
+            i += 1;
+            switch (e) {
+                '<', '>' => try out.append(gpa, e),
+                'b' => try out.appendSlice(gpa, "%(<|>)"),
+                else => try out.appendSlice(gpa, &.{ '\\', e }),
+            }
+            continue;
+        }
+        switch (ch) {
+            '<', '>', '=', '@', '%' => try out.appendSlice(gpa, &.{ '\\', ch }),
+            else => try out.append(gpa, ch),
+        }
+    }
+}
+
+/// Every match of the vim pattern on `text` — the one arbiter of what a
+/// line an external backend reported contributes, and one hit per match
+/// on every backend, so a count means the same thing whichever answered.
+fn pushLineMatches(c: *Ctx, backend: Backend, re: *regex.Regex, path: []const u8, rel: []const u8, line: u32, text: []const u8) Allocator.Error!void {
+    var from: usize = 0;
+    while (from <= text.len) {
+        const m = re.find(text, from) orelse return;
+        try c.push(backend, path, rel, line, @intCast(m.start), @intCast(m.end - m.start), text);
+        if (c.truncated) return;
+        from = if (m.end > m.start) m.end else m.end + 1;
     }
 }
 
@@ -630,16 +729,21 @@ const RgData = struct {
 const RgMsg = struct { type: []const u8, data: RgData = .{} };
 
 /// Spawn `rg --json` in `root`. `.no_rg` when the binary is missing.
-fn runRg(c: *Ctx, root: []const u8, query: []const u8, flags: Flags) WorkerError!RgOutcome {
+fn runRg(c: *Ctx, root: []const u8, query: []const u8, flags: Flags, p: *Pattern) WorkerError!RgOutcome {
     const io = c.io;
     const gpa = c.gpa;
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
     defer argv.deinit(gpa);
     try argv.appendSlice(gpa, &.{ c.rg_bin, "--json", "--no-config", "--no-require-git", "--max-filesize", "1M" });
-    try argv.append(gpa, if (flags.case_sensitive) "--case-sensitive" else "--ignore-case");
-    if (flags.whole_word) try argv.append(gpa, "--word-regexp");
-    if (!flags.regex) try argv.append(gpa, "--fixed-strings");
-    try argv.appendSlice(gpa, &.{ "-e", query, "." });
+    try argv.append(gpa, if (p.re.ignore_case) "--ignore-case" else "--case-sensitive");
+    if (flags.regex) {
+        // The vim pattern, translated; one rg cannot parse (a
+        // lookaround) hands the run to the walk, which can.
+        try argv.appendSlice(gpa, &.{ "-e", p.external, "." });
+    } else {
+        if (flags.whole_word) try argv.append(gpa, "--word-regexp");
+        try argv.appendSlice(gpa, &.{ "--fixed-strings", "-e", query, "." });
+    }
     var child = std.process.spawn(io, .{
         .argv = argv.items,
         .cwd = .{ .path = root },
@@ -678,10 +782,9 @@ fn runRg(c: *Ctx, root: []const u8, query: []const u8, flags: Flags) WorkerError
         try path_buf.appendSlice(gpa, root);
         try path_buf.append(gpa, '/');
         try path_buf.appendSlice(gpa, rel);
-        for (msg.data.submatches) |sm| {
-            if (sm.end < sm.start) continue;
-            try c.push(.rg, path_buf.items, rel, line, sm.start, sm.end - sm.start, text);
-        }
+        // rg found the line; the vim pattern says where on it.
+        try pushLineMatches(c, .rg, &p.re, path_buf.items, rel, line, text);
+        if (c.truncated) break;
     }
     // rg exits 1 for "no matches" and 2 for a bad pattern — the stream
     // says what happened either way; a process that never spoke and
@@ -691,14 +794,13 @@ fn runRg(c: *Ctx, root: []const u8, query: []const u8, flags: Flags) WorkerError
         else => null,
     };
     if (c.stale()) return .ran;
-    var err_msg: ?[]const u8 = null;
+    // rg exits 2 for a pattern it will not parse: the walk speaks the
+    // vim pattern natively, so it answers instead.
     if (!saw_line) if (term) |tm| switch (tm) {
-        .exited => |code| if (code == 2) {
-            err_msg = "rg refused the pattern";
-        },
+        .exited => |code| if (code == 2) return .no_rg,
         else => {},
     };
-    try c.finish(.rg, err_msg);
+    try c.finish(.rg, null);
     return .ran;
 }
 
@@ -742,17 +844,23 @@ fn inRepo(c: *Ctx, root: []const u8) WorkerError!bool {
 /// `--column` reports it — Rust counts the same way); the highlight
 /// length is the literal's, or the pattern's own match when the walk's
 /// engine agrees with git's at that column, else nothing.
-fn runGitGrep(c: *Ctx, root: []const u8, query: []const u8, flags: Flags) WorkerError!GitOutcome {
+fn runGitGrep(c: *Ctx, root: []const u8, query: []const u8, flags: Flags, p: *Pattern) WorkerError!GitOutcome {
     const io = c.io;
     const gpa = c.gpa;
     if (!(try inRepo(c, root))) return .no_git;
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
     defer argv.deinit(gpa);
     try argv.appendSlice(gpa, &.{ c.git_bin, "grep", "-n", "--column", "-z", "-I", "--no-color" });
-    if (!flags.case_sensitive) try argv.append(gpa, "-i");
-    if (flags.whole_word) try argv.append(gpa, "-w");
-    try argv.append(gpa, if (flags.regex) "-E" else "-F");
-    try argv.appendSlice(gpa, &.{ "-e", query, "--", "." });
+    if (p.re.ignore_case) try argv.append(gpa, "-i");
+    if (flags.regex) {
+        // PCRE takes the Oniguruma translation of the vim pattern as is;
+        // a git built without PCRE refuses (exit 128) and the next
+        // backend answers in the same language.
+        try argv.appendSlice(gpa, &.{ "-P", "-e", p.external, "--", "." });
+    } else {
+        if (flags.whole_word) try argv.append(gpa, "-w");
+        try argv.appendSlice(gpa, &.{ "-F", "-e", query, "--", "." });
+    }
     var child = std.process.spawn(io, .{
         .argv = argv.items,
         .cwd = .{ .path = root },
@@ -765,8 +873,6 @@ fn runGitGrep(c: *Ctx, root: []const u8, query: []const u8, flags: Flags) Worker
         else => return .no_git,
     };
     defer child.kill(io);
-    var re: ?regex.Regex = if (flags.regex) regex.Regex.compile(query, .{ .ignore_case = !flags.case_sensitive }) catch null else null;
-    defer if (re) |*r| r.deinit();
     const buf = try gpa.alloc(u8, 1024 * 1024);
     defer gpa.free(buf);
     var fr = child.stdout.?.readerStreaming(io, buf);
@@ -794,16 +900,11 @@ fn runGitGrep(c: *Ctx, root: []const u8, query: []const u8, flags: Flags) Worker
             error.StreamTooLong => break,
         }) orelse break;
         saw_line = true;
+        _ = col1;
         const text = std.mem.trimEnd(u8, rest, "\r");
-        const col = col1 -| 1;
-        const len: u32 = blk: {
-            if (re) |*r| {
-                if (col < text.len) if (r.find(text, col)) |m| if (m.start == col) break :blk @intCast(m.end - m.start);
-                break :blk 0;
-            }
-            break :blk @intCast(@min(query.len, text.len -| col));
-        };
-        try c.push(.git_grep, path_buf.items, rel, line, col, len, text);
+        // git found the line; the vim pattern says where on it (a line
+        // git's engine took that the vim pattern does not is dropped).
+        try pushLineMatches(c, .git_grep, &p.re, path_buf.items, rel, line, text);
         if (c.truncated) break;
     }
     // At the cap git still has output to write: waiting on it with the
@@ -829,29 +930,10 @@ fn runGitGrep(c: *Ctx, root: []const u8, query: []const u8, flags: Flags) Worker
 
 /// The in-process backend: every file under `root` that the
 /// `.gitignore`s allow, matched line by line with `src/regex/`.
-fn runWalk(c: *Ctx, root: []const u8, query: []const u8, flags: Flags) WorkerError!void {
+fn runWalk(c: *Ctx, root: []const u8, p: *Pattern) WorkerError!void {
     const io = c.io;
     const gpa = c.gpa;
-    // A literal query is a `\V` (very nomagic) pattern: only `\` is
-    // special, so the user's text means itself.
-    var pat: std.ArrayListUnmanaged(u8) = .empty;
-    defer pat.deinit(gpa);
-    if (flags.whole_word) try pat.appendSlice(gpa, "\\<");
-    if (!flags.regex) {
-        try pat.appendSlice(gpa, "\\V");
-        for (query) |ch| {
-            if (ch == '\\') try pat.append(gpa, '\\');
-            try pat.append(gpa, ch);
-        }
-    } else try pat.appendSlice(gpa, query);
-    if (flags.whole_word) try pat.appendSlice(gpa, "\\>");
-    var re = regex.Regex.compile(pat.items, .{ .ignore_case = !flags.case_sensitive }) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.InvalidPattern => return c.finish(.walk, "invalid pattern"),
-        error.Unsupported => return c.finish(.walk, "pattern uses an item this build does not support"),
-        error.TooLong => return c.finish(.walk, "pattern too long"),
-    };
-    defer re.deinit();
+    const re = &p.re;
     var dir = Io.Dir.cwd().openDir(io, root, .{ .iterate = true }) catch |err| {
         if (err == error.Canceled) return error.Canceled;
         return c.finish(.walk, "cannot open the workspace");
@@ -893,7 +975,7 @@ fn runWalk(c: *Ctx, root: []const u8, query: []const u8, flags: Flags) WorkerErr
                 try path_buf.appendSlice(gpa, root);
                 try path_buf.append(gpa, '/');
                 try path_buf.appendSlice(gpa, entry.path);
-                try grepFile(c, &re, entry.dir, entry.basename, entry.path, path_buf.items);
+                try grepFile(c, re, entry.dir, entry.basename, entry.path, path_buf.items);
             },
             else => {},
         }
@@ -934,13 +1016,8 @@ fn grepFile(c: *Ctx, re: *regex.Regex, dir: Io.Dir, basename: []const u8, rel: [
     while (lines.next()) |raw| {
         line_no += 1;
         const line = std.mem.trimEnd(u8, raw, "\r");
-        var from: usize = 0;
-        while (from <= line.len) {
-            const m = re.find(line, from) orelse break;
-            try c.push(.walk, abs, rel, line_no, @intCast(m.start), @intCast(m.end - m.start), line);
-            if (c.truncated) return;
-            from = if (m.end > m.start) m.end else m.end + 1;
-        }
+        try pushLineMatches(c, .walk, re, abs, rel, line_no, line);
+        if (c.truncated) return;
     }
 }
 
@@ -1380,7 +1457,13 @@ pub fn replaceAll(app: *App, id: PaneId, p: *GrepPane, replacement: []const u8) 
     const gpa = app.gpa;
     const arena = app.frame.allocator();
     var report: ReplaceReport = .{};
-    var re: ?regex.Regex = if (p.flags.regex) regex.Regex.compile(p.query, .{ .ignore_case = !(p.flags.case_sensitive or find_mod.hasUpper(p.query)) }) catch null else null;
+    // The search's own language (`eregexToVim`), so the replace rewrites
+    // exactly what the rows matched.
+    var re: ?regex.Regex = if (p.flags.regex) blk: {
+        var pat: std.ArrayListUnmanaged(u8) = .empty;
+        try eregexToVim(arena, &pat, p.query);
+        break :blk regex.Regex.compile(pat.items, .{ .ignore_case = !(p.flags.case_sensitive or find_mod.hasUpper(p.query)) }) catch null;
+    } else null;
     defer if (re) |*r| r.deinit();
     var i: usize = 0;
     while (i < p.hits.items.len) {
@@ -1521,11 +1604,32 @@ const Fixture = struct {
 };
 
 /// The walk backend, driven directly (no rg on PATH needed).
+/// `runRg` with the pattern compiled the way the worker does.
+fn rgRun(ctx: *Ctx, root: []const u8, query: []const u8, flags: Flags) !RgOutcome {
+    var p: Pattern = .{ .re = undefined, .external = "" };
+    if (!try compilePattern(ctx, query, flags, &p)) return .ran;
+    defer p.re.deinit();
+    return runRg(ctx, root, query, flags, &p);
+}
+
 fn walkInto(f: *Fixture, query: []const u8, flags: Flags) !*Result {
+    return backendInto(f, query, flags, .walk);
+}
+
+/// One backend's whole run, its batches merged.
+fn backendInto(f: *Fixture, query: []const u8, flags: Flags, which: Backend) !*Result {
     var abort: Abort = .{};
     abort.generation.store(1, .release);
     var ctx: Ctx = .{ .events = &f.app.events, .io = t.io, .gpa = t.allocator, .generation = 1, .pane = 0, .abort = &abort };
-    try runWalk(&ctx, f.root, query, flags);
+    var p: Pattern = .{ .re = undefined, .external = "" };
+    if (try compilePattern(&ctx, query, flags, &p)) {
+        defer p.re.deinit();
+        switch (which) {
+            .walk => try runWalk(&ctx, f.root, &p),
+            .git_grep => try t.expectEqual(GitOutcome.ran, try runGitGrep(&ctx, f.root, query, flags, &p)),
+            .rg => _ = try runRg(&ctx, f.root, query, flags, &p),
+        }
+    }
     var buf: [8]event.AppEvent = undefined;
     var merged = try Result.create(t.allocator, 1, 0, .walk);
     errdefer merged.destroy(t.allocator);
@@ -1545,7 +1649,81 @@ fn walkInto(f: *Fixture, query: []const u8, flags: Flags) !*Result {
     return merged;
 }
 
-test "walk backend: literal + smart case, .gitignore honoured, whole word, a vim pattern, a bad one" {
+fn hasGit() bool {
+    var child = std.process.spawn(t.io, .{ .argv = &.{ "git", "--version" }, .stdin = .ignore, .stdout = .ignore, .stderr = .ignore }) catch return false;
+    const term = child.wait(t.io) catch return false;
+    return term == .exited and term.exited == 0;
+}
+
+fn gitIn(root: []const u8, args: []const []const u8) !void {
+    var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer argv.deinit(t.allocator);
+    try argv.appendSlice(t.allocator, &.{ "git", "-C", root, "-c", "user.email=test@mnml.dev", "-c", "user.name=test", "-c", "commit.gpgsign=false" });
+    try argv.appendSlice(t.allocator, args);
+    var child = try std.process.spawn(t.io, .{ .argv = argv.items, .stdin = .ignore, .stdout = .ignore, .stderr = .ignore });
+    const term = try child.wait(t.io);
+    if (term != .exited or term.exited != 0) return error.GitFailed;
+}
+
+test "the regex flag means one language — ERE as people type it — under git grep and the walk alike" {
+    if (!hasGit()) return error.SkipZigTest;
+    var f = try Fixture.init();
+    defer f.deinit();
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "d.txt", .data = "v1 = 42\nno digits\nfoo-bar and foo+bar <b>\n" });
+    try gitIn(f.root, &.{ "init", "-q", "-b", "main" });
+    try gitIn(f.root, &.{ "add", "." });
+    try gitIn(f.root, &.{ "commit", "-q", "-m", "seed" });
+    const Case = struct { pat: []const u8, n: usize };
+    const cases = [_]Case{
+        // `\d` the digit class, `+` the quantifier — never a literal d.
+        .{ .pat = "\\d+", .n = 2 }, // `1`, `42`
+        .{ .pat = "[0-9]+", .n = 2 },
+        .{ .pat = "foo.bar", .n = 2 },
+        .{ .pat = "foo\\+bar", .n = 1 }, // an escaped plus is the character
+        .{ .pat = "(foo|v1) ", .n = 1 }, // `v1 ` — `foo` is followed by `-` / `+`
+        // Operators only in vim's very magic stay characters.
+        .{ .pat = "v1 = 4", .n = 1 },
+        .{ .pat = "<b>", .n = 1 },
+        // GNU's word edges, and PCRE's.
+        .{ .pat = "\\<no\\>", .n = 1 },
+        .{ .pat = "\\bdigits\\b", .n = 1 },
+        // A leading mode switch is a vim pattern as typed.
+        .{ .pat = "\\m\\d\\+", .n = 2 },
+        .{ .pat = "\\md+", .n = 0 }, // magic: `d+` is a d then a plus
+    };
+    for (cases) |c| {
+        var g = try backendInto(&f, c.pat, .{ .regex = true }, .git_grep);
+        defer g.destroy(t.allocator);
+        var w = try backendInto(&f, c.pat, .{ .regex = true }, .walk);
+        defer w.destroy(t.allocator);
+        var gn: usize = 0;
+        for (g.hits.items) |h| if (std.mem.eql(u8, h.rel, "d.txt")) {
+            gn += 1;
+        };
+        var wn: usize = 0;
+        for (w.hits.items) |h| if (std.mem.eql(u8, h.rel, "d.txt")) {
+            wn += 1;
+        };
+        // git grep reports a line once; the walk each match: compare lines.
+        var glines: [8]u32 = undefined;
+        var gl: usize = 0;
+        for (g.hits.items) |h| if (std.mem.eql(u8, h.rel, "d.txt") and (gl == 0 or glines[gl - 1] != h.line)) {
+            glines[gl] = h.line;
+            gl += 1;
+        };
+        var wlines: [8]u32 = undefined;
+        var wl: usize = 0;
+        for (w.hits.items) |h| if (std.mem.eql(u8, h.rel, "d.txt") and (wl == 0 or wlines[wl - 1] != h.line)) {
+            wlines[wl] = h.line;
+            wl += 1;
+        };
+        errdefer std.debug.print("pattern {s}: git {d} lines, walk {d} matches ({d} lines)\n", .{ c.pat, gn, wn, wl });
+        try t.expectEqual(c.n, wn);
+        try t.expectEqualSlices(u32, wlines[0..wl], glines[0..gl]);
+    }
+}
+
+test "walk backend: literal + smart case, .gitignore honoured, whole word, a regex and a vim pattern, a bad one" {
     var f = try Fixture.init();
     defer f.deinit();
     // Literal, smart case off: 3 hits in src/a.zig, 1 in b.txt (Alpha), 1 in notes.md; build/out.log is ignored.
@@ -1567,8 +1745,12 @@ test "walk backend: literal + smart case, .gitignore honoured, whole word, a vim
     var r3 = try walkInto(&f, "alph", .{ .whole_word = true });
     defer r3.destroy(t.allocator);
     try t.expectEqual(@as(usize, 0), r3.hits.items.len);
-    // A vim pattern: `\<\a\+ = ` (an identifier followed by ` = `).
-    var r4 = try walkInto(&f, "\\<\\a\\+ = ", .{ .regex = true });
+    // A pattern: `\<\a+ = ` (an identifier followed by ` = `) — and the
+    // same as a vim pattern, typed with its mode switch.
+    var r4v = try walkInto(&f, "\\m\\<\\a\\+ = ", .{ .regex = true });
+    defer r4v.destroy(t.allocator);
+    try t.expectEqual(@as(usize, 2), r4v.hits.items.len);
+    var r4 = try walkInto(&f, "\\<\\a+ = ", .{ .regex = true });
     defer r4.destroy(t.allocator);
     try t.expectEqual(@as(usize, 2), r4.hits.items.len);
     try t.expectEqual(@as(u32, 6), r4.hits.items[0].col);
@@ -1577,7 +1759,7 @@ test "walk backend: literal + smart case, .gitignore honoured, whole word, a vim
     defer r5.destroy(t.allocator);
     try t.expectEqual(@as(usize, 1), r5.hits.items.len);
     // A bad pattern says so and matches nothing.
-    var r6 = try walkInto(&f, "\\(x", .{ .regex = true });
+    var r6 = try walkInto(&f, "(x", .{ .regex = true });
     defer r6.destroy(t.allocator);
     try t.expectEqual(@as(usize, 0), r6.hits.items.len);
     try t.expectEqualStrings("invalid pattern", r6.err.?);
@@ -1589,7 +1771,7 @@ test "rg backend: the same tree through `rg --json` (skipped without rg on PATH)
     var abort: Abort = .{};
     abort.generation.store(1, .release);
     var ctx: Ctx = .{ .events = &f.app.events, .io = t.io, .gpa = t.allocator, .generation = 1, .pane = 0, .abort = &abort };
-    const outcome = try runRg(&ctx, f.root, "alpha", .{});
+    const outcome = try rgRun(&ctx, f.root, "alpha", .{});
     if (outcome == .no_rg) return error.SkipZigTest;
     var buf: [8]event.AppEvent = undefined;
     var n_hits: usize = 0;
@@ -1616,7 +1798,7 @@ test "rg backend: the same tree through `rg --json` (skipped without rg on PATH)
     try t.expectEqual(@as(usize, 5), n_hits);
 }
 
-test "rg backend: a stand-in rg proves the --json stream is parsed, `./` stripped, exit 2 reported" {
+test "rg backend: a stand-in rg proves the --json stream is parsed, `./` stripped, exit 2 handed on" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     var f = try Fixture.init();
     defer f.deinit();
@@ -1640,7 +1822,7 @@ test "rg backend: a stand-in rg proves the --json stream is parsed, `./` strippe
     var abort: Abort = .{};
     abort.generation.store(1, .release);
     var ctx: Ctx = .{ .events = &f.app.events, .io = t.io, .gpa = t.allocator, .generation = 1, .pane = 0, .abort = &abort, .rg_bin = bin };
-    try t.expectEqual(RgOutcome.ran, try runRg(&ctx, f.root, "alpha", .{}));
+    try t.expectEqual(RgOutcome.ran, try rgRun(&ctx, f.root, "alpha", .{}));
     var buf: [8]event.AppEvent = undefined;
     var hits: std.ArrayListUnmanaged(Hit) = .empty;
     defer hits.deinit(t.allocator);
@@ -1668,20 +1850,10 @@ test "rg backend: a stand-in rg proves the --json stream is parsed, `./` strippe
     try t.expectEqual(@as(u32, 5), hits.items[2].len);
     try t.expectEqualStrings("const beta = alpha + alpha;", hits.items[2].text);
     try t.expectEqualStrings("src/deep/b.txt", hits.items[3].rel);
-    // Exit 2 with no output: the run reports the refusal.
-    try t.expectEqual(RgOutcome.ran, try runRg(&ctx, f.root, "BAD", .{}));
-    var said: ?[]const u8 = null;
-    while (true) {
-        const n = f.app.events.drain(t.io, &buf);
-        if (n == 0) break;
-        for (buf[0..n]) |ev| {
-            defer event.freeEvent(t.allocator, ev);
-            if (ev == .grep) if (ev.grep.err) |e| {
-                said = try keep.allocator().dupe(u8, e);
-            };
-        }
-    }
-    try t.expectEqualStrings("rg refused the pattern", said.?);
+    // Exit 2 with no output — a pattern rg will not parse: the run is
+    // handed on (the walk speaks the vim pattern natively), nothing posted.
+    try t.expectEqual(RgOutcome.no_rg, try rgRun(&ctx, f.root, "BAD", .{}));
+    try t.expectEqual(@as(usize, 0), f.app.events.drain(t.io, &buf));
 }
 
 test "find.grep opens the pane beside the editor; hits land grouped by file; n steps, fold, filter, toggle" {
@@ -1801,20 +1973,20 @@ test "grep replace: open clean buffer through EditOps and saved, closed file on 
     try f.settle(id, 400);
 }
 
-test "grep replace: a vim-pattern query expands group references" {
+test "grep replace: a regex query expands group references" {
     var f = try Fixture.init();
     defer f.deinit();
     const app = &f.app;
     _ = try app.openScratch();
-    // The pane's query is a vim pattern; the hits come from the walk
-    // backend directly so the test does not depend on rg's syntax.
-    try runGrep(app, "\\(al\\)\\(pha\\)");
+    // The pane's query is a regex (ERE groups); the hits come from the
+    // walk backend directly so the test does not depend on rg.
+    try runGrep(app, "(al)(pha)");
     const id = find(app).?;
     try f.settle(id, 400);
     const p = &app.panes.get(id).?.grep;
     p.flags.regex = true;
     p.clearResults();
-    const walked = try walkInto(&f, "\\(al\\)\\(pha\\)", .{ .regex = true });
+    const walked = try walkInto(&f, "(al)(pha)", .{ .regex = true });
     walked.generation = p.generation;
     walked.pane = id;
     walked.done = true;

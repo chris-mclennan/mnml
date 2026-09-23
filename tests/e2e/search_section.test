@@ -1,6 +1,7 @@
 # The SEARCH section (src/app/search_section.zig): the rail's Search
 # row opens Rust's sidebar section — a query field, `N hits (git grep)`
-# naming the backend, the hits by file under a fold header — Enter on a
+# naming the backend (a hit per match: `alpha` twice on a line is two),
+# the hits by file under a fold header — Enter on a
 # hit opens the file at its line, the flags rerun, a right-click on a
 # row opens its menu, and Esc clears the query. `git grep` answers from
 # the tracked files only: the ignored log and the untracked scratch
@@ -23,7 +24,7 @@ expect screen contains "Enter to run"
 type alpha
 key enter
 wait 1500
-expect screen contains "3 hits (git grep)"
+expect screen contains "4 hits (git grep)"
 expect screen contains "src/a.zig"
 expect screen contains "docs/b.txt"
 expect screen contains "1:7  const alpha = 1;"
@@ -52,13 +53,13 @@ key /
 type alph
 key enter
 wait 1500
-expect screen contains "3 hits (git grep)"
+expect screen contains "4 hits (git grep)"
 command search.toggle_whole_word
 wait 1500
 expect screen contains "0 hits (git grep)"
 command search.toggle_whole_word
 wait 1500
-expect screen contains "3 hits (git grep)"
+expect screen contains "4 hits (git grep)"
 # A row's right-click: its menu, titled path:line.
 rightclick 12 7
 expect screen contains "Open to the side"
