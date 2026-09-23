@@ -61,6 +61,7 @@ const side = @import("side.zig");
 const layout_mod = @import("layout.zig");
 const find_mod = @import("find.zig");
 const context_menus = @import("context_menus.zig");
+const jobs = @import("jobs.zig");
 const MenuItem = command.MenuItem;
 
 const Style = @import("vaxis").Style;
@@ -725,6 +726,7 @@ pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
         const hint = client.installHint(cmd);
         if (mode != .ignore) try recordMissing(app, spec.name, cmd, hint, from_default);
         if (mode == .toast) {
+            jobs.record(app, .{ .kind = .lsp, .label = try startLabel(arena, spec.name) }, 0, jobs.Outcome.fail("not installed"));
             // // changed (bottom-row): with a known install command the
             // message carries an ` Install ` button that runs it in a
             // VISIBLE terminal pane. Printing the command and then
@@ -775,13 +777,19 @@ pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
         error.OutOfMemory => return error.OutOfMemory,
         else => {
             try markDead(app, spec.name);
+            jobs.record(app, .{ .kind = .lsp, .label = try startLabel(arena, spec.name) }, 0, jobs.Outcome.fail(@errorName(err)));
             try app.toastLevel(.warn, "LSP: {s} unavailable ({s})", .{ spec.cmd, @errorName(err) });
             return null;
         },
     };
     app.lsp.next_id += 1;
     try app.lsp.servers.append(app.gpa, s);
+    // Starting is a job until `initialize` answers: the chip turns while
+    // a slow server spins up, and one that never answers stays in the
+    // list rather than looking like a server that is simply quiet.
+    _ = try jobs.begin(app, .{ .kind = .lsp, .key = s.id, .label = try startLabel(arena, spec.name), .cancel = &cancelStart });
     s.initialize() catch |err| {
+        jobs.endKeyed(app, .lsp, s.id, jobs.Outcome.fail(@errorName(err)));
         app.toast("LSP: {s}: initialize failed ({s})", .{ spec.cmd, @errorName(err) });
         retireServer(app, s);
         return null;
@@ -789,7 +797,27 @@ pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
     return s;
 }
 
+fn startLabel(arena: Allocator, name: []const u8) Allocator.Error![]const u8 {
+    return std.fmt.allocPrint(arena, "start {s}", .{name});
+}
+
+/// The job key a server's indexing runs under — beside its start's
+/// (`s.id`), never the same.
+pub fn indexKey(id: u32) u64 {
+    return (@as(u64, 1) << 32) | id;
+}
+
+/// The JOBS list's Cancel on a server still starting: retire it.
+fn cancelStart(app: *App, key: u64) void {
+    for (app.lsp.servers.items) |s| if (s.id == key) {
+        retireServer(app, s);
+        return;
+    };
+}
+
 pub fn retireServer(app: *App, s: *Server) void {
+    jobs.endKeyed(app, .lsp, s.id, jobs.Outcome.cancel("stopped"));
+    jobs.endKeyed(app, .lsp, indexKey(s.id), jobs.Outcome.cancel("stopped"));
     for (app.lsp.servers.items, 0..) |x, i| if (x == s) {
         _ = app.lsp.servers.orderedRemove(i);
         break;
@@ -1044,6 +1072,10 @@ pub fn handle(app: *App, server_id: u32, ev: *event.LspEvent) Allocator.Error!vo
     const s = server orelse return;
     switch (ev.*) {
         .closed => {
+            // A server that dies while starting or indexing FAILED that
+            // job — it did not simply stop.
+            jobs.endKeyed(app, .lsp, s.id, jobs.Outcome.fail("exited before it was ready"));
+            jobs.endKeyed(app, .lsp, indexKey(s.id), jobs.Outcome.fail("exited while indexing"));
             try app.toastLevel(.warn, "LSP: {s} exited", .{s.cmd});
             retireServer(app, s);
         },
@@ -1081,6 +1113,7 @@ fn handleMessage(app: *App, s: *Server, msg: *jsonrpc.Incoming) Allocator.Error!
             const ctx = Ctx.unpack(pending.ctx);
             if (r.err) |err| {
                 const text = jsonrpc.getStr(err, "message") orelse "error";
+                if (kind == .initialize) jobs.endKeyed(app, .lsp, s.id, jobs.Outcome.fail(text));
                 switch (kind) {
                     .completion, .completion_resolve, .document_highlight, .signature_help, .hover => {},
                     // The outline's refresh is silent; `lsp.symbols` asked.
@@ -1128,8 +1161,16 @@ fn handleNotification(app: *App, s: *Server, method: []const u8, params: ?Value)
         const kind = jsonrpc.getStr(value, "kind") orelse return;
         if (std.mem.eql(u8, kind, "begin")) {
             s.progress_open += 1;
+            // Indexing is one job however many progress tokens it opens.
+            if (s.progress_open == 1) {
+                const title = jsonrpc.getStr(value, "title") orelse "indexing";
+                _ = try jobs.begin(app, .{ .kind = .lsp, .key = indexKey(s.id), .label = try std.fmt.allocPrint(app.frame.allocator(), "{s}: {s}", .{ s.name, title }) });
+            }
+        } else if (std.mem.eql(u8, kind, "report")) {
+            if (jsonrpc.getStr(value, "message")) |m| jobs.progress(app, .lsp, indexKey(s.id), m);
         } else if (std.mem.eql(u8, kind, "end")) {
             s.progress_open -|= 1;
+            if (s.progress_open == 0) jobs.endKeyed(app, .lsp, indexKey(s.id), .{});
             if (s.progress_open == 0 and s.ready) try runDeferred(app, s);
         }
     }
@@ -1251,6 +1292,7 @@ fn handleResponse(app: *App, s: *Server, kind: ReqKind, ctx: Ctx, result: ?Value
     switch (kind) {
         .initialize => {
             try s.onInitialized(result);
+            jobs.endKeyed(app, .lsp, s.id, jobs.Outcome.done("ready"));
             decor.onServerReady(app, s);
             // Documents opened while the server was starting are on the
             // wire now; symbols for the ones showing can follow, once
