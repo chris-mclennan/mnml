@@ -25,6 +25,7 @@ const regex = @import("../regex/regex.zig");
 const editor_mod = @import("../editor/editor.zig");
 const Editor = editor_mod.Editor;
 const input = @import("../input/mod.zig");
+const edit_op = @import("../editor/edit_op.zig");
 const dispatch = @import("dispatch.zig");
 const Config = app_mod.Config;
 const ex_verbs = @import("ex_verbs.zig");
@@ -77,7 +78,7 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     // the first non-letter.
     var letters: usize = 0;
     while (letters < verb.len and std.ascii.isAlphabetic(verb[letters])) letters += 1;
-    if (letters < verb.len and eqAny(verb[0..letters], &.{ "t", "co", "copy", "m", "mo", "move", "d", "de", "del", "delete", "y", "ya", "yan", "yank" })) {
+    if (letters < verb.len and eqAny(verb[0..letters], &.{ "t", "co", "copy", "m", "mo", "move", "d", "de", "del", "delete", "y", "ya", "yan", "yank", "j", "jo", "join" })) {
         i = letters;
         verb = rest[0..i];
     }
@@ -169,6 +170,7 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     if (eqAny(verb, &.{ "sor", "sort" })) return sort(app, range, args, bang);
     if (eqAny(verb, &.{ "ret", "retab" })) return retab(app, range, args, bang);
     if (eqAny(verb, &.{ "d", "de", "del", "delete" })) return deleteLines(app, range, args);
+    if (eqAny(verb, &.{ "j", "jo", "joi", "join" })) return joinLines(app, range, args, bang);
     if (eqAny(verb, &.{ "y", "ya", "yan", "yank" })) return yankLines(app, range, args);
     if (eqAny(verb, &.{ "ab", "abb", "abbreviate", "iab", "iabbrev" })) return abbreviate(app, args);
     if (eqAny(verb, &.{ "una", "unabbreviate", "iuna", "iunabbrev" })) return unabbreviate(app, args);
@@ -1075,6 +1077,37 @@ fn deleteLines(app: *App, range: ?Range, args: []const u8) CommandError!void {
     ed.setCursor(ed.firstNonWs(row));
     ed.goal_col = null;
     app.toast(":d — {d} line(s)", .{last - first + 1});
+}
+
+/// `:[range]j[oin][!] [count]` (`:help :join`): the range's lines as
+/// one, the way `J` joins them — `!` as `gJ`, no spaces added or
+/// removed. A range of one line (or none) joins it with the next; a
+/// count joins that many lines from the range's last. The cursor ends
+/// on the joined line's first non-blank.
+fn joinLines(app: *App, range: ?Range, args: []const u8, bang: bool) CommandError!void {
+    const arena = app.frame.allocator();
+    const e = try editor(app, ":join");
+    const ed = e.buf.editor;
+    const a = try parseLineArgs(app, ":join", args);
+    if (a.register != null) return app.diag.fail(arena, ":join — usage: :[range]join[!] [count]", .{});
+    const n = ed.lineCount();
+    const r = range orelse Range{ .first = ed.currentLine(), .last = ed.currentLine() };
+    var first = @min(r.first, n - 1);
+    var last = @min(r.last, n - 1);
+    if (a.count) |c| {
+        first = last;
+        last = @min(first + c - 1, n - 1);
+    }
+    if (last == first) {
+        if (first + 1 >= n) return app.diag.fail(arena, ":join — nothing below to join", .{});
+        last = first + 1;
+    }
+    const joins: u32 = @intCast(last - first);
+    const one = try arena.create(edit_op.EditOp);
+    one.* = .{ .join_lines = .{ .keep_space = !bang } };
+    _ = try app.applyOps(e, &.{ .{ .move_to_line = first + 1 }, .{ .atomic = &.{.{ .repeat = .{ .count = joins, .inner = one } }} } });
+    ed.setCursor(ed.firstNonWs(first));
+    ed.goal_col = null;
 }
 
 fn yankLines(app: *App, range: ?Range, args: []const u8) CommandError!void {
