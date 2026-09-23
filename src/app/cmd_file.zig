@@ -60,16 +60,22 @@ fn saveAllCmd(app: *App) CommandError!void {
     return saveAll(app);
 }
 
-/// Every dirty editor with a path. Returns after the first failure.
+/// Every dirty editor with a path, each through `savePane` — the one
+/// save path, so `save_pre` / `save_post` (and every consumer of them:
+/// a script's hook, the file watcher's own-write note, the LSP's
+/// didSave) and the conflict check run for a save-all exactly as for
+/// `:w`. Returns after the first failure. By index, re-fetched each
+/// time: a save hook may open or close panes.
 pub fn saveAll(app: *App) CommandError!void {
     var n: usize = 0;
-    for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-        .editor => |*e| if (e.buf.doc.dirty and e.buf.doc.path != null) {
-            e.buf.save(app.io) catch |err| return app.diag.fail(app.frame.allocator(), "save failed: {s}: {s}{s}", .{ app.relPath(e.buf.doc.path.?), @errorName(err), e.buf.saveFailNote() });
-            n += 1;
-        },
-        else => {},
-    };
+    var i: usize = 0;
+    while (i < app.panes.slots.items.len) : (i += 1) {
+        const id: app_mod.PaneId = @intCast(i);
+        const e = app.panes.editor(id) orelse continue;
+        if (!e.buf.doc.dirty or e.buf.doc.path == null) continue;
+        try savePane(app, id, e, .{});
+        n += 1;
+    }
     app.toast("saved {d} file(s)", .{n});
 }
 
@@ -116,6 +122,47 @@ test "file.save writes the active buffer and clears dirty; a scratch buffer is r
     const back = try tmp.dir.readFileAlloc(t.io, "a.txt", t.allocator, .limited(64));
     defer t.allocator.free(back);
     try t.expectEqualStrings("hello\n", back); // save adds the terminating newline
+}
+
+test "file.save_all and :wa go through the one save path: save_pre and save_post fire for every file" {
+    // Both used to call `buf.save` in a loop of their own: the bytes
+    // reached disk and no hook heard of it — a script's on-save, the
+    // file watcher's note of mnml's own write, the LSP's didSave.
+    const t = std.testing;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, t.allocator);
+    defer t.allocator.free(root);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root });
+    defer app.deinit();
+    try app.script().runString(
+        \\PRE, POST = {}, {}
+        \\mnml.on('save_pre', function(a) PRE[#PRE + 1] = a.path end)
+        \\mnml.on('save_post', function(a) POST[#POST + 1] = a.path end)
+    );
+    var editors: [2]*app_mod.EditorPane = undefined;
+    for ([_][]const u8{ "a.txt", "b.txt" }, 0..) |name, k| {
+        const path = try std.fs.path.join(t.allocator, &.{ root, name });
+        defer t.allocator.free(path);
+        _ = try app.openPath(path);
+        editors[k] = app.activeEditor().?;
+    }
+    for (editors) |e| {
+        try e.buf.editor.setText("one");
+        e.buf.doc.dirty = true;
+    }
+    try command.run(&app, .{ .static = .@"file.save_all" });
+    try app.script().runString("assert(#PRE == 2 and #POST == 2, #PRE .. '/' .. #POST); assert(POST[1] == 'a.txt' and POST[2] == 'b.txt', POST[1])");
+    for (editors) |e| {
+        try t.expect(!e.buf.doc.dirty);
+        try e.buf.editor.setText("two");
+        e.buf.doc.dirty = true;
+    }
+    try @import("dispatch.zig").runExLine(&app, "wa");
+    try app.script().runString("assert(#PRE == 4 and #POST == 4, #PRE .. '/' .. #POST)");
+    const back = try tmp.dir.readFileAlloc(t.io, "b.txt", t.allocator, .limited(64));
+    defer t.allocator.free(back);
+    try t.expectEqualStrings("two\n", back);
 }
 
 /// The tmp dir's absolute path, gpa-owned without a sentinel.
