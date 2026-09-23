@@ -278,6 +278,7 @@ pub fn normalize(arena: Allocator, cfg: *Config, diags: *Diagnostics, home: ?[]c
     cfg.ai.suggest_idle_ms = std.math.clamp(cfg.ai.suggest_idle_ms, Config.suggest_idle_ms_min, Config.suggest_idle_ms_max);
     cfg.ai.suggest_timeout_ms = std.math.clamp(cfg.ai.suggest_timeout_ms, Config.suggest_timeout_ms_min, Config.suggest_timeout_ms_max);
     cfg.ui.tree_width = std.math.clamp(cfg.ui.tree_width, Config.tree_width_min, Config.tree_width_max);
+    cfg.ui.focus_follows_mouse_delay_ms = @min(cfg.ui.focus_follows_mouse_delay_ms, Config.focus_follows_mouse_delay_ms_max);
     cfg.ui.hover_help_height = std.math.clamp(cfg.ui.hover_help_height, Config.hover_help_height_min, Config.hover_help_height_max);
     cfg.ui.bottom_panel_height = std.math.clamp(cfg.ui.bottom_panel_height, Config.bottom_panel_height_min, Config.bottom_panel_height_max);
     // // changed (sidebar-autohide): the two dwells, and the width

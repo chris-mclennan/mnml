@@ -35,6 +35,7 @@ const jobs_app = @import("jobs.zig");
 const now_playing = @import("now_playing.zig");
 const menu_bar = @import("menu_bar.zig");
 const sidebar_auto = @import("sidebar_auto.zig");
+const focus_follow = @import("focus_follow.zig");
 const Config = @import("../config/Config.zig");
 const activity_bar = @import("activity_bar.zig");
 const browser_open = @import("browser_open.zig");
@@ -1807,11 +1808,15 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
     app.needs_render = true;
     app.hover = .{ .x = m.x, .y = m.y };
     app.hover_live = m.kind == .motion or m.kind == .drag;
+    focus_follow.track(app, m);
     if (m.kind == .drag or m.kind == .release) {
         if (app.drag != null) return continueDrag(app, m);
     }
     if (m.kind == .motion) {
         if (app.overlay == .menu) try menuHover(app, m);
+        // `ui.focus_follows_mouse`: the hover branch — off, an overlay
+        // up or a button held, it does nothing (`focus_follow.zig`).
+        focus_follow.onMotion(app, m);
         return;
     }
     // A press anywhere puts flash's labels away.
@@ -2261,7 +2266,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             if (wheel) return wheelOnPane(app, id, m, count);
             if (m.kind != .press) return;
             if (app.overlay != .none) closeOverlay(app);
-            if (app.active != id) app.showPane(id) else app.focus = .{ .pane = id };
+            focus_follow.pointerFocus(app, id);
             // right-click: the editor's text menu; an AI pane's own
             // rows (Rust `open_ai_pane_context_menu`); any other pane
             // body gets its tab's menu (Zig-only — Rust fell through).

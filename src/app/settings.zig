@@ -217,6 +217,10 @@ pub const rows = [_]RowSpec{
     .{ .path = "ui.hover_help", .label = "Hover help", .section = .ui, .scope = .home },
     .{ .path = "ui.hover_tooltip", .label = "Hover tooltips", .section = .ui, .scope = .home },
     .{ .path = "ui.click_echo", .label = "Click echo in statusline", .section = .ui, .scope = .home },
+    // Opt-in: `off` is click-to-focus. The dwell is the number row
+    // under it (`app/focus_follow.zig`).
+    .{ .path = "ui.focus_follows_mouse", .label = "Focus follows mouse", .section = .ui, .scope = .home },
+    .{ .path = "ui.focus_follows_mouse_delay_ms", .label = "Focus follows mouse delay (ms)", .section = .ui, .scope = .home, .number = .{ .min = 0, .max = config.Config.focus_follows_mouse_delay_ms_max, .step = 50 } },
     // // changed (quit-confirm): `on` (the default) makes Ctrl+Q always
     // stop and ask; `off` asks only when something is unsaved.
     .{ .path = "ui.confirm_quit", .label = "Confirm on quit", .section = .ui, .scope = .home },
