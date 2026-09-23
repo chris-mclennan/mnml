@@ -171,6 +171,43 @@ pub fn measure(io: Io, gpa: Allocator, path: []const u8) u64 {
     return total;
 }
 
+/// The editor panes with unsaved edits on `path` — or under it, a
+/// folder — and the first such file's path.
+fn dirtyUnder(app: *App, path: []const u8) struct { n: usize, first: ?[]const u8 } {
+    var n: usize = 0;
+    var first: ?[]const u8 = null;
+    for (app.panes.slots.items) |*slot| if (slot.*) |*p| if (p.asEditor()) |e| if (e.buf.doc.path) |bp| {
+        const under = std.mem.eql(u8, bp, path) or (std.mem.startsWith(u8, bp, path) and bp.len > path.len and bp[path.len] == '/');
+        if (under and p.dirty()) {
+            n += 1;
+            if (first == null) first = bp;
+        }
+    };
+    return .{ .n = n, .first = first };
+}
+
+/// A trashed entry keeps what the user SAW: every dirty buffer on
+/// `path` (or under it) writes its text over its file's copy inside
+/// the trash entry `dest`, so a restore brings the unsaved edits back.
+fn keepUnsaved(app: *App, path: []const u8, dest: []const u8) Allocator.Error!void {
+    const arena = app.frame.allocator();
+    const Buffer = @import("../editor/buffer.zig").Buffer;
+    for (app.panes.slots.items) |*slot| if (slot.*) |*p| if (p.asEditor()) |e| if (e.buf.doc.path) |bp| {
+        if (!p.dirty()) continue;
+        const target = if (std.mem.eql(u8, bp, path))
+            dest
+        else if (std.mem.startsWith(u8, bp, path) and bp.len > path.len and bp[path.len] == '/')
+            try std.fs.path.join(arena, &.{ dest, bp[path.len + 1 ..] })
+        else
+            continue;
+        const data = try Buffer.withEol(arena, e.buf.editor.bytes(), e.buf.doc.eol);
+        if (std.fs.path.dirname(target)) |parent| Io.Dir.cwd().createDirPath(app.io, parent) catch {};
+        Io.Dir.cwd().writeFile(app.io, .{ .sub_path = target, .data = data }) catch |err| {
+            app.toast("could not keep the unsaved edits of {s} in the trash: {s}", .{ app.relPath(bp), @errorName(err) });
+        };
+    };
+}
+
 fn removeOutright(app: *App, path: []const u8) !void {
     const st = try Io.Dir.cwd().statFile(app.io, path, .{ .follow_symlinks = false });
     if (st.kind == .directory) return Io.Dir.cwd().deleteTree(app.io, path);
@@ -209,19 +246,35 @@ pub fn confirmDelete(app: *App, paths: []const []const u8) Allocator.Error!void 
         owned[n] = try gpa.dupe(u8, p);
         n += 1;
     }
-    const permanent_only = isTrashEntry(app, paths[0]);
+    const in_trash = isTrashEntry(app, paths[0]);
+    const permanent_only = in_trash;
+    var dirty_n: usize = 0;
+    var dirty_first: ?[]const u8 = null;
+    for (paths) |p| {
+        const d = dirtyUnder(app, p);
+        dirty_n += d.n;
+        if (dirty_first == null) dirty_first = d.first;
+    }
+    const arena = app.frame.allocator();
+    const dirty_note = if (dirty_n == 0)
+        ""
+    else if (permanent_only)
+        try std.fmt.allocPrint(arena, "  — unsaved changes in {s} are lost", .{if (dirty_n == 1) app.relPath(dirty_first.?) else try std.fmt.allocPrint(arena, "{d} open files", .{dirty_n})})
+    else
+        try std.fmt.allocPrint(arena, "  — unsaved changes in {s}: the trash keeps them", .{if (dirty_n == 1) app.relPath(dirty_first.?) else try std.fmt.allocPrint(arena, "{d} open files", .{dirty_n})});
+    const trash_note = if (in_trash) "  (permanent — already in the trash)" else "";
     const first_dir = if (Io.Dir.cwd().statFile(app.io, paths[0], .{})) |st| st.kind == .directory else |_| false;
     // Rust's question: `Delete <rel>?`, a directory's with its entry
     // count, an entry already in the trash flagged permanent. The
     // buttons say where it goes.
     const msg = if (paths.len > 1)
-        try std.fmt.allocPrint(gpa, "Delete {d} items?{s}", .{ paths.len, if (permanent_only) "  (permanent — already in the trash)" else "" })
+        try std.fmt.allocPrint(gpa, "Delete {d} items?{s}{s}", .{ paths.len, trash_note, dirty_note })
     else if (first_dir) blk: {
         const n_entries = entryCount(app, paths[0], 500);
         var nb: [24]u8 = undefined;
         const hint = if (n_entries >= 500) "500+ entries" else std.fmt.bufPrint(&nb, "{d} entr{s}", .{ n_entries, if (n_entries == 1) "y" else "ies" }) catch "entries";
-        break :blk try std.fmt.allocPrint(gpa, "Delete {s} recursively? ({s}){s}", .{ app.relPath(paths[0]), hint, if (permanent_only) "  (permanent — already in the trash)" else "" });
-    } else try std.fmt.allocPrint(gpa, "Delete {s}?{s}", .{ app.relPath(paths[0]), if (permanent_only) "  (permanent — already in the trash)" else "" });
+        break :blk try std.fmt.allocPrint(gpa, "Delete {s} recursively? ({s}){s}{s}", .{ app.relPath(paths[0]), hint, trash_note, dirty_note });
+    } else try std.fmt.allocPrint(gpa, "Delete {s}?{s}{s}", .{ app.relPath(paths[0]), trash_note, dirty_note });
     errdefer gpa.free(msg);
     const choices: []const app_mod.Confirm.Choice = if (permanent_only) &permanent_choices else &delete_choices;
     app.overlay.deinit(gpa);
@@ -302,6 +355,7 @@ pub fn deletePaths(app: *App, paths: []const []const u8, permanent: bool) Alloca
             if (Io.Dir.renameAbsolute(path, dest, app.io)) {
                 moved = true;
                 try recordOrigin(app, entry, path, stamp);
+                try keepUnsaved(app, path, dest);
             } else |_| {}
         }
         if (!moved) {
@@ -584,6 +638,61 @@ test "delete moves the entry to the trash and restore puts it back; a second del
     try deletePaths(&app, &.{b}, true);
     try t.expectEqual(@as(usize, 0), count(&app));
     try t.expect(!exists(&app, b));
+}
+
+test "a trashed file with unsaved edits: the confirm says so and the trash keeps the edits, file or folder" {
+    var env = try Env.init();
+    defer env.deinit();
+    var app = try env.app();
+    defer app.deinit();
+    try env.tmp.dir.writeFile(t.io, .{ .sub_path = "ws/a.txt", .data = "saved" });
+    try env.tmp.dir.createDirPath(t.io, "ws/lib");
+    try env.tmp.dir.writeFile(t.io, .{ .sub_path = "ws/lib/b.txt", .data = "b" });
+    const a = try std.fs.path.join(t.allocator, &.{ env.root, "a.txt" });
+    defer t.allocator.free(a);
+    const lib = try std.fs.path.join(t.allocator, &.{ env.root, "lib" });
+    defer t.allocator.free(lib);
+    const b = try std.fs.path.join(t.allocator, &.{ lib, "b.txt" });
+    defer t.allocator.free(b);
+    _ = try app.openPath(a);
+    const e = app.activeEditor().?;
+    e.buf.editor.setCursor(e.buf.editor.len());
+    _ = try app.applyOps(e, &.{.{ .insert_str = "UNSAVED" }});
+    try t.expect(app.panes.get(app.active.?).?.dirty());
+    try confirmDelete(&app, &.{a});
+    try t.expect(std.mem.indexOf(u8, app.overlay.confirm.state.message, "unsaved changes in a.txt: the trash keeps them") != null);
+    try app.handle(.{ .key = Key.char('d') });
+    try t.expect(!exists(&app, a));
+    // The restore brings back what the user saw, not the last save.
+    const td = try dir(&app, app.frame.allocator());
+    var d = try Io.Dir.cwd().openDir(t.io, td, .{ .iterate = true });
+    var it = d.iterate();
+    const entry = try std.fs.path.join(t.allocator, &.{ td, (try it.next(t.io)).?.name });
+    d.close(t.io);
+    defer t.allocator.free(entry);
+    try restore(&app, entry);
+    const got = try env.tmp.dir.readFileAlloc(t.io, "ws/a.txt", t.allocator, .limited(64));
+    defer t.allocator.free(got);
+    try t.expectEqualStrings("savedUNSAVED", got);
+    // A folder holding a dirty buffer: the file inside the entry holds the edits.
+    _ = try app.openPath(b);
+    const eb = app.activeEditor().?;
+    _ = try app.applyOps(eb, &.{.{ .insert_str = "EDIT" }});
+    try confirmDelete(&app, &.{lib});
+    try t.expect(std.mem.indexOf(u8, app.overlay.confirm.state.message, "unsaved changes in lib/b.txt") != null);
+    try app.handle(.{ .key = Key.char('d') });
+    try t.expect(!exists(&app, lib));
+    var d2 = try Io.Dir.cwd().openDir(t.io, td, .{ .iterate = true });
+    defer d2.close(t.io);
+    var it2 = d2.iterate();
+    var lib_entry: ?[]u8 = null;
+    while (try it2.next(t.io)) |x| if (std.mem.endsWith(u8, x.name, "-lib")) {
+        lib_entry = try std.fs.path.join(t.allocator, &.{ td, x.name, "b.txt" });
+    };
+    defer if (lib_entry) |q| t.allocator.free(q);
+    const kept = try Io.Dir.cwd().readFileAlloc(t.io, lib_entry.?, t.allocator, .limited(64));
+    defer t.allocator.free(kept);
+    try t.expectEqualStrings("EDITb", kept);
 }
 
 test "a directory round-trips through the trash into its own parent; restore refuses an unrecorded entry" {

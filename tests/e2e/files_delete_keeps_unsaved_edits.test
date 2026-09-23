@@ -1,0 +1,24 @@
+# Deleting (to the trash) a file whose buffer has unsaved edits: the
+# confirm says so, and the trash keeps what the user saw — restoring
+# brings back the edited text, not the last save.
+write a.txt "saved\n"
+write b.txt "b\n"
+open a.txt
+key end
+type UNSAVED
+expect dirty true
+command view.focus_tree
+key r
+key home
+command file.delete
+expect screen contains "Delete a.txt?"
+expect screen contains "unsaved changes in a.txt"
+key d
+wait 400
+command files.trash
+expect screen contains "-a.txt"
+command files.restore_from_trash
+expect screen contains "restored a.txt"
+wait 300
+shell cat a.txt > restored.out; true
+expect file restored.out contains "savedUNSAVED"
