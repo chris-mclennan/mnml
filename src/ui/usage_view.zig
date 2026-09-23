@@ -15,6 +15,7 @@ const overlay = @import("overlay.zig");
 const ids = @import("../core/ids.zig");
 const usage = @import("../ai/usage.zig");
 const usage_pane = @import("../app/usage_pane.zig");
+const localtime = @import("../core/localtime.zig");
 
 pub const PaneId = ids.PaneId;
 
@@ -32,9 +33,25 @@ pub const Props = struct {
     codex: ?usage.Codex,
     /// Unix seconds, for the countdowns.
     now: u64,
-    /// Seconds east of UTC, for the reset clocks.
-    tz: i64,
+    /// The zone the reset clocks read in.
+    tz: Tz,
     loading: bool = false,
+};
+
+/// The zone the clocks read in: a fixed offset (the fixture's), or the
+/// machine's, looked up at each instant — a weekly reset on the far side
+/// of a daylight-saving change is in that side's offset, not today's.
+pub const Tz = union(enum) {
+    fixed: i64,
+    local,
+
+    /// Seconds east of UTC at `secs`.
+    pub fn at(tz: Tz, secs: u64) i64 {
+        return switch (tz) {
+            .fixed => |o| o,
+            .local => localtime.offset(@intCast(@min(secs, std.math.maxInt(i64)))),
+        };
+    }
 };
 
 /// The bar's width: the body minus the ` 100% used` suffix, at most 60.
@@ -195,10 +212,10 @@ fn claudeRows(ui: Ui, rows: *std.ArrayListUnmanaged(Row), props: Props, focused:
     try rows.append(a, .{ .body = .{ .spans = try a.dupe(Span, &.{.{ .text = " `:ai.refresh_usage` to force fetch · `:ai.show_last_response` for raw JSON ", .style = hint }}) } });
 }
 
-fn resetRow(a: std.mem.Allocator, resets_at: u64, tz: i64, long: bool, style: Theme.Style) std.mem.Allocator.Error![]const Span {
+fn resetRow(a: std.mem.Allocator, resets_at: u64, tz: Tz, long: bool, style: Theme.Style) std.mem.Allocator.Error![]const Span {
     if (resets_at == 0) return a.dupe(Span, &.{.{ .text = "  (reset time not available)", .style = style }});
     var buf: [32]u8 = undefined;
-    const when = if (long) usage.fmtLongTime(&buf, resets_at, tz) else usage.fmtShortTime(&buf, resets_at, tz);
+    const when = if (long) usage.fmtLongTime(&buf, resets_at, tz.at(resets_at)) else usage.fmtShortTime(&buf, resets_at, tz.at(resets_at));
     return a.dupe(Span, &.{.{ .text = try std.fmt.allocPrint(a, "  Resets {s}", .{when}), .style = style }});
 }
 
@@ -229,7 +246,7 @@ fn codexRows(ui: Ui, rows: *std.ArrayListUnmanaged(Row), props: Props, focused: 
         try rows.append(a, .{ .body = .{ .spans = &.{} } });
         if (c.fetched_at > 0) {
             var tb: [32]u8 = undefined;
-            try rows.append(a, .{ .body = .{ .spans = try a.dupe(Span, &.{.{ .text = try std.fmt.allocPrint(a, "  Last scan: {s}", .{usage.fmtShortTime(&tb, c.fetched_at, props.tz)}), .style = muted }}) } });
+            try rows.append(a, .{ .body = .{ .spans = try a.dupe(Span, &.{.{ .text = try std.fmt.allocPrint(a, "  Last scan: {s}", .{usage.fmtShortTime(&tb, c.fetched_at, props.tz.at(c.fetched_at))}), .style = muted }}) } });
             try rows.append(a, .{ .body = .{ .spans = &.{} } });
         }
         if (c.last_error) |e| {

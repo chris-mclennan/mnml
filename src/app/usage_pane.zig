@@ -682,7 +682,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, p: *UsagePane, area: Rect) Allocator.
         .accounts = views,
         .codex = s.codex,
         .now = now,
-        .tz = tzOffset(app, now),
+        .tz = if (st(app).tz_override) |o| .{ .fixed = o } else .local,
         .loading = s.anyPending(),
     }, app.active == id and app.focus == .pane);
 }
