@@ -343,6 +343,15 @@ const Run = struct {
             defer gpa.free(path);
             file_env.put(var_name, path) catch return self.fail("out of memory", .{});
         }
+        // The SESSIONS scan reads the file's own data root unless the
+        // file names a HOME to seed a fake one under: the start surface
+        // lists the workspace's sessions on every empty layout, and a
+        // test's screen must not carry the developer's own transcripts.
+        var names_home = false;
+        for (header.envPairs()) |pair| if (std.mem.eql(u8, pair.key, "HOME")) {
+            names_home = true;
+        };
+        if (!names_home) file_env.put("MNML_SESSIONS_HOME", data_root) catch return self.fail("out of memory", .{});
         for (header.envPairs()) |pair| {
             const value = expandEnv(gpa, pair.value, &file_env) catch return self.fail("out of memory", .{});
             defer gpa.free(value);

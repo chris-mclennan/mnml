@@ -623,7 +623,12 @@ pub fn envHome(app: *const App) ?[]const u8 {
 pub fn homeFor(app: *App) Allocator.Error!?[]const u8 {
     const st = &app.sessions;
     if (st.home) |h| return h;
-    const h = envHome(app) orelse return null;
+    // `MNML_SESSIONS_HOME` names the home to read `.claude` / `.codex`
+    // under without moving anything else's: the `.test` runner and the
+    // UI-dump tools point it at an empty directory, so a screen they
+    // keep never carries the developer's own transcripts.
+    const override: ?[]const u8 = if (app.env.get("MNML_SESSIONS_HOME")) |v| (if (v.len > 0) v else null) else null;
+    const h = override orelse envHome(app) orelse return null;
     if (std.fs.path.isAbsolute(h)) return h;
     st.home = try std.fs.path.join(app.gpa, &.{ app.workspace, h });
     return st.home.?;
