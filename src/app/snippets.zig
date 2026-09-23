@@ -225,7 +225,11 @@ fn insertBody(app: *App, pane_id: PaneId, e: *EditorPane, start: usize, cursor: 
     var parsed = try parse(app.gpa, body);
     defer parsed.deinit(app.gpa);
     app.snippets.endSession();
-    const text = try app.frame.allocator().dupe(u8, parsed.text);
+    // Every line after the first carries the indent of the line the
+    // snippet lands on, as in Neovim and VS Code: a body expanded
+    // inside a block stays inside it. The stops move with their lines.
+    const indent = ed.leadingIndent(ed.lineOfByte(start), start);
+    const text = try indentBody(app.frame.allocator(), parsed.text, indent, parsed.stops);
     try app.splice(e, start, cursor, text);
     // Land on the first stop (or the end of the body).
     const first: ?Stop = if (parsed.stops.len > 0) parsed.stops[0] else null;
@@ -242,6 +246,19 @@ fn insertBody(app: *App, pane_id: PaneId, e: *EditorPane, start: usize, cursor: 
         app.snippets.session = .{ .pane = pane_id, .stops = stops, .current = 0, .seen_seq = ed.doc.edits.head() };
     }
     app.needs_render = true;
+}
+
+/// `text` with `indent` after every `\n`; each stop's offset moves by
+/// the indent of the lines before it. `stops` is updated in place.
+fn indentBody(arena: Allocator, text: []const u8, indent: []const u8, stops: []Stop) Allocator.Error![]u8 {
+    if (indent.len == 0 or std.mem.indexOfScalar(u8, text, '\n') == null) return arena.dupe(u8, text);
+    for (stops) |*st| st.pos += indent.len * std.mem.count(u8, text[0..st.pos], "\n");
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    for (text) |c| {
+        try out.append(arena, c);
+        if (c == '\n') try out.appendSlice(arena, indent);
+    }
+    return out.toOwnedSlice(arena);
 }
 
 // ── the picker ──
@@ -547,4 +564,15 @@ test "snippet.pick lists the file's scope and global sorted, pick_all every scop
     try testing.expectEqualStrings("main", app.overlay.picker.labels[1]);
     try testing.expectEqualStrings("py", app.overlay.picker.hints[1]);
     app.overlay.deinit(app.gpa);
+}
+
+test "snippet: a body expanded on an indented line carries the indent onto its later lines, stops and all" {
+    var stops = [_]Stop{ .{ .pos = 4 }, .{ .pos = 8 }, .{ .pos = 15 } };
+    // `for $1 in $2 {\n    $0\n}` parsed: stops at 4, 8 and 15.
+    const out = try indentBody(testing.allocator, "for  in  {\n    \n}", "    ", &stops);
+    defer testing.allocator.free(out);
+    try testing.expectEqualStrings("for  in  {\n        \n    }", out);
+    try testing.expectEqual(@as(usize, 4), stops[0].pos);
+    try testing.expectEqual(@as(usize, 8), stops[1].pos);
+    try testing.expectEqual(@as(usize, 19), stops[2].pos);
 }

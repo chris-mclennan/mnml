@@ -1,0 +1,19 @@
+# A snippet expanded on an indented line carries that line's indent
+# onto every line it inserts, as Neovim and VS Code snippets do. Here
+# the expansion sits at 4 spaces, so the body lands at 8 and the
+# closing brace at 4.
+snippet rs forr "for $1 in $2 {\n    $0\n}"
+write code.rs "fn main() {\n    let v = 1;\n    \n}\n"
+open code.rs
+key down
+key down
+key end
+type forr
+command snippet.expand
+type "i"
+key tab
+type "xs"
+key tab
+type "body();"
+command file.save
+expect file code.rs contains "    for i in xs {\n        body();\n    }\n}\n"
