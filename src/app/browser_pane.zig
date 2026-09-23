@@ -270,6 +270,10 @@ pub const BrowserPane = struct {
         errdefer self.gpa.free(copy);
         if (self.log.items.len >= 5000) self.gpa.free(self.log.orderedRemove(0).text);
         try self.log.append(self.gpa, .{ .kind = kind, .text = copy });
+        // Scrolled back, the view holds still: `scroll` counts rows from
+        // the bottom, so the rows this line adds under the view are
+        // added to it. (The perf panel reuses the field from the top.)
+        if (self.scroll > 0 and self.panel != .perf and matches(std.mem.trim(u8, self.filter.items, " \t"), copy)) self.scroll += entryRows(copy);
     }
 
     pub fn setUrl(self: *BrowserPane, url: []const u8) Allocator.Error!void {
@@ -1902,4 +1906,68 @@ test "console: every line of a multi-line message paints, objects read from thei
     const rows = try logRows(app.frame.allocator(), p, &.{p.log.items.len - 1});
     try testing.expectEqual(@as(usize, max_entry_rows + 1), rows.len);
     try testing.expectEqualStrings("  ⏎ +10 more lines", rows[rows.len - 1].text);
+}
+
+/// One CDP message as the worker posts it.
+fn cdpMsg(pid: PaneId, text: []const u8) !*CdpEvent {
+    const g = testing.allocator;
+    const box = try g.create(CdpEvent);
+    box.* = .{ .pane = pid, .kind = .{ .message = try g.dupe(u8, text) } };
+    return box;
+}
+
+/// A fresh app on a temporary workspace, and a browser pane in it.
+const TestBed = struct {
+    tmp: testing.TmpDir = undefined,
+    buf: [std.fs.max_path_bytes]u8 = undefined,
+    root: []const u8 = "",
+    app: App = undefined,
+    id: PaneId = undefined,
+
+    fn init(self: *TestBed) !*BrowserPane {
+        self.tmp = testing.tmpDir(.{});
+        const n = try self.tmp.dir.realPath(testing.io, &self.buf);
+        self.root = self.buf[0..n];
+        self.app = try App.initWith(testing.allocator, testing.io, .{ .workspace = self.root, .data_root = self.root });
+        self.id = try testPane(&self.app);
+        return self.app.panes.get(self.id).?.asBrowser().?;
+    }
+
+    fn deinit(self: *TestBed) void {
+        self.app.deinit();
+        self.tmp.cleanup();
+    }
+
+    fn msg(self: *TestBed, text: []const u8) !void {
+        try handle(&self.app, try cdpMsg(self.id, text));
+    }
+
+    fn last(self: *TestBed) []const u8 {
+        const p = self.app.panes.get(self.id).?.asBrowser().?;
+        return p.log.items[p.log.items.len - 1].text;
+    }
+
+    fn lastQueued(self: *TestBed) []const u8 {
+        const p = self.app.panes.get(self.id).?.asBrowser().?;
+        return p.queued.items[p.queued.items.len - 1].method;
+    }
+};
+
+test "scrolled back, the log holds still while lines arrive; at the tail it follows" {
+    var tb: TestBed = .{};
+    const p = try tb.init();
+    defer tb.deinit();
+    for (0..10) |i| try p.push(.console, try std.fmt.allocPrint(tb.app.frame.allocator(), "tick {d}", .{i}));
+    p.scroll = 3;
+    try p.push(.console, "tick 10");
+    try p.push(.console, "two\nrows");
+    try testing.expectEqual(@as(usize, 6), p.scroll);
+    // A line the filter hides adds no row.
+    try p.filter.appendSlice(testing.allocator, "tick");
+    try p.push(.console, "noise");
+    try testing.expectEqual(@as(usize, 6), p.scroll);
+    p.filter.clearRetainingCapacity();
+    p.scroll = 0;
+    try p.push(.console, "tick 11");
+    try testing.expectEqual(@as(usize, 0), p.scroll);
 }
