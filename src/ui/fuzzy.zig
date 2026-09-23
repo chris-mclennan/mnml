@@ -60,8 +60,23 @@ fn isSeparator(c: u21) bool {
     return c == '_' or c == '-' or c == '.';
 }
 
+/// Latin letters with a diacritic → the base letter (U+00C0–U+017F);
+/// `_` = no fold. With the combining marks dropped in `decode`, an NFC
+/// `é` typed on the keyboard and an NFD `e` + U+0301 in a name Finder
+/// wrote both reach `e` — fzf's default folding, VS Code's NFC match.
+const fold_latin1 = "AAAAAA_CEEEEIIIIDNOOOOO_OUUUUY__aaaaaa_ceeeeiiiidnooooo_ouuuuy_y";
+const fold_ext_a = "AaAaAaCcCcCcCcDdDdEeEeEeEeEeGgGgGgGgHhHhIiIiIiIiIiIiJjKkkLlLlLlLlLlNnNnNnnNnOoOoOoOoRrRrRrSsSsSsSsTtTtTtUuUuUuUuUuUuWwYyYZzZzZzs";
+
 fn lower(c: u21) u21 {
-    return if (c < 0x80) std.ascii.toLower(@intCast(c)) else c;
+    if (c < 0x80) return std.ascii.toLower(@intCast(c));
+    const base_letter: u8 = if (c >= 0xC0 and c < 0x100) fold_latin1[c - 0xC0] else if (c >= 0x100 and c < 0x180) fold_ext_a[c - 0x100] else return c;
+    return if (base_letter == '_') c else std.ascii.toLower(base_letter);
+}
+
+/// A combining diacritical mark (U+0300–U+036F): part of the letter
+/// before it for matching.
+fn isCombining(c: u21) bool {
+    return c >= 0x300 and c <= 0x36F;
 }
 
 fn isUpper(c: u21) bool {
@@ -73,13 +88,18 @@ fn isLower(c: u21) bool {
 }
 
 /// `text` as code points with each one's byte offset; invalid bytes
-/// count as one code point each.
+/// count as one code point each, and a combining mark joins the code
+/// point before it (it is skipped).
 fn decode(text: []const u8, chars: []u21, offs: []usize) usize {
     var n: usize = 0;
     var i: usize = 0;
     while (i < text.len and n < chars.len) {
         const len = std.unicode.utf8ByteSequenceLength(text[i]) catch 1;
         const cp: u21 = if (i + len <= text.len) std.unicode.utf8Decode(text[i .. i + len]) catch text[i] else text[i];
+        if (n > 0 and isCombining(cp)) {
+            i += @max(len, 1);
+            continue;
+        }
         chars[n] = cp;
         offs[n] = i;
         n += 1;
@@ -99,7 +119,11 @@ fn cannotMatch(query: []const u8, text: []const u8) bool {
         if (qc >= 0x80) return false; // decoding decides
         if (qc == '_' or qc == '-' or qc == '.') continue;
         const want = std.ascii.toLower(qc);
-        while (ti < text.len and std.ascii.toLower(text[ti]) != want) ti += 1;
+        while (ti < text.len and std.ascii.toLower(text[ti]) != want) {
+            // A non-ASCII letter may fold to `want` (`é` → `e`).
+            if (text[ti] >= 0x80) return false;
+            ti += 1;
+        }
         if (ti == text.len) return true;
         ti += 1;
     }
@@ -304,4 +328,20 @@ test "positions are byte offsets, ascending and inside the text" {
     const dot = (try match(testing.allocator, "diff", "g  ·  diff")).?;
     defer testing.allocator.free(dot.positions);
     try testing.expectEqualSlices(usize, &.{ 7, 8, 9, 10 }, dot.positions);
+}
+
+test "latin diacritics fold both ways: NFC typed finds an NFD name and the reverse; ecole finds either" {
+    const nfd = "e\u{301}cole-notes.txt"; // Finder's spelling: e + COMBINING ACUTE
+    const nfc = "\u{e9}cole-notes.txt";
+    try testing.expect(score("\u{e9}cole", nfd) != null);
+    try testing.expect(score("e\u{301}cole", nfc) != null);
+    try testing.expect(score("ecole", nfd) != null);
+    try testing.expect(score("ecole", nfc) != null);
+    try testing.expect(score("\u{e9}cole", "school.txt") == null);
+    // The positions still land on real bytes of the haystack.
+    var buf: [256]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    const m = (try match(fba.allocator(), "\u{e9}c", nfd)).?;
+    try testing.expectEqual(@as(usize, 0), m.positions[0]);
+    try testing.expectEqual(@as(usize, 3), m.positions[1]);
 }
