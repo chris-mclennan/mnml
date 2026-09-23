@@ -358,7 +358,9 @@ pub fn filterRows(arena: Allocator, files: []const parse.FileDiff, rows: []const
     for (rows, 0..) |r, i| {
         const keep = switch (r) {
             .blank => !hide_hunks and needle.len == 0,
-            .hunk => |h| !hide_hunks and hunkMatches(files[h.file].hunks[h.hunk], needle),
+            // The Inline view keeps one row per file of a several-file
+            // diff (a commit, a range): its name, where the file starts.
+            .hunk => |h| (!hide_hunks or (h.hunk == 0 and files.len > 1)) and hunkMatches(files[h.file].hunks[h.hunk], needle),
             .line => |l| hunkMatches(files[l.file].hunks[l.hunk], needle),
         };
         if (keep) try out.append(arena, @intCast(i));
@@ -795,7 +797,7 @@ fn drawUnifiedRow(ui: Ui, pane: PaneId, area: Rect, y0: u16, ri: u32, doc: Doc) 
             return 1;
         },
         .hunk => |h| {
-            drawHunkHeader(ui, pane, r, ri, h, doc, on_cursor);
+            if (doc.mode == .flat) drawFileHeader(ui, pane, r, ri, h.file, doc, on_cursor) else drawHunkHeader(ui, pane, r, ri, h, doc, on_cursor);
             return 1;
         },
         .line => |l| {
@@ -871,6 +873,32 @@ fn cutAt(ui: Ui, s: []const u8, w: u16) usize {
 
 /// `▶ v @@ -1,2 +1,3 @@  file +N -M` with the chips right-aligned —
 /// Rust's per-hunk header in the Hunk view.
+/// The Inline view's row at the top of each file of a several-file
+/// diff: ` ▾ path  +N -M`. Without it a commit's files ran together, the
+/// line numbers restarting at 1 the only sign one had ended.
+fn drawFileHeader(ui: Ui, pane: PaneId, r: Rect, ri: u32, file: u32, doc: Doc, on_cursor: bool) void {
+    const p = ui.theme.palette;
+    const f = doc.files[file];
+    const bg = if (on_cursor) p.bg2 else p.bg_darker;
+    ui.fill(r, .{ .bg = bg });
+    var added: usize = 0;
+    var removed: usize = 0;
+    for (f.hunks) |h| for (h.lines) |l| switch (l.kind) {
+        .add => added += 1,
+        .del => removed += 1,
+        else => {},
+    };
+    var x = r.x;
+    const end = r.right();
+    x += ui.putStr(x, r.y, end -| x, if (on_cursor) (if (ui.ascii) "> " else "\u{25B6} ") else "  ", .{ .fg = p.yellow, .bg = bg });
+    x += ui.putStr(x, r.y, end -| x, f.path(), .{ .fg = p.blue, .bg = bg, .bold = true });
+    if (f.status == .renamed) if (f.old_path) |old| {
+        x += ui.putStr(x, r.y, end -| x, ui.fmt(" \u{2190} {s}", .{old}), .{ .fg = p.comment, .bg = bg });
+    };
+    _ = ui.putStr(x, r.y, end -| x, ui.fmt("  +{d} -{d}", .{ added, removed }), .{ .fg = p.comment, .bg = bg });
+    ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = ri } });
+}
+
 fn drawHunkHeader(ui: Ui, pane: PaneId, r: Rect, ri: u32, h: HunkRef, doc: Doc, on_cursor: bool) void {
     const p = ui.theme.palette;
     const hunk = doc.files[h.file].hunks[h.hunk];

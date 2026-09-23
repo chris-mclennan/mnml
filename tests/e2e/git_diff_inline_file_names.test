@@ -1,0 +1,22 @@
+# A commit's own diff (git.graph → git.graph_diff) touching two files
+# opens in the Inline view with a row naming each file where it starts —
+# `alpha.txt  +1 -1`, then `beta.txt  +1 -1` — instead of running the
+# two together with the line number restarting at 1 as the only sign.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write alpha.txt "a1\na2\n"
+write beta.txt "b1\nb2\n"
+shell git add .
+shell git commit -q -m "initial"
+write alpha.txt "a1\na2-changed\n"
+write beta.txt "b1\nb2-changed\n"
+shell git commit -q -am "change both"
+command git.graph
+wait 2000
+command git.graph_diff
+command view.only
+expect screen contains "+ a2-changed"
+expect screen contains "+ b2-changed"
+expect screen contains "alpha.txt  +1 -1"
+expect screen contains "beta.txt  +1 -1"
