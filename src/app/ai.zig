@@ -155,6 +155,12 @@ pub const State = struct {
     suggest_group: Io.Group = .init,
     /// The pane whose suggestion is in flight.
     suggest_pane: ?PaneId = null,
+    /// Where that request was asked from: the document (compared, never
+    /// dereferenced), its edit-log head and the cursor. An answer lands
+    /// only if all three still hold (`noteRequest`).
+    suggest_doc: ?*const anyopaque = null,
+    suggest_seq: u64 = 0,
+    suggest_cursor: usize = 0,
     /// What the chip, `:messages` and `status.json` read.
     ghost: ghost_chip.State = .{},
     /// A runtime pick from the setup picker; wins over the config.
@@ -400,6 +406,7 @@ fn acceptGhost(app: *App, e: *EditorPane, take_in: usize) Allocator.Error!bool {
 
 /// Every tick: fire the request once the clock is due.
 pub fn tick(app: *App) Allocator.Error!void {
+    if (app.active) |id| if (app.panes.editor(id)) |e| try dropMovedGhost(app, e);
     if (app.ai.debounce.due(app.now_ms)) try fireSuggestion(app);
     try usage_pane.tick(app);
     usage_pane.pollTicker(app);
@@ -483,11 +490,40 @@ fn fireSuggestion(app: *App) Allocator.Error!void {
     st.ghost.clearHolds();
     const generation = st.debounce.fire(app.now_ms);
     st.suggest_pane = id;
+    noteRequest(app, e);
     st.current_accepted = false;
     st.suggest_group.concurrent(app.io, suggestWorker, .{ app.events, app.io, gpa, @as(u32, id), generation, backend, prompt, model, key_owned, cwd, &app.env, app.cfg.ai.suggest_timeout_ms }) catch {
         st.debounce.cancel();
         return error.OutOfMemory;
     };
+    app.needs_render = true;
+}
+
+/// A suggestion request is going out for `e`: remember the spot it is
+/// for. Both backends call this (`copilot.fireSuggestion` too).
+pub fn noteRequest(app: *App, e: *const EditorPane) void {
+    app.ai.suggest_doc = e.buf.doc;
+    app.ai.suggest_seq = e.buf.doc.edits.head();
+    app.ai.suggest_cursor = e.buf.editor.cursor;
+}
+
+/// Whether `e` is still at the spot the request in flight was made
+/// from: the same document, no edit since, the cursor where it was.
+fn atRequestedSpot(app: *const App, e: *const EditorPane) bool {
+    const st = &app.ai;
+    const doc = st.suggest_doc orelse return false;
+    return doc == @as(*const anyopaque, e.buf.doc) and
+        st.suggest_seq == e.buf.doc.edits.head() and
+        st.suggest_cursor == e.buf.editor.cursor;
+}
+
+/// A ghost whose cursor has moved goes: a click, a jump, a motion that
+/// did not pass through `interceptKey`. Run before an editor is painted
+/// and on every tick.
+pub fn dropMovedGhost(app: *App, e: *EditorPane) Allocator.Error!void {
+    if (!e.buf.editor.ghostMoved()) return;
+    try e.buf.editor.setGhostSuggestion(null);
+    app.ai.current_accepted = false;
     app.needs_render = true;
 }
 
@@ -645,6 +681,10 @@ pub fn handle(app: *App, job_id: u64, msg: event.AiMsg) Allocator.Error!void {
             if (!wanted or st.suggest_pane != @as(PaneId, s.pane)) return;
             const e = app.panes.editor(s.pane) orelse return;
             if (s.text.len == 0) return;
+            // Asked for one spot, answered after the cursor left it
+            // without an edit (a motion, a click): it would land in the
+            // wrong place, so it does not land at all.
+            if (!atRequestedSpot(app, e)) return ghost_chip.settle(app, .stale, 0, null);
             try e.buf.editor.setGhostSuggestion(s.text);
             st.shown +|= 1;
             st.current_accepted = false;
@@ -1888,10 +1928,25 @@ test "ghost text: typing arms the debounce; a stale generation's result is dropp
     try app.handle(.{ .ai = .{ .job = 0, .msg = .{ .suggestion = .{ .pane = id, .generation = gen, .text = stale } } } });
     try t.expect(e.buf.editor.ghost_suggestion == null);
     const live_gen = app.ai.debounce.fire(app.now_ms);
+    noteRequest(&app, e);
     const live = try t.allocator.dupe(u8, "NEW");
     try app.handle(.{ .ai = .{ .job = 0, .msg = .{ .suggestion = .{ .pane = id, .generation = live_gen, .text = live } } } });
     try t.expectEqualStrings("NEW", e.buf.editor.ghost_suggestion.?);
     try t.expectEqual(@as(u32, 1), app.ai.shown);
+    // The cursor moves (no edit): the ghost goes with it rather than
+    // riding along to the new spot.
+    e.buf.editor.setCursor(0);
+    try dropMovedGhost(&app, e);
+    try t.expect(e.buf.editor.ghost_suggestion == null);
+    // A request whose cursor moved before the answer came: dropped.
+    const moved_gen = app.ai.debounce.fire(app.now_ms);
+    e.buf.editor.setCursor(1);
+    noteRequest(&app, e);
+    e.buf.editor.setCursor(0);
+    const late = try t.allocator.dupe(u8, "LATE");
+    try app.handle(.{ .ai = .{ .job = 0, .msg = .{ .suggestion = .{ .pane = id, .generation = moved_gen, .text = late } } } });
+    try t.expect(e.buf.editor.ghost_suggestion == null);
+    try t.expect(std.mem.endsWith(u8, lastMessage(&app), "dropped (cursor moved)"));
 }
 
 test "the confirm channel: a worker parks on the job's queue; the UI's answer releases it" {

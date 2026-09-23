@@ -368,6 +368,7 @@ pub fn fireSuggestion(app: *App, pane: PaneId, e: *EditorPane) Allocator.Error!v
     const generation = app.ai.debounce.fire(app.now_ms);
     st.req_pane = pane;
     st.req_generation = generation;
+    @import("ai.zig").noteRequest(app, e);
     _ = c.inlineCompletion(path, pos, app.cfg.editor.tab_width, true) catch {
         _ = app.ai.debounce.settle(generation);
         try ghost_chip.settle(app, .failed, 0, "Copilot: the request could not be sent");
