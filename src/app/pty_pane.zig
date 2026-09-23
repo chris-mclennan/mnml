@@ -791,17 +791,26 @@ pub fn termNormalKey(app: *App, p: *PtyPane, k: Key) Allocator.Error!bool {
     }
 }
 
+/// The pane's own scrollback keys, Shift+PageUp/PageDown/Home/End: true
+/// when `k` was one and the view moved.
+pub fn scrollKey(app: *App, p: *PtyPane, k: Key) bool {
+    if (!k.mods.shift or k.mods.ctrl or k.mods.alt or k.mods.super) return false;
+    const rows: isize = @intCast(@max(app.pane_rows, 2));
+    switch (k.code) {
+        .page_up => p.scrollBy(-(rows - 1)),
+        .page_down => p.scrollBy(rows - 1),
+        .home => p.scrollTo(.top),
+        .end => p.scrollTo(.bottom),
+        else => return false,
+    }
+    app.needs_render = true;
+    return true;
+}
+
 /// A key for the child. Shift+PageUp/PageDown/Home/End scroll the
 /// scrollback instead of being sent.
 pub fn feedKey(app: *App, p: *PtyPane, k: Key) void {
-    const rows: isize = @intCast(@max(app.pane_rows, 2));
-    if (k.mods.shift and !k.mods.ctrl and !k.mods.alt) switch (k.code) {
-        .page_up => return p.scrollBy(-(rows - 1)),
-        .page_down => return p.scrollBy(rows - 1),
-        .home => return p.scrollTo(.top),
-        .end => return p.scrollTo(.bottom),
-        else => {},
-    };
+    if (scrollKey(app, p, k)) return;
     var buf: [16]u8 = undefined;
     const bytes = encodeKey(k, p.encoding(), &buf);
     if (bytes.len > 0) p.write(bytes);
@@ -1418,10 +1427,38 @@ test "a scripted child's coloured line reaches the cells, the exit is noticed, a
     try t.expect(found);
     try t.expect(try tickUntilScreen(&app, "[exited 4]", 5000));
     try t.expectEqual(Exit{ .code = 4 }, app.panes.pty(id).?.exit.?);
-    // Any plain key closes an exited pane.
+    // Enter closes an exited pane.
     try app.handle(.{ .key = Key.named(.enter) });
     try t.expect(app.panes.get(id) == null);
     try t.expect(app.active == null);
+}
+
+test "an exited pane stays for reading back: its scroll keys scroll, a letter or the vim leader leaves it, Enter or Esc closes it" {
+    // A POSIX shell script drives this one.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (!supported) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    try app.setInputStyle(.vim);
+    const id = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "seq 1 300" }, .label = "seq" });
+    try t.expect(try tickUntilScreen(&app, "[exited 0]", 5000));
+    try app.handle(.{ .key = .{ .code = .page_up, .mods = .{ .shift = true } } });
+    try t.expect(app.panes.get(id) != null);
+    try app.render();
+    const txt = try screen_mod.toTestText(t.allocator, &app.screen);
+    defer t.allocator.free(txt);
+    try t.expect(std.mem.indexOf(u8, txt, "300") == null);
+    try app.handle(.{ .key = .{ .code = .home, .mods = .{ .shift = true } } });
+    try t.expect(try tickUntilScreen(&app, "▌1 ", 2000));
+    try app.handle(.{ .key = Key.char('x') });
+    try t.expect(app.panes.get(id) != null);
+    try app.handle(.{ .key = Key.char(' ') });
+    try t.expect(app.panes.get(id) != null);
+    // Esc lets go of the leader, the next one closes the pane.
+    try app.handle(.{ .key = Key.named(.esc) });
+    try app.handle(.{ .key = Key.named(.esc) });
+    try t.expect(app.panes.get(id) == null);
 }
 
 test "keys reach the child: typed text and ctrl+d end a cat that echoes back" {

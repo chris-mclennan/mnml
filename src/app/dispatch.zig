@@ -532,7 +532,8 @@ fn listPaneKey(app: *App, id: PaneId, l: *app_mod.ListPane, k: Key) Allocator.Er
 /// programs need it; the app's chords are the way out). A modified
 /// chord goes to the chord chain first when the keymap binds it, except
 /// the ones a terminal owns outright (`pty_pane.childOwned`). An exited
-/// pane closes on any plain key.
+/// pane closes on Enter or Esc; its scrollback keys still scroll it, and
+/// every other key is the app's (the vim leader included).
 fn ptyKey(app: *App, id: PaneId, p: *pty_pane.PtyPane, k: Key) Allocator.Error!void {
     if (app.chord.len > 0) {
         _ = try chordChain(app, k);
@@ -540,6 +541,10 @@ fn ptyKey(app: *App, id: PaneId, p: *pty_pane.PtyPane, k: Key) Allocator.Error!v
     }
     const modified = k.mods.ctrl or k.mods.alt or k.mods.super;
     if (p.exit != null) {
+        // Reading back what the command printed is why the pane is still
+        // there: Shift+PageUp / Home … scroll, as they did while it ran
+        // (ghostty's keybindings, too, come before "any key closes").
+        if (pty_pane.scrollKey(app, p, k)) return;
         if (modified and try chordChain(app, k)) return;
         // A pane restored from a saved session never ran: a key offers
         // it back rather than closing the tab the restore just brought.
@@ -550,7 +555,9 @@ fn ptyKey(app: *App, id: PaneId, p: *pty_pane.PtyPane, k: Key) Allocator.Error!v
             };
             return;
         }
-        try app.forceClosePane(id);
+        const plain = !modified and !k.mods.shift;
+        if (plain and (k.code == .enter or k.code == .esc)) return app.forceClosePane(id);
+        _ = try chordChain(app, k);
         return;
     }
     // vim: `<C-\><C-n>` (NvChad's `<C-x>` too) leaves the child for

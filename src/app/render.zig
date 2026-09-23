@@ -1784,8 +1784,8 @@ fn drawPty(app: *App, ui: Ui, id: PaneId, p: *pty_pane.PtyPane, rect: Rect) Allo
     const exit_label: ?[]const u8 = if (p.dormant)
         ui.fmt("[exited] — any key restarts {s}", .{p.label})
     else if (p.exit) |e| switch (e) {
-        .code => |c| ui.fmt("[exited {d}] — any key closes", .{c}),
-        .signal => |sg| ui.fmt("[killed by signal {d}] — any key closes", .{sg}),
+        .code => |c| ui.fmt("[exited {d}] — Enter closes", .{c}),
+        .signal => |sg| ui.fmt("[killed by signal {d}] — Enter closes", .{sg}),
     } else null;
     // // changed (pane-rail): the rail is painted by `drawPaneContent`
     // for every kind, and the rect that lands here has already had its
