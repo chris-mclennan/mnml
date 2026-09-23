@@ -279,6 +279,23 @@ pub const rows = [_]Row{
         .body = "Puts the workspace-relative path of whatever this menu was opened on — the tree row, the tab's file, the file chip's buffer — on the clipboard, and the toast repeats what it took. Relative is the form a commit message, an issue or a grep wants. A buffer that has never been saved has no name to copy and says so.",
         .links = &.{ .{ .command = .{ .id = .@"file.copy_path", .label = "Copy it" } }, .{ .command = .{ .id = .@"view.reveal_active", .label = "Reveal it in the OS" } }, .{ .command = .{ .id = .@"view.reveal_in_tree", .label = "Reveal it in the tree" } } },
     } },
+    // ── the statusline file chip's own rows (`openFileChipMenu`, titled `Buffer`) ──
+    .{ .menu = "Buffer", .label = "Copy absolute path", .kind = .copy_text, .entry = .{
+        .title = "Copy absolute path",
+        .body = "Puts the buffer's full path — from the filesystem root, not the workspace — on the clipboard, and the toast repeats it. It is the form a terminal outside the workspace, another editor or a bug report wants; *Copy path* above is the workspace-relative one.",
+        .links = &.{ .{ .command = .{ .id = .@"file.copy_path", .label = "The relative path instead" } }, .{ .command = .{ .id = .@"view.reveal_active", .label = "Reveal it in the OS" } } },
+    } },
+    .{ .menu = "Buffer", .label = "Copy file name", .kind = .copy_text, .entry = .{
+        .title = "Copy file name",
+        .body = "Puts the buffer's file name alone — `cart.ts`, no folders — on the clipboard, and the toast repeats it. Handy for a commit message, a search box or an import line.",
+        .links = &.{.{ .command = .{ .id = .@"file.copy_path", .label = "The path instead" } }},
+    } },
+    .{ .menu = "Buffer", .label = "Close buffer", .command = .@"buffer.close", .entry = .{
+        .title = "Close buffer",
+        .body = "Closes this buffer's tab. Unsaved changes are asked about first — save, discard or cancel — so nothing is lost by the click.",
+        .keys = &.{.{ .command = .@"buffer.close", .label = "Close it" }},
+        .links = &.{ .{ .command = .{ .id = .@"buffer.close", .label = "Close it" } }, .{ .command = .{ .id = .@"file.save", .label = "Save it first" } } },
+    } },
     .{ .label = "Refresh tree", .entry = .{
         .title = "Refresh tree",
         .body = "Re-reads every open folder from disk and rebuilds the rows, which is the fix when something done outside mnml — a `git checkout`, a build, another editor — is not showing. Folds, the cursor and the hidden-file state all survive it. The tree keeps itself up to date on most changes, so needing this row often is worth reporting.",

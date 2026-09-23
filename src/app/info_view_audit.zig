@@ -174,6 +174,7 @@ pub fn run(gpa: Allocator, io: Io, arena: Allocator, workspace: []const u8, data
     try walkOverlays(&w);
     try walkMenus(&w);
     try walkGitGraph(&w);
+    try walkFileChipRows(&w);
     return tally(arena, w.results.items, w.lint.items, todo);
 }
 
@@ -212,6 +213,23 @@ fn walkGitGraph(w: *Walk) Allocator.Error!void {
         .{ .label = "Browse commit on remote", .action = .{ .command = .@"git.browse_commit" } },
     };
     for (menu_rows) |r| try w.probeEntry(try w.fmtKey("menu:git_detail_row/{s}", .{r.label}), copy.menus.lookupItem("a.txt", null, r.label, r.action));
+}
+
+/// The statusline file chip's `Buffer` menu. The walk's menus family
+/// opens it on the active editor, which on the scratch app has no
+/// file, so it opens nothing there (`menuRows`); its rows are read
+/// here the way `context_menus.openFileChipMenu` builds them.
+fn walkFileChipRows(w: *Walk) Allocator.Error!void {
+    const Row = struct { label: []const u8, action: command.MenuAction };
+    const menu_rows = [_]Row{
+        .{ .label = "Reveal in tree", .action = .{ .command = .@"view.reveal_in_tree" } },
+        .{ .label = "Reveal in Finder", .action = .{ .command = .@"view.reveal_active" } },
+        .{ .label = "Copy path", .action = .{ .command = .@"file.copy_path" } },
+        .{ .label = "Copy absolute path", .action = .{ .copy_text = "/w/a.txt" } },
+        .{ .label = "Copy file name", .action = .{ .copy_text = "a.txt" } },
+        .{ .label = "Close buffer", .action = .{ .command = .@"buffer.close" } },
+    };
+    for (menu_rows) |r| try w.probeEntry(try w.fmtKey("menu:file_chip/{s}", .{r.label}), copy.menus.lookupItem("Buffer", null, r.label, r.action));
 }
 
 fn walkStatusline(w: *Walk) Allocator.Error!void {
