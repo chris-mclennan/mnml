@@ -2539,6 +2539,11 @@ pub fn applyEditsToPane(app: *App, e: *EditorPane, edits_in: []const types.TextE
     }
     ed.anchor = null;
     ed.setCursor(@min(cursor, ed.len()));
+    // The server hears of it now, not when the pane is next drawn: a
+    // rename's edits land in buffers behind the active one (and in files
+    // it opened for them), and until each was visited every diagnostic,
+    // hover and reference the server gave for them was for the old text.
+    syncPane(app, std.math.maxInt(PaneId), e);
     app.needs_render = true;
 }
 

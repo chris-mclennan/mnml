@@ -510,3 +510,42 @@ test "fileCount reads both WorkspaceEdit shapes" {
     defer q.deinit();
     try testing.expectEqual(@as(usize, 1), fileCount(q.value));
 }
+
+test "a rename's edits reach the server for every buffer they touched, not only the one on screen" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var app = try App.initWith(gpa, io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    var rig: lsp.TestRig = .{};
+    try rig.start(&app);
+    defer rig.stop(&app) catch {};
+    const other = lsp.TestRig.other;
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = other, .data = "foo();\nfoo();\n" });
+    defer Io.Dir.cwd().deleteFile(io, other) catch {};
+    // `other` open in a pane of its own, behind the source file.
+    const oe = try lsp.TestRig.openFile(&app, other, "foo();\nfoo();\n");
+    const e = try lsp.TestRig.openFile(&app, lsp.TestRig.file, lsp.TestRig.text);
+    const Cond = struct {
+        fn ready(a: *App) bool {
+            const s = a.lsp.servers.items[0];
+            return s.ready and s.isOpen(lsp.TestRig.file) and s.isOpen(lsp.TestRig.other);
+        }
+        fn preview(a: *App) bool {
+            return a.lsp.rename.preview != null;
+        }
+    };
+    try lsp.TestRig.pump(&app, &app, Cond.ready, 5000);
+    e.buf.editor.setCursor(17); // `foo` on line 1
+    try lsp.acceptRename(&app, "multiSynced");
+    try lsp.TestRig.pump(&app, &app, Cond.preview, 5000);
+    // Enter applies, and no frame is drawn before the check: the sync is
+    // the apply's, not the painter's.
+    try app.handle(.{ .key = Key.named(.enter) });
+    try testing.expectEqualStrings("foo();\nmultiSynced();\n", oe.buf.editor.bytes());
+    // Both documents are current with the server: a `didChange` went out
+    // for the buffer behind the active one as well as for the active one.
+    try testing.expectEqual(oe.buf.doc.edits.head(), oe.buf.doc.lsp_seen.?);
+    try testing.expectEqual(e.buf.doc.edits.head(), e.buf.doc.lsp_seen.?);
+}
