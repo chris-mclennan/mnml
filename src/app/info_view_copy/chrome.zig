@@ -353,8 +353,8 @@ pub fn tab(app: *App, arena: Allocator, tb: hit.TabRef) Allocator.Error!?Entry {
             // The raised hand: this tab's child is blocked on the user.
             if (sessions.needsYou(app, id)) break :blk .{
                 .title = try std.fmt.allocPrint(arena, "Tab: {s} — needs you", .{p.title()}),
-                .body = "The raised hand after the name: the program in this pane is stopped on a question — a permission prompt, a `(y/n)`, a numbered choice — or its session's transcript says it is waiting. It stays up until the screen stops asking. Click shows it so you can answer; the SESSIONS card wears the same mark, and the Waiting sort puts every such session first.",
-                .keys = &.{.{ .command = .@"buffer.close", .label = "Close" }},
+                .body = "The raised hand after the name: the program in this pane is stopped on a question — a permission prompt, a `(y/n)`, a numbered choice — or its session's transcript says it is waiting. It stays up until the screen stops asking. Click shows it so you can answer; the jump keys walk every tab wearing it, the SESSIONS card wears the same mark, and the Waiting sort puts every such session first.",
+                .keys = &.{ .{ .command = .@"sessions.next_waiting", .label = "Next that needs you" }, .{ .command = .@"sessions.prev_waiting", .label = "Previous that needs you" } },
                 .links = &.{ .{ .command = .{ .id = .@"sessions.sort_waiting", .label = "Sort SESSIONS waiting first" } }, .{ .command = .{ .id = .@"view.activity_sessions", .label = "The SESSIONS section" } } },
             };
             break :blk .{

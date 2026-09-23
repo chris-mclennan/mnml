@@ -264,6 +264,8 @@ pub const table = .{
     .@"sessions.sort_auto" = &sortAutoCmd,
     .@"sessions.sort_manual" = &sortManualCmd,
     .@"sessions.sort_waiting" = &sortWaitingCmd,
+    .@"sessions.next_waiting" = &nextWaitingCmd,
+    .@"sessions.prev_waiting" = &prevWaitingCmd,
     .@"sessions.cycle_state" = &cycleStateCmd,
     .@"sessions.open" = &openCmd,
     .@"sessions.open_transcript" = &openTranscriptCmd,
@@ -882,6 +884,59 @@ fn needsYouDeadlineMs(app: *const App) ?i64 {
         else => {},
     };
     return next;
+}
+
+/// The waiting pane to land on from `from`: the first of `waiting`
+/// (ascending pane ids) past it — or before it, `forward = false` —
+/// wrapping round; `from` itself when it is the only one. Null when
+/// nothing waits.
+pub fn waitingStep(waiting: []const app_mod.PaneId, from: ?app_mod.PaneId, forward: bool) ?app_mod.PaneId {
+    if (waiting.len == 0) return null;
+    const at = from orelse return if (forward) waiting[0] else waiting[waiting.len - 1];
+    if (forward) {
+        for (waiting) |id| if (id > at) return id;
+        return waiting[0];
+    }
+    var i = waiting.len;
+    while (i > 0) {
+        i -= 1;
+        if (waiting[i] < at) return waiting[i];
+    }
+    return waiting[waiting.len - 1];
+}
+
+/// Every pane that needs you, in pane order, on `arena`.
+pub fn waitingPanes(app: *App, arena: Allocator) Allocator.Error![]app_mod.PaneId {
+    var out: std.ArrayListUnmanaged(app_mod.PaneId) = .empty;
+    var i: usize = 0;
+    while (i < app.panes.slots.items.len) : (i += 1) {
+        const pid: app_mod.PaneId = @intCast(i);
+        if (needsYou(app, pid)) try out.append(arena, pid);
+    }
+    return out.items;
+}
+
+fn nextWaitingCmd(app: *App) CommandError!void {
+    return jumpWaiting(app, true);
+}
+
+fn prevWaitingCmd(app: *App) CommandError!void {
+    return jumpWaiting(app, false);
+}
+
+/// `sessions.next_waiting` / `prev_waiting`: focus the next / previous
+/// pane that needs you after the active one, wrapping; a toast when
+/// none does.
+fn jumpWaiting(app: *App, forward: bool) CommandError!void {
+    const waiting = try waitingPanes(app, app.frame.allocator());
+    const to = waitingStep(waiting, app.active, forward) orelse {
+        app.toast("no session needs you", .{});
+        return;
+    };
+    app.showPane(to);
+    app.focus = .{ .pane = to };
+    app.needs_render = true;
+    if (waiting.len > 1) app.toast("needs you: {s} ({d} waiting)", .{ paneName(app, to), waiting.len });
 }
 
 /// What a pane is called when it is announced: an AI session's card
@@ -3347,6 +3402,63 @@ test "the Waiting sort: the sessions that need you lead, the manual order under 
     try testing.expectEqualStrings("Waiting", menu.items[2].label);
     try testing.expect(menu.items[2].action.command == .@"sessions.sort_waiting");
     try testing.expect(menu.items[0].checked and !menu.items[2].checked);
+}
+
+test "waitingStep: the next waiting pane past the active one, or the one before it, wrapping; the only one is itself; none is null" {
+    const w = [_]app_mod.PaneId{ 2, 5, 9 };
+    try testing.expectEqual(@as(?app_mod.PaneId, 5), waitingStep(&w, 2, true));
+    try testing.expectEqual(@as(?app_mod.PaneId, 5), waitingStep(&w, 3, true));
+    try testing.expectEqual(@as(?app_mod.PaneId, 2), waitingStep(&w, 9, true));
+    try testing.expectEqual(@as(?app_mod.PaneId, 2), waitingStep(&w, 12, true));
+    try testing.expectEqual(@as(?app_mod.PaneId, 2), waitingStep(&w, 5, false));
+    try testing.expectEqual(@as(?app_mod.PaneId, 9), waitingStep(&w, 2, false));
+    try testing.expectEqual(@as(?app_mod.PaneId, 9), waitingStep(&w, 0, false));
+    try testing.expectEqual(@as(?app_mod.PaneId, 2), waitingStep(&w, null, true));
+    try testing.expectEqual(@as(?app_mod.PaneId, 9), waitingStep(&w, null, false));
+    const one = [_]app_mod.PaneId{4};
+    try testing.expectEqual(@as(?app_mod.PaneId, 4), waitingStep(&one, 4, true));
+    try testing.expectEqual(@as(?app_mod.PaneId, 4), waitingStep(&one, 4, false));
+    try testing.expectEqual(@as(?app_mod.PaneId, null), waitingStep(&.{}, 4, true));
+}
+
+test "sessions.next_waiting / prev_waiting focus the panes that need you in pane order, wrapping, past panes that do not; none waiting toasts" {
+    var f = try Fixture.init(100, 30);
+    defer f.deinit();
+    try f.fakeClaude();
+    const app = &f.app;
+    const plain = try f.openCard("plain-7");
+    const ask_a = try f.openCard("ask-7");
+    const other = try f.openCard("plain-8");
+    const ask_b = try f.openCard("ask-8");
+    try f.adopt(&.{});
+    try testing.expect(try f.waitNeedsYou(ask_a, true, 5000));
+    try testing.expect(try f.waitNeedsYou(ask_b, true, 5000));
+    try testing.expect(try f.waitGrid(plain, "Claude Code v9", 5000));
+    try testing.expect(!needsYou(app, plain) and !needsYou(app, other));
+    const next: command.CommandRef = .{ .static = .@"sessions.next_waiting" };
+    const prev: command.CommandRef = .{ .static = .@"sessions.prev_waiting" };
+    app.showPane(plain);
+    try command.run(app, next);
+    try testing.expectEqual(@as(?app_mod.PaneId, ask_a), app.active);
+    try testing.expect(app.focus == .pane and app.focus.pane == ask_a);
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "2 waiting") != null);
+    try command.run(app, next);
+    try testing.expectEqual(@as(?app_mod.PaneId, ask_b), app.active);
+    try command.run(app, next);
+    try testing.expectEqual(@as(?app_mod.PaneId, ask_a), app.active);
+    try command.run(app, prev);
+    try testing.expectEqual(@as(?app_mod.PaneId, ask_b), app.active);
+    app.showPane(other);
+    try command.run(app, prev);
+    try testing.expectEqual(@as(?app_mod.PaneId, ask_a), app.active);
+    // Nothing waits: the focus stays and a toast says so.
+    for ([_]app_mod.PaneId{ ask_a, ask_b }) |id| app.panes.pty(id).?.needs_you = false;
+    app.showPane(plain);
+    try command.run(app, next);
+    try testing.expectEqual(@as(?app_mod.PaneId, plain), app.active);
+    try testing.expectEqualStrings("no session needs you", app.lastToast().?);
+    try command.run(app, prev);
+    try testing.expectEqual(@as(?app_mod.PaneId, plain), app.active);
 }
 
 test "the sort is Rust's priority: an approval prompt first, then thinking, idle, exited; pins lead; Manual follows the order list then the pane order" {

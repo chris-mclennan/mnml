@@ -104,7 +104,7 @@ pub fn row(app: *App, arena: Allocator, r: hit.PanelRow) Allocator.Error!?Entry 
         .sessions => .{
             .title = try std.fmt.allocPrint(arena, "Session {d}", .{r.idx + 1}),
             .body = "A Claude Code or Codex session's card — its name, branch, cwd and what the pane is showing; a raised hand before the name means the session is stopped on a question for you. Enter or a click opens its pane; the kebab has rename, pin, the colour, kill, the transcript, the worktree rows. Drag reorders under the Manual sort.",
-            .keys = &.{.{ .chord = "Enter", .label = "Open the pane" }},
+            .keys = &.{ .{ .chord = "Enter", .label = "Open the pane" }, .{ .command = .@"sessions.next_waiting", .label = "Next that needs you" } },
             .links = &.{ .{ .command = .{ .id = .@"sessions.open_transcript", .label = "Read the transcript" } }, ask },
         },
         .git => .{
