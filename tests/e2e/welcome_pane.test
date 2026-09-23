@@ -1,15 +1,22 @@
 # width: 120
-# The welcome pane (src/ui/welcome.zig): the editor area with no pane
-# open. On a workspace outside a repository the stack is eighteen rows
-# from row 11 — the logo, `workspace · <name>`, the shortcut list, the
-# version. A press on a shortcut row runs its command; a closed file
-# lands under Recent Files, and a press on that row opens it again.
+# The welcome pane's minimal form (src/ui/welcome.zig, `ui.welcome =
+# minimal`), reached through its Settings row: the editor area with no
+# pane open is the logo, `workspace · <name>`, the shortcut list and
+# the version. On a workspace outside a repository the stack is
+# eighteen rows from row 11. A press on a shortcut row runs its
+# command. The start surface is the default (welcome_start.test).
 write a.txt "hello from a\n"
 write b.txt "b\n"
+expect screen contains "RECENT FILES"
+command view.settings
+type Welcome screen
+key enter
+key right
+key enter
 expect screen contains "workspace ·"
 expect screen contains "^P     find file"
 expect screen contains "^Q     quit"
-expect screen lacks "ctrl+p opens a file"
+expect screen lacks "RECENT FILES"
 expect screen contains "b.txt"
 # `  ^B     toggle tree` is 20 cells on the 89-cell pane: inset 34, so
 # it starts at column 65 of row 25.
@@ -22,7 +29,4 @@ open a.txt
 expect screen contains "1 hello from a"
 command buffer.close
 expect screen lacks "1 hello from a"
-expect screen contains "Recent Files"
-# 22 rows from row 9: the path row is row 19, `  a.txt` from column 72.
-click 74 19
-expect screen contains "1 hello from a"
+expect screen contains "^P     find file"

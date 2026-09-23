@@ -65,6 +65,7 @@ const notes = @import("notes.zig");
 const findings = @import("findings.zig");
 const debug_panel = @import("app/debug_panel.zig");
 const sessions = @import("sessions.zig");
+const welcome_mod = @import("app/welcome.zig");
 const dock = @import("app/dock.zig");
 const hover_zones = @import("app/hover_zones.zig");
 const sidebar_auto = @import("app/sidebar_auto.zig");
@@ -1044,6 +1045,9 @@ pub const App = struct {
     notes: notes.State,
     findings: findings.State,
     sessions: sessions.State,
+    /// // changed (welcome): the start surface's cursors
+    /// (`app/welcome.zig`).
+    welcome: welcome_mod.State = .{},
     /// // changed (lua-track): the SCRIPTS section's list state.
     scripts_panel: scripts_panel.State = .{},
     /// // changed (lua-plumbing): the lists `mnml.list{}` registered —
@@ -1739,6 +1743,7 @@ pub const App = struct {
         self.script_sections.deinit(gpa);
         self.debug_panel.deinit(gpa);
         self.sessions.deinit(gpa, self.io);
+        self.welcome.deinit(gpa);
         self.dock.deinit(gpa, self.io);
         self.bottom.deinit(gpa);
         self.http.deinit(gpa, self.io);
@@ -3248,6 +3253,7 @@ test {
     _ = @import("app/ai.zig");
     _ = @import("app/agents.zig");
     _ = @import("app/sessions_table.zig");
+    _ = @import("app/welcome.zig");
     _ = @import("app/cloud_agents.zig");
     _ = @import("ui/sessions_table_view.zig");
     _ = @import("app/spend.zig");

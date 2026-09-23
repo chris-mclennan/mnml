@@ -995,6 +995,7 @@ fn contextMenuAtFocus(app: *App) CommandError!void {
             const r = rectOf(app, .{ .pane = id });
             try openTabMenu(app, id, r.x, r.y);
         },
+        .welcome => try @import("welcome.zig").menuAtFocus(app),
         .overlay => {},
     }
 }

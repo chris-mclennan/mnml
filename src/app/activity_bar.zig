@@ -263,7 +263,7 @@ pub fn active(app: *App) Section {
         .tree => return .explorer,
         .panel => |p| if (onRail(side.sectionOfPanel(p))) |s| return s,
         .pane => |id| if (sectionOfPane(app, id)) |s| return s,
-        .overlay => {},
+        .overlay, .welcome => {},
     }
     if (side.shown(app, .right)) |s| if (onRail(s)) |r| return r;
     if (app.active) |id| if (sectionOfPane(app, id)) |s| return s;

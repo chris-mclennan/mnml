@@ -309,6 +309,8 @@ fn emptyCopy(app: *App) Copy {
             .{ .title = "Sidebar", .body = "Arrows or j/k walk rows. Enter opens the selection. Ctrl+Shift+P opens the palette." }
         else
             .{ .title = "Editor", .body = "Hover a chip, tab, or tree row for help. Ctrl+Shift+P opens the palette." },
+        // The start surface (`app/welcome.zig`).
+        .welcome => .{ .title = "Start", .body = "j/k walk a list, Tab moves to the next. Enter acts on the row. ? opens the cheatsheet; Esc gives the keys back to the tree." },
         // `focusUnder` never says so: an overlay names its surface.
         .overlay => unreachable,
     };

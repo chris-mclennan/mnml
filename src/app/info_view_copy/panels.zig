@@ -371,17 +371,35 @@ pub fn aiPlaceholder() Entry {
 
 pub fn welcome(w: hit.WelcomeRow) Entry {
     return switch (w.kind) {
+        .workspace => .{
+            .title = "Recent workspace",
+            .body = "A workspace this window has open — the one it started on, then the extra folders `workspaces` in config.zon and Add folder bring in — the same list Switch workspace offers. Enter or a click shows that workspace's files in the tree; `open` marks the one the tree is showing. On the start surface j / k walk the list and Tab moves to the next one.",
+            .keys = &.{ .{ .chord = "Enter", .label = "Show it in the tree" }, .{ .command = .@"view.switch_workspace", .label = "Switch workspace" } },
+            .links = &.{ .{ .command = .{ .id = .@"view.add_workspace", .label = "Add a folder" } }, .{ .command = .{ .id = .@"view.manage_workspaces", .label = "Manage workspaces" } } },
+        },
         .recent => .{
             .title = "Recent file",
-            .body = "A file opened recently in this workspace, newest first, from the session's recent list. Click opens it in the active pane; right-click offers open in a split, reveal in the tree, copy the path, remove from the list. The welcome pane closes itself once something is open.",
+            .body = "A file opened recently in this workspace, newest first, from the session's recent list — the rows Recent files lists. Click or Enter opens it; right-click offers open, copy the path and the full list. The welcome pane closes itself once something is open.",
             .keys = &.{ .{ .chord = "Enter", .label = "Open" }, .{ .command = .@"picker.recent", .label = "Every recent file" } },
             .links = &.{ .{ .command = .{ .id = .@"picker.recent", .label = "Every recent file" } }, .{ .command = .{ .id = .@"file.clear_recent", .label = "Clear the list" } } },
         },
+        .session => .{
+            .title = "Session to resume",
+            .body = "A Claude Code or Codex session of this workspace that no process is running any more, newest first, from the SESSIONS section's scan: its name (or last prompt), the tool and how long ago it last moved. Enter or a click resumes it in a terminal pane on the right, in the directory it ran in, where the conversation picks up.",
+            .keys = &.{ .{ .chord = "Enter", .label = "Resume it" }, .{ .command = .@"view.activity_sessions", .label = "The SESSIONS section" } },
+            .links = &.{ .{ .command = .{ .id = .@"view.activity_sessions", .label = "Every session" } }, .{ .command = .{ .id = .@"sessions.refresh", .label = "Scan again" } } },
+        },
+        .new_session => .{
+            .title = "+ New Claude Code session here",
+            .body = "Starts a fresh Claude Code session in this workspace, in a terminal pane; its card joins the SESSIONS section. With Claude Code not installed the pane says so rather than failing quietly.",
+            .keys = &.{.{ .chord = "Enter", .label = "Start it" }},
+            .links = &.{ .{ .command = .{ .id = .@"ai.claude_code_new", .label = "Start a session" } }, .{ .command = .{ .id = .@"view.activity_sessions", .label = "The SESSIONS section" } } },
+        },
         .shortcut => .{
             .title = "Shortcut",
-            .body = "One of the commands worth knowing first — the file picker, the palette, a new shell, Settings — with its chord under the active profile. Click runs it. The cheatsheet has every chord; the welcome pane closes once something is open.",
+            .body = "One of the commands worth knowing first — the file picker, the palette, the tree, Settings — with its chord under the active profile, read from the same table the cheatsheet lists. Click or Enter runs it; `?` on the start surface opens the cheatsheet. The welcome pane closes once something is open.",
             .keys = &.{ .{ .chord = "Enter", .label = "Run it" }, .{ .command = .@"view.cheatsheet", .label = "Every chord" } },
-            .links = &.{ .{ .command = .{ .id = .@"view.cheatsheet", .label = "The cheatsheet" } }, .{ .command = .{ .id = .@"picker.files", .label = "Open a file" } } },
+            .links = &.{ .{ .command = .{ .id = .@"view.cheatsheet", .label = "The cheatsheet" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.welcome"), .label = "Welcome screen" } } },
         },
     };
 }

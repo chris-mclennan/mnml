@@ -66,6 +66,7 @@ const debug_panel = @import("debug_panel.zig");
 const debug_toolbar = @import("../ui/debug_toolbar.zig");
 const CellHit = @FieldType(@import("../ui/hit.zig").HitTarget, "editor_cell");
 const sessions = @import("../sessions.zig");
+const welcome_app = @import("welcome.zig");
 const dock = @import("dock.zig");
 const launcher_dock = @import("launcher_dock.zig");
 const snippets = @import("snippets.zig");
@@ -266,6 +267,18 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
         _ = try chordChain(app, k);
         return;
     }
+
+    // // changed (welcome): the start surface walks its lists while the
+    // layout is empty; what it does not take goes on to the chords.
+    if (welcome_app.takesKeys(app)) {
+        if (app.focus != .welcome) welcome_app.focus(app);
+        if (try welcome_app.handleKey(app, k)) return;
+        _ = try chordChain(app, k);
+        return;
+    }
+    // A stale start-surface focus (a pane opened from under it) goes
+    // to the pane.
+    if (app.focus == .welcome) app.focus = if (app.active) |a| .{ .pane = a } else .tree;
 
     const pane_id = app.active;
     // The non-editor panes take their own keys first.
@@ -1869,9 +1882,11 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .row => |pr| return panelWheel(app, pr.panel, down, count),
             .kebab => |pr| return panelWheel(app, pr.panel, down, count),
             .git_palette => return panelWheel(app, .git, down, count),
+            .welcome => |row| return welcomeWheel(app, row.list(), down, count),
             .scrollbar => |sb| switch (sb.owner) {
                 .panel => |p| return panelWheel(app, p, down, count),
                 .tree => return treeWheel(app, m, count),
+                .welcome => |l| return welcomeWheel(app, l, down, count),
                 .pane => |id| {
                     // The help box's and the picker's bars take the wheel
                     // as their rows do; any other pane's bar scrolls the pane.
@@ -1963,6 +1978,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             switch (sb.owner) {
                 .panel => |p| panelScrollbar(app, p, track, m),
                 .tree => app.tree.scrollbarMouse(app, track, m),
+                .welcome => |l| welcome_app.scrollbarMouse(app, l, track, m),
                 .pane => |id| {
                     if (!grab) return;
                     if (app.panes.editor(id) != null) return beginScrollbarDrag(app, id, track, m.y);
@@ -2419,34 +2435,8 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         .git_palette => |part| try git_palette.partMouse(app, part, m),
         .font_update => |row| try font_scan.updateChipMouse(app, row, m),
         .http => |part| try http_panel.partMouse(app, part, m),
-        .welcome => |row| {
-            // The welcome pane: a recent file opens, a shortcut row runs
-            // its command.
-            if (wheel or m.kind != .press) return;
-            // right-click: a recent row's own rows (Zig-only); a
-            // shortcut row is one verb and keeps none.
-            if (m.button == .right) {
-                if (row.kind == .recent) if (render.welcomeRecentPath(app, row.idx)) |path| {
-                    if (app.overlay != .none) closeOverlay(app);
-                    try context_menus.openWelcomeRecentMenu(app, path, m.x, m.y);
-                };
-                return;
-            }
-            if (m.button != .left) return;
-            switch (row.kind) {
-                .recent => if (render.welcomeRecentPath(app, row.idx)) |path| {
-                    const copy = try app.frame.allocator().dupe(u8, path);
-                    _ = app.openPath(copy) catch |err| switch (err) {
-                        error.OutOfMemory => return error.OutOfMemory,
-                        else => {},
-                    };
-                },
-                .shortcut => {
-                    const rows = try render.welcomeShortcuts(app, app.frame.allocator());
-                    if (row.idx < rows.len) try runCmd(app, rows[row.idx].command);
-                },
-            }
-        },
+        // The welcome pane: a row acts on a press (`app/welcome.zig`).
+        .welcome => |row| if (!wheel) try welcome_app.mouse(app, row, m),
         .button => |id| {
             // The strip's markers and `+`: a wheel scrolls the strip, a
             // press on a marker steps it.
@@ -3080,6 +3070,13 @@ fn panelWheel(app: *App, panel: hit_mod.PanelId, down: bool, count: u16) Allocat
     }
 }
 
+/// The wheel over a start-surface list (`app/welcome.zig`).
+fn welcomeWheel(app: *App, l: hit_mod.WelcomeList, down: bool, count: u16) Allocator.Error!void {
+    const lines = wheelLines(app, count);
+    if (lines == 0) return;
+    welcome_app.wheel(app, l, down, scroll_mod.listStep(lines, app.cfg.editor.scroll_accel));
+}
+
 /// A press or drag on a panel's scrollbar: the panel lands its cursor
 /// at the pointer's fraction of the track.
 fn panelScrollbar(app: *App, panel: hit_mod.PanelId, track: Rect, m: Mouse) void {
@@ -3163,6 +3160,7 @@ fn barDrag(app: *App, owner: hit_mod.Owner, m: Mouse) Allocator.Error!void {
     switch (owner) {
         .panel => |p| panelScrollbar(app, p, track, m),
         .tree => app.tree.scrollbarMouse(app, track, m),
+        .welcome => |l| welcome_app.scrollbarMouse(app, l, track, m),
         .pane => |id| try paneBarJump(app, id, track, m.y),
     }
 }
@@ -4892,7 +4890,7 @@ pub const right_click_of = std.EnumArray(HitTag, RightClick).init(.{
     .dock = .{ .delegated = "dock.mouse" },
     .launcher_dock = .{ .delegated = "launcher_dock.mouse" },
     .rail = .{ .delegated = "activity_bar.mouse" },
-    .welcome = .here,
+    .welcome = .{ .delegated = "welcome_app.mouse" },
     .git_palette = .{ .delegated = "git_palette.partMouse" },
     .http = .{ .delegated = "http_panel.partMouse" },
     .font_update = .{ .none = "one-verb" },

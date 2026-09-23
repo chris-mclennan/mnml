@@ -229,7 +229,10 @@ pub fn describe(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!
         .overlay_item => .{ .title = "Overlay item", .detail = "click chooses it" },
         .rail => |part| try activity_bar.describeIn(app, arena, part),
         .welcome => |row| switch (row.kind) {
+            .workspace => .{ .title = "Recent workspace", .detail = "click shows it in the tree" },
             .recent => .{ .title = "Recent file", .detail = "click opens it" },
+            .session => .{ .title = "Session", .detail = "click resumes it" },
+            .new_session => .{ .title = "New Claude Code session", .detail = "click starts one here" },
             .shortcut => .{ .title = "Shortcut", .detail = "click runs it" },
         },
     };

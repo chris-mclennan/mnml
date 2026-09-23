@@ -87,6 +87,9 @@ pub const Owner = union(enum) {
     panel: PanelId,
     /// The file tree's list (`ui/tree_view.zig`).
     tree,
+    /// // changed (welcome): one of the start surface's lists
+    /// (`ui/welcome.zig`).
+    welcome: WelcomeList,
 };
 
 pub const Axis = enum { v, h };
@@ -103,9 +106,29 @@ pub const TabRef = struct { leaf: u32, idx: u16 };
 /// `.gutter` and `.fold_arrow` so one arm captures both.
 pub const GutterRef = struct { pane: PaneId, line: u32 };
 
-/// A row of the welcome pane (`ui/welcome.zig`): the `idx`-th recent
-/// file (newest first) or the `idx`-th shortcut shown.
-pub const WelcomeRow = struct { kind: enum { recent, shortcut }, idx: u16 };
+/// The start surface's lists (`ui/welcome.zig`), in Tab order.
+pub const WelcomeList = enum { workspaces, recent, sessions, shortcuts };
+
+/// A row of the welcome pane (`ui/welcome.zig`): the `idx`-th entry of
+/// a list — a workspace, a recent file (newest first), a session that
+/// can be resumed, a shortcut — or the Sessions list's `+ New Claude
+/// Code session here` row (`new_session`, `idx` 0).
+pub const WelcomeRow = struct {
+    kind: Kind,
+    idx: u16,
+
+    pub const Kind = enum { workspace, recent, session, new_session, shortcut };
+
+    /// The list a row belongs to.
+    pub fn list(r: WelcomeRow) WelcomeList {
+        return switch (r.kind) {
+            .workspace => .workspaces,
+            .recent => .recent,
+            .session, .new_session => .sessions,
+            .shortcut => .shortcuts,
+        };
+    }
+};
 
 pub const HitTarget = union(enum) {
     pane: PaneId,
@@ -217,6 +240,7 @@ pub const HitTarget = union(enum) {
                     .pane => |id| try w.print(":pane:{d}", .{id}),
                     .panel => |p| try w.print(":panel:{s}", .{@tagName(p)}),
                     .tree => try w.writeAll(":tree"),
+                    .welcome => |l| try w.print(":welcome:{s}", .{@tagName(l)}),
                 }
                 try w.print(":{s}", .{@tagName(v.axis)});
             },
