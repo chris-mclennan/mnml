@@ -178,7 +178,6 @@ pub const specs = [_]Spec{
     .{ .id = "ai.dashboard.export_markdown", .title = "AI dashboard: export the focused session's transcript as markdown", .group = "ai" },
     .{ .id = "ai.dashboard.kill", .title = "AI dashboard: kill the focused session (with confirm)", .group = "ai" },
     .{ .id = "ai.dashboard.resume_in_pty", .title = "AI dashboard: resume the focused session in a new mnml pty pane", .group = "ai" },
-    .{ .id = "ai.canary", .title = "AI: open the ANTHROPIC_API_KEY canary log (per-callsite hit trail)", .group = "ai" },
     .{ .id = "ai.dashboard", .title = "AI: open the sessions table (was the Claude Agents dashboard)", .group = "ai" },
     .{ .id = "lsp.inlay_hints_toggle", .title = "LSP: toggle inlay hints (type / parameter chips)", .group = "lsp" },
     .{ .id = "lsp.fold_all", .title = "LSP: fold all (server-suggested ranges; the editor's own blocks when the server has none)", .group = "lsp" },
@@ -591,10 +590,6 @@ pub const specs = [_]Spec{
     .{ .id = "cloud_agents.new_run", .title = "Cloud agents: fire a new ECS run for a Jira ticket", .group = "view" },
     .{ .id = "agents.new_from_pr", .title = "Agents: + New session from a PR (Claude Agent SDK · multi-select + action)", .group = "view" },
     .{ .id = "cloud_agents.new_run_wizard", .title = "Cloud agents: + New cloud run (Managed Agents · ECS)", .group = "view" },
-    .{ .id = "cloud_agents.refresh_run_detail", .title = "Cloud agents: refresh the active run-detail pane (logs + artifacts)", .group = "view" },
-    .{ .id = "cloud_agents.focus_quick_input", .title = "Cloud agents: focus the quick-fire prompt input", .group = "view" },
-    .{ .id = "cloud_agents.spawn_worker", .title = "Cloud agents: spawn ant beta:worker poll for a self-hosted sandbox", .group = "view" },
-    .{ .id = "cloud_agents.webhook_docs", .title = "Cloud agents: open webhook-handler docs (alternative to ant poll)", .group = "view" },
     .{ .id = "view.git_commit_focus", .title = "Activity: focus the Git section's commit textarea", .group = "view" },
     .{ .id = "git.blame_toggle", .title = "Git: toggle blame gutter", .group = "git", .keys = .{ .standard = &.{"ctrl+k b"} } },
     .{ .id = "git.toggle_line_blame", .title = "Git: toggle the current line's blame", .group = "git" },
@@ -1283,7 +1278,7 @@ pub const specs = [_]Spec{
     .{ .id = "view.keep_tab", .title = "Keep this tab (stop the next glance taking the preview over)", .group = "view", .keys = .{ .vim = &.{"space b k"}, .standard = &.{"ctrl+k enter"} } },
 };
 
-test "1139 specs, unique ids" {
+test "1134 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1320,25 +1315,43 @@ test "1139 specs, unique ids" {
     // + the three `view.rail_*` membership commands (railmove)
     // + the four `view.dock_item_move_*` reorder commands (dock-polish)
     // + `view.focus_prev_split`, the split walk backwards (splitcycle)
-    try std.testing.expectEqual(@as(usize, 1139), specs.len);
+    try std.testing.expectEqual(@as(usize, 1134), specs.len);
     // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
-    try std.testing.expectEqual(@as(usize, 1139), specs.len);
+    try std.testing.expectEqual(@as(usize, 1134), specs.len);
     // + `jobs.show`, the background-jobs list (jobschip)
-    try std.testing.expectEqual(@as(usize, 1139), specs.len);
+    try std.testing.expectEqual(@as(usize, 1134), specs.len);
     // + `editor.toggle_indent_guides` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1139), specs.len);
+    try std.testing.expectEqual(@as(usize, 1134), specs.len);
     // + `editor.toggle_indent_guides`, `git.toggle_line_blame` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1139), specs.len);
+    try std.testing.expectEqual(@as(usize, 1134), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis (needsyou)
-    try std.testing.expectEqual(@as(usize, 1139), specs.len);
+    try std.testing.expectEqual(@as(usize, 1134), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis, and
     //   `sessions.next_waiting` / `prev_waiting`, the jumps (needsyou)
-    try std.testing.expectEqual(@as(usize, 1139), specs.len);
+    try std.testing.expectEqual(@as(usize, 1134), specs.len);
     // + `term.search` / `term.search_next` / `term.search_prev` (scrollsearch)
-    try std.testing.expectEqual(@as(usize, 1139), specs.len);
+    try std.testing.expectEqual(@as(usize, 1134), specs.len);
     // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
     // + `find.word_forward_partial` / `find.word_backward_partial`, vim's `g*` / `g#` (vimfix)
     // + `ai.claude_add_account` / `ai.claude_remove_account` (usagemeters)
-    try std.testing.expectEqual(@as(usize, 1139), specs.len);
+    try std.testing.expectEqual(@as(usize, 1134), specs.len);
+    // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
+    try std.testing.expectEqual(@as(usize, 1134), specs.len);
+    // + `jobs.show`, the background-jobs list (jobschip)
+    try std.testing.expectEqual(@as(usize, 1134), specs.len);
+    // + `editor.toggle_indent_guides` (editorpolish)
+    try std.testing.expectEqual(@as(usize, 1134), specs.len);
+    // + `editor.toggle_indent_guides`, `git.toggle_line_blame` (editorpolish)
+    try std.testing.expectEqual(@as(usize, 1134), specs.len);
+    // + `sessions.sort_waiting`, the Waiting axis (needsyou)
+    try std.testing.expectEqual(@as(usize, 1134), specs.len);
+    // + `sessions.sort_waiting`, the Waiting axis, and
+    //   `sessions.next_waiting` / `prev_waiting`, the jumps (needsyou)
+    try std.testing.expectEqual(@as(usize, 1134), specs.len);
+    // + `term.search` / `term.search_next` / `term.search_prev` (scrollsearch)
+    try std.testing.expectEqual(@as(usize, 1134), specs.len);
+    // − the five ids that only ever said "not in this build": the four
+    // `cloud_agents.*` stubs and `ai.canary` (aifix)
+    try std.testing.expectEqual(@as(usize, 1134), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

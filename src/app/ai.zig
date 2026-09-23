@@ -91,7 +91,6 @@ pub const table = .{
     .@"ai.suggestion_stats" = &suggestionStats,
     .@"ai.show_config" = &showConfig,
     .@"ai.token_usage" = &tokenUsage,
-    .@"ai.canary" = &canary,
     .@"ai.write_pr_description" = &writePrDescription,
     .@"ai.write_branch_name" = &writeBranchName,
     .@"ai.recompose_branch" = &recomposeBranch,
@@ -112,10 +111,6 @@ pub const table = .{
     .@"ai.chip_show_all_off" = &chipAllOff,
     .@"ai.chip_show_all_compact" = &chipAllCompact,
     .@"ai.chip_show_all_ticker" = &chipAllTicker,
-    .@"cloud_agents.refresh_run_detail" = &cloudNotInBuild,
-    .@"cloud_agents.focus_quick_input" = &cloudNotInBuild,
-    .@"cloud_agents.spawn_worker" = &cloudNotInBuild,
-    .@"cloud_agents.webhook_docs" = &cloudNotInBuild,
 };
 
 /// How many API turns an agentic job may take before it is stopped.
@@ -923,11 +918,16 @@ fn jobWorker(events: *event.EventQueue, io: Io, gpa: Allocator, j: *Job, mode: J
                 postFailed(events, io, gpa, j.id, spawnFailure(arena.allocator(), binary, out.text));
                 return;
             }
+            // Text to paint, not a terminal stream: escapes dropped whole.
+            const clean = blk: {
+                defer gpa.free(out.text);
+                break :blk cli.cleanOutput(gpa, out.text) catch return;
+            };
             if (!out.ok) {
-                events.post(io, .{ .ai = .{ .job = j.id, .msg = .{ .failed = out.text } } });
+                events.post(io, .{ .ai = .{ .job = j.id, .msg = .{ .failed = clean } } });
                 return;
             }
-            events.post(io, .{ .ai = .{ .job = j.id, .msg = .{ .text = out.text } } });
+            events.post(io, .{ .ai = .{ .job = j.id, .msg = .{ .text = clean } } });
             events.post(io, .{ .ai = .{ .job = j.id, .msg = .done } });
         },
         .claude_api => try agentLoop(events, io, gpa, j, prompt, model, key, cwd, system, use_tools, write_tools, max_tokens),
@@ -1724,8 +1724,8 @@ fn tokenUsage(app: *App) CommandError!void {
     return spend.refreshMeter(app);
 }
 
-fn canary(app: *App) CommandError!void {
-    return app.diag.fail(app.frame.allocator(), "the API-key canary log is not in this build", .{});
+fn notInBuildCmd(app: *App) CommandError!void {
+    return app.diag.fail(app.frame.allocator(), "not in this build yet", .{});
 }
 
 fn showLastResponse(app: *App) CommandError!void {
@@ -1876,10 +1876,6 @@ fn chipAllTicker(app: *App) CommandError!void {
 }
 
 // ─── cloud agents ───────────────────────────────────────────────────────
-
-fn cloudNotInBuild(app: *App) CommandError!void {
-    return app.diag.fail(app.frame.allocator(), "cloud agents (AWS ECS / Managed Agents) are not in this build yet", .{});
-}
 
 // ─── tests ──────────────────────────────────────────────────────────────
 

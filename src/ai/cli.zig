@@ -361,6 +361,73 @@ pub fn runJob(
     return .{ .ok = false, .text = try gpa.dupe(u8, msg[0..@min(msg.len, 400)]) };
 }
 
+/// What a CLI printed, made fit to paint as text: terminal escapes
+/// dropped WHOLE — a CSI (`ESC [ … final`), an OSC (`ESC ] … BEL` or
+/// `ESC \`), a charset designation (`ESC ( B`), any other `ESC x` —
+/// along with the other C0 controls (tab and newline stay; CR is
+/// dropped) and bytes that are not UTF-8. Dropping only the ESC left `[31m` painted in the answer.
+/// Owned by the caller.
+pub fn cleanOutput(gpa: Allocator, s: []const u8) Allocator.Error![]u8 {
+    var out: std.ArrayList(u8) = try .initCapacity(gpa, s.len);
+    errdefer out.deinit(gpa);
+    var i: usize = 0;
+    while (i < s.len) {
+        const c = s[i];
+        if (c == 0x1b) {
+            i += 1;
+            if (i >= s.len) break;
+            switch (s[i]) {
+                '[' => {
+                    i += 1;
+                    while (i < s.len and !(s[i] >= 0x40 and s[i] <= 0x7e)) i += 1;
+                    i += 1;
+                },
+                ']', 'P', '_', '^' => {
+                    i += 1;
+                    while (i < s.len) : (i += 1) {
+                        if (s[i] == 0x07) {
+                            i += 1;
+                            break;
+                        }
+                        if (s[i] == 0x1b and i + 1 < s.len and s[i + 1] == '\\') {
+                            i += 2;
+                            break;
+                        }
+                    }
+                },
+                // A charset designation (`ESC ( B`) carries one byte more.
+                '(', ')', '*', '+', '-', '.', '/', '#', '%' => i += 2,
+                else => i += 1,
+            }
+            continue;
+        }
+        if (c < 0x20 and c != '\n' and c != '\t') {
+            i += 1;
+            continue;
+        }
+        if (c == 0x7f) {
+            i += 1;
+            continue;
+        }
+        if (c < 0x80) {
+            out.appendAssumeCapacity(c);
+            i += 1;
+            continue;
+        }
+        const n = std.unicode.utf8ByteSequenceLength(c) catch {
+            i += 1;
+            continue;
+        };
+        if (i + n > s.len or !std.unicode.utf8ValidateSlice(s[i .. i + n])) {
+            i += 1;
+            continue;
+        }
+        out.appendSliceAssumeCapacity(s[i .. i + n]);
+        i += n;
+    }
+    return out.toOwnedSlice(gpa);
+}
+
 /// Write `text` to a child's stdin and close it. A child that exits (or
 /// is killed) before reading it all ends the write with a broken pipe,
 /// which is not this function's to report.
@@ -615,4 +682,11 @@ test "the stdin argv builders carry no prompt" {
     try t.expectEqualSlices([]const u8, &.{ "claude", "-p", "--output-format", "text", "--session-id", "s", "--model", "m" }, try claudeStdinArgv(a, "s", "m"));
     try t.expectEqualSlices([]const u8, &.{ "claude", "-p", "--output-format", "text" }, try claudeStdinArgv(a, null, null));
     try t.expectEqualSlices([]const u8, &.{ "codex", "exec", "-" }, try codexStdinArgv(a));
+}
+
+test "cleanOutput: escapes go whole, controls and non-UTF-8 bytes go, text and newlines stay" {
+    const raw = "\x1b[31m\x01\x02\xff\xfe garbage \x1b]0;title\x07\nnext \x1b[1;32mgreen\x1b[0m\r\n\tünï \x1b]8;;http://x\x1b\\link\x1b(B";
+    const got = try cleanOutput(t.allocator, raw);
+    defer t.allocator.free(got);
+    try t.expectEqualStrings(" garbage \nnext green\n\tünï link", got);
 }

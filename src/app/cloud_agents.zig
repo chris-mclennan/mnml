@@ -412,7 +412,10 @@ pub fn acceptRun(app: *App, ticket_in: []const u8, model_in: ?[]const u8) Alloca
         app.toast("cloud: run-task: {s}", .{@errorName(err)});
         return;
     };
-    app.toast("cloud run started for {s}", .{ticket});
+    // The pane is `aws ecs run-task` starting, not the run: whether a
+    // task started is what its output says (an `aws` that exits 1 leaves
+    // `[exited 1]` there). Claiming "started" here was a lie on failure.
+    app.toast("cloud run for {s}: `aws ecs run-task` is running below — its output says whether the task started", .{ticket});
     sessions.refresh(app) catch {};
 }
 
@@ -555,4 +558,27 @@ test "the wizards refuse without the config; the New menu says so" {
     // Without a cluster the run does not fire; it says what is missing.
     try acceptRun(&app, "TE-5", null);
     try t.expect(std.mem.indexOf(u8, app.lastToast().?, "cluster") != null);
+}
+
+test "a cloud run's toast never claims the run started — the pane's output says whether it did" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    // An `aws` that fails: the run never starts.
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "aws", .data = "#!/bin/sh\nexit 1\n" });
+    try tmp.dir.setFilePermissions(t.io, "aws", .fromMode(0o755), .{});
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = dir, .cols = 100, .rows = 30 });
+    defer app.deinit();
+    try app.env.put("PATH", dir);
+    app.cfg.cloud_agents.runs_table = "runs";
+    app.cfg.cloud_agents.region = "r";
+    app.cfg.cloud_agents.cluster = "c";
+    app.cfg.cloud_agents.task_definition = "td";
+    try acceptRun(&app, "DEMO-1", null);
+    const said = app.lastToast().?;
+    try t.expect(std.mem.indexOf(u8, said, "started for") == null);
+    try t.expect(std.mem.indexOf(u8, said, "DEMO-1") != null);
+    try t.expect(std.mem.indexOf(u8, said, "its output says whether") != null);
 }

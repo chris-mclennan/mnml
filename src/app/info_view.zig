@@ -208,7 +208,8 @@ fn activePaneCopy(app: *App, arena: Allocator) Allocator.Error!?Copy {
             const row = z.current() orelse break :blk .{ .title = p.title(), .body = "ZON tree — Enter edits a field, ←→ adjust it, / filters by path, e opens the source." };
             break :blk .{ .title = try std.fmt.allocPrint(arena, "{s}", .{row.path}), .body = try z.docLine(arena, row) };
         },
-        .ai => .{ .title = p.title(), .body = "Claude / Codex session — type at the bottom prompt." },
+        // A one-shot answer, not a session: it has no prompt of its own.
+        .ai => .{ .title = p.title(), .body = "One-shot AI answer — r re-ask · c cancel · a apply the code block (a reviewed diff) · p continue in Claude Code · y copy · q close." },
         // Rust's `describe_active_pane` says nothing for the graph: the
         // box keeps the sidebar's own words in git mode.
         .git_graph => null,
@@ -674,4 +675,24 @@ test "a pty pane's copy: the title names the terminal and the shell, and the cho
     try t.expect(std.mem.indexOf(u8, c.body, "[Ctrl+W] Close") != null);
     try t.expect(std.mem.indexOf(u8, c.body, "Restart") != null);
     try t.expect(std.mem.indexOf(u8, c.body, "Ctrl+Alt+") == null);
+}
+
+test "an AI answer pane's copy names its own keys — it has no prompt to type at" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    const id = try app.panes.add(.{ .ai = .{
+        .gpa = t.allocator,
+        .title = try t.allocator.dupe(u8, "ai: explain"),
+        .prompt = try t.allocator.dupe(u8, "p"),
+        .job = 0,
+        .kind = .action,
+        .session_id = @splat('0'),
+    } });
+    app.showPane(id);
+    app.focus = .{ .pane = id };
+    const c = try pick(&app, app.frame.allocator());
+    try t.expectEqualStrings("ai: explain", c.title);
+    try t.expect(std.mem.indexOf(u8, c.body, "bottom prompt") == null);
+    for ([_][]const u8{ "r re-ask", "c cancel", "a apply", "p continue", "y copy", "q close" }) |k|
+        try t.expect(std.mem.indexOf(u8, c.body, k) != null);
 }
