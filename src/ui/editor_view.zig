@@ -26,6 +26,7 @@ const std = @import("std");
 const vaxis = @import("vaxis");
 const utf8 = @import("../core/utf8.zig");
 const Rect = @import("rect.zig");
+const Canvas = @import("canvas.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const ids = @import("../core/ids.zig");
@@ -533,28 +534,124 @@ pub const CellInfo = struct {
 };
 
 pub fn layoutLine(ui: Ui, line: []const u8, tab_width: u8) Allocator.Error![]CellInfo {
+    return (try layoutWindow(ui, line, tab_width, 0, std.math.maxInt(u32))).cells;
+}
+
+/// Lines longer than this lay out only the columns on screen when they
+/// do not wrap (`layoutWindow`); shorter ones take the whole line. A
+/// minified bundle is one line of megabytes, and building its cells
+/// twice a frame made every key cost 50-200 ms.
+pub var window_min_bytes: usize = 4096;
+
+/// Cells built by the layout since the process started — what a test
+/// reads to show a frame over a long line built a screenful, not a line.
+pub var cells_laid_out: usize = 0;
+
+/// A stretch of a line's cells: `cells[0]` starts at display column
+/// `x0`, byte `start`; the stretch ends before byte `end`. `vt_from` is
+/// the first byte whose virtual text can still show: text anchored at or
+/// before a cell scrolled off to the left is dropped with it.
+pub const Window = struct {
+    cells: []CellInfo,
+    x0: u32,
+    start: u32,
+    end: u32,
+    vt_from: u32 = 0,
+};
+
+/// Width of one grapheme at display column `x` as the layout counts it:
+/// a tab runs to the next stop, an invalid byte is one U+FFFD cell,
+/// anything else is the canvas' measure capped at two (0 = no cell).
+fn unitWidth(ui: Ui, g: []const u8, x: u32, tw: u32) u32 {
+    return unitWidthM(g, x, tw, ui.canvas.widthMethod());
+}
+
+fn unitWidthM(g: []const u8, x: u32, tw: u32, method: vaxis.gwidth.Method) u32 {
+    if (g.len == 1 and g[0] == '\t') return tw - (x % tw);
+    return @min(Canvas.measureWidth(utf8.displayBytes(g), method), 2);
+}
+
+/// The cells of `line` that cover display columns `[from_col, from_col +
+/// width)`, plus the cell after them when the line goes on (so a row
+/// painter always stops on a cell that does not fit, as it does on the
+/// whole line). The columns before the window are walked but not built.
+pub fn layoutWindow(ui: Ui, line: []const u8, tab_width: u8, from_col: u32, width: u32) Allocator.Error!Window {
     var out: std.ArrayListUnmanaged(CellInfo) = .empty;
+    const tw: u32 = if (tab_width == 0) 1 else tab_width;
+    const stop: u32 = from_col +| width +| 2;
+    var x: u32 = 0;
+    var x0: ?u32 = null;
+    var start: u32 = @intCast(line.len);
+    var end: u32 = @intCast(line.len);
+    var vt_from: u32 = 0;
+    var it = utf8.graphemeIterator(line);
+    while (it.next()) |g| {
+        if (x >= stop) {
+            end = @intCast(g.start);
+            break;
+        }
+        // An invalid byte is its own one-cell unit, painted as U+FFFD.
+        const bytes = utf8.displayBytes(g.bytes(line));
+        const off: u32 = @intCast(g.start);
+        const w = unitWidth(ui, g.bytes(line), x, tw);
+        if (w == 0) continue;
+        if (x0 == null) {
+            if (x + w <= from_col) {
+                x += w;
+                vt_from = off + 1;
+                continue;
+            }
+            x0 = x;
+            start = off;
+        }
+        if (bytes.len == 1 and bytes[0] == '\t') {
+            for (0..w) |_| try out.append(ui.arena, .{ .bytes = " ", .off = off, .w = 1, .ws = true, .tab = true });
+        } else {
+            try out.append(ui.arena, .{ .bytes = bytes, .off = off, .w = @intCast(w), .ws = bytes.len == 1 and bytes[0] == ' ' });
+        }
+        x += w;
+    }
+    cells_laid_out += out.items.len;
+    return .{ .cells = out.items, .x0 = x0 orelse x, .start = start, .end = end, .vt_from = vt_from };
+}
+
+/// Display column of byte `off` in `line` — `cellX(layoutLine(line), off)`
+/// without building a cell.
+pub fn colOfOff(ui: Ui, line: []const u8, tab_width: u8, off: u32) u32 {
+    return colOfOffM(line, tab_width, off, ui.canvas.widthMethod());
+}
+
+pub fn colOfOffM(line: []const u8, tab_width: u8, off: u32, method: vaxis.gwidth.Method) u32 {
     const tw: u32 = if (tab_width == 0) 1 else tab_width;
     var x: u32 = 0;
     var it = utf8.graphemeIterator(line);
     while (it.next()) |g| {
-        // An invalid byte is its own one-cell unit, painted as U+FFFD.
-        const bytes = utf8.displayBytes(g.bytes(line));
-        const off: u32 = @intCast(g.start);
-        if (bytes.len == 1 and bytes[0] == '\t') {
-            const n = tw - (x % tw);
-            for (0..n) |_| {
-                try out.append(ui.arena, .{ .bytes = " ", .off = off, .w = 1, .ws = true, .tab = true });
-                x += 1;
-            }
-            continue;
-        }
-        const w = ui.canvas.cellWidth(bytes);
-        if (w == 0) continue;
-        try out.append(ui.arena, .{ .bytes = bytes, .off = off, .w = @intCast(@min(w, 2)), .ws = bytes.len == 1 and bytes[0] == ' ' });
+        const w = unitWidthM(g.bytes(line), x, tw, method);
+        // A zero-width unit has no cell: the answer is the next cell's.
+        if (g.start >= off and w != 0) return x;
         x += w;
     }
-    return out.items;
+    return x;
+}
+
+/// Byte offset in `line` of the first unit that reaches past display
+/// column `col` (`line.len` when none does).
+pub fn byteAtColM(line: []const u8, tab_width: u8, col: u32, method: vaxis.gwidth.Method) usize {
+    const tw: u32 = if (tab_width == 0) 1 else tab_width;
+    var x: u32 = 0;
+    var it = utf8.graphemeIterator(line);
+    while (it.next()) |g| {
+        x += unitWidthM(g.bytes(line), x, tw, method);
+        if (x > col) return g.start;
+    }
+    return line.len;
+}
+
+/// A line the view paints in a column window rather than whole: long,
+/// on one row, and not concealing markdown (hidden marks would shift the
+/// columns before the window).
+pub fn windowed(doc: Doc, line_len: usize, one_row: bool) bool {
+    return one_row and line_len > window_min_bytes and !doc.render_markdown;
 }
 
 pub const RowSpan = struct { start: u32, end: u32 };
@@ -794,8 +891,13 @@ fn keepCursorVisible(ui: Ui, doc: Doc, lines: Lines, view: *ViewState, text_w: u
     }
 
     const cur_line = visibleOwner(doc.folds, lines.lineOf(doc.cursor));
-    const cur_cells = try layoutLine(ui, lines.slice(doc.text, cur_line), doc.tab_width);
+    const cur_text = lines.slice(doc.text, cur_line);
     const cur_off: u32 = if (lines.lineOf(doc.cursor) == cur_line) @intCast(doc.cursor - lines.start(cur_line)) else 0;
+    const cur_wraps = doc.wrap and foldStartingAt(doc.folds, cur_line) == null;
+    // Only a wrapped line needs its cells here (its rows); otherwise the
+    // cursor's column is all `followCursorCol` asks, and a long line
+    // should not be built for it.
+    const cur_cells: []const CellInfo = if (cur_wraps) try layoutLine(ui, cur_text, doc.tab_width) else &.{};
 
     if (cur_line < view.scroll_line) {
         view.scroll_line = cur_line;
@@ -812,7 +914,7 @@ fn keepCursorVisible(ui: Ui, doc: Doc, lines: Lines, view: *ViewState, text_w: u
             sum += h;
         }
         var subrow: u32 = virtualLineCount(doc, cur_line, false);
-        if (doc.wrap and foldStartingAt(doc.folds, cur_line) == null) {
+        if (cur_wraps) {
             const rows = try wrapRows(ui.arena, cur_cells, text_w);
             subrow += rowOfCell(rows, cellIndex(cur_cells, cur_off));
         }
@@ -826,7 +928,7 @@ fn keepCursorVisible(ui: Ui, doc: Doc, lines: Lines, view: *ViewState, text_w: u
     }
 
     try tailClamp(ui, doc, lines, view, text_w, text_h);
-    try followCursorCol(ui, doc, view, cur_cells, cur_off, text_w);
+    followCursorCol(doc, view, if (cur_wraps) 0 else colOfOff(ui, cur_text, doc.tab_width, cur_off), text_w);
 }
 
 /// Never leave rows blank below the last line when an earlier scroll
@@ -849,12 +951,10 @@ fn tailClamp(ui: Ui, doc: Doc, lines: Lines, view: *ViewState, text_w: u16, text
     }
 }
 
-fn followCursorCol(ui: Ui, doc: Doc, view: *ViewState, cur_cells: []const CellInfo, cur_off: u32, text_w: u16) Allocator.Error!void {
-    _ = ui;
+fn followCursorCol(doc: Doc, view: *ViewState, cx: u32, text_w: u16) void {
     if (doc.wrap) {
         view.scroll_col = 0;
     } else if (text_w > 0) {
-        const cx = cellX(cur_cells, cur_off);
         if (cx < view.scroll_col) {
             view.scroll_col = cx;
         } else if (cx >= view.scroll_col + text_w) {
@@ -869,8 +969,8 @@ fn selectionOf(ui: Ui, doc: Doc, lines: Lines) Allocator.Error!?Selection {
     if (doc.visual_block) {
         const la = lines.lineOf(anchor);
         const lc = lines.lineOf(doc.cursor);
-        const ca = cellX(try layoutLine(ui, lines.slice(doc.text, la), doc.tab_width), @intCast(anchor - lines.start(la)));
-        const cc = cellX(try layoutLine(ui, lines.slice(doc.text, lc), doc.tab_width), @intCast(doc.cursor - lines.start(lc)));
+        const ca = colOfOff(ui, lines.slice(doc.text, la), doc.tab_width, @intCast(anchor - lines.start(la)));
+        const cc = colOfOff(ui, lines.slice(doc.text, lc), doc.tab_width, @intCast(doc.cursor - lines.start(lc)));
         sel.block = .{ .l0 = @min(la, lc), .l1 = @max(la, lc), .c0 = @min(ca, cc), .c1 = @max(ca, cc), .eol = doc.block_eol };
     }
     return sel;
@@ -928,7 +1028,12 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
         const line_start = lines.start(line);
         const line_end = lines.end(line);
         const line_text = doc.text[line_start..line_end];
-        const cells = try layoutLine(ui, line_text, doc.tab_width);
+        // A long line on one row builds only the columns on screen.
+        const win: Window = if (windowed(doc, line_text.len, !doc.wrap or fold != null))
+            try layoutWindow(ui, line_text, doc.tab_width, view.scroll_col, text_w)
+        else
+            .{ .cells = try layoutLine(ui, line_text, doc.tab_width), .x0 = 0, .start = 0, .end = @intCast(line_text.len) };
+        const cells = win.cells;
         const rows: []const RowSpan = if (doc.wrap and fold == null)
             try wrapRows(ui.arena, cells, text_w)
         else
@@ -946,13 +1051,19 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
         var var_spans = RangeCursor(VarSpan).init(doc.var_spans, line_start);
         var matches = RangeCursor(Range).init(doc.matches, line_start);
         var underlines = RangeCursor(Underline).init(doc.underlines, line_start);
-        var vti = firstVirtualAt(doc.virtual_text, line_start);
+        // Virtual text anchored before the window's first cell sat on a
+        // cell scrolled off to the left, which drops it.
+        var vti = firstVirtualAt(doc.virtual_text, line_start + win.vt_from);
 
         // ── virtual lines: the rows above this line (a code lens) ──
         y = drawVirtualRows(ui, pane, area, doc, line, false, text_x, text_w, y);
         var words = RangeCursor(Range).init(doc.word_matches, line_start);
         // ── ui toggles ──
-        const toggles = try lineToggles(ui, doc, line_text, cells, is_cursor_line, &rainbow_depth);
+        if (doc.bracket_rainbow) rainbow_depth = bracketDepthOver(line_text, 0, win.start, rainbow_depth);
+        var toggles = try lineToggles(ui, doc, line_text, cells, is_cursor_line, &rainbow_depth);
+        if (doc.bracket_rainbow) rainbow_depth = bracketDepthOver(line_text, win.end, line_text.len, rainbow_depth);
+        // Trailing whitespace is the line's, not the window's.
+        if (win.end < line_text.len) toggles.trail_start = cells.len;
         // ── indent guides ── the indent this line is drawn with
         const guide_indent: u32 = if (guides) |g| g.indentOf(line) else 0;
 
@@ -1011,9 +1122,9 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
             // Cells. `abs_x` is the display column within the line (what
             // a block selection is measured in); `rel_x` the column within
             // this row, which is what lands on screen.
-            var abs_x: u32 = 0;
+            var abs_x: u32 = win.x0;
             for (cells[0..row.start]) |p| abs_x += p.w;
-            var rel_x: u32 = 0;
+            var rel_x: u32 = win.x0;
             var painted_x: u16 = text_x;
             const skip: u32 = if (ri == 0) view.scroll_col else 0;
             // Columns the row's virtual text has taken so far (lsp-more).
@@ -2483,4 +2594,98 @@ test "an unfocused pane marks where its caret is; a focused one leaves the cell 
     // Its neighbours are untouched: one cell, not a band.
     try testing.expect(Theme.Color.eql(plain.style.bg, f.screen.readCell(0, 0).?.style.bg));
     try testing.expect(Theme.Color.eql(plain.style.bg, f.screen.readCell(2, 0).?.style.bg));
+}
+
+test "a frame over a long unwrapped line builds a screenful of cells, not the line" {
+    // One 200 KB line with the cursor at its end: the view used to build
+    // every cell of it twice a frame (O(line) per key, ~100 bytes of RAM
+    // per byte of line).
+    var f = try Fixture.init(40, 2);
+    defer f.deinit();
+    const n = 200_000;
+    const text = try testing.allocator.alloc(u8, n + 4);
+    defer testing.allocator.free(text);
+    for (text[0..n], 0..) |*b, i| b.* = if (i % 97 == 0) '\t' else 'a' + @as(u8, @intCast(i % 26));
+    @memcpy(text[n..], "END\n");
+    var view: ViewState = .{};
+    var d = mkDoc(text);
+    d.line_numbers = false;
+    d.cursor = n + 3;
+    const before = cells_laid_out;
+    const cur = draw(f.ui(), 0, f.full(), &view, d);
+    try testing.expect(cells_laid_out - before < 200);
+    var buf: [256]u8 = undefined;
+    try testing.expect(std.mem.endsWith(u8, f.row(0, &buf), "END"));
+    try testing.expectEqual(@as(u16, 39), cur.?.x);
+    // Back at the start: the window follows.
+    d.cursor = 0;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try testing.expectEqual(@as(u32, 0), view.scroll_col);
+    try testing.expect(std.mem.startsWith(u8, f.row(0, &buf), "    bcd")); // byte 0 is a tab
+}
+
+fn expectSameScreen(a: *Fixture, b: *Fixture) !void {
+    var y: u16 = 0;
+    while (y < a.screen.height) : (y += 1) {
+        var x: u16 = 0;
+        while (x < a.screen.width) : (x += 1) {
+            const ca = a.screen.readCell(x, y).?;
+            const cb = b.screen.readCell(x, y).?;
+            try testing.expectEqualStrings(ca.char.grapheme, cb.char.grapheme);
+            try testing.expect(std.meta.eql(ca.style, cb.style));
+            const ha = a.hits.at(x, y);
+            const hb = b.hits.at(x, y);
+            try testing.expectEqual(ha == null, hb == null);
+            if (ha) |h| try testing.expect(std.meta.eql(h, hb.?));
+        }
+    }
+}
+
+test "the windowed paint of a long line matches the whole-line paint" {
+    // Tabs, wide glyphs, combining marks, invalid bytes, virtual text and
+    // rainbow brackets, at scroll positions across the line.
+    var line: std.ArrayList(u8) = .empty;
+    defer line.deinit(testing.allocator);
+    var prng = std.Random.DefaultPrng.init(0x11ae_0004);
+    const r = prng.random();
+    const pieces = [_][]const u8{ "a", "bc", " ", "\t", "漢", "e\u{301}", "\x91", "(", ")", "[x]", "\u{1F44D}", "  " };
+    while (line.items.len < 9000) try line.appendSlice(testing.allocator, pieces[r.uintLessThan(usize, pieces.len)]);
+    try line.appendSlice(testing.allocator, "\nnext (line) {x}\n");
+    const text = line.items;
+    const vts = [_]VirtualText{
+        .{ .byte = 700, .text = "<vt>", .style = .{} },
+        .{ .byte = 5000, .text = "<vt2>", .style = .{} },
+    };
+    const saved = window_min_bytes;
+    defer window_min_bytes = saved;
+    for ([_]usize{ 0, 1, 37, 699, 700, 701, 2500, 4999, 5003, 8000, 8999 }) |c0| {
+        var cur = @min(c0, 8999);
+        while (!utf8.isBoundary(text, cur)) cur -= 1;
+        var fa = try Fixture.init(50, 3);
+        defer fa.deinit();
+        var fb = try Fixture.init(50, 3);
+        defer fb.deinit();
+        var va: ViewState = .{};
+        var vb: ViewState = .{};
+        var d = mkDoc(text);
+        d.cursor = cur;
+        d.virtual_text = &vts;
+        d.bracket_rainbow = true;
+        d.highlight_trailing_ws = true;
+        window_min_bytes = 4096;
+        const ka = draw(fa.ui(), 0, fa.full(), &va, d);
+        window_min_bytes = std.math.maxInt(usize);
+        const kb = draw(fb.ui(), 0, fb.full(), &vb, d);
+        try testing.expectEqual(vb.scroll_col, va.scroll_col);
+        try testing.expect(std.meta.eql(ka, kb));
+        try expectSameScreen(&fa, &fb);
+    }
+}
+
+test "colOfOff answers what the laid-out cells say" {
+    var f = try Fixture.init(10, 1);
+    defer f.deinit();
+    const s = "a\tb漢\x91e\u{301}\t\u{200B}z";
+    const cells = try layoutLine(f.ui(), s, 4);
+    for (0..s.len + 1) |off| try testing.expectEqual(cellX(cells, @intCast(off)), colOfOff(f.ui(), s, 4, @intCast(off)));
 }

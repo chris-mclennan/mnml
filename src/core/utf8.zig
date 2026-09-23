@@ -103,6 +103,14 @@ pub const GraphemeIterator = struct {
             }
             if (self.pos >= self.str.len) return null;
             const s = self.str;
+            // ASCII followed by ASCII is a cluster of its own (CR LF is
+            // the one pair that joins) — the common case, without vaxis.
+            const c = s[self.pos];
+            if (c < 0x80 and c != '\r' and (self.pos + 1 >= s.len or s[self.pos + 1] < 0x80)) {
+                const p = self.pos;
+                self.pos += 1;
+                return .{ .start = p, .len = 1 };
+            }
             if (seqLen(s, self.pos) == 0) {
                 const p = self.pos;
                 self.pos += 1;
@@ -200,6 +208,25 @@ test "GraphemeIterator: a cluster straddling the scan chunk stays whole" {
     }
     try testing.expectEqual(buf.len, covered);
     try testing.expectEqual(buf.len - 2, n);
+}
+
+test "GraphemeIterator matches vaxis on valid text, ASCII fast path included" {
+    const cases = [_][]const u8{
+        "plain ascii, tabs\tand CR LF\r\nhere\r",
+        "e\u{301}x\u{1F44D}\u{1F3FD}ab\u{1F1FA}\u{1F1F8}\u{200D}c\r\n",
+        "a\u{301}\u{302}bc\u{0360}d",
+        "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}!",
+    };
+    for (cases) |s| {
+        var ours = graphemeIterator(s);
+        var theirs = vaxis.unicode.graphemeIterator(s);
+        while (theirs.next()) |want| {
+            const got = ours.next().?;
+            try testing.expectEqual(want.start, got.start);
+            try testing.expectEqual(want.len, got.len);
+        }
+        try testing.expect(ours.next() == null);
+    }
 }
 
 test "GraphemeIterator + width survive any bytes (seeded fuzz)" {

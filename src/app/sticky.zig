@@ -164,7 +164,8 @@ pub fn draw(ui: Ui, pane: PaneId, e: *const EditorPane, area: Rect, lines: []con
             _ = ui.putStrRight(area.x + gutter_w - 1, y, gutter_w - 2, num, Theme.withFg(style, t.gutter.fg));
         }
         const text = ed.bytes()[ed.lineStart(line)..ed.lineEnd(line)];
-        const cells = editor_view.layoutLine(ui, text, @intCast(ed.doc.tab_width)) catch &.{};
+        // The columns the header shows, not the whole of a long line.
+        const cells = if (editor_view.layoutWindow(ui, text, @intCast(ed.doc.tab_width), 0, area.w)) |w| w.cells else |_| &.{};
         var x = area.x + gutter_w;
         for (cells) |c| {
             if (x + c.w > area.right()) break;
