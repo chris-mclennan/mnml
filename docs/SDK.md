@@ -1272,6 +1272,8 @@ sdk/mnml-sdk/src/
   pane/work.zig    a pane's slow work off its event loop
   pane/expect.zig  the assertions your own tests make about the chrome
   pane/consistency_test.zig  the toolkit painted from both panes' vocabularies, cell for cell
+  pane/columns.zig how a table gives way when narrow: shrink to floors,
+                   then drop whole by rank; the key column never clips
 sdk/clients/ratelimit_broker.py   the broker's twenty-line Python client
 sdk/examples/hello/   the small list the host's mount test spawns (`zig build sdk-example`)
 integrations/sample/  the official sample (`zig build sample-integration`, or its own build.zig)

@@ -547,8 +547,6 @@ pub const Painter = struct {
 
     const ColX = struct { col: config.Column, x: u16, w: u16 };
 
-    /// Where each column starts at this width: the fixed ones from the
-    /// config, shrunk together when they would eat the summary.
     /// Whether the active tab's rows outrun a body `h` rows tall.
     fn listOverflows(p: *Painter, h: u16) Allocator.Error!bool {
         if (h == 0) return false;
@@ -556,22 +554,35 @@ pub const Painter = struct {
         return r.rows.len > h;
     }
 
+    /// Where each column starts at this width — the toolkit's rule for
+    /// a narrow table (`sdk.pane.columns`), the one the forge pane's
+    /// table follows: the columns give up cells together down to what
+    /// still reads, then go whole (ACTIONS first, STATUS last). KEY is
+    /// never dropped and never narrower than the longest key on the
+    /// tab, so every row keeps the thing it is known by; the summary is
+    /// what gets elided.
     fn columnLayout(p: *Painter) Allocator.Error![]const ColX {
-        const set = p.a.tab().cfg.columnSet();
-        var fixed: u32 = 0;
-        for (set) |c| fixed += c.width() orelse 0;
-        const avail: u32 = p.lay.list_w -| 2;
-        // The summary keeps at least 20 cells; the fixed columns shrink
-        // together for it, the date column no further than a date.
-        const budget: u32 = avail -| 20;
-        const scale_num: u32 = if (fixed > budget and fixed > 0) budget else fixed;
+        const t = p.a.tab();
+        const set = t.cfg.columnSet();
+        var specs: [16]sdk.pane.columns.Spec = undefined;
+        var widths: [16]u16 = undefined;
+        const n = @min(set.len, specs.len);
+        // The key cell: chevron and indent (4), the key, a space and
+        // the bump star (2) — `paintTree`'s own arithmetic.
+        var longest: usize = 0;
+        for (t.issues) |iss| longest = @max(longest, sdk.pane.width(iss.key));
+        const key_floor: u16 = @intCast(@min(@as(usize, 40), @max(@as(usize, config.Column.key.minWidth()), longest + 7)));
+        for (set[0..n], specs[0..n]) |c, *sp| sp.* = switch (c) {
+            .summary => .{ .w = c.minWidth(), .rest = true },
+            .key => .{ .w = @max(c.width().?, key_floor), .min = key_floor },
+            else => .{ .w = c.width().?, .min = c.minWidth(), .drop = c.dropRank() },
+        };
+        const avail: u16 = p.lay.list_w -| 2;
+        sdk.pane.columns.fit(widths[0..n], specs[0..n], avail, 0);
         var out: std.ArrayList(ColX) = .empty;
         var x: u16 = 2;
-        for (set) |c| {
-            const w: u16 = if (c.width()) |cw| blk: {
-                const scaled: u32 = if (fixed > 0) cw * scale_num / fixed else cw;
-                break :blk @intCast(@max(if (c == .updated) @as(u32, 11) else 6, scaled));
-            } else @intCast(@max(1, avail -| (x - 2)));
+        for (set[0..n], widths[0..n]) |c, w| {
+            if (w == 0 and c != .summary) continue;
             try out.append(p.arena, .{ .col = c, .x = x, .w = w });
             x += w;
         }
@@ -2214,6 +2225,55 @@ test "the narrow pane: 80x24 keeps the chips whole by wrapping, the columns shri
     // Wheel on the list moves the cursor.
     try a.wheel(20, 10, -1);
     try testing.expect(a.tab().selected > 0);
+}
+
+test "a half-width pane keeps every key whole: the columns go before the key loses a cell" {
+    // hunt/findings-2026-09-23/integ-jira-narrow-key-truncated.md: at 60
+    // columns every key read `ENG…`; at ~43 the key cell was empty and
+    // the header ran together (`STATUSASSIGNUPDATED`).
+    const h = try app_mod.Harness.start(.{ .tabs = &app_mod.work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    for ([_]u16{ 60, 43, 34 }) |cols| {
+        a.resize(cols, 24);
+        var f = try Frame.init(testing.allocator, cols, 24);
+        defer f.deinit();
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        const ar = arena.allocator();
+        try paint(ar, &f, a, .{});
+        // Every ticket on the tab has its whole key on screen, with no
+        // ellipsis eating it.
+        for (a.tab().issues) |iss| {
+            const y = (try findRow(ar, &f, iss.key)) orelse {
+                // A folded group hides its tickets; only the unfolded
+                // ones are the point here.
+                continue;
+            };
+            const row = try rowText(ar, &f, y);
+            const at = std.mem.indexOf(u8, row, iss.key).?;
+            const after = row[at + iss.key.len ..];
+            try testing.expect(!std.mem.startsWith(u8, after, "\u{2026}"));
+        }
+        // The header's labels are words with air between them, never
+        // two run together.
+        const hy = (try findRow(ar, &f, "KEY")).?;
+        const head = try rowText(ar, &f, hy);
+        try testing.expect(std.mem.indexOf(u8, head, "STATUSASSIGN") == null);
+        try testing.expect(std.mem.indexOf(u8, head, "ASSIGNEEUPDATED") == null);
+        try testing.expect(std.mem.indexOf(u8, head, "SUMMARY") != null);
+    }
+    // At 60 the assignee went whole; the key and the summary are there.
+    a.resize(60, 24);
+    var f = try Frame.init(testing.allocator, 60, 24);
+    defer f.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    try paint(arena.allocator(), &f, a, .{});
+    const head = try rowText(arena.allocator(), &f, (try findRow(arena.allocator(), &f, "KEY")).?);
+    try testing.expect(std.mem.indexOf(u8, head, "ASSIGNEE") == null);
+    try testing.expect((try findRow(arena.allocator(), &f, "ENG-2")) != null);
 }
 
 test "the JQL editor paints its box with the caret and a click places it" {

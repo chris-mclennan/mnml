@@ -11,6 +11,9 @@
 //!           ground, `Show more (N)`, a detail panel with its `×` and
 //!           scrollbar, and the hint row where every entry is a hit
 //!   text    widths and fitting, counted the way `Frame` paints
+//!   columns how a table gives way when the pane is narrow: shrink
+//!           together to a floor, then drop whole by rank — never clip
+//!           the column a row is known by
 //!   figure  what a statusline segment is allowed to say — one named
 //!           figure, and a bracketed subset only when the pane has one
 //!   expect  what an integration's OWN tests assert about the chrome
@@ -52,6 +55,8 @@ pub const build = @import("pane/build.zig");
 pub const merge = @import("pane/merge.zig");
 pub const chrome = @import("pane/chrome.zig");
 pub const text = @import("pane/text.zig");
+/// How a table gives way at a narrow width — one rule for every pane.
+pub const columns = @import("pane/columns.zig");
 /// What a statusline segment is allowed to say: one named figure, and
 /// a bracketed subset only when the pane genuinely has one.
 pub const figure = @import("pane/figure.zig");
@@ -91,6 +96,7 @@ test {
     _ = theme;
     _ = chrome;
     _ = text;
+    _ = columns;
     _ = work;
     _ = action;
     _ = build;

@@ -303,6 +303,39 @@ pub const Column = enum {
         };
     }
 
+    /// The narrowest the column still reads at — a date's ten cells
+    /// and a space, a name's first word. KEY's is the longest key on
+    /// the tab (`screen.zig` works it out); SUMMARY takes what is left.
+    pub fn minWidth(c: Column) u16 {
+        return switch (c) {
+            .key => 12,
+            .status => 8,
+            .assignee, .reporter => 10,
+            .priority, .type => 7,
+            .updated => 11,
+            .fix_version => 9,
+            .actions => 11,
+            .summary => 20,
+        };
+    }
+
+    /// When a narrow pane runs out of width, the columns go whole in
+    /// this order (1 first); KEY and SUMMARY never do — the key is what
+    /// a row is known by, and the summary is what is elided instead.
+    pub fn dropRank(c: Column) u8 {
+        return switch (c) {
+            .actions => 1,
+            .fix_version => 2,
+            .type => 3,
+            .priority => 4,
+            .reporter => 5,
+            .assignee => 6,
+            .updated => 7,
+            .status => 8,
+            .key, .summary => 0,
+        };
+    }
+
     pub fn header(c: Column) []const u8 {
         return switch (c) {
             .key => "KEY",
