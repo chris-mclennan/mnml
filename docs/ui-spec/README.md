@@ -213,6 +213,16 @@ and the `RESTRICTED` chip. `tools/ui-diff.sh` on the chrome fixture
 before / after (main `6a13786` / this branch, Rust `target/release`):
 esc 4 → 4, status 8 → 3, menu-plus 11 → 8 beyond the rail.
 
+## One toast per source (sessiontabs, 2026-09-22)
+
+`zig-launcher-dock-120x40.txt` and `zig-launcher-dock-outer-120x40.txt`
+were re-cut (`tools/zig-spec.sh launcher-dock` / `launcher-dock-outer`):
+the two cycles of `view.dock_cycle_mode` paint one toast box,
+`dock: always`, where they stacked `dock: hidden` above it — a later
+run of the command whose toast is up replaces it (`App.toastLevel`,
+`ToastSource`). Cut a second time with main's binary, the two differ
+only in those three rows and the clock.
+
 ## Context menus: the row above the bottom border (2026-09-10)
 
 Every titled popup — a rail menu, a tree row's, the `+` chip's
@@ -439,6 +449,16 @@ workspace at 120×40:
   `rust-sessions-120x40.txt` are unchanged at 39 — the row itself
   still differs (Rust names each session by its prompt, Zig by the
   binary), but the mark on it now matches.
+  *// changed 2026-09-22 (sessiontabs):* `zig-sessions-120x40.txt` and
+  `zig-sessions-table-120x40.txt` were re-cut — row 1's tabs now read
+  each session by its name, `󱸀 fix the failing t…  󱸀 release train
+  󱸀 write the release`, the names Rust's row 1 carries (`sessions.nameOf`,
+  the one function the card reads too); the table's strip, three names
+  wider, folds two of them into `+2 hidden`. The tabs are one leaf's
+  and Rust's three splits, as before. Cut a second time with main's
+  binary, the two differ only in row 1, the clock and a pid; the rest of
+  each re-cut is main's own drift since it was last cut (the table's
+  Claude mark, the strip's New-terminal chip).
 - `outline` — `src/main.rs` open, `view.toggle_right_panel`,
   `outline.show`: the outline in the right panel at Rust's 32 cells (the
   divider at 87), a strip row above it (`main.rs ⌥1   󰐕 … ×`,

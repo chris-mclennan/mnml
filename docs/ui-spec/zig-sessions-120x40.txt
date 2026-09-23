@@ -1,7 +1,7 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │ SESSIONS (3)           │ 󱸀 claude 󰅖   󱸀 claude 󰅖   󱸀 claude 󰅖   󰐕                            󰅁  󰅂  󱸀        
+   │ SESSIONS (3)           │ 󱸀 fix the failing t… 󰅖   󱸀 release train 󰅖   󱸀 write the release 󰐕  󰅁  󰅂  󱸀  󲀀      
   │  󰍉 / filter              │▌claude (fake) 5e551011-0000-4000-8000-000000000001
-   │                          │▌^[^[
+   │                          │▌^[^[▯
  󰍉 │  + New session           │▌
    │                          │▌
  󰊢 │ ▌ 󰐃 write the release not│▌
@@ -36,5 +36,5 @@
    │ Close.                   │▌                                             ┌───────────────────────────────────── × ┐
   │                          │▌                                             │ pinned write the release notes for 0.3 │
    │                          │▌                                             └────────────────────────────────────────┘
- TREE  [no file]                                                                            󱼀 󰐎    14:52  ws   —
-
+ TREE  [no file]                                                                            󱼀 󰐎    00:34  ws   —
+pinned write the release notes for 0.3                     ⋯
