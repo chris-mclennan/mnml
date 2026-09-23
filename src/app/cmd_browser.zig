@@ -307,7 +307,7 @@ fn deleteStorageCmd(app: *App) CommandError!void {
     app.toast("storage: {s} removed", .{key});
 }
 
-const perf_dump = "(function(){var t=performance.timing;var n=performance.getEntriesByType('navigation')[0];var p=performance.getEntriesByType('paint');var out=[];function ms(v){return Math.round(v)+' ms'}if(n){out.push('ttfb        '+ms(n.responseStart-n.requestStart));out.push('dom ready   '+ms(n.domContentLoadedEventEnd-n.startTime));out.push('load        '+ms(n.loadEventEnd-n.startTime));out.push('transfer    '+n.transferSize+' B')}p.forEach(function(e){out.push((e.name+'                ').slice(0,12)+ms(e.startTime))});try{var lcp=performance.getEntriesByType('largest-contentful-paint');if(lcp.length)out.push('lcp         '+ms(lcp[lcp.length-1].startTime))}catch(e){}return out.join('\\n')})()";
+const perf_dump = "(function(){var n=performance.getEntriesByType('navigation')[0];var p=performance.getEntriesByType('paint');var out=[];function ms(v){return Math.round(v)+' ms'}function row(k,v){out.push(k.padEnd(24)+v)}if(n){row('ttfb',ms(n.responseStart-n.requestStart));row('dom ready',ms(n.domContentLoadedEventEnd-n.startTime));row('load',ms(n.loadEventEnd-n.startTime));row('transfer',n.transferSize+' B')}p.forEach(function(e){row(e.name,ms(e.startTime))});try{var lcp=performance.getEntriesByType('largest-contentful-paint');if(lcp.length)row('lcp',ms(lcp[lcp.length-1].startTime))}catch(e){}return out.join('\\n')})()";
 
 fn perfCmd(app: *App) CommandError!void {
     const b = try requireBrowser(app);
