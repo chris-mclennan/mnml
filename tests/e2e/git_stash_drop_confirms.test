@@ -1,0 +1,29 @@
+# Dropping a stash asks first, as every other verb that loses work in
+# the git UI does: the picker's Enter opens a confirm that names the
+# stash, `n` keeps it, `y` drops it. git says which.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write a.txt "one\n"
+shell git add a.txt
+shell git commit -q -m "first"
+write a.txt "two\n"
+shell git stash -q -m "keep me"
+command git.refresh
+wait 1000
+command git.stash_drop
+expect screen contains "keep me"
+key enter
+expect screen contains "Drop stash@{0}?"
+key n
+wait 800
+shell git stash list > kept.out
+expect file kept.out contains "keep me"
+command git.stash_drop
+expect screen contains "keep me"
+key enter
+expect screen contains "Drop stash@{0}?"
+key y
+wait 1500
+shell git stash list > gone.out
+expect file gone.out lacks "keep me"

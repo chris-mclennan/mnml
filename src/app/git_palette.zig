@@ -1475,7 +1475,7 @@ pub fn menuAction(app: *App, a: MenuAct) Allocator.Error!void {
                     .stash_show => break :blk git.stashShow(app, ref),
                     .stash_branch => break :blk git.stashBranchPrompt(app, ref),
                     .stash_rename => break :blk git.stashRenamePrompt(app, ref, gs.rail_stashes[a.idx].message),
-                    else => break :blk git.submitOp(app, repo, .{ .stash_drop = try gpa.dupe(u8, ref) }),
+                    else => break :blk git.askStashDrop(app, ref),
                 }
             },
             .tag_checkout, .tag_delete, .tag_copy, .new_branch_from, .worktree_from => {

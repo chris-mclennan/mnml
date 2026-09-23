@@ -228,10 +228,13 @@ pub const Confirm = union(enum) {
     delete_remote: struct { remote: []u8, branch: []u8 },
     /// `push --force-with-lease` after a yes.
     push_force,
+    /// `stash drop <ref>` after a yes: a dropped stash is gone from the
+    /// list, found again only through `git fsck --unreachable`.
+    stash_drop: []u8,
 
     pub fn deinit(c: Confirm, gpa: Allocator) void {
         switch (c) {
-            .discard, .delete_branch, .worktree_remove, .checkout, .tag_delete, .reset_hard, .checkout_force => |s| gpa.free(s),
+            .discard, .delete_branch, .worktree_remove, .checkout, .tag_delete, .reset_hard, .checkout_force, .stash_drop => |s| gpa.free(s),
             .worktree_remove_branch => |w| {
                 gpa.free(w.path);
                 gpa.free(w.branch);
@@ -2671,7 +2674,7 @@ pub fn acceptPick(app: *App, label_in: []const u8, detail_in: []const u8) Comman
             try refreshGraph(app, g);
         },
         .stash_apply => try submitOp(app, try requireRepo(app), .{ .stash_apply = try gpa.dupe(u8, detail) }),
-        .stash_drop => try submitOp(app, try requireRepo(app), .{ .stash_drop = try gpa.dupe(u8, detail) }),
+        .stash_drop => try askStashDrop(app, detail),
         .stash_show => try stashShow(app, detail),
         .stash_branch => try stashBranchPrompt(app, detail),
         .stash_rename => {
@@ -2961,6 +2964,14 @@ pub const remove_branch_choices = [_]app_mod.Confirm.Choice{
     .{ .key = 'c', .label = "Cancel" },
 };
 
+/// `Drop…` (the picker, the palette's stash row): every other verb that
+/// loses work confirms first, and this one dropped on Enter.
+pub fn askStashDrop(app: *App, ref: []const u8) Allocator.Error!void {
+    const owned = try app.gpa.dupe(u8, ref);
+    errdefer app.gpa.free(owned);
+    try openConfirm(app, .{ .stash_drop = owned }, try std.fmt.allocPrint(app.gpa, "Drop {s}? It leaves the stash list; only `git fsck --unreachable` finds it again.", .{ref}));
+}
+
 pub fn acceptConfirm(app: *App, choice: usize) CommandError!void {
     const st = &app.git;
     const gpa = app.gpa;
@@ -3006,6 +3017,7 @@ pub fn acceptConfirm(app: *App, choice: usize) CommandError!void {
             app.toast("pushing (--force-with-lease)\u{2026}", .{});
             try submitOp(app, try requireRepo(app), .push_force);
         },
+        .stash_drop => |ref| try submitOp(app, try requireRepo(app), .{ .stash_drop = try gpa.dupe(u8, ref) }),
         // Handled above: its choices are not yes / no.
         .worktree_remove_branch => unreachable,
     }
