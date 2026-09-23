@@ -41,6 +41,7 @@ const filter_input = @import("../ui/filter_input.zig");
 const view = @import("../ui/search_section_view.zig");
 const grep = @import("grep.zig");
 const find_mod = @import("find.zig");
+const jobs = @import("jobs.zig");
 const side = @import("side.zig");
 const activity_bar = @import("activity_bar.zig");
 const cmd_view = @import("cmd_view.zig");
@@ -240,7 +241,7 @@ pub fn run(app: *App) CommandError!void {
     st.ran = null;
     st.loading = false;
     app.needs_render = true;
-    if (q.len == 0) return;
+    if (q.len == 0) return jobs.dropKeyed(app, .search, grep.section_target);
     st.ran = try app.gpa.dupe(u8, q);
     st.loading = true;
     var flags = st.flags;
@@ -249,6 +250,19 @@ pub fn run(app: *App) CommandError!void {
         st.loading = false;
         return app.diag.fail(app.frame.allocator(), "search: could not start the worker: {s}", .{@errorName(err)});
     };
+    _ = try jobs.begin(app, .{ .kind = .search, .key = grep.section_target, .label = try std.fmt.allocPrint(app.frame.allocator(), "search \"{s}\"", .{q}), .cancel = &cancelRun, .drop_superseded = true });
+}
+
+/// The JOBS list's Cancel: stop the walk where it is; the hits so far stay.
+fn cancelRun(app: *App, key: u64) void {
+    const st = &app.search_section;
+    st.abort.generation.store(std.math.maxInt(u32), .release);
+    st.group.cancel(app.io);
+    st.generation +%= 1;
+    st.abort.generation.store(st.generation, .release);
+    st.loading = false;
+    jobs.endKeyed(app, .search, key, jobs.Outcome.cancel(null));
+    app.needs_render = true;
 }
 
 /// A batch from the worker (D1: destroyed on every path). A stale
@@ -282,7 +296,12 @@ pub fn handle(app: *App, result: *grep.Result) Allocator.Error!void {
     // Rust's `search_selected = 0` is the first HIT: the selection
     // starts under the first file header, not on it.
     if (first_batch and st.rows.items.len > 1) st.list.cursor = 1;
-    if (result.done) st.loading = false;
+    if (result.done) {
+        st.loading = false;
+        const n = st.hits.items.len;
+        const words = try std.fmt.allocPrint(app.frame.allocator(), "{d} match{s}{s}", .{ n, if (n == 1) "" else "es", if (st.truncated) " (capped)" else "" });
+        jobs.endKeyed(app, .search, grep.section_target, if (st.err) |e| jobs.Outcome.fail(e) else jobs.Outcome.done(words));
+    } else jobs.progress(app, .search, grep.section_target, try std.fmt.allocPrint(app.frame.allocator(), "{d} so far", .{st.hits.items.len}));
     app.needs_render = true;
 }
 
