@@ -694,7 +694,7 @@ pub fn substitute(app: *App, range: ?Range, spec: []const u8, whole: bool) Comma
         'I' => case = true,
         else => {},
     };
-    const case_sensitive = case orelse app.search_case orelse find_mod.hasUpper(pattern);
+    const case_sensitive = case orelse app.search_case orelse find_mod.patternHasUpper(pattern);
     var re = try compilePattern(app, label, pattern, case_sensitive);
     defer re.deinit();
 

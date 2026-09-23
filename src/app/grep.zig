@@ -480,7 +480,11 @@ pub fn runGrep(app: *App, query: []const u8) CommandError!void {
     }
     var pane = try GrepPane.init(app.gpa, app.workspace, query);
     errdefer pane.deinit(app.io);
-    if (app.activeEditor()) |e| pane.flags.regex = e.find.regex;
+    // The standard bar's sticky `.*` chip carries over; vim's `/` is a
+    // pattern whatever the chip, so it says nothing about the grep.
+    if (app.input_style == .standard) if (app.activeEditor()) |e| {
+        pane.flags.regex = e.find.regex;
+    };
     const id = try app.panes.add(.{ .grep = pane });
     pane = undefined; // moved into the store
     const layout = app.layouts.current();

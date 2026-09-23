@@ -1,0 +1,54 @@
+# vim's `/` and `?` read a vim pattern, as `:s` and `:g` do (Neovim 0.12.5
+# and NvChad: `/^ab`, `/\<foo\>`, `/\d\d\d`, `/o.b`, `/\cFOO` are regexes).
+# Before, the vim bar was literal unless its `.*` chip was on, so each of
+# these answered "no matches".
+write a.txt "x ab\nab\n"
+open a.txt
+command editor.use_vim
+key /
+type "^ab"
+key enter
+expect screen lacks "no matches"
+expect status contains "\"line\":2"
+
+write b.txt "xx foobar foo\nfoo\n"
+open b.txt
+key /
+type "\<foo\>"
+key enter
+expect screen lacks "no matches"
+expect status contains "\"line\":1"
+expect status contains "\"col\":11"
+
+write c.txt "a1 b22 c333\nzz 4444\n"
+open c.txt
+key /
+type "\d\d\d"
+key enter
+expect status contains "\"col\":9"
+key /
+type "[0-9]\{4}"
+key enter
+expect status contains "\"line\":2"
+expect status contains "\"col\":4"
+
+write d.txt "foo.bar fooxbar\n"
+open d.txt
+key /
+type "o.b"
+key enter
+expect screen contains "match 1/2"
+key n
+expect status contains "\"col\":11"
+
+write e.txt "xx Foo\nfoo\nFOO\n"
+open e.txt
+key /
+type "\cFOO"
+key enter
+expect status contains "\"line\":1"
+expect status contains "\"col\":4"
+key /
+type "foo\C"
+key enter
+expect status contains "\"line\":2"

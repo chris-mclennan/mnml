@@ -132,13 +132,21 @@ pub fn openBar(app: *App, reverse: bool) CommandError!void {
     }
     const snap = tg.find().clone() catch return error.OutOfMemory;
     var fb: app_mod.FindBarState = .{ .pane = id, .snapshot = snap, .snapshot_cursor = tg.cursor(), .reverse = reverse, .hist_cursor = app.find_history.items.len };
-    // The regex chip is sticky per pane (`find.toggle_regex`).
-    fb.state.regex = tg.find().regex;
+    // The regex chip is sticky per pane (`find.toggle_regex`); vim's `/`
+    // and `?` are always a pattern (`:help pattern`).
+    fb.state.regex = vimPattern(app) or tg.find().regex;
     // The live preview starts from a blank slate; Esc restores the snapshot.
     tg.find().clear();
     app.find_bar = fb;
     app.focus = .overlay;
     app.needs_render = true;
+}
+
+/// vim's `/` and `?` read the query as a vim pattern, always — the same
+/// text `:s` and `:g` take; only the standard profile's Ctrl+F bar has a
+/// literal mode behind its `.*` chip (VS Code). `\V` is vim's literal.
+pub fn vimPattern(app: *const App) bool {
+    return app.input_style == .vim;
 }
 
 /// The syntax the find bar's regex takes: vim's under the vim profile,
@@ -155,6 +163,7 @@ pub fn liveUpdate(app: *App) Allocator.Error!void {
     const tg = Target.of(app, fb.pane) orelse return;
     const f = tg.find();
     const q = fb.state.query.items;
+    if (vimPattern(app)) fb.state.regex = true;
     f.regex = fb.state.regex;
     f.dialect = dialectFor(app);
     fb.landed = false;
@@ -286,7 +295,7 @@ fn acceptAndClose(app: *App) Allocator.Error!void {
         pattern = sp.pattern;
         offset = sp.offset;
     };
-    f.regex = fb.state.regex;
+    f.regex = vimPattern(app) or fb.state.regex;
     f.dialect = dialectFor(app);
     try f.setQuery(pattern, tg.text(), if (fb.state.match_case) true else app.search_case);
     f.offset = offset;
@@ -490,6 +499,11 @@ fn clearAndDeselect(app: *App) CommandError!void {
 fn toggleRegex(app: *App) CommandError!void {
     const tg = try requireTarget(app);
     const f = tg.find();
+    if (vimPattern(app)) {
+        // Nothing to toggle: `/` is a pattern; `\V` reads the rest literally.
+        app.toast("find: / is always a vim pattern — start it with \\V for literal text", .{});
+        return;
+    }
     f.regex = !f.regex;
     f.dialect = dialectFor(app);
     if (app.find_bar) |*fb| if (fb.pane == app.active.?) {
@@ -750,12 +764,58 @@ test "find: ctrl+r turns the query into a pattern — Perl-style in the standard
     try t.expectEqualStrings("invalid pattern: \"(x\"", app.lastToast().?);
     try command.run(&app, .{ .static = .@"find.toggle_regex" });
     try t.expect(!e.find.regex);
-    // The vim profile's bar takes vim's syntax: `\d\+`, `\|`.
+    // The vim profile's `/` takes vim's syntax, `\d\+`, `\|`, chip or not.
     try command.run(&app, .{ .static = .@"editor.use_vim" });
-    try command.run(&app, .{ .static = .@"find.toggle_regex" });
+    try command.run(&app, .{ .static = .@"find.find" });
+    for ("\\d\\+\\|foo") |c| try app.handle(.{ .key = Key.char(c) });
     try t.expectEqual(regex.Dialect.vim, e.find.dialect);
-    try e.find.setQuery("\\d\\+\\|foo", e.buf.editor.bytes(), null);
     try t.expectEqual(@as(usize, 4), e.find.matches.items.len);
+    try app.handle(.{ .key = Key.named(.esc) });
+}
+
+test "find: vim's / and ? are vim patterns, never literal — ^, \\<\\>, \\d, ., \\c, \\|; smart case skips escapes" {
+    var app = try appWith("x ab\nab foo.bar fooxbar\nxx foobar foo\na1 b22 c333\nxx Foo\n");
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
+    const e = app.activeEditor().?;
+    const Case = struct { q: []const u8, line: usize, col: usize, n: usize };
+    const cases = [_]Case{
+        .{ .q = "^ab", .line = 1, .col = 0, .n = 1 },
+        .{ .q = "\\<foo\\>", .line = 1, .col = 3, .n = 3 },
+        .{ .q = "\\d\\d\\d", .line = 3, .col = 8, .n = 1 },
+        .{ .q = "o.b", .line = 1, .col = 5, .n = 3 },
+        .{ .q = "\\cFOO", .line = 1, .col = 3, .n = 5 },
+        .{ .q = "c333\\|Foo", .line = 3, .col = 7, .n = 2 },
+        // `\S` is no uppercase letter, so `\Soo` is case-insensitive;
+        // `OO` is, so `\SOO` is not.
+        .{ .q = "\\SOO", .line = 0, .col = 0, .n = 0 },
+        .{ .q = "\\Soo", .line = 1, .col = 3, .n = 5 },
+        // `\V` is vim's literal: the dot is a dot.
+        .{ .q = "\\Vo.b", .line = 1, .col = 5, .n = 1 },
+    };
+    for (cases) |c| {
+        e.buf.editor.setCursor(0);
+        try command.run(&app, .{ .static = .@"find.find" });
+        try t.expect(app.find_bar.?.state.regex);
+        for (c.q) |ch| try app.handle(.{ .key = Key.char(ch) });
+        try app.handle(.{ .key = Key.named(.enter) });
+        t.expectEqual(c.n, e.find.matches.items.len) catch |err| {
+            std.debug.print("query {s}\n", .{c.q});
+            return err;
+        };
+        if (c.n == 0) continue;
+        try t.expectEqual(c.line, e.buf.editor.currentLine());
+        try t.expectEqual(c.col, e.buf.editor.cursor - e.buf.editor.lineStart(c.line));
+    }
+    // `?` too.
+    e.buf.editor.setCursor(e.buf.editor.len());
+    try command.run(&app, .{ .static = .@"find.find_backward" });
+    for ("^\\a\\d") |ch| try app.handle(.{ .key = Key.char(ch) });
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expectEqual(@as(usize, 3), e.buf.editor.currentLine());
+    // Alt+R has nothing to turn off in the vim profile.
+    try command.run(&app, .{ .static = .@"find.toggle_regex" });
+    try t.expect(e.find.regex);
 }
 
 test "find: Esc restores the previous find state; replace prompts and splices every match" {

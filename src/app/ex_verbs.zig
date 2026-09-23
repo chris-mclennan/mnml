@@ -55,7 +55,7 @@ fn editor(app: *App, label: []const u8) CommandError!*EditorPane {
 
 /// `app.search_case`, else smart case on the pattern.
 fn caseFor(app: *App, needle: []const u8) bool {
-    return app.search_case orelse find_mod.hasUpper(needle);
+    return app.search_case orelse find_mod.patternHasUpper(needle);
 }
 
 fn lineHas(line: []const u8, re: *regex.Regex) bool {
