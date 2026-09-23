@@ -1,0 +1,26 @@
+# buffer_change is "150 ms after the last edit" — of a pane. Its
+# debounce used to compare ONE edit-log head against whichever pane was
+# active, so a focus switch with no edit at all fired it. The debounce
+# is per pane now: four switches, no edit, no event.
+write .mnml/init.lua "L = {}\nmnml.on('buffer_change', function(a) L[#L + 1] = a.pane end)\nmnml.command{ id = 'bc', run = function() mnml.toast('BC=[' .. table.concat(L, ',') .. ']') end }\nmnml.command{ id = 'reset', run = function() L = {} end }\n"
+write a.txt "one"
+write b.txt "two"
+command script.reload
+open a.txt
+open b.txt
+open a.txt
+# One edit in a.txt, let its event land, then clear the log.
+type "x"
+wait 400
+command user.reset
+# No edits from here: four focus switches.
+open b.txt
+wait 400
+open a.txt
+wait 400
+open b.txt
+wait 400
+open a.txt
+wait 400
+command user.bc
+expect screen contains "BC=[]"

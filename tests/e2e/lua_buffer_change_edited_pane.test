@@ -1,0 +1,18 @@
+# An edit in a.txt followed by a switch to b.txt inside the 150 ms
+# debounce: buffer_change arrives once, for a.txt's pane. It used to
+# name b.txt's pane, which was never edited, and a.txt's edit was never
+# reported.
+write .mnml/init.lua "L = {}\nmnml.on('buffer_change', function(a) L[#L + 1] = a.pane .. ':' .. (mnml.buf.path(a.pane) or '?') end)\nmnml.command{ id = 'bc', run = function() mnml.toast('BC=[' .. table.concat(L, ',') .. ']') end }\nmnml.command{ id = 'reset', run = function() L = {} end }\n"
+write a.txt "one"
+write b.txt "two"
+command script.reload
+open a.txt
+open b.txt
+open a.txt
+wait 400
+command user.reset
+type "x"
+open b.txt
+wait 400
+command user.bc
+expect screen contains "BC=[0:a.txt]"
