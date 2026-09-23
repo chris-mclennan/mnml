@@ -202,6 +202,8 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .backspace => try delete.backspace(ed, out),
         .delete_forward => try delete.deleteForward(ed, out),
         .delete_word_left => try delete.deleteWordLeft(ed, out),
+        .delete_word_left_in_insert => try delete.deleteBackInInsert(ed, .word, out),
+        .delete_to_line_start_in_insert => try delete.deleteBackInInsert(ed, .line, out),
         .delete_word_right => try delete.deleteWordRight(ed, out),
         .delete_to_line_start => try delete.deleteToLineStart(ed, out),
         .delete_to_line_end => try delete.deleteToLineEnd(ed, out),
@@ -377,6 +379,7 @@ test "property: cursor stays on a boundary and text stays valid UTF-8" {
         .{ .surround_selection = .{ .open = '(', .close = ')', .pad = true } }, .{ .delete_surround = '"' },                            .{ .change_surround = .{ .from = '(', .to = '[' } },                                                             .{ .delete_surround = 't' },
         .toggle_line_comment,                                                   .{ .change_number_at_cursor = .{ .delta = 3 } },        .{ .reflow_paragraph = .{ .width = 12 } },                                                                       .{ .align_selection = .{ .on_char = '(' } },
         .{ .restore_last_selection = .linewise },                               .{ .restore_last_selection = .block },                  .{ .change_numbers_in_selection = .{ .delta = -2, .progressive = true } },                                       .{ .move_to_line_keep_col = 2 },
+        .delete_word_left_in_insert,                                            .delete_to_line_start_in_insert,
     };
     for (0..3000) |_| {
         const op = ops[rnd.uintLessThan(usize, ops.len)];

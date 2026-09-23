@@ -1,0 +1,137 @@
+# vim's Insert Ctrl-W / Ctrl-U delete what this Insert typed first and
+# stop once at the Insert start; the next press carries on into the
+# text that was there (`:help i_CTRL-U`, 'backspace' = Neovim's
+# indent,eol,start). Ctrl-U with nothing typed goes back to the indent,
+# then to the line start; at a line start either one takes the line break.
+# Every expectation is Neovim 0.12.5's (`nvim --clean`, the keys fed as
+# typed), each file behind a `top` line so a match is the whole line.
+command editor.use_vim
+write u0.txt "top\none two-three four\n"
+open u0.txt
+type j
+type AX
+key ctrl+w
+type Y
+key esc
+command file.save
+expect file u0.txt contains "top\none two-three fourY\n"
+
+write u1.txt "top\none two-three four\n"
+open u1.txt
+type j
+type AX
+key ctrl+w
+key ctrl+w
+type Y
+key esc
+command file.save
+expect file u1.txt contains "top\none two-three Y\n"
+
+write u2.txt "top\none two-three four\n"
+open u2.txt
+type j
+type AX
+key ctrl+u
+type Y
+key esc
+command file.save
+expect file u2.txt contains "top\none two-three fourY\n"
+
+write u3.txt "top\none two-three four\n"
+open u3.txt
+type j
+type AXY
+key ctrl+u
+key ctrl+u
+type Z
+key esc
+command file.save
+expect file u3.txt contains "top\nZ\n"
+
+write u4.txt "top\none two-three four\n"
+open u4.txt
+type j
+type A
+key ctrl+w
+type Y
+key esc
+command file.save
+expect file u4.txt contains "top\none two-three Y\n"
+
+write u5.txt "top\none two-three four\n"
+open u5.txt
+type j
+type A
+key ctrl+u
+type Y
+key esc
+command file.save
+expect file u5.txt contains "top\nY\n"
+
+write u6.txt "top\none two-three four\n"
+open u6.txt
+type j
+type A ab cd
+key ctrl+w
+key ctrl+w
+key ctrl+w
+type Y
+key esc
+command file.save
+expect file u6.txt contains "top\none two-three fourY\n"
+
+write u7.txt "top\none two-three four\n"
+open u7.txt
+type j
+type 0wiX
+key ctrl+u
+type Y
+key esc
+command file.save
+expect file u7.txt contains "top\none Ytwo-three four\n"
+
+write u8.txt "top\none two-three four\n"
+open u8.txt
+type j
+type AX
+key enter
+type ab
+key ctrl+u
+type Y
+key esc
+command file.save
+expect file u8.txt contains "top\none two-three fourX\nY\n"
+
+write u9.txt "top\none two-three four\n"
+open u9.txt
+type j
+type AX
+key enter
+type ab
+key ctrl+u
+key ctrl+u
+type Y
+key esc
+command file.save
+expect file u9.txt contains "top\none two-three fourXY\n"
+
+write u10.txt "top\n    indented text\n"
+open u10.txt
+type j
+type A
+key ctrl+u
+type Y
+key esc
+command file.save
+expect file u10.txt contains "top\n    Y\n"
+
+write u11.txt "top\n    indented text\n"
+open u11.txt
+type j
+type A
+key ctrl+u
+key ctrl+u
+type Y
+key esc
+command file.save
+expect file u11.txt contains "top\nY\n"

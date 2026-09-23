@@ -543,6 +543,7 @@ pub const Buffer = struct {
             if (!self.insert_session) {
                 self.insert_session = true;
                 self.insert_undo_target = null;
+                ed.insert_start = ed.cursor;
             }
             if (self.insert_undo_target == null and ed.doc.history.undoLen() > undo_before) self.insert_undo_target = undo_before + 1;
         } else if (self.insert_session) {
@@ -550,6 +551,7 @@ pub const Buffer = struct {
             if (self.insert_undo_target) |t| ed.doc.history.truncateUndo(t);
             self.insert_undo_target = null;
             ed.in_insert_run = false;
+            ed.insert_start = null;
         }
     }
 

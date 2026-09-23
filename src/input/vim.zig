@@ -760,8 +760,8 @@ pub const Vim = struct {
                     self.enterNormal();
                     return ops(arena, &.{.move_left_no_cross_line});
                 },
-                'w' => return ops(arena, &.{.delete_word_left}),
-                'u' => return ops(arena, &.{.delete_to_line_start}),
+                'w' => return ops(arena, &.{.delete_word_left_in_insert}),
+                'u' => return ops(arena, &.{.delete_to_line_start_in_insert}),
                 'h' => return ops(arena, &.{.backspace}),
                 't' => return ops(arena, &.{.indent}),
                 'd' => return ops(arena, &.{.outdent}),

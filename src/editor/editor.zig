@@ -124,6 +124,10 @@ pub const Editor = struct {
     /// A coalescing run of typed chars is open (and is this view's —
     /// `doc.insert_run_owner`).
     in_insert_run: bool = false,
+    /// Where the Insert session now open began (the buffer sets it when
+    /// a modal handler enters Insert, clears it when it leaves): vim's
+    /// Insert `Ctrl-W` / `Ctrl-U` stop there once (`:help i_CTRL-U`).
+    insert_start: ?usize = null,
     /// Tree-sitter text objects, installed by the app; null = the ops
     /// that need one are no-ops.
     objects: ?ObjectProvider = null,

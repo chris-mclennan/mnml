@@ -173,6 +173,14 @@ pub const EditOp = union(enum) {
     delete_word_right,
     delete_to_line_start,
     delete_to_line_end,
+    /// vim's Insert `Ctrl-W`: the word before the cursor, on its line
+    /// (at a line start, the line break), stopping once at the Insert
+    /// start (`Editor.insert_start`, `:help i_CTRL-W`).
+    delete_word_left_in_insert,
+    /// vim's Insert `Ctrl-U`: back to the indent, or from within the
+    /// indent to the line start (at a line start, the line break),
+    /// stopping once at the Insert start (`:help i_CTRL-U`).
+    delete_to_line_start_in_insert,
     delete_line,
     delete_selection,
     replace_selection: []const u8,
@@ -231,7 +239,7 @@ pub const EditOp = union(enum) {
     atomic: []const EditOp,
 
     comptime {
-        std.debug.assert(@typeInfo(EditOp).@"union".fields.len == 150);
+        std.debug.assert(@typeInfo(EditOp).@"union".fields.len == 152);
     }
 
     /// Whether the op can change buffer text (vs. move / select / yank / meta).
