@@ -1,0 +1,12 @@
+# On the SCRIPTS Marketplace tab, `i` on a focused row installs THAT
+# row (script.marketplace_install → its trust dialog). It used to be
+# hard-wired to `script.install` on every tab, so `i` over a shipped
+# row opened a "git URL, archive or folder" prompt instead.
+command view.activity_scripts
+command script.show_marketplace
+expect screen contains "eslint"
+key down
+key i
+# The row-install confirm names the script; the generic prompt does not.
+expect screen contains "Install this script"
+expect screen lacks "git URL"

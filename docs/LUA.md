@@ -1252,12 +1252,15 @@ local scripts = mnml.data_root() .. "/scripts"
 | `script.run_selection` | vim `<leader>sr`, standard `ctrl+alt+enter` | runs the selected lines — or the cursor line — in the script state |
 | `script.doctor` | `d` in the SCRIPTS section | the report: every state, its api, its source, whether it is enabled, its budget overruns this session, its hooks, its `require` root and its namespaces with live decoration counts — plus the three folders a script can be scanned from |
 | `script.install` | `i` in the SCRIPTS section | installs from a path, a git URL or an archive |
+| `script.marketplace_install` | `i` on a Marketplace row, the row's menu | installs the focused Marketplace row, through its trust dialog |
 | `script.new_init` | `n` in the SCRIPTS section | writes the workspace `init.lua` from the commented template |
 | `view.activity_scripts` | the rail's 󰢱 | opens the SCRIPTS section |
 
 The SCRIPTS section's own keys: `1` `2` `3` or `h` `l` / Tab pick a tab, `/`
 filters, `s` cycles the sort (its chip's right-click lists every mode with a
-✓), `r` refreshes, `i` installs, `e` enables or disables the focused row, `x`
+✓), `r` refreshes, `i` installs (the focused row, on the Marketplace tab;
+otherwise it asks for a path, git URL or archive), `e` enables or disables
+the focused row, `x`
 removes it, `d` opens `script.doctor`. Enter opens the focused script's
 README — the file itself, for `init.lua`.
 
