@@ -173,7 +173,7 @@ const Shared = struct {
 pub const BrowserPane = struct {
     gpa: Allocator,
     url: []u8,
-    state: enum { launching, connected, closed } = .launching,
+    state: enum { launching, connected, crashed, closed } = .launching,
     log: std.ArrayListUnmanaged(LogLine) = .empty,
     net: std.ArrayListUnmanaged(NetEntry) = .empty,
     net_sel: usize = 0,
@@ -217,6 +217,8 @@ pub const BrowserPane = struct {
     pane_id: ?PaneId = null,
     /// Tests: the stand-in Chrome the worker runs.
     binary: ?[]const u8 = null,
+    /// The pane's own page's target id, off its WebSocket URL.
+    self_target: ?[]u8 = null,
     dialog: ?Dialog = null,
     /// The DOM panel was open across a navigation: ask again on load.
     dom_refresh: bool = false,
@@ -255,6 +257,7 @@ pub const BrowserPane = struct {
         for (self.visited.items) |v| gpa.free(v);
         self.visited.deinit(gpa);
         self.filter.deinit(gpa);
+        if (self.self_target) |t| gpa.free(t);
         if (self.dialog) |*d| d.deinit(gpa);
         self.clearFallbacks();
         self.eval_fallback.deinit(gpa);
@@ -300,6 +303,7 @@ pub const BrowserPane = struct {
         const badge: []const u8 = switch (self.state) {
             .launching => "…",
             .connected => "●",
+            .crashed => "✗",
             .closed => "·",
         };
         const fresh = try std.fmt.allocPrint(self.gpa, "browser {s} {s}", .{ badge, history.shortUrl(self.url) });
@@ -651,6 +655,10 @@ pub fn handle(app: *App, ev: *CdpEvent) Allocator.Error!void {
             var lines = std.mem.splitScalar(u8, info, '\n');
             const ws_url = lines.next() orelse "";
             if (lines.next()) |port| p.port = std.fmt.parseInt(u16, port, 10) catch null;
+            // `ws://…/devtools/page/<target id>`: which target is ours.
+            if (p.self_target) |t| app.gpa.free(t);
+            p.self_target = null;
+            if (std.mem.lastIndexOf(u8, ws_url, "/devtools/page/")) |at| p.self_target = try app.gpa.dupe(u8, ws_url[at + "/devtools/page/".len ..]);
             try p.push(.system, try std.fmt.allocPrint(app.frame.allocator(), "connected — {s}", .{ws_url}));
             try p.refreshTitle();
             try flushQueued(app, p);
@@ -929,6 +937,16 @@ fn eqlOpt(a: ?[]const u8, b: []const u8) bool {
     return if (a) |x| std.mem.eql(u8, x, b) else false;
 }
 
+/// The renderer of what the pane shows died: say so once, flip the
+/// badge, and let `r` bring it back.
+fn onCrash(app: *App, p: *BrowserPane) Allocator.Error!void {
+    if (p.state == .crashed) return;
+    p.state = .crashed;
+    try p.refreshTitle();
+    try p.push(.console_err, "renderer crashed — r reloads");
+    app.toast("browser: the page's renderer crashed — r reloads", .{});
+}
+
 /// The page (or the focused popup) moved to a new document: the
 /// previous page's requests and DOM go, as DevTools clears them. The
 /// new document's own request (its id is the frame's `loaderId`) stays.
@@ -972,6 +990,10 @@ fn onEvent(app: *App, p: *BrowserPane, method: []const u8, m: cdp.Message) Alloc
         const url = cdp.str(m.params, &.{ "frame", "url" }) orelse return;
         try p.setUrl(url);
         try resetForNavigation(app, p, cdp.str(m.params, &.{ "frame", "loaderId" }));
+        if (p.state == .crashed) {
+            p.state = .connected;
+            try p.refreshTitle();
+        }
         try p.push(.nav, try std.fmt.allocPrint(arena, "navigated: {s}", .{url}));
     } else if (std.mem.eql(u8, method, "Page.loadEventFired")) {
         if (!p.dom_refresh) return;
@@ -997,6 +1019,17 @@ fn onEvent(app: *App, p: *BrowserPane, method: []const u8, m: cdp.Message) Alloc
         p.clearDialog();
         const accepted = if (cdp.get(m.params, &.{"result"})) |r| r == .bool and r.bool else false;
         try p.push(.system, if (accepted) "dialog closed: accepted" else "dialog closed: cancelled");
+    } else if (std.mem.eql(u8, method, "Inspector.targetCrashed")) {
+        // A child session's renderer is not the page's.
+        if (m.session_id != null) return;
+        return onCrash(app, p);
+    } else if (std.mem.eql(u8, method, "Target.targetCrashed")) {
+        const tid = cdp.str(m.params, &.{"targetId"}) orelse return;
+        if (eqlOpt(p.self_target, tid)) return onCrash(app, p);
+    } else if (std.mem.eql(u8, method, "Inspector.targetReloadedAfterCrash")) {
+        if (p.state != .crashed) return;
+        p.state = .connected;
+        try p.refreshTitle();
     } else if (std.mem.eql(u8, method, "Network.requestWillBeSent")) {
         const ty = cdp.str(m.params, &.{"type"}) orelse "";
         if (!(std.mem.eql(u8, ty, "Document") or std.mem.eql(u8, ty, "XHR") or std.mem.eql(u8, ty, "Fetch"))) return;
@@ -2468,6 +2501,26 @@ test "an alert / confirm / prompt the page raises is shown, and Enter / Esc answ
     defer f.deinit();
     try draw(&tb.app, f.ui(), tb.id, p, f.full());
     try f.expectContains("the page waits on a prompt() — Enter answers · Esc cancels");
+}
+
+test "a renderer crash flips the badge and says r reloads; the reloaded page is connected again" {
+    var tb: TestBed = .{};
+    const p = try tb.init();
+    defer tb.deinit();
+    p.state = .connected;
+    p.self_target = try testing.allocator.dupe(u8, "SELF");
+    try tb.msg("{\"method\":\"Inspector.targetCrashed\",\"params\":{}}");
+    try tb.msg("{\"method\":\"Target.targetCrashed\",\"params\":{\"targetId\":\"SELF\",\"status\":\"crashed\",\"errorCode\":11}}");
+    try testing.expect(p.state == .crashed);
+    try testing.expectEqualStrings("renderer crashed — r reloads", tb.last());
+    try testing.expect(std.mem.startsWith(u8, p.title(), "browser ✗"));
+    var n: usize = 0;
+    for (p.log.items) |l| if (std.mem.eql(u8, l.text, "renderer crashed — r reloads")) {
+        n += 1;
+    };
+    try testing.expectEqual(@as(usize, 1), n);
+    try tb.msg("{\"method\":\"Page.frameNavigated\",\"params\":{\"frame\":{\"id\":\"F\",\"loaderId\":\"L\",\"url\":\"http://a/victim\"}}}");
+    try testing.expect(p.state == .connected);
 }
 
 test "scrolled back, the log holds still while lines arrive; at the tail it follows" {

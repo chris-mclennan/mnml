@@ -102,8 +102,10 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, m: Model) Outcome {
     if (area.isEmpty()) return out;
     const head = area.row(0);
     ui.fill(head, t.panel_bg);
-    const badge: []const u8 = if (std.mem.eql(u8, m.state, "connected")) " ● " else if (std.mem.eql(u8, m.state, "launching")) " … " else " · ";
-    const bw = ui.putStr(head.x, head.y, head.w, badge, Theme.onBg(if (std.mem.eql(u8, m.state, "connected")) t.info_fg else t.muted, t.panel_bg.bg));
+    const crashed = std.mem.eql(u8, m.state, "crashed");
+    const badge: []const u8 = if (std.mem.eql(u8, m.state, "connected")) " ● " else if (std.mem.eql(u8, m.state, "launching")) " … " else if (crashed) " ✗ " else " · ";
+    const badge_fg = if (std.mem.eql(u8, m.state, "connected")) t.info_fg else if (crashed) t.error_fg else t.muted;
+    const bw = ui.putStr(head.x, head.y, head.w, badge, Theme.onBg(badge_fg, t.panel_bg.bg));
     var label = m.url;
     if (m.device) |d| label = ui.fmt("{s}   [{s}]", .{ m.url, d });
     if (m.port) |p| label = ui.fmt("{s}   :{d}", .{ label, p });
