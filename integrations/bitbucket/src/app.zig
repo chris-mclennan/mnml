@@ -168,6 +168,61 @@ pub const MergeConfirm = struct {
     }
 };
 
+/// What `carryFailedRepos` hands back: the tree to show, the PR count
+/// when it changed, and the header's reason ("" when nothing failed).
+const Carried = struct { data: tabs.TabData, items: ?usize = null, why: []const u8 = "" };
+
+/// A refetch of a repo tree where some repos failed: each failed repo
+/// that had rows last time gets them back (copied onto `a`, the new
+/// result's arena), its error label dropped — the failure is said once,
+/// in the header, rather than clipped into a STATE cell. A repo that
+/// never answered keeps its error row. `why_buf` backs `why`.
+fn carryFailedRepos(a: Allocator, old: tabs.TabData, fresh: tabs.TabData, why_buf: []u8) Allocator.Error!Carried {
+    switch (fresh) {
+        .repo_pr_tree => |rows| {
+            const prev: []const model.RepoPrs = if (old == .repo_pr_tree) old.repo_pr_tree else &.{};
+            var failed: usize = 0;
+            var first: model.RepoPrs = .{ .slug = "" };
+            for (rows) |r| if (r.error_label.len > 0) {
+                if (failed == 0) first = r;
+                failed += 1;
+            };
+            if (failed == 0) return .{ .data = fresh };
+            const out = try a.alloc(model.RepoPrs, rows.len);
+            var items: usize = 0;
+            for (rows, out) |r, *o| {
+                o.* = r;
+                if (r.error_label.len > 0) for (prev) |pr| if (pr.error_label.len == 0 and std.mem.eql(u8, pr.slug, r.slug)) {
+                    o.* = try sdk.pane.work.dupeDeep(model.RepoPrs, a, pr);
+                    break;
+                };
+                items += o.prs.len;
+            }
+            return .{ .data = .{ .repo_pr_tree = out }, .items = items, .why = sdk.pane.work.partialFailureText(why_buf, failed, rows.len, "repos", first.slug, first.error_label) };
+        },
+        .repo_tree => |rows| {
+            const prev: []const model.RepoPipelines = if (old == .repo_tree) old.repo_tree else &.{};
+            var failed: usize = 0;
+            var first: model.RepoPipelines = .{ .slug = "" };
+            for (rows) |r| if (r.error_label.len > 0) {
+                if (failed == 0) first = r;
+                failed += 1;
+            };
+            if (failed == 0) return .{ .data = fresh };
+            const out = try a.alloc(model.RepoPipelines, rows.len);
+            for (rows, out) |r, *o| {
+                o.* = r;
+                if (r.error_label.len > 0) for (prev) |pr| if (pr.error_label.len == 0 and std.mem.eql(u8, pr.slug, r.slug)) {
+                    o.* = try sdk.pane.work.dupeDeep(model.RepoPipelines, a, pr);
+                    break;
+                };
+            }
+            return .{ .data = .{ .repo_tree = out }, .why = sdk.pane.work.partialFailureText(why_buf, failed, rows.len, "repos", first.slug, first.error_label) };
+        },
+        else => return .{ .data = fresh },
+    }
+}
+
 pub const TabState = struct {
     spec: tabs.TabSpec,
     data: tabs.TabData,
@@ -2310,20 +2365,37 @@ pub const App = struct {
                 const ts = &app.tabs[r.tab];
                 ts.loading = false;
                 app.refreshes_landed += 1;
-                if (r.data) |data| {
+                if (r.data) |fresh| {
+                    // A repo whose fetch failed this time keeps the rows
+                    // it had: they are still the last thing the server
+                    // said about it, and an empty list would read as "no
+                    // PRs". Copied onto the new arena — the old one goes.
+                    var why_buf: [160]u8 = undefined;
+                    const carried = try carryFailedRepos(res.arena.allocator(), ts.data, fresh, &why_buf);
+                    const data = carried.data;
                     if (ts.data_arena) |*old| old.deinit();
                     ts.data_arena = res.arena;
                     keep_arena = true;
                     ts.data = data;
                     ts.fetched = true;
-                    ts.fetched_at = app.now_secs;
+                    // `as of` is the last time EVERY repo answered; a
+                    // partial failure does not make the rows fresh.
+                    if (r.errored == 0 or ts.fetched_at == 0) ts.fetched_at = app.now_secs;
                     ts.show_all = false;
                     ts.repos = r.repos;
-                    ts.items = r.items;
+                    ts.items = if (carried.items) |n| n else r.items;
                     ts.errored = r.errored;
                     ts.loaded_states = r.states;
-                    try TabState.setText(app.gpa, &ts.error_text, "");
-                    try TabState.setText(app.gpa, &ts.status, r.status);
+                    // Any repo that failed is a failed fetch, in the
+                    // header, in the toolkit's words — the pane beside
+                    // this one says `fetch failed: …` for the same thing.
+                    var some_buf: [48]u8 = undefined;
+                    const why = if (carried.why.len > 0) carried.why else if (r.errored > 0) (std.fmt.bufPrint(&some_buf, "{d} repo{s} did not answer", .{ r.errored, if (r.errored == 1) "" else "s" }) catch "some repos did not answer") else "";
+                    try TabState.setText(app.gpa, &ts.error_text, why);
+                    // The status line follows: the fetch's own count
+                    // would say `0 PRs` over rows that are on screen.
+                    const status = if (why.len > 0) try std.fmt.allocPrint(app.frame_arena.allocator(), "{s} · fetch failed: {s}", .{ ts.spec.name, why }) else r.status;
+                    try TabState.setText(app.gpa, &ts.status, status);
                     // The trees open every repo on their first fetch and
                     // keep the user's choices after that.
                     switch (data) {
@@ -2341,14 +2413,14 @@ pub const App = struct {
                     }
                     // A message set after the refresh was queued (`hid api`)
                     // outlives it, as it does in the reference.
-                    if (r.tab == app.active and (app.status.items.len == 0 or std.mem.startsWith(u8, app.status.items, "refreshing "))) app.setStatus("{s}", .{r.status});
+                    if (r.tab == app.active and (app.status.items.len == 0 or std.mem.startsWith(u8, app.status.items, "refreshing "))) app.setStatus("{s}", .{ts.status});
                     // A refresh that came back with every repo errored
                     // and nothing to show is a failed refresh, whatever
                     // the shape of the answer: the list on screen is
                     // stale and nothing on it says so. It gets the same
                     // offer as one that failed outright.
                     if (r.errored > 0 and r.items == 0) {
-                        app.toastWithAction(.err, retry_action, "error: {s}", .{r.status});
+                        app.toastWithAction(.err, retry_action, "error: {s}", .{ts.status});
                     }
                 } else {
                     try TabState.setText(app.gpa, &ts.error_text, r.error_text);
@@ -3128,6 +3200,55 @@ test "a refetch keeps the old rows on screen and puts the cursor back on the PR 
     // And the remembered key is cleared, so the next refetch reads the
     // cursor fresh.
     try t.expectEqual(@as(usize, 0), ts.keep_key_len);
+}
+
+test "a refetch that fails keeps the rows it had, says `fetch failed`, and keeps `as of` on the last success" {
+    // hunt/findings-2026-09-23/integ-bb-refresh-failure-wipes-rows.md: a
+    // 5xx (or the server gone) replaced every PR with nothing, `(0)`,
+    // a clipped `network er` per repo and a fresh `as of`.
+    const r = try Rig.init(acme, .{});
+    defer r.deinit();
+    const ts = &r.app.tabs[0];
+    const Probe = struct {
+        fn prsOf(tab: *const TabState, slug: []const u8) usize {
+            for (tab.data.repo_pr_tree) |rp| if (std.mem.eql(u8, rp.slug, slug)) return rp.prs.len;
+            return 0;
+        }
+    };
+    const api_prs = Probe.prsOf(ts, "api");
+    const web_prs = Probe.prsOf(ts, "web");
+    try t.expect(api_prs > 0 and web_prs > 0);
+    const items = ts.items;
+    const stamp = ts.fetched_at;
+
+    // Every repo 500s.
+    r.app.now_secs += 600;
+    r.srv.failPaths("");
+    try r.app.refreshTab(0);
+    try r.drain();
+    try t.expectEqual(api_prs, Probe.prsOf(ts, "api"));
+    try t.expectEqual(web_prs, Probe.prsOf(ts, "web"));
+    try t.expectEqual(items, ts.items);
+    try t.expectEqual(stamp, ts.fetched_at);
+    for (ts.data.repo_pr_tree) |rp| try t.expectEqualStrings("", rp.error_label);
+    var buf: [128]u8 = undefined;
+    try t.expectEqualStrings("fetch failed: HTTP 500", sdk.pane.chrome.fetchText(&buf, r.app.fetchState(), false));
+
+    // One repo 500s: the other is fresh, the failed one keeps its rows,
+    // and the header names it.
+    r.srv.failPaths("/web/");
+    try r.app.refreshTab(0);
+    try r.drain();
+    try t.expectEqual(web_prs, Probe.prsOf(ts, "web"));
+    try t.expectEqualStrings("fetch failed: web: HTTP 500", sdk.pane.chrome.fetchText(&buf, r.app.fetchState(), false));
+    try t.expectEqual(stamp, ts.fetched_at);
+
+    // Back up: the failure clears and the stamp moves.
+    r.srv.failPaths(null);
+    try r.app.refreshTab(0);
+    try r.drain();
+    try t.expect(r.app.fetchState() == .idle);
+    try t.expectEqual(r.app.now_secs, ts.fetched_at);
 }
 
 test "the detail follows the cursor, and `a` approves then withdraws on the fake server" {

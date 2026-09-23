@@ -4587,6 +4587,26 @@ test "an End pressed before a ticket's linked PRs land is still on the last row 
     try testing.expectEqual(after.rows.len - 1, a.tab().selected);
 }
 
+test "a refetch that fails keeps the rows it had, says `fetch failed`, and keeps `as of` on the last success" {
+    // The rule the Bitbucket pane now follows too
+    // (hunt/findings-2026-09-23/integ-bb-refresh-failure-wipes-rows.md):
+    // one behaviour for one situation, in the toolkit's words.
+    const h = try Harness.start(.{ .tabs = &work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    const n = a.tab().issues.len;
+    try testing.expect(n > 0);
+    const stamp = a.tab().fetched_at;
+    h.store.fail_with = 500;
+    defer h.store.fail_with = null;
+    _ = try a.onKey("shift+r");
+    try testing.expectEqual(n, a.tab().issues.len);
+    try testing.expectEqual(stamp, a.tab().fetched_at);
+    // The header's reason, which `screen.zig` hands `fetchText`.
+    try testing.expect(a.tab().last_error.len > 0);
+}
+
 test "the Work family's three kinds: open work counts for the chip, reported is the reporter query, the editable tab interpolates its vars" {
     const h = try Harness.start(.{ .tabs = &editable_tabs }, .work);
     defer h.stop();

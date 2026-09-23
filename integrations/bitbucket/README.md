@@ -309,8 +309,13 @@ and the refresh chip turns the host's own spinner ring:
 | `(2 repos · 3 PRs)  ⠋ fetching…` | a refetch: the rows and their count stay on screen |
 | `⠋ queued behind 3 requests` | held in the local broker's queue, that many ahead |
 | `⠋ waiting for the API budget` | held on the shared file bucket (no broker) |
-| `fetch failed: <why>` | the last fetch failed, and this is why |
+| `(2 repos · 3 PRs)  fetch failed: <why>` | the last fetch failed, and this is why — for every repo (`network error`), one (`web: HTTP 500`) or some (`2 of 5 repos: …`) |
 | `(2 repos · 3 PRs)  as of 4m ago` | done; the age the family already says |
+
+A failed refetch never empties the list: a repo that did not answer
+keeps the rows it had (the same rule the Jira pane follows), and `as
+of` stays on the last time every repo answered. Only a tab with
+nothing to show paints the reason in place of the list.
 | `no pull requests match` | the chips or the `/` query hid every row |
 
 ## The statusline chips

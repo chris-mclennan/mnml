@@ -191,7 +191,7 @@ fn paintHeader(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
             sub = try std.fmt.allocPrint(arena, "  ({d} of {d})", .{ app.filter_shown, app.filter_total });
         } else if (ts.fetched) {
             sub = switch (ts.data) {
-                .repo_pr_tree => try std.fmt.allocPrint(arena, "  ({d} repos · {d} PRs{s})", .{ ts.repos, ts.items, if (ts.errored > 0) " · some errored" else "" }),
+                .repo_pr_tree => try std.fmt.allocPrint(arena, "  ({d} repos · {d} PRs)", .{ ts.repos, ts.items }),
                 .repo_tree => try std.fmt.allocPrint(arena, "  ({d} repos)", .{ts.repos}),
                 .pull_requests => try std.fmt.allocPrint(arena, "  ({d} PRs)", .{ts.items}),
                 .pipelines => try std.fmt.allocPrint(arena, "  ({d} pipelines)", .{ts.items}),
@@ -327,13 +327,31 @@ fn paintBody(arena: Allocator, p: *Painter, body: Box) Allocator.Error!void {
     }
 }
 
+/// No row on the tab carries anything the server said: never fetched,
+/// an empty list, or a tree whose every repo is an error row.
+fn nothingToShow(ts: *const app_mod.TabState) bool {
+    if (!ts.fetched) return true;
+    return switch (ts.data) {
+        .repo_pr_tree => |repos| for (repos) |r| {
+            if (r.error_label.len == 0) break false;
+        } else true,
+        .repo_tree => |repos| for (repos) |r| {
+            if (r.error_label.len == 0) break false;
+        } else true,
+        else => ts.data.len() == 0,
+    };
+}
+
 fn paintList(arena: Allocator, p: *Painter, box: Box) Allocator.Error!void {
     const app = p.app;
     const th = p.th;
     const ts = app.activeTab();
     if (box.h == 0 or box.w < 4) return;
-    // A tab that failed paints the reason instead of an empty list.
-    if (ts.error_text.len > 0) {
+    // A tab that failed with nothing to show paints the reason instead
+    // of an empty list. One that failed over rows it already had keeps
+    // them: the header says `fetch failed: …`, and the rows are still
+    // the last thing the server said.
+    if (ts.error_text.len > 0 and nothingToShow(ts)) {
         _ = p.text(box.x + 2, box.y, box.w -| 2, ts.spec.name, th.label());
         if (box.h > 2) _ = p.text(box.x + 2, box.y + 2, box.w -| 2, ts.error_text, th.bad());
         if (box.h > 4) _ = p.text(box.x + 2, box.y + 4, box.w -| 2, "r retries · see the README's Auth section", th.mutedText());
@@ -1494,6 +1512,10 @@ test "the header says what a fetch is doing: queued behind N, waiting, fetching,
     scr = try s.draw();
     try t.expect(has(scr, "fetch failed: 401 auth failed"));
     try t.expect(!has(scr, "\u{2839}"));
+    // …over the rows it had, which stay: the failure is the header's,
+    // not a panel painted where the list was.
+    try t.expect(has(scr, "#1234"));
+    try t.expect(!has(scr, "r retries"));
     try app_mod.TabState.setText(app.gpa, &app.tabs[0].error_text, "");
     // The chips hid every row: the header names that rather than
     // counting to zero.

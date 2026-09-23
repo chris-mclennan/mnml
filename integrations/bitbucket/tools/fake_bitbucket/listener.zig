@@ -83,6 +83,19 @@ pub const Server = struct {
         self.state.extra_prs = n;
     }
 
+    /// Answer every request whose path contains `path` ("" = all) with
+    /// a 500 until `failPaths(null)`.
+    pub fn failPaths(self: *Server, path: ?[]const u8) void {
+        self.state_lock.lockUncancelable(self.io);
+        defer self.state_lock.unlock(self.io);
+        if (path) |p| {
+            const n = @min(p.len, self.state.fail_path_buf.len);
+            @memcpy(self.state.fail_path_buf[0..n], p[0..n]);
+            self.state.fail_path_len = @intCast(n);
+            self.state.failing = true;
+        } else self.state.failing = false;
+    }
+
     /// Answer `/2.0/user` with a 403 from now on.
     pub fn denyUser(self: *Server, on: bool) void {
         self.state_lock.lockUncancelable(self.io);
