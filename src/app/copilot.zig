@@ -45,6 +45,7 @@ const settings = @import("settings.zig");
 const lsp_decor = @import("lsp_decor.zig");
 const dap_client = @import("../dap/client.zig");
 const config = @import("../config/root.zig");
+const runners = @import("runners.zig");
 
 pub const table = .{
     .@"ai.copilot_sign_in" = &signInCmd,
@@ -233,14 +234,21 @@ pub fn ensure(app: *App) Allocator.Error!?*Client {
     const arena = app.frame.allocator();
     const argv = try argvFor(app, arena);
     if (argv.len == 0) return null;
-    if (!try onPath(app, arena, argv[0])) {
+    // Resolved ONCE, on the App's PATH, and the spawn gets the path the
+    // walk found: `std.process.spawn` looks a bare argv[0] up on the
+    // process's own PATH, not on the env map it is handed, so a binary
+    // on the App's PATH alone was found here and `FileNotFound` there.
+    var where: [std.fs.max_path_bytes]u8 = undefined;
+    const found = runners.pathOf(app.io, &app.env, &where, argv[0]) orelse {
         st.unavailable = true;
         const msg = try copilot.missingMessage(arena, argv[0]);
         try app.toastLevel(.warn, "{s}", .{msg});
         return null;
-    }
+    };
+    const spawn_argv = try arena.dupe([]const u8, argv);
+    spawn_argv[0] = try arena.dupe(u8, found);
     const c = Client.spawn(app.gpa, app.io, &app.events, .{
-        .argv = argv,
+        .argv = spawn_argv,
         .root = app.workspace,
         .env = &app.env,
         .github_enterprise_uri = app.cfg.ai.copilot.github_enterprise_uri,
@@ -260,12 +268,6 @@ pub fn ensure(app: *App) Allocator.Error!?*Client {
     };
     loadIgnores(app);
     return c;
-}
-
-/// `copilot-language-server` on `PATH` — the same check the LSP client
-/// makes, so an absolute path and a bare name both work.
-fn onPath(app: *App, arena: Allocator, cmd: []const u8) Allocator.Error!bool {
-    return @import("lsp.zig").onPath(app, arena, cmd);
 }
 
 pub fn retire(app: *App) void {
@@ -712,4 +714,38 @@ test "argvFor: the default binary, or the config's argv with $VARS expanded" {
     try t.expectEqual(@as(usize, 1), copilot.default_args.len);
     try t.expectEqualStrings("--stdio", copilot.default_args[0]);
     _ = a;
+}
+
+test "ensure: a copilot found on the App's PATH is the one spawned — a shim dir the process's own PATH never had" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const gpa = t.allocator;
+    const io = t.io;
+    const exe = @import("build_options").fake_copilot_exe;
+    Io.Dir.cwd().access(io, exe, .{}) catch return error.SkipZigTest;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const ws = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+    try tmp.dir.createDirPath(io, "shim");
+    try tmp.dir.writeFile(io, .{ .sub_path = "shim/copilot-shim", .data = "#!/bin/sh\nexec \"$MNML_FAKE_COPILOT\" \"$@\"\n" });
+    const shim = try std.fs.path.join(gpa, &.{ ws, "shim", "copilot-shim" });
+    defer gpa.free(shim);
+    try Io.Dir.cwd().setFilePermissions(io, shim, .fromMode(0o755), .{});
+    try tmp.dir.createDirPath(io, ".mnml");
+    try tmp.dir.writeFile(io, .{ .sub_path = ".mnml/config.zon", .data = ".{ .ai = .{ .suggest_backend = \"copilot\", .copilot_here = true, .copilot = .{ .command = .{ \"copilot-shim\", \"--stdio\" } } } }" });
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try env.put("MNML_FAKE_COPILOT", exe);
+    const shim_dir = try std.fs.path.join(gpa, &.{ ws, "shim" });
+    defer gpa.free(shim_dir);
+    try env.put("PATH", shim_dir);
+    var app = try App.initWith(gpa, io, .{ .workspace = ws, .cols = 100, .rows = 30, .env = &env, .workspace_trusted = true });
+    defer app.deinit();
+    // The walk found `copilot-shim` and the spawn then looked the bare
+    // name up again on this process's PATH: `would not start
+    // (FileNotFound)` and the backend was quiet for the session.
+    const c = try ensure(&app);
+    try t.expect(c != null);
+    try t.expect(!app.copilot.unavailable);
+    if (app.lastToast()) |toast| try t.expect(std.mem.indexOf(u8, toast, "would not start") == null);
 }

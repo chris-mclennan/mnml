@@ -1178,6 +1178,7 @@ pub fn openSource(app: *App, self: *Lua, src: *lua_mod.PickerSource, query: []co
     p.icons = owned_icons;
     p.marked = marked;
     p.lua_source = source_id;
+    p.lua_state = self.id;
     p.state.multi = src.multi;
     p.state.has_preview = src.preview != null;
     // A re-run keeps what the reader typed: the query is the overlay's.
@@ -1196,7 +1197,7 @@ pub fn refreshPreview(app: *App) Allocator.Error!void {
     if (app.overlay != .picker or app.overlay.picker.kind != .lua) return;
     const p = &app.overlay.picker;
     if (!p.state.has_preview) return;
-    const self = app.script();
+    const self = app.luaState(p.lua_state) orelse return;
     const src = self.findSource(p.lua_source) orelse return;
     const fnref = src.preview orelse return;
     app_mod.Overlay.freePreview(app.gpa, p.preview);
@@ -1215,7 +1216,7 @@ pub fn tickLivePicker(app: *App, now: i64) Allocator.Error!void {
     const due = app.overlay.picker.requery_at_ms orelse return;
     if (now < due) return;
     app.overlay.picker.requery_at_ms = null;
-    const self = app.script();
+    const self = app.luaState(app.overlay.picker.lua_state) orelse return;
     const src = self.findSource(app.overlay.picker.lua_source) orelse return;
     if (!src.live) return;
     const query = try app.gpa.dupe(u8, app.overlay.picker.state.queryText());
@@ -1236,7 +1237,8 @@ pub fn tickLivePicker(app: *App, now: i64) Allocator.Error!void {
 /// The query changed on a live source: arm the debounce.
 pub fn noteQueryChanged(app: *App, now: i64) void {
     if (app.overlay != .picker or app.overlay.picker.kind != .lua) return;
-    const src = app.script().findSource(app.overlay.picker.lua_source) orelse return;
+    const lua = app.luaState(app.overlay.picker.lua_state) orelse return;
+    const src = lua.findSource(app.overlay.picker.lua_source) orelse return;
     if (!src.live) return;
     app.overlay.picker.requery_at_ms = now + lua_mod.live_debounce_ms;
 }

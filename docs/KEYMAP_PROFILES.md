@@ -236,6 +236,33 @@ terminal never sends. Before it did, and `buffer.prev` was dead on
 `Ctrl+Shift+Tab` and on NvChad's `<S-Tab>` in every terminal while the
 corpus reported it working.
 
+## Shifted function keys on a terminal without the kitty protocol
+
+Nine commands sit on `Shift+F`-keys in both profiles (`find.prev`
+Shift+F3, `dap.terminate` Shift+F5, `git.diff_prev_file` Shift+F7,
+`git.conflict_prev` Shift+F8, `dap.toggle_breakpoint_conditional`
+Shift+F9, `view.context_menu_at_focus` Shift+F10, `dap.step_out`
+Shift+F11, `lsp.references` Shift+F12, and `dap.restart` on
+Ctrl+Shift+F5). How they arrive depends on the terminal:
+
+| terminal | Shift+F5 arrives as | read as |
+|---|---|---|
+| ghostty, kitty, WezTerm, foot, xterm, Windows Terminal, VTE, Konsole | `CSI 15;2 ~` (xterm's modifier parameter) | `shift+f5` |
+| Terminal.app (`TERM_PROGRAM=Apple_Terminal`) | `CSI 25 ~` — the VT220's F13 | `shift+f5` |
+| rxvt, the Linux console (`TERM=rxvt*` / `linux`) | `CSI 28 ~` — F15 | `shift+f5` |
+
+The last two send a different KEY rather than a modified one, and the
+parser mnml uses drops those codes; `src/tui/legacy_fkeys.zig` reads
+them first, by the convention `$TERM_PROGRAM` / `$TERM` names:
+Terminal.app sends Shift+F5–F12 as F13–F20; rxvt and the Linux console
+send Shift+F3–F10 as F13–F20 and Shift+F11 / F12 as `CSI 23 $` /
+`CSI 24 $`; anywhere else F13–F20 are xterm's own names for
+Shift+F1–F8. `ESC O <m> P…S` (SS3 with a modifier digit) reads its
+modifier too. Two chords stay out of reach there: rxvt's Shift+F1 /
+F2 are the same bytes as F11 / F12, and neither Terminal.app nor rxvt
+sends anything for Ctrl+Shift+F5 — `dap.restart` has `<leader>dR` and
+the palette.
+
 ## Quick open's prefixes — and the non-kitty route to the palette
 
 `Ctrl+P` opens *Open file*, and the FIRST character typed picks a mode,

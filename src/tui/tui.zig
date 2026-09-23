@@ -14,6 +14,7 @@ test {
     @import("std").testing.refAllDecls(@This());
     _ = @import("caps.zig");
     _ = @import("input_common.zig");
+    _ = @import("legacy_fkeys.zig");
     // The Windows backends' pure halves — the record fold, the console
     // mode words — have tests that analyze on every host; the tests that
     // need a console skip themselves elsewhere. (The POSIX files are not

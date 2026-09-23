@@ -89,6 +89,7 @@ pub fn init(self: *Term, io: Io, gpa: std.mem.Allocator, env: *std.process.Envir
     errdefer self.vx.deinit(gpa, w);
 
     self.input.init(io, gpa, &self.vx, tty_in);
+    self.input.fkeys = @import("legacy_fkeys.zig").styleFor(env.get("TERM_PROGRAM"), env.get("TERM"));
     try self.input.start();
     errdefer self.input.stop();
 

@@ -405,7 +405,7 @@ const Run = struct {
                 if (self.quit and !meaningfulAfterQuit(check)) {
                     return self.fail("line {d}: {s}", .{ line.ln, after_quit_msg });
                 }
-                if (self.pollCheck(check, asserting)) |msg| {
+                if (self.pollCheck(check, asserting, line.budget_ms)) |msg| {
                     defer self.gpa.free(msg);
                     if (std.mem.startsWith(u8, msg, "render: ")) return self.fail("{s}", .{msg});
                     return self.fail("line {d}: {s}", .{ line.ln, msg });
@@ -493,9 +493,12 @@ const Run = struct {
     /// Once the app has quit there is nothing left to retry AGAINST (the
     /// runner stops ticking it), so the check is evaluated once and
     /// answered.
-    fn pollCheck(self: *Run, check: parser.Check, asserting: bool) ?[]u8 {
+    /// `expect within <ms>` widens the budget for that one check; it
+    /// never narrows it below the runner's own.
+    fn pollCheck(self: *Run, check: parser.Check, asserting: bool, budget_ms: ?u64) ?[]u8 {
         const d = self.driver.?;
-        const deadline = self.nowMs() + @as(i64, @intCast(self.opts.timing.expect_budget_ms));
+        const budget = @max(self.opts.timing.expect_budget_ms, budget_ms orelse 0);
+        const deadline = self.nowMs() + @as(i64, @intCast(budget));
         while (true) {
             const screen = screen_mod.toTestText(self.gpa, d.screen()) catch return self.errMsg("render: {s}", error.OutOfMemory);
             defer self.gpa.free(screen);
@@ -2032,4 +2035,34 @@ test "the ladder brackets every known chrome breakpoint, in order, and includes 
         if (s.cols >= 130 and s.cols <= 140) brackets_135 = true;
     }
     try t.expect(brackets_135);
+}
+
+test "expect within <ms> polls past the runner's budget and answers the moment the check holds" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+    // The text lands on the 80th render: far past `fast`'s 60 ms budget
+    // at a 5 ms poll, well inside 5 s.
+    const bare = try env.script("b.test", "open a.txt\nexpect screen contains late\n");
+    defer t.allocator.free(bare);
+    var slow: StubFactory = .{ .proto = .{ .text = "early", .late_after = 80, .late_text = "late" } };
+    var o = runFile(t.allocator, t.io, slow.factory(), bare, content_size, env.opts());
+    defer o.deinit(t.allocator);
+    try t.expect(!o.passed);
+
+    const within = try env.script("w.test", "open a.txt\nexpect within 5000 screen contains late\n");
+    defer t.allocator.free(within);
+    var slow2: StubFactory = .{ .proto = .{ .text = "early", .late_after = 80, .late_text = "late" } };
+    var o2 = runFile(t.allocator, t.io, slow2.factory(), within, content_size, env.opts());
+    try expectPassed(&o2);
+    // It stopped polling once the text was there, not at the 5 s cap.
+    try t.expect(slow2.stats.renders < 200);
+
+    // A check that never holds still fails, with the screen, at the cap.
+    var never: StubFactory = .{ .proto = .{ .text = "early" } };
+    const short = try env.script("n.test", "open a.txt\nexpect within 100 screen contains late\n");
+    defer t.allocator.free(short);
+    var o3 = runFile(t.allocator, t.io, never.factory(), short, content_size, env.opts());
+    defer o3.deinit(t.allocator);
+    try t.expect(!o3.passed);
+    try t.expect(std.mem.startsWith(u8, o3.message.?, "line 2: screen does not contain \"late\""));
 }

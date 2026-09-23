@@ -16,6 +16,7 @@
 
 const std = @import("std");
 const vaxis = @import("vaxis");
+pub const legacy_fkeys = @import("legacy_fkeys.zig");
 
 const Io = std.Io;
 
@@ -31,6 +32,13 @@ pub const queue_len = 256;
 pub fn parse(in: anytype, parser: *vaxis.Parser, buf: []u8, total: usize) !usize {
     var pos: usize = 0;
     while (pos < total) {
+        // A shifted F-key in a convention vaxis does not read — it drops
+        // those sequences — is the chord the key was (`legacy_fkeys.zig`).
+        if (legacy_fkeys.match(buf[pos..total], in.fkeys)) |m| {
+            pos += m.n;
+            try fold(in, .{ .key_press = m.key });
+            continue;
+        }
         const result = parser.parse(buf[pos..total], in.gpa) catch {
             // Unparseable garbage: drop one byte and carry on.
             pos += 1;
@@ -301,6 +309,46 @@ test "parse: a stream is cut at sequence boundaries and the tail carries over" {
     try testing.expectEqual(@as(usize, 2), n);
     try testing.expectEqual(@as(u21, 'a'), out[0].key_press.codepoint);
     try testing.expectEqual(@as(u21, Key.up), out[1].key_press.codepoint);
+}
+
+test "parse: a shifted F-key reaches the keymap as `shift+fN` whichever way the terminal spells it" {
+    var env: std.process.Environ.Map = .init(testing.allocator);
+    defer env.deinit();
+    var vx = try vaxis.init(testing.io, testing.allocator, &env, .{});
+    var sink_buf: [256]u8 = undefined;
+    var sink: Io.Writer.Discarding = .init(&sink_buf);
+    defer vx.deinit(testing.allocator, &sink.writer);
+    const in = try testInput(&vx);
+    defer testing.allocator.destroy(in);
+    vx.queries_done.store(true, .unordered);
+
+    const Case = struct { style: legacy_fkeys.Style, bytes: []const u8, names: []const []const u8 };
+    const cases = [_]Case{
+        // xterm's modifier parameter — Windows Terminal, VTE, Konsole,
+        // xterm itself: vaxis reads these already.
+        .{ .style = .xterm, .bytes = "\x1b[1;2R\x1b[15;2~\x1b[24;2~\x1b[15;6~", .names = &.{ "shift+f3", "shift+f5", "shift+f12", "ctrl+shift+f5" } },
+        // Terminal.app: Shift+F5..F12 are the VT220's F13..F20, which
+        // vaxis drops.
+        .{ .style = .apple_terminal, .bytes = "\x1b[25~\x1b[28~\x1b[29~\x1b[31~\x1b[33~\x1b[34~", .names = &.{ "shift+f5", "shift+f7", "shift+f8", "shift+f9", "shift+f11", "shift+f12" } },
+        // rxvt / the Linux console.
+        .{ .style = .rxvt, .bytes = "\x1b[25~\x1b[32~\x1b[23$\x1b[24$", .names = &.{ "shift+f3", "shift+f8", "shift+f11", "shift+f12" } },
+        // xterm's own F13 is Shift+F1; SS3 with a modifier digit.
+        .{ .style = .xterm, .bytes = "\x1b[25~\x1bO2R", .names = &.{ "shift+f1", "shift+f3" } },
+    };
+    var parser: vaxis.Parser = .{};
+    for (cases) |c| {
+        in.fkeys = c.style;
+        var buf: [64]u8 = undefined;
+        @memcpy(buf[0..c.bytes.len], c.bytes);
+        try testing.expectEqual(@as(usize, 0), try parse(in, &parser, &buf, c.bytes.len));
+        var out: [8]Event = undefined;
+        const n = try in.drain(&out);
+        try testing.expectEqual(c.names.len, n);
+        for (c.names, out[0..n]) |want, ev| {
+            var nb: [32]u8 = undefined;
+            try testing.expectEqualStrings(want, keyName(ev.key_press, &nb));
+        }
+    }
 }
 
 test "parser distinguishes chords the legacy encoding folds together" {
