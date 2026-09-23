@@ -65,7 +65,7 @@ platform polish that closed §5 of the design — `mnml.inspect`, the
 argument-error contract, the budget chip, `script.doctor`'s roots and
 the doc check that keeps `docs/LUA.md` and the registry in step.
 
-Ids: 1121 in `src/commands/specs.zig` (the four session-worktree ids — `ai.new_session_worktree`, `sessions.open_worktree_in_tree` / `merge_worktree` / `remove_worktree` — landed 2026-09-10); 1121 have runners (32 of them the deliberate `cutRunner` stubs, each naming the cut and the PARITY section that records it), none without — `view.toggle_zoom` landed with the fullscreen track (`zen.zig`) and `integrations.icon_picker` with the leftovers track. `zig build -Dpartial=false` builds, and CI runs it.
+Ids: 1123 in `src/commands/specs.zig` (`ai.claude_add_account` / `ai.claude_remove_account` landed 2026-09-23; the four session-worktree ids — `ai.new_session_worktree`, `sessions.open_worktree_in_tree` / `merge_worktree` / `remove_worktree` — landed 2026-09-10); 1123 have runners (32 of them the deliberate `cutRunner` stubs, each naming the cut and the PARITY section that records it), none without — `view.toggle_zoom` landed with the fullscreen track (`zen.zig`) and `integrations.icon_picker` with the leftovers track. `zig build -Dpartial=false` builds, and CI runs it.
 
 ## Landed since the first ledger
 
