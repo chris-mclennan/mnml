@@ -24,6 +24,7 @@
 
 const std = @import("std");
 const vaxis = @import("vaxis");
+const utf8 = @import("../core/utf8.zig");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
@@ -371,7 +372,7 @@ pub fn drawBreadcrumb(ui: Ui, pane: PaneId, area: Rect, names: []const []const u
     const half = (max - 1) / 2;
     const tail_w = max - 1 - half;
     var head_end: usize = 0;
-    var it = vaxis.unicode.graphemeIterator(label);
+    var it = utf8.graphemeIterator(label);
     var cells: u16 = 0;
     while (it.next()) |g| {
         const b = g.bytes(label);
@@ -535,9 +536,10 @@ pub fn layoutLine(ui: Ui, line: []const u8, tab_width: u8) Allocator.Error![]Cel
     var out: std.ArrayListUnmanaged(CellInfo) = .empty;
     const tw: u32 = if (tab_width == 0) 1 else tab_width;
     var x: u32 = 0;
-    var it = vaxis.unicode.graphemeIterator(line);
+    var it = utf8.graphemeIterator(line);
     while (it.next()) |g| {
-        const bytes = g.bytes(line);
+        // An invalid byte is its own one-cell unit, painted as U+FFFD.
+        const bytes = utf8.displayBytes(g.bytes(line));
         const off: u32 = @intCast(g.start);
         if (bytes.len == 1 and bytes[0] == '\t') {
             const n = tw - (x % tw);

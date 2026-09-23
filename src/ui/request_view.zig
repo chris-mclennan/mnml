@@ -36,6 +36,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const vaxis = @import("vaxis");
+const utf8 = @import("../core/utf8.zig");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
@@ -1262,7 +1263,7 @@ fn paintVarsOnLine(ui: Ui, pane: PaneId, x: u16, y: u16, max_w: u16, line: []con
 pub fn fieldScroll(ui: Ui, text: []const u8, caret: usize, w: u16) u32 {
     if (w == 0) return 0;
     var caret_col: u32 = 0;
-    var it = vaxis.unicode.graphemeIterator(text);
+    var it = utf8.graphemeIterator(text);
     var widths: std.ArrayListUnmanaged(u32) = .empty;
     const c = @min(caret, text.len);
     while (it.next()) |g| {
@@ -1756,7 +1757,7 @@ fn spanLine(ui: Ui, gutter: Seg, l: []const u8, off: usize, spans: []const edito
 /// The byte length of the longest prefix of `s` that fits `w` cells.
 fn cutAt(ui: Ui, s: []const u8, w: u16) usize {
     var used: u16 = 0;
-    var it = vaxis.unicode.graphemeIterator(s);
+    var it = utf8.graphemeIterator(s);
     while (it.next()) |g| {
         const cw: u16 = @intCast(ui.canvas.cellWidth(g.bytes(s)));
         if (used + cw > w) return if (g.start == 0) g.len else g.start;
