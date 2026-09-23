@@ -507,7 +507,13 @@ pub const Editor = struct {
         if (!op.isInsertChar()) self.in_insert_run = false;
 
         var out: EditOutcome = .{};
+        // A view the other side of a foreign splice can sit mid-char when
+        // that splice joined a lone lead byte to the continuation bytes
+        // after it (invalid UTF-8 turned valid); step back onto the char.
+        self.cursor = self.snapBoundary(self.cursor);
         try apply_mod.applyOne(self, op, viewport_rows, clip, &out);
+        // Same for this view's own deletion.
+        if (self.doc.text.items.len != before_len) self.cursor = self.snapBoundary(self.cursor);
         assert(self.isBoundary(self.cursor));
         out.cursor_moved = out.cursor_moved or self.cursor != before_cursor;
         out.buffer_changed = out.buffer_changed or self.doc.text.items.len != before_len;
@@ -742,4 +748,60 @@ test "a typed run in one view does not join another view's undo group" {
     _ = try b.apply(.undo, 10, &clip, arena);
     try std.testing.expectEqualStrings("", b.bytes());
     try std.testing.expectEqual(@as(usize, 0), a.cursor);
+}
+
+test "cursor motion and small edits never trip on invalid UTF-8 (seeded fuzz over random bytes)" {
+    // A file is bytes: stray continuation bytes (first byte of the file
+    // included), cut-short sequences and combining marks after garbage
+    // must step one unit at a time in both directions, at both ends.
+    const gpa = std.testing.allocator;
+    var clip = Clipboard.init(gpa);
+    defer clip.deinit();
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    var prng = std.Random.DefaultPrng.init(0x7fe1_0002);
+    const r = prng.random();
+    const ops = [_]EditOp{
+        .move_left,                .move_right,        .move_up,           .move_down,
+        .move_word_left,           .move_word_right,   .move_word_end,     .move_big_word_right,
+        .move_big_word_left,       .move_line_start,   .move_line_end,     .move_line_last_char,
+        .move_line_first_non_ws,   .move_buffer_start, .move_buffer_end,   .page_up,
+        .page_down,                .half_page_up,      .half_page_down,    .backspace,
+        .delete_forward,           .delete_word_left,  .delete_word_right, .{ .insert_char = 'x' },
+        .{ .insert_char = 0x301 },
+    };
+    var buf: [48]u8 = undefined;
+    for (0..3000) |_| {
+        const len = r.uintAtMost(usize, buf.len);
+        const s = buf[0..len];
+        for (s) |*b| b.* = switch (r.uintLessThan(u8, 5)) {
+            0 => r.int(u8),
+            1 => 0x80 + r.uintLessThan(u8, 0x40),
+            2 => ([_]u8{ 0xCC, 0xCD, 0x81, 0xA0, 0xC3, 0xE2, 0xF0, 0x9F, 0x98 })[r.uintLessThan(usize, 9)],
+            3 => ([_]u8{ '\n', ' ', '\t', '\r' })[r.uintLessThan(usize, 4)],
+            else => 'a' + r.uintLessThan(u8, 26),
+        };
+        const ed = try Editor.init(gpa, s);
+        defer ed.deinit();
+        ed.cursor = if (r.boolean()) 0 else ed.doc.text.items.len;
+        for (0..24) |_| {
+            _ = arena_state.reset(.retain_capacity);
+            const op = ops[r.uintLessThan(usize, ops.len)];
+            _ = try ed.apply(op, 5, &clip, arena_state.allocator());
+            const t = ed.doc.text.items;
+            try std.testing.expect(ed.cursor <= t.len);
+            try std.testing.expect(ed.isBoundary(ed.cursor));
+            // Every step lands on a boundary and moves.
+            if (ed.cursor < t.len) {
+                const nb = ed.nextBoundary(ed.cursor);
+                try std.testing.expect(nb > ed.cursor and ed.isBoundary(nb));
+            }
+            if (ed.cursor > 0) {
+                const pb = ed.prevBoundary(ed.cursor);
+                try std.testing.expect(pb < ed.cursor and ed.isBoundary(pb));
+            }
+            _ = ed.doc.vcolAtByte(ed.cursor);
+            _ = ed.rowCol();
+        }
+    }
 }
