@@ -540,6 +540,10 @@ pub fn items(app: *App, arena: Allocator) Allocator.Error![]Item {
     // ── pinned commands ──
     for (app.cfg.ui.dock.pins) |id| {
         const ref = command.resolve(app, id) orelse continue;
+        // A pin of a command an item already runs is that item, not a
+        // second one beside it (Claude Code pinned from its own menu
+        // painted `Claude Code` and `AI: open Claude Code`).
+        if (alreadyRuns(app, out.items, id)) continue;
         // // changed (railmove): a section's own command is a PANEL on
         // the dock — the section's glyph and name, the running dot
         // while its column is open, and a way back to the bar.
@@ -1009,12 +1013,11 @@ pub fn openItemMenu(app: *App, i: usize, x: u16, y: u16) Allocator.Error!void {
             if (activity_bar.sectionOfCommandName(it.id)) |s| try rows.append(app.gpa, .{ .label = "Move back to activity bar", .action = .{ .rail_from_dock = s } });
             try rows.append(app.gpa, .{ .label = "Unpin from dock", .action = .{ .command = .@"view.dock_unpin_item" } });
         },
-        .integration, .launcher => {
-            const on = integrations.isPinnedToDock(app, commandIdOf(app, it) orelse "");
-            try rows.append(app.gpa, .{
-                .label = if (on) "Unpin from dock" else "Pin to dock",
-                .action = .{ .command = if (on) .@"integrations.unpin_from_dock" else .@"integrations.pin_to_dock" },
-            });
+        // An installed surface is on the strip because it is installed:
+        // there is nothing to pin. A pin left in `ui.dock.pins` from
+        // before still gets its way out.
+        .integration, .launcher => if (integrations.isPinnedToDock(app, commandIdOf(app, it) orelse "")) {
+            try rows.append(app.gpa, .{ .label = "Unpin from dock", .action = .{ .command = .@"integrations.unpin_from_dock" } });
             try integrations.setDockMenuChip(app, it.id);
         },
         else => {},
@@ -1046,6 +1049,12 @@ fn fullTitle(app: *App, it: Item) []const u8 {
 }
 
 /// The command id an item names — what `ui.dock.pins` stores.
+/// Some item in `list` already runs command `id`.
+fn alreadyRuns(app: *App, list: []const Item, id: []const u8) bool {
+    for (list) |it| if (commandIdOf(app, it)) |have| if (std.mem.eql(u8, have, id)) return true;
+    return false;
+}
+
 pub fn commandIdOf(app: *App, it: Item) ?[]const u8 {
     return switch (it.action) {
         .named => |id| id,
@@ -1643,6 +1652,48 @@ test "order: `ui.dock.order` leads the strip with the listed ids, keeps the unli
     try t.expectEqualStrings("picker.files", named[0].id);
     try t.expectEqual(Kind.plus, named[7].kind);
     app.cfg.ui.dock.order = &.{};
+}
+
+test "an installed item is never doubled by a pin of its own command, and its menu offers no Pin to dock" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    try app.render();
+    const before = try items(&app, app.frame.allocator());
+    try t.expectEqualStrings("Claude Code", before[1].label);
+    const claude_cmd = try app.gpa.dupe(u8, commandIdOf(&app, before[1]).?);
+    defer app.gpa.free(claude_cmd);
+    const Rows = struct {
+        fn has(items_: []const command.MenuItem, label: []const u8) bool {
+            for (items_) |it| if (std.mem.eql(u8, it.label, label)) return true;
+            return false;
+        }
+    };
+    try openItemMenu(&app, 1, 10, 37);
+    try t.expect(!Rows.has(app.overlay.menu.items, "Pin to dock"));
+    try t.expect(!Rows.has(app.overlay.menu.items, "Unpin from dock"));
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    // A pin of the same command (an older config, a pin from the
+    // palette) adds no second item…
+    const pins = [_][]const u8{claude_cmd};
+    app.cfg.ui.dock.pins = &pins;
+    const after = try items(&app, app.frame.allocator());
+    try t.expectEqual(before.len, after.len);
+    var n: usize = 0;
+    for (after) |it| if (commandIdOf(&app, it)) |c| if (std.mem.eql(u8, c, claude_cmd)) {
+        n += 1;
+    };
+    try t.expectEqual(@as(usize, 1), n);
+    // …and the item's menu offers the pin's way out.
+    try openItemMenu(&app, 1, 10, 37);
+    try t.expect(Rows.has(app.overlay.menu.items, "Unpin from dock"));
+    try t.expect(!Rows.has(app.overlay.menu.items, "Pin to dock"));
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    app.cfg.ui.dock.pins = &.{};
 }
 
 test "the item menu: the four Move rows say left / right on a bottom strip and up / down on a side one, from the edge — and the `+` gets none" {
