@@ -271,7 +271,7 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
             .jobs => false,
         };
         if (took) return;
-        _ = try chordChain(app, k);
+        try unclaimedKey(app, k);
         return;
     }
 
@@ -293,132 +293,132 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
         .pty => |*term| return ptyKey(app, id, term, k),
         .outline => {
             if (try outline.handleKey(app, id, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .md_preview => {
             if (try md_preview.handleKey(app, id, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .zon => {
             if (try zon_pane.handleKey(app, id, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .cheatsheet => |*c| {
             if (try cheatsheet.handleKey(app, c, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .script => |*s| {
             if (try script_pane.handleKey(app, s, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .list => |*l| {
             if (try listPaneKey(app, id, l, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .git_status => |*s| {
             if (try git_app.statusPaneKey(app, id, s, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .diff => |*d| {
             if (try git_app.diffKey(app, id, d, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .git_graph => |*g| {
             if (try git_app.graphKey(app, id, g, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .ai => |*a| {
             if (try ai_app.paneKey(app, id, a, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .sessions_table => |*tp| {
             if (try sessions_table.handleKey(app, id, tp, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .spend_report => |*s| {
             if (try spend.handleKey(app, id, s, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .ai_usage => |*u| {
             if (try usage_pane.handleKey(app, id, u, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .grep => |*g| {
             if (try grep.handleKey(app, id, g, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .debug => |*d| {
             if (try dap.debugKey(app, id, d, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .request => |*rp| {
             if (try request_pane.handleKey(app, id, rp, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .websocket => |*w| {
             if (try ws_pane.handleKey(app, id, w, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .browser => |*b| {
             if (try browser_pane.handleKey(app, id, b, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .mount => |*mp| {
             if (try mount_pane.handleKey(app, id, mp, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .integrations => |*ip| {
             if (try integrations.paneKey(app, id, ip, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .ai_apply => |*ap| {
             if (try ai_apply.handleKey(app, id, ap, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .tests => |*tp| {
             if (try tests_pane.handleKey(app, id, tp, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .flaky => |*fp| {
             if (try flaky.handleKey(app, id, fp, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .requests => |*rp| {
             if (try requests_pane.handleKey(app, id, rp, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .files => |*f| {
             if (try files_pane.handleKey(app, id, f, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .image => |*im| {
             if (try image_pane.handleKey(app, id, im, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .editor => {},
@@ -477,6 +477,23 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
     // follows it. `e` is stale after an app command; ask afresh.
     const now_open = if (app.activeEditor()) |still| still.buf.input.isCmdlineOpen() else false;
     if (cmdline_open or now_open) try cmdline_popup.refresh(app);
+}
+
+/// A key the focused pane or panel did not take. To a vim user every
+/// window is a window: a plain `:` nobody claimed opens the app's
+/// command line (`:help :`) — terminal-normal, the git status pane, the
+/// graph, the cheatsheet, a sidebar section — so the letters typed after
+/// it are the command's and never the pane's single-key verbs (`c` of
+/// `:e` opening the commit box). A pane that types text (a filter, a
+/// prompt field) has already taken its `:`. Anything else is a chord.
+fn unclaimedKey(app: *App, k: Key) Allocator.Error!void {
+    const bare = !k.mods.ctrl and !k.mods.alt and !k.mods.super;
+    if (app.input_style == .vim and bare and k.typed() == ':') {
+        app.chord.clear(app.gpa);
+        cmdline_mod.open(app);
+        return;
+    }
+    _ = try chordChain(app, k);
 }
 
 /// The list panes: j/k move, enter acts, esc closes the pane.
@@ -588,7 +605,7 @@ fn ptyKey(app: *App, id: PaneId, p: *pty_pane.PtyPane, k: Key) Allocator.Error!v
         // `/`, `n`, `N`: the scrollback search (`pty_search.zig`).
         if (try pty_search.termNormalKey(app, id, p, k)) return;
         if (try pty_pane.termNormalKey(app, p, k)) return;
-        _ = try chordChain(app, k);
+        try unclaimedKey(app, k);
         return;
     }
     if (pty_pane.escapeKey(app, p, k)) return;

@@ -1,0 +1,64 @@
+# Vim profile: `:` opens the command line from every Normal-mode window,
+# not only the editor — the git status pane, the commit graph, the
+# cheatsheet and a terminal in T-NORMAL — and the letters typed after it
+# are the command's, never the pane's own keys (the `c` of `:e` is the
+# git status pane's commit box). Neovim 0.12.5:
+#   nvim --clean --headless -c terminal \
+#     -c 'call feedkeys("\<C-\>\<C-n>:e other.txt\<CR>", "xt")' \
+#     -c 'lua io.stdout:write(vim.fn.expand("%:t"))'   ->  other.txt
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write seed.txt "seed\n"
+write a.txt "a\n"
+write b.txt "b\n"
+write c.txt "c\n"
+write d.txt "d\n"
+shell git add .
+shell git commit -q -m "initial"
+open seed.txt
+command editor.use_vim
+
+command git.status_pane
+wait 800
+expect screen contains "working tree clean"
+key :
+type e a.txt
+key enter
+expect within 3000 pane "a.txt"
+expect screen lacks "Commit message"
+
+command git.graph
+wait 800
+key :
+type e b.txt
+key enter
+expect within 3000 pane "b.txt"
+
+command view.cheatsheet
+wait 300
+expect pane "Cheatsheet"
+key :
+type e c.txt
+key enter
+expect within 3000 pane "c.txt"
+
+command term.shell_bottom
+wait 800
+key ctrl+backslash
+key ctrl+n
+expect screen contains "T-NORMAL"
+key :
+type e d.txt
+key enter
+expect within 3000 pane "d.txt"
+
+# A sidebar section is a window too.
+write e.txt "e\n"
+command view.activity_todos
+expect screen contains TODOS
+expect status lacks "\"focus\":\"pane\""
+key :
+type e e.txt
+key enter
+expect within 3000 pane "e.txt"
