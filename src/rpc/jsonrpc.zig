@@ -179,11 +179,26 @@ pub const Transport = struct {
     /// pending map, free the box. A client sends its protocol goodbye
     /// (`shutdown`/`exit`, `disconnect`) before this.
     pub fn shutdown(self: *Transport) void {
+        self.shutdownWithin(0);
+    }
+
+    /// `shutdown`, but once the queue has drained the server gets up
+    /// to `exit_grace_ms` to act on the goodbye and end on its own
+    /// before it is killed. A debug adapter told `disconnect` needs
+    /// that moment to detach from (or end) its debuggee; killed on the
+    /// heels of the frame it would leave the process behind — stopped
+    /// under ptrace for a launched one, alive by luck for an attached
+    /// one (hunt: dap-stop-kills-attached-process).
+    pub fn shutdownWithin(self: *Transport, exit_grace_ms: u32) void {
         self.closing.store(true, .release);
         self.out.close(self.io);
         if (self.started) {
             var waited: u32 = 0;
             while (!self.drained.load(.acquire) and !self.dead.load(.acquire) and waited < drain_grace_ms) : (waited += 5) {
+                self.io.sleep(.fromMilliseconds(5), .awake) catch break;
+            }
+            waited = 0;
+            while (!self.dead.load(.acquire) and waited < exit_grace_ms) : (waited += 5) {
                 self.io.sleep(.fromMilliseconds(5), .awake) catch break;
             }
         }

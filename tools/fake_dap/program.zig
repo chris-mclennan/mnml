@@ -151,6 +151,10 @@ pub const Program = struct {
     /// The struct refs handed out since the last resume: index + 1000.
     struct_refs: std.ArrayList(StructRef) = .empty,
     state: enum { not_started, stopped, sleeping, exited } = .not_started,
+    /// A `stepOut` from main stopped in the runtime's `start` frame —
+    /// the one a debugger shows after main returns (lldb's dyld`start),
+    /// which has no file; any resume from there is the exit.
+    in_runtime: bool = false,
     /// Set by a stop at a `throw`: the resume unwinds it first.
     pending_throw: bool = false,
     /// The line a `pause` interrupted: its `sleep` is done.
@@ -158,8 +162,11 @@ pub const Program = struct {
     /// A stop was just reported at this line: its breakpoint does not
     /// fire again on resume.
     resume_line: ?usize = null,
-    /// The last exception's message, for `stopped.text`.
+    /// The last exception's message, for `stopped.description`.
     last_throw: []const u8 = "",
+    /// Its type, for `stopped.text`: `Throw` for a `throw` line,
+    /// `Error` for a runtime error.
+    last_throw_type: []const u8 = "",
 
     const FnEntry = struct { name: []const u8, body: usize, end_index: usize };
     pub const StructRef = struct { frame: usize, name: []const u8 };
@@ -330,6 +337,7 @@ pub const Program = struct {
     pub fn run(self: *Program, mode: Mode) Allocator.Error!Outcome {
         const a = self.arena();
         if (self.state == .exited) return .{ .exited = 0 };
+        if (self.in_runtime) return self.finish(0);
         const start_depth = self.depth();
         var executed: usize = 0;
         self.struct_refs = .empty;
@@ -345,6 +353,12 @@ pub const Program = struct {
                     _ = self.frames.pop();
                     self.top().pc += 1;
                     continue;
+                }
+                // Stepping out of main: the caller is the runtime.
+                if (mode == .step_out) {
+                    self.in_runtime = true;
+                    self.state = .stopped;
+                    return .{ .stopped = .step };
                 }
                 return self.finish(0);
             }
@@ -413,6 +427,7 @@ pub const Program = struct {
                 },
                 .throw => |msg| {
                     self.last_throw = msg;
+                    self.last_throw_type = "Throw";
                     try self.pending_output.append(a, .{ .category = "stderr", .text = try std.fmt.allocPrint(a, "throw: {s}\n", .{msg}) });
                     const uncaught = self.frames.items.len == 1;
                     if (self.stop_on_error or (uncaught and self.stop_on_uncaught)) {
@@ -453,6 +468,7 @@ pub const Program = struct {
         const a = self.arena();
         const msg = try std.fmt.allocPrint(a, fmt, args);
         self.last_throw = msg;
+        self.last_throw_type = "Error";
         try self.pending_output.append(a, .{ .category = "stderr", .text = try std.fmt.allocPrint(a, "error: {s}\n", .{msg}) });
         _ = pc;
         self.pending_throw = true;
@@ -634,6 +650,16 @@ pub const Program = struct {
             return v;
         };
         return error.NoSuchField;
+    }
+
+    /// A console line `name = expr` (lldb's `x = 41`): the value goes
+    /// to the nearest `name` — this frame, then main — or defines it
+    /// here, and comes back as the result.
+    pub fn assign(self: *Program, frame: usize, name: []const u8, expr: []const u8) EvalError!Value {
+        const v = try self.evaluate(expr, frame);
+        const f = &self.frames.items[@min(frame, self.frames.items.len - 1)];
+        self.assignIn(f, name, v) catch try self.define(f, name, v);
+        return v;
     }
 
     // ─── expressions ───
@@ -829,7 +855,7 @@ fn isIdentChar(c: u8) bool {
     return std.ascii.isAlphanumeric(c) or c == '_';
 }
 
-fn isIdent(s: []const u8) bool {
+pub fn isIdent(s: []const u8) bool {
     if (s.len == 0 or !isIdentStart(s[0])) return false;
     for (s) |c| if (!isIdentChar(c)) return false;
     return true;

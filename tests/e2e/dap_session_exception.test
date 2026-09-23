@@ -1,19 +1,21 @@
 # DAP session — an exception stop. The adapter advertises two filters
 # (`error`, `uncaught`; the second on by default), listed by
-# dap.exceptions. A `throw` at the top level stops with reason exception;
-# the message reaches the output as a stderr line. continue lets the
-# uncaught exception end the program with exit code 1.
+# dap.exceptions. A `throw` at the top level stops with reason exception:
+# the stop's `text` (the type, `Throw`) and `description` (the message)
+# make the toast and a console note; the message reaches the output as
+# a stderr line too. continue lets the uncaught exception end the
+# program with exit code 1.
 write prog.dbg "print \"before\"\nthrow \"boom\"\nprint \"after\"\n"
 write .mnml/config.zon .{ .dap = .{ .dbg = .{ .cmd = "$MNML_FAKE_DAP" } } }
 open prog.dbg
 
 command dap.run
-expect screen contains "dap: stopped (exception)"
+expect screen contains "dap: stopped (Throw: boom)"
 # The stop's jump to the line (the ▶ in the gutter) lands after the toast;
 # the panes below are opened once it has, so the jump does not take focus back.
 expect screen contains "▶"
 command dap.show
-expect screen contains "stopped (exception)"
+expect screen contains "exception — Throw: boom"
 expect screen contains "prog.dbg:2  main"
 expect screen contains "before"
 expect screen contains "throw: boom"

@@ -1,0 +1,26 @@
+# DAP session — an `output` event with `category: "telemetry"` is the
+# adapter reporting on itself (debugpy sends `ptvsd` / `debugpy` with a
+# package version at every start; the fake sends `fake-dap-telemetry`
+# after its `initialize` reply). It is not program output: VS Code drops
+# the category, and so must the Debug Console — a client that painted
+# every category began every Python session with two stray words
+# (hunt: dap-console-shows-telemetry-output).
+write prog.dbg "let x = 1\nprint \"hello\"\nprint x\n"
+write .mnml/config.zon .{ .dap = .{ .dbg = .{ .cmd = "$MNML_FAKE_DAP" } } }
+open prog.dbg
+command editor.use_vim
+type 2j
+command dap.toggle_breakpoint
+expect screen contains "breakpoint set: line 3"
+
+command dap.run
+expect screen contains "dap: stopped (breakpoint)"
+expect screen contains "▶"
+command dap.show
+expect pane "Debug"
+expect screen contains "started prog.dbg"
+expect screen contains "hello"
+expect screen lacks "telemetry"
+
+command dap.terminate
+expect screen contains "dap: terminated"

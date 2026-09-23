@@ -24,7 +24,11 @@ statements: steps skip them and a breakpoint on one is unverified. A
 breakpoint on a line stops *before* it runs; `next` runs one line;
 `stepIn` on a `call` lands on the function's first line; `stepOut`
 returns to the line after the `call`. Reaching the end of the file is
-`exit 0`.
+`exit 0` — except by `stepOut` from main, which stops first in the
+runtime's `start` frame, as lldb-dap stops in dyld`start: a frame with
+`sourceReference: 1` and a `path` (`` <runtime>`start ``) that is no
+file, whose text only `source` gives and whose `scopes` are none. Any
+resume from there is the exit.
 
 | statement | meaning |
 |---|---|
@@ -55,28 +59,34 @@ level, default on). A throw inside a function is caught by its caller:
 the function returns early and the caller continues after the `call`.
 A throw at the top level ends the program with exit code 1 on resume
 (`uncaught: msg` on stderr first). The `stopped` event carries
-`reason: "exception"` and `text: "<msg>"`.
+`reason: "exception"`, `text: "Throw"` (the exception's TYPE, as DAP
+has it — `"Error"` for a runtime error such as an unknown name) and
+`description: "<msg>"`, the shape debugpy sends (`text:
+"ZeroDivisionError"`, `description: "division by zero"`).
 
 ## The requests
 
 | request | answer |
 |---|---|
-| `initialize` | the capabilities (conditional + hit-conditional breakpoints, set-variable, evaluate-for-hovers, terminate; no step-back) and the filters; then the `initialized` event |
-| `launch{program}` | loads the file; a missing file is `success:false` with `cannot read <path>: <error>` |
+| `initialize` | the capabilities (conditional + hit-conditional breakpoints, set-variable, evaluate-for-hovers, terminate; no step-back) and the filters, then one `output` event with `category: "telemetry"` (`fake-dap-telemetry`, a version in `data`) — debugpy's habit, which a console must not paint — and NOT the `initialized` event, which follows `launch` |
+| `launch{program}` | loads the file; a missing file is `success:false` with `cannot read <path>: <error>`. The reply, then the `initialized` event — lldb-dap's and debugpy's order (the protocol's sequence diagram), so a client that waits for `initialized` before sending `launch` deadlocks here as it does against them |
+| `attach{program}` | the same program, "already running" — it starts on `configurationDone` like a launch, and the reply is followed by `initialized` too. What differs is the goodbye: a fake has no real process a test could `kill -0`, so `<program>.debuggee` beside the file is the ledger — `attached` on attach, then `killed` after `terminate` or `disconnect{terminateDebuggee: true}`, `detached` after a `disconnect` without it (what a client must send for a process it did not start) |
 | `setBreakpoints{source, breakpoints[{line, condition, hitCondition}]}` | replaces the list; `verified` per breakpoint (a statement line of the launched program). Sent before `launch`, the source file is read then so `verified` is real. Hit counts start over on every set |
 | `setExceptionBreakpoints{filters}` | the enabled filter ids |
 | `configurationDone` | starts the run |
 | `threads` | one thread, id 1, `main` |
-| `stackTrace` | the frames, top first; ids count from 1 at the bottom (main); `line` is 1-based; `source.path` is the launched file |
-| `scopes{frameId}` | `Locals` (that frame's variables) and `Globals` (main's) |
+| `stackTrace` | the frames, top first; ids count from 1 at the bottom (main); `line` is 1-based; `source.path` is the launched file. In the runtime (after `stepOut` from main): one frame, `start`, line 3, `source{name: "start", path: "<runtime>`start", sourceReference: 1}` |
+| `scopes{frameId}` | `Locals` (that frame's variables) and `Globals` (main's); none in the runtime frame |
+| `source{sourceReference}` | reference 1: the runtime's text (four lines of pseudo-assembly, `call main` on line 3), `mimeType: text/x-asm`; any other reference fails |
 | `variables{variablesReference}` | the scope's variables (`name`, `value`, `type`, and a reference for a struct) or a struct's fields |
-| `evaluate{expression, frameId, context}` | the value in that frame (the top one when unset), for every context; a struct named by the expression gets a reference |
+| `evaluate{expression, frameId, context}` | the value in that frame (the top one when unset), for every context; a struct named by the expression gets a reference. With `context: "repl"` the console's extras: `name = expr` assigns to the nearest `name` (this frame, then main; an unknown name is defined here) and answers with the value, as lldb's console does; `bt` answers with one line per frame (`* frame #0: f at prog.dbg:3`, then `  frame #1: …`) and no type, and an error's message runs to two lines (`no such variable`, then `  in: <expression>`) — the shapes lldb-dap and debugpy answer with, which a console must paint whole |
 | `setVariable{variablesReference, name, value}` | `value` is an expression in the scope's frame; a scope's variable or a struct's field |
 | `continue` / `next` / `stepIn` / `stepOut` | the response, a `continued` event, then the run: `output` events in order, then `stopped{reason}` (`breakpoint`, `step`, `exception`, `pause`) or `exited` + `terminated`. A resume invalidates every struct reference |
 | `pause` | ends a `sleep`: `stopped{reason: "pause"}`; `success:false` when nothing is running |
-| `terminate` | `terminated` (once); the program is over |
-| `disconnect` | the loop ends |
+| `terminate` | `terminated` (once); the program is over (an attached one: the ledger says `killed`) |
+| `disconnect` | the loop ends (an attached program's ledger says `detached`, or `killed` when `terminateDebuggee` is true) |
 | anything else | `success:false` with `unsupported request: <command>`; a frame that is not JSON is ignored |
+| any request whose `arguments` is not an object (or absent) | `success:false` with `` <command>: `arguments` must be an object, not <kind> `` — debugpy's strictness, so a client that writes `[]` for an argument-less request fails here as it does there |
 
 Hit conditions: `5`, `== 5`, `>= 5`, `> 5`, `< 5`, `<= 5`, `% 5`; one
 that does not parse matches every hit. A condition that fails to

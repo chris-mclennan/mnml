@@ -1,0 +1,35 @@
+# DAP session — a REPL result or error of several lines is painted
+# whole, one row per line. lldb-dap answers `bt` with a line per frame
+# and an unknown name with a two-line diagnostic whose second line is
+# the real one; debugpy's error is a traceback whose LAST line names
+# the exception. The fake's console does the same: `bt` lists the
+# frames, an error names the expression on its second line. A console
+# that painted one row per result showed `* frame #0…` alone and lost
+# the diagnostic (hunt: dap-repl-multiline-result).
+write prog.dbg "let x = 1\nfn f\n  let y = 10\n  x = x * y\nend\ncall f\nprint x\n"
+write .mnml/config.zon .{ .dap = .{ .dbg = .{ .cmd = "$MNML_FAKE_DAP" } } }
+open prog.dbg
+command editor.use_vim
+type 3j
+command dap.toggle_breakpoint
+expect screen contains "breakpoint set: line 4"
+
+command dap.run
+expect screen contains "dap: stopped (breakpoint)"
+expect screen contains "▶"
+
+command dap.repl
+expect pane "Debug"
+type "bt"
+key enter
+expect screen contains "* frame #0: f at prog.dbg:4"
+# The second frame is a second row — what one runs `bt` for.
+expect screen contains "frame #1: main at prog.dbg:6"
+
+type "nope"
+key enter
+expect screen contains "err: no such variable"
+expect screen contains "in: nope"
+
+command dap.terminate
+expect screen contains "dap: terminated"

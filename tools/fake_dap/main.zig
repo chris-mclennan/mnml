@@ -41,6 +41,12 @@ pub const Server = struct {
     /// Owned copies of the enabled filter ids.
     enabled_filters: std.ArrayList([]u8) = .empty,
     launched: bool = false,
+    /// The session came in through `attach`: the program stands in
+    /// for somebody else's process, and `<program>.debuggee` beside
+    /// it records what the goodbye did to it (`attached` → `killed` /
+    /// `detached`), since a fake has no real process a test could
+    /// probe with `kill -0`.
+    attached: bool = false,
     /// `terminated` has been sent; the program is over.
     terminated: bool = false,
     /// `disconnect` landed: the loop ends.
@@ -160,6 +166,14 @@ pub const Server = struct {
         var arena_state = std.heap.ArenaAllocator.init(self.gpa);
         defer arena_state.deinit();
         const arena = arena_state.allocator();
+        // DAP types `arguments` as an object (or absent). debugpy's
+        // schema refuses anything else — `[]` for an argument-less
+        // request once cost every Python session its start — so this
+        // adapter is as strict, and the corpus catches the shape.
+        switch (args) {
+            .object, .null => {},
+            else => return self.fail(rseq, command, try std.fmt.allocPrint(arena, "{s}: `arguments` must be an object, not {s}", .{ command, @tagName(args) })),
+        }
         try self.dispatch(arena, rseq, command, args);
     }
 
@@ -177,7 +191,11 @@ pub const Server = struct {
                 .supportsRestartRequest = false,
                 .exceptionBreakpointFilters = filters,
             });
-            try self.event("initialized", .{});
+            // debugpy's habit: an `output` event about the adapter itself
+            // (`category: telemetry`, `output: <package>`, a version in
+            // `data`) right after the reply. Not program output; a
+            // console that paints it shows a stray word every session.
+            try self.event("output", .{ .category = "telemetry", .output = "fake-dap-telemetry", .data = .{ .packageVersion = version } });
         } else if (eql(u8, command, "launch")) {
             const path = getStr(args, "program") orelse return self.fail(rseq, command, "launch needs `program`");
             self.ensureProgram(path) catch |err| switch (err) {
@@ -186,8 +204,27 @@ pub const Server = struct {
             };
             self.launched = true;
             try self.respond(rseq, command, .{});
+            // `initialized` only now — lldb-dap's and debugpy's order
+            // (the protocol's sequence diagram): the client sends
+            // `launch` after the `initialize` reply and its breakpoints
+            // and `configurationDone` after this event. A client that
+            // waits for this event before `launch` deadlocks here, as
+            // it does against those adapters.
+            try self.event("initialized", .{});
         } else if (eql(u8, command, "attach")) {
-            try self.fail(rseq, command, "mnml-fake-dap does not attach; use launch");
+            // The same program, "already running": it starts on
+            // `configurationDone` like a launch. What differs is the
+            // goodbye, written to the ledger.
+            const path = getStr(args, "program") orelse return self.fail(rseq, command, "attach needs `program` (the file that stands in for the process)");
+            self.ensureProgram(path) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return self.fail(rseq, command, try std.fmt.allocPrint(arena, "cannot read {s}: {s}", .{ path, @errorName(err) })),
+            };
+            self.launched = true;
+            self.attached = true;
+            try self.ledger(arena, "attached");
+            try self.respond(rseq, command, .{});
+            try self.event("initialized", .{});
         } else if (eql(u8, command, "setBreakpoints")) {
             try self.setBreakpoints(arena, rseq, command, args);
         } else if (eql(u8, command, "setExceptionBreakpoints")) {
@@ -207,6 +244,12 @@ pub const Server = struct {
             try self.respond(rseq, command, .{ .threads = .{.{ .id = 1, .name = "main" }} });
         } else if (eql(u8, command, "stackTrace")) {
             const p = self.stoppedProgram() orelse return self.fail(rseq, command, "not stopped");
+            if (p.in_runtime) {
+                // No file behind this frame: `path` is a display
+                // string and `sourceReference` says `source` has the text.
+                try self.respond(rseq, command, .{ .stackFrames = .{runtime_frame}, .totalFrames = 1 });
+                return;
+            }
             const n = p.frames.items.len;
             const frames = try arena.alloc(FrameJson, n);
             const name = std.fs.path.basename(self.program_path.?);
@@ -217,6 +260,7 @@ pub const Server = struct {
             try self.respond(rseq, command, .{ .stackFrames = frames, .totalFrames = n });
         } else if (eql(u8, command, "scopes")) {
             const p = self.stoppedProgram() orelse return self.fail(rseq, command, "not stopped");
+            if (p.in_runtime) return self.respond(rseq, command, .{ .scopes = .{} });
             const frame = frameIndex(p, getInt(args, "frameId")) orelse return self.fail(rseq, command, "no such frameId");
             try self.respond(rseq, command, .{ .scopes = .{
                 .{ .name = "Locals", .presentationHint = "locals", .variablesReference = Program.localsRef(frame), .expensive = false },
@@ -257,9 +301,36 @@ pub const Server = struct {
             const p = self.stoppedProgram() orelse return self.fail(rseq, command, "not stopped");
             const expr = getStr(args, "expression") orelse "";
             const frame = frameIndex(p, getInt(args, "frameId")) orelse p.frames.items.len - 1;
-            const v = p.evaluate(expr, frame) catch |err| switch (err) {
+            const repl = if (getStr(args, "context")) |c| eql(u8, c, "repl") else false;
+            // The console runs debugger commands as well as expressions,
+            // as lldb-dap's does: `bt` answers with one line per frame —
+            // a result a console must paint whole.
+            if (repl and eql(u8, std.mem.trim(u8, expr, " \t"), "bt")) {
+                var text: std.ArrayList(u8) = .empty;
+                const n = p.frames.items.len;
+                const name = std.fs.path.basename(self.program_path.?);
+                for (0..n) |i| {
+                    const f = p.frames.items[n - 1 - i];
+                    try text.print(arena, "{s} frame #{d}: {s} at {s}:{d}\n", .{ if (i == 0) "*" else " ", i, f.name, name, f.pc + 1 });
+                }
+                try self.respond(rseq, command, .{ .result = text.items, .type = @as(?[]const u8, null), .variablesReference = 0 });
+                return;
+            }
+            // `name = expr` in the console assigns, as lldb's does.
+            const assignment: ?struct { name: []const u8, rhs: []const u8 } = if (repl) blk: {
+                const eq = std.mem.indexOfScalar(u8, expr, '=') orelse break :blk null;
+                if (eq + 1 < expr.len and expr[eq + 1] == '=') break :blk null;
+                if (eq > 0 and (expr[eq - 1] == '!' or expr[eq - 1] == '<' or expr[eq - 1] == '>')) break :blk null;
+                const name = std.mem.trim(u8, expr[0..eq], " \t");
+                if (!program.isIdent(name)) break :blk null;
+                break :blk .{ .name = name, .rhs = std.mem.trim(u8, expr[eq + 1 ..], " \t") };
+            } else null;
+            const v = (if (assignment) |as| p.assign(frame, as.name, as.rhs) else p.evaluate(expr, frame)) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
-                else => return self.fail(rseq, command, program.errName(err)),
+                // A console error names the expression on a second
+                // line, as lldb's and Python's diagnostics run to
+                // several; a watch or a hover keeps the one line.
+                else => return self.fail(rseq, command, if (repl) try std.fmt.allocPrint(arena, "{s}\n  in: {s}", .{ program.errName(err), std.mem.trim(u8, expr, " \t") }) else program.errName(err)),
             };
             const trimmed = std.mem.trim(u8, expr, " \t");
             const ref: i64 = if (v == .strct and p.lookup(frame, trimmed) != null) try p.structRef(frame, trimmed) else 0;
@@ -296,16 +367,49 @@ pub const Server = struct {
             try self.respond(rseq, command, .{});
             try self.report(outcome);
         } else if (eql(u8, command, "terminate")) {
+            // Ends the debuggee whatever the session — the client
+            // must not send it for an attached one.
+            if (self.attached) try self.ledger(arena, "killed");
             try self.respond(rseq, command, .{});
             try self.endProgram(null);
         } else if (eql(u8, command, "disconnect")) {
+            // `terminateDebuggee` decides an attached process's fate;
+            // absent, DAP leaves it to the adapter, and this one keeps
+            // the process it did not start.
+            if (self.attached and !self.terminated) {
+                const kill = if (getField(args, "terminateDebuggee")) |v| (v == .bool and v.bool) else false;
+                try self.ledger(arena, if (kill) "killed" else "detached");
+            }
             try self.respond(rseq, command, .{});
             if (!self.terminated) try self.endProgram(null);
             self.done = true;
+        } else if (eql(u8, command, "source")) {
+            const ref = getInt(args, "sourceReference") orelse (if (getObj(args, "source")) |so| getInt(so, "sourceReference") else null) orelse 0;
+            if (ref != runtime_source_ref) return self.fail(rseq, command, try std.fmt.allocPrint(arena, "no source for reference {d}", .{ref}));
+            try self.respond(rseq, command, .{ .content = runtime_source, .mimeType = "text/x-asm" });
         } else {
             try self.fail(rseq, command, try std.fmt.allocPrint(arena, "unsupported request: {s}", .{command}));
         }
     }
+
+    /// The frame after main returns, as lldb-dap reports dyld`start:
+    /// a `sourceReference` and a `path` that is not a file.
+    const runtime_source_ref: i64 = 1;
+    const runtime_frame = .{
+        .id = 1,
+        .name = "start",
+        .line = 3,
+        .column = 1,
+        .presentationHint = "deemphasize",
+        .source = .{ .name = "start", .path = "<runtime>`start", .sourceReference = runtime_source_ref, .presentationHint = "deemphasize" },
+    };
+    const runtime_source =
+        \\; runtime`start — the process's entry; no source file
+        \\start:
+        \\    call main        ; main returned here
+        \\    exit
+        \\
+    ;
 
     const FrameJson = struct { id: i64, name: []const u8, line: i64, column: i64, source: struct { name: []const u8, path: []const u8 } };
     const VariableJson = struct { name: []const u8, value: []const u8, type: []const u8, variablesReference: i64 };
@@ -361,6 +465,14 @@ pub const Server = struct {
         self.program_path = owned;
     }
 
+    /// `<program>.debuggee` ← `word`, the attached process's ledger.
+    fn ledger(self: *Server, arena: Allocator, word: []const u8) !void {
+        const path = self.program_path orelse return;
+        const ledger_path = try std.fmt.allocPrint(arena, "{s}.debuggee", .{path});
+        const text = try std.fmt.allocPrint(arena, "{s}\n", .{word});
+        Io.Dir.cwd().writeFile(self.io, .{ .sub_path = ledger_path, .data = text }) catch {};
+    }
+
     fn stoppedProgram(self: *Server) ?*Program {
         const p: *Program = if (self.prog) |*p| p else return null;
         return if (p.state == .stopped) p else null;
@@ -387,11 +499,14 @@ pub const Server = struct {
         const p = &self.prog.?;
         for (p.takeOutput()) |o| try self.event("output", .{ .category = o.category, .output = o.text });
         switch (outcome) {
+            // An exception stop carries DAP's two fields: `text` is the
+            // exception's type, `description` its message.
             .stopped => |reason| try self.event("stopped", .{
                 .reason = @tagName(reason),
                 .threadId = 1,
                 .allThreadsStopped = true,
-                .text = if (reason == .exception) p.last_throw else null,
+                .text = if (reason == .exception) p.last_throw_type else null,
+                .description = if (reason == .exception) p.last_throw else null,
             }),
             .sleeping => {},
             .exited => |code| try self.endProgram(code),
@@ -657,7 +772,7 @@ test "framing: readFrame skips other headers and takes exactly Content-Length by
     try t.expectError(error.BadFrame, readFrame(t.allocator, &bad));
 }
 
-test "initialize: capabilities and the two filters, then `initialized`; an unknown request fails without a crash" {
+test "initialize: capabilities and the two filters, then a telemetry output event (no `initialized` yet — that follows `launch`); an unknown request fails without a crash" {
     var h: Harness = undefined;
     h.init();
     defer h.deinit();
@@ -665,6 +780,9 @@ test "initialize: capabilities and the two filters, then `initialized`; an unkno
     defer t.allocator.free(out);
     try t.expectEqual(@as(usize, 2), out.len);
     try expectResponse(out[0], "initialize", true);
+    const tele = try expectEvent(out[1], "output");
+    try t.expectEqualStrings("telemetry", getStr(tele, "category").?);
+    try t.expectEqualStrings("fake-dap-telemetry", getStr(tele, "output").?);
     const caps = getField(out[0], "body").?;
     try t.expect(caps.object.get("supportsConditionalBreakpoints").?.bool);
     try t.expect(caps.object.get("supportsHitConditionalBreakpoints").?.bool);
@@ -678,7 +796,6 @@ test "initialize: capabilities and the two filters, then `initialized`; an unkno
     try t.expect(!fl[0].object.get("default").?.bool);
     try t.expectEqualStrings("uncaught", getStr(fl[1], "filter").?);
     try t.expect(fl[1].object.get("default").?.bool);
-    _ = try expectEvent(out[1], "initialized");
     try t.expectEqual(@as(i64, 1), getInt(out[0], "seq").?);
     try t.expectEqual(@as(i64, 1), getInt(out[0], "request_seq").?);
     const bogus = try h.send("frobnicate", "{}");
@@ -690,6 +807,12 @@ test "initialize: capabilities and the two filters, then `initialized`; an unkno
     try h.server.handle(not_json);
     try h.drain();
     try t.expectEqual(@as(usize, 3), h.parsed.items.len);
+    // `arguments` as a list — the shape a client's empty tuple once took
+    // on the wire — is refused as debugpy refuses it, not answered.
+    const listed = try h.send("configurationDone", "[]");
+    defer t.allocator.free(listed);
+    try expectResponse(listed[0], "configurationDone", false);
+    try t.expectEqualStrings("configurationDone: `arguments` must be an object, not array", getStr(listed[0], "message").?);
 }
 
 test "the session: breakpoints before launch verify against the file, launch + configurationDone run to the stop, inspection, steps, evaluate, setVariable, exception, exit" {
@@ -718,8 +841,10 @@ test "the session: breakpoints before launch verify against the file, launch + c
     t.allocator.free(try h.send("setExceptionBreakpoints", "{\"filters\":[\"uncaught\"]}"));
     const launch = try h.send("launch", try std.fmt.allocPrint(a, "{{\"program\":{s},\"cwd\":\"/\"}}", .{pj}));
     defer t.allocator.free(launch);
-    try t.expectEqual(@as(usize, 1), launch.len);
+    // The reply, then `initialized` — only now, as lldb-dap and debugpy have it.
+    try t.expectEqual(@as(usize, 2), launch.len);
     try expectResponse(launch[0], "launch", true);
+    _ = try expectEvent(launch[1], "initialized");
 
     // configurationDone starts the run: `hello` is printed, then the stop at 4.
     const go = try h.send("configurationDone", "{}");
@@ -734,6 +859,7 @@ test "the session: breakpoints before launch verify against the file, launch + c
     try t.expectEqual(@as(i64, 1), getInt(st, "threadId").?);
     try t.expect(st.object.get("allThreadsStopped").?.bool);
     try t.expect(st.object.get("text") == null);
+    try t.expect(st.object.get("description") == null);
 
     // threads / stackTrace / scopes / variables.
     const th = try h.send("threads", "{}");
@@ -796,7 +922,8 @@ test "the session: breakpoints before launch verify against the file, launch + c
     const bad = try h.send("evaluate", "{\"expression\":\"nope\",\"context\":\"repl\"}");
     defer t.allocator.free(bad);
     try expectResponse(bad[0], "evaluate", false);
-    try t.expectEqualStrings("no such variable", getStr(bad[0], "message").?);
+    // A console error runs to two lines: the message, then the expression.
+    try t.expectEqualStrings("no such variable\n  in: nope", getStr(bad[0], "message").?);
 
     // setVariable on Locals, then on the struct's field.
     const sv = try h.send("setVariable", "{\"variablesReference\":1,\"name\":\"x\",\"value\":\"x + 4\"}");
@@ -876,7 +1003,8 @@ test "the session: breakpoints before launch verify against the file, launch + c
     try t.expectEqualStrings("throw: boom\n", getStr(eo, "output").?);
     const ex = try expectEvent(c1[4], "stopped");
     try t.expectEqualStrings("exception", getStr(ex, "reason").?);
-    try t.expectEqualStrings("boom", getStr(ex, "text").?);
+    try t.expectEqualStrings("Throw", getStr(ex, "text").?);
+    try t.expectEqualStrings("boom", getStr(ex, "description").?);
     // pause while stopped is a failure, not a crash.
     const pz = try h.send("pause", "{\"threadId\":1}");
     defer t.allocator.free(pz);
@@ -940,6 +1068,101 @@ test "sleep runs until pause; terminate ends a running program; a missing progra
     const nx = try h.send("next", "{\"threadId\":1}");
     defer t.allocator.free(nx);
     try expectResponse(nx[0], "next", false);
+}
+
+test "attach: the program runs as a launch would; the ledger says detached after disconnect{terminateDebuggee:false}, killed after terminate" {
+    var tp = try TmpProgram.init("let n = 7\nprint n\nsleep\n");
+    defer tp.deinit();
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const pj = try tp.json(a);
+    const ledger_path = try std.fmt.allocPrint(a, "{s}.debuggee", .{tp.path});
+    const Ledger = struct {
+        fn read(alloc_: Allocator, path: []const u8) ![]u8 {
+            return Io.Dir.cwd().readFileAlloc(t.io, path, alloc_, .limited(64));
+        }
+    };
+    {
+        var h: Harness = undefined;
+        h.init();
+        defer h.deinit();
+        t.allocator.free(try h.send("initialize", "{}"));
+        const no_program = try h.send("attach", "{\"request\":\"attach\"}");
+        defer t.allocator.free(no_program);
+        try expectResponse(no_program[0], "attach", false);
+        const at = try h.send("attach", try std.fmt.allocPrint(a, "{{\"request\":\"attach\",\"program\":{s}}}", .{pj}));
+        defer t.allocator.free(at);
+        try t.expectEqual(@as(usize, 2), at.len);
+        try expectResponse(at[0], "attach", true);
+        _ = try expectEvent(at[1], "initialized");
+        try t.expectEqualStrings("attached\n", try Ledger.read(a, ledger_path));
+        const go = try h.send("configurationDone", "{}");
+        defer t.allocator.free(go);
+        try t.expectEqualStrings("7\n", getStr(try expectEvent(go[1], "output"), "output").?);
+        // Detach: the process outlives the session.
+        const dc = try h.send("disconnect", "{\"terminateDebuggee\":false}");
+        defer t.allocator.free(dc);
+        try expectResponse(dc[0], "disconnect", true);
+        try t.expect(h.server.done);
+        try t.expectEqualStrings("detached\n", try Ledger.read(a, ledger_path));
+    }
+    {
+        var h: Harness = undefined;
+        h.init();
+        defer h.deinit();
+        t.allocator.free(try h.send("initialize", "{}"));
+        t.allocator.free(try h.send("attach", try std.fmt.allocPrint(a, "{{\"request\":\"attach\",\"program\":{s}}}", .{pj})));
+        t.allocator.free(try h.send("configurationDone", "{}"));
+        t.allocator.free(try h.send("terminate", "{}"));
+        try t.expectEqualStrings("killed\n", try Ledger.read(a, ledger_path));
+    }
+}
+
+test "stepOut from main stops in the runtime's `start` frame — a sourceReference, no scopes, its text from `source`; a resume exits" {
+    var tp = try TmpProgram.init("let n = 7\nprint n\n");
+    defer tp.deinit();
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var h: Harness = undefined;
+    h.init();
+    defer h.deinit();
+    t.allocator.free(try h.send("initialize", "{}"));
+    t.allocator.free(try h.send("setBreakpoints", try std.fmt.allocPrint(a, "{{\"source\":{{\"path\":{s}}},\"breakpoints\":[{{\"line\":2}}]}}", .{try tp.json(a)})));
+    t.allocator.free(try h.send("launch", try std.fmt.allocPrint(a, "{{\"program\":{s}}}", .{try tp.json(a)})));
+    const go = try h.send("configurationDone", "{}");
+    defer t.allocator.free(go);
+    try t.expectEqualStrings("breakpoint", getStr(try expectEvent(go[go.len - 1], "stopped"), "reason").?);
+
+    const so = try h.send("stepOut", "{\"threadId\":1}");
+    defer t.allocator.free(so);
+    try t.expectEqualStrings("7\n", getStr(try expectEvent(so[2], "output"), "output").?);
+    try t.expectEqualStrings("step", getStr(try expectEvent(so[3], "stopped"), "reason").?);
+    const stk = try h.send("stackTrace", "{\"threadId\":1}");
+    defer t.allocator.free(stk);
+    const frames = getArr(getField(stk[0], "body").?, "stackFrames").?;
+    try t.expectEqual(@as(usize, 1), frames.len);
+    try t.expectEqualStrings("start", getStr(frames[0], "name").?);
+    try t.expectEqual(@as(i64, 3), getInt(frames[0], "line").?);
+    const src = getObj(frames[0], "source").?;
+    try t.expectEqual(@as(i64, 1), getInt(src, "sourceReference").?);
+    try t.expectEqualStrings("<runtime>`start", getStr(src, "path").?);
+    const sc = try h.send("scopes", "{\"frameId\":1}");
+    defer t.allocator.free(sc);
+    try t.expectEqual(@as(usize, 0), getArr(getField(sc[0], "body").?, "scopes").?.len);
+    const text = try h.send("source", "{\"source\":{\"sourceReference\":1},\"sourceReference\":1}");
+    defer t.allocator.free(text);
+    try expectResponse(text[0], "source", true);
+    try t.expect(std.mem.indexOf(u8, getStr(getField(text[0], "body").?, "content").?, "call main") != null);
+    const none = try h.send("source", "{\"sourceReference\":7}");
+    defer t.allocator.free(none);
+    try expectResponse(none[0], "source", false);
+    // Any resume from the runtime is the exit.
+    const c = try h.send("next", "{\"threadId\":1}");
+    defer t.allocator.free(c);
+    try t.expectEqual(@as(i64, 0), getInt(try expectEvent(c[2], "exited"), "exitCode").?);
+    _ = try expectEvent(c[3], "terminated");
 }
 
 test "breakpoints for another file are unverified and not kept; conditions and hit counts reach the program" {

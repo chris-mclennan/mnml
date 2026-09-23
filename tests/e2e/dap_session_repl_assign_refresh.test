@@ -1,0 +1,38 @@
+# DAP session — after a console line the panel is asked again. Typing
+# `x = 41` in the Debug Console changes the program's `x` (the reply is
+# 41; the fake assigns as lldb's console does); VARIABLES, WATCH and the
+# inline values must show 41 at once, not the pre-assignment 1 until
+# the next stop. The client re-requests the expanded scopes and
+# re-evaluates the watches after every `context: "repl"` evaluation, as
+# VS Code does (hunt: dap-repl-assignment-stale).
+write prog.dbg "let x = 1\nlet y = 2\nprint x\nprint y\n"
+write .mnml/config.zon .{ .dap = .{ .dbg = .{ .cmd = "$MNML_FAKE_DAP" } } }
+open prog.dbg
+command editor.use_vim
+type 2j
+command dap.toggle_breakpoint
+expect screen contains "breakpoint set: line 3"
+command dap.add_watch
+type "x * 10"
+key enter
+expect screen contains "watch: + x * 10"
+
+command dap.run
+expect screen contains "dap: stopped (breakpoint)"
+expect screen contains "▶"
+command view.activity_debug
+expect screen contains "x: int = 1"
+expect screen contains "x * 10 = 10 : int"
+
+command dap.repl
+expect pane "Debug"
+type "x = 41"
+key enter
+expect screen contains "41 : int"
+# The debugger now holds 41; the panel must not keep showing 1.
+expect screen contains "x: int = 41"
+expect screen contains "x * 10 = 410 : int"
+expect screen lacks "x: int = 1"
+
+command dap.terminate
+expect screen contains "dap: terminated"

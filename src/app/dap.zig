@@ -1,7 +1,11 @@
 //! Debugging (DAP) on the app side: the breakpoints and watches mnml
 //! keeps across sessions, the one live `Session` (`dap/client.zig`), the
-//! handshake it drives (`initialize` → `initialized` → breakpoints,
-//! exception filters, `launch`, `configurationDone`), what a `stopped`
+//! handshake it drives (`initialize` → its reply sends `launch` /
+//! `attach` → the adapter's `initialized` → breakpoints, exception
+//! filters, `configurationDone` — the protocol's own order, which
+//! lldb-dap and debugpy require: they emit `initialized` only while
+//! handling `launch`; netcoredbg emits it before the `initialize`
+//! reply, so the configuration step waits for both), what a `stopped`
 //! event sets in motion (threads, the stack, scopes, variables, the
 //! watches, the ▶ mark in the gutter), and the two panes — `Pane.debug`
 //! and the console pane — `Pane.debug`: the step toolbar and the Debug
@@ -55,7 +59,10 @@ pub const Session = client.Session;
 pub const Breakpoint = types.Breakpoint;
 
 /// Where execution stopped: the ▶ in the gutter. Owned path, 0-based line.
-pub const Arrow = struct { path: []u8, line: u32 };
+/// The ▶ of the stop: a file by path — or, for a frame whose text
+/// came from the adapter (`source_ref`), the read-only pane it was
+/// shown in, `path` then being the frame's display name.
+pub const Arrow = struct { path: []u8, line: u32, pane: ?PaneId = null };
 
 /// `Pane.debug`: the console pane. Its scrollback and input live in
 /// `State.console` so they outlive the pane (and land while it is closed).
@@ -136,9 +143,18 @@ pub const State = struct {
     breakpoints: std.StringHashMapUnmanaged(types.FileBreakpoints) = .empty,
     /// Owned expressions, in the order they were added.
     watches: std.ArrayListUnmanaged([]u8) = .empty,
+    /// Exception filters the user switched, by id (owned keys) → on.
+    /// Like the breakpoints and the watches, these outlive a session:
+    /// a restart re-applies them over the adapter's defaults.
+    filter_overrides: Session.FilterOverrides = .empty,
     session: ?*Session = null,
     next_session: u32 = 1,
     arrow: ?Arrow = null,
+    /// The read-only panes holding text fetched with `source` — a
+    /// frame without a file (dyld, libc, a panic's std frames) — by the
+    /// frame's display name (owned), so a second stop in the same place
+    /// reuses the pane rather than opening another.
+    source_panes: std.StringHashMapUnmanaged(PaneId) = .empty,
     /// The config layers read again by `dap.run` when the active file
     /// had no adapter (an adapter added to `.mnml/config.zon` after
     /// launch); `app.cfg.dap` borrows from it from then on.
@@ -168,7 +184,13 @@ pub const State = struct {
         self.breakpoints.deinit(gpa);
         for (self.watches.items) |w| gpa.free(w);
         self.watches.deinit(gpa);
+        var fk = self.filter_overrides.keyIterator();
+        while (fk.next()) |k| gpa.free(k.*);
+        self.filter_overrides.deinit(gpa);
         if (self.arrow) |a| gpa.free(a.path);
+        var sk = self.source_panes.keyIterator();
+        while (sk.next()) |k| gpa.free(k.*);
+        self.source_panes.deinit(gpa);
         if (self.last_file) |f| gpa.free(f);
         self.console.deinit(gpa);
     }
@@ -484,6 +506,17 @@ pub fn acceptHitCount(app: *App, path: []const u8, line: u32, text_in: []const u
 /// The gutter marks for `path`: the ▶ of a stop wins over a
 /// breakpoint's `●` (`◐` conditional or hit-counted, `◆` a logpoint,
 /// `○` disabled); one the adapter did not verify paints muted. Frame arena.
+/// `marksFor` for a pane: a pane holding a frame's fetched text has
+/// no path, and the ▶ finds it by id.
+pub fn marksForPane(app: *App, arena: Allocator, pane: PaneId, e: *EditorPane, theme: *const Theme, ascii: bool) Allocator.Error![]editor_view.GutterMark {
+    if (app.dap.arrow) |a| if (a.pane != null and a.pane.? == pane and sourcePane(app, pane, a.path) == e) {
+        var out: std.ArrayListUnmanaged(editor_view.GutterMark) = .empty;
+        try out.append(arena, .{ .line = a.line, .kind = .sign, .glyph = if (ascii) ">" else "▶", .style = theme.warn_fg, .priority = editor_view.mark_priority.breakpoint });
+        return out.items;
+    };
+    return marksFor(app, arena, e.buf.doc.path, theme, ascii);
+}
+
 pub fn marksFor(app: *App, arena: Allocator, path: ?[]const u8, theme: *const Theme, ascii: bool) Allocator.Error![]editor_view.GutterMark {
     const p = path orelse return &.{};
     var out: std.ArrayListUnmanaged(editor_view.GutterMark) = .empty;
@@ -850,6 +883,8 @@ pub fn restart(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     const file = if (app.dap.last_file) |f| try arena.dupe(u8, f) else (try editorWithPath(app)).path;
     const found = adapterFor(app, file) orelse (try builtinAdapterFor(app, file)) orelse return app.diag.fail(arena, "dap: no adapter for {s}", .{std.fs.path.basename(file)});
+    // `Session.terminate` is a no-op for an attached session; the
+    // `disconnect` inside `startSession`'s `endSession` releases it.
     if (app.dap.session) |s| s.terminate() catch {};
     try startSession(app, found.cfg, file, found.body);
     app.toast("dap: restarted", .{});
@@ -914,6 +949,7 @@ pub fn hoverValue(app: *App, arena: Allocator, pane: PaneId, line: u32, col: u32
 /// The debugger's current line in `e`'s file, for the row band.
 pub fn stoppedLine(app: *App, e: *EditorPane) ?u32 {
     const a = app.dap.arrow orelse return null;
+    if (a.pane) |pid| return if (sourcePane(app, pid, a.path) == e) a.line else null;
     const path = e.buf.doc.path orelse return null;
     return if (std.mem.eql(u8, a.path, path)) a.line else null;
 }
@@ -997,7 +1033,7 @@ pub fn selectFrame(app: *App, idx: usize) CommandError!void {
     s.variables.clearRetainingCapacity();
     s.requestScopes(f.id) catch {};
     evaluateWatches(app);
-    if (f.source) |src| try jumpTo(app, src, f.line -| 1);
+    try openFrame(app, s, f);
     app.needs_render = true;
 }
 
@@ -1010,12 +1046,26 @@ pub fn selectThread(app: *App, id: i64) CommandError!void {
 }
 
 /// An exception filter row's checkbox.
+/// Flip an exception filter on the live session, and remember the
+/// choice for the sessions after it.
 pub fn toggleFilter(app: *App, id: []const u8) CommandError!void {
     const s = app.dap.session orelse return app.diag.fail(app.frame.allocator(), "no DAP session", .{});
     const on = try s.toggleFilter(id);
+    try rememberFilter(app, id, on);
     s.setExceptionBreakpoints() catch |err| app.toast("dap setExceptionBreakpoints: {s}", .{@errorName(err)});
     app.toast("exception {s}: {s}", .{ id, if (on) "on" else "off" });
     app.needs_render = true;
+}
+
+fn rememberFilter(app: *App, id: []const u8, on: bool) Allocator.Error!void {
+    const gop = try app.dap.filter_overrides.getOrPut(app.gpa, id);
+    if (!gop.found_existing) {
+        gop.key_ptr.* = app.gpa.dupe(u8, id) catch |err| {
+            _ = app.dap.filter_overrides.remove(id);
+            return err;
+        };
+    }
+    gop.value_ptr.* = on;
 }
 
 fn requireStopped(app: *App) CommandError!*Session {
@@ -1032,11 +1082,15 @@ pub fn threadCommand(app: *App, kind: client.ReqKind, verb: []const u8) CommandE
     s.threadRequest(kind, verb) catch |err| return app.diag.fail(app.frame.allocator(), "dap {s}: {s}", .{ verb, @errorName(err) });
 }
 
+/// `dap.terminate` (Stop): a launched program is ended; an attached one
+/// is detached from and keeps running — `terminate` is not sent and
+/// the `disconnect` says `terminateDebuggee: false`.
 pub fn terminate(app: *App) CommandError!void {
     const s = app.dap.session orelse return app.diag.fail(app.frame.allocator(), "no DAP session", .{});
+    const attached = s.is_attach;
     s.terminate() catch {};
     endSession(app);
-    app.toast("dap: terminated", .{});
+    if (attached) app.toast("dap: detached (the process keeps running)", .{}) else app.toast("dap: terminated", .{});
 }
 
 pub fn exceptionsPicker(app: *App) CommandError!void {
@@ -1085,11 +1139,11 @@ pub fn pickerAccept(app: *App, kind: app_mod.PickerKind, label: []const u8, deta
     switch (kind) {
         .dap_remove_watch => removeWatch(app, label),
         .dap_exceptions => {
-            const s = app.dap.session orelse return;
             const id = if (std.mem.indexOf(u8, detail, " · ")) |i| detail[0..i] else detail;
-            const on = try s.toggleFilter(id);
-            s.setExceptionBreakpoints() catch |err| app.toast("dap setExceptionBreakpoints: {s}", .{@errorName(err)});
-            app.toast("exception {s}: {s}", .{ id, if (on) "on" else "off" });
+            toggleFilter(app, id) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {},
+            };
         },
         .dap_threads => {
             const s = app.dap.session orelse return;
@@ -1141,11 +1195,17 @@ fn handleResponse(app: *App, s: *Session, kind: client.ReqKind, ctx: u64, succes
     }
     switch (kind) {
         .initialize => {
-            try s.setCapabilities(body);
-            // netcoredbg sends `initialized` from inside `initialize`,
-            // before this reply: the filters were not known when the
-            // event's handler ran, so its defaults go on now.
-            if (s.initialized and s.filters.items.len > 0) s.setExceptionBreakpoints() catch {};
+            try s.setCapabilities(body, &app.dap.filter_overrides);
+            s.ready = true;
+            // `launch` / `attach` goes out on this reply, not on
+            // `initialized`: lldb-dap and debugpy send `initialized`
+            // only while handling `launch`, so a client that waited for
+            // the event first never started (hunt: dap-launch-never-sent).
+            s.launch() catch |err| app.toast("dap launch: {s}", .{@errorName(err)});
+            // netcoredbg's `initialized` came before this reply: the
+            // filters were not known then, so the configuration step
+            // runs now, with them.
+            if (s.initialized) configure(app, s);
         },
         .launch => if (success) {
             s.running = true;
@@ -1157,8 +1217,21 @@ fn handleResponse(app: *App, s: *Session, kind: client.ReqKind, ctx: u64, succes
                 const top = s.frames[0];
                 s.requestScopes(top.id) catch {};
                 evaluateWatches(app);
-                if (top.source) |src| try jumpTo(app, src, top.line -| 1);
+                try openFrame(app, s, top);
             }
+        },
+        .source => {
+            // The text of a frame that has no file, asked for by
+            // `openFrame`; the reference rides back as the context.
+            const ref: i64 = @bitCast(ctx);
+            if (!success) {
+                app.toast("dap: no source for the frame ({s})", .{message orelse "the adapter has none"});
+                return;
+            }
+            const b = body orelse return;
+            const content = jsonrpc.getStr(b, "content") orelse return;
+            const f = frameForSource(s, ref) orelse return;
+            try showFetchedSource(app, f.source orelse f.name, content, f.line -| 1);
         },
         .scopes => {
             try s.setScopes(body);
@@ -1172,6 +1245,14 @@ fn handleResponse(app: *App, s: *Session, kind: client.ReqKind, ctx: u64, succes
             const expr = s.takeEval(ctx) orelse return;
             defer app.gpa.free(expr);
             try consoleResult(app, expr, success, message, body);
+            // A console line may have changed the program (`total = 7`,
+            // a call with side effects): the DAP guidance for
+            // `context: "repl"` is to re-fetch what the panel shows.
+            // Variable references stay valid until the next resume,
+            // so the expanded nodes are asked again in place, the
+            // watches re-evaluated, and the inline values — read off
+            // the same scopes — follow (hunt: dap-repl-assignment-stale).
+            if (success) refreshAfterEvaluate(app, s);
         },
         .evaluate_watch => {
             const expr = s.takeEval(ctx) orelse return;
@@ -1219,18 +1300,21 @@ fn handleResponse(app: *App, s: *Session, kind: client.ReqKind, ctx: u64, succes
 fn handleEvent(app: *App, s: *Session, name: []const u8, body: ?jsonrpc.Value) Allocator.Error!void {
     if (std.mem.eql(u8, name, "initialized")) {
         s.initialized = true;
-        syncAllBreakpoints(app);
-        if (s.filters.items.len > 0) s.setExceptionBreakpoints() catch {};
-        s.launch() catch |err| app.toast("dap launch: {s}", .{@errorName(err)});
-        s.configurationDone() catch {};
+        if (s.ready) configure(app, s);
     } else if (std.mem.eql(u8, name, "stopped")) {
         const b = body orelse return;
         const thread = jsonrpc.getInt(b, "threadId") orelse s.thread orelse 1;
         const reason = jsonrpc.getStr(b, "reason") orelse "stopped";
-        try s.setStopped(thread, reason, jsonrpc.getStr(b, "description"));
+        // `text` is the exception's type (`ZeroDivisionError`),
+        // `description` its message: the label says both (hunt:
+        // dap-exception-stop-drops-type).
+        try s.setStopped(thread, reason, jsonrpc.getStr(b, "description"), jsonrpc.getStr(b, "text"));
         s.requestStackTrace(thread) catch {};
         s.requestThreads() catch {};
         app.toast("dap: stopped ({s})", .{s.stopped.?.label()});
+        // The toast goes; an exception's type and message stay in the
+        // console, where the program's own last words are.
+        if (std.mem.eql(u8, reason, "exception")) try consoleNote(app, "exception \u{2014} {s}", .{s.stopped.?.label()});
     } else if (std.mem.eql(u8, name, "continued")) {
         try debug_panel.snapshotValues(app);
         s.onResumed();
@@ -1239,6 +1323,11 @@ fn handleEvent(app: *App, s: *Session, name: []const u8, body: ?jsonrpc.Value) A
     } else if (std.mem.eql(u8, name, "output")) {
         const b = body orelse return;
         const category = jsonrpc.getStr(b, "category") orelse "console";
+        // `telemetry` is the adapter reporting on itself (debugpy sends
+        // `ptvsd` / `debugpy` with a package version at every start),
+        // not something the program said: VS Code drops it, and so does
+        // the console (hunt: dap-console-shows-telemetry-output).
+        if (std.mem.eql(u8, category, "telemetry")) return;
         const text = jsonrpc.getStr(b, "output") orelse "";
         try s.appendOutput(category, text);
         try consoleOutput(app, category, text);
@@ -1260,6 +1349,89 @@ fn handleEvent(app: *App, s: *Session, name: []const u8, body: ?jsonrpc.Value) A
         s.exited = true;
         endSession(app);
     }
+}
+
+/// Ask again for every expanded scope and composite, and the watches.
+fn refreshAfterEvaluate(app: *App, s: *Session) void {
+    if (s.stopped == null) return;
+    var it = s.expanded.keyIterator();
+    while (it.next()) |ref| s.requestVariables(ref.*) catch {};
+    evaluateWatches(app);
+}
+
+/// The configuration step, once `initialized` has arrived AND the
+/// `initialize` reply has landed (either order): every file's
+/// breakpoints, the exception filters, then `configurationDone`.
+fn configure(app: *App, s: *Session) void {
+    if (s.configured) return;
+    syncAllBreakpoints(app);
+    if (s.filters.items.len > 0) s.setExceptionBreakpoints() catch {};
+    s.configurationDone() catch {};
+}
+
+/// Show where a frame is: its file — or, for a `source_ref`, the text
+/// the adapter holds for it, asked with `source` and shown read-only
+/// when it answers. lldb-dap names such a frame `/usr/lib/dyld`start`;
+/// opening that PATH made an empty file the user could `:w`
+/// (hunt: dap-sourceref-frame-opens-empty-file).
+fn openFrame(app: *App, s: *Session, f: types.StackFrame) Allocator.Error!void {
+    if (f.source_ref > 0) {
+        clearArrow(app);
+        s.requestSource(f.source_ref) catch {};
+        app.needs_render = true;
+        return;
+    }
+    if (f.source) |src| try jumpTo(app, src, f.line -| 1);
+}
+
+/// The frame a `source` reply is for: the selected one when it has
+/// that reference, else the first that does.
+fn frameForSource(s: *Session, ref: i64) ?types.StackFrame {
+    if (s.frame_id) |id| for (s.frames) |f| if (f.id == id and f.source_ref == ref) return f;
+    for (s.frames) |f| if (f.source_ref == ref) return f;
+    return null;
+}
+
+/// `content` in a read-only pane titled `name` — the one already
+/// holding it when there is one — with the ▶ on `line`.
+fn showFetchedSource(app: *App, name: []const u8, content: []const u8, line: u32) Allocator.Error!void {
+    const id: PaneId = blk: {
+        if (app.dap.source_panes.get(name)) |id| if (sourcePane(app, id, name) != null) {
+            app.showPane(id);
+            break :blk id;
+        };
+        const id = app.openScratchWith(content) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return,
+        };
+        const e = app.panes.editor(id) orelse return;
+        e.buf.doc.read_only = true;
+        e.label = try app.gpa.dupe(u8, name);
+        const gop = try app.dap.source_panes.getOrPut(app.gpa, name);
+        if (!gop.found_existing) gop.key_ptr.* = try app.gpa.dupe(u8, name);
+        gop.value_ptr.* = id;
+        break :blk id;
+    };
+    const copy = try app.gpa.dupe(u8, name);
+    clearArrow(app);
+    app.dap.arrow = .{ .path = copy, .line = line, .pane = id };
+    if (app.panes.editor(id)) |e| {
+        const ed = e.buf.editor;
+        ed.anchor = null;
+        ed.placeCursor(@min(line, @as(u32, @intCast(ed.lineCount() -| 1))), 0);
+        e.view.scroll_line = @intCast(ed.currentLine() -| app.pane_rows / 2);
+    }
+    app.needs_render = true;
+}
+
+/// The pane holding a frame's fetched text, when `id` still is that
+/// pane: pane ids are reused after a close, so an editor at the id
+/// with a path, or another label, is some other pane.
+fn sourcePane(app: *App, id: PaneId, name: []const u8) ?*EditorPane {
+    const e = app.panes.editor(id) orelse return null;
+    if (e.buf.doc.path != null) return null;
+    const label = e.label orelse return null;
+    return if (std.mem.eql(u8, label, name)) e else null;
 }
 
 /// Open (or reveal) the stopped frame's file with the cursor on `line`.
@@ -1369,7 +1541,10 @@ pub fn stripPane(app: *App) ?PaneId {
         .always => {},
     }
     if (app.active) |a| if (app.panes.editor(a) != null) return a;
-    if (app.dap.arrow) |ar| return app.panes.findPath(ar.path);
+    if (app.dap.arrow) |ar| {
+        if (ar.pane) |pid| return if (sourcePane(app, pid, ar.path) != null) pid else null;
+        return app.panes.findPath(ar.path);
+    }
     return null;
 }
 
@@ -1406,14 +1581,29 @@ fn consoleLines(app: *App, arena: Allocator) Allocator.Error![]dap_view.Line {
                 if (ev.pending) {
                     try out.append(arena, .{ .kind = .pending, .text = "  (evaluating\u{2026})", .entry = idx });
                 } else if (ev.err) |err| {
-                    try out.append(arena, .{ .kind = .err, .text = try std.fmt.allocPrint(arena, "  err: {s}", .{err}), .entry = idx });
+                    // Every line: lldb's diagnostic is on the second
+                    // line of its message, a Python traceback's last
+                    // (hunt: dap-repl-multiline-result).
+                    var lines = std.mem.splitScalar(u8, std.mem.trimEnd(u8, err, "\n"), '\n');
+                    var first = true;
+                    while (lines.next()) |line| : (first = false) {
+                        const text = if (first) try std.fmt.allocPrint(arena, "  err: {s}", .{line}) else try std.fmt.allocPrint(arena, "  {s}", .{std.mem.trimEnd(u8, line, "\r")});
+                        try out.append(arena, .{ .kind = .err, .text = text, .entry = idx });
+                    }
                 } else {
                     // A foldable result carries its expander; the view
-                    // paints it before the text.
+                    // paints it before the text. A result of several
+                    // lines (`bt`, `frame variable`, `p` of a struct)
+                    // is one row each, the type after the first.
                     const folds = ev.variables_ref > 0;
                     const indent: []const u8 = if (folds) "" else "  ";
-                    const text = if (ev.ty) |ty| try std.fmt.allocPrint(arena, "{s}{s} : {s}", .{ indent, ev.value, ty }) else try std.fmt.allocPrint(arena, "{s}{s}", .{ indent, ev.value });
+                    var lines = std.mem.splitScalar(u8, std.mem.trimEnd(u8, ev.value, "\n"), '\n');
+                    const head = lines.next() orelse "";
+                    const text = if (ev.ty) |ty| try std.fmt.allocPrint(arena, "{s}{s} : {s}", .{ indent, head, ty }) else try std.fmt.allocPrint(arena, "{s}{s}", .{ indent, head });
                     try out.append(arena, .{ .kind = .result, .text = text, .entry = idx, .fold = if (folds) ev.expanded else null });
+                    while (lines.next()) |line| {
+                        try out.append(arena, .{ .kind = .result, .text = try std.fmt.allocPrint(arena, "  {s}", .{std.mem.trimEnd(u8, line, "\r")}), .entry = idx });
+                    }
                     if (ev.expanded and ev.variables_ref > 0) {
                         if (app.dap.session) |s| if (s.variables.get(ev.variables_ref)) |kids| {
                             for (kids) |k| {
@@ -1717,6 +1907,74 @@ fn screenText(app: *App) ![]u8 {
     return screen_mod.toTestText(testing.allocator, &app.screen);
 }
 
+test "consoleLines: a result or an error of several lines is one row each, the type after the first line, all rows the entry's" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    defer app.deinit();
+    var bt: types.ReplEntry = .{ .expression = try app.gpa.dupe(u8, "bt") };
+    try bt.setResult(app.gpa, "* thread #1, stop reason = breakpoint 1.1\n  * frame #0: main at main.c:22\n    frame #1: start\n", null, null, 0);
+    try consoleAppend(&app, .{ .eval = bt });
+    var nope: types.ReplEntry = .{ .expression = try app.gpa.dupe(u8, "nope") };
+    try nope.setResult(app.gpa, "", null, "Expression evaluation in pure C not supported.\nerror: use of undeclared identifier 'nope'", 0);
+    try consoleAppend(&app, .{ .eval = nope });
+    var typed: types.ReplEntry = .{ .expression = try app.gpa.dupe(u8, "p") };
+    try typed.setResult(app.gpa, "(point) {\n  x = 1\n  y = 2\n}", "point", null, 0);
+    try consoleAppend(&app, .{ .eval = typed });
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const lines = try consoleLines(&app, arena.allocator());
+    try testing.expectEqual(@as(usize, 4 + 3 + 5), lines.len);
+    try testing.expectEqualStrings("bt", lines[0].text);
+    try testing.expectEqualStrings("  * thread #1, stop reason = breakpoint 1.1", lines[1].text);
+    try testing.expectEqualStrings("    * frame #0: main at main.c:22", lines[2].text);
+    try testing.expectEqualStrings("      frame #1: start", lines[3].text);
+    try testing.expectEqual(@as(?u32, 0), lines[3].entry);
+    try testing.expectEqual(dap_view.Line.Kind.result, lines[3].kind);
+    try testing.expectEqualStrings("  err: Expression evaluation in pure C not supported.", lines[5].text);
+    try testing.expectEqualStrings("  error: use of undeclared identifier 'nope'", lines[6].text);
+    try testing.expectEqual(dap_view.Line.Kind.err, lines[6].kind);
+    try testing.expectEqual(@as(?u32, 1), lines[6].entry);
+    try testing.expectEqualStrings("  (point) { : point", lines[8].text);
+    try testing.expectEqualStrings("  }", lines[11].text);
+}
+
+test "a fetched source's pane: closed and its id taken by another buffer, the ▶ and the strip leave, and the next stop there makes a new pane; the same name reuses it" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 90, .rows = 24 });
+    defer app.deinit();
+    app.tree.visible = false;
+    try showFetchedSource(&app, "start", "start:\n    call main\n    exit\n", 1);
+    const first = app.dap.arrow.?.pane.?;
+    try testing.expectEqualStrings("start", app.panes.get(first).?.title());
+    try testing.expect(app.panes.editor(first).?.buf.doc.read_only);
+    try testing.expectEqual(@as(?u32, 1), stoppedLine(&app, app.panes.editor(first).?));
+    // The strip over the editor finds the pane by the arrow when no
+    // editor is active (the console is).
+    app.cfg.ui.debug_toolbar = .always;
+    try command.run(&app, .{ .static = .@"dap.show" });
+    try testing.expectEqual(@as(?PaneId, first), stripPane(&app));
+    // The same frame again: the pane is reused, not doubled.
+    try showFetchedSource(&app, "start", "start:\n    call main\n    exit\n", 2);
+    try testing.expectEqual(first, app.dap.arrow.?.pane.?);
+    try testing.expectEqual(@as(?u32, 2), stoppedLine(&app, app.panes.editor(first).?));
+    // Closed, and a scratch buffer takes the freed id.
+    try app.closePane(first, true);
+    const taken = try app.openScratch();
+    try testing.expectEqual(first, taken);
+    const other = app.panes.editor(taken).?;
+    try testing.expectEqual(@as(?u32, null), stoppedLine(&app, other));
+    try command.run(&app, .{ .static = .@"dap.show" });
+    try testing.expectEqual(@as(?PaneId, null), stripPane(&app));
+    const marks = try marksForPane(&app, testing.allocator, taken, other, &app.theme, false);
+    defer testing.allocator.free(marks);
+    try testing.expectEqual(@as(usize, 0), marks.len);
+    // The next stop in `start` gets a pane of its own, not the scratch.
+    try showFetchedSource(&app, "start", "start:\n    call main\n    exit\n", 1);
+    const again = app.dap.arrow.?.pane.?;
+    try testing.expect(again != taken);
+    try testing.expectEqual(again, app.dap.source_panes.get("start").?);
+    try testing.expectEqualStrings("start", app.panes.get(again).?.title());
+    try testing.expectEqual(@as(?u32, null), stoppedLine(&app, other));
+}
+
 test "breakpoints: toggle on/off toasts the 1-based line, list summarises, clear counts" {
     var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
     defer app.deinit();
@@ -1925,6 +2183,14 @@ const FakeLog = struct {
     launched: bool = false,
     configured: bool = false,
     set_variable: bool = false,
+    /// What the goodbye looked like: whether `terminate` came, and
+    /// `disconnect`'s `terminateDebuggee`.
+    terminate_seen: bool = false,
+    disconnect_terminate: ?bool = null,
+    /// How many `variables` requests, and how many `evaluate`s with
+    /// `context: "watch"`, have come — a REPL line re-asks for both.
+    variables_count: u32 = 0,
+    watch_evals: u32 = 0,
 
     fn note(self: *FakeLog, comptime field: []const u8, value: anytype) void {
         self.lock.lockUncancelable(testing.io);
@@ -1947,7 +2213,8 @@ fn fakeEvent(io: std.Io, gpa: Allocator, out: std.Io.File, seq: *i64, name: []co
     jsonrpc.writeFrame(io, out, text) catch {};
 }
 
-/// A debugpy-shaped adapter: stops on `launch` at line 3 of the file,
+/// A debugpy-shaped adapter (`initialized` after the `launch` reply,
+/// as debugpy and lldb-dap have it): stops at line 3 of the file,
 /// steps to line 4 on `next`, answers the inspection requests with
 /// one scope / one variable, echoes evaluations as `<expr> = 42`.
 fn fakeAdapter(io: std.Io, gpa: Allocator, in: std.Io.File, out: std.Io.File, log: *FakeLog, file: []const u8) std.Io.Cancelable!void {
@@ -1966,7 +2233,6 @@ fn fakeAdapter(io: std.Io, gpa: Allocator, in: std.Io.File, out: std.Io.File, lo
         const args = jsonrpc.getField(v, "arguments") orelse jsonrpc.Value.null;
         if (std.mem.eql(u8, cmd, "initialize")) {
             fakeReply(io, gpa, out, &seq, rseq, cmd, "{\"exceptionBreakpointFilters\":[{\"filter\":\"uncaught\",\"label\":\"Uncaught Exceptions\",\"default\":true},{\"filter\":\"raised\",\"label\":\"Raised Exceptions\",\"default\":false}]}");
-            fakeEvent(io, gpa, out, &seq, "initialized", "{}");
         } else if (std.mem.eql(u8, cmd, "setBreakpoints")) {
             const lines: []const jsonrpc.Value = jsonrpc.getArr(args, "lines") orelse &.{};
             log.lock.lockUncancelable(io);
@@ -1978,9 +2244,12 @@ fn fakeAdapter(io: std.Io, gpa: Allocator, in: std.Io.File, out: std.Io.File, lo
             const filters: []const jsonrpc.Value = jsonrpc.getArr(args, "filters") orelse &.{};
             log.note("filters_count", filters.len);
             fakeReply(io, gpa, out, &seq, rseq, cmd, "{}");
-        } else if (std.mem.eql(u8, cmd, "launch")) {
+        } else if (std.mem.eql(u8, cmd, "launch") or std.mem.eql(u8, cmd, "attach")) {
             log.note("launched", true);
             fakeReply(io, gpa, out, &seq, rseq, cmd, "{}");
+            // debugpy (and lldb-dap): `initialized` only while handling
+            // `launch` / `attach` — a client waiting for it first hangs here.
+            fakeEvent(io, gpa, out, &seq, "initialized", "{}");
         } else if (std.mem.eql(u8, cmd, "configurationDone")) {
             log.note("configured", true);
             fakeReply(io, gpa, out, &seq, rseq, cmd, "{}");
@@ -1995,9 +2264,17 @@ fn fakeAdapter(io: std.Io, gpa: Allocator, in: std.Io.File, out: std.Io.File, lo
         } else if (std.mem.eql(u8, cmd, "scopes")) {
             fakeReply(io, gpa, out, &seq, rseq, cmd, "{\"scopes\":[{\"name\":\"Locals\",\"variablesReference\":10,\"expensive\":false}]}");
         } else if (std.mem.eql(u8, cmd, "variables")) {
+            log.lock.lockUncancelable(io);
+            log.variables_count += 1;
+            log.lock.unlock(io);
             fakeReply(io, gpa, out, &seq, rseq, cmd, "{\"variables\":[{\"name\":\"a\",\"value\":\"1\",\"type\":\"int\",\"variablesReference\":0}]}");
         } else if (std.mem.eql(u8, cmd, "evaluate")) {
             const expr = jsonrpc.getStr(args, "expression") orelse "";
+            if (jsonrpc.getStr(args, "context")) |c| if (std.mem.eql(u8, c, "watch")) {
+                log.lock.lockUncancelable(io);
+                log.watch_evals += 1;
+                log.lock.unlock(io);
+            };
             const b = std.fmt.allocPrint(gpa, "{{\"result\":\"{s} = 42\",\"type\":\"int\",\"variablesReference\":0}}", .{expr}) catch return;
             defer gpa.free(b);
             fakeReply(io, gpa, out, &seq, rseq, cmd, b);
@@ -2009,9 +2286,13 @@ fn fakeAdapter(io: std.Io, gpa: Allocator, in: std.Io.File, out: std.Io.File, lo
             fakeEvent(io, gpa, out, &seq, "continued", "{\"threadId\":1}");
             line += 1;
             fakeEvent(io, gpa, out, &seq, "stopped", "{\"reason\":\"step\",\"threadId\":1}");
-        } else if (std.mem.eql(u8, cmd, "disconnect") or std.mem.eql(u8, cmd, "terminate")) {
+        } else if (std.mem.eql(u8, cmd, "terminate")) {
+            log.note("terminate_seen", true);
             fakeReply(io, gpa, out, &seq, rseq, cmd, "{}");
-            if (std.mem.eql(u8, cmd, "disconnect")) return;
+        } else if (std.mem.eql(u8, cmd, "disconnect")) {
+            log.note("disconnect_terminate", jsonrpc.getBool(args, "terminateDebuggee"));
+            fakeReply(io, gpa, out, &seq, rseq, cmd, "{}");
+            return;
         } else {
             fakeReply(io, gpa, out, &seq, rseq, cmd, "{}");
         }
@@ -2098,13 +2379,28 @@ test "a scripted adapter: the handshake, a stop with frames/scopes/variables/wat
     const marks = try marksFor(&app, arena.allocator(), file, &app.theme, false);
     try testing.expectEqualStrings("▶", marks[0].glyph);
 
-    // The REPL evaluates against the stop.
+    // The REPL evaluates against the stop — and the panel is asked
+    // again afterwards: the scope's variables and the watch.
+    const vars_before = log.variables_count;
+    const watch_before = log.watch_evals;
     try command.run(&app, .{ .static = .@"dap.repl" });
     for ("a + 1") |c| try app.handle(.{ .key = Key.char(c) });
     try app.handle(.{ .key = Key.named(.enter) });
     try pumpUntil(&app, &app, Cond.replied, 5000);
     try testing.expectEqualStrings("a + 1 = 42", app.dap.console.lastEval().?.value);
     try testing.expectEqualStrings("int", app.dap.console.lastEval().?.ty.?);
+    const Refreshed = struct {
+        log: *FakeLog,
+        vars: u32,
+        watches: u32,
+        fn done(r: *const @This()) bool {
+            r.log.lock.lockUncancelable(testing.io);
+            defer r.log.lock.unlock(testing.io);
+            return r.log.variables_count > r.vars and r.log.watch_evals > r.watches;
+        }
+    };
+    const refreshed: Refreshed = .{ .log = &log, .vars = vars_before, .watches = watch_before };
+    try pumpUntil(&app, &refreshed, Refreshed.done, 5000);
 
     // setVariable round-trips and re-fetches the parent.
     try acceptSetVariable(&app, 10, "a", "7");
@@ -2118,10 +2414,59 @@ test "a scripted adapter: the handshake, a stop with frames/scopes/variables/wat
     try testing.expectEqual(@as(u32, 3), app.dap.arrow.?.line);
 
     // Goodbye: terminate drops the session; the fake leaves on disconnect.
+    // A LAUNCHED program is ended with it: `terminate`, then
+    // `disconnect { terminateDebuggee: true }`.
+    try testing.expect(!s.is_attach);
     try command.run(&app, .{ .static = .@"dap.terminate" });
+    try testing.expectEqualStrings("dap: terminated", app.lastToast().?);
     try testing.expect(app.dap.session == null);
     try testing.expect(app.dap.arrow == null);
     try group.await(io);
+    try testing.expect(log.terminate_seen);
+    try testing.expectEqual(@as(?bool, true), log.disconnect_terminate);
+    (F{ .handle = c2s[0], .flags = flags }).close(io);
+    (F{ .handle = s2c[1], .flags = flags }).close(io);
+}
+
+test "an attach session: Stop detaches — no `terminate`, `disconnect { terminateDebuggee: false }` — and the process is not mnml's to end" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var app = try App.initWith(gpa, io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const file = "/tmp/mnml-zig-fake-dap-attach.py";
+    _ = try app.openScratch();
+    const ed_pane = app.activeEditor().?;
+    try ed_pane.buf.setPath(file);
+    try ed_pane.buf.editor.setText("import x\n\nx = 1\ny = 2\n");
+
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const c2s = try std.Io.Threaded.pipe2(.{});
+    const s2c = try std.Io.Threaded.pipe2(.{});
+    const F = std.Io.File;
+    const flags: F.Flags = .{ .nonblocking = false };
+    var log: FakeLog = .{};
+    var group: std.Io.Group = .init;
+    try group.concurrent(io, fakeAdapter, .{ io, gpa, F{ .handle = c2s[0], .flags = flags }, F{ .handle = s2c[1], .flags = flags }, &log, file });
+    const s = try Session.initFiles(gpa, io, &app.events, app.dap.next_session, F{ .handle = c2s[1], .flags = flags }, F{ .handle = s2c[0], .flags = flags }, "{\"request\":\"attach\",\"listen\":{\"host\":\"127.0.0.1\",\"port\":5678}}");
+    app.dap.next_session += 1;
+    app.dap.session = s;
+    try testing.expect(s.is_attach);
+    try s.initialize();
+    const Cond = struct {
+        fn stopped(a: *App) bool {
+            const ss = a.dap.session orelse return false;
+            return ss.stopped != null and ss.frames.len > 0;
+        }
+    };
+    try pumpUntil(&app, &app, Cond.stopped, 5000);
+    try testing.expect(log.launched and log.configured);
+    try command.run(&app, .{ .static = .@"dap.terminate" });
+    try testing.expectEqualStrings("dap: detached (the process keeps running)", app.lastToast().?);
+    try testing.expect(app.dap.session == null);
+    try group.await(io);
+    try testing.expect(!log.terminate_seen);
+    try testing.expectEqual(@as(?bool, false), log.disconnect_terminate);
     (F{ .handle = c2s[0], .flags = flags }).close(io);
     (F{ .handle = s2c[1], .flags = flags }).close(io);
 }
@@ -2514,7 +2859,8 @@ test "mnml-fake-dap end to end: spawn, initialize → launch → stop at a break
         }
     };
     try pumpUntil(&app, &app, Cond2.replied2, 10_000);
-    try testing.expectEqualStrings("no such variable", app.dap.console.lastEval().?.err.?);
+    // The fake's console error runs to two lines, as lldb's and Python's do.
+    try testing.expectEqualStrings("no such variable\n  in: nope", app.dap.console.lastEval().?.err.?);
 
     // setVariable: the Locals scope's `x` becomes 7; the parent is
     // re-fetched and the watch follows.

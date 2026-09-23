@@ -86,11 +86,16 @@ pub const EditorPane = struct {
     /// tab of its own. Never saved with the session — a restored tab
     /// is one the user kept.
     preview: bool = false,
+    /// A name for a buffer that is not a file — a frame's text fetched
+    /// from a debug adapter (`dyld`start`) — where a pathless pane
+    /// would say `[scratch]`. Owned on the buffer's gpa.
+    label: ?[]u8 = null,
     /// The sticky context's chain for the last top line / text / parse
     /// (`sticky.headerLines`).
     sticky: sticky.Cache = .{},
 
     pub fn deinit(self: *EditorPane) void {
+        if (self.label) |l| self.buf.gpa.free(l);
         self.sticky.deinit(self.buf.gpa);
         ListPane.freeEntries(self.buf.gpa, self.loclist.items);
         self.loclist.deinit(self.buf.gpa);
@@ -280,7 +285,7 @@ pub const Pane = union(enum) {
     /// is its label.
     pub fn title(self: *const Pane) []const u8 {
         switch (self.*) {
-            .editor => |*e| return if (e.buf.doc.path) |p| std.fs.path.basename(p) else "[scratch]",
+            .editor => |*e| return if (e.buf.doc.path) |p| std.fs.path.basename(p) else e.label orelse "[scratch]",
             .outline => |*o| return o.title,
             .md_preview => |*m| return std.fs.path.basename(m.path),
             .image => |*im| return im.tab_title,

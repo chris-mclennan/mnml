@@ -45,6 +45,7 @@ pub const ReqKind = enum(u16) {
     evaluate_watch,
     evaluate_hover,
     set_variable,
+    source,
     terminate,
     disconnect,
     cancel,
@@ -92,10 +93,22 @@ pub const Session = struct {
     /// The adapter's command, for toasts. Owned.
     adapter: []u8,
     /// The substituted `launch` / `attach` arguments as JSON. Owned;
-    /// sent once `initialized` lands.
+    /// sent on the `initialize` reply.
     launch_body: []u8,
+    /// The body's `request` is `attach`: the debuggee is somebody
+    /// else's process. Stop then DETACHES — `disconnect` with
+    /// `terminateDebuggee: false` and no `terminate` — where a launched
+    /// session ends its program (hunt: dap-stop-kills-attached-process).
+    is_attach: bool,
 
+    /// The adapter's `initialized` event has arrived: it is ready for
+    /// breakpoints and `configurationDone`.
     initialized: bool = false,
+    /// The `initialize` reply has landed (the capabilities are known).
+    /// netcoredbg sends `initialized` before it, lldb-dap and debugpy
+    /// only while handling `launch`; the configuration step waits for
+    /// both flags, whichever order they come in.
+    ready: bool = false,
     /// `configurationDone` has been sent.
     configured: bool = false,
     running: bool = false,
@@ -152,6 +165,7 @@ pub const Session = struct {
             .transport = t,
             .adapter = adapter,
             .launch_body = body,
+            .is_attach = isAttachBody(gpa, body),
             .snapshot = alloc.SnapshotArena.init(gpa),
             .vars = alloc.SnapshotArena.init(gpa),
         };
@@ -178,6 +192,7 @@ pub const Session = struct {
             .transport = t,
             .adapter = adapter,
             .launch_body = body,
+            .is_attach = isAttachBody(gpa, body),
             .snapshot = alloc.SnapshotArena.init(gpa),
             .vars = alloc.SnapshotArena.init(gpa),
         };
@@ -185,12 +200,18 @@ pub const Session = struct {
         return s;
     }
 
+    /// How long the adapter gets to act on `disconnect` — end or
+    /// release its debuggee and exit — before it is killed.
+    pub const exit_grace_ms: u32 = 500;
+
     /// Say goodbye (best effort), stop the reader, kill the adapter,
-    /// free everything.
+    /// free everything. A launched program is ended with the session
+    /// (`terminateDebuggee: true`); an attached one is released and
+    /// keeps running, as VS Code's Stop-as-Disconnect does.
     pub fn deinit(self: *Session) void {
         const gpa = self.gpa;
-        if (!self.transport.isDead() and !self.exited) _ = self.request(.disconnect, "disconnect", .{ .terminateDebuggee = true }) catch 0;
-        self.transport.shutdown();
+        if (!self.transport.isDead() and !self.exited) _ = self.request(.disconnect, "disconnect", .{ .terminateDebuggee = !self.is_attach }) catch 0;
+        self.transport.shutdownWithin(exit_grace_ms);
         if (self.stopped) |*s| s.deinit(gpa);
         for (self.filters.items) |*f| f.deinit(gpa);
         self.filters.deinit(gpa);
@@ -403,6 +424,12 @@ pub const Session = struct {
         _ = try self.requestCtx(.variables, "variables", .{ .variablesReference = ref }, @bitCast(ref));
     }
 
+    /// The text of a frame whose source is the adapter's (`source_ref`
+    /// above 0); the reply carries the reference back as its context.
+    pub fn requestSource(self: *Session, ref: i64) SendError!void {
+        _ = try self.requestCtx(.source, "source", .{ .source = .{ .sourceReference = ref }, .sourceReference = ref }, @bitCast(ref));
+    }
+
     pub const EvalContext = enum { repl, watch, hover };
 
     /// The frame evaluations and scopes address: the selected one, else
@@ -453,7 +480,11 @@ pub const Session = struct {
         _ = try self.request(.set_variable, "setVariable", .{ .variablesReference = parent_ref, .name = name, .value = value });
     }
 
+    /// `terminate` ends a LAUNCHED program. For an attached one it is
+    /// not sent — the process is not the session's to end; the
+    /// `disconnect` in `deinit` releases it instead.
     pub fn terminate(self: *Session) SendError!void {
+        if (self.is_attach) return;
         _ = try self.request(.terminate, "terminate", .{});
     }
 
@@ -481,11 +512,19 @@ pub const Session = struct {
         const arr = if (body) |b| jsonrpc.getArr(b, "stackFrames") orelse &.{} else &.{};
         const out = try arena.alloc(types.StackFrame, arr.len);
         for (arr, 0..) |f, i| {
-            const src = if (jsonrpc.getObj(f, "source")) |s| jsonrpc.getStr(s, "path") else null;
+            const src_obj = jsonrpc.getObj(f, "source");
+            // A `sourceReference` above 0 says the text is the
+            // adapter's to give (`source`), whatever `path` reads.
+            const ref = if (src_obj) |s| jsonrpc.getInt(s, "sourceReference") orelse 0 else 0;
+            // With a reference the `path` is only a display string
+            // (lldb-dap: `/usr/lib/dyld`start`); the name is the
+            // shorter of the two and is what the frame is called.
+            const src = if (src_obj) |s| (if (ref > 0) (jsonrpc.getStr(s, "name") orelse jsonrpc.getStr(s, "path")) else (jsonrpc.getStr(s, "path") orelse jsonrpc.getStr(s, "name"))) else null;
             out[i] = .{
                 .id = jsonrpc.getInt(f, "id") orelse 0,
                 .name = try arena.dupe(u8, jsonrpc.getStr(f, "name") orelse "?"),
                 .source = if (src) |p| try arena.dupe(u8, p) else null,
+                .source_ref = @max(ref, 0),
                 .line = @intCast(@max(jsonrpc.getInt(f, "line") orelse 1, 0)),
                 .column = @intCast(@max(jsonrpc.getInt(f, "column") orelse 1, 0)),
             };
@@ -527,8 +566,16 @@ pub const Session = struct {
         try self.variables.put(self.gpa, ref, out);
     }
 
-    /// The filters from `initialize`'s reply; the defaults go on.
-    pub fn setCapabilities(self: *Session, body: ?Value) Allocator.Error!void {
+    /// The user's word on a filter, kept by the app across sessions:
+    /// filter id → on. A filter with no entry takes the adapter's default.
+    pub const FilterOverrides = std.StringHashMapUnmanaged(bool);
+
+    /// The filters from `initialize`'s reply; each goes on when the
+    /// user last switched it on (`overrides`), else when the adapter
+    /// says it is on by default. A restart is a new session, and
+    /// "break on throw" was switched on for exactly the next run
+    /// (hunt: dap-restart-drops-exception-filters).
+    pub fn setCapabilities(self: *Session, body: ?Value, overrides: ?*const FilterOverrides) Allocator.Error!void {
         const b = body orelse return;
         const arr = jsonrpc.getArr(b, "exceptionBreakpointFilters") orelse return;
         for (arr) |f| {
@@ -542,7 +589,8 @@ pub const Session = struct {
             filter.label = try self.gpa.dupe(u8, jsonrpc.getStr(f, "label") orelse id);
             errdefer self.gpa.free(filter.label);
             try self.filters.append(self.gpa, filter);
-            if (filter.default and !self.enabled_filters.contains(id)) {
+            const on = if (overrides) |o| (o.get(id) orelse filter.default) else filter.default;
+            if (on and !self.enabled_filters.contains(id)) {
                 const key = try self.gpa.dupe(u8, id);
                 errdefer self.gpa.free(key);
                 try self.enabled_filters.put(self.gpa, key, {});
@@ -550,10 +598,8 @@ pub const Session = struct {
         }
     }
 
-    pub fn setStopped(self: *Session, thread_id: i64, reason: []const u8, description: ?[]const u8) Allocator.Error!void {
-        var st: types.Stopped = .{ .thread_id = thread_id, .reason = try self.gpa.dupe(u8, reason), .description = null };
-        errdefer self.gpa.free(st.reason);
-        if (description) |d| st.description = try self.gpa.dupe(u8, d);
+    pub fn setStopped(self: *Session, thread_id: i64, reason: []const u8, description: ?[]const u8, text: ?[]const u8) Allocator.Error!void {
+        const st = try types.Stopped.init(self.gpa, thread_id, reason, description, text);
         if (self.stopped) |*old| old.deinit(self.gpa);
         self.stopped = st;
         self.thread = thread_id;
@@ -638,6 +684,14 @@ pub const Session = struct {
     }
 };
 
+/// Whether a launch body names `"request": "attach"`.
+fn isAttachBody(gpa: Allocator, body: []const u8) bool {
+    var parsed = std.json.parseFromSlice(Value, gpa, body, .{}) catch return false;
+    defer parsed.deinit();
+    const req = jsonrpc.getStr(parsed.value, "request") orelse return false;
+    return std.mem.eql(u8, req, "attach");
+}
+
 /// `{"seq":N,"type":"request","command":C,"arguments":A}`; `raw`
 /// supplies the arguments as JSON text when set.
 fn envelope(gpa: Allocator, seq: i64, command: []const u8, args: anytype, raw: ?[]const u8) Allocator.Error![]u8 {
@@ -661,13 +715,28 @@ fn envelopeInto(js: *std.json.Stringify, seq: i64, command: []const u8, args: an
         try js.beginWriteRaw();
         try js.writer.writeAll(r);
         js.endWriteRaw();
-    } else if (@TypeOf(args) == void) {
+    } else if (@TypeOf(args) == void or isEmptyStruct(@TypeOf(args))) {
+        // DAP types `arguments` as an object. `std.json` writes the
+        // empty tuple `.{}` — what every argument-less call passes —
+        // as the list `[]`, which debugpy (pydevd's schema) rejects:
+        // "argument after ** must be a mapping, not list", and the
+        // session never starts (hunt: dap-debugpy-configurationdone-
+        // arguments-list). lldb-dap tolerated it, which hid this.
         try js.beginObject();
         try js.endObject();
     } else {
         try js.write(args);
     }
     try js.endObject();
+}
+
+/// `.{}` — a tuple with no fields; a struct with none is the same to
+/// the wire.
+fn isEmptyStruct(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .@"struct" => |st| st.fields.len == 0,
+        else => false,
+    };
 }
 
 /// `${file}`, `${fileBasename}`, `${fileDirname}`, `${workspaceFolder}`
@@ -747,7 +816,7 @@ pub fn expandEnv(gpa: Allocator, text: []const u8, env: *const std.process.Envir
 
 const testing = std.testing;
 
-test "envelope: seq/type/command/arguments; a raw body is spliced in verbatim" {
+test "envelope: seq/type/command/arguments; a raw body is spliced in verbatim; `.{}` is the object `{}`, never the list `[]`" {
     const gpa = testing.allocator;
     const a = try envelope(gpa, 7, "next", .{ .threadId = 3 }, null);
     defer gpa.free(a);
@@ -758,6 +827,23 @@ test "envelope: seq/type/command/arguments; a raw body is spliced in verbatim" {
     const c = try envelope(gpa, 9, "configurationDone", {}, null);
     defer gpa.free(c);
     try testing.expect(std.mem.endsWith(u8, c, "\"arguments\":{}}"));
+    // What the callers pass — `request(.configuration_done, "configurationDone", .{})`,
+    // `threads`, `terminate` — is the empty TUPLE, which std.json would
+    // write as `[]`. debugpy refuses a list; the wire must say `{}`.
+    const d = try envelope(gpa, 10, "configurationDone", .{}, null);
+    defer gpa.free(d);
+    try testing.expectEqualStrings("{\"seq\":10,\"type\":\"request\",\"command\":\"configurationDone\",\"arguments\":{}}", d);
+    const e = try envelope(gpa, 11, "threads", .{}, null);
+    defer gpa.free(e);
+    try testing.expect(std.mem.endsWith(u8, e, "\"arguments\":{}}"));
+    try testing.expect(std.mem.indexOf(u8, e, "[]") == null);
+}
+
+test "isAttachBody: only a body whose `request` is attach" {
+    try testing.expect(isAttachBody(testing.allocator, "{\"request\":\"attach\",\"listen\":{\"port\":5678}}"));
+    try testing.expect(!isAttachBody(testing.allocator, "{\"request\":\"launch\",\"program\":\"x\"}"));
+    try testing.expect(!isAttachBody(testing.allocator, "{\"program\":\"x\"}"));
+    try testing.expect(!isAttachBody(testing.allocator, "not json"));
 }
 
 test "substitute: file / workspace variables, unknown names kept, quotes escaped" {
@@ -782,6 +868,34 @@ test "classify: response / event / reverse request" {
     var q = try std.json.parseFromSlice(Value, testing.allocator, "{\"seq\":4,\"type\":\"request\",\"command\":\"runInTerminal\"}", .{});
     defer q.deinit();
     try testing.expectEqualStrings("runInTerminal", classify(q.value).request.command);
+}
+
+test "setFrames: a `sourceReference` frame keeps the reference and is named by `name`, not the display path; a file frame keeps its path" {
+    const gpa = testing.allocator;
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var events = try event.EventQueue.init(gpa, 4);
+    defer events.deinit(testing.io);
+    const fds_a = try Io.Threaded.pipe2(.{});
+    const fds_b = try Io.Threaded.pipe2(.{});
+    const in_file: Io.File = .{ .handle = fds_a[1], .flags = .{ .nonblocking = false } };
+    const out_file: Io.File = .{ .handle = fds_b[0], .flags = .{ .nonblocking = false } };
+    const s = try Session.initFiles(gpa, testing.io, &events, 1, in_file, out_file, "{}");
+    defer {
+        s.exited = true;
+        s.deinit();
+        (Io.File{ .handle = fds_a[0], .flags = .{ .nonblocking = false } }).close(testing.io);
+        (Io.File{ .handle = fds_b[1], .flags = .{ .nonblocking = false } }).close(testing.io);
+    }
+    var parsed = try std.json.parseFromSlice(Value, gpa, "{\"stackFrames\":[{\"id\":524289,\"name\":\"start\",\"line\":1749,\"column\":1,\"presentationHint\":\"deemphasize\",\"source\":{\"name\":\"start\",\"path\":\"/usr/lib/dyld`start\",\"sourceReference\":1}},{\"id\":2,\"name\":\"main\",\"line\":22,\"column\":5,\"source\":{\"name\":\"main.c\",\"path\":\"/ws/main.c\"}},{\"id\":3,\"name\":\"nowhere\",\"line\":0,\"column\":0}]}", .{});
+    defer parsed.deinit();
+    try s.setFrames(parsed.value);
+    try testing.expectEqual(@as(usize, 3), s.frames.len);
+    try testing.expectEqual(@as(i64, 1), s.frames[0].source_ref);
+    try testing.expectEqualStrings("start", s.frames[0].source.?);
+    try testing.expectEqual(@as(i64, 0), s.frames[1].source_ref);
+    try testing.expectEqualStrings("/ws/main.c", s.frames[1].source.?);
+    try testing.expect(s.frames[2].source == null);
+    try testing.expectEqual(@as(i64, 0), s.frames[2].source_ref);
 }
 
 test "variableRows flattens scopes and only the expanded composites" {
@@ -828,6 +942,37 @@ test "variableRows flattens scopes and only the expanded composites" {
     // A resume drops the cache and the expansion state.
     s.onResumed();
     try testing.expectEqual(@as(usize, 0), (try s.variableRows(arena.allocator())).len);
+}
+
+test "setCapabilities: a filter goes on by the user's override first, the adapter's default second" {
+    const gpa = testing.allocator;
+    var events = try event.EventQueue.init(gpa, 4);
+    defer events.deinit(testing.io);
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const fds_a = try Io.Threaded.pipe2(.{});
+    const fds_b = try Io.Threaded.pipe2(.{});
+    const in_file: Io.File = .{ .handle = fds_a[1], .flags = .{ .nonblocking = false } };
+    const out_file: Io.File = .{ .handle = fds_b[0], .flags = .{ .nonblocking = false } };
+    const s = try Session.initFiles(gpa, testing.io, &events, 1, in_file, out_file, "{}");
+    defer {
+        s.exited = true;
+        s.deinit();
+        (Io.File{ .handle = fds_a[0], .flags = .{ .nonblocking = false } }).close(testing.io);
+        (Io.File{ .handle = fds_b[1], .flags = .{ .nonblocking = false } }).close(testing.io);
+    }
+    var caps = try std.json.parseFromSlice(Value, gpa, "{\"exceptionBreakpointFilters\":[{\"filter\":\"cpp_throw\",\"label\":\"C++ Throw\"},{\"filter\":\"uncaught\",\"label\":\"Uncaught\",\"default\":true},{\"filter\":\"all\",\"label\":\"All\"}]}", .{});
+    defer caps.deinit();
+    var overrides: Session.FilterOverrides = .empty;
+    defer overrides.deinit(gpa);
+    // The user switched cpp_throw ON and the default-on uncaught OFF last session.
+    try overrides.put(gpa, "cpp_throw", true);
+    try overrides.put(gpa, "uncaught", false);
+    try s.setCapabilities(caps.value, &overrides);
+    try testing.expectEqual(@as(usize, 3), s.filters.items.len);
+    try testing.expect(s.enabled_filters.contains("cpp_throw"));
+    try testing.expect(!s.enabled_filters.contains("uncaught"));
+    try testing.expect(!s.enabled_filters.contains("all"));
+    try testing.expectEqual(@as(usize, 1), s.enabled_filters.count());
 }
 
 test "expandEnv: $NAME and ${NAME} from the map; unknown names and bare dollars stay" {

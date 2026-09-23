@@ -1,0 +1,40 @@
+# DAP session — a frame without a file. A `stepOut` from main stops the
+# fake in the runtime's `start` frame, as lldb-dap stops in dyld`start:
+# its `source` has `sourceReference: 1` and a `path` (<runtime>`start)
+# that is a display string, not a file. The client must ask the adapter
+# for the text (`source`) and show it read-only under the frame's name —
+# never open the path as a file, which made an empty buffer the user
+# could `:w` (hunt: dap-sourceref-frame-opens-empty-file).
+write prog.dbg "let x = 1\nprint x\n"
+write .mnml/config.zon .{ .dap = .{ .dbg = .{ .cmd = "$MNML_FAKE_DAP" } } }
+open prog.dbg
+command editor.use_vim
+type j
+command dap.toggle_breakpoint
+expect screen contains "breakpoint set: line 2"
+
+command dap.run
+expect screen contains "dap: stopped (breakpoint)"
+expect screen contains "▶"
+
+command dap.step_out
+expect screen contains "dap: stopped (step)"
+# The adapter's text, in a pane named for the frame — read-only.
+expect pane start
+expect screen contains "call main"
+expect screen contains "▶"
+expect status lacks "\"title\":\"[scratch]\""
+expect status contains "\"title\":\"start\""
+expect status lacks "\"title\":\"<runtime>`start\""
+# The stack names the frame; the status row says where.
+command dap.show
+expect screen contains "start:3  start"
+
+# The pane is not a file: an edit is refused, nothing is dirty.
+key escape
+type "izzz"
+expect screen lacks "zzz"
+expect status lacks "\"dirty\":true"
+
+command dap.continue
+expect screen contains "dap: exited (code 0)"

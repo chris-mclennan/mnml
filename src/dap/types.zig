@@ -50,8 +50,14 @@ pub const FileBreakpoints = std.ArrayListUnmanaged(Breakpoint);
 pub const StackFrame = struct {
     id: i64,
     name: []const u8,
-    /// Absolute path when the adapter named one.
+    /// Absolute path when the adapter named one — or, with a
+    /// `source_ref`, the display name (lldb-dap's `/usr/lib/dyld`start`
+    /// is not a file).
     source: ?[]const u8,
+    /// DAP's `sourceReference`: above 0, the frame's text is not on
+    /// disk and comes from a `source` request — a frame without debug
+    /// info (dyld, libc, a panic's std frames), a disassembly.
+    source_ref: i64 = 0,
     /// 1-based, as the wire has it (`linesStartAt1`).
     line: u32,
     column: u32,
@@ -174,17 +180,60 @@ pub const ReplEntry = struct {
 pub const Stopped = struct {
     thread_id: i64,
     reason: []u8,
+    /// DAP: the full reason, shown as-is — an exception's message.
     description: ?[]u8,
+    /// DAP: "additional information … e.g. the exception name" —
+    /// `ZeroDivisionError`, `ValueError`; what a reader looks for first.
+    text: ?[]u8,
+    /// What the toast and the status row say, built once by `init`:
+    /// `text: description`, either alone, else the reason.
+    label_text: []u8,
+
+    pub fn init(gpa: Allocator, thread_id: i64, reason: []const u8, description: ?[]const u8, text: ?[]const u8) Allocator.Error!Stopped {
+        const r = try gpa.dupe(u8, reason);
+        errdefer gpa.free(r);
+        const d: ?[]u8 = if (description) |x| (if (x.len > 0) try gpa.dupe(u8, x) else null) else null;
+        errdefer if (d) |x| gpa.free(x);
+        const t: ?[]u8 = if (text) |x| (if (x.len > 0) try gpa.dupe(u8, x) else null) else null;
+        errdefer if (t) |x| gpa.free(x);
+        const l: []u8 = if (t != null and d != null and !std.mem.eql(u8, t.?, d.?))
+            try std.fmt.allocPrint(gpa, "{s}: {s}", .{ t.?, d.? })
+        else
+            try gpa.dupe(u8, t orelse d orelse reason);
+        return .{ .thread_id = thread_id, .reason = r, .description = d, .text = t, .label_text = l };
+    }
 
     pub fn deinit(self: *Stopped, gpa: Allocator) void {
         gpa.free(self.reason);
         if (self.description) |d| gpa.free(d);
+        if (self.text) |t| gpa.free(t);
+        gpa.free(self.label_text);
     }
 
     pub fn label(self: *const Stopped) []const u8 {
-        return self.description orelse self.reason;
+        return self.label_text;
     }
 };
+
+test "Stopped.label: the exception's type with its message, either alone, else the reason" {
+    const gpa = std.testing.allocator;
+    var both = try Stopped.init(gpa, 1, "exception", "division by zero", "ZeroDivisionError");
+    defer both.deinit(gpa);
+    try std.testing.expectEqualStrings("ZeroDivisionError: division by zero", both.label());
+    var text_only = try Stopped.init(gpa, 1, "exception", null, "SystemExit");
+    defer text_only.deinit(gpa);
+    try std.testing.expectEqualStrings("SystemExit", text_only.label());
+    var desc_only = try Stopped.init(gpa, 1, "breakpoint", "breakpoint 1.1", null);
+    defer desc_only.deinit(gpa);
+    try std.testing.expectEqualStrings("breakpoint 1.1", desc_only.label());
+    var bare = try Stopped.init(gpa, 1, "step", "", "");
+    defer bare.deinit(gpa);
+    try std.testing.expectEqualStrings("step", bare.label());
+    // The same word twice is said once.
+    var same = try Stopped.init(gpa, 1, "exception", "boom", "boom");
+    defer same.deinit(gpa);
+    try std.testing.expectEqualStrings("boom", same.label());
+}
 
 test "ReplEntry.setResult replaces every result field and clears pending" {
     const gpa = std.testing.allocator;

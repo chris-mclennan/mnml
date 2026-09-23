@@ -1,0 +1,30 @@
+# DAP session — Stop on an ATTACH session detaches; the process keeps
+# running. The config's `.launch` names `request = "attach"` (the fake
+# adapter's `program` stands in for the process; a real adapter takes a
+# pid or a port). The session stops on the breakpoint like a launch
+# would. dap.terminate then sends `disconnect { terminateDebuggee: false }`
+# and no `terminate` — the fake's ledger beside the program records what
+# the goodbye did to the "process": `detached`, never `killed`. A client
+# that sent a launch session's goodbye (terminate + terminateDebuggee:
+# true) killed the process the user had attached to (hunt:
+# dap-stop-kills-attached-process).
+write prog.dbg "let x = 1\nlet y = 2\nprint x\nsleep\n"
+write .mnml/config.zon .{ .dap = .{ .dbg = .{ .cmd = "$MNML_FAKE_DAP", .launch = .{ .request = "attach", .program = "${file}" } } } }
+open prog.dbg
+command editor.use_vim
+key j
+command dap.toggle_breakpoint
+expect screen contains "breakpoint set: line 2"
+
+command dap.run
+expect screen contains "dap: stopped (breakpoint)"
+expect file prog.dbg.debuggee contains attached
+
+command dap.terminate
+expect screen contains "dap: detached (the process keeps running)"
+expect screen lacks "dap: terminated"
+# The adapter is given a moment to act on the disconnect before it is
+# killed; the ledger is what it wrote.
+wait 400
+expect file prog.dbg.debuggee contains detached
+expect file prog.dbg.debuggee lacks killed
