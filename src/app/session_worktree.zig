@@ -436,7 +436,7 @@ pub fn acceptName(app: *App, product: Config.AiProduct, profile: []const u8, tex
     const repo = (try repoRoot(app, arena, app.workspace)) orelse return app.diag.fail(arena, "worktree: {s} is not in a git repository", .{app.workspace});
     const l = try launch_profiles.launch(app, arena, product, profile);
     const path = try create(app, arena, repo, name);
-    const id = pty_pane.open(app, .{
+    const id = pty_pane.openSession(app, .{
         .argv = l.argv,
         .cwd = path,
         .label = try std.fmt.allocPrint(arena, "{s} @ {s}", .{ l.label, name }),

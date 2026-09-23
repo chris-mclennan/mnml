@@ -46,6 +46,7 @@ pub const supported = true;
 const pty = @import("pty");
 const first_launch_install = @import("first_launch_install.zig");
 const pty_env = @import("pty_env.zig");
+const jobs = @import("jobs.zig");
 
 pub const Session = pty.Session;
 pub const Grid = pty.Grid;
@@ -669,9 +670,40 @@ pub fn resumeArgv(arena: Allocator, argv: []const []const u8) Allocator.Error![]
 pub fn onReadable(app: *App, id: PaneId) void {
     const pane = app.panes.get(id) orelse return;
     switch (pane.*) {
-        .pty => |*p| p.pump(app),
+        .pty => |*p| {
+            p.pump(app);
+            settleSpawn(app, id, p);
+        },
         else => {},
     }
+}
+
+/// `open` for an AI session. The spawn is a background job until the
+/// child says something: a session that exits before its first byte (a
+/// CLI that is not signed in, a profile naming a missing binary) FAILED
+/// to start — which used to read as a pane that simply closed.
+pub fn openSession(app: *App, opts: OpenOptions) CommandError!PaneId {
+    const arena = app.frame.allocator();
+    const label = try std.fmt.allocPrint(arena, "spawn {s}", .{opts.label orelse (if (opts.argv.len > 0) std.fs.path.basename(opts.argv[0]) else "session")});
+    const id = open(app, opts) catch |err| {
+        if (err != error.OutOfMemory) jobs.record(app, .{ .kind = .session, .label = label }, 0, jobs.Outcome.fail(app.diag.msg orelse @errorName(err)));
+        return err;
+    };
+    _ = try jobs.begin(app, .{ .kind = .session, .key = id, .label = label, .pane = id });
+    return id;
+}
+
+/// A session spawn's job ends with the first output, or with an exit
+/// before any.
+fn settleSpawn(app: *App, id: PaneId, p: *const PtyPane) void {
+    if (!jobs.running(app, .session, id)) return;
+    if (p.fed_gen != 0) return jobs.endKeyed(app, .session, id, jobs.Outcome.done("started"));
+    const e = p.exit orelse return;
+    const words = switch (e) {
+        .code => |c| std.fmt.allocPrint(app.frame.allocator(), "exited {d} before any output", .{c}) catch "exited before any output",
+        .signal => "killed before any output",
+    };
+    jobs.endKeyed(app, .session, id, jobs.Outcome.fail(words));
 }
 
 /// Every tick: a pane with ringed bytes whose wakeup was dropped, and a
@@ -691,6 +723,7 @@ pub fn tickAll(app: *App) void {
                 p.noticeExit(app);
                 app.needs_render = true;
             }
+            settleSpawn(app, @intCast(i), p);
         },
         else => {},
     };

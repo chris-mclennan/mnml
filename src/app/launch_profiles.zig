@@ -233,7 +233,7 @@ pub fn openSessionWith(app: *App, product: Product, name: []const u8, placement:
         return null;
     };
     const l = try launch(app, app.frame.allocator(), product, name);
-    return try pty_pane.open(app, .{ .argv = l.argv, .cwd = l.cwd, .label = l.label, .placement = placement, .kind = .command });
+    return try pty_pane.openSession(app, .{ .argv = l.argv, .cwd = l.cwd, .label = l.label, .placement = placement, .kind = .command });
 }
 
 /// Persist `name` as the product's default (`.ai.default_profile.<product>`).
