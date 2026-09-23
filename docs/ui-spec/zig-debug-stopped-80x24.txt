@@ -1,24 +1,24 @@
  ❯_  mnml  »             󰍉  ws                                    󰐕  ●━  󰅖
-   │ DEBUG                  + │  pro 󰐕  󱸀  󲀀       │  Deb 󰐕  󱸀  󲀀      
-  │  󰍉 / filter              │▌prog.dbg               │▌  󰐊   󰆷   󰆹   󰆸   󰜉
- 󰍉 │                          │▌ 󰐊   󰆷   󰆹   󰆸   󰜉   󰓛 │▌ ── started prog.dbg ──
- 󰊢 │▌● prog.dbg:4 · main     █│▌  1 let x = 1  x = 1   │▌ hello
-▌ │  VARIABLES (4)         █│▌  2 let p = struct{a=1,│▌
- 󰐱 │  Locals                █│▌  3 print "hello"      │▌
- 󰎒 │     x: int = 1          █│▶  4 x = x + 1  x = 1   │▌
-  │    p: struct╭────────────────────────────────────────────────────────────╮
-  │  Globals    │x: int = 1                                                  │
-  │     x: int = │Locals · debugger value · right-click the gutter: breakpoin…│
- 󱘣 │    p: struct╰────────────────────────────────────────────────────────────╯
- 󰢱 │                         █│▌  9 call f             │▌
-   │  WATCH (0)             █│▌ 10 print x            │▌
-   │──────────────────────────│▌                       │▌
-   │ x: int = 1             ⋮ │▌                       │▌
-   │                          │▌                       │▌
-   │ Locals · debugger value  │▌                       │▌
-   │ · right-click the        │▌                       │▌
-   │ gutter: breakpoints      │▌                       │▌
-  │                          │▌                       │▌
-   │                          │▌                       │▌ > expression — Tab com
- VIEW  [no file]                      F 59% ▲0.2  󱼀 󰐎    00:37  ws   —
-
+  prog.dbg 󰅖   󰐕         󱸀  󲀀       │  Debug 󰅖   󰐕           󱸀  󲀀      
+▌prog.dbg                               │▌  󰐊   󰆷   󰆹   󰆸   󰜉   󰓛
+▌ 󰐊   󰆷   󰆹   󰆸   󰜉   󰓛                 │▌ ── started prog.dbg ──
+▌  1 let x = 1  x = 1                   │▌ hello
+▌  2 let p = struct{a=1,b="two"}  p = {a│▌
+▌  3 print "hello"                      │▌
+▶  4 x = x + 1  x = 1                   │▌
+▌  5 fn f         ╭────────────────────────────────────────────────────────────╮
+▌  6   let y = 10 │Line 4                                                      │
+   7   x = x * y  │click places the cursor · drag selects · right-click: edito…│
+⋮  8 end          ╰────────────────────────────────────────────────────────────╯
+   9 call f                             │▌
+▌ 10 print x                            │▌
+▌                                       │▌
+▌                                       │▌
+▌                                       │▌
+▌                                       │▌
+▌                                       │▌
+▌                                       │▌
+▌                                       │▌
+▌                                       │▌ > expression — Tab completes, ↑↓ hist
+ VIEW  [no file]                      F 57% ▼1.6  󱼀 󰐎    23:28  ws   —
+                                       ⋯

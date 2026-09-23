@@ -1902,6 +1902,9 @@ test "the pane rail: a pane's left column is the `▌` in its accent, its grid i
     defer t.allocator.free(shim);
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 80, .rows = 20 });
     defer app.deinit();
+    // A narrow screen with the column docked: this test is about
+    // what sits beside it, not the width rule (`ui.sidebar_auto_below`).
+    app.cfg.ui.sidebar_auto_below = 0;
     app.cfg.ai.launch_profiles = &color_profiles;
     app.tree.visible = false;
     const c1 = try open(&app, .{ .argv = &.{shim}, .label = "claude", .kind = .command, .placement = .tab });

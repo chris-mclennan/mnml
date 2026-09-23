@@ -507,6 +507,12 @@ pub const Ui = struct {
     /// see `Sidebar`. It governs BOTH columns; `ui.sidebar_side` still
     /// says which one a section calls home.
     sidebar: Sidebar = .always,
+    /// A narrow terminal's side columns: below this many columns a
+    /// `sidebar = .always` column behaves as `.auto` — hidden, the
+    /// screen edge or a section command brings it in over the editor —
+    /// and it docks again as soon as the terminal is this wide. An
+    /// explicit `.auto` / `.hidden` is left as it is. 0 = never.
+    sidebar_auto_below: u16 = 100,
     /// How long the pointer must rest in a column's edge zone before
     /// the overlay slides in (ms; clamped to 0..`sidebar_dwell_ms_max`).
     sidebar_reveal_ms: u16 = 250,
@@ -1312,6 +1318,7 @@ test "defaults are the shipped values" {
     try std.testing.expectEqual(@as(u16, 250), c.ui.sidebar_reveal_ms);
     try std.testing.expectEqual(@as(u16, 400), c.ui.sidebar_hide_ms);
     try std.testing.expectEqual(@as(u16, 0), c.ui.auto_hide_narrow_width);
+    try std.testing.expectEqual(@as(u16, 100), c.ui.sidebar_auto_below);
     try std.testing.expect(c.ui.animations);
     try std.testing.expect(c.ui.edge_grips);
     try std.testing.expectEqual(DiagStyle.count, c.ui.bufferline_diag_style);

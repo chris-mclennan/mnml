@@ -19,11 +19,13 @@ command git.graph
 wait 600
 expect screen contains "third"
 # Mark third (the cursor) and second; the mark cell shows ✓.
+# (A row's lane `▌` sits in the pane rail's column, `pane_rail.absorb`,
+# with a blank cell after it.)
 key space
 key j
 key space
-expect screen contains "▌▶✓"
-expect screen contains "▌ ✓"
+expect screen contains "▌ ▶✓"
+expect screen contains "▌  ✓"
 key r
 wait 200
 expect screen contains "Rebase plan · 2 commits onto"
@@ -35,7 +37,7 @@ key j
 key s
 expect screen contains "▶ squash "
 # The graph row behind carries the action's letter in the mark cell.
-expect screen contains "▌ s"
+expect screen contains "▌  s"
 key enter
 wait 2500
 expect screen contains "rebased: 2 commit(s), 1 changed"

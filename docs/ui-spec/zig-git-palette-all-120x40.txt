@@ -1,7 +1,7 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │ GIT               │ 󰊢 alpha 󰅖   󰊢 beta 󰅖   󰐕                                                  󰅁  󰅂  󱸀        
+   │ GIT               │ 󰊢 alpha 󰅖   󰊢 beta 󰅖   󰐕                                                  󰅁  󰅂  󱸀  󲀀      
   │  󰍉 / filter        │▌    󰕌 Undo   󰑎 Redo    Pull    Push    Fetch    Branch    Commit    Stash   󰋚 Reflog
-   │                    │▌     G… │ COMMIT MESSAGE         │ DATE / TIME   │     SHA    │─ fa2107d76 · spec · 9d ───────
+   │                    │▌     G… │ COMMIT MESSAGE         │ DATE / TIME   │     SHA    │─ fa2107d76 · spec · 2w ───────
  󰍉 │  All repos 󰅀 󰅁  󰅂  │▌▌▶   ●─╮ │ On main: half done    │   09/06 20:00 │ fa2107d76  │  On main: half done
    │ Viewing 15         │▌▌    │ ● │ index on main: 30ef8… │   09/06 20:00 │ c320ee567  │  parents: 30ef8c750  c320ee567
 ▌󰊢 │                    │▌▌    ●─╯ │ third                 │   09/06 20:00 │ 30ef8c750  │
@@ -36,5 +36,5 @@
    │ opens the         ││▌                                                              │
   │ selection.        ││▌                                                              │
    │                    │▌                                                              │
- VIEW   main  ⇡1  [no file]                                              F 59% ▲0.4  󱼀 󰐎    00:01  alpha   —
-
+ VIEW   main  ⇡1  [no file]                                              F 57% ▼1.6  󱼀 󰐎    03:33  alpha   —
+                                                           ⋯

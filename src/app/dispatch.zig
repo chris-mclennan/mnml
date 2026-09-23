@@ -4688,6 +4688,9 @@ test "wheel: the batch is budgeted through scroll_accel — a fast second notch 
 test "wheel_moves_cursor: always moves the cursor in standard, never pins the view in vim; a scrollbar drag follows the same rule" {
     var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
     defer app.deinit();
+    // A narrow screen with the column docked: this test is about
+    // what sits beside it, not the width rule (`ui.sidebar_auto_below`).
+    app.cfg.ui.sidebar_auto_below = 0;
     app.tree.visible = false;
     _ = try app.openScratch();
     var text: std.ArrayListUnmanaged(u8) = .empty;
@@ -4981,6 +4984,9 @@ test "wheel over the tree: a batch is a notch and moves one row; a batch inside 
     }
     var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = root, .cols = 80, .rows = 30 });
     defer app.deinit();
+    // A narrow screen with the column docked: this test is about
+    // what sits beside it, not the width rule (`ui.sidebar_auto_below`).
+    app.cfg.ui.sidebar_auto_below = 0;
     try app.tree.refresh(&app);
     try std.testing.expect(app.tree.rows.items.len >= 12);
     app.cfg.editor.scroll_accel = .off;

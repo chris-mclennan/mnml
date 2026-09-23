@@ -2387,6 +2387,9 @@ test "mnml.config.get walks structs, maps, optionals and Dynamic; mnml.workspace
 test "mnml.decor: the four decorations paint, anchored, in a namespace the reload drops" {
     var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
     defer app.deinit();
+    // A narrow screen with the column docked: this test is about
+    // what sits beside it, not the width rule (`ui.sidebar_auto_below`).
+    app.cfg.ui.sidebar_auto_below = 0;
     app.tree.visible = false;
     const lua = app.script();
     const pane = try app.openScratchWith("alpha\nbeta\ngamma\n");

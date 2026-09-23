@@ -291,6 +291,10 @@ pub fn normalize(arena: Allocator, cfg: *Config, diags: *Diagnostics, home: ?[]c
     cfg.ui.dock.reveal_ms = @min(cfg.ui.dock.reveal_ms, Config.sidebar_dwell_ms_max);
     cfg.ui.dock.hide_ms = @min(cfg.ui.dock.hide_ms, Config.sidebar_dwell_ms_max);
     if (cfg.ui.auto_hide_narrow_width != 0) cfg.ui.auto_hide_narrow_width = std.math.clamp(cfg.ui.auto_hide_narrow_width, 40, 300);
+    // The same range for the rule that makes a docked column auto-hide
+    // on a narrow terminal, for the same reason: a stray `4` must not
+    // mean "never", nor `4000` "always".
+    if (cfg.ui.sidebar_auto_below != 0) cfg.ui.sidebar_auto_below = std.math.clamp(cfg.ui.sidebar_auto_below, 40, 300);
     cfg.ui.projects_dir = try expandTilde(arena, cfg.ui.projects_dir, home);
     if (cfg.startup.default_workspace) |ws| cfg.startup.default_workspace = try expandTilde(arena, ws, home);
 

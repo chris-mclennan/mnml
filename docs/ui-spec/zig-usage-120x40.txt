@@ -2,39 +2,39 @@
    │  ● /pri…            │ 󱸀 Claude usage 󰅖   󰐕                                                      󱸀  󲀀      
 ▌ │▌    .mnml              │▌ Claude usage · r refresh · L claude login · R capture · esc close
    │       ipc-zig          │▌
- 󰍉 │      prog.dbg           │▌▌(active) personal · sam@example.com · sam@example.com's Organization
-   │                          │▌▌
- 󰊢 │         󰐙 Add workspace  │▌▌Current session
-   │                          │▌▌                                                             95% used
-  │                          │▌▌  Resets 8:20pm
-   │                          │▌▌
- 󰐱 │                          │▌▌Current week (all models)
-   │                          │▌▌                                                             52% used
- 󰎒 │                          │▌▌  Resets Sep 19 at 5am
-   │                          │▌▌
-  │                          │▌▌Current week (Fable)
-   │                          │▌▌                                                             55% used
-  │                          │▌▌  Resets Sep 19 at 5am
-   │                          │▌▌
-  │                          │▌
-   │                          │▌▌work · sam@work.example · Example Co
- 󱘣 │                          │▌▌
-   │                          │▌▌Current session
- 󰢱 │                          │▌▌                                                             24% used
-   │                          │▌▌  Resets 11:05pm
-   │                          │▌▌
-   │                          │▌▌Current week (all models)
-   │                          │▌▌                                                             71% used
-   │                          │▌▌  Resets Sep 16 at 9am
-   │                          │▌▌
+ 󰍉 │      prog.dbg           │▌ (active) personal · sam@example.com · sam@example.com's Organization
    │                          │▌
-   │──────────────────────────│▌▌consulting
-   │ Claude usage           ⋮ │▌▌
-   │                          │▌▌Current session
-   │                          │▌▌                                                             0% used
-   │                          │▌▌  (reset time not available)
-   │                          │▌▌
-  │                          │▌▌Current week (all models)
-   │                          │▌▌                                                             0% used
- VIEW  [no file]                                                              F 59% ▲0.2  󱼀 󰐎    00:39  ws   —
-
+ 󰊢 │         󰐙 Add workspace  │▌ Current session
+   │                          │▌                                                              95% used
+  │                          │▌   Resets 8:20pm
+   │                          │▌
+ 󰐱 │                          │▌ Current week (all models)
+   │                          │▌                                                              52% used
+ 󰎒 │                          │▌   Resets Sep 19 at 5am
+   │                          │▌
+  │                          │▌ Current week (Fable)
+   │                          │▌                                                              55% used
+  │                          │▌   Resets Sep 19 at 5am
+   │                          │▌
+  │                          │▌
+   │                          │▌ work · sam@work.example · Example Co
+ 󱘣 │                          │▌
+   │                          │▌ Current session
+ 󰢱 │                          │▌                                                              24% used
+   │                          │▌   Resets 11:05pm
+   │                          │▌
+   │                          │▌ Current week (all models)
+   │                          │▌                                                              71% used
+   │                          │▌   Resets Sep 16 at 9am
+   │                          │▌
+   │                          │▌
+   │──────────────────────────│▌ consulting
+   │ Claude usage           ⋮ │▌
+   │                          │▌ Current session
+   │                          │▌                                                              0% used
+   │                          │▌   (reset time not available)
+   │                          │▌
+  │                          │▌ Current week (all models)
+   │                          │▌                                                              0% used
+ VIEW  [no file]                                                              F 57% ▼1.6  󱼀 󰐎    23:31  ws   —
+                                                           ⋯

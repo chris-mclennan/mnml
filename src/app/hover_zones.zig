@@ -136,7 +136,9 @@ fn registerGeometric(app: *App, full: Rect) void {
     const dock_band: ?Rect = if (@import("launcher_dock.zig").cmdlineBlocks(app)) null else dockBand(app, full);
     if (dock_band) |band| add(app, .{ .rect = band, .id = .launcher_dock, .dwell_ms = cfg.dock.reveal_ms, .priority = prio_dock });
 
-    if (cfg.sidebar == .auto and !app.zen) {
+    // The configured mode as the terminal's width reads it: a docked
+    // column on a narrow screen is an auto one (`sidebar_auto.configured`).
+    if (@import("sidebar_auto.zig").configured(app) == .auto and !app.zen) {
         const dwell = cfg.sidebar_reveal_ms;
         add(app, .{ .rect = sidebarEdge(app, full, .left), .id = .sidebar_left, .dwell_ms = dwell, .priority = prio_sidebar });
         add(app, .{ .rect = sidebarEdge(app, full, .right), .id = .sidebar_right, .dwell_ms = dwell, .priority = prio_sidebar });

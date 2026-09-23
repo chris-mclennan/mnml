@@ -179,6 +179,14 @@ same colour twice and a column narrower for the sibling.
   gutter opens with the sign column, and a sign still wins the cell it
   needs. When you add a kind, ask which of the two it is; do not invent
   a third.
+- **One bar per row.** A pane that paints its own `▌` in its first
+  content column — a git graph row in its lane's colour, a sessions
+  row in its session's, a usage account's gutter — does not get a
+  second one beside it: after the pane paints, `pane_rail.absorb`
+  moves that stripe into the rail's cell (the row's own colour wins
+  the row) and blanks the cell it left, so no text moves. It runs in
+  `drawPaneContent` for every inset pane; a pane never special-cases
+  the rail.
 - `ui.pane_rail` is `all` / `sessions` / `off`, read in one place
   (`pane_accent.railColorOf`). Nothing else branches on it.
 

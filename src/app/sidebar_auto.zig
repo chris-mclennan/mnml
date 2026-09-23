@@ -88,7 +88,26 @@ pub const State = struct {
 /// `ui.sidebar`, with the session's pin on top of it.
 pub fn mode(app: *const App) Config.Sidebar {
     if (app.sidebar_auto.pinned) return .always;
-    return app.cfg.ui.sidebar;
+    return configured(app);
+}
+
+/// `ui.sidebar` as this terminal's width reads it, before the pin: a
+/// docked column on a terminal narrower than `ui.sidebar_auto_below`
+/// is an auto-hiding one — at 80 columns a docked tree takes a third
+/// of the screen — and it docks again once the terminal is that wide.
+/// Only `.always` bends; a user who asked for `.auto` or `.hidden`
+/// already has what the rule would give them.
+pub fn configured(app: *const App) Config.Sidebar {
+    const m = app.cfg.ui.sidebar;
+    if (m == .always and narrowAuto(app)) return .auto;
+    return m;
+}
+
+/// Whether the width rule is what makes the column auto-hide this frame.
+pub fn narrowAuto(app: *const App) bool {
+    const below = app.cfg.ui.sidebar_auto_below;
+    const w = app.screen.width;
+    return below > 0 and w > 0 and w < below;
 }
 
 /// Whether the columns are under the auto-hide regime at all.
@@ -118,7 +137,7 @@ pub fn suppressed(app: *const App, s: ColumnSide) bool {
 /// while the column is down: revealed, the pin chip in its header
 /// strip is the handle, and pinned there is nothing left to summon.
 pub fn gripShown(app: *const App, s: ColumnSide) bool {
-    return app.cfg.ui.edge_grips and app.cfg.ui.sidebar == .auto and
+    return app.cfg.ui.edge_grips and configured(app) == .auto and
         !app.sidebar_auto.pinned and !overlaid(app, s) and !app.zen;
 }
 
@@ -351,11 +370,15 @@ pub fn togglePin(app: *App) CommandError!void {
     const st = &app.sidebar_auto;
     if (st.pinned) {
         st.pinned = false;
-        app.toast("sidebar: auto-hide on (ui.sidebar = .{s})", .{@tagName(app.cfg.ui.sidebar)});
+        if (app.cfg.ui.sidebar == .always and narrowAuto(app)) {
+            app.toast("sidebar: auto-hide on (narrower than ui.sidebar_auto_below = {d})", .{app.cfg.ui.sidebar_auto_below});
+        } else {
+            app.toast("sidebar: auto-hide on (ui.sidebar = .{s})", .{@tagName(configured(app))});
+        }
         app.needs_render = true;
         return;
     }
-    if (app.cfg.ui.sidebar == .always) {
+    if (configured(app) == .always) {
         return app.diag.fail(app.frame.allocator(), "the sidebar is already docked (ui.sidebar = .always)", .{});
     }
     // Pinning docks whatever is up; with nothing up it docks the side
@@ -674,4 +697,77 @@ test "a keyboard reveal waits for the pointer: a nudge of the mouse does not tak
     try point(&app, 90, 20, 9200);
     try point(&app, 90, 20, 9700);
     try t.expect(app.sidebar_auto.open == null);
+}
+
+test "ui.sidebar_auto_below: a docked column auto-hides on a narrow terminal and docks again when it widens" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    defer app.deinit();
+    side_mod.place(&app, .explorer, false);
+    _ = try app.openScratch();
+    try t.expectEqual(Config.Sidebar.always, app.cfg.ui.sidebar);
+    try t.expectEqual(@as(u16, 100), app.cfg.ui.sidebar_auto_below);
+    // 80 columns: the column is not carved, and the edge summons it.
+    try point(&app, 40, 10, 1000);
+    try t.expect(narrowAuto(&app));
+    try t.expectEqual(Config.Sidebar.auto, mode(&app));
+    try t.expect(render.chrome(&app).sidebar == null);
+    try t.expect(gripShown(&app, .left));
+    try point(&app, 0, 10, 1000);
+    try point(&app, 0, 10, 1000 + app.cfg.ui.sidebar_reveal_ms);
+    try t.expectEqual(ColumnSide.left, app.sidebar_auto.open.?);
+    // The config is not written: the rule is a reading of the width.
+    try t.expectEqual(Config.Sidebar.always, app.cfg.ui.sidebar);
+    // Widened past the threshold: docked, the overlay put away.
+    try app.resize(120, 40);
+    try point(&app, 60, 10, 5000);
+    try t.expect(!narrowAuto(&app));
+    try t.expectEqual(Config.Sidebar.always, mode(&app));
+    try t.expect(app.sidebar_auto.open == null);
+    try t.expect(render.chrome(&app).sidebar != null);
+    // Exactly the threshold is wide enough.
+    try app.resize(100, 30);
+    try point(&app, 50, 10, 6000);
+    try t.expect(render.chrome(&app).sidebar != null);
+    try app.resize(99, 30);
+    try point(&app, 50, 10, 7000);
+    try t.expect(render.chrome(&app).sidebar == null);
+}
+
+test "ui.sidebar_auto_below leaves an explicit auto or hidden alone, and 0 turns the rule off" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    defer app.deinit();
+    side_mod.place(&app, .explorer, false);
+    // `.hidden` stays hidden: no hover reveal on a narrow screen either.
+    app.cfg.ui.sidebar = .hidden;
+    try t.expectEqual(Config.Sidebar.hidden, mode(&app));
+    try t.expect(!gripShown(&app, .left));
+    // …and on a wide one it is still the user's word.
+    try app.resize(160, 40);
+    try t.expectEqual(Config.Sidebar.hidden, mode(&app));
+    app.cfg.ui.sidebar = .auto;
+    try t.expectEqual(Config.Sidebar.auto, mode(&app));
+    // 0: a docked column is docked at any width.
+    try app.resize(60, 20);
+    app.cfg.ui.sidebar = .always;
+    app.cfg.ui.sidebar_auto_below = 0;
+    try t.expectEqual(Config.Sidebar.always, mode(&app));
+    try app.render();
+    try t.expect(render.chrome(&app).sidebar != null);
+}
+
+test "a narrow terminal's auto column pins like a configured one, and the pin outlives a widen and a narrow again" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    defer app.deinit();
+    side_mod.place(&app, .explorer, false);
+    try togglePin(&app);
+    try t.expectEqual(Config.Sidebar.always, mode(&app));
+    try app.render();
+    try t.expect(render.chrome(&app).sidebar != null);
+    try app.resize(140, 40);
+    try t.expectEqual(Config.Sidebar.always, mode(&app));
+    // Wide, the column is docked by the config: nothing to pin.
+    try togglePin(&app);
+    try t.expectError(error.Failed, togglePin(&app));
+    try app.resize(80, 24);
+    try t.expectEqual(Config.Sidebar.auto, mode(&app));
 }

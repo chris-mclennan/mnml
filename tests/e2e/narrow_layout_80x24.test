@@ -1,0 +1,51 @@
+# width: 80
+# height: 24
+# An 80-column terminal (src/app/sidebar_auto.zig, `ui.sidebar_auto_below`
+# = 100 as shipped): the docked left column would take 30 of the 80
+# cells, so below the threshold `ui.sidebar = .always` reads as `.auto`
+# — the column is not carved, the screen edge wears its `⋮` grip, a
+# dwell there or `view.toggle_tree` brings it in over the editor, and
+# the config itself still says `always` (the 120x40 twin shows it
+# docked).
+#
+# And one bar per row (src/ui/pane_rail.zig, `absorb`): the git graph
+# paints a `▌` in its lane's colour at the start of every commit row,
+# and the pane rail inset one cell to its left made that `▌▌`.
+#
+# The info view's kebab is also `⋮`, so the hover-help panel is off.
+write zz_marker.txt "nothing opens this\n"
+write a.txt "alpha\n............................................................ENDMARK\n"
+open a.txt
+command view.toggle_hover_help
+expect screen contains "alpha"
+# Not carved: the editor has the whole width — the marker at column 60
+# of the file is on screen, where a docked 30-cell tree would clip it —
+# the tree's file is off screen, and the grip is on.
+expect screen contains "ENDMARK"
+expect screen lacks "zz_marker"
+expect screen contains "⋮"
+# The edge summons it, over the editor.
+hover 0 11
+wait 500
+expect screen contains "zz_marker"
+expect screen contains "󰐃"
+expect screen contains "ENDMARK"
+hover 60 11
+wait 700
+expect screen lacks "zz_marker"
+# So does the keyboard, and the same key puts it away.
+command view.toggle_tree
+expect screen contains "zz_marker"
+command view.toggle_tree
+expect screen lacks "zz_marker"
+# ── one bar per row ──
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+shell git add a.txt && GIT_AUTHOR_DATE=2026-09-06T20:00:00+0000 GIT_COMMITTER_DATE=2026-09-06T20:00:00+0000 git commit -q -m "first"
+shell git add zz_marker.txt && GIT_AUTHOR_DATE=2026-09-07T08:30:00+0000 GIT_COMMITTER_DATE=2026-09-07T08:30:00+0000 git commit -q -m "second"
+command git.graph
+wait 1500
+expect screen contains "second"
+expect screen contains "first"
+expect screen lacks "▌▌"

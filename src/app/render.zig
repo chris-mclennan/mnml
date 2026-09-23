@@ -1571,6 +1571,9 @@ pub fn drawPaneContent(app: *App, ui: Ui, id: PaneId, full_rect: Rect) Allocator
     const rect = pane_rail.body(full_rect, inset);
     if (rail) |c| if (inset) pane_rail.draw(ui, full_rect, c);
     defer if (rail) |c| if (shares_gutter) pane_rail.drawOver(ui, full_rect, c);
+    // A pane that painted its own `▌` in its first column gets one
+    // bar there, not two (`pane_rail.absorb`).
+    defer if (rail != null and inset) pane_rail.absorb(ui, full_rect);
     switch (pane.*) {
         .editor => |*e| try drawEditor(app, ui, id, e, rect),
         .outline => |*o| {
@@ -3295,6 +3298,9 @@ test "ui toggles: expand_indicator and workspace dots change the tree rail" {
     try tmp.dir.writeFile(t.io, .{ .sub_path = "sub/a.txt", .data = "x" });
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = buf[0..n], .cols = 60, .rows = 10 });
     defer app.deinit();
+    // A narrow screen with the column docked: this test is about
+    // what sits beside it, not the width rule (`ui.sidebar_auto_below`).
+    app.cfg.ui.sidebar_auto_below = 0;
     app.cfg.ui.show_workspace_dots = true;
     const chev = try screenText(&app);
     defer t.allocator.free(chev);

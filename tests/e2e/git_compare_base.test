@@ -23,12 +23,14 @@ expect screen lacks "⚑"
 key j
 key j
 key W
+# (A row's lane `▌` sits in the pane rail's column, `pane_rail.absorb`,
+# with a blank cell after it.)
 expect screen contains "compare base:"
-expect screen contains "▌▶⚑"
+expect screen contains "▌ ▶⚑"
 # `d` on third: the range diff — b.txt and c.txt were added in between.
 key k
 key k
-expect screen contains "▌ ⚑"
+expect screen contains "▌  ⚑"
 key d
 wait 1500
 # The tab reads base..row (short shas); the two added lines are the diff.

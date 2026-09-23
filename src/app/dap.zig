@@ -2148,6 +2148,9 @@ test "console without a session: entries land as no-session, ↑↓ walk the his
 test "watches: add via the prompt, the debug pane lists them, the picker removes one" {
     var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 90, .rows = 24 });
     defer app.deinit();
+    // A narrow screen with the column docked: this test is about
+    // what sits beside it, not the width rule (`ui.sidebar_auto_below`).
+    app.cfg.ui.sidebar_auto_below = 0;
     app.tree.visible = false;
     _ = try app.openScratch();
     try command.run(&app, .{ .static = .@"dap.show" });
