@@ -503,6 +503,64 @@ pub const rows = [_]Row{
         .body = "Asks first, then runs `git checkout <sha>` on the row's commit: the working tree becomes that commit and HEAD is on no branch — the statusline and the status pane then read `HEAD detached at …`. Commits made there belong to no branch until you create one, which *New branch from here…* does. Uncommitted changes the checkout would overwrite make git refuse, with a `log` link in the toast.",
         .links = &.{ .{ .command = .{ .id = .@"git.checkout_commit", .label = "Checkout the selected commit" } }, .{ .command = .{ .id = .@"git.new_branch_from", .label = "New branch from it instead" } }, .{ .command = .{ .id = .@"git.checkout", .label = "Back onto a branch" } } },
     } },
+
+    // ── the git graph's detail-column file rows (`git.openDetailRowMenu`,
+    // titled with the file's name, so qualified by what each row runs) ──
+    .{ .label = "Open diff (Enter)", .command = .@"git.graph_detail_open", .entry = .{
+        .title = "Open diff",
+        .body = "Opens this working-tree file's diff in a tab: the unstaged changes for an unstaged file, the staged ones for a staged file. Enter on the row does the same; a click on the row opens it too.",
+        .keys = &.{.{ .chord = "Enter", .label = "Open the diff" }},
+        .links = &.{.{ .command = .{ .id = .@"git.graph_detail_open", .label = "Open the diff" } }},
+    } },
+    .{ .label = "Open file", .command = .@"git.open_file", .entry = .{
+        .title = "Open the file",
+        .body = "Opens the file itself in an editor tab, as it is in the working tree now — not the diff. A deleted file has nothing to open and says so.",
+        .links = &.{.{ .command = .{ .id = .@"git.open_file", .label = "Open it" } }},
+    } },
+    .{ .label = "Stage", .command = .@"git.stage", .entry = .{
+        .title = "Stage the file",
+        .body = "Adds all of this file's changes to the index, so the next commit takes them; the row moves to Staged. The row's `[+]` does the same.",
+        .links = &.{ .{ .command = .{ .id = .@"git.stage", .label = "Stage it" } }, .{ .command = .{ .id = .@"git.stage_all", .label = "Stage everything" } } },
+    } },
+    .{ .label = "Unstage", .command = .@"git.unstage", .entry = .{
+        .title = "Unstage the file",
+        .body = "Takes this file's changes back out of the index; the edits stay in the file and the row moves to Unstaged. The row's `[−]` does the same.",
+        .links = &.{ .{ .command = .{ .id = .@"git.unstage", .label = "Unstage it" } }, .{ .command = .{ .id = .@"git.unstage_all", .label = "Unstage everything" } } },
+    } },
+    .{ .label = "Discard changes\u{2026}", .command = .@"git.discard", .entry = .{
+        .title = "Discard the file's changes",
+        .body = "Throws away this file's uncommitted changes (`git checkout -- <file>`) after a confirm — the edits are not stashed anywhere, so the confirm is the last word. An untracked file is removed (`git clean`).",
+        .links = &.{ .{ .command = .{ .id = .@"git.discard", .label = "Discard" } }, .{ .command = .{ .id = .@"git.stash_file", .label = "Stash it instead" } } },
+    } },
+    .{ .label = "Stash this file\u{2026}", .command = .@"git.stash_file", .entry = .{
+        .title = "Stash this file",
+        .body = "Stashes this file's changes alone, asking for an optional message; the rest of the working tree is untouched. The STASHES section lists the entry and Pop brings it back.",
+        .links = &.{ .{ .command = .{ .id = .@"git.stash_file", .label = "Stash it" } }, .{ .command = .{ .id = .@"git.stash_pop", .label = "Pop the newest stash" } } },
+    } },
+    .{ .label = "Copy path (", .prefix = true, .kind = .copy_text, .entry = .{
+        .title = "Copy the file's path",
+        .body = "Copies the path in brackets — relative to the repository's root, as git names it — to the clipboard. Nothing else changes.",
+    } },
+    .{ .label = "Open the file's diff in this commit (Enter)", .command = .@"git.graph_detail_open", .entry = .{
+        .title = "Open the file's diff in this commit",
+        .body = "Opens what this commit changed in the file, as a diff against its parent, in a tab. Enter on the row does the same.",
+        .keys = &.{.{ .chord = "Enter", .label = "Open the diff" }},
+        .links = &.{.{ .command = .{ .id = .@"git.graph_detail_open", .label = "Open the diff" } }},
+    } },
+    .{ .label = "Open file at this revision", .command = .@"git.graph_file_at_rev", .entry = .{
+        .title = "Open the file at this revision",
+        .body = "Opens the file as it was in this commit (`git show <commit>:<path>`) in a buffer of its own — the working tree's copy is not touched.",
+        .links = &.{.{ .command = .{ .id = .@"git.graph_file_at_rev", .label = "Open it" } }},
+    } },
+    .{ .label = "Browse commit on remote", .command = .@"git.browse_commit", .entry = .{
+        .title = "Browse the commit on the remote",
+        .body = "Opens the selected commit's page on the repository's web host in the OS browser, built from the `origin` remote's URL. A repository with no `origin` says so in a toast instead.",
+        .links = &.{.{ .command = .{ .id = .@"git.browse_commit", .label = "Browse it" } }},
+    } },
+    .{ .label = "Copy commit hash (", .prefix = true, .kind = .copy_text, .entry = .{
+        .title = "Copy the commit's hash",
+        .body = "Copies the full hash of the selected commit to the clipboard; the short form is the one in brackets.",
+    } },
 };
 
 /// The pty body's four `Dock <edge>` rows: where the pane is moved to
