@@ -5,7 +5,7 @@
 //!
 //!   left   mode · host segments · branch · PR · file (glyph, name, `●`)
 //!          · diagnostics · enclosing symbol · macro · find
-//!   right  host segments · tests · Claude · Codex · coverage ·
+//!   right  host segments · tests · jobs · Claude · Codex · coverage ·
 //!          now-playing · transfer · LSP · RESTRICTED · WRAP · autosave ·
 //!          size · Ln/Col · Sel · stress · bell · clock · workspace ·
 //!          language
@@ -47,6 +47,7 @@ const lsp = @import("lsp.zig");
 const lsp_types = @import("../lsp/types.zig");
 const usage_pane = @import("usage_pane.zig");
 const ghost_chip = @import("ghost_chip.zig");
+const jobs = @import("jobs.zig");
 const claude_mark = @import("claude_mark.zig");
 const coverage = @import("coverage.zig");
 const now_playing = @import("now_playing.zig");
@@ -93,6 +94,9 @@ pub const SegId = enum(u32) {
     np_next,
     np_track,
     transfer,
+    /// ` ⠋ 2 jobs ` while background jobs run, ` ✗ lint: exit 2 ` for
+    /// ten seconds after one fails (`app/jobs.zig`, `ui.jobs_chip`).
+    jobs,
     /// ` LSP 2 ` — running language servers.
     lsp,
     wrap,
@@ -542,6 +546,16 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
         .tests => |*tp| try push(&right, arena, Seg.init(ui.fmt(" {s} {s} ", .{ if (ui.ascii) "T" else "\u{1f9ea}", tp.title() }), p.bg_darker, p.yellow).withHit(SegId.test_run.raw())),
         else => {},
     };
+    // Background jobs: a spinner and a count while any runs, the last
+    // failure's words dimmed for ten seconds after, nothing idle — the
+    // states a worker used to finish in without a word (`app/jobs.zig`).
+    if (try jobs.chipFor(app, arena, ui.ascii)) |c| {
+        const fg = switch (c.tone) {
+            .busy => p.cyan,
+            .failed, .idle => p.comment,
+        };
+        try push(&right, arena, Seg.init(c.text, fg, p.bg2).withHit(SegId.jobs.raw()));
+    }
     // The AI meters, each while its integration is on: the quota the
     // usage reader holds (`app/usage_pane.zig`, the same snapshots the
     // usage pane shows) — Claude's session / weekly percent, near-black

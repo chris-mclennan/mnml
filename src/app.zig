@@ -102,6 +102,7 @@ const idle = @import("app/idle.zig");
 const autosave = @import("app/autosave.zig");
 const script_task = @import("app/script_task.zig");
 const syntax_jobs = @import("app/syntax_jobs.zig");
+const jobs_mod = @import("app/jobs.zig");
 const http_app = @import("app/http.zig");
 const http_panel = @import("app/http_panel.zig");
 const request_pane = @import("app/request_pane.zig");
@@ -162,6 +163,7 @@ pub const Prompt = prompt_mod;
 pub const Confirm = confirm_mod;
 pub const Picker = picker_mod;
 pub const HelpUi = @import("ui/help_overlay.zig");
+pub const JobsView = @import("ui/jobs_view.zig");
 pub const FindBar = find_bar_mod;
 pub const FindState = find_mod.FindState;
 
@@ -620,6 +622,8 @@ pub const Overlay = union(enum) {
     settings: settings_app.State,
     /// The first-launch wizard (`first_launch.show`).
     wizard: first_launch.State,
+    /// `jobs.show`: the background jobs (`app/jobs.zig`).
+    jobs: JobsView.Panel.State,
 
     /// The preview column's rows and their segment texts (gpa).
     pub fn freePreview(gpa: Allocator, rows: [][]Picker.PreviewSegment) void {
@@ -635,6 +639,7 @@ pub const Overlay = union(enum) {
             .none, .which_key, .info, .discovery, .wizard => {},
             .help => |*h| h.deinit(gpa),
             .settings => |*s| s.deinit(gpa),
+            .jobs => |*j| j.deinit(gpa),
             .menu => |*m| {
                 m.closeSub(gpa);
                 gpa.free(m.items);
@@ -1079,6 +1084,9 @@ pub const App = struct {
     todos: todos.State,
     /// The parse workers of documents too large to parse in a frame.
     syntax_jobs: syntax_jobs.State = .{},
+    /// Every background job, running and the last fifty finished
+    /// (`app/jobs.zig`) — the statusline chip and the JOBS overlay.
+    jobs: jobs_mod.State = .{},
     notes: notes.State,
     findings: findings.State,
     sessions: sessions.State,
@@ -1809,6 +1817,7 @@ pub const App = struct {
         for (self.plus_hidden.items) |p| gpa.free(p);
         self.plus_hidden.deinit(gpa);
         self.messages.deinit(gpa);
+        self.jobs.deinit(gpa);
         self.harpoon.deinit(gpa);
         self.file_clipboard.deinit(gpa);
         self.jumplist.deinit(gpa);
@@ -2695,6 +2704,7 @@ pub const App = struct {
         if (closed_path) |p| lsp.onClose(self, id, p);
         if (closed_path) |p| copilot_app.onClose(self, p);
         files_pane.onPaneClosed(self, id);
+        jobs_mod.onPaneClosed(self, id);
         if (self.last_editor == id) self.last_editor = null;
         if (self.outline_panel == id) self.outline_panel = null;
         if (std.mem.indexOfScalar(PaneId, self.pane_mru.items, id)) |at| _ = self.pane_mru.orderedRemove(at);
@@ -2934,6 +2944,7 @@ pub const App = struct {
             .grep => |result| try grep.handle(self, result),
             .script_task => |t| script_task.handle(self, t),
             .syntax => |r| syntax_jobs.handle(self, r),
+            .job => |j| jobs_mod.handleEvent(self, j),
             .ai => |a| try ai_app.handle(self, a.job, a.msg),
             .dap => |d| try dap.handle(self, d.session, d.msg),
             .lsp => |l| try lsp.handle(self, l.server, l.msg),
@@ -2956,7 +2967,10 @@ pub const App = struct {
                 if (e.source == .git) {
                     self.git.status_pending = false;
                     if (self.git.busy > 0) self.git.busy -= 1;
+                    git_app.onWorkerErr(self, e.msg);
                 }
+                // A chain whose worker could not even read its file.
+                if (e.source == .http) jobs_mod.endKeyed(self, .http, http_app.chain_job_key, jobs_mod.Outcome.fail(e.msg));
                 try self.toastLevel(.err, "{s}: {s}", .{ @tagName(e.source), e.msg });
             },
             .timer => {},
@@ -3093,6 +3107,7 @@ pub const App = struct {
         dock.tick(self, now);
         try git_app.tick(self, now);
         try lsp.tick(self, now);
+        jobs_mod.tick(self, now);
         try ai_app.tick(self);
         try http_app.tick(self, now);
         idle.tick(self, now);
@@ -3137,6 +3152,7 @@ pub const App = struct {
         if (self.git.activeRepo() != null and !self.git.status_pending) next = @min(next orelse std.math.maxInt(i64), self.git.status_at_ms + git_app.status_ttl_ms);
         if (ai_app.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (transfers.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
+        if (jobs_mod.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (now_playing.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (sessions.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (dock.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);

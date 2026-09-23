@@ -37,6 +37,13 @@ const completion_view = @import("../ui/completion_view.zig");
 const Key = @import("../core/key.zig").Key;
 const editor_view = @import("../ui/editor_view.zig");
 const Ui = @import("../ui/context.zig");
+const jobs = @import("jobs.zig");
+
+/// The JOBS list's keys for the http work that is not one send: they
+/// sit above every job id `nextJob` hands out.
+pub const chain_job_key: u64 = std.math.maxInt(u64);
+pub const sync_job_key: u64 = std.math.maxInt(u64) - 1;
+pub const bench_job_key: u64 = std.math.maxInt(u64) - 2;
 
 pub const Request = parse.Request;
 pub const Response = client.Response;
@@ -1183,10 +1190,14 @@ pub fn spawnWith(app: *App, pane: ?PaneId, kind: client.JobKind, req: Request, o
     }
     errdefer if (job.proxy_owned) |p| gpa.free(p);
     const id = job.id;
+    // One send is one job; a bench's ten and a fan-out's are the bench's
+    // and the fan-out's own business (`cmd_http.zig`).
+    const label: ?[]const u8 = if (kind == .send) try std.fmt.allocPrint(app.frame.allocator(), "{s} {s}", .{ job.req.method, job.req.url }) else null;
     if (opts.stream == .never) {
         app.http.group.concurrent(app.io, worker, .{job}) catch |err| {
             return app.diag.fail(app.frame.allocator(), "http: could not start the send: {s}", .{@errorName(err)});
         };
+        if (label) |l| _ = try jobs.begin(app, .{ .kind = .http, .key = id, .label = l, .pane = pane });
         return id;
     }
     const own = try gpa.create(JobHandle);
@@ -1197,7 +1208,30 @@ pub fn spawnWith(app: *App, pane: ?PaneId, kind: client.JobKind, req: Request, o
     own.group.concurrent(app.io, worker, .{job}) catch |err| {
         return app.diag.fail(app.frame.allocator(), "http: could not start the send: {s}", .{@errorName(err)});
     };
+    if (label) |l| _ = try jobs.begin(app, .{ .kind = .http, .key = id, .label = l, .pane = pane, .cancel = &cancelSend });
     return id;
+}
+
+/// The JOBS list's Cancel on a send with a handle of its own (`http.cancel`'s
+/// path, by job id rather than by the active pane).
+fn cancelSend(app: *App, job: u64) void {
+    const own = app.http.handles.get(job) orelse {
+        app.toast("http: this send cannot be interrupted on its own — :http.abort stops every worker", .{});
+        return;
+    };
+    own.group.cancel(app.io);
+    _ = app.http.handles.swapRemove(job);
+    app.gpa.destroy(own);
+    app.http.sending -|= 1;
+    // As `http.cancel`: a stream keeps what arrived, sealed as truncated.
+    for (app.panes.slots.items) |*slot| if (slot.*) |*p| if (p.asRequest()) |rp| if (rp.state.job() == job) {
+        if (rp.streaming()) |st| {
+            const elapsed: u64 = @intCast(@max(app.now_ms - st.started_ms, 0));
+            rp.finishStream(.{ .total_ms = elapsed, .receive_ms = elapsed }, true) catch {};
+        } else rp.setFailed("canceled") catch {};
+    };
+    jobs.endKeyed(app, .http, job, jobs.Outcome.cancel(null));
+    app.needs_render = true;
 }
 
 /// Drop the per-job group once its worker has posted its last event.
@@ -1364,6 +1398,12 @@ pub fn fire(app: *App, id: PaneId) CommandError!void {
 pub fn handleStream(app: *App, c: *client.StreamChunk) Allocator.Error!void {
     defer c.destroy(app.gpa);
     app.needs_render = true;
+    // The job ends with the stream, whether or not a pane still waits.
+    switch (c.kind) {
+        .done => jobs.endKeyed(app, .http, c.job, jobs.Outcome.done("streamed")),
+        .err => |msg| jobs.endKeyed(app, .http, c.job, jobs.Outcome.fail(msg)),
+        .head, .bytes => {},
+    }
     const id = c.pane orelse return;
     const rp = (app.panes.get(id) orelse return).asRequest() orelse return;
     const cmd_http = @import("cmd_http.zig");
@@ -1409,6 +1449,7 @@ fn cancelCmd(app: *App) CommandError!void {
     own.group.cancel(app.io);
     _ = app.http.handles.swapRemove(job);
     app.gpa.destroy(own);
+    jobs.endKeyed(app, .http, job, jobs.Outcome.cancel(null));
     app.http.sending -|= 1;
     // A stream stopped by hand keeps what arrived: it seals into the
     // response, marked truncated, as the server closing it would.
@@ -1431,6 +1472,12 @@ pub fn handle(app: *App, r: *JobResult) Allocator.Error!void {
     switch (r.kind) {
         .send => {
             releaseHandle(app, r.job);
+            // The job ends here whatever the pane does with the answer.
+            switch (r.outcome) {
+                .ok => |resp| jobs.endKeyed(app, .http, r.job, jobs.Outcome.done(try std.fmt.allocPrint(app.frame.allocator(), "{d} · {d}ms", .{ resp.status, r.elapsed_ms }))),
+                .err => |msg| jobs.endKeyed(app, .http, r.job, jobs.Outcome.fail(msg)),
+                .moved => jobs.endKeyed(app, .http, r.job, .{}),
+            }
             const id = r.pane orelse return;
             const rp = (app.panes.get(id) orelse return).asRequest() orelse return;
             if (rp.state != .sending or rp.state.sending != r.job) return;

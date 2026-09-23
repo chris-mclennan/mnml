@@ -1233,7 +1233,7 @@ pub fn resumeItem(app: *App, it: Item) CommandError!void {
     };
     const cwd: ?[]const u8 = if (it.cwd) |c| try arena.dupe(u8, c) else null;
     // The session's chosen colour follows it into the pane.
-    _ = try pty_pane.open(app, .{ .argv = argv, .cwd = cwd, .label = it.source.label(), .placement = .right, .kind = .command, .accent_color = app.sessions.color(it.session_id) });
+    _ = try pty_pane.openSession(app, .{ .argv = argv, .cwd = cwd, .label = it.source.label(), .placement = .right, .kind = .command, .accent_color = app.sessions.color(it.session_id) });
 }
 
 /// The scan's sessions of this workspace that can be picked up again,

@@ -11,7 +11,9 @@
 # makes `build` exit 1), `test` prints the console logger's shape — one
 # passed, one failed with its message and a stack frame under $PWD,
 # one skipped, the tally — and echoes any `--filter` so a script can
-# see the argv that reached the tool. Nothing here reads the project.
+# see the argv that reached the tool. `MNML_SHIM_DOTNET_TEST_SLEEP=<s>`
+# holds `test` that many seconds first, so a script can catch the run
+# in flight. Nothing here reads the project.
 verb=$1
 shift
 case "$verb" in
@@ -29,6 +31,7 @@ case "$verb" in
   run) echo "Hello from the shim"; exit 0 ;;
   watch) echo "dotnet watch (shim): $*"; exit 0 ;;
   test)
+    [ -n "${MNML_SHIM_DOTNET_TEST_SLEEP:-}" ] && sleep "$MNML_SHIM_DOTNET_TEST_SLEEP"
     filter=""
     while [ $# -gt 0 ]; do
       case "$1" in

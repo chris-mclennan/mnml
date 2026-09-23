@@ -279,6 +279,7 @@ pub const specs = [_]Spec{
     .{ .id = "markdown.cycle_engine", .title = "Markdown preview engine — cycle builtin / glow (external ANSI renderer)", .group = "markdown" },
     .{ .id = "view.commands_reference", .title = "Commands reference — every mnml command, grouped, in a scratch buffer", .group = "view" },
     .{ .id = "messages.show", .title = "Messages: recent toasts (searchable log)", .group = "view" },
+    .{ .id = "jobs.show", .title = "Jobs: the background jobs — running, and the last fifty finished (the statusline chip's click)", .group = "view" },
     .{ .id = "files.open", .title = "Files: open a file-browser pane (workspace root)", .group = "view" },
     .{ .id = "files.open_split", .title = "Files: open a second file-browser pane beside this one", .group = "view" },
     .{ .id = "bookmarks.open", .title = "Bookmarks: open a site (env-grouped web bookmarks)", .group = "view" },
@@ -1265,7 +1266,7 @@ pub const specs = [_]Spec{
     .{ .id = "view.keep_tab", .title = "Keep this tab (stop the next glance taking the preview over)", .group = "view", .keys = .{ .vim = &.{"space b k"}, .standard = &.{"ctrl+k enter"} } },
 };
 
-test "1126 specs, unique ids" {
+test "1127 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1302,8 +1303,10 @@ test "1126 specs, unique ids" {
     // + the three `view.rail_*` membership commands (railmove)
     // + the four `view.dock_item_move_*` reorder commands (dock-polish)
     // + `view.focus_prev_split`, the split walk backwards (splitcycle)
-    try std.testing.expectEqual(@as(usize, 1126), specs.len);
+    try std.testing.expectEqual(@as(usize, 1127), specs.len);
     // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
-    try std.testing.expectEqual(@as(usize, 1126), specs.len);
+    try std.testing.expectEqual(@as(usize, 1127), specs.len);
+    // + `jobs.show`, the background-jobs list (jobschip)
+    try std.testing.expectEqual(@as(usize, 1127), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

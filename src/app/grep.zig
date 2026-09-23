@@ -35,6 +35,7 @@ const find_mod = @import("find.zig");
 const gitignore = @import("gitignore.zig");
 const text_field = @import("../ui/text_field.zig");
 const EditOp = @import("../editor/edit_op.zig").EditOp;
+const jobs = @import("jobs.zig");
 
 pub const table = .{
     .@"find.grep" = &grepCmd,
@@ -547,6 +548,24 @@ pub fn refresh(app: *App, id: PaneId) CommandError!void {
         p.loading = false;
         return app.diag.fail(app.frame.allocator(), "grep: could not start the worker: {s}", .{@errorName(err)});
     };
+    _ = try jobs.begin(app, .{ .kind = .search, .key = id, .label = try std.fmt.allocPrint(app.frame.allocator(), "grep \"{s}\"", .{p.query}), .pane = id, .cancel = &cancelWalk, .drop_superseded = true });
+}
+
+/// The JOBS list's Cancel on a grep pane's walk: stop it where it is.
+fn cancelWalk(app: *App, key: u64) void {
+    const id: PaneId = @intCast(key);
+    const pane = app.panes.get(id) orelse return jobs.endKeyed(app, .search, key, jobs.Outcome.cancel(null));
+    const p = switch (pane.*) {
+        .grep => |*p| p,
+        else => return,
+    };
+    p.abort.generation.store(std.math.maxInt(u32), .release);
+    p.group.cancel(app.io);
+    p.generation +%= 1;
+    p.abort.generation.store(p.generation, .release);
+    p.loading = false;
+    jobs.endKeyed(app, .search, key, jobs.Outcome.cancel(null));
+    app.needs_render = true;
 }
 
 // ─── the worker ─────────────────────────────────────────────────────────
@@ -1086,8 +1105,14 @@ pub fn handle(app: *App, result: *Result) Allocator.Error!void {
         p.err = try p.gpa.dupe(u8, e);
     }
     try p.rebuild();
+    if (!result.done) jobs.progress(app, .search, result.pane, try std.fmt.allocPrint(app.frame.allocator(), "{d} so far", .{p.hits.items.len}));
     if (result.done) {
         p.loading = false;
+        {
+            const n = p.hits.items.len;
+            const words = try std.fmt.allocPrint(app.frame.allocator(), "{d} match{s} in {d} file{s}", .{ n, if (n == 1) "" else "es", p.groups.items.len, if (p.groups.items.len == 1) "" else "s" });
+            jobs.endKeyed(app, .search, result.pane, if (p.err) |e| jobs.Outcome.fail(e) else jobs.Outcome.done(words));
+        }
         if (p.restore_cursor) |row| {
             p.restore_cursor = null;
             p.cursor = @min(row, p.rows.items.len -| 1);

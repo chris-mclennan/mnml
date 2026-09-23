@@ -276,6 +276,13 @@ otherwise. Copy what you need; leave the rest out.
         // The coverage chip reads `.tattle-claude-artifacts` under
         // `MNML_ARTIFACTS_HOME` when that is set, else your home directory.
         .coverage_chip_mode = .feature, // .both | .feature | .code | .ticker
+        // The background-jobs chip in the statusline: a spinner and a
+        // count while a language server starts, a fetch runs, a test
+        // run or a send is out; the last failure's words, dimmed, for
+        // ten seconds after one fails. A click opens the JOBS list
+        // (`jobs.show`) — the running jobs with a Cancel row where one
+        // can be stopped, and the last fifty that finished.
+        .jobs_chip = .auto, // .auto (while busy or just failed) | .always | .hidden
         .expand_indicator = .chevron, // .chevron | .triangle
         // How a mounted integration's tab strip marks the tab that is
         // on: one row under the labels, in the pane's brand colour,

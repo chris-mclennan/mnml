@@ -32,6 +32,7 @@ const parse = @import("../http/parse.zig");
 const captured = @import("../http/captured.zig");
 const history = @import("../http/history.zig");
 const http = @import("http.zig");
+const jobs = @import("jobs.zig");
 
 pub const LogKind = view.LogKind;
 pub const Panel = view.Panel;
@@ -578,6 +579,10 @@ fn startWorker(app: *App, p: *BrowserPane) CommandError!void {
         try p.refreshTitle();
         return app.diag.fail(app.frame.allocator(), "browser: could not start the worker: {s}", .{@errorName(err)});
     };
+    // Launching is a job until the DevTools socket answers.
+    _ = try jobs.begin(app, .{ .kind = .browser, .key = id, .label = try std.fmt.allocPrint(app.frame.allocator(), "Chrome {s}", .{p.url}), .pane = id });
+    if (p.device) |d| _ = d;
+    return id;
 }
 
 /// `r` on a pane whose session ended: Chrome again, on the same
@@ -764,6 +769,7 @@ pub fn handle(app: *App, ev: *CdpEvent) Allocator.Error!void {
     switch (ev.kind) {
         .connected => |info| {
             p.state = .connected;
+            jobs.endKeyed(app, .browser, ev.pane, jobs.Outcome.done("connected"));
             var lines = std.mem.splitScalar(u8, info, '\n');
             const ws_url = lines.next() orelse "";
             if (lines.next()) |port| p.port = std.fmt.parseInt(u16, port, 10) catch null;
@@ -777,6 +783,14 @@ pub fn handle(app: *App, ev: *CdpEvent) Allocator.Error!void {
             if (p.device) |d| try applyDevice(app, p, d);
         },
         .closed => |reason| {
+            // Chrome that never came up failed its launch; Chrome that
+            // dies under a connected pane is a failure too, and the one
+            // that used to be silent — the pane went on saying connected.
+            if (jobs.running(app, .browser, ev.pane)) {
+                jobs.endKeyed(app, .browser, ev.pane, jobs.Outcome.fail(reason));
+            } else if (p.state == .connected) {
+                jobs.record(app, .{ .kind = .browser, .label = try std.fmt.allocPrint(app.frame.allocator(), "Chrome {s}", .{p.url}), .pane = ev.pane }, 0, jobs.Outcome.fail(try std.fmt.allocPrint(app.frame.allocator(), "session ended: {s}", .{reason})));
+            }
             p.state = .closed;
             p.reap();
             p.clearTargets();

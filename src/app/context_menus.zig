@@ -958,7 +958,7 @@ fn contextMenuAtFocus(app: *App) CommandError!void {
                 .integrations => app.integrations.panel.cursor,
                 .search => app.search_section.list.cursor,
                 .script => if (@import("script_section.zig").activeList(app)) |l| l.panel.cursor else return app.diag.fail(arena, "no script section", .{}),
-                .notes, .findings, .sessions, .outline, .scripts => return app.diag.fail(arena, "{s}: no menu in this build", .{@tagName(which)}),
+                .notes, .findings, .sessions, .outline, .scripts, .jobs => return app.diag.fail(arena, "{s}: no menu in this build", .{@tagName(which)}),
             };
             const r = rectOf(app, .{ .row = .{ .panel = which, .idx = @intCast(cursor) } });
             const m: Mouse = .{ .x = r.x, .y = r.y, .kind = .press, .button = .left };
@@ -971,7 +971,7 @@ fn contextMenuAtFocus(app: *App) CommandError!void {
                 .debug => try @import("debug_panel.zig").kebabMouse(app, @intCast(cursor), m),
                 .integrations => try @import("integrations.zig").kebabMouse(app, @intCast(cursor), m),
                 .script => try @import("script_section.zig").kebabMouse(app, @intCast(cursor), m),
-                .notes, .findings, .sessions, .outline, .scripts => {},
+                .notes, .findings, .sessions, .outline, .scripts, .jobs => {},
             }
         },
         .pane => |id| {
