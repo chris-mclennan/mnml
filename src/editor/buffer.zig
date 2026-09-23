@@ -2253,3 +2253,23 @@ test "buffer: a runner-stopped recording keeps its last key (no `q` to drop)" {
     try testing.expect(!h.buf.isRecording());
     try testing.expectEqualStrings("A!<esc>", h.clip.macro('@').?);
 }
+
+test "vim / standard: motions and deletes step over whole grapheme clusters (an emoji family, e + a combining accent)" {
+    const fam = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+    const e_acute = "e\u{301}";
+    const line = "a" ++ fam ++ "b " ++ e_acute ++ "x 中文z\n";
+    // Neovim 0.12.5 (`exe "normal …"` on the same line) for every row.
+    try vim("lx", "|" ++ line, "a|b " ++ e_acute ++ "x 中文z\n");
+    try vim("3lx", "|" ++ line, "a" ++ fam ++ "b|" ++ e_acute ++ "x 中文z\n");
+    try vim("5lx", "|" ++ line, "a" ++ fam ++ "b " ++ e_acute ++ "| 中文z\n");
+    try vim("2lvlld", "|" ++ line, "a" ++ fam ++ "|x 中文z\n");
+    try vim("$hhx", "|" ++ line, "a" ++ fam ++ "b " ++ e_acute ++ "x |文z\n");
+    try vim("A<bs><bs><esc>", "|a" ++ e_acute ++ "z\n", "|a\n");
+    try vim("hx", "a" ++ e_acute ++ "|z\n", "a|z\n");
+    // Standard: two rights land after the family; Backspace takes all of it.
+    try std_("<right><right><bs><del>", "|" ++ line, "a| " ++ e_acute ++ "x 中文z\n");
+    try std_("<left><bs>", "a" ++ e_acute ++ "z|\n", "a|z\n");
+    // A CR before the LF is its own character (CR LF is one cluster to
+    // Unicode, never to a line): `$` lands on it and `x` takes only it.
+    try vim("$x", "|ab\r\ncd\n", "a|b\ncd\n");
+}

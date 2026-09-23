@@ -10,6 +10,8 @@
 
 const std = @import("std");
 const detect = @import("highlight").detect;
+// Extended grapheme clusters (uucode, through vaxis).
+const graphemes = @import("vaxis").unicode;
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const editor_mod = @import("editor.zig");
@@ -475,24 +477,59 @@ pub const Document = struct {
 
     // ─── char boundaries ────────────────────────────────────────────
 
+    /// How far a cluster search looks around a position. Real clusters
+    /// are a few dozen bytes; the cap keeps a pathological run linear.
+    const cluster_window = 1024;
+
     pub fn isBoundary(self: *const Document, b: usize) bool {
         if (b >= self.text.items.len) return true;
         return (self.text.items[b] & 0xC0) != 0x80;
     }
 
+    /// The start of the character before `b` — the extended grapheme
+    /// cluster, so an emoji family, a flag or `e` + a combining accent is
+    /// one step, as it is one cell on screen. A line break is always a
+    /// break of its own. `b` is taken to be a cluster boundary.
     pub fn prevBoundary(self: *const Document, b: usize) usize {
         if (b == 0) return 0;
-        var i = @min(b, self.text.items.len) - 1;
-        while (i > 0 and !self.isBoundary(i)) i -= 1;
-        return i;
+        const t = self.text.items;
+        var p = @min(b, t.len) - 1;
+        while (p > 0 and !self.isBoundary(p)) p -= 1;
+        // ASCII after ASCII (or at the start) always starts its cluster.
+        if (t[p] == '\n' or (t[p] < 0x80 and (p == 0 or t[p - 1] < 0x80))) return p;
+        // Else walk forward from a known cluster start close behind: a
+        // line start, or the second of two ASCII bytes.
+        const floor = p -| cluster_window;
+        var s = p;
+        while (s > floor) : (s -= 1) {
+            if (t[s - 1] == '\n') break;
+            if (t[s] < 0x80 and t[s - 1] < 0x80 and t[s - 1] != '\r') break;
+        }
+        s = self.snapBoundary(s);
+        var it = graphemes.graphemeIterator(t[s..@min(b, t.len)]);
+        var last: usize = p;
+        while (it.next()) |g| {
+            if (s + g.start >= b) break;
+            last = s + g.start;
+        }
+        return if (last <= p and self.isBoundary(last)) last else p;
     }
 
+    /// The end of the character at `b` — its extended grapheme cluster
+    /// (see `prevBoundary`).
     pub fn nextBoundary(self: *const Document, b: usize) usize {
-        const n = self.text.items.len;
+        const t = self.text.items;
+        const n = t.len;
         if (b >= n) return n;
         var i = b + 1;
         while (i < n and !self.isBoundary(i)) i += 1;
-        return i;
+        if (t[b] == '\n' or (t[b] < 0x80 and (i >= n or t[i] < 0x80))) return i;
+        var lim = @min(n, b + cluster_window);
+        if (std.mem.indexOfScalarPos(u8, t[0..lim], b, '\n')) |nl| lim = nl;
+        var it = graphemes.graphemeIterator(t[b..lim]);
+        const g = it.next() orelse return i;
+        const end = b + g.len;
+        return if (end >= i and self.isBoundary(end)) end else i;
     }
 
     /// Snap `b` down to the nearest boundary (and into range).
