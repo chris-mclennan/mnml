@@ -346,10 +346,27 @@ fn backup(gpa: Allocator, io: Io, root: []const u8, text: []const u8) !void {
 
     var stamp: [17]u8 = undefined;
     formatStamp(&stamp, Io.Timestamp.now(io, .real).toSeconds());
-    const name = try std.fmt.allocPrint(gpa, "config.{s}.zon", .{stamp});
+    const name = try backupName(gpa, io, dir, &stamp);
     defer gpa.free(name);
     try dir.writeFile(io, .{ .sub_path = name, .data = text });
     try prune(gpa, io, dir);
+}
+
+/// `config.<stamp>-<NNNN>.zon`, the first `NNNN` from 0000 not yet in
+/// `dir`. The stamp is by the second and a Settings row held under →
+/// writes several times a second: named by the stamp alone, each write
+/// replaced the one before it, and the backup of the file as it was
+/// before the session — the one a user wants back — was the first to
+/// go. The counter is fixed-width, so names still sort by time.
+fn backupName(gpa: Allocator, io: Io, dir: Io.Dir, stamp: *const [17]u8) ![]u8 {
+    var seq: u16 = 0;
+    while (seq < 10_000) : (seq += 1) {
+        const name = try std.fmt.allocPrint(gpa, "config.{s}-{d:0>4}.zon", .{ stamp, seq });
+        if (dir.access(io, name, .{})) |_| {
+            gpa.free(name);
+        } else |_| return name;
+    }
+    return error.PathAlreadyExists;
 }
 
 /// Keep the newest `max_backups` files named `config.*.zon`. Names sort
@@ -663,6 +680,43 @@ test "formatStamp is YYYY-MM-DD-HHMMSS" {
     try t.expectEqualStrings("1970-01-01-000000", &buf);
     formatStamp(&buf, 1_756_944_000); // 2025-09-04 00:00:00 UTC
     try t.expectEqualStrings("2025-09-04-000000", &buf);
+}
+
+test "writes in the same second each keep their own backup, in order, and the first holds the original" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const path = try std.fs.path.join(t.allocator, &.{ buf[0..n], "config.zon" });
+    defer t.allocator.free(path);
+    const original = "// hand-tuned: keep 40\n.{\n    .ui = .{\n        .tree_width = 40,\n    },\n}\n";
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "config.zon", .data = original });
+    // Three writes back to back — well inside one second.
+    for ([_][]const u8{ "41", "42", "43" }) |v| {
+        try t.expectEqual(Outcome.written, try persistScalar(t.allocator, t.io, path, &.{ "ui", "tree_width" }, v));
+    }
+    var backups = try tmp.dir.openDir(t.io, "backups", .{ .iterate = true });
+    defer backups.close(t.io);
+    var names: std.ArrayList([]u8) = .empty;
+    defer {
+        for (names.items) |x| t.allocator.free(x);
+        names.deinit(t.allocator);
+    }
+    var it = backups.iterate();
+    while (try it.next(t.io)) |e| try names.append(t.allocator, try t.allocator.dupe(u8, e.name));
+    try t.expectEqual(@as(usize, 3), names.items.len);
+    std.mem.sort([]u8, names.items, {}, struct {
+        fn lt(_: void, a: []u8, b: []u8) bool {
+            return std.mem.order(u8, a, b) == .lt;
+        }
+    }.lt);
+    // The oldest by name is the file before the first write.
+    const first = try backups.readFileAlloc(t.io, names.items[0], t.allocator, .unlimited);
+    defer t.allocator.free(first);
+    try t.expectEqualStrings(original, first);
+    const last = try backups.readFileAlloc(t.io, names.items[2], t.allocator, .unlimited);
+    defer t.allocator.free(last);
+    try t.expect(std.mem.indexOf(u8, last, ".tree_width = 42") != null);
 }
 
 test "persistScalar writes, backs up, no-ops, and prunes to max_backups" {

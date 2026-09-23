@@ -1631,8 +1631,10 @@ Settings screens and toggles write back with `persistScalar`: the file is
 parsed, the one value's bytes are replaced in place, and comments and
 order survive. A missing key is added at its section's indent; a missing
 section is appended. An unchanged value is not written. Before every
-write the previous file is copied to `backups/config.<YYYY-MM-DD-HHMMSS>.zon`
-next to it, keeping the newest 50.
+write the previous file is copied to
+`backups/config.<YYYY-MM-DD-HHMMSS>-<NNNN>.zon` next to it — the stamp in
+UTC, the counter so that several writes in one second (a Settings row
+held under `→`) each keep their own copy — keeping the newest 50.
 
 ### The settings overlay
 
