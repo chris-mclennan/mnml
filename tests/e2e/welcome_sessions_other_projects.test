@@ -1,0 +1,21 @@
+# width: 120
+# env: HOME=home
+# The start surface's SESSIONS lists the Claude transcripts of THIS
+# workspace, and no other. It used to take (a) any cwd that merely
+# started with the workspace's path, so `<ws>-old` counted as `<ws>`,
+# and (b) any transcript whose label was this workspace's basename,
+# wherever its cwd was. Enter on such a row resumed another project's
+# session here.
+#
+# Three fake transcripts: one in this workspace (listed), one in the
+# sibling `<ws>-old` and one in `/elsewhere/<same basename>` (neither).
+# Each first prompt is one short word, so a row the list truncates is
+# still found — or its absence still means something.
+write a.txt "alpha\n"
+shell B=$(basename "$MNML_E2E_WORKSPACE"); n=0; for cwd in "$MNML_E2E_WORKSPACE" "$MNML_E2E_WORKSPACE-old" "/elsewhere/$B"; do n=$((n+1)); ENC=$(printf '%s' "$cwd" | sed 's/[\/.]/-/g'); mkdir -p "home/.claude/projects/$ENC"; case $n in 1) m="HERE";; 2) m="SIBLING";; 3) m="SAMENAME";; esac; printf '{"type":"user","cwd":"%s","gitBranch":"main","message":{"role":"user","content":"%s"}}\n' "$cwd" "$m" > "home/.claude/projects/$ENC/e2e00000-0000-4000-8000-00000000000$n.jsonl"; done
+command sessions.refresh
+wait 1500
+expect screen contains "SESSIONS"
+expect screen contains "HERE"
+expect screen lacks "SIBLING"
+expect screen lacks "SAMENAME"
