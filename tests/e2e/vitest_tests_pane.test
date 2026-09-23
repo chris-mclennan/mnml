@@ -1,0 +1,36 @@
+# An npm project whose package.json names vitest runs `test.*` in the
+# results pane — `npx vitest run --reporter=json --includeTaskLocation`,
+# the Jest-shaped report as rows under the file, the failure's message
+# beneath it, vitest's own tally, Enter on the failure at its `it(`
+# line — and `test.rerun_failed` re-runs the failures by full name
+# (`-t '^(…)$'`) in their files, not `npm test` again. Before, every
+# `test.*` id on an npm project opened a raw pty and `test.rerun_failed`
+# re-ran the whole suite. The `npx` here is a shim that answers `vitest
+# run` with the report vitest 3.2 prints for this file, narrowed when
+# `-t` is on its argv, and logs its argv to `shim-args.txt`.
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+write bin/npx #!/bin/sh\necho "$*" >> shim-args.txt\n[ "$1" = "vitest" ] || { echo "npx (shim): $*" >&2; exit 2; }\nnarrow=0\nfor a in "$@"; do [ "$a" = "-t" ] && narrow=1; done\nf="$PWD/tests/math.test.ts"\nif [ $narrow = 1 ]; then\nprintf '{"numTotalTests":4,"numPassedTests":0,"numFailedTests":1,"numPendingTests":3,"testResults":[{"status":"failed","message":"","name":"%s","assertionResults":[{"ancestorTitles":["clamp"],"title":"clamps below","status":"skipped","duration":0,"failureMessages":[],"location":{"line":5,"column":3}},{"ancestorTitles":["clamp"],"title":"clamps above","status":"skipped","duration":0,"failureMessages":[],"location":{"line":8,"column":3}},{"ancestorTitles":["clamp"],"title":"is wrong on purpose","status":"failed","duration":4.5,"failureMessages":["AssertionError: expected 50 to be 51 // Object.is equality"],"location":{"line":11,"column":3}},{"ancestorTitles":["area"],"title":"square","status":"skipped","duration":0,"failureMessages":[],"location":{"line":17,"column":3}}]}]}' "$f"\nelse\nprintf '{"numTotalTests":4,"numPassedTests":3,"numFailedTests":1,"numPendingTests":0,"testResults":[{"status":"failed","message":"","name":"%s","assertionResults":[{"ancestorTitles":["clamp"],"title":"clamps below","status":"passed","duration":0.7,"failureMessages":[],"location":{"line":5,"column":3}},{"ancestorTitles":["clamp"],"title":"clamps above","status":"passed","duration":0.1,"failureMessages":[],"location":{"line":8,"column":3}},{"ancestorTitles":["clamp"],"title":"is wrong on purpose","status":"failed","duration":4.5,"failureMessages":["AssertionError: expected 50 to be 51 // Object.is equality"],"location":{"line":11,"column":3}},{"ancestorTitles":["area"],"title":"square","status":"passed","duration":0.14,"failureMessages":[],"location":{"line":17,"column":3}}]}]}' "$f"\nfi\nexit 1\n
+shell /bin/chmod +x bin/npx
+write package.json {"name":"acme","scripts":{"test":"vitest run"},"devDependencies":{"vitest":"^3.0.0"}}\n
+write tests/math.test.ts import { describe, expect, it } from 'vitest';\nimport { area, clamp, Shape } from '@core/math';\n\ndescribe('clamp', () => {\n  it('clamps below', () => {\n    expect(clamp(-5)).toBe(0);\n  });\n  it('clamps above', () => {\n    expect(clamp(500)).toBe(100);\n  });\n  it('is wrong on purpose', () => {\n    expect(clamp(50)).toBe(51);\n  });\n});\n\ndescribe('area', () => {\n  it('square', () => {\n    expect(area(Shape.Square, 3)).toBe(9);\n  });\n});\n
+open tests/math.test.ts
+command view.toggle_tree
+command test.run_all
+expect pane tests
+expect screen contains "npx vitest run --reporter=json --includeTaskLocation"
+expect screen contains "Tests  1 failed | 3 passed (4)"
+expect screen contains "tests/math.test.ts"
+expect screen contains "is wrong on purpose"
+expect screen contains "expected 50 to be 51"
+expect screen contains "tests: 1 failed, 3 passed"
+# The cursor lands on the failure; Enter opens the file at its `it(`.
+key enter
+expect pane math.test.ts
+expect screen contains "Ln 11/"
+# The failures only: `-t` with the full name, then the file (the shim
+# logs its argv; the pane's header is clipped in a split).
+command test.rerun_failed
+expect pane tests
+expect screen contains "Tests  1 failed | 3 skipped (4)"
+expect file shim-args.txt contains "vitest run --reporter=json --includeTaskLocation -t ^(clamp is wrong on purpose)$ tests/math.test.ts"
+expect screen contains "tests: 1 failed, 0 passed, 3 skipped"

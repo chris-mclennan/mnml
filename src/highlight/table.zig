@@ -30,16 +30,16 @@ pub const Entry = struct {
 
 pub const entries = [_]Entry{
     .{ .key = "rs", .language = tree_sitter_rust, .highlights = &.{q.rust_highlights}, .injections = q.rust_injections, .fixture = "fn main() {\n    let s = \"hi\";\n}\n" },
-    .{ .key = "js", .language = tree_sitter_javascript, .highlights = &.{q.javascript_highlights}, .injections = q.javascript_injections, .fixture = "const x = 1;\nconsole.log(x);\n" },
-    .{ .key = "jsx", .language = tree_sitter_javascript, .highlights = &.{ q.javascript_highlights, q.javascript_highlights_jsx }, .injections = q.javascript_injections, .fixture = "const el = <div className=\"a\">hi</div>;\n" },
+    .{ .key = "js", .language = tree_sitter_javascript, .highlights = &.{ q.javascript_highlights, q.javascript_highlights_extra }, .injections = q.javascript_injections, .fixture = "const x = 1;\nconsole.log(x);\n" },
+    .{ .key = "jsx", .language = tree_sitter_javascript, .highlights = &.{ q.javascript_highlights, q.javascript_highlights_jsx, q.javascript_highlights_extra }, .injections = q.javascript_injections, .fixture = "const el = <div className=\"a\">hi</div>;\n" },
     .{ .key = "py", .language = tree_sitter_python, .highlights = &.{q.python_highlights}, .fixture = "def f(x):\n    return x + 1\n" },
     .{ .key = "json", .language = tree_sitter_json, .highlights = &.{q.json_highlights}, .fixture = "{\"a\": [1, 2, {\"b\": null}]}\n" },
     .{ .key = "go", .language = tree_sitter_go, .highlights = &.{q.go_highlights}, .fixture = "package main\n\nfunc main() {\n\tprintln(\"hi\")\n}\n" },
     .{ .key = "toml", .language = tree_sitter_toml, .highlights = &.{q.toml_highlights}, .fixture = "[package]\nname = \"mnml\"\n" },
     // TypeScript's own highlights are ~35 lines of TS-specific captures; JavaScript's carry
     // the keywords / literals / comments. Without the JS layer most tokens stay plain.
-    .{ .key = "ts", .language = tree_sitter_typescript, .highlights = &.{ q.javascript_highlights, q.typescript_highlights }, .fixture = "const x: number = 1;\ninterface A { b: string }\n" },
-    .{ .key = "tsx", .language = tree_sitter_tsx, .highlights = &.{ q.javascript_highlights, q.javascript_highlights_jsx, q.typescript_highlights }, .fixture = "const el = <div>{1 + 1}</div>;\nlet y: string = \"a\";\n" },
+    .{ .key = "ts", .language = tree_sitter_typescript, .highlights = &.{ q.javascript_highlights, q.javascript_highlights_extra, q.typescript_highlights }, .fixture = "const x: number = 1;\ninterface A { b: string }\n" },
+    .{ .key = "tsx", .language = tree_sitter_tsx, .highlights = &.{ q.javascript_highlights, q.javascript_highlights_jsx, q.javascript_highlights_extra, q.typescript_highlights }, .fixture = "const el = <div>{1 + 1}</div>;\nlet y: string = \"a\";\n" },
     .{ .key = "css", .language = tree_sitter_css, .highlights = &.{q.css_highlights}, .fixture = "a { color: red; }\n" },
     .{ .key = "html", .language = tree_sitter_html, .highlights = &.{q.html_highlights}, .injections = q.html_injections, .fixture = "<html><body><p class=\"x\">hi</p></body></html>\n" },
     .{ .key = "sh", .language = tree_sitter_bash, .highlights = &.{q.bash_highlights}, .fixture = "for f in *.c; do echo \"$f\"; done\n" },

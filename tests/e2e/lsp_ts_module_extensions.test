@@ -1,0 +1,27 @@
+# `.mjs` / `.cjs` / `.mts` / `.cts` belong to the builtin typescript
+# server: the row listed ts/tsx/js/jsx only, so a Node project's
+# loaders, configs and dual packages opened with no server at all — no
+# chip, no diagnostics, no goto — while `languageIdFor` already knew
+# them. PATH is emptied so the machine's own install does not start;
+# what shows is the muted ` LSP? ` chip, which only a file that HAS a
+# server row gets (`lsp_missing_default_quiet.test`).
+# env: PATH=
+write package.json "{\n  \"name\": \"x\",\n  \"type\": \"module\"\n}\n"
+write src/mod/loader.mjs "export const load = (p) => import(p);\n"
+write src/mod/loader.cjs "module.exports = { load: (p) => require(p) };\n"
+write src/mod/types.mts "export type Loader = (p: string) => Promise<unknown>;\n"
+write src/mod/types.cts "export type Loader = (p: string) => unknown;\n"
+open src/mod/loader.mjs
+wait 300
+expect screen contains "LSP?"
+command lsp.status
+expect screen contains "typescript-language-server"
+open src/mod/loader.cjs
+wait 300
+expect screen contains "LSP?"
+open src/mod/types.mts
+wait 300
+expect screen contains "LSP?"
+open src/mod/types.cts
+wait 300
+expect screen contains "LSP?"

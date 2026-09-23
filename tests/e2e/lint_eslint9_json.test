@@ -1,0 +1,25 @@
+# The builtin ESLint linter on a modern project: ESLint 9 dropped the
+# `unix` formatter from core (`--format=unix` exits 2 with "install
+# eslint-formatter-unix"), so `editor.lint_external` and the on-save
+# hook produced nothing, silently, on every ESLint 9 workspace. The
+# builtin asks for `--format=json` now and reads it.
+#
+# `eslint` is a shim on PATH that behaves as ESLint 9 does: `--format=unix`
+# is refused with the real message (exit 2); `--format=json` prints the
+# real reporter's shape for lint-me.ts — two ERRORS (`severity: 2`),
+# which is also what pins the severity: the old line parser read every
+# ESLint error as a warning.
+# env: PATH=${MNML_E2E_WORKSPACE}/bin
+write bin/eslint #!/bin/sh\ncase " $* " in\n  *" --format=json "*)\n    printf '[{"filePath":"%s/src/core/lint-me.ts","messages":[{"ruleId":"no-var","severity":2,"message":"Unexpected var, use let or const instead.","line":2,"column":3,"nodeType":"VariableDeclaration","messageId":"unexpectedVar","endLine":2,"endColumn":17},{"ruleId":"prefer-const","severity":2,"message":"unchanged is never reassigned. Use const instead.","line":3,"column":7,"endLine":3,"endColumn":16}],"suppressedMessages":[],"errorCount":2,"fatalErrorCount":0,"warningCount":0,"fixableErrorCount":2,"fixableWarningCount":0}]\\n' "$PWD"\n    exit 1 ;;\n  *)\n    echo "The unix formatter is no longer part of core ESLint. Install it manually with npm install -D eslint-formatter-unix" >&2\n    exit 2 ;;\nesac\n
+shell /bin/chmod +x bin/eslint
+write package.json {\n  "name": "acme",\n  "scripts": { "lint": "eslint ." }\n}\n
+write src/core/lint-me.ts export function untidy(a: number) {\n  var total = a;\n  let unchanged = 2;\n  total = total + unchanged;\n  return total;\n}\n
+open src/core/lint-me.ts
+command editor.lint_external
+expect screen contains "linting src/core/lint-me.ts with eslint"
+wait 1500
+expect screen contains "lint-me.ts ✗2"
+command lsp.diagnostics
+expect screen contains "DIAGNOSTICS (2)"
+expect screen contains "Unexpected var"
+expect screen contains "never reassigned"

@@ -916,7 +916,9 @@ pub fn onSavePre(app: *App, args: hooks.HookArgs) void {
     // An autosave is not a save the user asked for: nothing reformats
     // the text under them.
     if (args.save_pre.auto) return;
-    format_app.onSavePre(app, pane, e, s);
+    // The external tool formatted (configured, or the project's own):
+    // the server is not asked as well.
+    if (format_app.onSavePre(app, pane, e, s)) return;
     if (!app.cfg.editor.format_on_save) return;
     const srv = s orelse return;
     if (!srv.caps.formatting or !srv.ready) return;
@@ -927,6 +929,7 @@ pub fn onSavePost(app: *App, args: hooks.HookArgs) void {
     const e = app.panes.editor(args.save_post.pane) orelse return;
     const path = e.buf.doc.path orelse return;
     format_app.lintOnHook(app, path, serverFor(app, path) != null);
+    notifyWatched(app, path, .changed);
     const s = serverFor(app, path) orelse return;
     syncPane(app, args.save_post.pane, e);
     s.didSave(path, e.buf.editor.bytes()) catch {};
@@ -1213,9 +1216,34 @@ fn handleServerRequest(app: *App, s: *Server, id: jsonrpc.Id, method: []const u8
             app.toast("LSP: applied {d} edit(s)", .{n});
         };
         s.respond(id, "{\"applied\":true}") catch {};
-    } else {
-        // `client/registerCapability`, `window/workDoneProgress/create`…
+    } else if (std.mem.eql(u8, method, "client/registerCapability")) {
+        // The one registration mnml honours: a file watcher. The globs
+        // are not kept — every change under the workspace is reported.
+        const regs: []const Value = if (params) |p| (jsonrpc.getArr(p, "registrations") orelse &.{}) else &.{};
+        for (regs) |r| if (jsonrpc.getStr(r, "method")) |m| if (std.mem.eql(u8, m, "workspace/didChangeWatchedFiles")) {
+            s.watches_files = true;
+        };
         s.respond(id, "null") catch {};
+    } else {
+        // `window/workDoneProgress/create`…
+        s.respond(id, "null") catch {};
+    }
+}
+
+/// A file mnml itself wrote, created, moved or deleted: every ready
+/// server that registered a watcher hears of it, whether or not it has
+/// the file open — a server's references / rename / diagnostics come
+/// from what it has read, and a file it never opened is what it read
+/// last. Its own `didSave` tells the owning server about an open
+/// buffer; this is for the rest (`Cargo.toml` for rust-analyzer, a
+/// sibling `.cs` for csharp-ls, a generated file), as VS Code's
+/// watcher reports every write, its own included.
+pub fn notifyWatched(app: *App, path: []const u8, kind: client.FileChangeKind) void {
+    if (!std.fs.path.isAbsolute(path)) return;
+    for (app.lsp.servers.items) |s| {
+        if (!s.ready or !s.watches_files) continue;
+        if (!std.mem.startsWith(u8, path, s.root)) continue;
+        s.didChangeWatchedFile(path, kind) catch {};
     }
 }
 
@@ -1300,6 +1328,7 @@ fn copyDiagnostics(arena: Allocator, list: []const types.Diagnostic) Allocator.E
         d.message = try arena.dupe(u8, d.message);
         if (d.source) |src| d.source = try arena.dupe(u8, src);
         if (d.code) |c| d.code = try arena.dupe(u8, c);
+        if (d.raw) |r| d.raw = try arena.dupe(u8, r);
         out[i] = d;
     }
     return out;
@@ -1324,7 +1353,12 @@ fn finishDiagnostics(app: *App, path: []const u8, fd: *FileDiags) Allocator.Erro
 pub fn applyDiagnostics(app: *App, path: []const u8, list: []const Value) Allocator.Error!void {
     const arena = app.frame.allocator();
     var read: std.ArrayListUnmanaged(types.Diagnostic) = .empty;
-    for (list) |v| if (types.readDiagnostic(v)) |d| try read.append(arena, d);
+    for (list) |v| if (types.readDiagnostic(v)) |d_in| {
+        var d = d_in;
+        // Kept whole for `codeAction`'s echo (`requestActions`).
+        d.raw = try jsonrpc.stringify(arena, v);
+        try read.append(arena, d);
+    };
     const fd = try fileDiags(app, path);
     fd.arena.reset();
     fd.server_items = &.{};
@@ -2523,16 +2557,44 @@ pub fn codeAction(app: *App) CommandError!void {
 
 pub fn quickFix(app: *App) CommandError!void {
     const t = try requireServer(app, "quick fix");
-    try requestActions(app, t, "quickfix", action_first);
+    try requestActions(app, t, "quickfix", action_first_quickfix);
 }
 
 pub fn organizeImports(app: *App) CommandError!void {
     const t = try requireServer(app, "organize imports");
-    try requestActions(app, t, "source.organizeImports", action_first);
+    try requestActions(app, t, "source.organizeImports", action_first_organize);
 }
 
+/// `Ctx.extra` of a `codeAction` request: what to do with the list.
 const action_pick: u32 = 0;
-const action_first: u32 = 1;
+/// Run the first action whose `kind` is `quickfix` (or under it).
+const action_first_quickfix: u32 = 1;
+/// Run the first action whose `kind` is `source.organizeImports`.
+const action_first_organize: u32 = 2;
+
+/// The kind an auto-run mode asked for; null for the picker.
+fn wantedKind(mode: u32) ?[]const u8 {
+    return switch (mode) {
+        action_first_quickfix => "quickfix",
+        action_first_organize => "source.organizeImports",
+        else => null,
+    };
+}
+
+/// The first action whose `kind` is `want` or a kind under it
+/// (`quickfix` takes `quickfix.import`, never `refactor.extract`).
+/// Null when none says so — `only` is a hint a server may ignore
+/// (csharp-ls answers the same sixteen kind-less actions to every
+/// request), and the spec leaves the filtering to the client; the
+/// first item of an unfiltered list is a refactor as often as a fix.
+pub fn firstOfKind(items: []const types.CodeAction, want: []const u8) ?usize {
+    for (items, 0..) |a, i| {
+        const k = a.kind orelse continue;
+        if (std.mem.eql(u8, k, want)) return i;
+        if (k.len > want.len and std.mem.startsWith(u8, k, want) and k[want.len] == '.') return i;
+    }
+    return null;
+}
 
 fn requestActions(app: *App, t: Target, only: ?[]const u8, mode: u32) CommandError!void {
     const arena = app.frame.allocator();
@@ -2546,16 +2608,50 @@ fn requestActions(app: *App, t: Target, only: ?[]const u8, mode: u32) CommandErr
     const span: [2]usize = ed.selection() orelse .{ ed.lineStart(ed.currentLine()), ed.lineEnd(ed.currentLine()) };
     const start = types.positionOf(text, span[0], t.server.encoding);
     const end = types.positionOf(text, span[1], t.server.encoding);
-    // The diagnostics on those lines give the server its context.
-    var diags: std.ArrayListUnmanaged(struct { range: types.Range, severity: u8, message: []const u8 }) = .empty;
-    for (diagnosticsFor(app, t.path)) |d| if (d.range.start.line >= start.line and d.range.start.line <= end.line) try diags.append(arena, .{ .range = d.range, .severity = @intFromEnum(d.severity), .message = d.message });
+    // The diagnostics on those lines give the server its context — each
+    // one as it was published, so a server can key a quick fix on it.
+    const diags = try echoDiagnostics(arena, diagnosticsFor(app, t.path), start.line, end.line);
     const uri = try types.uriFromPath(arena, t.path);
     const only_list: ?[]const []const u8 = if (only) |o| try arena.dupe([]const u8, &.{o}) else null;
     _ = t.server.request(.code_action, "textDocument/codeAction", .{
         .textDocument = .{ .uri = uri },
         .range = .{ .start = start, .end = end },
-        .context = .{ .diagnostics = diags.items, .only = only_list },
+        .context = .{ .diagnostics = diags, .only = only_list },
     }, .{ .pane = t.pane, .extra = mode }) catch |err| return app.diag.fail(arena, "LSP code action: {s}", .{@errorName(err)});
+}
+
+/// One diagnostic in a `codeAction` context: the server's own object,
+/// byte for byte, when it published one (`Diagnostic.raw`) — a server
+/// looks its fixes up by `code`, by `data`, by what it put there — and
+/// the fields mnml has when the diagnostic is its own (a linter's).
+/// A three-field `{range, severity, message}` projection is what made
+/// every diagnostic-keyed quick fix on tsserver, pyright and
+/// bash-language-server come back empty.
+const EchoDiag = struct {
+    d: types.Diagnostic,
+
+    pub fn jsonStringify(self: *const EchoDiag, js: *std.json.Stringify) !void {
+        if (self.d.raw) |raw| {
+            try js.beginWriteRaw();
+            try js.writer.writeAll(raw);
+            js.endWriteRaw();
+            return;
+        }
+        try js.write(.{
+            .range = self.d.range,
+            .severity = @intFromEnum(self.d.severity),
+            .message = self.d.message,
+            .source = self.d.source,
+            .code = self.d.code,
+        });
+    }
+};
+
+/// The diagnostics starting on lines `first..=last`, ready to echo.
+fn echoDiagnostics(arena: Allocator, all: []const types.Diagnostic, first: u32, last: u32) Allocator.Error![]EchoDiag {
+    var out: std.ArrayListUnmanaged(EchoDiag) = .empty;
+    for (all) |d| if (d.range.start.line >= first and d.range.start.line <= last) try out.append(arena, .{ .d = d });
+    return out.items;
 }
 
 fn dropActions(app: *App) void {
@@ -2576,9 +2672,13 @@ fn openActions(app: *App, s: *Server, ctx: Ctx, result: ?Value, msg: *jsonrpc.In
         return false;
     }
     app.lsp.picker_actions = set;
-    if (ctx.extra == action_first) {
-        try runAction(app, 0);
-        return true;
+    if (wantedKind(ctx.extra)) |want| {
+        if (firstOfKind(set.items, want)) |i| {
+            try runAction(app, i);
+            return true;
+        }
+        // No action of that kind: the list, never its first item.
+        app.toast("no {s} action among {d} — pick one", .{ want, set.items.len });
     }
     const gpa = app.gpa;
     var labels: std.ArrayListUnmanaged([]u8) = .empty;
@@ -2669,6 +2769,9 @@ pub fn requestSymbols(app: *App, s: *Server, path: []const u8) void {
     const arena = app.frame.allocator();
     const uri = types.uriFromPath(arena, path) catch return;
     const pane = app.panes.findPath(path) orelse return;
+    // Over the highlight ceiling the outline says so instead
+    // (`Syntax.overCeiling`); the reply would be dropped at the frame cap.
+    if (app.panes.editor(pane)) |e| if (e.syntax.overCeiling()) return;
     _ = s.request(.document_symbol, "textDocument/documentSymbol", .{ .textDocument = .{ .uri = uri } }, .{ .pane = pane, .extra = 0 }) catch {};
 }
 
@@ -3648,6 +3751,38 @@ pub const TestRig = struct {
     }
 };
 
+test "codeAction echoes a published diagnostic whole — code, source, data, tags — and a linter's with what it has" {
+    const gpa = testing.allocator;
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    defer app.deinit();
+    const path = "/tmp/echo.ts";
+    // As tsserver / bash-language-server publish: a numeric `code`, a
+    // `source`, `tags`, `relatedInformation` and a nested `data` the
+    // server will look its fix up by. Written in std.json's own
+    // canonical spacing so the echo can be compared byte for byte.
+    const published = "{\"range\":{\"start\":{\"line\":3,\"character\":4},\"end\":{\"line\":3,\"character\":9}},\"severity\":1,\"code\":2304,\"source\":\"typescript\",\"message\":\"Cannot find name 'clamp'.\",\"tags\":[1],\"relatedInformation\":[{\"location\":{\"uri\":\"file:///tmp/echo.ts\",\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":1}}},\"message\":\"declared here\"}],\"data\":{\"id\":\"shellcheck|2086|3:4-3:9\",\"fixes\":[1,2.5,true,null,\"x\"],\"nested\":{\"k\":[]}}}";
+    var parsed = try std.json.parseFromSlice(Value, gpa, "[" ++ published ++ "]", .{});
+    defer parsed.deinit();
+    try applyDiagnostics(&app, path, parsed.value.array.items);
+    const lint = [_]types.Diagnostic{.{ .range = .{ .start = .{ .line = 3, .character = 0 }, .end = .{ .line = 3, .character = 1 } }, .severity = .warning, .message = "lint", .source = "eslint", .code = "no-var" }};
+    try applyLintDiagnostics(&app, path, &lint);
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const on_line = try echoDiagnostics(arena, diagnosticsFor(&app, path), 3, 3);
+    try testing.expectEqual(@as(usize, 2), on_line.len);
+    const body = try jsonrpc.stringify(gpa, .{ .diagnostics = on_line });
+    defer gpa.free(body);
+    // The server's object comes back untouched, `data` and all…
+    try testing.expect(std.mem.indexOf(u8, body, published) != null);
+    try testing.expect(std.mem.indexOf(u8, body, "\"data\":{\"id\":\"shellcheck|2086|3:4-3:9\",\"fixes\":[1,2.5,true,null,\"x\"],\"nested\":{\"k\":[]}}") != null);
+    // …and the linter's carries its source and code, no invented data.
+    try testing.expect(std.mem.indexOf(u8, body, "\"message\":\"lint\",\"source\":\"eslint\",\"code\":\"no-var\"}") != null);
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, body, "\"data\""));
+    // Another line's diagnostic is not context for this one.
+    try testing.expectEqual(@as(usize, 0), (try echoDiagnostics(arena, diagnosticsFor(&app, path), 0, 0)).len);
+}
+
 test "diagnostics from a server and a linter merge sorted, and each source replaces only its own" {
     var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
     defer app.deinit();
@@ -4533,4 +4668,94 @@ test "a file over editor.lsp_max_bytes gets no server, says so once, and editor.
     const after = try TestRig.screenText(&app, gpa);
     defer gpa.free(after);
     try testing.expect(std.mem.indexOf(u8, after, "LSP off") == null);
+}
+
+test "firstOfKind: the first action of the asked kind or under it; a kind-less or foreign list gives nothing, never its first item" {
+    const raw: Value = .null;
+    const items = [_]types.CodeAction{
+        .{ .title = "Introduce constant", .kind = null, .raw = raw },
+        .{ .title = "Extract", .kind = "refactor.extract", .raw = raw },
+        .{ .title = "Add import", .kind = "quickfix.import", .raw = raw },
+        .{ .title = "Remove unused", .kind = "quickfix", .raw = raw },
+        .{ .title = "Sort imports", .kind = "source.organizeImports", .raw = raw },
+    };
+    try testing.expectEqual(@as(?usize, 2), firstOfKind(&items, "quickfix"));
+    try testing.expectEqual(@as(?usize, 4), firstOfKind(&items, "source.organizeImports"));
+    try testing.expectEqual(@as(?usize, 1), firstOfKind(&items, "refactor"));
+    // `quickfixes` is not under `quickfix`; nothing is under `source.fixAll`.
+    try testing.expectEqual(@as(?usize, null), firstOfKind(&items, "quickfixe"));
+    try testing.expectEqual(@as(?usize, null), firstOfKind(&items, "source.fixAll"));
+    // csharp-ls's list: sixteen actions, no kinds — the picker, not item 0.
+    const unkinded = [_]types.CodeAction{ .{ .title = "Introduce constant", .kind = null, .raw = raw }, .{ .title = "Remove unused variable", .kind = null, .raw = raw } };
+    try testing.expectEqual(@as(?usize, null), firstOfKind(&unkinded, "quickfix"));
+    try testing.expectEqual(@as(?usize, null), firstOfKind(&.{}, "quickfix"));
+}
+
+test "client/registerCapability for workspace/didChangeWatchedFiles marks the server; a save then reports the file to it" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    var rig: TestRig = .{};
+    try rig.start(&app);
+    defer rig.stop(&app) catch {};
+    const s = app.lsp.servers.items[0];
+    try testing.expect(!s.watches_files);
+    // Another method's registration is not a watcher.
+    var other = try std.json.parseFromSlice(Value, gpa, "{\"registrations\":[{\"id\":\"1\",\"method\":\"textDocument/formatting\"}]}", .{});
+    defer other.deinit();
+    try handleServerRequest(&app, s, .{ .int = 7 }, "client/registerCapability", other.value);
+    try testing.expect(!s.watches_files);
+    var reg = try std.json.parseFromSlice(Value, gpa, "{\"registrations\":[{\"id\":\"2\",\"method\":\"workspace/didChangeWatchedFiles\",\"registerOptions\":{\"watchers\":[{\"globPattern\":\"**/*.cs\"}]}}]}", .{});
+    defer reg.deinit();
+    try handleServerRequest(&app, s, .{ .int = 8 }, "client/registerCapability", reg.value);
+    try testing.expect(s.watches_files);
+    // A path under the server's root is announced; one outside it is not
+    // (the notify returns without a wire error either way).
+    notifyWatched(&app, "/tmp/mnml-zig-fake-lsp-gen.ts", .created);
+    notifyWatched(&app, "/nowhere/else.ts", .deleted);
+}
+
+test "over the highlight ceiling no documentSymbol is asked and the outline says `outline off`; editor.highlight_this_file asks after all" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    app.cfg.editor.highlight_max_bytes = 64;
+    var rig: TestRig = .{};
+    try rig.start(&app);
+    defer rig.stop(&app) catch {};
+    const e = try TestRig.openFile(&app, TestRig.file, "let x = 1;\nconst foo = 2;\nconst bar = 3;\nconst baz = 4;\nconst qux = 5;\nconst quux = 6;\n");
+    // The rig sets the text by hand; `openPath` applies the ceiling on open.
+    e.syntax.applyLimit(e.buf.editor.len(), app.cfg.editor.highlight_max_bytes);
+    try testing.expect(e.syntax.overCeiling());
+    const Probe = struct { app: *App };
+    const ctx: Probe = .{ .app = &app };
+    const Cond = struct {
+        fn attached(c: Probe) bool {
+            const servers = c.app.lsp.servers.items;
+            return servers.len == 1 and servers[0].ready and servers[0].docs.count() == 1;
+        }
+        fn symbols(c: Probe) bool {
+            return symbolsFor(c.app, TestRig.file) != null;
+        }
+    };
+    try TestRig.pump(&app, ctx, Cond.attached, 30_000);
+    // The server is attached (goto / references / rename work) but
+    // nothing asked it for the symbol list — a frame or two of ticks
+    // later there still is none, where an attach under the ceiling
+    // has one within the same pumping (the outline test above).
+    try testing.expectError(error.Timeout, TestRig.pump(&app, ctx, Cond.symbols, 300));
+    try command.run(&app, .{ .static = .@"outline.show" });
+    const screen = try TestRig.screenText(&app, gpa);
+    defer gpa.free(screen);
+    try testing.expect(std.mem.indexOf(u8, screen, "(outline off · 87 B)") != null);
+    try testing.expect(std.mem.indexOf(u8, screen, "(no symbols)") == null);
+    // Turned back on by hand: the symbols are asked for and land.
+    app.showPane(app.panes.findPath(TestRig.file).?);
+    try command.run(&app, .{ .static = .@"editor.highlight_this_file" });
+    try testing.expect(!e.syntax.overCeiling());
+    try TestRig.pump(&app, ctx, Cond.symbols, 30_000);
 }

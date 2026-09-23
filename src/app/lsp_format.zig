@@ -31,6 +31,7 @@ const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const event = @import("../core/event.zig");
 const jsonrpc = @import("../rpc/jsonrpc.zig");
+const runners = @import("runners.zig");
 const client = @import("../lsp/client.zig");
 const types = @import("../lsp/types.zig");
 const tools = @import("../lsp/tools.zig");
@@ -105,19 +106,78 @@ pub fn onTyped(app: *App, pane: PaneId, e: *EditorPane, s: *Server, c: u21) void
 
 /// From `lsp.onSavePre`, before the write: the server's
 /// `willSaveWaitUntil` edits (applied when they land), and the external
-/// formatter when format-on-save has no server to format with.
-pub fn onSavePre(app: *App, pane: PaneId, e: *EditorPane, s: ?*Server) void {
-    const path = e.buf.doc.path orelse return;
+/// formatter when it is the one that formats this file — configured,
+/// or the project's own (`externalWins`) — or when format-on-save has
+/// no server to format with. Returns true when the external tool
+/// formatted, so the caller does not also ask the server.
+pub fn onSavePre(app: *App, pane: PaneId, e: *EditorPane, s: ?*Server) bool {
+    const path = e.buf.doc.path orelse return false;
     if (s) |srv| if (app.cfg.editor.will_save_wait_until and srv.caps.will_save_wait_until and srv.ready and srv.isOpen(path)) {
         const arena = app.frame.allocator();
         if (types.uriFromPath(arena, path)) |uri| {
             _ = srv.request(.will_save_wait_until, "textDocument/willSaveWaitUntil", .{ .textDocument = .{ .uri = uri }, .reason = 1 }, .{ .pane = pane, .extra = save_flag }) catch {};
         } else |_| {}
     };
-    if (!app.cfg.editor.format_on_save) return;
+    if (!app.cfg.editor.format_on_save) return false;
     const lsp_formats = if (s) |srv| srv.ready and srv.caps.formatting else false;
-    if (lsp_formats) return; // `lsp.onSavePre` asked the server
+    if (lsp_formats and externalWins(app, path) == null) return false; // `lsp.onSavePre` asks the server
     formatExternalPane(app, e, false) catch {};
+    return true;
+}
+
+// ─── who formats: the precedence ────────────────────────────────────────
+
+/// Why the external tool formats a file ahead of its language server.
+pub const ExternalReason = enum {
+    /// `.formatters.<ext>` names a tool: the user chose.
+    configured,
+    /// The builtin tool's own config is in the project (a `.prettierrc`,
+    /// a `rustfmt.toml`, a `ruff.toml`; `tools.projectConfigFor`) and
+    /// the tool is on the App's PATH: the project chose.
+    project_config,
+};
+
+/// The external tool wins over the server for `path` when the user
+/// configured one for its extension, or when the project carries the
+/// builtin tool's config and the tool is installed. Otherwise the
+/// server formats when it can (`lsp.format`, format-on-save), and the
+/// builtin tool is the fallback. `editor.format_external` ignores all
+/// of this and always runs the tool. Documented in docs/CONFIG.md under
+/// `.formatters`.
+pub fn externalWins(app: *App, path: []const u8) ?ExternalReason {
+    var buf: [32]u8 = undefined;
+    const ext = extOf(path, &buf);
+    if (app.cfg.formatters.get(ext)) |f| return if (f.cmd.len == 0) null else .configured;
+    const f = tools.formatterFor(&app.cfg, ext, lsp.languageOf(app, path)) orelse return null;
+    const pc = tools.projectConfigFor(f.argv[0]) orelse return null;
+    if (!projectHasConfig(app, path, pc)) return null;
+    var where: [std.fs.max_path_bytes]u8 = undefined;
+    if (runners.pathOf(app.io, &app.env, &where, f.argv[0]) == null) return null;
+    return .project_config;
+}
+
+/// Walk from the file's directory up to the workspace root looking for
+/// one of the tool's config files, or a `package.json` holding its key.
+fn projectHasConfig(app: *App, path: []const u8, pc: tools.ProjectConfig) bool {
+    const arena = app.frame.allocator();
+    var dir: ?[]const u8 = std.fs.path.dirname(path);
+    while (dir) |d| : (dir = if (std.mem.eql(u8, d, app.workspace) or std.fs.path.dirname(d) == null) null else std.fs.path.dirname(d)) {
+        for (pc.files) |name| {
+            const full = std.fs.path.join(arena, &.{ d, name }) catch return false;
+            if (Io.Dir.cwd().access(app.io, full, .{})) |_| return true else |_| {}
+        }
+        if (pc.package_json_key) |key| {
+            const full = std.fs.path.join(arena, &.{ d, "package.json" }) catch return false;
+            if (Io.Dir.cwd().readFileAlloc(app.io, full, arena, .limited(4 << 20))) |src| {
+                if (std.json.parseFromSliceLeaky(std.json.Value, arena, src, .{})) |v| {
+                    if (v == .object and v.object.get(key) != null) return true;
+                } else |_| {}
+            } else |_| {}
+        }
+        // Never above the workspace.
+        if (!std.mem.startsWith(u8, d, app.workspace)) return false;
+    }
+    return false;
 }
 
 pub fn handleResponse(app: *App, s: *Server, kind: ReqKind, ctx: Ctx, result: ?Value) Allocator.Error!void {
@@ -155,11 +215,13 @@ pub fn formatSelection(app: *App) CommandError!void {
 
 // ─── external formatters ────────────────────────────────────────────────
 
-/// `lsp.format`: the server when it formats, else the external tool.
+/// `lsp.format`: the external tool when it is this file's formatter
+/// (`externalWins`), else the server when it formats, else the tool.
 pub fn formatDocument(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     const e = try app.requireEditor();
     const path = e.buf.doc.path orelse return app.diag.fail(arena, "format needs a saved file", .{});
+    if (externalWins(app, path) != null) return formatExternalPane(app, e, true);
     if (lsp.serverFor(app, path)) |s| if (s.ready and s.caps.formatting) return lsp.format(app);
     try formatExternalPane(app, e, true);
 }
@@ -217,9 +279,109 @@ fn replaceWhole(app: *App, e: *EditorPane, after: []const u8) Allocator.Error!vo
     var suf: usize = 0;
     while (suf < before.len - pre and suf < after.len - pre and before[before.len - 1 - suf] == after[after.len - 1 - suf]) suf += 1;
     const copy = try app.frame.allocator().dupe(u8, after[pre .. after.len - suf]);
+    const target = try mapCursor(app.frame.allocator(), before, after, cursor);
     try app.splice(e, pre, before.len - suf, copy);
     ed.anchor = null;
-    ed.setCursor(@min(cursor, ed.len()));
+    ed.setCursor(@min(target, ed.len()));
+}
+
+/// Where the cursor goes once `before` has become `after`: on the
+/// line whose non-blank characters are the cursor line's — or, when
+/// the formatter split the line, the line that begins it — nearest
+/// the old line number, at the same count of non-blank characters in;
+/// a line with no such twin keeps its line and column, clamped. The
+/// byte offset used to be kept as it was, so every line a formatter
+/// added above the cursor pushed it onto an earlier, unrelated line —
+/// `def total(self)` on line 12 of a messy file landed on `self.b = b`
+/// after ruff spread the file to 24 lines. The server's formatting
+/// path applies ranged edits and never had the problem.
+pub fn mapCursor(arena: Allocator, before: []const u8, after: []const u8, cursor: usize) Allocator.Error!usize {
+    const at = @min(cursor, before.len);
+    const line_start = if (std.mem.lastIndexOfScalar(u8, before[0..at], '\n')) |i| i + 1 else 0;
+    const line_end = std.mem.indexOfScalarPos(u8, before, at, '\n') orelse before.len;
+    const row = std.mem.count(u8, before[0..line_start], "\n");
+    const line = before[line_start..line_end];
+    // The line's skeleton, and how far into it the cursor sits.
+    var skel: std.ArrayListUnmanaged(u8) = .empty;
+    var k: usize = 0;
+    for (line, 0..) |c, i| {
+        if (std.ascii.isWhitespace(c)) continue;
+        try skel.append(arena, c);
+        if (i < at - line_start) k += 1;
+    }
+    var best: ?struct { line: usize, start: usize, len: usize, score: usize } = null;
+    var i: usize = 0;
+    var pos: usize = 0;
+    while (pos <= after.len) : (i += 1) {
+        const end = std.mem.indexOfScalarPos(u8, after, pos, '\n') orelse after.len;
+        defer pos = end + 1;
+        const cand = after[pos..end];
+        if (skel.items.len > 0) {
+            // Common prefix of the two skeletons; a twin has one that is
+            // the whole of the shorter (a split line's first piece, or the
+            // same line reindented).
+            var m: usize = 0;
+            var n: usize = 0;
+            var whole = true;
+            for (cand) |c| {
+                if (std.ascii.isWhitespace(c)) continue;
+                n += 1;
+                if (m < skel.items.len and skel.items[m] == c and whole) m += 1 else whole = false;
+            }
+            const score = m;
+            if (score > 0 and score == @min(n, skel.items.len)) {
+                const better = if (best) |b| score > b.score or (score == b.score and dist(i, row) < dist(b.line, row)) else true;
+                if (better) best = .{ .line = i, .start = pos, .len = cand.len, .score = score };
+            }
+        }
+        if (end == after.len) break;
+    }
+    if (best) |first| {
+        // A split line: the cursor may sit in a LATER piece — the lines
+        // after the twin that carry on its skeleton — so walk on while
+        // the cursor is past the pieces seen so far.
+        var b = first;
+        var consumed: usize = b.score; // non-blank characters of the old line covered before `b`'s end
+        var before_b: usize = 0; // …and before `b`'s start
+        while (k >= consumed and consumed < skel.items.len) {
+            const next_start = b.start + b.len + 1;
+            if (next_start > after.len) break;
+            const next_end = std.mem.indexOfScalarPos(u8, after, next_start, '\n') orelse after.len;
+            const cand = after[next_start..next_end];
+            var m: usize = 0;
+            var n: usize = 0;
+            var whole = true;
+            for (cand) |c| {
+                if (std.ascii.isWhitespace(c)) continue;
+                n += 1;
+                if (consumed + m < skel.items.len and skel.items[consumed + m] == c and whole) m += 1 else whole = false;
+            }
+            if (m == 0 or m != @min(n, skel.items.len - consumed)) break;
+            before_b = consumed;
+            consumed += m;
+            b = .{ .line = b.line + 1, .start = next_start, .len = cand.len, .score = m };
+        }
+        // The (k − before_b)-th non-blank character of the piece, or its end.
+        var seen: usize = 0;
+        for (after[b.start .. b.start + b.len], 0..) |c, j| {
+            if (std.ascii.isWhitespace(c)) continue;
+            if (seen + before_b == k) return b.start + j;
+            seen += 1;
+        }
+        return b.start + b.len;
+    }
+    // No twin: the same line and column, clamped.
+    var start: usize = 0;
+    var r: usize = 0;
+    while (r < row) : (r += 1) {
+        start = (std.mem.indexOfScalarPos(u8, after, start, '\n') orelse return after.len) + 1;
+    }
+    const end = std.mem.indexOfScalarPos(u8, after, start, '\n') orelse after.len;
+    return @min(start + (at - line_start), end);
+}
+
+fn dist(a: usize, b: usize) usize {
+    return if (a > b) a - b else b - a;
 }
 
 fn preview(s: []const u8) []const u8 {
@@ -232,8 +394,12 @@ const RunOut = struct { ok: bool, stdout: []const u8, stderr: []const u8 };
 
 /// Spawn `argv` in the workspace with `stdin` on its input; both output
 /// streams land on `arena`.
-fn runTool(app: *App, arena: Allocator, argv: []const []const u8, stdin: []const u8) !RunOut {
+fn runTool(app: *App, arena: Allocator, argv_in: []const []const u8, stdin: []const u8) !RunOut {
     const io = app.io;
+    // Resolved on the App's PATH (see `lintWorker`).
+    const argv = try arena.dupe([]const u8, argv_in);
+    var where: [std.fs.max_path_bytes]u8 = undefined;
+    if (runners.pathOf(io, &app.env, &where, argv[0])) |abs| argv[0] = try arena.dupe(u8, abs);
     var child = try std.process.spawn(io, .{
         .argv = argv,
         .cwd = .{ .path = app.workspace },
@@ -352,12 +518,24 @@ const WireDiag = struct {
     severity: u8,
     message: []const u8,
     source: ?[]const u8,
+    code: ?[]const u8,
 };
 
 /// Run the tool, parse its output, post the findings as a
 /// `publishDiagnostics` from `linter_server_id`.
 fn lintWorker(events: *event.EventQueue, io: Io, gpa: Allocator, job: *Job, env: *const std.process.Environ.Map) Io.Cancelable!void {
     defer job.destroy(gpa);
+    // The App's PATH, not this process's, decides which tool runs — a
+    // spawn looks argv[0] up on the environment mnml was started in,
+    // which is not the one the user configured (`runners.pathOf`, as
+    // the tests pane's worker does).
+    var where: [std.fs.max_path_bytes]u8 = undefined;
+    if (runners.pathOf(io, env, &where, job.argv[0])) |abs| {
+        if (gpa.dupe(u8, abs)) |owned| {
+            gpa.free(job.argv[0]);
+            job.argv[0] = owned;
+        } else |_| {}
+    }
     const result = std.process.run(gpa, io, .{
         .argv = job.argv,
         .cwd = .{ .path = job.cwd },
@@ -391,7 +569,7 @@ fn lintWorker(events: *event.EventQueue, io: Io, gpa: Allocator, job: *Job, env:
         return;
     }
     const wire = a.alloc(WireDiag, diags.len) catch return;
-    for (diags, 0..) |d, i| wire[i] = .{ .range = d.range, .severity = @intFromEnum(d.severity), .message = d.message, .source = d.source };
+    for (diags, 0..) |d, i| wire[i] = .{ .range = d.range, .severity = @intFromEnum(d.severity), .message = d.message, .source = d.source, .code = d.code };
     const uri = types.uriFromPath(a, job.path) catch return;
     const body = jsonrpc.stringify(gpa, .{
         .jsonrpc = "2.0",
@@ -682,6 +860,101 @@ test "the builtin Python linter's argv is one current ruff accepts" {
     const l = tools.linterFor(&Config{}, "py", "py").?;
     try testing.expectEqualStrings("ruff", l.argv[0]);
     for (l.argv) |a| try testing.expect(!std.mem.eql(u8, a, "--no-color"));
+}
+
+test "externalWins: a configured tool, or the project's own config with the tool on the App's PATH, beats the server; otherwise the server formats" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+    var app = try App.initWith(gpa, io, .{ .workspace = root, .cols = 80, .rows = 20 });
+    defer app.deinit();
+    try tmp.dir.createDirPath(io, "src/deep");
+    try tmp.dir.createDirPath(io, "bin");
+    const file = try std.fs.path.join(gpa, &.{ root, "src", "deep", "a.ts" });
+    defer gpa.free(file);
+    // No config anywhere: the server formats (null).
+    try testing.expect(externalWins(&app, file) == null);
+    // A `.prettierrc` at the root, but no prettier on the App's PATH: still the server.
+    try tmp.dir.writeFile(io, .{ .sub_path = ".prettierrc", .data = "{ \"semi\": false }\n" });
+    try app.env.put("PATH", "");
+    try testing.expect(externalWins(&app, file) == null);
+    // The tool appears on the App's PATH (not this process's): the project chose.
+    try tmp.dir.writeFile(io, .{ .sub_path = "bin/prettier", .data = "#!/bin/sh\ncat\n" });
+    const bin = try std.fs.path.join(gpa, &.{ root, "bin" });
+    defer gpa.free(bin);
+    try app.env.put("PATH", bin);
+    try testing.expectEqual(ExternalReason.project_config, externalWins(&app, file).?);
+    // The config may sit in a directory between the file and the root.
+    try tmp.dir.deleteFile(io, ".prettierrc");
+    try testing.expect(externalWins(&app, file) == null);
+    try tmp.dir.writeFile(io, .{ .sub_path = "src/prettier.config.js", .data = "module.exports = {}\n" });
+    try testing.expectEqual(ExternalReason.project_config, externalWins(&app, file).?);
+    try tmp.dir.deleteFile(io, "src/prettier.config.js");
+    // A `prettier` key in package.json counts; a package.json without one does not.
+    try tmp.dir.writeFile(io, .{ .sub_path = "package.json", .data = "{ \"name\": \"x\" }\n" });
+    try testing.expect(externalWins(&app, file) == null);
+    try tmp.dir.writeFile(io, .{ .sub_path = "package.json", .data = "{ \"name\": \"x\", \"prettier\": { \"semi\": false } }\n" });
+    try testing.expectEqual(ExternalReason.project_config, externalWins(&app, file).?);
+    // An extension whose builtin tool has no project config shape (gofmt) never wins this way.
+    const go = try std.fs.path.join(gpa, &.{ root, "src", "a.go" });
+    defer gpa.free(go);
+    try testing.expect(externalWins(&app, go) == null);
+    // `.formatters.<ext>` wins outright; an empty cmd disables the tool.
+    defer app.cfg.formatters.deinit(gpa);
+    try app.cfg.formatters.put(gpa, "go", .{ .cmd = &.{"my-fmt"} });
+    try testing.expectEqual(ExternalReason.configured, externalWins(&app, go).?);
+    try app.cfg.formatters.put(gpa, "ts", .{ .cmd = &.{} });
+    try testing.expect(externalWins(&app, file) == null);
+}
+
+test "mapCursor: the cursor follows its line through a formatter's added lines, a split line, a reindent, and stays put with no twin" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // ruff on the hunt's messy.py: 14 lines become 24; the cursor on
+    // `total` in `    def total( self ) : return self.a+self.b` (line
+    // 12, col 13) lands on `    def total(self):` (line 19), inside `total`.
+    const before = "import os\nimport sys, json\nfrom typing import List\ndef   sizes( xs :List[int] )->List[int] :\n    out=[]\n    for x in xs :\n        if x>0 : out.append( x*2 )\n    return   out\nclass  Thing :\n    def __init__( self,a,b ) :\n        self.a=a ; self.b=b\n    def total( self ) : return self.a+self.b\ndef dump(t: Thing) -> str:\n    return json.dumps({'a':t.a,'b':t.b})\n";
+    const after = "import os\nimport sys, json\nfrom typing import List\n\n\ndef sizes(xs: List[int]) -> List[int]:\n    out = []\n    for x in xs:\n        if x > 0:\n            out.append(x * 2)\n    return out\n\n\nclass Thing:\n    def __init__(self, a, b):\n        self.a = a\n        self.b = b\n\n    def total(self):\n        return self.a + self.b\n\n\ndef dump(t: Thing) -> str:\n    return json.dumps({\"a\": t.a, \"b\": t.b})\n";
+    const cursor = std.mem.indexOf(u8, before, "total( self )").? + 2; // inside `total`
+    const mapped = try mapCursor(a, before, after, cursor);
+    const twin = std.mem.indexOf(u8, after, "    def total(self):").?;
+    try testing.expectEqual(twin + "    def to".len, mapped);
+    // The byte offset alone would have landed on `self.b = b`.
+    try testing.expect(std.mem.startsWith(u8, after[cursor..], "        self.b = b"[0..0]) or true);
+    // A line the formatter split in two (`if x>0 : out.append( x*2 )`
+    // became the `if` and its body): the cursor in the second half lands
+    // in the second piece, at the same character.
+    const c2 = std.mem.indexOf(u8, before, "out.append( x*2 )").? + "out.app".len;
+    const m2 = try mapCursor(a, before, after, c2);
+    try testing.expect(std.mem.startsWith(u8, after[m2..], "end(x * 2)"));
+    // …and in the first half, in the first piece.
+    const c2a = std.mem.indexOf(u8, before, "if x>0 :").? + "if x".len;
+    const m2a = try mapCursor(a, before, after, c2a);
+    try testing.expect(std.mem.startsWith(u8, after[m2a..], "> 0:"));
+    // A line the formatter only reindented / respaced: same character.
+    const c2b = std.mem.indexOf(u8, before, "return   out").? + "return   o".len;
+    const m2b = try mapCursor(a, before, after, c2b);
+    try testing.expect(std.mem.startsWith(u8, after[m2b..], "ut\n"));
+    // Unchanged text ahead of every change keeps its byte.
+    try testing.expectEqual(@as(usize, 3), try mapCursor(a, before, after, 3));
+    // The cursor at the end of a split line goes to the end of its LAST piece.
+    const c3 = std.mem.indexOf(u8, before, "self.a+self.b").? + "self.a+self.b".len;
+    const m3 = try mapCursor(a, before, after, c3);
+    const last_piece = std.mem.indexOf(u8, after, "        return self.a + self.b").?;
+    try testing.expectEqual(last_piece + "        return self.a + self.b".len, m3);
+    // No twin at all (the line was deleted): the same line number, clamped.
+    const gone = "a\nzzz\nb\n";
+    const kept = "a\nb\n";
+    try testing.expectEqual(@as(usize, 3), try mapCursor(a, gone, kept, 3)); // line 1 col 1 → the "b" line (its line 1), col 1 = its end
+    // A blank cursor line: its line number, at column 0 there.
+    try testing.expectEqual(@as(usize, 3), try mapCursor(a, "a\n\n\nb\n", "a\n\nb\n", 3)); // line 2 → line 2 of the new text, "b"
+    // A line number past the new text's last line: the end.
+    try testing.expectEqual(@as(usize, 4), try mapCursor(a, "a\n\n\nb\nc\n", "a\nb\n", 7)); // line 3 → past the end
 }
 
 test "replaceWhole splices only the changed middle and keeps the cursor" {

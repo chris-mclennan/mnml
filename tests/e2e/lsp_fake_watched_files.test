@@ -1,0 +1,25 @@
+# A server that registers a file watcher (`client/registerCapability`
+# for `workspace/didChangeWatchedFiles` — csharp-ls, rust-analyzer,
+# tsserver, gopls) hears of every file mnml writes, open or not:
+# a save is `changed`, a file created from the tree is `created`. Before,
+# mnml's `initialize` did not advertise the capability, so no server
+# registered one and nothing was ever sent; a file mnml wrote without
+# opening it stayed invisible to the server until something opened it.
+write src/main.fk "fn foo() {\n  let x = 1;\n}\n"
+write src/other.fk "fn bar() {}\n"
+write .fkroot ""
+write .mnml/config.zon .{ .lsp = .{ .fake = .{ .cmd = "$MNML_FAKE_LSP", .args = .{ "--log", "lsp.log", "--watch" }, .extensions = .{ "fk" }, .root_markers = .{ ".fkroot" } } } }
+open src/main.fk
+expect screen contains "LSP 1"
+expect file lsp.log lacks "didChangeWatchedFiles"
+type "// edit"
+key ctrl+s
+wait 300
+expect file lsp.log contains "workspace/didChangeWatchedFiles"
+expect file lsp.log contains "didChangeWatchedFiles changed main.fk"
+# A second file opened, edited and saved: the same for it.
+open src/other.fk
+type "// edit"
+key ctrl+s
+wait 300
+expect file lsp.log contains "didChangeWatchedFiles changed other.fk"

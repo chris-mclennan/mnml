@@ -15,6 +15,7 @@
 //! the extension (`.tsx` is tsx, not ts), then a shebang.
 
 const std = @import("std");
+const lsp = @import("lsp.zig");
 const Allocator = std.mem.Allocator;
 const highlight = @import("highlight");
 const ts = highlight.ts;
@@ -107,6 +108,18 @@ pub const Syntax = struct {
     /// The limit in force when this document opened, for the toast and
     /// the chip's hover.
     limit_bytes: u64 = 0,
+
+    /// Highlighting is off for this document BECAUSE it opened over the
+    /// ceiling (`editor.highlight_max_bytes`), and nobody turned it back
+    /// on. What the language server's per-file extras — the symbol
+    /// list, inlay hints, code lenses, semantic tokens — read before
+    /// asking: a 200 000-symbol reply to a file mnml will not even
+    /// colour is a 47 MB frame that the transport drops, and then the
+    /// outline says "(no symbols)" for a file with 200 001. A buffer
+    /// switched off by hand under the limit keeps them all.
+    pub fn overCeiling(self: *const Syntax) bool {
+        return self.off and self.over_limit;
+    }
 
     pub const Pending = struct { id: u64, base_seq: u64, ticket: *@import("syntax_jobs.zig").Ticket };
 
@@ -417,9 +430,16 @@ fn highlightToggleFile(app: *App) command.CommandError!void {
 pub fn setHighlight(app: *App, e: *EditorPane, on: bool) Allocator.Error!void {
     const s = e.syntax;
     s.size_bytes = e.buf.editor.len();
+    const was_over = s.overCeiling();
     s.setOff(!on);
     var buf: [24]u8 = undefined;
     app.toast("highlighting {s} for {s} ({s})", .{ if (on) "on" else "off", bufferName(e), Syntax.sizeLabel(&buf, s.size_bytes) });
+    // Back under the ceiling by hand: the extras the ceiling held back
+    // are asked for now, and an outline on this buffer repaints.
+    if (was_over and on) {
+        if (e.buf.doc.path) |path| if (lsp.serverFor(app, path)) |srv| lsp.requestSymbols(app, srv, path);
+    }
+    app.lsp.symbols_gen +%= 1;
     app.needs_render = true;
 }
 

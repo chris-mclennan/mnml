@@ -53,6 +53,10 @@ pub const Props = struct {
     query: []const u8 = "",
     /// Keys build the query; the query line carries a block caret.
     filter_mode: bool = false,
+    /// The source is over the highlight ceiling: the list row reads
+    /// `(outline off · 8.0 MB)` — the chip's words, the size formatted by
+    /// the caller — not `(no symbols)`.
+    off_label: ?[]const u8 = null,
 };
 
 /// Rows the header takes before the list starts: the title, the hint,
@@ -139,7 +143,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, scroll: *usize, p: Props) void {
     const list = Rect.init(body.x, @min(y, body.bottom()), body.w, body.bottom() -| y);
     if (p.total == 0 or p.rows.len == 0) {
         scroll.* = 0;
-        const note: []const u8 = if (p.total == 0) "  (no symbols)" else "  (no matches)";
+        const note: []const u8 = if (p.off_label) |l| ui.fmt("  (outline off · {s})", .{l}) else if (p.total == 0) "  (no symbols)" else "  (no matches)";
         if (!list.isEmpty()) _ = ui.putStr(list.x, list.y, list.w -| air, ui.clipStr(note, list.w -| air), Theme.onBg(t.muted, bg));
         if (!cols.rest.isEmpty()) scrollbar.drawVertical(ui, cols.rest, .{ .pane = pane }, 0, @max(list.h, 1), 0);
         return;
@@ -274,6 +278,12 @@ test "the hint's three tiers, and the query line with its caret" {
     try f.expectRow(0, "  ⌥ code.rs   0 symbols" ++ " " ** 16 ++ "█");
     try f.expectRow(3, "  (no symbols)" ++ " " ** 25 ++ "█");
     try testing.expectEqual(@as(u16, 3), headerRows(props(&.{}, 0, null)));
+    // Over the highlight ceiling the row says so, with the size — never
+    // "(no symbols)" for a file that has 200 001 of them.
+    var off = props(&.{}, 0, null);
+    off.off_label = "8.0 MB";
+    draw(f.ui(), 2, f.full(), &scroll, off);
+    try f.expectRow(3, "  (outline off · 8.0 MB)" ++ " " ** 15 ++ "█");
 }
 
 test "a 100k-char symbol name paints clipped without overflowing the cell sum" {

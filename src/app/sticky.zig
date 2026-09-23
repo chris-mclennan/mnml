@@ -343,11 +343,13 @@ test "a file with a syntax error pins the scope that encloses the top line, from
         const chain = try headerLines(&app, e, arena.allocator());
         try testing.expectEqualSlices(u32, c.chain, chain);
     }
-    // The tree's own answer inside `outer` is nothing at all — its
+    // The tree's own answer inside `outer` is not `outer`: its
     // function_item never closed, so recovery left an ERROR node where
-    // the fn was — and the fallback's is `outer`'s header.
+    // the fn was, and all the tree still sees above line 3 is the `if`
+    // the stray brace closed (a compound statement is a context since
+    // `context_kinds`) — and the fallback's is `outer`'s header.
     const from_tree = try e.syntax.scopeChainOf(e.syntax.keptRoot().?, e.buf.editor, arena.allocator(), 3);
-    try testing.expectEqual(@as(usize, 0), from_tree.len);
+    try testing.expectEqualSlices(u32, &.{1}, from_tree);
     // `scopeEnd` on the pieces: a closing line at the header's depth is
     // the scope's, a shallower non-closing line is past it.
     try testing.expectEqual(@as(u32, 18), scopeEnd(e.buf.editor, 7, 0));

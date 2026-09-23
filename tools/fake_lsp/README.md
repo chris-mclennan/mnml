@@ -52,6 +52,18 @@ as for a debug adapter.
   its line — the shape a real server sends, which the breadcrumb chip
   has to place a caret inside. Without it a symbol is one line, as it
   always was.
+- `--actions unkinded` — every `codeAction` answer is csharp-ls's shape:
+  two actions with no `kind` at all, a refactor (*Introduce constant for
+  '1'*, which writes `// refactored` at the top) first and *Resolve TODO*
+  second. `--actions refactor-first` is the same pair WITH kinds
+  (`refactor.extract`, then `quickfix`). Both drive a client's kind check:
+  `lsp.quick_fix` must never run the first item of a list that does not
+  say it is a quick fix.
+- `--watch` — on `initialized`, send `client/registerCapability` for a
+  `workspace/didChangeWatchedFiles` watcher on `**/*`, as rust-analyzer,
+  tsserver, csharp-ls and gopls do; every change the client then reports
+  is one `didChangeWatchedFiles <created|changed|deleted> <basename>` line
+  in `--log`.
 - `--version`, `--help`.
 
 Two more lines go into `--log` under the method that carried them,

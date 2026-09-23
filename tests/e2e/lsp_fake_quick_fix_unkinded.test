@@ -1,0 +1,32 @@
+# `lsp.quick_fix` on a server that ignores `only` and sets no `kind` on
+# its actions (csharp-ls: sixteen kind-less actions to every request, a
+# refactor first, the fix fourteenth). The fake's `--actions unkinded`
+# answers a kind-less pair — *Introduce constant* (writes `// refactored`
+# at the top) then *Resolve TODO*. Before, `lsp.quick_fix` ran item 0
+# of whatever came back, so the "quick fix" silently applied an
+# unrelated refactor and left the warning. Now a list with no action of
+# the asked kind opens the picker, and says why.
+write src/main.fk "fn foo() {\n  let x = 1;  \n  foo(x); // TODO later\n}\nfn bar() { foo(); }\n"
+write .fkroot ""
+write .mnml/config.zon .{ .lsp = .{ .fake = .{ .cmd = "$MNML_FAKE_LSP", .args = .{ "--log", "lsp.log", "--actions", "unkinded" }, .extensions = .{ "fk" }, .root_markers = .{ ".fkroot" } } } }
+open src/main.fk
+expect screen contains "LSP 1"
+# Line 3, on `foo`.
+key down
+key down
+key right
+key right
+key right
+expect screen contains "main.fk ⚠1"
+command lsp.quick_fix
+expect screen lacks "// refactored"
+expect screen contains "no quickfix action among 2 — pick one"
+expect screen contains "Code actions"
+expect screen contains "Introduce constant for '1'"
+expect screen contains "Resolve TODO"
+# The second row is the fix.
+key down
+key enter
+expect screen contains "foo(x); // DONE later"
+expect screen lacks "// refactored"
+expect screen lacks "main.fk ⚠1"

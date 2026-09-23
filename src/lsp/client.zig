@@ -188,7 +188,11 @@ pub const Builtin = struct {
 pub const builtins = [_]Builtin{
     .{ .name = "rust", .cmd = "rust-analyzer", .args = &.{}, .extensions = &.{"rs"}, .root_markers = &.{"Cargo.toml"} },
     .{ .name = "python", .cmd = "pyright-langserver", .args = &.{"--stdio"}, .extensions = &.{"py"}, .root_markers = &.{ "pyproject.toml", "setup.py", "requirements.txt" } },
-    .{ .name = "typescript", .cmd = "typescript-language-server", .args = &.{"--stdio"}, .extensions = &.{ "ts", "tsx", "js", "jsx" }, .root_markers = &.{ "tsconfig.json", "jsconfig.json", "package.json" } },
+    // `.mjs` / `.cjs` / `.mts` / `.cts` are the same server's files
+    // (tsserver includes them through `allowJs`; `languageIdFor` already
+    // knew them) — a modern Node project's configs, loaders and dual
+    // packages live in exactly those.
+    .{ .name = "typescript", .cmd = "typescript-language-server", .args = &.{"--stdio"}, .extensions = &.{ "ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts" }, .root_markers = &.{ "tsconfig.json", "jsconfig.json", "package.json" } },
     .{ .name = "go", .cmd = "gopls", .args = &.{}, .extensions = &.{"go"}, .root_markers = &.{"go.mod"} },
     .{ .name = "c", .cmd = "clangd", .args = &.{}, .extensions = &.{ "c", "h", "cpp", "hpp", "cc" }, .root_markers = &.{ "compile_commands.json", ".clangd" } },
     .{ .name = "zig", .cmd = "zls", .args = &.{}, .extensions = &.{"zig"}, .root_markers = &.{"build.zig"} },
@@ -294,7 +298,7 @@ fn languageIdForKey(ext: []const u8) ?[]const u8 {
         .{ "sh", "shellscript" },        .{ "bash", "shellscript" },    .{ "lua", "lua" },       .{ "rb", "ruby" },             .{ "java", "java" },       .{ "kt", "kotlin" },
         .{ "swift", "swift" },           .{ "cs", "csharp" },           .{ "php", "php" },       .{ "vue", "vue" },             .{ "svelte", "svelte" },   .{ "sql", "sql" },
         .{ "jsonc", "jsonc" },           .{ "htm", "html" },            .{ "less", "less" },     .{ "csx", "csharp" },          .{ "zsh", "shellscript" }, .{ "make", "makefile" },
-        .{ "dockerfile", "dockerfile" }, .{ "ex", "elixir" },           .{ "hcl", "terraform" }, .{ "proto", "proto" },
+        .{ "dockerfile", "dockerfile" }, .{ "ex", "elixir" },           .{ "hcl", "terraform" }, .{ "proto", "proto" },         .{ "mts", "typescript" },  .{ "cts", "typescript" },
     };
     for (table) |kv| if (std.mem.eql(u8, kv[0], ext)) return kv[1];
     return null;
@@ -305,6 +309,9 @@ pub const Change = struct { range: ?types.Range, text: []const u8 };
 
 const OpenDoc = struct { version: i64 };
 const QueuedOpen = struct { path: []u8, language_id: []u8, text: []u8 };
+
+/// `FileChangeType` of `workspace/didChangeWatchedFiles`.
+pub const FileChangeKind = enum(u8) { created = 1, changed = 2, deleted = 3 };
 
 pub const Server = struct {
     gpa: Allocator,
@@ -320,6 +327,13 @@ pub const Server = struct {
     root: []u8,
     /// `initialize` replied and `initialized` went out.
     ready: bool = false,
+    /// The server registered a `workspace/didChangeWatchedFiles`
+    /// watcher (`client/registerCapability`): every file mnml writes,
+    /// creates, moves or deletes is reported to it whether or not it is
+    /// open. The registration's globs are not matched — every change
+    /// under the workspace goes, and a server ignores what it did not
+    /// ask for, as it must (VS Code's watcher is no narrower).
+    watches_files: bool = false,
     /// `$/progress` begins without their end — the server is loading
     /// or indexing, and answers it gives meanwhile are partial.
     progress_open: u32 = 0,
@@ -529,7 +543,7 @@ pub const Server = struct {
         try js.objectField("capabilities");
         try js.write(.{
             .general = .{ .positionEncodings = &[_][]const u8{ "utf-8", "utf-16" } },
-            .workspace = .{ .applyEdit = true, .workspaceEdit = .{ .documentChanges = true }, .configuration = true, .workspaceFolders = true, .didChangeConfiguration = .{ .dynamicRegistration = false } },
+            .workspace = .{ .applyEdit = true, .workspaceEdit = .{ .documentChanges = true }, .configuration = true, .workspaceFolders = true, .didChangeConfiguration = .{ .dynamicRegistration = false }, .didChangeWatchedFiles = .{ .dynamicRegistration = true, .relativePatternSupport = false } },
             .window = .{ .workDoneProgress = true },
             .textDocument = .{
                 .synchronization = .{ .didSave = true, .willSave = false, .willSaveWaitUntil = true },
@@ -741,6 +755,14 @@ pub const Server = struct {
         try self.notify("textDocument/didChange", .{ .textDocument = .{ .uri = uri, .version = doc.version }, .contentChanges = list });
     }
 
+    /// `workspace/didChangeWatchedFiles`: one change, by path.
+    pub fn didChangeWatchedFile(self: *Server, path: []const u8, kind: FileChangeKind) SendError!void {
+        var buf: [std.fs.max_path_bytes + 32]u8 = undefined;
+        var fba = std.heap.FixedBufferAllocator.init(&buf);
+        const uri = types.uriFromPath(fba.allocator(), path) catch return error.OutOfMemory;
+        try self.notify("workspace/didChangeWatchedFiles", .{ .changes = &[_]struct { uri: []const u8, type: u8 }{.{ .uri = uri, .type = @intFromEnum(kind) }} });
+    }
+
     pub fn didSave(self: *Server, path: []const u8, text: []const u8) SendError!void {
         if (!self.docs.contains(path)) return;
         var arena = std.heap.ArenaAllocator.init(self.gpa);
@@ -870,6 +892,11 @@ test "initialize's capabilities are all objects: an empty struct would serialize
     try testing.expect(std.mem.indexOf(u8, body, "\"references\":{\"dynamicRegistration\":false}") != null);
     try testing.expect(std.mem.indexOf(u8, body, "\"formatting\":{") != null);
     try testing.expect(std.mem.indexOf(u8, body, "\"rootUri\":\"file:///ws/src\"") != null);
+    // A server registers its file watcher only when the client says it
+    // can take one; without this line csharp-ls, rust-analyzer and
+    // tsserver never learn of a file mnml wrote that they did not have
+    // open (the closed half of a rename, a generated file).
+    try testing.expect(std.mem.indexOf(u8, body, "\"didChangeWatchedFiles\":{\"dynamicRegistration\":true") != null);
 }
 
 test "initialize reads caps and encoding; an early didOpen is queued and flushed; the server's notification arrives as an event" {
@@ -934,4 +961,21 @@ test "initialize reads caps and encoding; an early didOpen is queued and flushed
     lock.unlock(io);
     c2s[0].close(io);
     s2c[1].close(io);
+}
+
+test "the builtin typescript server serves the module-flavoured extensions too, with the right languageId" {
+    var found: ?Builtin = null;
+    for (builtins) |b| if (std.mem.eql(u8, b.name, "typescript")) {
+        found = b;
+    };
+    const ts = found.?;
+    for ([_][]const u8{ "ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts" }) |want| {
+        var hit = false;
+        for (ts.extensions) |e| hit = hit or std.mem.eql(u8, e, want);
+        try std.testing.expect(hit);
+    }
+    try std.testing.expectEqualStrings("javascript", languageIdFor("/p/loader.mjs", ""));
+    try std.testing.expectEqualStrings("javascript", languageIdFor("/p/loader.cjs", ""));
+    try std.testing.expectEqualStrings("typescript", languageIdFor("/p/types.mts", ""));
+    try std.testing.expectEqualStrings("typescript", languageIdFor("/p/types.CTS", ""));
 }

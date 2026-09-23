@@ -25,6 +25,7 @@ const App = app_mod.App;
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const files_pane = @import("files_pane.zig");
+const lsp = @import("lsp.zig");
 const file_clipboard = @import("file_clipboard.zig");
 
 pub const table = .{
@@ -438,6 +439,7 @@ pub fn deletePaths(app: *App, paths: []const []const u8, permanent: bool) Alloca
         } else trashed += 1;
         try closeBuffersUnder(app, path, is_dir);
         dropRecent(app, path, is_dir);
+        lsp.notifyWatched(app, path, .deleted);
     }
     if (trashed > 0) prune(app, nowUnix(app), bounds);
     try pruneIndex(app);

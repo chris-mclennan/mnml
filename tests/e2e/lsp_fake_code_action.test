@@ -1,6 +1,12 @@
 # Code actions through the fake server: on the TODO line the picker
 # offers the server's quickfix; Enter applies its edit, the didChange
 # republishes and the warning is gone.
+#
+# The fake keys its fix on the published diagnostic coming back whole —
+# `code` and `data.id` — the way bash-language-server (`data.id`) and
+# tsserver (`code`) do, so this also pins that `requestActions` echoes
+# the server's diagnostic verbatim: a `{range, severity, message}`
+# projection gets `[]` and the toast below instead of a picker.
 write src/main.fk "fn foo() {\n  let x = 1;  \n  foo(x); // TODO later\n}\nfn bar() { foo(); }\n"
 write .fkroot ""
 write .mnml/config.zon .{ .lsp = .{ .fake = .{ .cmd = "$MNML_FAKE_LSP", .args = .{ "--log", "lsp.log" }, .extensions = .{ "fk" }, .root_markers = .{ ".fkroot" } } } }
@@ -14,6 +20,7 @@ key right
 key right
 expect screen contains "main.fk ⚠1"
 command lsp.code_action
+expect screen lacks "no code actions here"
 expect screen contains "Code actions"
 expect screen contains "Resolve TODO"
 expect screen contains "quickfix"

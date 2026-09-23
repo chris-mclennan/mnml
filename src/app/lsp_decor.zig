@@ -173,6 +173,10 @@ pub fn onServerReady(app: *App, s: *const Server) void {
 /// window. `first`..`last` are the visible lines.
 pub fn onFrame(app: *App, pane: PaneId, e: *EditorPane, first: u32, last: u32) Allocator.Error!void {
     const path = e.buf.doc.path orelse return;
+    // A file over the highlight ceiling gets no per-file extras either:
+    // the server keeps the document (goto, references, rename work),
+    // but nothing here asks it to walk all of it (`Syntax.overCeiling`).
+    if (e.syntax.overCeiling()) return;
     const s = lsp.serverFor(app, path) orelse return;
     if (!s.ready or !s.isOpen(path)) return;
     const head = e.buf.doc.edits.head();

@@ -134,17 +134,22 @@ test "highlights queries produce captures on their fixtures" {
     }
 }
 
-test "layering: ts = js + ts, tsx = js + jsx + ts, jsx = js + jsx" {
+test "layering: js = js + extra, ts = js + extra + ts, tsx = js + jsx + extra + ts, jsx = js + jsx + extra" {
+    // mnml's own `javascript.extra.scm` (decorators) sits after the crate's
+    // JavaScript query — and after the JSX one — on every JavaScript-family
+    // key, and before TypeScript's.
     const js = table.highlightSource(table.find("js").?);
     const ts_src = table.highlightSource(table.find("ts").?);
     const tsx = table.highlightSource(table.find("tsx").?);
     const jsx = table.highlightSource(table.find("jsx").?);
+    try testing.expectEqualStrings(queries.javascript_highlights ++ "\n" ++ queries.javascript_highlights_extra, js);
     try testing.expect(std.mem.startsWith(u8, ts_src, js));
     try testing.expect(std.mem.endsWith(u8, ts_src, queries.typescript_highlights));
-    const js_plus_jsx = queries.javascript_highlights ++ "\n" ++ queries.javascript_highlights_jsx;
+    const js_plus_jsx = queries.javascript_highlights ++ "\n" ++ queries.javascript_highlights_jsx ++ "\n" ++ queries.javascript_highlights_extra;
     try testing.expect(std.mem.startsWith(u8, tsx, js_plus_jsx));
     try testing.expect(std.mem.endsWith(u8, tsx, queries.typescript_highlights));
     try testing.expectEqualStrings(js_plus_jsx, jsx);
+    try testing.expect(std.mem.indexOf(u8, queries.javascript_highlights_extra, "(decorator") != null);
     // The interface grammar reuses ocaml's query minus the one node it lacks; the two
     // Markdown grammars have distinct queries.
     const ocaml = table.highlightSource(table.find("ocaml").?);

@@ -26,7 +26,13 @@ const Position = struct { line: u32, character: u32 };
 const Range = struct { start: Position, end: Position };
 const Location = struct { uri: []const u8, range: Range };
 const TextEdit = struct { range: Range, newText: []const u8 };
-const Diagnostic = struct { range: Range, severity: u8, source: []const u8 = "fake-lsp", message: []const u8 };
+/// A published diagnostic carries what a real server keys its fixes
+/// on: a `code` and a `data` the client must echo back untouched in a
+/// `codeAction` context (bash-language-server looks its fix up by
+/// `data.id`, tsserver by `code`).
+const DiagData = struct { id: []const u8 };
+const Diagnostic = struct { range: Range, severity: u8, source: []const u8 = "fake-lsp", code: []const u8 = todo_code, message: []const u8, data: DiagData };
+const todo_code = "fk/todo";
 const CompletionItem = struct { label: []const u8, kind: u8, detail: []const u8 };
 const DocSymbol = struct { name: []const u8, kind: u8, range: Range, selectionRange: Range };
 
@@ -62,6 +68,8 @@ const capabilities_incremental = .{
     .documentFormattingProvider = true,
 };
 
+pub const ActionsShape = enum { kinded, unkinded, refactor_first };
+
 pub const Server = struct {
     gpa: Allocator,
     io: Io,
@@ -87,6 +95,17 @@ pub const Server = struct {
     /// every `let` is a variable symbol, the shape a real server sends;
     /// the default keeps one single-line symbol per `fn`.
     rich_symbols: bool = false,
+    /// `--actions unkinded` / `--actions refactor-first`: the shape of
+    /// the `codeAction` list — csharp-ls's (every action kind-less, a
+    /// refactor first, the fix later) or a kinded list led by a
+    /// refactor — so a client's kind check can be driven.
+    actions: ActionsShape = .kinded,
+    /// `--watch`: on `initialized`, register a `workspace/didChangeWatchedFiles`
+    /// watcher for everything (`client/registerCapability`), the way
+    /// rust-analyzer, tsserver, csharp-ls and gopls do; each change the
+    /// client then reports lands in the log as
+    /// `didChangeWatchedFiles <created|changed|deleted> <basename>`.
+    watch: bool = false,
     log: std.ArrayList(u8) = .empty,
     initialized: bool = false,
     shutdown: bool = false,
@@ -295,8 +314,18 @@ pub const Server = struct {
             // spans lines — so the first TODO anywhere in it answers.
             const last: u32 = if (getObj(range, "end")) |e| @intCast(@max(getInt(e, "line") orelse first, first)) else first;
             const todo = todoIn(d.text, first, last) orelse return self.respondRaw(id, "[]");
+            // Only for the diagnostic the client hands back as it was
+            // published — its `code` and its `data.id` — the way a real
+            // server scopes a quick fix. A projection gets nothing.
+            if (!echoesTodo(params, todo.start.line)) return self.respondRaw(id, "[]");
             const edit = try workspaceEdit(arena, d.uri, &.{.{ .range = todo, .newText = "DONE" }});
-            const action = try std.fmt.allocPrint(arena, "[{{\"title\":\"Resolve TODO\",\"kind\":\"quickfix\",\"edit\":{s}}}]", .{edit});
+            // The refactor of the shaped lists: a comment at the top.
+            const refactor = try workspaceEdit(arena, d.uri, &.{.{ .range = .{ .start = .{ .line = 0, .character = 0 }, .end = .{ .line = 0, .character = 0 } }, .newText = "// refactored\n" }});
+            const action = switch (self.actions) {
+                .kinded => try std.fmt.allocPrint(arena, "[{{\"title\":\"Resolve TODO\",\"kind\":\"quickfix\",\"edit\":{s}}}]", .{edit}),
+                .unkinded => try std.fmt.allocPrint(arena, "[{{\"title\":\"Introduce constant for '1'\",\"edit\":{s}}},{{\"title\":\"Resolve TODO\",\"edit\":{s}}}]", .{ refactor, edit }),
+                .refactor_first => try std.fmt.allocPrint(arena, "[{{\"title\":\"Extract to method\",\"kind\":\"refactor.extract\",\"edit\":{s}}},{{\"title\":\"Resolve TODO\",\"kind\":\"quickfix\",\"edit\":{s}}}]", .{ refactor, edit }),
+            };
             try self.respondRaw(id, action);
         } else if (eql(u8, method, "textDocument/formatting")) {
             if (getObj(params, "options")) |o| try self.logLine("formatting tabSize={d} insertSpaces={}", .{ getInt(o, "tabSize") orelse -1, getBool(o, "insertSpaces") orelse false });
@@ -315,6 +344,10 @@ pub const Server = struct {
             self.done = true;
         } else if (eql(u8, method, "initialized")) {
             if (self.configure) try self.request_out("workspace/configuration", .{ .items = &[_]struct { section: []const u8 }{.{ .section = "fakeIde" }} });
+            // A server that wants to hear about files it does not have
+            // open asks for a watcher; the client answers the request
+            // (`null`) and nothing here reads the answer.
+            if (self.watch) try self.emit("{\"jsonrpc\":\"2.0\",\"id\":9001,\"method\":\"client/registerCapability\",\"params\":{\"registrations\":[{\"id\":\"watch-1\",\"method\":\"workspace/didChangeWatchedFiles\",\"registerOptions\":{\"watchers\":[{\"globPattern\":\"**/*\"}]}}]}}");
         } else if (eql(u8, method, "textDocument/didOpen")) {
             const td = getObj(params, "textDocument") orelse return;
             const uri = getStr(td, "uri") orelse return;
@@ -343,8 +376,20 @@ pub const Server = struct {
                 self.gpa.free(kv.value);
             }
             try self.notify("textDocument/publishDiagnostics", .{ .uri = uri, .diagnostics = &[_]Diagnostic{} });
+        } else if (eql(u8, method, "workspace/didChangeWatchedFiles")) {
+            const changes = getArr(params, "changes") orelse return;
+            for (changes) |ch| {
+                const uri = getStr(ch, "uri") orelse continue;
+                const kind: []const u8 = switch (getInt(ch, "type") orelse 0) {
+                    1 => "created",
+                    2 => "changed",
+                    3 => "deleted",
+                    else => "?",
+                };
+                try self.logLine("didChangeWatchedFiles {s} {s}", .{ kind, std.fs.path.basename(uri) });
+            }
         }
-        // `initialized`, `didSave`, `$/cancelRequest`…: nothing to do.
+        // `didSave`, `$/cancelRequest`…: nothing to do.
     }
 
     /// Apply an incremental `didChange`, in order, exactly as the
@@ -432,6 +477,7 @@ pub const Server = struct {
                     .range = .{ .start = .{ .line = line, .character = at }, .end = .{ .line = line, .character = @intCast(std.mem.trimEnd(u8, l, "\r").len) } },
                     .severity = 2,
                     .message = "unresolved TODO",
+                    .data = .{ .id = try todoId(arena, line) },
                 });
             }
         }
@@ -541,6 +587,28 @@ fn definitionOf(text: []const u8, name: []const u8) ?Range {
         }
     }
     return null;
+}
+
+/// The `data.id` a TODO diagnostic on `line` is published with.
+fn todoId(arena: Allocator, line: u32) ![]const u8 {
+    return std.fmt.allocPrint(arena, "todo|{d}", .{line});
+}
+
+/// Does the `codeAction` context carry line `line`'s diagnostic as it
+/// was published — `code` and `data.id` intact?
+fn echoesTodo(params: Value, line: u32) bool {
+    const ctx = getObj(params, "context") orelse return false;
+    const diags = getArr(ctx, "diagnostics") orelse return false;
+    var buf: [32]u8 = undefined;
+    const want = std.fmt.bufPrint(&buf, "todo|{d}", .{line}) catch return false;
+    for (diags) |d| {
+        const code = getStr(d, "code") orelse continue;
+        if (!std.mem.eql(u8, code, todo_code)) continue;
+        const data = getObj(d, "data") orelse continue;
+        const id = getStr(data, "id") orelse continue;
+        if (std.mem.eql(u8, id, want)) return true;
+    }
+    return false;
 }
 
 /// Every whole-word occurrence of `name`, in document order.
@@ -850,6 +918,8 @@ pub fn main(init: std.process.Init) !u8 {
     var incremental = false;
     var configure = false;
     var rich_symbols = false;
+    var actions: ActionsShape = .kinded;
+    var watch = false;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const a = args[i];
@@ -863,7 +933,7 @@ pub fn main(init: std.process.Init) !u8 {
         if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) {
             var buf: [512]u8 = undefined;
             var w: Io.File.Writer = .initStreaming(.stdout(), io, &buf);
-            try w.interface.writeAll("mnml-fake-lsp [--log PATH] [--sync full|incremental] [--configure] [--symbols plain|rich]: a deterministic language server over stdio (see tools/fake_lsp/README.md)\n");
+            try w.interface.writeAll("mnml-fake-lsp [--log PATH] [--sync full|incremental] [--configure] [--symbols plain|rich] [--actions kinded|unkinded|refactor-first] [--watch]: a deterministic language server over stdio (see tools/fake_lsp/README.md)\n");
             try w.interface.flush();
             return 0;
         }
@@ -880,6 +950,11 @@ pub fn main(init: std.process.Init) !u8 {
             i += 1;
             rich_symbols = std.mem.eql(u8, args[i], "rich");
         }
+        if (std.mem.eql(u8, a, "--watch")) watch = true;
+        if (std.mem.eql(u8, a, "--actions") and i + 1 < args.len) {
+            i += 1;
+            actions = if (std.mem.eql(u8, args[i], "unkinded")) .unkinded else if (std.mem.eql(u8, args[i], "refactor-first")) .refactor_first else .kinded;
+        }
     }
     var in_buf: [64 * 1024]u8 = undefined;
     var out_buf: [64 * 1024]u8 = undefined;
@@ -891,6 +966,8 @@ pub fn main(init: std.process.Init) !u8 {
     server.incremental = incremental;
     server.configure = configure;
     server.rich_symbols = rich_symbols;
+    server.actions = actions;
+    server.watch = watch;
     while (!server.done) {
         const body = readFrame(gpa, &reader.interface) catch |err| switch (err) {
             error.Closed, error.BadFrame => break,
@@ -1005,6 +1082,8 @@ test "didOpen publishes a warning per TODO line; didChange republishes; didClose
     try t.expectEqual(@as(usize, 1), diags.len);
     try t.expectEqualStrings("unresolved TODO", getStr(diags[0], "message").?);
     try t.expectEqual(@as(i64, 2), getInt(diags[0], "severity").?);
+    try t.expectEqualStrings("fk/todo", getStr(diags[0], "code").?);
+    try t.expectEqualStrings("todo|2", getStr(getObj(diags[0], "data").?, "id").?);
     const start = getObj(getObj(diags[0], "range").?, "start").?;
     try t.expectEqual(@as(i64, 2), getInt(start, "line").?);
     try t.expectEqual(@as(i64, 13), getInt(start, "character").?);
@@ -1073,17 +1152,27 @@ test "hover, definition, references, completion, rename, symbols, code action an
     try t.expectEqualStrings("bar", getStr(list[1], "name").?);
     try t.expectEqual(@as(i64, 4), getInt(getObj(getObj(list[1], "range").?, "start").?, "line").?);
 
-    const act = try h.send(9, "textDocument/codeAction", "{\"textDocument\":{\"uri\":\"file:///ws/a.fk\"},\"range\":{\"start\":{\"line\":2,\"character\":0},\"end\":{\"line\":2,\"character\":0}},\"context\":{\"diagnostics\":[]}}");
+    // The fix comes only with the published diagnostic echoed whole:
+    // an empty context and a `{range, severity, message}` projection
+    // (what a client that drops `code` / `data` sends) both get [].
+    const bare = try h.send(9, "textDocument/codeAction", "{\"textDocument\":{\"uri\":\"file:///ws/a.fk\"},\"range\":{\"start\":{\"line\":2,\"character\":0},\"end\":{\"line\":2,\"character\":0}},\"context\":{\"diagnostics\":[]}}");
+    defer t.allocator.free(bare);
+    try t.expectEqual(@as(usize, 0), resultOf(bare[0]).array.items.len);
+    const stripped = try h.send(9, "textDocument/codeAction", "{\"textDocument\":{\"uri\":\"file:///ws/a.fk\"},\"range\":{\"start\":{\"line\":2,\"character\":0},\"end\":{\"line\":2,\"character\":0}},\"context\":{\"diagnostics\":[{\"range\":{\"start\":{\"line\":2,\"character\":13},\"end\":{\"line\":2,\"character\":23}},\"severity\":2,\"message\":\"unresolved TODO\"}]}}");
+    defer t.allocator.free(stripped);
+    try t.expectEqual(@as(usize, 0), resultOf(stripped[0]).array.items.len);
+    const act = try h.send(9, "textDocument/codeAction", "{\"textDocument\":{\"uri\":\"file:///ws/a.fk\"},\"range\":{\"start\":{\"line\":2,\"character\":0},\"end\":{\"line\":2,\"character\":0}},\"context\":{\"diagnostics\":[{\"range\":{\"start\":{\"line\":2,\"character\":13},\"end\":{\"line\":2,\"character\":23}},\"severity\":2,\"source\":\"fake-lsp\",\"code\":\"fk/todo\",\"message\":\"unresolved TODO\",\"data\":{\"id\":\"todo|2\"}}]}}");
     defer t.allocator.free(act);
     const actions = resultOf(act[0]).array.items;
     try t.expectEqual(@as(usize, 1), actions.len);
     try t.expectEqualStrings("Resolve TODO", getStr(actions[0], "title").?);
     const fix = getArr(getObj(getObj(actions[0], "edit").?, "changes").?, "file:///ws/a.fk").?;
     try t.expectEqualStrings("DONE", getStr(fix[0], "newText").?);
-    const no_act = try h.send(10, "textDocument/codeAction", "{\"textDocument\":{\"uri\":\"file:///ws/a.fk\"},\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":0}},\"context\":{\"diagnostics\":[]}}");
+    const no_act = try h.send(10, "textDocument/codeAction", "{\"textDocument\":{\"uri\":\"file:///ws/a.fk\"},\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":0}},\"context\":{\"diagnostics\":[{\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":1}},\"severity\":2,\"code\":\"fk/todo\",\"message\":\"unresolved TODO\",\"data\":{\"id\":\"todo|0\"}}]}}");
     defer t.allocator.free(no_act);
-    // A range that spans down onto the TODO's line (a selection) finds it.
-    const span_act = try h.send(14, "textDocument/codeAction", "{\"textDocument\":{\"uri\":\"file:///ws/a.fk\"},\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":3,\"character\":0}},\"context\":{\"diagnostics\":[]}}");
+    // A range that spans down onto the TODO's line (a selection) finds
+    // it, the diagnostic echoed as the client does for every line it spans.
+    const span_act = try h.send(14, "textDocument/codeAction", "{\"textDocument\":{\"uri\":\"file:///ws/a.fk\"},\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":3,\"character\":0}},\"context\":{\"diagnostics\":[{\"range\":{\"start\":{\"line\":2,\"character\":13},\"end\":{\"line\":2,\"character\":23}},\"severity\":2,\"source\":\"fake-lsp\",\"code\":\"fk/todo\",\"message\":\"unresolved TODO\",\"data\":{\"id\":\"todo|2\"}}]}}");
     defer t.allocator.free(span_act);
     try t.expectEqual(@as(usize, 1), resultOf(span_act[0]).array.items.len);
     try t.expectEqual(@as(usize, 0), resultOf(no_act[0]).array.items.len);

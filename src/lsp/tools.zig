@@ -1,8 +1,9 @@
 //! External formatters and linters: the builtin table for the common
 //! extensions (`.formatters.<ext>` / `.linters.<ext>` in the config
 //! override it), `{file}` expansion into an argv, and the output
-//! parsers that turn a tool's lines into diagnostics — `vimgrep`
-//! (`path:line:col: message`), eslint's `--format=unix`, `tsc`, ruff's
+//! parsers that turn a tool's output into diagnostics — `vimgrep`
+//! (`path:line:col: message`), eslint's `--format=json` (its `unix`
+//! lines too, for a config that still asks for them), `tsc`, ruff's
 //! concise form, shellcheck's gcc form, and a placeholder template for
 //! everything else. Pure: nothing here spawns a process.
 
@@ -10,6 +11,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const types = @import("types.zig");
 const Config = @import("../config/Config.zig");
+const jsonrpc = @import("../rpc/jsonrpc.zig");
 
 pub const LintParser = Config.LintParser;
 
@@ -38,6 +40,10 @@ pub const builtin_formatters = [_]FmtEntry{
     .{ "tsx", .{ .argv = &.{ "prettier", "--stdin-filepath", "{file}" } } },
     .{ "js", .{ .argv = &.{ "prettier", "--stdin-filepath", "{file}" } } },
     .{ "jsx", .{ .argv = &.{ "prettier", "--stdin-filepath", "{file}" } } },
+    .{ "mjs", .{ .argv = &.{ "prettier", "--stdin-filepath", "{file}" } } },
+    .{ "cjs", .{ .argv = &.{ "prettier", "--stdin-filepath", "{file}" } } },
+    .{ "mts", .{ .argv = &.{ "prettier", "--stdin-filepath", "{file}" } } },
+    .{ "cts", .{ .argv = &.{ "prettier", "--stdin-filepath", "{file}" } } },
     .{ "json", .{ .argv = &.{ "prettier", "--stdin-filepath", "{file}" } } },
     .{ "css", .{ .argv = &.{ "prettier", "--stdin-filepath", "{file}" } } },
     .{ "scss", .{ .argv = &.{ "prettier", "--stdin-filepath", "{file}" } } },
@@ -54,17 +60,48 @@ pub const builtin_formatters = [_]FmtEntry{
     .{ "nix", .{ .argv = &.{"nixfmt"} } },
 };
 
+// ESLint 9 dropped the `unix` formatter from core (it exits 2 with
+// "install eslint-formatter-unix"); `json` is the one every major
+// ships, and it carries the rule id and the end position besides.
+const eslint_argv: []const []const u8 = &.{ "eslint", "--no-color", "--format=json", "{file}" };
+
 pub const builtin_linters = [_]LintEntry{
-    .{ "ts", .{ .argv = &.{ "eslint", "--no-color", "--format=unix", "{file}" }, .parser = .eslint } },
-    .{ "tsx", .{ .argv = &.{ "eslint", "--no-color", "--format=unix", "{file}" }, .parser = .eslint } },
-    .{ "js", .{ .argv = &.{ "eslint", "--no-color", "--format=unix", "{file}" }, .parser = .eslint } },
-    .{ "jsx", .{ .argv = &.{ "eslint", "--no-color", "--format=unix", "{file}" }, .parser = .eslint } },
+    .{ "ts", .{ .argv = eslint_argv, .parser = .eslint } },
+    .{ "tsx", .{ .argv = eslint_argv, .parser = .eslint } },
+    .{ "js", .{ .argv = eslint_argv, .parser = .eslint } },
+    .{ "jsx", .{ .argv = eslint_argv, .parser = .eslint } },
+    .{ "mjs", .{ .argv = eslint_argv, .parser = .eslint } },
+    .{ "cjs", .{ .argv = eslint_argv, .parser = .eslint } },
+    .{ "mts", .{ .argv = eslint_argv, .parser = .eslint } },
+    .{ "cts", .{ .argv = eslint_argv, .parser = .eslint } },
     // ruff never colours a pipe and takes no `--no-color` (only
     // `--color <WHEN>`, and not on every release): no colour flag.
     .{ "py", .{ .argv = &.{ "ruff", "check", "--output-format=concise", "{file}" }, .parser = .ruff } },
     .{ "sh", .{ .argv = &.{ "shellcheck", "--format=gcc", "{file}" }, .parser = .shellcheck } },
     .{ "bash", .{ .argv = &.{ "shellcheck", "--format=gcc", "{file}" }, .parser = .shellcheck } },
 };
+
+/// The files a project carries when a builtin tool is THE formatter
+/// there: a `.prettierrc` beside `package.json` means the repo's
+/// `prettier --check` is the law, whatever the language server's own
+/// formatter would do. Keyed by the tool's binary name. A `package_json_key`
+/// is a top-level key of `package.json` that says the same.
+pub const ProjectConfig = struct {
+    files: []const []const u8,
+    package_json_key: ?[]const u8 = null,
+};
+
+pub fn projectConfigFor(bin: []const u8) ?ProjectConfig {
+    const name = std.fs.path.basename(bin);
+    if (std.mem.eql(u8, name, "prettier")) return .{
+        .files = &.{ ".prettierrc", ".prettierrc.json", ".prettierrc.yaml", ".prettierrc.yml", ".prettierrc.json5", ".prettierrc.js", ".prettierrc.cjs", ".prettierrc.mjs", ".prettierrc.toml", "prettier.config.js", "prettier.config.cjs", "prettier.config.mjs", "prettier.config.ts" },
+        .package_json_key = "prettier",
+    };
+    if (std.mem.eql(u8, name, "rustfmt")) return .{ .files = &.{ "rustfmt.toml", ".rustfmt.toml" } };
+    if (std.mem.eql(u8, name, "ruff")) return .{ .files = &.{ "ruff.toml", ".ruff.toml" } };
+    if (std.mem.eql(u8, name, "stylua")) return .{ .files = &.{ "stylua.toml", ".stylua.toml" } };
+    return null;
+}
 
 /// The config's formatter for the file, else the builtin, else null.
 /// `ext` is the file's extension (empty for `bin/run-all`) and `key`
@@ -186,6 +223,8 @@ fn severityWord(w: []const u8) ?types.Severity {
 /// into diagnostics for `file`. Messages borrow `text`.
 pub fn parseOutput(arena: Allocator, parser: LintParser, pattern: []const u8, text: []const u8, file: []const u8) Allocator.Error![]types.Diagnostic {
     var out: std.ArrayListUnmanaged(types.Diagnostic) = .empty;
+    // ESLint's `--format=json` is one document, not lines.
+    if (parser == .eslint and std.mem.startsWith(u8, std.mem.trimStart(u8, text, " \t\r\n"), "[")) return parseEslintJson(arena, text, file);
     var it = std.mem.splitScalar(u8, text, '\n');
     while (it.next()) |raw| {
         const line = std.mem.trimEnd(u8, raw, "\r");
@@ -216,19 +255,71 @@ fn parseVimgrep(line: []const u8, file: []const u8, source: []const u8) ?types.D
     return .{ .range = oneChar(lc.line, lc.col), .severity = severity, .message = msg, .source = source, .code = null };
 }
 
-/// `path:line:col: message [rule] (Severity)`.
+/// ESLint's `unix` line: `path:line:col: message [Error/rule]` (the
+/// formatter package's form) or the older `… [rule] (Error)`.
 fn parseEslint(line: []const u8, file: []const u8) ?types.Diagnostic {
     const lc = splitPathLineCol(line) orelse return null;
     if (!pathMatches(lc.path, file)) return null;
     var msg = lc.rest;
     var severity: types.Severity = .warning;
+    var code: ?[]const u8 = null;
     if (std.mem.endsWith(u8, msg, " (Error)")) {
         severity = .err;
         msg = msg[0 .. msg.len - " (Error)".len];
     } else if (std.mem.endsWith(u8, msg, " (Warning)")) {
         msg = msg[0 .. msg.len - " (Warning)".len];
+    } else if (std.mem.endsWith(u8, msg, "]")) {
+        if (std.mem.lastIndexOf(u8, msg, " [")) |lb| {
+            const tag = msg[lb + 2 .. msg.len - 1];
+            if (std.mem.indexOfScalar(u8, tag, '/')) |slash| {
+                if (severityWord(tag[0..slash])) |sev| {
+                    severity = sev;
+                    code = tag[slash + 1 ..];
+                    msg = msg[0..lb];
+                }
+            }
+        }
     }
-    return .{ .range = oneChar(lc.line, lc.col), .severity = severity, .message = msg, .source = "eslint", .code = null };
+    return .{ .range = oneChar(lc.line, lc.col), .severity = severity, .message = msg, .source = "eslint", .code = code };
+}
+
+/// ESLint's `--format=json`: one result per file, each with its
+/// `messages` (`severity` 2 error / 1 warning, 1-based `line` /
+/// `column`, an exclusive `endColumn`, the `ruleId`; a parse error has
+/// no rule and `fatal: true`). Messages borrow `text`.
+fn parseEslintJson(arena: Allocator, text: []const u8, file: []const u8) Allocator.Error![]types.Diagnostic {
+    var out: std.ArrayListUnmanaged(types.Diagnostic) = .empty;
+    const root = std.json.parseFromSliceLeaky(std.json.Value, arena, text, .{}) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return out.items,
+    };
+    const results = switch (root) {
+        .array => |a| a.items,
+        else => return out.items,
+    };
+    for (results) |r| {
+        const path = jsonrpc.getStr(r, "filePath") orelse "";
+        if (!pathMatches(path, file)) continue;
+        const messages = jsonrpc.getArr(r, "messages") orelse continue;
+        for (messages) |m| {
+            const line: u32 = @intCast(@max(jsonrpc.getInt(m, "line") orelse 1, 1));
+            const col: u32 = @intCast(@max(jsonrpc.getInt(m, "column") orelse 1, 1));
+            var range = oneChar(line, col);
+            if (jsonrpc.getInt(m, "endLine")) |el| if (jsonrpc.getInt(m, "endColumn")) |ec| {
+                const end: types.Position = .{ .line = @intCast(@max(el, 1) - 1), .character = @intCast(@max(ec, 1) - 1) };
+                if (end.line > range.start.line or (end.line == range.start.line and end.character > range.start.character)) range.end = end;
+            };
+            const severity: types.Severity = if ((jsonrpc.getInt(m, "severity") orelse 1) >= 2) .err else .warning;
+            try out.append(arena, .{
+                .range = range,
+                .severity = severity,
+                .message = jsonrpc.getStr(m, "message") orelse "",
+                .source = "eslint",
+                .code = jsonrpc.getStr(m, "ruleId"),
+            });
+        }
+    }
+    return out.items;
 }
 
 /// `path(line,col): error TSnnnn: message`.
@@ -378,6 +469,15 @@ test "the five parsers and the pattern template read their line shapes" {
     try testing.expectEqual(@as(usize, 2), es.len);
     try testing.expectEqualStrings("'y' is defined but never used. [no-unused-vars]", es[0].message);
     try testing.expectEqual(types.Severity.err, es[1].severity);
+    // The `eslint-formatter-unix` package's line puts the severity and
+    // the rule in one bracket; both errors read as errors, the rule is
+    // the code.
+    const es2 = try parseOutput(a, .eslint, "", "src/x.ts:2:3: Unexpected var, use let or const instead. [Error/no-var]\nsrc/x.ts:3:7: 'u' is never reassigned. [Warning/prefer-const]\n", "/ws/src/x.ts");
+    try testing.expectEqual(@as(usize, 2), es2.len);
+    try testing.expectEqual(types.Severity.err, es2[0].severity);
+    try testing.expectEqualStrings("no-var", es2[0].code.?);
+    try testing.expectEqualStrings("Unexpected var, use let or const instead.", es2[0].message);
+    try testing.expectEqual(types.Severity.warning, es2[1].severity);
     const ts = try parseOutput(a, .tsc, "", "src/x.ts(4,10): error TS2322: Type 'string' is not assignable.\nsrc/y.ts(1,1): error TS1: other file\n", "/ws/src/x.ts");
     try testing.expectEqual(@as(usize, 1), ts.len);
     try testing.expectEqual(@as(u32, 3), ts[0].range.start.line);
@@ -399,4 +499,57 @@ test "the five parsers and the pattern template read their line shapes" {
     try testing.expectEqual(@as(u32, 2), p2.range.start.line);
     try testing.expectEqualStrings("hmm", p2.message);
     try testing.expect(parsePattern("", "x", "a") == null);
+}
+
+test "the builtin ESLint linter asks for --format=json (ESLint 9 has no unix formatter), and the JSON parser reads it" {
+    const l = linterFor(&Config{}, "ts", "ts").?;
+    try testing.expectEqualStrings("eslint", l.argv[0]);
+    var json = false;
+    for (l.argv) |a| {
+        try testing.expect(std.mem.indexOf(u8, a, "unix") == null);
+        if (std.mem.eql(u8, a, "--format=json")) json = true;
+    }
+    try testing.expect(json);
+    try testing.expectEqual(LintParser.eslint, l.parser);
+    for ([_][]const u8{ "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts" }) |ext| try testing.expectEqual(LintParser.eslint, linterFor(&Config{}, ext, ext).?.parser);
+    for ([_][]const u8{ "mjs", "cjs", "mts", "cts" }) |ext| try testing.expectEqualStrings("prettier", formatterFor(&Config{}, ext, ext).?.argv[0]);
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // ESLint 9.39's `--format=json` on the hunt's lint-me.ts, a parse
+    // error appended: severity 2 is an error, 1 a warning, `ruleId` the
+    // code, `endColumn` exclusive; another file's result is skipped.
+    const text =
+        \\[{"filePath":"/ws/src/core/lint-me.ts","messages":[{"ruleId":"no-var","severity":2,"message":"Unexpected var, use let or const instead.","line":2,"column":3,"nodeType":"VariableDeclaration","messageId":"unexpectedVar","endLine":2,"endColumn":17,"fix":{"range":[38,41],"text":"let"}},{"ruleId":"prefer-const","severity":1,"message":"'unchanged' is never reassigned. Use 'const' instead.","line":3,"column":7,"endLine":3,"endColumn":16},{"ruleId":null,"fatal":true,"severity":2,"message":"Parsing error: Unexpected token","line":9,"column":1}],"suppressedMessages":[],"errorCount":2,"fatalErrorCount":1,"warningCount":1},{"filePath":"/ws/src/other.ts","messages":[{"ruleId":"no-var","severity":2,"message":"elsewhere","line":1,"column":1}]}]
+    ;
+    const es = try parseOutput(a, .eslint, "", text, "/ws/src/core/lint-me.ts");
+    try testing.expectEqual(@as(usize, 3), es.len);
+    try testing.expectEqual(types.Severity.err, es[0].severity);
+    try testing.expectEqualStrings("no-var", es[0].code.?);
+    try testing.expectEqualStrings("eslint", es[0].source.?);
+    try testing.expectEqualStrings("Unexpected var, use let or const instead.", es[0].message);
+    try testing.expectEqual(@as(u32, 1), es[0].range.start.line);
+    try testing.expectEqual(@as(u32, 2), es[0].range.start.character);
+    try testing.expectEqual(@as(u32, 16), es[0].range.end.character);
+    try testing.expectEqual(types.Severity.warning, es[1].severity);
+    try testing.expectEqualStrings("prefer-const", es[1].code.?);
+    try testing.expectEqual(types.Severity.err, es[2].severity);
+    try testing.expect(es[2].code == null);
+    try testing.expectEqual(@as(u32, 8), es[2].range.start.line);
+    try testing.expectEqual(@as(u32, 1), es[2].range.end.character);
+    // An empty result set and something that is not JSON are no findings.
+    try testing.expectEqual(@as(usize, 0), (try parseOutput(a, .eslint, "", "[]", "/ws/x.ts")).len);
+    try testing.expectEqual(@as(usize, 0), (try parseOutput(a, .eslint, "", "[not json", "/ws/x.ts")).len);
+    try testing.expectEqual(@as(usize, 0), (try parseOutput(a, .eslint, "", "The unix formatter is no longer part of core ESLint.", "/ws/x.ts")).len);
+}
+
+test "projectConfigFor names the files that make a builtin tool the project's formatter" {
+    const pr = projectConfigFor("prettier").?;
+    try testing.expectEqualStrings(".prettierrc", pr.files[0]);
+    try testing.expectEqualStrings("prettier", pr.package_json_key.?);
+    try testing.expectEqualStrings("rustfmt.toml", projectConfigFor("/usr/local/bin/rustfmt").?.files[0]);
+    try testing.expect(projectConfigFor("ruff").?.package_json_key == null);
+    try testing.expect(projectConfigFor("gofmt") == null);
+    try testing.expect(projectConfigFor("zig") == null);
 }

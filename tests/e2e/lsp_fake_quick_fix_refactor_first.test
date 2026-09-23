@@ -1,0 +1,21 @@
+# `lsp.quick_fix` on a server that ignores `only` but does set kinds:
+# the fake's `--actions refactor-first` answers *Extract to method*
+# (`refactor.extract`, writes `// refactored` at the top) and then
+# *Resolve TODO* (`quickfix`). The first action whose kind is the one
+# asked for runs — the second — not item 0.
+write src/main.fk "fn foo() {\n  let x = 1;  \n  foo(x); // TODO later\n}\nfn bar() { foo(); }\n"
+write .fkroot ""
+write .mnml/config.zon .{ .lsp = .{ .fake = .{ .cmd = "$MNML_FAKE_LSP", .args = .{ "--log", "lsp.log", "--actions", "refactor-first" }, .extensions = .{ "fk" }, .root_markers = .{ ".fkroot" } } } }
+open src/main.fk
+expect screen contains "LSP 1"
+key down
+key down
+key right
+key right
+key right
+expect screen contains "main.fk ⚠1"
+command lsp.quick_fix
+expect screen contains "foo(x); // DONE later"
+expect screen lacks "// refactored"
+expect screen lacks "Code actions"
+expect screen lacks "main.fk ⚠1"

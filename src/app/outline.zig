@@ -68,6 +68,10 @@ pub const OutlinePane = struct {
     /// `app.lsp.symbols_gen` as of the last refresh: a server's list
     /// landing since then is a reason to refresh, a text change the other.
     symbols_gen: u64 = 0,
+    /// The source is over the highlight ceiling (`Syntax.overCeiling`):
+    /// no tree, no symbol request, and the list says `outline off · N MB`
+    /// with the size, not `(no symbols)`. Null when the outline is on.
+    off_bytes: ?usize = null,
 
     pub fn init(gpa: Allocator, source: PaneId, title: []const u8) Allocator.Error!OutlinePane {
         return .{ .gpa = gpa, .source = source, .title = try gpa.dupe(u8, title) };
@@ -256,6 +260,15 @@ pub fn refresh(app: *App, id: PaneId) Allocator.Error!void {
     const a = arena.allocator();
     o.clear();
     o.symbols_gen = app.lsp.symbols_gen;
+    o.off_bytes = null;
+    // Over the ceiling nothing is asked and nothing is walked: the pane
+    // says so, honestly, instead of "(no symbols)" for a file full of them.
+    if (src.syntax.overCeiling()) {
+        o.off_bytes = src.syntax.size_bytes;
+        o.clampCursor(0);
+        app.needs_render = true;
+        return;
+    }
     // A language server's symbols first; the tree-sitter walk otherwise.
     const from_server: ?[]const lsp_types.Symbol = if (src.buf.doc.path) |p| lsp.symbolsFor(app, p) else null;
     if (from_server) |syms| {
@@ -403,6 +416,10 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, o: *OutlinePane, area: Rect, focused:
         .focused = focused,
         .query = o.query.items,
         .filter_mode = o.filter_mode,
+        .off_label = if (o.off_bytes) |n| blk: {
+            var size_buf: [24]u8 = undefined;
+            break :blk ui.fmt("{s}", .{syntax.Syntax.sizeLabel(&size_buf, n)});
+        } else null,
     });
 }
 
