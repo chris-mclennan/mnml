@@ -1615,6 +1615,8 @@ fn rotateSplits(app: *App) CommandError!void {
     const pid = layout.parentOf(lid) orelse return app.diag.fail(app.frame.allocator(), "only one pane — nothing to rotate", .{});
     const s = &layout.node(pid).split;
     std.mem.swap(layout_mod.NodeId, &s.first, &s.second);
+    // The tree moved under the zoom: the page comes back to show it.
+    layout.zoomed = null;
     app.needs_render = true;
 }
 

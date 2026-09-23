@@ -100,6 +100,18 @@ pub const Layout = struct {
     gpa: Allocator,
     nodes: std.ArrayListUnmanaged(Node) = .empty,
     root: ?NodeId = null,
+    /// `view.toggle_zoom`: the pane whose leaf alone paints over this
+    /// page's body. Per page — each tab page keeps its own, and
+    /// `session.zon` writes it down per page. The tree underneath is
+    /// untouched, so un-zooming is clearing this and nothing else: the
+    /// ratios, the focus and the other leaves are where they were.
+    ///
+    /// Anything that changes the TREE drops it here, at the mutation,
+    /// rather than at every command that happens to split, close or
+    /// move: a split, a leaf going, a move to an edge, a merge or a
+    /// spread. A tab switch inside the zoomed leaf, a resize or a new
+    /// tab in it is not a change to the tree and keeps it.
+    zoomed: ?PaneId = null,
 
     pub fn init(gpa: Allocator) Layout {
         return .{ .gpa = gpa };
@@ -139,7 +151,7 @@ pub const Layout = struct {
     }
 
     /// The leaf showing `pane` as a tab, if any.
-    pub fn leafOf(self: *Layout, pane: PaneId) ?NodeId {
+    pub fn leafOf(self: *const Layout, pane: PaneId) ?NodeId {
         for (self.nodes.items, 0..) |n, i| switch (n) {
             .leaf => |l| for (l.tabs.items) |t| if (t == pane) return @intCast(i),
             else => {},
@@ -170,6 +182,16 @@ pub const Layout = struct {
             },
             .empty, .free => {},
         }
+    }
+
+    /// The pane the focus lands on when this page comes on screen: the
+    /// zoomed one on a zoomed page — landing anywhere else would move
+    /// the zoom, which follows the focus — else the first leaf's shown
+    /// tab.
+    pub fn landing(self: *const Layout) ?PaneId {
+        if (self.zoomed) |z| if (self.leafOf(z) != null) return z;
+        const l = self.firstLeaf() orelse return null;
+        return self.nodes.items[l].leaf.active;
     }
 
     /// The first leaf in tree order — past any `.empty` slot.
@@ -217,6 +239,9 @@ pub const Layout = struct {
         const l = self.leaf(lid).?;
         const idx = std.mem.indexOfScalar(PaneId, l.tabs.items, pane) orelse return null;
         _ = l.tabs.orderedRemove(idx);
+        // The zoomed pane closing is the zoom going, whatever its leaf
+        // still holds.
+        if (self.zoomed == pane) self.zoomed = null;
         if (l.tabs.items.len == 0) {
             self.removeNode(lid);
             return null;
@@ -240,6 +265,7 @@ pub const Layout = struct {
     /// leaf. A sibling that is itself `.empty` goes too: a split of
     /// nothing but a placeholder has no reason to stay.
     fn removeNode(self: *Layout, id: NodeId) void {
+        self.zoomed = null;
         if (self.parentOf(id)) |pid| {
             const s = self.nodes.items[pid].split;
             const sibling = if (s.first == id) s.second else s.first;
@@ -260,6 +286,7 @@ pub const Layout = struct {
     /// sits after (right / below). Returns the new leaf.
     pub fn split(self: *Layout, pane: PaneId, dir: SplitDir, new_pane: PaneId) Allocator.Error!?NodeId {
         const lid = self.leafOf(pane) orelse return null;
+        self.zoomed = null;
         var nl: Leaf = .{ .active = new_pane };
         try nl.tabs.append(self.gpa, new_pane);
         const new_leaf = try self.alloc(.{ .leaf = nl });
@@ -294,6 +321,7 @@ pub const Layout = struct {
         const lid = self.leafOf(pane) orelse return;
         const root = self.root orelse return;
         if (root == lid) return;
+        self.zoomed = null;
         const l = self.leaf(lid).?;
         const alone = l.tabs.items.len == 1;
         // Every allocation happens before the first mutation, so a
@@ -504,6 +532,7 @@ pub const Layout = struct {
     pub fn mergeToTabs(self: *Layout, arena: Allocator, active: PaneId) Allocator.Error!usize {
         const ls = try self.leaves(arena);
         if (ls.len < 2) return ls.len;
+        self.zoomed = null;
         const panes = try arena.dupe(PaneId, try self.allPanes(arena));
         const shown: PaneId = if (std.mem.indexOfScalar(PaneId, panes, active) != null) active else panes[0];
         // The merged leaf is filled before anything is torn down, so a
@@ -530,6 +559,7 @@ pub const Layout = struct {
         const root = self.root orelse return 0;
         const l = self.leaf(root) orelse return 0;
         if (l.tabs.items.len < 2) return 0;
+        self.zoomed = null;
         const tabs = try arena.dupe(PaneId, l.tabs.items);
         const first = tabs[0];
         l.tabs.shrinkRetainingCapacity(1);
@@ -564,6 +594,7 @@ pub const Layout = struct {
     /// `pane`; returns that leaf, or null when there is no slot.
     pub fn fillFirstEmpty(self: *Layout, pane: PaneId) Allocator.Error!?NodeId {
         const id = self.firstEmptyUnder(self.root orelse return null) orelse return null;
+        self.zoomed = null;
         var l: Leaf = .{ .active = pane };
         try l.tabs.append(self.gpa, pane);
         self.nodes.items[id] = .{ .leaf = l };
@@ -675,6 +706,7 @@ pub const Layout = struct {
     /// leaf outside the subtree is not allowed. Every allocation
     /// happens before the first mutation.
     pub fn buildGrid(self: *Layout, root: NodeId, rows: []const []const ?PaneId) Allocator.Error!void {
+        self.zoomed = null;
         var scratch = std.heap.ArenaAllocator.init(self.gpa);
         defer scratch.deinit();
         const arena = scratch.allocator();

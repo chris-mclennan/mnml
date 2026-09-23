@@ -538,6 +538,7 @@ fn describeSegment(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Tip {
         },
         .clock => .{ .title = "Clock", .detail = "local time (a Z is UTC) · click: local ⇄ UTC · right-click: local / UTC / hide" },
         .workspace => .{ .title = "Workspace", .detail = "click: switch workspace (or the active repo, with several)" },
+        .zoom => .{ .title = "zoom", .detail = "one split fills this tab page; the others are hidden, not closed · click: restore the layout" },
         .dev_profile => .{ .title = "dev profile", .detail = "this is the build being worked on, not the installed mnml · click says where its data root is" },
         _ => null,
     };

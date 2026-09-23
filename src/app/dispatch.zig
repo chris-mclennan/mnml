@@ -73,6 +73,7 @@ const snippets = @import("snippets.zig");
 const outline = @import("outline.zig");
 const md_preview = @import("md_preview.zig");
 const zen = @import("zen.zig");
+const named_layouts = @import("named_layouts.zig");
 const zon_pane = @import("zon_pane.zig");
 const cmd_view = @import("cmd_view.zig");
 const context_menus = @import("context_menus.zig");
@@ -1567,6 +1568,9 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .http_rename => |t| try @import("http_ops.zig").acceptRename(app, t, text),
         .http_description => try http_app.applyDescriptionPrompt(app, text),
         .http_tags => try http_app.applyTagsPrompt(app, text),
+        .layout_save => try named_layouts.acceptSave(app, text),
+        .layout_load => try named_layouts.acceptLoad(app, text),
+        .layout_delete => try named_layouts.acceptDelete(app, text),
     }
 }
 
@@ -1585,6 +1589,7 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
         .trust_workspace => try @import("trust.zig").answer(app, choice),
         .script_install => |i| try @import("scripts.zig").answerInstall(app, i, choice),
         .remove_script => |n| try @import("scripts.zig").answerRemove(app, n, choice),
+        .layout_load => |n| try named_layouts.answerLoad(app, n, choice),
         .replace_confirm => try ex_verbs.answerConfirm(app, choice),
         .review_trust => try @import("workspace_trust.zig").answerReview(app, choice),
         .close_pane => |id| switch (choice) {
@@ -2419,6 +2424,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     .bell => if (right) try context_menus.openBellMenu(app, m.x, m.y) else try runCmd(app, .@"messages.show"),
                     .clock => if (right) try clock_mod.openMenu(app, m.x, m.y) else try runCmd(app, if (app.clock.mode == .utc) .@"clock.local" else .@"clock.utc"),
                     .workspace => if (right) try context_menus.openWorkspaceChipMenu(app, m.x, m.y) else try runCmd(app, if (app.git.repos.items.len > 1) .@"git.switch_repo" else .@"view.switch_workspace"),
+                    .zoom => try runCmd(app, .@"view.toggle_zoom"),
                     .dev_profile => app.toast("dev profile — state in {s} (the installed mnml keeps its own)", .{app.data_root}),
                     _ => {},
                 } else if (seg >= statusline.seg_dyn_base) {

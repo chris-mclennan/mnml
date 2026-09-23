@@ -107,6 +107,9 @@ pub const SegId = enum(u32) {
     bell,
     clock,
     workspace,
+    /// ` zoom ` — this page is zoomed (`view.toggle_zoom`): one split
+    /// fills the body and the rest of the tree is hidden, not gone.
+    zoom,
     /// ` dev ` — this is the build being worked on, not the installed
     /// mnml (`MNML_PROFILE=dev`, `src/config/profile.zig`). The stable
     /// profile paints nothing: you are meant to forget it is a choice.
@@ -455,6 +458,14 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
         try push(&left, arena, Seg.init(ui.fmt("{s} ", .{mode.label}), p.bg_darker, mode_bg).strong().withHit(sl.seg_mode));
     } else {
         try push(&left, arena, Seg.init(ui.fmt(" {s} ", .{mode.label}), p.bg_darker, mode_bg).strong().withHit(sl.seg_mode));
+    }
+
+    // ── the zoom ──
+    // Beside the mode, in the mode's own colour: one split has the
+    // page, and the rest of the tree is waiting to come back. The click
+    // brings it back.
+    if (app.zoomedPane() != null) {
+        try push(&left, arena, Seg.init(" zoom ", p.bg_darker, mode_bg).strong().withHit(SegId.zoom.raw()));
     }
 
     // ── the profile ──

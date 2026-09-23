@@ -1,7 +1,7 @@
 //! The session — `<workspace>/.mnml/session.zon` (E1: persisted state is
 //! ZON). What the workspace looked like when mnml last ran: the open
 //! panes (path, cursor, scroll, wrap, folds, marks; a pty's command
-//! line), every tab page's split tree, the active pane, the tree rail,
+//! line), every tab page's split tree (and its zoom), the active pane, the tree rail,
 //! the right panel, zen, the theme, the harpoon pins, the `:` history,
 //! the recent files, the recent commands, the closed-buffer list and
 //! the toast log.
@@ -67,6 +67,9 @@ const git_app = @import("git.zig");
 const git_client = @import("../git/client.zig");
 const grep = @import("grep.zig");
 const image_pane = @import("image_pane.zig");
+const http_app = @import("http.zig");
+const http_parse = @import("../http/parse.zig");
+const browser_pane = @import("browser_pane.zig");
 const Profile = config_profile.Profile;
 
 pub const format_version: u32 = 1;
@@ -104,7 +107,11 @@ pub const Fold = struct { start: usize, end: usize };
 /// with the "does not parse" toast rather than crashing. Every other
 /// change to `Pane` stays additive — new fields carry defaults, and
 /// `ignore_unknown_fields` lets an older field set read a newer file.
-pub const PaneKind = enum { editor, md_preview, pty, git_status, grep, git_graph, diff, image };
+/// // changed (layouts): `request` and `browser` joined for the named
+/// layouts, which write them; the session itself never does
+/// (`CaptureOpts.extra_kinds`), so a session file stays readable by a
+/// build that does not know them.
+pub const PaneKind = enum { editor, md_preview, pty, git_status, grep, git_graph, diff, image, request, browser };
 
 pub const Pane = struct {
     kind: PaneKind = .editor,
@@ -162,6 +169,14 @@ pub const Pane = struct {
     diff_scope: ?git_client.DiffScope = null,
     /// diff: the revision the scope names, when it names one.
     rev: ?[]const u8 = null,
+    /// request: the `### name` block of `path` it shows; `""` a bare
+    /// `###`, null the file's leading block.
+    block: ?[]const u8 = null,
+    /// request: that block's position among the file's blocks — what
+    /// tells two blocks of one name (two bare `###`) apart.
+    block_index: ?u32 = null,
+    /// browser: the page it was on.
+    url: ?[]const u8 = null,
 };
 
 /// The split tree as the node pool it is in memory: leaves name pane
@@ -170,7 +185,15 @@ pub const Node = union(enum) {
     leaf: struct { active: u32 = 0, tabs: []const u32 = &.{} },
     split: struct { dir: layout_mod.SplitDir = .horizontal, ratio: u16 = 50, first: u32 = 0, second: u32 = 0 },
 };
-pub const Tab = struct { nodes: []const Node = &.{}, root: ?u32 = null };
+pub const Tab = struct {
+    nodes: []const Node = &.{},
+    root: ?u32 = null,
+    /// `view.toggle_zoom`: the zoomed pane, an index into `panes` —
+    /// the page comes back zoomed on it. Null (and left out of the
+    /// file) for a page that was not zoomed; a pane that did not come
+    /// back leaves the page un-zoomed.
+    zoomed: ?u32 = null,
+};
 pub const Closed = struct { path: []const u8 = "", cursor: usize = 0 };
 pub const Message = struct { level: Level = .info, age_ms: i64 = 0, text: []const u8 = "" };
 /// SESSIONS: a display name for a session id.
@@ -337,6 +360,104 @@ fn paneSessionId(app: *App, arena: Allocator, pt: *pty_pane.PtyPane, argv: []con
     return pty_pane.codexSessionIdOfArgv(argv);
 }
 
+/// What `capturePane` may write down beyond the session's own kinds.
+pub const CaptureOpts = struct {
+    /// A request pane (its `.http` file and block) and a browser pane
+    /// (its URL). The session leaves them out — a restart that
+    /// relaunched Chrome behind the user's back is not a restore — and
+    /// a named layout, which is loaded on purpose, keeps them
+    /// (`app/named_layouts.zig`).
+    extra_kinds: bool = false,
+};
+
+/// One pane as the file writes it down, or null when it is not a kind
+/// that can come back (a scratch buffer, a list, a runner's pty). The
+/// strings are the pane's own or `arena`'s — good for as long as the
+/// pane and the arena are.
+pub fn capturePane(app: *App, arena: Allocator, i: PaneId, p: *app_mod.Pane, opts: CaptureOpts) Allocator.Error!?Pane {
+    return switch (p.*) {
+        .editor => |*e| blk: {
+            const file = e.buf.doc.path orelse break :blk null;
+            var folds: std.ArrayListUnmanaged(Fold) = .empty;
+            for (e.buf.editor.folds.keys(), e.buf.editor.folds.values()) |s, en| try folds.append(arena, .{ .start = s, .end = en });
+            var marks: std.ArrayListUnmanaged(Mark) = .empty;
+            var it = e.buf.doc.marks.keyIterator();
+            while (it.next()) |letter| {
+                const pos = e.buf.doc.markPos(letter.*).?;
+                try marks.append(arena, .{ .letter = letter.*, .row = pos.row, .col = pos.col });
+            }
+            break :blk .{
+                .kind = .editor,
+                .path = file,
+                .cursor = e.buf.editor.cursor,
+                .scroll_line = e.view.scroll_line,
+                .scroll_col = e.view.scroll_col,
+                .wrap = e.wrap,
+                .folds = folds.items,
+                .marks = marks.items,
+                .pinned = e.pinned,
+                // // changed (pane-rail): the pane's rail colour,
+                // so a restored window comes back the colour it
+                // was rather than re-rolling off the ladder.
+                .accent = app.panes.accent(i),
+            };
+        },
+        .md_preview => |*m| .{ .kind = .md_preview, .path = m.path, .accent = app.panes.accent(i) },
+        // // changed (session-kinds): the query-shaped panes. Each
+        // writes down what it was ASKED, never what came back — a
+        // restore re-runs the query against today's repo and
+        // today's files.
+        .image => |*im| .{ .kind = .image, .path = im.path, .accent = app.panes.accent(i) },
+        .git_status => |*st| blk: {
+            const repo = app.git.repoById(st.repo) orelse break :blk null;
+            break :blk .{ .kind = .git_status, .repo = repo.path, .cursor = st.cursor, .scroll_line = @intCast(@min(st.scroll, std.math.maxInt(u32))), .accent = app.panes.accent(i) };
+        },
+        .git_graph => |*g| blk: {
+            const repo = app.git.repoById(g.repo) orelse break :blk null;
+            break :blk .{ .kind = .git_graph, .repo = repo.path, .accent = app.panes.accent(i) };
+        },
+        .diff => |*d| blk: {
+            const repo = app.git.repoById(d.repo) orelse break :blk null;
+            // A scope whose subject is a revision cannot be checked
+            // for reachability without running git, and a diff pane
+            // that opens onto an error is worse than one that does
+            // not come back at all.
+            switch (d.scope) {
+                .file, .worktree, .head, .staged => {},
+                .commit, .range, .orig, .conflict => break :blk null,
+            }
+            break :blk .{ .kind = .diff, .repo = repo.path, .diff_scope = d.scope, .path = d.path orelse "", .rev = d.rev, .accent = app.panes.accent(i) };
+        },
+        .grep => |*g| blk: {
+            if (g.query.len == 0) break :blk null;
+            break :blk .{
+                .kind = .grep,
+                .query = g.query,
+                .grep_case = g.flags.case_sensitive,
+                .grep_word = g.flags.whole_word,
+                .grep_regex = g.flags.regex,
+                .cursor = g.cursor,
+                .accent = app.panes.accent(i),
+            };
+        },
+        .pty => |*pt| blk: {
+            // Runner and task ptys are re-created by their owners.
+            if (pt.kind != .shell and pt.kind != .command) break :blk null;
+            // A Claude session started under `--session-id` comes
+            // back with `--resume`: the id is taken once.
+            const argv = try pty_pane.resumeArgv(arena, pt.argv);
+            break :blk .{ .kind = .pty, .argv = argv, .cwd = (try pt.liveCwd(arena)) orelse pt.cwd, .label = pt.label, .renamed = pt.renamed, .accent = pt.accent_color, .session_id = try paneSessionId(app, arena, pt, argv) };
+        },
+        .request => |*rp| blk: {
+            if (!opts.extra_kinds) break :blk null;
+            const file = rp.source_path orelse break :blk null;
+            break :blk .{ .kind = .request, .path = file, .block = rp.block_name, .block_index = rp.block_index, .accent = app.panes.accent(i) };
+        },
+        .browser => |*b| if (opts.extra_kinds) .{ .kind = .browser, .url = b.url, .accent = app.panes.accent(i) } else null,
+        else => null,
+    };
+}
+
 /// The app as a `Saved`, every slice on `arena`.
 pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
     var saved: Saved = .{ .workspace = try canonicalWorkspace(app, arena) };
@@ -348,81 +469,7 @@ pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
     var panes: std.ArrayListUnmanaged(Pane) = .empty;
     for (app.panes.slots.items, 0..) |*slot, i| {
         const p = &(slot.* orelse continue);
-        const sp: ?Pane = switch (p.*) {
-            .editor => |*e| blk: {
-                const file = e.buf.doc.path orelse break :blk null;
-                var folds: std.ArrayListUnmanaged(Fold) = .empty;
-                for (e.buf.editor.folds.keys(), e.buf.editor.folds.values()) |s, en| try folds.append(arena, .{ .start = s, .end = en });
-                var marks: std.ArrayListUnmanaged(Mark) = .empty;
-                var it = e.buf.doc.marks.keyIterator();
-                while (it.next()) |letter| {
-                    const pos = e.buf.doc.markPos(letter.*).?;
-                    try marks.append(arena, .{ .letter = letter.*, .row = pos.row, .col = pos.col });
-                }
-                break :blk .{
-                    .kind = .editor,
-                    .path = file,
-                    .cursor = e.buf.editor.cursor,
-                    .scroll_line = e.view.scroll_line,
-                    .scroll_col = e.view.scroll_col,
-                    .wrap = e.wrap,
-                    .folds = folds.items,
-                    .marks = marks.items,
-                    .pinned = e.pinned,
-                    // // changed (pane-rail): the pane's rail colour,
-                    // so a restored window comes back the colour it
-                    // was rather than re-rolling off the ladder.
-                    .accent = app.panes.accent(@intCast(i)),
-                };
-            },
-            .md_preview => |*m| .{ .kind = .md_preview, .path = m.path, .accent = app.panes.accent(@intCast(i)) },
-            // // changed (session-kinds): the query-shaped panes. Each
-            // writes down what it was ASKED, never what came back — a
-            // restore re-runs the query against today's repo and
-            // today's files.
-            .image => |*im| .{ .kind = .image, .path = im.path, .accent = app.panes.accent(@intCast(i)) },
-            .git_status => |*st| blk: {
-                const repo = app.git.repoById(st.repo) orelse break :blk null;
-                break :blk .{ .kind = .git_status, .repo = repo.path, .cursor = st.cursor, .scroll_line = @intCast(@min(st.scroll, std.math.maxInt(u32))), .accent = app.panes.accent(@intCast(i)) };
-            },
-            .git_graph => |*g| blk: {
-                const repo = app.git.repoById(g.repo) orelse break :blk null;
-                break :blk .{ .kind = .git_graph, .repo = repo.path, .accent = app.panes.accent(@intCast(i)) };
-            },
-            .diff => |*d| blk: {
-                const repo = app.git.repoById(d.repo) orelse break :blk null;
-                // A scope whose subject is a revision cannot be checked
-                // for reachability without running git, and a diff pane
-                // that opens onto an error is worse than one that does
-                // not come back at all.
-                switch (d.scope) {
-                    .file, .worktree, .head, .staged => {},
-                    .commit, .range, .orig, .conflict => break :blk null,
-                }
-                break :blk .{ .kind = .diff, .repo = repo.path, .diff_scope = d.scope, .path = d.path orelse "", .rev = d.rev, .accent = app.panes.accent(@intCast(i)) };
-            },
-            .grep => |*g| blk: {
-                if (g.query.len == 0) break :blk null;
-                break :blk .{
-                    .kind = .grep,
-                    .query = g.query,
-                    .grep_case = g.flags.case_sensitive,
-                    .grep_word = g.flags.whole_word,
-                    .grep_regex = g.flags.regex,
-                    .cursor = g.cursor,
-                    .accent = app.panes.accent(@intCast(i)),
-                };
-            },
-            .pty => |*pt| blk: {
-                // Runner and task ptys are re-created by their owners.
-                if (pt.kind != .shell and pt.kind != .command) break :blk null;
-                // A Claude session started under `--session-id` comes
-                // back with `--resume`: the id is taken once.
-                const argv = try pty_pane.resumeArgv(arena, pt.argv);
-                break :blk .{ .kind = .pty, .argv = argv, .cwd = (try pt.liveCwd(arena)) orelse pt.cwd, .label = pt.label, .renamed = pt.renamed, .accent = pt.accent_color, .session_id = try paneSessionId(app, arena, pt, argv) };
-            },
-            else => null,
-        };
+        const sp: ?Pane = try capturePane(app, arena, @intCast(i), p, .{});
         const sp_val = sp orelse continue;
         index_of[i] = @intCast(panes.items.len);
         try panes.append(arena, sp_val);
@@ -507,7 +554,7 @@ fn dupeList(arena: Allocator, items: []const []u8) Allocator.Error![]const []con
     return out;
 }
 
-fn captureLayout(arena: Allocator, l: *const Layout, index_of: []const ?u32) Allocator.Error!Tab {
+pub fn captureLayout(arena: Allocator, l: *const Layout, index_of: []const ?u32) Allocator.Error!Tab {
     // Compact node ids: free slots go, the rest renumber in order.
     const remap = try arena.alloc(?u32, l.nodes.items.len);
     var next: u32 = 0;
@@ -538,7 +585,8 @@ fn captureLayout(arena: Allocator, l: *const Layout, index_of: []const ?u32) All
             .second = remap[s.second] orelse 0,
         } }),
     };
-    return .{ .nodes = nodes.items, .root = if (l.root) |r| remap[r] else null };
+    const zoomed: ?u32 = if (l.zoomed) |z| (if (z < index_of.len and l.leafOf(z) != null) index_of[z] else null) else null;
+    return .{ .nodes = nodes.items, .root = if (l.root) |r| remap[r] else null, .zoomed = zoomed };
 }
 
 // ─── restore ─────────────────────────────────────────────────────────────
@@ -643,7 +691,7 @@ pub fn apply(app: *App, arena: Allocator, saved: Saved) RestoreError!void {
         app.showPane(id);
     } else {
         const layout = app.layouts.current();
-        if (layout.firstLeaf()) |l| app.setActive(layout.leaf(l).?.active);
+        app.setActive(layout.landing());
     }
 
     // Chrome.
@@ -728,14 +776,30 @@ pub fn apply(app: *App, arena: Allocator, saved: Saved) RestoreError!void {
     app.needs_render = true;
 }
 
-const OpenError = Allocator.Error || error{Skipped};
+pub const OpenError = Allocator.Error || error{Skipped};
 
 /// One saved pane back into the store. `Skipped` for anything that
 /// cannot be reopened (a file that went away, a pty where there is none).
 /// `opened` is what this restore has brought back so far: a file already
 /// among them was saved from two windows, and gets its second one.
 fn openSaved(app: *App, sp: Pane, opened: []const ?PaneId) OpenError!?PaneId {
-    const id = try openSavedPane(app, sp, opened);
+    return openSavedWith(app, sp, opened, .{});
+}
+
+/// How `openSavedWith` treats what it opens.
+pub const OpenOpts = struct {
+    /// A terminal with a command line comes back running it, not
+    /// dormant. The session's rule 3 exists because a restart is not
+    /// the user asking for their build again; loading a named layout
+    /// is — and whether this workspace may run it at all was decided
+    /// before (`app/named_layouts.zig`'s trust rule).
+    run_commands: bool = false,
+};
+
+/// `openSaved` with options — the named layouts' door into the same
+/// per-kind reopening the session uses.
+pub fn openSavedWith(app: *App, sp: Pane, opened: []const ?PaneId, opts: OpenOpts) OpenError!?PaneId {
+    const id = try openSavedPane(app, sp, opened, opts);
     // // changed (pane-rail): the colour the pane wore is put back over
     // the slot `PaneStore.add` just handed it. A pty holds its own
     // (`accent_color` on the pane, passed to `open`), so this is for
@@ -803,7 +867,7 @@ pub fn terminalRestore(app: *const App, sp: Pane) TerminalRestore {
     return .{ .resumed = id };
 }
 
-fn openSavedPane(app: *App, sp: Pane, opened: []const ?PaneId) OpenError!?PaneId {
+fn openSavedPane(app: *App, sp: Pane, opened: []const ?PaneId, opts: OpenOpts) OpenError!?PaneId {
     switch (sp.kind) {
         .editor => {
             if (sp.path.len == 0) return null;
@@ -909,6 +973,21 @@ fn openSavedPane(app: *App, sp: Pane, opened: []const ?PaneId) OpenError!?PaneId
                 else => return null,
             };
         },
+        .request => {
+            if (sp.path.len == 0) return null;
+            const idx = (try requestBlockIndex(app, sp.path, sp.block, sp.block_index)) orelse return null;
+            return http_app.openFileBlock(app, sp.path, idx) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return null,
+            };
+        },
+        .browser => {
+            const url = sp.url orelse return null;
+            return browser_pane.open(app, url) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return null,
+            };
+        },
         .pty => {
             if (!pty_pane.supported) return null;
             // The three rules, in `terminalRestore`.
@@ -945,7 +1024,7 @@ fn openSavedPane(app: *App, sp: Pane, opened: []const ?PaneId) OpenError!?PaneId
                 .placement = .tab,
                 .kind = if (argv.len == 0) .shell else .command,
                 .accent_color = sp.accent,
-                .dormant = plan == .dormant,
+                .dormant = plan == .dormant and !opts.run_commands,
             }) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => return null,
@@ -954,10 +1033,34 @@ fn openSavedPane(app: *App, sp: Pane, opened: []const ?PaneId) OpenError!?PaneId
     }
 }
 
+/// Which block of the `.http` file at `file` a saved request pane
+/// named — the one at its saved position when that one still has the
+/// saved name, else the first of that name (the leading block for
+/// null). Null when the file went away or no longer has that block.
+fn requestBlockIndex(app: *App, file: []const u8, block: ?[]const u8, at: ?u32) Allocator.Error!?u32 {
+    var arena_state = std.heap.ArenaAllocator.init(app.gpa);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const text = Io.Dir.cwd().readFileAlloc(app.io, file, a, .limited(16 << 20)) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return null,
+    };
+    const list = try http_parse.blocks(a, text);
+    const Same = struct {
+        fn is(b: http_parse.Block, want: ?[]const u8) bool {
+            return if (want) |w| (b.name != null and std.mem.eql(u8, b.name.?, w)) else b.name == null;
+        }
+    };
+    if (at) |i| if (i < list.len and Same.is(list[i], block)) return i;
+    for (list, 0..) |b, i| if (Same.is(b, block)) return @intCast(i);
+    // A file of one unnamed block reads as its leading block.
+    return if (block == null and list.len > 0) 0 else null;
+}
+
 /// A `Layout` from a saved tab. Pane indices that did not come back
 /// become `sentinel` tabs and are swept; a pool that is not a tree
 /// (a node referenced twice, an index out of range) is an empty layout.
-fn buildLayout(gpa: Allocator, tab: Tab, ids: []const ?PaneId) Allocator.Error!Layout {
+pub fn buildLayout(gpa: Allocator, tab: Tab, ids: []const ?PaneId) Allocator.Error!Layout {
     var l = Layout.init(gpa);
     errdefer l.deinit();
     if (!wellFormed(tab)) return l;
@@ -980,6 +1083,10 @@ fn buildLayout(gpa: Allocator, tab: Tab, ids: []const ?PaneId) Allocator.Error!L
     };
     l.root = tab.root;
     while (l.leafOf(sentinel) != null) _ = l.removePane(sentinel);
+    // After the sweep, which drops a zoom whenever it collapses a leaf.
+    if (tab.zoomed) |zi| if (zi < ids.len) if (ids[zi]) |pid| if (l.leafOf(pid) != null) {
+        l.zoomed = pid;
+    };
     return l;
 }
 
@@ -1096,6 +1203,51 @@ const Fixture = struct {
         return false;
     }
 };
+
+test "session: each tab page's zoom comes back — page 1 zoomed on its second split, page 2 on its first, a page with no zoom writes none" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    for ([_][]const u8{ "a.txt", "b.txt", "c.txt", "d.txt" }) |n| try f.tmp.dir.writeFile(t.io, .{ .sub_path = n, .data = "x\n" });
+    const paths = [_][]u8{ try f.abs("a.txt"), try f.abs("b.txt"), try f.abs("c.txt"), try f.abs("d.txt") };
+    defer for (paths) |p| t.allocator.free(p);
+    {
+        var app = try f.app();
+        defer app.deinit();
+        _ = try app.openPath(paths[0]);
+        try command.run(&app, .{ .static = .@"view.split_right" });
+        _ = try app.openPath(paths[1]);
+        try command.run(&app, .{ .static = .@"view.toggle_zoom" });
+        try command.run(&app, .{ .static = .@"tab.new" });
+        _ = try app.openPath(paths[2]);
+        try command.run(&app, .{ .static = .@"view.split_right" });
+        _ = try app.openPath(paths[3]);
+        app.setActive(app.panes.findPath(paths[2]).?);
+        try command.run(&app, .{ .static = .@"view.toggle_zoom" });
+        try command.run(&app, .{ .static = .@"tab.new" });
+        try command.run(&app, .{ .static = .@"tab.first" });
+        try save(&app);
+        const text = try Io.Dir.cwd().readFileAlloc(t.io, try path(&app, app.frame.allocator()), app.frame.allocator(), .limited(1 << 20));
+        // Two pages zoomed, the third not: two `.zoomed` fields.
+        try t.expectEqual(@as(usize, 2), std.mem.count(u8, text, ".zoomed"));
+    }
+    {
+        var app = try f.app();
+        defer app.deinit();
+        try restore(&app);
+        try t.expectEqual(@as(usize, 3), app.layouts.layouts.items.len);
+        try t.expectEqual(@as(usize, 0), app.layouts.active);
+        try t.expectEqualStrings(paths[1], app.activeEditor().?.buf.doc.path.?);
+        try t.expect(app.panes.editor(app.zoomedPane().?).?.buf.doc.isAt(paths[1]));
+        try t.expectEqual(@as(usize, 2), (try app.layouts.current().leaves(app.frame.allocator())).len);
+        const z2 = app.layouts.layouts.items[1].zoomed.?;
+        try t.expect(app.panes.editor(z2).?.buf.doc.isAt(paths[2]));
+        try t.expect(app.layouts.layouts.items[2].zoomed == null);
+        // Switching to page 2 lands on its zoomed split and keeps it.
+        try command.run(&app, .{ .static = .@"tab.next" });
+        try t.expectEqual(z2, app.active.?);
+        try t.expectEqual(z2, app.zoomedPane().?);
+    }
+}
 
 test "session: save → restore brings back the panes, the split, the tab pages, the cursor, folds, pins and history" {
     var f = try Fixture.init();

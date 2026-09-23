@@ -90,7 +90,6 @@ pub fn host(app: *App, id: PaneId) Allocator.Error!void {
         app.bottom.active = std.mem.indexOfScalar(PaneId, app.bottom.panes.items, id).?;
     } else {
         _ = app.layouts.current().removePane(id);
-        if (app.zoomed_leaf == id) app.zoomed_leaf = null;
         try app.bottom.panes.append(app.gpa, id);
         app.bottom.active = app.bottom.panes.items.len - 1;
     }

@@ -1264,6 +1264,78 @@ the band is not watched at all, so the strip neither reveals nor
 stays, and its grip goes with it. Closing the line asks for a fresh
 `reveal_ms` rather than popping the strip up the same frame.
 
+## Split zoom
+
+`view.toggle_zoom` — vim `Ctrl-W z`, standard `Ctrl+K Ctrl+Z`, which-key
+`space s z`, the tab strip's maximize button (with `ui.maximize_click =
+.zoom_pane`, the default) — gives the focused split the whole editor
+area. The other splits of the tab page are hidden, not closed: the tab
+strip shows only the zoomed split's tabs, the statusline carries a
+` zoom ` chip in the mode chip's colour, and the same command (or a
+click on the chip) puts the layout back exactly — the ratios, the focus
+and the other pages are never touched. While zoomed the zoom follows
+the focus, so a focus step shows the split it lands in rather than
+sending keys to one nobody can see.
+
+Anything that changes the split tree un-zooms first: a split, closing
+the zoomed pane or a split, a move (`Ctrl-W H/J/K/L`), a rotate, the
+split leaving for a page of its own (`Ctrl-W T`). A tab switch inside
+the zoomed split, a resize or a new tab in it keeps the zoom. The zoom
+is per tab page — a new page starts un-zoomed, and switching back to a
+zoomed page lands on its zoomed split — and it is written to
+`.mnml/session.zon` per page, so a restart comes back zoomed. Full
+screen (`view.fullscreen`) composes with it: full screen hides the
+chrome, the zoom hides the sibling splits, and with both on one pane has
+the window.
+
+## Named layouts
+
+A named layout is one tab page written down under a name and put back
+on demand. `:layout save <name>` (or `layout.save`, which prompts) writes
+the current page to `.mnml/layouts/<name>.zon`: its split tree with the
+ratios, which pane is focused, its zoom, and for every pane its kind and
+what reopens it — a file's path (editor, markdown preview, image), a
+terminal's cwd and command line, an AI session's CLI and id (it comes
+back resumed), an `.http` file and its `### block`, a browser pane's
+URL, a git status / graph / worktree diff by repo, a Search by its query
+and options. It is the same shape `.mnml/session.zon` uses for a page,
+plus the request and browser panes the session leaves out. Paths under
+the workspace are written relative to it, so a layout can be committed
+and used from another clone. Scratch buffers and list panes are left
+out; a page with nothing else is refused.
+
+| | |
+|---|---|
+| `:layout save <name>` · `layout.save` | write this tab page under `<name>` (letters, digits, `-` `_` `.`, not first; 64 at most); the same name overwrites |
+| `:layout load <name>` · `layout.load` | replace this tab page with the layout |
+| `:layout load! <name>` | the same without the unsaved-changes question |
+| `layout.pick` | a picker over the saved layouts, each with its pane / split count and what it holds; the pick loads |
+| `:layout delete <name>` · `layout.delete` | delete the file |
+| `:layout list` (or a bare `:layout`) | toast the saved names |
+
+The View menu's *Layouts* submenu and which-key `space W` (`s` save,
+`l` pick, `n` load by name, `d` delete) carry the same four commands.
+
+Loading replaces the current tab page. Its panes that no other page
+shows close; when any of them has unsaved changes the confirm box asks
+first (Cancel holds the focus), and on Load those stay open as
+background tabs of the new page — nothing is lost, and `tab.reopen`
+brings the replaced page's files back. A pane whose subject went away
+(a deleted file, a directory that is no longer a repo, no Chrome for a
+browser pane) is skipped and counted in the toast. A terminal with a
+command line comes back running it — unlike a session restore, a load
+is the user asking for it.
+
+**Trust.** A layout file is workspace content, so its terminal commands
+and AI sessions are exec-bearing: in an untrusted workspace they are
+refused with a toast (the rest of the layout opens), as `.startup.layout`'s
+pty entries are (Workspace trust above). The exception is a file this
+mnml wrote: `save` records a fingerprint of the file's command lines and
+their cwds in `<data root>/written_layouts.zon`, and a file whose commands
+still match it loads them anywhere — edit a command by hand and it is
+someone else's again. A plain shell (no command) runs nothing the file
+chose and is never refused.
+
 ## Session worktrees
 
 A Claude / Codex session can start in a git worktree of its own —

@@ -73,17 +73,32 @@ pub fn set(app: *App, on: bool) void {
     app.needs_render = true;
 }
 
-/// `view.toggle_zoom` (`space z z`, the strip's maximize button's
-/// menu): the active pane's leaf alone fills the body; the same call
-/// on it restores; on another leaf the zoom moves there (Rust's
-/// `toggle_zoom_active_leaf`). The split tree is untouched, so
-/// `Ctrl+W` and the dividers still address the real layout.
+/// `view.toggle_zoom` (`Ctrl-W z`, `Ctrl+K Ctrl+Z`, `space s z`, the
+/// strip's maximize button, the `zoom` chip): the focused split alone
+/// fills the page's body; the same call restores. The state is the
+/// page's (`Layout.zoomed`), so each tab page keeps its own and
+/// `session.zon` brings it back. The split tree underneath is
+/// untouched — un-zooming is clearing the field, so the ratios, the
+/// focus and the other leaves come back exactly as they were — and
+/// anything that changes the tree (a split, a close, a move, `Ctrl-W
+/// T`) un-zooms first, in `layout.zig`. While zoomed the zoom follows
+/// the focus (`App.setActive`), so a focus step never sends the keys
+/// to a split nobody can see.
+///
+/// Full screen composes with it: zen hides the chrome, the zoom hides
+/// the sibling splits, and with both on one pane has the window.
 fn toggleZoom(app: *App) CommandError!void {
     const active = app.active orelse {
         app.toast("nothing to maximize — open a pane first", .{});
         return;
     };
-    app.zoomed_leaf = if (app.zoomed_leaf == active) null else active;
+    const layout = app.layouts.current();
+    if (app.zoomedPane() != null) {
+        layout.zoomed = null;
+    } else {
+        if (layout.leafOf(active) == null) return app.diag.fail(app.frame.allocator(), "the focused pane is not in a split — nothing to zoom", .{});
+        layout.zoomed = active;
+    }
     app.needs_render = true;
 }
 
@@ -114,7 +129,7 @@ pub fn modeLabel(mode: Config.MaximizeClick) []const u8 {
 /// the chrome the zoom keeps. With nothing on, it is the mode.
 pub fn clickCommand(app: *const App) command.CommandId {
     if (app.zen) return .@"view.fullscreen";
-    if (app.zoomed_leaf != null) return .@"view.toggle_zoom";
+    if (app.zoomedPane() != null) return .@"view.toggle_zoom";
     return commandFor(app.cfg.ui.maximize_click);
 }
 
@@ -134,7 +149,7 @@ pub fn commandFor(mode: Config.MaximizeClick) command.CommandId {
 fn resetLayout(app: *App) CommandError!void {
     set(app, false);
     app.dismissToast(esc_toast_id);
-    app.zoomed_leaf = null;
+    app.layouts.current().zoomed = null;
     side.place(app, .explorer, false);
     app.tree.width = app.cfg.ui.tree_width;
     if (app.cfg.ui.menu_bar == .hidden) {
@@ -325,7 +340,7 @@ test "zoom: the active leaf alone paints over the body; again restores; another 
     app.tree.loaded = true;
     // No pane: a word, nothing set.
     try command.run(&app, .{ .static = .@"view.toggle_zoom" });
-    try t.expect(app.zoomed_leaf == null);
+    try t.expect(app.zoomedPane() == null);
     try t.expectEqualStrings("nothing to maximize — open a pane first", lastToast(&app));
     const a = try app.openScratch();
     try command.run(&app, .{ .static = .@"view.split_right" });
@@ -336,7 +351,7 @@ test "zoom: the active leaf alone paints over the body; again restores; another 
     try t.expect(paneRect(&app, b).?.w < app.panes_area.w);
     // Zoom: one pane, the whole body; the tree underneath keeps two leaves.
     try command.run(&app, .{ .static = .@"view.toggle_zoom" });
-    try t.expectEqual(b, app.zoomed_leaf.?);
+    try t.expectEqual(b, app.zoomedPane().?);
     try app.render();
     try t.expectEqual(@as(usize, 1), panesPainted(&app));
     try t.expect(paneRect(&app, a) == null);
@@ -345,22 +360,158 @@ test "zoom: the active leaf alone paints over the body; again restores; another 
     try t.expectEqual(@as(usize, 2), (try app.layouts.current().leaves(app.frame.allocator())).len);
     // Again restores.
     try command.run(&app, .{ .static = .@"view.toggle_zoom" });
-    try t.expect(app.zoomed_leaf == null);
+    try t.expect(app.zoomedPane() == null);
     try app.render();
     try t.expectEqual(@as(usize, 2), panesPainted(&app));
-    // Zoomed on `a`, the call from `b` moves the zoom rather than
-    // asking for an un-zoom of a hidden leaf first.
+    // Zoomed on `a`, a focus step to `b` takes the zoom with it — the
+    // page shows the focused split, never a hidden one with the keys.
     app.setActive(a);
     try command.run(&app, .{ .static = .@"view.toggle_zoom" });
-    try t.expectEqual(a, app.zoomed_leaf.?);
+    try t.expectEqual(a, app.zoomedPane().?);
     app.setActive(b);
-    try command.run(&app, .{ .static = .@"view.toggle_zoom" });
-    try t.expectEqual(b, app.zoomed_leaf.?);
-    // The zoomed pane closing clears the zoom.
-    try app.forceClosePane(b);
-    try t.expect(app.zoomed_leaf == null);
+    try t.expectEqual(b, app.zoomedPane().?);
     try app.render();
     try t.expectEqual(@as(usize, 1), panesPainted(&app));
+    try t.expect(paneRect(&app, b) != null);
+    // The zoomed pane closing clears the zoom.
+    try app.forceClosePane(b);
+    try t.expect(app.zoomedPane() == null);
+    try app.render();
+    try t.expectEqual(@as(usize, 1), panesPainted(&app));
+}
+
+/// Every split's ratio in node order — what an un-zoom must put back.
+fn ratiosOf(layout: *const app_mod.Layout, arena: std.mem.Allocator) ![]u16 {
+    var out: std.ArrayListUnmanaged(u16) = .empty;
+    for (layout.nodes.items) |n| switch (n) {
+        .split => |sp| try out.append(arena, sp.ratio),
+        else => {},
+    };
+    return out.items;
+}
+
+/// The statusline: the row above the `:` line.
+fn statusRow(app: *App) ![]const u8 {
+    return rowText(app, app.screen.height - 2);
+}
+
+test "zoom: a 3-split page zooms the focused split and restores it exactly — ratios, focus, the tab pages; the zoom is per page; a tree change un-zooms first" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    app.tree.loaded = true;
+    // Not the frame arena: every render resets it.
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    // Page 1: a | (b / c), with the dividers dragged off centre.
+    const a = try app.openScratch();
+    try command.run(&app, .{ .static = .@"view.split_right" });
+    const b = app.active.?;
+    try command.run(&app, .{ .static = .@"view.split_down" });
+    const c = app.active.?;
+    const page1 = app.layouts.current();
+    for (page1.nodes.items, 0..) |n, i| if (n == .split) page1.setRatio(@intCast(i), if (n.split.dir == .horizontal) 30 else 70);
+    const ratios = try arena.dupe(u16, try ratiosOf(page1, arena));
+    try t.expectEqual(@as(usize, 2), ratios.len);
+    app.setActive(b);
+    try app.render();
+    try t.expectEqual(@as(usize, 3), panesPainted(&app));
+    try t.expect(std.mem.indexOf(u8, try statusRow(&app), " zoom ") == null);
+
+    // Zoom b: one pane, the whole body, one strip; the chip says so.
+    try command.run(&app, .{ .static = .@"view.toggle_zoom" });
+    try t.expectEqual(b, app.zoomedPane().?);
+    try app.render();
+    try t.expectEqual(@as(usize, 1), panesPainted(&app));
+    try t.expectEqual(app.panes_area.w, paneRect(&app, b).?.w);
+    try t.expectEqual(app.panes_area.h, paneRect(&app, b).?.h);
+    try t.expect(paneRect(&app, a) == null and paneRect(&app, c) == null);
+    try t.expect(std.mem.indexOf(u8, try statusRow(&app), " zoom ") != null);
+    // The tree underneath has not moved.
+    try t.expectEqual(@as(usize, 3), (try page1.leaves(arena)).len);
+    try t.expectEqualSlices(u16, ratios, try ratiosOf(page1, arena));
+
+    // A second page starts un-zoomed; page 1 keeps its zoom meanwhile.
+    try command.run(&app, .{ .static = .@"tab.new" });
+    try t.expectEqual(@as(usize, 1), app.layouts.active);
+    try t.expect(app.zoomedPane() == null);
+    try app.render();
+    try t.expect(std.mem.indexOf(u8, try statusRow(&app), " zoom ") == null);
+    try t.expectEqual(b, app.layouts.layouts.items[0].zoomed.?);
+    // Zoom page 2 on a split of its own.
+    const d = app.active.?;
+    try command.run(&app, .{ .static = .@"view.split_right" });
+    const e = app.active.?;
+    app.setActive(d);
+    try command.run(&app, .{ .static = .@"view.toggle_zoom" });
+    try t.expectEqual(d, app.zoomedPane().?);
+    _ = e;
+    // Back on page 1 the focus lands on its zoomed split, not its
+    // first leaf — landing elsewhere would have moved the zoom.
+    try command.run(&app, .{ .static = .@"tab.prev" });
+    try t.expectEqual(@as(usize, 0), app.layouts.active);
+    try t.expectEqual(b, app.active.?);
+    try t.expectEqual(b, app.zoomedPane().?);
+
+    // Restore: the same command, and the page is what it was.
+    try command.run(&app, .{ .static = .@"view.toggle_zoom" });
+    try t.expect(app.zoomedPane() == null);
+    try t.expectEqual(b, app.active.?);
+    try t.expectEqualSlices(u16, ratios, try ratiosOf(page1, arena));
+    try app.render();
+    try t.expectEqual(@as(usize, 3), panesPainted(&app));
+    try t.expect(std.mem.indexOf(u8, try statusRow(&app), " zoom ") == null);
+    // Page 2's zoom was its own and is still there.
+    try t.expectEqual(d, app.layouts.layouts.items[1].zoomed.?);
+
+    // A tree change while zoomed un-zooms first: a split,
+    try command.run(&app, .{ .static = .@"view.toggle_zoom" });
+    try command.run(&app, .{ .static = .@"view.split_right" });
+    try t.expect(app.zoomedPane() == null);
+    try t.expectEqual(@as(usize, 4), (try page1.leaves(arena)).len);
+    // a move to an edge,
+    try command.run(&app, .{ .static = .@"view.toggle_zoom" });
+    try command.run(&app, .{ .static = .@"view.move_split_left" });
+    try t.expect(app.zoomedPane() == null);
+    // a close,
+    try command.run(&app, .{ .static = .@"view.toggle_zoom" });
+    try app.forceClosePane(app.active.?);
+    try t.expect(app.zoomedPane() == null);
+    try t.expectEqual(@as(usize, 3), (try page1.leaves(arena)).len);
+    // and the focused split leaving for a page of its own.
+    app.setActive(a);
+    try command.run(&app, .{ .static = .@"view.toggle_zoom" });
+    try command.run(&app, .{ .static = .@"view.move_to_new_tab" });
+    try t.expect(app.layouts.layouts.items[0].zoomed == null);
+    try t.expectEqual(@as(usize, 3), app.layouts.layouts.items.len);
+    // A tab switch inside the zoomed leaf is not a tree change.
+    try command.run(&app, .{ .static = .@"tab.first" });
+    const f = app.active.?;
+    try command.run(&app, .{ .static = .@"view.toggle_zoom" });
+    _ = try app.openScratch();
+    try t.expect(app.zoomedPane() != null);
+    try t.expectEqual(app.layouts.current().leafOf(f), app.layouts.current().leafOf(app.zoomedPane().?));
+}
+
+test "zoom composes with full screen: both on is one pane and no chrome; either off leaves the other" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 24 });
+    defer app.deinit();
+    app.tree.visible = false;
+    app.tree.loaded = true;
+    _ = try app.openScratch();
+    try command.run(&app, .{ .static = .@"view.split_right" });
+    const b = app.active.?;
+    try command.run(&app, .{ .static = .@"view.toggle_zoom" });
+    try command.run(&app, .{ .static = .@"view.fullscreen" });
+    try app.render();
+    try t.expectEqual(@as(usize, 1), panesPainted(&app));
+    try t.expectEqual(@as(u16, 100), paneRect(&app, b).?.w);
+    try t.expectEqual(@as(u16, 0), paneRect(&app, b).?.y);
+    try command.run(&app, .{ .static = .@"view.fullscreen" });
+    try app.render();
+    try t.expectEqual(@as(usize, 1), panesPainted(&app));
+    try t.expect(std.mem.indexOf(u8, try statusRow(&app), " zoom ") != null);
 }
 
 test "reset_layout: leaves full screen and the zoom, shows the tree at the config width, brings hidden bars back, equalizes, keeps the panes; `:resetview` is it" {
@@ -385,10 +536,10 @@ test "reset_layout: leaves full screen and the zoom, shows the tree at the confi
     app.cfg.ui.menu_bar = .hidden;
     app.cfg.ui.activity_bar = .hidden;
     try t.expect(app.zen);
-    try t.expect(app.zoomed_leaf != null);
+    try t.expect(app.zoomedPane() != null);
     try command.run(&app, .{ .static = .@"view.reset_layout" });
     try t.expect(!app.zen);
-    try t.expect(app.zoomed_leaf == null);
+    try t.expect(app.zoomedPane() == null);
     try t.expect(app.tree.visible);
     try t.expect(side.shown(&app, .left) == .explorer);
     try t.expectEqual(app.cfg.ui.tree_width, app.tree.width);
@@ -547,18 +698,18 @@ test "the maximize button: `ui.maximize_click` picks what a left click runs, and
     // leaves the chrome alone.
     try clickMaximize(&app);
     try t.expect(!app.zen);
-    try t.expectEqual(b, app.zoomed_leaf.?);
+    try t.expectEqual(b, app.zoomedPane().?);
     // Zoomed, the button is the restore.
     try t.expectEqual(command.CommandId.@"view.toggle_zoom", clickCommand(&app));
     try clickMaximize(&app);
-    try t.expect(app.zoomed_leaf == null);
+    try t.expect(app.zoomedPane() == null);
 
     // The other mode: the same click drops the chrome instead.
     app.cfg.ui.maximize_click = .fullscreen;
     try app.render();
     try clickMaximize(&app);
     try t.expect(app.zen);
-    try t.expect(app.zoomed_leaf == null);
+    try t.expect(app.zoomedPane() == null);
 
     // Inside full screen the button leaves it — it never toggles the
     // zoom underneath, whichever mode is configured.
@@ -574,7 +725,7 @@ test "the maximize button: `ui.maximize_click` picks what a left click runs, and
     try t.expectEqual(command.CommandId.@"view.toggle_zoom", clickCommand(&app));
     try app.render();
     try clickMaximize(&app);
-    try t.expect(app.zoomed_leaf == null);
+    try t.expect(app.zoomedPane() == null);
     try t.expect(!app.zen);
 
     // The strip's own restore mark, while zoomed and in full screen —

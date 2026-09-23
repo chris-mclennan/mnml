@@ -1,0 +1,111 @@
+# width: 120
+# height: 40
+# Pane zoom (`view.toggle_zoom`): the focused split takes the whole
+# editor area, the tab strip shows only its tabs, the statusline says
+# `zoom`, and the same chord puts the layout back exactly. The zoom is
+# the tab page's: another page is not zoomed by it, and a restart
+# (`session.save` / `session.restore`) comes back zoomed.
+write a.txt "alpha alpha\n"
+write b.txt "bravo bravo\n"
+write c.txt "charlie charlie\n"
+write d.txt "delta delta\n"
+open a.txt
+command editor.use_vim
+command view.split_right
+open b.txt
+command view.split_down
+open c.txt
+command view.focus_up
+expect pane b.txt
+expect screen contains "alpha alpha"
+expect screen contains "bravo bravo"
+expect screen contains "charlie charlie"
+expect screen lacks " zoom "
+
+# vim: `Ctrl-W z` (tmux's letter). One split, the whole body — one
+# strip, the zoomed leaf's — and the chip is up.
+key ctrl+w
+key z
+wait 200
+expect pane b.txt
+expect screen contains "bravo bravo"
+expect screen lacks "alpha alpha"
+expect screen lacks "charlie charlie"
+expect screen contains " zoom "
+# A focus step while zoomed takes the zoom with it — the keys never go
+# to a split nobody can see.
+command view.focus_down
+expect pane c.txt
+expect screen contains "charlie charlie"
+expect screen lacks "bravo bravo"
+command view.focus_up
+expect pane b.txt
+
+# Again restores: all three splits, the focus still on b.
+key ctrl+w
+key z
+wait 200
+expect pane b.txt
+expect screen contains "alpha alpha"
+expect screen contains "bravo bravo"
+expect screen contains "charlie charlie"
+expect screen lacks " zoom "
+
+# The pending `Ctrl-W` popup lists the chord.
+key ctrl+w
+wait 400
+expect screen contains "zoom / restore"
+key esc
+
+# A second tab page is not zoomed by the first page's zoom.
+key ctrl+w
+key z
+wait 200
+command tab.new
+expect screen lacks " zoom "
+open d.txt
+expect screen contains "delta delta"
+command tab.prev
+expect pane b.txt
+expect screen contains " zoom "
+expect screen lacks "alpha alpha"
+
+# A split while zoomed un-zooms first.
+command view.split_right
+expect screen lacks " zoom "
+expect screen contains "alpha alpha"
+expect screen contains "charlie charlie"
+command view.close_split
+open b.txt
+expect pane b.txt
+
+# The zoom rides in the session: saved zoomed, restored zoomed.
+key ctrl+w
+key z
+wait 200
+expect screen contains " zoom "
+command session.save
+expect file .mnml/session.zon contains ".zoomed"
+command session.restore
+wait 300
+expect screen contains "session restored"
+expect pane b.txt
+expect screen contains " zoom "
+expect screen contains "bravo bravo"
+expect screen lacks "alpha alpha"
+expect screen lacks "charlie charlie"
+
+# standard: `Ctrl+K Ctrl+Z` (VS Code's zen chord `Ctrl+K Z` is full
+# screen here).
+command editor.use_standard
+key ctrl+k
+key ctrl+z
+wait 300
+expect screen lacks " zoom "
+expect screen contains "alpha alpha"
+expect screen contains "charlie charlie"
+key ctrl+k
+key ctrl+z
+wait 300
+expect screen contains " zoom "
+expect screen lacks "alpha alpha"

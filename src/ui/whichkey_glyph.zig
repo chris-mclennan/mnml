@@ -82,6 +82,7 @@ pub const by_group = [_]Row{
     .{ .key = "+integrations", .glyph = railGlyph(.integrations), .fallback = "i" }, // the rail's INTEGRATIONS
     .{ .key = "+insert", .glyph = "\u{f121}", .fallback = "s" }, //  fa-code, a snippet
     .{ .key = "+harpoon", .glyph = "\u{f08d}", .fallback = "^" }, //  fa-thumb_tack, the menus' pin verb
+    .{ .key = "+layouts", .glyph = "\u{f009}", .fallback = "#" }, //  fa-th_large, a page of splits
 };
 
 /// The glyph for a group label (`+find`), or the neutral one. The root
