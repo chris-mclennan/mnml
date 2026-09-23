@@ -1707,9 +1707,11 @@ test "vim marks, macros and visual mode" {
     try vim("<c-v>jd", "|ab\ncd", "|b\nd");
     try vim("<c-v>jld", "a|bcd\nefgh\nij", "a|d\neh\nij");
     try vim("<c-v>jlx", "a|bcd\nefgh", "a|d\neh");
-    try vim("<c-v>jldp", "a|bcd\nefgh", "adbc\nf|g\neh"); // the block is in the register charwise (Rust parity)
-    try vim("<c-v>jly$p", "a|bcd\nefgh", "abcdbc\nf|g\nefgh");
-    try vim("<c-v>jlyP", "a|bcd\nefgh", "abc\nfg|bcd\nefgh"); // `y` parks at the rectangle's top-left; `P` lands after the text
+    // A block register puts back as a block (`:help blockwise-register`;
+    // Neovim 0.12.5: `adbc` / `ehfg`, the cursor on the block's top-left).
+    try vim("<c-v>jldp", "a|bcd\nefgh", "ad|bc\nehfg");
+    try vim("<c-v>jly$p", "a|bcd\nefgh", "abcd|bc\nefghfg");
+    try vim("<c-v>jlyP", "a|bcd\nefgh", "a|bcbcd\nefgfgh"); // `y` parks at the rectangle's top-left; `P` puts the block there
     try vim("<c-v>jl<esc>x", "a|bcd\nefgh", "abcd\nef|h");
     try vim("<c-v>kd", "ab\n|cd", "|b\nd"); // the rectangle is anchor→cursor in either direction
     try vim("<c-v>jjld", "|abc\nx\nabc", "|c\n\nc"); // a short row contributes nothing
