@@ -178,6 +178,9 @@ pub const PtyPane = struct {
     /// A mouse selection in flight (the press's anchor); the selection
     /// itself lives on the terminal's screen, where the grid reads it.
     select: ?Select = null,
+    /// What the child was last told about its focus (or would have
+    /// been, had it asked): `tickAll` reports the edges.
+    has_focus: bool = false,
     /// Restored from a saved session and never started: `session` is
     /// null, `exit` is set so every live-pane path already skips it, and
     /// the footer says a key restarts rather than closes.
@@ -669,10 +672,11 @@ pub fn onReadable(app: *App, id: PaneId) void {
 /// child that died without closing the pty, are both picked up here.
 pub fn tickAll(app: *App) void {
     if (!supported) return;
-    for (app.panes.slots.items) |*slot| if (slot.*) |*pane| switch (pane.*) {
+    for (app.panes.slots.items, 0..) |*slot, i| if (slot.*) |*pane| switch (pane.*) {
         .pty => |*p| {
             if (p.exit != null) continue;
             const session = p.session orelse continue;
+            reportFocus(app, p, @intCast(i));
             if (session.shared.ring.len() > 0 or session.eof()) {
                 p.pump(app);
             } else if (session.exited()) |e| {
@@ -684,6 +688,21 @@ pub fn tickAll(app: *App) void {
         },
         else => {},
     };
+}
+
+/// Focus reports (DEC 1004): a child that asked hears `ESC [ I` when its
+/// pane takes the focus and `ESC [ O` when it loses it — to another
+/// pane, to the tree or an overlay, or because the host window itself
+/// lost it — as ghostty sends them per surface and tmux per pane.
+/// vim's FocusGained / FocusLost (`autoread`), neovim, helix and lazygit
+/// rely on it.
+fn reportFocus(app: *App, p: *PtyPane, id: PaneId) void {
+    const focused = app.host_focused and app.active == id and app.focus == .pane;
+    if (focused == p.has_focus) return;
+    p.has_focus = focused;
+    const session = p.session orelse return;
+    if (!session.terminal().modes.get(.focus_event)) return;
+    session.write(if (focused) "\x1b[I" else "\x1b[O");
 }
 
 // ─── input ──────────────────────────────────────────────────────────────
@@ -1605,6 +1624,22 @@ test "what a shell reports: OSC 7 is the pane's live cwd, OSC 133 prompts are ju
     try app.render();
     try t.expectEqualStrings("https://example.com/x", linkAt(p, p.body.x + 1, p.body.y).?);
     try t.expect(linkAt(p, p.body.x + 6, p.body.y) == null);
+}
+
+test "focus reports: a child that enabled DEC 1004 hears ESC [ O when its pane loses the focus and ESC [ I when it comes back" {
+    // A POSIX shell script drives this one.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (!supported) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 16 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const ed = try app.openScratch();
+    const id = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "stty raw -echo; printf '\\033[?1004h'; echo ready; dd bs=1 count=6 2>/dev/null | od -An -c; sleep 30" }, .label = "focus" });
+    try t.expect(try tickUntilScreen(&app, "ready", 5000));
+    app.showPane(ed);
+    try app.tick(App.nowMs(app.io));
+    app.showPane(id);
+    try t.expect(try tickUntilScreen(&app, "033   [   O 033   [   I", 5000));
 }
 
 test "the wheel over a pager: on the alternate screen with no mouse tracking the notches reach the child as arrow keys" {
