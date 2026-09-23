@@ -1152,6 +1152,11 @@ something (`cmd`, `command`, `binary`, `args`, `env`, `roots`,
 `sources`, …) fails the build until it carries a verdict — a row here,
 or a reason it runs nothing.
 
+The terminal and `--headless` (IPC hosts, `run.sh headless`) decide
+trust the same way, from the same store. Only the `.test` runner trusts
+its workspace outright: it made that workspace itself, in a temp
+directory, and the `.mnml/init.lua` in it is the script under test.
+
 `.ai.copilot_here` is the one row that is not an argv. It is in the
 table because its effect is the same shape: a repo you cloned could
 otherwise ship a `.mnml/config.zon` that opts *you* into sending that
