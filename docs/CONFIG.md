@@ -73,6 +73,13 @@ otherwise. Copy what you need; leave the rest out.
         .semantic_tokens_viewport = false,
         .semantic_tokens = true, // lay a server's semantic tokens over the syntax highlighting (off leaves tree-sitter alone)
         .code_lens = true,
+        // A faint rule at every indent step of a line's leading white
+        // space — the step is the buffer's indent (a .editorconfig, else
+        // what the file is indented by, else tab_width) — with the guide
+        // of the block the cursor is in brighter; .active paints only
+        // that one. Never on a wrapped row's continuation or over a
+        // selection. Toggle: editor.toggle_indent_guides.
+        .indent_guides = .on, // .on | .off | .active
         .text_width = 80,
         .ensure_trailing_newline = true,
         .chord_timeout_ms = 500, // vim's timeoutlen; clamped to 100..5000

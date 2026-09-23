@@ -28,6 +28,7 @@ const Canvas = @import("../ui/canvas.zig");
 const context = @import("../ui/context.zig");
 const Ui = context;
 const editor_view = @import("../ui/editor_view.zig");
+const indent_mod = @import("../editor/indent.zig");
 const statusline = @import("../ui/statusline.zig");
 const cmdline_bar = @import("../ui/cmdline_bar.zig");
 const edge_grip = @import("../ui/edge_grip.zig");
@@ -2174,6 +2175,12 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .todo_keywords = app.cfg.ui.highlight_todo_keywords,
         .color_column = app.cfg.ui.color_column,
         .render_markdown = app.cfg.ui.render_markdown and e.buf.doc.path != null and md_preview.isMarkdownPath(e.buf.doc.path.?),
+        .indent_guides = switch (app.cfg.editor.indent_guides) {
+            .off => .off,
+            .on => .on,
+            .active => .active,
+        },
+        .indent_step = if (app.cfg.editor.indent_guides == .off) 0 else guideStep(e),
     };
     const cursor = editor_view.draw(ui, id, rect, &e.view, doc);
     try http_app.drawEditorVarTip(app, ui, id, e, rect);
@@ -2207,6 +2214,30 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         if (find_bar_mod.draw(ui, b, &fb.state, .{ .current = e.find.current, .total = e.find.matches.items.len })) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
     };
 }
+
+/// The columns one indent level takes in `e`'s buffer, for its indent
+/// guides; 0 is the tab width (a tab-indented file). A `.editorconfig`'s
+/// indent is the answer when it named one; otherwise what the text is
+/// indented by (`editor/indent.zig`, over the first `guide_detect_bytes`
+/// — a file's indent is settled long before that), cached per pane
+/// until the next edit; a file that says nothing gets `tab_width`'s
+/// unit. A detected step of one column is alignment, not indent.
+fn guideStep(e: *app_mod.EditorPane) u8 {
+    const doc = e.buf.doc;
+    const fallback: u8 = if (doc.use_tabs) 0 else @intCast(@min(doc.indent_unit, 16));
+    if (doc.indent_pinned) return fallback;
+    const head = doc.edits.head();
+    if (e.guide_step) |c| if (c.seq == head) return c.step;
+    const text = e.buf.editor.bytes();
+    const step: u8 = if (indent_mod.detect(text[0..@min(text.len, guide_detect_bytes)])) |d|
+        (if (d.use_tabs) 0 else if (d.unit >= 2) @intCast(d.unit) else fallback)
+    else
+        fallback;
+    e.guide_step = .{ .seq = head, .step = step };
+    return step;
+}
+
+const guide_detect_bytes = 256 * 1024;
 
 /// The cmdline-history / quickfix list: a header, then one row per
 /// entry with the cursor row banded. Rows register `.script_hit`.

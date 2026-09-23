@@ -33,5 +33,6 @@ open code.txt
 key :
 type "retab"
 key enter
-# Default tab_width is 4 ⇒ "    foo".
-expect screen contains "    foo"
+# Default tab_width is 4 ⇒ "    foo" (its first cell painted as the
+# indent guide, `│`).
+expect screen contains "│   foo"

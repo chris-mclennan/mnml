@@ -31,17 +31,18 @@ expect screen contains "▼  1 fn main() {"
 click 31 2
 expect screen contains "▶  1 fn main() { ⋯ folded"
 
-# A line that starts no fold gets no chevron, hovered or not.
+# A line that starts no fold gets no chevron, hovered or not. (The `│`
+# after its number is its indent guide, `editor.indent_guides`.)
 click 31 2
 hover 40 4
-expect screen contains "▌  3     two();"
+expect screen contains "▌  3 │   two();"
 
 # `ui.always_show_fold_arrows`: the offer without the pointer at all,
 # and only on the lines that can take it.
 ex set ui.always_show_fold_arrows=true
 hover 100 20
 expect screen contains "▼  1 fn main() {"
-expect screen contains "▌  3     two();"
+expect screen contains "▌  3 │   two();"
 ex set ui.always_show_fold_arrows=false
 hover 100 20
 expect screen contains "▌  1 fn main() {"

@@ -12,7 +12,8 @@ command editor.use_vim
 key +
 key r
 key X
-expect screen contains "  Xeta"
+# (The `│` is the line's indent guide: the file steps by two.)
+expect screen contains "│ Xeta"
 
 # Up + first non-blank (`-`) ⇒ line 1 col 0. Replace with `Y`.
 key -
@@ -29,8 +30,9 @@ key 0
 key _
 key r
 key Z
-# Line 3 was "    gamma"; first non-blank is column 4 ⇒ "    Zamma".
-expect screen contains "    Zamma"
+# Line 3 was "    gamma"; first non-blank is column 4 ⇒ "    Zamma"
+# (two indent guides in its four spaces).
+expect screen contains "│ │ Zamma"
 
 # `<CR>` works as `+` — down + first non-blank.
 # Cursor on line 3. Press Enter ⇒ down to line 4 + first non-blank

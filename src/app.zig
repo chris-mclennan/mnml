@@ -3449,6 +3449,7 @@ test {
     _ = @import("ui/picker.zig");
     _ = @import("ui/fuzzy.zig");
     _ = @import("ui/editor_view.zig");
+    _ = @import("ui/indent_guides.zig");
     _ = @import("scripting/lua.zig");
     _ = @import("scripting/manifest.zig");
     _ = @import("scripting/api.zig");
