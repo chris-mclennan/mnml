@@ -14,6 +14,7 @@
 //! The pty module picks its backend by target (openpty / fork on POSIX,
 //! ConPTY on Windows); this file never names either.
 
+const sessions = @import("../sessions.zig");
 const std = @import("std");
 const builtin = @import("builtin");
 const Io = std.Io;
@@ -337,7 +338,12 @@ pub const PtyPane = struct {
     /// Borrowed from the terminal — valid until the child retitles.
     pub fn tabTitle(self: *const PtyPane) []const u8 {
         if (!self.renamed) if (self.childTitle()) |title| {
-            const trimmed = std.mem.trim(u8, title, " \t");
+            // A Claude session titles its window `✳ <task>` while it
+            // thinks: the spinner is state, not a name, and no reader of
+            // the title (the tab, the card, the info view's header)
+            // wants it. Only a leading spinner glyph is stripped, so a
+            // shell's `~/proj` keeps its tilde.
+            const trimmed = sessions.stripLeadingSpinnerOnly(std.mem.trim(u8, title, " \t"));
             if (trimmed.len > 0) return trimmed;
         };
         return self.label;

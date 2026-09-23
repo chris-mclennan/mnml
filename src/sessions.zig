@@ -2179,6 +2179,17 @@ pub fn stripLeadingSpinner(s: []const u8) []const u8 {
     return std.mem.trimStart(u8, s[i..], " \t");
 }
 
+/// `stripLeadingSpinner` only when the text starts with a spinner glyph
+/// — a title that is a name already (`~/proj`, `vim main.zig`) is
+/// returned untouched.
+pub fn stripLeadingSpinnerOnly(s: []const u8) []const u8 {
+    if (s.len == 0) return s;
+    const len = std.unicode.utf8ByteSequenceLength(s[0]) catch return s;
+    if (len > s.len) return s;
+    const cp = std.unicode.utf8Decode(s[0..len]) catch return s;
+    return if (isSpinnerCp(cp)) stripLeadingSpinner(s) else s;
+}
+
 /// Claude Code's spinner set (`is_claude_thinking`).
 fn isSpinnerCp(cp: u21) bool {
     return switch (cp) {
