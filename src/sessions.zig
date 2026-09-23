@@ -1657,7 +1657,7 @@ fn mergeWorktreeCmd(app: *App) CommandError!void {
 fn removeWorktreeCmd(app: *App) CommandError!void {
     const it = try currentOrFail(app);
     const e = worktreeOf(app, it) orelse return app.diag.fail(app.frame.allocator(), "sessions: {s} has no worktree", .{displayName(app, it)});
-    return session_worktree.confirmRemove(app, e.*, false);
+    return session_worktree.confirmRemove(app, e.*);
 }
 
 fn copyIdCmd(app: *App) CommandError!void {

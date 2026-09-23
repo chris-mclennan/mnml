@@ -1,0 +1,48 @@
+# env: HOME=${MNML_E2E_WORKSPACE}/home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# *Remove worktree…* on a session worktree holding uncommitted work.
+# While the session runs in the tree the remove is refused — its
+# working directory would be deleted under it. Once it has ended, the
+# confirm names the files and offers Keep the files (no `--force`: git
+# refuses, nothing is lost) or Remove anyway; past the unmerged branch
+# the second confirm says the files go too.
+shell git init -q -b main && git config user.email t@example.com && git config user.name t
+write .gitignore ".mnml/\nbin/\nhome/\n"
+write a.txt "one\n"
+shell git add -A && git commit -q -m first
+write bin/claude #!/bin/bash\nif [ "$1" = "--resume" ]; then exit 0; fi\nprintf 'from the worktree\\n' > wt.txt\ngit add wt.txt && git -c user.email=t@example.com -c user.name=t commit -q -m "from the worktree"\nprintf 'half-written work\\n' > draft.txt\nprintf 'edit\\n' >> a.txt\nprintf 'fake session up\\n'\nexec sleep 4
+shell chmod +x bin/claude
+command ai.new_session_worktree
+key enter
+wait 1500
+shell test -f ../$(basename "$PWD")-worktrees/session-1/draft.txt
+command view.activity_sessions
+wait 500
+command sessions.remove_worktree
+wait 300
+expect screen contains "still running"
+expect screen lacks "Remove worktree session-1 and branch"
+# The session ends; now the confirm counts the files.
+wait 4000
+command sessions.remove_worktree
+wait 300
+expect screen contains "2 uncommitted files"
+expect screen contains "[K]eep the files"
+expect screen contains "[R]emove anyway"
+# Keep the files: git refuses without --force; the draft is still there.
+key k
+wait 800
+expect screen contains "kept worktree session-1"
+shell test -f ../$(basename "$PWD")-worktrees/session-1/draft.txt
+shell git rev-parse --verify -q refs/heads/session-1
+# Remove anyway: the branch is unmerged, and the second box says the
+# files go as well. Cancel there: still nothing lost.
+command sessions.remove_worktree
+wait 300
+key r
+wait 500
+expect screen contains "not merged"
+expect screen contains "has 2 uncommitted files — throw both away?"
+key c
+wait 300
+shell test -f ../$(basename "$PWD")-worktrees/session-1/draft.txt

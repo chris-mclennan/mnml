@@ -449,7 +449,16 @@ pub const ConfirmPurpose = union(enum) {
 
     pub const DeletePaths = struct { paths: [][]u8, permanent_only: bool };
     pub const ScriptInstall = struct { dir: []u8, name: []u8, url: []u8, source: @import("scripting/manifest.zig").Source };
-    pub const SessionWorktreeRemove = struct { path: []u8, force: bool };
+    /// `stage`: the first confirm (`.tree`: Remove, or Keep the files /
+    /// Remove anyway when `dirty` files are in the tree) or the one
+    /// past an unmerged branch (`.branch`), which carries the first
+    /// one's answer in `force_tree`.
+    pub const SessionWorktreeRemove = struct {
+        path: []u8,
+        stage: enum { tree, branch } = .tree,
+        force_tree: bool = false,
+        dirty: u32 = 0,
+    };
 
     pub fn deinit(c: ConfirmPurpose, gpa: Allocator) void {
         switch (c) {
