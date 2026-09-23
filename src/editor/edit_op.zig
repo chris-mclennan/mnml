@@ -117,6 +117,10 @@ pub const EditOp = union(enum) {
     normalize_linewise_selection_inner,
     make_selection_inclusive,
     continue_insert_run,
+    /// After a text object: when it found nothing (no selection) the rest
+    /// of the op list is dropped — vim abandons the operator, so a failed
+    /// `ci(` stays in Normal and records nothing for `.`.
+    abort_unless_selection,
     find_char_on_line: struct { ch: u21, forward: bool, before: bool, inclusive: bool, repeat: bool },
 
     // ── multi-cursor / block ──
@@ -205,7 +209,7 @@ pub const EditOp = union(enum) {
     atomic: []const EditOp,
 
     comptime {
-        std.debug.assert(@typeInfo(EditOp).@"union".fields.len == 145);
+        std.debug.assert(@typeInfo(EditOp).@"union".fields.len == 146);
     }
 
     /// Whether the op can change buffer text (vs. move / select / yank / meta).
@@ -218,7 +222,7 @@ pub const EditOp = union(enum) {
             // motions
             .move_left, .move_right, .move_up, .move_down, .move_word_left, .move_word_right, .move_word_right_no_cross_line, .move_right_no_cross_line, .move_left_no_cross_line, .move_word_end, .move_word_end_cw, .move_big_word_end_cw, .move_word_end_back, .move_big_word_right, .move_big_word_right_no_cross_line, .move_big_word_left, .move_big_word_end, .move_big_word_end_back, .move_line_start, .move_line_first_non_ws, .move_down_first_non_ws, .move_up_first_non_ws, .move_line_last_non_ws, .move_paragraph, .move_sentence, .move_line_end, .move_line_last_char, .move_visual_down, .move_visual_up, .move_visual_line_start, .move_visual_line_end, .move_buffer_start, .move_buffer_end, .move_to_line, .move_to_col, .set_cursor_byte, .page_up, .page_down, .half_page_up, .half_page_down => false,
             // selection
-            .select_start, .select_clear, .remember_selection, .select_line, .select_line_to_end, .select_all, .select_word, .select_inner_word, .select_around_word, .select_inner_big_word, .select_around_big_word, .select_inner_quote, .select_around_quote, .select_inner_smart_quote, .select_around_smart_quote, .select_inner_bracket, .select_around_bracket, .select_inner_tag, .select_around_tag, .select_inner_paragraph, .select_around_paragraph, .select_inner_sentence, .select_around_sentence, .select_inner_function, .select_around_function, .select_inner_class, .select_around_class, .select_inner_argument, .select_around_argument, .select_inner_indent_block, .select_around_indent_block, .select_outer_indent_block, .restore_last_selection, .swap_anchor_cursor, .move_cursor_to_selection_start, .normalize_linewise_selection, .normalize_linewise_selection_inner, .make_selection_inclusive, .continue_insert_run, .find_char_on_line => false,
+            .select_start, .select_clear, .remember_selection, .select_line, .select_line_to_end, .select_all, .select_word, .select_inner_word, .select_around_word, .select_inner_big_word, .select_around_big_word, .select_inner_quote, .select_around_quote, .select_inner_smart_quote, .select_around_smart_quote, .select_inner_bracket, .select_around_bracket, .select_inner_tag, .select_around_tag, .select_inner_paragraph, .select_around_paragraph, .select_inner_sentence, .select_around_sentence, .select_inner_function, .select_around_function, .select_inner_class, .select_around_class, .select_inner_argument, .select_around_argument, .select_inner_indent_block, .select_around_indent_block, .select_outer_indent_block, .restore_last_selection, .swap_anchor_cursor, .move_cursor_to_selection_start, .normalize_linewise_selection, .normalize_linewise_selection_inner, .make_selection_inclusive, .continue_insert_run, .abort_unless_selection, .find_char_on_line => false,
             .add_cursor_below, .add_cursor_above, .clear_extra_cursors, .add_cursor_at_next_word, .block_select_start, .block_select_clear, .block_eol, .yank_block => false,
             .set_register_hint, .yank_line, .yank_lines_count, .yank_selection, .yank_selection_linewise, .undo, .redo, .replace_session_begin => false,
             else => true,
@@ -349,6 +353,9 @@ pub const EditOutcome = struct {
     text_edits: []const TextEdit = &.{},
     /// Byte range just yanked or deleted — the inc-yank flash.
     yanked_range: ?[2]usize = null,
+    /// `abort_unless_selection` found no selection: the ops after it in
+    /// the same list are not applied.
+    aborted: bool = false,
 };
 
 test "dupe/free round-trips the recursive shapes leak-free" {

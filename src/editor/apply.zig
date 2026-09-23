@@ -165,6 +165,9 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .normalize_linewise_selection_inner => select.normalizeLinewiseSelectionInner(ed),
         .make_selection_inclusive => select.makeSelectionInclusive(ed),
         .continue_insert_run => select.continueInsertRun(ed),
+        .abort_unless_selection => if (ed.anchor == null) {
+            out.aborted = true;
+        },
 
         // ── multi-cursor / block ──
         .add_cursor_below => try mc.addCursorBelow(ed),

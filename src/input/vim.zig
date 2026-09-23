@@ -1081,6 +1081,9 @@ pub const Vim = struct {
                 const linewise = select_op == .select_inner_paragraph or select_op == .select_around_paragraph;
                 var b = Builder.init(arena);
                 try b.push(select_op);
+                // No object under the cursor (`ci(` outside parens): the
+                // operator is abandoned, not run on nothing.
+                try b.push(.abort_unless_selection);
                 return self.finishOperator(&b, op, ctx, linewise);
             },
             .bracket_open => {

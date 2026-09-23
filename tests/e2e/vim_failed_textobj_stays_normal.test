@@ -1,0 +1,12 @@
+# `ci(` / `ci"` with no pair to act on is abandoned: Normal again, and
+# nothing recorded for `.`. Neovim 0.12.5 (keys typed) on `$ci(X<Esc>`:
+# the X is Normal's X and deletes the char before the cursor.
+write f.txt "foo(bar) baz qux\n"
+open f.txt
+command editor.use_vim
+key $
+type "ci("
+type "X"
+key escape
+ex w
+expect file f.txt contains "foo(bar) baz qx\n"

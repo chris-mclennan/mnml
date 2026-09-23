@@ -47,6 +47,8 @@ pub const Buffer = struct {
     /// `@tagName` of the last op the editor refused with `Unsupported`,
     /// for the app to toast. Static string.
     last_unsupported: ?[]const u8 = null,
+    /// Set by `applyOps` when an `abort_unless_selection` cut a list short.
+    ops_aborted: bool = false,
     /// The find matches nearest the cursor (`gn` / `gN`), byte ranges.
     /// The find state lives with the app; it seeds these before a key.
     find_next: ?[2]usize = null,
@@ -448,7 +450,15 @@ pub const Buffer = struct {
     /// The record keeps the handler's own list, so `.` on another fold
     /// re-expands against that fold.
     fn applyHandlerOps(self: *Buffer, list: []const EditOp, visual: ?VisualShape, clip: *Clipboard, viewport_rows: usize, arena: Allocator) Allocator.Error!BufferEvent {
+        self.ops_aborted = false;
         const changed = try self.applyOps(try self.foldAwareOps(list, arena), clip, viewport_rows, arena);
+        if (self.ops_aborted) {
+            // A text object that found nothing: the operator is dropped
+            // whole — Normal again, nothing for `.` (`:help ci(`).
+            self.ops_aborted = false;
+            if (self.input.mode() == .insert or self.input.mode() == .replace) self.input.onBlur();
+            return if (changed) .edited else .redraw;
+        }
         try self.trackDot(list, visual, arena);
         return if (changed) .edited else .redraw;
     }
@@ -497,6 +507,10 @@ pub const Buffer = struct {
                 const delta: isize = @as(isize, @intCast(self.editor.lineCount())) - @as(isize, @intCast(lines_before));
                 if (delta != 0) try self.shiftFoldsAfter(cursor_line_before, delta);
                 changed = true;
+            }
+            if (out.aborted) {
+                self.ops_aborted = true;
+                break;
             }
         }
         if (changed) self.doc.recomputeDirty();
@@ -2295,4 +2309,15 @@ test "vim / standard: j / k keep the display column across tabs and wide glyphs"
     // VS Code: three rights put the caret after `b` (screen column 5);
     // Down lands under it, before the `6`.
     try std_("<right><right><right><down>X", "|a\tb\n1234567890", "a\tb\n12345X|67890");
+}
+
+test "vim: an operator on a text object that finds nothing is abandoned — Normal, nothing for `.`" {
+    // Neovim 0.12.5 `--clean`, keys typed (`feedkeys(…, "xt")`).
+    try vim("$ci(X<esc>", "|foo(bar) baz qux", "foo(bar) baz q|x");
+    try vim("$ci\"X<esc>", "|foo(bar) baz qux", "foo(bar) baz q|x");
+    try vim("4lci(X<esc>ww.", "|foo(bar) baz qux", "foo(X) |baz qux");
+    try vim("$ci(X<esc>0.", "|foo(bar) baz qux", "|foo(bar) baz qx");
+    try vim("$di(", "|foo(bar) baz qux", "foo(bar) baz qu|x");
+    // An empty object is still an object: Insert opens between the pair.
+    try vim("ci(X<esc>", "foo(|) z", "foo(|X) z");
 }
