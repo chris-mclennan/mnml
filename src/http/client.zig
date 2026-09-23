@@ -53,6 +53,8 @@ pub const Timing = struct {
 pub const HopCookie = struct {
     host: []u8,
     value: []u8,
+    /// The hop's request path (the cookie's default `Path`).
+    path: []u8,
 };
 
 /// Frees the entries, not the slice — for an `ArrayList`'s `items`.
@@ -60,6 +62,7 @@ fn freeHopCookieEntries(gpa: Allocator, list: []const HopCookie) void {
     for (list) |c| {
         gpa.free(c.host);
         gpa.free(c.value);
+        gpa.free(c.path);
     }
 }
 
@@ -79,6 +82,8 @@ pub fn cloneHopCookies(gpa: Allocator, list: []const HopCookie) Allocator.Error!
         out[filled].host = try gpa.dupe(u8, c.host);
         errdefer gpa.free(out[filled].host);
         out[filled].value = try gpa.dupe(u8, c.value);
+        errdefer gpa.free(out[filled].value);
+        out[filled].path = try gpa.dupe(u8, c.path);
         filled += 1;
     }
     return out;
@@ -280,9 +285,31 @@ pub const SendOptions = struct {
 /// Fire `req` and wait for the whole response. Never throws for a
 /// transport failure — that is the `.err` outcome. OOM is the one error.
 pub fn send(gpa: Allocator, io: Io, req: *const Request, opts: SendOptions) Allocator.Error!Outcome {
+    if (try urlRefusal(gpa, req.url)) |msg| return .{ .err = msg };
     const t = Transport.fromRequest(req, opts.transport);
     if (t.timeout_ms) |ms| if (ms > 0) return sendWithDeadline(gpa, io, req, opts, t, ms);
     return sendGuarded(gpa, io, req, opts, t);
+}
+
+/// A URL no server can be sent: a space or a control character would go
+/// onto the request line as it is — a malformed request line (RFC 9112
+/// §3). curl refuses such a URL ("URL rejected", exit 3), and so does
+/// the send, naming the column and the fix rather than letting a server
+/// answer 400. Owned; null for a URL that can go out.
+pub fn urlRefusal(gpa: Allocator, raw: []const u8) Allocator.Error!?[]u8 {
+    const url = std.mem.trim(u8, raw, " \t");
+    for (url, 0..) |c, i| {
+        if (c > ' ' and c != 0x7f) continue;
+        const what: []const u8 = switch (c) {
+            ' ' => "a space",
+            '\t' => "a tab",
+            '\r', '\n' => "a line break",
+            else => "a control character",
+        };
+        const fix: []const u8 = if (c == ' ') " \u{2014} write it as %20" else "";
+        return try std.fmt.allocPrint(gpa, "bad request: the URL has {s} at column {d}{s} ({s})", .{ what, i + 1, fix, url });
+    }
+    return null;
 }
 
 fn sendGuarded(gpa: Allocator, io: Io, req: *const Request, opts: SendOptions, t: Transport) Allocator.Error!Outcome {
@@ -575,7 +602,9 @@ fn sendInner(gpa: Allocator, io: Io, req: *const Request, opts: SendOptions, t: 
                 errdefer gpa.free(host);
                 const value = try gpa.dupe(u8, h.value);
                 errdefer gpa.free(value);
-                try hop_cookies.append(gpa, .{ .host = host, .value = value });
+                const path = try gpa.dupe(u8, cookies_mod.pathOf(url));
+                errdefer gpa.free(path);
+                try hop_cookies.append(gpa, .{ .host = host, .value = value, .path = path });
                 if (cookiePair(h.value)) |pair| try pairs.append(ha, try ha.dupe(u8, pair));
             }
             // `Location`, relative to this hop.
@@ -643,7 +672,12 @@ fn sendInner(gpa: Allocator, io: Io, req: *const Request, opts: SendOptions, t: 
             var total: usize = 0;
             var truncated = false;
             while (true) {
-                reader.fillMore() catch |err| switch (err) {
+                // What the head's read already pulled in goes first: a
+                // close-delimited body reads straight off the
+                // connection, whose buffer can hold the first event
+                // behind the head — reading more before handing that
+                // over parks it until the server's NEXT write.
+                if (reader.buffered().len == 0) reader.fillMore() catch |err| switch (err) {
                     error.EndOfStream => break,
                     error.ReadFailed => return response.bodyErr() orelse error.ReadFailed,
                 };
@@ -945,11 +979,13 @@ test "send: redirects are followed by hand, so a 302's Set-Cookie reaches the ja
     // Into the jar, keyed by the host that set them.
     var jar = @import("cookies.zig").Jar.init(testing.allocator);
     defer jar.deinit();
-    for (resp.hop_cookies) |c| try jar.recordSetCookie(c.host, c.value);
+    for (resp.hop_cookies) |c| try jar.recordSetCookie(c.host, c.path, c.value, 0);
     try testing.expectEqual(@as(usize, 2), jar.total());
-    const line = (try jar.cookieHeaderFor(testing.allocator, "127.0.0.1")).?;
+    const line = (try jar.cookieHeaderFor(testing.allocator, "127.0.0.1", "/cookies", false, 0)).?;
     defer testing.allocator.free(line);
-    try testing.expectEqualStrings("session=abc123; user=chris", line);
+    // `user` came with no Path from `/cookies/set`: its default path is
+    // `/cookies` (RFC 6265 §5.1.4), so it rides first there — and not to `/`.
+    try testing.expectEqualStrings("user=chris; session=abc123", line);
     var cloned = try resp.clone(testing.allocator);
     defer cloned.deinit(testing.allocator);
     try testing.expectEqual(@as(usize, 2), cloned.hop_cookies.len);
@@ -1224,4 +1260,23 @@ test "send: -k routes an https hop through the shim (the origin sees a ClientHel
     var o3 = try send(testing.allocator, io, &req, .{ .transport = .{ .insecure = true } });
     defer o3.deinit(testing.allocator);
     try testing.expect(o3 == .err and std.mem.startsWith(u8, o3.err, "tls (insecure): "));
+}
+
+test "urlRefusal: a space or a control character in the URL is refused with its column, as curl refuses it" {
+    const msg = (try urlRefusal(testing.allocator, "http://h/search?q=new york")).?;
+    defer testing.allocator.free(msg);
+    try testing.expectEqualStrings("bad request: the URL has a space at column 22 \u{2014} write it as %20 (http://h/search?q=new york)", msg);
+    const tab = (try urlRefusal(testing.allocator, "http://h/a\tb")).?;
+    defer testing.allocator.free(tab);
+    try testing.expect(std.mem.startsWith(u8, tab, "bad request: the URL has a tab at column 11"));
+    // Encoded, or with the surrounding blanks a paste leaves: fine.
+    try testing.expect((try urlRefusal(testing.allocator, "  http://h/search?q=new%20york  ")) == null);
+    // The send says so instead of putting it on the wire.
+    var req = try Request.init(testing.allocator);
+    defer req.deinit(testing.allocator);
+    try req.setUrl(testing.allocator, "http://127.0.0.1:9/search?q=new york");
+    var out = try send(testing.allocator, testing.io, &req, .{});
+    defer out.deinit(testing.allocator);
+    try testing.expect(out == .err);
+    try testing.expect(std.mem.startsWith(u8, out.err, "bad request: the URL has a space"));
 }

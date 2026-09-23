@@ -26,6 +26,8 @@ const editor_view = @import("../ui/editor_view.zig");
 const view = @import("../ui/request_view.zig");
 const command = @import("../core/command.zig");
 const parse = @import("../http/parse.zig");
+const json_pretty = @import("../http/json_pretty.zig");
+const charset = @import("../http/charset.zig");
 const client = @import("../http/client.zig");
 const env_mod = @import("../http/env.zig");
 const syntax = @import("syntax.zig");
@@ -197,6 +199,9 @@ pub const RequestPane = struct {
     /// The `### name` it came from; `""` for a bare `###`; null for a
     /// single-block file or the leading block.
     block_name: ?[]u8 = null,
+    /// Its position among the file's blocks (`parse.Block.index`) —
+    /// what tells two same-named blocks apart; null for a scratch.
+    block_index: ?u32 = null,
     /// A leading `# …` comment, shown as the tab label.
     summary: ?[]u8 = null,
     /// `METHOD  url` for the tab; rebuilt when either changes.
@@ -206,6 +211,13 @@ pub const RequestPane = struct {
     prev: ?Response = null,
     /// `METHOD url` as last sent (post-expansion). Owned.
     sent_line: ?[]u8 = null,
+    /// The env the last send resolved against (history records it).
+    /// Owned.
+    sent_env: ?[]u8 = null,
+    /// A history re-fire resolves against the env its entry was sent
+    /// with, not whichever is active now; an explicit env pick clears
+    /// it. Owned.
+    env_pin: ?[]u8 = null,
     /// The headers as last sent — after the `@set-*` directives, the
     /// expansion and the `http_request` hook (the Timeline tab shows
     /// them). Owned.
@@ -294,6 +306,8 @@ pub const RequestPane = struct {
         self.state.deinit(gpa);
         if (self.prev) |*p| p.deinit(gpa);
         if (self.sent_line) |s| gpa.free(s);
+        if (self.sent_env) |s| gpa.free(s);
+        if (self.env_pin) |s| gpa.free(s);
         self.clearSentHeaders();
         self.sent_headers.deinit(gpa);
         for (self.tests.items) |t| gpa.free(t);
@@ -466,12 +480,14 @@ pub const RequestPane = struct {
         self.keepAsPrev();
         const resp = resp_in;
         if (resp.kind() == .json) {
-            if (std.json.parseFromSlice(std.json.Value, self.gpa, resp.body, .{})) |parsed| {
-                defer parsed.deinit();
-                if (std.json.Stringify.valueAlloc(self.gpa, parsed.value, .{ .whitespace = .indent_2 })) |pretty| {
-                    if (std.mem.eql(u8, pretty, resp.body)) self.gpa.free(pretty) else self.resp_pretty = pretty;
-                } else |_| {}
-            } else |_| {}
+            // Re-indented, never re-printed: a `5.0` stays `5.0`.
+            if (try json_pretty.pretty(self.gpa, resp.body)) |pretty| {
+                if (std.mem.eql(u8, pretty, resp.body)) self.gpa.free(pretty) else self.resp_pretty = pretty;
+            }
+        } else if (charset.singleByte(resp.header("content-type"))) |cs| {
+            // A latin-1 body painted as bytes is torn cells; the view
+            // gets it transcoded, the stored body stays the server's.
+            if (!std.unicode.utf8ValidateSlice(resp.body)) self.resp_pretty = try charset.toUtf8(self.gpa, resp.body, cs);
         }
         self.state = .{ .done = resp };
         self.resp_view = .{};
@@ -1643,10 +1659,8 @@ pub fn click(app: *App, id: PaneId, rp: *RequestPane, hit_id: u32, m: Mouse, hit
             } else app.toast("no response yet", .{});
             return;
         },
-        view.hit_type => {
-            app.toast("response format follows the content-type", .{});
-            return;
-        },
+        // The `JSON ▼` chip's caret opens what can be done with the body.
+        view.hit_type => return http.openResponseBodyMenu(app, rp, m.x, m.y),
         view.hit_add_row => {
             if (rp.edit_tab == .headers) {
                 if (rp.draft == null) try rp.startHeaderDraft(null);
@@ -1770,7 +1784,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area_in: Rect) Allo
         }
         break :blk null;
     };
-    const env_name = try http.envName(app, arena);
+    const env_name = try http.paneEnvName(app, rp, arena);
     const vars = try http.varRows(app, rp, arena, env_name);
     const toks = try http.varTokens(app, rp, arena, env_name);
     var resp_model: ?view.ResponseModel = null;
@@ -1844,7 +1858,9 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area_in: Rect) Allo
         .env_name = env_name,
         .env_override = app.http.env_override != null,
         .edit_scroll = &rp.edit_scroll,
-        .sending = rp.isSending(),
+        // Only before the head: once it lands the pane is streaming and
+        // shows what has arrived (`.stream`), not a spinner over it.
+        .sending = rp.state == .sending,
         .failed = if (rp.state == .failed) rp.state.failed else null,
         .response = resp_model,
         .stream = stream_info,
@@ -1969,6 +1985,17 @@ test "split: toggling picks a second tab; showing the right tab swaps the halves
     try testing.expect(rp.split and rp.split_tab == .body);
     rp.split_ratio = 30;
     try testing.expectEqual(@as(u8, 30), rp.split_ratio);
+}
+
+test "a latin-1 response is transcoded for the view and keeps its bytes" {
+    var rp = try RequestPane.init(testing.allocator);
+    defer rp.deinit();
+    const gpa = testing.allocator;
+    const hs = try gpa.alloc(parse.Header, 1);
+    hs[0] = .{ .name = try gpa.dupe(u8, "content-type"), .value = try gpa.dupe(u8, "text/plain; charset=iso-8859-1") };
+    try rp.setResponse(.{ .status = 200, .status_text = try gpa.dupe(u8, "OK"), .final_url = try gpa.dupe(u8, "http://x/"), .headers = hs, .body = try gpa.dupe(u8, "caf\xe9 cr\xe8me\n") });
+    try testing.expectEqualStrings("caf\xe9 cr\xe8me\n", rp.response().?.body);
+    try testing.expectEqualStrings("caf\u{e9} cr\u{e8}me\n", rp.displayBody());
 }
 
 test "a JSON response keeps its wire body; the view text is re-indented, and goes when the response does" {

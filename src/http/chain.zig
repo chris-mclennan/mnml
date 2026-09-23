@@ -13,6 +13,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const parse_mod = @import("parse.zig");
 const client = @import("client.zig");
+const body_mod = @import("body.zig");
 const env_mod = @import("env.zig");
 const script_mod = @import("script.zig");
 
@@ -157,7 +158,22 @@ pub fn run(gpa: Allocator, io: Io, chain_path: []const u8, workspace: []const u8
         // and `@capture` after it, captures feeding the later steps.
         const script = try script_mod.parse(a, raw.script orelse "");
         try script_mod.applyPre(a, &raw, &set, script);
+        // A `{{VAR}}` neither the env nor an earlier step defines goes
+        // out as written; the trace says so, as the pane and `run` do.
+        {
+            var seen: std.StringArrayHashMapUnmanaged(void) = .empty;
+            for (try env_mod.unresolved(a, raw.url, &set)) |m| try seen.put(a, m, {});
+            for (raw.headers.items) |h| for (try env_mod.unresolved(a, h.value, &set)) |m| try seen.put(a, m, {});
+            if (raw.body) |b| for (try env_mod.unresolved(a, b, &set)) |m| try seen.put(a, m, {});
+            for (seen.keys()) |m| try appendFmt(a, &trace, "   warn: {{{{{s}}}}} is not defined in env {s}\n", .{ m, env_name });
+        }
         var req = try expandWith(a, io, &raw, &set);
+        // The same wire body the pane and `mnml-zig run` send.
+        var missing: ?[]const u8 = null;
+        body_mod.encode(a, io, &req, .{ .base_dir = std.fs.path.dirname(path) orelse chain_dir }, &missing) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.FileNotFound => return finish(gpa, false, try std.fmt.allocPrint(gpa, "step {d}: multipart: no file at {s}", .{ i + 1, missing orelse "?" }), &trace, &captured),
+        };
         var outcome = try client.send(a, io, &req, .{});
         switch (outcome) {
             .err => |e| {
@@ -274,6 +290,14 @@ test "run: two steps over a local server, the first's extract feeds the second" 
     try testing.expect(std.mem.indexOf(u8, out.trace, "TOKEN = tok9") != null);
     try testing.expectEqualStrings("TOKEN=tok9\n", out.captured);
     try testing.expect(std.ascii.indexOfIgnoreCase(server.lastRequest(), "authorization: Bearer tok9") != null);
+    try testing.expect(std.mem.indexOf(u8, out.trace, "warn:") == null);
+    // A variable nothing defines is named in the trace, not sent silently.
+    try tmp.dir.writeFile(io, .{ .sub_path = ".mnml/chains/un.chain.json", .data = "[{\"request\":\"list.curl\"}]" });
+    const un_path = try std.fs.path.join(testing.allocator, &.{ ws, ".mnml/chains/un.chain.json" });
+    defer testing.allocator.free(un_path);
+    var un = try run(testing.allocator, io, un_path, ws, "dev");
+    defer un.deinit(testing.allocator);
+    try testing.expect(std.mem.indexOf(u8, un.trace, "   warn: {{TOKEN}} is not defined in env dev\n") != null);
     // A missing extract stops the chain.
     try tmp.dir.writeFile(io, .{ .sub_path = ".mnml/chains/bad.chain.json", .data = "[{\"request\":\"login.curl\",\"extract\":{\"X\":\"$.nope\"}},{\"request\":\"list.curl\"}]" });
     const bad_path = try std.fs.path.join(testing.allocator, &.{ ws, ".mnml/chains/bad.chain.json" });

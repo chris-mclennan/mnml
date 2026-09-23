@@ -650,6 +650,24 @@ pub const EchoServer = struct {
                         if (self.received.items.len > 0) try self.received.append(gpa, '\n');
                         try self.received.appendSlice(gpa, msg.items);
                     }
+                    // "close:<code> <reason>" is answered with a Close
+                    // frame carrying them, and the connection ends.
+                    if (std.mem.startsWith(u8, msg.items, "close:")) {
+                        const spec = msg.items["close:".len..];
+                        const sp = std.mem.indexOfScalar(u8, spec, ' ') orelse spec.len;
+                        const code = std.fmt.parseInt(u16, spec[0..sp], 10) catch 1000;
+                        var payload: std.ArrayListUnmanaged(u8) = .empty;
+                        defer payload.deinit(gpa);
+                        var cb: [2]u8 = undefined;
+                        std.mem.writeInt(u16, &cb, code, .big);
+                        try payload.appendSlice(gpa, &cb);
+                        if (sp < spec.len) try payload.appendSlice(gpa, spec[sp + 1 ..]);
+                        const f = try encodeFrame(gpa, .close, payload.items, true, null);
+                        defer gpa.free(f);
+                        try w.writeAll(f);
+                        try w.flush();
+                        return;
+                    }
                     // "split:<text>" comes back as two fragments.
                     if (std.mem.startsWith(u8, msg.items, "split:")) {
                         const body = msg.items["split:".len..];

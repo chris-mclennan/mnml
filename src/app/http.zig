@@ -21,6 +21,7 @@ const CommandError = command.CommandError;
 const event = @import("../core/event.zig");
 const parse = @import("../http/parse.zig");
 const multipart = @import("../http/multipart.zig");
+const body_mod = @import("../http/body.zig");
 const client = @import("../http/client.zig");
 const env_mod = @import("../http/env.zig");
 const history = @import("../http/history.zig");
@@ -505,6 +506,21 @@ pub fn envSelection(app: *App, arena: Allocator) Allocator.Error!env_mod.Selecti
     return env_mod.select(arena, app.io, app.workspace, app.http.env_override, app.env.get("MNML_ENV"), app.cfg.http.default_env);
 }
 
+/// The env `rp` resolves against: its pin (a history re-fire), else
+/// the active one.
+pub fn paneEnvName(app: *App, rp: *const RequestPane, arena: Allocator) Allocator.Error!?[]const u8 {
+    if (rp.env_pin) |p| return p;
+    return envName(app, arena);
+}
+
+/// `loadEnv` for `rp`: its pinned env when it has one.
+pub fn loadEnvFor(app: *App, gpa: Allocator, rp: *const RequestPane) Allocator.Error!env_mod.EnvSet {
+    const pin = rp.env_pin orelse return loadEnv(app, gpa);
+    var set = try env_mod.EnvSet.load(gpa, app.io, app.workspace, pin);
+    set.process = &app.env;
+    return set;
+}
+
 /// The active env, loaded. `gpa` may be an arena.
 pub fn loadEnv(app: *App, gpa: Allocator) Allocator.Error!env_mod.EnvSet {
     var scratch = std.heap.ArenaAllocator.init(app.gpa);
@@ -607,7 +623,7 @@ pub fn varClick(app: *App, id: PaneId, rp: *RequestPane, idx: usize, m: @import(
     var arena = std.heap.ArenaAllocator.init(app.gpa);
     defer arena.deinit();
     const a = arena.allocator();
-    const toks = try varTokens(app, rp, a, try envName(app, a));
+    const toks = try varTokens(app, rp, a, try paneEnvName(app, rp, a));
     if (idx >= toks.all.len) return;
     const tok = toks.all[idx];
     if (m.button == .right) return openQuickFixMenu(app, tok.name, tok.dynamic, m.x, m.y);
@@ -717,7 +733,7 @@ fn currentVar(app: *App, arena: Allocator) Allocator.Error!?[]const u8 {
     };
     if (try rp.varAtCaret(arena)) |n| return try arena.dupe(u8, n);
     if (rp.edit_tab == .vars) {
-        const rows = try varRows(app, rp, arena, try envName(app, arena));
+        const rows = try varRows(app, rp, arena, try paneEnvName(app, rp, arena));
         if (rp.row_cursor < rows.len) return try arena.dupe(u8, rows[rp.row_cursor].name);
     }
     return null;
@@ -928,6 +944,7 @@ pub const OpenOptions = struct {
     /// Absolute. Duped.
     source_path: ?[]const u8 = null,
     block_name: ?[]const u8 = null,
+    block_index: ?u32 = null,
     summary: ?[]const u8 = null,
     /// The keyboard starts in the Response block (a send from a file).
     focus_response: bool = false,
@@ -943,6 +960,7 @@ pub fn openFromRequest(app: *App, req: Request, opts: OpenOptions) CommandError!
     errdefer rp.deinit();
     if (opts.source_path) |p| rp.source_path = try gpa.dupe(u8, p);
     if (opts.block_name) |b| rp.block_name = try gpa.dupe(u8, b);
+    rp.block_index = opts.block_index;
     if (opts.summary) |s| rp.summary = try gpa.dupe(u8, s);
     try rp.load(incoming);
     incoming = undefined;
@@ -973,13 +991,17 @@ fn findPreview(app: *App) ?PaneId {
     return null;
 }
 
-/// The request pane already showing `path`'s block `block_name`.
-pub fn findSource(app: *App, path: []const u8, block_name: ?[]const u8) ?PaneId {
+/// The request pane already showing `path`'s block `index` (named
+/// `block_name`). The position is the identity: two bare `###` blocks
+/// share the name `""`, and keying on it put block two into block one's
+/// pane — whose save then rewrote block one.
+pub fn findSource(app: *App, path: []const u8, index: ?u32, block_name: ?[]const u8) ?PaneId {
     for (app.panes.slots.items, 0..) |*slot, i| if (slot.*) |*p| switch (p.*) {
         .request => |*rp| if (rp.source_path) |sp| {
             if (!std.mem.eql(u8, sp, path)) continue;
-            const same_block = if (block_name) |b| (rp.block_name != null and std.mem.eql(u8, rp.block_name.?, b)) else rp.block_name == null;
-            if (same_block) return @intCast(i);
+            if ((rp.block_index orelse 0) != (index orelse 0)) continue;
+            const same_name = if (block_name) |b| (rp.block_name != null and std.mem.eql(u8, rp.block_name.?, b)) else rp.block_name == null;
+            if (same_name) return @intCast(i);
         },
         else => {},
     };
@@ -991,10 +1013,6 @@ pub const OpenFileError = CommandError || parse.ParseError || error{ ReadFailed,
 /// Open `path` (absolute) as a request pane on its first block. The
 /// error tells `App.openPath` to fall back to an editor.
 pub fn openFile(app: *App, path: []const u8, preview: bool) OpenFileError!PaneId {
-    if (findSource(app, path, null)) |id| {
-        app.showPane(id);
-        return id;
-    }
     var arena = std.heap.ArenaAllocator.init(app.gpa);
     defer arena.deinit();
     const a = arena.allocator();
@@ -1002,11 +1020,15 @@ pub fn openFile(app: *App, path: []const u8, preview: bool) OpenFileError!PaneId
     const list = try parse.blocks(a, text);
     if (list.len == 0) return error.EmptyFile;
     const first = list[0];
+    if (findSource(app, path, 0, first.name)) |id| {
+        app.showPane(id);
+        return id;
+    }
     var req = try parse.parse(app.gpa, first.text);
     errdefer req.deinit(app.gpa);
     // The leading block of a multi-block file is addressed as `null`;
     // a `### name` block by its name.
-    const id = try openFromRequest(app, req, .{ .source_path = path, .block_name = first.name, .summary = first.summary, .focus_response = false, .preview = preview });
+    const id = try openFromRequest(app, req, .{ .source_path = path, .block_name = first.name, .block_index = 0, .summary = first.summary, .focus_response = false, .preview = preview });
     req = undefined;
     if (app.panes.get(id)) |p| if (p.asRequest()) |rp| {
         rp.edited = false;
@@ -1026,13 +1048,13 @@ pub fn openFileBlock(app: *App, path: []const u8, idx: u32) OpenFileError!PaneId
     const list = try parse.blocks(a, text);
     if (idx >= list.len) return error.EmptyFile;
     const b = list[idx];
-    if (findSource(app, path, b.name)) |id| {
+    if (findSource(app, path, idx, b.name)) |id| {
         app.showPane(id);
         return id;
     }
     var req = try parse.parse(app.gpa, b.text);
     errdefer req.deinit(app.gpa);
-    const id = try openFromRequest(app, req, .{ .source_path = path, .block_name = b.name, .summary = b.summary });
+    const id = try openFromRequest(app, req, .{ .source_path = path, .block_name = b.name, .block_index = idx, .summary = b.summary });
     req = undefined;
     if (app.panes.get(id)) |p| if (p.asRequest()) |rp| {
         rp.edited = false;
@@ -1047,6 +1069,7 @@ pub const Active = struct {
     req: Request,
     source_path: ?[]const u8 = null,
     block_name: ?[]const u8 = null,
+    block_index: ?u32 = null,
     summary: ?[]const u8 = null,
     /// The request pane it came from, when it did.
     pane: ?PaneId = null,
@@ -1057,7 +1080,7 @@ pub fn parseActive(app: *App, arena: Allocator) CommandError!Active {
     const gpa = app.gpa;
     if (activeRequest(app)) |rp| {
         try rp.commit();
-        return .{ .req = try rp.request.clone(gpa), .source_path = rp.source_path, .block_name = rp.block_name, .summary = rp.summary, .pane = app.active };
+        return .{ .req = try rp.request.clone(gpa), .source_path = rp.source_path, .block_name = rp.block_name, .block_index = rp.block_index, .summary = rp.summary, .pane = app.active };
     }
     const e = app.activeEditor() orelse return app.diag.fail(app.frame.allocator(), "http: no active .http/.curl/.rest editor or Request pane", .{});
     const path = e.buf.doc.path;
@@ -1067,14 +1090,15 @@ pub fn parseActive(app: *App, arena: Allocator) CommandError!Active {
     }
     const list = try parse.blocks(arena, text);
     const line = e.buf.editor.currentLine();
-    const block = parse.blockAtLine(list, line) orelse return app.diag.fail(app.frame.allocator(), "http: the buffer has no request", .{});
+    if (list.len == 0) return app.diag.fail(app.frame.allocator(), "http: the buffer has no request", .{});
+    const block = parse.blockAtLine(list, line) orelse return app.diag.fail(app.frame.allocator(), "http: the block under the cursor is empty", .{});
     const req = parse.parse(gpa, block.text) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.Empty => return app.diag.fail(app.frame.allocator(), "http: the block under the cursor is empty", .{}),
         error.NoUrl => return app.diag.fail(app.frame.allocator(), "http: no URL in the block under the cursor", .{}),
         error.UnterminatedQuote => return app.diag.fail(app.frame.allocator(), "http: unterminated quote in the curl command", .{}),
     };
-    return .{ .req = req, .source_path = if (path) |p| try arena.dupe(u8, p) else null, .block_name = block.name, .summary = block.summary };
+    return .{ .req = req, .source_path = if (path) |p| try arena.dupe(u8, p) else null, .block_name = block.name, .block_index = block.index, .summary = block.summary };
 }
 
 // ─── the send ───────────────────────────────────────────────────────────
@@ -1295,15 +1319,22 @@ pub fn fire(app: *App, id: PaneId) CommandError!void {
     var arena = std.heap.ArenaAllocator.init(app.gpa);
     defer arena.deinit();
     const a = arena.allocator();
-    var set = try loadEnv(app, a);
+    var set = try loadEnvFor(app, a, rp);
     set.process = &app.env;
+    if (rp.sent_env) |old| app.gpa.free(old);
+    rp.sent_env = if (set.name) |n| try app.gpa.dupe(u8, n) else null;
     // Pre-request directives land on a copy: the editable fields stay
     // as written, the wire sees the `@set-*` values.
     var staged = try rp.request.clone(a);
     const script = try script_mod.parse(a, rp.request.script orelse "");
     try script_mod.applyPre(a, &staged, &set, script);
-    const missing = try env_mod.unresolved(a, staged.url, &set);
-    if (missing.len > 0) app.toast("http: unresolved {{{{{s}}}}} — env: {s}", .{ missing[0], set.name orelse "?" });
+    // The URL, the headers and the body — a `{{VAR}}` an env value
+    // names counts too (`BASE=http://{{HOST}}` with no HOST).
+    var missing: std.ArrayListUnmanaged([]const u8) = .empty;
+    try missing.appendSlice(a, try env_mod.unresolved(a, staged.url, &set));
+    for (staged.headers.items) |h| try missing.appendSlice(a, try env_mod.unresolved(a, h.value, &set));
+    if (staged.body) |b| try missing.appendSlice(a, try env_mod.unresolved(a, b, &set));
+    if (missing.items.len > 0) app.toast("http: unresolved {{{{{s}}}}} — env: {s}", .{ missing.items[0], set.name orelse "?" });
     var expanded = try expandWith(app.gpa, app.io, &staged, &set);
     var handed = false;
     errdefer if (!handed) expanded.deinit(app.gpa);
@@ -1354,7 +1385,9 @@ pub fn handleStream(app: *App, c: *client.StreamChunk) Allocator.Error!void {
             app.http.sending -|= 1;
             releaseHandle(app, c.job);
             const st = rp.streaming().?;
-            const facts: cmd_http.HistoryFacts = .{ .method = rp.request.method, .url = try app.frame.allocator().dupe(u8, rp.request.url), .status = st.head.status, .elapsed_ms = d.timing.total_ms };
+            // The URL as sent (expanded), as the whole-body path records it.
+            const sent_url: []const u8 = if (rp.sent_line) |l| (if (std.mem.indexOfScalar(u8, l, ' ')) |sp| l[sp + 1 ..] else l) else rp.request.url;
+            const facts: cmd_http.HistoryFacts = .{ .method = rp.request.method, .url = try app.frame.allocator().dupe(u8, sent_url), .status = st.head.status, .elapsed_ms = d.timing.total_ms };
             try rp.finishStream(d.timing, d.truncated);
             try cmd_http.afterResponse(app, id, rp);
             cmd_http.recordHistory(app, facts, rp) catch {};
@@ -1376,11 +1409,18 @@ fn cancelCmd(app: *App) CommandError!void {
     own.group.cancel(app.io);
     _ = app.http.handles.swapRemove(job);
     app.gpa.destroy(own);
-    const was_streaming = rp.state == .streaming;
-    const got: usize = if (rp.streaming()) |st| st.body.items.len else 0;
-    try rp.setFailed(if (was_streaming) "canceled mid-stream" else "canceled");
     app.http.sending -|= 1;
-    if (was_streaming) app.toast("http.cancel: stopped after {d} bytes", .{got}) else app.toast("http.cancel: stopped", .{});
+    // A stream stopped by hand keeps what arrived: it seals into the
+    // response, marked truncated, as the server closing it would.
+    if (rp.streaming()) |st| {
+        const got = st.body.items.len;
+        const elapsed: u64 = @intCast(@max(app.now_ms - st.started_ms, 0));
+        try rp.finishStream(.{ .total_ms = elapsed, .receive_ms = elapsed }, true);
+        app.toast("http.cancel: stopped after {d} bytes \u{00B7} what arrived is kept", .{got});
+        return;
+    }
+    try rp.setFailed("canceled");
+    app.toast("http.cancel: stopped", .{});
 }
 
 /// D1: the result is ours to adopt or destroy. A job no pane is waiting
@@ -1441,7 +1481,12 @@ pub fn saveToSource(app: *App) CommandError!void {
             const curl = try parse.toCurl(arena, &rp.request);
             break :blk if (rp.block_name) |n| try std.fmt.allocPrint(arena, "### {s}\n{s}\n", .{ n, curl }) else try std.fmt.allocPrint(arena, "{s}\n", .{curl});
         };
-        if (try parse.splice(gpa, text, rp.block_name, block_text)) |fresh| {
+        const spliced = parse.splice(gpa, text, rp.block_index, rp.block_name, block_text) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            // Writing the whole file here would drop every other block.
+            error.NoSuchBlock => return app.diag.fail(arena, "save: the pane's block is not in {s} any more (Save As writes it elsewhere)", .{rel}),
+        };
+        if (spliced) |fresh| {
             defer gpa.free(fresh);
             Io.Dir.cwd().writeFile(app.io, .{ .sub_path = path, .data = fresh }) catch |err| return app.diag.fail(arena, "save failed: {s}: {s}", .{ rel, @errorName(err) });
             rp.edited = false;
@@ -1644,43 +1689,13 @@ pub fn openOptionPrompt(app: *App, rp: *RequestPane, kind: OptionKind) Allocator
 /// read relative to the source file's directory (the workspace for a
 /// scratch). A `Content-Type` the request already carries is kept.
 pub fn applyBodyType(app: *App, rp: *RequestPane, req: *Request) CommandError!void {
-    const gpa = app.gpa;
-    const kind = parse.bodyType(req);
-    if (kind == .raw) return;
-    const body = req.body orelse return;
-    var arena = std.heap.ArenaAllocator.init(gpa);
-    defer arena.deinit();
-    const a = arena.allocator();
-    switch (kind) {
-        .raw => {},
-        .json => {
-            if (app.http.auto_format_body) {
-                if (std.json.parseFromSliceLeaky(std.json.Value, a, body, .{})) |v| {
-                    const pretty = std.json.Stringify.valueAlloc(a, v, .{ .whitespace = .indent_2 }) catch return error.OutOfMemory;
-                    try req.setBody(gpa, pretty);
-                } else |_| {}
-            }
-            if (req.header("content-type") == null) try req.addHeader(gpa, "Content-Type", "application/json");
-        },
-        .form => {
-            const rows = try multipart.parseRows(a, body);
-            try req.setBody(gpa, try multipart.urlencode(a, rows));
-            if (req.header("content-type") == null) try req.addHeader(gpa, "Content-Type", multipart.form_content_type);
-        },
-        .multipart => {
-            const rows = try multipart.parseRows(a, body);
-            const base = if (rp.source_path) |p| (std.fs.path.dirname(p) orelse app.workspace) else app.workspace;
-            var missing: ?[]const u8 = null;
-            const parts = multipart.resolve(a, app.io, rows, base, &missing) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
-                error.FileNotFound => return app.diag.fail(app.frame.allocator(), "multipart: no file at {s} (relative to {s})", .{ missing orelse "?", app.relPath(base) }),
-            };
-            var bbuf: [multipart.boundary_len]u8 = undefined;
-            const boundary = multipart.makeBoundary(&bbuf, app.io);
-            try req.setBody(gpa, try multipart.encode(a, parts, boundary));
-            if (req.header("content-type") == null) try req.addHeader(gpa, "Content-Type", try multipart.contentType(a, boundary));
-        },
-    }
+    const base = if (rp.source_path) |p| (std.fs.path.dirname(p) orelse app.workspace) else app.workspace;
+    var missing: ?[]const u8 = null;
+    defer if (missing) |m| app.gpa.free(m);
+    body_mod.encode(app.gpa, app.io, req, .{ .format_json = app.http.auto_format_body, .base_dir = base }, &missing) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.FileNotFound => return app.diag.fail(app.frame.allocator(), "multipart: no file at {s} (relative to {s})", .{ missing orelse "?", app.relPath(base) }),
+    };
 }
 
 /// The chip's pick: the block's line follows, and a toast names it.
@@ -1703,6 +1718,25 @@ pub fn openBodyTypeMenu(app: *App, rp: *RequestPane, x: u16, y: u16) Allocator.E
     });
     errdefer app.gpa.free(items);
     try app.openMenu("Body type", items, x, y);
+}
+
+/// The Response strip's ` TYPE ▼ ` chip: the format follows the
+/// content-type (the menu's title says so); the rows are what can be
+/// done with the body.
+pub fn openResponseBodyMenu(app: *App, rp: *RequestPane, x: u16, y: u16) Allocator.Error!void {
+    if (rp.response() == null) {
+        app.toast("no response yet", .{});
+        return;
+    }
+    const M = command.MenuItem;
+    const items = try app.gpa.dupe(M, &.{
+        .{ .label = "Copy body", .action = .{ .command = .@"http.copy_response_body" } },
+        .{ .label = "Save body to a file\u{2026}", .action = .{ .command = .@"http.save_response" } },
+        .{ .label = "Save as mock", .action = .{ .command = .@"http.save_mock" } },
+        .{ .label = "Wrap long lines", .action = .{ .command = .@"http.toggle_response_wrap" }, .checked = rp.body_wrap, .separator_before = true },
+    });
+    errdefer app.gpa.free(items);
+    try app.openMenu("Body \u{00B7} format follows the content-type", items, x, y);
 }
 
 fn cycleBodyTypeCmd(app: *App) CommandError!void {
@@ -1914,9 +1948,8 @@ pub fn formatBody(app: *App, rp: *RequestPane) CommandError!void {
     const gpa = app.gpa;
     const body = std.mem.trim(u8, rp.body.items, " \t\r\n");
     if (body.len == 0) return app.diag.fail(app.frame.allocator(), "body: empty", .{});
-    var parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return app.diag.fail(app.frame.allocator(), "body: not JSON", .{});
-    defer parsed.deinit();
-    const pretty = std.json.Stringify.valueAlloc(gpa, parsed.value, .{ .whitespace = .indent_2 }) catch return error.OutOfMemory;
+    // Re-indented token by token: the numbers keep the digits typed.
+    const pretty = (try @import("../http/json_pretty.zig").pretty(gpa, body)) orelse return app.diag.fail(app.frame.allocator(), "body: not JSON", .{});
     defer gpa.free(pretty);
     try rp.body.replaceRange(gpa, 0, rp.body.items.len, pretty);
     rp.body_caret = @min(rp.body_caret, rp.body.items.len);
@@ -1935,7 +1968,7 @@ fn sendCmd(app: *App) CommandError!void {
     errdefer req.deinit(app.gpa);
     // A pane already on this block re-fires; otherwise a new one opens
     // beside the source.
-    if (active.source_path) |p| if (findSource(app, p, active.block_name)) |id| {
+    if (active.source_path) |p| if (findSource(app, p, active.block_index, active.block_name)) |id| {
         const rp = app.panes.get(id).?.asRequest().?;
         try rp.load(req);
         req = undefined;
@@ -1944,7 +1977,7 @@ fn sendCmd(app: *App) CommandError!void {
         rp.block = .response;
         return fire(app, id);
     };
-    const id = try openFromRequest(app, req, .{ .source_path = active.source_path, .block_name = active.block_name, .summary = active.summary, .focus_response = true });
+    const id = try openFromRequest(app, req, .{ .source_path = active.source_path, .block_name = active.block_name, .block_index = active.block_index, .summary = active.summary, .focus_response = true });
     req = undefined;
     if (app.panes.get(id)) |p| if (p.asRequest()) |rp| {
         rp.edited = false;
@@ -2740,6 +2773,65 @@ test "save: a multi-block .http writes back one block; a scratch prompts" {
     try testing.expect(std.mem.startsWith(u8, app.clipboard.text(), "curl 'https://example.com/two EDIT'"));
 }
 
+test "save: two bare ### blocks each keep their own pane, and saving block two leaves block one" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    const src = "###\nGET http://127.0.0.1:9/items?n=first\n\n###\nGET http://127.0.0.1:9/items?n=second\n";
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "bare.http", .data = src });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    const path = try std.fs.path.join(testing.allocator, &.{ root, "bare.http" });
+    defer testing.allocator.free(path);
+    const first = try openFileBlock(&app, path, 0);
+    const second = try openFileBlock(&app, path, 1);
+    // Both are named "" — the position keeps them apart.
+    try testing.expect(first != second);
+    try testing.expectEqual(@as(?PaneId, second), findSource(&app, path, 1, ""));
+    try testing.expectEqual(@as(?PaneId, first), findSource(&app, path, 0, ""));
+    // The editor's cursor on block two finds block two.
+    _ = try app.openEditor(path);
+    app.activeEditor().?.buf.editor.placeCursor(4, 0);
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var active = try parseActive(&app, arena.allocator());
+    defer active.req.deinit(testing.allocator);
+    try testing.expectEqual(@as(?u32, 1), active.block_index);
+    app.showPane(second);
+    const rp = app.panes.get(second).?.asRequest().?;
+    try rp.url.appendSlice(testing.allocator, "&edited=1");
+    try saveToSource(&app);
+    const out = try tmp.dir.readFileAlloc(testing.io, "bare.http", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(out);
+    try testing.expectEqualStrings("###\nGET http://127.0.0.1:9/items?n=first\n\n###\nGET http://127.0.0.1:9/items?n=second&edited=1\n", out);
+}
+
+test "send: the cursor on a comment-only block is refused, not block one fired" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "c.http", .data = "### one\nDELETE http://127.0.0.1:9/items/1\n\n### notes\n# a comment, no request yet\n\n### two\nGET http://127.0.0.1:9/items\n" });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    const path = try std.fs.path.join(testing.allocator, &.{ root, "c.http" });
+    defer testing.allocator.free(path);
+    _ = try app.openEditor(path);
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    for ([_]usize{ 3, 4 }) |line| {
+        app.activeEditor().?.buf.editor.placeCursor(line, 0);
+        try testing.expectError(error.Failed, parseActive(&app, arena.allocator()));
+        try testing.expectEqualStrings("http: the block under the cursor is empty", app.diag.msg.?);
+        app.diag.clear();
+    }
+    app.activeEditor().?.buf.editor.placeCursor(7, 0);
+    var active = try parseActive(&app, arena.allocator());
+    defer active.req.deinit(testing.allocator);
+    try testing.expectEqualStrings("two", active.block_name.?);
+}
+
 fn pumpUntil(app: *App, rp: *RequestPane, comptime pred: fn (*RequestPane) bool, max_ticks: usize) !void {
     var waited: usize = 0;
     while (!pred(rp) and waited < max_ticks) : (waited += 1) {
@@ -2782,6 +2874,16 @@ test "stream: an event-stream lands event by event, live, then seals into the Do
     }.f, 300);
     try testing.expect(rp.state == .streaming);
     try testing.expectEqual(@as(usize, 2), rp.streaming().?.events);
+    // And the SCREEN shows them while the stream is open — not a
+    // `sending…` spinner over events that have already arrived.
+    {
+        try app.render();
+        const txt = try @import("../ipc/screen.zig").toTestText(testing.allocator, &app.screen);
+        defer testing.allocator.free(txt);
+        try testing.expect(std.mem.indexOf(u8, txt, "sending\u{2026}") == null);
+        try testing.expect(std.mem.indexOf(u8, txt, "streaming \u{00B7} 2 events") != null);
+        try testing.expect(std.mem.indexOf(u8, txt, "data: two") != null);
+    }
     try testing.expect(std.mem.indexOf(u8, rp.streaming().?.body.items, "data: two") != null);
     try testing.expect(std.mem.indexOf(u8, rp.streaming().?.body.items, "three") == null);
     try testing.expectEqual(@as(u32, 1), app.http.sending);
@@ -2800,6 +2902,107 @@ test "stream: an event-stream lands event by event, live, then seals into the Do
     const hist = try tmp.dir.readFileAlloc(testing.io, ".rqst/history.jsonl", testing.allocator, .limited(1 << 16));
     defer testing.allocator.free(hist);
     try testing.expect(std.mem.indexOf(u8, hist, "\"status\":200") != null);
+}
+
+test "history: a re-fire resolves the URL and the headers against the env it was sent with; an env pick moves both" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    var server = try mock.Server.start(testing.allocator, testing.io, .{ .status = 200, .status_text = "OK", .body = "ok" });
+    defer server.stop(testing.io);
+    try tmp.dir.createDirPath(testing.io, ".mnml/env");
+    const dev = try std.fmt.allocPrint(testing.allocator, "BASE=http://127.0.0.1:{d}/dev\nTOKEN=dev-token\n", .{server.port});
+    defer testing.allocator.free(dev);
+    const stg = try std.fmt.allocPrint(testing.allocator, "BASE=http://127.0.0.1:{d}/stg\nTOKEN=staging-token\n", .{server.port});
+    defer testing.allocator.free(stg);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/dev.env", .data = dev });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/staging.env", .data = stg });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "a.http", .data = "GET {{BASE}}/me\nAuthorization: Bearer {{TOKEN}}\n" });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    const path = try std.fs.path.join(testing.allocator, &.{ root, "a.http" });
+    defer testing.allocator.free(path);
+    const first = try openFile(&app, path, false);
+    try fire(&app, first);
+    const done = struct {
+        fn f(p: *RequestPane) bool {
+            return p.state == .done or p.state == .failed;
+        }
+    }.f;
+    try pumpUntil(&app, app.panes.get(first).?.asRequest().?, done, 300);
+    try testing.expect(std.mem.startsWith(u8, server.lastRequest(), "GET /dev/me "));
+    // Staging becomes the active env; the dev entry is re-fired.
+    const cmd_http = @import("cmd_http.zig");
+    try cmd_http.acceptPicker(&app, .http_env_pick, 0, "staging");
+    try command.run(&app, .{ .static = .@"http.history" });
+    try cmd_http.acceptPicker(&app, .http_history, 0, "");
+    const again = app.active.?;
+    try testing.expect(again != first);
+    const rp = app.panes.get(again).?.asRequest().?;
+    try testing.expectEqualStrings("dev", rp.env_pin.?);
+    try fire(&app, again);
+    try pumpUntil(&app, rp, done, 300);
+    // One env for all of it: dev's host AND dev's token.
+    try testing.expect(std.mem.startsWith(u8, server.lastRequest(), "GET /dev/me "));
+    try testing.expect(std.ascii.indexOfIgnoreCase(server.lastRequest(), "authorization: Bearer dev-token\r\n") != null);
+    // An explicit pick moves the whole request to the new env.
+    try cmd_http.acceptPicker(&app, .http_env_pick, 0, "staging");
+    try testing.expect(rp.env_pin == null);
+    try fire(&app, again);
+    try pumpUntil(&app, rp, done, 300);
+    try testing.expect(std.mem.startsWith(u8, server.lastRequest(), "GET /stg/me "));
+    try testing.expect(std.ascii.indexOfIgnoreCase(server.lastRequest(), "authorization: Bearer staging-token\r\n") != null);
+}
+
+test "the Response strip's type chip opens the body menu, not a toast" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    const id = try openBlank(&app);
+    const rp = app.panes.get(id).?.asRequest().?;
+    try openResponseBodyMenu(&app, rp, 10, 10);
+    try testing.expect(app.overlay != .menu);
+    try testing.expectEqualStrings("no response yet", app.lastToast().?);
+    const gpa = testing.allocator;
+    try rp.setResponse(.{ .status = 200, .status_text = try gpa.dupe(u8, "OK"), .final_url = try gpa.dupe(u8, "http://x/"), .headers = &.{}, .body = try gpa.dupe(u8, "{}") });
+    // A press on the chip is what opens it.
+    try @import("request_pane.zig").click(&app, id, rp, @import("../ui/request_view.zig").hit_type, .{ .x = 10, .y = 10, .kind = .press, .button = .left }, null);
+    try testing.expect(app.overlay == .menu);
+    try testing.expectEqual(@as(usize, 4), app.overlay.menu.items.len);
+    try testing.expectEqual(command.CommandId.@"http.copy_response_body", app.overlay.menu.items[0].action.command);
+    try testing.expectEqual(command.CommandId.@"http.toggle_response_wrap", app.overlay.menu.items[3].action.command);
+}
+
+test "stream: an event that shares a packet with the head shows before the server writes again" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    const chunks = [_][]const u8{ "id: 1\ndata: first-event\n\n", "data: second\n\n" };
+    var server = try mock.Server.start(testing.allocator, testing.io, .{ .headers = &.{.{ .name = "content-type", .value = "text/event-stream" }}, .chunks = &chunks, .chunk_delay_ms = 3000, .first_with_head = true });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    const id = try openBlank(&app);
+    const rp = app.panes.get(id).?.asRequest().?;
+    const url = try std.fmt.allocPrint(testing.allocator, "http://127.0.0.1:{d}/events", .{server.port});
+    defer testing.allocator.free(url);
+    try rp.url.appendSlice(testing.allocator, url);
+    try command.run(&app, .{ .static = .@"http.send" });
+    // Well inside the server's 3 s pause before the second event.
+    try pumpUntil(&app, rp, struct {
+        fn f(p: *RequestPane) bool {
+            return p.state != .sending and (p.state != .streaming or p.streaming().?.events >= 1);
+        }
+    }.f, 100);
+    try testing.expect(rp.state == .streaming);
+    try testing.expectEqual(@as(usize, 1), rp.streaming().?.events);
+    try testing.expect(std.mem.indexOf(u8, rp.streaming().?.body.items, "first-event") != null);
+    try command.run(&app, .{ .static = .@"http.cancel" });
+    server.stop(testing.io);
 }
 
 test "stream: http.cancel stops a stream where it is; a chunked body of any type streams with a byte count" {
@@ -2827,13 +3030,15 @@ test "stream: http.cancel stops a stream where it is; a chunked body of any type
     const before = App.nowMs(app.io);
     try command.run(&app, .{ .static = .@"http.cancel" });
     try testing.expect(App.nowMs(app.io) - before < 300);
-    try testing.expect(rp.state == .failed);
-    try testing.expectEqualStrings("canceled mid-stream", rp.state.failed);
+    // What arrived before the cancel is kept, marked truncated.
+    try testing.expect(rp.state == .done);
+    try testing.expectEqualStrings("data: first\n\n", rp.response().?.body);
+    try testing.expect(rp.response().?.truncated);
     try testing.expectEqual(@as(usize, 0), app.http.handles.count());
     try testing.expectEqual(@as(u32, 0), app.http.sending);
     // A late chunk for the dead job is dropped, not appended.
     try app.tick(App.nowMs(app.io));
-    try testing.expect(rp.state == .failed);
+    try testing.expectEqualStrings("data: first\n\n", rp.response().?.body);
     server.stop(testing.io);
 
     // Chunked framing on a plain body streams too, counting bytes.
@@ -2988,9 +3193,11 @@ test "send: a GET with trailing directives sends no body, and a 302's Set-Cookie
     // The hop's cookies are in the jar, keyed by the host that set them.
     const j = try @import("cmd_http.zig").jar(&app);
     try testing.expectEqual(@as(usize, 2), j.total());
-    const line = (try j.cookieHeaderFor(testing.allocator, "127.0.0.1")).?;
+    const line = (try j.cookieHeaderFor(testing.allocator, "127.0.0.1", "/cookies", false, 0)).?;
     defer testing.allocator.free(line);
-    try testing.expectEqualStrings("session=abc123; user=chris", line);
+    // `user` came with no Path from `/cookies/set`: its default path is
+    // `/cookies` (RFC 6265 §5.1.4), so it rides first there — and not to `/`.
+    try testing.expectEqualStrings("user=chris; session=abc123", line);
     const saved = try tmp.dir.readFileAlloc(testing.io, ".mnml/cookies.json", testing.allocator, .limited(1 << 16));
     defer testing.allocator.free(saved);
     try testing.expect(std.mem.indexOf(u8, saved, "abc123") != null);

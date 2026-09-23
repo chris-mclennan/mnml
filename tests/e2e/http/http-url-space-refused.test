@@ -1,0 +1,19 @@
+# width: 200
+# height: 45
+# A space in the URL — typed, or from a {{VAR}} value — would go onto
+# the request line raw, a request line no server accepts. The send
+# refuses it as curl does ("URL rejected"), naming the column and the
+# %20 fix; an encoded URL goes out.
+serve 19603 200 @echo
+write .mnml/env/dev.env "CITY=new york\nENC=new%20york\n"
+write a.http "GET http://127.0.0.1:19603/search?q={{CITY}}\n"
+write b.http "GET http://127.0.0.1:19603/search?q={{ENC}}\n"
+open a.http
+command http.send
+wait 500
+expect screen contains "the URL has a space at column 36"
+expect screen contains "write it as %20"
+open b.http
+command http.send
+wait 800
+expect screen contains "GET /search?q=new%20york HTTP/1.1"

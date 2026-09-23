@@ -640,7 +640,8 @@ otherwise. Copy what you need; leave the rest out.
     .ws = .{
         .subprotocols = .{},
         .ping_interval_secs = 30,
-        .reconnect_max_attempts = 3,
+        .reconnect_max_attempts = 3, // after a drop, or a server close of 1001 / 1011–1014
+        .reconnect_on_close = false, // true: after every server Close frame (1000, 4xxx, …)
     },
 
     // ── sonos ──────────────────────────────────────────────────────────

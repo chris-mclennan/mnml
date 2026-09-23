@@ -842,6 +842,9 @@ test {
     _ = @import("app/smoke_test.zig");
     _ = @import("http/cli.zig");
     _ = @import("http/multipart.zig");
+    _ = @import("http/body.zig");
+    _ = @import("http/json_pretty.zig");
+    _ = @import("http/charset.zig");
     _ = @import("http/proxy.zig");
     _ = @import("http/yaml.zig");
     _ = @import("http/discover.zig");

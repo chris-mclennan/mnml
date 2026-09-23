@@ -147,10 +147,24 @@ pub fn parseLine(raw: []const u8) ?KeyValue {
     var value = std.mem.trim(u8, line[eq + 1 ..], " \t");
     if (value.len >= 2 and (value[0] == '"' or value[0] == '\'') and value[value.len - 1] == value[0]) {
         value = value[1 .. value.len - 1];
+    } else if (quotedThenComment(value)) |inner| {
+        // `KEY="v w" # note`: the quotes close before the comment.
+        value = inner;
     } else if (std.mem.indexOf(u8, value, " #")) |c| {
         value = std.mem.trimEnd(u8, value[0..c], " \t");
     }
     return .{ .key = key, .value = value };
+}
+
+/// The inside of `"…" # comment` / `'…' # comment`: a quoted value whose
+/// closing quote is followed only by blanks and a `#` comment.
+fn quotedThenComment(value: []const u8) ?[]const u8 {
+    if (value.len < 2 or (value[0] != '"' and value[0] != '\'')) return null;
+    const close = std.mem.indexOfScalarPos(u8, value, 1, value[0]) orelse return null;
+    const rest = std.mem.trimStart(u8, value[close + 1 ..], " \t");
+    if (rest.len == 0 or rest[0] != '#') return null;
+    if (close + 1 < value.len and value[close + 1] != ' ' and value[close + 1] != '\t') return null;
+    return value[1..close];
 }
 
 pub fn isValidName(s: []const u8) bool {
@@ -364,9 +378,19 @@ pub fn deleteKey(gpa: Allocator, io: Io, workspace: []const u8, name: []const u8
 
 // ─── expansion ──────────────────────────────────────────────────────────
 
+/// How deep a value may name another value (`BASE=http://{{HOST}}`,
+/// `HOST={{IP}}:80`, …). Past it — or in a cycle — the inner `{{…}}`
+/// stays as written, and `unresolved` names it.
+pub const max_depth = 8;
+
 /// Replace every `{{NAME}}` / `{{ NAME }}` / `{{$dynamic}}` in `text`.
-/// Unknown names stay as written.
+/// A value that itself holds `{{…}}` is expanded too, `max_depth`
+/// levels down. Unknown names stay as written.
 pub fn expand(alloc: Allocator, io: Io, text: []const u8, env: *const EnvSet) Allocator.Error![]u8 {
+    return expandDepth(alloc, io, text, env, 0);
+}
+
+fn expandDepth(alloc: Allocator, io: Io, text: []const u8, env: *const EnvSet, depth: usize) Allocator.Error![]u8 {
     var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(alloc);
     var i: usize = 0;
@@ -377,7 +401,13 @@ pub fn expand(alloc: Allocator, io: Io, text: []const u8, env: *const EnvSet) Al
                 const name = std.mem.trim(u8, raw, " \t");
                 if (try resolve(alloc, io, name, env)) |v| {
                     defer if (v.owned) alloc.free(v.text);
-                    try out.appendSlice(alloc, v.text);
+                    // A dynamic's text is final; an env value may name
+                    // another.
+                    if (!v.owned and depth < max_depth and std.mem.indexOf(u8, v.text, "{{") != null) {
+                        const inner = try expandDepth(alloc, io, v.text, env, depth + 1);
+                        defer alloc.free(inner);
+                        try out.appendSlice(alloc, inner);
+                    } else try out.appendSlice(alloc, v.text);
                     i += 2 + close + 2;
                     continue;
                 }
@@ -389,9 +419,17 @@ pub fn expand(alloc: Allocator, io: Io, text: []const u8, env: *const EnvSet) Al
     return out.toOwnedSlice(alloc);
 }
 
-/// Names in `text` that `env` cannot resolve, in order, deduplicated.
+/// Names in `text` that `env` cannot resolve, in order, deduplicated —
+/// the ones a resolved value names included (`BASE=http://{{HOST}}`
+/// with no `HOST` reports `HOST`), and a name still standing at
+/// `max_depth` (a cycle).
 pub fn unresolved(arena: Allocator, text: []const u8, env: *const EnvSet) Allocator.Error![]const []const u8 {
     var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    try unresolvedInto(arena, text, env, &out, 0);
+    return out.items;
+}
+
+fn unresolvedInto(arena: Allocator, text: []const u8, env: *const EnvSet, out: *std.ArrayListUnmanaged([]const u8), depth: usize) Allocator.Error!void {
     var i: usize = 0;
     while (i < text.len) {
         if (std.mem.startsWith(u8, text[i..], "{{")) {
@@ -399,7 +437,14 @@ pub fn unresolved(arena: Allocator, text: []const u8, env: *const EnvSet) Alloca
                 const name = std.mem.trim(u8, text[i + 2 .. i + 2 + close], " \t");
                 i += 2 + close + 2;
                 if (name.len > 0 and name[0] == '$') continue;
-                if (!isValidName(name) or env.get(name) != null) continue;
+                if (!isValidName(name)) continue;
+                if (env.get(name)) |v| {
+                    if (depth < max_depth) {
+                        try unresolvedInto(arena, v, env, out, depth + 1);
+                        continue;
+                    }
+                    if (std.mem.indexOf(u8, v, "{{") == null) continue;
+                }
                 var seen = false;
                 for (out.items) |o| if (std.mem.eql(u8, o, name)) {
                     seen = true;
@@ -411,7 +456,6 @@ pub fn unresolved(arena: Allocator, text: []const u8, env: *const EnvSet) Alloca
         }
         i += 1;
     }
-    return out.items;
 }
 
 /// Every `{{…}}` token's byte range in `text`, for highlighting.
@@ -504,6 +548,11 @@ test "parseLine: quotes, export, comments, invalid keys" {
     try testing.expectEqualStrings("v w", parseLine("K=\"v w\"").?.value);
     try testing.expectEqualStrings("v", parseLine("export K='v'").?.value);
     try testing.expectEqualStrings("v", parseLine("K=v # note").?.value);
+    // Quoted AND commented: the quotes close before the comment.
+    try testing.expectEqualStrings("hello world", parseLine("GREETING=\"hello world\" # shown to users").?.value);
+    try testing.expectEqualStrings("a # b", parseLine("K='a # b'   # note").?.value);
+    // A `#` inside the quotes, no comment after, is the value's own.
+    try testing.expectEqualStrings("a # b", parseLine("K=\"a # b\"").?.value);
     try testing.expect(parseLine("# K=v") == null);
     try testing.expect(parseLine("bad key=v") == null);
     try testing.expect(parseLine("") == null);
@@ -526,6 +575,24 @@ test "expand substitutes known names, leaves unknown, resolves dynamics; unresol
     try testing.expectEqual(@as(usize, 2), miss.len);
     try testing.expectEqualStrings("A", miss[0]);
     try testing.expectEqualStrings("B", miss[1]);
+    // A value naming another expands too; a missing inner name is reported.
+    try env.put("HOST", "127.0.0.1:9");
+    try env.put("NESTED", "http://{{HOST}}");
+    try env.put("DEEP", "{{NESTED}}/v1");
+    try env.put("HALF", "http://{{NOPE}}");
+    const nested = try expand(testing.allocator, testing.io, "X-Base: {{DEEP}}", &env);
+    defer testing.allocator.free(nested);
+    try testing.expectEqualStrings("X-Base: http://127.0.0.1:9/v1", nested);
+    const half = try unresolved(arena.allocator(), "{{HALF}}", &env);
+    try testing.expectEqual(@as(usize, 1), half.len);
+    try testing.expectEqualStrings("NOPE", half[0]);
+    // A cycle stops at the depth cap and is named, never a hang.
+    try env.put("LOOP_A", "a{{LOOP_B}}");
+    try env.put("LOOP_B", "b{{LOOP_A}}");
+    const loop = try expand(testing.allocator, testing.io, "{{LOOP_A}}", &env);
+    defer testing.allocator.free(loop);
+    try testing.expect(std.mem.indexOf(u8, loop, "{{LOOP_") != null);
+    try testing.expect((try unresolved(arena.allocator(), "{{LOOP_A}}", &env)).len == 1);
     const ts = (try dynamicVar(testing.allocator, testing.io, "isoTimestamp")).?;
     defer testing.allocator.free(ts);
     try testing.expectEqual(@as(usize, 24), ts.len);

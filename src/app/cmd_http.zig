@@ -92,7 +92,8 @@ pub fn jar(app: *App) Allocator.Error!*cookies.Jar {
 pub fn cookieHeaderFor(app: *App, arena: Allocator, url: []const u8) Allocator.Error!?[]const u8 {
     const host = cookies.hostOf(url) orelse return null;
     const j = try jar(app);
-    return j.cookieHeaderFor(arena, host);
+    const secure = std.ascii.startsWithIgnoreCase(std.mem.trim(u8, url, " \t"), "https://");
+    return j.cookieHeaderFor(arena, host, cookies.pathOf(url), secure, cookies.nowMs(app.io));
 }
 
 fn saveJar(app: *App) void {
@@ -110,15 +111,16 @@ pub fn afterResponse(app: *App, id: PaneId, rp: *RequestPane) Allocator.Error!vo
     // A redirect hop's cookies belong to the host that set them, the
     // final response's to the host it came from.
     var jarred = false;
+    const now = cookies.nowMs(app.io);
     for (resp.hop_cookies) |c| {
-        try (try jar(app)).recordSetCookie(c.host, c.value);
+        try (try jar(app)).recordSetCookie(c.host, c.path, c.value, now);
         jarred = true;
     }
     if (cookies.hostOf(resp.final_url)) |host| {
         var arena = std.heap.ArenaAllocator.init(app.gpa);
         defer arena.deinit();
         const set = try resp.setCookies(arena.allocator());
-        for (set) |c| try (try jar(app)).recordSetCookie(host, c);
+        for (set) |c| try (try jar(app)).recordSetCookie(host, cookies.pathOf(resp.final_url), c, now);
         jarred = jarred or set.len > 0;
     }
     if (jarred) saveJar(app);
@@ -312,6 +314,11 @@ pub fn recordHistory(app: *App, r: HistoryFacts, rp: *RequestPane) !void {
         .err = if (rp.state == .failed) rp.state.failed else null,
         .headers = hs.items,
         .request_body = rp.request.body,
+        // The URL as written and the env it resolved against: a re-fire
+        // resolves ALL of it against that env, never an expanded URL
+        // with another env's headers.
+        .url_template = rp.request.url,
+        .env = rp.sent_env,
     });
 }
 
@@ -619,7 +626,24 @@ fn importPostmanCmd(app: *App) CommandError!void {
         else => return app.diag.fail(app.frame.allocator(), "postman: no item[] (not a v2.1 collection?)", .{}),
     };
     const n = try writeStubs(app, imported);
-    app.toast("postman: wrote {d} curls → .rqst/captured/{s}/", .{ n, imported.dir });
+    // The collection's variables become an env of their own, picked
+    // like any other; an existing file is the user's and is kept.
+    var env_note: []const u8 = "";
+    if (imported.vars.len > 0) {
+        const fa = app.frame.allocator();
+        const env_path = try std.fs.path.join(fa, &.{ app.workspace, ".mnml", "env", try std.fmt.allocPrint(fa, "{s}.env", .{imported.dir}) });
+        if (Io.Dir.cwd().access(app.io, env_path, .{})) |_| {
+            env_note = try std.fmt.allocPrint(fa, " · {s}.env exists, kept", .{imported.dir});
+        } else |_| {
+            var text: std.ArrayListUnmanaged(u8) = .empty;
+            for (imported.vars) |v| if (env_mod.isValidName(v.key)) try text.print(fa, "{s}={s}\n", .{ v.key, v.value });
+            if (std.fs.path.dirname(env_path)) |d| Io.Dir.cwd().createDirPath(app.io, d) catch {};
+            Io.Dir.cwd().writeFile(app.io, .{ .sub_path = env_path, .data = text.items }) catch {};
+            env_note = try std.fmt.allocPrint(fa, " · {d} variables → env {s}", .{ imported.vars.len, imported.dir });
+        }
+    }
+    const auth_note: []const u8 = if (imported.unimported_auth > 0) try std.fmt.allocPrint(app.frame.allocator(), " · {d} with an auth type not imported", .{imported.unimported_auth}) else "";
+    app.toast("postman: wrote {d} curls → .rqst/captured/{s}/{s}{s}", .{ n, imported.dir, env_note, auth_note });
 }
 
 // ─── fan out ────────────────────────────────────────────────────────────
@@ -1344,16 +1368,26 @@ pub fn acceptPicker(app: *App, kind: app_mod.PickerKind, i: usize, label: []cons
         .http_env_pick => {
             if (app.http.env_override) |e| app.gpa.free(e);
             app.http.env_override = try app.gpa.dupe(u8, label);
+            // An explicit pick is for every pane, a re-fired one too.
+            for (app.panes.slots.items) |*slot| if (slot.*) |*pane| if (pane.asRequest()) |rp| if (rp.env_pin) |pin| {
+                app.gpa.free(pin);
+                rp.env_pin = null;
+            };
             app.toast("env: {s} (session override — :http.reset_env clears)", .{label});
         },
         .http_history => {
             const rows = app.http.history_rows;
             if (rows.len == 0) return;
             const idx = rows.len - 1 - @min(i, rows.len - 1);
-            const req = try history.rowToRequest(app.gpa, rows[idx]);
-            _ = http.openFromRequest(app, req, .{}) catch |err| switch (err) {
+            const row = rows[idx];
+            const req = try history.rowToRequest(app.gpa, row);
+            const id = http.openFromRequest(app, req, .{}) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
-                else => {},
+                else => return,
+            };
+            if (row.env) |env_name| if (row.url_template != null) if (app.panes.get(id)) |p| if (p.asRequest()) |rp| {
+                rp.env_pin = try app.gpa.dupe(u8, env_name);
+                app.toast("history: resolves against env {s}, the one it was sent with", .{env_name});
             };
         },
         .http_captured => {
@@ -1380,8 +1414,7 @@ pub fn acceptPicker(app: *App, kind: app_mod.PickerKind, i: usize, label: []cons
             const host = parts.next() orelse return;
             const name = parts.next() orelse return;
             const j = try jar(app);
-            const inner = j.hosts.get(host) orelse return;
-            const value = inner.get(name) orelse return;
+            const value = j.valueOf(host, name) orelse return;
             const text = try std.fmt.allocPrint(app.frame.allocator(), "{s}={s}", .{ name, value });
             try app.clipboard.set(text, false);
             app.toast("cookies: copied {s}", .{text});

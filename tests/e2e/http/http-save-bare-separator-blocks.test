@@ -1,0 +1,24 @@
+# width: 160
+# height: 45
+# Two blocks under bare `###` separators (the JetBrains / REST Client
+# habit) share the block name "" — each is still its own block: the
+# send from block two opens block two's pane, and Ctrl+S there rewrites
+# block two on disk and leaves block one as it was.
+serve 19601 200 @echo
+write bare.http "###\nGET http://127.0.0.1:19601/items?n=first\n\n###\nGET http://127.0.0.1:19601/items?n=second\n"
+open bare.http
+command http.view_source
+wait 200
+key ctrl+home
+key down
+key down
+key down
+key down
+expect screen contains "Ln 5/"
+command http.send
+wait 800
+expect screen contains "n=second"
+key ctrl+s
+wait 300
+expect file bare.http contains "n=second"
+expect file bare.http contains "n=first"

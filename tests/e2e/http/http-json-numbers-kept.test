@@ -1,0 +1,22 @@
+# width: 160
+# height: 45
+# JSON is re-indented, never re-printed: the pretty Body shows the
+# numbers the server sent (5.0, 1.10, 1E5, all of a long decimal), and
+# `# @body-type json` sends the numbers the block says (10.50, 5.0).
+serve 19605 200 "content-type: application/json\n\n{\"f\": 5.0, \"price\": 1.10, \"exp\": 1E5, \"pi\": 3.141592653589793238}"
+serve 19606 200 @echo
+write a.http "GET http://127.0.0.1:19605/n\n"
+write b.http "# @body-type json\nPOST http://127.0.0.1:19606/pay\n\n{\"amount\": 10.50, \"qty\": 5.0}\n"
+open a.http
+command http.send
+wait 800
+expect screen contains "\"f\": 5.0,"
+expect screen contains "\"price\": 1.10,"
+expect screen contains "\"exp\": 1E5,"
+expect screen contains "3.141592653589793238"
+open b.http
+command http.send
+wait 800
+expect screen contains "POST /pay HTTP/1.1"
+expect screen contains "\"amount\": 10.50,"
+expect screen contains "\"qty\": 5.0"
