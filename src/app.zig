@@ -2866,6 +2866,8 @@ pub const App = struct {
     /// Close the find bar; `restore` puts the pre-open find state back.
     pub fn closeFindBar(self: *App, restore: bool) void {
         const fb = &(self.find_bar orelse return);
+        // A terminal's bar leaves its selection on the current match.
+        if (self.panes.pty(fb.pane)) |p| @import("app/pty_search.zig").barClosed(self, p, restore);
         if (fb.snapshot) |*snap| {
             if (restore) {
                 if (self.panes.editor(fb.pane)) |e| {
@@ -3122,6 +3124,7 @@ pub const App = struct {
         try dispatch.finishDeferredInserts(self);
         if (self.theme_auto_poll_ms) |at| if (now >= at) try @import("app/cmd_view.zig").pollSystemTheme(self);
         pty_pane.tickAll(self);
+        try @import("app/pty_search.zig").tickAll(self);
         runners.onFrame(self);
         dap.pollPendingLaunch(self);
         ws_pane.tickAll(self);
@@ -3206,6 +3209,7 @@ pub const App = struct {
             next = @min(next orelse std.math.maxInt(i64), d);
         };
         if (cmd_picker.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
+        if (@import("app/pty_search.zig").nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         for (self.toasts.items) |t| {
             if (t.expires_ms == std.math.maxInt(i64)) continue;
             if (next == null or t.expires_ms < next.?) next = t.expires_ms;
@@ -3328,6 +3332,7 @@ test {
     _ = @import("app/cmd_buffer.zig");
     _ = @import("app/cmd_editor.zig");
     _ = @import("app/cmd_find.zig");
+    _ = @import("app/pty_search.zig");
     _ = @import("app/cmd_view.zig");
     _ = @import("app/cmd_picker.zig");
     _ = @import("app/cmd_app.zig");

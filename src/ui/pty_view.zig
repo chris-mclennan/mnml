@@ -83,7 +83,14 @@ pub const Props = struct {
     /// default: a caller that cannot say gets the Unicode fallback,
     /// which renders everywhere, rather than a guaranteed `?`.
     mnml_font: bool = false,
+    /// Spans to call out over the cells — a scrollback search's matches
+    /// (`app/pty_search.zig`), in viewport rows.
+    marks: []const Mark = &.{},
 };
+
+/// One row's run of cells, `x0` to `x1` inclusive, painted in the
+/// theme's `match` role — `current_match` for the one being stepped.
+pub const Mark = struct { y: u16, x0: u16, x1: u16, current: bool = false };
 
 /// The full-cell outline MnmlSymbols bakes — the hollow cursor proper.
 /// `cursor_hollow_cp` is the same codepoint for the caller that has to
@@ -239,6 +246,23 @@ fn paintCursor(ui: Ui, area: Rect, grid: *const pty.Grid, cur: pty.grid.Cursor, 
     }
 }
 
+/// Repaint a mark's cells in the match role, keeping what they hold.
+fn paintMark(ui: Ui, area: Rect, grid: *const pty.Grid, m: Mark, rows: u16, cols: u16) void {
+    if (m.y >= rows or m.x0 >= cols) return;
+    const style = if (m.current) ui.theme.current_match else ui.theme.match;
+    var x = m.x0;
+    while (x <= @min(m.x1, cols - 1)) : (x += 1) {
+        const cell = grid.cell(x, m.y);
+        switch (cell.wide) {
+            .spacer_tail, .spacer_head => continue,
+            .narrow, .wide => {},
+        }
+        const g = graphemeOf(ui, cell) orelse " ";
+        const width: u8 = if (cell.wide == .wide) 2 else 1;
+        ui.canvas.put(area.x + x, area.y + m.y, .{ .char = .{ .grapheme = g, .width = width }, .style = style });
+    }
+}
+
 /// Paint `grid` into `area`. Returns the terminal cursor's screen
 /// position when it is visible and inside the area.
 pub fn draw(ui: Ui, area: Rect, grid: *const pty.Grid, props: Props) ?Cursor {
@@ -271,6 +295,7 @@ pub fn draw(ui: Ui, area: Rect, grid: *const pty.Grid, props: Props) ?Cursor {
             ui.canvas.put(area.x + x, area.y + y, .{ .char = .{ .grapheme = g, .width = width }, .style = style });
         }
     }
+    for (props.marks) |m| paintMark(ui, area, grid, m, rows, cols);
     if (props.exit_label) |label| {
         const r = area.row(area.h - 1);
         ui.fill(r, th.statusline);
@@ -568,4 +593,28 @@ test "--ascii swaps the outline and the sliver for characters a plain font has" 
     defer bar.deinit();
     _ = draw(f.ui(), Rect.init(0, 0, 10, 2), &bar.grid, .{ .focused = true });
     try testing.expectEqualStrings("|", f.cell(0, 0).char.grapheme);
+}
+
+test "marks paint their cells in the match roles and keep what the cells hold; a wide char is painted whole; out-of-range marks are ignored" {
+    var g = try GridFixture.init(12, 3, "ab find cd\r\n\xe4\xbd\xa0x");
+    defer g.deinit();
+    var f = try Fixture.init(12, 3);
+    defer f.deinit();
+    const marks = [_]Mark{
+        .{ .y = 0, .x0 = 3, .x1 = 6 },
+        .{ .y = 1, .x0 = 0, .x1 = 1, .current = true },
+        .{ .y = 9, .x0 = 0, .x1 = 3 },
+        .{ .y = 0, .x0 = 40, .x1 = 50 },
+    };
+    _ = draw(f.ui(), Rect.init(0, 0, 12, 3), &g.grid, .{ .focused = false, .unfocused = .none, .marks = &marks });
+    try f.expectRow(0, "ab find cd");
+    try testing.expect(f.bgEql(3, 0, f.theme.match));
+    try testing.expect(f.fgEql(6, 0, f.theme.match));
+    try testing.expect(!f.bgEql(2, 0, f.theme.match));
+    try testing.expect(!f.bgEql(7, 0, f.theme.match));
+    const wide = f.screen.readCell(0, 1).?;
+    try testing.expectEqualStrings("\u{4f60}", wide.char.grapheme);
+    try testing.expect(f.bgEql(0, 1, f.theme.current_match));
+    try testing.expect(f.bgEql(1, 1, f.theme.current_match));
+    try testing.expect(!f.bgEql(2, 1, f.theme.current_match));
 }

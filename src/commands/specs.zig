@@ -889,6 +889,12 @@ pub const specs = [_]Spec{
     .{ .id = "integrations.unpin_from_dock", .title = "Integrations: take the chip's command off the launcher dock", .group = "integrations" },
     .{ .id = "integrations.toggle_palette_bar", .title = "Integrations: show / hide the chip on the palette bar", .group = "integrations" },
     .{ .id = "term.rename", .title = "Terminal: rename this session (shown in the tab)", .group = "term" },
+    // The scrollback search. No keymap chord: the terminal pane's own key
+    // handler reads `/` (vim, terminal-normal) and the standard profile's
+    // `find.find` chord as `term.search`, and `n` / `N` as the steps.
+    .{ .id = "term.search", .title = "Terminal: search the scrollback (/ in terminal-normal, Ctrl+F)", .group = "terminal" },
+    .{ .id = "term.search_next", .title = "Terminal: next scrollback match (n in terminal-normal)", .group = "terminal" },
+    .{ .id = "term.search_prev", .title = "Terminal: previous scrollback match (N in terminal-normal)", .group = "terminal" },
     .{ .id = "dock.new_text", .title = "Dock: new text widget (bottom-left)", .group = "dock" },
     .{ .id = "dock.new_text_br", .title = "Dock: new text widget (bottom-right)", .group = "dock" },
     .{ .id = "dock.new_text_tl", .title = "Dock: new text widget (top-left)", .group = "dock" },
@@ -1273,7 +1279,7 @@ pub const specs = [_]Spec{
     .{ .id = "view.keep_tab", .title = "Keep this tab (stop the next glance taking the preview over)", .group = "view", .keys = .{ .vim = &.{"space b k"}, .standard = &.{"ctrl+k enter"} } },
 };
 
-test "1132 specs, unique ids" {
+test "1135 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1310,19 +1316,21 @@ test "1132 specs, unique ids" {
     // + the three `view.rail_*` membership commands (railmove)
     // + the four `view.dock_item_move_*` reorder commands (dock-polish)
     // + `view.focus_prev_split`, the split walk backwards (splitcycle)
-    try std.testing.expectEqual(@as(usize, 1132), specs.len);
+    try std.testing.expectEqual(@as(usize, 1135), specs.len);
     // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
-    try std.testing.expectEqual(@as(usize, 1132), specs.len);
+    try std.testing.expectEqual(@as(usize, 1135), specs.len);
     // + `jobs.show`, the background-jobs list (jobschip)
-    try std.testing.expectEqual(@as(usize, 1132), specs.len);
+    try std.testing.expectEqual(@as(usize, 1135), specs.len);
     // + `editor.toggle_indent_guides` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1132), specs.len);
+    try std.testing.expectEqual(@as(usize, 1135), specs.len);
     // + `editor.toggle_indent_guides`, `git.toggle_line_blame` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1132), specs.len);
+    try std.testing.expectEqual(@as(usize, 1135), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis (needsyou)
-    try std.testing.expectEqual(@as(usize, 1132), specs.len);
+    try std.testing.expectEqual(@as(usize, 1135), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis, and
     //   `sessions.next_waiting` / `prev_waiting`, the jumps (needsyou)
-    try std.testing.expectEqual(@as(usize, 1132), specs.len);
+    try std.testing.expectEqual(@as(usize, 1135), specs.len);
+    // + `term.search` / `term.search_next` / `term.search_prev` (scrollsearch)
+    try std.testing.expectEqual(@as(usize, 1135), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

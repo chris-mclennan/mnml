@@ -108,6 +108,7 @@ const tree_mod = @import("tree.zig");
 const info_view_app = @import("info_view.zig");
 const Rect = @import("../ui/rect.zig");
 const pty_pane = @import("pty_pane.zig");
+const pty_search = @import("pty_search.zig");
 const request_pane = @import("request_pane.zig");
 const http_app = @import("http.zig");
 const decor = @import("lsp_decor.zig");
@@ -584,12 +585,15 @@ fn ptyKey(app: *App, id: PaneId, p: *pty_pane.PtyPane, k: Key) Allocator.Error!v
     // terminal-normal mode, where every key is the app's — the leader,
     // the `Ctrl-W` family, `i` / `a` back in — and none is the child's.
     if (p.term_normal) {
+        // `/`, `n`, `N`: the scrollback search (`pty_search.zig`).
+        if (try pty_search.termNormalKey(app, id, p, k)) return;
         if (try pty_pane.termNormalKey(app, p, k)) return;
         _ = try chordChain(app, k);
         return;
     }
     if (pty_pane.escapeKey(app, p, k)) return;
     if (modified and !pty_pane.childOwned(k)) {
+        if (try pty_search.findChord(app, id, p, k)) return;
         const bound = app.keymap.resolveSeq(&.{Chord.of(k)}) != .none;
         if (bound and try chordChain(app, k)) return;
     }

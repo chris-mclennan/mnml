@@ -803,8 +803,9 @@ pub const Session = struct {
 /// emulator keeps and lets its child do. Read when a pane starts; a pane
 /// already open keeps what it started with.
 pub const Terminal = struct {
-    /// Lines kept above the screen for Shift+PageUp / the wheel. The
-    /// oldest go first once a pane has this many.
+    /// Lines kept above the screen for Shift+PageUp / the wheel, and
+    /// what the terminal's search (`term.search`) reaches. The oldest go
+    /// first once a pane has this many.
     scrollback_lines: u32 = 10_000,
     /// A program in a pane may copy to the clipboard (OSC 52 — neovim's
     /// osc52 provider, tmux, helix, anything over ssh): the text lands in
