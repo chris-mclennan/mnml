@@ -20,6 +20,15 @@
 //! Every entry row is a `.script_hit{ pane, id = flat index }`; every
 //! hint word is a `.script_hit{ pane, id = hintId(action) }`, so a click
 //! on `s` stages the cursor's file the way the key does.
+//!
+//! // changed (sessiondiff): the same pane scoped to what one AI session
+//! changed (`Doc.scope`, `app/session_changes.zig`): the header is the
+//! session's line (`<title> · since 5m ago · 3 files · +12 −4`), the hint
+//! row keeps the verbs that act on one file, a third section lists the
+//! files the session COMMITTED since it started, a `Commit…` row closes
+//! the list, and a file another session also touched carries that
+//! session's name after its path. Nothing to show is the empty-state
+//! component's line, not the `working tree clean` note.
 
 const std = @import("std");
 const vaxis = @import("vaxis");
@@ -27,6 +36,7 @@ const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const scrollbar = @import("scrollbar.zig");
+const empty_state = @import("empty_state.zig");
 const ids = @import("../core/ids.zig");
 const parse = @import("../git/parse.zig");
 
@@ -37,13 +47,25 @@ const PaneId = ids.PaneId;
 
 /// A file the pane lists: its porcelain letter (`M A D R C U ?`) and
 /// which section it sits in. A file changed on both sides is one
-/// entry per section.
+/// entry per section. `note` (sessiondiff) is the other session that
+/// touched the file too — painted after the path with the overlap mark.
 pub const Entry = struct {
     path: []const u8,
     letter: u8,
     staged: bool,
     /// The path is a submodule: the row reads `sub/  (submodule, …)`.
     submodule: ?parse.Submodule = null,
+    note: []const u8 = "",
+};
+
+/// The session-scoped form (sessiondiff). The flat index runs unstaged,
+/// staged, committed, then the `Commit…` row.
+pub const Scope = struct {
+    /// The whole header line.
+    header: []const u8,
+    committed: []const Entry = &.{},
+    /// What the empty view says instead of three `(none)` sections.
+    empty: empty_state.EmptyState = .{ .message = "Nothing changed since this session started." },
 };
 
 pub const Doc = struct {
@@ -61,6 +83,16 @@ pub const Doc = struct {
     /// The vim profile: Space is the leader there, so the toggle is
     /// fugitive's `-` and the hint row says so.
     vim: bool = false,
+    /// Scoped to one session's changes (sessiondiff).
+    scope: ?Scope = null,
+
+    /// Every row the cursor can stand on: the entries, and the scoped
+    /// view's `Commit…` row.
+    pub fn flatLen(d: Doc) usize {
+        const s = d.scope orelse return d.unstaged.len + d.staged.len;
+        const n = d.unstaged.len + d.staged.len + s.committed.len;
+        return if (n == 0) 0 else n + 1;
+    }
 };
 
 /// What a hint word does; the keys share the table.
@@ -85,14 +117,19 @@ pub const Line = union(enum) {
     hint,
     blank,
     clean,
-    section: struct { staged: bool, count: usize, conflicts: bool = false },
+    section: struct { staged: bool, count: usize, conflicts: bool = false, committed: bool = false },
     none,
     entry: struct { flat: usize, e: Entry },
+    /// The scoped view's last row (sessiondiff).
+    commit_row: usize,
+    /// The scoped view with nothing in it (sessiondiff).
+    empty,
 };
 
 /// Rust's `lines`: header, hint, then either the clean note or the
 /// two sections, each `(none)` when empty, a blank row between them.
 pub fn lines(arena: Allocator, doc: Doc) Allocator.Error![]const Line {
+    if (doc.scope) |s| return scopedLines(arena, doc, s);
     var out: std.ArrayListUnmanaged(Line) = .empty;
     try out.append(arena, .header);
     try out.append(arena, .hint);
@@ -122,10 +159,41 @@ pub fn lines(arena: Allocator, doc: Doc) Allocator.Error![]const Line {
     return out.items;
 }
 
+/// The scoped view (sessiondiff): header, hint, then Unstaged, Staged
+/// and Committed since start, each `(none)` when empty, and the
+/// `Commit…` row; or the empty state when the session changed nothing.
+fn scopedLines(arena: Allocator, doc: Doc, s: Scope) Allocator.Error![]const Line {
+    var out: std.ArrayListUnmanaged(Line) = .empty;
+    try out.append(arena, .header);
+    try out.append(arena, .hint);
+    const n = doc.unstaged.len + doc.staged.len + s.committed.len;
+    if (n == 0) {
+        try out.append(arena, .blank);
+        try out.append(arena, .empty);
+        return out.items;
+    }
+    try out.append(arena, .{ .section = .{ .staged = false, .count = doc.unstaged.len } });
+    if (doc.unstaged.len == 0) try out.append(arena, .none);
+    for (doc.unstaged, 0..) |e, i| try out.append(arena, .{ .entry = .{ .flat = i, .e = e } });
+    try out.append(arena, .blank);
+    try out.append(arena, .{ .section = .{ .staged = true, .count = doc.staged.len } });
+    if (doc.staged.len == 0) try out.append(arena, .none);
+    for (doc.staged, 0..) |e, i| try out.append(arena, .{ .entry = .{ .flat = doc.unstaged.len + i, .e = e } });
+    try out.append(arena, .blank);
+    try out.append(arena, .{ .section = .{ .staged = false, .count = s.committed.len, .committed = true } });
+    if (s.committed.len == 0) try out.append(arena, .none);
+    const base = doc.unstaged.len + doc.staged.len;
+    for (s.committed, 0..) |e, i| try out.append(arena, .{ .entry = .{ .flat = base + i, .e = e } });
+    try out.append(arena, .blank);
+    try out.append(arena, .{ .commit_row = n });
+    return out.items;
+}
+
 /// The row holding the cursor's entry; 0 when there is none.
 pub fn cursorLine(ls: []const Line, cursor: usize) usize {
     for (ls, 0..) |l, i| switch (l) {
         .entry => |e| if (e.flat == cursor) return i,
+        .commit_row => |flat| if (flat == cursor) return i,
         else => {},
     };
     return 0;
@@ -174,6 +242,32 @@ const hint_segs = [_]Seg{
     .{ .text = "  ", .action = null },
     .{ .text = "r refresh", .action = .refresh },
 };
+// The scoped view's hint row (sessiondiff): the verbs on one file, the
+// commit, the refresh — `a/A all` and the AI commit act on the whole
+// repository, which is not what this view is about.
+const scoped_hint_segs = [_]Seg{
+    .{ .text = "  ", .action = null },
+    .{ .text = "s", .action = .stage },
+    .{ .text = "/", .action = null },
+    .{ .text = "u", .action = .unstage },
+    .{ .text = " ", .action = null },
+    .{ .text = "stage", .action = .stage },
+    .{ .text = "\u{B7}", .action = null },
+    .{ .text = "unstage", .action = .unstage },
+    .{ .text = "  ", .action = null },
+    .{ .text = "space toggle", .action = .toggle },
+    .{ .text = "  ", .action = null },
+    .{ .text = "\u{23CE} diff", .action = .diff },
+    .{ .text = "  ", .action = null },
+    .{ .text = "c commit", .action = .commit },
+    .{ .text = "  ", .action = null },
+    .{ .text = "r refresh", .action = .refresh },
+};
+const commit_label = "\u{2713} Commit\u{2026}";
+const commit_label_ascii = "v Commit...";
+/// The overlap mark before the other session's name.
+const overlap_mark = "\u{21C4} ";
+const overlap_mark_ascii = "<> ";
 const ascii_enter = "enter diff";
 const vim_toggle = "- toggle";
 const ai_hint = "  \u{2726} asking Claude for a commit message\u{2026}";
@@ -202,7 +296,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, doc: Doc, scroll: *usize) void {
     const ground: Style = .{ .bg = p.bg_dark };
     ui.fill(area, ground);
     if (area.isEmpty()) return;
-    const n = doc.unstaged.len + doc.staged.len;
+    const n = doc.flatLen();
     const sb_w: u16 = if (area.w >= min_scrollbar_width) 1 else 0;
     const body = Rect.init(area.x, area.y, area.w - sb_w, area.h);
     // The text stops a cell short of the bar; a row's hit reaches it.
@@ -213,6 +307,10 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, doc: Doc, scroll: *usize) void {
         // Rust paints the four rows from the top and no scrollbar.
         for (ls, 0..) |l, i| {
             if (i >= h) break;
+            if (l == .empty) {
+                if (doc.scope) |s| _ = empty_state.draw(ui, Rect.init(text.x, text.y + @as(u16, @intCast(i)), text.w, area.h - @as(u16, @intCast(i))), s.empty, ground);
+                continue;
+            }
             paintLine(ui, pane, text.row(@intCast(i)), doc, l);
         }
         return;
@@ -228,6 +326,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, doc: Doc, scroll: *usize) void {
         paintLine(ui, pane, text.row(y), doc, ls[i]);
         switch (ls[i]) {
             .entry => |e| ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = @intCast(e.flat) } }),
+            .commit_row => |flat| ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = @intCast(flat) } }),
             else => {},
         }
     }
@@ -241,6 +340,11 @@ fn paintLine(ui: Ui, pane: PaneId, r: Rect, doc: Doc, l: Line) void {
     var x = r.x;
     switch (l) {
         .header => {
+            if (doc.scope) |s| {
+                x += ui.putStr(x, r.y, end -| x, "  ", comment);
+                _ = ui.putStr(x, r.y, end -| x, ui.clipStr(s.header, end -| x), .{ .fg = p.fg, .bg = p.bg_dark, .bold = true });
+                return;
+            }
             if (doc.branch) |b| {
                 x += ui.putStr(x, r.y, end -| x, "  on ", comment);
                 x += ui.putStr(x, r.y, end -| x, b, .{ .fg = p.blue, .bg = p.bg_dark, .bold = true });
@@ -255,7 +359,8 @@ fn paintLine(ui: Ui, pane: PaneId, r: Rect, doc: Doc, l: Line) void {
                 _ = ui.putStr(x, r.y, end -| x, if (ui.ascii) ai_hint_ascii else ai_hint, comment);
                 return;
             }
-            for (hint_segs) |seg| {
+            const segs: []const Seg = if (doc.scope != null) &scoped_hint_segs else &hint_segs;
+            for (segs) |seg| {
                 if (x >= end) break;
                 const text = if (ui.ascii and seg.action == .diff) ascii_enter else if (doc.vim and seg.action == .toggle) vim_toggle else seg.text;
                 const w = ui.putStr(x, r.y, end -| x, text, comment);
@@ -269,6 +374,10 @@ fn paintLine(ui: Ui, pane: PaneId, r: Rect, doc: Doc, l: Line) void {
             if (s.conflicts) {
                 const label = ui.fmt("  {s} Conflicts ({d})  \u{23CE} resolve in the editor", .{ if (ui.ascii) "!" else "\u{26A0}", s.count });
                 _ = ui.putStr(x, r.y, end -| x, label, .{ .fg = p.red, .bg = p.bg_dark, .bold = true });
+                return;
+            }
+            if (s.committed) {
+                _ = ui.putStr(x, r.y, end -| x, ui.fmt("  Committed since start ({d})", .{s.count}), .{ .fg = p.blue, .bg = p.bg_dark, .bold = true });
                 return;
             }
             const label = ui.fmt("  {s} changes ({d})", .{ if (s.staged) "Staged" else "Unstaged", s.count });
@@ -287,9 +396,22 @@ fn paintLine(ui: Ui, pane: PaneId, r: Rect, doc: Doc, l: Line) void {
             if (e.e.submodule) |sm| {
                 x += ui.putStr(x, r.y, end -| x, "/", .{ .fg = p.fg, .bg = bg });
                 var buf: [64]u8 = undefined;
-                _ = ui.putStr(x, r.y, end -| x, ui.fmt("  (submodule, {s})", .{sm.note(&buf)}), .{ .fg = p.comment, .bg = bg });
+                x += ui.putStr(x, r.y, end -| x, ui.fmt("  (submodule, {s})", .{sm.note(&buf)}), .{ .fg = p.comment, .bg = bg });
+            }
+            if (e.e.note.len > 0) {
+                x += ui.putStr(x, r.y, end -| x, "  ", .{ .bg = bg });
+                x += ui.putStr(x, r.y, end -| x, if (ui.ascii) overlap_mark_ascii else overlap_mark, .{ .fg = p.orange, .bg = bg, .bold = true });
+                _ = ui.putStr(x, r.y, end -| x, ui.clipStr(e.e.note, end -| x), .{ .fg = p.orange, .bg = bg });
             }
         },
+        .commit_row => |flat| {
+            const sel = flat == doc.cursor;
+            const bg = if (sel) p.bg2 else p.bg_dark;
+            const marker: []const u8 = if (!sel) "    " else if (ui.ascii) "  > " else "  \u{25B6} ";
+            x += ui.putStr(x, r.y, end -| x, marker, .{ .fg = p.yellow, .bg = bg });
+            _ = ui.putStr(x, r.y, end -| x, if (ui.ascii) commit_label_ascii else commit_label, .{ .fg = p.green, .bg = bg, .bold = true });
+        },
+        .empty => {},
     }
 }
 
@@ -524,4 +646,49 @@ test "scrollTo: pulls the cursor row in from either side and clamps to the end" 
     s = 4;
     scrollTo(&s, 2, 3, 10);
     try testing.expectEqual(@as(usize, 0), s);
+}
+
+test "the scoped form (sessiondiff): the session's header, the one-file verbs, Committed since start, the Commit… row, the overlap name; empty is the empty-state line" {
+    var f = try Fixture.init(70, 14);
+    defer f.deinit();
+    var scroll: usize = 0;
+    const un = [_]Entry{.{ .path = "new.txt", .letter = '?', .staged = false, .note = "second job" }};
+    const co = [_]Entry{.{ .path = "c.txt", .letter = 'A', .staged = false }};
+    const doc: Doc = .{ .branch = null, .unstaged = &un, .staged = &.{}, .cursor = 2, .scope = .{ .header = "fix the tests \u{B7} since 5m ago \u{B7} 2 files \u{B7} +2 \u{2212}0", .committed = &co } };
+    try testing.expectEqual(@as(usize, 3), doc.flatLen());
+    draw(f.ui(), 4, f.full(), doc, &scroll);
+    const arena = f.arena_state.allocator();
+    try f.expectRow(0, try withBar(arena, "  fix the tests \u{B7} since 5m ago \u{B7} 2 files \u{B7} +2 \u{2212}0", 70));
+    try f.expectRow(1, try withBar(arena, "  s/u stage\u{B7}unstage  space toggle  \u{23CE} diff  c commit  r refresh", 70));
+    try f.expectRow(2, try withBar(arena, "  Unstaged changes (1)", 70));
+    try f.expectRow(3, try withBar(arena, "    ? new.txt  \u{21C4} second job", 70));
+    try f.expectRow(8, try withBar(arena, "  Committed since start (1)", 70));
+    try f.expectRow(9, try withBar(arena, "    A c.txt", 70));
+    try f.expectRow(11, try withBar(arena, "  \u{25B6} \u{2713} Commit\u{2026}", 70));
+    // The rows and the commit row are hits by flat index; `a/A` and the
+    // AI commit are not on this hint row.
+    try testing.expectEqual(@as(u32, 0), f.hits.at(10, 3).?.script_hit.id);
+    try testing.expectEqual(@as(u32, 1), f.hits.at(10, 9).?.script_hit.id);
+    try testing.expectEqual(@as(u32, 2), f.hits.at(10, 11).?.script_hit.id);
+    for (f.hits.items.items) |h| if (h.target == .script_hit) {
+        const id = h.target.script_hit.id;
+        try testing.expect(id != hintId(.stage_all) and id != hintId(.ai_commit));
+    };
+    try testing.expect(f.fgEql(17, 3, .{ .fg = f.theme.palette.orange }));
+    try testing.expect(f.fgEql(2, 8, .{ .fg = f.theme.palette.blue }));
+
+    var g = try Fixture.init(50, 5);
+    defer g.deinit();
+    const empty: Doc = .{ .branch = null, .unstaged = &.{}, .staged = &.{}, .cursor = 0, .scope = .{ .header = "quiet one", .empty = .{ .message = "Nothing changed." } } };
+    try testing.expectEqual(@as(usize, 0), empty.flatLen());
+    draw(g.ui(), 1, g.full(), empty, &scroll);
+    try g.expectRow(0, "  quiet one");
+    try g.expectRow(3, "  Nothing changed.");
+    try testing.expect(g.fgEql(2, 3, g.theme.muted));
+    g.ascii = true;
+    var top: usize = 0;
+    var at_top = doc;
+    at_top.cursor = 0;
+    draw(g.ui(), 1, g.full(), at_top, &top);
+    try g.expectContains("  > ? new.txt  <> second job");
 }
