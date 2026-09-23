@@ -715,82 +715,177 @@ pub fn unescapeDelim(arena: Allocator, s: []const u8, delim: u8) Allocator.Error
     return out.items;
 }
 
-/// `:sort [u] [r] [i] [n]`; `:sort!` reverses.
+/// `:[range]sort[!] [b][f][i][n][o][r][u][x] [/{pattern}/]` (`:help
+/// :sort`). `!` reverses; `i` ignores case; `n` / `x` / `o` / `b` sort
+/// on the first decimal / hex / octal / binary number and `f` on the
+/// first float (a line without one sorts first); `u` keeps the first of
+/// equal lines (case folded under `i`). A pattern sorts on what follows
+/// its match — on the match itself with `r` — and a line it misses
+/// sorts first, in its own order. The sort is stable.
 fn sort(app: *App, range: ?Range, flags: []const u8, bang: bool) CommandError!void {
     const arena = app.frame.allocator();
     const e = try editor(app, ":sort");
     const ed = e.buf.editor;
     var unique = false;
-    var reverse = bang;
     var icase = false;
-    var numeric = false;
-    for (flags) |f| switch (f) {
-        'u' => unique = true,
-        'r' => reverse = true,
-        'i' => icase = true,
-        'n' => numeric = true,
-        else => {},
-    };
+    var on_match = false;
+    var kind: SortKind = .text;
+    var pattern: ?[]const u8 = null;
+    var i: usize = 0;
+    while (i < flags.len) : (i += 1) {
+        const f = flags[i];
+        switch (f) {
+            ' ', '\t' => {},
+            'u' => unique = true,
+            'i' => icase = true,
+            'r' => on_match = true,
+            'l' => {}, // locale collation: byte order here
+            'n' => kind = .decimal,
+            'x' => kind = .hex,
+            'o' => kind = .octal,
+            'b' => kind = .binary,
+            'f' => kind = .float,
+            else => {
+                if (std.ascii.isAlphabetic(f) or f == '"' or f == '\\') return app.diag.fail(arena, ":sort — E474: invalid argument: {s}", .{flags[i..]});
+                // Any other character opens the pattern and closes it.
+                var j = i + 1;
+                while (j < flags.len and flags[j] != f) : (j += 1) {
+                    if (flags[j] == '\\' and j + 1 < flags.len) j += 1;
+                }
+                pattern = try unescapeDelim(arena, flags[i + 1 .. j], f);
+                i = j;
+            },
+        }
+    }
+    if (pattern) |p| if (p.len == 0) return app.diag.fail(arena, ":sort — E35: no previous regular expression", .{});
+    var re: ?regex.Regex = if (pattern) |p| try compilePattern(app, ":sort", p, true) else null;
+    defer if (re) |*r| r.deinit();
+
     const r = range orelse Range{ .first = 0, .last = ed.lineCount() - 1 };
     const first = @min(r.first, ed.lineCount() - 1);
     const last = @min(r.last, ed.lineCount() - 1);
-    var lines: std.ArrayListUnmanaged([]const u8) = .empty;
+    const Line = struct { text: []const u8, key: []const u8, has_num: bool = false, num: i64 = 0, flt: f64 = 0 };
+    var lines: std.ArrayListUnmanaged(Line) = .empty;
     var row = first;
-    while (row <= last) : (row += 1) try lines.append(arena, ed.lineSlice(row));
-    const Ctx = struct {
-        icase: bool,
-        numeric: bool,
-        fn num(s: []const u8) ?i64 {
-            var i: usize = 0;
-            while (i < s.len and !std.ascii.isDigit(s[i]) and !(s[i] == '-' and i + 1 < s.len and std.ascii.isDigit(s[i + 1]))) i += 1;
-            if (i == s.len) return null;
-            var j = i + 1;
-            while (j < s.len and std.ascii.isDigit(s[j])) j += 1;
-            return std.fmt.parseInt(i64, s[i..j], 10) catch null;
+    while (row <= last) : (row += 1) {
+        const text = ed.lineSlice(row);
+        var key = text;
+        if (re) |*rx| {
+            if (rx.find(text, 0)) |m| {
+                key = if (on_match) text[m.start..m.end] else text[m.end..];
+            } else key = text[0..0];
         }
-        fn lt(c: @This(), a: []const u8, b: []const u8) bool {
-            if (c.numeric) {
-                const na = num(a);
-                const nb = num(b);
-                if (na == null and nb == null) return false;
-                if (na == null) return true;
-                if (nb == null) return false;
-                return na.? < nb.?;
+        var l: Line = .{ .text = text, .key = key };
+        if (kind != .text) sortNumber(&l, kind);
+        try lines.append(arena, l);
+    }
+    const Ctx = struct {
+        kind: SortKind,
+        icase: bool,
+        fn lt(c: @This(), a: Line, b: Line) bool {
+            switch (c.kind) {
+                .text => {
+                    if (!c.icase) return std.mem.lessThan(u8, a.key, b.key);
+                    return std.ascii.orderIgnoreCase(a.key, b.key) == .lt;
+                },
+                else => {
+                    if (a.has_num != b.has_num) return !a.has_num;
+                    if (c.kind == .float) return a.flt < b.flt;
+                    return a.num < b.num;
+                },
             }
-            if (c.icase) {
-                const n = @min(a.len, b.len);
-                for (a[0..n], b[0..n]) |x, y| {
-                    const lx = std.ascii.toLower(x);
-                    const ly = std.ascii.toLower(y);
-                    if (lx != ly) return lx < ly;
-                }
-                return a.len < b.len;
-            }
-            return std.mem.lessThan(u8, a, b);
         }
     };
-    std.mem.sort([]const u8, lines.items, Ctx{ .icase = icase, .numeric = numeric }, Ctx.lt);
-    if (reverse) std.mem.reverse([]const u8, lines.items);
+    // Stable, so equal keys keep their order (and `!` reverses it all).
+    std.mem.sort(Line, lines.items, Ctx{ .kind = kind, .icase = icase }, Ctx.lt);
+    if (bang) std.mem.reverse(Line, lines.items);
     var out: std.ArrayListUnmanaged(u8) = .empty;
     var kept: usize = 0;
     var prev: ?[]const u8 = null;
     for (lines.items) |l| {
-        if (unique and prev != null and std.mem.eql(u8, prev.?, l)) continue;
+        if (unique and prev != null) {
+            const same = if (icase) std.ascii.eqlIgnoreCase(prev.?, l.text) else std.mem.eql(u8, prev.?, l.text);
+            if (same) continue;
+        }
         if (kept > 0) try out.append(arena, '\n');
-        try out.appendSlice(arena, l);
+        try out.appendSlice(arena, l.text);
         kept += 1;
-        prev = l;
+        prev = l.text;
     }
     try app.splice(e, ed.lineStart(first), ed.lineEnd(last), out.items);
     ed.setCursor(ed.lineStart(first));
     ed.goal_col = null;
-    app.toast(":sort{s}{s}{s}{s} — {d} line(s)", .{
+    app.toast(":sort{s}{s}{s}{s}{s}{s}{s}{s} — {d} line(s)", .{
+        if (bang) "!" else "",
         if (unique) " u" else "",
-        if (reverse) " r" else "",
         if (icase) " i" else "",
-        if (numeric) " n" else "",
+        switch (kind) {
+            .text => "",
+            .decimal => " n",
+            .hex => " x",
+            .octal => " o",
+            .binary => " b",
+            .float => " f",
+        },
+        if (on_match) " r" else "",
+        if (pattern != null) " /" else "",
+        pattern orelse "",
+        if (pattern != null) "/" else "",
         kept,
     });
+}
+
+const SortKind = enum { text, decimal, hex, octal, binary, float };
+
+/// The number `:sort n` / `x` / `o` / `b` / `f` sorts a line on: the
+/// first one in its key, a `-` right before it the sign (Neovim's
+/// `ex_sort`). No number leaves `has_num` false.
+fn sortNumber(l: anytype, kind: SortKind) void {
+    const k = l.key;
+    const isDig = struct {
+        fn f(kd: SortKind, c: u8) bool {
+            return switch (kd) {
+                .hex => std.ascii.isHex(c),
+                .binary => c == '0' or c == '1',
+                .octal => c >= '0' and c <= '7',
+                else => std.ascii.isDigit(c),
+            };
+        }
+    }.f;
+    var i: usize = 0;
+    while (i < k.len and !isDig(kind, k[i]) and !(kind == .float and k[i] == '.' and i + 1 < k.len and std.ascii.isDigit(k[i + 1]))) i += 1;
+    if (i == k.len) return;
+    const neg = i > 0 and k[i - 1] == '-';
+    var start = i;
+    var base: u8 = 10;
+    switch (kind) {
+        .hex => {
+            base = 16;
+            if (k[i] == '0' and i + 2 < k.len and (k[i + 1] == 'x' or k[i + 1] == 'X') and std.ascii.isHex(k[i + 2])) start = i + 2;
+        },
+        .binary => {
+            base = 2;
+            if (k[i] == '0' and i + 2 < k.len and (k[i + 1] == 'b' or k[i + 1] == 'B')) start = i + 2;
+        },
+        .octal => base = 8,
+        else => {},
+    }
+    var end = start;
+    if (kind == .float) {
+        while (end < k.len and (std.ascii.isDigit(k[end]) or k[end] == '.' or k[end] == 'e' or k[end] == 'E')) end += 1;
+        while (end > start) : (end -= 1) {
+            if (std.fmt.parseFloat(f64, k[start..end])) |v| {
+                l.flt = if (neg) -v else v;
+                l.has_num = true;
+                return;
+            } else |_| {}
+        }
+        return;
+    }
+    while (end < k.len and isDig(kind, k[end])) end += 1;
+    const v = std.fmt.parseInt(i64, k[start..end], base) catch std.math.maxInt(i64);
+    l.num = if (neg) -v else v;
+    l.has_num = true;
 }
 
 /// `:retab` — every TAB becomes spaces to the next tab stop.
@@ -1464,6 +1559,29 @@ test "ex: sort, sort u, retab, ranged delete with marks and a bare line jump" {
     try testing.expectEqual(@as(usize, 1), e.buf.editor.currentLine());
     try f.ex("$");
     try testing.expectEqual(@as(usize, 1), e.buf.editor.currentLine());
+}
+
+test "ex: :sort takes a pattern, r, i with u, and the number kinds as Neovim does" {
+    // Neovim 0.12.5 `--clean`, each row.
+    var f = try Fixture.init("x3 b\nx1 c\nx2 a");
+    defer f.deinit();
+    try f.ex("sort /x. /");
+    try testing.expectEqualStrings("x2 a\nx3 b\nx1 c", f.text());
+    try f.ex("sort /x\\d/ r");
+    try testing.expectEqualStrings("x1 c\nx2 a\nx3 b", f.text());
+    const e = f.app.activeEditor().?;
+    try e.buf.editor.setText("b\na\nB\na\nb");
+    try f.ex("sort iu");
+    try testing.expectEqualStrings("a\nb", f.text());
+    // A line with no number sorts first, in its own order; `-` is a sign.
+    try e.buf.editor.setText("v10\nnone\nv-2\nv3\nalso");
+    try f.ex("sort n");
+    try testing.expectEqualStrings("none\nalso\nv-2\nv3\nv10", f.text());
+    try e.buf.editor.setText("0x1f\n0xa\n0x2");
+    try f.ex("sort x");
+    try testing.expectEqualStrings("0x2\n0xa\n0x1f", f.text());
+    // A letter that is not a flag is refused, not ignored.
+    try testing.expectError(error.Failed, f.ex("sort q"));
 }
 
 test "ex: a Visual `:` range covers the cursor's line and the command leaves Visual behind" {
