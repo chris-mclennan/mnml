@@ -1,0 +1,14 @@
+# width: 120
+# height: 40
+# env: PATH=
+# The markdown preview indents a nested list item two cells a level under
+# its parent, bulleted and ordered alike, as the Rust mnml's preview does.
+write doc.md "# Lists\n\n- alpha\n- beta\n  - nested child\n    - grandchild\n- gamma\n\n1. one\n   1. one-a\n2. two\n"
+open doc.md
+wait 300
+expect screen contains "• beta"
+expect screen contains "• gamma"
+expect screen contains "  • nested child"
+expect screen contains "    • grandchild"
+expect screen contains "   1. one-a"
+expect screen lacks "  • gamma"
