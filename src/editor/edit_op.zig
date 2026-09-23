@@ -63,6 +63,10 @@ pub const EditOp = union(enum) {
     move_buffer_end,
     /// 1-based line (`3G`); 0 and 1 both mean the first line.
     move_to_line: usize,
+    /// vim's `G` / `gg` / `{count}G` under `nostartofline` (Neovim's and
+    /// NvChad's default, `:help 'sol'`): the line, at the column the
+    /// cursor wants (the goal column, kept). 1-based; 0 = the last line.
+    move_to_line_keep_col: usize,
     /// 1-based column in chars (`5|`).
     move_to_col: usize,
     set_cursor_byte: usize,
@@ -227,7 +231,7 @@ pub const EditOp = union(enum) {
     atomic: []const EditOp,
 
     comptime {
-        std.debug.assert(@typeInfo(EditOp).@"union".fields.len == 149);
+        std.debug.assert(@typeInfo(EditOp).@"union".fields.len == 150);
     }
 
     /// Whether the op can change buffer text (vs. move / select / yank / meta).
@@ -239,7 +243,7 @@ pub const EditOp = union(enum) {
             } else false,
             .if_lines_object => |c| anyOf(c.lines, isMutation) or anyOf(c.chars, isMutation),
             // motions
-            .move_left, .move_right, .move_up, .move_down, .move_word_left, .move_word_right, .move_word_right_no_cross_line, .move_right_no_cross_line, .move_left_no_cross_line, .move_word_end, .move_word_end_cw, .move_big_word_end_cw, .move_word_end_back, .move_big_word_right, .move_big_word_right_no_cross_line, .move_big_word_left, .move_big_word_end, .move_big_word_end_back, .move_line_start, .move_line_first_non_ws, .move_down_first_non_ws, .move_up_first_non_ws, .move_line_last_non_ws, .move_paragraph, .move_to_unmatched, .move_sentence, .move_line_end, .move_line_last_char, .move_visual_down, .move_visual_up, .move_visual_line_start, .move_visual_line_end, .move_buffer_start, .move_buffer_end, .move_to_line, .move_to_col, .set_cursor_byte, .page_up, .page_down, .half_page_up, .half_page_down => false,
+            .move_left, .move_right, .move_up, .move_down, .move_word_left, .move_word_right, .move_word_right_no_cross_line, .move_right_no_cross_line, .move_left_no_cross_line, .move_word_end, .move_word_end_cw, .move_big_word_end_cw, .move_word_end_back, .move_big_word_right, .move_big_word_right_no_cross_line, .move_big_word_left, .move_big_word_end, .move_big_word_end_back, .move_line_start, .move_line_first_non_ws, .move_down_first_non_ws, .move_up_first_non_ws, .move_line_last_non_ws, .move_paragraph, .move_to_unmatched, .move_sentence, .move_line_end, .move_line_last_char, .move_visual_down, .move_visual_up, .move_visual_line_start, .move_visual_line_end, .move_buffer_start, .move_buffer_end, .move_to_line, .move_to_line_keep_col, .move_to_col, .set_cursor_byte, .page_up, .page_down, .half_page_up, .half_page_down => false,
             // selection
             .select_start, .select_clear, .remember_selection, .select_line, .select_line_to_end, .select_all, .select_word, .select_inner_word, .select_around_word, .select_inner_big_word, .select_around_big_word, .select_inner_quote, .select_around_quote, .select_inner_smart_quote, .select_around_smart_quote, .select_inner_bracket, .select_around_bracket, .select_inner_tag, .select_around_tag, .select_inner_paragraph, .select_around_paragraph, .select_inner_sentence, .select_around_sentence, .select_inner_function, .select_around_function, .select_inner_class, .select_around_class, .select_inner_argument, .select_around_argument, .select_inner_indent_block, .select_around_indent_block, .select_outer_indent_block, .restore_last_selection, .swap_anchor_cursor, .move_cursor_to_selection_start, .normalize_linewise_selection, .normalize_linewise_selection_inner, .make_selection_inclusive, .continue_insert_run, .abort_unless_selection, .find_char_on_line, .select_find_match => false,
             .add_cursor_below, .add_cursor_above, .clear_extra_cursors, .add_cursor_at_next_word, .block_select_start, .block_select_clear, .block_eol, .yank_block => false,
@@ -251,7 +255,7 @@ pub const EditOp = union(enum) {
     /// Vertical motions keep the goal column; everything else resets it.
     pub fn preservesGoalCol(op: EditOp) bool {
         return switch (op) {
-            .move_up, .move_down, .page_up, .page_down, .half_page_up, .half_page_down, .move_visual_down, .move_visual_up, .move_down_first_non_ws, .move_up_first_non_ws => true,
+            .move_up, .move_down, .page_up, .page_down, .half_page_up, .half_page_down, .move_visual_down, .move_visual_up, .move_down_first_non_ws, .move_up_first_non_ws, .move_to_line_keep_col => true,
             .repeat => |r| r.inner.preservesGoalCol(),
             .atomic => |ops| for (ops) |o| {
                 if (!o.preservesGoalCol()) break false;

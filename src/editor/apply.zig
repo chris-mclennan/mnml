@@ -129,6 +129,7 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .move_buffer_start => motion.bufferStart(ed),
         .move_buffer_end => motion.bufferEnd(ed),
         .move_to_line => |n| motion.toLine(ed, n),
+        .move_to_line_keep_col => |n| motion.toLineKeepCol(ed, n),
         .move_to_col => |n| motion.toCol(ed, n),
         .set_cursor_byte => |b| motion.setCursorByte(ed, b),
         .find_char_on_line => |f| motion.findCharOnLine(ed, f.ch, f.forward, f.before, f.inclusive, f.repeat),
@@ -375,7 +376,7 @@ test "property: cursor stays on a boundary and text stays valid UTF-8" {
         .block_select_start,                                                    .block_select_clear,                                    .yank_block,                                                                                                     .delete_block,
         .{ .surround_selection = .{ .open = '(', .close = ')', .pad = true } }, .{ .delete_surround = '"' },                            .{ .change_surround = .{ .from = '(', .to = '[' } },                                                             .{ .delete_surround = 't' },
         .toggle_line_comment,                                                   .{ .change_number_at_cursor = .{ .delta = 3 } },        .{ .reflow_paragraph = .{ .width = 12 } },                                                                       .{ .align_selection = .{ .on_char = '(' } },
-        .{ .restore_last_selection = .linewise },                               .{ .restore_last_selection = .block },                  .{ .change_numbers_in_selection = .{ .delta = -2, .progressive = true } },
+        .{ .restore_last_selection = .linewise },                               .{ .restore_last_selection = .block },                  .{ .change_numbers_in_selection = .{ .delta = -2, .progressive = true } },                                       .{ .move_to_line_keep_col = 2 },
     };
     for (0..3000) |_| {
         const op = ops[rnd.uintLessThan(usize, ops.len)];

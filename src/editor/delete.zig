@@ -170,6 +170,9 @@ pub fn deleteLine(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocator.Er
     const line = ed.currentLine();
     const start = ed.lineStart(line);
     const end = ed.lineEnd(line);
+    // The column the cursor wants, read once: a counted `3dd` lands on
+    // it too, not on where a short line in between clamped it.
+    const gc = ed.goalCol();
     const yanked = try std.mem.concat(ed.gpa, u8, &.{ ed.doc.text.items[start..end], "\n" });
     defer ed.gpa.free(yanked);
     try clip.pushDelete(yanked, true);
@@ -189,6 +192,10 @@ pub fn deleteLine(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocator.Er
         try ed.splice(0, ed.len(), "");
         ed.cursor = 0;
     }
+    // The line that takes its place keeps that column, clamped to it —
+    // vim's `nostartofline` (Neovim's default, `:help 'sol'`) and VS
+    // Code's Ctrl+Shift+K alike.
+    ed.cursor = ed.byteAtVcol(ed.currentLine(), gc);
     out.buffer_changed = true;
 }
 

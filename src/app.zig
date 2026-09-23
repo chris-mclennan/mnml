@@ -770,7 +770,7 @@ pub const FindBarState = struct {
 /// `eol`: `$A` — the typed run goes to every row's end, whatever its length.
 /// A visual-block `I` / `A` / `c` in flight. `col` is a display column:
 /// where `I` / `c` type, or the column after the block for `A`.
-pub const BlockInsert = struct { pane: PaneId, first_row: usize, last_row: usize, col: usize, start_byte: usize, len_before: usize, eol: bool = false, append: bool = false };
+pub const BlockInsert = struct { pane: PaneId, first_row: usize, last_row: usize, col: usize, start_byte: usize, len_before: usize, eol: bool = false, append: bool = false, left_col: usize = 0 };
 /// `<count>i` / `I` / `a` / `A` / `o` / `O` in flight: what was typed
 /// replicates on Esc — as whole new lines for `o` / `O`, in place for
 /// the other four (`:help count`).

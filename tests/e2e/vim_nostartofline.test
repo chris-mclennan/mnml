@@ -1,0 +1,101 @@
+# Neovim's default is 'nostartofline' (`:help 'sol'`; NvChad keeps it off —
+# nvchad-probe prints sol=false): G, gg, {n}G, {n}gg, {n}%, H, M, L and dd
+# keep the column the cursor wants, clamped to the line.
+# Every expectation is `nvim --clean` 0.12.5's cursor after the keys. The
+# indented cases start from `^`: Neovim opens a file on line 1's first
+# non-blank, mnml on its first column.
+command editor.use_vim
+write s0.txt "alpha beta gamma\n  two words here\nthree\nfour and more\n"
+open s0.txt
+type wwG
+expect screen contains "Ln 4/4 Col 12"
+
+write s1.txt "alpha beta gamma\n  two words here\nthree\nfour and more\n"
+open s1.txt
+type wwgg
+expect screen contains "Ln 1/4 Col 12"
+
+write s2.txt "alpha beta gamma\n  two words here\nthree\nfour and more\n"
+open s2.txt
+type Gwwgg
+expect screen contains "Ln 1/4 Col 10"
+
+write s3.txt "alpha beta gamma\n  two words here\nthree\nfour and more\n"
+open s3.txt
+type ww3G
+expect screen contains "Ln 3/4 Col 5"
+
+write s4.txt "alpha beta gamma\n  two words here\nthree\nfour and more\n"
+open s4.txt
+type ww2gg
+expect screen contains "Ln 2/4 Col 12"
+
+write s5.txt "alpha beta gamma\n  two words here\nthree\nfour and more\n"
+open s5.txt
+type wwjdd
+expect screen contains "Ln 2/3 Col 5"
+
+write s6.txt "alpha beta gamma\n  two words here\nthree\nfour and more\n"
+open s6.txt
+type wwjjddk
+expect screen contains "Ln 2/3 Col 12"
+
+write s7.txt "alpha beta gamma\n  two words here\nthree\nfour and more\n"
+open s7.txt
+type wwL
+expect screen contains "Ln 4/4 Col 12"
+
+write s8.txt "alpha beta gamma\n  two words here\nthree\nfour and more\n"
+open s8.txt
+type wwjH
+expect screen contains "Ln 1/4 Col 12"
+
+write s9.txt "alpha beta gamma\n  two words here\nthree\nfour and more\n"
+open s9.txt
+type wwM
+expect screen contains "Ln 2/4 Col 12"
+
+write s10.txt "alpha beta gamma\n  two words here\nthree\nfour and more\n"
+open s10.txt
+type ww50%
+expect screen contains "Ln 2/4 Col 12"
+
+write s11.txt "  alpha beta gamma\n  two words here\n    three\n    four and more\n"
+open s11.txt
+type ^G
+expect screen contains "Ln 4/4 Col 3"
+
+write s12.txt "  alpha beta gamma\n  two words here\n    three\n    four and more\n"
+open s12.txt
+type ^3G
+expect screen contains "Ln 3/4 Col 3"
+
+write s13.txt "  alpha beta gamma\n  two words here\n    three\n    four and more\n"
+open s13.txt
+type ^wwG
+expect screen contains "Ln 4/4 Col 14"
+
+write s14.txt "  alpha beta gamma\n  two words here\n    three\n    four and more\n"
+open s14.txt
+type ^Ggg
+expect screen contains "Ln 1/4 Col 3"
+
+write x.txt "  alpha beta gamma\n  two words here\n    three\n    four and more\n"
+open x.txt
+type ^3Gx
+command file.save
+expect file x.txt contains "  two words here\n   three\n"
+
+# A Visual-block I / A ends on the block's top-left and wants that
+# column from then on — Neovim 0.12.5 (`nvim --clean`, the keys fed as
+# typed): `l<C-v>2jlA;<Esc>gg` → 1:2, `l<C-v>2jlA;<Esc>j` → 2:2.
+write b1.txt "alpha bravo charlie\ndelta echo foxtrot\ngolf hotel india\n"
+open b1.txt
+type l
+key ctrl+v
+type 2jlA;
+key esc
+type gg
+expect screen contains "Ln 1/3 Col 2"
+type j
+expect screen contains "Ln 2/3 Col 2"

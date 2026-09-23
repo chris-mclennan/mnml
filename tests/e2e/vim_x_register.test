@@ -31,5 +31,9 @@ type ":reg 1"
 key enter
 expect screen contains "\"1  second"
 
+# `dd` of the last line lands on line 1 at the column `$` left
+# (`nostartofline`), `k` cannot move, and `x` takes the last char —
+# Neovim 0.12.5 (`nvim --clean`, the keys fed as typed) ends
+# "aplha bravo charle".
 command file.save
-expect file a.txt contains "plha bravo charlei\n"
+expect file a.txt contains "aplha bravo charle\n"

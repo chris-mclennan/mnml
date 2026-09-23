@@ -420,7 +420,7 @@ pub const Vim = struct {
                 '$' => .move_line_last_char,
                 '+' => .move_down_first_non_ws,
                 '-' => .move_up_first_non_ws,
-                'G' => .move_buffer_end,
+                'G' => .{ .move_to_line_keep_col = 0 },
                 '{' => .{ .move_paragraph = .{ .forward = false } },
                 '}' => .{ .move_paragraph = .{ .forward = true } },
                 '(' => .{ .move_sentence = .{ .forward = false } },
@@ -1325,7 +1325,7 @@ pub const Vim = struct {
         if (ch == 'G' and !ctrl) {
             if (self.count) |n| {
                 self.resetPending();
-                return ops(arena, &.{.{ .move_to_line = n }});
+                return ops(arena, &.{.{ .move_to_line_keep_col = @max(n, 1) }});
             }
         }
         if (modifiedMotion(key)) |m| {
@@ -1591,7 +1591,7 @@ pub const Vim = struct {
                             const clamped: usize = @min(@max(p, 1), 100);
                             const lc = @max(ctx.line_count, 1);
                             const target = @max(@min((clamped * lc + 99) / 100, lc), 1);
-                            return ops(arena, &.{.{ .move_to_line = target }});
+                            return ops(arena, &.{.{ .move_to_line_keep_col = target }});
                         }
                         return runCmd(.@"editor.bracket_match");
                     },
@@ -1680,7 +1680,7 @@ pub const Vim = struct {
         if (key.mods.ctrl and c == 'g') return runCmd(.@"editor.file_stats");
         switch (c) {
             'g' => {
-                const go: EditOp = if (count_explicit) .{ .move_to_line = n } else .move_buffer_start;
+                const go: EditOp = .{ .move_to_line_keep_col = if (count_explicit) @max(n, 1) else 1 };
                 if (pending_op) |op| {
                     if (op == .delete or op == .yank) {
                         const target: ?u32 = if (count_explicit) n else 0;

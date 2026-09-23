@@ -453,6 +453,15 @@ pub fn toLine(ed: *Editor, n: usize) void {
     ed.cursor = ed.lineStart(line);
 }
 
+/// `G` / `gg` / `{n}G` with `nostartofline`: line `n` (1-based; 0 = the
+/// last), at the goal column — the one `j` / `k` would keep.
+pub fn toLineKeepCol(ed: *Editor, n: usize) void {
+    const last = ed.lineCount() - 1;
+    const line = if (n == 0) last else @min(n - 1, last);
+    const gc = ed.goalCol();
+    ed.cursor = ed.byteAtVcol(line, gc);
+}
+
 /// 1-based column.
 pub fn toCol(ed: *Editor, n: usize) void {
     ed.cursor = ed.byteAtCol(ed.currentLine(), n -| 1);

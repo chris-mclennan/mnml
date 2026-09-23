@@ -3865,7 +3865,7 @@ fn beginBlockInsert(app: *App, pane_id: PaneId, e: *EditorPane, append: bool, ch
     ed.in_insert_run = true;
     ed.doc.insert_run_owner = ed;
     e.buf.input.requestInsertMode();
-    app.block_insert = .{ .pane = pane_id, .first_row = rect.r0, .last_row = rect.r1, .col = col, .start_byte = start, .len_before = ed.len(), .eol = ragged, .append = as_append };
+    app.block_insert = .{ .pane = pane_id, .first_row = rect.r0, .last_row = rect.r1, .col = col, .start_byte = start, .len_before = ed.len(), .eol = ragged, .append = as_append, .left_col = rect.c0 };
 }
 
 /// `r<ch>` on a visual block: every character in the rectangle becomes
@@ -3947,7 +3947,11 @@ pub fn finishDeferredInserts(app: *App) Allocator.Error!void {
             const at = try blockInsertAt(ed, row, b.col, b.append, b.eol) orelse continue;
             try ed.splice(at, at, typed);
         }
-        ed.setCursor(b.start_byte);
+        // The cursor ends on the block's top-left, and wants that column
+        // from here on (Neovim 0.12.5: `l<C-v>2jlA;<Esc>` → 1:2, and
+        // `gg` / `j` after it stay in column 2).
+        ed.setCursor(ed.byteAtVcol(b.first_row, b.left_col));
+        ed.goal_col = null;
         e.buf.doc.recomputeDirty();
         e.syntax.dirty = true;
         app.needs_render = true;

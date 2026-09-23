@@ -1435,8 +1435,14 @@ fn cursorViewAt(app: *App, where: enum { top, middle, bottom }) CommandError!voi
         .middle => top + (bottom - top) / 2,
         .bottom => bottom,
     };
-    ed.setCursor(ed.firstNonWs(row));
-    ed.goal_col = null;
+    // Vim keeps the column (`nostartofline`, Neovim's default); the
+    // standard profile lands on the first non-blank.
+    if (app.input_style == .vim) {
+        ed.setCursor(ed.byteAtVcol(row, ed.goalCol()));
+    } else {
+        ed.setCursor(ed.firstNonWs(row));
+        ed.goal_col = null;
+    }
     app.needs_render = true;
 }
 
