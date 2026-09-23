@@ -8,7 +8,9 @@
 //!   3, 5, 7 with the placeholder live: the new session fills it
 //!   4     the 2×2 grows to 3×2 (five sessions and a placeholder)
 //!   6     the 3×2 grows to 4×2 (seven and a placeholder)
-//!   8     the page is full: a new, empty page, and the count starts over
+//!   8     the page is full: the session goes to the first other page
+//!         of sessions with room (the rule runs there), else to a new,
+//!         empty page after the last one, and the count starts over
 //!
 //! Each grid step needs the layout to hold a pure cluster of exactly
 //! those Claudes (`Layout.findPureCluster`); a layout the user has
@@ -30,7 +32,6 @@ const CommandError = command.CommandError;
 const layout_mod = @import("layout.zig");
 const pty_pane = @import("pty_pane.zig");
 const launch_profiles = @import("launch_profiles.zig");
-const cmd_tab = @import("cmd_tab.zig");
 
 /// Claude sessions a page holds before the next one opens a new page.
 pub const cap: usize = 8;
@@ -68,7 +69,10 @@ fn openCounting(app: *App, pages: *usize) CommandError!?PaneId {
     if (launch_profiles.find(app, .claude, name)) |p| if (p.worktree) return launch_profiles.openSessionWith(app, .claude, name, .right);
     if (app.ai.placeholder and !app.layouts.current().containsEmpty()) app.ai.placeholder = false;
     if (countOnPage(app) >= cap) {
-        try cmd_tab.tabNewEmpty(app);
+        // A full page sends the session to the first page of sessions
+        // with room; only with none does it make a page, after the
+        // last, so the tabs keep the order the sessions came in.
+        if (pageWithRoom(app)) |page| goToPage(app, page) else try appendPage(app);
         pages.* += 1;
     }
     const arena = app.frame.allocator();
@@ -84,10 +88,49 @@ fn openCounting(app: *App, pages: *usize) CommandError!?PaneId {
     return launch_profiles.openSessionWith(app, .claude, name, .right);
 }
 
+/// The first page other than this one that holds Claude sessions and
+/// fewer than `cap` of them. A page with none is the user's own (their
+/// files), not a page of the grid, and is left alone.
+fn pageWithRoom(app: *App) ?usize {
+    const ls = &app.layouts;
+    for (ls.layouts.items, 0..) |*l, i| {
+        if (i == ls.active) continue;
+        const n = countOn(app, l);
+        if (n > 0 and n < cap) return i;
+    }
+    return null;
+}
+
+/// Make page `idx` the one on screen, its first leaf's pane active —
+/// no toast: the session that lands there is the follow. Its `.empty`
+/// slot, if it has one, is the grid's placeholder.
+fn goToPage(app: *App, idx: usize) void {
+    const ls = &app.layouts;
+    app.setActive(null);
+    ls.active = idx;
+    const layout = ls.current();
+    app.setActive(if (layout.firstLeaf()) |l| layout.leaf(l).?.active else null);
+    app.ai.placeholder = layout.containsEmpty();
+}
+
+/// A fresh, empty page after the LAST one, made current.
+fn appendPage(app: *App) Allocator.Error!void {
+    const ls = &app.layouts;
+    try ls.layouts.append(ls.gpa, layout_mod.Layout.init(ls.gpa));
+    app.setActive(null);
+    ls.active = ls.layouts.items.len - 1;
+    app.ai.placeholder = false;
+    app.needs_render = true;
+}
+
 /// Claude panes on the current page, in pane order.
 pub fn countOnPage(app: *App) usize {
+    return countOn(app, app.layouts.current());
+}
+
+/// Claude panes in `layout`'s split tree.
+fn countOn(app: *App, layout: *layout_mod.Layout) usize {
     var n: usize = 0;
-    const layout = app.layouts.current();
     for (app.panes.slots.items, 0..) |*slot, i| if (slot.*) |*pane| switch (pane.*) {
         .pty => |*p| if (pty_pane.productOf(app, p) == .claude and layout.leafOf(@intCast(i)) != null) {
             n += 1;

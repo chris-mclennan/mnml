@@ -1,0 +1,51 @@
+# env: HOME=home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# The AI grid past a full page. Eight sessions fill page 1; with the
+# user's own page 2 (a file, no sessions) already there, the ninth
+# makes a page AFTER the last — page 3, not a page wedged in after
+# page 1. Back on page 1, the tenth joins the ninth on page 3 (room for
+# seven more) rather than opening a fourth page; the user's page is
+# never used for sessions.
+write bin/claude #!/bin/bash\nn=$(cat .n 2>/dev/null || echo 0); n=$((n+1)); echo $n > .n\nprintf '\\033]0;job %s\\007' $n\nprintf 'fake session %s\\n' $n\nexec sleep 600
+shell chmod +x bin/claude
+write notes.txt "my own page"
+command tab.new
+open notes.txt
+command tab.first
+command ai.claude_code_new
+wait 250
+command ai.claude_code_new
+wait 250
+command ai.claude_code_new
+wait 250
+command ai.claude_code_new
+wait 250
+command ai.claude_code_new
+wait 250
+command ai.claude_code_new
+wait 250
+command ai.claude_code_new
+wait 250
+command ai.claude_code_new
+wait 250
+expect screen contains "│▌fake session 8"
+command ai.claude_code_new
+wait 500
+expect screen contains "│▌fake session 9"
+expect screen contains "TABS  1  2  3 󰅖"
+command tab.goto_2
+wait 300
+expect screen contains "my own page"
+expect screen lacks "│▌fake session"
+command tab.first
+wait 300
+command ai.claude_code_new
+wait 500
+# Ten sessions, three pages: the tenth shares page 3 with the ninth.
+expect screen contains "│▌fake session 9"
+expect screen contains "│▌fake session 10"
+expect screen lacks "  4 "
+command tab.goto_2
+wait 300
+expect screen contains "my own page"
+expect screen lacks "│▌fake session"
