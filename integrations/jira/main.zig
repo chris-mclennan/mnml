@@ -559,6 +559,8 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
         // the order the rows are on screen.
         try app.drainPrs();
         try app.pumpPrs();
+        // A detail or a picker's transitions, fetched off the loop.
+        try app.drainLooks();
         // One spinner counter for the whole pane, so every button that
         // is mid-dispatch turns together.
         if (app.actions.anyRunning()) app.spin +%= 1;
@@ -573,8 +575,9 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
         // a pane with a session running wakes at the spinner's pace.
         // A linked-PR fetch counts too: its rows replace a `loading…`
         // row under the cursor, and half a second of that row is half a
-        // second of a list that is about to move.
-        _ = box.wait(io, if (app.refresh.busy() or app.prs.busy()) 60 else if (app.actions.anyRunning()) 120 else 500);
+        // second of a list that is about to move. So does a detail or a
+        // picker's list on the wire.
+        _ = box.wait(io, if (app.refresh.busy() or app.prs.busy() or app.looks.busy()) 60 else if (app.actions.anyRunning()) 120 else 500);
     }
     return 0;
 }

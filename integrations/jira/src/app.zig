@@ -240,6 +240,41 @@ pub const PrResult = struct {
 
 pub const PrSlot = sdk.pane.Slot(PrResult);
 
+/// A look at one ticket the reader asked for — its detail (`d`) or the
+/// transitions a picker offers (`t`) — off the loop. They used to be
+/// fetched inline, and on a slow site the pane froze for the whole of
+/// it: no spinner, no `?`, nothing to say the key was heard.
+pub const LookKind = enum { detail, transitions };
+
+pub const LookJob = struct {
+    /// Owns `key`.
+    arena: std.heap.ArenaAllocator,
+    client: jira.Client,
+    kind: LookKind,
+    key: []const u8,
+
+    pub fn deinit(j: *LookJob) void {
+        j.arena.deinit();
+    }
+};
+
+pub const LookResult = struct {
+    /// Owns everything below; a detail result's becomes the entry's.
+    arena: std.heap.ArenaAllocator,
+    kind: LookKind,
+    key: []const u8 = "",
+    detail: model.IssueDetail = .{},
+    transitions: []const model.Transition = &.{},
+    error_text: []const u8 = "",
+
+    pub fn drop(r: LookResult) void {
+        var arena = r.arena;
+        arena.deinit();
+    }
+};
+
+pub const LookSlot = sdk.pane.Slot(LookResult);
+
 pub const Filter = struct { edit: TextEdit, editing: bool };
 
 pub const Comment = struct { key: []const u8, edit: TextEdit, posting: bool = false, error_text: []const u8 = "" };
@@ -310,6 +345,15 @@ pub const App = struct {
     refresh: RefreshSlot,
     /// One linked-PR fetch at a time, behind the paint.
     prs: PrSlot,
+    /// One detail / transitions fetch at a time, off the loop; the
+    /// latest ask while one is out waits in `look_next`.
+    looks: LookSlot,
+    look_next_kind: ?LookKind = null,
+    look_next_buf: [64]u8 = undefined,
+    look_next_len: usize = 0,
+    /// The ticket whose detail is on the wire, for the spinner.
+    detail_fetching_buf: [64]u8 = undefined,
+    detail_fetching_len: usize = 0,
     /// Tickets whose linked PRs are not known yet, in the order their
     /// rows are on screen. `pumpPrs` takes the front one.
     pr_queue: std.ArrayListUnmanaged([]const u8) = .empty,
@@ -440,7 +484,7 @@ pub const App = struct {
                 .board_id = c.board_id,
             };
         }
-        return .{ .gpa = gpa, .io = io, .cfg = cfg, .family = family, .client = client, .forge = forge, .keys = keys, .tabs = tabs, .refresh = try RefreshSlot.init(gpa), .prs = try PrSlot.init(gpa), .actions = sdk.pane.ActionStore.init(gpa), .watch_arena = std.heap.ArenaAllocator.init(gpa) };
+        return .{ .gpa = gpa, .io = io, .cfg = cfg, .family = family, .client = client, .forge = forge, .keys = keys, .tabs = tabs, .refresh = try RefreshSlot.init(gpa), .prs = try PrSlot.init(gpa), .looks = try LookSlot.init(gpa), .actions = sdk.pane.ActionStore.init(gpa), .watch_arena = std.heap.ArenaAllocator.init(gpa) };
     }
 
     /// `$MNML_IPC_DIR` — the channel of the mnml this pane is running
@@ -476,6 +520,7 @@ pub const App = struct {
     pub fn closeRefresh(a: *App) void {
         a.refresh.q.close(a.io);
         a.prs.q.close(a.io);
+        a.looks.q.close(a.io);
     }
 
     /// Where a ticket's linked PRs are remembered between runs. Set by
@@ -558,6 +603,7 @@ pub const App = struct {
         a.hits.deinit(a.gpa);
         a.refresh.deinit(a.io, RefreshResult.drop);
         a.prs.deinit(a.io, PrResult.drop);
+        a.looks.deinit(a.io, LookResult.drop);
         a.actions.deinit();
         a.watch_out.deinit(a.gpa);
         a.watch_arena.deinit();
@@ -1504,6 +1550,9 @@ pub const App = struct {
 
     pub fn ensureDetail(a: *App, key: []const u8) Allocator.Error!void {
         if (a.details.contains(key)) return;
+        // With a loop to come back to, off it: the panel paints its
+        // spinner and every key still answers while the site thinks.
+        if (a.group != null) return a.startLook(.detail, key);
         const e = try a.gpa.create(DetailEntry);
         e.* = .{ .arena = std.heap.ArenaAllocator.init(a.gpa), .detail = .{} };
         switch (jira.issueDetail(a.client, e.arena.allocator(), key) catch |err| switch (err) {
@@ -1517,6 +1566,122 @@ pub const App = struct {
             },
         }
         try a.details.put(a.gpa, try a.keep(key), e);
+    }
+
+    /// Is `key`'s detail on the wire right now?
+    pub fn detailFetching(a: *const App, key: []const u8) bool {
+        return a.detail_fetching_len > 0 and std.mem.eql(u8, a.detail_fetching_buf[0..a.detail_fetching_len], key);
+    }
+
+    /// Start a look, or — with one already out — remember it as the next
+    /// (the latest ask wins: a cursor run down the list wants the row it
+    /// stopped on, not every row it passed).
+    fn startLook(a: *App, kind: LookKind, key: []const u8) Allocator.Error!void {
+        const g = a.group orelse return;
+        if (key.len > a.look_next_buf.len) return;
+        if (kind == .detail and a.detailFetching(key)) return;
+        if (!a.looks.claim()) {
+            @memcpy(a.look_next_buf[0..key.len], key);
+            a.look_next_len = key.len;
+            a.look_next_kind = kind;
+            return;
+        }
+        var job: LookJob = .{ .arena = std.heap.ArenaAllocator.init(a.gpa), .client = a.client.*, .kind = kind, .key = "" };
+        job.key = job.arena.allocator().dupe(u8, key) catch {
+            a.looks.abandon();
+            job.deinit();
+            return error.OutOfMemory;
+        };
+        if (kind == .detail) {
+            @memcpy(a.detail_fetching_buf[0..key.len], key);
+            a.detail_fetching_len = key.len;
+        }
+        g.concurrent(a.io, lookWorker, .{ a.io, &a.looks, job }) catch {
+            a.looks.abandon();
+            a.detail_fetching_len = 0;
+            job.deinit();
+        };
+    }
+
+    /// The whole of one look, on whichever thread runs it.
+    pub fn runLook(job_in: LookJob) LookResult {
+        var job = job_in;
+        defer job.deinit();
+        var client = job.client;
+        var arena = std.heap.ArenaAllocator.init(job.arena.child_allocator);
+        const ar = arena.allocator();
+        var res: LookResult = .{ .arena = undefined, .kind = job.kind, .key = ar.dupe(u8, job.key) catch "" };
+        switch (job.kind) {
+            .detail => switch (jira.issueDetail(&client, ar, job.key) catch jira.Answer(model.IssueDetail){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
+                .ok => |d| res.detail = d,
+                .failed => |f| res.error_text = ar.dupe(u8, f.message) catch "out of memory",
+            },
+            .transitions => switch (jira.transitions(&client, ar, job.key) catch jira.Answer([]const model.Transition){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
+                .ok => |l| res.transitions = l,
+                .failed => |f| res.error_text = ar.dupe(u8, f.message) catch "out of memory",
+            },
+        }
+        res.arena = arena;
+        return res;
+    }
+
+    fn lookWorker(io: Io, slot: *LookSlot, job: LookJob) Io.Cancelable!void {
+        const res = runLook(job);
+        slot.finish(io, res) catch |err| {
+            res.drop();
+            if (err == error.Canceled) return error.Canceled;
+            return;
+        };
+    }
+
+    /// Take a finished look, if one has landed, and start the one that
+    /// waited behind it.
+    pub fn drainLooks(a: *App) Allocator.Error!void {
+        if (a.looks.take(a.io)) |res_in| {
+            var res = res_in;
+            var owned = false;
+            defer if (!owned) res.drop();
+            switch (res.kind) {
+                .detail => {
+                    if (a.detailFetching(res.key)) a.detail_fetching_len = 0;
+                    if (!a.details.contains(res.key)) {
+                        const e = try a.gpa.create(DetailEntry);
+                        e.* = .{ .arena = res.arena, .detail = res.detail };
+                        owned = true;
+                        if (res.error_text.len > 0) {
+                            e.detail.error_text = res.error_text;
+                            a.setStatus("detail fetch failed for {s}: {s}", .{ res.key, res.error_text });
+                        }
+                        try a.details.put(a.gpa, try a.keep(res.key), e);
+                    }
+                },
+                .transitions => if (a.transition) |*p| {
+                    if (p.transitions == null and std.mem.eql(u8, p.key, res.key)) {
+                        if (res.error_text.len > 0) try p.fail(res.error_text) else try p.setTransitions(res.transitions);
+                        // What was typed ahead of the list, in order.
+                        if (p.pending_jump) |j| p.jump(j);
+                        if (p.pending_commit and p.current() != null) try a.commitTransition();
+                    }
+                },
+            }
+        } else if (a.looks.lost) {
+            a.detail_fetching_len = 0;
+        }
+        if (!a.looks.busy()) {
+            if (a.look_next_kind) |kind| {
+                a.look_next_kind = null;
+                var kbuf: [64]u8 = undefined;
+                const n = a.look_next_len;
+                @memcpy(kbuf[0..n], a.look_next_buf[0..n]);
+                // Still wanted? A detail for a row still focused with the
+                // panel open; transitions for the picker still up.
+                const want = switch (kind) {
+                    .detail => a.details_visible and !a.details.contains(kbuf[0..n]),
+                    .transitions => if (a.transition) |*p| p.transitions == null and std.mem.eql(u8, p.key, kbuf[0..n]) else false,
+                };
+                if (want) try a.startLook(kind, kbuf[0..n]);
+            }
+        }
     }
 
     pub fn invalidateDetail(a: *App, key: []const u8) void {
@@ -2225,6 +2390,12 @@ pub const App = struct {
         const key = (try a.focusedKey(scratch.allocator())) orelse return;
         var p = try pickers.TransitionPicker.init(a.gpa, key);
         p.targets = if (a.selection.count() > 0) a.selection.count() else 1;
+        if (a.group != null) {
+            // Up at once with `loading…`; the list lands on a later tick.
+            if (a.transition) |*old| old.deinit();
+            a.transition = p;
+            return a.startLook(.transitions, key);
+        }
         switch (jira.transitions(a.client, scratch.allocator(), key) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             error.Transport => jira.Answer([]const model.Transition){ .failed = .{ .status = 0, .message = "the site did not answer" } },
@@ -3303,6 +3474,15 @@ pub const App = struct {
             return true;
         }
         if (a.transition) |*p| {
+            if (p.transitions == null and !std.mem.eql(u8, spec, "esc")) {
+                // The list is still on the wire: what is typed now is
+                // held and played when it lands, so `t 3 ⏎` typed
+                // ahead of a slow site still moves the ticket.
+                if (std.mem.eql(u8, spec, "enter")) {
+                    p.pending_commit = true;
+                } else if (keymap.tabDigit(spec)) |d| p.pending_jump = d;
+                return true;
+            }
             if (std.mem.eql(u8, spec, "esc")) {
                 a.closeTransition();
             } else if (std.mem.eql(u8, spec, "enter")) {
@@ -4676,6 +4856,71 @@ test "a refetch that fails keeps the rows it had, says `fetch failed`, and keeps
     try testing.expectEqual(stamp, a.tab().fetched_at);
     // The header's reason, which `screen.zig` hands `fetchText`.
     try testing.expect(a.tab().last_error.len > 0);
+}
+
+test "`d` and `t` fetch off the loop: the keys answer at once, the detail and the transitions land on a later tick" {
+    // hunt/findings-2026-09-23/integ-jira-detail-blocks-pane.md: on a slow
+    // site `d` froze the pane — no spinner, no `?` — until the answer.
+    const h = try Harness.start(.{ .tabs = &work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    _ = try a.onKey("j");
+    const key = try arena.allocator().dupe(u8, (try a.focusedKey(arena.allocator())).?);
+
+    var group: Io.Group = .init;
+    a.setGroup(&group);
+    defer {
+        a.closeRefresh();
+        group.cancel(testing.io);
+        a.group = null;
+    }
+    // `d` returns before the site has answered: the panel is open, the
+    // ticket's detail is on the wire (the spinner's cue), and `?` is
+    // heard straight away.
+    _ = try a.onKey("d");
+    try testing.expect(a.details_visible);
+    try testing.expect(a.detailOf(key) == null);
+    try testing.expect(a.detailFetching(key));
+    _ = try a.onKey("?");
+    try testing.expect(a.help);
+    _ = try a.onKey("esc");
+    var spins: usize = 0;
+    while (a.detailOf(key) == null and spins < 2000) : (spins += 1) {
+        try a.drainLooks();
+        testing.io.sleep(.fromMilliseconds(2), .awake) catch break;
+    }
+    try testing.expect(a.detailOf(key) != null);
+    try testing.expect(!a.detailFetching(key));
+
+    // `t`: the picker is up at once with `loading…`, its list lands later.
+    _ = try a.onKey("t");
+    try testing.expect(a.transition != null);
+    try testing.expect(a.transition.?.transitions == null);
+    spins = 0;
+    while (a.transition.?.transitions == null and spins < 2000) : (spins += 1) {
+        try a.drainLooks();
+        testing.io.sleep(.fromMilliseconds(2), .awake) catch break;
+    }
+    try testing.expect(a.transition.?.transitions.?.len > 0);
+    a.closeTransition();
+
+    // Typed ahead of the list — `t 1 ⏎` — it still moves the ticket
+    // once the list lands.
+    const moves_before = h.store.requests;
+    _ = try a.onKey("t");
+    _ = try a.onKey("1");
+    _ = try a.onKey("enter");
+    try testing.expect(a.transition != null);
+    spins = 0;
+    while (a.transition != null and spins < 2000) : (spins += 1) {
+        try a.drainLooks();
+        testing.io.sleep(.fromMilliseconds(2), .awake) catch break;
+    }
+    try testing.expect(a.transition == null);
+    try testing.expect(h.store.requests - moves_before >= 2);
 }
 
 test "the Work family's three kinds: open work counts for the chip, reported is the reporter query, the editable tab interpolates its vars" {

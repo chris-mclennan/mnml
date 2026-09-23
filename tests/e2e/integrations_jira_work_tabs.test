@@ -45,9 +45,10 @@ expect screen lacks "installed jira_work from"
 command integrations.open_as_tab
 command jira_work.open
 # The pane spawns and mounts; its first search runs on a worker, so the
-# rows land on a later tick. The pickers and the detail are still
-# fetched on the loop, so a loaded machine can still outlast an expect's
-# 3 s budget — hence the margin.
+# rows land on a later tick. The detail and the transitions are fetched
+# off the loop too; the other pickers are still fetched on it, so a
+# loaded machine can still outlast an expect's 3 s budget — hence the
+# margin.
 wait 8000
 command view.toggle_tree
 command view.focus_pane

@@ -1057,6 +1057,11 @@ pub const Painter = struct {
         for (fields) |f| try out.append(arena, .{ .s = try std.fmt.allocPrint(arena, "{s:>10}: {s}", .{ f.label, f.value }), .style = p.s.plain });
         try out.append(arena, .{ .s = "" });
         const d = a.detailOf(iss.key);
+        if (d == null and a.detailFetching(iss.key)) {
+            // On the wire: the toolkit's spinner and words, so a slow
+            // site reads as busy, not as a key that was not heard.
+            try out.append(arena, .{ .s = std.mem.trimStart(u8, p.c.fetchSub(.{ .fetching = .{} }, a.nowMs()), " "), .style = p.s.muted });
+        }
         if (d) |det| {
             if (det.error_text.len > 0) {
                 try out.append(arena, .{ .s = try std.fmt.allocPrint(arena, "detail fetch failed: {s}", .{det.error_text}), .style = p.s.err_style });
