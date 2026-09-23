@@ -357,6 +357,18 @@ pub const GraphPane = struct {
     view: graph_view.State = .{},
     cursor: usize = 0,
     pending: bool = true,
+    /// How many commits the log asks for: `graph_limit`, a page more
+    /// each time the cursor reaches the last one while `more` says the
+    /// history goes on, everything when `G` / End asks for the end.
+    limit: u32 = graph_limit,
+    /// The `limit` the log in flight (or the last one) was asked with.
+    asked: u32 = graph_limit,
+    /// The last log had a commit past `limit`: the list is a page, not
+    /// the history.
+    more: bool = false,
+    /// `G` asked for the end of a paged list: the cursor goes to the last
+    /// row when the whole log lands.
+    to_end: bool = false,
     filter: client.LogFilter = .{},
     /// The detail panel.
     detail_arena: std.heap.ArenaAllocator,
@@ -1365,10 +1377,21 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
                     g.clearSelection();
                     g.closePlan();
                     adoptArena(&g.arena, &result.arena, gpa);
-                    g.commits = l.commits;
-                    g.lanes = try graph_view.layout(g.arena.allocator(), l.commits);
-                    g.order = try graph_view.sortOrder(g.arena.allocator(), l.commits, g.sort);
+                    // One commit past the limit was asked for: its
+                    // presence says the history goes on.
+                    g.more = l.commits.len > g.asked;
+                    g.commits = if (g.more) l.commits[0..g.asked] else l.commits;
+                    g.lanes = try graph_view.layout(g.arena.allocator(), g.commits);
+                    g.order = try graph_view.sortOrder(g.arena.allocator(), g.commits, g.sort);
                     g.pending = false;
+                    // A bigger page was asked for while this one was on
+                    // its way: ask again.
+                    if (g.more and g.limit > g.asked) {
+                        refreshGraph(app, g) catch {};
+                    } else if (g.to_end) {
+                        g.to_end = false;
+                        g.cursor = g.totalRows() -| 1;
+                    }
                     if (g.cursor >= g.totalRows()) g.cursor = g.totalRows() -| 1;
                     if (g.jump_to) |sha| {
                         g.jump_to = null;
@@ -1943,7 +1966,28 @@ pub fn refreshGraph(app: *App, g: *GraphPane) CommandError!void {
     const repo = app.git.repoById(g.repo) orelse return error.NoRepo;
     const filter = try g.filter.dupe(app.gpa);
     g.pending = true;
-    try submit(app, repo, .{ .log = .{ .n = graph_limit, .filter = filter } });
+    g.asked = g.limit;
+    try submit(app, repo, .{ .log = .{ .n = g.limit +| 1, .filter = filter } });
+}
+
+/// `limit` for the whole history: git reads `-n` as a signed int, so
+/// the largest it takes, less the one-past probe.
+const all_commits: u32 = std.math.maxInt(i32) - 1;
+
+/// The graph shows a page of a longer history and the cursor reached its
+/// last commit: the next page is asked for (`to_end`: all of it, for `G`).
+fn pageInMore(app: *App, g: *GraphPane, to_end: bool) void {
+    if (!g.more) return;
+    if (to_end) {
+        g.to_end = true;
+        g.limit = all_commits;
+    } else if (g.limit == g.asked) {
+        g.limit +|= graph_limit;
+    } else return; // the next page is asked for already
+    // A log in flight asks again when it lands (`handle`'s `.log`).
+    if (g.pending) return;
+    refreshGraph(app, g) catch return;
+    app.toast("graph: loading {s} commits", .{if (to_end) "all" else "older"});
 }
 
 /// The repo whose root is `root`, discovering them first if nothing
@@ -3705,6 +3749,19 @@ fn moveGraphCursor(app: *App, g: *GraphPane, to: usize) void {
     g.cursor = @min(to, total - 1);
     g.detail_cursor = 0;
     if (!g.wipSelected()) requestDetail(app, g) catch {};
+    // The last row of a page is not the first commit: fetch the next.
+    if (g.cursor + 1 >= total) pageInMore(app, g, false);
+}
+
+/// `G` / End: the last row — of the whole history, which a paged list
+/// loads first.
+fn graphToEnd(app: *App, g: *GraphPane) void {
+    const total = g.totalRows();
+    if (total == 0) return;
+    g.cursor = total - 1;
+    g.detail_cursor = 0;
+    if (!g.wipSelected()) requestDetail(app, g) catch {};
+    pageInMore(app, g, true);
 }
 
 /// The graph pane: motion over the virtual rows, enter opens the
@@ -3723,14 +3780,13 @@ pub fn graphKey(app: *App, id: PaneId, g: *GraphPane, k: Key) Allocator.Error!bo
     if (g.detail_focus) return detailKey(app, id, g, k);
     if (g.plan != null) return planKey(app, g, k);
     if (g.hash_filter_mode) return hashFilterKey(app, g, k);
-    const n = g.totalRows();
     switch (k.code) {
         .up => moveGraphCursor(app, g, g.cursor -| 1),
         .down => moveGraphCursor(app, g, g.cursor + 1),
         .page_up => moveGraphCursor(app, g, g.cursor -| app.pane_rows),
         .page_down => moveGraphCursor(app, g, g.cursor + app.pane_rows),
         .home => moveGraphCursor(app, g, 0),
-        .end => moveGraphCursor(app, g, n -| 1),
+        .end => graphToEnd(app, g),
         .enter => runToast(app, showSelectedCommit(app, g)),
         .tab => g.detail_focus = true,
         .esc => {
@@ -3744,7 +3800,7 @@ pub fn graphKey(app: *App, id: PaneId, g: *GraphPane, k: Key) Allocator.Error!bo
                 'j' => moveGraphCursor(app, g, g.cursor + 1),
                 'k' => moveGraphCursor(app, g, g.cursor -| 1),
                 'g' => moveGraphCursor(app, g, 0),
-                'G' => moveGraphCursor(app, g, n -| 1),
+                'G' => graphToEnd(app, g),
                 'd' => runToast(app, diffSelected(app, g)),
                 'W' => runToast(app, toggleCompareBase(app, g)),
                 's' => try setSort(app, g, .{ .col = g.sort.col.next(), .asc = false }),
