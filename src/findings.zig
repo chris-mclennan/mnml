@@ -226,7 +226,7 @@ pub fn refresh(app: *App) CommandError!void {
     st.scanning = true;
     st.scanned_once = true;
     app.needs_render = true;
-    st.group.concurrent(app.io, scanWorker, .{ &app.events, app.io, app.gpa, app.workspace, st.generation }) catch |err| {
+    st.group.concurrent(app.io, scanWorker, .{ app.events, app.io, app.gpa, app.workspace, st.generation }) catch |err| {
         st.scanning = false;
         return app.diag.fail(app.frame.allocator(), "findings: could not start the scan: {s}", .{@errorName(err)});
     };

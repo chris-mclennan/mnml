@@ -481,7 +481,7 @@ pub fn tick(app: *App, now: i64) void {
         if (w.tail_busy or now - w.tail_at_ms < tail_ms) continue;
         w.tail_busy = true;
         w.tail_at_ms = now;
-        st.group.concurrent(app.io, tailWorker, .{ &app.events, app.io, app.gpa, lt.path, lt.max_lines, w.id, w.tail_generation }) catch {
+        st.group.concurrent(app.io, tailWorker, .{ app.events, app.io, app.gpa, lt.path, lt.max_lines, w.id, w.tail_generation }) catch {
             w.tail_busy = false;
         };
     }

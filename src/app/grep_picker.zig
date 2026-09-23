@@ -127,7 +127,7 @@ fn run(app: *App) Allocator.Error!void {
     if (app.search_case) |c| flags.case_sensitive = c;
     st.loading = true;
     app.needs_render = true;
-    st.group.concurrent(app.io, grep.worker, .{ &app.events, app.io, app.gpa, @as([]const u8, app.workspace), @as([]const u8, st.ran), flags, st.generation, target, st.abort, false }) catch {
+    st.group.concurrent(app.io, grep.worker, .{ app.events, app.io, app.gpa, @as([]const u8, app.workspace), @as([]const u8, st.ran), flags, st.generation, target, st.abort, false }) catch {
         st.loading = false;
     };
 }

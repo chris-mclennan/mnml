@@ -574,7 +574,7 @@ fn startWorker(app: *App, p: *BrowserPane) CommandError!void {
     if (!std.mem.eql(u8, p.url, "about:blank")) try navigate(app, p, p.url);
     const dir_owned = try gpa.dupe(u8, p.profile_dir);
     errdefer gpa.free(dir_owned);
-    p.thread = std.Thread.spawn(.{}, worker, .{ &app.events, app.io, gpa, &app.env, p.shared, p.pane_id.?, dir_owned, p.headless, p.binary }) catch |err| {
+    p.thread = std.Thread.spawn(.{}, worker, .{ app.events, app.io, gpa, &app.env, p.shared, p.pane_id.?, dir_owned, p.headless, p.binary }) catch |err| {
         p.state = .closed;
         try p.refreshTitle();
         return app.diag.fail(app.frame.allocator(), "browser: could not start the worker: {s}", .{@errorName(err)});

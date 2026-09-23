@@ -2053,7 +2053,7 @@ fn start(app: *App, id: PaneId, p: *TestsPane) CommandError!void {
     // The runner and what was asked of it — the full command line is
     // the pane's first row; the list has a row's width.
     const label = if (p.last_args.len == 0) p.runner.label() else try std.fmt.allocPrint(app.frame.allocator(), "{s} {s}", .{ p.runner.label(), try std.mem.join(app.frame.allocator(), " ", p.last_args) });
-    p.group.concurrent(app.io, worker, .{ &app.events, app.io, gpa, p.runner, cwd, workspace, env, extra, p.generation, id }) catch |err| {
+    p.group.concurrent(app.io, worker, .{ app.events, app.io, gpa, p.runner, cwd, workspace, env, extra, p.generation, id }) catch |err| {
         p.state = .failed;
         p.err = "could not start the worker";
         jobs.record(app, .{ .kind = .test_run, .label = label, .pane = id }, 0, jobs.Outcome.fail("could not start the worker"));

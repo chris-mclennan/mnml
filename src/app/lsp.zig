@@ -766,7 +766,7 @@ pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
     try argv.append(arena, try arena.dupe(u8, found.?));
     for (spec.args) |a| try argv.append(arena, try dap_client.expandEnv(arena, a, &app.env));
     const id = app.lsp.next_id;
-    const s = Server.spawn(app.gpa, app.io, &app.events, id, .{
+    const s = Server.spawn(app.gpa, app.io, app.events, id, .{
         .name = spec.name,
         .argv = argv.items,
         .root = root,
@@ -3671,7 +3671,7 @@ test "a server's string-id `workspace/configuration` (zls's) is answered under t
     const out_w = F{ .handle = s2c[1], .flags = flags };
     var group: Io.Group = .init;
     try group.concurrent(io, stringIdServer, .{ io, gpa, in_r, out_w });
-    const s = try Server.initFiles(gpa, io, &app.events, app.lsp.next_id, F{ .handle = c2s[1], .flags = flags }, F{ .handle = s2c[0], .flags = flags }, .{ .name = "zls", .argv = &.{"fake-zls"}, .root = "/tmp", .settings = "{\"enable_build_on_save\":true}" });
+    const s = try Server.initFiles(gpa, io, app.events, app.lsp.next_id, F{ .handle = c2s[1], .flags = flags }, F{ .handle = s2c[0], .flags = flags }, .{ .name = "zls", .argv = &.{"fake-zls"}, .root = "/tmp", .settings = "{\"enable_build_on_save\":true}" });
     app.lsp.next_id += 1;
     try app.lsp.servers.append(gpa, s);
     try s.initialize();
@@ -3736,7 +3736,7 @@ pub const TestRig = struct {
         const flags: F.Flags = .{ .nonblocking = false };
         self.* = .{ .in_r = F{ .handle = c2s[0], .flags = flags }, .out_w = F{ .handle = s2c[1], .flags = flags } };
         try self.group.concurrent(io, fakeLanguageServer, .{ io, gpa, self.in_r, self.out_w });
-        const s = try Server.initFiles(gpa, io, &app.events, app.lsp.next_id, F{ .handle = c2s[1], .flags = flags }, F{ .handle = s2c[0], .flags = flags }, .{ .name = "typescript", .argv = &.{"fake-ts"}, .root = "/tmp" });
+        const s = try Server.initFiles(gpa, io, app.events, app.lsp.next_id, F{ .handle = c2s[1], .flags = flags }, F{ .handle = s2c[0], .flags = flags }, .{ .name = "typescript", .argv = &.{"fake-ts"}, .root = "/tmp" });
         app.lsp.next_id += 1;
         try app.lsp.servers.append(gpa, s);
         try s.initialize();
@@ -4417,7 +4417,7 @@ test "a scripted server through the app: attach + diagnostics, completion (a sni
     try group.concurrent(io, fakeLanguageServer, .{ io, gpa, F{ .handle = c2s[0], .flags = flags }, F{ .handle = s2c[1], .flags = flags } });
     // Registered as the typescript server rooted at /tmp, so the builtin
     // spec for `.ts` resolves to it without a binary or a root marker.
-    const s = try Server.initFiles(gpa, io, &app.events, app.lsp.next_id, F{ .handle = c2s[1], .flags = flags }, F{ .handle = s2c[0], .flags = flags }, .{ .name = "typescript", .argv = &.{"fake-ts"}, .root = "/tmp" });
+    const s = try Server.initFiles(gpa, io, app.events, app.lsp.next_id, F{ .handle = c2s[1], .flags = flags }, F{ .handle = s2c[0], .flags = flags }, .{ .name = "typescript", .argv = &.{"fake-ts"}, .root = "/tmp" });
     app.lsp.next_id += 1;
     try app.lsp.servers.append(gpa, s);
     try s.initialize();

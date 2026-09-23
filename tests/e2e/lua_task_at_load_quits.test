@@ -1,0 +1,17 @@
+# A script that starts a hidden task while it loads (`mnml.task.run` in
+# its init.lua — a build watcher, a linter) must not keep mnml from
+# quitting. The task used to start inside `App.initWith`, on the App
+# that function then returned by value: the worker reported to a task
+# group nobody owned any more, and the moved App's shutdown waited for
+# it forever — Ctrl+Q, SIGTERM and the end of this file all hung.
+#
+# The script is a dev-root fixture named by the environment, so it is
+# there before the App is built (a file written by a step is too late).
+# The task still runs, in the workspace; the file then ends, and the
+# runner's teardown is the quit under test: a hang is this file's
+# timeout.
+# env: MNML_SCRIPTS_DEV_ROOTS=${PWD}/tests/e2e/fixtures/init_task
+write a.txt "alpha\n"
+open a.txt
+wait 300
+expect file INIT_TASK_RAN contains "ran"

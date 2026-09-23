@@ -256,7 +256,7 @@ fn start(app: *App) void {
     const st = &app.now_playing;
     st.group.cancel(app.io);
     const home = app.env.get("HOME") orelse "";
-    st.group.concurrent(app.io, worker, .{ st, &app.events, app.io, app.cfg.ui.now_playing_source, home }) catch {};
+    st.group.concurrent(app.io, worker, .{ st, app.events, app.io, app.cfg.ui.now_playing_source, home }) catch {};
 }
 
 fn worker(st: *State, events: *event.EventQueue, io: Io, source: Config.NowPlayingSource, home: []const u8) Io.Cancelable!void {

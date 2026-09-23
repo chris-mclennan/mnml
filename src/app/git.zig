@@ -999,7 +999,7 @@ pub fn onSavePost(app: *App, args: hooks.HookArgs) void {
 /// Queue `job` on `repo`, starting its worker if needed. The job's
 /// strings are the worker's from here.
 pub fn submit(app: *App, repo: *client.Repo, job: client.Job) CommandError!void {
-    repo.start(app.io, &app.events, &app.env) catch |err| {
+    repo.start(app.io, app.events, &app.env) catch |err| {
         job.deinit(app.gpa);
         return app.diag.fail(app.frame.allocator(), "git: could not start the worker: {s}", .{@errorName(err)});
     };

@@ -472,7 +472,7 @@ fn fireSuggestion(app: *App) Allocator.Error!void {
     const generation = st.debounce.fire(app.now_ms);
     st.suggest_pane = id;
     st.current_accepted = false;
-    st.suggest_group.concurrent(app.io, suggestWorker, .{ &app.events, app.io, gpa, @as(u32, id), generation, backend, prompt, model, key_owned, cwd, &app.env, app.cfg.ai.suggest_timeout_ms }) catch {
+    st.suggest_group.concurrent(app.io, suggestWorker, .{ app.events, app.io, gpa, @as(u32, id), generation, backend, prompt, model, key_owned, cwd, &app.env, app.cfg.ai.suggest_timeout_ms }) catch {
         st.debounce.cancel();
         return error.OutOfMemory;
     };
@@ -791,7 +791,7 @@ pub fn askProduct(app: *App, product: Product, title: []const u8, prompt: []cons
 
     const id = try app.panes.add(.{ .ai = pane });
     // Owned by the store from here.
-    app.ai.group.concurrent(app.io, jobWorker, .{ &app.events, app.io, gpa, j, mode, prompt_owned, pane.session_id, model, key_owned, cwd, &app.env, system, use_tools, write_tools, max_tokens }) catch {
+    app.ai.group.concurrent(app.io, jobWorker, .{ app.events, app.io, gpa, j, mode, prompt_owned, pane.session_id, model, key_owned, cwd, &app.env, system, use_tools, write_tools, max_tokens }) catch {
         app.panes.remove(id);
         return error.OutOfMemory;
     };
@@ -1852,7 +1852,7 @@ test "the confirm channel: a worker parks on the job's queue; the UI's answer re
         }
     };
     Worker.answer = null;
-    try app.ai.group.concurrent(app.io, Worker.run, .{ &app.events, app.io, gpa, j });
+    try app.ai.group.concurrent(app.io, Worker.run, .{ app.events, app.io, gpa, j });
     // The confirm box opens once the event is pumped.
     var waited: usize = 0;
     while (app.overlay != .confirm and waited < 200) : (waited += 1) {

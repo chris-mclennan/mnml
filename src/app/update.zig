@@ -95,7 +95,7 @@ pub fn start(app: *App, manual: bool) CommandError!void {
     st.group.cancel(app.io);
     st.started = true;
     st.manual = manual;
-    st.group.concurrent(app.io, worker, .{ st, &app.events, app.io, app.gpa }) catch |err| {
+    st.group.concurrent(app.io, worker, .{ st, app.events, app.io, app.gpa }) catch |err| {
         return app.diag.fail(app.frame.allocator(), "update check: could not start: {s}", .{@errorName(err)});
     };
 }

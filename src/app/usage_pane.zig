@@ -375,7 +375,7 @@ fn spawnClaude(app: *App, c: usage.AccountCfg, count: usize, now: u64) Allocator
     errdefer gpa.free(job.data_root);
     if (fixtureDir(app)) |d| job.fixture = try gpa.dupe(u8, d);
     errdefer if (job.fixture) |f| gpa.free(f);
-    st(app).group.concurrent(app.io, claudeWorker, .{ &app.events, app.io, gpa, job }) catch return error.OutOfMemory;
+    st(app).group.concurrent(app.io, claudeWorker, .{ app.events, app.io, gpa, job }) catch return error.OutOfMemory;
 }
 
 fn claudeWorker(events: *event.EventQueue, io: Io, gpa: Allocator, job: *ClaudeJob) Io.Cancelable!void {
@@ -419,7 +419,7 @@ fn spawnCodex(app: *App, now: u64) Allocator.Error!void {
     if (fixtureDir(app)) |d| job.fixture = try gpa.dupe(u8, d);
     errdefer if (job.fixture) |f| gpa.free(f);
     s.codex_pending = true;
-    s.group.concurrent(app.io, codexWorker, .{ &app.events, app.io, gpa, job }) catch {
+    s.group.concurrent(app.io, codexWorker, .{ app.events, app.io, gpa, job }) catch {
         s.codex_pending = false;
         return error.OutOfMemory;
     };
@@ -451,7 +451,7 @@ fn spawnKeychain(app: *App, capture: bool) Allocator.Error!void {
     const job = try gpa.create(KeychainJob);
     job.* = .{ .capture = capture };
     s.keychain_pending = true;
-    s.group.concurrent(app.io, keychainWorker, .{ &app.events, app.io, gpa, job }) catch {
+    s.group.concurrent(app.io, keychainWorker, .{ app.events, app.io, gpa, job }) catch {
         s.keychain_pending = false;
         gpa.destroy(job);
         return error.OutOfMemory;

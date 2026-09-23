@@ -345,7 +345,7 @@ pub fn refresh(app: *App) CommandError!void {
     }
     const api = try gpa.dupe(u8, apiBase(app));
     errdefer gpa.free(api);
-    st.group.concurrent(app.io, fetchWorker, .{ &app.events, app.io, gpa, specs, api, st.generation }) catch |err| {
+    st.group.concurrent(app.io, fetchWorker, .{ app.events, app.io, gpa, specs, api, st.generation }) catch |err| {
         return app.diag.fail(app.frame.allocator(), "marketplace: cannot start the fetch: {s}", .{@errorName(err)});
     };
     st.fetching = true;
@@ -640,7 +640,7 @@ pub fn install(app: *App, idx: usize) CommandError!void {
     job.env = try app.env.clone(gpa);
     errdefer job.env.deinit();
     try job.env.put("MNML_DATA_ROOT", app.data_root);
-    st.group.concurrent(app.io, installWorker, .{ &app.events, app.io, gpa, job, st.generation }) catch |err| {
+    st.group.concurrent(app.io, installWorker, .{ app.events, app.io, gpa, job, st.generation }) catch |err| {
         return app.diag.fail(app.frame.allocator(), "marketplace: cannot start the install: {s}", .{@errorName(err)});
     };
     st.installing = try gpa.dupe(u8, e.id);

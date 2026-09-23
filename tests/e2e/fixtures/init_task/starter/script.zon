@@ -1,0 +1,1 @@
+.{ .name = "init-task-starter", .api = 1, .version = "0.0.1", .description = "Starts a hidden task while it loads (tests/e2e/lua_task_at_load_quits.test)" }

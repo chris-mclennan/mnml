@@ -860,7 +860,7 @@ pub fn startSession(app: *App, cfg: app_mod.Config.DapAdapter, file: []const u8,
     const body = try client.substitute(arena, raw, app.workspace, file);
     const id = app.dap.next_session;
     app.dap.next_session += 1;
-    const s = Session.spawn(app.gpa, app.io, &app.events, id, argv.items, app.workspace, &app.env, body) catch |err| switch (err) {
+    const s = Session.spawn(app.gpa, app.io, app.events, id, argv.items, app.workspace, &app.env, body) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.FileNotFound => return app.diag.fail(arena, "dap spawn failed: {s} not found on PATH", .{cfg.cmd}),
         else => return app.diag.fail(arena, "dap spawn failed: {s}", .{@errorName(err)}),
@@ -2335,7 +2335,7 @@ test "a scripted adapter: the handshake, a stop with frames/scopes/variables/wat
     var log: FakeLog = .{};
     var group: std.Io.Group = .init;
     try group.concurrent(io, fakeAdapter, .{ io, gpa, F{ .handle = c2s[0], .flags = flags }, F{ .handle = s2c[1], .flags = flags }, &log, file });
-    const s = try Session.initFiles(gpa, io, &app.events, app.dap.next_session, F{ .handle = c2s[1], .flags = flags }, F{ .handle = s2c[0], .flags = flags }, "{\"program\":\"x\"}");
+    const s = try Session.initFiles(gpa, io, app.events, app.dap.next_session, F{ .handle = c2s[1], .flags = flags }, F{ .handle = s2c[0], .flags = flags }, "{\"program\":\"x\"}");
     app.dap.next_session += 1;
     app.dap.session = s;
     try s.initialize();
@@ -2451,7 +2451,7 @@ test "an attach session: Stop detaches — no `terminate`, `disconnect { termina
     var log: FakeLog = .{};
     var group: std.Io.Group = .init;
     try group.concurrent(io, fakeAdapter, .{ io, gpa, F{ .handle = c2s[0], .flags = flags }, F{ .handle = s2c[1], .flags = flags }, &log, file });
-    const s = try Session.initFiles(gpa, io, &app.events, app.dap.next_session, F{ .handle = c2s[1], .flags = flags }, F{ .handle = s2c[0], .flags = flags }, "{\"request\":\"attach\",\"listen\":{\"host\":\"127.0.0.1\",\"port\":5678}}");
+    const s = try Session.initFiles(gpa, io, app.events, app.dap.next_session, F{ .handle = c2s[1], .flags = flags }, F{ .handle = s2c[0], .flags = flags }, "{\"request\":\"attach\",\"listen\":{\"host\":\"127.0.0.1\",\"port\":5678}}");
     app.dap.next_session += 1;
     app.dap.session = s;
     try testing.expect(s.is_attach);
@@ -2556,7 +2556,7 @@ test "a netcoredbg-shaped adapter: initialized before the initialize reply still
     var log: FakeLog = .{};
     var group: std.Io.Group = .init;
     try group.concurrent(io, fakeNetcoredbg, .{ io, gpa, F{ .handle = c2s[0], .flags = flags }, F{ .handle = s2c[1], .flags = flags }, &log, file });
-    const s = try Session.initFiles(gpa, io, &app.events, app.dap.next_session, F{ .handle = c2s[1], .flags = flags }, F{ .handle = s2c[0], .flags = flags }, "{\"program\":\"/tmp/x/bin/Debug/net8.0/x.dll\",\"cwd\":\"/tmp/x\"}");
+    const s = try Session.initFiles(gpa, io, app.events, app.dap.next_session, F{ .handle = c2s[1], .flags = flags }, F{ .handle = s2c[0], .flags = flags }, "{\"program\":\"/tmp/x/bin/Debug/net8.0/x.dll\",\"cwd\":\"/tmp/x\"}");
     app.dap.next_session += 1;
     app.dap.session = s;
     try s.initialize();

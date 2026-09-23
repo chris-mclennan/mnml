@@ -618,7 +618,7 @@ pub fn refresh(app: *App) CommandError!void {
     // The cloud settings the worker reads, renewed while no worker runs.
     if (st.cloud) |*c| c.deinit(app.gpa);
     st.cloud = try cloud_agents.Opts.fromConfig(app.gpa, &app.cfg.cloud_agents, &app.env);
-    st.group.concurrent(app.io, scanWorker, .{ &app.events, app.io, app.gpa, home, app.workspace, st.cloud, st.generation }) catch |err| {
+    st.group.concurrent(app.io, scanWorker, .{ app.events, app.io, app.gpa, home, app.workspace, st.cloud, st.generation }) catch |err| {
         st.scanning = false;
         return app.diag.fail(app.frame.allocator(), "sessions: could not start the scan: {s}", .{@errorName(err)});
     };

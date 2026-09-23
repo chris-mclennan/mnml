@@ -128,7 +128,7 @@ pub fn start(app: *App, s: *Syntax, doc: *const Document) bool {
     };
     result.* = .{ .id = st.next_id, .tree = null };
     job.* = .{ .id = st.next_id, .entry = entry, .text = text, .old = if (s.hl.tree) |t| t.copy() else null, .ticket = ticket, .io = app.io, .result = result };
-    st.group.concurrent(app.io, worker, .{ &app.events, app.io, gpa, job }) catch {
+    st.group.concurrent(app.io, worker, .{ app.events, app.io, gpa, job }) catch {
         ticket.refs.store(1, .release);
         job.destroy(gpa);
         return false;

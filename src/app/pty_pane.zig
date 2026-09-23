@@ -398,7 +398,7 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
     const id = app.panes.peekId();
     const wire = try gpa.create(Wire);
     errdefer gpa.destroy(wire);
-    wire.* = .{ .events = &app.events, .io = app.io, .pane = id };
+    wire.* = .{ .events = app.events, .io = app.io, .pane = id };
 
     // The child's environment: the app's, the extras, and what it is
     // told about the pane it runs in (`pty_env.zig`).

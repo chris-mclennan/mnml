@@ -617,7 +617,7 @@ pub fn fetchLatest(app: *App) Allocator.Error!void {
     errdefer gpa.free(url);
     const cache: ?[]u8 = if (try cachePath(app.frame.allocator(), app.data_root)) |p| try gpa.dupe(u8, p) else null;
     errdefer if (cache) |c| gpa.free(c);
-    st.group.concurrent(app.io, fetchWorker, .{ &app.events, app.io, gpa, url, cache }) catch return;
+    st.group.concurrent(app.io, fetchWorker, .{ app.events, app.io, gpa, url, cache }) catch return;
     st.fetching = true;
 }
 
