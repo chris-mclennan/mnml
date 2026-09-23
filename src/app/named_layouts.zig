@@ -139,7 +139,7 @@ fn resolved(app: *const App, arena: Allocator, path: []const u8) Allocator.Error
 fn hasWorkspacePath(kind: session.PaneKind) bool {
     return switch (kind) {
         .editor, .md_preview, .image, .request => true,
-        .pty, .git_status, .grep, .git_graph, .diff, .browser => false,
+        .pty, .git_status, .grep, .git_graph, .diff, .browser, .mount => false,
     };
 }
 
@@ -159,9 +159,11 @@ fn makeResolved(app: *const App, arena: Allocator, sp: *session.Pane) Allocator.
 
 /// A pane that runs a program the file names: a terminal with a command
 /// line, which is every AI session too. A plain shell (no argv) runs
-/// the user's own `$SHELL` and is not.
+/// the user's own `$SHELL` and is not. An integration pane (`mount`)
+/// is too: its binary comes from today's manifest, but the arguments it
+/// is started with are the file's.
 pub fn execBearing(sp: session.Pane) bool {
-    return sp.kind == .pty and sp.argv.len > 0;
+    return (sp.kind == .pty or sp.kind == .mount) and sp.argv.len > 0;
 }
 
 /// FNV-1a over the file's command lines and their cwds, in pane order —
@@ -531,6 +533,7 @@ fn describe(app: *App, arena: Allocator, name: []const u8) Allocator.Error![]con
             .git_status => "git status",
             .git_graph => "git graph",
             .diff => "diff",
+            .mount => sp.label orelse sp.integration orelse "integration",
         };
         try what.appendSlice(arena, if (shown == 0) " · " else ", ");
         try what.appendSlice(arena, label);
@@ -1007,4 +1010,15 @@ test "named layouts: layout.save / load / delete prompt through the one prompt, 
     app.overlay = .none;
     try acceptDelete(&app, "two");
     try t.expect(toasted(&app, "layout two deleted"));
+}
+
+test "named layouts: an integration pane's arguments are the file's, so it is a trust question like a terminal command" {
+    const argv: []const []const u8 = &.{ "/bin/mnml-jira", "--only", "work" };
+    try t.expect(execBearing(.{ .kind = .mount, .integration = "jira_work", .argv = argv }));
+    try t.expect(!execBearing(.{ .kind = .mount, .integration = "jira_work" }));
+    try t.expect(!hasWorkspacePath(.mount));
+    // The fingerprint covers it, so a file this mnml wrote still opens.
+    const with: File = .{ .panes = &.{.{ .kind = .mount, .integration = "jira_work", .argv = argv }} };
+    const without: File = .{ .panes = &.{.{ .kind = .mount, .integration = "jira_work" }} };
+    try t.expect(fingerprint(with) != fingerprint(without));
 }

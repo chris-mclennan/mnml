@@ -103,6 +103,9 @@ pub const MountPane = struct {
     /// beside `--only prs`) still gets one of its own. Owned; empty
     /// only for a pane a test built by hand, which matches nothing.
     cmdline: []u8 = &.{},
+    /// The same argv as a list (deep link cut off) — what a session
+    /// writes down so a restart brings the pane back. Owned.
+    argv: []const []const u8 = &.{},
     /// The UI's copy of the sibling's screen.
     grid: host.Grid = .{},
     cursor: ?wire.Cursor = null,
@@ -128,6 +131,8 @@ pub const MountPane = struct {
         self.grid.deinit(gpa);
         gpa.free(self.label);
         if (self.cmdline.len > 0) gpa.free(self.cmdline);
+        for (self.argv) |a| gpa.free(a);
+        if (self.argv.len > 0) gpa.free(self.argv);
         if (self.title_buf) |t| gpa.free(t);
         if (self.integration) |i| gpa.free(i);
         if (self.exit) |e| gpa.free(e);
@@ -274,6 +279,16 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
     errdefer if (integration) |i| gpa.free(i);
     const cmdline = try joinArgv(gpa, identity);
     errdefer gpa.free(cmdline);
+    const kept = try gpa.alloc([]const u8, identity.len);
+    var n_kept: usize = 0;
+    errdefer {
+        for (kept[0..n_kept]) |x| gpa.free(x);
+        gpa.free(kept);
+    }
+    for (identity) |x| {
+        kept[n_kept] = try gpa.dupe(u8, x);
+        n_kept += 1;
+    }
 
     next_id += 1;
     const id = app.panes.peekId();
@@ -319,6 +334,7 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
         .label = label,
         .integration = integration,
         .cmdline = cmdline,
+        .argv = kept,
         .generation = next_id,
     } });
     std.debug.assert(got == id);
