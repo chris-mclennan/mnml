@@ -60,6 +60,7 @@ const runners = @import("runners.zig");
 const dotnet = @import("dotnet.zig");
 const ai_app = @import("ai.zig");
 const flaky = @import("flaky.zig");
+const jobs = @import("jobs.zig");
 
 pub const table = .{
     .@"test.run_playwright" = &runAll,
@@ -2049,11 +2050,44 @@ fn start(app: *App, id: PaneId, p: *TestsPane) CommandError!void {
     errdefer gpa.free(cwd);
     const workspace = try gpa.dupe(u8, app.workspace);
     errdefer gpa.free(workspace);
+    // The runner and what was asked of it — the full command line is
+    // the pane's first row; the list has a row's width.
+    const label = if (p.last_args.len == 0) p.runner.label() else try std.fmt.allocPrint(app.frame.allocator(), "{s} {s}", .{ p.runner.label(), try std.mem.join(app.frame.allocator(), " ", p.last_args) });
     p.group.concurrent(app.io, worker, .{ &app.events, app.io, gpa, p.runner, cwd, workspace, env, extra, p.generation, id }) catch |err| {
         p.state = .failed;
         p.err = "could not start the worker";
+        jobs.record(app, .{ .kind = .test_run, .label = label, .pane = id }, 0, jobs.Outcome.fail("could not start the worker"));
         return app.diag.fail(app.frame.allocator(), "{s}: could not start the worker: {s}", .{ p.runner.label(), @errorName(err) });
     };
+    // A re-run supersedes the run before it (same pane, same key).
+    _ = try jobs.begin(app, .{ .kind = .test_run, .key = id, .label = label, .pane = id, .cancel = &cancelRun });
+}
+
+/// The JOBS list's Cancel: stop the worker (its child with it), and
+/// drop whatever it had already posted by moving the generation on.
+fn cancelRun(app: *App, key: u64) void {
+    const id: PaneId = @intCast(key);
+    const pane = app.panes.get(id) orelse return jobs.endKeyed(app, .test_run, key, jobs.Outcome.cancel(null));
+    const p = switch (pane.*) {
+        .tests => |*p| p,
+        else => return,
+    };
+    p.generation +%= 1;
+    p.group.cancel(app.io);
+    p.state = .failed;
+    p.err = "cancelled";
+    jobs.endKeyed(app, .test_run, key, jobs.Outcome.cancel(null));
+    app.needs_render = true;
+}
+
+/// How a finished run reads in the JOBS list. A run that ran nothing
+/// is a failure: it looked like a pass, and it was not one.
+fn runOutcome(arena: Allocator, tr: TestRun) Allocator.Error!jobs.Outcome {
+    const f = tr.count(.failed);
+    const ok = tr.passed();
+    if (f > 0) return jobs.Outcome.fail(try std.fmt.allocPrint(arena, "{d} failed, {d} passed", .{ f, ok }));
+    if (tr.tests.len == 0) return jobs.Outcome.fail("no tests ran");
+    return jobs.Outcome.done(try std.fmt.allocPrint(arena, "{d} passed", .{ok}));
 }
 
 /// `result` is destroyed on every path. A stale generation or a closed
@@ -2091,10 +2125,12 @@ pub fn handle(app: *App, result: *Result) Allocator.Error!void {
             app.toast("tests: all {d} passed{s}", .{ ok, note });
         }
         try flaky.recordRun(app, p.run);
+        jobs.endKeyed(app, .test_run, result.pane, try runOutcome(app.frame.allocator(), p.run));
     } else {
         p.state = .failed;
         p.run = .{};
         p.err = try a.dupe(u8, result.err orelse "the run failed");
+        jobs.endKeyed(app, .test_run, result.pane, jobs.Outcome.fail(p.err));
         app.toast("{s}: {s}", .{ p.runner.label(), firstLine(p.err) });
     }
     app.needs_render = true;
