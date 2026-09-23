@@ -45,7 +45,11 @@ cat >"$DATA/config.zon" <<'ZON'
 }
 ZON
 IPC=$WS/.mnml/ipc-zig
-MNML_DATA_ROOT=$DATA MNML_COLS=$COLS MNML_ROWS=$ROWS "$ZIG" --headless --input standard "$WS" >"$TMP/zig.log" 2>&1 &
+# An empty sessions home: the start surface lists the workspace's
+# Claude / Codex sessions from `~/.claude` / `~/.codex`, and the
+# developer's own transcripts must never reach a dump.
+mkdir -p "$TMP/sessions-home"
+MNML_SESSIONS_HOME=$TMP/sessions-home MNML_DATA_ROOT=$DATA MNML_COLS=$COLS MNML_ROWS=$ROWS "$ZIG" --headless --input standard "$WS" >"$TMP/zig.log" 2>&1 &
 pid=$!
 for _ in $(seq 1 80); do grep -q '"start"' "$IPC/events.jsonl" 2>/dev/null && break; sleep 0.1; done
 sleep 0.8
