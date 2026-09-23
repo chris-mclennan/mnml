@@ -1,0 +1,24 @@
+# Ctrl+Shift+L (editor.select_all_occurrences) with the cursor in a word and no
+# selection selects every whole-word occurrence, as VS Code does: here the 3
+# `foo`s, not `foobar`. It used to stop after selecting the word under the
+# cursor ("1 cursor(s)"), and with a selection it stopped at 4 097 silently.
+write a.txt "foo x foo\nfoobar foo\n"
+open a.txt
+command editor.use_standard
+key ctrl+shift+l
+expect screen contains "3 cursor(s)"
+type X
+key ctrl+s
+expect file a.txt contains "X x X\nfoobar X"
+
+# The cursor on the LAST occurrence still takes the ones above it.
+write b.txt "bar 1\nbar 2\nbar 3\n"
+open b.txt
+key ctrl+end
+key up
+key home
+key ctrl+shift+l
+expect screen contains "3 cursor(s)"
+type Q
+key ctrl+s
+expect file b.txt contains "Q 1\nQ 2\nQ 3"

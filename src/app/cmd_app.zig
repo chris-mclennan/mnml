@@ -725,13 +725,13 @@ fn openAtCursor(app: *App) CommandError!void {
 /// `ctrl+shift+l`: a cursor on every occurrence of the word.
 fn selectAllOccurrences(app: *App) CommandError!void {
     const e = try app.requireEditor();
-    var rounds: usize = 0;
-    while (rounds < 4096) : (rounds += 1) {
-        const before = e.buf.editor.extra_cursors.items.len;
-        _ = try app.applyOps(e, &.{.add_cursor_at_next_word});
-        if (e.buf.editor.extra_cursors.items.len == before) break;
+    _ = try app.applyOps(e, &.{.select_all_word_occurrences});
+    const ed = e.buf.editor;
+    if (ed.anchor == null or ed.anchor.? == ed.cursor) {
+        app.toast("no word under the cursor to select", .{});
+        return;
     }
-    app.toast("{d} cursor(s)", .{e.buf.editor.extra_cursors.items.len + 1});
+    app.toast("{d} cursor(s)", .{ed.extra_cursors.items.len + 1});
 }
 
 /// `@:` — the last `:` line again.

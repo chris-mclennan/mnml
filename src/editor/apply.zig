@@ -184,6 +184,7 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .add_cursor_above => try mc.addCursorAbove(ed),
         .clear_extra_cursors => mc.clear(ed),
         .add_cursor_at_next_word => try mc.addCursorAtNextWord(ed),
+        .select_all_word_occurrences => try mc.selectAllWordOccurrences(ed),
         .block_select_start => block.selectStart(ed),
         .block_select_clear => block.selectClear(ed),
         .block_eol => |v| ed.block_eol = v,

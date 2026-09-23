@@ -920,6 +920,7 @@ test {
     _ = @import("editor/motion.zig");
     _ = @import("editor/insert.zig");
     _ = @import("editor/delete.zig");
+    _ = @import("editor/multicursor.zig");
     _ = @import("editor/select.zig");
     _ = @import("editor/line.zig");
     _ = @import("editor/register.zig");

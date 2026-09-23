@@ -155,6 +155,33 @@ pub fn addCursorAtNextWord(ed: *Editor) Allocator.Error!void {
     }
 }
 
+/// VS Code's Ctrl+Shift+L: the identifier under the primary cursor (or
+/// the one it has selected) and every other whole-word occurrence of it
+/// in the buffer, before the cursor too, each selected. The primary keeps
+/// the occurrence it is on. No cap: one scan and one sort.
+pub fn selectAllWordOccurrences(ed: *Editor) Allocator.Error!void {
+    const t = ed.bytes();
+    const probe = if (ed.cursor < t.len and isId(t[ed.cursor])) ed.cursor else if (ed.cursor > 0 and isId(t[ed.cursor - 1])) ed.cursor - 1 else return;
+    const wb = select.wordBoundsAt(ed, probe);
+    if (wb[0] == wb[1]) return;
+    const word = t[wb[0]..wb[1]];
+    ed.anchor = wb[0];
+    ed.cursor = wb[1];
+    var pairs: std.ArrayListUnmanaged(Pair) = .empty;
+    defer pairs.deinit(ed.gpa);
+    var start: usize = 0;
+    while (std.mem.indexOfPos(u8, t, start, word)) |pos| {
+        const after = pos + word.len;
+        const before_ok = pos == 0 or !isId(t[pos - 1]);
+        const after_ok = after == t.len or !isId(t[after]);
+        if (before_ok and after_ok) {
+            if (pos != wb[0]) try pairs.append(ed.gpa, .{ .c = after, .a = pos });
+            start = after;
+        } else start = ed.nextBoundary(pos);
+    }
+    try commitExtras(ed, pairs.items);
+}
+
 // ─── motions ────────────────────────────────────────────────────────────
 
 /// Run the motion once per extra with the cursor standing in for it;
@@ -445,6 +472,32 @@ test "ctrl+d: first press selects the word, later presses add anchored cursors a
     try testing.expectEqualSlices(usize, &.{ 11, 26 }, ed.extra_cursors.items);
     try addCursorAtNextWord(ed); // no more
     try testing.expectEqual(@as(usize, 2), ed.extra_cursors.items.len);
+}
+
+test "ctrl+shift+l: from a bare cursor every whole-word occurrence is selected, before the cursor too, with no cap" {
+    const ed = try Editor.init(testing.allocator, "foo x foo\nfoobar foo\n");
+    defer ed.deinit();
+    ed.cursor = 7; // inside the second `foo`
+    try selectAllWordOccurrences(ed);
+    try testing.expectEqual(@as(?usize, 6), ed.anchor);
+    try testing.expectEqual(@as(usize, 9), ed.cursor);
+    try testing.expectEqualSlices(usize, &.{ 3, 20 }, ed.extra_cursors.items);
+    try testing.expectEqualSlices(?usize, &.{ 0, 17 }, ed.extra_anchors.items);
+    // Past the old 4 097-round cap: every one of 5 000 lines.
+    var big: std.ArrayListUnmanaged(u8) = .empty;
+    defer big.deinit(testing.allocator);
+    for (0..5000) |_| try big.appendSlice(testing.allocator, "a foo b\n");
+    const ed2 = try Editor.init(testing.allocator, big.items);
+    defer ed2.deinit();
+    ed2.cursor = 2;
+    try selectAllWordOccurrences(ed2);
+    try testing.expectEqual(@as(usize, 4999), ed2.extra_cursors.items.len);
+    // Nothing under the cursor: nothing selected.
+    const ed3 = try Editor.init(testing.allocator, "a  b");
+    defer ed3.deinit();
+    ed3.cursor = 2;
+    try selectAllWordOccurrences(ed3);
+    try testing.expect(ed3.anchor == null);
 }
 
 test "insert, backspace, forward delete and range delete fan out and keep offsets straight" {
