@@ -98,6 +98,7 @@ const cmd_view = @import("cmd_view.zig");
 const cheatsheet = @import("cheatsheet.zig");
 const script_pane = @import("script_pane.zig");
 const pty_view = @import("../ui/pty_view.zig");
+const pty_search = @import("pty_search.zig");
 const pty_pane = @import("pty_pane.zig");
 const terminal_glyph = @import("terminal_glyph.zig");
 const claude_mark = @import("claude_mark.zig");
@@ -1718,7 +1719,11 @@ fn drawPty(app: *App, ui: Ui, id: PaneId, p: *pty_pane.PtyPane, rect: Rect) Allo
         },
         .blink = app.cfg.ui.pty_cursor.blink,
         .mnml_font = app.fonts.baked(pty_view.cursor_hollow_cp),
+        // The scrollback search's matches in view (`pty_search.zig`).
+        .marks = try pty_search.marks(app, id, p),
     });
+    // Its bar lies over the last row: the child keeps its size.
+    pty_search.drawBar(app, ui, id, p, body);
     if (app.active == id) {
         app.pane_rows = @max(body.h, 1);
         app.pane_cols = @max(body.w, 1);

@@ -38,6 +38,7 @@ const pane_accent = @import("pane_accent.zig");
 const pane_rail = @import("../ui/pane_rail.zig");
 const bufferline = @import("../ui/bufferline.zig");
 const Theme = @import("../ui/theme.zig");
+const pty_search = @import("pty_search.zig");
 
 /// Every target has a pty backend now (openpty on POSIX, ConPTY on
 /// Windows — `src/pty/root.zig`); the flag stays for the callers that
@@ -214,10 +215,14 @@ pub const PtyPane = struct {
     /// that identifies a session only narrows as later ones start — the
     /// first unambiguous answer is the one worth holding.
     codex_session_id: ?[]u8 = null,
+    /// The scrollback search (`pty_search.zig`): the query, its matches
+    /// and the scan's place.
+    search: pty_search.Search = .{},
 
     pub fn deinit(self: *PtyPane, gpa: Allocator) void {
         if (self.session) |s| s.deinit();
         self.grid.deinit(gpa);
+        self.search.deinit(gpa);
         gpa.destroy(self.wire);
         if (self.accent_color) |c| gpa.free(c);
         if (self.codex_session_id) |c| gpa.free(c);
@@ -600,6 +605,7 @@ pub fn restart(app: *App, id: PaneId) CommandError!void {
         .pty => |*p| p,
         else => return error.NotAnEditor,
     };
+    pty_search.onRestart(p);
     // A Claude session started with `--session-id` cannot be started
     // twice under that id: the restart resumes it.
     try resumeInPlace(app.gpa, p.argv);

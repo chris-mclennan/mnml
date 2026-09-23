@@ -147,6 +147,8 @@ pub fn dialectFor(app: *const App) regex.Dialect {
 /// The query changed: recompute the pane's matches, keep the cursor.
 pub fn liveUpdate(app: *App) Allocator.Error!void {
     const fb = &(app.find_bar orelse return);
+    // A terminal's bar searches its scrollback (`pty_search.zig`).
+    if (@import("pty_search.zig").barPane(app)) |p| return @import("pty_search.zig").liveUpdate(app, p);
     const tg = Target.of(app, fb.pane) orelse return;
     const f = tg.find();
     const q = fb.state.query.items;
@@ -193,6 +195,7 @@ fn patternProblem(err: regex.Error) []const u8 {
 /// closes either way.
 pub fn acceptFromBar(app: *App) Allocator.Error!void {
     const fb = &(app.find_bar orelse return);
+    if (@import("pty_search.zig").barPane(app)) |p| return @import("pty_search.zig").accept(app, p);
     if (app.input_style == .vim or fb.chain_to_replace) return acceptAndClose(app);
     const tg = Target.of(app, fb.pane) orelse {
         app.closeFindBar(false);
@@ -243,6 +246,7 @@ fn landFromBar(app: *App, fb: *app_mod.FindBarState, tg: Target) Allocator.Error
 /// Esc keeps the match it landed on.
 pub fn stepFromBar(app: *App, delta: i32) Allocator.Error!void {
     const fb = &(app.find_bar orelse return);
+    if (@import("pty_search.zig").barPane(app)) |p| return @import("pty_search.zig").step(app, p, delta);
     const tg = Target.of(app, fb.pane) orelse return;
     try stepFind(app, delta);
     if (app.input_style == .vim or tg.find().current == null) return;
