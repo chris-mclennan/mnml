@@ -583,10 +583,12 @@ test "welcome: the start surface lays out at 80x24, 120x40 and 200x60 inside the
         try t.expect(std.mem.indexOf(u8, txt, "RECENT FILES") != null);
         try t.expect(std.mem.indexOf(u8, txt, "SESSIONS") != null);
         try t.expect(std.mem.indexOf(u8, txt, ui_welcome.new_session_label) != null);
-        // The mark and SHORTCUTS need the room 80x24 does not have.
+        // The mark needs rows 80x24 does not have. SHORTCUTS needs width:
+        // at 80 columns the tree auto-hides (`ui.sidebar_auto_below`), so
+        // the surface has the whole width and the list fits at every size.
         const small = size[1] == 24;
         try t.expectEqual(!small, std.mem.indexOf(u8, txt, ui_welcome.mark[1]) != null);
-        try t.expectEqual(!small, std.mem.indexOf(u8, txt, "SHORTCUTS") != null);
+        try t.expect(std.mem.indexOf(u8, txt, "SHORTCUTS") != null);
     }
 }
 
