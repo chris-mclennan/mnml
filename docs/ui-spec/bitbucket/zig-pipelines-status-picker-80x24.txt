@@ -21,4 +21,4 @@
 ▌         └──────────────────────────────────────────────────────────┘
 ▌
 ▌
- Pipelines · 2 repos              type to filter · ↑↓ move · ⏎ pick · esc cancel
+ Pipelines · 2 repos          type to filter · ↑↓ move · Enter pick · Esc cancel

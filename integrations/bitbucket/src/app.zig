@@ -1089,11 +1089,10 @@ pub const App = struct {
                 return true;
             },
             .help => {
-                if (std.mem.eql(u8, spec, "j") or std.mem.eql(u8, spec, "down")) {
-                    app.help_scroll += 1;
-                } else if (std.mem.eql(u8, spec, "k") or std.mem.eql(u8, spec, "up")) {
-                    app.help_scroll -|= 1;
-                } else {
+                // The family's one sheet grammar (`sdk.pane.keysheet.key`):
+                // Esc / ? / q close, j / k and the page keys scroll, and
+                // any other key is ignored rather than closing the sheet.
+                if (sdk.pane.keysheet.scroll(&app.help_scroll, sdk.pane.keysheet.key(spec))) {
                     app.mode = .list;
                     app.help_scroll = 0;
                 }

@@ -21,4 +21,4 @@
 ▌         └──────────────────────────────────────────────────────────┘
 ▌
 ▌
- Open + Draft · 2 repos, 3 PRs  type to filter · ↑↓ move · ␣ toggle · ⏎ close ·
+ Open + Draft · 2 repos, 3 PRs  type to filter · ↑↓ move · Space toggle · Enter

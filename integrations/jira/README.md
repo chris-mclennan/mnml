@@ -161,9 +161,11 @@ on every selected ticket and reports the ones skipped.
 **JQL editor** (`J`) is a box at the bottom with the tab's resolved
 query, every text-field affordance (arrows, Home/End, `Ctrl+A/E`,
 `Alt+←/→`, `Ctrl+W/U/K`, paste, a click places the caret), `Enter`
-runs it. The **key sheet** (`?`) is the built-in sections' —
-`▾ ── name ── (n)` headers, the chords in the accent — from the
-bindings that apply, so it cannot drift.
+runs it. The **key sheet** (`?`) is the family's one component
+(`sdk.pane.chrome.Painter.keySheet`, the Bitbucket pane's too) —
+`▾ ── name ── (n)` headers, the chords in the accent, a long label
+wrapped, `Esc` closes — from the bindings that apply, so it cannot
+drift.
 
 **Setup screens.** No config, a config that does not parse, one that
 cannot work, a scope with no tabs, no token: each names the file and

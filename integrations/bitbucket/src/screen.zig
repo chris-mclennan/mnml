@@ -663,11 +663,11 @@ fn paintDetail(arena: Allocator, p: *Painter, box: Box) Allocator.Error!void {
 fn modeHint(app: *App) ?[]const u8 {
     return switch (app.mode) {
         .list => null,
-        .filter => "type to filter · ⏎ commit · esc clear · ^u wipe · ↑↓ leave",
-        .menu => "↑↓ / jk move · ⏎ run · esc close",
-        .picker => if (app.picker) |pk| (if (pk.kind.multi()) "type to filter · ↑↓ move · ␣ toggle · ⏎ close · esc cancel" else "type to filter · ↑↓ move · ⏎ pick · esc cancel") else null,
-        .help => "j k scroll · any other key closes",
-        .confirm => "⏎ merge through Claude Code · ←→ strategy · esc cancel",
+        .filter => "type to filter · Enter commit · Esc clear · Ctrl+U wipe · ↑↓ leave",
+        .menu => "↑↓ / j k move · Enter run · Esc close",
+        .picker => if (app.picker) |pk| (if (pk.kind.multi()) "type to filter · ↑↓ move · Space toggle · Enter close · Esc cancel" else "type to filter · ↑↓ move · Enter pick · Esc cancel") else null,
+        .help => sdk.pane.keysheet.footer,
+        .confirm => "Enter merge through Claude Code · ←→ strategy · Esc cancel",
     };
 }
 
@@ -825,66 +825,34 @@ fn paintFrame(p: *Painter, b: Box, style: Style) void {
     p.c.frameBox(.{ .x = b.x, .y = b.y, .w = b.w, .h = b.h }, style);
 }
 
-/// The key sheet: mnml's help shape — a centred box, a section
-/// header per group, `key  title` rows, the hint at the bottom.
+/// The key sheet: the family's one component
+/// (`sdk.pane.chrome.Painter.keySheet`), fed the bindings that apply
+/// here, by section — the same sheet the Jira pane opens.
 fn paintSheet(arena: Allocator, p: *Painter) Allocator.Error!void {
     const app = p.app;
-    const th = p.th;
-    const w: u16 = @min(p.f.cols -| 4, 70);
-    const h: u16 = @min(p.f.rows -| 2, 40);
-    if (w < 20 or h < 6) return;
-    const x = (p.f.cols - w) / 2;
-    const y = (p.f.rows - h) / 2;
-    const box: Box = .{ .x = x, .y = y, .w = w, .h = h };
-    p.fill(box, .{ .fg = th.fg, .bg = th.cursor_line });
-    paintFrame(p, box, th.overlayBorder());
-    _ = p.text(x + 2, y, 10, " Keys ", .{ .fg = th.accent, .bg = th.cursor_line, .mods = .{ .bold = true } });
-    p.app.hits.add(.{ .x = x, .y = y, .w = w, .h = h }, .sheet);
-    // The rows: a header per section, then its bindings.
-    const Row = union(enum) { section: []const u8, binding: keymap.Binding };
-    var rows: std.ArrayList(Row) = .empty;
+    const shown = try app.visible(arena);
+    const ctx = app.keyContext(shown.rows);
+    var rows: std.ArrayList(Chrome.SheetRowSpec) = .empty;
     for (keymap.sections) |sec| {
-        try rows.append(arena, .{ .section = sec });
-        for (&keymap.table) |b| if (std.mem.eql(u8, b.section, sec)) try rows.append(arena, .{ .binding = b });
-    }
-    const body_h = h -| 3;
-    const max_scroll = rows.items.len -| body_h;
-    if (app.help_scroll > max_scroll) app.help_scroll = max_scroll;
-    var ry = y + 1;
-    var i = app.help_scroll;
-    while (i < rows.items.len and ry < y + 1 + body_h) : (i += 1) {
-        switch (rows.items[i]) {
-            .section => |name| {
-                const line = try std.fmt.allocPrint(arena, "── {s} ──", .{name});
-                _ = p.text(x + 2, ry, w -| 4, line, .{ .fg = th.accent, .bg = th.cursor_line, .mods = .{ .bold = true } });
-            },
-            .binding => |b| {
-                var keys: std.ArrayList(u8) = .empty;
-                for (b.keys, 0..) |k, ki| {
-                    if (ki > 0) try keys.appendSlice(arena, " ");
-                    try keys.appendSlice(arena, keymap.keyLabel(k));
-                }
-                _ = p.text(x + 4, ry, 14, keys.items, .{ .fg = th.accent, .bg = th.cursor_line });
-                const scope: []const u8 = switch (b.scope) {
-                    .any => "",
-                    .tree => "  (tree)",
-                    .row => "  (row)",
-                    .detail => "  (detail open)",
-                    .prs => "  (PR tab)",
-                    .pipelines => "  (pipelines tab)",
-                    .pr_row => "  (PR row)",
-                    .pr_detail => "  (detail open)",
-                };
-                const line = try std.fmt.allocPrint(arena, "{s}{s}", .{ b.title, scope });
-                _ = p.text(x + 19, ry, w -| 21, line, .{ .fg = th.fg, .bg = th.cursor_line });
-                // A row of the sheet runs what its chord runs: reading
-                // the keys and using them are the same gesture.
-                p.app.hits.add(.{ .x = x + 1, .y = ry, .w = w -| 2, .h = 1 }, .{ .sheet_row = b.action });
-            },
+        var any = false;
+        var tabs_row = false;
+        for (&keymap.table) |b| {
+            if (!std.mem.eql(u8, b.section, sec) or !ctx.allows(b.scope)) continue;
+            if (!any) try rows.append(arena, .{ .section = sec });
+            any = true;
+            // `1`…`9` is one row, as the Jira sheet has it.
+            if (b.action.tabNumber() != null) {
+                if (tabs_row) continue;
+                tabs_row = true;
+                try rows.append(arena, .{ .chord = "1-9", .label = "tab by number" });
+                continue;
+            }
+            // A row of the sheet runs what its chord runs: reading
+            // the keys and using them are the same gesture.
+            try rows.append(arena, .{ .chord = try sdk.pane.keysheet.chords(arena, b.keys), .label = b.title, .target = .{ .sheet_row = b.action } });
         }
-        ry += 1;
     }
-    _ = p.text(x + 2, y + h - 2, w -| 4, "j/k scroll · any other key closes", .{ .fg = th.muted, .bg = th.cursor_line });
+    try p.c.keySheet(rows.items, &app.help_scroll, .sheet);
 }
 
 // ─── the text of a frame, for the tests ──────────────────────────────────
@@ -1022,7 +990,7 @@ test "the pane paints the header, the strip, the pill, the reference's columns, 
     try sdk.pane.expect.gutterFullHeight(&s.frame, s.rig.app.theme, 0, 0, s.frame.rows - 1, false);
     try sdk.pane.expect.headerLadderTail(&s.frame, s.rig.app.theme, 0, true, false);
     try t.expect(has(scr, "Open + Draft · 2 repos, 3 PRs"));
-    try t.expect(has(scr, "⏎ expand"));
+    try t.expect(has(scr, "Enter expand"));
     try t.expect(has(scr, "q quit"));
     // The reference painted four chips that did nothing when clicked
     // (`filter not wired yet (round-1 visual)`); the pane cut them.
@@ -1450,8 +1418,14 @@ test "the key sheet, the row menu and the filter paint as overlays that take the
     try t.expect(has(scr, " Keys "));
     try t.expect(has(scr, "── tree ──"));
     try t.expect(has(scr, "hide this repo (persists)"));
-    try t.expect(has(scr, "approve / withdraw the approval"));
-    try s.click(60, 20, .left);
+    try t.expect(has(scr, "the pull request's detail"));
+    // Only the keys that apply here: `a` wants the detail open.
+    try t.expect(!has(scr, "approve / withdraw the approval"));
+    try t.expect(has(scr, "j/k scroll · Esc close"));
+    // A press on the sheet off its rows (its top edge) closes it and
+    // runs nothing; a press on a row runs that row's key.
+    const sheet = s.rig.app.hits.inner.rectOf(.sheet).?;
+    try s.click(sheet.x + 1, sheet.y, .left);
     try t.expectEqual(app_mod.Mode.list, s.rig.app.mode);
     _ = try s.draw();
     const y_1234 = try s.rowOf("OPEN       Chris M");
@@ -1592,8 +1566,8 @@ test "the `/` filter: the header reads N of M while narrowed and the hint row ch
     try s.key("/");
     scr = try s.draw();
     try t.expect(has(scr, "type to filter"));
-    try t.expect(has(scr, "⏎ commit"));
-    try t.expect(has(scr, "esc clear"));
+    try t.expect(has(scr, "Enter commit"));
+    try t.expect(has(scr, "Esc clear"));
     try t.expect(!has(scr, "q quit"));
 
     // Typing narrows live — before Enter commits anything.
@@ -1625,7 +1599,7 @@ test "the `/` filter: the header reads N of M while narrowed and the hint row ch
     try s.key("j");
     try s.click(6, try s.rowOf("#1234"), .right);
     scr = try s.draw();
-    try t.expect(has(scr, "⏎ run"));
+    try t.expect(has(scr, "Enter run"));
     try s.key("esc");
     try s.key("?");
     scr = try s.draw();

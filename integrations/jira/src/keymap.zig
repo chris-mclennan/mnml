@@ -10,6 +10,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const config = @import("config.zig");
+const sdk = @import("mnml_sdk");
 
 pub const Action = enum {
     quit,
@@ -218,31 +219,12 @@ pub fn hints(arena: Allocator, ctx: Context) Allocator.Error![]const Binding {
     return out.toOwnedSlice(arena);
 }
 
-/// The chord as the sheet prints it: `D` for `shift+d`, `Space`, `⇧⇥`.
+/// The chord as the sheet and the hint row print it: `D` for
+/// `shift+d`, `Space`, `Shift+Tab` — the family's one spelling
+/// (`sdk.pane.keysheet.chord`). `buf` is kept for the callers.
 pub fn displayKey(buf: []u8, key: []const u8) []const u8 {
-    if (std.mem.startsWith(u8, key, "shift+") and key.len == 7) {
-        buf[0] = std.ascii.toUpper(key[6]);
-        if (key[6] == '.') return ">";
-        return buf[0..1];
-    }
-    if (std.mem.eql(u8, key, "space")) return "Space";
-    if (std.mem.eql(u8, key, "enter")) return "Enter";
-    if (std.mem.eql(u8, key, "esc")) return "Esc";
-    if (std.mem.eql(u8, key, "tab")) return "Tab";
-    if (std.mem.eql(u8, key, "backtab")) return "Shift+Tab";
-    if (std.mem.eql(u8, key, "up")) return "↑";
-    if (std.mem.eql(u8, key, "down")) return "↓";
-    if (std.mem.eql(u8, key, "left")) return "←";
-    if (std.mem.eql(u8, key, "right")) return "→";
-    if (std.mem.eql(u8, key, "pageup")) return "PgUp";
-    if (std.mem.eql(u8, key, "pagedown")) return "PgDn";
-    if (std.mem.eql(u8, key, "home")) return "Home";
-    if (std.mem.eql(u8, key, "end")) return "End";
-    if (std.mem.eql(u8, key, "f1")) return "F1";
-    if (std.mem.eql(u8, key, "ctrl+c")) return "Ctrl+C";
-    if (std.mem.eql(u8, key, "ctrl+u")) return "Ctrl+U";
-    if (std.mem.eql(u8, key, "ctrl+d")) return "Ctrl+D";
-    return key;
+    _ = buf;
+    return sdk.pane.keysheet.chord(key);
 }
 
 /// `t transition · a assignee · …` from the hint rank, on `arena`.

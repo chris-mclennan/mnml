@@ -18,7 +18,7 @@ is the inventory), painted in mnml-zig's own chrome.
 ▌      #1198                   OPEN       Dana R         dana/timeout       2026-08-31   Bump the client timeout to 30s
 ▌  web                        1 PR       Chris M        chris/empty-state  2026-09-01   #820 · Redesign the empty state
 ▌                                                                                        ⋯  Show more (1)
- Open + Draft · 2 repos, 5 PRs   ↓ move · ⏎ expand · o open on web · d detail · m open↔merged · r refresh · ? keys · q quit
+ Open + Draft · 2 repos, 5 PRs   ↓ move · Enter expand · o open on web · d detail · m open↔merged · r refresh · ? keys · q quit
 ```
 
 The row under the strip is Bitbucket Cloud's own filter bar — see
@@ -144,17 +144,19 @@ approve token: BITBUCKET_ACCESS_TOKEN (192 chars, not shown) · Bearer <token>
 
 ## Keys
 
-`?` in the pane is the sheet; it and the hint row are generated from
-the one table in `src/keymap.zig`, so neither can drift from what a key
-does. The keys are the reference's:
+`?` in the pane is the sheet — the family's one component
+(`sdk.pane.chrome.Painter.keySheet`, the Jira pane's too), listing the
+keys that apply where the cursor is; `Esc` closes it. It and the hint
+row are generated from the one table in `src/keymap.zig`, so neither
+can drift from what a key does. The keys are the reference's:
 
 | | |
 |---|---|
-| `j` `k` `↑` `↓` · `⇞` `⇟` · `g` `G` `⇱` `⇲` | move |
-| `⏎` `␣` | expand / collapse a repo; fold a pull request out to its builds; open a build's page; lift the `Show more (N)` footer |
+| `j` `k` `↑` `↓` · `PgUp` `PgDn` · `g` `G` `Home` `End` | move |
+| `Enter` `Space` | expand / collapse a repo; fold a pull request out to its builds; open a build's page; lift the `Show more (N)` footer |
 | `→` `l` · `←` `h` | expand or step in · collapse or step up |
 | `E` `C` (or `e` `c`) | expand / collapse every repo — the integration tree convention, the same pair the Jira pane binds |
-| `x` `H` `s` `⌥↑` `⌥↓` | hide this repo · un-hide all · cycle the scope · reorder (all persist) |
+| `x` `H` `s` `Alt+↑` `Alt+↓` | hide this repo · un-hide all · cycle the scope · reorder (all persist) |
 | `o` · `y` | open on the web · copy the URL |
 | `d` · `^d` `^u` | the pull request's detail · scroll it (PR tabs) |
 | `a` | approve / withdraw (a PR tab, with the detail open) |
@@ -192,7 +194,7 @@ before you merge it. One row per run:
 
 State first, then the branch it ran on, then how long ago, then the
 run's number — the same line the Jira pane paints, out of the same
-toolkit code (`sdk.pane.build`). `⏎` on one opens that run's page; `h`
+toolkit code (`sdk.pane.build`). `Enter` on one opens that run's page; `h`
 folds the pull request back up.
 
 It costs **one** request per pull request, keyed by the PR's
@@ -259,7 +261,7 @@ geometry (the tracker pane's), with its key beside it:
 
 | PR tab | | |
 |---|---|---|
-| `status:` | `S` | **multi-select** — Open · Draft · Merged · Declined; `␣` toggles a box, `⏎` closes. Open + Draft is the open tree's default, Merged the merged tree's |
+| `status:` | `S` | **multi-select** — Open · Draft · Merged · Declined; `Space` toggles a box, `Enter` closes. Open + Draft is the open tree's default, Merged the merged tree's |
 | `author:` | `U` | `all`, `me`, then everyone the loaded set names, sorted |
 | `target:` | `T` | the destination branch, from the set |
 | `show:` | `A` | `all` → `reviewing` (you are a REVIEWER, voted or not) → `awaiting me (N)` (a reviewer who has not voted — the pane's older `awaiting:` chip, folded in). The web's third value, *watching*, needs a watcher list Bitbucket's API does not expose, so it is not offered |
@@ -273,7 +275,7 @@ geometry (the tracker pane's), with its key beside it:
 | `trigger:` | `T` | `push` · `manual` · `schedule` |
 
 A left click opens the chip's picker (a typed filter over its rows,
-`↑↓`, `⏎`; `show:` has three values and a click cycles it, the way
+`↑↓`, `Enter`; `show:` has three values and a click cycles it, the way
 the host's `sort:` chip does); a **right click** lists every value
 with a `✓` on the live one, and a row of that menu applies it. A chip
 off its default wears the active ink and the header reads `N of M`;

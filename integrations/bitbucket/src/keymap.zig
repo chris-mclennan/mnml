@@ -18,6 +18,7 @@
 
 const std = @import("std");
 const cfg = @import("config.zig");
+const sdk = @import("mnml_sdk");
 
 pub const Action = enum {
     quit,
@@ -119,7 +120,7 @@ pub const Binding = struct {
     /// Painted on the hint row (in table order) when it applies.
     hint: bool = false,
     /// The sheet's section.
-    section: []const u8 = "navigate",
+    section: []const u8 = "navigation",
 };
 
 pub const table = [_]Binding{
@@ -175,7 +176,7 @@ pub const table = [_]Binding{
     .{ .keys = &.{ "q", "ctrl+c" }, .action = .quit, .title = "quit", .hint = true, .section = "pane" },
 };
 
-pub const sections = [_][]const u8{ "navigate", "tree", "row", "filters", "tabs", "pane" };
+pub const sections = [_][]const u8{ "navigation", "tree", "row", "filters", "tabs", "pane" };
 
 /// What is true of the focused row, for scope checks.
 pub const Context = struct {
@@ -216,42 +217,11 @@ pub fn bindingOf(action: Action) ?Binding {
     return null;
 }
 
-/// The key a hint shows for a spec: `↑`, `⏎`, `⇥`, `⌥↑`, `^d`, or
-/// the letter.
+/// The key a hint or the sheet shows for a spec: `↑`, `Enter`,
+/// `Tab`, `Alt+↑`, `Ctrl+D`, or the letter — the family's one spelling
+/// (`sdk.pane.keysheet.chord`), the words the Jira pane uses too.
 pub fn keyLabel(spec: []const u8) []const u8 {
-    const pairs = [_][2][]const u8{
-        .{ "enter", "⏎" },
-        .{ "space", "␣" },
-        .{ "up", "↑" },
-        .{ "down", "↓" },
-        .{ "left", "←" },
-        .{ "right", "→" },
-        .{ "tab", "⇥" },
-        .{ "backtab", "⇤" },
-        .{ "esc", "esc" },
-        .{ "pageup", "⇞" },
-        .{ "pagedown", "⇟" },
-        .{ "home", "⇱" },
-        .{ "end", "⇲" },
-        .{ "alt+up", "⌥↑" },
-        .{ "alt+down", "⌥↓" },
-        .{ "ctrl+d", "^d" },
-        .{ "ctrl+u", "^u" },
-        .{ "ctrl+c", "^c" },
-        .{ "shift+g", "G" },
-        .{ "shift+h", "H" },
-        .{ "shift+s", "S" },
-        .{ "shift+u", "U" },
-        .{ "shift+t", "T" },
-        .{ "shift+a", "A" },
-        .{ "shift+b", "B" },
-        .{ "shift+p", "P" },
-        .{ "shift+m", "M" },
-        .{ "shift+r", "R" },
-        .{ "shift+tab", "⇤" },
-    };
-    for (pairs) |p| if (std.mem.eql(u8, p[0], spec)) return p[1];
-    return spec;
+    return sdk.pane.keysheet.chord(spec);
 }
 
 /// The bindings the hint row paints, in table order, for the context.
@@ -351,7 +321,8 @@ test "every action in the table is reachable and the hint row is a subset of it"
     // On a flat list without a detail the tree-only and detail-only hints are gone.
     const flat = hints(.{}, &buf);
     for (flat) |b| try t.expect(b.scope == .any or b.scope == .prs);
-    try t.expectEqualStrings("⏎", keyLabel("enter"));
-    try t.expectEqualStrings("⌥↑", keyLabel("alt+up"));
+    try t.expectEqualStrings("Enter", keyLabel("enter"));
+    try t.expectEqualStrings("Alt+↑", keyLabel("alt+up"));
+    try t.expectEqualStrings("E", keyLabel("shift+e"));
     try t.expectEqualStrings("q", keyLabel("q"));
 }

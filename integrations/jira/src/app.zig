@@ -3443,13 +3443,8 @@ pub const App = struct {
             return true;
         }
         if (a.help) {
-            if (std.mem.eql(u8, spec, "esc") or std.mem.eql(u8, spec, "?") or std.mem.eql(u8, spec, "q") or std.mem.eql(u8, spec, "f1")) {
-                a.help = false;
-            } else if (std.mem.eql(u8, spec, "down") or std.mem.eql(u8, spec, "j")) {
-                a.help_scroll += 1;
-            } else if (std.mem.eql(u8, spec, "up") or std.mem.eql(u8, spec, "k")) {
-                a.help_scroll -|= 1;
-            }
+            // The family's one sheet grammar (`sdk.pane.keysheet.key`).
+            if (sdk.pane.keysheet.scroll(&a.help_scroll, sdk.pane.keysheet.key(spec))) a.help = false;
             return true;
         }
         if (a.modal != null) {

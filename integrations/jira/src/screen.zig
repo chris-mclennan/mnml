@@ -1446,65 +1446,27 @@ pub const Painter = struct {
         _ = p.putFit(r.x + 1, r.bottom() - 1, iw, if (c.posting) " sending… " else " Enter newline · Enter on an empty line or Ctrl+S sends · Esc cancel ", p.s.muted);
     }
 
-    /// The key sheet, the built-in sections' way: `▾ ── name ── (n)`
-    /// headers and `  chord  title` rows, from the bindings that apply.
+    /// The key sheet: the family's one component
+    /// (`sdk.pane.chrome.Painter.keySheet`), fed the bindings that
+    /// apply here by section, then the overlays' own keys to read.
     fn paintHelp(p: *Painter) Allocator.Error!void {
-        const r = p.centred(84, 32);
-        try p.box(r, " KEYS ", p.s.border);
-        try p.hitAdd(r, .help_body);
-        const ix = r.x + 1;
-        const iw = r.w -| 2;
-        const HelpRow = struct { header: []const u8 = "", chord: []const u8 = "", label: []const u8 = "", action: ?keymap.Action = null };
-        var lines: std.ArrayList(HelpRow) = .empty;
-        const ctx = p.a.context();
-        const active = try keymap.active(p.arena, ctx);
-        var chord_w: u16 = 8;
-        for (active) |b| {
-            var buf: [64]u8 = undefined;
-            chord_w = @max(chord_w, @min(text.width(chordText(&buf, b)), 20));
-        }
-        for (keymap.modal_rows) |m| chord_w = @max(chord_w, @min(text.width(m.keys), 20));
-        const fold = if (p.ui.ascii) "v" else "▾";
+        const Row = sdk.pane.chrome.SheetRow(hit.Target);
+        var sheet: std.ArrayList(Row) = .empty;
+        const active = try keymap.active(p.arena, p.a.context());
         inline for (@typeInfo(keymap.Section).@"enum".fields) |sf| {
             const section: keymap.Section = @enumFromInt(sf.value);
-            var n: usize = 0;
+            var any = false;
             for (active) |b| if (b.section == section) {
-                n += 1;
-            };
-            if (n > 0) {
-                try lines.append(p.arena, .{ .header = try std.fmt.allocPrint(p.arena, "{s} ── {s} ── ({d})", .{ fold, section.title(), n }) });
-                for (active) |b| if (b.section == section) {
-                    var buf: [64]u8 = undefined;
-                    try lines.append(p.arena, .{ .chord = try p.arena.dupe(u8, chordText(&buf, b)), .label = b.label, .action = b.action });
-                };
-                try lines.append(p.arena, .{});
-            }
-        }
-        try lines.append(p.arena, .{ .header = try std.fmt.allocPrint(p.arena, "{s} ── overlays ── ({d})", .{ fold, keymap.modal_rows.len }) });
-        for (keymap.modal_rows) |m| try lines.append(p.arena, .{ .chord = m.keys, .label = m.label });
-        const body_h: usize = r.h -| 3;
-        var start = p.a.help_scroll;
-        if (start > lines.items.len -| body_h) start = lines.items.len -| body_h;
-        p.a.help_scroll = start;
-        var i = start;
-        var y = r.y + 1;
-        while (i < lines.items.len and y < r.bottom() - 2) : ({
-            i += 1;
-            y += 1;
-        }) {
-            const l = lines.items[i];
-            if (l.header.len > 0) {
-                _ = p.putFit(ix + 1, y, iw -| 1, l.header, p.s.bold);
-            } else if (l.chord.len > 0) {
-                // The chord in the accent, padded to the column; the title plain.
-                _ = p.putFit(ix + 3, y, chord_w, l.chord, p.s.accent_plain);
-                _ = p.putFit(ix + 3 + chord_w + 2, y, iw -| (chord_w + 6), l.label, p.s.plain);
+                if (!any) try sheet.append(p.arena, .{ .section = section.title() });
+                any = true;
                 // A row of the sheet runs what its chord runs: reading
                 // the keys and using them are the same gesture.
-                if (l.action) |act| try p.hitAdd(.{ .x = ix + 1, .y = y, .w = iw -| 1, .h = 1 }, .{ .help_row = act });
-            }
+                try sheet.append(p.arena, .{ .chord = try sdk.pane.keysheet.chords(p.arena, b.keys), .label = b.label, .target = .{ .help_row = b.action } });
+            };
         }
-        _ = p.putFit(ix + 1, r.bottom() - 2, iw -| 1, "j/k scroll · Esc close", p.s.muted);
+        try sheet.append(p.arena, .{ .section = "overlays" });
+        for (keymap.modal_rows) |m| try sheet.append(p.arena, .{ .chord = m.keys, .label = m.label });
+        try p.c.keySheet(sheet.items, &p.a.help_scroll, .help_body);
     }
 };
 
@@ -1573,24 +1535,6 @@ pub fn initials(buf: []u8, name: []const u8) []const u8 {
     if (n == 0) {
         buf[0] = '?';
         return buf[0..1];
-    }
-    return buf[0..n];
-}
-
-/// The chords of a binding as the sheet prints them: `↑ / k`.
-fn chordText(buf: []u8, b: keymap.Binding) []const u8 {
-    var n: usize = 0;
-    for (b.keys, 0..) |k, i| {
-        var kb: [16]u8 = undefined;
-        const d = keymap.displayKey(&kb, k);
-        if (i > 0) {
-            if (n + 3 > buf.len) break;
-            @memcpy(buf[n .. n + 3], " / ");
-            n += 3;
-        }
-        if (n + d.len > buf.len) break;
-        @memcpy(buf[n .. n + d.len], d);
-        n += d.len;
     }
     return buf[0..n];
 }
@@ -1947,7 +1891,7 @@ test "Fix Versions: the pill, the bump star, the transition picker's rows, and t
     _ = try a.onKey("esc");
     _ = try a.onKey("?");
     try paint(ar, &f, a, .{});
-    try testing.expect((try findRow(ar, &f, " KEYS ")) != null);
+    try testing.expect((try findRow(ar, &f, " Keys ")) != null);
     try testing.expect((try findRow(ar, &f, "▾ ── rows ──")) != null);
     // The dispatch section is below the fold at 32 rows: scroll to it.
     a.help_scroll = 14;

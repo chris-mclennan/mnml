@@ -245,6 +245,8 @@ the next backfill has to come back for.
 | Whether a pull request may merge, and why not | `pane.merge` |
 | A named confirm | `Painter.confirmBox` |
 | The hint row, every `key label` a hit | `Painter.hintRow` |
+| The `?` key sheet — ` Keys ` box on the overlay ground, `▾ ── name ── (n)` headers, chords padded to the widest, a long label wrapped under itself, `j/k scroll · Esc close`; Esc / `?` / `q` close it and a stray key is ignored; a row runs its key | `Painter.keySheet`, `pane.keysheet.key` / `scroll` |
+| A chord spelled the family's one way — `Enter`, `Space`, `PgDn`, `Home`, `Shift+Tab`, `Ctrl+D`, `Alt+↑`, `D` for `shift+d` — on the sheet, the hint row and a mode's help line | `pane.keysheet.chord` / `chords` |
 | A count's noun — `1 PR`, `3 PRs` | `pane.text.noun` |
 | The tree keys: `→`/`←` expand / collapse, `Enter`/`Space` toggle, `E`/`C` every node open / shut | (the convention; both first-party panes bind it) |
 | State colours | `Theme.prState` / `pipelineState` / `ticketStatus` |

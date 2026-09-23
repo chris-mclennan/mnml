@@ -19,6 +19,7 @@ const build_mod = @import("build.zig");
 const action_mod = @import("action.zig");
 const wire_mod = @import("../wire.zig");
 const warm_mod = @import("../warm.zig");
+const keysheet_mod = @import("keysheet.zig");
 
 pub const Frame = frame_mod.Frame;
 pub const Style = frame_mod.Style;
@@ -199,6 +200,13 @@ pub fn Tab(comptime Target: type) type {
     return struct { label: []const u8, target: Target, active: bool = false };
 }
 
+/// One row of the key sheet: a section header (`section` set), or a
+/// binding — its chord spelled with `keysheet.chords`, what it does,
+/// and what a click on it runs (null: a row to read, not press).
+pub fn SheetRow(comptime Target: type) type {
+    return struct { section: []const u8 = "", chord: []const u8 = "", label: []const u8 = "", target: ?Target = null };
+}
+
 /// One action button of a row's run, as the row hands it over.
 pub fn ActionChip(comptime Target: type) type {
     return struct {
@@ -221,6 +229,7 @@ pub fn Painter(comptime Target: type) type {
         pub const HintSpec = Hint(Target);
         pub const TabSpec = Tab(Target);
         pub const ActionChipSpec = ActionChip(Target);
+        pub const SheetRowSpec = SheetRow(Target);
 
         f: *Frame,
         /// The hit map's allocator — it outlives the frame.
@@ -881,6 +890,109 @@ pub fn Painter(comptime Target: type) type {
             try p.closeChip(box, close_target);
         }
 
+        // ─── the key sheet ───────────────────────────────────────────
+
+        /// The `?` key sheet, in the host's help shape (`keysheet.zig`):
+        /// a centred box titled ` Keys ` on the overlay ground, a
+        /// `▾ ── name ── (n)` header per section, the chords in the
+        /// accent padded to the widest, the label two cells on and
+        /// wrapped under itself, a blank line between sections, the
+        /// footer on the last inner row. `scroll` is clamped to the
+        /// rows here. The box is one hit (`body_target`: the wheel, a
+        /// press that closes); a binding with a target is a hit on each
+        /// of its lines.
+        pub fn keySheet(p: *Self, list: []const SheetRowSpec, scroll: *usize, body_target: Target) Allocator.Error!void {
+            const th = p.th;
+            const bw = @min(p.cols() -| 4, keysheet_mod.max_w);
+            const bh = @min(p.rows() -| 2, keysheet_mod.max_h);
+            if (bw < 24 or bh < 6) return;
+            const box: Rect = .{ .x = (p.cols() - bw) / 2, .y = (p.rows() - bh) / 2, .w = bw, .h = bh };
+            const ground = th.overlayBg();
+            const on = struct {
+                fn bg(g: Style, s: Style) Style {
+                    var out = s;
+                    out.bg = g.bg;
+                    return out;
+                }
+            }.bg;
+            p.fill(box, ground);
+            p.frameBox(box, on(ground, th.overlayBorder()));
+            _ = p.putFit(box.x + 1, box.y, box.w -| 2, keysheet_mod.title, on(ground, th.accentText()));
+            try p.mark(box, body_target);
+
+            const ix = box.x + 2;
+            const iw = box.w -| 4;
+            var chord_w: u16 = keysheet_mod.chord_min;
+            for (list) |r| if (r.section.len == 0) {
+                chord_w = @max(chord_w, @min(width(r.chord), keysheet_mod.chord_max));
+            };
+            const label_x = ix + 2 + chord_w + 2;
+            const label_w = (box.x + box.w -| 2) -| label_x;
+
+            // The lines: a header, then each binding over as many lines
+            // as its label wraps to, a blank after each section.
+            const Line = struct { header: []const u8 = "", chord: []const u8 = "", label: []const u8 = "", target: ?Target = null };
+            var lines: std.ArrayList(Line) = .empty;
+            const fold = if (p.ui.ascii) "v" else "\u{25be}";
+            for (list, 0..) |r, ri| {
+                if (r.section.len > 0) {
+                    if (lines.items.len > 0) try lines.append(p.arena, .{});
+                    var n: usize = 0;
+                    for (list[ri + 1 ..]) |b| {
+                        if (b.section.len > 0) break;
+                        n += 1;
+                    }
+                    try lines.append(p.arena, .{ .header = p.fmt("{s} \u{2500}\u{2500} {s} \u{2500}\u{2500} ({d})", .{ fold, r.section, n }) });
+                    continue;
+                }
+                var first = true;
+                var rest = r.label;
+                while (true) {
+                    var cut = wrapAt(rest, label_w);
+                    // A lone glyph wider than the column still moves on.
+                    if (cut == 0) cut = @min(rest.len, std.unicode.utf8ByteSequenceLength(rest[0]) catch 1);
+                    try lines.append(p.arena, .{ .chord = if (first) r.chord else "", .label = std.mem.trimEnd(u8, rest[0..cut], " "), .target = r.target });
+                    first = false;
+                    rest = std.mem.trimStart(u8, rest[cut..], " ");
+                    if (rest.len == 0) break;
+                }
+            }
+
+            const body_h: usize = bh -| 3;
+            const max_scroll = lines.items.len -| body_h;
+            if (scroll.* > max_scroll) scroll.* = max_scroll;
+            var y = box.y + 1;
+            for (lines.items[scroll.*..]) |l| {
+                if (y >= box.y + 1 + body_h) break;
+                if (l.header.len > 0) {
+                    _ = p.putFit(ix, y, iw, l.header, on(ground, th.bright()));
+                } else if (l.chord.len > 0 or l.label.len > 0) {
+                    if (l.chord.len > 0) _ = p.putFit(ix + 2, y, chord_w, l.chord, on(ground, th.accentPlain()));
+                    _ = p.putFit(label_x, y, label_w, l.label, on(ground, th.text()));
+                    if (l.target) |tg| try p.mark(.{ .x = box.x + 1, .y = y, .w = box.w -| 2, .h = 1 }, tg);
+                }
+                y += 1;
+            }
+            _ = p.putFit(ix, box.y + bh - 2, iw, if (p.ui.ascii) keysheet_mod.footer_ascii else keysheet_mod.footer, on(ground, th.dimText()));
+        }
+
+        /// Where to cut `s` so the piece fits `w` cells: after the last
+        /// space that keeps it in, else hard at `w` (one long word).
+        fn wrapAt(s: []const u8, w: u16) usize {
+            if (width(s) <= w or w == 0) return s.len;
+            var used: u16 = 0;
+            var last_space: ?usize = null;
+            var it = std.unicode.Utf8View.initUnchecked(s).iterator();
+            var i: usize = 0;
+            while (it.nextCodepointSlice()) |bytes| {
+                if (bytes.len == 1 and bytes[0] == ' ') last_space = i;
+                used += width(bytes);
+                if (used > w) return if (last_space) |sp| (if (sp == 0) i else sp) else i;
+                i += bytes.len;
+            }
+            return s.len;
+        }
+
         // ─── the hint row ────────────────────────────────────────────
 
         /// The status on the left, the keys that apply on the right,
@@ -1524,4 +1636,37 @@ test "the toolbar row lays chips left to right, wraps whole chips, and every chi
     try testing.expectEqual(@as(u16, 1), try p2.toolbarRow(1, 0, 30, 1, &chips));
     try testing.expect(r2.hits.rectOf(.{ .chip = 1 }) == null);
     try testing.expect(std.mem.indexOf(u8, try r2.rowText(0), "author") == null);
+}
+
+test "the key sheet: one box for every pane — counted headers, padded chords, a long label wrapped under itself, Esc in the footer, every line of a row a hit" {
+    // hunt/findings-2026-09-23/integ-keysheet-two-components.md
+    var r = try Rig.init(60, 20);
+    defer r.deinit();
+    var p = r.painter(Theme.fromHello(null), .{});
+    const rows = [_]P.SheetRowSpec{
+        .{ .section = "navigation" },
+        .{ .chord = "\u{2191} / k", .label = "up", .target = .{ .hint = 1 } },
+        .{ .chord = "PgDn", .label = "page down", .target = .{ .hint = 2 } },
+        .{ .section = "tree" },
+        .{ .chord = "\u{2192} / l", .label = "expand, or step into the first child of the row under the cursor", .target = .{ .hint = 3 } },
+    };
+    var scroll: usize = 99;
+    try p.keySheet(&rows, &scroll, .detail);
+    // The scroll is clamped to the rows.
+    try testing.expectEqual(@as(usize, 0), scroll);
+    const box = r.hits.rectOf(.detail).?;
+    try testing.expectEqual(@as(u16, 56), box.w);
+    try testing.expect(std.mem.indexOf(u8, try r.rowText(box.y), " Keys ") != null);
+    try testing.expect(std.mem.indexOf(u8, try r.rowText(box.y + 1), "\u{25be} \u{2500}\u{2500} navigation \u{2500}\u{2500} (2)") != null);
+    try testing.expect(std.mem.indexOf(u8, try r.rowText(box.y + 2), "\u{2191} / k     up") != null);
+    // A blank line, then the next section.
+    try testing.expect(std.mem.indexOf(u8, try r.rowText(box.y + 5), "\u{2500}\u{2500} tree \u{2500}\u{2500} (1)") != null);
+    // The long label is whole, over two lines, not clipped.
+    const l1 = try r.rowText(box.y + 6);
+    const l2 = try r.rowText(box.y + 7);
+    try testing.expect(std.mem.indexOf(u8, l1, "expand, or step into") != null);
+    try testing.expect(std.mem.indexOf(u8, l2, "cursor") != null);
+    try testing.expect(std.mem.indexOf(u8, l1, "\u{2026}") == null);
+    try testing.expectEqual(Demo{ .hint = 3 }, r.hits.at(box.x + 30, box.y + 7).?);
+    try testing.expect(std.mem.indexOf(u8, try r.rowText(box.y + box.h - 2), "j/k scroll \u{b7} Esc close") != null);
 }

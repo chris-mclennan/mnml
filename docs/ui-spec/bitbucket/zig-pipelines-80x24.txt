@@ -21,4 +21,4 @@
 ▌
 ▌
 ▌
- Pipelines · 2 repos      d detail · m open↔merged · r refresh · ? keys · q quit
+ Pipelines · 2 repos  Enter expand · o open on web · r refresh · ? keys · q quit
