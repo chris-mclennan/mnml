@@ -291,7 +291,7 @@ end)
 | `startup` | — | once, after every `init.lua` and the startup tasks |
 | `exit` | — | on quit |
 | `open` | `path`, `pane` | a file opened in an editor pane |
-| `save_pre` | `path`, `pane` | before the bytes are written |
+| `save_pre` | `path`, `pane`, `auto` (true when an autosave is writing it, not a save you asked for) | before the bytes are written |
 | `save_post` | `path`, `pane`, `bytes` | after |
 | `buffer_change` | `pane`, `line_count` | 150 ms after the last edit |
 | `cursor_idle` | `pane`, `line` (1-based) | 300 ms after the cursor last moved, once per resting place *(api 1, added)* |
