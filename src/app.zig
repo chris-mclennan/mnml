@@ -3657,6 +3657,7 @@ test {
     _ = @import("git/intraline.zig");
     _ = @import("git/remote.zig");
     _ = @import("git/client.zig");
+    _ = @import("git/changes.zig");
     _ = @import("ui/git_status_view.zig");
     _ = @import("ui/diff_view.zig");
     _ = @import("ui/git_graph_view.zig");
