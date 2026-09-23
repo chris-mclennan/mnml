@@ -250,7 +250,10 @@ pub const AppDriver = struct {
             .tree_cursor = app.tree.cursor,
             .tree_selection = try a.dupe(u8, try app.tree.selectionPath(app)),
             .tree_visible = app.tree.visible,
-            .right_panel_visible = side.shown(app, .right) != null,
+            // Shown AND on screen: an auto-hidden column (`ui.sidebar`,
+            // or a screen under `ui.auto_hide_narrow_width`) that the
+            // overlay is not carrying is not visible.
+            .right_panel_visible = side.shown(app, .right) != null and !@import("sidebar_auto.zig").suppressed(app, .right),
             .right_panel_panes = &.{},
             .right_panel_active_idx = 0,
             .panes = panes.items,
