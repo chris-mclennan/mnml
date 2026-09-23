@@ -94,8 +94,10 @@ fn navigateCmd(app: *App) CommandError!void {
     try openPrompt(app, "Navigate to", .browser_navigate, b.url);
 }
 
+/// Reload the page; on a pane whose session ended, launch Chrome again.
 fn reloadCmd(app: *App) CommandError!void {
     const b = try requireBrowser(app);
+    if (b.state == .closed) return browser.relaunch(app, b);
     try browser.send(app, b, "Page.reload", "{}", .quiet);
     try b.push(.system, "reload");
 }

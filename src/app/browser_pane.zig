@@ -329,6 +329,22 @@ pub const BrowserPane = struct {
         if (self.shared.launch) |l| l.kill(io);
     }
 
+    /// After the worker said the session ended: join it (posting that
+    /// was the last thing it did), free the socket, and stop a Chrome
+    /// that is still up (a page that closed itself leaves the browser
+    /// running). The pane can then relaunch on the same profile.
+    fn reap(self: *BrowserPane) void {
+        const io = self.shared.io;
+        if (self.thread) |t| t.join();
+        self.thread = null;
+        self.shared.lock.lockUncancelable(io);
+        defer self.shared.lock.unlock(io);
+        if (self.shared.session) |*s| s.deinit();
+        self.shared.session = null;
+        if (self.shared.launch) |l| l.destroy(io);
+        self.shared.launch = null;
+    }
+
     pub fn push(self: *BrowserPane, kind: LogKind, text: []const u8) Allocator.Error!void {
         const copy = try self.gpa.dupe(u8, text);
         errdefer self.gpa.free(copy);
@@ -492,6 +508,22 @@ fn startWorker(app: *App, p: *BrowserPane) CommandError!void {
     };
 }
 
+/// `r` on a pane whose session ended: Chrome again, on the same
+/// profile, at the page's URL. The log, the network list and the
+/// snapshots stay.
+pub fn relaunch(app: *App, p: *BrowserPane) CommandError!void {
+    if (p.state != .closed or p.pane_id == null) return;
+    p.reap();
+    p.shared.closing = false;
+    p.shared.stop.store(false, .release);
+    p.state = .launching;
+    p.pending.clearRetainingCapacity();
+    p.clearFallbacks();
+    try p.refreshTitle();
+    try p.push(.system, "relaunching Chrome…");
+    try startWorker(app, p);
+}
+
 fn post(events: *event.EventQueue, io: Io, gpa: Allocator, ev: CdpEvent) void {
     const box = gpa.create(CdpEvent) catch return;
     box.* = ev;
@@ -580,7 +612,10 @@ fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, env: *const std.pro
             },
         }
     }
-    postClosed(events, io, gpa, pane, if (shared.closing) "closed" else "page closed");
+    // A Chrome that died closes its stderr at once; a page that closed
+    // itself (`window.close()`) leaves the browser up.
+    const why: []const u8 = if (shared.closing) "closed" else if (launch.exitedWithin(io, .fromMilliseconds(500))) "Chrome exited" else "page closed";
+    postClosed(events, io, gpa, pane, why);
 }
 
 // ─── requests ───────────────────────────────────────────────────────────
@@ -596,6 +631,10 @@ pub fn sendTo(app: *App, p: *BrowserPane, method: []const u8, params_json: []con
     const io = app.io;
     p.shared.lock.lockUncancelable(io);
     defer p.shared.lock.unlock(io);
+    if (p.state == .closed) {
+        try p.push(.system, "not connected — r relaunches Chrome");
+        return null;
+    }
     if (p.shared.session) |*s| {
         const id = s.send(method, params_json, session) catch |err| {
             try p.push(.system, try std.fmt.allocPrint(app.frame.allocator(), "send {s} failed: {s}", .{ method, @errorName(err) }));
@@ -666,8 +705,14 @@ pub fn handle(app: *App, ev: *CdpEvent) Allocator.Error!void {
         },
         .closed => |reason| {
             p.state = .closed;
-            try p.push(.system, try std.fmt.allocPrint(app.frame.allocator(), "session ended: {s}", .{reason}));
+            p.reap();
+            p.clearDialog();
+            p.clearFallbacks();
+            p.pending.clearRetainingCapacity();
+            try p.push(.system, try std.fmt.allocPrint(app.frame.allocator(), "session ended: {s} — r relaunches", .{reason}));
             try p.refreshTitle();
+            // A pane in another tab dies noticed.
+            if (!std.mem.eql(u8, reason, "closed")) app.toast("browser: session ended ({s}) — r relaunches", .{std.mem.sliceTo(reason, '\n')});
         },
         .message => |text| try onMessage(app, p, text),
         .too_long => |t| try onTooLong(app, p, t.id, t.method, t.len),
@@ -2540,4 +2585,45 @@ test "scrolled back, the log holds still while lines arrive; at the tail it foll
     p.scroll = 0;
     try p.push(.console, "tick 11");
     try testing.expectEqual(@as(usize, 0), p.scroll);
+}
+
+test "an ended session drops the socket, says r relaunches, refuses sends, and r launches Chrome again on the same profile" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var tb: TestBed = .{};
+    const p = try tb.init();
+    defer tb.deinit();
+    p.pane_id = tb.id;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    p.binary = try standInScript(arena.allocator(), tb.root, "chrome-again", "exec /bin/sleep 30");
+    p.url = blk: {
+        testing.allocator.free(p.url);
+        break :blk try testing.allocator.dupe(u8, "http://a/page");
+    };
+    const closed = try testing.allocator.create(CdpEvent);
+    closed.* = .{ .pane = tb.id, .kind = .{ .closed = try testing.allocator.dupe(u8, "page closed") } };
+    try handle(&tb.app, closed);
+    try testing.expect(p.state == .closed);
+    try testing.expectEqualStrings("session ended: page closed — r relaunches", tb.last());
+    const queued = p.queued.items.len;
+    try eval(&tb.app, p, "1+1", .eval);
+    try testing.expectEqual(queued, p.queued.items.len);
+    try testing.expectEqualStrings("» 1+1", tb.last());
+    try testing.expectEqualStrings("not connected — r relaunches Chrome", p.log.items[p.log.items.len - 2].text);
+    try testing.expect(try handleKey(&tb.app, tb.id, p, Key.char('r')));
+    try testing.expect(p.state == .launching);
+    try testing.expect(p.thread != null);
+    // The page is loaded by a navigate queued behind the enables.
+    try testing.expectEqualStrings("Page.navigate", tb.lastQueued());
+    var pid: ?std.process.Child.Id = null;
+    var tries: usize = 0;
+    while (pid == null and tries < 500) : (tries += 1) {
+        p.shared.lock.lockUncancelable(testing.io);
+        if (p.shared.launch) |l| pid = l.child.id;
+        p.shared.lock.unlock(testing.io);
+        if (pid == null) testing.io.sleep(.fromMilliseconds(10), .awake) catch {};
+    }
+    try testing.expect(pid != null);
+    try tb.app.forceClosePane(tb.id);
+    try testing.expect(child_os.goneWithin(testing.io, pid.?, .fromSeconds(10)));
 }

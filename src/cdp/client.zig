@@ -178,6 +178,9 @@ pub const Launch = struct {
     port_ready: Io.Event = .unset,
     port: u16 = 0,
     killed: bool = false,
+    /// Set by the reader when Chrome closed its stderr: it exited (or
+    /// was killed). A session that ends without it is a page closing.
+    exited: std.atomic.Value(bool) = .init(false),
 
     /// Terminate Chrome, reap it, and stop the stderr reader. Idempotent.
     /// Not thread-safe against itself: one owner calls it (the browser
@@ -203,6 +206,17 @@ pub const Launch = struct {
     /// Block until the reader found the port, gave up, or `timeout`
     /// passed. Null when there is no port (yet). Uncancelable, and
     /// wakes as soon as `kill` has stopped the reader.
+    /// True once Chrome closed its stderr, waited for up to `limit`: a
+    /// dead Chrome closes it at once; a page that closed leaves it open.
+    pub fn exitedWithin(self: *Launch, io: Io, limit: Io.Duration) bool {
+        const start = Io.Timestamp.now(io, .awake);
+        while (!self.exited.load(.acquire)) {
+            if (start.durationTo(Io.Timestamp.now(io, .awake)).nanoseconds >= limit.nanoseconds) return false;
+            io.sleep(.fromMilliseconds(10), .awake) catch return self.exited.load(.acquire);
+        }
+        return true;
+    }
+
     pub fn waitPort(self: *Launch, io: Io, timeout: Io.Duration) ?u16 {
         const start = Io.Timestamp.now(io, .awake);
         while (!self.port_ready.isSet()) {
@@ -364,7 +378,10 @@ fn readStderr(self: *Launch, io: Io) void {
     var r: Io.File.Reader = .init(self.stderr, io, &rbuf);
     var lines: usize = 0;
     while (lines < 200) : (lines += 1) {
-        const line = r.interface.takeDelimiterInclusive('\n') catch return;
+        const line = r.interface.takeDelimiterInclusive('\n') catch |err| {
+            if (err == error.EndOfStream) self.exited.store(true, .release);
+            return;
+        };
         if (parsePortLine(line)) |p| {
             self.port = p;
             break;
@@ -373,8 +390,16 @@ fn readStderr(self: *Launch, io: Io) void {
     self.port_ready.set(io);
     var sink: [4096]u8 = undefined;
     while (true) {
-        const n = r.interface.readSliceShort(&sink) catch return;
-        if (n == 0) return;
+        // A cancel (`kill`) lands here too; `exited` is read only for a
+        // session that ended without the pane closing it.
+        const n = r.interface.readSliceShort(&sink) catch {
+            self.exited.store(true, .release);
+            return;
+        };
+        if (n == 0) {
+            self.exited.store(true, .release);
+            return;
+        }
     }
 }
 
