@@ -3,7 +3,8 @@
 Twenty branches merged in a day, each appending rows to the user-facing
 docs. This pass held every claim in the files below against the source,
 by a grep or a run, and fixed what was wrong in place. Base: `main` at
-`d34360fc`.
+`d34360fc`, rebased onto `82a4bc4f` and re-checked there (the PARITY
+counts, the spec count, the keymap script).
 
 ## Method
 
@@ -36,7 +37,7 @@ by a grep or a run, and fixed what was wrong in place. Base: `main` at
 | KEYMAP_PROFILES.md | `view.focus_right_panel`: `Ctrl+K R` | the spec binds `ctrl+k r` (lowercase) | corrected |
 | PARITY.md | one row per feature | External linters, Code actions — quick-fix, Code actions — refactors + picker, and `dotnet test` in the results pane each appeared twice (keep-both merges) | one copy each, the one with the later notes |
 | PARITY.md | totals: 552 done / 9 cut of 561 | 595 done / 7 cut of 602 once deduped and the two flips below applied; eight sections' counts were stale | table regenerated; a note that the jira (45) and bitbucket (42) sections are counted apart |
-| PARITY.md | "Ids: 1039 … 1039 have runners (35 … `cutRunner`)" | 1120 spec ids, all with runners (`-Dpartial=false` builds), 32 `cutRunner` | corrected |
+| PARITY.md | "Ids: 1039 … 1039 have runners (35 … `cutRunner`)" | 1121 spec ids after the rebase onto `82a4bc4f` (`tree.toggle_ignored` landed), all with runners (`-Dpartial=false` builds), 32 `cutRunner` | corrected |
 | PARITY.md | Curated `+` menu: `plus_sections`, New / Open / Panels / Tools / Integrations | `plus_tree` + `curate`: New / Open / AI / Dock, then the integrations group; *Reopen last closed (N)* leads | corrected |
 | PARITY.md | Marketplace: `Pane.marketplace`, `src/ui/marketplace_view.zig` | no such pane variant or file; the Marketplace is a tab of `Pane.integrations`, painted by `src/ui/integrations_view.zig` | corrected |
 | PARITY.md | Source-aware dispatch (mixr / AppleScript): `cut` | `now_playing.zig` drives Music / Spotify through `osascript`; only mixr's IPC is cut (a toast) | `done`, with the cut half named |
@@ -70,8 +71,8 @@ commands.md 0.
   Terminal.app / rxvt code tables; the `dap.*` tables; the quick-open
   prefixes (`cmd_picker.zig`).
 - The workspace-trust table's rows against `trust.zig`'s `Sink`s.
-- `docs/commands.md` (1120 commands in 49 groups) — `zig build docs`
-  leaves it as it is.
+- `docs/commands.md` (1121 commands in 49 groups after the rebase) —
+  `zig build docs` leaves it as it is.
 
 ## Not verified
 
