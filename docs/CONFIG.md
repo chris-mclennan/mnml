@@ -432,6 +432,8 @@ otherwise. Copy what you need; leave the rest out.
         .hover_help = true,
         .hover_tooltip = false,
         .click_echo = false,
+        .focus_follows_mouse = .off, // .off | .panes | .all — opt-in focus follows mouse: .panes focuses the split (editor, terminal, session) the pointer moves onto; .all also hands the side columns and the dock the keys. Never while a menu, picker, prompt, confirm or the which-key popup is up, a button is held or a chord is half-typed; it moves only the focus, never the view or the cursor
+        .focus_follows_mouse_delay_ms = 0, // how long the pointer rests on the new target before it takes the focus; 0 is at once, clamped to 2000
         // `app.quit` (Ctrl+Q, the menu bar's Quit, the palette) always stops to ask — Quit / Cancel
         // with nothing unsaved, Save all / Quit anyway / Cancel with something, Cancel focused either
         // way. `false` asks only when something is unsaved. `:q!` / `:qa!` and the IPC `quit` /
@@ -1619,7 +1621,7 @@ removed again.
 Rows are discrete choices (bools, enums, the theme) and numbers
 (`tree_width`, `right_panel_width`, `bottom_panel_height`, `wheel_lines`, `md_image_rows`,
 `hover_help_height`, `color_column`, `tab_width`, `text_width`,
-`chord_timeout_ms` — 73 rows in all); text (`projects_dir`, the
+`chord_timeout_ms`, `focus_follows_mouse_delay_ms` — 106 rows in all); text (`projects_dir`, the
 labels) stays a file edit.
 
 ### Themes

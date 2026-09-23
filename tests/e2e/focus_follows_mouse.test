@@ -1,0 +1,41 @@
+# `ui.focus_follows_mouse` — opt-in focus follows mouse. Two splits,
+# the tree hidden so each half is 60 wide: a.txt on the left, b.txt on
+# the right (the one `open` focused last).
+write a.txt aaaa
+write b.txt bbbb
+open a.txt
+command view.toggle_tree
+command view.split_right
+open b.txt
+expect pane "b.txt"
+
+# `off`, the default: a hover is only a hover.
+hover 18 18
+expect pane "b.txt"
+
+# `panes`: the pointer moving onto the other split focuses it, and
+# back again.
+ex set ui.focus_follows_mouse=panes
+hover 19 18
+expect pane "a.txt"
+hover 95 18
+expect pane "b.txt"
+hover 18 18
+expect pane "a.txt"
+
+# A drag with the button held never refocuses mid-drag: the press
+# focuses b.txt and the pointer crossing into a.txt leaves it there.
+drag 95 18 20 18
+expect pane "b.txt"
+
+# An open context menu keeps the focus where it is: the right press
+# focuses b.txt and opens its menu, and the pointer wandering over
+# a.txt leaves both alone until the menu is gone.
+rightclick 95 18
+expect pane "b.txt"
+hover 18 18
+hover 19 30
+expect pane "b.txt"
+key esc
+hover 18 18
+expect pane "a.txt"

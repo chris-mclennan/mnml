@@ -69,6 +69,7 @@ const welcome_mod = @import("app/welcome.zig");
 const dock = @import("app/dock.zig");
 const hover_zones = @import("app/hover_zones.zig");
 const sidebar_auto = @import("app/sidebar_auto.zig");
+const focus_follow = @import("app/focus_follow.zig");
 const launcher_dock_mod = @import("app/launcher_dock.zig");
 const activity_bar_mod = @import("app/activity_bar.zig");
 const panel_mod = @import("core/panel.zig");
@@ -1169,6 +1170,8 @@ pub const App = struct {
     /// column the overlay is carrying, where it is in its slide, and
     /// the session's pin (`app/sidebar_auto.zig`).
     sidebar_auto: sidebar_auto.State = .{},
+    /// `ui.focus_follows_mouse`: the held button and the dwell (`app/focus_follow.zig`).
+    focus_follow: focus_follow.State = .{},
     /// // changed (launcher-dock): `ui.dock` — the launcher strip's
     /// reveal, its session pin and its keyboard cursor
     /// (`app/launcher_dock.zig`). Neither the bottom panel (`bottom`)
@@ -3128,6 +3131,7 @@ pub const App = struct {
         discovery_app.tick(self, now);
         sidebar_auto.tick(self, now);
         launcher_dock_mod.tick(self, now);
+        focus_follow.tick(self, now);
     }
 
     /// The next moment `tick` has something to do, or null when idle.
@@ -3164,6 +3168,7 @@ pub const App = struct {
         if (autosave.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (hover_zones.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (sidebar_auto.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
+        if (focus_follow.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (launcher_dock_mod.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (self.lua) |l| if (l.nextDeadlineMs()) |d| {
             next = @min(next orelse std.math.maxInt(i64), d);
@@ -3284,6 +3289,7 @@ test {
     _ = @import("app/find.zig");
     _ = @import("app/syntax.zig");
     _ = @import("app/whichkey.zig");
+    _ = @import("app/focus_follow.zig");
     _ = @import("app/tree.zig");
     _ = @import("app/ex.zig");
     _ = @import("app/dispatch.zig");

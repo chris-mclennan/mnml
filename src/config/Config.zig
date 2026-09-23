@@ -359,6 +359,10 @@ pub const CoverageChipMode = enum { both, feature, code, ticker };
 /// still `jobs.show`).
 pub const JobsChip = enum { always, auto, hidden };
 pub const ExpandIndicator = enum { chevron, triangle };
+/// Focus follows the mouse (`app/focus_follow.zig`): `panes` — the
+/// pointer over another split's body focuses that pane; `all` — the
+/// side columns and the dock too. `off` is the click-to-focus default.
+pub const FocusFollowsMouse = enum { off, panes, all };
 /// Which panes wear the one-cell colour rail down their left edge
 /// (`ui/pane_rail.zig`). `all` is every pane, so two terminals side by
 /// side are never the same colour; `sessions` is the older look, where
@@ -445,6 +449,8 @@ pub const bottom_panel_height_max: u16 = 60;
 pub const sidebar_dwell_ms_max: u16 = 5000;
 pub const hover_help_height_min: u16 = 3;
 pub const hover_help_height_max: u16 = 20;
+/// The focus-follows-mouse dwell's ceiling, clamped on load.
+pub const focus_follows_mouse_delay_ms_max: u16 = 2000;
 
 pub const Ui = struct {
     theme: []const u8 = "onedark",
@@ -663,6 +669,14 @@ pub const Ui = struct {
     hover_help: bool = true,
     hover_tooltip: bool = false,
     click_echo: bool = false,
+    /// Focus follows the mouse — opt-in. A hover never refocuses while
+    /// a menu, picker, prompt, confirm or the which-key popup is up,
+    /// while a button is held, or mid-chord (`app/focus_follow.zig`).
+    focus_follows_mouse: FocusFollowsMouse = .off,
+    /// How long the pointer must rest on the new target before it takes
+    /// the focus (ms; clamped to 0..`focus_follows_mouse_delay_ms_max`).
+    /// 0 is at once.
+    focus_follows_mouse_delay_ms: u16 = 0,
     /// `app.quit` (Ctrl+Q, the menu bar's Quit, the palette) always
     /// stops to ask, clean workspace or not — a fat-fingered chord is
     /// the one way to lose a session outright, and Cancel holds the
