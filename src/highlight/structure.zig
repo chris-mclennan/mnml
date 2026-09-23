@@ -158,10 +158,11 @@ fn isTransparent(kind: []const u8) bool {
 }
 
 /// `kind` is a `Kind`, or null for anything that is not a definition.
-/// Besides the table, two shapes only the node's children tell apart:
+/// Besides the table, three shapes only the node's children tell apart:
 /// Zig's `const Point = struct {…}` (a variable whose value is a
-/// container), and Kotlin's `interface` / `enum class`, which its
-/// grammar calls a class.
+/// container), a YAML key that opens a block (`jobs:` above a mapping
+/// or a list — what the Rust outline listed), and Kotlin's
+/// `interface` / `enum class`, which its grammar calls a class.
 pub fn kindOf(node: ts.Node) ?Kind {
     const k = node.kind();
     if (kinds.get(k)) |kind| {
@@ -169,6 +170,10 @@ pub fn kindOf(node: ts.Node) ?Kind {
         return kind;
     }
     if (std.mem.eql(u8, k, "variable_declaration")) return zigContainerKind(node);
+    if (std.mem.eql(u8, k, "block_mapping_pair")) {
+        const value = node.childByFieldName("value");
+        if (!value.isNull() and std.mem.eql(u8, value.kind(), "block_node")) return .namespace;
+    }
     return null;
 }
 
@@ -210,6 +215,7 @@ pub fn nameOf(node: ts.Node, text: []const u8) ?[]const u8 {
     var n = node.childByFieldName("name");
     if (n.isNull()) n = node.childByFieldName("declarator");
     if (n.isNull() and std.mem.eql(u8, node.kind(), "impl_item")) n = node.childByFieldName("type");
+    if (n.isNull() and std.mem.eql(u8, node.kind(), "block_mapping_pair")) n = node.childByFieldName("key");
     if (n.isNull()) return leadingName(node, text);
     var guard: usize = 0;
     while (!n.isNull() and guard < 8) : (guard += 1) {
@@ -622,6 +628,7 @@ test "one fixture per language: the outline names every definition the table kno
         .{ .key = "kt", .text = "package demo\n\nobject Registry {\n    fun register() {}\n}\n\ndata class User(val id: Int)\n\ninterface Repo {\n    fun find(id: Int): User?\n}\n\nenum class Color { RED }\n\nfun String.shout() = uppercase()\n\nfun main() {\n    println(\"hi\")\n}\n", .want = "Registry register User Repo find Color shout main" },
         .{ .key = "zig", .text = "const std = @import(\"std\");\n\npub const Point = struct {\n    x: i32,\n    pub fn len(self: Point) i32 {\n        return self.x;\n    }\n};\n\nconst Color = enum { red, green };\n\npub fn main() !void {}\n\ntest \"adds\" {\n    try std.testing.expect(true);\n}\n", .want = "Point len Color main adds" },
         .{ .key = "py", .text = "@cache\ndef f():\n    return 1\n\n@dataclass\nclass A:\n    @property\n    def g(self):\n        pass\n", .want = "f A g" },
+        .{ .key = "yaml", .text = "name: CI\non:\n  push:\n    branches: [main]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n  test:\n    needs: build\n", .want = "on push jobs build steps test" },
         .{ .key = "go", .text = "package p\n\ntype ID = int\n\nfunc F() {}\n", .want = "ID F" },
     };
     for (cases) |c| {
@@ -635,7 +642,7 @@ test "one fixture per language: the outline names every definition the table kno
     }
 }
 
-test "kinds the children decide: Zig containers and tests, Kotlin interfaces and enums" {
+test "kinds the children decide: Zig containers and tests, Kotlin interfaces and enums, YAML blocks, depth under them" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -655,6 +662,14 @@ test "kinds the children decide: Zig containers and tests, Kotlin interfaces and
     try testing.expectEqual(Kind.interface, ks[0].kind);
     try testing.expectEqual(Kind.@"enum", ks[1].kind);
     try testing.expectEqual(Kind.class, ks[2].kind);
+    const yaml = "jobs:\n  build:\n    runs-on: x\n";
+    var y = try Parsed.init("yaml", yaml);
+    defer y.deinit();
+    const ys = try symbols(a, y.tree.rootNode(), yaml);
+    try testing.expectEqual(@as(usize, 2), ys.len);
+    try testing.expectEqual(Kind.namespace, ys[0].kind);
+    try testing.expectEqual(@as(u8, 1), ys[1].depth);
+    try testing.expectEqual(@as(u32, 1), ys[1].line);
 }
 
 test "text objects: `af` on a decorated Python def takes its decorators; `ac` finds a TypeScript abstract class and a namespace" {
