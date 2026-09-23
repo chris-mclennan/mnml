@@ -159,7 +159,7 @@ pub fn liveUpdate(app: *App) Allocator.Error!void {
         f.clear();
     } else {
         try f.setQuery(q, tg.text(), if (fb.state.match_case) true else app.search_case);
-        f.current = if (fb.reverse) f.indexBefore(tg.cursor()) else f.indexAtOrAfter(tg.cursor());
+        f.current = if (fb.reverse) f.indexBefore(tg.cursor()) else f.indexAtOrAfter(forwardFrom(app, tg.cursor()));
         // A response follows the live match as it is typed.
         if (tg == .request) if (f.current) |c| tg.request.revealFind(f.matches.items[c].start);
     }
@@ -296,12 +296,20 @@ fn acceptAndClose(app: *App) Allocator.Error!void {
         app.key_failed = true;
         return;
     }
-    const idx = (if (reverse) f.indexBefore(tg.cursor()) else f.indexAtOrAfter(tg.cursor())) orelse 0;
+    const idx = (if (reverse) f.indexBefore(tg.cursor()) else f.indexAtOrAfter(forwardFrom(app, tg.cursor()))) orelse 0;
     f.current = idx;
     tg.setCursor(tg.landing(idx));
     app.toast("match {d}/{d}", .{ idx + 1, f.matches.items.len });
     app.closeFindBar(false);
     if (chain and tg == .editor) try openReplacePrompt(app);
+}
+
+/// Where a forward search starts: vim's `/` one past the cursor, so a
+/// match under the cursor is the next one only after wrapping round
+/// (`:help search-commands`); the standard profile's find takes the
+/// match at the cursor.
+fn forwardFrom(app: *const App, cursor: usize) usize {
+    return if (app.input_style == .vim) cursor + 1 else cursor;
 }
 
 /// `find.next` / `find.prev` and the bar's ↓ / ↑.

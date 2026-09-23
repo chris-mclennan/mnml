@@ -1,0 +1,45 @@
+# vim's `/` starts searching one character past the cursor: a match
+# under the cursor is the next one only after wrapping round, when it is
+# the only one (`:help search-commands`). `?` looks strictly before it.
+# Neovim 0.12.5 (`nvim --clean`), from 1:1:
+#   "foo bar / foo baz"   /foo<CR>   -> 2:1
+#   "foo only / x"        /foo<CR>   -> 1:1 (wrapped to itself)
+#   "a foo foo"           /foo<CR>   -> 1:3 (no match under the cursor)
+#   "foo bar / foo baz"   j?foo<CR>  -> 1:1
+command editor.use_vim
+write a.txt "foo bar\nfoo baz\n"
+open a.txt
+key /
+type foo
+key enter
+expect screen contains "Ln 2/2 Col 1"
+
+write b.txt "foo only\nx\n"
+open b.txt
+key /
+type foo
+key enter
+expect screen contains "Ln 1/2 Col 1"
+
+write c.txt "a foo foo\n"
+open c.txt
+key /
+type foo
+key enter
+expect screen contains "Ln 1/1 Col 3"
+
+write d.txt "foo bar\nfoo baz\n"
+open d.txt
+type j
+key ?
+type foo
+key enter
+expect screen contains "Ln 1/2 Col 1"
+
+# `d/` takes the text up to the next match, not an empty range.
+write e.txt "foo bar\nfoo baz\n"
+open e.txt
+type d/foo
+key enter
+command file.save
+expect file e.txt contains "foo baz\n"
