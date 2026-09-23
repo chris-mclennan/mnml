@@ -604,6 +604,10 @@ pub const Overlay = union(enum) {
         /// Parallel to `labels`: the chord hint after the label; an
         /// empty string paints nothing.
         hints: [][]u8 = &.{},
+        /// Parallel to `labels` (or empty): what the accept acts on when
+        /// that is not the label — the session picker's rows are named
+        /// for people and accept the session id.
+        values: [][]u8 = &.{},
         /// Parallel to `labels` (or empty): Rust's `PickerItem.priority`
         /// — a tier that always beats the score (the file picker pins
         /// workspace files over cross-workspace recents with it).
@@ -688,6 +692,8 @@ pub const Overlay = union(enum) {
                 gpa.free(p.details);
                 for (p.hints) |h| gpa.free(h);
                 gpa.free(p.hints);
+                for (p.values) |v| gpa.free(v);
+                gpa.free(p.values);
                 for (p.icons) |i| gpa.free(i);
                 gpa.free(p.icons);
                 gpa.free(p.marked);

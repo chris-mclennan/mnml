@@ -582,7 +582,7 @@ pub fn accept(app: *App, idx: usize) Allocator.Error!void {
             };
         },
         .ai_session => {
-            const sid = try app.frame.allocator().dupe(u8, p.labels[i]);
+            const sid = try app.frame.allocator().dupe(u8, if (i < p.values.len) p.values[i] else p.labels[i]);
             app.overlay.deinit(app.gpa);
             app.focus = if (app.active) |a| .{ .pane = a } else .tree;
             ai_app.sessionAccept(app, sid) catch |err| switch (err) {

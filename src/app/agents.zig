@@ -488,7 +488,7 @@ pub fn scanInto(io: Io, gpa: Allocator, arena: Allocator, home: []const u8, scop
 
 /// The first prompt of a transcript too long for its tail to hold it:
 /// the head's, on `arena`. A head that cannot be read has none.
-fn firstPrompt(gpa: Allocator, io: Io, arena: Allocator, dir: Io.Dir, name: []const u8, kind: Source) ScanError!?[]const u8 {
+pub fn firstPrompt(gpa: Allocator, io: Io, arena: Allocator, dir: Io.Dir, name: []const u8, kind: Source) ScanError!?[]const u8 {
     const head = transcript.readHead(gpa, io, dir, name, head_cap) catch |err| switch (err) {
         error.Canceled => return error.Canceled,
         error.OutOfMemory => return error.OutOfMemory,

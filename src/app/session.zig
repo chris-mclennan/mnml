@@ -649,7 +649,7 @@ pub fn sameWorkspace(io: Io, saved: []const u8, actual: []const u8) bool {
 /// `app.workspace` as the file stores it: resolved, so a session written
 /// from an unresolved spelling is canonical the next time it is read.
 /// Falls back to the spelling in hand when the path does not resolve.
-fn canonicalWorkspace(app: *App, arena: Allocator) Allocator.Error![]const u8 {
+pub fn canonicalWorkspace(app: *App, arena: Allocator) Allocator.Error![]const u8 {
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const n = Io.Dir.cwd().realPathFile(app.io, app.workspace, &buf) catch return app.workspace;
     return arena.dupe(u8, buf[0..n]);
