@@ -892,6 +892,22 @@ test "inherits: the base query comes first, the file's own patterns after it, an
     try testing.expectEqualStrings("(a) @b\n; inherits: html\n", comptime table.withInherited(.highlights, "(a) @b\n; inherits: html\n"));
 }
 
+test "injections: TypeScript and TSX carry JavaScript's — css / html / sql tagged templates and regex literals are their languages, as in .js" {
+    var h = Highlighter.init(testing.allocator);
+    defer h.deinit();
+    const text = "const b = css`\n  color: red;\n`;\nconst p = html`<div class=\"x\">hi</div>`;\nconst q = sql`SELECT id FROM users`;\nconst re = /ab+[0-9]{2}$/;\n";
+    for ([_][]const u8{ "js", "ts", "tsx" }) |key| {
+        h.setLanguage(table.find(key).?);
+        const spans = try h.highlightAll(text);
+        errdefer std.debug.print("in {s}\n", .{key});
+        try testing.expectEqual(Role.variable, roleAt(spans, std.mem.indexOf(u8, text, "color").?));
+        try testing.expectEqual(Role.type, roleAt(spans, std.mem.indexOf(u8, text, "div").?));
+        try testing.expectEqual(Role.keyword, roleAt(spans, std.mem.indexOf(u8, text, "SELECT").?));
+        // The regex grammar splits the literal: `+` is not the string's colour.
+        try testing.expect(roleAt(spans, std.mem.indexOf(u8, text, "+[").?) != roleAt(spans, std.mem.indexOf(u8, text, "ab+").?));
+    }
+}
+
 test "incremental: an edit told to the tree reparses to the same spans as a fresh parse" {
     var h = Highlighter.init(testing.allocator);
     defer h.deinit();

@@ -38,8 +38,10 @@ pub const entries = [_]Entry{
     .{ .key = "toml", .language = tree_sitter_toml, .highlights = &.{q.toml_highlights}, .fixture = "[package]\nname = \"mnml\"\n" },
     // TypeScript's own highlights are ~35 lines of TS-specific captures; JavaScript's carry
     // the keywords / literals / comments. Without the JS layer most tokens stay plain.
-    .{ .key = "ts", .language = tree_sitter_typescript, .highlights = &.{ q.javascript_highlights, q.javascript_highlights_extra, q.typescript_highlights }, .fixture = "const x: number = 1;\ninterface A { b: string }\n" },
-    .{ .key = "tsx", .language = tree_sitter_tsx, .highlights = &.{ q.javascript_highlights, q.javascript_highlights_jsx, q.javascript_highlights_extra, q.typescript_highlights }, .fixture = "const el = <div>{1 + 1}</div>;\nlet y: string = \"a\";\n" },
+    // The injections are JavaScript's as they stand (TypeScript ships none; Neovim's ecma
+    // queries serve both): css`…` / html`…` / sql`…` templates and regex literals.
+    .{ .key = "ts", .language = tree_sitter_typescript, .highlights = &.{ q.javascript_highlights, q.javascript_highlights_extra, q.typescript_highlights }, .injections = q.javascript_injections, .fixture = "const x: number = 1;\ninterface A { b: string }\n" },
+    .{ .key = "tsx", .language = tree_sitter_tsx, .highlights = &.{ q.javascript_highlights, q.javascript_highlights_jsx, q.javascript_highlights_extra, q.typescript_highlights }, .injections = q.javascript_injections, .fixture = "const el = <div>{1 + 1}</div>;\nlet y: string = \"a\";\n" },
     .{ .key = "css", .language = tree_sitter_css, .highlights = &.{q.css_highlights}, .fixture = "a { color: red; }\n" },
     .{ .key = "html", .language = tree_sitter_html, .highlights = &.{q.html_highlights}, .injections = q.html_injections, .fixture = "<html><body><p class=\"x\">hi</p></body></html>\n" },
     .{ .key = "sh", .language = tree_sitter_bash, .highlights = &.{q.bash_highlights}, .fixture = "for f in *.c; do echo \"$f\"; done\n" },
