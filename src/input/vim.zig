@@ -1206,7 +1206,14 @@ pub const Vim = struct {
             .window => {
                 const count = self.count;
                 self.resetPending();
-                const c = ch orelse return .consumed;
+                // `CTRL-W <Left>` … are `CTRL-W h` … (`:help CTRL-W_<Left>`).
+                const c: u21 = ch orelse switch (key.code) {
+                    .left => 'h',
+                    .right => 'l',
+                    .up => 'k',
+                    .down => 'j',
+                    else => return .consumed,
+                };
                 // `{count} Ctrl-W >` / `<` / `+` / `-`: that many cells
                 // (`:help CTRL-W_>`); the bare chord keeps its 5 % step.
                 if (count) |n| {

@@ -306,6 +306,14 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
     if (app.focus == .welcome) app.focus = if (app.active) |a| .{ .pane = a } else .tree;
 
     const pane_id = app.active;
+    // A non-editor pane is a window to vim's `Ctrl-W` family: the key
+    // after an unclaimed `Ctrl-W` (`unclaimedKey`) names the verb, ahead
+    // of the pane's own use of it (`h` is not the pane's here).
+    if (app.pane_ctrl_w_pending) {
+        app.pane_ctrl_w_pending = false;
+        if (paneCtrlWCommand(k)) |id| try runCmd(app, id);
+        return;
+    }
     // The non-editor panes take their own keys first.
     if (pane_id) |id| if (app.panes.get(id)) |p| switch (p.*) {
         .pty => |*term| return ptyKey(app, id, term, k),
@@ -516,7 +524,48 @@ fn unclaimedKey(app: *App, k: Key) Allocator.Error!void {
         cmdline_mod.open(app);
         return;
     }
+    // `Ctrl-W` nobody took arms the window chord; the next key is its.
+    if (side.isCtrlW(app, k) and app.focus == .pane) {
+        app.pane_ctrl_w_pending = true;
+        return;
+    }
     _ = try chordChain(app, k);
+}
+
+/// The second key of `Ctrl-W` from a non-editor pane: the window verbs
+/// the editor's `Ctrl-W` has (`:help CTRL-W`).
+fn paneCtrlWCommand(k: Key) ?command.CommandId {
+    const c: u21 = switch (k.code) {
+        .char => |ch| if (k.mods.ctrl and ch < 0x80) std.ascii.toLower(@intCast(ch)) else ch,
+        .left => 'h',
+        .right => 'l',
+        .down => 'j',
+        .up => 'k',
+        else => return null,
+    };
+    return switch (c) {
+        'w' => .@"view.focus_next_split",
+        'W' => .@"view.focus_prev_split",
+        'p' => .@"view.focus_previous",
+        't' => .@"view.focus_top",
+        'b' => .@"view.focus_bottom",
+        'h' => .@"view.focus_left",
+        'j' => .@"view.focus_down",
+        'k' => .@"view.focus_up",
+        'l' => .@"view.focus_right",
+        'D' => .@"view.focus_dock",
+        'q', 'c' => .@"view.close_split",
+        'o' => .@"view.only",
+        's' => .@"view.split_down",
+        'v' => .@"view.split_right",
+        'H' => .@"view.move_split_left",
+        'J' => .@"view.move_split_down",
+        'K' => .@"view.move_split_up",
+        'L' => .@"view.move_split_right",
+        '=' => .@"view.equalize_splits",
+        'r' => .@"view.rotate_splits",
+        else => null,
+    };
 }
 
 /// The list panes: j/k move, enter acts, esc closes the pane.

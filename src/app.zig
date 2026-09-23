@@ -1394,6 +1394,9 @@ pub const App = struct {
     /// The key just dispatched failed the way vim beeps — a motion that
     /// could not move, a search with no match — which ends a replay.
     key_failed: bool = false,
+    /// `Ctrl-W` from a non-editor pane: the next key names the window
+    /// verb (`dispatch.paneCtrlWCommand`).
+    pane_ctrl_w_pending: bool = false,
     /// Nine pinned files (`harpoon.*`).
     harpoon: harpoon.State = .{},
     /// Render durations for the statusline stress meter.
