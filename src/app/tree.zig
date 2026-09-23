@@ -884,17 +884,16 @@ pub const Tree = struct {
                 continue;
             }
             if (i == self.cursor) cursor_item = items.items.len;
-            const abs = try app.absPath(row.rel);
             const depth = row.depth - @as(u8, if (multi) 1 else 0);
+            // The name and the badges (a path join, the git map, every
+            // open buffer) are filled below for the rows on screen only:
+            // an expanded 50k-row tree paid them per row on every repaint.
             try items.append(arena, .{ .entry = .{
                 .idx = @intCast(i),
-                .name = row.name(),
+                .name = "",
                 .depth = depth,
                 .is_dir = row.is_dir,
                 .expanded = row.is_dir and self.isExpanded(row.rel),
-                .git = if (row.is_dir) null else states.get(abs),
-                .dirty = !row.is_dir and dirtyInEditor(app, abs),
-                .repo = if (row.root == 0 and row.is_dir and depth == 0) repoMark(app, abs) else null,
                 .ignored = row.ignored,
             } });
         }
@@ -906,6 +905,21 @@ pub const Tree = struct {
             if (ci >= self.scroll + h) self.scroll = ci + 1 - h;
         }
         self.scroll = @min(self.scroll, tree_view.contentLen(items.items) -| h);
+        // A pinned header may shift the painted window by a row or two.
+        const lo = self.scroll -| 2;
+        const hi = @min(items.items.len, self.scroll + h + 2);
+        for (items.items[lo..hi]) |*it| switch (it.*) {
+            .entry => |*en| {
+                const row = self.rows.items[en.idx];
+                en.name = row.name();
+                const abs = try app.absPath(row.rel);
+                if (!row.is_dir) {
+                    en.git = states.get(abs);
+                    en.dirty = dirtyInEditor(app, abs);
+                } else if (row.root == 0 and en.depth == 0) en.repo = repoMark(app, abs);
+            },
+            else => {},
+        };
         _ = tree_view.draw(ui, area, .{
             .items = items.items,
             .cursor = cursor_item,
