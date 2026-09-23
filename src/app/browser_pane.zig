@@ -579,10 +579,11 @@ fn startWorker(app: *App, p: *BrowserPane) CommandError!void {
         try p.refreshTitle();
         return app.diag.fail(app.frame.allocator(), "browser: could not start the worker: {s}", .{@errorName(err)});
     };
-    // Launching is a job until the DevTools socket answers.
+    // Launching is a job until the DevTools socket answers — for the
+    // first start and for `r`'s relaunch alike.
+    const id = p.pane_id.?;
     _ = try jobs.begin(app, .{ .kind = .browser, .key = id, .label = try std.fmt.allocPrint(app.frame.allocator(), "Chrome {s}", .{p.url}), .pane = id });
     if (p.device) |d| _ = d;
-    return id;
 }
 
 /// `r` on a pane whose session ended: Chrome again, on the same
