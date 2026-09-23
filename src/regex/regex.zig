@@ -22,10 +22,18 @@ pub const Error = error{
     OutOfMemory,
 };
 
+/// How a pattern is written. `.vim`: vim's magic syntax, translated
+/// (`\|`, `\+`, `\{n}` — what `/`, `:s` and the vim profile's find bar
+/// take). `.perl`: the Perl-style syntax a regex find in the standard
+/// profile takes as typed — `a|b`, `\d+`, `x{3}`, `(…)` — handed to the
+/// engine as is; `^` / `$` still anchor at each line.
+pub const Dialect = enum { vim, perl };
+
 pub const Options = struct {
-    /// Case-insensitive unless the pattern itself says `\C`. A `\c`
-    /// in the pattern wins the other way.
+    /// Case-insensitive unless the pattern itself says `\C` (vim). A
+    /// `\c` in the pattern wins the other way.
     ignore_case: bool = false,
+    dialect: Dialect = .vim,
 };
 
 pub const Range = struct { start: usize, end: usize };
@@ -81,10 +89,13 @@ pub const Regex = struct {
     pub fn compile(pattern: []const u8, opts: Options) Error!Regex {
         try ensureInit();
         var buf: [max_pattern]u8 = undefined;
-        const tr = vim.translate(pattern, &buf) catch |err| return switch (err) {
-            error.TooLong => error.TooLong,
-            error.Unsupported => error.Unsupported,
-            error.Invalid => error.InvalidPattern,
+        const tr: vim.Result = switch (opts.dialect) {
+            .vim => vim.translate(pattern, &buf) catch |err| return switch (err) {
+                error.TooLong => error.TooLong,
+                error.Unsupported => error.Unsupported,
+                error.Invalid => error.InvalidPattern,
+            },
+            .perl => .{ .pattern = pattern, .ignore_case = null },
         };
         const ignore_case = tr.ignore_case orelse opts.ignore_case;
         const inner = onig.Regex.init(tr.pattern, .{ .ignorecase = ignore_case }, onig.Encoding.utf8, onig.Syntax.default, null) catch |err| return switch (err) {
@@ -163,6 +174,54 @@ pub fn expandReplacement(gpa: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8
             else => |o| try putCased(gpa, out, &.{o}, &mode),
         }
     }
+}
+
+/// Expand a Perl-style replacement (the standard profile's find bar):
+/// `$&` / `$0` the whole match, `$1`–`$9` the groups, `$$` a dollar,
+/// `\n` a newline, `\t` a tab, `\\` a backslash; anything else as typed.
+pub fn expandReplacementPerl(gpa: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), rep: []const u8, haystack: []const u8, m: Match) std.mem.Allocator.Error!void {
+    var i: usize = 0;
+    while (i < rep.len) : (i += 1) {
+        const c = rep[i];
+        if (i + 1 < rep.len and c == '$') {
+            switch (rep[i + 1]) {
+                '&', '0'...'9' => |d| {
+                    const g: usize = if (d == '&') 0 else d - '0';
+                    if (m.group(g)) |r| try out.appendSlice(gpa, haystack[r.start..r.end]);
+                    i += 1;
+                    continue;
+                },
+                '$' => {
+                    try out.append(gpa, '$');
+                    i += 1;
+                    continue;
+                },
+                else => {},
+            }
+        }
+        if (i + 1 < rep.len and c == '\\') {
+            switch (rep[i + 1]) {
+                'n' => try out.append(gpa, '\n'),
+                't' => try out.append(gpa, '\t'),
+                '\\' => try out.append(gpa, '\\'),
+                else => {
+                    try out.append(gpa, c);
+                    continue;
+                },
+            }
+            i += 1;
+            continue;
+        }
+        try out.append(gpa, c);
+    }
+}
+
+/// The replacement expansion that goes with `dialect`.
+pub fn expandReplacementFor(dialect: Dialect, gpa: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), rep: []const u8, haystack: []const u8, m: Match) std.mem.Allocator.Error!void {
+    return switch (dialect) {
+        .vim => expandReplacement(gpa, out, rep, haystack, m),
+        .perl => expandReplacementPerl(gpa, out, rep, haystack, m),
+    };
 }
 
 fn putCased(gpa: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), s: []const u8, mode: anytype) std.mem.Allocator.Error!void {
@@ -384,4 +443,35 @@ test "regex: :s replacement expansion — &, \\0, groups, escapes, case ops" {
     out.clearRetainingCapacity();
     try expandReplacement(testing.allocator, &out, "\\9x", hay, m);
     try testing.expectEqualStrings("x", out.items);
+}
+
+test "regex: the Perl-style dialect takes alternation, \\d, counts and groups as typed; ^ and $ stay line anchors" {
+    const t = std.testing;
+    const text = "a ERROR x\nb WARN y\ntook 123ms\nok 45ms\n";
+    var re = try Regex.compile("ERROR|WARN", .{ .dialect = .perl });
+    defer re.deinit();
+    var out: std.ArrayListUnmanaged(Range) = .empty;
+    defer out.deinit(t.allocator);
+    try re.findAll(t.allocator, &out, text);
+    try t.expectEqual(@as(usize, 2), out.items.len);
+    var re2 = try Regex.compile("took \\d{3}ms", .{ .dialect = .perl });
+    defer re2.deinit();
+    try t.expect(re2.find(text, 0) != null);
+    var re3 = try Regex.compile("\\d+ms$", .{ .dialect = .perl });
+    defer re3.deinit();
+    out.clearRetainingCapacity();
+    try re3.findAll(t.allocator, &out, text);
+    try t.expectEqual(@as(usize, 2), out.items.len);
+    // The same text is literal to the vim dialect.
+    var rv = try Regex.compile("ERROR|WARN", .{});
+    defer rv.deinit();
+    try t.expect(rv.find(text, 0) == null);
+    // `$1` / `$&` in a Perl-style replacement.
+    var re4 = try Regex.compile("(\\w+) (\\d+)ms", .{ .dialect = .perl });
+    defer re4.deinit();
+    const m = re4.find(text, 0).?;
+    var rep: std.ArrayListUnmanaged(u8) = .empty;
+    defer rep.deinit(t.allocator);
+    try expandReplacementPerl(t.allocator, &rep, "$2 <$1> [$&] $$", text, m);
+    try t.expectEqualStrings("123 <took> [took 123ms] $", rep.items);
 }

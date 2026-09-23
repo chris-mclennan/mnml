@@ -138,6 +138,12 @@ pub fn openBar(app: *App, reverse: bool) CommandError!void {
     app.needs_render = true;
 }
 
+/// The syntax the find bar's regex takes: vim's under the vim profile,
+/// the Perl-style one a VS Code user types under the standard profile.
+pub fn dialectFor(app: *const App) regex.Dialect {
+    return if (app.input_style == .standard) .perl else .vim;
+}
+
 /// The query changed: recompute the pane's matches, keep the cursor.
 pub fn liveUpdate(app: *App) Allocator.Error!void {
     const fb = &(app.find_bar orelse return);
@@ -145,6 +151,7 @@ pub fn liveUpdate(app: *App) Allocator.Error!void {
     const f = tg.find();
     const q = fb.state.query.items;
     f.regex = fb.state.regex;
+    f.dialect = dialectFor(app);
     fb.landed = false;
     if (q.len == 0) {
         f.clear();
@@ -201,6 +208,7 @@ pub fn acceptFromBar(app: *App) Allocator.Error!void {
     const cursor = tg.cursor();
     const was_on: ?usize = if (fb.landed) (if (f.current) |c| (if (c < f.matches.items.len and cursor == f.matches.items[c].start) c else null) else null) else null;
     f.regex = fb.state.regex;
+    f.dialect = dialectFor(app);
     try f.setQuery(q, tg.text(), if (fb.state.match_case) true else app.search_case);
     const n = f.matches.items.len;
     if (n == 0) {
@@ -272,6 +280,7 @@ fn acceptAndClose(app: *App) Allocator.Error!void {
         offset = sp.offset;
     };
     f.regex = fb.state.regex;
+    f.dialect = dialectFor(app);
     try f.setQuery(pattern, tg.text(), if (fb.state.match_case) true else app.search_case);
     f.offset = offset;
     // `/` and `?` write vim's last search pattern, which `:s//new/` reads.
@@ -390,7 +399,7 @@ pub fn replaceAll(app: *App, replacement: []const u8) Allocator.Error!void {
     const arena = app.frame.allocator();
     // In regex mode the replacement may name groups (`\1`, `&`), so
     // each match is found again for its groups and expanded.
-    var re: ?regex.Regex = if (e.find.regex) regex.Regex.compile(e.find.query.items, .{ .ignore_case = !e.find.case_sensitive }) catch null else null;
+    var re: ?regex.Regex = if (e.find.regex) regex.Regex.compile(e.find.query.items, .{ .ignore_case = !e.find.case_sensitive, .dialect = e.find.dialect }) catch null else null;
     defer if (re) |*r| r.deinit();
     const text = e.buf.editor.bytes();
     const matches = e.find.matches.items;
@@ -406,7 +415,7 @@ pub fn replaceAll(app: *App, replacement: []const u8) Allocator.Error!void {
     for (matches, 0..) |m, mi| {
         try out.appendSlice(arena, text[copied..m.start]);
         if (re) |*r| if (r.find(text, m.start)) |full| {
-            try regex.expandReplacement(arena, &out, replacement, text, full);
+            try regex.expandReplacementFor(e.find.dialect, arena, &out, replacement, text, full);
         } else try out.appendSlice(arena, replacement) else try out.appendSlice(arena, replacement);
         copied = m.end;
         if (mi == 0) first_end = lo + out.items.len;
@@ -461,12 +470,13 @@ fn toggleRegex(app: *App) CommandError!void {
     const tg = try requireTarget(app);
     const f = tg.find();
     f.regex = !f.regex;
+    f.dialect = dialectFor(app);
     if (app.find_bar) |*fb| if (fb.pane == app.active.?) {
         fb.state.regex = f.regex;
         try liveUpdate(app);
     };
     if (f.isActive()) try f.recompute(tg.text());
-    app.toast("find: regex {s}", .{if (f.regex) "on (vim patterns)" else "off"});
+    app.toast("find: regex {s}", .{if (!f.regex) "off" else if (f.dialect == .vim) "on (vim patterns)" else "on (a|b, \\d+, x{3}, (…))"});
     app.needs_render = true;
 }
 
@@ -671,33 +681,40 @@ test "find: standard Enter steps and keeps the bar, Esc keeps the landing, Ctrl+
     try t.expectEqual(@as(usize, 2), e.buf.editor.currentLine());
 }
 
-test "find: ctrl+r turns the query into a vim pattern; replace expands groups; a bad pattern says so" {
+test "find: ctrl+r turns the query into a pattern — Perl-style in the standard profile; replace expands $1 groups; a bad pattern says so" {
     var app = try appWith("foo1 bar22 baz333\n");
     defer app.deinit();
     try command.run(&app, .{ .static = .@"find.find" });
-    for ("\\d\\+") |c| try app.handle(.{ .key = Key.char(c) });
+    for ("\\d+") |c| try app.handle(.{ .key = Key.char(c) });
     const e = app.activeEditor().?;
     try t.expectEqual(@as(usize, 0), e.find.matches.items.len);
     try app.handle(.{ .key = Key.ctrl('r') });
     try t.expect(e.find.regex);
+    try t.expectEqual(regex.Dialect.perl, e.find.dialect);
     try t.expectEqual(@as(usize, 3), e.find.matches.items.len);
     try app.handle(.{ .key = Key.named(.enter) });
     try t.expectEqualStrings("match 1/3", app.lastToast().?);
     // The chip is sticky: reopening the bar keeps regex on.
     try command.run(&app, .{ .static = .@"find.find" });
     try t.expect(app.find_bar.?.state.regex);
-    for ("\\(\\a\\+\\)\\(\\d\\+\\)") |c| try app.handle(.{ .key = Key.char(c) });
+    for ("([a-z]+)(\\d+)") |c| try app.handle(.{ .key = Key.char(c) });
     try app.handle(.{ .key = Key.named(.enter) });
     try command.run(&app, .{ .static = .@"find.replace" });
-    for ("\\2-\\1") |c| try app.handle(.{ .key = Key.char(c) });
+    for ("$2-$1") |c| try app.handle(.{ .key = Key.char(c) });
     try app.handle(.{ .key = Key.named(.enter) });
     try t.expectEqualStrings("1-foo 22-bar 333-baz\n", e.buf.editor.bytes());
     try command.run(&app, .{ .static = .@"find.find" });
-    for ("\\(x") |c| try app.handle(.{ .key = Key.char(c) });
+    for ("(x") |c| try app.handle(.{ .key = Key.char(c) });
     try app.handle(.{ .key = Key.named(.enter) });
-    try t.expectEqualStrings("invalid pattern: \"\\(x\"", app.lastToast().?);
+    try t.expectEqualStrings("invalid pattern: \"(x\"", app.lastToast().?);
     try command.run(&app, .{ .static = .@"find.toggle_regex" });
     try t.expect(!e.find.regex);
+    // The vim profile's bar takes vim's syntax: `\d\+`, `\|`.
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
+    try command.run(&app, .{ .static = .@"find.toggle_regex" });
+    try t.expectEqual(regex.Dialect.vim, e.find.dialect);
+    try e.find.setQuery("\\d\\+\\|foo", e.buf.editor.bytes(), null);
+    try t.expectEqual(@as(usize, 4), e.find.matches.items.len);
 }
 
 test "find: Esc restores the previous find state; replace prompts and splices every match" {
