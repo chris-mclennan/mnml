@@ -3545,6 +3545,7 @@ test {
     _ = @import("app/glyph_audit.zig");
     _ = @import("app/marks_store.zig");
     _ = @import("app/ex_verbs.zig");
+    _ = @import("app/ex_fname.zig");
     _ = @import("app/loclist.zig");
     _ = @import("app/update.zig");
     _ = @import("app/session.zig");

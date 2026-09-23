@@ -592,7 +592,7 @@ pub fn read(app: *App, range: ?Range, args_in: []const u8) CommandError!void {
         body = res.stdout;
         what = try std.mem.concat(arena, u8, &.{ "!", app.last_shell_cmd.? });
     } else {
-        const abs = try app.absPath(args);
+        const abs = try app.absPath(try @import("ex.zig").fileArg(app, ":r", args));
         body = Io.Dir.cwd().readFileAlloc(app.io, abs, arena, .limited(64 * 1024 * 1024)) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => return app.diag.fail(arena, ":r — E484: can't open file {s} ({s})", .{ args, @errorName(err) }),

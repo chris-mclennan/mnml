@@ -28,6 +28,7 @@ const input = @import("../input/mod.zig");
 const dispatch = @import("dispatch.zig");
 const Config = app_mod.Config;
 const ex_verbs = @import("ex_verbs.zig");
+const ex_fname = @import("ex_fname.zig");
 const cmd_app = @import("cmd_app.zig");
 const cmd_file = @import("cmd_file.zig");
 const loclist = @import("loclist.zig");
@@ -104,9 +105,9 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     // A bare `:s [flags]` repeats the last substitute.
     if (eqAny(verb, &.{ "s", "su", "substitute" })) return ex_verbs.ampersand(app, range, args, p.saw_percent);
 
-    if (eqAny(verb, &.{ "w", "write" })) return write(app, range, args, false);
+    if (eqAny(verb, &.{ "w", "write" })) return write(app, range, args, false, false);
     if (eqAny(verb, &.{ "wa", "wall" })) return saveAll(app);
-    if (eqAny(verb, &.{ "wq", "x", "xit", "exit" })) return write(app, range, args, true);
+    if (eqAny(verb, &.{ "wq", "x", "xit", "exit" })) return write(app, range, args, true, false);
     if (eqAny(verb, &.{ "wqa", "wqall", "xa", "xall" })) {
         try saveAll(app);
         app.quit = true;
@@ -147,11 +148,11 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     if (eqAny(verb, &.{ "up", "update" })) {
         const e = try editor(app, ":update");
         if (!e.buf.doc.dirty) return;
-        return write(app, null, "", false);
+        return write(app, null, "", false, false);
     }
     if (eqAny(verb, &.{ "sav", "saveas" })) {
         if (args.len == 0) return app.diag.fail(arena, ":saveas — file name required", .{});
-        return write(app, null, args, false);
+        return write(app, null, args, false, true);
     }
     if (eqAny(verb, &.{ "cq", "cquit" })) {
         // Quit with a failing exit code — a `git commit` or `crontab -e`
@@ -479,7 +480,7 @@ const Parser = struct {
 
 // ─── files ──────────────────────────────────────────────────────────────
 
-fn write(app: *App, range: ?Range, path_arg: []const u8, then_close: bool) CommandError!void {
+fn write(app: *App, range: ?Range, path_arg: []const u8, then_close: bool, rename: bool) CommandError!void {
     const arena = app.frame.allocator();
     const e = try editor(app, ":w");
     // `:w !cmd` / `:[range]w !cmd` pipe the text to `cmd` and show its
@@ -487,7 +488,21 @@ fn write(app: *App, range: ?Range, path_arg: []const u8, then_close: bool) Comma
     // called `!cmd`.
     if (path_arg.len > 0 and path_arg[0] == '!') return writeToCommand(app, e, range, path_arg[1..]);
     if (path_arg.len > 0) {
-        const abs = try app.absPath(path_arg);
+        const abs = try app.absPath(try fileArg(app, ":w", path_arg));
+        // `:w {file}` on a named buffer writes a copy and the buffer keeps
+        // its name (`:help :w_f`); `:saveas` and an unnamed buffer take
+        // the new name.
+        if (!rename) if (e.buf.doc.path) |cur| if (!std.mem.eql(u8, cur, abs)) {
+            const data = e.buf.copyForWrite() catch return error.OutOfMemory;
+            defer app.gpa.free(data);
+            std.Io.Dir.cwd().writeFile(app.io, .{ .sub_path = abs, .data = data }) catch |err| return app.diag.fail(arena, ":w — {s}: {s}", .{ app.relPath(abs), @errorName(err) });
+            app.toast("wrote {s}", .{app.relPath(abs)});
+            if (then_close) {
+                try app.forceClosePane(app.active.?);
+                if (app.panes.count() == 0) app.quit = true;
+            }
+            return;
+        };
         e.buf.setPath(abs) catch return error.OutOfMemory;
         e.syntax.setLanguage(abs, e.buf.editor.bytes());
         e.syntax.dirty = true;
@@ -565,8 +580,35 @@ fn edit(app: *App, arg: []const u8, bang: bool) CommandError!void {
         app.toast("reloaded {s}", .{app.relPath(path)});
         return;
     }
-    const abs = try app.absPath(arg);
+    const abs = try app.absPath(try fileArg(app, ":e", arg));
     _ = app.openPath(abs) catch |err| return app.diag.fail(arena, ":e {s} — {s}", .{ arg, @errorName(err) });
+}
+
+/// A file argument with `%` / `#` / `<cfile>` and their modifiers
+/// expanded (`ex_fname.zig`); the errors are vim's.
+pub fn fileArg(app: *App, label: []const u8, arg: []const u8) CommandError![]const u8 {
+    const arena = app.frame.allocator();
+    const e = app.activeEditor();
+    const cur: ?[]const u8 = if (e) |ed| (if (ed.buf.doc.path) |p| app.relPath(p) else null) else null;
+    const cfile: ?[]const u8 = if (e) |ed| ex_fname.nameAt(ed.buf.editor.bytes(), ed.buf.editor.cursor) else null;
+    return ex_fname.expand(arena, arg, .{ .current = cur, .alternate = alternateFile(app), .cfile = cfile, .workspace = app.workspace }) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.NoFileName => app.diag.fail(arena, "{s} — E499: empty file name for '%'", .{label}),
+        error.NoAlternate => app.diag.fail(arena, "{s} — E194: no alternate file name to substitute for '#'", .{label}),
+        error.NoCfile => app.diag.fail(arena, "{s} — E446: no file name under cursor", .{label}),
+    };
+}
+
+/// The alternate file (`:help alternate-file`): the most recently used
+/// editor, other than the active one, that has a file — what `:b#` and
+/// `Ctrl-^` go back to.
+fn alternateFile(app: *App) ?[]const u8 {
+    for (app.pane_mru.items) |id| {
+        if (app.active == id) continue;
+        const ed = app.panes.editor(id) orelse continue;
+        if (ed.buf.doc.path) |p| return app.relPath(p);
+    }
+    return null;
 }
 
 /// `:A` — the test ↔ source counterpart of the active file.
@@ -1729,8 +1771,10 @@ test "ex: write, abbreviations, set, registers, unknown verbs" {
     const back = try f.tmp.dir.readFileAlloc(testing.io, "doc.txt", testing.allocator, .limited(64));
     defer testing.allocator.free(back);
     try testing.expectEqualStrings("changed\n", back); // `:w` adds the terminating newline
+    // `:w {file}` on a named buffer writes a copy and keeps the name
+    // (`:help :w_f`; Neovim 0.12.5 on doc.txt: `%` is still doc.txt).
     try f.ex("w copy.txt");
-    try testing.expectEqualStrings("copy.txt", f.app.panes.get(f.app.active.?).?.title());
+    try testing.expectEqualStrings("doc.txt", f.app.panes.get(f.app.active.?).?.title());
     _ = try f.tmp.dir.statFile(testing.io, "copy.txt", .{});
 }
 

@@ -261,6 +261,18 @@ pub const Buffer = struct {
         return if (self.save_in_place) " — written in place (hard-linked or special file); the file on disk may be incomplete" else " — the file on disk is untouched";
     }
 
+    /// The bytes a `:w {file}` copy writes: the text with the file's line
+    /// breaks and, under `ensure_trailing_newline`, a final newline —
+    /// without touching the buffer or its saved state. gpa-owned.
+    pub fn copyForWrite(self: *const Buffer) Allocator.Error![]u8 {
+        const text = self.editor.bytes();
+        const add_nl = self.doc.ensure_trailing_newline and text.len > 0 and text[text.len - 1] != '\n';
+        if (!add_nl) return withEol(self.gpa, text, self.doc.eol);
+        const joined = try std.mem.concat(self.gpa, u8, &.{ text, "\n" });
+        defer self.gpa.free(joined);
+        return withEol(self.gpa, joined, self.doc.eol);
+    }
+
     /// Strip the spaces and tabs before every line end, as one undoable
     /// edit; the cursor keeps its place (or moves left with the text
     /// removed before it).

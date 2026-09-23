@@ -1,0 +1,30 @@
+# In an ex file argument `%` is the current file, `#` the alternate one
+# and `:h` / `:t` / `:r` / `:e` modify them (`:help cmdline-special`);
+# `:w {file}` on a named buffer writes a copy and keeps the buffer's
+# name (`:help :w_f`). Neovim 0.12.5 on sub/a.txt:
+#   :w %.bak        -> writes sub/a.txt.bak, the buffer stays sub/a.txt
+#   :e %:h/b.txt    -> opens sub/b.txt
+#   :e#             -> back to the alternate file
+write sub/a.txt "alpha\n"
+write sub/b.txt "bravo\n"
+open sub/a.txt
+command editor.use_vim
+key :
+type w %.bak
+key enter
+shell test -f sub/a.txt.bak
+shell test ! -e '%.bak'
+expect pane "a.txt"
+key :
+type e %:h/b.txt
+key enter
+expect pane "b.txt"
+key :
+type e#
+key enter
+expect pane "a.txt"
+shell test ! -e '#'
+key :
+type w %:r.copy
+key enter
+shell test -f sub/a.copy
