@@ -165,7 +165,7 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     if (eqAny(verb, &.{ "ls", "buffers", "files" })) return command.run(app, .{ .static = .@"picker.buffers" });
     if (eqAny(verb, &.{"A"})) return alternate(app);
     if (eqAny(verb, &.{ "sor", "sort" })) return sort(app, range, args, bang);
-    if (eqAny(verb, &.{ "ret", "retab" })) return retab(app);
+    if (eqAny(verb, &.{ "ret", "retab" })) return retab(app, range, args, bang);
     if (eqAny(verb, &.{ "d", "de", "del", "delete" })) return deleteLines(app, range, args);
     if (eqAny(verb, &.{ "y", "ya", "yan", "yank" })) return yankLines(app, range, args);
     if (eqAny(verb, &.{ "ab", "abb", "abbreviate", "iab", "iabbrev" })) return abbreviate(app, args);
@@ -888,42 +888,93 @@ fn sortNumber(l: anytype, kind: SortKind) void {
     l.has_num = true;
 }
 
-/// `:retab` — every TAB becomes spaces to the next tab stop.
-fn retab(app: *App) CommandError!void {
+/// `:[range]retab[!] [N]` (`:help :retab`): every run of blanks that
+/// holds a TAB is rewritten for tab stop `N` (default: the current
+/// one) — as spaces under `expandtab`, else as tabs and the spaces left
+/// over. `!` rewrites runs of spaces too. Columns are display cells
+/// (`é` is one, `中` two), measured at the old tab stop; `N` becomes the
+/// buffer's tab stop.
+fn retab(app: *App, range: ?Range, args: []const u8, bang: bool) CommandError!void {
     const arena = app.frame.allocator();
     const e = try editor(app, ":retab");
     const ed = e.buf.editor;
-    const tw: usize = @max(ed.doc.tab_width, 1);
+    const doc = ed.doc;
+    const trimmed = std.mem.trim(u8, args, " \t");
+    const old_ts: usize = @max(doc.tab_width, 1);
+    const new_ts: usize = if (trimmed.len == 0) old_ts else std.fmt.parseInt(u8, trimmed, 10) catch return app.diag.fail(arena, ":retab — E475: invalid argument: {s}", .{trimmed});
+    if (new_ts == 0) return app.diag.fail(arena, ":retab — E487: argument must be positive", .{});
+    const expand = !doc.use_tabs;
+    const r = range orelse Range{ .first = 0, .last = ed.lineCount() - 1 };
+    const first = @min(r.first, ed.lineCount() - 1);
+    const last = @min(r.last, ed.lineCount() - 1);
+    const from = ed.lineStart(first);
+    const to = ed.lineEnd(last);
     const text = ed.bytes();
     var out: std.ArrayListUnmanaged(u8) = .empty;
-    var col: usize = 0;
-    var tabs: usize = 0;
-    for (text) |c| {
-        switch (c) {
-            '\t' => {
-                const n = tw - (col % tw);
-                try out.appendNTimes(arena, ' ', n);
-                col += n;
-                tabs += 1;
-            },
-            '\n' => {
-                try out.append(arena, c);
-                col = 0;
-            },
-            else => {
-                try out.append(arena, c);
-                col += 1;
-            },
+    var runs: usize = 0;
+    var row = first;
+    while (row <= last) : (row += 1) {
+        if (row > first) try out.append(arena, '\n');
+        const ls = ed.lineStart(row);
+        const le = ed.lineEnd(row);
+        var b = ls;
+        var vcol: usize = 0;
+        while (b <= le) {
+            if (b < le and (text[b] == ' ' or text[b] == '\t')) {
+                // A run of blanks: measure it at the old tab stop.
+                const run_s = b;
+                const start_vcol = vcol;
+                var got_tab = false;
+                var spaces: usize = 0;
+                while (b < le and (text[b] == ' ' or text[b] == '\t')) : (b += 1) {
+                    if (text[b] == '\t') {
+                        got_tab = true;
+                        vcol += old_ts - vcol % old_ts;
+                    } else {
+                        spaces += 1;
+                        vcol += 1;
+                    }
+                }
+                const len = vcol - start_vcol;
+                if (got_tab or (bang and spaces > 1)) {
+                    var tabs: usize = 0;
+                    var sp: usize = len;
+                    if (!expand) {
+                        // Neovim's `tabstop_fromto`: the first tab reaches
+                        // the next stop, the rest are whole stops.
+                        const init = new_ts - start_vcol % new_ts;
+                        if (sp >= init) {
+                            sp -= init;
+                            tabs = 1 + sp / new_ts;
+                            sp %= new_ts;
+                        }
+                    }
+                    if (expand or got_tab or tabs + sp < len) {
+                        try out.appendNTimes(arena, '\t', tabs);
+                        try out.appendNTimes(arena, ' ', sp);
+                        runs += 1;
+                        continue;
+                    }
+                }
+                try out.appendSlice(arena, text[run_s..b]);
+                continue;
+            }
+            if (b == le) break;
+            const nb = ed.nextBoundary(b);
+            vcol += doc.cellsAt(b, vcol);
+            try out.appendSlice(arena, text[b..nb]);
+            b = nb;
         }
     }
-    if (tabs == 0) {
-        app.toast(":retab — no tabs", .{});
+    doc.tab_width = new_ts;
+    if (std.mem.eql(u8, out.items, text[from..to])) {
+        app.toast(":retab — nothing to change", .{});
         return;
     }
     const cursor = ed.cursor;
-    try app.splice(e, 0, text.len, out.items);
-    ed.setCursor(cursor);
-    app.toast(":retab — {d} tab(s)", .{tabs});
+    try app.splice(e, from, to, out.items);
+    ed.setCursor(@min(cursor, ed.len()));
+    app.toast(":retab{s} — {d} run(s){s}", .{ if (bang) "!" else "", runs, if (expand) " to spaces" else "" });
 }
 
 /// The tail of `:[range]d[elete] [x] [count]` and
@@ -1555,6 +1606,27 @@ test "ex: sort, sort u, retab, ranged delete with marks and a bare line jump" {
     try e.buf.editor.setText("\tfoo\nx\ty");
     try f.ex("retab");
     try testing.expectEqualStrings("    foo\nx   y", f.text());
+    // Neovim 0.12.5: `:set ts=8 noet` then `:retab!` makes the eight
+    // spaces a tab and leaves the tab; `:set ts=4 et`, `é\tx` → three
+    // spaces (é is one cell); `:retab 8` re-stops a tab-indented line.
+    try e.buf.editor.setText("\tfoo\n        bar");
+    e.buf.setIndent(8, 8, true);
+    try f.ex("retab!");
+    try testing.expectEqualStrings("\tfoo\n\tbar", f.text());
+    e.buf.setIndent(4, 4, false);
+    try e.buf.editor.setText("é\tx\n中\ty");
+    try f.ex("retab");
+    try testing.expectEqualStrings("é   x\n中  y", f.text());
+    try e.buf.editor.setText("\t\tx\n    y");
+    e.buf.setIndent(4, 4, true);
+    try f.ex("retab 8");
+    try testing.expectEqualStrings("\tx\n    y", f.text());
+    try testing.expectEqual(@as(usize, 8), e.buf.doc.tab_width);
+    // A range: only line 2.
+    e.buf.setIndent(4, 4, false);
+    try e.buf.editor.setText("\ta\n\tb");
+    try f.ex("2retab");
+    try testing.expectEqualStrings("\ta\n    b", f.text());
     try f.ex("2");
     try testing.expectEqual(@as(usize, 1), e.buf.editor.currentLine());
     try f.ex("$");
