@@ -291,6 +291,9 @@ test "apply: outcome flags, text edit inference, changelist, goal col" {
     try std.testing.expectEqual(@as(usize, 1), out.text_edits.len);
     try std.testing.expectEqual(edit_op.TextEdit{ .start_byte = 1, .old_end_byte = 1, .new_end_byte = 2 }, out.text_edits[0]);
     try std.testing.expectEqual(@as(usize, 1), ed.doc.change_list.items.len);
+    // A typed character's change is AT it (col 1), not past it — `g;`
+    // lands on the `X` (Neovim: `AX<Esc>g;`).
+    try std.testing.expectEqual(@as(usize, 1), ed.doc.change_list.items[0].col);
     // Replace-range reports its explicit extent.
     out = try ed.apply(.{ .replace_range = .{ .start = 0, .end = 2, .text = "Q" } }, 10, &clip, arena);
     try std.testing.expectEqual(edit_op.TextEdit{ .start_byte = 0, .old_end_byte = 2, .new_end_byte = 1 }, out.text_edits[0]);

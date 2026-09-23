@@ -722,7 +722,9 @@ fn goToLastInsert(app: *App) CommandError!void {
         app.toast("no recent edit", .{});
         return;
     }
-    const pos = list[list.len - 1];
+    // Where typing stopped (`'^`); a buffer changed only by other means
+    // falls back to its last change.
+    const pos = e.buf.doc.last_insert orelse list[list.len - 1];
     const ed = e.buf.editor;
     ed.placeCursor(@min(pos.row, ed.lineCount() - 1), pos.col);
     ed.anchor = null;
@@ -1095,13 +1097,14 @@ test "change list: g; walks back through edits, g, forward, with the toasts the 
     _ = try app.applyOps(e, &.{.{ .insert_char = 'Y' }});
     e.buf.editor.placeCursor(3, 0);
     try command.run(&app, .{ .static = .@"editor.jump_prev_edit" });
-    try t.expectEqualStrings("g; → 6:2", app.lastToast().?);
+    // Each change is AT the typed character (Neovim's `g;`), col 1.
+    try t.expectEqualStrings("g; → 6:1", app.lastToast().?);
     try command.run(&app, .{ .static = .@"editor.jump_prev_edit" });
-    try t.expectEqualStrings("g; → 1:2", app.lastToast().?);
+    try t.expectEqualStrings("g; → 1:1", app.lastToast().?);
     try command.run(&app, .{ .static = .@"editor.jump_prev_edit" });
     try t.expectEqualStrings("no earlier edit", app.lastToast().?);
     try command.run(&app, .{ .static = .@"editor.jump_next_edit" });
-    try t.expectEqualStrings("g, → 6:2", app.lastToast().?);
+    try t.expectEqualStrings("g, → 6:1", app.lastToast().?);
     try command.run(&app, .{ .static = .@"editor.jump_next_edit" });
     try t.expectEqualStrings("at newest edit", app.lastToast().?);
 }

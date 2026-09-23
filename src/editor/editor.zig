@@ -461,8 +461,13 @@ pub const Editor = struct {
         }
     }
 
-    fn recordChange(self: *Editor) Allocator.Error!void {
-        const pos = self.rowCol();
+    /// `typed`: a typed character just went in before the cursor — the
+    /// change is AT that character, where `g;` lands (Neovim: `AX<Esc>`
+    /// then `g;` is on the `X`, not past it).
+    fn recordChange(self: *Editor, typed: bool) Allocator.Error!void {
+        const at = if (typed and self.cursor > 0) self.prevBoundary(self.cursor) else self.cursor;
+        const pos = self.rowColAt(at);
+        if (typed) self.doc.last_insert = self.rowCol();
         const list = &self.doc.change_list;
         if (list.items.len > 0) {
             const last = &list.items[list.items.len - 1];
@@ -503,7 +508,7 @@ pub const Editor = struct {
             if (self.block_anchor) |a| self.block_anchor = self.snapBoundary(a);
         }
         if (self.extra_cursors.items.len != 0) self.normalizeExtras();
-        if (out.buffer_changed and !is_undo_redo) try self.recordChange();
+        if (out.buffer_changed and !is_undo_redo) try self.recordChange(op.isInsertChar() and self.doc.text.items.len > before_len);
         if (!keep_goal) self.goal_col = null;
         // `$` sticks to the end: the `j` / `k` after it land on each
         // line's last character (`:help $`, curswant = MAXCOL).

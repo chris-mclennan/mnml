@@ -171,6 +171,9 @@ pub const Document = struct {
     comment_token_close: []const u8 = "",
     /// `:changes` — where each mutation left the cursor, newest last.
     change_list: std.ArrayList(Pos) = .empty,
+    /// Where typing last stopped — just past the last typed character,
+    /// vim's `'^` — which `gi` returns to (`:help gi`).
+    last_insert: ?Pos = null,
     history: undo.History,
     /// The view whose coalescing run of typed chars is open; another
     /// view's first char starts its own undo group.
