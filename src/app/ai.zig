@@ -577,12 +577,19 @@ fn suggestWorker(
             // `claude -p` that picks up the CLI's own default runs the
             // big model for a one-line completion, which is where the
             // multi-second waits came from.
-            const argv = cli.claudeArgv(arena.allocator(), prompt, null, model) catch return;
-            const out = cli.runWithin(gpa, io, argv, cwd, env, timeout_ms) catch |err| switch (err) {
+            // The prompt on stdin, as every job's is (`jobWorker`). A
+            // keystroke cancels this worker's group, which unwinds
+            // `runJob` through its kill.
+            const argv = cli.claudeStdinArgv(arena.allocator(), null, model) catch return;
+            const out = cli.runJob(gpa, io, argv, cwd, env, .{ .timeout_ms = timeout_ms, .stdin = prompt }) catch |err| switch (err) {
                 error.Canceled => return error.Canceled,
                 error.TimedOut => return postOutcome(events, io, gpa, pane, generation, .timed_out, ""),
-                else => return postOutcome(events, io, gpa, pane, generation, .failed, "`claude` could not be run — is it installed and signed in?"),
+                else => |e| return postOutcome(events, io, gpa, pane, generation, .failed, @errorName(e)),
             };
+            if (out.spawn_failed) {
+                defer gpa.free(out.text);
+                return postOutcome(events, io, gpa, pane, generation, .failed, spawnFailure(arena.allocator(), cli.claude_binary, out.text));
+            }
             if (!out.ok) {
                 defer gpa.free(out.text);
                 const msg = std.fmt.allocPrint(arena.allocator(), "claude -p: {s}", .{out.text}) catch return;
@@ -850,23 +857,32 @@ fn jobWorker(events: *event.EventQueue, io: Io, gpa: Allocator, j: *Job, mode: J
         .claude_cli, .codex_cli => {
             var arena = std.heap.ArenaAllocator.init(gpa);
             defer arena.deinit();
-            const argv = (if (mode == .claude_cli) cli.claudeArgv(arena.allocator(), prompt, &session_id, extraModel(model)) else cli.codexArgv(arena.allocator(), prompt)) catch return;
-            const out = cli.runJob(gpa, io, argv, cwd, env, .{ .timeout_ms = timeout_ms, .cancel = &j.cancel }) catch |err| switch (err) {
+            // The prompt on stdin, never in argv: argv has an OS cap a
+            // whole file can pass, and `ps` shows it to every local user.
+            const argv = (if (mode == .claude_cli) cli.claudeStdinArgv(arena.allocator(), &session_id, extraModel(model)) else cli.codexStdinArgv(arena.allocator())) catch return;
+            const binary = if (mode == .claude_cli) cli.claude_binary else cli.codex_binary;
+            const out = cli.runJob(gpa, io, argv, cwd, env, .{ .timeout_ms = timeout_ms, .cancel = &j.cancel, .stdin = prompt }) catch |err| switch (err) {
                 error.Canceled => return error.Canceled,
                 error.Aborted => {
                     postFailed(events, io, gpa, j.id, "cancelled");
                     return;
                 },
                 error.TimedOut => {
-                    const why = std.fmt.allocPrint(gpa, "`{s}` gave no answer within {d} s and was stopped ([ai] cli_timeout_ms)", .{ if (mode == .claude_cli) cli.claude_binary else cli.codex_binary, std.math.divCeil(u32, timeout_ms, 1000) catch 0 }) catch return;
+                    const why = std.fmt.allocPrint(gpa, "`{s}` gave no answer within {d} s and was stopped ([ai] cli_timeout_ms)", .{ binary, std.math.divCeil(u32, timeout_ms, 1000) catch 0 }) catch return;
                     events.post(io, .{ .ai = .{ .job = j.id, .msg = .{ .timed_out = why } } });
                     return;
                 },
-                else => {
-                    postFailed(events, io, gpa, j.id, if (mode == .claude_cli) "`claude` could not be run — is it installed and signed in?" else "`codex` could not be run — is it installed?");
+                else => |e| {
+                    const why = std.fmt.allocPrint(gpa, "`{s}` failed: {s}", .{ binary, @errorName(e) }) catch return;
+                    events.post(io, .{ .ai = .{ .job = j.id, .msg = .{ .failed = why } } });
                     return;
                 },
             };
+            if (out.spawn_failed) {
+                defer gpa.free(out.text);
+                postFailed(events, io, gpa, j.id, spawnFailure(arena.allocator(), binary, out.text));
+                return;
+            }
             if (!out.ok) {
                 events.post(io, .{ .ai = .{ .job = j.id, .msg = .{ .failed = out.text } } });
                 return;
@@ -876,6 +892,16 @@ fn jobWorker(events: *event.EventQueue, io: Io, gpa: Allocator, j: *Job, mode: J
         },
         .claude_api => try agentLoop(events, io, gpa, j, prompt, model, key, cwd, system, use_tools, write_tools, max_tokens),
     }
+}
+
+/// Why a CLI could not be started, in the OS's words. Only a binary that
+/// is not there is worth a guess at the cause; anything else is said as
+/// it is, never folded into "is it installed?" — a CLI that is installed
+/// and signed in must not send its user off to reinstall it.
+pub fn spawnFailure(arena: Allocator, binary: []const u8, err_name: []const u8) []const u8 {
+    if (std.mem.eql(u8, err_name, "FileNotFound"))
+        return std.fmt.allocPrint(arena, "`{s}` could not be started (FileNotFound) — is it installed and on PATH?", .{binary}) catch "the CLI could not be started";
+    return std.fmt.allocPrint(arena, "`{s}` could not be started: {s}", .{ binary, err_name }) catch "the CLI could not be started";
 }
 
 /// `[ai] model` is for the API; the CLI takes it only when it looks

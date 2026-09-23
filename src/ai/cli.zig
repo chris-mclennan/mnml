@@ -21,6 +21,25 @@ pub fn claudeArgv(arena: Allocator, prompt: []const u8, session_id: ?[]const u8,
     return argv.items;
 }
 
+/// `claude -p --output-format text [--session-id <id>] [--model <m>]`
+/// with NO prompt argument: `claude -p` reads it from stdin. What a job
+/// runs (`runJob` with `JobOpts.stdin`). A prompt in argv is capped by
+/// the OS — 1 MiB for the whole argv on macOS, 128 KiB for one argument
+/// on Linux — so a big file failed to spawn at all; and argv is what
+/// `ps` shows every local user for the life of the call.
+pub fn claudeStdinArgv(arena: Allocator, session_id: ?[]const u8, model: ?[]const u8) Allocator.Error![]const []const u8 {
+    var argv: std.ArrayList([]const u8) = .empty;
+    try argv.appendSlice(arena, &.{ claude_binary, "-p", "--output-format", "text" });
+    if (session_id) |sid| try argv.appendSlice(arena, &.{ "--session-id", sid });
+    if (model) |m| try argv.appendSlice(arena, &.{ "--model", m });
+    return argv.items;
+}
+
+/// `codex exec -`: the prompt on stdin, as `claudeStdinArgv`.
+pub fn codexStdinArgv(arena: Allocator) Allocator.Error![]const []const u8 {
+    return arena.dupe([]const u8, &.{ codex_binary, "exec", "-" });
+}
+
 /// `claude --resume <id>` — the interactive continuation of a one-shot.
 pub fn claudeResumeArgv(arena: Allocator, session_id: []const u8) Allocator.Error![]const []const u8 {
     return arena.dupe([]const u8, &.{ claude_binary, "--resume", session_id });
@@ -137,6 +156,10 @@ pub const Outcome = struct {
     ok: bool,
     /// stdout on success, the trimmed stderr (or a fallback) on failure. Owned.
     text: []u8,
+    /// `runJob`: the process could not be started at all; `text` is the
+    /// OS's reason as an error name (`FileNotFound`, `AccessDenied`…),
+    /// said as it is rather than guessed at.
+    spawn_failed: bool = false,
 };
 
 /// Run `argv` in `cwd` and collect what it printed. `error.Failed`
@@ -241,6 +264,9 @@ pub const JobOpts = struct {
     /// How often the flag and the clock are looked at while the child
     /// is quiet.
     poll_ms: u32 = 100,
+    /// Written to the child's stdin, which is then closed — the prompt.
+    /// Null: stdin is /dev/null.
+    stdin: ?[]const u8 = null,
 };
 
 pub const JobError = error{ OutOfMemory, Canceled, Failed, TimedOut, Aborted };
@@ -272,16 +298,36 @@ pub fn runJob(
         .argv = resolved,
         .cwd = .{ .path = cwd },
         .environ_map = env,
-        .stdin = .ignore,
+        .stdin = if (opts.stdin != null) .pipe else .ignore,
         .stdout = .pipe,
         .stderr = .pipe,
     }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.Canceled => return error.Canceled,
-        else => return error.Failed,
+        else => return .{ .ok = false, .text = try gpa.dupe(u8, @errorName(err)), .spawn_failed = true },
     };
-    // Kills and reaps on every early return; a no-op after `wait`.
-    defer child.kill(io);
+    // The prompt goes in on a task of its own: a child that is slow to
+    // read (or never reads) must not park this loop, which is the one
+    // that watches the cancel flag. The file is the feeder's — taken off
+    // the child so its kill does not close it under the write.
+    var feeder: ?Io.Future(void) = null;
+    if (opts.stdin) |text| {
+        const in = child.stdin.?;
+        child.stdin = null;
+        feeder = io.concurrent(feed, .{ io, in, text }) catch blk: {
+            // No second task to be had: write it here. A child that
+            // reads its prompt first (both CLIs do) takes it all.
+            feed(io, in, text);
+            break :blk null;
+        };
+    }
+    // Kills and reaps on every early return (a no-op after `wait`), and
+    // only then collects the feeder: the kill is what unblocks a write
+    // into a pipe nobody reads.
+    defer {
+        child.kill(io);
+        if (feeder) |*f| f.await(io);
+    }
 
     var multi_reader_buffer: Io.File.MultiReader.Buffer(2) = undefined;
     var multi_reader: Io.File.MultiReader = undefined;
@@ -313,6 +359,14 @@ pub fn runJob(
     const out_text = std.mem.trim(u8, stdout, " \t\r\n");
     const msg = if (err_text.len > 0) err_text else if (out_text.len > 0) out_text else "the command failed";
     return .{ .ok = false, .text = try gpa.dupe(u8, msg[0..@min(msg.len, 400)]) };
+}
+
+/// Write `text` to a child's stdin and close it. A child that exits (or
+/// is killed) before reading it all ends the write with a broken pipe,
+/// which is not this function's to report.
+fn feed(io: Io, file: Io.File, text: []const u8) void {
+    file.writeStreamingAll(io, text) catch {};
+    file.close(io);
 }
 
 /// A UUID v4 for `--session-id`.
@@ -528,4 +582,37 @@ test "runJob: past the budget the child is killed and TimedOut comes back; a qui
     defer t.allocator.free(bad.text);
     try t.expect(!bad.ok);
     try t.expectEqualStrings("boom", bad.text);
+}
+
+test "runJob: the prompt goes in on stdin, however big — nothing of it in argv" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    // 2 MiB: past macOS's whole-argv limit and Linux's per-argument one.
+    const big = try t.allocator.alloc(u8, 2 * 1024 * 1024);
+    defer t.allocator.free(big);
+    @memset(big, 'x');
+    big[big.len - 1] = '!';
+    const out = try runJob(t.allocator, t.io, &.{ "/bin/sh", "-c", "wc -c | tr -d ' '; echo \"argc=$#\"" }, "/tmp", null, .{ .stdin = big });
+    defer t.allocator.free(out.text);
+    try t.expect(out.ok);
+    try t.expectEqualStrings("2097152\nargc=0\n", out.text);
+    // A child that never reads its stdin still ends on the budget: the
+    // feeder is unblocked by the kill, not left behind.
+    try t.expectError(error.TimedOut, runJob(t.allocator, t.io, &.{ "/bin/sh", "-c", "exec sleep 30" }, "/tmp", null, .{ .stdin = big, .timeout_ms = 300 }));
+}
+
+test "runJob: a binary that cannot be started says why, in the OS's words" {
+    const out = try runJob(t.allocator, t.io, &.{"/definitely/not/a/binary"}, "/tmp", null, .{ .stdin = "hi" });
+    defer t.allocator.free(out.text);
+    try t.expect(!out.ok);
+    try t.expect(out.spawn_failed);
+    try t.expectEqualStrings("FileNotFound", out.text);
+}
+
+test "the stdin argv builders carry no prompt" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try t.expectEqualSlices([]const u8, &.{ "claude", "-p", "--output-format", "text", "--session-id", "s", "--model", "m" }, try claudeStdinArgv(a, "s", "m"));
+    try t.expectEqualSlices([]const u8, &.{ "claude", "-p", "--output-format", "text" }, try claudeStdinArgv(a, null, null));
+    try t.expectEqualSlices([]const u8, &.{ "codex", "exec", "-" }, try codexStdinArgv(a));
 }

@@ -1,0 +1,31 @@
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# ai.explain on a 1.6 MB file. The prompt used to ride in argv to
+# `claude -p`: exec failed with E2BIG (macOS caps the whole argv at
+# 1 MiB, Linux one argument at 128 KiB) and the pane blamed the install.
+# It goes in on stdin now, whatever its size — the fake `claude` counts
+# what it was sent there and how many arguments it got.
+# A CLI that cannot be started is then named with the OS's own reason,
+# never a guess that sends the user off to reinstall it.
+write bin/claude #!/bin/sh\nn=$(wc -c | tr -d ' ')\nprintf 'GOT %s BYTES ON STDIN' "$n"\nfor a in "$@"; do case "$a" in *padding*) printf ' PROMPT-IN-ARGV';; esac; done
+shell chmod +x bin/claude
+shell /usr/bin/perl -e 'print "const v$_ = $_; // padding padding padding padding\n" for 0..29999' > big.zig
+open big.zig
+command ai.explain
+wait 2500
+expect screen contains "GOT 1687"
+expect screen contains "BYTES ON STDIN"
+expect screen lacks "PROMPT-IN-ARGV"
+expect screen lacks "could not be"
+key q
+
+# A `claude` that is there but cannot be executed: the reason as the OS
+# gives it.
+shell chmod -x bin/claude
+write small.zig "const x = 0;\n"
+open small.zig
+command ai.explain
+wait 1200
+# (The pane wraps the line; the two halves are asserted apart.)
+expect screen contains "`claude` could not be started:"
+expect screen contains "AccessDenied"
+expect screen lacks "is it installed"
