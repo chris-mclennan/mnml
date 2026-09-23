@@ -58,6 +58,18 @@ pub const Sink = enum {
     /// `script.install` puts on screen before the first run
     /// (`app/scripts.zig`).
     script_install,
+    /// `scripts.dev_roots` / `scripts.private_sources` — folders whose
+    /// script directories are adopted AND loaded at startup: every
+    /// `init.lua` under them runs, with `task.run` in reach. A config
+    /// key, so a cloned repo could otherwise name its own `tools/` and
+    /// have its Lua run on open without asking.
+    script_source,
+    /// `scripts.marketplace_local` — the folder the SCRIPTS Marketplace
+    /// tab lists instead of the shipped set, badged `official`. Nothing
+    /// runs until an install, but the badge is the claim a reader takes
+    /// on trust, so a workspace must not be able to put it on its own
+    /// scripts.
+    script_marketplace,
 
     /// Human label for the trust dialog's bullet list.
     pub fn label(s: Sink) []const u8 {
@@ -76,6 +88,8 @@ pub const Sink = enum {
             .init_lua => "script",
             .workspace_manifests => "integration",
             .script_install => "script",
+            .script_source => "script folder",
+            .script_marketplace => "script marketplace",
         };
     }
 
@@ -95,6 +109,8 @@ pub const Sink = enum {
             .init_lua => "immediately, on open",
             .workspace_manifests => "when you run one of its commands",
             .script_install => "every time mnml starts",
+            .script_source => "every time mnml starts",
+            .script_marketplace => "when you install from the Marketplace tab, badged official",
         };
     }
 };
@@ -120,6 +136,9 @@ pub const exec_bearing = [_]Rule{
     .{ .path = ".mnml/init.lua (the file beside the config)", .sink = .init_lua },
     .{ .path = ".mnml/integrations/*.zon (the manifests beside the config)", .sink = .workspace_manifests },
     .{ .path = "<data root>/scripts/<name>/ (an installed script's directory)", .sink = .script_install },
+    .{ .path = "scripts.dev_roots", .sink = .script_source },
+    .{ .path = "scripts.private_sources", .sink = .script_source },
+    .{ .path = "scripts.marketplace_local", .sink = .script_marketplace },
 };
 
 /// What the loader knows about the workspace beyond its config patch:
@@ -268,6 +287,25 @@ fn stripSink(comptime sink: Sink, arena: Allocator, p: *Patch(Config)) Allocator
         // Nothing in the patch: a script is installed by hand, and the
         // dialog that installs it is the gate.
         .script_install => return 0,
+        .script_source => {
+            const s = &(p.scripts orelse return 0);
+            var n: usize = 0;
+            if (s.dev_roots) |roots| {
+                n += roots.len;
+                s.dev_roots = null;
+            }
+            if (s.private_sources) |roots| {
+                n += roots.len;
+                s.private_sources = null;
+            }
+            return n;
+        },
+        .script_marketplace => {
+            const s = &(p.scripts orelse return 0);
+            const m = s.marketplace_local orelse return 0;
+            s.marketplace_local = null;
+            return if (m.len != 0) 1 else 0;
+        },
     }
 }
 
@@ -362,6 +400,26 @@ fn collect(comptime sink: Sink, arena: Allocator, p: Patch(Config), facts: Facts
         // installed by hand, and `script.install`'s own dialog is where
         // its claims are shown (`scriptClaims`).
         .script_install => {},
+        // One claim per folder: what runs is every script's `init.lua`
+        // under it, so that is the command the dialog spells.
+        .script_source => {
+            const s = p.scripts orelse return;
+            inline for (.{ "dev_roots", "private_sources" }) |field| {
+                for (@field(s, field) orelse &.{}) |root| {
+                    if (root.len == 0) continue;
+                    try out.append(arena, .{
+                        .sink = sink,
+                        .key = "scripts." ++ field,
+                        .command = try std.fmt.allocPrint(arena, "{s}/*/init.lua", .{std.mem.trimEnd(u8, root, "/")}),
+                    });
+                }
+            }
+        },
+        .script_marketplace => {
+            const s = p.scripts orelse return;
+            const m = s.marketplace_local orelse return;
+            if (m.len != 0) try out.append(arena, .{ .sink = sink, .key = "scripts.marketplace_local", .command = m });
+        },
         .init_lua => {
             if (facts.init_lua) try out.append(arena, .{ .sink = sink, .key = "script.init", .command = ".mnml/init.lua" });
         },
@@ -736,4 +794,182 @@ test "fingerprint is stable, change-sensitive, and blind to ordinary edits" {
     try t.expectEqual(@as(usize, 0), empty.len);
     try t.expect(fingerprint(empty) != fa);
     try t.expectEqual(@as(usize, 16), fingerprintHex(empty).len);
+}
+
+// ─── the review: every config key that reads like it could run something ──
+
+/// What was decided about one config path whose name reads like it
+/// could run a program (`execShaped`): either it is in `exec_bearing`
+/// under `sink`, or it is not, and `why` says what it does instead.
+const Verdict = union(enum) {
+    sink: Sink,
+    inert: []const u8,
+};
+
+const Reviewed = struct { path: []const u8, verdict: Verdict };
+
+/// The checked-in reference `the exec-shaped config keys are every one
+/// reviewed` pins. Every path here must exist in `Config`. A new key whose name says `cmd`, `command`, `binary`,
+/// `args`, `env`, `shell`, `script`, `roots`, `sources`, `browser`,
+/// `engine`, `profile`, `launch`, `tasks`, `layout`, `hook`, `custom`,
+/// `tools`, `extra` or `local` fails the test until a row here says
+/// whether it runs something — so an exec-bearing key cannot land
+/// without a deliberate decision about trust.
+const reviewed = [_]Reviewed{
+    .{ .path = "ui.external_browser", .verdict = .{ .sink = .external_browser } },
+    .{ .path = "ui.md_preview_engine", .verdict = .{ .sink = .md_preview } },
+    .{ .path = "ui.md_preview_engine.custom", .verdict = .{ .sink = .md_preview } },
+    .{ .path = "ui.integration_icons[].command", .verdict = .{ .inert = "a command id the chip dispatches, resolved against the registry" } },
+    .{ .path = "ui.integration_icons[].commands", .verdict = .{ .inert = "command ids and titles for the chip's menu" } },
+    .{ .path = "ui.accent_defaults.shell", .verdict = .{ .inert = "the accent colour of a shell tab" } },
+    .{ .path = "ui.ai_layout_mode", .verdict = .{ .inert = "grid or tabs for AI panes" } },
+    .{ .path = "ui.first_launch_complete", .verdict = .{ .inert = "whether the first-launch wizard has run" } },
+    .{ .path = "cloud_run.defaults.env_id", .verdict = .{ .inert = "an environment id sent to the cloud API" } },
+    .{ .path = "cloud_agents.aws_profile_fallback", .verdict = .{ .inert = "an AWS profile name the cloud views read with; no program is named" } },
+    .{ .path = "http.default_env", .verdict = .{ .inert = "which environment block a request resolves against" } },
+    .{ .path = "lsp.<name>.cmd", .verdict = .{ .sink = .language_server } },
+    .{ .path = "lsp.<name>.args", .verdict = .{ .sink = .language_server } },
+    .{ .path = "ai.launch_profiles", .verdict = .{ .sink = .launch_profile } },
+    .{ .path = "ai.launch_profiles[].binary", .verdict = .{ .sink = .launch_profile } },
+    .{ .path = "ai.launch_profiles[].args", .verdict = .{ .sink = .launch_profile } },
+    .{ .path = "ai.launch_profiles[].env", .verdict = .{ .sink = .launch_profile } },
+    .{ .path = "ai.default_profile", .verdict = .{ .sink = .launch_profile } },
+    .{ .path = "ai.copilot.command", .verdict = .{ .sink = .copilot_server } },
+    // Not exec-shaped by name — the switch that shares text — but a
+    // row of the table, so it is reviewed here too.
+    .{ .path = "ai.copilot_here", .verdict = .{ .sink = .copilot_share } },
+    .{ .path = "ai.extra", .verdict = .{ .inert = "model / token / backend knobs read by name (`suggest_backend`, `max_tokens`); no argv" } },
+    .{ .path = "tools", .verdict = .{ .inert = "per-integration settings forwarded as JSON to an integration the user installed" } },
+    .{ .path = "tasks", .verdict = .{ .inert = "task bodies run only when the user asks for one by name; `startup.tasks` is the exec-bearing half" } },
+    .{ .path = "tasks.<name>.cmd", .verdict = .{ .inert = "a task body; runs on request" } },
+    .{ .path = "startup.tasks", .verdict = .{ .sink = .startup_task } },
+    .{ .path = "startup.layout", .verdict = .{ .sink = .startup_pty } },
+    .{ .path = "startup.layout[].cmd", .verdict = .{ .sink = .startup_pty } },
+    .{ .path = "formatters.<name>.cmd", .verdict = .{ .sink = .formatter } },
+    .{ .path = "linters.<name>.cmd", .verdict = .{ .sink = .linter } },
+    .{ .path = "dap.<name>.cmd", .verdict = .{ .sink = .debug_adapter } },
+    .{ .path = "dap.<name>.args", .verdict = .{ .sink = .debug_adapter } },
+    // `.launch` names the program the adapter starts; it goes with the
+    // whole `dap.<name>` entry, which an untrusted layer loses.
+    .{ .path = "dap.<name>.launch", .verdict = .{ .sink = .debug_adapter } },
+    .{ .path = "browser", .verdict = .{ .inert = "the browser pane's settings; the browser it drives is found, never named here" } },
+    .{ .path = "browser.profile_mode", .verdict = .{ .inert = "which browser profile directory the pane uses" } },
+    .{ .path = "integrations.dev_roots", .verdict = .{ .inert = "folders the INTEGRATIONS Dev tab lists; nothing builds or runs until the user presses build on a row" } },
+    .{ .path = "marketplace.sources", .verdict = .{ .inert = "catalogues the Marketplace tab lists; an install is its own confirm" } },
+    .{ .path = "marketplace.sources[].local_folder", .verdict = .{ .inert = "a catalogue folder" } },
+    .{ .path = "scripts.marketplace_local", .verdict = .{ .sink = .script_marketplace } },
+    .{ .path = "scripts.private_sources", .verdict = .{ .sink = .script_source } },
+    .{ .path = "scripts.dev_roots", .verdict = .{ .sink = .script_source } },
+};
+
+/// Whether a field name reads like it could run a program: one of its
+/// `_`-separated words is in the list.
+fn execShaped(name: []const u8) bool {
+    const words = [_][]const u8{ "cmd", "command", "commands", "binary", "args", "argv", "env", "shell", "exec", "program", "roots", "sources", "browser", "engine", "profile", "profiles", "launch", "tasks", "layout", "hook", "hooks", "custom", "tools", "extra", "local" };
+    var it = std.mem.splitScalar(u8, name, '_');
+    while (it.next()) |word| for (words) |w| if (std.mem.eql(u8, word, w)) return true;
+    return false;
+}
+
+const Found = struct { path: []const u8, shaped: bool };
+
+/// Every path under `T`, `prefix`-rooted: `a.b`, `m.<name>.c`, `s[].d`,
+/// `u.tag.e`; `shaped` when its own last name is exec-shaped.
+fn walk(comptime T: type, comptime prefix: []const u8, arena: Allocator, out: *std.ArrayList(Found)) Allocator.Error!void {
+    @setEvalBranchQuota(1_000_000);
+    const Dynamic = @import("Dynamic.zig").Dynamic;
+    if (T == Dynamic) return;
+    if (comptime patch_mod.isMap(T)) return walk(T.Value, prefix ++ ".<name>", arena, out);
+    switch (@typeInfo(T)) {
+        .@"struct" => |s| inline for (s.fields) |f| {
+            const p = if (prefix.len == 0) f.name else prefix ++ "." ++ f.name;
+            try out.append(arena, .{ .path = p, .shaped = comptime execShaped(f.name) });
+            try walk(f.type, p, arena, out);
+        },
+        .optional => |o| try walk(o.child, prefix, arena, out),
+        .pointer => |ptr| if (ptr.size == .slice and ptr.child != u8) try walk(ptr.child, prefix ++ "[]", arena, out),
+        .@"union" => |u| inline for (u.fields) |f| {
+            const p = prefix ++ "." ++ f.name;
+            try out.append(arena, .{ .path = p, .shaped = comptime execShaped(f.name) });
+            try walk(f.type, p, arena, out);
+        },
+        else => {},
+    }
+}
+
+test "the exec-shaped config keys are every one reviewed, and each exec verdict is a row of the table" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var found: std.ArrayList(Found) = .empty;
+    try walk(Config, "", arena, &found);
+
+    var missing: usize = 0;
+    for (found.items) |f| {
+        if (!f.shaped) continue;
+        const path = f.path;
+        var ok = false;
+        for (reviewed) |r| ok = ok or std.mem.eql(u8, r.path, path);
+        if (!ok) {
+            std.debug.print("trust: config key `{s}` reads exec-shaped and has no verdict in `reviewed` — decide whether it runs a program (and if so add it to `exec_bearing`, `strip` and `claims`)\n", .{path});
+            missing += 1;
+        }
+    }
+    var stale: usize = 0;
+    for (reviewed) |r| {
+        var ok = false;
+        for (found.items) |f| ok = ok or std.mem.eql(u8, r.path, f.path);
+        if (!ok) {
+            std.debug.print("trust: `reviewed` names `{s}`, which the Config type no longer has\n", .{r.path});
+            stale += 1;
+        }
+    }
+    try t.expectEqual(@as(usize, 0), missing);
+    try t.expectEqual(@as(usize, 0), stale);
+
+    // Every config key the table itself names has an exec verdict here.
+    for (exec_bearing) |row| {
+        if (std.mem.startsWith(u8, row.path, ".mnml/") or std.mem.startsWith(u8, row.path, "<data root>")) continue;
+        var ok = false;
+        for (reviewed) |r| if (r.verdict == .sink and r.verdict.sink == row.sink) {
+            ok = true;
+        };
+        try t.expect(ok);
+    }
+}
+
+test "an untrusted layer loses its script folders, and they are claims the fingerprint moves with" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var diags = Diagnostics.init(arena);
+    // What a cloned repo would ship to have its own Lua run on open.
+    var p = try load.parseLayer(arena,
+        \\.{ .scripts = .{
+        \\    .dev_roots = .{ "tools/" },
+        \\    .private_sources = .{ "vendor/scripts" },
+        \\    .marketplace_local = "fake-official",
+        \\    .show_dev_tab = true,
+        \\} }
+    , "ws.zon", &diags);
+    try t.expectEqual(@as(usize, 0), diags.count());
+
+    const before = try claims(arena, p);
+    try t.expectEqual(@as(usize, 3), before.len);
+    var buf: [256]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    try before[0].format(&w);
+    try t.expectEqualStrings("script folder dev_roots — runs `tools/*/init.lua` every time mnml starts", w.buffered());
+    try t.expectEqualStrings("scripts.private_sources", before[1].key);
+    try t.expectEqualStrings("vendor/scripts/*/init.lua", before[1].command);
+    try t.expectEqual(Sink.script_marketplace, before[2].sink);
+    try t.expect(fingerprint(before) != fingerprint(try claims(arena, .{})));
+
+    try t.expectEqual(@as(usize, 3), try strip(arena, &p));
+    try t.expect(p.scripts.?.dev_roots == null);
+    try t.expect(p.scripts.?.private_sources == null);
+    try t.expect(p.scripts.?.marketplace_local == null);
+    try t.expectEqual(@as(?bool, true), p.scripts.?.show_dev_tab); // ordinary, kept
+    try t.expectEqual(@as(usize, 0), (try claims(arena, p)).len);
+    try t.expectEqual(@as(usize, 0), try strip(arena, &p));
 }

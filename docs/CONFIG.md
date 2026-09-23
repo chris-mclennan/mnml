@@ -1139,9 +1139,18 @@ workspace layer and everything else still applies:
 | `.ai.copilot_here` | when you type, with Copilot ghost text on |
 | `.mnml/init.lua` (the script beside the config) | on open, and on `script.reload` |
 | `.mnml/integrations/*.zon` (the manifests beside the config) | when one of their commands runs |
+| `.scripts.dev_roots` / `.scripts.private_sources` (every script folder under them) | every time mnml starts |
+| `.scripts.marketplace_local` (the folder the SCRIPTS Marketplace tab badges `official`) | when you install from the Marketplace tab |
 
 (`.tasks.<name>` bodies are not in the table: a task only runs when you
-ask for it by name.)
+ask for it by name. Nor is `.integrations.dev_roots`: the INTEGRATIONS
+Dev tab only lists what is there until you build a row.)
+
+The table is `exec_bearing` in `src/config/trust.zig`, and a unit test
+there walks every `Config` key: one whose name reads like it could run
+something (`cmd`, `command`, `binary`, `args`, `env`, `roots`,
+`sources`, …) fails the build until it carries a verdict — a row here,
+or a reason it runs nothing.
 
 `.ai.copilot_here` is the one row that is not an argv. It is in the
 table because its effect is the same shape: a repo you cloned could

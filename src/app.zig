@@ -1688,6 +1688,10 @@ pub const App = struct {
         if (!was_trusted and self.workspace_trusted) {
             try self.script().reset();
             try self.script().loadInitFiles();
+            // …and the script folders its config names
+            // (`scripts.dev_roots` / `private_sources`), which an
+            // untrusted layer had stripped.
+            try scripts_mod.scan(self);
             if (self.integrations.scanned) try integrations.refresh(self);
         }
         self.needs_render = true;
