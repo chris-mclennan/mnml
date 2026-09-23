@@ -388,6 +388,12 @@ pub const PaneRail = enum { all, sessions, off };
 /// sessions to resume, the shortcuts; `minimal` the word mark and the
 /// shortcut list alone; `off` the bare ground.
 pub const WelcomeMode = enum { full, minimal, off };
+/// How the chrome says which pane has the keys (`ui/focus_cue.zig`):
+/// `dim` paints what does NOT have them — a pane's tab-strip name, a
+/// side section's header — in the dim colour role; `rail` leaves the
+/// words and lights only the focused pane's rail and the focused
+/// section's header; `both` is the two at once.
+pub const FocusCue = @import("../ui/focus_cue.zig").Cue;
 /// A colour a pane can open in (`ui/accent_color.zig`'s names): the
 /// eight ladder colours, `white` (the theme's text colour) and
 /// `claude_orange` (Anthropic's, the one the Claude chip wears), or
@@ -638,6 +644,8 @@ pub const Ui = struct {
     pane_rail: PaneRail = .all,
     /// What the editor area shows while no pane is open.
     welcome: WelcomeMode = .full,
+    /// Which cue marks the focused pane and section (`FocusCue`).
+    focus_cue: FocusCue = .both,
     /// The colour the first pane of each kind opens in (`AccentDefaults`).
     accent_defaults: AccentDefaults = .{},
     /// The shape of the cursor mnml puts on the focused editor or text
@@ -1319,6 +1327,7 @@ test "defaults are the shipped values" {
     try std.testing.expectEqual(@as(u16, 400), c.ui.sidebar_hide_ms);
     try std.testing.expectEqual(@as(u16, 0), c.ui.auto_hide_narrow_width);
     try std.testing.expectEqual(@as(u16, 100), c.ui.sidebar_auto_below);
+    try std.testing.expectEqual(FocusCue.both, c.ui.focus_cue);
     try std.testing.expect(c.ui.animations);
     try std.testing.expect(c.ui.edge_grips);
     try std.testing.expectEqual(DiagStyle.count, c.ui.bufferline_diag_style);

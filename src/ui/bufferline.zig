@@ -44,6 +44,7 @@ const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const brand = @import("brand.zig");
 const ids = @import("../core/ids.zig");
+const focus_cue = @import("focus_cue.zig");
 
 const Style = vaxis.Style;
 const Color = vaxis.Color;
@@ -131,6 +132,9 @@ pub const Opts = struct {
     hidden_button: ?u32 = null,
     /// The leaf is zoomed: the maximize button shows the restore glyph.
     zoomed: bool = false,
+    /// The leaf's pane has the keys. False puts the active chip's name
+    /// in the dim role under `ui.focus_cue = dim | both` (`focus_cue.words`).
+    focused: bool = true,
 };
 
 /// What `draw` painted: the offset it settled on, how many chips it
@@ -341,7 +345,7 @@ fn badgeOf(ui: Ui, tab: Tab, hovered: bool) Badge {
 
 /// Paints one chip at `x`, clipped to `avail` cells, and registers its
 /// hits. Returns the cells it took.
-fn paintChip(ui: Ui, x: u16, y: u16, avail: u16, tab: Tab, leaf: u32, idx: u16) u16 {
+fn paintChip(ui: Ui, x: u16, y: u16, avail: u16, tab: Tab, leaf: u32, idx: u16, focused: bool) u16 {
     if (avail == 0) return 0;
     const p = ui.theme.palette;
     const natural = chipWidth(ui, tab);
@@ -366,7 +370,11 @@ fn paintChip(ui: Ui, x: u16, y: u16, avail: u16, tab: Tab, leaf: u32, idx: u16) 
         cx += ui.putStr(cx, y, end - cx, " ", pill);
         cx += ui.putStr(cx, y, end - cx, " ", .{ .bg = bg });
     }
-    const name_style: Style = .{ .fg = if (tab.active) p.fg else p.grey_fg, .bg = bg, .bold = tab.active, .italic = tab.preview };
+    // The active chip's name is the pane's title: the focus cue dims
+    // it on a leaf whose pane does not have the keys. The other chips
+    // are in the dim role already.
+    const plain: Style = .{ .fg = if (tab.active) p.fg else p.grey_fg, .bg = bg, .bold = tab.active, .italic = tab.preview };
+    const name_style = if (tab.active) focus_cue.words(ui.theme, ui.focus_cue, focused, plain) else plain;
     cx += ui.putStr(cx, y, end - cx, chipName(ui, tab), name_style);
     cx += ui.putStr(cx, y, end - cx, " ", .{ .bg = bg });
     if (tab.diag.len > 0) {
@@ -526,7 +534,7 @@ pub fn draw(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Window {
     var i = first;
     while (i < tabs.len) : (i += 1) {
         if (x >= tabs_right) break;
-        const w = paintChip(ui, x, y, tabs_right - x, tabs[i], opts.leaf, @intCast(i));
+        const w = paintChip(ui, x, y, tabs_right - x, tabs[i], opts.leaf, @intCast(i), opts.focused);
         if (w == 0) break;
         x += w + 1;
         painted += 1;
@@ -1160,4 +1168,25 @@ test "the right cluster: compact is Rust's `+ ●━ ×` on one page, full adds 
     try testing.expectEqual(ClusterFit{ .w = 10, .compact = true }, pickCluster(bar, 84, .{}, .compact).?);
     try testing.expectEqual(ClusterFit{ .w = 10, .compact = true }, pickCluster(Rect.init(0, 0, 80, 1), 64, .{}, .auto).?);
     try testing.expect(pickCluster(Rect.init(0, 0, 76, 1), 64, .{}, .expanded) == null);
+}
+
+test "focus cue: the active chip's name dims on a leaf whose pane does not have the keys; the cue `rail` leaves it" {
+    var f = try Fixture.init(60, 1);
+    defer f.deinit();
+    const tabs = [_]Tab{
+        .{ .id = 7, .title = "main.rs", .glyph = rust_glyph, .active = true },
+        .{ .id = 8, .title = "lib.rs", .glyph = rust_glyph },
+    };
+    // The name starts after ` glyph `: column 3. The second chip's name
+    // after the first chip, the one-cell gap and its own ` glyph `.
+    _ = draw(f.ui(), f.full(), &tabs, .{});
+    try testing.expect(f.fgEql(3, 0, .{ .fg = f.theme.palette.fg }));
+    try testing.expect(f.style(3, 0).bold);
+    _ = draw(f.ui(), f.full(), &tabs, .{ .focused = false });
+    try testing.expect(f.fgEql(3, 0, .{ .fg = f.theme.palette.comment }));
+    try testing.expect(!f.style(3, 0).bold);
+    var ui = f.ui();
+    ui.focus_cue = .rail;
+    _ = draw(ui, f.full(), &tabs, .{ .focused = false });
+    try testing.expect(f.fgEql(3, 0, .{ .fg = f.theme.palette.fg }));
 }

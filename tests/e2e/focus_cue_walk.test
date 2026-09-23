@@ -1,0 +1,56 @@
+# width: 120
+# height: 40
+# The focus cue (`ui.focus_cue = .both`, the default — src/ui/focus_cue.zig):
+# focus is marked in three places, each through its component, and this
+# walks the keys editor → tree → TODOS → editor and reads each one.
+#
+#   the tab strip  the active chip's name (34,1) — the pane's title —
+#                  in the text colour while its pane has the keys, the
+#                  dim role (#80848d) while it does not;
+#   the pane rail  (31,5), the editor's sign column — its colour
+#                  (green, the first ladder slot) while focused,
+#                  stepped back toward the ground (#4b5e47) while not;
+#   the sidebar    the tree's workspace path (9,1) green while the tree
+#                  has the keys and dim while not; a caps header
+#                  (TODOS, 5,1) in the accent while focused, the dim
+#                  role while not.
+#
+# The hunt that asked for this typed `:` into the tree and ran tree
+# actions: nothing on screen said the keys had left the editor.
+write a.txt "alpha\n"
+open a.txt
+expect screen contains "alpha"
+# The editor has the keys.
+expect color 34 1 fg #abb2bf
+expect color 31 5 fg #98c379
+expect color 9 1 fg #80848d
+# The tree has them: the editor dims, the tree lights.
+command view.focus_tree
+expect status contains "\"focus\":\"tree\""
+expect color 34 1 fg #80848d
+expect color 31 5 fg #4b5e47
+expect color 9 1 fg #98c379
+# A caps section has them.
+command view.activity_todos
+expect screen contains "TODOS"
+expect color 5 1 fg #61afef
+# Back to the editor: the section header steps back, the tab lights.
+command view.focus_pane
+expect color 5 1 fg #80848d
+expect color 34 1 fg #abb2bf
+expect color 31 5 fg #98c379
+# The two halves alone (`:set ui.focus_cue=…`), the tree holding the keys.
+# `dim`: the editor's tab name dims, its rail keeps its colour.
+command view.focus_tree
+ex set ui.focus_cue=dim
+expect color 34 1 fg #80848d
+expect color 31 5 fg #98c379
+expect color 9 1 fg #98c379
+# `rail`: the name keeps the text colour, the rail steps back.
+ex set ui.focus_cue=rail
+expect color 34 1 fg #abb2bf
+expect color 31 5 fg #4b5e47
+# The tree's path keeps its green whoever has the keys.
+command view.focus_pane
+expect color 9 1 fg #98c379
+expect color 31 5 fg #98c379

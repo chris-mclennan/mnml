@@ -10,6 +10,10 @@
 # second — the child's own text is white too, so a white rail and the
 # `L` that stands in its cell with the rail off would read the same.
 command view.toggle_tree
+# Each pane's rail is read at its own colour: the focus cue's `rail`
+# half steps a pane without the keys back toward its ground
+# (`ui/focus_cue.zig`), so the cue is `dim` here.
+ex set ui.focus_cue=dim
 ex set ui.pane_rail=off
 ex term printf LL; sleep 30
 expect screen contains "LL"

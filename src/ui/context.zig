@@ -20,6 +20,7 @@ const hit_mod = @import("hit.zig");
 const clip = @import("clip.zig");
 const border = @import("border.zig");
 const ids = @import("../core/ids.zig");
+const focus_cue_mod = @import("focus_cue.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -43,6 +44,9 @@ nerd_font: bool = true,
 /// `ui.expand_indicator = .triangle`: every expander paints the small
 /// triangle instead of the chevron (`expander.zig`).
 triangle: bool = false,
+/// `ui.focus_cue`: how the chrome marks what has the keys
+/// (`focus_cue.zig`).
+focus_cue: focus_cue_mod.Cue = .both,
 
 /// Registers `t` for `r`. OOM drops the entry: the paint already
 /// happened and the next frame re-registers it.

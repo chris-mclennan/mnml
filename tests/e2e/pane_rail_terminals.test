@@ -15,6 +15,10 @@
 # `sleep 30` keeps each child alive; an exited pane paints its banner
 # over the pane and the rail is all that is left of it.
 command view.toggle_tree
+# Each pane's rail is read at its own colour: the focus cue's `rail`
+# half steps a pane without the keys back toward its ground
+# (`ui/focus_cue.zig`), so the cue is `dim` here.
+ex set ui.focus_cue=dim
 ex term printf LL; sleep 30
 expect screen contains "LL"
 ex term printf RR; sleep 30

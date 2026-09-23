@@ -3356,6 +3356,7 @@ test {
     _ = @import("ui/pty_view.zig");
     _ = @import("ui/accent_color.zig");
     _ = @import("ui/pane_rail.zig");
+    _ = @import("ui/focus_cue.zig");
     _ = @import("app/pane_accent.zig");
     _ = @import("app/ai.zig");
     _ = @import("app/agents.zig");

@@ -362,6 +362,7 @@ otherwise. Copy what you need; leave the rest out.
         //   .minimal  the logo and the shortcut list alone, centred
         //   .off      the bare ground
         .welcome = .full, // .full | .minimal | .off
+        .focus_cue = .both, // how the focused pane and section are marked: .dim (every pane WITHOUT the keys paints its tab name, and the tree its workspace path, in the dim colour) | .rail (only the focused pane's rail at full colour — the others stepped back toward the ground — and the focused section's caps header in the accent) | .both (the default)
         // The colour the FIRST pane of a kind opens in. A plain
         // terminal opens in white (the theme's text colour), a Claude
         // session in Claude's orange (the chip's), a Codex session in

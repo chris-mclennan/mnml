@@ -134,6 +134,7 @@ What each component owns (`src/ui/` unless noted):
 | `toast.zig` · `prompt.zig` · `confirm.zig` · `tooltip.zig` · `which_key.zig` | one transient each, opened through `overlay.box` |
 | `bufferline.zig` | the file tabs (the tab strip in core) |
 | `pane_rail.zig` · `accent_color.zig` | the `▌` rail and the one accent ladder |
+| `focus_cue.zig` | which pane or section has the keys (`ui.focus_cue`): the dim role on what does not (`words`), the unfocused rail stepped back (`rail`), the focused caps header lit (`label`) — asked by `bufferline`, `header`, `tree_view` and `render.drawPaneContent`, never re-decided |
 | `expander.zig` · `tree_view.zig` | the `▸`/`▾` slot and the tree's connectors |
 | `sdk/mnml-sdk/src/pane/chrome.zig` | the same chrome on the integrations' side of the wire: `capsHeader`, `tabStrip`, `filterPill`, `rowGround`, `scrollbar`, `frameBox` / `frameTitled`, `vrule` / `hrule`, `confirmBox`, `hintRow`, `actionChips` — an integration supplies words and targets, never glyphs |
 

@@ -263,6 +263,8 @@ pub const rows = [_]RowSpec{
     .{ .path = "ui.pty_cursor.blink", .label = "Terminal cursor blinks", .section = .ui, .scope = .home },
     .{ .path = "ui.pane_rail", .label = "Pane colour rail", .section = .ui, .scope = .home },
     .{ .path = "ui.welcome", .label = "Welcome screen", .section = .ui, .scope = .home },
+    // How the focused pane and section are marked (`ui/focus_cue.zig`).
+    .{ .path = "ui.focus_cue", .label = "Focus cue", .section = .ui, .scope = .home },
     // // changed (accent-defaults): the colour the first pane of each
     // kind opens in, under the rail they paint.
     .{ .path = "ui.accent_defaults.shell", .label = "First terminal colour", .section = .ui, .scope = .home },
