@@ -448,6 +448,7 @@ pub fn welcome(w: hit.WelcomeRow) Entry {
 
 pub fn scriptHit(app: *App, arena: Allocator, pane: PaneId, id: u32) Allocator.Error!?Entry {
     const p = app.panes.get(pane) orelse return null;
+    if (p.* == .session_changes) return sessionChangesHit(app, &p.session_changes, id);
     const kind = @tagName(std.meta.activeTag(p.*));
     if (p.* == .editor and id == line_blame.hit_id) return .{
         .title = (try line_blame.hoverTitle(app, arena, pane)) orelse "Current-line blame",
@@ -519,6 +520,67 @@ fn usagePane(app: *App, arena: Allocator, id: u32) Allocator.Error!Entry {
         .body = "Every watched Claude account, one block each. `a` adds an account, `r` refreshes them all, `L` runs `claude login` and `R` captures that login into the matching account's token file. Right-click here or the kebab is the pane's menu.",
         .keys = &.{ .{ .chord = "a", .label = "Add an account" }, .{ .chord = "r", .label = "Refresh" }, .{ .chord = "Right-click", .label = "The pane's menu" } },
         .links = &.{ .{ .command = .{ .id = .@"ai.claude_add_account", .label = "Add an account" } }, .{ .command = .{ .id = .@"ai.show_last_response", .label = "The raw response" } } },
+    };
+}
+
+/// sessiondiff: a hint word or a row of a session's changes view.
+pub fn sessionChangesHit(app: *App, v: *const session_changes.ChangesPane, id: u32) Entry {
+    if (status_view.hintOf(id)) |a| return switch (a) {
+        .stage, .unstage, .toggle, .stage_all, .unstage_all => .{
+            .title = "Stage / unstage",
+            .body = "`s` stages the cursor's file in the session's repo, `u` unstages it, space picks whichever it is not. Only the session's files are listed, and only those move — the whole-repo `a` / `A` are not on this view on purpose.",
+            .keys = &.{.{ .chord = "s", .label = "Stage the file" }},
+            .links = &.{ .{ .command = .{ .id = .@"git.stage", .label = "Stage it" } }, .{ .command = .{ .id = .@"git.unstage", .label = "Unstage it" } } },
+        },
+        .diff => .{
+            .title = "Diff",
+            .body = "Enter opens the cursor row's diff: unstaged against the index, staged against HEAD, a committed file from the session's starting HEAD to now. On the Commit… row Enter commits instead.",
+            .keys = &.{.{ .chord = "Enter", .label = "Open the diff" }},
+            .links = &.{.{ .command = .{ .id = .@"git.diff_file", .label = "Open it" } }},
+        },
+        .commit, .ai_commit => .{
+            .title = "Commit",
+            .body = "`c` opens the commit prompt for the session's repo, seeded with the session's title; Enter keeps it. What is staged there is what commits, so stage the session's rows first.",
+            .keys = &.{.{ .chord = "c", .label = "Commit" }},
+            .links = &.{.{ .command = .{ .id = .@"git.commit", .label = "Commit" } }},
+        },
+        .refresh => .{
+            .title = "Refresh",
+            .body = "`r` reads git again for this session — its status, its commits since the starting HEAD, the mtimes. The view already follows the repo's status; this catches a file edited again while it was already dirty.",
+            .keys = &.{.{ .chord = "r", .label = "Refresh" }},
+            .links = &.{.{ .command = .{ .id = .@"sessions.refresh", .label = "Refresh every session" } }},
+        },
+    };
+    return switch (session_changes.rowKind(app, v, id)) {
+        .unstaged => .{
+            .title = "Unstaged — the session changed it",
+            .body = "A file the session changed that is not in the index: dirty now and not dirty when it started, or written after it started. `s` stages it; Enter diffs it against the index. A name in orange after the path is another session that touched the same file.",
+            .keys = &.{ .{ .chord = "Enter", .label = "Open the diff" }, .{ .chord = "s", .label = "Stage it" } },
+            .links = &.{ .{ .command = .{ .id = .@"git.stage", .label = "Stage it" } }, .{ .command = .{ .id = .@"git.open_file", .label = "Open the file" } } },
+        },
+        .staged => .{
+            .title = "Staged — ready to commit",
+            .body = "A file the session changed that is in the index now; the Commit… row takes it. `u` puts it back to unstaged; Enter diffs the index against HEAD. Anything else staged in the repo commits with it.",
+            .keys = &.{.{ .chord = "Enter", .label = "Open the diff" }},
+            .links = &.{ .{ .command = .{ .id = .@"git.unstage", .label = "Unstage it" } }, .{ .command = .{ .id = .@"git.commit", .label = "Commit" } } },
+        },
+        .committed => .{
+            .title = "Committed since the session started",
+            .body = "A file in a commit made since the session's pane started — by the session or by you — with the newest commit's letter. Enter opens its diff from the session's starting HEAD to now. Nothing to stage: it is in the history already.",
+            .keys = &.{.{ .chord = "Enter", .label = "Open the diff" }},
+            .links = &.{ .{ .command = .{ .id = .@"git.graph", .label = "The commit graph" } }, .{ .command = .{ .id = .@"git.open_file", .label = "Open the file" } } },
+        },
+        .commit => .{
+            .title = "Commit…",
+            .body = "Commits what is staged in the session's repo, with the session's title seeded as the message — Enter on the prompt keeps it, typing replaces it. Stage the session's rows first; `c` anywhere in the view does the same.",
+            .keys = &.{.{ .chord = "Enter", .label = "Commit" }},
+            .links = &.{.{ .command = .{ .id = .@"git.commit", .label = "Commit" } }},
+        },
+        .none => .{
+            .title = "What this session changed",
+            .body = "A row of a session's changes view — the files one Claude or Codex session changed since its pane started, grouped as uncommitted and committed since. Click selects, click again or Enter opens the diff, right-click is the row menu.",
+            .links = &.{ .{ .command = .{ .id = .@"sessions.changes", .label = "What did this session change" } }, .{ .command = .{ .id = .@"sessions.refresh", .label = "Refresh" } } },
+        },
     };
 }
 
