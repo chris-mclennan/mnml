@@ -487,7 +487,12 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
     // The vim `:` line's completion popup owns the arrows and Esc while
     // it shows (`app/cmdline_popup.zig`); Tab reaches it through the
     // handler's own seams.
-    if (cmdline_open and try cmdline_popup.interceptKey(app, k)) return;
+    // Esc is the exception: it abandons the vim line whatever the popup
+    // shows (`:help c_<Esc>`; Neovim's wildmenu / pum never holds the
+    // line open), so the next keys are Normal mode's, not the line's.
+    if (cmdline_open and k.code == .esc) {
+        cmdline_popup.dismiss(app);
+    } else if (cmdline_open and try cmdline_popup.interceptKey(app, k)) return;
     if (try snippets.interceptKey(app, pane_id.?, e, k)) return;
     const consumed = try feedEditor(app, pane_id.?, e, k);
     if (!consumed and editor_first) _ = try chordChain(app, k);

@@ -1,0 +1,15 @@
+# While the `:` line's as-you-type completion popup shows, one Esc
+# abandons the line, popup and all; the next keys are Normal mode's.
+# Neovim 0.12.5 (`nvim --clean`, wildoptions=pum):
+# `:tabn<Tab><Esc>iX<Esc>` -> buffer "Xhello" (Esc abandons the line).
+write t.txt "hello\n"
+open t.txt
+command editor.use_vim
+key :
+type tabn
+expect screen contains "tabnext"
+key esc
+type iX
+key esc
+command file.save
+expect file t.txt contains "Xhello\n"

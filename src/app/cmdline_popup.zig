@@ -301,7 +301,7 @@ test "Tab on the app's : line cycles the same list the popup shows, and a click 
     try t.expect(app.cmd_complete == null or !std.mem.eql(u8, app.cmd_complete.?.prefix, "ta"));
 }
 
-test "the vim : line: Up walks the popup while it shows and history when it does not" {
+test "the vim : line: Up walks the popup while it shows and history when it does not; one Esc abandons it" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
     defer app.deinit();
     _ = try app.openScratch();
@@ -324,14 +324,20 @@ test "the vim : line: Up walks the popup while it shows and history when it does
     try dispatch.key(&app, Key.named(.esc));
     try t.expect(e.buf.input.cmdlineGet() == null);
     try t.expect(app.cmd_complete == null);
-    // Over the typed text Esc puts the popup away and keeps the line;
-    // with the popup away, Up is the history walk again.
+    // Over the typed text too: one Esc abandons the line with the popup
+    // on it (Neovim: `:tabn<Tab><Esc>iX<Esc>` inserts the X).
     try dispatch.key(&app, Key.char(':'));
     try typeInto(&app, "do");
     try t.expect(showing(&app));
     try dispatch.key(&app, Key.named(.esc));
+    try t.expect(e.buf.input.cmdlineGet() == null);
+    try t.expect(app.cmd_complete == null);
+    // A popup put away by a click-away keeps the line; Up is then the
+    // history walk again.
+    try dispatch.key(&app, Key.char(':'));
+    try typeInto(&app, "do");
+    dismiss(&app);
     try t.expect(!showing(&app));
-    try t.expectEqualStrings("do", e.buf.input.cmdlineGet().?);
     try dispatch.key(&app, Key.named(.up));
     try t.expectEqualStrings("noh", e.buf.input.cmdlineGet().?);
     try dispatch.key(&app, Key.named(.esc));
