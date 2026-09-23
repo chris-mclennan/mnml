@@ -1,0 +1,16 @@
+# Vim profile, focus in the file tree (Ctrl-H from the editor, NvChad's
+# move into nvim-tree): `:` opens the command line as it does from any
+# window, so `:e b.txt<CR>` opens b.txt — and its letters never reach the
+# tree's single-key verbs (`x` would cut the row, `d` delete it).
+write a.txt "hi\n"
+write b.txt "bee\n"
+write c.txt "sea\n"
+open a.txt
+command editor.use_vim
+type ":e c.txt\n"
+expect pane c.txt
+key ctrl+h
+expect status contains "\"focus\":\"tree\""
+type ":e b.txt\n"
+expect pane b.txt
+expect screen lacks "cut "
