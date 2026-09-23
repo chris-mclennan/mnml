@@ -24,6 +24,12 @@ pub const version = build_options.version;
 /// modes put back too.
 pub const panic = Term.Panic;
 
+/// `std.log` — ours and every library's (ghostty-vt logs the sequences
+/// it does not know) — never paints over the TUI: while it runs, lines
+/// go to the data root's `mnml.log` (`core/log_sink.zig`).
+pub const std_options: std.Options = .{ .logFn = log_sink.logFn };
+const log_sink = @import("core/log_sink.zig");
+
 /// The application's driver factory: the same App the terminal runs,
 /// behind the `e2e.Driver` vtable for `test` and `--headless`.
 pub const app_factory: ?e2e.Factory = app_driver.default_factory.factory();
@@ -802,6 +808,7 @@ fn headlessSubcommand(gpa_in: Allocator, io: Io, env: *std.process.Environ.Map, 
 test {
     _ = @import("config/root.zig");
     _ = @import("core/alloc.zig");
+    _ = @import("core/log_sink.zig");
     _ = @import("core/key.zig");
     _ = @import("core/event.zig");
     _ = @import("commands/specs.zig");

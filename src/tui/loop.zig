@@ -11,6 +11,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const vaxis = @import("vaxis");
 const Term = @import("term.zig").Term;
+const log_sink = @import("../core/log_sink.zig");
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const event = @import("../core/event.zig");
@@ -49,6 +50,10 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
     // never moves.
     const term = try gpa.create(Term);
     defer gpa.destroy(term);
+    // From before the terminal is taken until after it is given back,
+    // `std.log` writes to `mnml.log`, not over the screen.
+    log_sink.toFile(opts.data_root);
+    defer log_sink.restore();
     try term.init(io, gpa, env, .{});
     defer term.deinit();
     // The window title names the workspace ("mnml — work"), so several
