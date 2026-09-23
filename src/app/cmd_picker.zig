@@ -115,7 +115,7 @@ fn files(app: *App) CommandError!void {
     while (i > 0) {
         i -= 1;
         const path = app.recent.items[i];
-        if (!inWorkspace(app, path) or isNoise(app.relPath(path))) continue;
+        if (!inWorkspace(app, path) or isNoise(app, app.relPath(path))) continue;
         if (!exists(app, path)) continue;
         if (seen.contains(path)) continue;
         try seen.put(gpa, path, {});
@@ -174,10 +174,19 @@ fn exists(app: *App, path: []const u8) bool {
 }
 
 /// Rust's `is_noise`: what Ctrl+P never lists, whatever the tree shows.
-fn isNoise(rel: []const u8) bool {
+/// `.git` and `.mnml` always; `node_modules` / `.next` unless ignored
+/// files are on; `target` / `dist` / `build` only outside a git repo —
+/// inside one the `.gitignore`s decide, so a tracked `build/` is found.
+fn isNoise(app: *App, rel: []const u8) bool {
+    const all = app.tree.show_ignored;
+    const in_repo = app.tree.inRepo(app);
     var it = std.mem.splitScalar(u8, rel, '/');
     while (it.next()) |part| {
-        for ([_][]const u8{ ".git", ".mnml", "node_modules", "target", ".next", "dist", "build" }) |n| if (std.mem.eql(u8, part, n)) return true;
+        if (std.mem.eql(u8, part, ".git") or std.mem.eql(u8, part, ".mnml")) return true;
+        if (all) continue;
+        for ([_][]const u8{ "node_modules", ".next" }) |n| if (std.mem.eql(u8, part, n)) return true;
+        if (in_repo) continue;
+        for ([_][]const u8{ "target", "dist", "build" }) |n| if (std.mem.eql(u8, part, n)) return true;
     }
     return false;
 }
@@ -189,10 +198,10 @@ fn isNoise(rel: []const u8) bool {
 pub fn walkTree(app: *App, out: *std.ArrayListUnmanaged([]u8)) CommandError!bool {
     var ignores = gitignore.Stack.init(app.gpa);
     defer ignores.deinit();
-    return walkDir(app, out, "", &ignores);
+    return walkDir(app, out, "", &ignores, false);
 }
 
-fn walkDir(app: *App, out: *std.ArrayListUnmanaged([]u8), rel_dir: []const u8, ignores: *gitignore.Stack) CommandError!bool {
+fn walkDir(app: *App, out: *std.ArrayListUnmanaged([]u8), rel_dir: []const u8, ignores: *gitignore.Stack, under_ignored: bool) CommandError!bool {
     const gpa = app.gpa;
     const arena = app.frame.allocator();
     const abs = if (rel_dir.len == 0) app.workspace else try std.fs.path.join(arena, &.{ app.workspace, rel_dir });
@@ -208,7 +217,7 @@ fn walkDir(app: *App, out: *std.ArrayListUnmanaged([]u8), rel_dir: []const u8, i
         var layer = ignores.layers.pop().?;
         layer.deinit(gpa);
     };
-    const Entry = struct { rel: []u8, is_dir: bool };
+    const Entry = struct { rel: []u8, is_dir: bool, ignored: bool };
     var names: std.ArrayListUnmanaged(Entry) = .empty;
     defer {
         for (names.items) |n| gpa.free(n.rel);
@@ -219,14 +228,15 @@ fn walkDir(app: *App, out: *std.ArrayListUnmanaged([]u8), rel_dir: []const u8, i
         if (entry.kind != .directory and entry.kind != .file and entry.kind != .sym_link) continue;
         const is_dir = entry.kind == .directory;
         if (!app.tree.show_hidden and entry.name.len > 0 and entry.name[0] == '.') continue;
-        if (is_dir and (tree_mod.isArtifactDir(entry.name) or isNoise(entry.name))) continue;
+        if (is_dir and isNoise(app, entry.name)) continue;
         const rel = if (rel_dir.len == 0) try gpa.dupe(u8, entry.name) else try std.fs.path.join(gpa, &.{ rel_dir, entry.name });
         errdefer gpa.free(rel);
-        if (ignores.ignored(rel, is_dir)) {
+        const ignored = under_ignored or (is_dir and app.tree.artifactHidden(app, entry.name)) or ignores.ignored(rel, is_dir);
+        if (ignored and !app.tree.show_ignored) {
             gpa.free(rel);
             continue;
         }
-        try names.append(gpa, .{ .rel = rel, .is_dir = is_dir });
+        try names.append(gpa, .{ .rel = rel, .is_dir = is_dir, .ignored = ignored });
     }
     std.mem.sort(Entry, names.items, {}, struct {
         fn lt(_: void, a: Entry, b: Entry) bool {
@@ -236,7 +246,7 @@ fn walkDir(app: *App, out: *std.ArrayListUnmanaged([]u8), rel_dir: []const u8, i
     }.lt);
     for (names.items) |n| {
         if (n.is_dir) {
-            if (try walkDir(app, out, n.rel, ignores)) return true;
+            if (try walkDir(app, out, n.rel, ignores, n.ignored)) return true;
         } else {
             if (out.items.len >= max_picker_files) return true;
             try out.append(gpa, try gpa.dupe(u8, n.rel));

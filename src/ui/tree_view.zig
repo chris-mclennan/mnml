@@ -157,6 +157,8 @@ pub const Entry = struct {
     /// A depth-0 directory that is its own repo in a multi-repo
     /// workspace: the repo glyph, tinted; `active` marks the active one.
     repo: ?RepoMark = null,
+    /// A git-ignored entry shown by `tree.toggle_ignored`: dim.
+    ignored: bool = false,
 };
 
 pub const Item = union(enum) {
@@ -397,7 +399,7 @@ fn drawEntry(ui: Ui, r: Rect, sb_w: u16, items: []const Item, i: usize, e: Entry
     } else pal.fg;
     var name_style = Theme.onBg(Theme.withFg(t.fg, name_fg), bg);
     name_style.bold = e.is_dir or lit;
-    name_style.dim = (e.repo != null and !e.repo.?.active) or (e.name.len > 0 and e.name[0] == '.');
+    name_style.dim = (e.repo != null and !e.repo.?.active) or (e.name.len > 0 and e.name[0] == '.') or e.ignored;
     const badge_w: u16 = if (e.dirty or e.git != null) 2 else 0;
     // The name stops at the badge, or a cell short of the bar.
     const name_end = if (badge_w > 0) right -| badge_w else right -| sb_w;

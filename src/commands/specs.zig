@@ -421,6 +421,7 @@ pub const specs = [_]Spec{
     .{ .id = "tree.collapse_all", .title = "Collapse all folders in the file tree", .group = "view" },
     .{ .id = "tree.expand_all", .title = "Expand all folders in the file tree", .group = "view" },
     .{ .id = "tree.toggle_collapse_all", .title = "Toggle: collapse-all / expand-all", .group = "view" },
+    .{ .id = "tree.toggle_ignored", .title = "Toggle git-ignored files in the file tree and Ctrl+P", .group = "view" },
     .{ .id = "editor.use_vim", .title = "Editing: use vim keymap", .group = "editor" },
     .{ .id = "editor.use_standard", .title = "Editing: use standard (VSCode) keymap", .group = "editor" },
     .{ .id = "editor.toggle_keymap", .title = "Editing: toggle vim ⇄ standard keymap", .group = "editor" },
@@ -1252,7 +1253,7 @@ pub const specs = [_]Spec{
     .{ .id = "view.keep_tab", .title = "Keep this tab (stop the next glance taking the preview over)", .group = "view", .keys = .{ .vim = &.{"space b k"}, .standard = &.{"ctrl+k enter"} } },
 };
 
-test "1120 specs, unique ids" {
+test "1121 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1289,6 +1290,6 @@ test "1120 specs, unique ids" {
     // + the three `view.rail_*` membership commands (railmove)
     // + the four `view.dock_item_move_*` reorder commands (dock-polish)
     // + `view.focus_prev_split`, the split walk backwards (splitcycle)
-    try std.testing.expectEqual(@as(usize, 1120), specs.len);
+    try std.testing.expectEqual(@as(usize, 1121), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

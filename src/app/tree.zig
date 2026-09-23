@@ -49,6 +49,7 @@ pub const table = .{
     .@"tree.refresh" = &refreshCmd,
     .@"tree.collapse_all" = &collapseAll,
     .@"tree.expand_all" = &expandAll,
+    .@"tree.toggle_ignored" = &toggleIgnored,
     .@"tree.toggle_collapse_all" = &toggleCollapseAll,
     .@"tree.open_selected" = &openSelected,
     .@"tree.open_in_split" = &openInSplit,
@@ -62,13 +63,24 @@ pub const table = .{
 pub const default_width: u16 = 30;
 /// Never entered by `expand_all`; a click still opens them.
 const noisy_dirs = [_][]const u8{ ".git", "node_modules", "target", "zig-out", ".zig-cache", "zig-cache" };
-/// Build artifacts hidden even without a `.gitignore` — the same set
-/// the file picker skips, so the two surfaces agree. Unlike a dot
-/// entry, `H` does not reveal them (Rust).
-pub const artifact_dirs = [_][]const u8{ "node_modules", "__pycache__", ".next", "dist", "build", "target", "vendor", ".venv", "venv", "zig-out", ".zig-cache", "zig-cache" };
+/// Folders a package manager or a build fills and nobody writes source
+/// in: hidden even without a `.gitignore` — the same set the file
+/// picker skips, so the two surfaces agree. Unlike a dot entry, `H`
+/// does not reveal them (Rust); `tree.toggle_ignored` (`I`) does.
+pub const artifact_dirs = [_][]const u8{ "node_modules", "__pycache__", ".next", ".venv", "venv", ".zig-cache", "zig-cache" };
+/// Build-output names that are ALSO where committed source lives — a Go
+/// `vendor/`, a tracked `build/deploy.yaml`, a docs site's `dist/`.
+/// Hidden by name outside a git repo; inside one the `.gitignore`s
+/// alone decide, so tracked files there are listed and found.
+pub const build_dirs = [_][]const u8{ "dist", "build", "target", "vendor", "zig-out" };
 
 pub fn isArtifactDir(name: []const u8) bool {
     for (artifact_dirs) |d| if (std.mem.eql(u8, name, d)) return true;
+    return isBuildDir(name);
+}
+
+pub fn isBuildDir(name: []const u8) bool {
+    for (build_dirs) |d| if (std.mem.eql(u8, name, d)) return true;
     return false;
 }
 
@@ -84,6 +96,9 @@ pub const Row = struct {
     /// A root's section header (`▾ name`); `rel` is the root's path
     /// (`""` for the primary).
     header: bool = false,
+    /// Listed only because `show_ignored` is on: a `.gitignore` names it
+    /// (or, outside a git repo, it is an artifact directory). Painted dim.
+    ignored: bool = false,
 
     pub fn name(r: Row) []const u8 {
         return std.fs.path.basename(r.rel);
@@ -109,6 +124,12 @@ pub const Tree = struct {
     /// Dot entries show (Rust's default); `H` hides them. `.git` and the
     /// artifact directories stay out either way.
     show_hidden: bool = true,
+    /// Git-ignored entries (and, outside a repo, the artifact
+    /// directories) listed, dim — nvim-tree's `I`. Off by default; the
+    /// file picker follows the same switch.
+    show_ignored: bool = false,
+    /// Whether the workspace sits in a git work tree, asked once.
+    in_repo: ?bool = null,
     rows: std.ArrayListUnmanaged(Row) = .empty,
     /// Expanded directories, workspace-relative, owned keys.
     expanded: std.StringHashMapUnmanaged(void) = .empty,
@@ -406,7 +427,30 @@ pub const Tree = struct {
     fn listInto(self: *Tree, app: *App, rel_dir: []const u8, depth: u8, root: u8) Allocator.Error!void {
         var ignores = gitignore.Stack.init(self.gpa);
         defer ignores.deinit();
-        try self.listWith(app, rel_dir, depth, root, &ignores);
+        try self.listWith(app, rel_dir, depth, root, &ignores, false);
+    }
+
+    /// The workspace is inside a git work tree (a `.git` at it or above).
+    /// Inside one the `.gitignore`s say whether a `build/` or `vendor/`
+    /// is listed; outside one its name is the only guide (`build_dirs`).
+    pub fn inRepo(self: *Tree, app: *App) bool {
+        if (self.in_repo) |v| return v;
+        var dir: []const u8 = app.workspace;
+        const found = while (true) {
+            var buf: [std.fs.max_path_bytes]u8 = undefined;
+            const probe = std.fmt.bufPrint(&buf, "{s}/.git", .{dir}) catch break false;
+            if (std.Io.Dir.cwd().statFile(app.io, probe, .{})) |_| break true else |_| {}
+            dir = std.fs.path.dirname(dir) orelse break false;
+        };
+        self.in_repo = found;
+        return found;
+    }
+
+    /// Whether a listing leaves directory `name` out by its name alone
+    /// (`artifact_dirs` always, `build_dirs` outside a repo).
+    pub fn artifactHidden(self: *Tree, app: *App, name: []const u8) bool {
+        for (artifact_dirs) |d| if (std.mem.eql(u8, name, d)) return true;
+        return isBuildDir(name) and !self.inRepo(app);
     }
 
     /// The path of `rel_dir` relative to its root — what a `.gitignore`
@@ -419,7 +463,7 @@ pub const Tree = struct {
         return "";
     }
 
-    fn listWith(self: *Tree, app: *App, rel_dir: []const u8, depth: u8, root: u8, ignores: *gitignore.Stack) Allocator.Error!void {
+    fn listWith(self: *Tree, app: *App, rel_dir: []const u8, depth: u8, root: u8, ignores: *gitignore.Stack, under_ignored: bool) Allocator.Error!void {
         const gpa = self.gpa;
         const arena = app.frame.allocator();
         const abs = if (rel_dir.len == 0) app.workspace else if (std.fs.path.isAbsolute(rel_dir)) rel_dir else try std.fs.path.join(arena, &.{ app.workspace, rel_dir });
@@ -447,12 +491,12 @@ pub const Tree = struct {
             const is_dir = entry.kind == .directory;
             if (is_dir and std.mem.eql(u8, entry.name, ".git")) continue;
             if (!self.show_hidden and entry.name.len > 0 and entry.name[0] == '.') continue;
-            if (is_dir and isArtifactDir(entry.name)) continue;
             const here_rel = if (here.len == 0) entry.name else try std.fs.path.join(arena, &.{ here, entry.name });
-            if (ignores.ignored(here_rel, is_dir)) continue;
+            const ignored = under_ignored or (is_dir and self.artifactHidden(app, entry.name)) or ignores.ignored(here_rel, is_dir);
+            if (ignored and !self.show_ignored) continue;
             const rel = if (rel_dir.len == 0) try gpa.dupe(u8, entry.name) else try std.fs.path.join(gpa, &.{ rel_dir, entry.name });
             errdefer gpa.free(rel);
-            try names.append(gpa, .{ .rel = rel, .depth = depth, .is_dir = is_dir, .root = root });
+            try names.append(gpa, .{ .rel = rel, .depth = depth, .is_dir = is_dir, .root = root, .ignored = ignored });
         }
         // Directories first, then names folded to lower case (Rust).
         std.mem.sort(Row, names.items, {}, struct {
@@ -463,7 +507,7 @@ pub const Tree = struct {
         }.lt);
         for (names.items) |row| {
             try self.rows.append(gpa, row);
-            if (row.is_dir and self.expanded.contains(row.rel)) try self.listWith(app, row.rel, depth + 1, root, ignores);
+            if (row.is_dir and self.expanded.contains(row.rel)) try self.listWith(app, row.rel, depth + 1, root, ignores, row.ignored);
         }
     }
 
@@ -661,6 +705,8 @@ pub const Tree = struct {
                     self.show_hidden = !self.show_hidden;
                     try self.refresh(app);
                 },
+                // nvim-tree's `I`: git-ignored entries in and out.
+                'I' => try runCmd(app, .@"tree.toggle_ignored"),
                 'D' => try runCmd(app, .@"file.duplicate"),
                 'd' => {
                     if (app.input_style != .vim) return false;
@@ -843,6 +889,7 @@ pub const Tree = struct {
                 .git = if (row.is_dir) null else states.get(abs),
                 .dirty = !row.is_dir and dirtyInEditor(app, abs),
                 .repo = if (row.root == 0 and row.is_dir and depth == 0) repoMark(app, abs) else null,
+                .ignored = row.ignored,
             } });
         }
         try items.append(arena, .blank);
@@ -898,7 +945,7 @@ pub const Tree = struct {
             try self.refresh(app);
             for (self.rows.items) |row| {
                 if (row.header or !row.is_dir or self.isExpanded(row.rel)) continue;
-                if (isNoisy(row.name())) continue;
+                if (isNoisy(row.name()) or row.ignored) continue;
                 try self.setExpanded(row.rel, true);
                 again = true;
             }
@@ -1549,6 +1596,8 @@ fn toggleHidden(app: *App) CommandError!void {
 }
 
 fn refreshCmd(app: *App) CommandError!void {
+    // `git init` / a clone since the last look: ask again.
+    app.tree.in_repo = null;
     try app.tree.refresh(app);
     app.needs_render = true;
 }
@@ -1558,6 +1607,13 @@ fn collapseAll(app: *App) CommandError!void {
     while (it.next()) |k| app.gpa.free(k.*);
     app.tree.expanded.clearRetainingCapacity();
     try app.tree.refresh(app);
+}
+
+fn toggleIgnored(app: *App) CommandError!void {
+    app.tree.show_ignored = !app.tree.show_ignored;
+    try app.tree.refresh(app);
+    app.toast("git-ignored files {s}", .{if (app.tree.show_ignored) "shown (dim)" else "hidden"});
+    app.needs_render = true;
 }
 
 fn toggleCollapseAll(app: *App) CommandError!void {
@@ -1841,7 +1897,7 @@ test "tree: F2 opens the rename prompt seeded with the row; other function keys 
     try t.expect(app.focus == .overlay);
 }
 
-test "tree: artifact directories and .git stay out of the rows without a .gitignore, with H either way; a .gitignore hides what it names" {
+test "tree: artifact directories and .git stay out of the rows without a .gitignore, with H either way; a build dir only outside a repo; a .gitignore hides what it names" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -1860,12 +1916,28 @@ test "tree: artifact directories and .git stay out of the rows without a .gitign
     var names: std.ArrayListUnmanaged([]const u8) = .empty;
     defer names.deinit(t.allocator);
     for (app.tree.rows.items) |r| try names.append(t.allocator, r.name());
-    try t.expectEqual(@as(usize, 2), names.items.len);
+    // A repo (the `.git` above): `vendor` is the .gitignore's call, and
+    // none names it — it is listed; node_modules / __pycache__ never are.
+    try t.expectEqual(@as(usize, 3), names.items.len);
     try t.expectEqualStrings("src", names.items[0]);
-    try t.expectEqualStrings("build", names.items[1]);
+    try t.expectEqualStrings("vendor", names.items[1]);
+    try t.expectEqualStrings("build", names.items[2]);
     app.tree.show_hidden = false;
     try app.tree.refresh(&app);
+    try t.expectEqual(@as(usize, 3), app.tree.rows.items.len);
+    // No repo: the name alone hides `vendor`.
+    try tmp.dir.deleteTree(t.io, ".git");
+    app.tree.in_repo = false;
+    try app.tree.refresh(&app);
     try t.expectEqual(@as(usize, 2), app.tree.rows.items.len);
+    try t.expect(app.tree.rowOf("vendor") == null);
+    // `I` brings every one of them back, dim.
+    app.tree.show_ignored = true;
+    try app.tree.refresh(&app);
+    try t.expect(app.tree.rows.items[app.tree.rowOf("node_modules").?].ignored);
+    try t.expect(app.tree.rows.items[app.tree.rowOf("vendor").?].ignored);
+    try t.expect(!app.tree.rows.items[app.tree.rowOf("src").?].ignored);
+    app.tree.show_ignored = false;
     // A `.gitignore` in the root hides what it names — at any depth
     // for a bare name, under its own directory for an anchored one.
     app.tree.show_hidden = true;
