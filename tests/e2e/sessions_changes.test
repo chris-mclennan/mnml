@@ -1,0 +1,74 @@
+# env: HOME=home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# What did this session change (src/app/session_changes.zig): a Claude
+# session pane records its base as it starts — the wall clock, HEAD, the
+# paths dirty then — and the SESSIONS card counts the files it changed
+# since: `old.txt`, dirty (and dated) before the session, is not one of
+# them; the file it wrote and the file it committed are. The chip opens
+# the view — the git status pane's component scoped to those files,
+# Unstaged / Staged / Committed since start and a Commit… row seeded
+# with the session's title — where `s` stages, Enter on a committed row
+# opens its base..HEAD diff, and the commit lands in the repo. A second
+# session that touches the same file names itself after the path.
+# The fake `claude` on PATH titles its window, waits a second (the base
+# is taken through the git worker) and acts; a marker makes the second
+# instance a different session.
+shell git init -q -b main && git config user.email t@mnml.dev && git config user.name t && git config commit.gpgsign false
+write .gitignore ".mnml/\nbin/\nhome/\n"
+write seed.txt "seed\n"
+write old.txt "old\n"
+shell git add -A && git commit -q -m first
+write old.txt "old, edited before the session\n"
+shell touch -t 202001010000 old.txt
+write bin/claude #!/bin/bash\nif [ -e bin/.first-ran ]; then\nprintf '\\033]0;\\342\\234\\263 second job\\007'\nsleep 1\nprintf 'more\\n' >> new.txt\nelse\ntouch bin/.first-ran\nprintf '\\033]0;\\342\\234\\263 fix the tests\\007'\nsleep 1\nprintf 'hello\\n' > new.txt\nprintf 'committed\\n' > c.txt\ngit add c.txt && git -c user.email=t@mnml.dev -c user.name=t commit -q -m "by the session"\nfi\nexec -a claude /bin/sh -c 'i=0; while [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done'
+shell chmod +x bin/claude
+command ai.claude_code_new
+command view.activity_sessions
+# The card counts what the session changed once git has been read.
+expect within 10000 screen contains "▌ fix the tests  2 files"
+# The view: the new file uncommitted, the commit's file committed, the
+# file dirty before the session nowhere.
+command sessions.changes
+# (The view alone in its tab page, so the header's line is whole.)
+command view.only
+expect within 5000 screen contains "fix the tests · since just now · 2 files · +2 −0"
+expect screen contains "s/u stage·unstage  space toggle  ⏎ diff  c commit  r refresh"
+expect screen contains "Unstaged changes (1)"
+expect screen contains "▶ ? new.txt"
+expect screen contains "Staged changes (0)"
+expect screen contains "Committed since start (1)"
+expect screen contains "A c.txt"
+expect screen contains "✓ Commit…"
+expect screen lacks "old.txt"
+expect screen lacks "seed.txt"
+# `s` stages the cursor's file in the session's repo; the view follows.
+key s
+expect within 5000 screen contains "staged new.txt"
+expect within 5000 screen contains "Staged changes (1)"
+expect screen contains "▶ A new.txt"
+shell git diff --cached --name-only | grep -qx new.txt
+# Enter on the committed row: the base..HEAD diff of that file.
+key down
+key enter
+expect within 5000 screen contains "+ committed"
+expect screen contains "..HEAD c.txt"
+command buffer.close
+# The Commit… row: the prompt seeded with the session's title; Enter
+# keeps the seed and commits in the session's repo.
+command sessions.changes
+key G
+key enter
+expect screen contains "Commit message"
+expect screen contains "fix the tests"
+key enter
+expect within 5000 screen contains "committed: fix the tests"
+shell git log -1 --format=%s | grep -qx "fix the tests"
+shell test -z "$(git diff --cached --name-only)"
+# Both files are the session's commits now; old.txt is still not its.
+expect within 5000 screen contains "Committed since start (2)"
+expect screen lacks "old.txt"
+# A second session appends to new.txt: the first one's view names it.
+command ai.claude_code_new
+expect within 10000 screen contains "▌ second job  1 file"
+command sessions.refresh
+expect within 5000 screen contains "new.txt  ⇄ second job"
