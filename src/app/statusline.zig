@@ -480,7 +480,7 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
         const name = if (path) |pth| std.fs.path.basename(pth) else e.label orelse "[scratch]";
         const icon = file_glyph.forName(name);
         try push(&left, arena, Seg.init(ui.fmt(" {s} ", .{if (nerd) icon.glyph else icon.fallback}), icon.color, p.statusline).withHit(sl.seg_file));
-        try push(&left, arena, Seg.init(ui.fmt("{s}{s} ", .{ name, if (e.buf.doc.dirty) " ●" else "" }), p.fg, p.statusline).withHit(sl.seg_file));
+        try push(&left, arena, Seg.init(ui.fmt("{s}{s}{s} ", .{ name, if (e.buf.doc.dirty) " ●" else "", if (e.buf.doc.deleted) " (deleted)" else "" }), p.fg, p.statusline).withHit(sl.seg_file));
         if (path) |pth| {
             var errors: u32 = 0;
             var warnings: u32 = 0;

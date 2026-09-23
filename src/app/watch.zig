@@ -35,6 +35,7 @@ pub fn restamp(app: *App, e: *EditorPane) void {
         return;
     };
     e.buf.doc.disk = stamp(app.io, path);
+    if (e.buf.doc.disk != null) e.buf.doc.deleted = false;
 }
 
 /// `save_post` subscriber: the buffer just wrote the file.
@@ -57,7 +58,21 @@ pub fn check(app: *App) Allocator.Error!void {
         const e = pane.asEditor() orelse continue;
         const path = e.buf.doc.path orelse continue;
         const known = e.buf.doc.disk orelse continue;
-        const now_on_disk = stamp(app.io, path) orelse continue;
+        const now_on_disk = stamp(app.io, path) orelse {
+            // Gone: said once, and the buffer keeps every byte — a save
+            // writes the file back (vim's E211, VS Code's "(deleted)").
+            if (!e.buf.doc.deleted) {
+                e.buf.doc.deleted = true;
+                try app.toastLevel(.warn, "{s} was deleted on disk — the buffer keeps it; save to write it back", .{app.relPath(path)});
+                app.needs_render = true;
+            }
+            continue;
+        };
+        if (e.buf.doc.deleted) {
+            // Back (a checkout, an undo in another tool): a change like any.
+            e.buf.doc.deleted = false;
+            app.needs_render = true;
+        }
         if (now_on_disk.mtime_ns == known.mtime_ns and now_on_disk.size == known.size) continue;
         // The change event: the TODOS panel queues a debounced rescan
         // whether the buffer reloads or is left dirty — the disk moved.
