@@ -263,7 +263,7 @@ const run_rows = [_]MenuItem{
 };
 
 const terminal_rows = [_]MenuItem{
-    .{ .icon = "\u{F120}", .icon_ascii = "$", .label = "New terminal (split below)", .action = .{ .command = .@"term.shell" } },
+    .{ .icon = "\u{F120}", .icon_ascii = "$", .label = "New terminal (split below)", .action = .{ .command = .@"term.shell_bottom" } },
     .{ .icon = "\u{F120}", .icon_ascii = "$", .label = "Toggle scratch terminal", .action = .{ .command = .@"term.scratch_toggle" } },
     .{ .icon = "\u{F040}", .icon_ascii = "e", .label = "Rename terminal", .action = .{ .command = .@"term.rename" } },
 };
@@ -648,6 +648,26 @@ test "menu rows: ten menus with Rust's row counts; every row is a registered com
     try t.expectEqual(@as(u8, 'w'), Menu.window.accelerator());
     try t.expectEqualStrings("mnml", Menu.brand.title());
     try t.expectEqual(command.CommandId.@"view.fullscreen", view_rows[view_fullscreen_row].action.command);
+}
+
+test "the Terminal menu's \"split below\" row opens its shell under the active pane, not beside it" {
+    // A login shell: POSIX.
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    if (!@import("pty_pane.zig").supported) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const ed = try app.openScratch();
+    const row = terminal_rows[0];
+    try t.expectEqualStrings("New terminal (split below)", row.label);
+    try command.run(&app, .{ .static = row.action.command });
+    const sh = app.active.?;
+    try t.expect(sh != ed);
+    try app.render();
+    const body = app.panes.pty(sh).?.body;
+    // Below: the full width's left edge, the lower half's rows.
+    try t.expect(body.x < 10);
+    try t.expect(body.y >= 8);
 }
 
 test "menu bar: the View menu's full-screen row reads the way in outside and the way out inside" {

@@ -327,9 +327,9 @@ pub const rows = [_]Row{
     // ── Terminal ──
     .{ .menu = "Terminal", .label = "New terminal (split below)", .entry = .{
         .title = "New terminal (split below)",
-        .body = "Opens a new `$SHELL` in a split of the active leaf, in the workspace directory with mnml's environment, rendered by libghostty-vt — each shell is its own pane with its own scrollback and working directory. Closing the tab ends the shell; the strip's terminal chip places one in a chosen half.",
-        .keys = &.{ .{ .command = .@"term.shell", .label = "New shell" }, .{ .command = .@"term.scratch_toggle", .label = "The scratch terminal" } },
-        .links = &.{ .{ .command = .{ .id = .@"term.shell", .label = "Open a shell" } }, .{ .command = .{ .id = .@"term.shell_bottom", .label = "In the bottom half" } }, .{ .settings = .{ .row = copy.settingsRow("session.restore_terminals"), .label = "Restore terminals" } } },
+        .body = "Opens a new `$SHELL` in a split under the active leaf, in the workspace directory with mnml's environment, rendered by libghostty-vt — each shell is its own pane with its own scrollback and working directory. Closing the tab ends the shell; the strip's terminal chip places one in a chosen half.",
+        .keys = &.{ .{ .command = .@"term.shell_bottom", .label = "New shell below" }, .{ .command = .@"term.shell", .label = "New shell beside" }, .{ .command = .@"term.scratch_toggle", .label = "The scratch terminal" } },
+        .links = &.{ .{ .command = .{ .id = .@"term.shell_bottom", .label = "Open a shell below" } }, .{ .command = .{ .id = .@"term.shell", .label = "Beside instead" } }, .{ .settings = .{ .row = copy.settingsRow("session.restore_terminals"), .label = "Restore terminals" } } },
     } },
     .{ .menu = "Terminal", .label = "Toggle scratch terminal", .entry = .{
         .title = "Toggle scratch terminal",
