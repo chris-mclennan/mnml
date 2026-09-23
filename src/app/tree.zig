@@ -706,6 +706,12 @@ pub const Tree = struct {
         if (row.header or row.is_dir) return;
         const rel = try app.frame.allocator().dupe(u8, row.rel);
         const abs = try app.absPath(rel);
+        // The cursor only passed over it: a file too heavy to glance at
+        // is named, not loaded — Enter still opens it.
+        if (try previewTooHeavy(app, abs)) |why| {
+            app.toast("{s}: {s} — not previewed; Enter opens it", .{ rel, why });
+            return;
+        }
         _ = app.openPreview(abs) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => {
@@ -1013,6 +1019,37 @@ fn runCmd(app: *App, id: command.CommandId) Allocator.Error!void {
 }
 
 /// `path` relative to `base` when it lies under it, else null.
+/// The arrow-key preview's bounds: past either, the file is not
+/// loaded as the cursor goes by (a 42 MB one-line bundle costs the
+/// editor seconds and gigabytes; a 2 GB blob would be read whole).
+pub const preview_max_bytes: u64 = 4 * 1024 * 1024;
+pub const preview_max_line: usize = 16 * 1024;
+/// How much of a file's head is scanned for a line that long.
+const preview_head_bytes: usize = 64 * 1024;
+
+/// Why `abs` is too heavy for an arrow-key preview, or null. Reads at
+/// most `preview_head_bytes`, never the whole file.
+pub fn previewTooHeavy(app: *App, abs: []const u8) Allocator.Error!?[]const u8 {
+    const arena = app.frame.allocator();
+    const st = std.Io.Dir.cwd().statFile(app.io, abs, .{}) catch return null;
+    if (st.kind != .file) return null;
+    if (st.size > preview_max_bytes) return try std.fmt.allocPrint(arena, "{d} MB", .{st.size / (1024 * 1024)});
+    const file = std.Io.Dir.cwd().openFile(app.io, abs, .{}) catch return null;
+    defer file.close(app.io);
+    const head = try arena.alloc(u8, @min(preview_head_bytes, st.size));
+    const n = file.readPositionalAll(app.io, head, 0) catch return null;
+    var run: usize = 0;
+    for (head[0..n]) |c| {
+        if (c == '\n') {
+            run = 0;
+        } else {
+            run += 1;
+            if (run > preview_max_line) return try std.fmt.allocPrint(arena, "a line over {d} KB", .{preview_max_line / 1024});
+        }
+    }
+    return null;
+}
+
 fn underRoot(base: []const u8, path: []const u8) ?[]const u8 {
     if (path.len > base.len + 1 and std.mem.startsWith(u8, path, base) and path[base.len] == '/') return path[base.len + 1 ..];
     return null;
@@ -1648,6 +1685,40 @@ test "tree, vim profile: nvim-tree's a / r / d / x / R / E / W — create, renam
     try t.expect(!try app.tree.handleKey(&app, Key.char('E')));
     try t.expect(try app.tree.handleKey(&app, Key.char('r')));
     try t.expect(app.overlay == .none);
+}
+
+test "the arrow preview skips a file too heavy to glance at — a very long line, or too many bytes — and says so" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "a.txt", .data = "a" });
+    const one_line = try t.allocator.alloc(u8, 40 * 1024);
+    defer t.allocator.free(one_line);
+    @memset(one_line, 'x');
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "b.min.json", .data = one_line });
+    const big = try t.allocator.alloc(u8, preview_max_bytes + 4096);
+    defer t.allocator.free(big);
+    for (big, 0..) |*c, i| c.* = if (i % 64 == 63) '\n' else 'y';
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "c.log", .data = big });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "d.txt", .data = "d" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = buf[0..n] });
+    defer app.deinit();
+    app.input_style = .standard;
+    app.cfg.ui.tree_preview_on_arrow = true;
+    try app.tree.refresh(&app);
+    app.focus = .tree;
+    app.tree.cursor = app.tree.rowOf("a.txt").?;
+    _ = try app.tree.handleKey(&app, Key.named(.down));
+    try t.expectEqual(app.tree.rowOf("b.min.json").?, app.tree.cursor);
+    try t.expect(app.panes.findPath(try app.absPath("b.min.json")) == null);
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "b.min.json: a line over 16 KB — not previewed") != null);
+    _ = try app.tree.handleKey(&app, Key.named(.down));
+    try t.expect(app.panes.findPath(try app.absPath("c.log")) == null);
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "c.log: 4 MB — not previewed") != null);
+    // An ordinary file still previews.
+    _ = try app.tree.handleKey(&app, Key.named(.down));
+    try t.expect(app.panes.findPath(try app.absPath("d.txt")) != null);
 }
 
 test "rename / move onto a taken name is refused — the existing bytes survive" {

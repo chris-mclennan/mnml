@@ -1,0 +1,15 @@
+# Standard profile: moving the tree cursor onto a file previews it —
+# but a 42 MB single-line file (minified JSON, a bundle) is only named:
+# the arrow key must not load it (it used to take ~7 s and ~3.8 GB).
+# The shell below reads the RSS of this test process (its parent).
+write a.txt "a"
+shell python3 -c "import sys; sys.stdout.write('[' + ','.join('{\"id\":%d,\"name\":\"item\"}' % i for i in range(1500000)) + ']')" > data.min.json
+command view.focus_tree
+key r
+key home
+key down
+wait 500
+expect screen contains "data.min.json"
+expect screen contains "not previewed"
+shell r=$(ps -o rss= -p $PPID); if [ "$r" -lt 1000000 ]; then echo "under 1GB: $r KB"; else echo "OVER 1GB: $r KB"; fi > rss.out
+expect file rss.out contains "under 1GB"
