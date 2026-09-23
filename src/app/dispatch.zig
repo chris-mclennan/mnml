@@ -1594,7 +1594,7 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
                     return;
                 }
                 e.buf.save(app.io) catch |err| {
-                    app.toast("save failed: {s}", .{@errorName(err)});
+                    app.toast("save failed: {s}{s}", .{ @errorName(err), e.buf.saveFailNote() });
                     return;
                 };
                 try app.forceClosePane(id);

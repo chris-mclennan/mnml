@@ -44,7 +44,7 @@ pub fn savePane(app: *App, id: app_mod.PaneId, e: *app_mod.EditorPane, opts: Sav
     app.hooks.emit(app, .{ .save_pre = .{ .path = rel, .pane = id, .auto = opts.auto } });
     e.buf.save(app.io) catch |err| {
         if (opts.auto) app.toast("autosave failed: {s}: {s}", .{ rel, @errorName(err) });
-        return app.diag.fail(arena, "save failed: {s}: {s}", .{ rel, @errorName(err) });
+        return app.diag.fail(arena, "save failed: {s}: {s}{s}", .{ rel, @errorName(err), e.buf.saveFailNote() });
     };
     app.hooks.emit(app, .{ .save_post = .{ .path = rel, .pane = id, .bytes = e.buf.editor.len() } });
     if (!opts.auto) app.toast("saved {s}", .{rel});
@@ -65,7 +65,7 @@ pub fn saveAll(app: *App) CommandError!void {
     var n: usize = 0;
     for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
         .editor => |*e| if (e.buf.doc.dirty and e.buf.doc.path != null) {
-            e.buf.save(app.io) catch |err| return app.diag.fail(app.frame.allocator(), "save failed: {s}: {s}", .{ app.relPath(e.buf.doc.path.?), @errorName(err) });
+            e.buf.save(app.io) catch |err| return app.diag.fail(app.frame.allocator(), "save failed: {s}: {s}{s}", .{ app.relPath(e.buf.doc.path.?), @errorName(err), e.buf.saveFailNote() });
             n += 1;
         },
         else => {},
