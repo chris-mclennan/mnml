@@ -59,7 +59,7 @@ pub const Key = struct {
 
 /// The literal chords an entry may spell without a command behind
 /// them — the keys lists and overlays answer themselves.
-pub const literal_chords = [_][]const u8{ "Enter", "Esc", "Space", "Tab", "→ / ←", "↑ / ↓", "←→", "↑↓", "j / k", "h / l", "j k", "h l", "r", "R", "/", "Ctrl+Enter", "Ctrl+F", "Alt+click", "Double-click", "Middle-click", "Drag", "Wheel", "Right-click", "q", "y", "n", "s", "d", "c", "a", "?" };
+pub const literal_chords = [_][]const u8{ "Enter", "Esc", "Space", "Tab", "→ / ←", "↑ / ↓", "←→", "↑↓", "j / k", "h / l", "j k", "h l", "r", "R", "/", "Ctrl+Enter", "Shift+Enter", "Ctrl+F", "Alt+click", "Double-click", "Middle-click", "Drag", "Wheel", "Right-click", "q", "y", "n", "N", "s", "d", "c", "a", "?" };
 
 pub const Link = union(enum) {
     command: struct { id: CommandId, label: []const u8 },

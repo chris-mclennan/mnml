@@ -55,6 +55,33 @@ pub fn entry(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
                 .links = &.{ .{ .command = .{ .id = .@"app.check_updates", .label = "Check for updates" } }, .{ .url = .{ .url = "https://github.com/chris-mclennan/mnml-zig/issues", .label = "File an issue" } } },
             },
         },
+        // The find bar over a terminal pane (`pty_search.zig`).
+        .none => if (@import("../pty_search.zig").barPane(app) != null) termSearchBar(id) else null,
+        else => null,
+    };
+}
+
+/// The terminal's search bar: the same bar the editor docks, searching
+/// the pane's scrollback instead of a buffer.
+fn termSearchBar(id: u32) ?Entry {
+    const bar = @import("../../ui/find_bar.zig");
+    return switch (id) {
+        bar.hit_query => .{
+            .title = "Search the terminal",
+            .body = "Searches everything the pane still holds — the scrollback and the screen — as you type; the count is `match k/N` and the view scrolls to the current one. Enter steps to the next (vim: lands and closes, then `n` / `N`), Shift+Enter the previous; Esc closes and leaves the terminal's selection on the match, so copying takes it. Output that lands while it is open is searched too.",
+            .keys = &.{ .{ .chord = "Enter", .label = "Next match (vim: land and close)" }, .{ .chord = "Shift+Enter", .label = "Previous match" }, .{ .chord = "n", .label = "Next, in terminal-normal" }, .{ .chord = "N", .label = "Previous, in terminal-normal" }, .{ .chord = "Esc", .label = "Close, the match selected" } },
+            .links = &.{ .{ .command = .{ .id = .@"term.search_next", .label = "Next match" } }, .{ .command = .{ .id = .@"term.search_prev", .label = "Previous match" } }, ask },
+        },
+        bar.hit_regex => .{
+            .title = "Regex (terminal search)",
+            .body = "Makes the query a regular expression — the same engine and syntax the editor's find uses in this profile — matched one line at a time, a soft-wrapped line whole, `^` and `$` at its ends. Off, the query is literal: lower case matches either case, an upper-case letter makes it exact. Ctrl+R flips it from the keyboard.",
+            .links = &.{ .{ .command = .{ .id = .@"term.search", .label = "Open the terminal search" } }, ask },
+        },
+        bar.hit_case => .{
+            .title = "Match case (terminal search)",
+            .body = "Makes the query match case exactly. Off, a query in lower case matches either case and one with a capital letter matches exactly — smart case, as the editor's find does. Ctrl+C on the bar flips it; the matches follow at once.",
+            .links = &.{ .{ .command = .{ .id = .@"term.search", .label = "Open the terminal search" } }, ask },
+        },
         else => null,
     };
 }

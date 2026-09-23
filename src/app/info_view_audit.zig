@@ -348,6 +348,17 @@ fn walkOverlays(w: *Walk) Allocator.Error!void {
     try w.probe("overlay_item:help", .{ .overlay_item = 0 });
     w.closeOverlay();
     app.overlay = .none;
+    // The find bar over a terminal pane (`pty_search.zig`): a dormant
+    // terminal — nothing is spawned — with the bar open on it.
+    if (@import("pty_pane.zig").open(app, .{ .dormant = true, .label = "audit" })) |tid| {
+        const bar = @import("../ui/find_bar.zig");
+        app.find_bar = .{ .pane = tid, .snapshot = null, .snapshot_cursor = 0 };
+        try w.probe("term_search:query", .{ .overlay_item = bar.hit_query });
+        try w.probe("term_search:regex", .{ .overlay_item = bar.hit_regex });
+        try w.probe("term_search:case", .{ .overlay_item = bar.hit_case });
+        app.closeFindBar(false);
+        try app.forceClosePane(tid);
+    } else |_| {}
     // A picker's row.
     command.run(app, .{ .static = .@"picker.files" }) catch {};
     if (app.overlay == .picker) {
