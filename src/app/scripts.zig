@@ -1065,9 +1065,9 @@ test "two installed scripts run in their own states: one erroring leaves the oth
     try t.expect(found_a and found_b and ns_a != ns_b);
     try t.expectEqual(@as(?u16, alpha.id), decor.namespaceOwner(&app, ns_a));
     // Alpha burns its budget: its own counter moves, beta's does not.
-    // `pcall` keeps the raise inside Lua — the count hook has already
-    // charged it to alpha by then.
-    try app.luaState(alpha.id).?.runString("assert(not pcall(function() while true do end end))");
+    // The script's own `pcall` cannot keep the trip inside Lua — it is
+    // rethrown out to the host — and it is charged to alpha once.
+    try t.expectError(error.Failed, app.luaState(alpha.id).?.runString("pcall(function() while true do end end)"));
     try t.expectEqual(@as(u32, 1), alpha.state.?.budget_hits);
     try t.expectEqual(@as(u32, 0), beta.state.?.budget_hits);
     try t.expectEqual(@as(u32, 0), app.script().budget_hits);

@@ -10,9 +10,12 @@
 //! table is the whole surface.
 //!
 //! Budget: a count hook every 100 000 instructions checks the
-//! `budget_ms` deadline armed at the outermost entry; a trip raises
-//! `mnml: script budget exceeded`, which `pcall` catches like any other
-//! error.
+//! `budget_ms` deadline armed at the outermost entry. A trip is not an
+//! ordinary error a script can swallow: the state is marked `tripped`,
+//! the hook then fires on EVERY instruction and raises again, and the
+//! `pcall` / `xpcall` a script sees rethrow instead of returning false
+//! — so the raise climbs all the way out to the host's own `pcall`,
+//! however many protected calls the script stacked in its way.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -36,6 +39,8 @@ pub const Segment = script_view.Segment;
 
 /// The count hook fires every this many VM instructions.
 pub const hook_count: i32 = 100_000;
+/// What a budget trip raises, and what the host reports it as.
+pub const budget_msg = "mnml: script budget exceeded";
 /// A frame's worth of work: what the budget protects in a SHIPPED
 /// build, where a script must not hold the UI thread longer than one.
 pub const frame_budget_ms: i64 = 20;
@@ -208,6 +213,10 @@ pub const Lua = struct {
     modules: ?LuaRef = null,
     /// Set by the outermost `enter`; the count hook compares against it.
     deadline_ms: ?i64 = null,
+    /// The budget ran out during the current outermost call. From then
+    /// until that call returns, every instruction raises and the
+    /// script's `pcall` / `xpcall` rethrow: the trip cannot be caught.
+    tripped: bool = false,
     depth: u32 = 0,
     /// The last error `pcall` caught, on the frame arena.
     last_error: ?[]const u8 = null,
@@ -294,6 +303,14 @@ pub const Lua = struct {
         L.setGlobal("loadfile");
         L.pushFunction(zlua.wrap(api.print));
         L.setGlobal("print");
+        // A budget trip must reach the host: the script's own protected
+        // calls rethrow it (see `guardedPcall`).
+        _ = L.getGlobal("pcall");
+        L.pushClosure(zlua.wrap(guardedPcall), 1);
+        L.setGlobal("pcall");
+        _ = L.getGlobal("xpcall");
+        L.pushClosure(zlua.wrap(guardedXpcall), 1);
+        L.setGlobal("xpcall");
         // An installed script — and only an installed script — may
         // `require` its own files. There is no `package`, so this is
         // the whole module system: a name resolves under the script's
@@ -500,11 +517,58 @@ pub const Lua = struct {
     fn countHook(state: ?*zlua.LuaState, _: DebugPtr) callconv(.c) void {
         const L: *State = @ptrCast(state.?);
         const self = of(L);
-        const deadline = self.deadline_ms orelse return;
-        if (App.nowMs(self.io) >= deadline) {
-            self.budget_hits += 1;
-            L.raiseErrorStr("mnml: script budget exceeded", .{});
+        if (self.tripped) L.raiseErrorStr(budget_msg, .{});
+        if (self.spent()) L.raiseErrorStr(budget_msg, .{});
+    }
+
+    /// Whether the budget of the call running now is gone — and if it
+    /// just went, the trip: counted once, and the hook re-armed to fire
+    /// on every instruction so the script cannot run another one.
+    fn spent(self: *Lua) bool {
+        if (self.tripped) return true;
+        const deadline = self.deadline_ms orelse return false;
+        if (App.nowMs(self.io) < deadline) return false;
+        self.tripped = true;
+        self.budget_hits += 1;
+        self.L.setHook(&countHook, .{ .count = true }, 1);
+        return true;
+    }
+
+    /// The `pcall` and `xpcall` scripts see: the base library's own
+    /// (upvalue 1), called with the same arguments, except that a budget
+    /// trip is rethrown rather than returned as `false, msg`. Without
+    /// this, `while true do pcall(function() while true do end end) end`
+    /// swallowed each raise and ran forever.
+    fn guardedPcall(L: *State) i32 {
+        const n = L.getTop();
+        L.pushValue(State.upvalueIndex(1));
+        L.insert(1);
+        L.call(.{ .args = n, .results = zlua.mult_return });
+        if (of(L).tripped) L.raiseErrorStr(budget_msg, .{});
+        return L.getTop();
+    }
+
+    /// `xpcall(f, msgh, …)`: `guardedPcall`, with the message handler
+    /// wrapped too. A raise from the count hook reaches the handler
+    /// while Lua still has hooks switched off (it is running inside the
+    /// hook), so a handler that looped there would run with no budget
+    /// at all. After a trip the wrapper hands the message on without
+    /// calling the script's handler.
+    fn guardedXpcall(L: *State) i32 {
+        if (L.isFunction(2)) {
+            L.pushValue(2);
+            L.pushClosure(zlua.wrap(guardedHandler), 1);
+            L.replace(2);
         }
+        return guardedPcall(L);
+    }
+
+    fn guardedHandler(L: *State) i32 {
+        if (of(L).tripped) return 1;
+        L.pushValue(State.upvalueIndex(1));
+        L.insert(1);
+        L.call(.{ .args = L.getTop() - 1, .results = 1 });
+        return 1;
     }
 
     /// UI-thread assertion plus the budget for the outermost call. Pair
@@ -513,6 +577,7 @@ pub const Lua = struct {
         std.debug.assert(std.Thread.getCurrentId() == self.ui_thread);
         if (self.depth == 0) {
             self.deadline_ms = App.nowMs(self.io) + budget_ms;
+            self.tripped = false;
             self.L.setHook(&countHook, .{ .count = true }, hook_count);
         }
         self.depth += 1;
@@ -523,6 +588,7 @@ pub const Lua = struct {
         if (self.depth == 0) {
             self.L.setHook(&countHook, .{}, 0);
             self.deadline_ms = null;
+            self.tripped = false;
         }
     }
 
@@ -543,12 +609,19 @@ pub const Lua = struct {
         L.insert(base);
         self.enter();
         const result = L.protectedCall(.{ .args = nargs, .results = nresults, .msg_handler = base });
+        // Read before `leave` clears it: a trip is reported as a trip
+        // whatever the script's handlers made of the message on the way.
+        const tripped = self.tripped;
         self.leave();
         L.remove(base);
         result catch {
             // `toStringEx` pushes the string form; pop it and the error object.
             const msg = L.toStringEx(-1);
-            self.last_error = self.app.frame.allocator().dupe(u8, msg) catch "script error";
+            const arena = self.app.frame.allocator();
+            self.last_error = if (tripped and std.mem.indexOf(u8, msg, budget_msg) == null)
+                std.fmt.allocPrint(arena, "{s}\n{s}", .{ budget_msg, msg }) catch budget_msg
+            else
+                arena.dupe(u8, msg) catch "script error";
             L.pop(2);
             return error.Failed;
         };
@@ -1501,6 +1574,38 @@ test "budget: an infinite loop trips after the deadline and the app survives" {
     // The toast said so.
     try testing.expect(app.toasts.items.len >= 1);
     try testing.expect(std.mem.indexOf(u8, app.toasts.items[0].text, "budget") != null);
+}
+
+test "budget: a trip cannot be caught — pcall and xpcall rethrow it, loops around them end" {
+    // The trip used to be a plain `error()`. A script's own `pcall`
+    // caught it, the deadline stayed past, the hook raised again a
+    // hundred thousand instructions later, the `pcall` caught that too —
+    // forever, at 100% CPU, with the UI thread never coming back.
+    var app = try App.init(testing.allocator, testing.io);
+    defer app.deinit();
+    const lua = app.script();
+    const top = lua.L.getTop();
+    const cases = [_][]const u8{
+        "while true do pcall(function() while true do end end) end",
+        "while true do xpcall(function() while true do end end, function(m) return m end) end",
+        // A handler that itself loops, and one that rewrites the message.
+        "xpcall(function() while true do end end, function() while true do end end)",
+        "while true do xpcall(function() while true do end end, function() return 'swallowed' end) end",
+        // Protected calls stacked deep, each one retrying.
+        "local function f(n) if n == 0 then while true do end end; while true do pcall(f, n - 1) end end; f(5)",
+    };
+    for (cases, 1..) |src, n| {
+        try testing.expectError(error.Failed, lua.runString(src));
+        try testing.expect(std.mem.indexOf(u8, lua.last_error.?, budget_msg) != null);
+        try testing.expectEqual(@as(u32, @intCast(n)), lua.budget_hits);
+        try testing.expect(!lua.tripped);
+        try testing.expectEqual(@as(u32, 0), lua.depth);
+    }
+    // An ordinary error is still an ordinary error to `pcall`, and the
+    // state works afterwards.
+    try lua.runString("local ok, err = pcall(error, 'plain'); assert(not ok and err == 'plain')");
+    try lua.runString("local ok = xpcall(function() return 1 end, print); assert(ok)");
+    try testing.expectEqual(top, lua.L.getTop());
 }
 
 test "the frame budget is a shipped-build promise; Debug gets a runaway budget derived from the same slowdown" {

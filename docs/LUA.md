@@ -82,9 +82,14 @@ Lua state, and a `require` scoped to its own folder.
 Every call into Lua — a chunk, a command, a hook, a render, one line of a
 hidden task's output — runs under a count hook that fires every 100 000 VM
 instructions and checks a **20 ms deadline** armed at the outermost entry.
-Past it the call is aborted with `mnml: script budget exceeded`; the script
-sees it as an error, the user as a toast, and the editor keeps running.
-`while true do end` in an `init.lua` costs one toast.
+Past it the call is aborted with `mnml: script budget exceeded`; the user
+sees a toast, and the editor keeps running. `while true do end` in an
+`init.lua` costs one toast.
+
+The abort cannot be caught. A script's own `pcall` / `xpcall` rethrow it
+rather than returning `false`, and from the moment it trips every further
+instruction raises it again, so `while true do pcall(loop) end` ends the
+same way the bare loop does. An `xpcall` message handler is not run for it.
 
 The 20 ms is the SHIPPED build's, and it is a frame budget. Most of what
 it bounds is host code — `mnml.commands()` walks eleven hundred command
