@@ -1454,7 +1454,17 @@ fn movePath(app: *App, from: []const u8, to: []const u8) Allocator.Error!void {
         app.toast("move {s}: {s}", .{ from, @errorName(err) });
         return;
     };
-    // An open buffer follows its file.
+    try retargetBuffers(app, from_abs, to_abs);
+    try files_pane.refreshAfterFsChange(app);
+    if (app.tree.rowOf(to)) |i| app.tree.cursor = i;
+    app.toast("moved {s} → {s}", .{ app.relPath(from), app.relPath(to) });
+}
+
+/// An open buffer follows its file: every editor on `from_abs` — or,
+/// a folder, under it — now points at the same file under `to_abs`.
+/// Every move calls this: a rename, a drag, `file.move_to`, and the
+/// clipboard's cut-and-paste when its transfer lands.
+pub fn retargetBuffers(app: *App, from_abs: []const u8, to_abs: []const u8) Allocator.Error!void {
     for (app.panes.slots.items) |*slot| if (slot.*) |*p| if (p.asEditor()) |e| if (e.buf.doc.path) |bp| {
         if (std.mem.eql(u8, bp, from_abs)) {
             try e.buf.setPath(to_abs);
@@ -1463,9 +1473,6 @@ fn movePath(app: *App, from: []const u8, to: []const u8) Allocator.Error!void {
             try e.buf.setPath(moved);
         }
     };
-    try files_pane.refreshAfterFsChange(app);
-    if (app.tree.rowOf(to)) |i| app.tree.cursor = i;
-    app.toast("moved {s} → {s}", .{ app.relPath(from), app.relPath(to) });
 }
 
 /// Delete `rel` into the trash (`trash.deletePaths`); buffers on the

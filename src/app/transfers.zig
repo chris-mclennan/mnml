@@ -27,6 +27,7 @@ const CommandError = command.CommandError;
 const event = @import("../core/event.zig");
 const files_pane = @import("files_pane.zig");
 const files_view = @import("../ui/files_view.zig");
+const tree_mod = @import("tree.zig");
 
 pub const table = .{
     .@"transfer.cancel_all" = &cancelAllCmd,
@@ -97,6 +98,17 @@ pub const Job = struct {
     /// Heap so the worker can read it after `jobs` reallocates; freed
     /// when the job is retired, after the worker's last message.
     cancel: *Flag,
+    /// A move's sources and destinations (owned): when it lands, the
+    /// buffers open on a source follow it. Empty for a copy.
+    moves: []Item = &.{},
+
+    fn freeMoves(j: *const Job, gpa: Allocator) void {
+        for (j.moves) |it| {
+            gpa.free(it.src);
+            gpa.free(it.dst);
+        }
+        gpa.free(j.moves);
+    }
 
     pub fn percent(j: *const Job) u8 {
         if (j.bytes_total == 0) return 0;
@@ -125,6 +137,7 @@ pub const State = struct {
         for (self.jobs.items) |j| {
             gpa.free(j.dest);
             gpa.destroy(j.cancel);
+            j.freeMoves(gpa);
         }
         self.jobs.deinit(gpa);
     }
@@ -182,7 +195,16 @@ pub fn start(app: *App, kind: Kind, items: []const Item) CommandError!u64 {
     work.cancel = flag;
     const dest = try gpa.dupe(u8, commonAncestor(items));
     errdefer gpa.free(dest);
-    try st.jobs.append(gpa, .{ .id = st.next_id, .kind = kind, .dest = dest, .started_ms = app.now_ms, .cancel = flag });
+    var moves: []Item = &.{};
+    if (kind == .move) {
+        moves = try gpa.alloc(Item, items.len);
+        @memset(moves, .{ .src = &.{}, .dst = &.{} });
+    }
+    errdefer (Job{ .id = 0, .kind = kind, .dest = &.{}, .started_ms = 0, .cancel = flag, .moves = moves }).freeMoves(gpa);
+    if (kind == .move) for (moves, items) |*m, it| {
+        m.* = .{ .src = try gpa.dupe(u8, it.src), .dst = try gpa.dupe(u8, it.dst) };
+    };
+    try st.jobs.append(gpa, .{ .id = st.next_id, .kind = kind, .dest = dest, .started_ms = app.now_ms, .cancel = flag, .moves = moves });
     errdefer _ = st.jobs.pop();
     st.group.concurrent(app.io, worker, .{ &app.events, app.io, work }) catch |err| {
         return app.diag.fail(app.frame.allocator(), "transfer: could not start the worker: {s}", .{@errorName(err)});
@@ -466,6 +488,9 @@ pub fn handle(app: *App, ev: *Event) Allocator.Error!void {
         },
         .done => |d| {
             const files = j.files_done;
+            // The moved files' buffers follow them — or the next save
+            // re-creates the old path beside the moved file.
+            for (j.moves) |m| try tree_mod.retargetBuffers(app, m.src, m.dst);
             if (d.skipped > 0) {
                 app.toast("{s} finished — {d} item{s}, {d} skipped", .{ j.kind.verb(), files, if (files == 1) "" else "s", d.skipped });
             } else {
@@ -491,6 +516,7 @@ fn retire(app: *App, idx: usize) void {
     const j = app.transfers.jobs.orderedRemove(idx);
     app.gpa.free(j.dest);
     app.gpa.destroy(j.cancel);
+    j.freeMoves(app.gpa);
 }
 
 pub fn running(app: *App) usize {
@@ -653,6 +679,47 @@ test "a move within one filesystem renames; cancel_all stops a copy between file
     try tmp.dir.access(t.io, "moved/top.txt", .{});
     // Nothing running: the command says so.
     try t.expectError(error.Failed, command.run(&app, .{ .static = .@"transfer.cancel_all" }));
+}
+
+test "a move that lands takes the open buffers with it — a file, and a file inside a moved folder" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, t.allocator);
+    defer t.allocator.free(root);
+    try tmp.dir.createDirPath(t.io, "dest");
+    try tmp.dir.createDirPath(t.io, "lib");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "a.txt", .data = "orig" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "lib/b.txt", .data = "b" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root });
+    defer app.deinit();
+    const a = try std.fs.path.join(t.allocator, &.{ root, "a.txt" });
+    defer t.allocator.free(a);
+    const b = try std.fs.path.join(t.allocator, &.{ root, "lib", "b.txt" });
+    defer t.allocator.free(b);
+    _ = try app.openPath(a);
+    const ida = app.active.?;
+    _ = try app.applyOps(app.activeEditor().?, &.{.{ .insert_str = "EDIT" }});
+    _ = try app.openPath(b);
+    const idb = app.active.?;
+    const a_dst = try std.fs.path.join(t.allocator, &.{ root, "dest", "a.txt" });
+    defer t.allocator.free(a_dst);
+    const lib = try std.fs.path.join(t.allocator, &.{ root, "lib" });
+    defer t.allocator.free(lib);
+    const lib_dst = try std.fs.path.join(t.allocator, &.{ root, "dest", "lib" });
+    defer t.allocator.free(lib_dst);
+    _ = try start(&app, .move, &.{ .{ .src = a, .dst = a_dst }, .{ .src = lib, .dst = lib_dst } });
+    try settle(&app, 4000);
+    const ea = app.panes.editor(ida).?;
+    const eb = app.panes.editor(idb).?;
+    try t.expectEqualStrings(a_dst, ea.buf.doc.path.?);
+    const b_dst = try std.fs.path.join(t.allocator, &.{ lib_dst, "b.txt" });
+    defer t.allocator.free(b_dst);
+    try t.expectEqualStrings(b_dst, eb.buf.doc.path.?);
+    // The save lands on the moved file; the old path stays gone.
+    try ea.buf.save(t.io);
+    var got: [16]u8 = undefined;
+    try t.expectEqualStrings("EDITorig\n", try tmp.dir.readFile(t.io, "dest/a.txt", &got));
+    try t.expectError(error.FileNotFound, tmp.dir.access(t.io, "a.txt", .{}));
 }
 
 test ":qa refuses while a transfer runs and :qa! overrides; the chip shows progress" {
