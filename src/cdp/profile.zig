@@ -25,7 +25,10 @@ const builtin = @import("builtin");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
-pub const Pid = std.posix.pid_t;
+/// The number Chrome writes into its lock. On Windows `std.posix.pid_t`
+/// is a process HANDLE, not a number, and there is no lock to read, so
+/// the number is a plain integer there — it is only ever formatted.
+pub const Pid = if (builtin.os.tag == .windows) u32 else std.posix.pid_t;
 
 pub const State = union(enum) {
     free,
