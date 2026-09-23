@@ -1617,8 +1617,15 @@ fn sessionPicker(app: *App) CommandError!void {
     try cmd_picker.openPickerWith(app, "Claude sessions (this workspace)", .ai_session, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0), try details.toOwnedSlice(gpa), &.{});
 }
 
-/// The session picker's accept: `claude --resume <id>`.
+/// The session picker's accept: `claude --resume <id>` — or, for a
+/// session already running in a pane, that pane: a second resume of a
+/// live session is two processes on one conversation.
 pub fn sessionAccept(app: *App, session_id: []const u8) CommandError!void {
+    if (pty_pane.liveSessionPane(app, session_id)) |live| {
+        app.showPane(live);
+        app.toast("session already running — showing its pane", .{});
+        return;
+    }
     const argv = try cli.claudeResumeArgv(app.frame.allocator(), session_id);
     _ = try pty_pane.open(app, .{ .argv = argv, .label = "claude", .placement = .right, .kind = .command });
 }
@@ -2154,6 +2161,22 @@ test "the setup picker lists the backends and Esc leaves the config alone; a pic
     try app.handle(.{ .key = Key.named(.down) });
     try app.handle(.{ .key = Key.named(.enter) });
     try t.expectEqualStrings(suggest.migration_note, app.lastToast().?);
+}
+
+test "the session picker's accept on a session already running shows its pane — no second `--resume` of a live id" {
+    // sess-resume-live-session-twice.
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const live = try pty_pane.open(&app, .{ .argv = &.{ "/bin/sh", "-c", "sleep 30", "--resume", "sid-live" }, .label = "claude", .kind = .command, .placement = .tab });
+    const other = try app.openScratch();
+    try t.expectEqual(other, app.active.?);
+    const before = app.panes.count();
+    try sessionAccept(&app, "sid-live");
+    try t.expectEqual(before, app.panes.count());
+    try t.expectEqual(live, app.active.?);
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "already running") != null);
 }
 
 test "every ai / agents / cloud_agents id has a runner" {

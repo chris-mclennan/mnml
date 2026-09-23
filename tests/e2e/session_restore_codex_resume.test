@@ -13,7 +13,10 @@
 # resume it logs `resume <id>`, plus `resumed-the-same-session` when
 # the id it was handed is the one it started under. A restore that
 # started a SECOND session instead would log `second-new-session`.
-write bin/codex #!/bin/bash\nsid="abcdabcd-0000-4000-8000-00000000c0de"\nif [ "$1" = resume ]; then\n  printf 'resume %s\\n' "$2" >> argv.log\n  if [ -f "started-$2" ]; then printf 'resumed-the-same-session\\n' >> argv.log; fi\nelse\n  if [ -f "started-$sid" ]; then printf 'second-new-session\\n' >> argv.log; fi\n  d="$HOME/.codex/sessions/2026/09/21"\n  mkdir -p "$d"\n  printf '{"timestamp":"%s.000Z","type":"session_meta","payload":{"id":"%s","cwd":"%s"}}\\n' "$(date -u +%Y-%m-%dT%H:%M:%S)" "$sid" "$MNML_E2E_WORKSPACE" > "$d/rollout-$(date -u +%Y-%m-%dT%H-%M-%S)-$sid.jsonl"\n  : > "started-$sid"\n  printf 'new %s\\n' "$sid" >> argv.log\nfi\nprintf 'Codex (fake)\\n'\nexec -a codex /bin/sh -c 'i=0; while [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done'
+# The new session's run ends after two seconds, so the restore meets a
+# session that is not live (a live one is kept, not resumed again —
+# `sessions_restore_keeps_live_session.test`).
+write bin/codex #!/bin/bash\nsid="abcdabcd-0000-4000-8000-00000000c0de"\nif [ "$1" = resume ]; then\n  printf 'resume %s\\n' "$2" >> argv.log\n  if [ -f "started-$2" ]; then printf 'resumed-the-same-session\\n' >> argv.log; fi\nelse\n  if [ -f "started-$sid" ]; then printf 'second-new-session\\n' >> argv.log; fi\n  d="$HOME/.codex/sessions/2026/09/21"\n  mkdir -p "$d"\n  printf '{"timestamp":"%s.000Z","type":"session_meta","payload":{"id":"%s","cwd":"%s"}}\\n' "$(date -u +%Y-%m-%dT%H:%M:%S)" "$sid" "$MNML_E2E_WORKSPACE" > "$d/rollout-$(date -u +%Y-%m-%dT%H-%M-%S)-$sid.jsonl"\n  : > "started-$sid"\n  printf 'new %s\\n' "$sid" >> argv.log\nfi\nprintf 'Codex (fake)\\n'\nn=60; [ "$1" = resume ] || n=2\nexec -a codex /bin/sh -c 'i=0; while [ $i -lt $0 ]; do sleep 1; i=$((i+1)); done' "$n"
 shell chmod +x bin/codex
 write notes.txt "alpha\n"
 open notes.txt
@@ -27,6 +30,10 @@ expect file argv.log contains "new abcdabcd-0000-4000-8000-00000000c0de"
 # the save looked it up.
 command session.save
 expect file .mnml/session.zon contains "abcdabcd-0000-4000-8000-00000000c0de"
+
+# The first run ends on its own (as after a quit).
+wait 3000
+expect screen contains "[exited"
 
 command session.restore
 wait 2000
