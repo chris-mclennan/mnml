@@ -49,6 +49,7 @@ pub const table = .{
     .@"tree.refresh" = &refreshCmd,
     .@"tree.collapse_all" = &collapseAll,
     .@"tree.expand_all" = &expandAll,
+    .@"tree.toggle_ignored" = &toggleIgnored,
     .@"tree.toggle_collapse_all" = &toggleCollapseAll,
     .@"tree.open_selected" = &openSelected,
     .@"tree.open_in_split" = &openInSplit,
@@ -62,13 +63,24 @@ pub const table = .{
 pub const default_width: u16 = 30;
 /// Never entered by `expand_all`; a click still opens them.
 const noisy_dirs = [_][]const u8{ ".git", "node_modules", "target", "zig-out", ".zig-cache", "zig-cache" };
-/// Build artifacts hidden even without a `.gitignore` — the same set
-/// the file picker skips, so the two surfaces agree. Unlike a dot
-/// entry, `H` does not reveal them (Rust).
-pub const artifact_dirs = [_][]const u8{ "node_modules", "__pycache__", ".next", "dist", "build", "target", "vendor", ".venv", "venv", "zig-out", ".zig-cache", "zig-cache" };
+/// Folders a package manager or a build fills and nobody writes source
+/// in: hidden even without a `.gitignore` — the same set the file
+/// picker skips, so the two surfaces agree. Unlike a dot entry, `H`
+/// does not reveal them (Rust); `tree.toggle_ignored` (`I`) does.
+pub const artifact_dirs = [_][]const u8{ "node_modules", "__pycache__", ".next", ".venv", "venv", ".zig-cache", "zig-cache" };
+/// Build-output names that are ALSO where committed source lives — a Go
+/// `vendor/`, a tracked `build/deploy.yaml`, a docs site's `dist/`.
+/// Hidden by name outside a git repo; inside one the `.gitignore`s
+/// alone decide, so tracked files there are listed and found.
+pub const build_dirs = [_][]const u8{ "dist", "build", "target", "vendor", "zig-out" };
 
 pub fn isArtifactDir(name: []const u8) bool {
     for (artifact_dirs) |d| if (std.mem.eql(u8, name, d)) return true;
+    return isBuildDir(name);
+}
+
+pub fn isBuildDir(name: []const u8) bool {
+    for (build_dirs) |d| if (std.mem.eql(u8, name, d)) return true;
     return false;
 }
 
@@ -84,6 +96,12 @@ pub const Row = struct {
     /// A root's section header (`▾ name`); `rel` is the root's path
     /// (`""` for the primary).
     header: bool = false,
+    /// Listed only because `show_ignored` is on: a `.gitignore` names it
+    /// (or, outside a git repo, it is an artifact directory). Painted dim.
+    ignored: bool = false,
+    /// A symbolic link. A link to a directory is a directory row that
+    /// expands like one; `expand_all` never enters it (a link can loop).
+    link: bool = false,
 
     pub fn name(r: Row) []const u8 {
         return std.fs.path.basename(r.rel);
@@ -109,6 +127,12 @@ pub const Tree = struct {
     /// Dot entries show (Rust's default); `H` hides them. `.git` and the
     /// artifact directories stay out either way.
     show_hidden: bool = true,
+    /// Git-ignored entries (and, outside a repo, the artifact
+    /// directories) listed, dim — nvim-tree's `I`. Off by default; the
+    /// file picker follows the same switch.
+    show_ignored: bool = false,
+    /// Whether the workspace sits in a git work tree, asked once.
+    in_repo: ?bool = null,
     rows: std.ArrayListUnmanaged(Row) = .empty,
     /// Expanded directories, workspace-relative, owned keys.
     expanded: std.StringHashMapUnmanaged(void) = .empty,
@@ -406,7 +430,30 @@ pub const Tree = struct {
     fn listInto(self: *Tree, app: *App, rel_dir: []const u8, depth: u8, root: u8) Allocator.Error!void {
         var ignores = gitignore.Stack.init(self.gpa);
         defer ignores.deinit();
-        try self.listWith(app, rel_dir, depth, root, &ignores);
+        try self.listWith(app, rel_dir, depth, root, &ignores, false);
+    }
+
+    /// The workspace is inside a git work tree (a `.git` at it or above).
+    /// Inside one the `.gitignore`s say whether a `build/` or `vendor/`
+    /// is listed; outside one its name is the only guide (`build_dirs`).
+    pub fn inRepo(self: *Tree, app: *App) bool {
+        if (self.in_repo) |v| return v;
+        var dir: []const u8 = app.workspace;
+        const found = while (true) {
+            var buf: [std.fs.max_path_bytes]u8 = undefined;
+            const probe = std.fmt.bufPrint(&buf, "{s}/.git", .{dir}) catch break false;
+            if (std.Io.Dir.cwd().statFile(app.io, probe, .{})) |_| break true else |_| {}
+            dir = std.fs.path.dirname(dir) orelse break false;
+        };
+        self.in_repo = found;
+        return found;
+    }
+
+    /// Whether a listing leaves directory `name` out by its name alone
+    /// (`artifact_dirs` always, `build_dirs` outside a repo).
+    pub fn artifactHidden(self: *Tree, app: *App, name: []const u8) bool {
+        for (artifact_dirs) |d| if (std.mem.eql(u8, name, d)) return true;
+        return isBuildDir(name) and !self.inRepo(app);
     }
 
     /// The path of `rel_dir` relative to its root — what a `.gitignore`
@@ -419,7 +466,7 @@ pub const Tree = struct {
         return "";
     }
 
-    fn listWith(self: *Tree, app: *App, rel_dir: []const u8, depth: u8, root: u8, ignores: *gitignore.Stack) Allocator.Error!void {
+    fn listWith(self: *Tree, app: *App, rel_dir: []const u8, depth: u8, root: u8, ignores: *gitignore.Stack, under_ignored: bool) Allocator.Error!void {
         const gpa = self.gpa;
         const arena = app.frame.allocator();
         const abs = if (rel_dir.len == 0) app.workspace else if (std.fs.path.isAbsolute(rel_dir)) rel_dir else try std.fs.path.join(arena, &.{ app.workspace, rel_dir });
@@ -444,15 +491,18 @@ pub const Tree = struct {
         var it = dir.iterate();
         while (it.next(app.io) catch null) |entry| {
             if (entry.kind != .directory and entry.kind != .file and entry.kind != .sym_link) continue;
-            const is_dir = entry.kind == .directory;
+            const link = entry.kind == .sym_link;
+            // A link is a folder row when its target is one (the stat
+            // follows the link); a dangling link stays a file row.
+            const is_dir = entry.kind == .directory or (link and linkIsDir(app, dir, entry.name));
             if (is_dir and std.mem.eql(u8, entry.name, ".git")) continue;
             if (!self.show_hidden and entry.name.len > 0 and entry.name[0] == '.') continue;
-            if (is_dir and isArtifactDir(entry.name)) continue;
             const here_rel = if (here.len == 0) entry.name else try std.fs.path.join(arena, &.{ here, entry.name });
-            if (ignores.ignored(here_rel, is_dir)) continue;
+            const ignored = under_ignored or (is_dir and self.artifactHidden(app, entry.name)) or ignores.ignored(here_rel, is_dir);
+            if (ignored and !self.show_ignored) continue;
             const rel = if (rel_dir.len == 0) try gpa.dupe(u8, entry.name) else try std.fs.path.join(gpa, &.{ rel_dir, entry.name });
             errdefer gpa.free(rel);
-            try names.append(gpa, .{ .rel = rel, .depth = depth, .is_dir = is_dir, .root = root });
+            try names.append(gpa, .{ .rel = rel, .depth = depth, .is_dir = is_dir, .root = root, .ignored = ignored, .link = link });
         }
         // Directories first, then names folded to lower case (Rust).
         std.mem.sort(Row, names.items, {}, struct {
@@ -463,7 +513,7 @@ pub const Tree = struct {
         }.lt);
         for (names.items) |row| {
             try self.rows.append(gpa, row);
-            if (row.is_dir and self.expanded.contains(row.rel)) try self.listWith(app, row.rel, depth + 1, root, ignores);
+            if (row.is_dir and self.expanded.contains(row.rel)) try self.listWith(app, row.rel, depth + 1, root, ignores, row.ignored);
         }
     }
 
@@ -661,6 +711,8 @@ pub const Tree = struct {
                     self.show_hidden = !self.show_hidden;
                     try self.refresh(app);
                 },
+                // nvim-tree's `I`: git-ignored entries in and out.
+                'I' => try runCmd(app, .@"tree.toggle_ignored"),
                 'D' => try runCmd(app, .@"file.duplicate"),
                 'd' => {
                     if (app.input_style != .vim) return false;
@@ -706,6 +758,12 @@ pub const Tree = struct {
         if (row.header or row.is_dir) return;
         const rel = try app.frame.allocator().dupe(u8, row.rel);
         const abs = try app.absPath(rel);
+        // The cursor only passed over it: a file too heavy to glance at
+        // is named, not loaded — Enter still opens it.
+        if (try previewTooHeavy(app, abs)) |why| {
+            app.toast("{s}: {s} — not previewed; Enter opens it", .{ rel, why });
+            return;
+        }
         _ = app.openPreview(abs) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => {
@@ -826,17 +884,17 @@ pub const Tree = struct {
                 continue;
             }
             if (i == self.cursor) cursor_item = items.items.len;
-            const abs = try app.absPath(row.rel);
             const depth = row.depth - @as(u8, if (multi) 1 else 0);
+            // The name and the badges (a path join, the git map, every
+            // open buffer) are filled below for the rows on screen only:
+            // an expanded 50k-row tree paid them per row on every repaint.
             try items.append(arena, .{ .entry = .{
                 .idx = @intCast(i),
-                .name = row.name(),
+                .name = "",
                 .depth = depth,
                 .is_dir = row.is_dir,
                 .expanded = row.is_dir and self.isExpanded(row.rel),
-                .git = if (row.is_dir) null else states.get(abs),
-                .dirty = !row.is_dir and dirtyInEditor(app, abs),
-                .repo = if (row.root == 0 and row.is_dir and depth == 0) repoMark(app, abs) else null,
+                .ignored = row.ignored,
             } });
         }
         try items.append(arena, .blank);
@@ -847,6 +905,21 @@ pub const Tree = struct {
             if (ci >= self.scroll + h) self.scroll = ci + 1 - h;
         }
         self.scroll = @min(self.scroll, tree_view.contentLen(items.items) -| h);
+        // A pinned header may shift the painted window by a row or two.
+        const lo = self.scroll -| 2;
+        const hi = @min(items.items.len, self.scroll + h + 2);
+        for (items.items[lo..hi]) |*it| switch (it.*) {
+            .entry => |*en| {
+                const row = self.rows.items[en.idx];
+                en.name = row.name();
+                const abs = try app.absPath(row.rel);
+                if (!row.is_dir) {
+                    en.git = states.get(abs);
+                    en.dirty = dirtyInEditor(app, abs);
+                } else if (row.root == 0 and en.depth == 0) en.repo = repoMark(app, abs);
+            },
+            else => {},
+        };
         _ = tree_view.draw(ui, area, .{
             .items = items.items,
             .cursor = cursor_item,
@@ -892,7 +965,7 @@ pub const Tree = struct {
             try self.refresh(app);
             for (self.rows.items) |row| {
                 if (row.header or !row.is_dir or self.isExpanded(row.rel)) continue;
-                if (isNoisy(row.name())) continue;
+                if (isNoisy(row.name()) or row.link or row.ignored) continue;
                 try self.setExpanded(row.rel, true);
                 again = true;
             }
@@ -1013,9 +1086,46 @@ fn runCmd(app: *App, id: command.CommandId) Allocator.Error!void {
 }
 
 /// `path` relative to `base` when it lies under it, else null.
+/// The arrow-key preview's bounds: past either, the file is not
+/// loaded as the cursor goes by (a 42 MB one-line bundle costs the
+/// editor seconds and gigabytes; a 2 GB blob would be read whole).
+pub const preview_max_bytes: u64 = 4 * 1024 * 1024;
+pub const preview_max_line: usize = 16 * 1024;
+/// How much of a file's head is scanned for a line that long.
+const preview_head_bytes: usize = 64 * 1024;
+
+/// Why `abs` is too heavy for an arrow-key preview, or null. Reads at
+/// most `preview_head_bytes`, never the whole file.
+pub fn previewTooHeavy(app: *App, abs: []const u8) Allocator.Error!?[]const u8 {
+    const arena = app.frame.allocator();
+    const st = std.Io.Dir.cwd().statFile(app.io, abs, .{}) catch return null;
+    if (st.kind != .file) return null;
+    if (st.size > preview_max_bytes) return try std.fmt.allocPrint(arena, "{d} MB", .{st.size / (1024 * 1024)});
+    const file = std.Io.Dir.cwd().openFile(app.io, abs, .{}) catch return null;
+    defer file.close(app.io);
+    const head = try arena.alloc(u8, @min(preview_head_bytes, st.size));
+    const n = file.readPositionalAll(app.io, head, 0) catch return null;
+    var run: usize = 0;
+    for (head[0..n]) |c| {
+        if (c == '\n') {
+            run = 0;
+        } else {
+            run += 1;
+            if (run > preview_max_line) return try std.fmt.allocPrint(arena, "a line over {d} KB", .{preview_max_line / 1024});
+        }
+    }
+    return null;
+}
+
 fn underRoot(base: []const u8, path: []const u8) ?[]const u8 {
     if (path.len > base.len + 1 and std.mem.startsWith(u8, path, base) and path[base.len] == '/') return path[base.len + 1 ..];
     return null;
+}
+
+/// `name` in `dir` is a link whose target is a directory.
+fn linkIsDir(app: *App, dir: std.Io.Dir, name: []const u8) bool {
+    const st = dir.statFile(app.io, name, .{}) catch return false;
+    return st.kind == .directory;
 }
 
 fn isNoisy(name: []const u8) bool {
@@ -1399,8 +1509,14 @@ pub fn acceptRename(app: *App, from: []const u8, text: []const u8) Allocator.Err
         if (std.fs.path.dirname(from)) |dir| to = try std.fs.path.join(arena, &.{ dir, to });
     }
     if (std.mem.eql(u8, to, from)) return;
+    // A trailing slash names a folder, as it does for `mv` and the
+    // New-file prompt: `newdir/` moves the file INTO newdir (made when
+    // missing), keeping its name — never renames it to `newdir`.
+    const into_dir = std.mem.endsWith(u8, std.mem.trimEnd(u8, text, " \t"), "/");
     const to_abs = try app.absPath(to);
-    if (std.Io.Dir.cwd().statFile(app.io, to_abs, .{})) |st| {
+    if (into_dir) {
+        to = try std.fs.path.join(arena, &.{ to, std.fs.path.basename(from) });
+    } else if (std.Io.Dir.cwd().statFile(app.io, to_abs, .{})) |st| {
         if (st.kind == .directory) to = try std.fs.path.join(arena, &.{ to, std.fs.path.basename(from) });
     } else |_| {}
     try movePath(app, from, to);
@@ -1439,12 +1555,32 @@ pub fn acceptCopy(app: *App, from: []const u8, into: []const u8) Allocator.Error
 fn movePath(app: *App, from: []const u8, to: []const u8) Allocator.Error!void {
     const from_abs = try app.absPath(from);
     const to_abs = try app.absPath(to);
+    // A taken name is refused — a rename never replaces what is already
+    // there. The one exception is the same file under another spelling
+    // (a case-only rename on a case-insensitive volume): same inode.
+    if (std.Io.Dir.cwd().statFile(app.io, to_abs, .{ .follow_symlinks = false })) |to_st| {
+        const same = if (std.Io.Dir.cwd().statFile(app.io, from_abs, .{ .follow_symlinks = false })) |from_st| from_st.inode == to_st.inode else |_| false;
+        if (!same) {
+            app.toast("already exists: {s} — nothing moved", .{app.relPath(to)});
+            return;
+        }
+    } else |_| {}
     if (std.fs.path.dirname(to)) |parent| std.Io.Dir.cwd().createDirPath(app.io, try app.absPath(parent)) catch {};
     std.Io.Dir.rename(std.Io.Dir.cwd(), from_abs, std.Io.Dir.cwd(), to_abs, app.io) catch |err| {
         app.toast("move {s}: {s}", .{ from, @errorName(err) });
         return;
     };
-    // An open buffer follows its file.
+    try retargetBuffers(app, from_abs, to_abs);
+    try files_pane.refreshAfterFsChange(app);
+    if (app.tree.rowOf(to)) |i| app.tree.cursor = i;
+    app.toast("moved {s} → {s}", .{ app.relPath(from), app.relPath(to) });
+}
+
+/// An open buffer follows its file: every editor on `from_abs` — or,
+/// a folder, under it — now points at the same file under `to_abs`.
+/// Every move calls this: a rename, a drag, `file.move_to`, and the
+/// clipboard's cut-and-paste when its transfer lands.
+pub fn retargetBuffers(app: *App, from_abs: []const u8, to_abs: []const u8) Allocator.Error!void {
     for (app.panes.slots.items) |*slot| if (slot.*) |*p| if (p.asEditor()) |e| if (e.buf.doc.path) |bp| {
         if (std.mem.eql(u8, bp, from_abs)) {
             try e.buf.setPath(to_abs);
@@ -1453,9 +1589,6 @@ fn movePath(app: *App, from: []const u8, to: []const u8) Allocator.Error!void {
             try e.buf.setPath(moved);
         }
     };
-    try files_pane.refreshAfterFsChange(app);
-    if (app.tree.rowOf(to)) |i| app.tree.cursor = i;
-    app.toast("moved {s} → {s}", .{ app.relPath(from), app.relPath(to) });
 }
 
 /// Delete `rel` into the trash (`trash.deletePaths`); buffers on the
@@ -1495,6 +1628,8 @@ fn toggleHidden(app: *App) CommandError!void {
 }
 
 fn refreshCmd(app: *App) CommandError!void {
+    // `git init` / a clone since the last look: ask again.
+    app.tree.in_repo = null;
     try app.tree.refresh(app);
     app.needs_render = true;
 }
@@ -1504,6 +1639,13 @@ fn collapseAll(app: *App) CommandError!void {
     while (it.next()) |k| app.gpa.free(k.*);
     app.tree.expanded.clearRetainingCapacity();
     try app.tree.refresh(app);
+}
+
+fn toggleIgnored(app: *App) CommandError!void {
+    app.tree.show_ignored = !app.tree.show_ignored;
+    try app.tree.refresh(app);
+    app.toast("git-ignored files {s}", .{if (app.tree.show_ignored) "shown (dim)" else "hidden"});
+    app.needs_render = true;
 }
 
 fn toggleCollapseAll(app: *App) CommandError!void {
@@ -1633,6 +1775,71 @@ test "tree, vim profile: nvim-tree's a / r / d / x / R / E / W — create, renam
     try t.expect(app.overlay == .none);
 }
 
+test "the arrow preview skips a file too heavy to glance at — a very long line, or too many bytes — and says so" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "a.txt", .data = "a" });
+    const one_line = try t.allocator.alloc(u8, 40 * 1024);
+    defer t.allocator.free(one_line);
+    @memset(one_line, 'x');
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "b.min.json", .data = one_line });
+    const big = try t.allocator.alloc(u8, preview_max_bytes + 4096);
+    defer t.allocator.free(big);
+    for (big, 0..) |*c, i| c.* = if (i % 64 == 63) '\n' else 'y';
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "c.log", .data = big });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "d.txt", .data = "d" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = buf[0..n] });
+    defer app.deinit();
+    app.input_style = .standard;
+    app.cfg.ui.tree_preview_on_arrow = true;
+    try app.tree.refresh(&app);
+    app.focus = .tree;
+    app.tree.cursor = app.tree.rowOf("a.txt").?;
+    _ = try app.tree.handleKey(&app, Key.named(.down));
+    try t.expectEqual(app.tree.rowOf("b.min.json").?, app.tree.cursor);
+    try t.expect(app.panes.findPath(try app.absPath("b.min.json")) == null);
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "b.min.json: a line over 16 KB — not previewed") != null);
+    _ = try app.tree.handleKey(&app, Key.named(.down));
+    try t.expect(app.panes.findPath(try app.absPath("c.log")) == null);
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "c.log: 4 MB — not previewed") != null);
+    // An ordinary file still previews.
+    _ = try app.tree.handleKey(&app, Key.named(.down));
+    try t.expect(app.panes.findPath(try app.absPath("d.txt")) != null);
+}
+
+test "rename / move onto a taken name is refused — the existing bytes survive" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    try tmp.dir.createDirPath(t.io, "sub");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "a.txt", .data = "AAA" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "b.txt", .data = "BBB" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "sub/a.txt", .data = "SUBA" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = buf[0..n] });
+    defer app.deinit();
+    try app.tree.refresh(&app);
+    var got: [16]u8 = undefined;
+    // F2 onto a sibling's name.
+    try acceptRename(&app, "a.txt", "b.txt");
+    try t.expectEqualStrings("BBB", try tmp.dir.readFile(t.io, "b.txt", &got));
+    try t.expectEqualStrings("AAA", try tmp.dir.readFile(t.io, "a.txt", &got));
+    try t.expect(std.mem.startsWith(u8, app.lastToast().?, "already exists: b.txt"));
+    // Into a folder that holds the same name (the rename prompt and `file.move_to`).
+    try acceptRename(&app, "a.txt", "sub");
+    try t.expectEqualStrings("SUBA", try tmp.dir.readFile(t.io, "sub/a.txt", &got));
+    // A drag-move onto the same folder.
+    try acceptMove(&app, "a.txt", "sub");
+    try t.expectEqualStrings("SUBA", try tmp.dir.readFile(t.io, "sub/a.txt", &got));
+    try t.expectEqualStrings("AAA", try tmp.dir.readFile(t.io, "a.txt", &got));
+    // A free name still moves.
+    try acceptRename(&app, "a.txt", "c.txt");
+    try t.expectEqualStrings("AAA", try tmp.dir.readFile(t.io, "c.txt", &got));
+    try t.expect(std.mem.startsWith(u8, app.lastToast().?, "moved"));
+}
+
 test "tree file verbs: new file, new folder, rename into a folder, move by drag-confirm, delete" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
@@ -1722,7 +1929,7 @@ test "tree: F2 opens the rename prompt seeded with the row; other function keys 
     try t.expect(app.focus == .overlay);
 }
 
-test "tree: artifact directories and .git stay out of the rows without a .gitignore, with H either way; a .gitignore hides what it names" {
+test "tree: artifact directories and .git stay out of the rows without a .gitignore, with H either way; a build dir only outside a repo; a .gitignore hides what it names" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -1741,12 +1948,28 @@ test "tree: artifact directories and .git stay out of the rows without a .gitign
     var names: std.ArrayListUnmanaged([]const u8) = .empty;
     defer names.deinit(t.allocator);
     for (app.tree.rows.items) |r| try names.append(t.allocator, r.name());
-    try t.expectEqual(@as(usize, 2), names.items.len);
+    // A repo (the `.git` above): `vendor` is the .gitignore's call, and
+    // none names it — it is listed; node_modules / __pycache__ never are.
+    try t.expectEqual(@as(usize, 3), names.items.len);
     try t.expectEqualStrings("src", names.items[0]);
-    try t.expectEqualStrings("build", names.items[1]);
+    try t.expectEqualStrings("vendor", names.items[1]);
+    try t.expectEqualStrings("build", names.items[2]);
     app.tree.show_hidden = false;
     try app.tree.refresh(&app);
+    try t.expectEqual(@as(usize, 3), app.tree.rows.items.len);
+    // No repo: the name alone hides `vendor`.
+    try tmp.dir.deleteTree(t.io, ".git");
+    app.tree.in_repo = false;
+    try app.tree.refresh(&app);
     try t.expectEqual(@as(usize, 2), app.tree.rows.items.len);
+    try t.expect(app.tree.rowOf("vendor") == null);
+    // `I` brings every one of them back, dim.
+    app.tree.show_ignored = true;
+    try app.tree.refresh(&app);
+    try t.expect(app.tree.rows.items[app.tree.rowOf("node_modules").?].ignored);
+    try t.expect(app.tree.rows.items[app.tree.rowOf("vendor").?].ignored);
+    try t.expect(!app.tree.rows.items[app.tree.rowOf("src").?].ignored);
+    app.tree.show_ignored = false;
     // A `.gitignore` in the root hides what it names — at any depth
     // for a bare name, under its own directory for an anchored one.
     app.tree.show_hidden = true;

@@ -493,7 +493,7 @@ fn write(app: *App, range: ?Range, path_arg: []const u8, then_close: bool) Comma
     const path = e.buf.doc.path orelse return app.diag.fail(arena, ":w — no file name (use :w <path>)", .{});
     const rel = app.relPath(path);
     app.hooks.emit(app, .{ .save_pre = .{ .path = rel, .pane = app.active.? } });
-    e.buf.save(app.io) catch |err| return app.diag.fail(arena, ":w — {s}: {s}", .{ rel, @errorName(err) });
+    e.buf.save(app.io) catch |err| return app.diag.fail(arena, ":w — {s}: {s}{s}", .{ rel, @errorName(err), e.buf.saveFailNote() });
     app.hooks.emit(app, .{ .save_post = .{ .path = rel, .pane = app.active.?, .bytes = e.buf.editor.len() } });
     app.toast("saved {s}", .{rel});
     if (then_close) {
@@ -526,7 +526,7 @@ fn saveAll(app: *App) CommandError!void {
     var n: usize = 0;
     for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
         .editor => |*e| if (e.buf.doc.dirty and e.buf.doc.path != null) {
-            e.buf.save(app.io) catch |err| return app.diag.fail(app.frame.allocator(), ":wa — {s}: {s}", .{ app.relPath(e.buf.doc.path.?), @errorName(err) });
+            e.buf.save(app.io) catch |err| return app.diag.fail(app.frame.allocator(), ":wa — {s}: {s}{s}", .{ app.relPath(e.buf.doc.path.?), @errorName(err), e.buf.saveFailNote() });
             n += 1;
         },
         else => {},

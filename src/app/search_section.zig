@@ -108,6 +108,8 @@ pub const State = struct {
     list: Panel.State = .{},
     loading: bool = false,
     truncated: bool = false,
+    /// Files the last run left unread for their size.
+    skipped_big: u32 = 0,
     /// The last run's reason for nothing.
     err: ?[]u8 = null,
 
@@ -202,6 +204,7 @@ pub const State = struct {
         self.list.cursor = 0;
         self.list.scroll = 0;
         self.truncated = false;
+        self.skipped_big = 0;
         self.backend = null;
         if (self.err) |e| gpa.free(e);
         self.err = null;
@@ -264,10 +267,12 @@ pub fn handle(app: *App, result: *grep.Result) Allocator.Error!void {
             .len = h.len,
             .text = try arena.dupe(u8, h.text),
             .text_off = h.text_off,
+            .ccol = h.ccol,
         });
     }
     st.backend = result.backend;
     if (result.truncated) st.truncated = true;
+    st.skipped_big += result.skipped_big;
     if (result.err) |e| {
         if (st.err) |old| app.gpa.free(old);
         st.err = try app.gpa.dupe(u8, e);
@@ -367,7 +372,7 @@ pub fn openHit(app: *App, h: grep.Hit, beside: bool) CommandError!void {
     if (app.panes.editor(eid)) |e| {
         const ed = e.buf.editor;
         ed.anchor = null;
-        ed.placeCursor(@min(@as(usize, line) -| 1, ed.lineCount() -| 1), col);
+        ed.placeCursorByte(@min(@as(usize, line) -| 1, ed.lineCount() -| 1), col);
         ed.goal_col = null;
         e.view.scroll_line = @intCast(ed.currentLine() -| app.pane_rows / 2);
     }
@@ -642,7 +647,9 @@ pub fn statusText(ui: Ui, st: *const State) []const u8 {
     if (st.ran == null) return if (st.query_focused) " type \u{b7} Enter to run \u{b7} Esc clears" else " / focuses the query \u{b7} Enter runs it";
     if (st.err) |e| return ui.fmt(" {s}: {s}", .{ if (st.backend) |b| b.label() else "search", e });
     const n = st.hits.items.len;
-    return ui.fmt(" {d} hit{s} ({s}){s}", .{ n, if (n == 1) "" else "s", if (st.backend) |b| b.label() else "search", if (st.truncated) " (capped)" else "" });
+    const big = grep.bigNote(ui.arena, st.skipped_big);
+    if (st.truncated) return ui.fmt(" {d}+ hits, capped ({s}){s}", .{ n, if (st.backend) |b| b.label() else "search", big });
+    return ui.fmt(" {d} hit{s} ({s}){s}", .{ n, if (n == 1) "" else "s", if (st.backend) |b| b.label() else "search", big });
 }
 
 pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
@@ -788,18 +795,19 @@ test "view.activity_search: the section takes the column with the query focused;
     try f.settle(400);
     const st = &app.search_section;
     try t.expectEqual(grep.Backend.git_grep, st.backend.?);
-    // One hit per line (Rust counts the same way): 2 in src/a.zig, 1 in
-    // b.txt, 1 in notes.md; the log and the scratch never.
-    try t.expectEqual(@as(usize, 4), st.hits.items.len);
+    // One hit per MATCH, as the walk and rg count (Rust's git grep
+    // counts lines): 3 in src/a.zig, 1 in b.txt, 1 in notes.md; the log
+    // and the scratch never.
+    try t.expectEqual(@as(usize, 5), st.hits.items.len);
     try t.expectEqual(@as(usize, 3), st.groups.items.len);
-    try t.expectEqual(@as(usize, 7), st.rows.items.len);
+    try t.expectEqual(@as(usize, 8), st.rows.items.len);
     for (st.hits.items) |h| {
         try t.expect(std.mem.indexOf(u8, h.rel, ".log") == null);
         try t.expect(std.mem.indexOf(u8, h.rel, "scratch") == null);
     }
     txt = try f.screen();
     defer t.allocator.free(txt);
-    try t.expect(std.mem.indexOf(u8, txt, " 4 hits (git grep)") != null);
+    try t.expect(std.mem.indexOf(u8, txt, " 5 hits (git grep)") != null);
     try t.expect(std.mem.indexOf(u8, txt, "\u{F0349} alpha") != null);
     try t.expect(std.mem.indexOf(u8, txt, "src/a.zig") != null);
     try t.expect(std.mem.indexOf(u8, txt, "1:7  const alpha = 1;") != null);
@@ -823,7 +831,7 @@ test "view.activity_search: the section takes the column with the query focused;
             try t.expect(std.mem.indexOf(u8, l, "\u{F0349}") == null);
             try t.expect(std.mem.indexOf(u8, l, "hits (") == null);
         } else if (y == header_y.? + 3) {
-            try t.expect(std.mem.indexOf(u8, l, "4 hits (git grep)") != null);
+            try t.expect(std.mem.indexOf(u8, l, "5 hits (git grep)") != null);
         } else if (y == header_y.? + 5) {
             try t.expect(std.mem.indexOf(u8, l, "src/a.zig") != null or std.mem.indexOf(u8, l, "notes.md") != null or std.mem.indexOf(u8, l, "b.txt") != null);
         }
@@ -840,6 +848,33 @@ test "view.activity_search: the section takes the column with the query focused;
         t.io.sleep(.fromMilliseconds(5), .awake) catch {};
     }
     try t.expect(!app.panes.get(id).?.grep.loading);
+}
+
+test "git grep past the cap: the run finishes (git is stopped, not waited on with the pipe full) and the header says it capped" {
+    if (!hasGit()) return error.SkipZigTest;
+    var f = try Fixture.init();
+    defer f.deinit();
+    const app = &f.app;
+    // 12 000 matching lines, ~1.6 MB of `git grep` output: more than
+    // the reader's buffer plus the pipe.
+    var big: std.ArrayListUnmanaged(u8) = .empty;
+    defer big.deinit(t.allocator);
+    for (0..12_000) |i| try big.print(t.allocator, "alpha {d:0>6} padding padding padding padding padding padding padding padding padding padding padding\n", .{i});
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "big.txt", .data = big.items });
+    try Fixture.git(f.root, &.{ "add", "big.txt" });
+    try Fixture.git(f.root, &.{ "commit", "-q", "-m", "big" });
+    _ = try app.openScratch();
+    try command.run(app, .{ .static = .@"view.activity_search" });
+    try f.typeQuery("alpha");
+    try app.handle(.{ .key = Key.named(.enter) });
+    try f.settle(2000);
+    const st = &app.search_section;
+    try t.expect(st.truncated);
+    try t.expectEqual(grep.max_hits, st.hits.items.len);
+    const txt = try f.screen();
+    defer t.allocator.free(txt);
+    // At the stock column width the words that matter come first.
+    try t.expect(std.mem.indexOf(u8, txt, " 5000+ hits, capped") != null);
 }
 
 test "the walk parity: the same seed without a repository answers through the walk with the .gitignore honoured, and the header says so" {
@@ -883,7 +918,7 @@ test "keys: Esc clears the query then leaves it; ↓ and Enter open the hit at i
     try app.handle(.{ .key = Key.named(.enter) });
     try f.settle(400);
     const st = &app.search_section;
-    try t.expectEqual(@as(usize, 7), st.rows.items.len);
+    try t.expectEqual(@as(usize, 8), st.rows.items.len);
     // The selection starts on the first hit (row 1, under its file
     // header — Rust's `search_selected = 0`); ↓ ↓ from the query moves
     // it past the next file header onto the second hit (row 3). Enter
@@ -909,11 +944,11 @@ test "keys: Esc clears the query then leaves it; ↓ and Enter open the hit at i
     try t.expect(!st.query_focused);
     st.list.cursor = 1;
     try app.handle(.{ .key = Key.char('h') });
-    try t.expectEqual(@as(usize, 7 - st.groups.items[0].count), st.rows.items.len);
+    try t.expectEqual(@as(usize, 8 - st.groups.items[0].count), st.rows.items.len);
     try t.expectEqual(@as(usize, 0), st.list.cursor);
     try t.expect(st.rows.items[0] == .file);
     try app.handle(.{ .key = Key.char('l') });
-    try t.expectEqual(@as(usize, 7), st.rows.items.len);
+    try t.expectEqual(@as(usize, 8), st.rows.items.len);
     // `/` focuses the query again; typing edits it (the caret moves with ←).
     try app.handle(.{ .key = Key.char('/') });
     try t.expect(st.query_focused);
@@ -932,20 +967,20 @@ test "keys: Esc clears the query then leaves it; ↓ and Enter open the hit at i
     try f.typeQuery("alph");
     try app.handle(.{ .key = Key.named(.enter) });
     try f.settle(400);
-    try t.expectEqual(@as(usize, 4), st.hits.items.len);
+    try t.expectEqual(@as(usize, 5), st.hits.items.len);
     try command.run(app, .{ .static = .@"search.toggle_whole_word" });
     try t.expect(st.flags.whole_word);
     try f.settle(400);
     try t.expectEqual(@as(usize, 0), st.hits.items.len);
     try command.run(app, .{ .static = .@"search.toggle_whole_word" });
     try f.settle(400);
-    try t.expectEqual(@as(usize, 4), st.hits.items.len);
+    try t.expectEqual(@as(usize, 5), st.hits.items.len);
     // The case flag: `Aa` on with a lower-case query finds nothing upper.
     try command.run(app, .{ .static = .@"search.toggle_case_sensitive" });
     try t.expect(st.flags.case_sensitive);
     try t.expectEqual(true, app.search_case.?);
     try f.settle(400);
-    try t.expectEqual(@as(usize, 3), st.hits.items.len);
+    try t.expectEqual(@as(usize, 4), st.hits.items.len);
     try command.run(app, .{ .static = .@"search.toggle_case_sensitive" });
     try f.settle(400);
     // A click on a hit row opens it; a right click opens the row menu titled by the hit.

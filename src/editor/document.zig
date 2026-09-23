@@ -224,6 +224,10 @@ pub const Document = struct {
     /// The file's mtime + size when it was last read or written; the
     /// watcher compares against it. Null for a scratch document.
     disk: ?DiskStamp = null,
+    /// The watcher found the file gone (deleted, or renamed away by
+    /// another program): the statusline says `(deleted)` until a save
+    /// writes it again or it reappears.
+    deleted: bool = false,
     /// The edit-log seq the language server has been told about; null
     /// until a server has the file open.
     lsp_seen: ?u64 = null,

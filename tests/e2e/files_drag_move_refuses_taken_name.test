@@ -1,0 +1,14 @@
+# Dragging a file onto a folder that already holds a file of the same
+# name is refused like the clipboard paste: sub/aa.txt keeps its bytes.
+write sub/aa.txt "SUBAA"
+write aa.txt "ROOTAA"
+open aa.txt
+command tree.refresh
+# rows: 2 sub/, 3 sub/aa.txt, 4 aa.txt
+drag 9 4 9 2
+expect screen contains "Move to"
+key enter
+wait 500
+expect screen contains "already exists: sub/aa.txt"
+expect file sub/aa.txt contains "SUBAA"
+expect file aa.txt contains "ROOTAA"

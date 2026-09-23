@@ -324,6 +324,16 @@ pub const Editor = struct {
         self.goal_col = null;
     }
 
+    /// As `placeCursor`, with `byte` a BYTE offset on the line (what a
+    /// search backend reports), clamped to the line and snapped onto a
+    /// character boundary.
+    pub fn placeCursorByte(self: *Editor, row: usize, byte: usize) void {
+        const start = self.lineStart(row);
+        const end = self.lineEnd(row);
+        self.cursor = self.doc.snapBoundary(start + @min(byte, end - start));
+        self.goal_col = null;
+    }
+
     /// The display column `j` / `k` aim for: the cells before the
     /// cursor, tabs and wide glyphs at their width, so the cursor keeps
     /// its place on screen from line to line.

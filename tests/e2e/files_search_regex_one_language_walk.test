@@ -1,0 +1,13 @@
+# Outside a repo the walk answers the SEARCH regex in the same language
+# as git grep: `[0-9]+` finds the digits line (vim magic read `+` as a
+# literal plus and said "0 hits").
+write a.txt "v1 = 42\nno digits\n"
+open a.txt
+command view.activity_search
+command search.toggle_regex
+type [0-9]+
+key enter
+wait 1500
+expect screen contains "(walk)"
+expect screen contains "v1 = 42"
+expect screen lacks "0 hits"

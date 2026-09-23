@@ -252,7 +252,27 @@ pub const RankOpts = struct {
     /// the palette's recents keep their newest-first order on an empty
     /// query, where every score is the same (`maxInt` for the rest).
     order: []const u32 = &.{},
+    /// A path list: a query with spaces is also tried as separate terms,
+    /// every one matching in any order (fzf's, VS Code's quick open) —
+    /// `src main` finds `src/main.rs`. The whole query is tried first,
+    /// so a name with a real space still ranks on it.
+    terms: bool = false,
 };
+
+/// `query`'s score on `label`, or its space-separated terms' summed
+/// scores when every term matches (see `RankOpts.terms`).
+fn termScore(query: []const u8, label: []const u8, terms: bool) ?i64 {
+    if (fuzzy.raw(query, label)) |r| return r;
+    if (!terms or std.mem.indexOfScalar(u8, query, ' ') == null) return null;
+    var it = std.mem.tokenizeScalar(u8, query, ' ');
+    var sum: i64 = 0;
+    var n: usize = 0;
+    while (it.next()) |term| {
+        sum += fuzzy.raw(term, label) orelse return null;
+        n += 1;
+    }
+    return if (n == 0) null else sum;
+}
 
 /// Indices into `items` that match `query`, best first: priority desc,
 /// score desc, index asc — Rust's `refilter`. An empty query keeps
@@ -264,7 +284,7 @@ pub fn rank(arena: Allocator, query: []const u8, items: []const Item, opts: Rank
     const q = std.ascii.lowerString(qlower_buf[0..@min(query.len, qlower_buf.len)], query[0..@min(query.len, qlower_buf.len)]);
     const id_boosts = opts.ids.len > 0 and q.len > 0;
     for (items, 0..) |it, i| {
-        const raw = fuzzy.raw(query, it.label) orelse continue;
+        const raw = termScore(query, it.label, opts.terms) orelse continue;
         var prio: u8 = if (i < opts.priority.len) opts.priority[i] else 0;
         var sc: i64 = raw + (if (i < opts.score_bonus.len) opts.score_bonus[i] else 0);
         if (id_boosts and i < opts.ids.len) {
@@ -588,6 +608,20 @@ test "rank is Rust's refilter: priority beats score, bonuses tier the empty quer
     const pal = [_]Item{ .{ .label = "file  ·  Save file as…  ·  file.save_as" }, .{ .label = "file  ·  Save file  ·  file.save" } };
     const pinned = try rank(arena, "file.save", &pal, .{ .ids = &.{ "file.save_as", "file.save" } });
     try testing.expectEqualSlices(usize, &.{ 1, 0 }, pinned);
+}
+
+test "a path list reads a spaced query as terms in any order; a literal space still matches; other lists do not split" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const items = [_]Item{ .{ .label = "src/main.rs" }, .{ .label = "src/domain/manager.rs" }, .{ .label = "docs/readme.md" }, .{ .label = "with space/my file.txt" } };
+    const both = try rank(arena, "src main", &items, .{ .terms = true });
+    try std.testing.expectEqual(@as(usize, 2), both.len);
+    try std.testing.expectEqual(@as(usize, 0), both[0]);
+    try std.testing.expectEqual(@as(usize, 2), (try rank(arena, "main src", &items, .{ .terms = true })).len);
+    const lit = try rank(arena, "my file", &items, .{ .terms = true });
+    try std.testing.expectEqual(@as(usize, 3), lit[0]);
+    try std.testing.expectEqual(@as(usize, 0), (try rank(arena, "src main", &items, .{})).len);
 }
 
 test "the geometry at 80, 120 and 200 columns is Rust's; top anchors to the edge" {

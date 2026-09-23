@@ -152,6 +152,6 @@ test "rows: a file header is its path; folded it leads with the expander and end
     try testing.expect(std.mem.endsWith(u8, g.row(0, &buf), "src/a.zig (3)"));
     var h = try Fixture.init(40, 1);
     defer h.deinit();
-    paintRow(h.ui(), h.full(), .{ .hit = .{ .path = "/x", .rel = "x", .line = 3, .col = 8, .len = 4, .text = "    let name = 1;" } }, false);
+    paintRow(h.ui(), h.full(), .{ .hit = .{ .path = "/x", .rel = "x", .line = 3, .col = 8, .ccol = 8, .len = 4, .text = "    let name = 1;" } }, false);
     try h.expectRow(0, "  3:9  let name = 1;");
 }

@@ -29,17 +29,15 @@ pub const Match = struct {
 
 /// The score alone. An empty query matches everything at the base score.
 pub fn score(query: []const u8, text: []const u8) ?u32 {
-    var buf: [max_hits]usize = undefined;
     var n: usize = 0;
-    return scoreImpl(query, text, &buf, &n);
+    return scoreImpl(query, text, &scratch.out, &n);
 }
 
 /// The score and the matched positions, on `arena`.
 pub fn match(arena: Allocator, query: []const u8, text: []const u8) Allocator.Error!?Match {
-    var buf: [max_hits]usize = undefined;
     var n: usize = 0;
-    const s = scoreImpl(query, text, &buf, &n) orelse return null;
-    return .{ .score = s, .positions = try arena.dupe(usize, buf[0..n]) };
+    const s = scoreImpl(query, text, &scratch.out, &n) orelse return null;
+    return .{ .score = s, .positions = try arena.dupe(usize, scratch.out[0..n]) };
 }
 
 /// Scores are offset so a poor match is still non-negative: `base` is
@@ -62,8 +60,23 @@ fn isSeparator(c: u21) bool {
     return c == '_' or c == '-' or c == '.';
 }
 
+/// Latin letters with a diacritic → the base letter (U+00C0–U+017F);
+/// `_` = no fold. With the combining marks dropped in `decode`, an NFC
+/// `é` typed on the keyboard and an NFD `e` + U+0301 in a name Finder
+/// wrote both reach `e` — fzf's default folding, VS Code's NFC match.
+const fold_latin1 = "AAAAAA_CEEEEIIIIDNOOOOO_OUUUUY__aaaaaa_ceeeeiiiidnooooo_ouuuuy_y";
+const fold_ext_a = "AaAaAaCcCcCcCcDdDdEeEeEeEeEeGgGgGgGgHhHhIiIiIiIiIiIiJjKkkLlLlLlLlLlNnNnNnnNnOoOoOoOoRrRrRrSsSsSsSsTtTtTtUuUuUuUuUuUuWwYyYZzZzZzs";
+
 fn lower(c: u21) u21 {
-    return if (c < 0x80) std.ascii.toLower(@intCast(c)) else c;
+    if (c < 0x80) return std.ascii.toLower(@intCast(c));
+    const base_letter: u8 = if (c >= 0xC0 and c < 0x100) fold_latin1[c - 0xC0] else if (c >= 0x100 and c < 0x180) fold_ext_a[c - 0x100] else return c;
+    return if (base_letter == '_') c else std.ascii.toLower(base_letter);
+}
+
+/// A combining diacritical mark (U+0300–U+036F): part of the letter
+/// before it for matching.
+fn isCombining(c: u21) bool {
+    return c >= 0x300 and c <= 0x36F;
 }
 
 fn isUpper(c: u21) bool {
@@ -75,13 +88,18 @@ fn isLower(c: u21) bool {
 }
 
 /// `text` as code points with each one's byte offset; invalid bytes
-/// count as one code point each.
+/// count as one code point each, and a combining mark joins the code
+/// point before it (it is skipped).
 fn decode(text: []const u8, chars: []u21, offs: []usize) usize {
     var n: usize = 0;
     var i: usize = 0;
     while (i < text.len and n < chars.len) {
         const len = std.unicode.utf8ByteSequenceLength(text[i]) catch 1;
         const cp: u21 = if (i + len <= text.len) std.unicode.utf8Decode(text[i .. i + len]) catch text[i] else text[i];
+        if (n > 0 and isCombining(cp)) {
+            i += @max(len, 1);
+            continue;
+        }
         chars[n] = cp;
         offs[n] = i;
         n += 1;
@@ -90,13 +108,55 @@ fn decode(text: []const u8, chars: []u21, offs: []usize) usize {
     return n;
 }
 
+/// The verdict `scoreImpl` would reach for an all-ASCII query whose
+/// needle (separators dropped, case folded) is not a subsequence of the
+/// text — reached on the bytes, without decoding either side. A picker
+/// over a 50k-file tree calls the scorer once per file per keystroke,
+/// and most files are rejected here.
+fn cannotMatch(query: []const u8, text: []const u8) bool {
+    var ti: usize = 0;
+    for (query) |qc| {
+        if (qc >= 0x80) return false; // decoding decides
+        if (qc == '_' or qc == '-' or qc == '.') continue;
+        const want = std.ascii.toLower(qc);
+        while (ti < text.len and std.ascii.toLower(text[ti]) != want) {
+            // A non-ASCII letter may fold to `want` (`é` → `e`).
+            if (text[ti] >= 0x80) return false;
+            ti += 1;
+        }
+        if (ti == text.len) return true;
+        ti += 1;
+    }
+    return false;
+}
+
+/// The scorer's working arrays, kept per thread: as locals they cost a
+/// ~20 KB fill of `undefined` on every call in the safe build modes —
+/// more than the scoring itself, times every row of a large picker.
+const Scratch = struct {
+    qchars: [max_chars]u21,
+    qoffs: [max_chars]usize,
+    nl: [max_chars]u21,
+    hchars: [max_chars]u21,
+    hoffs: [max_chars]usize,
+    hlower: [max_chars]u21,
+    tchars: [max_chars]u21,
+    toffs: [max_chars]usize,
+    matched: [max_hits]usize,
+    /// `score` / `match`'s positions before `match` copies them out.
+    out: [max_hits]usize,
+};
+threadlocal var scratch: Scratch = undefined;
+
 fn scoreImpl(query_in: []const u8, text: []const u8, buf: []usize, n_out: *usize) ?u32 {
     n_out.* = 0;
-    var qchars: [max_chars]u21 = undefined;
-    var qoffs: [max_chars]usize = undefined;
-    const qn_raw = decode(query_in, &qchars, &qoffs);
+    if (cannotMatch(query_in, text)) return null;
+    const sc = &scratch;
+    const qchars = &sc.qchars;
+    const qoffs = &sc.qoffs;
+    const qn_raw = decode(query_in, qchars, qoffs);
     // Rust normalises the needle by dropping `_` `-` `.` and lower-casing.
-    var nl: [max_chars]u21 = undefined;
+    const nl = &sc.nl;
     var nl_n: usize = 0;
     for (qchars[0..qn_raw]) |c| {
         if (isSeparator(c)) continue;
@@ -105,20 +165,20 @@ fn scoreImpl(query_in: []const u8, text: []const u8, buf: []usize, n_out: *usize
     }
     if (nl_n == 0) return base;
 
-    var hchars: [max_chars]u21 = undefined;
-    var hoffs: [max_chars]usize = undefined;
-    const n = decode(text, &hchars, &hoffs);
-    var hlower: [max_chars]u21 = undefined;
+    const hchars = &sc.hchars;
+    const hoffs = &sc.hoffs;
+    const n = decode(text, hchars, hoffs);
+    const hlower = &sc.hlower;
     for (hchars[0..n], 0..) |c, i| hlower[i] = lower(c);
 
     // The trimmed original query, lower-cased, for the substring passes.
     const trimmed = std.mem.trim(u8, query_in, " \t\r\n");
-    var tchars: [max_chars]u21 = undefined;
-    var toffs: [max_chars]usize = undefined;
-    const tn = decode(trimmed, &tchars, &toffs);
+    const tchars = &sc.tchars;
+    const toffs = &sc.toffs;
+    const tn = decode(trimmed, tchars, toffs);
     for (tchars[0..tn], 0..) |c, i| tchars[i] = lower(c);
 
-    var matched: [max_hits]usize = undefined; // char indices
+    const matched = &sc.matched; // char indices
     var mn: usize = 0;
 
     // Pass 1: the original query as a case-insensitive substring at a boundary.
@@ -268,4 +328,20 @@ test "positions are byte offsets, ascending and inside the text" {
     const dot = (try match(testing.allocator, "diff", "g  ·  diff")).?;
     defer testing.allocator.free(dot.positions);
     try testing.expectEqualSlices(usize, &.{ 7, 8, 9, 10 }, dot.positions);
+}
+
+test "latin diacritics fold both ways: NFC typed finds an NFD name and the reverse; ecole finds either" {
+    const nfd = "e\u{301}cole-notes.txt"; // Finder's spelling: e + COMBINING ACUTE
+    const nfc = "\u{e9}cole-notes.txt";
+    try testing.expect(score("\u{e9}cole", nfd) != null);
+    try testing.expect(score("e\u{301}cole", nfc) != null);
+    try testing.expect(score("ecole", nfd) != null);
+    try testing.expect(score("ecole", nfc) != null);
+    try testing.expect(score("\u{e9}cole", "school.txt") == null);
+    // The positions still land on real bytes of the haystack.
+    var buf: [256]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    const m = (try match(fba.allocator(), "\u{e9}c", nfd)).?;
+    try testing.expectEqual(@as(usize, 0), m.positions[0]);
+    try testing.expectEqual(@as(usize, 3), m.positions[1]);
 }

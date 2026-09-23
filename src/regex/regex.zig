@@ -56,6 +56,9 @@ pub const Match = struct {
 
 /// The longest translated pattern accepted.
 pub const max_pattern = 4096;
+/// The vim → Oniguruma translation on its own, for a caller that hands
+/// the pattern to an external engine (`git grep -P`, `rg`).
+pub const translate = vim.translate;
 
 /// 0 = not yet, 1 = another thread is doing it, 2 = done. No `Io` is
 /// in reach here (a compile has none), so this is an atomic hand-off

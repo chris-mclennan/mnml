@@ -1473,7 +1473,7 @@ pub fn refilterPicker(app: *App) Allocator.Error!void {
         .icon_glyphs => try icon_picker.hexIds(app, arena),
         else => &.{},
     };
-    const order = try Picker.rank(arena, p.state.query.items, items, .{ .priority = p.priority, .score_bonus = p.score_bonus, .ids = ids, .order = p.order });
+    const order = try Picker.rank(arena, p.state.query.items, items, .{ .priority = p.priority, .score_bonus = p.score_bonus, .ids = ids, .order = p.order, .terms = p.kind == .files or p.kind == .recent });
     try p.filtered.ensureTotalCapacity(app.gpa, order.len);
     for (order) |i| p.filtered.appendAssumeCapacity(@intCast(i));
     if (p.state.cursor >= p.filtered.items.len) p.state.cursor = 0;
@@ -1594,7 +1594,7 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
                     return;
                 }
                 e.buf.save(app.io) catch |err| {
-                    app.toast("save failed: {s}", .{@errorName(err)});
+                    app.toast("save failed: {s}{s}", .{ @errorName(err), e.buf.saveFailNote() });
                     return;
                 };
                 try app.forceClosePane(id);
@@ -1635,7 +1635,10 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
         },
         .delete_paths => |d| {
             try trash.acceptDelete(app, @ptrCast(d.paths), d.permanent_only, choice);
+            // Only what is really gone: a path the trash could not take
+            // is still there (the box asks again about it).
             if (choice == 0) for (d.paths) |p| {
+                if (std.Io.Dir.cwd().access(app.io, p, .{})) continue else |_| {}
                 notes.onPathRemoved(app, p);
                 findings.onPathRemoved(app, p);
             };

@@ -1,0 +1,13 @@
+# A name Finder wrote decomposed (e + U+0301) is found by the composed
+# "é" the keyboard types, and by a plain "ecole".
+shell echo x > "$(printf 'e\xcc\x81cole-notes.txt')" && echo y > other.txt
+key ctrl+p
+type école
+wait 300
+expect screen lacks "(no matches)"
+expect screen contains "cole-notes.txt"
+key esc
+key ctrl+p
+type ecole
+wait 300
+expect screen contains "cole-notes.txt"

@@ -1,0 +1,25 @@
+# Ctrl+X / Ctrl+V (a move on the transfer worker) takes the open buffer
+# along: the save after the move lands on dest/a.txt, and nothing
+# re-appears at ./a.txt.
+write dest/.keep ""
+write a.txt "orig\n"
+open a.txt
+key end
+type EDIT
+expect dirty true
+command view.focus_tree
+key r
+key end
+key ctrl+x
+wait 100
+key home
+key ctrl+v
+wait 800
+expect file dest/a.txt contains "orig"
+command view.focus_pane
+key ctrl+s
+wait 300
+# The moved file must carry the save; nothing may re-appear at ./a.txt.
+expect file dest/a.txt contains "origEDIT"
+shell test -e a.txt && echo BACK > old.out || echo GONE > old.out
+expect file old.out contains "GONE"

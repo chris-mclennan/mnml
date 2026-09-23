@@ -1269,6 +1269,7 @@ pub fn openWorkspaceHeaderMenu(app: *App, root: u8, x: u16, y: u16) Allocator.Er
             .{ .label = "Collapse / expand section", .action = .{ .command = .@"view.toggle_tree_section" } },
             .{ .label = "Expand all", .action = .{ .command = .@"tree.expand_all" }, .separator_before = true },
             .{ .label = "Collapse all", .action = .{ .command = .@"tree.collapse_all" } },
+            .{ .label = "Show git-ignored files", .action = .{ .command = .@"tree.toggle_ignored" }, .checked = app.tree.show_ignored },
             .{ .label = "New file…", .action = .{ .command = .@"file.new" }, .separator_before = true },
             .{ .label = "New folder…", .action = .{ .command = .@"file.new_folder" } },
             .{ .label = "Paste here", .action = .{ .command = .@"file.paste" } },

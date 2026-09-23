@@ -1,0 +1,12 @@
+# An open file deleted by another program is reported: a warning toast
+# and "(deleted)" on the statusline until a save writes it back.
+write a.txt "one\n"
+open a.txt
+expect screen contains "one"
+shell rm a.txt
+wait 4500
+expect screen contains "(deleted)"
+command file.save
+wait 300
+expect file a.txt contains "one"
+expect screen lacks "(deleted)"

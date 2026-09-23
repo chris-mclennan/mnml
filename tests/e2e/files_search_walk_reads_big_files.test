@@ -1,0 +1,10 @@
+# The walk (no repo, no rg) reads a 1.3 MB log instead of skipping every
+# file over 1 MB in silence: the one FATAL line is found.
+write small.txt "nothing\n"
+shell python3 -c "import sys; sys.stdout.write('ok line\n'*170000 + 'FATAL disk quota exceeded\n')" > server.log
+command view.activity_search
+type FATAL
+key enter
+wait 3000
+expect screen contains "1 hit (walk)"
+expect screen lacks "0 hits"

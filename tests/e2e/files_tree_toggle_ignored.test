@@ -1,0 +1,23 @@
+# Git-ignored files are out of the tree by default; tree.toggle_ignored
+# (`I` in the tree, nvim-tree's key) lists them, dim, and Ctrl+P finds
+# them while it is on.
+write .gitignore "*.log\nlocal.env\n"
+write local.env "SECRET=1"
+write app.log "log"
+write a.txt "a"
+command view.focus_tree
+key r
+wait 200
+expect screen lacks "local.env"
+key I
+wait 200
+expect screen contains "local.env"
+expect screen contains "app.log"
+key ctrl+p
+type local
+wait 300
+expect screen contains "local.env"
+key esc
+command tree.toggle_ignored
+wait 200
+expect screen lacks "app.log"

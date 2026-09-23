@@ -1,0 +1,16 @@
+# Renaming a file onto an existing sibling's name is refused: the
+# sibling keeps its bytes and the source stays where it was.
+write a.txt "AAA"
+write b.txt "BBB"
+command view.focus_tree
+key r
+key home
+key f2
+expect screen contains "Rename a.txt"
+key ctrl+u
+type b.txt
+key enter
+wait 300
+expect screen contains "already exists: b.txt"
+expect file b.txt contains "BBB"
+expect file a.txt contains "AAA"

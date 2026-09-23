@@ -21,6 +21,7 @@ const Document = editor_mod.Document;
 const Pos = editor_mod.Pos;
 pub const Clipboard = editor_mod.Clipboard;
 const edit_op = @import("edit_op.zig");
+const safe_write = @import("safe_write.zig");
 const EditOp = edit_op.EditOp;
 const input = @import("../input/mod.zig");
 pub const InputHandler = input.InputHandler;
@@ -49,6 +50,10 @@ pub const Buffer = struct {
     last_unsupported: ?[]const u8 = null,
     /// Set by `applyOps` when an `abort_unless_selection` cut a list short.
     ops_aborted: bool = false,
+    /// The last save (or attempt) rewrote the file in place rather than
+    /// through a temp file (`safe_write.zig`) — a failure then may have
+    /// left the file incomplete.
+    save_in_place: bool = false,
     /// The find matches nearest the cursor (`gn` / `gN`), byte ranges.
     /// The find state lives with the app; it seeds these before a key.
     find_next: ?[2]usize = null,
@@ -219,17 +224,32 @@ pub const Buffer = struct {
         return self.doc.setPath(path);
     }
 
-    pub const SaveError = Allocator.Error || Io.Dir.WriteFileError || error{NoPath};
+    pub const SaveError = Allocator.Error || safe_write.Error || error{NoPath};
 
-    /// Write the document; every window on it is clean afterwards.
+    /// Write the document; every window on it is clean afterwards. The
+    /// bytes go through a sibling temp file renamed over the target
+    /// (`safe_write.zig`), so a save that fails leaves the file on disk
+    /// as it was — `save_in_place` says when that could not be done.
     pub fn save(self: *Buffer, io: Io) SaveError!void {
         const path = self.doc.path orelse return error.NoPath;
         if (self.doc.trim_trailing_ws_on_save) try self.trimTrailingWhitespace();
         if (self.doc.ensure_trailing_newline) try self.fixTrailingNewline();
         const data = try withEol(self.gpa, self.editor.bytes(), self.doc.eol);
         defer self.gpa.free(data);
-        try Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = data });
+        var p = safe_write.plan(io, path);
+        self.save_in_place = p.outcome == .in_place;
+        const outcome = safe_write.writePlanned(io, &p, data, null) catch |err| {
+            self.save_in_place = p.outcome == .in_place;
+            return err;
+        };
+        self.save_in_place = outcome == .in_place;
         try self.markSaved();
+    }
+
+    /// The tail of a failed save's message: whether the file on disk
+    /// is still the old one.
+    pub fn saveFailNote(self: *const Buffer) []const u8 {
+        return if (self.save_in_place) " — written in place (hard-linked or special file); the file on disk may be incomplete" else " — the file on disk is untouched";
     }
 
     /// Strip the spaces and tabs before every line end, as one undoable

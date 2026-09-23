@@ -222,6 +222,11 @@ pub const rows = [_]Row{
         .body = "Opens every directory, walking outwards until nothing new appears, so the whole workspace is one scrollable list. Noisy folders — `node_modules`, `target` and their kin — stay shut, which is what keeps this from taking minutes on a real project. It is still a long list on a large repo: the file picker is usually the faster way to one file.",
         .links = &.{ .{ .command = .{ .id = .@"tree.expand_all", .label = "Expand them" } }, .{ .command = .{ .id = .@"tree.collapse_all", .label = "Collapse them again" } }, .{ .command = .{ .id = .@"picker.files", .label = "Find a file by name" } } },
     } },
+    .{ .label = "Show git-ignored files", .command = .@"tree.toggle_ignored", .entry = .{
+        .title = "Show git-ignored files",
+        .body = "Lists what the `.gitignore`s leave out — a `.env.local`, a failing test's `*.log`, a generated `dist/` — dim, beside everything else, and lets Ctrl+P find them too. Outside a git repo the build folders (`node_modules`, `target`, `build`…) are what it brings back. `I` in the focused tree flips it too (nvim-tree's key); the tick says it is on, and the switch lasts the session.",
+        .links = &.{ .{ .command = .{ .id = .@"tree.toggle_ignored", .label = "Toggle it" } }, .{ .command = .{ .id = .@"view.toggle_hidden", .label = "Dot files instead" } }, .{ .command = .{ .id = .@"picker.files", .label = "Find a file by name" } } },
+    } },
     .{ .label = "Open", .command = .@"tree.open_selected", .entry = .{
         .title = "Open",
         .body = "Opens this row in the active leaf — a file in an editor tab, a markdown file rendered when `ui.markdown_opens_rendered` says so, a directory by folding it open in place. Enter on the row does the same thing. *Open in split* is the row for putting it beside what is already on screen.",

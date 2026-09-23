@@ -1,0 +1,16 @@
+# In a git repo the .gitignore decides what Ctrl+P lists: tracked files
+# under folders named build/ and vendor/ are found by name.
+shell git init -q -b main && git config user.email t@e.st && git config user.name t
+write build/deploy.yaml "x"
+write vendor/github.com/lib/lib.go "package lib"
+write src/app.go "package main"
+shell git add -A && git commit -qm seed
+key ctrl+p
+type deploy
+wait 300
+expect screen contains "build/deploy.yaml"
+key esc
+key ctrl+p
+type lib.go
+wait 300
+expect screen contains "vendor/github.com/lib/lib.go"

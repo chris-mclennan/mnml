@@ -1,0 +1,10 @@
+# Ctrl+P indexes the whole tree: in a workspace of 5101 files the one
+# walked last is found by typing its name, and the title claims no cap.
+shell mkdir -p aaa zzz && cd aaa && for i in $(seq 1 5100); do : > f$i.txt; done
+shell echo target > zzz/zz_target.txt
+key ctrl+p
+expect screen contains "Open file"
+expect screen lacks "first 5000"
+type zz_target
+wait 300
+expect screen contains "zzz/zz_target.txt"

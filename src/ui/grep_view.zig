@@ -35,7 +35,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: *grep.GrepPane, focused: bool) 
         ui.fmt("{d} match{s} in {d} file{s}", .{ n, if (n == 1) "" else "es", p.groups.items.len, if (p.groups.items.len == 1) "" else "s" })
     else
         ui.fmt("{d}/{d} enabled in {d} file{s}", .{ enabled, n, p.groups.items.len, if (p.groups.items.len == 1) "" else "s" });
-    const title = ui.fmt(" SEARCH · {s}: \"{s}\" · {s}{s}{s} ", .{ backend, p.query, count, capped, state });
+    const title = ui.fmt(" SEARCH · {s}: \"{s}\" · {s}{s}{s}{s} ", .{ backend, p.query, count, capped, grep.bigNote(ui.arena, p.skipped_big), state });
     _ = ui.putStr(head.x, head.y, head.w, ui.clipStr(title, head.w), title_style);
     ui.hit(head, .{ .script_hit = .{ .pane = pane, .id = grep.hit_title } });
     if (area.h < 2) return;
@@ -140,7 +140,7 @@ pub fn paintHitWith(ui: Ui, r: Rect, h: grep.Hit, disabled: bool, bg: anytype, m
     const mark: []const u8 = if (disabled) (if (ui.ascii) " - " else " ○ ") else mark_in;
     var x = r.x;
     x += ui.putStr(x, r.y, r.w, mark, dim);
-    const pos = ui.fmt("{d}:{d}  ", .{ h.line, h.col + 1 });
+    const pos = ui.fmt("{d}:{d}  ", .{ h.line, h.ccol + 1 });
     x += ui.putStr(x, r.y, r.right() -| x, pos, dim);
     // Leading blanks go only when the text starts the line: a window
     // that begins mid-line keeps its bytes as they are.
@@ -199,7 +199,7 @@ test "a hit on a 100k-char line paints a window: ellipsis, ~40 cells of context,
     @memcpy(long[70_000..][0..6], "needle");
     const ui = f.ui();
     // The whole line stored (an older session, or a test): the painter windows it itself.
-    paintHit(ui, f.full(), .{ .path = "/x", .rel = "x", .line = 1, .col = 70_000, .len = 6, .text = long }, false, f.theme.bg.bg);
+    paintHit(ui, f.full(), .{ .path = "/x", .rel = "x", .line = 1, .col = 70_000, .ccol = 70_000, .len = 6, .text = long }, false, f.theme.bg.bg);
     var buf: [1024]u8 = undefined;
     const row = f.row(0, &buf);
     try testing.expect(std.mem.startsWith(u8, row, "   1:70001  …"));
@@ -211,18 +211,18 @@ test "a hit on a 100k-char line paints a window: ellipsis, ~40 cells of context,
     try testing.expect(win.off > 0 and win.text.len < long.len);
     var g = try Fixture.init(100, 1);
     defer g.deinit();
-    paintHit(g.ui(), g.full(), .{ .path = "/x", .rel = "x", .line = 1, .col = 70_000, .len = 6, .text = win.text, .text_off = win.off }, false, g.theme.bg.bg);
+    paintHit(g.ui(), g.full(), .{ .path = "/x", .rel = "x", .line = 1, .col = 70_000, .ccol = 70_000, .len = 6, .text = win.text, .text_off = win.off }, false, g.theme.bg.bg);
     try testing.expectEqualStrings(row, g.row(0, &buf));
     // A match at the head of a long line: no leading ellipsis, the tail is clipped.
     var h = try Fixture.init(60, 1);
     defer h.deinit();
-    paintHit(h.ui(), h.full(), .{ .path = "/x", .rel = "x", .line = 2, .col = 0, .len = 3, .text = long }, false, h.theme.bg.bg);
+    paintHit(h.ui(), h.full(), .{ .path = "/x", .rel = "x", .line = 2, .col = 0, .ccol = 0, .len = 3, .text = long }, false, h.theme.bg.bg);
     try h.expectRow(0, "   2:1  " ++ "y" ** 51 ++ "…");
 }
 
 test "a short hit paints whole: no ellipsis, leading blanks trimmed" {
     var f = try Fixture.init(40, 1);
     defer f.deinit();
-    paintHit(f.ui(), f.full(), .{ .path = "/x", .rel = "x", .line = 3, .col = 8, .len = 4, .text = "    let name = 1;" }, false, f.theme.bg.bg);
+    paintHit(f.ui(), f.full(), .{ .path = "/x", .rel = "x", .line = 3, .col = 8, .ccol = 8, .len = 4, .text = "    let name = 1;" }, false, f.theme.bg.bg);
     try f.expectRow(0, "   3:9  let name = 1;");
 }

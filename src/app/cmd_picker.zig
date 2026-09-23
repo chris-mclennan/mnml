@@ -53,6 +53,10 @@ pub fn cursorLabel(app: *App) ?[]const u8 {
 const skip_dirs = [_][]const u8{ ".git", "node_modules", "target", "zig-out", ".zig-cache", "zig-cache", ".mnml", "vendor", "dist", "build" };
 /// Cap so a huge tree does not stall the UI thread; the picker says so.
 pub const max_files = 5000;
+/// Ctrl+P's own bound: the whole tree of any ordinary monorepo (the
+/// walk lists 50k files in well under a second), with a ceiling so a
+/// workspace opened on a home directory cannot stall the UI thread.
+pub const max_picker_files = 200_000;
 
 fn buffers(app: *App) CommandError!void {
     const gpa = app.gpa;
@@ -111,7 +115,7 @@ fn files(app: *App) CommandError!void {
     while (i > 0) {
         i -= 1;
         const path = app.recent.items[i];
-        if (!inWorkspace(app, path) or isNoise(app.relPath(path))) continue;
+        if (!inWorkspace(app, path) or isNoise(app, app.relPath(path))) continue;
         if (!exists(app, path)) continue;
         if (seen.contains(path)) continue;
         try seen.put(gpa, path, {});
@@ -142,7 +146,8 @@ fn files(app: *App) CommandError!void {
         try prio.append(gpa, 1);
     }
     if (labels.items.len == 0) return app.diag.fail(app.frame.allocator(), "no files under {s}", .{app.workspace});
-    try openPickerWith(app, if (truncated) "Open file (first 5000)" else "Open file", .files, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0), try details.toOwnedSlice(gpa), &.{});
+    const title = if (truncated) std.fmt.comptimePrint("Open file (first {d})", .{max_picker_files}) else "Open file";
+    try openPickerWith(app, title, .files, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0), try details.toOwnedSlice(gpa), &.{});
     app.overlay.picker.priority = try prio.toOwnedSlice(gpa);
     app.overlay.picker.state.has_preview = true;
     try dispatch.refilterPicker(app);
@@ -169,10 +174,19 @@ fn exists(app: *App, path: []const u8) bool {
 }
 
 /// Rust's `is_noise`: what Ctrl+P never lists, whatever the tree shows.
-fn isNoise(rel: []const u8) bool {
+/// `.git` and `.mnml` always; `node_modules` / `.next` unless ignored
+/// files are on; `target` / `dist` / `build` only outside a git repo —
+/// inside one the `.gitignore`s decide, so a tracked `build/` is found.
+fn isNoise(app: *App, rel: []const u8) bool {
+    const all = app.tree.show_ignored;
+    const in_repo = app.tree.inRepo(app);
     var it = std.mem.splitScalar(u8, rel, '/');
     while (it.next()) |part| {
-        for ([_][]const u8{ ".git", ".mnml", "node_modules", "target", ".next", "dist", "build" }) |n| if (std.mem.eql(u8, part, n)) return true;
+        if (std.mem.eql(u8, part, ".git") or std.mem.eql(u8, part, ".mnml")) return true;
+        if (all) continue;
+        for ([_][]const u8{ "node_modules", ".next" }) |n| if (std.mem.eql(u8, part, n)) return true;
+        if (in_repo) continue;
+        for ([_][]const u8{ "target", "dist", "build" }) |n| if (std.mem.eql(u8, part, n)) return true;
     }
     return false;
 }
@@ -184,10 +198,10 @@ fn isNoise(rel: []const u8) bool {
 pub fn walkTree(app: *App, out: *std.ArrayListUnmanaged([]u8)) CommandError!bool {
     var ignores = gitignore.Stack.init(app.gpa);
     defer ignores.deinit();
-    return walkDir(app, out, "", &ignores);
+    return walkDir(app, out, "", &ignores, false);
 }
 
-fn walkDir(app: *App, out: *std.ArrayListUnmanaged([]u8), rel_dir: []const u8, ignores: *gitignore.Stack) CommandError!bool {
+fn walkDir(app: *App, out: *std.ArrayListUnmanaged([]u8), rel_dir: []const u8, ignores: *gitignore.Stack, under_ignored: bool) CommandError!bool {
     const gpa = app.gpa;
     const arena = app.frame.allocator();
     const abs = if (rel_dir.len == 0) app.workspace else try std.fs.path.join(arena, &.{ app.workspace, rel_dir });
@@ -203,7 +217,7 @@ fn walkDir(app: *App, out: *std.ArrayListUnmanaged([]u8), rel_dir: []const u8, i
         var layer = ignores.layers.pop().?;
         layer.deinit(gpa);
     };
-    const Entry = struct { rel: []u8, is_dir: bool };
+    const Entry = struct { rel: []u8, is_dir: bool, ignored: bool };
     var names: std.ArrayListUnmanaged(Entry) = .empty;
     defer {
         for (names.items) |n| gpa.free(n.rel);
@@ -212,16 +226,23 @@ fn walkDir(app: *App, out: *std.ArrayListUnmanaged([]u8), rel_dir: []const u8, i
     var it = dir.iterate();
     while (it.next(app.io) catch null) |entry| {
         if (entry.kind != .directory and entry.kind != .file and entry.kind != .sym_link) continue;
+        // A link to a folder is not a file to open, and the walk does
+        // not follow it (a link can loop); the tree expands it instead.
+        if (entry.kind == .sym_link) {
+            const st = dir.statFile(app.io, entry.name, .{}) catch null;
+            if (st != null and st.?.kind == .directory) continue;
+        }
         const is_dir = entry.kind == .directory;
         if (!app.tree.show_hidden and entry.name.len > 0 and entry.name[0] == '.') continue;
-        if (is_dir and (tree_mod.isArtifactDir(entry.name) or isNoise(entry.name))) continue;
+        if (is_dir and isNoise(app, entry.name)) continue;
         const rel = if (rel_dir.len == 0) try gpa.dupe(u8, entry.name) else try std.fs.path.join(gpa, &.{ rel_dir, entry.name });
         errdefer gpa.free(rel);
-        if (ignores.ignored(rel, is_dir)) {
+        const ignored = under_ignored or (is_dir and app.tree.artifactHidden(app, entry.name)) or ignores.ignored(rel, is_dir);
+        if (ignored and !app.tree.show_ignored) {
             gpa.free(rel);
             continue;
         }
-        try names.append(gpa, .{ .rel = rel, .is_dir = is_dir });
+        try names.append(gpa, .{ .rel = rel, .is_dir = is_dir, .ignored = ignored });
     }
     std.mem.sort(Entry, names.items, {}, struct {
         fn lt(_: void, a: Entry, b: Entry) bool {
@@ -231,9 +252,9 @@ fn walkDir(app: *App, out: *std.ArrayListUnmanaged([]u8), rel_dir: []const u8, i
     }.lt);
     for (names.items) |n| {
         if (n.is_dir) {
-            if (try walkDir(app, out, n.rel, ignores)) return true;
+            if (try walkDir(app, out, n.rel, ignores, n.ignored)) return true;
         } else {
-            if (out.items.len >= max_files) return true;
+            if (out.items.len >= max_picker_files) return true;
             try out.append(gpa, try gpa.dupe(u8, n.rel));
         }
     }
@@ -1008,6 +1029,26 @@ test "picker.buffers lists every open buffer, filters, and Enter switches; picke
     try app.handle(.{ .key = Key.named(.enter) });
     try t.expect(app.overlay == .none);
     try t.expectEqual(true, app.activeEditor().?.wrap.?);
+}
+
+test "picker.files lists every file of a tree past 5000: the 5101st is found by name" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, t.allocator);
+    defer t.allocator.free(root);
+    try tmp.dir.createDirPath(t.io, "aaa");
+    try tmp.dir.createDirPath(t.io, "zzz");
+    var nb: [32]u8 = undefined;
+    for (0..5100) |i| try tmp.dir.writeFile(t.io, .{ .sub_path = try std.fmt.bufPrint(&nb, "aaa/f{d}.txt", .{i}), .data = "" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "zzz/zz_target.txt", .data = "" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root });
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"picker.files" });
+    try t.expectEqualStrings("Open file", app.overlay.picker.state.title);
+    try t.expectEqual(@as(usize, 5101), app.overlay.picker.labels.len);
+    for ("zz_target") |c| try app.handle(.{ .key = Key.char(c) });
+    try t.expect(app.overlay.picker.filtered.items.len >= 1);
+    try t.expectEqualStrings("zzz/zz_target.txt", app.overlay.picker.labels[app.overlay.picker.filtered.items[0]]);
 }
 
 test "Ctrl+S saves from the palette and from the find bar; both stay open" {
