@@ -963,12 +963,13 @@ pub const specs = [_]Spec{
     .{ .id = "browser.screenshot", .title = "Browser: screenshot the page → .mnml/screenshots/", .group = "browser" },
     .{ .id = "browser.screenshot_node", .title = "Browser: screenshot the selected DOM node → .mnml/screenshots/", .group = "browser" },
     .{ .id = "browser.print_pdf", .title = "Browser: print the page to PDF (p) → .mnml/screenshots/", .group = "browser" },
-    .{ .id = "browser.snapshot", .title = "Browser: snapshot state (URL + network + cookies + storage)", .group = "browser" },
+    .{ .id = "browser.snapshot", .title = "Browser: snapshot state (URL + network requests)", .group = "browser" },
     .{ .id = "browser.diff_snapshot", .title = "Browser: diff latest snapshot vs current state", .group = "browser" },
     .{ .id = "browser.clear_snapshots", .title = "Browser: clear all captured snapshots", .group = "browser" },
     .{ .id = "browser.device_picker", .title = "Browser: device emulation picker (m) — mobile UA + viewport", .group = "browser" },
     .{ .id = "browser.scroll_node_into_view", .title = "Browser: scroll the selected DOM node into view", .group = "browser" },
     .{ .id = "browser.url_history", .title = "Browser: fuzzy pick a previously-visited URL (Ctrl+R)", .group = "browser" },
+    .{ .id = "browser.switch_tab", .title = "Browser: switch to a popup / new tab the page opened (T)", .group = "browser" },
     .{ .id = "browser.cookies", .title = "Browser: toggle the cookies panel (K) — Network.getCookies", .group = "browser" },
     .{ .id = "browser.delete_cookie", .title = "Browser: delete the selected cookie (d in cookies panel)", .group = "browser" },
     .{ .id = "browser.wipe_profile", .title = "Browser: wipe Chrome's user-data-dir (next open starts fresh)", .group = "browser" },
@@ -1253,7 +1254,7 @@ pub const specs = [_]Spec{
     .{ .id = "view.keep_tab", .title = "Keep this tab (stop the next glance taking the preview over)", .group = "view", .keys = .{ .vim = &.{"space b k"}, .standard = &.{"ctrl+k enter"} } },
 };
 
-test "1121 specs, unique ids" {
+test "1122 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1290,6 +1291,6 @@ test "1121 specs, unique ids" {
     // + the three `view.rail_*` membership commands (railmove)
     // + the four `view.dock_item_move_*` reorder commands (dock-polish)
     // + `view.focus_prev_split`, the split walk backwards (splitcycle)
-    try std.testing.expectEqual(@as(usize, 1121), specs.len);
+    try std.testing.expectEqual(@as(usize, 1122), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

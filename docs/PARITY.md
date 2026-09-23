@@ -618,12 +618,12 @@ trust sink. Each row names its file and its test.
 | Web storage | done | `browser.storage` / `*_storage` | |
 | Performance panel | done | `perf_dump` in `cmd_browser.zig` | |
 | Type-to-narrow filters | done | `filter` / `filter_caret` on the pane in `browser_pane.zig` | one per panel |
-| Full-page screenshot | done | `browser.screenshot` | |
+| Viewport screenshot | done | `browser.screenshot` | the visible viewport, as Rust took it; not the full scrolled page |
 | Per-node screenshot | done | `browser.screenshot_node` | |
 | Print-to-PDF | done | `browser.print_pdf` | |
-| Snapshot diffs | done | `browser.snapshot` / `diff_snapshot` | |
+| Snapshot diffs | done | `browser.snapshot` / `diff_snapshot` | the URL and the network requests; a navigation clears the previous page's requests (as DevTools does), so a diff shows one going away |
 | Device emulation | done | `browser.device_picker` | |
-| Multi-target | done | `Target.setAutoAttach` in `cdp/client.zig` | |
+| Multi-target | done | `Target.setAutoAttach` in `cdp/client.zig`; `Target` / `onEvent`'s `Target.*` branches in `browser_pane.zig`; `browser.switch_tab` (`T`) | a popup / new tab is attached (`Target.attachToTarget`, flatten) and logged `⤴ new tab → <url>`; a cross-site frame gets `Runtime` / `Log` / `Network` enabled on its own session; their console lines carry a `[tab …]` / `[frame …]` tag and their requests join the network list; `T` points the pane (header, evals, sends) at a popup and back |
 | Headless | done | `browser.headless`, `mnml proxy` | |
 
 ## Debugging (DAP)

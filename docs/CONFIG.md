@@ -805,8 +805,24 @@ otherwise. Copy what you need; leave the rest out.
     // ── browser / ci / integrations ────────────────────────────────────
     .browser = .{
         .headless = false,
+        // Every Document / XHR / Fetch request is appended to
+        // <ws>/.rqst/captured/log.jsonl as it starts. The headers are the
+        // page's own: the Cookie Chrome's network stack adds reaches a
+        // re-send (Enter) and a copy-as-curl (y), never this file.
         .autocapture_to_log = true,
         .profile_mode = .workspace, // .workspace | .shared | .ephemeral
+        // Where Chrome keeps cookies / logins: .workspace is
+        // <ws>/.mnml/chrome-profile, .shared <data root>/chrome-profile.
+        // A second pane opens on the lowest free `-N` sibling — one no
+        // open pane uses and no live Chrome holds (Chrome's own
+        // SingletonLock). A lock held by a headless Chrome an earlier
+        // mnml started and left behind (a kill -9, a panic: its argv
+        // names this profile and it was adopted by pid 1) is cleared by
+        // stopping that Chrome, and the pane's log says so; any other
+        // holder — another mnml's pane, your own Chrome — is left alone.
+        // .ephemeral gives every open its own
+        // <ws>/.mnml/chrome-profile-ephemeral-<random>, deleted when the
+        // pane closes; browser.wipe_profile clears any a crash left.
     },
     .ci = .{
         .provider = null, // "codebuild" …

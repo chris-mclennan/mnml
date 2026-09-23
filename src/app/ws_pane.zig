@@ -237,6 +237,10 @@ fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, shared: *Shared, pa
                 const text = std.fmt.allocPrint(gpa, "(binary {d} bytes)", .{b.len}) catch break;
                 post(events, io, gpa, .{ .pane = pane, .attempt = attempt, .kind = .{ .recv = text } });
             },
+            .too_long => |t| {
+                const text = std.fmt.allocPrint(gpa, "(message of {d} bytes skipped: over the {d} MiB cap)", .{ t.len, conn.max_message >> 20 }) catch break;
+                post(events, io, gpa, .{ .pane = pane, .attempt = attempt, .kind = .{ .recv = text } });
+            },
             .close => |c| {
                 // Our own Esc's close comes back as the server's echo.
                 if (shared.closing) break;

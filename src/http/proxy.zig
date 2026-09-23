@@ -42,18 +42,26 @@ pub fn run(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, opts: Op
     const profile = try std.fmt.allocPrint(a, "{s}/.mnml/chrome-profile-proxy-{d}", .{ opts.workspace, Io.Timestamp.now(io, .real).toMilliseconds() });
     Io.Dir.cwd().createDirPath(io, profile) catch {};
     defer Io.Dir.cwd().deleteTree(io, profile) catch {};
-    var launch = cdp.launch(gpa, io, env, .{ .url = opts.url, .profile_dir = profile, .headless = true, .binary = opts.binary }) catch |err| return switch (err) {
+    // Chrome starts on about:blank and is sent to the URL once Network
+    // is enabled: a URL on the command line loads before any CDP client
+    // is listening, and its document request is never seen.
+    const launch = cdp.launch(gpa, io, env, .{ .url = "about:blank", .profile_dir = profile, .headless = true, .binary = opts.binary }) catch |err| return switch (err) {
         error.OutOfMemory => error.OutOfMemory,
         error.ChromeNotFound => error.ChromeNotFound,
-        error.NoDevToolsPort => error.NoDevToolsPort,
+        error.NoDevToolsPort, error.ConcurrencyUnavailable => error.NoDevToolsPort,
     };
-    defer launch.kill(io);
-    const ws_url = cdp.pageWsUrl(gpa, io, launch.port) catch return error.NoPageTarget;
+    defer launch.destroy(io);
+    const ws_url = cdp.pageWsUrl(gpa, io, launch.port, null) catch return error.NoPageTarget;
     defer gpa.free(ws_url);
     var session = cdp.Session.connect(gpa, io, ws_url) catch return error.ConnectFailed;
     defer session.deinit();
     if (err_w) |w| if (opts.verbose) w.print("mnml-zig proxy: attached to {s}\n", .{ws_url}) catch {};
     session.enableAll() catch return error.ConnectFailed;
+    const target = try cdp.normalizeUrl(a, opts.url);
+    if (!std.mem.eql(u8, target, "about:blank")) {
+        const params = try std.fmt.allocPrint(a, "{{\"url\":{f}}}", .{std.json.fmt(target, .{})});
+        _ = session.send("Page.navigate", params, null) catch return error.ConnectFailed;
+    }
     var shared: Shared = .{ .io = io, .last_event_ms = nowMs(io) };
     const reader = std.Thread.spawn(.{}, readerLoop, .{ gpa, io, &session, &shared, log_path, opts.verbose, err_w }) catch return error.ConnectFailed;
     const started = nowMs(io);
@@ -85,7 +93,12 @@ fn readerLoop(gpa: Allocator, io: Io, session: *cdp.Session, shared: *Shared, lo
         shared.lock.unlock(io);
     }
     while (true) {
-        const text = session.next() catch return orelse return;
+        const text = switch (session.next() catch return orelse return) {
+            .text => |t| t,
+            // A reply too large to take (a huge eval, a DOM dump) is not
+            // a request line; skip it and keep reading.
+            .too_long => continue,
+        };
         var arena = std.heap.ArenaAllocator.init(gpa);
         defer arena.deinit();
         const a = arena.allocator();

@@ -39,6 +39,7 @@ pub const table = .{
     .@"browser.network_throttle" = &throttlePickerCmd,
     .@"browser.scroll_node_into_view" = &scrollNodeCmd,
     .@"browser.url_history" = &urlHistoryCmd,
+    .@"browser.switch_tab" = &switchTabCmd,
     .@"browser.cookies" = &cookiesCmd,
     .@"browser.delete_cookie" = &deleteCookieCmd,
     .@"browser.edit_cookie" = &editCookieCmd,
@@ -91,11 +92,13 @@ fn openBlankCmd(app: *App) CommandError!void {
 
 fn navigateCmd(app: *App) CommandError!void {
     const b = try requireBrowser(app);
-    try openPrompt(app, "Navigate to", .browser_navigate, b.url);
+    try openPrompt(app, "Navigate to", .browser_navigate, b.shownUrl());
 }
 
+/// Reload the page; on a pane whose session ended, launch Chrome again.
 fn reloadCmd(app: *App) CommandError!void {
     const b = try requireBrowser(app);
+    if (b.state == .closed) return browser.relaunch(app, b);
     try browser.send(app, b, "Page.reload", "{}", .quiet);
     try b.push(.system, "reload");
 }
@@ -234,6 +237,31 @@ fn urlHistoryCmd(app: *App) CommandError!void {
     try cmd_picker.openPicker(app, "Browser history", .browser_url_history, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0));
 }
 
+/// `browser.switch_tab` (T): pick which of the pane's pages it shows —
+/// its own, or a popup / new tab the page opened.
+fn switchTabCmd(app: *App) CommandError!void {
+    const b = try requireBrowser(app);
+    const gpa = app.gpa;
+    var labels: std.ArrayListUnmanaged([]u8) = .empty;
+    errdefer {
+        for (labels.items) |l| gpa.free(l);
+        labels.deinit(gpa);
+    }
+    const mark = struct {
+        fn of(on: bool) []const u8 {
+            return if (on) "● " else "  ";
+        }
+    };
+    try labels.append(gpa, try std.fmt.allocPrint(gpa, "{s}page — {s}", .{ mark.of(b.focus == null), b.url }));
+    for (b.targets.items) |*t| if (t.isPage() and t.session != null) {
+        const on = if (b.focus) |f| std.mem.eql(u8, f, t.session.?) else false;
+        try labels.append(gpa, try std.fmt.allocPrint(gpa, "{s}tab — {s}", .{ mark.of(on), if (t.url.len > 0) t.url else "(loading)" }));
+    };
+    // The errdefer frees the one label.
+    if (labels.items.len == 1) return app.diag.fail(app.frame.allocator(), "browser: the page has opened no other tab", .{});
+    try cmd_picker.openPicker(app, "Browser tabs", .browser_tab, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0));
+}
+
 fn cookiesCmd(app: *App) CommandError!void {
     const b = try requireBrowser(app);
     if (b.panel == .cookies) {
@@ -307,7 +335,7 @@ fn deleteStorageCmd(app: *App) CommandError!void {
     app.toast("storage: {s} removed", .{key});
 }
 
-const perf_dump = "(function(){var t=performance.timing;var n=performance.getEntriesByType('navigation')[0];var p=performance.getEntriesByType('paint');var out=[];function ms(v){return Math.round(v)+' ms'}if(n){out.push('ttfb        '+ms(n.responseStart-n.requestStart));out.push('dom ready   '+ms(n.domContentLoadedEventEnd-n.startTime));out.push('load        '+ms(n.loadEventEnd-n.startTime));out.push('transfer    '+n.transferSize+' B')}p.forEach(function(e){out.push((e.name+'                ').slice(0,12)+ms(e.startTime))});try{var lcp=performance.getEntriesByType('largest-contentful-paint');if(lcp.length)out.push('lcp         '+ms(lcp[lcp.length-1].startTime))}catch(e){}return out.join('\\n')})()";
+const perf_dump = "(function(){var n=performance.getEntriesByType('navigation')[0];var p=performance.getEntriesByType('paint');var out=[];function ms(v){return Math.round(v)+' ms'}function row(k,v){out.push(k.padEnd(24)+v)}if(n){row('ttfb',ms(n.responseStart-n.requestStart));row('dom ready',ms(n.domContentLoadedEventEnd-n.startTime));row('load',ms(n.loadEventEnd-n.startTime));row('transfer',n.transferSize+' B')}p.forEach(function(e){row(e.name,ms(e.startTime))});try{var lcp=performance.getEntriesByType('largest-contentful-paint');if(lcp.length)row('lcp',ms(lcp[lcp.length-1].startTime))}catch(e){}return out.join('\\n')})()";
 
 fn perfCmd(app: *App) CommandError!void {
     const b = try requireBrowser(app);
@@ -324,16 +352,37 @@ fn domCmd(app: *App) CommandError!void {
         b.panel = .log;
         return;
     }
+    b.dom_depth = -1;
     try browser.send(app, b, "DOM.getDocument", "{\"depth\":-1}", .dom);
 }
 
+/// Deletes the profile — the base directory and every `-N` sibling a
+/// second pane opened — or, in ephemeral mode, every ephemeral profile
+/// a crash left behind (a pane that closes removes its own).
 fn wipeProfileCmd(app: *App) CommandError!void {
     if (activeBrowser(app) != null) return app.diag.fail(app.frame.allocator(), "close the browser pane first — Chrome has the profile locked", .{});
-    if (app.cfg.browser.profile_mode == .ephemeral) return app.diag.fail(app.frame.allocator(), "profile_mode = ephemeral — every open already starts fresh", .{});
-    const dir = if (app.cfg.browser.profile_mode == .shared and app.data_root.len > 0) try std.fs.path.join(app.frame.allocator(), &.{ app.data_root, "chrome-profile" }) else try std.fs.path.join(app.frame.allocator(), &.{ app.workspace, ".mnml", "chrome-profile" });
-    Io.Dir.cwd().access(app.io, dir, .{}) catch return app.diag.fail(app.frame.allocator(), "no profile to wipe", .{});
-    Io.Dir.cwd().deleteTree(app.io, dir) catch |err| return app.diag.fail(app.frame.allocator(), "wipe failed: {s}", .{@errorName(err)});
-    app.toast("wiped {s}", .{app.relPath(dir)});
+    const arena = app.frame.allocator();
+    const ephemeral = app.cfg.browser.profile_mode == .ephemeral;
+    const base = if (ephemeral) try std.fmt.allocPrint(arena, "{s}/.mnml/{s}", .{ app.workspace, browser.ephemeral_prefix }) else try browser.profileBase(app, arena);
+    const parent = std.fs.path.dirname(base) orelse return app.diag.fail(arena, "no profile to wipe", .{});
+    const stem = std.fs.path.basename(base);
+    var dir = Io.Dir.cwd().openDir(app.io, parent, .{ .iterate = true }) catch return app.diag.fail(arena, "no profile to wipe", .{});
+    defer dir.close(app.io);
+    var victims: std.ArrayListUnmanaged([]const u8) = .empty;
+    var it = dir.iterate();
+    while (it.next(app.io) catch null) |e| {
+        if (e.kind != .directory or !std.mem.startsWith(u8, e.name, stem)) continue;
+        const rest = e.name[stem.len..];
+        const ours = if (ephemeral) rest.len > 0 else rest.len == 0 or (rest[0] == '-' and rest.len > 1 and for (rest[1..]) |c| {
+            if (!std.ascii.isDigit(c)) break false;
+        } else true);
+        if (ours) try victims.append(arena, try arena.dupe(u8, e.name));
+    }
+    if (victims.items.len == 0) return app.diag.fail(arena, "no profile to wipe", .{});
+    for (victims.items) |name| dir.deleteTree(app.io, name) catch |err| return app.diag.fail(arena, "wipe failed: {s}", .{@errorName(err)});
+    if (victims.items.len == 1) {
+        app.toast("wiped {s}", .{app.relPath(try std.fs.path.join(arena, &.{ parent, victims.items[0] }))});
+    } else app.toast("wiped {d} profiles under {s}", .{ victims.items.len, app.relPath(parent) });
 }
 
 fn toggleHeadlessCmd(app: *App) CommandError!void {
@@ -364,6 +413,15 @@ pub fn acceptPicker(app: *App, kind: app_mod.PickerKind, i: usize, label: []cons
         .browser_device => try browser.applyDevice(app, b, i),
         .browser_throttle => try browser.applyThrottle(app, b, i),
         .browser_url_history => try browser.navigate(app, b, label),
+        .browser_tab => {
+            // Row 0 is the pane's own page; then its popups, in order.
+            if (i == 0) return browser.focusTarget(app, b, null);
+            var n: usize = 0;
+            for (b.targets.items) |*t| if (t.isPage() and t.session != null) {
+                n += 1;
+                if (n == i) return browser.focusTarget(app, b, t.session);
+            };
+        },
         else => {},
     }
 }
@@ -388,6 +446,10 @@ pub fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8)
             const b = activeBrowser(app) orelse return;
             if (std.mem.trim(u8, text, " \t").len == 0) return;
             try browser.eval(app, b, text, .eval);
+        },
+        .browser_dialog => {
+            const b = activeBrowser(app) orelse return;
+            try browser.answerDialog(app, b, true, text);
         },
         .browser_add_cookie => {
             const b = activeBrowser(app) orelse return;

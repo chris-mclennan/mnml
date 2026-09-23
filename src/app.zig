@@ -313,6 +313,8 @@ pub const PromptPurpose = union(enum) {
     browser_url,
     browser_navigate,
     browser_eval,
+    /// The answer to a page's `prompt()` dialog.
+    browser_dialog,
     browser_add_cookie,
     browser_add_storage,
     /// `mount.open`: the binary and args to host.
@@ -500,6 +502,8 @@ pub const PickerKind = enum {
     browser_device,
     browser_throttle,
     browser_url_history,
+    /// `browser.switch_tab`: the pane's page and the popups it opened.
+    browser_tab,
     /// `integrations.icon_picker`: the Nerd Font catalog (`app/icon_picker.zig`).
     icon_glyphs,
     /// `bookmarks.open`: the label rows, the URL as the detail.
@@ -3228,6 +3232,8 @@ test {
     _ = @import("http/bench.zig");
     _ = @import("http/ws.zig");
     _ = @import("cdp/client.zig");
+    _ = @import("cdp/profile.zig");
+    _ = @import("cdp/console.zig");
     _ = @import("app/ws_pane.zig");
     _ = @import("app/browser_pane.zig");
     _ = @import("app/cmd_browser.zig");

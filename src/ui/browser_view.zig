@@ -43,6 +43,8 @@ pub const Panel = enum {
     }
 };
 
+/// One painted row of the log: the pane splits a multi-line entry into
+/// several of these (`browser_pane.logRows`), so `text` has no newline.
 pub const LogLine = struct { kind: LogKind, text: []const u8 };
 pub const NetRow = struct {
     /// Position in the pane's unfiltered network list.
@@ -51,6 +53,8 @@ pub const NetRow = struct {
     url: []const u8,
     status: []const u8,
     mime: []const u8,
+    /// Why it failed (`net::ERR_FAILED (CORS: …)`); empty when it did not.
+    note: []const u8 = "",
 };
 
 pub const Model = struct {
@@ -76,6 +80,10 @@ pub const Model = struct {
     filter: []const u8,
     filter_caret: usize,
     filter_focused: bool,
+    /// The kind of JavaScript dialog the page is parked on, if one.
+    dialog: ?[]const u8 = null,
+    /// The pane's pages: its own plus the popups it opened.
+    tabs: usize = 1,
 };
 
 pub const hit_panel_base: u32 = 1; // + Panel index
@@ -96,9 +104,12 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, m: Model) Outcome {
     if (area.isEmpty()) return out;
     const head = area.row(0);
     ui.fill(head, t.panel_bg);
-    const badge: []const u8 = if (std.mem.eql(u8, m.state, "connected")) " ● " else if (std.mem.eql(u8, m.state, "launching")) " … " else " · ";
-    const bw = ui.putStr(head.x, head.y, head.w, badge, Theme.onBg(if (std.mem.eql(u8, m.state, "connected")) t.info_fg else t.muted, t.panel_bg.bg));
+    const crashed = std.mem.eql(u8, m.state, "crashed");
+    const badge: []const u8 = if (std.mem.eql(u8, m.state, "connected")) " ● " else if (std.mem.eql(u8, m.state, "launching")) " … " else if (crashed) " ✗ " else " · ";
+    const badge_fg = if (std.mem.eql(u8, m.state, "connected")) t.info_fg else if (crashed) t.error_fg else t.muted;
+    const bw = ui.putStr(head.x, head.y, head.w, badge, Theme.onBg(badge_fg, t.panel_bg.bg));
     var label = m.url;
+    if (m.tabs > 1) label = ui.fmt("{s}   [{d} tabs · T]", .{ label, m.tabs });
     if (m.device) |d| label = ui.fmt("{s}   [{s}]", .{ m.url, d });
     if (m.port) |p| label = ui.fmt("{s}   :{d}", .{ label, p });
     _ = ui.putStr(head.x + bw, head.y, head.w -| bw, ui.clipStr(label, head.w -| bw), Theme.onBg(t.fg, t.panel_bg.bg));
@@ -132,7 +143,9 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, m: Model) Outcome {
     out.caret = drawFilter(ui, pane, area.row(2), m);
     if (area.h < 4) return out;
     const hint_row = area.row(area.h - 1);
-    const hint: []const u8 = switch (m.panel) {
+    const hint: []const u8 = if (m.dialog) |d|
+        (if (std.mem.eql(u8, d, "prompt")) "the page waits on a prompt() — Enter answers · Esc cancels" else if (std.mem.eql(u8, d, "alert")) "the page waits on an alert() — Enter dismisses it" else ui.fmt("the page waits on a {s} dialog — Enter accepts · Esc cancels", .{d}))
+    else switch (m.panel) {
         .log => "/ filter · g navigate · e eval · r reload · n network · K cookies · L storage · P perf · D dom · m device · s screenshot · q close",
         .net => "/ filter · j/k select · y copy as curl · Enter re-send as a request · Esc back",
         .cookies => "/ filter · j/k select · d delete · a add · Esc back",
@@ -140,7 +153,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, m: Model) Outcome {
         .perf => "/ filter · Esc back",
         .dom => "/ filter · j/k select · hover highlights the node in Chrome · Esc back",
     };
-    _ = ui.putStr(hint_row.x + 1, hint_row.y, hint_row.w -| 1, ui.clipStr(hint, hint_row.w -| 1), t.muted);
+    _ = ui.putStr(hint_row.x + 1, hint_row.y, hint_row.w -| 1, ui.clipStr(hint, hint_row.w -| 1), if (m.dialog != null) t.warn_fg else t.muted);
     const body = Rect.init(area.x, area.y + 3, area.w, area.h - 4);
     if (body.isEmpty()) return out;
     switch (m.panel) {
@@ -160,7 +173,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, m: Model) Outcome {
                     .net => t.info_fg,
                     .eval => t.warn_fg,
                 };
-                _ = ui.putStr(r.x + 1, r.y, r.w -| 1, ui.clipStr(std.mem.sliceTo(l.text, '\n'), r.w -| 1), style);
+                _ = ui.putStr(r.x + 1, r.y, r.w -| 1, ui.clipStr(l.text, r.w -| 1), style);
                 y += 1;
             }
         },
@@ -181,9 +194,15 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, m: Model) Outcome {
                 const bg = if (selected) t.cursor_line.bg else t.bg.bg;
                 const status_style = if (std.mem.eql(u8, n.status, "✗")) t.error_fg else if (n.status.len > 0 and n.status[0] == '2') t.info_fg else t.warn_fg;
                 var xx = r.x + 1;
-                xx += ui.putStr(xx, r.y, 4, ui.fmt("{s: <4}", .{n.status}), Theme.onBg(status_style, bg));
+                // Columns by cells, not bytes: `✗` is one cell of three bytes.
+                _ = ui.putStr(xx, r.y, 4, n.status, Theme.onBg(status_style, bg));
+                xx += 4;
                 xx += ui.putStr(xx, r.y, 7, ui.fmt("{s: <7}", .{n.method}), Theme.onBg(t.accent, bg));
-                _ = ui.putStr(xx, r.y, r.right() -| xx, ui.clipStr(n.url, r.right() -| xx), Theme.onBg(t.fg, bg));
+                const uw = ui.putStr(xx, r.y, r.right() -| xx, ui.clipStr(n.url, r.right() -| xx), Theme.onBg(t.fg, bg));
+                if (n.note.len > 0 and xx + uw + 3 < r.right()) {
+                    const nx = xx + uw + 2;
+                    _ = ui.putStr(nx, r.y, r.right() - nx, ui.clipStr(n.note, r.right() - nx), Theme.onBg(t.error_fg, bg));
+                }
                 ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = hit_row_base + @as(u32, @intCast(n.index)) } });
                 if (ui.hovered(r)) out.hovered_row = n.index;
                 y += 1;
