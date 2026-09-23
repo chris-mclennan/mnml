@@ -1,0 +1,45 @@
+# A rename that reaches a file that is NOT open: the fake server renames
+# `foo` in main.fk and in its closed sibling other.fk. The preview lists
+# both and says the closed one will be opened; Enter applies every edit
+# in a buffer — other.fk is opened behind the active pane, edited and
+# left dirty — and NOTHING is written until the save. Before, the closed
+# file was written to disk at once while the open buffer only changed
+# in memory, so between the rename and the save the project on disk was
+# half renamed (a caller renamed, its definition not), and `:q!` on the
+# open buffer left the other files renamed for good.
+write src/main.fk "fn foo() {\n  let x = 1;\n  foo(x);\n}\n"
+write src/other.fk "fn bar() { foo(); }\nfoo();\n"
+write .fkroot ""
+write .mnml/config.zon .{ .lsp = .{ .fake = .{ .cmd = "$MNML_FAKE_LSP", .args = .{ "--log", "lsp.log" }, .extensions = .{ "fk" }, .root_markers = .{ ".fkroot" } } } }
+open src/main.fk
+expect screen contains "LSP 1"
+# Line 3, on `foo`.
+key down
+key down
+key right
+key right
+key right
+command lsp.rename
+expect screen contains "Rename symbol"
+key backspace
+key backspace
+key backspace
+type "quux"
+key enter
+expect screen contains "rename · 2 of 2 files · 4 edits · 1 closed file opens unsaved"
+expect screen contains "other.fk  (2)"
+key enter
+expect screen contains "renamed in 2 file(s) · 4 edit(s) · 1 opened unsaved"
+# The source pane stays active and holds the rename; the sibling is an
+# open, dirty buffer; the disk has neither yet.
+expect pane "main.fk"
+expect screen contains "fn quux() {"
+expect dirty true
+expect file src/main.fk lacks "quux"
+expect file src/other.fk lacks "quux"
+expect file src/other.fk contains "fn bar() { foo(); }"
+command file.save_all
+expect file src/main.fk contains "fn quux() {"
+expect file src/other.fk contains "fn bar() { quux(); }"
+expect file src/other.fk contains "quux();\n"
+expect file src/other.fk lacks "foo"

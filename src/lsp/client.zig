@@ -119,6 +119,9 @@ pub const Caps = struct {
     code_lens: bool = false,
     /// `codeLensProvider.resolveProvider`: a lens without a command asks.
     code_lens_resolve: bool = false,
+    /// Owned: `executeCommandProvider.commands` — the only commands
+    /// `workspace/executeCommand` may name.
+    execute_commands: [][]u8 = &.{},
     document_color: bool = false,
     document_link: bool = false,
     range_formatting: bool = false,
@@ -140,9 +143,17 @@ pub const Caps = struct {
     pub fn deinit(c: *Caps, gpa: Allocator) void {
         gpa.free(c.trigger_chars);
         gpa.free(c.on_type_triggers);
+        for (c.execute_commands) |n| gpa.free(n);
+        gpa.free(c.execute_commands);
         gpa.free(c.token_types);
         gpa.free(c.token_modifiers);
         c.* = .{};
+    }
+
+    /// Did the server list `name` in `executeCommandProvider.commands`?
+    pub fn executesCommand(c: *const Caps, name: []const u8) bool {
+        for (c.execute_commands) |n| if (std.mem.eql(u8, n, name)) return true;
+        return false;
     }
 
     pub fn semanticTokens(c: *const Caps) bool {
@@ -168,6 +179,10 @@ pub const Builtin = struct {
     args: []const []const u8,
     extensions: []const []const u8,
     root_markers: []const []const u8,
+    /// The markers rank: the walk looks for the first one all the way
+    /// up before it looks for the second. Off, the nearest directory
+    /// holding any marker wins.
+    root_markers_ranked: bool = false,
 };
 
 pub const builtins = [_]Builtin{
@@ -193,10 +208,14 @@ pub const builtins = [_]Builtin{
     .{ .name = "html", .cmd = "vscode-html-language-server", .args = &.{"--stdio"}, .extensions = &.{ "html", "htm" }, .root_markers = &.{ "package.json", ".git" } },
     .{ .name = "css", .cmd = "vscode-css-language-server", .args = &.{"--stdio"}, .extensions = &.{ "css", "scss", "less" }, .root_markers = &.{ "package.json", ".git" } },
     // C#: `csharp-ls` (a dotnet tool; stdio is its only transport, no
-    // flag) where Rust's table runs OmniSharp `-lsp`. The markers are
-    // Rust's — a solution first, then a project, then an SDK-style
-    // `global.json`; `*` is a glob (`markerMatches`).
-    .{ .name = "csharp", .cmd = "csharp-ls", .args = &.{}, .extensions = &.{ "cs", "csx" }, .root_markers = &.{ "*.sln", "*.csproj", "global.json" } },
+    // flag) where Rust's table runs OmniSharp `-lsp`. A solution first
+    // (`.sln`, then the XML `.slnx`), then a project, then an SDK-style
+    // `global.json`; `*` is a glob (`markerMatches`). Ranked: a file in
+    // `tests/Acme.Tests/` roots at the `Acme.sln` above its `.csproj`,
+    // so every project of the solution shares one Roslyn host and
+    // definition, references and rename cross projects — as Neovim's
+    // `root_pattern('*.sln')(f) or root_pattern('*.csproj')(f)`.
+    .{ .name = "csharp", .cmd = "csharp-ls", .args = &.{}, .extensions = &.{ "cs", "csx" }, .root_markers = &.{ "*.sln", "*.slnx", "*.csproj", "global.json" }, .root_markers_ranked = true },
     // Shell: bash-language-server (`start` is its stdio mode) for
     // `.sh` / `.bash` — and `.zsh`, which it opens like any other
     // document and which no other row would ever send it. The
@@ -604,6 +623,19 @@ pub const Server = struct {
             caps.code_lens = true;
             caps.code_lens_resolve = jsonrpc.getBool(lp, "resolveProvider") orelse false;
         }
+        if (jsonrpc.getObj(c, "executeCommandProvider")) |ep| if (jsonrpc.getArr(ep, "commands")) |arr| {
+            var names: std.ArrayListUnmanaged([]u8) = .empty;
+            errdefer {
+                for (names.items) |n| self.gpa.free(n);
+                names.deinit(self.gpa);
+            }
+            for (arr) |t| if (jsonrpc.asStr(t)) |n| {
+                const owned = try self.gpa.dupe(u8, n);
+                errdefer self.gpa.free(owned);
+                try names.append(self.gpa, owned);
+            };
+            caps.execute_commands = try names.toOwnedSlice(self.gpa);
+        };
         if (jsonrpc.getObj(c, "documentOnTypeFormattingProvider")) |ot| {
             var chars: std.ArrayListUnmanaged(u8) = .empty;
             errdefer chars.deinit(self.gpa);

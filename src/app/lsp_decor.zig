@@ -49,6 +49,11 @@ const Style = @import("vaxis").Style;
 pub const idle_ms: i64 = 250;
 /// Lens segments register `.script_hit{pane, lens_hit_base + index}`.
 pub const lens_hit_base: u32 = 0x4C45_0000;
+/// A `codeLens/resolve` the view sent for a title (`Ctx.extra` bit):
+/// the reply names the lens, nothing runs.
+const lens_view_bit: u32 = 1 << 31;
+/// The most view resolves one frame sends.
+const lens_view_batch = 32;
 
 /// One replace-wholesale dataset.
 fn Set(comptime T: type) type {
@@ -194,6 +199,35 @@ pub fn onFrame(app: *App, pane: PaneId, e: *EditorPane, first: u32, last: u32) A
     }
     const hints_out = first < tr.hint_lines[0] or last > tr.hint_lines[1] or tr.hint_seq == null or tr.hint_seq.? != head;
     if (hints_out and app.cfg.editor.inlay_hints and s.caps.inlay_hint) requestHints(app, s, pane, e, path, window, tr);
+    try resolveVisibleLenses(app, s, pane, path, head, window);
+}
+
+/// Lenses that came without a command are a row of `…` until resolved:
+/// the ones in the view's window (`onFrame`'s, a screen either side) ask
+/// for their titles, once each, as VS Code and Neovim do.
+fn resolveVisibleLenses(app: *App, s: *Server, pane: PaneId, path: []const u8, head: u64, window: [2]u32) Allocator.Error!void {
+    if (!app.cfg.editor.code_lens or !s.caps.code_lens_resolve) return;
+    const fd = app.lsp.decor.get(path) orelse return;
+    if (!setFresh(types.CodeLens, &fd.lenses, head)) return;
+    const gpa = app.gpa;
+    var sent: usize = 0;
+    for (fd.lenses.items, 0..) |*l, i| {
+        if (l.title != null or l.resolving) continue;
+        if (l.range.start.line < window[0] or l.range.start.line > window[1]) continue;
+        if (sent == lens_view_batch or i >= lens_view_bit) break;
+        const raw_json = try jsonrpc.stringify(gpa, l.raw);
+        defer gpa.free(raw_json);
+        const id = s.transport.allocId();
+        const body = try std.fmt.allocPrint(gpa, "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"method\":\"codeLens/resolve\",\"params\":{s}}}", .{ id, raw_json });
+        defer gpa.free(body);
+        try s.transport.expect(id, .{ .kind = @intFromEnum(ReqKind.code_lens_resolve), .ctx = (Ctx{ .pane = pane, .extra = @as(u32, @intCast(i)) | lens_view_bit }).pack() });
+        s.transport.send(body) catch {
+            _ = s.transport.forget(id);
+            return;
+        };
+        l.resolving = true;
+        sent += 1;
+    }
 }
 
 /// The hints for a line window; the reply replaces the file's set.
@@ -395,7 +429,7 @@ pub fn runLens(app: *App, pane: PaneId, idx: usize) Allocator.Error!void {
     const s = lsp.serverFor(app, path) orelse return;
     if (jsonrpc.getObj(lens.raw, "command")) |cmd| {
         app.toast("code lens: {s}", .{lens.title orelse "running"});
-        return lsp.executeCommand(app, s, cmd);
+        return runLensCommand(app, s, pane, cmd);
     }
     if (!s.caps.code_lens_resolve) {
         app.toast("code lens: nothing to run", .{});
@@ -413,19 +447,66 @@ pub fn runLens(app: *App, pane: PaneId, idx: usize) Allocator.Error!void {
     };
 }
 
-/// A resolved lens: its title lands on the set, its command runs.
+/// A resolved lens: its title lands on the set; its command runs unless
+/// the view only asked for the title.
 fn runResolvedLens(app: *App, s: *Server, ctx: Ctx, result: ?Value) Allocator.Error!void {
+    const view_only = ctx.extra & lens_view_bit != 0;
+    const idx: usize = ctx.extra & ~lens_view_bit;
     const r = result orelse return;
     if (app.panes.editor(ctx.pane)) |e| if (e.buf.doc.path) |path| if (app.lsp.decor.get(path)) |fd| {
-        const idx: usize = ctx.extra;
-        if (idx < fd.lenses.items.len) if (jsonrpc.getObj(r, "command")) |cmd| if (jsonrpc.getStr(cmd, "title")) |title| {
+        // The set may have been replaced since the ask: the range says
+        // whether this is still the lens that asked.
+        const same = idx < fd.lenses.items.len and if (jsonrpc.getObj(r, "range")) |rv|
+            (if (types.readRange(rv)) |rg| std.meta.eql(rg, fd.lenses.items[idx].range) else false)
+        else
+            !view_only;
+        if (same) if (jsonrpc.getObj(r, "command")) |cmd| if (jsonrpc.getStr(cmd, "title")) |title| {
             fd.lenses.items[idx].title = try fd.lenses.arena.allocator().dupe(u8, title);
         };
     };
-    if (jsonrpc.getObj(r, "command")) |cmd| {
-        try lsp.executeCommand(app, s, cmd);
-    } else app.toast("code lens: nothing to run", .{});
     app.needs_render = true;
+    if (view_only) return;
+    if (jsonrpc.getObj(r, "command")) |cmd| {
+        try runLensCommand(app, s, ctx.pane, cmd);
+    } else app.toast("code lens: nothing to run", .{});
+}
+
+/// Run a lens's command. One the server lists in
+/// `executeCommandProvider.commands` goes back to it as
+/// `workspace/executeCommand`. The rest are the client's to run, and
+/// servers hand out two such shapes for their reference-count lenses:
+/// an LSP request name with its params as the one argument
+/// (`textDocument/references` + `ReferenceParams` — csharp-ls, Roslyn),
+/// which mnml sends itself and shows as it shows `gr`; and VS Code's
+/// `editor.action.showReferences` / `rust-analyzer.showReferences`
+/// `[uri, position, locations]`, whose locations open in the picker. Any
+/// other command is named in a toast, never sent to a server that did
+/// not offer it.
+fn runLensCommand(app: *App, s: *Server, pane: PaneId, cmd: Value) Allocator.Error!void {
+    const name = jsonrpc.getStr(cmd, "command") orelse return;
+    if (s.caps.executesCommand(name)) return lsp.executeCommand(app, s, cmd);
+    const args: []const Value = jsonrpc.getArr(cmd, "arguments") orelse &.{};
+    const requests = [_]struct { []const u8, ReqKind }{
+        .{ "textDocument/references", .references },
+        .{ "textDocument/implementation", .implementation },
+        .{ "textDocument/definition", .definition },
+        .{ "textDocument/typeDefinition", .type_definition },
+        .{ "textDocument/declaration", .declaration },
+    };
+    for (requests) |rq| if (std.mem.eql(u8, name, rq[0])) {
+        if (args.len == 0 or args[0] != .object) break;
+        _ = s.request(rq[1], rq[0], args[0], .{ .pane = pane }) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => app.toast("code lens: couldn't send {s}", .{name}),
+        };
+        return;
+    };
+    const show_refs = [_][]const u8{ "editor.action.showReferences", "rust-analyzer.showReferences" };
+    for (show_refs) |sr| if (std.mem.eql(u8, name, sr) and args.len >= 3) {
+        const locs = try types.readLocations(app.frame.allocator(), args[2]);
+        return lsp.locationsPicker(app, "References", locs, "no references");
+    };
+    app.toast("code lens: {s} is a client-side command mnml does not run", .{name});
 }
 
 /// A `.script_hit` on an editor pane: a lens segment.
@@ -553,16 +634,26 @@ test "through the fake server: hints and swatches paint as virtual text, lenses 
         fn ranZero(a: *App) bool {
             return std.mem.indexOf(u8, a.lastToast() orelse return false, "ran refs #0") != null;
         }
+        fn lensTitled(a: *App) bool {
+            const fd = a.lsp.decor.get(lsp.TestRig.file) orelse return false;
+            return fd.lenses.items.len > 0 and fd.lenses.items[0].title != null;
+        }
     };
     try lsp.TestRig.pump(&app, &app, Cond.decorated, 5000);
     // The paint: the hint's parts joined after `x`, the swatch before the
-    // red `1`, the resolved lens's title above line 1 and an ellipsis
-    // above line 0 for the one that still needs a resolve.
+    // red `1`, the lens that came with a command titled above line 1; the
+    // one that came without is resolved because it is in view — its title
+    // lands above line 0 and nothing runs.
+    try lsp.TestRig.pump(&app, &app, Cond.lensTitled, 5000);
     const txt = try lsp.TestRig.screenText(&app, gpa);
     defer gpa.free(txt);
     try testing.expect(std.mem.indexOf(u8, txt, "let x: number = ■ 1;") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "2 references") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "…") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "resolved lens") != null);
+    // (An ellipsis on screen is no evidence either way: the tab strip
+    // clips the file's long name with one.)
+    try testing.expect(std.mem.indexOf(u8, txt, "▌    resolved lens") != null);
+    try testing.expect(std.mem.indexOf(u8, app.lastToast() orelse "", "ran refs") == null);
     // Links: one single underline over `foo` on line 1 (bytes 17..20);
     // `gx` there answers with the server's target, elsewhere it fails.
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -724,5 +815,71 @@ test "a file only READ (edit-log head 0) has its lenses and tokens asked for on 
     onServerReady(&app, app.lsp.servers.items[0]);
     try testing.expect(!Cond.asked(&app));
     try lsp.TestRig.pump(&app, &app, Cond.asked, 5000);
+    try rig.stop(&app);
+}
+
+test "through the fake server: a lens command the server did not offer runs client-side — `textDocument/references` asks for the references and opens the picker, `editor.action.showReferences` opens its locations, anything else is named and never sent" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    var rig: lsp.TestRig = .{};
+    try rig.start(&app);
+    _ = try lsp.TestRig.openFile(&app, lsp.TestRig.file, lsp.TestRig.text);
+    const Cond = struct {
+        fn ready(a: *App) bool {
+            const sv = a.lsp.servers.items[0];
+            return sv.ready and sv.isOpen(lsp.TestRig.file);
+        }
+        fn picker(a: *App) bool {
+            return a.overlay == .picker;
+        }
+    };
+    try lsp.TestRig.pump(&app, &app, Cond.ready, 5000);
+    const s = app.lsp.servers.items[0];
+    const pane = app.active.?;
+    // The server offers `refs` and nothing else.
+    try testing.expect(s.caps.executesCommand("refs"));
+    try testing.expect(!s.caps.executesCommand("textDocument/references"));
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const uri = try types.uriFromPath(a, lsp.TestRig.file);
+
+    // csharp-ls's resolved lens: the request name, `ReferenceParams` as
+    // its one argument (`foo` on line 1).
+    const refs_json = try std.fmt.allocPrint(a, "{{\"title\":\"2 Reference(s)\",\"command\":\"textDocument/references\",\"arguments\":[{{\"textDocument\":{{\"uri\":\"{s}\"}},\"position\":{{\"line\":1,\"character\":7}},\"context\":{{\"includeDeclaration\":false}}}}]}}", .{uri});
+    const refs = try std.json.parseFromSliceLeaky(Value, a, refs_json, .{});
+    try runLensCommand(&app, s, pane, refs);
+    try lsp.TestRig.pump(&app, &app, Cond.picker, 5000);
+    try testing.expectEqualStrings("References", app.overlay.picker.state.title);
+    try testing.expectEqual(@as(usize, 2), app.overlay.picker.labels.len);
+    try testing.expectEqualStrings("mnml-zig-fake-lsp.ts:2:7", app.overlay.picker.labels[0]);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try testing.expect(app.overlay != .picker);
+
+    // VS Code's shape: `[uri, position, locations]` — no round trip.
+    const show_json = try std.fmt.allocPrint(a, "{{\"title\":\"1 reference\",\"command\":\"editor.action.showReferences\",\"arguments\":[\"{s}\",{{\"line\":1,\"character\":6}},[{{\"uri\":\"{s}\",\"range\":{{\"start\":{{\"line\":2,\"character\":0}},\"end\":{{\"line\":2,\"character\":3}}}}}}]]}}", .{ uri, uri });
+    const show = try std.json.parseFromSliceLeaky(Value, a, show_json, .{});
+    const before = s.transport.pendingCount();
+    try runLensCommand(&app, s, pane, show);
+    try testing.expectEqual(before, s.transport.pendingCount());
+    try testing.expect(app.overlay == .picker);
+    try testing.expectEqualStrings("References", app.overlay.picker.state.title);
+    try testing.expectEqualStrings("mnml-zig-fake-lsp.ts:3:1", app.overlay.picker.labels[0]);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try testing.expect(app.overlay != .picker);
+
+    // A command the server did not list and mnml does not know: said,
+    // not sent — no `workspace/executeCommand` for a server to refuse.
+    const other = try std.json.parseFromSliceLeaky(Value, a, "{\"title\":\"x\",\"command\":\"acme.doSomething\",\"arguments\":[1]}", .{});
+    try runLensCommand(&app, s, pane, other);
+    try testing.expectEqual(before, s.transport.pendingCount());
+    try testing.expectEqualStrings("code lens: acme.doSomething is a client-side command mnml does not run", app.lastToast().?);
+    // One it did list still goes to it.
+    const listed = try std.json.parseFromSliceLeaky(Value, a, "{\"title\":\"x\",\"command\":\"refs\",\"arguments\":[5]}", .{});
+    try runLensCommand(&app, s, pane, listed);
+    try testing.expectEqual(before + 1, s.transport.pendingCount());
     try rig.stop(&app);
 }

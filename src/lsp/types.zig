@@ -136,6 +136,8 @@ pub const CodeLens = struct {
     title: ?[]const u8,
     /// The raw lens, for `resolve` and for `command`. Borrowed.
     raw: Value,
+    /// A `codeLens/resolve` for its title went out (the view asked).
+    resolving: bool = false,
 };
 
 /// A colour literal: `range` and its sRGB value.

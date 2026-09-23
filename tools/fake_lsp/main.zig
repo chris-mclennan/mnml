@@ -272,10 +272,16 @@ pub const Server = struct {
             const d = self.docAt(params) orelse return self.respondRaw(id, "null");
             const new_name = getStr(params, "newName") orelse return self.respondError(id, -32602, "rename needs newName");
             const word = wordAt(d.text, d.pos) orelse return self.respondRaw(id, "null");
+            // The document, then every sibling file of its extension in
+            // its directory that holds the word — open ones from their
+            // synced text, closed ones from disk — the way a real server
+            // renames across a project, so a client's handling of a
+            // file it does not have open can be driven.
+            var files: std.ArrayList(FileEdits) = .empty;
             const ranges = try occurrences(arena, d.text, word.text);
-            const edits = try arena.alloc(TextEdit, ranges.len);
-            for (ranges, 0..) |r, i| edits[i] = .{ .range = r, .newText = new_name };
-            try self.respondRaw(id, try workspaceEdit(arena, d.uri, edits));
+            try files.append(arena, .{ .uri = d.uri, .edits = try renameEdits(arena, ranges, new_name) });
+            try self.siblingEdits(arena, &files, d.uri, word.text, new_name);
+            try self.respondRaw(id, try workspaceEditMulti(arena, files.items));
         } else if (eql(u8, method, "textDocument/documentSymbol")) {
             const d = self.doc(params) orelse return self.respondRaw(id, "[]");
             if (self.configure and !self.configured) return self.respondRaw(id, "[]");
@@ -434,6 +440,42 @@ pub const Server = struct {
 
     const Doc = struct { uri: []const u8, text: []const u8 };
     const DocPos = struct { uri: []const u8, text: []const u8, pos: Position };
+
+    /// Every other file with `uri`'s extension in `uri`'s directory
+    /// that holds `word`, with its rename edits: an open one from the
+    /// synced text, a closed one from disk.
+    fn siblingEdits(self: *Server, arena: Allocator, files: *std.ArrayList(FileEdits), uri: []const u8, word: []const u8, new_name: []const u8) !void {
+        const path = uriPath(arena, uri) orelse return;
+        const dir_path = std.fs.path.dirname(path) orelse return;
+        const ext = std.fs.path.extension(path);
+        const uri_dir = uri[0 .. std.mem.lastIndexOfScalar(u8, uri, '/') orelse return];
+        var dir = Io.Dir.cwd().openDir(self.io, dir_path, .{ .iterate = true }) catch return;
+        defer dir.close(self.io);
+        var names: std.ArrayList([]const u8) = .empty;
+        var it = dir.iterate();
+        while (it.next(self.io) catch null) |entry| {
+            if (entry.kind != .file) continue;
+            if (!std.mem.eql(u8, std.fs.path.extension(entry.name), ext)) continue;
+            if (std.mem.eql(u8, entry.name, std.fs.path.basename(path))) continue;
+            try names.append(arena, try arena.dupe(u8, entry.name));
+        }
+        // Sorted, so the reply is the same run to run.
+        std.mem.sort([]const u8, names.items, {}, struct {
+            fn lt(_: void, a: []const u8, b: []const u8) bool {
+                return std.mem.lessThan(u8, a, b);
+            }
+        }.lt);
+        for (names.items) |name| {
+            const sib_uri = try std.fmt.allocPrint(arena, "{s}/{s}", .{ uri_dir, name });
+            const text: []const u8 = self.docs.get(sib_uri) orelse blk: {
+                const full = try std.fs.path.join(arena, &.{ dir_path, name });
+                break :blk Io.Dir.cwd().readFileAlloc(self.io, full, arena, .limited(4 << 20)) catch continue;
+            };
+            const ranges = try occurrences(arena, text, word);
+            if (ranges.len == 0) continue;
+            try files.append(arena, .{ .uri = sib_uri, .edits = try renameEdits(arena, ranges, new_name) });
+        }
+    }
 
     fn doc(self: *Server, params: Value) ?Doc {
         const td = getObj(params, "textDocument") orelse return null;
@@ -643,6 +685,38 @@ fn wholeRange(text: []const u8) Range {
 }
 
 /// `{"changes":{"<uri>":[edits]}}`.
+const FileEdits = struct { uri: []const u8, edits: []const TextEdit };
+
+fn renameEdits(arena: Allocator, ranges: []const Range, new_name: []const u8) ![]TextEdit {
+    const edits = try arena.alloc(TextEdit, ranges.len);
+    for (ranges, 0..) |r, i| edits[i] = .{ .range = r, .newText = new_name };
+    return edits;
+}
+
+/// A `WorkspaceEdit` over several files (`changes`, one key per uri).
+fn workspaceEditMulti(arena: Allocator, files: []const FileEdits) ![]const u8 {
+    var aw: Io.Writer.Allocating = .init(arena);
+    var js: std.json.Stringify = .{ .writer = &aw.writer };
+    try js.beginObject();
+    try js.objectField("changes");
+    try js.beginObject();
+    for (files) |f| {
+        try js.objectField(f.uri);
+        try js.write(f.edits);
+    }
+    try js.endObject();
+    try js.endObject();
+    return aw.written();
+}
+
+/// A `file://` uri's path (`%xx` decoded); null for any other scheme.
+fn uriPath(arena: Allocator, uri: []const u8) ?[]const u8 {
+    if (!std.mem.startsWith(u8, uri, "file://")) return null;
+    var raw = uri["file://".len..];
+    if (raw.len > 2 and raw[0] == '/' and raw[2] == ':') raw = raw[1..];
+    return decodePercent(arena, raw) catch raw;
+}
+
 fn workspaceEdit(arena: Allocator, uri: []const u8, edits: []const TextEdit) ![]const u8 {
     var aw: Io.Writer.Allocating = .init(arena);
     var js: std.json.Stringify = .{ .writer = &aw.writer };
@@ -1075,4 +1149,48 @@ test "--sync incremental: range changes apply in order, and the text they leave 
     const full = try h.send(0, "textDocument/didChange", "{\"textDocument\":{\"uri\":\"file:///ws/a.fk\",\"version\":3},\"contentChanges\":[{\"text\":\"fn bar() {}\\n\"}]}");
     defer t.allocator.free(full);
     try t.expectEqualStrings("fn bar() {}\n", h.server.docs.get("file:///ws/a.fk").?);
+}
+
+test "rename reaches a sibling file of the same extension: an open one from its synced text, a closed one from disk, in name order" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "closed.fk", .data = "foo();\nlet foo = 1; // foo\n" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "unrelated.fk", .data = "bar();\n" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "other.txt", .data = "foo\n" });
+    var h: Harness = undefined;
+    h.init();
+    defer h.deinit();
+    const a_uri = try std.fmt.allocPrint(t.allocator, "file://{s}/a.fk", .{root});
+    defer t.allocator.free(a_uri);
+    const open_params = try std.fmt.allocPrint(t.allocator, "{{\"textDocument\":{{\"uri\":\"{s}\",\"languageId\":\"fk\",\"version\":1,\"text\":\"fn foo() {{}}\\nfoo();\\n\"}}}}", .{a_uri});
+    defer t.allocator.free(open_params);
+    const open = try h.send(0, "textDocument/didOpen", open_params);
+    defer t.allocator.free(open);
+    // A second open document in the directory whose synced text differs
+    // from the disk's (the disk holds `foo`, the buffer does not).
+    const b_uri = try std.fmt.allocPrint(t.allocator, "file://{s}/b.fk", .{root});
+    defer t.allocator.free(b_uri);
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "b.fk", .data = "foo();\n" });
+    const open_b_params = try std.fmt.allocPrint(t.allocator, "{{\"textDocument\":{{\"uri\":\"{s}\",\"languageId\":\"fk\",\"version\":1,\"text\":\"baz();\\n\"}}}}", .{b_uri});
+    defer t.allocator.free(open_b_params);
+    const open_b = try h.send(0, "textDocument/didOpen", open_b_params);
+    defer t.allocator.free(open_b);
+    const ren_params = try std.fmt.allocPrint(t.allocator, "{{\"textDocument\":{{\"uri\":\"{s}\"}},\"position\":{{\"line\":1,\"character\":1}},\"newName\":\"quux\"}}", .{a_uri});
+    defer t.allocator.free(ren_params);
+    const ren = try h.send(7, "textDocument/rename", ren_params);
+    defer t.allocator.free(ren);
+    const changes = getObj(resultOf(ren[0]), "changes").?;
+    try t.expectEqual(@as(usize, 2), changes.object.count());
+    try t.expectEqual(@as(usize, 2), getArr(changes, a_uri).?.len);
+    const closed_uri = try std.fmt.allocPrint(t.allocator, "file://{s}/closed.fk", .{root});
+    defer t.allocator.free(closed_uri);
+    const closed = getArr(changes, closed_uri).?;
+    try t.expectEqual(@as(usize, 3), closed.len);
+    try t.expectEqualStrings("quux", getStr(closed[0], "newText").?);
+    try t.expectEqual(@as(i64, 1), getInt(getObj(getObj(closed[1], "range").?, "start").?, "line").?);
+    // b.fk is open and its synced text has no `foo`; unrelated.fk and
+    // other.txt hold none / are not the extension.
+    try t.expect(getArr(changes, b_uri) == null);
 }

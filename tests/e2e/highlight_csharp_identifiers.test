@@ -1,0 +1,32 @@
+# A C# file's identifiers take the query's specific captures. The
+# c_sharp grammar's highlights.scm opens with `(identifier) @variable`
+# and lists `(class_declaration name: (identifier) @type)`,
+# `(method_declaration name: (identifier) @function)`, `(attribute name:
+# (identifier) @attribute)`, `(invocation_expression
+# (member_access_expression name: (identifier) @function))` after it —
+# for one node a later pattern overrides an earlier one. onedark: type
+# #e5c07b, function #61afef, attribute #e5c07b, keyword #c678dd.
+write Calc.cs "using System;\n\nnamespace Acme.Core;\n\npublic record Point(int X, int Y);\n\n[AttributeUsage(AttributeTargets.Method)]\npublic sealed class AuditedAttribute : Attribute\n{\n    public string? Tag { get; init; }\n}\n\npublic static class Calc\n{\n    public static int Add(int a, int b) => a + b;\n\n    [Audited(Tag = \"div\")]\n    public static int Divide(int a, int b)\n    {\n        if (b == 0) throw new DivideByZeroException(\"b is zero\");\n        return a / b;\n    }\n\n    public static string Describe(object? o) => Calc.Add(1, 2).ToString();\n}\n"
+open Calc.cs
+command view.toggle_tree
+expect screen contains "public static class Calc"
+# The query's keyword / predefined-type captures do land, so the grammar ran.
+expect color 12 6 fg #c678dd
+expect color 25 6 fg #e5c07b
+# class_declaration name → @type
+expect color 25 14 fg #e5c07b
+# record_declaration identifier → @type
+expect color 19 6 fg #e5c07b
+# base_list identifier → @type
+expect color 44 9 fg #e5c07b
+# a plain identifier (`a` in `a / b`) stays the default fg
+expect color 20 22 fg #abb2bf
+# method_declaration name → @function
+expect color 27 16 fg #61afef
+# attribute name → @attribute (both attribute lists)
+expect color 6 8 fg #e5c07b
+expect color 10 18 fg #e5c07b
+# object_creation type → @type
+expect color 35 21 fg #e5c07b
+# invocation member name → @function
+expect color 58 25 fg #61afef

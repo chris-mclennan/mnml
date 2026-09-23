@@ -484,6 +484,30 @@ fn relativeTo(arena: Allocator, path: []const u8, workspace: []const u8) Allocat
     return arena.dupe(u8, path);
 }
 
+/// A stack frame names the file by its real path (the compiler records
+/// it resolved), so under a workspace reached through a symlink —
+/// macOS's `/var` and `/tmp`, a `~/work` link — a failure's file is
+/// `/private/var/…/CalcTests.cs` where the workspace is `/var/…`, the
+/// prefix test misses and the row keeps an absolute path. Compare the
+/// real paths: a file inside the real workspace becomes relative to it,
+/// so it heads the same group as its passing siblings and Enter opens
+/// the editor already open on it.
+fn realRelative(arena: Allocator, io: Io, workspace: []const u8, tests: []TestCase) Allocator.Error!void {
+    var ws_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var ws_real: ?[]const u8 = null;
+    for (tests) |*tc| {
+        if (!std.fs.path.isAbsolute(tc.file)) continue;
+        if (ws_real == null) {
+            const n = Io.Dir.cwd().realPathFile(io, workspace, &ws_buf) catch return;
+            ws_real = ws_buf[0..n];
+        }
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        const n = Io.Dir.cwd().realPathFile(io, tc.file, &buf) catch continue;
+        const rel = try relativeTo(arena, buf[0..n], ws_real.?);
+        if (!std.fs.path.isAbsolute(rel)) tc.file = rel;
+    }
+}
+
 /// The `Results File: <path>.trx` line, when the trx logger ran.
 pub fn trxPathIn(text: []const u8) ?[]const u8 {
     const at = std.mem.indexOf(u8, text, "Results File:") orelse return null;
@@ -735,7 +759,9 @@ fn zigTestLine(text: []const u8, title: []const u8) ?u32 {
 /// The TRX the `trx` logger writes: every `<UnitTestResult>` with its
 /// outcome and duration, the `<Message>` / `<StackTrace>` of a failure,
 /// and the class + method from the `<UnitTest>` definitions (the
-/// console's `testName` is the display name, which NUnit shortens).
+/// console's `testName` is the display name, which NUnit shortens). A
+/// data row of a Theory / TestCase keeps its arguments from the display
+/// name (`withArguments`), so three `[InlineData]` rows are three rows.
 pub fn parseTrx(arena: Allocator, xml: []const u8, workspace: []const u8) Allocator.Error!TestRun {
     var by_id: std.StringHashMapUnmanaged([]const u8) = .empty;
     var from: usize = 0;
@@ -764,7 +790,9 @@ pub fn parseTrx(arena: Allocator, xml: []const u8, workspace: []const u8) Alloca
         const close = if (self_closing) open_end else (std.mem.indexOfPos(u8, xml, open_end, "</UnitTestResult>") orelse xml.len);
         from = close;
         const test_id = try attrValue(arena, opener, "testId");
-        const name = (if (test_id) |id| by_id.get(id) else null) orelse (try attrValue(arena, opener, "testName")) orelse "(test)";
+        const display = try attrValue(arena, opener, "testName");
+        const defined = if (test_id) |id| by_id.get(id) else null;
+        const name = if (defined) |fqn| try withArguments(arena, fqn, display) else display orelse "(test)";
         const outcome = (try attrValue(arena, opener, "outcome")) orelse "";
         const status: Status = if (std.mem.eql(u8, outcome, "Passed")) .passed else if (std.mem.eql(u8, outcome, "Failed") or std.mem.eql(u8, outcome, "Error") or std.mem.eql(u8, outcome, "Timeout") or std.mem.eql(u8, outcome, "Aborted")) .failed else .skipped;
         const body = xml[open_end..close];
@@ -793,6 +821,21 @@ pub fn parseTrx(arena: Allocator, xml: []const u8, workspace: []const u8) Alloca
         try tests.append(arena, tc);
     }
     return .{ .tests = try tests.toOwnedSlice(arena) };
+}
+
+/// `Class.Method` plus the arguments the display name gives the data
+/// row: `Acme.Tests.CalcTests.Describes(x: 1, y: 5, expected: "p")` or
+/// NUnit's `Describes(1,5,"p")` → `…CalcTests.Describes(x: 1, …)`. A
+/// display name that does not call the method by name (a `DisplayName`)
+/// adds nothing.
+fn withArguments(arena: Allocator, fqn: []const u8, display: ?[]const u8) Allocator.Error![]const u8 {
+    const d = display orelse return fqn;
+    const paren = std.mem.indexOfScalar(u8, d, '(') orelse return fqn;
+    const method = fqn[if (std.mem.lastIndexOfScalar(u8, fqn, '.')) |dot| dot + 1 else 0..];
+    const head = d[0..paren];
+    if (!std.mem.endsWith(u8, head, method)) return fqn;
+    if (head.len > method.len and head[head.len - method.len - 1] != '.') return fqn;
+    return std.fmt.allocPrint(arena, "{s}{s}", .{ fqn, d[paren..] });
 }
 
 /// `key="value"` in a tag's opener, unescaped. The key must follow
@@ -1177,6 +1220,7 @@ fn dotnetResult(io: Io, arena: Allocator, result: *Result, cwd: []const u8, work
         return;
     }
     const tests = try arena.dupe(TestCase, r.tests);
+    try realRelative(arena, io, workspace, tests);
     try locateSources(arena, io, cwd, workspace, tests, .cs);
     r.tests = tests;
     r.command = try cmdlineFor(arena, .dotnet, extra);
@@ -1334,10 +1378,36 @@ pub const TestsPane = struct {
         };
     }
 
-    /// The order the rows follow: natural (file, then line) or slowest first.
+    /// The order the rows follow: by file, then line (then title, then
+    /// the report's order) — a test host reports in the order tests
+    /// finish, which is not the same twice — or slowest first. A row
+    /// no file was found for goes last.
     pub fn order(self: *const TestsPane, arena: Allocator) Allocator.Error![]u32 {
         const idx = try arena.alloc(u32, self.run.tests.len);
         for (idx, 0..) |*x, i| x.* = @intCast(i);
+        if (self.sort == .file_line) {
+            const Ctx = struct {
+                tests: []const TestCase,
+                fn lt(ctx: @This(), a: u32, b: u32) bool {
+                    const x = ctx.tests[a];
+                    const y = ctx.tests[b];
+                    if ((x.file.len == 0) != (y.file.len == 0)) return y.file.len == 0;
+                    switch (std.mem.order(u8, x.file, y.file)) {
+                        .lt => return true,
+                        .gt => return false,
+                        .eq => {},
+                    }
+                    if (x.line != y.line) return x.line < y.line;
+                    switch (std.mem.order(u8, x.title, y.title)) {
+                        .lt => return true,
+                        .gt => return false,
+                        .eq => {},
+                    }
+                    return a < b;
+                }
+            };
+            std.mem.sort(u32, idx, Ctx{ .tests = self.run.tests }, Ctx.lt);
+        }
         if (self.sort == .duration_desc) {
             const Ctx = struct {
                 tests: []const TestCase,
@@ -1926,17 +1996,19 @@ test "rows: grouped under file headers with error and trace rows; slowest-first 
     p.run = try copyRun(p.snapshot.allocator(), try parseReport(arena_state.allocator(), fixture_report));
     p.state = .done;
     try p.rebuildRows();
-    // global error, login header, 3 cases (+2 error lines +1 trace), cart header, 1 case.
+    // global error, cart header, 1 case, login header, 3 cases (+2
+    // error lines +1 trace): by file, then line — not the report's order.
     try t.expectEqual(@as(usize, 10), p.rows.len);
     try t.expect(p.rows[0] == .global_err);
-    try t.expectEqualStrings("login.spec.ts", p.rows[1].file);
-    try t.expect(p.rows[2] == .case and p.rows[2].case == 0);
-    try t.expect(p.rows[3] == .case and p.rows[3].case == 1);
-    try t.expect(p.rows[4] == .err_line and p.rows[5] == .err_line);
-    try t.expect(p.rows[6] == .trace and p.rows[6].trace == 1);
-    try t.expectEqualStrings("cart.spec.ts", p.rows[8].file);
+    try t.expectEqualStrings("cart.spec.ts", p.rows[1].file);
+    try t.expect(p.rows[2] == .case and p.rows[2].case == 3);
+    try t.expectEqualStrings("login.spec.ts", p.rows[3].file);
+    try t.expect(p.rows[4] == .case and p.rows[4].case == 0);
+    try t.expect(p.rows[5] == .case and p.rows[5].case == 1);
+    try t.expect(p.rows[6] == .err_line and p.rows[7] == .err_line);
+    try t.expect(p.rows[8] == .trace and p.rows[8].trace == 1);
     try t.expectEqual(@as(usize, 2), p.cursor);
-    p.cursor = 6;
+    p.cursor = 8;
     try t.expectEqualStrings("rejects bad password", p.selected().?.title);
     p.sort = .duration_desc;
     try p.rebuildRows();
@@ -1947,6 +2019,39 @@ test "rows: grouped under file headers with error and trace rows; slowest-first 
     try t.expectEqualStrings("tests ✗", p.title());
     scrollBy(&p, 100);
     try t.expectEqual(@as(usize, 7), p.cursor);
+}
+
+test "file:line sorts a test host's finishing order: one header per file, lines ascending, the same rows whatever the order they finished in" {
+    const Case = struct {
+        fn of(title: []const u8, file: []const u8, line: u32) TestCase {
+            return .{ .title = title, .suite_path = "Acme.Tests.CalcTests", .file = file, .line = line, .status = .passed, .duration_ms = 0, .err = null, .trace_path = null };
+        }
+    };
+    const calc = "tests/Acme.Tests/CalcTests.cs";
+    const desc = "tests/Acme.Tests/Sub/DescribeTests.cs";
+    // Two runs of one solution, as xunit reported them.
+    const runs = [_][7]TestCase{
+        .{ Case.of("Later", calc, 18), Case.of("Adds", calc, 9), Case.of("Nothing", desc, 5), Case.of("Describes(x: 2)", calc, 26), Case.of("DividesWrong", calc, 12), Case.of("Positive", desc, 9), Case.of("Unfound", "", 0) },
+        .{ Case.of("Unfound", "", 0), Case.of("Positive", desc, 9), Case.of("DividesWrong", calc, 12), Case.of("Describes(x: 2)", calc, 26), Case.of("Adds", calc, 9), Case.of("Nothing", desc, 5), Case.of("Later", calc, 18) },
+    };
+    var seen: [2][]const u8 = undefined;
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    for (runs, 0..) |cases, n| {
+        var p = try TestsPane.init(t.allocator);
+        defer p.deinit(t.allocator, t.io);
+        p.run = .{ .tests = &cases };
+        try p.rebuildRows();
+        var text: std.ArrayListUnmanaged(u8) = .empty;
+        for (p.rows) |r| switch (r) {
+            .file => |f| try text.print(arena_state.allocator(), "[{s}]", .{f}),
+            .case => |c| try text.print(arena_state.allocator(), " {s}:{d}", .{ p.run.tests[c].title, p.run.tests[c].line }),
+            else => {},
+        };
+        seen[n] = text.items;
+    }
+    try t.expectEqualStrings("[tests/Acme.Tests/CalcTests.cs] Adds:9 DividesWrong:12 Later:18 Describes(x: 2):26[tests/Acme.Tests/Sub/DescribeTests.cs] Nothing:5 Positive:9[] Unfound:0", seen[0]);
+    try t.expectEqualStrings(seen[0], seen[1]);
 }
 
 test "test.run_playwright needs a package.json; a result lands in the pane and the flaky history" {
@@ -2085,6 +2190,9 @@ pub const fixture_trx =
     \\      </Output>
     \\    </UnitTestResult>
     \\    <UnitTestResult executionId="e3" testId="t3" testName="Later" computerName="box" duration="00:00:00.0000000" outcome="NotExecuted" testType="13cdc9d9" testListId="8c84fa94" relativeResultsDirectory="e3" />
+    \\    <UnitTestResult executionId="e4" testId="t4" testName="Acme.Tests.CalcTests.Describes(x: 2, y: 2, expected: &quot;diagonal 2&quot;)" computerName="box" duration="00:00:00.0000603" outcome="Passed" testType="13cdc9d9" testListId="8c84fa94" relativeResultsDirectory="e4" />
+    \\    <UnitTestResult executionId="e5" testId="t5" testName="Acme.Tests.CalcTests.Describes(x: 1, y: 5, expected: &quot;point 1,5&quot;)" computerName="box" duration="00:00:00.0000177" outcome="Passed" testType="13cdc9d9" testListId="8c84fa94" relativeResultsDirectory="e5" />
+    \\    <UnitTestResult executionId="e6" testId="t6" testName="adds two numbers" computerName="box" duration="00:00:00.0000177" outcome="Passed" testType="13cdc9d9" testListId="8c84fa94" relativeResultsDirectory="e6" />
     \\  </Results>
     \\  <TestDefinitions>
     \\    <UnitTest name="Adds" storage="/ws/tests.dll" id="t1">
@@ -2094,6 +2202,15 @@ pub const fixture_trx =
     \\    <UnitTest name="Divides" storage="/ws/tests.dll" id="t2">
     \\      <Execution id="e2" />
     \\      <TestMethod codeBase="/ws/tests.dll" adapterTypeName="executor://xunit" className="Acme.Tests.CalcTests, Tests, Version=1.0.0.0" name="Divides" />
+    \\    </UnitTest>
+    \\    <UnitTest name="Acme.Tests.CalcTests.Describes(x: 2, y: 2, expected: &quot;diagonal 2&quot;)" storage="/ws/tests.dll" id="t4">
+    \\      <TestMethod codeBase="/ws/tests.dll" adapterTypeName="executor://xunit" className="Acme.Tests.CalcTests" name="Describes" />
+    \\    </UnitTest>
+    \\    <UnitTest name="Acme.Tests.CalcTests.Describes(x: 1, y: 5, expected: &quot;point 1,5&quot;)" storage="/ws/tests.dll" id="t5">
+    \\      <TestMethod codeBase="/ws/tests.dll" adapterTypeName="executor://xunit" className="Acme.Tests.CalcTests" name="Describes" />
+    \\    </UnitTest>
+    \\    <UnitTest name="adds two numbers" storage="/ws/tests.dll" id="t6">
+    \\      <TestMethod codeBase="/ws/tests.dll" adapterTypeName="executor://xunit" className="Acme.Tests.CalcTests" name="AddsNamed" />
     \\    </UnitTest>
     \\  </TestDefinitions>
     \\</TestRun>
@@ -2291,7 +2408,7 @@ test "parseTrx: outcomes, durations to the ms, the class from the definitions, t
     defer arena_state.deinit();
     const a = arena_state.allocator();
     const r = try parseTrx(a, fixture_trx, "C:\\ws");
-    try t.expectEqual(@as(usize, 3), r.tests.len);
+    try t.expectEqual(@as(usize, 6), r.tests.len);
     try t.expectEqualStrings("Acme.Tests.CalcTests", r.tests[0].suite_path);
     try t.expectEqualStrings("Adds", r.tests[0].title);
     try t.expectEqual(Status.passed, r.tests[0].status);
@@ -2307,7 +2424,73 @@ test "parseTrx: outcomes, durations to the ms, the class from the definitions, t
     try t.expectEqualStrings("Later", r.tests[2].title);
     try t.expectEqualStrings("", r.tests[2].suite_path);
     try t.expectEqual(Status.skipped, r.tests[2].status);
+    // A Theory's data rows: one row each, named with their arguments;
+    // the method is what the sources and the re-run filter see.
+    try t.expectEqualStrings("Describes(x: 2, y: 2, expected: \"diagonal 2\")", r.tests[3].title);
+    try t.expectEqualStrings("Describes(x: 1, y: 5, expected: \"point 1,5\")", r.tests[4].title);
+    try t.expectEqualStrings("Acme.Tests.CalcTests", r.tests[4].suite_path);
+    try t.expectEqualStrings("Describes", methodOf(r.tests[4].title));
+    // A `DisplayName` that does not name the method: the method, as before.
+    try t.expectEqualStrings("AddsNamed", r.tests[5].title);
     try t.expectEqual(@as(usize, 0), (try parseTrx(a, "<TestRun/>", "/ws")).tests.len);
+}
+
+test "a Theory's data rows are separate rows with separate histories: breaking one row marks that row, not its siblings" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const row = "<UnitTestResult testId=\"{s}\" testName=\"Acme.Tests.CalcTests.Describes(x: {d}, y: {d})\" duration=\"00:00:00.001\" outcome=\"{s}\" />";
+    const def = "<UnitTest name=\"Acme.Tests.CalcTests.Describes(x: {d}, y: {d})\" id=\"{s}\"><TestMethod className=\"Acme.Tests.CalcTests\" name=\"Describes\" /></UnitTest>";
+    const Trx = struct {
+        fn of(ar: Allocator, outcomes: [3][]const u8) ![]const u8 {
+            return std.fmt.allocPrint(ar, "<TestRun><Results>" ++ row ++ row ++ row ++ "</Results><TestDefinitions>" ++ def ++ def ++ def ++ "</TestDefinitions></TestRun>", .{
+                "a", 0, 0,   outcomes[0], "b", 2,   2, outcomes[1], "c", 1, 5, outcomes[2],
+                0,   0, "a", 2,           2,   "b", 1, 5,           "c",
+            });
+        }
+    };
+    var h: flaky.History = .{};
+    defer h.deinit(t.allocator);
+    for ([_][3][]const u8{ .{ "Passed", "Passed", "Passed" }, .{ "Passed", "Failed", "Passed" } }) |outcomes| {
+        const r = try parseTrx(a, try Trx.of(a, outcomes), "/ws");
+        try t.expectEqual(@as(usize, 3), r.tests.len);
+        for (r.tests) |tc| try h.record(t.allocator, try flaky.keyOf(a, tc.file, tc.suite_path, tc.title), if (tc.status == .passed) .pass else .fail, tc.line);
+    }
+    // Three keys, not one: the broken row changed, its siblings did not.
+    try t.expectEqual(@as(usize, 3), h.entries.count());
+    try t.expect(h.get(try flaky.keyOf(a, "", "Acme.Tests.CalcTests", "Describes(x: 2, y: 2)")).?.wobbly());
+    try t.expect(!h.get(try flaky.keyOf(a, "", "Acme.Tests.CalcTests", "Describes(x: 0, y: 0)")).?.wobbly());
+    try t.expect(!h.get(try flaky.keyOf(a, "", "Acme.Tests.CalcTests", "Describes(x: 1, y: 5)")).?.wobbly());
+}
+
+test "a failure's frame under a symlinked workspace: the real path becomes workspace-relative, as its passing siblings are" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const real = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    try tmp.dir.createDirPath(t.io, "ws/tests/Acme.Tests");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "ws/tests/Acme.Tests/CalcTests.cs", .data = "class CalcTests {}\n" });
+    try tmp.dir.symLink(t.io, "ws", "link", .{ .is_directory = true });
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    // The workspace is the link; the compiler wrote the real path.
+    const workspace = try std.fs.path.join(a, &.{ real, "link" });
+    const frame_path = try std.fs.path.join(a, &.{ real, "ws", "tests", "Acme.Tests", "CalcTests.cs" });
+    const outside = try std.fs.path.join(a, &.{ real, "elsewhere.cs" });
+    var tests = [_]TestCase{
+        .{ .title = "DividesWrong", .suite_path = "Acme.Tests.CalcTests", .file = frame_path, .line = 14, .status = .failed, .duration_ms = 0, .err = null, .trace_path = null },
+        .{ .title = "Gone", .suite_path = "", .file = outside, .line = 1, .status = .failed, .duration_ms = 0, .err = null, .trace_path = null },
+        .{ .title = "Adds", .suite_path = "Acme.Tests.CalcTests", .file = "tests/Acme.Tests/CalcTests.cs", .line = 9, .status = .passed, .duration_ms = 0, .err = null, .trace_path = null },
+    };
+    // The prefix test alone keeps it absolute.
+    try t.expect(std.fs.path.isAbsolute(try relativeTo(a, frame_path, workspace)));
+    try realRelative(a, t.io, workspace, &tests);
+    try t.expectEqualStrings("tests/Acme.Tests/CalcTests.cs", tests[0].file);
+    // A file that is not there (or not inside) stays as the frame said.
+    try t.expectEqualStrings(outside, tests[1].file);
+    try t.expectEqualStrings("tests/Acme.Tests/CalcTests.cs", tests[2].file);
 }
 
 test "locateSources: a passed row is found by class and method in the project's .cs files, bin/ and obj/ skipped" {
