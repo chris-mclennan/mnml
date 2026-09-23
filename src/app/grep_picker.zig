@@ -192,7 +192,7 @@ pub fn accept(app: *App, row: app_mod.GrepRow) Allocator.Error!void {
     const id = app.openPath(row.path) catch return;
     const pane = app.panes.get(id) orelse return;
     switch (pane.*) {
-        .editor => |*e| e.buf.editor.placeCursor(row.line -| 1, row.col),
+        .editor => |*e| e.buf.editor.placeCursorByte(row.line -| 1, row.col),
         else => {},
     }
 }

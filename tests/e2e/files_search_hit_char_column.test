@@ -1,0 +1,16 @@
+# A search hit after non-ASCII text opens on the match's character, not
+# its byte offset read as a column: "日本語 alpha" — alpha is column 5
+# (Ctrl+F lands there), and the row's label says 1:5, not 1:11.
+shell git init -q -b main && git config user.email t@e.st && git config user.name t
+write a.txt "日本語 alpha\n"
+shell git add -A && git commit -qm seed
+command view.activity_search
+type alpha
+key enter
+wait 1500
+expect screen contains "(git grep)"
+expect screen contains "1:5  日"
+key esc
+key enter
+wait 300
+expect status contains "\"line\":1,\"col\":5"

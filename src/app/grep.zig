@@ -110,12 +110,25 @@ pub const Hit = struct {
     text: []const u8,
     /// Byte offset of `text` on the line; 0 when `text` is the whole line.
     text_off: u32 = 0,
+    /// 0-based CHARACTER column of the match (code points before it) —
+    /// what the row's `line:col` label shows, the statusline's unit.
+    /// `col` stays the byte offset the editor is placed with.
+    ccol: u32 = 0,
 
     /// The match's byte offset within `text`.
     pub fn textCol(h: Hit) usize {
         return h.col -| h.text_off;
     }
 };
+
+/// Code points in `line[0..byte]` (a UTF-8 lead or ASCII byte each).
+pub fn charsBefore(line: []const u8, byte: u32) u32 {
+    var n: u32 = 0;
+    for (line[0..@min(line.len, byte)]) |b| {
+        if (b & 0xC0 != 0x80) n += 1;
+    }
+    return n;
+}
 
 /// Bytes of the line kept ahead of a match and past its end. A minified
 /// file has lines of half a megabyte; a hit stores what a row can show
@@ -693,6 +706,7 @@ const Ctx = struct {
             .len = len,
             .text = try arena.dupe(u8, win.text),
             .text_off = win.off,
+            .ccol = charsBefore(text, col),
         });
         c.total += 1;
         if (b.hits.items.len >= batch_size) c.flush(false);
@@ -1043,6 +1057,7 @@ pub fn handle(app: *App, result: *Result) Allocator.Error!void {
             .len = h.len,
             .text = try arena.dupe(u8, h.text),
             .text_off = h.text_off,
+            .ccol = h.ccol,
         });
     }
     p.backend = result.backend;
@@ -1123,7 +1138,7 @@ pub fn openHit(app: *App, id: PaneId, p: *GrepPane, hit: u32) Allocator.Error!vo
         return;
     };
     if (app.panes.editor(eid)) |e| {
-        e.buf.editor.placeCursor(@min(@as(usize, h.line) -| 1, e.buf.editor.lineCount() - 1), h.col);
+        e.buf.editor.placeCursorByte(@min(@as(usize, h.line) -| 1, e.buf.editor.lineCount() - 1), h.col);
         e.buf.editor.goal_col = null;
     }
     _ = id;
@@ -1641,7 +1656,7 @@ fn backendInto(f: *Fixture, query: []const u8, flags: Flags, which: Backend) !*R
             if (ev != .grep) continue;
             const b = ev.grep;
             const arena = merged.arena.allocator();
-            for (b.hits.items) |h| try merged.hits.append(arena, .{ .path = try arena.dupe(u8, h.path), .rel = try arena.dupe(u8, h.rel), .line = h.line, .col = h.col, .len = h.len, .text = try arena.dupe(u8, h.text), .text_off = h.text_off });
+            for (b.hits.items) |h| try merged.hits.append(arena, .{ .path = try arena.dupe(u8, h.path), .rel = try arena.dupe(u8, h.rel), .line = h.line, .col = h.col, .len = h.len, .text = try arena.dupe(u8, h.text), .text_off = h.text_off, .ccol = h.ccol });
             if (b.err) |e| merged.err = try arena.dupe(u8, e);
             merged.done = b.done;
         }
@@ -1721,6 +1736,17 @@ test "the regex flag means one language — ERE as people type it — under git 
         try t.expectEqual(c.n, wn);
         try t.expectEqualSlices(u32, wlines[0..wl], glines[0..gl]);
     }
+}
+
+test "a hit after non-ASCII text carries its byte column and its character column" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "cjk.txt", .data = "\u{65e5}\u{672c}\u{8a9e} omega\n" });
+    var r = try walkInto(&f, "omega", .{});
+    defer r.destroy(t.allocator);
+    try t.expectEqual(@as(usize, 1), r.hits.items.len);
+    try t.expectEqual(@as(u32, 10), r.hits.items[0].col);
+    try t.expectEqual(@as(u32, 4), r.hits.items[0].ccol);
 }
 
 test "walk backend: literal + smart case, .gitignore honoured, whole word, a regex and a vim pattern, a bad one" {

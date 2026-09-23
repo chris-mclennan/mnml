@@ -264,6 +264,7 @@ pub fn handle(app: *App, result: *grep.Result) Allocator.Error!void {
             .len = h.len,
             .text = try arena.dupe(u8, h.text),
             .text_off = h.text_off,
+            .ccol = h.ccol,
         });
     }
     st.backend = result.backend;
@@ -367,7 +368,7 @@ pub fn openHit(app: *App, h: grep.Hit, beside: bool) CommandError!void {
     if (app.panes.editor(eid)) |e| {
         const ed = e.buf.editor;
         ed.anchor = null;
-        ed.placeCursor(@min(@as(usize, line) -| 1, ed.lineCount() -| 1), col);
+        ed.placeCursorByte(@min(@as(usize, line) -| 1, ed.lineCount() -| 1), col);
         ed.goal_col = null;
         e.view.scroll_line = @intCast(ed.currentLine() -| app.pane_rows / 2);
     }
