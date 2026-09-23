@@ -28,6 +28,17 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
    `Ctrl+K Ctrl+I` (hover, which the Info panel advertises) could not be
    driven at all; `app/driver.zig`'s `expireChords` hook reads the same
    clock `App.tick` does. `tests/e2e/chord_ctrl_k_prefix.test`.
+   *Since 2026-09-23* the standard profile's timeout does not fire the
+   fallback at all: a pause after `Ctrl+K` (or `Ctrl+K g`) is the pause
+   before the chord's next key, as in VS Code. The chain stays pending
+   with no deadline and a popup lists the profile's own continuations —
+   `w → Close all other panes`, `g → +2 chords` — read off the keymap,
+   config overrides included (`Keymap.continuations`); the next key runs
+   through the keymap exactly as it would have before the pause, Esc
+   cancels, and a key no chord carries toasts `no Ctrl+K chord: …`. The
+   leader tree used to open there, so `Ctrl+K ⏸ W` ran its `w →
+   write/save` instead of `view.close_others`. The tree itself is
+   `whichkey.leader` from the palette. `tests/e2e/standard_ctrl_k_pause_menu.test`.
 3. **`ctrl+]` / `ctrl+[`** indent / outdent in `standard` (VS Code);
    `editor.bracket_match` keeps `ctrl+]` in `vim`.
 4. **`ctrl+l`** is select-line in standard and window-right in vim, so

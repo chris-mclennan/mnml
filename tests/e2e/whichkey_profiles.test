@@ -4,13 +4,15 @@
 # (NvChad's `<leader>ra`, which that popup does not carry) and no
 # `d → +debug`. The vim profile shows both, and `<BS>` climbs back out
 # of a group instead of dismissing the popup.
+# (The standard profile's Ctrl+K PAUSE lists its own Ctrl+K chords (since
+# 2026-09-23 — `standard_ctrl_k_pause_menu.test`); the leader tree is
+# `whichkey.leader`, the palette's "Leader menu (which-key)".)
 write a.txt "hello\n"
 open a.txt
 
 # Standard: Ctrl+K is the leader, and the header says so.
 command editor.use_standard
-key ctrl+k
-wait 700
+command whichkey.leader
 expect screen contains "┌ Ctrl+K "
 expect screen lacks "┌ <leader> "
 expect screen contains "f → +find"

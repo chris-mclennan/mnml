@@ -1,0 +1,40 @@
+# width: 120
+# Standard profile: `Ctrl+K`, a pause past the chord timeout, then the
+# second key — the chord still runs, as VS Code waits after Ctrl+K. The
+# pause opens a popup of the profile's OWN `Ctrl+K` chords (what the next
+# key will run), never the vim leader tree; it used to be the leader
+# tree, and `Ctrl+K ⏸ W` saved the file instead of closing the others.
+# (hunt/findings-2026-09-23/std-ctrlk-pause-runs-leader-map.md)
+write a.txt "AAA\n"
+write b.txt "BBB\n"
+open a.txt
+open b.txt
+key ctrl+k
+wait 1000
+expect screen contains "┌ Ctrl+K "
+expect screen contains "w → Close all other panes"
+expect screen contains "t → Theme: toggle"
+expect screen lacks "write/save"
+expect screen lacks "+split"
+key w
+wait 300
+# view.close_others: a.txt's tab goes, nothing is saved.
+expect screen lacks "saved b.txt"
+expect status lacks "\"title\":\"a.txt\""
+expect screen lacks "┌ Ctrl+K "
+
+# A prefix inside the popup goes one level down and waits again.
+key ctrl+k
+wait 700
+type g
+expect screen contains "┌ Ctrl+K g "
+expect screen contains "c → Git"
+key esc
+expect screen lacks "┌ Ctrl+K "
+
+# A key no chord carries is dropped with a word, never typed.
+key ctrl+k
+wait 700
+type ;
+expect screen contains "no Ctrl+K chord: Ctrl+K ;"
+expect dirty false

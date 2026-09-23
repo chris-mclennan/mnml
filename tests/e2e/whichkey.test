@@ -3,12 +3,14 @@
 # the prefix of eighteen `ctrl+k …` chords, so the popup is the
 # `timeoutlen` fallback — the pause is what opens it, not the press
 # (`tests/e2e/chord_ctrl_k_prefix.test`).
+# (The standard profile's Ctrl+K PAUSE lists its own Ctrl+K chords (since
+# 2026-09-23 — `standard_ctrl_k_pause_menu.test`); the leader tree is
+# `whichkey.leader`, the palette's "Leader menu (which-key)".)
 write src.txt hello world
 open src.txt
 expect screen lacks "+split"
 
-key ctrl+k
-wait 700
+command whichkey.leader
 expect screen contains "+split"
 
 # Descend into the +split group — its leaves show up.

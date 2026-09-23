@@ -843,6 +843,7 @@ fn chordChain(app: *App, k: Key) Allocator.Error!bool {
     if (app.chord.len >= keymap.max_seq) app.chord.clear(app.gpa);
     app.chord.seq[app.chord.len] = c;
     app.chord.len += 1;
+    if (app.chord.menu) return chordMenuKey(app, k);
     switch (app.keymap.resolveSeq(app.chord.seq[0..app.chord.len])) {
         .run => |t| {
             app.chord.clear(app.gpa);
@@ -938,6 +939,28 @@ fn chordChain(app: *App, k: Key) Allocator.Error!bool {
     }
 }
 
+/// A key while the standard `Ctrl+K` popup is up (`ChordChain.menu`):
+/// the keymap decides, exactly as for a key typed before the timeout —
+/// a bound chord runs, a prefix goes one level down (the popup follows
+/// it), Esc cancels, and a key no chord carries is dropped with a word
+/// rather than typed into the buffer.
+fn chordMenuKey(app: *App, k: Key) Allocator.Error!bool {
+    app.needs_render = true;
+    switch (app.keymap.resolveSeq(app.chord.seq[0..app.chord.len])) {
+        .run, .pending_with_fallback => |t| {
+            app.chord.clear(app.gpa);
+            try runTarget(app, t);
+        },
+        .pending => {},
+        .none => {
+            const tail = leaderTail(app, app.chord.seq[1..app.chord.len]);
+            app.chord.clear(app.gpa);
+            if (k.code != .esc) app.toast("no Ctrl+K chord: Ctrl+K {s}", .{tail});
+        },
+    }
+    return true;
+}
+
 /// Whether the chord chain was opened by the leader itself — the key
 /// `whichkey.leader` is bound to in the active profile, whatever the
 /// config spells it as. It is the one binding that is a command AND a
@@ -1001,6 +1024,20 @@ fn runTarget(app: *App, t: keymap.Target) Allocator.Error!void {
 /// `timeoutlen` picks the shorter mapping.
 pub fn expireChords(app: *App) Allocator.Error!void {
     if (app.chord.deadline_ms == null) return;
+    // The standard profile: a pause after `Ctrl+K` (or `Ctrl+K g`) is
+    // the pause before the chord's next key, as in VS Code. The chain
+    // stays pending with no deadline and the popup lists the profile's
+    // own `Ctrl+K` chords; the next key completes one through the keymap.
+    // It used to fire `whichkey.leader`, whose popup is the vim leader
+    // tree — `Ctrl+K ⏸ W` saved instead of `view.close_others`.
+    if (app.input_style != .vim and leaderArmed(app)) {
+        if (app.chord.fallback) |fb| freeTarget(app, fb);
+        app.chord.fallback = null;
+        app.chord.deadline_ms = null;
+        app.chord.menu = true;
+        app.needs_render = true;
+        return;
+    }
     const fallback = app.chord.fallback;
     app.chord.fallback = null;
     const menu = if (fallback == null) leaderLookup(app.chord.seq[0..app.chord.len], app.input_style == .vim) else null;
@@ -4327,19 +4364,29 @@ test "the one deep-link shape: `--focus <key>` names a thing inside a listing, a
     try std.testing.expect(focusKeyOf(&.{}) == null);
 }
 
-test "chord chain: ctrl+k alone is pending with a which-key fallback; expiring opens it" {
+test "chord chain: ctrl+k alone is pending with a which-key fallback; in the standard profile expiring keeps the chord and lists its keys, in vim the leader fallback opens the tree" {
     var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 40, .rows = 10 });
     defer app.deinit();
+    try std.testing.expect(app.input_style != .vim);
     try key(&app, Key.ctrl('k'));
     try std.testing.expect(app.chord.len == 1 and app.chord.fallback != null);
     try expireChords(&app);
-    try std.testing.expect(app.overlay == .which_key);
-    try std.testing.expect(app.chord.len == 0);
-    // `s` descends into +split; esc closes.
-    try key(&app, Key.char('s'));
-    try std.testing.expectEqualStrings("s", app.overlay.which_key.slice());
-    try key(&app, Key.named(.esc));
+    // Standard: no leader tree; the chain waits, with no deadline, for
+    // the chord's next key — and the popup of its continuations is up.
     try std.testing.expect(app.overlay == .none);
+    try std.testing.expect(app.chord.len == 1 and app.chord.menu and app.chord.deadline_ms == null);
+    const kids = try app.keymap.continuations(app.frame.allocator(), app.chord.seq[0..1]);
+    try std.testing.expect(kids.len >= 10);
+    // `t` completes `ctrl+k t` (theme.toggle) as it would have at speed.
+    const before = app.theme.name;
+    try key(&app, Key.char('t'));
+    try std.testing.expect(app.chord.len == 0 and !app.chord.menu);
+    try std.testing.expect(!std.mem.eql(u8, app.theme.name, before));
+    // Esc cancels a waiting chord and types nothing.
+    try key(&app, Key.ctrl('k'));
+    try expireChords(&app);
+    try key(&app, Key.named(.esc));
+    try std.testing.expect(app.chord.len == 0 and !app.chord.menu and app.overlay == .none);
 }
 
 test "leader chain: the second key of `space e` is the chord's, not the editor's; esc cancels a pending leader silently" {

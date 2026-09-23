@@ -905,10 +905,16 @@ pub const ChordChain = struct {
     len: usize = 0,
     deadline_ms: ?i64 = null,
     fallback: ?keymap.Target = null,
+    /// The standard profile's `Ctrl+K` popup is up: the chain outlived
+    /// the chord timeout and waits for its next key with no deadline,
+    /// as VS Code waits after `Ctrl+K` (`dispatch.expireChords`); the
+    /// popup lists the keymap's continuations of `seq`.
+    menu: bool = false,
 
     pub fn clear(c: *ChordChain, gpa: Allocator) void {
         c.len = 0;
         c.deadline_ms = null;
+        c.menu = false;
         if (c.fallback) |f| switch (f) {
             .named => |s| gpa.free(s),
             .static => {},

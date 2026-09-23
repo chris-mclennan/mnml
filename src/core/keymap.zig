@@ -383,6 +383,36 @@ pub const Keymap = struct {
         return self.map.count();
     }
 
+    /// One key that can follow a pending prefix: the binding it
+    /// completes (`target`, when prefix + next is bound) and how many
+    /// longer bindings go on through it (`longer`).
+    pub const Continuation = struct { next: Chord, target: ?Target = null, longer: u16 = 0 };
+
+    /// Every key that extends `prefix` to a binding or toward one, in
+    /// no particular order (the popup sorts). What the standard
+    /// profile's `Ctrl+K` popup lists: the profile's own chords, as
+    /// this keymap — config overrides included — binds them.
+    pub fn continuations(self: *const Keymap, arena: Allocator, prefix: []const Chord) Allocator.Error![]Continuation {
+        var out: std.ArrayListUnmanaged(Continuation) = .empty;
+        var pk: [max_seq]u64 = undefined;
+        const want = packSeq(prefix, &pk);
+        var it = self.map.iterator();
+        while (it.next()) |kv| {
+            const k = kv.key_ptr.*;
+            const n = k.len / @sizeOf(u64);
+            if (n <= prefix.len or !std.mem.eql(u8, k[0..want.len], want)) continue;
+            const next = Chord.unpack(std.mem.bytesToValue(u64, k[want.len..][0..@sizeOf(u64)]));
+            const slot = for (out.items) |*c| {
+                if (c.next.eql(next)) break c;
+            } else blk: {
+                try out.append(arena, .{ .next = next });
+                break :blk &out.items[out.items.len - 1];
+            };
+            if (n == prefix.len + 1) slot.target = kv.value_ptr.* else slot.longer += 1;
+        }
+        return out.items;
+    }
+
     fn packSeq(seq: []const Chord, out: []u64) []const u8 {
         for (seq, 0..) |c, i| out[i] = c.pack();
         return std.mem.sliceAsBytes(out[0..seq.len]);
@@ -618,4 +648,29 @@ test "the needs-you jumps: space s n / space s N in vim, ctrl+alt+n / ctrl+alt+s
     const casn = parseKeySeqBuf("ctrl+alt+shift+n", &buf).?;
     try std.testing.expectEqual(command.CommandId.@"sessions.prev_waiting", standard.resolveSeq(casn).run.static);
     try std.testing.expect(vim.resolveSeq(casn) == .none);
+}
+
+test "continuations: the keys that follow a prefix, the binding each completes, the longer ones through it" {
+    var km = Keymap.init(std.testing.allocator);
+    defer km.deinit();
+    try km.bindNow("ctrl+k w", "view.close_others");
+    try km.bindNow("ctrl+k g c", "git.commit");
+    try km.bindNow("ctrl+k g x", "git.commit");
+    try km.bindNow("ctrl+p", "picker.files");
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var buf: [max_seq]Chord = undefined;
+    const kids = try km.continuations(arena.allocator(), parseKeySeqBuf("ctrl+k", &buf).?);
+    try std.testing.expectEqual(@as(usize, 2), kids.len);
+    for (kids) |c| switch (c.next.code) {
+        .char => |ch| if (ch == 'w') {
+            try std.testing.expectEqual(command.CommandId.@"view.close_others", c.target.?.static);
+            try std.testing.expectEqual(@as(u16, 0), c.longer);
+        } else {
+            try std.testing.expectEqual(@as(u21, 'g'), ch);
+            try std.testing.expect(c.target == null);
+            try std.testing.expectEqual(@as(u16, 2), c.longer);
+        },
+        else => return error.TestUnexpectedResult,
+    };
 }

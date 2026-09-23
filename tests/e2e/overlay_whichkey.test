@@ -6,8 +6,10 @@
 # `esc to cancel` at the bottom. The leader is bound on its own AND a
 # prefix, so the popup opens on the `timeoutlen` pause, not the press
 # (`tests/e2e/chord_ctrl_k_prefix.test`).
-key ctrl+k
-wait 700
+# (The standard profile's Ctrl+K PAUSE lists its own Ctrl+K chords (since
+# 2026-09-23 — `standard_ctrl_k_pause_menu.test`); the leader tree is
+# `whichkey.leader`, the palette's "Leader menu (which-key)".)
+command whichkey.leader
 expect screen contains "┌ Ctrl+K "
 expect screen contains "f → +find"
 expect screen contains "e → explorer"
