@@ -228,8 +228,13 @@ pub const AiPane = struct {
     /// edit log could not follow (an undo, a reload) is still the right
     /// one if it reads exactly this.
     apply_original: ?[]u8 = null,
+    /// The job's cancel flag (the `Job` outlives the pane). Closing the
+    /// pane sets it: nobody will read the answer, so the child is killed
+    /// rather than left to spend the user's quota finishing it.
+    cancel: ?*std.atomic.Value(bool) = null,
 
     pub fn deinit(self: *AiPane) void {
+        if (self.cancel) |c| c.store(true, .release);
         self.gpa.free(self.title);
         self.gpa.free(self.prompt);
         if (self.apply_original) |o| self.gpa.free(o);
@@ -650,6 +655,13 @@ pub fn handle(app: *App, job_id: u64, msg: event.AiMsg) Allocator.Error!void {
             if (p.status == .running) p.status = .done;
             app.needs_render = true;
         },
+        .timed_out => |why| {
+            // Said out loud: the pane may be in a hidden tab, and a job
+            // that stalled for minutes is not one the user is watching.
+            const p = paneOfJob(app, job_id);
+            app.toast("{s}: {s}", .{ if (p) |ap| ap.title else "ai", why });
+            return handle(app, job_id, .{ .failed = why });
+        },
         .failed => |why| {
             if (app.ai.job(job_id)) |j| j.finished = true;
             const p = paneOfJob(app, job_id) orelse {
@@ -771,6 +783,7 @@ pub fn askProduct(app: *App, product: Product, title: []const u8, prompt: []cons
         .session_id = cli.genSessionId(app.io),
         .has_session = mode == .claude_cli,
         .apply = apply,
+        .cancel = &j.cancel,
     };
     errdefer gpa.free(pane.title);
     pane.prompt = try gpa.dupe(u8, prompt);
@@ -803,7 +816,7 @@ pub fn askProduct(app: *App, product: Product, title: []const u8, prompt: []cons
 
     const id = try app.panes.add(.{ .ai = pane });
     // Owned by the store from here.
-    app.ai.group.concurrent(app.io, jobWorker, .{ app.events, app.io, gpa, j, mode, prompt_owned, pane.session_id, model, key_owned, cwd, &app.env, system, use_tools, write_tools, max_tokens }) catch {
+    app.ai.group.concurrent(app.io, jobWorker, .{ app.events, app.io, gpa, j, mode, prompt_owned, pane.session_id, model, key_owned, cwd, &app.env, system, use_tools, write_tools, max_tokens, app.cfg.ai.cli_timeout_ms }) catch {
         app.panes.remove(id);
         return error.OutOfMemory;
     };
@@ -821,7 +834,13 @@ pub fn askProduct(app: *App, product: Product, title: []const u8, prompt: []cons
 
 /// The job worker: one `claude -p` / `codex exec`, or the agent loop
 /// over the API. Owns every string it was handed.
-fn jobWorker(events: *event.EventQueue, io: Io, gpa: Allocator, j: *Job, mode: JobMode, prompt: []u8, session_id: [36]u8, model: []u8, key: []u8, cwd: []u8, env: *const std.process.Environ.Map, system: ?[]u8, use_tools: bool, write_tools: bool, max_tokens: u32) Io.Cancelable!void {
+///
+/// The CLI child belongs to the job (`cli.runJob`): the job's cancel
+/// flag — set by `c`, by closing the pane, by a re-ask — kills and
+/// reaps it within a poll, and so does `[ai] cli_timeout_ms`. Every AI
+/// feature that runs a one-shot rides this path: the ai.* actions,
+/// the commit and branch drafts, `git.explain_branch`, the PR text.
+fn jobWorker(events: *event.EventQueue, io: Io, gpa: Allocator, j: *Job, mode: JobMode, prompt: []u8, session_id: [36]u8, model: []u8, key: []u8, cwd: []u8, env: *const std.process.Environ.Map, system: ?[]u8, use_tools: bool, write_tools: bool, max_tokens: u32, timeout_ms: u32) Io.Cancelable!void {
     defer gpa.free(prompt);
     defer gpa.free(model);
     defer gpa.free(key);
@@ -832,8 +851,17 @@ fn jobWorker(events: *event.EventQueue, io: Io, gpa: Allocator, j: *Job, mode: J
             var arena = std.heap.ArenaAllocator.init(gpa);
             defer arena.deinit();
             const argv = (if (mode == .claude_cli) cli.claudeArgv(arena.allocator(), prompt, &session_id, extraModel(model)) else cli.codexArgv(arena.allocator(), prompt)) catch return;
-            const out = cli.run(gpa, io, argv, cwd, env) catch |err| switch (err) {
+            const out = cli.runJob(gpa, io, argv, cwd, env, .{ .timeout_ms = timeout_ms, .cancel = &j.cancel }) catch |err| switch (err) {
                 error.Canceled => return error.Canceled,
+                error.Aborted => {
+                    postFailed(events, io, gpa, j.id, "cancelled");
+                    return;
+                },
+                error.TimedOut => {
+                    const why = std.fmt.allocPrint(gpa, "`{s}` gave no answer within {d} s and was stopped ([ai] cli_timeout_ms)", .{ if (mode == .claude_cli) cli.claude_binary else cli.codex_binary, std.math.divCeil(u32, timeout_ms, 1000) catch 0 }) catch return;
+                    events.post(io, .{ .ai = .{ .job = j.id, .msg = .{ .timed_out = why } } });
+                    return;
+                },
                 else => {
                     postFailed(events, io, gpa, j.id, if (mode == .claude_cli) "`claude` could not be run — is it installed and signed in?" else "`codex` could not be run — is it installed?");
                     return;
@@ -2188,4 +2216,41 @@ test "ghost text: typing through a request kills the claude child, not just our 
     try t.expect(elapsed < 5_000);
     try t.expect(app.ai.debounce.in_flight == null);
     try t.expectEqualStrings("ghost-text: claude-code · 0.4s · cancelled (typed)", lastMessage(&app));
+}
+
+test "an AI job's CLI child past [ai] cli_timeout_ms is killed and reaped, the pane says why and a toast names the key" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    // A `claude` that writes its pid and never answers.
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "claude", .data = "#!/bin/sh\necho $$ > pid\nexec /bin/sleep 30\n" });
+    try tmp.dir.setFilePermissions(t.io, "claude", .fromMode(0o755), .{});
+
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = dir, .cols = 100, .rows = 30 });
+    defer app.deinit();
+    try app.env.put("PATH", dir);
+    app.cfg.ai.routing.claude.backend = .sub;
+    // Below the clamp on purpose: the test is about the kill, not the wait.
+    app.cfg.ai.cli_timeout_ms = 1500;
+    const id = try ask(&app, "ai: ask", "hello", .ask, null);
+    const p = &app.panes.get(id).?.ai;
+    const Ctx = struct {
+        fn failed(ap: *AiPane) bool {
+            return ap.status == .failed;
+        }
+    };
+    var spent: u32 = 0;
+    while (!Ctx.failed(p)) : (spent += 10) {
+        if (spent > 8_000) return error.Timeout;
+        try t.io.sleep(.fromMilliseconds(10), .awake);
+        try app.tick(App.nowMs(app.io));
+    }
+    try t.expect(std.mem.indexOf(u8, p.err.?, "cli_timeout_ms") != null);
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "cli_timeout_ms") != null);
+    const pid_text = try tmp.dir.readFileAlloc(t.io, "pid", t.allocator, .limited(64));
+    defer t.allocator.free(pid_text);
+    const pid = try std.fmt.parseInt(std.posix.pid_t, std.mem.trim(u8, pid_text, " \n"), 10);
+    try t.expectError(error.ProcessNotFound, std.posix.kill(pid, @enumFromInt(0)));
 }

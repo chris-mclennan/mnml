@@ -1,0 +1,43 @@
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# An AI job's `claude -p` belongs to the job. Cancel (`c`), closing the
+# pane (`q`) and a re-ask (`r`) each kill it — and reap it — rather than
+# leave it running to spend the user's quota on an answer nobody will
+# read. The fake `claude` writes its pid and never answers; the check is
+# the process itself, not the pane's label.
+write bin/claude #!/bin/sh\necho $$ > claude.pid\nexec sleep 600
+shell chmod +x bin/claude
+write a.txt "fn main() {}\n"
+
+# Cancel.
+open a.txt
+command ai.explain
+wait 800
+shell test -s claude.pid && kill -0 "$(cat claude.pid)"
+key c
+expect screen contains "cancelled"
+wait 500
+shell ! kill -0 "$(cat claude.pid)" 2>/dev/null
+
+# Close the pane while it thinks.
+shell rm -f claude.pid
+open a.txt
+command ai.explain
+wait 800
+shell test -s claude.pid && kill -0 "$(cat claude.pid)"
+key q
+wait 500
+shell ! kill -0 "$(cat claude.pid)" 2>/dev/null
+
+# Re-ask: the first child goes, the second one runs.
+shell rm -f claude.pid
+open a.txt
+command ai.explain
+wait 800
+shell test -s claude.pid && cp claude.pid first.pid && rm claude.pid
+key r
+wait 800
+shell ! kill -0 "$(cat first.pid)" 2>/dev/null
+shell test -s claude.pid && kill -0 "$(cat claude.pid)"
+key q
+wait 500
+shell ! kill -0 "$(cat claude.pid)" 2>/dev/null

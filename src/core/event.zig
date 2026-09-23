@@ -109,6 +109,9 @@ pub const AiMsg = union(enum) {
     done,
     /// The job failed; the reason.
     failed: []u8,
+    /// The job's child ran past `[ai] cli_timeout_ms` and was killed;
+    /// the reason. A failure the user did not ask for, so it toasts.
+    timed_out: []u8,
     /// The worker wants a yes / no before a write (`detail`); it is
     /// parked on the job's `confirm` queue until the UI answers.
     confirm: []u8,
@@ -117,7 +120,7 @@ pub const AiMsg = union(enum) {
 pub fn freeAiMsg(gpa: Allocator, msg: AiMsg) void {
     switch (msg) {
         .suggestion => |s| gpa.free(s.text),
-        .text, .failed, .confirm => |s| gpa.free(s),
+        .text, .failed, .timed_out, .confirm => |s| gpa.free(s),
         .done => {},
     }
 }

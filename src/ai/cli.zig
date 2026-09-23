@@ -230,6 +230,91 @@ pub fn runWithin(
     return .{ .ok = false, .text = try gpa.dupe(u8, msg[0..@min(msg.len, 400)]) };
 }
 
+/// How a one-shot job's child is run (`runJob`).
+pub const JobOpts = struct {
+    /// Wall-clock budget for the whole run; null is none. Past it the
+    /// child is killed and `error.TimedOut` comes back.
+    timeout_ms: ?u64 = null,
+    /// Set by the UI (cancel, the pane closed, a re-ask): the child is
+    /// killed within `poll_ms` and `error.Aborted` comes back.
+    cancel: ?*const std.atomic.Value(bool) = null,
+    /// How often the flag and the clock are looked at while the child
+    /// is quiet.
+    poll_ms: u32 = 100,
+};
+
+pub const JobError = error{ OutOfMemory, Canceled, Failed, TimedOut, Aborted };
+
+/// One `claude -p` / `codex exec` for a job: the child is OURS until it
+/// is reaped. It is killed — and reaped, by `Child.kill`, which waits —
+/// when the job's cancel flag is set, when the budget runs out, and on
+/// any other way out of this function. Never `wait` after `kill`: the
+/// kill already reaped it.
+///
+/// `std.process.run` could not do this: it blocks in its read loop
+/// until the child exits or the task is cancelled, and a job's worker
+/// shares its `Io.Group` with every other job, so a cancel there would
+/// have taken them all. The read loop here wakes every `poll_ms` to
+/// look at the job's own flag instead.
+pub fn runJob(
+    gpa: Allocator,
+    io: Io,
+    argv: []const []const u8,
+    cwd: []const u8,
+    env: ?*const std.process.Environ.Map,
+    opts: JobOpts,
+) JobError!Outcome {
+    var scratch = std.heap.ArenaAllocator.init(gpa);
+    defer scratch.deinit();
+    const resolved = try resolveArgv(scratch.allocator(), io, argv, env);
+    const t0 = Io.Timestamp.now(io, .awake);
+    var child = std.process.spawn(io, .{
+        .argv = resolved,
+        .cwd = .{ .path = cwd },
+        .environ_map = env,
+        .stdin = .ignore,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    }) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.Canceled => return error.Canceled,
+        else => return error.Failed,
+    };
+    // Kills and reaps on every early return; a no-op after `wait`.
+    defer child.kill(io);
+
+    var multi_reader_buffer: Io.File.MultiReader.Buffer(2) = undefined;
+    var multi_reader: Io.File.MultiReader = undefined;
+    multi_reader.init(gpa, io, multi_reader_buffer.toStreams(), &.{ child.stdout.?, child.stderr.? });
+    defer multi_reader.deinit();
+    const stdout_limit: usize = 8 * 1024 * 1024;
+    const stderr_limit: usize = 1024 * 1024;
+    const poll: Io.Timeout = .{ .duration = .{ .raw = .fromMilliseconds(@max(opts.poll_ms, 1)), .clock = .awake } };
+    while (true) {
+        if (opts.cancel) |c| if (c.load(.acquire)) return error.Aborted;
+        if (opts.timeout_ms) |ms| if (t0.untilNow(io, .awake).toMilliseconds() >= @as(i64, @intCast(@min(ms, std.math.maxInt(i63))))) return error.TimedOut;
+        multi_reader.fill(64, poll) catch |err| switch (err) {
+            error.EndOfStream => break,
+            error.Timeout => continue,
+            error.Canceled => return error.Canceled,
+            else => return error.Failed,
+        };
+        if (multi_reader.reader(0).buffered().len > stdout_limit or multi_reader.reader(1).buffered().len > stderr_limit) return error.Failed;
+    }
+    multi_reader.checkAnyError() catch return error.Failed;
+    const term = child.wait(io) catch |err| switch (err) {
+        error.Canceled => return error.Canceled,
+        else => return error.Failed,
+    };
+    const stdout = multi_reader.reader(0).buffered();
+    const stderr = multi_reader.reader(1).buffered();
+    if (term == .exited and term.exited == 0) return .{ .ok = true, .text = try gpa.dupe(u8, stdout) };
+    const err_text = std.mem.trim(u8, stderr, " \t\r\n");
+    const out_text = std.mem.trim(u8, stdout, " \t\r\n");
+    const msg = if (err_text.len > 0) err_text else if (out_text.len > 0) out_text else "the command failed";
+    return .{ .ok = false, .text = try gpa.dupe(u8, msg[0..@min(msg.len, 400)]) };
+}
+
 /// A UUID v4 for `--session-id`.
 pub fn genSessionId(io: Io) [36]u8 {
     var bytes: [16]u8 = undefined;
@@ -398,4 +483,49 @@ test "runWithin: a child that sleeps past the budget is killed, and the call com
     const ok = try runWithin(t.allocator, t.io, &.{ "/bin/sh", "-c", "printf quick" }, "/tmp", null, 10_000);
     defer t.allocator.free(ok.text);
     try t.expectEqualStrings("quick", ok.text);
+}
+
+test "runJob: the cancel flag kills the child and reaps it, and the call comes back at once" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    // The child writes its own pid, then sleeps far past the test.
+    const script = try std.fmt.allocPrint(t.allocator, "echo $$ > {s}/pid; exec sleep 30", .{dir});
+    defer t.allocator.free(script);
+    var cancel: std.atomic.Value(bool) = .init(false);
+    const Canceller = struct {
+        fn run(io: Io, flag: *std.atomic.Value(bool)) Io.Cancelable!void {
+            try io.sleep(.fromMilliseconds(300), .awake);
+            flag.store(true, .release);
+        }
+    };
+    var group: Io.Group = .init;
+    defer group.cancel(t.io);
+    try group.concurrent(t.io, Canceller.run, .{ t.io, &cancel });
+    const t0 = Io.Timestamp.now(t.io, .awake);
+    try t.expectError(error.Aborted, runJob(t.allocator, t.io, &.{ "/bin/sh", "-c", script }, dir, null, .{ .cancel = &cancel }));
+    try t.expect(t0.untilNow(t.io, .awake).toMilliseconds() < 5_000);
+    // The pid it wrote is gone: killed AND reaped (a zombie would still
+    // answer signal 0).
+    const pid_text = try tmp.dir.readFileAlloc(t.io, "pid", t.allocator, .limited(64));
+    defer t.allocator.free(pid_text);
+    const pid = try std.fmt.parseInt(std.posix.pid_t, std.mem.trim(u8, pid_text, " \n"), 10);
+    try t.expectError(error.ProcessNotFound, std.posix.kill(pid, @enumFromInt(0)));
+}
+
+test "runJob: past the budget the child is killed and TimedOut comes back; a quick one answers" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const t0 = Io.Timestamp.now(t.io, .awake);
+    try t.expectError(error.TimedOut, runJob(t.allocator, t.io, &.{ "/bin/sh", "-c", "sleep 30" }, "/tmp", null, .{ .timeout_ms = 300 }));
+    try t.expect(t0.untilNow(t.io, .awake).toMilliseconds() < 5_000);
+    const ok = try runJob(t.allocator, t.io, &.{ "/bin/sh", "-c", "printf quick" }, "/tmp", null, .{ .timeout_ms = 10_000 });
+    defer t.allocator.free(ok.text);
+    try t.expect(ok.ok);
+    try t.expectEqualStrings("quick", ok.text);
+    const bad = try runJob(t.allocator, t.io, &.{ "/bin/sh", "-c", "echo boom >&2; exit 3" }, "/tmp", null, .{});
+    defer t.allocator.free(bad.text);
+    try t.expect(!bad.ok);
+    try t.expectEqualStrings("boom", bad.text);
 }

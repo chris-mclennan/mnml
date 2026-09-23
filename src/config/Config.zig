@@ -990,6 +990,12 @@ pub const suggest_idle_ms_min: u16 = 50;
 pub const suggest_idle_ms_max: u16 = 5000;
 pub const suggest_timeout_ms_min: u32 = 500;
 pub const suggest_timeout_ms_max: u32 = 120_000;
+/// The budget one AI job's `claude -p` / `codex exec` gets (an explain,
+/// a commit message, a PR draft). Generous: a big refactor can take
+/// minutes. It exists so a CLI that hangs — an auth prompt, a stalled
+/// network — is killed rather than held for the life of the session.
+pub const cli_timeout_ms_min: u32 = 5_000;
+pub const cli_timeout_ms_max: u32 = 3_600_000;
 
 /// GitHub Copilot as the ghost-text backend (`suggest_backend =
 /// "copilot"`). Everything here is HOME-scope: `command` is an argv, so
@@ -1029,6 +1035,11 @@ pub const Ai = struct {
     /// The wall-clock budget one suggestion gets. Past it the child is
     /// killed, the chip says `!`, and `:messages` says `timeout`.
     suggest_timeout_ms: u32 = 4000,
+    /// The wall-clock budget one AI job's CLI child gets (`ai.explain`,
+    /// `ai.fix`, `git.ai_commit`, `git.explain_branch`, PR drafts…). Past
+    /// it the child is killed and reaped, the pane says so and a toast
+    /// names the key.
+    cli_timeout_ms: u32 = 600_000,
     copilot: Copilot = .{},
     /// THE privacy switch. False by default, and the only Copilot key a
     /// workspace's own `.mnml/config.zon` may set — and only in a
