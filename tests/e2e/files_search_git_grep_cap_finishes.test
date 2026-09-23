@@ -1,0 +1,12 @@
+# The SEARCH section in a repo whose query matches more than 5000 lines
+# finishes: at the cap git is stopped instead of waited on with its
+# output pipe full, and the header says the list is capped.
+shell git init -q -b main && git config user.email t@e.st && git config user.name t
+shell for i in $(seq 1 60); do printf 'tail %04d padding padding padding padding padding\n' $(seq 1 1000) > f$i.txt; done
+shell git add -A && git commit -qm seed
+command view.activity_search
+type tail
+key enter
+wait 15000
+expect screen lacks "searching…"
+expect screen contains "5000+ hits, capped"

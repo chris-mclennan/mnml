@@ -806,7 +806,13 @@ fn runGitGrep(c: *Ctx, root: []const u8, query: []const u8, flags: Flags) Worker
         try c.push(.git_grep, path_buf.items, rel, line, col, len, text);
         if (c.truncated) break;
     }
-    const term = child.wait(io) catch |err| switch (err) {
+    // At the cap git still has output to write: waiting on it with the
+    // pipe unread is a deadlock (git blocks on the full pipe, `wait`
+    // never returns). Past the cap the rest is not wanted — stop git.
+    const term: ?std.process.Child.Term = if (c.truncated) blk: {
+        child.kill(io);
+        break :blk null;
+    } else child.wait(io) catch |err| switch (err) {
         error.Canceled => return error.Canceled,
         else => null,
     };

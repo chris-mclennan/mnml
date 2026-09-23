@@ -642,7 +642,8 @@ pub fn statusText(ui: Ui, st: *const State) []const u8 {
     if (st.ran == null) return if (st.query_focused) " type \u{b7} Enter to run \u{b7} Esc clears" else " / focuses the query \u{b7} Enter runs it";
     if (st.err) |e| return ui.fmt(" {s}: {s}", .{ if (st.backend) |b| b.label() else "search", e });
     const n = st.hits.items.len;
-    return ui.fmt(" {d} hit{s} ({s}){s}", .{ n, if (n == 1) "" else "s", if (st.backend) |b| b.label() else "search", if (st.truncated) " (capped)" else "" });
+    if (st.truncated) return ui.fmt(" {d}+ hits, capped ({s})", .{ n, if (st.backend) |b| b.label() else "search" });
+    return ui.fmt(" {d} hit{s} ({s})", .{ n, if (n == 1) "" else "s", if (st.backend) |b| b.label() else "search" });
 }
 
 pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
@@ -840,6 +841,33 @@ test "view.activity_search: the section takes the column with the query focused;
         t.io.sleep(.fromMilliseconds(5), .awake) catch {};
     }
     try t.expect(!app.panes.get(id).?.grep.loading);
+}
+
+test "git grep past the cap: the run finishes (git is stopped, not waited on with the pipe full) and the header says it capped" {
+    if (!hasGit()) return error.SkipZigTest;
+    var f = try Fixture.init();
+    defer f.deinit();
+    const app = &f.app;
+    // 12 000 matching lines, ~1.6 MB of `git grep` output: more than
+    // the reader's buffer plus the pipe.
+    var big: std.ArrayListUnmanaged(u8) = .empty;
+    defer big.deinit(t.allocator);
+    for (0..12_000) |i| try big.print(t.allocator, "alpha {d:0>6} padding padding padding padding padding padding padding padding padding padding padding\n", .{i});
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "big.txt", .data = big.items });
+    try Fixture.git(f.root, &.{ "add", "big.txt" });
+    try Fixture.git(f.root, &.{ "commit", "-q", "-m", "big" });
+    _ = try app.openScratch();
+    try command.run(app, .{ .static = .@"view.activity_search" });
+    try f.typeQuery("alpha");
+    try app.handle(.{ .key = Key.named(.enter) });
+    try f.settle(2000);
+    const st = &app.search_section;
+    try t.expect(st.truncated);
+    try t.expectEqual(grep.max_hits, st.hits.items.len);
+    const txt = try f.screen();
+    defer t.allocator.free(txt);
+    // At the stock column width the words that matter come first.
+    try t.expect(std.mem.indexOf(u8, txt, " 5000+ hits, capped") != null);
 }
 
 test "the walk parity: the same seed without a repository answers through the walk with the .gitignore honoured, and the header says so" {
