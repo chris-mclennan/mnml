@@ -413,7 +413,11 @@ pub const Buffer = struct {
         self.key_failed = false;
         const result = try self.input.handleKey(key, ctx, arena);
         const ev: BufferEvent = switch (result) {
-            .ops => |list| try self.applyHandlerOps(list, visual, clip, viewport_rows, arena),
+            .ops => |list| blk: {
+                const ev = try self.applyHandlerOps(list, visual, clip, viewport_rows, arena);
+                if (self.editor.cursor == cursor_before and failableMotion(list)) self.key_failed = true;
+                break :blk ev;
+            },
             .consumed => .redraw,
             .ignored => .{ .unhandled = key },
             .app => |cmd| try self.handleApp(cmd, clip, viewport_rows, wrap_width, arena),
@@ -487,11 +491,30 @@ pub const Buffer = struct {
             // A text object that found nothing: the operator is dropped
             // whole — Normal again, nothing for `.` (`:help ci(`).
             self.ops_aborted = false;
+            self.key_failed = true;
             if (self.input.mode() == .insert or self.input.mode() == .replace) self.input.onBlur();
             return if (changed) .edited else .redraw;
         }
         try self.trackDot(list, visual, arena);
         return if (changed) .edited else .redraw;
+    }
+
+    /// A list that is one motion vim fails when it cannot move (`:help
+    /// q`: the error ends a macro) — `j` / `k` / `h` / `l`, the word
+    /// motions, `+` / `-`, `f` / `t` — counted or not. `0`, `$`, `G`
+    /// and their kind never fail.
+    fn failableMotion(list: []const EditOp) bool {
+        const head: usize = if (list.len > 0 and list[0] == .set_register_hint) 1 else 0;
+        if (list.len != head + 1) return false;
+        var op = list[head];
+        if (op == .repeat) op = op.repeat.inner.*;
+        return switch (op) {
+            .move_up, .move_down, .move_left, .move_right, .move_down_first_non_ws, .move_up_first_non_ws => true,
+            .move_word_left, .move_word_right, .move_word_end, .move_word_end_back => true,
+            .move_big_word_left, .move_big_word_right, .move_big_word_end, .move_big_word_end_back => true,
+            .find_char_on_line => true,
+            else => false,
+        };
     }
 
     /// Open / anchor / close the Insert undo session against the mode
