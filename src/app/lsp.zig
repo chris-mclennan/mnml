@@ -306,6 +306,8 @@ pub const State = struct {
     /// The external linters' workers.
     lint_group: Io.Group = .init,
     rename: rename_app.State = .{},
+    /// Saves waiting on a server's edits (`lsp_format.Hold`).
+    holds: format_app.Holds = .{},
     /// The config layers read again for a `.lsp` table written after
     /// launch (`refreshServers`); `app.cfg.lsp` borrows from it then.
     servers_loaded: ?config.Loaded = null,
@@ -314,6 +316,7 @@ pub const State = struct {
 
     pub fn deinit(self: *State, gpa: Allocator, io: Io) void {
         self.lint_group.cancel(io);
+        self.holds.deinit(gpa);
         for (self.servers.items) |s| s.deinit();
         if (self.servers_loaded) |*l| l.deinit();
         self.servers.deinit(gpa);
@@ -942,13 +945,14 @@ pub fn onSavePre(app: *App, args: hooks.HookArgs) void {
     // An autosave is not a save the user asked for: nothing reformats
     // the text under them.
     if (args.save_pre.auto) return;
+    const may_hold = args.save_pre.may_hold;
     // The external tool formatted (configured, or the project's own):
     // the server is not asked as well.
-    if (format_app.onSavePre(app, pane, e, s)) return;
+    if (format_app.onSavePre(app, pane, e, s, may_hold)) return;
     if (!app.cfg.editor.format_on_save) return;
     const srv = s orelse return;
     if (!srv.caps.formatting or !srv.ready) return;
-    requestFormatting(app, srv, pane, e, true) catch {};
+    format_app.holdForFormat(app, srv, pane, e, may_hold);
 }
 
 pub fn onSavePost(app: *App, args: hooks.HookArgs) void {
@@ -966,6 +970,7 @@ pub fn onSavePost(app: *App, args: hooks.HookArgs) void {
 /// for it go too (a reopen republishes).
 pub fn onClose(app: *App, pane: PaneId, path: []const u8) void {
     decor.forgetPane(app, pane);
+    format_app.forgetPane(app, pane);
     // A script's decorations were about this pane's buffer.
     @import("script_decor.zig").forgetPane(app, pane);
     if (app.lsp.completion) |c| if (c.pane == pane) closeCompletion(app);
@@ -1117,6 +1122,11 @@ fn handleMessage(app: *App, s: *Server, msg: *jsonrpc.Incoming) Allocator.Error!
                     // The outline's refresh is silent; `lsp.symbols` asked.
                     .document_symbol => if (ctx.extra == symbols_pick) app.toast("LSP symbols: {s}", .{text}),
                     .definition, .declaration, .type_definition, .implementation => app.lsp.pending_peek = false,
+                    // A held save writes as it is; the toast says why.
+                    .formatting, .will_save_wait_until => {
+                        app.toast("LSP {s}: {s}", .{ @tagName(kind), text });
+                        format_app.heldFailed(app, ctx);
+                    },
                     else => app.toast("LSP {s}: {s}", .{ @tagName(kind), text }),
                 }
                 return false;
@@ -1191,6 +1201,7 @@ fn runDeferred(app: *App, s: *Server) Allocator.Error!void {
 /// past the grace, or at its deadline regardless.
 pub fn tick(app: *App, now: i64) Allocator.Error!void {
     try refreshDueSymbols(app, now);
+    try format_app.tickHolds(app, now);
     const d = app.lsp.deferred orelse return;
     if (d.not_before_ms == 0) return; // `initialize` has not answered
     for (app.lsp.servers.items) |s| if (s.id == d.server) {
@@ -2477,26 +2488,28 @@ pub fn acceptRename(app: *App, text_in: []const u8) Allocator.Error!void {
 pub fn format(app: *App) CommandError!void {
     const t = try requireServer(app, "format");
     if (!t.server.caps.formatting) return app.diag.fail(app.frame.allocator(), "{s} does not format documents", .{t.server.name});
-    try requestFormatting(app, t.server, t.pane, t.e, false);
+    try requestFormatting(app, t.server, t.pane, t.e, format_app.versionTag(t.e));
 }
 
-const format_save_flag: u32 = 1;
-
-fn requestFormatting(app: *App, s: *Server, pane: PaneId, e: *EditorPane, then_save: bool) CommandError!void {
+/// `extra`: the version the reply is for (`lsp_format.versionTag`), or
+/// a held save's serial (`lsp_format.held_bit`).
+pub fn requestFormatting(app: *App, s: *Server, pane: PaneId, e: *EditorPane, extra: u32) CommandError!void {
     const arena = app.frame.allocator();
     const path = e.buf.doc.path orelse return;
     const uri = try types.uriFromPath(arena, path);
-    _ = s.request(.formatting, "textDocument/formatting", .{ .textDocument = .{ .uri = uri }, .options = format_app.formattingOptions(e) }, .{ .pane = pane, .extra = if (then_save) format_save_flag else 0 }) catch |err| return app.diag.fail(arena, "LSP format: {s}", .{@errorName(err)});
+    _ = s.request(.formatting, "textDocument/formatting", .{ .textDocument = .{ .uri = uri }, .options = format_app.formattingOptions(e) }, .{ .pane = pane, .extra = extra }) catch |err| return app.diag.fail(arena, "LSP format: {s}", .{@errorName(err)});
 }
 
+/// `lsp.format`'s reply; a held save's goes to `lsp_format`, which
+/// writes once. Edits for a buffer that changed since are dropped.
 fn applyFormatting(app: *App, s: *Server, ctx: Ctx, result: ?Value) Allocator.Error!void {
+    if (ctx.extra & format_app.held_bit != 0) return format_app.handleResponse(app, s, .formatting, ctx, result);
     const e = app.panes.editor(ctx.pane) orelse return;
     const edits = try types.readTextEdits(app.frame.allocator(), result);
     if (edits.len == 0) return;
+    if (!format_app.stillCurrent(e, ctx.extra)) return format_app.handleResponse(app, s, .formatting, ctx, result);
     try applyEditsToPane(app, e, edits, s.encoding);
-    if (ctx.extra & format_save_flag != 0) {
-        e.buf.save(app.io) catch {};
-    } else if (e.buf.doc.path) |p| app.toast("formatted {s}", .{app.relPath(p)});
+    if (e.buf.doc.path) |p| app.toast("formatted {s}", .{app.relPath(p)});
 }
 
 /// Apply `edits` to one pane, last first so earlier offsets stay valid.
@@ -3500,7 +3513,7 @@ fn fakeLanguageServer(io: Io, gpa: Allocator, in: Io.File, out: Io.File) Io.Canc
             .request => |rq| {
                 const m = rq.method;
                 if (std.mem.eql(u8, m, "initialize")) {
-                    lspReply(io, gpa, out, rq.id, "{\"capabilities\":{\"textDocumentSync\":{\"change\":2,\"willSaveWaitUntil\":true},\"hoverProvider\":true,\"definitionProvider\":true,\"referencesProvider\":true,\"renameProvider\":true,\"documentSymbolProvider\":true,\"completionProvider\":{\"triggerCharacters\":[\".\"]},\"inlayHintProvider\":true,\"codeLensProvider\":{\"resolveProvider\":true},\"colorProvider\":true,\"documentLinkProvider\":{},\"documentRangeFormattingProvider\":true,\"documentOnTypeFormattingProvider\":{\"firstTriggerCharacter\":\";\"},\"executeCommandProvider\":{\"commands\":[\"refs\"]},\"semanticTokensProvider\":{\"legend\":{\"tokenTypes\":[\"keyword\",\"variable\",\"function\"],\"tokenModifiers\":[\"declaration\"]},\"full\":{\"delta\":true}}}}");
+                    lspReply(io, gpa, out, rq.id, "{\"capabilities\":{\"textDocumentSync\":{\"change\":2,\"willSaveWaitUntil\":true},\"hoverProvider\":true,\"definitionProvider\":true,\"referencesProvider\":true,\"renameProvider\":true,\"documentSymbolProvider\":true,\"completionProvider\":{\"triggerCharacters\":[\".\"]},\"inlayHintProvider\":true,\"codeLensProvider\":{\"resolveProvider\":true},\"colorProvider\":true,\"documentLinkProvider\":{},\"documentFormattingProvider\":true,\"documentRangeFormattingProvider\":true,\"documentOnTypeFormattingProvider\":{\"firstTriggerCharacter\":\";\"},\"executeCommandProvider\":{\"commands\":[\"refs\"]},\"semanticTokensProvider\":{\"legend\":{\"tokenTypes\":[\"keyword\",\"variable\",\"function\"],\"tokenModifiers\":[\"declaration\"]},\"full\":{\"delta\":true}}}}");
                 } else if (std.mem.eql(u8, m, "textDocument/completion")) {
                     lspReply(io, gpa, out, rq.id, "{\"isIncomplete\":false,\"items\":[{\"label\":\"alphaOne\",\"kind\":3,\"detail\":\"fn\"},{\"label\":\"alphaTwo\",\"kind\":2,\"insertText\":\"alphaTwo($1)\",\"insertTextFormat\":2}]}");
                 } else if (std.mem.eql(u8, m, "textDocument/hover")) {
@@ -3586,6 +3599,11 @@ fn fakeLanguageServer(io: Io, gpa: Allocator, in: Io.File, out: Io.File) Io.Canc
                     const r = std.fmt.allocPrint(gpa, "[{{\"range\":{{\"start\":{{\"line\":{d},\"character\":0}},\"end\":{{\"line\":{d},\"character\":0}}}},\"newText\":\"  \"}}]", .{ line, line }) catch return;
                     defer gpa.free(r);
                     lspReply(io, gpa, out, rq.id, r);
+                } else if (std.mem.eql(u8, m, "textDocument/formatting")) {
+                    // Line 0's first three bytes upper-cased as `LET` — a
+                    // ranged edit, so one applied to text that moved on
+                    // lands on whatever took its place.
+                    lspReply(io, gpa, out, rq.id, "[{\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":3}},\"newText\":\"LET\"}]");
                 } else if (std.mem.eql(u8, m, "textDocument/willSaveWaitUntil")) {
                     lspReply(io, gpa, out, rq.id, "[{\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":0}},\"newText\":\"// saved\\n\"}]");
                 } else {

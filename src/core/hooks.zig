@@ -42,7 +42,11 @@ pub const HookArgs = union(Hook) {
     /// Workspace-relative path; borrowed for the duration of the emit.
     open: struct { path: []const u8, pane: u32 },
     /// `auto`: an autosave wrote it, not a save the user asked for.
-    save_pre: struct { path: []const u8, pane: u32, auto: bool = false },
+    /// `may_hold`: the saver can wait for the language server's edits
+    /// (`lsp_format.Hold`) — `file.save` and `:w` can
+    /// (`cmd_file.SaveOpts.may_hold`); a save-all, a close confirm's
+    /// Save, autosave and the replace-in-files batch write cannot.
+    save_pre: struct { path: []const u8, pane: u32, auto: bool = false, may_hold: bool = false },
     save_post: struct { path: []const u8, pane: u32, bytes: u64 },
     buffer_change: struct { pane: u32, line_count: u32 },
     cursor_idle: struct { pane: u32, line: u32 },

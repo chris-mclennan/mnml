@@ -3304,6 +3304,7 @@ pub const App = struct {
         if (dock.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (clock.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (coverage.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
+        if (@import("app/lsp_format.zig").nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (self.click_echo) |e| next = @min(next orelse std.math.maxInt(i64), e.until_ms);
         if (ws_pane.nextDeadline(@constCast(self))) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (idle.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);

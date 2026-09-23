@@ -514,9 +514,16 @@ fn write(app: *App, range: ?Range, path_arg: []const u8, then_close: bool, renam
         e.syntax.dirty = true;
     }
     if (e.buf.doc.path == null) return app.diag.fail(arena, ":w — no file name (use :w <path>)", .{});
-    // The one save path: the hooks, and a resolved conflict staged.
+    // The one save path: the hooks, a format-on-save the server is
+    // asked for, and a resolved conflict staged.
     const id = app.active.?;
-    try cmd_file.savePane(app, id, e, .{ .fail_prefix = ":w —" });
+    try cmd_file.savePane(app, id, e, .{ .fail_prefix = ":w —", .may_hold = true });
+    // Held for the server's edits: the write — and `:wq`'s close —
+    // follow its reply (`lsp_format.finishHold`).
+    if (@import("lsp_format.zig").held(app, id)) {
+        if (then_close) @import("lsp_format.zig").closeAfter(app, id);
+        return;
+    }
     if (then_close) {
         try app.forceClosePane(id);
         if (app.panes.count() == 0) app.quit = true;

@@ -5,6 +5,7 @@ const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
+const format_app = @import("lsp_format.zig");
 
 pub const table = .{
     .@"file.save" = &save,
@@ -27,7 +28,7 @@ pub fn saveCurrent(app: *App) CommandError!void {
     if (app.active) |id| if (app.panes.get(id)) |p| if (p.* == .zon) return @import("zon_pane.zig").save(app, id);
     const e = try app.requireEditor();
     if (e.buf.doc.path == null) return app.diag.fail(arena, "no file name — use :w <path>", .{});
-    return savePane(app, app.active.?, e, .{});
+    return savePane(app, app.active.?, e, .{ .may_hold = true });
 }
 
 pub const SaveOpts = struct {
@@ -37,6 +38,14 @@ pub const SaveOpts = struct {
     quiet: bool = false,
     /// What a failure's message starts with: `save failed:`, `:w —`.
     fail_prefix: []const u8 = "save failed:",
+    /// The saver can wait for the language server's edits
+    /// (`lsp_format.Hold`): `file.save` and `:w` / `:wq` / `:x`. A caller
+    /// that acts on the file right after the call — a save-all, a close
+    /// or quit confirm's Save, autosave — cannot, and is never held.
+    may_hold: bool = false,
+    /// `lsp_format.finishHold` writing a held save: `save_pre` already
+    /// ran for it.
+    resume_held: bool = false,
 };
 
 /// Write editor pane `id` to its path — the `save_pre` / `save_post`
@@ -45,11 +54,32 @@ pub const SaveOpts = struct {
 /// `:w` / `:wq` / `:x` / `ZZ`, `:wa` / `:wqa` and the close / quit
 /// confirms' Save all come through here, so a save never skips what
 /// happens after one.
+///
+/// A caller that can wait (`opts.may_hold`: `file.save`, `:w`) may have
+/// its save held for the language server's edits (`lsp_format.Hold`):
+/// `save_pre` sends willSaveWaitUntil / format-on-save, this returns
+/// without writing, and the reply comes back through here
+/// (`opts.resume_held`, from `lsp_format.finishHold`) to write once,
+/// with the edits in it — so the hooks and the conflict check still run
+/// once per real write. `lsp_format.held` tells the caller which it was.
 pub fn savePane(app: *App, id: app_mod.PaneId, e: *app_mod.EditorPane, opts: SaveOpts) CommandError!void {
     const arena = app.frame.allocator();
     const path = e.buf.doc.path orelse return app.diag.fail(arena, "no file name — use :w <path>", .{});
     const rel = app.relPath(path);
-    app.hooks.emit(app, .{ .save_pre = .{ .path = rel, .pane = id, .auto = opts.auto } });
+    if (!opts.resume_held) {
+        if (format_app.held(app, id)) {
+            // A save already waiting on the server is this one: it
+            // writes the text as it is when the reply lands. A caller
+            // that cannot wait (a save-all, a close confirm) writes now
+            // and the hold is let go — its reply finds none.
+            if (opts.may_hold) return;
+            format_app.forgetPane(app, id);
+        }
+        app.hooks.emit(app, .{ .save_pre = .{ .path = rel, .pane = id, .auto = opts.auto, .may_hold = opts.may_hold and !opts.auto } });
+        // The server is formatting: `lsp_format` comes back here once
+        // its edits land (or `save_wait_ms` runs out).
+        if (format_app.held(app, id)) return;
+    }
     // A hook may have opened a pane and moved the store: look again.
     const ed = app.panes.editor(id) orelse return;
     ed.buf.save(app.io) catch |err| {

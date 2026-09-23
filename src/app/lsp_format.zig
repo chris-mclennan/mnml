@@ -14,10 +14,18 @@
 //!   `.lsp` event lane as a `publishDiagnostics` notification from a
 //!   server whose id is `linter_server_id`.
 //!
-//! // changed: `willSaveWaitUntil` cannot hold the write — the
-//! `save_pre` hook is fire-and-forget and no server is ever awaited
-//! (D3). The reply's edits are applied and the buffer written again;
-//! the file on disk is right within a round-trip of the save.
+//! // changed (stdfix): a save the server formats is HELD, not written
+//! twice. `file.save` and `:w` emit `save_pre` with `may_hold`; when a
+//! `willSaveWaitUntil` or a format-on-save request goes out, the write
+//! waits (nothing blocks — D3: the save is finished by the reply, or by
+//! `tick` once `save_wait_ms` has run out) and happens once, with the
+//! edits in it. Every formatting-family request carries the document
+//! version it was computed for (`Ctx.extra`), and a reply for a buffer
+//! that moved on since is dropped with a line in `:messages`: the
+//! server's offsets describe text that is no longer there. It used to
+//! write first, splice the late reply into whatever the buffer held by
+//! then — deleting what the user had typed after Ctrl+S — and write
+//! again, past the watcher (`<file> reloaded`, an empty undo step).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -69,7 +77,35 @@ pub fn formattingOptions(e: *const EditorPane) FormattingOptions {
     return .{ .tabSize = doc.indent_unit, .insertSpaces = !doc.use_tabs };
 }
 
-const save_flag: u32 = 1;
+// ─── the version a request was asked for ───────────────────────────────
+
+/// `Ctx.extra` of a formatting-family request (`formatting`,
+/// `rangeFormatting`, `onTypeFormatting`, `willSaveWaitUntil`): with
+/// this bit set, the serial of the held save waiting on it (`Hold`);
+/// without it, the document version the request was computed for — the
+/// edit log's head, low 31 bits (`versionTag`).
+pub const held_bit: u32 = 1 << 31;
+
+/// The document's version as a request's `Ctx.extra` carries it. The
+/// edit log's head moves on every splice and every wholesale
+/// replacement (`EditLog.markLost` takes a seq too).
+pub fn versionTag(e: *const EditorPane) u32 {
+    return @truncate(e.buf.doc.edits.head() & (held_bit - 1));
+}
+
+/// True when the buffer is still the text a request tagged
+/// `versionTag` was computed for. A reply that fails this is for text
+/// that is gone: its ranges would land on whatever moved in since.
+pub fn stillCurrent(e: *const EditorPane, tag: u32) bool {
+    return versionTag(e) == tag;
+}
+
+/// The quiet word a dropped reply leaves: `:messages`, no toast.
+fn noteDropped(app: *App, e: *const EditorPane, what: []const u8) void {
+    const rel = if (e.buf.doc.path) |p| app.relPath(p) else "buffer";
+    const text = std.fmt.allocPrint(app.frame.allocator(), "{s}: {s} dropped — the buffer changed while the server worked", .{ rel, what }) catch return;
+    app.messages.record(app.gpa, text, .info, app.now_ms) catch {};
+}
 
 fn extOf(path: []const u8, buf: []u8) []const u8 {
     const ext = std.fs.path.extension(path);
@@ -100,28 +136,33 @@ pub fn onTyped(app: *App, pane: PaneId, e: *EditorPane, s: *Server, c: u21) void
         .position = pos.position,
         .ch = &ch,
         .options = formattingOptions(e),
-    }, .{ .pane = pane }) catch {};
+    }, .{ .pane = pane, .extra = versionTag(e) }) catch {};
 }
 
 // ─── save time ──────────────────────────────────────────────────────────
 
 /// From `lsp.onSavePre`, before the write: the server's
-/// `willSaveWaitUntil` edits (applied when they land), and the external
-/// formatter when it is the one that formats this file — configured,
-/// or the project's own (`externalWins`) — or when format-on-save has
-/// no server to format with. Returns true when the external tool
-/// formatted, so the caller does not also ask the server.
-pub fn onSavePre(app: *App, pane: PaneId, e: *EditorPane, s: ?*Server) bool {
+/// `willSaveWaitUntil` edits, and the external formatter when it is
+/// the one that formats this file — configured, or the project's own
+/// (`externalWins`) — or when format-on-save has no server to format
+/// with. A save that may wait (`may_hold`) is held for the server's
+/// reply (`Hold`); one that cannot is not asked about — its write goes
+/// out now and a reply would only land on the text after it. Returns
+/// true when the external tool formatted, so the caller does not also
+/// ask the server.
+pub fn onSavePre(app: *App, pane: PaneId, e: *EditorPane, s: ?*Server, may_hold: bool) bool {
     const path = e.buf.doc.path orelse return false;
-    if (s) |srv| if (app.cfg.editor.will_save_wait_until and srv.caps.will_save_wait_until and srv.ready and srv.isOpen(path)) {
+    if (s) |srv| if (may_hold and app.cfg.editor.will_save_wait_until and srv.caps.will_save_wait_until and srv.ready and srv.isOpen(path)) {
         const arena = app.frame.allocator();
         if (types.uriFromPath(arena, path)) |uri| {
-            _ = srv.request(.will_save_wait_until, "textDocument/willSaveWaitUntil", .{ .textDocument = .{ .uri = uri }, .reason = 1 }, .{ .pane = pane, .extra = save_flag }) catch {};
+            if (newHold(app, pane, e, .will_save)) |serial| {
+                _ = srv.request(.will_save_wait_until, "textDocument/willSaveWaitUntil", .{ .textDocument = .{ .uri = uri }, .reason = 1 }, .{ .pane = pane, .extra = held_bit | serial }) catch dropHold(app, serial);
+            }
         } else |_| {}
     };
     if (!app.cfg.editor.format_on_save) return false;
     const lsp_formats = if (s) |srv| srv.ready and srv.caps.formatting else false;
-    if (lsp_formats and externalWins(app, path) == null) return false; // `lsp.onSavePre` asks the server
+    if (lsp_formats and externalWins(app, path) == null) return false; // `lsp.onSavePre` asks the server (`holdForFormat`)
     formatExternalPane(app, e, false) catch {};
     return true;
 }
@@ -182,17 +223,206 @@ fn projectHasConfig(app: *App, path: []const u8, pc: tools.ProjectConfig) bool {
 }
 
 pub fn handleResponse(app: *App, s: *Server, kind: ReqKind, ctx: Ctx, result: ?Value) Allocator.Error!void {
+    if (ctx.extra & held_bit != 0) return heldReply(app, s, ctx, result);
     const e = app.panes.editor(ctx.pane) orelse return;
     const edits = try types.readTextEdits(app.frame.allocator(), result);
+    if (edits.len > 0 and !stillCurrent(e, ctx.extra)) return noteDropped(app, e, @tagName(kind));
     if (edits.len > 0) try lsp.applyEditsToPane(app, e, edits, s.encoding);
     switch (kind) {
-        .will_save_wait_until => if (edits.len > 0 and ctx.extra & save_flag != 0) {
-            e.buf.save(app.io) catch {};
-        },
         .range_formatting => if (edits.len == 0) app.toast("format selection: nothing to change", .{}) else app.toast("formatted selection", .{}),
         else => {},
     }
     app.needs_render = true;
+}
+
+// ─── the held save ──────────────────────────────────────────────────────
+
+/// How long a save waits for the server before it writes the text as
+/// it is: the budget the Rust editor gives `willSaveWaitUntil`
+/// (`buffer_save_methods.rs`, 2000 ms), for the whole save — a
+/// `willSaveWaitUntil` and the format-on-save after it share it.
+pub const save_wait_ms: i64 = 2000;
+
+/// A save waiting on the server. The write happens once — when the
+/// last reply lands, when a reply fails, or when the budget runs out —
+/// back through `cmd_file.savePane` (`resume_held`), the same write an
+/// unheld save does.
+pub const Hold = struct {
+    pane: PaneId,
+    /// The document the save is for: a pane closed and its slot reused
+    /// is not this save's.
+    doc: *const anyopaque,
+    serial: u32,
+    /// The version (`EditLog.head`) the request in flight was asked for.
+    version: u64,
+    deadline_ms: i64,
+    stage: enum { will_save, format },
+    /// Format-on-save goes out after `willSaveWaitUntil`'s edits land,
+    /// on the text they leave (VS Code runs its save participants in
+    /// turn): asked at the same time, the formatting reply would be for
+    /// the text before them.
+    format_after: bool = false,
+    /// `:wq` / `:x`: the pane closes once the write lands.
+    then_close: bool = false,
+};
+
+pub const Holds = struct {
+    items: std.ArrayListUnmanaged(Hold) = .empty,
+    next_serial: u32 = 1,
+
+    pub fn deinit(self: *Holds, gpa: Allocator) void {
+        self.items.deinit(gpa);
+    }
+};
+
+/// True while a save of `pane` waits on the server: the saver returns
+/// and the reply writes (`file.save`, `:w`). A second Ctrl+S meanwhile
+/// is the same save — it writes the text as it is then.
+pub fn held(app: *const App, pane: PaneId) bool {
+    for (app.lsp.holds.items.items) |h| if (h.pane == pane) return true;
+    return false;
+}
+
+/// `:wq` over a held save: the close waits for the write.
+pub fn closeAfter(app: *App, pane: PaneId) void {
+    for (app.lsp.holds.items.items) |*h| if (h.pane == pane) {
+        h.then_close = true;
+    };
+}
+
+fn newHold(app: *App, pane: PaneId, e: *EditorPane, stage: @FieldType(Hold, "stage")) ?u32 {
+    const hs = &app.lsp.holds;
+    const serial = hs.next_serial;
+    hs.next_serial = if (serial + 1 >= held_bit) 1 else serial + 1;
+    hs.items.append(app.gpa, .{
+        .pane = pane,
+        .doc = e.buf.doc,
+        .serial = serial,
+        .version = e.buf.doc.edits.head(),
+        .deadline_ms = App.nowMs(app.io) + save_wait_ms,
+        .stage = stage,
+    }) catch return null;
+    return serial;
+}
+
+fn findHold(app: *App, serial: u32) ?usize {
+    for (app.lsp.holds.items.items, 0..) |h, i| if (h.serial == serial) return i;
+    return null;
+}
+
+fn dropHold(app: *App, serial: u32) void {
+    if (findHold(app, serial)) |i| _ = app.lsp.holds.items.orderedRemove(i);
+}
+
+/// The pane closed: its held save goes with it (the close guard asked
+/// about the unsaved text first).
+pub fn forgetPane(app: *App, pane: PaneId) void {
+    var i: usize = 0;
+    while (i < app.lsp.holds.items.items.len) {
+        if (app.lsp.holds.items.items[i].pane == pane) _ = app.lsp.holds.items.orderedRemove(i) else i += 1;
+    }
+}
+
+/// From `lsp.onSavePre` when format-on-save goes to the server. After a
+/// held `willSaveWaitUntil` it queues behind it; otherwise it holds the
+/// save itself. A save that cannot wait asks nothing (see `onSavePre`).
+pub fn holdForFormat(app: *App, s: *Server, pane: PaneId, e: *EditorPane, may_hold: bool) void {
+    if (!may_hold) return;
+    for (app.lsp.holds.items.items) |*h| if (h.pane == pane) {
+        h.format_after = true;
+        return;
+    };
+    const serial = newHold(app, pane, e, .format) orelse return;
+    lsp.requestFormatting(app, s, pane, e, held_bit | serial) catch dropHold(app, serial);
+}
+
+/// The editor a hold is for, when it is still open on the same document.
+fn holdEditor(app: *App, h: Hold) ?*EditorPane {
+    const e = app.panes.editor(h.pane) orelse return null;
+    if (@as(*const anyopaque, e.buf.doc) != h.doc) return null;
+    return e;
+}
+
+/// A reply to a held save's request: its edits when the buffer is the
+/// text they were computed for, dropped (a line in `:messages`) when it
+/// moved on; then the next stage, or the write.
+fn heldReply(app: *App, s: *Server, ctx: Ctx, result: ?Value) Allocator.Error!void {
+    const i = findHold(app, ctx.extra & ~held_bit) orelse return; // the budget ran out; the save wrote
+    const h = app.lsp.holds.items.items[i];
+    const e = holdEditor(app, h) orelse {
+        _ = app.lsp.holds.items.orderedRemove(i);
+        return;
+    };
+    const edits = try types.readTextEdits(app.frame.allocator(), result);
+    const what = if (h.stage == .will_save) "willSaveWaitUntil" else "format on save";
+    if (e.buf.doc.edits.head() != h.version) {
+        if (edits.len > 0) noteDropped(app, e, what);
+        return finishHold(app, i);
+    }
+    if (edits.len > 0) try lsp.applyEditsToPane(app, e, edits, s.encoding);
+    if (h.stage == .will_save and h.format_after and s.ready and s.caps.formatting) {
+        // The formatting request goes out on the text the first edits left.
+        lsp.syncPane(app, h.pane, e);
+        const hp = &app.lsp.holds.items.items[i];
+        hp.stage = .format;
+        hp.version = e.buf.doc.edits.head();
+        lsp.requestFormatting(app, s, h.pane, e, held_bit | h.serial) catch return finishHold(app, i);
+        return;
+    }
+    return finishHold(app, i);
+}
+
+/// A held request failed (an error reply): the save writes as it is.
+pub fn heldFailed(app: *App, ctx: Ctx) void {
+    if (ctx.extra & held_bit == 0) return;
+    const i = findHold(app, ctx.extra & ~held_bit) orelse return;
+    finishHold(app, i) catch {};
+}
+
+/// The write the hold was waiting for.
+fn finishHold(app: *App, i: usize) Allocator.Error!void {
+    const h = app.lsp.holds.items.orderedRemove(i);
+    const e = holdEditor(app, h) orelse return;
+    const cmd_file = @import("cmd_file.zig");
+    cmd_file.savePane(app, h.pane, e, .{ .resume_held = true }) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {
+            if (app.diag.msg) |m| app.toast("{s}", .{m});
+            return;
+        },
+    };
+    if (h.then_close) {
+        try app.forceClosePane(h.pane);
+        if (app.panes.count() == 0) app.quit = true;
+    }
+    app.needs_render = true;
+}
+
+/// Every tick: a save whose server has not answered within
+/// `save_wait_ms` writes the text as it is (a line in `:messages`
+/// says why); a late reply finds no hold and is dropped.
+pub fn tickHolds(app: *App, now: i64) Allocator.Error!void {
+    var i: usize = 0;
+    while (i < app.lsp.holds.items.items.len) {
+        const h = app.lsp.holds.items.items[i];
+        if (now < h.deadline_ms) {
+            i += 1;
+            continue;
+        }
+        if (holdEditor(app, h)) |e| {
+            const rel = if (e.buf.doc.path) |p| app.relPath(p) else "buffer";
+            const text = try std.fmt.allocPrint(app.frame.allocator(), "{s}: the server did not answer within {d} ms — saved without its edits", .{ rel, save_wait_ms });
+            try app.messages.record(app.gpa, text, .info, app.now_ms);
+        }
+        try finishHold(app, i);
+    }
+}
+
+/// The earliest held save's deadline, for the loop's wait.
+pub fn nextDeadlineMs(app: *const App) ?i64 {
+    var next: ?i64 = null;
+    for (app.lsp.holds.items.items) |h| next = @min(next orelse std.math.maxInt(i64), h.deadline_ms);
+    return next;
 }
 
 // ─── range formatting ───────────────────────────────────────────────────
@@ -211,7 +441,7 @@ pub fn formatSelection(app: *App) CommandError!void {
         .textDocument = .{ .uri = uri },
         .range = range,
         .options = formattingOptions(t.e),
-    }, .{ .pane = t.pane }) catch |err| return app.diag.fail(arena, "LSP format selection: {s}", .{@errorName(err)});
+    }, .{ .pane = t.pane, .extra = versionTag(t.e) }) catch |err| return app.diag.fail(arena, "LSP format selection: {s}", .{@errorName(err)});
 }
 
 // ─── external formatters ────────────────────────────────────────────────
@@ -1020,4 +1250,149 @@ test "replaceWhole splices only the changed middle and keeps the cursor" {
     const seq2 = e.buf.doc.edits.head();
     try replaceWhole(&app, e, "aaa\nBBB\nccc\n");
     try testing.expectEqual(seq2, e.buf.doc.edits.head());
+}
+
+const SaveCount = struct {
+    var n: u32 = 0;
+    fn onSave(_: *App, _: @import("../core/hooks.zig").HookArgs) void {
+        n += 1;
+    }
+};
+
+test "format-on-save holds the write for the server's edits: one write with them in it, dropped when the buffer moved on, written as is past the budget" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    var rig: lsp.TestRig = .{};
+    try rig.start(&app);
+    defer rig.stop(&app) catch {};
+    const file = lsp.TestRig.file;
+    const e = try lsp.TestRig.openFile(&app, file, lsp.TestRig.text);
+    defer Io.Dir.cwd().deleteFile(app.io, file) catch {};
+    const pane = app.active.?;
+    SaveCount.n = 0;
+    try app.hooks.subscribe(.save_post, .{ .zig = &SaveCount.onSave });
+    app.cfg.editor.format_on_save = true;
+    const Cond = struct {
+        fn ready(a: *App) bool {
+            const s = a.lsp.servers.items[0];
+            return s.ready and s.isOpen(lsp.TestRig.file);
+        }
+        fn released(a: *App) bool {
+            return !held(a, a.active.?);
+        }
+        fn upper(a: *App) bool {
+            return std.mem.startsWith(u8, a.activeEditor().?.buf.editor.bytes(), "LET");
+        }
+    };
+    try lsp.TestRig.pump(&app, &app, Cond.ready, 5000);
+    const ed = e.buf.editor;
+    const disk = struct {
+        fn read(a: *App) ![]u8 {
+            return Io.Dir.cwd().readFileAlloc(a.io, lsp.TestRig.file, a.gpa, .limited(4096));
+        }
+    };
+
+    // 1. The save waits: nothing is written until the reply lands, then
+    //    ONE write carries the edits, the watcher sees its own write
+    //    (no `reloaded`), and one undo takes the formatting back.
+    try command.run(&app, .{ .static = .@"file.save" });
+    try testing.expect(held(&app, pane));
+    try testing.expectEqual(@as(u32, 0), SaveCount.n);
+    try lsp.TestRig.pump(&app, &app, Cond.released, 5000);
+    try testing.expectEqual(@as(u32, 1), SaveCount.n);
+    try testing.expect(std.mem.startsWith(u8, ed.bytes(), "LET x = 1;\n"));
+    const d1 = try disk.read(&app);
+    defer gpa.free(d1);
+    try testing.expectEqualStrings(ed.bytes(), d1);
+    try testing.expect(!e.buf.doc.dirty);
+    try @import("watch.zig").check(&app);
+    try testing.expect(std.mem.startsWith(u8, app.lastToast().?, "saved "));
+    try command.run(&app, .{ .static = .@"editor.undo" });
+    try testing.expect(std.mem.startsWith(u8, ed.bytes(), "let x = 1;\n"));
+
+    // 2. Typing after Ctrl+S, before the reply: the edits were computed
+    //    for the text at Ctrl+S, so they are dropped — `Zle` is not
+    //    overwritten — and the text as it is now is written, once.
+    SaveCount.n = 0;
+    ed.anchor = null;
+    ed.setCursor(0);
+    try command.run(&app, .{ .static = .@"file.save" });
+    try testing.expect(held(&app, pane));
+    try app.handle(.{ .key = Key.char('Z') });
+    try lsp.TestRig.pump(&app, &app, Cond.released, 5000);
+    try testing.expectEqual(@as(u32, 1), SaveCount.n);
+    try testing.expect(std.mem.startsWith(u8, ed.bytes(), "Zlet x = 1;\n"));
+    const d2 = try disk.read(&app);
+    defer gpa.free(d2);
+    try testing.expectEqualStrings(ed.bytes(), d2);
+    var dropped = false;
+    for (app.messages.items.items) |m| if (std.mem.indexOf(u8, m.text, "format on save dropped") != null) {
+        dropped = true;
+    };
+    try testing.expect(dropped);
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "dropped") == null);
+
+    // 3. Past the budget the save writes without the edits, and the late
+    //    reply finds no hold: the buffer is never touched by it.
+    SaveCount.n = 0;
+    try command.run(&app, .{ .static = .@"editor.undo" });
+    try command.run(&app, .{ .static = .@"file.save" });
+    try testing.expect(held(&app, pane));
+    try tickHolds(&app, App.nowMs(app.io) + save_wait_ms);
+    try testing.expect(!held(&app, pane));
+    try testing.expectEqual(@as(u32, 1), SaveCount.n);
+    try testing.expectError(error.Timeout, lsp.TestRig.pump(&app, &app, Cond.upper, 400));
+    try testing.expect(!e.buf.doc.dirty);
+
+    // 4. `:w` is the same held save — `savePane` with `may_hold`, not a
+    //    second path. A save-all while it waits cannot wait: it writes
+    //    now, once, and lets the hold go, so the reply finds none and
+    //    never writes a second time.
+    SaveCount.n = 0;
+    try app.handle(.{ .key = Key.char('Q') });
+    try testing.expect(e.buf.doc.dirty);
+    try @import("ex.zig").run(&app, "w");
+    try testing.expect(held(&app, pane));
+    try testing.expectEqual(@as(u32, 0), SaveCount.n);
+    try @import("cmd_file.zig").saveAll(&app);
+    try testing.expect(!held(&app, pane));
+    try testing.expectEqual(@as(u32, 1), SaveCount.n);
+    try testing.expect(!e.buf.doc.dirty);
+    try testing.expectError(error.Timeout, lsp.TestRig.pump(&app, &app, Cond.upper, 400));
+    try testing.expectEqual(@as(u32, 1), SaveCount.n);
+}
+
+test "a formatting reply for a buffer that changed since the request is dropped, not spliced into the new text" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    var rig: lsp.TestRig = .{};
+    try rig.start(&app);
+    defer rig.stop(&app) catch {};
+    const e = try lsp.TestRig.openFile(&app, lsp.TestRig.file, lsp.TestRig.text);
+    const Cond = struct {
+        fn ready(a: *App) bool {
+            const s = a.lsp.servers.items[0];
+            return s.ready and s.isOpen(lsp.TestRig.file);
+        }
+        fn upper(a: *App) bool {
+            return std.mem.startsWith(u8, a.activeEditor().?.buf.editor.bytes(), "LET");
+        }
+    };
+    try lsp.TestRig.pump(&app, &app, Cond.ready, 5000);
+    const ed = e.buf.editor;
+    ed.setCursor(0);
+    try command.run(&app, .{ .static = .@"lsp.format" });
+    try app.handle(.{ .key = Key.char('Z') });
+    try testing.expectError(error.Timeout, lsp.TestRig.pump(&app, &app, Cond.upper, 400));
+    try testing.expect(std.mem.startsWith(u8, ed.bytes(), "Zlet x = 1;\n"));
+    // Asked again on the text as it is, the edits land.
+    try app.splice(e, 0, 1, "");
+    try command.run(&app, .{ .static = .@"lsp.format" });
+    try lsp.TestRig.pump(&app, &app, Cond.upper, 5000);
 }
