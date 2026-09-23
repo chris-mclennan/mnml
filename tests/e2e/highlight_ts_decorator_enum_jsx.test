@@ -38,5 +38,5 @@ open Button.tsx
 expect screen contains "className"
 # `<button` — the tag's name (line 2, `  return <button …`: `<` at col 14, `button` from col 15).
 expect color 15 3 fg #e5c07b
-# `className` is a JSX attribute.
-expect color 22 3 fg #e06c75
+# `className` is a JSX attribute — the attribute colour.
+expect color 22 3 fg #e5c07b
