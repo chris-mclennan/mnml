@@ -1,0 +1,45 @@
+# Resolving a conflict then saving with `:w` (vim's save) `git add`s the
+# file, as the lens promises ("save stages c.txt") and as Ctrl+S does:
+# `:w` goes through the one save path (`cmd_file.savePane`), after-save
+# conflict check included. `:wa` does the same for a second file.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write c.txt "one\ntwo\nthree\n"
+write d.txt "four\nfive\nsix\n"
+shell git add c.txt d.txt
+shell git commit -q -m "initial"
+shell git checkout -q -b feature
+write c.txt "one\ntwo-theirs\nthree\n"
+write d.txt "four\nfive-theirs\nsix\n"
+shell git commit -q -am "theirs"
+shell git checkout -q main
+write c.txt "one\ntwo-ours\nthree\n"
+write d.txt "four\nfive-ours\nsix\n"
+shell git commit -q -am "ours"
+shell git merge -q feature || true
+command git.status_pane
+wait 1000
+key enter
+expect screen contains "conflict 1/1"
+key alt+2
+expect screen contains "none left, save stages c.txt"
+ex w
+expect screen contains "resolved c.txt"
+wait 500
+expect file c.txt contains "two-theirs"
+shell git status --porcelain > st.out
+expect file st.out contains "M  c.txt"
+expect file st.out contains "UU d.txt"
+# The second file, saved by `:wa`.
+open d.txt
+expect screen contains "conflict 1/1"
+key down
+key down
+key alt+2
+expect screen contains "none left, save stages d.txt"
+ex wa
+expect screen contains "resolved d.txt"
+wait 500
+shell git status --porcelain > st2.out
+expect file st2.out contains "M  d.txt"

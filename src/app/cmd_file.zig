@@ -33,23 +33,33 @@ pub fn saveCurrent(app: *App) CommandError!void {
 pub const SaveOpts = struct {
     /// An autosave (`autosave.zig`): no format-on-save, no toast.
     auto: bool = false,
+    /// No `saved <file>` toast: a save-all toasts once for the lot.
+    quiet: bool = false,
+    /// What a failure's message starts with: `save failed:`, `:w —`.
+    fail_prefix: []const u8 = "save failed:",
 };
 
-/// Write editor pane `id` to its path — the hooks either side, the
-/// conflict check after. What `file.save` and autosave both run.
+/// Write editor pane `id` to its path — the `save_pre` / `save_post`
+/// hooks either side, the conflict check after (a resolved conflict is
+/// `git add`ed). THE save: `file.save`, `file.save_all`, autosave,
+/// `:w` / `:wq` / `:x` / `ZZ`, `:wa` / `:wqa` and the close / quit
+/// confirms' Save all come through here, so a save never skips what
+/// happens after one.
 pub fn savePane(app: *App, id: app_mod.PaneId, e: *app_mod.EditorPane, opts: SaveOpts) CommandError!void {
     const arena = app.frame.allocator();
     const path = e.buf.doc.path orelse return app.diag.fail(arena, "no file name — use :w <path>", .{});
     const rel = app.relPath(path);
     app.hooks.emit(app, .{ .save_pre = .{ .path = rel, .pane = id, .auto = opts.auto } });
-    e.buf.save(app.io) catch |err| {
+    // A hook may have opened a pane and moved the store: look again.
+    const ed = app.panes.editor(id) orelse return;
+    ed.buf.save(app.io) catch |err| {
         if (opts.auto) app.toast("autosave failed: {s}: {s}", .{ rel, @errorName(err) });
-        return app.diag.fail(arena, "save failed: {s}: {s}{s}", .{ rel, @errorName(err), e.buf.saveFailNote() });
+        return app.diag.fail(arena, "{s} {s}: {s}{s}", .{ opts.fail_prefix, rel, @errorName(err), ed.buf.saveFailNote() });
     };
-    app.hooks.emit(app, .{ .save_post = .{ .path = rel, .pane = id, .bytes = e.buf.editor.len() } });
-    if (!opts.auto) app.toast("saved {s}", .{rel});
+    app.hooks.emit(app, .{ .save_post = .{ .path = rel, .pane = id, .bytes = ed.buf.editor.len() } });
+    if (!opts.auto and !opts.quiet) app.toast("saved {s}", .{rel});
     // A conflicted file saved with no marker left is resolved: git add.
-    @import("conflicts.zig").afterSave(app, e) catch |err| switch (err) {
+    if (app.panes.editor(id)) |after| @import("conflicts.zig").afterSave(app, after) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => if (app.diag.msg) |m| app.toast("{s}", .{m}),
     };
@@ -67,13 +77,20 @@ fn saveAllCmd(app: *App) CommandError!void {
 /// `:w`. Returns after the first failure. By index, re-fetched each
 /// time: a save hook may open or close panes.
 pub fn saveAll(app: *App) CommandError!void {
+    return saveAllWith(app, "save failed:");
+}
+
+/// `saveAll` with the failure worded for its caller (`:wa —`). Each
+/// file goes through `savePane`, hooks and conflict check included.
+pub fn saveAllWith(app: *App, fail_prefix: []const u8) CommandError!void {
     var n: usize = 0;
     var i: usize = 0;
+    // By index, fetched each time: a save hook may add panes.
     while (i < app.panes.slots.items.len) : (i += 1) {
         const id: app_mod.PaneId = @intCast(i);
         const e = app.panes.editor(id) orelse continue;
         if (!e.buf.doc.dirty or e.buf.doc.path == null) continue;
-        try savePane(app, id, e, .{});
+        try savePane(app, id, e, .{ .quiet = true, .fail_prefix = fail_prefix });
         n += 1;
     }
     app.toast("saved {d} file(s)", .{n});

@@ -1621,9 +1621,13 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
                     app.toast("can't save a scratch buffer — pick Discard or Cancel", .{});
                     return;
                 }
-                e.buf.save(app.io) catch |err| {
-                    app.toast("save failed: {s}{s}", .{ @errorName(err), e.buf.saveFailNote() });
-                    return;
+                // The one save path: the hooks, and a resolved conflict staged.
+                cmd_file.savePane(app, id, e, .{}) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => {
+                        if (app.diag.msg) |msg| app.toast("{s}", .{msg});
+                        return;
+                    },
                 };
                 try app.forceClosePane(id);
             },
