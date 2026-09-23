@@ -49,4 +49,4 @@ expect screen contains "is deleted"
 key r
 wait 300
 expect screen contains "removed Claude account acme and its token file"
-expect screen lacks "acme"
+expect screen lacks "(active) acme"
