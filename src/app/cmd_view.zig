@@ -1425,6 +1425,7 @@ fn cursorViewBottom(app: *App) CommandError!void {
 
 fn cursorViewAt(app: *App, where: enum { top, middle, bottom }) CommandError!void {
     const e = try app.requireEditor();
+    @import("jumplist.zig").noteJumpMotion(app);
     const ed = e.buf.editor;
     const total = ed.lineCount();
     const top: usize = @min(e.view.scroll_line, total -| 1);

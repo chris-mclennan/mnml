@@ -702,6 +702,7 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
     const wrap_width = try beforeBufferInput(app, e);
 
     const ev = try e.buf.feedKey(k, &app.clipboard, app.pane_rows, wrap_width, arena);
+    if (e.buf.jumped) jumplist.noteJumpMotion(app);
     // A motion that could not move, a text object that found nothing:
     // a replaying macro stops here (`:help q`).
     if (e.buf.key_failed) app.key_failed = true;

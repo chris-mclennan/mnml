@@ -91,6 +91,10 @@ pub const Buffer = struct {
     /// move (`j` on the last line, `f` finding nothing) or an operator's
     /// object that found nothing. A replaying macro stops on it.
     key_failed: bool = false,
+    /// The last key was a vim jump motion (`:help jump-motions`) — `G`,
+    /// `{N}G`, `gg`, `{` `}`, `(` `)`, a mark: the app's jumplist records
+    /// it however near it went.
+    jumped: bool = false,
 
     /// vim's `".` register: what the last Insert session typed, derived
     /// from its ops when it closed (a backspace takes a char back).
@@ -426,9 +430,11 @@ pub const Buffer = struct {
         const cursor_before = self.editor.cursor;
         self.syncInsertSession(undo_before);
         self.key_failed = false;
+        self.jumped = false;
         const result = try self.input.handleKey(key, ctx, arena);
         const ev: BufferEvent = switch (result) {
             .ops => |list| blk: {
+                if (isJumpMotion(list)) self.jumped = true;
                 const ev = try self.applyHandlerOps(list, visual, clip, viewport_rows, arena);
                 if (self.editor.cursor == cursor_before and failableMotion(list)) self.key_failed = true;
                 break :blk ev;
@@ -517,6 +523,22 @@ pub const Buffer = struct {
             try clip.setLastInserted(self.last_inserted orelse "");
         }
         return if (changed) .edited else .redraw;
+    }
+
+    /// A list that only moves, and moves by a jump motion (`:help
+    /// jump-motions`): a line target, the buffer's ends, a paragraph or
+    /// a sentence. An operator's list (it changes text) is not a jump.
+    fn isJumpMotion(list: []const EditOp) bool {
+        var jump = false;
+        for (list) |o| {
+            if (o.isMutation()) return false;
+            const inner = if (o == .repeat) o.repeat.inner.* else o;
+            switch (inner) {
+                .move_to_line, .move_to_line_keep_col, .move_buffer_start, .move_buffer_end, .move_paragraph, .move_sentence => jump = true,
+                else => {},
+            }
+        }
+        return jump;
     }
 
     /// A list that is one motion vim fails when it cannot move (`:help
@@ -1052,6 +1074,7 @@ pub const Buffer = struct {
             .jump_to_mark_line => |c| {
                 if (c >= 'A' and c <= 'Z') return .{ .app = cmd };
                 const p = self.doc.markPos(c) orelse return .noop;
+                self.jumped = true;
                 const row = @min(p.row, self.editor.lineCount() - 1);
                 self.editor.cursor = self.editor.firstNonWs(row);
                 self.editor.goal_col = null;
@@ -1060,6 +1083,7 @@ pub const Buffer = struct {
             .jump_to_mark_exact => |c| {
                 if (c >= 'A' and c <= 'Z') return .{ .app = cmd };
                 const p = self.doc.markPos(c) orelse return .noop;
+                self.jumped = true;
                 self.editor.placeCursor(@min(p.row, self.editor.lineCount() - 1), p.col);
                 return .redraw;
             },

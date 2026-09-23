@@ -18,6 +18,7 @@ const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const find_mod = @import("find.zig");
 const regex = @import("../regex/regex.zig");
+const jumplist = @import("jumplist.zig");
 
 pub const table = .{
     .@"find.find" = &open,
@@ -300,6 +301,7 @@ fn acceptAndClose(app: *App) Allocator.Error!void {
     }
     const idx = (if (reverse) f.indexBefore(tg.cursor()) else f.indexAtOrAfter(forwardFrom(app, tg.cursor()))) orelse 0;
     f.current = idx;
+    jumplist.noteJumpMotion(app);
     tg.setCursor(tg.landing(idx));
     app.toast("match {d}/{d}", .{ idx + 1, f.matches.items.len });
     app.closeFindBar(false);
@@ -337,6 +339,7 @@ pub fn stepFind(app: *App, delta: i32) Allocator.Error!void {
     }
     const idx = f.current.?;
     tg.setCursor(tg.landing(idx));
+    jumplist.noteJumpMotion(app);
     app.toast("match {d}/{d}", .{ idx + 1, f.matches.items.len });
     app.needs_render = true;
 }
@@ -562,6 +565,7 @@ fn stepFromCurrent(app: *App, e: *EditorPane) Allocator.Error!void {
     };
     e.buf.editor.setCursor(e.find.matches.items[idx].start);
     e.buf.editor.goal_col = null;
+    jumplist.noteJumpMotion(app);
     app.toast("match {d}/{d}", .{ idx + 1, e.find.matches.items.len });
     app.needs_render = true;
 }

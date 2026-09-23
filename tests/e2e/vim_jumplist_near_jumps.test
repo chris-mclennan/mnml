@@ -1,0 +1,87 @@
+# Every jump motion (`:help jump-motions`) lands on the jumplist however
+# near it goes — `{count}G`, `/`, `}` two lines away — so Ctrl-O comes
+# back, and `` `` `` returns; `` `. `` / `'.` go to the last change (`:help '.`).
+# Every expectation is Neovim 0.12.5's (`nvim --clean`, the keys fed as
+# typed), on l1 foo / l2 / l3 foo / l4 / l5 foo / l6, each from 1:1. Each
+# file has its own line count (x lines after l6), so a Ctrl-O that went
+# back to the previous file could not pass for this one.
+command editor.use_vim
+write j0.txt "l1 foo\nl2\nl3 foo\nl4\nl5 foo\nl6\n"
+open j0.txt
+type 3G5G
+key ctrl+o
+expect screen contains "Ln 3/6"
+
+write j1.txt "l1 foo\nl2\nl3 foo\nl4\nl5 foo\nl6\nx\n"
+open j1.txt
+type 3G5G
+key ctrl+o
+key ctrl+o
+expect screen contains "Ln 1/7"
+
+write j2.txt "l1 foo\nl2\nl3 foo\nl4\nl5 foo\nl6\nx\nx\n"
+open j2.txt
+type 3GG
+key ctrl+o
+expect screen contains "Ln 3/8"
+
+write j3.txt "l1 foo\nl2\nl3 foo\nl4\nl5 foo\nl6\nx\nx\nx\n"
+open j3.txt
+type 3GG
+key ctrl+o
+key ctrl+o
+expect screen contains "Ln 1/9"
+
+write j4.txt "l1 foo\nl2\nl3 foo\nl4\nl5 foo\nl6\nx\nx\nx\nx\n"
+open j4.txt
+key /
+type l3
+key enter
+key /
+type l5
+key enter
+key ctrl+o
+expect screen contains "Ln 3/10"
+
+write j5.txt "l1 foo\nl2\nl3 foo\nl4\nl5 foo\nl6\nx\nx\nx\nx\nx\n"
+open j5.txt
+type 5G
+key ctrl+o
+expect screen contains "Ln 1/11"
+
+write j6.txt "l1 foo\nl2\nl3 foo\nl4\nl5 foo\nl6\nx\nx\nx\nx\nx\nx\n"
+open j6.txt
+type 3G5G
+key ctrl+o
+key ctrl+i
+expect screen contains "Ln 5/12"
+
+write j7.txt "l1 foo\nl2\nl3 foo\nl4\nl5 foo\nl6\nx\nx\nx\nx\nx\nx\nx\n"
+open j7.txt
+type 3G}
+key ctrl+o
+expect screen contains "Ln 3/13"
+
+write j8.txt "l1 foo\nl2\nl3 foo\nl4\nl5 foo\nl6\nx\nx\nx\nx\nx\nx\nx\nx\n"
+open j8.txt
+type 3G5G``
+expect screen contains "Ln 3/14"
+
+write j9.txt "l1 foo\nl2\nl3 foo\nl4\nl5 foo\nl6\nx\nx\nx\nx\nx\nx\nx\nx\nx\n"
+open j9.txt
+type 2G4G``
+expect screen contains "Ln 2/15"
+
+write j10.txt "l1 foo\nl2\nl3 foo\nl4\nl5 foo\nl6\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\n"
+open j10.txt
+type jAz
+key esc
+type G`.
+expect screen contains "Ln 2/16 Col 3"
+
+write j11.txt "l1 foo\nl2\nl3 foo\nl4\nl5 foo\nl6\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\n"
+open j11.txt
+type jAz
+key esc
+type G'.
+expect screen contains "Ln 2/17 Col 1"

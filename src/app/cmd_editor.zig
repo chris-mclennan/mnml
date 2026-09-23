@@ -604,6 +604,7 @@ fn unfoldAll(app: *App) CommandError!void {
 /// Silent when there is nothing to match.
 fn bracketMatch(app: *App) CommandError!void {
     const e = try app.requireEditor();
+    @import("jumplist.zig").noteJumpMotion(app);
     const ed = e.buf.editor;
     const text = ed.bytes();
     const pairs = [_][2]u8{ .{ '(', ')' }, .{ '[', ']' }, .{ '{', '}' } };

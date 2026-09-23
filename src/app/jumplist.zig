@@ -10,7 +10,11 @@
 //! before/after snapshot (`snapshot` / `afterKey`), and a file opened
 //! by `App.openEditor` while another was active. A jump made by
 //! `nav.back` / `nav.forward` / `nav.jump_toggle_prev` is not a push:
-//! `in_jump` is set for the key that made it. `prev` is vim's `''` /
+//! `in_jump` is set for the key that made it. A vim jump motion
+//! (`:help jump-motions`: `{N}G`, `gg`, `/` `?` `n` `N` `*` `#`, `%`,
+//! `(` `)` `{` `}`, `H` `M` `L`, a mark) is a push at ANY distance that
+//! changes the line — `jump_motion`, raised by whoever made it — so
+//! `3G5G<C-o>` comes back to 3. `prev` is vim's `''` /
 //! `` `` `` — the position before the last big jump, toggled by
 //! `nav.jump_toggle_prev`.
 
@@ -56,6 +60,8 @@ pub const State = struct {
     prev: ?Point = null,
     /// The key being handled is a back / forward / toggle jump itself.
     in_jump: bool = false,
+    /// The key being handled made a jump motion: a push however near.
+    jump_motion: bool = false,
 
     pub fn deinit(self: *State, gpa: Allocator) void {
         for (self.back.items) |p| p.deinit(gpa);
@@ -86,6 +92,7 @@ pub const State = struct {
 /// Clears `in_jump`: a new key is starting.
 pub fn snapshot(app: *App) Allocator.Error!?Snapshot {
     app.jumplist.in_jump = false;
+    app.jumplist.jump_motion = false;
     return current(app);
 }
 
@@ -101,11 +108,19 @@ pub fn current(app: *App) Allocator.Error!?Snapshot {
 /// records where the cursor was.
 pub fn afterKey(app: *App, before: ?Snapshot) Allocator.Error!void {
     defer app.jumplist.in_jump = false;
+    defer app.jumplist.jump_motion = false;
     const b = before orelse return;
     const a = (try current(app)) orelse return;
     const switched = !std.mem.eql(u8, a.path, b.path);
-    const far = !switched and (if (a.row > b.row) a.row - b.row else b.row - a.row) >= row_threshold;
+    const rows = if (a.row > b.row) a.row - b.row else b.row - a.row;
+    const far = !switched and (rows >= row_threshold or (app.jumplist.jump_motion and rows > 0));
     if (switched or far) try record(app, b);
+}
+
+/// The key being handled made a vim jump motion (`afterKey` records it
+/// whatever the distance).
+pub fn noteJumpMotion(app: *App) void {
+    app.jumplist.jump_motion = true;
 }
 
 /// `before` becomes the newest back entry (and `prev`); the forward

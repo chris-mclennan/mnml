@@ -1060,6 +1060,8 @@ pub const Vim = struct {
                 }
                 if (ch == '\'' and !exact) return runCmd(.@"nav.jump_toggle_prev");
                 if (ch == '`' and exact) return runCmd(.@"nav.jump_toggle_prev");
+                // `'.` / `` `. ``: the last change.
+                if (ch == '.' and op == null) return .{ .app = if (exact) .{ .jump_to_mark_exact = '.' } else .{ .jump_to_mark_line = '.' } };
                 return .consumed;
             },
             .find_char => |f| {
