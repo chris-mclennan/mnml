@@ -11,6 +11,10 @@ expect file a.txt contains "name = \"X\";\n"
 type j0di'
 command file.save
 expect file a.txt contains "x = '' + 'b';\n"
+# From the `+`, between two strings, the nearest quote behind the cursor
+# opens the string (Neovim's `current_quote`): `yi'` yanks ` + `, the
+# text between the two quoted strings, not the `b` after it. Neovim
+# 0.12.5 --clean, `0f+yi'$p` on this line → `x = '' + 'b'; + `.
 type 0f+yi'$p
 command file.save
-expect file a.txt contains "x = '' + 'b';b\n"
+expect file a.txt contains "x = '' + 'b'; + \n"

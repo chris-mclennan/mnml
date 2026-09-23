@@ -124,12 +124,91 @@ pub fn enclosingQuotePairOnLine(ed: *const Editor, q: u21) ?[2]usize {
     return null;
 }
 
+/// The `q` pair an `i"` / `a"` acts on, as Neovim's `current_quote`
+/// finds it (an operator, or a Visual mode with nothing selected yet):
+///
+/// - the cursor ON a quote: pairs are counted from the line start, and
+///   the pair holding the cursor is the one — the quote may open or
+///   close it;
+/// - anywhere else: the nearest quote before the cursor opens the
+///   string and the next one after that closes it, however the quotes
+///   before it paired up (`a "b" c "d"` with the cursor on `c` acts on
+///   `" c "`); with no quote before the cursor, the first pair after it
+///   on the line (`:help i"`).
+///
+/// A backslash escapes a quote everywhere but in the start-of-line
+/// count, where Neovim does not look for one. Byte offsets of the two
+/// quote chars; null when the line holds no such pair. The quote chars
+/// are ASCII, so the walk is over bytes.
+pub fn quoteObjectPair(ed: *const Editor, q: u21) ?[2]usize {
+    if (q >= 0x80) return enclosingQuotePairOnLine(ed, q);
+    const qc: u8 = @intCast(q);
+    const ls = ed.lineStart(ed.currentLine());
+    const t = ed.bytes()[ls..ed.lineEnd(ed.currentLine())];
+    const cur = ed.cursor - ls;
+    if (cur < t.len and t[cur] == qc) {
+        var from: usize = 0;
+        while (true) {
+            const o = nextQuote(t, from, qc, false) orelse return null;
+            if (o > cur) return null;
+            const c = nextQuote(t, o + 1, qc, true) orelse return null;
+            if (cur <= c) return .{ ls + o, ls + c };
+            from = c + 1;
+        }
+    }
+    const before = prevQuote(t, cur, qc);
+    const o = if (t.len > 0 and t[before] == qc) before else (nextQuote(t, 0, qc, false) orelse return null);
+    const c = nextQuote(t, o + 1, qc, true) orelse return null;
+    return .{ ls + o, ls + c };
+}
+
+/// Neovim's `find_next_quote`: the first `qc` at or after `from`; with
+/// `escaped`, a backslash takes the char after it out of the running.
+fn nextQuote(t: []const u8, from: usize, qc: u8, escaped: bool) ?usize {
+    var i = from;
+    while (i < t.len) : (i += 1) {
+        if (escaped and t[i] == '\\') {
+            i += 1;
+            if (i >= t.len) return null;
+        } else if (t[i] == qc) return i;
+    }
+    return null;
+}
+
+/// Neovim's `find_prev_quote`: walks back from `cur` and stops on the
+/// first `qc` that an even run of backslashes precedes — the caller
+/// checks the byte it stopped on, since the walk ends at 0 either way.
+fn prevQuote(t: []const u8, cur: usize, qc: u8) usize {
+    var i = @min(cur, t.len);
+    while (i > 0) {
+        i -= 1;
+        var n: usize = 0;
+        while (i - n > 0 and t[i - n - 1] == '\\') n += 1;
+        if (n & 1 == 1) {
+            i -= n;
+        } else if (t[i] == qc) return i;
+    }
+    return i;
+}
+
 pub fn quote(ed: *Editor, q: u21, around: bool) void {
-    const p = enclosingQuotePairOnLine(ed, q) orelse return;
+    const p = quoteObjectPair(ed, q) orelse return;
     const ql = editor.charLen(q);
     if (around) {
-        ed.anchor = p[0];
-        ed.cursor = p[1] + ql;
+        // `a"` takes the white space after the closing quote, or — when
+        // there is none — the white space before the opening one.
+        const le = ed.lineEnd(ed.currentLine());
+        const ls = ed.lineStart(ed.currentLine());
+        const t = ed.bytes();
+        var lo = p[0];
+        var hi = p[1] + ql;
+        if (hi < le and isWhite(t[hi])) {
+            while (hi < le and isWhite(t[hi])) hi += 1;
+        } else {
+            while (lo > ls and isWhite(t[lo - 1])) lo -= 1;
+        }
+        ed.anchor = lo;
+        ed.cursor = hi;
     } else {
         ed.anchor = p[0] + ql;
         ed.cursor = p[1];
@@ -149,7 +228,7 @@ pub fn matchCloseFor(open: u21) u21 {
 /// Smallest `open … close` pair around the cursor, depth-aware. Capped
 /// at 50k chars per side so a malformed file cannot hang.
 pub fn enclosingBracketPair(ed: *const Editor, open: u21, close: u21) ?[2]usize {
-    const budget = 50_000;
+    const budget = bracket_budget;
     var depth: usize = 0;
     var i = ed.cursor;
     var steps: usize = 0;
@@ -169,9 +248,16 @@ pub fn enclosingBracketPair(ed: *const Editor, open: u21, close: u21) ?[2]usize 
             if (steps > budget) return null;
         }
     };
-    depth = 0;
+    return closerOf(ed, open_byte, open, close);
+}
+
+const bracket_budget = 50_000;
+
+/// The `close` that matches the `open` at `open_byte`, depth-aware.
+fn closerOf(ed: *const Editor, open_byte: usize, open: u21, close: u21) ?[2]usize {
+    var depth: usize = 0;
     var j = ed.nextBoundary(open_byte);
-    steps = 0;
+    var steps: usize = 0;
     while (true) {
         if (j >= ed.len()) return null;
         const c = ed.charAt(j) orelse return null;
@@ -183,13 +269,37 @@ pub fn enclosingBracketPair(ed: *const Editor, open: u21, close: u21) ?[2]usize 
         }
         j = ed.nextBoundary(j);
         steps += 1;
-        if (steps > budget) return null;
+        if (steps > bracket_budget) return null;
     }
+}
+
+/// With the cursor in no `open … close` pair, the next `open` after it
+/// and its match — Neovim's `i(` "If the cursor is not inside a ()
+/// block, then find the next "("" (`:help i(`). The search is not held
+/// to the cursor's line, and a `close` met on the way cancels the next
+/// `open`, as its `findmatchlimit` counts them: in `x ) (a)` from the
+/// `x` there is nothing to find.
+pub fn nextBracketPair(ed: *const Editor, open: u21, close: u21) ?[2]usize {
+    var depth: usize = 0;
+    var i = ed.nextBoundary(ed.cursor);
+    var steps: usize = 0;
+    while (i < ed.len()) : (i = ed.nextBoundary(i)) {
+        const c = ed.charAt(i) orelse return null;
+        if (c == close) {
+            depth += 1;
+        } else if (c == open) {
+            if (depth == 0) return closerOf(ed, i, open, close);
+            depth -= 1;
+        }
+        steps += 1;
+        if (steps > bracket_budget) return null;
+    }
+    return null;
 }
 
 pub fn bracket(ed: *Editor, open: u21, around: bool) void {
     const close = matchCloseFor(open);
-    const p = enclosingBracketPair(ed, open, close) orelse return;
+    const p = enclosingBracketPair(ed, open, close) orelse nextBracketPair(ed, open, close) orelse return;
     if (around) {
         ed.anchor = p[0];
         ed.cursor = p[1] + editor.charLen(close);
@@ -566,8 +676,9 @@ test "quotes and brackets: inner / around, nested" {
     ed.cursor = 10; // inside "c d"
     quote(ed, '"', false);
     try std.testing.expectEqualStrings("c d", sel(ed));
+    // `a"` with nothing blank after the string takes the blank before.
     quote(ed, '"', true);
-    try std.testing.expectEqualStrings("\"c d\"", sel(ed));
+    try std.testing.expectEqualStrings(" \"c d\"", sel(ed));
     ed.cursor = 10;
     ed.anchor = null;
     bracket(ed, '(', false);
@@ -576,10 +687,93 @@ test "quotes and brackets: inner / around, nested" {
     ed.anchor = null;
     bracket(ed, '(', true);
     try std.testing.expectEqualStrings("(a, (b, \"c d\"), e)", sel(ed));
+    // Before the first `(` the object is the pair after the cursor.
     ed.cursor = 0;
     ed.anchor = null;
     bracket(ed, '(', true);
-    try std.testing.expect(ed.anchor == null);
+    try std.testing.expectEqualStrings("(a, (b, \"c d\"), e)", sel(ed));
+}
+
+/// What `i<c>` / `a<c>` selects from `cursor` in `text`; null when it
+/// finds nothing.
+fn objectAt(text: []const u8, cursor: usize, c: u21, around: bool) !?[]u8 {
+    const ed = try Editor.init(std.testing.allocator, text);
+    defer ed.deinit();
+    ed.cursor = cursor;
+    switch (c) {
+        '"', '\'', '`' => quote(ed, c, around),
+        else => bracket(ed, c, around),
+    }
+    if (ed.anchor == null) return null;
+    return try std.testing.allocator.dupe(u8, sel(ed));
+}
+
+fn expectObject(text: []const u8, cursor: usize, c: u21, around: bool, want: ?[]const u8) !void {
+    const got = try objectAt(text, cursor, c, around);
+    defer if (got) |g| std.testing.allocator.free(g);
+    if (want) |w| {
+        try std.testing.expect(got != null);
+        try std.testing.expectEqualStrings(w, got.?);
+    } else try std.testing.expect(got == null);
+}
+
+test "bracket objects look forward from outside a pair, as Neovim's do" {
+    // Each line is Neovim 0.12.5 --clean on the same text and column
+    // (the key it was probed with, and what it left, in the comment).
+    // `ci(` on `foo bar(baz) qux` from the f → `foo bar(X) qux`.
+    try expectObject("foo bar(baz) qux", 0, '(', false, "baz");
+    // `7|da[` on `a [1] b [2] c` → `a [1] b  c`: the pair after the b.
+    try expectObject("a [1] b [2] c", 6, '[', true, "[2]");
+    // `ci(` on `go (a (b) c) end` → `go (X) end`: the first ( found.
+    try expectObject("go (a (b) c) end", 0, '(', false, "a (b) c");
+    // `6|ci(` on `f(x) y (z)` → `f(x) y (X)`: a closed pair behind.
+    try expectObject("f(x) y (z)", 5, '(', false, "z");
+    // Not held to the line: `ci(` on line 1 of `foo\n(bar)` → `(X)`.
+    try expectObject("foo\n(bar)", 0, '(', false, "bar");
+    // `di<` / `da{` the same.
+    try expectObject("x <a> y", 0, '<', false, "a");
+    try expectObject("x {a} y", 0, '{', true, "{a}");
+    // An empty pair is still an object: `ci(` on `x ()` → `x (X)`.
+    try expectObject("x ()", 0, '(', false, "");
+    // Inside a pair, the pair around the cursor wins over one after it.
+    try expectObject("(a) (b)", 1, '(', false, "a");
+    // Nothing to find: past the last pair, a stray ) that cancels the
+    // next (, an opener with no closer, no brackets at all — each one
+    // Neovim leaves alone.
+    try expectObject("x (a) y", 6, '(', false, null);
+    try expectObject("x ) (a) y", 0, '(', false, null);
+    try expectObject("x (", 0, '(', false, null);
+    try expectObject("x (a", 0, '(', false, null);
+    try expectObject("foo bar baz", 0, '(', false, null);
+}
+
+test "quote objects pick the string Neovim's do, and a\" takes the white space it does" {
+    // Neovim 0.12.5 --clean, same text and column (1-based in the note).
+    // `di"` on `x = "foo" y` from the x → `x = "" y`: the first after.
+    try expectObject("x = \"foo\" y", 0, '"', false, "foo");
+    // `da"` on `x "q" y` → `x y`: the space after the string goes too.
+    try expectObject("x \"q\" y", 0, '"', true, "\"q\" ");
+    // `$da"` on `x "q"` → `x`: nothing after, so the space before.
+    try expectObject("x \"q\"", 4, '"', true, " \"q\"");
+    // `da"` on `x  "q"  y` → `x  y`: every blank after, none before.
+    try expectObject("x  \"q\"  y", 0, '"', true, "\"q\"  ");
+    // `$da"` on `a "b" "c"` → `a "b"`: on a quote, pairs count from
+    // the line start, and this one closes the second string.
+    try expectObject("a \"b\" \"c\"", 8, '"', true, " \"c\"");
+    // `6|di"` / `7|di"` on `a "b" c "d"` → `a "b""d"`: off a quote, the
+    // nearest quote behind the cursor opens the string.
+    try expectObject("a \"b\" c \"d\"", 5, '"', false, " c ");
+    try expectObject("a \"b\" c \"d\"", 6, '"', false, " c ");
+    // `11|da"` on `f(a, (b, "c d"), e)` → `f(a, (b,), e)`.
+    try expectObject("f(a, (b, \"c d\"), e)", 10, '"', true, " \"c d\"");
+    // `ci\`` on `x \`cmd\` y` → `x \`X\` y`; a single quote the same.
+    try expectObject("x `cmd` y", 0, '`', false, "cmd");
+    try expectObject("x 'q' y", 0, '\'', true, "'q' ");
+    // An escaped quote does not close the string.
+    try expectObject("s = \"a\\\"b\" end", 0, '"', false, "a\\\"b");
+    // No quote on the line — or an opener alone — is nothing.
+    try expectObject("foo bar", 0, '"', false, null);
+    try expectObject("x \"open", 0, '"', false, null);
 }
 
 test "paragraphs and tags" {

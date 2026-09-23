@@ -1383,7 +1383,8 @@ test "vim deletes and changes with motions, counts and text objects" {
     try vim("da(", "f(a, |b)", "|f");
     try vim("dib", "f(a, |b)", "f(|)");
     try vim("di\"", "x \"a |b\" y", "x \"|\" y");
-    try vim("da\"", "x \"a |b\" y", "x | y");
+    // `a"` takes the blank after the string (Neovim: `x y`, cursor on y).
+    try vim("da\"", "x \"a |b\" y", "x |y");
     try vim("dip", "a\n|b\n\nc", "|\nc"); // linewise (`:help ip`); Rust left an empty line
     try vim("dap", "a\n|b\n\nc", "|c");
     try vim("dit", "<b>hi |there</b>", "<b>|</b>");
@@ -1636,7 +1637,7 @@ test "vim marks, macros and visual mode" {
     try vim("viwlld", "|ab cd", "|"); // a motion after the object widens again
     try vim("vipd", "|a\nb\n\nc", "|\nc"); // `vip` is linewise (`:help v_ip`); Rust left an empty line
     try vim("vi(d", "f(a|b)", "f(|)");
-    try vim("va\"d", "x \"a|b\" y", "x | y");
+    try vim("va\"d", "x \"a|b\" y", "x |y");
     try vim("vlold", "|abcd", "a|cd");
     try vim("vly<esc>gvd", "|abc", "|c");
     try vim("v<esc>x", "|abc", "|bc");
