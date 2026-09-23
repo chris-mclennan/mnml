@@ -191,11 +191,11 @@ fn paintHeader(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
             sub = try std.fmt.allocPrint(arena, "  ({d} of {d})", .{ app.filter_shown, app.filter_total });
         } else if (ts.fetched) {
             sub = switch (ts.data) {
-                .repo_pr_tree => try std.fmt.allocPrint(arena, "  ({d} repos · {d} PRs)", .{ ts.repos, ts.items }),
-                .repo_tree => try std.fmt.allocPrint(arena, "  ({d} repos)", .{ts.repos}),
-                .pull_requests => try std.fmt.allocPrint(arena, "  ({d} PRs)", .{ts.items}),
-                .pipelines => try std.fmt.allocPrint(arena, "  ({d} pipelines)", .{ts.items}),
-                .branches => try std.fmt.allocPrint(arena, "  ({d} branches)", .{ts.items}),
+                .repo_pr_tree => try std.fmt.allocPrint(arena, "  ({d} {s} · {d} {s})", .{ ts.repos, sdk.pane.text.noun(ts.repos, "repo", "repos"), ts.items, sdk.pane.text.noun(ts.items, "PR", "PRs") }),
+                .repo_tree => try std.fmt.allocPrint(arena, "  ({d} {s})", .{ ts.repos, sdk.pane.text.noun(ts.repos, "repo", "repos") }),
+                .pull_requests => try std.fmt.allocPrint(arena, "  ({d} {s})", .{ ts.items, sdk.pane.text.noun(ts.items, "PR", "PRs") }),
+                .pipelines => try std.fmt.allocPrint(arena, "  ({d} {s})", .{ ts.items, sdk.pane.text.noun(ts.items, "pipeline", "pipelines") }),
+                .branches => try std.fmt.allocPrint(arena, "  ({d} {s})", .{ ts.items, sdk.pane.text.noun(ts.items, "branch", "branches") }),
             };
         }
         // A refetch over rows that are already there keeps the count
@@ -994,6 +994,10 @@ test "the pane paints the header, the strip, the pill, the reference's columns, 
     try t.expect(!has(scr, "▾"));
     try t.expect(!has(scr, "▸"));
     try t.expect(has(scr, "2 PRs"));
+    // `web` has one: the noun agrees with it
+    // (hunt/findings-2026-09-23/integ-bb-one-prs.md).
+    try t.expect(has(scr, "1 PR "));
+    try t.expect(!has(scr, "1 PRs"));
     try t.expect(has(scr, "#1234"));
     try t.expect(has(scr, "Fix the login redir"));
     try t.expect(has(scr, "chris/fix-login"));

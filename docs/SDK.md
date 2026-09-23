@@ -245,6 +245,7 @@ the next backfill has to come back for.
 | Whether a pull request may merge, and why not | `pane.merge` |
 | A named confirm | `Painter.confirmBox` |
 | The hint row, every `key label` a hit | `Painter.hintRow` |
+| A count's noun — `1 PR`, `3 PRs` | `pane.text.noun` |
 | State colours | `Theme.prState` / `pipelineState` / `ticketStatus` |
 | A chevron that folds under the mouse | `Painter.chevron` |
 

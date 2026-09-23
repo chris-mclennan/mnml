@@ -6,6 +6,12 @@
 const std = @import("std");
 const frame = @import("../frame.zig");
 
+/// The noun that agrees with a count — `1 PR`, `3 PRs`, `0 repos` —
+/// so no pane writes `1 PRs` on a row with one pull request.
+pub fn noun(n: usize, one: []const u8, many: []const u8) []const u8 {
+    return if (n == 1) one else many;
+}
+
 /// Cells `s` would take if it were painted whole.
 pub fn width(s: []const u8) u16 {
     var w: u16 = 0;
@@ -62,4 +68,10 @@ test "width counts cells, not bytes; fit cuts with an ellipsis" {
     try testing.expectEqualStrings("abc", fit(&buf, "abc", 5));
     try testing.expectEqualStrings("ab\u{2026}", fit(&buf, "abcdef", 3));
     try testing.expectEqualStrings("", fit(&buf, "abc", 0));
+}
+
+test "noun: one is singular, every other count is plural" {
+    try std.testing.expectEqualStrings("PR", noun(1, "PR", "PRs"));
+    try std.testing.expectEqualStrings("PRs", noun(0, "PR", "PRs"));
+    try std.testing.expectEqualStrings("PRs", noun(3, "PR", "PRs"));
 }

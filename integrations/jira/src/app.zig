@@ -1292,7 +1292,7 @@ pub const App = struct {
         t.last_error = "";
         // An action's message outlives the refetch it triggers;
         // an empty status gets the tab's summary.
-        if (a.status.items.len == 0) a.setStatus("{s} · {d} issues", .{ t.cfg.name, t.issues.len });
+        if (a.status.items.len == 0) a.setStatus("{s} · {d} {s}", .{ t.cfg.name, t.issues.len, sdk.pane.text.noun(t.issues.len, "issue", "issues") });
         if (t.cfg.kind) |k| if (k.isAssignedOpen()) {
             a.assigned_open = t.issues.len;
             a.assigned_tab = idx;

@@ -190,7 +190,7 @@ pub fn rowSpans(a: Allocator, c: RowCtx) Allocator.Error![]Span {
                     n = 6;
                 } else {
                     const p: ?model.PullRequest = if (r.prs.len > 0) r.prs[0] else null;
-                    cells[1] = try std.fmt.allocPrint(a, "{d} PRs", .{r.prs.len});
+                    cells[1] = try std.fmt.allocPrint(a, "{d} {s}", .{ r.prs.len, sdk.pane.text.noun(r.prs.len, "PR", "PRs") });
                     cells[2] = if (p) |pr| pr.author else "";
                     cells[3] = if (p) |pr| pr.source_branch else "";
                     cells[4] = if (p) |pr| pr.updatedDate() else "";
@@ -204,7 +204,7 @@ pub fn rowSpans(a: Allocator, c: RowCtx) Allocator.Error![]Span {
                 const open = ts.expanded.hasRepo(r.slug);
                 cells[0] = try std.fmt.allocPrint(a, "{s} {s}", .{ expander(open, c.ascii), r.slug });
                 styles[0] = cellStyle(c, if (r.error_label.len > 0) th.bad() else th.accentText());
-                cells[1] = if (r.error_label.len > 0) r.error_label else try std.fmt.allocPrint(a, "{d} branches", .{r.branches.len});
+                cells[1] = if (r.error_label.len > 0) r.error_label else try std.fmt.allocPrint(a, "{d} {s}", .{ r.branches.len, sdk.pane.text.noun(r.branches.len, "branch", "branches") });
                 styles[1] = cellStyle(c, if (r.error_label.len > 0) th.bad() else th.mutedText());
                 cells[2] = "";
                 cells[3] = "";
