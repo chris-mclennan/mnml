@@ -623,7 +623,12 @@ pub fn envHome(app: *const App) ?[]const u8 {
 pub fn homeFor(app: *App) Allocator.Error!?[]const u8 {
     const st = &app.sessions;
     if (st.home) |h| return h;
-    const h = envHome(app) orelse return null;
+    // `MNML_SESSIONS_HOME` names the home to read `.claude` / `.codex`
+    // under without moving anything else's: the `.test` runner and the
+    // UI-dump tools point it at an empty directory, so a screen they
+    // keep never carries the developer's own transcripts.
+    const override: ?[]const u8 = if (app.env.get("MNML_SESSIONS_HOME")) |v| (if (v.len > 0) v else null) else null;
+    const h = override orelse envHome(app) orelse return null;
     if (std.fs.path.isAbsolute(h)) return h;
     st.home = try std.fs.path.join(app.gpa, &.{ app.workspace, h });
     return st.home.?;
@@ -850,7 +855,7 @@ pub fn refilter(app: *App) Allocator.Error!void {
     const grace_s: i64 = @as(i64, app.cfg.ui.session_ended_grace_min) * 60;
     for (st.items, 0..) |it, i| {
         if (st.isCleared(it.session_id)) continue;
-        if (!st.all_workspaces and !inWorkspaceOrTree(app, it, app.workspace, ws_name)) continue;
+        if (!st.all_workspaces and !isHere(app, it, ws_name)) continue;
         var is_owned = false;
         for (owned.items) |id| if (std.mem.eql(u8, id, it.session_id)) {
             is_owned = true;
@@ -1168,7 +1173,15 @@ fn openCmd(app: *App) CommandError!void {
         app.needs_render = true;
         return;
     }
-    const it = try currentOrFail(app);
+    return resumeItem(app, try currentOrFail(app));
+}
+
+/// Open `it` again: a cloud run's page, else the CLI resumed on the
+/// session in a pane on the right, in the session's own cwd. The
+/// section's Enter and the start surface's SESSIONS rows
+/// (`app/welcome.zig`) both land here.
+pub fn resumeItem(app: *App, it: Item) CommandError!void {
+    const arena = app.frame.allocator();
     if (it.where == .cloud) return cloud_agents.openRun(app, it);
     const argv: []const []const u8 = switch (it.source) {
         .claude => try cli.claudeResumeArgv(arena, try arena.dupe(u8, it.session_id)),
@@ -1177,6 +1190,36 @@ fn openCmd(app: *App) CommandError!void {
     const cwd: ?[]const u8 = if (it.cwd) |c| try arena.dupe(u8, c) else null;
     // The session's chosen colour follows it into the pane.
     _ = try pty_pane.open(app, .{ .argv = argv, .cwd = cwd, .label = it.source.label(), .placement = .right, .kind = .command, .accent_color = app.sessions.color(it.session_id) });
+}
+
+/// The scan's sessions of this workspace that can be picked up again,
+/// newest first, on `arena`: local, no live process, no pane here
+/// already running them, not cleared — the rows SESSIONS lists as
+/// EXTERNAL / ENDED (`isHere`) that `resumeItem` can open. The start
+/// surface's SESSIONS list (`app/welcome.zig`).
+pub fn resumable(app: *App, arena: Allocator) Allocator.Error![]const Item {
+    const st = &app.sessions;
+    const ws_name = std.fs.path.basename(app.workspace);
+    var out: std.ArrayListUnmanaged(Item) = .empty;
+    for (st.items) |it| {
+        if (it.where != .local or it.pid != null) continue;
+        if (st.isCleared(it.session_id) or !isHere(app, it, ws_name)) continue;
+        if (ptyPaneOf(app, it.session_id) != null) continue;
+        try out.append(arena, it);
+    }
+    const Newest = struct {
+        fn lt(_: void, a: Item, b: Item) bool {
+            return a.last_activity_s > b.last_activity_s;
+        }
+    };
+    std.mem.sort(Item, out.items, {}, Newest.lt);
+    return out.items;
+}
+
+/// A scan row SESSIONS lists for this workspace (`ws_name` is its
+/// basename): rooted in it, or on a worktree mnml made for a session here.
+fn isHere(app: *App, it: Item, ws_name: []const u8) bool {
+    return inWorkspaceOrTree(app, it, app.workspace, ws_name);
 }
 
 // ─── the accent (colors) ────────────────────────────────────────────────

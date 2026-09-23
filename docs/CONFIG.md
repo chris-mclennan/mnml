@@ -324,6 +324,23 @@ otherwise. Copy what you need; leave the rest out.
         //              rail was a rule
         //   .off       none
         .pane_rail = .all, // .all | .sessions | .off
+        // What the editor area shows while no pane is open — at launch
+        // with no session to restore, and after the last pane closes.
+        //   .full     the start surface: a compact word mark, the
+        //             workspace line, then RECENT WORKSPACES (the
+        //             Switch workspace list; Enter shows it in the
+        //             tree), RECENT FILES (Enter opens), SESSIONS (this
+        //             workspace's Claude Code / Codex sessions no
+        //             process holds; Enter resumes, and a `+ New Claude
+        //             Code session here` row) and SHORTCUTS for the
+        //             active profile, read from the command table
+        //             (`Space f f` under vim, `Ctrl+P` under standard).
+        //             j / k walk a list, Tab moves between lists, Enter
+        //             acts, `?` opens the cheatsheet; a click acts too.
+        //             Under 30 rows the word mark goes, then SHORTCUTS.
+        //   .minimal  the logo and the shortcut list alone, centred
+        //   .off      the bare ground
+        .welcome = .full, // .full | .minimal | .off
         // The colour the FIRST pane of a kind opens in. A plain
         // terminal opens in white (the theme's text colour), a Claude
         // session in Claude's orange (the chip's), a Codex session in

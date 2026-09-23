@@ -400,6 +400,7 @@ pub fn scrollbar(s: anytype) Entry {
         .title = switch (s.owner) {
             .tree => "The tree's scrollbar",
             .panel => "A section's scrollbar",
+            .welcome => "A start-surface list's scrollbar",
             .pane => if (s.axis == .h) "The pane's horizontal scrollbar" else "The pane's scrollbar",
         },
         .body = "The thumb is where you are in the content and how much of it shows. Drag it, click the track to jump, or use the wheel over the content — `ui.wheel_lines` is how many lines a notch moves. `ui.scrollbar` turns the bars off for people who navigate by keyboard; the wheel still works.",

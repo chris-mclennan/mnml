@@ -359,6 +359,11 @@ pub const ExpandIndicator = enum { chevron, triangle };
 /// side are never the same colour; `sessions` is the older look, where
 /// only an AI session pane wore one; `off` paints none.
 pub const PaneRail = enum { all, sessions, off };
+/// What the editor area shows while no pane is open (`app/welcome.zig`).
+/// `full` is the start surface — recent workspaces, recent files, the
+/// sessions to resume, the shortcuts; `minimal` the word mark and the
+/// shortcut list alone; `off` the bare ground.
+pub const WelcomeMode = enum { full, minimal, off };
 /// A colour a pane can open in (`ui/accent_color.zig`'s names): the
 /// eight ladder colours, `white` (the theme's text colour) and
 /// `claude_orange` (Anthropic's, the one the Claude chip wears), or
@@ -598,6 +603,8 @@ pub const Ui = struct {
     pty_cursor: PtyCursor = .{},
     /// Which panes wear a colour rail down their left edge.
     pane_rail: PaneRail = .all,
+    /// What the editor area shows while no pane is open.
+    welcome: WelcomeMode = .full,
     /// The colour the first pane of each kind opens in (`AccentDefaults`).
     accent_defaults: AccentDefaults = .{},
     /// The shape of the cursor mnml puts on the focused editor or text

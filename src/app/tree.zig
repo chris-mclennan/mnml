@@ -1215,10 +1215,32 @@ pub fn acceptAddWorkspace(app: *App, text: []const u8) Allocator.Error!void {
 
 /// `view.switch_workspace`: a picker over the primary and every extra
 /// root; the pick opens that section and folds the others.
-fn switchWorkspace(app: *App) CommandError!void {
+/// One workspace the switcher offers: the primary first, then the
+/// extra roots, in the tree's order — `Tree.switchTo`'s index.
+pub const WorkspaceRow = struct {
+    name: []const u8,
+    path: []const u8,
+    /// The tree shows this root's files.
+    expanded: bool,
+};
+
+/// The workspaces `view.switch_workspace` lists, on `arena` — the
+/// picker's rows and the start surface's RECENT WORKSPACES
+/// (`app/welcome.zig`) read the same list. Borrowed slices: the names
+/// and paths are the tree's.
+pub fn workspaceRows(app: *App, arena: Allocator) Allocator.Error![]const WorkspaceRow {
     try app.tree.syncRoots(app);
+    const out = try arena.alloc(WorkspaceRow, 1 + app.tree.roots.items.len);
+    const primary = std.fs.path.basename(app.workspace);
+    out[0] = .{ .name = if (primary.len > 0) primary else app.workspace, .path = app.workspace, .expanded = app.tree.primary_expanded };
+    for (app.tree.roots.items, out[1..]) |r, *o| o.* = .{ .name = r.name, .path = r.path, .expanded = r.expanded };
+    return out;
+}
+
+fn switchWorkspace(app: *App) CommandError!void {
     const gpa = app.gpa;
-    if (app.tree.roots.items.len == 0) return app.diag.fail(app.frame.allocator(), "one workspace open — view.add_workspace adds another", .{});
+    const rows = try workspaceRows(app, app.frame.allocator());
+    if (rows.len == 1) return app.diag.fail(app.frame.allocator(), "one workspace open — view.add_workspace adds another", .{});
     var labels: std.ArrayListUnmanaged([]u8) = .empty;
     var details: std.ArrayListUnmanaged([]u8) = .empty;
     errdefer {
@@ -1227,10 +1249,7 @@ fn switchWorkspace(app: *App) CommandError!void {
         for (details.items) |d| gpa.free(d);
         details.deinit(gpa);
     }
-    const primary = std.fs.path.basename(app.workspace);
-    try labels.append(gpa, try std.fmt.allocPrint(gpa, "{s}{s}", .{ if (app.tree.primary_expanded) "* " else "", if (primary.len > 0) primary else app.workspace }));
-    try details.append(gpa, try gpa.dupe(u8, app.workspace));
-    for (app.tree.roots.items) |r| {
+    for (rows) |r| {
         try labels.append(gpa, try std.fmt.allocPrint(gpa, "{s}{s}", .{ if (r.expanded) "* " else "", r.name }));
         try details.append(gpa, try gpa.dupe(u8, r.path));
     }

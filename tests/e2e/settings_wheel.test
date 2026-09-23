@@ -14,8 +14,10 @@ expect screen contains "── UI ──"
 # tracks the section's length, so a row added to UI buys one more notch
 # here — 41 was exactly on the boundary until *Confirm on quit* pushed it
 # over, the three *First … colour* rows (accent-defaults) took the block
-# from 43 to 46, and the two dock-polish rows (*+ end*, *running mark*)
-# from 46 to 48; one fewer and the header is still off the bottom.
+# from 43 to 46, the two dock-polish rows (*+ end*, *running mark*)
+# from 46 to 48, and *Welcome screen* (welcome) from 48 to 49; one fewer
+# and the header is still off the bottom.
+scroll 60 20 down
 scroll 60 20 down
 scroll 60 20 down
 scroll 60 20 down

@@ -226,6 +226,7 @@ fn walkPanes(w: *Walk) Allocator.Error!void {
     try w.probe("scrollbar:pane", .{ .scrollbar = .{ .owner = .{ .pane = 0 }, .axis = .v } });
     try w.probe("scrollbar:panel", .{ .scrollbar = .{ .owner = .{ .panel = .todos }, .axis = .v } });
     try w.probe("scrollbar:tree", .{ .scrollbar = .{ .owner = .tree, .axis = .v } });
+    try w.probe("scrollbar:welcome", .{ .scrollbar = .{ .owner = .{ .welcome = .recent }, .axis = .v } });
     try w.probe("hover_popup", .hover_popup);
 }
 
@@ -251,8 +252,7 @@ fn walkPanels(w: *Walk) Allocator.Error!void {
     inline for (comptime std.enums.values(git_palette_ui.Part)) |p| try w.probe("git_palette:" ++ @tagName(p), .{ .git_palette = p });
     try w.probe("font_update", .{ .font_update = 0 });
     try w.probe("ai_placeholder", .{ .ai_placeholder = 0 });
-    try w.probe("welcome:recent", .{ .welcome = .{ .kind = .recent, .idx = 0 } });
-    try w.probe("welcome:shortcut", .{ .welcome = .{ .kind = .shortcut, .idx = 0 } });
+    inline for (comptime std.enums.values(hit.WelcomeRow.Kind)) |k| try w.probe("welcome:" ++ @tagName(k), .{ .welcome = .{ .kind = k, .idx = 0 } });
     try w.probe("link", .{ .link = .{ .url = "https://example.com/" } });
     try w.probe("info_view:body", .{ .info_view = .body });
     try w.probe("info_view:kebab", .{ .info_view = .kebab });

@@ -1,40 +1,40 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │  ● /pri…            │ 󰐕                                                                            󱸀      
+   │  ● /pri…            │ 󰐕                                                                            󱸀  󲀀    
 ▌ │▌    .mnml              │┌ Create… ──────────┐
    │       ipc-zig          ││   New          ▸ │┌───────────────────┐
  󰍉 │      prog.dbg           ││   O╭───────────────╮  Scratch buffer │
    │                          ││ 󰚩  A│Menu: New      │  From clipboard │
  󰊢 │         󰐙 Add workspace  ││   D│opens more rows│  HTTP request   │
    │                          ││   I╰───────────────╯  Shell          │
-  │                          ││                   ││   Browser tab    │
-   │                          │└───────────────────┘│   Tab page       │
- 󰐱 │                          │                     └───────────────────┘
-   │                          │                                                            _
- 󰎒 │                          │                            _ __ ___    _ __    _ __ ___   | |
-   │                          │                           | '_ ` _ \  | '_ \  | '_ ` _ \  | |
-  │                          │                           | | | | | | | | | | | | | | | | | |
-   │                          │                           |_| |_| |_| |_| |_| |_| |_| |_| |_|
-  │                          │
-   │                          │                                     workspace · ws
-  │                          │
-   │                          │                                        Shortcuts
- 󱘣 │                          │                                     ──────────────
-   │                          │                                     ^P     find file
- 󰢱 │                          │                                    ^R     recent files
-   │                          │                                   ^K     which-key menu
-   │                          │                                      ^N     new file
-   │                          │                                    ^B     toggle tree
-   │                          │                                        ^Q     quit
+  │                          │└───────────────────┘│   Browser tab    │_    _ __    _
+   │                          │                     │   Tab page       │ \  | '  \  | |
+ 󰐱 │                          │                     └───────────────────┘|_| |_|_|_| |_|
    │                          │
-   │                          │                              mnml 0.3.0-dev+g7a0368c-dirty
+ 󰎒 │                          │                                     workspace · ws
    │                          │
+  │                          │   RECENT WORKSPACES                           SESSIONS
+   │                          │    ws                                open
+  │                          │                                                + New Claude Code session here
+   │                          │   RECENT FILES
+  │                          │    No recent files yet                         No session to resume
+   │                          │
+ 󱘣 │                          │                                               SHORTCUTS
+   │                          │                                                Ctrl+P        find a file
+ 󰢱 │                          │                                                Ctrl+R        recent files
+   │                          │                                                Ctrl+Shift+E  the file tree
+   │                          │                                                Ctrl+B        toggle the tree
+   │                          │                                                Ctrl+Shift+P  command palette
+   │                          │                                                Ctrl+K        which-key menu
+   │                          │                                                Ctrl+,        settings
+   │                          │                                                Ctrl+N        new file
+   │                          │                                                Ctrl+Q        quit
    │──────────────────────────│
-   │ Menu: New              ⋮ │
+   │ New ▸                  ⋮ │                                mnml 0.3.0-dev+gf3dacda1
+   │                         ┃│
+   │ Opens the group of the  ││
+   │ things made from        ││
+   │ nothing: a scratch      ││
+  │ buffer, one filled from ││
    │                          │
-   │ opens more rows          │
-   │                          │
-   │                          │
-  │                          │
-   │                          │
- TREE  [no file]                                                              F 59% ▼0.4  󱼀 󰐎    12:02  ws   —
-
+ TREE  [no file]                                                              F 57% ▼1.6  󱼀 󰐎    23:55  ws   —
+                                                           ⋯

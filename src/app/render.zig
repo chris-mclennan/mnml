@@ -46,7 +46,7 @@ const brand = @import("../ui/brand.zig");
 const side_strip = @import("../ui/side_strip.zig");
 const pane_rail = @import("../ui/pane_rail.zig");
 const pane_accent = @import("pane_accent.zig");
-const welcome = @import("../ui/welcome.zig");
+const welcome_app = @import("welcome.zig");
 const keymap = @import("../core/keymap.zig");
 const update = @import("update.zig");
 const prompt_mod = @import("../ui/prompt.zig");
@@ -1476,123 +1476,10 @@ fn drawStrip(app: *App, ui: Ui, layout: *app_mod.Layout, lid: layout_mod.NodeId,
 
 // ── welcome ──
 
-/// The rows of the welcome pane's shortcut list, in order, and the
-/// command each runs. A row whose command has no chord under the
-/// active profile is left out (vim binds neither `picker.recent` nor
-/// `file.new`).
-pub const welcome_shortcuts = [_]struct { label: []const u8, command: command.CommandId }{
-    .{ .label = "find file", .command = .@"picker.files" },
-    .{ .label = "recent files", .command = .@"picker.recent" },
-    .{ .label = "which-key menu", .command = .@"whichkey.leader" },
-    .{ .label = "new file", .command = .@"file.new" },
-    .{ .label = "toggle tree", .command = .@"view.toggle_tree" },
-    .{ .label = "quit", .command = .@"app.quit" },
-};
-
-pub const WelcomeShortcut = struct { chord: []const u8, label: []const u8, command: command.CommandId };
-
-/// The shortcut rows the pane shows under the active profile, on `arena`.
-pub fn welcomeShortcuts(app: *App, arena: Allocator) Allocator.Error![]const WelcomeShortcut {
-    var out: std.ArrayListUnmanaged(WelcomeShortcut) = .empty;
-    for (welcome_shortcuts) |row| {
-        const chord = try welcomeChord(app, arena, command.spec(row.command).keys) orelse continue;
-        try out.append(arena, .{ .chord = chord, .label = row.label, .command = row.command });
-    }
-    return out.items;
-}
-
-/// The chord the pane shows for `keys` under the active profile, in
-/// the pane's spelling. The shared bindings come before the profile's
-/// own (`ctrl+p` over standard's `ctrl+o`); a chord with a modifier
-/// comes before a bare key (standard's `ctrl+k` over the shared
-/// `space`), and a single chord before a sequence (`SPC` over
-/// `SPC w K`). Null when the profile binds nothing.
-pub fn welcomeChord(app: *App, arena: Allocator, keys: command.Keys) Allocator.Error!?[]const u8 {
-    const own = switch (App.profileOf(app.input_style)) {
-        .vim => keys.vim,
-        .standard => keys.standard,
-    };
-    const lists = [_][]const []const u8{ keys.both, own };
-    var best: ?[]const u8 = null;
-    var best_rank: u8 = 3;
-    for (lists) |list| for (list) |spec| {
-        var buf: [64]u8 = undefined;
-        const norm = keymap.normalizeSpec(spec, &buf) orelse spec;
-        const sequence = std.mem.indexOfScalar(u8, norm, ' ') != null;
-        const modified = std.mem.indexOfScalar(u8, norm, '+') != null;
-        const rank: u8 = if (sequence) 2 else if (modified) 0 else 1;
-        if (rank < best_rank) {
-            best_rank = rank;
-            best = try chordDisplay(arena, norm);
-        }
-    };
-    return best;
-}
-
-/// `ctrl+p` → `^P`, `space` → `SPC`, a sequence chord by chord.
-fn chordDisplay(arena: Allocator, spec: []const u8) Allocator.Error![]const u8 {
-    var out: std.ArrayListUnmanaged(u8) = .empty;
-    var it = std.mem.splitScalar(u8, spec, ' ');
-    var first = true;
-    while (it.next()) |chord| {
-        if (chord.len == 0) continue;
-        if (!first) try out.append(arena, ' ');
-        first = false;
-        if (chord.len == 6 and std.mem.startsWith(u8, chord, "ctrl+") and std.ascii.isAlphabetic(chord[5])) {
-            try out.append(arena, '^');
-            try out.append(arena, std.ascii.toUpper(chord[5]));
-        } else if (std.mem.eql(u8, chord, "space")) {
-            try out.appendSlice(arena, "SPC");
-        } else {
-            try out.appendSlice(arena, chord);
-        }
-    }
-    return out.items;
-}
-
-/// The recent files as the pane lists them: workspace-relative,
-/// newest first, on `arena`.
-pub fn welcomeRecent(app: *App, arena: Allocator) Allocator.Error![]const []const u8 {
-    const out = try arena.alloc([]const u8, app.recent.items.len);
-    for (out, 0..) |*o, i| o.* = app.relPath(app.recent.items[app.recent.items.len - 1 - i]);
-    return out;
-}
-
-/// The path the `idx`-th recent row (newest first) names, if it is still one.
-pub fn welcomeRecentPath(app: *App, idx: usize) ?[]const u8 {
-    if (idx >= app.recent.items.len) return null;
-    return app.recent.items[app.recent.items.len - 1 - idx];
-}
-
-/// Files with tracked changes — what Rust counts from its line diffs;
-/// an untracked file is not a changed one.
-fn welcomeChanged(app: *App) u32 {
-    const st = app.git.status orelse return 0;
-    return st.staged + st.unstaged + st.conflicted;
-}
-
+/// The welcome pane: the start surface, or its minimal form
+/// (`app/welcome.zig`).
 fn drawWelcome(app: *App, ui: Ui, area: Rect) void {
-    if (area.isEmpty()) return;
-    // The branch row wants the repo the workspace is in or under, and
-    // the git state discovers on first use — the welcome pane is that
-    // use. A workspace without one is left undiscovered so a `git init`
-    // after launch is still found by the GIT panel's own first look.
-    if (!app.git.discovered) {
-        _ = git_app.requireRepo(app) catch null;
-        if (app.git.activeRepo() == null) app.git.discovered = false;
-    }
-    const arena = ui.arena;
-    const shortcuts = welcomeShortcuts(app, arena) catch &.{};
-    const rows: []welcome.Shortcut = arena.alloc(welcome.Shortcut, shortcuts.len) catch &.{};
-    for (rows, shortcuts[0..rows.len]) |*r, s| r.* = .{ .chord = s.chord, .label = s.label };
-    welcome.draw(ui, area, .{
-        .workspace = std.fs.path.basename(app.workspace),
-        .branch = app.git.branchLabel(),
-        .changed = welcomeChanged(app),
-        .recent = welcomeRecent(app, arena) catch &.{},
-        .shortcuts = rows,
-        .version = update.current,
-    });
+    welcome_app.draw(app, ui, area);
 }
 
 // ── end welcome ──
@@ -3504,91 +3391,6 @@ test "ui.click_echo: a left press underlines the word under it for 120 ms; off, 
     try t.expect(app.click_echo == null);
     try app.render();
     try t.expect(app.screen.readCell(x, y).?.style.ul_style != .double);
-}
-
-test "welcome: the shortcut rows follow the profile — standard's six, vim's five" {
-    var arena = std.heap.ArenaAllocator.init(t.allocator);
-    defer arena.deinit();
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
-    defer app.deinit();
-    const std_rows = try welcomeShortcuts(&app, arena.allocator());
-    try t.expectEqual(@as(usize, 6), std_rows.len);
-    const std_chords = [_][]const u8{ "^P", "^R", "^K", "^N", "^B", "^Q" };
-    for (std_rows, std_chords) |row, chord| try t.expectEqualStrings(chord, row.chord);
-    try t.expectEqual(command.CommandId.@"view.toggle_tree", std_rows[4].command);
-
-    var cfg: app_mod.Config = .{};
-    cfg.editor.input_style = .vim;
-    var vim = try App.initWith(t.allocator, t.io, .{ .cfg = cfg, .workspace = "/tmp", .cols = 120, .rows = 40 });
-    defer vim.deinit();
-    const vim_rows = try welcomeShortcuts(&vim, arena.allocator());
-    // NvChad's `<leader>fo` (oldfiles) gives vim a recent-files row too.
-    try t.expectEqual(@as(usize, 5), vim_rows.len);
-    const vim_chords = [_][]const u8{ "^P", "SPC f o", "SPC", "^N", "^Q" };
-    const vim_labels = [_][]const u8{ "find file", "recent files", "which-key menu", "toggle tree", "quit" };
-    for (vim_rows, vim_chords, vim_labels) |row, chord, label| {
-        try t.expectEqualStrings(chord, row.chord);
-        try t.expectEqualStrings(label, row.label);
-    }
-    // The frame paints vim's column.
-    const txt = try screenText(&vim);
-    defer t.allocator.free(txt);
-    try t.expect(std.mem.indexOf(u8, txt, "SPC     which-key menu") != null);
-    try t.expect(std.mem.indexOf(u8, txt, "SPC f o     recent files") != null);
-}
-
-test "welcome: a recent file is a row that opens on a press; a shortcut row runs its command" {
-    const dispatch = @import("dispatch.zig");
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
-    const n = try tmp.dir.realPath(t.io, &pbuf);
-    const root = pbuf[0..n];
-    try tmp.dir.writeFile(t.io, .{ .sub_path = "r.txt", .data = "recent text\n" });
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 120, .rows = 40 });
-    defer app.deinit();
-    const r = try std.fs.path.join(t.allocator, &.{ root, "r.txt" });
-    defer t.allocator.free(r);
-    try app.noteRecent(r);
-    const before = try screenText(&app);
-    defer t.allocator.free(before);
-    try t.expect(std.mem.indexOf(u8, before, "Recent Files") != null);
-    try t.expect(std.mem.indexOf(u8, before, "  r.txt") != null);
-    // The rows are hits hugging their text; the pane is 89 wide from
-    // column 31 with the tree up, so `  r.txt` (7 cells) starts at 72.
-    var recent_hit: ?Rect = null;
-    var toggle_hit: ?Rect = null;
-    for (app.hits.items.items) |h| switch (h.target) {
-        .welcome => |w| switch (w.kind) {
-            .recent => if (w.idx == 0) {
-                recent_hit = h.rect;
-            },
-            .shortcut => if (w.idx == 4) {
-                toggle_hit = h.rect;
-            },
-        },
-        else => {},
-    };
-    try t.expect(recent_hit.?.eql(Rect.init(72, 19, 7, 1)));
-    try t.expect(app.hits.at(74, 19).?.welcome.kind == .recent);
-    try t.expect(app.hits.at(71, 19) == null);
-    // A press on the toggle-tree row hides the tree.
-    try t.expect(app.tree.visible);
-    try dispatch.mouse(&app, .{ .x = toggle_hit.?.x + 3, .y = toggle_hit.?.y, .kind = .press, .button = .left }, 1);
-    try t.expect(!app.tree.visible);
-    // The pane spans the screen now; the recent row moved with it.
-    const wide = try screenText(&app);
-    defer t.allocator.free(wide);
-    try t.expect(app.hits.at(74, 19) == null);
-    try t.expect(app.hits.at(58, 19).?.welcome.kind == .recent);
-    // A press on it opens the file.
-    try dispatch.mouse(&app, .{ .x = 58, .y = 19, .kind = .press, .button = .left }, 1);
-    const e = app.activeEditor() orelse return error.TestUnexpectedResult;
-    try t.expect(std.mem.endsWith(u8, e.buf.doc.path.?, "r.txt"));
-    const after = try screenText(&app);
-    defer t.allocator.free(after);
-    try t.expect(std.mem.indexOf(u8, after, "recent text") != null);
-    try t.expect(std.mem.indexOf(u8, after, "Shortcuts") == null);
 }
 
 // ── the one cursor ──

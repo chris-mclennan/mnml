@@ -1,40 +1,40 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │ INTEGRATIONS            │ 󰐕                                                                            󱸀      
-  │ Inst (0) Mkt (0)         │
-   │  󰍉 / filter        A-Z ▾ │
+   │ INTEGRATIONS           │ 󰐕                                                                            󱸀  󲀀    
+  │ Inst (4) Mkt (3)         │
+   │  󰍉 / filter              │
  󰍉 │                          │
    │  FONTS · latest Nerd Fon…│
  󰊢 │    JetBrainsMono Nerd F…│
    │    MnmlSymbols  auto-ba…│
-  │    Symbols Nerd Font  v…│
+  │    Symbols Nerd Font  v…│                                _ __    _ _    _ __    _
+   │                          │                               | '  \  | ' \  | '  \  | |
+▌󰐱 │▌ 󰂨  [app] Bitbucket  0.2.│                               |_|_|_| |_||_| |_|_|_| |_|
+   │▌   Bitbucket: pull reque…│
+ 󰎒 │                          │                                     workspace · ws
+   │  󰌃  [app] Jira  0.2.0  ✓ │
+  │    Jira: work, boards an…│   RECENT WORKSPACES                           SESSIONS
+   │                          │    ws                                open
+  │    [app] Sample  0.1.0  │                                                + New Claude Code session here
+   │    The mnml-sdk sample: …│   RECENT FILES
+  │                          │    No recent files yet                         No session to resume
    │                          │
-▌󰐱 │  No sources yet — the of…│
-   │  marketplace.sources in …│                                                            _
- 󰎒 │                          │                            _ __ ___    _ __    _ __ ___   | |
-   │                          │                           | '_ ` _ \  | '_ \  | '_ ` _ \  | |
-  │                          │                           | | | | | | | | | | | | | | | | | |
-   │                          │                           |_| |_| |_| |_| |_| |_| |_| |_| |_|
-  │                          │
-   │                          │                                     workspace · ws
-  │                          │
-   │                          │                                        Shortcuts
- 󱘣 │                          │                                     ──────────────
-   │                          │                                     ^P     find file
- 󰢱 │                          │                                    ^R     recent files
-   │                          │                                   ^K     which-key menu
-   │                          │                                      ^N     new file
-   │                          │                                    ^B     toggle tree
-   │                          │                                        ^Q     quit
-   │                          │
-   │                          │                                 mnml 0.3.0-dev+gcffb814
-   │                          │
+ 󱘣 │                          │                                               SHORTCUTS
+   │                          │                                                Ctrl+P        find a file
+ 󰢱 │                          │                                                Ctrl+R        recent files
+   │                          │                                                Ctrl+Shift+E  the file tree
+   │                          │                                                Ctrl+B        toggle the tree
+   │                          │                                                Ctrl+Shift+P  command palette
+   │                          │                                                Ctrl+K        which-key menu
+   │                          │                                                Ctrl+,        settings
+   │                          │                                                Ctrl+N        new file
+   │                          │                                                Ctrl+Q        quit
    │──────────────────────────│
-   │ Integrations           ⋮ │
+   │ Integrations           ⋮ │                                mnml 0.3.0-dev+gf3dacda1
    │                          │
    │ Installed integrations.  │
    │ Enter fires the command. │
    │ Right-click for          │
   │ Configure / Uninstall.   │
    │                          │
- TREE  [no file]                                                              F 57% ▲1.0  󱼀 󰐎    02:06  ws   —
-
+ TREE  [no file]                                                           F 57% ▼1.6  󱼀 󰐎   1  23:54  ws   —
+                                                           ⋯

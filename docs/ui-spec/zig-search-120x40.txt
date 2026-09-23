@@ -1,40 +1,40 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │ SEARCH       Aa \b .*   │ 󰐕                                                                            󱸀      
+   │ SEARCH       Aa \b .*   │ 󰐕                                                                            󱸀  󲀀    
   │  󰍉 t                     │
    │                          │
 ▌󰍉 │ 2 hits (git grep)        │
    │                          │
  󰊢 │ a.txt                    │
    │▌  2:1  two               │
-  │   3:1  three             │
+  │   3:1  three             │                                _ __    _ _    _ __    _
+   │                          │                               | '  \  | ' \  | '  \  | |
+ 󰐱 │                          │                               |_|_|_| |_||_| |_|_|_| |_|
    │                          │
- 󰐱 │                          │                                                            _
-   │                          │                            _ __ ___    _ __    _ __ ___   | |
- 󰎒 │                          │                           | '_ ` _ \  | '_ \  | '_ ` _ \  | |
-   │                          │                           | | | | | | | | | | | | | | | | | |
-  │                          │                           |_| |_| |_| |_| |_| |_| |_| |_| |_|
+ 󰎒 │                          │                                workspace · ws  on main
    │                          │
-  │                          │                                     workspace · ws
-   │                          │                                         on main
-  │                          │
-   │                          │                                        Shortcuts
- 󱘣 │                          │                                     ──────────────
-   │                          │                                     ^P     find file
- 󰢱 │                          │                                    ^R     recent files
-   │                          │                                   ^K     which-key menu
-   │                          │                                      ^N     new file
-   │                          │                                    ^B     toggle tree
-   │                          │                                        ^Q     quit
+  │                          │   RECENT WORKSPACES                           SESSIONS
+   │                          │    ws                                open
+  │                          │                                                + New Claude Code session here
+   │                          │   RECENT FILES
+  │                          │    No recent files yet                         No session to resume
    │                          │
-   │                          │                              mnml 0.3.0-dev+g8e0cd61-dirty
-   │                          │
+ 󱘣 │                          │                                               SHORTCUTS
+   │                          │                                                Ctrl+P        find a file
+ 󰢱 │                          │                                                Ctrl+R        recent files
+   │                          │                                                Ctrl+Shift+E  the file tree
+   │                          │                                                Ctrl+B        toggle the tree
+   │                          │                                                Ctrl+Shift+P  command palette
+   │                          │                                                Ctrl+K        which-key menu
+   │                          │                                                Ctrl+,        settings
+   │                          │                                                Ctrl+N        new file
+   │                          │                                                Ctrl+Q        quit
    │──────────────────────────│
-   │ Search                 ⋮ │
+   │ Search                 ⋮ │                                mnml 0.3.0-dev+gf3dacda1
    │                          │
    │ Workspace search. `/`    │
    │ filters. Enter jumps to  │
    │ the match.               │
   │                          │
    │                          │
- TREE   main  ⇡1  [no file]                                                 F 59% ▼0.4  󱼀 󰐎    17:18  ws   —
-
+ TREE   main  ⇡1  [no file]                                                 F 57% ▼1.6  󱼀 󰐎    23:55  ws   —
+                                                           ⋯

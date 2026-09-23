@@ -1,0 +1,57 @@
+# width: 120
+# env: HOME=home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# The start surface (src/app/welcome.zig, src/ui/welcome.zig): with no
+# pane open the editor area lists RECENT WORKSPACES, RECENT FILES,
+# SESSIONS and SHORTCUTS. Two files opened and closed are the recent
+# rows, newest first; a Claude transcript of this workspace that no
+# process holds is a session row; a fake `claude` on PATH answers the
+# resume. view.focus_pane hands the surface the keys: j walks a list,
+# Tab steps to the next, Enter acts; a click acts as well.
+write a.txt "alpha text\n"
+write b.txt "beta text\n"
+write bin/claude #!/bin/bash\nprintf 'fake claude %s\\n' "$*"\nexec sleep 30
+shell chmod +x bin/claude
+shell ENC=$(printf '%s' "$MNML_E2E_WORKSPACE" | sed 's/[\/.]/-/g') && mkdir -p "home/.claude/projects/$ENC" && printf '{"type":"user","cwd":"%s","gitBranch":"main","message":{"role":"user","content":"resume the refactor"}}\n' "$MNML_E2E_WORKSPACE" > "home/.claude/projects/$ENC/e2e00000-0000-4000-8000-000000000021.jsonl" && touch -t "$(date -v-1H +%Y%m%d%H%M 2>/dev/null || date -d '1 hour ago' +%Y%m%d%H%M)" "home/.claude/projects/$ENC/e2e00000-0000-4000-8000-000000000021.jsonl"
+open a.txt
+command buffer.close
+open b.txt
+command buffer.close
+command sessions.refresh
+wait 1500
+expect screen contains "RECENT WORKSPACES"
+expect screen contains "RECENT FILES"
+expect screen contains "SHORTCUTS"
+expect screen contains "+ New Claude Code session here"
+expect screen contains "resume the refactor"
+expect screen contains "Ctrl+P        find a file"
+# The pointer: a hover on a row shows its info-view entry; a click acts
+# and hands the surface the keys. `  a.txt` is row 19 from column 36,
+# the transcript row 18 and `Ctrl+B  toggle the tree` row 24, both from
+# column 78 (the right column).
+hover 38 19
+expect screen contains "Recent file"
+hover 84 18
+expect screen contains "Session to resume"
+click 84 24
+expect screen lacks "Add workspace"
+expect screen contains " START "
+# The keys: the click left the cursor in SHORTCUTS; Shift+Tab twice is
+# RECENT FILES, where b.txt heads the list, j is a.txt, Enter opens it.
+command view.focus_pane
+expect screen contains " START "
+key shift+tab
+key shift+tab
+key j
+key enter
+expect screen contains "1 alpha text"
+expect screen lacks "RECENT FILES"
+command buffer.close
+expect screen contains "RECENT FILES"
+# Tab steps to SESSIONS, the transcript its first row; Enter resumes it
+# in a terminal pane.
+command view.focus_pane
+key tab
+key enter
+wait 800
+expect screen contains "fake claude --resume e2e00000-0000-4000-8000-000000000021"

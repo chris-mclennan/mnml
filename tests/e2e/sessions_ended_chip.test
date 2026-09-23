@@ -5,7 +5,10 @@
 # lists them all and lights the chip; the toggle rides in session.zon;
 # sessions.clear_ended forgets them. (The transcripts name the
 # workspace as the app sees it — $MNML_E2E_WORKSPACE — so they are this
-# workspace's without w.)
+# workspace's without w.) The start surface behind the section lists
+# every session there is to resume, hidden or not, as `old one` with
+# `claude · 2d` beside it; the section's own rows read `<name>  (<id>)`,
+# which is what the hidden / shown checks look for.
 
 shell ENC=$(printf '%s' "$MNML_E2E_WORKSPACE" | sed 's/[\/.]/-/g') && mkdir -p "home/.claude/projects/$ENC" && printf '{"type":"user","cwd":"%s","message":{"role":"user","content":"old one"}}\n{"type":"assistant","cwd":"%s","message":{"role":"assistant","content":[{"type":"text","text":"Drafted them."}]}}\n' "$MNML_E2E_WORKSPACE" "$MNML_E2E_WORKSPACE" > "home/.claude/projects/$ENC/e2e00007-0000-4000-8000-000000007001.jsonl" && touch -t "$(date -v-2d +%Y%m%d%H%M 2>/dev/null || date -d '2 days ago' +%Y%m%d%H%M)" "home/.claude/projects/$ENC/e2e00007-0000-4000-8000-000000007001.jsonl"
 shell ENC=$(printf '%s' "$MNML_E2E_WORKSPACE" | sed 's/[\/.]/-/g') && printf '{"type":"user","cwd":"%s","message":{"role":"user","content":"just ended"}}\n' "$MNML_E2E_WORKSPACE" > "home/.claude/projects/$ENC/e2e00007-0000-4000-8000-000000007002.jsonl"
@@ -14,7 +17,7 @@ wait 1500
 expect screen contains "No sessions yet."
 expect screen contains "ENDED"
 expect screen contains "just ended  (e2e00007)"
-expect screen lacks "old one"
+expect screen lacks "old one  (e2e00007)"
 expect screen contains "󰋚 1"
 key E
 expect screen contains "sessions: ended shown"
@@ -24,7 +27,7 @@ command session.save
 expect file .mnml/session.zon contains "sessions_show_ended = true"
 key E
 expect screen contains "sessions: ended hidden"
-expect screen lacks "old one"
+expect screen lacks "old one  (e2e00007)"
 command sessions.clear_ended
 expect screen contains "sessions: cleared 2 ended"
 expect screen lacks "just ended"

@@ -6,6 +6,7 @@
 //! overlay is `settings.zig` + `ui/settings.zig`.
 
 const std = @import("std");
+const welcome_app = @import("welcome.zig");
 const builtin = @import("builtin");
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
@@ -426,6 +427,16 @@ fn focusDir(app: *App, dir: Dir) CommandError!void {
         return;
     }
     if (dir == .down and bottom_dock.open(app) and app.focus != .pane) return enterDock(app);
+    // // changed (welcome): with the layout empty the start surface is
+    // the one window: right from the tree enters it, left leaves it.
+    if (welcome_app.full(app)) {
+        if (app.focus == .tree and dir == .right) welcome_app.focus(app);
+        if (app.focus == .welcome and dir == .left and app.tree.visible) {
+            app.focus = .tree;
+            app.needs_render = true;
+        }
+        return;
+    }
     const cur = app.active orelse return error.NoActivePane;
     if (app.focus == .tree) {
         if (dir == .right) {
@@ -758,6 +769,8 @@ fn spreadToSplits(app: *App) CommandError!void {
 }
 
 fn focusPane(app: *App) CommandError!void {
+    // With no pane open the start surface is the window.
+    if (welcome_app.full(app)) return welcome_app.focus(app);
     const id = app.active orelse return error.NoActivePane;
     app.focus = .{ .pane = id };
     app.needs_render = true;

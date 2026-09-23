@@ -15,4 +15,8 @@ pub const FocusId = union(enum) {
     /// An overlay (prompt, picker, which-key, confirm) is up; the
     /// app routes keys to it before anything else.
     overlay,
+    /// // changed (welcome): the start surface — the editor area while
+    /// the layout is empty (`app/welcome.zig`). Its lists walk on
+    /// j / k, Tab steps between them, Enter acts.
+    welcome,
 };

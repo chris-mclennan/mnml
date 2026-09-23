@@ -211,7 +211,7 @@ pub const AppDriver = struct {
             // Rust's wire words: a left-column section is the sidebar.
             .focus = switch (app.focus) {
                 .tree => .tree,
-                .pane, .overlay => .pane,
+                .pane, .overlay, .welcome => .pane,
                 .panel => |pid| if (side.sideOf(app, side.sectionOfPanel(pid)) == .left) .tree else .right_panel,
             },
             .active_pane = if (app.active) |id| @as(usize, id) else null,

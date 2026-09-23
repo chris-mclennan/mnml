@@ -103,11 +103,11 @@ else
   SESSION_BAK=$(mktemp -d)
 fi
 
-run_one() { # name bin data ipcdir
-  local name=$1 bin=$2 data=$3 ipc="$WS/.mnml/$4"
+run_one() { # name bin data ipcdir [sessions-home]
+  local name=$1 bin=$2 data=$3 ipc="$WS/.mnml/$4" shome=${5:-}
   rm -rf "$ipc"
   save_session
-  MNML_DATA_ROOT=$data MNML_COLS=$COLS MNML_ROWS=$ROWS "$bin" --headless --input standard "$WS" >"$OUT/$name.log" 2>&1 &
+  MNML_SESSIONS_HOME=$shome MNML_DATA_ROOT=$data MNML_COLS=$COLS MNML_ROWS=$ROWS "$bin" --headless --input standard "$WS" >"$OUT/$name.log" 2>&1 &
   local pid=$!
   for _ in $(seq 1 80); do grep -q '"start"' "$ipc/events.jsonl" 2>/dev/null && break; sleep 0.1; done
   sleep 0.8
@@ -119,7 +119,13 @@ run_one() { # name bin data ipcdir
   restore_session
 }
 run_one rust "$RUST" "$RS" ipc
-run_one zig  "$ZIG"  "$ZG" ipc-zig
+# The Zig side reads its sessions under an empty home: its start
+# surface lists the workspace's Claude / Codex sessions from `~/.claude`
+# / `~/.codex`, and the fixture's workspace is named like others on this
+# machine — the developer's own transcripts must never reach a dump.
+ZIG_SESSIONS_HOME=$(mktemp -d)
+run_one zig  "$ZIG"  "$ZG" ipc-zig "$ZIG_SESSIONS_HOME"
+rm -rf "$ZIG_SESSIONS_HOME"
 echo "== rust: $OUT/rust.txt   zig: $OUT/zig.txt"
 diff --label rust --label zig "$OUT/rust.txt" "$OUT/zig.txt" >"$OUT/screen.diff"
 n=$(grep -c '^[<>]' "$OUT/screen.diff"); echo "== differing lines: $n  ($OUT/screen.diff)"

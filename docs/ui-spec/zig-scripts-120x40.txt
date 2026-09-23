@@ -1,40 +1,40 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │ SCRIPTS                │ 󰐕                                                                            󱸀      
+   │ SCRIPTS                │ 󰐕                                                                            󱸀  󲀀    
   │ Inst (1) Mkt (5)  (1)   │
    │  󰍉 / filter              │
  󰍉 │                          │
    │▌ + create init.lua       │
  󰊢 │▌   the workspace has no …│
    │                          │
-  │  init.lua  api 1  install│
-   │    0 command(s), 0 hook(…│
- 󰐱 │                          │
-   │                          │                                                            _
- 󰎒 │                          │                            _ __ ___    _ __    _ __ ___   | |
-   │                          │                           | '_ ` _ \  | '_ \  | '_ ` _ \  | |
-  │                          │                           | | | | | | | | | | | | | | | | | |
-   │                          │                           |_| |_| |_| |_| |_| |_| |_| |_| |_|
-  │                          │
-   │                          │                                     workspace · ws
-  │                          │
-   │                          │                                        Shortcuts
- 󱘣 │                          │                                     ──────────────
-   │                          │                                     ^P     find file
-▌󰢱 │                          │                                    ^R     recent files
-   │                          │                                   ^K     which-key menu
-   │                          │                                      ^N     new file
-   │                          │                                    ^B     toggle tree
-   │                          │                                        ^Q     quit
+  │  init.lua  api 1  install│                                _ __    _ _    _ __    _
+   │    0 command(s), 0 hook(…│                               | '  \  | ' \  | '  \  | |
+ 󰐱 │                          │                               |_|_|_| |_||_| |_|_|_| |_|
    │                          │
-   │                          │                                 mnml 0.3.0-dev+gcd87ce6
+ 󰎒 │                          │                                     workspace · ws
    │                          │
+  │                          │   RECENT WORKSPACES                           SESSIONS
+   │                          │    ws                                open
+  │                          │                                                + New Claude Code session here
+   │                          │   RECENT FILES
+  │                          │    No recent files yet                         No session to resume
+   │                          │
+ 󱘣 │                          │                                               SHORTCUTS
+   │                          │                                                Ctrl+P        find a file
+▌󰢱 │                          │                                                Ctrl+R        recent files
+   │                          │                                                Ctrl+Shift+E  the file tree
+   │                          │                                                Ctrl+B        toggle the tree
+   │                          │                                                Ctrl+Shift+P  command palette
+   │                          │                                                Ctrl+K        which-key menu
+   │                          │                                                Ctrl+,        settings
+   │                          │                                                Ctrl+N        new file
+   │                          │                                                Ctrl+Q        quit
    │──────────────────────────│
-   │ Scripts                ⋮ │
+   │ Scripts                ⋮ │                                mnml 0.3.0-dev+gf3dacda1
    │                          │
    │ Arrows walk rows. Enter  │
    │ jumps to the source. F6  │
    │ cycles focus.            │
   │                          │
    │                          │
- TREE  [no file]                                                              F 59% ▼0.4  󱼀 󰐎    19:40  ws   —
-
+ TREE  [no file]                                                              F 57% ▼1.6  󱼀 󰐎    23:55  ws   —
+                                                           ⋯
