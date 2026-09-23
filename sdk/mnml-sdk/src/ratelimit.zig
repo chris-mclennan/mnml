@@ -861,6 +861,40 @@ fn nonEmpty(v: ?[]const u8) ?[]const u8 {
     return if (s.len == 0) null else s;
 }
 
+// ─── a 429, answered the same way by every integration ─────────────────
+
+/// `Retry-After` as whole seconds. A date form (RFC 9110 allows one)
+/// is not parsed — the caller's default stands.
+pub fn parseRetryAfter(value: []const u8) ?u32 {
+    const trimmed = std.mem.trim(u8, value, " \t\r\n");
+    if (trimmed.len == 0) return null;
+    return std.fmt.parseInt(u32, trimmed, 10) catch null;
+}
+
+/// What a request does with a 429: park the shared bucket for as long
+/// as the server asked (`Limiter.penalize`), wait that long, and ask
+/// again — up to `max_attempts` in all. A wait longer than
+/// `max_backoff_secs` is not slept through in the request: the bucket
+/// stays parked for the whole of it and the failure goes back to the
+/// caller, whose header says so. Both first-party integrations send
+/// through this, so one site's `Retry-After: 2` is two seconds in the
+/// Jira pane and the Bitbucket pane alike.
+pub const Retry = struct {
+    max_attempts: u32 = 3,
+    /// A 429 with no `Retry-After`.
+    default_backoff_secs: u32 = 15,
+    max_backoff_secs: u32 = 30,
+
+    /// The seconds to wait before attempt `attempt + 1` (attempts count
+    /// from 1), or null when the request should give up now.
+    pub fn next(r: Retry, attempt: u32, retry_after: ?u32) ?u32 {
+        if (attempt >= @max(r.max_attempts, 1)) return null;
+        const want = retry_after orelse r.default_backoff_secs;
+        if (want > r.max_backoff_secs) return null;
+        return want;
+    }
+};
+
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const t = std.testing;
@@ -1367,4 +1401,14 @@ test "a brokered acquire is one token off the same bucket, marked broker, with i
     try t.expectEqual(@as(usize, 1), std.mem.count(u8, lines, "\n"));
     try t.expect(std.mem.indexOf(u8, lines, "\"program\":\"mnml-bitbucket\"") != null);
     try t.expect(std.mem.indexOf(u8, lines, "\"reason\":\"pane_open\"") != null);
+}
+
+test "a 429 is retried after what the server asked, a bounded number of times, never through a long park" {
+    const r: Retry = .{ .max_attempts = 3, .default_backoff_secs = 15, .max_backoff_secs = 30 };
+    try t.expectEqual(@as(?u32, 2), r.next(1, 2));
+    try t.expectEqual(@as(?u32, 15), r.next(2, null));
+    try t.expectEqual(@as(?u32, null), r.next(3, 2));
+    try t.expectEqual(@as(?u32, null), r.next(1, 45));
+    try t.expectEqual(@as(?u32, 2), parseRetryAfter(" 2 "));
+    try t.expectEqual(@as(?u32, null), parseRetryAfter("Wed, 21 Oct 2026 07:28:00 GMT"));
 }

@@ -14,9 +14,10 @@
 //! * **The shared bucket is in front of every request** (`ratelimit.zig`),
 //!   and a 429 is answered the reference's way: the bucket is penalised
 //!   so every process on the machine backs off, the request retried up
-//!   to `max_attempts` times honouring `Retry-After` (clamped by
-//!   `max_backoff_secs`), and nothing else is retried — a 401 will not
-//!   become a 200 by asking twice.
+//!   to `max_attempts` times honouring `Retry-After` (`sdk.ratelimit.Retry`:
+//!   a park longer than `max_backoff_secs` is not slept through — the
+//!   failure goes back to the pane), and nothing else is retried — a
+//!   401 will not become a 200 by asking twice.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -317,9 +318,13 @@ pub const Client = struct {
                 .failed => |f| {
                     self.note(gpa, method, url, f.status, 0, ms, gate, attempt - 1, .none, head.rate_limit, null);
                     if (!f.isRateLimited()) return reply;
-                    const wait = @min(f.retry_after_secs orelse self.rate.default_backoff_secs, self.rate.max_backoff_secs);
-                    if (self.limiter) |l| l.penalize(@floatFromInt(wait));
-                    if (attempt >= @max(self.rate.max_attempts, 1)) return reply;
+                    // The SDK's one answer to a 429, the Jira pane's too:
+                    // park the bucket for what the server asked, wait
+                    // that long, ask again — never sleep through a park
+                    // longer than `max_backoff_secs`.
+                    const policy: sdk.ratelimit.Retry = .{ .max_attempts = self.rate.max_attempts, .default_backoff_secs = self.rate.default_backoff_secs, .max_backoff_secs = self.rate.max_backoff_secs };
+                    if (self.limiter) |l| l.penalize(@floatFromInt(f.retry_after_secs orelse self.rate.default_backoff_secs));
+                    const wait = policy.next(attempt, f.retry_after_secs) orelse return reply;
                     reply.deinit(gpa);
                     self.io.sleep(.fromMilliseconds(@as(i64, wait) * 1000), .awake) catch {};
                 },
@@ -417,7 +422,7 @@ pub const Client = struct {
         var hit = response.head.iterateHeaders();
         while (hit.next()) |h| {
             if (std.ascii.eqlIgnoreCase(h.name, "retry-after")) {
-                retry_after = std.fmt.parseInt(u32, std.mem.trim(u8, h.value, " \t"), 10) catch null;
+                retry_after = sdk.ratelimit.parseRetryAfter(h.value);
             }
             // The tag, duped: `h.value` points into the header buffer,
             // which does not outlive this request.

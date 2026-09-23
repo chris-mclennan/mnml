@@ -426,7 +426,7 @@ Python scripts on this machine already take turns on —
 `~/.tattle-claude-artifacts/bitbucket-ratelimit.json` (or
 `$TATTLE_ARTIFACTS_ROOT`, `$BITBUCKET_RATELIMIT_STATE`, `<MNML_DATA_ROOT>/ratelimit/`),
 0.22 requests/s, a burst of 40. A 429 is retried up to three times
-honouring `Retry-After` (clamped to 30 s) and parks every process on
+honouring `Retry-After` (a park longer than 30 s is not slept through; the SDK's `ratelimit.Retry`, the Jira pane's too) and parks every process on
 the bucket; nothing else is retried. A repo that fails keeps its row,
 labelled `429 · retry in 30s` / `auth failed` / `no such repo`.
 

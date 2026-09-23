@@ -865,6 +865,16 @@ authority outright.
 
 mnml's own REQUESTS pane (`integrations.requests`) reads these files.
 
+### A 429 — `ratelimit.Retry`
+
+Read `Retry-After` with `ratelimit.parseRetryAfter`, park the shared
+bucket with `Limiter.penalize(retry_after)` (the service's default
+cooldown when the server sent none), and ask `Retry.next(attempt,
+retry_after)` how long to wait before the next try — null means give
+up now: out of attempts, or a park longer than `max_backoff_secs`,
+which is not slept through inside a request. Both first-party
+integrations answer a 429 through it.
+
 ## The warmer — pacing, one warmer per service, windows
 
 `mnml_sdk.warm` is the part `ratelimit` and `store` do not own: **when**

@@ -91,7 +91,7 @@ example.
 | — | `.token_file = "~/…"` | port only: a file holding the token |
 | — | `.token_env = "JIRA_API_TOKEN"` | port only: the variable (this is the default) |
 | — | `.api = .v3` | port only: `.v2` for a site that answers `410` |
-| — | `.rate = .{ .per_sec = 0.33, .burst = 60, .cooldown_secs = 45, .max_block_secs = 120 }` | port only: the shared bucket's numbers (the reference's). The bucket is one file — `<root>/jira-ratelimit.json` — so every pane, the statusline poller and the Rust tracker take turns on one allowance and one 429 parks them all |
+| — | `.rate = .{ .per_sec = 0.33, .burst = 60, .cooldown_secs = 45, .max_block_secs = 120 }` | port only: the shared bucket's numbers (the reference's). The bucket is one file — `<root>/jira-ratelimit.json` — so every pane, the statusline poller and the Rust tracker take turns on one allowance and one 429 parks them all — for the `Retry-After` the site sent (then the request asks again, up to three tries, the SDK's `ratelimit.Retry` the Bitbucket pane uses too), or `cooldown_secs` when it sent none |
 | — | `.bitbucket_api_url`, `.bitbucket_token_env` | port only: the forge for post-merge pipelines (`BITBUCKET_ACCESS_TOKEN`) |
 | — | `.open_command = "open"` | port only: the browser command |
 
