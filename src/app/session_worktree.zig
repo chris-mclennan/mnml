@@ -407,7 +407,10 @@ fn refuseLive(app: *App, arena: Allocator, e: Entry) CommandError!void {
 /// `git worktree remove` then `git branch -d`. An unmerged branch is
 /// refused unless `force.branch` (`-D`); a tree with uncommitted or
 /// untracked files is refused by git itself unless `force.tree`
-/// (`--force`), which fails cleanly and keeps the files. Refused
+/// (`--force`), which fails cleanly and keeps the files. A tree whose
+/// directory is already gone has its own entry dropped — never a
+/// repository-wide `git worktree prune`, which would take the user's
+/// own worktrees that are only away for a moment with it. Refused
 /// while a session runs in the tree. The registry row goes with the
 /// tree, and an emptied root directory too.
 pub fn remove(app: *App, arena: Allocator, e: Entry, force: RemoveForce) CommandError!void {
@@ -426,7 +429,10 @@ pub fn remove(app: *App, arena: Allocator, e: Entry, force: RemoveForce) Command
             return app.diag.fail(arena, "worktree remove {s}: {s}", .{ e.name, out.reason() });
         }
     } else {
-        _ = try run(app, arena, e.repo, &.{ "worktree", "prune" });
+        // The directory is gone: `worktree remove` on its path drops
+        // this tree's own admin entry and nothing else. A path git no
+        // longer knows is already what we want.
+        _ = try run(app, arena, e.repo, &.{ "worktree", "remove", e.path });
     }
     if (try branchExists(app, arena, e.repo, e.branch)) {
         const out = try run(app, arena, e.repo, &.{ "branch", if (force.branch) "-D" else "-d", e.branch });
@@ -1025,6 +1031,27 @@ test "remove: a dirty tree's confirm counts its files and offers Keep the files 
     try t.expect(app.overlay != .confirm);
     try t.expectError(error.Failed, remove(app, a, e2, .{ .branch = true, .tree = true }));
     try t.expect(exists(t.io, p2));
+}
+
+test "remove: a session tree whose directory is gone drops its own entry — the user's worktree that is only away for a moment survives" {
+    // sess-worktree-remove-prunes-user-worktrees.
+    var f = try RepoFixture.init();
+    defer f.deinit();
+    const app = &f.app;
+    const a = app.frame.allocator();
+    const mine = try std.fs.path.join(a, &.{ f.root, "mine" });
+    try f.sh(f.repo, &.{ "worktree", "add", "-q", "-b", "mine", mine });
+    const path = try create(app, a, f.repo, "session-1");
+    try app.sessions.worktrees.add(app.gpa, path, "session-1", "session-1", f.repo, null);
+    try Io.Dir.cwd().deleteTree(t.io, path);
+    const away = try std.fs.path.join(a, &.{ f.root, "mine-away" });
+    try Io.Dir.cwd().rename(mine, Io.Dir.cwd(), away, t.io);
+    try remove(app, a, app.sessions.worktrees.byPath(path).?.*, .{});
+    try t.expectEqualStrings("removed worktree session-1", app.lastToast().?);
+    const list = try run(app, a, f.repo, &.{ "worktree", "list", "--porcelain" });
+    try t.expect(std.mem.indexOf(u8, list.stdout, "branch refs/heads/mine") != null);
+    try t.expect(std.mem.indexOf(u8, list.stdout, "session-1") == null);
+    for (app.git.log.items.items) |le| try t.expect(std.mem.indexOf(u8, le.argv, "prune") == null);
 }
 
 test "a session that ends with its worktree still there toasts once with the commit count; a tree that is gone, or a live session, toasts nothing" {

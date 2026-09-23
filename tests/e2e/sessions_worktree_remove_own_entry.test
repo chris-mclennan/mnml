@@ -1,0 +1,31 @@
+# env: HOME=${MNML_E2E_WORKSPACE}/home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# Removing a session worktree whose directory is already gone drops
+# that tree's own entry and nothing else — never a repository-wide
+# `git worktree prune`, which would also drop the user's own `mine`
+# worktree whose directory is only away for a moment (moved, on an
+# unmounted volume), so `git worktree repair` could not re-attach it.
+shell git init -q -b main && git config user.email t@example.com && git config user.name t
+write .gitignore ".mnml/\nbin/\nhome/\n"
+write a.txt "one\n"
+shell git add -A && git commit -q -m first
+shell git worktree add -q ../$(basename "$PWD")-mine -b mine
+write bin/claude #!/bin/bash\nif [ "$1" = "--resume" ]; then exit 0; fi\nprintf '\\033]0;job\\007'\nprintf 'fake session up\\n'\nexit 0
+shell chmod +x bin/claude
+command ai.new_session_worktree
+key enter
+wait 2000
+# The session is over; its tree was deleted by hand; the user's own
+# tree is moved aside for a moment.
+shell rm -rf ../$(basename "$PWD")-worktrees/session-1
+shell mv ../$(basename "$PWD")-mine ../$(basename "$PWD")-mine-away
+shell git worktree list --porcelain | grep -q "mine"
+command view.activity_sessions
+wait 500
+command sessions.remove_worktree
+key enter
+wait 1000
+expect screen contains "removed worktree session-1"
+# The user's worktree record must survive a session tree's removal.
+shell git worktree list --porcelain | grep -q "branch refs/heads/mine"
+shell ! git worktree list --porcelain | grep -q "session-1"
