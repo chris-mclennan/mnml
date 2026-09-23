@@ -23,24 +23,31 @@ line), not by hand.
 | section | done | partial | cut | missing | rows |
 |---|---|---|---|---|---|
 | Editing & input | 54 | 0 | 0 | 0 | 54 |
-| Panes, splits & tab pages | 23 | 0 | 0 | 0 | 23 |
+| Panes, splits & tab pages | 27 | 0 | 0 | 0 | 27 |
 | File manager | 22 | 0 | 0 | 0 | 22 |
-| Navigation & search | 31 | 0 | 0 | 0 | 31 |
+| Navigation & search | 36 | 0 | 0 | 0 | 36 |
 | Language intelligence (LSP) | 33 | 0 | 0 | 0 | 33 |
-| Git | 47 | 0 | 2 | 0 | 49 |
+| Git | 49 | 0 | 2 | 0 | 51 |
 | TODOs, notes & findings | 22 | 0 | 0 | 0 | 22 |
 | AI | 35 | 0 | 1 | 0 | 36 |
 | Terminal & process panes | 15 | 0 | 0 | 0 | 15 |
+| AI | 40 | 0 | 1 | 0 | 41 |
+| Terminal & process panes | 18 | 0 | 0 | 0 | 18 |
 | Dock widgets | 13 | 0 | 0 | 0 | 13 |
-| HTTP request client | 48 | 0 | 1 | 0 | 49 |
+| HTTP request client | 49 | 0 | 1 | 0 | 50 |
 | Browser & CDP capture | 17 | 0 | 0 | 0 | 17 |
 | Debugging (DAP) | 25 | 0 | 0 | 0 | 25 |
-| Testing & quality | 17 | 0 | 0 | 0 | 17 |
-| UI & theming | 86 | 0 | 3 | 0 | 89 |
+| Testing & quality | 18 | 0 | 0 | 0 | 18 |
+| UI & theming | 96 | 0 | 1 | 0 | 97 |
 | Workspace trust | 11 | 0 | 0 | 0 | 11 |
-| Headless, IPC & extensibility | 56 | 0 | 2 | 0 | 58 |
+| Headless, IPC & extensibility | 59 | 0 | 2 | 0 | 61 |
 | Languages | 6 | 0 | 0 | 0 | 6 |
 | **total** | **553** | **0** | **9** | **0** | **562** |
+| **total** | **595** | **0** | **7** | **0** | **602** |
+
+The two integration sections at the bottom (jira: 44 done, 1 cut, of 45;
+bitbucket: 41 done, 1 cut, of 42) are counted apart: they measure the
+integrations against their Rust apps, not the editor against 0.2.21.
 
 The first ledger (at `de423c5`) printed 278 / 36 / 10 / 149 of 473; the
 same script over that file counts 279 / 36 / 10 / 149 of 474 — the old
@@ -58,7 +65,7 @@ platform polish that closed §5 of the design — `mnml.inspect`, the
 argument-error contract, the budget chip, `script.doctor`'s roots and
 the doc check that keeps `docs/LUA.md` and the registry in step.
 
-Ids: 1039 in `src/commands/specs.zig` (the four session-worktree ids — `ai.new_session_worktree`, `sessions.open_worktree_in_tree` / `merge_worktree` / `remove_worktree` — landed 2026-09-10); 1039 have runners (35 of them the deliberate `cutRunner` stubs, each naming the cut and the PARITY section that records it), none without — `view.toggle_zoom` landed with the fullscreen track (`zen.zig`) and `integrations.icon_picker` with the leftovers track. `zig build -Dpartial=false` builds, and CI runs it.
+Ids: 1120 in `src/commands/specs.zig` (the four session-worktree ids — `ai.new_session_worktree`, `sessions.open_worktree_in_tree` / `merge_worktree` / `remove_worktree` — landed 2026-09-10); 1120 have runners (32 of them the deliberate `cutRunner` stubs, each naming the cut and the PARITY section that records it), none without — `view.toggle_zoom` landed with the fullscreen track (`zen.zig`) and `integrations.icon_picker` with the leftovers track. `zig build -Dpartial=false` builds, and CI runs it.
 
 ## Landed since the first ledger
 
@@ -702,11 +709,10 @@ real adapters refuse (`arguments: []`, `initialized` before `launch`).
 | `tools/break-check.sh` | done | `tools/break-check.sh <test> <file> <sed-expr>` | proves a unit test can fail on a scratch copy; exit 2 when the break did not land (a `zig fmt` reflow), 3 when the broken copy does not compile, 4 when no test matched; Zig-only |
 | `tools/pty-mouse-check.py` | done | `tools/pty-mouse-check.py [BIN] [WORKSPACE]` | the real binary in a pty answering the probes like ghostty: cell coordinates asked for (mode 1006, never 1016), one click opens a file, a right-click opens the row menu, a wheel notch reaches the app; Zig-only |
 | .NET runners — `dotnet.build` / `run` / `test` / `restore` / `watch`, the `test.*` arm | done | `runDotnet` in `src/app/runners.zig`, `src/app/dotnet.zig` (`find`, `Project.buildRoot` / `runRoot`, `testAt`, `filterArg`); `tests/e2e/dotnet_runner_*.test`, `dotnet_test_at_cursor_filter.test` | the nearest `*.csproj` and `*.sln` at or above the file: the solution builds / tests / restores, the project runs / watches; `test.run_at_cursor` is `--filter "FullyQualifiedName~Class.Method"` from the grammar's outline (the line patterns without a tree), `run_file` the file's classes; the missing-manifest toast names the id like the others; `dotnet` in `known_tools`; beyond the Rust list |
-| `dotnet test` in the results pane | done | `Runner.dotnet`, `parseDotnet`, `parseTrx`, `locateSources`, `failedFilter` in `src/app/tests_pane.zig`; `tools/shims/dotnet`; `tests/e2e/dotnet_test_results_pane.test` | the console logger's lines are the rows, the TRX fills in durations and the class; a failure's file:line from its first frame, a passed row found in the project's `.cs`; the tool's own tally under the glyph tally; `R` re-runs the failures as `--filter FullyQualifiedName=…`; the worker resolves the tool on the App's PATH (`runners.pathOf`); beyond the Rust list |
-| Zig runner — the `test.*` arm on a `build.zig` project, `zig test` in the results pane | done | `Project.zig` / `detectProject` / `testNameIn` in `src/app/runners.zig`; `Runner.zig`, `parseZig`, `zigAll` / `zigFile` / `zigAtCursor` / `zigRerunFailed`, `buildExposesTestFilter`, `locateSources(.zig)` in `src/app/tests_pane.zig`; `tools/shims/zig`; `tests/e2e/zig_runner_test_at_cursor.test`, `zig_runner_file_filter.test` | `run_all` is `zig build test`, `run_file` `zig test <file>`, `run_at_cursor` `zig build test -Dtest-filter=<name>` when the build.zig declares the option (as this repo's does) else `zig test <file> --test-filter <name>`; both report shapes parse — the test runner's per-test lines, the build runner's failures with the passes from its tally; a failure's file:line is its own frame, a passed test is found by its `test "…"` line; `zig` in `known_tools`; beyond the Rust list |
 | `dotnet test` in the results pane | done | `Runner.dotnet`, `parseDotnet`, `parseTrx`, `locateSources`, `failedFilter` in `src/app/tests_pane.zig`; `tools/shims/dotnet`; `tests/e2e/dotnet_test_results_pane.test` | the console logger's lines are the rows, the TRX fills in durations and the class; a failure's file:line from its first frame, a passed row found in the project's `.cs`; the tool's own tally under the glyph tally; `R` re-runs the failures as `--filter FullyQualifiedName=…`; the worker resolves the tool on the App's PATH (`runners.pathOf`); beyond the Rust list. *2026-09-22 (csfix):* a Theory data row keeps its arguments from the display name (`withArguments`), so each row has its own history; a frame's real path is matched to the real workspace (`realRelative`); `file:line` sorts by file, line, title (`TestsPane.order`) |
 | vitest in the results pane | done | `Runner.vitest`, `parseVitest`, `vitestFailedArgs`, `vitestProject` in `src/app/tests_pane.zig`; `tests/e2e/vitest_tests_pane.test` | *2026-09-22 (tsfix):* an npm project whose package.json names vitest (a dependency, or the first word of its `test` script) runs `test.run_all` / `run_file` / `run_at_cursor` / `rerun_failed` as `npx vitest run --reporter=json --includeTaskLocation …` in the pane — the Jest-shaped report as rows under the file (describes as the suite, `location.line` or the failure's own frame for the line, the assertion without its stack beneath a failure, a file that failed with no tests as a global error), vitest's own `Tests  1 failed \| 3 passed (4)` tally, Enter to the `it(`, the flaky history; `R` / `test.rerun_failed` re-run the failures by full name (`-t '^(a\|b)$'`, metacharacters escaped) in their files, where the pty re-ran `npm test` whole. An npm project without vitest keeps the pty. Beyond the Rust list |
 | pytest in the results pane | done | `Runner.pytest`, `parseJunit`, `parsePytestConsole`, `pytestSummary`, `pytestFailedArgs` in `src/app/tests_pane.zig`, `runners.pytestRoot`; `tests/e2e/pytest_tests_pane.test` | *2026-09-22 (tsfix):* `pytest.run` / `pytest.failed` and the `test.*` ids on a Python project run `pytest -q -rA -o junit_family=xunit1 --junitxml=.mnml/pytest-junit.xml …` in the pane — the JUnit file's `<testcase>`s as rows (the parametrize id in the name, a class past the module as the suite, the `def` line 1-based or the failing frame's `file:N:` line, `time` to the ms, a `<failure>` / `<error>`'s message beneath, a collection error as a failed row), the `-rA` lines when no file landed, pytest's own `1 failed, 13 passed, 1 skipped in 0.04s` tally, Enter to the line that raised; the project's venv `bin` goes first on the worker's PATH; `R` / `pytest.failed` / `test.rerun_failed` re-run the failures by node id (`tests/x.py::Class::name[id]`), `--lf` only before a run. Beyond the Rust list |
+| Zig runner — the `test.*` arm on a `build.zig` project, `zig test` in the results pane | done | `Project.zig` / `detectProject` / `testNameIn` in `src/app/runners.zig`; `Runner.zig`, `parseZig`, `zigAll` / `zigFile` / `zigAtCursor` / `zigRerunFailed`, `buildExposesTestFilter`, `locateSources(.zig)` in `src/app/tests_pane.zig`; `tools/shims/zig`; `tests/e2e/zig_runner_test_at_cursor.test`, `zig_runner_file_filter.test` | `run_all` is `zig build test`, `run_file` `zig test <file>`, `run_at_cursor` `zig build test -Dtest-filter=<name>` when the build.zig declares the option (as this repo's does) else `zig test <file> --test-filter <name>`; both report shapes parse — the test runner's per-test lines, the build runner's failures with the passes from its tally; a failure's file:line is its own frame, a passed test is found by its `test "…"` line; `zig` in `known_tools`; beyond the Rust list |
 | `zig build gate-build -Dtarget=…` | done | `build.zig` | the exe and every test binary compiled for a foreign target without running — the Windows / Linux gate; Zig-only |
 
 ## UI & theming
@@ -753,7 +759,7 @@ real adapters refuse (`arguments: []`, `initialized` before `launch`).
 | `ascii_icons` blanks glyphs | done | `forItem(it, ascii)` in `menu_glyph.zig` | every group glyph has a one-character ASCII twin |
 | `menu.glyph_audit` | done | `menuAuditCmd` in `src/app/glyph_audit.zig` | the menu glyph table (group · codepoint · catalog name · ASCII twin · one-codepoint check) then the source audit, in a scratch pane; needs the workspace's `data/nerd-glyphnames.json` (the mnml-zig tree) |
 | Submenus | done | `MenuState.sub`, `openSubmenu` in `context_menus.zig`, `overlayKey` in `dispatch.zig` | → / l / Enter / click open, ← / h step back |
-| Curated five-section `+` menu | done | `plus_sections` / `openNewTabMenu` in `context_menus.zig` | New / Open / Panels / Tools / Integrations, pinned rows first |
+| Curated five-section `+` menu | done | `plus_tree` / `openNewTabMenu` / `curate` in `context_menus.zig` | New / Open / AI / Dock, then the enabled integrations as the fifth group (`integrationRows`); *Reopen last closed (N)* leads while there is something to reopen; pinned rows first |
 | Per-row kebab pin / hide / copy id | done | `openCuration` in `context_menus.zig`, `menu.pin_row` / `unpin_row` / `hide_row` / `copy_id` | ⋯ on the focused leaf row, or → on it |
 | `plus_menu_pinned` / `hidden` | done | `App.plus_pinned` / `plus_hidden`, `persistPlus` in `context_menus.zig` | written back to the home config |
 | `ui.external_browser` | done | `src/app/browser_open.zig` (`argv`), used by `git.openExternal` and `lsp_decor.openExternal` | `open -a <name>` / `start "" <name>` / `<name> <url>`; the trust layer strips the key from an untrusted workspace before it is read |
@@ -784,8 +790,8 @@ real adapters refuse (`arguments: []`, `initialized` before `launch`).
 | Typing makes a preview permanent | done | `edited` in `request_pane.zig` (request panes); `swapToEditor` in `md_preview.zig` (a markdown preview becomes the raw editor, which is never a preview) | the rule as Rust's: a request preview is promoted by an edit; typing on a markdown preview swaps the editor in; editor and image tabs carry no promotion — pinned by the `preview tabs:` test in `md_preview.zig` |
 | Image rendering (kitty / iTerm2) | done | `src/image/{root,kitty,iterm2,sixel,painter}.zig`, the attach in `tui/loop.zig` | kitty by probe, iTerm2 by `TERM_PROGRAM`, sixel for foot / mlterm; `MNML_IMAGE_PROTOCOL` overrides |
 | Now-playing transport chip | done | `src/app/now_playing.zig` (`ui.now_playing_source`, `ui.preferred_music_app`, `ui.now_playing_marquee`; `MNML_NOW_PLAYING` override); `tests/e2e/statusline_now_playing.test` | the poller runs only under the terminal loop; headless paints the idle pair as Rust does |
-| Source-aware dispatch (mixr / AppleScript) | cut | same | |
-| Idle `♪` chip, `preferred_music_app` | cut | same; config keys accepted and ignored | |
+| Source-aware dispatch (mixr / AppleScript) | done | `src/app/now_playing.zig` (the poller under `ui.now_playing_source`, the click arm) | `osascript` drives Music / Spotify; mixr's transport IPC is the cut half — a click on a mixr track toasts the reason |
+| Idle `♪` chip, `preferred_music_app` | done | `src/app/now_playing.zig` (`Source.ofPreferred`), `src/app/statusline.zig` | the idle form is the preferred player's brand mark and the play chip; the right-click player menu's radio rows write `ui.preferred_music_app` |
 | Mixr panel size chips | cut | same | |
 | Stress meter — statusline bar | done | `src/app/stress.zig`, `render.zig` | p95 of a 120-sample ring |
 | Stress meter — bufferline copy | done (by spec) | the statusline meter, its tooltip and its menu | *2026-09-09 (leftovers), verified against the dump:* `rust-120x40.txt` row 0 shows no meter, and `ui/bufferline.rs:894` says why — the top-right mirror was added and removed on 2026-07-12 ("the statusline meter is enough"), `palette_stress_chip = None`, "paint nothing". Not painted, by the spec |
@@ -853,7 +859,7 @@ real adapters refuse (`arguments: []`, `initialized` before `launch`).
 | Launcher-icon strip | done | `drawGapChips` in `render.zig` over `integrations.chips` | the enabled config icons and installed manifests' chips (`in_palette_bar`) in the bar's gap on Rust's stride |
 | Integration-icon rail | done (by spec) | the palette-bar chips (`in_palette_bar`, `src/app/integrations.zig` `barChips`) and the activity-bar pins (`ui.activity_bar_pinned_integrations`, `src/app/activity_bar.zig`, the launchers track) | *2026-09-09 (leftovers):* the Rust tree paints no integration icons — `ui/tree_view.rs` hard-codes `integration_height = 0u16` (the 2026-06-30 note: the INTEGRATIONS and GIT tree sections were zeroed when both got activity-bar panels), so `draw_integration_section` returns at its first line and `IntegrationIcon` has no `in_tree_rail` field to read. The icons Rust does place — the palette bar's chips and the rail's pinned launcher slots — are here, painted, clicked and menued |
 | `+` add-integration → Marketplace | done (by spec) | `integrations.show_marketplace` from the `+` menu's Integrations submenu and the integrations pane's `M` | the bar chip is not painted: Rust's row-0 `󰐕` is the new-tab button and row 1's is the empty strip's `+` menu (the UI section's row has the line numbers) |
-| Marketplace | done — *2026-09-20 (int-distribution):* the DEFAULT source is now the `mnml` catalogue, so the tab lists the shipped integrations out of the box with no config | `src/app/marketplace.zig`, `src/app/marketplace_catalogue.zig`, `data/marketplace.zon`, `Pane.marketplace`, `src/ui/marketplace_view.zig`, `marketplace.*` | `mnml` (the shipped catalogue), `github_launcher_folder`, `github_monorepo_apps` and `local_folder` sources; a `crates_keyword` source lists nothing. `MNML_MARKETPLACE_CATALOGUE` / `MNML_MARKETPLACE_LOCAL` / `MNML_MARKETPLACE_GITHUB` are the environment overrides; `tests/e2e/integrations_marketplace_mnml.test`, `integrations_marketplace_github.test` |
+| Marketplace | done — *2026-09-20 (int-distribution):* the DEFAULT source is now the `mnml` catalogue, so the tab lists the shipped integrations out of the box with no config | `src/app/marketplace.zig`, `src/app/marketplace_catalogue.zig`, `data/marketplace.zon`, the Marketplace tab of `Pane.integrations` (`src/ui/integrations_view.zig`), `marketplace.*` | `mnml` (the shipped catalogue), `github_launcher_folder`, `github_monorepo_apps` and `local_folder` sources; a `crates_keyword` source lists nothing. `MNML_MARKETPLACE_CATALOGUE` / `MNML_MARKETPLACE_LOCAL` / `MNML_MARKETPLACE_GITHUB` are the environment overrides; `tests/e2e/integrations_marketplace_mnml.test`, `integrations_marketplace_github.test` |
 | Integration distribution — install links the binary | done — *2026-09-20 (int-distribution)* | `src/app/marketplace_catalogue.zig` (`find` / `repoOf` / `linkTarget` / `olderThan`), `marketplace.linkBinary`, `integrations.catalogueState` / `updateAt` / `removeAccept`, `integrations.update` | Zig-authored — the Rust editor's marketplace had no shipped source. Installing a `mnml` row runs `<binary> --install` and links `<data root>/bin/<name>` at the binary — PREFIX's copy when one is installed, else this checkout's `zig-out/bin` — so a manifest keeps a bare `binary` name and a rebuild never moves the binary under a running stable copy (the layout `run.sh install` already relinks). A row shows `installed` / `update available` (by version) / `not installed`; `integrations.update` relinks; uninstall takes the manifest and, when no other manifest names the binary, the link |
 | `integrations.toggle_enabled`, `<leader>iE` | done | `toggleEnabled` in `integrations.zig` (a picker); the `i` group in `whichkey.zig` | `i d` details, `i h` / `i I` / `i r` the tool panes |
 | `integrations.edit` / `remove` / kebab | done | `editCmd` / `removeCmd` / `openRowMenu` in `integrations.zig` | |
