@@ -888,8 +888,8 @@ fn applyDerived(app: *App, comptime path: []const u8) Allocator.Error!void {
         if (style != app.input_style) try app.setInputStyle(style);
     } else if (comptime std.mem.eql(u8, path, "editor.clipboard")) {
         app.clipboard.selectMode(app.cfg.editor.clipboard);
-    } else if (comptime std.mem.eql(u8, path, "editor.auto_indent")) {
-        app.syncAutoIndent();
+    } else if (comptime std.mem.eql(u8, path, "editor.auto_indent") or std.mem.eql(u8, path, "editor.trim_trailing_ws_on_save") or std.mem.eql(u8, path, "editor.ensure_trailing_newline")) {
+        try app.syncBufferPrefs();
     } else if (comptime isTheme(path)) {
         try app.applyTheme();
     } else if (comptime std.mem.eql(u8, path, "ui.clock")) {

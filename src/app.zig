@@ -1567,6 +1567,7 @@ pub const App = struct {
         self.chord.clear(self.gpa);
         const style = styleOf(self.cfg.editor.input_style);
         if (style != self.input_style) try self.setInputStyle(style);
+        try self.syncBufferPrefs();
         self.tree.width = self.cfg.ui.tree_width;
         try self.seedPlusMenu();
         auto_refresh.seed(self);
@@ -2191,9 +2192,26 @@ pub const App = struct {
     /// a markdown file gets the editor AND a preview split beside it.
     /// `editor.auto_indent` changed (`:set ai`, the settings row): every
     /// open buffer follows.
-    pub fn syncAutoIndent(self: *App) void {
+    /// The per-buffer copies of `editor.auto_indent`,
+    /// `trim_trailing_ws_on_save` and `ensure_trailing_newline` follow
+    /// the config when it changes (`:set`, Settings, a reload), so the
+    /// file already open obeys the toast — a file's `.editorconfig`
+    /// still has the last word on the two save-time rules.
+    pub fn syncBufferPrefs(self: *App) Allocator.Error!void {
+        var arena_state = std.heap.ArenaAllocator.init(self.gpa);
+        defer arena_state.deinit();
         for (self.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-            .editor => |*e| e.buf.doc.auto_indent = self.cfg.editor.auto_indent,
+            .editor => |*e| {
+                const doc = e.buf.doc;
+                doc.auto_indent = self.cfg.editor.auto_indent;
+                doc.trim_trailing_ws_on_save = self.cfg.editor.trim_trailing_ws_on_save;
+                doc.ensure_trailing_newline = self.cfg.editor.ensure_trailing_newline;
+                const path = doc.path orelse continue;
+                _ = arena_state.reset(.retain_capacity);
+                const r = try editorconfig.resolveFor(self.io, arena_state.allocator(), path, self.workspace);
+                if (r.trim_trailing_whitespace) |v| doc.trim_trailing_ws_on_save = v;
+                if (r.insert_final_newline) |v| doc.ensure_trailing_newline = v;
+            },
             else => {},
         };
     }
