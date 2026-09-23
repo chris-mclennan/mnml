@@ -14,6 +14,17 @@ write seed.txt "seed\nmore\n"
 open seed.txt
 command editor.use_vim
 
+# The tree.
+key space
+key e
+expect screen contains "TREE"
+key space
+key f
+key f
+expect screen contains "Open file"
+key esc
+expect screen lacks "Open file"
+
 # The git status pane.
 command git.status_pane
 wait 800
