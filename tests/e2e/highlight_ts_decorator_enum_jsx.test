@@ -25,11 +25,12 @@ expect color 8 7 fg #e5c07b
 expect color 12 6 fg #c678dd
 expect color 18 6 fg #e5c07b
 # `enum` keyword and the enum's name `Shape` (line 12: `export enum Shape {`) —
-# the JS layer's `@constructor` for a capitalised identifier, cyan; the TS
-# layer's `@type` for the same node comes later and a coloured capture keeps
-# its node. Coloured, where it was the default fg.
+# the JS layer's `@constructor` claims the capitalised identifier first and
+# the TS layer's `@type` comes later; the engine's same-node rule lets the
+# later specific pattern win (what Neovim paints for a TS enum name), so
+# `Shape` is the type colour. Coloured, where it was the default fg.
 expect color 12 13 fg #c678dd
-expect color 17 13 fg #56b6c2
+expect color 17 13 fg #e5c07b
 # `require` (line 17: `const fs = require('fs');`, col 16).
 expect color 16 18 fg #61afef
 write Button.tsx export function Button() {\n  return <button className="a">hi</button>;\n}\n
