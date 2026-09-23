@@ -68,6 +68,7 @@ const child_os = @import("../core/child.zig");
 const integrations = @import("integrations.zig");
 const mount_pane = @import("mount_pane.zig");
 const broker_app = @import("broker.zig");
+const jobs = @import("jobs.zig");
 const manifest_mod = @import("../bridge/manifest.zig");
 const sdk_chrome = @import("mnml_sdk").pane.chrome;
 
@@ -136,6 +137,8 @@ pub const Job = struct {
     env: std.process.Environ.Map,
     interval_secs: u32,
     stagger_secs: u32,
+    /// The JOBS list's key for this source's runs (its build index).
+    job_key: u64 = 0,
     shared: Shared = .{},
 
     fn deinit(self: *Job, gpa: Allocator) void {
@@ -359,6 +362,7 @@ fn buildJob(
         .env = env,
         .interval_secs = clampInterval(src.poll_interval_secs, app.cfg.integrations.poll.min_interval_secs),
         .stagger_secs = staggerFor(index),
+        .job_key = index,
     };
     return job;
 }
@@ -390,12 +394,21 @@ fn worker(job: *Job, events: *event.EventQueue, io: Io) Io.Cancelable!void {
             _ = job.shared.run_now.swap(false, .acq_rel);
             job.shared.in_flight.store(true, .release);
             events.post(io, .timer);
+            // A run is a background job: the worker says so itself, the
+            // UI thread keeps the list (`jobs.post`).
+            var label_buf: [160]u8 = undefined;
+            const label = std.fmt.bufPrint(&label_buf, "{s} --values ({s})", .{ job.integration_id, job.source_id }) catch job.integration_id;
+            jobs.post(events, io, events.gpa, .integration, job.job_key, .running, label);
             const code = runOnce(job, io) catch |err| switch (err) {
                 error.Canceled => {
                     job.shared.in_flight.store(false, .release);
+                    jobs.post(events, io, events.gpa, .integration, job.job_key, .cancelled, null);
                     return error.Canceled;
                 },
             };
+            var words_buf: [48]u8 = undefined;
+            const words: []const u8 = if (code == 0) "published" else if (code < 0) "could not start it" else std.fmt.bufPrint(&words_buf, "exit {d} — backing off", .{code}) catch "failed";
+            jobs.post(events, io, events.gpa, .integration, job.job_key, if (code == 0) .ok else .failed, words);
             job.shared.in_flight.store(false, .release);
             job.shared.last_exit.store(code, .monotonic);
             job.shared.last_run_secs.store(Io.Timestamp.now(io, .real).toSeconds(), .monotonic);
