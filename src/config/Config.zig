@@ -194,7 +194,10 @@ pub const Clipboard = enum { auto, os, internal };
 // ─── ui ──────────────────────────────────────────────────────────────────
 
 pub const ListSort = enum { newest, oldest, name, name_desc };
-pub const SessionsSort = enum { auto, manual };
+/// SESSIONS' own axis: `auto` is State (action needed, thinking, idle,
+/// ended), `manual` the order `J` / `K` build, `waiting` the sessions
+/// that need you first and the manual order under them.
+pub const SessionsSort = enum { auto, manual, waiting };
 pub const PickerPosition = enum { center, top };
 pub const NowPlayingSource = enum { auto, mixr, macos };
 pub const MusicApp = enum { mixr, music, spotify };

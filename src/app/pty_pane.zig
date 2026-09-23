@@ -145,10 +145,6 @@ pub const PtyPane = struct {
     kind: Kind,
     exit: ?Exit = null,
     after_exit: ?AfterExit = null,
-    /// // changed (sessions-merge): the session in this pane needs input
-    /// (`sessions.zig` sets it on the edge); the tab shows a badge until
-    /// the pane is looked at.
-    attention: bool = false,
     /// The pane's child is blocked on a question — a permission prompt,
     /// a `(y/n)`, a numbered choice — as `sessions.evalNeedsYou` last
     /// read it (`sessions.trackNeedsYou` re-reads it at most every

@@ -1,8 +1,8 @@
 # env: HOME=home
 # env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
-# s flips SESSIONS' own axis — State / Manual — says so and persists it
-# (the sort chip's click does the same); J adopts the visible order as
-# the manual list and lands on Manual by itself.
+# s walks SESSIONS' own axis — State / Manual / Waiting — says so and
+# persists it (the sort chip's click does the same); J adopts the
+# visible order as the manual list and lands on Manual by itself.
 
 write bin/claude #!/bin/bash\nsid=""\nwhile [ $# -gt 0 ]; do case "$1" in --session-id|--resume) sid=$2; shift 2;; *) shift;; esac; done\nprintf '\\033]0;\\342\\234\\263 fix the failing tests\\007'\nprintf 'Claude Code v9 (fake)\\n'\nexec -a claude /bin/sh -c 'i=0; while [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done' --resume "$sid"
 shell chmod +x bin/claude
@@ -14,6 +14,9 @@ command view.activity_sessions
 wait 300
 key s
 expect screen contains "sessions: Manual"
+key s
+expect screen contains "sessions: Waiting"
+expect file .mnml/config.zon contains "waiting"
 key s
 expect screen contains "sessions: State"
 expect file .mnml/config.zon contains "auto"

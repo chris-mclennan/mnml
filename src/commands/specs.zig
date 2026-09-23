@@ -1,4 +1,4 @@
-//! Every command mnml-zig knows about — 795 Rust ids plus 137 Zig-only, titles, palette groups
+//! Every command mnml-zig knows about — 795 Rust ids plus 138 Zig-only, titles, palette groups
 //! and default chords per keymap profile (D4b). Data only: no function
 //! pointers. Runners live in each subsystem's `pub const table` and are
 //! merged into `command.runners` at comptime.
@@ -532,7 +532,7 @@ pub const specs = [_]Spec{
     .{ .id = "findings.copy_path", .title = "Findings: copy the selected finding's path", .group = "findings" },
     .{ .id = "findings.resolve", .title = "Findings: mark the selected finding resolved (status: resolved)", .group = "findings" },
     .{ .id = "findings.delete", .title = "Findings: delete the selected finding (confirm)", .group = "findings" },
-    .{ .id = "sessions.sort", .title = "Sessions: toggle the sort axis (State / Manual)", .group = "sessions" },
+    .{ .id = "sessions.sort", .title = "Sessions: cycle the sort axis (State / Manual / Waiting)", .group = "sessions" },
     .{ .id = "sessions.cycle_state", .title = "Sessions: cycle the state filter (every / waiting / live / tool / idle / failed / done)", .group = "sessions" },
     .{ .id = "sessions.open", .title = "Sessions: resume the selected session in a terminal", .group = "sessions" },
     .{ .id = "sessions.open_transcript", .title = "Sessions: open the selected session's transcript", .group = "sessions" },
@@ -557,6 +557,7 @@ pub const specs = [_]Spec{
     .{ .id = "findings.sort", .title = "Findings: cycle sort order", .group = "findings" },
     .{ .id = "sessions.sort_auto", .title = "Sessions: sort by state (approval → running → rest)", .group = "sessions" },
     .{ .id = "sessions.sort_manual", .title = "Sessions: sort by manual order", .group = "sessions" },
+    .{ .id = "sessions.sort_waiting", .title = "Sessions: sort the sessions that need you first (manual order under them)", .group = "sessions" },
     // // changed (sessions-merge): the table and the cloud rows.
     .{ .id = "sessions.table", .title = "Sessions: open every session on this machine as a table (grouped by workspace)", .group = "sessions" },
     .{ .id = "sessions.show_ended", .title = "Sessions table: show / hide ended sessions older than a day", .group = "sessions" },
@@ -1268,7 +1269,7 @@ pub const specs = [_]Spec{
     .{ .id = "view.keep_tab", .title = "Keep this tab (stop the next glance taking the preview over)", .group = "view", .keys = .{ .vim = &.{"space b k"}, .standard = &.{"ctrl+k enter"} } },
 };
 
-test "1129 specs, unique ids" {
+test "1130 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1305,14 +1306,16 @@ test "1129 specs, unique ids" {
     // + the three `view.rail_*` membership commands (railmove)
     // + the four `view.dock_item_move_*` reorder commands (dock-polish)
     // + `view.focus_prev_split`, the split walk backwards (splitcycle)
-    try std.testing.expectEqual(@as(usize, 1129), specs.len);
+    try std.testing.expectEqual(@as(usize, 1130), specs.len);
     // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
-    try std.testing.expectEqual(@as(usize, 1129), specs.len);
+    try std.testing.expectEqual(@as(usize, 1130), specs.len);
     // + `jobs.show`, the background-jobs list (jobschip)
-    try std.testing.expectEqual(@as(usize, 1129), specs.len);
+    try std.testing.expectEqual(@as(usize, 1130), specs.len);
     // + `editor.toggle_indent_guides` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1129), specs.len);
+    try std.testing.expectEqual(@as(usize, 1130), specs.len);
     // + `editor.toggle_indent_guides`, `git.toggle_line_blame` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1129), specs.len);
+    try std.testing.expectEqual(@as(usize, 1130), specs.len);
+    // + `sessions.sort_waiting`, the Waiting axis (needsyou)
+    try std.testing.expectEqual(@as(usize, 1130), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

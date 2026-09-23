@@ -79,6 +79,11 @@ overlay_border: Style,
 overlay_title: Style,
 error_fg: Style,
 warn_fg: Style,
+/// Something is blocked on the user — a session that needs you: its
+/// tab's mark, its SESSIONS card's, the dock's running mark for its
+/// kind. A role of its own so the three stay one colour whatever a
+/// theme does to warnings.
+attention_fg: Style,
 info_fg: Style,
 /// The `⋯ folded · N lines hidden` marker.
 fold: Style,
@@ -275,6 +280,7 @@ pub fn derive(src: Source) Theme {
         .overlay_title = bold(p.comment, p.bg2),
         .error_fg = on(p.red, p.bg_dark),
         .warn_fg = on(p.yellow, p.bg_dark),
+        .attention_fg = bold(p.yellow, p.bg_dark),
         .info_fg = on(p.blue, p.bg_dark),
         .fold = .{ .fg = p.comment, .bg = p.bg_dark, .italic = true },
         .whitespace = on(p.grey, p.bg_dark),

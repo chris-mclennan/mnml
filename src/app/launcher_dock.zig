@@ -70,6 +70,9 @@ const rail = @import("../ui/activity_bar.zig");
 const side_mod = @import("side.zig");
 const Theme = @import("../ui/theme.zig");
 const paletteColor = @import("../ui/integrations_view.zig").paletteColor;
+const sessions = @import("../sessions.zig");
+const pty_pane = @import("pty_pane.zig");
+const launch_profiles = @import("launch_profiles.zig");
 
 pub const Mode = Config.DockMode;
 pub const Edge = Config.DockEdge;
@@ -428,8 +431,29 @@ pub const Item = struct {
     color: Color,
     label: []const u8,
     running: bool,
+    /// A session of this item's kind needs you (`sessions.needsYou`):
+    /// the running mark wears the attention colour.
+    attention: bool = false,
     action: Action,
 };
+
+/// The AI product an integration chip launches, if it is one.
+fn chipProduct(id: []const u8) ?launch_profiles.Product {
+    if (std.mem.eql(u8, id, "claude_code")) return .claude;
+    if (std.mem.eql(u8, id, "codex")) return .codex;
+    return null;
+}
+
+/// A pty pane of `product` is blocked on the user.
+fn productNeedsYou(app: *App, product: launch_profiles.Product) bool {
+    var pid: PaneId = 0;
+    while (pid < app.panes.capacity()) : (pid += 1) {
+        const p = app.panes.pty(pid) orelse continue;
+        if (pty_pane.productOf(app, p) != product) continue;
+        if (sessions.needsYou(app, pid)) return true;
+    }
+    return false;
+}
 
 /// Every item the strip shows, in paint order, on `arena`:
 /// integrations, then launchers that declared no chip, then the
@@ -448,6 +472,9 @@ pub fn items(app: *App, arena: Allocator) Allocator.Error![]Item {
     // ── integrations ──
     for (try integrations.allChips(app, arena)) |c| {
         if (!c.on_dock) continue;
+        // A waiting session lights its product's item in the attention
+        // colour, running or not by the mount rule.
+        const attention = if (chipProduct(c.id)) |product| productNeedsYou(app, product) else false;
         try out.append(arena, .{
             .kind = .integration,
             .id = c.id,
@@ -455,7 +482,8 @@ pub fn items(app: *App, arena: Allocator) Allocator.Error![]Item {
             .fallback = c.fallback,
             .color = .{ .role = c.color },
             .label = c.tooltip,
-            .running = integrationOpen(app, c.id),
+            .running = attention or integrationOpen(app, c.id),
+            .attention = attention,
             .action = switch (c.action) {
                 .dyn => |slot| .{ .dyn = slot },
                 .named => |n| .{ .named = n },
@@ -503,6 +531,7 @@ pub fn items(app: *App, arena: Allocator) Allocator.Error![]Item {
             .color = terminal_color,
             .label = p.title(),
             .running = true,
+            .attention = sessions.needsYou(app, pid),
             .action = .{ .pane = pid },
         });
     }
@@ -790,6 +819,7 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         .color = resolveColor(ui.theme, it.color),
         .label = it.label,
         .running = it.running,
+        .attention = it.attention,
     };
     view.draw(ui, area, .{
         .items = props_items,

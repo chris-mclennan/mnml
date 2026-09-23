@@ -92,6 +92,10 @@ pub const Item = struct {
     label: []const u8,
     /// The item's thing is open: a mounted integration, a live pty.
     running: bool = false,
+    /// A session of the item's kind needs the user: the running mark —
+    /// the lit glyph, or the dot — wears `Theme.attention_fg` instead of
+    /// the item's own colour.
+    attention: bool = false,
 };
 
 pub const Props = struct {
@@ -231,7 +235,9 @@ fn paintItem(ui: Ui, cell: Rect, it: Item, focused: bool, bg: vaxis.Color, hover
     // integration's identity — and only sheds the `dim`. A running one
     // under `.bright` has shed it already: that is the mark.
     const lit = it.running and mark == .bright;
-    const glyph_style = if (hot or focused) bold(base) else if (lit) base else dim(base);
+    // A session that needs you: the mark is the attention colour's.
+    const marked = if (it.running and it.attention) Theme.withFg(Theme.onBg(th.fg, ground), th.attention_fg.fg) else base;
+    const glyph_style = if (hot or focused) bold(if (lit) marked else base) else if (lit) marked else dim(base);
     const glyph = if (ui.ascii or !ui.nerd_font or it.glyph.len == 0) it.fallback else it.glyph;
     const grey = Theme.withFg(Theme.onBg(th.fg, ground), pal.comment);
     const label_style = if (hot or focused)
@@ -252,7 +258,7 @@ fn paintItem(ui: Ui, cell: Rect, it: Item, focused: bool, bg: vaxis.Color, hover
         if (focused) {
             _ = ui.putStr(x, cell.y, 1, if (ui.ascii) cursor_ascii else cursor_glyph, bold(Theme.withFg(Theme.onBg(th.fg, ground), pal.blue)));
         } else if (show_dot) {
-            _ = ui.putStr(x, cell.y, 1, dot, base);
+            _ = ui.putStr(x, cell.y, 1, dot, marked);
         }
         x += 1;
         // The word wears the item's own colour here, not the label
@@ -270,7 +276,7 @@ fn paintItem(ui: Ui, cell: Rect, it: Item, focused: bool, bg: vaxis.Color, hover
         }
         x += 1;
         x += ui.putStr(x, cell.y, cell.right() -| x, glyph, glyph_style);
-        if (show_dot) x += ui.putStr(x, cell.y, cell.right() -| x, dot, base);
+        if (show_dot) x += ui.putStr(x, cell.y, cell.right() -| x, dot, marked);
         x += 1;
         _ = ui.putStr(x, cell.y, cell.right() -| x, it.label, label_style);
         return;
@@ -280,7 +286,7 @@ fn paintItem(ui: Ui, cell: Rect, it: Item, focused: bool, bg: vaxis.Color, hover
     if (focused) {
         _ = ui.putStr(x, cell.y, 1, if (ui.ascii) cursor_ascii else cursor_glyph, bold(Theme.withFg(Theme.onBg(th.fg, ground), pal.blue)));
     } else if (show_dot) {
-        _ = ui.putStr(x, cell.y, 1, dot, base);
+        _ = ui.putStr(x, cell.y, 1, dot, marked);
     }
     _ = ui.putStr(cell.x + 1, cell.y, cell.w -| 1, glyph, glyph_style);
 }
@@ -672,4 +678,32 @@ test "side: the alignment centres the items down the column, and the pin chip ke
     try t.expectEqualStrings("\u{EB01}", fx.cell(1, 8).char.grapheme);
     try t.expectEqualStrings("\u{F1D8}", fx.cell(1, 9).char.grapheme);
     try t.expect(fx.hits.at(1, 10).?.launcher_dock == .pin);
+}
+
+test "a session that needs you: the running mark wears the attention colour — the lit glyph under `.bright`, the dot under `.dot` — and an idle item with the flag marks nothing" {
+    var fx = try test_fixture.init(60, 6);
+    defer fx.deinit();
+    const area = Rect.init(0, 5, 60, 1);
+    const ui = fx.ui();
+    const want = ui.theme.attention_fg.fg;
+    var waiting = sample;
+    waiting[1].attention = true;
+    // A flag on an item that is not running paints no mark at all.
+    waiting[0].attention = true;
+    draw(ui, area, .{ .items = &waiting, .edge = .bottom, .@"align" = .start });
+    try t.expect(vaxis.Color.eql(want, fx.style(13, 5).fg));
+    try t.expect(!fx.style(13, 5).dim);
+    try t.expect(fx.style(2, 5).dim);
+    try t.expect(vaxis.Color.eql(blue, fx.style(2, 5).fg));
+    // `.dot`: the dot is the attention colour's, the glyph stays dim in
+    // the item's own.
+    fx.hits.reset();
+    draw(ui, area, .{ .items = &waiting, .edge = .bottom, .@"align" = .start, .running_mark = .dot });
+    try t.expectEqualStrings(running_dot, fx.cell(14, 5).char.grapheme);
+    try t.expect(vaxis.Color.eql(want, fx.style(14, 5).fg));
+    try t.expect(vaxis.Color.eql(teal, fx.style(13, 5).fg));
+    // Without the flag the same item is its own colour again.
+    fx.hits.reset();
+    draw(ui, area, .{ .items = &sample, .edge = .bottom, .@"align" = .start });
+    try t.expect(vaxis.Color.eql(teal, fx.style(13, 5).fg));
 }

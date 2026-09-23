@@ -1367,15 +1367,9 @@ pub fn tabsOfList(app: *App, ui: Ui, ids: []const PaneId, active_id: PaneId) All
             diag = d.severity;
             diag_text = d.text;
         }
-        // A pty whose session needs input carries a warning badge until
-        // it is the active pane.
-        if (p.* == .pty) {
-            if (active) p.pty.attention = false;
-            if (p.pty.attention) {
-                diag = .warning;
-                diag_text = if (ui.ascii) "!" else "⚠";
-            }
-        }
+        // A pty whose child is blocked on the user wears the needs-you
+        // mark — the one answer the SESSIONS card and the jumps read.
+        const needs_you = p.* == .pty and sessions.needsYou(app, id);
         var icon = paneIcon(app, p, ui.ascii);
         // A mounted integration's tab wears its own manifest chip — the
         // glyph and the colour the rail and the palette bar already give
@@ -1423,6 +1417,7 @@ pub fn tabsOfList(app: *App, ui: Ui, ids: []const PaneId, active_id: PaneId) All
             .preview = p.preview(),
             .diag = diag_text,
             .diag_severity = diag,
+            .needs_you = needs_you,
         });
     }
     return tabs.items;

@@ -94,6 +94,7 @@ const cli = @import("ai/cli.zig");
 const pty_pane = @import("app/pty_pane.zig");
 const pty_mod = @import("pty");
 const pty_view = @import("ui/pty_view.zig");
+const bufferline = @import("ui/bufferline.zig");
 const settings = @import("app/settings.zig");
 const Config = @import("config/Config.zig");
 const accent_color = @import("ui/accent_color.zig");
@@ -227,6 +228,9 @@ pub const RowView = struct {
     /// // changed (sessions-worktree): the session worktree's name — the
     /// `⑂ <name>` tag after the label.
     worktree: ?[]const u8 = null,
+    /// The pane's child is blocked on the user (`needsYou`): the
+    /// needs-you mark before the name, as the tab wears it.
+    needs_you: bool = false,
 };
 
 pub const Summary = enum { exited, none, text };
@@ -259,6 +263,7 @@ pub const table = .{
     .@"sessions.sort" = &sortCmd,
     .@"sessions.sort_auto" = &sortAutoCmd,
     .@"sessions.sort_manual" = &sortManualCmd,
+    .@"sessions.sort_waiting" = &sortWaitingCmd,
     .@"sessions.cycle_state" = &cycleStateCmd,
     .@"sessions.open" = &openCmd,
     .@"sessions.open_transcript" = &openTranscriptCmd,
@@ -892,12 +897,10 @@ pub fn paneName(app: *App, pid: app_mod.PaneId) []const u8 {
     return pane.title();
 }
 
-/// The rising edge: a warn toast naming the pane, the tab's badge, and
-/// the bell under `ui.session_bell`.
+/// The rising edge: a warn toast naming the pane, and the bell under
+/// `ui.session_bell`. The mark on its tab and card is `needsYou` itself.
 fn announceNeedsYou(app: *App, pid: app_mod.PaneId) Allocator.Error!void {
-    const p = app.panes.pty(pid) orelse return;
     try app.toastLevel(.warn, "session needs input: {s}", .{paneName(app, pid)});
-    p.attention = true;
     if (app.cfg.ui.session_bell) app.bell_pending = true;
 }
 
@@ -1002,7 +1005,12 @@ pub fn refilter(app: *App) Allocator.Error!void {
                     const rb = priority(ctx.app, cb.pane);
                     if (ra != rb) return ra < rb;
                 },
-                .manual => {
+                .manual, .waiting => {
+                    if (st_.sort == .waiting) {
+                        const wa = needsYou(ctx.app, ca.pane);
+                        const wb = needsYou(ctx.app, cb.pane);
+                        if (wa != wb) return wa;
+                    }
                     const oa = st_.orderIndex(ca.key);
                     const ob = st_.orderIndex(cb.key);
                     if (oa != null and ob != null) return oa.? < ob.?;
@@ -1198,12 +1206,18 @@ fn refreshCmd(app: *App) CommandError!void {
     return refresh(app);
 }
 
-/// The chip's click: the other axis, persisted as `ui.sessions_sort`.
+/// The chip's click: the next axis — State, Manual, Waiting, round —
+/// persisted as `ui.sessions_sort`.
 fn sortCmd(app: *App) CommandError!void {
     return applySort(app, switch (app.sessions.sort) {
         .auto => .manual,
-        .manual => .auto,
+        .manual => .waiting,
+        .waiting => .auto,
     });
+}
+
+fn sortWaitingCmd(app: *App) CommandError!void {
+    return applySort(app, .waiting);
 }
 
 fn sortAutoCmd(app: *App) CommandError!void {
@@ -1225,10 +1239,11 @@ pub fn sortLabel(s: SessionsSort) []const u8 {
     return switch (s) {
         .auto => "State",
         .manual => "Manual",
+        .waiting => "Waiting",
     };
 }
 
-pub const sort_widest: usize = 6;
+pub const sort_widest: usize = 7;
 
 /// `f`: the state filter cycles every → waiting → live → tool → idle
 /// → failed → done → every. The table has its own filter.
@@ -2019,11 +2034,12 @@ fn openHistoryMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     try app.openMenu("Ended sessions", items, x, y);
 }
 
-/// SESSIONS' own axis: the two modes name their commands directly.
+/// SESSIONS' own axis: the three modes name their commands directly.
 fn openSortMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     const items = try app.gpa.dupe(command.MenuItem, &.{
         .{ .label = "State", .action = .{ .command = .@"sessions.sort_auto" }, .checked = app.sessions.sort == .auto },
         .{ .label = "Manual", .action = .{ .command = .@"sessions.sort_manual" }, .checked = app.sessions.sort == .manual },
+        .{ .label = "Waiting", .action = .{ .command = .@"sessions.sort_waiting" }, .checked = app.sessions.sort == .waiting },
     });
     errdefer app.gpa.free(items);
     try app.openMenu("Sort by", items, x, y);
@@ -2207,6 +2223,7 @@ pub fn cardView(app: *App, arena: Allocator, c: Card) Allocator.Error!RowView {
         .ticket = if (aliased) null else detectTicket(app.cfg.ui.ticket_prefixes, &.{ name, cardBranch(app, c) orelse "", label }),
         .color = cardColor(app, c),
         .worktree = if (cardWorktree(app, c)) |e| try arena.dupe(u8, e.name) else null,
+        .needs_you = needsYou(app, c.pane),
     };
 }
 
@@ -2752,6 +2769,10 @@ fn paintRow(ui: Ui, r: Rect, row: RowView, selected: bool) void {
     var x = r.x + 2;
     x += ui.putStr(x, r.y, end -| x, " ", bg);
     if (row.pinned) x += ui.putStr(x, r.y, end -| x, if (ui.ascii) "📌 " else "\u{F0403} ", Theme.withFg(bg, t.palette.orange));
+    if (row.needs_you) {
+        x += ui.putStr(x, r.y, end -| x, bufferline.needsYouMark(ui), Theme.onBg(t.attention_fg, bg.bg));
+        x += ui.putStr(x, r.y, end -| x, " ", bg);
+    }
     var name_style = Theme.withFg(bg, t.fg.fg);
     name_style.bold = row.active;
     x += ui.putStr(x, r.y, end -| x, row.name, name_style);
@@ -3269,6 +3290,65 @@ test "needsYou: a pane whose screen asks is waiting, one that does not is not; a
     try testing.expect(!evalNeedsYou(app, gone));
 }
 
+test "the Waiting sort: the sessions that need you lead, the manual order under them; the card wears the mark before its name and the tab after; s cycles State → Manual → Waiting and the chip's menu ticks it" {
+    var f = try Fixture.init(120, 30);
+    defer f.deinit();
+    try f.fakeClaude();
+    const app = &f.app;
+    const st = &app.sessions;
+    const a = try f.openCard("plain-5");
+    const b = try f.openCard("plain-6");
+    const ask = try f.openCard("ask-5");
+    try f.adopt(&.{});
+    try testing.expect(try f.waitGrid(a, "Claude Code v9", 5000));
+    try testing.expect(try f.waitGrid(b, "Claude Code v9", 5000));
+    try testing.expect(try f.waitGrid(ask, "Do you want", 5000));
+    try testing.expect(try f.waitNeedsYou(ask, true, 3000));
+    // The manual list puts the waiting one last …
+    for ([_][]const u8{ "plain-6", "plain-5", "ask-5" }) |id| try st.order.append(testing.allocator, try testing.allocator.dupe(u8, id));
+    try setSort(app, .manual);
+    try testing.expectEqual(b, f.cardAt(0).pane);
+    try testing.expectEqual(a, f.cardAt(1).pane);
+    try testing.expectEqual(ask, f.cardAt(2).pane);
+    // … Waiting lifts it over the list and keeps the list's order below.
+    try setSort(app, .waiting);
+    try testing.expectEqual(ask, f.cardAt(0).pane);
+    try testing.expectEqual(b, f.cardAt(1).pane);
+    try testing.expectEqual(a, f.cardAt(2).pane);
+    // A pin still leads.
+    _ = try st.togglePin(testing.allocator, "plain-5");
+    try refilter(app);
+    try testing.expectEqual(a, f.cardAt(0).pane);
+    try testing.expectEqual(ask, f.cardAt(1).pane);
+    _ = try st.togglePin(testing.allocator, "plain-5");
+    try refilter(app);
+    // The card carries the mark; the others do not.
+    const v = try cardView(app, app.frame.allocator(), f.cardAt(0));
+    try testing.expect(v.needs_you);
+    try testing.expect(!(try cardView(app, app.frame.allocator(), f.cardAt(1))).needs_you);
+    try f.showSection(40);
+    const scr = try f.screen();
+    defer testing.allocator.free(scr);
+    // The card: the mark before the name (the tab wears it after).
+    try testing.expect(std.mem.indexOf(u8, scr, bufferline.needs_you_glyph ++ " claude") != null);
+    try testing.expect(std.mem.indexOf(u8, scr, "claude " ++ bufferline.needs_you_glyph) != null);
+    // The chip names the axis; s walks the three and persists each.
+    try testing.expect(std.mem.indexOf(u8, scr, "Waiting") != null);
+    try setSort(app, .auto);
+    for ([_]SessionsSort{ .manual, .waiting, .auto }) |want| {
+        try sortCmd(app);
+        try testing.expectEqual(want, st.sort);
+        try testing.expectEqual(want, app.cfg.ui.sessions_sort);
+    }
+    try testing.expectEqualStrings("sessions: State", app.lastToast().?);
+    try openSortMenu(app, 1, 1);
+    const menu = app.overlay.menu;
+    try testing.expectEqual(@as(usize, 3), menu.items.len);
+    try testing.expectEqualStrings("Waiting", menu.items[2].label);
+    try testing.expect(menu.items[2].action.command == .@"sessions.sort_waiting");
+    try testing.expect(menu.items[0].checked and !menu.items[2].checked);
+}
+
 test "the sort is Rust's priority: an approval prompt first, then thinking, idle, exited; pins lead; Manual follows the order list then the pane order" {
     var f = try Fixture.init(80, 24);
     defer f.deinit();
@@ -3582,7 +3662,9 @@ test "headless: a card owning a scanned transcript reads it; w widens ENDED; J a
     try testing.expectEqualStrings(first, f.cardAt(1).key);
     try testing.expectEqual(@as(usize, 1), st.list.cursor);
     try testing.expectEqual(@as(usize, 2), st.order.items.len);
-    // The chip toggles back to State and persists.
+    // The chip walks on through Waiting back to State and persists.
+    try app.handle(.{ .key = Key.char('s') });
+    try testing.expectEqual(SessionsSort.waiting, st.sort);
     try app.handle(.{ .key = Key.char('s') });
     try testing.expectEqual(SessionsSort.auto, st.sort);
     const cfg = try f.tmp.dir.readFileAlloc(testing.io, ".mnml/config.zon", testing.allocator, .limited(1 << 16));
@@ -3628,7 +3710,7 @@ test "headless: a card owning a scanned transcript reads it; w widens ENDED; J a
     try app.handle(.{ .key = Key.named(.esc) });
     try app.handle(.{ .mouse = .{ .x = sort_chip.?.x + 1, .y = sort_chip.?.y, .kind = .press, .button = .right } });
     try testing.expect(app.overlay == .menu);
-    try testing.expectEqual(@as(usize, 2), app.overlay.menu.items.len);
+    try testing.expectEqual(@as(usize, 3), app.overlay.menu.items.len);
     try testing.expect(app.overlay.menu.items[0].checked);
     try app.handle(.{ .key = Key.named(.esc) });
     // Rename through the prompt: the alias lands on the card's key and

@@ -46,8 +46,8 @@ pub fn chip(panel: PanelId, kind: hit.ChipKind) Entry {
     return switch (kind) {
         .sort => if (panel == .sessions) .{
             .title = "SESSIONS: sort",
-            .body = "Click switches between State and Manual order. State groups by what a session is doing — awaiting your approval first, then running, then the rest — so the card that needs you is on top; Manual keeps the order you dragged the cards into. Pinned sessions stay at the top either way. Right-click picks a mode directly.",
-            .links = &.{ .{ .command = .{ .id = .@"sessions.sort_auto", .label = "State order" } }, .{ .command = .{ .id = .@"sessions.sort_manual", .label = "Manual order" } } },
+            .body = "Click steps through State, Manual and Waiting. State groups by what a session is doing — the ones that need you first, then running, then the rest; Manual keeps the order you moved the cards into; Waiting lifts every session blocked on a prompt (the raised-hand mark) over your manual order and leaves the rest where you put them. Pinned sessions stay at the top on every axis. Right-click picks a mode directly.",
+            .links = &.{ .{ .command = .{ .id = .@"sessions.sort_auto", .label = "State order" } }, .{ .command = .{ .id = .@"sessions.sort_manual", .label = "Manual order" } }, .{ .command = .{ .id = .@"sessions.sort_waiting", .label = "Waiting first" } } },
         } else .{
             .title = "sort: chip",
             .body = "Click cycles the row order — newest first, oldest first, name A–Z, name Z–A; right-click picks one directly, each mode beside its reverse. The order is per panel and persisted, so notes sorted A–Z does not reorder findings. On a narrow column the chip shrinks to its icon; the menu is the same.",
@@ -103,7 +103,7 @@ pub fn row(app: *App, arena: Allocator, r: hit.PanelRow) Allocator.Error!?Entry 
         },
         .sessions => .{
             .title = try std.fmt.allocPrint(arena, "Session {d}", .{r.idx + 1}),
-            .body = "A Claude Code or Codex session's card — its name, branch, cwd and what the pane is showing; the ring means unread output. Enter or a click opens its pane; the kebab has rename, pin, the colour, kill, the transcript, the worktree rows. Drag reorders under the Manual sort.",
+            .body = "A Claude Code or Codex session's card — its name, branch, cwd and what the pane is showing; a raised hand before the name means the session is stopped on a question for you. Enter or a click opens its pane; the kebab has rename, pin, the colour, kill, the transcript, the worktree rows. Drag reorders under the Manual sort.",
             .keys = &.{.{ .chord = "Enter", .label = "Open the pane" }},
             .links = &.{ .{ .command = .{ .id = .@"sessions.open_transcript", .label = "Read the transcript" } }, ask },
         },
