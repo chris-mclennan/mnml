@@ -77,7 +77,10 @@ pub const NetEntry = struct {
 };
 
 /// What a request the pane sent was for; the reply is routed by it.
-pub const Pending = enum { eval, screenshot, screenshot_clip, pdf, cookies, storage, perf, dom, box_model, quiet };
+/// `eval_json` is the by-value copy of an object an eval returned;
+/// `silent` drops even an error (enables on a child target that lacks
+/// the domain).
+pub const Pending = enum { eval, eval_json, screenshot, screenshot_clip, pdf, cookies, storage, perf, dom, box_model, navigate, quiet, silent };
 
 pub const Snapshot = struct {
     url: []u8,
@@ -190,6 +193,9 @@ pub const BrowserPane = struct {
     /// `profile_mode = .ephemeral`: the profile is this pane's alone and
     /// goes with it.
     ephemeral: bool = false,
+    /// What an eval returned, as its preview, for when the by-value copy
+    /// (`eval_json`) fails: keyed by that request's id.
+    eval_fallback: std.AutoHashMapUnmanaged(i64, []u8) = .empty,
 
     pub fn deinit(self: *BrowserPane, gpa: Allocator) void {
         self.shutdown();
@@ -219,9 +225,17 @@ pub const BrowserPane = struct {
         for (self.visited.items) |v| gpa.free(v);
         self.visited.deinit(gpa);
         self.filter.deinit(gpa);
+        self.clearFallbacks();
+        self.eval_fallback.deinit(gpa);
         gpa.free(self.url);
         gpa.free(self.title_buf);
         gpa.free(self.profile_dir);
+    }
+
+    fn clearFallbacks(self: *BrowserPane) void {
+        var it = self.eval_fallback.valueIterator();
+        while (it.next()) |v| self.gpa.free(v.*);
+        self.eval_fallback.clearRetainingCapacity();
     }
 
     fn freeRows(gpa: Allocator, rows: *std.ArrayListUnmanaged(Row)) void {
@@ -507,18 +521,25 @@ fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, env: *const std.pro
 
 /// Send a CDP request from the pane (queued until connected).
 pub fn send(app: *App, p: *BrowserPane, method: []const u8, params_json: []const u8, purpose: Pending) Allocator.Error!void {
+    _ = try sendTo(app, p, method, params_json, purpose, null);
+}
+
+/// `send`, to a given session (null: the pane's own page). The request
+/// id once sent; null when queued or not sent.
+pub fn sendTo(app: *App, p: *BrowserPane, method: []const u8, params_json: []const u8, purpose: Pending, session: ?[]const u8) Allocator.Error!?i64 {
     const io = app.io;
     p.shared.lock.lockUncancelable(io);
     defer p.shared.lock.unlock(io);
     if (p.shared.session) |*s| {
-        const id = s.send(method, params_json, null) catch |err| {
+        const id = s.send(method, params_json, session) catch |err| {
             try p.push(.system, try std.fmt.allocPrint(app.frame.allocator(), "send {s} failed: {s}", .{ method, @errorName(err) }));
-            return;
+            return null;
         };
         try p.pending.put(app.gpa, id, purpose);
-        return;
+        return id;
     }
     try p.queued.append(app.gpa, .{ .method = try app.gpa.dupe(u8, method), .params = try app.gpa.dupe(u8, params_json), .purpose = purpose });
+    return null;
 }
 
 fn flushQueued(app: *App, p: *BrowserPane) Allocator.Error!void {
@@ -535,12 +556,17 @@ fn flushQueued(app: *App, p: *BrowserPane) Allocator.Error!void {
 
 pub fn navigate(app: *App, p: *BrowserPane, url: []const u8) Allocator.Error!void {
     const params = try std.fmt.allocPrint(app.frame.allocator(), "{{\"url\":{f}}}", .{std.json.fmt(url, .{})});
-    try send(app, p, "Page.navigate", params, .quiet);
+    try send(app, p, "Page.navigate", params, .navigate);
     try p.push(.nav, try std.fmt.allocPrint(app.frame.allocator(), "→ {s}", .{url}));
 }
 
+/// Evaluate `expr` in the page. The user's eval (`.eval`) gets the
+/// result as a remote object with its preview, so a function, a
+/// Symbol or a circular object reads as DevTools shows it; the
+/// panels' dumps (`.storage` / `.perf` / `.quiet`) take it by value.
 pub fn eval(app: *App, p: *BrowserPane, expr: []const u8, purpose: Pending) Allocator.Error!void {
-    const params = try std.fmt.allocPrint(app.frame.allocator(), "{{\"expression\":{f},\"returnByValue\":true,\"userGesture\":true,\"awaitPromise\":true}}", .{std.json.fmt(expr, .{})});
+    const by_value = purpose != .eval;
+    const params = try std.fmt.allocPrint(app.frame.allocator(), "{{\"expression\":{f},\"returnByValue\":{},\"generatePreview\":{},\"userGesture\":true,\"awaitPromise\":true}}", .{ std.json.fmt(expr, .{}), by_value, !by_value });
     try send(app, p, "Runtime.evaluate", params, purpose);
     if (purpose == .eval) try p.push(.eval, try std.fmt.allocPrint(app.frame.allocator(), "» {s}", .{expr}));
 }
@@ -570,7 +596,7 @@ pub fn handle(app: *App, ev: *CdpEvent) Allocator.Error!void {
             try p.push(.system, try std.fmt.allocPrint(app.frame.allocator(), "session ended: {s}", .{reason}));
             try p.refreshTitle();
         },
-        .message => |text| try onMessage(app, ev.pane, p, text),
+        .message => |text| try onMessage(app, p, text),
         .too_long => |t| try onTooLong(app, p, t.id, t.method, t.len),
     }
 }
@@ -589,8 +615,29 @@ fn purposeLabel(purpose: Pending) []const u8 {
         .perf => "perf",
         .dom => "DOM",
         .box_model => "node box",
-        .quiet => "request",
+        .navigate => "navigate",
+        .eval_json => "eval",
+        .quiet, .silent => "request",
     };
+}
+
+/// The preview an eval's object read as, when its by-value copy failed.
+fn evalFallback(app: *App, p: *BrowserPane, rid: i64) Allocator.Error!void {
+    const kv = p.eval_fallback.fetchRemove(rid) orelse return;
+    defer app.gpa.free(kv.value);
+    try p.push(.eval, try std.fmt.allocPrint(app.frame.allocator(), "= {s}", .{kv.value}));
+}
+
+/// `⚠ Uncaught Error: boom` off a reply's or an event's
+/// `exceptionDetails`: the exception's first line, prefixed the way
+/// DevTools prefixes it.
+fn exceptionLine(arena: Allocator, details: std.json.Value) Allocator.Error![]const u8 {
+    const text = cdp.str(details, &.{"text"}) orelse "Uncaught";
+    const exc = cdp.get(details, &.{"exception"});
+    const desc: []const u8 = if (cdp.str(exc, &.{"description"})) |d| std.mem.sliceTo(d, '\n') else if (exc) |e| try console.objectText(arena, e, false) else "";
+    if (desc.len == 0) return std.fmt.allocPrint(arena, "⚠ {s}", .{text});
+    const prefix: []const u8 = if (std.mem.startsWith(u8, text, "Uncaught (in promise)")) "Uncaught (in promise)" else "Uncaught";
+    return std.fmt.allocPrint(arena, "⚠ {s} {s}", .{ prefix, desc });
 }
 
 /// A reply or event over the WebSocket cap was skipped; the session
@@ -605,6 +652,7 @@ fn onTooLong(app: *App, p: *BrowserPane, id: ?i64, method: ?[]const u8, len: u64
     };
     const purpose = p.pending.get(rid) orelse return;
     _ = p.pending.remove(rid);
+    if (purpose == .eval_json) return evalFallback(app, p, rid);
     const fewer: i32 = if (p.dom_depth < 0) 8 else @divFloor(p.dom_depth, 2);
     if (purpose == .dom and fewer >= dom_min_depth) {
         p.dom_depth = fewer;
@@ -615,8 +663,7 @@ fn onTooLong(app: *App, p: *BrowserPane, id: ?i64, method: ?[]const u8, len: u64
     try p.push(.console_err, try std.fmt.allocPrint(arena, "{s}: reply too large ({d} MB) — not shown", .{ purposeLabel(purpose), mb }));
 }
 
-fn onMessage(app: *App, id: PaneId, p: *BrowserPane, text: []const u8) Allocator.Error!void {
-    _ = id;
+fn onMessage(app: *App, p: *BrowserPane, text: []const u8) Allocator.Error!void {
     const arena = app.frame.allocator();
     const m = cdp.parseMessage(arena, text) catch return;
     if (m.method) |method| return onEvent(app, p, method, m);
@@ -624,14 +671,53 @@ fn onMessage(app: *App, id: PaneId, p: *BrowserPane, text: []const u8) Allocator
     const purpose = p.pending.get(rid) orelse return;
     _ = p.pending.remove(rid);
     if (m.error_message) |e| {
-        try p.push(.console_err, try std.fmt.allocPrint(arena, "{s}: {s}", .{ @tagName(purpose), e }));
+        switch (purpose) {
+            .silent => {},
+            .eval_json => try evalFallback(app, p, rid),
+            else => try p.push(.console_err, try std.fmt.allocPrint(arena, "{s} failed: {s}", .{ purposeLabel(purpose), e })),
+        }
         return;
     }
+    // A throw or a rejection: the panels' dumps say which one failed.
+    if (cdp.get(m.result, &.{"exceptionDetails"})) |details| switch (purpose) {
+        .eval => return p.push(.console_err, try exceptionLine(arena, details)),
+        .storage, .perf => return p.push(.console_err, try std.fmt.allocPrint(arena, "{s}: {s}", .{ purposeLabel(purpose), (try exceptionLine(arena, details))["⚠ ".len..] })),
+        .eval_json => return evalFallback(app, p, rid),
+        else => {},
+    };
     switch (purpose) {
-        .quiet => {},
+        .quiet, .silent => {},
+        .navigate => {
+            // A navigation Chrome refused at the network layer.
+            if (cdp.str(m.result, &.{"errorText"})) |e| try p.push(.console_err, try std.fmt.allocPrint(arena, "navigate failed: {s}", .{e}));
+        },
         .eval => {
             const value = cdp.get(m.result, &.{"result"}) orelse return;
-            try p.push(.eval, try std.fmt.allocPrint(arena, "= {s}", .{try cdp.remoteObjectText(arena, value)}));
+            const ty = cdp.str(value, &.{"type"}) orelse "";
+            const subtype = cdp.str(value, &.{"subtype"}) orelse "";
+            const shown = try console.objectText(arena, value, false);
+            // A plain object or an array reads as its JSON, copied by
+            // value from the object the eval returned; the preview is
+            // what shows if that copy fails (a circular object).
+            if (std.mem.eql(u8, ty, "object") and (subtype.len == 0 or std.mem.eql(u8, subtype, "array"))) if (cdp.str(value, &.{"objectId"})) |oid| {
+                const params = try std.fmt.allocPrint(arena, "{{\"objectId\":{f},\"functionDeclaration\":\"function(){{return this}}\",\"returnByValue\":true}}", .{std.json.fmt(oid, .{})});
+                // To the session the eval ran in: the reply carries it.
+                if (try sendTo(app, p, "Runtime.callFunctionOn", params, .eval_json, m.session_id)) |jid| {
+                    try p.eval_fallback.put(app.gpa, jid, try app.gpa.dupe(u8, shown));
+                    _ = try sendTo(app, p, "Runtime.releaseObject", try std.fmt.allocPrint(arena, "{{\"objectId\":{f}}}", .{std.json.fmt(oid, .{})}), .silent, m.session_id);
+                    return;
+                }
+            };
+            try p.push(.eval, try std.fmt.allocPrint(arena, "= {s}", .{shown}));
+        },
+        .eval_json => {
+            const kv = p.eval_fallback.fetchRemove(rid);
+            defer if (kv) |x| app.gpa.free(x.value);
+            const value = cdp.get(m.result, &.{ "result", "value" }) orelse {
+                if (kv) |x| try p.push(.eval, try std.fmt.allocPrint(arena, "= {s}", .{x.value}));
+                return;
+            };
+            try p.push(.eval, try std.fmt.allocPrint(arena, "= {s}", .{try std.json.Stringify.valueAlloc(arena, value, .{})}));
         },
         .screenshot, .screenshot_clip, .pdf => {
             const data = cdp.str(m.result, &.{"data"}) orelse return;
@@ -664,7 +750,7 @@ fn onMessage(app: *App, id: PaneId, p: *BrowserPane, text: []const u8) Allocator
         .storage => {
             BrowserPane.freeRows(app.gpa, &p.storage);
             p.storage = .empty;
-            const value = cdp.str(m.result, &.{ "result", "value" }) orelse return;
+            const value = cdp.str(m.result, &.{ "result", "value" }) orelse return p.push(.console_err, "storage: the page gave no storage to read");
             const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, value, .{}) catch return;
             if (parsed != .array) return;
             for (parsed.array.items) |e| {
@@ -683,7 +769,7 @@ fn onMessage(app: *App, id: PaneId, p: *BrowserPane, text: []const u8) Allocator
         .perf => {
             for (p.perf.items) |l| app.gpa.free(l);
             p.perf.clearRetainingCapacity();
-            const value = cdp.str(m.result, &.{ "result", "value" }) orelse return;
+            const value = cdp.str(m.result, &.{ "result", "value" }) orelse return p.push(.console_err, "perf: the page gave no timings to read");
             var lines = std.mem.splitScalar(u8, value, '\n');
             while (lines.next()) |l| if (l.len > 0) try p.perf.append(app.gpa, try app.gpa.dupe(u8, l));
             p.panel = .perf;
@@ -1952,6 +2038,61 @@ const TestBed = struct {
         return p.queued.items[p.queued.items.len - 1].method;
     }
 };
+
+test "an eval that throws or rejects reads as an error; a function, a Symbol and an object read the way DevTools shows them" {
+    var tb: TestBed = .{};
+    const p = try tb.init();
+    defer tb.deinit();
+    const gpa = testing.allocator;
+    // The user's eval asks for a remote object with its preview.
+    try eval(&tb.app, p, "1", .eval);
+    try testing.expect(std.mem.indexOf(u8, p.queued.items[0].params, "\"returnByValue\":false,\"generatePreview\":true") != null);
+    try p.pending.put(gpa, 200, .eval);
+    try tb.msg("{\"id\":200,\"result\":{\"result\":{\"type\":\"object\",\"value\":{}},\"exceptionDetails\":{\"text\":\"Uncaught (in promise) Error: rej\",\"exception\":{\"type\":\"object\",\"subtype\":\"error\",\"description\":\"Error: rej\\n    at <anonymous>:1:16\"}}}}");
+    try testing.expectEqualStrings("⚠ Uncaught (in promise) Error: rej", tb.last());
+    try testing.expect(p.log.items[p.log.items.len - 1].kind == .console_err);
+    try p.pending.put(gpa, 201, .eval);
+    try tb.msg("{\"id\":201,\"result\":{\"result\":{\"type\":\"object\",\"subtype\":\"error\",\"description\":\"Error: evalboom\\n at x\"},\"exceptionDetails\":{\"text\":\"Uncaught\",\"exception\":{\"type\":\"object\",\"subtype\":\"error\",\"description\":\"Error: evalboom\\n at x\"}}}}");
+    try testing.expectEqualStrings("⚠ Uncaught Error: evalboom", tb.last());
+    try p.pending.put(gpa, 202, .eval);
+    try tb.msg("{\"id\":202,\"result\":{\"result\":{\"type\":\"function\",\"className\":\"Function\",\"description\":\"() => 1\",\"objectId\":\"o1\"}}}");
+    try testing.expectEqualStrings("= () => 1", tb.last());
+    try p.pending.put(gpa, 203, .eval);
+    try tb.msg("{\"id\":203,\"result\":{\"result\":{\"type\":\"symbol\",\"description\":\"Symbol(s)\",\"objectId\":\"o2\"}}}");
+    try testing.expectEqualStrings("= Symbol(s)", tb.last());
+    // An object: copied by value from its objectId (its preview is kept
+    // for when that fails), and released.
+    p.state = .connected;
+    const queued_before = p.queued.items.len;
+    try p.pending.put(gpa, 204, .eval);
+    try tb.msg("{\"id\":204,\"result\":{\"result\":{\"type\":\"object\",\"className\":\"Object\",\"description\":\"Object\",\"objectId\":\"o3\",\"preview\":{\"type\":\"object\",\"description\":\"Object\",\"overflow\":false,\"properties\":[{\"name\":\"x\",\"type\":\"number\",\"value\":\"1\"},{\"name\":\"self\",\"type\":\"object\",\"value\":\"Object\"}]}}}}");
+    // No session in a test pane: the copy is queued, so the preview shows.
+    try testing.expectEqual(queued_before + 1, p.queued.items.len);
+    try testing.expectEqualStrings("Runtime.callFunctionOn", tb.lastQueued());
+    try testing.expectEqualStrings("= {x: 1, self: Object}", tb.last());
+    // The copy's reply is the JSON; a failed copy (a circular object) the preview.
+    try p.eval_fallback.put(gpa, 205, try gpa.dupe(u8, "{x: 1}"));
+    try p.pending.put(gpa, 205, .eval_json);
+    try tb.msg("{\"id\":205,\"result\":{\"result\":{\"type\":\"object\",\"value\":{\"x\":1,\"y\":[1,2]}}}}");
+    try testing.expectEqualStrings("= {\"x\":1,\"y\":[1,2]}", tb.last());
+    try p.eval_fallback.put(gpa, 206, try gpa.dupe(u8, "{x: 1, self: Object}"));
+    try p.pending.put(gpa, 206, .eval_json);
+    try tb.msg("{\"id\":206,\"error\":{\"code\":-32000,\"message\":\"Object reference chain is too long\"}}");
+    try testing.expectEqualStrings("= {x: 1, self: Object}", tb.last());
+    try testing.expectEqual(@as(usize, 0), p.eval_fallback.count());
+    // A panel's dump that throws says so (about:blank's localStorage).
+    try p.pending.put(gpa, 207, .storage);
+    try tb.msg("{\"id\":207,\"result\":{\"result\":{\"type\":\"object\"},\"exceptionDetails\":{\"text\":\"Uncaught\",\"exception\":{\"description\":\"SecurityError: Failed to read the 'localStorage' property\\n at\"}}}}");
+    try testing.expectEqualStrings("storage: Uncaught SecurityError: Failed to read the 'localStorage' property", tb.last());
+    try testing.expect(p.panel == .log);
+    // An error reply names what failed in words, not the tag.
+    try p.pending.put(gpa, 208, .navigate);
+    try tb.msg("{\"id\":208,\"error\":{\"code\":-32000,\"message\":\"Cannot navigate to invalid URL\"}}");
+    try testing.expectEqualStrings("navigate failed: Cannot navigate to invalid URL", tb.last());
+    try p.pending.put(gpa, 209, .quiet);
+    try tb.msg("{\"id\":209,\"error\":{\"code\":-32000,\"message\":\"Could not find node with given id\"}}");
+    try testing.expectEqualStrings("request failed: Could not find node with given id", tb.last());
+}
 
 test "scrolled back, the log holds still while lines arrive; at the tail it follows" {
     var tb: TestBed = .{};
