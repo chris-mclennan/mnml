@@ -1,6 +1,7 @@
 // midnight_breeze — converted from mnml's themes/midnight_breeze.toml by tools/theme_toml2zon.zig.
 // The palette as NvChad ships it; src/ui/theme.zig derives every UI role from it.
-// note: base_16 lacks 13 slot(s) — onedark fills them at load
+// note: base_16 slots the conversion dropped are resolved from base46's own
+//       themes/midnight_breeze.lua (its `M.base_30.<key>` references), not onedark's
 // note: 1 extra key(s) kept under .extra
 .{
     .name = "midnight_breeze",
@@ -38,8 +39,21 @@
         .folder_bg = 0x6e7681,
     },
     .base_16 = .{
+        .base00 = 0x0d1117,
+        .base01 = 0x161b22,
+        .base02 = 0x21262d,
+        .base03 = 0x313641,
+        .base04 = 0x434b59,
+        .base05 = 0xc9d1d9,
         .base06 = 0xd3dbe3,
         .base07 = 0xdde5ed,
+        .base08 = 0xfb6f6f,
+        .base09 = 0xffa3a0,
+        .base0A = 0xffdf5d,
+        .base0B = 0x56d364,
+        .base0C = 0x39c5cf,
+        .base0D = 0x58a6ff,
+        .base0E = 0xbc8cff,
         .base0F = 0x85e89d,
     },
     .extra = .{

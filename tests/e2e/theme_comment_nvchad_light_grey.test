@@ -1,0 +1,15 @@
+# width: 120
+# height: 40
+# Comments paint the palette's `light_grey` and line numbers its `grey`,
+# as NvChad does (base46 integrations/defaults.lua: `Comment = { fg =
+# colors.light_grey }`, `LineNr = { fg = colors.grey }`). They used to
+# paint base_16's `base03`, which in most palettes is a background
+# shade: in onenord_light that is #dfdfe0 on the #d8dee9 ground, 1.01:1,
+# and the comment was not there.
+write a.zig "const a = 1; // the comment\nconst b = 2;\n"
+open a.zig
+ex theme onenord_light
+key down
+expect screen contains "// the comment"
+expect color 55 2 bg #d8dee9
+expect color 55 2 fg #8b919c

@@ -1,6 +1,7 @@
 // flexoki — converted from mnml's themes/flexoki.toml by tools/theme_toml2zon.zig.
 // The palette as NvChad ships it; src/ui/theme.zig derives every UI role from it.
-// note: base_16 lacks 14 slot(s) — onedark fills them at load
+// note: base_16 slots the conversion dropped are resolved from base46's own
+//       themes/flexoki.lua (its `M.base_30.<key>` references), not onedark's
 .{
     .name = "flexoki",
     .kind = .dark,
@@ -37,7 +38,21 @@
         .folder_bg = 0x4385be,
     },
     .base_16 = .{
+        .base00 = 0x100f0f,
+        .base01 = 0x1c1b1b,
+        .base02 = 0x292626,
+        .base03 = 0x393636,
+        .base04 = 0x555050,
+        .base05 = 0xcecdc3,
         .base06 = 0xb6bdca,
         .base07 = 0xc8ccd4,
+        .base08 = 0xd14d41,
+        .base09 = 0xda702c,
+        .base0A = 0x8b7ec8,
+        .base0B = 0x879a39,
+        .base0C = 0x3aa99f,
+        .base0D = 0x4385be,
+        .base0E = 0xd0a215,
+        .base0F = 0x519aba,
     },
 }

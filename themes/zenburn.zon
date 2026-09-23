@@ -1,6 +1,7 @@
 // zenburn — converted from mnml's themes/zenburn.toml by tools/theme_toml2zon.zig.
 // The palette as NvChad ships it; src/ui/theme.zig derives every UI role from it.
-// note: base_16 lacks 1 slot(s) — onedark fills them at load
+// note: base_16 slots the conversion dropped are resolved from base46's own
+//       themes/zenburn.lua (its `M.base_30.<key>` references), not onedark's
 .{
     .name = "zenburn",
     .kind = .dark,
@@ -45,6 +46,7 @@
         .base05 = 0xdcdccc,
         .base06 = 0xc0c0c0,
         .base07 = 0xffffff,
+        .base08 = 0xbc98ec,
         .base09 = 0xdfaf8f,
         .base0A = 0xe0cf9f,
         .base0B = 0xca7b7b,

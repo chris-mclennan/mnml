@@ -1,6 +1,7 @@
 // kanagawa-dragon — converted from mnml's themes/kanagawa-dragon.toml by tools/theme_toml2zon.zig.
 // The palette as NvChad ships it; src/ui/theme.zig derives every UI role from it.
-// note: base_16 lacks 3 slot(s) — onedark fills them at load
+// note: base_16 slots the conversion dropped are resolved from base46's own
+//       themes/kanagawa-dragon.lua (its `M.base_30.<key>` references), not onedark's
 // note: 1 extra key(s) kept under .extra
 .{
     .name = "kanagawa-dragon",
@@ -46,6 +47,9 @@
         .base05 = 0xadada4,
         .base06 = 0x8ea4a2,
         .base07 = 0x737c73,
+        .base08 = 0xc4b28a,
+        .base09 = 0xb6927b,
+        .base0A = 0x8ea4a2,
         .base0B = 0x87a987,
         .base0C = 0x8ea4a2,
         .base0D = 0x8ba4b0,

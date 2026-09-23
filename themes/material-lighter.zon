@@ -1,6 +1,7 @@
 // material-lighter — converted from mnml's themes/material-lighter.toml by tools/theme_toml2zon.zig.
 // The palette as NvChad ships it; src/ui/theme.zig derives every UI role from it.
-// note: base_16 lacks 1 slot(s) — onedark fills them at load
+// note: base_16 slots the conversion dropped are resolved from base46's own
+//       themes/material-lighter.lua (its `M.base_30.<key>` references), not onedark's
 .{
     .name = "material-lighter",
     .kind = .light,
@@ -45,6 +46,7 @@
         .base05 = 0x435862,
         .base06 = 0x7e8eaa,
         .base07 = 0x546e7a,
+        .base08 = 0xf59717,
         .base09 = 0xf76d47,
         .base0A = 0x00bcd4,
         .base0B = 0x91b859,

@@ -1,6 +1,7 @@
 // sunrise_breeze — converted from mnml's themes/sunrise_breeze.toml by tools/theme_toml2zon.zig.
 // The palette as NvChad ships it; src/ui/theme.zig derives every UI role from it.
-// note: base_16 lacks 14 slot(s) — onedark fills them at load
+// note: base_16 slots the conversion dropped are resolved from base46's own
+//       themes/sunrise_breeze.lua (its `M.base_30.<key>` references), not onedark's
 // note: 4 extra key(s) kept under .extra
 .{
     .name = "sunrise_breeze",
@@ -38,8 +39,22 @@
         .folder_bg = 0x68727d,
     },
     .base_16 = .{
+        .base00 = 0xf5f5f5,
+        .base01 = 0xececec,
+        .base02 = 0xe5e5e5,
+        .base03 = 0x9ea7b1,
+        .base04 = 0x6e7681,
+        .base05 = 0x1b1f23,
         .base06 = 0x2f363d,
         .base07 = 0x3b4045,
+        .base08 = 0xd64545,
+        .base09 = 0xe87c7c,
+        .base0A = 0xbb8009,
+        .base0B = 0x238636,
+        .base0C = 0x2c9ab7,
+        .base0D = 0x0969da,
+        .base0E = 0x8250df,
+        .base0F = 0x85e89d,
     },
     .extra = .{
         .{ .name = "seablue", .hex = 0x39c5cf },

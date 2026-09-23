@@ -1,6 +1,7 @@
 // embark — converted from mnml's themes/embark.toml by tools/theme_toml2zon.zig.
 // The palette as NvChad ships it; src/ui/theme.zig derives every UI role from it.
-// note: base_16 lacks 8 slot(s) — onedark fills them at load
+// note: base_16 slots the conversion dropped are resolved from base46's own
+//       themes/embark.lua (its `M.base_30.<key>` references), not onedark's
 .{
     .name = "embark",
     .kind = .dark,
@@ -45,5 +46,13 @@
         .base05 = 0xcbe3e7,
         .base06 = 0xcbe3e7,
         .base07 = 0xffffff,
+        .base08 = 0xa1efd3,
+        .base09 = 0xd4bfff,
+        .base0A = 0xa1efd3,
+        .base0B = 0xffe9aa,
+        .base0C = 0xaaffe4,
+        .base0D = 0x91ddff,
+        .base0E = 0xa1efd3,
+        .base0F = 0xffb378,
     },
 }

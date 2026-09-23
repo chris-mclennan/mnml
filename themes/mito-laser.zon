@@ -1,6 +1,7 @@
 // mito-laser — converted from mnml's themes/mito-laser.toml by tools/theme_toml2zon.zig.
 // The palette as NvChad ships it; src/ui/theme.zig derives every UI role from it.
-// note: base_16 lacks 8 slot(s) — onedark fills them at load
+// note: base_16 slots the conversion dropped are resolved from base46's own
+//       themes/mito-laser.lua (its `M.base_30.<key>` references), not onedark's
 .{
     .name = "mito-laser",
     .kind = .dark,
@@ -37,13 +38,21 @@
         .folder_bg = 0x268bd2,
     },
     .base_16 = .{
+        .base00 = 0x201947,
+        .base01 = 0x271e56,
+        .base02 = 0x2e2466,
+        .base03 = 0x352975,
+        .base04 = 0x3e318a,
         .base05 = 0xeee8d5,
         .base06 = 0xefe9d8,
         .base07 = 0xfdf6e3,
+        .base08 = 0xff047d,
+        .base09 = 0xc85106,
         .base0A = 0xb58900,
         .base0B = 0x859900,
         .base0C = 0x2aa198,
         .base0D = 0x268bd2,
         .base0E = 0x6c71c4,
+        .base0F = 0xff047d,
     },
 }

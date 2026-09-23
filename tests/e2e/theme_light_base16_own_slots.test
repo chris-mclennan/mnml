@@ -1,0 +1,14 @@
+# width: 120
+# height: 40
+# nano-light's base_16 is its own: base46 writes it as references to
+# base_30 (`base02 = M.base_30.one_bg`), which the conversion once
+# dropped, so onedark's DARK slots filled in — the selection ground was
+# #3e4451 under nano-light's #37474f text, and selected text vanished.
+write a.txt "plain words here\n"
+open a.txt
+ex theme nano-light
+key shift+end
+# The text is nano-light's `white`…
+expect color 40 2 fg #37474f
+# …on nano-light's own selection ground, base02 = one_bg.
+expect color 40 2 bg #ebebeb

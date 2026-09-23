@@ -1,6 +1,7 @@
 // solarized_osaka — converted from mnml's themes/solarized_osaka.toml by tools/theme_toml2zon.zig.
 // The palette as NvChad ships it; src/ui/theme.zig derives every UI role from it.
-// note: base_16 lacks 5 slot(s) — onedark fills them at load
+// note: base_16 slots the conversion dropped are resolved from base46's own
+//       themes/solarized_osaka.lua (its `M.base_30.<key>` references), not onedark's
 .{
     .name = "solarized_osaka",
     .kind = .dark,
@@ -37,7 +38,12 @@
         .folder_bg = 0x268bd3,
     },
     .base_16 = .{
+        .base00 = 0x011219,
+        .base01 = 0x022736,
+        .base02 = 0x03394f,
+        .base03 = 0x044a67,
         .base04 = 0x1b4651,
+        .base05 = 0x9eabac,
         .base06 = 0xeee8d5,
         .base07 = 0xfdf6e3,
         .base08 = 0x268bd2,
