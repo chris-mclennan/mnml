@@ -1751,11 +1751,11 @@ pub const Vim = struct {
             'P' => return repeated(arena, .paste_before_end, n),
             '*' => {
                 self.last_search_backward = false;
-                return runCmd(.@"find.word_forward");
+                return runCmd(.@"find.word_forward_partial");
             },
             '#' => {
                 self.last_search_backward = true;
-                return runCmd(.@"find.word_backward");
+                return runCmd(.@"find.word_backward_partial");
             },
             't' => {
                 if (count_explicit) return .{ .app = .{ .tab_page = .{ .count = n, .back = false } } };

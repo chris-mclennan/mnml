@@ -142,6 +142,8 @@ pub const specs = [_]Spec{
     .{ .id = "find.toggle_regex", .title = "Find: toggle regex mode (sticky)", .group = "find", .keys = .{ .both = &.{"alt+r"} } },
     .{ .id = "find.word_forward", .title = "Find: word under cursor (forward) — vim `*`", .group = "find" },
     .{ .id = "find.word_backward", .title = "Find: word under cursor (backward) — vim `#`", .group = "find" },
+    .{ .id = "find.word_forward_partial", .title = "Find: word under cursor, inside longer words too (forward) — vim `g*`", .group = "find" },
+    .{ .id = "find.word_backward_partial", .title = "Find: word under cursor, inside longer words too (backward) — vim `g#`", .group = "find" },
     .{ .id = "find.selection_forward", .title = "Find: selected text (forward) — vim visual `*`", .group = "find" },
     .{ .id = "find.selection_backward", .title = "Find: selected text (backward) — vim visual `#`", .group = "find" },
     .{ .id = "find.replace", .title = "Replace every match of the active find", .group = "find", .keys = .{ .standard = &.{"ctrl+h"} } },
@@ -1279,7 +1281,7 @@ pub const specs = [_]Spec{
     .{ .id = "view.keep_tab", .title = "Keep this tab (stop the next glance taking the preview over)", .group = "view", .keys = .{ .vim = &.{"space b k"}, .standard = &.{"ctrl+k enter"} } },
 };
 
-test "1135 specs, unique ids" {
+test "1137 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1316,21 +1318,24 @@ test "1135 specs, unique ids" {
     // + the three `view.rail_*` membership commands (railmove)
     // + the four `view.dock_item_move_*` reorder commands (dock-polish)
     // + `view.focus_prev_split`, the split walk backwards (splitcycle)
-    try std.testing.expectEqual(@as(usize, 1135), specs.len);
+    try std.testing.expectEqual(@as(usize, 1137), specs.len);
     // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
-    try std.testing.expectEqual(@as(usize, 1135), specs.len);
+    try std.testing.expectEqual(@as(usize, 1137), specs.len);
     // + `jobs.show`, the background-jobs list (jobschip)
-    try std.testing.expectEqual(@as(usize, 1135), specs.len);
+    try std.testing.expectEqual(@as(usize, 1137), specs.len);
     // + `editor.toggle_indent_guides` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1135), specs.len);
+    try std.testing.expectEqual(@as(usize, 1137), specs.len);
     // + `editor.toggle_indent_guides`, `git.toggle_line_blame` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1135), specs.len);
+    try std.testing.expectEqual(@as(usize, 1137), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis (needsyou)
-    try std.testing.expectEqual(@as(usize, 1135), specs.len);
+    try std.testing.expectEqual(@as(usize, 1137), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis, and
     //   `sessions.next_waiting` / `prev_waiting`, the jumps (needsyou)
-    try std.testing.expectEqual(@as(usize, 1135), specs.len);
+    try std.testing.expectEqual(@as(usize, 1137), specs.len);
     // + `term.search` / `term.search_next` / `term.search_prev` (scrollsearch)
-    try std.testing.expectEqual(@as(usize, 1135), specs.len);
+    try std.testing.expectEqual(@as(usize, 1137), specs.len);
+    // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
+    // + `find.word_forward_partial` / `find.word_backward_partial`, vim's `g*` / `g#` (vimfix)
+    try std.testing.expectEqual(@as(usize, 1137), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

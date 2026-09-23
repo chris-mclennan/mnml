@@ -1978,6 +1978,10 @@ test "vim: cmdline, ZZ and :s reach the app as ex commands; gd runs a command" {
     try testing.expectEqual(input.CommandId.@"find.word_forward", h.last_app.?.run_command);
     try h.feed("#");
     try testing.expectEqual(input.CommandId.@"find.word_backward", h.last_app.?.run_command);
+    try h.feed("g*");
+    try testing.expectEqual(input.CommandId.@"find.word_forward_partial", h.last_app.?.run_command);
+    try h.feed("g#");
+    try testing.expectEqual(input.CommandId.@"find.word_backward_partial", h.last_app.?.run_command);
     try h.feed("N");
     try testing.expectEqual(input.CommandId.@"find.next", h.last_app.?.run_command);
     try h.feed("3o");

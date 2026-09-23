@@ -29,6 +29,8 @@ pub const table = .{
     .@"find.clear_and_deselect" = &clearAndDeselect,
     .@"find.word_forward" = &wordForward,
     .@"find.word_backward" = &wordBackward,
+    .@"find.word_forward_partial" = &wordForwardPartial,
+    .@"find.word_backward_partial" = &wordBackwardPartial,
     .@"find.selection_forward" = &selectionForward,
     .@"find.selection_backward" = &selectionBackward,
     .@"find.select_match_forward" = &selectMatchForward,
@@ -496,8 +498,10 @@ fn toggleRegex(app: *App) CommandError!void {
     app.needs_render = true;
 }
 
-/// `*` / `#`: the identifier under the cursor becomes the query.
-fn wordSearch(app: *App, forward: bool) CommandError!void {
+/// `*` / `#`: the identifier under the cursor, as a whole keyword
+/// (`\<word\>`, `:help star`), becomes the query; `g*` / `g#` take it
+/// as a substring too.
+fn wordSearch(app: *App, forward: bool, whole: bool) CommandError!void {
     const e = try app.requireEditor();
     const text = e.buf.editor.bytes();
     const r = find_mod.wordAt(text, e.buf.editor.cursor) orelse {
@@ -505,20 +509,29 @@ fn wordSearch(app: *App, forward: bool) CommandError!void {
         return;
     };
     const word = try app.frame.allocator().dupe(u8, text[r.start..r.end]);
-    try e.find.setQuery(word, text, app.search_case);
-    // `*` / `#` write the last search pattern too (`:help star`).
-    try app.noteSearchPattern(word);
+    if (whole) try e.find.setWordQuery(word, text, app.search_case) else try e.find.setQuery(word, text, app.search_case);
+    // `*` / `#` write the last search pattern too (`:help star`), so
+    // `:s//new/` renames that identifier and not its longer cousins.
+    try app.noteSearchPattern(if (whole) try std.fmt.allocPrint(app.frame.allocator(), "\\<{s}\\>", .{word}) else word);
     // Step off the word under the cursor so the jump is a real move.
     e.find.current = if (forward) e.find.indexAtOrAfter(r.end) else e.find.indexBefore(r.start);
     try stepFromCurrent(app, e);
 }
 
 fn wordForward(app: *App) CommandError!void {
-    return wordSearch(app, true);
+    return wordSearch(app, true, true);
 }
 
 fn wordBackward(app: *App) CommandError!void {
-    return wordSearch(app, false);
+    return wordSearch(app, false, true);
+}
+
+fn wordForwardPartial(app: *App) CommandError!void {
+    return wordSearch(app, true, false);
+}
+
+fn wordBackwardPartial(app: *App) CommandError!void {
+    return wordSearch(app, false, false);
 }
 
 fn selectionSearch(app: *App, forward: bool) CommandError!void {

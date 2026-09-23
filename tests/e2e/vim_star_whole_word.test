@@ -1,0 +1,47 @@
+# `*` / `#` search the word under the cursor as a whole keyword
+# (`\<word\>`, `:help star`); `g*` / `g#` take it inside longer words
+# too. The pattern `*` writes is `\<word\>`, so `:s//` after it renames
+# the identifier and not its longer cousins.
+# Neovim 0.12.5 (`nvim --clean`) on "bar x / barfoo / bar y" from 1:1:
+#   *iX      -> bar x / barfoo / Xbar y
+#   *nciwX   -> X x / barfoo / bar y      (n wraps round to line 1)
+#   g*iX     -> bar x / Xbarfoo / bar y
+#   #iX      -> bar x / barfoo / Xbar y   (wraps back to the last)
+#   *:%s//Q/ -> Q x / barfoo / Q y
+command editor.use_vim
+write a.txt "bar x\nbarfoo\nbar y\n"
+open a.txt
+type *iX
+key esc
+command file.save
+expect file a.txt contains "bar x\nbarfoo\nXbar y\n"
+
+write b.txt "bar x\nbarfoo\nbar y\n"
+open b.txt
+type *nciwX
+key esc
+command file.save
+expect file b.txt contains "X x\nbarfoo\nbar y\n"
+
+write c.txt "bar x\nbarfoo\nbar y\n"
+open c.txt
+type g*iX
+key esc
+command file.save
+expect file c.txt contains "bar x\nXbarfoo\nbar y\n"
+
+write d.txt "bar x\nbarfoo\nbar y\n"
+open d.txt
+type #iX
+key esc
+command file.save
+expect file d.txt contains "bar x\nbarfoo\nXbar y\n"
+
+write e.txt "bar x\nbarfoo\nbar y\n"
+open e.txt
+type *
+key :
+type %s//Q/
+key enter
+command file.save
+expect file e.txt contains "Q x\nbarfoo\nQ y\n"

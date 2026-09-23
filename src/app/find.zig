@@ -91,6 +91,9 @@ pub const FindState = struct {
     /// so `gn` / `.` / `n` never act on the bytes a match used to cover.
     /// Null: just found against the current text by someone else.
     seen_edit: ?u64 = null,
+    /// vim's `*` / `#`: only a match that is a whole keyword counts —
+    /// the pattern `\<word\>` (`:help star`). `setQuery` clears it.
+    whole_word: bool = false,
 
     pub fn init(gpa: Allocator) FindState {
         return .{ .gpa = gpa };
@@ -113,6 +116,7 @@ pub const FindState = struct {
         out.bad_pattern = self.bad_pattern;
         out.offset = self.offset;
         out.seen_edit = self.seen_edit;
+        out.whole_word = self.whole_word;
         return out;
     }
 
@@ -125,6 +129,7 @@ pub const FindState = struct {
         self.matches.clearRetainingCapacity();
         self.current = null;
         self.offset = .{};
+        self.whole_word = false;
     }
 
     /// Replace the query and recompute every match in `text`. Smart case:
@@ -134,6 +139,14 @@ pub const FindState = struct {
         self.query.clearRetainingCapacity();
         try self.query.appendSlice(self.gpa, query);
         self.case_sensitive = force_case orelse hasUpper(query);
+        self.whole_word = false;
+        try self.recompute(text);
+    }
+
+    /// `*` / `#`: `word` as a whole keyword only (`\<word\>`).
+    pub fn setWordQuery(self: *FindState, word: []const u8, text: []const u8, force_case: ?bool) Allocator.Error!void {
+        try self.setQuery(word, text, force_case);
+        self.whole_word = true;
         try self.recompute(text);
     }
 
@@ -154,12 +167,23 @@ pub const FindState = struct {
             };
             defer re.deinit();
             try re.findAll(self.gpa, &self.matches, text);
-            return;
+        } else {
+            var needle_buf: [256]u8 = undefined;
+            const needle = unescape(self.query.items, &needle_buf);
+            if (needle.len == 0) return;
+            try findAll(self.gpa, &self.matches, text, needle, self.case_sensitive);
         }
-        var needle_buf: [256]u8 = undefined;
-        const needle = unescape(self.query.items, &needle_buf);
-        if (needle.len == 0) return;
-        try findAll(self.gpa, &self.matches, text, needle, self.case_sensitive);
+        if (self.whole_word) {
+            var kept: usize = 0;
+            for (self.matches.items) |m| {
+                const glued_before = m.start > 0 and isWord(text[m.start - 1]);
+                const glued_after = m.end < text.len and isWord(text[m.end]);
+                if (glued_before or glued_after) continue;
+                self.matches.items[kept] = m;
+                kept += 1;
+            }
+            self.matches.shrinkRetainingCapacity(kept);
+        }
     }
 
     /// The first match starting at or after `byte`, wrapping to 0.
@@ -263,6 +287,22 @@ test "find: smart case, escapes, wrap-around stepping" {
     try std.testing.expectEqual(@as(usize, 5), f.matches.items[0].start);
     try std.testing.expectEqual(@as(usize, 6), wordAt("hello world", 8).?.start);
     try std.testing.expect(wordAt("a b", 1) == null);
+}
+
+test "find: a word query takes whole keywords only, and a plain query clears it" {
+    const gpa = std.testing.allocator;
+    var f = FindState.init(gpa);
+    defer f.deinit();
+    const text = "bar x\nbarfoo\nfoobar\nbar_1\nbar y";
+    try f.setWordQuery("bar", text, null);
+    try std.testing.expectEqual(@as(usize, 2), f.matches.items.len);
+    try std.testing.expectEqual(@as(usize, 0), f.matches.items[0].start);
+    try std.testing.expectEqual(@as(usize, 26), f.matches.items[1].start);
+    // An edit's re-find keeps the rule.
+    try f.recompute(text);
+    try std.testing.expectEqual(@as(usize, 2), f.matches.items.len);
+    try f.setQuery("bar", text, null);
+    try std.testing.expectEqual(@as(usize, 5), f.matches.items.len);
 }
 
 test "find: regex mode compiles a vim pattern; a bad one reports and matches nothing" {
