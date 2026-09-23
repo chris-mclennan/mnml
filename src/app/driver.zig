@@ -26,6 +26,15 @@ const input = @import("../input/mod.zig");
 
 const Error = e2e.Error;
 
+/// The session is ending — a quit or a restart: the `exit` hook, the
+/// one place both loops say goodbye through, so a script's shutdown
+/// (persisting state, a last save) runs under `--headless`, IPC and the
+/// terminal alike. Called once, after the loop stops and before the App
+/// is torn down.
+pub fn endSession(app: *App) void {
+    app.hooks.emit(app, .exit);
+}
+
 pub const AppDriver = struct {
     gpa: Allocator,
     app: App,
@@ -104,6 +113,7 @@ pub const AppDriver = struct {
         .ipcCommand = vIpcCommand,
         .pluginInvocations = vPluginInvocations,
         .requestQuit = vRequestQuit,
+        .shutdown = vShutdown,
         .deinit = vDeinit,
     };
 
@@ -340,6 +350,10 @@ pub const AppDriver = struct {
         const app = &cast(p).app;
         app.quit = true;
         app.restart = restart;
+    }
+
+    fn vShutdown(p: *anyopaque) void {
+        endSession(&cast(p).app);
     }
 
     fn vDeinit(p: *anyopaque) void {

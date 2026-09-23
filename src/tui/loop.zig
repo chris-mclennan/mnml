@@ -214,7 +214,7 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
             }
         }
     }
-    app.hooks.emit(&app, .exit);
+    app_driver.endSession(&app);
     // The tail stops before the channel's exit line so the two never
     // interleave; the marker outlives a restart for the relaunch.
     bridge.cancel(io);
