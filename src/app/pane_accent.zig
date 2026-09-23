@@ -163,6 +163,9 @@ pub fn colorOf(app: *App, id: PaneId, theme: *const Theme) ?Color {
         .git_graph => |*g| if (git_palette.repoAccent(app, g.repo)) |c| return c,
         // A pty's own precedence: its name, then its product's brand.
         .pty => |*pt| return pty_pane.accentOf(app, pt, theme),
+        // sessiondiff: a session's changes view is the session's — its
+        // rail is the card's colour, so the two read as one thing.
+        .session_changes => |*v| if (app.panes.pty(v.session)) |pt| if (pty_pane.accentOf(app, pt, theme)) |c| return c,
         else => {},
     }
     const name = nameOf(app, id) orelse return null;

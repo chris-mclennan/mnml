@@ -203,6 +203,10 @@ pub const SessionsSort = enum { auto, manual, waiting };
 /// while its pane is not the one you are looking at (or the terminal
 /// window is not focused), or every time.
 pub const SessionNotify = enum { off, unfocused, always };
+/// // changed (sessiondiff): which rule `sessions.changes` counts a file
+/// by — its mtime after the session started, git (dirty now and not at
+/// the start, or in a commit since), or either.
+pub const SessionChanges = enum { mtime, git, both };
 pub const PickerPosition = enum { center, top };
 pub const NowPlayingSource = enum { auto, mixr, macos };
 pub const MusicApp = enum { mixr, music, spotify };
@@ -595,6 +599,11 @@ pub const Ui = struct {
     /// history chip hides it — so the ended toast and a worktree offer
     /// are not lost. 0 hides at once.
     session_ended_grace_min: u16 = 10,
+    /// // changed (sessiondiff): what *What did this session change*
+    /// counts — `.mtime` (a dirty or committed file written after the
+    /// session started), `.git` (dirty now and not at the start, or in a
+    /// commit since the session's `HEAD`), `.both` either.
+    session_changes: SessionChanges = .both,
     todos_sort: ListSort = .newest,
     notes_sort: ListSort = .newest,
     findings_sort: ListSort = .newest,
@@ -1344,6 +1353,7 @@ test "defaults are the shipped values" {
     try std.testing.expectEqualStrings("REVIEW", c.ui.todo_keywords[4]);
     try std.testing.expectEqual(SessionsSort.auto, c.ui.sessions_sort);
     try std.testing.expectEqual(@as(u16, 10), c.ui.session_ended_grace_min);
+    try std.testing.expectEqual(SessionChanges.both, c.ui.session_changes);
     try std.testing.expectEqual(PickerPosition.center, c.ui.picker_position);
     try std.testing.expectEqual(NowPlayingSource.mixr, c.ui.now_playing_source);
     try std.testing.expectEqual(MenuBar.always, c.ui.menu_bar);

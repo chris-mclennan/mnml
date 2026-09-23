@@ -72,6 +72,7 @@ const image_pane = @import("image_pane.zig");
 const http_app = @import("http.zig");
 const http_parse = @import("../http/parse.zig");
 const browser_pane = @import("browser_pane.zig");
+const session_changes = @import("session_changes.zig");
 const Profile = config_profile.Profile;
 
 pub const format_version: u32 = 1;
@@ -152,6 +153,17 @@ pub const Pane = struct {
     /// `claude`, and for a Codex pane whose session could not be named
     /// without guessing.
     session_id: ?[]const u8 = null,
+    /// pty (sessiondiff): the base `sessions.changes` diffs an AI session
+    /// against — its repo root, the wall clock it started at (ms), that
+    /// repo's `HEAD` then (null: an unborn branch) and the paths dirty
+    /// then. A restored session keeps the base it STARTED with, so the
+    /// review after a restart still covers everything it did. Absent on
+    /// a shell, on a session outside any repository, and on a file from
+    /// before the field (that session takes a fresh base).
+    changes_repo: ?[]const u8 = null,
+    changes_since_ms: i64 = 0,
+    changes_head: ?[]const u8 = null,
+    changes_dirty: []const []const u8 = &.{},
 
     // ─── the query-shaped kinds (session-kinds) ──────────────────────
     // Each names its SUBJECT, not its answer: a repo root, a search
@@ -460,7 +472,17 @@ pub fn capturePane(app: *App, arena: Allocator, i: PaneId, p: *app_mod.Pane, opt
             // A Claude session started under `--session-id` comes
             // back with `--resume`: the id is taken once.
             const argv = try pty_pane.resumeArgv(arena, pt.argv);
-            break :blk .{ .kind = .pty, .argv = argv, .cwd = (try pt.liveCwd(arena)) orelse pt.cwd, .label = pt.label, .renamed = pt.renamed, .accent = pt.accent_color, .session_id = try paneSessionId(app, arena, pt, argv) };
+            var sp: Pane = .{ .kind = .pty, .argv = argv, .cwd = (try pt.liveCwd(arena)) orelse pt.cwd, .label = pt.label, .renamed = pt.renamed, .accent = pt.accent_color, .session_id = try paneSessionId(app, arena, pt, argv) };
+            // sessiondiff: the session's base, once it has one.
+            if (pt.changes) |rec| if (rec.base == .ready) {
+                sp.changes_repo = rec.root;
+                sp.changes_since_ms = rec.since_ms;
+                sp.changes_head = rec.head;
+                const dirty = try arena.alloc([]const u8, rec.dirty0.len);
+                for (dirty, rec.dirty0) |*d, src| d.* = src;
+                sp.changes_dirty = dirty;
+            };
+            break :blk sp;
         },
         .request => |*rp| blk: {
             if (!opts.extra_kinds) break :blk null;
@@ -1110,7 +1132,7 @@ fn openSavedPane(app: *App, sp: Pane, opened: []const ?PaneId, opts: OpenOpts) O
                     break :blk try cli.claudeResumeArgv(app.frame.allocator(), id);
                 },
             };
-            return pty_pane.open(app, .{
+            const id = pty_pane.open(app, .{
                 .argv = argv,
                 .cwd = sp.cwd,
                 .label = sp.label,
@@ -1119,10 +1141,14 @@ fn openSavedPane(app: *App, sp: Pane, opened: []const ?PaneId, opts: OpenOpts) O
                 .kind = if (argv.len == 0) .shell else .command,
                 .accent_color = sp.accent,
                 .dormant = plan == .dormant and !opts.run_commands,
+                // sessiondiff: a saved base is adopted, not re-taken.
+                .record_changes = sp.changes_repo == null,
             }) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => return null,
             };
+            if (sp.changes_repo) |repo| try session_changes.adopt(app, id, .{ .repo = repo, .since_ms = sp.changes_since_ms, .head = sp.changes_head, .dirty = sp.changes_dirty });
+            return id;
         },
     }
 }

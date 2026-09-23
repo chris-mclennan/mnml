@@ -15,6 +15,7 @@ const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const git = @import("git.zig");
 const line_blame = @import("line_blame.zig");
+const session_changes = @import("session_changes.zig");
 const client = @import("../git/client.zig");
 const parse = @import("../git/parse.zig");
 const git_palette = @import("git_palette.zig");
@@ -212,6 +213,7 @@ fn refresh(app: *App) CommandError!void {
 /// The rail / status pane's selected row when one has focus, else the
 /// active editor's file.
 fn diffFile(app: *App) CommandError!void {
+    if (try session_changes.gitVerb(app, .diff)) return;
     const repo = try git.requireRepo(app);
     if (try selectedRow(app)) |row| return git.actOnRow(app, row, .open);
     const rel = try activeRel(app, repo);
@@ -406,11 +408,13 @@ fn rowOrActiveFile(app: *App, repo: *client.Repo) CommandError!git.Row {
 }
 
 fn stage(app: *App) CommandError!void {
+    if (try session_changes.gitVerb(app, .stage)) return;
     const repo = try git.requireRepo(app);
     try git.actOnRow(app, try rowOrActiveFile(app, repo), .stage);
 }
 
 fn unstage(app: *App) CommandError!void {
+    if (try session_changes.gitVerb(app, .unstage)) return;
     const repo = try git.requireRepo(app);
     try git.actOnRow(app, try rowOrActiveFile(app, repo), .unstage);
 }
@@ -421,6 +425,7 @@ fn discard(app: *App) CommandError!void {
 }
 
 fn openFile(app: *App) CommandError!void {
+    if (try session_changes.gitVerb(app, .open_file)) return;
     const row = (try selectedRow(app)) orelse return app.diag.fail(arena(app), "git: nothing selected", .{});
     try git.openRowFile(app, row);
 }
@@ -443,6 +448,9 @@ fn unstageAll(app: *App) CommandError!void {
 /// commits, Esc leaves it), on its hint row. Outside git mode the modal
 /// prompt, titled with the staged count as Rust titles it.
 fn commit(app: *App) CommandError!void {
+    // sessiondiff: on a session's changes view the commit is that
+    // session's — its repo, its title as the message seed.
+    if (try session_changes.gitVerb(app, .commit)) return;
     _ = try git.requireRepo(app);
     if (git.activeGraph(app)) |g| if (g.wipSelected() and std.mem.trim(u8, g.wip_text.items, " \t\r\n").len > 0) return git.commitFromTextarea(app, g);
     if (app.git_palette.active and git.graphPaintsBox(app)) return commitFocus(app);

@@ -222,6 +222,7 @@ otherwise. Copy what you need; leave the rest out.
         .session_bell = false, // ring the terminal bell with a session notification (so session_notify gates it); a session no pane here runs rings it on its own. SESSIONS toasts once per edge either way
         .session_notify = .unfocused, // a desktop notification, through the terminal, when a session pane starts needing you (a permission prompt, a question) or ends: .off | .unfocused (its pane is not the focused one, or the terminal window is not) | .always. OSC 777 for ghostty and WezTerm, OSC 9 for iTerm2, both elsewhere
         .session_ended_grace_min = 10, // minutes an ended session stays listed in SESSIONS before the history chip hides it (0 = at once)
+        .session_changes = .both, // .mtime | .git | .both — what "What did this session change" (sessions.changes) counts: a dirty or committed file written after the session started, one dirty now and not at the start or in a commit since its HEAD, or either
         .todos_sort = .newest, // .newest | .oldest | .name | .name_desc
         .notes_sort = .newest,
         .findings_sort = .newest,

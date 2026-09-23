@@ -67,6 +67,7 @@ const findings = @import("findings.zig");
 const debug_panel = @import("app/debug_panel.zig");
 const sessions = @import("sessions.zig");
 const welcome_mod = @import("app/welcome.zig");
+const session_changes_mod = @import("app/session_changes.zig");
 const dock = @import("app/dock.zig");
 const hover_zones = @import("app/hover_zones.zig");
 const sidebar_auto = @import("app/sidebar_auto.zig");
@@ -247,6 +248,9 @@ pub const PromptPurpose = union(enum) {
     /// worktree; the payload names the product and the launch profile
     /// (owned) the session then starts with.
     session_worktree_name: SessionWorktreeName,
+    /// // changed (sessiondiff): the commit message for a session's
+    /// changes view; the payload is the repo id it commits in.
+    session_commit: u32,
     /// A cloud run's ticket; the wizard's first step; its second, the
     /// model, carrying the ticket (owned).
     cloud_run_ticket,
@@ -1163,6 +1167,9 @@ pub const App = struct {
     /// // changed (welcome): the start surface's cursors
     /// (`app/welcome.zig`).
     welcome: welcome_mod.State = .{},
+    /// // changed (sessiondiff): what each AI session changed — the
+    /// records live on their pty panes; this is the token counter.
+    session_changes: session_changes_mod.State = .{},
     /// // changed (lua-track): the SCRIPTS section's list state.
     scripts_panel: scripts_panel.State = .{},
     /// // changed (lua-plumbing): the lists `mnml.list{}` registered —

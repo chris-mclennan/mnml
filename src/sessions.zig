@@ -101,6 +101,8 @@ const Config = @import("config/Config.zig");
 const accent_color = @import("ui/accent_color.zig");
 const session_worktree = @import("app/session_worktree.zig");
 const mount_pane_mod = @import("app/mount_pane.zig");
+const session_changes = @import("app/session_changes.zig");
+const chip_mod = @import("ui/chip.zig");
 
 pub const Source = agents.Source;
 pub const AgentState = agents.AgentState;
@@ -1339,6 +1341,8 @@ pub fn nextDeadlineMs(app: *const App) ?i64 {
 // ─── commands (D2, D5) ──────────────────────────────────────────────────
 
 fn refreshCmd(app: *App) CommandError!void {
+    // sessiondiff: the refresh reads every session's changes again too.
+    session_changes.refreshAll(app);
     return refresh(app);
 }
 
@@ -2026,7 +2030,7 @@ pub fn chipMouse(app: *App, kind: hit.ChipKind, m: Mouse) Allocator.Error!void {
     if (m.kind != .press) return;
     switch (kind) {
         .sort => if (m.button == .right) try openSortMenu(app, m.x, m.y) else runToast(app, sortCmd(app)),
-        .refresh => if (m.button == .right) try auto_refresh.openRefreshMenu(app, .sessions, m.x, m.y) else runToast(app, refresh(app)),
+        .refresh => if (m.button == .right) try auto_refresh.openRefreshMenu(app, .sessions, m.x, m.y) else runToast(app, refreshCmd(app)),
         .new => try openNewMenu(app, m.x, m.y + 1),
         .view => runToast(app, sessions_table.openCmd(app)),
         .history => if (m.button == .right) try openHistoryMenu(app, m.x, m.y) else runToast(app, toggleEndedCmd(app)),

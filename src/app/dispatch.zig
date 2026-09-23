@@ -79,6 +79,7 @@ const md_preview = @import("md_preview.zig");
 const zen = @import("zen.zig");
 const named_layouts = @import("named_layouts.zig");
 const zon_pane = @import("zon_pane.zig");
+const session_changes = @import("session_changes.zig");
 const cmd_view = @import("cmd_view.zig");
 const context_menus = @import("context_menus.zig");
 const cheatsheet = @import("cheatsheet.zig");
@@ -350,6 +351,11 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
         .git_status => |*s| {
             if (try git_app.statusPaneKey(app, id, s, k)) return;
             try unclaimedKey(app, k);
+            return;
+        },
+        .session_changes => |*v| {
+            if (try session_changes.key(app, id, v, k)) return;
+            _ = try chordChain(app, k);
             return;
         },
         .diff => |*d| {
@@ -1680,6 +1686,7 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .new_finding => |dir| try findings.acceptNew(app, dir, text),
         .sessions_rename => |id| try sessions.acceptRename(app, id, text),
         .session_worktree_name => |w| try toastOnFail(app, @import("session_worktree.zig").acceptNameCmd(app, w.product, w.profile, text)),
+        .session_commit => |repo| try toastOnFail(app, session_changes.acceptCommit(app, repo, text)),
         .cloud_run_ticket => try cloud_agents.acceptRun(app, text, null),
         .cloud_run_wizard_ticket => try cloud_agents.acceptWizardTicket(app, text),
         .cloud_run_model => |ticket| try cloud_agents.acceptRun(app, ticket, text),
@@ -2485,6 +2492,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     if (l.cursor == sh.id) try listPaneEnter(app, sh.pane, l) else l.cursor = sh.id;
                 },
                 .git_status => |*s| try git_app.statusPaneClick(app, s, sh.id, m),
+                .session_changes => |*v| try session_changes.click(app, v, sh.id, m),
                 .diff => |*d| try git_app.diffClick(app, sh.pane, d, sh.id, m),
                 .git_graph => |*g| try git_app.graphClick(app, sh.pane, g, sh.id, m),
                 .sessions_table => |*tp| try sessions_table.click(app, sh.pane, tp, sh.id, m),
@@ -3233,6 +3241,7 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         // body's gain (`pty_pane.wheel`).
         .pty => |*p| pty_pane.wheel(app, p, down, n, n * gain),
         .git_status => |*s| git_app.statusPaneWheel(app, s, down, n),
+        .session_changes => |*v| session_changes.wheel(app, v, down, n),
         .diff => |*d| git_app.stepDiff(d, signed(down, @intCast(n * gain))),
         .git_graph => |*g| g.cursor = if (down) @min(g.cursor + n, g.totalRows() -| 1) else g.cursor -| n,
         .ai => |*a| ai_app.scrollBy(a, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),

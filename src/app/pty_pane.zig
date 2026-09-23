@@ -34,6 +34,7 @@ const statusline = @import("statusline.zig");
 const CommandError = command.CommandError;
 const launch_profiles = @import("launch_profiles.zig");
 const accent_color = @import("../ui/accent_color.zig");
+const session_changes = @import("session_changes.zig");
 const pane_accent = @import("pane_accent.zig");
 const pane_rail = @import("../ui/pane_rail.zig");
 const bufferline = @import("../ui/bufferline.zig");
@@ -104,6 +105,11 @@ pub const OpenOptions = struct {
     /// session uses, so relaunching an editor never runs a shell (and
     /// its rc files, and whatever it was in the middle of) unasked.
     dormant: bool = false,
+    /// // changed (sessiondiff): an AI session takes its record (the
+    /// base `sessions.changes` diffs against) as it starts. A restore
+    /// passes false and hands the saved base over instead
+    /// (`session_changes.adopt`) — the session started then, not now.
+    record_changes: bool = true,
 };
 
 /// The reader thread's way into the app: posts `.pty_readable{pane}`
@@ -220,8 +226,13 @@ pub const PtyPane = struct {
     /// The scrollback search (`pty_search.zig`): the query, its matches
     /// and the scan's place.
     search: pty_search.Search = .{},
+    /// // changed (sessiondiff): an AI session's base and its latest
+    /// set — what `sessions.changes` shows (`app/session_changes.zig`).
+    /// Owned; null on a shell, and on a session outside any repository.
+    changes: ?*session_changes.Record = null,
 
     pub fn deinit(self: *PtyPane, gpa: Allocator) void {
+        if (self.changes) |c| c.destroy(gpa);
         if (self.session) |s| s.deinit();
         self.grid.deinit(gpa);
         self.search.deinit(gpa);
@@ -460,6 +471,7 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
         return err;
     };
     bornFocused(app, id);
+    if (!opts.dormant and opts.record_changes) try session_changes.onSessionStart(app, id);
     app.needs_render = true;
     return id;
 }
@@ -648,6 +660,10 @@ pub fn restart(app: *App, id: PaneId) CommandError!void {
     p.started_at_s = started_at_s;
     if (p.codex_session_id) |c| app.gpa.free(c);
     p.codex_session_id = null;
+    // sessiondiff: a pane restored dormant with no saved base starts
+    // its record now; one that has a base keeps it — a resume is the
+    // same session.
+    try session_changes.onSessionStart(app, id);
     app.needs_render = true;
 }
 
