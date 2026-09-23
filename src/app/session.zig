@@ -698,6 +698,17 @@ pub fn apply(app: *App, arena: Allocator, saved: Saved) RestoreError!void {
             fresh.deinit(gpa);
         }
         for (saved.tabs) |tab| try fresh.append(gpa, try buildLayout(gpa, tab, ids));
+        // A pane other than an editor lives in one leaf of one page
+        // (`LayoutState.holders`): a file naming one on two pages (only a
+        // hand-edited one does) keeps it on the first. An editor — a
+        // buffer — may be on several, as vim's tab pages share one.
+        for (fresh.items, 0..) |*l, i| for (try l.allPanes(arena)) |pid| {
+            if (app.sharedAcrossPages(pid)) continue;
+            for (fresh.items[0..i]) |*prev| if (prev.leafOf(pid) != null) {
+                _ = l.removePane(pid);
+                break;
+            };
+        };
         app.setActive(null);
         const ls = &app.layouts;
         for (ls.layouts.items) |*l| l.deinit();
@@ -1099,7 +1110,13 @@ pub fn buildLayout(gpa: Allocator, tab: Tab, ids: []const ?PaneId) Allocator.Err
         .leaf => |lf| {
             var leaf: layout_mod.Leaf = .{ .active = sentinel, .tabs = .empty };
             errdefer leaf.tabs.deinit(gpa);
-            for (lf.tabs) |ti| try leaf.tabs.append(gpa, if (ti < ids.len) (ids[ti] orelse sentinel) else sentinel);
+            for (lf.tabs) |ti| {
+                const id: PaneId = if (ti < ids.len) (ids[ti] orelse sentinel) else sentinel;
+                // Named twice in one tree (a hand-edited file): the
+                // first leaf keeps it.
+                const twice = id != sentinel and (l.leafOf(id) != null or std.mem.indexOfScalar(PaneId, leaf.tabs.items, id) != null);
+                try leaf.tabs.append(gpa, if (twice) sentinel else id);
+            }
             if (leaf.tabs.items.len == 0) try leaf.tabs.append(gpa, sentinel);
             const want: PaneId = if (lf.active < ids.len) (ids[lf.active] orelse sentinel) else sentinel;
             leaf.active = if (std.mem.indexOfScalar(PaneId, leaf.tabs.items, want) != null) want else leaf.tabs.items[0];

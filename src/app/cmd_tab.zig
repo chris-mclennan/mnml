@@ -478,6 +478,48 @@ test "tab.close keeps a pane another page still shows; only the panes no page sh
     try t.expect(app.panes.get(b) == null);
 }
 
+test "showing a non-editor pane on another page goes to that page — it is never pulled into this one; tab.close then retires only its own page's panes" {
+    // sess-card-enter-pulls-pane-across-tabs: a pane other than an
+    // editor (a session's pty, here the cheatsheet) lives in one leaf.
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    // Page 1: a and the cheatsheet. Page 2: c.
+    const a = try app.openScratch();
+    try command.run(&app, .{ .static = .@"view.cheatsheet" });
+    const cs = app.active.?;
+    try t.expect(app.panes.get(cs).?.* == .cheatsheet);
+    try command.run(&app, .{ .static = .@"tab.new" });
+    const c = app.active.?;
+    try t.expectEqual(@as(usize, 1), app.layouts.active);
+    app.showPane(cs);
+    // Page 1 is on screen with the cheatsheet focused; page 2 still
+    // holds only c.
+    try t.expectEqual(@as(usize, 0), app.layouts.active);
+    try t.expectEqual(cs, app.active.?);
+    try t.expect(app.layouts.layouts.items[1].leafOf(cs) == null);
+    try t.expectEqual(@as(usize, 1), app.layouts.holders(cs));
+    try t.expectEqualSlices(app_mod.PaneId, &.{c}, try app.layouts.layouts.items[1].allPanes(app.frame.allocator()));
+    // `showPaneIn` a leaf of page 2 goes to page 1 too.
+    switchTab(&app, 1);
+    try t.expectEqual(c, app.active.?);
+    app.showPaneIn(app.layouts.current().leafOf(c).?, cs);
+    try t.expectEqual(@as(usize, 0), app.layouts.active);
+    try t.expectEqual(@as(usize, 1), app.layouts.holders(cs));
+    // A file, by contrast, is shown on this page as well — vim's tab
+    // pages share a buffer.
+    app.showPane(c);
+    try t.expectEqual(@as(usize, 0), app.layouts.active);
+    try t.expectEqual(@as(usize, 2), app.layouts.holders(c));
+    switchTab(&app, 1);
+    try command.run(&app, .{ .static = .@"tab.close" });
+    try t.expectEqual(@as(usize, 1), app.layouts.layouts.items.len);
+    try t.expect(app.panes.get(cs) != null);
+    try t.expect(app.panes.get(a) != null);
+    // c is still shown on page 1, so it stays.
+    try t.expect(app.panes.get(c) != null);
+    try t.expectEqual(@as(usize, 1), app.layouts.holders(cs));
+}
+
 test "tab.reopen brings a closed page's files back as a new page after this one, the active one focused; nothing left toasts" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();

@@ -2610,25 +2610,54 @@ pub const App = struct {
         return id;
     }
 
-    /// Reveal `id` and focus it: where it already is when it has a
-    /// leaf, else as a new tab of the focused leaf (or a new leaf).
-    pub fn showPane(self: *App, id: PaneId) void {
-        const layout = self.layouts.current();
-        if (layout.leafOf(id)) |lid| {
-            layout.leaf(lid).?.active = id;
-        } else {
-            const where: ?layout_mod.NodeId = if (self.active) |a| layout.leafOf(a) else null;
-            _ = layout.showIn(where, id) catch {};
-        }
-        self.setActive(id);
+    /// Whether `id` may be shown on more than one tab page: an editor —
+    /// a buffer, which vim's tab pages share (`:tabnew`, `:e a.txt`
+    /// shows the file there too; `tab.close` keeps a pane another page
+    /// still shows). Every other pane — a session's pty above all — lives
+    /// in one leaf of one page (`LayoutState.holders`).
+    pub fn sharedAcrossPages(self: *App, id: PaneId) bool {
+        const p = self.panes.get(id) orelse return false;
+        return p.* == .editor;
     }
 
-    /// Move `id` into leaf `lid` as its active tab and focus it.
+    /// Reveal `id` and focus it: where it already is on this page, else —
+    /// for a pane that lives on one page only — on whichever page holds
+    /// it, which becomes the page on screen, else as a new tab of the
+    /// focused leaf (or a new leaf). Every "go to that pane" gesture (a
+    /// SESSIONS card, the sessions table, the dock, a picker) lands
+    /// here, so a session on another page is gone to, never pulled into
+    /// this one; a file is shown here, as vim shows a buffer in the
+    /// current tab page.
+    pub fn showPane(self: *App, id: PaneId) void {
+        const ls = &self.layouts;
+        const shared = self.sharedAcrossPages(id);
+        const here = ls.current();
+        if (here.leafOf(id)) |lid| {
+            here.leaf(lid).?.active = id;
+        } else if (!shared and ls.pageOf(id) != null) {
+            self.setActive(null);
+            ls.active = ls.pageOf(id).?;
+            const layout = ls.current();
+            layout.leaf(layout.leafOf(id).?).?.active = id;
+        } else {
+            const where: ?layout_mod.NodeId = if (self.active) |a| here.leafOf(a) else null;
+            _ = here.showIn(where, id) catch {};
+        }
+        self.setActive(id);
+        if (!shared) std.debug.assert(ls.holders(id) <= 1);
+    }
+
+    /// Move `id` into leaf `lid` as its active tab and focus it. A pane
+    /// that lives on one page and is on another is gone to instead
+    /// (`showPane`): the page's leaf is the one it lives in.
     pub fn showPaneIn(self: *App, lid: layout_mod.NodeId, id: PaneId) void {
         const layout = self.layouts.current();
         if (layout.leaf(lid) == null) return self.showPane(id);
+        const shared = self.sharedAcrossPages(id);
+        if (!shared) if (self.layouts.pageOf(id)) |page| if (page != self.layouts.active) return self.showPane(id);
         _ = layout.showIn(lid, id) catch {};
         self.setActive(id);
+        if (!shared) std.debug.assert(self.layouts.holders(id) <= 1);
     }
 
     pub fn setActive(self: *App, id: ?PaneId) void {
