@@ -717,13 +717,49 @@ pub fn substituteEntry(app: *App, range: ?Range, spec: []const u8, whole: bool) 
         const last = app.last_search_pattern orelse return app.diag.fail(arena, "{s} — E35: no previous regular expression", .{label});
         parts.pattern = try arena.dupe(u8, last);
     }
+    // `~` is the previous replacement string (`:help s~`), `\~` a tilde;
+    // what is remembered is the expanded string, as in Neovim.
+    parts.replacement = try expandTilde(arena, parts.replacement, if (app.last_substitute) |l| l.replacement else "");
+    // `:s/x/y/ 3` — a count: that many lines from the range's last one.
+    var r = range;
+    var flag_letters: std.ArrayListUnmanaged(u8) = .empty;
+    var count: usize = 0;
+    for (parts.flags) |f| {
+        if (std.ascii.isDigit(f)) {
+            count = count * 10 + (f - '0');
+        } else if (f != ' ' and f != '\t') try flag_letters.append(arena, f);
+    }
+    parts.flags = flag_letters.items;
+    if (count > 0) {
+        const e = try editor(app, label);
+        const lines = e.buf.editor.lineCount();
+        const from = if (r) |rr| rr.last else e.buf.editor.currentLine();
+        r = .{ .first = @min(from, lines - 1), .last = @min(from + count - 1, lines - 1) };
+    }
     try remember(app, parts);
     // `remember` freed the previous spec — an empty pattern borrowed from it.
     parts.pattern = app.last_substitute.?.pattern;
-    if (std.mem.indexOfScalar(u8, parts.flags, 'n') != null) return substituteCount(app, range, parts, whole);
-    if (std.mem.indexOfScalar(u8, parts.flags, 'c') != null) return substituteConfirm(app, range, parts, whole);
+    parts.replacement = app.last_substitute.?.replacement;
+    if (std.mem.indexOfScalar(u8, parts.flags, 'n') != null) return substituteCount(app, r, parts, whole);
+    if (std.mem.indexOfScalar(u8, parts.flags, 'c') != null) return substituteConfirm(app, r, parts, whole);
     const rebuilt = try std.fmt.allocPrint(arena, "{c}{s}{c}{s}{c}{s}", .{ parts.delim, parts.pattern, parts.delim, parts.replacement, parts.delim, parts.flags });
-    return ex.substitute(app, range, rebuilt, whole);
+    return ex.substitute(app, r, rebuilt, whole);
+}
+
+/// `~` → `prev`; `\~` and every other escape stay for the expansion.
+fn expandTilde(arena: Allocator, rep: []const u8, prev: []const u8) Allocator.Error![]const u8 {
+    if (std.mem.indexOfScalar(u8, rep, '~') == null) return rep;
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var i: usize = 0;
+    while (i < rep.len) : (i += 1) {
+        if (rep[i] == '\\' and i + 1 < rep.len) {
+            try out.appendSlice(arena, rep[i .. i + 2]);
+            i += 1;
+        } else if (rep[i] == '~') {
+            try out.appendSlice(arena, prev);
+        } else try out.append(arena, rep[i]);
+    }
+    return out.items;
 }
 
 fn remember(app: *App, parts: SubParts) Allocator.Error!void {
