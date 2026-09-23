@@ -4,7 +4,7 @@
    │       ipc-zig          │▌
  󰍉 │      prog.dbg           │▌ (active) personal  · sam@example.com · sam@example.com's Organization
    │                          │▌
- 󰊢 │         󰐙 Add workspace  │▌ Current session
+ 󰊢 │         󰐙 Add workspace  │▌ Current session · in force
    │                          │▌                                                              95% used
   │                          │▌   Resets 8:20pm
    │                          │▌
@@ -16,25 +16,25 @@
    │                          │▌                                                              55% used
   │                          │▌   Resets Sep 19 at 5am
    │                          │▌
-  │                          │▌
-   │                          │▌ work  · sam@work.example · Example Co
+  │                          │▌   Extra usage: off
+   │                          │▌
  󱘣 │                          │▌
+   │                          │▌ work  · sam@work.example · Example Co
+ 󰢱 │                          │▌
    │                          │▌ Current session
- 󰢱 │                          │▌                                                              24% used
+   │                          │▌                                                              24% used
    │                          │▌   Resets 11:05pm
    │                          │▌
    │                          │▌ Current week (all models)
    │                          │▌                                                              71% used
    │                          │▌   Resets Sep 16 at 9am
-   │                          │▌
-   │                          │▌
-   │──────────────────────────│▌ consulting 
+   │──────────────────────────│▌
    │ Claude Usage           ⋮ │▌
+   │                          │▌ consulting 
+   │                          │▌
    │                          │▌ Current session
    │                          │▌                                                              0% used
-   │                          │▌   (reset time not available)
+  │                          │▌   (reset time not available)
    │                          │▌
-  │                          │▌ Current week (all models)
-   │                          │▌                                                              0% used
- VIEW  [no file]                                                                            󱼀 󰐎    17:48  ws   —
+ VIEW  [no file]                                                                            󱼀 󰐎    18:23  ws   —
                                                            ⋯
