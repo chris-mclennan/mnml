@@ -115,6 +115,7 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .move_up_first_non_ws => motion.upFirstNonWs(ed),
         .move_line_last_non_ws => motion.lineLastNonWs(ed),
         .move_paragraph => |p| motion.paragraph(ed, p.forward),
+        .move_to_unmatched => |u| motion.toUnmatched(ed, u.open, u.forward),
         .move_sentence => |p| motion.sentence(ed, p.forward),
         .move_line_end => {
             motion.lineEnd(ed);

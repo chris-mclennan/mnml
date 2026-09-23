@@ -906,6 +906,16 @@ pub const Vim = struct {
         return b.finish();
     }
 
+    /// `[(` `[{` `])` `]}` as a motion, or as an operator's target.
+    fn unmatchedMotion(self: *Vim, op: ?PendingOp, open: u21, forward: bool, n: u32, ctx: EditCtx, arena: Allocator) Allocator.Error!InputResult {
+        const m: EditOp = .{ .move_to_unmatched = .{ .open = open, .forward = forward } };
+        const o = op orelse return repeated(arena, m, n);
+        var b = Builder.init(arena);
+        try b.push(.select_start);
+        try b.pushRepeated(m, n);
+        return self.finishOperator(&b, o, ctx, false);
+    }
+
     fn textObjectOp(key: Key, around: bool) ?EditOp {
         const c = charOf(key) orelse return null;
         return switch (c) {
@@ -1116,8 +1126,13 @@ pub const Vim = struct {
             },
             .bracket_open => {
                 const n = self.count1();
+                const op = self.op;
                 self.resetPending();
                 const c = ch orelse return .consumed;
+                // `[(` / `[{`: back to the unmatched opener — a motion,
+                // so `d[{` / `c[(` take it (exclusive, `:help [(`).
+                if (c == '(' or c == '{') return self.unmatchedMotion(op, c, false, n, ctx, arena);
+                if (op != null) return .consumed;
                 return switch (c) {
                     'c' => runCmd(.@"git.jump_prev_change"),
                     'x' => runCmd(.@"git.conflict_prev"),
@@ -1135,8 +1150,12 @@ pub const Vim = struct {
             },
             .bracket_close => {
                 const n = self.count1();
+                const op = self.op;
                 self.resetPending();
                 const c = ch orelse return .consumed;
+                // `])` / `]}`: on to the unmatched closer.
+                if (c == ')' or c == '}') return self.unmatchedMotion(op, if (c == ')') '(' else '{', true, n, ctx, arena);
+                if (op != null) return .consumed;
                 return switch (c) {
                     'c' => runCmd(.@"git.jump_next_change"),
                     'x' => runCmd(.@"git.conflict_next"),
@@ -1906,6 +1925,13 @@ pub const Vim = struct {
             self.op = op;
             self.prefix = .g;
             if (n > 1) self.count = n;
+            return .consumed;
+        }
+        if (ch == '[' or ch == ']') {
+            // `d]}`, `c[(`: the bracket motion comes next.
+            self.op = op;
+            if (n > 1) self.count = n;
+            self.prefix = if (ch == '[') .bracket_open else .bracket_close;
             return .consumed;
         }
         if (ch == '\'' or ch == '`') {

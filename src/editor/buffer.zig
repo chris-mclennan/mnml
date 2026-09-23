@@ -512,7 +512,7 @@ pub const Buffer = struct {
             .move_up, .move_down, .move_left, .move_right, .move_down_first_non_ws, .move_up_first_non_ws => true,
             .move_word_left, .move_word_right, .move_word_end, .move_word_end_back => true,
             .move_big_word_left, .move_big_word_right, .move_big_word_end, .move_big_word_end_back => true,
-            .find_char_on_line => true,
+            .find_char_on_line, .move_to_unmatched => true,
             else => false,
         };
     }
