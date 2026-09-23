@@ -221,6 +221,13 @@ pub fn forItem(it: command.MenuItem, ascii: bool) []const u8 {
         .lua_bind => if (ascii) "k" else "\u{f11c}", // fa-keyboard_o
         // // changed (lsp-defaults): the LSP chip menu's Install row.
         .lsp_install => if (ascii) "v" else "\u{f019}", // fa-download, the tools table's install row
+        // A Claude account's rows: the pencil the pane's header paints
+        // beside the name, a key for the token, the trash for removal.
+        .claude_account => |c| switch (c.act) {
+            .rename => if (ascii) "e" else "\u{F040}", // fa-pencil, the header's own
+            .link => if (ascii) "k" else "\u{f084}", // fa-key
+            .remove => if (ascii) "d" else "\u{f1f8}", // fa-trash, as the command rows that remove
+        },
         .dyn, .none => if (it.submenu.len > 0) (if (ascii) "=" else "\u{f0c9}") else "",
     };
 }

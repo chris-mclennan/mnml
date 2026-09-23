@@ -172,6 +172,12 @@ const phase_one = [_]Row{
         .body = "Asks the account's usage endpoint again instead of waiting for the next poll — the thing to do when a chip reads stale after a reset. A chip stuck at 0% on a linked account is a token that needs re-linking, which a refresh does not fix.",
         .links = &.{ .{ .command = .{ .id = .@"ai.refresh_usage", .label = "Refresh now" } }, .{ .command = .{ .id = .@"ai.link_claude_token", .label = "Re-link the token" } } },
     } },
+    .{ .label = "Add Claude account…", .command = .@"ai.claude_add_account", .entry = .{
+        .title = "Add a Claude account",
+        .body = "Asks for a name, then for that account's Claude Code OAuth token, and adds it to `ai.claude_accounts` in the home config with a token file of its own under the data root. It is fetched at once and from then on with the others; the usage pane lists it and the chip counts it. Esc on the token prompt keeps the account unlinked — in the usage pane, L runs `claude login` as it and R captures that login into its file.",
+        .keys = &.{.{ .chord = "a", .label = "Add (in the usage pane)" }},
+        .links = &.{ .{ .command = .{ .id = .@"ai.claude_add_account", .label = "Add one" } }, .{ .command = .{ .id = .@"ai.claude_usage", .label = "The usage pane" } } },
+    } },
     .{ .label = "Show last response", .entry = .{
         .title = "The last usage response",
         .body = "Opens the raw answer the usage endpoint gave last time, as text — for reading exactly what the account reports when the chip's figure looks wrong. A 401 here is an expired token; re-link it.",
@@ -324,7 +330,30 @@ fn family(app: *App, arena: Allocator, menu: []const u8, parent: ?[]const u8, it
     if (item.action == .rail_from_dock) return try rail.fromDock(app, arena, item.action.rail_from_dock);
     if (std.mem.eql(u8, menu, "File")) if (parent) |p| if (std.mem.eql(u8, p, "Open recent file") and item.action == .command and menu_bar.isRecentId(item.action.command)) return try menu_bar.recentFile(app, arena, label);
     if (std.mem.eql(u8, menu, "Create…")) if (parent) |p| if (std.mem.eql(u8, p, "Integrations")) return try plus.integration(arena, label);
+    if (item.action == .claude_account) return try claudeAccountRow(arena, item.action.claude_account);
     return null;
+}
+
+/// A row that acts on one Claude account: the usage pane's account menu,
+/// or the palette's chooser when several are configured.
+fn claudeAccountRow(arena: Allocator, a: command.ClaudeAccountAct) Allocator.Error!Entry {
+    return switch (a.act) {
+        .link => .{
+            .title = try std.fmt.allocPrint(arena, "Link a token to {s}", .{a.name}),
+            .body = try std.fmt.allocPrint(arena, "Opens a hidden prompt for the Claude Code OAuth token of `{s}` and writes it to that account's own token file (mode 0600), then fetches its usage. The token is the `accessToken` in the CLI's login — or paste the whole login blob, whose refresh token lets an expired token renew itself.", .{a.name}),
+            .links = &.{ .{ .command = .{ .id = .@"ai.link_claude_token", .label = "Link a token" } }, .{ .command = .{ .id = .@"ai.claude_usage", .label = "The usage pane" } } },
+        },
+        .rename => .{
+            .title = try std.fmt.allocPrint(arena, "Rename {s}", .{a.name}),
+            .body = try std.fmt.allocPrint(arena, "Opens a prompt seeded with `{s}`; the new name is written to `ai.claude_accounts` in the home config and follows the account's numbers, schedule and identity pin. The token file keeps its name. At most 32 characters, no quotes or backslashes, and not another account's name.", .{a.name}),
+            .links = &.{.{ .command = .{ .id = .@"ai.claude_rename_account", .label = "Rename an account" } }},
+        },
+        .remove => .{
+            .title = try std.fmt.allocPrint(arena, "Remove {s}", .{a.name}),
+            .body = try std.fmt.allocPrint(arena, "Asks first, then takes `{s}` out of `ai.claude_accounts` in the home config and out of the pane and the chip. Its token file is deleted when it lives under the data root and no other account uses it; a file elsewhere (under `~/.claude`, say) is left alone. The box says which.", .{a.name}),
+            .links = &.{ .{ .command = .{ .id = .@"ai.claude_remove_account", .label = "Remove an account" } }, .{ .command = .{ .id = .@"ai.claude_add_account", .label = "Add one" } } },
+        },
+    };
 }
 
 /// The entry for a row of a menu titled `menu` (under `parent` when the

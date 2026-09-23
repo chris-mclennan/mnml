@@ -443,6 +443,7 @@ pub fn scriptHit(app: *App, arena: Allocator, pane: PaneId, id: u32) Allocator.E
         .body = "Who last changed the cursor's line, how long ago, and the commit's summary — `git blame` for this one line, asked on the git worker once the cursor rests and kept until the file changes. Click opens that commit in the graph with the cursor on it. It says nothing while the buffer has unsaved changes (git blames the file on disk) or for a line not committed yet.",
         .links = &.{ .{ .command = .{ .id = .@"git.toggle_line_blame", .label = "Turn it off" } }, .{ .command = .{ .id = .@"git.blame_toggle", .label = "Blame every line in the gutter" } }, .{ .settings = .{ .row = comptime copy.settingsRow("editor.line_blame"), .label = "Current-line blame in Settings" } } },
     };
+    if (p.* == .ai_usage) return try usagePane(app, arena, id);
     if (hit.ListHit.chipOf(id)) |c| return chip(.script, c);
     if (id == hit.ListHit.filter_id) return filter(.script);
     if (id >= hit.ListHit.kebab_base) return kebab(.{ .panel = .script, .idx = id - hit.ListHit.kebab_base });
@@ -455,6 +456,36 @@ pub fn scriptHit(app: *App, arena: Allocator, pane: PaneId, id: u32) Allocator.E
 }
 
 const PaneId = app_mod.PaneId;
+
+/// The Claude usage pane's parts (`app/usage_pane.zig`'s hit ids).
+fn usagePane(app: *App, arena: Allocator, id: u32) Allocator.Error!Entry {
+    const up = @import("../usage_pane.zig");
+    if (id == up.hit_kebab) return .{
+        .title = "Usage pane menu",
+        .body = "Add a Claude account, refresh every account now, or open the last raw response. A right-click on an account's own rows gives that account's menu instead — link a token, rename, remove.",
+        .keys = &.{ .{ .chord = "a", .label = "Add an account" }, .{ .chord = "r", .label = "Refresh" } },
+        .links = &.{ .{ .command = .{ .id = .@"ai.claude_add_account", .label = "Add an account" } }, .{ .command = .{ .id = .@"ai.refresh_usage", .label = "Refresh now" } } },
+    };
+    if (up.accountOfHit(app, id)) |name| {
+        if (id >= up.hit_pencil_base) return .{
+            .title = try std.fmt.allocPrint(arena, "Rename {s}", .{name}),
+            .body = "Click opens the rename prompt, seeded with the name. The new name is written to `ai.claude_accounts` in the home config; the account's token file, numbers and identity pin go with it.",
+            .links = &.{.{ .command = .{ .id = .@"ai.claude_rename_account", .label = "Rename an account" } }},
+        };
+        return .{
+            .title = try std.fmt.allocPrint(arena, "Claude account — {s}", .{name}),
+            .body = "One account's windows, as Claude Code's own usage screen shows them: the five-hour session, the week across models, a week per model, each bar with its reset time. Right-click is the account's menu — link a token, rename, remove. The green gutter and `(active)` mark the account the Claude Code CLI is logged in as.",
+            .keys = &.{ .{ .chord = "Right-click", .label = "The account's menu" }, .{ .chord = "r", .label = "Refresh" } },
+            .links = &.{ .{ .command = .{ .id = .@"ai.link_claude_token", .label = "Link a token" } }, .{ .command = .{ .id = .@"ai.refresh_usage", .label = "Refresh now" } } },
+        };
+    }
+    return .{
+        .title = "Claude usage",
+        .body = "Every watched Claude account, one block each. `a` adds an account, `r` refreshes them all, `L` runs `claude login` and `R` captures that login into the matching account's token file. Right-click here or the kebab is the pane's menu.",
+        .keys = &.{ .{ .chord = "a", .label = "Add an account" }, .{ .chord = "r", .label = "Refresh" }, .{ .chord = "Right-click", .label = "The pane's menu" } },
+        .links = &.{ .{ .command = .{ .id = .@"ai.claude_add_account", .label = "Add an account" } }, .{ .command = .{ .id = .@"ai.show_last_response", .label = "The raw response" } } },
+    };
+}
 
 pub fn link(arena: Allocator, url: []const u8) Allocator.Error!Entry {
     return .{

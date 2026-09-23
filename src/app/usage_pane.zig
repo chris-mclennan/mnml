@@ -32,6 +32,11 @@ const clock = @import("clock.zig");
 const pty_pane = @import("pty_pane.zig");
 const Ui = @import("../ui/context.zig");
 const Rect = @import("../ui/rect.zig");
+const settings = @import("settings.zig");
+const context_menus = @import("context_menus.zig");
+const config_persist = @import("../config/persist.zig");
+const ClaudeAccount = app_mod.Config.ClaudeAccount;
+const MenuItem = command.MenuItem;
 
 pub const Product = enum { claude, codex };
 
@@ -94,9 +99,14 @@ pub const State = struct {
     /// The ticker chip's last slot, to repaint when it moves.
     ticker_slot: u64 = 0,
     dup_warned: bool = false,
+    /// Owns `app.cfg.ai.claude_accounts` once an account has been added,
+    /// renamed or removed here (the loader's arena owned the list it
+    /// read). A reload points the config back at the loader's.
+    cfg_arena: ?std.heap.ArenaAllocator = null,
 
     pub fn deinit(self: *State, gpa: Allocator, io: Io) void {
         self.group.cancel(io);
+        if (self.cfg_arena) |*a| a.deinit();
         for (self.accounts.items) |*a| a.arena.deinit();
         self.accounts.deinit(gpa);
         for (self.sched.items) |s| gpa.free(s.name);
@@ -575,12 +585,325 @@ fn captureLogin(app: *App, k: usage.Keychain) Allocator.Error!void {
             target = c;
         };
     }
+    // An account just added and never linked has no pin yet: when it is
+    // the only one without a token file, the login is taken to be its —
+    // `a`, then `L` to log in as it, then `R`, is how one is linked
+    // without pasting a token.
+    if (target == null) if (try onlyUnlinked(app, cfg)) |c| {
+        target = c;
+    };
     const tgt = target orelse return app.toast("the keychain login ({s}) matches no account on file — press L to log in as the one you want, then R", .{k.email orelse "unknown"});
     usage.writeSecret(app.io, tgt.token_path, blob) catch |err| return app.toast("could not write {s}: {s}", .{ app.relPath(tgt.token_path), @errorName(err) });
     app.toast("captured the keychain login for {s} ({s})", .{ tgt.name, k.email orelse "identity unknown" });
     if (st(app).schedFor(tgt.name)) |sched| sched.last_at = 0;
     if (st(app).find(tgt.name)) |a| a.usage.retry_after_at = 0;
     try refresh(app, true);
+}
+
+/// The one configured account whose token file is missing, when exactly
+/// one is.
+fn onlyUnlinked(app: *App, cfg: []const usage.AccountCfg) Allocator.Error!?usage.AccountCfg {
+    var found: ?usage.AccountCfg = null;
+    for (cfg) |c| {
+        if (c.token_path.len == 0) continue;
+        Io.Dir.cwd().access(app.io, c.token_path, .{}) catch {
+            if (found != null) return null;
+            found = c;
+        };
+    }
+    return found;
+}
+
+// ─── the accounts: add, link, rename, remove ────────────────────────────
+
+pub const max_name_len = 32;
+
+/// Why `name` cannot name an account, or null. The rules are Rust's
+/// (`rename_claude_account`): not empty, at most 32 characters, nothing
+/// that would need escaping in the config.
+pub fn nameProblem(name: []const u8) ?[]const u8 {
+    if (name.len == 0) return "the name is empty";
+    const n = std.unicode.utf8CountCodepoints(name) catch return "the name is not UTF-8";
+    if (n > max_name_len) return "at most 32 characters";
+    for (name) |c| if (c == '"' or c == '\\' or c < 0x20 or c == 0x7f) return "no quotes, backslashes or control characters";
+    return null;
+}
+
+/// The accounts as the home config spells them — names, unresolved token
+/// paths, the active flag — the list an edit writes back. The config's
+/// list, else the 0.2.x blocks, else the implicit `default` account when
+/// its `ai_token` exists (so adding a second account keeps the first).
+pub fn rawAccounts(app: *App, arena: Allocator) Allocator.Error![]ClaudeAccount {
+    if (app.cfg.ai.claude_accounts.len > 0) return arena.dupe(ClaudeAccount, app.cfg.ai.claude_accounts);
+    if (try accountsFromExtra(arena, app.cfg.ai.extra)) |list| return list;
+    if (app.data_root.len > 0) {
+        const path = try std.fs.path.join(arena, &.{ app.data_root, usage.token_file });
+        if (Io.Dir.cwd().access(app.io, path, .{})) |_| {
+            const one = try arena.alloc(ClaudeAccount, 1);
+            one[0] = .{ .name = "default", .token_path = usage.token_file, .active = true };
+            return one;
+        } else |_| {}
+    }
+    return &.{};
+}
+
+/// `ai_token.<slug>` under the data root, unused by any account in
+/// `list` and not already on disk.
+fn freshTokenFile(app: *App, arena: Allocator, name: []const u8, list: []const ClaudeAccount) Allocator.Error![]const u8 {
+    var slug: std.ArrayListUnmanaged(u8) = .empty;
+    for (name) |c| {
+        const keep = std.ascii.isAlphanumeric(c) or c == '_' or c == '-';
+        if (keep) try slug.append(arena, std.ascii.toLower(c)) else if (slug.items.len > 0 and slug.items[slug.items.len - 1] != '-') try slug.append(arena, '-');
+    }
+    while (slug.items.len > 0 and slug.items[slug.items.len - 1] == '-') slug.items.len -= 1;
+    if (slug.items.len == 0) try slug.appendSlice(arena, "account");
+    var n: usize = 1;
+    while (true) : (n += 1) {
+        const file = if (n == 1) try std.fmt.allocPrint(arena, "{s}.{s}", .{ usage.token_file, slug.items }) else try std.fmt.allocPrint(arena, "{s}.{s}-{d}", .{ usage.token_file, slug.items, n });
+        const taken = for (list) |a| {
+            if (std.mem.eql(u8, a.token_path, file)) break true;
+        } else false;
+        if (taken) continue;
+        if (app.data_root.len > 0) {
+            const path = try std.fs.path.join(arena, &.{ app.data_root, file });
+            if (Io.Dir.cwd().access(app.io, path, .{})) |_| continue else |_| {}
+        }
+        return file;
+    }
+}
+
+/// Point `app.cfg.ai.claude_accounts` at an owned copy of `list` and
+/// write it to the home config, one account per line.
+fn writeAccounts(app: *App, list: []const ClaudeAccount) Allocator.Error!void {
+    const s = st(app);
+    if (s.cfg_arena == null) s.cfg_arena = .init(app.gpa);
+    const a = s.cfg_arena.?.allocator();
+    const owned = try a.alloc(ClaudeAccount, list.len);
+    for (list, 0..) |acc, i| owned[i] = .{ .name = try a.dupe(u8, acc.name), .token_path = try a.dupe(u8, acc.token_path), .active = acc.active };
+    app.cfg.ai.claude_accounts = owned;
+    const arena = app.frame.allocator();
+    const elems = try arena.alloc([]const u8, owned.len);
+    for (owned, 0..) |acc, i| elems[i] = try config_persist.serializeLiteral(arena, acc);
+    const literal = try config_persist.listLiteral(arena, elems, true, " " ** 12);
+    _ = try settings.persistLiteral(app, .home, &.{ "ai", "claude_accounts" }, literal);
+}
+
+/// `ai.claude_add_account`, `a` in the Claude pane, the pane's and the
+/// chip's menus: the name first, then the token prompt for it.
+pub fn addCmd(app: *App) CommandError!void {
+    app.overlay.deinit(app.gpa);
+    app.overlay = .{ .prompt = .{ .state = app_mod.Prompt.init(app.gpa, "Name the Claude account to add"), .purpose = .claude_account_add } };
+    app.overlay.prompt.state.placeholder = "work, personal, a client's name…";
+    app.focus = .overlay;
+    app.needs_render = true;
+}
+
+/// The name prompt's accept: the account joins `ai.claude_accounts` in
+/// the home config with a token file of its own under the data root —
+/// the first one added is the active one — its fetch starts, and the
+/// token prompt opens for it.
+pub fn addAccept(app: *App, text: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    const name = std.mem.trim(u8, text, " \t\r\n");
+    if (name.len == 0) return;
+    if (nameProblem(name)) |why| return app.diag.fail(arena, "add account: {s}", .{why});
+    const list = try rawAccounts(app, arena);
+    for (list) |a| if (std.mem.eql(u8, a.name, name)) return app.diag.fail(arena, "add account: `{s}` is already an account", .{name});
+    const next = try arena.alloc(ClaudeAccount, list.len + 1);
+    @memcpy(next[0..list.len], list);
+    next[list.len] = .{ .name = name, .token_path = try freshTokenFile(app, arena, name, list), .active = list.len == 0 };
+    try writeAccounts(app, next);
+    try refreshAll(app);
+    try openTokenPrompt(app, name);
+}
+
+/// The secret prompt that links `name`: the OAuth token pasted into it
+/// lands in that account's token file.
+pub fn openTokenPrompt(app: *App, name: []const u8) CommandError!void {
+    const gpa = app.gpa;
+    const owned = try gpa.dupe(u8, name);
+    errdefer gpa.free(owned);
+    const title = try std.fmt.allocPrint(gpa, "Paste the Claude Code OAuth token for {s}", .{name});
+    errdefer gpa.free(title);
+    var ps = app_mod.Prompt.init(gpa, title);
+    ps.secret = true;
+    ps.placeholder = "esc links it later: L logs in, R captures";
+    app.overlay.deinit(gpa);
+    app.overlay = .{ .prompt = .{ .state = ps, .purpose = .{ .claude_account_token = .{ .name = owned, .title = title } } } };
+    app.focus = .overlay;
+    app.needs_render = true;
+}
+
+/// The token prompt's accept: the token into the account's own file
+/// (mode 0600), and a fetch for it now. Empty is "later".
+pub fn tokenAccept(app: *App, name: []const u8, text: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    const token = std.mem.trim(u8, text, " \t\r\n");
+    if (token.len == 0) {
+        app.toast("{s} is not linked yet — in the usage pane, L logs in as it and R captures the login", .{name});
+        return;
+    }
+    const cfg = try configured(app, arena);
+    const acc = for (cfg) |c| {
+        if (std.mem.eql(u8, c.name, name)) break c;
+    } else return app.diag.fail(arena, "no Claude account named {s}", .{name});
+    if (acc.token_path.len == 0) return app.diag.fail(arena, "fixture mode: {s} has no token file", .{name});
+    usage.writeSecret(app.io, acc.token_path, token) catch |err| return app.diag.fail(arena, "could not write {s}: {s}", .{ app.relPath(acc.token_path), @errorName(err) });
+    app.toast("linked {s} ({s})", .{ name, app.relPath(acc.token_path) });
+    if (st(app).schedFor(name)) |sched| sched.last_at = 0;
+    if (st(app).find(name)) |a| a.usage.retry_after_at = 0;
+    try refreshAll(app);
+}
+
+/// The rename prompt, seeded with the name as a selection.
+pub fn openRenamePrompt(app: *App, name: []const u8) CommandError!void {
+    const gpa = app.gpa;
+    const owned = try gpa.dupe(u8, name);
+    errdefer gpa.free(owned);
+    const title = try std.fmt.allocPrint(gpa, "Rename Claude account (was: {s})", .{name});
+    errdefer gpa.free(title);
+    var ps = app_mod.Prompt.init(gpa, title);
+    errdefer app_mod.Prompt.deinit(&ps, gpa);
+    try ps.seed(gpa, name);
+    app.overlay.deinit(gpa);
+    app.overlay = .{ .prompt = .{ .state = ps, .purpose = .{ .claude_account_rename = .{ .name = owned, .title = title } } } };
+    app.focus = .overlay;
+    app.needs_render = true;
+}
+
+/// The rename prompt's accept: the name in the home config, the
+/// snapshot, the schedule and the identity pin — the token file stays
+/// where it is.
+pub fn renameAccount(app: *App, old: []const u8, text: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    const new = std.mem.trim(u8, text, " \t\r\n");
+    if (std.mem.eql(u8, new, old)) return;
+    if (nameProblem(new)) |why| return app.diag.fail(arena, "rename: {s}", .{why});
+    const list = try rawAccounts(app, arena);
+    var idx: ?usize = null;
+    for (list, 0..) |a, i| {
+        if (std.mem.eql(u8, a.name, new)) return app.diag.fail(arena, "rename: `{s}` is already an account", .{new});
+        if (std.mem.eql(u8, a.name, old)) idx = i;
+    }
+    const i = idx orelse return app.diag.fail(arena, "no Claude account named {s} in the config", .{old});
+    list[i].name = new;
+    try writeAccounts(app, list);
+    const s = st(app);
+    if (s.find(old)) |a| a.name = try a.arena.allocator().dupe(u8, new);
+    if (s.schedFor(old)) |sched| {
+        const owned = try app.gpa.dupe(u8, new);
+        app.gpa.free(sched.name);
+        sched.name = owned;
+    }
+    try usage.movePin(arena, app.io, app.data_root, old, new);
+    app.toast("renamed `{s}` → `{s}`", .{ old, new });
+    app.needs_render = true;
+}
+
+pub const remove_choices = [_]app_mod.Confirm.Choice{ .{ .key = 'r', .label = "Remove" }, .{ .key = 'c', .label = "Cancel" } };
+
+/// The confirm before a removal, naming what goes and what stays.
+pub fn openRemoveConfirm(app: *App, name: []const u8) CommandError!void {
+    const gpa = app.gpa;
+    const arena = app.frame.allocator();
+    const list = try rawAccounts(app, arena);
+    const acc = for (list) |a| {
+        if (std.mem.eql(u8, a.name, name)) break a;
+    } else return app.diag.fail(arena, "no Claude account named {s} in the config", .{name});
+    const path = try usage.resolveTokenPath(arena, acc.token_path, app.data_root, app.homeDir());
+    const msg = if (ownsTokenFile(app, path, list, name))
+        try std.fmt.allocPrint(gpa, "Remove Claude account {s}? It leaves the config, and its token file is deleted ({s}).", .{ name, app.relPath(path) })
+    else
+        try std.fmt.allocPrint(gpa, "Remove Claude account {s}? It leaves the config; its token file stays, being outside the data root ({s}).", .{ name, app.relPath(path) });
+    errdefer gpa.free(msg);
+    const owned = try gpa.dupe(u8, name);
+    errdefer gpa.free(owned);
+    app.overlay.deinit(gpa);
+    app.overlay = .{ .confirm = .{
+        .state = .{ .title = "Remove Claude account", .message = msg, .choices = &remove_choices },
+        .purpose = .{ .remove_claude_account = owned },
+        .message = msg,
+    } };
+    app.focus = .overlay;
+    app.needs_render = true;
+}
+
+/// Whether removing `name` may delete `path`: it sits under the data
+/// root and no other account names the same file.
+fn ownsTokenFile(app: *App, path: []const u8, list: []const ClaudeAccount, name: []const u8) bool {
+    const root = app.data_root;
+    if (root.len == 0 or path.len <= root.len + 1) return false;
+    if (!std.mem.startsWith(u8, path, root) or !std.fs.path.isSep(path[root.len])) return false;
+    const arena = app.frame.allocator();
+    for (list) |a| {
+        if (std.mem.eql(u8, a.name, name)) continue;
+        const other = usage.resolveTokenPath(arena, a.token_path, root, app.homeDir()) catch return false;
+        if (std.mem.eql(u8, other, path)) return false;
+    }
+    return true;
+}
+
+/// The confirm's yes: out of the home config, the snapshot and the pin
+/// dropped, the token file deleted when it is the data root's and no
+/// one else's. The active flag moves to the first account left.
+pub fn removeAccount(app: *App, name: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    const list = try rawAccounts(app, arena);
+    var next: std.ArrayListUnmanaged(ClaudeAccount) = .empty;
+    var gone: ?ClaudeAccount = null;
+    for (list) |a| if (std.mem.eql(u8, a.name, name)) {
+        gone = a;
+    } else try next.append(arena, a);
+    const acc = gone orelse return app.diag.fail(arena, "no Claude account named {s} in the config", .{name});
+    if (acc.active and next.items.len > 0) {
+        const any = for (next.items) |a| {
+            if (a.active) break true;
+        } else false;
+        if (!any) next.items[0].active = true;
+    }
+    const path = try usage.resolveTokenPath(arena, acc.token_path, app.data_root, app.homeDir());
+    const owns = ownsTokenFile(app, path, list, name);
+    try writeAccounts(app, next.items);
+    var deleted = false;
+    if (owns) {
+        if (Io.Dir.cwd().deleteFile(app.io, path)) |_| {
+            deleted = true;
+        } else |_| {}
+    }
+    try usage.movePin(arena, app.io, app.data_root, name, null);
+    try pruneTo(app, try configured(app, arena));
+    try restampActive(app);
+    app.toast("removed Claude account {s}{s}", .{ name, if (deleted) " and its token file" else "" });
+    app.needs_render = true;
+}
+
+/// A `.claude_account` menu row.
+pub fn accountAction(app: *App, verb: command.ClaudeAccountAct.Verb, name: []const u8) CommandError!void {
+    return switch (verb) {
+        .link => openTokenPrompt(app, name),
+        .rename => openRenamePrompt(app, name),
+        .remove => openRemoveConfirm(app, name),
+    };
+}
+
+/// The palette's link / rename / remove: straight to the one account
+/// when there is only one, else a menu of them to pick from.
+pub fn chooseAccount(app: *App, verb: command.ClaudeAccountAct.Verb) CommandError!void {
+    const arena = app.frame.allocator();
+    const cfg = try configured(app, arena);
+    if (cfg.len == 0) return app.diag.fail(arena, "no Claude account configured — :ai.claude_add_account adds one", .{});
+    if (cfg.len == 1) return accountAction(app, verb, cfg[0].name);
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const rows = try app.gpa.alloc(MenuItem, cfg.len);
+    errdefer app.gpa.free(rows);
+    for (cfg, 0..) |c, i| rows[i] = .{ .label = try mem.allocator().dupe(u8, c.name), .action = .{ .claude_account = .{ .act = verb, .name = try mem.allocator().dupe(u8, c.name) } }, .checked = c.active };
+    const title: []const u8 = switch (verb) {
+        .link => "Link which Claude account?",
+        .rename => "Rename which Claude account?",
+        .remove => "Remove which Claude account?",
+    };
+    try context_menus.openOwned(app, title, rows, app.screen.width / 3, app.screen.height / 4, mem);
 }
 
 // ─── the panes ──────────────────────────────────────────────────────────
@@ -637,6 +960,7 @@ pub fn handleKey(app: *App, id: PaneId, p: *UsagePane, k: Key) Allocator.Error!b
                 'g' => p.scroll = 0,
                 'G' => p.scroll = std.math.maxInt(usize) / 2,
                 'q' => try app.forceClosePane(id),
+                'a' => if (p.product == .claude) try toastFail(app, addCmd(app)) else return false,
                 'r' => {
                     try refreshAll(app);
                     app.toast("refreshing {s} usage…", .{if (p.product == .claude) "Claude" else "Codex"});
@@ -665,6 +989,77 @@ pub fn handleKey(app: *App, id: PaneId, p: *UsagePane, k: Key) Allocator.Error!b
         else => return false,
     }
     return true;
+}
+
+// ─── the mouse ──────────────────────────────────────────────────────────
+
+/// The Claude pane's `script_hit` ids: the header's kebab, a row outside
+/// any account, a row of account `i`'s block, account `i`'s pencil.
+pub const hit_kebab: u32 = 1;
+pub const hit_body: u32 = 2;
+pub const hit_account_base: u32 = 0x100;
+pub const hit_pencil_base: u32 = 0x1000;
+
+/// The account a block or pencil id names, in the order the pane lists them.
+pub fn accountOfHit(app: *App, id: u32) ?[]const u8 {
+    const base: u32 = if (id >= hit_pencil_base) hit_pencil_base else if (id >= hit_account_base) hit_account_base else return null;
+    const i = id - base;
+    const s = st(app);
+    return if (i < s.accounts.items.len) s.accounts.items[i].name else null;
+}
+
+/// A press in the Claude pane: the pencil renames; right-click on an
+/// account's rows is that account's menu, anywhere else (or the kebab,
+/// either button) the pane's.
+pub fn click(app: *App, p: *UsagePane, hit_id: u32, m: @import("../core/key.zig").Mouse) Allocator.Error!void {
+    if (m.kind != .press or p.product != .claude) return;
+    const right = m.button == .right;
+    if (hit_id == hit_kebab) return openPaneMenu(app, m.x, m.y);
+    if (accountOfHit(app, hit_id)) |name| {
+        if (hit_id >= hit_pencil_base and !right) return toastFail(app, openRenamePrompt(app, name));
+        if (right) return openAccountMenu(app, name, m.x, m.y);
+        return;
+    }
+    if (right) return openPaneMenu(app, m.x, m.y);
+}
+
+fn toastFail(app: *App, r: CommandError!void) Allocator.Error!void {
+    r catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {
+            if (app.diag.msg) |msg| app.toast("{s}", .{msg}) else app.toast("{s}", .{command.reason(err)});
+            app.diag.clear();
+        },
+    };
+}
+
+/// The pane's menu (the kebab, a right-click outside an account): add an
+/// account, refresh, the raw response.
+pub fn openPaneMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try context_menus.items(app, &.{
+        .{ .label = "Add Claude account…", .action = .{ .command = .@"ai.claude_add_account" } },
+        .{ .label = "Refresh usage now", .action = .{ .command = .@"ai.refresh_usage" }, .separator_before = true },
+        .{ .label = "Show last response", .action = .{ .command = .@"ai.show_last_response" } },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Claude usage", rows, x, y);
+}
+
+/// One account's menu, titled with its name: link a token to it, rename
+/// it, remove it; then the pane's own rows.
+pub fn openAccountMenu(app: *App, name: []const u8, x: u16, y: u16) Allocator.Error!void {
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const n = try mem.allocator().dupe(u8, name);
+    const rows = try context_menus.items(app, &.{
+        .{ .label = "Link a token…", .action = .{ .claude_account = .{ .act = .link, .name = n } } },
+        .{ .label = "Rename…", .action = .{ .claude_account = .{ .act = .rename, .name = n } } },
+        .{ .label = "Remove…", .action = .{ .claude_account = .{ .act = .remove, .name = n } } },
+        .{ .label = "Add Claude account…", .action = .{ .command = .@"ai.claude_add_account" }, .separator_before = true },
+        .{ .label = "Refresh usage now", .action = .{ .command = .@"ai.refresh_usage" } },
+    });
+    errdefer app.gpa.free(rows);
+    try context_menus.openOwned(app, n, rows, x, y, mem);
 }
 
 pub fn scrollBy(p: *UsagePane, delta: i64) void {
@@ -1073,4 +1468,222 @@ test "the INTEGRATIONS row's quota line, per reader state" {
     // A quiet Codex day reads as one, not as a login problem.
     st(&app).codex = .{ .tokens_today = 0, .sessions_today = 0, .fetched_at = 1 };
     try t.expectEqualStrings("no sessions today", try codexSummary(&app, app.frame.allocator()));
+}
+
+/// Type `text` into whatever has the keys, then Enter.
+fn typeLine(app: *App, text: []const u8) !void {
+    for (text) |c| try app.handle(.{ .key = Key.char(c) });
+    try app.handle(.{ .key = Key.named(.enter) });
+}
+
+/// A fixture directory with no `accounts` file — the config's list is
+/// the account list — and a data root beside it.
+const AccountsFixture = struct {
+    fx: Fixture,
+    data: [std.fs.max_path_bytes]u8 = undefined,
+    data_len: usize = 0,
+
+    fn init() !AccountsFixture {
+        var f: AccountsFixture = .{ .fx = try Fixture.init() };
+        errdefer f.fx.deinit();
+        try f.fx.tmp.dir.deleteFile(t.io, "accounts");
+        try f.fx.tmp.dir.createDirPath(t.io, "data");
+        try f.fx.tmp.dir.writeFile(t.io, .{ .sub_path = "client.json", .data = usage.usage_fixture });
+        const d = try std.fmt.bufPrint(&f.data, "{s}/data", .{f.fx.dir[0..f.fx.dir_len]});
+        f.data_len = d.len;
+        return f;
+    }
+
+    fn app(f: *AccountsFixture) !App {
+        return App.initWith(t.allocator, t.io, .{ .workspace = "/w", .data_root = f.data[0..f.data_len], .cols = 120, .rows = 40, .env = &f.fx.env });
+    }
+
+    fn read(f: *AccountsFixture, rel: []const u8) ![]u8 {
+        return f.fx.tmp.dir.readFileAlloc(t.io, rel, t.allocator, .limited(64 * 1024));
+    }
+};
+
+test "ai.claude_add_account: a name, then its token — the account joins the home config beside the default with a token file of its own (0600), and is fetched" {
+    var f = try AccountsFixture.init();
+    defer f.fx.deinit();
+    // The implicit `default` account is linked, so it must survive the add.
+    try f.fx.tmp.dir.writeFile(t.io, .{ .sub_path = "data/ai_token", .data = "fake-default-token" });
+    try f.fx.tmp.dir.writeFile(t.io, .{ .sub_path = "Client A.json", .data = usage.usage_fixture });
+    var app = try f.app();
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    try command.run(&app, .{ .static = .@"ai.claude_add_account" });
+    try t.expect(app.overlay == .prompt and app.overlay.prompt.purpose == .claude_account_add);
+    try typeLine(&app, "Client A");
+    try t.expect(app.overlay == .prompt and app.overlay.prompt.purpose == .claude_account_token);
+    try t.expectEqualStrings("Client A", app.overlay.prompt.purpose.claude_account_token.name);
+    try t.expect(app.overlay.prompt.state.secret);
+    try typeLine(&app, "fake-token-for-tests");
+    // The config: the default kept (still active), the new one after it.
+    try t.expectEqual(@as(usize, 2), app.cfg.ai.claude_accounts.len);
+    try t.expectEqualStrings("default", app.cfg.ai.claude_accounts[0].name);
+    try t.expect(app.cfg.ai.claude_accounts[0].active);
+    try t.expectEqualStrings("Client A", app.cfg.ai.claude_accounts[1].name);
+    try t.expectEqualStrings("ai_token.client-a", app.cfg.ai.claude_accounts[1].token_path);
+    try t.expect(!app.cfg.ai.claude_accounts[1].active);
+    const zon = try f.read("data/config.zon");
+    defer t.allocator.free(zon);
+    try t.expect(std.mem.indexOf(u8, zon, ".name = \"Client A\"") != null);
+    try t.expect(std.mem.indexOf(u8, zon, ".token_path = \"ai_token.client-a\"") != null);
+    try t.expect(std.mem.indexOf(u8, zon, ".name = \"default\"") != null);
+    // The token file, private.
+    const tok = try f.read("data/ai_token.client-a");
+    defer t.allocator.free(tok);
+    try t.expectEqualStrings("fake-token-for-tests", tok);
+    if (builtin.os.tag != .windows) {
+        const stat = try f.fx.tmp.dir.statFile(t.io, "data/ai_token.client-a", .{});
+        try t.expectEqual(@as(u32, 0o600), @as(u32, @intCast(stat.permissions.toMode() & 0o777)));
+    }
+    // A second account of the same name is refused.
+    try command.run(&app, .{ .static = .@"ai.claude_add_account" });
+    try typeLine(&app, "Client A");
+    try t.expect(app.overlay != .prompt);
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "already an account") != null);
+    try settle(&app);
+    // Fetched: the fixture's numbers under the new name.
+    try t.expectEqual(@as(u16, 95), st(&app).find("Client A").?.usage.percent);
+}
+
+test "rename and remove: the config, the snapshot, the pin; a token file under the data root goes, one outside it stays" {
+    var f = try AccountsFixture.init();
+    defer f.fx.deinit();
+    try f.fx.tmp.dir.createDirPath(t.io, "outside");
+    try f.fx.tmp.dir.writeFile(t.io, .{ .sub_path = "outside/tok", .data = "fake-outside-token" });
+    try f.fx.tmp.dir.writeFile(t.io, .{ .sub_path = "data/ai_token.client", .data = "fake-client-token" });
+    try f.fx.tmp.dir.writeFile(t.io, .{ .sub_path = "data/ai_account_identity.json", .data = "{\"client\":\"c@example.com\"}" });
+    var outside_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const outside = try std.fmt.bufPrint(&outside_buf, "{s}/outside/tok", .{f.fx.dir[0..f.fx.dir_len]});
+    const initial = [_]app_mod.Config.ClaudeAccount{
+        .{ .name = "client", .token_path = "ai_token.client", .active = true },
+        .{ .name = "ext", .token_path = outside },
+    };
+    var app = try f.app();
+    defer app.deinit();
+    app.cfg.ai.claude_accounts = &initial;
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    try command.run(&app, .{ .static = .@"ai.claude_usage" });
+    try settle(&app);
+    try t.expect(st(&app).find("client") != null);
+    // Two accounts: the palette asks which.
+    try command.run(&app, .{ .static = .@"ai.claude_rename_account" });
+    try t.expect(app.overlay == .menu);
+    try t.expectEqualStrings("Rename which Claude account?", app.overlay.menu.title);
+    try t.expectEqual(@as(usize, 2), app.overlay.menu.items.len);
+    try @import("dispatch.zig").runMenuActionForTest(&app, .{ .claude_account = .{ .act = .rename, .name = "client" } });
+    try t.expect(app.overlay == .prompt and app.overlay.prompt.purpose == .claude_account_rename);
+    try t.expectEqualStrings("client", app.overlay.prompt.state.text());
+    // The seed is a selection: typing replaces it.
+    try typeLine(&app, "acme");
+    try t.expectEqualStrings("acme", app.cfg.ai.claude_accounts[0].name);
+    try t.expectEqualStrings("ai_token.client", app.cfg.ai.claude_accounts[0].token_path);
+    try t.expect(st(&app).find("acme") != null and st(&app).find("client") == null);
+    try t.expect(st(&app).schedFor("acme") != null);
+    try t.expectEqualStrings("c@example.com", (try usage.pinnedEmail(app.frame.allocator(), t.io, app.data_root, "acme")).?);
+    // A clash and a bad name are refused.
+    try usage_paneRename(&app, "acme", "ext");
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "already an account") != null);
+    try usage_paneRename(&app, "acme", "a\"b");
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "no quotes") != null);
+    // Remove the renamed one: confirmed, gone from the config and the
+    // pane, its file (under the data root) deleted, its pin dropped, the
+    // active flag moved to the one left.
+    try command.run(&app, .{ .static = .@"ai.claude_remove_account" });
+    try @import("dispatch.zig").runMenuActionForTest(&app, .{ .claude_account = .{ .act = .remove, .name = "acme" } });
+    try t.expect(app.overlay == .confirm and app.overlay.confirm.purpose == .remove_claude_account);
+    try t.expect(std.mem.indexOf(u8, app.overlay.confirm.message, "is deleted") != null);
+    try app.handle(.{ .key = Key.char('r') });
+    try t.expectEqual(@as(usize, 1), app.cfg.ai.claude_accounts.len);
+    try t.expectEqualStrings("ext", app.cfg.ai.claude_accounts[0].name);
+    try t.expect(app.cfg.ai.claude_accounts[0].active);
+    try t.expect(st(&app).find("acme") == null);
+    try t.expectError(error.FileNotFound, f.fx.tmp.dir.access(t.io, "data/ai_token.client", .{}));
+    try t.expect((try usage.pinnedEmail(app.frame.allocator(), t.io, app.data_root, "acme")) == null);
+    const zon = try f.read("data/config.zon");
+    defer t.allocator.free(zon);
+    try t.expect(std.mem.indexOf(u8, zon, "acme") == null);
+    // The one outside the data root: out of the config, its file kept.
+    try command.run(&app, .{ .static = .@"ai.claude_remove_account" });
+    try t.expect(app.overlay == .confirm);
+    try t.expect(std.mem.indexOf(u8, app.overlay.confirm.message, "stays") != null);
+    try app.handle(.{ .key = Key.char('r') });
+    try t.expectEqual(@as(usize, 0), app.cfg.ai.claude_accounts.len);
+    try f.fx.tmp.dir.access(t.io, "outside/tok", .{});
+    try settle(&app);
+}
+
+fn usage_paneRename(app: *App, old: []const u8, new: []const u8) !void {
+    try openRenamePrompt(app, old);
+    try typeLine(app, new);
+}
+
+test "the pane's mouse: the pencil renames, an account's rows open its menu, the kebab and the rest the pane's; `a` adds" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    var app = try fx.app();
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    try command.run(&app, .{ .static = .@"ai.claude_usage" });
+    try settle(&app);
+    try app.render();
+    const txt = try screen_mod.toTestText(t.allocator, &app.screen);
+    defer t.allocator.free(txt);
+    try t.expect(std.mem.indexOf(u8, txt, "(active) personal " ++ usage_view.pencil_glyph ++ " · me@example.com") != null);
+    const id = findPane(&app, .claude).?;
+    var pencil: ?Rect = null;
+    var block: ?Rect = null;
+    var kebab: ?Rect = null;
+    var body: ?Rect = null;
+    for (app.hits.items.items) |h| if (h.target == .script_hit and h.target.script_hit.pane == id) {
+        const hid = h.target.script_hit.id;
+        if (hid == hit_pencil_base) pencil = h.rect;
+        if (hid == hit_account_base + 1 and block == null) block = h.rect;
+        if (hid == hit_kebab) kebab = h.rect;
+        if (hid == hit_body and body == null) body = h.rect;
+    };
+    const Mouse = @import("../core/key.zig").Mouse;
+    const press = struct {
+        fn at(a: *App, r: Rect, button: @FieldType(Mouse, "button")) !void {
+            try a.handle(.{ .mouse = .{ .x = r.x, .y = r.y, .kind = .press, .button = button } });
+        }
+    }.at;
+    try press(&app, pencil.?, .left);
+    try t.expect(app.overlay == .prompt and app.overlay.prompt.purpose == .claude_account_rename);
+    try t.expectEqualStrings("personal", app.overlay.prompt.purpose.claude_account_rename.name);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try press(&app, block.?, .right);
+    try t.expect(app.overlay == .menu);
+    try t.expectEqualStrings("work", app.overlay.menu.title);
+    try t.expect(app.overlay.menu.items[1].action == .claude_account);
+    try t.expectEqual(command.ClaudeAccountAct.Verb.rename, app.overlay.menu.items[1].action.claude_account.act);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try press(&app, kebab.?, .left);
+    try t.expect(app.overlay == .menu);
+    try t.expectEqualStrings("Claude usage", app.overlay.menu.title);
+    try t.expectEqual(command.CommandId.@"ai.claude_add_account", app.overlay.menu.items[0].action.command);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try press(&app, body.?, .right);
+    try t.expectEqualStrings("Claude usage", app.overlay.menu.title);
+    try app.handle(.{ .key = Key.named(.esc) });
+    app.focus = .{ .pane = id };
+    try app.handle(.{ .key = Key.char('a') });
+    try t.expect(app.overlay == .prompt and app.overlay.prompt.purpose == .claude_account_add);
+    try app.handle(.{ .key = Key.named(.esc) });
+    // The chip's menu offers the add; the Codex one does not.
+    try @import("context_menus.zig").openAiChipMenu(&app, false, 3, 3);
+    var has_add = false;
+    for (app.overlay.menu.items) |it| if (it.action == .command and it.action.command == .@"ai.claude_add_account") {
+        has_add = true;
+    };
+    try t.expect(has_add);
+    try @import("context_menus.zig").openAiChipMenu(&app, true, 3, 3);
+    for (app.overlay.menu.items) |it| try t.expect(!(it.action == .command and it.action.command == .@"ai.claude_add_account"));
+    try app.handle(.{ .key = Key.named(.esc) });
 }

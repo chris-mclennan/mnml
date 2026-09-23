@@ -140,11 +140,16 @@ pub fn configPath(app: *App, scope: Scope) Allocator.Error!?[]const u8 {
 /// never fatal — a read-only home must not stop the setting from
 /// applying in memory. Returns whether the file changed.
 pub fn persist(app: *App, scope: Scope, key_path: []const []const u8, value: anytype) Allocator.Error!bool {
+    return persistLiteral(app, scope, key_path, try config.persist.serializeLiteral(app.frame.allocator(), value));
+}
+
+/// `persist` for a value already written as ZON source — a list laid
+/// out one element per line, say.
+pub fn persistLiteral(app: *App, scope: Scope, key_path: []const []const u8, literal: []const u8) Allocator.Error!bool {
     const path = (try configPath(app, scope)) orelse {
         app.toast("nowhere to save settings (no home directory)", .{});
         return false;
     };
-    const literal = try config.persist.serializeLiteral(app.frame.allocator(), value);
     const outcome = config.persist.persistScalar(app.gpa, app.io, path, key_path, literal) catch |err| {
         app.toast("could not write {s}: {s}", .{ path, @errorName(err) });
         return false;

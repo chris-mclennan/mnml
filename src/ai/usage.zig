@@ -810,6 +810,23 @@ pub fn pinIdentity(arena: Allocator, io: Io, data_root: []const u8, name: []cons
     return null;
 }
 
+/// Move `old`'s pin to `new` (an account renamed), or drop it when `new`
+/// is null (an account removed). No pin, no write.
+pub fn movePin(arena: Allocator, io: Io, data_root: []const u8, old: []const u8, new: ?[]const u8) Allocator.Error!void {
+    if (data_root.len == 0) return;
+    var pins = try readPins(arena, io, data_root);
+    const email = pins.get(old) orelse return;
+    _ = pins.orderedRemove(old);
+    if (new) |n| try pins.put(arena, n, email);
+    var obj: std.json.ObjectMap = .empty;
+    var it = pins.iterator();
+    while (it.next()) |e| try obj.put(arena, e.key_ptr.*, .{ .string = e.value_ptr.* });
+    var out: Io.Writer.Allocating = .init(arena);
+    std.json.Stringify.value(std.json.Value{ .object = obj }, .{ .whitespace = .indent_2 }, &out.writer) catch return error.OutOfMemory;
+    const path = try std.fs.path.join(arena, &.{ data_root, identity_file });
+    writeSecret(io, path, out.written()) catch {};
+}
+
 /// The account whose token file holds `refresh_token` — the one the
 /// CLI is logged in as right now.
 pub fn accountOfRefreshToken(arena: Allocator, io: Io, accounts: []const AccountCfg, refresh_token: []const u8) Allocator.Error!?[]const u8 {

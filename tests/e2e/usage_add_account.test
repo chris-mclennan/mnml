@@ -1,0 +1,52 @@
+# Watching another Claude account from inside the app: `a` in the usage
+# pane asks for a name, then for that account's OAuth token (a hidden
+# prompt); the account joins `ai.claude_accounts` in the home config with
+# a token file of its own and is fetched at once. The palette renames it
+# (the prompt is seeded with the name) and removes it (after a confirm).
+# The fixture has no `accounts` file, so the config's list is the list,
+# and `client.json` is what the new account's fetch reads.
+# env: MNML_CLAUDE_USAGE_FIXTURE=${MNML_E2E_WORKSPACE}/fixture
+
+write fixture/now 1789243232
+write fixture/tz_offset 0
+write fixture/client.json {"five_hour":{"utilization":73.0,"resets_at":"2026-09-12T22:05:00+00:00"},"seven_day":{"utilization":41.0,"resets_at":"2026-09-16T09:00:00+00:00"}}
+write placeholder.txt x
+open placeholder.txt
+
+command ai.claude_usage
+wait 600
+expect pane "Claude usage"
+key a
+expect screen contains "Name the Claude account to add"
+type client
+key enter
+expect screen contains "Paste the Claude Code OAuth token for client"
+expect screen lacks "fake-token-for-tests"
+type fake-token-for-tests
+expect screen lacks "fake-token-for-tests"
+key enter
+wait 800
+expect screen contains "linked client"
+expect screen contains "(active) client"
+expect screen contains "73% used"
+expect screen contains "Resets 10:05pm"
+expect screen contains "41% used"
+
+# Rename: one account, so straight to its prompt, the old name selected.
+command ai.claude_rename_account
+expect screen contains "Rename Claude account (was: client)"
+type acme
+key enter
+wait 300
+expect screen contains "renamed `client` → `acme`"
+expect screen contains "(active) acme"
+expect screen lacks "(active) client"
+
+# Remove: a confirm that says the token file goes with it.
+command ai.claude_remove_account
+expect screen contains "Remove Claude account acme?"
+expect screen contains "is deleted"
+key r
+wait 300
+expect screen contains "removed Claude account acme and its token file"
+expect screen lacks "acme"

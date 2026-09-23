@@ -15,6 +15,7 @@ const overlay = @import("overlay.zig");
 const ids = @import("../core/ids.zig");
 const usage = @import("../ai/usage.zig");
 const usage_pane = @import("../app/usage_pane.zig");
+const list_panel = @import("list_panel.zig");
 const localtime = @import("../core/localtime.zig");
 
 pub const PaneId = ids.PaneId;
@@ -60,11 +61,21 @@ pub const suffix_cells: u16 = 10;
 pub const gutter_glyph = "▌";
 pub const gutter_ascii = "|";
 
-const Span = struct { text: []const u8, style: Theme.Style };
+/// The pencil after an account's name: click renames it (Rust's
+/// `claude_usage_pencils`, nf-fa-pencil).
+pub const pencil_glyph = "\u{F040}";
+pub const pencil_ascii = "e";
+
+/// A run of text; `hit` registers its cells as that `script_hit` id.
+const Span = struct { text: []const u8, style: Theme.Style, hit: ?u32 = null };
 
 const Row = struct {
     /// Painted first, in this style, when set.
     gutter: ?Theme.Style = null,
+    /// The whole row's `script_hit` id (a span's own wins over it).
+    hit: ?u32 = null,
+    /// The pane menu's kebab, right-aligned (the header row).
+    kebab: bool = false,
     body: union(enum) {
         spans: []const Span,
         bar: struct { percent: u16 },
@@ -72,7 +83,6 @@ const Row = struct {
 };
 
 pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: *usage_pane.UsagePane, props: Props, focused: bool) void {
-    _ = pane;
     const th = ui.theme;
     ui.fill(area, th.bg);
     if (area.isEmpty()) return;
@@ -94,12 +104,26 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: *usage_pane.UsagePane, props: P
     }) {
         const r = area.row(y);
         const row = rows.items[i];
+        if (row.hit) |h| ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = h } });
+        var right = r.right();
+        if (row.kebab) {
+            const k = if (ui.ascii) list_panel.kebab_ascii else list_panel.kebab_glyph;
+            const kw = ui.width(k);
+            if (kw + 4 < r.w) {
+                right -= kw;
+                const kr = Rect.init(right, r.y, kw, 1);
+                _ = ui.putStr(kr.x, kr.y, kw, k, Theme.onBg(th.muted, th.bg.bg));
+                ui.hit(kr, .{ .script_hit = .{ .pane = pane, .id = usage_pane.hit_kebab } });
+            }
+        }
         var x = r.x;
-        if (row.gutter) |g| x += ui.putStr(x, r.y, r.right() -| x, if (ui.ascii) gutter_ascii else gutter_glyph, g);
+        if (row.gutter) |g| x += ui.putStr(x, r.y, right -| x, if (ui.ascii) gutter_ascii else gutter_glyph, g);
         switch (row.body) {
             .spans => |spans| for (spans) |s| {
-                if (x >= r.right()) break;
-                x += ui.putStr(x, r.y, r.right() - x, s.text, s.style);
+                if (x >= right) break;
+                const w = ui.putStr(x, r.y, right - x, s.text, s.style);
+                if (s.hit) |h| if (w > 0) ui.hit(Rect.init(x, r.y, w, 1), .{ .script_hit = .{ .pane = pane, .id = h } });
+                x += w;
             },
             .bar => |b| {
                 const clamped: u32 = @min(b.percent, 100);
@@ -141,20 +165,22 @@ fn claudeRows(ui: Ui, rows: *std.ArrayListUnmanaged(Row), props: Props, focused:
     head_style.bold = true;
     const yellow = Theme.onBg(th.warn_fg, th.bg.bg);
     const red = Theme.onBg(th.error_fg, th.bg.bg);
-    try rows.append(a, .{ .body = .{ .spans = try a.dupe(Span, &.{
+    const body_hit: ?u32 = usage_pane.hit_body;
+    try rows.append(a, .{ .hit = body_hit, .kebab = true, .body = .{ .spans = try a.dupe(Span, &.{
         .{ .text = " Claude usage ", .style = head_style },
-        .{ .text = overlay.hintText(ui, "· r refresh · L claude login · R capture · esc close"), .style = hint },
+        .{ .text = overlay.hintText(ui, "· r refresh · a add · L claude login · R capture · esc close"), .style = hint },
     }) } });
-    try rows.append(a, .{ .body = .{ .spans = &.{} } });
+    try rows.append(a, .{ .hit = body_hit, .body = .{ .spans = &.{} } });
     if (props.accounts.len == 0) {
-        try rows.append(a, .{ .body = .{ .spans = try a.dupe(Span, &.{.{ .text = "fetching… (link a token via `:ai.link_claude_token`)", .style = muted }}) } });
+        try rows.append(a, .{ .hit = body_hit, .body = .{ .spans = try a.dupe(Span, &.{.{ .text = "fetching… (link a token via `:ai.link_claude_token`)", .style = muted }}) } });
     }
     for (props.accounts, 0..) |acc, i| {
+        const first = rows.items.len;
         const u = &acc.usage;
         var gutter = colored(th, if (acc.is_active) pal.green else pal.bg_darker);
         gutter.bold = acc.is_active;
         const g: ?Theme.Style = gutter;
-        // `▌ (active) name · email · org`
+        // `▌(active) name ✎ · email · org` (Rust's header shape).
         var head: std.ArrayListUnmanaged(Span) = .empty;
         if (acc.is_active) {
             var pill = colored(th, pal.green);
@@ -162,9 +188,10 @@ fn claudeRows(ui: Ui, rows: *std.ArrayListUnmanaged(Row), props: Props, focused:
             try head.append(a, .{ .text = "(active) ", .style = pill });
         }
         try head.append(a, .{ .text = try std.fmt.allocPrint(a, "{s} ", .{acc.name}), .style = bold });
+        try head.append(a, .{ .text = if (ui.ascii) pencil_ascii else pencil_glyph, .style = muted, .hit = usage_pane.hit_pencil_base + @as(u32, @intCast(i)) });
         var identity: std.ArrayListUnmanaged(u8) = .empty;
-        if (acc.email) |e| try identity.print(a, "· {s} ", .{e});
-        if (acc.org) |o| try identity.print(a, "· {s}", .{o});
+        if (acc.email) |e| try identity.print(a, " · {s}", .{e});
+        if (acc.org) |o| try identity.print(a, " · {s}", .{o});
         if (identity.items.len > 0) try head.append(a, .{ .text = identity.items, .style = muted });
         try rows.append(a, .{ .gutter = g, .body = .{ .spans = head.items } });
         try rows.append(a, .{ .gutter = g, .body = .{ .spans = &.{} } });
@@ -206,10 +233,13 @@ fn claudeRows(ui: Ui, rows: *std.ArrayListUnmanaged(Row), props: Props, focused:
         } else if (u.last_error) |e| {
             try rows.append(a, .{ .gutter = g, .body = .{ .spans = try a.dupe(Span, &.{.{ .text = try std.fmt.allocPrint(a, "  last fetch error: {s}", .{e}), .style = red }}) } });
         }
-        if (i + 1 < props.accounts.len) try rows.append(a, .{ .body = .{ .spans = &.{} } });
+        // Every row of the block answers a right-click with the
+        // account's menu.
+        for (rows.items[first..]) |*r| r.hit = usage_pane.hit_account_base + @as(u32, @intCast(i));
+        if (i + 1 < props.accounts.len) try rows.append(a, .{ .hit = body_hit, .body = .{ .spans = &.{} } });
     }
-    try rows.append(a, .{ .body = .{ .spans = &.{} } });
-    try rows.append(a, .{ .body = .{ .spans = try a.dupe(Span, &.{.{ .text = " `:ai.refresh_usage` to force fetch · `:ai.show_last_response` for raw JSON ", .style = hint }}) } });
+    try rows.append(a, .{ .hit = body_hit, .body = .{ .spans = &.{} } });
+    try rows.append(a, .{ .hit = body_hit, .body = .{ .spans = try a.dupe(Span, &.{.{ .text = " `:ai.refresh_usage` to force fetch · `:ai.show_last_response` for raw JSON ", .style = hint }}) } });
 }
 
 fn resetRow(a: std.mem.Allocator, resets_at: u64, tz: Tz, long: bool, style: Theme.Style) std.mem.Allocator.Error![]const Span {

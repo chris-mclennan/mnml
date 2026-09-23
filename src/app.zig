@@ -263,12 +263,18 @@ pub const PromptPurpose = union(enum) {
     /// (owned) into the folder typed into the prompt.
     move_paths: [][]u8,
     /// AI: a bare question; a question with the file + selection;
-    /// a transcript search; a branch description; the OAuth token.
+    /// a transcript search; a branch description.
     ai_ask,
     ai_chat,
     ai_search,
     ai_branch_name,
-    ai_token,
+    /// The usage reader's accounts (`app/usage_pane.zig`): a new
+    /// account's name; the OAuth token for the named account; the new
+    /// name for the named account. The payload owns the name and the
+    /// prompt's title, which names the account.
+    claude_account_add,
+    claude_account_token: AccountPrompt,
+    claude_account_rename: AccountPrompt,
     /// DAP: a watch expression.
     dap_add_watch,
     /// DAP: a condition / hit-count for the breakpoint on `line` of `path` (owned).
@@ -344,11 +350,16 @@ pub const PromptPurpose = union(enum) {
     layout_delete,
 
     pub const BpTarget = struct { path: []u8, line: u32 };
+    pub const AccountPrompt = struct { name: []u8, title: []u8 };
     pub const SessionWorktreeName = struct { product: Config.AiProduct, profile: []u8 };
 
     pub fn deinit(p: PromptPurpose, gpa: Allocator) void {
         switch (p) {
             .new_file, .new_folder, .new_note, .new_finding, .sessions_rename, .cloud_run_model, .rename, .http_env_edit_value, .http_path_param, .script_install => |s| gpa.free(s),
+            .claude_account_token, .claude_account_rename => |a| {
+                gpa.free(a.name);
+                gpa.free(a.title);
+            },
             .session_worktree_name => |w| gpa.free(w.profile),
             .move_paths => |ps| {
                 for (ps) |q| gpa.free(q);
@@ -408,6 +419,8 @@ pub const ConfirmPurpose = union(enum) {
     cloud_cancel: []u8,
     /// `integrations.remove`: the manifest id to delete (owned).
     remove_integration: []u8,
+    /// `ai.claude_remove_account`: the account's name (owned).
+    remove_claude_account: []u8,
     /// SESSIONS: the absolute transcript path to delete (owned).
     delete_session: []u8,
     /// // changed (sessions-worktree): merge the session worktree at
@@ -439,7 +452,7 @@ pub const ConfirmPurpose = union(enum) {
 
     pub fn deinit(c: ConfirmPurpose, gpa: Allocator) void {
         switch (c) {
-            .delete_path, .remove_integration, .delete_session, .session_worktree_merge, .remove_script, .layout_load => |s| gpa.free(s),
+            .delete_path, .remove_integration, .remove_claude_account, .delete_session, .session_worktree_merge, .remove_script, .layout_load => |s| gpa.free(s),
             .script_install => |i| {
                 gpa.free(i.dir);
                 gpa.free(i.name);
