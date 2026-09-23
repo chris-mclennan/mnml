@@ -432,13 +432,11 @@ fn reveal(s: *const Search, term: *vt.Terminal, idx: usize) void {
 // ─── the query ──────────────────────────────────────────────────────────
 
 /// The options the editor's find bar compiles its regex with, the
-/// dialect included: whichever syntax `cmd_find` gives the profile, a
-/// terminal's bar takes too. (Both halves are read at comptime, so this
-/// builds against a regex engine with one dialect or several.)
+/// dialect included: whichever syntax `cmd_find` gives the profile —
+/// vim's under vim, the Perl-style one under standard — a terminal's
+/// bar takes too.
 fn regexOptions(app: *const App, ignore_case: bool) regex.Options {
-    var o: regex.Options = .{ .ignore_case = ignore_case };
-    if (comptime @hasField(regex.Options, "dialect") and @hasDecl(cmd_find, "dialectFor")) o.dialect = cmd_find.dialectFor(app);
-    return o;
+    return .{ .ignore_case = ignore_case, .dialect = cmd_find.dialectFor(app) };
 }
 
 /// A new query (or toggles): recompile and scan from the top, as much
@@ -905,6 +903,11 @@ test "scrollback search (standard): Ctrl+F opens it, Enter / Shift+Enter step wi
     try app.handle(.{ .key = Key.ctrl('f') });
     try t.expectEqualStrings("^11", app.find_bar.?.state.queryText());
     try t.expect(app.find_bar.?.state.select_all);
+    // The standard profile's regex is the one a VS Code user types:
+    // `(` `|` `)` group and alternate — the query replaces the selection.
+    try typeText(&app, "^(11|119)$");
+    try settleScan(&app, p);
+    try t.expectEqual(@as(usize, 2), p.search.matches.items.len);
 }
 
 /// How many times `99` is in the lines `from`..`to`, as the literal
