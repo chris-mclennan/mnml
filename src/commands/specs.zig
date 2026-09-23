@@ -146,7 +146,7 @@ pub const specs = [_]Spec{
     .{ .id = "find.word_backward_partial", .title = "Find: word under cursor, inside longer words too (backward) — vim `g#`", .group = "find" },
     .{ .id = "find.selection_forward", .title = "Find: selected text (forward) — vim visual `*`", .group = "find" },
     .{ .id = "find.selection_backward", .title = "Find: selected text (backward) — vim visual `#`", .group = "find" },
-    .{ .id = "find.replace", .title = "Replace every match of the active find", .group = "find", .keys = .{ .standard = &.{"ctrl+h"} } },
+    .{ .id = "find.replace", .title = "Find and replace in this buffer — the bar's Replace row (vim: every match of the active find)", .group = "find", .keys = .{ .standard = &.{"ctrl+h"} } },
     .{ .id = "find.grep", .title = "Find in files — grep workspace (rg / git grep) → results pane", .group = "find", .keys = .{ .vim = &.{"space f w"}, .both = &.{ "ctrl+shift+f", "space f g" } } },
     .{ .id = "find.live_grep", .title = "Find in files — live grep with a preview column (picker)", .group = "find" },
     .{ .id = "find.grep_replace", .title = "Replace in files — every grep hit across every file (active grep pane)", .group = "find" },

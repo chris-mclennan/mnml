@@ -2,8 +2,10 @@
 //! active pane, matches update as the query is typed, Enter lands on
 //! the first match at or after the cursor (before it for vim `?`) and
 //! toasts `match N/M`; `find.next` / `find.prev` step and toast the
-//! same; `find.replace` prompts `Replace N× "q" with` and splices every
-//! match as one undo step.
+//! same. `find.replace` in the standard profile is VS Code's Ctrl+H —
+//! the bar's Replace row: Enter there replaces the current match and
+//! moves on, Ctrl+Alt+Enter splices every match as one undo step; in the
+//! vim profile it prompts `Replace N× "q" with` for the same splice.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -123,7 +125,8 @@ pub fn openBar(app: *App, reverse: bool) CommandError!void {
         if (fb.pane == id) {
             fb.reverse = reverse;
             // Ctrl+F on an open bar selects the query (VS Code): typing
-            // starts over, a move keeps it.
+            // starts over, a move keeps it — from the Replace field too.
+            fb.state.focus = .query;
             fb.state.select_all = fb.state.query.items.len > 0;
             app.focus = .overlay;
             return;
@@ -170,7 +173,7 @@ pub fn liveUpdate(app: *App) Allocator.Error!void {
     if (q.len == 0) {
         f.clear();
     } else {
-        try f.setQuery(q, tg.text(), if (fb.state.match_case) true else app.search_case);
+        try setBarQuery(app, fb, f, q, tg.text());
         f.current = if (fb.reverse) f.indexBefore(tg.cursor()) else f.indexAtOrAfter(forwardFrom(app, tg.cursor()));
         // A response follows the live match as it is typed.
         if (tg == .request) if (f.current) |c| tg.request.revealFind(f.matches.items[c].start);
@@ -178,13 +181,20 @@ pub fn liveUpdate(app: *App) Allocator.Error!void {
     app.needs_render = true;
 }
 
-/// A click on the bar's `.*` / `Aa` chip (`find_bar.hit_regex` /
-/// `hit_case`): the same toggle as ctrl+r / ctrl+c.
+/// The bar's query with its case and whole-word toggles.
+fn setBarQuery(app: *App, fb: *const app_mod.FindBarState, f: *find_mod.FindState, q: []const u8, text: []const u8) Allocator.Error!void {
+    const case: ?bool = if (fb.state.match_case) true else app.search_case;
+    if (fb.state.whole_word) try f.setWordQuery(q, text, case) else try f.setQuery(q, text, case);
+}
+
+/// A click on the bar's `.*` / `Aa` / `\b` chip (`find_bar.hit_regex` /
+/// `hit_case` / `hit_word`): the same toggle as Alt+R / Alt+C / Alt+W.
 pub fn chipClick(app: *App, id: u32) Allocator.Error!void {
     const fb = &(app.find_bar orelse return);
     switch (id) {
         FindBar.hit_regex => fb.state.regex = !fb.state.regex,
         FindBar.hit_case => fb.state.match_case = !fb.state.match_case,
+        FindBar.hit_word => fb.state.whole_word = !fb.state.whole_word,
         else => return,
     }
     try liveUpdate(app);
@@ -224,7 +234,7 @@ pub fn acceptFromBar(app: *App) Allocator.Error!void {
     const was_on: ?usize = if (fb.landed) (if (f.current) |c| (if (c < f.matches.items.len and cursor == f.matches.items[c].start) c else null) else null) else null;
     f.regex = fb.state.regex;
     f.dialect = dialectFor(app);
-    try f.setQuery(q, tg.text(), if (fb.state.match_case) true else app.search_case);
+    try setBarQuery(app, fb, f, q, tg.text());
     const n = f.matches.items.len;
     if (n == 0) {
         if (f.bad_pattern) |err| app.toast("{s}: \"{s}\"", .{ patternProblem(err), q }) else app.toast("no matches for \"{s}\"", .{q});
@@ -244,13 +254,27 @@ pub fn acceptFromBar(app: *App) Allocator.Error!void {
 fn landFromBar(app: *App, fb: *app_mod.FindBarState, tg: Target) Allocator.Error!void {
     const f = tg.find();
     const idx = f.current orelse return;
-    tg.setCursor(f.matches.items[idx].start);
+    switch (tg) {
+        .editor => |e| landOnMatch(app, e, idx),
+        .request => tg.setCursor(f.matches.items[idx].start),
+    }
     app.toast("match {d}/{d}", .{ idx + 1, f.matches.items.len });
     const snap = f.clone() catch return error.OutOfMemory;
     if (fb.snapshot) |*old| old.deinit();
     fb.snapshot = snap;
     fb.snapshot_cursor = tg.cursor();
     fb.landed = true;
+    app.needs_render = true;
+}
+
+/// The cursor goes to match `idx`; the standard profile also selects it,
+/// as VS Code's find does, so Esc leaves the match selected and typing
+/// replaces it. The cursor stays on the match's first character.
+fn landOnMatch(app: *App, e: *EditorPane, idx: usize) void {
+    const m = e.find.matches.items[idx];
+    e.buf.editor.setCursor(m.start);
+    e.buf.editor.goal_col = null;
+    if (app.input_style == .standard) e.buf.editor.anchor = if (m.end > m.start) m.end else null;
     app.needs_render = true;
 }
 
@@ -262,6 +286,7 @@ pub fn stepFromBar(app: *App, delta: i32) Allocator.Error!void {
     const tg = Target.of(app, fb.pane) orelse return;
     try stepFind(app, delta);
     if (app.input_style == .vim or tg.find().current == null) return;
+    if (tg == .editor) landOnMatch(app, tg.editor, tg.find().current.?);
     const snap = tg.find().clone() catch return error.OutOfMemory;
     if (fb.snapshot) |*old| old.deinit();
     fb.snapshot = snap;
@@ -297,7 +322,7 @@ fn acceptAndClose(app: *App) Allocator.Error!void {
     };
     f.regex = vimPattern(app) or fb.state.regex;
     f.dialect = dialectFor(app);
-    try f.setQuery(pattern, tg.text(), if (fb.state.match_case) true else app.search_case);
+    try setBarQuery(app, fb, f, pattern, tg.text());
     f.offset = offset;
     // `/` and `?` write vim's last search pattern, which `:s//new/` reads.
     try app.noteSearchPattern(pattern);
@@ -385,7 +410,29 @@ fn prev(app: *App) CommandError!void {
 
 fn replace(app: *App) CommandError!void {
     _ = try app.requireEditor();
+    if (app.input_style == .standard) return openReplaceBar(app);
     try openReplacePrompt(app);
+}
+
+/// VS Code's Ctrl+H: the find bar with its Replace row. The query is
+/// the active find's, selected so typing starts over; Tab moves to the
+/// Replace field, Enter there replaces the current match and moves on,
+/// Ctrl+Alt+Enter replaces them all, Esc closes.
+pub fn openReplaceBar(app: *App) CommandError!void {
+    const e = try app.requireEditor();
+    const prior = try app.frame.allocator().dupe(u8, e.find.query.items);
+    const was_regex = e.find.regex;
+    try openBar(app, false);
+    const fb = &(app.find_bar orelse return);
+    fb.state.show_replace = true;
+    fb.state.focus = .query;
+    if (fb.state.query.items.len == 0 and prior.len > 0) {
+        try fb.state.setQuery(app.gpa, prior);
+        fb.state.regex = fb.state.regex or was_regex;
+        fb.state.select_all = true;
+        try liveUpdate(app);
+    }
+    app.needs_render = true;
 }
 
 /// `Replace N× "q" with` — or, with no find yet, a find bar that chains
@@ -451,6 +498,8 @@ pub fn replaceAll(app: *App, replacement: []const u8) Allocator.Error!void {
         if (mi == 0) first_end = lo + out.items.len;
     }
     _ = try app.applyOps(e, &.{.{ .replace_range = .{ .start = lo, .end = hi, .text = out.items } }});
+    // A landed match's selection went with the text it covered.
+    e.buf.editor.anchor = null;
     // The cursor ends after the first replacement, where it always has.
     e.buf.editor.setCursor(@min(first_end, e.buf.editor.len()));
     try e.find.recompute(e.buf.editor.bytes());
@@ -470,12 +519,31 @@ pub fn replaceCurrent(app: *App) Allocator.Error!void {
         return;
     };
     const m = e.find.matches.items[idx];
-    const text = try app.frame.allocator().dupe(u8, fb.state.replace.items);
-    try app.splice(e, m.start, m.end, text);
+    const arena = app.frame.allocator();
+    const all = e.buf.editor.bytes();
+    // A regex replacement may name the match's groups (`$1`, `\1`).
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var re: ?regex.Regex = if (e.find.regex) regex.Regex.compile(e.find.query.items, .{ .ignore_case = !e.find.case_sensitive, .dialect = e.find.dialect }) catch null else null;
+    defer if (re) |*r| r.deinit();
+    if (re) |*r| if (r.find(all, m.start)) |full| {
+        try regex.expandReplacementFor(e.find.dialect, arena, &out, fb.state.replace.items, all, full);
+    } else try out.appendSlice(arena, fb.state.replace.items) else try out.appendSlice(arena, fb.state.replace.items);
+    try app.splice(e, m.start, m.end, out.items);
+    // The next match is searched for from after the replacement, so a
+    // replacement that contains the query is not replaced again.
+    const after = m.start + out.items.len;
     try e.find.recompute(e.buf.editor.bytes());
     if (e.find.matches.items.len > 0) {
-        e.find.current = e.find.indexAtOrAfter(e.buf.editor.cursor);
-        e.buf.editor.setCursor(e.find.matches.items[e.find.current.?].start);
+        // Lands (and commits) the way Enter in Find does, so Esc keeps it.
+        e.find.current = e.find.indexAtOrAfter(after);
+        try landFromBar(app, fb, .{ .editor = e });
+    } else {
+        e.buf.editor.anchor = null;
+        e.buf.editor.setCursor(after);
+        const snap = try e.find.clone();
+        if (fb.snapshot) |*old| old.deinit();
+        fb.snapshot = snap;
+        fb.snapshot_cursor = after;
     }
     app.toast("replaced 1 · {d} left", .{e.find.matches.items.len});
 }
@@ -755,8 +823,9 @@ test "find: ctrl+r turns the query into a pattern — Perl-style in the standard
     for ("([a-z]+)(\\d+)") |c| try app.handle(.{ .key = Key.char(c) });
     try app.handle(.{ .key = Key.named(.enter) });
     try command.run(&app, .{ .static = .@"find.replace" });
+    try app.handle(.{ .key = Key.named(.tab) });
     for ("$2-$1") |c| try app.handle(.{ .key = Key.char(c) });
-    try app.handle(.{ .key = Key.named(.enter) });
+    try app.handle(.{ .key = .{ .code = .enter, .mods = .{ .ctrl = true, .alt = true } } });
     try t.expectEqualStrings("1-foo 22-bar 333-baz\n", e.buf.editor.bytes());
     try command.run(&app, .{ .static = .@"find.find" });
     for ("(x") |c| try app.handle(.{ .key = Key.char(c) });
@@ -818,7 +887,7 @@ test "find: vim's / and ? are vim patterns, never literal — ^, \\<\\>, \\d, .,
     try t.expect(e.find.regex);
 }
 
-test "find: Esc restores the previous find state; replace prompts and splices every match" {
+test "find: Esc restores the previous find state; Ctrl+H's replace-all splices every match" {
     var app = try appWith("alpha beta alpha gamma alpha");
     defer app.deinit();
     try command.run(&app, .{ .static = .@"find.find" });
@@ -832,11 +901,13 @@ test "find: Esc restores the previous find state; replace prompts and splices ev
     try app.handle(.{ .key = Key.named(.esc) });
     try t.expectEqualStrings("alpha", e.find.query.items);
     try t.expectEqual(@as(usize, 3), e.find.matches.items.len);
+    // Ctrl+H: the bar's Replace row, the find's query in the Find field.
     try command.run(&app, .{ .static = .@"find.replace" });
-    try t.expect(app.overlay == .prompt);
-    try t.expectEqualStrings("Replace 3× \"alpha\" with", app.overlay.prompt.state.title);
+    try t.expect(app.find_bar.?.state.show_replace);
+    try t.expectEqualStrings("alpha", app.find_bar.?.state.queryText());
+    try app.handle(.{ .key = Key.named(.tab) });
     for ("DELTA") |c| try app.handle(.{ .key = Key.char(c) });
-    try app.handle(.{ .key = Key.named(.enter) });
+    try app.handle(.{ .key = .{ .code = .enter, .mods = .{ .ctrl = true, .alt = true } } });
     try t.expectEqualStrings("DELTA beta DELTA gamma DELTA", e.buf.editor.bytes());
     try t.expectEqualStrings("replaced 3", app.lastToast().?);
     try t.expect(e.buf.doc.dirty);
@@ -855,11 +926,48 @@ test "find: replace-all lands every match in one splice, cursor after the first 
     try t.expectEqual(@as(usize, 3), e.find.matches.items.len);
     const seq0 = e.buf.doc.edits.next_seq;
     try command.run(&app, .{ .static = .@"find.replace" });
+    try app.handle(.{ .key = Key.named(.tab) });
     for ("w-") |c| try app.handle(.{ .key = Key.char(c) });
-    try app.handle(.{ .key = Key.named(.enter) });
+    try app.handle(.{ .key = .{ .code = .enter, .mods = .{ .ctrl = true, .alt = true } } });
     try t.expectEqualStrings("x w-1 y w-2 z w-3\n", e.buf.editor.bytes());
     // One splice (so one change for the server and O(file) work), where
     // an op per match spliced the whole buffer once per match.
     try t.expectEqual(seq0 + 1, e.buf.doc.edits.next_seq);
     try t.expectEqual(@as(usize, 4), e.buf.editor.cursor);
+}
+
+test "find: Ctrl+H's Replace row — Tab, Enter replaces one and moves on, $1 groups, Esc keeps the selection" {
+    var app = try appWith("foo1 x foo22 foox foo3\n");
+    defer app.deinit();
+    const e = app.activeEditor().?;
+    try command.run(&app, .{ .static = .@"find.replace" });
+    try t.expect(app.find_bar.?.state.show_replace);
+    for ("foo") |c| try app.handle(.{ .key = Key.char(c) });
+    try t.expectEqual(@as(usize, 4), e.find.matches.items.len);
+    try app.handle(.{ .key = Key.named(.tab) });
+    try t.expectEqual(FindBar.Focus.replace, app.find_bar.?.state.focus);
+    for ("bar") |c| try app.handle(.{ .key = Key.char(c) });
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expectEqualStrings("bar1 x foo22 foox foo3\n", e.buf.editor.bytes());
+    try t.expectEqualStrings("replaced 1 · 3 left", app.lastToast().?);
+    // The next match is the current one now, selected.
+    try t.expectEqual(@as(usize, 7), e.buf.editor.cursor);
+    try t.expectEqual(@as(?usize, 10), e.buf.editor.anchor);
+    // Shift+Tab back to Find, then a pattern with groups.
+    try app.handle(.{ .key = Key.named(.backtab) });
+    try app.handle(.{ .key = .{ .code = .{ .char = 'r' }, .mods = .{ .alt = true } } });
+    for ("(\\d+)") |c| try app.handle(.{ .key = Key.char(c) });
+    try t.expectEqual(@as(usize, 2), e.find.matches.items.len);
+    try app.handle(.{ .key = Key.named(.tab) });
+    for ("<$1>") |c| try app.handle(.{ .key = Key.char(c) });
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expectEqualStrings("bar1 x bar<22> foox foo3\n", e.buf.editor.bytes());
+    // Esc closes and keeps the next match selected: `foo3`.
+    try app.handle(.{ .key = Key.named(.esc) });
+    try t.expect(app.find_bar == null);
+    try t.expectEqual(@as(usize, 20), e.buf.editor.cursor);
+    try t.expectEqual(@as(?usize, 24), e.buf.editor.anchor);
+    // Each replacement was its own undo step.
+    _ = try app.applyOps(e, &.{ .undo, .undo });
+    try t.expectEqualStrings("foo1 x foo22 foox foo3\n", e.buf.editor.bytes());
 }

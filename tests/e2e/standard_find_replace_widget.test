@@ -1,0 +1,55 @@
+# VS Code's find/replace widget in the standard profile: Ctrl+H opens the
+# bar with its Replace row; Tab moves between the fields; Enter in Replace
+# replaces the current match and moves to the next; Ctrl+Alt+Enter
+# replaces every match; Alt+W whole word, Alt+C match case; Esc closes and
+# the match stays selected. Before, the Replace row was never shown and
+# Ctrl+H could only replace every match through a prompt.
+write a.txt "foo 1\nfoo 2\nfoo 3\n"
+open a.txt
+command editor.use_standard
+key ctrl+h
+expect screen contains "Replace"
+type foo
+key tab
+type X
+key enter
+expect screen contains "replaced 1 · 2 left"
+key ctrl+s
+expect file a.txt contains "X 1\nfoo 2\nfoo 3"
+key enter
+expect screen contains "replaced 1 · 1 left"
+key ctrl+s
+expect file a.txt contains "X 1\nX 2\nfoo 3"
+key shift+tab
+key esc
+expect screen lacks "Replace"
+
+# Whole word (Alt+W) and match case (Alt+C) narrow what Ctrl+Alt+Enter hits.
+write b.txt "id valid ID idx id\n"
+open b.txt
+key ctrl+h
+type id
+expect screen contains "match 1/5"
+key alt+w
+expect screen contains "match 1/3"
+key alt+c
+expect screen contains "match 1/2"
+key tab
+type key
+key ctrl+alt+enter
+expect screen contains "replaced 2"
+key ctrl+s
+expect file b.txt contains "key valid ID idx key"
+key esc
+
+# Esc keeps the landed match selected: typing replaces it.
+write c.txt "one two three\n"
+open c.txt
+key ctrl+f
+type two
+key enter
+expect screen contains "match 1/1"
+key esc
+type 2
+key ctrl+s
+expect file c.txt contains "one 2 three"

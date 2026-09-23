@@ -7,11 +7,11 @@ shell python3 -c "import sys; sys.stdout.write(''.join('line %d worker-%d took 5
 open a.log
 key ctrl+h
 type "worker-"
-key enter
-expect screen contains "Replace 80000"
+expect screen contains "/80000"
+key tab
 type "w-"
 shell python3 -c 'import time; open("t0","w").write(str(time.time()))'
-key enter
+key ctrl+alt+enter
 shell python3 -c 'import time,sys; e=time.time()-float(open("t0").read()); print("replace-all took %.2fs" % e, file=sys.stderr); sys.exit(0 if e < 3.0 else 1)'
 expect screen contains "replaced 80000"
 command file.save

@@ -105,7 +105,7 @@ pub const rows = [_]Row{
     // ── Edit ──
     .{ .menu = "Edit", .label = "Find…", .entry = .{
         .title = "Find…",
-        .body = "Opens the find bar under the active editor: the matches highlight as you type, Enter jumps to the next and keeps the highlights behind; Esc backs the search out entirely, highlights and all. Alt+R makes the query a regex; the statusline's Find chip counts the matches and its menu clears them.",
+        .body = "Opens the find bar under the active editor: the matches highlight as you type, Enter jumps to the next and keeps the highlights behind; Esc backs the search out entirely, highlights and all. Alt+R makes the query a regex, Alt+C matches case, Alt+W whole words only (the vim profile's `/` is always a vim pattern); the statusline's Find chip counts the matches and its menu clears them.",
         .keys = &.{ .{ .command = .@"find.find", .label = "Find" }, .{ .command = .@"find.toggle_regex", .label = "Regex on / off" } },
         .links = &.{ .{ .command = .{ .id = .@"find.find", .label = "Open the find bar" } }, .{ .command = .{ .id = .@"find.replace", .label = "Replace the matches" } }, .{ .command = .{ .id = .@"find.grep", .label = "Search the workspace instead" } } },
     } },
@@ -123,7 +123,7 @@ pub const rows = [_]Row{
     } },
     .{ .menu = "Edit", .label = "Replace…", .entry = .{
         .title = "Replace…",
-        .body = "Asks for a replacement and applies it to every match of the active find in this buffer, as one edit that Undo takes back whole. With no search running yet it opens the find bar first and chains into the replace once you have a query (the vim profile points you at `:%s` instead). Replace in files… is the workspace-wide twin.",
+        .body = "Opens the find bar with its Replace row, the active search already in the Find field. Tab moves between the two fields; Enter in Replace swaps the current match and moves to the next, one Undo step each; Ctrl+Alt+Enter replaces every match as one edit that Undo takes back whole. Alt+C, Alt+W and Alt+R turn on match case, whole word and regex (`$1` names a group). Esc closes the bar and leaves the current match selected. The vim profile asks for one replacement for every match instead, and `:%s` is its everyday tool. Replace in files… is the workspace-wide twin.",
         .keys = &.{.{ .command = .@"find.replace", .label = "Replace" }},
         .links = &.{ .{ .command = .{ .id = .@"find.replace", .label = "Replace in this buffer" } }, .{ .command = .{ .id = .@"find.find", .label = "Set the search" } }, .{ .command = .{ .id = .@"find.grep_replace", .label = "Replace across files" } } },
     } },

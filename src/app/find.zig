@@ -92,7 +92,8 @@ pub const FindState = struct {
     /// Null: just found against the current text by someone else.
     seen_edit: ?u64 = null,
     /// vim's `*` / `#`: only a match that is a whole keyword counts —
-    /// the pattern `\<word\>` (`:help star`). `setQuery` clears it.
+    /// the pattern `\<word\>` (`:help star`) — and the standard bar's
+    /// Alt+W. `setQuery` clears it.
     whole_word: bool = false,
 
     pub fn init(gpa: Allocator) FindState {

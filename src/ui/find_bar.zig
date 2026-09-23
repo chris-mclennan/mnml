@@ -1,7 +1,8 @@
 //! Find bar — docked at the bottom of a pane: the `Find` label, the
-//! query, the `.*` and `Aa` toggles, and the match count — `match 2/3`
-//! or `no matches`, the exact words the gate asserts. A second row with
-//! `Replace` appears when the app asks for it.
+//! query, the `.*`, `Aa` and `\b` (whole word) toggles, and the match
+//! count — `match 2/3` or `no matches`, the exact words the gate
+//! asserts. A second row with `Replace` appears when the app asks for
+//! it (VS Code's Ctrl+H).
 //!
 //! Both fields are `text_field`s. The bar does not search: it edits the
 //! query and reports what the user meant (`changed`, `next`, `prev`,
@@ -33,6 +34,8 @@ pub const State = struct {
     focus: Focus = .query,
     regex: bool = false,
     match_case: bool = false,
+    /// VS Code's Alt+W: only matches that are whole words count.
+    whole_word: bool = false,
     in_selection: bool = false,
     show_replace: bool = false,
     /// The whole query is selected (a second Ctrl+F on an open bar, as
@@ -63,7 +66,7 @@ pub const State = struct {
 
 /// `ignored`: not a bar key and not a field key — a modified chord the
 /// app may still resolve (Ctrl+S saves from the bar, as in VS Code).
-pub const Outcome = enum { consumed, ignored, cancel, next, prev, submit, toggle_regex, toggle_case, focus_toggle, replace_one, replace_all, changed, history_prev, history_next };
+pub const Outcome = enum { consumed, ignored, cancel, next, prev, submit, toggle_regex, toggle_case, toggle_word, focus_toggle, replace_one, replace_all, changed, history_prev, history_next };
 
 /// Match info from the app: `current` is 0-based.
 pub const Info = struct { current: ?usize, total: usize };
@@ -73,18 +76,21 @@ pub const hit_query: u32 = 0;
 pub const hit_replace: u32 = 1;
 pub const hit_regex: u32 = 2;
 pub const hit_case: u32 = 3;
+pub const hit_word: u32 = 4;
 
 pub const label_find = "Find";
 pub const label_find_selection = "Find (in selection)";
 pub const label_replace = "Replace";
 pub const chip_regex = ".*";
 pub const chip_case = "Aa";
+pub const chip_word = "\\b";
 pub const no_matches = "no matches";
 
-/// enter → submit (replace field: replace_one), ctrl+enter → replace_all,
-/// shift+enter / ctrl+p / shift+F3 → prev, ctrl+n / F3 → next, ↑ / ↓ →
-/// the find history, esc → cancel, ctrl+r regex, ctrl+c case, tab →
-/// focus_toggle; typing → changed.
+/// enter → submit (replace field: replace_one), ctrl+enter / ctrl+alt+enter
+/// → replace_all, shift+enter / ctrl+p / shift+F3 → prev, ctrl+n / F3 →
+/// next, ↑ / ↓ → the find history, esc → cancel, ctrl+r / alt+r regex,
+/// ctrl+c / alt+c case, alt+w whole word, tab / shift+tab → focus_toggle;
+/// typing → changed.
 pub fn handleKey(s: *State, gpa: Allocator, key: Key) Allocator.Error!Outcome {
     const m = key.mods;
     switch (key.code) {
@@ -114,6 +120,21 @@ pub fn handleKey(s: *State, gpa: Allocator, key: Key) Allocator.Error!Outcome {
             },
             'n' => return .next,
             'p' => return .prev,
+            else => {},
+        } else if (m.alt and !m.ctrl and !m.super) switch (c) {
+            // VS Code's find widget: Alt+C case, Alt+W whole word, Alt+R regex.
+            'c' => {
+                s.match_case = !s.match_case;
+                return .toggle_case;
+            },
+            'w' => {
+                s.whole_word = !s.whole_word;
+                return .toggle_word;
+            },
+            'r' => {
+                s.regex = !s.regex;
+                return .toggle_regex;
+            },
             else => {},
         },
         else => {},
@@ -183,13 +204,17 @@ pub fn draw(ui: Ui, area: Rect, s: *const State, info: Info) ?Caret {
     var right = r0.right();
     const regex_chip = ui.fmt(" {s} ", .{chip_regex});
     const case_chip = ui.fmt(" {s} ", .{chip_case});
+    const word_chip = ui.fmt(" {s} ", .{chip_word});
     const status_w = ui.width(status) + 1;
-    const chips_w = ui.width(regex_chip) + 1 + ui.width(case_chip) + 1;
+    const chips_w = ui.width(regex_chip) + 1 + ui.width(case_chip) + 1 + ui.width(word_chip) + 1;
     const field_min: u16 = 6;
     if (right -| x >= status_w + chips_w + field_min) {
         right -= 1;
         right = ui.putStrRight(right, r0.y, status_w, status, status_style);
         right -= 1;
+        const wx = ui.putStrRight(right, r0.y, ui.width(word_chip), word_chip, if (s.whole_word) t.chip_active else t.chip);
+        ui.hit(Rect.init(wx, r0.y, right - wx, 1), .{ .overlay_item = hit_word });
+        right = wx - 1;
         const cx = ui.putStrRight(right, r0.y, ui.width(case_chip), case_chip, if (s.match_case) t.chip_active else t.chip);
         ui.hit(Rect.init(cx, r0.y, right - cx, 1), .{ .overlay_item = hit_case });
         right = cx - 1;
@@ -236,7 +261,7 @@ test "the gate's literals: Find, match N/M, no matches" {
     var caret = draw(f.ui(), f.full(), &s, .{ .current = 0, .total = 3 });
     try f.expectContains("Find");
     try f.expectContains("match 1/3");
-    try f.expectRow(0, " Find  alpha" ++ " " ** 28 ++ " .*   Aa  match 1/3");
+    try f.expectRow(0, " Find  alpha" ++ " " ** 23 ++ " .*   Aa   \\b  match 1/3");
     try testing.expectEqual(Caret{ .x = 12, .y = 0 }, caret.?);
     try testing.expect(f.bgEql(1, 0, f.theme.chip_active));
     try testing.expect(f.bgEql(7, 0, f.theme.chip));
@@ -249,13 +274,16 @@ test "the gate's literals: Find, match N/M, no matches" {
     try f.expectContains("4 matches");
     // Hits: the query field, the toggles.
     try testing.expectEqual(hit_query, f.hits.at(20, 0).?.overlay_item);
-    try testing.expectEqual(hit_regex, f.hits.at(40, 0).?.overlay_item);
-    try testing.expectEqual(hit_case, f.hits.at(45, 0).?.overlay_item);
+    try testing.expectEqual(hit_regex, f.hits.at(35, 0).?.overlay_item);
+    try testing.expectEqual(hit_case, f.hits.at(40, 0).?.overlay_item);
+    try testing.expectEqual(hit_word, f.hits.at(45, 0).?.overlay_item);
     s.in_selection = true;
     s.regex = true;
+    s.whole_word = true;
     caret = draw(f.ui(), f.full(), &s, .{ .current = 0, .total = 1 });
     try f.expectContains(" Find (in selection) ");
-    try testing.expect(f.bgEql(40, 0, f.theme.chip_active));
+    try testing.expect(f.bgEql(35, 0, f.theme.chip_active));
+    try testing.expect(f.bgEql(45, 0, f.theme.chip_active));
 }
 
 test "the replace row, its focus and caret" {
@@ -299,6 +327,14 @@ test "keys map to outcomes and flip the toggles; typing is changed" {
     try testing.expect(s.regex);
     try testing.expectEqual(Outcome.toggle_case, try handleKey(&s, gpa, Key.ctrl('c')));
     try testing.expect(s.match_case);
+    // VS Code's Alt+C / Alt+W / Alt+R.
+    try testing.expectEqual(Outcome.toggle_case, try handleKey(&s, gpa, .{ .code = .{ .char = 'c' }, .mods = .{ .alt = true } }));
+    try testing.expect(!s.match_case);
+    try testing.expectEqual(Outcome.toggle_word, try handleKey(&s, gpa, .{ .code = .{ .char = 'w' }, .mods = .{ .alt = true } }));
+    try testing.expect(s.whole_word);
+    try testing.expectEqual(Outcome.toggle_regex, try handleKey(&s, gpa, .{ .code = .{ .char = 'r' }, .mods = .{ .alt = true } }));
+    try testing.expect(!s.regex);
+    try testing.expectEqualStrings("", s.queryText());
     try testing.expectEqual(Outcome.cancel, try handleKey(&s, gpa, Key.named(.esc)));
     // A chord neither the bar nor the field wants is the app's to resolve.
     try testing.expectEqual(Outcome.ignored, try handleKey(&s, gpa, Key.ctrl('s')));
@@ -310,6 +346,12 @@ test "keys map to outcomes and flip the toggles; typing is changed" {
     _ = try handleKey(&s, gpa, Key.named(.tab));
     try testing.expectEqual(Outcome.replace_one, try handleKey(&s, gpa, Key.named(.enter)));
     try testing.expectEqual(Outcome.replace_all, try handleKey(&s, gpa, .{ .code = .enter, .mods = .{ .ctrl = true } }));
+    try testing.expectEqual(Outcome.replace_all, try handleKey(&s, gpa, .{ .code = .enter, .mods = .{ .ctrl = true, .alt = true } }));
+    // Shift+Tab goes back to the query.
+    try testing.expectEqual(Outcome.focus_toggle, try handleKey(&s, gpa, Key.named(.backtab)));
+    try testing.expectEqual(Focus.query, s.focus);
+    try testing.expectEqual(Outcome.submit, try handleKey(&s, gpa, Key.named(.enter)));
+    _ = try handleKey(&s, gpa, Key.named(.tab));
     try paste(&s, gpa, "new\nvalue");
     try testing.expectEqualStrings("new value", s.replaceText());
     try testing.expectEqualStrings("", s.queryText());

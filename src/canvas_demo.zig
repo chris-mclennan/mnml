@@ -498,6 +498,7 @@ fn handleScreenKey(g: *Gallery, key: Key) !void {
                 .replace_all => g.setNote("replace all: {s} → {s}", .{ g.find.queryText(), g.find.replaceText() }),
                 .toggle_regex => g.setNote("regex: {}", .{g.find.regex}),
                 .toggle_case => g.setNote("match case: {}", .{g.find.match_case}),
+                .toggle_word => g.setNote("whole word: {}", .{g.find.whole_word}),
                 .focus_toggle => g.setNote("focus: {s}", .{@tagName(g.find.focus)}),
                 .consumed, .ignored => {},
             }

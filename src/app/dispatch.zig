@@ -1842,7 +1842,7 @@ fn findBarKey(app: *App, k: Key) Allocator.Error!void {
     switch (try FindBar.handleKey(&fb.state, app.gpa, k)) {
         .consumed, .focus_toggle => {},
         .ignored => try widgetFallthrough(app, k),
-        .toggle_regex, .toggle_case => try cmd_find.liveUpdate(app),
+        .toggle_regex, .toggle_case, .toggle_word => try cmd_find.liveUpdate(app),
         .cancel => app.closeFindBar(true),
         .changed => try cmd_find.liveUpdate(app),
         .submit => try cmd_find.acceptFromBar(app),
