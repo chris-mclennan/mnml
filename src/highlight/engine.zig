@@ -908,6 +908,17 @@ test "injections: TypeScript and TSX carry JavaScript's — css / html / sql tag
     }
 }
 
+test "sql: integers and floats are constants — the query's `#match?` is in Lua's `%d` — and strings stay strings" {
+    var h = Highlighter.init(testing.allocator);
+    defer h.deinit();
+    h.setLanguage(table.find("sql").?);
+    const text = "SELECT id FROM users WHERE id = 42 AND ratio > 2.5 AND name = 'x';\n";
+    const spans = try h.highlightAll(text);
+    try testing.expectEqual(Role.constant, roleAt(spans, std.mem.indexOf(u8, text, "42").?));
+    try testing.expectEqual(Role.constant, roleAt(spans, std.mem.indexOf(u8, text, "2.5").?));
+    try testing.expectEqual(Role.string, roleAt(spans, std.mem.indexOf(u8, text, "'x'").?));
+}
+
 test "incremental: an edit told to the tree reparses to the same spans as a fresh parse" {
     var h = Highlighter.init(testing.allocator);
     defer h.deinit();

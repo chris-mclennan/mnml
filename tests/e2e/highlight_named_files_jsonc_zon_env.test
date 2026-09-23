@@ -1,0 +1,26 @@
+# width: 160
+# height: 40
+# env: PATH=
+# Files whose names, not a plain extension, say their language: `.jsonc`
+# and `.json5` are JSON (the grammar parses comments), `.zon` is Zig,
+# `.env.local` is the shell lines `.env` is, `Cargo.lock` is TOML.
+write settings.jsonc "{\n  // line comment\n  \"strict\": true\n}\n"
+open settings.jsonc
+wait 300
+expect pane "settings.jsonc"
+expect highlights at_least 3
+write build.zig.zon ".{\n    .name = .demo,\n    .version = \"0.1.0\",\n}\n"
+open build.zig.zon
+wait 300
+expect pane "build.zig.zon"
+expect highlights at_least 3
+write .env.local "export API_URL=\"http://localhost\"\nDEBUG=1\n"
+open .env.local
+wait 300
+expect pane ".env.local"
+expect highlights at_least 2
+write Cargo.lock "[[package]]\nname = \"demo\"\nversion = \"0.1.0\"\n"
+open Cargo.lock
+wait 300
+expect pane "Cargo.lock"
+expect highlights at_least 3

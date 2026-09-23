@@ -211,7 +211,12 @@ const extension_aliases = std.StaticStringMap([]const u8).initComptime(.{
     .{ "mjs", "js" },
     .{ "jsx", "jsx" },
     .{ "py", "py" },
+    .{ "pyi", "py" },
     .{ "json", "json" },
+    // JSON with comments (VS Code settings, tsconfig) and JSON5: the
+    // json grammar parses comments.
+    .{ "jsonc", "json" },
+    .{ "json5", "json" },
     .{ "jsonl", "json" },
     .{ "ndjson", "json" },
     .{ "go", "go" },
@@ -262,6 +267,8 @@ const extension_aliases = std.StaticStringMap([]const u8).initComptime(.{
     .{ "phtml", "php" },
     .{ "swift", "swift" },
     .{ "zig", "zig" },
+    // Zig Object Notation is Zig's own expression syntax (`build.zig.zon`, `config.zon`).
+    .{ "zon", "zig" },
     .{ "nix", "nix" },
     .{ "ocaml", "ocaml" },
     .{ "ml", "ocaml" },
@@ -296,6 +303,8 @@ const extension_aliases = std.StaticStringMap([]const u8).initComptime(.{
 pub fn keyForFilename(name: []const u8) ?[]const u8 {
     if (filename_aliases.get(name)) |k| return k;
     if (std.mem.startsWith(u8, name, "Dockerfile.") or std.mem.startsWith(u8, name, "Containerfile.")) return "dockerfile";
+    // `.env.local`, `.env.production`: the same `KEY=value` lines as `.env`.
+    if (std.mem.startsWith(u8, name, ".env.")) return "sh";
     return null;
 }
 
@@ -313,6 +322,9 @@ const filename_aliases = std.StaticStringMap([]const u8).initComptime(.{
     .{ ".zlogin", "sh" },            .{ ".zlogout", "sh" },              .{ ".bashrc", "sh" },
     .{ ".bash_profile", "sh" },      .{ ".bash_login", "sh" },           .{ ".bash_logout", "sh" },
     .{ ".bash_aliases", "sh" },      .{ ".profile", "sh" },              .{ ".shrc", "sh" },
+    // TOML under a name of its own.
+    .{ "Cargo.lock", "toml" },       .{ "Pipfile", "toml" },             .{ "poetry.lock", "toml" },
+    .{ "uv.lock", "toml" },
 });
 
 /// An injection language name — a code-fence info string (`rust`, `console`) or a literal
