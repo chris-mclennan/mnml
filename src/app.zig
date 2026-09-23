@@ -363,6 +363,9 @@ pub const ConfirmPurpose = union(enum) {
     /// else (0 = Quit, 1 = Cancel). Payload-free like `.quit`, which
     /// `dispatch.zig` also uses as its ownership-moved sentinel.
     quit_clean,
+    /// `app.restart` with unsaved work: Save all / Restart anyway /
+    /// Cancel, the quit box's answers for a relaunch.
+    restart,
     /// Run the workspace's exec-bearing config (`trust.zig`).
     trust_workspace,
     /// `workspace.review_trust` on a trusted workspace: Keep / Forget.
@@ -2511,6 +2514,10 @@ pub const App = struct {
     /// Cancel still holds the focus, because the reason to stop and ask
     /// on a clean workspace is the mis-hit chord, not the unsaved file.
     pub const quit_clean_choices = [_]Confirm.Choice{ .{ .key = 'q', .label = "Quit" }, .{ .key = 'c', .label = "Cancel" } };
+
+    /// `app.restart` over unsaved work: the relaunch starts from the
+    /// files on disk, so the dirty buffers are saved or given up first.
+    pub const restart_choices = [_]Confirm.Choice{ .{ .key = 's', .label = "Save all" }, .{ .key = 'r', .label = "Restart anyway" }, .{ .key = 'c', .label = "Cancel" } };
 
     /// The dirty buffers by name, in pane order — what the quit box
     /// lists. A count alone ("2 buffer(s) have unsaved changes") does

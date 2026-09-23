@@ -1617,6 +1617,21 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
         .quit_clean => if (choice == 0) {
             app.quit = true;
         },
+        .restart => switch (choice) {
+            0 => {
+                cmd_file.saveAll(app) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => return, // toasted; the restart is off
+                };
+                app.restart = true;
+                app.quit = true;
+            },
+            1 => {
+                app.restart = true;
+                app.quit = true;
+            },
+            else => {},
+        },
         .delete_paths => |d| {
             try trash.acceptDelete(app, @ptrCast(d.paths), d.permanent_only, choice);
             if (choice == 0) for (d.paths) |p| {

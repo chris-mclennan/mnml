@@ -326,6 +326,9 @@ fn walkOverlays(w: *Walk) Allocator.Error!void {
     app.overlay.confirm.purpose = .quit_clean;
     app.overlay.confirm.state.choices = &App.quit_clean_choices;
     for (App.quit_clean_choices, 0..) |c, i| try w.probe(try w.fmtKey("confirm:quit_clean:{s}", .{c.label}), .{ .overlay_item = @intCast(i) });
+    app.overlay.confirm.purpose = .restart;
+    app.overlay.confirm.state.choices = &App.restart_choices;
+    for (App.restart_choices, 0..) |c, i| try w.probe(try w.fmtKey("confirm:restart:{s}", .{c.label}), .{ .overlay_item = @intCast(i) });
     app.overlay.confirm.purpose = .{ .close_pane = 0 };
     app.overlay.confirm.state.choices = &App.close_choices;
     for (App.close_choices, 0..) |c, i| try w.probe(try w.fmtKey("confirm:close_pane:{s}", .{c.label}), .{ .overlay_item = @intCast(i) });

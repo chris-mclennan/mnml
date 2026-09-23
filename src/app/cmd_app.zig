@@ -167,10 +167,14 @@ fn quit(app: *App) CommandError!void {
 /// Raise the quit box over `msg` (owned, the overlay takes it) with
 /// Cancel — the last choice — holding the focus.
 fn openQuitBox(app: *App, msg: []u8, choices: []const app_mod.Confirm.Choice, purpose: app_mod.ConfirmPurpose) CommandError!void {
+    return openBox(app, "Quit mnml?", msg, choices, purpose);
+}
+
+fn openBox(app: *App, title: []const u8, msg: []u8, choices: []const app_mod.Confirm.Choice, purpose: app_mod.ConfirmPurpose) CommandError!void {
     errdefer app.gpa.free(msg);
     app.overlay.deinit(app.gpa);
     app.overlay = .{ .confirm = .{
-        .state = .{ .title = "Quit mnml?", .message = msg, .choices = choices, .selected = choices.len - 1 },
+        .state = .{ .title = title, .message = msg, .choices = choices, .selected = choices.len - 1 },
         .purpose = purpose,
         .message = msg,
     } };
@@ -217,10 +221,21 @@ fn commandLine(app: *App) CommandError!void {
     cmdline_mod.open(app);
 }
 
-/// Exit 75: the `run.sh` loop rebuilds and relaunches.
+/// Exit 75: the `run.sh` loop rebuilds and relaunches. The relaunch
+/// reads every file back from disk, so unsaved work stops at the quit
+/// box's own answers first — Save all / Restart anyway / Cancel. The
+/// harness's restart (`run.sh restart`, the IPC command) is not this
+/// runner and still goes straight out.
 fn restart(app: *App) CommandError!void {
-    app.restart = true;
-    app.quit = true;
+    try transfers.quitGuard(app, false);
+    const dirty = try app.dirtyBufferNames(app.frame.allocator());
+    if (dirty.len == 0) {
+        app.restart = true;
+        app.quit = true;
+        return;
+    }
+    const msg = try std.fmt.allocPrint(app.gpa, "Unsaved: {s}", .{dirty});
+    return openBox(app, "Restart mnml?", msg, &App.restart_choices, .restart);
 }
 
 fn leader(app: *App) CommandError!void {
@@ -341,6 +356,42 @@ test "the harness's exits are not gated by the box: the IPC quit and restart go 
     try command.run(&app, .{ .static = .@"app.restart" });
     try t.expect(app.quit);
     try t.expect(app.restart);
+    try t.expect(app.overlay == .none);
+}
+
+test "app.restart over unsaved work asks first — Save all / Restart anyway / Cancel — and a clean one restarts at once" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    _ = try app.openScratch();
+    const e = app.activeEditor().?;
+    try e.buf.editor.setText("x");
+    e.buf.doc.dirty = true;
+    try command.run(&app, .{ .static = .@"app.restart" });
+    try t.expect(!app.quit);
+    try t.expect(!app.restart);
+    try t.expect(app.overlay == .confirm);
+    try t.expect(app.overlay.confirm.purpose == .restart);
+    try t.expectEqualStrings("Restart mnml?", app.overlay.confirm.state.title);
+    try t.expectEqualStrings("Unsaved: [scratch]", app.overlay.confirm.state.message);
+    try t.expectEqualStrings("Cancel", app.overlay.confirm.state.choices[app.overlay.confirm.state.selected].label);
+    // Enter lands on Cancel; Esc cancels too. The edit stays.
+    try app.handle(.{ .key = app_mod.Key.named(.enter) });
+    try t.expect(app.overlay == .none);
+    try t.expect(!app.quit and !app.restart);
+    try command.run(&app, .{ .static = .@"app.restart" });
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+    try t.expect(!app.quit and !app.restart);
+    try t.expect(app.activeEditor().?.buf.doc.dirty);
+    // `r` is Restart anyway.
+    try command.run(&app, .{ .static = .@"app.restart" });
+    try app.handle(.{ .key = app_mod.Key.char('r') });
+    try t.expect(app.quit and app.restart);
+    // Nothing unsaved: straight out, no box.
+    app.quit = false;
+    app.restart = false;
+    e.buf.doc.dirty = false;
+    try command.run(&app, .{ .static = .@"app.restart" });
+    try t.expect(app.quit and app.restart);
     try t.expect(app.overlay == .none);
 }
 
