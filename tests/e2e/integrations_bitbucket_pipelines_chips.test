@@ -1,0 +1,37 @@
+# width: 120
+# height: 40
+# env: MNML_MARKETPLACE_LOCAL=market
+# env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/bitbucket.zon
+# env: BITBUCKET_BASE_URL=@${MNML_E2E_WORKSPACE}/bb.url
+# env: BITBUCKET_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/bucket.json
+# env: BITBUCKET_API_TOKEN=corpus-read-token
+# The Pipelines pane's header chips act on the repo under the cursor,
+# and its hint row offers only keys that do something there.
+# hunt/findings-2026-09-23/integ-bb-pipelines-dead-actions.md
+shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --lifetime-secs 180 --log-file wire.jsonl >/dev/null 2>&1 & echo $! > fake-bb.pid
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 0, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs }, .{ .name = \"Merged\", .kind = .workspace_merged_prs }, .{ .name = \"Pipelines\", .kind = .workspace_pipelines } } }"
+write market/bitbucket_pipelines.zon ".{ .id = \"bitbucket_pipelines\", .label = \"Bitbucket Pipelines\", .version = \"0.2.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .args = .{ \"--only\", \"pipelines\" }, .description = \"Bitbucket pipelines\", .commands = .{ .{ .id = \"bitbucket_pipelines.open\", .title = \"Bitbucket Pipelines: open\" } } }"
+command integrations.show_marketplace
+key i
+expect screen contains "installed bitbucket_pipelines"
+command integrations.open_as_tab
+command bitbucket_pipelines.open
+command view.toggle_tree
+command view.focus_pane
+expect within 15000 screen contains "(2 repos)"
+expect screen contains "run pipeline"
+key g
+key j
+key j
+click 72 2
+wait 800
+expect screen lacks "switch to a repo tab first"
+expect screen contains "acme/api/pipelines"
+# The hint row: no PR-only keys on a pipelines pane.
+expect screen lacks "m open↔merged"
+expect screen lacks "d detail"
+key d
+wait 800
+expect screen lacks "(no PR focused)"
+expect screen lacks "a approve"
+shell kill "$(cat fake-bb.pid)" 2>/dev/null || true

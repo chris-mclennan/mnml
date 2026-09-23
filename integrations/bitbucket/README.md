@@ -156,14 +156,21 @@ does. The keys are the reference's:
 | `e` `c` | expand / collapse every repo |
 | `x` `H` `s` `⌥↑` `⌥↓` | hide this repo · un-hide all · cycle the scope · reorder (all persist) |
 | `o` · `y` | open on the web · copy the URL |
-| `d` · `^d` `^u` | the detail · scroll it |
-| `a` | approve / withdraw (with the detail open) |
+| `d` · `^d` `^u` | the pull request's detail · scroll it (PR tabs) |
+| `a` | approve / withdraw (a PR tab, with the detail open) |
 | `M` · `[ Open ]` `[ Merge ]` | merge this PR through Claude Code (only when it may) · the same two on the cursor's row, when it is wide enough |
 | `S` `U` `T` `A` | on a PR tab: the Status picker · the Author picker · the Target-branch picker · show: all → reviewing → awaiting me |
 | `U` `B` `P` `S` `T` | on a pipelines tab: Run by · Branch · Pipeline type · Status · Trigger type — each a picker |
-| `m` · `⇥` `⇤` · `1`–`9` | open ↔ merged · next / previous tab · a tab |
+| `m` · `⇥` `⇤` · `1`–`9` | open ↔ merged (PR tabs) · next / previous tab · a tab |
 | `/` `esc` | filter · clear |
 | `r` `?` `q` | refresh · keys · quit |
+
+The pipelines header's `run pipeline`, `schedules` and `caches` open
+that page for the repo under the cursor (its header or any of its
+branches), and are not offered when no repo is; `usage` asks before
+it opens the workspace's pipeline-minutes page in the browser. On a
+pipelines tab the PR-only keys (`d`, `a`, `m`, `M`) are unbound and
+off the hint row.
 
 Mouse: every row, tab, chip and hint word is a hit target sized to what
 it paints — a click on a row selects that row (and toggles a repo

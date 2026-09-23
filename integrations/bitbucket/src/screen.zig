@@ -225,6 +225,12 @@ fn paintHeader(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
             const nerd = p.nerd;
             chips[n] = .{ .text = " usage ", .target = .{ .chip = .usage }, .active = false, .icon = if (nerd) " " ++ usage_nerd ++ " " else " " ++ usage_ascii ++ " " };
             n += 1;
+            // The three repo pages act on the repo under the cursor (or
+            // the tab's own); with none, they are not offered at all.
+            if (app.pipelinesRepo((try app.visible(arena)).rows) == null) {
+                _ = try p.c.capsHeader(1, y, label, sub, ts.fetched_at, app.now_secs, chips[0..n]);
+                return;
+            }
             chips[n] = .{ .text = " caches ", .target = .{ .chip = .caches }, .active = false, .icon = if (nerd) " " ++ caches_nerd ++ " " else " " ++ caches_ascii ++ " " };
             n += 1;
             chips[n] = .{ .text = " schedules ", .target = .{ .chip = .schedules }, .active = false, .icon = if (nerd) " " ++ schedules_nerd ++ " " else " " ++ schedules_ascii ++ " " };
@@ -718,6 +724,8 @@ fn paintMenu(arena: Allocator, p: *Painter) Allocator.Error!void {
             w = @max(w, Painter.width(b.title) + Painter.width(keymap.keyLabel(b.keys[0])) + 5);
         },
         .pick => w = @max(w, Painter.width(if (i < m.values.len) m.values[i].label else "") + 4),
+        .open_url => |o| w = @max(w, Painter.width(o.label) + 2),
+        .cancel => w = @max(w, Painter.width("cancel") + 2),
     };
     const h: u16 = @intCast(m.items.len + 2);
     const x: u16 = if (m.col + w + 2 <= p.f.cols) m.col else p.f.cols -| (w + 2);
@@ -745,6 +753,8 @@ fn paintMenu(arena: Allocator, p: *Painter) Allocator.Error!void {
                 const line = try std.fmt.allocPrint(arena, " {s} {s}", .{ if (v.checked) tick else " ", v.label });
                 _ = p.text(x + 1, row_y, w, line, style);
             },
+            .open_url => |o| _ = p.text(x + 1, row_y, w, try std.fmt.allocPrint(arena, " {s}", .{o.label}), style),
+            .cancel => _ = p.text(x + 1, row_y, w, " cancel", style),
         }
         p.app.hits.add(.{ .x = x, .y = row_y, .w = w + 2, .h = 1 }, .{ .menu_item = i });
     }
@@ -862,6 +872,8 @@ fn paintSheet(arena: Allocator, p: *Painter) Allocator.Error!void {
                     .detail => "  (detail open)",
                     .prs => "  (PR tab)",
                     .pipelines => "  (pipelines tab)",
+                    .pr_row => "  (PR row)",
+                    .pr_detail => "  (detail open)",
                 };
                 const line = try std.fmt.allocPrint(arena, "{s}{s}", .{ b.title, scope });
                 _ = p.text(x + 19, ry, w -| 21, line, .{ .fg = th.fg, .bg = th.cursor_line });
@@ -1371,6 +1383,13 @@ test "the pipelines tree paints the reference's columns and glyphs; the pipeline
     try t.expect(has(scr, "run pipeline"));
     try t.expect(has(scr, "usage"));
     try t.expect(s.rig.app.hits.rectOf(.{ .chip = .usage }) != null);
+    // The hint row offers only what does something here: no PR detail,
+    // no approve, no open↔merged (integ-bb-pipelines-dead-actions).
+    const hint = try rowText(s.arena.allocator(), &s.frame, 39);
+    try t.expect(!has(hint, "d detail"));
+    try t.expect(!has(hint, "approve"));
+    try t.expect(!has(hint, "merged"));
+    try t.expect(has(hint, "r refresh"));
 }
 
 test "the pipelines header at 80x24: the chips drop to their icons and the repo count stays whole; at 120x40 they say their words" {

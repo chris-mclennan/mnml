@@ -150,6 +150,11 @@ pub const Picker = struct {
 pub const MenuItem = union(enum) {
     action: Action,
     pick: struct { kind: FilterKind, idx: usize },
+    /// A page that is about to open in the browser, asked first: the
+    /// words, and the URL (both on the menu's arena).
+    open_url: struct { label: []const u8, url: []const u8 },
+    /// Close the menu, do nothing.
+    cancel,
 };
 
 /// What one readiness look found, and the `updated_on` it was true at.
@@ -2702,7 +2707,7 @@ pub const App = struct {
         var out: std.ArrayList(Action) = .empty;
         for (m.items) |it| switch (it) {
             .action => |act| try out.append(a, act),
-            .pick => {},
+            .pick, .open_url, .cancel => {},
         };
         return out.toOwnedSlice(a);
     }
@@ -2742,6 +2747,13 @@ pub const App = struct {
                 try app.applyPick(pk.kind, pk.idx);
                 return true;
             },
+            .open_url => |o| {
+                const url = try app.effect_arena.allocator().dupe(u8, o.url);
+                app.effect(.{ .open_url = url });
+                app.say(.info, "opened {s}", .{url});
+                return true;
+            },
+            .cancel => return true,
         }
     }
 
@@ -2825,7 +2837,7 @@ pub const App = struct {
                     app.mode = .filter;
                     app.filter_caret = app.filter.items.len;
                 },
-                .run_pipeline, .schedules, .caches, .usage => try app.openPipelinesPage(c),
+                .run_pipeline, .schedules, .caches, .usage => try app.openPipelinesPage(c, col, row),
             },
             // A dim `[ Merge ]` registers only `merge_blocked`, so a
             // click that lands on one says why rather than doing
@@ -2954,28 +2966,60 @@ pub const App = struct {
         if (app.detail_visible) try app.ensureDetail((try app.visible(a)).rows);
     }
 
-    /// The pipelines family's chips open Bitbucket's pages.
-    fn openPipelinesPage(app: *App, c: hit.Chip) Allocator.Error!void {
+    /// The repo a pipelines chip acts on: the tab's own, or the one
+    /// under the cursor on the workspace tree (its header or any branch
+    /// under it). Null when neither names one — the chips are not
+    /// offered then (`screen.zig`).
+    pub fn pipelinesRepo(app: *App, rows: []const tabs.VisibleRow) ?[]const u8 {
+        const ts = app.activeTab();
+        if (ts.spec.repo.len > 0) return ts.spec.repo;
+        if (ts.data != .repo_tree or ts.selected >= rows.len) return null;
+        const i = switch (rows[ts.selected]) {
+            .repo_header => |h| h.repo,
+            .branch => |b| b.repo,
+            else => return null,
+        };
+        const repos = ts.data.repo_tree;
+        return if (i < repos.len) repos[i].slug else null;
+    }
+
+    /// The pipelines family's chips open Bitbucket's pages: the three
+    /// repo pages on the repo the cursor is on, and the workspace's
+    /// usage page after asking — a click on a header chip should not
+    /// be enough to throw a browser window up unasked.
+    fn openPipelinesPage(app: *App, c: hit.Chip, col: u16, y: u16) Allocator.Error!void {
         const ts = app.activeTab();
         const ws = ts.spec.workspace;
         const a = app.effect_arena.allocator();
-        const url: []const u8 = switch (c) {
-            .usage => try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/workspace/settings/plans-billing/pipelines-minutes", .{ws}),
-            .run_pipeline, .schedules, .caches => blk: {
-                if (ts.spec.repo.len == 0) {
-                    app.say(.warn, "repo-scoped action — switch to a repo tab first", .{});
-                    return;
-                }
-                break :blk switch (c) {
-                    .run_pipeline => try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/pipelines", .{ ws, ts.spec.repo }),
-                    .schedules => try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/admin/addon/admin/pipelines/schedules", .{ ws, ts.spec.repo }),
-                    else => try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/admin/addon/admin/pipelines/caches", .{ ws, ts.spec.repo }),
-                };
+        switch (c) {
+            .usage => {
+                _ = app.menu_arena.reset(.retain_capacity);
+                const ma = app.menu_arena.allocator();
+                const url = try std.fmt.allocPrint(ma, "https://bitbucket.org/{s}/workspace/settings/plans-billing/pipelines-minutes", .{ws});
+                const items = try ma.alloc(MenuItem, 2);
+                items[0] = .{ .open_url = .{ .label = "open the pipeline-minutes usage page in the browser", .url = url } };
+                items[1] = .cancel;
+                app.menu = .{ .col = col, .y = y, .items = items };
+                app.mode = .menu;
+                return;
             },
-            else => return,
-        };
-        app.effect(.{ .open_url = url });
-        app.say(.info, "opened {s}", .{url});
+            .run_pipeline, .schedules, .caches => {
+                _ = app.frame_arena.reset(.retain_capacity);
+                const rows = (try app.visible(app.frame_arena.allocator())).rows;
+                const repo = app.pipelinesRepo(rows) orelse {
+                    app.say(.warn, "put the cursor on a repo (or one of its branches) first", .{});
+                    return;
+                };
+                const url = switch (c) {
+                    .run_pipeline => try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/pipelines", .{ ws, repo }),
+                    .schedules => try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/admin/addon/admin/pipelines/schedules", .{ ws, repo }),
+                    else => try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/admin/addon/admin/pipelines/caches", .{ ws, repo }),
+                };
+                app.effect(.{ .open_url = url });
+                app.say(.info, "opened {s}", .{url});
+            },
+            else => {},
+        }
     }
 };
 
@@ -3249,6 +3293,52 @@ test "a refetch that fails keeps the rows it had, says `fetch failed`, and keeps
     try r.drain();
     try t.expect(r.app.fetchState() == .idle);
     try t.expectEqual(r.app.now_secs, ts.fetched_at);
+}
+
+test "the pipelines chips act on the cursor's repo, and `usage` asks before it opens the browser" {
+    // hunt/findings-2026-09-23/integ-bb-pipelines-dead-actions.md: `run
+    // pipeline`, `schedules` and `caches` said "switch to a repo tab
+    // first" on the workspace tree (a pane with no other tab), and
+    // `usage` opened the browser on one click.
+    const r = try Rig.init(acme, .{});
+    defer r.deinit();
+    _ = try r.key("3");
+    try t.expectEqual(cfg.Family.pipelines, r.app.family());
+    const Urls = struct {
+        fn opened(app: *App, out: []u8) []const u8 {
+            const fx = app.takeEffects();
+            defer app.freeEffects(fx);
+            for (fx) |e| if (e == .open_url) {
+                const n = @min(out.len, e.open_url.len);
+                @memcpy(out[0..n], e.open_url[0..n]);
+                return out[0..n];
+            };
+            return "";
+        }
+    };
+    var buf: [256]u8 = undefined;
+    // The cursor on `api`'s header: every repo page is api's.
+    r.app.tabs[r.app.active].selected = 0;
+    try r.app.openPipelinesPage(.run_pipeline, 0, 0);
+    try t.expectEqualStrings("https://bitbucket.org/acme/api/pipelines", Urls.opened(&r.app, &buf));
+    // On one of api's branches: still api.
+    r.app.tabs[r.app.active].selected = 1;
+    try r.app.openPipelinesPage(.schedules, 0, 0);
+    try t.expectEqualStrings("https://bitbucket.org/acme/api/admin/addon/admin/pipelines/schedules", Urls.opened(&r.app, &buf));
+    try r.app.openPipelinesPage(.caches, 0, 0);
+    try t.expectEqualStrings("https://bitbucket.org/acme/api/admin/addon/admin/pipelines/caches", Urls.opened(&r.app, &buf));
+
+    // `usage` asks: a menu, nothing opened yet.
+    try r.app.openPipelinesPage(.usage, 10, 2);
+    try t.expectEqual(Mode.menu, r.app.mode);
+    try t.expectEqualStrings("", Urls.opened(&r.app, &buf));
+    // Cancel opens nothing.
+    _ = try r.app.runMenuItem(r.arena.allocator(), 1);
+    try t.expectEqualStrings("", Urls.opened(&r.app, &buf));
+    // Asked again and confirmed: the page.
+    try r.app.openPipelinesPage(.usage, 10, 2);
+    _ = try r.app.runMenuItem(r.arena.allocator(), 0);
+    try t.expectEqualStrings("https://bitbucket.org/acme/workspace/settings/plans-billing/pipelines-minutes", Urls.opened(&r.app, &buf));
 }
 
 test "the detail follows the cursor, and `a` approves then withdraws on the fake server" {

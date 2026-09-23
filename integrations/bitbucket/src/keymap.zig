@@ -101,6 +101,11 @@ pub const Scope = enum {
     prs,
     /// A pipelines tab.
     pipelines,
+    /// A row, on a pull-request tab — what only a pull request has
+    /// (its merge).
+    pr_row,
+    /// The detail open, on a pull-request tab.
+    pr_detail,
 };
 
 pub const Binding = struct {
@@ -136,11 +141,11 @@ pub const table = [_]Binding{
     .{ .keys = &.{"alt+down"}, .action = .reorder_down, .title = "move this repo down (persists)", .scope = .tree, .section = "tree" },
     .{ .keys = &.{"o"}, .action = .open_web, .title = "open on the web", .scope = .row, .hint = true, .section = "row" },
     .{ .keys = &.{"y"}, .action = .yank_url, .title = "copy the URL", .scope = .row, .section = "row" },
-    .{ .keys = &.{"d"}, .action = .toggle_detail, .title = "the pull request's detail", .hint = true, .section = "row" },
-    .{ .keys = &.{"a"}, .action = .toggle_approval, .title = "approve / withdraw the approval", .scope = .detail, .hint = true, .section = "row" },
+    .{ .keys = &.{"d"}, .action = .toggle_detail, .title = "the pull request's detail", .scope = .prs, .hint = true, .section = "row" },
+    .{ .keys = &.{"a"}, .action = .toggle_approval, .title = "approve / withdraw the approval", .scope = .pr_detail, .hint = true, .section = "row" },
     .{ .keys = &.{"ctrl+d"}, .action = .detail_down, .title = "scroll the detail down", .scope = .detail, .section = "row" },
     .{ .keys = &.{"ctrl+u"}, .action = .detail_up, .title = "scroll the detail up", .scope = .detail, .section = "row" },
-    .{ .keys = &.{"shift+m"}, .action = .merge_pr, .title = "merge (through Claude Code)", .scope = .row, .section = "row" },
+    .{ .keys = &.{"shift+m"}, .action = .merge_pr, .title = "merge (through Claude Code)", .scope = .pr_row, .section = "row" },
     .{ .keys = &.{"shift+s"}, .action = .filter_status, .title = "status: Open / Draft / Merged / Declined", .scope = .prs, .section = "filters" },
     .{ .keys = &.{"shift+u"}, .action = .filter_author, .title = "author: all / me / one seen", .scope = .prs, .section = "filters" },
     .{ .keys = &.{"shift+t"}, .action = .filter_target, .title = "target branch", .scope = .prs, .section = "filters" },
@@ -150,7 +155,7 @@ pub const table = [_]Binding{
     .{ .keys = &.{"shift+p"}, .action = .filter_type, .title = "pipeline type", .scope = .pipelines, .section = "filters" },
     .{ .keys = &.{"shift+s"}, .action = .filter_pstatus, .title = "status: successful / failed / …", .scope = .pipelines, .section = "filters" },
     .{ .keys = &.{"shift+t"}, .action = .filter_trigger, .title = "trigger type", .scope = .pipelines, .section = "filters" },
-    .{ .keys = &.{"m"}, .action = .toggle_merged, .title = "open ↔ merged", .hint = true, .section = "tabs" },
+    .{ .keys = &.{"m"}, .action = .toggle_merged, .title = "open ↔ merged", .scope = .prs, .hint = true, .section = "tabs" },
     .{ .keys = &.{"tab"}, .action = .next_tab, .title = "next tab", .section = "tabs" },
     .{ .keys = &.{ "backtab", "shift+tab" }, .action = .prev_tab, .title = "previous tab", .section = "tabs" },
     .{ .keys = &.{"1"}, .action = .tab_1, .title = "tab 1", .section = "tabs" },
@@ -189,6 +194,8 @@ pub const Context = struct {
             .detail => c.detail_open,
             .prs => c.family == .prs,
             .pipelines => c.family == .pipelines,
+            .pr_row => c.family == .prs and c.on_row,
+            .pr_detail => c.family == .prs and c.detail_open,
         };
     }
 };
@@ -303,6 +310,25 @@ test "the reference's keys dispatch to their actions, scoped to where they apply
     try t.expect(lookup("z", tree) == null);
 }
 
+test "a pipelines tab binds and offers only what does something there" {
+    // hunt/findings-2026-09-23/integ-bb-pipelines-dead-actions.md: the
+    // hint row offered `d detail` (a `(no PR focused)` panel), `m
+    // open↔merged` (no merged view) and then `a approve`.
+    const pipes: Context = .{ .on_tree = true, .on_row = true, .detail_open = true, .family = .pipelines };
+    for ([_][]const u8{ "d", "a", "m", "shift+m" }) |k| try t.expect(lookup(k, pipes) == null);
+    var buf: [table.len]Binding = undefined;
+    for (hints(pipes, &buf)) |b| switch (b.action) {
+        .toggle_detail, .toggle_approval, .toggle_merged, .merge_pr => return error.TestUnexpectedResult,
+        else => {},
+    };
+    // The PR family keeps all four.
+    const prs: Context = .{ .on_tree = true, .on_row = true, .detail_open = true, .family = .prs };
+    try t.expectEqual(Action.toggle_detail, lookup("d", prs).?);
+    try t.expectEqual(Action.toggle_approval, lookup("a", prs).?);
+    try t.expectEqual(Action.toggle_merged, lookup("m", prs).?);
+    try t.expectEqual(Action.merge_pr, lookup("shift+m", prs).?);
+}
+
 test "every action in the table is reachable and the hint row is a subset of it" {
     var seen = std.enums.EnumSet(Action).initEmpty();
     for (&table) |b| seen.insert(b.action);
@@ -317,7 +343,7 @@ test "every action in the table is reachable and the hint row is a subset of it"
     for (hs) |b| try t.expect(bindingOf(b.action) != null);
     // On a flat list without a detail the tree-only and detail-only hints are gone.
     const flat = hints(.{}, &buf);
-    for (flat) |b| try t.expect(b.scope == .any);
+    for (flat) |b| try t.expect(b.scope == .any or b.scope == .prs);
     try t.expectEqualStrings("⏎", keyLabel("enter"));
     try t.expectEqualStrings("⌥↑", keyLabel("alt+up"));
     try t.expectEqualStrings("q", keyLabel("q"));
