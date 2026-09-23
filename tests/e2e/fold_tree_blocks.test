@@ -1,0 +1,52 @@
+# width: 120
+# height: 30
+# env: PATH=
+# `zc` folds the blocks a language delimits with words or markup rather
+# than brackets: Ruby / Lua / Elixir `… end`, an HTML element, a markdown
+# section, an OCaml `let`, a SQL statement. The tree-sitter tree knows
+# each one.
+command editor.use_vim
+write a.rb "def foo\n  bar\n  baz_rb\nend\nZ = 2\n"
+open a.rb
+ex 2
+key z
+key c
+expect screen contains "def foo"
+expect screen lacks "baz_rb"
+expect screen contains "Z = 2"
+write a.lua "local function f()\n  a()\n  baz_lua()\nend\nx = 1\n"
+open a.lua
+ex 2
+key z
+key c
+expect screen contains "local function f()"
+expect screen lacks "baz_lua"
+write a.ex "defmodule A do\n  def f(x) do\n    baz_ex(x)\n  end\nend\n"
+open a.ex
+ex 3
+key z
+key c
+expect screen contains "def f(x) do"
+expect screen lacks "baz_ex"
+expect screen contains "defmodule A do"
+write a.html "<div>\n  <p>a</p>\n  <p>baz_html</p>\n</div>\n<span>after</span>\n"
+open a.html
+ex 2
+key z
+key c
+expect screen lacks "baz_html"
+expect screen contains "<span>after</span>"
+write a.ml "let f x =\n  let y = x + 1 in\n  baz_ml y\n\nlet g = 3\n"
+open a.ml
+ex 2
+key z
+key c
+expect screen lacks "baz_ml"
+expect screen contains "let g = 3"
+write a.sql "SELECT id,\n  baz_sql\nFROM users\nWHERE id = 1;\n"
+open a.sql
+ex 2
+key z
+key c
+expect screen contains "SELECT id,"
+expect screen lacks "baz_sql"

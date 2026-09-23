@@ -410,6 +410,104 @@ pub fn objectAt(root: ts.Node, text: []const u8, which: Object, byte: usize, aro
     return null;
 }
 
+// ── folds ──
+
+/// The blocks a language folds that are not bracket pairs — `do … end`,
+/// markup elements, markdown sections, `let` bindings, SQL statements —
+/// by table key, after the grammars' own `folds.scm` in nvim-treesitter.
+/// A bracket language needs none: its pairs are what `za` folds.
+const Kinds = std.StaticStringMap(void);
+const fold_kinds = blk: {
+    @setEvalBranchQuota(20_000);
+    break :blk std.StaticStringMap(Kinds).initComptime(.{
+        .{ "rb", Kinds.initComptime(.{ .{"method"}, .{"singleton_method"}, .{"class"}, .{"module"}, .{"singleton_class"}, .{"do_block"}, .{"begin"}, .{"if"}, .{"unless"}, .{"case"}, .{"while"}, .{"until"}, .{"for"}, .{"lambda"} }) },
+        .{ "lua", Kinds.initComptime(.{ .{"function_declaration"}, .{"function_definition"}, .{"if_statement"}, .{"for_statement"}, .{"while_statement"}, .{"repeat_statement"}, .{"do_statement"}, .{"table_constructor"} }) },
+        .{ "ex", Kinds.initComptime(.{ .{"do_block"}, .{"stab_clause"} }) },
+        .{ "html", markup_folds },
+        .{ "vue", markup_folds },
+        .{ "svelte", markup_folds },
+        .{ "md", Kinds.initComptime(.{ .{"section"}, .{"fenced_code_block"}, .{"list"}, .{"block_quote"} }) },
+        .{ "ocaml", Kinds.initComptime(.{ .{"let_binding"}, .{"module_binding"}, .{"type_binding"}, .{"class_binding"}, .{"match_expression"} }) },
+        .{ "sql", Kinds.initComptime(.{ .{"statement"}, .{"subquery"}, .{"cte"}, .{"case"} }) },
+    });
+};
+
+const markup_folds = Kinds.initComptime(.{ .{"element"}, .{"script_element"}, .{"style_element"}, .{"template_element"}, .{"if_statement"}, .{"each_statement"}, .{"await_statement"}, .{"key_statement"}, .{"snippet_statement"} });
+
+/// A parsed file whose language folds tree nodes.
+pub const FoldTree = struct {
+    root: ts.Node,
+    kinds: Kinds,
+
+    /// Null when `lang` folds nothing but brackets and indentation.
+    pub fn of(lang: ?[]const u8, root: ?ts.Node) ?FoldTree {
+        const r = root orelse return null;
+        const k = fold_kinds.get(lang orelse return null) orelse return null;
+        return .{ .root = r, .kinds = k };
+    }
+
+    /// `(first row, last row)` of a fold node spanning more than one
+    /// line; a node that ends at the start of a line (a markdown section
+    /// runs up to the next heading) ends on the line before.
+    fn rows(self: FoldTree, node: ts.Node) ?[2]usize {
+        if (!self.kinds.has(node.kind())) return null;
+        const lo: usize = node.startPoint().row;
+        const end = node.endPoint();
+        var hi: usize = end.row;
+        if (end.column == 0 and hi > lo) hi -= 1;
+        return if (hi > lo) .{ lo, hi } else null;
+    }
+
+    /// The smallest fold around `byte` that holds `row`, or that starts
+    /// on `row` (at `line_start`, its first byte): a header line folds
+    /// the block it opens, as `za` does on a bracket.
+    pub fn around(self: FoldTree, byte: usize, row: usize, line_start: usize, line_end: usize) ?[2]usize {
+        var best: ?[2]usize = null;
+        var node = self.root.descendantForByteRange(@intCast(byte), @intCast(byte));
+        while (!node.isNull()) : (node = node.parent()) {
+            if (self.rows(node)) |r| if (r[0] <= row and row <= r[1]) {
+                best = r;
+                break;
+            };
+        }
+        if (self.startingOn(row, line_start, line_end)) |r| {
+            if (best == null or r[1] - r[0] < best.?[1] - best.?[0]) best = r;
+        }
+        return best;
+    }
+
+    /// The smallest fold that begins on `row`.
+    pub fn startingOn(self: FoldTree, row: usize, line_start: usize, line_end: usize) ?[2]usize {
+        var best: ?[2]usize = null;
+        var b = line_start;
+        while (b < line_end) : (b += 1) {
+            var node = self.root.descendantForByteRange(@intCast(b), @intCast(b));
+            while (!node.isNull() and node.startPoint().row == row) : (node = node.parent()) {
+                if (self.rows(node)) |r| if (best == null or r[1] - r[0] < best.?[1] - best.?[0]) {
+                    best = r;
+                };
+            }
+            // One probe per token is enough: skip a token that starts
+            // here to its end.
+            const leaf = self.root.descendantForByteRange(@intCast(b), @intCast(b));
+            if (!leaf.isNull() and leaf.startByte() == b and leaf.endByte() > b + 1) b = @min(line_end, leaf.endByte()) - 1;
+        }
+        return best;
+    }
+
+    /// Every fold in the file, document order.
+    pub fn all(self: FoldTree, arena: Allocator, out: *std.ArrayListUnmanaged([2]usize)) Allocator.Error!void {
+        try self.collect(arena, self.root, out);
+    }
+
+    fn collect(self: FoldTree, arena: Allocator, node: ts.Node, out: *std.ArrayListUnmanaged([2]usize)) Allocator.Error!void {
+        if (node.endPoint().row == node.startPoint().row) return;
+        if (self.rows(node)) |r| try out.append(arena, r);
+        var i: u32 = 0;
+        while (i < node.namedChildCount()) : (i += 1) try self.collect(arena, node.namedChild(i), out);
+    }
+};
+
 // ── tests ──
 
 const testing = std.testing;
@@ -688,4 +786,53 @@ test "text objects: `af` on a decorated Python def takes its decorators; `ac` fi
     try testing.expect(std.mem.startsWith(u8, ts_text[c[0]..c[1]], "abstract class Store"));
     const n = objectAt(root, ts_text, .class, std.mem.indexOf(u8, ts_text, "export function").?, true).?;
     try testing.expect(std.mem.startsWith(u8, ts_text[n[0]..n[1]], "namespace Util"));
+}
+
+test "folds: do / end, markup and section blocks fold by their tree nodes; a bracket language folds none here" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const Case = struct { key: []const u8, text: []const u8, row: usize, want: [2]usize };
+    const cases = [_]Case{
+        .{ .key = "rb", .text = "def foo\n  bar\n  baz\nend\nZ = 2\n", .row = 1, .want = .{ 0, 3 } },
+        .{ .key = "lua", .text = "local function f()\n  a()\n  b()\nend\nx = 1\n", .row = 2, .want = .{ 0, 3 } },
+        .{ .key = "ex", .text = "defmodule A do\n  def f(x) do\n    x + 1\n  end\nend\n", .row = 2, .want = .{ 1, 3 } },
+        .{ .key = "html", .text = "<div>\n  <p>a</p>\n  <p>b</p>\n</div>\n", .row = 1, .want = .{ 0, 3 } },
+        .{ .key = "md", .text = "# One\n\ntext\nmore\n\n# Two\n\nz\n", .row = 2, .want = .{ 0, 4 } },
+        .{ .key = "ocaml", .text = "let f x =\n  let y = x + 1 in\n  y * 2\n\nlet g = 3\n", .row = 2, .want = .{ 0, 2 } },
+        .{ .key = "sql", .text = "SELECT id,\n  name\nFROM users\nWHERE id = 1;\n", .row = 1, .want = .{ 0, 3 } },
+    };
+    for (cases) |c| {
+        var p = try Parsed.init(c.key, c.text);
+        defer p.deinit();
+        const ft = FoldTree.of(c.key, p.tree.rootNode()).?;
+        const ls = lineStartOf(c.text, c.row);
+        const le = std.mem.indexOfScalarPos(u8, c.text, ls, '\n') orelse c.text.len;
+        const got = ft.around(ls + (le - ls) / 2, c.row, ls, le) orelse {
+            std.debug.print("{s}: no fold at row {d}\n", .{ c.key, c.row });
+            return error.NoFold;
+        };
+        testing.expectEqual(c.want, got) catch |err| {
+            std.debug.print("in {s}\n", .{c.key});
+            return err;
+        };
+        // The header line folds the block it opens.
+        const hs = lineStartOf(c.text, c.want[0]);
+        const he = std.mem.indexOfScalarPos(u8, c.text, hs, '\n').?;
+        try testing.expect(ft.startingOn(c.want[0], hs, he) != null);
+        var all: std.ArrayListUnmanaged([2]usize) = .empty;
+        try ft.all(a, &all);
+        try testing.expect(all.items.len > 0);
+    }
+    try testing.expect(FoldTree.of("rs", null) == null);
+    var r = try Parsed.init("rs", "fn f() {\n    x;\n}\n");
+    defer r.deinit();
+    try testing.expect(FoldTree.of("rs", r.tree.rootNode()) == null);
+}
+
+fn lineStartOf(text: []const u8, row: usize) usize {
+    var i: usize = 0;
+    var r: usize = 0;
+    while (r < row) : (r += 1) i = std.mem.indexOfScalarPos(u8, text, i, '\n').? + 1;
+    return i;
 }

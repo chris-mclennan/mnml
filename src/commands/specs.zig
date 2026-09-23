@@ -183,7 +183,7 @@ pub const specs = [_]Spec{
     .{ .id = "lsp.inlay_hints_toggle", .title = "LSP: toggle inlay hints (type / parameter chips)", .group = "lsp" },
     .{ .id = "lsp.fold_all", .title = "LSP: fold all (server-suggested ranges; the editor's own blocks when the server has none)", .group = "lsp" },
     .{ .id = "lsp.status", .title = "LSP: report the running servers (the statusline chip's click)", .group = "lsp" },
-    .{ .id = "editor.fold_all_brackets", .title = "Fold every multi-line block — bracket pairs, and indented suites in Python / YAML (`zM` fallback)", .group = "editor" },
+    .{ .id = "editor.fold_all_brackets", .title = "Fold every multi-line block — bracket pairs, Python / YAML suites, and do…end, element and section blocks (`zM` fallback)", .group = "editor" },
     .{ .id = "editor.fold_next", .title = "Jump to next fold (`zj`)", .group = "editor" },
     .{ .id = "editor.section_next_start", .title = "Jump to next section start (vim `]]`)", .group = "editor" },
     .{ .id = "editor.section_prev_start", .title = "Jump to previous section start (vim `[[`)", .group = "editor" },
