@@ -53,6 +53,10 @@ pub fn cursorLabel(app: *App) ?[]const u8 {
 const skip_dirs = [_][]const u8{ ".git", "node_modules", "target", "zig-out", ".zig-cache", "zig-cache", ".mnml", "vendor", "dist", "build" };
 /// Cap so a huge tree does not stall the UI thread; the picker says so.
 pub const max_files = 5000;
+/// Ctrl+P's own bound: the whole tree of any ordinary monorepo (the
+/// walk lists 50k files in well under a second), with a ceiling so a
+/// workspace opened on a home directory cannot stall the UI thread.
+pub const max_picker_files = 200_000;
 
 fn buffers(app: *App) CommandError!void {
     const gpa = app.gpa;
@@ -142,7 +146,8 @@ fn files(app: *App) CommandError!void {
         try prio.append(gpa, 1);
     }
     if (labels.items.len == 0) return app.diag.fail(app.frame.allocator(), "no files under {s}", .{app.workspace});
-    try openPickerWith(app, if (truncated) "Open file (first 5000)" else "Open file", .files, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0), try details.toOwnedSlice(gpa), &.{});
+    const title = if (truncated) std.fmt.comptimePrint("Open file (first {d})", .{max_picker_files}) else "Open file";
+    try openPickerWith(app, title, .files, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0), try details.toOwnedSlice(gpa), &.{});
     app.overlay.picker.priority = try prio.toOwnedSlice(gpa);
     app.overlay.picker.state.has_preview = true;
     try dispatch.refilterPicker(app);
@@ -233,7 +238,7 @@ fn walkDir(app: *App, out: *std.ArrayListUnmanaged([]u8), rel_dir: []const u8, i
         if (n.is_dir) {
             if (try walkDir(app, out, n.rel, ignores)) return true;
         } else {
-            if (out.items.len >= max_files) return true;
+            if (out.items.len >= max_picker_files) return true;
             try out.append(gpa, try gpa.dupe(u8, n.rel));
         }
     }
@@ -1008,6 +1013,26 @@ test "picker.buffers lists every open buffer, filters, and Enter switches; picke
     try app.handle(.{ .key = Key.named(.enter) });
     try t.expect(app.overlay == .none);
     try t.expectEqual(true, app.activeEditor().?.wrap.?);
+}
+
+test "picker.files lists every file of a tree past 5000: the 5101st is found by name" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, t.allocator);
+    defer t.allocator.free(root);
+    try tmp.dir.createDirPath(t.io, "aaa");
+    try tmp.dir.createDirPath(t.io, "zzz");
+    var nb: [32]u8 = undefined;
+    for (0..5100) |i| try tmp.dir.writeFile(t.io, .{ .sub_path = try std.fmt.bufPrint(&nb, "aaa/f{d}.txt", .{i}), .data = "" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "zzz/zz_target.txt", .data = "" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root });
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"picker.files" });
+    try t.expectEqualStrings("Open file", app.overlay.picker.state.title);
+    try t.expectEqual(@as(usize, 5101), app.overlay.picker.labels.len);
+    for ("zz_target") |c| try app.handle(.{ .key = Key.char(c) });
+    try t.expect(app.overlay.picker.filtered.items.len >= 1);
+    try t.expectEqualStrings("zzz/zz_target.txt", app.overlay.picker.labels[app.overlay.picker.filtered.items[0]]);
 }
 
 test "Ctrl+S saves from the palette and from the find bar; both stay open" {

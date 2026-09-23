@@ -29,17 +29,15 @@ pub const Match = struct {
 
 /// The score alone. An empty query matches everything at the base score.
 pub fn score(query: []const u8, text: []const u8) ?u32 {
-    var buf: [max_hits]usize = undefined;
     var n: usize = 0;
-    return scoreImpl(query, text, &buf, &n);
+    return scoreImpl(query, text, &scratch.out, &n);
 }
 
 /// The score and the matched positions, on `arena`.
 pub fn match(arena: Allocator, query: []const u8, text: []const u8) Allocator.Error!?Match {
-    var buf: [max_hits]usize = undefined;
     var n: usize = 0;
-    const s = scoreImpl(query, text, &buf, &n) orelse return null;
-    return .{ .score = s, .positions = try arena.dupe(usize, buf[0..n]) };
+    const s = scoreImpl(query, text, &scratch.out, &n) orelse return null;
+    return .{ .score = s, .positions = try arena.dupe(usize, scratch.out[0..n]) };
 }
 
 /// Scores are offset so a poor match is still non-negative: `base` is
@@ -90,13 +88,51 @@ fn decode(text: []const u8, chars: []u21, offs: []usize) usize {
     return n;
 }
 
+/// The verdict `scoreImpl` would reach for an all-ASCII query whose
+/// needle (separators dropped, case folded) is not a subsequence of the
+/// text — reached on the bytes, without decoding either side. A picker
+/// over a 50k-file tree calls the scorer once per file per keystroke,
+/// and most files are rejected here.
+fn cannotMatch(query: []const u8, text: []const u8) bool {
+    var ti: usize = 0;
+    for (query) |qc| {
+        if (qc >= 0x80) return false; // decoding decides
+        if (qc == '_' or qc == '-' or qc == '.') continue;
+        const want = std.ascii.toLower(qc);
+        while (ti < text.len and std.ascii.toLower(text[ti]) != want) ti += 1;
+        if (ti == text.len) return true;
+        ti += 1;
+    }
+    return false;
+}
+
+/// The scorer's working arrays, kept per thread: as locals they cost a
+/// ~20 KB fill of `undefined` on every call in the safe build modes —
+/// more than the scoring itself, times every row of a large picker.
+const Scratch = struct {
+    qchars: [max_chars]u21,
+    qoffs: [max_chars]usize,
+    nl: [max_chars]u21,
+    hchars: [max_chars]u21,
+    hoffs: [max_chars]usize,
+    hlower: [max_chars]u21,
+    tchars: [max_chars]u21,
+    toffs: [max_chars]usize,
+    matched: [max_hits]usize,
+    /// `score` / `match`'s positions before `match` copies them out.
+    out: [max_hits]usize,
+};
+threadlocal var scratch: Scratch = undefined;
+
 fn scoreImpl(query_in: []const u8, text: []const u8, buf: []usize, n_out: *usize) ?u32 {
     n_out.* = 0;
-    var qchars: [max_chars]u21 = undefined;
-    var qoffs: [max_chars]usize = undefined;
-    const qn_raw = decode(query_in, &qchars, &qoffs);
+    if (cannotMatch(query_in, text)) return null;
+    const sc = &scratch;
+    const qchars = &sc.qchars;
+    const qoffs = &sc.qoffs;
+    const qn_raw = decode(query_in, qchars, qoffs);
     // Rust normalises the needle by dropping `_` `-` `.` and lower-casing.
-    var nl: [max_chars]u21 = undefined;
+    const nl = &sc.nl;
     var nl_n: usize = 0;
     for (qchars[0..qn_raw]) |c| {
         if (isSeparator(c)) continue;
@@ -105,20 +141,20 @@ fn scoreImpl(query_in: []const u8, text: []const u8, buf: []usize, n_out: *usize
     }
     if (nl_n == 0) return base;
 
-    var hchars: [max_chars]u21 = undefined;
-    var hoffs: [max_chars]usize = undefined;
-    const n = decode(text, &hchars, &hoffs);
-    var hlower: [max_chars]u21 = undefined;
+    const hchars = &sc.hchars;
+    const hoffs = &sc.hoffs;
+    const n = decode(text, hchars, hoffs);
+    const hlower = &sc.hlower;
     for (hchars[0..n], 0..) |c, i| hlower[i] = lower(c);
 
     // The trimmed original query, lower-cased, for the substring passes.
     const trimmed = std.mem.trim(u8, query_in, " \t\r\n");
-    var tchars: [max_chars]u21 = undefined;
-    var toffs: [max_chars]usize = undefined;
-    const tn = decode(trimmed, &tchars, &toffs);
+    const tchars = &sc.tchars;
+    const toffs = &sc.toffs;
+    const tn = decode(trimmed, tchars, toffs);
     for (tchars[0..tn], 0..) |c, i| tchars[i] = lower(c);
 
-    var matched: [max_hits]usize = undefined; // char indices
+    const matched = &sc.matched; // char indices
     var mn: usize = 0;
 
     // Pass 1: the original query as a case-insensitive substring at a boundary.
