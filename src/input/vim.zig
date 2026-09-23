@@ -1714,17 +1714,20 @@ pub const Vim = struct {
             'n', 'N' => {
                 const forward = c == 'n';
                 const range = if (forward) ctx.next_find_match else ctx.prev_find_match;
+                // No match to take: the command's toast says why.
+                if (range == null) return runCmd(if (forward) .@"find.select_match_forward" else .@"find.select_match_backward");
+                // The match is picked when the op is applied, not here:
+                // `.` after `cgn` takes the match after the one it
+                // changed (`:help gn`).
                 if (pending_op) |op| {
-                    const r = range orelse return runCmd(if (forward) .@"find.select_match_forward" else .@"find.select_match_backward");
                     var b = Builder.init(arena);
-                    try b.push(.{ .set_cursor_byte = r[0] });
-                    try b.push(.select_start);
-                    try b.push(.{ .set_cursor_byte = r[1] });
+                    try b.push(.{ .select_find_match = .{ .forward = forward } });
                     return self.finishOperator(&b, op, ctx, false);
                 }
-                const r = range orelse return runCmd(if (forward) .@"find.select_match_forward" else .@"find.select_match_backward");
+                // Visual: the cursor sits ON the match's last char, so
+                // the `d` / `y` after it widen to the match and no more.
                 self.vmode = .visual;
-                return ops(arena, &.{ .{ .set_cursor_byte = r[0] }, .select_start, .{ .set_cursor_byte = r[1] } });
+                return ops(arena, &.{.{ .select_find_match = .{ .forward = forward, .inclusive = true } }});
             },
             'a' => return runCmd(.@"editor.char_info"),
             '8' => return runCmd(.@"editor.char_utf8"),
@@ -2002,9 +2005,9 @@ pub const Vim = struct {
                     },
                     'n', 'N' => {
                         const forward = c == 'n';
-                        const r = (if (forward) ctx.next_find_match else ctx.prev_find_match) orelse
+                        if ((if (forward) ctx.next_find_match else ctx.prev_find_match) == null)
                             return runCmd(if (forward) .@"find.select_match_forward" else .@"find.select_match_backward");
-                        return ops(arena, &.{.{ .set_cursor_byte = if (forward) r[1] else r[0] }});
+                        return ops(arena, &.{.{ .select_find_match = .{ .forward = forward, .inclusive = true, .extend = true } }});
                     },
                     // Neovim's `gc` in Visual: every selected line toggles,
                     // NORMAL resumes at the range's start (`'<`).

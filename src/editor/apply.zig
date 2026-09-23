@@ -168,6 +168,7 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .abort_unless_selection => if (ed.anchor == null) {
             out.aborted = true;
         },
+        .select_find_match => |m| select.selectFindMatch(ed, m.forward, m.inclusive, m.extend, out),
 
         // ── multi-cursor / block ──
         .add_cursor_below => try mc.addCursorBelow(ed),

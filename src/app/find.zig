@@ -86,6 +86,11 @@ pub const FindState = struct {
     bad_pattern: ?regex.Error = null,
     /// The vim `/pat/e`-style offset the query carried.
     offset: Offset = .{},
+    /// The document's edit-log head `matches` were last found against
+    /// (`cmd_find.seedCtxMatches`); a key after an edit finds them again,
+    /// so `gn` / `.` / `n` never act on the bytes a match used to cover.
+    /// Null: just found against the current text by someone else.
+    seen_edit: ?u64 = null,
 
     pub fn init(gpa: Allocator) FindState {
         return .{ .gpa = gpa };
@@ -107,6 +112,7 @@ pub const FindState = struct {
         out.case_sensitive = self.case_sensitive;
         out.bad_pattern = self.bad_pattern;
         out.offset = self.offset;
+        out.seen_edit = self.seen_edit;
         return out;
     }
 
@@ -132,6 +138,8 @@ pub const FindState = struct {
     }
 
     pub fn recompute(self: *FindState, text: []const u8) Allocator.Error!void {
+        // Found against the text as it is now; the next seed stamps it.
+        self.seen_edit = null;
         self.matches.clearRetainingCapacity();
         self.current = null;
         self.bad_pattern = null;

@@ -571,19 +571,26 @@ fn selectMatchBackward(app: *App) CommandError!void {
 
 /// The `gn` / `gN` ranges the vim handler reads through `EditCtx`: the
 /// match the cursor is on, else the next (previous) one, wrapping.
-pub fn seedCtxMatches(e: *EditorPane) void {
+/// Matches found before an edit are found again first: the text moved
+/// under them (`cgnQ<Esc>` then `.`).
+pub fn seedCtxMatches(e: *EditorPane) Allocator.Error!void {
+    const head = e.buf.editor.doc.edits.head();
+    if (e.find.isActive()) {
+        if (e.find.seen_edit) |seen| if (seen != head) try e.find.recompute(e.buf.editor.bytes());
+        e.find.seen_edit = head;
+    }
     const cur = e.buf.editor.cursor;
-    e.buf.find_next = null;
-    e.buf.find_prev = null;
+    e.buf.editor.find_next = null;
+    e.buf.editor.find_prev = null;
     const ms = e.find.matches.items;
     if (ms.len == 0) return;
     for (ms) |m| if (m.start <= cur and cur < m.end) {
-        e.buf.find_next = .{ m.start, m.end };
-        e.buf.find_prev = .{ m.start, m.end };
+        e.buf.editor.find_next = .{ m.start, m.end };
+        e.buf.editor.find_prev = .{ m.start, m.end };
         return;
     };
     const nxt = e.find.indexAtOrAfter(cur) orelse 0;
-    e.buf.find_next = .{ ms[nxt].start, ms[nxt].end };
+    e.buf.editor.find_next = .{ ms[nxt].start, ms[nxt].end };
     var last: usize = ms.len - 1;
     var i = ms.len;
     while (i > 0) {
@@ -593,7 +600,7 @@ pub fn seedCtxMatches(e: *EditorPane) void {
             break;
         }
     }
-    e.buf.find_prev = .{ ms[last].start, ms[last].end };
+    e.buf.editor.find_prev = .{ ms[last].start, ms[last].end };
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────

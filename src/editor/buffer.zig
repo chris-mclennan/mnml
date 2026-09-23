@@ -54,10 +54,6 @@ pub const Buffer = struct {
     /// through a temp file (`safe_write.zig`) — a failure then may have
     /// left the file incomplete.
     save_in_place: bool = false,
-    /// The find matches nearest the cursor (`gn` / `gN`), byte ranges.
-    /// The find state lives with the app; it seeds these before a key.
-    find_next: ?[2]usize = null,
-    find_prev: ?[2]usize = null,
 
     /// Dot-repeat: the last change, gpa-owned ops.
     dot: ?[]EditOp = null,
@@ -378,8 +374,8 @@ pub const Buffer = struct {
             .has_selection = ed.hasSelection(),
             .line_first_nonws_col = ed.colAtByte(ed.firstNonWs(line)),
             .cursor_col = ed.colAtByte(ed.cursor),
-            .next_find_match = self.find_next,
-            .prev_find_match = self.find_prev,
+            .next_find_match = ed.find_next,
+            .prev_find_match = ed.find_prev,
             .wrap_width = wrap_width,
             .register_empty = clip.text().len == 0,
         };

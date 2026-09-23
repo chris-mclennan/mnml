@@ -96,6 +96,11 @@ pub const Editor = struct {
     goal_col: ?usize = null,
     /// The last selection that was closed — `gv` restores it.
     last_selection: ?[2]usize = null,
+    /// The find matches nearest the cursor (`gn` / `gN`), byte ranges.
+    /// The find state lives with the app; it seeds these before a key,
+    /// and `select_find_match` reads them when it is applied.
+    find_next: ?[2]usize = null,
+    find_prev: ?[2]usize = null,
     /// Visual-block anchor. Independent of `anchor`.
     block_anchor: ?usize = null,
     /// The block runs to each line's end (`$` in V-BLOCK).

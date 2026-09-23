@@ -1,0 +1,46 @@
+# `cgn` / `dgn` then `.`: each `.` takes the NEXT match, found again
+# against the text as the last change left it. Visual `gn` ends ON the
+# match's last char, so `gnd` / `gnyP` take the match and no more.
+# Neovim 0.12.5 (`nvim --clean`), on "a foo x\nfoo y\nfoo z\n", `/foo<CR>` first:
+#   cgnQ<Esc>..  -> "a Q x\nQ y\nQ z\n"
+#   dgn.         -> "a  x\n y\nfoo z\n"
+#   gnd          -> "a  x\nfoo y\nfoo z\n"
+#   gnyP         -> "a foofoo x\nfoo y\nfoo z\n"
+command editor.use_vim
+write c.txt "a foo x\nfoo y\nfoo z\n"
+open c.txt
+key /
+type foo
+key enter
+type cgnQ
+key esc
+type ..
+command file.save
+expect file c.txt contains "a Q x\nQ y\nQ z\n"
+
+write d.txt "a foo x\nfoo y\nfoo z\n"
+open d.txt
+key /
+type foo
+key enter
+type dgn.
+command file.save
+expect file d.txt contains "a  x\n y\nfoo z\n"
+
+write v.txt "a foo x\nfoo y\nfoo z\n"
+open v.txt
+key /
+type foo
+key enter
+type gnd
+command file.save
+expect file v.txt contains "a  x\nfoo y\nfoo z\n"
+
+write y.txt "a foo x\nfoo y\nfoo z\n"
+open y.txt
+key /
+type foo
+key enter
+type gnyP
+command file.save
+expect file y.txt contains "a foofoo x\nfoo y\nfoo z\n"

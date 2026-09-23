@@ -610,7 +610,7 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
     const had_mark: bool = if (mark != null and mark_key != null) e.buf.doc.marks.contains(mark_key.?) else false;
     const trigger = before_mode == .insert and isAbbrevTrigger(k);
     const was_recording = e.buf.isRecording();
-    const wrap_width = beforeBufferInput(app, e);
+    const wrap_width = try beforeBufferInput(app, e);
 
     const ev = try e.buf.feedKey(k, &app.clipboard, app.pane_rows, wrap_width, arena);
     switch (ev) {
@@ -657,8 +657,8 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
 /// What the buffer needs from the app before a key or a runner's app
 /// command reaches it: the `gn` matches, the text-object seam, and the
 /// wrap width for page motions.
-fn beforeBufferInput(app: *App, e: *EditorPane) ?usize {
-    cmd_find.seedCtxMatches(e);
+fn beforeBufferInput(app: *App, e: *EditorPane) Allocator.Error!?usize {
+    try cmd_find.seedCtxMatches(e);
     app.attachSeams(e);
     return if (e.wrap orelse app.cfg.ui.wrap) app.pane_cols else null;
 }
@@ -693,7 +693,7 @@ fn afterBufferEvent(app: *App, pane_id: PaneId, e: *EditorPane, ev: input.Buffer
 /// chip): the same road a key's `.app` result takes, without a key.
 pub fn runBufferApp(app: *App, pane_id: PaneId, e: *EditorPane, cmd: input.AppCommand) Allocator.Error!void {
     const was_recording = e.buf.isRecording();
-    const wrap_width = beforeBufferInput(app, e);
+    const wrap_width = try beforeBufferInput(app, e);
     const ev = try e.buf.runApp(cmd, &app.clipboard, app.pane_rows, wrap_width, app.frame.allocator());
     try afterBufferEvent(app, pane_id, e, ev, was_recording);
     if (app.panes.editor(pane_id)) |still| still.buf.input.setMacroRecording(still.buf.isRecording());

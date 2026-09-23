@@ -5,6 +5,7 @@ const std = @import("std");
 const editor = @import("editor.zig");
 const edit_op = @import("edit_op.zig");
 const Editor = editor.Editor;
+const EditOutcome = edit_op.EditOutcome;
 const classOf = editor.classOf;
 const isSpace = editor.isSpace;
 
@@ -594,6 +595,25 @@ pub fn moveCursorToSelectionStart(ed: *Editor) void {
 
 /// Widen the high end by one char, never across a `\n`: vim's charwise
 /// visual is inclusive.
+/// `gn` / `gN` (`:help gn`): the match the app seeded as nearest the
+/// cursor becomes the selection — anchor on its first byte, the cursor
+/// past its end (an operator's exclusive range) or ON its last char
+/// (Visual). `extend` keeps a live anchor (`v…gn` grows the selection).
+/// No match: the list is abandoned, so `dgn` / `cgn` / their `.` do
+/// nothing rather than act at the cursor.
+pub fn selectFindMatch(ed: *Editor, forward: bool, inclusive: bool, extend: bool, out: *EditOutcome) void {
+    const r = (if (forward) ed.find_next else ed.find_prev) orelse {
+        out.aborted = true;
+        return;
+    };
+    const n = ed.len();
+    const start = @min(r[0], n);
+    const end = @min(@max(r[1], start), n);
+    const last = if (inclusive and end > start) ed.prevBoundary(end) else end;
+    if (!(extend and ed.anchor != null)) ed.anchor = start;
+    ed.cursor = if (extend and ed.anchor != null and !forward) start else last;
+}
+
 pub fn makeSelectionInclusive(ed: *Editor) void {
     if (ed.anchor) |a| {
         const w = widenInclusive(ed, a, ed.cursor);
