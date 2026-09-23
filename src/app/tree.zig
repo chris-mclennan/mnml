@@ -99,6 +99,9 @@ pub const Row = struct {
     /// Listed only because `show_ignored` is on: a `.gitignore` names it
     /// (or, outside a git repo, it is an artifact directory). Painted dim.
     ignored: bool = false,
+    /// A symbolic link. A link to a directory is a directory row that
+    /// expands like one; `expand_all` never enters it (a link can loop).
+    link: bool = false,
 
     pub fn name(r: Row) []const u8 {
         return std.fs.path.basename(r.rel);
@@ -488,7 +491,10 @@ pub const Tree = struct {
         var it = dir.iterate();
         while (it.next(app.io) catch null) |entry| {
             if (entry.kind != .directory and entry.kind != .file and entry.kind != .sym_link) continue;
-            const is_dir = entry.kind == .directory;
+            const link = entry.kind == .sym_link;
+            // A link is a folder row when its target is one (the stat
+            // follows the link); a dangling link stays a file row.
+            const is_dir = entry.kind == .directory or (link and linkIsDir(app, dir, entry.name));
             if (is_dir and std.mem.eql(u8, entry.name, ".git")) continue;
             if (!self.show_hidden and entry.name.len > 0 and entry.name[0] == '.') continue;
             const here_rel = if (here.len == 0) entry.name else try std.fs.path.join(arena, &.{ here, entry.name });
@@ -496,7 +502,7 @@ pub const Tree = struct {
             if (ignored and !self.show_ignored) continue;
             const rel = if (rel_dir.len == 0) try gpa.dupe(u8, entry.name) else try std.fs.path.join(gpa, &.{ rel_dir, entry.name });
             errdefer gpa.free(rel);
-            try names.append(gpa, .{ .rel = rel, .depth = depth, .is_dir = is_dir, .root = root, .ignored = ignored });
+            try names.append(gpa, .{ .rel = rel, .depth = depth, .is_dir = is_dir, .root = root, .ignored = ignored, .link = link });
         }
         // Directories first, then names folded to lower case (Rust).
         std.mem.sort(Row, names.items, {}, struct {
@@ -945,7 +951,7 @@ pub const Tree = struct {
             try self.refresh(app);
             for (self.rows.items) |row| {
                 if (row.header or !row.is_dir or self.isExpanded(row.rel)) continue;
-                if (isNoisy(row.name()) or row.ignored) continue;
+                if (isNoisy(row.name()) or row.link or row.ignored) continue;
                 try self.setExpanded(row.rel, true);
                 again = true;
             }
@@ -1100,6 +1106,12 @@ pub fn previewTooHeavy(app: *App, abs: []const u8) Allocator.Error!?[]const u8 {
 fn underRoot(base: []const u8, path: []const u8) ?[]const u8 {
     if (path.len > base.len + 1 and std.mem.startsWith(u8, path, base) and path[base.len] == '/') return path[base.len + 1 ..];
     return null;
+}
+
+/// `name` in `dir` is a link whose target is a directory.
+fn linkIsDir(app: *App, dir: std.Io.Dir, name: []const u8) bool {
+    const st = dir.statFile(app.io, name, .{}) catch return false;
+    return st.kind == .directory;
 }
 
 fn isNoisy(name: []const u8) bool {

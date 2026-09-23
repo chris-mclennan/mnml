@@ -1,0 +1,16 @@
+# A symlink to a folder is a folder row: Right expands it and lists the
+# target's files; nothing tries to open the folder as a buffer. The
+# target sits under node_modules (never listed), so the only way to its
+# file is through the link.
+write node_modules/real/inner.txt "alpha"
+shell ln -s node_modules/real linkdir
+command view.focus_tree
+key r
+command tree.collapse_all
+key home
+key right
+wait 300
+expect screen contains "inner.txt"
+key enter
+wait 300
+expect screen lacks "IsDir"

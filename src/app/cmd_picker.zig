@@ -226,6 +226,12 @@ fn walkDir(app: *App, out: *std.ArrayListUnmanaged([]u8), rel_dir: []const u8, i
     var it = dir.iterate();
     while (it.next(app.io) catch null) |entry| {
         if (entry.kind != .directory and entry.kind != .file and entry.kind != .sym_link) continue;
+        // A link to a folder is not a file to open, and the walk does
+        // not follow it (a link can loop); the tree expands it instead.
+        if (entry.kind == .sym_link) {
+            const st = dir.statFile(app.io, entry.name, .{}) catch null;
+            if (st != null and st.?.kind == .directory) continue;
+        }
         const is_dir = entry.kind == .directory;
         if (!app.tree.show_hidden and entry.name.len > 0 and entry.name[0] == '.') continue;
         if (is_dir and isNoise(app, entry.name)) continue;
