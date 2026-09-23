@@ -1875,7 +1875,7 @@ pub fn gutterMarksFor(app: *App, arena: Allocator, pane: PaneId, e: *EditorPane,
     const d = try dap.marksForPane(app, arena, pane, e, &app.theme, ascii);
     const l = try lsp.marksFor(app, arena, e.buf.doc.path, &app.theme, ascii);
     const s = try script_decor.gutterMarksFor(app, arena, pane, e, &app.theme);
-    const g: []const editor_view.GutterMark = if (e.buf.doc.path) |p| try git_app.viewMarks(app, p, arena) else &.{};
+    const g: []const editor_view.GutterMark = try git_app.viewMarks(app, e, arena);
     if (l.len == 0 and g.len == 0 and s.len == 0) return d;
     if (d.len == 0 and g.len == 0 and s.len == 0) return l;
     if (d.len == 0 and l.len == 0 and s.len == 0) return g;

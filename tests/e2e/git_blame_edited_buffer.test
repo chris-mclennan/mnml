@@ -1,0 +1,23 @@
+# Blame on a buffer with an unsaved line inserted at the top blames the
+# buffer as it reads (`git blame --contents -`): the new line is not
+# committed, `first-line` is still "mnml test"'s and `second-line`
+# "Second Author"'s — no label is painted one row off.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write b.txt "first-line\n"
+shell git add b.txt
+shell git commit -q -m "one"
+shell git config user.name "Second Author"
+write b.txt "first-line\nsecond-line\n"
+shell git commit -q -am "two"
+open b.txt
+command editor.use_vim
+wait 500
+key g
+key g
+key O
+type "brand new"
+key esc
+command git.blame_toggle
+expect screen contains "not committed"

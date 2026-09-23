@@ -259,7 +259,29 @@ pub const AiWait = struct {
 pub const Blame = struct {
     arena: std.heap.ArenaAllocator,
     lines: []parse.BlameLine,
+    /// The buffer's edit seq the lines were blamed at, and the one last
+    /// asked for: `tick` blames again once the buffer has moved past
+    /// both (an answer that failed does not ask again for the same text).
+    seq: u64 = 0,
+    asked: u64 = 0,
 };
+
+/// An edited buffer's gutter (`client.Job.buffer_signs`): the marks of
+/// its text against HEAD, for edit seq `seq`. `asked` is the seq last
+/// sent to the worker and `asked_ms` when, so a burst of keys asks once.
+pub const BufSigns = struct {
+    /// gpa-owned; empty until the first answer.
+    marks: []parse.GutterMark = &.{},
+    seq: u64 = 0,
+    /// HEAD had the file: false falls back to the status's marks.
+    ok: bool = false,
+    have: bool = false,
+    asked: u64 = 0,
+    asked_ms: i64 = 0,
+};
+
+/// How long the buffer must sit still before its gutter is asked for.
+pub const buf_signs_debounce_ms: i64 = 150;
 
 // ─── the panes ──────────────────────────────────────────────────────────
 
@@ -521,6 +543,17 @@ pub const Plan = struct {
 
 // ─── state ──────────────────────────────────────────────────────────────
 
+pub const PendingJump = struct { pane: PaneId, forward: bool };
+
+fn clearBufSigns(st: *State, gpa: Allocator) void {
+    var it = st.buf_signs.iterator();
+    while (it.next()) |kv| {
+        gpa.free(kv.key_ptr.*);
+        gpa.free(kv.value_ptr.marks);
+    }
+    st.buf_signs.clearRetainingCapacity();
+}
+
 /// A repo's rail as `State.rails` parks it: the worker's arena, adopted
 /// whole, and the lists into it.
 pub const RepoRail = struct {
@@ -552,6 +585,12 @@ pub const State = struct {
     status_at_ms: i64 = 0,
     status_pending: bool = false,
     blames: std.AutoHashMapUnmanaged(PaneId, Blame) = .empty,
+    /// Absolute path (owned) → an edited buffer's own gutter marks.
+    buf_signs: std.StringHashMapUnmanaged(BufSigns) = .empty,
+    /// A `]c` / `[c` asked for before the marks it walks were there (the
+    /// first status of the session, an edit the worker has not seen):
+    /// run when they land.
+    pending_jump: ?PendingJump = null,
     /// The pane a blame was asked for, until it lands.
     blame_pending: ?PaneId = null,
     /// The current-line blame's answers and its one ask in flight
@@ -645,6 +684,8 @@ pub const State = struct {
         while (it.next()) |b| b.arena.deinit();
         self.blames.deinit(gpa);
         self.line_blame.deinit(gpa);
+        clearBufSigns(self, gpa);
+        self.buf_signs.deinit(gpa);
         self.marks.deinit(gpa);
         self.confirm.deinit(gpa);
         if (self.ai_body) |b| gpa.free(b);
@@ -1010,12 +1051,80 @@ pub fn requestStatus(app: *App) CommandError!void {
     };
 }
 
+/// Blame `pane`'s file. An edited buffer is blamed as it reads (`git
+/// blame --contents -`): its lines where they sit now, the new ones
+/// not committed — the file on disk painted onto the buffer shifted
+/// every label below an inserted line onto its neighbour.
 pub fn requestBlame(app: *App, pane: PaneId, abs_path: []const u8) CommandError!void {
     const r = try requireRepo(app);
     const rel = relToRepo(r, abs_path);
-    const owned = try app.gpa.dupe(u8, rel);
+    const gpa = app.gpa;
+    const owned = try gpa.dupe(u8, rel);
+    errdefer gpa.free(owned);
+    var text: ?[]u8 = null;
+    var seq: u64 = 0;
+    if (app.panes.editor(pane)) |e| {
+        seq = e.buf.doc.edits.head();
+        if (e.buf.doc.dirty) text = try gpa.dupe(u8, e.buf.editor.bytes());
+    }
     app.git.blame_pending = pane;
-    try submit(app, r, .{ .blame = owned });
+    try submit(app, r, .{ .blame = .{ .path = owned, .text = text, .seq = seq } });
+}
+
+/// Ask for an edited buffer's own gutter (`client.Job.buffer_signs`).
+fn requestBufSigns(app: *App, r: *client.Repo, abs: []const u8, e: *app_mod.EditorPane, now: i64) CommandError!void {
+    const st = &app.git;
+    const gpa = app.gpa;
+    const seq = e.buf.doc.edits.head();
+    const gop = try st.buf_signs.getOrPut(gpa, abs);
+    if (!gop.found_existing) {
+        gop.key_ptr.* = gpa.dupe(u8, abs) catch |err| {
+            st.buf_signs.removeByPtr(gop.key_ptr);
+            return err;
+        };
+        gop.value_ptr.* = .{};
+    }
+    const path = try gpa.dupe(u8, relToRepo(r, abs));
+    errdefer gpa.free(path);
+    const text = try gpa.dupe(u8, e.buf.editor.bytes());
+    errdefer gpa.free(text);
+    gop.value_ptr.asked = seq;
+    gop.value_ptr.asked_ms = now;
+    try submit(app, r, .{ .buffer_signs = .{ .path = path, .text = text, .seq = seq } });
+}
+
+/// Keep edited buffers' gutters and blames on their text: a dirty
+/// editor whose text the worker has not seen is asked for once it has
+/// sat still `buf_signs_debounce_ms`.
+fn tickBuffers(app: *App, now: i64) Allocator.Error!void {
+    const st = &app.git;
+    const r = st.activeRepo() orelse return;
+    if (st.status_repo != r.id or st.status == null) return;
+    var i: usize = 0;
+    while (i < app.panes.slots.items.len) : (i += 1) {
+        const id: PaneId = @intCast(i);
+        const e = app.panes.editor(id) orelse continue;
+        const abs = e.buf.doc.path orelse continue;
+        if (!std.mem.startsWith(u8, abs, r.path) or abs.len <= r.path.len or abs[r.path.len] != '/') continue;
+        const seq = e.buf.doc.edits.head();
+        if (e.buf.doc.dirty) {
+            const b = st.buf_signs.get(abs) orelse BufSigns{};
+            const current = b.have and b.seq == seq;
+            if (!current and b.asked != seq and now - b.asked_ms >= buf_signs_debounce_ms) {
+                requestBufSigns(app, r, abs, e, now) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => {},
+                };
+            }
+        }
+        if (st.blames.getPtr(id)) |bl| if (bl.seq != seq and bl.asked != seq and st.blame_pending == null) {
+            bl.asked = seq;
+            requestBlame(app, id, abs) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {},
+            };
+        };
+    }
 }
 
 /// Wall-clock seconds, for the age columns.
@@ -1038,7 +1147,9 @@ pub fn tick(app: *App, now: i64) Allocator.Error!void {
     // sessions show: the repos are looked up on the first tick, not
     // the first git pane.
     if (!st.discovered) try discover(app);
-    if (st.activeRepo() == null or st.status_pending) return;
+    if (st.activeRepo() == null) return;
+    try tickBuffers(app, now);
+    if (st.status_pending) return;
     if (now - st.status_at_ms >= status_ttl_ms) requestStatus(app) catch {};
 }
 
@@ -1309,6 +1420,17 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
             if (active.id != repo.id) return;
             st.status_pending = false;
             st.status_at_ms = app.now_ms;
+            // HEAD moved (a commit, a checkout): the edited buffers'
+            // marks were against the old one.
+            const head_moved = if (st.status) |old| !optEql(old.oid, s.status.oid) else true;
+            if (head_moved) {
+                var bit = st.buf_signs.valueIterator();
+                while (bit.next()) |b| {
+                    b.have = false;
+                    b.asked = 0;
+                    b.asked_ms = 0;
+                }
+            }
             adoptArena(&st.snapshot.arena, &result.arena, gpa);
             st.status = s.status;
             st.status_repo = repo.id;
@@ -1325,6 +1447,7 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
                 else => {},
             };
             app.hooks.emit(app, .{ .git_status = .{ .branch = s.status.branch orelse "", .dirty = s.status.changeCount() } });
+            try runPendingJump(app);
         },
         .diff => |d| {
             for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
@@ -1348,20 +1471,40 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
             const pane = st.blame_pending orelse return;
             st.blame_pending = null;
             if (b.lines.len == 0) {
-                app.toast("git blame returned nothing (untracked file?)", .{});
+                // A re-blame after an edit keeps what it had, quietly.
+                if (!st.blames.contains(pane)) app.toast("git blame returned nothing (untracked file?)", .{});
                 return;
             }
             const e = app.panes.editor(pane) orelse return;
             const abs = e.buf.doc.path orelse return;
             if (!std.mem.eql(u8, relToRepo(repo, abs), b.path)) return;
-            var blame: Blame = .{ .arena = .init(gpa), .lines = b.lines };
+            var blame: Blame = .{ .arena = .init(gpa), .lines = b.lines, .seq = b.seq, .asked = b.seq };
             adoptArena(&blame.arena, &result.arena, gpa);
-            if (st.blames.fetchRemove(pane)) |old| {
+            const again = st.blames.fetchRemove(pane);
+            if (again) |old| {
                 var o = old.value;
                 o.arena.deinit();
             }
             try st.blames.put(gpa, pane, blame);
-            app.toast("blame: on", .{});
+            // A re-blame after an edit or a save is quiet.
+            if (again == null) app.toast("blame: on", .{});
+        },
+        .buffer_signs => |b| {
+            if (st.activeRepo() != repo) return;
+            const abs = try std.fs.path.join(app.frame.allocator(), &.{ repo.path, b.path });
+            const entry = st.buf_signs.getPtr(abs) orelse return;
+            // An answer for older text than the one already painted.
+            if (entry.have and b.seq < entry.seq) return;
+            var marks: std.ArrayListUnmanaged(parse.GutterMark) = .empty;
+            defer marks.deinit(gpa);
+            if (b.ok) for (b.files) |f| try marks.appendSlice(gpa, try parse.gutterMarks(result.arena.allocator(), f));
+            const owned = try marks.toOwnedSlice(gpa);
+            gpa.free(entry.marks);
+            entry.marks = owned;
+            entry.seq = b.seq;
+            entry.ok = b.ok;
+            entry.have = true;
+            try runPendingJump(app);
         },
         .blame_line => |b| try line_blame.handle(app, repo, b.path, b.line, b.blame),
         .log => |l| {
@@ -1619,6 +1762,7 @@ fn clearStatus(app: *App) void {
     st.rail_pending = false;
     st.rail_snapshot.reset();
     st.marks.clearRetainingCapacity();
+    clearBufSigns(st, app.gpa);
     st.snapshot.reset();
     app.needs_render = true;
 }
@@ -1737,10 +1881,32 @@ pub fn marksFor(app: *App, abs_path: []const u8) []const parse.GutterMark {
     return st.marks.get(relToRepo(r, abs_path)) orelse &.{};
 }
 
-/// The active repo's marks for `abs_path` in the editor view's own type,
-/// on the frame arena.
-pub fn viewMarks(app: *App, abs_path: []const u8, arena: Allocator) Allocator.Error![]const editor_view.GutterMark {
-    const marks = marksFor(app, abs_path);
+/// The marks for editor `e`: while its buffer is edited, the marks of
+/// ITS text against HEAD (`buffer_signs`) — the status's marks are the
+/// file on disk, keyed by the disk's line numbers, and sat on the wrong
+/// lines the moment a line was inserted above a change. Until the first
+/// answer for the buffer lands, the disk's.
+pub fn marksForEditor(app: *App, e: *const app_mod.EditorPane) []const parse.GutterMark {
+    const abs = e.buf.doc.path orelse return &.{};
+    if (e.buf.doc.dirty) if (app.git.buf_signs.get(abs)) |b| if (b.have and b.ok) return b.marks;
+    return marksFor(app, abs);
+}
+
+/// Whether `e`'s marks describe its text as it is now.
+pub fn marksCurrent(app: *App, e: *const app_mod.EditorPane) bool {
+    const st = &app.git;
+    const r = st.activeRepo() orelse return false;
+    if (st.status_repo != r.id or st.status == null) return false;
+    if (!e.buf.doc.dirty) return true;
+    const abs = e.buf.doc.path orelse return true;
+    const b = st.buf_signs.get(abs) orelse return false;
+    return b.have and b.seq == e.buf.doc.edits.head();
+}
+
+/// The active repo's marks for editor `e` in the editor view's own
+/// type, on the frame arena.
+pub fn viewMarks(app: *App, e: *const app_mod.EditorPane, arena: Allocator) Allocator.Error![]const editor_view.GutterMark {
+    const marks = marksForEditor(app, e);
     if (marks.len == 0) return &.{};
     const out = try arena.alloc(editor_view.GutterMark, marks.len);
     for (marks, 0..) |m, i| out[i] = .{ .line = m.line, .kind = switch (m.kind) {
@@ -1749,6 +1915,66 @@ pub fn viewMarks(app: *App, abs_path: []const u8, arena: Allocator) Allocator.Er
         .deleted => .deleted,
     }, .priority = editor_view.mark_priority.git_change };
     return out;
+}
+
+/// `]c` / `[c` in editor `pane`: to the start of the next / previous
+/// changed run of lines (a hunk to gitsigns). When the marks do not yet
+/// describe the buffer — the session's first status is on the way, or
+/// the worker has not seen the latest edit — the jump waits for them
+/// (`pending_jump`) instead of answering "no changes" for a file whose
+/// bar is on screen.
+pub fn jumpChange(app: *App, pane: PaneId, forward: bool) CommandError!void {
+    const st = &app.git;
+    const e = app.panes.editor(pane) orelse return app.diag.fail(app.frame.allocator(), "git: not an editor", .{});
+    const abs = e.buf.doc.path orelse return app.diag.fail(app.frame.allocator(), "git: the buffer has no file", .{});
+    const r = try requireRepo(app);
+    if (!marksCurrent(app, e)) {
+        st.pending_jump = .{ .pane = pane, .forward = forward };
+        if (st.status_repo != r.id or st.status == null) {
+            try requestStatus(app);
+        } else if (e.buf.doc.dirty) {
+            const b = st.buf_signs.get(abs) orelse BufSigns{};
+            if (b.asked != e.buf.doc.edits.head()) try requestBufSigns(app, r, abs, e, app.now_ms);
+        }
+        return;
+    }
+    st.pending_jump = null;
+    const marks = marksForEditor(app, e);
+    if (marks.len == 0) return app.diag.fail(app.frame.allocator(), "no changes in this file (vs HEAD)", .{});
+    const cur: u32 = @intCast(e.buf.editor.currentLine());
+    const line = changeStart(marks, cur, forward) orelse return app.diag.fail(app.frame.allocator(), "no {s} change", .{if (forward) "next" else "previous"});
+    e.buf.editor.anchor = null;
+    e.buf.editor.placeCursor(@min(line, e.buf.editor.lineCount() -| 1), 0);
+    app.needs_render = true;
+}
+
+/// The first line of the next (previous) run of marked lines after
+/// (before) `cur`. Marks are in line order.
+pub fn changeStart(marks: []const parse.GutterMark, cur: u32, forward: bool) ?u32 {
+    var best: ?u32 = null;
+    for (marks, 0..) |m, i| {
+        const starts = i == 0 or marks[i - 1].line + 1 < m.line;
+        if (!starts) continue;
+        if (forward) {
+            if (m.line > cur) return m.line;
+        } else if (m.line < cur) best = m.line;
+    }
+    return best;
+}
+
+/// A jump that was waiting for its marks, now that some landed.
+fn runPendingJump(app: *App) Allocator.Error!void {
+    const j = app.git.pending_jump orelse return;
+    const e = app.panes.editor(j.pane) orelse {
+        app.git.pending_jump = null;
+        return;
+    };
+    if (!marksCurrent(app, e)) return;
+    app.git.pending_jump = null;
+    jumpChange(app, j.pane, j.forward) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => if (app.diag.msg) |m| app.toast("{s}", .{m}),
+    };
 }
 
 /// `<sha7> <author> <age>` per line for a blamed pane, on the frame
@@ -6947,4 +7173,17 @@ test "the AI answer lands in the graph's commit box when its WIP row asked: the 
     try testing.expect(f.app.overlay == .prompt);
     try testing.expectEqualStrings("fix: thing", f.app.overlay.prompt.state.text());
     try testing.expectEqualStrings("why", f.app.git.ai_body.?);
+}
+
+test "changeStart: ]c / [c step runs of marked lines, the way gitsigns steps hunks" {
+    const M = parse.GutterMark;
+    // Lines 0-2 added (one run), line 7 modified, line 9 deleted.
+    const marks = [_]M{ .{ .line = 0, .kind = .added }, .{ .line = 1, .kind = .added }, .{ .line = 2, .kind = .added }, .{ .line = 7, .kind = .modified }, .{ .line = 9, .kind = .deleted } };
+    try std.testing.expectEqual(@as(?u32, 7), changeStart(&marks, 0, true));
+    try std.testing.expectEqual(@as(?u32, 7), changeStart(&marks, 1, true));
+    try std.testing.expectEqual(@as(?u32, 9), changeStart(&marks, 7, true));
+    try std.testing.expectEqual(@as(?u32, null), changeStart(&marks, 9, true));
+    try std.testing.expectEqual(@as(?u32, 0), changeStart(&marks, 7, false));
+    try std.testing.expectEqual(@as(?u32, 0), changeStart(&marks, 2, false));
+    try std.testing.expectEqual(@as(?u32, null), changeStart(&marks, 0, false));
 }

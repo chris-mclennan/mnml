@@ -139,7 +139,10 @@ pub const Job = union(enum) {
     /// `full` asks for every line of the file (the Inline / Split views)
     /// instead of three lines of context.
     diff: struct { scope: DiffScope, path: ?[]u8 = null, rev: ?[]u8 = null, text: ?[]u8 = null, full: bool = false },
-    blame: []u8,
+    /// `blame --porcelain` of `path`; with `text`, of that text
+    /// (`--contents -`): an edited buffer is blamed as it reads, its
+    /// new lines "not committed", the rest where they now sit.
+    blame: struct { path: []u8, text: ?[]u8 = null, seq: u64 = 0 },
     /// `blame -L n,n --porcelain -- path`: one line (1-based), for the
     /// current-line blame at the end of the cursor's line.
     blame_line: struct { path: []u8, line: u32 },
@@ -259,6 +262,11 @@ pub const Job = union(enum) {
     /// A conflicted file's three stages (`:1:` base, `:2:` ours, `:3:`
     /// theirs) as text, for the AI resolve prompt.
     conflict_text: []u8,
+    /// An edited buffer's gutter: its text against HEAD's copy of
+    /// `path`, at `-U0` — what the bars, `]c` and `[c` read while the
+    /// buffer is not the file on disk. `seq` is the buffer's edit seq,
+    /// handed back so a late answer for older text is known as one.
+    buffer_signs: struct { path: []u8, text: []u8, seq: u64 },
     /// `git <op> --continue` / `--abort` / `--skip` on the operation
     /// the status found in progress (`Status.in_progress`).
     op_continue: parse.InProgress,
@@ -354,7 +362,7 @@ pub const Job = union(enum) {
                 gpa.free(s.ref);
                 gpa.free(s.msg);
             },
-            .blame, .stage, .unstage, .discard, .commit, .checkout, .delete_branch, .merge, .rebase, .stash_apply, .stash_drop, .tag, .tag_delete, .cherry_pick, .revert, .worktree_remove => |s| gpa.free(s),
+            .stage, .unstage, .discard, .commit, .checkout, .delete_branch, .merge, .rebase, .stash_apply, .stash_drop, .tag, .tag_delete, .cherry_pick, .revert, .worktree_remove => |s| gpa.free(s),
             .tag_at => |t| {
                 gpa.free(t.name);
                 gpa.free(t.start);
@@ -398,6 +406,14 @@ pub const Job = union(enum) {
                 gpa.free(l.msg);
             },
             .conflict_text => |s| gpa.free(s),
+            .buffer_signs => |b| {
+                gpa.free(b.path);
+                gpa.free(b.text);
+            },
+            .blame => |b| {
+                gpa.free(b.path);
+                if (b.text) |t| gpa.free(t);
+            },
         }
     }
 };
@@ -413,7 +429,10 @@ pub const Result = struct {
     pub const Payload = union(enum) {
         status: struct { status: parse.Status, signs: []parse.FileDiff, remote: []const u8 = "" },
         diff: struct { scope: DiffScope, path: ?[]const u8, rev: ?[]const u8, files: []parse.FileDiff, full: bool = false },
-        blame: struct { path: []const u8, lines: []parse.BlameLine },
+        blame: struct { path: []const u8, lines: []parse.BlameLine, seq: u64 = 0 },
+        /// `buffer_signs`' answer: `ok` false when HEAD has no copy of
+        /// the file (the gutter falls back to the status's marks).
+        buffer_signs: struct { path: []const u8, seq: u64, files: []parse.FileDiff, ok: bool },
         /// The one line a `blame_line` asked about; null when git had no
         /// answer (an untracked file, a line past the end).
         blame_line: struct { path: []const u8, line: u32, blame: ?parse.BlameLine },
@@ -1018,10 +1037,13 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             }
             r.payload = .{ .diff = .{ .scope = d.scope, .path = if (d.path) |p| try arena.dupe(u8, p) else null, .rev = if (d.rev) |v| try arena.dupe(u8, v) else null, .files = files, .full = d.full } };
         },
-        .blame => |path| {
-            const out = try git(repo, io, arena, &.{ "blame", "--porcelain", "--", path }, null);
+        .blame => |b| {
+            const out = if (b.text) |t|
+                try git(repo, io, arena, &.{ "blame", "--porcelain", "--contents", "-", "--", b.path }, t)
+            else
+                try git(repo, io, arena, &.{ "blame", "--porcelain", "--", b.path }, null);
             const lines: []parse.BlameLine = if (out.ok) try parse.parseBlame(arena, out.stdout) else &.{};
-            r.payload = .{ .blame = .{ .path = try arena.dupe(u8, path), .lines = lines } };
+            r.payload = .{ .blame = .{ .path = try arena.dupe(u8, b.path), .lines = lines, .seq = b.seq } };
         },
         .blame_line => |b| {
             const range = try std.fmt.allocPrint(arena, "-L{d},{d}", .{ b.line, b.line });
@@ -1029,6 +1051,7 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             const one: ?parse.BlameLine = if (out.ok) try parse.parseBlameOne(arena, out.stdout) else null;
             r.payload = .{ .blame_line = .{ .path = try arena.dupe(u8, b.path), .line = b.line, .blame = one } };
         },
+        .buffer_signs => |b| r.payload = .{ .buffer_signs = try bufferSigns(repo, io, arena, b.path, b.text, b.seq) },
         .log => |l| {
             var args: std.ArrayListUnmanaged([]const u8) = .empty;
             // Rust's order: `--date-order` — children before parents, newest first.
@@ -2005,6 +2028,33 @@ fn commitLines(repo: *Repo, io: Io, r: *Result, patch: []const u8, msg: []const 
         return;
     }
     r.payload = .{ .op = .{ .desc = desc, .ok = true } };
+}
+
+// ─── the gutter of an edited buffer ─────────────────────────────────────
+
+/// `text` (a buffer) against HEAD's `path`, at `-U0`: HEAD's copy is
+/// written under the git dir and diffed with `--no-index` against the
+/// text on stdin — git's own diff, as the status's `diff -U0 HEAD`
+/// is for the file on disk.
+fn bufferSigns(repo: *Repo, io: Io, arena: Allocator, path: []const u8, text: []const u8, seq: u64) JobError!@FieldType(Result.Payload, "buffer_signs") {
+    const none: @FieldType(Result.Payload, "buffer_signs") = .{ .path = try arena.dupe(u8, path), .seq = seq, .files = &.{}, .ok = false };
+    const dir = (try gitDir(repo, io, arena)) orelse return none;
+    const head = try git(repo, io, arena, &.{ "cat-file", "blob", try std.fmt.allocPrint(arena, "HEAD:{s}", .{path}) }, null);
+    if (!head.ok) return none;
+    const tmp = try std.fmt.allocPrint(arena, "{s}/mnml-gutter-head", .{dir});
+    const cwd = std.Io.Dir.cwd();
+    cwd.writeFile(io, .{ .sub_path = tmp, .data = head.stdout }) catch |err| {
+        keepCancel(io, err);
+        return none;
+    };
+    defer cwd.deleteFile(io, tmp) catch |err| keepCancel(io, err);
+    // `--no-index` exits 1 when the two differ: the output is the diff.
+    const out = try git(repo, io, arena, &.{ "diff", "--no-index", "--no-ext-diff", "-U0", "--", tmp, "-" }, text);
+    if (out.exit == null or out.exit.? > 1) return none;
+    var got = none;
+    got.files = try parse.parseDiff(arena, out.stdout);
+    got.ok = true;
+    return got;
 }
 
 // ─── conflicts (git-lines) ──────────────────────────────────────────────

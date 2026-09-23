@@ -1,0 +1,34 @@
+# The git gutter and ]c follow the buffer, not the file on disk: after
+# inserting three lines above a change (unsaved), the change is on line
+# 8 and ]c from the top goes to the three new lines' run, then to it —
+# vim-gitsigns' and VS Code's answer. The marks are the buffer's text
+# diffed against HEAD's copy (`git diff --no-index -U0`).
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write g.txt "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\n"
+shell git add g.txt
+shell git commit -q -m "initial"
+write g.txt "l1\nl2\nl3\nl4\nCHANGED\nl6\nl7\nl8\nl9\nl10\n"
+open g.txt
+command editor.use_vim
+wait 500
+key g
+key g
+key O
+type "a"
+key enter
+type "b"
+key enter
+type "c"
+key esc
+key g
+key g
+key j
+key ]
+key c
+# From line 2 (inside the run of new lines) the next change is CHANGED.
+expect status contains "\"line\":8"
+key [
+key c
+expect status contains "\"line\":1,"
