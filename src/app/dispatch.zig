@@ -3784,6 +3784,7 @@ pub fn listPaneEnter(app: *App, pane: PaneId, l: *app_mod.ListPane) Allocator.Er
             // changed: the location list shares the quickfix row action; the
             // owning editor's index follows the row so `:lnext` continues from it.
             if (l.kind == .location) @import("loclist.zig").noteEnter(app, l.cursor);
+            if (l.kind == .quickfix) @import("quickfix.zig").noteEnter(app, l.cursor);
             const rel = try app.frame.allocator().dupe(u8, e.path orelse return);
             const abs = try app.absPath(rel);
             const line = e.line;

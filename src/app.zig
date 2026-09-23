@@ -1373,6 +1373,8 @@ pub const App = struct {
     /// until when (`discovery.flashRow`).
     discovery_flash: ?discovery_app.Flash = null,
     find_bar: ?FindBarState = null,
+    /// Vim's one quickfix list (`app/quickfix.zig`).
+    quickfix: @import("app/quickfix.zig").State = .{},
     /// The find bar's accepted queries, oldest first (`app/find_history.zig`).
     find_history: std.ArrayListUnmanaged([]u8) = .empty,
     closed: std.ArrayListUnmanaged(ClosedBuffer) = .empty,
@@ -1940,6 +1942,7 @@ pub const App = struct {
         self.jumplist.deinit(gpa);
         for (self.closed.items) |c| gpa.free(c.path);
         self.closed.deinit(gpa);
+        self.quickfix.deinit(gpa);
         for (self.find_history.items) |q| gpa.free(q);
         self.find_history.deinit(gpa);
         self.pane_mru.deinit(gpa);

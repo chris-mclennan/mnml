@@ -1,0 +1,87 @@
+# The quickfix list is one list every producer fills: a finished workspace
+# grep, `:grep`, `:vimgrep`, `:cexpr` / `:cgetexpr`. `:cnext` / `qf.next`
+# walk it, `:cc N` jumps to entry N, `:clist` prints it as Neovim does,
+# `:copen` / `:cwindow` / `:cclose` show and hide it (Neovim 0.12.5).
+write src/a.txt "alpha\nbeta alpha\nx alpha\n"
+write notes.txt "nothing here\n"
+open notes.txt
+command editor.use_vim
+
+# A workspace grep fills the list; the first `qf.next` lands on hit 1.
+command find.grep
+type alpha
+key enter
+wait 800
+expect screen contains "3 matches in 1 file"
+command qf.next
+expect screen lacks "no quickfix list"
+expect screen contains "(1 of 3) alpha"
+expect pane "a.txt"
+expect status contains "\"line\":1"
+command qf.next
+expect screen contains "(2 of 3) beta alpha"
+expect status contains "\"line\":2"
+expect status contains "\"col\":6"
+key :
+type "cn"
+key enter
+expect screen contains "(3 of 3) x alpha"
+expect status contains "\"line\":3"
+# Off the end is E553, not a wrap.
+key :
+type "cn"
+key enter
+expect screen contains "E553: No more items"
+expect status contains "\"line\":3"
+# `:cc 2` jumps to entry 2; `:clist` lists every entry.
+key :
+type "cc 2"
+key enter
+expect screen contains "(2 of 3) beta alpha"
+expect pane "a.txt"
+key :
+type "clist"
+key enter
+expect screen contains " 1 src/a.txt:1 col 1: alpha"
+expect screen contains " 3 src/a.txt:3 col 3: x alpha"
+
+# `:cgetexpr` fills without opening; `:copen` shows it and focuses it,
+# `:cclose` hides it again, `:cwindow` opens it when it has entries.
+key :
+type "cgetexpr notes.txt:1:9:the-here"
+key enter
+key :
+type "copen"
+key enter
+expect pane "Quickfix"
+expect screen contains "the-here"
+key enter
+expect pane "notes.txt"
+expect status contains "\"col\":9"
+key :
+type "cclose"
+key enter
+expect screen lacks "the-here"
+key :
+type "cw"
+key enter
+expect pane "Quickfix"
+key enter
+
+# `:vimgrep` reads a vim pattern and jumps to the first hit.
+key :
+type "vimgrep /\<beta\>/ **"
+key enter
+wait 800
+expect pane "a.txt"
+expect status contains "\"line\":2"
+expect screen contains "(1 of 1) beta alpha"
+# `:grep` reads a regex and jumps too.
+open notes.txt
+key :
+type "grep x al.ha"
+key enter
+wait 800
+expect pane "a.txt"
+expect status contains "\"line\":3"
+expect screen contains "(1 of 1) x alpha"

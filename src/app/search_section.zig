@@ -298,6 +298,8 @@ pub fn handle(app: *App, result: *grep.Result) Allocator.Error!void {
     if (first_batch and st.rows.items.len > 1) st.list.cursor = 1;
     if (result.done) {
         st.loading = false;
+        // Every finished search is the quickfix list (`:cnext` walks it).
+        if (st.err == null) try @import("quickfix.zig").fromGrepHits(app, st.hits.items, grep.section_target);
         const n = st.hits.items.len;
         const words = try std.fmt.allocPrint(app.frame.allocator(), "{d} match{s}{s}", .{ n, if (n == 1) "" else "es", if (st.truncated) " (capped)" else "" });
         jobs.endKeyed(app, .search, grep.section_target, if (st.err) |e| jobs.Outcome.fail(e) else jobs.Outcome.done(words));
@@ -364,7 +366,10 @@ fn activateRow(app: *App, beside: bool) CommandError!void {
     if (st.list.cursor >= st.rows.items.len) return app.diag.fail(app.frame.allocator(), "search: nothing selected", .{});
     switch (st.rows.items[st.list.cursor]) {
         .file => |g| try toggleGroup(app, g),
-        .hit => |h| try openHit(app, st.hits.items[h], beside),
+        .hit => |h| {
+            @import("quickfix.zig").noteGrepHit(app, grep.section_target, h);
+            try openHit(app, st.hits.items[h], beside);
+        },
     }
 }
 

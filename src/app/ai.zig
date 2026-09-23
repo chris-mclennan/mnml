@@ -1786,7 +1786,7 @@ pub fn sessionSearchAccept(app: *App, query_in: []const u8) CommandError!void {
     }
     if (entries.items.len == 0) return app.diag.fail(arena, "\"{s}\": no matches in {d} transcripts", .{ query, files });
     app.toast("{d} match{s} for \"{s}\"", .{ entries.items.len, if (entries.items.len == 1) "" else "es", query });
-    try cmd_view.openListPane(app, .quickfix, try entries.toOwnedSlice(gpa));
+    try @import("quickfix.zig").setAndOpen(app, try entries.toOwnedSlice(gpa), .{});
 }
 
 // ─── commands: setup / config ───────────────────────────────────────────

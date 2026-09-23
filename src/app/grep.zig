@@ -463,8 +463,15 @@ pub fn acceptQuery(app: *App, text: []const u8) Allocator.Error!void {
 /// beside the active pane. Scoped to the primary workspace, as VS
 /// Code's Ctrl+Shift+F is.
 pub fn runGrep(app: *App, query: []const u8) CommandError!void {
+    return runGrepWith(app, query, null);
+}
+
+/// `runGrep` with the regex flag set for this run (`:grep`, `:vimgrep`
+/// read their query as a pattern); null keeps the pane's own.
+pub fn runGrepWith(app: *App, query: []const u8, regex_on: ?bool) CommandError!void {
     if (find(app)) |id| {
         const p = &app.panes.get(id).?.grep;
+        if (regex_on) |on| p.flags.regex = on;
         if (!std.mem.eql(u8, p.query, query)) {
             // The worker reads `query`: stop it before the swap.
             p.abort.generation.store(std.math.maxInt(u32), .release);
@@ -485,6 +492,7 @@ pub fn runGrep(app: *App, query: []const u8) CommandError!void {
     if (app.input_style == .standard) if (app.activeEditor()) |e| {
         pane.flags.regex = e.find.regex;
     };
+    if (regex_on) |on| pane.flags.regex = on;
     const id = try app.panes.add(.{ .grep = pane });
     pane = undefined; // moved into the store
     const layout = app.layouts.current();
@@ -1112,6 +1120,8 @@ pub fn handle(app: *App, result: *Result) Allocator.Error!void {
     if (!result.done) jobs.progress(app, .search, result.pane, try std.fmt.allocPrint(app.frame.allocator(), "{d} so far", .{p.hits.items.len}));
     if (result.done) {
         p.loading = false;
+        // Every finished grep is the quickfix list (`:cnext` walks it).
+        if (p.err == null) try @import("quickfix.zig").fromGrepHits(app, p.hits.items, result.pane);
         {
             const n = p.hits.items.len;
             const words = try std.fmt.allocPrint(app.frame.allocator(), "{d} match{s} in {d} file{s}", .{ n, if (n == 1) "" else "es", p.groups.items.len, if (p.groups.items.len == 1) "" else "s" });
@@ -1178,6 +1188,8 @@ fn stepHit(app: *App, id: PaneId, p: *GrepPane, delta: i32) Allocator.Error!void
 /// grep pane stays.
 pub fn openHit(app: *App, id: PaneId, p: *GrepPane, hit: u32) Allocator.Error!void {
     if (hit >= p.hits.items.len) return;
+    // `:cnext` goes on from the hit the user opened.
+    @import("quickfix.zig").noteGrepHit(app, id, hit);
     const h = p.hits.items[hit];
     const path = try app.frame.allocator().dupe(u8, h.path);
     try app.noteRecent(path);
@@ -1189,7 +1201,6 @@ pub fn openHit(app: *App, id: PaneId, p: *GrepPane, hit: u32) Allocator.Error!vo
         e.buf.editor.placeCursorByte(@min(@as(usize, h.line) -| 1, e.buf.editor.lineCount() - 1), h.col);
         e.buf.editor.goal_col = null;
     }
-    _ = id;
     app.needs_render = true;
 }
 

@@ -103,7 +103,10 @@ pub fn lexpr(app: *App, args: []const u8) CommandError!void {
     e.loc_idx = null;
     if (listPane(app)) |lp| {
         const fresh = try copies(gpa, e.loclist.items);
-        lp.list.deinit();
+        // The rows only: `ListPane.deinit` would leave the filter undefined
+        // for the pane's own deinit to free a second time.
+        ListPane.freeEntries(gpa, lp.list.entries.items);
+        lp.list.entries.deinit(gpa);
         lp.list.entries = .fromOwnedSlice(fresh);
         lp.list.cursor = 0;
         lp.list.scroll = 0;

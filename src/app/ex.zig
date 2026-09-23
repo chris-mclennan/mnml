@@ -16,7 +16,6 @@ const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const EditorPane = app_mod.EditorPane;
 const command = @import("../core/command.zig");
-const os_path = @import("../core/os_path.zig");
 const side = @import("side.zig");
 const launcher_dock = @import("launcher_dock.zig");
 const marks_store = @import("marks_store.zig");
@@ -34,6 +33,7 @@ const ex_fname = @import("ex_fname.zig");
 const cmd_app = @import("cmd_app.zig");
 const cmd_file = @import("cmd_file.zig");
 const loclist = @import("loclist.zig");
+const quickfix = @import("quickfix.zig");
 
 /// 0-based inclusive rows.
 pub const Range = struct { first: usize, last: usize };
@@ -192,10 +192,22 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
         if (bang) return @import("messages.zig").dump(app);
         return command.run(app, .{ .static = .@"messages.show" });
     }
-    if (eqAny(verb, &.{ "cn", "cnext" })) return command.run(app, .{ .static = .@"qf.next" });
-    if (eqAny(verb, &.{ "cp", "cprev", "cprevious", "cN", "cNext" })) return command.run(app, .{ .static = .@"qf.prev" });
-    if (eqAny(verb, &.{ "cfir", "cfirst", "cr", "crewind" })) return command.run(app, .{ .static = .@"qf.first" });
-    if (eqAny(verb, &.{ "cla", "clast" })) return command.run(app, .{ .static = .@"qf.last" });
+    if (eqAny(verb, &.{ "cn", "cne", "cnext" })) return quickfix.go(app, .next);
+    if (eqAny(verb, &.{ "cp", "cprev", "cprevious", "cN", "cNext" })) return quickfix.go(app, .prev);
+    if (eqAny(verb, &.{ "cfir", "cfirst", "cr", "crewind" })) return quickfix.go(app, .first);
+    if (eqAny(verb, &.{ "cla", "clast" })) return quickfix.go(app, .last);
+    if (eqAny(verb, &.{"cc"})) {
+        const a = std.mem.trim(u8, args, " \t");
+        if (a.len == 0 and range == null) return quickfix.go(app, .current);
+        const nth = if (a.len > 0) std.fmt.parseInt(usize, a, 10) catch return app.diag.fail(arena, "E488: Trailing characters: {s}", .{a}) else range.?.last + 1;
+        return quickfix.go(app, .{ .nth = nth });
+    }
+    if (eqAny(verb, &.{ "cope", "copen" })) return quickfix.open(app);
+    if (eqAny(verb, &.{ "cw", "cwindow" })) return quickfix.window(app);
+    if (eqAny(verb, &.{ "ccl", "cclose" })) return quickfix.close(app);
+    if (eqAny(verb, &.{ "cl", "clist" })) return quickfix.list(app);
+    if (eqAny(verb, &.{ "gr", "grep" })) return quickfix.grepEx(app, args, bang);
+    if (eqAny(verb, &.{ "vim", "vimgrep" })) return quickfix.vimgrepEx(app, args, bang);
     if (eqAny(verb, &.{ "lex", "lexpr", "lgetexpr" })) return loclist.lexpr(app, args);
     if (eqAny(verb, &.{ "lop", "lopen", "lw", "lwindow" })) return loclist.open(app);
     if (eqAny(verb, &.{ "lcl", "lclose" })) return loclist.close(app);
@@ -214,7 +226,8 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     }
     if (eqAny(verb, &.{ "sp", "split" })) return splitOpen(app, .vertical, args);
     if (eqAny(verb, &.{ "vs", "vsplit" })) return splitOpen(app, .horizontal, args);
-    if (eqAny(verb, &.{ "cex", "cexpr", "cgetexpr" })) return cexpr(app, args);
+    if (eqAny(verb, &.{ "cex", "cexpr" })) return quickfix.cexpr(app, args, true);
+    if (eqAny(verb, &.{ "cgete", "cgetexpr" })) return quickfix.cexpr(app, args, false);
     if (eqAny(verb, &.{ "on", "only" })) return command.run(app, .{ .static = .@"view.only" });
     if (eqAny(verb, &.{ "tabnew", "tabe", "tabedit" })) return command.run(app, .{ .static = .@"tab.new" });
     if (eqAny(verb, &.{ "tabn", "tabnext" })) return command.run(app, .{ .static = .@"tab.next" });
@@ -343,41 +356,6 @@ fn splitOpen(app: *App, dir: @import("layout.zig").SplitDir, args: []const u8) C
     if (id == cur) return app.diag.fail(app.frame.allocator(), "{s} is the active pane", .{path});
     app.setActive(cur);
     return cmd_view.splitWith(app, dir, id);
-}
-
-/// `:cexpr path:line:col:text` (one entry per line of the argument):
-/// fills the quickfix pane.
-fn cexpr(app: *App, args: []const u8) CommandError!void {
-    const cmd_view = @import("cmd_view.zig");
-    var entries: std.ArrayListUnmanaged(app_mod.ListPane.Entry) = .empty;
-    const gpa = app.gpa;
-    errdefer {
-        for (entries.items) |e| {
-            gpa.free(e.text);
-            if (e.path) |p| gpa.free(p);
-        }
-        entries.deinit(gpa);
-    }
-    var lines = std.mem.splitScalar(u8, args, '\n');
-    while (lines.next()) |raw| {
-        const line = std.mem.trim(u8, raw, " \t\r");
-        if (line.len == 0) continue;
-        // The path ends at its first colon — after a drive letter on
-        // Windows (`C:\src\a.zig:12:3: msg`).
-        const loc = os_path.splitLocation(line, .native);
-        const path = loc.path;
-        var parts = std.mem.splitScalar(u8, loc.rest, ':');
-        const ln = std.fmt.parseInt(u32, parts.next() orelse "1", 10) catch 1;
-        const col = std.fmt.parseInt(u32, parts.next() orelse "1", 10) catch 1;
-        const text = parts.rest();
-        try entries.append(gpa, .{
-            .text = try gpa.dupe(u8, if (text.len > 0) text else line),
-            .path = try gpa.dupe(u8, path),
-            .line = ln,
-            .col = col,
-        });
-    }
-    try cmd_view.openListPane(app, .quickfix, try entries.toOwnedSlice(gpa));
 }
 
 fn eqAny(s: []const u8, list: []const []const u8) bool {
@@ -1943,7 +1921,7 @@ test "ex: :messages opens the picker, :messages! dumps, :cn/:cp walk the quickfi
     try f.ex("messages!");
     try testing.expect(std.mem.indexOf(u8, f.app.activeEditor().?.buf.editor.bytes(), "hello there") != null);
     try testing.expectError(error.Failed, f.ex("cn"));
-    try testing.expect(std.mem.indexOf(u8, f.app.diag.msg.?, "no quickfix list") != null);
+    try testing.expect(std.mem.indexOf(u8, f.app.diag.msg.?, "E42: No Errors") != null);
 }
 
 test "ex: q refuses a dirty buffer, q! discards, the last close quits" {
