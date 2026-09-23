@@ -161,6 +161,9 @@ pub const PtyPane = struct {
     /// scan's `waiting` for this pane's session holds only while the
     /// pane has printed nothing since — after that, the grid decides.
     needs_you_snap_gen: u64 = 0,
+    /// The AI session's end was announced (`sessions.trackNeedsYou`):
+    /// once per run — a restart clears it.
+    needs_you_ended: bool = false,
     /// Neovim's terminal-normal mode (`:help CTRL-\_CTRL-N`): the keys
     /// are the app's — the leader, the `Ctrl-W` family, `i` / `a` back
     /// to the child — and nothing reaches the child. vim profile only.

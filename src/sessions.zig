@@ -95,6 +95,7 @@ const pty_pane = @import("app/pty_pane.zig");
 const pty_mod = @import("pty");
 const pty_view = @import("ui/pty_view.zig");
 const bufferline = @import("ui/bufferline.zig");
+const effects = @import("ipc/effects.zig");
 const settings = @import("app/settings.zig");
 const Config = @import("config/Config.zig");
 const accent_color = @import("ui/accent_color.zig");
@@ -854,10 +855,17 @@ pub fn trackNeedsYou(app: *App) Allocator.Error!void {
     while (i < app.panes.slots.items.len) : (i += 1) {
         const pid: app_mod.PaneId = @intCast(i);
         const p = app.panes.pty(pid) orelse continue;
-        if (p.exit != null) {
+        if (p.exit) |e| {
             p.needs_you = false;
+            // An AI session that ends is announced once; a pane restored
+            // dormant never ran, so it has nothing to say.
+            if (!p.needs_you_ended) {
+                p.needs_you_ended = true;
+                if (!p.dormant and pty_pane.productOf(app, p) != null) try notifySession(app, pid, if (e.ok()) .finished else .failed);
+            }
             continue;
         }
+        p.needs_you_ended = false;
         const moved = p.fed_gen != p.needs_you_gen or app.sessions.adoptions != p.needs_you_adopted;
         if (!moved and p.needs_you_at_ms != 0) continue;
         if (p.needs_you_at_ms != 0 and app.now_ms - p.needs_you_at_ms < needs_you_ttl_ms) continue;
@@ -952,11 +960,54 @@ pub fn paneName(app: *App, pid: app_mod.PaneId) []const u8 {
     return pane.title();
 }
 
-/// The rising edge: a warn toast naming the pane, and the bell under
-/// `ui.session_bell`. The mark on its tab and card is `needsYou` itself.
+/// The rising edge: a warn toast naming the pane, and the desktop
+/// notification (`notifySession`) with its bell. The mark on its tab
+/// and card is `needsYou` itself.
 fn announceNeedsYou(app: *App, pid: app_mod.PaneId) Allocator.Error!void {
     try app.toastLevel(.warn, "session needs input: {s}", .{paneName(app, pid)});
-    if (app.cfg.ui.session_bell) app.bell_pending = true;
+    try notifySession(app, pid, .waiting);
+}
+
+pub const NotifyWhat = enum { waiting, finished, failed };
+
+/// The pane is the one being looked at: the active pane, the keyboard
+/// on it, and the terminal window in front (`App.host_focused`).
+pub fn paneFocused(app: *const App, pid: app_mod.PaneId) bool {
+    return app.host_focused and app.active == pid and app.focus == .pane;
+}
+
+/// `ui.session_notify` for a pane that is (or is not) being looked at.
+pub fn notifyWanted(mode: Config.SessionNotify, focused: bool) bool {
+    return switch (mode) {
+        .off => false,
+        .unfocused => !focused,
+        .always => true,
+    };
+}
+
+/// A session pane started needing you, or ended: the desktop
+/// notification through the terminal (the IPC `notify` path,
+/// `effects.notify` with `.terminal`), and the bell after it under
+/// `ui.session_bell` — when `ui.session_notify` wants one for a pane
+/// in this state of focus. The toast is the caller's.
+pub fn notifySession(app: *App, pid: app_mod.PaneId, what: NotifyWhat) Allocator.Error!void {
+    if (!notifyWanted(app.cfg.ui.session_notify, paneFocused(app, pid))) return;
+    try effects.notify(app, .{
+        .title = switch (what) {
+            .waiting => "mnml — needs you",
+            .finished => "mnml — session finished",
+            .failed => "mnml — session failed",
+        },
+        .body = paneName(app, pid),
+        .level = switch (what) {
+            .waiting => .warn,
+            .finished => .info,
+            .failed => .@"error",
+        },
+        .sound = app.cfg.ui.session_bell,
+        .toast = false,
+        .terminal = true,
+    });
 }
 
 /// The card's state for the `f` filter and the stand-in row: the exit
@@ -3402,6 +3453,88 @@ test "the Waiting sort: the sessions that need you lead, the manual order under 
     try testing.expectEqualStrings("Waiting", menu.items[2].label);
     try testing.expect(menu.items[2].action.command == .@"sessions.sort_waiting");
     try testing.expect(menu.items[0].checked and !menu.items[2].checked);
+}
+
+test "notifyWanted: off never, unfocused only while the pane is not being looked at, always always" {
+    try testing.expect(!notifyWanted(.off, false));
+    try testing.expect(!notifyWanted(.off, true));
+    try testing.expect(notifyWanted(.unfocused, false));
+    try testing.expect(!notifyWanted(.unfocused, true));
+    try testing.expect(notifyWanted(.always, false));
+    try testing.expect(notifyWanted(.always, true));
+}
+
+/// How many of the host log's escapes contain `needle`.
+fn hostCount(app: *const App, needle: []const u8) usize {
+    var n: usize = 0;
+    for (app.host_log.items) |e| {
+        if (std.mem.indexOf(u8, e, needle) != null) n += 1;
+    }
+    return n;
+}
+
+test "a session pane that starts needing you, or ends, notifies through the terminal under ui.session_notify — not the pane you are looking at unless the window is not in front; the bell rides along under ui.session_bell" {
+    var f = try Fixture.init(100, 30);
+    defer f.deinit();
+    try f.fakeClaude();
+    const app = &f.app;
+    try app.env.put("TERM_PROGRAM", "xterm-ish");
+    try testing.expectEqual(Config.SessionNotify.unfocused, app.cfg.ui.session_notify);
+    // Looked at: the default says nothing (the toast still does).
+    const seen = try f.openCard("ask-9");
+    app.showPane(seen);
+    try testing.expect(paneFocused(app, seen));
+    try testing.expect(try f.waitNeedsYou(seen, true, 5000));
+    try testing.expectEqual(@as(usize, 0), hostCount(app, "]777;"));
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "session needs input") != null);
+    // Behind another pane: OSC 777 and OSC 9, naming it; no bell yet.
+    const plain = try f.openCard("plain-9");
+    const behind = try f.openCard("ask-10");
+    app.showPane(plain);
+    try testing.expect(try f.waitNeedsYou(behind, true, 5000));
+    try testing.expectEqual(@as(usize, 1), hostCount(app, "\x1b]777;notify;mnml — needs you;"));
+    try testing.expectEqual(@as(usize, 1), hostCount(app, "\x1b]9;mnml — needs you: "));
+    try testing.expectEqual(@as(usize, 0), hostCount(app, "\x07\x07"));
+    for (app.host_log.items) |e| try testing.expect(!std.mem.eql(u8, e, "\x07"));
+    // The window in the background counts as not looking, even at the
+    // active pane; the bell follows under ui.session_bell.
+    app.cfg.ui.session_bell = true;
+    app.host_focused = false;
+    const third = try f.openCard("ask-11");
+    app.showPane(third);
+    try testing.expect(try f.waitNeedsYou(third, true, 5000));
+    try testing.expectEqual(@as(usize, 2), hostCount(app, "]777;notify;mnml — needs you;"));
+    try testing.expectEqualStrings("\x07", app.host_log.items[app.host_log.items.len - 1]);
+    // `off` sends nothing; `always` sends while looking.
+    app.host_focused = true;
+    app.cfg.ui.session_notify = .off;
+    const quiet = try f.openCard("ask-12");
+    try testing.expect(try f.waitNeedsYou(quiet, true, 5000));
+    try testing.expectEqual(@as(usize, 2), hostCount(app, "]777;notify;mnml — needs you;"));
+    app.cfg.ui.session_notify = .always;
+    const loud = try f.openCard("ask-13");
+    app.showPane(loud);
+    try testing.expect(try f.waitNeedsYou(loud, true, 5000));
+    try testing.expectEqual(@as(usize, 3), hostCount(app, "]777;notify;mnml — needs you;"));
+    // An AI session that ends: once, finished or failed by its exit.
+    app.cfg.ui.session_notify = .unfocused;
+    app.cfg.ui.session_bell = false;
+    const done = try f.openCard("exit-9");
+    const bad = try f.openCard("fail-9");
+    app.showPane(plain);
+    try testing.expect(try f.waitExit(done, 5000));
+    try testing.expect(try f.waitExit(bad, 5000));
+    try f.app.tick(App.nowMs(testing.io));
+    try testing.expectEqual(@as(usize, 1), hostCount(app, "]777;notify;mnml — session finished;"));
+    try testing.expectEqual(@as(usize, 1), hostCount(app, "]777;notify;mnml — session failed;"));
+    try f.app.tick(App.nowMs(testing.io));
+    try testing.expectEqual(@as(usize, 1), hostCount(app, "]777;notify;mnml — session finished;"));
+    // A plain shell's exit is no session's end.
+    const sh = try f.openShell("exit 0");
+    try testing.expect(try f.waitExit(sh, 5000));
+    try f.app.tick(App.nowMs(testing.io));
+    try testing.expectEqual(@as(usize, 1), hostCount(app, "]777;notify;mnml — session finished;"));
+    try testing.expectEqual(@as(usize, 1), hostCount(app, "\x1b]9;mnml — session finished: "));
 }
 
 test "waitingStep: the next waiting pane past the active one, or the one before it, wrapping; the only one is itself; none is null" {

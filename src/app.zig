@@ -1218,6 +1218,19 @@ pub const App = struct {
     /// // changed (sessions-merge): a session needs input and
     /// `ui.session_bell` is on — the loop rings the terminal once.
     bell_pending: bool = false,
+    /// Bytes for the host terminal itself, not the screen: a session
+    /// notification's OSC 777 / OSC 9 and the bell riding with it
+    /// (`hostWrite`). Only a terminal loop fills it (`host_tty`); it
+    /// writes them raw after the tick and empties it.
+    host_out: std.ArrayListUnmanaged(u8) = .empty,
+    /// The terminal loop drains `host_out` — headless and the tests do
+    /// not, so nothing collects there.
+    host_tty: bool = false,
+    /// The last `host_log_max` host writes, each whole, oldest first —
+    /// what `status.json` reports as `hostEscapes`, so a headless run
+    /// and a `.test` can see what the terminal would have been sent.
+    /// Owned.
+    host_log: std.ArrayListUnmanaged([]u8) = .empty,
     pane_cols: usize = 80,
     /// Where the last render put the terminal cursor, if visible.
     /// Written by every surface that takes typing as it draws; draw
@@ -1851,6 +1864,9 @@ pub const App = struct {
         self.cmd_history.deinit(gpa);
         for (self.recent_commands.items) |c| gpa.free(c);
         self.recent_commands.deinit(gpa);
+        self.host_out.deinit(gpa);
+        for (self.host_log.items) |e| gpa.free(e);
+        self.host_log.deinit(gpa);
         self.runners.deinit(gpa);
         self.tasks.deinit(gpa);
         self.chord.clear(gpa);
@@ -2186,6 +2202,19 @@ pub const App = struct {
         if (idx >= self.toasts.items.len) return;
         freeToast(self.gpa, self.toasts.orderedRemove(idx));
         self.needs_render = true;
+    }
+
+    pub const host_log_max: usize = 16;
+
+    /// Queue `bytes` for the host terminal (`host_out`) and keep a copy
+    /// in `host_log` — the one door an escape meant for the terminal
+    /// itself goes through.
+    pub fn hostWrite(self: *App, bytes: []const u8) Allocator.Error!void {
+        const copy = try self.gpa.dupe(u8, bytes);
+        errdefer self.gpa.free(copy);
+        if (self.host_tty) try self.host_out.appendSlice(self.gpa, bytes);
+        if (self.host_log.items.len >= host_log_max) self.gpa.free(self.host_log.orderedRemove(0));
+        try self.host_log.append(self.gpa, copy);
     }
 
     pub fn lastToast(self: *const App) ?[]const u8 {

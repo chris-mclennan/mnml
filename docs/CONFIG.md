@@ -219,7 +219,8 @@ otherwise. Copy what you need; leave the rest out.
         .plus_menu_hidden = .{},
         .auto_refresh_off = .{}, // panel ids whose auto-refresh is off
         .sessions_sort = .auto, // .auto (State: needs you → thinking → idle → ended) | .manual (the J / K order) | .waiting (the sessions that need you first, the manual order under them)
-        .session_bell = false, // ring the terminal bell when a session starts waiting for input (SESSIONS toasts once per edge either way)
+        .session_bell = false, // ring the terminal bell with a session notification (so session_notify gates it); a session no pane here runs rings it on its own. SESSIONS toasts once per edge either way
+        .session_notify = .unfocused, // a desktop notification, through the terminal, when a session pane starts needing you (a permission prompt, a question) or ends: .off | .unfocused (its pane is not the focused one, or the terminal window is not) | .always. OSC 777 for ghostty and WezTerm, OSC 9 for iTerm2, both elsewhere
         .session_ended_grace_min = 10, // minutes an ended session stays listed in SESSIONS before the history chip hides it (0 = at once)
         .todos_sort = .newest, // .newest | .oldest | .name | .name_desc
         .notes_sort = .newest,
