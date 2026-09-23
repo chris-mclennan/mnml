@@ -39,6 +39,7 @@ pub const table = .{
     .@"browser.network_throttle" = &throttlePickerCmd,
     .@"browser.scroll_node_into_view" = &scrollNodeCmd,
     .@"browser.url_history" = &urlHistoryCmd,
+    .@"browser.switch_tab" = &switchTabCmd,
     .@"browser.cookies" = &cookiesCmd,
     .@"browser.delete_cookie" = &deleteCookieCmd,
     .@"browser.edit_cookie" = &editCookieCmd,
@@ -91,7 +92,7 @@ fn openBlankCmd(app: *App) CommandError!void {
 
 fn navigateCmd(app: *App) CommandError!void {
     const b = try requireBrowser(app);
-    try openPrompt(app, "Navigate to", .browser_navigate, b.url);
+    try openPrompt(app, "Navigate to", .browser_navigate, b.shownUrl());
 }
 
 /// Reload the page; on a pane whose session ended, launch Chrome again.
@@ -234,6 +235,31 @@ fn urlHistoryCmd(app: *App) CommandError!void {
         try labels.append(gpa, try gpa.dupe(u8, b.visited.items[i]));
     }
     try cmd_picker.openPicker(app, "Browser history", .browser_url_history, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0));
+}
+
+/// `browser.switch_tab` (T): pick which of the pane's pages it shows —
+/// its own, or a popup / new tab the page opened.
+fn switchTabCmd(app: *App) CommandError!void {
+    const b = try requireBrowser(app);
+    const gpa = app.gpa;
+    var labels: std.ArrayListUnmanaged([]u8) = .empty;
+    errdefer {
+        for (labels.items) |l| gpa.free(l);
+        labels.deinit(gpa);
+    }
+    const mark = struct {
+        fn of(on: bool) []const u8 {
+            return if (on) "● " else "  ";
+        }
+    };
+    try labels.append(gpa, try std.fmt.allocPrint(gpa, "{s}page — {s}", .{ mark.of(b.focus == null), b.url }));
+    for (b.targets.items) |*t| if (t.isPage() and t.session != null) {
+        const on = if (b.focus) |f| std.mem.eql(u8, f, t.session.?) else false;
+        try labels.append(gpa, try std.fmt.allocPrint(gpa, "{s}tab — {s}", .{ mark.of(on), if (t.url.len > 0) t.url else "(loading)" }));
+    };
+    // The errdefer frees the one label.
+    if (labels.items.len == 1) return app.diag.fail(app.frame.allocator(), "browser: the page has opened no other tab", .{});
+    try cmd_picker.openPicker(app, "Browser tabs", .browser_tab, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0));
 }
 
 fn cookiesCmd(app: *App) CommandError!void {
@@ -387,6 +413,15 @@ pub fn acceptPicker(app: *App, kind: app_mod.PickerKind, i: usize, label: []cons
         .browser_device => try browser.applyDevice(app, b, i),
         .browser_throttle => try browser.applyThrottle(app, b, i),
         .browser_url_history => try browser.navigate(app, b, label),
+        .browser_tab => {
+            // Row 0 is the pane's own page; then its popups, in order.
+            if (i == 0) return browser.focusTarget(app, b, null);
+            var n: usize = 0;
+            for (b.targets.items) |*t| if (t.isPage() and t.session != null) {
+                n += 1;
+                if (n == i) return browser.focusTarget(app, b, t.session);
+            };
+        },
         else => {},
     }
 }

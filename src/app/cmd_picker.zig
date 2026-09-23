@@ -647,7 +647,7 @@ pub fn accept(app: *App, idx: usize) Allocator.Error!void {
             app.focus = if (app.active) |a| .{ .pane = a } else .tree;
             try f(app, i, label);
         },
-        .http_env_vars, .http_env_delete, .http_env_pick, .http_history, .http_captured, .http_chains, .auth_presets, .cookies_show, .cookies_delete, .http_insert_header, .http_copy_as, .http_lookup_file, .http_lookup_item, .http_find_request, .http_move_target, .ws_history, .browser_device, .browser_throttle, .browser_url_history => |kind| {
+        .http_env_vars, .http_env_delete, .http_env_pick, .http_history, .http_captured, .http_chains, .auth_presets, .cookies_show, .cookies_delete, .http_insert_header, .http_copy_as, .http_lookup_file, .http_lookup_item, .http_find_request, .http_move_target, .ws_history, .browser_device, .browser_throttle, .browser_url_history, .browser_tab => |kind| {
             const label = try app.frame.allocator().dupe(u8, p.labels[i]);
             app.overlay.deinit(app.gpa);
             app.focus = if (app.active) |a| .{ .pane = a } else .tree;
@@ -656,7 +656,7 @@ pub fn accept(app: *App, idx: usize) Allocator.Error!void {
                     error.OutOfMemory => return error.OutOfMemory,
                     else => {},
                 },
-                .browser_device, .browser_throttle, .browser_url_history => try @import("cmd_browser.zig").acceptPicker(app, kind, i, label),
+                .browser_device, .browser_throttle, .browser_url_history, .browser_tab => try @import("cmd_browser.zig").acceptPicker(app, kind, i, label),
                 else => try @import("cmd_http.zig").acceptPicker(app, kind, i, label),
             }
         },

@@ -82,6 +82,8 @@ pub const Model = struct {
     filter_focused: bool,
     /// The kind of JavaScript dialog the page is parked on, if one.
     dialog: ?[]const u8 = null,
+    /// The pane's pages: its own plus the popups it opened.
+    tabs: usize = 1,
 };
 
 pub const hit_panel_base: u32 = 1; // + Panel index
@@ -107,6 +109,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, m: Model) Outcome {
     const badge_fg = if (std.mem.eql(u8, m.state, "connected")) t.info_fg else if (crashed) t.error_fg else t.muted;
     const bw = ui.putStr(head.x, head.y, head.w, badge, Theme.onBg(badge_fg, t.panel_bg.bg));
     var label = m.url;
+    if (m.tabs > 1) label = ui.fmt("{s}   [{d} tabs · T]", .{ label, m.tabs });
     if (m.device) |d| label = ui.fmt("{s}   [{s}]", .{ m.url, d });
     if (m.port) |p| label = ui.fmt("{s}   :{d}", .{ label, p });
     _ = ui.putStr(head.x + bw, head.y, head.w -| bw, ui.clipStr(label, head.w -| bw), Theme.onBg(t.fg, t.panel_bg.bg));

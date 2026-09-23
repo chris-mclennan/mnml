@@ -85,6 +85,31 @@ pub const NetEntry = struct {
 /// the domain).
 pub const Pending = enum { eval, eval_json, screenshot, screenshot_clip, pdf, cookies, storage, perf, dom, box_model, navigate, dialog, quiet, silent };
 
+/// A target besides the pane's own page: a popup or new tab the page
+/// opened, or a cross-site frame or worker Chrome attached. Owned.
+pub const Target = struct {
+    id: []u8,
+    /// `page` (a popup / new tab), `iframe`, `worker`…
+    kind: []u8,
+    url: []u8,
+    /// The flattened session its messages carry, once attached.
+    session: ?[]u8 = null,
+    /// Its first URL is in the log (`⤴ new tab → …`).
+    announced: bool = false,
+    crashed: bool = false,
+
+    fn deinit(self: *Target, gpa: Allocator) void {
+        gpa.free(self.id);
+        gpa.free(self.kind);
+        gpa.free(self.url);
+        if (self.session) |x| gpa.free(x);
+    }
+
+    pub fn isPage(self: *const Target) bool {
+        return std.mem.eql(u8, self.kind, "page");
+    }
+};
+
 /// A JavaScript dialog the page is parked on (`alert` / `confirm` /
 /// `prompt` / `beforeunload`) until the pane answers it. Owned.
 pub const Dialog = struct {
@@ -217,8 +242,13 @@ pub const BrowserPane = struct {
     pane_id: ?PaneId = null,
     /// Tests: the stand-in Chrome the worker runs.
     binary: ?[]const u8 = null,
+    /// Popups, cross-site frames and workers (`Target`).
+    targets: std.ArrayListUnmanaged(Target) = .empty,
     /// The pane's own page's target id, off its WebSocket URL.
     self_target: ?[]u8 = null,
+    /// The popup the pane shows and sends to (its session); null is the
+    /// pane's own page. `url` stays the own page's.
+    focus: ?[]u8 = null,
     dialog: ?Dialog = null,
     /// The DOM panel was open across a navigation: ask again on load.
     dom_refresh: bool = false,
@@ -257,6 +287,8 @@ pub const BrowserPane = struct {
         for (self.visited.items) |v| gpa.free(v);
         self.visited.deinit(gpa);
         self.filter.deinit(gpa);
+        self.clearTargets();
+        self.targets.deinit(gpa);
         if (self.self_target) |t| gpa.free(t);
         if (self.dialog) |*d| d.deinit(gpa);
         self.clearFallbacks();
@@ -266,6 +298,13 @@ pub const BrowserPane = struct {
         gpa.free(self.url);
         gpa.free(self.title_buf);
         gpa.free(self.profile_dir);
+    }
+
+    fn clearTargets(self: *BrowserPane) void {
+        for (self.targets.items) |*t| t.deinit(self.gpa);
+        self.targets.clearRetainingCapacity();
+        if (self.focus) |f| self.gpa.free(f);
+        self.focus = null;
     }
 
     fn clearFallbacks(self: *BrowserPane) void {
@@ -287,6 +326,39 @@ pub const BrowserPane = struct {
         self.dialog = null;
     }
 
+    pub fn targetBySession(self: *BrowserPane, session: []const u8) ?*Target {
+        for (self.targets.items) |*t| if (t.session) |x| if (std.mem.eql(u8, x, session)) return t;
+        return null;
+    }
+
+    pub fn targetById(self: *BrowserPane, id: []const u8) ?*Target {
+        for (self.targets.items) |*t| if (std.mem.eql(u8, t.id, id)) return t;
+        return null;
+    }
+
+    fn removeTarget(self: *BrowserPane, t: *Target) void {
+        const i = (@intFromPtr(t) - @intFromPtr(self.targets.items.ptr)) / @sizeOf(Target);
+        var gone = self.targets.orderedRemove(i);
+        gone.deinit(self.gpa);
+    }
+
+    /// The popup that has the focus, if one does.
+    pub fn focused(self: *BrowserPane) ?*Target {
+        return self.targetBySession(self.focus orelse return null);
+    }
+
+    /// The URL the header shows: the focused popup's, else the page's.
+    pub fn shownUrl(self: *BrowserPane) []const u8 {
+        return if (self.focused()) |t| t.url else self.url;
+    }
+
+    /// Whether a message from `session` is from what the pane shows.
+    fn isFocused(self: *const BrowserPane, session: ?[]const u8) bool {
+        const a = session orelse return self.focus == null;
+        const b = self.focus orelse return false;
+        return std.mem.eql(u8, a, b);
+    }
+
     fn freeRows(gpa: Allocator, rows: *std.ArrayListUnmanaged(Row)) void {
         for (rows.items) |r| {
             gpa.free(r.text);
@@ -306,7 +378,7 @@ pub const BrowserPane = struct {
             .crashed => "✗",
             .closed => "·",
         };
-        const fresh = try std.fmt.allocPrint(self.gpa, "browser {s} {s}", .{ badge, history.shortUrl(self.url) });
+        const fresh = try std.fmt.allocPrint(self.gpa, "browser {s} {s}", .{ badge, history.shortUrl(self.shownUrl()) });
         self.gpa.free(self.title_buf);
         self.title_buf = fresh;
     }
@@ -620,9 +692,10 @@ fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, env: *const std.pro
 
 // ─── requests ───────────────────────────────────────────────────────────
 
-/// Send a CDP request from the pane (queued until connected).
+/// Send a CDP request from the pane to what it shows — its page, or
+/// the focused popup (queued until connected).
 pub fn send(app: *App, p: *BrowserPane, method: []const u8, params_json: []const u8, purpose: Pending) Allocator.Error!void {
-    _ = try sendTo(app, p, method, params_json, purpose, null);
+    _ = try sendTo(app, p, method, params_json, purpose, p.focus);
 }
 
 /// `send`, to a given session (null: the pane's own page). The request
@@ -706,6 +779,7 @@ pub fn handle(app: *App, ev: *CdpEvent) Allocator.Error!void {
         .closed => |reason| {
             p.state = .closed;
             p.reap();
+            p.clearTargets();
             p.clearDialog();
             p.clearFallbacks();
             p.pending.clearRetainingCapacity();
@@ -978,6 +1052,18 @@ fn saveBase64(app: *App, data: []const u8, ext: []const u8) Allocator.Error!?[]c
     return path;
 }
 
+/// `[frame localhost:8080] ` before a line from a target the pane is
+/// not showing: a cross-site frame, a popup, or the page itself while a
+/// popup has the focus.
+fn sourceTag(arena: Allocator, p: *BrowserPane, session: ?[]const u8) Allocator.Error![]const u8 {
+    if (p.isFocused(session)) return "";
+    const sid = session orelse return "[page] ";
+    const t = p.targetBySession(sid) orelse return "[frame] ";
+    const kind: []const u8 = if (t.isPage()) "tab" else if (std.mem.eql(u8, t.kind, "iframe")) "frame" else t.kind;
+    if (t.url.len == 0) return std.fmt.allocPrint(arena, "[{s}] ", .{kind});
+    return std.fmt.allocPrint(arena, "[{s} {s}] ", .{ kind, history.shortUrl(t.url) });
+}
+
 fn eqlOpt(a: ?[]const u8, b: []const u8) bool {
     return if (a) |x| std.mem.eql(u8, x, b) else false;
 }
@@ -1014,34 +1100,91 @@ fn resetForNavigation(app: *App, p: *BrowserPane, loader_id: ?[]const u8) Alloca
     if (p.panel == .dom) p.dom_refresh = true;
 }
 
+/// A new target Chrome told the pane of, or null if it is ours or not
+/// one the pane follows.
+fn addTarget(app: *App, p: *BrowserPane, info: std.json.Value) Allocator.Error!?*Target {
+    const tid = cdp.str(info, &.{"targetId"}) orelse return null;
+    if (eqlOpt(p.self_target, tid)) return null;
+    if (p.targetById(tid)) |t| return t;
+    const kind = cdp.str(info, &.{"type"}) orelse "other";
+    var t: Target = .{ .id = try app.gpa.dupe(u8, tid), .kind = undefined, .url = undefined };
+    errdefer app.gpa.free(t.id);
+    t.kind = try app.gpa.dupe(u8, kind);
+    errdefer app.gpa.free(t.kind);
+    t.url = try app.gpa.dupe(u8, cdp.str(info, &.{"url"}) orelse "");
+    errdefer app.gpa.free(t.url);
+    try p.targets.append(app.gpa, t);
+    return &p.targets.items[p.targets.items.len - 1];
+}
+
+/// The first URL a popup or frame reports: one line in the log.
+fn announce(app: *App, p: *BrowserPane, t: *Target) Allocator.Error!void {
+    if (t.announced or t.url.len == 0) return;
+    const arena = app.frame.allocator();
+    if (t.isPage()) {
+        t.announced = true;
+        try p.push(.nav, try std.fmt.allocPrint(arena, "⤴ new tab → {s} — T switches to it", .{t.url}));
+        app.toast("browser: the page opened a new tab — T switches to it", .{});
+    } else if (std.mem.eql(u8, t.kind, "iframe")) {
+        t.announced = true;
+        try p.push(.nav, try std.fmt.allocPrint(arena, "attached frame: {s}", .{t.url}));
+    }
+}
+
+/// Back to the pane's own page, when the focused popup went away.
+fn unfocus(p: *BrowserPane, t: *const Target) Allocator.Error!bool {
+    const f = p.focus orelse return false;
+    const s = t.session orelse return false;
+    if (!std.mem.eql(u8, f, s)) return false;
+    p.gpa.free(f);
+    p.focus = null;
+    try p.refreshTitle();
+    return true;
+}
+
 fn onEvent(app: *App, p: *BrowserPane, method: []const u8, m: cdp.Message) Allocator.Error!void {
     const arena = app.frame.allocator();
+    const sid = m.session_id;
+    const shown = p.isFocused(sid);
     if (std.mem.eql(u8, method, "Runtime.consoleAPICalled")) {
         const kind = cdp.str(m.params, &.{"type"}) orelse "log";
         const args: []const std.json.Value = if (cdp.get(m.params, &.{"args"})) |a| (if (a == .array) a.array.items else &.{}) else &.{};
         const text = try console.formatArgs(arena, args);
         const is_err = std.mem.eql(u8, kind, "error") or std.mem.eql(u8, kind, "warning") or std.mem.eql(u8, kind, "assert");
-        try p.push(if (is_err) .console_err else .console, try std.fmt.allocPrint(arena, "console.{s}: {s}", .{ console.callName(kind), text }));
+        try p.push(if (is_err) .console_err else .console, try std.fmt.allocPrint(arena, "{s}console.{s}: {s}", .{ try sourceTag(arena, p, sid), console.callName(kind), text }));
     } else if (std.mem.eql(u8, method, "Log.entryAdded")) {
         const level = cdp.str(m.params, &.{ "entry", "level" }) orelse "info";
         const text = cdp.str(m.params, &.{ "entry", "text" }) orelse "";
-        try p.push(if (std.mem.eql(u8, level, "error") or std.mem.eql(u8, level, "warning")) .console_err else .console, try std.fmt.allocPrint(arena, "[{s}] {s}", .{ level, text }));
+        try p.push(if (std.mem.eql(u8, level, "error") or std.mem.eql(u8, level, "warning")) .console_err else .console, try std.fmt.allocPrint(arena, "{s}[{s}] {s}", .{ try sourceTag(arena, p, sid), level, text }));
     } else if (std.mem.eql(u8, method, "Runtime.exceptionThrown")) {
         const text = cdp.str(m.params, &.{ "exceptionDetails", "text" }) orelse "exception";
         const desc = cdp.str(m.params, &.{ "exceptionDetails", "exception", "description" }) orelse "";
-        try p.push(.console_err, try std.fmt.allocPrint(arena, "{s} {s}", .{ text, std.mem.sliceTo(desc, '\n') }));
+        try p.push(.console_err, try std.fmt.allocPrint(arena, "{s}{s} {s}", .{ try sourceTag(arena, p, sid), text, std.mem.sliceTo(desc, '\n') }));
     } else if (std.mem.eql(u8, method, "Page.frameNavigated")) {
         if (cdp.str(m.params, &.{ "frame", "parentId" }) != null) return;
         const url = cdp.str(m.params, &.{ "frame", "url" }) orelse return;
-        try p.setUrl(url);
-        try resetForNavigation(app, p, cdp.str(m.params, &.{ "frame", "loaderId" }));
-        if (p.state == .crashed) {
-            p.state = .connected;
+        if (sid) |x| {
+            // A popup's own document: its target's URL; the panels
+            // reset only for the one the pane shows.
+            const t = p.targetBySession(x) orelse return;
+            if (!t.isPage()) return;
+            const copy = try app.gpa.dupe(u8, url);
+            app.gpa.free(t.url);
+            t.url = copy;
+            try announce(app, p, t);
+            if (!shown) return;
             try p.refreshTitle();
+        } else try p.setUrl(url);
+        if (shown) {
+            try resetForNavigation(app, p, cdp.str(m.params, &.{ "frame", "loaderId" }));
+            if (p.state == .crashed) {
+                p.state = .connected;
+                try p.refreshTitle();
+            }
         }
-        try p.push(.nav, try std.fmt.allocPrint(arena, "navigated: {s}", .{url}));
+        try p.push(.nav, try std.fmt.allocPrint(arena, "{s}navigated: {s}", .{ try sourceTag(arena, p, sid), url }));
     } else if (std.mem.eql(u8, method, "Page.loadEventFired")) {
-        if (!p.dom_refresh) return;
+        if (!shown or !p.dom_refresh) return;
         p.dom_refresh = false;
         if (p.panel == .dom) try send(app, p, "DOM.getDocument", "{\"depth\":-1}", .dom);
     } else if (std.mem.eql(u8, method, "Page.javascriptDialogOpening")) {
@@ -1054,10 +1197,10 @@ fn onEvent(app: *App, p: *BrowserPane, method: []const u8, m: cdp.Message) Alloc
         errdefer app.gpa.free(d.message);
         d.default_prompt = try app.gpa.dupe(u8, cdp.str(m.params, &.{"defaultPrompt"}) orelse "");
         errdefer app.gpa.free(d.default_prompt);
-        d.session = if (m.session_id) |x| try app.gpa.dupe(u8, x) else null;
+        d.session = if (sid) |x| try app.gpa.dupe(u8, x) else null;
         p.dialog = d;
         const how: []const u8 = if (std.mem.eql(u8, kind, "alert")) "Enter dismisses it" else if (std.mem.eql(u8, kind, "prompt")) "Enter answers · Esc cancels" else "Enter accepts · Esc cancels";
-        try p.push(.console_err, try std.fmt.allocPrint(arena, "dialog ({s}): {s} — the page waits: {s}", .{ kind, message, how }));
+        try p.push(.console_err, try std.fmt.allocPrint(arena, "{s}dialog ({s}): {s} — the page waits: {s}", .{ try sourceTag(arena, p, sid), kind, message, how }));
         app.toast("browser: the page opened a {s} dialog — {s}", .{ kind, how });
     } else if (std.mem.eql(u8, method, "Page.javascriptDialogClosed")) {
         if (p.dialog == null) return;
@@ -1065,14 +1208,24 @@ fn onEvent(app: *App, p: *BrowserPane, method: []const u8, m: cdp.Message) Alloc
         const accepted = if (cdp.get(m.params, &.{"result"})) |r| r == .bool and r.bool else false;
         try p.push(.system, if (accepted) "dialog closed: accepted" else "dialog closed: cancelled");
     } else if (std.mem.eql(u8, method, "Inspector.targetCrashed")) {
-        // A child session's renderer is not the page's.
-        if (m.session_id != null) return;
-        return onCrash(app, p);
+        if (shown) return onCrash(app, p);
+        const t = p.targetBySession(sid orelse return) orelse return;
+        if (t.crashed) return;
+        t.crashed = true;
+        try p.push(.console_err, try std.fmt.allocPrint(arena, "{s}crashed", .{try sourceTag(arena, p, sid)}));
     } else if (std.mem.eql(u8, method, "Target.targetCrashed")) {
         const tid = cdp.str(m.params, &.{"targetId"}) orelse return;
-        if (eqlOpt(p.self_target, tid)) return onCrash(app, p);
+        if (eqlOpt(p.self_target, tid)) {
+            if (p.focus == null) try onCrash(app, p) else try p.push(.console_err, "[page] crashed — T back to it, then r reloads");
+            return;
+        }
+        const t = p.targetById(tid) orelse return;
+        if (t.crashed) return;
+        t.crashed = true;
+        if (t.session) |x| if (p.isFocused(x)) return onCrash(app, p);
+        try p.push(.console_err, try std.fmt.allocPrint(arena, "{s}crashed", .{try sourceTag(arena, p, t.session)}));
     } else if (std.mem.eql(u8, method, "Inspector.targetReloadedAfterCrash")) {
-        if (p.state != .crashed) return;
+        if (!shown or p.state != .crashed) return;
         p.state = .connected;
         try p.refreshTitle();
     } else if (std.mem.eql(u8, method, "Network.requestWillBeSent")) {
@@ -1163,10 +1316,55 @@ fn onEvent(app: *App, p: *BrowserPane, method: []const u8, m: cdp.Message) Alloc
         // A navigation the page itself cut short is not a failure worth a line.
         const canceled = if (cdp.get(m.params, &.{"canceled"})) |c| c == .bool and c.bool else false;
         if (!canceled) try p.push(.console_err, try std.fmt.allocPrint(arena, "✗ {s} {s} — {s}", .{ n.method, history.shortUrl(n.url), why }));
+    } else if (std.mem.eql(u8, method, "Target.targetCreated")) {
+        const info = cdp.get(m.params, &.{"targetInfo"}) orelse return;
+        // A popup or a new tab: page-level auto-attach never reaches
+        // it, so the pane attaches itself.
+        if (!std.mem.eql(u8, cdp.str(info, &.{"type"}) orelse "", "page")) return;
+        const t = (try addTarget(app, p, info)) orelse return;
+        try announce(app, p, t);
+        if (t.session == null) {
+            const params = try std.fmt.allocPrint(arena, "{{\"targetId\":{f},\"flatten\":true}}", .{std.json.fmt(t.id, .{})});
+            _ = try sendTo(app, p, "Target.attachToTarget", params, .silent, null);
+        }
+    } else if (std.mem.eql(u8, method, "Target.targetInfoChanged")) {
+        const info = cdp.get(m.params, &.{"targetInfo"}) orelse return;
+        const t = p.targetById(cdp.str(info, &.{"targetId"}) orelse return) orelse return;
+        const url = cdp.str(info, &.{"url"}) orelse return;
+        if (!std.mem.eql(u8, t.url, url)) {
+            const copy = try app.gpa.dupe(u8, url);
+            app.gpa.free(t.url);
+            t.url = copy;
+            if (t.session) |x| if (p.isFocused(x)) try p.refreshTitle();
+        }
+        try announce(app, p, t);
     } else if (std.mem.eql(u8, method, "Target.attachedToTarget")) {
-        const url = cdp.str(m.params, &.{ "targetInfo", "url" }) orelse "";
-        const ty = cdp.str(m.params, &.{ "targetInfo", "type" }) orelse "";
-        try p.push(.nav, try std.fmt.allocPrint(arena, "attached {s}: {s}", .{ ty, url }));
+        const child = cdp.str(m.params, &.{"sessionId"}) orelse return;
+        const info = cdp.get(m.params, &.{"targetInfo"}) orelse return;
+        const t = (try addTarget(app, p, info)) orelse return;
+        if (t.session) |old| app.gpa.free(old);
+        t.session = try app.gpa.dupe(u8, child);
+        // Flatten mode: a child session sends nothing until its own
+        // domains are enabled on it. A worker's console already reaches
+        // the page's Log domain, so only frames and popups get them.
+        const follow = t.isPage() or std.mem.eql(u8, t.kind, "iframe");
+        if (follow) {
+            for ([_][]const u8{ "Runtime.enable", "Log.enable", "Network.enable" }) |dom| _ = try sendTo(app, p, dom, "{}", .silent, child);
+            if (t.isPage()) _ = try sendTo(app, p, "Page.enable", "{}", .silent, child);
+            _ = try sendTo(app, p, "Target.setAutoAttach", "{\"autoAttach\":true,\"waitForDebuggerOnStart\":false,\"flatten\":true}", .silent, child);
+        }
+        _ = try sendTo(app, p, "Runtime.runIfWaitingForDebugger", "{}", .silent, child);
+        try announce(app, p, t);
+    } else if (std.mem.eql(u8, method, "Target.detachedFromTarget")) {
+        const child = cdp.str(m.params, &.{"sessionId"}) orelse return;
+        const t = p.targetBySession(child) orelse return;
+        if (try unfocus(p, t)) try p.push(.system, "the tab closed — back to the page");
+        p.removeTarget(t);
+    } else if (std.mem.eql(u8, method, "Target.targetDestroyed")) {
+        const t = p.targetById(cdp.str(m.params, &.{"targetId"}) orelse return) orelse return;
+        if (t.isPage() and t.announced) try p.push(.nav, try std.fmt.allocPrint(arena, "⤵ tab closed: {s}", .{t.url}));
+        if (try unfocus(p, t)) try p.push(.system, "back to the page");
+        p.removeTarget(t);
     }
 }
 
@@ -1335,6 +1533,7 @@ pub fn handleKey(app: *App, id: PaneId, p: *BrowserPane, k: Key) Allocator.Error
             'g' => try runCmd(app, .@"browser.navigate"),
             'e' => try evalPrompt(app),
             'r' => try runCmd(app, .@"browser.reload"),
+            'T' => try runCmd(app, .@"browser.switch_tab"),
             'n' => p.panel = if (p.panel == .net) .log else .net,
             'K' => try runCmd(app, .@"browser.cookies"),
             'L' => try runCmd(app, .@"browser.storage"),
@@ -1489,6 +1688,16 @@ fn dialogPrompt(app: *App, d: Dialog) Allocator.Error!void {
     app.focus = .overlay;
 }
 
+/// Point the pane at another of its pages: null is its own, else a
+/// popup's session. Sends, evals and the header follow.
+pub fn focusTarget(app: *App, p: *BrowserPane, session: ?[]const u8) Allocator.Error!void {
+    const copy = if (session) |x| try app.gpa.dupe(u8, x) else null;
+    if (p.focus) |f| app.gpa.free(f);
+    p.focus = copy;
+    try p.refreshTitle();
+    try p.push(.nav, try std.fmt.allocPrint(app.frame.allocator(), "showing {s}", .{p.shownUrl()}));
+}
+
 pub fn evalPrompt(app: *App) Allocator.Error!void {
     app.overlay.deinit(app.gpa);
     app.overlay = .{ .prompt = .{ .state = app_mod.Prompt.init(app.gpa, "Evaluate in page"), .purpose = .browser_eval } };
@@ -1598,7 +1807,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, p: *BrowserPane, area: Rect) Allocato
         .log, .perf => 0,
     };
     const out = view.draw(ui, id, area, .{
-        .url = p.url,
+        .url = p.shownUrl(),
         .state = @tagName(p.state),
         .port = p.port,
         .panel = p.panel,
@@ -1615,6 +1824,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, p: *BrowserPane, area: Rect) Allocato
         .filter_caret = p.filter_caret,
         .filter_focused = p.filter_focused,
         .dialog = if (p.dialog) |d| d.kind else null,
+        .tabs = tabCount(p),
     });
     if (app.active == id) {
         app.pane_rows = @max(area.h, 1);
@@ -1624,6 +1834,15 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, p: *BrowserPane, area: Rect) Allocato
         };
     }
     try syncHighlight(app, p, if (p.panel == .dom) out.hovered_row else null);
+}
+
+/// The pane's pages: its own and every popup.
+fn tabCount(p: *const BrowserPane) usize {
+    var n: usize = 1;
+    for (p.targets.items) |*t| if (t.isPage()) {
+        n += 1;
+    };
+    return n;
 }
 
 /// A log entry of several lines paints as that many rows, up to
@@ -2566,6 +2785,65 @@ test "a renderer crash flips the badge and says r reloads; the reloaded page is 
     try testing.expectEqual(@as(usize, 1), n);
     try tb.msg("{\"method\":\"Page.frameNavigated\",\"params\":{\"frame\":{\"id\":\"F\",\"loaderId\":\"L\",\"url\":\"http://a/victim\"}}}");
     try testing.expect(p.state == .connected);
+}
+
+test "a popup is announced and attached, its console is tagged, T shows it, and closing it comes back to the page" {
+    var tb: TestBed = .{};
+    const p = try tb.init();
+    defer tb.deinit();
+    p.self_target = try testing.allocator.dupe(u8, "SELF");
+    // setDiscoverTargets reports our own page too: not a popup.
+    try tb.msg("{\"method\":\"Target.targetCreated\",\"params\":{\"targetInfo\":{\"targetId\":\"SELF\",\"type\":\"page\",\"url\":\"http://a/opener\",\"attached\":true}}}");
+    try testing.expectEqual(@as(usize, 0), p.targets.items.len);
+    try tb.msg("{\"method\":\"Target.targetCreated\",\"params\":{\"targetInfo\":{\"targetId\":\"POP\",\"type\":\"page\",\"title\":\"\",\"url\":\"\",\"attached\":false,\"openerId\":\"SELF\"}}}");
+    try testing.expectEqualStrings("Target.attachToTarget", tb.lastQueued());
+    try testing.expectEqualStrings("{\"targetId\":\"POP\",\"flatten\":true}", p.queued.items[p.queued.items.len - 1].params);
+    try tb.msg("{\"method\":\"Target.attachedToTarget\",\"params\":{\"sessionId\":\"S1\",\"targetInfo\":{\"targetId\":\"POP\",\"type\":\"page\",\"url\":\"\",\"attached\":true},\"waitingForDebugger\":false}}");
+    // Flatten mode: the child's own domains are enabled on it.
+    var enabled: std.ArrayListUnmanaged(u8) = .empty;
+    defer enabled.deinit(testing.allocator);
+    for (p.queued.items) |q| try enabled.print(testing.allocator, "{s};", .{q.method});
+    try testing.expect(std.mem.indexOf(u8, enabled.items, "Runtime.enable;Log.enable;Network.enable;Page.enable;Target.setAutoAttach;Runtime.runIfWaitingForDebugger;") != null);
+    try tb.msg("{\"method\":\"Target.targetInfoChanged\",\"params\":{\"targetInfo\":{\"targetId\":\"POP\",\"type\":\"page\",\"url\":\"http://a/popup-tgt\",\"attached\":true}}}");
+    try testing.expectEqualStrings("⤴ new tab → http://a/popup-tgt — T switches to it", tb.last());
+    try tb.msg("{\"method\":\"Runtime.consoleAPICalled\",\"sessionId\":\"S1\",\"params\":{\"type\":\"log\",\"args\":[{\"type\":\"string\",\"value\":\"from popup\"}]}}");
+    try testing.expectEqualStrings("[tab a/popup-tgt] console.log: from popup", tb.last());
+    // Switch to it: the header shows it and evals go there.
+    try command.run(&tb.app, .{ .static = .@"browser.switch_tab" });
+    try testing.expect(tb.app.overlay == .picker);
+    tb.app.overlay.deinit(testing.allocator);
+    tb.app.overlay = .none;
+    try focusTarget(&tb.app, p, "S1");
+    try testing.expectEqualStrings("http://a/popup-tgt", p.shownUrl());
+    try tb.msg("{\"method\":\"Runtime.consoleAPICalled\",\"params\":{\"type\":\"log\",\"args\":[{\"type\":\"string\",\"value\":\"from opener\"}]}}");
+    try testing.expectEqualStrings("[page] console.log: from opener", tb.last());
+    try tb.msg("{\"method\":\"Target.targetDestroyed\",\"params\":{\"targetId\":\"POP\"}}");
+    try testing.expect(p.focus == null);
+    try testing.expectEqual(@as(usize, 0), p.targets.items.len);
+    try testing.expectEqualStrings("back to the page", tb.last());
+    try testing.expectError(error.Failed, command.run(&tb.app, .{ .static = .@"browser.switch_tab" }));
+}
+
+test "a cross-site frame's console and network arrive once its session's domains are enabled, tagged with the frame" {
+    var tb: TestBed = .{};
+    const p = try tb.init();
+    defer tb.deinit();
+    try tb.msg("{\"method\":\"Target.attachedToTarget\",\"params\":{\"sessionId\":\"BF93\",\"targetInfo\":{\"targetId\":\"FR\",\"type\":\"iframe\",\"url\":\"\",\"attached\":true},\"waitingForDebugger\":false}}");
+    var enabled: std.ArrayListUnmanaged(u8) = .empty;
+    defer enabled.deinit(testing.allocator);
+    for (p.queued.items) |q| try enabled.print(testing.allocator, "{s};", .{q.method});
+    try testing.expectEqualStrings("Runtime.enable;Log.enable;Network.enable;Target.setAutoAttach;Runtime.runIfWaitingForDebugger;", enabled.items);
+    try tb.msg("{\"method\":\"Target.targetInfoChanged\",\"params\":{\"targetInfo\":{\"targetId\":\"FR\",\"type\":\"iframe\",\"url\":\"http://localhost:18766/child.html\",\"attached\":true}}}");
+    try testing.expectEqualStrings("attached frame: http://localhost:18766/child.html", tb.last());
+    try tb.msg("{\"method\":\"Runtime.consoleAPICalled\",\"sessionId\":\"BF93\",\"params\":{\"type\":\"log\",\"args\":[{\"type\":\"string\",\"value\":\"child-frame-says-77\"}]}}");
+    try testing.expectEqualStrings("[frame localhost:18766/child.html] console.log: child-frame-says-77", tb.last());
+    try tb.msg("{\"method\":\"Network.requestWillBeSent\",\"sessionId\":\"BF93\",\"params\":{\"requestId\":\"c1\",\"type\":\"Fetch\",\"request\":{\"url\":\"http://localhost:18766/api/json?from=child\",\"method\":\"GET\"}}}");
+    try testing.expectEqualStrings("http://localhost:18766/api/json?from=child", p.net.items[p.net.items.len - 1].url);
+    // A frame's navigation is not the page's: the URL stays.
+    try tb.msg("{\"method\":\"Page.frameNavigated\",\"sessionId\":\"BF93\",\"params\":{\"frame\":{\"id\":\"FR\",\"loaderId\":\"x\",\"url\":\"http://localhost:18766/other\"}}}");
+    try testing.expectEqualStrings("about:blank", p.url);
+    try tb.msg("{\"method\":\"Target.detachedFromTarget\",\"params\":{\"sessionId\":\"BF93\",\"targetId\":\"FR\"}}");
+    try testing.expectEqual(@as(usize, 0), p.targets.items.len);
 }
 
 test "scrolled back, the log holds still while lines arrive; at the tail it follows" {

@@ -502,6 +502,8 @@ pub const PickerKind = enum {
     browser_device,
     browser_throttle,
     browser_url_history,
+    /// `browser.switch_tab`: the pane's page and the popups it opened.
+    browser_tab,
     /// `integrations.icon_picker`: the Nerd Font catalog (`app/icon_picker.zig`).
     icon_glyphs,
     /// `bookmarks.open`: the label rows, the URL as the detail.

@@ -623,7 +623,7 @@ trust sink. Each row names its file and its test.
 | Print-to-PDF | done | `browser.print_pdf` | |
 | Snapshot diffs | done | `browser.snapshot` / `diff_snapshot` | the URL and the network requests; a navigation clears the previous page's requests (as DevTools does), so a diff shows one going away |
 | Device emulation | done | `browser.device_picker` | |
-| Multi-target | done | `Target.setAutoAttach` in `cdp/client.zig` | |
+| Multi-target | done | `Target.setAutoAttach` in `cdp/client.zig`; `Target` / `onEvent`'s `Target.*` branches in `browser_pane.zig`; `browser.switch_tab` (`T`) | a popup / new tab is attached (`Target.attachToTarget`, flatten) and logged `⤴ new tab → <url>`; a cross-site frame gets `Runtime` / `Log` / `Network` enabled on its own session; their console lines carry a `[tab …]` / `[frame …]` tag and their requests join the network list; `T` points the pane (header, evals, sends) at a popup and back |
 | Headless | done | `browser.headless`, `mnml proxy` | |
 
 ## Debugging (DAP)
