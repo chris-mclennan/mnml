@@ -890,6 +890,9 @@ pub const specs = [_]Spec{
     .{ .id = "dock.rename", .title = "Dock: rename the focused widget", .group = "dock" },
     .{ .id = "term.scratch_toggle", .title = "Terminal: quick scratch strip at the bottom (Ctrl+`)", .group = "term", .keys = .{ .both = &.{"ctrl+`"} } },
     .{ .id = "term.paste", .title = "Terminal: paste clipboard into the active Pty pane", .group = "terminal" },
+    .{ .id = "term.copy", .title = "Terminal: copy the mouse selection in the active Pty pane", .group = "terminal" },
+    .{ .id = "term.prev_prompt", .title = "Terminal: scroll to the previous shell prompt (OSC 133 marks)", .group = "terminal" },
+    .{ .id = "term.next_prompt", .title = "Terminal: scroll to the next shell prompt (OSC 133 marks)", .group = "terminal" },
     .{ .id = "term.clear", .title = "Terminal: clear screen (`Ctrl+L` in the child)", .group = "terminal" },
     .{ .id = "term.restart", .title = "Terminal: restart the child process in this pane", .group = "terminal" },
     .{ .id = "term.focus_or_open_shell", .title = "Terminal: focus existing shell or open one", .group = "term" },
@@ -1249,7 +1252,7 @@ pub const specs = [_]Spec{
     .{ .id = "view.keep_tab", .title = "Keep this tab (stop the next glance taking the preview over)", .group = "view", .keys = .{ .vim = &.{"space b k"}, .standard = &.{"ctrl+k enter"} } },
 };
 
-test "1117 specs, unique ids" {
+test "1120 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1286,6 +1289,6 @@ test "1117 specs, unique ids" {
     // + the three `view.rail_*` membership commands (railmove)
     // + the four `view.dock_item_move_*` reorder commands (dock-polish)
     // + `view.focus_prev_split`, the split walk backwards (splitcycle)
-    try std.testing.expectEqual(@as(usize, 1117), specs.len);
+    try std.testing.expectEqual(@as(usize, 1120), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

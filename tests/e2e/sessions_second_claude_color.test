@@ -6,7 +6,7 @@
 # ticked and `Color: Auto` last. A fake `claude` on PATH (a script that
 # sleeps) stands in for the CLI; the second session splits to the right,
 # so a right-click at (100, 20) lands on it. The Color row is the
-# thirteenth of the pane menu; → opens its rows.
+# fourteenth of the pane menu (Copy leads it); → opens its rows.
 write bin/claude #!/bin/sh\nsleep 30
 shell chmod +x bin/claude
 command ai.claude_code_new
@@ -16,6 +16,7 @@ wait 300
 rightclick 100 20
 expect screen contains "Color"
 expect screen contains "Close pane"
+key down
 key down
 key down
 key down
@@ -40,6 +41,7 @@ key esc
 key esc
 # The first session's menu ticks Claude orange, and not the second's green.
 rightclick 40 20
+key down
 key down
 key down
 key down

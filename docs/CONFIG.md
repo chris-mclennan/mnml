@@ -451,6 +451,12 @@ otherwise. Copy what you need; leave the rest out.
         .restore_terminals = .running, // .running (a shell restarts, a Claude / Codex pane resumes its session) | .dormant (every terminal pane comes back `[exited] — any key restarts …`)
     },
     .ipc = .{ .write_screen = false }, // also dump screen.txt, status.json and rects.json every frame
+    // ── terminal panes ─────────────────────────────────────────────────
+    // Read when a pane starts; a pane already open keeps what it began with.
+    .terminal = .{
+        .scrollback_lines = 10000, // lines kept above the screen per pane (Shift+PageUp, the wheel)
+        .osc52 = true, // a program in a pane may copy to the clipboard (OSC 52; neovim, tmux, ssh); reads are never answered
+    },
 
     // ── keys ───────────────────────────────────────────────────────────
     // One line per binding: chord → command id. "" / "none" / "unbound"
@@ -1291,6 +1297,28 @@ In the vim profile, bind the same chords to the commands under
 "view.focus_prev_split"`). `src/tui/loop.zig`'s test reads the two
 sequences through the terminal parser into the standard profile's
 chords.
+## Terminal panes
+
+A terminal pane's child is told it runs inside mnml. Every child gets
+`MNML_PANE=1` — an integration opened with `:term <binary>` keys its
+chrome on it and leaves the outer border to the pane — and
+`MNML_WORKSPACE`, the workspace it belongs to (a session worktree's
+pane gets the worktree). A shell also gets the prompt's environment:
+the theme's colours as `MNML_PROMPT_BG`, `_FG`, `_ACCENT`, `_BLUE`,
+`_GREEN`, `_RED`, `_YELLOW` and `_GREY` (`#rrggbb`), `MNML_CONTEXT=mnml`,
+and `MNML_PROMPT_SCRIPT` — the path of the mnml prompt
+(`themes/mnml-prompt.sh`, written as `prompt.sh` into the data root and
+rewritten when a new build carries a different one). Turn it on with
+one line in `~/.zshrc` or `~/.bashrc`; outside mnml it does nothing:
+
+```sh
+[ -n "$MNML_PROMPT_SCRIPT" ] && . "$MNML_PROMPT_SCRIPT"
+```
+
+The prompt shows the directory, the git branch (`±` when dirty), a
+failed command's status, and the time and context on the right
+(`MNML_PROMPT_ASCII=1` draws it without Nerd Font glyphs). It also
+reports the shell's directory (OSC 7) and its prompt marks (OSC 133).
 
 ## Bookmarks
 

@@ -1305,6 +1305,7 @@ pub fn openPtyPaneMenu(app: *App, pane: PaneId, x: u16, y: u16) Allocator.Error!
     errdefer mem.deinit();
     const current: ?[]const u8 = if (app.panes.pty(pane)) |pt| pt.accent_color else null;
     const rows = try items(app, &.{
+        .{ .label = "Copy", .action = .{ .command = .@"term.copy" } },
         .{ .label = "Paste", .action = .{ .command = .@"term.paste" } },
         .{ .label = "Clear (Ctrl+L)", .action = .{ .command = .@"term.clear" } },
         .{ .label = "Restart", .action = .{ .command = .@"term.restart" } },

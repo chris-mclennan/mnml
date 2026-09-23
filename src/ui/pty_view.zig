@@ -146,8 +146,12 @@ fn styleOf(cell: pty.grid.Cell, th: *const Theme) Style {
 /// The grapheme bytes of a cell, on the frame arena unless ASCII.
 fn graphemeOf(ui: Ui, cell: pty.grid.Cell) ?[]const u8 {
     if (cell.cp == 0) return null;
-    if (cell.grapheme.len > 1) {
+    if (cell.grapheme.len > 0) {
+        // The cluster: the first codepoint, then the rest the cell holds.
         var out = std.ArrayListUnmanaged(u8).empty;
+        var first: [4]u8 = undefined;
+        const n0 = std.unicode.utf8Encode(cell.cp, &first) catch return null;
+        out.appendSlice(ui.arena, first[0..n0]) catch return null;
         for (cell.grapheme) |cp| {
             var tmp: [4]u8 = undefined;
             const n = std.unicode.utf8Encode(cp, &tmp) catch continue;
@@ -252,7 +256,13 @@ pub fn draw(ui: Ui, area: Rect, grid: *const pty.Grid, props: Props) ?Cursor {
                 .spacer_tail, .spacer_head => continue,
                 .narrow, .wide => {},
             }
-            const style = styleOf(cell, th);
+            var style = styleOf(cell, th);
+            if (grid.rowSelection(y)) |sel| if (x >= sel[0] and x <= sel[1]) {
+                // A selection reads the way the editor's does: the
+                // theme's selection ground under the cell's own ink.
+                style.bg = th.selection.bg;
+                style.reverse = false;
+            };
             const g = graphemeOf(ui, cell) orelse {
                 ui.canvas.put(area.x + x, area.y + y, .{ .char = .{ .grapheme = " ", .width = 1 }, .style = style });
                 continue;
@@ -336,6 +346,24 @@ test "a coloured line lands in the cells with its style; wide chars keep their t
     // The cursor sits after "ok" on row 1, offset by the area's x.
     try testing.expectEqual(@as(u16, 3), cur.?.x);
     try testing.expectEqual(@as(u16, 1), cur.?.y);
+}
+
+test "a multi-codepoint cluster paints whole: the thumb and its skin tone in one two-cell grapheme, the next cell after it" {
+    var term: pty.vt.Terminal = try .init(testing.io, testing.allocator, .{ .cols = 12, .rows = 2, .default_modes = .{ .grapheme_cluster = true } });
+    defer term.deinit(testing.allocator);
+    var s = term.vtStream();
+    defer s.deinit();
+    s.nextSlice("\u{1F44D}\u{1F3FD}x");
+    var grid: pty.Grid = .{};
+    defer grid.deinit(testing.allocator);
+    try grid.update(testing.allocator, &term);
+    var f = try Fixture.init(12, 2);
+    defer f.deinit();
+    _ = draw(f.ui(), Rect.init(0, 0, 12, 2), &grid, .{ .focused = false, .unfocused = .none });
+    const thumb = f.screen.readCell(0, 0).?;
+    try testing.expectEqualStrings("\u{1F44D}\u{1F3FD}", thumb.char.grapheme);
+    try testing.expectEqual(@as(u8, 2), thumb.char.width);
+    try testing.expectEqualStrings("x", f.screen.readCell(2, 0).?.char.grapheme);
 }
 
 test "the exit banner takes the last row and hides the cursor" {

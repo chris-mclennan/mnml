@@ -44,6 +44,7 @@ const Theme = @import("../ui/theme.zig");
 pub const supported = true;
 const pty = @import("pty");
 const first_launch_install = @import("first_launch_install.zig");
+const pty_env = @import("pty_env.zig");
 
 pub const Session = pty.Session;
 pub const Grid = pty.Grid;
@@ -92,6 +93,9 @@ pub const OpenOptions = struct {
     /// app's environment for this child only (`MNML_WORKSPACE` pointing
     /// at a session worktree).
     env_extra: []const []const u8 = &.{},
+    /// The label is the user's own (a restored rename): the child's
+    /// title does not replace it.
+    renamed: bool = false,
     /// Open the pane WITHOUT starting anything: the tab, the title and
     /// `[exited]`, waiting for a key to start it. What a restored
     /// session uses, so relaunching an editor never runs a shell (and
@@ -127,8 +131,12 @@ pub const PtyPane = struct {
     session: ?*Session,
     grid: Grid = .{},
     wire: *Wire,
-    /// The tab label. Owned.
+    /// The tab label. Owned. What the tab reads until the child names
+    /// itself (OSC 0 / 2), and for good once the user renamed it.
     label: []u8,
+    /// The label came from the user (`term.rename`, `:rename`): the
+    /// child's own title no longer replaces it.
+    renamed: bool = false,
     /// The command line, owned, for `term.restart`; empty = the shell.
     argv: [][]u8,
     cwd: ?[]u8,
@@ -164,6 +172,15 @@ pub const PtyPane = struct {
     /// The grid size the session was last fitted to.
     cols: u16,
     rows: u16,
+    /// Where the grid was last painted, in screen cells — what a mouse
+    /// position is read against.
+    body: Body = .{},
+    /// A mouse selection in flight (the press's anchor); the selection
+    /// itself lives on the terminal's screen, where the grid reads it.
+    select: ?Select = null,
+    /// What the child was last told about its focus (or would have
+    /// been, had it asked): `tickAll` reports the edges.
+    has_focus: bool = false,
     /// Restored from a saved session and never started: `session` is
     /// null, `exit` is set so every live-pane path already skips it, and
     /// the footer says a key restarts rather than closes.
@@ -199,6 +216,13 @@ pub const PtyPane = struct {
         const session = self.session orelse return;
         const fed = session.pump();
         if (fed) self.fed_gen +%= 1;
+        // The child copied (OSC 52): the text takes the path any copy
+        // takes — the unnamed register and the OS clipboard.
+        if (session.takeClipboard()) |text| {
+            defer app.gpa.free(text);
+            app.clipboard.setPendingRegister('+');
+            app.clipboard.setYank(text, false) catch {};
+        }
         if (self.exit == null) {
             self.exit = exitOf(session.exited());
             if (self.exit != null) {
@@ -244,11 +268,18 @@ pub const PtyPane = struct {
         self.rows = rows;
     }
 
+    /// Queue bytes for the child. Never blocks: the session's own thread
+    /// writes them as the child reads (`pty/outbox.zig`), so a paste into
+    /// a build that is not reading its input leaves the app responsive.
     pub fn write(self: *PtyPane, bytes: []const u8) void {
         if (self.exit != null) return;
         const session = self.session orelse return;
-        // Typing brings the live screen back.
+        // Typing brings the live screen back, and lets go of a
+        // selection (ghostty's `selection-clear-on-typing`).
         session.terminal().scrollViewport(.bottom);
+        clearSelection(self);
+        // Ctrl+C must not wait behind input the child is not reading.
+        if (bytes.len == 1 and bytes[0] == 0x03) return session.interrupt();
         session.write(bytes);
     }
 
@@ -290,6 +321,27 @@ pub const PtyPane = struct {
         const session = self.session orelse return null;
         return session.term.getTitle();
     }
+
+    /// Where the shell says it is (OSC 7 — ghostty's shell integration,
+    /// macOS's `update_terminal_cwd`, starship, fish, the mnml prompt):
+    /// an absolute path on `arena`, or null when the child never said or
+    /// said something that is not a local `file://` URL.
+    pub fn liveCwd(self: *const PtyPane, arena: Allocator) Allocator.Error!?[]const u8 {
+        const session = self.session orelse return null;
+        return pwdPath(arena, session.term.getPwd() orelse return null);
+    }
+
+    /// What the tab reads, in the order every terminal's tab follows:
+    /// the user's rename, then the title the child set (a shell prompt's
+    /// cwd, vim's file, an ssh host), then the label it opened with.
+    /// Borrowed from the terminal — valid until the child retitles.
+    pub fn tabTitle(self: *const PtyPane) []const u8 {
+        if (!self.renamed) if (self.childTitle()) |title| {
+            const trimmed = std.mem.trim(u8, title, " \t");
+            if (trimmed.len > 0) return trimmed;
+        };
+        return self.label;
+    }
 };
 
 // ─── open / close ───────────────────────────────────────────────────────
@@ -319,13 +371,10 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
     errdefer gpa.destroy(wire);
     wire.* = .{ .events = &app.events, .io = app.io, .pane = id };
 
-    // The child's environment: the app's, or a copy with the extras.
-    var env_copy: ?std.process.Environ.Map = if (opts.env_extra.len > 0) try app.env.clone(gpa) else null;
-    defer if (env_copy) |*m| m.deinit();
-    if (env_copy) |*m| for (opts.env_extra) |kv| {
-        const eq = std.mem.indexOfScalar(u8, kv, '=') orelse continue;
-        try m.put(kv[0..eq], kv[eq + 1 ..]);
-    };
+    // The child's environment: the app's, the extras, and what it is
+    // told about the pane it runs in (`pty_env.zig`).
+    var child_env = try pty_env.build(app, opts.env_extra, opts.argv.len == 0);
+    defer child_env.deinit();
     // // changed (codex-resume): read BEFORE the spawn. The child may
     // open its Codex rollout before this call returns, and a rollout
     // dated a second earlier than the pane would never match it.
@@ -333,10 +382,12 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
     const session: ?*Session = if (opts.dormant) null else pty.Session.spawn(gpa, app.io, .{
         .cols = size.cols,
         .rows = size.rows,
-        .env = if (env_copy) |*m| m else &app.env,
+        .env = &child_env,
         .argv = if (argv.len == 0) null else @ptrCast(argv),
         .cwd = cwd orelse app.workspace,
         .notify = .{ .ctx = wire, .fn_ptr = &Wire.readable },
+        .scrollback_lines = app.cfg.terminal.scrollback_lines,
+        .clipboard_write = app.cfg.terminal.osc52,
     }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.Canceled => return error.Canceled,
@@ -356,6 +407,7 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
             .session = session,
             .wire = wire,
             .label = label,
+            .renamed = opts.renamed,
             .argv = argv,
             .cwd = cwd,
             .kind = opts.kind,
@@ -531,13 +583,17 @@ pub fn restart(app: *App, id: PaneId) CommandError!void {
     try resumeInPlace(app.gpa, p.argv);
     // // changed (codex-resume): before the spawn, as in `open`.
     const started_at_s = Io.Timestamp.now(app.io, .real).toSeconds();
+    var child_env = try pty_env.build(app, &.{}, p.argv.len == 0);
+    defer child_env.deinit();
     const fresh = pty.Session.spawn(app.gpa, app.io, .{
         .cols = p.cols,
         .rows = p.rows,
-        .env = &app.env,
+        .env = &child_env,
         .argv = if (p.argv.len == 0) null else @ptrCast(p.argv),
         .cwd = p.cwd orelse app.workspace,
         .notify = .{ .ctx = p.wire, .fn_ptr = &Wire.readable },
+        .scrollback_lines = app.cfg.terminal.scrollback_lines,
+        .clipboard_write = app.cfg.terminal.osc52,
     }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.Canceled => return error.Canceled,
@@ -546,6 +602,8 @@ pub fn restart(app: *App, id: PaneId) CommandError!void {
     if (p.session) |old| old.deinit();
     p.grid.deinit(app.gpa);
     p.grid = .{};
+    // The anchor was tracked in the old terminal's pages.
+    p.select = null;
     p.session = fresh;
     p.exit = null;
     p.exited_at_ms = null;
@@ -614,10 +672,11 @@ pub fn onReadable(app: *App, id: PaneId) void {
 /// child that died without closing the pty, are both picked up here.
 pub fn tickAll(app: *App) void {
     if (!supported) return;
-    for (app.panes.slots.items) |*slot| if (slot.*) |*pane| switch (pane.*) {
+    for (app.panes.slots.items, 0..) |*slot, i| if (slot.*) |*pane| switch (pane.*) {
         .pty => |*p| {
             if (p.exit != null) continue;
             const session = p.session orelse continue;
+            reportFocus(app, p, @intCast(i));
             if (session.shared.ring.len() > 0 or session.eof()) {
                 p.pump(app);
             } else if (session.exited()) |e| {
@@ -629,6 +688,21 @@ pub fn tickAll(app: *App) void {
         },
         else => {},
     };
+}
+
+/// Focus reports (DEC 1004): a child that asked hears `ESC [ I` when its
+/// pane takes the focus and `ESC [ O` when it loses it — to another
+/// pane, to the tree or an overlay, or because the host window itself
+/// lost it — as ghostty sends them per surface and tmux per pane.
+/// vim's FocusGained / FocusLost (`autoread`), neovim, helix and lazygit
+/// rely on it.
+fn reportFocus(app: *App, p: *PtyPane, id: PaneId) void {
+    const focused = app.host_focused and app.active == id and app.focus == .pane;
+    if (focused == p.has_focus) return;
+    p.has_focus = focused;
+    const session = p.session orelse return;
+    if (!session.terminal().modes.get(.focus_event)) return;
+    session.write(if (focused) "\x1b[I" else "\x1b[O");
 }
 
 // ─── input ──────────────────────────────────────────────────────────────
@@ -706,60 +780,305 @@ pub fn termNormalKey(app: *App, p: *PtyPane, k: Key) Allocator.Error!bool {
                 app.needs_render = true;
                 return true;
             },
+            // A mouse selection yanks, as `y` does in an editor's Visual.
+            'y' => {
+                if (!try copySelection(app, p)) app.toast("nothing is selected — drag across the text first", .{});
+                return true;
+            },
             else => return false,
         },
         else => return false,
     }
 }
 
+/// The pane's own scrollback keys, Shift+PageUp/PageDown/Home/End: true
+/// when `k` was one and the view moved.
+pub fn scrollKey(app: *App, p: *PtyPane, k: Key) bool {
+    if (!k.mods.shift or k.mods.ctrl or k.mods.alt or k.mods.super) return false;
+    const rows: isize = @intCast(@max(app.pane_rows, 2));
+    switch (k.code) {
+        .page_up => p.scrollBy(-(rows - 1)),
+        .page_down => p.scrollBy(rows - 1),
+        .home => p.scrollTo(.top),
+        .end => p.scrollTo(.bottom),
+        else => return false,
+    }
+    app.needs_render = true;
+    return true;
+}
+
 /// A key for the child. Shift+PageUp/PageDown/Home/End scroll the
 /// scrollback instead of being sent.
 pub fn feedKey(app: *App, p: *PtyPane, k: Key) void {
-    const rows: isize = @intCast(@max(app.pane_rows, 2));
-    if (k.mods.shift and !k.mods.ctrl and !k.mods.alt) switch (k.code) {
-        .page_up => return p.scrollBy(-(rows - 1)),
-        .page_down => return p.scrollBy(rows - 1),
-        .home => return p.scrollTo(.top),
-        .end => return p.scrollTo(.bottom),
-        else => {},
-    };
+    if (scrollKey(app, p, k)) return;
     var buf: [16]u8 = undefined;
     const bytes = encodeKey(k, p.encoding(), &buf);
     if (bytes.len > 0) p.write(bytes);
 }
 
 /// Paste: bracketed when the child asked for it, else the text with
-/// newlines as carriage returns (what a keyboard would have sent).
+/// newlines as carriage returns (what a keyboard would have sent) —
+/// sanitized either way (`encodePaste`).
 pub fn paste(app: *App, p: *PtyPane, text: []const u8) Allocator.Error!void {
-    const enc = p.encoding();
-    if (enc.bracketed_paste) {
-        const wrapped = try std.mem.concat(app.frame.allocator(), u8, &.{ "\x1b[200~", text, "\x1b[201~" });
-        p.write(wrapped);
+    p.write(try encodePaste(app.frame.allocator(), text, p.encoding().bracketed_paste));
+}
+
+/// The bytes a paste sends. Pasted text is data, never commands: ESC and
+/// every other C0 control but tab, CR and LF (and DEL) become spaces
+/// BEFORE the bracketed-paste fences go on, so an `ESC[201~` hidden in
+/// copied text cannot close the bracket early and type the rest at the
+/// prompt, and an embedded ^C / ^U / ^W never reaches the line
+/// discipline. xterm's rule (ghostty's `input/paste.zig` strips the same
+/// family); the framing and the newline conversion are ghostty's own
+/// encoder's.
+pub fn encodePaste(arena: Allocator, text: []const u8, bracketed: bool) Allocator.Error![]u8 {
+    const copy = try arena.dupe(u8, text);
+    for (copy) |*b| switch (b.*) {
+        '\t', '\n', '\r' => {},
+        0...0x08, 0x0b, 0x0c, 0x0e...0x1f, 0x7f => b.* = ' ',
+        else => {},
+    };
+    const parts = pty.vt.input.encodePaste(copy, .{ .bracketed = bracketed });
+    return std.mem.concat(arena, u8, &parts);
+}
+
+/// The wheel over a pane whose child is not tracking the mouse, in
+/// ghostty's order: on the alternate screen with alternate scroll (DEC
+/// 1007, on by default) the notches become ↑ / ↓ keys, `lines` of them,
+/// so a pager — less, man, git's, bat — scrolls; anywhere else the
+/// wheel moves the scrollback `rows` rows. (A child tracking the mouse
+/// gets the reports instead, `mouse`.)
+pub fn wheel(app: *App, p: *PtyPane, down: bool, rows: usize, lines: usize) void {
+    app.needs_render = true;
+    const session = p.session orelse return;
+    const term = session.terminal();
+    if (p.exit == null and term.screens.active_key == .alternate and term.modes.get(.mouse_alternate_scroll)) {
+        const app_keys = term.modes.get(.cursor_keys);
+        const seq: []const u8 = if (down)
+            (if (app_keys) "\x1bOB" else "\x1b[B")
+        else
+            (if (app_keys) "\x1bOA" else "\x1b[A");
+        var i: usize = 0;
+        while (i < lines) : (i += 1) session.write(seq);
         return;
     }
-    const copy = try app.frame.allocator().dupe(u8, text);
-    for (copy) |*c| if (c.* == '\n') {
-        c.* = '\r';
-    };
-    p.write(copy);
+    const delta: isize = @intCast(rows);
+    p.scrollBy(if (down) delta else -delta);
 }
 
 /// A mouse event inside the pane's rect: a report to the child when it
-/// tracks the mouse, else the wheel scrolls the scrollback.
+/// tracks the mouse, else the wheel follows `wheel`'s rule.
 pub fn mouse(app: *App, p: *PtyPane, m: Mouse, origin: struct { x: u16, y: u16 }) void {
     const enc = p.encoding();
     if (enc.mouse == .none) {
         switch (m.kind) {
-            .scroll_up => p.scrollBy(-3),
-            .scroll_down => p.scrollBy(3),
+            .scroll_up => wheel(app, p, false, 3, 3),
+            .scroll_down => wheel(app, p, true, 3, 3),
             else => {},
         }
-        app.needs_render = true;
         return;
     }
     var buf: [32]u8 = undefined;
     const bytes = encodeMouse(m, m.x -| origin.x, m.y -| origin.y, enc, &buf);
     if (bytes.len > 0) p.write(bytes);
+}
+
+// ─── what the shell reports ─────────────────────────────────────────────
+
+/// `file://host/some%20dir` → `/some dir`. OSC 7 carries a URL whose
+/// host is the machine the shell runs on; the path is what a saved
+/// session reopens in, so anything else (another scheme, a relative
+/// path) is refused rather than guessed at.
+pub fn pwdPath(arena: Allocator, url: []const u8) Allocator.Error!?[]const u8 {
+    const scheme = "file://";
+    if (!std.ascii.startsWithIgnoreCase(url, scheme)) return null;
+    const rest = url[scheme.len..];
+    const slash = std.mem.indexOfScalar(u8, rest, '/') orelse return null;
+    const raw = rest[slash..];
+    var out = try arena.alloc(u8, raw.len);
+    var n: usize = 0;
+    var i: usize = 0;
+    while (i < raw.len) : (i += 1) {
+        if (raw[i] == '%' and i + 2 < raw.len) {
+            if (std.fmt.parseInt(u8, raw[i + 1 .. i + 3], 16)) |b| {
+                out[n] = b;
+                n += 1;
+                i += 2;
+                continue;
+            } else |_| {}
+        }
+        out[n] = raw[i];
+        n += 1;
+    }
+    return out[0..n];
+}
+
+/// `term.prev_prompt` / `term.next_prompt`: the view jumps to the
+/// previous / next prompt the shell marked (OSC 133), as ghostty's
+/// `jump_to_prompt` does. False when the child never marked one.
+pub fn jumpPrompt(app: *App, p: *PtyPane, delta: isize) bool {
+    const session = p.session orelse return false;
+    const screen = session.terminal().screens.active;
+    const before = screen.pages.getTopLeft(.viewport);
+    screen.scroll(.{ .delta_prompt = delta });
+    app.needs_render = true;
+    return !screen.pages.getTopLeft(.viewport).eql(before);
+}
+
+/// The URL an OSC 8 hyperlink puts under the screen cell (`x`, `y`),
+/// borrowed from the terminal; null when the cell carries none.
+pub fn linkAt(p: *PtyPane, x: u16, y: u16) ?[]const u8 {
+    const b = p.body;
+    if (x < b.x or y < b.y or x >= b.x + b.w or y >= b.y + b.h) return null;
+    const pin = pinAt(p, x, y) orelse return null;
+    const page = pin.node.page();
+    const cell = pin.rowAndCell().cell;
+    const id = page.lookupHyperlink(cell) orelse return null;
+    return page.hyperlink_set.get(page.memory, id).uri.slice(page.memory);
+}
+
+// ─── selection ──────────────────────────────────────────────────────────
+
+/// A cell rectangle on the screen.
+pub const Body = struct { x: u16 = 0, y: u16 = 0, w: u16 = 0, h: u16 = 0 };
+
+/// A drag-select in flight: the pressed cell, tracked in the page list
+/// of the screen it was pressed on (so output scrolling past keeps it on
+/// its character), and the granularity the click count chose.
+pub const Select = struct {
+    anchor: *pty.vt.Pin,
+    screen: pty.vt.ScreenSet.Key,
+    generation: usize,
+    unit: app_mod.SelectUnit,
+};
+
+/// What a double-click treats as the edge of a word — ghostty's default
+/// `selection-word-chars`, so a path or a URL comes out whole.
+const word_boundaries = [_]u21{ 0, ' ', '\t', '\'', '"', '│', '`', '|', ':', ';', ',', '(', ')', '[', ']', '{', '}', '<', '>', '$' };
+
+/// The press still belongs to the screen on show: the child has not
+/// switched screens (a pager starting, vim quitting) since.
+fn anchorLive(term: *pty.vt.Terminal, s: Select) bool {
+    return s.screen == term.screens.active_key and term.screens.generation(s.screen) == s.generation;
+}
+
+/// Let go of the press. The pin is untracked only while its screen is
+/// the one it was tracked in; a recycled screen already freed it.
+fn endGesture(p: *PtyPane) void {
+    const s = p.select orelse return;
+    p.select = null;
+    const session = p.session orelse return;
+    const term = session.terminal();
+    if (term.screens.generation(s.screen) != s.generation) return;
+    const screen = term.screens.get(s.screen) orelse return;
+    screen.pages.untrackPin(s.anchor);
+}
+
+pub fn clearSelection(p: *PtyPane) void {
+    const session = p.session orelse return;
+    session.terminal().screens.active.clearSelection();
+}
+
+pub fn hasSelection(p: *const PtyPane) bool {
+    const session = p.session orelse return false;
+    return session.term.screens.active.selection != null;
+}
+
+/// The viewport cell under the screen position (`x`, `y`), clamped into
+/// the pane so a drag past an edge still selects to that edge.
+fn pinAt(p: *PtyPane, x: u16, y: u16) ?pty.vt.Pin {
+    const session = p.session orelse return null;
+    const b = p.body;
+    if (b.w == 0 or b.h == 0) return null;
+    const cx = std.math.clamp(x, b.x, b.x + b.w - 1) - b.x;
+    const cy = std.math.clamp(y, b.y, b.y + b.h - 1) - b.y;
+    return session.terminal().screens.active.pages.pin(.{ .viewport = .{ .x = cx, .y = cy } });
+}
+
+/// The selection `unit` makes of the one cell at `pin`: nothing for a
+/// char (a click is not a selection), the word under it, its line.
+fn unitAt(screen: *pty.vt.Screen, unit: app_mod.SelectUnit, pin: pty.vt.Pin) ?pty.vt.Selection {
+    return switch (unit) {
+        .char => null,
+        .word => screen.selectWord(pin, &word_boundaries),
+        .line => screen.selectLine(.{ .pin = pin }),
+    };
+}
+
+/// A left press in the pane (the child is not tracking the mouse, or
+/// Shift overrides it): any old selection goes, and the cell anchors a
+/// drag. Two presses select the word, three the line, as in ghostty.
+pub fn selectPress(app: *App, p: *PtyPane, x: u16, y: u16, clicks: u8) Allocator.Error!void {
+    endGesture(p);
+    clearSelection(p);
+    app.needs_render = true;
+    const session = p.session orelse return;
+    const term = session.terminal();
+    const pin = pinAt(p, x, y) orelse return;
+    const screen = term.screens.active;
+    const unit: app_mod.SelectUnit = switch (clicks) {
+        0, 1 => .char,
+        2 => .word,
+        else => .line,
+    };
+    p.select = .{
+        .anchor = try screen.pages.trackPin(pin),
+        .screen = term.screens.active_key,
+        .generation = term.screens.generation(term.screens.active_key),
+        .unit = unit,
+    };
+    if (unitAt(screen, unit, pin)) |sel| try screen.select(sel);
+}
+
+/// The pointer moved with the button down: the selection runs from the
+/// anchor to the cell under it, both ends included (a word or line press
+/// extends by words or lines). Past the top or bottom edge the view
+/// scrolls a row, so a drag can reach into the scrollback.
+pub fn selectDrag(app: *App, p: *PtyPane, x: u16, y: u16) Allocator.Error!void {
+    const s = p.select orelse return;
+    const session = p.session orelse return;
+    const term = session.terminal();
+    if (!anchorLive(term, s)) return endGesture(p);
+    app.needs_render = true;
+    if (y < p.body.y) term.scrollViewport(.{ .delta = -1 }) else if (y >= p.body.y + p.body.h) term.scrollViewport(.{ .delta = 1 });
+    const cur = pinAt(p, x, y) orelse return;
+    const screen = term.screens.active;
+    const anchor = s.anchor.*;
+    if (s.unit == .char) {
+        if (cur.eql(anchor)) return screen.clearSelection();
+        return screen.select(.init(anchor, cur, false));
+    }
+    const a = unitAt(screen, s.unit, anchor) orelse pty.vt.Selection.init(anchor, anchor, false);
+    const b = unitAt(screen, s.unit, cur) orelse pty.vt.Selection.init(cur, cur, false);
+    const a_tl = a.topLeft(screen);
+    const b_tl = b.topLeft(screen);
+    const a_br = a.bottomRight(screen);
+    const b_br = b.bottomRight(screen);
+    try screen.select(.init(if (b_tl.before(a_tl)) b_tl else a_tl, if (a_br.before(b_br)) b_br else a_br, false));
+}
+
+/// The button came up: a selection that has text is copied, and stays
+/// on show until a click or a key.
+pub fn selectRelease(app: *App, p: *PtyPane, x: u16, y: u16) Allocator.Error!void {
+    if (p.select == null) return;
+    try selectDrag(app, p, x, y);
+    endGesture(p);
+    _ = try copySelection(app, p);
+}
+
+/// The selection's text to the clipboard: the unnamed register (a `p`
+/// in an editor pastes it) and the OS clipboard, the way the standard
+/// profile's copy goes (`"+`). False when nothing is selected.
+pub fn copySelection(app: *App, p: *PtyPane) Allocator.Error!bool {
+    const session = p.session orelse return false;
+    const screen = session.terminal().screens.active;
+    const sel = screen.selection orelse return false;
+    const text = try screen.selectionString(app.frame.allocator(), .{ .sel = sel, .trim = true });
+    if (text.len == 0) return false;
+    app.clipboard.setPendingRegister('+');
+    try app.clipboard.setYank(text, false);
+    app.toast("copied the selection", .{});
+    return true;
 }
 
 // ─── encoders ───────────────────────────────────────────────────────────
@@ -1108,10 +1427,38 @@ test "a scripted child's coloured line reaches the cells, the exit is noticed, a
     try t.expect(found);
     try t.expect(try tickUntilScreen(&app, "[exited 4]", 5000));
     try t.expectEqual(Exit{ .code = 4 }, app.panes.pty(id).?.exit.?);
-    // Any plain key closes an exited pane.
+    // Enter closes an exited pane.
     try app.handle(.{ .key = Key.named(.enter) });
     try t.expect(app.panes.get(id) == null);
     try t.expect(app.active == null);
+}
+
+test "an exited pane stays for reading back: its scroll keys scroll, a letter or the vim leader leaves it, Enter or Esc closes it" {
+    // A POSIX shell script drives this one.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (!supported) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    try app.setInputStyle(.vim);
+    const id = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "seq 1 300" }, .label = "seq" });
+    try t.expect(try tickUntilScreen(&app, "[exited 0]", 5000));
+    try app.handle(.{ .key = .{ .code = .page_up, .mods = .{ .shift = true } } });
+    try t.expect(app.panes.get(id) != null);
+    try app.render();
+    const txt = try screen_mod.toTestText(t.allocator, &app.screen);
+    defer t.allocator.free(txt);
+    try t.expect(std.mem.indexOf(u8, txt, "300") == null);
+    try app.handle(.{ .key = .{ .code = .home, .mods = .{ .shift = true } } });
+    try t.expect(try tickUntilScreen(&app, "▌1 ", 2000));
+    try app.handle(.{ .key = Key.char('x') });
+    try t.expect(app.panes.get(id) != null);
+    try app.handle(.{ .key = Key.char(' ') });
+    try t.expect(app.panes.get(id) != null);
+    // Esc lets go of the leader, the next one closes the pane.
+    try app.handle(.{ .key = Key.named(.esc) });
+    try app.handle(.{ .key = Key.named(.esc) });
+    try t.expect(app.panes.get(id) == null);
 }
 
 test "keys reach the child: typed text and ctrl+d end a cat that echoes back" {
@@ -1193,6 +1540,23 @@ test "vim: <C-\\><C-n> leaves the child for terminal-normal, where the leader an
     try t.expect(try tickUntilScreen(&app, "#Q", 5000));
 }
 
+test "encodePaste: ESC and the tty controls become spaces before the fences go on; tab, CR and LF survive" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    // The paste-jacking payload: a fence closer, then a command line.
+    const evil = "echo harmless\x1b[201~\necho PWNED > pwned.txt\n";
+    const out = try encodePaste(arena, evil, true);
+    try t.expectEqualStrings("\x1b[200~echo harmless [201~\necho PWNED > pwned.txt\n\x1b[201~", out);
+    // Exactly one closer, and it is the last thing sent.
+    try t.expectEqual(@as(usize, 1), std.mem.count(u8, out, "\x1b[201~"));
+    // ^C ^U ^W ^Z NUL DEL are spaces — and ^A, which xterm's own list
+    // leaves alone and readline reads as "start of line"; tab is kept.
+    try t.expectEqualStrings("\x1b[200~a b c d e f g\th\x1b[201~", try encodePaste(arena, "a\x03b\x15c\x17d\x1ae\x00f\x01g\th", true));
+    // Unbracketed: the same strip, and LF as CR.
+    try t.expectEqualStrings("one\rtwo  x\r", try encodePaste(arena, "one\ntwo\x1b\x03x\n", false));
+}
+
 test "paste is bracketed only when the child asked; a newline becomes a carriage return otherwise" {
     // A POSIX shell script drives this one.
     if (builtin.os.tag == .windows) return error.SkipZigTest;
@@ -1208,6 +1572,133 @@ test "paste is bracketed only when the child asked; a newline becomes a carriage
     const text = try app.gpa.dupe(u8, "ab");
     try app.handle(.{ .paste = text });
     try t.expect(try tickUntilScreen(&app, "2   0   0   ~   a   b", 5000));
+}
+
+test "selecting in a terminal pane: a drag copies the cells it crossed (a wide char whole), two clicks a word, three the line; a key lets go" {
+    // A POSIX shell script drives this one.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (!supported) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const id = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "printf 'COPYME-alpha-beta \\344\\275\\240\\345\\245\\275 end\\n'; sleep 30" }, .label = "sel" });
+    try t.expect(try tickUntilScreen(&app, "COPYME-alpha-beta", 5000));
+    const p = app.panes.pty(id).?;
+    const b = p.body;
+    try t.expect(b.w > 0);
+    const row = b.y; // the line the child printed
+    const press = struct {
+        fn at(a: *App, x: u16, y: u16, kind: key_mod.MouseKind) !void {
+            try a.handle(.{ .mouse = .{ .x = x, .y = y, .kind = kind, .button = .left } });
+        }
+    }.at;
+    // Cells 0..16 are `COPYME-alpha-beta`; 18..21 the two wide chars.
+    try press(&app, b.x, row, .press);
+    try press(&app, b.x + 21, row, .drag);
+    try press(&app, b.x + 21, row, .release);
+    try t.expect(app.drag == null);
+    try t.expectEqualStrings("COPYME-alpha-beta \u{4f60}\u{597d}", app.clipboard.text());
+    // The painted cells carry the selection's ground.
+    try app.render();
+    try t.expect(p.grid.rowSelection(0) != null);
+    try t.expectEqual(app.theme.selection.bg, app.screen.readCell(b.x + 3, row).?.style.bg);
+
+    // A press elsewhere lets it go; a second one on the spot is a word.
+    app.now_ms += 5000;
+    try press(&app, b.x + 8, row, .press);
+    try press(&app, b.x + 8, row, .release);
+    try press(&app, b.x + 8, row, .press);
+    try press(&app, b.x + 8, row, .release);
+    try t.expectEqualStrings("COPYME-alpha-beta", app.clipboard.text());
+    // A third is the line.
+    try press(&app, b.x + 8, row, .press);
+    try press(&app, b.x + 8, row, .release);
+    try t.expectEqualStrings("COPYME-alpha-beta \u{4f60}\u{597d} end", app.clipboard.text());
+    try t.expect(hasSelection(p));
+    // A key for the child lets go of it.
+    try app.handle(.{ .key = Key.char('x') });
+    try t.expect(!hasSelection(p));
+}
+
+test "pwdPath: OSC 7's file URL to a path, percent escapes decoded; anything else refused" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    try t.expectEqualStrings("/Users/me/deep dir/sub", (try pwdPath(arena, "file://my-mac.local/Users/me/deep%20dir/sub")).?);
+    try t.expectEqualStrings("/tmp", (try pwdPath(arena, "file:///tmp")).?);
+    try t.expect(try pwdPath(arena, "kitty-shell-cwd://host/tmp") == null);
+    try t.expect(try pwdPath(arena, "file://host-only") == null);
+}
+
+test "what a shell reports: OSC 7 is the pane's live cwd, OSC 133 prompts are jumped between, an OSC 8 link is found under its cell" {
+    // A POSIX shell script drives this one.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (!supported) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const script =
+        \\printf '\033]8;;https://example.com/x\033\\link\033]8;;\033\\\n'
+        \\printf '\033]7;file://h/tmp/some%%20where\007'
+        \\printf '\033]133;A\007$ one\n\033]133;C\007'; seq 1 40
+        \\printf '\033]133;A\007$ two\n\033]133;C\007'; seq 41 80
+        \\echo done; sleep 30
+    ;
+    const id = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", script }, .label = "report" });
+    // Each prompt line is followed by the output mark (133;C) a shell
+    // sends: a prompt left open is cleared on resize for the shell to
+    // redraw (`shell_redraws_prompt`), and printf redraws nothing.
+    try t.expect(try tickUntilScreen(&app, "done", 5000));
+    const p = app.panes.pty(id).?;
+    try t.expectEqualStrings("/tmp/some where", (try p.liveCwd(app.frame.allocator())).?);
+    // Up to "$ two", then to "$ one"; a third jump has nowhere to go.
+    try t.expect(jumpPrompt(&app, p, -1));
+    try t.expect(try tickUntilScreen(&app, "$ two", 1000));
+    try t.expect(jumpPrompt(&app, p, -1));
+    try t.expect(try tickUntilScreen(&app, "$ one", 1000));
+    // At the top the link line is in view again.
+    p.scrollTo(.top);
+    try app.render();
+    try t.expectEqualStrings("https://example.com/x", linkAt(p, p.body.x + 1, p.body.y).?);
+    try t.expect(linkAt(p, p.body.x + 6, p.body.y) == null);
+}
+
+test "focus reports: a child that enabled DEC 1004 hears ESC [ O when its pane loses the focus and ESC [ I when it comes back" {
+    // A POSIX shell script drives this one.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (!supported) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 16 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const ed = try app.openScratch();
+    const id = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "stty raw -echo; printf '\\033[?1004h'; echo ready; dd bs=1 count=6 2>/dev/null | od -An -c; sleep 30" }, .label = "focus" });
+    try t.expect(try tickUntilScreen(&app, "ready", 5000));
+    app.showPane(ed);
+    try app.tick(App.nowMs(app.io));
+    app.showPane(id);
+    try t.expect(try tickUntilScreen(&app, "033   [   O 033   [   I", 5000));
+}
+
+test "the wheel over a pager: on the alternate screen with no mouse tracking the notches reach the child as arrow keys" {
+    // A POSIX shell script drives this one.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (!supported) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    // What less does: the alternate screen, no mouse mode. The child
+    // dumps the next six bytes it reads as octal.
+    const id = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "printf '\\033[?1049h'; stty raw -echo; echo ready; dd bs=1 count=6 2>/dev/null | od -An -c; sleep 30" }, .label = "pager" });
+    try t.expect(try tickUntilScreen(&app, "ready", 5000));
+    try t.expect(app.panes.pty(id).?.encoding().mouse == .none);
+    var rect: ?Rect = null;
+    for (app.hits.items.items) |h| if (h.target == .pane and h.target.pane == id) {
+        rect = h.rect;
+    };
+    const r = rect.?;
+    app.now_ms += 1000;
+    try app.handle(.{ .mouse = .{ .x = r.x + 5, .y = r.y + 3, .kind = .scroll_down } });
+    try t.expect(try tickUntilScreen(&app, "033   [   B 033   [   B", 5000));
 }
 
 test "the wheel over a pty: a child tracking the mouse gets every event of a batch as its report; one that is not scrolls the scrollback a line per event" {

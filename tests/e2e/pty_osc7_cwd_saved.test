@@ -1,0 +1,20 @@
+# env: SHELL=/bin/zsh
+# env: HOME=${MNML_E2E_WORKSPACE}/zdot
+# env: ZDOTDIR=${MNML_E2E_WORKSPACE}/zdot
+# A shell reports where it is with OSC 7 (ghostty's shell integration,
+# macOS's `update_terminal_cwd`, starship, fish, the mnml prompt), and a
+# saved session keeps it: after `cd deep/sub` the pane is written with
+# that directory, so a restore brings the shell back there rather than
+# in the workspace root. (OSC 133 prompt marks drive `term.prev_prompt`
+# / `term.next_prompt`; Ctrl / Cmd + click opens an OSC 8 link.)
+shell mkdir -p deep/sub zdot && printf 'PS1="%%# "\nunset HISTFILE\n' > zdot/.zshrc
+write a.txt "x\n"
+open a.txt
+command term.shell_bottom
+wait 2000
+type "cd deep/sub && printf '\\033]7;file://%s%s\\007' \"$(hostname)\" \"$PWD\" && echo CD-OK"
+key enter
+wait 800
+expect screen contains "CD-OK"
+command session.save
+expect file .mnml/session.zon contains "deep/sub"

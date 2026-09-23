@@ -25,7 +25,9 @@ expect screen contains "session-1"
 key enter
 wait 1500
 expect screen contains "worktree session-1:"
-expect screen contains "claude @ session-1"
+# The tab reads the title the child set (OSC 0), not the launch label
+# `claude @ session-1` — a terminal's tab follows its child's title.
+expect screen contains "󱸀 ✳ job"
 # The tree is a WORKTREES row of the git panel.
 command view.activity_git
 wait 1500

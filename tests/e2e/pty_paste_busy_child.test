@@ -1,0 +1,22 @@
+# A paste into a terminal whose program is not reading its input — a
+# build, `sleep`, `tail -f`, a server — is queued and the app stays
+# responsive, as it is in ghostty or Terminal.app. The tty takes about a
+# kilobyte and then stops; the rest waits in the session's outbox for
+# the child to read it (`pty/outbox.zig`), never on the UI thread.
+#
+# 200 lines (4.6 KB, tabs included) pasted into `sleep 12`: right after
+# the paste the child is still running, and the app still takes a
+# command.
+shell for i in $(seq 0 199); do printf 'line %04d\tcol\twith tab\n' $i; done > p.txt
+open p.txt
+command editor.use_vim
+type "ggyG"
+command view.toggle_tree
+ex term sleep 12
+wait 500
+expect screen contains "sleep 12"
+command term.paste
+wait 200
+expect screen lacks "[exited"
+ex rename still-here
+expect screen contains "still-here"

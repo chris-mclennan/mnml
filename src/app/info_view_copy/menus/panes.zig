@@ -413,6 +413,11 @@ pub const rows = [_]Row{
     // ── a terminal pane's body (`openPtyPaneMenu`, titled by the
     // pane's own name). Clear, Restart, Rename…, Color and Equalize
     // splits are written where the tab menu's rows are ──
+    .{ .label = "Copy", .command = .@"term.copy", .entry = .{
+        .title = "Copy",
+        .body = "Copies the text selected in the terminal to the clipboard — the register a `p` in an editor pastes, and the system clipboard. Drag across the output to select it, double-click for a word or a path, triple-click for the line; a release copies on its own, so this row is for copying the same selection again. Hold Shift to select in a program that takes the mouse. Nothing selected says so.",
+        .links = &.{ .{ .command = .{ .id = .@"term.copy", .label = "Copy the selection" } }, .{ .command = .{ .id = .@"term.paste", .label = "Paste it back" } } },
+    } },
     .{ .label = "Paste", .command = .@"term.paste", .entry = .{
         .title = "Paste",
         .body = "Writes the clipboard to the child process as typed input, wrapped in bracketed-paste markers when the program asked for them, so an editor running inside the terminal takes it as a paste rather than a burst of keys. A program that did not ask gets newlines as carriage returns, which means a multi-line paste runs its lines. An empty clipboard says so and sends nothing.",

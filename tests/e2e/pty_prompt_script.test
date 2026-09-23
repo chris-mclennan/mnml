@@ -1,0 +1,15 @@
+# env: SHELL=/bin/zsh
+# env: HOME=${MNML_E2E_WORKSPACE}/zdot
+# env: ZDOTDIR=${MNML_E2E_WORKSPACE}/zdot
+# A shell pane is handed the mnml prompt: `MNML_PROMPT_SCRIPT` names
+# `themes/mnml-prompt.sh` as written into the data root, and the one-line
+# opt-in a user puts in their rc file turns it on — the directory chip,
+# and on the right the clock and the `mnml` context.
+shell mkdir -p zdot && printf 'PS1="%%# "\nunset HISTFILE\n' > zdot/.zshrc
+command term.shell_bottom
+wait 2500
+type "[ -n \"$MNML_PROMPT_SCRIPT\" ] && . \"$MNML_PROMPT_SCRIPT\" && echo sourced-${MNML_PROMPT_SCRIPT##*/}"
+key enter
+wait 1500
+expect screen contains "sourced-prompt.sh"
+expect screen contains "· mnml"

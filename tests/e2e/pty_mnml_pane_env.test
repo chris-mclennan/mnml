@@ -1,0 +1,11 @@
+# A terminal child knows it runs inside mnml: `MNML_PANE=1` on every
+# one (integrations opened with `:term <binary>` drop their own outer
+# border on it), `MNML_WORKSPACE` naming the workspace, and for a shell
+# the prompt's environment — the theme's colours as `MNML_PROMPT_*`,
+# `MNML_CONTEXT`, and `MNML_PROMPT_SCRIPT`, the shipped
+# `themes/mnml-prompt.sh` written into the data root.
+command view.toggle_tree
+ex term printf 'pane=[%s] ws=[%s]\n' "$MNML_PANE" "${MNML_WORKSPACE##*/}"; sleep 30
+wait 1500
+expect screen contains "pane=[1]"
+expect screen lacks "ws=[]"

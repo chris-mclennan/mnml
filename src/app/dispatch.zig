@@ -532,7 +532,8 @@ fn listPaneKey(app: *App, id: PaneId, l: *app_mod.ListPane, k: Key) Allocator.Er
 /// programs need it; the app's chords are the way out). A modified
 /// chord goes to the chord chain first when the keymap binds it, except
 /// the ones a terminal owns outright (`pty_pane.childOwned`). An exited
-/// pane closes on any plain key.
+/// pane closes on Enter or Esc; its scrollback keys still scroll it, and
+/// every other key is the app's (the vim leader included).
 fn ptyKey(app: *App, id: PaneId, p: *pty_pane.PtyPane, k: Key) Allocator.Error!void {
     if (app.chord.len > 0) {
         _ = try chordChain(app, k);
@@ -540,6 +541,10 @@ fn ptyKey(app: *App, id: PaneId, p: *pty_pane.PtyPane, k: Key) Allocator.Error!v
     }
     const modified = k.mods.ctrl or k.mods.alt or k.mods.super;
     if (p.exit != null) {
+        // Reading back what the command printed is why the pane is still
+        // there: Shift+PageUp / Home … scroll, as they did while it ran
+        // (ghostty's keybindings, too, come before "any key closes").
+        if (pty_pane.scrollKey(app, p, k)) return;
         if (modified and try chordChain(app, k)) return;
         // A pane restored from a saved session never ran: a key offers
         // it back rather than closing the tab the restore just brought.
@@ -550,7 +555,9 @@ fn ptyKey(app: *App, id: PaneId, p: *pty_pane.PtyPane, k: Key) Allocator.Error!v
             };
             return;
         }
-        try app.forceClosePane(id);
+        const plain = !modified and !k.mods.shift;
+        if (plain and (k.code == .enter or k.code == .esc)) return app.forceClosePane(id);
+        _ = try chordChain(app, k);
         return;
     }
     // vim: `<C-\><C-n>` (NvChad's `<C-x>` too) leaves the child for
@@ -2153,12 +2160,25 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     if (app.overlay != .none) closeOverlay(app);
                     if (app.active != id or app.focus != .pane) app.showPane(id);
                 }
-                if (p.encoding().mouse == .none) {
+                // Shift overrides a child's mouse tracking for selecting,
+                // as in ghostty and xterm.
+                if (p.encoding().mouse == .none or (m.mods.shift and !wheel)) {
                     if (wheel) return wheelOnPane(app, id, m, count);
                     // right-click: Rust's dock menu, when the child is
                     // not tracking the mouse (a tracking child owns its
                     // right button).
                     if (m.kind == .press and m.button == .right) return context_menus.openPtyPaneMenu(app, id, m.x, m.y);
+                    // Ctrl / Cmd + click opens an OSC 8 link the child
+                    // printed, as ghostty's does.
+                    if (m.kind == .press and m.button == .left and (m.mods.ctrl or m.mods.super)) {
+                        if (pty_pane.linkAt(p, m.x, m.y)) |url| return git_app.openExternal(app, url);
+                    }
+                    // A left press anchors a text selection; the drag and
+                    // the release come back through `continueDrag`.
+                    if (m.kind == .press and m.button == .left) {
+                        try pty_pane.selectPress(app, p, m.x, m.y, clickCount(app, m));
+                        app.drag = .{ .pty_select = id };
+                    }
                     return;
                 }
                 const r = hitRect(app, m.x, m.y) orelse return;
@@ -2967,7 +2987,10 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         },
         .md_preview => |*mp| md_preview.scrollBy(app, mp, signed(down, @intCast(n * gain))),
         .zon => |*z| zon_pane.wheel(app, z, down, n),
-        .pty => |*p| p.scrollBy(signed(down, @intCast(n))),
+        // A row of scrollback a notch (Rust's `scroll_history`); a pager
+        // on the alternate screen gets `wheel_lines` arrows, a text
+        // body's gain (`pty_pane.wheel`).
+        .pty => |*p| pty_pane.wheel(app, p, down, n, n * gain),
         .git_status => |*s| git_app.statusPaneWheel(app, s, down, n),
         .diff => |*d| git_app.stepDiff(d, signed(down, @intCast(n * gain))),
         .git_graph => |*g| g.cursor = if (down) @min(g.cursor + n, g.totalRows() -| 1) else g.cursor -| n,
@@ -3234,6 +3257,9 @@ fn continueDrag(app: *App, m: Mouse) Allocator.Error!void {
         .bottom_divider => if (m.kind == .drag) bottom.dragTo(app, m.y),
         .graph_divider => |id| if (m.kind == .drag) git_app.dragGraphDivider(app, id, m.x),
         .diff_select => |ds| git_app.dragDiffSelect(app, ds.pane, ds.anchor, m),
+        .pty_select => |id| if (app.panes.pty(id)) |p| {
+            if (m.kind == .release) try pty_pane.selectRelease(app, p, m.x, m.y) else try pty_pane.selectDrag(app, p, m.x, m.y);
+        },
         .select => |sel| {
             extendSelection(app, sel, m.x, m.y);
             // A press-and-release on one cell is a click: no selection.

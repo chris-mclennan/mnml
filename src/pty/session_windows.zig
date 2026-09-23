@@ -6,7 +6,9 @@
 //! The plumbing
 //! ------------
 //! Two anonymous pipes. The child's input is the read end of one; we keep
-//! its write end and `WriteFile` keystrokes there. The child's output is
+//! its write end, and a writer thread `WriteFile`s the session's outbox
+//! there — the UI thread only queues (`outbox.zig`), so a child that stops
+//! reading its console input can never block it. The child's output is
 //! the write end of the other; the reader thread blocks in `ReadFile` on
 //! its read end. `CreatePseudoConsole` duplicates the two ends it is
 //! given into conhost, so our copies are closed right after — exactly as
@@ -16,14 +18,16 @@
 //!
 //! Threads and ownership
 //! ---------------------
-//! Both threads are *detached*, like the POSIX reader, and as there,
-//! `Session.deinit` does not join them but does wait for both to let go
-//! of the shared block before it frees it — so the block never outlives
+//! All three threads (reader, watcher, writer) are *detached*, like the
+//! POSIX reader, and as there, `Session.deinit` does not join them but
+//! does wait for all of them to let go of the shared block before it frees
+//! it — so the block never outlives
 //! the session and a leak-checked caller can tear down the allocator
 //! right after. `deinit` terminates the child, closes the pseudoconsole,
 //! marks the block `closing`, sets the stop event, and then waits for the
-//! two releases. Neither takes long: the watcher's wait returns on the
-//! stop event; the reader keeps draining (into scratch once closing —
+//! releases. None takes long: the watcher's and the writer's waits return
+//! on the stop event (a writer inside `WriteFile` is released by the
+//! pseudoconsole's close, which breaks the pipe under it); the reader keeps draining (into scratch once closing —
 //! `ClosePseudoConsole` is known to block until every pending byte has
 //! been read; a reader that stopped reading would wedge the UI thread on
 //! close) until conhost lets go of its end of the pipe after the close,
@@ -61,6 +65,7 @@ const Io = std.Io;
 const vt = @import("ghostty-vt");
 const Ring = @import("ring.zig").Ring;
 const common = @import("common.zig");
+const Outbox = @import("outbox.zig").Outbox;
 const win = @import("win_cmdline.zig");
 
 const log = std.log.scoped(.pty);
@@ -80,6 +85,11 @@ pub const Options = struct {
     notify: Notify = .none,
     /// Ring size; must be a power of two.
     ring_capacity: usize = Ring.default_capacity,
+    /// Scrollback kept above the screen, in lines.
+    scrollback_lines: usize = common.default_scrollback_lines,
+    /// Take the child's clipboard writes (OSC 52 and the kitty protocol)
+    /// for `takeClipboard`. Off: they are dropped, as before.
+    clipboard_write: bool = false,
     /// Accepted for symmetry with the POSIX options; the Windows reader
     /// blocks in `ReadFile` and needs no poll interval.
     poll_interval_ms: i32 = 250,
@@ -137,18 +147,7 @@ const kernel32 = struct {
     extern "kernel32" fn Sleep(dwMilliseconds: DWORD) callconv(.winapi) void;
 };
 
-/// A test-and-set lock for the two-line critical sections in `Shared`.
-const SpinLock = struct {
-    held: std.atomic.Value(bool) = .init(false),
-
-    fn lock(self: *SpinLock) void {
-        while (self.held.swap(true, .acquire)) std.atomic.spinLoopHint();
-    }
-
-    fn unlock(self: *SpinLock) void {
-        self.held.store(false, .release);
-    }
-};
+const SpinLock = common.SpinLock;
 
 /// State the two threads and the session all reach. Refcounted; see the
 /// module doc for why it is not simply owned by the session.
@@ -158,8 +157,16 @@ const Shared = struct {
     out_read: HANDLE,
     /// The child. Closed with the block.
     process: HANDLE,
-    /// Manual-reset event `deinit` sets so the watcher stops waiting.
+    /// Manual-reset event `deinit` sets so the watcher and the writer
+    /// stop waiting.
     stop: HANDLE,
+    /// What the session wants written to the child; the writer drains it.
+    outbox: Outbox = .{},
+    /// Auto-reset: set by a push onto an empty outbox.
+    write_ready: HANDLE,
+    /// Our end of the child's input pipe. The writer owns it and closes
+    /// it on its way out.
+    in_write: HANDLE,
     /// The pseudoconsole. Closed exactly once (`closePty`) by whoever
     /// gets there first — the watcher after the child exits, or
     /// `Session.deinit`. `pcon_lock` covers the flag and every resize,
@@ -179,22 +186,24 @@ const Shared = struct {
     /// Set by the watcher once `exit_code` is valid.
     exited: std.atomic.Value(bool) = .init(false),
     exit_code: std.atomic.Value(u32) = .init(0),
-    /// The session + the reader + the watcher. `deinit` waits for the two
-    /// threads' releases before its own, so the block is always freed by
-    /// `deinit`, before it returns — each thread's last touch is its
-    /// `fetchSub`.
-    refs: std.atomic.Value(u32) = .init(3),
+    /// The session + the reader + the watcher + the writer. `deinit`
+    /// waits for the three threads' releases before its own, so the block
+    /// is always freed by `deinit`, before it returns — each thread's last
+    /// touch is its `fetchSub`.
+    refs: std.atomic.Value(u32) = .init(4),
 
     fn release(self: *Shared, gpa: Allocator) void {
         if (self.refs.fetchSub(1, .acq_rel) != 1) return;
         self.ring.deinit();
+        self.outbox.deinit(gpa);
         windows.CloseHandle(self.process);
         windows.CloseHandle(self.stop);
+        windows.CloseHandle(self.write_ready);
         gpa.destroy(self);
     }
 
-    /// Session side: block until both threads have dropped their
-    /// references. Bounded by their wake-up latency once `deinit` has
+    /// Session side: block until every thread has dropped its
+    /// reference. Bounded by their wake-up latency once `deinit` has
     /// set the stop event and closed the pseudoconsole — a short spin,
     /// then 1 ms naps.
     fn awaitThreads(self: *Shared) void {
@@ -247,11 +256,9 @@ pub const Session = struct {
     /// By value: the write_pty callback recovers `Session` from
     /// `&stream.handler` via `@fieldParentPtr`. Never move a Session.
     stream: vt.TerminalStream,
-    /// Query replies stashed by `onWritePty`, flushed at the end of `pump`.
-    responses: std.ArrayList(u8) = .empty,
     shared: *Shared,
-    /// Our end of the child's input pipe.
-    in_write: HANDLE,
+    /// The child's last clipboard write, until `takeClipboard`.
+    clipboard: ?[]u8 = null,
     exit: ?Exit = null,
     cols: u16,
     rows: u16,
@@ -285,14 +292,16 @@ pub const Session = struct {
         var ring = try Ring.init(opts.ring_capacity);
         errdefer ring.deinit();
 
-        var term: vt.Terminal = try .init(io, gpa, .{ .cols = opts.cols, .rows = opts.rows });
+        var term: vt.Terminal = try .init(io, gpa, common.terminalOptions(opts.cols, opts.rows, opts.scrollback_lines));
         errdefer term.deinit(gpa);
 
         // ── pipes + pseudoconsole ──
         var in_read: HANDLE = undefined;
         var in_write: HANDLE = undefined;
         if (kernel32.CreatePipe(&in_read, &in_write, null, 0) == .FALSE) return error.PipeFailed;
-        errdefer windows.CloseHandle(in_write);
+        // Owned by the writer thread once it is running.
+        var in_write_owned = false;
+        errdefer if (!in_write_owned) windows.CloseHandle(in_write);
         var out_read: HANDLE = undefined;
         var out_write: HANDLE = undefined;
         if (kernel32.CreatePipe(&out_read, &out_write, null, 0) == .FALSE) {
@@ -359,6 +368,8 @@ pub const Session = struct {
 
         const stop = kernel32.CreateEventW(null, .TRUE, .FALSE, null) orelse return error.EventFailed;
         errdefer windows.CloseHandle(stop);
+        const write_ready = kernel32.CreateEventW(null, .FALSE, .FALSE, null) orelse return error.EventFailed;
+        errdefer windows.CloseHandle(write_ready);
 
         // ── wire the session ──
         shared.* = .{
@@ -366,6 +377,8 @@ pub const Session = struct {
             .out_read = out_read,
             .process = pi.hProcess,
             .stop = stop,
+            .write_ready = write_ready,
+            .in_write = in_write,
             .hpc = hpc,
             .notify = opts.notify,
         };
@@ -374,25 +387,34 @@ pub const Session = struct {
             .term = term,
             .stream = undefined,
             .shared = shared,
-            .in_write = in_write,
             .cols = opts.cols,
             .rows = opts.rows,
         };
         var handler = self.term.vtHandler();
         handler.effects = .readonly;
         handler.effects.write_pty = onWritePty;
+        if (opts.clipboard_write) handler.effects.clipboard_write = onClipboardWrite;
         self.stream = .init(.{ .handler = handler, .allocator = gpa });
 
-        // Watcher first: it only waits, so if the reader then fails to
-        // start it can be stopped and joined, and the errdefers above are
-        // once more the only owners of the block.
+        // Watcher and writer first: they only wait, so if a later thread
+        // fails to start they can be stopped and joined, and the errdefers
+        // above are once more the only owners of the block.
         const watcher = try std.Thread.spawn(.{ .stack_size = 64 * 1024 }, watcherMain, .{ shared, gpa });
-        const reader = std.Thread.spawn(.{ .stack_size = 256 * 1024 }, readerMain, .{ shared, gpa }) catch |err| {
+        const writer = std.Thread.spawn(.{ .stack_size = 64 * 1024 }, writerMain, .{ shared, gpa }) catch |err| {
             _ = kernel32.SetEvent(stop);
             watcher.join();
             return err;
         };
+        // The writer closes the pipe on its way out, even a joined one.
+        in_write_owned = true;
+        const reader = std.Thread.spawn(.{ .stack_size = 256 * 1024 }, readerMain, .{ shared, gpa }) catch |err| {
+            _ = kernel32.SetEvent(stop);
+            watcher.join();
+            writer.join();
+            return err;
+        };
         watcher.detach();
+        writer.detach();
         reader.detach();
         return self;
     }
@@ -413,21 +435,20 @@ pub const Session = struct {
         // The reader discards from here on, so the drain this may wait
         // for needs nothing from us.
         shared.closePty();
-        windows.CloseHandle(self.in_write);
         _ = kernel32.SetEvent(shared.stop);
         self.stream.deinit();
         self.term.deinit(gpa);
-        self.responses.deinit(gpa);
+        if (self.clipboard) |text| gpa.free(text);
         shared.awaitThreads();
         shared.release(gpa);
         self.* = undefined;
         gpa.destroy(self);
     }
 
-    /// Feed everything the reader has ringed into the terminal, then send
-    /// any query replies back to the child. Call from the UI thread on
-    /// every `.pty_readable` and once per frame. Returns true when the
-    /// terminal state changed (something to render).
+    /// Feed everything the reader has ringed into the terminal (its query
+    /// replies go onto the outbox as they are parsed). Call from the UI
+    /// thread on every `.pty_readable` and once per frame. Returns true
+    /// when the terminal state changed (something to render).
     pub fn pump(self: *Session) bool {
         const ring = &self.shared.ring;
         ring.beginDrain();
@@ -439,17 +460,35 @@ pub const Session = struct {
             ring.consume(chunk.len);
             fed = true;
         }
-        if (self.responses.items.len > 0) {
-            writeAll(self.in_write, self.responses.items);
-            self.responses.clearRetainingCapacity();
-        }
         self.reap();
         return fed;
     }
 
-    /// Bytes from the user (keystrokes, paste) to the child.
+    /// Bytes from the user (keystrokes, paste) to the child. Queued for
+    /// the writer; returns at once whether or not the child is reading.
     pub fn write(self: *Session, bytes: []const u8) void {
-        writeAll(self.in_write, bytes);
+        self.queue(bytes);
+    }
+
+    /// Ctrl+C: what is still queued goes (a tty flushes its input on an
+    /// interrupt), then the byte — conhost turns it into CTRL_C_EVENT.
+    pub fn interrupt(self: *Session) void {
+        self.shared.outbox.discard();
+        self.queue("\x03");
+    }
+
+    /// Bytes still waiting for the child to read them.
+    pub fn pendingInput(self: *Session) usize {
+        return self.shared.outbox.pending();
+    }
+
+    fn queue(self: *Session, bytes: []const u8) void {
+        if (self.shared.exited.load(.acquire)) return;
+        const edge = self.shared.outbox.push(self.gpa, bytes) catch |err| {
+            log.warn("dropping {d} bytes of input: {t}", .{ bytes.len, err });
+            return;
+        };
+        if (edge) _ = kernel32.SetEvent(self.shared.write_ready);
     }
 
     /// Resize both the pseudoconsole (the child sees a window-size event)
@@ -488,12 +527,26 @@ pub const Session = struct {
         return @alignCast(@fieldParentPtr("stream", stream));
     }
 
-    fn onWritePty(handler: *vt.TerminalStream.Handler, data: []const u8) void {
+    /// The text the child last copied, gpa-owned — the caller frees it.
+    /// Null when it copied nothing since the last call.
+    pub fn takeClipboard(self: *Session) ?[]u8 {
+        const text = self.clipboard orelse return null;
+        self.clipboard = null;
+        return text;
+    }
+
+    fn onClipboardWrite(handler: *vt.TerminalStream.Handler, w: vt.clipboard.Write) void {
         const self = fromHandler(handler);
-        // Mid-parse: stash only. `pump` flushes after the drain.
-        self.responses.appendSlice(self.gpa, data) catch |err| {
-            log.warn("dropping {d}-byte query reply: {t}", .{ data.len, err });
-        };
+        const text = common.clipboardText(w) orelse return w.reply(.unsupported);
+        const copy = self.gpa.dupe(u8, text) catch return w.reply(.io_error);
+        if (self.clipboard) |old| self.gpa.free(old);
+        self.clipboard = copy;
+        w.reply(.{ .success = .{} });
+    }
+
+    fn onWritePty(handler: *vt.TerminalStream.Handler, data: []const u8) void {
+        // Mid-parse is fine: a push only copies.
+        fromHandler(handler).queue(data);
     }
 
     /// Take the watcher's verdict. The watcher has closed (or is
@@ -558,23 +611,35 @@ fn watcherMain(shared: *Shared, gpa: Allocator) void {
     shared.closePty();
 }
 
+/// Drain the outbox into the child's input pipe. The only thread that
+/// writes it, and the one that closes it. `WriteFile` may block on a child
+/// that is not reading — which is why it is this thread and not the UI's.
+/// `deinit`'s pseudoconsole close breaks the pipe under a blocked write.
+fn writerMain(shared: *Shared, gpa: Allocator) void {
+    defer shared.release(gpa);
+    defer windows.CloseHandle(shared.in_write);
+    var chunk: [16 * 1024]u8 = undefined;
+    const handles = [_]HANDLE{ shared.write_ready, shared.stop };
+    while (!shared.closing.load(.acquire)) {
+        const taken = shared.outbox.peek(&chunk);
+        if (taken.n == 0) {
+            if (kernel32.WaitForMultipleObjects(handles.len, &handles, .FALSE, INFINITE) != WAIT_OBJECT_0) break;
+            continue;
+        }
+        var written: DWORD = 0;
+        if (kernel32.WriteFile(shared.in_write, &chunk, @intCast(taken.n), &written, null) == .FALSE or written == 0) {
+            shared.outbox.close();
+            break;
+        }
+        shared.outbox.consume(written, taken.gen);
+    }
+    shared.outbox.close();
+}
+
 // ── helpers ─────────────────────────────────────────────────────────
 
 fn coord(cols: u16, rows: u16) windows.COORD {
     return .{ .X = @intCast(@min(cols, std.math.maxInt(i16))), .Y = @intCast(@min(rows, std.math.maxInt(i16))) };
-}
-
-/// Blocking write. Bytes to a child that has gone away are dropped
-/// silently; the watcher will report the exit.
-fn writeAll(h: HANDLE, bytes: []const u8) void {
-    var off: usize = 0;
-    while (off < bytes.len) {
-        var written: DWORD = 0;
-        const n: DWORD = @intCast(@min(bytes.len - off, std.math.maxInt(DWORD)));
-        if (kernel32.WriteFile(h, bytes.ptr + off, n, &written, null) == .FALSE) return;
-        if (written == 0) return;
-        off += written;
-    }
 }
 
 /// Overlay the terminal identity on the child's environment. No terminfo

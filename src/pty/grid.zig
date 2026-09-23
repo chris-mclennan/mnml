@@ -39,8 +39,10 @@ pub const Underline = enum { none, single, double, curly, dotted, dashed };
 pub const Cell = struct {
     /// First (or only) codepoint; 0 for an empty cell.
     cp: u21 = 0,
-    /// Every codepoint when the cell holds a multi-codepoint grapheme;
-    /// borrowed from the render state — valid until the next `update`.
+    /// The codepoints AFTER `cp` when the cell holds a multi-codepoint
+    /// grapheme (a skin tone, a ZWJ and the next person, VS16) — the
+    /// cluster is `cp` then these. Borrowed from the render state, valid
+    /// until the next `update`.
     grapheme: []const u21 = &.{},
     fg: Color = .default,
     bg: Color = .default,
@@ -113,6 +115,13 @@ pub const Grid = struct {
     /// The row changed since the last `markClean`.
     pub fn rowDirty(self: *const Grid, y: u16) bool {
         return self.state.row_data.items(.dirty)[y];
+    }
+
+    /// The columns of row `y` the screen's selection covers, both ends
+    /// inclusive; null when the row has none.
+    pub fn rowSelection(self: *const Grid, y: u16) ?[2]u16 {
+        const sel = self.state.row_data.items(.selection)[y] orelse return null;
+        return .{ sel[0], sel[1] };
     }
 
     pub fn cell(self: *const Grid, x: u16, y: u16) Cell {

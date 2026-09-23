@@ -1,0 +1,19 @@
+# A finished command's pane is there to be read: it says `[exited 0] —
+# Enter closes`, and Shift+PageUp / Shift+Home are still its scrollback
+# keys (ghostty, too, runs its keybindings before a closing key). Only
+# Enter or Esc closes it; any other key is the app's.
+#
+# 300 lines, exit 0; Shift+PageUp scrolls, a letter does nothing, Enter
+# closes.
+command view.toggle_tree
+ex term seq 1 300
+wait 1200
+expect screen contains "[exited 0] — Enter closes"
+key shift+pageup
+wait 300
+expect pane "seq 1 300"
+expect screen contains "250"
+type "q"
+expect pane "seq 1 300"
+key enter
+expect screen lacks "seq 1 300"

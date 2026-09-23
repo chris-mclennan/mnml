@@ -805,6 +805,9 @@ pub const Drag = union(enum) {
     /// A diff pane's row press: the rows dragged over select
     /// (`git.dragDiffSelect`); `anchor` is the pressed row.
     diff_select: struct { pane: PaneId, anchor: usize },
+    /// A terminal pane's text: the pane keeps the anchor
+    /// (`pty_pane.selectDrag`).
+    pty_select: PaneId,
 };
 pub const DockDrag = struct { id: u32, x: u16, y: u16, moved: bool = false };
 pub const SelectUnit = enum { char, word, line };
@@ -990,6 +993,9 @@ pub const App = struct {
     data_root: []u8,
     /// What a spawned child inherits. Owned.
     env: std.process.Environ.Map,
+    /// The terminal mnml runs in has the focus (its own focus reports;
+    /// true until one says otherwise).
+    host_focused: bool = true,
     quit: bool = false,
     /// What the process exits with once `quit` is set: `:cq` asks for 1.
     exit_code: u8 = 0,
@@ -2785,7 +2791,9 @@ pub const App = struct {
                 defer self.gpa.free(text);
                 try dispatch.paste(self, text);
             },
-            .focus => {},
+            // The host window's focus: a focused terminal pane's child
+            // hears it too (DEC 1004, `pty_pane.tickAll`).
+            .focus => |f| self.host_focused = f,
             // D1: the payload is the handler's to adopt or free.
             .todos => |result| try todos.handle(self, result),
             .notes => |result| try notes.handle(self, result),
@@ -3160,6 +3168,7 @@ test {
     _ = @import("bridge/wire.zig");
     _ = @import("bridge/host.zig");
     _ = @import("app/pty_pane.zig");
+    _ = @import("app/pty_env.zig");
     _ = @import("app/http.zig");
     _ = @import("app/http_panel.zig");
     _ = @import("app/cmd_http.zig");
