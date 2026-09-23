@@ -3392,7 +3392,12 @@ pub fn pushStartPr(app: *App, name: []const u8) CommandError!void {
 pub fn pushForce(app: *App) CommandError!void {
     _ = try requireRepo(app);
     const branch = app.git.branchLabel() orelse "HEAD";
-    try openConfirm(app, .push_force, try std.fmt.allocPrint(app.gpa, "Push {s} with --force-with-lease? The remote branch is rewritten to match this one; commits only the remote has since your last fetch would be lost (git refuses if it moved past that fetch)", .{branch}));
+    const upstream: []const u8 = if (app.git.status) |st| (st.upstream orelse "the remote branch") else "the remote branch";
+    // What `--force-with-lease` does: the remote branch is made this
+    // one, dropping the commits the last fetch saw there that this
+    // branch does not have; a remote that moved since that fetch is
+    // refused. The box wraps (`confirm.messageLines`).
+    try openConfirm(app, .push_force, try std.fmt.allocPrint(app.gpa, "Push {s} with --force-with-lease?\n{s} is rewritten to match {s}: commits on it that you fetched but never merged are dropped. If it moved since your last fetch, git refuses the push.", .{ branch, upstream, branch }));
 }
 
 /// A prompt or confirm box closing by any route: an AI body waiting
@@ -6781,7 +6786,8 @@ test "the branch verbs on a seeded remote: fast-forward fetches ref:branch when 
     try f.sh(&.{ "commit", "-q", "--amend", "-m", "second, reworded" });
     try pushForce(&f.app);
     try testing.expect(std.mem.indexOf(u8, f.app.overlay.confirm.message, "force-with-lease") != null);
-    try testing.expect(std.mem.indexOf(u8, f.app.overlay.confirm.message, "would be lost") != null);
+    try testing.expect(std.mem.indexOf(u8, f.app.overlay.confirm.message, "never merged are dropped") != null);
+    try testing.expect(std.mem.indexOf(u8, f.app.overlay.confirm.message, "git refuses the push") != null);
     try acceptConfirm(&f.app, 0);
     try f.settle(4000);
     try testing.expect(std.mem.startsWith(u8, f.app.lastToast().?, "pushed (--force-with-lease)"));
