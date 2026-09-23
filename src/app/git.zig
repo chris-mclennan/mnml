@@ -4953,8 +4953,30 @@ fn openGraphMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
         .{ .label = "Sort by next column", .action = .{ .command = .@"git.graph_sort" }, .separator_before = true },
         .{ .label = "Jump to hash…", .action = .{ .command = .@"git.graph_jump_hash" } },
     });
-    errdefer app.gpa.free(items);
-    try app.openMenu("Commit", items, x, y);
+    // A commit HEAD already has (HEAD itself, any ancestor) cannot be
+    // picked onto it: git stops with an empty pick and leaves one in
+    // progress. The row is not offered there.
+    var list: std.ArrayListUnmanaged(command.MenuItem) = .fromOwnedSlice(items);
+    errdefer list.deinit(app.gpa);
+    if (g) |gp| if (gp.selectedIndex()) |ci| if (try inHead(app, gp, ci)) {
+        for (list.items, 0..) |it, i| if (it.action == .command and it.action.command == .@"git.cherry_pick") {
+            if (i + 1 < list.items.len) list.items[i + 1].separator_before = true;
+            _ = list.orderedRemove(i);
+            break;
+        };
+    };
+    const rows = try list.toOwnedSlice(app.gpa);
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Commit", rows, x, y);
+}
+
+/// Whether HEAD already has commit `ci` of the graph: HEAD's row or one
+/// of its ancestors among the graph's commits.
+pub fn inHead(app: *App, g: *const GraphPane, ci: usize) Allocator.Error!bool {
+    const head = headIndex(app, g) orelse return false;
+    if (ci >= g.commits.len) return false;
+    const on = try reachable(app.frame.allocator(), g, head);
+    return on[ci];
 }
 
 /// The detail divider follows the pointer while it is held.

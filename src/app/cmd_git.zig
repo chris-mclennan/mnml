@@ -1043,6 +1043,11 @@ fn selectedCommit(app: *App) CommandError![]const u8 {
 
 fn cherryPick(app: *App) CommandError!void {
     const sha = try selectedCommit(app);
+    // HEAD's own history: the pick would be empty, and git would leave a
+    // cherry-pick in progress for the user to find `op_skip` for.
+    const g = try requireGraph(app);
+    if (g.selectedIndex()) |ci| if (try git.inHead(app, g, ci))
+        return app.diag.fail(arena(app), "cherry-pick: {s} is already in HEAD \u{2014} nothing to pick", .{sha[0..@min(7, sha.len)]});
     const repo = try git.requireRepo(app);
     try git.submitOp(app, repo, .{ .cherry_pick = try app.gpa.dupe(u8, sha) });
 }

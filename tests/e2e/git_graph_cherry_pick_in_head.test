@@ -1,0 +1,20 @@
+# The graph's "Cherry-pick onto HEAD" on a commit HEAD already has (here
+# HEAD itself, the row the graph opens on) is refused by name: git would
+# stop with "The previous cherry-pick is now empty" and leave a
+# cherry-pick in progress (CHERRY_PICK_HEAD, `main | CHERRY-PICK`). The
+# row menu does not offer it there.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write a.txt "one\n"
+shell git add a.txt
+shell git commit -q -m "first"
+write a.txt "two\n"
+shell git commit -q -am "second"
+command git.graph
+expect screen contains "second"
+command git.cherry_pick
+expect screen contains "is already in HEAD"
+wait 1000
+shell test ! -e .git/CHERRY_PICK_HEAD
+expect screen lacks "CHERRY-PICK"
