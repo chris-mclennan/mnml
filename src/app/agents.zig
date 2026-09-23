@@ -25,6 +25,9 @@ pub const Item = sessions.Item;
 pub const max_age_s: i64 = 7 * 24 * 3600;
 /// Bytes of a transcript's tail that are parsed.
 pub const tail_cap: usize = 256 * 1024;
+/// Bytes of a transcript's head read for its first prompt when the file
+/// is longer than `tail_cap` (the tail no longer holds it).
+pub const head_cap: usize = 64 * 1024;
 /// Transcripts past this are skipped outright.
 pub const max_file_bytes: u64 = 256 * 1024 * 1024;
 /// A session whose file moved within this many seconds is `streaming`.
@@ -191,6 +194,7 @@ pub fn scanInto(io: Io, gpa: Allocator, arena: Allocator, home: []const u8, rows
                 };
                 defer gpa.free(tail);
                 const stats = try transcript.parseClaude(arena, tail);
+                const first = if (st.size > tail_cap) try firstPrompt(gpa, io, arena, sub, f.name, .claude) else stats.first_user_msg;
                 const sid = try arena.dupe(u8, f.name[0 .. f.name.len - ".jsonl".len]);
                 var pid: ?u32 = null;
                 for (pids) |p| if (p.session_id) |s| if (std.mem.eql(u8, s, sid)) {
@@ -208,6 +212,7 @@ pub fn scanInto(io: Io, gpa: Allocator, arena: Allocator, home: []const u8, rows
                     .tokens = stats.tokens,
                     .cost_usd = stats.costUsd(),
                     .last_activity_s = mtime,
+                    .first_user_msg = first,
                     .last_user_msg = stats.last_user_msg,
                     .last_assistant_msg = stats.last_assistant_msg,
                     .current_tool = stats.last_tool_name,
@@ -241,6 +246,7 @@ pub fn scanInto(io: Io, gpa: Allocator, arena: Allocator, home: []const u8, rows
             };
             defer gpa.free(tail);
             const stats = try transcript.parseCodex(arena, tail);
+            const first = if (st.size > tail_cap) try firstPrompt(gpa, io, arena, entry.dir, entry.basename, .codex) else stats.first_user_msg;
             // Codex carries no session id on its command line: the first
             // unclaimed codex process is this session's, newest file first.
             var pid: ?u32 = null;
@@ -263,6 +269,7 @@ pub fn scanInto(io: Io, gpa: Allocator, arena: Allocator, home: []const u8, rows
                 .tokens = stats.tokens,
                 .cost_usd = stats.costUsd(),
                 .last_activity_s = mtime,
+                .first_user_msg = first,
                 .last_user_msg = stats.last_user_msg,
                 .last_assistant_msg = stats.last_assistant_msg,
                 .current_tool = stats.last_tool_name,
@@ -271,6 +278,22 @@ pub fn scanInto(io: Io, gpa: Allocator, arena: Allocator, home: []const u8, rows
             });
         }
     } else |_| {}
+}
+
+/// The first prompt of a transcript too long for its tail to hold it:
+/// the head's, on `arena`. A head that cannot be read has none.
+fn firstPrompt(gpa: Allocator, io: Io, arena: Allocator, dir: Io.Dir, name: []const u8, kind: Source) ScanError!?[]const u8 {
+    const head = transcript.readHead(gpa, io, dir, name, head_cap) catch |err| switch (err) {
+        error.Canceled => return error.Canceled,
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return null,
+    };
+    defer gpa.free(head);
+    const stats = switch (kind) {
+        .claude => try transcript.parseClaude(arena, head),
+        .codex => try transcript.parseCodex(arena, head),
+    };
+    return stats.first_user_msg;
 }
 
 // ─── the dirty signal ───────────────────────────────────────────────────

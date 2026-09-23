@@ -1395,6 +1395,12 @@ pub fn tabsOfList(app: *App, ui: Ui, ids: []const PaneId, active_id: PaneId) All
             icon.color = accent;
         };
         var title = p.title();
+        // A Claude / Codex tab goes by its session's name — the one its
+        // SESSIONS card reads (`sessions.nameOf`), so three sessions in
+        // a leaf are not three `claude` tabs. The component cuts it.
+        if (p.* == .pty) if (sessions.paneName(app, id)) |n| {
+            title = n.text;
+        };
         var verb: ?[]const u8 = null;
         if (p.* == .request) if (std.mem.indexOfScalar(u8, title, ' ')) |sp| {
             verb = title[0..sp];
