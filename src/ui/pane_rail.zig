@@ -78,6 +78,32 @@ pub fn drawOver(ui: Ui, rect: Rect, color: Color) void {
     }
 }
 
+/// One stripe per row, never two side by side. Several panes paint a
+/// `▌` of their own in their first content column — a git graph row
+/// in its lane's colour, a sessions-table row in its session's, a
+/// usage account behind its gutter — and with the rail inset one cell
+/// to their left that read as a double bar, `▌▌`, on every such row.
+/// Called after the pane has painted: where the body's first column
+/// holds the marker glyph, the pane's stripe moves into the rail's
+/// cell — its colour is the row's own fact, which is why it wins that
+/// row — and the cell it left keeps its ground and goes blank, so no
+/// text moves. Every pane that insets gets this through
+/// `render.drawPaneContent`; nothing in a pane has to know the rail
+/// is there.
+pub fn absorb(ui: Ui, rect: Rect) void {
+    if (rect.w < 3 or rect.h == 0) return;
+    const g = glyph(ui.ascii);
+    const inner_x = rect.x + width;
+    var y: u16 = 0;
+    while (y < rect.h) : (y += 1) {
+        const cell = ui.canvas.screen.readCell(inner_x, rect.y + y) orelse continue;
+        if (!std.mem.eql(u8, cell.char.grapheme, g)) continue;
+        const style = cell.style;
+        _ = ui.putStr(rect.x, rect.y + y, width, g, style);
+        _ = ui.putStr(inner_x, rect.y + y, width, " ", style);
+    }
+}
+
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
@@ -152,4 +178,51 @@ test "drawOver fills the blank cells of a column it shares, keeps their ground, 
     try testing.expectEqualStrings("E", f.cell(0, 2).char.grapheme);
     // And nothing was painted one cell in.
     try testing.expect(!std.mem.eql(u8, list_panel.marker_glyph, f.cell(1, 0).char.grapheme));
+}
+
+test "absorb: a pane's own stripe beside the rail moves into the rail's cell — one bar per row, in the row's colour, no text moved" {
+    var f = try Fixture.init(12, 4);
+    defer f.deinit();
+    const ui = f.ui();
+    const r = f.full();
+    draw(ui, r, f.theme.palette.blue);
+    const body_x = body(r, true).x;
+    // Row 1: the pane painted a stripe of its own in its first column
+    // (a graph lane, a session's accent) on a banded ground, text after.
+    const band = Theme.withFg(f.theme.cursor_line, f.theme.palette.green);
+    _ = ui.putStr(body_x, 1, 1, list_panel.marker_glyph, band);
+    _ = ui.putStr(body_x + 1, 1, 3, "abc", f.theme.cursor_line);
+    // Row 2: plain text right at the body's edge.
+    _ = ui.putStr(body_x, 2, 3, "xyz", f.theme.bg);
+    absorb(ui, r);
+    // Row 1: ONE bar, in the rail's column, in the pane's colour for
+    // the row; the cell it left is blank on the row's ground.
+    try testing.expectEqualStrings(list_panel.marker_glyph, f.cell(0, 1).char.grapheme);
+    try testing.expect(vaxis.Color.eql(f.cell(0, 1).style.fg, f.theme.palette.green));
+    try testing.expectEqualStrings(" ", f.cell(body_x, 1).char.grapheme);
+    try testing.expect(f.bgEql(body_x, 1, f.theme.cursor_line));
+    try testing.expectEqualStrings("a", f.cell(body_x + 1, 1).char.grapheme);
+    // Rows 0 and 2: the rail is the rail, the text untouched.
+    try testing.expect(vaxis.Color.eql(f.cell(0, 0).style.fg, f.theme.palette.blue));
+    try testing.expect(vaxis.Color.eql(f.cell(0, 2).style.fg, f.theme.palette.blue));
+    try testing.expectEqualStrings("x", f.cell(body_x, 2).char.grapheme);
+}
+
+test "absorb under --ascii matches the ascii marker, and a pane too narrow to hold both is left alone" {
+    var f = try Fixture.init(8, 2);
+    defer f.deinit();
+    f.ascii = true;
+    const ui = f.ui();
+    draw(ui, f.full(), f.theme.palette.blue);
+    _ = ui.putStr(1, 0, 1, list_panel.marker_ascii, Theme.withFg(f.theme.bg, f.theme.palette.red));
+    absorb(ui, f.full());
+    try testing.expectEqualStrings(list_panel.marker_ascii, f.cell(0, 0).char.grapheme);
+    try testing.expect(vaxis.Color.eql(f.cell(0, 0).style.fg, f.theme.palette.red));
+    try testing.expectEqualStrings(" ", f.cell(1, 0).char.grapheme);
+    // Two columns: the rail and one cell of content — nothing to fold.
+    var g = try Fixture.init(2, 1);
+    defer g.deinit();
+    _ = g.ui().putStr(1, 0, 1, list_panel.marker_glyph, g.theme.bg);
+    absorb(g.ui(), g.full());
+    try testing.expectEqualStrings(list_panel.marker_glyph, g.cell(1, 0).char.grapheme);
 }

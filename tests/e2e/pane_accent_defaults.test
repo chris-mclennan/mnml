@@ -11,6 +11,10 @@
 # A fake `claude` on PATH (a script that sleeps) stands in for the CLI;
 # `sleep 30` keeps each terminal alive.
 command view.toggle_tree
+# Each pane's rail is read at its own colour: the focus cue's `rail`
+# half steps a pane without the keys back toward its ground
+# (`ui/focus_cue.zig`), so the cue is `dim` here.
+ex set ui.focus_cue=dim
 ex term printf LL; sleep 30
 expect screen contains "LL"
 # The first terminal's rail is white, not the ladder's green.

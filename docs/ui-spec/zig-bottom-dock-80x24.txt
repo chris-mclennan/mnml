@@ -1,12 +1,12 @@
  ❯_  mnml  »             󰍉  ws                                    󰐕  ●━  󰅖
-   │  ● /pri…            │  prog.dbg 󰅖   󰐕                  󱸀  󲀀      
-▌ │▌    .mnml              │▌prog.dbg
- 󰍉 │       ipc-zig          │▌  1 let x = 1
- 󰊢 │      prog.dbg           │▌  2 let p = struct{a=1,b="two"}
-  │                          │▌  3 print "hello"
-   │         󰐙 Add workspace  │▌  4 x = x + 1
-  │                          │▌  5 fn f
-   │                          │▌  6   let y = 10
+  prog.dbg 󰅖   󰐕                                                 󱸀  󲀀      
+▌prog.dbg
+   1 let x = 1
+⋮  2 let p = struct{a=1,b="two"}                                               ⋮
+   3 print "hello"
+▌  4 x = x + 1
+▌  5 fn f
+▌  6   let y = 10
 ────────────────────────────────────────────────────────────────────────────────
  DIAGNOSTICS (0)                                                sort: All    ×
   󰍉 / filter
@@ -20,5 +20,5 @@
 
 
 
- EDIT   pr…   F 59% ▲0.2  󱼀 󰐎  111B  Ln 1/10 Col 1    00:36  ws   dbg
-
+ EDIT   pr…   F 57% ▼1.6  󱼀 󰐎  111B  Ln 1/10 Col 1    23:27  ws   dbg
+                                       ⋯

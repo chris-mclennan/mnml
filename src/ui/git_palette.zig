@@ -260,6 +260,7 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Painted {
         .label = "GIT",
         .show_refresh = true,
         .bg = bg,
+        .focused = ui.isFocused(.{ .panel = .git }),
     });
 
     // ── the filter row every list panel has ──

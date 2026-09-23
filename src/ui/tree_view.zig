@@ -34,6 +34,7 @@ const icons = @import("icons.zig");
 const chip_mod = @import("chip.zig");
 const scrollbar = @import("scrollbar.zig");
 const list_panel = @import("list_panel.zig");
+const focus_cue = @import("focus_cue.zig");
 const expander = @import("expander.zig");
 
 const Style = vaxis.Style;
@@ -282,6 +283,9 @@ fn drawSection(ui: Ui, r: Rect, sb_w: u16, s: Section, p: Props, is_cursor: bool
     const label = ui.clipStr(s.label, max_label);
     var style = Theme.onBg(Theme.withFg(t.fg, if (primary) pal.green else pal.fg), bg);
     style.bold = true;
+    // The focus cue: a workspace header is the tree's title, dim while
+    // the keys are somewhere else (`focus_cue.words`).
+    style = focus_cue.words(t, ui.focus_cue, p.focused, style);
     style.italic = s.italic;
     const label_w = ui.putStr(x, r.y, r.right() -| x, label, style);
     if (primary) drawChips(ui, r, 3 + 2 + label_w, s.fully_collapsed, rail_bg);

@@ -6110,10 +6110,11 @@ test "the plan modal: space and v select rows, * takes the branch, r opens the p
     try testing.expectEqualStrings("third", g.commits[plan.rows.items[0].ci].subject);
     try testing.expectEqual(parse.TodoAction.squash, plan.rows.items[0].action);
     // The graph rows behind carry the letters; the cursor row's marker
-    // sits in the cell before its letter.
+    // sits in the cell before its letter. The row's lane `▌` is in the
+    // pane rail's column (`pane_rail.absorb`), a blank cell after it.
     txt = try f.screen();
-    try testing.expect(std.mem.indexOf(u8, txt, "\u{258C} s") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "\u{258C}\u{25B6}p") != null or std.mem.indexOf(u8, txt, "\u{258C} p") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{258C}  s") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{258C} \u{25B6}p") != null or std.mem.indexOf(u8, txt, "\u{258C}  p") != null);
     testing.allocator.free(txt);
     // Enter with a squash first refuses: nothing before it.
     try testing.expectError(error.Failed, runPlan(&f.app, g));

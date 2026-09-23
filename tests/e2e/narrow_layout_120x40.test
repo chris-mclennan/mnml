@@ -1,0 +1,28 @@
+# width: 120
+# height: 40
+# The 80x24 twin's other side: at 120 columns — at and above
+# `ui.sidebar_auto_below` (100 as shipped) — a `ui.sidebar = .always`
+# column is docked as it always was: carved, the tree's file on screen,
+# no grip to summon it by. And the git graph's commit rows wear one bar
+# each, not the rail and their own `▌` side by side.
+#
+# The info view's kebab is also `⋮`, so the hover-help panel is off.
+write zz_marker.txt "nothing opens this\n"
+write a.txt "alpha\n"
+open a.txt
+command view.toggle_hover_help
+expect screen contains "alpha"
+expect screen contains "zz_marker"
+expect screen lacks "⋮"
+expect screen lacks "󰐃"
+# ── one bar per row ──
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+shell git add a.txt && GIT_AUTHOR_DATE=2026-09-06T20:00:00+0000 GIT_COMMITTER_DATE=2026-09-06T20:00:00+0000 git commit -q -m "first"
+shell git add zz_marker.txt && GIT_AUTHOR_DATE=2026-09-07T08:30:00+0000 GIT_COMMITTER_DATE=2026-09-07T08:30:00+0000 git commit -q -m "second"
+command git.graph
+wait 1500
+expect screen contains "second"
+expect screen contains "first"
+expect screen lacks "▌▌"

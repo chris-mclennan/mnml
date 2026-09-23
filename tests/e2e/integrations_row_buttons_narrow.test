@@ -38,7 +38,10 @@ wait 1200
 command integrations.open_as_tab
 command jira_work.open
 wait 9000
-command view.toggle_tree
+# The column away. At 80 columns (`ui.sidebar_auto_below`) the section
+# command brought it in as an overlay; picking `always` puts a revealed
+# overlay down, and an `always` column is not carved at this width.
+command view.sidebar_mode_always
 command view.focus_pane
 expect screen contains "JIRA WORK"
 # The same answer on the other family: a glyph, not a clipped word —
@@ -63,7 +66,10 @@ command integrations.open_as_tab
 command bitbucket_prs.open
 # The marketplace panel re-opened the sidebar; the corpus lays its
 # screens out at full width.
-command view.toggle_tree
+# The column away. At 80 columns (`ui.sidebar_auto_below`) the section
+# command brought it in as an overlay; picking `always` puts a revealed
+# overlay down, and an `always` column is not carved at this width.
+command view.sidebar_mode_always
 command view.focus_pane
 wait 6000
 expect screen contains "BITBUCKET PRS"

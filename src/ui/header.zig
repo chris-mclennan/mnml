@@ -28,6 +28,7 @@ const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const chip = @import("chip.zig");
 const hit = @import("hit.zig");
+const focus_cue = @import("focus_cue.zig");
 
 const Style = vaxis.Style;
 
@@ -56,6 +57,9 @@ pub const Props = struct {
     /// dropped whole when it does not fit before the title. On a panel
     /// (no pane) only the chips that name a `kind` paint.
     extra: []const ExtraChip = &.{},
+    /// The section has the keys: the label lights (`focus_cue.label`).
+    /// Null is a header with no focus of its own to show.
+    focused: ?bool = null,
 };
 
 pub const ExtraChip = struct {
@@ -108,6 +112,7 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
     const w = area.w;
 
     const label_w = ui.width(p.label);
+    const label_style = if (p.focused) |f| focus_cue.label(t, ui.focus_cue, f, labelStyle(t, p.bg)) else labelStyle(t, p.bg);
     const refresh_text = chip.refreshIcon(ui.ascii);
     // `refresh_w` is the room the right-end chips take: the refresh
     // glyph and, with `new_chip`, the ` + ` before it.
@@ -116,7 +121,7 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
     // Rung 0: no room for any chip — the title alone, clipped.
     const refresh_fits = w >= label_w + refresh_w + 3;
     if (!refresh_fits) {
-        _ = ui.putStr(area.x + 1, y, w -| 1, ui.clipStr(p.label, w -| 1), labelStyle(t, p.bg));
+        _ = ui.putStr(area.x + 1, y, w -| 1, ui.clipStr(p.label, w -| 1), label_style);
         return out;
     }
 
@@ -187,7 +192,7 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
     }
 
     var x = area.x + 1;
-    x += ui.putStr(x, y, title_end -| x, p.label, labelStyle(t, p.bg));
+    x += ui.putStr(x, y, title_end -| x, p.label, label_style);
     if (sub) |s| _ = ui.putStr(x, y, title_end -| x, s, subtitleStyle(t, p.bg));
 
     if (mode_text) |mt| {
@@ -360,4 +365,26 @@ test "ascii glyphs, no refresh, a view chip, and degenerate areas" {
     defer g.deinit();
     _ = draw(g.ui(), g.full(), props(&g, null, null));
     try g.expectRow(0, " T…");
+}
+
+test "focus cue: a focused header's label lights, an unfocused or focus-less one keeps the dim role" {
+    var f = try Fixture.init(30, 1);
+    defer f.deinit();
+    var p = props(&f, null, null);
+    // No focus of its own to show: the label as it always was.
+    _ = draw(f.ui(), f.full(), p);
+    try testing.expect(f.fgEql(1, 0, .{ .fg = f.theme.muted.fg }));
+    p.focused = false;
+    _ = draw(f.ui(), f.full(), p);
+    try testing.expect(f.fgEql(1, 0, .{ .fg = f.theme.muted.fg }));
+    // The keys are here: the accent under `both` (and `rail`)…
+    p.focused = true;
+    _ = draw(f.ui(), f.full(), p);
+    try testing.expect(f.fgEql(1, 0, .{ .fg = f.theme.accent.fg }));
+    try testing.expect(f.style(1, 0).bold);
+    // …the full foreground under `dim`.
+    var ui = f.ui();
+    ui.focus_cue = .dim;
+    _ = draw(ui, f.full(), p);
+    try testing.expect(f.fgEql(1, 0, .{ .fg = f.theme.fg.fg }));
 }

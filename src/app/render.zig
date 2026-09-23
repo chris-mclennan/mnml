@@ -47,6 +47,7 @@ const bufferline = @import("../ui/bufferline.zig");
 const brand = @import("../ui/brand.zig");
 const side_strip = @import("../ui/side_strip.zig");
 const pane_rail = @import("../ui/pane_rail.zig");
+const focus_cue = @import("../ui/focus_cue.zig");
 const pane_accent = @import("pane_accent.zig");
 const welcome_app = @import("welcome.zig");
 const keymap = @import("../core/keymap.zig");
@@ -581,6 +582,7 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
         .hover = if (app.hover) |h| .{ .x = h.x, .y = h.y } else null,
         .ascii = app.cfg.ui.ascii_icons,
         .triangle = app.cfg.ui.expand_indicator == .triangle,
+        .focus_cue = app.cfg.ui.focus_cue,
     };
     const full = ui.canvas.full();
     ui.canvas.fill(full, app.theme.bg);
@@ -1028,7 +1030,7 @@ fn drawBottomDock(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         if (rect.h >= 2) {
             const s = rect.splitTop(1);
             const tabs = try tabsOfList(app, ui, app.bottom.panes.items, id);
-            _ = bufferline.draw(ui, s.top, tabs, .{ .leaf = bottom_mod.strip_leaf });
+            _ = bufferline.draw(ui, s.top, tabs, .{ .leaf = bottom_mod.strip_leaf, .focused = paneFocused(app, id) });
             rect = s.rest;
         }
         try drawPaneContent(app, ui, id, rect);
@@ -1472,6 +1474,7 @@ fn drawStrip(app: *App, ui: Ui, layout: *app_mod.Layout, lid: layout_mod.NodeId,
         // or in full screen, where the zoom is moot and the button is
         // the way out (Rust `ui/mod.rs`).
         .zoomed = app.zen or (if (app.zoomedPane()) |z| layout.leafOf(z) == lid else false),
+        .focused = paneFocused(app, leaf.active),
     };
     if (leaf.strip_anchor == null or leaf.strip_anchor.? != leaf.active) {
         opts.first = bufferline.fitActive(ui, strip, tabs, leaf.strip_first, opts);
@@ -1551,6 +1554,14 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
     }
 }
 
+/// Whether pane `id` has the keys — what the focus cue marks.
+pub fn paneFocused(app: *const App, id: PaneId) bool {
+    return switch (app.focus) {
+        .pane => |p| p == id,
+        else => false,
+    };
+}
+
 /// One pane's body in a rect — the kind switch, with nothing about
 /// where the rect came from. // changed (bottom-dock): lifted out of
 /// `drawBody` so the dock paints a hosted pane the same way a leaf
@@ -1565,12 +1576,20 @@ pub fn drawPaneContent(app: *App, ui: Ui, id: PaneId, full_rect: Rect) Allocator
     // pane has painted (`pane_rail.drawOver`) and nothing on screen
     // moves. With line numbers off there is no gutter to share and
     // the editor insets like everything else.
-    const rail = pane_accent.railColorOf(app, id, ui.theme);
+    // The focus cue (`ui/focus_cue.zig`): a pane without the keys wears
+    // its colour stepped back toward the ground under `rail` / `both`.
+    const rail = if (pane_accent.railColorOf(app, id, ui.theme)) |c|
+        focus_cue.rail(ui.theme, ui.focus_cue, paneFocused(app, id), c, ui.theme.bg.bg)
+    else
+        null;
     const shares_gutter = pane.* == .editor and app.cfg.ui.line_numbers;
     const inset = rail != null and !shares_gutter;
     const rect = pane_rail.body(full_rect, inset);
     if (rail) |c| if (inset) pane_rail.draw(ui, full_rect, c);
     defer if (rail) |c| if (shares_gutter) pane_rail.drawOver(ui, full_rect, c);
+    // A pane that painted its own `▌` in its first column gets one
+    // bar there, not two (`pane_rail.absorb`).
+    defer if (rail != null and inset) pane_rail.absorb(ui, full_rect);
     switch (pane.*) {
         .editor => |*e| try drawEditor(app, ui, id, e, rect),
         .outline => |*o| {
@@ -3295,6 +3314,9 @@ test "ui toggles: expand_indicator and workspace dots change the tree rail" {
     try tmp.dir.writeFile(t.io, .{ .sub_path = "sub/a.txt", .data = "x" });
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = buf[0..n], .cols = 60, .rows = 10 });
     defer app.deinit();
+    // A narrow screen with the column docked: this test is about
+    // what sits beside it, not the width rule (`ui.sidebar_auto_below`).
+    app.cfg.ui.sidebar_auto_below = 0;
     app.cfg.ui.show_workspace_dots = true;
     const chev = try screenText(&app);
     defer t.allocator.free(chev);

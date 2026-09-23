@@ -178,6 +178,7 @@ otherwise. Copy what you need; leave the rest out.
         },
         .auto_hide_narrow_width = 0, // a WIDTH rule: below this many columns both side columns are dropped for the frame (0 = never; a non-zero value is clamped to 40..300). Nothing is mutated — widening brings back what was open
         .sidebar = .always, // .always (docked) | .auto (hidden; the pointer at the column's screen edge reveals it as an overlay OVER the editor — no relayout, no pty resize) | .hidden (never on hover; a keyboard command still gives a one-shot overlay)
+        .sidebar_auto_below = 100, // a narrow terminal's columns: below this many columns a `.always` column behaves as `.auto` (hidden; the screen edge or a section command brings it in over the editor) and it docks again once the terminal is this wide. An explicit `.auto` / `.hidden` is untouched (0 = never; a non-zero value is clamped to 40..300)
         .sidebar_reveal_ms = 250, // how long the pointer rests in the edge zone before the overlay slides in (0..5000)
         .sidebar_hide_ms = 400, // how long after the pointer leaves the overlay before it hides (0..5000)
         .dock = .{ // the LAUNCHER dock (`app/launcher_dock.zig`) — integrations, terminals, launchers and pinned commands along one edge of the editor area. Not the bottom panel (`ui.bottom_panel_*`) and not the dock widgets
@@ -361,6 +362,7 @@ otherwise. Copy what you need; leave the rest out.
         //   .minimal  the logo and the shortcut list alone, centred
         //   .off      the bare ground
         .welcome = .full, // .full | .minimal | .off
+        .focus_cue = .both, // how the focused pane and section are marked: .dim (every pane WITHOUT the keys paints its tab name, and the tree its workspace path, in the dim colour) | .rail (only the focused pane's rail at full colour — the others stepped back toward the ground — and the focused section's caps header in the accent) | .both (the default)
         // The colour the FIRST pane of a kind opens in. A plain
         // terminal opens in white (the theme's text colour), a Claude
         // session in Claude's orange (the chip's), a Codex session in

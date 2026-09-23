@@ -134,6 +134,7 @@ What each component owns (`src/ui/` unless noted):
 | `toast.zig` · `prompt.zig` · `confirm.zig` · `tooltip.zig` · `which_key.zig` | one transient each, opened through `overlay.box` |
 | `bufferline.zig` | the file tabs (the tab strip in core) |
 | `pane_rail.zig` · `accent_color.zig` | the `▌` rail and the one accent ladder |
+| `focus_cue.zig` | which pane or section has the keys (`ui.focus_cue`): the dim role on what does not (`words`), the unfocused rail stepped back (`rail`), the focused caps header lit (`label`) — asked by `bufferline`, `header`, `tree_view` and `render.drawPaneContent`, never re-decided |
 | `expander.zig` · `tree_view.zig` | the `▸`/`▾` slot and the tree's connectors |
 | `sdk/mnml-sdk/src/pane/chrome.zig` | the same chrome on the integrations' side of the wire: `capsHeader`, `tabStrip`, `filterPill`, `rowGround`, `scrollbar`, `frameBox` / `frameTitled`, `vrule` / `hrule`, `confirmBox`, `hintRow`, `actionChips` — an integration supplies words and targets, never glyphs |
 
@@ -179,6 +180,14 @@ same colour twice and a column narrower for the sibling.
   gutter opens with the sign column, and a sign still wins the cell it
   needs. When you add a kind, ask which of the two it is; do not invent
   a third.
+- **One bar per row.** A pane that paints its own `▌` in its first
+  content column — a git graph row in its lane's colour, a sessions
+  row in its session's, a usage account's gutter — does not get a
+  second one beside it: after the pane paints, `pane_rail.absorb`
+  moves that stripe into the rail's cell (the row's own colour wins
+  the row) and blanks the cell it left, so no text moves. It runs in
+  `drawPaneContent` for every inset pane; a pane never special-cases
+  the rail.
 - `ui.pane_rail` is `all` / `sessions` / `off`, read in one place
   (`pane_accent.railColorOf`). Nothing else branches on it.
 

@@ -301,6 +301,7 @@ pub fn ListPanel(comptime Row: type) type {
             // Header.
             const top = area.splitTop(1);
             const mode_text: ?[]const u8 = if (p.sort_chip) |v| (chip.modeText(ui.arena, "sort", v, p.sort_widest) catch null) else null;
+            const focused = p.focused orelse ui.isFocused(.{ .panel = p.panel });
             _ = header.draw(ui, top.top, .{
                 .panel = p.panel,
                 .label = p.label,
@@ -312,8 +313,8 @@ pub fn ListPanel(comptime Row: type) type {
                 .bg = ground,
                 .pane = p.pane,
                 .extra = p.extra_chips,
+                .focused = focused,
             });
-            const focused = p.focused orelse ui.isFocused(.{ .panel = p.panel });
 
             // Filter pill.
             var caret: ?Caret = null;

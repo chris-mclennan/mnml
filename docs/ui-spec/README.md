@@ -89,6 +89,28 @@ never touches the wire and the reset clocks read the same on every
 machine. The Rust pane was never driven for a spec; the layout is
 `claude_usage_view.rs` / `codex_usage_view.rs` read against these.
 
+*// changed 2026-09-22 (narrow):* every `zig-*-80x24.txt` was re-cut
+(`zig-usage`, `zig-git-palette`, `zig-bottom-dock`, `zig-debug-stopped`):
+an 80-column terminal is under `ui.sidebar_auto_below` (100), so the
+`always` column reads as `auto` — no tree, no activity bar, the `⋮`
+grip at each screen edge, the panes the whole width. And
+`zig-usage-{80x24,120x40}`, `zig-git-palette-{80x24,120x40,all-120x40}`
+and `zig-sessions-table-120x40` lost their `▌▌`: a row's own stripe
+(an account's gutter, a lane, a session's accent) is in the pane
+rail's column now and the cell after it is blank
+(`pane_rail.absorb`). The GIT panel is therefore not in
+`zig-git-palette-80x24.txt` any more — at 80 columns the column is
+down until something asks for it; the 120-column dumps are the panel's
+spec. The other lines those files moved on are the clock, the stress
+meter, the graph detail's age, and the launcher dock's `⋯` grip on the
+last row, which main already paints; the git dumps were cut under
+`TZ=UTC`, as their dates always were. Against `rust-80x24.txt` this is
+a deliberate departure — the Rust columns dock at any width — so
+`tools/ui-diff.sh … "" 80x24` on the chrome fixture reads 44 differing
+lines (22 rows beyond the rail) where it read 20 (4): the tree and the
+activity bar are not on the Zig screen. At 120x40 nothing grew, and
+`steps-esc` / `steps-graph2` / `steps-http` each lost a row (the `▌▌`).
+
 `rust-git-120x40.txt` / `rust-git-80x24.txt` are git mode (`steps-graph2.jsonl`).
 
 `zig-search-120x40.txt` is the SEARCH section (`steps-search.jsonl`
