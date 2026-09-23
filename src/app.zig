@@ -827,6 +827,11 @@ pub const ClosedTab = struct {
 
 /// A mouse gesture in flight: what the press landed on, until release.
 pub const Drag = union(enum) {
+    /// A left press on a button (`dispatch.firesOnRelease`): armed, not
+    /// fired. The release fires it when it lands on the same target —
+    /// a press the pointer slides off is taken back, as a GUI button's
+    /// is. A tab's close badge dragged off becomes that tab's drag.
+    button: struct { target: PressedButton, rect: Rect, x: u16, y: u16 },
     /// A split's divider, by the split node it belongs to.
     divider: struct { split: layout_mod.NodeId, dir: layout_mod.SplitDir },
     tree_divider,
@@ -897,6 +902,20 @@ pub const KeywordComplete = struct {
     pub fn deinit(self: *KeywordComplete, gpa: Allocator) void {
         for (self.candidates) |w| gpa.free(w);
         gpa.free(self.candidates);
+    }
+};
+
+/// The target a `Drag.button` armed; only payloads that outlive the
+/// frame (no slices into the frame's hit map).
+pub const PressedButton = union(enum) {
+    tab_close: hit.TabRef,
+    button: u32,
+
+    pub fn target(b: PressedButton) hit.HitTarget {
+        return switch (b) {
+            .tab_close => |t| .{ .tab_close = t },
+            .button => |id| .{ .button = id },
+        };
     }
 };
 
@@ -1224,6 +1243,9 @@ pub const App = struct {
     activity_bar: activity_bar_mod.State = .{},
     /// The mouse gesture in flight, press to release.
     drag: ?Drag = null,
+    /// Set while `dispatch.mouse` replays an armed button's press on its
+    /// release, so the replay routes instead of arming again.
+    firing_button: ?PressedButton = null,
     last_click: ?LastClick = null,
     /// Wheel events folded until the next tick (`scroll.zig`).
     wheel: scroll_mod.Coalescer = .{},

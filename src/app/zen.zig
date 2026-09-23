@@ -641,6 +641,7 @@ test "zen: the corner mark paints at the body's top-right while inside, is a but
     try t.expectEqualStrings(bufferline.restore_ascii, app.screen.readCell(99, 0).?.char.grapheme);
     // The click leaves; the mark and its hit go with the frame's return.
     try app.handle(.{ .mouse = .{ .x = 99, .y = 0, .kind = .press, .button = .left } });
+    try app.handle(.{ .mouse = .{ .x = 99, .y = 0, .kind = .release, .button = .left } });
     try t.expect(!app.zen);
     try app.render();
     try t.expect(if (app.hits.at(99, 0)) |h| (h != .button or h.button != @intFromEnum(render.Button.fullscreen_exit)) else true);
@@ -740,7 +741,7 @@ test "the maximize button: `ui.maximize_click` picks what a left click runs, and
     try t.expect(std.mem.indexOf(u8, try rowText(&app, 1), bufferline.maximize_glyph) != null);
 }
 
-/// Presses the rightmost maximize button the last frame registered.
+/// Clicks the rightmost maximize button the last frame registered.
 fn clickMaximize(app: *App) !void {
     const render = @import("render.zig");
     const want = @intFromEnum(render.Button.split_max);
@@ -750,6 +751,7 @@ fn clickMaximize(app: *App) !void {
     };
     const cell = at orelse return error.NoMaximizeButton;
     try app.handle(.{ .mouse = .{ .x = cell.x, .y = cell.y, .kind = .press, .button = .left } });
+    try app.handle(.{ .mouse = .{ .x = cell.x, .y = cell.y, .kind = .release, .button = .left } });
     try app.render();
 }
 

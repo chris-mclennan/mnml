@@ -1984,7 +1984,9 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         const on_bar = if (app.hits.at(m.x, m.y)) |u| u == .button and u.button == @intFromEnum(render.Button.cmdline_bar) else false;
         if (!on_bar) _ = cmdline_mod.clickAway(app);
     }
-    const target = app.hits.at(m.x, m.y) orelse {
+    // An armed button's release replays its press on the button itself,
+    // whatever the frame since has painted under the pointer.
+    const target = if (app.firing_button) |pb| pb.target() else app.hits.at(m.x, m.y) orelse {
         if (m.kind == .press) pressOutside(app);
         return;
     };
@@ -2025,6 +2027,15 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             else => {},
         }
     }
+    // A button arms on the press and fires on the release inside it
+    // (`Drag.button`, `continueDrag`): a press the pointer slides off —
+    // a tab drag begun a cell too far right, on the close badge — is
+    // taken back, as a GUI button's is. One rule here, so every chip,
+    // badge and tool button the hit map knows as one behaves the same.
+    if (m.kind == .press and m.button == .left and app.firing_button == null) if (firesOnRelease(target)) |pb| {
+        app.drag = .{ .button = .{ .target = pb, .rect = hitRect(app, m.x, m.y) orelse Rect.init(m.x, m.y, 1, 1), .x = m.x, .y = m.y } };
+        return;
+    };
     const wheel = m.kind == .scroll_up or m.kind == .scroll_down;
     const down = m.kind == .scroll_down;
     // A notch on a pane's tab-strip row (a gap between tabs falls through
@@ -3448,9 +3459,56 @@ fn scrollbarTrackOf(app: *App, owner: hit_mod.Owner) ?Rect {
 }
 
 /// A drag or a release while a gesture is in flight.
+/// The targets that fire on release (`App.Drag.button`): a tab's close
+/// badge and the `.button` family — the strip's chips, the tool buttons,
+/// a toast's controls. Not the menu bar's titles: a menu opens on the
+/// press so the pointer can drag down onto an item and release there.
+/// Not the `:` bar either: it is a text field, focused on the press.
+pub fn firesOnRelease(t: hit_mod.HitTarget) ?app_mod.PressedButton {
+    return switch (t) {
+        .tab_close => |tb| .{ .tab_close = tb },
+        .button => |id| if (menu_bar.buttonOf(id) != null or id == menu_bar.overflow_button or id == @intFromEnum(render.Button.cmdline_bar)) null else .{ .button = id },
+        else => null,
+    };
+}
+
+/// A release over an armed button: the press it stood for, when the
+/// pointer is still on that button; nothing otherwise. A close badge
+/// the pointer left while held becomes its tab's drag instead.
+fn releaseButton(app: *App, b: @FieldType(app_mod.Drag, "button"), m: Mouse) Allocator.Error!void {
+    if (m.kind == .drag) {
+        if (b.target == .tab_close) {
+            if (!b.rect.contains(m.x, m.y)) if (try tabPaneOf(app, b.target.tab_close)) |pane| {
+                app.drag = .{ .tab = .{ .pane = pane, .x = b.x, .y = b.y } };
+                return continueDrag(app, m);
+            };
+        }
+        return;
+    }
+    if (m.kind != .release) return;
+    app.drag = null;
+    // Inside the rect it had when pressed: a surface the press revealed
+    // over it (a hover zone's bar) does not take the click away.
+    if (!b.rect.contains(m.x, m.y)) return;
+    app.firing_button = b.target;
+    defer app.firing_button = null;
+    return mouse(app, .{ .x = m.x, .y = m.y, .kind = .press, .button = .left, .mods = m.mods }, 1);
+}
+
+/// The pane a tab close badge belongs to, when it is a layout tab.
+fn tabPaneOf(app: *App, tb: hit_mod.TabRef) Allocator.Error!?PaneId {
+    if (tb.leaf == bottom.strip_leaf) return null;
+    const layout = app.layouts.current();
+    const lid = (try layout.leafAt(app.frame.allocator(), tb.leaf)) orelse return null;
+    const leaf = layout.leaf(lid) orelse return null;
+    if (tb.idx >= leaf.tabs.items.len) return null;
+    return leaf.tabs.items[tb.idx];
+}
+
 fn continueDrag(app: *App, m: Mouse) Allocator.Error!void {
     const d = &(app.drag orelse return);
     switch (d.*) {
+        .button => |b| return releaseButton(app, b, m),
         .divider => |dv| if (m.kind == .drag) {
             const rects = try app.layouts.current().computeRects(app.panes_area, app.frame.allocator());
             for (rects.dividers) |dr| if (dr.split == dv.split) {
@@ -5030,6 +5088,7 @@ test "gestures: a divider drag resizes with the minimum kept, a tab drag reorder
         plus = h.rect;
     };
     try press(&app, plus.?.x + 1, plus.?.y, .left);
+    try release(&app, plus.?.x + 1, plus.?.y);
     try std.testing.expect(app.overlay == .menu);
     try std.testing.expectEqualStrings("Create…", app.overlay.menu.title);
     try std.testing.expect(app.overlay.menu.curatable);
@@ -5285,6 +5344,7 @@ test "a submenu's first arrow moves as well as lights: New ▸ then two downs an
         plus = h.rect;
     };
     try press(&app, plus.?.x + 1, plus.?.y, .left);
+    try release(&app, plus.?.x + 1, plus.?.y);
     try std.testing.expect(app.overlay == .menu);
     try std.testing.expectEqualStrings("Create…", app.overlay.menu.title);
     try app.render();
@@ -5385,4 +5445,58 @@ test "a paste into the editor lands literally in both profiles: no auto-indent c
         _ = try app.applyOps(e, &.{.undo});
         try std.testing.expectEqualStrings("", e.buf.editor.bytes());
     };
+}
+
+/// The first rect the last frame registered for `want` (a `.tab_close`
+/// or `.button` target), by its centre cell.
+fn hitCentre(app: *App, want: app_mod.PressedButton) ?[2]u16 {
+    for (app.hits.items.items) |h| if (firesOnRelease(h.target)) |pb| if (std.meta.eql(pb, want)) {
+        return .{ h.rect.x + h.rect.w / 2, h.rect.y + h.rect.h / 2 };
+    };
+    return null;
+}
+
+test "a button fires on the release inside it: a close badge or a strip chip pressed and slid off does nothing; the badge dragged off drags its tab" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 120, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const a = try app.openScratch();
+    const b = try app.openScratch();
+    const layout = app.layouts.current();
+    try app.render();
+    // The first tab's close badge (tab 0 of leaf 0).
+    const badge: app_mod.PressedButton = .{ .tab_close = .{ .leaf = 0, .idx = 0 } };
+    const at = hitCentre(&app, badge).?;
+    // Pressed: armed, nothing closed yet.
+    try press(&app, at[0], at[1], .left);
+    try std.testing.expect(app.panes.get(a) != null);
+    // Slid off onto the editor and released: the badge's tab is being
+    // dragged, not closed — the release drops it where it is.
+    try dragTo(&app, 60, 20);
+    try std.testing.expect(app.drag == null or app.drag.? == .tab);
+    try release(&app, 60, 20);
+    try std.testing.expect(app.panes.get(a) != null);
+    try std.testing.expect(app.drag == null);
+    // A press and release on the badge closes the tab.
+    try app.render();
+    const at2 = hitCentre(&app, badge).?;
+    const first = layout.leaf(layout.firstLeaf().?).?.tabs.items[0];
+    try press(&app, at2[0], at2[1], .left);
+    try release(&app, at2[0], at2[1]);
+    try std.testing.expect(app.panes.get(first) == null);
+    _ = b;
+    // A strip chip (split right): pressed and slid off, no split; pressed
+    // and released on it, the split.
+    try app.render();
+    const chip: app_mod.PressedButton = .{ .button = @intFromEnum(render.Button.split_right) };
+    const c = hitCentre(&app, chip).?;
+    try press(&app, c[0], c[1], .left);
+    try dragTo(&app, 60, 20);
+    try release(&app, 60, 20);
+    try std.testing.expectEqual(@as(usize, 1), (try layout.leaves(app.frame.allocator())).len);
+    try app.render();
+    const c2 = hitCentre(&app, chip).?;
+    try press(&app, c2[0], c2[1], .left);
+    try release(&app, c2[0], c2[1]);
+    try std.testing.expectEqual(@as(usize, 2), (try layout.leaves(app.frame.allocator())).len);
 }
