@@ -1456,6 +1456,7 @@ In the vim profile, bind the same chords to the commands under
 "view.focus_prev_split"`). `src/tui/loop.zig`'s test reads the two
 sequences through the terminal parser into the standard profile's
 chords.
+
 ## Terminal panes
 
 A terminal pane's child is told it runs inside mnml. Every child gets
