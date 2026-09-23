@@ -153,7 +153,7 @@ does. The keys are the reference's:
 | `j` `k` `↑` `↓` · `⇞` `⇟` · `g` `G` `⇱` `⇲` | move |
 | `⏎` `␣` | expand / collapse a repo; fold a pull request out to its builds; open a build's page; lift the `Show more (N)` footer |
 | `→` `l` · `←` `h` | expand or step in · collapse or step up |
-| `e` `c` | expand / collapse every repo |
+| `E` `C` (or `e` `c`) | expand / collapse every repo — the integration tree convention, the same pair the Jira pane binds |
 | `x` `H` `s` `⌥↑` `⌥↓` | hide this repo · un-hide all · cycle the scope · reorder (all persist) |
 | `o` · `y` | open on the web · copy the URL |
 | `d` · `^d` `^u` | the pull request's detail · scroll it (PR tabs) |

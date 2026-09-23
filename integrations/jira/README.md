@@ -75,7 +75,7 @@ example.
 | `[detail_modal.field_alias] Severity = "customfield_1"` | `.detail_modal = .{ .field_alias = .{ .{ .name = "Severity", .id = "customfield_1" } } }` | |
 | `[[tabs]] name` | `.tabs = .{ .{ .name = "…", … } }` | |
 | `kind = "work_assigned"` | `.kind = .work_assigned` | `work_open` · `work_reported` · `work_assigned` · `work_recently_done` · `work_recent` · `work_unified` · `jql_editable` · `filter` · `fix_version_tree` · `board_active_sprint` · `board_backlog` |
-| — | `.vars = .{ .{ .name = "project", .value = "ENG" }, .{ .name = "versions", .values = .{ "1.2.0" } } }` | a `jql_editable` tab's `{name}` holes. ZON has no string-keyed map, so this is a list of small structs — the shape `bumps.release_cut` and `field_alias` already use. `E` on the tab edits these and writes them back here |
+| — | `.vars = .{ .{ .name = "project", .value = "ENG" }, .{ .name = "versions", .values = .{ "1.2.0" } } }` | a `jql_editable` tab's `{name}` holes. ZON has no string-keyed map, so this is a list of small structs — the shape `bumps.release_cut` and `field_alias` already use. `J` on the tab edits these and writes them back here |
 | `mode = "current_release"` | `.mode = .current_release` | or `.next_release`; needs `.project` |
 | `jql = "…"` | `.jql = "…"` | a custom query |
 | `project`, `component` | `.project`, `.component` | |
@@ -158,7 +158,7 @@ kanban) carries into `t`, `a` and `f`: the transition matches by name
 on every selected ticket and reports the ones skipped.
 
 **The filter** (`/`) narrows the tree and the kanban as it is typed; the
-**JQL editor** (`E`) is a box at the bottom with the tab's resolved
+**JQL editor** (`J`) is a box at the bottom with the tab's resolved
 query, every text-field affordance (arrows, Home/End, `Ctrl+A/E`,
 `Alt+←/→`, `Ctrl+W/U/K`, paste, a click places the caret), `Enter`
 runs it. The **key sheet** (`?`) is the built-in sections' —
@@ -181,6 +181,7 @@ the next step and waits for `r`.
 | detail open | `Ctrl+U` / `Ctrl+D` | scroll the detail pane |
 | tree | `Enter`, `Space` | fold a group · expand a ticket · open a PR · uncap a show-all row |
 | tree | `→` `l` / `←` `h` | expand / collapse (every PR row expands to its builds) |
+| tree | `E` / `C` | expand / collapse every group — the integration tree convention, the same pair the Bitbucket pane binds |
 | tree | `S` | select for a bulk action |
 | kanban | `Space` | select for a bulk action |
 | kanban | `>` | expand the card |
@@ -192,7 +193,7 @@ the next step and waits for `r`.
 | Fix Versions | `I` `X` `T` `V` `M` | dispatch implement / fix / triage / review · merge the PR through Claude Code (`V` / `M` on a PR row) |
 | detail open | `c` | comment |
 | any | `d` / `D` | detail pane / detail modal |
-| any | `/` · `E` · `?` | filter · JQL editor · keys |
+| any | `/` · `J` · `?` | filter · JQL editor (the vars editor on a `jql_editable` tab) · keys |
 
 Every row, chip, tab, picker entry and button is a click target sized
 to what it paints (`src/hit.zig`); a right click on a ticket row
@@ -228,7 +229,7 @@ is the session's, not the file's: a restart opens the tab back on
 `reported_window_days`.
 
 An editable tab wears its vars as header chips (`project: ENG`,
-`versions: 1.2.0 +1`). **`E`**, or a click on any of them, opens a small
+`versions: 1.2.0 +1`). **`J`**, or a click on any of them, opens a small
 editor: `↑↓` move, `⏎` types into the focused value, `a` adds one, `d`
 removes one, `s` (or `Ctrl+S`) saves, `Esc` cancels. `s` as well as
 `Ctrl+S` because `Ctrl+S` is the host's own save chord and a mounted

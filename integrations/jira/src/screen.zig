@@ -2291,7 +2291,7 @@ test "the JQL editor paints its box with the caret and a click places it" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const ar = arena.allocator();
-    _ = try a.onKey("shift+e");
+    _ = try a.onKey("shift+j");
     try paint(ar, &f, a, .{});
     const title_y = (try findRow(ar, &f, " JQL — type to edit")).?;
     const line = try rowText(ar, &f, title_y + 1);

@@ -246,6 +246,7 @@ the next backfill has to come back for.
 | A named confirm | `Painter.confirmBox` |
 | The hint row, every `key label` a hit | `Painter.hintRow` |
 | A count's noun — `1 PR`, `3 PRs` | `pane.text.noun` |
+| The tree keys: `→`/`←` expand / collapse, `Enter`/`Space` toggle, `E`/`C` every node open / shut | (the convention; both first-party panes bind it) |
 | State colours | `Theme.prState` / `pipelineState` / `ticketStatus` |
 | A chevron that folds under the mouse | `Painter.chevron` |
 

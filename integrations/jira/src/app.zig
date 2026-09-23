@@ -2253,6 +2253,55 @@ pub const App = struct {
         }
     }
 
+    /// `E`: every group open, the cursor on the row it was on. The
+    /// tickets and PRs keep the folds they had.
+    pub fn treeExpandAll(a: *App) Allocator.Error!void {
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const sa = scratch.allocator();
+        const before = (try a.focusedRow(sa)) orelse return;
+        const t = a.tab();
+        const st = &(t.tree.?);
+        if (st.collapsed_groups.count() == 0) return;
+        const group: ?[]const u8 = if (before == .group) try sa.dupe(u8, before.group.status) else null;
+        const issue = before.issueIdx();
+        st.collapsed_groups.clearRetainingCapacity();
+        const after = (try a.treeRows(sa)).?;
+        for (after.rows, 0..) |r, i| {
+            const same = if (group) |g| (r == .group and std.mem.eql(u8, r.group.status, g)) else (r == .ticket and issue != null and r.ticket.issue_idx == issue.?);
+            if (same) {
+                t.selected = i;
+                break;
+            }
+        }
+        try a.clampCursor();
+    }
+
+    /// `C`: every group shut, the cursor on the group it was inside.
+    pub fn treeCollapseAll(a: *App) Allocator.Error!void {
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const sa = scratch.allocator();
+        const rows = (try a.treeRows(sa)) orelse return;
+        const t = a.tab();
+        const st = &(t.tree.?);
+        var home: ?[]const u8 = null;
+        for (rows.rows, 0..) |r, i| {
+            if (i > t.selected) break;
+            if (r == .group) home = try sa.dupe(u8, r.group.status);
+        }
+        for (rows.rows) |r| if (r == .group) try st.setGroup(r.group.status, true);
+        const after = (try a.treeRows(sa)).?;
+        t.selected = 0;
+        if (home) |h| for (after.rows, 0..) |r, i| {
+            if (r == .group and std.mem.eql(u8, r.group.status, h)) {
+                t.selected = i;
+                break;
+            }
+        };
+        try a.clampCursor();
+    }
+
     pub fn treeCollapse(a: *App) Allocator.Error!void {
         var scratch = std.heap.ArenaAllocator.init(a.gpa);
         defer scratch.deinit();
@@ -3575,6 +3624,8 @@ pub const App = struct {
             .tree_activate => try a.treeActivate(),
             .tree_expand => try a.treeExpand(),
             .tree_collapse => try a.treeCollapse(),
+            .tree_expand_all => try a.treeExpandAll(),
+            .tree_collapse_all => try a.treeCollapseAll(),
             .dispatch_implement => try a.dispatchTicket("implement"),
             .dispatch_fix => try a.dispatchTicket("fix"),
             .dispatch_triage => try a.dispatchTicket("triage"),
@@ -4127,6 +4178,36 @@ pub const board_tabs = [_]config.Tab{
     .{ .name = "Sprint", .kind = .board_active_sprint, .project = "ENG", .board_id = 7 },
     .{ .name = "Backlog", .kind = .board_backlog, .project = "ENG" },
 };
+
+test "Work: E / C open and shut every group, the cursor staying on the group it was in — the Bitbucket pane's pair" {
+    // hunt/findings-2026-09-23/integ-tree-nav-convention.md
+    const h = try Harness.start(.{ .tabs = &work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const ar = arena.allocator();
+    var steps: usize = 0;
+    while (steps < 20) : (steps += 1) {
+        if (try a.focusedKey(ar)) |k| if (std.mem.eql(u8, k, "ENG-1")) break;
+        _ = try a.onKey("j");
+    }
+    try testing.expectEqualStrings("ENG-1", (try a.focusedKey(ar)).?);
+    _ = try a.onKey("shift+c");
+    const shut = (try a.treeRows(ar)).?;
+    try testing.expectEqual(@as(usize, 3), shut.rows.len);
+    for (shut.rows) |r| try testing.expect(r == .group and !r.group.expanded);
+    try testing.expectEqualStrings("In Progress", (try a.focusedRow(ar)).?.group.status);
+    _ = try a.onKey("shift+e");
+    const open = (try a.treeRows(ar)).?;
+    try testing.expect(open.rows.len > 3);
+    for (open.rows) |r| if (r == .group) try testing.expect(r.group.expanded);
+    try testing.expectEqualStrings("In Progress", (try a.focusedRow(ar)).?.group.status);
+    // J, not E, is the JQL editor now.
+    _ = try a.onKey("shift+j");
+    try testing.expect(a.jql != null);
+}
 
 test "Work: the assigned tab loads the three tickets, auto-expands them with their PRs, and the tree keys fold and move" {
     const h = try Harness.start(.{ .tabs = &work_tabs, .team_field_id = "customfield_10056" }, .work);
@@ -4948,7 +5029,7 @@ test "the Work family's three kinds: open work counts for the chip, reported is 
     );
 }
 
-test "E on an editable tab edits the vars, saves them into the config file's own spans, and the JQL follows" {
+test "J on an editable tab edits the vars, saves them into the config file's own spans, and the JQL follows" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     var pbuf: [std.fs.max_path_bytes]u8 = undefined;
@@ -4986,8 +5067,8 @@ test "E on an editable tab edits the vars, saves them into the config file's own
     try a.ensureLoaded();
     try a.switchTab(2);
 
-    // E opens the editor on the vars, not on the JQL.
-    _ = try a.onKey("shift+e");
+    // J opens the editor on the vars, not on the JQL.
+    _ = try a.onKey("shift+j");
     try testing.expect(a.vars != null);
     try testing.expect(a.jql == null);
     const e = &(a.vars.?);
@@ -5033,7 +5114,7 @@ test "E on an editable tab edits the vars, saves them into the config file's own
 
     // Esc on a tab without vars says so rather than opening an empty box.
     try a.switchTab(0);
-    _ = try a.onKey("shift+e");
+    _ = try a.onKey("shift+j");
     try testing.expect(a.vars == null);
     try testing.expect(a.jql != null);
     _ = try a.onKey("esc");

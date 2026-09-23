@@ -7,7 +7,7 @@
 //! `j`/`k` and the arrows move, `enter`/`space` toggle a tree row,
 //! `o` opens on the web, `y` copies the URL, `d` the detail, `a` the
 //! approval, `m` open↔merged, `tab` the next tab, `1`–`9` a tab by
-//! number, `e`/`c` open / close every repo, `x` hides one, `H` un-hides
+//! number, `E`/`C` (and the reference's `e`/`c`) open / close every repo, `x` hides one, `H` un-hides
 //! them all, `s` cycles the scope, `alt+↑`/`alt+↓` reorder, `ctrl+u` /
 //! `ctrl+d` scroll the detail. Added here: `?` for this sheet, `/`
 //! for the filter, `esc` to leave either, and the toolbar's chips —
@@ -132,8 +132,8 @@ pub const table = [_]Binding{
     .{ .keys = &.{ "enter", "space" }, .action = .activate, .title = "expand / collapse the row", .scope = .tree, .hint = true, .section = "tree" },
     .{ .keys = &.{ "right", "l" }, .action = .expand, .title = "expand, or step into the first child", .scope = .tree, .section = "tree" },
     .{ .keys = &.{ "left", "h" }, .action = .collapse, .title = "collapse, or step up to the repo", .scope = .tree, .section = "tree" },
-    .{ .keys = &.{"e"}, .action = .expand_all, .title = "expand every repo", .scope = .tree, .section = "tree" },
-    .{ .keys = &.{"c"}, .action = .collapse_all, .title = "collapse every repo", .scope = .tree, .section = "tree" },
+    .{ .keys = &.{ "shift+e", "e" }, .action = .expand_all, .title = "expand every repo", .scope = .tree, .section = "tree" },
+    .{ .keys = &.{ "shift+c", "c" }, .action = .collapse_all, .title = "collapse every repo", .scope = .tree, .section = "tree" },
     .{ .keys = &.{"x"}, .action = .hide_repo, .title = "hide this repo (persists)", .scope = .tree, .section = "tree" },
     .{ .keys = &.{"shift+h"}, .action = .unhide_all, .title = "un-hide every repo (persists)", .scope = .tree, .section = "tree" },
     .{ .keys = &.{"s"}, .action = .cycle_scope, .title = "cycle the scope: all → recent → explicit (persists)", .scope = .tree, .section = "tree" },
@@ -277,6 +277,13 @@ test "the reference's keys dispatch to their actions, scoped to where they apply
     try t.expectEqual(Action.down, lookup("j", .{}).?);
     try t.expectEqual(Action.end, lookup("shift+g", .{}).?);
     try t.expectEqual(Action.unhide_all, lookup("shift+h", tree).?);
+    // E / C: the integration tree convention's pair, the one the Jira
+    // pane binds; the reference's e / c still work
+    // (hunt/findings-2026-09-23/integ-tree-nav-convention.md).
+    try t.expectEqual(Action.expand_all, lookup("shift+e", tree).?);
+    try t.expectEqual(Action.collapse_all, lookup("shift+c", tree).?);
+    try t.expectEqual(Action.expand_all, lookup("e", tree).?);
+    try t.expectEqual(Action.collapse_all, lookup("c", tree).?);
     try t.expectEqual(Action.activate, lookup("enter", tree).?);
     try t.expectEqual(Action.expand, lookup("right", tree).?);
     try t.expectEqual(Action.reorder_up, lookup("alt+up", tree).?);

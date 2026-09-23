@@ -47,6 +47,10 @@ pub const Action = enum {
     tree_activate,
     tree_expand,
     tree_collapse,
+    /// `E` / `C`: every group of the tree open / shut — the integration
+    /// tree convention's keys, the same pair the Bitbucket pane binds.
+    tree_expand_all,
+    tree_collapse_all,
     dispatch_implement,
     dispatch_fix,
     dispatch_triage,
@@ -114,6 +118,8 @@ pub const bindings = [_]Binding{
     .{ .keys = &.{ "enter", "space" }, .action = .tree_activate, .label = "fold a group · expand a ticket · open a PR", .section = .rows, .where = .tree },
     .{ .keys = &.{ "right", "l" }, .action = .tree_expand, .label = "expand", .section = .rows, .where = .tree },
     .{ .keys = &.{ "left", "h" }, .action = .tree_collapse, .label = "collapse", .section = .rows, .where = .tree },
+    .{ .keys = &.{"shift+e"}, .action = .tree_expand_all, .label = "expand every group", .section = .rows, .where = .tree },
+    .{ .keys = &.{"shift+c"}, .action = .tree_collapse_all, .label = "collapse every group", .section = .rows, .where = .tree },
     .{ .keys = &.{"shift+."}, .action = .card_expand, .label = "expand the card", .section = .rows, .where = .kanban, .hint = 6 },
     .{ .keys = &.{ "enter", "o" }, .action = .open_browser, .label = "open in the browser", .section = .rows, .where = .flat },
     .{ .keys = &.{"o"}, .action = .open_browser, .label = "open in the browser", .section = .rows, .where = .tree },
@@ -136,8 +142,10 @@ pub const bindings = [_]Binding{
     .{ .keys = &.{"shift+v"}, .action = .dispatch_review, .label = "dispatch: review the PR", .section = .dispatch, .where = .fix_versions },
     .{ .keys = &.{"shift+m"}, .action = .merge_pr, .label = "merge the PR (through Claude Code)", .section = .dispatch, .where = .fix_versions },
     .{ .keys = &.{"/"}, .action = .filter, .label = "filter", .section = .filters, .hint = 8 },
-    .{ .keys = &.{"shift+e"}, .action = .vars_editor, .label = "edit the tab's vars", .section = .filters, .where = .editable_jql },
-    .{ .keys = &.{"shift+e"}, .action = .jql_editor, .label = "edit the JQL", .section = .filters, .where = .fixed_jql },
+    // `J` — the JQL. `E` / `C` are the tree convention's expand /
+    // collapse every group, on both integration panes.
+    .{ .keys = &.{"shift+j"}, .action = .vars_editor, .label = "edit the tab's vars", .section = .filters, .where = .editable_jql },
+    .{ .keys = &.{"shift+j"}, .action = .jql_editor, .label = "edit the JQL", .section = .filters, .where = .fixed_jql },
     .{ .keys = &.{"f"}, .action = .tab_fix_version, .label = "switch the release", .section = .filters, .where = .fix_versions, .hint = 4 },
     .{ .keys = &.{"shift+v"}, .action = .tab_fix_version, .label = "switch the fix version", .section = .filters, .where = .work_or_boards },
     .{ .keys = &.{"shift+t"}, .action = .team, .label = "team", .section = .filters, .where = .work_or_boards },
@@ -297,10 +305,16 @@ test "the reference's chords resolve per context: f / F / V / T / space / > / c"
     try testing.expectEqual(Action.help, resolve("?", kanban_ctx).?);
     try testing.expectEqual(Action.quit, resolve("ctrl+c", kanban_ctx).?);
     try testing.expect(resolve("z", kanban_ctx) == null);
-    // E is the JQL editor everywhere but a jql_editable tab, where the
+    // J is the JQL editor everywhere but a jql_editable tab, where the
     // JQL is the user's own text and the vars are the part worth typing.
-    try testing.expectEqual(Action.jql_editor, resolve("shift+e", tree_ctx).?);
-    try testing.expectEqual(Action.vars_editor, resolve("shift+e", editable_ctx).?);
+    try testing.expectEqual(Action.jql_editor, resolve("shift+j", tree_ctx).?);
+    try testing.expectEqual(Action.vars_editor, resolve("shift+j", editable_ctx).?);
+    try testing.expectEqual(Action.jql_editor, resolve("shift+j", kanban_ctx).?);
+    // E / C: the tree convention's expand / collapse every group
+    // (hunt/findings-2026-09-23/integ-tree-nav-convention.md).
+    try testing.expectEqual(Action.tree_expand_all, resolve("shift+e", tree_ctx).?);
+    try testing.expectEqual(Action.tree_collapse_all, resolve("shift+c", tree_ctx).?);
+    try testing.expect(resolve("shift+e", kanban_ctx) == null);
     var saw_jql = false;
     for (bindings) |b| if (b.action == .jql_editor and applies(b, editable_ctx)) {
         saw_jql = true;
