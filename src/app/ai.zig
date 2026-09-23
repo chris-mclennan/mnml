@@ -1504,14 +1504,39 @@ pub fn chipClick(app: *App, product: Product) CommandError!void {
     } });
 }
 
+/// `ai.claude_code` — `SPC a c`, the palette, the dock's Claude item: a
+/// NEW session every time, one already running or not (the user runs
+/// several at once). Going back to a running one is
+/// `ai.claude_code_focus`, the chip menu's "Toggle existing" row.
 fn claudeCode(app: *App) CommandError!void {
     _ = try openSession(app, .claude, null);
 }
 
-/// Focus the running session, or start one.
+/// The live session of `product` focused most recently (the pane MRU),
+/// else the first one open.
+fn lastSession(app: *App, product: Product) ?PaneId {
+    for (app.pane_mru.items) |id| {
+        const p = app.panes.pty(id) orelse continue;
+        if (p.exit == null and p.argv.len > 0 and launch_profiles.isProductArgv(app, p.argv[0], product)) return id;
+    }
+    return findSession(app, product);
+}
+
+/// `ai.claude_code_focus` — the chip menu's "Toggle existing Claude
+/// Code pane": the running session focused last, shown and focused on
+/// the tab page that holds it; when it already has the focus, back to
+/// the pane focused before it. Only with none running does one start.
 fn claudeCodeFocus(app: *App) CommandError!void {
-    if (findSession(app, .claude)) |id| return app.showPane(id);
-    _ = try openSession(app, .claude, null);
+    const id = lastSession(app, .claude) orelse {
+        _ = try openSession(app, .claude, null);
+        return;
+    };
+    if (app.active == id and app.focus == .pane) {
+        const prev = app.prev_active orelse return;
+        if (prev == id or app.panes.get(prev) == null or app.layouts.pageOf(prev) == null) return;
+        return app.showPane(prev);
+    }
+    app.showPane(id);
 }
 
 fn claudeCodeNew(app: *App) CommandError!void {

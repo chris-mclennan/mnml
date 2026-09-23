@@ -446,6 +446,40 @@ test "the grid: the open slot paints the Add Claude Code card over the whole qua
     try t.expect(std.mem.indexOf(u8, after, "Add Claude Code") == null);
 }
 
+test "ai.claude_code_focus toggles the running session — shown, then back to the pane before it — and starts one only when none runs; ai.claude_code always starts one" {
+    // sess-chip-toggle-existing-opens-new.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var f = try Fixture.init();
+    defer f.deinit();
+    const app = &f.app;
+    const ed = try app.openScratch();
+    try command.run(app, .{ .static = .@"ai.claude_code_focus" });
+    try t.expectEqual(@as(usize, 1), countOnPage(app));
+    const c1 = app.active.?;
+    try t.expect(c1 != ed);
+    // On it: back to the scratch; off it: the session again. Never a second.
+    try command.run(app, .{ .static = .@"ai.claude_code_focus" });
+    try t.expectEqual(ed, app.active.?);
+    try command.run(app, .{ .static = .@"ai.claude_code_focus" });
+    try t.expectEqual(c1, app.active.?);
+    try t.expectEqual(@as(usize, 1), countOnPage(app));
+    // Two sessions: the one focused last is the one toggled.
+    const c2 = try f.open();
+    try t.expectEqual(@as(usize, 2), countOnPage(app));
+    app.showPane(ed);
+    try command.run(app, .{ .static = .@"ai.claude_code_focus" });
+    try t.expectEqual(c2, app.active.?);
+    app.showPane(c1);
+    app.showPane(ed);
+    try command.run(app, .{ .static = .@"ai.claude_code_focus" });
+    try t.expectEqual(c1, app.active.?);
+    try t.expectEqual(@as(usize, 2), countOnPage(app));
+    // The plain command is a new session every time (the user's
+    // 2026-09-02 ask), a session already up or not.
+    try command.run(app, .{ .static = .@"ai.claude_code" });
+    try t.expectEqual(@as(usize, 3), countOnPage(app));
+}
+
 test "ui.auto_show_sessions_on_ai_activate: a new Claude or Codex session, single or batch, shows SESSIONS and keeps the keys on the pane; off, the column is left alone" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     var f = try Fixture.init();

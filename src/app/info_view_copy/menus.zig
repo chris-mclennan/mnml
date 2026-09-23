@@ -85,8 +85,8 @@ const phase_one = [_]Row{
     // ── the Claude / Codex chips on the tab strip ──
     .{ .menu = "Claude Code launcher", .label = "Toggle existing Claude Code pane", .entry = .{
         .title = "Toggle the Claude Code pane",
-        .body = "Shows the running Claude Code session's pane if it is hidden, hides it if it is on screen, and starts a session when there is none — one row for the everyday case. The session is the `claude` CLI in a terminal pane, in the workspace, on the account it is signed in as.",
-        .links = &.{ .{ .command = .{ .id = .@"ai.claude_code", .label = "Toggle it" } }, .{ .command = .{ .id = .@"view.activity_sessions", .label = "The sessions section" } } },
+        .body = "Goes to the running Claude Code session — the one you were in last, on whichever tab holds it — and, chosen again while you are in it, back to the pane you came from. Only when none is running does it start one; it never opens a second. The session is the `claude` CLI in a terminal pane, in the workspace, on the account it is signed in as.",
+        .links = &.{ .{ .command = .{ .id = .@"ai.claude_code_focus", .label = "Toggle it" } }, .{ .command = .{ .id = .@"view.activity_sessions", .label = "The sessions section" } } },
     } },
     .{ .menu = "Claude Code launcher", .label = "New Claude Code session in left half", .entry = newSession(.claude, "left") },
     .{ .menu = "Claude Code launcher", .label = "New Claude Code session in right half", .entry = newSession(.claude, "right") },

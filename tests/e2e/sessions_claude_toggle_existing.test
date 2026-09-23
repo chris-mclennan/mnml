@@ -1,0 +1,32 @@
+# env: HOME=home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# The Claude chip's right-click menu leads with "Toggle existing Claude
+# Code pane", and it does that: with a session up it goes to that pane
+# (`ai.claude_code_focus`); it never starts a second, billed session.
+# Run again, it goes back to the file. The plain `ai.claude_code`
+# (`SPC a c`, the dock's item) is the one that opens a new session.
+write bin/claude #!/bin/bash\nprintf '\\033]0;job\\007'\nprintf 'fake session up\\n'\nexec sleep 60
+shell chmod +x bin/claude
+write a.txt "alpha alpha"
+open a.txt
+command ai.claude_code_new
+wait 500
+command view.activity_sessions
+expect screen contains "SESSIONS (1)"
+rightclick 106 1
+expect screen contains "Toggle existing Claude Code pane"
+key enter
+wait 600
+command view.activity_sessions
+# There was one session to toggle; there is still one.
+expect screen contains "SESSIONS (1)"
+expect screen contains "fake session up"
+command ai.claude_code_focus
+wait 300
+command view.activity_sessions
+expect screen contains "SESSIONS (1)"
+expect screen contains "alpha alpha"
+command ai.claude_code
+wait 500
+command view.activity_sessions
+expect screen contains "SESSIONS (2)"
