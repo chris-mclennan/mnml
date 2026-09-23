@@ -571,6 +571,10 @@ test "the NvChad leader chords ra / ca / gt / cm / fo / fz resolve in the vim pr
         .{ .spec = "space c m", .id = .@"git.graph" },
         .{ .spec = "space f o", .id = .@"picker.recent" },
         .{ .spec = "space f z", .id = .@"find.find" },
+        // `<leader>rn` "toggle relative number", `<leader>ds` "LSP
+        // diagnostic loclist".
+        .{ .spec = "space r n", .id = .@"view.toggle_relative_numbers" },
+        .{ .spec = "space d s", .id = .@"lsp.diagnostics" },
     }) |c| {
         const seq = parseKeySeqBuf(c.spec, &buf).?;
         try std.testing.expectEqual(c.id, vim.resolveSeq(seq).run.static);
