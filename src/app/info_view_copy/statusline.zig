@@ -133,7 +133,7 @@ pub fn entry(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Entry {
         },
         .autosave => .{
             .title = try std.fmt.allocPrint(arena, "Autosave every {d}s", .{app.cfg.editor.autosave_secs}),
-            .body = "`editor.autosave_secs` is set, so a dirty buffer is written to disk that many seconds after the last keystroke — the ● on the file chip clears by itself. Click restates the interval in a toast; there is no menu because the number lives in config.zon. A file that a formatter rewrites on save is formatted on every autosave too, which can move the cursor mid-thought.",
+            .body = "`editor.autosave_secs` is set, so a dirty buffer is written to disk that many seconds after the last keystroke — the ● on the file chip clears by itself. Click restates the interval in a toast; there is no menu because the number lives in config.zon. An autosave skips format-on-save, so the text never moves under the cursor; `editor.autosave_on_focus_loss` also writes everything when the terminal loses focus.",
             .links = &.{ .{ .command = .{ .id = .@"file.open_settings", .label = "Open config.zon" } }, .{ .settings = .{ .row = comptime copy.settingsRow("editor.format_on_save"), .label = "Format on save" } } },
         },
         .highlight => try highlight(app, arena),

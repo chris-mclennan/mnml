@@ -48,7 +48,7 @@ otherwise. Copy what you need; leave the rest out.
     .editor = .{
         .input_style = .standard, // .vim | .standard
         .tab_width = 4,
-        .autosave_secs = 0, // 0 = off
+        .autosave_secs = 0, // a dirty buffer is saved this many seconds after its last change; 0 = off
         .trim_trailing_ws_on_save = false,
         .breadcrumb = true,
         .auto_pair = true,
@@ -56,7 +56,7 @@ otherwise. Copy what you need; leave the rest out.
         .format_on_save = false,
         .will_save_wait_until = false,
         .format_on_type = false,
-        .autosave_on_focus_loss = false,
+        .autosave_on_focus_loss = false, // save every dirty buffer when the terminal loses focus
         .inlay_hints = true,
         // A built-in default server (json / yaml / html / css / csharp / …)
         // that is not on PATH: .quiet records it once per session — the LSP

@@ -41,7 +41,8 @@ pub const HookArgs = union(Hook) {
     exit: void,
     /// Workspace-relative path; borrowed for the duration of the emit.
     open: struct { path: []const u8, pane: u32 },
-    save_pre: struct { path: []const u8, pane: u32 },
+    /// `auto`: an autosave wrote it, not a save the user asked for.
+    save_pre: struct { path: []const u8, pane: u32, auto: bool = false },
     save_post: struct { path: []const u8, pane: u32, bytes: u64 },
     buffer_change: struct { pane: u32, line_count: u32 },
     cursor_idle: struct { pane: u32, line: u32 },

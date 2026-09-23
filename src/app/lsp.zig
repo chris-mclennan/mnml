@@ -913,6 +913,9 @@ pub fn onSavePre(app: *App, args: hooks.HookArgs) void {
     const path = e.buf.doc.path orelse return;
     const s = serverFor(app, path);
     if (s != null) syncPane(app, pane, e);
+    // An autosave is not a save the user asked for: nothing reformats
+    // the text under them.
+    if (args.save_pre.auto) return;
     format_app.onSavePre(app, pane, e, s);
     if (!app.cfg.editor.format_on_save) return;
     const srv = s orelse return;
