@@ -118,8 +118,18 @@ pub const Root = struct {
     expanded: bool = false,
 };
 
+/// Directories `Tree` has listed since the process started — what a test
+/// reads to show `expand_all` lists each folder once.
+pub var dirs_listed: usize = 0;
+
+/// `expand_all` opens folders this deep and no deeper (the old walk's
+/// 64-pass guard).
+const max_expand_depth = 64;
+
 pub const Tree = struct {
     gpa: Allocator,
+    /// `expandAllDirs` is listing: every folder met is opened on the way.
+    expanding_all: bool = false,
     visible: bool = true,
     /// A `Ctrl-W` arrived with the tree focused; the next key names the
     /// window to move to.
@@ -469,6 +479,7 @@ pub const Tree = struct {
 
     fn listWith(self: *Tree, app: *App, rel_dir: []const u8, depth: u8, root: u8, ignores: *gitignore.Stack, under_ignored: bool) Allocator.Error!void {
         const gpa = self.gpa;
+        dirs_listed += 1;
         const arena = app.frame.allocator();
         const abs = if (rel_dir.len == 0) app.workspace else if (std.fs.path.isAbsolute(rel_dir)) rel_dir else try std.fs.path.join(arena, &.{ app.workspace, rel_dir });
         var dir = std.Io.Dir.cwd().openDir(app.io, abs, .{ .iterate = true }) catch return;
@@ -514,6 +525,7 @@ pub const Tree = struct {
         }.lt);
         for (names.items) |row| {
             try self.rows.append(gpa, row);
+            if (self.expanding_all and autoExpands(row)) try self.setExpanded(row.rel, true);
             if (row.is_dir and self.expanded.contains(row.rel)) try self.listWith(app, row.rel, depth + 1, root, ignores, row.ignored);
         }
     }
@@ -958,19 +970,23 @@ pub const Tree = struct {
         self.expanded.clearRetainingCapacity();
     }
 
-    fn expandAllDirs(self: *Tree, app: *App) Allocator.Error!void {
-        var again = true;
-        var guard: usize = 0;
-        while (again and guard < 64) : (guard += 1) {
-            again = false;
-            try self.refresh(app);
-            for (self.rows.items) |row| {
-                if (row.header or !row.is_dir or self.isExpanded(row.rel)) continue;
-                if (isNoisy(row.name()) or row.link or row.ignored) continue;
-                try self.setExpanded(row.rel, true);
-                again = true;
-            }
-        }
+    /// Every folder open, in one listing: the walk expands each folder
+    /// it meets and descends into it. It used to re-list the whole tree
+    /// once per level — 44 listings of a tree growing to 55k rows, a
+    /// five-second freeze on a deep workspace.
+    pub fn expandAllDirs(self: *Tree, app: *App) Allocator.Error!void {
+        self.expanding_all = true;
+        defer self.expanding_all = false;
+        try self.refresh(app);
+    }
+
+    /// `expand_all`'s rule for one listed folder: not noisy, not a link
+    /// (followed in one walk, a link to an ancestor recurses until the
+    /// depth cap on every branch), and not past the depth the old
+    /// level-by-level walk stopped at. An ignored folder the tree shows
+    /// (`show_ignored`) opens like any other, as it did.
+    fn autoExpands(row: Row) bool {
+        return row.is_dir and !row.header and !row.link and !isNoisy(row.name()) and row.depth < max_expand_depth;
     }
 
     /// The scrollbar in the tree's last column: a press or drag lands
@@ -1678,19 +1694,7 @@ fn toggleCollapseAll(app: *App) CommandError!void {
 
 /// Expand every directory (the noisy ones stay closed).
 fn expandAll(app: *App) CommandError!void {
-    var again = true;
-    var guard: usize = 0;
-    while (again and guard < 64) : (guard += 1) {
-        again = false;
-        try app.tree.refresh(app);
-        for (app.tree.rows.items) |row| {
-            if (!row.is_dir or app.tree.isExpanded(row.rel)) continue;
-            if (isNoisy(row.name())) continue;
-            try app.tree.setExpanded(row.rel, true);
-            again = true;
-        }
-    }
-    try app.tree.refresh(app);
+    try app.tree.expandAllDirs(app);
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
@@ -1796,6 +1800,39 @@ test "tree, vim profile: nvim-tree's a / r / d / x / R / E / W — create, renam
     try t.expect(!try app.tree.handleKey(&app, Key.char('E')));
     try t.expect(try app.tree.handleKey(&app, Key.char('r')));
     try t.expect(app.overlay == .none);
+}
+
+test "expand all lists each folder once, however deep — not the whole tree once per level" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    // A 12-deep chain beside a few wide folders, a file at every level.
+    var path: std.ArrayListUnmanaged(u8) = .empty;
+    defer path.deinit(t.allocator);
+    for (0..12) |i| {
+        if (i > 0) try path.append(t.allocator, '/');
+        try path.print(t.allocator, "d{d}", .{i});
+        try tmp.dir.createDirPath(t.io, path.items);
+        const f = try std.fmt.allocPrint(t.allocator, "{s}/f.txt", .{path.items});
+        defer t.allocator.free(f);
+        try tmp.dir.writeFile(t.io, .{ .sub_path = f, .data = "x" });
+    }
+    for ([_][]const u8{ "w1/a", "w1/b", "w2/a", "w3" }) |d| try tmp.dir.createDirPath(t.io, d);
+    try tmp.dir.createDirPath(t.io, "node_modules/pkg");
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = buf[0..n] });
+    defer app.deinit();
+    try app.tree.refresh(&app);
+    try command.run(&app, .{ .static = .@"tree.collapse_all" });
+    const before = dirs_listed;
+    try command.run(&app, .{ .static = .@"tree.expand_all" });
+    // 12 chain + 6 wide + node_modules (listed, never entered) + the root;
+    // a second listing of the top level when the first opens new
+    // top-level folders is allowed.
+    try t.expect(dirs_listed - before <= 2 * 20);
+    try t.expect(app.tree.rowOf("d0/d1/d2/d3/d4/d5/d6/d7/d8/d9/d10/d11/f.txt") != null);
+    try t.expect(app.tree.rowOf("w1/b") != null);
+    try t.expect(app.tree.rowOf("node_modules/pkg") == null);
 }
 
 test "the arrow preview skips a file too heavy to glance at — a very long line, or too many bytes — and says so" {
