@@ -38,6 +38,7 @@ const tools = @import("../lsp/tools.zig");
 const Config = @import("../config/Config.zig");
 const lsp = @import("lsp.zig");
 const indent = @import("../editor/indent.zig");
+const jobs = @import("jobs.zig");
 
 const Server = client.Server;
 const ReqKind = client.ReqKind;
@@ -246,9 +247,23 @@ pub fn formatExternalPane(app: *App, e: *EditorPane, explicit: bool) CommandErro
     };
     const argv = try arena.dupe([]const u8, try tools.expandArgv(arena, f.argv, app.relPath(path)));
     argv[0] = try lsp.resolveOnPath(app, arena, argv[0]);
+    // The run is over before a frame could show it, so it is recorded
+    // rather than begun: a save-time failure — which says nothing else
+    // — still reaches the chip and the JOBS list.
+    const label = try std.fmt.allocPrint(arena, "{s} {s}", .{ std.fs.path.basename(argv[0]), app.relPath(path) });
+    const started = App.nowMs(app.io);
+    runFormatter(app, e, path, argv, f.in_place, explicit) catch |err| {
+        jobs.record(app, .{ .kind = .format, .label = label }, App.nowMs(app.io) - started, jobs.Outcome.fail(app.diag.msg orelse @errorName(err)));
+        return err;
+    };
+    jobs.record(app, .{ .kind = .format, .label = label }, App.nowMs(app.io) - started, jobs.Outcome.done("formatted"));
+}
+
+fn runFormatter(app: *App, e: *EditorPane, path: []const u8, argv: []const []const u8, in_place: bool, explicit: bool) CommandError!void {
+    const arena = app.frame.allocator();
     const ed = e.buf.editor;
     const before = ed.bytes();
-    if (f.in_place) {
+    if (in_place) {
         // The tool wants the file: write what the buffer holds, run it
         // on the path, read the result back.
         Io.Dir.cwd().writeFile(app.io, .{ .sub_path = path, .data = before }) catch |err| return app.diag.fail(arena, "format: write {s}: {s}", .{ app.relPath(path), @errorName(err) });
@@ -465,6 +480,8 @@ pub fn lintOnHook(app: *App, path: []const u8, has_server: bool) void {
 
 /// Owned copies for the worker; freed by it.
 const Job = struct {
+    /// The JOBS list's key for this run (`jobs.freshKey`).
+    job_key: u64 = 0,
     argv: [][]u8,
     cwd: []u8,
     path: []u8,
@@ -510,7 +527,13 @@ fn lintPath(app: *App, path: []const u8, l: tools.Linter) !void {
     errdefer gpa.free(job.rel);
     job.pattern = try gpa.dupe(u8, l.pattern);
     errdefer gpa.free(job.pattern);
+    job.job_key = jobs.freshKey(app);
+    const key = job.job_key;
+    const label = try std.fmt.allocPrint(arena, "{s} {s}", .{ std.fs.path.basename(job.argv[0]), rel });
     try app.lsp.lint_group.concurrent(app.io, lintWorker, .{ &app.events, app.io, gpa, job, &app.env });
+    // Begun after the spawn: the worker's end cannot reach the queue
+    // before this runs, since both land on this thread.
+    _ = try jobs.begin(app, .{ .kind = .lint, .key = key, .label = label });
 }
 
 const WireDiag = struct {
@@ -536,6 +559,15 @@ fn lintWorker(events: *event.EventQueue, io: Io, gpa: Allocator, job: *Job, env:
             job.argv[0] = owned;
         } else |_| {}
     }
+    // How the run ended, for the JOBS list — posted on every way out,
+    // so a tool whose output could not be read never looks like one
+    // still running. A linter exits non-zero on findings; one that
+    // exits non-zero with nothing parsed and something said is the tool
+    // failing (`lintFailed`), and its words are the job's.
+    var verdict: jobs.Status = .failed;
+    var words_buf: [192]u8 = undefined;
+    var words: []const u8 = "its output could not be read";
+    defer jobs.post(events, io, gpa, .lint, job.job_key, verdict, words);
     const result = std.process.run(gpa, io, .{
         .argv = job.argv,
         .cwd = .{ .path = job.cwd },
@@ -543,8 +575,13 @@ fn lintWorker(events: *event.EventQueue, io: Io, gpa: Allocator, job: *Job, env:
         .stdout_limit = .limited(8 * 1024 * 1024),
         .stderr_limit = .limited(1024 * 1024),
     }) catch |err| switch (err) {
-        error.Canceled => return error.Canceled,
+        error.Canceled => {
+            verdict = .cancelled;
+            words = "cancelled";
+            return error.Canceled;
+        },
         else => {
+            words = std.fmt.bufPrint(&words_buf, "could not run it: {s}", .{@errorName(err)}) catch "could not run it";
             const msg = std.fmt.allocPrint(gpa, "linter `{s}`: {s}", .{ job.argv[0], @errorName(err) }) catch return;
             events.post(io, .{ .err = .{ .source = .lsp, .msg = msg } });
             return;
@@ -564,10 +601,15 @@ fn lintWorker(events: *event.EventQueue, io: Io, gpa: Allocator, job: *Job, env:
     // so, and leave the file's last findings alone.
     if (lintFailed(result.term, diags.len, result.stdout, result.stderr)) |why| {
         var reason: [160]u8 = undefined;
-        const msg = std.fmt.allocPrint(gpa, "linter `{s}` failed — {s}", .{ std.fs.path.basename(job.argv[0]), summarize(&reason, why) }) catch return;
+        const said = summarize(&reason, why);
+        // Copied: the deferred post reads `words` after this block.
+        words = std.fmt.bufPrint(&words_buf, "{s}", .{jobs.cut(said, words_buf.len)}) catch "failed";
+        const msg = std.fmt.allocPrint(gpa, "linter `{s}` failed — {s}", .{ std.fs.path.basename(job.argv[0]), said }) catch return;
         events.post(io, .{ .err = .{ .source = .lsp, .msg = msg } });
         return;
     }
+    verdict = .ok;
+    words = std.fmt.bufPrint(&words_buf, "{d} finding{s}", .{ diags.len, if (diags.len == 1) "" else "s" }) catch "done";
     const wire = a.alloc(WireDiag, diags.len) catch return;
     for (diags, 0..) |d, i| wire[i] = .{ .range = d.range, .severity = @intFromEnum(d.severity), .message = d.message, .source = d.source, .code = d.code };
     const uri = types.uriFromPath(a, job.path) catch return;
