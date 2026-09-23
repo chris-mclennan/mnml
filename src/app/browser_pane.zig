@@ -47,6 +47,9 @@ pub const NetEntry = struct {
     status: ?i64 = null,
     mime: ?[]u8 = null,
     failed: ?[]u8 = null,
+    /// The headers `requestWillBeSentExtraInfo` added (the wire's
+    /// `Cookie` among them) are in `headers` already.
+    extra: bool = false,
 
     fn deinit(self: *NetEntry, gpa: Allocator) void {
         gpa.free(self.request_id);
@@ -202,6 +205,9 @@ pub const BrowserPane = struct {
     /// What an eval returned, as its preview, for when the by-value copy
     /// (`eval_json`) fails: keyed by that request's id.
     eval_fallback: std.AutoHashMapUnmanaged(i64, []u8) = .empty,
+    /// `requestWillBeSentExtraInfo` that came before its request: the
+    /// request id and its headers' JSON.
+    extra_early: std.ArrayListUnmanaged(struct { id: []u8, headers: []u8 }) = .empty,
 
     pub fn deinit(self: *BrowserPane, gpa: Allocator) void {
         self.shutdown();
@@ -233,6 +239,8 @@ pub const BrowserPane = struct {
         self.filter.deinit(gpa);
         self.clearFallbacks();
         self.eval_fallback.deinit(gpa);
+        self.clearExtraEarly();
+        self.extra_early.deinit(gpa);
         gpa.free(self.url);
         gpa.free(self.title_buf);
         gpa.free(self.profile_dir);
@@ -242,6 +250,14 @@ pub const BrowserPane = struct {
         var it = self.eval_fallback.valueIterator();
         while (it.next()) |v| self.gpa.free(v.*);
         self.eval_fallback.clearRetainingCapacity();
+    }
+
+    fn clearExtraEarly(self: *BrowserPane) void {
+        for (self.extra_early.items) |e| {
+            self.gpa.free(e.id);
+            self.gpa.free(e.headers);
+        }
+        self.extra_early.clearRetainingCapacity();
     }
 
     fn freeRows(gpa: Allocator, rows: *std.ArrayListUnmanaged(Row)) void {
@@ -974,8 +990,31 @@ fn onEvent(app: *App, p: *BrowserPane, method: []const u8, m: cdp.Message) Alloc
             oldest.deinit(app.gpa);
         }
         try p.net.append(app.gpa, entry);
+        const added = &p.net.items[p.net.items.len - 1];
         try p.push(.net, try std.fmt.allocPrint(arena, "{s} {s}", .{ meth, history.shortUrl(url) }));
-        if (app.cfg.browser.autocapture_to_log) try appendCaptured(app, &p.net.items[p.net.items.len - 1]);
+        // The captured log is written now, before any ExtraInfo: the
+        // wire's Cookie never lands on disk.
+        if (app.cfg.browser.autocapture_to_log) try appendCaptured(app, added);
+        if (takeExtraEarly(p, request_id)) |hdrs| {
+            defer app.gpa.free(hdrs);
+            const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, hdrs, .{}) catch return;
+            try mergeExtra(app, added, parsed);
+        }
+    } else if (std.mem.eql(u8, method, "Network.requestWillBeSentExtraInfo")) {
+        const request_id = cdp.str(m.params, &.{"requestId"}) orelse return;
+        const hs = cdp.get(m.params, &.{"headers"}) orelse return;
+        if (p.findNet(request_id)) |n| if (!n.extra) return mergeExtra(app, n, hs);
+        // Before its request (Chrome sends the two in either order).
+        if (p.extra_early.items.len >= 64) {
+            const old = p.extra_early.orderedRemove(0);
+            app.gpa.free(old.id);
+            app.gpa.free(old.headers);
+        }
+        const id_copy = try app.gpa.dupe(u8, request_id);
+        errdefer app.gpa.free(id_copy);
+        const json = try std.json.Stringify.valueAlloc(app.gpa, hs, .{});
+        errdefer app.gpa.free(json);
+        try p.extra_early.append(app.gpa, .{ .id = id_copy, .headers = json });
     } else if (std.mem.eql(u8, method, "Network.responseReceived")) {
         const request_id = cdp.str(m.params, &.{"requestId"}) orelse return;
         const n = p.findNet(request_id) orelse return;
@@ -1005,6 +1044,40 @@ fn onEvent(app: *App, p: *BrowserPane, method: []const u8, m: cdp.Message) Alloc
         const url = cdp.str(m.params, &.{ "targetInfo", "url" }) orelse "";
         const ty = cdp.str(m.params, &.{ "targetInfo", "type" }) orelse "";
         try p.push(.nav, try std.fmt.allocPrint(arena, "attached {s}: {s}", .{ ty, url }));
+    }
+}
+
+/// The headers ExtraInfo stashed for `request_id`, taken (owned).
+fn takeExtraEarly(p: *BrowserPane, request_id: []const u8) ?[]u8 {
+    for (p.extra_early.items, 0..) |e, i| if (std.mem.eql(u8, e.id, request_id)) {
+        const taken = p.extra_early.orderedRemove(i);
+        p.gpa.free(taken.id);
+        return taken.headers;
+    };
+    return null;
+}
+
+/// Headers the network stack added, which `requestWillBeSent` leaves
+/// out: the wire's `Cookie`, `Origin`, `Sec-Fetch-*`. Those the entry
+/// already has are kept; transport ones (`Host`, `Connection`,
+/// `Accept-Encoding`…) are not taken, so a re-send is not asked for an
+/// encoding the request pane cannot read.
+fn mergeExtra(app: *App, n: *NetEntry, hs: std.json.Value) Allocator.Error!void {
+    n.extra = true;
+    if (hs != .object) return;
+    const skip = [_][]const u8{ "host", "connection", "content-length", "accept-encoding", "keep-alive", "transfer-encoding", "upgrade" };
+    var it = hs.object.iterator();
+    outer: while (it.next()) |e| {
+        if (e.value_ptr.* != .string) continue;
+        const name = e.key_ptr.*;
+        if (name.len == 0 or name[0] == ':') continue;
+        for (skip) |sk| if (std.ascii.eqlIgnoreCase(name, sk)) continue :outer;
+        for (n.headers.items) |h| if (std.ascii.eqlIgnoreCase(h.name, name)) continue :outer;
+        const nm = try app.gpa.dupe(u8, name);
+        errdefer app.gpa.free(nm);
+        const v = try app.gpa.dupe(u8, e.value_ptr.string);
+        errdefer app.gpa.free(v);
+        try n.headers.append(app.gpa, .{ .name = nm, .value = v });
     }
 }
 
@@ -2258,6 +2331,33 @@ test "a failed request says why in the log and on its row, CORS reason included;
     // The ✗ row's method sits in the same column as a numbered one's.
     try testing.expect(std.mem.indexOf(u8, screen, " ✗   GET    localhost:1/cors  net::ERR_FAILED (CORS: MissingAllowOriginHeader)") != null);
     try testing.expect(std.mem.indexOf(u8, screen, " 404 GET    a/ok") != null);
+}
+
+test "requestWillBeSentExtraInfo's Cookie reaches the re-send and the curl, in either order, and never the captured log" {
+    var tb: TestBed = .{};
+    const p = try tb.init();
+    defer tb.deinit();
+    const gpa = testing.allocator;
+    try tb.msg("{\"method\":\"Network.requestWillBeSent\",\"params\":{\"requestId\":\"a1\",\"type\":\"Fetch\",\"request\":{\"url\":\"http://h/api?authed=1\",\"method\":\"GET\",\"headers\":{\"X-Hunt\":\"1\"}}}}");
+    try tb.msg("{\"method\":\"Network.requestWillBeSentExtraInfo\",\"params\":{\"requestId\":\"a1\",\"headers\":{\"Cookie\":\"sid=secret-session-77\",\"x-hunt\":\"dup\",\"Accept-Encoding\":\"gzip, br\",\"Host\":\"h\",\":path\":\"/api\"}}}");
+    // Before its request, the other way round.
+    try tb.msg("{\"method\":\"Network.requestWillBeSentExtraInfo\",\"params\":{\"requestId\":\"a2\",\"headers\":{\"Cookie\":\"sid=two\"}}}");
+    try tb.msg("{\"method\":\"Network.requestWillBeSent\",\"params\":{\"requestId\":\"a2\",\"type\":\"XHR\",\"request\":{\"url\":\"http://h/two\",\"method\":\"POST\",\"headers\":{}}}}");
+    var one = try p.net.items[0].toRequest(gpa);
+    defer one.deinit(gpa);
+    var names: std.ArrayListUnmanaged(u8) = .empty;
+    defer names.deinit(gpa);
+    for (one.headers.items) |h| try names.print(gpa, "{s}={s};", .{ h.name, h.value });
+    try testing.expectEqualStrings("X-Hunt=1;Cookie=sid=secret-session-77;", names.items);
+    var two = try p.net.items[1].toRequest(gpa);
+    defer two.deinit(gpa);
+    try testing.expectEqualStrings("Cookie", two.headers.items[0].name);
+    try testing.expectEqualStrings("sid=two", two.headers.items[0].value);
+    try testing.expectEqual(@as(usize, 0), p.extra_early.items.len);
+    const log = try tb.tmp.dir.readFileAlloc(testing.io, ".rqst/captured/log.jsonl", gpa, .limited(1 << 16));
+    defer gpa.free(log);
+    try testing.expect(std.mem.indexOf(u8, log, "secret-session") == null);
+    try testing.expect(std.mem.indexOf(u8, log, "X-Hunt") != null);
 }
 
 test "scrolled back, the log holds still while lines arrive; at the tail it follows" {

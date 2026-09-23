@@ -805,6 +805,10 @@ otherwise. Copy what you need; leave the rest out.
     // ── browser / ci / integrations ────────────────────────────────────
     .browser = .{
         .headless = false,
+        // Every Document / XHR / Fetch request is appended to
+        // <ws>/.rqst/captured/log.jsonl as it starts. The headers are the
+        // page's own: the Cookie Chrome's network stack adds reaches a
+        // re-send (Enter) and a copy-as-curl (y), never this file.
         .autocapture_to_log = true,
         .profile_mode = .workspace, // .workspace | .shared | .ephemeral
         // Where Chrome keeps cookies / logins: .workspace is
