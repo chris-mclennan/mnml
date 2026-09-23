@@ -1,0 +1,19 @@
+# env: MNML_CLAUDE_USAGE_FIXTURE=${MNML_E2E_WORKSPACE}/fixture
+# env: HOME=home
+# A usage window whose reset has already passed (the fixture clock is
+# 20:00, the session window reset at 19:00) says it reset and that the
+# figure predates it — never "Resets 7pm", a past time read as a future
+# one. The weekly window, still ahead, keeps "Resets …".
+write fixture/accounts *personal
+write fixture/now 1789243232
+write fixture/tz_offset 0
+write fixture/personal.json {"five_hour":{"utilization":100.0,"resets_at":"2026-09-12T19:00:00.280504+00:00"},"seven_day":{"utilization":30.0,"resets_at":"2026-09-19T05:00:00.280523+00:00"},"limits":[{"kind":"session","percent":100,"resets_at":"2026-09-12T19:00:00.280504+00:00"},{"kind":"weekly_all","percent":30,"resets_at":"2026-09-19T05:00:00.280523+00:00"}]}
+write fixture/personal.profile.json {"account":{"email":"sam@example.com"},"organization":{"name":"Example Org"}}
+write placeholder.txt x
+open placeholder.txt
+command ai.claude_usage
+wait 800
+expect screen contains "100% used"
+expect screen contains "Reset 7pm — the figure is from before it"
+expect screen lacks "Resets 7pm"
+expect screen contains "Resets Sep 19 at 5am"

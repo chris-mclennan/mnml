@@ -184,6 +184,29 @@ pub fn suggestName(arena: Allocator, io: Io, root: []const u8, base: []const u8)
     return std.fmt.allocPrint(arena, "{s}-{d}", .{ base, n });
 }
 
+/// `suggestName`, past a local branch of that name as well: accepting a
+/// seed whose branch already exists fails, and a branch named
+/// `session-1` with the user's own commit on it is not a tree to reuse.
+/// Gives up asking git after a hundred taken names.
+pub fn freeName(app: *App, arena: Allocator, repo: []const u8, root: []const u8, base: []const u8) CommandError![]const u8 {
+    var name = try suggestName(arena, app.io, root, base);
+    var tries: u32 = 0;
+    while (tries < 100 and try branchExists(app, arena, repo, name)) : (tries += 1) {
+        const dash = std.mem.lastIndexOfScalar(u8, name, '-').?;
+        const n = std.fmt.parseInt(u32, name[dash + 1 ..], 10) catch break;
+        var next = n + 1;
+        // The next number whose directory is free too.
+        while (next < 10_000) : (next += 1) {
+            const cand = try std.fmt.allocPrint(arena, "{s}-{d}", .{ base, next });
+            if (!exists(app.io, try pathFor(arena, root, cand))) {
+                name = cand;
+                break;
+            }
+        } else break;
+    }
+    return name;
+}
+
 pub fn exists(io: Io, path: []const u8) bool {
     _ = Io.Dir.cwd().statFile(io, path, .{}) catch return false;
     return true;
@@ -469,7 +492,7 @@ pub fn openNamePrompt(app: *App, product: Config.AiProduct, profile: []const u8)
     const repo = (try repoRoot(app, arena, app.workspace)) orelse return app.diag.fail(arena, "worktree: {s} is not in a git repository", .{app.workspace});
     const root = try rootOf(app, arena, repo);
     const base: []const u8 = if (std.mem.eql(u8, profile, launch_profiles.builtin_name)) "session" else profile;
-    const seed = try suggestName(arena, app.io, root, base);
+    const seed = try freeName(app, arena, repo, root, base);
     const owned = try app.gpa.dupe(u8, profile);
     errdefer app.gpa.free(owned);
     app.overlay.deinit(app.gpa);
@@ -1101,4 +1124,24 @@ test "a session that ends with its worktree still there toasts once with the com
     try listing.post(&f, path, .streaming, 7);
     try listing.post(&f, path, .done, 8);
     try t.expectEqual(after_remove, msgs.items.len);
+}
+
+test "the name seed skips a local branch that already has the name, as it skips a directory" {
+    // sess-small-drift (3).
+    var f = try RepoFixture.init();
+    defer f.deinit();
+    const app = &f.app;
+    const a = app.frame.allocator();
+    const root = try rootOf(app, a, f.repo);
+    try t.expectEqualStrings("session-1", try freeName(app, a, f.repo, root, "session"));
+    // The user's own `session-1` branch, no tree: the seed moves past it.
+    try f.sh(f.repo, &.{ "branch", "session-1" });
+    try t.expectEqualStrings("session-2", try freeName(app, a, f.repo, root, "session"));
+    // A tree at session-2 and a branch session-3: the next free is 4.
+    _ = try create(app, a, f.repo, "session-2");
+    try f.sh(f.repo, &.{ "branch", "session-3" });
+    try t.expectEqualStrings("session-4", try freeName(app, a, f.repo, root, "session"));
+    // The prompt is seeded with it.
+    try openNamePrompt(app, .claude, launch_profiles.builtin_name);
+    try t.expectEqualStrings("session-4", app.overlay.prompt.state.buf.items);
 }
