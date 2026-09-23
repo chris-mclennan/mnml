@@ -1,0 +1,13 @@
+# A rename target with a trailing slash names a folder (as for `mv` and
+# the New-file prompt): `newdir/` moves a.txt INTO a new newdir, keeping
+# its name, instead of renaming the file to `newdir`.
+write a.txt "aa"
+command view.focus_tree
+key r
+key home
+key f2
+key ctrl+u
+type newdir/
+key enter
+wait 300
+expect file newdir/a.txt contains "aa"

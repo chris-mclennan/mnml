@@ -1495,8 +1495,14 @@ pub fn acceptRename(app: *App, from: []const u8, text: []const u8) Allocator.Err
         if (std.fs.path.dirname(from)) |dir| to = try std.fs.path.join(arena, &.{ dir, to });
     }
     if (std.mem.eql(u8, to, from)) return;
+    // A trailing slash names a folder, as it does for `mv` and the
+    // New-file prompt: `newdir/` moves the file INTO newdir (made when
+    // missing), keeping its name — never renames it to `newdir`.
+    const into_dir = std.mem.endsWith(u8, std.mem.trimEnd(u8, text, " \t"), "/");
     const to_abs = try app.absPath(to);
-    if (std.Io.Dir.cwd().statFile(app.io, to_abs, .{})) |st| {
+    if (into_dir) {
+        to = try std.fs.path.join(arena, &.{ to, std.fs.path.basename(from) });
+    } else if (std.Io.Dir.cwd().statFile(app.io, to_abs, .{})) |st| {
         if (st.kind == .directory) to = try std.fs.path.join(arena, &.{ to, std.fs.path.basename(from) });
     } else |_| {}
     try movePath(app, from, to);
