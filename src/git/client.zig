@@ -528,15 +528,40 @@ pub const Action = union(enum) {
     }
 };
 
+/// Where HEAD is: its branch (empty when detached) and its commit.
+/// Owned by the entry that records it.
+pub const Where = struct {
+    branch: []u8,
+    head: []u8,
+
+    fn deinit(w: Where, gpa: Allocator) void {
+        gpa.free(w.branch);
+        gpa.free(w.head);
+    }
+
+    fn eql(a: Where, b: Where) bool {
+        return std.mem.eql(u8, a.branch, b.branch) and std.mem.eql(u8, a.head, b.head);
+    }
+};
+
+/// One undoable step. `after` is where the step left HEAD — an undo
+/// runs only while HEAD is still there, on the same branch; `before`
+/// is where the undo left it, which a redo checks the same way. A step
+/// replayed onto another branch (or onto commits made since) rewrote
+/// history the step never touched.
 const UndoEntry = struct {
     desc: []u8,
     undo: Action,
     redo: Action,
+    after: Where,
+    before: ?Where = null,
 
     fn deinit(e: UndoEntry, gpa: Allocator) void {
         gpa.free(e.desc);
         e.undo.deinit(gpa);
         e.redo.deinit(gpa);
+        e.after.deinit(gpa);
+        if (e.before) |b| b.deinit(gpa);
     }
 };
 
@@ -1101,7 +1126,7 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
                 if (before.ok and after.ok) {
                     const desc = try std.fmt.allocPrint(arena, "amend {s}", .{firstLine(msg)});
                     const pair = try dupe2(gpa, trimmed(before.stdout), trimmed(after.stdout));
-                    try pushUndo(repo, desc, .{ .reset_soft = pair[0] }, .{ .reset_soft = pair[1] });
+                    try pushUndo(repo, io, arena, desc, .{ .reset_soft = pair[0] }, .{ .reset_soft = pair[1] });
                 }
             }
             r.payload = .{ .op = .{ .desc = try std.fmt.allocPrint(arena, "amended: {s}", .{firstLine(msg)}), .ok = out.ok, .msg = out.reason() } };
@@ -1155,7 +1180,7 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
                     // it, pushUndo owns both and frees them on failure.
                     const desc = try std.fmt.allocPrint(arena, "commit {s}", .{firstLine(msg)});
                     const pair = try dupe2(gpa, trimmed(before.stdout), trimmed(after.stdout));
-                    try pushUndo(repo, desc, .{ .reset_soft = pair[0] }, .{ .reset_soft = pair[1] });
+                    try pushUndo(repo, io, arena, desc, .{ .reset_soft = pair[0] }, .{ .reset_soft = pair[1] });
                 }
             }
             r.payload = .{ .op = .{ .desc = try std.fmt.allocPrint(arena, "committed: {s}", .{firstLine(msg)}), .ok = out.ok, .msg = out.reason() } };
@@ -1166,7 +1191,7 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             if (out.ok and from.ok and trimmed(from.stdout).len > 0) {
                 const desc = try std.fmt.allocPrint(arena, "checkout {s}", .{b});
                 const pair = try dupe2(gpa, trimmed(from.stdout), b);
-                try pushUndo(repo, desc, .{ .checkout = pair[0] }, .{ .checkout = pair[1] });
+                try pushUndo(repo, io, arena, desc, .{ .checkout = pair[0] }, .{ .checkout = pair[1] });
             }
             r.payload = .{ .op = .{ .desc = try std.fmt.allocPrint(arena, "checked out {s}", .{b}), .ok = out.ok, .msg = out.reason() } };
         },
@@ -1295,13 +1320,29 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
         .cherry_pick => |sha| try simple(repo, io, r, &.{ "cherry-pick", sha }, try std.fmt.allocPrint(arena, "cherry-picked {s}", .{sha[0..@min(7, sha.len)]})),
         .revert => |sha| try simple(repo, io, r, &.{ "revert", "--no-edit", sha }, try std.fmt.allocPrint(arena, "reverted {s}", .{sha[0..@min(7, sha.len)]})),
         .undo => {
-            if (repo.undo.pop()) |entry| {
+            if (repo.undo.items.len > 0) {
+                // HEAD must still be where the step left it, on the same
+                // branch; otherwise "reset to before" rewrites whatever
+                // branch is checked out now. The entry stays: back on
+                // that branch and commit, the undo is right again.
+                const now = try whereNow(repo, io, arena);
+                defer now.deinit(gpa);
+                const top = repo.undo.items[repo.undo.items.len - 1];
+                if (!top.after.eql(now)) {
+                    r.payload = .{ .op = .{ .desc = "undo refused", .ok = false, .msg = try movedMsg(arena, top.desc, top.after, now), .refresh = false } };
+                    events.post(io, .{ .git = r });
+                    return;
+                }
+                var entry = repo.undo.pop().?;
                 // Popped and not yet on the other list: a step that fails
                 // part-way (the child cancelled at shutdown) frees it.
                 errdefer entry.deinit(gpa);
                 const out = try applyAction(repo, io, arena, entry.undo);
                 if (out.ok) {
                     const desc = try std.fmt.allocPrint(arena, "undid: {s}", .{entry.desc});
+                    if (entry.before) |b| b.deinit(gpa);
+                    entry.before = null;
+                    entry.before = try whereNow(repo, io, arena);
                     try repo.redo.append(gpa, entry);
                     r.payload = .{ .op = .{ .desc = desc, .ok = true } };
                 } else {
@@ -1313,13 +1354,25 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             }
         },
         .redo => {
-            if (repo.redo.pop()) |entry| {
+            if (repo.redo.items.len > 0) {
+                const now = try whereNow(repo, io, arena);
+                defer now.deinit(gpa);
+                const top = repo.redo.items[repo.redo.items.len - 1];
+                if (top.before) |b| if (!b.eql(now)) {
+                    r.payload = .{ .op = .{ .desc = "redo refused", .ok = false, .msg = try movedMsg(arena, top.desc, b, now), .refresh = false } };
+                    events.post(io, .{ .git = r });
+                    return;
+                };
+                var entry = repo.redo.pop().?;
                 // Popped and not yet on the other list: a step that fails
                 // part-way (the child cancelled at shutdown) frees it.
                 errdefer entry.deinit(gpa);
                 const out = try applyAction(repo, io, arena, entry.redo);
                 if (out.ok) {
                     const desc = try std.fmt.allocPrint(arena, "redid: {s}", .{entry.desc});
+                    const again = try whereNow(repo, io, arena);
+                    entry.after.deinit(gpa);
+                    entry.after = again;
                     try repo.undo.append(gpa, entry);
                     r.payload = .{ .op = .{ .desc = desc, .ok = true } };
                 } else {
@@ -1408,7 +1461,7 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
                 const after = try git(repo, io, arena, &.{ "rev-parse", "--verify", "-q", "HEAD" }, null);
                 if (before.ok and after.ok) {
                     const pair = try dupe2(gpa, trimmed(before.stdout), trimmed(after.stdout));
-                    try pushUndo(repo, "amend (staged changes into HEAD)", .{ .reset_soft = pair[0] }, .{ .reset_soft = pair[1] });
+                    try pushUndo(repo, io, arena, "amend (staged changes into HEAD)", .{ .reset_soft = pair[0] }, .{ .reset_soft = pair[1] });
                 }
             }
             r.payload = .{ .op = .{ .desc = "amended HEAD with the staged changes", .ok = out.ok, .msg = out.reason() } };
@@ -1441,7 +1494,7 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
                     const after = try git(repo, io, arena, &.{ "rev-parse", "--verify", "-q", "HEAD" }, null);
                     if (snap.head) |h| if (after.ok) {
                         const pair = try dupe2(gpa, h, trimmed(after.stdout));
-                        try pushUndo(repo, desc, .{ .reset_soft = pair[0] }, .{ .reset_soft = pair[1] });
+                        try pushUndo(repo, io, arena, desc, .{ .reset_soft = pair[0] }, .{ .reset_soft = pair[1] });
                     };
                 } else try pushSnapshotUndo(repo, io, arena, desc, snap);
             }
@@ -1736,16 +1789,41 @@ fn dupe2(gpa: Allocator, a: []const u8, b: []const u8) Allocator.Error![2][]u8 {
     return .{ x, try gpa.dupe(u8, b) };
 }
 
-fn pushUndo(repo: *Repo, desc: []const u8, undo: Action, redo: Action) Allocator.Error!void {
+fn pushUndo(repo: *Repo, io: Io, arena: Allocator, desc: []const u8, undo: Action, redo: Action) JobError!void {
     const gpa = repo.gpa;
     errdefer undo.deinit(gpa);
     errdefer redo.deinit(gpa);
+    const after = try whereNow(repo, io, arena);
+    errdefer after.deinit(gpa);
     const d = try gpa.dupe(u8, desc);
     errdefer gpa.free(d);
-    try repo.undo.append(gpa, .{ .desc = d, .undo = undo, .redo = redo });
+    try repo.undo.append(gpa, .{ .desc = d, .undo = undo, .redo = redo, .after = after });
     // A new operation forks history: what was undone is gone.
     for (repo.redo.items) |e| e.deinit(gpa);
     repo.redo.clearRetainingCapacity();
+}
+
+/// HEAD's branch and commit now, on the gpa (an unborn or unreadable
+/// HEAD reads as empty strings: nothing matches it but itself).
+fn whereNow(repo: *Repo, io: Io, arena: Allocator) JobError!Where {
+    const gpa = repo.gpa;
+    const b = try git(repo, io, arena, &.{ "symbolic-ref", "--short", "-q", "HEAD" }, null);
+    const h = try git(repo, io, arena, &.{ "rev-parse", "--verify", "-q", "HEAD" }, null);
+    const branch = try gpa.dupe(u8, if (b.ok) trimmed(b.stdout) else "");
+    errdefer gpa.free(branch);
+    return .{ .branch = branch, .head = try gpa.dupe(u8, if (h.ok) trimmed(h.stdout) else "") };
+}
+
+/// Why a recorded step cannot run from here: the toast, naming the
+/// branch and commit the step expects and the ones HEAD is on now.
+fn movedMsg(arena: Allocator, desc: []const u8, want: Where, now: Where) Allocator.Error![]const u8 {
+    return std.fmt.allocPrint(arena, "`{s}` left {s} at {s}; HEAD is now {s} at {s}", .{
+        desc,
+        if (want.branch.len > 0) want.branch else "(detached)",
+        want.head[0..@min(7, want.head.len)],
+        if (now.branch.len > 0) now.branch else "(detached)",
+        now.head[0..@min(7, now.head.len)],
+    });
 }
 
 fn applyAction(repo: *Repo, io: Io, arena: Allocator, a: Action) JobError!Out {
@@ -1797,7 +1875,7 @@ fn pushSnapshotUndo(repo: *Repo, io: Io, arena: Allocator, desc: []const u8, sna
         return err;
     };
     // `pushUndo` owns both actions from here, failure included.
-    try pushUndo(repo, desc, .{ .reset_hard = .{ .sha = undo_sha, .stash = undo_stash } }, .{ .reset_hard = .{ .sha = redo_sha, .stash = null } });
+    try pushUndo(repo, io, arena, desc, .{ .reset_hard = .{ .sha = undo_sha, .stash = undo_stash } }, .{ .reset_hard = .{ .sha = redo_sha, .stash = null } });
 }
 
 fn firstLine(s: []const u8) []const u8 {
@@ -1919,7 +1997,7 @@ fn commitLines(repo: *Repo, io: Io, r: *Result, patch: []const u8, msg: []const 
     const after = trimmed(commit.stdout);
     const moved = try git(repo, io, arena, &.{ "update-ref", "-m", try std.fmt.allocPrint(arena, "commit: {s}", .{firstLine(msg)}), "HEAD", after }, null);
     if (!moved.ok) return fail(r, desc, moved);
-    if (before.ok) try pushUndo(repo, try std.fmt.allocPrint(arena, "commit {s}", .{firstLine(msg)}), .{ .reset_soft = try gpa.dupe(u8, trimmed(before.stdout)) }, .{ .reset_soft = try gpa.dupe(u8, after) });
+    if (before.ok) try pushUndo(repo, io, arena, try std.fmt.allocPrint(arena, "commit {s}", .{firstLine(msg)}), .{ .reset_soft = try gpa.dupe(u8, trimmed(before.stdout)) }, .{ .reset_soft = try gpa.dupe(u8, after) });
     // The real index catches up with HEAD for those lines only.
     const caught = try git(repo, io, arena, &.{ "apply", "--cached", "--whitespace=nowarn", "-" }, patch);
     if (!caught.ok) {
