@@ -1,0 +1,13 @@
+# A `__gc` finalizer runs with Lua's hooks switched off — when a reload
+# closes the state, at quit, or mid-collection — so the budget could
+# never cut one that loops: `script.reload` hung the UI thread for good.
+# `setmetatable` refuses a metatable with `__gc`; the line that asks is
+# the script's error, and reloading stays safe.
+write .mnml/init.lua "mnml.command{ id = 'ok', run = function() mnml.toast('STILL-ALIVE') end }\nKEEP = setmetatable({}, { __gc = function() while true do end end })\n"
+command script.reload
+expect screen contains "__gc"
+command user.ok
+expect screen contains "STILL-ALIVE"
+command script.reload
+command user.ok
+expect screen contains "STILL-ALIVE"

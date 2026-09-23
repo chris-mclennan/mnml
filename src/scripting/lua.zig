@@ -311,6 +311,10 @@ pub const Lua = struct {
         _ = L.getGlobal("xpcall");
         L.pushClosure(zlua.wrap(guardedXpcall), 1);
         L.setGlobal("xpcall");
+        // No finalizers: see `guardedSetmetatable`.
+        _ = L.getGlobal("setmetatable");
+        L.pushClosure(zlua.wrap(guardedSetmetatable), 1);
+        L.setGlobal("setmetatable");
         // An installed script — and only an installed script — may
         // `require` its own files. There is no `package`, so this is
         // the whole module system: a name resolves under the script's
@@ -561,6 +565,29 @@ pub const Lua = struct {
             L.replace(2);
         }
         return guardedPcall(L);
+    }
+
+    /// `setmetatable(t, mt)`, refusing a metatable with a `__gc` field.
+    /// A finalizer runs when the collector gets to it — on a reload or a
+    /// quit (closing the state runs every pending one), or at any
+    /// allocation — and Lua switches hooks off while it runs, so the
+    /// count hook cannot cut it: `__gc = function() while true do end
+    /// end` hung the UI thread on the next `script.reload`. Lua marks an
+    /// object for finalization only if its metatable has the field at
+    /// the moment it is set (any non-nil value, even one replaced by a
+    /// function later), so a raw look at `mt.__gc` here is the whole
+    /// gate. There is no `debug.setmetatable` to go around it.
+    fn guardedSetmetatable(L: *State) i32 {
+        if (L.typeOf(2) == .table) {
+            _ = L.pushString("__gc");
+            const has_gc = L.getTableRaw(2) != .nil;
+            L.pop(1);
+            if (has_gc) L.raiseErrorStr("setmetatable: `__gc` is not available to scripts — a finalizer runs where the script budget cannot reach it (a reload, a quit, any collection)", .{});
+        }
+        L.pushValue(State.upvalueIndex(1));
+        L.insert(1);
+        L.call(.{ .args = L.getTop() - 1, .results = 1 });
+        return 1;
     }
 
     fn guardedHandler(L: *State) i32 {
@@ -1606,6 +1633,29 @@ test "budget: a trip cannot be caught — pcall and xpcall rethrow it, loops aro
     try lua.runString("local ok, err = pcall(error, 'plain'); assert(not ok and err == 'plain')");
     try lua.runString("local ok = xpcall(function() return 1 end, print); assert(ok)");
     try testing.expectEqual(top, lua.L.getTop());
+}
+
+test "a metatable with __gc is refused, so no finalizer ever runs unbudgeted" {
+    // A finalizer runs with Lua's hooks switched off — on the state's
+    // close at a reload or a quit, or mid-collection — so the budget
+    // could never cut one that loops; `script.reload` hung for good.
+    var app = try App.init(testing.allocator, testing.io);
+    defer app.deinit();
+    const lua = app.script();
+    try testing.expectError(error.Failed, lua.runString("KEEP = setmetatable({}, { __gc = function() while true do end end })"));
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "__gc") != null);
+    // Any value marks the object, a later function would then run: refused too.
+    try testing.expectError(error.Failed, lua.runString("local mt = { __gc = false }; KEEP = setmetatable({}, mt); mt.__gc = function() while true do end end"));
+    // Every other metatable is untouched.
+    try lua.runString(
+        \\local t = setmetatable({}, { __index = function() return 7 end })
+        \\assert(t.x == 7 and getmetatable(t) ~= nil)
+        \\local mt = {}; local u = setmetatable({}, mt); mt.__gc = function() while true do end end
+        \\assert(getmetatable(setmetatable(u, nil)) == nil)
+    );
+    // The close a reload does runs no finalizer that could hang it.
+    try lua.reset();
+    try lua.runString("collectgarbage('collect')");
 }
 
 test "the frame budget is a shipped-build promise; Debug gets a runaway budget derived from the same slowdown" {

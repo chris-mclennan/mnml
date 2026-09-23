@@ -1424,6 +1424,10 @@ once, which is what a unit test runs to prove they all still load together.
 - **No `os`, `io`, `package`, `debug`; no `dofile` or `loadfile`.** The two
   `init.lua` files are one file each; an installed script gets a `require`
   scoped to its own directory and nothing wider.
+- **No `__gc` finalizers.** `setmetatable` refuses a metatable with a
+  `__gc` field. A finalizer runs with Lua's hooks off — when a reload or a
+  quit closes the state, or mid-collection — so the budget could never cut
+  one, and a looping one hung the reload.
 - **No colour values.** Roles only, so a script looks right in every theme.
 - **No app handle, no raw buffer pointer.** Reads are copies; writes are
   `EditOp`s through the one chokepoint.
