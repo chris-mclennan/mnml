@@ -6,7 +6,7 @@
 //!    󰕌 Undo   󰑎 Redo    Pull    Push  …
 //!      G… │ COMMIT MESSAGE          │ DATE / TIME   │     SHA    │─ WIP @ main · 1 change(s) · 1
 //! ▌▶       │ 1 change(s) · 1 new    │               │            │
-//! ▌    ●─╮ │ merge feature          │   09/06 20:00 │ 7ce273514  │  ▾ Unstaged Files (1)  Stage A
+//! ▌    ●─╮ │ HEAD main merge featu… │   09/06 20:00 │ 7ce273514  │  ▾ Unstaged Files (1)  Stage A
 //! ▌    ● │ │ main work              │   09/06 20:00 │ 34b03ced4  │    ? .gitignore           [+]
 //! ```
 //!
@@ -861,7 +861,21 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, view: *State, doc: Doc) Painted {
         pen.put(" \u{2502} ", sep);
         var subj = Theme.withFg(base, subject_fg);
         if (planned) |a| subj.strikethrough = a == .drop;
-        pen.put(padOrTruncate(arena, c.subject, subject_w, ui.ascii) catch "", subj);
+        // No BRANCH / TAG column at this width (the sha, the date and the
+        // author took the room first): the refs lead the subject, as
+        // `git log --decorate` prints them — a graph that names no
+        // branch, tag or HEAD cannot say where anything is.
+        var subject_room = subject_w;
+        if (cols.branch == 0 and subject_w >= 12) {
+            const labels = refLabels(arena, c.refs) catch &.{};
+            if (labels.len > 0) {
+                const chip_w = @min(chipWidth(labels), subject_w / 2);
+                drawBranchChips(ui, &pen, labels, chip_w, base);
+                pen.put(" ", base);
+                subject_room = subject_w - chip_w - 1;
+            }
+        }
+        pen.put(padOrTruncate(arena, c.subject, subject_room, ui.ascii) catch "", subj);
         if (cols.author > 0) {
             pen.put(" \u{2502} ", sep);
             pen.put(rightAlign(arena, c.author, cols.author, ui.ascii) catch "", Theme.withFg(base, pal.comment));
@@ -1586,9 +1600,12 @@ test "the spec's rows at 95 wide: the toolbar, the column header, the WIP row, t
     try f.expectRow(0, try std.fmt.allocPrint(arena, "    {s} Undo   {s} Redo   {s} Pull   {s} Push   {s} Fetch   {s} Branch   {s} Commit   {s} Stash   {s} Reflog", .{ git_toolbar.glyphOf(.undo), git_toolbar.glyphOf(.redo), git_toolbar.glyphOf(.pull), git_toolbar.glyphOf(.push), git_toolbar.glyphOf(.fetch), git_toolbar.glyphOf(.branch), git_toolbar.glyphOf(.commit), git_toolbar.glyphOf(.stash), git_toolbar.glyphOf(.reflog) }));
     try f.expectRow(1, "     G\u{2026} \u{2502} COMMIT MESSAGE          \u{2502} DATE / TIME   \u{2502}     SHA    \u{2502}\u{2500} WIP @ main \u{B7} 1 change(s) \u{B7} 1");
     try f.expectRow(2, "\u{258C}\u{25B6}       \u{2502} 1 change(s) \u{B7} 1 new    \u{2502}               \u{2502}            \u{2502}");
-    try f.expectRow(3, "\u{258C}    \u{25CF}\u{2500}\u{256E} \u{2502} merge feature          \u{2502}   09/06 20:00 \u{2502} 7ce273514  \u{2502}  \u{25BE} Unstaged Files (1)  Stage A");
+    // No BRANCH / TAG column at 95: the refs lead the subject (Rust
+    // painted none at this width, and a graph that names no ref cannot
+    // say where anything is).
+    try f.expectRow(3, "\u{258C}    \u{25CF}\u{2500}\u{256E} \u{2502} HEAD main merge featu\u{2026} \u{2502}   09/06 20:00 \u{2502} 7ce273514  \u{2502}  \u{25BE} Unstaged Files (1)  Stage A");
     try f.expectRow(4, "\u{258C}    \u{25CF} \u{2502} \u{2502} main work              \u{2502}   09/06 20:00 \u{2502} 34b03ced4  \u{2502}    ? .gitignore           [+]");
-    try f.expectRow(5, "\u{258C}    \u{2502} \u{25CF} \u{2502} feature work           \u{2502}   09/06 20:00 \u{2502} 3ec2bf9e8  \u{2502}");
+    try f.expectRow(5, "\u{258C}    \u{2502} \u{25CF} \u{2502} feature feature work   \u{2502}   09/06 20:00 \u{2502} 3ec2bf9e8  \u{2502}");
     try f.expectRow(6, "\u{258C}    \u{25CF}\u{2500}\u{256F} \u{2502} init                   \u{2502}   09/06 03:55 \u{2502} 482589dd2  \u{2502}  \u{25BE} Staged Files (0)  Unstage A");
     try f.expectRow(27, "                                                               \u{2502}  \u{25BE} Commit  \u{B7} (nothing staged)");
     try f.expectRow(28, "                                                               \u{2502}   click here \u{B7} then type a \u{2026}");

@@ -1,0 +1,28 @@
+# The commit graph at 120x40 with the git sidebar and the detail column
+# open has no room for the BRANCH / TAG column, and nothing else on a
+# row named a ref. The refs now lead the subject, as `git log
+# --decorate` prints them: HEAD and main on "main work", feature on
+# "feature work", the v0.1 tag on "first".
+# width: 120
+# height: 40
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write a.txt "a\n"
+shell git add a.txt
+shell git commit -q -m "first"
+shell git tag v0.1
+shell git checkout -q -b feature
+write b.txt "b\n"
+shell git add b.txt
+shell git commit -q -m "feature work"
+shell git checkout -q main
+write c.txt "c\n"
+shell git add c.txt
+shell git commit -q -m "main work"
+command git.graph
+expect screen contains "feature work"
+expect screen lacks "BRANCH / TAG"
+expect screen contains "HEAD main main work"
+expect screen contains "feature feature work"
+expect screen contains "v0.1 first"
