@@ -3588,7 +3588,7 @@ pub fn handleAppCommand(app: *App, pane_id: PaneId, e: *EditorPane, cmd: input.A
             try openFilterPrompt(app, range[0], range[1]);
         },
         .repeat_insert_start => |r| try beginRepeatInsert(app, pane_id, e, r.count, r.kind),
-        .operator_linewise_to => |o| try linewiseOp(app, e, o.op, o.target),
+        .operator_linewise_to => |o| try linewiseOp(app, e, o.op, o.target, o.register),
         .cmdline_tab_complete => try cmdlineTabComplete(app, e),
         .cmdline_popup_move => |d| try cmdlineCycle(app, e, d),
         .cmdline_insert_cursor_word => |big| try cmdlineInsertWord(app, e, big),
@@ -3837,7 +3837,7 @@ pub fn finishDeferredInserts(app: *App) Allocator.Error!void {
 
 /// `dG` / `dgg` / `<n>dG` / `yG`…: `target` null = last line, 0 = first,
 /// n = 1-based line. Whole lines, inclusive, into the unnamed register.
-fn linewiseOp(app: *App, e: *EditorPane, op: u8, target: ?u32) Allocator.Error!void {
+fn linewiseOp(app: *App, e: *EditorPane, op: u8, target: ?u32, register: ?u21) Allocator.Error!void {
     const ed = e.buf.editor;
     const total = ed.lineCount();
     const cur = ed.currentLine();
@@ -3850,6 +3850,8 @@ fn linewiseOp(app: *App, e: *EditorPane, op: u8, target: ?u32) Allocator.Error!v
     var copy = try app.frame.allocator().alloc(u8, text.len + 1);
     @memcpy(copy[0..text.len], text);
     copy[text.len] = '\n';
+    // The register a `"x` named goes with the write it routes.
+    if (register) |r| app.clipboard.setPendingRegister(r);
     switch (op) {
         'y' => {
             try app.clipboard.setYank(copy, true);

@@ -483,6 +483,14 @@ pub const Vim = struct {
             .visual_block => try self.handleVisualBlock(key, arena),
         };
         if (isVisual(before) and !isVisual(self.vmode)) self.last_visual = before;
+        // `"+yG` / `"adgg`: the linewise-to-an-end ops run in the app, so
+        // the pending register rides along with the command.
+        if (result == .app and result.app == .operator_linewise_to and self.pending_register != null) {
+            var cmd = result.app;
+            cmd.operator_linewise_to.register = self.pending_register;
+            self.pending_register = null;
+            return .{ .app = cmd };
+        }
         // A pending `"x` routes the next register-touching op list.
         if (result == .ops and self.pending_register != null) {
             var touches = false;

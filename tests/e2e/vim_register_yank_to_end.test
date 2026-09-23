@@ -1,0 +1,20 @@
+# A pending register reaches the linewise ops that run to an end of the
+# buffer: `"ayG` yanks to the last line into register a, `"bdgg` deletes
+# up to the first into register b, and `"+yG` writes the clipboard
+# register. Neovim 0.12.5: `"ayGG"ap` on three lines gives six.
+write r.txt "one\ntwo\nthree\n"
+open r.txt
+command editor.use_vim
+type "\"ayGG\"ap"
+ex w
+shell test "$(cat r.txt)" = "$(printf 'one\ntwo\nthree\none\ntwo\nthree')"
+# `"bdgg` from line 2 takes lines 1–2 into b; the unnamed put below
+# must not see them (it puts b's text only when asked).
+write s.txt "a\nb\nc\n"
+open s.txt
+command editor.use_vim
+type "j\"bdggG\"bp"
+ex w
+shell test "$(cat s.txt)" = "$(printf 'c\na\nb')"
+# The pending-register chip does not linger after the op.
+expect screen lacks "\"b"
