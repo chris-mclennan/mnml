@@ -51,8 +51,10 @@ pub const table = .{
 
 /// Hits past this are dropped; the pane says so.
 pub const max_hits: usize = 5000;
-/// A file the walk backend will not read past.
-pub const max_file_bytes: usize = 1024 * 1024;
+/// A file the walk backend will not read past (it holds one file in
+/// memory at a time). A file over it is counted, never dropped silently:
+/// the status row says how many were skipped.
+pub const max_file_bytes: usize = 16 * 1024 * 1024;
 /// Hits per posted batch.
 pub const batch_size: usize = 64;
 
@@ -121,6 +123,13 @@ pub const Hit = struct {
     }
 };
 
+/// ` · N over 16 MB skipped` when the walk left files unread for their
+/// size, else "" — said wherever a count is, so a `0` is honest.
+pub fn bigNote(arena: Allocator, n: u32) []const u8 {
+    if (n == 0) return "";
+    return std.fmt.allocPrint(arena, " \u{b7} {d} over {d} MB skipped", .{ n, max_file_bytes / (1024 * 1024) }) catch "";
+}
+
 /// Code points in `line[0..byte]` (a UTF-8 lead or ASCII byte each).
 pub fn charsBefore(line: []const u8, byte: u32) u32 {
     var n: u32 = 0;
@@ -160,6 +169,8 @@ pub const Result = struct {
     done: bool = false,
     /// The run stopped at `max_hits`.
     truncated: bool = false,
+    /// On the last batch: files the walk skipped as too large to read.
+    skipped_big: u32 = 0,
     /// Why the run produced nothing (no rg, unreadable root).
     err: ?[]const u8 = null,
 
@@ -222,6 +233,8 @@ pub const GrepPane = struct {
     filter_active: bool = false,
     loading: bool = false,
     truncated: bool = false,
+    /// Files the last run left unread for their size.
+    skipped_big: u32 = 0,
     /// The last run's reason for nothing, toasted once and shown.
     err: ?[]u8 = null,
     /// Heap-allocated: the worker holds it past the pane's moves.
@@ -361,6 +374,7 @@ pub const GrepPane = struct {
         self.cursor = 0;
         self.scroll = 0;
         self.truncated = false;
+        self.skipped_big = 0;
         self.backend = null;
         if (self.err) |e| self.gpa.free(e);
         self.err = null;
@@ -672,6 +686,8 @@ const Ctx = struct {
     batch: ?*Result = null,
     total: usize = 0,
     truncated: bool = false,
+    /// Files the walk left unread for their size (`max_file_bytes`).
+    skipped_big: u32 = 0,
     /// The ripgrep binary; a test points it at a stand-in.
     rg_bin: []const u8 = "rg",
     /// The git binary, likewise.
@@ -717,6 +733,7 @@ const Ctx = struct {
         c.batch = null;
         b.done = done;
         b.truncated = c.truncated;
+        if (done) b.skipped_big = c.skipped_big;
         c.events.post(c.io, .{ .grep = b });
     }
 
@@ -748,7 +765,7 @@ fn runRg(c: *Ctx, root: []const u8, query: []const u8, flags: Flags, p: *Pattern
     const gpa = c.gpa;
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
     defer argv.deinit(gpa);
-    try argv.appendSlice(gpa, &.{ c.rg_bin, "--json", "--no-config", "--no-require-git", "--max-filesize", "1M" });
+    try argv.appendSlice(gpa, &.{ c.rg_bin, "--json", "--no-config", "--no-require-git" });
     try argv.append(gpa, if (p.re.ignore_case) "--ignore-case" else "--case-sensitive");
     if (flags.regex) {
         // The vim pattern, translated; one rg cannot parse (a
@@ -1021,6 +1038,7 @@ fn grepFile(c: *Ctx, re: *regex.Regex, dir: Io.Dir, basename: []const u8, rel: [
     const content = dir.readFileAlloc(io, basename, gpa, .limited(max_file_bytes)) catch |err| {
         if (err == error.Canceled) return error.Canceled;
         if (err == error.OutOfMemory) return error.OutOfMemory;
+        if (err == error.StreamTooLong) c.skipped_big += 1;
         return;
     };
     defer gpa.free(content);
@@ -1062,6 +1080,7 @@ pub fn handle(app: *App, result: *Result) Allocator.Error!void {
     }
     p.backend = result.backend;
     if (result.truncated) p.truncated = true;
+    p.skipped_big += result.skipped_big;
     if (result.err) |e| {
         if (p.err) |old| p.gpa.free(old);
         p.err = try p.gpa.dupe(u8, e);
@@ -1077,9 +1096,9 @@ pub fn handle(app: *App, result: *Result) Allocator.Error!void {
         if (p.err) |e| {
             app.toast("{s}: {s}", .{ result.backend.label(), e });
         } else if (n == 0) {
-            app.toast("{s}: no matches for \"{s}\"", .{ result.backend.label(), p.query });
+            app.toast("{s}: no matches for \"{s}\"{s}", .{ result.backend.label(), p.query, bigNote(app.frame.allocator(), p.skipped_big) });
         } else {
-            app.toast("{s}: {d} match{s} in {d} file{s}{s}", .{ result.backend.label(), n, if (n == 1) "" else "es", p.groups.items.len, if (p.groups.items.len == 1) "" else "s", if (p.truncated) " (capped)" else "" });
+            app.toast("{s}: {d} match{s} in {d} file{s}{s}{s}", .{ result.backend.label(), n, if (n == 1) "" else "es", p.groups.items.len, if (p.groups.items.len == 1) "" else "s", if (p.truncated) " (capped)" else "", bigNote(app.frame.allocator(), p.skipped_big) });
         }
     }
     app.needs_render = true;

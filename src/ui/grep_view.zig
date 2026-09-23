@@ -35,7 +35,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: *grep.GrepPane, focused: bool) 
         ui.fmt("{d} match{s} in {d} file{s}", .{ n, if (n == 1) "" else "es", p.groups.items.len, if (p.groups.items.len == 1) "" else "s" })
     else
         ui.fmt("{d}/{d} enabled in {d} file{s}", .{ enabled, n, p.groups.items.len, if (p.groups.items.len == 1) "" else "s" });
-    const title = ui.fmt(" SEARCH · {s}: \"{s}\" · {s}{s}{s} ", .{ backend, p.query, count, capped, state });
+    const title = ui.fmt(" SEARCH · {s}: \"{s}\" · {s}{s}{s}{s} ", .{ backend, p.query, count, capped, grep.bigNote(ui.arena, p.skipped_big), state });
     _ = ui.putStr(head.x, head.y, head.w, ui.clipStr(title, head.w), title_style);
     ui.hit(head, .{ .script_hit = .{ .pane = pane, .id = grep.hit_title } });
     if (area.h < 2) return;

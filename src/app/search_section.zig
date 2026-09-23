@@ -108,6 +108,8 @@ pub const State = struct {
     list: Panel.State = .{},
     loading: bool = false,
     truncated: bool = false,
+    /// Files the last run left unread for their size.
+    skipped_big: u32 = 0,
     /// The last run's reason for nothing.
     err: ?[]u8 = null,
 
@@ -202,6 +204,7 @@ pub const State = struct {
         self.list.cursor = 0;
         self.list.scroll = 0;
         self.truncated = false;
+        self.skipped_big = 0;
         self.backend = null;
         if (self.err) |e| gpa.free(e);
         self.err = null;
@@ -269,6 +272,7 @@ pub fn handle(app: *App, result: *grep.Result) Allocator.Error!void {
     }
     st.backend = result.backend;
     if (result.truncated) st.truncated = true;
+    st.skipped_big += result.skipped_big;
     if (result.err) |e| {
         if (st.err) |old| app.gpa.free(old);
         st.err = try app.gpa.dupe(u8, e);
@@ -643,8 +647,9 @@ pub fn statusText(ui: Ui, st: *const State) []const u8 {
     if (st.ran == null) return if (st.query_focused) " type \u{b7} Enter to run \u{b7} Esc clears" else " / focuses the query \u{b7} Enter runs it";
     if (st.err) |e| return ui.fmt(" {s}: {s}", .{ if (st.backend) |b| b.label() else "search", e });
     const n = st.hits.items.len;
-    if (st.truncated) return ui.fmt(" {d}+ hits, capped ({s})", .{ n, if (st.backend) |b| b.label() else "search" });
-    return ui.fmt(" {d} hit{s} ({s})", .{ n, if (n == 1) "" else "s", if (st.backend) |b| b.label() else "search" });
+    const big = grep.bigNote(ui.arena, st.skipped_big);
+    if (st.truncated) return ui.fmt(" {d}+ hits, capped ({s}){s}", .{ n, if (st.backend) |b| b.label() else "search", big });
+    return ui.fmt(" {d} hit{s} ({s}){s}", .{ n, if (n == 1) "" else "s", if (st.backend) |b| b.label() else "search", big });
 }
 
 pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
