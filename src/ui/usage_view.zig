@@ -65,6 +65,9 @@ pub const gutter_ascii = "|";
 /// `claude_usage_pencils`, nf-fa-pencil).
 pub const pencil_glyph = "\u{F040}";
 pub const pencil_ascii = "e";
+/// The mark before a limit-reset offer (and on the chip's block).
+pub const offer_glyph = "↺";
+pub const offer_ascii = "@";
 
 /// A run of text; `hit` registers its cells as that `script_hit` id.
 const Span = struct { text: []const u8, style: Theme.Style, hit: ?u32 = null };
@@ -78,7 +81,7 @@ const Row = struct {
     kebab: bool = false,
     body: union(enum) {
         spans: []const Span,
-        bar: struct { percent: u16 },
+        bar: struct { percent: u16, severity: ?usage.Severity = null },
     },
 };
 
@@ -129,7 +132,9 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: *usage_pane.UsagePane, props: P
                 const clamped: u32 = @min(b.percent, 100);
                 const filled: u16 = @intCast((@as(u32, bar_w) * clamped) / 100);
                 const empty: u16 = bar_w -| filled;
-                const color = switch (usage.tierOf(b.percent)) {
+                // The endpoint's own grade when it gave one, else Rust's
+                // thresholds (85 / 60); below both, Claude Code's purple.
+                const color = switch (usage.tierOfWire(b.percent, b.severity)) {
                     .hot => pal.red,
                     .warn => pal.yellow,
                     .ok => pal.purple,
@@ -194,22 +199,34 @@ fn claudeRows(ui: Ui, rows: *std.ArrayListUnmanaged(Row), props: Props, focused:
         if (acc.org) |o| try identity.print(a, " · {s}", .{o});
         if (identity.items.len > 0) try head.append(a, .{ .text = identity.items, .style = muted });
         try rows.append(a, .{ .gutter = g, .body = .{ .spans = head.items } });
+        // A limit-reset offer, under the name (the key is a GUESS —
+        // `usage.reset_offer_keys`).
+        if (u.offer) |o| {
+            var green = colored(th, pal.green);
+            green.bold = true;
+            const text = if (o.expires_at == 0) "Limit reset available" else blk: {
+                var buf: [32]u8 = undefined;
+                const soon = o.expires_at > props.now and o.expires_at - props.now < 86_400;
+                const when = if (soon) usage.fmtShortTime(&buf, o.expires_at, props.tz.at(o.expires_at)) else usage.fmtLongTime(&buf, o.expires_at, props.tz.at(o.expires_at));
+                break :blk try std.fmt.allocPrint(a, "Limit reset available · expires {s}", .{when});
+            };
+            try rows.append(a, .{ .gutter = g, .body = .{ .spans = try a.dupe(Span, &.{ .{ .text = if (ui.ascii) offer_ascii ++ " " else offer_glyph ++ " ", .style = green }, .{ .text = text, .style = green } }) } });
+        }
         try rows.append(a, .{ .gutter = g, .body = .{ .spans = &.{} } });
-        // The session window.
-        try rows.append(a, .{ .gutter = g, .body = .{ .spans = try a.dupe(Span, &.{.{ .text = "Current session", .style = bold }}) } });
-        try rows.append(a, .{ .gutter = g, .body = .{ .bar = .{ .percent = u.percent } } });
-        try rows.append(a, .{ .gutter = g, .body = .{ .spans = try resetRow(a, u.resets_at, props.tz, false, muted) } });
-        try rows.append(a, .{ .gutter = g, .body = .{ .spans = &.{} } });
-        // The weekly window.
-        try rows.append(a, .{ .gutter = g, .body = .{ .spans = try a.dupe(Span, &.{.{ .text = "Current week (all models)", .style = bold }}) } });
-        try rows.append(a, .{ .gutter = g, .body = .{ .bar = .{ .percent = u.weekly_percent } } });
-        try rows.append(a, .{ .gutter = g, .body = .{ .spans = try resetRow(a, u.weekly_resets_at, props.tz, true, muted) } });
-        try rows.append(a, .{ .gutter = g, .body = .{ .spans = &.{} } });
+        const ctx: WindowCtx = .{ .ui = ui, .rows = rows, .g = g, .bold = bold, .muted = muted, .tz = props.tz };
+        try window(ctx, "Current session", u.percent, u.severity, u.resets_at, false, u.session_active, u.locked_reason, true);
+        try window(ctx, "Current week (all models)", u.weekly_percent, u.weekly_severity, u.weekly_resets_at, true, u.weekly_active, u.weekly_locked_reason, true);
         // Per-model windows.
-        for (u.scoped) |sc| {
-            try rows.append(a, .{ .gutter = g, .body = .{ .spans = try a.dupe(Span, &.{.{ .text = try std.fmt.allocPrint(a, "Current week ({s})", .{sc.model}), .style = bold }}) } });
-            try rows.append(a, .{ .gutter = g, .body = .{ .bar = .{ .percent = sc.percent } } });
-            if (sc.resets_at > 0) try rows.append(a, .{ .gutter = g, .body = .{ .spans = try resetRow(a, sc.resets_at, props.tz, true, muted) } });
+        for (u.scoped) |sc| try window(ctx, try std.fmt.allocPrint(a, "Current week ({s})", .{sc.model}), sc.percent, sc.severity, sc.resets_at, true, sc.is_active, null, false);
+        // Windows the endpoint reports that this build does not name.
+        for (u.windows) |w| try window(ctx, w.title, w.percent, null, w.resets_at, true, false, w.locked_reason, false);
+        if (u.extra_usage) |e| {
+            const state = if (e.enabled) "on" else "off";
+            var line: std.ArrayListUnmanaged(u8) = .empty;
+            try line.print(a, "  Extra usage: {s}", .{state});
+            if (e.percent) |pct| try line.print(a, " · {d}% used", .{pct});
+            if (!e.enabled) if (e.reason) |r| try line.print(a, " · {s}", .{try usage.humanWords(a, r)});
+            try rows.append(a, .{ .gutter = g, .body = .{ .spans = try a.dupe(Span, &.{.{ .text = line.items, .style = muted }}) } });
             try rows.append(a, .{ .gutter = g, .body = .{ .spans = &.{} } });
         }
         // A 429 is the server's own cooldown; any other failure backs
@@ -240,6 +257,32 @@ fn claudeRows(ui: Ui, rows: *std.ArrayListUnmanaged(Row), props: Props, focused:
     }
     try rows.append(a, .{ .hit = body_hit, .body = .{ .spans = &.{} } });
     try rows.append(a, .{ .hit = body_hit, .body = .{ .spans = try a.dupe(Span, &.{.{ .text = " `:ai.refresh_usage` to force fetch · `:ai.show_last_response` for raw JSON ", .style = hint }}) } });
+}
+
+const WindowCtx = struct {
+    ui: Ui,
+    rows: *std.ArrayListUnmanaged(Row),
+    g: ?Theme.Style,
+    bold: Theme.Style,
+    muted: Theme.Style,
+    tz: Tz,
+};
+
+/// One window as Claude Code's usage screen draws it: the title (with
+/// `· in force` when the endpoint says it is the binding limit), the
+/// bar, the reset clock, a `Locked:` line when the window is locked.
+/// `always_reset` paints "(reset time not available)" for a zero clock.
+fn window(c: WindowCtx, title: []const u8, percent: u16, severity: ?usage.Severity, resets_at: u64, long: bool, active: bool, locked: ?[]const u8, always_reset: bool) std.mem.Allocator.Error!void {
+    const a = c.ui.arena;
+    const head: []const Span = if (active)
+        try a.dupe(Span, &.{ .{ .text = title, .style = c.bold }, .{ .text = " · in force", .style = c.muted } })
+    else
+        try a.dupe(Span, &.{.{ .text = title, .style = c.bold }});
+    try c.rows.append(a, .{ .gutter = c.g, .body = .{ .spans = head } });
+    try c.rows.append(a, .{ .gutter = c.g, .body = .{ .bar = .{ .percent = percent, .severity = severity } } });
+    if (resets_at > 0 or always_reset) try c.rows.append(a, .{ .gutter = c.g, .body = .{ .spans = try resetRow(a, resets_at, c.tz, long, c.muted) } });
+    if (locked) |why| try c.rows.append(a, .{ .gutter = c.g, .body = .{ .spans = try a.dupe(Span, &.{.{ .text = try std.fmt.allocPrint(a, "  Locked: {s}", .{try usage.humanWords(a, why)}), .style = c.muted }}) } });
+    try c.rows.append(a, .{ .gutter = c.g, .body = .{ .spans = &.{} } });
 }
 
 fn resetRow(a: std.mem.Allocator, resets_at: u64, tz: Tz, long: bool, style: Theme.Style) std.mem.Allocator.Error![]const Span {

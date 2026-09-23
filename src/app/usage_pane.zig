@@ -104,10 +104,17 @@ pub const State = struct {
     /// renamed or removed here (the loader's arena owned the list it
     /// read). A reload points the config back at the loader's.
     cfg_arena: ?std.heap.ArenaAllocator = null,
+    /// `account\x00key` for every unknown usage key already logged (owned
+    /// keys), and how many have been — the tests read the count.
+    unknown_seen: std.StringHashMapUnmanaged(void) = .empty,
+    unknown_logged: usize = 0,
 
     pub fn deinit(self: *State, gpa: Allocator, io: Io) void {
         self.group.cancel(io);
         if (self.cfg_arena) |*a| a.deinit();
+        var kit = self.unknown_seen.keyIterator();
+        while (kit.next()) |k| gpa.free(k.*);
+        self.unknown_seen.deinit(gpa);
         for (self.accounts.items) |*a| a.arena.deinit();
         self.accounts.deinit(gpa);
         for (self.sched.items) |s| gpa.free(s.name);
@@ -504,6 +511,7 @@ pub fn handle(app: *App, r: *usage.Result) Allocator.Error!void {
             if (old) |o| next.is_active = o.is_active;
             switch (c.outcome) {
                 .ok => |f| {
+                    try logUnknownKeys(app, c.name, f.usage.unknown_keys);
                     next.usage = try dupeUsage(fa, f.usage);
                     if (f.email) |e| next.email = try fa.dupe(u8, e);
                     if (f.org) |o| next.org = try fa.dupe(u8, o);
@@ -553,10 +561,44 @@ pub fn handle(app: *App, r: *usage.Result) Allocator.Error!void {
 fn dupeUsage(arena: Allocator, u: usage.Usage) Allocator.Error!usage.Usage {
     var out = u;
     const scoped = try arena.alloc(usage.Scoped, u.scoped.len);
-    for (u.scoped, 0..) |sc, i| scoped[i] = .{ .model = try arena.dupe(u8, sc.model), .percent = sc.percent, .resets_at = sc.resets_at };
+    for (u.scoped, 0..) |sc, i| {
+        scoped[i] = sc;
+        scoped[i].model = try arena.dupe(u8, sc.model);
+    }
     out.scoped = scoped;
+    const windows = try arena.alloc(usage.ExtraWindow, u.windows.len);
+    for (u.windows, 0..) |w, i| windows[i] = .{ .key = try arena.dupe(u8, w.key), .title = try arena.dupe(u8, w.title), .percent = w.percent, .resets_at = w.resets_at, .locked_reason = try dupeOpt(arena, w.locked_reason) };
+    out.windows = windows;
+    if (u.extra_usage) |e| out.extra_usage = .{ .enabled = e.enabled, .reason = try dupeOpt(arena, e.reason), .percent = e.percent };
+    if (u.offer) |o| out.offer = .{ .key = try arena.dupe(u8, o.key), .expires_at = o.expires_at };
+    out.locked_reason = try dupeOpt(arena, u.locked_reason);
+    out.weekly_locked_reason = try dupeOpt(arena, u.weekly_locked_reason);
+    // Logged on arrival; the snapshot does not keep them.
+    out.unknown_keys = &.{};
     if (u.last_error) |e| out.last_error = try arena.dupe(u8, e);
     return out;
+}
+
+fn dupeOpt(arena: Allocator, s: ?[]const u8) Allocator.Error!?[]const u8 {
+    return if (s) |x| try arena.dupe(u8, x) else null;
+}
+
+const log = std.log.scoped(.usage);
+
+/// The names of the top-level keys the parser does not know, at debug
+/// level, once per account per key — how the field that carries a new
+/// window or a reset offer gets learned from an account that has one.
+fn logUnknownKeys(app: *App, name: []const u8, keys: []const []const u8) Allocator.Error!void {
+    const s = st(app);
+    for (keys) |k| {
+        const id = try std.fmt.allocPrint(app.frame.allocator(), "{s}\x00{s}", .{ name, k });
+        if (s.unknown_seen.contains(id)) continue;
+        const owned = try app.gpa.dupe(u8, id);
+        errdefer app.gpa.free(owned);
+        try s.unknown_seen.put(app.gpa, owned, {});
+        s.unknown_logged += 1;
+        log.debug("claude usage: account {s} reports a field this build does not read: {s}", .{ name, k });
+    }
 }
 
 /// `is_active`: the account whose token file holds the keychain's
@@ -1726,4 +1768,51 @@ test "the pane's mouse: the pencil renames, an account's rows open its menu, the
     try @import("context_menus.zig").openAiChipMenu(&app, true, 3, 3);
     for (app.overlay.menu.items) |it| try t.expect(!(it.action == .command and it.action.command == .@"ai.claude_add_account"));
     try app.handle(.{ .key = Key.named(.esc) });
+}
+
+test "the wire's severity colours the bar over the thresholds; unknown keys are logged once per account" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "accounts", .data = "*personal\n" });
+    try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "personal.json", .data = usage.usage_wide_fixture });
+    var app = try fx.app();
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    try command.run(&app, .{ .static = .@"ai.claude_usage" });
+    try settle(&app);
+    const a = st(&app).find("personal").?;
+    try t.expectEqual(usage.Severity.critical, a.usage.weekly_severity.?);
+    try t.expectEqualStrings("omelette_promotional", a.usage.offer.?.key);
+    // Four keys this build does not read: logged, once.
+    try t.expectEqual(@as(usize, 4), st(&app).unknown_logged);
+    try refreshAll(&app);
+    try settle(&app);
+    try t.expectEqual(@as(usize, 4), st(&app).unknown_logged);
+    // 61 % is yellow by the thresholds; the endpoint says critical: red.
+    try app.render();
+    const pal = &app.theme.palette;
+    var found = false;
+    var y: u16 = 0;
+    while (y < app.screen.height) : (y += 1) {
+        var x: u16 = 0;
+        var row: std.ArrayListUnmanaged(u8) = .empty;
+        defer row.deinit(t.allocator);
+        while (x < app.screen.width) : (x += 1) if (app.screen.readCell(x, y)) |c| try row.appendSlice(t.allocator, c.char.grapheme);
+        if (std.mem.indexOf(u8, row.items, "61% used") == null) continue;
+        // The bar starts after the pane's gutter (the last `▌` on the
+        // row — the chrome's focus cue may paint one further left).
+        var gx: ?u16 = null;
+        var bx: u16 = 0;
+        while (bx < app.screen.width) : (bx += 1) {
+            const c = app.screen.readCell(bx, y) orelse continue;
+            if (std.mem.eql(u8, c.char.grapheme, usage_view.gutter_glyph)) gx = bx;
+        }
+        // A few cells in: well inside the 61 % that is filled.
+        const bar = app.screen.readCell(gx.? + 5, y).?;
+        try t.expect(@import("vaxis").Color.eql(bar.style.bg, pal.red));
+        found = true;
+        break;
+    }
+    try t.expect(found);
 }
