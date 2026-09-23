@@ -255,6 +255,14 @@ fn readManifest(app: *App, arena: Allocator, dir: []const u8, why: *[]const u8) 
     return manifest_mod.parse(arena, text, why) catch null;
 }
 
+fn warnUnknownFields(app: *App, arena: Allocator, dir: []const u8) Allocator.Error!void {
+    const path = try std.fs.path.join(arena, &.{ dir, manifest_mod.file_name });
+    const text = Io.Dir.cwd().readFileAllocOptions(app.io, path, arena, .limited(64 * 1024), .of(u8), 0) catch return;
+    for (try manifest_mod.unknownFields(arena, text)) |f| {
+        try app.toastLevel(.warn, "scripts: {s}: unknown field `.{s}` in {s} (ignored)", .{ std.fs.path.basename(dir), f, manifest_mod.file_name });
+    }
+}
+
 fn dupeList(gpa: Allocator, src: []const []const u8) Allocator.Error![][]u8 {
     const out = try gpa.alloc([]u8, src.len);
     var n: usize = 0;
@@ -328,6 +336,10 @@ fn adopt(app: *App, dir: []const u8, source: Source) Allocator.Error!?*Entry {
     };
     // A name already known keeps its state id: a re-scan is not a reload.
     if (app.scripts.find(m.name)) |existing| return existing;
+    // It loads, but a field `script.zon` has no place for was dropped —
+    // `.commmands` would list a script that says it adds nothing. Named
+    // once, when the script is first adopted.
+    try warnUnknownFields(app, arena, dir);
     const disabled = fileExists(app, try std.fs.path.join(arena, &.{ dir, disabled_marker }));
     var e: Entry = .{
         .id = app.scripts.next_id,
@@ -1248,6 +1260,29 @@ test "an installed script's `mnml.list{}` asks ITS state for the rows — the in
     try t.expectEqualStrings("enter row 3", app.lastToast().?);
     // The state is untouched: `init.lua`'s registry never held the ref.
     try t.expectEqual(@as(i32, 0), e.state.?.L.getTop());
+}
+
+test "a typo'd field in script.zon loads the script and names the field in a warning" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try writeScript(tmp.dir, t.io, "scripts", "typo",
+        \\.{ .name = "typo", .api = 1, .commmands = .{ "user.typo_go" } }
+    ,
+        \\mnml.command{ id = "typo_go", run = function() end }
+    );
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .data_root = root, .cols = 80, .rows = 24 });
+    defer app.deinit();
+    const e = app.scripts.find("typo").?;
+    try t.expect(e.state != null);
+    try t.expect(app.dyn_commands.get("user.typo_go") != null);
+    var named = false;
+    for (app.toasts.items) |toast| {
+        if (std.mem.indexOf(u8, toast.text, "typo: unknown field `.commmands` in script.zon (ignored)") != null) named = true;
+    }
+    try t.expect(named);
 }
 
 test "a manifest whose api is higher than this build's is a row that says so, and never runs" {

@@ -22,6 +22,12 @@ pub const writeUnder = manifest.writeUnder;
 
 pub const ParseError = error{ BadManifest, OutOfMemory };
 
+/// The fields `text` names that no manifest has — each one a typo or a
+/// newer SDK's field, dropped by `parse` either way (`core/zon_fields.zig`).
+pub fn unknownFields(arena: Allocator, text: [:0]const u8) Allocator.Error![]const []const u8 {
+    return @import("../core/zon_fields.zig").unknown(Manifest, arena, text);
+}
+
 /// One manifest file's text as a `Manifest` on `arena`. Unknown fields
 /// are ignored so a newer SDK's manifest still loads. A diagnostic, when
 /// there is one, is rendered onto `arena` for the toast.

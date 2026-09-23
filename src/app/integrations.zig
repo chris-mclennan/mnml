@@ -741,13 +741,19 @@ fn readManifest(app: *App, arena: Allocator, dir: Io.Dir, name: []const u8, path
         return null;
     };
     var why: []const u8 = "";
-    return manifest_mod.parse(arena, text, &why) catch |err| switch (err) {
-        error.OutOfMemory => null,
+    const m = manifest_mod.parse(arena, text, &why) catch |err| switch (err) {
+        error.OutOfMemory => return null,
         error.BadManifest => {
             problems.append(arena, std.fmt.allocPrint(arena, "{s}: {s}", .{ app.relPath(path), why }) catch return null) catch {};
             return null;
         },
     };
+    // It loads, but a field the schema has no place for was dropped —
+    // `.commmands` would leave an integration that looks installed and
+    // does nothing. Named, so the typo is findable.
+    const unknown = manifest_mod.unknownFields(arena, text) catch &.{};
+    for (unknown) |f| problems.append(arena, std.fmt.allocPrint(arena, "{s}: unknown field `.{s}` (ignored)", .{ app.relPath(path), f }) catch return m) catch {};
+    return m;
 }
 
 /// The glyph a manifest chip paints: `chip.glyph`, else its pinned
@@ -3206,6 +3212,31 @@ fn testApp(tmp: *testing.TmpDir) !App {
 fn screenText(app: *App) ![]u8 {
     try app.render();
     return screen_mod.toTestText(testing.allocator, &app.screen);
+}
+
+test "a typo'd manifest field still loads the integration and is named in a warning" {
+    // `ignore_unknown_fields` keeps a newer SDK's manifest loading — and
+    // dropped `.commmands` without a word, leaving an integration that
+    // looked installed and added nothing.
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var app = try testApp(&tmp);
+    defer app.deinit();
+    const typo = try std.mem.replaceOwned(u8, testing.allocator, fixture_manifest, "    .commands = .{", "    .commmands = .{");
+    defer testing.allocator.free(typo);
+    const typo2 = try std.mem.replaceOwned(u8, testing.allocator, typo, ".id = \"hello\"", ".id = \"typo\"");
+    defer testing.allocator.free(typo2);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/typo.zon", .data = typo2 });
+    try refresh(&app);
+    const st = &app.integrations;
+    try testing.expectEqual(@as(usize, 2), st.list.len);
+    var named = false;
+    for (st.problems) |p| {
+        if (std.mem.indexOf(u8, p, "typo.zon: unknown field `.commmands` (ignored)") != null) named = true;
+    }
+    try testing.expect(named);
+    // The well-formed one has nothing to say.
+    for (st.problems) |p| try testing.expect(std.mem.indexOf(u8, p, "hello.zon") == null);
 }
 
 test "discovery: manifests become dyn commands with bindings; a broken file is a warning; refresh is idempotent" {
