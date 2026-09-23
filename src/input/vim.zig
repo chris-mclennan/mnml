@@ -1072,6 +1072,7 @@ pub const Vim = struct {
                     self.resetPending();
                     return .consumed;
                 };
+                const n = self.count1();
                 self.resetPending();
                 const select_op = textObjectOp(key, around) orelse return .consumed;
                 if (op == .filter) {
@@ -1079,11 +1080,38 @@ pub const Vim = struct {
                     return .consumed;
                 }
                 const linewise = select_op == .select_inner_paragraph or select_op == .select_around_paragraph;
+                const is_bracket = select_op == .select_inner_bracket or select_op == .select_around_bracket;
                 var b = Builder.init(arena);
-                try b.push(select_op);
+                // `2di{`: the count-th enclosing pair (`:help i{`).
+                if (is_bracket and n > 1) try b.pushRepeated(select_op, n) else try b.push(select_op);
                 // No object under the cursor (`ci(` outside parens): the
                 // operator is abandoned, not run on nothing.
                 try b.push(.abort_unless_selection);
+                if (select_op == .select_inner_bracket and (op == .delete or op == .change or op == .yank)) {
+                    // A body between braces on their own lines is whole
+                    // lines: `d` / `y` take them linewise and `c` leaves
+                    // one line, its indent kept (Neovim's autoindent).
+                    // The editor knows which once the object is chosen.
+                    const vmode_before = self.vmode;
+                    var lb = Builder.init(arena);
+                    const lines = (try self.finishOperator(&lb, op, ctx, true)).ops;
+                    const lines_list: []const EditOp = if (op == .change) blk: {
+                        var l2 = Builder.init(arena);
+                        for (lines) |o| {
+                            try l2.push(o);
+                            if (o == .normalize_linewise_selection_inner) {
+                                try l2.push(.swap_anchor_cursor);
+                                try l2.push(.move_line_first_non_ws);
+                            }
+                        }
+                        break :blk l2.list.items;
+                    } else lines;
+                    self.vmode = vmode_before;
+                    var cb = Builder.init(arena);
+                    const chars = (try self.finishOperator(&cb, op, ctx, false)).ops;
+                    try b.push(.{ .if_lines_object = .{ .lines = lines_list, .chars = chars } });
+                    return b.finish();
+                }
                 return self.finishOperator(&b, op, ctx, linewise);
             },
             .bracket_open => {
@@ -2052,6 +2080,9 @@ pub const Vim = struct {
                 self.visual_exact = true;
                 // `vip` / `vap` make the selection linewise (`:help v_ip`).
                 if (op == .select_inner_paragraph or op == .select_around_paragraph) self.vmode = .visual_line;
+                // `vi{` over a body on its own lines takes the last line's
+                // break too, so `vi{d` leaves no empty line (`:help v_i{`).
+                if (op == .select_inner_bracket) return ops(arena, &.{ op, .{ .if_lines_object = .{ .lines = &.{.move_right}, .chars = &.{} } } });
                 return ops(arena, &.{op});
             },
             .align_char_wait => {
@@ -2133,8 +2164,10 @@ pub const Vim = struct {
                     self.enterNormal();
                     return ops(arena, &.{.select_clear});
                 }
+                // The selection keeps both ends and names their lines
+                // (`:help v_V`): `va{V` is every line the block touches.
                 self.vmode = .visual_line;
-                return ops(arena, &.{.select_line});
+                return .consumed;
             },
             'i' => {
                 self.prefix = .text_object_inner;

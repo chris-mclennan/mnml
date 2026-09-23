@@ -131,6 +131,12 @@ pub const EditOp = union(enum) {
     /// `inclusive`: the cursor ends ON the match's last char (Visual);
     /// `extend`: the selection's anchor stays where it is (`v…gn`).
     select_find_match: struct { forward: bool, inclusive: bool = false, extend: bool = false },
+    /// After a bracket object: `lines` when it chose whole lines
+    /// (`Editor.object_lines` — `i{` over a body whose `{` ends its line
+    /// and whose `}` has only indent before it, `:help i{`), else `chars`.
+    /// The operator's two shapes, picked when the op is applied so `.`
+    /// picks again. Slices point into the frame arena like `atomic`'s.
+    if_lines_object: struct { lines: []const EditOp, chars: []const EditOp },
 
     // ── multi-cursor / block ──
     add_cursor_below,
@@ -218,7 +224,7 @@ pub const EditOp = union(enum) {
     atomic: []const EditOp,
 
     comptime {
-        std.debug.assert(@typeInfo(EditOp).@"union".fields.len == 147);
+        std.debug.assert(@typeInfo(EditOp).@"union".fields.len == 148);
     }
 
     /// Whether the op can change buffer text (vs. move / select / yank / meta).
@@ -228,6 +234,7 @@ pub const EditOp = union(enum) {
             .atomic => |ops| for (ops) |o| {
                 if (o.isMutation()) break true;
             } else false,
+            .if_lines_object => |c| anyOf(c.lines, isMutation) or anyOf(c.chars, isMutation),
             // motions
             .move_left, .move_right, .move_up, .move_down, .move_word_left, .move_word_right, .move_word_right_no_cross_line, .move_right_no_cross_line, .move_left_no_cross_line, .move_word_end, .move_word_end_cw, .move_big_word_end_cw, .move_word_end_back, .move_big_word_right, .move_big_word_right_no_cross_line, .move_big_word_left, .move_big_word_end, .move_big_word_end_back, .move_line_start, .move_line_first_non_ws, .move_down_first_non_ws, .move_up_first_non_ws, .move_line_last_non_ws, .move_paragraph, .move_sentence, .move_line_end, .move_line_last_char, .move_visual_down, .move_visual_up, .move_visual_line_start, .move_visual_line_end, .move_buffer_start, .move_buffer_end, .move_to_line, .move_to_col, .set_cursor_byte, .page_up, .page_down, .half_page_up, .half_page_down => false,
             // selection
@@ -268,8 +275,33 @@ pub const EditOp = union(enum) {
             .atomic => |ops| for (ops) |o| {
                 if (o.touchesClipboard()) break true;
             } else false,
+            .if_lines_object => |c| anyOf(c.lines, touchesClipboard) or anyOf(c.chars, touchesClipboard),
             else => false,
         };
+    }
+
+    fn anyOf(list: []const EditOp, comptime pred: fn (EditOp) bool) bool {
+        for (list) |o| if (pred(o)) return true;
+        return false;
+    }
+
+    fn dupeList(list: []const EditOp, gpa: Allocator) Allocator.Error![]const EditOp {
+        const copy = try gpa.alloc(EditOp, list.len);
+        var n: usize = 0;
+        errdefer {
+            for (copy[0..n]) |o| o.free(gpa);
+            gpa.free(copy);
+        }
+        for (list) |o| {
+            copy[n] = try o.dupe(gpa);
+            n += 1;
+        }
+        return copy;
+    }
+
+    fn freeList(list: []const EditOp, gpa: Allocator) void {
+        for (list) |o| o.free(gpa);
+        gpa.free(list);
     }
 
     /// The count a `{count}.` replaces: a `repeat`'s, or a counted
@@ -316,6 +348,11 @@ pub const EditOp = union(enum) {
                 }
                 break :blk .{ .atomic = copy };
             },
+            .if_lines_object => |c| blk: {
+                const lines = try dupeList(c.lines, gpa);
+                errdefer freeList(lines, gpa);
+                break :blk .{ .if_lines_object = .{ .lines = lines, .chars = try dupeList(c.chars, gpa) } };
+            },
             else => op,
         };
     }
@@ -333,6 +370,10 @@ pub const EditOp = union(enum) {
             .atomic => |ops| {
                 for (ops) |o| o.free(gpa);
                 gpa.free(ops);
+            },
+            .if_lines_object => |c| {
+                freeList(c.lines, gpa);
+                freeList(c.chars, gpa);
             },
             else => {},
         }

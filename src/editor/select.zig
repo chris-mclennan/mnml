@@ -300,14 +300,103 @@ pub fn nextBracketPair(ed: *const Editor, open: u21, close: u21) ?[2]usize {
 
 pub fn bracket(ed: *Editor, open: u21, around: bool) void {
     const close = matchCloseFor(open);
+    ed.object_lines = false;
     const p = enclosingBracketPair(ed, open, close) orelse nextBracketPair(ed, open, close) orelse return;
+    setBracketObject(ed, p, open, close, around);
+}
+
+/// `{count}i{` / `{count}a{` (`:help i{`): the count-th pair out from
+/// the one `bracket` picks. Too few levels: no selection, so the
+/// operator is abandoned.
+pub fn bracketCount(ed: *Editor, open: u21, around: bool, count: u32) void {
+    if (count <= 1) return bracket(ed, open, around);
+    const close = matchCloseFor(open);
+    ed.object_lines = false;
+    var p = enclosingBracketPair(ed, open, close) orelse return;
+    var k: u32 = 1;
+    while (k < count) : (k += 1) p = outerBracketPair(ed, p[0], open, close) orelse return;
+    setBracketObject(ed, p, open, close, around);
+}
+
+/// The pair enclosing the `open` at `open_byte`, depth-aware.
+fn outerBracketPair(ed: *Editor, open_byte: usize, open: u21, close: u21) ?[2]usize {
+    var depth: usize = 0;
+    var i = open_byte;
+    var steps: usize = 0;
+    const outer = while (i > 0) {
+        i = ed.prevBoundary(i);
+        const c = ed.charAt(i) orelse return null;
+        if (c == close) {
+            depth += 1;
+        } else if (c == open) {
+            if (depth == 0) break i;
+            depth -= 1;
+        }
+        steps += 1;
+        if (steps > 50_000) return null;
+    } else return null;
+    // A cursor ON an opener names that opener's pair.
+    const saved = ed.cursor;
+    defer ed.cursor = saved;
+    ed.cursor = outer;
+    return enclosingBracketPair(ed, open, close);
+}
+
+/// `a{` is the pair itself. `i{` is what lies between, shaped the way
+/// Neovim's `current_block` shapes it: an opener that ends its line
+/// starts the object on the next line, and a closer with only indent
+/// before it (or at a line start) ends it at the end of the line above.
+/// When both hold the object is whole lines (`Editor.object_lines`),
+/// and `d` / `c` / `y` take them linewise — `di{` on a function body
+/// keeps the braces on their own lines. Otherwise it is the chars from
+/// after the opener to before the closer.
+fn setBracketObject(ed: *Editor, p: [2]usize, open: u21, close: u21, around: bool) void {
+    ed.object_lines = false;
     if (around) {
         ed.anchor = p[0];
         ed.cursor = p[1] + editor.charLen(close);
-    } else {
-        ed.anchor = p[0] + editor.charLen(open);
-        ed.cursor = p[1];
+        return;
     }
+    const t = ed.bytes();
+    var start = p[0] + editor.charLen(open);
+    if (start < t.len and t[start] == '\n') start += 1;
+    const close_line = ed.lineOfByte(p[1]);
+    const close_ls = ed.lineStart(close_line);
+    var sol = p[1] == close_ls;
+    // The line the object's last char is on, when `sol`.
+    var last_line: usize = if (close_line > 0) close_line - 1 else 0;
+    if (sol) {
+        // At a line start: Neovim steps back onto the line above, and
+        // past it too when that line is only white space.
+        if (close_line > 0 and isBlankNonEmpty(ed, close_line - 1) and close_line >= 2) last_line = close_line - 2;
+    } else if (allWhite(t[close_ls..p[1]])) {
+        sol = true;
+    }
+    if (!sol or start > p[1]) {
+        ed.anchor = start;
+        ed.cursor = @max(p[1], start);
+        return;
+    }
+    const start_line = ed.lineOfByte(start);
+    if (last_line < start_line) {
+        // Nothing between the pair's lines (`{` / `}`).
+        ed.anchor = start;
+        ed.cursor = start;
+        return;
+    }
+    ed.anchor = start;
+    ed.cursor = ed.lineEnd(last_line);
+    ed.object_lines = start == ed.lineStart(start_line);
+}
+
+fn allWhite(s: []const u8) bool {
+    for (s) |c| if (c != ' ' and c != '\t') return false;
+    return true;
+}
+
+fn isBlankNonEmpty(ed: *const Editor, line: usize) bool {
+    const s = ed.bytes()[ed.lineStart(line)..ed.lineEnd(line)];
+    return s.len > 0 and allWhite(s);
 }
 
 /// Byte range of the paragraph under the cursor, from its first line's
@@ -894,4 +983,52 @@ test "function / class objects go through the installed provider; none installed
     try std.testing.expectEqual(@as(usize, 11), ed.cursor);
     object(ed, .class, true);
     try std.testing.expectEqual(@as(?usize, 8), ed.anchor); // unchanged: no class
+}
+
+test "i{ over a body on its own lines is whole lines, a count reaches out, a{ is the pair (Neovim's current_block)" {
+    const text = "fn a() void {\n    if (x) {\n        y(1, 2);\n        z();\n    }\n}\n";
+    const ed = try Editor.init(std.testing.allocator, text);
+    defer ed.deinit();
+    // Line 3 (`y(1, 2);`): the inner block is lines 3–4, linewise.
+    ed.cursor = ed.lineStart(2) + 8;
+    bracket(ed, '{', false);
+    try std.testing.expectEqualStrings("        y(1, 2);\n        z();", sel(ed));
+    try std.testing.expect(ed.object_lines);
+    // `2i{`: the function body, lines 2–5.
+    ed.anchor = null;
+    ed.cursor = ed.lineStart(2) + 8;
+    bracketCount(ed, '{', false, 2);
+    try std.testing.expectEqualStrings("    if (x) {\n        y(1, 2);\n        z();\n    }", sel(ed));
+    try std.testing.expect(ed.object_lines);
+    // Three levels do not exist: nothing is selected.
+    ed.anchor = null;
+    ed.cursor = ed.lineStart(2) + 8;
+    bracketCount(ed, '{', false, 3);
+    try std.testing.expect(ed.anchor == null);
+    // `a{` is the pair, braces included, charwise.
+    ed.cursor = ed.lineStart(2) + 8;
+    bracket(ed, '{', true);
+    try std.testing.expectEqualStrings("{\n        y(1, 2);\n        z();\n    }", sel(ed));
+    try std.testing.expect(!ed.object_lines);
+}
+
+test "i{ stays chars on one line, ends at the line above a closer that has only indent, and is empty for `{` / `}`" {
+    const ed = try Editor.init(std.testing.allocator, "f { a, b }\nif (x) { foo\n  bar\n}\na {\n    \n}\n");
+    defer ed.deinit();
+    ed.cursor = 5;
+    bracket(ed, '{', false);
+    try std.testing.expectEqualStrings(" a, b ", sel(ed));
+    try std.testing.expect(!ed.object_lines);
+    // The opener does not end its line: chars, up to the end of `  bar`.
+    ed.anchor = null;
+    ed.cursor = ed.lineStart(2) + 2;
+    bracket(ed, '{', false);
+    try std.testing.expectEqualStrings(" foo\n  bar", sel(ed));
+    try std.testing.expect(!ed.object_lines);
+    // A white-space-only line alone between the pair: nothing.
+    ed.anchor = null;
+    ed.cursor = ed.lineStart(4) + 2;
+    bracket(ed, '{', false);
+    try std.testing.expectEqualStrings("", sel(ed));
+    try std.testing.expect(!ed.object_lines);
 }

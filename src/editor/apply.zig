@@ -30,6 +30,12 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
             // `count` puts (`:help p`); the op stays a `repeat` so
             // `{count}.` can still replace the count.
             if (register.isPut(r.inner.*)) return register.putRepeated(ed, r.inner.*, r.count, clip, out);
+            // `2di{`: the count-th enclosing pair, not the object twice.
+            switch (r.inner.*) {
+                .select_inner_bracket => |b| return select.bracketCount(ed, b, false, r.count),
+                .select_around_bracket => |b| return select.bracketCount(ed, b, true, r.count),
+                else => {},
+            }
             // `{count}dd` past the end takes what is there (`:help dd`),
             // never a line above the one it started on.
             const count: u32 = if (r.inner.* == .delete_line) @intCast(@min(r.count, @max(ed.lineCount() -| ed.currentLine(), 1))) else r.count;
@@ -169,6 +175,7 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
             out.aborted = true;
         },
         .select_find_match => |m| select.selectFindMatch(ed, m.forward, m.inclusive, m.extend, out),
+        .if_lines_object => |c| for (if (ed.object_lines) c.lines else c.chars) |o| try applyOne(ed, o, vp, clip, out),
 
         // ── multi-cursor / block ──
         .add_cursor_below => try mc.addCursorBelow(ed),

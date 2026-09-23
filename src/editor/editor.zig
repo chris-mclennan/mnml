@@ -101,6 +101,9 @@ pub const Editor = struct {
     /// and `select_find_match` reads them when it is applied.
     find_next: ?[2]usize = null,
     find_prev: ?[2]usize = null,
+    /// The last bracket object chose whole lines (`select.bracketCount`);
+    /// `if_lines_object` reads it.
+    object_lines: bool = false,
     /// Visual-block anchor. Independent of `anchor`.
     block_anchor: ?usize = null,
     /// The block runs to each line's end (`$` in V-BLOCK).
