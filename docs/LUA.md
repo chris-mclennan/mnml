@@ -1450,7 +1450,9 @@ once, which is what a unit test runs to prove they all still load together.
 `tests/e2e/lua_init.test` shows the shape: `write .mnml/init.lua "…"`,
 `command script.reload`, then `command user.<id>` and `expect screen contains
 …`. The `.test` runner's temp workspace is trusted, so the workspace file
-runs. Unit tests reach the state as `app.script()` and run chunks with
+runs. A command that is MEANT to error runs as `command! user.<id>`: the
+step passes only when the command fails, where a plain `command` step fails
+on it. Unit tests reach the state as `app.script()` and run chunks with
 `runString`.
 
 A test that drives a script **file** rather than an inline one copies it in

@@ -1,0 +1,11 @@
+# A script command whose `run` errors fails the command: the error is
+# toasted with its line, AND the caller hears about it — a `.test` step
+# (`command!` expects the failure; a plain `command` step would fail) and
+# an IPC `command` ack (`ok:false`). The driver used to swallow the error,
+# so every caller was told it had worked.
+write .mnml/init.lua "mnml.command{ id = 'err', run = function() error('ERR-BOOM') end }\nmnml.command{ id = 'ok', run = function() mnml.toast('STILL-ALIVE') end }\n"
+command script.reload
+command! user.err
+expect screen contains "ERR-BOOM"
+command user.ok
+expect screen contains "STILL-ALIVE"

@@ -617,3 +617,38 @@ test "a quit runs the exit hook, as the terminal loop does" {
     try t.expect(!restart);
     try drv.app.script().runString("assert(EXITS == 1, 'exit hook ran ' .. EXITS .. ' times')");
 }
+
+test "an IPC run-command of a script command that errors acks ok:false" {
+    // The driver swallowed the script's error, so the host was told
+    // `ok:true` while the user saw an error toast.
+    const app_driver = @import("app/driver.zig");
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const ws = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    const data_root = try std.fs.path.join(t.allocator, &.{ ws, "data" });
+    defer t.allocator.free(data_root);
+
+    const drv = try app_driver.AppDriver.create(t.allocator, t.io, .{ .workspace = ws, .data_root = data_root, .cols = 40, .rows = 6 }, null);
+    defer drv.driver().deinit();
+    try drv.app.script().runString(
+        \\mnml.command{ id = 'err', run = function() error('BOOM') end }
+        \\mnml.command{ id = 'fine', run = function() end }
+    );
+
+    const cmd_path = try std.fs.path.join(t.allocator, &.{ ws, ".mnml", "ipc-zig", "command" });
+    defer t.allocator.free(cmd_path);
+    var feeder: Feeder = .{ .io = t.io, .path = cmd_path, .delay_ms = 120, .lines =
+        \\{"cmd":"run-command","id":"user.err"}
+        \\{"cmd":"run-command","id":"user.fine"}
+        \\{"cmd":"quit"}
+        \\
+    };
+    const th = try std.Thread.spawn(.{}, Feeder.run, .{&feeder});
+    _ = try run(t.allocator, t.io, drv.driver(), ws, .{ .size = .{ .cols = 40, .rows = 6 }, .ipc = .{ .subdir = "ipc-zig" } });
+    th.join();
+    const events = try tmp.dir.readFileAlloc(t.io, ".mnml/ipc-zig/events.jsonl", t.allocator, .unlimited);
+    defer t.allocator.free(events);
+    try t.expect(std.mem.indexOf(u8, events, "{\"event\":\"command_run\",\"id\":\"user.err\",\"ok\":\"false\"}") != null);
+    try t.expect(std.mem.indexOf(u8, events, "{\"event\":\"command_run\",\"id\":\"user.fine\",\"ok\":\"true\"}") != null);
+}

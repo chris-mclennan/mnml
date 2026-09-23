@@ -555,6 +555,13 @@ const Run = struct {
                 error.NoSuchCommand => return std.fmt.allocPrint(gpa, "no such command `{s}`", .{id}) catch null,
                 else => return self.errMsg("command: {s}", e),
             },
+            .command_fails => |id| if (d.command(id)) |_| {
+                return std.fmt.allocPrint(gpa, "command! `{s}` succeeded; the step expects it to fail", .{id}) catch null;
+            } else |e| switch (e) {
+                error.NoSuchCommand => return std.fmt.allocPrint(gpa, "no such command `{s}`", .{id}) catch null,
+                error.OutOfMemory => return self.errMsg("command!: {s}", e),
+                else => {},
+            },
             .ex => |line| d.ex(line) catch |e| return self.errMsg("ex: {s}", e),
             .wait => |ms| {
                 // Tick throughout the sleep so async work makes progress
@@ -1455,6 +1462,23 @@ test "step failures: unknown command, ghost without an editor, unsafe paths, ref
         const path = try env.script(try std.fmt.bufPrint(&name_buf, "s{d}.test", .{i}), c.src);
         defer t.allocator.free(path);
         var sf: StubFactory = .{ .proto = .{ .has_editor = false, .known_commands = &.{"editor.use_vim"} } };
+        var o = runFile(t.allocator, t.io, sf.factory(), path, content_size, env.opts());
+        try expectFailed(&o, c.msg);
+    }
+}
+
+test "command! passes only when the command fails: a success, or no such command, fails the step" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+    const cases = [_]struct { src: []const u8, msg: []const u8 }{
+        .{ .src = "command! a.ok\n", .msg = "line 1: command! `a.ok` succeeded; the step expects it to fail" },
+        .{ .src = "command! a.nope\n", .msg = "line 1: no such command `a.nope`" },
+    };
+    for (cases, 0..) |c, i| {
+        var name_buf: [16]u8 = undefined;
+        const path = try env.script(try std.fmt.bufPrint(&name_buf, "cf{d}.test", .{i}), c.src);
+        defer t.allocator.free(path);
+        var sf: StubFactory = .{ .proto = .{ .known_commands = &.{"a.ok"} } };
         var o = runFile(t.allocator, t.io, sf.factory(), path, content_size, env.opts());
         try expectFailed(&o, c.msg);
     }

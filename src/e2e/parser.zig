@@ -8,6 +8,9 @@
 //! key   <keyspec>                # send one chord — "ctrl+s", "enter", "down", "esc", "a", …
 //! type  <text>                   # type literal text, char by char ("\n" → Enter)
 //! command <id>                   # run a registered command by id
+//! command! <id>                  # run it, and it must FAIL — a script's
+//!                                #   command whose `run` errors (a plain
+//!                                #   `command` step fails on that)
 //! ex <cmdline>                   # run an ex command — `ex bd!` runs `:bd!`
 //! wait  <ms>                     # sleep while ticking (for async/pty steps)
 //! snippet <scope> <trig> <expansion>  # seed a [snippets.<scope>] entry
@@ -108,6 +111,8 @@ pub const Step = union(enum) {
     key: key.Key,
     type: []const u8,
     command: []const u8,
+    /// `command! <id>`: the command runs and must fail.
+    command_fails: []const u8,
     ex: []const u8,
     wait: u64,
     snippet: struct { scope: []const u8, trigger: []const u8, expansion: []const u8 },
@@ -301,6 +306,10 @@ pub fn parse(gpa: Allocator, text: []const u8, diag: *Diagnostic) Error!Script {
                 if (rest.len == 0) return diag.set("line {d}: `command` needs an id", .{ln});
                 break :blk .{ .step = .{ .command = trim(rest) } };
             },
+            .@"command!" => blk: {
+                if (rest.len == 0) return diag.set("line {d}: `command!` needs an id", .{ln});
+                break :blk .{ .step = .{ .command_fails = trim(rest) } };
+            },
             .ex => blk: {
                 if (rest.len == 0) return diag.set("line {d}: `ex` needs an ex command", .{ln});
                 break :blk .{ .step = .{ .ex = trim(rest) } };
@@ -385,7 +394,7 @@ pub fn parse(gpa: Allocator, text: []const u8, diag: *Diagnostic) Error!Script {
     return .{ .arena = arena, .header = header, .lines = try lines.toOwnedSlice(a) };
 }
 
-const Keyword = enum { write, open, key, type, command, ex, wait, snippet, shell, serve, ghost, click, rightclick, doubleclick, hover, scroll, drag, shot, expect };
+const Keyword = enum { write, open, key, type, command, @"command!", ex, wait, snippet, shell, serve, ghost, click, rightclick, doubleclick, hover, scroll, drag, shot, expect };
 
 fn parseExpect(a: Allocator, diag: *Diagnostic, ln: usize, rest: []const u8) Error!Stmt {
     const what, const arg = split1(rest);
@@ -698,6 +707,7 @@ test "errors name the line and the directive" {
     try expectErr("open   \n", "line 1: `open` needs a path");
     try expectErr("key ctrl+nope+x\n", "line 1: unrecognised key spec `ctrl+nope+x`");
     try expectErr("command\n", "line 1: `command` needs an id");
+    try expectErr("command!\n", "line 1: `command!` needs an id");
     try expectErr("ex\n", "line 1: `ex` needs an ex command");
     try expectErr("wait soon\n", "line 1: `wait` needs a millisecond count");
     try expectErr("snippet rust\n", "line 1: `snippet` needs <scope> <trigger> <expansion>");

@@ -143,12 +143,23 @@ pub const AppDriver = struct {
     /// An unknown id is the step's failure; a command that ran and
     /// failed has toasted its reason and the script goes on, as under
     /// the Rust runner.
+    /// Run `id`. A failure is the toast `command.run` already showed and
+    /// otherwise success — except for a script's command: a Lua `run`
+    /// that errors is `error.Failed` here, so the IPC ack says
+    /// `ok:false` and a `.test` step fails (docs/LUA.md promises both).
+    /// The rest keep the old contract, which the corpus leans on: a
+    /// refused built-in is a toast, not a failed step.
     fn vCommand(p: *anyopaque, id: []const u8) Error!void {
         const app = &cast(p).app;
         const ref = command.resolve(app, id) orelse return error.NoSuchCommand;
+        // Asked before the run: the command may unregister itself.
+        const scripted = switch (ref) {
+            .dyn => |slot| if (app.dyn_commands.at(slot)) |c| c.runner == .lua else false,
+            .static => false,
+        };
         command.run(app, ref) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
-            else => {},
+            else => if (scripted) return error.Failed,
         };
     }
 
@@ -420,6 +431,26 @@ pub var default_factory: AppFactory = .{};
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+
+test "driver: a script command that errors fails the call, so an IPC ack and a .test step see it" {
+    // `command.run` toasted the error and the driver swallowed it, so
+    // the IPC ack said `ok:true` and a `.test` step passed.
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, t.allocator);
+    defer t.allocator.free(root);
+    var f: AppFactory = .{};
+    const d = try f.factory().make(t.allocator, t.io, .{ .workspace = root, .data_root = "", .cols = 60, .rows = 12 });
+    defer d.deinit();
+    try AppDriver.cast(d.ptr).app.script().runString(
+        \\mnml.command{ id = 'err', run = function() error('BOOM') end }
+        \\mnml.command{ id = 'fine', run = function() end }
+    );
+    try t.expectError(error.Failed, d.command("user.err"));
+    try d.command("user.fine");
+    // A refused built-in keeps the old contract: a toast, not a failure.
+    try d.command("file.save");
+}
 
 test "driver: open, type, status, dirty, title, rects, quit — the runner's contract" {
     var tmp = t.tmpDir(.{});
