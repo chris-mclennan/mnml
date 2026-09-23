@@ -783,6 +783,10 @@ otherwise. Copy what you need; leave the rest out.
     },
 
     // ── snippets / abbr ────────────────────────────────────────────────
+    // A scope is a language name or an extension — `.rust` and `.rs` are
+    // one scope, `.yml` is `.yaml` — or `.global` for every file. TSX
+    // files also take the `.ts` snippets, JSX files the `.js` ones. Read
+    // at launch and on every config reload.
     .snippets = .{
         .rust = .{
             .@"fn" = "fn $1($2) {\n    $0\n}",

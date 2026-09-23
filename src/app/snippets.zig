@@ -21,6 +21,7 @@ const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const key_mod = @import("../core/key.zig");
 const Key = key_mod.Key;
+const hl = @import("highlight");
 
 pub const table = .{
     .@"snippet.expand" = &expandCmd,
@@ -108,10 +109,58 @@ pub const Session = struct {
     seen_seq: u64,
 };
 
+/// scope → trigger → body, every key and body owned.
+const Table = std.StringHashMapUnmanaged(std.StringHashMapUnmanaged([]u8));
+
+fn freeTable(gpa: Allocator, t: *Table) void {
+    var it = t.iterator();
+    while (it.next()) |e| {
+        var inner = e.value_ptr.*;
+        var it2 = inner.iterator();
+        while (it2.next()) |x| {
+            gpa.free(x.key_ptr.*);
+            gpa.free(x.value_ptr.*);
+        }
+        inner.deinit(gpa);
+        gpa.free(e.key_ptr.*);
+    }
+    t.deinit(gpa);
+    t.* = .empty;
+}
+
+/// Add (or replace) `trigger` in `scope` of `t`; `scope` is taken as
+/// it is (the caller normalized it).
+fn put(gpa: Allocator, t: *Table, scope: []const u8, trigger: []const u8, body: []const u8) Allocator.Error!void {
+    const gop = try t.getOrPut(gpa, scope);
+    if (!gop.found_existing) {
+        gop.key_ptr.* = gpa.dupe(u8, scope) catch |err| {
+            t.removeByPtr(gop.key_ptr);
+            return err;
+        };
+        gop.value_ptr.* = .empty;
+    }
+    const owned = try gpa.dupe(u8, body);
+    errdefer gpa.free(owned);
+    const inner = gop.value_ptr;
+    if (inner.getEntry(trigger)) |e| {
+        gpa.free(e.value_ptr.*);
+        e.value_ptr.* = owned;
+        return;
+    }
+    const key = try gpa.dupe(u8, trigger);
+    errdefer gpa.free(key);
+    try inner.put(gpa, key, owned);
+}
+
 pub const State = struct {
     gpa: Allocator,
-    /// scope → trigger → body. Keys and bodies are owned.
-    scopes: std.StringHashMapUnmanaged(std.StringHashMapUnmanaged([]u8)) = .empty,
+    /// What lookups and the picker read: the config's snippets with the
+    /// seeded ones over them. Scopes are normalized (`normalizeScope`).
+    scopes: Table = .empty,
+    /// The snippets added at run time (`seed`: the `.test` `snippet`
+    /// directive), kept apart so a config reload, which rebuilds
+    /// `scopes`, lays them back on top.
+    seeded: Table = .empty,
     session: ?Session = null,
 
     pub fn init(gpa: Allocator) State {
@@ -119,57 +168,42 @@ pub const State = struct {
     }
 
     pub fn deinit(self: *State) void {
-        var it = self.scopes.iterator();
-        while (it.next()) |e| {
-            var inner = e.value_ptr.*;
-            var it2 = inner.iterator();
-            while (it2.next()) |t| {
-                self.gpa.free(t.key_ptr.*);
-                self.gpa.free(t.value_ptr.*);
-            }
-            inner.deinit(self.gpa);
-            self.gpa.free(e.key_ptr.*);
-        }
-        self.scopes.deinit(self.gpa);
+        freeTable(self.gpa, &self.scopes);
+        freeTable(self.gpa, &self.seeded);
         self.endSession();
     }
 
-    /// Add (or replace) `trigger` in `scope`.
+    /// Add (or replace) `trigger` in `scope`. It outlives a config reload.
     pub fn seed(self: *State, scope: []const u8, trigger: []const u8, body: []const u8) Allocator.Error!void {
-        const gpa = self.gpa;
-        const gop = try self.scopes.getOrPut(gpa, scope);
-        if (!gop.found_existing) {
-            gop.key_ptr.* = try gpa.dupe(u8, scope);
-            gop.value_ptr.* = .empty;
-        }
-        errdefer if (!gop.found_existing) {
-            gpa.free(gop.key_ptr.*);
-            _ = self.scopes.remove(scope);
-        };
-        const owned = try gpa.dupe(u8, body);
-        errdefer gpa.free(owned);
-        const inner = gop.value_ptr;
-        if (inner.getEntry(trigger)) |e| {
-            gpa.free(e.value_ptr.*);
-            e.value_ptr.* = owned;
-            return;
-        }
-        const key = try gpa.dupe(u8, trigger);
-        errdefer gpa.free(key);
-        try inner.put(gpa, key, owned);
+        var buf: [max_scope]u8 = undefined;
+        const s = normalizeScope(scope, &buf);
+        try put(self.gpa, &self.seeded, s, trigger, body);
+        try put(self.gpa, &self.scopes, s, trigger, body);
     }
 
-    /// The config's `snippets` section: `scope → trigger → body`.
+    /// The config's `snippets` section (`scope → trigger → body`)
+    /// becomes the table, replacing what an earlier config put there;
+    /// the seeded snippets go back on top. Called when the config is
+    /// loaded and on every reload.
     pub fn absorbConfig(self: *State, snippets: anytype) Allocator.Error!void {
+        freeTable(self.gpa, &self.scopes);
+        var buf: [max_scope]u8 = undefined;
         for (snippets.keys()) |scope| {
             const inner = snippets.get(scope) orelse continue;
-            for (inner.keys()) |trigger| try self.seed(scope, trigger, inner.get(trigger).?);
+            const s = normalizeScope(scope, &buf);
+            for (inner.keys()) |trigger| try put(self.gpa, &self.scopes, s, trigger, inner.get(trigger).?);
+        }
+        var it = self.seeded.iterator();
+        while (it.next()) |e| {
+            var it2 = e.value_ptr.iterator();
+            while (it2.next()) |x| try put(self.gpa, &self.scopes, e.key_ptr.*, x.key_ptr.*, x.value_ptr.*);
         }
     }
 
-    /// `scope` first, then `global`.
+    /// `scope` first, then the scope it extends (`tsx` → `ts`), then `global`.
     pub fn lookup(self: *const State, scope: []const u8, trigger: []const u8) ?[]const u8 {
         if (self.scopes.get(scope)) |inner| if (inner.get(trigger)) |b| return b;
+        if (parentScope(scope)) |p| if (self.scopes.get(p)) |inner| if (inner.get(trigger)) |b| return b;
         if (self.scopes.get("global")) |inner| if (inner.get(trigger)) |b| return b;
         return null;
     }
@@ -187,8 +221,37 @@ pub const State = struct {
     }
 };
 
-/// The snippet scope of a file: its extension, lower-cased.
-pub fn scopeFor(path: ?[]const u8, buf: []u8) []const u8 {
+/// The longest scope name kept as written; longer ones are cut.
+const max_scope = 32;
+
+/// A scope as the config or a `.test` writes it → the key a file's
+/// scope is compared with. A language name or an extension becomes the
+/// language's key — `.rust` and `.rs` are both `rs`, `.yml` is `yaml`,
+/// `.typescript` is `ts` — so the config's scopes and `scopeFor` agree.
+/// `global`, and a name mnml-zig has no grammar for, stay as written,
+/// lower-cased.
+pub fn normalizeScope(raw: []const u8, buf: []u8) []const u8 {
+    if (std.ascii.eqlIgnoreCase(raw, "global")) return "global";
+    if (hl.table.keyForLanguageName(raw)) |k| return k;
+    const n = @min(raw.len, buf.len);
+    const lower = std.ascii.lowerString(buf[0..n], raw[0..n]);
+    if (hl.table.keyForExtension(lower)) |k| return k;
+    return lower;
+}
+
+/// The scope a scope's snippets also apply in: TSX files take the
+/// TypeScript snippets, JSX files the JavaScript ones.
+pub fn parentScope(scope: []const u8) ?[]const u8 {
+    if (std.mem.eql(u8, scope, "tsx")) return "ts";
+    if (std.mem.eql(u8, scope, "jsx")) return "js";
+    return null;
+}
+
+/// The snippet scope of a file: its language's key (`rs`, `yaml`, `sh`
+/// for a `.zshrc` or a bash shebang), else its extension lower-cased,
+/// else `global`. `text` supplies the shebang.
+pub fn scopeFor(path: ?[]const u8, text: []const u8, buf: []u8) []const u8 {
+    if (hl.detect.keyFor(path, text)) |k| return k;
     const p = path orelse return "global";
     const ext = std.fs.path.extension(p);
     if (ext.len < 2 or ext.len - 1 > buf.len) return "global";
@@ -209,7 +272,7 @@ pub fn expand(app: *App, pane_id: PaneId, e: *EditorPane) Allocator.Error!bool {
     const ed = e.buf.editor;
     const w = wordBefore(ed.bytes(), ed.cursor);
     var scope_buf: [32]u8 = undefined;
-    const scope = scopeFor(e.buf.doc.path, &scope_buf);
+    const scope = scopeFor(e.buf.doc.path, e.buf.editor.bytes(), &scope_buf);
     const body = (if (w.word.len > 0) app.snippets.lookup(scope, w.word) else null) orelse {
         app.toast("no snippet matches \"{s}\"", .{w.word});
         return false;
@@ -278,14 +341,15 @@ fn pickAllCmd(app: *App) CommandError!void {
 fn openPicker(app: *App, all: bool) CommandError!void {
     const e = try app.requireEditor();
     var scope_buf: [32]u8 = undefined;
-    const scope = scopeFor(e.buf.doc.path, &scope_buf);
+    const scope = scopeFor(e.buf.doc.path, e.buf.editor.bytes(), &scope_buf);
     const gpa = app.gpa;
     const arena = app.frame.allocator();
     // Scopes sorted, then triggers sorted: the list reads the same each time.
     var scopes: std.ArrayListUnmanaged([]const u8) = .empty;
     var it = app.snippets.scopes.keyIterator();
     while (it.next()) |k| {
-        if (!all and !std.mem.eql(u8, k.*, scope) and !std.mem.eql(u8, k.*, "global")) continue;
+        const parent = parentScope(scope) orelse "";
+        if (!all and !std.mem.eql(u8, k.*, scope) and !std.mem.eql(u8, k.*, parent) and !std.mem.eql(u8, k.*, "global")) continue;
         try scopes.append(arena, k.*);
     }
     std.mem.sort([]const u8, scopes.items, {}, lessStr);
@@ -429,7 +493,7 @@ pub fn interceptKey(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocato
     const w = wordBefore(ed.bytes(), ed.cursor);
     if (w.word.len == 0) return false;
     var scope_buf: [32]u8 = undefined;
-    if (app.snippets.lookup(scopeFor(e.buf.doc.path, &scope_buf), w.word) == null) return false;
+    if (app.snippets.lookup(scopeFor(e.buf.doc.path, e.buf.editor.bytes(), &scope_buf), w.word) == null) return false;
     return expand(app, pane_id, e);
 }
 
@@ -488,8 +552,8 @@ test "table: scope then global, replace on re-seed, config absorb" {
     try testing.expect(st.lookup("md", "fn") == null);
     try testing.expectEqual(@as(usize, 2), st.count());
     var buf: [32]u8 = undefined;
-    try testing.expectEqualStrings("rs", scopeFor("/x/a.RS", &buf));
-    try testing.expectEqualStrings("global", scopeFor(null, &buf));
+    try testing.expectEqualStrings("rs", scopeFor("/x/a.RS", "", &buf));
+    try testing.expectEqualStrings("global", scopeFor(null, "", &buf));
     const w = wordBefore("let forr", 8);
     try testing.expectEqualStrings("forr", w.word);
     try testing.expectEqual(@as(usize, 4), w.start);
@@ -575,4 +639,60 @@ test "snippet: a body expanded on an indented line carries the indent onto its l
     try testing.expectEqual(@as(usize, 4), stops[0].pos);
     try testing.expectEqual(@as(usize, 8), stops[1].pos);
     try testing.expectEqual(@as(usize, 19), stops[2].pos);
+}
+
+test "config: `.snippets` in the home config.zon fills the table at launch, by language name or extension, and a reload replaces it with seeds kept" {
+    const t = std.testing;
+    const config = @import("../config/root.zig");
+    var vars = std.process.Environ.Map.init(t.allocator);
+    defer vars.deinit();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &pbuf);
+    const root = pbuf[0..n];
+    try tmp.dir.createDirPath(t.io, "data");
+    try tmp.dir.createDirPath(t.io, "ws");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "data/config.zon", .data =
+        \\.{ .snippets = .{
+        \\    .rust = .{ .fnrs = "fn $1() {}" },
+        \\    .yml = .{ .job = "job: $1" },
+        \\    .ts = .{ .ifc = "interface $1 {}" },
+        \\    .global = .{ .todo = "// TODO: $1" },
+        \\} }
+    });
+    const data = try std.fs.path.join(t.allocator, &.{ root, "data" });
+    defer t.allocator.free(data);
+    const ws = try std.fs.path.join(t.allocator, &.{ root, "ws" });
+    defer t.allocator.free(ws);
+    try vars.put("MNML_DATA_ROOT", data);
+    var loaded = try config.load.load(t.allocator, t.io, .{ .workspace = ws, .env = .{ .vars = &vars } });
+    var app = try App.initWith(t.allocator, t.io, .{ .cfg = loaded.config, .loaded = loaded, .workspace = ws, .cols = 60, .rows = 12 });
+    loaded = undefined; // the app owns it now
+    defer app.deinit();
+    app.tree.visible = false;
+    var buf: [32]u8 = undefined;
+    try t.expectEqualStrings("rs", scopeFor("/w/main.rs", "", &buf));
+    try t.expectEqualStrings("fn $1() {}", app.snippets.lookup("rs", "fnrs").?);
+    try t.expectEqualStrings("job: $1", app.snippets.lookup(scopeFor("/w/ci.yaml", "", &buf), "job").?);
+    try t.expectEqualStrings("interface $1 {}", app.snippets.lookup(scopeFor("/w/App.tsx", "", &buf), "ifc").?);
+    try t.expectEqualStrings("// TODO: $1", app.snippets.lookup("rs", "todo").?);
+    // Typed in a buffer: the trigger expands.
+    _ = try app.openScratch();
+    const e = app.activeEditor().?;
+    try e.buf.setPath("/w/main.rs");
+    for ("fnrs") |c| try app.handle(.{ .key = Key.char(c) });
+    try command.run(&app, .{ .static = .@"snippet.expand" });
+    try t.expectEqualStrings("fn () {}", e.buf.editor.bytes());
+    app.snippets.endSession();
+    // A seed (the `.test` directive) survives the reload; the reload
+    // takes the file as it is now.
+    try app.snippets.seed("rs", "seeded", "x");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "data/config.zon", .data = ".{ .snippets = .{ .rs = .{ .main = \"fn main() {}\" } } }" });
+    try app.reloadConfig(.ask);
+    try t.expect(app.snippets.lookup("rs", "fnrs") == null);
+    try t.expect(app.snippets.lookup("rs", "todo") == null);
+    try t.expectEqualStrings("fn main() {}", app.snippets.lookup("rs", "main").?);
+    try t.expectEqualStrings("x", app.snippets.lookup("rs", "seeded").?);
+    try t.expectEqual(@as(usize, 2), app.snippets.count());
 }
