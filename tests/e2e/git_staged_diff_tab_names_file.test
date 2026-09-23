@@ -1,0 +1,18 @@
+# One file's staged diff names the file on its tab, as the unstaged one
+# does: Enter on a staged row of the status pane opens `diff: staged
+# app.txt`, not a bare `diff: staged` that says nothing once both are
+# open.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write app.txt "one\n"
+shell git add app.txt
+shell git commit -q -m "initial"
+write app.txt "two\n"
+shell git add app.txt
+command git.status_pane
+wait 800
+expect screen contains "M app.txt"
+key enter
+wait 1500
+expect screen contains "diff: staged app.txt"

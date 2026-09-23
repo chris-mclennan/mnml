@@ -2042,7 +2042,9 @@ pub fn openDiffPlaced(app: *App, repo: *client.Repo, scope: client.DiffScope, re
         .file => try std.fmt.allocPrint(gpa, "diff: {s}", .{std.fs.path.basename(rel orelse "")}),
         .worktree => try gpa.dupe(u8, "diff: worktree"),
         .head => try gpa.dupe(u8, "diff: HEAD"),
-        .staged => try gpa.dupe(u8, "diff: staged"),
+        // One file's staged diff names the file, as its unstaged twin
+        // does; the whole index stays `diff: staged`.
+        .staged => if (rel) |r| try std.fmt.allocPrint(gpa, "diff: staged {s}", .{std.fs.path.basename(r)}) else try gpa.dupe(u8, "diff: staged"),
         .commit => blk: {
             const r: []const u8 = rev orelse "HEAD";
             break :blk try std.fmt.allocPrint(gpa, "commit {s}", .{r[0..@min(7, r.len)]});
