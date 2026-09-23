@@ -1,0 +1,24 @@
+# env: MNML_ANTHROPIC_BASE_URL=http://127.0.0.1:19714
+# env: ANTHROPIC_API_KEY=fake-key-for-a-mock
+# env: PATH=${MNML_E2E_WORKSPACE}/no-bin
+# A server that sends its head and never its body. The app stays
+# responsive while the request hangs — another pane opens, typing works —
+# and `c` stops the request at once. (`[ai] cli_timeout_ms` ends such a
+# request on its own; its unit test drives that with a short budget.)
+serve 19714 200 delay=60000 "{}"
+write note.txt "x\n"
+open note.txt
+command ai.ask
+type "hello"
+key enter
+wait 800
+expect screen contains "thinking"
+command view.focus_left
+key ctrl+end
+type "still typing"
+expect screen contains "still typing"
+command view.focus_right
+key c
+wait 400
+expect screen contains "cancelled"
+expect screen lacks "thinking"

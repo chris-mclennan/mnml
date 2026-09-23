@@ -1,0 +1,13 @@
+# env: MNML_ANTHROPIC_BASE_URL=http://127.0.0.1:19712
+# env: ANTHROPIC_API_KEY=fake-key-for-a-mock
+# env: PATH=${MNML_E2E_WORKSPACE}/no-bin
+# The API answers 429 with a retry-after: the pane says the status, the
+# API's own words and when to try again.
+serve 19712 429 "retry-after: 7\ncontent-type: application/json\n\n{\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"slow down\"}}"
+command ai.ask
+type "hello"
+key enter
+wait 1000
+expect screen contains "HTTP 429 slow down"
+expect screen contains "retry after 7 s"
+expect screen contains "failed"

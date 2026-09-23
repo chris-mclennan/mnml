@@ -657,6 +657,10 @@ otherwise. Copy what you need; leave the rest out.
         // git.explain_branch and the PR drafts (5000..3600000, clamped). Past
         // it the child is killed, the pane says so and a toast names this key.
         // Cancel (`c`), closing the pane and a re-ask (`r`) kill it at once.
+        // The same budget bounds each request of the API backend. The API's
+        // base URL is the real one unless MNML_ANTHROPIC_BASE_URL (an
+        // environment variable — never a config key, which a cloned repo
+        // could set to collect your key) points it at a proxy or a mock.
         .cli_timeout_ms = 600000,
         // GitHub Copilot as the ghost-text backend. NOTHING is sent until
         // THIS workspace opts in: `suggest_backend = "copilot"` alone shares

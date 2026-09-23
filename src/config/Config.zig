@@ -1038,7 +1038,7 @@ pub const Ai = struct {
     /// The wall-clock budget one AI job's CLI child gets (`ai.explain`,
     /// `ai.fix`, `git.ai_commit`, `git.explain_branch`, PR drafts…). Past
     /// it the child is killed and reaped, the pane says so and a toast
-    /// names the key.
+    /// names the key. The API backend's requests keep the same budget.
     cli_timeout_ms: u32 = 600_000,
     copilot: Copilot = .{},
     /// THE privacy switch. False by default, and the only Copilot key a

@@ -12,6 +12,21 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
 pub const endpoint = "https://api.anthropic.com/v1/messages";
+/// The environment variable that points every Messages request at
+/// another base URL (`http://127.0.0.1:19711`): a mock in the tests, a
+/// proxy or a gateway in real use. Read from the App's environment
+/// only — never from a workspace config, which a cloned repo writes
+/// and which would then decide where the API key goes.
+pub const base_url_env = "MNML_ANTHROPIC_BASE_URL";
+
+/// The Messages endpoint for `env`: `<base>/v1/messages` when
+/// `MNML_ANTHROPIC_BASE_URL` is set (a trailing `/` dropped), else the
+/// real one.
+pub fn endpointFor(arena: Allocator, env: *const std.process.Environ.Map) Allocator.Error![]const u8 {
+    const base = std.mem.trimEnd(u8, std.mem.trim(u8, env.get(base_url_env) orelse "", " \t"), "/");
+    if (base.len == 0) return endpoint;
+    return std.fmt.allocPrint(arena, "{s}/v1/messages", .{base});
+}
 pub const api_version = "2023-06-01";
 pub const default_model = "claude-sonnet-4-5";
 pub const default_max_tokens: u32 = 4096;
@@ -276,35 +291,74 @@ pub const Response = struct {
     status: u16,
     /// Owned by the caller.
     body: []u8,
+    /// A `retry-after: <seconds>` the server sent (a 429, a 529).
+    retry_after_s: ?u32 = null,
 };
 
 pub const PostError = error{ OutOfMemory, Canceled, Failed };
 
 /// POST `body` to `url` with the Messages headers. Blocking; call it
-/// from a worker. Any transport failure is `error.Failed`.
+/// from a worker. Any transport failure is `error.Failed`. The shape of
+/// `std.http.Client.fetch`, spelled out so the `retry-after` header of
+/// a rate-limited answer can be read before the body is.
 pub fn post(gpa: Allocator, io: Io, url: []const u8, api_key: []const u8, body: []const u8) PostError!Response {
-    var client: std.http.Client = .{ .allocator = gpa, .io = io };
-    defer client.deinit();
-    var out: Io.Writer.Allocating = .init(gpa);
-    errdefer out.deinit();
-    const headers = [_]std.http.Header{
-        .{ .name = "x-api-key", .value = api_key },
-        .{ .name = "anthropic-version", .value = api_version },
-    };
-    const res = client.fetch(.{
-        .location = .{ .url = url },
-        .method = .POST,
-        .payload = body,
-        .response_writer = &out.writer,
-        .extra_headers = &headers,
-        .headers = .{ .content_type = .{ .override = "application/json" } },
-        .keep_alive = false,
-    }) catch |err| switch (err) {
+    return postInner(gpa, io, url, api_key, body) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.Canceled => return error.Canceled,
         else => return error.Failed,
     };
-    return .{ .status = @intFromEnum(res.status), .body = out.toOwnedSlice() catch return error.OutOfMemory };
+}
+
+fn postInner(gpa: Allocator, io: Io, url: []const u8, api_key: []const u8, body: []const u8) !Response {
+    var client: std.http.Client = .{ .allocator = gpa, .io = io };
+    defer client.deinit();
+    const headers = [_]std.http.Header{
+        .{ .name = "x-api-key", .value = api_key },
+        .{ .name = "anthropic-version", .value = api_version },
+    };
+    var req = try client.request(.POST, try std.Uri.parse(url), .{
+        .redirect_behavior = .unhandled,
+        .headers = .{ .content_type = .{ .override = "application/json" } },
+        .extra_headers = &headers,
+        .keep_alive = false,
+    });
+    defer req.deinit();
+    req.transfer_encoding = .{ .content_length = body.len };
+    var bw = try req.sendBodyUnflushed(&.{});
+    try bw.writer.writeAll(body);
+    try bw.end();
+    try req.connection.?.flush();
+    var response = try req.receiveHead(&.{});
+    // The head's strings are gone once the body is read.
+    var retry_after: ?u32 = null;
+    var it = response.head.iterateHeaders();
+    while (it.next()) |h| if (std.ascii.eqlIgnoreCase(h.name, "retry-after")) {
+        retry_after = std.fmt.parseInt(u32, std.mem.trim(u8, h.value, " \t"), 10) catch null;
+    };
+    const status: u16 = @intFromEnum(response.head.status);
+    var out: Io.Writer.Allocating = .init(gpa);
+    errdefer out.deinit();
+    const decompress_buffer: []u8 = switch (response.head.content_encoding) {
+        .identity => &.{},
+        .zstd => try gpa.alloc(u8, std.compress.zstd.default_window_len),
+        .deflate, .gzip => try gpa.alloc(u8, std.compress.flate.max_window_len),
+        .compress => return error.UnsupportedCompressionMethod,
+    };
+    defer if (decompress_buffer.len > 0) gpa.free(decompress_buffer);
+    var transfer_buffer: [64]u8 = undefined;
+    var decompress: std.http.Decompress = undefined;
+    const reader = response.readerDecompressing(&transfer_buffer, &decompress, decompress_buffer);
+    _ = reader.streamRemaining(&out.writer) catch |err| switch (err) {
+        // The body's own error, else the socket's — a cancel lands on
+        // the socket, and `fetch`'s bare `bodyErr().?` panicked on it.
+        error.ReadFailed => {
+            if (response.bodyErr()) |e| return e;
+            if (req.connection) |c| if (c.stream_reader.err) |e| return e;
+            return error.ReadFailed;
+        },
+        else => |e| return e,
+    };
+    return .{ .status = status, .body = try out.toOwnedSlice(), .retry_after_s = retry_after };
 }
 
 /// The one-shot completion request the ghost text sends.

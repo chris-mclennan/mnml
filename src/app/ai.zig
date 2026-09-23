@@ -585,7 +585,10 @@ fn suggestWorker(
         .claude_api => {
             const body = api.completionRequest(gpa, model, suggest.system_prompt, prompt, suggest.max_tokens) catch return;
             defer gpa.free(body);
-            const res = api.post(gpa, io, api.endpoint, key, body) catch |err| switch (err) {
+            var url_arena = std.heap.ArenaAllocator.init(gpa);
+            defer url_arena.deinit();
+            const url = api.endpointFor(url_arena.allocator(), env) catch return;
+            const res = api.post(gpa, io, url, key, body) catch |err| switch (err) {
                 error.Canceled => return error.Canceled,
                 else => return postOutcome(events, io, gpa, pane, generation, .failed, "the request failed"),
             };
@@ -930,7 +933,7 @@ fn jobWorker(events: *event.EventQueue, io: Io, gpa: Allocator, j: *Job, mode: J
             events.post(io, .{ .ai = .{ .job = j.id, .msg = .{ .text = clean } } });
             events.post(io, .{ .ai = .{ .job = j.id, .msg = .done } });
         },
-        .claude_api => try agentLoop(events, io, gpa, j, prompt, model, key, cwd, system, use_tools, write_tools, max_tokens),
+        .claude_api => try agentLoop(events, io, gpa, j, prompt, model, key, cwd, env, system, use_tools, write_tools, max_tokens, timeout_ms),
     }
 }
 
@@ -958,10 +961,15 @@ fn postFailed(events: *event.EventQueue, io: Io, gpa: Allocator, job_id: u64, ms
 
 /// request → (tool calls) → request until the model stops. Text of
 /// every turn is posted as it lands; a write waits on the confirm.
-fn agentLoop(events: *event.EventQueue, io: Io, gpa: Allocator, j: *Job, prompt: []const u8, model: []const u8, key: []const u8, cwd: []const u8, system: ?[]const u8, use_tools: bool, write_tools: bool, max_tokens: u32) Io.Cancelable!void {
+///
+/// Each request is watched (`postWatched`): the job's cancel flag and
+/// `[ai] cli_timeout_ms` end it mid-flight, so a server that stalls —
+/// or answers its head and never its body — cannot hold the job.
+fn agentLoop(events: *event.EventQueue, io: Io, gpa: Allocator, j: *Job, prompt: []const u8, model: []const u8, key: []const u8, cwd: []const u8, env: *const std.process.Environ.Map, system: ?[]const u8, use_tools: bool, write_tools: bool, max_tokens: u32, timeout_ms: u32) Io.Cancelable!void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
+    const url = api.endpointFor(arena, env) catch return;
     const sys = api.agentSystemPrompt(arena, system, write_tools) catch return;
     var messages: std.ArrayListUnmanaged(api.Message) = .empty;
     messages.append(arena, .{ .role = "user", .blocks = arena.dupe(api.Block, &.{.{ .text = prompt }}) catch return }) catch return;
@@ -980,8 +988,17 @@ fn agentLoop(events: *event.EventQueue, io: Io, gpa: Allocator, j: *Job, prompt:
             .tools = if (!use_tools) .none else if (write_tools) .with_write else .read_only,
         }) catch return;
         defer gpa.free(body);
-        const res = api.post(gpa, io, api.endpoint, key, body) catch |err| switch (err) {
+        const res = postWatched(gpa, io, url, key, body, &j.cancel, timeout_ms) catch |err| switch (err) {
             error.Canceled => return error.Canceled,
+            error.Aborted => {
+                postFailed(events, io, gpa, j.id, "cancelled");
+                return;
+            },
+            error.TimedOut => {
+                const why = std.fmt.allocPrint(gpa, "the API gave no answer within {d} s and the request was stopped ([ai] cli_timeout_ms)", .{std.math.divCeil(u32, timeout_ms, 1000) catch 0}) catch return;
+                events.post(io, .{ .ai = .{ .job = j.id, .msg = .{ .timed_out = why } } });
+                return;
+            },
             else => {
                 postFailed(events, io, gpa, j.id, "the request failed (network / TLS)");
                 return;
@@ -989,9 +1006,7 @@ fn agentLoop(events: *event.EventQueue, io: Io, gpa: Allocator, j: *Job, prompt:
         };
         defer gpa.free(res.body);
         if (res.status != 200) {
-            const why = api.errorMessage(arena, res.body) orelse "";
-            const msg = std.fmt.allocPrint(gpa, "HTTP {d} {s}", .{ res.status, why }) catch return;
-            events.post(io, .{ .ai = .{ .job = j.id, .msg = .{ .failed = msg } } });
+            events.post(io, .{ .ai = .{ .job = j.id, .msg = .{ .failed = httpFailure(gpa, arena, res) catch return } } });
             return;
         }
         var reply = api.parseReply(gpa, res.body) catch {
@@ -1023,6 +1038,72 @@ fn agentLoop(events: *event.EventQueue, io: Io, gpa: Allocator, j: *Job, prompt:
         messages.append(arena, .{ .role = "user", .blocks = results.items }) catch return;
     }
     events.post(io, .{ .ai = .{ .job = j.id, .msg = .done } });
+}
+
+/// What a non-200 answer says in the pane: the status, the API's own
+/// message, and — on a 429 / 529 that names one — when to try again.
+/// Owned by `gpa`.
+fn httpFailure(gpa: Allocator, arena: Allocator, res: api.Response) Allocator.Error![]u8 {
+    const why = api.errorMessage(arena, res.body) orelse "";
+    const sep: []const u8 = if (why.len > 0) " " else "";
+    if (res.retry_after_s) |s| return std.fmt.allocPrint(gpa, "HTTP {d}{s}{s} — retry after {d} s", .{ res.status, sep, why, s });
+    return std.fmt.allocPrint(gpa, "HTTP {d}{s}{s}", .{ res.status, sep, why });
+}
+
+const Stop = enum { aborted, timed_out };
+const Watched = union(enum) {
+    post: api.PostError!api.Response,
+    watch: Io.Cancelable!Stop,
+};
+
+/// The flag and the clock, looked at every 100 ms.
+fn watchJob(io: Io, cancel: *const std.atomic.Value(bool), timeout_ms: u32) Io.Cancelable!Stop {
+    const t0 = Io.Timestamp.now(io, .awake);
+    while (true) {
+        if (cancel.load(.acquire)) return .aborted;
+        if (t0.untilNow(io, .awake).toMilliseconds() >= timeout_ms) return .timed_out;
+        try io.sleep(.fromMilliseconds(100), .awake);
+    }
+}
+
+/// `api.post`, raced against the job's cancel flag and its budget: the
+/// first to finish wins and the other is cancelled. A request cut off
+/// mid-flight is `Aborted` / `TimedOut`; a response that lands while
+/// the loser is being stopped is freed, not leaked.
+fn postWatched(gpa: Allocator, io: Io, url: []const u8, key: []const u8, body: []const u8, cancel: *const std.atomic.Value(bool), timeout_ms: u32) (api.PostError || error{ Aborted, TimedOut })!api.Response {
+    var buf: [2]Watched = undefined;
+    var sel = Io.Select(Watched).init(io, &buf);
+    sel.concurrent(.post, api.post, .{ gpa, io, url, key, body }) catch return api.post(gpa, io, url, key, body);
+    sel.concurrent(.watch, watchJob, .{ io, cancel, timeout_ms }) catch {
+        // No task for the watcher: the request runs unwatched.
+        const first = sel.await() catch |err| {
+            drainWatched(gpa, &sel);
+            return err;
+        };
+        drainWatched(gpa, &sel);
+        return first.post;
+    };
+    const first = sel.await() catch |err| {
+        drainWatched(gpa, &sel);
+        return err;
+    };
+    drainWatched(gpa, &sel);
+    return switch (first) {
+        .post => |r| r,
+        .watch => |w| switch (w catch return error.Canceled) {
+            .aborted => error.Aborted,
+            .timed_out => error.TimedOut,
+        },
+    };
+}
+
+/// Cancel what is left of a `postWatched` race and free any response it
+/// produced on the way out.
+fn drainWatched(gpa: Allocator, sel: *Io.Select(Watched)) void {
+    while (sel.cancel()) |rest| switch (rest) {
+        .post => |r| if (r) |res| gpa.free(res.body) else |_| {},
+        .watch => {},
+    };
 }
 
 const ToolResult = struct { text: []const u8, note: []const u8, is_error: bool = false };
@@ -2376,4 +2457,67 @@ test "the API agent's read_file refuses a secret-bearing file, and grep never re
     const g = try executeTool(arena, t.io, t.allocator, &app.events, &j, dir, "grep", grep_in, false);
     try t.expect(std.mem.indexOf(u8, g.text, "config.txt") != null);
     try t.expect(std.mem.indexOf(u8, g.text, "hunter2") == null);
+}
+
+test "the API backend: MNML_ANTHROPIC_BASE_URL points it at a mock; a server that never finishes is cut off by the budget" {
+    // A server that answers the head and never the body.
+    const Stall = struct {
+        fn serve(io: Io, server: *Io.net.Server) Io.Cancelable!void {
+            const stream = server.accept(io) catch return;
+            defer stream.close(io);
+            var rbuf: [16 * 1024]u8 = undefined;
+            var reader = stream.reader(io, &rbuf);
+            // The request head; the body is not read.
+            while (true) {
+                const line = reader.interface.takeDelimiterInclusive('\n') catch return;
+                if (line.len <= 2) break;
+            }
+            var wbuf: [256]u8 = undefined;
+            var writer = stream.writer(io, &wbuf);
+            writer.interface.writeAll("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 1000\r\n\r\n{") catch return;
+            writer.interface.flush() catch return;
+            try io.sleep(.fromSeconds(30), .awake);
+        }
+    };
+    const io = t.io;
+    var addr: Io.net.IpAddress = .{ .ip4 = .loopback(0) };
+    var server = try addr.listen(io, .{ .reuse_address = true });
+    defer server.deinit(io);
+    var group: Io.Group = .init;
+    defer group.cancel(io);
+    try group.concurrent(io, Stall.serve, .{ io, &server });
+
+    var app = try App.initWith(t.allocator, io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    const base = try std.fmt.allocPrint(t.allocator, "http://127.0.0.1:{d}/", .{server.socket.address.getPort()});
+    defer t.allocator.free(base);
+    try app.env.put(api.base_url_env, base);
+    try app.env.put(api.env_key, "fake-key-for-a-mock");
+    app.cfg.ai.routing.claude.backend = .api;
+    app.cfg.ai.cli_timeout_ms = 1200; // below the clamp: the test is about the cut-off
+    const t0 = Io.Timestamp.now(io, .awake);
+    const id = try ask(&app, "ai: ask", "hello", .ask, null);
+    const p = &app.panes.get(id).?.ai;
+    var spent: u32 = 0;
+    while (p.status == .running) : (spent += 10) {
+        if (spent > 10_000) return error.Timeout;
+        try io.sleep(.fromMilliseconds(10), .awake);
+        try app.tick(App.nowMs(app.io));
+    }
+    try t.expect(t0.untilNow(io, .awake).toMilliseconds() < 8_000);
+    try t.expect(std.mem.indexOf(u8, p.err.?, "the API gave no answer within 2 s") != null);
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "cli_timeout_ms") != null);
+}
+
+test "an API failure says its status, the API's words and, on a 429, when to retry" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    var body = "{\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"slow down\"}}".*;
+    const m429 = try httpFailure(t.allocator, arena.allocator(), .{ .status = 429, .body = &body, .retry_after_s = 7 });
+    defer t.allocator.free(m429);
+    try t.expectEqualStrings("HTTP 429 slow down — retry after 7 s", m429);
+    var junk = "oops".*;
+    const m500 = try httpFailure(t.allocator, arena.allocator(), .{ .status = 500, .body = &junk });
+    defer t.allocator.free(m500);
+    try t.expectEqualStrings("HTTP 500", m500);
 }
