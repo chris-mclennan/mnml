@@ -1,0 +1,32 @@
+# :%s/x/Y/gc — whatever the answers, the confirmed replacements undo as ONE
+# step (Neovim 0.12.5: `a` then `u` gives the file back whole). Before,
+# each confirmed match was its own undo step.
+write a.txt "l1 x\nl2 x\nl3 x\n"
+open a.txt
+command editor.use_vim
+key :
+type "%s/x/Y/gc"
+key enter
+key a
+key u
+key :
+type "w"
+key enter
+expect file a.txt contains "l1 x\nl2 x\nl3 x"
+
+# `y y` then Esc: one `u` undoes both.
+key :
+type "%s/x/Y/gc"
+key enter
+key y
+key y
+key esc
+key :
+type "w"
+key enter
+expect file a.txt contains "l1 Y\nl2 Y\nl3 x"
+key u
+key :
+type "w"
+key enter
+expect file a.txt contains "l1 x\nl2 x\nl3 x"

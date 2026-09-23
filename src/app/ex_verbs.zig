@@ -777,6 +777,9 @@ pub const ReplaceConfirm = struct {
     idx: usize = 0,
     applied: usize = 0,
     delta: isize = 0,
+    /// The undo stack's depth before the first replacement: the ones
+    /// confirmed collapse into one undo step when the run ends (Neovim).
+    undo_base: usize = 0,
 
     pub fn deinit(c: ReplaceConfirm, gpa: Allocator) void {
         gpa.free(c.needle);
@@ -841,7 +844,7 @@ fn substituteConfirm(app: *App, range: ?Range, parts: SubParts, whole: bool) Com
     errdefer app.gpa.free(rep_owned);
     const matches_owned = try matches.toOwnedSlice(app.gpa);
     errdefer app.gpa.free(matches_owned);
-    app.replace_confirm = .{ .pane = pane_id, .needle = needle_owned, .replacement = rep_owned, .matches = matches_owned, .expansions = try expansions.toOwnedSlice(app.gpa) };
+    app.replace_confirm = .{ .pane = pane_id, .needle = needle_owned, .replacement = rep_owned, .matches = matches_owned, .expansions = try expansions.toOwnedSlice(app.gpa), .undo_base = ed.doc.history.undoLen() };
     try showNext(app);
 }
 
@@ -973,6 +976,8 @@ fn finishConfirm(app: *App) void {
     if (app.panes.editor(c.pane)) |e| {
         e.buf.editor.anchor = null;
         e.buf.editor.goal_col = null;
+        // Every confirmed replacement is one undo step, as in Neovim.
+        if (c.applied > 1) e.buf.editor.endAtomic(.{ .target_len = c.undo_base + 1 });
     }
     app.toast(":s — {d} replacement(s)", .{c.applied});
     c.deinit(app.gpa);
@@ -1246,6 +1251,30 @@ test "ex: :g, :s///n and :s///c take vim patterns — word bounds, a group refer
     try testing.expectError(error.Failed, f.ex("g/\\(x/d"));
     try testing.expectError(error.Failed, f.ex("%s/\\(x/-/c"));
     try testing.expectEqualStrings("foobar\n12-ab 34-cd", f.text());
+}
+
+test "ex: :s///c — the confirmed replacements undo as one step, whether answered a, y y y or y then Esc" {
+    const Case = struct { keys: []const Key };
+    const cases = [_]Case{
+        .{ .keys = &.{Key.char('a')} },
+        .{ .keys = &.{ Key.char('y'), Key.char('y'), Key.char('y') } },
+        .{ .keys = &.{ Key.char('y'), Key.char('y'), Key.named(.esc) } },
+        .{ .keys = &.{ Key.char('y'), Key.char('n'), Key.char('y') } },
+    };
+    for (cases) |c| {
+        var f = try Fixture.init("l1 x\nl2 x\nl3 x\n");
+        defer f.deinit();
+        const e = f.app.activeEditor().?;
+        try f.ex("%s/x/Y/gc");
+        for (c.keys) |k| try f.key(k);
+        try testing.expect(f.app.replace_confirm == null);
+        try testing.expect(!std.mem.eql(u8, "l1 x\nl2 x\nl3 x\n", f.text()));
+        _ = try f.app.applyOps(e, &.{.undo});
+        try testing.expectEqualStrings("l1 x\nl2 x\nl3 x\n", f.text());
+        // And redo brings the whole run back.
+        _ = try f.app.applyOps(e, &.{.redo});
+        try testing.expect(std.mem.count(u8, f.text(), "Y") >= 2);
+    }
 }
 
 test "ex: :s///c asks per match — y/n/a/q/l and Esc" {
