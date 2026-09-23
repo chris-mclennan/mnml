@@ -410,6 +410,10 @@ pub fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8)
             if (std.mem.trim(u8, text, " \t").len == 0) return;
             try browser.eval(app, b, text, .eval);
         },
+        .browser_dialog => {
+            const b = activeBrowser(app) orelse return;
+            try browser.answerDialog(app, b, true, text);
+        },
         .browser_add_cookie => {
             const b = activeBrowser(app) orelse return;
             const eq = std.mem.indexOfScalar(u8, text, '=') orelse {

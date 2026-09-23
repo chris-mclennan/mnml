@@ -313,6 +313,8 @@ pub const PromptPurpose = union(enum) {
     browser_url,
     browser_navigate,
     browser_eval,
+    /// The answer to a page's `prompt()` dialog.
+    browser_dialog,
     browser_add_cookie,
     browser_add_storage,
     /// `mount.open`: the binary and args to host.

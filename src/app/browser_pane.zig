@@ -83,7 +83,24 @@ pub const NetEntry = struct {
 /// `eval_json` is the by-value copy of an object an eval returned;
 /// `silent` drops even an error (enables on a child target that lacks
 /// the domain).
-pub const Pending = enum { eval, eval_json, screenshot, screenshot_clip, pdf, cookies, storage, perf, dom, box_model, navigate, quiet, silent };
+pub const Pending = enum { eval, eval_json, screenshot, screenshot_clip, pdf, cookies, storage, perf, dom, box_model, navigate, dialog, quiet, silent };
+
+/// A JavaScript dialog the page is parked on (`alert` / `confirm` /
+/// `prompt` / `beforeunload`) until the pane answers it. Owned.
+pub const Dialog = struct {
+    kind: []u8,
+    message: []u8,
+    default_prompt: []u8,
+    /// The session that raised it; null for the pane's own page.
+    session: ?[]u8,
+
+    fn deinit(self: *Dialog, gpa: Allocator) void {
+        gpa.free(self.kind);
+        gpa.free(self.message);
+        gpa.free(self.default_prompt);
+        if (self.session) |x| gpa.free(x);
+    }
+};
 
 pub const Snapshot = struct {
     url: []u8,
@@ -200,6 +217,7 @@ pub const BrowserPane = struct {
     pane_id: ?PaneId = null,
     /// Tests: the stand-in Chrome the worker runs.
     binary: ?[]const u8 = null,
+    dialog: ?Dialog = null,
     /// The DOM panel was open across a navigation: ask again on load.
     dom_refresh: bool = false,
     /// What an eval returned, as its preview, for when the by-value copy
@@ -237,6 +255,7 @@ pub const BrowserPane = struct {
         for (self.visited.items) |v| gpa.free(v);
         self.visited.deinit(gpa);
         self.filter.deinit(gpa);
+        if (self.dialog) |*d| d.deinit(gpa);
         self.clearFallbacks();
         self.eval_fallback.deinit(gpa);
         self.clearExtraEarly();
@@ -258,6 +277,11 @@ pub const BrowserPane = struct {
             self.gpa.free(e.headers);
         }
         self.extra_early.clearRetainingCapacity();
+    }
+
+    fn clearDialog(self: *BrowserPane) void {
+        if (self.dialog) |*d| d.deinit(self.gpa);
+        self.dialog = null;
     }
 
     fn freeRows(gpa: Allocator, rows: *std.ArrayListUnmanaged(Row)) void {
@@ -657,6 +681,7 @@ fn purposeLabel(purpose: Pending) []const u8 {
         .dom => "DOM",
         .box_model => "node box",
         .navigate => "navigate",
+        .dialog => "dialog",
         .eval_json => "eval",
         .quiet, .silent => "request",
     };
@@ -727,7 +752,7 @@ fn onMessage(app: *App, p: *BrowserPane, text: []const u8) Allocator.Error!void 
         else => {},
     };
     switch (purpose) {
-        .quiet, .silent => {},
+        .quiet, .silent, .dialog => {},
         .navigate => {
             // A navigation Chrome refused at the network layer.
             if (cdp.str(m.result, &.{"errorText"})) |e| try p.push(.console_err, try std.fmt.allocPrint(arena, "navigate failed: {s}", .{e}));
@@ -952,6 +977,26 @@ fn onEvent(app: *App, p: *BrowserPane, method: []const u8, m: cdp.Message) Alloc
         if (!p.dom_refresh) return;
         p.dom_refresh = false;
         if (p.panel == .dom) try send(app, p, "DOM.getDocument", "{\"depth\":-1}", .dom);
+    } else if (std.mem.eql(u8, method, "Page.javascriptDialogOpening")) {
+        const kind = cdp.str(m.params, &.{"type"}) orelse "alert";
+        const message = cdp.str(m.params, &.{"message"}) orelse "";
+        p.clearDialog();
+        var d: Dialog = .{ .kind = try app.gpa.dupe(u8, kind), .message = undefined, .default_prompt = undefined, .session = null };
+        errdefer app.gpa.free(d.kind);
+        d.message = try app.gpa.dupe(u8, message);
+        errdefer app.gpa.free(d.message);
+        d.default_prompt = try app.gpa.dupe(u8, cdp.str(m.params, &.{"defaultPrompt"}) orelse "");
+        errdefer app.gpa.free(d.default_prompt);
+        d.session = if (m.session_id) |x| try app.gpa.dupe(u8, x) else null;
+        p.dialog = d;
+        const how: []const u8 = if (std.mem.eql(u8, kind, "alert")) "Enter dismisses it" else if (std.mem.eql(u8, kind, "prompt")) "Enter answers · Esc cancels" else "Enter accepts · Esc cancels";
+        try p.push(.console_err, try std.fmt.allocPrint(arena, "dialog ({s}): {s} — the page waits: {s}", .{ kind, message, how }));
+        app.toast("browser: the page opened a {s} dialog — {s}", .{ kind, how });
+    } else if (std.mem.eql(u8, method, "Page.javascriptDialogClosed")) {
+        if (p.dialog == null) return;
+        p.clearDialog();
+        const accepted = if (cdp.get(m.params, &.{"result"})) |r| r == .bool and r.bool else false;
+        try p.push(.system, if (accepted) "dialog closed: accepted" else "dialog closed: cancelled");
     } else if (std.mem.eql(u8, method, "Network.requestWillBeSent")) {
         const ty = cdp.str(m.params, &.{"type"}) orelse "";
         if (!(std.mem.eql(u8, ty, "Document") or std.mem.eql(u8, ty, "XHR") or std.mem.eql(u8, ty, "Fetch"))) return;
@@ -1173,6 +1218,18 @@ pub fn handleKey(app: *App, id: PaneId, p: *BrowserPane, k: Key) Allocator.Error
     }
     if (k.mods.ctrl or k.mods.alt or k.mods.super) return false;
     if (p.filter_focused) return filterKey(app, p, k);
+    // A dialog the page is parked on takes Enter and Esc first.
+    if (p.dialog) |d| switch (k.code) {
+        .enter => {
+            if (std.mem.eql(u8, d.kind, "prompt")) try dialogPrompt(app, d) else try answerDialog(app, p, true, null);
+            return true;
+        },
+        .esc => {
+            try answerDialog(app, p, false, null);
+            return true;
+        },
+        else => {},
+    };
     const page: i64 = @intCast(@max(app.pane_rows, 1));
     switch (k.code) {
         .esc => {
@@ -1333,6 +1390,27 @@ fn moveSel(p: *BrowserPane, delta: i64) Allocator.Error!void {
     sel.* = visible[@intCast(next)];
 }
 
+/// Answer the dialog the page is parked on: accept (with `text` for a
+/// `prompt()`), or cancel. The pane forgets it once Chrome says it
+/// closed.
+pub fn answerDialog(app: *App, p: *BrowserPane, accept: bool, text: ?[]const u8) Allocator.Error!void {
+    const d = p.dialog orelse return;
+    const arena = app.frame.allocator();
+    const params = if (text) |t|
+        try std.fmt.allocPrint(arena, "{{\"accept\":{},\"promptText\":{f}}}", .{ accept, std.json.fmt(t, .{}) })
+    else
+        try std.fmt.allocPrint(arena, "{{\"accept\":{}}}", .{accept});
+    _ = try sendTo(app, p, "Page.handleJavaScriptDialog", params, .dialog, d.session);
+}
+
+fn dialogPrompt(app: *App, d: Dialog) Allocator.Error!void {
+    var state = app_mod.Prompt.init(app.gpa, "Answer the page's prompt()");
+    if (d.default_prompt.len > 0) try state.setText(app.gpa, d.default_prompt);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .{ .prompt = .{ .state = state, .purpose = .browser_dialog } };
+    app.focus = .overlay;
+}
+
 pub fn evalPrompt(app: *App) Allocator.Error!void {
     app.overlay.deinit(app.gpa);
     app.overlay = .{ .prompt = .{ .state = app_mod.Prompt.init(app.gpa, "Evaluate in page"), .purpose = .browser_eval } };
@@ -1458,6 +1536,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, p: *BrowserPane, area: Rect) Allocato
         .filter = p.filter.items,
         .filter_caret = p.filter_caret,
         .filter_focused = p.filter_focused,
+        .dialog = if (p.dialog) |d| d.kind else null,
     });
     if (app.active == id) {
         app.pane_rows = @max(area.h, 1);
@@ -2358,6 +2437,37 @@ test "requestWillBeSentExtraInfo's Cookie reaches the re-send and the curl, in e
     defer gpa.free(log);
     try testing.expect(std.mem.indexOf(u8, log, "secret-session") == null);
     try testing.expect(std.mem.indexOf(u8, log, "X-Hunt") != null);
+}
+
+test "an alert / confirm / prompt the page raises is shown, and Enter / Esc answer it" {
+    var tb: TestBed = .{};
+    const p = try tb.init();
+    defer tb.deinit();
+    try tb.msg("{\"method\":\"Page.javascriptDialogOpening\",\"params\":{\"url\":\"http://a/\",\"message\":\"dlg-msg-77\",\"type\":\"alert\",\"hasBrowserHandler\":true,\"defaultPrompt\":\"\"}}");
+    try testing.expectEqualStrings("dialog (alert): dlg-msg-77 — the page waits: Enter dismisses it", tb.last());
+    try testing.expect(p.dialog != null);
+    try testing.expect(try handleKey(&tb.app, tb.id, p, Key.named(.enter)));
+    try testing.expectEqualStrings("Page.handleJavaScriptDialog", tb.lastQueued());
+    try testing.expectEqualStrings("{\"accept\":true}", p.queued.items[p.queued.items.len - 1].params);
+    try tb.msg("{\"method\":\"Page.javascriptDialogClosed\",\"params\":{\"result\":true,\"userInput\":\"\"}}");
+    try testing.expect(p.dialog == null);
+    try testing.expectEqualStrings("dialog closed: accepted", tb.last());
+    // confirm(): Esc cancels.
+    try tb.msg("{\"method\":\"Page.javascriptDialogOpening\",\"params\":{\"url\":\"http://a/\",\"message\":\"sure?\",\"type\":\"confirm\",\"defaultPrompt\":\"\"}}");
+    try testing.expect(try handleKey(&tb.app, tb.id, p, Key.named(.esc)));
+    try testing.expectEqualStrings("{\"accept\":false}", p.queued.items[p.queued.items.len - 1].params);
+    // prompt(): Enter opens an answer prompt seeded with the default.
+    try tb.msg("{\"method\":\"Page.javascriptDialogOpening\",\"params\":{\"url\":\"http://a/\",\"message\":\"name?\",\"type\":\"prompt\",\"defaultPrompt\":\"ann\"}}");
+    try testing.expect(try handleKey(&tb.app, tb.id, p, Key.named(.enter)));
+    try testing.expect(tb.app.overlay == .prompt);
+    try testing.expect(tb.app.overlay.prompt.purpose == .browser_dialog);
+    try answerDialog(&tb.app, p, true, "bob");
+    try testing.expectEqualStrings("{\"accept\":true,\"promptText\":\"bob\"}", p.queued.items[p.queued.items.len - 1].params);
+    // The hint row says the page waits.
+    var f = try @import("../ui/test_fixture.zig").init(100, 12);
+    defer f.deinit();
+    try draw(&tb.app, f.ui(), tb.id, p, f.full());
+    try f.expectContains("the page waits on a prompt() — Enter answers · Esc cancels");
 }
 
 test "scrolled back, the log holds still while lines arrive; at the tail it follows" {

@@ -80,6 +80,8 @@ pub const Model = struct {
     filter: []const u8,
     filter_caret: usize,
     filter_focused: bool,
+    /// The kind of JavaScript dialog the page is parked on, if one.
+    dialog: ?[]const u8 = null,
 };
 
 pub const hit_panel_base: u32 = 1; // + Panel index
@@ -136,7 +138,9 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, m: Model) Outcome {
     out.caret = drawFilter(ui, pane, area.row(2), m);
     if (area.h < 4) return out;
     const hint_row = area.row(area.h - 1);
-    const hint: []const u8 = switch (m.panel) {
+    const hint: []const u8 = if (m.dialog) |d|
+        (if (std.mem.eql(u8, d, "prompt")) "the page waits on a prompt() — Enter answers · Esc cancels" else if (std.mem.eql(u8, d, "alert")) "the page waits on an alert() — Enter dismisses it" else ui.fmt("the page waits on a {s} dialog — Enter accepts · Esc cancels", .{d}))
+    else switch (m.panel) {
         .log => "/ filter · g navigate · e eval · r reload · n network · K cookies · L storage · P perf · D dom · m device · s screenshot · q close",
         .net => "/ filter · j/k select · y copy as curl · Enter re-send as a request · Esc back",
         .cookies => "/ filter · j/k select · d delete · a add · Esc back",
@@ -144,7 +148,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, m: Model) Outcome {
         .perf => "/ filter · Esc back",
         .dom => "/ filter · j/k select · hover highlights the node in Chrome · Esc back",
     };
-    _ = ui.putStr(hint_row.x + 1, hint_row.y, hint_row.w -| 1, ui.clipStr(hint, hint_row.w -| 1), t.muted);
+    _ = ui.putStr(hint_row.x + 1, hint_row.y, hint_row.w -| 1, ui.clipStr(hint, hint_row.w -| 1), if (m.dialog != null) t.warn_fg else t.muted);
     const body = Rect.init(area.x, area.y + 3, area.w, area.h - 4);
     if (body.isEmpty()) return out;
     switch (m.panel) {
