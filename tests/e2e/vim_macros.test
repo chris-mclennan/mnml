@@ -1,14 +1,15 @@
-# vim macros — vim canonical: `q<reg>` starts recording into <reg>,
-# `q` alone stops. mnml convenience: `qq` records into the anonymous
-# `'@'` register; `@@` and bare `@` replay anonymous.
+# vim macros, as Neovim 0.12.5 does them: `q<reg>` starts recording into
+# <reg> (`qq` is register q like any letter), `q` alone stops, `@<reg>`
+# replays and `@@` repeats the last register EXECUTED — so `@q` then
+# `@@` changes two more lines (`:help @@`). `Q` replays the last one
+# recorded.
 
-write code.txt "hello\nworld\nfoo\nbar"
+write code.txt "hello\nworld\nfoo\nbar\nbaz"
 open code.txt
 
 command editor.use_vim
 
-# Start anonymous recording: qq. Then i → X → esc → j (next line).
-# Stop: q.
+# Record into q: i → X → esc → j (next line). Stop: q.
 key q
 key q
 key i
@@ -20,12 +21,16 @@ key q
 # After recording: line 0 should now be "Xhello", cursor on line 1.
 expect screen contains "Xhello"
 
-# Replay with @@ (anonymous): same actions on the next line.
+# `@q` replays register q on the next line.
 key @
-key @
+key q
 expect screen contains "Xworld"
 
-# And again.
+# `@@` repeats it — the first `@@` after `@q` runs, not only a second.
 key @
 key @
 expect screen contains "Xfoo"
+
+# `Q`: the last recorded register again.
+key Q
+expect screen contains "Xbar"

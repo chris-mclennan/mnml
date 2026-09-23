@@ -58,8 +58,10 @@ pub const Clipboard = struct {
     /// The last text read back from the OS, gpa-owned — what `text()`
     /// handed out for a `"+` / `"*` read. Freed on the next such read.
     os_text: ?[]u8 = null,
-    /// The register `@@` repeats: the last one recorded or replayed.
+    /// The register `@@` repeats: the last one executed (`:help @@`).
     last_macro: ?u8 = null,
+    /// The register `Q` repeats: the last one recorded (`:help Q`).
+    last_recorded: ?u8 = null,
 
     pub fn init(gpa: Allocator) Clipboard {
         return .{ .gpa = gpa };

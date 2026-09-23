@@ -88,7 +88,9 @@ pub const AppCommand = union(enum) {
     jump_to_mark_exact: u8,
     /// `q<reg>`; `'@'` = anonymous. Idle ⇒ start; recording ⇒ stop.
     macro_record_into: u8,
-    macro_replay_from: struct { reg: u8, count: u32 },
+    /// `@x` / `@@` (`reg` '@': the last one executed); `recorded`: `Q`,
+    /// the last one recorded (`:help Q`).
+    macro_replay_from: struct { reg: u8, count: u32, recorded: bool = false },
     block_insert_start: struct { append: bool },
     block_change_start,
     block_replace_with: struct { ch: u21 },

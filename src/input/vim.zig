@@ -1134,10 +1134,7 @@ pub const Vim = struct {
                 self.prefix = .none;
                 const c = ch orelse return .consumed;
                 if (c == ':') return runCmd(.@"view.cmdline_history");
-                if (c == 'q') {
-                    self.is_recording_macro = true;
-                    return .{ .app = .{ .macro_record_into = '@' } };
-                }
+                // `qq` is register q like any other letter (`:help q`).
                 // `qA` appends to `a` (`:help q`); the buffer folds the case.
                 if ((c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9')) {
                     self.is_recording_macro = true;
@@ -1427,7 +1424,7 @@ pub const Vim = struct {
                     'Q' => {
                         const count = self.count1();
                         self.count = null;
-                        return .{ .app = .{ .macro_replay_from = .{ .reg = '@', .count = count } } };
+                        return .{ .app = .{ .macro_replay_from = .{ .reg = '@', .count = count, .recorded = true } } };
                     },
                     '@' => {
                         self.prefix = .macro_replay_target;

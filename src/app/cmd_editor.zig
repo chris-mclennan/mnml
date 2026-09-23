@@ -703,7 +703,7 @@ fn macroToggle(app: *App) CommandError!void {
 /// `vim.macro_replay`: the last recorded macro, once.
 fn macroReplay(app: *App) CommandError!void {
     const a = try activeWithId(app);
-    const reg = app.clipboard.last_macro orelse {
+    const reg = app.clipboard.last_recorded orelse {
         app.toast("no macro to replay", .{});
         return;
     };
@@ -711,7 +711,7 @@ fn macroReplay(app: *App) CommandError!void {
         app.toast("no macro to replay", .{});
         return;
     }
-    try dispatch.runBufferApp(app, a.id, a.e, .{ .macro_replay_from = .{ .reg = '@', .count = 1 } });
+    try dispatch.runBufferApp(app, a.id, a.e, .{ .macro_replay_from = .{ .reg = '@', .count = 1, .recorded = true } });
 }
 
 /// `gi`: back to where the last change ended, in Insert.
