@@ -352,7 +352,7 @@ pub const Vim = struct {
                 .{ .key = 'W', .label = "previous split" }, .{ .key = 'q', .label = "close split" },     .{ .key = 'o', .label = "only" },
                 .{ .key = 'H', .label = "move far left" },  .{ .key = 'J', .label = "move bottom" },     .{ .key = 'K', .label = "move top" },
                 .{ .key = 'L', .label = "move far right" }, .{ .key = 'r', .label = "rotate" },          .{ .key = '=', .label = "equalize" },
-                .{ .key = 'n', .label = "new scratch" },    .{ .key = 'T', .label = "move to new tab" },
+                .{ .key = 'n', .label = "new scratch" },    .{ .key = 'T', .label = "move to new tab" }, .{ .key = 'z', .label = "zoom / restore" },
             } },
             else => null,
         };
@@ -1206,6 +1206,9 @@ pub const Vim = struct {
                     // `:help CTRL-W_T` — the split leaves its tab page for
                     // a new one, the partner of `Ctrl-W s` / `v`.
                     'T' => runCmd(.@"view.move_to_new_tab"),
+                    // tmux's zoom letter: the split has the page until
+                    // the same chord puts the layout back.
+                    'z' => runCmd(.@"view.toggle_zoom"),
                     else => .consumed,
                 };
             },
@@ -2495,7 +2498,7 @@ test "every chord a spec lists as the vim handler's own reaches that spec's comm
     try testing.expect(listed >= 2);
 }
 
-test "ctrl+w H/J/K/L move the split; = r _ | + - > < n o w h d f T reach their runners" {
+test "ctrl+w H/J/K/L move the split; = r _ | + - > < n o w h d f T z reach their runners" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
@@ -2528,6 +2531,8 @@ test "ctrl+w H/J/K/L move the split; = r _ | + - > < n o w h d f T reach their r
         // `:help CTRL-W_T`: the palette title and `docs/commands.md`
         // advertised this chord long before it was bound.
         .{ .key = 'T', .id = .@"view.move_to_new_tab" },
+        // tmux's zoom letter — the split fills the page, again restores.
+        .{ .key = 'z', .id = .@"view.toggle_zoom" },
     };
     for (cases) |c| {
         try testing.expect((try v.handleKey(Key.ctrl('w'), .{}, a)) == .consumed);

@@ -181,7 +181,7 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
             .keys = &.{ .{ .command = .@"view.split_down", .label = "Split down" }, .{ .command = .@"term.shell_bottom", .label = "A shell below" } },
             .links = &.{ .{ .command = .{ .id = .@"view.split_down", .label = "Split down" } }, .{ .command = .{ .id = .@"term.shell_bottom", .label = "A shell in the bottom half" } } },
         },
-        .split_max => if (app.zen or app.zoomed_leaf != null) .{
+        .split_max => if (app.zen or app.zoomedPane() != null) .{
             .title = "Restore",
             .body = if (app.zen) "Full screen is on: the chrome — the rail, the columns, the bars — is hidden and the panes have the whole terminal. Click brings the frame back; so does Esc Esc, or the corner mark at the top right. Right-click lists the two maximize modes." else "This pane is zoomed: it has its leaf's whole area and the other splits are hidden, not closed. Click restores the splits; right-click lists the two maximize modes. The zoom is per tab page.",
             .keys = &.{ .{ .command = .@"view.fullscreen", .label = "Full screen" }, .{ .command = .@"view.toggle_zoom", .label = "Zoom this pane" } },
@@ -584,7 +584,7 @@ pub fn askContext(app: *App, arena: Allocator, id: u32) Allocator.Error!?[]const
     if (menu_bar.buttonOf(id)) |m| return try std.fmt.allocPrint(arena, "- the menu bar's {s} menu\n", .{m.title()});
     if (id >= @intFromEnum(Button.new_tab_base)) return null;
     return switch (@as(Button, @enumFromInt(id))) {
-        .split_max => try std.fmt.allocPrint(arena, "- the maximize button; ui.maximize_click = {s}; full screen on: {}; a pane zoomed: {}\n", .{ @tagName(app.cfg.ui.maximize_click), app.zen, app.zoomed_leaf != null }),
+        .split_max => try std.fmt.allocPrint(arena, "- the maximize button; ui.maximize_click = {s}; full screen on: {}; a pane zoomed: {}\n", .{ @tagName(app.cfg.ui.maximize_click), app.zen, app.zoomedPane() != null }),
         .theme_toggle => try std.fmt.allocPrint(arena, "- theme: {s}\n", .{app.theme.name}),
         else => null,
     };

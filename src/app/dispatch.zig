@@ -2419,6 +2419,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     .bell => if (right) try context_menus.openBellMenu(app, m.x, m.y) else try runCmd(app, .@"messages.show"),
                     .clock => if (right) try clock_mod.openMenu(app, m.x, m.y) else try runCmd(app, if (app.clock.mode == .utc) .@"clock.local" else .@"clock.utc"),
                     .workspace => if (right) try context_menus.openWorkspaceChipMenu(app, m.x, m.y) else try runCmd(app, if (app.git.repos.items.len > 1) .@"git.switch_repo" else .@"view.switch_workspace"),
+                    .zoom => try runCmd(app, .@"view.toggle_zoom"),
                     .dev_profile => app.toast("dev profile — state in {s} (the installed mnml keeps its own)", .{app.data_root}),
                     _ => {},
                 } else if (seg >= statusline.seg_dyn_base) {

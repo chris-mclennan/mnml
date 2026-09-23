@@ -1878,7 +1878,7 @@ test "right-click: the maximize chip lists its two modes and ticks the one a lef
     app.overlay.menu.highlight = true;
     _ = try app.openScratch();
     try app.handle(.{ .key = app_mod.Key.named(.enter) });
-    try t.expect(app.zoomed_leaf != null);
+    try t.expect(app.zoomedPane() != null);
     try t.expectEqual(app_mod.Config.MaximizeClick.fullscreen, app.cfg.ui.maximize_click);
 }
 

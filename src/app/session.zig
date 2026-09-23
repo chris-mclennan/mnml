@@ -1,7 +1,7 @@
 //! The session — `<workspace>/.mnml/session.zon` (E1: persisted state is
 //! ZON). What the workspace looked like when mnml last ran: the open
 //! panes (path, cursor, scroll, wrap, folds, marks; a pty's command
-//! line), every tab page's split tree, the active pane, the tree rail,
+//! line), every tab page's split tree (and its zoom), the active pane, the tree rail,
 //! the right panel, zen, the theme, the harpoon pins, the `:` history,
 //! the recent files, the recent commands, the closed-buffer list and
 //! the toast log.
@@ -170,7 +170,15 @@ pub const Node = union(enum) {
     leaf: struct { active: u32 = 0, tabs: []const u32 = &.{} },
     split: struct { dir: layout_mod.SplitDir = .horizontal, ratio: u16 = 50, first: u32 = 0, second: u32 = 0 },
 };
-pub const Tab = struct { nodes: []const Node = &.{}, root: ?u32 = null };
+pub const Tab = struct {
+    nodes: []const Node = &.{},
+    root: ?u32 = null,
+    /// `view.toggle_zoom`: the zoomed pane, an index into `panes` —
+    /// the page comes back zoomed on it. Null (and left out of the
+    /// file) for a page that was not zoomed; a pane that did not come
+    /// back leaves the page un-zoomed.
+    zoomed: ?u32 = null,
+};
 pub const Closed = struct { path: []const u8 = "", cursor: usize = 0 };
 pub const Message = struct { level: Level = .info, age_ms: i64 = 0, text: []const u8 = "" };
 /// SESSIONS: a display name for a session id.
@@ -538,7 +546,8 @@ fn captureLayout(arena: Allocator, l: *const Layout, index_of: []const ?u32) All
             .second = remap[s.second] orelse 0,
         } }),
     };
-    return .{ .nodes = nodes.items, .root = if (l.root) |r| remap[r] else null };
+    const zoomed: ?u32 = if (l.zoomed) |z| (if (z < index_of.len and l.leafOf(z) != null) index_of[z] else null) else null;
+    return .{ .nodes = nodes.items, .root = if (l.root) |r| remap[r] else null, .zoomed = zoomed };
 }
 
 // ─── restore ─────────────────────────────────────────────────────────────
@@ -643,7 +652,7 @@ pub fn apply(app: *App, arena: Allocator, saved: Saved) RestoreError!void {
         app.showPane(id);
     } else {
         const layout = app.layouts.current();
-        if (layout.firstLeaf()) |l| app.setActive(layout.leaf(l).?.active);
+        app.setActive(layout.landing());
     }
 
     // Chrome.
@@ -980,6 +989,10 @@ fn buildLayout(gpa: Allocator, tab: Tab, ids: []const ?PaneId) Allocator.Error!L
     };
     l.root = tab.root;
     while (l.leafOf(sentinel) != null) _ = l.removePane(sentinel);
+    // After the sweep, which drops a zoom whenever it collapses a leaf.
+    if (tab.zoomed) |zi| if (zi < ids.len) if (ids[zi]) |pid| if (l.leafOf(pid) != null) {
+        l.zoomed = pid;
+    };
     return l;
 }
 
@@ -1096,6 +1109,51 @@ const Fixture = struct {
         return false;
     }
 };
+
+test "session: each tab page's zoom comes back — page 1 zoomed on its second split, page 2 on its first, a page with no zoom writes none" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    for ([_][]const u8{ "a.txt", "b.txt", "c.txt", "d.txt" }) |n| try f.tmp.dir.writeFile(t.io, .{ .sub_path = n, .data = "x\n" });
+    const paths = [_][]u8{ try f.abs("a.txt"), try f.abs("b.txt"), try f.abs("c.txt"), try f.abs("d.txt") };
+    defer for (paths) |p| t.allocator.free(p);
+    {
+        var app = try f.app();
+        defer app.deinit();
+        _ = try app.openPath(paths[0]);
+        try command.run(&app, .{ .static = .@"view.split_right" });
+        _ = try app.openPath(paths[1]);
+        try command.run(&app, .{ .static = .@"view.toggle_zoom" });
+        try command.run(&app, .{ .static = .@"tab.new" });
+        _ = try app.openPath(paths[2]);
+        try command.run(&app, .{ .static = .@"view.split_right" });
+        _ = try app.openPath(paths[3]);
+        app.setActive(app.panes.findPath(paths[2]).?);
+        try command.run(&app, .{ .static = .@"view.toggle_zoom" });
+        try command.run(&app, .{ .static = .@"tab.new" });
+        try command.run(&app, .{ .static = .@"tab.first" });
+        try save(&app);
+        const text = try Io.Dir.cwd().readFileAlloc(t.io, try path(&app, app.frame.allocator()), app.frame.allocator(), .limited(1 << 20));
+        // Two pages zoomed, the third not: two `.zoomed` fields.
+        try t.expectEqual(@as(usize, 2), std.mem.count(u8, text, ".zoomed"));
+    }
+    {
+        var app = try f.app();
+        defer app.deinit();
+        try restore(&app);
+        try t.expectEqual(@as(usize, 3), app.layouts.layouts.items.len);
+        try t.expectEqual(@as(usize, 0), app.layouts.active);
+        try t.expectEqualStrings(paths[1], app.activeEditor().?.buf.doc.path.?);
+        try t.expect(app.panes.editor(app.zoomedPane().?).?.buf.doc.isAt(paths[1]));
+        try t.expectEqual(@as(usize, 2), (try app.layouts.current().leaves(app.frame.allocator())).len);
+        const z2 = app.layouts.layouts.items[1].zoomed.?;
+        try t.expect(app.panes.editor(z2).?.buf.doc.isAt(paths[2]));
+        try t.expect(app.layouts.layouts.items[2].zoomed == null);
+        // Switching to page 2 lands on its zoomed split and keeps it.
+        try command.run(&app, .{ .static = .@"tab.next" });
+        try t.expectEqual(z2, app.active.?);
+        try t.expectEqual(z2, app.zoomedPane().?);
+    }
+}
 
 test "session: save → restore brings back the panes, the split, the tab pages, the cursor, folds, pins and history" {
     var f = try Fixture.init();

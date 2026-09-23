@@ -583,7 +583,7 @@ pub fn describeButton(app: *App, arena: Allocator, id: u32) Allocator.Error!?Tip
         // button has two and `ui.maximize_click` picks which
         // (`app/zen.zig`); while something is maximized it names the
         // way back instead.
-        .split_max => if (app.zen or app.zoomed_leaf != null) .{
+        .split_max => if (app.zen or app.zoomedPane() != null) .{
             .title = "Restore",
             .detail = try std.fmt.allocPrint(arena, "click: the frame comes back ({s}) · right-click: the modes", .{command.name(zen.clickCommand(app))}),
         } else .{

@@ -73,6 +73,9 @@ fn moveToNewTab(app: *App) CommandError!void {
     if (layout.leafOf(cur) == null) return error.NoActivePane;
     const panes = try layout.allPanes(arena);
     if (panes.len <= 1) return app.diag.fail(arena, "already alone on this page", .{});
+    // The page it leaves changes shape: its zoom goes first, whichever
+    // tab of the zoomed leaf is moving.
+    layout.zoomed = null;
     // The page list grows before the pane leaves, so a failed insert
     // changes nothing.
     try ls.layouts.insert(ls.gpa, ls.active + 1, Layout.init(ls.gpa));
@@ -94,7 +97,7 @@ pub fn switchTab(app: *App, idx: usize) void {
     app.setActive(null);
     ls.active = idx;
     const layout = ls.current();
-    const first: ?PaneId = if (layout.firstLeaf()) |l| layout.leaf(l).?.active else null;
+    const first: ?PaneId = layout.landing();
     app.setActive(first);
     app.toastReplace(tab_toast, "tab {d}/{d}", .{ idx + 1, ls.layouts.items.len });
 }
@@ -230,7 +233,7 @@ fn tabClose(app: *App) CommandError!void {
     ls.active = @min(ls.active -| 1, ls.layouts.items.len - 1);
     try retirePage(app, &gone, ls.current());
     const layout = ls.current();
-    const first: ?PaneId = if (layout.firstLeaf()) |l| layout.leaf(l).?.active else null;
+    const first: ?PaneId = layout.landing();
     app.setActive(first);
     app.toastReplace(tab_toast, "tab {d}/{d}", .{ ls.active + 1, ls.layouts.items.len });
 }

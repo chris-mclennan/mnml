@@ -1354,11 +1354,6 @@ pub const App = struct {
     /// When a plain Esc last armed the way out of full screen; a
     /// second within the chord timeout leaves (`zen.escKey`).
     zen_esc_ms: ?i64 = null,
-    /// `view.toggle_zoom`: the pane whose leaf alone paints, over the
-    /// whole body, while the split tree underneath is untouched (Rust's
-    /// `zoomed_leaf`). Closing the pane clears it; a pane no longer in
-    /// the active layout is ignored by the painter.
-    zoomed_leaf: ?PaneId = null,
     /// Nine pinned files (`harpoon.*`).
     harpoon: harpoon.State = .{},
     /// Render durations for the statusline stress meter.
@@ -2540,10 +2535,16 @@ pub const App = struct {
             if (std.mem.indexOfScalar(PaneId, self.pane_mru.items, i)) |at| _ = self.pane_mru.orderedRemove(at);
             self.pane_mru.insert(self.gpa, 0, i) catch {};
         }
-        // The focused pane is its leaf's shown tab.
+        // The focused pane is its leaf's shown tab. On a zoomed page the
+        // zoom follows the focus: the page shows the focused split, so a
+        // focus step (`Ctrl-W w`, a click in the tree, `:b N`) never
+        // lands the keys in a split nobody can see.
         if (id) |i| {
             const layout = self.layouts.current();
-            if (layout.leafOf(i)) |lid| layout.leaf(lid).?.active = i;
+            if (layout.leafOf(i)) |lid| {
+                layout.leaf(lid).?.active = i;
+                if (layout.zoomed != null) layout.zoomed = i;
+            }
         }
         if (id) |i| if (self.panes.editor(i) != null) {
             self.last_editor = i;
@@ -2650,9 +2651,6 @@ pub const App = struct {
 
     pub fn forceClosePane(self: *App, id: PaneId) Allocator.Error!void {
         const pane = self.panes.get(id) orelse return;
-        // The zoomed pane going means the zoom goes: a synthetic leaf
-        // holding a pane that is no longer in the layout paints nothing.
-        if (self.zoomed_leaf == id) self.zoomed_leaf = null;
         // // changed (bottom-dock): a closed pane cannot stay hosted.
         bottom_mod.forget(self, id);
         // A graph tab closed is a repo hidden for the session (Rust `close_pane`).
@@ -2760,6 +2758,15 @@ pub const App = struct {
 
     /// `ui.auto_equalize_splits`: a split just opened or closed — even
     /// them out.
+    /// `view.toggle_zoom`: the pane whose leaf alone paints over the
+    /// body of the page on screen, if the page is zoomed and the pane is
+    /// still in its tree (`Layout.zoomed`).
+    pub fn zoomedPane(self: *const App) ?PaneId {
+        const layout = &self.layouts.layouts.items[self.layouts.active];
+        const z = layout.zoomed orelse return null;
+        return if (layout.leafOf(z) != null) z else null;
+    }
+
     pub fn afterSplitChange(self: *App) void {
         if (self.cfg.ui.auto_equalize_splits) self.layouts.current().equalize();
     }

@@ -1469,7 +1469,7 @@ fn drawStrip(app: *App, ui: Ui, layout: *app_mod.Layout, lid: layout_mod.NodeId,
         // The maximize button reads restore while this leaf is zoomed —
         // or in full screen, where the zoom is moot and the button is
         // the way out (Rust `ui/mod.rs`).
-        .zoomed = app.zen or (app.zoomed_leaf != null and layout.leafOf(app.zoomed_leaf.?) == lid),
+        .zoomed = app.zen or (if (app.zoomedPane()) |z| layout.leafOf(z) == lid else false),
     };
     if (leaf.strip_anchor == null or leaf.strip_anchor.? != leaf.active) {
         opts.first = bufferline.fitActive(ui, strip, tabs, leaf.strip_first, opts);
@@ -1510,7 +1510,7 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
     // by paint index); no dividers. The split tree underneath is what
     // the mouse and `Ctrl+W` still see (`zen.zig`).
     var leaf_index: usize = 0;
-    if (app.zoomed_leaf) |zid| if (layout.leafOf(zid)) |zlid| {
+    if (app.zoomedPane()) |zid| if (layout.leafOf(zid)) |zlid| {
         for (rects.panes, 0..) |pr, i| if (pr.leaf == zlid) {
             const one = try ui.arena.alloc(layout_mod.PaneRect, 1);
             one[0] = .{ .pane = pr.pane, .rect = body, .leaf = zlid };

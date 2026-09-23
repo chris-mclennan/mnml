@@ -1264,6 +1264,30 @@ the band is not watched at all, so the strip neither reveals nor
 stays, and its grip goes with it. Closing the line asks for a fresh
 `reveal_ms` rather than popping the strip up the same frame.
 
+## Split zoom
+
+`view.toggle_zoom` — vim `Ctrl-W z`, standard `Ctrl+K Ctrl+Z`, which-key
+`space s z`, the tab strip's maximize button (with `ui.maximize_click =
+.zoom_pane`, the default) — gives the focused split the whole editor
+area. The other splits of the tab page are hidden, not closed: the tab
+strip shows only the zoomed split's tabs, the statusline carries a
+` zoom ` chip in the mode chip's colour, and the same command (or a
+click on the chip) puts the layout back exactly — the ratios, the focus
+and the other pages are never touched. While zoomed the zoom follows
+the focus, so a focus step shows the split it lands in rather than
+sending keys to one nobody can see.
+
+Anything that changes the split tree un-zooms first: a split, closing
+the zoomed pane or a split, a move (`Ctrl-W H/J/K/L`), a rotate, the
+split leaving for a page of its own (`Ctrl-W T`). A tab switch inside
+the zoomed split, a resize or a new tab in it keeps the zoom. The zoom
+is per tab page — a new page starts un-zoomed, and switching back to a
+zoomed page lands on its zoomed split — and it is written to
+`.mnml/session.zon` per page, so a restart comes back zoomed. Full
+screen (`view.fullscreen`) composes with it: full screen hides the
+chrome, the zoom hides the sibling splits, and with both on one pane has
+the window.
+
 ## Session worktrees
 
 A Claude / Codex session can start in a git worktree of its own —
