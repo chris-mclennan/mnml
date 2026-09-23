@@ -81,8 +81,26 @@ pub fn scrollWindow(scroll: *usize, cursor: usize, total: usize, visible_rows: u
 }
 
 pub fn rowStyle(t: *const Theme, selected: bool) Style {
-    return if (selected) Theme.onBg(t.panel_bg, t.cursor_line.bg) else t.panel_bg;
+    return rowStyleOn(t, t.panel_bg, selected);
 }
+
+/// `rowStyle` on another ground — a panel drawn with `Props.ground`
+/// (the start surface's lists sit on the editor area's ground, not the
+/// side column's).
+pub fn rowStyleOn(t: *const Theme, ground: Style, selected: bool) Style {
+    return if (selected) Theme.onBg(ground, t.cursor_line.bg) else ground;
+}
+
+/// Where a panel's clicks go when it is not a side-column panel or a
+/// pane-hosted one: the row's target by index, the ` + New … ` row's,
+/// and the scrollbar's owner. The start surface's lists
+/// (`ui/welcome.zig`) are the case — four lists that belong to no
+/// panel id.
+pub const Targets = struct {
+    row: *const fn (idx: u32) hit.HitTarget,
+    new: ?hit.HitTarget = null,
+    bar: hit.Owner,
+};
 
 /// The selection gutter down the WHOLE of `r` — one marker cell per row
 /// of the item, the accent when the panel has the keys and muted when
@@ -247,6 +265,16 @@ pub fn ListPanel(comptime Row: type) type {
             /// for the panel's own footer (SESSIONS' EXTERNAL / ENDED
             /// groups); the page counts items over the rest.
             reserve_bottom: u16 = 0,
+            /// // changed (welcome): the panel's ground; null is the
+            /// theme's `panel_bg`, the side column's.
+            ground: ?Style = null,
+            /// // changed (welcome): false paints no row as selected —
+            /// a list that shares its screen with others and is not the
+            /// one the keys walk.
+            show_cursor: bool = true,
+            /// // changed (welcome): the rows' / New row's / bar's hits
+            /// for a panel that is neither a side panel nor pane-hosted.
+            targets: ?Targets = null,
         };
 
         pub const PaneId = hit.PaneId;
@@ -266,7 +294,8 @@ pub fn ListPanel(comptime Row: type) type {
         /// focus (the app places the terminal cursor there).
         pub fn draw(st: *State, ui: Ui, area: Rect, p: Props) ?Caret {
             const t = ui.theme;
-            ui.fill(area, t.panel_bg);
+            const ground = p.ground orelse t.panel_bg;
+            ui.fill(area, ground);
             if (area.isEmpty()) return null;
 
             // Header.
@@ -280,7 +309,7 @@ pub fn ListPanel(comptime Row: type) type {
                 .mode_kind = .sort,
                 .show_refresh = p.show_refresh,
                 .new_chip = p.new_chip,
-                .bg = t.panel_bg,
+                .bg = ground,
                 .pane = p.pane,
                 .extra = p.extra_chips,
             });
@@ -296,7 +325,7 @@ pub fn ListPanel(comptime Row: type) type {
                     .text = st.filter.items,
                     .caret = st.filter_caret,
                     .focused = st.filter_focused,
-                    .bg = t.panel_bg,
+                    .bg = ground,
                     .pane = p.pane,
                 });
                 rest = fr.rest;
@@ -320,15 +349,17 @@ pub fn ListPanel(comptime Row: type) type {
                     const nr = rest.splitTop(1);
                     const row_rect = nr.top;
                     rest = nr.rest;
-                    const style = rowStyle(t, st.on_new);
+                    const on_new = st.on_new and p.show_cursor;
+                    const style = rowStyleOn(t, ground, on_new);
                     ui.fill(row_rect, style);
-                    if (st.on_new) paintMarker(ui, row_rect, style, focused);
+                    if (on_new) paintMarker(ui, row_rect, style, focused);
                     const text = ui.fmt(" {s} ", .{label});
                     const cw = @min(ui.width(text), row_rect.w -| 1);
                     if (cw > 0) {
                         const cr = Rect.init(row_rect.x + 1, row_rect.y, cw, 1);
                         _ = ui.putStr(cr.x, cr.y, cw, ui.clipStr(text, cw), chip.newRowStyle(t));
-                        ui.hit(cr, hit.chipTarget(p.panel, .new, p.pane));
+                        const new_target = if (p.targets) |tg| (tg.new orelse hit.chipTarget(p.panel, .new, p.pane)) else hit.chipTarget(p.panel, .new, p.pane);
+                        ui.hit(cr, new_target);
                     }
                 }
                 if (rest.h > 0) rest = rest.splitTop(1).rest;
@@ -344,7 +375,7 @@ pub fn ListPanel(comptime Row: type) type {
             if (p.rows.len == 0) {
                 st.visible = 0;
                 st.scroll = 0;
-                const used = empty_state.draw(ui, rest, p.empty, t.panel_bg);
+                const used = empty_state.draw(ui, rest, p.empty, ground);
                 st.end_y = @min(rest.y + used + 1, rest.bottom());
                 return caret;
             }
@@ -364,7 +395,7 @@ pub fn ListPanel(comptime Row: type) type {
                 const split = rest.splitRight(1);
                 list = split.left;
                 air = 1;
-                const owner: hit.Owner = if (p.pane) |id| .{ .pane = id } else .{ .panel = p.panel };
+                const owner: hit.Owner = if (p.targets) |tg| tg.bar else if (p.pane) |id| .{ .pane = id } else .{ .panel = p.panel };
                 scrollbar.drawVertical(ui, split.rest, owner, p.rows.len, per_page, st.scroll);
             }
             if (list.w <= marker_w) return caret;
@@ -374,8 +405,8 @@ pub fn ListPanel(comptime Row: type) type {
             while (i < win.visible) : (i += 1) {
                 const idx = win.first + i;
                 const row_rect = Rect.init(list.x, list.y + @as(u16, @intCast(i)) * stride, list.w, @max(1, p.row_h));
-                const selected = idx == st.cursor and !st.on_new;
-                const style = if (p.own_marker) t.panel_bg else rowStyle(t, selected);
+                const selected = p.show_cursor and idx == st.cursor and !st.on_new;
+                const style = if (p.own_marker) ground else rowStyleOn(t, ground, selected);
                 var content = row_rect;
                 if (!p.own_marker) {
                     ui.fill(row_rect, style);
@@ -395,7 +426,7 @@ pub fn ListPanel(comptime Row: type) type {
                 // chips, a link): last painted wins.
                 // // changed (http-panel): was registered after `paintRow`,
                 // so a painter's targets could never be clicked.
-                if (p.pane) |id| ui.hit(row_rect, .{ .script_hit = .{ .pane = id, .id = hit.ListHit.row(@intCast(idx)) } }) else ui.hit(row_rect, .{ .row = .{ .panel = p.panel, .idx = @intCast(idx) } });
+                if (p.targets) |tg| ui.hit(row_rect, tg.row(@intCast(idx))) else if (p.pane) |id| ui.hit(row_rect, .{ .script_hit = .{ .pane = id, .id = hit.ListHit.row(@intCast(idx)) } }) else ui.hit(row_rect, .{ .row = .{ .panel = p.panel, .idx = @intCast(idx) } });
                 p.paintRow(ui.withClip(content), content, p.rows[idx], selected);
                 if (hovered and row_rect.w > marker_w + kebab_w) {
                     const kr = row_rect.row(0).rightCells(kebab_w);
