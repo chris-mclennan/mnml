@@ -62,7 +62,7 @@ pub const Channel = struct {
             try std.fs.path.join(gpa, &.{ workspace, ".mnml", opts.subdir });
         errdefer gpa.free(dir);
         try Io.Dir.cwd().createDirPath(io, dir);
-        ensureWorkspaceGitignore(gpa, io, workspace) catch {};
+        ensureWorkspaceExcluded(gpa, io, workspace) catch {};
 
         var self: Channel = .{
             .gpa = gpa,
@@ -274,21 +274,28 @@ fn gitignoreCovers(existing: []const u8, dir: []const u8) bool {
 }
 
 /// On a git workspace, make sure `.mnml/` (and `.rqst/` once it exists)
-/// are ignored. Idempotent; a symlinked `.gitignore` is left alone — that
-/// one is the user's content.
-pub fn ensureWorkspaceGitignore(gpa: Allocator, io: Io, workspace: []const u8) !void {
+/// are ignored — in the clone's own `info/exclude`, never in
+/// `.gitignore`. A `.gitignore` is the project's file: editing it made
+/// every repo mnml opened show a change the user never made, which then
+/// rode along in their next `commit -a` or stash, and a stash that took
+/// the edit away left `.mnml/` for the next `add -A` to commit. The
+/// exclude file is per clone, invisible to `status`, and never
+/// committed or stashed. Idempotent; nothing is written when either
+/// file already has a rule about the directory.
+pub fn ensureWorkspaceExcluded(gpa: Allocator, io: Io, workspace: []const u8) !void {
     const cwd = Io.Dir.cwd();
-    const git_dir = try std.fs.path.join(gpa, &.{ workspace, ".git" });
-    defer gpa.free(git_dir);
-    cwd.access(io, git_dir, .{}) catch return;
+    const common = (try gitCommonDir(gpa, io, workspace)) orelse return;
+    defer gpa.free(common);
 
     const gi = try std.fs.path.join(gpa, &.{ workspace, ".gitignore" });
     defer gpa.free(gi);
-    if (isSymlink(io, gi)) {
-        log.warn("{s} is a symlink — not modifying it. Add `.mnml/` (and `.rqst/` if you use the HTTP client) yourself.", .{gi});
-        return;
-    }
-    const existing = readFile(gpa, io, gi) catch try gpa.dupe(u8, "");
+    const ignore = readFile(gpa, io, gi) catch try gpa.dupe(u8, "");
+    defer gpa.free(ignore);
+    const info = try std.fs.path.join(gpa, &.{ common, "info" });
+    defer gpa.free(info);
+    const ex = try std.fs.path.join(gpa, &.{ info, "exclude" });
+    defer gpa.free(ex);
+    const existing = readFile(gpa, io, ex) catch try gpa.dupe(u8, "");
     defer gpa.free(existing);
 
     var missing: std.ArrayList([]const u8) = .empty;
@@ -299,7 +306,7 @@ pub fn ensureWorkspaceGitignore(gpa: Allocator, io: Io, workspace: []const u8) !
             defer gpa.free(p);
             cwd.access(io, p, .{}) catch continue;
         }
-        if (!gitignoreCovers(existing, d)) try missing.append(gpa, d);
+        if (!gitignoreCovers(ignore, d) and !gitignoreCovers(existing, d)) try missing.append(gpa, d);
     }
     if (missing.items.len == 0) return;
 
@@ -311,7 +318,32 @@ pub fn ensureWorkspaceGitignore(gpa: Allocator, io: Io, workspace: []const u8) !
     try w.writeAll("# Added by mnml — workspace state: IPC, session, and HTTP\n");
     try w.writeAll("# history / captured traffic / env values (these carry secrets)\n");
     for (missing.items) |d| try w.print("{s}/\n", .{d});
-    try cwd.writeFile(io, .{ .sub_path = gi, .data = out.written() });
+    try cwd.createDirPath(io, info);
+    try cwd.writeFile(io, .{ .sub_path = ex, .data = out.written() });
+}
+
+/// The workspace's git common dir — where `info/exclude` is read — or
+/// null when the workspace is not a repo root. `.git` is that directory
+/// in a plain clone; in a linked worktree it is a file naming the
+/// worktree's git dir (`gitdir: …`), whose `commondir` names the shared
+/// one. Owned.
+fn gitCommonDir(gpa: Allocator, io: Io, workspace: []const u8) !?[]u8 {
+    const dot_git = try std.fs.path.join(gpa, &.{ workspace, ".git" });
+    defer gpa.free(dot_git);
+    const st = Io.Dir.cwd().statFile(io, dot_git, .{}) catch return null;
+    if (st.kind == .directory) return try gpa.dupe(u8, dot_git);
+    const text = readFile(gpa, io, dot_git) catch return null;
+    defer gpa.free(text);
+    const line = std.mem.trim(u8, text, " \t\r\n");
+    if (!std.mem.startsWith(u8, line, "gitdir:")) return null;
+    const gd_rel = std.mem.trim(u8, line["gitdir:".len..], " \t");
+    const gd = try std.fs.path.resolve(gpa, &.{ workspace, gd_rel });
+    defer gpa.free(gd);
+    const cd_path = try std.fs.path.join(gpa, &.{ gd, "commondir" });
+    defer gpa.free(cd_path);
+    const cd = readFile(gpa, io, cd_path) catch return try gpa.dupe(u8, gd);
+    defer gpa.free(cd);
+    return try std.fs.path.resolve(gpa, &.{ gd, std.mem.trim(u8, cd, " \t\r\n") });
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
@@ -475,40 +507,49 @@ test "events append one line each; deinit without an exit line writes a death ce
     try t.expectEqualStrings("{\"event\":\"exit\",\"restart\":true}\n", clean);
 }
 
-test ".gitignore gains the state dirs once, only in a git workspace, never through a symlink" {
-    std.testing.log_level = .err;
-    defer std.testing.log_level = .warn;
+test "the state dirs go into the clone's info/exclude once, only in a git workspace; .gitignore is never written" {
     var ws = try TestWs.init();
     defer ws.deinit();
     // Not a git repo: nothing is written.
-    try ensureWorkspaceGitignore(t.allocator, t.io, ws.path);
+    try ensureWorkspaceExcluded(t.allocator, t.io, ws.path);
     try t.expectError(error.FileNotFound, ws.tmp.dir.statFile(t.io, ".gitignore", .{}));
 
+    const header = "# Added by mnml — workspace state: IPC, session, and HTTP\n# history / captured traffic / env values (these carry secrets)\n";
     try ws.tmp.dir.createDirPath(t.io, ".git");
-    try ws.write(".gitignore", "existing");
-    try ensureWorkspaceGitignore(t.allocator, t.io, ws.path);
-    const once = try ws.read(".gitignore");
+    // No .gitignore: none is made; the exclude file (and `info/`) is.
+    try ensureWorkspaceExcluded(t.allocator, t.io, ws.path);
+    try t.expectError(error.FileNotFound, ws.tmp.dir.statFile(t.io, ".gitignore", .{}));
+    const made = try ws.read(".git/info/exclude");
+    defer t.allocator.free(made);
+    try t.expectEqualStrings(header ++ ".mnml/\n", made);
+
+    // A tracked-looking .gitignore stays byte for byte; git's own
+    // exclude lines are kept above ours.
+    try ws.write(".gitignore", "*.log");
+    try ws.write(".git/info/exclude", "# git ls-files --others --exclude-from=.git/info/exclude\n*.swp");
+    try ensureWorkspaceExcluded(t.allocator, t.io, ws.path);
+    const ignore = try ws.read(".gitignore");
+    defer t.allocator.free(ignore);
+    try t.expectEqualStrings("*.log", ignore);
+    const once = try ws.read(".git/info/exclude");
     defer t.allocator.free(once);
-    try t.expectEqualStrings(
-        "existing\n# Added by mnml — workspace state: IPC, session, and HTTP\n# history / captured traffic / env values (these carry secrets)\n.mnml/\n",
-        once,
-    );
+    try t.expectEqualStrings("# git ls-files --others --exclude-from=.git/info/exclude\n*.swp\n" ++ header ++ ".mnml/\n", once);
     // Idempotent.
-    try ensureWorkspaceGitignore(t.allocator, t.io, ws.path);
-    const twice = try ws.read(".gitignore");
+    try ensureWorkspaceExcluded(t.allocator, t.io, ws.path);
+    const twice = try ws.read(".git/info/exclude");
     defer t.allocator.free(twice);
     try t.expectEqualStrings(once, twice);
     // `.rqst/` joins only once the directory exists.
     try ws.tmp.dir.createDirPath(t.io, ".rqst");
-    try ensureWorkspaceGitignore(t.allocator, t.io, ws.path);
-    const with_rqst = try ws.read(".gitignore");
+    try ensureWorkspaceExcluded(t.allocator, t.io, ws.path);
+    const with_rqst = try ws.read(".git/info/exclude");
     defer t.allocator.free(with_rqst);
-    try t.expect(std.mem.endsWith(u8, with_rqst, ".mnml/\n# Added by mnml — workspace state: IPC, session, and HTTP\n# history / captured traffic / env values (these carry secrets)\n.rqst/\n"));
-
+    try t.expect(std.mem.endsWith(u8, with_rqst, ".mnml/\n" ++ header ++ ".rqst/\n"));
     try ws.tmp.dir.deleteDir(t.io, ".rqst");
-    // A file that already has a rule about `.mnml` is left alone — in
-    // particular `.mnml/*` + `!.mnml/findings/`, where an appended
-    // `.mnml/` would stop git from re-including the carve-out.
+
+    // A .gitignore that already has a rule about `.mnml` (the user's
+    // decision, carve-outs included) means no exclude line either.
+    try ws.write(".git/info/exclude", "");
     for ([_][]const u8{
         ".mnml/*\n!.mnml/findings/\n",
         "/.mnml/\n",
@@ -519,28 +560,41 @@ test ".gitignore gains the state dirs once, only in a git workspace, never throu
         "!.mnml/findings/\n",
     }) |body| {
         try ws.write(".gitignore", body);
-        try ensureWorkspaceGitignore(t.allocator, t.io, ws.path);
+        try ensureWorkspaceExcluded(t.allocator, t.io, ws.path);
         const kept = try ws.read(".gitignore");
         defer t.allocator.free(kept);
         try t.expectEqualStrings(body, kept);
+        const ex = try ws.read(".git/info/exclude");
+        defer t.allocator.free(ex);
+        try t.expectEqualStrings("", ex);
     }
     // A rule that only resembles the name is not a decision about it.
     try ws.write(".gitignore", "*.mnml\n.mnml-backup/\n");
-    try ensureWorkspaceGitignore(t.allocator, t.io, ws.path);
-    const grown = try ws.read(".gitignore");
+    try ensureWorkspaceExcluded(t.allocator, t.io, ws.path);
+    const grown = try ws.read(".git/info/exclude");
     defer t.allocator.free(grown);
     try t.expect(std.mem.endsWith(u8, grown, ".mnml/\n"));
-    try t.expect(std.mem.startsWith(u8, grown, "*.mnml\n.mnml-backup/\n"));
+    const same = try ws.read(".gitignore");
+    defer t.allocator.free(same);
+    try t.expectEqualStrings("*.mnml\n.mnml-backup/\n", same);
+}
 
-    if (builtin.os.tag != .windows) {
-        try ws.tmp.dir.deleteFile(t.io, ".gitignore");
-        try ws.write("real-ignore", "");
-        try ws.tmp.dir.symLink(t.io, "real-ignore", ".gitignore", .{});
-        try ensureWorkspaceGitignore(t.allocator, t.io, ws.path);
-        const untouched = try ws.read("real-ignore");
-        defer t.allocator.free(untouched);
-        try t.expectEqualStrings("", untouched);
-    }
+test "a linked worktree's state dirs go into the shared git dir's info/exclude" {
+    var ws = try TestWs.init();
+    defer ws.deinit();
+    // main/.git/worktrees/wt is the worktree's git dir; its commondir
+    // points two levels up, at main/.git.
+    try ws.tmp.dir.createDirPath(t.io, "main/.git/worktrees/wt");
+    try ws.tmp.dir.createDirPath(t.io, "wt");
+    try ws.write("main/.git/worktrees/wt/commondir", "../..\n");
+    try ws.write("wt/.git", "gitdir: ../main/.git/worktrees/wt\n");
+    const wt = try std.fs.path.join(t.allocator, &.{ ws.path, "wt" });
+    defer t.allocator.free(wt);
+    try ensureWorkspaceExcluded(t.allocator, t.io, wt);
+    const ex = try ws.read("main/.git/info/exclude");
+    defer t.allocator.free(ex);
+    try t.expect(std.mem.endsWith(u8, ex, ".mnml/\n"));
+    try t.expectError(error.FileNotFound, ws.tmp.dir.statFile(t.io, "wt/.gitignore", .{}));
 }
 
 test "gitignoreCovers tolerates the usual spellings" {
