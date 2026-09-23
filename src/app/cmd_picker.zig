@@ -306,8 +306,24 @@ pub fn openPickerWith(app: *App, title: []const u8, kind: app_mod.PickerKind, la
     app.needs_render = true;
 }
 
-/// `Recent files` — newest first, the active file left out so the top
-/// row is the one to switch back to.
+/// The recent files, newest first, on `arena` — absolute paths
+/// borrowed from `App.recent`. The active file is left out, so the top
+/// row is the one to switch back to. `picker.recent` lists these, and
+/// the start surface's RECENT FILES (`app/welcome.zig`) does too.
+pub fn recentFiles(app: *App, arena: Allocator) Allocator.Error![]const []const u8 {
+    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    const active_path: ?[]const u8 = if (app.activeEditor()) |e| e.buf.doc.path else null;
+    var i = app.recent.items.len;
+    while (i > 0) {
+        i -= 1;
+        const path = app.recent.items[i];
+        if (active_path != null and std.mem.eql(u8, active_path.?, path)) continue;
+        try out.append(arena, path);
+    }
+    return out.items;
+}
+
+/// `Recent files` — `recentFiles`, workspace-relative.
 fn recent(app: *App) CommandError!void {
     const gpa = app.gpa;
     var labels: std.ArrayListUnmanaged([]u8) = .empty;
@@ -315,12 +331,7 @@ fn recent(app: *App) CommandError!void {
         for (labels.items) |l| gpa.free(l);
         labels.deinit(gpa);
     }
-    const active_path: ?[]const u8 = if (app.activeEditor()) |e| e.buf.doc.path else null;
-    var i = app.recent.items.len;
-    while (i > 0) {
-        i -= 1;
-        const path = app.recent.items[i];
-        if (active_path != null and std.mem.eql(u8, active_path.?, path)) continue;
+    for (try recentFiles(app, app.frame.allocator())) |path| {
         const label = try gpa.dupe(u8, app.relPath(path));
         errdefer gpa.free(label);
         try labels.append(gpa, label);
