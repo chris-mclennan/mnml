@@ -950,6 +950,7 @@ fn onEvent(app: *App, p: *BrowserPane, method: []const u8, m: cdp.Message) Alloc
                 if (prev.mime) |old| app.gpa.free(old);
                 prev.mime = try app.gpa.dupe(u8, mt);
             }
+            try p.push(.net, try std.fmt.allocPrint(arena, "← {d} {s}", .{ prev.status orelse 0, history.shortUrl(prev.url) }));
         };
         var entry: NetEntry = .{ .request_id = try app.gpa.dupe(u8, request_id), .method = undefined, .url = undefined };
         errdefer app.gpa.free(entry.request_id);
@@ -983,12 +984,23 @@ fn onEvent(app: *App, p: *BrowserPane, method: []const u8, m: cdp.Message) Alloc
             if (n.mime) |old| app.gpa.free(old);
             n.mime = try app.gpa.dupe(u8, mt);
         }
+        try p.push(.net, try std.fmt.allocPrint(arena, "← {d} {s}", .{ n.status orelse 0, history.shortUrl(n.url) }));
     } else if (std.mem.eql(u8, method, "Network.loadingFailed")) {
         const request_id = cdp.str(m.params, &.{"requestId"}) orelse return;
         const n = p.findNet(request_id) orelse return;
-        const why = cdp.str(m.params, &.{"errorText"}) orelse "failed";
+        const err_text = cdp.str(m.params, &.{"errorText"}) orelse "failed";
+        // CORS and a blocked request say why beyond `net::ERR_FAILED`.
+        const why = if (cdp.str(m.params, &.{ "corsErrorStatus", "corsError" })) |c|
+            try std.fmt.allocPrint(arena, "{s} (CORS: {s})", .{ err_text, c })
+        else if (cdp.str(m.params, &.{"blockedReason"})) |b|
+            try std.fmt.allocPrint(arena, "{s} (blocked: {s})", .{ err_text, b })
+        else
+            err_text;
         if (n.failed) |old| app.gpa.free(old);
         n.failed = try app.gpa.dupe(u8, why);
+        // A navigation the page itself cut short is not a failure worth a line.
+        const canceled = if (cdp.get(m.params, &.{"canceled"})) |c| c == .bool and c.bool else false;
+        if (!canceled) try p.push(.console_err, try std.fmt.allocPrint(arena, "✗ {s} {s} — {s}", .{ n.method, history.shortUrl(n.url), why }));
     } else if (std.mem.eql(u8, method, "Target.attachedToTarget")) {
         const url = cdp.str(m.params, &.{ "targetInfo", "url" }) orelse "";
         const ty = cdp.str(m.params, &.{ "targetInfo", "type" }) orelse "";
@@ -1329,6 +1341,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, p: *BrowserPane, area: Rect) Allocato
                     .url = history.shortUrl(n.url),
                     .status = if (n.failed != null) "✗" else if (n.status) |st| try std.fmt.allocPrint(arena, "{d}", .{st}) else "…",
                     .mime = n.mime orelse "",
+                    .note = n.failed orelse "",
                 };
             }
         },
@@ -2220,6 +2233,31 @@ test "a navigation clears the previous page's requests and DOM, keeping the new 
     try tb.msg("{\"method\":\"Page.frameNavigated\",\"params\":{\"frame\":{\"id\":\"F\",\"loaderId\":\"L4\",\"url\":\"http://a/third\"}}}");
     const diff = (try diffSnapshot(&tb.app, p)).?;
     try testing.expect(std.mem.indexOf(u8, diff, "- http://a/api") != null);
+}
+
+test "a failed request says why in the log and on its row, CORS reason included; every response logs its status" {
+    var tb: TestBed = .{};
+    const p = try tb.init();
+    defer tb.deinit();
+    const gpa = testing.allocator;
+    try handle(&tb.app, try netEvent(gpa, tb.id, "r1", "GET", "http://127.0.0.1:9/nothing-here"));
+    try tb.msg("{\"method\":\"Network.loadingFailed\",\"params\":{\"requestId\":\"r1\",\"type\":\"Fetch\",\"errorText\":\"net::ERR_CONNECTION_REFUSED\",\"canceled\":false}}");
+    try testing.expectEqualStrings("✗ GET 127.0.0.1:9/nothing-here — net::ERR_CONNECTION_REFUSED", tb.last());
+    try handle(&tb.app, try netEvent(gpa, tb.id, "r2", "GET", "http://localhost:1/cors"));
+    try tb.msg("{\"method\":\"Network.loadingFailed\",\"params\":{\"requestId\":\"r2\",\"type\":\"Fetch\",\"errorText\":\"net::ERR_FAILED\",\"canceled\":false,\"corsErrorStatus\":{\"corsError\":\"MissingAllowOriginHeader\",\"failedParameter\":\"\"}}}");
+    try testing.expectEqualStrings("net::ERR_FAILED (CORS: MissingAllowOriginHeader)", p.net.items[1].failed.?);
+    try handle(&tb.app, try netEvent(gpa, tb.id, "r3", "GET", "http://a/ok"));
+    try tb.msg("{\"method\":\"Network.responseReceived\",\"params\":{\"requestId\":\"r3\",\"response\":{\"status\":404,\"mimeType\":\"text/plain\"}}}");
+    try testing.expectEqualStrings("← 404 a/ok", tb.last());
+    p.panel = .net;
+    p.net_sel = 2;
+    var f = try @import("../ui/test_fixture.zig").init(100, 12);
+    defer f.deinit();
+    try draw(&tb.app, f.ui(), tb.id, p, f.full());
+    const screen = try f.text();
+    // The ✗ row's method sits in the same column as a numbered one's.
+    try testing.expect(std.mem.indexOf(u8, screen, " ✗   GET    localhost:1/cors  net::ERR_FAILED (CORS: MissingAllowOriginHeader)") != null);
+    try testing.expect(std.mem.indexOf(u8, screen, " 404 GET    a/ok") != null);
 }
 
 test "scrolled back, the log holds still while lines arrive; at the tail it follows" {

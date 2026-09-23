@@ -53,6 +53,8 @@ pub const NetRow = struct {
     url: []const u8,
     status: []const u8,
     mime: []const u8,
+    /// Why it failed (`net::ERR_FAILED (CORS: …)`); empty when it did not.
+    note: []const u8 = "",
 };
 
 pub const Model = struct {
@@ -183,9 +185,15 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, m: Model) Outcome {
                 const bg = if (selected) t.cursor_line.bg else t.bg.bg;
                 const status_style = if (std.mem.eql(u8, n.status, "✗")) t.error_fg else if (n.status.len > 0 and n.status[0] == '2') t.info_fg else t.warn_fg;
                 var xx = r.x + 1;
-                xx += ui.putStr(xx, r.y, 4, ui.fmt("{s: <4}", .{n.status}), Theme.onBg(status_style, bg));
+                // Columns by cells, not bytes: `✗` is one cell of three bytes.
+                _ = ui.putStr(xx, r.y, 4, n.status, Theme.onBg(status_style, bg));
+                xx += 4;
                 xx += ui.putStr(xx, r.y, 7, ui.fmt("{s: <7}", .{n.method}), Theme.onBg(t.accent, bg));
-                _ = ui.putStr(xx, r.y, r.right() -| xx, ui.clipStr(n.url, r.right() -| xx), Theme.onBg(t.fg, bg));
+                const uw = ui.putStr(xx, r.y, r.right() -| xx, ui.clipStr(n.url, r.right() -| xx), Theme.onBg(t.fg, bg));
+                if (n.note.len > 0 and xx + uw + 3 < r.right()) {
+                    const nx = xx + uw + 2;
+                    _ = ui.putStr(nx, r.y, r.right() - nx, ui.clipStr(n.note, r.right() - nx), Theme.onBg(t.error_fg, bg));
+                }
                 ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = hit_row_base + @as(u32, @intCast(n.index)) } });
                 if (ui.hovered(r)) out.hovered_row = n.index;
                 y += 1;
