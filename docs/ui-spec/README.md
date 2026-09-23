@@ -167,6 +167,37 @@ hard-codes `[gd] … [K]` — editor 2 → 6 beyond the rail, the four rows
 deliberate. esc 3, menu-file 3, menu-plus 8, http 3 are unchanged (the
 statusline's coverage-ticker phase flickers one more row in some runs).
 
+## The start surface (2026-09-23, branch `welcome`)
+
+With no pane open the editor area is the start surface
+(`src/ui/welcome.zig`'s `drawStart`, `ui.welcome = full`, the default)
+where Rust paints its centred logo: a three-row word mark, the
+workspace line, RECENT WORKSPACES and RECENT FILES on the left, SESSIONS
+(with `+ New Claude Code session here`) and SHORTCUTS on the right, the
+version line under them. Every `zig-*` dump that shows the empty
+layout was re-cut for it — `esc`, `status`, `menu-plus`, `whichkey`,
+`themes`, `fonts`, `launchers`, `scripts`, `scripts-dev`,
+`scripts-marketplace`, `picker-preview`, `grep-preview` through
+`tools/zig-spec.sh`, `search` through `tools/zig-spec-git.sh`, and
+`integrations` through `tools/ui-diff.sh` on a copy of the chrome
+fixture whose `zig-data/config.zon` has its `.workspaces` list taken
+out: RECENT WORKSPACES lists them, and the author's own workspace names
+do not belong in a dump. The rows outside the editor area moved only
+where main had moved since the last cut (the `⋯` grip on the `:` line,
+the marketplace sections, the clock). `ui.welcome = minimal` is the old
+pane, still matched against `rust-120x40.txt` by the unit test.
+
+The dump tools now set `MNML_SESSIONS_HOME` for the Zig run to a
+throwaway directory: SESSIONS lists this workspace's transcripts out of
+`~/.claude` / `~/.codex`, the dumps' workspace is `ws`, and several
+real workspaces on this machine are called that. Nothing else reads it,
+so the fonts, the coverage chip and the rest are what they were.
+
+`tools/ui-diff.sh` on the chrome fixture, main `06e0d4b2` / this
+branch, Rust `target/release`: esc 5 → 27, menu-plus 16 → 34 rows
+beyond the rail — the editor area's rows, which Rust fills with its
+logo and this build with the lists.
+
 ## The chrome walk (2026-09-14)
 
 `zig-esc-120x40.txt` (`steps-esc.jsonl`, the resting screen),

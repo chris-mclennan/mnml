@@ -1,40 +1,40 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │ INTEGRATIONS           │ 󰐕                                                                            󱸀      
-  │ Inst (1) Mkt (4)         │
+   │ INTEGRATIONS           │ 󰐕                                                                            󱸀  󲀀    
+  │ Inst (5) Mkt (4)         │
    │  󰍉 / filter              │
  󰍉 │                          │
    │  FONTS · latest Nerd Fon…│
  󰊢 │    JetBrainsMono Nerd F…│
    │    MnmlSymbols  auto-ba…│
-  │    Symbols Nerd Font  v…│
-   │                          │
-▌󰐱 │▌ 󰫯  [installed] btop  ✓ O│
-   │▌   Resource monitor (cpu…│                                                            _
- 󰎒 │                          │                            _ __ ___    _ __    _ __ ___   | |
-   │  󱴀  [launcher] htop  ✓ Of│                           | '_ ` _ \  | '_ \  | '_ ` _ \  | |
-  │    Interactive process v…│                           | | | | | | | | | | | | | | | | | |
-   │                          │                           |_| |_| |_| |_| |_| |_| |_| |_| |_|
-  │  󰛳  [launcher] iftop  ✓ O│
-   │    Interactive bandwidth…│                                     workspace · ws
-  │                          │
-   │    [launcher] VSCode  ✓ │                                        Shortcuts
- 󱘣 │    Visual Studio Code (o…│                                     ──────────────
-   │                          │                                     ^P     find file
- 󰢱 │                          │                                    ^R     recent files
-   │                          │                                   ^K     which-key menu
- 󰫯 │                          │                                      ^N     new file
-   │                          │                                    ^B     toggle tree
-   │                          │                                        ^Q     quit
-   │                          │
-   │                          │                                 mnml 0.3.0-dev+gcffb814
-   │                          │
+  │    Symbols Nerd Font  v…│                                _ __    _ _    _ __    _
+   │                          │                               | '  \  | ' \  | '  \  | |
+▌󰐱 │▌ 󰫯  [installed] btop  ✓ O│                               |_|_|_| |_||_| |_|_|_| |_|
+   │▌   Resource monitor (cpu…│
+ 󰎒 │                          │                                     workspace · ws
+   │  󱴀  [launcher] htop  ✓ Of│
+  │    Interactive process v…│   RECENT WORKSPACES                           SESSIONS
+   │                          │    ws                                open
+  │  󰛳  [launc┌ Add to activity bar ───────────────────────────────────────────────────────────────────┐here
+   │    Interac│                                                                                      1 │
+  │           │▌btop  btop                                                                             │
+   │    [launc│                                                                                        │
+ 󱘣 │    Visual │                                                                                        │
+   │           │                                                                                        │
+ 󰢱 │           └────────────────────────────────────────────────────────────────────────────────────────┘
+   │                          │                                                Ctrl+Shift+E  the file tree
+   │                          │                                                Ctrl+B        toggle the tree
+   │                          │                                                Ctrl+Shift+P  command palette
+   │                          │                                                Ctrl+K        which-key menu
+   │                          │                                                Ctrl+,        settings
+   │                          │                                                Ctrl+N        new file
+   │                          │                                                Ctrl+Q        quit
    │──────────────────────────│
-   │ Integrations           ⋮ │
+   │ Integrations           ⋮ │                                mnml 0.3.0-dev+gf3dacda1
    │                          │
    │ Installed integrations.  │
    │ Enter fires the command. │
    │ Right-click for          │
   │ Configure / Uninstall.   │
    │                          │
- TREE  [no file]                                                              F 57% ▲1.0  󱼀 󰐎    02:06  ws   —
-
+ TREE  [no file]                                                              F 57% ▼1.6  󱼀 󰐎    23:54  ws   —
+                                                           ⋯
