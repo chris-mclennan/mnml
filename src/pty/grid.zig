@@ -39,8 +39,10 @@ pub const Underline = enum { none, single, double, curly, dotted, dashed };
 pub const Cell = struct {
     /// First (or only) codepoint; 0 for an empty cell.
     cp: u21 = 0,
-    /// Every codepoint when the cell holds a multi-codepoint grapheme;
-    /// borrowed from the render state — valid until the next `update`.
+    /// The codepoints AFTER `cp` when the cell holds a multi-codepoint
+    /// grapheme (a skin tone, a ZWJ and the next person, VS16) — the
+    /// cluster is `cp` then these. Borrowed from the render state, valid
+    /// until the next `update`.
     grapheme: []const u21 = &.{},
     fg: Color = .default,
     bg: Color = .default,

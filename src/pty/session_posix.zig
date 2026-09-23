@@ -1066,3 +1066,23 @@ test "a child's OSC 52 copy is taken when clipboard writes are on, dropped when 
         } else try testing.expect(got == null);
     }
 }
+
+test "graphemes are clusters (mode 2027): thumbs-up with a skin tone is two cells, and the child is told the mode is set" {
+    var env = try testEnv();
+    defer env.deinit();
+    const s = try Session.spawn(testing.allocator, testing.io, .{
+        .cols = 40,
+        .rows = 4,
+        .env = &env,
+        .argv = &.{ "/bin/sh", "-c", "printf '\\360\\237\\221\\215\\360\\237\\217\\275x\\n'" },
+    });
+    defer s.deinit();
+    _ = pumpUntilExit(s, 5000) orelse return error.ChildDidNotExit;
+    try testing.expect(s.terminal().modes.get(.grapheme_cluster));
+    var g: @import("grid.zig").Grid = .{};
+    defer g.deinit(testing.allocator);
+    try g.update(testing.allocator, s.terminal());
+    try testing.expectEqual(@as(u21, 0x1F44D), g.cell(0, 0).cp);
+    try testing.expectEqualSlices(u21, &.{0x1F3FD}, g.cell(0, 0).grapheme);
+    try testing.expectEqual(@as(u21, 'x'), g.cell(2, 0).cp);
+}

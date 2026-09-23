@@ -246,6 +246,7 @@ fn paint(w: *std.Io.Writer, grid: *const pty.Grid, all: bool) !void {
                 pen = want;
             }
             if (cell.grapheme.len > 0) {
+                try writeCp(w, cell.cp);
                 for (cell.grapheme) |cp| try writeCp(w, cp);
             } else if (cell.cp == 0) {
                 try w.writeByte(' ');

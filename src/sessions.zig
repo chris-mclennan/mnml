@@ -2158,13 +2158,11 @@ fn gridRows(arena: Allocator, grid: *const pty_pane.Grid) Allocator.Error![]Grid
                 continue;
             }
             var buf: [4]u8 = undefined;
-            if (cell.grapheme.len > 0) {
-                for (cell.grapheme) |cp| {
-                    const n = std.unicode.utf8Encode(cp, &buf) catch continue;
-                    try text.appendSlice(arena, buf[0..n]);
-                }
-            } else {
-                const n = std.unicode.utf8Encode(cell.cp, &buf) catch continue;
+            const n0 = std.unicode.utf8Encode(cell.cp, &buf) catch continue;
+            try text.appendSlice(arena, buf[0..n0]);
+            // A cluster's other codepoints follow its first.
+            for (cell.grapheme) |cp| {
+                const n = std.unicode.utf8Encode(cp, &buf) catch continue;
                 try text.appendSlice(arena, buf[0..n]);
             }
             try colors.appendNTimes(arena, paint, text.items.len - before);

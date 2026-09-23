@@ -19,6 +19,12 @@ pub fn terminalOptions(cols: u16, rows: u16, scrollback_lines: usize) vt.Termina
         .rows = rows,
         .max_scrollback_bytes = null,
         .max_scrollback_lines = scrollback_lines,
+        // Mode 2027 on, as ghostty's `grapheme-width-method = unicode`
+        // sets it and as mnml's own canvas asks its host for: 👍🏽 and 🇺🇸
+        // are one two-cell cluster, a ZWJ family keeps its joiners, ❤️
+        // takes VS16's width — so the child, the pane's grid and the
+        // host agree on where every later cell of the row is.
+        .default_modes = .{ .grapheme_cluster = true },
     };
 }
 

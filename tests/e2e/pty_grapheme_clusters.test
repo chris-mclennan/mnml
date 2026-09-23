@@ -1,0 +1,13 @@
+# A terminal pane measures graphemes the way the ghostty it runs in
+# does: mode 2027 is on (ghostty's `grapheme-width-method = unicode`,
+# and what mnml's own canvas asks its host for), so 👍🏽 (a thumb and a
+# skin tone) is ONE two-cell cluster — the child, the pane's grid and
+# the host all put the next cell in the same place.
+#
+# The child's own view, by DECRQM and a cursor-position report.
+command view.toggle_tree
+shell printf '%s\n' 'printf "\033[?2027\$p"; IFS= read -rs -d y -t 2 r; echo "m=${r#*[}" > cpr.txt' 'printf "\r\360\237\221\215\360\237\217\275\033[6n"; IFS= read -rs -d R -t 2 r; echo "thumb col=${r##*;}" >> cpr.txt' 'sleep 20' > probe.sh
+ex term /bin/bash probe.sh
+wait 2000
+expect file cpr.txt contains "m=?2027;1$"
+expect file cpr.txt contains "thumb col=3"
