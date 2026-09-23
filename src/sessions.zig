@@ -944,19 +944,14 @@ fn jumpWaiting(app: *App, forward: bool) CommandError!void {
     app.showPane(to);
     app.focus = .{ .pane = to };
     app.needs_render = true;
-    if (waiting.len > 1) app.toast("needs you: {s} ({d} waiting)", .{ paneName(app, to), waiting.len });
+    if (waiting.len > 1) app.toast("needs you: {s} ({d} waiting)", .{ announcedName(app, to), waiting.len });
 }
 
-/// What a pane is called when it is announced: an AI session's card
-/// name (its alias, the child's title, its label), else the tab title.
-pub fn paneName(app: *App, pid: app_mod.PaneId) []const u8 {
+/// What a pane is called when it is announced: the session name its
+/// tab shows (`paneName`, the card's), else the pane's own title.
+pub fn announcedName(app: *App, pid: app_mod.PaneId) []const u8 {
+    if (paneName(app, pid)) |n| return n.text;
     const pane = app.panes.get(pid) orelse return "";
-    const p = pane.asPty() orelse return pane.title();
-    if (pty_pane.productOf(app, p) != null) {
-        const sid = p.sessionId();
-        const key = sid orelse std.fmt.allocPrint(app.frame.allocator(), "pane:{d}", .{pid}) catch return p.label;
-        return cardName(app, .{ .pane = pid, .session_id = sid, .key = key });
-    }
     return pane.title();
 }
 
@@ -964,7 +959,7 @@ pub fn paneName(app: *App, pid: app_mod.PaneId) []const u8 {
 /// notification (`notifySession`) with its bell. The mark on its tab
 /// and card is `needsYou` itself.
 fn announceNeedsYou(app: *App, pid: app_mod.PaneId) Allocator.Error!void {
-    try app.toastLevel(.warn, "session needs input: {s}", .{paneName(app, pid)});
+    try app.toastLevel(.warn, "session needs input: {s}", .{announcedName(app, pid)});
     try notifySession(app, pid, .waiting);
 }
 
@@ -998,7 +993,7 @@ pub fn notifySession(app: *App, pid: app_mod.PaneId, what: NotifyWhat) Allocator
             .finished => "mnml — session finished",
             .failed => "mnml — session failed",
         },
-        .body = paneName(app, pid),
+        .body = announcedName(app, pid),
         .level = switch (what) {
             .waiting => .warn,
             .finished => .info,

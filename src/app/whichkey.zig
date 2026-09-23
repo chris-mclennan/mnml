@@ -596,7 +596,7 @@ test "every group in both profiles has a glyph with an ascii twin, and the count
     // shows up here rather than silently on screen.
     try t.expectEqual(@as(u16, 7), chordCount(lookup("f").?, true));
     try t.expectEqual(@as(u16, 16), chordCount(lookup("s").?, true));
-    try t.expectEqual(@as(u16, 13), chordCount(lookup("s").?, false));
+    try t.expectEqual(@as(u16, 14), chordCount(lookup("s").?, false));
     try t.expectEqual(@as(u16, 5), chordCount(lookup("Lc").?, true));
     try t.expectEqual(@as(u16, 19), chordCount(lookup("L").?, true));
     try t.expectEqual(@as(u16, 15), chordCount(lookup("d").?, true));
