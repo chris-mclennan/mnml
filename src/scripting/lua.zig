@@ -336,6 +336,10 @@ pub const Lua = struct {
         _ = L.getGlobal("xpcall");
         L.pushClosure(zlua.wrap(guardedXpcall), 1);
         L.setGlobal("xpcall");
+        // Source text only: see `textLoad`.
+        _ = L.getGlobal("load");
+        L.pushClosure(zlua.wrap(textLoad), 1);
+        L.setGlobal("load");
         // No finalizers: see `guardedSetmetatable`.
         _ = L.getGlobal("setmetatable");
         L.pushClosure(zlua.wrap(guardedSetmetatable), 1);
@@ -595,6 +599,27 @@ pub const Lua = struct {
             L.replace(2);
         }
         return guardedPcall(L);
+    }
+
+    /// `load(chunk, chunkname?, mode?, env?)` with the mode forced to
+    /// `"t"`: source text, never a precompiled chunk. Lua 5.4 does not
+    /// verify bytecode — a crafted binary chunk is a way out of the VM's
+    /// guarantees — so a script may compile text and nothing else. The
+    /// arguments are passed on as given otherwise (an absent `env` stays
+    /// absent: an explicit nil would be an `_ENV` of nil).
+    fn textLoad(L: *State) i32 {
+        const n = L.getTop();
+        if (n >= 3) {
+            _ = L.pushString("t");
+            L.replace(3);
+        } else {
+            while (L.getTop() < 2) L.pushNil();
+            _ = L.pushString("t");
+        }
+        L.pushValue(State.upvalueIndex(1));
+        L.insert(1);
+        L.call(.{ .args = L.getTop() - 1, .results = zlua.mult_return });
+        return L.getTop();
     }
 
     /// `setmetatable(t, mt)`, refusing a metatable with a `__gc` field.
@@ -1719,6 +1744,21 @@ test "a statusline segment that errors toasts once and is not polled again until
     try lua.tick(now);
     try lua.tick(now + segment_poll_ms);
     try lua.runString("assert(N == 2, 'polled ' .. N .. ' times')");
+}
+
+test "load compiles source text only: a precompiled chunk is refused, text and env work as before" {
+    var app = try App.init(testing.allocator, testing.io);
+    defer app.deinit();
+    const lua = app.script();
+    try lua.runString(
+        \\local f, err = load(string.dump(function() return 42 end))
+        \\assert(f == nil and err:find('binary'), tostring(err))
+        \\f, err = load(string.dump(function() return 42 end), 'x', 'b')
+        \\assert(f == nil and err:find('binary'), tostring(err))
+        \\assert(load('return 1 + 1')() == 2)
+        \\assert(load('return x', 'chunk', 'bt', { x = 7 })() == 7)
+        \\assert(load('return y', 'chunk')() == nil)
+    );
 }
 
 test "a metatable with __gc is refused, so no finalizer ever runs unbudgeted" {

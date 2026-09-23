@@ -1434,6 +1434,9 @@ once, which is what a unit test runs to prove they all still load together.
 - **No `os`, `io`, `package`, `debug`; no `dofile` or `loadfile`.** The two
   `init.lua` files are one file each; an installed script gets a `require`
   scoped to its own directory and nothing wider.
+- **No precompiled chunks.** `load` compiles source text only (its mode is
+  always `"t"`); Lua does not verify bytecode, so a binary chunk is never
+  run.
 - **No `__gc` finalizers.** `setmetatable` refuses a metatable with a
   `__gc` field. A finalizer runs with Lua's hooks off — when a reload or a
   quit closes the state, or mid-collection — so the budget could never cut
