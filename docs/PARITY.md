@@ -621,7 +621,7 @@ trust sink. Each row names its file and its test.
 | Full-page screenshot | done | `browser.screenshot` | |
 | Per-node screenshot | done | `browser.screenshot_node` | |
 | Print-to-PDF | done | `browser.print_pdf` | |
-| Snapshot diffs | done | `browser.snapshot` / `diff_snapshot` | |
+| Snapshot diffs | done | `browser.snapshot` / `diff_snapshot` | the URL and the network requests; a navigation clears the previous page's requests (as DevTools does), so a diff shows one going away |
 | Device emulation | done | `browser.device_picker` | |
 | Multi-target | done | `Target.setAutoAttach` in `cdp/client.zig` | |
 | Headless | done | `browser.headless`, `mnml proxy` | |

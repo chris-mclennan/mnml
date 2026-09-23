@@ -963,7 +963,7 @@ pub const specs = [_]Spec{
     .{ .id = "browser.screenshot", .title = "Browser: screenshot the page → .mnml/screenshots/", .group = "browser" },
     .{ .id = "browser.screenshot_node", .title = "Browser: screenshot the selected DOM node → .mnml/screenshots/", .group = "browser" },
     .{ .id = "browser.print_pdf", .title = "Browser: print the page to PDF (p) → .mnml/screenshots/", .group = "browser" },
-    .{ .id = "browser.snapshot", .title = "Browser: snapshot state (URL + network + cookies + storage)", .group = "browser" },
+    .{ .id = "browser.snapshot", .title = "Browser: snapshot state (URL + network requests)", .group = "browser" },
     .{ .id = "browser.diff_snapshot", .title = "Browser: diff latest snapshot vs current state", .group = "browser" },
     .{ .id = "browser.clear_snapshots", .title = "Browser: clear all captured snapshots", .group = "browser" },
     .{ .id = "browser.device_picker", .title = "Browser: device emulation picker (m) — mobile UA + viewport", .group = "browser" },

@@ -197,6 +197,8 @@ pub const BrowserPane = struct {
     pane_id: ?PaneId = null,
     /// Tests: the stand-in Chrome the worker runs.
     binary: ?[]const u8 = null,
+    /// The DOM panel was open across a navigation: ask again on load.
+    dom_refresh: bool = false,
     /// What an eval returned, as its preview, for when the by-value copy
     /// (`eval_json`) fails: keyed by that request's id.
     eval_fallback: std.AutoHashMapUnmanaged(i64, []u8) = .empty,
@@ -882,6 +884,32 @@ fn saveBase64(app: *App, data: []const u8, ext: []const u8) Allocator.Error!?[]c
     return path;
 }
 
+fn eqlOpt(a: ?[]const u8, b: []const u8) bool {
+    return if (a) |x| std.mem.eql(u8, x, b) else false;
+}
+
+/// The page (or the focused popup) moved to a new document: the
+/// previous page's requests and DOM go, as DevTools clears them. The
+/// new document's own request (its id is the frame's `loaderId`) stays.
+fn resetForNavigation(app: *App, p: *BrowserPane, loader_id: ?[]const u8) Allocator.Error!void {
+    var i: usize = 0;
+    while (i < p.net.items.len) {
+        if (eqlOpt(loader_id, p.net.items[i].request_id)) {
+            i += 1;
+            continue;
+        }
+        var gone = p.net.orderedRemove(i);
+        gone.deinit(app.gpa);
+    }
+    p.net_sel = 0;
+    BrowserPane.freeRows(app.gpa, &p.dom);
+    p.dom = .empty;
+    p.dom_sel = 0;
+    p.dom_depth = -1;
+    p.hover_dom = null;
+    if (p.panel == .dom) p.dom_refresh = true;
+}
+
 fn onEvent(app: *App, p: *BrowserPane, method: []const u8, m: cdp.Message) Allocator.Error!void {
     const arena = app.frame.allocator();
     if (std.mem.eql(u8, method, "Runtime.consoleAPICalled")) {
@@ -902,7 +930,12 @@ fn onEvent(app: *App, p: *BrowserPane, method: []const u8, m: cdp.Message) Alloc
         if (cdp.str(m.params, &.{ "frame", "parentId" }) != null) return;
         const url = cdp.str(m.params, &.{ "frame", "url" }) orelse return;
         try p.setUrl(url);
+        try resetForNavigation(app, p, cdp.str(m.params, &.{ "frame", "loaderId" }));
         try p.push(.nav, try std.fmt.allocPrint(arena, "navigated: {s}", .{url}));
+    } else if (std.mem.eql(u8, method, "Page.loadEventFired")) {
+        if (!p.dom_refresh) return;
+        p.dom_refresh = false;
+        if (p.panel == .dom) try send(app, p, "DOM.getDocument", "{\"depth\":-1}", .dom);
     } else if (std.mem.eql(u8, method, "Network.requestWillBeSent")) {
         const ty = cdp.str(m.params, &.{"type"}) orelse "";
         if (!(std.mem.eql(u8, ty, "Document") or std.mem.eql(u8, ty, "XHR") or std.mem.eql(u8, ty, "Fetch"))) return;
@@ -2158,6 +2191,35 @@ test "Chrome starts on about:blank and the page is loaded by a navigate queued b
     p.shared.lock.unlock(testing.io);
     try tb.app.forceClosePane(id);
     if (pid) |x| try testing.expect(child_os.goneWithin(testing.io, x, .fromSeconds(10)));
+}
+
+test "a navigation clears the previous page's requests and DOM, keeping the new document's own request" {
+    var tb: TestBed = .{};
+    const p = try tb.init();
+    defer tb.deinit();
+    const gpa = testing.allocator;
+    try handle(&tb.app, try netEvent(gpa, tb.id, "old.1", "GET", "http://a/old"));
+    try handle(&tb.app, try netEvent(gpa, tb.id, "LOADER2", "GET", "http://a/new"));
+    try p.dom.append(gpa, .{ .text = try gpa.dupe(u8, "div#alpha9"), .key = try gpa.dupe(u8, "31") });
+    p.panel = .dom;
+    p.hover_dom = 0;
+    try tb.msg("{\"method\":\"Page.frameNavigated\",\"params\":{\"frame\":{\"id\":\"F\",\"loaderId\":\"LOADER2\",\"url\":\"http://a/new\"}}}");
+    try testing.expectEqual(@as(usize, 1), p.net.items.len);
+    try testing.expectEqualStrings("http://a/new", p.net.items[0].url);
+    try testing.expectEqual(@as(usize, 0), p.dom.items.len);
+    try testing.expect(p.hover_dom == null);
+    // The DOM panel was open: it asks again once the new page loaded.
+    try tb.msg("{\"method\":\"Page.loadEventFired\",\"params\":{\"timestamp\":1}}");
+    try testing.expectEqualStrings("DOM.getDocument", tb.lastQueued());
+    // A subframe's navigation is not the page's.
+    try handle(&tb.app, try netEvent(gpa, tb.id, "sub.1", "GET", "http://a/api"));
+    try tb.msg("{\"method\":\"Page.frameNavigated\",\"params\":{\"frame\":{\"id\":\"C\",\"parentId\":\"F\",\"loaderId\":\"L3\",\"url\":\"http://a/frame\"}}}");
+    try testing.expectEqual(@as(usize, 2), p.net.items.len);
+    // A snapshot diff can now show a request going away.
+    _ = try captureSnapshot(&tb.app, p);
+    try tb.msg("{\"method\":\"Page.frameNavigated\",\"params\":{\"frame\":{\"id\":\"F\",\"loaderId\":\"L4\",\"url\":\"http://a/third\"}}}");
+    const diff = (try diffSnapshot(&tb.app, p)).?;
+    try testing.expect(std.mem.indexOf(u8, diff, "- http://a/api") != null);
 }
 
 test "scrolled back, the log holds still while lines arrive; at the tail it follows" {
