@@ -79,7 +79,8 @@ by name, so a TOML converts line for line:
 `state` `.OPEN` / `.MERGED` / `.DECLINED` / `.SUPERSEDED`; `mode`
 `.mine` / `.reviewing` on a `pull_requests` tab. Two keys have no TOML
 twin: `.base_url` (a test double; `$BITBUCKET_BASE_URL` wins, `@<path>`
-reads a file) and `.rate` (`rate_per_sec`, `capacity`, `max_attempts`,
+reads a file — one still missing after 5 s is the setup screen and a
+failing `--check`, never a fall back to `api.bitbucket.org`) and `.rate` (`rate_per_sec`, `capacity`, `max_attempts`,
 `default_backoff_secs`, `max_backoff_secs`, `state_path`).
 
 The keys that change the config at runtime — `x` hide, `H` un-hide,

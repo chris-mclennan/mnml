@@ -1194,6 +1194,23 @@ frames back with `sdk.wire.receive(sdk.SiblingMessage, …)`. mnml's own
 test does exactly this against the sample
 (`src/app/mount_pane.zig`, "a mounted sample integration paints…").
 
+### Pointing an integration at a fake — `sdk.base_url`
+
+A test points an integration at its fake server with
+`$<SERVICE>_BASE_URL`: a URL, or `@<path>` naming the file the fake
+writes once it listens (`--port 0 --url-file <path>`), so no script
+ever picks a port. Read it with
+`sdk.base_url.fromEnv(gpa, io, env, "JIRA_BASE_URL", .{})`: `.unset`
+leaves the config's URL standing, `.url` is the override, and
+`.unreadable` — an `@<path>` whose file is still missing or empty
+after the wait (5 s) — is a sentence for the setup screen. On
+`.unreadable` the integration builds **no client and asks no server**:
+the fake did not start, and neither the config's URL nor the
+service's production API is a fallback for it. Both first-party
+integrations read their overrides here (Jira reads
+`$JIRA_BASE_URL` and, for a ticket's linked pull requests,
+`$BITBUCKET_BASE_URL`).
+
 ### Proving a result outlives its job — `sdk.testing.Scribble`
 
 A test for the rule above passes whatever the code does unless the
@@ -1238,6 +1255,8 @@ sdk/mnml-sdk/src/
                  the splice the host's settings write through too
   warm.zig       the warmer: pacing with priority, one warmer per
                  service, delta windows, intervals, the budget floor
+  base_url.zig   the `$<SERVICE>_BASE_URL` override — a URL or `@<file>`;
+                 a file that never arrives is an error, never a fallback
   testing.zig    test allocators a suite borrows — Scribble, which
                  poisons what it frees so a slice into a let-go arena
                  reads as 0xAA rather than as luck

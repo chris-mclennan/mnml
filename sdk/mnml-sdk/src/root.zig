@@ -23,6 +23,9 @@
 //!             one JSON line per request under
 //!             `<data root>/requests/<service>.jsonl` — what a slow
 //!             pane spent, and what it spent it waiting on
+//!   base_url  the `$<SERVICE>_BASE_URL` override a test points an
+//!             integration at its fake with — a URL or `@<file>`; a
+//!             file that never arrives is an error, never a fallback
 //!   zon_edit  saving a hand-written ZON file without losing its
 //!             comments — the splice the host's settings and an
 //!             integration's own config both write through
@@ -53,6 +56,7 @@ pub const warm = @import("warm.zig");
 pub const pane = @import("pane.zig");
 pub const zon_edit = @import("zon_edit.zig");
 pub const platform = @import("platform.zig");
+pub const base_url = @import("base_url.zig");
 pub const testing = @import("testing.zig");
 
 pub const Mount = client.Mount;
@@ -95,5 +99,6 @@ test {
     _ = pane;
     _ = zon_edit;
     _ = platform;
+    _ = base_url;
     _ = testing;
 }

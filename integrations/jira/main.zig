@@ -258,6 +258,12 @@ pub fn main(init: std.process.Init) !u8 {
     const cfg_path = try configPath(arena, io, env, args);
     if (args.check or args.diag or args.values or args.prefetch or args.dump) {
         const loaded = try config.loadWithEnv(arena, io, env, cfg_path);
+        // A test double's override that points nowhere: no server is
+        // asked — not the fake, not the config's site.
+        if (loaded.base_url_error) |why| {
+            try stderr.print("mnml-jira: {s}\n", .{why});
+            return 1;
+        }
         const token = try auth.resolve(arena, io, env, .{ .config_path = loaded.config.token_file, .env_name = loaded.config.token_env, .data_root = data_root });
         if (args.check) return check(arena, stdout, loaded, token);
         if (args.diag) return diag(gpa, io, env, arena, stdout, loaded, token);
@@ -301,6 +307,7 @@ fn setup(arena: Allocator, io: Io, env: *const std.process.Environ.Map, cfg_path
     const loaded = try config.loadWithEnv(arena, io, env, cfg_path);
     if (loaded.missing) return .{ .problem = .{ .title = "No Jira config yet.", .lines = try missingConfig(arena, cfg_path) } };
     if (loaded.parse_error) |why| return .{ .problem = .{ .title = "The config did not parse.", .lines = try parseError(arena, cfg_path, why) } };
+    if (loaded.base_url_error) |why| return .{ .problem = .{ .title = "The base URL override points nowhere.", .lines = try baseUrlProblem(arena, why) } };
     var why: []const u8 = "";
     config.validate(loaded.config, &why) catch return .{ .problem = .{ .title = "The config is not usable yet.", .lines = try configProblem(arena, cfg_path, why) } };
     if (family) |f| {
@@ -315,6 +322,18 @@ fn setup(arena: Allocator, io: Io, env: *const std.process.Environ.Map, cfg_path
 }
 
 const setup_hint = "r try again · q quit";
+
+/// The setup screen for a `$JIRA_BASE_URL` / `$BITBUCKET_BASE_URL` of
+/// `@<path>` whose file never arrived.
+fn baseUrlProblem(arena: Allocator, why: []const u8) Allocator.Error![]const []const u8 {
+    var out: std.ArrayList([]const u8) = .empty;
+    try out.append(arena, why);
+    try out.append(arena, "");
+    try out.append(arena, "The override is how a test points the pane at a fake server; the");
+    try out.append(arena, "file is what the fake writes once it listens. Start the fake, or");
+    try out.append(arena, "unset the variable to use the config's jira_url — then r.");
+    return out.toOwnedSlice(arena);
+}
 
 fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allocator, mount: *sdk.Mount, args: Args, data_root: ?[]const u8) !u8 {
     defer mount.destroy();
@@ -1817,4 +1836,37 @@ test "the detail modal's fields are readable after it is open: its arena is take
 
     a.closeModal();
     try testing.expect(a.modal == null);
+}
+
+test "a $JIRA_BASE_URL=@file that never arrives is the setup screen, and no request is made" {
+    // hunt/findings-2026-09-23/integ-bb-base-url-falls-back-to-production.md
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = a.allocator();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    try tmp.dir.writeFile(testing.io, .{
+        .sub_path = "config.zon",
+        .data = ".{ .jira_url = \"https://acme.atlassian.net\", .email = \"me@acme.com\", .tabs = .{ .{ .name = \"Assigned\", .kind = .work_assigned } } }",
+    });
+    const cfg_path = try std.fs.path.join(arena, &.{ root, "config.zon" });
+    const data = try std.fs.path.join(arena, &.{ root, "data" });
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    try env.put("MNML_DATA_ROOT", data);
+    try env.put(auth.default_env, "fixture-token");
+    try env.put(config.base_url_env, try std.fmt.allocPrint(arena, "@{s}/never.url", .{root}));
+
+    switch (try setup(arena, testing.io, &env, cfg_path, data, null)) {
+        .ready => return error.TestUnexpectedResult,
+        .problem => |p| {
+            try testing.expectEqualStrings("The base URL override points nowhere.", p.title);
+            try testing.expect(std.mem.indexOf(u8, p.lines[0], "never.url") != null);
+        },
+    }
+    // Nothing reached the request log: no client was ever built.
+    try testing.expectError(error.FileNotFound, Io.Dir.cwd().access(testing.io, try std.fs.path.join(arena, &.{ data, "requests", "jira.jsonl" }), .{}));
+    try testing.expectError(error.FileNotFound, Io.Dir.cwd().access(testing.io, try std.fs.path.join(arena, &.{ data, "requests", "bitbucket.jsonl" }), .{}));
 }

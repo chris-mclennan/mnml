@@ -106,7 +106,12 @@ over `.jira_url`, either literally or as `@<path>` naming a file that
 holds the URL. It is there for the test double — `mnml-fake-jira
 --port 0 --url-file jira.url` writes the port it was actually given, so
 a script never picks a number and two runs never collide. Bitbucket's
-`$BITBUCKET_BASE_URL` is the same shape.
+`$BITBUCKET_BASE_URL` is the same shape, and wins over
+`.bitbucket_api_url` (where a ticket's linked pull requests are asked
+about). An `@<path>` whose file is still missing after 5 s is the
+setup screen ("The base URL override points nowhere.") and `--check`
+exits 1 naming it: the fake did not start, and no server — not the
+config's site — is asked instead.
 
 ## The screens
 
