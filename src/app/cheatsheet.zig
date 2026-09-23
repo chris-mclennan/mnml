@@ -308,8 +308,12 @@ pub fn draw(app: *App, st: *State, ui: Ui, pane: PaneId, area: Rect) Allocator.E
         ui.fmt(" Cheatsheet · /{s}▏ · esc clears · enter applies ", .{st.query.items})
     else if (st.query.items.len > 0)
         ui.fmt(" Cheatsheet · filter: {s} · / to edit · esc clears ", .{st.query.items})
+    else if (app.input_style == .vim)
+        " Cheatsheet · / filter · j/k · C collapse · X all · Esc → back "
     else
-        " Cheatsheet · / filter · j/k · C collapse · X all · Esc → back ";
+        // The standard profile moves with the arrows; `j/k` is a vim
+        // user's hint.
+        " Cheatsheet · / filter · ↑↓ · C collapse · X all · Esc → back ";
     _ = ui.putStr(area.x, area.y, area.w, ui.clipStr(header, area.w), Theme.onBg(th.accent, th.bg.bg));
     if (area.h < 2) return;
     const list = area.splitTop(1).rest;
