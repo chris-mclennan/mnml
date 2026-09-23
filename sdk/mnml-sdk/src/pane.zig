@@ -11,6 +11,8 @@
 //!           ground, `Show more (N)`, a detail panel with its `×` and
 //!           scrollbar, and the hint row where every entry is a hit
 //!   text    widths and fitting, counted the way `Frame` paints
+//!   help    hover help: what each chrome element is and does, for
+//!           the host's info view (`Mount.hover`)
 //!   keysheet the `?` sheet's chord spelling and keys (painted by
 //!           `chrome.Painter.keySheet`)
 //!   columns how a table gives way when the pane is narrow: shrink
@@ -59,6 +61,9 @@ pub const chrome = @import("pane/chrome.zig");
 pub const text = @import("pane/text.zig");
 /// How a table gives way at a narrow width — one rule for every pane.
 pub const columns = @import("pane/columns.zig");
+/// Hover help for a pane's elements: the toolkit's own chrome has one
+/// entry each, sent up with `Mount.hover` for the host's info view.
+pub const help = @import("pane/help.zig");
 /// The `?` key sheet's grammar — the chord spelling and the keys it
 /// answers; `chrome.Painter.keySheet` paints it. One sheet for every pane.
 pub const keysheet = @import("pane/keysheet.zig");
@@ -102,6 +107,7 @@ test {
     _ = chrome;
     _ = text;
     _ = columns;
+    _ = help;
     _ = keysheet;
     _ = work;
     _ = action;

@@ -1,0 +1,37 @@
+# width: 120
+# height: 40
+# env: JIRA_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/jira-bucket.json
+# env: JIRA_API_TOKEN=fake-token
+# env: JIRA_BASE_URL=@${MNML_E2E_WORKSPACE}/jira.url
+# Hovering an element of an integration pane shows what THAT element
+# is and does — the pane names it in a `hover` message — rather than
+# one host blurb about a list row's sort / refresh / filter chips.
+# hunt/findings-2026-09-23/integ-hover-help-generic.md
+shell "$MNML_FAKE_JIRA" --port 0 --url-file jira.url --life-secs 180 --quiet --log-file jira.log --pid-file fake-jira.pid >/dev/null 2>&1 &
+wait 500
+write sdk/mnml-sdk/build.zig ""
+write integrations/jira/build.zig ""
+write integrations/jira/manifest.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } } }"
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"https://jira.invalid\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .rate = .{ .per_sec = 1000, .burst = 1000 }, .tabs = .{ .{ .name = \"My open work items\", .kind = .work_open } } }"
+command integrations.show_in_dev
+expect screen contains "INTEGRATIONS"
+drag 30 5 60 5
+key i
+expect within 10000 screen contains "installed jira_work from"
+expect within 10000 screen lacks "installed jira_work from"
+command integrations.open_as_tab
+command view.toggle_tree
+command jira_work.open
+expect within 30000 screen contains "JIRA WORK (3)"
+expect within 30000 file jira.log contains "issueId=10005"
+command view.focus_pane
+wait 1000
+command view.toggle_tree
+wait 800
+expect screen contains "assignee: All"
+# hover the assignee: chip (tree visible: the pane starts at column 58)
+hover 90 5
+wait 800
+expect screen lacks "mount pane row"
+expect within 5000 screen contains "Whose tickets show"
+shell kill "$(cat fake-jira.pid)" 2>/dev/null || true

@@ -2132,6 +2132,84 @@ pub const App = struct {
         return a.hover_buf[0..a.hover_len];
     }
 
+    /// What the element under the pointer is and does — for the host's
+    /// info view (`Mount.hover`). The toolkit's chrome reads the same as
+    /// in every pane (`sdk.pane.help.common`); the Jira chips, the
+    /// ticket buttons and the pickers say their own words. `buf` backs
+    /// a title that names a key or a ticket.
+    pub fn helpAt(a: *App, col: u16, row: u16, buf: []u8) sdk.pane.help.Help {
+        const H = sdk.pane.help;
+        const target = a.hits.at(col, row) orelse return .{ .title = "" };
+        return switch (target) {
+            .row, .card => if (a.hasTabs() and a.tab().cfg.isKanban())
+                .{ .title = "Card", .body = "A ticket on the board. Click selects it; > expands it; t transitions it, a assigns it, d opens it in full." }
+            else
+                H.common(.tree_row),
+            .chevron, .card_chevron => H.common(.chevron),
+            .show_more => .{ .title = "Show all PRs", .body = "This ticket has more linked pull requests than the three shown. Click (or Enter) lists every one." },
+            .show_older => .{ .title = "Show older", .body = "Widens this tab's date window one step — two weeks, 30 days, 90 days, all time. One refetch per step." },
+            .build_line => H.common(.build_line),
+            .pr_button => |b| switch (b.which) {
+                .open => H.common(.open_button),
+                .review => H.common(.review_button),
+                .merge => H.common(.merge_button),
+            },
+            .merge_blocked => .{ .title = H.common(.merge_blocked).title, .body = if (a.hover_len > 0) a.hoverNote() else H.common(.merge_blocked).body },
+            .confirm_ok => H.common(.confirm_ok),
+            .confirm_cancel => H.common(.confirm_cancel),
+            .confirm_body => .{ .title = "Merge confirm", .body = "The pull request, its source and target, and the strategy. Enter merges through Claude Code; Esc cancels." },
+            .action => .{ .title = "Ticket action", .body = "Dispatches a Claude Code session for this ticket — implement, fix, triage or review. The button turns while it runs and becomes `view` when it ends." },
+            .tab => H.common(.tab),
+            .chip => |c| chipHelp(c),
+            .avatar => .{ .title = "Assignee", .body = "One person on the board. Click shows only their cards; click again to show everyone's." },
+            .filter => H.common(.filter),
+            .column => .{ .title = "Board column", .body = "A status column of the board. The wheel scrolls it." },
+            .picker_row, .picker_body => H.common(.picker_row),
+            .modal_close => H.common(.detail_close),
+            .modal_body => .{ .title = "Ticket", .body = "The ticket in full: its fields, description and comments. The wheel scrolls it; Esc closes it." },
+            .vars_row, .vars_body => .{ .title = "Tab vars", .body = "The values this tab's JQL is built from. Enter edits one, a adds, d removes; s saves them into config.zon, Esc cancels." },
+            .vars_save => .{ .title = "Save the vars", .body = "Writes the vars into config.zon, keeping every comment, and refetches the tab." },
+            .vars_close => .{ .title = "Close", .body = "Closes the vars editor without saving." },
+            .jql_text, .jql_body => .{ .title = "JQL", .body = "This tab's query. Edit it and press Enter to run it; Esc cancels." },
+            .help_body => H.common(.key_sheet),
+            .detail => H.common(.detail),
+            .detail_close => H.common(.detail_close),
+            .detail_bar, .list_bar => H.common(.scrollbar),
+            .hint, .help_row => |which| blk: {
+                const b = keymap.bindingOf(which) orelse break :blk H.common(.key_sheet);
+                var kb: [24]u8 = undefined;
+                break :blk H.key(buf, keymap.displayKey(&kb, b.keys[0]), b.label);
+            },
+            .comment => .{ .title = "Comment", .body = "Type the comment; Enter posts it to the ticket, Esc drops it." },
+        };
+    }
+
+    fn chipHelp(c: hit.Chip) sdk.pane.help.Help {
+        const H = sdk.pane.help;
+        return switch (c) {
+            .refresh => H.common(.refresh),
+            .help => H.common(.keys_chip),
+            .basic => .{ .title = "Basic", .body = "Filter the tab with the chips beside it rather than typed JQL." },
+            .jql => .{ .title = "JQL", .body = "Show this tab's query and edit it; Enter runs the edited query. Key: J." },
+            .vars => .{ .title = "Tab vars", .body = "The values this tab's JQL is built from (a project, versions). Click edits them. Key: J." },
+            .search => .{ .title = "Search", .body = "Narrows the rows to the ones whose key or summary matches what is typed. Key: /." },
+            .assignee => .{ .title = "assignee:", .body = "Whose tickets show. Click opens a picker of the people on the tab — pick several; me is the account the token belongs to." },
+            .type => .{ .title = "type:", .body = "Which issue types show — Bug, Story, Task … Click opens the picker." },
+            .status => .{ .title = "status:", .body = "Which statuses show. Click opens the picker; All shows every one." },
+            .fixv_pill => .{ .title = "Fix version", .body = "The release this tab is looking at. Click switches it. Key: f (V on Work)." },
+            .fixv_remove => .{ .title = "Clear the fix version", .body = "Stops narrowing the tab to one release." },
+            .board => .{ .title = "Board", .body = "The Jira board this tab reads its sprint from." },
+            .sprint => .{ .title = "Sprint", .body = "Which sprint the board shows. Click picks another." },
+            .version => .{ .title = "Version", .body = "Narrows the board to one fix version." },
+            .epic => .{ .title = "Epic", .body = "Narrows the board to the tickets under one epic." },
+            .label => .{ .title = "Label", .body = "Narrows the board to tickets carrying one label." },
+            .quick_filters => .{ .title = "Quick filters", .body = "The board's own quick filters from Jira. Click toggles them." },
+            .unassigned => .{ .title = "Unassigned", .body = "Shows only the cards nobody is assigned to." },
+            .overflow => .{ .title = "More chips", .body = "The chips that did not fit the toolbar at this width." },
+            .settings => .{ .title = "Settings", .body = "This integration's settings." },
+        };
+    }
+
     pub fn hover(a: *App, col: u16, row: u16) Allocator.Error!void {
         a.hover_len = 0;
         const target = a.hits.at(col, row) orelse return;

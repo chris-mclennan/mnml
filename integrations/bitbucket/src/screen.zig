@@ -1756,3 +1756,25 @@ test "the cursor row is a filled band across the whole row, and no row at rest i
     const now = s.rig.app.hits.inner.rectOf(hit.Target{ .row = 1 }).?;
     try expectBand(&s.frame, now.y, now.x, now.x + now.w, band, &chip_grounds);
 }
+
+test "hover help names each element: a chip, a row, a hint entry, the refresh chip — never one generic blurb" {
+    // hunt/findings-2026-09-23/integ-hover-help-generic.md
+    const s = try Screen.init(120, 40, acme, .{});
+    defer s.deinit();
+    _ = try s.draw();
+    const app = &s.rig.app;
+    var buf: [96]u8 = undefined;
+    const Probe = struct {
+        fn at(a: *App, t_: hit.Target, b: []u8) ![]const u8 {
+            const r = a.hits.rectOf(t_) orelse return error.NotPainted;
+            return a.helpAt(r.x, r.y, b).title;
+        }
+    };
+    try t.expectEqualStrings("status:", try Probe.at(app, .{ .chip = .status }, &buf));
+    try t.expectEqualStrings("author:", try Probe.at(app, .{ .chip = .author }, &buf));
+    try t.expectEqualStrings("Refresh", try Probe.at(app, .{ .chip = .refresh }, &buf));
+    try t.expectEqualStrings("Row", try Probe.at(app, .{ .row = 1 }, &buf));
+    try t.expectEqualStrings("r — refresh this tab", try Probe.at(app, .{ .hint = .refresh }, &buf));
+    // Nothing under the pointer: an empty title, which clears the view.
+    try t.expectEqualStrings("", app.helpAt(0, 60, &buf).title);
+}

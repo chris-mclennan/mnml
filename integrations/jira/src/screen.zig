@@ -2525,3 +2525,28 @@ test "the hint row says `? keys` once: the entry it reserves room for, not that 
     try a.click(keys.x, keys.y, false);
     try testing.expect(a.help);
 }
+
+test "hover help names each element: the assignee chip, a row, a hint entry — never one generic blurb" {
+    // hunt/findings-2026-09-23/integ-hover-help-generic.md
+    const h = try app_mod.Harness.start(.{ .tabs = &app_mod.work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    a.resize(120, 40);
+    var f = try Frame.init(testing.allocator, 120, 40);
+    defer f.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    try paint(arena.allocator(), &f, a, .{});
+    var buf: [96]u8 = undefined;
+    const Probe = struct {
+        fn at(app: *app_mod.App, t_: hit.Target, b: []u8) ![]const u8 {
+            const r = app.hits.rectOf(t_) orelse return error.NotPainted;
+            return app.helpAt(r.x, r.y, b).title;
+        }
+    };
+    try testing.expectEqualStrings("assignee:", try Probe.at(a, .{ .chip = .assignee }, &buf));
+    try testing.expectEqualStrings("Refresh", try Probe.at(a, .{ .chip = .refresh }, &buf));
+    try testing.expectEqualStrings("Row", try Probe.at(a, .{ .row = 1 }, &buf));
+    try testing.expectEqualStrings("r — refresh", try Probe.at(a, .{ .hint = .refresh }, &buf));
+}

@@ -1445,7 +1445,14 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
                 // A drag along the detail panel's scrollbar: the same
                 // jump a press there makes, once per move.
                 .drag => |d| try app.drag(d.col, d.row),
-                .hover => |hv| app.hover(hv.col, hv.row),
+                .hover => |hv| {
+                    app.hover(hv.col, hv.row);
+                    // The host's info view, told what is under the
+                    // pointer (sent only when it changed).
+                    var hb: [96]u8 = undefined;
+                    const help = app.helpAt(hv.col, hv.row, &hb);
+                    mount.hover(help.title, help.body) catch {};
+                },
                 .session_state => |ss| {
                     defer gpa.free(ss.key);
                     defer gpa.free(ss.session_id);

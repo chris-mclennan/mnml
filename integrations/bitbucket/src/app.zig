@@ -1329,6 +1329,57 @@ pub const App = struct {
         return app.hover_buf[0..app.hover_len];
     }
 
+    /// What the element under the pointer is and does — for the host's
+    /// info view (`Mount.hover`). The toolkit's chrome reads the same as
+    /// in every pane (`sdk.pane.help.common`); the forge's own chips and
+    /// pages say their own words. `buf` backs a title that names a key.
+    pub fn helpAt(app: *App, col: u16, row: u16, buf: []u8) sdk.pane.help.Help {
+        const H = sdk.pane.help;
+        const target = app.hits.at(col, row) orelse return .{ .title = "" };
+        return switch (target) {
+            .tab => H.common(.tab),
+            .chip => |c| switch (c) {
+                .refresh => H.common(.refresh),
+                .help => H.common(.keys_chip),
+                .filter => H.common(.filter),
+                .status => .{ .title = "status:", .body = "Which pull requests show — Open, Draft, Merged, Declined; pick several. Right-click lists them with the live ones ticked. Key: S." },
+                .author => .{ .title = "author:", .body = "Whose pull requests show — everyone, me, or one person seen on the tab. Key: U." },
+                .target => .{ .title = "target:", .body = "Only the pull requests into one branch. Key: T." },
+                .show => .{ .title = "show:", .body = "all → reviewing (I am a reviewer) → awaiting me (my review is still due). A click cycles; nothing is fetched. Key: A." },
+                .run_by => .{ .title = "run by:", .body = "Only the pipelines one person started. Key: U." },
+                .branch => .{ .title = "branch:", .body = "Only one branch's pipelines. Key: B." },
+                .ptype => .{ .title = "type:", .body = "Which kind of pipeline — branch, pull request, custom, tag. Key: P." },
+                .pstatus => .{ .title = "status:", .body = "Which results show — successful, failed, in progress, stopped. Key: S." },
+                .trigger => .{ .title = "trigger:", .body = "How a run was started — a push, a schedule, by hand. Key: T." },
+                .run_pipeline => .{ .title = "run pipeline", .body = "Opens the pipelines page of the repo under the cursor, where a run is started, in the browser." },
+                .schedules => .{ .title = "schedules", .body = "Opens the pipeline schedules of the repo under the cursor in the browser." },
+                .caches => .{ .title = "caches", .body = "Opens the pipeline caches of the repo under the cursor in the browser." },
+                .usage => .{ .title = "usage", .body = "The workspace's pipeline-minutes page. Asks before it opens the browser." },
+            },
+            .row => H.common(if (app.activeTab().spec.isTree()) .tree_row else .list_row),
+            .build_line => H.common(.build_line),
+            .chevron => H.common(.chevron),
+            .pr_button => |b| switch (b.which) {
+                .open => H.common(.open_button),
+                .merge => H.common(.merge_button),
+            },
+            .merge_blocked => .{ .title = H.common(.merge_blocked).title, .body = if (app.hover_len > 0) app.hoverNote() else H.common(.merge_blocked).body },
+            .confirm_ok => H.common(.confirm_ok),
+            .confirm_cancel => H.common(.confirm_cancel),
+            .confirm_body => .{ .title = "Merge confirm", .body = "The pull request, its source and target, and the strategy. Enter merges through Claude Code; Esc cancels." },
+            .hint, .sheet_row => |which| blk: {
+                const b = keymap.bindingOf(which) orelse break :blk H.common(.key_sheet);
+                break :blk H.key(buf, keymap.keyLabel(b.keys[0]), b.title);
+            },
+            .menu_item => H.common(.menu_item),
+            .picker_row, .picker_body => H.common(.picker_row),
+            .detail => H.common(.detail),
+            .detail_close => H.common(.detail_close),
+            .detail_bar => H.common(.scrollbar),
+            .sheet => H.common(.key_sheet),
+        };
+    }
+
     pub fn hover(app: *App, col: u16, row: u16) void {
         app.hover_len = 0;
         const target = app.hits.at(col, row) orelse return;

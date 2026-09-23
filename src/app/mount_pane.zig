@@ -120,6 +120,18 @@ pub const MountPane = struct {
     generation: u32,
     /// Sessions this pane started and wants told about.
     watches: std.ArrayListUnmanaged(Watch) = .empty,
+    /// What the pane says the element under the pointer is and does
+    /// (`wire.SiblingMessage.hover`) — the info view's entry for this
+    /// pane's cells. Owned; empty when the pane named nothing.
+    hover_title: []u8 = &.{},
+    hover_body: []u8 = &.{},
+
+    pub fn clearHover(self: *MountPane) void {
+        if (self.hover_title.len > 0) self.gpa.free(self.hover_title);
+        if (self.hover_body.len > 0) self.gpa.free(self.hover_body);
+        self.hover_title = &.{};
+        self.hover_body = &.{};
+    }
 
     pub fn deinit(self: *MountPane, gpa: Allocator) void {
         if (self.mount) |m| {
@@ -128,6 +140,7 @@ pub const MountPane = struct {
         }
         for (self.watches.items) |*w| w.deinit(gpa);
         self.watches.deinit(gpa);
+        self.clearHover();
         self.grid.deinit(gpa);
         gpa.free(self.label);
         if (self.cmdline.len > 0) gpa.free(self.cmdline);
@@ -407,7 +420,7 @@ pub fn handle(app: *App, ev: *host.Event) Allocator.Error!void {
                     .geometry = geometry,
                     .theme = app.theme.name,
                     .workspace = app.workspace,
-                    .capabilities = .{ .rgb = true, .nerd_font = !app.cfg.ui.ascii_icons, .ascii = app.cfg.ui.ascii_icons },
+                    .capabilities = .{ .rgb = true, .nerd_font = !app.cfg.ui.ascii_icons, .ascii = app.cfg.ui.ascii_icons, .hover_help = true },
                     .palette = paletteOf(&app.theme),
                     // The pane's tab strip marks its active tab the way the
                     // rest of mnml does, rather than picking for itself.
@@ -472,6 +485,16 @@ pub fn handle(app: *App, ev: *host.Event) Allocator.Error!void {
             // button does not sit on the press's own guess until the
             // next cadence comes round.
             notifyOne(app, p, &p.watches.items[p.watches.items.len - 1]);
+        },
+        .hover => |h| {
+            // Adopted rather than copied would double-free with
+            // `Event.destroy`; the pane keeps its own two strings.
+            const title = try gpa.dupe(u8, h.title);
+            errdefer gpa.free(title);
+            const body = try gpa.dupe(u8, h.body);
+            p.clearHover();
+            p.hover_title = title;
+            p.hover_body = body;
         },
         .bye => try p.setExit("exited"),
         .closed => |reason| try p.setExit(reason),
@@ -1083,4 +1106,34 @@ test "the IPC channel an integration is told about exists even when the workspac
     // …and the channel is there anyway.
     try Io.Dir.cwd().access(testing.io, dir, .{});
     try testing.expect(std.mem.startsWith(u8, dir, deep.items));
+}
+
+test "a pane's `hover` is the info view's entry for its cells; with none, the entry is about the pane, not a list row" {
+    // hunt/findings-2026-09-23/integ-hover-help-generic.md: every element
+    // of both integration panes read the host's "mount pane row" blurb
+    // about sort / refresh / filter chips that do not exist.
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/w/acme", .cols = 100, .rows = 20 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const p = try paneOnly(&app, "Jira Work");
+    const id: PaneId = @intCast(for (app.panes.slots.items, 0..) |*slot, i| {
+        if (slot.*) |*sp| if (sp.asMount() == p) break i;
+    } else unreachable);
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const copy = @import("info_view_copy.zig");
+
+    const before = (try copy.lookup(&app, arena.allocator(), .{ .script_hit = .{ .pane = id, .id = 3 } })).?;
+    try testing.expect(std.mem.indexOf(u8, before.body, "sort, refresh and filter") == null);
+    try testing.expect(std.mem.indexOf(u8, before.title, "Jira Work") != null);
+
+    const ev = try testing.allocator.create(host.Event);
+    ev.* = .{ .pane = id, .generation = 0, .kind = .{ .hover = .{
+        .title = try testing.allocator.dupe(u8, "assignee:"),
+        .body = try testing.allocator.dupe(u8, "Whose tickets show."),
+    } } };
+    try handle(&app, ev);
+    const after = (try copy.lookup(&app, arena.allocator(), .{ .script_hit = .{ .pane = id, .id = 3 } })).?;
+    try testing.expectEqualStrings("assignee:", after.title);
+    try testing.expectEqualStrings("Whose tickets show.", after.body);
 }

@@ -540,7 +540,14 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
                     // same jump a press there makes, once per move. A
                     // plain move is what makes a dim `[ Merge ]` say
                     // why it is dim.
-                    .hover => |h| if (h.dragging) try app.drag(h.col, h.row) else try app.hover(h.col, h.row),
+                    .hover => |h| if (h.dragging) try app.drag(h.col, h.row) else {
+                        try app.hover(h.col, h.row);
+                        // The host's info view, told what is under the
+                        // pointer (sent only when it changed).
+                        var hb: [96]u8 = undefined;
+                        const help = app.helpAt(h.col, h.row, &hb);
+                        mount.hover(help.title, help.body) catch {};
+                    },
                 },
             }
             if (ended) break;

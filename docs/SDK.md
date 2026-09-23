@@ -669,6 +669,23 @@ if (try sdk.Ipc.fromEnv(gpa, io, env)) |ipc_const| {
 }
 ```
 
+### Hover help — `Mount.hover` and `sdk.pane.help`
+
+mnml's info view explains whatever the pointer rests on. A mounted pane
+paints every cell itself, so only the pane knows that the cell under
+the pointer is an `assignee:` chip rather than a row: on every pointer
+move (`input` → `hover`), look the cell up in your hit map and call
+`mount.hover(title, body)`. The SDK sends it only to a host that shows
+it (`hello.capabilities.hover_help`) and only when it changed, so
+calling it on every move is free; `""` clears it. The toolkit's own
+chrome has one entry each in `sdk.pane.help.common` — the refresh and
+`?` chips, a tab, the filter pill, a tree or list row, a chevron, a
+build line, the PR row's Open / Review / Merge, the detail panel, the
+scrollbar, a picker row, the key sheet — and `help.key` spells a
+hint-row entry, so the same element reads the same in every pane; your
+own chips and pages get your own words. Both first-party integrations
+do this (`App.helpAt`).
+
 ### A figure's hover lists what it counts
 
 **The design-language rule: a statusline figure's hover lists what the

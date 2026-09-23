@@ -51,6 +51,10 @@ pub const Capabilities = struct {
     rgb: bool = true,
     nerd_font: bool = true,
     ascii: bool = false,
+    /// The host shows a pane's `hover` in its info view. A host that
+    /// predates the message sends nothing here, reads as false, and a
+    /// sibling then never sends one — so no version bump is needed.
+    hover_help: bool = false,
 };
 
 /// The host theme's roles, so a sibling can paint in the theme it is
@@ -339,6 +343,12 @@ pub const SiblingMessage = union(enum) {
     /// second watch under a key replaces the first, so a button that
     /// is pressed again follows the newer session.
     watch_session: struct { key: []const u8, selector: SessionSelector },
+    /// What the element under the pointer is and does — a chip, a
+    /// row, a button — for the host's info view (the hover help every
+    /// other part of mnml has). A short title, a sentence or two of
+    /// body; an empty title says "nothing to explain here". Only sent
+    /// to a host whose `hello.capabilities.hover_help` is set.
+    hover: struct { title: []const u8 = "", body: []const u8 = "" },
     /// A clean exit.
     bye,
 };
@@ -588,7 +598,7 @@ test "the JSON shape is the documented one" {
     const gpa = testing.allocator;
     const hello = try encode(gpa, HostMessage{ .hello = .{ .geometry = .{ .cols = 8, .rows = 2 } } });
     defer gpa.free(hello);
-    try testing.expectEqualStrings("{\"hello\":{\"protocol\":3,\"geometry\":{\"cols\":8,\"rows\":2},\"theme\":\"\",\"workspace\":\"\",\"capabilities\":{\"rgb\":true,\"nerd_font\":true,\"ascii\":false},\"tab_indicator\":\"block\"}}", hello);
+    try testing.expectEqualStrings("{\"hello\":{\"protocol\":3,\"geometry\":{\"cols\":8,\"rows\":2},\"theme\":\"\",\"workspace\":\"\",\"capabilities\":{\"rgb\":true,\"nerd_font\":true,\"ascii\":false,\"hover_help\":false},\"tab_indicator\":\"block\"}}", hello);
     const bye = try encode(gpa, @as(SiblingMessage, .bye));
     defer gpa.free(bye);
     try testing.expectEqualStrings("{\"bye\":{}}", bye);
@@ -681,4 +691,20 @@ test "framing fuzz: random bodies of random lengths survive a round trip; random
             _ = decode(HostMessage, arena_state.allocator(), body) catch {};
         }
     }
+}
+
+test "hover: a pane names the element under the pointer, and only a host that says it shows one is sent one" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = a.allocator();
+    const body = try encode(arena, SiblingMessage{ .hover = .{ .title = "assignee:", .body = "Picks whose tickets show." } });
+    try testing.expectEqualStrings("{\"hover\":{\"title\":\"assignee:\",\"body\":\"Picks whose tickets show.\"}}", body);
+    const back = try decode(SiblingMessage, arena, body);
+    try testing.expectEqualStrings("assignee:", back.hover.title);
+    // A host from before the message says nothing about it: false, and
+    // `Mount.hover` then sends nothing a host could choke on.
+    const old = try decode(HostMessage, arena, "{\"hello\":{\"protocol\":3,\"geometry\":{\"cols\":8,\"rows\":2},\"capabilities\":{\"rgb\":true}}}");
+    try testing.expect(!old.hello.capabilities.hover_help);
+    const new = try decode(HostMessage, arena, "{\"hello\":{\"protocol\":3,\"geometry\":{\"cols\":8,\"rows\":2},\"capabilities\":{\"hover_help\":true}}}");
+    try testing.expect(new.hello.capabilities.hover_help);
 }
