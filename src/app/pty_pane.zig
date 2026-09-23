@@ -149,6 +149,22 @@ pub const PtyPane = struct {
     /// (`sessions.zig` sets it on the edge); the tab shows a badge until
     /// the pane is looked at.
     attention: bool = false,
+    /// The pane's child is blocked on a question — a permission prompt,
+    /// a `(y/n)`, a numbered choice — as `sessions.evalNeedsYou` last
+    /// read it (`sessions.trackNeedsYou` re-reads it at most every
+    /// `sessions.needs_you_ttl_ms`). `sessions.needsYou` answers from
+    /// here, for the tab mark, the SESSIONS card and the waiting jumps.
+    needs_you: bool = false,
+    /// When `needs_you` was last read (the awake clock), and the
+    /// `fed_gen` / listing count it was read at: a pane whose output or
+    /// listing moved since is read again once the throttle allows.
+    needs_you_at_ms: i64 = 0,
+    needs_you_gen: u64 = 0,
+    needs_you_adopted: u32 = 0,
+    /// `fed_gen` when the SESSIONS scan last adopted a listing: the
+    /// scan's `waiting` for this pane's session holds only while the
+    /// pane has printed nothing since — after that, the grid decides.
+    needs_you_snap_gen: u64 = 0,
     /// Neovim's terminal-normal mode (`:help CTRL-\_CTRL-N`): the keys
     /// are the app's — the leader, the `Ctrl-W` family, `i` / `a` back
     /// to the child — and nothing reaches the child. vim profile only.
