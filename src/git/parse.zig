@@ -891,6 +891,31 @@ pub fn parseBlame(arena: Allocator, text: []const u8) Allocator.Error![]BlameLin
     return out.items;
 }
 
+/// The first entry of `git blame --porcelain` output — what a one-line
+/// `-L n,n` blame prints: its commit, author, author time and summary.
+/// Null when the output holds no entry.
+pub fn parseBlameOne(arena: Allocator, text: []const u8) Allocator.Error!?BlameLine {
+    var out: BlameLine = .{ .sha = "", .author = "" };
+    var seen = false;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |line| {
+        if (line.len > 0 and line[0] == '\t') return if (seen) out else null;
+        if (!seen and isShaHeader(line)) {
+            out.sha = try arena.dupe(u8, line[0..40]);
+            seen = true;
+        } else if (!seen) {
+            continue;
+        } else if (std.mem.startsWith(u8, line, "author ")) {
+            out.author = try arena.dupe(u8, line["author ".len..]);
+        } else if (std.mem.startsWith(u8, line, "author-time ")) {
+            out.time = std.fmt.parseInt(i64, line["author-time ".len..], 10) catch 0;
+        } else if (std.mem.startsWith(u8, line, "summary ")) {
+            out.summary = try arena.dupe(u8, line["summary ".len..]);
+        }
+    }
+    return if (seen) out else null;
+}
+
 fn isShaHeader(line: []const u8) bool {
     if (line.len < 42) return false;
     for (line[0..40]) |c| if (!std.ascii.isHex(c)) return false;
@@ -1649,6 +1674,28 @@ test "parseBlame: metadata once per commit, later groups resolve through the sha
     try testing.expect(lines[2].isUncommitted());
     try testing.expect(!lines[0].isUncommitted());
     try testing.expectEqualStrings("initial", lines[0].summary);
+}
+
+test "parseBlameOne: the one entry a -L n,n blame prints, uncommitted included; nothing is null" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const sha = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
+    const one = (try parseBlameOne(arenaOf(&a), sha ++ " 7 12 1\n" ++
+        "author alice\n" ++
+        "author-mail <a@x>\n" ++
+        "author-time 1700000000\n" ++
+        "summary fix the total\n" ++
+        "filename code.rs\n" ++
+        "\tlet total = 1;\n")).?;
+    try testing.expectEqualStrings(sha, one.sha);
+    try testing.expectEqualStrings("alice", one.author);
+    try testing.expectEqual(@as(i64, 1700000000), one.time);
+    try testing.expectEqualStrings("fix the total", one.summary);
+    try testing.expect(!one.isUncommitted());
+    const dirty = (try parseBlameOne(arenaOf(&a), "0000000000000000000000000000000000000000 3 3 1\nauthor Not Committed Yet\nauthor-time 0\nsummary Version of code.rs from code.rs\n\tx\n")).?;
+    try testing.expect(dirty.isUncommitted());
+    try testing.expect((try parseBlameOne(arenaOf(&a), "")) == null);
+    try testing.expect((try parseBlameOne(arenaOf(&a), "fatal: no such path 'x' in HEAD\n")) == null);
 }
 
 test "parseLog splits records and fields, parents by space" {

@@ -89,6 +89,7 @@ pub const specs = [_]Spec{
     .{ .id = "view.toggle_scrollbar", .title = "Toggle the editor scrollbar (right-edge thumb)", .group = "view" },
     .{ .id = "view.toggle_breadcrumb", .title = "Toggle the editor breadcrumb row (path above each pane)", .group = "view" },
     .{ .id = "editor.toggle_auto_pair", .title = "Toggle bracket / quote auto-pairing", .group = "editor" },
+    .{ .id = "editor.toggle_indent_guides", .title = "Toggle indent guides", .group = "editor" },
     .{ .id = "view.toggle_auto_md_preview", .title = "Toggle auto-open markdown preview on file open", .group = "view" },
     .{ .id = "view.toggle_highlight_trailing_ws", .title = "Toggle trailing-whitespace highlight (red bg on trailing space/tab)", .group = "view" },
     .{ .id = "view.toggle_highlight_word", .title = "Toggle 'highlight other occurrences of word under cursor'", .group = "view" },
@@ -589,6 +590,7 @@ pub const specs = [_]Spec{
     .{ .id = "cloud_agents.webhook_docs", .title = "Cloud agents: open webhook-handler docs (alternative to ant poll)", .group = "view" },
     .{ .id = "view.git_commit_focus", .title = "Activity: focus the Git section's commit textarea", .group = "view" },
     .{ .id = "git.blame_toggle", .title = "Git: toggle blame gutter", .group = "git", .keys = .{ .standard = &.{"ctrl+k b"} } },
+    .{ .id = "git.toggle_line_blame", .title = "Git: toggle the current line's blame", .group = "git" },
     .{ .id = "git.commit", .title = "Git: commit staged changes", .group = "git", .keys = .{ .standard = &.{"ctrl+k g c"} } },
     .{ .id = "git.stash", .title = "Git: stash (push -u, optional message)", .group = "git" },
     .{ .id = "git.stash_pop", .title = "Git: stash pop (apply + drop most recent)", .group = "git" },
@@ -1266,7 +1268,7 @@ pub const specs = [_]Spec{
     .{ .id = "view.keep_tab", .title = "Keep this tab (stop the next glance taking the preview over)", .group = "view", .keys = .{ .vim = &.{"space b k"}, .standard = &.{"ctrl+k enter"} } },
 };
 
-test "1127 specs, unique ids" {
+test "1129 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1303,10 +1305,14 @@ test "1127 specs, unique ids" {
     // + the three `view.rail_*` membership commands (railmove)
     // + the four `view.dock_item_move_*` reorder commands (dock-polish)
     // + `view.focus_prev_split`, the split walk backwards (splitcycle)
-    try std.testing.expectEqual(@as(usize, 1127), specs.len);
+    try std.testing.expectEqual(@as(usize, 1129), specs.len);
     // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
-    try std.testing.expectEqual(@as(usize, 1127), specs.len);
+    try std.testing.expectEqual(@as(usize, 1129), specs.len);
     // + `jobs.show`, the background-jobs list (jobschip)
-    try std.testing.expectEqual(@as(usize, 1127), specs.len);
+    try std.testing.expectEqual(@as(usize, 1129), specs.len);
+    // + `editor.toggle_indent_guides` (editorpolish)
+    try std.testing.expectEqual(@as(usize, 1129), specs.len);
+    // + `editor.toggle_indent_guides`, `git.toggle_line_blame` (editorpolish)
+    try std.testing.expectEqual(@as(usize, 1129), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

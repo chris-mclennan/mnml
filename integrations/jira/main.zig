@@ -552,7 +552,10 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
         // second later.
         // A spinner that only moves twice a second reads as stuck, so
         // a pane with a session running wakes at the spinner's pace.
-        _ = box.wait(io, if (app.refresh.busy()) 60 else if (app.actions.anyRunning()) 120 else 500);
+        // A linked-PR fetch counts too: its rows replace a `loading…`
+        // row under the cursor, and half a second of that row is half a
+        // second of a list that is about to move.
+        _ = box.wait(io, if (app.refresh.busy() or app.prs.busy()) 60 else if (app.actions.anyRunning()) 120 else 500);
     }
     return 0;
 }

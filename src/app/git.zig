@@ -51,6 +51,7 @@ const cmd_view = @import("cmd_view.zig");
 const context_menus = @import("context_menus.zig");
 const git_palette = @import("git_palette.zig");
 const conflicts = @import("conflicts.zig");
+const line_blame = @import("line_blame.zig");
 const clock = @import("clock.zig");
 const jobs = @import("jobs.zig");
 
@@ -394,10 +395,15 @@ pub const GraphPane = struct {
     /// `W`: the commit a `d` on another row diffs from (`base..row`).
     /// Owned; a sha, so it survives a log reload.
     compare_base: ?[]u8 = null,
+    /// The commit the cursor goes to when the log lands — a click on an
+    /// editor's line blame opened the graph for it (`openCommitInGraph`).
+    /// Owned.
+    jump_to: ?[]u8 = null,
 
     pub fn deinit(self: *GraphPane) void {
         self.gpa.free(self.name);
         if (self.compare_base) |b| self.gpa.free(b);
+        if (self.jump_to) |b| self.gpa.free(b);
         self.wip_text.deinit(self.gpa);
         self.filter.deinit(self.gpa);
         self.marks.deinit(self.gpa);
@@ -536,6 +542,9 @@ pub const State = struct {
     blames: std.AutoHashMapUnmanaged(PaneId, Blame) = .empty,
     /// The pane a blame was asked for, until it lands.
     blame_pending: ?PaneId = null,
+    /// The current-line blame's answers and its one ask in flight
+    /// (`app/line_blame.zig`).
+    line_blame: line_blame.State = .{},
     pick: Pick = .none,
     prompt: PromptKind = .none,
     confirm: Confirm = .none,
@@ -623,6 +632,7 @@ pub const State = struct {
         var it = self.blames.valueIterator();
         while (it.next()) |b| b.arena.deinit();
         self.blames.deinit(gpa);
+        self.line_blame.deinit(gpa);
         self.marks.deinit(gpa);
         self.confirm.deinit(gpa);
         if (self.ai_body) |b| gpa.free(b);
@@ -1341,6 +1351,7 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
             try st.blames.put(gpa, pane, blame);
             app.toast("blame: on", .{});
         },
+        .blame_line => |b| try line_blame.handle(app, repo, b.path, b.line, b.blame),
         .log => |l| {
             if (l.path != null and st.awaiting == .file_history) {
                 st.awaiting = .none;
@@ -1359,6 +1370,11 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
                     g.order = try graph_view.sortOrder(g.arena.allocator(), l.commits, g.sort);
                     g.pending = false;
                     if (g.cursor >= g.totalRows()) g.cursor = g.totalRows() -| 1;
+                    if (g.jump_to) |sha| {
+                        g.jump_to = null;
+                        defer gpa.free(sha);
+                        if (!jumpToCommit(g, sha)) app.toast("{s} is not in the graph's last {d} commits", .{ sha[0..@min(7, sha.len)], graph_limit });
+                    }
                     if (!g.wipSelected()) requestDetail(app, g) catch {};
                     return;
                 },
@@ -3791,6 +3807,33 @@ fn hashFilterKey(app: *App, g: *GraphPane, k: Key) Allocator.Error!bool {
     return true;
 }
 
+/// The graph's cursor on the commit `sha` names; false when the log
+/// does not hold it.
+fn jumpToCommit(g: *GraphPane, sha: []const u8) bool {
+    const idx = graph_view.findByHashPrefix(g.commits, sha) orelse return false;
+    g.cursor = g.rowOfCommit(idx);
+    return true;
+}
+
+/// The commit graph with the cursor on `sha`: now when the graph has
+/// its log, else once the log it is loading lands.
+pub fn openCommitInGraph(app: *App, sha: []const u8) CommandError!void {
+    try command.run(app, .{ .static = .@"git.graph" });
+    const g = activeGraph(app) orelse return;
+    if (!g.pending) {
+        if (!jumpToCommit(g, sha)) {
+            app.toast("{s} is not in the graph's last {d} commits", .{ sha[0..@min(7, sha.len)], graph_limit });
+            return;
+        }
+        if (!g.wipSelected()) requestDetail(app, g) catch {};
+        app.needs_render = true;
+        return;
+    }
+    const owned = try app.gpa.dupe(u8, sha);
+    if (g.jump_to) |old| app.gpa.free(old);
+    g.jump_to = owned;
+}
+
 /// The cursor to the first commit the typed prefix names; false when none.
 fn jumpToHashPrefix(app: *App, g: *GraphPane) bool {
     const idx = graph_view.findByHashPrefix(g.commits, g.hashFilter()) orelse return false;
@@ -5440,6 +5483,56 @@ test "headless smoke: git init → the rail lists an untracked file; stage moves
     testing.allocator.free(txt);
     try command.run(&f.app, .{ .static = .@"git.blame_toggle" });
     try testing.expectEqualStrings("blame: off", f.app.lastToast().?);
+}
+
+test "line blame: the cursor's line gets its commit on the worker, nothing while the buffer is dirty, and an edit drops the cache" {
+    var f = try Fixture.init(100, 12);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q" });
+    try f.write("a.txt", "one\ntwo\n");
+    try f.sh(&.{ "add", "a.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "first two lines" });
+    f.app.tree.visible = false;
+    const abs = try std.fs.path.join(testing.allocator, &.{ f.root, "a.txt" });
+    defer testing.allocator.free(abs);
+    const pane = try f.app.openPath(abs);
+    const lb = &f.app.git.line_blame;
+
+    // Off by default: nothing is asked.
+    try line_blame.request(&f.app, pane);
+    try testing.expect(lb.pending == null);
+
+    f.app.cfg.editor.line_blame = true;
+    try line_blame.request(&f.app, pane);
+    // The ask is a job on the worker: the call returned with it in flight.
+    try testing.expect(lb.pending != null);
+    var i: usize = 0;
+    while (lb.pending != null and i < 2000) : (i += 1) {
+        try f.app.tick(App.nowMs(testing.io));
+        testing.io.sleep(.fromMilliseconds(5), .awake) catch {};
+    }
+    try testing.expect(lb.pending == null);
+    try testing.expectEqual(@as(usize, 1), lb.entries.items.len);
+    try testing.expectEqualStrings("tester", lb.entries.items[0].author);
+    var txt = try f.screen();
+    try testing.expect(std.mem.indexOf(u8, txt, "one  tester · ") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, " ago · first two lines") != null);
+    testing.allocator.free(txt);
+    // Asking again for the same line is a cache hit, not a job.
+    try line_blame.request(&f.app, pane);
+    try testing.expect(lb.pending == null);
+
+    // An edit: the buffer is not the file git blames — nothing paints,
+    // nothing is asked, and what was cached for the file goes.
+    try f.app.handle(.{ .key = Key.char('x') });
+    try testing.expect(f.app.panes.editor(pane).?.buf.doc.dirty);
+    txt = try f.screen();
+    try testing.expect(std.mem.indexOf(u8, txt, "tester") == null);
+    testing.allocator.free(txt);
+    try line_blame.request(&f.app, pane);
+    try testing.expect(lb.pending == null);
+    line_blame.dropStale(&f.app, pane);
+    try testing.expectEqual(@as(usize, 0), lb.entries.items.len);
 }
 
 test "git.status_pane opens beside the graph — Rust's split to the right, the graph's tabs kept on the left — a second call reveals it there, a pane too narrow for two makes it a tab, and with nothing open it is the only leaf; git.diff_file from an editor splits the same way and the worktree diff stays a tab" {

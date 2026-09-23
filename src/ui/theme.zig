@@ -82,8 +82,14 @@ warn_fg: Style,
 info_fg: Style,
 /// The `⋯ folded · N lines hidden` marker.
 fold: Style,
-/// Rendered whitespace / indent guides.
+/// Rendered whitespace (`ui.show_whitespace`'s `·` and `→`).
 whitespace: Style,
+/// An indent guide (`editor.indent_guides`): faint, a step above the
+/// ground — NvChad's `IblChar`.
+indent_guide: Style,
+/// The indent guide of the block the cursor is in — NvChad's
+/// `IblScopeChar`, brighter than the rest.
+indent_guide_active: Style,
 /// Tree-sitter capture roles, foreground only.
 syntax: Syntax,
 
@@ -272,6 +278,8 @@ pub fn derive(src: Source) Theme {
         .info_fg = on(p.blue, p.bg_dark),
         .fold = .{ .fg = p.comment, .bg = p.bg_dark, .italic = true },
         .whitespace = on(p.grey, p.bg_dark),
+        .indent_guide = on(p.bg3, p.bg_dark),
+        .indent_guide_active = on(p.grey_fg, p.bg_dark),
         // base16 roles: 03 comments, 05 default fg, 08 variables, 09
         // numbers / constants, 0A types, 0B strings, 0C escapes /
         // constructors, 0D functions, 0E keywords, 0F punctuation.

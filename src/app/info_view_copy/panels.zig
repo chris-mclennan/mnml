@@ -17,6 +17,7 @@ const search_view = @import("../../ui/search_section_view.zig");
 const git_palette_ui = @import("../../ui/git_palette.zig");
 const sessions = @import("../../sessions.zig");
 const git_palette = @import("../git_palette.zig");
+const line_blame = @import("../line_blame.zig");
 
 const ask = copy.ask_link;
 
@@ -437,6 +438,11 @@ pub fn welcome(w: hit.WelcomeRow) Entry {
 pub fn scriptHit(app: *App, arena: Allocator, pane: PaneId, id: u32) Allocator.Error!?Entry {
     const p = app.panes.get(pane) orelse return null;
     const kind = @tagName(std.meta.activeTag(p.*));
+    if (p.* == .editor and id == line_blame.hit_id) return .{
+        .title = (try line_blame.hoverTitle(app, arena, pane)) orelse "Current-line blame",
+        .body = "Who last changed the cursor's line, how long ago, and the commit's summary — `git blame` for this one line, asked on the git worker once the cursor rests and kept until the file changes. Click opens that commit in the graph with the cursor on it. It says nothing while the buffer has unsaved changes (git blames the file on disk) or for a line not committed yet.",
+        .links = &.{ .{ .command = .{ .id = .@"git.toggle_line_blame", .label = "Turn it off" } }, .{ .command = .{ .id = .@"git.blame_toggle", .label = "Blame every line in the gutter" } }, .{ .settings = .{ .row = comptime copy.settingsRow("editor.line_blame"), .label = "Current-line blame in Settings" } } },
+    };
     if (hit.ListHit.chipOf(id)) |c| return chip(.script, c);
     if (id == hit.ListHit.filter_id) return filter(.script);
     if (id >= hit.ListHit.kebab_base) return kebab(.{ .panel = .script, .idx = id - hit.ListHit.kebab_base });

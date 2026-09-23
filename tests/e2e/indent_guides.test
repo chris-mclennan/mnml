@@ -1,0 +1,35 @@
+# Indent guides (`editor.indent_guides`, on by default): a rule at every
+# indent step of a line's leading white space, a blank line inside a
+# block carrying the block's guides, and the guide of the block the
+# cursor is in brighter than the rest — onedark's grey_fg (#565c64) over
+# one_bg3 (#373b43). The text starts at column 36 here, so the guides
+# sit at 36 (the function's body) and 40 (the if's).
+write g.rs "fn a() {\n    if x {\n        y();\n\n        z();\n    }\n}\n"
+open g.rs
+expect screen contains "1 fn a() {"
+expect screen contains "2 │   if x {"
+expect screen contains "3 │   │   y();"
+expect screen contains "5 │   │   z();"
+expect screen contains "6 │   }"
+# On `fn a() {` the scope is the body it opens: the column-36 guide.
+expect color 36 4 fg #565c64
+expect color 40 4 fg #373b43
+# Line 4 is blank; its guides run on past its end.
+expect color 36 5 fg #565c64
+expect color 40 5 fg #373b43
+# Down to `y();`: the scope is the if's body now, blank line and all.
+key down
+key down
+expect color 40 4 fg #565c64
+expect color 40 5 fg #565c64
+expect color 40 6 fg #565c64
+expect color 36 4 fg #373b43
+# `}` closing the if is outside that body: its guide is a plain one.
+expect color 36 7 fg #373b43
+# The toggle takes them away and puts them back.
+command editor.toggle_indent_guides
+expect screen contains "indent guides off"
+expect screen contains "3         y();"
+command editor.toggle_indent_guides
+expect screen contains "indent guides on"
+expect screen contains "3 │   │   y();"

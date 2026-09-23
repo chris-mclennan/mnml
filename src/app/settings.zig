@@ -56,6 +56,7 @@ pub const table = .{
     .@"view.toggle_hover_tooltip" = toggleRunner("ui.hover_tooltip", "hover tooltips"),
     .@"view.toggle_workspace_dots" = toggleRunner("ui.show_workspace_dots", "workspace dots"),
     .@"view.toggle_color_column" = &toggleColorColumn,
+    .@"editor.toggle_indent_guides" = &toggleIndentGuides,
     // The setters Rust listed and never ran: set the key, write it to
     // the home config, say so.
     .@"view.tab_bar_ai_claude_only" = setRunner("ui.tab_bar_ai_icon", .claude_code, "AI chips: Claude, and Codex when its icon is enabled"),
@@ -102,6 +103,16 @@ fn toggleRunner(comptime path: []const u8, comptime label: []const u8) command.C
             app.needs_render = true;
         }
     }.run;
+}
+
+/// `editor.toggle_indent_guides`: shown (as `.on`, or `.active` when
+/// that is what the config asked for) ⇄ `.off`, in memory like the
+/// other toggles. Turning them back on from `.off` gives `.on`.
+fn toggleIndentGuides(app: *App) command.CommandError!void {
+    const g = &app.cfg.editor.indent_guides;
+    g.* = if (g.* == .off) .on else .off;
+    app.toast("indent guides {s}", .{if (g.* == .off) "off" else "on"});
+    app.needs_render = true;
 }
 
 /// `view.toggle_color_column`: off ↔ the editor's `text_width`.
@@ -277,6 +288,8 @@ pub const rows = [_]RowSpec{
     .{ .path = "editor.ensure_trailing_newline", .label = "Ensure trailing newline", .section = .editor, .scope = .workspace },
     .{ .path = "editor.breadcrumb", .label = "Breadcrumb", .section = .editor, .scope = .home },
     .{ .path = "editor.inline_values", .label = "Inline debugger values", .section = .editor, .scope = .workspace },
+    .{ .path = "editor.indent_guides", .label = "Indent guides", .section = .editor, .scope = .home },
+    .{ .path = "editor.line_blame", .label = "Current-line blame", .section = .editor, .scope = .home },
     // The gutter's fold chevron is an offer made under the pointer; on
     // `on` every foldable line wears one whether the pointer is there
     // or not, so the offer is findable without hunting for it

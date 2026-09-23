@@ -93,6 +93,9 @@ pub const EditorPane = struct {
     /// The sticky context's chain for the last top line / text / parse
     /// (`sticky.headerLines`).
     sticky: sticky.Cache = .{},
+    /// The indent step the guides were drawn with and the edit-log seq
+    /// it was read at (`render.guideStep`); null until the first frame.
+    guide_step: ?struct { seq: u64, step: u8 } = null,
 
     pub fn deinit(self: *EditorPane) void {
         if (self.label) |l| self.buf.gpa.free(l);

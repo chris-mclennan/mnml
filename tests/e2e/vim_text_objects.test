@@ -1,6 +1,7 @@
 # Vim text objects — `diw` deletes the inner word; `daw` includes trailing
 # whitespace; same shape for `ciw` / `caw`. Cursor doesn't need to be at the
-# start of the word.
+# start of the word. The bracket and quote objects act on the pair Neovim
+# picks, the cursor inside it or not (the cases at the end).
 write code.txt "alpha beta gamma"
 open code.txt
 command editor.use_vim
@@ -72,3 +73,83 @@ key i
 key (
 expect screen contains "call()"
 expect screen lacks "arg1"
+
+# Outside a pair the bracket object is the next pair — Neovim's `i(`
+# "If the cursor is not inside a () block, then find the next "("".
+# Neovim 0.12.5 --clean on the same text, same keys:
+#   ci(X<Esc> from the f of `foo bar(baz) qux`   → foo bar(X) qux
+#   fbda[      on `a [1] b [2] c`               → a [1] b  c
+write fwd.txt "foo bar(baz) qux"
+open fwd.txt
+command editor.use_vim
+key 0
+key c
+key i
+key (
+type X
+key esc
+expect screen contains "foo bar(X) qux"
+
+write two.txt "a [1] b [2] c"
+open two.txt
+command editor.use_vim
+key 0
+key f
+key b
+key d
+key a
+key [
+expect screen contains "a [1] b  c"
+
+# Quotes pick the string Neovim picks. From the x, di" empties the first
+# string after the cursor; between two strings the nearest quote behind
+# the cursor opens the string, so fcdi" on `a "b" c "d"` takes ` c `;
+# and da" takes the blank after the closing quote with it.
+#   di"      on `x = "foo" y`   → x = "" y
+#   fcdi"    on `a "b" c "d"`   → a "b""d"
+#   da"      on `k "q" y`       → k y
+write fwdq.txt "x = \"foo\" y"
+open fwdq.txt
+command editor.use_vim
+key 0
+key d
+key i
+key "
+expect screen contains "x = \"\" y"
+
+write between.txt "a \"b\" c \"d\""
+open between.txt
+command editor.use_vim
+key 0
+key f
+key c
+key d
+key i
+key "
+expect screen contains "a \"b\"\"d\""
+
+write around.txt "k \"q\" y"
+open around.txt
+command editor.use_vim
+key 0
+key d
+key a
+key "
+expect screen contains "k y"
+expect screen lacks "k  y"
+
+# Nothing to find — no `(` anywhere after the cursor — is a no-op that
+# leaves Normal mode as it was: Neovim's `di(` on `no pairs here` from
+# the p changes nothing, and the next `x` deletes the p.
+write none.txt "no pairs here\nsecond"
+open none.txt
+command editor.use_vim
+key 0
+key w
+key d
+key i
+key (
+expect screen contains "no pairs here"
+expect status contains "\"mode\":\"NORMAL\""
+key x
+expect screen contains "no airs here"

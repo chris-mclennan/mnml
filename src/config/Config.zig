@@ -72,6 +72,10 @@ pub const InputStyle = enum { vim, standard };
 pub const LspMissingDefaults = enum { quiet, toast, ignore };
 pub const WheelMovesCursor = enum { auto, always, never };
 pub const ScrollAccel = enum { off, gentle, normal, fast };
+/// `editor.indent_guides`: `.on` rules every indent step of a line's
+/// leading white space and brightens the cursor's scope; `.active`
+/// paints only the cursor's scope; `.off` none.
+pub const IndentGuides = enum { off, on, active };
 
 pub const chord_timeout_ms_min: u16 = 100;
 pub const chord_timeout_ms_max: u16 = 5000;
@@ -113,6 +117,17 @@ pub const Editor = struct {
     /// Lay a server's semantic tokens over the syntax highlighting.
     semantic_tokens: bool = true,
     code_lens: bool = true,
+    /// A faint rule at every indent step of a line's leading white
+    /// space, the step being the buffer's own indent (a `.editorconfig`,
+    /// else what the file is indented by, else `tab_width`); the guide
+    /// of the block the cursor is in is brighter. `.active` paints only
+    /// that one.
+    indent_guides: IndentGuides = .on,
+    /// Dim text at the end of the cursor's line naming who last changed
+    /// it, how long ago and the commit's summary (`git blame -L`, on the
+    /// git worker when the cursor rests). Nothing while the buffer has
+    /// unsaved changes. Off by default — GitLens's opt-in.
+    line_blame: bool = false,
     text_width: u16 = 80,
     ensure_trailing_newline: bool = true,
     /// Vim's `timeoutlen`; clamped to `chord_timeout_ms_min..max` on load.
@@ -1265,6 +1280,8 @@ test "defaults are the shipped values" {
     try std.testing.expect(c.editor.inlay_hints);
     try std.testing.expect(c.editor.semantic_tokens);
     try std.testing.expect(c.editor.code_lens);
+    try std.testing.expectEqual(IndentGuides.on, c.editor.indent_guides);
+    try std.testing.expect(!c.editor.line_blame);
     try std.testing.expect(!c.editor.format_on_type);
     try std.testing.expect(!c.editor.will_save_wait_until);
     try std.testing.expectEqual(@as(usize, 0), c.formatters.count());

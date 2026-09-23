@@ -1,0 +1,46 @@
+# Current-line blame (`editor.line_blame`, off by default — GitLens's
+# opt-in): dim text at the end of the cursor's line, `  author · age
+# ago · summary`, from `git blame -L n,n --porcelain` on the git worker
+# once the cursor rests. Nothing while the buffer has unsaved changes,
+# nothing for a line not committed yet, and a click on the text opens
+# the commit in the graph with the cursor on it.
+# env: GIT_CONFIG_GLOBAL=/dev/null
+# env: GIT_CONFIG_SYSTEM=/dev/null
+shell printf 'alpha\nbeta\ngamma\n' > notes.txt
+shell git init -q -b main . && git config user.email ada@example.com && git config user.name "Ada Lovelace" && git add notes.txt && git commit -qm "the first three lines"
+open notes.txt
+# Off: the cursor rests and nothing is asked for.
+wait 400
+expect screen lacks "Ada Lovelace"
+command git.toggle_line_blame
+expect screen contains "line blame on"
+expect screen contains "alpha  Ada Lovelace · "
+expect screen contains " ago · the first three lines"
+# It follows the cursor, one line at a time.
+key down
+wait 400
+expect screen contains "beta  Ada Lovelace · "
+expect screen lacks "alpha  Ada"
+# An edit: the buffer is not the file git blames, so nothing shows.
+key end
+type !
+expect screen contains "beta!"
+expect screen lacks "Ada Lovelace"
+# Saved, the line is not committed yet: still nothing.
+key ctrl+s
+wait 400
+expect screen lacks "Ada Lovelace"
+# A committed line again.
+key down
+wait 400
+expect screen contains "gamma  Ada Lovelace · "
+# The pointer on it: the info view names the commit it will open.
+hover 45 4
+expect screen contains "Blame: "
+# A press on the text: the commit graph, the cursor on that commit —
+# the working-tree row `beta!` put first is passed over, and the
+# detail column shows the commit's own files.
+click 45 4
+expect pane "mnml-e2e-"
+expect screen contains "the first three lines"
+expect screen contains "changed files (1):"

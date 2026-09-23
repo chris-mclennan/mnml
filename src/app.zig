@@ -3261,6 +3261,7 @@ test {
     _ = @import("app/cmdline.zig");
     _ = @import("app/flash.zig");
     _ = @import("app/settings.zig");
+    _ = @import("app/line_blame.zig");
     _ = @import("app/first_launch.zig");
     _ = @import("app/key_doctor.zig");
     _ = @import("app/icon_picker.zig");
@@ -3449,6 +3450,7 @@ test {
     _ = @import("ui/picker.zig");
     _ = @import("ui/fuzzy.zig");
     _ = @import("ui/editor_view.zig");
+    _ = @import("ui/indent_guides.zig");
     _ = @import("scripting/lua.zig");
     _ = @import("scripting/manifest.zig");
     _ = @import("scripting/api.zig");

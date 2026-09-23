@@ -29,6 +29,8 @@ const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const ids = @import("../core/ids.zig");
 const scrollbar = @import("scrollbar.zig");
+const border = @import("border.zig");
+const indent_guides = @import("indent_guides.zig");
 const blendOver = @import("diff_view.zig").blendOver;
 
 const Allocator = std.mem.Allocator;
@@ -84,7 +86,15 @@ pub const Label = struct { byte: usize, text: []const u8 };
 
 /// Text painted before the grapheme at `byte` (`byte == line end` paints
 /// after the last grapheme). Sorted by `byte`.
-pub const VirtualText = struct { byte: usize, text: []const u8, style: Style };
+pub const VirtualText = struct {
+    byte: usize,
+    text: []const u8,
+    style: Style,
+    /// A `.script_hit{pane, hit}` over the text, above the cell's own
+    /// `.editor_cell` — for virtual text a press does something with
+    /// (the current-line blame opens its commit).
+    hit: ?u32 = null,
+};
 /// One clickable piece of a virtual line.
 pub const VirtualSeg = struct { text: []const u8, style: Style, hit: ?u32 = null };
 /// A row above `line` (0-based) — or below it when `below`. Sorted by
@@ -98,6 +108,8 @@ pub const VirtualLine = struct { line: u32, segments: []const VirtualSeg, below:
 /// role paints. Sorted by `line`; the first entry for a line wins, and
 /// the cursor line's own band still wins over it.
 pub const LineGround = struct { line: u32, style: Style };
+
+pub const IndentGuides = indent_guides.Mode;
 
 pub const Doc = struct {
     text: []const u8,
@@ -188,6 +200,14 @@ pub const Doc = struct {
     /// Markdown concealed in place on the lines the cursor is not on:
     /// heading marks, emphasis and code fences hidden, the text styled.
     render_markdown: bool = false,
+    /// `editor.indent_guides`: a rule at every indent step of a line's
+    /// leading white space in `theme.indent_guide`, the cursor's scope in
+    /// `theme.indent_guide_active` (`.active` paints only that one).
+    /// Never on a wrapped row's continuation, never over a selection.
+    indent_guides: IndentGuides = .off,
+    /// The columns one indent level takes — the buffer's indent; 0 is
+    /// `tab_width` (a tab-indented file).
+    indent_step: u8 = 0,
 };
 
 /// `added` / `modified` / `deleted` are git's change marks — a coloured
@@ -889,6 +909,13 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
 
     const fold_word = if (ui.ascii) fold_marker_ascii else fold_marker;
 
+    // ── indent guides ── the step and the cursor's scope, once a frame
+    const guides: ?indent_guides.Frame(Lines) = if (doc.indent_guides != .off)
+        indent_guides.Frame(Lines).init(doc.text, lines, if (doc.tab_width == 0) 1 else doc.tab_width, if (doc.indent_step == 0) doc.tab_width else doc.indent_step, cursor_line_real)
+    else
+        null;
+    const guide_glyph = border.ruleGlyph(.v, ui.ascii);
+
     // ── ui toggles ── the bracket depth at the top of the viewport
     var rainbow_depth: u32 = if (doc.bracket_rainbow) bracketDepthOver(doc.text, 0, lines.start(view.scroll_line), 0) else 0;
 
@@ -924,6 +951,8 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
         var words = RangeCursor(Range).init(doc.word_matches, line_start);
         // ── ui toggles ──
         const toggles = try lineToggles(ui, doc, line_text, cells, is_cursor_line, &rainbow_depth);
+        // ── indent guides ── the indent this line is drawn with
+        const guide_indent: u32 = if (guides) |g| g.indentOf(line) else 0;
 
         for (rows, 0..) |row, ri| {
             if (y >= area.bottom()) break;
@@ -1012,6 +1041,7 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
                     const vsx: u16 = text_x + @as(u16, @intCast(at));
                     const used = ui.putStr(vsx, y, text_w - @as(u16, @intCast(at)), vt.text, Theme.onBg(vt.style, row_style.bg));
                     ui.hit(Rect.init(vsx, y, used, 1), .{ .editor_cell = .{ .pane = pane, .line = line, .col = c.off } });
+                    if (vt.hit) |id| ui.hit(Rect.init(vsx, y, used, 1), .{ .script_hit = .{ .pane = pane, .id = id } });
                     vx += used;
                 }
                 cx += vx;
@@ -1053,16 +1083,20 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
                         style.bold = ms.bold;
                     }
                 }
+                // A selected cell or an extra caret keeps its paint.
+                var covered = false;
                 if (sel) |s| {
                     const in_range = s.block == null and off >= s.lo and off < s.hi;
                     const in_block = if (s.block) |b| line >= b.l0 and line <= b.l1 and x >= b.c0 and (b.eol or x <= b.c1) else false;
                     if (in_range or in_block) {
                         style.bg = t.selection.bg;
+                        covered = true;
                     }
                 }
                 for (doc.extra_cursors) |ec| if (ec == off) {
                     style.bg = t.fg.fg;
                     style.fg = t.bg.bg;
+                    covered = true;
                 };
 
                 // ── ui toggles ── word matches, rainbow, todo words, whitespace, trailing ws, markdown
@@ -1091,6 +1125,12 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
                 if (doc.highlight_trailing_ws and !is_cursor_line and c.ws and i >= toggles.trail_start) {
                     style.bg = t.error_fg.fg;
                 }
+                // ── indent guides ── in the leading white space, on the
+                // line's first row, never over the selection
+                if (guides) |g| if (ri == 0 and c.ws and !covered) if (g.at(doc.indent_guides, line, guide_indent, x)) |active| {
+                    glyph = guide_glyph;
+                    style.fg = (if (active) t.indent_guide_active else t.indent_guide).fg;
+                };
 
                 const cell_rect = Rect.init(sx, y, c.w, 1);
                 while (label_i < doc.labels.len and doc.labels[label_i].byte < off) label_i += 1;
@@ -1111,12 +1151,15 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
             const is_last_row = ri == rows.len - 1;
             if (is_last_row and painted_x < text_x + text_w) {
                 const eol_off = line_end - line_start;
+                // Where the text stopped, before anything painted after it.
+                const text_end_x = painted_x;
                 // ── virtual text at the line's end ──
                 while (vti < doc.virtual_text.len and doc.virtual_text[vti].byte <= line_end) : (vti += 1) {
                     const vt = doc.virtual_text[vti];
                     if (vt.byte < line_start or painted_x >= text_x + text_w) continue;
                     const used = ui.putStr(painted_x, y, text_x + text_w - painted_x, vt.text, Theme.onBg(vt.style, row_style.bg));
                     ui.hit(Rect.init(painted_x, y, used, 1), .{ .editor_cell = .{ .pane = pane, .line = line, .col = eol_off } });
+                    if (vt.hit) |id| ui.hit(Rect.init(painted_x, y, used, 1), .{ .script_hit = .{ .pane = pane, .id = id } });
                     painted_x += used;
                 }
                 if (painted_x >= text_x + text_w) {
@@ -1157,6 +1200,23 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
                     const ccx: u32 = doc.color_column - 1 - skip;
                     if (ccx < text_w and text_x + ccx >= eol_x) ui.canvas.put(text_x + @as(u16, @intCast(ccx)), y, .{ .char = .{ .grapheme = " ", .width = 1 }, .style = Theme.onBg(row_style, t.panel_bg.bg) });
                 }
+                // ── indent guides ── a blank line's guides run on past its
+                // (white) text, where a block's lines above and below have
+                // them; what the end-of-line text covers, it keeps
+                if (guides) |g| if (ri == 0 and guide_indent > abs_x) {
+                    var col: u32 = abs_x;
+                    while (col < guide_indent) : (col += 1) {
+                        const active = g.at(doc.indent_guides, line, guide_indent, col) orelse continue;
+                        if (col < skip) continue;
+                        const gx: u32 = if (abs_x >= skip) @as(u32, text_end_x) + (col - abs_x) else @as(u32, text_x) + (col - skip);
+                        if (gx < painted_x or gx >= text_x + text_w) continue;
+                        if (paint_eol and gx == eol_x) continue;
+                        if (sel) |s| if (s.block) |b| if (line >= b.l0 and line <= b.l1 and col >= b.c0 and (b.eol or col <= b.c1)) continue;
+                        const on_column = doc.color_column != 0 and gx - text_x + skip + 1 == doc.color_column;
+                        const gs = Theme.onBg(if (active) t.indent_guide_active else t.indent_guide, if (on_column) t.panel_bg.bg else row_style.bg);
+                        ui.canvas.put(@intCast(gx), y, .{ .char = .{ .grapheme = guide_glyph, .width = 1 }, .style = gs });
+                    }
+                };
                 if (is_cursor_line and found == null and cursor_line_real == cursor_line and cursor_off >= eol_off) {
                     found = .{ .x = eol_x, .y = y };
                 }
@@ -1601,6 +1661,73 @@ test "selection paints a byte range, including the EOL cell across lines" {
     try testing.expect(f.bgEql(1, 1, sel));
     try testing.expect(!f.bgEql(2, 1, sel));
     try testing.expect(!f.bgEql(0, 2, sel));
+}
+
+test "indent guides: a rule at every step of the leading white space, the cursor's scope brighter, a blank line's run past its end" {
+    var f = try Fixture.init(24, 6);
+    defer f.deinit();
+    var view: ViewState = .{};
+    // The cursor on `y();`: the if's body is the scope, its guide at 4.
+    var d = mkDoc("fn a() {\n    if x {\n        y();\n\n        z();\n    }");
+    d.line_numbers = false;
+    d.cursor_line_band = false;
+    d.cursor = 22;
+    d.indent_guides = .on;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRows(&.{ "fn a() {", "│   if x {", "│   │   y();", "│   │", "│   │   z();", "│   }" });
+    const plain = f.theme.indent_guide;
+    const active = f.theme.indent_guide_active;
+    try testing.expect(f.fgEql(0, 2, plain));
+    try testing.expect(f.fgEql(4, 2, active));
+    // The blank line between y and z: past its (empty) text, the same pair.
+    try testing.expect(f.fgEql(0, 3, plain));
+    try testing.expect(f.fgEql(4, 3, active));
+    try testing.expect(f.fgEql(0, 1, plain));
+    // `.active` paints the one guide and no other.
+    d.indent_guides = .active;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRows(&.{ "fn a() {", "    if x {", "    │   y();", "    │", "    │   z();", "    }" });
+    // `.off` paints none.
+    d.indent_guides = .off;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRow(2, "        y();");
+    // ASCII draws the rule's ASCII twin.
+    f.ascii = true;
+    d.indent_guides = .on;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRow(2, "|   |   y();");
+}
+
+test "indent guides step by the buffer's indent, and stay off a selection and a wrapped row's continuation" {
+    var f = try Fixture.init(12, 4);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("a:\n  b:\n    c: 1");
+    d.line_numbers = false;
+    d.indent_guides = .on;
+    d.indent_step = 2;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRows(&.{ "a:", "│ b:", "│ │ c: 1" });
+    // A selection over the third line's indent keeps its own paint.
+    d.anchor = 8; // the start of `    c: 1`
+    d.cursor = 12;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRow(2, "    c: 1");
+    try testing.expect(f.bgEql(0, 2, f.theme.selection));
+    // Wrapped: the continuation of an indented line gets no guide, even
+    // where it starts with white space of its own.
+    var w = try Fixture.init(10, 4);
+    defer w.deinit();
+    var wv: ViewState = .{};
+    var wd = mkDoc("x\n    aaaa bbbb   cc");
+    wd.line_numbers = false;
+    wd.indent_guides = .on;
+    wd.wrap = true;
+    _ = draw(w.ui(), 0, w.full(), &wv, wd);
+    try w.expectRow(1, "│   aaaa");
+    var buf: [64]u8 = undefined;
+    const second = w.row(2, &buf);
+    try testing.expect(std.mem.indexOf(u8, second, "│") == null);
 }
 
 test "a trailing newline opens no phantom line; a cursor at EOF keeps it" {
