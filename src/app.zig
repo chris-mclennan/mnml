@@ -3091,7 +3091,9 @@ pub const App = struct {
         while (true) {
             const n = self.events.drain(self.io, &buf);
             if (n == 0) break;
-            for (buf[0..n]) |ev| try self.handle(ev);
+            // Terminal output is pumped by `tick` after this drain (see
+            // the terminal loop), once per pass and behind the input.
+            for (buf[0..n]) |ev| if (ev != .pty_readable) try self.handle(ev);
         }
     }
 
@@ -3169,6 +3171,9 @@ pub const App = struct {
     /// The next moment `tick` has something to do, or null when idle.
     pub fn nextDeadlineMs(self: *const App) ?i64 {
         var next: ?i64 = self.chord.deadline_ms;
+        // A terminal pane's output is still ringed: another bounded pump
+        // is due at once (`pty_pane.backlog`).
+        if (pty_pane.backlog(self)) return self.now_ms;
         if (self.theme_auto_poll_ms) |at| next = @min(next orelse std.math.maxInt(i64), at);
         // A pane waiting out the highlight idle gate wants a frame then.
         for (self.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {

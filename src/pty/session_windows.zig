@@ -445,23 +445,34 @@ pub const Session = struct {
         gpa.destroy(self);
     }
 
-    /// Feed everything the reader has ringed into the terminal (its query
-    /// replies go onto the outbox as they are parsed). Call from the UI
-    /// thread on every `.pty_readable` and once per frame. Returns true
-    /// when the terminal state changed (something to render).
+    /// Feed what the reader has ringed into the terminal (its query
+    /// replies go onto the outbox as they are parsed): the bytes there
+    /// when the pump starts, at most `common.pump_budget` of them — never
+    /// what the child writes while it runs (see `pump_budget`). Call from
+    /// the UI thread on every `.pty_readable` and once per frame; while
+    /// `backlog` is true the loop calls again without sleeping. Returns
+    /// true when the terminal state changed (something to render).
     pub fn pump(self: *Session) bool {
         const ring = &self.shared.ring;
         ring.beginDrain();
+        var left = @min(ring.len(), common.pump_budget);
         var fed = false;
-        while (true) {
+        while (left > 0) {
             const chunk = ring.readableSlice();
             if (chunk.len == 0) break;
-            self.stream.nextSlice(chunk);
-            ring.consume(chunk.len);
+            const n = @min(chunk.len, left);
+            self.stream.nextSlice(chunk[0..n]);
+            ring.consume(n);
+            left -= n;
             fed = true;
         }
         self.reap();
         return fed;
+    }
+
+    /// Bytes are ringed that no pump has fed yet.
+    pub fn backlog(self: *const Session) bool {
+        return self.shared.ring.len() > 0;
     }
 
     /// Bytes from the user (keystrokes, paste) to the child. Queued for

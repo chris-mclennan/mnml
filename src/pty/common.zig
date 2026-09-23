@@ -6,6 +6,15 @@
 const std = @import("std");
 const vt = @import("ghostty-vt");
 
+/// The most bytes one `Session.pump` feeds the terminal. A pump takes
+/// what was in the ring when it started, up to this, and returns: a
+/// child flooding short lines (`yes`) refills the ring as fast as the
+/// terminal parses it, and a pump that chased it until empty never gave
+/// the loop back to the keyboard (Ctrl+C took 4-18 s to arrive). What
+/// is left is taken on the next pass; `Session.backlog` says there is
+/// some, and the loop does not sleep while it is true.
+pub const pump_budget: usize = 64 * 1024;
+
 /// `terminal.scrollback_lines`' default: what a build log needs to keep
 /// its first error. The library's own default is 10 KB — about 500 lines.
 pub const default_scrollback_lines: usize = 10_000;

@@ -27,6 +27,7 @@ const clipboard_os = @import("../core/clipboard_os.zig");
 const image = @import("../image/root.zig");
 const marker = @import("marker.zig");
 const app_driver = @import("../app/driver.zig");
+const pty_pane = @import("../app/pty_pane.zig");
 
 /// How often the IPC tail looks at `command`. A wrapper's `stop` /
 /// `restart` lands within this; the UI thread's one wait is untouched.
@@ -156,6 +157,7 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
     defer bridge.cancel(io);
 
     var buf: [64]event.AppEvent = undefined;
+    var last_frame_ms: i64 = 0;
     while (!app.quit) {
         const timeout: Io.Timeout = if (app.nextDeadlineMs()) |deadline| blk: {
             const ms = @max(deadline - App.nowMs(io), 0);
@@ -166,10 +168,19 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
             error.Canceled => break,
         };
         app.events.wake.reset();
+        var input_seen = false;
         while (true) {
             const n = app.events.drain(io, &buf);
             if (n == 0) break;
             for (buf[0..n]) |ev| {
+                // Terminal output waits for `tick`: `pty_pane.tickAll`
+                // gives every pane with ringed bytes one bounded pump per
+                // pass, after all the input that is here. Pumping per
+                // wakeup let a flooding child refill the queue as fast as
+                // this loop drained it — keys, clicks and frames waited
+                // behind it for seconds.
+                if (ev == .pty_readable) continue;
+                input_seen = true;
                 if (ev == .winsize) term.resize(.{ .rows = ev.winsize.rows, .cols = ev.winsize.cols, .x_pixel = 0, .y_pixel = 0 }) catch {};
                 try app.handle(ev);
             }
@@ -183,7 +194,13 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
             term.writeRaw(app.host_out.items) catch {};
             app.host_out.clearRetainingCapacity();
         }
-        if (app.needs_render) {
+        // While a terminal pane has a backlog the loop does not sleep, and
+        // a frame per bounded pump spent the time the flood needed: frames
+        // come at most every `flood_frame_ms` then, and at once for input.
+        const now_ms = App.nowMs(io);
+        const paced = pty_pane.backlog(&app) and !input_seen and now_ms - last_frame_ms < flood_frame_ms;
+        if (app.needs_render and !paced) {
+            last_frame_ms = now_ms;
             try app.renderInto(term.screen());
             term.render() catch {};
             // The frame's images, over the cells just written.
@@ -222,6 +239,9 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
     if (!app.restart) marker.removeIfOurs(gpa, io, marker_path, opts.workspace);
     return if (app.restart) 75 else app.exit_code;
 }
+
+/// The frame interval while a terminal pane is working off a backlog.
+const flood_frame_ms = 16;
 
 /// Tail `<ipc>/command` and post every line as an event. Runs until the
 /// group is cancelled.
