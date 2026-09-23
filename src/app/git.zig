@@ -3526,6 +3526,10 @@ pub fn statusPaneWheel(app: *App, sp: *StatusPane, down: bool, n: usize) void {
 /// Esc: back to the tree when it is showing, else the pane closes.
 fn leaveStatusPane(app: *App, id: PaneId) Allocator.Error!void {
     _ = id;
+    // Vim: Esc in a Normal-mode window keeps the window (fugitive's and
+    // Neogit's status buffers included) — a reflex Esc must not hand the
+    // next letters to the tree's single-key verbs.
+    if (app.input_style == .vim) return;
     leaveToTree(app);
 }
 

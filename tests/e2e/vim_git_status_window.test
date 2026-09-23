@@ -1,0 +1,19 @@
+# Vim profile: the git status pane is a window like any other. A reflex
+# Esc keeps the focus on it — Esc in a Normal-mode window never changes
+# the window in Neovim, fugitive's and Neogit's status buffers included.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write seed.txt "seed\n"
+shell git add seed.txt
+shell git commit -q -m "initial"
+open seed.txt
+command editor.use_vim
+command git.status_pane
+wait 800
+expect pane "git status"
+expect screen contains " VIEW "
+key esc
+wait 200
+expect screen lacks " TREE "
+expect pane "git status"
