@@ -603,9 +603,16 @@ pub const State = struct {
     /// The ghost-text override when the overlay opened (the row writes it).
     before_suggest: ?suggest.Backend = null,
     files: std.EnumArray(Scope, FileSnapshot) = .initFill(.{}),
+    /// Per row: a layer loaded AFTER the row's own file that sets the
+    /// same key — the workspace's `.mnml/config.zon` over a home row,
+    /// `--config` over either. What that file says is what the next
+    /// launch runs on, so the row says so (`footer`) and a change to it
+    /// is toasted (`setRow`). Gpa-owned paths, found once at `open`.
+    overrides: [rows.len]?[]u8 = @splat(null),
 
     pub fn deinit(s: *State, gpa: Allocator) void {
         for (&s.files.values) |*f| f.deinit(gpa);
+        for (s.overrides) |o| if (o) |p| gpa.free(p);
         s.ui.deinit(gpa);
     }
 
@@ -629,10 +636,64 @@ pub fn open(app: *App) Allocator.Error!void {
             };
         }
     }
+    try findOverrides(app, &st);
     app.overlay.deinit(gpa);
     app.overlay = .{ .settings = st };
     app.focus = .overlay;
     app.needs_render = true;
+}
+
+/// One layer file as a patch, or null when it is absent or unreadable
+/// (the loader has already said so).
+fn readPatch(app: *App, arena: Allocator, path: []const u8) Allocator.Error!?config.load.Patch(Config) {
+    const src = Io.Dir.cwd().readFileAllocOptions(app.io, path, arena, .limited(config.load.max_file_bytes), .of(u8), 0) catch |e| switch (e) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return null,
+    };
+    var diags = config.diag.Diagnostics.init(arena);
+    return try config.load.parseLayer(arena, src, path, &diags);
+}
+
+/// Whether the layer `p` sets the field at `parts`.
+fn patchSets(comptime T: type, p: config.load.Patch(T), comptime parts: []const []const u8) bool {
+    const F = @FieldType(T, parts[0]);
+    const v = @field(p, parts[0]);
+    if (comptime parts.len == 1) return v != null;
+    const sub = v orelse return false;
+    return patchSets(F, sub, parts[1..]);
+}
+
+/// Fill `st.overrides`: for each row, the first layer above its own file
+/// that sets its key — `--config` (loaded last, so it wins over both),
+/// else the workspace file for a home row.
+fn findOverrides(app: *App, st: *State) Allocator.Error!void {
+    @setEvalBranchQuota(400_000);
+    var arena_state = std.heap.ArenaAllocator.init(app.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const explicit: ?[]const u8 = if (app.loaded) |l| l.explicit_path else null;
+    const ws_path = (try configPath(app, .workspace)).?;
+    const ex_patch = if (explicit) |p| try readPatch(app, arena, p) else null;
+    const ws_patch = try readPatch(app, arena, ws_path);
+    inline for (rows, 0..) |r, i| {
+        // The ghost-text backend row names no `Config` field: its value
+        // is a token in `ai.extra`.
+        if (comptime isSuggestBackend(r.path)) continue;
+        const parts = comptime keyPath(r.path);
+        const above: ?[]const u8 = blk: {
+            if (ex_patch) |p| if (patchSets(Config, p, parts)) break :blk explicit.?;
+            if (r.scope == .home) if (ws_patch) |p| if (patchSets(Config, p, parts)) break :blk ws_path;
+            break :blk null;
+        };
+        if (above) |a| st.overrides[i] = try app.gpa.dupe(u8, a);
+    }
+}
+
+/// A layer path the way the user reads it: relative inside the
+/// workspace, `~` for home, else as it is.
+fn shownPath(app: *App, arena: Allocator, path: []const u8) Allocator.Error![]const u8 {
+    if (std.mem.startsWith(u8, path, app.workspace)) return app.relPath(path);
+    return setup.tilde(app, arena, path);
 }
 
 /// `view.settings_search`: the box, with the filter pill up and
@@ -723,7 +784,11 @@ pub fn footer(app: *App, arena: Allocator, list: []const Item) Allocator.Error!?
     }
     const scope = rows[row.id].scope;
     const path = (try configPath(app, scope)) orelse return "no config file to write";
-    return try std.fmt.allocPrint(arena, "→ {s}", .{if (scope == .workspace) app.relPath(path) else try setup.tilde(app, arena, path)});
+    const shown = if (scope == .workspace) app.relPath(path) else try setup.tilde(app, arena, path);
+    // A layer above the row's file sets the same key: say which, or the
+    // row reads as saved and the next launch quietly puts it back.
+    if (st.overrides[row.id]) |over| return try std.fmt.allocPrint(arena, "→ {s} · overridden by {s}", .{ shown, try shownPath(app, arena, over) });
+    return try std.fmt.allocPrint(arena, "→ {s}", .{shown});
 }
 
 pub fn key(app: *App, k: Key) Allocator.Error!void {
@@ -892,6 +957,10 @@ pub fn setRow(app: *App, id: u32, idx: usize) Allocator.Error!void {
         setIndex(&app.cfg, r.path, idx);
         try applyDerived(app, r.path);
         _ = try persist(app, r.scope, comptime keyPath(r.path), fieldPtr(&app.cfg, r.path).*);
+        if (app.overlay == .settings) if (app.overlay.settings.overrides[i]) |over| {
+            const arena = app.frame.allocator();
+            try app.toastLevel(.warn, "{s}: saved, but {s} sets it too — that value wins at the next launch", .{ r.path, try shownPath(app, arena, over) });
+        };
         app.needs_render = true;
         return;
     };
@@ -1073,6 +1142,66 @@ test "the highlighting size limit is a choice row, not a step row: 4 MB is the d
     try t.expectEqual(@as(usize, 1), currentIndex(&c, "editor.highlight_max_bytes"));
     c.editor.highlight_max_bytes = 1 << 40;
     try t.expectEqual(@as(usize, 4), currentIndex(&c, "editor.highlight_max_bytes"));
+}
+
+test "a row a later layer also sets says which file wins, and saving it says so too" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, "ws/.mnml");
+    try tmp.dir.createDirPath(t.io, "home");
+    // `--config extra.zon` pins the clock off; the workspace pins the theme.
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "extra.zon", .data = ".{ .ui = .{ .clock = false } }\n" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "ws/.mnml/config.zon", .data = ".{ .ui = .{ .theme = \"gruvbox\" } }\n" });
+    const ws = try std.fs.path.join(t.allocator, &.{ root, "ws" });
+    defer t.allocator.free(ws);
+    const home = try std.fs.path.join(t.allocator, &.{ root, "home" });
+    defer t.allocator.free(home);
+    const extra = try std.fs.path.join(t.allocator, &.{ root, "extra.zon" });
+    defer t.allocator.free(extra);
+    var vars = std.process.Environ.Map.init(t.allocator);
+    defer vars.deinit();
+    try vars.put("MNML_DATA_ROOT", home);
+    const loaded = try config.load.load(t.allocator, t.io, .{ .explicit = extra, .workspace = ws, .trust = .trusted, .data_root = home, .env = .{ .vars = &vars } });
+    var app = try App.initWith(t.allocator, t.io, .{ .cfg = loaded.config, .loaded = loaded, .workspace = ws, .data_root = home, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    _ = try app.openScratch();
+    try t.expect(!app.cfg.ui.clock);
+
+    try command.run(&app, .{ .static = .@"view.settings" });
+    const arena = app.frame.allocator();
+    const list = try items(&app, arena);
+    var clock_item: ?usize = null;
+    var theme_item: ?usize = null;
+    var dots_item: ?usize = null;
+    for (list, 0..) |it, i| if (it == .row) {
+        if (std.mem.eql(u8, it.row.label, "Clock in statusline")) clock_item = i;
+        if (std.mem.eql(u8, it.row.label, "Theme")) theme_item = i;
+        if (std.mem.eql(u8, it.row.label, "Workspace dots")) dots_item = i;
+    };
+    // The row's subtitle names the file that wins…
+    app.overlay.settings.ui.cursor = clock_item.?;
+    try t.expect(std.mem.indexOf(u8, (try footer(&app, arena, list)).?, "overridden by ") != null);
+    try t.expect(std.mem.endsWith(u8, (try footer(&app, arena, list)).?, "extra.zon"));
+    app.overlay.settings.ui.cursor = theme_item.?;
+    try t.expect(std.mem.endsWith(u8, (try footer(&app, arena, list)).?, "overridden by .mnml/config.zon"));
+    // …and a row nothing else sets does not claim one.
+    app.overlay.settings.ui.cursor = dots_item.?;
+    try t.expect(std.mem.indexOf(u8, (try footer(&app, arena, list)).?, "overridden") == null);
+
+    // Saving the pinned row still writes the home file, and says the
+    // value will not stick.
+    app.overlay.settings.ui.cursor = clock_item.?;
+    try app.handle(.{ .key = Key.named(.right) });
+    try t.expect(app.cfg.ui.clock);
+    const written = (try readOrNull(tmp, "home/config.zon")).?;
+    defer t.allocator.free(written);
+    try t.expect(std.mem.indexOf(u8, written, ".clock = true") != null);
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "ui.clock: saved, but ") != null);
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "extra.zon sets it too — that value wins at the next launch") != null);
+    try app.handle(.{ .key = Key.named(.esc) });
 }
 
 test "adjust writes the row's file live; Esc restores bytes (and absence); Enter keeps; r and R reset" {
