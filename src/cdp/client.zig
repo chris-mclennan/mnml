@@ -128,6 +128,20 @@ pub fn remoteObjectText(arena: Allocator, v: std.json.Value) Allocator.Error![]c
     return "?";
 }
 
+/// What a URL typed the way an address bar takes it means: `localhost:3000`
+/// and `example.com/x` get `http://`, an absolute path gets `file://`,
+/// and anything with a scheme (`https://`, `about:`, `chrome:`, `data:`…)
+/// is left alone. Empty is `about:blank`.
+pub fn normalizeUrl(arena: Allocator, text: []const u8) Allocator.Error![]const u8 {
+    const url = std.mem.trim(u8, text, " \t\r\n");
+    if (url.len == 0) return "about:blank";
+    if (std.mem.indexOf(u8, url, "://") != null) return url;
+    const schemes = [_][]const u8{ "about:", "chrome:", "data:", "file:", "javascript:", "view-source:", "blob:", "devtools:", "chrome-extension:", "mailto:" };
+    for (schemes) |sc| if (std.ascii.startsWithIgnoreCase(url, sc)) return url;
+    if (url[0] == '/') return std.fmt.allocPrint(arena, "file://{s}", .{url});
+    return std.fmt.allocPrint(arena, "http://{s}", .{url});
+}
+
 // ─── launch ─────────────────────────────────────────────────────────────
 
 pub const LaunchOptions = struct {
@@ -499,6 +513,17 @@ pub fn headMethod(head: []const u8) ?[]const u8 {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+
+test "normalizeUrl: a schemeless address gets http://, a path file://, a scheme is kept" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try testing.expectEqualStrings("http://localhost:3000/x", try normalizeUrl(a, " localhost:3000/x "));
+    try testing.expectEqualStrings("http://example.invalid", try normalizeUrl(a, "example.invalid"));
+    try testing.expectEqualStrings("file:///tmp/a.html", try normalizeUrl(a, "/tmp/a.html"));
+    for ([_][]const u8{ "https://a.example/b", "about:blank", "chrome://version", "data:text/html,hi", "file:///x", "HTTP://X" }) |u| try testing.expectEqualStrings(u, try normalizeUrl(a, u));
+    try testing.expectEqualStrings("about:blank", try normalizeUrl(a, "  "));
+}
 
 test "headId / headMethod name a message from its first bytes" {
     try testing.expectEqual(@as(?i64, 1234), headId("{\"id\":1234,\"result\":{\"result\":{\"type\":\"string\",\"value\":\"www"));

@@ -386,7 +386,7 @@ pub fn open(app: *App, url_in: []const u8) CommandError!PaneId {
     const binary: ?[]const u8 = if (builtin.is_test) test_binary else null;
     const no_chrome = (builtin.is_test and test_no_chrome) or (binary == null and !cdp.available(gpa, app.io, &app.env));
     if (no_chrome) return app.diag.fail(app.frame.allocator(), "no Chrome found — run `:browser.install_cft` to install Chrome for Testing", .{});
-    const url = std.mem.trim(u8, url_in, " \t");
+    const url = try cdp.normalizeUrl(app.frame.allocator(), url_in);
     const shared = try gpa.create(Shared);
     errdefer gpa.destroy(shared);
     shared.* = .{ .io = app.io };
@@ -395,7 +395,7 @@ pub fn open(app: *App, url_in: []const u8) CommandError!PaneId {
     Io.Dir.cwd().createDirPath(app.io, pdir) catch {};
     var pane: BrowserPane = .{
         .gpa = gpa,
-        .url = try gpa.dupe(u8, if (url.len == 0) "about:blank" else url),
+        .url = try gpa.dupe(u8, url),
         .shared = shared,
         .title_buf = try gpa.dupe(u8, "browser"),
         .profile_dir = try gpa.dupe(u8, pdir),
@@ -554,7 +554,10 @@ fn flushQueued(app: *App, p: *BrowserPane) Allocator.Error!void {
     }
 }
 
-pub fn navigate(app: *App, p: *BrowserPane, url: []const u8) Allocator.Error!void {
+/// Load `url_in` (typed the way an address bar takes it: see
+/// `cdp.normalizeUrl`) in what the pane shows.
+pub fn navigate(app: *App, p: *BrowserPane, url_in: []const u8) Allocator.Error!void {
+    const url = try cdp.normalizeUrl(app.frame.allocator(), url_in);
     const params = try std.fmt.allocPrint(app.frame.allocator(), "{{\"url\":{f}}}", .{std.json.fmt(url, .{})});
     try send(app, p, "Page.navigate", params, .navigate);
     try p.push(.nav, try std.fmt.allocPrint(app.frame.allocator(), "→ {s}", .{url}));
@@ -2092,6 +2095,16 @@ test "an eval that throws or rejects reads as an error; a function, a Symbol and
     try p.pending.put(gpa, 209, .quiet);
     try tb.msg("{\"id\":209,\"error\":{\"code\":-32000,\"message\":\"Could not find node with given id\"}}");
     try testing.expectEqualStrings("request failed: Could not find node with given id", tb.last());
+}
+
+test "a schemeless address typed into navigate is sent with http://" {
+    var tb: TestBed = .{};
+    const p = try tb.init();
+    defer tb.deinit();
+    try navigate(&tb.app, p, "localhost:18808/first");
+    try testing.expectEqualStrings("Page.navigate", tb.lastQueued());
+    try testing.expectEqualStrings("{\"url\":\"http://localhost:18808/first\"}", p.queued.items[p.queued.items.len - 1].params);
+    try testing.expectEqualStrings("→ http://localhost:18808/first", tb.last());
 }
 
 test "scrolled back, the log holds still while lines arrive; at the tail it follows" {
