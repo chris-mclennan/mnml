@@ -108,6 +108,10 @@ pub const StatusSegment = struct {
     /// The last string the function returned; null hides the segment.
     text: ?[]u8 = null,
     next_poll_ms: i64 = 0,
+    /// The function errored: the one toast has been shown, the segment
+    /// is hidden, and it is not asked again until the script reloads —
+    /// an erroring render paints in its pane once in the same spirit.
+    failed: bool = false,
 };
 
 /// `mnml.picker.source{ id, title, items, live?, preview?, multi?,
@@ -1048,9 +1052,10 @@ pub const Lua = struct {
     }
 
     /// A statusline segment's function → its text on the frame arena,
-    /// null to hide it. The value's string form is taken inside the
-    /// protected call: a returned table's `__tostring` is script code.
-    fn callSegment(self: *Lua, r: LuaRef) ?[]const u8 {
+    /// null to hide it; `error.Failed` (toasted) when it errored. The
+    /// value's string form is taken inside the protected call: a
+    /// returned table's `__tostring` is script code.
+    fn callSegment(self: *Lua, r: LuaRef) error{Failed}!?[]const u8 {
         const Ctx = struct {
             text: ?[]const u8 = null,
             pub fn decode(c: *@This(), lua: *Lua) void {
@@ -1065,7 +1070,7 @@ pub const Lua = struct {
         self.pushRef(r);
         self.pcallThen(0, 1, &ctx) catch {
             self.toastError("statusline segment");
-            return null;
+            return error.Failed;
         };
         return ctx.text;
     }
@@ -1453,9 +1458,14 @@ pub const Lua = struct {
     /// every task whose pane exited.
     pub fn tick(self: *Lua, now: i64) Allocator.Error!void {
         for (self.segments.items) |*s| {
-            if (now < s.next_poll_ms) continue;
+            if (s.failed or now < s.next_poll_ms) continue;
             s.next_poll_ms = now + segment_poll_ms;
-            const fresh = self.callSegment(s.func);
+            // An error is one toast, not one every 250 ms for the rest of
+            // the session: the segment latches off until a reload.
+            const fresh = self.callSegment(s.func) catch blk: {
+                s.failed = true;
+                break :blk null;
+            };
             const same = if (s.text) |old| (if (fresh) |f| std.mem.eql(u8, old, f) else false) else fresh == null;
             if (same) continue;
             if (s.text) |old| self.gpa.free(old);
@@ -1537,7 +1547,9 @@ pub const Lua = struct {
 
     pub fn nextDeadlineMs(self: *const Lua) ?i64 {
         var next: ?i64 = null;
-        for (self.segments.items) |s| next = @min(next orelse std.math.maxInt(i64), s.next_poll_ms);
+        for (self.segments.items) |s| if (!s.failed) {
+            next = @min(next orelse std.math.maxInt(i64), s.next_poll_ms);
+        };
         if (self.tasks.items.len > 0) next = @min(next orelse std.math.maxInt(i64), self.app.now_ms + 100);
         return next;
     }
@@ -1685,6 +1697,30 @@ test "budget: a long pattern match is cut inside the C call, not after it" {
     try lua.runString("assert(('hello world'):find('o w') == 5 and ('a,b'):gsub(',', ';') == 'a;b')");
 }
 
+test "a statusline segment that errors toasts once and is not polled again until a reload" {
+    // A segment was polled every 250 ms forever and each error was a
+    // fresh toast: 118 in the message log after half a minute.
+    var app = try App.init(testing.allocator, testing.io);
+    defer app.deinit();
+    const lua = app.script();
+    try lua.runString("N = 0; mnml.statusline.segment{ id = 'bad', fn = function() N = N + 1; error('SEGBOOM') end }");
+    const toasts_before = app.toasts.items.len;
+    var now: i64 = 1_000;
+    for (0..8) |_| {
+        try lua.tick(now);
+        now += segment_poll_ms;
+    }
+    try lua.runString("assert(N == 1, 'polled ' .. N .. ' times')");
+    try testing.expectEqual(toasts_before + 1, app.toasts.items.len);
+    try testing.expect(lua.nextDeadlineMs() == null);
+    // A reload is a fresh start: the new segment is asked again.
+    try lua.reset();
+    try lua.runString("N = 0; mnml.statusline.segment{ id = 'bad', fn = function() N = N + 1; return 'ok' end }");
+    try lua.tick(now);
+    try lua.tick(now + segment_poll_ms);
+    try lua.runString("assert(N == 2, 'polled ' .. N .. ' times')");
+}
+
 test "a metatable with __gc is refused, so no finalizer ever runs unbudgeted" {
     // A finalizer runs with Lua's hooks switched off — on the state's
     // close at a reload or a quit, or mid-collection — so the budget
@@ -1770,7 +1806,7 @@ test "a returned value's metamethods run inside the protected call: an error the
     const rows = try lua.callRender(globalRef(lua, "render"), 20, 4);
     try testing.expectEqual(@as(usize, 1), rows.len);
     try testing.expect(std.mem.indexOf(u8, rows[0][0].text, "ROW-BOOM") != null);
-    try testing.expect(lua.callSegment(globalRef(lua, "segment")) == null);
+    try testing.expectError(error.Failed, lua.callSegment(globalRef(lua, "segment")));
     try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "SEG-BOOM") != null);
     try testing.expect((try lua.callListRows(globalRef(lua, "rows"), null)) == null);
     try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "LIST-BOOM") != null);

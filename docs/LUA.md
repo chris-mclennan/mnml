@@ -812,7 +812,8 @@ mnml.inspect(v) takes one value — any type, nil included
 #### `mnml.statusline.segment{ id, side?, fn }`
 
 A segment of the script's own. `fn()` is polled every 250 ms; returning nil
-hides it. `side` is `"left"` or `"right"` — both sit in the right-hand
+hides it. A `fn` that errors is toasted once and the segment goes quiet —
+hidden, and not asked again until the script reloads. `side` is `"left"` or `"right"` — both sit in the right-hand
 cluster, `left` ones at its inner edge, `right` ones after the built-in chips
 (branch, diagnostics, AI meter). Registering an id again replaces its
 function.

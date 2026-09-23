@@ -1,0 +1,12 @@
+# A statusline segment whose fn errors is toasted once and then goes
+# quiet until a reload. It used to be polled every 250 ms forever, each
+# error a fresh toast: 118 in the message log after half a minute. A
+# render error paints once in its pane; a segment now stops the same way.
+write .mnml/init.lua "N = 0\nmnml.statusline.segment{ id = 'bad', fn = function() N = N + 1; error('SEGBOOM') end }\nmnml.command{ id = 'n', run = function() mnml.toast('SEGCALLS=' .. N) end }\n"
+command script.reload
+wait 3000
+command messages.show
+expect screen contains "SEGBOOM"
+key esc
+command user.n
+expect screen contains "SEGCALLS=1 "
