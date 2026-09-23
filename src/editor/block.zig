@@ -13,6 +13,8 @@ const editor = @import("editor.zig");
 const Editor = editor.Editor;
 const Clipboard = editor.Clipboard;
 const EditOutcome = @import("edit_op.zig").EditOutcome;
+const CaseTransform = @import("edit_op.zig").CaseTransform;
+const line_ops = @import("line.zig");
 
 /// Inclusive rows and display columns.
 pub const Rect = struct { r0: usize, c0: usize, r1: usize, c1: usize };
@@ -201,6 +203,116 @@ pub fn deleteBlock(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocator.E
     ed.cursor = ed.byteAtVcol(r.r0, r.c0);
     selectClear(ed);
     out.buffer_changed = true;
+}
+
+/// `U` / `u` / `~` on a block (`:help v_U`): the case of every
+/// character inside the rectangle, ASCII letters as the charwise form
+/// does. The cursor parks at the top-left.
+pub fn transformCase(ed: *Editor, kind: CaseTransform, out: *EditOutcome) Allocator.Error!void {
+    const r = rect(ed) orelse return;
+    remember(ed);
+    const last = @min(r.r1, ed.lineCount() - 1);
+    var cp = false;
+    var row = @min(r.r0, last);
+    while (row <= last) : (row += 1) {
+        const sp = span(ed, row, r.c0, r.c1, ed.block_eol);
+        var b = sp.inner_s;
+        while (b < sp.inner_e) : (b += 1) {
+            const c = ed.bytes()[b];
+            const t = switch (kind) {
+                .lower => std.ascii.toLower(c),
+                .upper => std.ascii.toUpper(c),
+                .toggle => if (std.ascii.isUpper(c)) std.ascii.toLower(c) else std.ascii.toUpper(c),
+            };
+            if (t == c) continue;
+            if (!cp) {
+                try ed.checkpoint();
+                cp = true;
+            }
+            try ed.splice(b, b + 1, &.{t});
+            out.buffer_changed = true;
+        }
+    }
+    ed.cursor = ed.byteAtVcol(r.r0, r.c0);
+    selectClear(ed);
+}
+
+/// `>` / `<` on a block (`:help v_b_>`): every row is shifted from the
+/// block's left edge — the white space there grows (or, for `<`,
+/// shrinks) by `count` shift widths, the text after it moving with it
+/// — and is written again as tabs to the tab stops then spaces under
+/// `use_tabs`, else spaces. A row that ends before the edge is left
+/// alone. The cursor parks at the top-left.
+pub fn shift(ed: *Editor, left: bool, count: u32, out: *EditOutcome) Allocator.Error!void {
+    const r = rect(ed) orelse return;
+    remember(ed);
+    const unit = @max(ed.doc.tab_width, 1);
+    const total = unit * @max(count, 1);
+    const last = @min(r.r1, ed.lineCount() - 1);
+    var cp = false;
+    var fill: std.ArrayList(u8) = .empty;
+    defer fill.deinit(ed.gpa);
+    var row = last + 1;
+    while (row > r.r0) {
+        row -= 1;
+        const start = ed.byteAtVcol(row, r.c0);
+        const line_end = ed.lineEnd(row);
+        if (start >= line_end) continue;
+        const from = ed.vcolAtByte(start);
+        var ws_end = start;
+        while (ws_end < line_end and (ed.bytes()[ws_end] == ' ' or ed.bytes()[ws_end] == '\t')) ws_end += 1;
+        const width = ed.vcolAtByte(ws_end) - from;
+        if (left and width == 0) continue;
+        const to = from + (if (left) width -| total else width + total);
+        fill.clearRetainingCapacity();
+        var v = from;
+        if (ed.doc.use_tabs) while (true) {
+            const stop = (v / unit + 1) * unit;
+            if (stop > to) break;
+            try fill.append(ed.gpa, '\t');
+            v = stop;
+        };
+        try fill.appendNTimes(ed.gpa, ' ', to - v);
+        if (std.mem.eql(u8, fill.items, ed.bytes()[start..ws_end])) continue;
+        if (!cp) {
+            try ed.checkpoint();
+            cp = true;
+        }
+        try ed.splice(start, ws_end, fill.items);
+        out.buffer_changed = true;
+    }
+    ed.cursor = ed.byteAtVcol(r.r0, r.c0);
+    selectClear(ed);
+}
+
+/// `J` / `gJ` on a block: the rows it spans joined, as `V…J` joins them
+/// (two rows at least).
+pub fn join(ed: *Editor, keep_space: bool, out: *EditOutcome) Allocator.Error!void {
+    const r = rect(ed) orelse return;
+    remember(ed);
+    ed.cursor = ed.lineStart(r.r0);
+    selectClear(ed);
+    const joins = @max(r.r1 - r.r0, 1);
+    // One undo step, as vim's `J` over a range.
+    const tok = try ed.beginAtomic();
+    defer ed.endAtomic(tok);
+    for (0..joins) |_| try line_ops.joinLines(ed, keep_space, out);
+}
+
+/// `O` in a block (`:help v_b_O`): the cursor goes to the other end of
+/// its own row, and the anchor to the other end of its row, so the
+/// same rectangle grows from the corner beside the cursor.
+pub fn otherEndOfRow(ed: *Editor) void {
+    const a = ed.block_anchor orelse return;
+    const a_row = ed.lineOfByte(a);
+    const c_row = ed.currentLine();
+    const av = ed.vcolAtByte(a);
+    const cv = ed.vcolAtByte(ed.cursor);
+    const na = ed.byteAtVcol(a_row, cv);
+    ed.cursor = ed.byteAtVcol(c_row, av);
+    ed.block_anchor = na;
+    ed.anchor = na;
+    ed.goal_col = null;
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────

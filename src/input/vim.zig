@@ -2339,6 +2339,7 @@ pub const Vim = struct {
             try b.push(.{ .block_eol = false });
             return b.finish();
         }
+        const n = self.count1();
         self.count = null;
         if (key.code == .esc or isCtrlChar(key, 'v')) {
             self.enterNormal();
@@ -2346,6 +2347,26 @@ pub const Vim = struct {
         }
         const c = ch orelse return .consumed;
         switch (c) {
+            // The other corner (`:help v_o`), the other end of the row
+            // (`:help v_b_O`).
+            'o' => return ops(arena, &.{.swap_anchor_cursor}),
+            'O' => return ops(arena, &.{.block_other_end_of_row}),
+            'U', 'u', '~' => {
+                self.enterNormal();
+                return ops(arena, &.{.{ .block_case = switch (c) {
+                    'U' => .upper,
+                    'u' => .lower,
+                    else => .toggle,
+                } }});
+            },
+            '>', '<' => {
+                self.enterNormal();
+                return ops(arena, &.{.{ .block_shift = .{ .left = c == '<', .count = n } }});
+            },
+            'J' => {
+                self.enterNormal();
+                return ops(arena, &.{.{ .block_join = .{ .keep_space = true } }});
+            },
             'v' => {
                 self.vmode = .visual;
                 return ops(arena, &.{ .block_select_clear, .select_start });

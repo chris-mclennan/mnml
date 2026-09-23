@@ -670,6 +670,15 @@ pub fn restoreLastSelection(ed: *Editor, shape: edit_op.SelectionShape) void {
 }
 
 pub fn swapAnchorCursor(ed: *Editor) void {
+    // A block's `o` swaps the corners (`:help v_o`): the block anchor
+    // leads, `anchor` mirrors it.
+    if (ed.block_anchor) |ba| {
+        ed.block_anchor = ed.cursor;
+        ed.anchor = ed.cursor;
+        ed.cursor = ba;
+        ed.goal_col = null;
+        return;
+    }
     const a = ed.anchor orelse return;
     ed.anchor = ed.cursor;
     ed.cursor = a;
