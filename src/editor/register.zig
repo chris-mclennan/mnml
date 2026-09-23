@@ -107,28 +107,7 @@ pub fn putTimes(ed: *Editor, clip: *Clipboard, where: Where, land: Land, times: 
         return;
     }
     if (clip.isLinewise()) {
-        const line = ed.currentLine();
-        if (where == .after) {
-            const eol = ed.lineEnd(line);
-            const at_eof = eol >= ed.len();
-            const insert_at = if (at_eof) eol else eol + 1;
-            if (at_eof and ed.len() > 0) {
-                // No `\n` to put after: open a line with `\n` + payload
-                // minus its own terminator.
-                const trimmed = if (s[s.len - 1] == '\n') s[0 .. s.len - 1] else s;
-                const payload = try std.mem.concat(ed.gpa, u8, &.{ "\n", trimmed });
-                defer ed.gpa.free(payload);
-                try ed.splice(insert_at, insert_at, payload);
-                ed.cursor = if (land == .start) insert_at + 1 else insert_at + payload.len;
-            } else {
-                try ed.splice(insert_at, insert_at, s);
-                ed.cursor = if (land == .start) insert_at else insert_at + s.len;
-            }
-        } else {
-            const bol = ed.lineStart(line);
-            try ed.splice(bol, bol, s);
-            ed.cursor = if (land == .start) bol else bol + s.len;
-        }
+        _ = try putLines(ed, s, where, land);
     } else {
         // `p` puts after the char under the cursor; on an empty line (or
         // past the end) there is none, and vim puts at the cursor — not
@@ -140,6 +119,93 @@ pub fn putTimes(ed: *Editor, clip: *Clipboard, where: Where, land: Land, times: 
     }
     ed.anchor = null;
     out.buffer_changed = true;
+}
+
+/// A linewise payload `s` below (`after`) or above the cursor's line;
+/// returns the line its first line landed on.
+fn putLines(ed: *Editor, s: []const u8, where: Where, land: Land) Allocator.Error!usize {
+    const line = ed.currentLine();
+    if (where == .after) {
+        const eol = ed.lineEnd(line);
+        const at_eof = eol >= ed.len();
+        const insert_at = if (at_eof) eol else eol + 1;
+        if (at_eof and ed.len() > 0) {
+            // No `\n` to put after: open a line with `\n` + payload
+            // minus its own terminator.
+            const trimmed = if (s[s.len - 1] == '\n') s[0 .. s.len - 1] else s;
+            const payload = try std.mem.concat(ed.gpa, u8, &.{ "\n", trimmed });
+            defer ed.gpa.free(payload);
+            try ed.splice(insert_at, insert_at, payload);
+            ed.cursor = if (land == .start) insert_at + 1 else insert_at + payload.len;
+        } else {
+            try ed.splice(insert_at, insert_at, s);
+            ed.cursor = if (land == .start) insert_at else insert_at + s.len;
+        }
+        return line + 1;
+    }
+    const bol = ed.lineStart(line);
+    try ed.splice(bol, bol, s);
+    ed.cursor = if (land == .start) bol else bol + s.len;
+    return line;
+}
+
+/// `[count]]p` / `[count][p` (`:help ]p`): a linewise register put with
+/// its lines shifted so the first non-empty one takes the cursor line's
+/// indent, the rest keeping their indent relative to it (never below
+/// column 0). Empty lines stay empty. The indent is rebuilt from
+/// columns — tabs at `tab_width` under `use_tabs`, else spaces. A
+/// charwise register is a plain `p` / `P`. The cursor lands on the
+/// first put line's first non-blank.
+pub fn putIndentedTimes(ed: *Editor, clip: *Clipboard, where: Where, times: u32, out: *EditOutcome) Allocator.Error!void {
+    const one = clip.text();
+    if (one.len == 0 or times == 0) return;
+    if (!clip.isLinewise() or mc.hasExtras(ed)) return putTimes(ed, clip, where, .start, times, out);
+    const tw = @max(ed.doc.tab_width, 1);
+    const target: isize = @intCast(indentCols(ed.leadingIndent(ed.currentLine(), null), tw));
+    const body = if (one[one.len - 1] == '\n') one[0 .. one.len - 1] else one;
+    var payload: std.ArrayList(u8) = .empty;
+    defer payload.deinit(ed.gpa);
+    // The shift is fixed by the first non-empty line of the first copy
+    // and holds for every copy after it.
+    var diff: ?isize = null;
+    for (0..times) |_| {
+        var it = std.mem.splitScalar(u8, body, '\n');
+        while (it.next()) |ln| {
+            if (ln.len > 0) {
+                const lead = ln.len - std.mem.trimStart(u8, ln, " \t").len;
+                const have: isize = @intCast(indentCols(ln[0..lead], tw));
+                const d = diff orelse blk: {
+                    diff = target - have;
+                    break :blk target - have;
+                };
+                try appendIndent(ed, &payload, @intCast(@max(have + d, 0)), tw);
+                try payload.appendSlice(ed.gpa, ln[lead..]);
+            }
+            try payload.append(ed.gpa, '\n');
+        }
+    }
+    try ed.checkpoint();
+    const first = try putLines(ed, payload.items, where, .start);
+    ed.cursor = ed.firstNonWs(first);
+    ed.goal_col = null;
+    ed.anchor = null;
+    out.buffer_changed = true;
+}
+
+/// The display width of an indent run, tabs advancing to the next stop.
+fn indentCols(lead: []const u8, tw: usize) usize {
+    var cols: usize = 0;
+    for (lead) |b| cols = if (b == '\t') (cols / tw + 1) * tw else cols + 1;
+    return cols;
+}
+
+fn appendIndent(ed: *Editor, list: *std.ArrayList(u8), cols: usize, tw: usize) Allocator.Error!void {
+    var left = cols;
+    if (ed.doc.use_tabs) {
+        try list.appendNTimes(ed.gpa, '\t', left / tw);
+        left %= tw;
+    }
+    try list.appendNTimes(ed.gpa, ' ', left);
 }
 
 /// Multi-cursor put: a clipboard with exactly one line per cursor is
@@ -167,13 +233,15 @@ pub fn putRepeated(ed: *Editor, op: EditOp, times: u32, clip: *Clipboard, out: *
         .paste_before => putTimes(ed, clip, .before, .start, times, out),
         .paste_after_end => putTimes(ed, clip, .after, .end, times, out),
         .paste_before_end => putTimes(ed, clip, .before, .end, times, out),
+        .paste_after_indent => putIndentedTimes(ed, clip, .after, times, out),
+        .paste_before_indent => putIndentedTimes(ed, clip, .before, times, out),
         else => unreachable,
     };
 }
 
 pub fn isPut(op: EditOp) bool {
     return switch (op) {
-        .paste_after, .paste_before, .paste_after_end, .paste_before_end => true,
+        .paste_after, .paste_before, .paste_after_end, .paste_before_end, .paste_after_indent, .paste_before_indent => true,
         else => false,
     };
 }
@@ -198,6 +266,16 @@ pub fn pasteAfterEnd(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocator
 /// `gP`.
 pub fn pasteBeforeEnd(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocator.Error!void {
     try put(ed, clip, .before, .end, out);
+}
+
+/// `]p`.
+pub fn pasteAfterIndent(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocator.Error!void {
+    try putIndentedTimes(ed, clip, .after, 1, out);
+}
+
+/// `[p` / `[P` / `]P`.
+pub fn pasteBeforeIndent(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocator.Error!void {
+    try putIndentedTimes(ed, clip, .before, 1, out);
 }
 
 /// Modeless paste: replaces the selection, inserts at the cursor.
@@ -255,4 +333,111 @@ test "charwise yank/put and modeless paste over a selection" {
     try std.testing.expectEqualStrings("hehe", ed.doc.text.items);
     try yankLinesCount(ed, 3, &clip, &out);
     try std.testing.expectEqualStrings("hehe\n", clip.text());
+}
+
+/// Runs `op` through `Editor.apply` — the path a keystroke takes.
+fn applyOp(ed: *Editor, clip: *Clipboard, op: EditOp) !EditOutcome {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    return ed.apply(op, 10, clip, arena_state.allocator());
+}
+
+fn cursorRowCol(ed: *const Editor) [2]usize {
+    const row = ed.currentLine();
+    return .{ row, ed.cursor - ed.lineStart(row) };
+}
+
+test "put-indent ]p: a 2-space block put under an 8-space line takes its indent, the inner line keeps +2" {
+    // Neovim 0.12.5 (ts=4 sw=4 et): `3yyG]p`.
+    var clip = Clipboard.init(std.testing.allocator);
+    defer clip.deinit();
+    const ed = try Editor.init(std.testing.allocator, "  if x {\n    y();\n  }\n        target");
+    defer ed.deinit();
+    _ = try applyOp(ed, &clip, .{ .yank_lines_count = 3 });
+    ed.cursor = ed.lineStart(3) + 8;
+    const out = try applyOp(ed, &clip, .paste_after_indent);
+    try std.testing.expect(out.buffer_changed);
+    try std.testing.expectEqualStrings("  if x {\n    y();\n  }\n        target\n        if x {\n          y();\n        }", ed.doc.text.items);
+    try std.testing.expectEqual([2]usize{ 4, 8 }, cursorRowCol(ed));
+    // One undo step takes the whole put back.
+    _ = try applyOp(ed, &clip, .undo);
+    try std.testing.expectEqualStrings("  if x {\n    y();\n  }\n        target", ed.doc.text.items);
+}
+
+test "put-indent [p: put above a tab-indented line; the tab counts to its stop, spaces under expandtab" {
+    // Neovim 0.12.5 (ts=4 sw=4 et): `2yyG[p`.
+    var clip = Clipboard.init(std.testing.allocator);
+    defer clip.deinit();
+    const ed = try Editor.init(std.testing.allocator, "  a\n    b\n\tfoo\n");
+    defer ed.deinit();
+    ed.doc.tab_width = 4;
+    _ = try applyOp(ed, &clip, .{ .yank_lines_count = 2 });
+    ed.cursor = ed.lineStart(2) + 1;
+    _ = try applyOp(ed, &clip, .paste_before_indent);
+    try std.testing.expectEqualStrings("  a\n    b\n    a\n      b\n\tfoo\n", ed.doc.text.items);
+    try std.testing.expectEqual([2]usize{ 2, 4 }, cursorRowCol(ed));
+}
+
+test "put-indent ]p with a charwise register is exactly p; [p exactly P" {
+    // Neovim 0.12.5: `yeG]p` on `        target` puts `hello` after the `t`.
+    var clip = Clipboard.init(std.testing.allocator);
+    defer clip.deinit();
+    const text = "  hello world\n        target";
+    const ed = try Editor.init(std.testing.allocator, text);
+    defer ed.deinit();
+    ed.anchor = 2;
+    ed.cursor = 7;
+    _ = try applyOp(ed, &clip, .yank_selection);
+    ed.anchor = null;
+    const plain = try Editor.init(std.testing.allocator, text);
+    defer plain.deinit();
+    for ([_][2]EditOp{ .{ .paste_after_indent, .paste_after }, .{ .paste_before_indent, .paste_before } }) |pair| {
+        try ed.setText(text);
+        try plain.setText(text);
+        ed.cursor = ed.lineStart(1) + 8;
+        plain.cursor = ed.cursor;
+        _ = try applyOp(ed, &clip, pair[0]);
+        _ = try applyOp(plain, &clip, pair[1]);
+        try std.testing.expectEqualStrings(plain.doc.text.items, ed.doc.text.items);
+        try std.testing.expectEqual(plain.cursor, ed.cursor);
+    }
+    try std.testing.expectEqualStrings("  hello world\n        hellotarget", ed.doc.text.items);
+}
+
+test "put-indent [count]]p: the copies all take the one shift; the cursor lands on the first copy" {
+    // Neovim 0.12.5 (ts=4 sw=4 et): `2yyG2]p`.
+    var clip = Clipboard.init(std.testing.allocator);
+    defer clip.deinit();
+    const ed = try Editor.init(std.testing.allocator, "  a\n    b\n      t\n");
+    defer ed.deinit();
+    _ = try applyOp(ed, &clip, .{ .yank_lines_count = 2 });
+    ed.cursor = ed.lineStart(2);
+    _ = try applyOp(ed, &clip, .{ .repeat = .{ .count = 2, .inner = &.paste_after_indent } });
+    try std.testing.expectEqualStrings("  a\n    b\n      t\n      a\n        b\n      a\n        b\n", ed.doc.text.items);
+    try std.testing.expectEqual([2]usize{ 3, 6 }, cursorRowCol(ed));
+    _ = try applyOp(ed, &clip, .undo);
+    try std.testing.expectEqualStrings("  a\n    b\n      t\n", ed.doc.text.items);
+}
+
+test "put-indent ]p under use_tabs: tabs then spaces; empty lines stay empty; a shift below column 0 stops there" {
+    // Neovim 0.12.5 (ts=4 sw=4 noet): `3yyG]p` over an empty line, and
+    // `2yyG]p` from a deeper block onto an unindented line.
+    var clip = Clipboard.init(std.testing.allocator);
+    defer clip.deinit();
+    const ed = try Editor.init(std.testing.allocator, "  a\n\n    b\n      x\n");
+    defer ed.deinit();
+    ed.doc.tab_width = 4;
+    ed.doc.use_tabs = true;
+    _ = try applyOp(ed, &clip, .{ .yank_lines_count = 3 });
+    ed.cursor = ed.lineStart(3);
+    _ = try applyOp(ed, &clip, .paste_after_indent);
+    try std.testing.expectEqualStrings("  a\n\n    b\n      x\n\t  a\n\n\t\tb\n", ed.doc.text.items);
+    try std.testing.expectEqual([2]usize{ 4, 3 }, cursorRowCol(ed));
+
+    try ed.setText("    a\n  b\nx\n");
+    ed.cursor = 0;
+    _ = try applyOp(ed, &clip, .{ .yank_lines_count = 2 });
+    ed.cursor = ed.lineStart(2);
+    _ = try applyOp(ed, &clip, .paste_after_indent);
+    try std.testing.expectEqualStrings("    a\n  b\nx\na\nb\n", ed.doc.text.items);
 }

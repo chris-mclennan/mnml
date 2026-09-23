@@ -140,7 +140,6 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .select_inner_quote => |q| select.quote(ed, q, false),
         .select_around_quote => |q| select.quote(ed, q, true),
         .select_inner_smart_quote, .select_around_smart_quote => return error.Unsupported, // TODO(vim-slice: text-objects) iq / aq
-        .paste_after_indent, .paste_before_indent => return error.Unsupported, // TODO(vim-slice: put) `]p` / `[p` put with the indent adjusted to the current line
         .surround_selection => |s| try surround.surroundSelection(ed, s.open, s.close, s.pad, out),
         .delete_surround => |c| try surround.deleteSurround(ed, c, out),
         .change_surround => |c| try surround.changeSurround(ed, c.from, c.to, out),
@@ -231,6 +230,8 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .paste_before => try register.pasteBefore(ed, clip, out),
         .paste_after_end => try register.pasteAfterEnd(ed, clip, out),
         .paste_before_end => try register.pasteBeforeEnd(ed, clip, out),
+        .paste_after_indent => try register.pasteAfterIndent(ed, clip, out),
+        .paste_before_indent => try register.pasteBeforeIndent(ed, clip, out),
         .paste => try register.paste(ed, clip, out),
 
         // ── history ──
@@ -340,7 +341,7 @@ test "property: cursor stays on a boundary and text stays valid UTF-8" {
         .select_inner_tag,                                                      .select_around_tag,                                     .{ .restore_last_selection = .charwise },                                                                        .swap_anchor_cursor,
         .move_cursor_to_selection_start,                                        .normalize_linewise_selection,                          .normalize_linewise_selection_inner,                                                                             .make_selection_inclusive,
         .{ .insert_char = 'é' },
-        .{ .insert_char = '\n' },
+        .paste_after_indent,                                                    .paste_before_indent,                                   .{ .insert_char = '\n' },
         .{ .insert_str = "世界" },
         .{ .insert_char_from_line = .{ .above = true } },                       .insert_newline,                                        .insert_newline_below,                                                                                           .insert_newline_above,
         .backspace,                                                             .delete_forward,                                        .delete_word_left,                                                                                               .delete_word_right,
