@@ -119,6 +119,12 @@ pub const Clipboard = struct {
         return names.items;
     }
 
+    /// vim's read-only `".` register: what the last Insert typed
+    /// (`:help quote.`), written when an Insert session closes.
+    pub fn setLastInserted(self: *Clipboard, s: []const u8) Allocator.Error!void {
+        try self.putNamed('.', .{ .text = try self.gpa.dupe(u8, s), .linewise = false });
+    }
+
     pub fn setPendingRegister(self: *Clipboard, reg: ?u21) void {
         self.pending_register = reg;
     }
@@ -250,7 +256,8 @@ pub const Clipboard = struct {
                 self.effective_linewise = false;
                 return "";
             }
-            if ((r >= 'a' and r <= 'z') or (r >= 'A' and r <= 'Z') or (r >= '0' and r <= '9') or r == '-') {
+            // `".` before any Insert is empty: nothing is put (E29).
+            if ((r >= 'a' and r <= 'z') or (r >= 'A' and r <= 'Z') or (r >= '0' and r <= '9') or r == '-' or r == '.') {
                 const slot: u8 = if (r >= 'A' and r <= 'Z') @intCast(r - 'A' + 'a') else @intCast(r);
                 if (self.named.get(slot)) |e| {
                     self.effective_linewise = e.linewise;

@@ -1,0 +1,60 @@
+# `".` is the text the last Insert typed (`:help quote.`), empty — E29,
+# nothing put — before any Insert. `.` after `"1p` puts `"2`, then `"3`
+# (`:help redo-register`), so `"1pu.u.` fishes back through the delete
+# history. Every expectation is Neovim 0.12.5's (`nvim --clean`, the
+# keys fed as typed), on "one two / three four / five six / seven".
+command editor.use_vim
+# First, while no Insert has happened: `".` is empty (the register is
+# the session's, as in vim, so this has to come before any Insert).
+write d.txt "one two\nthree four\nfive six\nseven\n"
+open d.txt
+type dwjdw".p
+command file.save
+expect file d.txt contains "two\nfour\nfive six\nseven\n"
+
+# Two deletes, before any other: the second `.` finds `"3` empty and
+# puts nothing (E353). The numbered registers are the session's too.
+write g.txt "one two\nthree four\nfive six\nseven\n"
+open g.txt
+type dddd"1p..
+command file.save
+expect file g.txt contains "five six\nthree four\none two\nseven\n"
+
+write a.txt "one two\nthree four\nfive six\nseven\n"
+open a.txt
+type iabc
+key esc
+type j".p
+command file.save
+expect file a.txt contains "abcone two\nthrabcee four\nfive six\n"
+
+write b.txt "one two\nthree four\nfive six\nseven\n"
+open b.txt
+type iabc
+key esc
+type j".P
+command file.save
+expect file b.txt contains "abcone two\nthabcree four\nfive six\n"
+
+# The LAST Insert, not the first.
+write c.txt "one two\nthree four\nfive six\nseven\n"
+open c.txt
+type iabc
+key esc
+type ixy
+key esc
+type ".p
+command file.save
+expect file c.txt contains "abxyxycone two\nthree four\n"
+
+write e.txt "one two\nthree four\nfive six\nseven\n"
+open e.txt
+type dddddd"1p..
+command file.save
+expect file e.txt contains "seven\nfive six\nthree four\none two\n"
+
+write f.txt "one two\nthree four\nfive six\nseven\n"
+open f.txt
+type dddd"1pu.
+command file.save
+expect file f.txt contains "five six\none two\nseven\n"

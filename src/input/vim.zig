@@ -1175,7 +1175,8 @@ pub const Vim = struct {
             .register => {
                 self.prefix = .none;
                 if (ch) |c| {
-                    const valid = (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '+' or c == '*' or c == '_' or c == '-';
+                    // `".` reads the last inserted text (a put only).
+                    const valid = (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '+' or c == '*' or c == '_' or c == '-' or c == '.';
                     if (valid) self.pending_register = c;
                 }
                 return .consumed;

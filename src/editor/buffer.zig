@@ -22,6 +22,7 @@ const Pos = editor_mod.Pos;
 pub const Clipboard = editor_mod.Clipboard;
 const edit_op = @import("edit_op.zig");
 const safe_write = @import("safe_write.zig");
+const register_mod = @import("register.zig");
 const EditOp = edit_op.EditOp;
 const input = @import("../input/mod.zig");
 pub const InputHandler = input.InputHandler;
@@ -95,6 +96,8 @@ pub const Buffer = struct {
     /// from its ops when it closed (a backspace takes a char back).
     /// gpa-owned.
     last_inserted: ?[]u8 = null,
+    /// `last_inserted` changed since the clipboard's `".` was written.
+    last_inserted_unsynced: bool = false,
 
     pub const max_replay_depth = 8;
 
@@ -508,6 +511,11 @@ pub const Buffer = struct {
             return if (changed) .edited else .redraw;
         }
         try self.trackDot(list, visual, arena);
+        // The Insert that just closed is what `".` puts now.
+        if (self.last_inserted_unsynced) {
+            self.last_inserted_unsynced = false;
+            try clip.setLastInserted(self.last_inserted orelse "");
+        }
         return if (changed) .edited else .redraw;
     }
 
@@ -866,6 +874,7 @@ pub const Buffer = struct {
         for (self.dot_pending.items) |o| try collectTyped(&typed, self.gpa, o);
         if (self.last_inserted) |s| self.gpa.free(s);
         self.last_inserted = try typed.toOwnedSlice(self.gpa);
+        self.last_inserted_unsynced = true;
     }
 
     fn collectTyped(typed: *std.ArrayList(u8), gpa: Allocator, op: EditOp) Allocator.Error!void {
@@ -911,6 +920,14 @@ pub const Buffer = struct {
                 d[idx].repeat.count = count -| 1;
             } else if (countedOp(d)) |n| n.* = count else times = count;
         }
+        // `.` after `"1p` puts `"2`, the next `"3`… (`:help redo-register`):
+        // the record's register steps on, so `"1pu.u.` fishes back
+        // through the delete history.
+        if (d.len > 0 and d[0] == .set_register_hint) {
+            if (d[0].set_register_hint) |r| if (r >= '1' and r <= '8' and putsFrom(d[1..])) {
+                d[0].set_register_hint = r + 1;
+            };
+        }
         const tok = try self.editor.beginAtomic();
         var changed = false;
         for (0..times) |_| {
@@ -922,6 +939,16 @@ pub const Buffer = struct {
         // there; the replay already typed the text, so drop back.
         if (self.input.mode() == .insert or self.input.mode() == .replace) self.input.onBlur();
         return if (changed) .edited else .redraw;
+    }
+
+    /// A recorded change that is a put — what `.` steps the numbered
+    /// register of.
+    fn putsFrom(list: []const EditOp) bool {
+        for (list) |o| {
+            const inner = if (o == .repeat) o.repeat.inner.* else o;
+            if (register_mod.isPut(inner)) return true;
+        }
+        return false;
     }
 
     /// The count in a recorded change: the first counted op's.
