@@ -2410,24 +2410,10 @@ fn acceptCompletion(app: *App, idx: u32) Allocator.Error!void {
     defer if (raw_json) |j| gpa.free(j);
     closeCompletion(app);
     if (is_snippet) {
-        var parsed = try snippets.parse(gpa, insert);
-        defer parsed.deinit(gpa);
-        app.snippets.endSession();
-        const body = try arena.dupe(u8, parsed.text);
-        try app.splice(e, start, end, body);
-        const first: ?snippets.Stop = if (parsed.stops.len > 0) parsed.stops[0] else null;
-        const land = start + (if (first) |f| f.pos else parsed.text.len);
+        // The snippet grammar, the indent, the stops and their mirrors:
+        // the path a trigger expansion takes.
         ed.anchor = null;
-        ed.setCursor(@min(land, ed.len()));
-        if (first) |f| if (f.default_len > 0) {
-            ed.anchor = land;
-            ed.setCursor(@min(land + f.default_len, ed.len()));
-        };
-        if (parsed.stops.len > 1) {
-            const stops = try gpa.alloc(snippets.Stop, parsed.stops.len);
-            for (parsed.stops, 0..) |s, i| stops[i] = .{ .pos = start + s.pos, .default_len = s.default_len, .exit = if (i == 0 and s.default_len > 0) start + s.pos + s.default_len else null };
-            app.snippets.session = .{ .pane = pane, .stops = stops, .current = 0, .seen_seq = ed.doc.edits.head() };
-        }
+        try snippets.insertBody(app, pane, e, start, end, insert);
     } else {
         try app.splice(e, start, end, insert);
     }

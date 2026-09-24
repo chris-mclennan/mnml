@@ -28,6 +28,10 @@ pub const Line = struct {
     segs: []const Segment,
     /// Cells a wrapped continuation row is indented by.
     indent: u16 = 0,
+    /// Cells the whole line stands in from the margin: a nested list
+    /// item, two per level. Painted as an offset, never as text — the
+    /// word wrap trims a row's leading blanks.
+    lead: u16 = 0,
     /// // changed (ui-polish): a standalone `![alt](src)` line renders as
     /// a caption carrying `image = src`, followed by `image_rows - 1`
     /// blank `filler` lines the terminal draws the image over.
@@ -234,6 +238,9 @@ pub fn renderWith(arena: Allocator, t: *const Theme, src: []const u8, ascii: boo
     var lines = std.mem.splitScalar(u8, src, '\n');
     var table_rows: std.ArrayListUnmanaged([]const []const u8) = .empty;
     var table_header = true;
+    // The source columns of the open list items, outermost first: an
+    // item's depth is how many of them sit left of it.
+    var list_cols: std.ArrayListUnmanaged(u16) = .empty;
     while (lines.next()) |raw| {
         const line = std.mem.trimEnd(u8, raw, "\r");
         const trimmed = std.mem.trimStart(u8, line, " \t");
@@ -298,16 +305,23 @@ pub fn renderWith(arena: Allocator, t: *const Theme, src: []const u8, ascii: boo
             continue;
         }
         const indent = leadingSpaces(line);
+        const is_item = listItem(trimmed) != null or orderedItem(trimmed) != null;
+        // A paragraph back at the margin closes every list.
+        if (!is_item and indent == 0) list_cols.clearRetainingCapacity();
+        if (is_item) {
+            while (list_cols.items.len > 0 and list_cols.items[list_cols.items.len - 1] >= indent) _ = list_cols.pop();
+            try list_cols.append(arena, indent);
+        }
+        const lead: u16 = if (is_item) @intCast(@min(2 * (list_cols.items.len - 1), 40)) else 0;
         if (listItem(trimmed)) |item| {
-            const bullet = try std.fmt.allocPrint(arena, "{s}{s}", .{ line[0 .. line.len - trimmed.len], item.marker(ascii) });
-            const segs = try prefixed(arena, .{ .text = bullet, .style = t.accent }, try inlineSegs(arena, t, item.rest, body));
-            try out.append(arena, .{ .segs = segs, .indent = indent + item.width(ascii) });
+            const segs = try prefixed(arena, .{ .text = item.marker(ascii), .style = t.accent }, try inlineSegs(arena, t, item.rest, body));
+            try out.append(arena, .{ .segs = segs, .indent = item.width(ascii), .lead = lead });
             continue;
         }
         if (orderedItem(trimmed)) |n| {
-            const label = try std.fmt.allocPrint(arena, "{s}{s} ", .{ line[0 .. line.len - trimmed.len], trimmed[0..n] });
+            const label = try std.fmt.allocPrint(arena, "{s} ", .{trimmed[0..n]});
             const segs = try prefixed(arena, .{ .text = label, .style = t.accent }, try inlineSegs(arena, t, std.mem.trimStart(u8, trimmed[n + 1 ..], " "), body));
-            try out.append(arena, .{ .segs = segs, .indent = @intCast(indent + n + 1) });
+            try out.append(arena, .{ .segs = segs, .indent = @intCast(n + 1), .lead = lead });
             continue;
         }
         try out.append(arena, .{ .segs = try inlineSegs(arena, t, line, body), .indent = indent });
@@ -400,7 +414,7 @@ fn spaces(arena: Allocator, n: usize) Allocator.Error![]const u8 {
 /// Display rows `lines` take at `width` (word-wrapped).
 pub fn totalRows(c: Canvas, lines: []const Line, width: u16) usize {
     var rows: usize = 0;
-    for (lines) |l| rows += @max(1, c.measure(l.segs, width, .{ .wrap = .word, .trim = true }));
+    for (lines) |l| rows += @max(1, c.measure(l.segs, width -| l.lead, .{ .wrap = .word, .trim = true }));
     return rows;
 }
 
@@ -440,12 +454,12 @@ pub fn drawWith(ui: Ui, pane: PaneId, area: Rect, lines: []const Line, scroll: u
             box = null;
         }
         if (y >= body.bottom()) break;
-        const rows = @max(1, ui.canvas.measure(l.segs, text_w, .{ .wrap = .word, .trim = true }));
+        const rows = @max(1, ui.canvas.measure(l.segs, text_w -| l.lead, .{ .wrap = .word, .trim = true }));
         if (skip >= rows) {
             skip -= rows;
             continue;
         }
-        const r = Rect.init(body.x + 1, y, text_w, body.bottom() - y);
+        const r = Rect.init(body.x + 1 + l.lead, y, text_w -| l.lead, body.bottom() - y);
         const painted = if (l.segs.len == 0) 1 else ui.canvas.text(r, l.segs, .{ .wrap = .word, .trim = true, .scroll_y = @intCast(skip) });
         const used: u16 = @max(painted, 1);
         if (l.filler and cur_src != null) {
@@ -495,6 +509,27 @@ test "headings strip their marks, emphasis and code drop their markers, lists ge
     try testing.expectEqualStrings("• item", try joined(a, lines[3]));
     try testing.expectEqualStrings("1. first", try joined(a, lines[4]));
     try testing.expectEqualStrings("☑ done", try joined(a, lines[5]));
+}
+
+test "nested list items stand in two cells a level, painted as an offset the wrap cannot trim; a paragraph ends the list" {
+    var f = try Fixture.init(40, 12);
+    defer f.deinit();
+    const a = f.arena_state.allocator();
+    const src = "- alpha\n- beta\n  - nested child\n    - grandchild\n- gamma\n\n1. one\n   1. one-a\n2. two\ntext\n  - fresh\n";
+    const lines = try render(a, &f.theme, src, false);
+    const want_lead = [_]u16{ 0, 0, 2, 4, 0, 0, 0, 2, 0, 0, 0 };
+    for (want_lead, 0..) |w, i| testing.expectEqual(w, lines[i].lead) catch |err| {
+        std.debug.print("line {d}: {s}\n", .{ i, try joined(a, lines[i]) });
+        return err;
+    };
+    try testing.expectEqualStrings("• nested child", try joined(a, lines[2]));
+    try testing.expectEqualStrings("1. one-a", try joined(a, lines[7]));
+    _ = draw(f.ui(), 1, f.full(), lines, 0);
+    var buf: [128]u8 = undefined;
+    try testing.expect(std.mem.startsWith(u8, f.row(1, &buf), " • beta"));
+    try testing.expect(std.mem.startsWith(u8, f.row(2, &buf), "   • nested child"));
+    try testing.expect(std.mem.startsWith(u8, f.row(3, &buf), "     • grandchild"));
+    try testing.expect(std.mem.startsWith(u8, f.row(7, &buf), "   1. one-a"));
 }
 
 test "fences vanish, their body is code; quotes, rules, links and tables" {

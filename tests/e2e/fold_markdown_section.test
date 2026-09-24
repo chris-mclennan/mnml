@@ -1,0 +1,18 @@
+# width: 120
+# height: 30
+# env: PATH=
+# `zc` in a markdown section folds the heading's section up to the next
+# heading; the next section stays open. The raw editor, so the text is
+# what is on screen.
+write notes.md "# One\n\nbaz_md text\nmore\n\n# Two\n\nzed\n"
+open notes.md
+command markdown.edit_raw
+expect pane "notes.md"
+command editor.use_vim
+ex 3
+key z
+key c
+expect screen contains "# One"
+expect screen lacks "baz_md"
+expect screen contains "# Two"
+expect screen contains "zed"

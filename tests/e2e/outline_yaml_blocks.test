@@ -1,0 +1,15 @@
+# width: 160
+# height: 40
+# env: PATH=
+# YAML: every mapping key that opens a block (`on:2`, `push:3`, `jobs:5`,
+# `build:6`, `steps:8`, `test:10`) is a namespace row — the Rust mnml's
+# outline, and what `ic` / `ac` select.
+write deploy.yaml "name: CI\non:\n  push:\n    branches: [main]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n  test:\n    needs: build\n"
+open deploy.yaml
+command outline.show
+wait 300
+expect screen lacks "(no symbols)"
+expect screen contains "jobs:5"
+expect screen contains "build:6"
+expect screen contains "6 symbols"
+expect screen contains "test:10"

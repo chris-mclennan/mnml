@@ -1,0 +1,23 @@
+# width: 120
+# height: 30
+# env: PATH=
+# `dac` inside a TypeScript abstract class deletes the class, as it does
+# inside a plain `class` (the control).
+write plain.ts "export class Store {\n  load(): void {\n    go();\n  }\n}\nconst Z = 2;\n"
+open plain.ts
+command editor.use_vim
+ex 3
+key d
+key a
+key c
+expect screen lacks "class Store"
+expect screen contains "const Z = 2;"
+write abs.ts "export abstract class Store {\n  load(): void {\n    go();\n  }\n}\nconst Z = 2;\n"
+open abs.ts
+command editor.use_vim
+ex 3
+key d
+key a
+key c
+expect screen contains "const Z = 2;"
+expect screen lacks "abstract class Store"

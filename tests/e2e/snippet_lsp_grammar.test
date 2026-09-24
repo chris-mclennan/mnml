@@ -1,0 +1,104 @@
+# width: 120
+# height: 30
+# env: PATH=
+# The LSP / VS Code snippet grammar end to end, each body expanded from
+# its trigger and filled in: a mirror follows its stop as it is typed,
+# a nested placeholder is a stop of its own inside its parent's default,
+# a choice inserts its first option, a variable its value — and no `$…`
+# markup is ever left in the text.
+# mirror
+snippet rs tm1 "let ${1:name} = 1; use_$1($1);"
+write m1.rs ""
+open m1.rs
+type tm1
+command snippet.expand
+type count
+key tab
+expect screen contains "let count = 1; use_count(count);"
+expect screen lacks "${"
+expect screen lacks "$1"
+key esc
+# placeholder-default-kept
+snippet rs tm2 "let ${1:name} = ${2:0};"
+write m2.rs ""
+open m2.rs
+type tm2
+command snippet.expand
+key tab
+key tab
+expect screen contains "let name = 0;"
+expect screen lacks "${"
+expect screen lacks "$1"
+key esc
+# placeholder-overtype
+snippet rs tm3 "let ${1:name} = ${2:0};"
+write m3.rs ""
+open m3.rs
+type tm3
+command snippet.expand
+type abc
+key tab
+type 7
+expect screen contains "let abc = 7;"
+expect screen lacks "${"
+expect screen lacks "$1"
+key esc
+# nested
+snippet rs tm4 "f(${1:a, ${2:b}});"
+write m4.rs ""
+open m4.rs
+type tm4
+command snippet.expand
+key tab
+type Q
+expect screen contains "f(a, Q);"
+expect screen lacks "${"
+expect screen lacks "$1"
+key esc
+# choice
+snippet rs tm5 "x = ${1|red,green|};"
+write m5.rs ""
+open m5.rs
+type tm5
+command snippet.expand
+key tab
+expect screen contains "x = red;"
+expect screen lacks "${"
+expect screen lacks "$1"
+key esc
+# variable
+snippet rs tm6 "// $TM_FILENAME"
+write m6.rs ""
+open m6.rs
+type tm6
+command snippet.expand
+key tab
+expect screen contains "// m6.rs"
+expect screen lacks "$TM_"
+expect screen lacks "${"
+expect screen lacks "$1"
+key esc
+# escaped-dollar
+snippet rs tm7 "cost \\$5 $1;"
+write m7.rs ""
+open m7.rs
+type tm7
+command snippet.expand
+type z
+expect screen contains "cost $5 z;"
+expect screen lacks "${"
+expect screen lacks "$1"
+key esc
+# final-then-type
+snippet rs tm8 "a($1) $0"
+write m8.rs ""
+open m8.rs
+type tm8
+command snippet.expand
+type q
+key tab
+type Z
+expect screen contains "a(q) Z"
+expect screen lacks "${"
+expect screen lacks "$1"
+key esc

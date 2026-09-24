@@ -1,0 +1,19 @@
+# Vue SFC: the vue queries open with `; inherits: html_tags` (nvim's
+# convention), so the HTML layer — tag names, attributes, <style> → css —
+# is prepended to them. Control first: the same <style> in an .html file.
+# width: 160
+# height: 60
+# env: PATH=/usr/bin:/bin
+write ctl.html "<style>\n.app { color: red; }\n</style>\n"
+open ctl.html
+wait 400
+expect screen contains ".app { color: red; }"
+expect color 43 3 fg #e06c75
+write App.vue "<template>\n  <div class=\"app\" :title=\"msg\" @click=\"inc()\" v-if=\"ok\">\n    {{ count + 1 }} items\n    <MyComp v-for=\"item in items\" :key=\"item.id\" />\n  </div>\n</template>\n\n<script setup lang=\"ts\">\nimport { ref } from \"vue\";\nconst count = ref<number>(0);\nfunction inc(): void { count.value++; }\n</script>\n\n<style scoped>\n.app { color: red; }\n</style>\n"
+open App.vue
+wait 400
+expect screen contains "<div class="
+# <div ...>: tag name should paint as a tag (type slot, #e5c07b) as it does in .html
+expect color 39 3 fg #e5c07b
+# <style scoped> .app { color: red; } — `color` should paint as a css property (#e06c75)
+expect color 43 16 fg #e06c75

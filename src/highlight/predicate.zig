@@ -171,7 +171,8 @@ fn compile(a: Allocator, q: *const ts.Query, name: []const u8, args: []const ts.
     if (is_match or is_lua) {
         if (args.len != 2 or args[0].type != .capture or args[1].type != .string) return .unsupported;
         const pat = try a.create(pattern.Pattern);
-        pat.* = pattern.Pattern.compile(a, q.stringValue(args[1].value_id), if (is_lua) .lua else .regex) catch |err| switch (err) {
+        const source = q.stringValue(args[1].value_id);
+        pat.* = pattern.Pattern.compile(a, source, if (is_lua or usesLuaClasses(source)) .lua else .regex) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             error.Unsupported => return .unsupported,
         };
@@ -182,10 +183,34 @@ fn compile(a: Allocator, q: *const ts.Query, name: []const u8, args: []const ts.
     return .unsupported;
 }
 
+/// A `#match?` written with Lua's `%d` / `%a` classes — tree-sitter-sequel's
+/// number patterns are — is a Lua pattern that says `match?`. No regex
+/// dialect has `%` classes, so read as a regex it never matched and every
+/// SQL number painted as a string.
+fn usesLuaClasses(source: []const u8) bool {
+    var i: usize = 0;
+    while (i + 1 < source.len) : (i += 1) {
+        if (source[i] == '\\') {
+            i += 1;
+            continue;
+        }
+        if (source[i] == '%' and std.mem.indexOfScalar(u8, "adlpsuwxc", source[i + 1]) != null) return true;
+    }
+    return false;
+}
+
 // ── tests ──
 
 const testing = std.testing;
 const table = @import("table.zig");
+
+test "a `#match?` in Lua's `%d` classes reads as the Lua pattern it is; a regex stays a regex" {
+    try testing.expect(usesLuaClasses("^[-+]?%d+$"));
+    try testing.expect(usesLuaClasses("^%a"));
+    try testing.expect(!usesLuaClasses("^[A-Z][A-Z_]+$"));
+    try testing.expect(!usesLuaClasses("^100%$"));
+    try testing.expect(!usesLuaClasses("\\%d"));
+}
 
 test "eq / any-of / match predicates decide which identifiers a pattern takes" {
     const idx = table.find("rs").?;

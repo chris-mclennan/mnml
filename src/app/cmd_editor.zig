@@ -265,7 +265,7 @@ fn foldAtCursor(app: *App, action: FoldAction) CommandError!void {
         return;
     };
     if (action == .open) return;
-    const best = foldRangeAt(ed, foldRulesFor(e), row) orelse {
+    const best = foldRangeAt(ed, foldRulesParsed(e), row) orelse {
         app.toast("nothing to fold here", .{});
         return;
     };
@@ -289,6 +289,9 @@ fn foldAtCursor(app: *App, action: FoldAction) CommandError!void {
 /// YAML that is the only block there is.
 pub const FoldRules = struct {
     indent: bool = false,
+    /// The language's non-bracket blocks — `do … end`, elements,
+    /// sections, `let` bindings — read off the syntax tree.
+    tree: ?syntax.FoldTree = null,
 };
 
 /// Languages whose blocks are indented suites rather than bracket
@@ -303,11 +306,19 @@ pub fn foldRulesFor(e: *const EditorPane) FoldRules {
         const x = std.fs.path.extension(p);
         break :blk if (x.len > 1) x[1..] else "";
     } else "";
+    const tree = syntax.FoldTree.of(key, e.syntax.keptRoot());
     for (indent_block_exts) |i| {
-        if (key) |k| if (std.mem.eql(u8, k, i)) return .{ .indent = true };
-        if (std.ascii.eqlIgnoreCase(ext, i)) return .{ .indent = true };
+        if (key) |k| if (std.mem.eql(u8, k, i)) return .{ .indent = true, .tree = tree };
+        if (std.ascii.eqlIgnoreCase(ext, i)) return .{ .indent = true, .tree = tree };
     }
-    return .{};
+    return .{ .tree = tree };
+}
+
+/// `foldRulesFor` after bringing the tree up to the text — what a fold
+/// command reads; the gutter's per-frame question keeps the cheap one.
+pub fn foldRulesParsed(e: *EditorPane) FoldRules {
+    _ = e.syntax.parsedRoot(e.buf.editor);
+    return foldRulesFor(e);
 }
 
 /// The smallest multi-line block around `row`: the bracket pair that
@@ -331,7 +342,8 @@ pub fn foldStartsAt(ed: *const Editor, rules: FoldRules, row: usize) bool {
     // of every visible line instead of just the hovered one.
     // An indented block likewise only starts on a line the next
     // non-blank line is indented past.
-    if (!hasUnmatchedOpener(ed, row) and !(rules.indent and headsIndentedLines(ed, row))) return false;
+    const tree_start = if (rules.tree) |ft| ft.startingOn(row, ed.lineStart(row), ed.lineEnd(row)) != null else false;
+    if (!hasUnmatchedOpener(ed, row) and !(rules.indent and headsIndentedLines(ed, row)) and !tree_start) return false;
     const r = foldRangeFrom(ed, rules, row, ed.lineStart(row)) orelse return false;
     return r[0] == row;
 }
@@ -376,6 +388,7 @@ pub fn foldRangeFrom(ed: *const Editor, rules: FoldRules, row: usize, from: usiz
         if (indentBlockHeadedBy(ed, row)) |b| considerRows(&best, b);
         if (indentBlockAround(ed, row)) |b| considerRows(&best, b);
     }
+    if (rules.tree) |ft| if (ft.around(from, row, ls, le)) |b| considerRows(&best, b);
     return best;
 }
 
@@ -540,9 +553,11 @@ pub fn foldAllBrackets(app: *App) CommandError!void {
             }
         }
     }
-    if (foldRulesFor(e).indent) {
+    const rules = foldRulesParsed(e);
+    if (rules.indent or rules.tree != null) {
         var blocks: std.ArrayListUnmanaged([2]usize) = .empty;
-        try appendIndentBlocks(ed, arena, &blocks);
+        if (rules.indent) try appendIndentBlocks(ed, arena, &blocks);
+        if (rules.tree) |ft| try ft.all(arena, &blocks);
         for (blocks.items) |b| {
             if (e.buf.editor.folds.contains(b[0])) continue;
             try e.buf.editor.folds.put(app.gpa, b[0], b[1]);
@@ -586,6 +601,7 @@ pub fn allFoldRanges(ed: *const Editor, rules: FoldRules, arena: std.mem.Allocat
         }
     }
     if (rules.indent) try appendIndentBlocks(ed, arena, &out);
+    if (rules.tree) |ft| try ft.all(arena, &out);
     return out.items;
 }
 

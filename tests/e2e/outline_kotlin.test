@@ -1,0 +1,15 @@
+# width: 160
+# height: 40
+# env: PATH=
+# Kotlin: an object, a data class, an interface and a top-level fun are
+# outline rows, named by the identifier the grammar gives them (it has no
+# `name` field). No language server on PATH: the tree-sitter structure.
+write App.kt "package demo\n\nobject Registry {\n    fun register() {}\n}\n\ndata class User(val id: Int)\n\ninterface Repo {\n    fun find(id: Int): User?\n}\n\nfun main() {\n    println(\"hi\")\n}\n"
+open App.kt
+command outline.show
+wait 300
+expect screen lacks "(no symbols)"
+expect screen contains "main:13"
+expect screen contains "User:7"
+expect screen contains "Registry:3"
+expect screen contains "interface Repo:9"

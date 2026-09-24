@@ -31,6 +31,7 @@ const Theme = @import("../ui/theme.zig");
 pub const Span = editor_view.Span;
 pub const Role = highlight.Role;
 pub const Symbol = structure.Symbol;
+pub const FoldTree = structure.FoldTree;
 
 /// How long after the last observed edit a reparse waits.
 pub const idle_ms: i64 = 120;
@@ -359,6 +360,13 @@ pub const Syntax = struct {
     /// cheap while a large file waits for its first parse.
     pub fn keptRoot(self: *const Syntax) ?ts.Node {
         return self.hl.rootNode();
+    }
+
+    /// The tree parsed up to the text as it is now (a small file parses
+    /// here; a large one's worker tree is taken as it stands) — what a
+    /// command reads before it asks `keptRoot`'s cheaper readers.
+    pub fn parsedRoot(self: *Syntax, ed: *const Editor) ?ts.Node {
+        return self.fresh(ed);
     }
 
     /// Every definition in the file, for the outline. Null when the file

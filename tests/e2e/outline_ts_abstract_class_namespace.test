@@ -1,0 +1,16 @@
+# width: 160
+# height: 40
+# env: PATH=
+# A TypeScript `abstract class` and a `namespace` are outline rows of their
+# own, with their members nested under them (no language server on PATH:
+# the tree-sitter structure answers).
+write store.ts "export abstract class Store {\n  private items: number[] = [];\n  load(): void {\n    go();\n  }\n}\nnamespace Util {\n  export function helper() {}\n}\nexport class Plain {}\n"
+open store.ts
+command outline.show
+wait 300
+expect screen contains "6 symbols"
+expect screen contains "class Store:1"
+expect screen contains "load:3"
+expect screen contains "namespace Util:7"
+expect screen contains "helper:8"
+expect screen contains "class Plain:10"

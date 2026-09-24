@@ -1575,6 +1575,7 @@ pub const App = struct {
         try app.seedPlusMenu();
         auto_refresh.seed(&app);
         clock.seed(&app);
+        try app.snippets.absorbConfig(app.cfg.snippets);
         try integrations.loadSettings(&app);
         try app.toastConfigDiagnostics();
         try app.noticeUnreadToml();
@@ -1660,6 +1661,7 @@ pub const App = struct {
         try self.seedPlusMenu();
         auto_refresh.seed(self);
         clock.seed(self);
+        try self.snippets.absorbConfig(self.cfg.snippets);
         try self.toastConfigDiagnostics();
         self.probeWorkspaceToml();
         try self.applyTheme();
