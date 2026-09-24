@@ -143,6 +143,7 @@ pub const table = .{
     .@"git.checkout_force" = &checkoutForce,
     .@"git.delete_remote_branch" = &deleteRemoteBranch,
     .@"git.new_branch_from" = &newBranchFrom,
+    .@"git.checkout_commit" = &checkoutCommit,
     .@"git.worktree_add_from" = &worktreeAddFrom,
     .@"git.push_force" = &pushForce,
     .@"git.stash_staged" = &stashStaged,
@@ -1072,6 +1073,19 @@ fn cherryPick(app: *App) CommandError!void {
         return app.diag.fail(arena(app), "cherry-pick: {s} is already in HEAD \u{2014} nothing to pick", .{sha[0..@min(7, sha.len)]});
     const repo = try git.requireRepo(app);
     try git.submitOp(app, repo, .{ .cherry_pick = try app.gpa.dupe(u8, sha) });
+}
+
+/// `git.checkout_commit`: the graph's selected commit checked out on
+/// no branch — `git checkout <sha>`, which detaches HEAD. The confirm
+/// says so, as the tag checkout's does: a commit made there belongs to
+/// no branch until one is created.
+fn checkoutCommit(app: *App) CommandError!void {
+    const sha = try selectedCommit(app);
+    _ = try git.requireRepo(app);
+    const short = sha[0..@min(7, sha.len)];
+    const owned = try app.gpa.dupe(u8, sha);
+    errdefer app.gpa.free(owned);
+    try git.openConfirm(app, .{ .checkout = owned }, try std.fmt.allocPrint(app.gpa, "Checkout {s}? (detached HEAD)\nHEAD will be on no branch: commits made there belong to none until you create one (New branch from here).", .{short}));
 }
 
 fn revert(app: *App) CommandError!void {

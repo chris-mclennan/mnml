@@ -1,0 +1,38 @@
+# A commit row of the graph checks out: "Checkout this commit (detached
+# HEAD)…" on the row's menu, and `git.checkout_commit` by id, ask first
+# and then run `git checkout <sha>` — HEAD lands on the commit, on no
+# branch, and the status says so. "New branch from here…" sits under it.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write .gitignore ".mnml/\n"
+write a.txt "one\n"
+shell git add a.txt .gitignore
+shell git commit -q -m "first"
+write b.txt "two\n"
+shell git add b.txt
+shell git commit -q -m "second"
+command git.graph
+wait 800
+expect screen contains "second"
+# Rows: second, first.
+key j
+rightclick 40 5
+expect screen contains "Checkout this commit (detached HEAD)…"
+expect screen contains "New branch from here…"
+key esc
+# `n` keeps the branch.
+command git.checkout_commit
+expect screen contains "(detached HEAD)"
+expect screen contains "HEAD will be on no branch"
+key n
+wait 800
+shell test "$(git symbolic-ref --short HEAD)" = main
+command git.checkout_commit
+key y
+wait 1500
+shell ! git symbolic-ref -q HEAD
+shell test "$(git rev-parse HEAD)" = "$(git rev-parse main~1)"
+command git.status_pane
+wait 1500
+expect screen contains "HEAD detached at "
