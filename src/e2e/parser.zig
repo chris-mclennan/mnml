@@ -15,7 +15,10 @@
 //! wait  <ms>                     # sleep while ticking (for async/pty steps)
 //! snippet <scope> <trig> <expansion>  # seed a [snippets.<scope>] entry
 //! shell <cmd>                    # `$SHELL -c` in the workspace with the file's env
-//!                                #   (`# env:`, `$MNML_E2E_WORKSPACE`); non-zero exit fails
+//!                                #   (`# env:`, `$MNML_E2E_WORKSPACE`); non-zero exit fails.
+//!                                #   Every shell step runs in the file's own process
+//!                                #   group (`$MNML_AGENTS_PGID`, which the App's session
+//!                                #   scan is limited to); the file's end kills the group
 //! serve <port> <status> [delay=<ms>] <text>  # an HTTP server on 127.0.0.1:<port> for this file:
 //!                                #   <text> is "Name: value\n…\n\n<body>" (headers, a blank
 //!                                #   line, the body) or just the body; delay= waits before

@@ -3,12 +3,25 @@
 # session and SIGTERMs each after the confirm. Two fake `claude
 # --resume <id>` processes stand in for the sessions (found through
 # `ps`); the toast counts the kills.
+#
+# A third fake carries the FIRST session's id from outside this file's
+# process group — what another run of this same file looks like when two
+# corpus runs share a machine. The scan is limited to the file's group
+# (`MNML_AGENTS_PGID`), so it is not this session's process and the kill
+# never reaches it. Unscoped, the scan took the stray (the later pid)
+# for the session and SIGTERMed another run's process.
 
 write home/.claude/projects/-tmp-ws/e2e00003-0000-4000-8000-000000003001.jsonl {"type":"user","message":{"role":"user","content":"fix the failing tests"}}\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Running the suite first."}]}}
 write home/.claude/projects/-tmp-ws/e2e00003-0000-4000-8000-000000003002.jsonl {"type":"user","message":{"role":"user","content":"add a --json flag"}}\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Added the flag."}]}}
 write fake-claude.sh #!/bin/bash\nexec -a claude /bin/sh -c 'i=0; while [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done' --resume "$1"
 shell chmod +x fake-claude.sh && (nohup ./fake-claude.sh e2e00003-0000-4000-8000-000000003001 >/dev/null 2>&1 &) && (nohup ./fake-claude.sh e2e00003-0000-4000-8000-000000003002 >/dev/null 2>&1 &)
 wait 400
+# The stray: its own process group (perl's setpgrp), started after ours
+# so its pid is the higher one. It outlives the file's group, so the
+# file ends it itself.
+shell (perl -e 'setpgrp(0, 0); exec "./fake-claude.sh", "e2e00003-0000-4000-8000-000000003001"' >/dev/null 2>&1 & echo $! > stray.pid)
+wait 400
+shell kill -0 "$(cat stray.pid)" && [ "$(ps -o pgid= -p "$(cat stray.pid)" | tr -d ' ')" != "$MNML_AGENTS_PGID" ]
 command sessions.table
 wait 1000
 expect screen contains "2 live"
@@ -21,3 +34,6 @@ expect screen contains "SIGTERM 2 sessions?"
 key enter
 wait 400
 expect screen contains "sent SIGTERM to 2 of 2"
+# The stray was never this file's: still running after the kills.
+shell kill -0 "$(cat stray.pid)"
+shell kill "$(cat stray.pid)"

@@ -258,6 +258,14 @@ const Run = struct {
     /// `shell` steps too, so a step can name the workspace the App sees
     /// (`$MNML_E2E_WORKSPACE`, the path a transcript's `cwd` must match).
     shell_env: ?*const std.process.Environ.Map = null,
+    /// The file's process group: a `sleep` the runner starts as its
+    /// leader before the App, so the group exists for the whole file.
+    /// Every `shell` step joins it, the App's session scan is limited
+    /// to it (`MNML_AGENTS_PGID`), and the file's end kills it — so
+    /// nothing a file starts (a fake `claude`, a fake server left in
+    /// the background) outlives the file or is seen by another run's.
+    /// Null on Windows and when shell steps are refused.
+    group_leader: ?std.process.Child = null,
     /// `serve` steps' servers, stopped after the script; their canned
     /// answers live on `serve_arena`.
     servers: std.ArrayListUnmanaged(*mock.Server) = .empty,
@@ -352,6 +360,14 @@ const Run = struct {
             names_home = true;
         };
         if (!names_home) file_env.put("MNML_SESSIONS_HOME", data_root) catch return self.fail("out of memory", .{});
+        // Before the header's own lines, so a file can still name a
+        // scope of its own.
+        if (self.startGroup()) |pgid| {
+            var pbuf: [16]u8 = undefined;
+            const text_pgid = std.fmt.bufPrint(&pbuf, "{d}", .{pgid}) catch unreachable;
+            file_env.put(agents_scope_env, text_pgid) catch return self.fail("out of memory", .{});
+        }
+        defer self.endGroup();
         for (header.envPairs()) |pair| {
             const value = expandEnv(gpa, pair.value, &file_env) catch return self.fail("out of memory", .{});
             defer gpa.free(value);
@@ -670,6 +686,39 @@ const Run = struct {
         self.serve_arena = null;
     }
 
+    /// Start the file's process group (`group_leader`). Returns its id.
+    fn startGroup(self: *Run) ?i32 {
+        if (builtin.os.tag == .windows or !self.opts.allow_shell) return null;
+        var child = std.process.spawn(self.io, .{
+            .argv = &.{ "/bin/sh", "-c", "exec sleep 86400" },
+            .pgid = 0,
+            .stdin = .ignore,
+            .stdout = .ignore,
+            .stderr = .ignore,
+        }) catch return null;
+        const pid = child.id orelse {
+            child.kill(self.io);
+            return null;
+        };
+        self.group_leader = child;
+        return @intCast(pid);
+    }
+
+    /// Kill everything in the file's group, the leader last, and reap
+    /// the leader. A background process a `shell` step left running —
+    /// `( nohup fake &)` — is in the group too, reparented or not.
+    fn endGroup(self: *Run) void {
+        const leader = if (self.group_leader) |*l| l else return;
+        if (leader.id) |pid| std.posix.kill(-pid, .KILL) catch {};
+        leader.kill(self.io);
+        self.group_leader = null;
+    }
+
+    fn groupId(self: *const Run) ?std.posix.pid_t {
+        const leader = self.group_leader orelse return null;
+        return leader.id;
+    }
+
     /// `shell <cmd>` runs unsandboxed in the user's account, so it is
     /// default-deny: a cloned repo's `.test` files must not be arbitrary
     /// code execution under `zig build test`.
@@ -678,11 +727,11 @@ const Run = struct {
         if (!self.opts.allow_shell) {
             return std.fmt.allocPrint(gpa, "shell `{s}`: refused. .test `shell` steps run unsandboxed; set MNML_E2E_ALLOW_SHELL=1 to opt in (only for trusted repos).", .{cmd}) catch null;
         }
-        const result = std.process.run(gpa, self.io, .{
+        const result = runIn(gpa, self.io, .{
             .argv = &.{ self.opts.shell, "-c", cmd },
             .cwd = .{ .path = self.workspace },
             .environ_map = self.shell_env,
-        }) catch |e| return std.fmt.allocPrint(gpa, "shell spawn: {s}", .{@errorName(e)}) catch null;
+        }, self.groupId()) catch |e| return std.fmt.allocPrint(gpa, "shell spawn: {s}", .{@errorName(e)}) catch null;
         defer gpa.free(result.stdout);
         defer gpa.free(result.stderr);
         const ok = switch (result.term) {
@@ -856,6 +905,41 @@ fn rejectUnsafePath(gpa: Allocator, rel: []const u8, kw: []const u8) ?[]u8 {
         }
     }
     return null;
+}
+
+/// What the App's session scan reads for its process-group scope
+/// (`app/agents.zig`'s `scope_env`; the runner cannot import the App).
+pub const agents_scope_env = "MNML_AGENTS_PGID";
+
+/// `std.process.run`, with the child put in process group `pgid` when
+/// one is given — the file's group, so whatever the step leaves running
+/// in the background is the file's to kill.
+fn runIn(gpa: Allocator, io: Io, options: std.process.RunOptions, pgid: ?std.posix.pid_t) std.process.RunError!std.process.RunResult {
+    var child = try std.process.spawn(io, .{
+        .argv = options.argv,
+        .cwd = options.cwd,
+        .environ_map = options.environ_map,
+        .pgid = pgid,
+        .stdin = .ignore,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
+    defer child.kill(io);
+
+    var multi_reader_buffer: Io.File.MultiReader.Buffer(2) = undefined;
+    var multi_reader: Io.File.MultiReader = undefined;
+    multi_reader.init(gpa, io, multi_reader_buffer.toStreams(), &.{ child.stdout.?, child.stderr.? });
+    defer multi_reader.deinit();
+    while (multi_reader.fill(options.reserve_amount, options.timeout)) |_| {} else |err| switch (err) {
+        error.EndOfStream => {},
+        else => |e| return e,
+    }
+    try multi_reader.checkAnyError();
+    const term = try child.wait(io);
+    const stdout_slice = try multi_reader.toOwnedSlice(0);
+    errdefer gpa.free(stdout_slice);
+    const stderr_slice = try multi_reader.toOwnedSlice(1);
+    return .{ .stdout = stdout_slice, .stderr = stderr_slice, .term = term };
 }
 
 /// `<tmp_root>/mnml-e2e-<random>`, created.
@@ -2098,4 +2182,47 @@ test "expect within <ms> polls past the runner's budget and answers the moment t
     defer o3.deinit(t.allocator);
     try t.expect(!o3.passed);
     try t.expect(std.mem.startsWith(u8, o3.message.?, "line 2: screen does not contain \"late\""));
+}
+
+test "a process a shell step leaves behind is in the file's own group, and dies with the file" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var env = try TestEnv.init();
+    defer env.deinit();
+    var run_env = std.process.Environ.Map.init(t.allocator);
+    defer run_env.deinit();
+    try run_env.put("OUT", env.root);
+    var opts = env.opts();
+    opts.allow_shell = true;
+    opts.env = &run_env;
+    var sf: StubFactory = .{};
+    // The shape of `sessions_table_batch_kill.test`: a detached fake
+    // left running. It is in the group the App's session scan is
+    // scoped to, and the file's end takes it down — it used to live
+    // on for a minute, where the next run of the same file found it.
+    const path = try env.script("group.test",
+        \\shell ( /bin/sleep 30 >/dev/null 2>&1 & echo $! > "$OUT/bg.pid" )
+        \\shell [ "$MNML_AGENTS_PGID" -gt 1 ] && [ "$MNML_AGENTS_PGID" -eq $(/bin/ps -o pgid= -p $$) ]
+        \\shell read p < "$OUT/bg.pid"; [ "$MNML_AGENTS_PGID" -eq $(/bin/ps -o pgid= -p "$p") ]
+        \\
+    );
+    defer t.allocator.free(path);
+    var o = runFile(t.allocator, t.io, sf.factory(), path, content_size, opts);
+    try expectPassed(&o);
+    const pid_path = try std.fs.path.join(t.allocator, &.{ env.root, "bg.pid" });
+    defer t.allocator.free(pid_path);
+    const pid_text = try Io.Dir.cwd().readFileAlloc(t.io, pid_path, t.allocator, .limited(64));
+    defer t.allocator.free(pid_text);
+    const pid = try std.fmt.parseInt(std.posix.pid_t, std.mem.trim(u8, pid_text, " \n"), 10);
+    // Gone — reaped by init once the group was killed. Polled: the
+    // reaping is init's, not ours.
+    var alive = true;
+    for (0..100) |_| {
+        std.posix.kill(pid, @enumFromInt(0)) catch {
+            alive = false;
+            break;
+        };
+        t.io.sleep(.fromMilliseconds(50), .awake) catch {};
+    }
+    if (alive) std.posix.kill(pid, .KILL) catch {};
+    try t.expect(!alive);
 }

@@ -618,7 +618,7 @@ pub fn refresh(app: *App) CommandError!void {
     // The cloud settings the worker reads, renewed while no worker runs.
     if (st.cloud) |*c| c.deinit(app.gpa);
     st.cloud = try cloud_agents.Opts.fromConfig(app.gpa, &app.cfg.cloud_agents, &app.env);
-    st.group.concurrent(app.io, scanWorker, .{ app.events, app.io, app.gpa, home, app.workspace, st.cloud, st.generation }) catch |err| {
+    st.group.concurrent(app.io, scanWorker, .{ app.events, app.io, app.gpa, home, app.workspace, st.cloud, agents.scopeFrom(&app.env), st.generation }) catch |err| {
         st.scanning = false;
         return app.diag.fail(app.frame.allocator(), "sessions: could not start the scan: {s}", .{@errorName(err)});
     };
@@ -651,13 +651,13 @@ pub fn homeFor(app: *App) Allocator.Error!?[]const u8 {
     return st.home.?;
 }
 
-fn scanWorker(events: *event.EventQueue, io: Io, gpa: Allocator, home: []const u8, workspace: []const u8, cloud: ?cloud_agents.Opts, generation: u32) Io.Cancelable!void {
+fn scanWorker(events: *event.EventQueue, io: Io, gpa: Allocator, home: []const u8, workspace: []const u8, cloud: ?cloud_agents.Opts, scope: agents.Scope, generation: u32) Io.Cancelable!void {
     const result = ScanResult.create(gpa, generation) catch {
         postErr(events, io, gpa, "out of memory starting the scan");
         return;
     };
     errdefer result.destroy(gpa);
-    scanInto(io, gpa, home, workspace, cloud, result) catch |err| switch (err) {
+    scanInto(io, gpa, home, workspace, cloud, scope, result) catch |err| switch (err) {
         error.Canceled => return error.Canceled,
         error.OutOfMemory => {
             postErr(events, io, gpa, "out of memory during the scan");
@@ -678,11 +678,11 @@ const ScanError = Io.Cancelable || Allocator.Error;
 /// transcripts, the cloud runs when configured, then one `git status`
 /// per distinct cwd. Every session is kept; `refilter` narrows to the
 /// workspace, so the toggle needs no rescan.
-pub fn scanInto(io: Io, gpa: Allocator, home: []const u8, workspace: []const u8, cloud: ?cloud_agents.Opts, r: *ScanResult) ScanError!void {
+pub fn scanInto(io: Io, gpa: Allocator, home: []const u8, workspace: []const u8, cloud: ?cloud_agents.Opts, scope: agents.Scope, r: *ScanResult) ScanError!void {
     _ = workspace;
     const arena = r.arena.allocator();
     var rows: std.ArrayListUnmanaged(Item) = .empty;
-    try agents.scanInto(io, gpa, arena, home, &rows);
+    try agents.scanInto(io, gpa, arena, home, scope, &rows);
     if (cloud) |c| try cloud_agents.scanInto(io, gpa, arena, c, &rows);
     const now = Io.Timestamp.now(io, .real).toSeconds();
     try agents.dirtyScan(io, gpa, arena, rows.items, now);
@@ -3865,7 +3865,7 @@ test "scanInto over a fixture home lists the dashboard's sessions in this module
     try f.seedHome();
     const r = try ScanResult.create(testing.allocator, 1);
     defer r.destroy(testing.allocator);
-    try scanInto(testing.io, testing.allocator, f.app.sessions.home.?, f.root, null, r);
+    try scanInto(testing.io, testing.allocator, f.app.sessions.home.?, f.root, null, .{ .pgid = -1, .self_pid = 0 }, r);
     try testing.expectEqual(@as(usize, 2), r.items.len);
     var claude_seen = false;
     for (r.items) |it| if (it.source == .claude) {
