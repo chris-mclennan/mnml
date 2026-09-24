@@ -416,6 +416,16 @@ ran nothing while `-Dtest-filter=colors` found the same test: other
 matching tests happened to pull its file in. `-Dtest-filter` still
 narrows the e2e corpus by file name, which is what it is for.
 
+A seeded test reads `std.testing.random_seed`. Under the default
+runner that is the build's `--seed` (`zig build unit --seed 0x6fc0c5a4`);
+the build never hands a seed to the trace runner, so there it is 0
+unless `MNML_TEST_SEED=<n>` names one, and the runner prints
+`seed 0x…` once per binary when it is set:
+
+```sh
+MNML_TEST_SEED=0x6fc0c5a4 MNML_TEST_FILTER=<substring> zig build unit -Dtest-trace
+```
+
 ## Running it
 
 `./run.sh` is the launcher: it builds ReleaseSafe only when a file under
