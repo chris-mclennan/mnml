@@ -115,6 +115,20 @@ pub const ExtraUsage = struct {
     percent: ?u16 = null,
 };
 
+/// One `seven_day_breakdown.rows[]` entry: a surface's share of the
+/// weekly window — `percent` of the week itself, not of the rows' sum.
+/// `key` is `claude_code` / `chat` / `cowork` / `other` on the wire today.
+pub const SurfaceShare = struct { key: []const u8, name: []const u8, percent: u16 };
+
+/// `seven_day_breakdown`: where the week went, one row per surface, as
+/// of `as_of` (unix seconds; zero when the body gave no time). Null on
+/// the accounts whose endpoint sends `null` or no rows.
+pub const Breakdown = struct {
+    as_of: u64 = 0,
+    window_started_at: u64 = 0,
+    rows: []const SurfaceShare = &.{},
+};
+
 // The limit-reset offer is NOT on this endpoint, and nothing here reads
 // one. claude.ai's usage page gets its reset button from a separate call
 // that only a web session (the browser's cookie) can make; the OAuth
@@ -174,6 +188,8 @@ pub const Usage = struct {
     /// Top-level windows the parser does not name, in the body's order.
     windows: []const ExtraWindow = &.{},
     extra_usage: ?ExtraUsage = null,
+    /// `seven_day_breakdown`, when the endpoint sent rows.
+    breakdown: ?Breakdown = null,
     /// Every non-null top-level key the parser neither reads nor names —
     /// logged once per account so a new field's name can be learned.
     unknown_keys: []const []const u8 = &.{},
@@ -398,6 +414,7 @@ pub fn parseUsage(arena: Allocator, json: []const u8, now: u64) ParseError!Usage
             .percent = if (field(e, "utilization") != null) pctOf(e, "utilization") else null,
         };
     };
+    out.breakdown = try parseBreakdown(arena, field(v, "seven_day_breakdown"));
     var windows: std.ArrayListUnmanaged(ExtraWindow) = .empty;
     var unknown: std.ArrayListUnmanaged([]const u8) = .empty;
     var it = v.object.iterator();
@@ -424,6 +441,29 @@ pub fn parseUsage(arena: Allocator, json: []const u8, now: u64) ParseError!Usage
     out.windows = windows.items;
     out.unknown_keys = unknown.items;
     return out;
+}
+
+/// `seven_day_breakdown` → its rows; null when it is null, not an object,
+/// or has no row to show. A row without a `display_name` is titled from
+/// its key.
+fn parseBreakdown(arena: Allocator, v: ?std.json.Value) Allocator.Error!?Breakdown {
+    const b = v orelse return null;
+    if (b != .object) return null;
+    const rows = field(b, "rows") orelse return null;
+    if (rows != .array) return null;
+    var shares: std.ArrayListUnmanaged(SurfaceShare) = .empty;
+    for (rows.array.items) |r| {
+        if (r != .object) continue;
+        const key = strOf(r, "key") orelse "other";
+        const name = if (strOf(r, "display_name")) |n| try arena.dupe(u8, n) else try humanWords(arena, key);
+        try shares.append(arena, .{ .key = try arena.dupe(u8, key), .name = name, .percent = pctOf(r, "percent") });
+    }
+    if (shares.items.len == 0) return null;
+    return .{
+        .as_of = if (strOf(b, "as_of")) |x| (parseIso8601(x) orelse 0) else 0,
+        .window_started_at = if (strOf(b, "window_started_at")) |x| (parseIso8601(x) orelse 0) else 0,
+        .rows = shares.items,
+    };
 }
 
 fn inList(list: []const []const u8, key: []const u8) bool {
@@ -1326,6 +1366,18 @@ pub const usage_wide_fixture =
     \\ "member_dashboard_available":false,"seven_day_breakdown":null}
 ;
 
+/// `seven_day_breakdown` as the endpoint sends it (values invented): the
+/// week split by surface, a row with no `display_name`, and an
+/// `extra_usage` whose currency, places and reason are all null.
+pub const usage_breakdown_fixture =
+    \\{"five_hour":{"utilization":20.0,"resets_at":"2026-09-12T22:00:00+00:00"},
+    \\ "seven_day":{"utilization":47.0,"resets_at":"2026-09-19T05:00:00+00:00"},
+    \\ "extra_usage":{"is_enabled":null,"monthly_limit":null,"used_credits":null,"utilization":null,"currency":null,"decimal_places":null,"disabled_reason":null},
+    \\ "seven_day_breakdown":{"as_of":"2026-09-12T19:55:00+00:00","window_started_at":"2026-09-12T05:00:00+00:00",
+    \\   "rows":[{"key":"claude_code","display_name":"Claude Code","percent":31.4},{"key":"chat","display_name":"Chat","percent":9},
+    \\          {"key":"cowork","display_name":"Cowork","percent":5.0},{"key":"other","percent":2}]}}
+;
+
 pub const profile_fixture =
     \\{"account":{"uuid":"00000000-0000-4000-8000-000000000000","full_name":"Test User","display_name":"Test","email":"me@example.com","has_claude_max":true},
     \\ "organization":{"uuid":"00000000-0000-4000-8000-000000000001","name":"me@example.com's Organization","organization_type":"claude_max"}}
@@ -1429,6 +1481,38 @@ test "parseUsage: the wire's newer fields — severity, is_active, locked_reason
     try t.expectEqualStrings("Nimbus quill", try humanKey(a, "nimbus_quill"));
     try t.expectEqualStrings("Current session (Burst)", try humanKey(a, "five_hour_burst"));
     try t.expectEqualStrings("Current week (Oauth apps)", try humanKey(a, "seven_day_oauth_apps"));
+}
+
+test "parseUsage: seven_day_breakdown — a row per surface of the week, the time it was taken; null, rowless or absent is none; extra_usage's null fields" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const u = try parseUsage(a, usage_breakdown_fixture, 1789243232);
+    const b = u.breakdown.?;
+    try t.expectEqual(parseIso8601("2026-09-12T19:55:00+00:00").?, b.as_of);
+    try t.expectEqual(parseIso8601("2026-09-12T05:00:00+00:00").?, b.window_started_at);
+    try t.expectEqual(@as(usize, 4), b.rows.len);
+    try t.expectEqualStrings("claude_code", b.rows[0].key);
+    try t.expectEqualStrings("Claude Code", b.rows[0].name);
+    try t.expectEqual(@as(u16, 31), b.rows[0].percent);
+    try t.expectEqual(@as(u16, 9), b.rows[1].percent);
+    // No display name: titled from the key.
+    try t.expectEqualStrings("Other", b.rows[3].name);
+    // The key is named: never an unknown slot, never a window.
+    try t.expectEqual(@as(usize, 0), u.unknown_keys.len);
+    try t.expectEqual(@as(usize, 0), u.windows.len);
+    // Every sub-field of extra_usage null: off, no reason, no percent.
+    try t.expect(!u.extra_usage.?.enabled);
+    try t.expect(u.extra_usage.?.reason == null and u.extra_usage.?.percent == null);
+    // The accounts that send none.
+    try t.expect((try parseUsage(a, usage_fixture, 1)).breakdown == null);
+    try t.expect((try parseUsage(a, usage_wide_fixture, 1)).breakdown == null);
+    try t.expect((try parseUsage(a, "{\"seven_day_breakdown\":{\"as_of\":null,\"rows\":[]}}", 1)).breakdown == null);
+    try t.expect((try parseUsage(a, "{\"seven_day_breakdown\":{\"rows\":null}}", 1)).breakdown == null);
+    // No time: the rows still land, the stamp is zero.
+    const nt = try parseUsage(a, "{\"seven_day_breakdown\":{\"as_of\":null,\"rows\":[{\"key\":\"chat\",\"display_name\":\"Chat\",\"percent\":3}]}}", 1);
+    try t.expectEqual(@as(u64, 0), nt.breakdown.?.as_of);
+    try t.expectEqual(@as(usize, 1), nt.breakdown.?.rows.len);
 }
 
 test "parseProfile and the token blob fields" {

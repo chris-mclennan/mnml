@@ -485,14 +485,20 @@ fn usagePane(app: *App, arena: Allocator, id: u32) Allocator.Error!Entry {
         .links = &.{ .{ .command = .{ .id = .@"ai.claude_add_account", .label = "Add an account" } }, .{ .command = .{ .id = .@"ai.refresh_usage", .label = "Refresh now" } } },
     };
     if (up.accountOfHit(app, id)) |name| {
-        if (id >= up.hit_pencil_base) return .{
+        if (up.isBreakdownHit(id)) return .{
+            .title = try std.fmt.allocPrint(arena, "This week by surface — {s}", .{name}),
+            .body = "Where this account's week went, one row per surface — Claude Code, chat on claude.ai, Cowork, everything else — as the endpoint's `seven_day_breakdown` reports it. Each percent is a share of the WEEKLY window above, not of these rows' total, so they add up to the week's figure at most; the muted time is when the endpoint took them. An account whose endpoint sends no breakdown shows no rows. Right-click is the account's menu.",
+            .keys = &.{ .{ .chord = "Right-click", .label = "The account's menu" }, .{ .chord = "r", .label = "Refresh" } },
+            .links = &.{ .{ .command = .{ .id = .@"ai.refresh_usage", .label = "Refresh now" } }, .{ .command = .{ .id = .@"ai.show_last_response", .label = "The raw response" } } },
+        };
+        if (up.isPencilHit(id)) return .{
             .title = try std.fmt.allocPrint(arena, "Rename {s}", .{name}),
             .body = "Click opens the rename prompt, seeded with the name. The new name is written to `ai.claude_accounts` in the home config; the account's token file, numbers and identity pin go with it.",
             .links = &.{.{ .command = .{ .id = .@"ai.claude_rename_account", .label = "Rename an account" } }},
         };
         return .{
             .title = try std.fmt.allocPrint(arena, "Claude account — {s}", .{name}),
-            .body = "One account's windows, as Claude Code's own usage screen shows them: the five-hour session, the week across models, a week per model, and any other window the endpoint reports under a key this build does not name, each bar coloured by the endpoint's own severity with its reset time. Right-click is the account's menu — link a token, rename, remove. The green gutter and `(active)` mark the account the Claude Code CLI is logged in as.",
+            .body = "One account's windows, as Claude Code's own usage screen shows them: the five-hour session, the week across models, a week per model, and any other window the endpoint reports under a key this build does not name, each bar coloured by the endpoint's own severity with its reset time. Under the week, when the endpoint sends one, `This week by surface` splits it by where it was spent. Right-click is the account's menu — link a token, rename, remove. The green gutter and `(active)` mark the account the Claude Code CLI is logged in as.",
             .keys = &.{ .{ .chord = "Right-click", .label = "The account's menu" }, .{ .chord = "r", .label = "Refresh" } },
             .links = &.{ .{ .command = .{ .id = .@"ai.link_claude_token", .label = "Link a token" } }, .{ .command = .{ .id = .@"ai.refresh_usage", .label = "Refresh now" } } },
         };

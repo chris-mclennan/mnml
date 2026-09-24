@@ -65,6 +65,9 @@ pub const gutter_ascii = "|";
 /// `claude_usage_pencils`, nf-fa-pencil).
 pub const pencil_glyph = "\u{F040}";
 pub const pencil_ascii = "e";
+/// The per-surface bars under the week (`This week by surface`): short,
+/// a share beside its name rather than a window of its own.
+pub const share_bar_w: u16 = 20;
 
 /// A run of text; `hit` registers its cells as that `script_hit` id.
 const Span = struct { text: []const u8, style: Theme.Style, hit: ?u32 = null };
@@ -79,6 +82,9 @@ const Row = struct {
     body: union(enum) {
         spans: []const Span,
         bar: struct { percent: u16, severity: ?usage.Severity = null },
+        /// One surface's share of the week: its name padded to
+        /// `label_w`, a `share_bar_w` bar, `NN%`.
+        share: struct { label: []const u8, label_w: u16, percent: u16 },
     },
 };
 
@@ -144,6 +150,20 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: *usage_pane.UsagePane, props: P
                 label.bold = true;
                 if (x < r.right()) _ = ui.putStr(x, r.y, r.right() - x, ui.fmt(" {d}% used", .{b.percent}), label);
             },
+            .share => |sh| {
+                const plain = Theme.onBg(th.fg, th.bg.bg);
+                x += ui.putStr(x, r.y, right -| x, "  ", plain);
+                _ = ui.putStr(x, r.y, right -| x, sh.label, plain);
+                x = @min(right, x + sh.label_w + 1);
+                const w: u16 = @min(share_bar_w, right -| x);
+                const filled: u16 = @intCast((@as(u32, w) * @min(sh.percent, 100)) / 100);
+                if (filled > 0) ui.fill(Rect.init(x, r.y, filled, 1), Theme.onBg(th.fg, pal.purple));
+                if (w > filled) ui.fill(Rect.init(x + filled, r.y, w - filled, 1), Theme.onBg(th.fg, pal.bg2));
+                x += w;
+                var label = plain;
+                label.bold = true;
+                if (x < right) _ = ui.putStr(x, r.y, right - x, ui.fmt(" {d}%", .{sh.percent}), label);
+            },
         }
     }
 }
@@ -200,6 +220,8 @@ fn claudeRows(ui: Ui, rows: *std.ArrayListUnmanaged(Row), props: Props, focused:
         const ctx: WindowCtx = .{ .ui = ui, .rows = rows, .g = g, .bold = bold, .muted = muted, .tz = props.tz, .now = props.now };
         try window(ctx, "Current session", u.percent, u.severity, u.resets_at, false, u.session_active, u.locked_reason, true);
         try window(ctx, "Current week (all models)", u.weekly_percent, u.weekly_severity, u.weekly_resets_at, true, u.weekly_active, u.weekly_locked_reason, true);
+        // The week by surface, when the endpoint sent it.
+        if (u.breakdown) |bd| try surfaces(ctx, bd, props.now, usage_pane.hit_breakdown_base + @as(u32, @intCast(i)));
         // Per-model windows.
         for (u.scoped) |sc| try window(ctx, try std.fmt.allocPrint(a, "Current week ({s})", .{sc.model}), sc.percent, sc.severity, sc.resets_at, true, sc.is_active, null, false);
         // Windows the endpoint reports that this build does not name.
@@ -236,7 +258,9 @@ fn claudeRows(ui: Ui, rows: *std.ArrayListUnmanaged(Row), props: Props, focused:
         }
         // Every row of the block answers a right-click with the
         // account's menu.
-        for (rows.items[first..]) |*r| r.hit = usage_pane.hit_account_base + @as(u32, @intCast(i));
+        for (rows.items[first..]) |*r| if (r.hit == null) {
+            r.hit = usage_pane.hit_account_base + @as(u32, @intCast(i));
+        };
         if (i + 1 < props.accounts.len) try rows.append(a, .{ .hit = body_hit, .body = .{ .spans = &.{} } });
     }
     try rows.append(a, .{ .hit = body_hit, .body = .{ .spans = &.{} } });
@@ -268,6 +292,26 @@ fn window(c: WindowCtx, title: []const u8, percent: u16, severity: ?usage.Severi
     try c.rows.append(a, .{ .gutter = c.g, .body = .{ .bar = .{ .percent = percent, .severity = severity } } });
     if (resets_at > 0 or always_reset) try c.rows.append(a, .{ .gutter = c.g, .body = .{ .spans = try resetRow(a, resets_at, c.now, c.tz, long, c.muted) } });
     if (locked) |why| try c.rows.append(a, .{ .gutter = c.g, .body = .{ .spans = try a.dupe(Span, &.{.{ .text = try std.fmt.allocPrint(a, "  Locked: {s}", .{try usage.humanWords(a, why)}), .style = c.muted }}) } });
+    try c.rows.append(a, .{ .gutter = c.g, .body = .{ .spans = &.{} } });
+}
+
+/// `This week by surface` (`seven_day_breakdown`): the title with the
+/// time the endpoint took it, muted, then one row per surface — its
+/// name, a short bar, `NN%` of the week. Every row carries `hit`.
+fn surfaces(c: WindowCtx, bd: usage.Breakdown, now: u64, hit: u32) std.mem.Allocator.Error!void {
+    const a = c.ui.arena;
+    var head: std.ArrayListUnmanaged(Span) = .empty;
+    try head.append(a, .{ .text = "This week by surface", .style = c.bold });
+    if (bd.as_of > 0) {
+        var buf: [32]u8 = undefined;
+        const soon = bd.as_of <= now + 86_400 and now < bd.as_of + 86_400;
+        const when = if (soon) usage.fmtShortTime(&buf, bd.as_of, c.tz.at(bd.as_of)) else usage.fmtLongTime(&buf, bd.as_of, c.tz.at(bd.as_of));
+        try head.append(a, .{ .text = try std.fmt.allocPrint(a, " · as of {s}", .{when}), .style = c.muted });
+    }
+    try c.rows.append(a, .{ .gutter = c.g, .hit = hit, .body = .{ .spans = head.items } });
+    var label_w: u16 = 0;
+    for (bd.rows) |r| label_w = @max(label_w, c.ui.width(r.name));
+    for (bd.rows) |r| try c.rows.append(a, .{ .gutter = c.g, .hit = hit, .body = .{ .share = .{ .label = r.name, .label_w = label_w, .percent = r.percent } } });
     try c.rows.append(a, .{ .gutter = c.g, .body = .{ .spans = &.{} } });
 }
 
