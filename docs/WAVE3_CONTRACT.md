@@ -1076,7 +1076,8 @@ that the oldest slot reads `+K more…`.
   with its session, and a child gone before the loop quits can race the
   leak check (seen once under ReleaseSafe). Not fixed here —
   `src/pty/` is outside the touch list; noted in
-  `docs/parity-notes/misc.md`.
+  `docs/parity-notes/misc.md` (folded into `docs/PARITY.md` by
+  `5498f872`).
 ## File manager — `// changed:` notes (2026-09-05, branch `files`)
 
 - `// changed (app):` `Pane.files: FilesPane` (`src/app/files_pane.zig`)
@@ -1266,8 +1267,9 @@ that the oldest slot reads `+K more…`.
 
 ## EDITOR / EX tier — `// changed:` notes (2026-09-05, branch `editor-ex`)
 
-The full row-by-row account is `docs/parity-notes/editor-ex.md`; this
-is the contract-level list of what moved.
+The full row-by-row account was `docs/parity-notes/editor-ex.md` (its
+rows now stand in `docs/PARITY.md`, `5498f872`); this is the
+contract-level list of what moved.
 
 - `// changed (config):` `Config.Editor.clipboard: Clipboard = .auto`
   (`.auto | .os | .internal`). Rust routed the unnamed register through
