@@ -1039,7 +1039,13 @@ pub const App = struct {
     gpa: Allocator,
     io: Io,
     frame: alloc.FrameArena,
-    events: event.EventQueue,
+    /// On the heap, not in the struct: the App is built on `initWith`'s
+    /// stack and moved to its caller, and a worker a script starts while
+    /// it loads (`init.lua`'s `task.run`) keeps the queue's address. A
+    /// queue inside the struct would leave that worker posting into a
+    /// dead stack frame — no event ever arrived, and the post parked
+    /// forever, so quitting hung in `App.deinit`.
+    events: *event.EventQueue,
     diag: command.Diag = .{},
     /// The command `command.run` is inside, for a runner that has to
     /// come back to it later (an LSP request that waited for its server).
@@ -1452,7 +1458,9 @@ pub const App = struct {
         errdefer gpa.free(dr);
         var env = if (opts.env) |e| try e.clone(gpa) else try processEnv(gpa);
         errdefer env.deinit();
-        var events = try event.EventQueue.init(gpa, 256);
+        const events = try gpa.create(event.EventQueue);
+        errdefer gpa.destroy(events);
+        events.* = try event.EventQueue.init(gpa, 256);
         errdefer events.deinit(io);
         const style = styleOf(opts.cfg.editor.input_style);
         var km = try buildKeymap(gpa, style, opts.cfg.keys);
@@ -1582,10 +1590,14 @@ pub const App = struct {
         try app.applyTheme();
         try trust_app.promptIfNeeded(&app);
         // D10: the scripts subscribe before the `startup` hook fires.
+        // A hidden task one of them starts waits for the App's final
+        // address (`script_task.State.defer_spawns`).
+        app.script_tasks.defer_spawns = true;
         try app.script().loadInitFiles();
         // // changed (lua-install): then the installed scripts, each in
         // its own state (`app/scripts.zig`).
         try scripts_mod.scan(&app);
+        app.script_tasks.defer_spawns = false;
         return app;
     }
 
@@ -1676,6 +1688,10 @@ pub const App = struct {
         if (!was_trusted and self.workspace_trusted) {
             try self.script().reset();
             try self.script().loadInitFiles();
+            // …and the script folders its config names
+            // (`scripts.dev_roots` / `private_sources`), which an
+            // untrusted layer had stripped.
+            try scripts_mod.scan(self);
             if (self.integrations.scanned) try integrations.refresh(self);
         }
         self.needs_render = true;
@@ -1803,6 +1819,14 @@ pub const App = struct {
 
     pub fn deinit(self: *App) void {
         const gpa = self.gpa;
+        // Close the queue before a single group is cancelled. Nothing
+        // drains it once the loop has stopped, so a worker that posts
+        // into a full ring waits for room that never comes — and a
+        // `cancel` waiting on that worker waits with it. Closed, every
+        // post fails at once and frees its payload, so each worker
+        // runs to its end and the cancels below return. What was
+        // already queued is freed with the ring, last.
+        self.events.close(self.io);
         // Workers first: they borrow `workspace` and post into `events`.
         self.syntax_jobs.deinit(self.io);
         self.transfers.deinit(gpa, self.io);
@@ -1907,11 +1931,12 @@ pub const App = struct {
         // (above, before the manifests); the state closes after them.
         self.scripts.deinit(gpa);
         if (self.lua) |l| l.destroy();
-        self.script_tasks.deinit(self.io);
+        self.script_tasks.deinit(gpa, self.io);
         self.script_decor.deinit(gpa);
         if (self.workspace_toml) |p| gpa.free(p);
         self.screen.deinit(gpa);
         self.events.deinit(self.io);
+        gpa.destroy(self.events);
         self.frame.deinit();
         self.env.deinit();
         gpa.free(self.data_root);
@@ -2959,6 +2984,7 @@ pub const App = struct {
     // ─── the loop's three entry points ───
 
     pub fn handle(self: *App, ev: AppEvent) Allocator.Error!void {
+        script_task.startDeferred(self);
         // A wheel burst folds into one motion; anything else flushes
         // what is pending first so order is kept (`scroll.zig`). A
         // wheel event the batch would not take — the other direction,
@@ -3135,6 +3161,7 @@ pub const App = struct {
 
     /// Timers: the chord chain, toast expiry, the deferred replays.
     pub fn tick(self: *App, now: i64) Allocator.Error!void {
+        script_task.startDeferred(self);
         self.now_ms = now;
         try self.pumpEvents();
         try self.flushWheel();

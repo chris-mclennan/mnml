@@ -247,7 +247,7 @@ pub fn ensure(app: *App) Allocator.Error!?*Client {
     };
     const spawn_argv = try arena.dupe([]const u8, argv);
     spawn_argv[0] = try arena.dupe(u8, found);
-    const c = Client.spawn(app.gpa, app.io, &app.events, .{
+    const c = Client.spawn(app.gpa, app.io, app.events, .{
         .argv = spawn_argv,
         .root = app.workspace,
         .env = &app.env,

@@ -184,7 +184,7 @@ fn startWorker(app: *App, id: PaneId, p: *WebsocketPane) CommandError!void {
     }
     for (app.cfg.ws.subprotocols) |s| try subs.append(gpa, try gpa.dupe(u8, s));
     const subs_owned = try subs.toOwnedSlice(gpa);
-    p.thread = std.Thread.spawn(.{}, worker, .{ &app.events, app.io, gpa, p.shared, id, p.attempt, url, subs_owned }) catch |err| {
+    p.thread = std.Thread.spawn(.{}, worker, .{ app.events, app.io, gpa, p.shared, id, p.attempt, url, subs_owned }) catch |err| {
         gpa.free(url);
         for (subs_owned) |s| gpa.free(s);
         gpa.free(subs_owned);

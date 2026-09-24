@@ -1,6 +1,7 @@
 // jabuti — converted from mnml's themes/jabuti.toml by tools/theme_toml2zon.zig.
 // The palette as NvChad ships it; src/ui/theme.zig derives every UI role from it.
-// note: base_16 lacks 6 slot(s) — onedark fills them at load
+// note: base_16 slots the conversion dropped are resolved from base46's own
+//       themes/jabuti.lua (its `M.base_30.<key>` references), not onedark's
 // note: 1 extra key(s) kept under .extra
 .{
     .name = "jabuti",
@@ -39,14 +40,20 @@
     },
     .base_16 = .{
         .base00 = 0x292a37,
+        .base01 = 0x343545,
+        .base02 = 0x3c3e51,
+        .base03 = 0x45475d,
+        .base04 = 0x50526b,
         .base05 = 0xc0cbe3,
         .base06 = 0xd9e0ee,
         .base07 = 0xffffff,
         .base08 = 0xec6a88,
         .base09 = 0xefb993,
+        .base0A = 0xe1c697,
         .base0B = 0x3fdaa4,
         .base0C = 0xff7eb6,
         .base0D = 0x3fc6de,
+        .base0E = 0xbe95ff,
         .base0F = 0x8b8da9,
     },
     .extra = .{

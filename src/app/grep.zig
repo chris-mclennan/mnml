@@ -544,7 +544,7 @@ pub fn refresh(app: *App, id: PaneId) CommandError!void {
     var flags = p.flags;
     if (!flags.case_sensitive and find_mod.hasUpper(p.query)) flags.case_sensitive = true;
     if (app.search_case) |c| flags.case_sensitive = c;
-    p.group.concurrent(app.io, worker, .{ &app.events, app.io, app.gpa, @as([]const u8, p.root), @as([]const u8, p.query), flags, p.generation, id, p.abort, false }) catch |err| {
+    p.group.concurrent(app.io, worker, .{ app.events, app.io, app.gpa, @as([]const u8, p.root), @as([]const u8, p.query), flags, p.generation, id, p.abort, false }) catch |err| {
         p.loading = false;
         return app.diag.fail(app.frame.allocator(), "grep: could not start the worker: {s}", .{@errorName(err)});
     };
@@ -1679,7 +1679,7 @@ fn walkInto(f: *Fixture, query: []const u8, flags: Flags) !*Result {
 fn backendInto(f: *Fixture, query: []const u8, flags: Flags, which: Backend) !*Result {
     var abort: Abort = .{};
     abort.generation.store(1, .release);
-    var ctx: Ctx = .{ .events = &f.app.events, .io = t.io, .gpa = t.allocator, .generation = 1, .pane = 0, .abort = &abort };
+    var ctx: Ctx = .{ .events = f.app.events, .io = t.io, .gpa = t.allocator, .generation = 1, .pane = 0, .abort = &abort };
     var p: Pattern = .{ .re = undefined, .external = "" };
     if (try compilePattern(&ctx, query, flags, &p)) {
         defer p.re.deinit();
@@ -1840,7 +1840,7 @@ test "rg backend: the same tree through `rg --json` (skipped without rg on PATH)
     defer f.deinit();
     var abort: Abort = .{};
     abort.generation.store(1, .release);
-    var ctx: Ctx = .{ .events = &f.app.events, .io = t.io, .gpa = t.allocator, .generation = 1, .pane = 0, .abort = &abort };
+    var ctx: Ctx = .{ .events = f.app.events, .io = t.io, .gpa = t.allocator, .generation = 1, .pane = 0, .abort = &abort };
     const outcome = try rgRun(&ctx, f.root, "alpha", .{});
     if (outcome == .no_rg) return error.SkipZigTest;
     var buf: [8]event.AppEvent = undefined;
@@ -1891,7 +1891,7 @@ test "rg backend: a stand-in rg proves the --json stream is parsed, `./` strippe
     defer t.allocator.free(bin);
     var abort: Abort = .{};
     abort.generation.store(1, .release);
-    var ctx: Ctx = .{ .events = &f.app.events, .io = t.io, .gpa = t.allocator, .generation = 1, .pane = 0, .abort = &abort, .rg_bin = bin };
+    var ctx: Ctx = .{ .events = f.app.events, .io = t.io, .gpa = t.allocator, .generation = 1, .pane = 0, .abort = &abort, .rg_bin = bin };
     try t.expectEqual(RgOutcome.ran, try rgRun(&ctx, f.root, "alpha", .{}));
     var buf: [8]event.AppEvent = undefined;
     var hits: std.ArrayListUnmanaged(Hit) = .empty;

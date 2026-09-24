@@ -1,6 +1,7 @@
 // neofusion — converted from mnml's themes/neofusion.toml by tools/theme_toml2zon.zig.
 // The palette as NvChad ships it; src/ui/theme.zig derives every UI role from it.
-// note: base_16 lacks 11 slot(s) — onedark fills them at load
+// note: base_16 slots the conversion dropped are resolved from base46's own
+//       themes/neofusion.lua (its `M.base_30.<key>` references), not onedark's
 .{
     .name = "neofusion",
     .kind = .dark,
@@ -38,9 +39,20 @@
     },
     .base_16 = .{
         .base00 = 0x06101e,
+        .base01 = 0x0a1c36,
+        .base02 = 0x0e284e,
+        .base03 = 0x102e5a,
+        .base04 = 0x123466,
         .base05 = 0xe8e5b5,
         .base06 = 0x66def9,
         .base07 = 0x66def9,
+        .base08 = 0x66def9,
+        .base09 = 0xfd5e3a,
+        .base0A = 0xfd5e3a,
+        .base0B = 0x01eca7,
+        .base0C = 0xfd5e3a,
+        .base0D = 0x35b5ff,
+        .base0E = 0x66def9,
         .base0F = 0x008da3,
     },
 }

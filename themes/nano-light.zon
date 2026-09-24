@@ -1,6 +1,7 @@
 // nano-light — converted from mnml's themes/nano-light.toml by tools/theme_toml2zon.zig.
 // The palette as NvChad ships it; src/ui/theme.zig derives every UI role from it.
-// note: base_16 lacks 16 slot(s) — onedark fills them at load
+// note: base_16 slots the conversion dropped are resolved from base46's own
+//       themes/nano-light.lua (its `M.base_30.<key>` references), not onedark's
 // note: 5 extra key(s) kept under .extra
 .{
     .name = "nano-light",
@@ -37,7 +38,24 @@
         .pmenu_bg = 0x673ab7,
         .folder_bg = 0x4c566a,
     },
-    .base_16 = .{},
+    .base_16 = .{
+        .base00 = 0xffffff,
+        .base01 = 0xeceff1,
+        .base02 = 0xebebeb,
+        .base03 = 0xc4c4c4,
+        .base04 = 0xb5b5b5,
+        .base05 = 0x37474f,
+        .base06 = 0x4c566a,
+        .base07 = 0x263238,
+        .base08 = 0x673ab7,
+        .base09 = 0x8497a0,
+        .base0A = 0x673ab7,
+        .base0B = 0x8497a0,
+        .base0C = 0x673ab7,
+        .base0D = 0x263238,
+        .base0E = 0x37474f,
+        .base0F = 0x8497a0,
+    },
     .extra = .{
         .{ .name = "deep_black", .hex = 0x263238 },
         .{ .name = "faded_grey", .hex = 0x8497a0 },

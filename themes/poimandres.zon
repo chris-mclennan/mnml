@@ -1,6 +1,7 @@
 // poimandres — converted from mnml's themes/poimandres.toml by tools/theme_toml2zon.zig.
 // The palette as NvChad ships it; src/ui/theme.zig derives every UI role from it.
-// note: base_16 lacks 16 slot(s) — onedark fills them at load
+// note: base_16 slots the conversion dropped are resolved from base46's own
+//       themes/poimandres.lua (its `M.base_30.<key>` references), not onedark's
 // note: 2 extra key(s) kept under .extra
 .{
     .name = "poimandres",
@@ -37,7 +38,24 @@
         .pmenu_bg = 0x5fb3a1,
         .folder_bg = 0x91b4d5,
     },
-    .base_16 = .{},
+    .base_16 = .{
+        .base00 = 0x1b1e28,
+        .base01 = 0x2b3040,
+        .base02 = 0x32384a,
+        .base03 = 0x3b4258,
+        .base04 = 0x48506a,
+        .base05 = 0xa6accd,
+        .base06 = 0xb6d7f4,
+        .base07 = 0xffffff,
+        .base08 = 0xa6accd,
+        .base09 = 0xd0679d,
+        .base0A = 0x5de4c7,
+        .base0B = 0x5de4c7,
+        .base0C = 0x89ddff,
+        .base0D = 0xadd7ff,
+        .base0E = 0x91b4d5,
+        .base0F = 0xffffff,
+    },
     .extra = .{
         .{ .name = "ogwhite", .hex = 0xffffff },
         .{ .name = "seablue", .hex = 0xadd7ff },

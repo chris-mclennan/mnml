@@ -618,7 +618,7 @@ pub fn refresh(app: *App) CommandError!void {
     // The cloud settings the worker reads, renewed while no worker runs.
     if (st.cloud) |*c| c.deinit(app.gpa);
     st.cloud = try cloud_agents.Opts.fromConfig(app.gpa, &app.cfg.cloud_agents, &app.env);
-    st.group.concurrent(app.io, scanWorker, .{ &app.events, app.io, app.gpa, home, app.workspace, st.cloud, st.generation }) catch |err| {
+    st.group.concurrent(app.io, scanWorker, .{ app.events, app.io, app.gpa, home, app.workspace, st.cloud, st.generation }) catch |err| {
         st.scanning = false;
         return app.diag.fail(app.frame.allocator(), "sessions: could not start the scan: {s}", .{@errorName(err)});
     };
@@ -1241,8 +1241,23 @@ pub fn cardItem(app: *App, c: Card) Item {
     };
 }
 
+/// Whether `path` is `root` or somewhere under it, compared by path
+/// component: `/x/app/src` is under `/x/app`, `/x/app-old` is not.
+pub fn pathWithin(path: []const u8, root: []const u8) bool {
+    const r = std.mem.trimEnd(u8, root, "/\\");
+    const p = std.mem.trimEnd(u8, path, "/\\");
+    if (!std.mem.startsWith(u8, p, r)) return false;
+    if (p.len == r.len) return true;
+    // An empty root after trimming is `/`: everything is under it.
+    return r.len == 0 or std.fs.path.isSep(p[r.len]);
+}
+
+/// A transcript belongs here when its cwd is the workspace or under it.
+/// Only a transcript that recorded no cwd falls back to the label (a
+/// basename) — with a cwd in hand, the same folder name somewhere else
+/// is another project.
 fn inWorkspace(it: Item, workspace: []const u8, ws_name: []const u8) bool {
-    if (it.cwd) |c| if (std.mem.startsWith(u8, c, workspace)) return true;
+    if (it.cwd) |c| return pathWithin(c, workspace);
     return std.mem.eql(u8, it.workspace, ws_name);
 }
 
@@ -4598,4 +4613,28 @@ test "colors: the state keeps a colour per session id — set, replace, none dro
     try testing.expectEqual(@as(usize, 1), st.colors.items.len);
     try testing.expectEqualStrings("red", colorNameOf(&f.app, "s1").?);
     try testing.expect(colorNameOf(&f.app, "s2") == null);
+}
+
+test "a transcript is this workspace's by path component: a sibling with a suffix is not, the same folder name elsewhere is not; only a row with no cwd goes by its label" {
+    const ws = "/x/app";
+    var it = testItem("s1", .done, 0, "app", null);
+    const Case = struct { cwd: ?[]const u8, here: bool };
+    const cases = [_]Case{
+        .{ .cwd = "/x/app", .here = true },
+        .{ .cwd = "/x/app/", .here = true },
+        .{ .cwd = "/x/app/src/deep", .here = true },
+        // A sibling whose name starts with this one's.
+        .{ .cwd = "/x/app-old", .here = false },
+        .{ .cwd = "/x/application", .here = false },
+        // Another project with the same folder name: its label is `app`
+        // too, and the path says it is not this one.
+        .{ .cwd = "/elsewhere/app", .here = false },
+        // No cwd recorded: the label is all there is to go by.
+        .{ .cwd = null, .here = true },
+    };
+    for (cases) |c| {
+        it.cwd = c.cwd;
+        try testing.expectEqual(c.here, inWorkspace(it, ws, "app"));
+    }
+    try testing.expect(pathWithin("/anything", "/"));
 }

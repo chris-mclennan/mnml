@@ -280,7 +280,7 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
     try broker_app.putEnv(app, &env);
     for (opts.extra_env) |pair| try env.put(pair.name, pair.value);
 
-    const mount = host.Mount.spawn(gpa, app.io, &app.events, .{
+    const mount = host.Mount.spawn(gpa, app.io, app.events, .{
         .argv = opts.argv,
         .cwd = opts.cwd orelse app.workspace,
         .env = &env,

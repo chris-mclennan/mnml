@@ -1,6 +1,7 @@
 // darcula-dark — converted from mnml's themes/darcula-dark.toml by tools/theme_toml2zon.zig.
 // The palette as NvChad ships it; src/ui/theme.zig derives every UI role from it.
-// note: base_16 lacks 7 slot(s) — onedark fills them at load
+// note: base_16 slots the conversion dropped are resolved from base46's own
+//       themes/darcula-dark.lua (its `M.base_30.<key>` references), not onedark's
 // note: 2 extra key(s) kept under .extra
 .{
     .name = "darcula-dark",
@@ -47,6 +48,13 @@
         .base06 = 0xa2aab8,
         .base07 = 0x99a2b1,
         .base08 = 0xc9d0d3,
+        .base09 = 0x9876aa,
+        .base0A = 0xdc9656,
+        .base0B = 0x6a8759,
+        .base0C = 0xd3b987,
+        .base0D = 0xad9e7d,
+        .base0E = 0xd3b987,
+        .base0F = 0xcc7832,
     },
     .extra = .{
         .{ .name = "taupe", .hex = 0xad9e7d },

@@ -1,6 +1,7 @@
 // hiberbee — converted from mnml's themes/hiberbee.toml by tools/theme_toml2zon.zig.
 // The palette as NvChad ships it; src/ui/theme.zig derives every UI role from it.
-// note: base_16 lacks 13 slot(s) — onedark fills them at load
+// note: base_16 slots the conversion dropped are resolved from base46's own
+//       themes/hiberbee.lua (its `M.base_30.<key>` references), not onedark's
 // note: 1 extra key(s) kept under .extra
 .{
     .name = "hiberbee",
@@ -38,9 +39,22 @@
         .folder_bg = 0x7fdbca,
     },
     .base_16 = .{
+        .base00 = 0x121110,
+        .base01 = 0x2a2625,
+        .base02 = 0x322d2c,
+        .base03 = 0x3a3433,
+        .base04 = 0x423b3a,
         .base05 = 0xbbbab9,
         .base06 = 0xefeeed,
         .base07 = 0xdfdedd,
+        .base08 = 0xf25022,
+        .base09 = 0x92d923,
+        .base0A = 0x7fdbca,
+        .base0B = 0xffb900,
+        .base0C = 0x409cff,
+        .base0D = 0x7fdbca,
+        .base0E = 0xee7762,
+        .base0F = 0x0e9c9e,
     },
     .extra = .{
         .{ .name = "turquoise", .hex = 0x0e9c9e },

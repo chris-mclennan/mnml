@@ -110,9 +110,14 @@ pub fn narrowAuto(app: *const App) bool {
     return below > 0 and w > 0 and w < below;
 }
 
-/// Whether the columns are under the auto-hide regime at all.
+/// Whether the columns are under the auto-hide regime at all: `.auto`
+/// / `.hidden`, or a screen narrower than `ui.auto_hide_narrow_width`,
+/// which drops both columns from the frame just the same — so a command
+/// that hands a column the keys reveals it over the editor here too,
+/// instead of focusing a column nobody can see.
 pub fn autoHiding(app: *const App) bool {
-    return mode(app) != .always and !app.zen;
+    if (app.zen) return false;
+    return mode(app) != .always or @import("render.zig").narrowAutoHidden(app, app.screen.width);
 }
 
 /// Whether `s` is being carried by the overlay this frame — the one
@@ -770,4 +775,31 @@ test "a narrow terminal's auto column pins like a configured one, and the pin ou
     try t.expectError(error.Failed, togglePin(&app));
     try app.resize(80, 24);
     try t.expectEqual(Config.Sidebar.auto, mode(&app));
+}
+
+test "under ui.auto_hide_narrow_width, focusing the tree brings it up over the editor instead of focusing a column nobody can see" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    defer app.deinit();
+    _ = try app.openScratch();
+    side_mod.place(&app, .explorer, false);
+    // Only the frame rule under test: `ui.sidebar_auto_below` (which
+    // reads a narrow `.always` as `.auto`) is off, so without the fix
+    // the column stays docked-but-dropped.
+    app.cfg.ui.sidebar_auto_below = 0;
+    app.cfg.ui.auto_hide_narrow_width = 100;
+    try app.render();
+    // Narrow: no column is carved, and nothing is overlaid yet.
+    try t.expect(app.sidebar_auto.open == null);
+    try t.expect(suppressed(&app, .left));
+    try command.run(&app, .{ .static = .@"view.focus_tree" });
+    try t.expect(app.focus == .tree);
+    // The keys went to the tree — so the tree is on screen, over the editor.
+    try t.expectEqual(@as(?ColumnSide, .left), app.sidebar_auto.open);
+    try t.expect(!suppressed(&app, .left));
+    try app.render();
+    try t.expect(!app.sidebar_auto.rect.isEmpty());
+    // Wide again: the column docks, the overlay is gone.
+    try app.resize(120, 40);
+    tick(&app, 100);
+    try t.expect(app.sidebar_auto.open == null);
 }

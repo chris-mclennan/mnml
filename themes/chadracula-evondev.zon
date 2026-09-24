@@ -1,6 +1,7 @@
 // chadracula-evondev — converted from mnml's themes/chadracula-evondev.toml by tools/theme_toml2zon.zig.
 // The palette as NvChad ships it; src/ui/theme.zig derives every UI role from it.
-// note: base_16 lacks 4 slot(s) — onedark fills them at load
+// note: base_16 slots the conversion dropped are resolved from base46's own
+//       themes/chadracula-evondev.lua (its `M.base_30.<key>` references), not onedark's
 // note: 3 extra key(s) kept under .extra
 .{
     .name = "chadracula-evondev",
@@ -39,6 +40,10 @@
     },
     .base_16 = .{
         .base00 = 0x141423,
+        .base01 = 0x23233d,
+        .base02 = 0x2b2b4c,
+        .base03 = 0x373760,
+        .base04 = 0x414171,
         .base05 = 0xe9e9f4,
         .base06 = 0xf1f2f8,
         .base07 = 0xf7f7fb,

@@ -1139,9 +1139,23 @@ workspace layer and everything else still applies:
 | `.ai.copilot_here` | when you type, with Copilot ghost text on |
 | `.mnml/init.lua` (the script beside the config) | on open, and on `script.reload` |
 | `.mnml/integrations/*.zon` (the manifests beside the config) | when one of their commands runs |
+| `.scripts.dev_roots` / `.scripts.private_sources` (every script folder under them) | every time mnml starts |
+| `.scripts.marketplace_local` (the folder the SCRIPTS Marketplace tab badges `official`) | when you install from the Marketplace tab |
 
 (`.tasks.<name>` bodies are not in the table: a task only runs when you
-ask for it by name.)
+ask for it by name. Nor is `.integrations.dev_roots`: the INTEGRATIONS
+Dev tab only lists what is there until you build a row.)
+
+The table is `exec_bearing` in `src/config/trust.zig`, and a unit test
+there walks every `Config` key: one whose name reads like it could run
+something (`cmd`, `command`, `binary`, `args`, `env`, `roots`,
+`sources`, …) fails the build until it carries a verdict — a row here,
+or a reason it runs nothing.
+
+The terminal and `--headless` (IPC hosts, `run.sh headless`) decide
+trust the same way, from the same store. Only the `.test` runner trusts
+its workspace outright: it made that workspace itself, in a temp
+directory, and the `.mnml/init.lua` in it is the script under test.
 
 `.ai.copilot_here` is the one row that is not an argv. It is in the
 table because its effect is the same shape: a repo you cloned could
@@ -1617,8 +1631,10 @@ Settings screens and toggles write back with `persistScalar`: the file is
 parsed, the one value's bytes are replaced in place, and comments and
 order survive. A missing key is added at its section's indent; a missing
 section is appended. An unchanged value is not written. Before every
-write the previous file is copied to `backups/config.<YYYY-MM-DD-HHMMSS>.zon`
-next to it, keeping the newest 50.
+write the previous file is copied to
+`backups/config.<YYYY-MM-DD-HHMMSS>-<NNNN>.zon` next to it — the stamp in
+UTC, the counter so that several writes in one second (a Settings row
+held under `→`) each keep their own copy — keeping the newest 50.
 
 ### The settings overlay
 

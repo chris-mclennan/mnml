@@ -61,9 +61,16 @@ pub const AppDriver = struct {
                 .cols = cfg.cols,
                 .rows = cfg.rows,
                 .env = cfg.env,
-                // The runner made this workspace itself: its `.mnml/init.lua`
-                // is the script under test.
-                .workspace_trusted = true,
+                // Two callers, two answers. The `.test` runner (no
+                // `loaded`) made this workspace itself, in a temp dir:
+                // its `.mnml/init.lua` is the script under test, so it is
+                // trusted outright. The headless loop (`--headless`,
+                // `run.sh headless`, an IPC host) opens a real workspace
+                // off disk, and its trust is what the loader decided —
+                // the same store, the same dialog, the same stripping as
+                // the terminal loop. Null lets `initWith` take it from
+                // `loaded`.
+                .workspace_trusted = if (loaded == null) true else null,
             }),
         };
         loaded = null;
@@ -243,7 +250,10 @@ pub const AppDriver = struct {
             .tree_cursor = app.tree.cursor,
             .tree_selection = try a.dupe(u8, try app.tree.selectionPath(app)),
             .tree_visible = app.tree.visible,
-            .right_panel_visible = side.shown(app, .right) != null,
+            // Shown AND on screen: an auto-hidden column (`ui.sidebar`,
+            // or a screen under `ui.auto_hide_narrow_width`) that the
+            // overlay is not carrying is not visible.
+            .right_panel_visible = side.shown(app, .right) != null and !@import("sidebar_auto.zig").suppressed(app, .right),
             .right_panel_panes = &.{},
             .right_panel_active_idx = 0,
             .panes = panes.items,
@@ -450,6 +460,43 @@ test "driver: a script command that errors fails the call, so an IPC ack and a .
     try d.command("user.fine");
     // A refused built-in keeps the old contract: a toast, not a failure.
     try d.command("file.save");
+}
+
+test "driver: the headless loop's workspace is trusted only as the store says; the runner's own is trusted" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, t.allocator);
+    defer t.allocator.free(root);
+    try tmp.dir.createDirPath(t.io, "ws/.mnml");
+    try tmp.dir.createDirPath(t.io, "data");
+    // A workspace off disk whose init.lua shells out on open.
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "ws/.mnml/init.lua", .data = "mnml.task.run{ cmd = 'touch RAN_INIT', hidden = true }\n" });
+    const ws = try std.fs.path.join(t.allocator, &.{ root, "ws" });
+    defer t.allocator.free(ws);
+    const data = try std.fs.path.join(t.allocator, &.{ root, "data" });
+    defer t.allocator.free(data);
+    var vars = std.process.Environ.Map.init(t.allocator);
+    defer vars.deinit();
+    try vars.put("MNML_DATA_ROOT", data);
+    const config = @import("../config/root.zig");
+    const loaded = try config.load.load(t.allocator, t.io, .{ .workspace = ws, .trust = .ask, .data_root = data, .env = .{ .vars = &vars } });
+    var f: AppFactory = .{};
+    {
+        // As `--headless` builds it: from files, with the loader's answer.
+        const d = try f.factory().make(t.allocator, t.io, .{ .workspace = ws, .data_root = data, .cols = 100, .rows = 30, .cfg = loaded.config, .loaded = loaded, .env = &vars });
+        defer d.deinit();
+        const app = &AppDriver.cast(d.ptr).app;
+        try t.expect(!app.workspace_trusted);
+        try t.expect(app.overlay == .confirm and app.overlay.confirm.purpose == .trust_workspace);
+        try t.io.sleep(.fromMilliseconds(300), .awake);
+        try t.expectError(error.FileNotFound, tmp.dir.access(t.io, "ws/RAN_INIT", .{}));
+    }
+    {
+        // As the `.test` runner builds it: no `loaded`, its own workspace.
+        const d = try f.factory().make(t.allocator, t.io, .{ .workspace = ws, .data_root = data, .cols = 100, .rows = 30, .env = &vars });
+        defer d.deinit();
+        try t.expect(AppDriver.cast(d.ptr).app.workspace_trusted);
+    }
 }
 
 test "driver: open, type, status, dirty, title, rects, quit — the runner's contract" {

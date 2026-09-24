@@ -373,7 +373,7 @@ fn start(app: *App) void {
     const st = &app.integration_poll;
     if (st.jobs.items.len == 0) return;
     for (st.jobs.items) |j| {
-        st.group.concurrent(app.io, worker, .{ j, &app.events, app.io }) catch continue;
+        st.group.concurrent(app.io, worker, .{ j, app.events, app.io }) catch continue;
     }
     st.running = true;
 }

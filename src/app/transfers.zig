@@ -206,7 +206,7 @@ pub fn start(app: *App, kind: Kind, items: []const Item) CommandError!u64 {
     };
     try st.jobs.append(gpa, .{ .id = st.next_id, .kind = kind, .dest = dest, .started_ms = app.now_ms, .cancel = flag, .moves = moves });
     errdefer _ = st.jobs.pop();
-    st.group.concurrent(app.io, worker, .{ &app.events, app.io, work }) catch |err| {
+    st.group.concurrent(app.io, worker, .{ app.events, app.io, work }) catch |err| {
         return app.diag.fail(app.frame.allocator(), "transfer: could not start the worker: {s}", .{@errorName(err)});
     };
     const id = st.next_id;

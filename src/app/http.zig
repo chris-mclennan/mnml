@@ -1175,7 +1175,7 @@ pub fn spawnWith(app: *App, pane: ?PaneId, kind: client.JobKind, req: Request, o
     errdefer incoming.deinit(gpa);
     const job = try gpa.create(Job);
     errdefer gpa.destroy(job);
-    job.* = .{ .id = app.http.nextJob(), .pane = pane, .kind = kind, .req = incoming, .stream = opts.stream, .events = &app.events, .io = app.io, .gpa = gpa };
+    job.* = .{ .id = app.http.nextJob(), .pane = pane, .kind = kind, .req = incoming, .stream = opts.stream, .events = app.events, .io = app.io, .gpa = gpa };
     incoming = undefined;
     if (opts.label) |l| job.label = try gpa.dupe(u8, l);
     errdefer if (job.label) |l| gpa.free(l);

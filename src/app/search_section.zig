@@ -246,7 +246,7 @@ pub fn run(app: *App) CommandError!void {
     st.loading = true;
     var flags = st.flags;
     if (!flags.case_sensitive and find_mod.hasUpper(q)) flags.case_sensitive = true;
-    st.group.concurrent(app.io, grep.worker, .{ &app.events, app.io, app.gpa, @as([]const u8, app.workspace), @as([]const u8, st.ran.?), flags, st.generation, grep.section_target, st.abort, true }) catch |err| {
+    st.group.concurrent(app.io, grep.worker, .{ app.events, app.io, app.gpa, @as([]const u8, app.workspace), @as([]const u8, st.ran.?), flags, st.generation, grep.section_target, st.abort, true }) catch |err| {
         st.loading = false;
         return app.diag.fail(app.frame.allocator(), "search: could not start the worker: {s}", .{@errorName(err)});
     };

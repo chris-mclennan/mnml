@@ -189,7 +189,7 @@ pub fn refresh(app: *App, id: PaneId) CommandError!void {
         app.events.post(app.io, .{ .spend = r });
         return;
     };
-    p.group.concurrent(app.io, worker, .{ &app.events, app.io, app.gpa, home, p.generation, @as(?PaneId, id), p.abort }) catch |err| {
+    p.group.concurrent(app.io, worker, .{ app.events, app.io, app.gpa, home, p.generation, @as(?PaneId, id), p.abort }) catch |err| {
         p.loading = false;
         return app.diag.fail(app.frame.allocator(), "spend: could not start the worker: {s}", .{@errorName(err)});
     };
@@ -199,7 +199,7 @@ pub fn refresh(app: *App, id: PaneId) CommandError!void {
 pub fn refreshMeter(app: *App) CommandError!void {
     const home = app.homeDir() orelse return app.diag.fail(app.frame.allocator(), "AI usage: no home directory to read transcripts from", .{});
     app.ai.meter_generation +%= 1;
-    app.ai.spend_group.concurrent(app.io, worker, .{ &app.events, app.io, app.gpa, home, app.ai.meter_generation, @as(?PaneId, null), @as(*Abort, &meter_abort) }) catch |err| {
+    app.ai.spend_group.concurrent(app.io, worker, .{ app.events, app.io, app.gpa, home, app.ai.meter_generation, @as(?PaneId, null), @as(*Abort, &meter_abort) }) catch |err| {
         return app.diag.fail(app.frame.allocator(), "AI usage: could not start the worker: {s}", .{@errorName(err)});
     };
     app.toast("computing AI usage… (background)", .{});

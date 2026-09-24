@@ -834,21 +834,21 @@ test "the .job event: progress from a worker, then its end, through the queue" {
     var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
     defer app.deinit();
     // A worker can start its own job: the text is the label.
-    post(&app.events, app.io, gpa, .integration, 7, .running, "mnml-jira --values");
+    post(app.events, app.io, gpa, .integration, 7, .running, "mnml-jira --values");
     try app.pumpEvents();
     try testing.expect(running(&app, .integration, 7));
-    post(&app.events, app.io, gpa, .integration, 7, .ok, "published");
+    post(app.events, app.io, gpa, .integration, 7, .ok, "published");
     try app.pumpEvents();
     try testing.expect(!running(&app, .integration, 7));
     const id = try begin(&app, .{ .kind = .lint, .key = 42, .label = "shellcheck a.sh" });
-    post(&app.events, app.io, gpa, .lint, 42, .running, "running");
+    post(app.events, app.io, gpa, .lint, 42, .running, "running");
     try app.pumpEvents();
     try testing.expectEqualStrings("running", app.jobs.reg.get(id).?.detail.?);
-    post(&app.events, app.io, gpa, .lint, 42, .failed, "exit 2");
+    post(app.events, app.io, gpa, .lint, 42, .failed, "exit 2");
     try app.pumpEvents();
     try testing.expectEqual(Status.failed, app.jobs.reg.get(id).?.status);
     // An end for a job nobody is running is dropped whole, leak-free.
-    post(&app.events, app.io, gpa, .lint, 43, .ok, "late");
+    post(app.events, app.io, gpa, .lint, 43, .ok, "late");
     try app.pumpEvents();
 }
 

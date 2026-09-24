@@ -285,6 +285,15 @@ pub const EventQueue = struct {
         return .{ .q = .init(buffer), .gpa = gpa, .buffer = buffer };
     }
 
+    /// Refuse every post from now on: a post already waiting for room
+    /// in a full ring returns at once, and every later one frees its
+    /// payload instead of queueing it. What is queued stays until
+    /// `deinit`. The first step of a shutdown — before any worker is
+    /// cancelled or awaited, since nothing drains the queue any more.
+    pub fn close(self: *EventQueue, io: Io) void {
+        self.q.close(io);
+    }
+
     /// Closes the queue, frees anything still queued, and releases the ring.
     pub fn deinit(self: *EventQueue, io: Io) void {
         self.q.close(io);
@@ -326,6 +335,25 @@ test "post then drain returns events in order and wakes" {
     try std.testing.expect(buf[0] == .focus);
     try std.testing.expectEqual(@as(PtyId, 7), buf[1].pty_readable);
     try std.testing.expectEqual(@as(usize, 0), q.drain(io, &buf));
+}
+
+test "close releases a worker parked on a full ring, and its payload is freed" {
+    const io = std.testing.io;
+    var q = try EventQueue.init(std.testing.allocator, 1);
+    defer q.deinit(io);
+    q.post(io, .{ .focus = true }); // the ring is now full
+    const Worker = struct {
+        fn run(queue: *EventQueue, wio: Io) Io.Cancelable!void {
+            const msg = std.testing.allocator.dupe(u8, "parked") catch return;
+            queue.post(wio, .{ .err = .{ .source = .todos, .msg = msg } });
+        }
+    };
+    var group: Io.Group = .init;
+    try group.concurrent(io, Worker.run, .{ &q, io });
+    // Nothing drains: this is a shutdown. Without the close the worker
+    // waits for room forever and so does the group.
+    q.close(io);
+    try group.await(io);
 }
 
 test "deinit frees payloads still queued; post after close frees too" {

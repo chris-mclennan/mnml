@@ -65,11 +65,45 @@ pub const Event = struct {
 pub const State = struct {
     group: Io.Group = .init,
     next_id: u32 = 0,
+    /// Set while `App.initWith` loads the scripts. The App is built on
+    /// that function's stack and then moved to its caller, and a task
+    /// in `group` holds the group's address: one started there would
+    /// report to a group nobody owns any more, so the moved App's
+    /// `cancel` would wait for it forever (quitting hung). A run asked
+    /// for then waits in `deferred` and starts on the App's first
+    /// `tick` or `handle`, at its final address.
+    defer_spawns: bool = false,
+    deferred: std.ArrayListUnmanaged(Deferred) = .empty,
 
-    pub fn deinit(self: *State, io: Io) void {
+    const Deferred = struct { line: []u8, dir: []u8, env: *std.process.Environ.Map, id: u32 };
+
+    pub fn deinit(self: *State, gpa: Allocator, io: Io) void {
         self.group.cancel(io);
+        for (self.deferred.items) |d| freeDeferred(gpa, d);
+        self.deferred.deinit(gpa);
     }
 };
+
+fn freeDeferred(gpa: Allocator, d: State.Deferred) void {
+    gpa.free(d.line);
+    gpa.free(d.dir);
+    d.env.deinit();
+    gpa.destroy(d.env);
+}
+
+/// Start the runs asked for while the App was being built. Called from
+/// `App.tick` and `App.handle`: by then the App is where it will stay.
+pub fn startDeferred(app: *App) void {
+    const st = &app.script_tasks;
+    if (st.deferred.items.len == 0) return;
+    for (st.deferred.items) |d| {
+        st.group.concurrent(app.io, worker, .{ app.events, app.io, app.gpa, d.line, d.dir, d.env, d.id }) catch {
+            freeDeferred(app.gpa, d);
+            postFailed(app.events, app.io, app.gpa, d.id, error.ConcurrencyUnavailable);
+        };
+    }
+    st.deferred.clearRetainingCapacity();
+}
 
 /// Start `cmd` hidden. Answers the run's id; the script's `on_line` and
 /// `on_done` are found by it when the events land.
@@ -88,7 +122,11 @@ pub fn spawn(app: *App, cmd: []const u8, cwd: []const u8) !u32 {
     errdefer gpa.destroy(env);
     env.* = try app.env.clone(gpa);
     errdefer env.deinit();
-    try st.group.concurrent(app.io, worker, .{ &app.events, app.io, gpa, line, dir, env, id });
+    if (st.defer_spawns) {
+        try st.deferred.append(gpa, .{ .line = line, .dir = dir, .env = env, .id = id });
+        return id;
+    }
+    try st.group.concurrent(app.io, worker, .{ app.events, app.io, gpa, line, dir, env, id });
     return id;
 }
 
@@ -257,4 +295,52 @@ test "a hidden task streams its lines to on_line and its exit to on_done" {
         \\assert(seen[3] == "three", seen[3])
         \\assert(done.ok == false and done.code == 3, tostring(done.code))
     );
+}
+
+/// Pump `app` until the Lua global `done` is set, or give up after 5 s.
+fn waitDone(app: *App) !void {
+    var waited: u32 = 0;
+    while (true) : (waited += 10) {
+        var pending = false;
+        app.script().runString("assert(done ~= nil)") catch {
+            pending = true;
+        };
+        if (!pending) return;
+        if (waited > 5000) return error.Timeout;
+        try testing.io.sleep(.fromMilliseconds(10), .awake);
+        try app.tick(App.nowMs(app.io));
+    }
+}
+
+test "a hidden task started while init.lua loads reaches on_done after the App has moved" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &buf);
+    try tmp.dir.createDirPath(testing.io, ".mnml");
+    // `task.run` at load: the worker starts inside `initWith`, whose
+    // App is then returned — moved — to this frame.
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/init.lua", .data = "done = nil\nmnml.task.run{ cmd = 'true', hidden = true, on_done = function(r) done = r end }\n" });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = buf[0..n], .workspace_trusted = true, .cols = 60, .rows = 12 });
+    defer app.deinit();
+    try waitDone(&app);
+    try app.script().runString("assert(done.ok == true, 'ok')");
+}
+
+test "deinit returns while a hidden task is waiting for room in a full event ring" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    // Fill the ring, as a burst of output does once the loop has
+    // stopped draining it for good.
+    while (true) {
+        const took = app.events.q.putUncancelable(testing.io, &.{.{ .focus = true }}, 0) catch 0;
+        if (took == 0) break;
+    }
+    try app.script().runString("mnml.task.run{ cmd = 'true', hidden = true }");
+    // Let the child exit and its worker reach the post that cannot fit.
+    try testing.io.sleep(.fromMilliseconds(300), .awake);
+    // Quitting: without the close first, the task group's cancel waits
+    // on a worker that waits on the ring, and this never returns.
+    app.deinit();
 }

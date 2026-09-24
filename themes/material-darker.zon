@@ -1,6 +1,7 @@
 // material-darker — converted from mnml's themes/material-darker.toml by tools/theme_toml2zon.zig.
 // The palette as NvChad ships it; src/ui/theme.zig derives every UI role from it.
-// note: base_16 lacks 5 slot(s) — onedark fills them at load
+// note: base_16 slots the conversion dropped are resolved from base46's own
+//       themes/material-darker.lua (its `M.base_30.<key>` references), not onedark's
 .{
     .name = "material-darker",
     .kind = .dark,
@@ -38,6 +39,10 @@
     },
     .base_16 = .{
         .base00 = 0x212121,
+        .base01 = 0x292929,
+        .base02 = 0x303030,
+        .base03 = 0x383838,
+        .base04 = 0x404040,
         .base05 = 0xdff0f0,
         .base06 = 0xe6f7f7,
         .base07 = 0xeeffff,
@@ -47,6 +52,7 @@
         .base0B = 0xc3e88d,
         .base0C = 0xc3e88d,
         .base0D = 0x82aaff,
+        .base0E = 0xc792ea,
         .base0F = 0xf07178,
     },
 }

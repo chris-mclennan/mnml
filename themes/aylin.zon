@@ -1,6 +1,7 @@
 // aylin — converted from mnml's themes/aylin.toml by tools/theme_toml2zon.zig.
 // The palette as NvChad ships it; src/ui/theme.zig derives every UI role from it.
-// note: base_16 lacks 7 slot(s) — onedark fills them at load
+// note: base_16 slots the conversion dropped are resolved from base46's own
+//       themes/aylin.lua (its `M.base_30.<key>` references), not onedark's
 // note: 1 extra key(s) kept under .extra
 .{
     .name = "aylin",
@@ -46,7 +47,14 @@
         .base05 = 0xebefff,
         .base06 = 0xbbc8ff,
         .base07 = 0xabbbff,
+        .base08 = 0xfd98b9,
         .base09 = 0xecc48d,
+        .base0A = 0xacafb9,
+        .base0B = 0xecc48d,
+        .base0C = 0x9fd4ff,
+        .base0D = 0x7fdbca,
+        .base0E = 0x9fd4ff,
+        .base0F = 0xfd98b9,
     },
     .extra = .{
         .{ .name = "brown", .hex = 0xacafb9 },

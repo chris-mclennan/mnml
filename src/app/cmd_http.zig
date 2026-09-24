@@ -833,7 +833,7 @@ pub fn runChainNamed(app: *App, name: []const u8) CommandError!void {
     const ws = try app.gpa.dupe(u8, app.workspace);
     errdefer app.gpa.free(ws);
     app.http.chain_running = true;
-    app.http.group.concurrent(app.io, chainWorker, .{ &app.events, app.io, app.gpa, path_owned, ws, env_name }) catch |err| {
+    app.http.group.concurrent(app.io, chainWorker, .{ app.events, app.io, app.gpa, path_owned, ws, env_name }) catch |err| {
         app.http.chain_running = false;
         return app.diag.fail(arena, "http.run_chain: could not start: {s}", .{@errorName(err)});
     };
@@ -862,7 +862,7 @@ fn startSync(app: *App, check_only: bool) CommandError!void {
     const ws = try app.gpa.dupe(u8, app.workspace);
     errdefer app.gpa.free(ws);
     app.http.sync_running = true;
-    app.http.group.concurrent(app.io, syncWorker, .{ &app.events, app.io, app.gpa, ws, check_only, app.http.sync_normalize }) catch |err| {
+    app.http.group.concurrent(app.io, syncWorker, .{ app.events, app.io, app.gpa, ws, check_only, app.http.sync_normalize }) catch |err| {
         app.http.sync_running = false;
         return app.diag.fail(app.frame.allocator(), "http.sync: could not start: {s}", .{@errorName(err)});
     };

@@ -257,7 +257,11 @@ pub fn derive(src: Source) Theme {
         .muted = on(p.comment, p.bg_dark),
         .accent = on(p.blue, p.bg_dark),
         .border = on(p.line, p.bg_dark),
-        .gutter = on(b16[3], p.bg_dark),
+        // NvChad's `LineNr = { fg = colors.grey }` (base46
+        // integrations/defaults.lua) — not base_16's `base03`, which in
+        // most palettes is a background shade: on onenord_light it is
+        // 1.01:1 against the ground, invisible.
+        .gutter = on(p.grey, p.bg_dark),
         .cursor_line = on(p.fg, p.line),
         .selection = on(p.fg, b16[2]),
         .match = on(p.fg, p.grey),
@@ -286,11 +290,13 @@ pub fn derive(src: Source) Theme {
         .whitespace = on(p.grey, p.bg_dark),
         .indent_guide = on(p.bg3, p.bg_dark),
         .indent_guide_active = on(p.grey_fg, p.bg_dark),
-        // base16 roles: 03 comments, 05 default fg, 08 variables, 09
+        // base16 roles: 05 default fg, 08 variables, 09
         // numbers / constants, 0A types, 0B strings, 0C escapes /
         // constructors, 0D functions, 0E keywords, 0F punctuation.
         .syntax = .{
-            .comment = .{ .fg = b16[3], .italic = true },
+            // NvChad's `Comment = { fg = colors.light_grey }`, not
+            // `base03` (see the gutter above) — the palette's `comment`.
+            .comment = .{ .fg = p.comment, .italic = true },
             .string = fgOnly(b16[0xB]),
             .keyword = fgOnly(b16[0xE]),
             .function = fgOnly(b16[0xD]),
@@ -454,7 +460,9 @@ test "default is onedark and matches the seed values mnml 0.2 hardcoded" {
     try testing.expect(Color.eql(default.palette.comment, rgb(0x80848d)));
     try testing.expect(Color.eql(default.palette.base16[0xE], rgb(0xc678dd)));
     try testing.expect(Color.eql(default.selection.bg, rgb(0x3e4451)));
-    try testing.expect(Color.eql(default.gutter.fg, rgb(0x545862)));
+    // NvChad's LineNr and Comment: `grey` and `light_grey`.
+    try testing.expect(Color.eql(default.gutter.fg, rgb(0x42464e)));
+    try testing.expect(Color.eql(default.syntax.comment.fg, rgb(0x80848d)));
 }
 
 test "byName is case-insensitive and trims; unknown is null" {
@@ -492,13 +500,70 @@ test "a partial palette resolves through the fallback chains" {
     try testing.expect(Color.eql(t.bg.bg, rgb(0x101010)));
 }
 
-test "the two upstream palettes with no base_16 at all paint onedark's syntax" {
-    for ([_][]const u8{ "nano-light", "poimandres" }) |n| {
-        const t = byName(n).?;
-        try testing.expect(Color.eql(t.syntax.keyword.fg, rgb(0xc678dd)));
+test "no bundled palette leans on onedark's base_16: every slot is its own" {
+    // The conversion once dropped the slots base46 writes as
+    // `M.base_30.<key>` references; 20 palettes then painted onedark's
+    // dark syntax — nano-light's selected text sat on #3e4451, 1.01:1.
+    @setEvalBranchQuota(100_000);
+    inline for (themes.all) |src| {
+        inline for (std.meta.fields(themes.Base16)) |f| {
+            if (@field(src.base_16, f.name) == null) {
+                std.debug.print("theme {s}: base_16.{s} is missing\n", .{ src.name, f.name });
+                return error.TestUnexpectedResult;
+            }
+        }
     }
+    // nano-light's keyword is its own `white`, not onedark's purple.
+    try testing.expect(Color.eql(byName("nano-light").?.syntax.keyword.fg, rgb(0x37474f)));
+    try testing.expect(Color.eql(byName("nano-light").?.selection.bg, rgb(0xebebeb)));
     // catppuccin-latte's upstream typo was folded onto vibrant_green.
     try testing.expect(!Color.eql(byName("catppuccin-latte").?.palette.vibrant_green, byName("catppuccin-latte").?.palette.green));
+}
+
+/// WCAG 2 relative luminance of an sRGB colour.
+fn luminance(c: Color) f64 {
+    var out: f64 = 0;
+    const weights = [3]f64{ 0.2126, 0.7152, 0.0722 };
+    for (c.rgb, weights) |ch, w| {
+        const v = @as(f64, @floatFromInt(ch)) / 255.0;
+        const lin = if (v <= 0.03928) v / 12.92 else std.math.pow(f64, (v + 0.055) / 1.055, 2.4);
+        out += w * lin;
+    }
+    return out;
+}
+
+/// WCAG 2 contrast ratio, 1.0 (none) to 21.0.
+fn contrast(a: Color, b: Color) f64 {
+    const la = luminance(a);
+    const lb = luminance(b);
+    return (@max(la, lb) + 0.05) / (@min(la, lb) + 0.05);
+}
+
+test "every bundled theme keeps comments, line numbers and selected text readable" {
+    // The floors, and why:
+    //   comment    2.0:1 — dim by design (NvChad's light_grey), but text
+    //              a reader has to be able to read; every bundled
+    //              palette clears it (the lowest, material-lighter, is
+    //              2.01), and base03 — the old choice — failed it in 66.
+    //   selection  2.0:1 — the same text, on the selection ground.
+    //   line nr    1.5:1 — NvChad paints LineNr in `grey`, a step dimmer
+    //              than comments on purpose: chrome, not content. The
+    //              lowest upstream grey is ayu_light's 1.52; the failure
+    //              this exists to catch is base03's 1.01, invisible.
+    var failures: usize = 0;
+    for (&all) |*t| {
+        const ground = t.fg.bg;
+        const checks = [_]struct { what: []const u8, ratio: f64, floor: f64 }{
+            .{ .what = "comment", .ratio = contrast(t.syntax.comment.fg, ground), .floor = 2.0 },
+            .{ .what = "selection", .ratio = contrast(t.selection.fg, t.selection.bg), .floor = 2.0 },
+            .{ .what = "line number", .ratio = contrast(t.gutter.fg, t.gutter.bg), .floor = 1.5 },
+        };
+        for (checks) |c| if (c.ratio < c.floor) {
+            std.debug.print("theme {s}: {s} contrast {d:.2}:1 is under {d:.1}:1\n", .{ t.name, c.what, c.ratio, c.floor });
+            failures += 1;
+        };
+    }
+    try testing.expectEqual(@as(usize, 0), failures);
 }
 
 test "rgb unpacks channels" {

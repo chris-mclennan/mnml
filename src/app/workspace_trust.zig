@@ -202,6 +202,54 @@ test "review on a trusted workspace lists the claims; Forget drops the store lin
     try t.expect(std.mem.indexOf(u8, app.lastToast().?, "was not trusted") != null);
 }
 
+test "a cloned repo's scripts.dev_roots runs nothing until the workspace is trusted, and the dialog names it" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, "ws/.mnml");
+    try tmp.dir.createDirPath(t.io, "ws/tools/hello");
+    try tmp.dir.createDirPath(t.io, "data");
+    // The repo as it would be cloned: its config names its own folder,
+    // and the script there shells out the moment it loads.
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "ws/.mnml/config.zon", .data = ".{ .scripts = .{ .dev_roots = .{\"tools\"} } }" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "ws/tools/hello/script.zon", .data = ".{ .name = \"hello\", .version = \"1.0.0\", .api = 1 }" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "ws/tools/hello/init.lua", .data = "mnml.task.run{ cmd = 'touch RAN_WITHOUT_TRUST', hidden = true }\n" });
+    const ws = try std.fs.path.join(t.allocator, &.{ root, "ws" });
+    defer t.allocator.free(ws);
+    const data = try std.fs.path.join(t.allocator, &.{ root, "data" });
+    defer t.allocator.free(data);
+    var vars = std.process.Environ.Map.init(t.allocator);
+    defer vars.deinit();
+    try vars.put("MNML_DATA_ROOT", data);
+    const opts: config.load.Options = .{ .workspace = ws, .trust = .ask, .data_root = data, .env = .{ .vars = &vars } };
+    const loaded = try config.load.load(t.allocator, t.io, opts);
+    var app = try App.initWith(t.allocator, t.io, .{ .cfg = loaded.config, .loaded = loaded, .workspace = ws, .data_root = data, .cols = 120, .rows = 30, .env = &vars });
+    defer app.deinit();
+    // The question is up, and it names the folder and what runs from it.
+    try t.expect(app.overlay == .confirm and app.overlay.confirm.purpose == .trust_workspace);
+    try t.expect(std.mem.indexOf(u8, app.overlay.confirm.message, "script folder dev_roots — runs `tools/*/init.lua`") != null);
+    // Unanswered: the script is not even adopted, and nothing ran.
+    try t.expect(app.scripts.find("hello") == null);
+    try t.io.sleep(.fromMilliseconds(300), .awake);
+    try app.tick(App.nowMs(app.io));
+    try t.expectError(error.FileNotFound, tmp.dir.access(t.io, "ws/RAN_WITHOUT_TRUST", .{}));
+    // Trust: the folder is scanned now and its script runs.
+    try app.handle(.{ .key = app_mod.Key.char('t') });
+    try t.expect(app.workspace_trusted);
+    const e = app.scripts.find("hello") orelse return error.TestUnexpectedResult;
+    try t.expect(e.state != null);
+    var waited: u32 = 0;
+    while (true) : (waited += 20) {
+        if (tmp.dir.access(t.io, "ws/RAN_WITHOUT_TRUST", .{})) |_| break else |_| {}
+        if (waited > 5000) return error.Timeout;
+        try t.io.sleep(.fromMilliseconds(20), .awake);
+        try app.tick(App.nowMs(app.io));
+    }
+}
+
 test "removeEntry keeps the other lines and the comments" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();

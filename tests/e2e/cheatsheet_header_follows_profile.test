@@ -1,0 +1,12 @@
+# The cheatsheet's header names the keys that move its cursor in the
+# profile at hand: the arrows in the standard profile, `j/k` under vim.
+# It used to say `j/k` to everyone.
+write hello.txt "hello\n"
+open hello.txt
+command view.cheatsheet
+expect screen contains "Cheatsheet · / filter · ↑↓ · C collapse"
+expect screen lacks "· j/k ·"
+key esc
+command editor.use_vim
+command view.cheatsheet
+expect screen contains "Cheatsheet · / filter · j/k · C collapse"

@@ -248,7 +248,7 @@ pub fn refresh(app: *App) CommandError!void {
     st.scanning = true;
     st.scanned_once = true;
     app.needs_render = true;
-    st.group.concurrent(app.io, scanWorker, .{ &app.events, app.io, app.gpa, app.workspace, app.cfg.ui.todo_keywords, st.generation }) catch |err| {
+    st.group.concurrent(app.io, scanWorker, .{ app.events, app.io, app.gpa, app.workspace, app.cfg.ui.todo_keywords, st.generation }) catch |err| {
         st.scanning = false;
         return app.diag.fail(app.frame.allocator(), "todos: could not start the scan: {s}", .{@errorName(err)});
     };

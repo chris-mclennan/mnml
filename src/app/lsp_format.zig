@@ -530,7 +530,7 @@ fn lintPath(app: *App, path: []const u8, l: tools.Linter) !void {
     job.job_key = jobs.freshKey(app);
     const key = job.job_key;
     const label = try std.fmt.allocPrint(arena, "{s} {s}", .{ std.fs.path.basename(job.argv[0]), rel });
-    try app.lsp.lint_group.concurrent(app.io, lintWorker, .{ &app.events, app.io, gpa, job, &app.env });
+    try app.lsp.lint_group.concurrent(app.io, lintWorker, .{ app.events, app.io, gpa, job, &app.env });
     // Begun after the spawn: the worker's end cannot reach the queue
     // before this runs, since both land on this thread.
     _ = try jobs.begin(app, .{ .kind = .lint, .key = key, .label = label });

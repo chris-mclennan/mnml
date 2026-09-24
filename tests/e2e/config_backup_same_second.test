@@ -1,0 +1,21 @@
+# width: 120
+# height: 40
+# Every config write backs the previous file up, and several writes in
+# one second each keep their own copy. The backups used to be named by
+# the second alone, so a Settings row pressed three times replaced its
+# own backups, and the copy of the file as it was before the session —
+# the one worth having — was the first to go.
+write .mnml/config.zon .{\n    // hand-tuned: keep 40\n    .ui = .{\n        .tree_width = 40,\n    },\n}\n
+command view.settings_search
+type "Tree width"
+expect screen contains "Tree width:"
+key enter
+key right
+key right
+key right
+key enter
+expect file .mnml/config.zon contains "hand-tuned"
+# Three writes, three backups.
+shell test "$(ls .mnml/backups | wc -l | tr -d ' ')" = 3
+# The file as it was before the first write is one of them.
+shell grep -l 'tree_width = 40' .mnml/backups/*.zon
