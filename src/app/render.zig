@@ -3642,6 +3642,9 @@ test "editor.cursor_blink picks the blinking variant; ui.cursor_shape overrides 
 test "an overlay's field wins over the editor; a box that takes no typing hides the cursor; the tree has none" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 13 });
     defer app.deinit();
+    // The tree docked at 60 columns, so it can keep the keys below
+    // (the width rule would hide it and hand them to the editor).
+    app.cfg.ui.sidebar_auto_below = 0;
     app.tree.visible = false;
     _ = try app.openScratch();
     try app.activeEditor().?.buf.editor.setText("alpha beta");

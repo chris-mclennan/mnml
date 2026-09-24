@@ -877,6 +877,10 @@ const Bench = struct {
         cfg.ui.wrap = true;
         cfg.ui.clock = true;
         cfg.ui.coverage_chip_mode = .feature;
+        // The Rust rows these compare against dock the tree at any width
+        // and keep the keys in it (their mode chip reads TREE); the
+        // width rule would hide it at 80 columns and hand the keys on.
+        cfg.ui.sidebar_auto_below = 0;
         var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = ws, .data_root = root, .cfg = cfg, .cols = cols, .rows = rows });
         errdefer app.deinit();
         // The developer's own coverage must not paint into the row.

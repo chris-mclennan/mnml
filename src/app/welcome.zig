@@ -33,6 +33,7 @@
 //! clickable. `off` paints the bare ground.
 
 const std = @import("std");
+const sidebar_auto = @import("sidebar_auto.zig");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
@@ -72,12 +73,13 @@ pub fn full(app: *App) bool {
 }
 
 /// The start surface takes this key press: it has the keys, or nothing
-/// else does (the tree put away, no pane to fall back on).
+/// else does (the tree put away or off screen — auto-hidden on a narrow
+/// terminal — and no pane to fall back on).
 pub fn takesKeys(app: *App) bool {
     if (!full(app)) return false;
     return switch (app.focus) {
         .welcome => true,
-        .tree => !app.tree.visible,
+        .tree => !app.tree.visible or !sidebar_auto.focusOnScreen(app, .tree),
         .pane => app.active == null,
         .panel, .overlay => false,
     };
