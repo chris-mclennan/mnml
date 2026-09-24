@@ -792,7 +792,10 @@ fn testEnv() !std.process.Environ.Map {
 test "a pump feeds at most its budget and leaves the rest for the next pass" {
     // A child that floods faster than the terminal parses kept one pump
     // running for seconds, and the UI thread with it. 200 000 bytes fit
-    // the 256 KiB ring whole, so the count is deterministic.
+    // the 256 KiB ring whole, so the count is deterministic. The bytes
+    // are one long run of `y`s that wraps: `yes`'s "y\n" at 40x4 is
+    // 100 000 scrolls, which took the terminal 70 s in Debug for no
+    // assertion's sake; this is 5 000 and the same byte counts.
     var env = try testEnv();
     defer env.deinit();
     const total: usize = 200_000;
@@ -800,7 +803,7 @@ test "a pump feeds at most its budget and leaves the rest for the next pass" {
         .cols = 40,
         .rows = 4,
         .env = &env,
-        .argv = &.{ "/bin/sh", "-c", "stty -onlcr; yes | head -c 200000; sleep 5" },
+        .argv = &.{ "/bin/sh", "-c", "stty -onlcr; head -c 200000 /dev/zero | tr '\\0' y; sleep 5" },
         .poll_interval_ms = 20,
     });
     defer s.deinit();
