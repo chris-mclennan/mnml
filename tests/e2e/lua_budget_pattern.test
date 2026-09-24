@@ -5,6 +5,11 @@
 write .mnml/init.lua "mnml.command{ id = 'slow', run = function() local s = string.rep('a', 100000); return s:find('.-b') end }\nmnml.command{ id = 'ok', run = function() mnml.toast('STILL-ALIVE') end }\n"
 command script.reload
 command! user.slow
-expect screen contains "script budget exceeded"
+# The toast reads `<workspace>/.mnml/init.lua:1: mnml: script budget
+# exceeded` and word-wraps: where it breaks moves with the length of the
+# temp dir the workspace is in (`$TMPDIR` on a Mac, `/tmp` on Linux), so
+# the words are asked for one at a time.
+expect screen contains "budget"
+expect screen contains "exceeded"
 command user.ok
 expect screen contains "STILL-ALIVE"

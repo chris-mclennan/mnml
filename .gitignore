@@ -17,3 +17,6 @@ docs/research/compare/*/*.log
 docs/research/compare/*/fixture.txt
 __pycache__/
 *.pyc
+
+# tools/linux-verify.sh: the Zig tarball cache and the Linux run logs.
+.verify/

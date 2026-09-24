@@ -20,7 +20,8 @@ set -u
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 CHECK="$ROOT/tools/break-check.sh"
-TMP=$(mktemp -d -t break-check-selftest)
+TMPDIR_BASE=${TMPDIR:-/tmp}; TMPDIR_BASE=${TMPDIR_BASE%/}
+TMP=$(mktemp -d "${TMPDIR_BASE}/break-check-selftest.XXXXXX") || exit 70  # GNU mktemp: a template, not -t NAME
 trap 'rm -rf "$TMP"' EXIT
 
 FIXTURE="$TMP/fixture.zig"

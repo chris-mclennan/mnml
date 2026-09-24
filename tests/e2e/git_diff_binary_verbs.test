@@ -8,7 +8,9 @@ shell git init -q -b main
 shell git config user.email "ada@example.test"
 shell git config user.name "Ada Example"
 write .gitignore ".mnml/\n"
-shell printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89' > logo.png
+# Octal escapes, not \x: dash's printf (Linux's /bin/sh) has no \x and
+# writes the backslash through.
+shell printf '\211PNG\r\n\032\n\000\000\000\rIHDR\000\000\000\001\000\000\000\001\010\006\000\000\000\037\025\304\211' > logo.png
 shell git add .gitignore logo.png
 shell git commit -q -m "initial"
 shell printf 'garbage' >> logo.png

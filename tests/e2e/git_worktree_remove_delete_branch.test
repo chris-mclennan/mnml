@@ -55,7 +55,12 @@ key enter
 wait 400
 key f
 wait 2500
-expect screen contains "branch feat deleted"
+# The toast leads with the tree's absolute path too: its words one at a
+# time (a short TMPDIR — Linux's /tmp — wraps "feat" away from
+# "deleted"), and not the `kept` a refused `branch -D` would say.
+expect screen contains "worktree removed:"
+expect screen contains "deleted"
+expect screen lacks "kept"
 shell test ! -d wt
 shell test -z "$(git rev-parse --verify -q refs/heads/feat || true)"
 # Both children are in the command log.

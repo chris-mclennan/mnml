@@ -46,7 +46,10 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 REAL_BIN=${MNML_ZIG_BIN:-$ROOT/zig-out/bin/mnml-zig}
 [ -x "$REAL_BIN" ] || { echo "run-sh-check: build first: zig build -Doptimize=ReleaseSafe" >&2; exit 64; }
 
-TMP=$(mktemp -d -t run-sh-check)
+# A template, not `-t NAME`: GNU mktemp wants the X's spelled out and
+# fails on a bare prefix, which left TMP empty and every path below at /.
+TMPDIR_BASE=${TMPDIR:-/tmp}; TMPDIR_BASE=${TMPDIR_BASE%/}
+TMP=$(mktemp -d "${TMPDIR_BASE}/run-sh-check.XXXXXX") || { echo "run-sh-check: mktemp failed" >&2; exit 70; }
 export TMPDIR="$TMP/tmp"
 export MNML_DATA_ROOT="$TMP/data"
 export MNML_BIN="$TMP/bin/mnml-zig"

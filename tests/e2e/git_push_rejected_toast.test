@@ -12,7 +12,7 @@ write .gitignore ".mnml/\n"
 write a.txt "one\n"
 shell git add .gitignore a.txt
 shell git commit -q -m "first"
-shell git init -q --bare .mnml/remote.git
+shell git init -q --bare -b main .mnml/remote.git
 shell git remote add origin "$PWD/.mnml/remote.git"
 shell git push -q -u origin main
 shell git clone -q .mnml/remote.git .mnml/other && cd .mnml/other && git config user.email "bob@example.test" && git config user.name "Bob Example" && printf "theirs\n" > b.txt && git add b.txt && git commit -q -m "remote side" && git push -q origin main

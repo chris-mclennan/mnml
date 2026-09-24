@@ -14,12 +14,14 @@ wait 1000
 expect screen contains "Viewing 4"
 click 8 2
 expect screen contains "type to filter"
-type fea
+# `feat`, not `fea`: the workspace is `mnml-e2e-<6 hex>`, and a name
+# with `fea` in it (1 run in ~1000) put the WORKTREES row in the count.
+type feat
 expect screen contains "Viewing 2"
 expect screen contains "  󰘬 feature"
 expect screen contains "  󰓹 feat-1"
 expect screen lacks "󰘬 main"
-type ture
+type ure
 expect screen contains "Viewing 1"
 expect screen lacks "feat-1"
 key esc

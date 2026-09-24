@@ -721,6 +721,13 @@ container-local copy, so a Linux run never touches the host's
 `.zig-cache` or `zig-out`; the package cache and the build cache are
 docker volumes, so only the first run pays for fetching dependencies.
 
+For the whole sequence unattended on a commit — `git archive HEAD` into
+a fresh container, both unit modes, the gate, the corpus,
+`tools/run-sh-check.sh`, the integrations, each step's exit code and log
+in `.verify/linux/` — use `tools/linux-verify.sh` (`docs/CONVENTIONS.md`,
+"Verification on Linux"; what its first run found is in
+`docs/PORTABILITY-linux.md`).
+
 Give the VM room. A single `-Doptimize=ReleaseSafe` compile of
 `mnml-zig` is OOM-killed under 8 GB (`error: process terminated with
 signal KILL`), and the two build caches together want ~15 GB of disk:
