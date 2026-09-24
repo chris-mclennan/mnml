@@ -173,6 +173,12 @@ pub fn paintSpinner(ui: Ui, area: Rect, label: []const u8, now_ms: i64) void {
     _ = ui.putStr(x + 2, area.y, 1, " ", style);
 }
 
+/// `Ctrl` and nothing else: the list's own `Ctrl+N` / `Ctrl+P`, never
+/// the app's `Ctrl+Alt+N` or `Ctrl+Shift+P`.
+fn bareCtrl(m: anytype) bool {
+    return m.ctrl and !m.alt and !m.shift and !m.super;
+}
+
 pub fn ListPanel(comptime Row: type) type {
     return struct {
         const Self = @This();
@@ -494,7 +500,7 @@ pub fn ListPanel(comptime Row: type) type {
                         moveDown(st, 1, last);
                         return .consumed;
                     },
-                    .char => |c| if (m.ctrl and (c == 'n' or c == 'p')) {
+                    .char => |c| if (bareCtrl(m) and (c == 'n' or c == 'p')) {
                         if (c == 'n') moveDown(st, 1, last) else moveUp(st, 1);
                         return .consumed;
                     },
@@ -536,6 +542,11 @@ pub fn ListPanel(comptime Row: type) type {
                     return .filter_changed;
                 },
                 .char => |c| {
+                    // The list binds bare `Ctrl+N/P/D/U` and plain keys
+                    // only. Any other modified chord — `Ctrl+Alt+N`,
+                    // `Ctrl+Shift+P`, `Alt+J` — is the app's, and goes
+                    // on to the keymap, as it does from the tree.
+                    if (m.alt or m.super or (m.ctrl and m.shift)) return .ignored;
                     if (m.ctrl) switch (c) {
                         'n' => moveDown(st, 1, last),
                         'p' => moveUp(st, 1),
@@ -808,6 +819,32 @@ test "keys: motion, paging, the filter's focus and clearing" {
     // Esc from the list clears a stale filter.
     try testing.expectEqual(Todos.Outcome.filter_changed, try Todos.handleKey(&st, gpa, Key.named(.esc)));
     try testing.expectEqualStrings("", st.filterText());
+}
+
+test "keys: the list binds bare Ctrl+N / Ctrl+P and plain keys; Ctrl+Alt+N, Ctrl+Shift+P and Alt+J are the app's" {
+    var f = try Fixture.init(30, 12);
+    defer f.deinit();
+    var st: Todos.State = .{};
+    defer st.deinit(testing.allocator);
+    const rows = try forty(f.arena_state.allocator());
+    _ = Todos.draw(&st, f.ui(), f.full(), props(rows));
+    const gpa = testing.allocator;
+    try testing.expectEqual(Todos.Outcome.consumed, try Todos.handleKey(&st, gpa, Key.ctrl('n')));
+    try testing.expectEqual(@as(usize, 1), st.cursor);
+    for ([_]Key{
+        .{ .code = .{ .char = 'n' }, .mods = .{ .ctrl = true, .alt = true } },
+        .{ .code = .{ .char = 'p' }, .mods = .{ .ctrl = true, .shift = true } },
+        .{ .code = .{ .char = 'P' }, .mods = .{ .ctrl = true, .shift = true } },
+        .{ .code = .{ .char = 'j' }, .mods = .{ .alt = true } },
+    }) |k| {
+        try testing.expectEqual(Todos.Outcome.ignored, try Todos.handleKey(&st, gpa, k));
+        try testing.expectEqual(@as(usize, 1), st.cursor);
+    }
+    // In the filter too: the field keeps its own keys, not the app's.
+    _ = try Todos.handleKey(&st, gpa, Key.char('/'));
+    try testing.expect(st.filter_focused);
+    _ = try Todos.handleKey(&st, gpa, .{ .code = .{ .char = 'n' }, .mods = .{ .ctrl = true, .alt = true } });
+    try testing.expectEqual(@as(usize, 1), st.cursor);
 }
 
 test "narrow and short areas never panic and register nothing off-screen" {
