@@ -212,7 +212,7 @@ pub fn isoToUnix(s: []const u8) ?i64 {
 
 fn optsOrFail(app: *App) CommandError!Opts {
     return (try Opts.fromConfig(app.frame.allocator(), &app.cfg.cloud_agents, &app.env)) orelse
-        app.diag.fail(app.frame.allocator(), "cloud runs need [cloud_agents] runs_table and region (or MNML_CLOUD_AGENTS_REGION) in the config", .{});
+        app.diag.fail(app.frame.allocator(), "cloud runs need .cloud_agents.runs_table and .region (or MNML_CLOUD_AGENTS_REGION) in the config", .{});
 }
 
 fn cloudRow(app: *App) CommandError!Item {
@@ -311,7 +311,7 @@ pub fn runTaskArgv(arena: Allocator, o: Opts, ticket: []const u8, model: ?[]cons
 pub fn openRun(app: *App, it: Item) CommandError!void {
     const o = try optsOrFail(app);
     const arena = app.frame.allocator();
-    if (it.cloud != null and it.cloud.?.task_arn != null and o.cluster.len == 0) return app.diag.fail(arena, "cloud runs need [cloud_agents] cluster to describe a task", .{});
+    if (it.cloud != null and it.cloud.?.task_arn != null and o.cluster.len == 0) return app.diag.fail(arena, "cloud runs need .cloud_agents.cluster to describe a task", .{});
     const argv = try describeArgv(arena, o, it);
     _ = try pty_pane.open(app, .{ .argv = argv, .label = try std.fmt.allocPrint(arena, "run {s}", .{it.session_id[0..@min(8, it.session_id.len)]}), .placement = .right, .kind = .command });
 }
@@ -320,7 +320,7 @@ pub fn openRun(app: *App, it: Item) CommandError!void {
 pub fn tailLog(app: *App, it: Item) CommandError!void {
     const o = try optsOrFail(app);
     const arena = app.frame.allocator();
-    if (o.log_group.len == 0) return app.diag.fail(arena, "cloud runs need [cloud_agents] log_group to tail a log", .{});
+    if (o.log_group.len == 0) return app.diag.fail(arena, "cloud runs need .cloud_agents.log_group to tail a log", .{});
     const argv = try tailArgv(arena, o, it.session_id, true);
     _ = try pty_pane.open(app, .{ .argv = argv, .label = try std.fmt.allocPrint(arena, "log {s}", .{it.session_id[0..@min(8, it.session_id.len)]}), .placement = .below, .kind = .command });
 }
@@ -329,7 +329,7 @@ pub fn tailLog(app: *App, it: Item) CommandError!void {
 pub fn cancelRun(app: *App, it: Item) CommandError!void {
     const arena = app.frame.allocator();
     const o = try optsOrFail(app);
-    if (o.cluster.len == 0) return app.diag.fail(arena, "cloud runs need [cloud_agents] cluster to cancel a task", .{});
+    if (o.cluster.len == 0) return app.diag.fail(arena, "cloud runs need .cloud_agents.cluster to cancel a task", .{});
     const arn = (if (it.cloud) |c| c.task_arn else null) orelse return app.diag.fail(arena, "sessions: run {s} has no task to stop (it may already be done)", .{it.session_id});
     const owned = try app.gpa.dupe(u8, arn);
     errdefer app.gpa.free(owned);
@@ -405,7 +405,7 @@ pub fn acceptRun(app: *App, ticket_in: []const u8, model_in: ?[]const u8) Alloca
     }
     const o = (try Opts.fromConfig(arena, &app.cfg.cloud_agents, &app.env)) orelse return;
     if (o.cluster.len == 0 or o.task_definition.len == 0) {
-        app.toast("cloud runs need [cloud_agents] cluster and task_definition to start one", .{});
+        app.toast("cloud runs need .cloud_agents.cluster and .task_definition to start one", .{});
         return;
     }
     var model: ?[]const u8 = if (model_in) |m| std.mem.trim(u8, m, " \t\r\n") else null;

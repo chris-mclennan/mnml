@@ -32,8 +32,10 @@ pub const Linter = struct {
 const FmtEntry = struct { []const u8, Formatter };
 const LintEntry = struct { []const u8, Linter };
 
-/// What runs when the config names nothing. The binaries are assumed
-/// on PATH; a missing one is reported when the run is asked for.
+/// What runs when the config names nothing. A binary is looked for in
+/// the project's `node_modules/.bin`, then on PATH
+/// (`lsp_format.toolPath`); a missing one is reported when the run is
+/// asked for.
 pub const builtin_formatters = [_]FmtEntry{
     .{ "rs", .{ .argv = &.{ "rustfmt", "--emit", "stdout" } } },
     .{ "ts", .{ .argv = &.{ "prettier", "--stdin-filepath", "{file}" } } },

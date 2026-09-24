@@ -1,0 +1,28 @@
+# Vim's charwise VISUAL includes the character under the cursor: `y`
+# yanks it, and the range a code action asks about must hold it too.
+# `foo(x)` selected with `v5l` went out as 2:2-2:7 — `foo(x` without the
+# `)` — so tsserver offered none of its Extract refactors for a correctly
+# made selection, and the statusline said `Sel 5` for six characters.
+# One conversion (`Buffer.selectedSpan`) serves both now; a one-char
+# selection is one character, not an empty range.
+write src/main.fk "fn foo() {\n  let x = 1;\n  foo(x); // TODO later\n}\n"
+write .fkroot ""
+write .mnml/config.zon .{ .lsp = .{ .fake = .{ .cmd = "$MNML_FAKE_LSP", .args = .{ "--log", "lsp.log" }, .extensions = .{ "fk" }, .root_markers = .{ ".fkroot" } } } }
+open src/main.fk
+expect screen contains "LSP 1"
+command editor.use_vim
+type 3G
+type 0w
+type v
+expect screen contains "VISUAL"
+expect screen contains " Sel 1 "
+command lsp.code_action
+expect within 3000 file lsp.log contains "codeAction range 2:2-2:3"
+key esc
+key esc
+type 3G
+type 0w
+type v5l
+expect screen contains " Sel 6 "
+command lsp.code_action
+expect within 3000 file lsp.log contains "codeAction range 2:2-2:8"

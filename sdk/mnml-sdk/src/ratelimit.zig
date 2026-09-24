@@ -387,7 +387,9 @@ pub const Limiter = struct {
         errdefer l.deinit();
         // Resolved once, whether or not anything is listening: the
         // broker comes and goes with mnml, so the answer to "is there
-        // one" belongs to `acquireVia`, not to startup.
+        // one" belongs to `acquireVia`, not to startup. Told
+        // `MNML_BROKER=0`, there is no socket to try at all.
+        if (!broker.enabledIn(env)) return l;
         l.broker_socket = broker.socketPath(gpa, io, env, service) catch &.{};
         return l;
     }
@@ -1339,6 +1341,31 @@ test "a limiter for a service resolves its broker socket beside the bucket, list
     // Resolved at startup, tried per request — the broker comes and
     // goes with mnml.
     if (broker.supported) try t.expectEqualStrings("/data/ratelimit/bitbucket-broker.sock", l.broker_socket);
+}
+
+test "MNML_BROKER=0 leaves a limiter without a broker socket: every acquire is the file bucket's" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    try env.put("HOME", "/nonexistent-home");
+    try env.put("MNML_DATA_ROOT", dir);
+    for ([_][]const u8{ "0", "off", "False", "NO" }) |v| {
+        try env.put(broker.enabled_env, v);
+        var l = try Limiter.forService(t.allocator, t.io, &env, "bitbucket");
+        defer l.deinit();
+        try t.expectEqualStrings("", l.broker_socket);
+        const got = l.acquireVia(.interactive);
+        try t.expect(got.ok);
+        try t.expectEqual(Via.file, got.via);
+    }
+    // Anything else leaves it on.
+    try env.put(broker.enabled_env, "1");
+    var on = try Limiter.forService(t.allocator, t.io, &env, "bitbucket");
+    defer on.deinit();
+    if (broker.supported) try t.expect(on.broker_socket.len > 0);
 }
 
 test "a brokered acquire is one token off the same bucket, marked broker, with its draw line written" {

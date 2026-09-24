@@ -54,6 +54,8 @@ const lsp = @import("lsp.zig");
 const find_mod = @import("find.zig");
 const config = @import("../config/root.zig");
 const build_options = @import("build_options");
+const hooks = @import("../core/hooks.zig");
+const document = @import("../editor/document.zig");
 
 pub const Session = client.Session;
 pub const Breakpoint = types.Breakpoint;
@@ -359,6 +361,48 @@ pub fn setAllEnabled(app: *App, on: bool) CommandError!void {
     }
     app.toast("{s} {d} breakpoint{s}", .{ if (on) "enabled" else "disabled", n, if (n == 1) "" else "s" });
     app.needs_render = true;
+}
+
+/// A breakpoint belongs to its line's text, not to a line number: move
+/// `doc`'s breakpoints across every edit it logged since they last
+/// moved (`Splice.shiftPoint` — a line opened above takes the
+/// breakpoint down with its text, as Neovim's signs and VS Code's
+/// breakpoints do). Called for every drawn editor before the frame trims
+/// the log (`render`), and on a save; a log that lost its records
+/// (`EditLog.lostSince`) leaves them where they are. Two breakpoints
+/// whose lines were deleted into one keep the first.
+pub fn followBreakpoints(app: *App, doc: *document.Document) void {
+    const head = doc.edits.head();
+    const seen = doc.bp_seen orelse head;
+    doc.bp_seen = head;
+    if (seen == head or doc.edits.lostSince(seen)) return;
+    const recs = doc.edits.since(seen);
+    if (recs.len != head - seen) return;
+    const path = doc.path orelse return;
+    const list = app.dap.breakpoints.getPtr(path) orelse return;
+    if (list.items.len == 0) return;
+    for (recs) |sp| for (list.items) |*b| {
+        b.line = sp.shiftPoint(.{ .row = b.line, .col = 0 }).row;
+    };
+    sortByLine(list);
+    var i: usize = 1;
+    while (i < list.items.len) {
+        if (list.items[i].line == list.items[i - 1].line) {
+            var gone = list.orderedRemove(i);
+            gone.deinit(app.gpa);
+        } else i += 1;
+    }
+    app.needs_render = true;
+}
+
+/// A save: the breakpoints follow the text that was written, and a live
+/// adapter hears where they are now — the program it runs is built from
+/// the saved file, so the lines it is sent must be the saved text's.
+pub fn onSavePost(app: *App, args: hooks.HookArgs) void {
+    const e = app.panes.editor(args.save_post.pane) orelse return;
+    followBreakpoints(app, e.buf.doc);
+    const path = e.buf.doc.path orelse return;
+    if (app.dap.bpsFor(path).len > 0) syncBreakpoints(app, path);
 }
 
 /// Push one file's list to a live, initialized adapter.

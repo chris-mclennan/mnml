@@ -71,6 +71,7 @@ pub const Server = client.Server;
 pub const ReqKind = client.ReqKind;
 pub const Ctx = client.Ctx;
 const Value = jsonrpc.Value;
+const document = @import("../editor/document.zig");
 
 /// One file's diagnostics from four sources — the server's publish, an
 /// external linter's run, the script layer's own `init.lua` error and
@@ -313,6 +314,10 @@ pub const State = struct {
     servers_loaded: ?config.Loaded = null,
     /// One re-read per session: a miss stays a miss.
     servers_refreshed: bool = false,
+    /// The server whose answer a jump is following (`jumpTo`), for the
+    /// length of the open it makes: the file it lands in is served by
+    /// that server (`ensureServer`), whatever marker sits above it.
+    lender: ?u32 = null,
 
     pub fn deinit(self: *State, gpa: Allocator, io: Io) void {
         self.lint_group.cancel(io);
@@ -467,6 +472,12 @@ fn markedRoot(app: *App, arena: Allocator, path: []const u8, markers: []const []
     return try walkUp(app, arena, start, markers);
 }
 
+/// `markedRoot` for a test in another file (the ceiling's, `git.zig`).
+pub fn rootMarkedFor(app: *App, path: []const u8, markers: []const []const u8) Allocator.Error!?[]const u8 {
+    if (!builtin.is_test) @compileError("tests only");
+    return markedRoot(app, app.frame.allocator(), path, markers, false);
+}
+
 /// The first directory from `start` up holding any of `markers`. The
 /// walk never climbs into a `GIT_CEILING_DIRECTORIES` entry, as git's
 /// own search does not: the commonest marker is `.git`, and a workspace
@@ -476,7 +487,7 @@ fn walkUp(app: *App, arena: Allocator, start: []const u8, markers: []const []con
     const ceilings = app.env.get("GIT_CEILING_DIRECTORIES") orelse "";
     var dir: ?[]const u8 = start;
     while (dir) |d| : (dir = std.fs.path.dirname(d)) {
-        if (d.len != start.len and @import("git.zig").isCeiling(ceilings, d)) break;
+        if (d.len != start.len and @import("git.zig").isCeiling(app.io, ceilings, d)) break;
         for (markers) |m| {
             // // changed (lsp-defaults): `*.sln` scans the directory, as
             // Rust's `marker_matches`; a literal is one stat.
@@ -496,6 +507,40 @@ fn walkUp(app: *App, arena: Allocator, start: []const u8, markers: []const []con
 fn pathUnder(path: []const u8, dir: []const u8) bool {
     if (!std.mem.startsWith(u8, path, dir)) return false;
     return path.len == dir.len or path[dir.len] == '/' or (dir.len > 0 and dir[dir.len - 1] == '/');
+}
+
+/// Is `path` inside a toolchain's, a package manager's or an
+/// interpreter's own tree — the Rust sysroot, a cargo registry, Zig's
+/// `lib/zig`, `node_modules`, `site-packages`, Go's module cache? A
+/// marker there (std's own `Cargo.toml`, `lib/zig/std/build.zig`, a
+/// package's `package.json`) is the library's, not a project the user
+/// opened: a file under one is lent to a running server rather than
+/// rooting a second one that loads the library as a workspace.
+pub fn isLibraryPath(path: []const u8) bool {
+    const pairs = [_][2][]const u8{
+        .{ "lib", "rustlib" }, .{ ".rustup", "toolchains" }, .{ ".cargo", "registry" },
+        .{ ".cargo", "git" },  .{ "lib", "zig" },            .{ "zig", "p" },
+        .{ "pkg", "mod" },
+    };
+    const singles = [_][]const u8{ "node_modules", "site-packages", "dist-packages" };
+    var it = std.mem.tokenizeAny(u8, path, "/\\");
+    var prev: []const u8 = "";
+    while (it.next()) |c| {
+        for (singles) |x| if (std.mem.eql(u8, c, x)) return true;
+        for (pairs) |pr| if (std.mem.eql(u8, prev, pr[0]) and std.mem.eql(u8, c, pr[1])) return true;
+        prev = c;
+    }
+    return false;
+}
+
+/// The server a jump is following (`State.lender`), when it is alive
+/// and speaks `name`.
+fn lentByJump(app: *App, name: []const u8) ?*Server {
+    const id = app.lsp.lender orelse return null;
+    for (app.lsp.servers.items) |s| {
+        if (s.id == id and !s.transport.isDead() and std.mem.eql(u8, s.name, name)) return s;
+    }
+    return null;
 }
 
 /// A live server of `name` to lend a file that has no project of its
@@ -702,6 +747,12 @@ pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
         try refreshServers(app);
         spec = specFor(app, path) orelse return null;
     }
+    // A jump the running server answered (`gd` into std, a reference in
+    // a registry crate) lands in a file that server already reaches: it
+    // serves it, as a plain open document. The file's own marker —
+    // library/std's `Cargo.toml`, zig std's `build.zig` — must not root a
+    // second server that loads the library as a workspace.
+    if (lentByJump(app, spec.name)) |s| return s;
     if (app.lsp.dead.contains(spec.name)) return null;
     const arena = app.frame.allocator();
     // `$NAME` in the command or an argument comes from the environment,
@@ -760,7 +811,11 @@ pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
     // opened it): it joins that server as a plain open document instead
     // of rooting a second one at its own directory. Only a file under a
     // different project's marker gets a server of its own.
-    if (marked == null and !pathUnder(path, app.workspace)) if (serverToLend(app, spec.name)) |s| return s;
+    // A file opened by hand under a marker inside a toolchain or package
+    // tree (`isLibraryPath`) is the same case: the marker is the
+    // library's, so a running server is lent before a new root starts.
+    const lendable = if (marked) |m| isLibraryPath(m) else !pathUnder(path, app.workspace);
+    if (lendable) if (serverToLend(app, spec.name)) |s| return s;
     const root = marked orelse std.fs.path.dirname(path) orelse app.workspace;
     for (app.lsp.servers.items) |s| if (std.mem.eql(u8, s.name, spec.name) and std.mem.eql(u8, s.root, root) and !s.transport.isDead()) return s;
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
@@ -1179,6 +1234,12 @@ fn handleNotification(app: *App, s: *Server, method: []const u8, params: ?Value)
         } else if (std.mem.eql(u8, kind, "end")) {
             s.progress_open -|= 1;
             if (s.progress_open == 0) jobs.endKeyed(app, .lsp, indexKey(s.id), .{});
+            // Loading done: what the decorations asked for on open was
+            // answered from the half-loaded snapshot (rust-analyzer says
+            // `[]` to a hint request before its crate graph is built), and
+            // a server that sends no refresh would leave it so until the
+            // first edit. They are asked for once more.
+            if (s.progress_open == 0 and s.ready) decor.onServerReady(app, s);
             if (s.progress_open == 0 and s.ready) try runDeferred(app, s);
         }
     }
@@ -1266,6 +1327,13 @@ fn handleServerRequest(app: *App, s: *Server, id: jsonrpc.Id, method: []const u8
             app.toast("LSP: applied {d} edit(s)", .{n});
         };
         s.respond(id, "{\"applied\":true}") catch {};
+    } else if (isRefresh(method)) {
+        // The server's view changed under what it answered before — a
+        // hint or token asked while rust-analyzer was still loading its
+        // workspace came back empty — and it says so: every set of the
+        // decorations for its files is asked for again.
+        s.respond(id, "null") catch {};
+        decor.onServerReady(app, s);
     } else if (std.mem.eql(u8, method, "client/registerCapability")) {
         // The one registration mnml honours: a file watcher. The globs
         // are not kept — every change under the workspace is reported.
@@ -1278,6 +1346,15 @@ fn handleServerRequest(app: *App, s: *Server, id: jsonrpc.Id, method: []const u8
         // `window/workDoneProgress/create`…
         s.respond(id, "null") catch {};
     }
+}
+
+/// `workspace/{inlayHint,semanticTokens,codeLens}/refresh` — the three
+/// the client advertises `refreshSupport` for (`client.zig`).
+fn isRefresh(method: []const u8) bool {
+    for ([_][]const u8{ "workspace/inlayHint/refresh", "workspace/semanticTokens/refresh", "workspace/codeLens/refresh" }) |m| {
+        if (std.mem.eql(u8, method, m)) return true;
+    }
+    return false;
 }
 
 /// A file mnml itself wrote, created, moved or deleted: every ready
@@ -1410,11 +1487,80 @@ pub fn applyDiagnostics(app: *App, path: []const u8, list: []const Value) Alloca
         d.raw = try jsonrpc.stringify(arena, v);
         try read.append(arena, d);
     };
+    // The other sources are brought up to the text as it is now first;
+    // the publish describes the text the server was last told about
+    // (`lsp_seen`), so it is carried across whatever was typed since.
+    const doc = openDoc(app, path);
+    if (doc) |d| followDiagnostics(app, d);
     const fd = try fileDiags(app, path);
     fd.arena.reset();
     fd.server_items = &.{};
     fd.server_items = try copyDiagnostics(fd.arena.allocator(), read.items);
+    if (doc) |d| if (d.lsp_seen) |told| if (recordsSince(d, told)) |recs| shiftDiagnostics(fd.server_items, recs);
     try finishDiagnostics(app, path, fd);
+}
+
+/// The document open on `path`, if an editor shows it.
+fn openDoc(app: *App, path: []const u8) ?*document.Document {
+    const id = app.panes.findPath(path) orelse return null;
+    const e = app.panes.editor(id) orelse return null;
+    return e.buf.doc;
+}
+
+/// A diagnostic belongs to the text it was published about, not to a
+/// line number: move `doc`'s diagnostics — every source's, and the
+/// merged list — across the edit log's records since they last moved
+/// (`Document.diag_seen`, `Splice.shiftPoint`), as Neovim's extmarks
+/// carry a sign and an underline. rust-analyzer republishes rustc's
+/// findings only on a save; until then the client owns their places,
+/// and the gutter mark, the squiggle, `]d`, the hover and a quickfix
+/// list built from them walked onto whatever moved into the old line.
+/// Runs where the other edit-log consumers follow before the frame
+/// trims the log (`render`), and before a publish lands. Columns shift
+/// by the edit's bytes on its own last row — exact for ASCII; the next
+/// publish puts any wide character right.
+pub fn followDiagnostics(app: *App, doc: *document.Document) void {
+    const head = doc.edits.head();
+    const seen = doc.diag_seen orelse head;
+    doc.diag_seen = head;
+    const recs = recordsSince(doc, seen) orelse return;
+    const path = doc.path orelse return;
+    // A quickfix list filled from these diagnostics holds their places
+    // too (Neovim's qf_mark_adjust): it moves with them.
+    @import("quickfix.zig").followDiagnosticEdits(app, path, recs);
+    const fd = app.lsp.diags.get(path) orelse return;
+    if (fd.items.len == 0) return;
+    for ([_][]types.Diagnostic{ fd.server_items, fd.lint_items, fd.script_items, fd.lua_items, fd.items }) |list| {
+        shiftDiagnostics(list, recs);
+    }
+    app.needs_render = true;
+}
+
+/// `followDiagnostics` for the document open on `path`, if one is.
+pub fn followDiagnosticsAt(app: *App, path: []const u8) void {
+    if (openDoc(app, path)) |d| followDiagnostics(app, d);
+}
+
+/// Every record `doc` logged after `seen` — null when there are none,
+/// or when the log no longer holds them all (lost, or trimmed).
+fn recordsSince(doc: *const document.Document, seen: u64) ?[]const document.Splice {
+    const head = doc.edits.head();
+    if (seen >= head or doc.edits.lostSince(seen)) return null;
+    const recs = doc.edits.since(seen);
+    if (recs.len != head - seen) return null;
+    return recs;
+}
+
+fn shiftDiagnostics(list: []types.Diagnostic, recs: []const document.Splice) void {
+    for (list) |*d| for (recs) |sp| {
+        d.range.start = shiftPos(sp, d.range.start);
+        d.range.end = shiftPos(sp, d.range.end);
+    };
+}
+
+fn shiftPos(sp: document.Splice, p: types.Position) types.Position {
+    const q = sp.shiftPoint(.{ .row = p.line, .col = p.character });
+    return .{ .line = q.row, .character = q.col };
 }
 
 /// An external linter's findings for `path`: its list replaced
@@ -1895,15 +2041,23 @@ fn gotoResult(app: *App, kind: ReqKind, ctx: Ctx, result: ?Value) Allocator.Erro
         return;
     }
     if (overlay) return openPeek(app, ctx.pane, locs[0]);
-    if (locs.len == 1) return jumpTo(app, locs[0], ctx.extra == goto_split);
+    if (locs.len == 1) return jumpTo(app, locs[0], ctx.extra == goto_split, ctx.pane);
     try locationsPicker(app, "Definitions", locs, "no definition");
 }
 
 /// Open `loc`'s file with the cursor on its range; `split` puts it in
-/// a new leaf below instead of the current leaf.
-fn jumpTo(app: *App, loc: types.Location, split: bool) Allocator.Error!void {
+/// a new leaf below instead of the current leaf. `from` is the pane the
+/// jump started in (null: the active one): its server answered, so the
+/// file it lands in is lent to that server (`State.lender`).
+fn jumpTo(app: *App, loc: types.Location, split: bool, from: ?PaneId) Allocator.Error!void {
     const path = try app.frame.allocator().dupe(u8, loc.path);
     const cur = app.active;
+    app.lsp.lender = lender: {
+        const e = app.panes.editor(from orelse cur orelse break :lender null) orelse break :lender null;
+        const s = serverFor(app, e.buf.doc.path orelse break :lender null) orelse break :lender null;
+        break :lender s.id;
+    };
+    defer app.lsp.lender = null;
     const id = app.openPath(path) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => {
@@ -2647,9 +2801,10 @@ fn requestActions(app: *App, t: Target, only: ?[]const u8, mode: u32) CommandErr
     // The range is what the server judges the assists by — a fill-match-
     // arms fix is offered when the range spans the match, an extract
     // refactor works on the span the user marked. A selection is sent as
-    // it stands (a linewise one already covers whole lines); without one
-    // the cursor's line, as before.
-    const span: [2]usize = ed.selection() orelse .{ ed.lineStart(ed.currentLine()), ed.lineEnd(ed.currentLine()) };
+    // the user sees it (`selectedSpan`: charwise VISUAL takes the
+    // character under the cursor, as `y` does — the extract refactors
+    // need the whole expression); without one the cursor's line.
+    const span: [2]usize = t.e.buf.selectedSpan() orelse .{ ed.lineStart(ed.currentLine()), ed.lineEnd(ed.currentLine()) };
     const start = types.positionOf(text, span[0], t.server.encoding);
     const end = types.positionOf(text, span[1], t.server.encoding);
     // The diagnostics on those lines give the server its context — each
@@ -2947,7 +3102,7 @@ pub fn pickerAccept(app: *App, kind: app_mod.PickerKind, idx: usize) Allocator.E
     switch (kind) {
         .lsp_locations => {
             const set = app.lsp.picker_locs orelse return;
-            if (idx < set.items.len) try jumpTo(app, set.items[idx], false);
+            if (idx < set.items.len) try jumpTo(app, set.items[idx], false, null);
             dropLocs(app);
         },
         .lsp_code_actions => try runAction(app, idx),
@@ -2956,7 +3111,7 @@ pub fn pickerAccept(app: *App, kind: app_mod.PickerKind, idx: usize) Allocator.E
             if (idx >= pick.items.len) return;
             const s = pick.items[idx];
             const path: []const u8 = s.path orelse (if (app.panes.editor(pick.pane)) |e| (e.buf.doc.path orelse return) else return);
-            try jumpTo(app, .{ .path = path, .range = .{ .start = .{ .line = s.line, .character = s.character }, .end = .{ .line = s.line, .character = s.character } } }, false);
+            try jumpTo(app, .{ .path = path, .range = .{ .start = .{ .line = s.line, .character = s.character }, .end = .{ .line = s.line, .character = s.character } } }, false, null);
             dropSymbolPick(app);
         },
         else => {},
@@ -3678,6 +3833,119 @@ fn stringIdServer(io: Io, gpa: Allocator, in: Io.File, out: Io.File) Io.Cancelab
     }
 }
 
+/// rust-analyzer's shape before its workspace has loaded: the first
+/// `inlayHint` is answered `[]` and `semanticTokens/full` with no
+/// tokens. Answering that first hint request is when loading finishes;
+/// then `.refresh` sends `workspace/inlayHint/refresh` and
+/// `workspace/semanticTokens/refresh` — only when the client advertised
+/// `refreshSupport`, as the real server does — and `.progress` ends the
+/// `$/progress` it began at `initialized`, sending no refresh. Loaded,
+/// a hint `: u32` after `x` and one keyword token on line 0.
+const Unloaded = enum { refresh, progress };
+fn unloadedServer(io: Io, gpa: Allocator, in: Io.File, out: Io.File, mode: Unloaded) Io.Cancelable!void {
+    var buf: [16384]u8 = undefined;
+    var fr = in.readerStreaming(io, &buf);
+    var loaded = false;
+    var refresh_ok = false;
+    while (true) {
+        const body = jsonrpc.readBody(gpa, &fr.interface) catch return;
+        defer gpa.free(body);
+        var parsed = std.json.parseFromSlice(Value, gpa, body, .{}) catch return;
+        defer parsed.deinit();
+        switch (jsonrpc.classify(parsed.value)) {
+            .request => |rq| {
+                const m = rq.method;
+                if (std.mem.eql(u8, m, "initialize")) {
+                    const ws = jsonrpc.getObj(jsonrpc.getObj(rq.params.?, "capabilities") orelse return, "workspace");
+                    const hint = if (ws) |w| jsonrpc.getObj(w, "inlayHint") else null;
+                    refresh_ok = if (hint) |h| (jsonrpc.getBool(h, "refreshSupport") orelse false) else false;
+                    lspReply(io, gpa, out, rq.id, "{\"capabilities\":{\"textDocumentSync\":1,\"inlayHintProvider\":true,\"semanticTokensProvider\":{\"legend\":{\"tokenTypes\":[\"keyword\"],\"tokenModifiers\":[]},\"full\":true}}}");
+                } else if (std.mem.eql(u8, m, "textDocument/inlayHint")) {
+                    if (loaded) {
+                        lspReply(io, gpa, out, rq.id, "[{\"position\":{\"line\":0,\"character\":5},\"label\":\": u32\",\"kind\":1}]");
+                        continue;
+                    }
+                    lspReply(io, gpa, out, rq.id, "[]");
+                    loaded = true;
+                    switch (mode) {
+                        .refresh => if (refresh_ok) {
+                            jsonrpc.writeFrame(io, out, "{\"jsonrpc\":\"2.0\",\"id\":\"hint-refresh\",\"method\":\"workspace/inlayHint/refresh\"}") catch return;
+                            jsonrpc.writeFrame(io, out, "{\"jsonrpc\":\"2.0\",\"id\":\"token-refresh\",\"method\":\"workspace/semanticTokens/refresh\"}") catch return;
+                        },
+                        .progress => jsonrpc.writeFrame(io, out, "{\"jsonrpc\":\"2.0\",\"method\":\"$/progress\",\"params\":{\"token\":\"rustAnalyzer/Indexing\",\"value\":{\"kind\":\"end\"}}}") catch return,
+                    }
+                } else if (std.mem.eql(u8, m, "textDocument/semanticTokens/full")) {
+                    lspReply(io, gpa, out, rq.id, if (loaded) "{\"data\":[0,0,3,0,0]}" else "{\"data\":[]}");
+                } else {
+                    lspReply(io, gpa, out, rq.id, "null");
+                }
+            },
+            .notification => |n| {
+                if (std.mem.eql(u8, n.method, "exit")) return;
+                if (mode == .progress and std.mem.eql(u8, n.method, "initialized")) {
+                    jsonrpc.writeFrame(io, out, "{\"jsonrpc\":\"2.0\",\"method\":\"$/progress\",\"params\":{\"token\":\"rustAnalyzer/Indexing\",\"value\":{\"kind\":\"begin\",\"title\":\"Indexing\"}}}") catch return;
+                }
+            },
+            else => {},
+        }
+    }
+}
+
+/// Open a file on an `unloadedServer` and wait until the loaded hint
+/// paints and the file holds the loaded token — with no edit, ever.
+fn unloadedRun(mode: Unloaded, comptime name: []const u8) !void {
+    const gpa = testing.allocator;
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const io = app.io;
+    const c2s = try Io.Threaded.pipe2(.{});
+    const s2c = try Io.Threaded.pipe2(.{});
+    const F = Io.File;
+    const flags: F.Flags = .{ .nonblocking = false };
+    const in_r = F{ .handle = c2s[0], .flags = flags };
+    const out_w = F{ .handle = s2c[1], .flags = flags };
+    var group: Io.Group = .init;
+    try group.concurrent(io, unloadedServer, .{ io, gpa, in_r, out_w, mode });
+    const s = try Server.initFiles(gpa, io, app.events, app.lsp.next_id, F{ .handle = c2s[1], .flags = flags }, F{ .handle = s2c[0], .flags = flags }, .{ .name = "typescript", .argv = &.{"fake-ra"}, .root = "/tmp" });
+    app.lsp.next_id += 1;
+    try app.lsp.servers.append(gpa, s);
+    try s.initialize();
+    const path = TestRig.scratch(name);
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = TestRig.text });
+    defer Io.Dir.cwd().deleteFile(io, path) catch {};
+    const pane = try app.openPath(path);
+    const e = app.panes.editor(pane).?;
+    const Probe = struct {
+        app: *App,
+        path: []const u8,
+        fn loaded(p: @This()) bool {
+            const f = p.app.lsp.semantic.get(p.path) orelse return false;
+            if (f.tokens.len != 1) return false;
+            const txt = TestRig.screenText(p.app, p.app.gpa) catch return false;
+            defer p.app.gpa.free(txt);
+            return std.mem.indexOf(u8, txt, "let x: u32 = 1;") != null;
+        }
+    };
+    try TestRig.pump(&app, Probe{ .app = &app, .path = path }, Probe.loaded, 5000);
+    try testing.expectEqual(@as(u64, 0), e.buf.doc.edits.head());
+    retireServer(&app, s);
+    try group.await(io);
+    in_r.close(io);
+    out_w.close(io);
+    TestRig.removeDirIfEmpty();
+}
+
+test "lsp refresh: hints and tokens answered empty before the workspace loaded are asked again on the server's refresh request" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    try unloadedRun(.refresh, "mnml-zig-fake-lsp-refresh.ts");
+}
+
+test "lsp refresh: a server that sends no refresh is asked again when its $/progress ends" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    try unloadedRun(.progress, "mnml-zig-fake-lsp-progress.ts");
+}
+
 test "a server's string-id `workspace/configuration` (zls's) is answered under the same id, with the configured settings" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const gpa = testing.allocator;
@@ -4084,6 +4352,127 @@ test "a file outside the workspace under no project marker joins the workspace's
     try pumpUntil(&app, Probe{ .app = &app, .path = c }, Cond.open, 30_000);
     try testing.expectEqual(@as(usize, 2), app.lsp.servers.items.len);
     try testing.expectEqualStrings(other_root, serverFor(&app, c).?.root);
+}
+
+/// A tree for the lending tests: `ws/` (the workspace, a project) and
+/// `extra` directories each holding a `.fkroot` marker and one file.
+fn lendFixture(tmp: *testing.TmpDir, marked: []const []const u8) !void {
+    const io = testing.io;
+    try tmp.dir.createDirPath(io, "ws/.mnml");
+    try tmp.dir.writeFile(io, .{ .sub_path = "ws/.fkroot", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "ws/a.fk", .data = "fn a() {}\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "ws/.mnml/config.zon", .data = ".{ .lsp = .{ .fake = .{ .cmd = \"$MNML_FAKE_LSP\", .extensions = .{ \"fk\" }, .root_markers = .{ \".fkroot\" } } } }" });
+    var buf: [512]u8 = undefined;
+    for (marked) |dir| {
+        try tmp.dir.createDirPath(io, dir);
+        try tmp.dir.writeFile(io, .{ .sub_path = try std.fmt.bufPrint(&buf, "{s}/.fkroot", .{dir}), .data = "" });
+        try tmp.dir.writeFile(io, .{ .sub_path = try std.fmt.bufPrint(&buf, "{s}/m.fk", .{dir}), .data = "fn m() {}\n" });
+    }
+}
+
+const LendProbe = struct {
+    app: *App,
+    path: []const u8,
+    fn open(p: LendProbe) bool {
+        for (p.app.lsp.servers.items) |x| if (x.ready and x.isOpen(p.path)) return true;
+        return false;
+    }
+};
+
+test "lsp lend: a jump the running server answered is served by that server, whatever marker sits above the file it lands in (rust-analyzer into std, a path dependency)" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    const exe = build_options.fake_lsp_exe;
+    Io.Dir.cwd().access(io, exe, .{}) catch return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const top = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+    // The sysroot's library/std has its own Cargo.toml; so has a path
+    // dependency beside the workspace — neither is a library path for
+    // the second one.
+    const std_dir = ".rustup/toolchains/stable/lib/rustlib/src/rust/library/std";
+    try lendFixture(&tmp, &.{ std_dir, "deps/serde" });
+    const ws = try std.fs.path.join(gpa, &.{ top, "ws" });
+    defer gpa.free(ws);
+    const a = try std.fs.path.join(gpa, &.{ ws, "a.fk" });
+    defer gpa.free(a);
+    const in_std = try std.fs.path.join(gpa, &.{ top, std_dir, "m.fk" });
+    defer gpa.free(in_std);
+    const in_dep = try std.fs.path.join(gpa, &.{ top, "deps", "serde", "m.fk" });
+    defer gpa.free(in_dep);
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try env.put("MNML_FAKE_LSP", exe);
+    var app = try App.initWith(gpa, io, .{ .workspace = ws, .cols = 100, .rows = 30, .env = &env, .workspace_trusted = true });
+    defer app.deinit();
+    app.tree.visible = false;
+    const from = try app.openPath(a);
+    try pumpUntil(&app, LendProbe{ .app = &app, .path = a }, LendProbe.open, 30_000);
+    const first = app.lsp.servers.items[0];
+    const zero: types.Range = .{ .start = .{ .line = 0, .character = 0 }, .end = .{ .line = 0, .character = 0 } };
+    try jumpTo(&app, .{ .path = in_dep, .range = zero }, false, from);
+    try pumpUntil(&app, LendProbe{ .app = &app, .path = in_dep }, LendProbe.open, 30_000);
+    try testing.expectEqual(@as(usize, 1), app.lsp.servers.items.len);
+    try testing.expect(first.isOpen(in_dep));
+    try testing.expectEqual(first, serverFor(&app, in_dep).?);
+    try jumpTo(&app, .{ .path = in_std, .range = zero }, false, from);
+    try pumpUntil(&app, LendProbe{ .app = &app, .path = in_std }, LendProbe.open, 30_000);
+    try testing.expectEqual(@as(usize, 1), app.lsp.servers.items.len);
+    try testing.expect(first.isOpen(in_std));
+    // The lend lasts only for the jump's own open.
+    try testing.expectEqual(@as(?u32, null), app.lsp.lender);
+}
+
+test "lsp lend: a file opened by hand under a toolchain's own marker (zls into lib/zig/std) is lent; another project's marker still roots its own server" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    const exe = build_options.fake_lsp_exe;
+    Io.Dir.cwd().access(io, exe, .{}) catch return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const top = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+    try lendFixture(&tmp, &.{ "Cellar/zig/0.16.0/lib/zig/std", "other" });
+    const ws = try std.fs.path.join(gpa, &.{ top, "ws" });
+    defer gpa.free(ws);
+    const a = try std.fs.path.join(gpa, &.{ ws, "a.fk" });
+    defer gpa.free(a);
+    const in_std = try std.fs.path.join(gpa, &.{ top, "Cellar/zig/0.16.0/lib/zig/std", "m.fk" });
+    defer gpa.free(in_std);
+    const other_root = try std.fs.path.join(gpa, &.{ top, "other" });
+    defer gpa.free(other_root);
+    const in_other = try std.fs.path.join(gpa, &.{ other_root, "m.fk" });
+    defer gpa.free(in_other);
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try env.put("MNML_FAKE_LSP", exe);
+    var app = try App.initWith(gpa, io, .{ .workspace = ws, .cols = 100, .rows = 30, .env = &env, .workspace_trusted = true });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openPath(a);
+    try pumpUntil(&app, LendProbe{ .app = &app, .path = a }, LendProbe.open, 30_000);
+    const first = app.lsp.servers.items[0];
+    _ = try app.openPath(in_std);
+    try pumpUntil(&app, LendProbe{ .app = &app, .path = in_std }, LendProbe.open, 30_000);
+    try testing.expectEqual(@as(usize, 1), app.lsp.servers.items.len);
+    try testing.expect(first.isOpen(in_std));
+    _ = try app.openPath(in_other);
+    try pumpUntil(&app, LendProbe{ .app = &app, .path = in_other }, LendProbe.open, 30_000);
+    try testing.expectEqual(@as(usize, 2), app.lsp.servers.items.len);
+    try testing.expectEqualStrings(other_root, serverFor(&app, in_other).?.root);
+}
+
+test "isLibraryPath: toolchain, registry and package trees by path component, not by substring" {
+    try testing.expect(isLibraryPath("/Users/u/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/std"));
+    try testing.expect(isLibraryPath("/Users/u/.cargo/registry/src/index.crates.io-1/serde-1.0.0"));
+    try testing.expect(isLibraryPath("/opt/homebrew/Cellar/zig/0.16.0/lib/zig/std"));
+    try testing.expect(isLibraryPath("/p/web/node_modules/left-pad"));
+    try testing.expect(isLibraryPath("/p/.venv/lib/python3.12/site-packages/requests"));
+    try testing.expect(isLibraryPath("C:\\Users\\u\\go\\pkg\\mod\\x"));
+    try testing.expect(!isLibraryPath("/Users/u/Projects/app"));
+    try testing.expect(!isLibraryPath("/Users/u/Projects/my_node_modules_tool"));
+    try testing.expect(!isLibraryPath("/Users/u/Projects/zig/src"));
 }
 
 test "withPythonPath adds python.pythonPath unless the config already names an interpreter or a venv" {

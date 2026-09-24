@@ -92,7 +92,7 @@ pub const rows = [_]Row{
     // ── AI ▸ ──
     .{ .label = "Claude Code session", .entry = .{
         .title = "Claude Code session",
-        .body = "Starts a new Claude Code session — the `claude` CLI in a terminal pane — beside the active pane, with a card in the SESSIONS section; `ui.ai_layout_mode` says whether several sit as a grid of splits or as tabs in one leaf. The strip's Claude chip menu starts one in a chosen half instead. Claude routed off in `[ai.routing]` refuses.",
+        .body = "Starts a new Claude Code session — the `claude` CLI in a terminal pane — beside the active pane, with a card in the SESSIONS section; `ui.ai_layout_mode` says whether several sit as a grid of splits or as tabs in one leaf. The strip's Claude chip menu starts one in a chosen half instead. Claude routed off in `ai.routing` refuses.",
         .links = &.{ .{ .command = .{ .id = .@"ai.claude_code_new", .label = "Start one" } }, .{ .settings = .{ .row = copy.settingsRow("ui.ai_layout_mode"), .label = "AI session layout" } }, .{ .settings = .{ .row = copy.settingsRow("ai.routing.claude.backend"), .label = "Claude routing" } } },
     } },
     .{ .label = "New session in a worktree…", .entry = .{
@@ -102,7 +102,7 @@ pub const rows = [_]Row{
     } },
     .{ .label = "Codex session", .entry = .{
         .title = "Codex session",
-        .body = "Starts a new Codex session — the `codex` CLI in a terminal pane — beside the active pane, with a card in the SESSIONS section; under `ui.ai_layout_mode = tabs` it stacks as a tab in the active leaf instead of a split. The CLI must be on PATH, since Codex has no API route in this build; Codex routed off in `[ai.routing]` refuses.",
+        .body = "Starts a new Codex session — the `codex` CLI in a terminal pane — beside the active pane, with a card in the SESSIONS section; under `ui.ai_layout_mode = tabs` it stacks as a tab in the active leaf instead of a split. The CLI must be on PATH, since Codex has no API route in this build; Codex routed off in `ai.routing` refuses.",
         .links = &.{ .{ .command = .{ .id = .@"ai.codex_new", .label = "Start one" } }, .{ .settings = .{ .row = copy.settingsRow("ai.routing.codex.backend"), .label = "Codex routing" } } },
     } },
     // ── Dock ▸ ──

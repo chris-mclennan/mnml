@@ -1,0 +1,35 @@
+# A diagnostic belongs to the text it was published about. The fake
+# server here publishes on open and save only (`--publish open-save`),
+# as rust-analyzer does rustc's findings: between saves the client owns
+# their places. A line opened above the TODO takes its gutter dot down
+# with it (Neovim's extmarks do) — it used to stay on row 3, on the text
+# that moved there; the DIAGNOSTICS panel and `]d` follow too. A line
+# deleted above brings it back up.
+write src/main.fk "fn foo() {\n  let x = 1;\n  foo(x); // TODO later\n}\nfn bar() { foo(); }\n"
+write .fkroot ""
+write .mnml/config.zon .{ .lsp = .{ .fake = .{ .cmd = "$MNML_FAKE_LSP", .args = .{ "--log", "lsp.log", "--publish", "open-save" }, .extensions = .{ "fk" }, .root_markers = .{ ".fkroot" } } } }
+open src/main.fk
+command editor.use_vim
+expect screen contains "LSP 1"
+expect screen contains "●  3 │ foo(x); // TODO later"
+
+key g
+key g
+key O
+type "// new"
+# The first Esc closes the completion popup, the second leaves Insert.
+key esc
+key esc
+expect screen contains "●  4 │ foo(x); // TODO later"
+expect screen lacks "●  3"
+key g
+key g
+command lsp.next_diagnostic
+expect status contains "\"line\":4"
+
+# `dd` on the new line: back to row 3.
+key g
+key g
+key d
+key d
+expect screen contains "●  3 │ foo(x); // TODO later"

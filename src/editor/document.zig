@@ -47,6 +47,30 @@ pub const Splice = struct {
         return self.start;
     }
 
+    /// Where the (row, byte column) point `p` of the pre-edit text sits
+    /// afterwards — `shift` for a consumer that keeps rows and columns
+    /// instead of bytes (a breakpoint, a diagnostic). Before the edit it
+    /// stays; at or after its end it moves with the text — an insertion
+    /// exactly at `p` pushes it along, as Neovim's extmarks and signs do
+    /// (`O` above a breakpoint's line takes the breakpoint down with its
+    /// line); inside the replaced range it lands on the edit's start.
+    /// Only the edit's own last row shifts a column.
+    pub fn shiftPoint(self: Splice, p: Point) Point {
+        if (pointLess(p, self.start_pt)) return p;
+        if (!pointLess(p, self.old_end_pt)) {
+            const row: u32 = @intCast(@as(isize, @intCast(p.row)) + self.rowDelta());
+            if (p.row != self.old_end_pt.row) return .{ .row = row, .col = p.col };
+            // Saturating: a consumer may hold `maxInt(u32)` for "the end
+            // of the line" (a script's whole-line diagnostic).
+            return .{ .row = row, .col = (p.col - self.old_end_pt.col) +| self.new_end_pt.col };
+        }
+        return self.start_pt;
+    }
+
+    fn pointLess(a: Point, b: Point) bool {
+        return a.row < b.row or (a.row == b.row and a.col < b.col);
+    }
+
     /// Rows gained (or lost) by the edit.
     pub fn rowDelta(self: Splice) isize {
         return @as(isize, @intCast(self.new_end_pt.row)) - @as(isize, @intCast(self.old_end_pt.row));
@@ -234,6 +258,11 @@ pub const Document = struct {
     /// kept apart from `lsp_seen`: the two servers see different sets of
     /// files — Copilot only ever sees the ones the privacy gate allows.
     copilot_seen: ?u64 = null,
+    /// The edit-log seq this document's breakpoints were last moved
+    /// across (`dap.followBreakpoints`); null until the first follow.
+    bp_seen: ?u64 = null,
+    /// The same for its diagnostics (`lsp.followDiagnostics`).
+    diag_seen: ?u64 = null,
 
     // ─── views ───
 
@@ -831,4 +860,29 @@ test "Splice.shift: before stays, after moves by the delta, inside lands on the 
     try testing.expectEqual(@as(usize, 4), sp.shift(5));
     try testing.expectEqual(@as(usize, 9), sp.shift(6));
     try testing.expectEqual(@as(usize, 13), sp.shift(10));
+}
+
+test "Splice.shiftPoint: rows follow an edit above, an insertion at the point pushes it, a deleted span collapses to its start" {
+    const at = struct {
+        fn sp(start: Point, old_end: Point, new_end: Point) Splice {
+            return .{ .start = 0, .old_end = 0, .new_end = 0, .start_pt = start, .old_end_pt = old_end, .new_end_pt = new_end, .seq = 1 };
+        }
+    }.sp;
+    // `O` on row 3: "new\n" in at (3,0) — row 3's text is row 4 now.
+    const open_above = at(.{ .row = 3, .col = 0 }, .{ .row = 3, .col = 0 }, .{ .row = 4, .col = 0 });
+    try std.testing.expectEqual(Point{ .row = 4, .col = 0 }, open_above.shiftPoint(.{ .row = 3, .col = 0 }));
+    try std.testing.expectEqual(Point{ .row = 2, .col = 5 }, open_above.shiftPoint(.{ .row = 2, .col = 5 }));
+    try std.testing.expectEqual(Point{ .row = 8, .col = 2 }, open_above.shiftPoint(.{ .row = 7, .col = 2 }));
+    // `dd` on row 1: (1,0)..(2,0) goes; row 1 holds what was row 2.
+    const dd = at(.{ .row = 1, .col = 0 }, .{ .row = 2, .col = 0 }, .{ .row = 1, .col = 0 });
+    try std.testing.expectEqual(Point{ .row = 1, .col = 0 }, dd.shiftPoint(.{ .row = 1, .col = 0 }));
+    try std.testing.expectEqual(Point{ .row = 1, .col = 4 }, dd.shiftPoint(.{ .row = 2, .col = 4 }));
+    try std.testing.expectEqual(Point{ .row = 4, .col = 0 }, dd.shiftPoint(.{ .row = 5, .col = 0 }));
+    // Three chars typed at (0,2): a column after them on row 0 moves by three.
+    const typed = at(.{ .row = 0, .col = 2 }, .{ .row = 0, .col = 2 }, .{ .row = 0, .col = 5 });
+    try std.testing.expectEqual(Point{ .row = 0, .col = 9 }, typed.shiftPoint(.{ .row = 0, .col = 6 }));
+    try std.testing.expectEqual(Point{ .row = 0, .col = 1 }, typed.shiftPoint(.{ .row = 0, .col = 1 }));
+    // "The end of the line" as `maxInt(u32)` stays there, never overflows.
+    const eol = std.math.maxInt(u32);
+    try std.testing.expectEqual(Point{ .row = 0, .col = eol }, typed.shiftPoint(.{ .row = 0, .col = eol }));
 }

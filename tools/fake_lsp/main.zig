@@ -106,6 +106,11 @@ pub const Server = struct {
     /// client then reports lands in the log as
     /// `didChangeWatchedFiles <created|changed|deleted> <basename>`.
     watch: bool = false,
+    /// `--publish open-save`: diagnostics are published on `didOpen` and
+    /// `didSave` only, never on `didChange` — rust-analyzer's shape for
+    /// rustc's (flycheck) findings, whose places the client owns until
+    /// the next save.
+    publish_on_change: bool = true,
     log: std.ArrayList(u8) = .empty,
     initialized: bool = false,
     shutdown: bool = false,
@@ -310,6 +315,7 @@ pub const Server = struct {
             const range = getObj(params, "range") orelse return self.respondRaw(id, "[]");
             const start = getObj(range, "start") orelse return self.respondRaw(id, "[]");
             const first: u32 = @intCast(@max(getInt(start, "line") orelse 0, 0));
+            if (getObj(range, "end")) |e| try self.logLine("codeAction range {d}:{d}-{d}:{d}", .{ first, getInt(start, "character") orelse 0, getInt(e, "line") orelse 0, getInt(e, "character") orelse 0 });
             // The range is what the client asked about — a selection
             // spans lines — so the first TODO anywhere in it answers.
             const last: u32 = if (getObj(range, "end")) |e| @intCast(@max(getInt(e, "line") orelse first, first)) else first;
@@ -367,6 +373,11 @@ pub const Server = struct {
                 const text = getStr(changes[changes.len - 1], "text") orelse return;
                 try self.setDoc(uri, text);
             }
+            if (self.publish_on_change) try self.publish(arena, uri);
+        } else if (eql(u8, method, "textDocument/didSave")) {
+            if (self.publish_on_change) return;
+            const td = getObj(params, "textDocument") orelse return;
+            const uri = getStr(td, "uri") orelse return;
             try self.publish(arena, uri);
         } else if (eql(u8, method, "textDocument/didClose")) {
             const td = getObj(params, "textDocument") orelse return;
@@ -389,7 +400,7 @@ pub const Server = struct {
                 try self.logLine("didChangeWatchedFiles {s} {s}", .{ kind, std.fs.path.basename(uri) });
             }
         }
-        // `didSave`, `$/cancelRequest`…: nothing to do.
+        // `$/cancelRequest`…: nothing to do.
     }
 
     /// Apply an incremental `didChange`, in order, exactly as the
@@ -920,6 +931,7 @@ pub fn main(init: std.process.Init) !u8 {
     var rich_symbols = false;
     var actions: ActionsShape = .kinded;
     var watch = false;
+    var publish_on_change = true;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const a = args[i];
@@ -933,7 +945,7 @@ pub fn main(init: std.process.Init) !u8 {
         if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) {
             var buf: [512]u8 = undefined;
             var w: Io.File.Writer = .initStreaming(.stdout(), io, &buf);
-            try w.interface.writeAll("mnml-fake-lsp [--log PATH] [--sync full|incremental] [--configure] [--symbols plain|rich] [--actions kinded|unkinded|refactor-first] [--watch]: a deterministic language server over stdio (see tools/fake_lsp/README.md)\n");
+            try w.interface.writeAll("mnml-fake-lsp [--log PATH] [--sync full|incremental] [--configure] [--symbols plain|rich] [--actions kinded|unkinded|refactor-first] [--watch] [--publish change|open-save]: a deterministic language server over stdio (see tools/fake_lsp/README.md)\n");
             try w.interface.flush();
             return 0;
         }
@@ -951,6 +963,10 @@ pub fn main(init: std.process.Init) !u8 {
             rich_symbols = std.mem.eql(u8, args[i], "rich");
         }
         if (std.mem.eql(u8, a, "--watch")) watch = true;
+        if (std.mem.eql(u8, a, "--publish") and i + 1 < args.len) {
+            i += 1;
+            publish_on_change = !std.mem.eql(u8, args[i], "open-save");
+        }
         if (std.mem.eql(u8, a, "--actions") and i + 1 < args.len) {
             i += 1;
             actions = if (std.mem.eql(u8, args[i], "unkinded")) .unkinded else if (std.mem.eql(u8, args[i], "refactor-first")) .refactor_first else .kinded;
@@ -968,6 +984,7 @@ pub fn main(init: std.process.Init) !u8 {
     server.rich_symbols = rich_symbols;
     server.actions = actions;
     server.watch = watch;
+    server.publish_on_change = publish_on_change;
     while (!server.done) {
         const body = readFrame(gpa, &reader.interface) catch |err| switch (err) {
             error.Closed, error.BadFrame => break,

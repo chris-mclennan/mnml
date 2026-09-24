@@ -14,7 +14,7 @@
 //! ex <cmdline>                   # run an ex command — `ex bd!` runs `:bd!`
 //! wait  <ms>                     # sleep while ticking (for async/pty steps)
 //! snippet <scope> <trig> <expansion>  # seed a [snippets.<scope>] entry
-//! shell <cmd>                    # `$SHELL -c` in the workspace with the file's env
+//! shell <cmd>                    # `/bin/sh -c` (`$MNML_E2E_SHELL` overrides) in the workspace with the file's env
 //!                                #   (`# env:`, `$MNML_E2E_WORKSPACE`); non-zero exit fails.
 //!                                #   Every shell step runs in the file's own process
 //!                                #   group (`$MNML_AGENTS_PGID`, which the App's session

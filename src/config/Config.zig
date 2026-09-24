@@ -28,7 +28,6 @@ session: Session = .{},
 ipc: Ipc = .{},
 terminal: Terminal = .{},
 cloud_run: CloudRun = .{},
-jira: Jira = .{},
 cloud_agents: CloudAgents = .{},
 keys: Keys = .{},
 lsp: Map(LspServer) = .empty,
@@ -843,13 +842,6 @@ pub const CloudRunDefaults = struct {
     model: []const u8 = "",
 };
 pub const CloudRun = struct { defaults: CloudRunDefaults = .{} };
-
-pub const Jira = struct {
-    /// `MNML_JIRA_DOMAIN` overrides at runtime.
-    domain: []const u8 = "",
-    /// `MNML_JIRA_TICKET_PREFIX` overrides at runtime.
-    ticket_prefix: []const u8 = "",
-};
 
 pub const CloudAgents = struct {
     label: []const u8 = "",

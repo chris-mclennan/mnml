@@ -64,13 +64,19 @@ as for a debug adapter.
   tsserver, csharp-ls and gopls do; every change the client then reports
   is one `didChangeWatchedFiles <created|changed|deleted> <basename>` line
   in `--log`.
+- `--publish open-save` — diagnostics are published on `didOpen` and
+  `didSave` only, never on `didChange`: rust-analyzer's shape for
+  rustc's (flycheck) findings, whose places the client owns until the
+  next save. `--publish change` (the default) publishes on every
+  `didOpen` and `didChange`.
 - `--version`, `--help`.
 
-Two more lines go into `--log` under the method that carried them,
+Three more lines go into `--log` under the method that carried them,
 whatever the flags: `didOpen languageId=<id>` (what the client called
-the file — `shellscript` for a `bin/run-all` under a bash shebang) and
+the file — `shellscript` for a `bin/run-all` under a bash shebang),
 `formatting tabSize=<n> insertSpaces=<bool>` (the options a formatting
-request carried).
+request carried) and `codeAction range L:C-L:C` (the range a code
+action asked about, zero-based, end exclusive).
 
 ## The contract
 

@@ -72,10 +72,29 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const ratelimit = @import("ratelimit.zig");
 
-/// Unix sockets are the whole transport. Windows gets the file bucket
-/// and no broker — `ratelimit.acquireVia` is written so that is a
-/// path, not a hole.
+/// Unix sockets are the whole transport — on Windows too (AF_UNIX since
+/// Windows 10 1803; `socketPath` falls back under `%TEMP%` there). A
+/// platform without them gets the file bucket and no broker —
+/// `ratelimit.acquireVia` is written so that is a path, not a hole.
 pub const supported = Io.net.has_unix_sockets;
+
+/// `MNML_BROKER`: `0` / `off` / `false` / `no` (any case) turns the
+/// broker off for this process. mnml tells every integration it starts
+/// so when `.integrations.broker = false` (`src/app/broker.zig`'s
+/// `putEnv`), and the Python client honours it too: the limiter then
+/// never opens a socket and goes straight to the file bucket, instead
+/// of queueing on some other window's broker. Unset or anything else:
+/// on.
+pub const enabled_env = "MNML_BROKER";
+
+/// Whether `env` leaves the broker on (`enabled_env`).
+pub fn enabledIn(env: *const std.process.Environ.Map) bool {
+    const v = env.get(enabled_env) orelse return true;
+    for ([_][]const u8{ "0", "off", "false", "no" }) |no| {
+        if (std.ascii.eqlIgnoreCase(v, no)) return false;
+    }
+    return true;
+}
 
 /// The protocol version every message carries. A peer that sends
 /// another one is answered `bad_request` rather than guessed at.

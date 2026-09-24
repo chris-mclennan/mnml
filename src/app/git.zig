@@ -901,7 +901,7 @@ pub fn repoAbove(app: *App, path: []const u8) Allocator.Error!?[]const u8 {
     var dir: []const u8 = if (std.fs.path.dirname(path)) |d| d else path;
     const ceilings = app.env.get("GIT_CEILING_DIRECTORIES") orelse "";
     while (true) {
-        if (isCeiling(ceilings, dir)) return null;
+        if (isCeiling(app.io, ceilings, dir)) return null;
         if (hasDotGit(app.io, dir)) return try app.frame.allocator().dupe(u8, dir);
         const parent = std.fs.path.dirname(dir) orelse return null;
         if (parent.len == dir.len) return null;
@@ -919,14 +919,32 @@ pub fn repoFor(app: *App, dir: []const u8) Allocator.Error!?[]const u8 {
 }
 
 /// Whether `dir` is one of `GIT_CEILING_DIRECTORIES`' entries (`:`
-/// separated, `;` on Windows; a trailing separator ignored).
-pub fn isCeiling(ceilings: []const u8, dir: []const u8) bool {
+/// separated, `;` on Windows; a trailing separator ignored) — the one
+/// fence both walks use, git's (`repoAbove`) and a language server's
+/// root (`lsp.walkUp`). The spellings are compared first; failing that,
+/// each side's real path, as git canonicalises its ceiling entries: an
+/// entry named through a symlink (`/tmp`, `/var` on macOS, a linked
+/// home, a mounted volume) still fences a walk over the real directory,
+/// and the other way round. A path that does not resolve compares as
+/// written.
+pub fn isCeiling(io: std.Io, ceilings: []const u8, dir: []const u8) bool {
     const sep: u8 = if (@import("builtin").os.tag == .windows) ';' else ':';
     const want = std.mem.trimEnd(u8, dir, "/\\");
     var it = std.mem.splitScalar(u8, ceilings, sep);
     while (it.next()) |raw| {
         const c = std.mem.trimEnd(u8, raw, "/\\");
         if (c.len > 0 and std.mem.eql(u8, c, want)) return true;
+    }
+    if (ceilings.len == 0 or want.len == 0) return false;
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const real_dir = dir_buf[0 .. std.Io.Dir.cwd().realPathFile(io, want, &dir_buf) catch return false];
+    it = std.mem.splitScalar(u8, ceilings, sep);
+    while (it.next()) |raw| {
+        const c = std.mem.trimEnd(u8, raw, "/\\");
+        if (c.len == 0) continue;
+        var c_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const real_c = c_buf[0 .. std.Io.Dir.cwd().realPathFile(io, c, &c_buf) catch continue];
+        if (std.mem.eql(u8, std.mem.trimEnd(u8, real_c, "/\\"), std.mem.trimEnd(u8, real_dir, "/\\"))) return true;
     }
     return false;
 }
@@ -1268,7 +1286,7 @@ pub fn askAi(app: *App, what: client.AiContext, product: ai_app.Product) Command
     const repo = try requireRepo(app);
     // Fail fast on a route that cannot run, before any git runs.
     switch (ai_app.route(app, if (product == .claude) .claude else .codex)) {
-        .off => return app.diag.fail(app.frame.allocator(), "AI is routed off ([ai.routing.{s}] backend = \"off\")", .{@tagName(product)}),
+        .off => return app.diag.fail(app.frame.allocator(), "AI is routed off (.ai.routing.{s}.backend = .off)", .{@tagName(product)}),
         .api => if (product == .codex) return app.diag.fail(app.frame.allocator(), "Codex has no API backend in this build", .{}),
         .cli => {},
     }
@@ -1303,7 +1321,7 @@ pub fn explainBranch(app: *App, name: []const u8) CommandError!void {
     if (base.len == 0) return app.diag.fail(arena, "explain {s}: it is the checked-out branch and has no upstream \u{2014} nothing to compare it against", .{name});
     // Fail on a route that cannot run before any git does.
     switch (ai_app.route(app, .claude)) {
-        .off => return app.diag.fail(arena, "AI is routed off ([ai.routing.claude] backend = \"off\")", .{}),
+        .off => return app.diag.fail(arena, "AI is routed off (.ai.routing.claude.backend = .off)", .{}),
         .api => if (app.env.get(api.env_key) == null) return app.diag.fail(arena, "AI: ${s} not set (the API backend needs it)", .{api.env_key}),
         .cli => {},
     }
@@ -7523,6 +7541,42 @@ test "LogRing: the idle poll's repeats collapse onto one row each, so a user's c
     try std.testing.expectEqual(@as(usize, 5), ring.items.items.len);
 }
 
+test "ceiling: an entry named through a symlink fences the real directory, for repoAbove and the language server's root walk alike" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var rbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = rbuf[0..try tmp.dir.realPath(testing.io, &rbuf)];
+    // real/outer is a checkout and a python project; link -> real. The
+    // workspace is real/outer/inner, the fence named as link/outer.
+    try tmp.dir.createDirPath(testing.io, "real/outer/.git");
+    try tmp.dir.createDirPath(testing.io, "real/outer/inner");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "real/outer/pyproject.toml", .data = "" });
+    try tmp.dir.symLink(testing.io, "real", "link", .{ .is_directory = true });
+    const ws = try std.fs.path.join(gpa, &.{ root, "real", "outer", "inner" });
+    defer gpa.free(ws);
+    const real_outer = try std.fs.path.join(gpa, &.{ root, "real", "outer" });
+    defer gpa.free(real_outer);
+    const link_outer = try std.fs.path.join(gpa, &.{ root, "link", "outer" });
+    defer gpa.free(link_outer);
+    // Both spellings name the same directory, either way round.
+    try testing.expect(isCeiling(testing.io, link_outer, real_outer));
+    try testing.expect(isCeiling(testing.io, real_outer, link_outer));
+    try testing.expect(!isCeiling(testing.io, link_outer, ws));
+    var a = try App.initWith(gpa, testing.io, .{ .workspace = ws, .data_root = ws, .cols = 80, .rows = 24 });
+    defer a.deinit();
+    _ = a.env.swapRemove("GIT_CEILING_DIRECTORIES");
+    try testing.expectEqualStrings(real_outer, (try repoAbove(&a, ws)).?);
+    const a_py = try std.fs.path.join(gpa, &.{ ws, "a.py" });
+    defer gpa.free(a_py);
+    try testing.expectEqualStrings(real_outer, (try @import("lsp.zig").rootMarkedFor(&a, a_py, &.{"pyproject.toml"})).?);
+    // Fenced through the symlink: git's walk and the server's both stop.
+    try a.env.put("GIT_CEILING_DIRECTORIES", link_outer);
+    try testing.expect((try repoAbove(&a, ws)) == null);
+    try testing.expect((try @import("lsp.zig").rootMarkedFor(&a, a_py, &.{"pyproject.toml"})) == null);
+}
+
 test "repoAbove and repoFor stop at GIT_CEILING_DIRECTORIES, as git does" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -7553,7 +7607,7 @@ test "repoAbove and repoFor stop at GIT_CEILING_DIRECTORIES, as git does" {
     try testing.expectEqualStrings(root, (try repoFor(&a, ws)).?);
     try testing.expectEqualStrings(root, (try repoFor(&a, root)).?);
     try a.env.put("GIT_CEILING_DIRECTORIES", list);
-    try testing.expect(isCeiling("/a:/b/", "/b"));
-    try testing.expect(!isCeiling("/a:/b", "/c"));
-    try testing.expect(!isCeiling("", "/"));
+    try testing.expect(isCeiling(testing.io, "/a:/b/", "/b"));
+    try testing.expect(!isCeiling(testing.io, "/a:/b", "/c"));
+    try testing.expect(!isCeiling(testing.io, "", "/"));
 }

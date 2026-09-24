@@ -2176,6 +2176,12 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
     // And so are the AI panes' apply targets and the open reviews: the
     // range a proposal replaces moves with the edits made behind it.
     ai_apply.followAll(app, e.buf.doc);
+    // The breakpoints are anchored to the text as well: an edit above
+    // one moves it with its line.
+    dap.followBreakpoints(app, e.buf.doc);
+    // And the diagnostics: their marks stay on their text until the
+    // server publishes again.
+    lsp.followDiagnostics(app, e.buf.doc);
     // A ghost whose cursor moved (a click, a jump) is not painted there.
     try ai_app.dropMovedGhost(app, e);
     ed.doc.edits.trim(@min(e.syntax.trimFloor(), script_decor.minSeen(app, e.buf.doc) orelse std.math.maxInt(u64)));

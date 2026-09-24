@@ -236,6 +236,20 @@ pub const Buffer = struct {
         return out.toOwnedSlice(gpa);
     }
 
+    /// The selection as the user sees it, as a half-open byte span
+    /// `(lo, hi)`: the editor's `selection()`, except under charwise
+    /// VISUAL, whose range includes the character under the cursor
+    /// (`y` yanks it, `d` deletes it) — the one place that conversion is
+    /// made for a reader outside the operators (the statusline's `Sel N`,
+    /// the range a code action or a range format is sent). Null with no
+    /// selection.
+    pub fn selectedSpan(self: *const Buffer) ?[2]usize {
+        const sel = self.editor.selection() orelse return null;
+        if (self.input.mode() != .visual) return sel;
+        const w = @import("select.zig").widenInclusive(self.editor, self.editor.anchor.?, self.editor.cursor);
+        return .{ @min(w[0], w[1]), @max(w[0], w[1]) };
+    }
+
     pub fn setPath(self: *Buffer, path: []const u8) Allocator.Error!void {
         return self.doc.setPath(path);
     }

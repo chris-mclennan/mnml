@@ -186,6 +186,9 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
             }
         }
         try app.tick(App.nowMs(io));
+        // A command an integration registered over IPC was invoked: its
+        // `plugin-command` line, as the headless loop writes it.
+        try app_driver.emitPluginEvents(&app, if (channel) |*c| c else null, app.frame.allocator());
         if (app.bell_pending) {
             app.bell_pending = false;
             term.writeRaw("\x07") catch {};

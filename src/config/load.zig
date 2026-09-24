@@ -449,6 +449,15 @@ test "an unknown section is reported and skipped, not fatal" {
     try t.expectEqual(@as(u32, 5), f.diags.items.items[0].col);
 }
 
+test "config: a `.jira` section (domain / ticket_prefix: never read, removed) is an unknown section, reported and skipped" {
+    const f = try Fixture.init();
+    defer f.deinit();
+    const p = try parseLayer(f.arena(), ".{ .jira = .{ .domain = \"acme\", .ticket_prefix = \"TE-\" }, .session = .{ .restore = false } }", "c.zon", &f.diags);
+    try t.expectEqual(@as(?bool, false), p.session.?.restore);
+    try t.expectEqual(@as(usize, 1), f.diags.count());
+    try t.expect(std.mem.indexOf(u8, f.diags.items.items[0].msg, "unknown section 'jira'") != null);
+}
+
 test "a syntax error yields a located diagnostic and an empty patch" {
     const f = try Fixture.init();
     defer f.deinit();

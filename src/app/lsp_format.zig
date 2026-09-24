@@ -193,9 +193,42 @@ pub fn externalWins(app: *App, path: []const u8) ?ExternalReason {
     const f = tools.formatterFor(&app.cfg, ext, lsp.languageOf(app, path)) orelse return null;
     const pc = tools.projectConfigFor(f.argv[0]) orelse return null;
     if (!projectHasConfig(app, path, pc)) return null;
-    var where: [std.fs.max_path_bytes]u8 = undefined;
-    if (runners.pathOf(app.io, &app.env, &where, f.argv[0]) == null) return null;
+    if ((toolPath(app, app.frame.allocator(), path, f.argv[0]) catch null) == null) return null;
     return .project_config;
+}
+
+/// Where a formatter's or linter's `cmd` runs from for `file`. A bare
+/// name is looked for first in `node_modules/.bin` beside the file and
+/// in each directory above it, up to the workspace root (the whole way
+/// up for a file outside it) — npm's rule, and conform.nvim's, nvim-lint's
+/// and VS Code's eslint / prettier extensions': a JS/TS project's own
+/// eslint and prettier, the versions its CI runs, are the normal case,
+/// and nothing global may be installed at all. Then the App's PATH
+/// (`runners.pathOf`). A name with a directory part is taken as given
+/// when it exists. Null when nothing has it. Frame arena.
+pub fn toolPath(app: *App, arena: Allocator, file: []const u8, cmd: []const u8) Allocator.Error!?[]const u8 {
+    if (std.fs.path.dirname(cmd) == null) {
+        const suffixes: []const []const u8 = if (builtin.os.tag == .windows) &.{ ".cmd", ".exe", "" } else &.{""};
+        const under = std.mem.startsWith(u8, file, app.workspace);
+        var dir: ?[]const u8 = std.fs.path.dirname(file);
+        while (dir) |d| : (dir = std.fs.path.dirname(d)) {
+            for (suffixes) |sfx| {
+                const bin = try std.fmt.allocPrint(arena, "{s}{s}", .{ cmd, sfx });
+                const p = try std.fs.path.join(arena, &.{ d, "node_modules", ".bin", bin });
+                if (Io.Dir.cwd().statFile(app.io, p, .{})) |_| return p else |_| {}
+            }
+            if (under and d.len <= app.workspace.len) break;
+        }
+    }
+    var where: [std.fs.max_path_bytes]u8 = undefined;
+    const found = runners.pathOf(app.io, &app.env, &where, cmd) orelse return null;
+    return try arena.dupe(u8, found);
+}
+
+/// The words for a tool nothing has: where it was looked for.
+fn notFound(arena: Allocator, cmd: []const u8) []const u8 {
+    if (std.fs.path.dirname(cmd) != null) return std.fmt.allocPrint(arena, "{s} not found", .{cmd}) catch "not found";
+    return std.fmt.allocPrint(arena, "{s} not found (no node_modules/.bin/{s}, not on PATH)", .{ cmd, cmd }) catch "not found";
 }
 
 /// Walk from the file's directory up to the workspace root looking for
@@ -433,7 +466,8 @@ pub fn formatSelection(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     if (!t.server.caps.range_formatting) return app.diag.fail(arena, "{s} does not format ranges", .{t.server.name});
     const ed = t.e.buf.editor;
-    const sel = ed.selection() orelse return app.diag.fail(arena, "select a range first", .{});
+    // As the user sees it: charwise VISUAL takes the cursor's character.
+    const sel = t.e.buf.selectedSpan() orelse return app.diag.fail(arena, "select a range first", .{});
     const text = ed.bytes();
     const uri = try types.uriFromPath(arena, t.path);
     const range: types.Range = .{ .start = types.positionOf(text, sel[0], t.server.encoding), .end = types.positionOf(text, sel[1], t.server.encoding) };
@@ -476,11 +510,16 @@ pub fn formatExternalPane(app: *App, e: *EditorPane, explicit: bool) CommandErro
         return;
     };
     const argv = try arena.dupe([]const u8, try tools.expandArgv(arena, f.argv, app.relPath(path)));
-    argv[0] = try lsp.resolveOnPath(app, arena, argv[0]);
     // The run is over before a frame could show it, so it is recorded
     // rather than begun: a save-time failure — which says nothing else
     // — still reaches the chip and the JOBS list.
     const label = try std.fmt.allocPrint(arena, "{s} {s}", .{ std.fs.path.basename(argv[0]), app.relPath(path) });
+    argv[0] = (try toolPath(app, arena, path, argv[0])) orelse {
+        const why = notFound(arena, argv[0]);
+        jobs.record(app, .{ .kind = .format, .label = label }, 0, jobs.Outcome.fail(why));
+        if (explicit) return app.diag.fail(arena, "formatter {s}", .{why});
+        return;
+    };
     const started = App.nowMs(app.io);
     runFormatter(app, e, path, argv, f.in_place, explicit) catch |err| {
         jobs.record(app, .{ .kind = .format, .label = label }, App.nowMs(app.io) - started, jobs.Outcome.fail(app.diag.msg orelse @errorName(err)));
@@ -684,7 +723,10 @@ pub fn lintExternal(app: *App) CommandError!void {
     var buf: [32]u8 = undefined;
     const ext = extOf(path, &buf);
     const l = tools.linterFor(&app.cfg, ext, lsp.languageOf(app, path)) orelse return app.diag.fail(arena, "no linter for {s} (nothing in .linters)", .{toolSubject(path, ext)});
-    lintPath(app, path, l) catch |err| return app.diag.fail(arena, "lint: {s}", .{@errorName(err)});
+    lintPath(app, path, l) catch |err| switch (err) {
+        error.ToolNotFound => return app.diag.fail(arena, "lint: linter {s}", .{notFound(arena, l.argv[0])}),
+        else => return app.diag.fail(arena, "lint: {s}", .{@errorName(err)}),
+    };
     app.toast("linting {s} with {s}…", .{ app.relPath(path), std.fs.path.basename(l.argv[0]) });
 }
 
@@ -703,9 +745,13 @@ pub fn lintOnHook(app: *App, path: []const u8, has_server: bool) void {
     if (!tools.linterConfigured(&app.cfg, ext, key)) {
         if (has_server) return;
         // A builtin tool that is not installed is not worth a spawn per save.
-        if (!(lsp.onPath(app, app.frame.allocator(), l.argv[0]) catch false)) return;
+        if ((toolPath(app, app.frame.allocator(), path, l.argv[0]) catch null) == null) return;
     }
-    lintPath(app, path, l) catch {};
+    lintPath(app, path, l) catch |err| switch (err) {
+        // A linter the config names and nothing has: said once per run.
+        error.ToolNotFound => app.toast("lint: linter {s}", .{notFound(app.frame.allocator(), l.argv[0])}),
+        else => {},
+    };
 }
 
 /// Owned copies for the worker; freed by it.
@@ -743,7 +789,11 @@ fn lintPath(app: *App, path: []const u8, l: tools.Linter) !void {
         for (argv.items) |a| gpa.free(a);
         argv.deinit(gpa);
     }
-    for (expanded, 0..) |a, i| try argv.append(gpa, try gpa.dupe(u8, if (i == 0) try lsp.resolveOnPath(app, arena, a) else a));
+    // The project's own tool first (`toolPath`); one found nowhere is
+    // said so in words (`ToolNotFound`) rather than as the spawn's
+    // `FileNotFound`.
+    const tool = (try toolPath(app, arena, path, expanded[0])) orelse return error.ToolNotFound;
+    for (expanded, 0..) |a, i| try argv.append(gpa, try gpa.dupe(u8, if (i == 0) tool else a));
     job.argv = try argv.toOwnedSlice(gpa);
     errdefer {
         for (job.argv) |a| gpa.free(a);

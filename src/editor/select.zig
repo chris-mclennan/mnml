@@ -726,7 +726,10 @@ pub fn makeSelectionInclusive(ed: *Editor) void {
     }
 }
 
-fn widenInclusive(ed: *const Editor, anchor: usize, cursor: usize) [2]usize {
+/// `(anchor, cursor)` with the character under the higher end taken in
+/// — charwise VISUAL's inclusive range made the half-open span every
+/// operator works on. A line's `\n` and the buffer's end are not taken.
+pub fn widenInclusive(ed: *const Editor, anchor: usize, cursor: usize) [2]usize {
     const hi = @max(anchor, cursor);
     if (hi >= ed.len() or ed.bytes()[hi] == '\n') return .{ anchor, cursor };
     const next = ed.nextBoundary(hi);
