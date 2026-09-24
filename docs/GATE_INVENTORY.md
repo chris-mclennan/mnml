@@ -1,5 +1,11 @@
 ## Gate inventory (auto-extracted from the 47 files)
 
+A snapshot of 2026-09-04, when `tools/gate.txt` listed 47 files. It
+now lists 52 (the five `edge_grip_side_*` / `launcher_dock_side_rail_order`
+files joined on 2026-09-21), and nothing regenerates this page: read the
+gate from `tools/gate.txt`. Every command id below is still in
+`src/commands/specs.zig`.
+
 ### command ids
 - `editor.use_vim` ×44
 - `file.save` ×30
