@@ -2449,12 +2449,12 @@ test "the API agent's read_file refuses a secret-bearing file, and grep never re
     var j: Job = .{ .id = 1, .confirm = undefined };
     j.confirm = .init(&j.confirm_buf);
     const read_in = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"path\":\".env\"}", .{});
-    const r = try executeTool(arena, t.io, t.allocator, &app.events, &j, dir, "read_file", read_in, false);
+    const r = try executeTool(arena, t.io, t.allocator, app.events, &j, dir, "read_file", read_in, false);
     try t.expect(r.is_error);
     try t.expect(std.mem.indexOf(u8, r.text, "hunter2") == null);
     try t.expect(std.mem.indexOf(u8, r.text, "refused") != null);
     const grep_in = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"pattern\":\"DB_PASSWORD\"}", .{});
-    const g = try executeTool(arena, t.io, t.allocator, &app.events, &j, dir, "grep", grep_in, false);
+    const g = try executeTool(arena, t.io, t.allocator, app.events, &j, dir, "grep", grep_in, false);
     try t.expect(std.mem.indexOf(u8, g.text, "config.txt") != null);
     try t.expect(std.mem.indexOf(u8, g.text, "hunter2") == null);
 }
