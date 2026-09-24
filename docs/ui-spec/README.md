@@ -110,6 +110,11 @@ a deliberate departure — the Rust columns dock at any width — so
 lines (22 rows beyond the rail) where it read 20 (4): the tree and the
 activity bar are not on the Zig screen. At 120x40 nothing grew, and
 `steps-esc` / `steps-graph2` / `steps-http` each lost a row (the `▌▌`).
+*// changed 2026-09-23:* the sessions table had NOT lost them — its row
+stripe sits past the list's marker column, where `absorb` does not look,
+so the dump read `▌ ▌` on every row and `▌▌` on the selected one.
+`pane_rail.absorbList` takes it now, and `zig-sessions-table-120x40.txt`
+was re-cut (it had also been cut over a second run's rows).
 
 `rust-git-120x40.txt` / `rust-git-80x24.txt` are git mode (`steps-graph2.jsonl`).
 

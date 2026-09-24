@@ -1587,7 +1587,13 @@ pub fn drawPaneContent(app: *App, ui: Ui, id: PaneId, full_rect: Rect) Allocator
     defer if (rail) |c| if (shares_gutter) pane_rail.drawOver(ui, full_rect, c);
     // A pane that painted its own `▌` in its first column gets one
     // bar there, not two (`pane_rail.absorb`).
-    defer if (rail != null and inset) pane_rail.absorb(ui, full_rect);
+    // One bar per row: a pane's own stripe beside the rail goes into it
+    // (`pane_rail.absorb`); a list pane's sits past the list's marker
+    // column (`absorbList`).
+    defer if (rail != null and inset) switch (pane.*) {
+        .sessions_table => pane_rail.absorbList(ui, full_rect),
+        else => pane_rail.absorb(ui, full_rect),
+    };
     switch (pane.*) {
         .editor => |*e| try drawEditor(app, ui, id, e, rect),
         .outline => |*o| {
