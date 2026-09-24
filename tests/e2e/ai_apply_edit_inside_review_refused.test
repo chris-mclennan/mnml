@@ -1,0 +1,27 @@
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# `ai.fix` on a whole file, `a` opens the ai.apply review, and the user
+# edits INSIDE the reviewed text while the review is open. The proposal
+# no longer describes that text, so Enter refuses and says why: the
+# buffer keeps the user's edit and nothing else.
+write bin/claude #!/bin/sh\ncat >/dev/null\nprintf 'Here:\\n\\n```\\nALPHA\\nb\\nc\\n```\\n'
+shell chmod +x bin/claude
+write b.txt "a\nb\nc\n"
+open b.txt
+command ai.fix
+wait 1200
+expect screen contains "ALPHA"
+key a
+expect screen contains "1 of 1 hunk accepted"
+open b.txt
+key ctrl+home
+key down
+type "B"
+command view.focus_right
+key enter
+expect screen contains "changed since"
+# The review stays open; save from the editor.
+expect screen contains "1 of 1 hunk accepted"
+open b.txt
+command file.save
+expect file b.txt contains "a\nBb\nc\n"
+expect file b.txt lacks "ALPHA"

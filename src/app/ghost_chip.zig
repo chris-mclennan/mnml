@@ -74,6 +74,9 @@ pub const Outcome = enum {
     failed,
     timeout,
     cancelled,
+    /// The answer came back for a cursor that has since moved (no edit,
+    /// so nothing cancelled the flight): dropped, never painted there.
+    stale,
 
     pub fn word(o: Outcome) []const u8 {
         return switch (o) {
@@ -82,6 +85,7 @@ pub const Outcome = enum {
             .failed => "error",
             .timeout => "timeout",
             .cancelled => "cancelled",
+            .stale => "stale",
         };
     }
 };
@@ -123,7 +127,7 @@ pub const State = struct {
             .failed, .timeout => self.error_until_ms = now_ms + error_hold_ms,
             // A suggestion or a cancel replaces whatever was held: the
             // chip must never show `!` over a ghost that just landed.
-            .shown, .cancelled => {
+            .shown, .cancelled, .stale => {
                 self.empty_until_ms = 0;
                 self.error_until_ms = 0;
             },
@@ -220,6 +224,7 @@ pub fn logLine(
         .empty => std.fmt.allocPrint(arena, "{s}empty", .{head}),
         .timeout => std.fmt.allocPrint(arena, "{s}timeout", .{head}),
         .cancelled => std.fmt.allocPrint(arena, "{s}cancelled (typed)", .{head}),
+        .stale => std.fmt.allocPrint(arena, "{s}dropped (cursor moved)", .{head}),
         .failed => std.fmt.allocPrint(arena, "{s}error: {s}", .{ head, trimPrefix(detail orelse "the request failed") }),
     };
 }

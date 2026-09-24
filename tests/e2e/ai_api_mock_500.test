@@ -1,0 +1,14 @@
+# env: MNML_ANTHROPIC_BASE_URL=http://127.0.0.1:19713
+# env: ANTHROPIC_API_KEY=fake-key-for-a-mock
+# env: PATH=${MNML_E2E_WORKSPACE}/no-bin
+# The API answers 500: the pane fails with the status and the API's
+# message, and the app goes on (a second ask opens its own pane).
+serve 19713 500 "content-type: application/json\n\n{\"type\":\"error\",\"error\":{\"type\":\"api_error\",\"message\":\"internal trouble\"}}"
+command ai.ask
+type "hello"
+key enter
+wait 1000
+expect screen contains "HTTP 500 internal trouble"
+expect screen contains "failed"
+command ai.ask
+expect screen contains "Ask Claude"

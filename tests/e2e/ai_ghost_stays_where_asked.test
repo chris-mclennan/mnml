@@ -1,0 +1,24 @@
+# env: PATH=${MNML_SHIMS}/ghost:${PATH}
+# env: MNML_FAKE_CLAUDE_DELAY_MS=1500
+# env: MNML_FAKE_CLAUDE_OUT= = 42;
+# A suggestion belongs to the spot it was asked about. It is requested
+# at the end of `let x`; the typist then moves the cursor (ctrl+home —
+# no edit, so nothing cancels the flight). The answer that arrives
+# 1.5 s later is dropped — it used to be painted at the NEW cursor, and
+# Tab put ` = 42;` in front of `fn main() {`.
+write .mnml/config.zon .{ .ai = .{ .suggest_backend = "claude-code", .inline_suggestions = true, .suggest_idle_ms = 50 } }
+write a.txt "fn main() {"
+open a.txt
+key end
+type "\n    let x"
+wait 400
+expect status contains "\"ghost\":\"inflight\""
+key ctrl+home
+wait 2200
+expect status lacks "\"ghost\":\"inflight\""
+expect screen lacks "= 42;"
+key tab
+command file.save
+expect file a.txt lacks " = 42;fn main"
+command messages.show
+expect screen contains "dropped (cursor moved)"

@@ -21,6 +21,25 @@ pub fn claudeArgv(arena: Allocator, prompt: []const u8, session_id: ?[]const u8,
     return argv.items;
 }
 
+/// `claude -p --output-format text [--session-id <id>] [--model <m>]`
+/// with NO prompt argument: `claude -p` reads it from stdin. What a job
+/// runs (`runJob` with `JobOpts.stdin`). A prompt in argv is capped by
+/// the OS — 1 MiB for the whole argv on macOS, 128 KiB for one argument
+/// on Linux — so a big file failed to spawn at all; and argv is what
+/// `ps` shows every local user for the life of the call.
+pub fn claudeStdinArgv(arena: Allocator, session_id: ?[]const u8, model: ?[]const u8) Allocator.Error![]const []const u8 {
+    var argv: std.ArrayList([]const u8) = .empty;
+    try argv.appendSlice(arena, &.{ claude_binary, "-p", "--output-format", "text" });
+    if (session_id) |sid| try argv.appendSlice(arena, &.{ "--session-id", sid });
+    if (model) |m| try argv.appendSlice(arena, &.{ "--model", m });
+    return argv.items;
+}
+
+/// `codex exec -`: the prompt on stdin, as `claudeStdinArgv`.
+pub fn codexStdinArgv(arena: Allocator) Allocator.Error![]const []const u8 {
+    return arena.dupe([]const u8, &.{ codex_binary, "exec", "-" });
+}
+
 /// `claude --resume <id>` — the interactive continuation of a one-shot.
 pub fn claudeResumeArgv(arena: Allocator, session_id: []const u8) Allocator.Error![]const []const u8 {
     return arena.dupe([]const u8, &.{ claude_binary, "--resume", session_id });
@@ -137,6 +156,10 @@ pub const Outcome = struct {
     ok: bool,
     /// stdout on success, the trimmed stderr (or a fallback) on failure. Owned.
     text: []u8,
+    /// `runJob`: the process could not be started at all; `text` is the
+    /// OS's reason as an error name (`FileNotFound`, `AccessDenied`…),
+    /// said as it is rather than guessed at.
+    spawn_failed: bool = false,
 };
 
 /// Run `argv` in `cwd` and collect what it printed. `error.Failed`
@@ -228,6 +251,189 @@ pub fn runWithin(
     const err_text = std.mem.trim(u8, result.stderr, " \t\r\n");
     const msg = if (err_text.len > 0) err_text else if (std.mem.trim(u8, result.stdout, " \t\r\n").len > 0) std.mem.trim(u8, result.stdout, " \t\r\n") else "the command failed";
     return .{ .ok = false, .text = try gpa.dupe(u8, msg[0..@min(msg.len, 400)]) };
+}
+
+/// How a one-shot job's child is run (`runJob`).
+pub const JobOpts = struct {
+    /// Wall-clock budget for the whole run; null is none. Past it the
+    /// child is killed and `error.TimedOut` comes back.
+    timeout_ms: ?u64 = null,
+    /// Set by the UI (cancel, the pane closed, a re-ask): the child is
+    /// killed within `poll_ms` and `error.Aborted` comes back.
+    cancel: ?*const std.atomic.Value(bool) = null,
+    /// How often the flag and the clock are looked at while the child
+    /// is quiet.
+    poll_ms: u32 = 100,
+    /// Written to the child's stdin, which is then closed — the prompt.
+    /// Null: stdin is /dev/null.
+    stdin: ?[]const u8 = null,
+};
+
+pub const JobError = error{ OutOfMemory, Canceled, Failed, TimedOut, Aborted };
+
+/// One `claude -p` / `codex exec` for a job: the child is OURS until it
+/// is reaped. It is killed — and reaped, by `Child.kill`, which waits —
+/// when the job's cancel flag is set, when the budget runs out, and on
+/// any other way out of this function. Never `wait` after `kill`: the
+/// kill already reaped it.
+///
+/// `std.process.run` could not do this: it blocks in its read loop
+/// until the child exits or the task is cancelled, and a job's worker
+/// shares its `Io.Group` with every other job, so a cancel there would
+/// have taken them all. The read loop here wakes every `poll_ms` to
+/// look at the job's own flag instead.
+pub fn runJob(
+    gpa: Allocator,
+    io: Io,
+    argv: []const []const u8,
+    cwd: []const u8,
+    env: ?*const std.process.Environ.Map,
+    opts: JobOpts,
+) JobError!Outcome {
+    var scratch = std.heap.ArenaAllocator.init(gpa);
+    defer scratch.deinit();
+    const resolved = try resolveArgv(scratch.allocator(), io, argv, env);
+    const t0 = Io.Timestamp.now(io, .awake);
+    var child = std.process.spawn(io, .{
+        .argv = resolved,
+        .cwd = .{ .path = cwd },
+        .environ_map = env,
+        .stdin = if (opts.stdin != null) .pipe else .ignore,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    }) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.Canceled => return error.Canceled,
+        else => return .{ .ok = false, .text = try gpa.dupe(u8, @errorName(err)), .spawn_failed = true },
+    };
+    // The prompt goes in on a task of its own: a child that is slow to
+    // read (or never reads) must not park this loop, which is the one
+    // that watches the cancel flag. The file is the feeder's — taken off
+    // the child so its kill does not close it under the write.
+    var feeder: ?Io.Future(void) = null;
+    if (opts.stdin) |text| {
+        const in = child.stdin.?;
+        child.stdin = null;
+        feeder = io.concurrent(feed, .{ io, in, text }) catch blk: {
+            // No second task to be had: write it here. A child that
+            // reads its prompt first (both CLIs do) takes it all.
+            feed(io, in, text);
+            break :blk null;
+        };
+    }
+    // Kills and reaps on every early return (a no-op after `wait`), and
+    // only then collects the feeder: the kill is what unblocks a write
+    // into a pipe nobody reads.
+    defer {
+        child.kill(io);
+        if (feeder) |*f| f.await(io);
+    }
+
+    var multi_reader_buffer: Io.File.MultiReader.Buffer(2) = undefined;
+    var multi_reader: Io.File.MultiReader = undefined;
+    multi_reader.init(gpa, io, multi_reader_buffer.toStreams(), &.{ child.stdout.?, child.stderr.? });
+    defer multi_reader.deinit();
+    const stdout_limit: usize = 8 * 1024 * 1024;
+    const stderr_limit: usize = 1024 * 1024;
+    const poll: Io.Timeout = .{ .duration = .{ .raw = .fromMilliseconds(@max(opts.poll_ms, 1)), .clock = .awake } };
+    while (true) {
+        if (opts.cancel) |c| if (c.load(.acquire)) return error.Aborted;
+        if (opts.timeout_ms) |ms| if (t0.untilNow(io, .awake).toMilliseconds() >= @as(i64, @intCast(@min(ms, std.math.maxInt(i63))))) return error.TimedOut;
+        multi_reader.fill(64, poll) catch |err| switch (err) {
+            error.EndOfStream => break,
+            error.Timeout => continue,
+            error.Canceled => return error.Canceled,
+            else => return error.Failed,
+        };
+        if (multi_reader.reader(0).buffered().len > stdout_limit or multi_reader.reader(1).buffered().len > stderr_limit) return error.Failed;
+    }
+    multi_reader.checkAnyError() catch return error.Failed;
+    const term = child.wait(io) catch |err| switch (err) {
+        error.Canceled => return error.Canceled,
+        else => return error.Failed,
+    };
+    const stdout = multi_reader.reader(0).buffered();
+    const stderr = multi_reader.reader(1).buffered();
+    if (term == .exited and term.exited == 0) return .{ .ok = true, .text = try gpa.dupe(u8, stdout) };
+    const err_text = std.mem.trim(u8, stderr, " \t\r\n");
+    const out_text = std.mem.trim(u8, stdout, " \t\r\n");
+    const msg = if (err_text.len > 0) err_text else if (out_text.len > 0) out_text else "the command failed";
+    return .{ .ok = false, .text = try gpa.dupe(u8, msg[0..@min(msg.len, 400)]) };
+}
+
+/// What a CLI printed, made fit to paint as text: terminal escapes
+/// dropped WHOLE — a CSI (`ESC [ … final`), an OSC (`ESC ] … BEL` or
+/// `ESC \`), a charset designation (`ESC ( B`), any other `ESC x` —
+/// along with the other C0 controls (tab and newline stay; CR is
+/// dropped) and bytes that are not UTF-8. Dropping only the ESC left `[31m` painted in the answer.
+/// Owned by the caller.
+pub fn cleanOutput(gpa: Allocator, s: []const u8) Allocator.Error![]u8 {
+    var out: std.ArrayList(u8) = try .initCapacity(gpa, s.len);
+    errdefer out.deinit(gpa);
+    var i: usize = 0;
+    while (i < s.len) {
+        const c = s[i];
+        if (c == 0x1b) {
+            i += 1;
+            if (i >= s.len) break;
+            switch (s[i]) {
+                '[' => {
+                    i += 1;
+                    while (i < s.len and !(s[i] >= 0x40 and s[i] <= 0x7e)) i += 1;
+                    i += 1;
+                },
+                ']', 'P', '_', '^' => {
+                    i += 1;
+                    while (i < s.len) : (i += 1) {
+                        if (s[i] == 0x07) {
+                            i += 1;
+                            break;
+                        }
+                        if (s[i] == 0x1b and i + 1 < s.len and s[i + 1] == '\\') {
+                            i += 2;
+                            break;
+                        }
+                    }
+                },
+                // A charset designation (`ESC ( B`) carries one byte more.
+                '(', ')', '*', '+', '-', '.', '/', '#', '%' => i += 2,
+                else => i += 1,
+            }
+            continue;
+        }
+        if (c < 0x20 and c != '\n' and c != '\t') {
+            i += 1;
+            continue;
+        }
+        if (c == 0x7f) {
+            i += 1;
+            continue;
+        }
+        if (c < 0x80) {
+            out.appendAssumeCapacity(c);
+            i += 1;
+            continue;
+        }
+        const n = std.unicode.utf8ByteSequenceLength(c) catch {
+            i += 1;
+            continue;
+        };
+        if (i + n > s.len or !std.unicode.utf8ValidateSlice(s[i .. i + n])) {
+            i += 1;
+            continue;
+        }
+        out.appendSliceAssumeCapacity(s[i .. i + n]);
+        i += n;
+    }
+    return out.toOwnedSlice(gpa);
+}
+
+/// Write `text` to a child's stdin and close it. A child that exits (or
+/// is killed) before reading it all ends the write with a broken pipe,
+/// which is not this function's to report.
+fn feed(io: Io, file: Io.File, text: []const u8) void {
+    file.writeStreamingAll(io, text) catch {};
+    file.close(io);
 }
 
 /// A UUID v4 for `--session-id`.
@@ -398,4 +604,89 @@ test "runWithin: a child that sleeps past the budget is killed, and the call com
     const ok = try runWithin(t.allocator, t.io, &.{ "/bin/sh", "-c", "printf quick" }, "/tmp", null, 10_000);
     defer t.allocator.free(ok.text);
     try t.expectEqualStrings("quick", ok.text);
+}
+
+test "runJob: the cancel flag kills the child and reaps it, and the call comes back at once" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    // The child writes its own pid, then sleeps far past the test.
+    const script = try std.fmt.allocPrint(t.allocator, "echo $$ > {s}/pid; exec sleep 30", .{dir});
+    defer t.allocator.free(script);
+    var cancel: std.atomic.Value(bool) = .init(false);
+    const Canceller = struct {
+        fn run(io: Io, flag: *std.atomic.Value(bool)) Io.Cancelable!void {
+            try io.sleep(.fromMilliseconds(300), .awake);
+            flag.store(true, .release);
+        }
+    };
+    var group: Io.Group = .init;
+    defer group.cancel(t.io);
+    try group.concurrent(t.io, Canceller.run, .{ t.io, &cancel });
+    const t0 = Io.Timestamp.now(t.io, .awake);
+    try t.expectError(error.Aborted, runJob(t.allocator, t.io, &.{ "/bin/sh", "-c", script }, dir, null, .{ .cancel = &cancel }));
+    try t.expect(t0.untilNow(t.io, .awake).toMilliseconds() < 5_000);
+    // The pid it wrote is gone: killed AND reaped (a zombie would still
+    // answer signal 0).
+    const pid_text = try tmp.dir.readFileAlloc(t.io, "pid", t.allocator, .limited(64));
+    defer t.allocator.free(pid_text);
+    const pid = try std.fmt.parseInt(std.posix.pid_t, std.mem.trim(u8, pid_text, " \n"), 10);
+    try t.expectError(error.ProcessNotFound, std.posix.kill(pid, @enumFromInt(0)));
+}
+
+test "runJob: past the budget the child is killed and TimedOut comes back; a quick one answers" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const t0 = Io.Timestamp.now(t.io, .awake);
+    try t.expectError(error.TimedOut, runJob(t.allocator, t.io, &.{ "/bin/sh", "-c", "sleep 30" }, "/tmp", null, .{ .timeout_ms = 300 }));
+    try t.expect(t0.untilNow(t.io, .awake).toMilliseconds() < 5_000);
+    const ok = try runJob(t.allocator, t.io, &.{ "/bin/sh", "-c", "printf quick" }, "/tmp", null, .{ .timeout_ms = 10_000 });
+    defer t.allocator.free(ok.text);
+    try t.expect(ok.ok);
+    try t.expectEqualStrings("quick", ok.text);
+    const bad = try runJob(t.allocator, t.io, &.{ "/bin/sh", "-c", "echo boom >&2; exit 3" }, "/tmp", null, .{});
+    defer t.allocator.free(bad.text);
+    try t.expect(!bad.ok);
+    try t.expectEqualStrings("boom", bad.text);
+}
+
+test "runJob: the prompt goes in on stdin, however big — nothing of it in argv" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    // 2 MiB: past macOS's whole-argv limit and Linux's per-argument one.
+    const big = try t.allocator.alloc(u8, 2 * 1024 * 1024);
+    defer t.allocator.free(big);
+    @memset(big, 'x');
+    big[big.len - 1] = '!';
+    const out = try runJob(t.allocator, t.io, &.{ "/bin/sh", "-c", "wc -c | tr -d ' '; echo \"argc=$#\"" }, "/tmp", null, .{ .stdin = big });
+    defer t.allocator.free(out.text);
+    try t.expect(out.ok);
+    try t.expectEqualStrings("2097152\nargc=0\n", out.text);
+    // A child that never reads its stdin still ends on the budget: the
+    // feeder is unblocked by the kill, not left behind.
+    try t.expectError(error.TimedOut, runJob(t.allocator, t.io, &.{ "/bin/sh", "-c", "exec sleep 30" }, "/tmp", null, .{ .stdin = big, .timeout_ms = 300 }));
+}
+
+test "runJob: a binary that cannot be started says why, in the OS's words" {
+    const out = try runJob(t.allocator, t.io, &.{"/definitely/not/a/binary"}, "/tmp", null, .{ .stdin = "hi" });
+    defer t.allocator.free(out.text);
+    try t.expect(!out.ok);
+    try t.expect(out.spawn_failed);
+    try t.expectEqualStrings("FileNotFound", out.text);
+}
+
+test "the stdin argv builders carry no prompt" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try t.expectEqualSlices([]const u8, &.{ "claude", "-p", "--output-format", "text", "--session-id", "s", "--model", "m" }, try claudeStdinArgv(a, "s", "m"));
+    try t.expectEqualSlices([]const u8, &.{ "claude", "-p", "--output-format", "text" }, try claudeStdinArgv(a, null, null));
+    try t.expectEqualSlices([]const u8, &.{ "codex", "exec", "-" }, try codexStdinArgv(a));
+}
+
+test "cleanOutput: escapes go whole, controls and non-UTF-8 bytes go, text and newlines stay" {
+    const raw = "\x1b[31m\x01\x02\xff\xfe garbage \x1b]0;title\x07\nnext \x1b[1;32mgreen\x1b[0m\r\n\tünï \x1b]8;;http://x\x1b\\link\x1b(B";
+    const got = try cleanOutput(t.allocator, raw);
+    defer t.allocator.free(got);
+    try t.expectEqualStrings(" garbage \nnext green\n\tünï link", got);
 }

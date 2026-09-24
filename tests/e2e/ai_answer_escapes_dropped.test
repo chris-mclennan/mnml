@@ -1,0 +1,13 @@
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# A CLI that prints terminal escapes into its answer: they are dropped
+# whole. Dropping only the ESC byte used to leave `[31m` and `]0;title`
+# painted in the AI pane.
+write bin/claude #!/bin/sh\ncat >/dev/null\nprintf '\\033[31mred words\\033[0m and \\033]0;title\\007plain\\n'
+shell chmod +x bin/claude
+write a.txt "x = 1\n"
+open a.txt
+command ai.explain
+wait 1200
+expect screen contains "red words and plain"
+expect screen lacks "[31m"
+expect screen lacks "0;title"

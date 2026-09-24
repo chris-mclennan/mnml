@@ -110,6 +110,12 @@ pub fn context(text: []const u8, cursor_in: usize) Context {
 /// Files whose names say "secret": never sent to a remote backend,
 /// whatever the setting. The list is by name, not by content — a
 /// heuristic that errs towards keeping things home.
+///
+/// THE never-send predicate for every AI path, not only ghost text:
+/// `ai.chat` and the actions (`app/ai.zig`), the API agent's read and
+/// grep tools, a conflict's AI resolve, and every diff handed to a
+/// model (`withholdSecretDiffs`). One list, so a path cannot be
+/// refused by one feature and shipped by the next.
 pub fn isSecretBearing(path: []const u8) bool {
     const name = std.fs.path.basename(path);
     if (name.len == 0) return false;
@@ -121,6 +127,44 @@ pub fn isSecretBearing(path: []const u8) bool {
     const exts = [_][]const u8{ ".pem", ".key", ".p12", ".pfx", ".kdbx", ".jks", ".keystore", ".gpg", ".asc" };
     for (exts) |e| if (std.ascii.endsWithIgnoreCase(name, e)) return true;
     return false;
+}
+
+/// `diff` (unified, `git diff` shape) with the body of every file whose
+/// path is secret-bearing replaced by one line saying it was withheld.
+/// `withheld` lists those paths (slices of `diff`) so the caller can say
+/// which. Text outside any `diff --git` section passes through.
+pub fn withholdSecretDiffs(arena: Allocator, diff: []const u8) Allocator.Error!struct { text: []const u8, withheld: []const []const u8 } {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var names: std.ArrayListUnmanaged([]const u8) = .empty;
+    var skipping = false;
+    var it = std.mem.splitScalar(u8, diff, '\n');
+    var first = true;
+    while (it.next()) |line| {
+        if (std.mem.startsWith(u8, line, "diff --git ")) {
+            const path = diffPath(line);
+            skipping = isSecretBearing(path);
+            if (skipping) {
+                try names.append(arena, path);
+                if (!first) try out.append(arena, '\n');
+                try out.print(arena, "{s}\n(withheld: {s} looks like it holds secrets, so its changes are not sent)", .{ line, path });
+                first = false;
+                continue;
+            }
+        }
+        if (skipping) continue;
+        if (!first) try out.append(arena, '\n');
+        try out.appendSlice(arena, line);
+        first = false;
+    }
+    if (names.items.len == 0) return .{ .text = diff, .withheld = &.{} };
+    return .{ .text = out.items, .withheld = names.items };
+}
+
+/// The `b/` path of a `diff --git a/X b/X` line.
+fn diffPath(line: []const u8) []const u8 {
+    const rest = line["diff --git ".len..];
+    if (std.mem.lastIndexOf(u8, rest, " b/")) |i| return rest[i + 3 ..];
+    return rest;
 }
 
 fn containsIgnoreCase(hay: []const u8, needle: []const u8) bool {
@@ -337,4 +381,22 @@ test "prompt and cleaning" {
     try t.expectEqualStrings("return 1;", try cleanCompletion(a, "```rust\nreturn 1;\n```\n"));
     try t.expectEqualStrings("a\nb", try cleanCompletion(a, "a\nb\n"));
     try t.expectEqualStrings("", try cleanCompletion(a, "```"));
+}
+
+test "withholdSecretDiffs: a secret file's hunks are replaced by one line; the rest passes" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const diff = "diff --git a/src/a.zig b/src/a.zig\n--- a/src/a.zig\n+++ b/src/a.zig\n@@ -1 +1 @@\n-x\n+y\ndiff --git a/.env b/.env\n--- a/.env\n+++ b/.env\n@@ -1 +1 @@\n-DB_PASSWORD=old\n+DB_PASSWORD=new\ndiff --git a/b.txt b/b.txt\n+z";
+    const r = try withholdSecretDiffs(a, diff);
+    try std.testing.expectEqual(@as(usize, 1), r.withheld.len);
+    try std.testing.expectEqualStrings(".env", r.withheld[0]);
+    try std.testing.expect(std.mem.indexOf(u8, r.text, "DB_PASSWORD") == null);
+    try std.testing.expect(std.mem.indexOf(u8, r.text, "(withheld: .env") != null);
+    try std.testing.expect(std.mem.indexOf(u8, r.text, "+y\ndiff --git a/.env") != null);
+    try std.testing.expect(std.mem.endsWith(u8, r.text, "diff --git a/b.txt b/b.txt\n+z"));
+    // Nothing secret: the diff itself, untouched.
+    const clean = try withholdSecretDiffs(a, "diff --git a/x b/x\n+1");
+    try std.testing.expectEqual(@as(usize, 0), clean.withheld.len);
+    try std.testing.expectEqualStrings("diff --git a/x b/x\n+1", clean.text);
 }

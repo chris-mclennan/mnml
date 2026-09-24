@@ -117,6 +117,11 @@ pub const Editor = struct {
     replace_stack: std.ArrayList(?u21) = .empty,
     /// AI ghost text painted after the cursor. Owned.
     ghost_suggestion: ?[]u8 = null,
+    /// The cursor the ghost was set at. It belongs there and nowhere
+    /// else: a cursor that moves (a click, a motion, a jump) takes the
+    /// ghost down with it (`ghostMoved`) rather than dragging it into
+    /// the middle of a word, where the next Tab would insert it.
+    ghost_at: usize = 0,
     /// Closed folds: start line → end line. A window's, in vim.
     folds: std.AutoArrayHashMapUnmanaged(usize, usize) = .empty,
     /// Row shifts from other views' edits, for the pane's scroll offset.
@@ -190,6 +195,12 @@ pub const Editor = struct {
     pub fn setGhostSuggestion(self: *Editor, s: ?[]const u8) Allocator.Error!void {
         if (self.ghost_suggestion) |g| self.gpa.free(g);
         self.ghost_suggestion = if (s) |v| try self.gpa.dupe(u8, v) else null;
+        self.ghost_at = self.cursor;
+    }
+
+    /// A ghost is showing and the cursor is no longer where it was set.
+    pub fn ghostMoved(self: *const Editor) bool {
+        return self.ghost_suggestion != null and self.cursor != self.ghost_at;
     }
 
     /// The mutation chokepoint for this view: the document splices and

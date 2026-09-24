@@ -5,8 +5,9 @@
 //! Both are parsed here into one `Stats`, line by line on a scratch arena
 //! so a 200 MB transcript costs one line of memory at a time.
 //!
-//! Pricing is a table by model, dollars per million tokens; an unknown
-//! model costs 0.0 rather than a wrong number.
+//! Pricing is a table by model, dollars per million tokens; tokens spent
+//! on an unknown model make the cost unknown (`Stats.priced`) rather than
+//! a wrong number — never a $0.00 that reads as free.
 
 const std = @import("std");
 const Io = std.Io;
@@ -37,8 +38,101 @@ pub const Stats = struct {
     /// a session without a process `failed` rather than `done`.
     last_error: bool = false,
 
+    /// Claude: the usage summed message by message, each at its own
+    /// model's price, every message counted once (`Usage`). Null for a
+    /// Codex rollout, whose running totals are priced by `model`.
+    usage: ?Usage = null,
+
     pub fn costUsd(s: Stats) f64 {
+        if (s.usage) |u| return u.cost_usd;
         return estimateCost(s.model orelse "", s.input_tokens, s.output_tokens, s.cache_create_tokens, s.cache_read_tokens);
+    }
+
+    /// Whether every token has a price: false when some were spent on a
+    /// model the price table does not know, so the cost is not a number
+    /// to show (`n/a`, never a $0.00 that reads as free).
+    pub fn priced(s: Stats) bool {
+        if (s.usage) |u| return !u.unpriced;
+        return s.tokens == 0 or knownPrice(s.model orelse "") != null;
+    }
+};
+
+/// Claude Code's usage, summed over a transcript. Claude Code writes one
+/// assistant message as several JSONL lines — one per content block —
+/// and every line repeats the message's id and its whole usage, so a
+/// message is counted the first time its id is seen and never again.
+/// The repeats follow each other closely, so the ids of the last
+/// `recent_ids` messages are what is remembered; `add` can be fed a
+/// transcript in pieces (the scan's per-file cache does).
+pub const Usage = struct {
+    tokens: u64 = 0,
+    input_tokens: u64 = 0,
+    output_tokens: u64 = 0,
+    cache_create_tokens: u64 = 0,
+    cache_read_tokens: u64 = 0,
+    /// Each message at its own model's price.
+    cost_usd: f64 = 0,
+    /// Some tokens were spent on a model with no price.
+    unpriced: bool = false,
+    ids: [recent_ids][id_cap]u8 = undefined,
+    id_lens: [recent_ids]u8 = @splat(0),
+    next_id: u8 = 0,
+
+    pub const recent_ids = 16;
+    const id_cap = 64;
+
+    fn seen(u: *const Usage, id: []const u8) bool {
+        if (id.len == 0 or id.len > id_cap) return false;
+        for (u.id_lens, 0..) |n, i| if (n == id.len and std.mem.eql(u8, u.ids[i][0..n], id)) return true;
+        return false;
+    }
+
+    fn remember(u: *Usage, id: []const u8) void {
+        if (id.len == 0 or id.len > id_cap) return;
+        const at = u.next_id;
+        @memcpy(u.ids[at][0..id.len], id);
+        u.id_lens[at] = @intCast(id.len);
+        u.next_id = (at + 1) % recent_ids;
+    }
+
+    /// One assistant message's `message` object: its usage, unless its
+    /// id was already counted.
+    pub fn addMessage(u: *Usage, m: std.json.Value) void {
+        if (m != .object) return;
+        const usage = m.object.get("usage") orelse return;
+        if (str(m, "id")) |id| {
+            if (u.seen(id)) return;
+            u.remember(id);
+        }
+        const i = int(usage, "input_tokens");
+        const o = int(usage, "output_tokens");
+        const cw = int(usage, "cache_creation_input_tokens");
+        const cr = int(usage, "cache_read_input_tokens");
+        u.tokens +|= i + o;
+        u.input_tokens +|= i;
+        u.output_tokens +|= o;
+        u.cache_create_tokens +|= cw;
+        u.cache_read_tokens +|= cr;
+        const model = str(m, "model") orelse "";
+        if (knownPrice(model)) |p| {
+            u.cost_usd += costAt(p, i, o, cw, cr);
+        } else if (i + o + cw + cr > 0) u.unpriced = true;
+    }
+
+    /// Every assistant line of `text` (whole lines), on a scratch arena
+    /// reset per line. Lines without `"usage"` are not parsed at all.
+    pub fn addText(u: *Usage, gpa: Allocator, text: []const u8) void {
+        var scratch = std.heap.ArenaAllocator.init(gpa);
+        defer scratch.deinit();
+        var lines = std.mem.splitScalar(u8, text, '\n');
+        while (lines.next()) |raw| {
+            if (std.mem.indexOf(u8, raw, "\"usage\"") == null) continue;
+            const line = std.mem.trim(u8, raw, " \r\t");
+            _ = scratch.reset(.retain_capacity);
+            const v = std.json.parseFromSliceLeaky(std.json.Value, scratch.allocator(), line, .{}) catch continue;
+            if (!std.mem.eql(u8, str(v, "type") orelse "", "assistant")) continue;
+            u.addMessage(v.object.get("message") orelse continue);
+        }
     }
 };
 
@@ -53,6 +147,7 @@ pub fn parseClaude(arena: Allocator, text: []const u8) Allocator.Error!Stats {
     defer scratch.deinit();
     var pending: std.StringHashMapUnmanaged(void) = .empty;
     defer pending.deinit(arena);
+    var usage: Usage = .{};
     var lines = std.mem.splitScalar(u8, text, '\n');
     while (lines.next()) |raw| {
         const line = std.mem.trim(u8, raw, " \r\t");
@@ -74,15 +169,7 @@ pub fn parseClaude(arena: Allocator, text: []const u8) Allocator.Error!Stats {
             st.last_error = boolean(v, "isApiErrorMessage");
             const m = msg orelse continue;
             if (str(m, "model")) |model| st.model = try arena.dupe(u8, model);
-            if (m == .object) if (m.object.get("usage")) |usage| {
-                const i = int(usage, "input_tokens");
-                const o = int(usage, "output_tokens");
-                st.tokens +|= i + o;
-                st.input_tokens +|= i;
-                st.output_tokens +|= o;
-                st.cache_create_tokens +|= int(usage, "cache_creation_input_tokens");
-                st.cache_read_tokens +|= int(usage, "cache_read_input_tokens");
-            };
+            usage.addMessage(m);
             const content = (if (m == .object) m.object.get("content") else null) orelse continue;
             if (content != .array) continue;
             var text_seen: ?[]const u8 = null;
@@ -132,6 +219,12 @@ pub fn parseClaude(arena: Allocator, text: []const u8) Allocator.Error!Stats {
         }
     }
     st.pending_tool_uses = pending.count();
+    st.usage = usage;
+    st.tokens = usage.tokens;
+    st.input_tokens = usage.input_tokens;
+    st.output_tokens = usage.output_tokens;
+    st.cache_create_tokens = usage.cache_create_tokens;
+    st.cache_read_tokens = usage.cache_read_tokens;
     return st;
 }
 
@@ -295,8 +388,16 @@ pub fn readTail(gpa: Allocator, io: Io, dir: Io.Dir, name: []const u8, cap: usiz
 
 // ─── pricing ────────────────────────────────────────────────────────────
 
-/// Dollars per million tokens: input, output, cache write, cache read.
-pub fn pricePerMt(model_in: []const u8) [4]f64 {
+/// Dollars per million tokens: input, output, cache write, cache read;
+/// zeros for a model the table does not know (`knownPrice` says which).
+pub fn pricePerMt(model: []const u8) [4]f64 {
+    return knownPrice(model) orelse .{ 0, 0, 0, 0 };
+}
+
+/// The price row for `model_in`, null when the table has none. Anthropic's
+/// public list: cache writes (5 min) are 1.25× input and cache reads
+/// 0.1× input, except where the list names its own read price.
+pub fn knownPrice(model_in: []const u8) ?[4]f64 {
     // `claude-haiku-4-5-20251001` → `claude-haiku-4-5`: a trailing
     // all-digit segment of six or more is a date.
     var model = model_in;
@@ -310,9 +411,14 @@ pub fn pricePerMt(model_in: []const u8) [4]f64 {
     }
     const Row = struct { name: []const u8, price: [4]f64 };
     const table = [_]Row{
-        .{ .name = "claude-opus-4-8", .price = .{ 15.0, 75.0, 18.75, 1.50 } },
-        .{ .name = "claude-opus-4-7", .price = .{ 15.0, 75.0, 18.75, 1.50 } },
-        .{ .name = "claude-opus-4-6", .price = .{ 15.0, 75.0, 18.75, 1.50 } },
+        .{ .name = "claude-fable-5-1", .price = .{ 10.0, 50.0, 12.50, 0.25 } },
+        .{ .name = "claude-fable-5", .price = .{ 10.0, 50.0, 12.50, 1.00 } },
+        .{ .name = "claude-opus-5-5", .price = .{ 4.0, 20.0, 5.00, 0.20 } },
+        .{ .name = "claude-opus-5", .price = .{ 5.0, 25.0, 6.25, 0.50 } },
+        .{ .name = "claude-sonnet-5", .price = .{ 2.0, 10.0, 2.50, 0.20 } },
+        .{ .name = "claude-opus-4-8", .price = .{ 5.0, 25.0, 6.25, 0.50 } },
+        .{ .name = "claude-opus-4-7", .price = .{ 5.0, 25.0, 6.25, 0.50 } },
+        .{ .name = "claude-opus-4-6", .price = .{ 5.0, 25.0, 6.25, 0.50 } },
         .{ .name = "claude-sonnet-4-6", .price = .{ 3.0, 15.0, 3.75, 0.30 } },
         .{ .name = "claude-sonnet-4-5", .price = .{ 3.0, 15.0, 3.75, 0.30 } },
         .{ .name = "claude-haiku-4-5", .price = .{ 1.0, 5.0, 1.25, 0.10 } },
@@ -325,11 +431,14 @@ pub fn pricePerMt(model_in: []const u8) [4]f64 {
         .{ .name = "gpt-4o-mini", .price = .{ 0.15, 0.60, 0.0, 0.075 } },
     };
     for (table) |row| if (std.mem.eql(u8, row.name, model)) return row.price;
-    return .{ 0, 0, 0, 0 };
+    return null;
 }
 
 pub fn estimateCost(model: []const u8, input: u64, output: u64, cache_create: u64, cache_read: u64) f64 {
-    const p = pricePerMt(model);
+    return costAt(pricePerMt(model), input, output, cache_create, cache_read);
+}
+
+fn costAt(p: [4]f64, input: u64, output: u64, cache_create: u64, cache_read: u64) f64 {
     const f = struct {
         fn mt(n: u64) f64 {
             return @as(f64, @floatFromInt(n)) / 1_000_000.0;
@@ -398,6 +507,45 @@ test "parseClaude: tokens sum across assistant events, the last messages and the
     // 1300 in @ $3, 320 out @ $15, 50 cw @ $3.75, 4000 cr @ $0.30 per MT.
     const cost = s.costUsd();
     try t.expect(cost > 0.0100 and cost < 0.0102);
+    try t.expect(s.priced());
+}
+
+test "parseClaude: a message split over several lines counts once; each message is priced at its own model; an unknown model's tokens make the cost n/a" {
+    // sess-table-tokens-cost-wrong: Claude Code writes one message as a
+    // line per content block, each repeating the id and the whole usage.
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const u = "\"usage\":{\"input_tokens\":1000,\"output_tokens\":200}";
+    const split =
+        "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"go\"}}\n" ++
+        "{\"type\":\"assistant\",\"message\":{\"id\":\"msg_a1\",\"model\":\"claude-opus-4-7\"," ++ u ++ ",\"content\":[{\"type\":\"thinking\",\"thinking\":\"hm\"}]}}\n" ++
+        "{\"type\":\"assistant\",\"message\":{\"id\":\"msg_a1\",\"model\":\"claude-opus-4-7\"," ++ u ++ ",\"content\":[{\"type\":\"text\",\"text\":\"one\"}]}}\n" ++
+        "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"x\",\"content\":\"ok\"}]}}\n" ++
+        "{\"type\":\"assistant\",\"message\":{\"id\":\"msg_a1\",\"model\":\"claude-opus-4-7\"," ++ u ++ ",\"content\":[{\"type\":\"text\",\"text\":\"two\"}]}}\n" ++
+        "{\"type\":\"assistant\",\"message\":{\"id\":\"msg_b2\",\"model\":\"claude-fable-5-1\"," ++ u ++ ",\"content\":[{\"type\":\"text\",\"text\":\"three\"}]}}\n";
+    const s = try parseClaude(arena.allocator(), split);
+    try t.expectEqual(@as(u64, 2400), s.tokens);
+    try t.expectEqual(@as(u64, 2000), s.input_tokens);
+    // opus-4-7: 1000 × $5 + 200 × $25 per MT = $0.010; fable-5-1:
+    // 1000 × $10 + 200 × $50 = $0.020.
+    try t.expectApproxEqAbs(@as(f64, 0.030), s.costUsd(), 1e-9);
+    try t.expect(s.priced());
+    // Fed in two pieces, the same totals: the ids carry over.
+    var piece: Usage = .{};
+    const cut = std.mem.indexOf(u8, split, "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[").?;
+    piece.addText(t.allocator, split[0..cut]);
+    piece.addText(t.allocator, split[cut..]);
+    try t.expectEqual(@as(u64, 2400), piece.tokens);
+    try t.expectApproxEqAbs(@as(f64, 0.030), piece.cost_usd, 1e-9);
+    // A model the table does not know: the tokens count, the cost is n/a.
+    const unknown = "{\"type\":\"assistant\",\"message\":{\"id\":\"m\",\"model\":\"claude-next-9\"," ++ u ++ "}}\n";
+    const n = try parseClaude(arena.allocator(), unknown);
+    try t.expectEqual(@as(u64, 1200), n.tokens);
+    try t.expect(!n.priced());
+    // Zero usage under an unknown model (Claude Code's `<synthetic>`
+    // turns) prices nothing and leaves the cost a number.
+    const synthetic = "{\"type\":\"assistant\",\"message\":{\"id\":\"z\",\"model\":\"<synthetic>\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0}}}\n";
+    try t.expect((try parseClaude(arena.allocator(), synthetic)).priced());
 }
 
 test "parseClaude / parseCodex: the first prompt is the user's first words, past the CLI's own preamble" {
@@ -448,8 +596,14 @@ test "parseCodex: cwd + model from the context, the pending exec, the running to
 
 test "pricing strips the date suffix and unknown models cost nothing" {
     try t.expectEqual(@as(f64, 1.0), pricePerMt("claude-haiku-4-5-20251001")[0]);
-    try t.expectEqual(@as(f64, 75.0), pricePerMt("claude-opus-4-7")[1]);
+    try t.expectEqual(@as(f64, 25.0), pricePerMt("claude-opus-4-7")[1]);
     try t.expectEqual(@as(f64, 0.0), pricePerMt("claude-2")[0]);
+    try t.expect(knownPrice("claude-2") == null);
+    // The models the user runs: Opus 5 / 5.5, Fable 5 / 5.1.
+    try t.expectEqual(@as(f64, 5.0), knownPrice("claude-opus-5").?[0]);
+    try t.expectEqual(@as(f64, 20.0), knownPrice("claude-opus-5-5").?[1]);
+    try t.expectEqual(@as(f64, 50.0), knownPrice("claude-fable-5").?[1]);
+    try t.expectEqual(@as(f64, 0.25), knownPrice("claude-fable-5-1").?[3]);
     try t.expectEqual(@as(f64, 0.0), estimateCost("", 1000, 1000, 0, 0));
     try t.expectEqualStrings("bar", decodeWorkspaceLabel("-Users-foo-Projects-bar"));
     try t.expectEqualStrings("plain", decodeWorkspaceLabel("plain"));

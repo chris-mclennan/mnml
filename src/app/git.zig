@@ -31,6 +31,7 @@ const parse = @import("../git/parse.zig");
 const sequence_editor = @import("../git/sequence_editor.zig");
 const remote_mod = @import("../git/remote.zig");
 const ai_app = @import("ai.zig");
+const suggest = @import("../ai/suggest.zig");
 const api = @import("../ai/api_client.zig");
 const cmd_app = @import("cmd_app.zig");
 const builtin = @import("builtin");
@@ -643,7 +644,10 @@ pub const State = struct {
     ai_wip_target: ?PaneId = null,
     ai_product: ai_app.Product = .claude,
     /// A message body the AI returned, appended to the prompt's subject
-    /// line at accept. Owned.
+    /// line at accept. Owned, and held for the prompt's whole life: the
+    /// dispatcher closes a prompt BEFORE it runs the accept, so the body
+    /// is dropped by the next `openPrompt`, never by the close — which
+    /// is how every AI commit once lost it.
     ai_body: ?[]u8 = null,
     /// The patch a `commit_lines` prompt will commit, and its repo.
     /// Owned; taken by the accept, dropped by a cancel.
@@ -1287,8 +1291,11 @@ fn aiContextReady(app: *App, repo: *client.Repo, what: client.AiContext, diff: [
         app.toast("{s}", .{if (what == .staged) "nothing staged — stage some changes first" else "HEAD has no patch to summarise"});
         return;
     }
-    const cut = diff[0..@min(diff.len, ai_diff_cap)];
-    const tail: []const u8 = if (diff.len > ai_diff_cap) "\n…(diff truncated)…" else "";
+    // A secret-bearing file's changes never go (`suggest.isSecretBearing`).
+    const kept = try suggest.withholdSecretDiffs(arena, diff);
+    ai_app.toastWithheld(app, kept.withheld);
+    const cut = kept.text[0..@min(kept.text.len, ai_diff_cap)];
+    const tail: []const u8 = if (kept.text.len > ai_diff_cap) "\n…(diff truncated)…" else "";
     const prompt = switch (what) {
         .staged => try std.fmt.allocPrint(arena, "Write a git commit message for the staged changes below. First line: imperative mood, ≤72 chars, no trailing period. Then a blank line and a short body ONLY if it adds something. Output ONLY the commit message — no preamble, no code fences.\n\n```diff\n{s}{s}\n```", .{ cut, tail }),
         .head => try std.fmt.allocPrint(arena, "Rewrite this commit's message based on what actually changed. First line: imperative mood, ≤72 chars, no trailing period. Then a blank line and a short body ONLY if it adds something the subject doesn't. Output ONLY the new message — no preamble, no code fences.\n\n{s}{s}{s}```diff\n{s}{s}\n```", .{ if (message.len > 0) "Current message:\n```\n" else "", message, if (message.len > 0) "\n```\n\n" else "", cut, tail }),
@@ -1348,14 +1355,14 @@ pub fn deliverAiAnswer(app: *App, w: AiWait, text: []const u8) Allocator.Error!v
         app.toast("AI returned an empty message", .{});
         return;
     }
-    if (st.ai_body) |b| app.gpa.free(b);
-    st.ai_body = if (msg.body.len > 0) try app.gpa.dupe(u8, msg.body) else null;
     const kind: PromptKind = if (w.what == .commit) .commit else .amend;
     const title: []const u8 = if (msg.body.len > 0)
         (if (kind == .commit) "Commit message (AI body attached)" else "Amend HEAD's message (AI body attached)")
     else
         (if (kind == .commit) "Commit message" else "Amend HEAD's message");
+    // After the open, which drops whatever body an earlier prompt left.
     openPrompt(app, kind, title);
+    if (msg.body.len > 0) st.ai_body = try app.gpa.dupe(u8, msg.body);
     try app.overlay.prompt.state.setText(app.gpa, msg.subject);
 }
 
@@ -2765,10 +2772,13 @@ pub fn commitPromptTitle(app: *App) []const u8 {
 
 pub fn openPrompt(app: *App, kind: PromptKind, title: []const u8) void {
     app.overlay.deinit(app.gpa);
-    if (kind != .commit and kind != .amend) if (app.git.ai_body) |b| {
+    // The AI body belongs to the prompt it was attached to, which is
+    // gone now: a commit typed by hand must not pick it up. (Not on
+    // close — the close runs before the accept that reads it.)
+    if (app.git.ai_body) |b| {
         app.gpa.free(b);
         app.git.ai_body = null;
-    };
+    }
     // The held line patch lives until its own accept or another prompt
     // (the close runs before the accept, so it cannot go on close).
     if (kind != .commit_lines) if (app.git.line_patch) |b| {
@@ -3431,16 +3441,6 @@ pub fn pushForce(app: *App) CommandError!void {
     // branch does not have; a remote that moved since that fetch is
     // refused. The box wraps (`confirm.messageLines`).
     try openConfirm(app, .push_force, try std.fmt.allocPrint(app.gpa, "Push {s} with --force-with-lease?\n{s} is rewritten to match {s}: commits on it that you fetched but never merged are dropped. If it moved since your last fetch, git refuses the push.", .{ branch, upstream, branch }));
-}
-
-/// A prompt or confirm box closing by any route: an AI body waiting
-/// for a commit prompt that is gone is dropped.
-pub fn overlayClosing(app: *App) void {
-    const st = &app.git;
-    if (st.prompt == .commit or st.prompt == .amend) {
-        if (st.ai_body) |b| app.gpa.free(b);
-        st.ai_body = null;
-    }
 }
 
 // ─── row actions (rail + status pane) ───────────────────────────────────

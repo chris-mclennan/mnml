@@ -91,7 +91,6 @@ pub const table = .{
     .@"ai.suggestion_stats" = &suggestionStats,
     .@"ai.show_config" = &showConfig,
     .@"ai.token_usage" = &tokenUsage,
-    .@"ai.canary" = &canary,
     .@"ai.write_pr_description" = &writePrDescription,
     .@"ai.write_branch_name" = &writeBranchName,
     .@"ai.recompose_branch" = &recomposeBranch,
@@ -112,10 +111,6 @@ pub const table = .{
     .@"ai.chip_show_all_off" = &chipAllOff,
     .@"ai.chip_show_all_compact" = &chipAllCompact,
     .@"ai.chip_show_all_ticker" = &chipAllTicker,
-    .@"cloud_agents.refresh_run_detail" = &cloudNotInBuild,
-    .@"cloud_agents.focus_quick_input" = &cloudNotInBuild,
-    .@"cloud_agents.spawn_worker" = &cloudNotInBuild,
-    .@"cloud_agents.webhook_docs" = &cloudNotInBuild,
 };
 
 /// How many API turns an agentic job may take before it is stopped.
@@ -155,6 +150,12 @@ pub const State = struct {
     suggest_group: Io.Group = .init,
     /// The pane whose suggestion is in flight.
     suggest_pane: ?PaneId = null,
+    /// Where that request was asked from: the document (compared, never
+    /// dereferenced), its edit-log head and the cursor. An answer lands
+    /// only if all three still hold (`noteRequest`).
+    suggest_doc: ?*const anyopaque = null,
+    suggest_seq: u64 = 0,
+    suggest_cursor: usize = 0,
     /// What the chip, `:messages` and `status.json` read.
     ghost: ghost_chip.State = .{},
     /// A runtime pick from the setup picker; wins over the config.
@@ -205,7 +206,9 @@ pub const State = struct {
 pub const AiPane = struct {
     pub const Status = enum { running, done, failed };
     pub const Kind = enum { ask, action, chat, git };
-    pub const ApplyTarget = struct { pane: PaneId, start: usize, end: usize };
+    /// What `ai.apply` replaces: the range the action was run on,
+    /// followed along the editor's edits (`ai_apply.Anchor`).
+    pub const ApplyTarget = ai_apply.Anchor;
 
     gpa: Allocator,
     /// Owned; the tab label.
@@ -222,10 +225,20 @@ pub const AiPane = struct {
     has_session: bool = false,
     /// What `ai.apply` replaces.
     apply: ?ApplyTarget = null,
+    /// Owned: the text `apply` covered when the job started. A range the
+    /// edit log could not follow (an undo, a reload) is still the right
+    /// one if it reads exactly this.
+    apply_original: ?[]u8 = null,
+    /// The job's cancel flag (the `Job` outlives the pane). Closing the
+    /// pane sets it: nobody will read the answer, so the child is killed
+    /// rather than left to spend the user's quota finishing it.
+    cancel: ?*std.atomic.Value(bool) = null,
 
     pub fn deinit(self: *AiPane) void {
+        if (self.cancel) |c| c.store(true, .release);
         self.gpa.free(self.title);
         self.gpa.free(self.prompt);
+        if (self.apply_original) |o| self.gpa.free(o);
         self.answer.deinit(self.gpa);
         if (self.err) |e| self.gpa.free(e);
     }
@@ -388,6 +401,7 @@ fn acceptGhost(app: *App, e: *EditorPane, take_in: usize) Allocator.Error!bool {
 
 /// Every tick: fire the request once the clock is due.
 pub fn tick(app: *App) Allocator.Error!void {
+    if (app.active) |id| if (app.panes.editor(id)) |e| try dropMovedGhost(app, e);
     if (app.ai.debounce.due(app.now_ms)) try fireSuggestion(app);
     try usage_pane.tick(app);
     usage_pane.pollTicker(app);
@@ -471,11 +485,40 @@ fn fireSuggestion(app: *App) Allocator.Error!void {
     st.ghost.clearHolds();
     const generation = st.debounce.fire(app.now_ms);
     st.suggest_pane = id;
+    noteRequest(app, e);
     st.current_accepted = false;
     st.suggest_group.concurrent(app.io, suggestWorker, .{ app.events, app.io, gpa, @as(u32, id), generation, backend, prompt, model, key_owned, cwd, &app.env, app.cfg.ai.suggest_timeout_ms }) catch {
         st.debounce.cancel();
         return error.OutOfMemory;
     };
+    app.needs_render = true;
+}
+
+/// A suggestion request is going out for `e`: remember the spot it is
+/// for. Both backends call this (`copilot.fireSuggestion` too).
+pub fn noteRequest(app: *App, e: *const EditorPane) void {
+    app.ai.suggest_doc = e.buf.doc;
+    app.ai.suggest_seq = e.buf.doc.edits.head();
+    app.ai.suggest_cursor = e.buf.editor.cursor;
+}
+
+/// Whether `e` is still at the spot the request in flight was made
+/// from: the same document, no edit since, the cursor where it was.
+fn atRequestedSpot(app: *const App, e: *const EditorPane) bool {
+    const st = &app.ai;
+    const doc = st.suggest_doc orelse return false;
+    return doc == @as(*const anyopaque, e.buf.doc) and
+        st.suggest_seq == e.buf.doc.edits.head() and
+        st.suggest_cursor == e.buf.editor.cursor;
+}
+
+/// A ghost whose cursor has moved goes: a click, a jump, a motion that
+/// did not pass through `interceptKey`. Run before an editor is painted
+/// and on every tick.
+pub fn dropMovedGhost(app: *App, e: *EditorPane) Allocator.Error!void {
+    if (!e.buf.editor.ghostMoved()) return;
+    try e.buf.editor.setGhostSuggestion(null);
+    app.ai.current_accepted = false;
     app.needs_render = true;
 }
 
@@ -542,7 +585,10 @@ fn suggestWorker(
         .claude_api => {
             const body = api.completionRequest(gpa, model, suggest.system_prompt, prompt, suggest.max_tokens) catch return;
             defer gpa.free(body);
-            const res = api.post(gpa, io, api.endpoint, key, body) catch |err| switch (err) {
+            var url_arena = std.heap.ArenaAllocator.init(gpa);
+            defer url_arena.deinit();
+            const url = api.endpointFor(url_arena.allocator(), env) catch return;
+            const res = api.post(gpa, io, url, key, body) catch |err| switch (err) {
                 error.Canceled => return error.Canceled,
                 else => return postOutcome(events, io, gpa, pane, generation, .failed, "the request failed"),
             };
@@ -565,12 +611,19 @@ fn suggestWorker(
             // `claude -p` that picks up the CLI's own default runs the
             // big model for a one-line completion, which is where the
             // multi-second waits came from.
-            const argv = cli.claudeArgv(arena.allocator(), prompt, null, model) catch return;
-            const out = cli.runWithin(gpa, io, argv, cwd, env, timeout_ms) catch |err| switch (err) {
+            // The prompt on stdin, as every job's is (`jobWorker`). A
+            // keystroke cancels this worker's group, which unwinds
+            // `runJob` through its kill.
+            const argv = cli.claudeStdinArgv(arena.allocator(), null, model) catch return;
+            const out = cli.runJob(gpa, io, argv, cwd, env, .{ .timeout_ms = timeout_ms, .stdin = prompt }) catch |err| switch (err) {
                 error.Canceled => return error.Canceled,
                 error.TimedOut => return postOutcome(events, io, gpa, pane, generation, .timed_out, ""),
-                else => return postOutcome(events, io, gpa, pane, generation, .failed, "`claude` could not be run — is it installed and signed in?"),
+                else => |e| return postOutcome(events, io, gpa, pane, generation, .failed, @errorName(e)),
             };
+            if (out.spawn_failed) {
+                defer gpa.free(out.text);
+                return postOutcome(events, io, gpa, pane, generation, .failed, spawnFailure(arena.allocator(), cli.claude_binary, out.text));
+            }
             if (!out.ok) {
                 defer gpa.free(out.text);
                 const msg = std.fmt.allocPrint(arena.allocator(), "claude -p: {s}", .{out.text}) catch return;
@@ -626,6 +679,10 @@ pub fn handle(app: *App, job_id: u64, msg: event.AiMsg) Allocator.Error!void {
             if (!wanted or st.suggest_pane != @as(PaneId, s.pane)) return;
             const e = app.panes.editor(s.pane) orelse return;
             if (s.text.len == 0) return;
+            // Asked for one spot, answered after the cursor left it
+            // without an edit (a motion, a click): it would land in the
+            // wrong place, so it does not land at all.
+            if (!atRequestedSpot(app, e)) return ghost_chip.settle(app, .stale, 0, null);
             try e.buf.editor.setGhostSuggestion(s.text);
             st.shown +|= 1;
             st.current_accepted = false;
@@ -642,6 +699,13 @@ pub fn handle(app: *App, job_id: u64, msg: event.AiMsg) Allocator.Error!void {
             const p = paneOfJob(app, job_id) orelse return;
             if (p.status == .running) p.status = .done;
             app.needs_render = true;
+        },
+        .timed_out => |why| {
+            // Said out loud: the pane may be in a hidden tab, and a job
+            // that stalled for minutes is not one the user is watching.
+            const p = paneOfJob(app, job_id);
+            app.toast("{s}: {s}", .{ if (p) |ap| ap.title else "ai", why });
+            return handle(app, job_id, .{ .failed = why });
         },
         .failed => |why| {
             if (app.ai.job(job_id)) |j| j.finished = true;
@@ -764,10 +828,16 @@ pub fn askProduct(app: *App, product: Product, title: []const u8, prompt: []cons
         .session_id = cli.genSessionId(app.io),
         .has_session = mode == .claude_cli,
         .apply = apply,
+        .cancel = &j.cancel,
     };
     errdefer gpa.free(pane.title);
     pane.prompt = try gpa.dupe(u8, prompt);
     errdefer gpa.free(pane.prompt);
+    if (apply) |an| if (app.panes.editor(an.pane)) |e| {
+        const bytes = e.buf.editor.bytes();
+        if (an.start <= an.end and an.end <= bytes.len) pane.apply_original = try gpa.dupe(u8, bytes[an.start..an.end]);
+    };
+    errdefer if (pane.apply_original) |o| gpa.free(o);
 
     const prompt_owned = try gpa.dupe(u8, prompt);
     errdefer gpa.free(prompt_owned);
@@ -791,7 +861,7 @@ pub fn askProduct(app: *App, product: Product, title: []const u8, prompt: []cons
 
     const id = try app.panes.add(.{ .ai = pane });
     // Owned by the store from here.
-    app.ai.group.concurrent(app.io, jobWorker, .{ app.events, app.io, gpa, j, mode, prompt_owned, pane.session_id, model, key_owned, cwd, &app.env, system, use_tools, write_tools, max_tokens }) catch {
+    app.ai.group.concurrent(app.io, jobWorker, .{ app.events, app.io, gpa, j, mode, prompt_owned, pane.session_id, model, key_owned, cwd, &app.env, system, use_tools, write_tools, max_tokens, app.cfg.ai.cli_timeout_ms }) catch {
         app.panes.remove(id);
         return error.OutOfMemory;
     };
@@ -809,7 +879,13 @@ pub fn askProduct(app: *App, product: Product, title: []const u8, prompt: []cons
 
 /// The job worker: one `claude -p` / `codex exec`, or the agent loop
 /// over the API. Owns every string it was handed.
-fn jobWorker(events: *event.EventQueue, io: Io, gpa: Allocator, j: *Job, mode: JobMode, prompt: []u8, session_id: [36]u8, model: []u8, key: []u8, cwd: []u8, env: *const std.process.Environ.Map, system: ?[]u8, use_tools: bool, write_tools: bool, max_tokens: u32) Io.Cancelable!void {
+///
+/// The CLI child belongs to the job (`cli.runJob`): the job's cancel
+/// flag — set by `c`, by closing the pane, by a re-ask — kills and
+/// reaps it within a poll, and so does `[ai] cli_timeout_ms`. Every AI
+/// feature that runs a one-shot rides this path: the ai.* actions,
+/// the commit and branch drafts, `git.explain_branch`, the PR text.
+fn jobWorker(events: *event.EventQueue, io: Io, gpa: Allocator, j: *Job, mode: JobMode, prompt: []u8, session_id: [36]u8, model: []u8, key: []u8, cwd: []u8, env: *const std.process.Environ.Map, system: ?[]u8, use_tools: bool, write_tools: bool, max_tokens: u32, timeout_ms: u32) Io.Cancelable!void {
     defer gpa.free(prompt);
     defer gpa.free(model);
     defer gpa.free(key);
@@ -819,23 +895,56 @@ fn jobWorker(events: *event.EventQueue, io: Io, gpa: Allocator, j: *Job, mode: J
         .claude_cli, .codex_cli => {
             var arena = std.heap.ArenaAllocator.init(gpa);
             defer arena.deinit();
-            const argv = (if (mode == .claude_cli) cli.claudeArgv(arena.allocator(), prompt, &session_id, extraModel(model)) else cli.codexArgv(arena.allocator(), prompt)) catch return;
-            const out = cli.run(gpa, io, argv, cwd, env) catch |err| switch (err) {
+            // The prompt on stdin, never in argv: argv has an OS cap a
+            // whole file can pass, and `ps` shows it to every local user.
+            const argv = (if (mode == .claude_cli) cli.claudeStdinArgv(arena.allocator(), &session_id, extraModel(model)) else cli.codexStdinArgv(arena.allocator())) catch return;
+            const binary = if (mode == .claude_cli) cli.claude_binary else cli.codex_binary;
+            const out = cli.runJob(gpa, io, argv, cwd, env, .{ .timeout_ms = timeout_ms, .cancel = &j.cancel, .stdin = prompt }) catch |err| switch (err) {
                 error.Canceled => return error.Canceled,
-                else => {
-                    postFailed(events, io, gpa, j.id, if (mode == .claude_cli) "`claude` could not be run — is it installed and signed in?" else "`codex` could not be run — is it installed?");
+                error.Aborted => {
+                    postFailed(events, io, gpa, j.id, "cancelled");
+                    return;
+                },
+                error.TimedOut => {
+                    const why = std.fmt.allocPrint(gpa, "`{s}` gave no answer within {d} s and was stopped ([ai] cli_timeout_ms)", .{ binary, std.math.divCeil(u32, timeout_ms, 1000) catch 0 }) catch return;
+                    events.post(io, .{ .ai = .{ .job = j.id, .msg = .{ .timed_out = why } } });
+                    return;
+                },
+                else => |e| {
+                    const why = std.fmt.allocPrint(gpa, "`{s}` failed: {s}", .{ binary, @errorName(e) }) catch return;
+                    events.post(io, .{ .ai = .{ .job = j.id, .msg = .{ .failed = why } } });
                     return;
                 },
             };
-            if (!out.ok) {
-                events.post(io, .{ .ai = .{ .job = j.id, .msg = .{ .failed = out.text } } });
+            if (out.spawn_failed) {
+                defer gpa.free(out.text);
+                postFailed(events, io, gpa, j.id, spawnFailure(arena.allocator(), binary, out.text));
                 return;
             }
-            events.post(io, .{ .ai = .{ .job = j.id, .msg = .{ .text = out.text } } });
+            // Text to paint, not a terminal stream: escapes dropped whole.
+            const clean = blk: {
+                defer gpa.free(out.text);
+                break :blk cli.cleanOutput(gpa, out.text) catch return;
+            };
+            if (!out.ok) {
+                events.post(io, .{ .ai = .{ .job = j.id, .msg = .{ .failed = clean } } });
+                return;
+            }
+            events.post(io, .{ .ai = .{ .job = j.id, .msg = .{ .text = clean } } });
             events.post(io, .{ .ai = .{ .job = j.id, .msg = .done } });
         },
-        .claude_api => try agentLoop(events, io, gpa, j, prompt, model, key, cwd, system, use_tools, write_tools, max_tokens),
+        .claude_api => try agentLoop(events, io, gpa, j, prompt, model, key, cwd, env, system, use_tools, write_tools, max_tokens, timeout_ms),
     }
+}
+
+/// Why a CLI could not be started, in the OS's words. Only a binary that
+/// is not there is worth a guess at the cause; anything else is said as
+/// it is, never folded into "is it installed?" — a CLI that is installed
+/// and signed in must not send its user off to reinstall it.
+pub fn spawnFailure(arena: Allocator, binary: []const u8, err_name: []const u8) []const u8 {
+    if (std.mem.eql(u8, err_name, "FileNotFound"))
+        return std.fmt.allocPrint(arena, "`{s}` could not be started (FileNotFound) — is it installed and on PATH?", .{binary}) catch "the CLI could not be started";
+    return std.fmt.allocPrint(arena, "`{s}` could not be started: {s}", .{ binary, err_name }) catch "the CLI could not be started";
 }
 
 /// `[ai] model` is for the API; the CLI takes it only when it looks
@@ -852,10 +961,15 @@ fn postFailed(events: *event.EventQueue, io: Io, gpa: Allocator, job_id: u64, ms
 
 /// request → (tool calls) → request until the model stops. Text of
 /// every turn is posted as it lands; a write waits on the confirm.
-fn agentLoop(events: *event.EventQueue, io: Io, gpa: Allocator, j: *Job, prompt: []const u8, model: []const u8, key: []const u8, cwd: []const u8, system: ?[]const u8, use_tools: bool, write_tools: bool, max_tokens: u32) Io.Cancelable!void {
+///
+/// Each request is watched (`postWatched`): the job's cancel flag and
+/// `[ai] cli_timeout_ms` end it mid-flight, so a server that stalls —
+/// or answers its head and never its body — cannot hold the job.
+fn agentLoop(events: *event.EventQueue, io: Io, gpa: Allocator, j: *Job, prompt: []const u8, model: []const u8, key: []const u8, cwd: []const u8, env: *const std.process.Environ.Map, system: ?[]const u8, use_tools: bool, write_tools: bool, max_tokens: u32, timeout_ms: u32) Io.Cancelable!void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
+    const url = api.endpointFor(arena, env) catch return;
     const sys = api.agentSystemPrompt(arena, system, write_tools) catch return;
     var messages: std.ArrayListUnmanaged(api.Message) = .empty;
     messages.append(arena, .{ .role = "user", .blocks = arena.dupe(api.Block, &.{.{ .text = prompt }}) catch return }) catch return;
@@ -874,8 +988,17 @@ fn agentLoop(events: *event.EventQueue, io: Io, gpa: Allocator, j: *Job, prompt:
             .tools = if (!use_tools) .none else if (write_tools) .with_write else .read_only,
         }) catch return;
         defer gpa.free(body);
-        const res = api.post(gpa, io, api.endpoint, key, body) catch |err| switch (err) {
+        const res = postWatched(gpa, io, url, key, body, &j.cancel, timeout_ms) catch |err| switch (err) {
             error.Canceled => return error.Canceled,
+            error.Aborted => {
+                postFailed(events, io, gpa, j.id, "cancelled");
+                return;
+            },
+            error.TimedOut => {
+                const why = std.fmt.allocPrint(gpa, "the API gave no answer within {d} s and the request was stopped ([ai] cli_timeout_ms)", .{std.math.divCeil(u32, timeout_ms, 1000) catch 0}) catch return;
+                events.post(io, .{ .ai = .{ .job = j.id, .msg = .{ .timed_out = why } } });
+                return;
+            },
             else => {
                 postFailed(events, io, gpa, j.id, "the request failed (network / TLS)");
                 return;
@@ -883,9 +1006,7 @@ fn agentLoop(events: *event.EventQueue, io: Io, gpa: Allocator, j: *Job, prompt:
         };
         defer gpa.free(res.body);
         if (res.status != 200) {
-            const why = api.errorMessage(arena, res.body) orelse "";
-            const msg = std.fmt.allocPrint(gpa, "HTTP {d} {s}", .{ res.status, why }) catch return;
-            events.post(io, .{ .ai = .{ .job = j.id, .msg = .{ .failed = msg } } });
+            events.post(io, .{ .ai = .{ .job = j.id, .msg = .{ .failed = httpFailure(gpa, arena, res) catch return } } });
             return;
         }
         var reply = api.parseReply(gpa, res.body) catch {
@@ -919,6 +1040,72 @@ fn agentLoop(events: *event.EventQueue, io: Io, gpa: Allocator, j: *Job, prompt:
     events.post(io, .{ .ai = .{ .job = j.id, .msg = .done } });
 }
 
+/// What a non-200 answer says in the pane: the status, the API's own
+/// message, and — on a 429 / 529 that names one — when to try again.
+/// Owned by `gpa`.
+fn httpFailure(gpa: Allocator, arena: Allocator, res: api.Response) Allocator.Error![]u8 {
+    const why = api.errorMessage(arena, res.body) orelse "";
+    const sep: []const u8 = if (why.len > 0) " " else "";
+    if (res.retry_after_s) |s| return std.fmt.allocPrint(gpa, "HTTP {d}{s}{s} — retry after {d} s", .{ res.status, sep, why, s });
+    return std.fmt.allocPrint(gpa, "HTTP {d}{s}{s}", .{ res.status, sep, why });
+}
+
+const Stop = enum { aborted, timed_out };
+const Watched = union(enum) {
+    post: api.PostError!api.Response,
+    watch: Io.Cancelable!Stop,
+};
+
+/// The flag and the clock, looked at every 100 ms.
+fn watchJob(io: Io, cancel: *const std.atomic.Value(bool), timeout_ms: u32) Io.Cancelable!Stop {
+    const t0 = Io.Timestamp.now(io, .awake);
+    while (true) {
+        if (cancel.load(.acquire)) return .aborted;
+        if (t0.untilNow(io, .awake).toMilliseconds() >= timeout_ms) return .timed_out;
+        try io.sleep(.fromMilliseconds(100), .awake);
+    }
+}
+
+/// `api.post`, raced against the job's cancel flag and its budget: the
+/// first to finish wins and the other is cancelled. A request cut off
+/// mid-flight is `Aborted` / `TimedOut`; a response that lands while
+/// the loser is being stopped is freed, not leaked.
+fn postWatched(gpa: Allocator, io: Io, url: []const u8, key: []const u8, body: []const u8, cancel: *const std.atomic.Value(bool), timeout_ms: u32) (api.PostError || error{ Aborted, TimedOut })!api.Response {
+    var buf: [2]Watched = undefined;
+    var sel = Io.Select(Watched).init(io, &buf);
+    sel.concurrent(.post, api.post, .{ gpa, io, url, key, body }) catch return api.post(gpa, io, url, key, body);
+    sel.concurrent(.watch, watchJob, .{ io, cancel, timeout_ms }) catch {
+        // No task for the watcher: the request runs unwatched.
+        const first = sel.await() catch |err| {
+            drainWatched(gpa, &sel);
+            return err;
+        };
+        drainWatched(gpa, &sel);
+        return first.post;
+    };
+    const first = sel.await() catch |err| {
+        drainWatched(gpa, &sel);
+        return err;
+    };
+    drainWatched(gpa, &sel);
+    return switch (first) {
+        .post => |r| r,
+        .watch => |w| switch (w catch return error.Canceled) {
+            .aborted => error.Aborted,
+            .timed_out => error.TimedOut,
+        },
+    };
+}
+
+/// Cancel what is left of a `postWatched` race and free any response it
+/// produced on the way out.
+fn drainWatched(gpa: Allocator, sel: *Io.Select(Watched)) void {
+    while (sel.cancel()) |rest| switch (rest) {
+        .post => |r| if (r) |res| gpa.free(res.body) else |_| {},
+        .watch => {},
+    };
+}
+
 const ToolResult = struct { text: []const u8, note: []const u8, is_error: bool = false };
 
 /// The workspace tools, on the worker. Paths are workspace-relative
@@ -934,6 +1121,7 @@ fn executeTool(arena: Allocator, io: Io, gpa: Allocator, events: *event.EventQue
     defer root.close(io);
     if (std.mem.eql(u8, name, "read_file")) {
         const rel = safeRel(api.inputStr(input, "path") orelse "") orelse return fail.f(arena, "read_file: bad path", .{});
+        if (suggest.isSecretBearing(rel)) return fail.f(arena, "read_file {s}: refused — it looks like it holds secrets, and those are never sent", .{rel});
         const text = root.readFileAlloc(io, rel, arena, .limited(tool_read_cap)) catch |err| return fail.f(arena, "read_file {s}: {s}", .{ rel, @errorName(err) });
         return .{ .text = text, .note = std.fmt.allocPrint(arena, "read {s} ({d} bytes)", .{ rel, text.len }) catch "read" };
     }
@@ -1008,6 +1196,8 @@ fn grepWorkspace(arena: Allocator, io: Io, gpa: Allocator, root: Io.Dir, pattern
             continue;
         }
         if (entry.kind != .file) continue;
+        // A secret-bearing file's lines are never sent, matched or not.
+        if (suggest.isSecretBearing(entry.basename)) continue;
         try io.checkCancel();
         const st = entry.dir.statFile(io, entry.basename, .{}) catch continue;
         if (st.size > 1024 * 1024) continue;
@@ -1113,7 +1303,13 @@ pub fn chatAccept(app: *App, text: []const u8) CommandError!void {
     if (q.len == 0) return;
     const arena = app.frame.allocator();
     var prompt: std.ArrayListUnmanaged(u8) = .empty;
-    if (app.activeEditor()) |e| {
+    const active = app.activeEditor();
+    if (active) |e| if (e.buf.doc.path) |p| if (suggest.isSecretBearing(p)) {
+        // The question still goes; the file never does (the one
+        // never-send list, `suggest.isSecretBearing`).
+        app.toast("ai.chat: {s} not attached — it looks like it holds secrets; the question went alone", .{app.relPath(p)});
+    };
+    if (active) |e| if (e.buf.doc.path == null or !suggest.isSecretBearing(e.buf.doc.path.?)) {
         const path = if (e.buf.doc.path) |p| app.relPath(p) else "[scratch]";
         const lang = suggest.languageOf(e.buf.doc.path);
         if (e.buf.editor.selection()) |sel| if (sel[1] > sel[0]) {
@@ -1123,7 +1319,7 @@ pub fn chatAccept(app: *App, text: []const u8) CommandError!void {
             const body = e.buf.editor.bytes();
             try prompt.print(arena, "File {s}:\n\n```{s}\n{s}\n```\n\n", .{ path, lang, body[0..@min(body.len, 12_000)] });
         }
-    }
+    };
     try prompt.appendSlice(arena, q);
     _ = try ask(app, "ai: chat", prompt.items, .chat, null);
 }
@@ -1132,13 +1328,15 @@ pub fn chatAccept(app: *App, text: []const u8) CommandError!void {
 fn actionTarget(app: *App) CommandError!struct { code: []const u8, lang: []const u8, apply: AiPane.ApplyTarget } {
     const id = app.active orelse return error.NoActivePane;
     const e = app.panes.editor(id) orelse return error.NotAnEditor;
+    if (e.buf.doc.path) |p| if (suggest.isSecretBearing(p))
+        return app.diag.fail(app.frame.allocator(), "ai: {s} not sent — it looks like it holds secrets", .{app.relPath(p)});
     const ed = e.buf.editor;
     const lang = suggest.languageOf(e.buf.doc.path);
     if (ed.selection()) |sel| if (sel[1] > sel[0]) {
-        return .{ .code = try app.frame.allocator().dupe(u8, ed.bytes()[sel[0]..sel[1]]), .lang = lang, .apply = .{ .pane = id, .start = sel[0], .end = sel[1] } };
+        return .{ .code = try app.frame.allocator().dupe(u8, ed.bytes()[sel[0]..sel[1]]), .lang = lang, .apply = .take(id, e.buf.doc, sel[0], sel[1]) };
     };
     if (ed.len() == 0) return error.NoSelection;
-    return .{ .code = try app.frame.allocator().dupe(u8, ed.bytes()), .lang = lang, .apply = .{ .pane = id, .start = 0, .end = ed.len() } };
+    return .{ .code = try app.frame.allocator().dupe(u8, ed.bytes()), .lang = lang, .apply = .take(id, e.buf.doc, 0, ed.len()) };
 }
 
 fn action(app: *App, what: []const u8) CommandError!void {
@@ -1207,12 +1405,12 @@ fn applyCmd(app: *App) CommandError!void {
         const id = app.last_editor orelse return app.diag.fail(arena, "no editor to apply to", .{});
         const e = app.panes.editor(id) orelse return app.diag.fail(arena, "no editor to apply to", .{});
         const sel = e.buf.editor.selection() orelse [2]usize{ 0, e.buf.editor.len() };
-        break :blk AiPane.ApplyTarget{ .pane = id, .start = sel[0], .end = sel[1] };
+        break :blk AiPane.ApplyTarget.take(id, e.buf.doc, sel[0], sel[1]);
     };
     // The block's own trailing newline is part of the proposal; the
     // fence's is not.
     const proposal = try std.fmt.allocPrint(arena, "{s}\n", .{code});
-    _ = try ai_apply.open(app, source, target.pane, target.start, target.end, proposal);
+    _ = try ai_apply.open(app, source, target, p.apply_original, proposal);
 }
 
 /// `ai.session_view`: the transcript file of this pane's session, live
@@ -1607,8 +1805,8 @@ fn tokenUsage(app: *App) CommandError!void {
     return spend.refreshMeter(app);
 }
 
-fn canary(app: *App) CommandError!void {
-    return app.diag.fail(app.frame.allocator(), "the API-key canary log is not in this build", .{});
+fn notInBuildCmd(app: *App) CommandError!void {
+    return app.diag.fail(app.frame.allocator(), "not in this build yet", .{});
 }
 
 fn showLastResponse(app: *App) CommandError!void {
@@ -1633,8 +1831,18 @@ fn explainDiff(app: *App) CommandError!void {
     var diff = try gitOut(app, &.{ "git", "diff", "--cached" });
     if (std.mem.trim(u8, diff, " \n").len == 0) diff = try gitOut(app, &.{ "git", "diff" });
     if (std.mem.trim(u8, diff, " \n").len == 0) return app.diag.fail(app.frame.allocator(), "nothing to explain: the working tree is clean", .{});
-    const prompt = try std.fmt.allocPrint(app.frame.allocator(), "Explain this diff, walking through what changed and why it might have:\n\n```diff\n{s}\n```\n", .{diff[0..@min(diff.len, 60_000)]});
+    const kept = try suggest.withholdSecretDiffs(app.frame.allocator(), diff);
+    toastWithheld(app, kept.withheld);
+    const prompt = try std.fmt.allocPrint(app.frame.allocator(), "Explain this diff, walking through what changed and why it might have:\n\n```diff\n{s}\n```\n", .{kept.text[0..@min(kept.text.len, 60_000)]});
     _ = try ask(app, "ai: explain diff", prompt, .git, null);
+}
+
+/// Say which files a diff going to a model left out, by name.
+pub fn toastWithheld(app: *App, withheld: []const []const u8) void {
+    if (withheld.len == 0) return;
+    if (withheld.len == 1) {
+        app.toast("ai: {s} not sent — it looks like it holds secrets", .{withheld[0]});
+    } else app.toast("ai: {s} and {d} more not sent — they look like they hold secrets", .{ withheld[0], withheld.len - 1 });
 }
 
 fn writePrDescription(app: *App) CommandError!void {
@@ -1750,10 +1958,6 @@ fn chipAllTicker(app: *App) CommandError!void {
 
 // ─── cloud agents ───────────────────────────────────────────────────────
 
-fn cloudNotInBuild(app: *App) CommandError!void {
-    return app.diag.fail(app.frame.allocator(), "cloud agents (AWS ECS / Managed Agents) are not in this build yet", .{});
-}
-
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
@@ -1822,10 +2026,25 @@ test "ghost text: typing arms the debounce; a stale generation's result is dropp
     try app.handle(.{ .ai = .{ .job = 0, .msg = .{ .suggestion = .{ .pane = id, .generation = gen, .text = stale } } } });
     try t.expect(e.buf.editor.ghost_suggestion == null);
     const live_gen = app.ai.debounce.fire(app.now_ms);
+    noteRequest(&app, e);
     const live = try t.allocator.dupe(u8, "NEW");
     try app.handle(.{ .ai = .{ .job = 0, .msg = .{ .suggestion = .{ .pane = id, .generation = live_gen, .text = live } } } });
     try t.expectEqualStrings("NEW", e.buf.editor.ghost_suggestion.?);
     try t.expectEqual(@as(u32, 1), app.ai.shown);
+    // The cursor moves (no edit): the ghost goes with it rather than
+    // riding along to the new spot.
+    e.buf.editor.setCursor(0);
+    try dropMovedGhost(&app, e);
+    try t.expect(e.buf.editor.ghost_suggestion == null);
+    // A request whose cursor moved before the answer came: dropped.
+    const moved_gen = app.ai.debounce.fire(app.now_ms);
+    e.buf.editor.setCursor(1);
+    noteRequest(&app, e);
+    e.buf.editor.setCursor(0);
+    const late = try t.allocator.dupe(u8, "LATE");
+    try app.handle(.{ .ai = .{ .job = 0, .msg = .{ .suggestion = .{ .pane = id, .generation = moved_gen, .text = late } } } });
+    try t.expect(e.buf.editor.ghost_suggestion == null);
+    try t.expect(std.mem.endsWith(u8, lastMessage(&app), "dropped (cursor moved)"));
 }
 
 test "the confirm channel: a worker parks on the job's queue; the UI's answer releases it" {
@@ -2176,4 +2395,129 @@ test "ghost text: typing through a request kills the claude child, not just our 
     try t.expect(elapsed < 5_000);
     try t.expect(app.ai.debounce.in_flight == null);
     try t.expectEqualStrings("ghost-text: claude-code · 0.4s · cancelled (typed)", lastMessage(&app));
+}
+
+test "an AI job's CLI child past [ai] cli_timeout_ms is killed and reaped, the pane says why and a toast names the key" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    // A `claude` that writes its pid and never answers.
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "claude", .data = "#!/bin/sh\necho $$ > pid\nexec /bin/sleep 30\n" });
+    try tmp.dir.setFilePermissions(t.io, "claude", .fromMode(0o755), .{});
+
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = dir, .cols = 100, .rows = 30 });
+    defer app.deinit();
+    try app.env.put("PATH", dir);
+    app.cfg.ai.routing.claude.backend = .sub;
+    // Below the clamp on purpose: the test is about the kill, not the wait.
+    app.cfg.ai.cli_timeout_ms = 1500;
+    const id = try ask(&app, "ai: ask", "hello", .ask, null);
+    const p = &app.panes.get(id).?.ai;
+    const Ctx = struct {
+        fn failed(ap: *AiPane) bool {
+            return ap.status == .failed;
+        }
+    };
+    var spent: u32 = 0;
+    while (!Ctx.failed(p)) : (spent += 10) {
+        if (spent > 8_000) return error.Timeout;
+        try t.io.sleep(.fromMilliseconds(10), .awake);
+        try app.tick(App.nowMs(app.io));
+    }
+    try t.expect(std.mem.indexOf(u8, p.err.?, "cli_timeout_ms") != null);
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "cli_timeout_ms") != null);
+    const pid_text = try tmp.dir.readFileAlloc(t.io, "pid", t.allocator, .limited(64));
+    defer t.allocator.free(pid_text);
+    const pid = try std.fmt.parseInt(std.posix.pid_t, std.mem.trim(u8, pid_text, " \n"), 10);
+    try t.expectError(error.ProcessNotFound, std.posix.kill(pid, @enumFromInt(0)));
+}
+
+test "the API agent's read_file refuses a secret-bearing file, and grep never reads one" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    try tmp.dir.writeFile(t.io, .{ .sub_path = ".env", .data = "DB_PASSWORD=hunter2-fake-value\n" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "config.txt", .data = "DB_PASSWORD is read from the env\n" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = dir, .cols = 80, .rows = 10 });
+    defer app.deinit();
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var j: Job = .{ .id = 1, .confirm = undefined };
+    j.confirm = .init(&j.confirm_buf);
+    const read_in = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"path\":\".env\"}", .{});
+    const r = try executeTool(arena, t.io, t.allocator, &app.events, &j, dir, "read_file", read_in, false);
+    try t.expect(r.is_error);
+    try t.expect(std.mem.indexOf(u8, r.text, "hunter2") == null);
+    try t.expect(std.mem.indexOf(u8, r.text, "refused") != null);
+    const grep_in = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"pattern\":\"DB_PASSWORD\"}", .{});
+    const g = try executeTool(arena, t.io, t.allocator, &app.events, &j, dir, "grep", grep_in, false);
+    try t.expect(std.mem.indexOf(u8, g.text, "config.txt") != null);
+    try t.expect(std.mem.indexOf(u8, g.text, "hunter2") == null);
+}
+
+test "the API backend: MNML_ANTHROPIC_BASE_URL points it at a mock; a server that never finishes is cut off by the budget" {
+    // A server that answers the head and never the body.
+    const Stall = struct {
+        fn serve(io: Io, server: *Io.net.Server) Io.Cancelable!void {
+            const stream = server.accept(io) catch return;
+            defer stream.close(io);
+            var rbuf: [16 * 1024]u8 = undefined;
+            var reader = stream.reader(io, &rbuf);
+            // The request head; the body is not read.
+            while (true) {
+                const line = reader.interface.takeDelimiterInclusive('\n') catch return;
+                if (line.len <= 2) break;
+            }
+            var wbuf: [256]u8 = undefined;
+            var writer = stream.writer(io, &wbuf);
+            writer.interface.writeAll("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 1000\r\n\r\n{") catch return;
+            writer.interface.flush() catch return;
+            try io.sleep(.fromSeconds(30), .awake);
+        }
+    };
+    const io = t.io;
+    var addr: Io.net.IpAddress = .{ .ip4 = .loopback(0) };
+    var server = try addr.listen(io, .{ .reuse_address = true });
+    defer server.deinit(io);
+    var group: Io.Group = .init;
+    defer group.cancel(io);
+    try group.concurrent(io, Stall.serve, .{ io, &server });
+
+    var app = try App.initWith(t.allocator, io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    const base = try std.fmt.allocPrint(t.allocator, "http://127.0.0.1:{d}/", .{server.socket.address.getPort()});
+    defer t.allocator.free(base);
+    try app.env.put(api.base_url_env, base);
+    try app.env.put(api.env_key, "fake-key-for-a-mock");
+    app.cfg.ai.routing.claude.backend = .api;
+    app.cfg.ai.cli_timeout_ms = 1200; // below the clamp: the test is about the cut-off
+    const t0 = Io.Timestamp.now(io, .awake);
+    const id = try ask(&app, "ai: ask", "hello", .ask, null);
+    const p = &app.panes.get(id).?.ai;
+    var spent: u32 = 0;
+    while (p.status == .running) : (spent += 10) {
+        if (spent > 10_000) return error.Timeout;
+        try io.sleep(.fromMilliseconds(10), .awake);
+        try app.tick(App.nowMs(app.io));
+    }
+    try t.expect(t0.untilNow(io, .awake).toMilliseconds() < 8_000);
+    try t.expect(std.mem.indexOf(u8, p.err.?, "the API gave no answer within 2 s") != null);
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "cli_timeout_ms") != null);
+}
+
+test "an API failure says its status, the API's words and, on a 429, when to retry" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    var body = "{\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"slow down\"}}".*;
+    const m429 = try httpFailure(t.allocator, arena.allocator(), .{ .status = 429, .body = &body, .retry_after_s = 7 });
+    defer t.allocator.free(m429);
+    try t.expectEqualStrings("HTTP 429 slow down — retry after 7 s", m429);
+    var junk = "oops".*;
+    const m500 = try httpFailure(t.allocator, arena.allocator(), .{ .status = 500, .body = &junk });
+    defer t.allocator.free(m500);
+    try t.expectEqualStrings("HTTP 500", m500);
 }

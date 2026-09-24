@@ -37,7 +37,21 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: Props) u16 {
     const head = area.row(0);
     ui.fill(head, th.panel_bg);
     const dot: []const u8 = if (p.running) (if (ui.ascii) "*" else "●") else " ";
-    const title = ui.fmt(" {s} {s} · {s} · r re-ask · c cancel · a apply · p promote · y yank · q close ", .{ dot, p.title, p.status });
+    // Every key stays on the row as the pane narrows: the words go
+    // first (down to the bare letters), then the title (the tab names
+    // the pane too). A half-width split used to clip after `c cance…`,
+    // so `a` apply, `p` promote and `y` yank were never shown.
+    const tiers = [_][]const u8{
+        ui.fmt(" {s} {s} · {s} · r re-ask · c cancel · a apply · p promote · y yank · q close ", .{ dot, p.title, p.status }),
+        ui.fmt(" {s} {s} · {s} · r re-ask  c cancel  a apply  p promote  y yank  q close ", .{ dot, p.title, p.status }),
+        ui.fmt(" {s} {s} · {s} · r c a p y q ", .{ dot, p.title, p.status }),
+        ui.fmt(" {s} {s} · r c a p y q ", .{ dot, p.status }),
+    };
+    var title = tiers[tiers.len - 1];
+    for (tiers) |cand| if ((std.unicode.utf8CountCodepoints(cand) catch cand.len) <= head.w) {
+        title = cand;
+        break;
+    };
     _ = ui.putStr(head.x, head.y, head.w, ui.clipStr(title, head.w), title_style);
     ui.hit(head, .{ .script_hit = .{ .pane = pane, .id = 0 } });
     if (area.h < 2) return 0;
@@ -76,6 +90,28 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: Props) u16 {
 
 const testing = std.testing;
 const Fixture = @import("test_fixture.zig");
+
+test "the header keeps every key as the pane narrows: the words shrink first, then the title goes" {
+    const props: Props = .{ .title = "ai: explain", .status = "done", .prompt = "p", .answer = "a", .err = null, .scroll = 0, .focused = true, .running = false };
+    var wide = try Fixture.init(100, 6);
+    defer wide.deinit();
+    _ = draw(wide.ui(), 3, wide.full(), props);
+    try wide.expectContains("ai: explain · done · r re-ask · c cancel · a apply · p promote · y yank · q close");
+    var mid = try Fixture.init(80, 6);
+    defer mid.deinit();
+    _ = draw(mid.ui(), 3, mid.full(), props);
+    try mid.expectContains("ai: explain · done · r re-ask  c cancel  a apply  p promote  y yank  q close");
+    // A half-width split beside an editor.
+    var half = try Fixture.init(45, 6);
+    defer half.deinit();
+    _ = draw(half.ui(), 3, half.full(), props);
+    try half.expectContains("ai: explain · done · r c a p y q");
+    var narrow = try Fixture.init(24, 6);
+    defer narrow.deinit();
+    _ = draw(narrow.ui(), 3, narrow.full(), props);
+    try narrow.expectContains("done · r c a p y q");
+    try narrow.expectLacks("ai: explain");
+}
 
 test "the answer pane paints the title, the prompt, the rule and the answer; a failure reads red" {
     var f = try Fixture.init(60, 10);

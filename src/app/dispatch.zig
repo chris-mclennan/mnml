@@ -1070,7 +1070,6 @@ fn closeOverlay(app: *App) void {
     http_app.overlayClosing(app);
     // Esc on a `:s///c` box keeps what was replaced and stops.
     if (app.overlay == .confirm and app.overlay.confirm.purpose == .replace_confirm) ex_verbs.cancelConfirm(app);
-    git_app.overlayClosing(app);
     const back: ?app_mod.FocusId = if (app.overlay == .menu) app.overlay.menu.return_focus else if (app.overlay == .prompt) app.overlay.prompt.return_focus else if (app.overlay == .confirm) app.overlay.confirm.return_focus else null;
     app.overlay.deinit(app.gpa);
     if (back) |f| {

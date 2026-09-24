@@ -442,6 +442,8 @@ pub fn askAi(app: *App, pane: PaneId, e: *const EditorPane, region: usize) Comma
     const st = &app.git;
     const repo = try git.requireRepo(app);
     const abs = e.buf.doc.path orelse return app.diag.fail(app.frame.allocator(), "no file", .{});
+    if (@import("../ai/suggest.zig").isSecretBearing(abs))
+        return app.diag.fail(app.frame.allocator(), "AI resolve: {s} not sent — it looks like it holds secrets", .{git.relToRepo(repo, abs)});
     switch (ai_app.route(app, if (st.ai_product == .claude) .claude else .codex)) {
         .off => return app.diag.fail(app.frame.allocator(), "AI is routed off", .{}),
         .api, .cli => {},
@@ -491,7 +493,7 @@ pub fn aiContextReady(app: *App, path: []const u8, base: []const u8, ours: []con
         \\{s}```
     , .{ path, block, if (base.len > 0) "The common base (the whole file, `:1:`):\n```\n" else "", capped(base), if (base.len > 0) "```\n\n" else "", capped(ours), capped(theirs) });
     const title = try std.fmt.allocPrint(arena, "ai: resolve conflict {d} of {s}", .{ w.region + 1, std.fs.path.basename(path) });
-    _ = ai_app.askProduct(app, st.ai_product, title, prompt, .git, .{ .pane = w.pane, .start = range[0], .end = range[1] }) catch |err| {
+    _ = ai_app.askProduct(app, st.ai_product, title, prompt, .git, .take(w.pane, e.buf.doc, range[0], range[1])) catch |err| {
         if (err == error.OutOfMemory) return error.OutOfMemory;
         git.runToast(app, err);
         return;

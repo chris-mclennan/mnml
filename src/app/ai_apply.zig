@@ -18,6 +18,13 @@
 //!   D6  the view (`ui/ai_apply_view.zig`) paints from `rows` and
 //!       registers one `.script_hit{ pane, id = row }` per row — a
 //!       click on a hunk header toggles it.
+//!
+//! The range is an `Anchor`: taken when the job starts, followed along
+//! the document's edit log (`follow`, run before every trim of the log)
+//! so an edit above or below it moves it and an edit inside it marks it
+//! `lost`. A lost anchor is written only if the text at its last known
+//! place is still exactly what the review diffed; otherwise the apply
+//! is refused. A stale byte range is never written.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -29,6 +36,84 @@ const key_mod = @import("../core/key.zig");
 const Mouse = key_mod.Mouse;
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
+const document = @import("../editor/document.zig");
+
+/// A range of one editor's text, kept current across edits made after
+/// it was taken. `doc` is compared, never dereferenced: a pane that has
+/// since opened another file no longer holds the text this was about.
+pub const Anchor = struct {
+    pane: PaneId,
+    doc: *const anyopaque,
+    /// The edit-log seq `start` / `end` are current at.
+    seen: u64,
+    start: usize,
+    end: usize,
+    /// The log could not carry the range: an edit landed inside it, the
+    /// text was replaced wholesale (an undo, a reload), or the records
+    /// were trimmed before they were followed. `start` / `end` are then
+    /// where the range last was.
+    lost: bool = false,
+
+    /// The range `start..end` of the editor in `pane`, as its text is now.
+    pub fn take(pane: PaneId, doc: *const document.Document, start: usize, end: usize) Anchor {
+        return .{ .pane = pane, .doc = doc, .seen = doc.edits.head(), .start = start, .end = end };
+    }
+
+    /// Move the range across every edit `doc` logged since `seen`. An
+    /// insertion exactly at `start` goes before the range and one exactly
+    /// at `end` after it; anything that touches the inside loses it.
+    pub fn follow(a: *Anchor, doc: *const document.Document) void {
+        if (a.lost or a.doc != @as(*const anyopaque, doc)) return;
+        const log = &doc.edits;
+        const head = log.head();
+        if (a.seen == head) return;
+        const recs = log.since(a.seen);
+        if (log.replacedSince(a.seen) or recs.len != head - a.seen) {
+            a.lost = true;
+            return;
+        }
+        for (recs) |sp| {
+            if (sp.old_end <= a.start) {
+                // Wholly before (an insertion at `start` included).
+                a.start = a.start - sp.old_end + sp.new_end;
+                a.end = a.end - sp.old_end + sp.new_end;
+            } else if (sp.start >= a.end) {
+                // Wholly after (an insertion at `end` included).
+            } else {
+                a.lost = true;
+                return;
+            }
+        }
+        a.seen = head;
+    }
+};
+
+/// Every anchor on `doc` — the AI panes' targets and the open reviews —
+/// moved across the log's records before they are trimmed away.
+pub fn followAll(app: *App, doc: *const document.Document) void {
+    for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+        .ai => |*a| if (a.apply) |*an| an.follow(doc),
+        .ai_apply => |*ap| ap.anchor.follow(doc),
+        else => {},
+    };
+}
+
+/// Where `anchor`'s text is now, if it still reads `expect`: the
+/// followed range, or — for a lost anchor — its last known place when
+/// the bytes there are exactly `expect`. Null means the text the review
+/// was built for is gone and nothing may be written.
+fn locate(app: *App, anchor: *Anchor, expect: ?[]const u8) ?[2]usize {
+    const e = app.panes.editor(anchor.pane) orelse return null;
+    if (@as(*const anyopaque, e.buf.doc) != anchor.doc) return null;
+    anchor.follow(e.buf.doc);
+    const bytes = e.buf.editor.bytes();
+    if (anchor.start > anchor.end or anchor.end > bytes.len) return null;
+    const now = bytes[anchor.start..anchor.end];
+    if (expect) |want| {
+        if (!std.mem.eql(u8, now, want)) return null;
+    } else if (anchor.lost) return null;
+    return .{ anchor.start, anchor.end };
+}
 
 /// A run of the edit script, in line indices of the old and new texts.
 pub const Hunk = struct {
@@ -68,10 +153,12 @@ pub const context_lines: u32 = 3;
 
 pub const AiApplyPane = struct {
     arena: std.heap.ArenaAllocator,
-    /// The editor the proposal is for, and the byte range it replaces.
-    target: PaneId,
-    start: usize,
-    end: usize,
+    /// The editor the proposal is for, and the range it replaces — kept
+    /// current as the editor is edited behind the review.
+    anchor: Anchor,
+    /// The text the review diffed (`old_lines`, joined), on the arena:
+    /// what the anchor must still read for the apply to go ahead.
+    old_text: []const u8,
     /// The AI pane the proposal came from; its `apply` target is
     /// updated after a successful apply.
     source: ?PaneId,
@@ -321,7 +408,7 @@ fn rowsOf(arena: Allocator, ops: []const Op, hunks: []const Hunk) Allocator.Erro
 
 /// Build the pane for `old` → `new`. Everything is copied onto the
 /// pane's arena.
-pub fn build(gpa: Allocator, target: PaneId, start: usize, end: usize, source: ?PaneId, file: []const u8, old: []const u8, new: []const u8) Allocator.Error!AiApplyPane {
+pub fn build(gpa: Allocator, anchor: Anchor, source: ?PaneId, file: []const u8, old: []const u8, new: []const u8) Allocator.Error!AiApplyPane {
     var arena = std.heap.ArenaAllocator.init(gpa);
     errdefer arena.deinit();
     const a = arena.allocator();
@@ -334,9 +421,8 @@ pub fn build(gpa: Allocator, target: PaneId, start: usize, end: usize, source: ?
     const rows = try rowsOf(a, ops, hunks);
     return .{
         .arena = arena,
-        .target = target,
-        .start = start,
-        .end = end,
+        .anchor = anchor,
+        .old_text = old_copy,
         .source = source,
         .file = try a.dupe(u8, file),
         .old_lines = old_lines,
@@ -358,13 +444,20 @@ pub fn lineText(p: *const AiApplyPane, row: Row) []const u8 {
 
 // ─── the command ────────────────────────────────────────────────────────
 
+/// The refusal when the text a proposal was made for has changed.
+pub const changed_msg = "the text changed since the AI was asked — re-ask (r) for a fresh proposal";
+
 /// `ai.apply` from an AI pane: open (or refresh) the review pane for
-/// its first code block against the editor it was run on.
-pub fn open(app: *App, source: PaneId, target: PaneId, start: usize, end: usize, code: []const u8) CommandError!PaneId {
-    const e = app.panes.editor(target) orelse return app.diag.fail(app.frame.allocator(), "the editor is gone", .{});
-    const len = e.buf.editor.len();
-    const s = @min(start, len);
-    const en = @min(@max(end, s), len);
+/// its first code block against the text the action was run on, as it
+/// stands now. `original` is that text as the job saw it, when known:
+/// an anchor the log lost is still good if its bytes read the same.
+pub fn open(app: *App, source: PaneId, target_in: Anchor, original: ?[]const u8, code: []const u8) CommandError!PaneId {
+    var target = target_in;
+    const e = app.panes.editor(target.pane) orelse return app.diag.fail(app.frame.allocator(), "the editor is gone", .{});
+    const range = locate(app, &target, if (target.lost) original else null) orelse
+        return app.diag.fail(app.frame.allocator(), "{s}", .{changed_msg});
+    const s = range[0];
+    const en = range[1];
     const file: []const u8 = if (e.buf.doc.path) |p| app.relPath(p) else "[scratch]";
     // One review per source: a second `a` replaces it.
     var existing: ?PaneId = null;
@@ -375,7 +468,8 @@ pub fn open(app: *App, source: PaneId, target: PaneId, start: usize, end: usize,
         else => {},
     };
     if (existing) |id| try app.forceClosePane(id);
-    const pane = try build(app.gpa, target, s, en, source, file, e.buf.editor.bytes()[s..en], code);
+    // Re-taken at the current seq: the review diffs the text as it is.
+    const pane = try build(app.gpa, Anchor.take(target.pane, e.buf.doc, s, en), source, file, e.buf.editor.bytes()[s..en], code);
     const id = try app.panes.add(.{ .ai_apply = pane });
     app.showPane(id);
     return id;
@@ -384,25 +478,24 @@ pub fn open(app: *App, source: PaneId, target: PaneId, start: usize, end: usize,
 /// Enter: splice the accepted hunks in as one edit, then close.
 pub fn apply(app: *App, id: PaneId, p: *AiApplyPane) CommandError!void {
     const arena = app.frame.allocator();
-    const e = app.panes.editor(p.target) orelse return app.diag.fail(arena, "the editor is gone", .{});
+    const e = app.panes.editor(p.anchor.pane) orelse return app.diag.fail(arena, "the editor is gone", .{});
     const n = p.accepted();
     const total = p.hunks.len;
-    const target = p.target;
+    const target = p.anchor.pane;
     const source = p.source;
-    const start = p.start;
     if (n == 0) {
         try app.forceClosePane(id);
         app.toast("nothing accepted — no change", .{});
         app.showPane(target);
         return;
     }
+    // Where the reviewed text is now; refused when it is not there to
+    // replace. The review stays open so the user can see what was asked.
+    const range = locate(app, &p.anchor, p.old_text) orelse return app.diag.fail(arena, "{s}", .{changed_msg});
     const text = try p.result(arena);
-    const len = e.buf.editor.len();
-    const s = @min(p.start, len);
-    const en = @min(p.end, len);
-    try app.splice(e, s, en, text);
+    try app.splice(e, range[0], range[1], text);
     if (source) |src| if (app.panes.get(src)) |sp| switch (sp.*) {
-        .ai => |*ap| ap.apply = .{ .pane = target, .start = start, .end = start + text.len },
+        .ai => |*ap| ap.apply = Anchor.take(target, e.buf.doc, range[0], range[0] + text.len),
         else => {},
     };
     try app.forceClosePane(id);
@@ -450,7 +543,7 @@ fn toggle(p: *AiApplyPane, hunk: usize) void {
 }
 
 fn cancel(app: *App, id: PaneId, p: *AiApplyPane) Allocator.Error!void {
-    const back = p.source orelse p.target;
+    const back = p.source orelse p.anchor.pane;
     try app.forceClosePane(id);
     if (app.panes.get(back) != null) app.showPane(back);
 }
@@ -524,7 +617,8 @@ test "the line diff: a middle change, an insertion, a deletion, and the missing 
 test "result assembles accepted hunks and leaves skipped ones as they were" {
     const old = "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n";
     const new = "1\n2\nX\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n19\n20\n";
-    var p = try build(t.allocator, 0, 0, old.len, null, "f.txt", old, new);
+    const no_doc: u8 = 0;
+    var p = try build(t.allocator, .{ .pane = 0, .doc = &no_doc, .seen = 0, .start = 0, .end = old.len }, null, "f.txt", old, new);
     defer p.deinit();
     var arena_state = std.heap.ArenaAllocator.init(t.allocator);
     defer arena_state.deinit();
@@ -557,7 +651,7 @@ test "ai.apply opens the review pane; skipping a hunk applies the rest as one un
     const old = "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n";
     try e.buf.editor.setText(old);
     const code = "1\n2\nX\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n19\n20";
-    const id = try open(&app, ed, ed, 0, old.len, code);
+    const id = try open(&app, ed, .take(ed, e.buf.doc, 0, old.len), null, code);
     try t.expectEqual(id, app.active.?);
     const p = &app.panes.get(id).?.ai_apply;
     try t.expectEqual(@as(usize, 2), p.hunks.len);
@@ -574,16 +668,89 @@ test "ai.apply opens the review pane; skipping a hunk applies the rest as one un
     _ = try app.applyOps(e, &.{.undo});
     try t.expectEqualStrings(old, e.buf.editor.bytes());
     // Esc cancels without touching the editor.
-    const id2 = try open(&app, ed, ed, 0, old.len, code);
+    const id2 = try open(&app, ed, .take(ed, e.buf.doc, 0, old.len), null, code);
     const p2 = &app.panes.get(id2).?.ai_apply;
     _ = try handleKey(&app, id2, p2, .{ .code = .esc });
     try t.expect(app.panes.get(id2) == null);
     try t.expectEqualStrings(old, e.buf.editor.bytes());
     // Nothing accepted: no edit, the pane closes.
-    const id3 = try open(&app, ed, ed, 0, old.len, code);
+    const id3 = try open(&app, ed, .take(ed, e.buf.doc, 0, old.len), null, code);
     const p3 = &app.panes.get(id3).?.ai_apply;
     _ = try handleKey(&app, id3, p3, .{ .code = .{ .char = 'R' } });
     _ = try handleKey(&app, id3, p3, .{ .code = .{ .char = 'y' } });
     try t.expect(app.panes.get(id3) == null);
     try t.expectEqualStrings(old, e.buf.editor.bytes());
+}
+
+test "an anchor follows edits around it, and an edit inside it — or an undo — loses it" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const ed = try app.openScratch();
+    const e = app.panes.editor(ed).?;
+    try e.buf.editor.setText("head\nmid\ntail\n");
+    // `mid\n`, bytes 5..9.
+    var a = Anchor.take(ed, e.buf.doc, 5, 9);
+    // A line typed above moves it down; one below leaves it.
+    try app.splice(e, 0, 0, "new\n");
+    try app.splice(e, e.buf.editor.len(), e.buf.editor.len(), "more\n");
+    a.follow(e.buf.doc);
+    try t.expect(!a.lost);
+    try t.expectEqualStrings("mid\n", e.buf.editor.bytes()[a.start..a.end]);
+    // An insertion right at either edge stays outside it.
+    try app.splice(e, a.start, a.start, ">");
+    a.follow(e.buf.doc);
+    try app.splice(e, a.end, a.end, "<");
+    a.follow(e.buf.doc);
+    try t.expectEqualStrings("mid\n", e.buf.editor.bytes()[a.start..a.end]);
+    // Deleting text before it pulls it up.
+    try app.splice(e, 0, 4, "");
+    a.follow(e.buf.doc);
+    try t.expectEqualStrings("mid\n", e.buf.editor.bytes()[a.start..a.end]);
+    // An edit inside it: lost, and it stays lost.
+    try app.splice(e, a.start + 1, a.start + 2, "I");
+    a.follow(e.buf.doc);
+    try t.expect(a.lost);
+    // An undo is a wholesale replacement the log cannot carry a range across.
+    var b = Anchor.take(ed, e.buf.doc, 0, 1);
+    _ = try app.applyOps(e, &.{.undo});
+    b.follow(e.buf.doc);
+    try t.expect(b.lost);
+}
+
+test "apply writes the reviewed text where it now is, and refuses when that text changed" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const ed = try app.openScratch();
+    const e = app.panes.editor(ed).?;
+    try e.buf.editor.setText("a\nb\nc\n");
+    const id = try open(&app, ed, .take(ed, e.buf.doc, 0, 6), null, "ALPHA\nb\nc\n");
+    // A line added above while the review is open.
+    try app.splice(e, 0, 0, "ZZZ\n");
+    const p = &app.panes.get(id).?.ai_apply;
+    _ = try handleKey(&app, id, p, .{ .code = .enter });
+    try t.expectEqualStrings("ZZZ\nALPHA\nb\nc\n", e.buf.editor.bytes());
+    // An edit inside the reviewed text: refused, the pane stays, the
+    // buffer is the user's.
+    try e.buf.editor.setText("a\nb\nc\n");
+    const id2 = try open(&app, ed, .take(ed, e.buf.doc, 0, 6), null, "ALPHA\nb\nc\n");
+    try app.splice(e, 2, 3, "B");
+    const p2 = &app.panes.get(id2).?.ai_apply;
+    _ = try handleKey(&app, id2, p2, .{ .code = .enter });
+    try t.expect(app.panes.get(id2) != null);
+    try t.expectEqualStrings("a\nB\nc\n", e.buf.editor.bytes());
+    // Opening a review for a range whose text changed since the job
+    // started is refused too.
+    var gone = Anchor.take(ed, e.buf.doc, 0, 6);
+    try app.splice(e, 0, 1, "X");
+    gone.follow(e.buf.doc);
+    try t.expectError(error.Failed, open(&app, ed, gone, "a\nB\nc\n", "ALPHA\n"));
+    app.diag.clear();
+    // …unless the text it lost track of reads the same again.
+    var back = Anchor.take(ed, e.buf.doc, 0, 6);
+    try app.splice(e, 0, 1, "a");
+    back.follow(e.buf.doc);
+    try t.expect(back.lost);
+    _ = try open(&app, ed, back, "a\nB\nc\n", "ALPHA\nB\nc\n");
 }

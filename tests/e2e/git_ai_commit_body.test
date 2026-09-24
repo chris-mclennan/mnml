@@ -1,0 +1,41 @@
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# git.ai_commit: the model answers a subject, a blank line and a body.
+# The prompt opens with the subject on its line and says the body is
+# attached; Enter commits BOTH. The body used to be freed when the
+# prompt closed — which happens before its accept — so every AI commit
+# landed with its subject alone. Esc drops the body: a later commit
+# typed by hand carries none of it.
+write bin/claude #!/bin/sh\ncat >/dev/null\nprintf 'Add the widget\\n\\nIt draws a box.\\n'
+shell chmod +x bin/claude
+shell git init -q -b main && git config user.email t@example.com && git config user.name t
+write .gitignore ".mnml/\nbin/\n"
+write a.txt "one\n"
+shell git add .gitignore a.txt && git commit -q -m init
+write a.txt "one\ntwo\n"
+shell git add a.txt
+open a.txt
+command git.ai_commit
+wait 1500
+expect screen contains "Add the widget"
+expect screen contains "AI body attached"
+key enter
+wait 800
+shell git log -1 --format=%B > msg.out
+expect file msg.out contains "Add the widget\n\nIt draws a box."
+
+# Esc on an AI prompt, then a commit typed by hand: no stray body.
+write a.txt "one\ntwo\nthree\n"
+shell git add a.txt
+command git.ai_commit
+wait 1500
+expect screen contains "AI body attached"
+key esc
+command git.commit
+expect screen contains "Commit message"
+expect screen lacks "AI body attached"
+type "by hand"
+key enter
+wait 800
+shell git log -1 --format=%B > msg2.out
+expect file msg2.out contains "by hand"
+expect file msg2.out lacks "draws a box"

@@ -1,0 +1,15 @@
+# A ghost shown at the end of the file; the user clicks into the middle
+# of line 2. Every key already dismissed a ghost; a click moved the
+# cursor without one, so the ghost followed it and painted mid-word
+# ("secoGHOSTZnd") — and the next Tab, an indent as far as the user
+# knew, inserted it there. Any cursor move now clears it.
+write a.txt "first line\nsecond line\n"
+open a.txt
+key ctrl+end
+ghost GHOSTZ
+expect screen contains "GHOSTZ"
+click 40 3
+expect screen lacks "GHOSTZ"
+key tab
+command file.save
+expect file a.txt lacks "GHOSTZ"
