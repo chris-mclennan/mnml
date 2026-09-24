@@ -472,6 +472,12 @@ fn markedRoot(app: *App, arena: Allocator, path: []const u8, markers: []const []
     return try walkUp(app, arena, start, markers);
 }
 
+/// `markedRoot` for a test in another file (the ceiling's, `git.zig`).
+pub fn rootMarkedFor(app: *App, path: []const u8, markers: []const []const u8) Allocator.Error!?[]const u8 {
+    if (!builtin.is_test) @compileError("tests only");
+    return markedRoot(app, app.frame.allocator(), path, markers, false);
+}
+
 /// The first directory from `start` up holding any of `markers`. The
 /// walk never climbs into a `GIT_CEILING_DIRECTORIES` entry, as git's
 /// own search does not: the commonest marker is `.git`, and a workspace
@@ -481,7 +487,7 @@ fn walkUp(app: *App, arena: Allocator, start: []const u8, markers: []const []con
     const ceilings = app.env.get("GIT_CEILING_DIRECTORIES") orelse "";
     var dir: ?[]const u8 = start;
     while (dir) |d| : (dir = std.fs.path.dirname(d)) {
-        if (d.len != start.len and @import("git.zig").isCeiling(ceilings, d)) break;
+        if (d.len != start.len and @import("git.zig").isCeiling(app.io, ceilings, d)) break;
         for (markers) |m| {
             // // changed (lsp-defaults): `*.sln` scans the directory, as
             // Rust's `marker_matches`; a literal is one stat.
