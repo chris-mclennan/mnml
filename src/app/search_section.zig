@@ -23,6 +23,7 @@ const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
+const git_app = @import("git.zig");
 const App = app_mod.App;
 const PaneId = app_mod.PaneId;
 const Key = app_mod.Key;
@@ -228,7 +229,8 @@ fn activitySearch(app: *App) CommandError!void {
 }
 
 /// Cancel the run in flight, bump the generation, start the query on
-/// the worker — `git grep` first. An empty query clears the hits.
+/// the worker — `git grep` first in a repository. An empty query clears
+/// the hits.
 pub fn run(app: *App) CommandError!void {
     const st = &app.search_section;
     const q = std.mem.trim(u8, st.query.items, " \t");
@@ -246,7 +248,13 @@ pub fn run(app: *App) CommandError!void {
     st.loading = true;
     var flags = st.flags;
     if (!flags.case_sensitive and find_mod.hasUpper(q)) flags.case_sensitive = true;
-    st.group.concurrent(app.io, grep.worker, .{ app.events, app.io, app.gpa, @as([]const u8, app.workspace), @as([]const u8, st.ran.?), flags, st.generation, grep.section_target, st.abort, true }) catch |err| {
+    // `git grep` only where git itself would find the repository: the
+    // lookup is fenced by `GIT_CEILING_DIRECTORIES` as git's is (a
+    // workspace under an enclosing checkout it was told to leave alone
+    // is no repo), and the worker's own git children never see the
+    // App's environment, so the fence is applied here.
+    const git_first = (try git_app.repoFor(app, app.workspace)) != null;
+    st.group.concurrent(app.io, grep.worker, .{ app.events, app.io, app.gpa, @as([]const u8, app.workspace), @as([]const u8, st.ran.?), flags, st.generation, grep.section_target, st.abort, git_first }) catch |err| {
         st.loading = false;
         return app.diag.fail(app.frame.allocator(), "search: could not start the worker: {s}", .{@errorName(err)});
     };
@@ -925,6 +933,50 @@ test "the walk parity: the same seed without a repository answers through the wa
     const txt = try f.screen();
     defer t.allocator.free(txt);
     try t.expect(std.mem.indexOf(u8, txt, ui_label(st.backend.?)) != null);
+}
+
+test "a workspace inside a checkout that GIT_CEILING_DIRECTORIES fences off is no repository to SEARCH: git grep never runs, the walk answers and the header says so" {
+    if (!hasGit()) return error.SkipZigTest;
+    var f = try Fixture.init();
+    defer f.deinit();
+    // `<root>/ws` is TRACKED in the enclosing checkout, so git grep
+    // would answer there — unless git was told not to go up into
+    // `<root>`, which the runner does for every file's temp root.
+    try f.tmp.dir.createDirPath(t.io, "ws");
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "ws/w.txt", .data = "alpha behind the fence\n" });
+    try Fixture.git(f.root, &.{ "add", "ws" });
+    try Fixture.git(f.root, &.{ "commit", "-q", "-m", "ws" });
+    const ws = try std.fs.path.join(t.allocator, &.{ f.root, "ws" });
+    defer t.allocator.free(ws);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws, .data_root = ws, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    const runOnce = struct {
+        fn go(a: *App) !grep.Backend {
+            try command.run(a, .{ .static = .@"view.activity_search" });
+            a.search_section.query.clearRetainingCapacity();
+            try a.search_section.query.appendSlice(t.allocator, "alpha");
+            try run(a);
+            var i: usize = 0;
+            while (i < 400 and a.search_section.loading) : (i += 1) {
+                try a.tick(App.nowMs(t.io));
+                t.io.sleep(.fromMilliseconds(5), .awake) catch {};
+            }
+            try t.expect(!a.search_section.loading);
+            try t.expectEqual(@as(usize, 1), a.search_section.hits.items.len);
+            return a.search_section.backend.?;
+        }
+    }.go;
+    // Unfenced, the enclosing checkout answers.
+    _ = app.env.swapRemove("GIT_CEILING_DIRECTORIES");
+    try t.expectEqual(grep.Backend.git_grep, try runOnce(&app));
+    // Fenced at `<root>`: git would find no repository, and neither does SEARCH.
+    try app.env.put("GIT_CEILING_DIRECTORIES", f.root);
+    const b = try runOnce(&app);
+    try t.expect(b != .git_grep);
+    try app.render();
+    const txt = try screen_mod.toTestText(t.allocator, &app.screen);
+    defer t.allocator.free(txt);
+    try t.expect(std.mem.indexOf(u8, txt, ui_label(b)) != null);
 }
 
 fn ui_label(b: grep.Backend) []const u8 {
