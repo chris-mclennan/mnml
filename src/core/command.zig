@@ -717,6 +717,11 @@ pub const MenuAction = union(enum) {
     /// — the binary's name; the menu's `mem` arena owns the bytes
     /// (`app/runners.zig`'s `installBin`).
     lsp_install: []const u8,
+    /// A Claude account row on the usage pane's menus (and the account
+    /// choosers the palette opens when several are configured): link a
+    /// token to it, rename it, or remove it. `name` is the account's;
+    /// the menu's `mem` arena owns the bytes (`app/usage_pane.zig`).
+    claude_account: ClaudeAccountAct,
     /// // changed (colors): a `Color: …` row on a session's menus — the
     /// SESSIONS card / table row, a pty tab, a pty pane body. `name` is
     /// one of `ui/accent_color.zig`'s literals or its `none` sentinel
@@ -846,6 +851,14 @@ pub const GitPaletteWhat = enum {
     worktree_unlock,
 };
 
+/// What a `.claude_account` menu row does to the account it names.
+pub const ClaudeAccountAct = struct {
+    act: Verb,
+    name: []const u8,
+
+    pub const Verb = enum { link, rename, remove };
+};
+
 pub const MenuItem = struct {
     label: []const u8,
     action: MenuAction,
@@ -867,7 +880,7 @@ test "ids round-trip through by_name and @tagName" {
     try std.testing.expectEqual(CommandId.@"app.quit", by_name.get("app.quit").?);
     try std.testing.expectEqualStrings("git.commit", name(.@"git.commit"));
     try std.testing.expect(by_name.get("nope.nope") == null);
-    try std.testing.expectEqual(@as(usize, 1137), count);
+    try std.testing.expectEqual(@as(usize, 1139), count);
     try std.testing.expectEqualStrings("Quit mnml", title(.@"app.quit"));
 }
 

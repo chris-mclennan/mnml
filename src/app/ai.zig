@@ -98,7 +98,9 @@ pub const table = .{
     .@"ai.explain_diff" = &explainDiff,
     .@"ai.link_claude_token" = &linkClaudeToken,
     .@"ai.claude_usage" = &claudeUsage,
-    .@"ai.claude_rename_account" = &notInBuildCmd,
+    .@"ai.claude_rename_account" = &claudeRenameAccount,
+    .@"ai.claude_add_account" = &claudeAddAccount,
+    .@"ai.claude_remove_account" = &claudeRemoveAccount,
     .@"ai.codex_usage" = &codexUsage,
     .@"ai.show_last_response" = &showLastResponse,
     .@"ai.refresh_usage" = &refreshUsage,
@@ -1609,10 +1611,6 @@ fn canary(app: *App) CommandError!void {
     return app.diag.fail(app.frame.allocator(), "the API-key canary log is not in this build", .{});
 }
 
-fn notInBuildCmd(app: *App) CommandError!void {
-    return app.diag.fail(app.frame.allocator(), "not in this build yet", .{});
-}
-
 fn showLastResponse(app: *App) CommandError!void {
     return usage_pane.showLastResponse(app);
 }
@@ -1669,26 +1667,23 @@ pub fn branchNameAccept(app: *App, text: []const u8) CommandError!void {
 
 // ─── commands: the usage meter ──────────────────────────────────────────
 
+/// `ai.link_claude_token`: the token prompt for the account — the one
+/// configured, or the one picked from a menu of them. The token lands in
+/// that account's own file, the one the reader reads.
 fn linkClaudeToken(app: *App) CommandError!void {
-    app.overlay.deinit(app.gpa);
-    var st = app_mod.Prompt.init(app.gpa, "Paste the Claude Code OAuth token");
-    st.secret = true;
-    app.overlay = .{ .prompt = .{ .state = st, .purpose = .ai_token } };
-    app.focus = .overlay;
-    app.needs_render = true;
+    return usage_pane.chooseAccount(app, .link);
 }
 
-/// `<home>/.config/mnml/ai_token`, mode 0600.
-pub fn tokenAccept(app: *App, token_in: []const u8) CommandError!void {
-    const token = std.mem.trim(u8, token_in, " \t\r\n");
-    if (token.len == 0) return;
-    const arena = app.frame.allocator();
-    const home = app.homeDir() orelse return app.diag.fail(arena, "no home directory to keep the token in", .{});
-    const dir = try std.fs.path.join(arena, &.{ home, ".config", "mnml" });
-    Io.Dir.cwd().createDirPath(app.io, dir) catch {};
-    const path = try std.fs.path.join(arena, &.{ dir, "ai_token" });
-    Io.Dir.cwd().writeFile(app.io, .{ .sub_path = path, .data = token }) catch |err| return app.diag.fail(arena, "could not write {s}: {s}", .{ path, @errorName(err) });
-    app.toast("Claude token linked ({s})", .{app.relPath(path)});
+fn claudeAddAccount(app: *App) CommandError!void {
+    return usage_pane.addCmd(app);
+}
+
+fn claudeRenameAccount(app: *App) CommandError!void {
+    return usage_pane.chooseAccount(app, .rename);
+}
+
+fn claudeRemoveAccount(app: *App) CommandError!void {
+    return usage_pane.chooseAccount(app, .remove);
 }
 
 /// The quota pane: the session and weekly windows per account, off

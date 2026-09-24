@@ -1212,10 +1212,14 @@ pub fn openTestMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
 pub fn openAiChipMenu(app: *App, codex: bool, x: u16, y: u16) Allocator.Error!void {
     const detail = app.ai.chip_detail;
     const meter = app.cfg.ai.claude_meter_mode;
-    const rows = try items(app, &.{
+    const head = [_]MenuItem{
         .{ .label = "Open usage pane", .action = .{ .command = if (codex) .@"ai.codex_usage" else .@"ai.claude_usage" } },
         .{ .label = "Refresh usage now", .action = .{ .command = .@"ai.refresh_usage" } },
         .{ .label = "Show last response", .action = .{ .command = .@"ai.show_last_response" } },
+    };
+    // Claude's meter watches accounts; this is where one joins it.
+    const add = [_]MenuItem{.{ .label = "Add Claude account…", .action = .{ .command = .@"ai.claude_add_account" } }};
+    const tail = [_]MenuItem{
         .{ .label = "Session only", .action = .{ .command = .@"ai.chip_show_session" }, .checked = detail == .session, .separator_before = true },
         .{ .label = "Weekly only", .action = .{ .command = .@"ai.chip_show_weekly" }, .checked = detail == .weekly },
         .{ .label = "Both", .action = .{ .command = .@"ai.chip_show_both" }, .checked = detail == .both },
@@ -1223,7 +1227,8 @@ pub fn openAiChipMenu(app: *App, codex: bool, x: u16, y: u16) Allocator.Error!vo
         .{ .label = "All AI chips: off", .action = .{ .command = .@"ai.chip_show_all_off" }, .checked = meter == .off, .separator_before = true },
         .{ .label = "All AI chips: compact", .action = .{ .command = .@"ai.chip_show_all_compact" }, .checked = meter == .compact },
         .{ .label = "All AI chips: ticker", .action = .{ .command = .@"ai.chip_show_all_ticker" }, .checked = meter == .ticker },
-    });
+    };
+    const rows = try std.mem.concat(app.gpa, MenuItem, &.{ &head, if (codex) &.{} else &add, &tail });
     errdefer app.gpa.free(rows);
     try app.openMenu(if (codex) "Codex" else "Claude", rows, x, y);
 }

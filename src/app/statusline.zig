@@ -564,8 +564,18 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
         // The mark `ui.claude_mark` names, not a codepoint of this
         // file's own (`app/claude_mark.zig`).
         const glyph = claude_mark.glyph(app, ui.ascii);
-        const text = try usage_pane.claudeChip(app, arena, glyph);
-        try push(&right, arena, Seg.init(text, claude_ink, iconColor(ui, ic, claude_brand)).withHit(SegId.ai_claude.raw()));
+        const parts = try usage_pane.claudeChipParts(app, arena, glyph);
+        var seg = Seg.init(parts.head, claude_ink, iconColor(ui, ic, claude_brand)).withHit(SegId.ai_claude.raw());
+        if (parts.accent.len > 0 or parts.tail.len > 0) {
+            seg.accent = .{ .text = parts.accent, .fg = claude_ink, .underline = parts.underline };
+            // The worst account in warning / critical: its colour on ink.
+            if (parts.tier) |tier| {
+                seg.accent.?.fg = if (tier == .hot) ui.theme.palette.red else ui.theme.palette.yellow;
+                seg.accent.?.bg = claude_ink;
+            }
+            seg.tail = parts.tail;
+        }
+        try push(&right, arena, seg);
     }
     if (enabledIcon(app, "codex")) |_| {
         const glyph = if (ui.ascii) sl.codex_ascii else sl.codex_glyph;

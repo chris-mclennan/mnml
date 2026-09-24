@@ -227,7 +227,7 @@ fn aiChip(app: *App, arena: Allocator, product: enum { claude, codex }) Allocato
                 .weekly => "How much of the current WEEKLY Claude allowance the active account has used, with the time until it resets. Click opens the usage pane, which has the five-hour window too and every linked account; right-click picks what the chip shows. At 100% the sessions keep running but new turns queue until the reset, so a stalled session and a full chip usually go together.",
                 .both => "The active account's Claude usage — the five-hour window and the weekly one, each as a percentage with its reset time. Click opens the usage pane, which has every linked account; right-click picks the session window, the weekly one, or both, and can turn all AI chips off or make them a ticker. At 100% the sessions keep running but new turns queue until the reset, so a stalled session and a full chip usually go together.",
             },
-            .aside = "The figures come from the account's own usage endpoint; a chip stuck at 0% on a linked account wants a token re-link.",
+            .aside = "The figures come from the account's own usage endpoint; a chip stuck at 0% on a linked account wants a token re-link. When the worst watched account is in warning or critical — the endpoint's own grade — the figures sit in a dark pill in yellow or red; `↺` after an account's block means it has a limit-reset offer open. Hovering lists every account with its two percents and the next reset.",
             .links = &.{ .{ .command = .{ .id = .@"ai.claude_usage", .label = "Open the usage pane" } }, .{ .command = .{ .id = .@"ai.link_claude_token", .label = "Re-link the Claude token" } }, ask },
         },
         .codex => .{

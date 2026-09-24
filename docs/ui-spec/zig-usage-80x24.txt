@@ -1,10 +1,10 @@
  ❯_  mnml  »             󰍉  ws                                    󰐕  ●━  󰅖
- 󱸀 Claude usage 󰅖   󰐕                                             󱸀  󲀀      
-▌ Claude usage · r refresh · L claude login · R capture · esc close
+ 󱸀 Claude Usage 󰅖   󰐕                                             󱸀  󲀀      
+▌ Claude usage · r refresh · a add · L claude login · R capture · esc close   ⋯
 ▌
-▌ (active) personal · sam@example.com · sam@example.com's Organization
+▌ (active) personal  · sam@example.com · sam@example.com's Organization
 ▌
-▌ Current session
+▌ Current session · in force
 ▌                                                              95% used
 ▌   Resets 8:20pm
 ▌
@@ -16,9 +16,9 @@
 ▌                                                              55% used
 ▌   Resets Sep 19 at 5am
 ▌
+▌   Extra usage: off
 ▌
-▌ work · sam@work.example · Example Co
 ▌
-▌ Current session
- VIEW  [no file]                      F 57% ▼1.6  󱼀 󰐎    23:31  ws   —
+▌ work  · sam@work.example · Example Co
+ VIEW  [no file]                                    󱼀 󰐎    18:23  ws   —
                                        ⋯

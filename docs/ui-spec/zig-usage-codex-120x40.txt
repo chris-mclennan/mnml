@@ -1,5 +1,5 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │  ● /pri…            │ 󱸁 Codex usage 󰅖   󰐕                                                       󱸀  󲀀      
+   │  ● /pri…            │ 󱸁 Codex Usage 󰅖   󰐕                                                       󱸀  󲀀      
 ▌ │▌    .mnml              │▌ Codex usage · r refresh · esc close
    │       ipc-zig          │▌
  󰍉 │      prog.dbg           │▌Tokens today
@@ -29,12 +29,12 @@
    │                          │▌
    │                          │▌
    │──────────────────────────│▌
-   │ Codex usage            ⋮ │▌
+   │ Codex Usage            ⋮ │▌
    │                          │▌
    │                          │▌
    │                          │▌
    │                          │▌
   │                          │▌
    │                          │▌
- VIEW  [no file]                                                              F 59% ▲0.2  󱼀 󰐎    00:39  ws   —
-
+ VIEW  [no file]                                                                            󱼀 󰐎    18:23  ws   —
+                                                           ⋯

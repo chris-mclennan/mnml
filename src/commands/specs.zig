@@ -955,6 +955,8 @@ pub const specs = [_]Spec{
     .{ .id = "ai.link_claude_token", .title = "AI: link Claude Code OAuth token (for usage meter)", .group = "ai" },
     .{ .id = "ai.claude_usage", .title = "AI: open Claude usage pane (session + weekly + per-model)", .group = "ai" },
     .{ .id = "ai.claude_rename_account", .title = "AI: rename Claude account (in-config)", .group = "ai" },
+    .{ .id = "ai.claude_add_account", .title = "AI: add a Claude account to the usage meter (name, then its token)", .group = "ai" },
+    .{ .id = "ai.claude_remove_account", .title = "AI: remove a Claude account from the usage meter", .group = "ai" },
     .{ .id = "ai.codex_usage", .title = "AI: open Codex usage pane (tokens + sessions today)", .group = "ai" },
     .{ .id = "ai.show_last_response", .title = "AI: show last Claude quota response (debug)", .group = "ai" },
     .{ .id = "ai.refresh_usage", .title = "AI: refresh usage meter (Claude + Codex)", .group = "ai" },
@@ -1281,7 +1283,7 @@ pub const specs = [_]Spec{
     .{ .id = "view.keep_tab", .title = "Keep this tab (stop the next glance taking the preview over)", .group = "view", .keys = .{ .vim = &.{"space b k"}, .standard = &.{"ctrl+k enter"} } },
 };
 
-test "1137 specs, unique ids" {
+test "1139 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1318,24 +1320,25 @@ test "1137 specs, unique ids" {
     // + the three `view.rail_*` membership commands (railmove)
     // + the four `view.dock_item_move_*` reorder commands (dock-polish)
     // + `view.focus_prev_split`, the split walk backwards (splitcycle)
-    try std.testing.expectEqual(@as(usize, 1137), specs.len);
+    try std.testing.expectEqual(@as(usize, 1139), specs.len);
     // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
-    try std.testing.expectEqual(@as(usize, 1137), specs.len);
+    try std.testing.expectEqual(@as(usize, 1139), specs.len);
     // + `jobs.show`, the background-jobs list (jobschip)
-    try std.testing.expectEqual(@as(usize, 1137), specs.len);
+    try std.testing.expectEqual(@as(usize, 1139), specs.len);
     // + `editor.toggle_indent_guides` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1137), specs.len);
+    try std.testing.expectEqual(@as(usize, 1139), specs.len);
     // + `editor.toggle_indent_guides`, `git.toggle_line_blame` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1137), specs.len);
+    try std.testing.expectEqual(@as(usize, 1139), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis (needsyou)
-    try std.testing.expectEqual(@as(usize, 1137), specs.len);
+    try std.testing.expectEqual(@as(usize, 1139), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis, and
     //   `sessions.next_waiting` / `prev_waiting`, the jumps (needsyou)
-    try std.testing.expectEqual(@as(usize, 1137), specs.len);
+    try std.testing.expectEqual(@as(usize, 1139), specs.len);
     // + `term.search` / `term.search_next` / `term.search_prev` (scrollsearch)
-    try std.testing.expectEqual(@as(usize, 1137), specs.len);
+    try std.testing.expectEqual(@as(usize, 1139), specs.len);
     // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
     // + `find.word_forward_partial` / `find.word_backward_partial`, vim's `g*` / `g#` (vimfix)
-    try std.testing.expectEqual(@as(usize, 1137), specs.len);
+    // + `ai.claude_add_account` / `ai.claude_remove_account` (usagemeters)
+    try std.testing.expectEqual(@as(usize, 1139), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

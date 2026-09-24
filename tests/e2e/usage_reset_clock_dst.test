@@ -1,0 +1,19 @@
+# A reset clock is read in the zone's offset AT the reset, not now. The
+# clock is fixed at 2026-10-30 12:00Z (New York on EDT, UTC-4); the
+# weekly window resets 2026-11-03 05:00Z, after the US leaves daylight
+# saving on Nov 1 — Nov 3 at 12am EST (`TZ=America/New_York date -r
+# 1793682000`), not the 1am that today's offset would make of it. No
+# tz_offset file, so the zone is the process's (TZ).
+# env: TZ=America/New_York
+# env: MNML_CLAUDE_USAGE_FIXTURE=${MNML_E2E_WORKSPACE}/fixture
+write fixture/accounts *personal
+write fixture/now 1793361600
+write fixture/personal.json {"five_hour":{"utilization":10.0,"resets_at":"2026-10-30T15:00:00+00:00"},"seven_day":{"utilization":40.0,"resets_at":"2026-11-03T05:00:00+00:00"}}
+write placeholder.txt x
+open placeholder.txt
+command ai.claude_usage
+wait 800
+expect pane "Claude Usage"
+# Same-day session reset: EDT is right.
+expect screen contains "Resets 11am"
+expect screen contains "Resets Nov 3 at 12am"

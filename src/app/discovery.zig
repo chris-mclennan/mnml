@@ -440,7 +440,20 @@ fn describeSegment(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Tip {
         .macro => .{ .title = "Recording a macro", .detail = "click stops it (q)" },
         .find => .{ .title = "Find", .detail = "the query and the match under the cursor · click reopens the find bar" },
         .test_run => .{ .title = "Test run", .detail = "click focuses the tests pane" },
-        .ai_claude => .{ .title = "Claude — usage", .detail = "the session and weekly windows of the active account · click: the usage pane · right-click: what the chip shows" },
+        .ai_claude => blk: {
+            // Every watched account: its two percents and next reset.
+            const lines = try @import("usage_pane.zig").chipTipLines(app, arena);
+            const rows = try arena.alloc(Row, lines.len);
+            for (lines, 0..) |l, i| rows[i] = .{ .text = l.text, .sub = l.sub, .command = "ai.claude_usage" };
+            const listed = capped(app, seg, rows, 0);
+            break :blk .{
+                .title = "Claude — usage",
+                .detail = "the session and weekly windows of every watched account · click: the usage pane · right-click: what the chip shows",
+                .rows = listed.rows,
+                .more = listed.more,
+                .row_seg = listed.row_seg,
+            };
+        },
         .ai_codex => .{ .title = "Codex — usage", .detail = "tokens today · click: the usage pane · right-click: what the chip shows" },
         .np_brand => .{ .title = try std.fmt.allocPrint(arena, "Music — {s}", .{@tagName(app.cfg.ui.preferred_music_app)}), .detail = "click opens the player · right-click: the player menu" },
         .np_play => .{ .title = "Play / pause", .detail = "click starts or pauses the player · right-click: the player menu" },

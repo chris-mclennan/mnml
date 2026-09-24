@@ -689,6 +689,12 @@ otherwise. Copy what you need; leave the rest out.
         // names one). No entries = one `default` account on `ai_token` — or
         // the 0.2.x `[[ai.claude.accounts]]` blocks, which the migration keeps
         // verbatim as `.ai.claude.accounts` and the reader honours as-is.
+        // The app edits this list itself, one account per line:
+        // ai.claude_add_account (`a` in the usage pane) appends a name with
+        // a token file of its own (`ai_token.<name>`, under the data root),
+        // ai.claude_rename_account changes a name, ai.claude_remove_account
+        // drops an entry and deletes its token file when that file is the
+        // data root's. Comments inside the list do not survive such an edit.
         // MNML_CLAUDE_USAGE_FIXTURE=<dir> replaces the wire with files (the
         // tests, the spec dumps; see src/ai/usage.zig).
         .claude_accounts = .{

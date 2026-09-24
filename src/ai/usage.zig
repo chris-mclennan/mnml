@@ -78,8 +78,59 @@ pub const max_lines_per_file: usize = 100_000;
 
 // ─── the numbers ────────────────────────────────────────────────────────
 
+/// A `limits[].severity`: how the endpoint itself grades the window.
+pub const Severity = enum {
+    normal,
+    warning,
+    critical,
+
+    pub fn parse(s: []const u8) ?Severity {
+        return std.meta.stringToEnum(Severity, s);
+    }
+};
+
 /// One `weekly_scoped` limit: a per-model weekly cap.
-pub const Scoped = struct { model: []const u8, percent: u16, resets_at: u64 };
+pub const Scoped = struct {
+    model: []const u8,
+    percent: u16,
+    resets_at: u64,
+    severity: ?Severity = null,
+    is_active: bool = false,
+};
+
+/// A top-level window the parser does not name (`seven_day_cowork`, a
+/// codename): its key, a title made from the key, its numbers.
+pub const ExtraWindow = struct {
+    key: []const u8,
+    title: []const u8,
+    percent: u16,
+    resets_at: u64,
+    locked_reason: ?[]const u8 = null,
+};
+
+/// `extra_usage`: whether paid overage is on, why not, how much of it is used.
+pub const ExtraUsage = struct {
+    enabled: bool,
+    reason: ?[]const u8 = null,
+    percent: ?u16 = null,
+};
+
+/// A limit-reset offer: which key carried it, when it lapses (unix
+/// seconds, zero when the object gave no time).
+pub const Offer = struct { key: []const u8, expires_at: u64 };
+
+/// GUESS — the top-level keys taken to carry a limit-reset offer. Claude
+/// added a reset button to its usage page in September 2026; no account
+/// with an offer has been read yet, so which of the endpoint's codenamed
+/// slots holds it is not known. `omelette_promotional` is the likeliest
+/// by name. Correct this table when a logged key (see `unknown_keys`)
+/// shows the real one; an object here is read for `expires_at`, else
+/// `resets_at`, and is never also drawn as a window.
+pub const reset_offer_keys = [_][]const u8{"omelette_promotional"};
+
+/// The top-level keys the parser reads or deliberately ignores; any other
+/// non-null key is reported in `Usage.unknown_keys`.
+const named_keys = [_][]const u8{ "five_hour", "seven_day", "limits", "extra_usage", "spend", "member_dashboard_available", "seven_day_breakdown" };
 
 /// One account's last reading. `resets_at` / `weekly_resets_at` are
 /// unix seconds; zero means the endpoint gave none.
@@ -100,6 +151,23 @@ pub const Usage = struct {
     /// The keychain's login is another account's, so the token could
     /// not be repaired: the pane shows the guided re-auth.
     needs_reauth: bool = false,
+    /// The endpoint's own grade of the session and the weekly window
+    /// (`limits[].severity`), when it gave one.
+    severity: ?Severity = null,
+    weekly_severity: ?Severity = null,
+    /// `limits[].is_active`: the window is the one in force.
+    session_active: bool = false,
+    weekly_active: bool = false,
+    /// `five_hour.locked_reason` / `seven_day.locked_reason`.
+    locked_reason: ?[]const u8 = null,
+    weekly_locked_reason: ?[]const u8 = null,
+    /// Top-level windows the parser does not name, in the body's order.
+    windows: []const ExtraWindow = &.{},
+    extra_usage: ?ExtraUsage = null,
+    offer: ?Offer = null,
+    /// Every non-null top-level key the parser neither reads nor names —
+    /// logged once per account so a new field's name can be learned.
+    unknown_keys: []const []const u8 = &.{},
 
     /// Nothing has ever been read and no error is on record.
     pub fn isEmpty(u: *const Usage) bool {
@@ -276,10 +344,27 @@ pub fn parseUsage(arena: Allocator, json: []const u8, now: u64) ParseError!Usage
     if (v != .object) return error.BadJson;
     const session = extractWindow(v, "five_hour", "session");
     const weekly = extractWindow(v, "seven_day", "weekly_all");
+    var out: Usage = .{
+        .percent = session.pct,
+        .weekly_percent = weekly.pct,
+        .resets_at = session.resets,
+        .weekly_resets_at = weekly.resets,
+        .fetched_at = now,
+    };
     var scoped: std.ArrayListUnmanaged(Scoped) = .empty;
     if (field(v, "limits")) |limits| if (limits == .array) {
         for (limits.array.items) |entry| {
-            if (!std.mem.eql(u8, strOf(entry, "kind") orelse "", "weekly_scoped")) continue;
+            const kind = strOf(entry, "kind") orelse "";
+            const sev: ?Severity = if (strOf(entry, "severity")) |x| Severity.parse(x) else null;
+            const active = if (field(entry, "is_active")) |x| x == .bool and x.bool else false;
+            if (std.mem.eql(u8, kind, "session")) {
+                out.severity = sev;
+                out.session_active = active;
+            } else if (std.mem.eql(u8, kind, "weekly_all")) {
+                out.weekly_severity = sev;
+                out.weekly_active = active;
+            }
+            if (!std.mem.eql(u8, kind, "weekly_scoped")) continue;
             const model: []const u8 = blk: {
                 const scope = field(entry, "scope") orelse break :blk "?";
                 const m = field(scope, "model") orelse break :blk "?";
@@ -288,18 +373,85 @@ pub fn parseUsage(arena: Allocator, json: []const u8, now: u64) ParseError!Usage
             try scoped.append(arena, .{
                 .model = try arena.dupe(u8, model),
                 .percent = pctOf(entry, "percent"),
-                .resets_at = if (strOf(entry, "resets_at")) |s| (parseIso8601(s) orelse 0) else 0,
+                .resets_at = if (strOf(entry, "resets_at")) |x| (parseIso8601(x) orelse 0) else 0,
+                .severity = sev,
+                .is_active = active,
             });
         }
     };
-    return .{
-        .percent = session.pct,
-        .weekly_percent = weekly.pct,
-        .resets_at = session.resets,
-        .weekly_resets_at = weekly.resets,
-        .scoped = scoped.items,
-        .fetched_at = now,
+    out.scoped = scoped.items;
+    if (field(v, "five_hour")) |w| out.locked_reason = try dupeOpt(arena, strOf(w, "locked_reason"));
+    if (field(v, "seven_day")) |w| out.weekly_locked_reason = try dupeOpt(arena, strOf(w, "locked_reason"));
+    if (field(v, "extra_usage")) |e| if (e == .object) {
+        out.extra_usage = .{
+            .enabled = if (field(e, "is_enabled")) |x| x == .bool and x.bool else false,
+            .reason = try dupeOpt(arena, strOf(e, "disabled_reason")),
+            .percent = if (field(e, "utilization") != null) pctOf(e, "utilization") else null,
+        };
     };
+    var windows: std.ArrayListUnmanaged(ExtraWindow) = .empty;
+    var unknown: std.ArrayListUnmanaged([]const u8) = .empty;
+    var it = v.object.iterator();
+    while (it.next()) |e| {
+        const key = e.key_ptr.*;
+        const val = e.value_ptr.*;
+        if (val == .null or inList(&named_keys, key)) continue;
+        if (inList(&reset_offer_keys, key)) {
+            if (val == .object and out.offer == null) {
+                const when = strOf(val, "expires_at") orelse strOf(val, "resets_at");
+                out.offer = .{ .key = try arena.dupe(u8, key), .expires_at = if (when) |x| (parseIso8601(x) orelse 0) else 0 };
+            }
+            continue;
+        }
+        try unknown.append(arena, try arena.dupe(u8, key));
+        if (val != .object or (val.object.get("utilization") == null and val.object.get("resets_at") == null)) continue;
+        const pct = pctOf(val, "utilization");
+        const resets: u64 = if (strOf(val, "resets_at")) |x| (parseIso8601(x) orelse 0) else 0;
+        const locked = strOf(val, "locked_reason");
+        // A slot the endpoint keeps at zero with no clock says nothing.
+        if (pct == 0 and resets == 0 and locked == null) continue;
+        const title = try humanKey(arena, key);
+        // `seven_day_sonnet` beside a scoped Sonnet row is that row.
+        const dup = for (out.scoped) |sc| {
+            const t_ = try std.fmt.allocPrint(arena, "Current week ({s})", .{sc.model});
+            if (std.ascii.eqlIgnoreCase(t_, title)) break true;
+        } else false;
+        if (dup) continue;
+        try windows.append(arena, .{ .key = try arena.dupe(u8, key), .title = title, .percent = pct, .resets_at = resets, .locked_reason = try dupeOpt(arena, locked) });
+    }
+    out.windows = windows.items;
+    out.unknown_keys = unknown.items;
+    return out;
+}
+
+fn inList(list: []const []const u8, key: []const u8) bool {
+    for (list) |k| if (std.mem.eql(u8, k, key)) return true;
+    return false;
+}
+
+fn dupeOpt(arena: Allocator, s: ?[]const u8) Allocator.Error!?[]const u8 {
+    return if (s) |x| try arena.dupe(u8, x) else null;
+}
+
+/// A window's title from its key: `seven_day_<x>` is `Current week (X)`,
+/// `five_hour_<x>` is `Current session (X)`, anything else the key with
+/// spaces for underscores and a capital first letter.
+pub fn humanKey(arena: Allocator, key: []const u8) Allocator.Error![]const u8 {
+    const Pre = struct { pre: []const u8, title: []const u8 };
+    for ([_]Pre{ .{ .pre = "seven_day_", .title = "Current week" }, .{ .pre = "five_hour_", .title = "Current session" } }) |p| {
+        if (std.mem.startsWith(u8, key, p.pre) and key.len > p.pre.len) return std.fmt.allocPrint(arena, "{s} ({s})", .{ p.title, try humanWords(arena, key[p.pre.len..]) });
+    }
+    return humanWords(arena, key);
+}
+
+/// `org_level_disabled_until` → `Org level disabled until`.
+pub fn humanWords(arena: Allocator, key: []const u8) Allocator.Error![]const u8 {
+    const out = try arena.dupe(u8, key);
+    for (out) |*c| if (c.* == '_') {
+        c.* = ' ';
+    };
+    if (out.len > 0) out[0] = std.ascii.toUpper(out[0]);
+    return out;
 }
 
 const Window = struct { pct: u16, resets: u64 };
@@ -810,6 +962,23 @@ pub fn pinIdentity(arena: Allocator, io: Io, data_root: []const u8, name: []cons
     return null;
 }
 
+/// Move `old`'s pin to `new` (an account renamed), or drop it when `new`
+/// is null (an account removed). No pin, no write.
+pub fn movePin(arena: Allocator, io: Io, data_root: []const u8, old: []const u8, new: ?[]const u8) Allocator.Error!void {
+    if (data_root.len == 0) return;
+    var pins = try readPins(arena, io, data_root);
+    const email = pins.get(old) orelse return;
+    _ = pins.orderedRemove(old);
+    if (new) |n| try pins.put(arena, n, email);
+    var obj: std.json.ObjectMap = .empty;
+    var it = pins.iterator();
+    while (it.next()) |e| try obj.put(arena, e.key_ptr.*, .{ .string = e.value_ptr.* });
+    var out: Io.Writer.Allocating = .init(arena);
+    std.json.Stringify.value(std.json.Value{ .object = obj }, .{ .whitespace = .indent_2 }, &out.writer) catch return error.OutOfMemory;
+    const path = try std.fs.path.join(arena, &.{ data_root, identity_file });
+    writeSecret(io, path, out.written()) catch {};
+}
+
 /// The account whose token file holds `refresh_token` — the one the
 /// CLI is logged in as right now.
 pub fn accountOfRefreshToken(arena: Allocator, io: Io, accounts: []const AccountCfg, refresh_token: []const u8) Allocator.Error!?[]const u8 {
@@ -950,6 +1119,16 @@ pub fn tierOf(percent: u16) Tier {
     return if (percent >= 85) .hot else if (percent >= 60) .warn else .ok;
 }
 
+/// The endpoint's `severity` when it gave one, else the thresholds.
+pub fn tierOfWire(percent: u16, severity: ?Severity) Tier {
+    const sev = severity orelse return tierOf(percent);
+    return switch (sev) {
+        .critical => .hot,
+        .warning => .warn,
+        .normal => .ok,
+    };
+}
+
 /// Eight blocks over 0–100 for the compact chip.
 pub fn sparklineChar(percent: u16) []const u8 {
     const blocks = [_][]const u8{ "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█" };
@@ -994,6 +1173,13 @@ pub fn singleChip(arena: Allocator, u: *const Usage, letter: ?u8, o: ChipOpts) A
 
 pub const Compact = struct {
     text: []const u8,
+    /// `text` in its parts: the blocks (with any `↺`), and what follows
+    /// them (the stale `!`, the arrow or the countdown, the last space).
+    spark: []const u8 = "",
+    rest: []const u8 = "",
+    /// The worst state across the accounts read (the endpoint's own
+    /// severity where it gave one).
+    tier: Tier = .ok,
     /// The worst session % across the accounts read.
     worst: u16 = 0,
     any_error: bool = false,
@@ -1014,6 +1200,9 @@ pub fn compactChip(arena: Allocator, accounts: []const ChipAccount, o: ChipOpts)
         const u = &a.usage;
         if (u.fetched_at > 0) {
             try spark.appendSlice(arena, sparklineChar(u.percent));
+            // A limit-reset offer on this account, still open.
+            if (u.offer) |of| if (of.expires_at == 0 or of.expires_at > o.now) try spark.appendSlice(arena, offer_mark);
+            out.tier = worseTier(out.tier, accountTier(u));
             out.worst = @max(out.worst, u.percent);
             out.any_fetched = true;
             if (u.percent < 90) all_near_empty = false;
@@ -1045,8 +1234,23 @@ pub fn compactChip(arena: Allocator, accounts: []const ChipAccount, o: ChipOpts)
             suffix = if (h == 0) " ⟳<1h" else if (h < 100) try std.fmt.allocPrint(arena, " ⟳{d}h", .{h}) else " ⟳soon";
         }
     }
-    out.text = try std.fmt.allocPrint(arena, " {s} {s}{s}{s} ", .{ o.glyph, spark.items, if (any_stale) "!" else "", suffix });
+    out.spark = spark.items;
+    out.rest = try std.fmt.allocPrint(arena, "{s}{s} ", .{ if (any_stale) "!" else "", suffix });
+    out.text = try std.fmt.allocPrint(arena, " {s} {s}{s}", .{ o.glyph, out.spark, out.rest });
     return out;
+}
+
+/// The chip's mark for an account with a limit-reset offer open.
+pub const offer_mark = "↺";
+
+/// An account's worst window: the session or the week, by the endpoint's
+/// grade where it gave one.
+pub fn accountTier(u: *const Usage) Tier {
+    return worseTier(tierOfWire(u.percent, u.severity), tierOfWire(u.weekly_percent, u.weekly_severity));
+}
+
+pub fn worseTier(a: Tier, b: Tier) Tier {
+    return if (@intFromEnum(a) >= @intFromEnum(b)) a else b;
 }
 
 /// `remaining % / hours to reset`: how much of an account the next reset
@@ -1099,6 +1303,29 @@ pub const usage_fixture =
 /// An older tier: no top-level windows, `limits[]` only.
 pub const usage_limits_only_fixture =
     \\{"limits":[{"kind":"session","percent":12,"resets_at":"2026-09-12T18:00:00Z"},{"kind":"weekly_all","percent":3,"resets_at":"2026-09-15T05:00:00Z"}]}
+;
+
+/// The 2026-09 shape, every field the parser reads plus the ones it only
+/// names (values invented): a weekly window per model at the top level,
+/// a live window under a codename at 0 %, a locked window, the extra
+/// usage block, the severities, and `omelette_promotional` carrying an
+/// offer — the GUESS `reset_offer_keys` names.
+pub const usage_wide_fixture =
+    \\{"five_hour":{"utilization":88.0,"resets_at":"2026-09-12T22:00:00+00:00","limit_dollars":null,"used_dollars":null,"remaining_dollars":null,"locked_reason":null},
+    \\ "seven_day":{"utilization":61.0,"resets_at":"2026-09-19T05:00:00+00:00","locked_reason":"weekly_limit_reached"},
+    \\ "seven_day_oauth_apps":null,"seven_day_opus":null,
+    \\ "seven_day_sonnet":{"utilization":30.0,"resets_at":"2026-09-19T05:00:00+00:00","locked_reason":null},
+    \\ "seven_day_cowork":{"utilization":12.0,"resets_at":null},
+    \\ "tangelo":null,"iguana_necktie":null,
+    \\ "omelette_promotional":{"resets_at":"2026-09-12T21:00:00+00:00","expires_at":"2026-09-13T04:00:00+00:00"},
+    \\ "nimbus_quill":{"utilization":0.0,"resets_at":null,"limit_dollars":null,"locked_reason":null},
+    \\ "copper_kite":{"state":"new"},
+    \\ "extra_usage":{"is_enabled":false,"monthly_limit":null,"used_credits":null,"utilization":null,"currency":"USD","decimal_places":2,"disabled_reason":"org_level_disabled_until","user_disabled":false},
+    \\ "limits":[{"kind":"session","group":"session","percent":88,"severity":"warning","resets_at":"2026-09-12T22:00:00+00:00","scope":null,"is_active":true},
+    \\   {"kind":"weekly_all","group":"weekly","percent":61,"severity":"critical","resets_at":"2026-09-19T05:00:00+00:00","scope":null,"is_active":false},
+    \\   {"kind":"weekly_scoped","group":"weekly","percent":30,"severity":"normal","resets_at":"2026-09-19T05:00:00+00:00","scope":{"model":{"id":null,"display_name":"Sonnet"},"surface":null},"is_active":false}],
+    \\ "spend":{"used":{"amount_minor":0,"currency":"USD","exponent":2},"percent":0,"severity":"normal","enabled":false},
+    \\ "member_dashboard_available":false,"seven_day_breakdown":null}
 ;
 
 pub const profile_fixture =
@@ -1156,6 +1383,52 @@ test "parseUsage: the windows, the scoped row, the limits-only fallback, junk" {
     try t.expect(z.isEmpty());
     try t.expectError(error.BadJson, parseUsage(a, "nope", 1));
     try t.expectError(error.BadJson, parseUsage(a, "[1]", 1));
+}
+
+test "parseUsage: the wire's newer fields — severity, is_active, locked_reason, extra usage, windows it does not name, the reset offer, the keys to learn" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const u = try parseUsage(a, usage_wide_fixture, 1789243232);
+    try t.expectEqual(@as(u16, 88), u.percent);
+    try t.expectEqual(Severity.warning, u.severity.?);
+    try t.expectEqual(Severity.critical, u.weekly_severity.?);
+    try t.expect(u.session_active and !u.weekly_active);
+    try t.expect(u.locked_reason == null);
+    try t.expectEqualStrings("weekly_limit_reached", u.weekly_locked_reason.?);
+    try t.expectEqual(Severity.normal, u.scoped[0].severity.?);
+    // `seven_day_sonnet` is the scoped Sonnet row already; `seven_day_cowork`
+    // is new — a window titled from its key; `nimbus_quill` at 0 % with no
+    // reset stays quiet; `copper_kite` is no window at all.
+    try t.expectEqual(@as(usize, 1), u.windows.len);
+    try t.expectEqualStrings("seven_day_cowork", u.windows[0].key);
+    try t.expectEqualStrings("Current week (Cowork)", u.windows[0].title);
+    try t.expectEqual(@as(u16, 12), u.windows[0].percent);
+    // Extra usage: off, and why.
+    try t.expect(!u.extra_usage.?.enabled);
+    try t.expectEqualStrings("org_level_disabled_until", u.extra_usage.?.reason.?);
+    try t.expect(u.extra_usage.?.percent == null);
+    // The offer, keyed by the guess table.
+    try t.expectEqualStrings("omelette_promotional", u.offer.?.key);
+    try t.expectEqual(parseIso8601("2026-09-13T04:00:00+00:00").?, u.offer.?.expires_at);
+    // Every non-null top-level key the parser does not name, to be logged.
+    for ([_][]const u8{ "seven_day_sonnet", "seven_day_cowork", "nimbus_quill", "copper_kite" }) |k| {
+        const found = for (u.unknown_keys) |x| {
+            if (std.mem.eql(u8, x, k)) break true;
+        } else false;
+        try t.expect(found);
+    }
+    for (u.unknown_keys) |x| {
+        try t.expect(!std.mem.eql(u8, x, "tangelo")); // null
+        try t.expect(!std.mem.eql(u8, x, "five_hour")); // named
+        try t.expect(!std.mem.eql(u8, x, "omelette_promotional")); // in the table
+    }
+    // The old shape has none of it.
+    const old = try parseUsage(a, usage_limits_only_fixture, 1);
+    try t.expect(old.offer == null and old.extra_usage == null and old.windows.len == 0 and old.severity == null);
+    try t.expectEqualStrings("Nimbus quill", try humanKey(a, "nimbus_quill"));
+    try t.expectEqualStrings("Current session (Burst)", try humanKey(a, "five_hour_burst"));
+    try t.expectEqualStrings("Current week (Oauth apps)", try humanKey(a, "seven_day_oauth_apps"));
 }
 
 test "parseProfile and the token blob fields" {

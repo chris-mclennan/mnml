@@ -51,6 +51,7 @@ const render = @import("render.zig");
 const Button = render.Button;
 const menu_bar = @import("menu_bar.zig");
 const context_menus = @import("context_menus.zig");
+const usage_pane = @import("usage_pane.zig");
 const settings_app = @import("settings.zig");
 const ui_settings = @import("../ui/settings.zig");
 const launcher_dock = @import("launcher_dock.zig");
@@ -168,6 +169,7 @@ pub fn run(gpa: Allocator, io: Io, arena: Allocator, workspace: []const u8, data
     try walkPanels(&w);
     try walkTree(&w);
     try walkEditor(&w);
+    try walkUsagePane(&w);
     try walkOverlays(&w);
     try walkMenus(&w);
     return tally(arena, w.results.items, w.lint.items, todo);
@@ -305,6 +307,17 @@ fn walkEditor(w: *Walk) Allocator.Error!void {
     try w.probe("script_hit:chip", .{ .script_hit = .{ .pane = eid, .id = hit.ListHit.chip(.sort) } });
     // The current-line blame's text (`app/line_blame.zig`).
     try w.probe("script_hit:line_blame", .{ .script_hit = .{ .pane = eid, .id = @import("line_blame.zig").hit_id } });
+}
+
+/// The Claude usage pane's parts: the kebab, a row outside any account,
+/// an account's block and its pencil (one account seeded to name).
+fn walkUsagePane(w: *Walk) Allocator.Error!void {
+    const id = try w.app.panes.add(.{ .ai_usage = .{ .product = .claude } });
+    if (w.app.ai.usage.accounts.items.len == 0) try w.app.ai.usage.accounts.append(w.app.gpa, .{ .arena = .init(w.app.gpa), .name = "work" });
+    try w.probe("script_hit:usage:kebab", .{ .script_hit = .{ .pane = id, .id = usage_pane.hit_kebab } });
+    try w.probe("script_hit:usage:body", .{ .script_hit = .{ .pane = id, .id = usage_pane.hit_body } });
+    try w.probe("script_hit:usage:account", .{ .script_hit = .{ .pane = id, .id = usage_pane.hit_account_base } });
+    try w.probe("script_hit:usage:pencil", .{ .script_hit = .{ .pane = id, .id = usage_pane.hit_pencil_base } });
 }
 
 fn walkOverlays(w: *Walk) Allocator.Error!void {
@@ -501,6 +514,12 @@ fn walkMenus(w: *Walk) Allocator.Error!void {
         fn tree(a: *App) Allocator.Error!void {
             return cm.openTreeMenu(a, 0, 5, 5);
         }
+        fn usagePane(a: *App) Allocator.Error!void {
+            return usage_pane.openPaneMenu(a, 5, 5);
+        }
+        fn usageAccount(a: *App) Allocator.Error!void {
+            return usage_pane.openAccountMenu(a, "work", 5, 5);
+        }
     };
     const openers = [_]Opener{
         .{ .name = "editor", .open = &Fns.editor },
@@ -544,6 +563,8 @@ fn walkMenus(w: *Walk) Allocator.Error!void {
         .{ .name = "welcome_recent", .open = &Fns.welcomeRecent },
         .{ .name = "toast", .open = &Fns.toast },
         .{ .name = "tree_row", .open = &Fns.tree },
+        .{ .name = "usage_pane", .open = &Fns.usagePane },
+        .{ .name = "usage_account", .open = &Fns.usageAccount },
     };
     for (openers) |o| {
         w.closeOverlay();

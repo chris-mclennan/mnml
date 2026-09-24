@@ -1242,6 +1242,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
     // own arena, which the close frees — copy them out first.
     const text: ?[]const u8 = switch (action) {
         .copy_text, .open_url, .open_path, .set_theme, .lua_bind, .lsp_install, .requests_for => |s| try app.frame.allocator().dupe(u8, s),
+        .claude_account => |c| try app.frame.allocator().dupe(u8, c.name),
         else => null,
     };
     closeOverlay(app);
@@ -1353,6 +1354,8 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
         .lua_bind => try scripts_panel.promptBind(app, text.?),
         // // changed (lsp-defaults): the LSP chip menu's Install row.
         .lsp_install => try toastOnFail(app, runners.installBin(app, text.?)),
+        // A Claude account's row on the usage pane's menus or a chooser.
+        .claude_account => |c| try toastOnFail(app, usage_pane.accountAction(app, c.act, text.?)),
         // // changed (lua-plumbing): a script list's row menu.
         .script_list_fold => |f| if (script_list.find(app, f.list)) |l| {
             const rows = try script_list.visible(app, l, app.frame.allocator());
@@ -1654,7 +1657,9 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .terminal_glyph_svg => try toastOnFail(app, @import("terminal_glyph.zig").customAccept(app, text)),
         .claude_mark_svg => try toastOnFail(app, @import("claude_mark.zig").customAccept(app, text)),
         .ai_branch_name => try toastOnFail(app, ai_app.branchNameAccept(app, text)),
-        .ai_token => try toastOnFail(app, ai_app.tokenAccept(app, text)),
+        .claude_account_add => try toastOnFail(app, usage_pane.addAccept(app, text)),
+        .claude_account_token => |a| try toastOnFail(app, usage_pane.tokenAccept(app, a.name, text)),
+        .claude_account_rename => |a| try toastOnFail(app, usage_pane.renameAccount(app, a.name, text)),
         .dap_add_watch => try dap.acceptWatch(app, text),
         .dap_bp_condition => |b| try dap.acceptCondition(app, b.path, b.line, text),
         .dap_hit_count => |b| try dap.acceptHitCount(app, b.path, b.line, text),
@@ -1788,6 +1793,7 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
         .kill_pids => |pids| if (choice == 0) try sessions.killAccept(app, pids),
         .cloud_cancel => |arn| if (choice == 0) try cloud_agents.cancelAccept(app, arn),
         .remove_integration => |id| if (choice == 0) try integrations.removeAccept(app, id),
+        .remove_claude_account => |name| if (choice == 0) try toastOnFail(app, usage_pane.removeAccount(app, name)),
         .choose_data_layout => try toastOnFail(app, @import("setup.zig").acceptDataLayout(app, choice)),
         .reset_to_defaults => try toastOnFail(app, @import("setup.zig").acceptReset(app, choice)),
     }
@@ -2413,7 +2419,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .git_graph => |*g| try git_app.graphClick(app, sh.pane, g, sh.id, m),
                 .sessions_table => |*tp| try sessions_table.click(app, sh.pane, tp, sh.id, m),
                 .spend_report => |*s| try spend.click(app, sh.pane, s, sh.id, m),
-                .ai_usage => {},
+                .ai_usage => |*u| try usage_pane.click(app, u, sh.id, m),
                 .grep => |*g| try grep.click(app, sh.pane, g, sh.id, m),
                 .debug => if (m.button == .left) try dap.click(app, sh.pane, sh.id),
                 .request => |*rp| try request_pane.click(app, sh.pane, rp, sh.id, m, hitRect(app, m.x, m.y)),
