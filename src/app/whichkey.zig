@@ -58,7 +58,6 @@ pub const groups = [_]Group{
     .{ .prefix = "c", .label = "+nvchad" },
     // NvChad's `<leader>ra` (vim only: the leaf under it is).
     .{ .prefix = "r", .label = "+lsp" },
-    .{ .prefix = "b", .label = "+buffer" },
     .{ .prefix = "s", .label = "+split" },
     // nvim-dap's leader chords (`docs/KEYMAP_PROFILES.md` → Debugger).
     .{ .prefix = "d", .label = "+debug" },
@@ -426,8 +425,11 @@ test "leader tree: root groups, descend, leaves, dead ends" {
     const std_root = continuations(arena_state.allocator(), "", false);
     for (std_root) |e| try std.testing.expect(e.key != 'd' and e.key != 'r');
     // The vim profile's root adds `+debug`, `+lsp` on `r`, `+nvchad`,
-    // `+which-key` and NvChad's `x` / `h` / `v` / `e` / `E` / `/`.
-    try std.testing.expectEqual(continuations(arena_state.allocator(), "", true).len - 10, std_root.len);
+    // `+which-key` and NvChad's `x` / `h` / `v` / `e` / `E` / `/` / `b`.
+    try std.testing.expectEqual(continuations(arena_state.allocator(), "", true).len - 11, std_root.len);
+    // NvChad's `<leader>b` is `:enew`, a leaf — the `+buffer` group is gone.
+    try std.testing.expectEqual(CommandId.@"scratch.new", lookupIn("b", true).?.cmd.id);
+    try std.testing.expect(lookupIn("b", false) == null);
 }
 
 test "leader tree: the groups R T L P i I H, the digits, the root leaves ? B m p o, tr, iE and the t leaves" {
@@ -511,11 +513,14 @@ test "every group in both profiles has a glyph with an ascii twin, and the count
                 }
             }
         }
-        try t.expect(seen >= 19);
+        // The standard profile's groups (vim adds `+debug`, `+lsp` on
+        // `r`, `+nvchad`, `+which-key`); `+buffer` went with NvChad's
+        // `<leader>b`.
+        try t.expect(seen >= 18);
     }
     // The count is a walk of the tree, not a literal: an iterative
     // sweep of every leaf beneath a node agrees with `chordCount`.
-    for ([_][]const u8{ "", "f", "s", "g", "L", "Lc", "t", "a", "l", "d", "T", "R", "i", "H", "I", "P", "b", "c", "r", "W", "w" }) |path| {
+    for ([_][]const u8{ "", "f", "s", "g", "L", "Lc", "t", "a", "l", "d", "T", "R", "i", "H", "I", "P", "c", "r", "W", "w" }) |path| {
         for ([_]bool{ true, false }) |vim| {
             const n = lookupIn(path, vim) orelse continue;
             try t.expectEqual(leavesUnder(n, vim), chordCount(n, vim));

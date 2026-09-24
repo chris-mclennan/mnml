@@ -228,7 +228,11 @@ pub const specs = [_]Spec{
     .{ .id = "lsp.peek_definition_overlay", .title = "LSP: peek definition as a floating overlay (cursor doesn't move; VS Code Alt+F12)", .group = "lsp", .keys = .{ .both = &.{"Alt+F12"} } },
     .{ .id = "view.split_open_file_under_cursor", .title = "Split + open file under cursor (vim `Ctrl+W f`)", .group = "view" },
     .{ .id = "view.split_new_scratch", .title = "Split + open a fresh scratch buffer (vim `Ctrl+W n`)", .group = "view" },
-    .{ .id = "scratch.new", .title = "New scratch buffer (empty, no file)", .group = "buffer" },
+    // NvChad's `<leader>b` is `:enew` — a fresh empty unnamed buffer in
+    // the current window; `:w name` gives it a file. It replaced the
+    // `+buffer` group, whose rows all had another chord (and `space x`
+    // is NvChad's close).
+    .{ .id = "scratch.new", .title = "New scratch buffer (empty, no file)", .group = "buffer", .short = "new buffer", .keys = .{ .vim = &.{"space b"} } },
     .{ .id = "scratch.from_clipboard", .title = "New scratch buffer from clipboard", .group = "buffer" },
     .{ .id = "view.maximize_height", .title = "Maximize active split height (vim `Ctrl+W _`)", .group = "view" },
     .{ .id = "view.maximize_width", .title = "Maximize active split width (vim `Ctrl+W |`)", .group = "view" },
@@ -383,10 +387,10 @@ pub const specs = [_]Spec{
     .{ .id = "file.open_recent_9", .title = "Open recent file #10", .group = "file" },
     .{ .id = "noop", .title = "(no-op — placeholder for disabled menu items)", .group = "file" },
     .{ .id = "picker.files", .title = "Open file…", .group = "go", .short = "files", .keys = .{ .standard = &.{"ctrl+o"}, .both = &.{ "ctrl+p", "space f f" } } },
-    .{ .id = "picker.buffers", .title = "Switch buffer…", .group = "go", .short = "buffers", .keys = .{ .standard = &.{"ctrl+k ctrl+p"}, .both = &.{ "space b b", "space f b" } } },
+    .{ .id = "picker.buffers", .title = "Switch buffer…", .group = "go", .short = "buffers", .keys = .{ .standard = &.{"ctrl+k ctrl+p"}, .both = &.{"space f b"} } },
     .{ .id = "palette", .title = "Command palette", .group = "go", .short = "command palette", .keys = .{ .both = &.{ "ctrl+shift+p", "space p" } } },
-    .{ .id = "buffer.close", .title = "Close tab (close active buffer)", .group = "buffer", .short = "close buffer", .keys = .{ .vim = &.{"space x"}, .standard = &.{"ctrl+w"}, .both = &.{ "space b d", "space q" } } },
-    .{ .id = "buffer.reopen", .title = "Re-open the most-recently-closed buffer", .group = "buffer", .short = "reopen closed", .keys = .{ .both = &.{ "ctrl+shift+t", "space b r" } } },
+    .{ .id = "buffer.close", .title = "Close tab (close active buffer)", .group = "buffer", .short = "close buffer", .keys = .{ .vim = &.{"space x"}, .standard = &.{"ctrl+w"}, .both = &.{"space q"} } },
+    .{ .id = "buffer.reopen", .title = "Re-open the most-recently-closed buffer", .group = "buffer", .short = "reopen closed", .keys = .{ .both = &.{"ctrl+shift+t"} } },
     .{ .id = "buffer.clear_mru", .title = "Clear the buffer MRU (nav back/forward history)", .group = "buffer" },
     .{ .id = "perf.reset_stress", .title = "Perf: reset the stress meter's frame-time window", .group = "perf" },
     .{ .id = "perf.toast_stress", .title = "Perf: toast the current stress numbers", .group = "perf" },
@@ -402,8 +406,8 @@ pub const specs = [_]Spec{
     .{ .id = "toast.dismiss_clicked", .title = "Toast: dismiss the toast the menu was opened on", .group = "toast" },
     .{ .id = "toast.copy_clicked", .title = "Toast: copy the text of the toast the menu was opened on", .group = "toast" },
     .{ .id = "buffer.pin_toggle", .title = "Pin / Unpin the active tab (sticks to front of strip)", .group = "buffer", .short = "pin / unpin tab", .keys = .{ .standard = &.{"ctrl+k shift+enter"} } },
-    .{ .id = "buffer.next", .title = "Next buffer (positional)", .group = "buffer", .short = "next buffer", .keys = .{ .vim = &.{"tab"}, .standard = &.{"ctrl+k ctrl+pagedown"}, .both = &.{ "ctrl+pagedown", "ctrl+alt+right", "space b n" } } },
-    .{ .id = "buffer.prev", .title = "Previous buffer (positional)", .group = "buffer", .short = "previous buffer", .keys = .{ .vim = &.{"shift+tab"}, .standard = &.{"ctrl+k ctrl+pageup"}, .both = &.{ "ctrl+pageup", "ctrl+alt+left", "ctrl+shift+tab", "space b p" } } },
+    .{ .id = "buffer.next", .title = "Next buffer (positional)", .group = "buffer", .short = "next buffer", .keys = .{ .vim = &.{"tab"}, .standard = &.{"ctrl+k ctrl+pagedown"}, .both = &.{ "ctrl+pagedown", "ctrl+alt+right" } } },
+    .{ .id = "buffer.prev", .title = "Previous buffer (positional)", .group = "buffer", .short = "previous buffer", .keys = .{ .vim = &.{"shift+tab"}, .standard = &.{"ctrl+k ctrl+pageup"}, .both = &.{ "ctrl+pageup", "ctrl+alt+left", "ctrl+shift+tab" } } },
     .{ .id = "tab.new", .title = "New tab page", .group = "tab", .short = "new tab page", .keys = .{ .standard = &.{"ctrl+k n"} } },
     .{ .id = "tab.next", .title = "Next tab page (vim gt)", .group = "tab" },
     .{ .id = "tab.prev", .title = "Previous tab page (vim gT)", .group = "tab" },
@@ -1298,7 +1302,7 @@ pub const specs = [_]Spec{
     .{ .id = "app.command_line", .title = "Open the `:` command line (any focus, either keymap profile)", .group = "app", .keys = .{ .both = &.{"ctrl+;"} } },
     .{ .id = "toast.run_action", .title = "Toast: take up the newest message's offer (the ` Install ` button)", .group = "toast", .keys = .{ .both = &.{"ctrl+shift+a"} } },
     // ── preview tabs (preview-tabs) ──
-    .{ .id = "view.keep_tab", .title = "Keep this tab (stop the next glance taking the preview over)", .group = "view", .short = "keep preview tab", .keys = .{ .vim = &.{"space b k"}, .standard = &.{"ctrl+k enter"} } },
+    .{ .id = "view.keep_tab", .title = "Keep this tab (stop the next glance taking the preview over)", .group = "view", .short = "keep preview tab", .keys = .{ .standard = &.{"ctrl+k enter"} } },
 };
 
 test "1141 specs, unique ids" {

@@ -16,7 +16,9 @@ command whichkey.leader
 expect screen contains "󰍉 f → +find (8)"
 expect screen contains "󰊢 g → +git (22)"
 expect screen contains "󰐱 i → +integrations (5)"
-expect screen contains "󰎒 b → +buffer (6)"
+# NvChad's `<leader>b` is `:enew`, a root leaf: the neutral mark.
+expect screen contains "󰘵 b → new buffer"
+expect screen lacks "+buffer"
 expect screen contains " L → +lang/run (20)"
 expect screen contains "󰓂 P → +pr (2)"
 expect screen contains "󰚩 a → +ai/term (16)"

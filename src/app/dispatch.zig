@@ -4558,10 +4558,11 @@ test "leader chain: an unbound chord is swallowed whole — its tail key never r
     try e.buf.editor.setText("alpha\nbravo\n");
     e.buf.editor.setCursor(0);
     const Case = struct { a: u21, b: u21 };
-    // `<leader>cx` is not `x` (delete a char), `<leader>fx` / `<leader>bx`
+    // `<leader>cx` is not `x` (delete a char), `<leader>fx` / `<leader>sx`
     // neither: NvChad's which-key drops an unbound chord whole. (The
-    // hunt's `ca` / `fo` / `gt` are bound now — `keymap.zig`.)
-    for ([_]Case{ .{ .a = 'c', .b = 'x' }, .{ .a = 'f', .b = 'x' }, .{ .a = 'b', .b = 'x' } }) |c| {
+    // hunt's `ca` / `fo` / `gt` are bound now — `keymap.zig`; `<leader>b`
+    // is NvChad's `:enew`, a leaf, so the third group is `+split`.)
+    for ([_]Case{ .{ .a = 'c', .b = 'x' }, .{ .a = 'f', .b = 'x' }, .{ .a = 's', .b = 'x' } }) |c| {
         try key(&app, Key.char(' '));
         try key(&app, Key.char(c.a));
         try key(&app, Key.char(c.b));

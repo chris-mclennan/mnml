@@ -1,0 +1,31 @@
+# width: 120
+# NvChad's `<leader>b` is `:enew` ("buffer new", nvchad-probe:
+# `<Space>b` → `<Cmd>enew<CR>`): a fresh empty unnamed buffer in the
+# current window, which `:w name` gives a file. It used to open the
+# `+buffer` group, whose rows each had another chord (`<leader>x` closes,
+# Tab / Shift-Tab walk, `<leader>fb` lists).
+write a.txt "alpha\n"
+open a.txt
+command editor.use_vim
+expect screen contains "alpha"
+
+key space
+key b
+wait 300
+# The current window shows the new buffer — not a split, not a popup.
+expect screen lacks "alpha"
+expect screen lacks "+buffer"
+expect screen lacks "┌ <leader>"
+expect screen contains "a.txt"
+expect dirty false
+
+type ihello
+key esc
+expect dirty true
+key :
+type w fresh.txt
+key enter
+wait 300
+expect file fresh.txt contains "hello"
+expect dirty false
+expect screen contains "fresh.txt"
