@@ -351,6 +351,13 @@ const Run = struct {
         // find the checkout's branches, and one that `git init`s its own
         // is unaffected.
         file_env.put("GIT_CEILING_DIRECTORIES", std.mem.trimEnd(u8, self.opts.tmp_root, "/")) catch return self.fail("out of memory", .{});
+        // The terminal the corpus was written in, whatever terminal (or
+        // none — CI, `env -i`) the run happens in. A shell pane is named
+        // after `$TERM_PROGRAM` (`Terminal (sh)`, `ghostty (sh)`), so a
+        // file that says `expect pane Terminal` passed in one emulator
+        // and failed in every other. A file that means another terminal
+        // says so in its own `# env:` lines, which come after these.
+        pinTerminal(&file_env) catch return self.fail("out of memory", .{});
         for (self.prebound.items, 1..) |srv, i| {
             var nbuf: [32]u8 = undefined;
             var vbuf: [8]u8 = undefined;
@@ -1005,6 +1012,81 @@ pub fn substitutePorts(gpa: Allocator, text: []const u8, ports: []const u16) All
     }
     try out.appendSlice(gpa, text[i..]);
     return out.toOwnedSlice(gpa);
+}
+
+/// Names a file's environment keeps from the environment `mnml-zig test`
+/// was started in. Everything else — a developer's tokens, a
+/// `CLAUDECODE` from the agent that launched the run, the `MNML_IPC_DIR`
+/// of the mnml whose terminal pane it runs in (an integration under test
+/// would have written into that live instance's channel), an
+/// `XDG_CONFIG_HOME` pointing at the real config — stays out, so a file
+/// sees the same environment on every machine: a developer's shell, a
+/// CI runner, `env -i`.
+const kept_vars = [_][]const u8{
+    "PATH",                "TMPDIR",                  "TEMP",                       "TMP",                 "USER",                   "LOGNAME",
+    "USERNAME",            "LANG",                    "TZ",                         "SYSTEMROOT",          "SystemRoot",             "WINDIR",
+    "COMSPEC",             "PATHEXT",                 "USERPROFILE",                "APPDATA",             "LOCALAPPDATA",           "PROGRAMDATA",
+    "HOMEDRIVE",           "HOMEPATH",                "ProgramFiles",               "OS",                  "PROCESSOR_ARCHITECTURE", "ZIG_GLOBAL_CACHE_DIR",
+    "ZIG_LOCAL_CACHE_DIR",
+    // What `mnml-zig test` itself exports for the scripts (an operator's
+    // own value of any of them wins, so they pass through by name).
+    "MNML_SHIMS",              "MNML_LAUNCHERS",             "MNML_REPO",           "MNML_FAKE_DAP",          "MNML_FAKE_LSP",
+    "MNML_FAKE_COPILOT",   "MNML_SAMPLE_INTEGRATION", "MNML_BITBUCKET_INTEGRATION", "MNML_FAKE_BITBUCKET", "MNML_JIRA",              "MNML_FAKE_JIRA",
+};
+
+/// A file's base environment, built from the one the run was started in
+/// (`kept_vars`, `LC_*`, `MNML_E2E_*`) with `HOME` set to `home` — a
+/// directory of the run's own, never the developer's: the real one
+/// carries their git identity, their `~/.config/mnml`, their Claude
+/// transcripts and their shared rate-limit buckets. `PATH` gets
+/// `$MNML_SHIMS/ai` in front, so the `claude` and `codex` a file finds
+/// are the sleeping stand-ins on every machine: the tab bar's AI chip
+/// shows only when one is on `PATH`, the corpus was written where both
+/// were, and a runner with neither laid its strips out differently — and
+/// no file ever starts a real session. A file that means another `PATH`
+/// says so in its `# env:` lines.
+pub fn hermeticEnv(gpa: Allocator, host: *const std.process.Environ.Map, home: []const u8) Allocator.Error!std.process.Environ.Map {
+    var out = std.process.Environ.Map.init(gpa);
+    errdefer out.deinit();
+    var it = host.iterator();
+    while (it.next()) |kv| {
+        const name = kv.key_ptr.*;
+        const keep = for (kept_vars) |k| {
+            if (std.mem.eql(u8, k, name)) break true;
+        } else std.mem.startsWith(u8, name, "LC_") or std.mem.startsWith(u8, name, "MNML_E2E_");
+        if (keep) try out.put(name, kv.value_ptr.*);
+    }
+    try out.put("HOME", home);
+    if (host.get("MNML_SHIMS")) |shims| {
+        const sep: u8 = if (builtin.os.tag == .windows) ';' else ':';
+        const ai = try std.fs.path.join(gpa, &.{ shims, "ai" });
+        defer gpa.free(ai);
+        const path = if (host.get("PATH")) |p| try std.fmt.allocPrint(gpa, "{s}{c}{s}", .{ ai, sep, p }) else try gpa.dupe(u8, ai);
+        defer gpa.free(path);
+        try out.put("PATH", path);
+    }
+    return out;
+}
+
+/// The host terminal's fingerprints, removed from a file's environment
+/// so none of them reaches the App (`pinTerminal`).
+const host_terminal_vars = [_][]const u8{
+    "TERM_PROGRAM_VERSION", "TERM_SESSION_ID",   "LC_TERMINAL",                 "LC_TERMINAL_VERSION",
+    "WT_SESSION",           "KITTY_WINDOW_ID",   "KITTY_PID",                   "GHOSTTY_RESOURCES_DIR",
+    "GHOSTTY_BIN_DIR",      "ITERM_SESSION_ID",  "WEZTERM_PANE",                "WEZTERM_EXECUTABLE",
+    "VTE_VERSION",          "KONSOLE_VERSION",   "TMUX",                        "TMUX_PANE",
+    "ALACRITTY_WINDOW_ID",  "TERMINAL_EMULATOR", "WARP_IS_LOCAL_SHELL_SESSION",
+};
+
+/// A file's terminal: the one the corpus was written in (Apple's
+/// Terminal, 256 colours, truecolor), with every other emulator's marks
+/// taken off. Deterministic on every host — a developer's ghostty, a CI
+/// runner with no terminal at all, an `env -i` run.
+pub fn pinTerminal(env: *std.process.Environ.Map) Allocator.Error!void {
+    for (host_terminal_vars) |name| _ = env.swapRemove(name);
+    try env.put("TERM_PROGRAM", "Apple_Terminal");
+    try env.put("TERM", "xterm-256color");
+    try env.put("COLORTERM", "truecolor");
 }
 
 /// What the App's session scan reads for its process-group scope
@@ -2387,4 +2469,67 @@ test "temp dirs are created exclusively: a name that exists is somebody else's" 
     defer t.allocator.free(b);
     try t.expect(!std.mem.eql(u8, a, b));
     try t.expectError(error.PathAlreadyExists, createFresh(t.io, a));
+}
+
+test "a file's environment is pinned: the corpus's terminal whatever the host's, and git fenced at the temp root" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var env = try TestEnv.init();
+    defer env.deinit();
+    // The host is some other terminal, and says so several ways.
+    var run_env = std.process.Environ.Map.init(t.allocator);
+    defer run_env.deinit();
+    try run_env.put("TERM_PROGRAM", "ghostty");
+    try run_env.put("KITTY_WINDOW_ID", "7");
+    try run_env.put("TERM", "dumb");
+    try run_env.put("ROOT", env.root);
+    var opts = env.opts();
+    opts.allow_shell = true;
+    opts.env = &run_env;
+    var sf: StubFactory = .{};
+    const path = try env.script("pinned.test",
+        \\shell [ "$TERM_PROGRAM" = Apple_Terminal ] && [ "$TERM" = xterm-256color ] && [ "$COLORTERM" = truecolor ] && [ -z "${KITTY_WINDOW_ID+x}" ]
+        \\shell [ "$GIT_CEILING_DIRECTORIES" = "$ROOT" ]
+        \\
+    );
+    defer t.allocator.free(path);
+    var o = runFile(t.allocator, t.io, sf.factory(), path, content_size, opts);
+    try expectPassed(&o);
+    // A file that means another terminal still says so, and wins.
+    const own = try env.script("own.test",
+        \\# env: TERM_PROGRAM=ghostty
+        \\shell [ "$TERM_PROGRAM" = ghostty ]
+        \\
+    );
+    defer t.allocator.free(own);
+    var o2 = runFile(t.allocator, t.io, sf.factory(), own, content_size, opts);
+    try expectPassed(&o2);
+}
+
+test "hermeticEnv keeps what a file needs, drops the developer's, and gives it a HOME and AI stand-ins of the run's own" {
+    var host = std.process.Environ.Map.init(t.allocator);
+    defer host.deinit();
+    try host.put("PATH", "/usr/bin:/bin");
+    try host.put("HOME", "/Users/dev");
+    try host.put("LC_ALL", "C.UTF-8");
+    try host.put("MNML_SHIMS", "/repo/tools/shims");
+    try host.put("MNML_E2E_FILE_TIMEOUT_SECS", "300");
+    // The ones a file must never see.
+    try host.put("BITBUCKET_ACCESS_TOKEN", "t");
+    try host.put("CLAUDECODE", "1");
+    try host.put("MNML_IPC_DIR", "/Users/dev/proj/.mnml/ipc-zig");
+    try host.put("XDG_CONFIG_HOME", "/Users/dev/.config");
+    try host.put("SHELL", "/bin/zsh");
+    var env = try hermeticEnv(t.allocator, &host, "/run/home");
+    defer env.deinit();
+    try t.expectEqualStrings("/run/home", env.get("HOME").?);
+    try t.expectEqualStrings("/repo/tools/shims/ai:/usr/bin:/bin", env.get("PATH").?);
+    try t.expectEqualStrings("C.UTF-8", env.get("LC_ALL").?);
+    try t.expectEqualStrings("300", env.get("MNML_E2E_FILE_TIMEOUT_SECS").?);
+    try t.expectEqualStrings("/repo/tools/shims", env.get("MNML_SHIMS").?);
+    for ([_][]const u8{ "BITBUCKET_ACCESS_TOKEN", "CLAUDECODE", "MNML_IPC_DIR", "XDG_CONFIG_HOME", "SHELL" }) |gone| {
+        if (env.get(gone) != null) {
+            std.debug.print("{s} leaked into a file's environment\n", .{gone});
+            return error.TestUnexpectedResult;
+        }
+    }
 }

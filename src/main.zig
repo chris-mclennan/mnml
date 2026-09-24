@@ -603,18 +603,28 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
         }
     }
     try reportHarness(env, w);
+    // What every file starts from: the kept names of this environment,
+    // a HOME of the run's own (`e2e.runner.hermeticEnv`) — never the
+    // developer's.
+    const run_home = try std.fs.path.join(gpa, &.{ data_root, "home" });
+    defer gpa.free(run_home);
+    try Io.Dir.cwd().createDirPath(io, run_home);
+    var file_base = try e2e.runner.hermeticEnv(gpa, env, run_home);
+    defer file_base.deinit();
     const opts: e2e.Options = .{
         .allow_shell = allow_shell,
         .network = network,
         .file_timeout_secs = timeout,
         .heartbeat_secs = heartbeat,
         .sizes = if (sizes.items.len > 0) sizes.items else &.{e2e.runner.content_size},
-        .shell = env.get("SHELL") orelse "/bin/sh",
+        // `/bin/sh` on every machine, not the developer's login shell:
+        // a step's quoting and builtins are the file's, not the host's.
+        .shell = env.get("MNML_E2E_SHELL") orelse "/bin/sh",
         .tmp_root = tmp_root,
         .data_root = data_root,
         .name_filter = name_filter,
         .skip = skips.items,
-        .env = env,
+        .env = &file_base,
     };
 
     var stub_factory: e2e.driver.StubFactory = .{};
