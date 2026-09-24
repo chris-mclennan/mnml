@@ -176,6 +176,10 @@ pub const Options = struct {
     /// this on unless `--strict`; off here, so the library's own
     /// callers see every failure as a failure.
     retry_flaky: bool = false,
+    /// `mnml-zig test`'s `git` guard (`installGitGuard`): every `git` a
+    /// file's App or `shell` steps run goes through it, and one whose
+    /// repository is outside the run's temp root fails the file.
+    git_guard: ?GitGuard = null,
 };
 
 /// The file's name without its `.test`.
@@ -289,6 +293,8 @@ const Run = struct {
     /// the background) outlives the file or is seen by another run's.
     /// Null on Windows and when shell steps are refused.
     group_leader: ?std.process.Child = null,
+    /// Where the git guard's log stood when the file started.
+    git_log_start: u64 = 0,
     /// `serve` steps' servers, stopped after the script; their canned
     /// answers live on `serve_arena`.
     servers: std.ArrayListUnmanaged(*mock.Server) = .empty,
@@ -381,6 +387,10 @@ const Run = struct {
         // and failed in every other. A file that means another terminal
         // says so in its own `# env:` lines, which come after these.
         pinTerminal(&file_env) catch return self.fail("out of memory", .{});
+        if (self.opts.git_guard) |g| {
+            g.putEnv(gpa, &file_env) catch return self.fail("out of memory", .{});
+            self.git_log_start = fileSize(io, g.log);
+        }
         for (self.prebound.items, 1..) |srv, i| {
             var nbuf: [32]u8 = undefined;
             var vbuf: [8]u8 = undefined;
@@ -445,9 +455,12 @@ const Run = struct {
                 .env = &file_env,
             }) catch |e| break :blk self.fail("App::new: {s}", .{@errorName(e)});
             self.driver = d;
-            const result = self.runScript(&script);
+            var result = self.runScript(&script);
             d.deinit();
             self.stopServers();
+            if (result.passed) if (self.gitGuardViolation()) |msg| {
+                result = .{ .name = self.name, .passed = false, .message = msg };
+            };
             break :blk result;
         };
         const leaked = if (self.opts.quiet_leak_report) blk: {
@@ -773,6 +786,23 @@ const Run = struct {
         const n = @min(self.prebound.items.len, ports.len);
         for (self.prebound.items[0..n], 0..) |srv, i| ports[i] = srv.port;
         return substitutePorts(self.gpa, text, ports[0..n]);
+    }
+
+    /// The first `git` this file ran against a repository outside the
+    /// run's temp root, as the guard wrote it down — an owned message —
+    /// or null.
+    fn gitGuardViolation(self: *Run) ?[]u8 {
+        const g = self.opts.git_guard orelse return null;
+        const file = Io.Dir.cwd().openFile(self.io, g.log, .{}) catch return null;
+        defer file.close(self.io);
+        const len = file.length(self.io) catch return null;
+        if (len <= self.git_log_start) return null;
+        var buf: [1024]u8 = undefined;
+        const n = file.readPositionalAll(self.io, buf[0..@min(buf.len, len - self.git_log_start)], self.git_log_start) catch return null;
+        const text = buf[0..n];
+        const line = text[0 .. std.mem.indexOfScalar(u8, text, '\n') orelse text.len];
+        const tab = std.mem.indexOfScalar(u8, line, '\t') orelse line.len;
+        return std.fmt.allocPrint(self.gpa, "git ran against a repository outside the run's temp root ({s}): {s} — a test must never reach the checkout it runs in", .{ line[0..tab], if (tab < line.len) line[tab + 1 ..] else "" }) catch null;
     }
 
     /// Start the file's process group (`group_leader`). Returns its id.
@@ -1112,6 +1142,110 @@ pub fn pinTerminal(env: *std.process.Environ.Map) Allocator.Error!void {
     try env.put("TERM_PROGRAM", "Apple_Terminal");
     try env.put("TERM", "xterm-256color");
     try env.put("COLORTERM", "truecolor");
+}
+
+/// `mnml-zig test`'s `git` guard. A shim named `git`, first on every
+/// file's PATH (and the runner's own, for the App's spawns that inherit
+/// it), hands every call to the real git and writes down — to `log` —
+/// any whose repository is outside `tmp_root`: the checkout the run
+/// was started in, above all. A test that reached it was how the
+/// checkout's `index.lock` went stale under a killed run. The file that
+/// did it fails, naming the command.
+pub const GitGuard = struct {
+    /// The directory holding the shim.
+    shim_dir: []const u8,
+    /// Where the shim writes `<repo root>\tgit <args>` lines.
+    log: []const u8,
+    /// Everything a test may touch is under here.
+    tmp_root: []const u8,
+
+    /// The shim first on `env`'s PATH, and the two variables it reads.
+    pub fn putEnv(g: GitGuard, gpa: Allocator, env: *std.process.Environ.Map) Allocator.Error!void {
+        const sep: u8 = if (builtin.os.tag == .windows) ';' else ':';
+        const path = if (env.get("PATH")) |p| try std.fmt.allocPrint(gpa, "{s}{c}{s}", .{ g.shim_dir, sep, p }) else try gpa.dupe(u8, g.shim_dir);
+        defer gpa.free(path);
+        try env.put("PATH", path);
+        try env.put("MNML_E2E_GIT_LOG", g.log);
+        try env.put("MNML_E2E_TMP_ROOT", std.mem.trimEnd(u8, g.tmp_root, "/"));
+    }
+};
+
+/// The shim, with the real git's path in place of `@REAL@`. POSIX sh:
+/// the leading options that move git elsewhere (`-C dir`) are followed
+/// to the directory git will act in; one outside the temp root that
+/// resolves to a repository is written down; the call then runs as it
+/// was made.
+const git_shim_template =
+    \\#!/bin/sh
+    \\# mnml-zig test's git guard (src/e2e/runner.zig, GitGuard).
+    \\real='@REAL@'
+    \\dir=$PWD
+    \\n=$#
+    \\i=1
+    \\while [ $i -le $n ]; do
+    \\  eval "a=\${$i}"
+    \\  case "$a" in
+    \\    -C) [ $i -lt $n ] || break; i=$((i+1)); eval "b=\${$i}"; case "$b" in /*) dir=$b ;; *) dir=$dir/$b ;; esac ;;
+    \\    -c) i=$((i+1)) ;;
+    \\    --*) ;;
+    \\    *) break ;;
+    \\  esac
+    \\  i=$((i+1))
+    \\done
+    \\case "$dir/" in
+    \\  "${MNML_E2E_TMP_ROOT:-}"/*) ;;
+    \\  *)
+    \\    top=$(cd "$dir" 2>/dev/null && "$real" rev-parse --show-toplevel 2>/dev/null)
+    \\    if [ -n "$top" ] && [ -n "${MNML_E2E_GIT_LOG:-}" ]; then
+    \\      printf '%s\tgit %s\n' "$top" "$*" >> "$MNML_E2E_GIT_LOG"
+    \\    fi ;;
+    \\esac
+    \\exec "$real" "$@"
+    \\
+;
+
+/// Write the guard's shim under `run_root` and name its log there.
+/// Null on Windows and when no `git` is on `path` (nothing to guard).
+/// The returned strings are owned (`deinitGitGuard`).
+pub fn installGitGuard(gpa: Allocator, io: Io, run_root: []const u8, tmp_root: []const u8, path: ?[]const u8) !?GitGuard {
+    if (builtin.os.tag == .windows) return null;
+    const real = (try findOnPath(gpa, io, path orelse return null, "git")) orelse return null;
+    defer gpa.free(real);
+    const dir = try std.fs.path.join(gpa, &.{ run_root, "git-guard" });
+    errdefer gpa.free(dir);
+    try Io.Dir.cwd().createDirPath(io, dir);
+    const script = try std.mem.replaceOwned(u8, gpa, git_shim_template, "@REAL@", real);
+    defer gpa.free(script);
+    const shim = try std.fs.path.join(gpa, &.{ dir, "git" });
+    defer gpa.free(shim);
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = shim, .data = script });
+    try Io.Dir.cwd().setFilePermissions(io, shim, .fromMode(0o755), .{});
+    const log = try std.fs.path.join(gpa, &.{ run_root, "git-guard.log" });
+    errdefer gpa.free(log);
+    return .{ .shim_dir = dir, .log = log, .tmp_root = try gpa.dupe(u8, tmp_root) };
+}
+
+pub fn deinitGitGuard(gpa: Allocator, g: GitGuard) void {
+    gpa.free(g.shim_dir);
+    gpa.free(g.log);
+    gpa.free(g.tmp_root);
+}
+
+/// The first `<dir>/<name>` on `path` that exists. Owned.
+fn findOnPath(gpa: Allocator, io: Io, path: []const u8, name: []const u8) Allocator.Error!?[]u8 {
+    var it = std.mem.splitScalar(u8, path, ':');
+    while (it.next()) |d| {
+        if (d.len == 0) continue;
+        const p = try std.fs.path.join(gpa, &.{ d, name });
+        if (Io.Dir.cwd().access(io, p, .{})) |_| return p else |_| gpa.free(p);
+    }
+    return null;
+}
+
+fn fileSize(io: Io, path: []const u8) u64 {
+    const f = Io.Dir.cwd().openFile(io, path, .{}) catch return 0;
+    defer f.close(io);
+    return f.length(io) catch 0;
 }
 
 /// What the App's session scan reads for its process-group scope
@@ -2650,4 +2784,48 @@ test "hermeticEnv keeps what a file needs, drops the developer's, and gives it a
             return error.TestUnexpectedResult;
         }
     }
+}
+
+test "the git guard fails a file whose git reaches a repository outside the temp root, and passes one that stays inside" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var env = try TestEnv.init();
+    defer env.deinit();
+    // The temp root is a directory of its own; beside it, "the checkout".
+    const tmp_root = try std.fs.path.join(t.allocator, &.{ env.root, "runs" });
+    defer t.allocator.free(tmp_root);
+    try Io.Dir.cwd().createDirPath(t.io, tmp_root);
+    const outside = try std.fs.path.join(t.allocator, &.{ env.root, "checkout" });
+    defer t.allocator.free(outside);
+    try Io.Dir.cwd().createDirPath(t.io, outside);
+    var host = std.process.Environ.Map.init(t.allocator);
+    defer host.deinit();
+    try host.put("PATH", "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin");
+    const guard = (try installGitGuard(t.allocator, t.io, env.root, tmp_root, host.get("PATH"))) orelse return error.SkipZigTest;
+    defer deinitGitGuard(t.allocator, guard);
+    {
+        const r = try std.process.run(t.allocator, t.io, .{ .argv = &.{ "git", "-C", outside, "init", "-q" } });
+        t.allocator.free(r.stdout);
+        t.allocator.free(r.stderr);
+    }
+    try host.put("OUT", outside);
+    var opts = env.opts();
+    opts.tmp_root = tmp_root;
+    opts.allow_shell = true;
+    opts.env = &host;
+    opts.git_guard = guard;
+    var sf: StubFactory = .{};
+    // Reaching the checkout: `git -C` into it, as a command the App ran
+    // with the wrong cwd would.
+    const bad = try env.script("reach.test", "shell git -C \"$OUT\" status --porcelain >/dev/null\n");
+    defer t.allocator.free(bad);
+    var o = runFile(t.allocator, t.io, sf.factory(), bad, content_size, opts);
+    defer o.deinit(t.allocator);
+    try t.expect(!o.passed);
+    try t.expect(std.mem.startsWith(u8, o.message.?, "git ran against a repository outside the run's temp root ("));
+    try t.expect(std.mem.indexOf(u8, o.message.?, "git -C ") != null);
+    // A repository of the file's own, in its workspace: nothing to say.
+    const good = try env.script("own.test", "shell git init -q . && git status --porcelain >/dev/null && git -C . log -1 >/dev/null 2>&1; true\n");
+    defer t.allocator.free(good);
+    var o2 = runFile(t.allocator, t.io, sf.factory(), good, content_size, opts);
+    try expectPassed(&o2);
 }

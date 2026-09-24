@@ -622,6 +622,19 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
         }
     }
     try reportHarness(env, w);
+    // The git guard (`e2e.runner.GitGuard`): a `git` shim first on PATH
+    // that fails any file whose git reaches a repository outside the
+    // temp root — the checkout this run was started in, above all.
+    const guard = try e2e.runner.installGitGuard(gpa, io, data_root, tmp_root, env.get("PATH"));
+    defer if (guard) |g| e2e.runner.deinitGitGuard(gpa, g);
+    if (guard) |g| try g.putEnv(gpa, env);
+    // This process's own environment and working directory are what a
+    // child the App spawns WITHOUT an environment or a cwd of its own
+    // inherits. They pointed at the developer's shell and the checkout,
+    // so such a `git` ran in the checkout. Now: the guard and the git
+    // fence in the environment, and the run's own temp root as the cwd
+    // (every path the run still needs made absolute first).
+    try fenceProcess(gpa, io, env, tmp_root, data_root, &paths);
     // What every file starts from: the kept names of this environment,
     // a HOME of the run's own (`e2e.runner.hermeticEnv`) — never the
     // developer's.
@@ -665,6 +678,42 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
     defer stats.deinit(gpa);
     if (stats.failed != 0) try reportHarness(env, w);
     return if (stats.failed == 0) 0 else 1;
+}
+
+/// `setenv`, for the variables a child spawned without an environment
+/// of its own must see (`fenceProcess`). libc's; not on Windows.
+extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+
+/// `mnml-zig test` runs the App in-process, and a child it spawns with
+/// neither an environment nor a cwd inherits this process's. Put the
+/// git guard's PATH, its log, the temp root and `GIT_CEILING_DIRECTORIES`
+/// into the real environment, make every test path absolute, and move
+/// the cwd into the run's own temp root — never the checkout.
+fn fenceProcess(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, tmp_root: []const u8, run_root: []const u8, paths: *std.ArrayList([]const u8)) !void {
+    if (@import("builtin").os.tag == .windows) return;
+    for (paths.items) |*p| {
+        if (std.fs.path.isAbsolute(p.*)) continue;
+        // page_allocator: `paths` does not own its items, and these live
+        // until the process ends.
+        const abs = Io.Dir.cwd().realPathFileAlloc(io, p.*, std.heap.page_allocator) catch continue;
+        p.* = abs;
+    }
+    for ([_][]const u8{ "PATH", "MNML_E2E_GIT_LOG", "MNML_E2E_TMP_ROOT" }) |name| {
+        const v = env.get(name) orelse continue;
+        try setenvOwned(gpa, name, v);
+    }
+    try setenvOwned(gpa, "GIT_CEILING_DIRECTORIES", std.mem.trimEnd(u8, tmp_root, "/"));
+    var dir = try Io.Dir.cwd().openDir(io, run_root, .{});
+    defer dir.close(io);
+    try std.process.setCurrentDir(io, dir);
+}
+
+fn setenvOwned(gpa: Allocator, name: []const u8, value: []const u8) !void {
+    const n = try gpa.dupeZ(u8, name);
+    defer gpa.free(n);
+    const v = try gpa.dupeZ(u8, value);
+    defer gpa.free(v);
+    if (setenv(n.ptr, v.ptr, 1) != 0) return error.SetEnvFailed;
 }
 
 /// The two things about the HARNESS that turn a `.test` failure into a
