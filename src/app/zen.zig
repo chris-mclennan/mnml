@@ -73,7 +73,7 @@ pub fn set(app: *App, on: bool) void {
     app.needs_render = true;
 }
 
-/// `view.toggle_zoom` (`Ctrl-W z`, `Ctrl+K Ctrl+Z`, `space s z`, the
+/// `view.toggle_zoom` (`Ctrl-W z`, `Ctrl+K Ctrl+M`, `space s z`, the
 /// strip's maximize button, the `zoom` chip): the focused split alone
 /// fills the page's body; the same call restores. The state is the
 /// page's (`Layout.zoomed`), so each tab page keeps its own and
@@ -111,14 +111,14 @@ fn toggleZoom(app: *App) CommandError!void {
 //
 // There is no third mode. The split tree's only scope between one pane
 // and the whole window is the leaf, and a leaf IS the tab group — the
-// tabs it holds are its own. So "zoom this pane" and "zoom this tab
+// tabs it holds are its own. So "zoom the split" and "zoom this tab
 // group" name the same rect, and a second row running the same command
 // would be a row that does nothing new.
 
 /// What `ui.maximize_click` names, for the hover line and the menu.
 pub fn modeLabel(mode: Config.MaximizeClick) []const u8 {
     return switch (mode) {
-        .zoom_pane => "Zoom this pane",
+        .zoom_pane => "Zoom the split",
         .fullscreen => "Full screen",
     };
 }
@@ -686,7 +686,7 @@ test "the maximize button: `ui.maximize_click` picks what a left click runs, and
     try t.expectEqual(app_mod.Config.MaximizeClick.zoom_pane, app.cfg.ui.maximize_click);
     try t.expectEqual(command.CommandId.@"view.toggle_zoom", commandFor(.zoom_pane));
     try t.expectEqual(command.CommandId.@"view.fullscreen", commandFor(.fullscreen));
-    try t.expectEqualStrings("Zoom this pane", modeLabel(.zoom_pane));
+    try t.expectEqualStrings("Zoom the split", modeLabel(.zoom_pane));
     try t.expectEqualStrings("Full screen", modeLabel(.fullscreen));
 
     const a = try app.openScratch();

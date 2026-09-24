@@ -352,7 +352,7 @@ pub const Vim = struct {
                 .{ .key = 'W', .label = "previous split" }, .{ .key = 'q', .label = "close split" },     .{ .key = 'o', .label = "only" },
                 .{ .key = 'H', .label = "move far left" },  .{ .key = 'J', .label = "move bottom" },     .{ .key = 'K', .label = "move top" },
                 .{ .key = 'L', .label = "move far right" }, .{ .key = 'r', .label = "rotate" },          .{ .key = '=', .label = "equalize" },
-                .{ .key = 'n', .label = "new scratch" },    .{ .key = 'T', .label = "move to new tab" }, .{ .key = 'z', .label = "zoom / restore" },
+                .{ .key = 'n', .label = "new scratch" },    .{ .key = 'T', .label = "move to new tab" }, .{ .key = 'z', .label = "zoom the split / restore" },
             } },
             else => null,
         };

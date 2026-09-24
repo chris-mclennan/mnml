@@ -232,11 +232,15 @@ pub const specs = [_]Spec{
     .{ .id = "scratch.from_clipboard", .title = "New scratch buffer from clipboard", .group = "buffer" },
     .{ .id = "view.maximize_height", .title = "Maximize active split height (vim `Ctrl+W _`)", .group = "view" },
     .{ .id = "view.maximize_width", .title = "Maximize active split width (vim `Ctrl+W |`)", .group = "view" },
-    // The zoom. vim: `Ctrl-W z` through the handler's window prefix,
-    // listed in `vim_handler` for the cheatsheet (tmux's letter; Neovim's own `Ctrl-W z` closes the preview
-    // window, which mnml does not have). standard: `ctrl+k ctrl+z` —
-    // VS Code's zen chord `ctrl+k z` is full screen's here.
-    .{ .id = "view.toggle_zoom", .title = "Zoom the focused split / restore", .group = "view", .short = "zoom the split / restore", .keys = .{ .vim = &.{"space s z"}, .standard = &.{"ctrl+k ctrl+z"}, .vim_handler = &.{"ctrl+w z"} } },
+    // The zoom. vim: `space s z` beside the split verbs — NvChad binds no
+    // zoom, and a leader chord is where its plugins put one — and
+    // `Ctrl-W z` through the handler's window prefix, listed in
+    // `vim_handler` for the cheatsheet (tmux's letter; Neovim's own
+    // `Ctrl-W z` closes the preview window, which mnml does not have).
+    // standard: `ctrl+k ctrl+m`, VS Code's "View: Toggle Maximize Editor
+    // Group" (`workbench.action.toggleMaximizeEditorGroup`, primary
+    // `KeyChord(CtrlCmd+K, CtrlCmd+M)` in the 1.138 bundle).
+    .{ .id = "view.toggle_zoom", .title = "Zoom the split / restore", .group = "view", .short = "zoom the split / restore", .keys = .{ .vim = &.{"space s z"}, .standard = &.{"ctrl+k ctrl+m"}, .vim_handler = &.{"ctrl+w z"} } },
     .{ .id = "view.move_to_new_tab", .title = "Move active split to a new tab page (vim `Ctrl+W T`)", .group = "view" },
     .{ .id = "view.equalize_splits", .title = "Equalize every split so all panes render at equal size (vim `Ctrl+W =`)", .group = "view" },
     .{ .id = "view.toggle_auto_equalize_splits", .title = "Auto-equalize splits on split / close (toggle)", .group = "view" },

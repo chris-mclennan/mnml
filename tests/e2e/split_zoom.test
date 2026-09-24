@@ -54,7 +54,7 @@ expect screen lacks " zoom "
 # The pending `Ctrl-W` popup lists the chord.
 key ctrl+w
 wait 400
-expect screen contains "zoom / restore"
+expect screen contains "zoom the split / restore"
 key esc
 
 # A second tab page is not zoomed by the first page's zoom.
@@ -95,17 +95,17 @@ expect screen contains "bravo bravo"
 expect screen lacks "alpha alpha"
 expect screen lacks "charlie charlie"
 
-# standard: `Ctrl+K Ctrl+Z` (VS Code's zen chord `Ctrl+K Z` is full
-# screen here).
+# standard: `Ctrl+K Ctrl+M`, VS Code's "View: Toggle Maximize Editor
+# Group" (its zen chord `Ctrl+K Z` is full screen here).
 command editor.use_standard
 key ctrl+k
-key ctrl+z
+key ctrl+m
 wait 300
 expect screen lacks " zoom "
 expect screen contains "alpha alpha"
 expect screen contains "charlie charlie"
 key ctrl+k
-key ctrl+z
+key ctrl+m
 wait 300
 expect screen contains " zoom "
 expect screen lacks "alpha alpha"

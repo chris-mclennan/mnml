@@ -475,7 +475,7 @@ fn fullScreen(comptime label: []const u8) Entry {
         else
             "Brings the chrome back — the tree, the bufferline, the menu bar and the statusline — around the panes as they are; Esc Esc does the same. The row reads Enter full screen again once outside, and Reset view to default is the way back from any hiding at once.",
         .keys = &.{ .{ .command = .@"view.fullscreen", .label = "Full screen" }, .{ .command = .@"view.toggle_zoom", .label = "Zoom one pane" } },
-        .links = &.{ .{ .command = .{ .id = .@"view.fullscreen", .label = "Toggle full screen" } }, .{ .command = .{ .id = .@"view.toggle_zoom", .label = "Zoom this pane instead" } }, .{ .command = .{ .id = .@"view.reset_layout", .label = "Reset the view" } } },
+        .links = &.{ .{ .command = .{ .id = .@"view.fullscreen", .label = "Toggle full screen" } }, .{ .command = .{ .id = .@"view.toggle_zoom", .label = "Zoom the split instead" } }, .{ .command = .{ .id = .@"view.reset_layout", .label = "Reset the view" } } },
     };
 }
 

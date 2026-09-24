@@ -1345,7 +1345,7 @@ stays, and its grip goes with it. Closing the line asks for a fresh
 
 ## Split zoom
 
-`view.toggle_zoom` — vim `Ctrl-W z`, standard `Ctrl+K Ctrl+Z`, which-key
+`view.toggle_zoom` ("Zoom the split") — vim `Ctrl-W z`, standard `Ctrl+K Ctrl+M` (VS Code's Toggle Maximize Editor Group), which-key
 `space s z`, the tab strip's maximize button (with `ui.maximize_click =
 .zoom_pane`, the default) — gives the focused split the whole editor
 area. The other splits of the tab page are hidden, not closed: the tab

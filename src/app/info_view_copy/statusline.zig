@@ -167,7 +167,7 @@ pub fn entry(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Entry {
         .zoom => .{
             .title = "Zoomed split",
             .body = "This tab page is zoomed: the focused split fills the body and the tab strip shows only its tabs, while the other splits are hidden rather than closed — their ratios, their tabs and the focus are kept exactly. Click puts the layout back as it was. A split, a close or a move un-zooms first, and each tab page keeps its own zoom across a restart.",
-            .keys = &.{.{ .command = .@"view.toggle_zoom", .label = "Zoom / restore" }},
+            .keys = &.{.{ .command = .@"view.toggle_zoom", .label = "Zoom the split / restore" }},
             .links = &.{ .{ .command = .{ .id = .@"view.toggle_zoom", .label = "Restore the layout" } }, .{ .command = .{ .id = .@"view.fullscreen", .label = "Full screen as well" } } },
         },
         .dev_profile => .{
