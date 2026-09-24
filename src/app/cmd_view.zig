@@ -116,6 +116,8 @@ pub const table = .{
     .@"view.settings" = &openSettings,
     .@"view.settings_search" = &openSettingsSearch,
     .@"view.cmdline_history" = &cmdlineHistory,
+    .@"view.search_history" = &searchHistory,
+    .@"view.search_history_backward" = &searchHistoryBackward,
     // changed: `editor.toggle_keymap` is the statusline mode chip's
     // click; it lives with the view code because that is who calls it.
     .@"editor.toggle_keymap" = &toggleKeymap,
@@ -853,6 +855,33 @@ fn cmdlineHistory(app: *App) CommandError!void {
     }
     for (app.cmd_history.items) |line| try entries.append(gpa, .{ .text = try gpa.dupe(u8, line) });
     try openListPane(app, .cmdline_history, try entries.toOwnedSlice(gpa));
+}
+
+/// `q/` / `q?` — the searches remembered (the find history), newest
+/// last; Enter searches the row again forward / backward.
+fn searchHistory(app: *App) CommandError!void {
+    return openSearchHistory(app, false);
+}
+
+fn searchHistoryBackward(app: *App) CommandError!void {
+    return openSearchHistory(app, true);
+}
+
+fn openSearchHistory(app: *App, reverse: bool) CommandError!void {
+    const gpa = app.gpa;
+    var entries: std.ArrayListUnmanaged(app_mod.ListPane.Entry) = .empty;
+    errdefer {
+        for (entries.items) |e| gpa.free(e.text);
+        entries.deinit(gpa);
+    }
+    for (app.find_history.items) |q| try entries.append(gpa, .{ .text = try gpa.dupe(u8, q) });
+    try openListPane(app, .search_history, try entries.toOwnedSlice(gpa));
+    for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+        .list => |*l| if (l.kind == .search_history) {
+            l.reverse = reverse;
+        },
+        else => {},
+    };
 }
 
 // ─── the read-only overlays ─────────────────────────────────────────────

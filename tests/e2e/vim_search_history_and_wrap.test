@@ -1,0 +1,47 @@
+# vim search history and the wrap notice (Neovim 0.12.5):
+#  - `/b<Up>` recalls the newest search that starts with `b` (`/bar`);
+#  - `q/` lists the searches, Enter searches the row again;
+#  - a search that goes past the end says "search hit BOTTOM, continuing
+#    at TOP" (`?` past the top: "search hit TOP, continuing at BOTTOM").
+write a.txt "foo bar\nbaz foo\nqux\nbar\n"
+open a.txt
+command editor.use_vim
+key /
+type bar
+key enter
+key /
+type qux
+key enter
+key /
+type b
+key up
+key enter
+expect status contains "\"line\":4"
+
+# q/ — the history in a pane; Enter on `qux` (the row above the newest)
+# searches it again.
+key g
+key g
+key q
+key /
+expect screen contains "search history"
+expect screen contains "qux"
+key up
+key enter
+expect screen lacks "search history"
+expect status contains "\"line\":3"
+
+# The wrap notice.
+write b.txt "foo\nx\nfoo\n"
+open b.txt
+key j
+key /
+type foo
+key enter
+expect status contains "\"line\":3"
+key n
+expect status contains "\"line\":1"
+expect screen contains "search hit BOTTOM, continuing at TOP"
+key N
+expect screen contains "search hit TOP, continuing at BOTTOM"
+expect status contains "\"line\":3"

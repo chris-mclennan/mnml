@@ -1250,7 +1250,7 @@ pub fn paneIcon(app: *App, pane: *const app_mod.Pane, ascii: bool) icons.Icon {
         .outline => kindIcon(ascii, "\u{2325}", "\u{F01BD}", p.purple),
         .files => kindIcon(ascii, "\u{25A4}", "\u{F0770}", p.blue),
         .list => |*l| switch (l.kind) {
-            .cmdline_history => kindIcon(ascii, "\u{276F}", "\u{EB15}", p.comment),
+            .cmdline_history, .search_history => kindIcon(ascii, "\u{276F}", "\u{EB15}", p.comment),
             .stash_files, .git_log => kindIcon(ascii, "\u{2387}", "\u{F02A2}", p.orange),
             else => kindIcon(ascii, "\u{2315}", "\u{F0349}", p.teal),
         },
@@ -2351,6 +2351,7 @@ fn drawListPane(app: *App, l: *app_mod.ListPane, ui: Ui, pane: PaneId, area: Rec
     if (area.isEmpty()) return;
     const header = switch (l.kind) {
         .cmdline_history => ui.fmt(" cmdline history · {d} entr{s} · enter re-runs · esc closes ", .{ l.entries.items.len, if (l.entries.items.len == 1) "y" else "ies" }),
+        .search_history => ui.fmt(" search history · {d} entr{s} · enter searches {s} · esc closes ", .{ l.entries.items.len, if (l.entries.items.len == 1) "y" else "ies", if (l.reverse) "backward" else "forward" }),
         .quickfix => ui.fmt(" {d} match{s}   ·   quickfix: enter opens · esc closes ", .{ l.entries.items.len, if (l.entries.items.len == 1) "" else "es" }),
         // changed: a third list kind — the location list is the quickfix row layout under its own header.
         .location => ui.fmt(" {d} entr{s}   ·   location list: enter opens · :lnext / :lprev walk · esc closes ", .{ l.entries.items.len, if (l.entries.items.len == 1) "y" else "ies" }),

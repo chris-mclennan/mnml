@@ -294,6 +294,19 @@ pub fn stepFromBar(app: *App, delta: i32) Allocator.Error!void {
     fb.landed = true;
 }
 
+/// A search run as if typed after `/` (`?` when `reverse`) — `q/`'s
+/// Enter: the bar opens over the active editor with `q` and lands.
+pub fn searchFor(app: *App, q: []const u8, reverse: bool) Allocator.Error!void {
+    openBar(app, reverse) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return,
+    };
+    const fb = &(app.find_bar orelse return);
+    try fb.state.setQuery(app.gpa, q);
+    try liveUpdate(app);
+    try acceptFromBar(app);
+}
+
 /// vim's Enter: land on the match and close (or chain to replace).
 fn acceptAndClose(app: *App) Allocator.Error!void {
     const fb = &(app.find_bar orelse return);
@@ -336,6 +349,7 @@ fn acceptAndClose(app: *App) Allocator.Error!void {
     const idx = (if (reverse) f.indexBefore(tg.cursor()) else f.indexAtOrAfter(forwardFrom(app, tg.cursor()))) orelse 0;
     f.current = idx;
     jumplist.noteJumpMotion(app);
+    try noteWrap(app, f.matches.items[idx].start, tg.cursor(), !reverse, false);
     tg.setCursor(tg.landing(idx));
     app.toast("match {d}/{d}", .{ idx + 1, f.matches.items.len });
     app.closeFindBar(false);
@@ -348,6 +362,19 @@ fn acceptAndClose(app: *App) Allocator.Error!void {
 /// match at the cursor.
 fn forwardFrom(app: *const App, cursor: usize) usize {
     return if (app.input_style == .vim) cursor + 1 else cursor;
+}
+
+/// vim's `W` notice: a search that went past the end of the buffer and
+/// came round says so (`:help 'shortmess'`), before its `match N/M`.
+/// `at_ok`: landing on `from` itself is not a wrap (a step with no
+/// current match takes the one under the cursor). `/` starts one past
+/// the cursor, so for it landing back on the cursor is a wrap.
+fn noteWrap(app: *App, landed: usize, from: usize, forward: bool, at_ok: bool) Allocator.Error!void {
+    if (app.input_style != .vim) return;
+    if (at_ok and landed == from) return;
+    const wrapped = if (forward) landed <= from else landed >= from;
+    if (!wrapped) return;
+    try app.toastLevel(.warn, "{s}", .{if (forward) "search hit BOTTOM, continuing at TOP" else "search hit TOP, continuing at BOTTOM"});
 }
 
 /// `find.next` / `find.prev` and the bar's ↓ / ↑.
@@ -366,12 +393,15 @@ pub fn stepFind(app: *App, delta: i32) Allocator.Error!void {
         return;
     }
     // Without a current match (a cleared cursor jump), step from the cursor.
+    const from = tg.cursor();
+    const fresh = f.current == null;
     if (f.current == null) {
-        f.current = if (delta > 0) f.indexAtOrAfter(tg.cursor()) else f.indexBefore(tg.cursor());
+        f.current = if (delta > 0) f.indexAtOrAfter(from) else f.indexBefore(from);
     } else {
         _ = f.step(delta);
     }
     const idx = f.current.?;
+    try noteWrap(app, f.matches.items[idx].start, from, delta > 0, fresh);
     tg.setCursor(tg.landing(idx));
     jumplist.noteJumpMotion(app);
     app.toast("match {d}/{d}", .{ idx + 1, f.matches.items.len });

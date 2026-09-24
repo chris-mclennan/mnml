@@ -797,6 +797,10 @@ pub const FindBarState = struct {
     landed: bool = false,
     /// Where `↑` / `↓` are in `App.find_history`; `len` is the live query.
     hist_cursor: usize = 0,
+    /// vim's `/b<Up>`: the query typed before the walk began — only the
+    /// entries that start with it are recalled (`:help c_<Up>`).
+    /// gpa-owned; null outside a walk.
+    hist_prefix: ?[]u8 = null,
 };
 
 /// Visual-block `I` / `A` / `c` in flight: the typed run on the first
@@ -3081,6 +3085,7 @@ pub const App = struct {
             if (fb.snapshot) |*s| s.deinit();
         }
         fb.state.deinit(self.gpa);
+        if (fb.hist_prefix) |pfx| self.gpa.free(pfx);
         self.find_bar = null;
         if (self.focus == .overlay) self.focus = if (self.active) |a| .{ .pane = a } else .tree;
         self.needs_render = true;

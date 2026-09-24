@@ -1855,7 +1855,10 @@ fn findBarKey(app: *App, k: Key) Allocator.Error!void {
         .ignored => try widgetFallthrough(app, k),
         .toggle_regex, .toggle_case, .toggle_word => try cmd_find.liveUpdate(app),
         .cancel => app.closeFindBar(true),
-        .changed => try cmd_find.liveUpdate(app),
+        .changed => {
+            if (app.input_style == .vim) find_history.endWalk(app);
+            try cmd_find.liveUpdate(app);
+        },
         .submit => try cmd_find.acceptFromBar(app),
         .next => try cmd_find.stepFromBar(app, 1),
         .prev => try cmd_find.stepFromBar(app, -1),
@@ -3790,6 +3793,13 @@ pub fn listPaneEnter(app: *App, pane: PaneId, l: *app_mod.ListPane) Allocator.Er
             const line = try app.frame.allocator().dupe(u8, e.text);
             try app.forceClosePane(pane);
             try runExLine(app, line);
+        },
+        // `q/` / `q?`: the row is searched again, as if typed after `/`.
+        .search_history => {
+            const q = try app.frame.allocator().dupe(u8, e.text);
+            const reverse = l.reverse;
+            try app.forceClosePane(pane);
+            try cmd_find.searchFor(app, q, reverse);
         },
         .quickfix, .location => {
             // changed: the location list shares the quickfix row action; the

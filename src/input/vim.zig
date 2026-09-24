@@ -1200,6 +1200,8 @@ pub const Vim = struct {
                 self.prefix = .none;
                 const c = ch orelse return .consumed;
                 if (c == ':') return runCmd(.@"view.cmdline_history");
+                if (c == '/') return runCmd(.@"view.search_history");
+                if (c == '?') return runCmd(.@"view.search_history_backward");
                 // `qq` is register q like any other letter (`:help q`).
                 // `qA` appends to `a` (`:help q`); the buffer folds the case.
                 if ((c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9')) {
