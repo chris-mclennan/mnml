@@ -797,6 +797,7 @@ const Run = struct {
     /// the leader. A background process a `shell` step left running —
     /// `( nohup fake &)` — is in the group too, reparented or not.
     fn endGroup(self: *Run) void {
+        if (builtin.os.tag == .windows) return;
         const leader = if (self.group_leader) |*l| l else return;
         if (leader.id) |pid| std.posix.kill(-pid, .KILL) catch {};
         leader.kill(self.io);
@@ -804,6 +805,7 @@ const Run = struct {
     }
 
     fn groupId(self: *const Run) ?std.posix.pid_t {
+        if (builtin.os.tag == .windows) return null;
         const leader = self.group_leader orelse return null;
         return leader.id;
     }
