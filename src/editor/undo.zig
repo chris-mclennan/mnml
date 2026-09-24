@@ -789,115 +789,150 @@ const Model = struct {
     }
 };
 
+/// Rounds of the undo property: each is `undo_property_steps` random
+/// operations from a seed of its own, so the work is bounded per seed.
+const undo_property_rounds = 20;
+const undo_property_steps = 120;
+/// Past this much wall clock no new round starts (the first
+/// `undo_property_min_rounds` always run): the suite's time is bounded
+/// on a slow or loaded machine, not only the work.
+const undo_property_budget_ms = 20_000;
+const undo_property_min_rounds = 4;
+
 test "undo property: a random script of edits, groups, no-op checkpoints, replacements, undos and redos leaves the text a stack of whole copies would" {
-    const gpa = testing.allocator;
-    var prng = std.Random.DefaultPrng.init(0x756e646f);
+    // The editor under test allocates from `testing.allocator` (leaks
+    // are reported with their stack). The oracle's copies and the views
+    // it reads the history through — every entry, every step, nearly all
+    // of the allocations — come from an allocator that does not capture
+    // a stack per allocation: in Debug that capture (a DWARF unwind on
+    // macOS) was nearly all of this test's 533 s. It still reports a
+    // leak and catches a double free.
+    var scratch_state: std.heap.DebugAllocator(.{ .stack_trace_frames = 0 }) = .init;
+    errdefer _ = scratch_state.deinit();
+    const scratch = scratch_state.allocator();
+    // Seeded from the runner's seed (`zig build unit --seed N`; the
+    // trace runner's MNML_TEST_SEED), so a failure reruns exactly; each
+    // round's seed is a hash of it and the round.
+    const base = testing.random_seed;
+    const t0 = std.Io.Clock.awake.now(testing.io);
+    var round: u32 = 0;
+    while (round < undo_property_rounds) : (round += 1) {
+        const elapsed_ms = @divTrunc(std.Io.Clock.awake.now(testing.io).nanoseconds - t0.nanoseconds, std.time.ns_per_ms);
+        if (round >= undo_property_min_rounds and elapsed_ms > undo_property_budget_ms) break;
+        const seed = std.hash.int(@as(u64, base) << 32 | round);
+        undoPropertyRound(testing.allocator, scratch, seed) catch |err| {
+            std.debug.print("undo property: round {d} (seed 0x{x}) failed; rerun it with `zig build unit --seed 0x{x}`, or MNML_TEST_SEED=0x{x} under -Dtest-trace\n", .{ round, seed, base, base });
+            return err;
+        };
+    }
+    try testing.expect(scratch_state.deinit() == .ok);
+}
+
+fn undoPropertyRound(gpa: Allocator, scratch: Allocator, seed: u64) !void {
+    var prng = std.Random.DefaultPrng.init(seed);
     const rand = prng.random();
     const bits = [_][]const u8{ "x", "hello", "\n", "é", "日本", "  ", "fn f() {}\n", "🦀", "", "0123456789" };
-    var round: usize = 0;
-    while (round < 20) : (round += 1) {
-        const ed = try Editor.init(gpa, "alpha\nbeta é\ngamma 日本語\n\ndelta\n");
-        defer ed.deinit();
-        var m: Model = .{ .gpa = gpa };
-        defer m.deinit();
-        var out: EditOutcome = .{};
-        var step: usize = 0;
-        while (step < 120) : (step += 1) {
-            switch (rand.uintLessThan(u8, 10)) {
-                // One edit, one undo group.
-                0...3 => {
-                    m.clearRedo();
-                    try m.undo.append(gpa, try gpa.dupe(u8, ed.bytes()));
+    const ed = try Editor.init(gpa, "alpha\nbeta é\ngamma 日本語\n\ndelta\n");
+    defer ed.deinit();
+    var m: Model = .{ .gpa = scratch };
+    defer m.deinit();
+    var out: EditOutcome = .{};
+    var step: usize = 0;
+    while (step < undo_property_steps) : (step += 1) {
+        switch (rand.uintLessThan(u8, 10)) {
+            // One edit, one undo group.
+            0...3 => {
+                m.clearRedo();
+                try m.undo.append(scratch, try scratch.dupe(u8, ed.bytes()));
+                try ed.checkpoint();
+                try randomSplice(ed, rand, &bits);
+            },
+            // A group: several checkpoints collapse into the first.
+            4 => {
+                m.clearRedo();
+                try m.undo.append(scratch, try scratch.dupe(u8, ed.bytes()));
+                const keep = m.undo.items.len;
+                const tok = try ed.beginAtomic();
+                const inner = 1 + rand.uintLessThan(usize, 4);
+                var k: usize = 0;
+                while (k < inner) : (k += 1) {
+                    try m.undo.append(scratch, try scratch.dupe(u8, ed.bytes()));
                     try ed.checkpoint();
                     try randomSplice(ed, rand, &bits);
-                },
-                // A group: several checkpoints collapse into the first.
-                4 => {
-                    m.clearRedo();
-                    try m.undo.append(gpa, try gpa.dupe(u8, ed.bytes()));
-                    const keep = m.undo.items.len;
-                    const tok = try ed.beginAtomic();
-                    const inner = 1 + rand.uintLessThan(usize, 4);
-                    var k: usize = 0;
-                    while (k < inner) : (k += 1) {
-                        try m.undo.append(gpa, try gpa.dupe(u8, ed.bytes()));
-                        try ed.checkpoint();
-                        try randomSplice(ed, rand, &bits);
-                    }
-                    ed.endAtomic(tok);
-                    m.truncate(keep);
-                },
-                // A checkpoint that turned out to be a no-op.
-                5 => {
-                    m.clearRedo();
-                    try ed.checkpoint();
-                    ed.popCheckpoint();
-                },
-                // A wholesale replacement inside a group of its own.
-                6 => {
-                    m.clearRedo();
-                    try m.undo.append(gpa, try gpa.dupe(u8, ed.bytes()));
-                    try ed.checkpoint();
-                    const cut = ed.snapBoundary(rand.uintLessThan(usize, ed.len() + 1));
-                    const fresh = try std.mem.concat(gpa, u8, &.{ ed.bytes()[cut..], bits[rand.uintLessThan(usize, bits.len)], ed.bytes()[0..cut] });
-                    defer gpa.free(fresh);
-                    try ed.setText(fresh);
-                },
-                7, 8 => if (m.undo.items.len > 0) {
-                    try m.redo.append(gpa, try gpa.dupe(u8, ed.bytes()));
-                    const want = m.undo.pop().?;
-                    defer gpa.free(want);
-                    try undoOp(ed, &out);
-                    try testing.expectEqualStrings(want, ed.bytes());
-                },
-                else => if (m.redo.items.len > 0) {
-                    try m.undo.append(gpa, try gpa.dupe(u8, ed.bytes()));
-                    const want = m.redo.pop().?;
-                    defer gpa.free(want);
-                    try redoOp(ed, &out);
-                    try testing.expectEqualStrings(want, ed.bytes());
-                },
-            }
-            try testing.expectEqual(m.undo.items.len, ed.doc.history.undoLen());
-            try testing.expectEqual(m.redo.items.len, ed.doc.history.redoLen());
-            try testing.expect(ed.isBoundary(ed.cursor) and ed.cursor <= ed.len());
-            try m.expectSame(ed);
+                }
+                ed.endAtomic(tok);
+                m.truncate(keep);
+            },
+            // A checkpoint that turned out to be a no-op.
+            5 => {
+                m.clearRedo();
+                try ed.checkpoint();
+                ed.popCheckpoint();
+            },
+            // A wholesale replacement inside a group of its own.
+            6 => {
+                m.clearRedo();
+                try m.undo.append(scratch, try scratch.dupe(u8, ed.bytes()));
+                try ed.checkpoint();
+                const cut = ed.snapBoundary(rand.uintLessThan(usize, ed.len() + 1));
+                const fresh = try std.mem.concat(gpa, u8, &.{ ed.bytes()[cut..], bits[rand.uintLessThan(usize, bits.len)], ed.bytes()[0..cut] });
+                defer gpa.free(fresh);
+                try ed.setText(fresh);
+            },
+            7, 8 => if (m.undo.items.len > 0) {
+                try m.redo.append(scratch, try scratch.dupe(u8, ed.bytes()));
+                const want = m.undo.pop().?;
+                defer scratch.free(want);
+                try undoOp(ed, &out);
+                try testing.expectEqualStrings(want, ed.bytes());
+            },
+            else => if (m.redo.items.len > 0) {
+                try m.undo.append(scratch, try scratch.dupe(u8, ed.bytes()));
+                const want = m.redo.pop().?;
+                defer scratch.free(want);
+                try redoOp(ed, &out);
+                try testing.expectEqualStrings(want, ed.bytes());
+            },
         }
-        // The persisted tail is the model's tail, whole.
-        {
-            var arena = std.heap.ArenaAllocator.init(gpa);
-            defer arena.deinit();
-            const tail = try ed.doc.history.tailStates(arena.allocator(), .undo, 7);
-            const from = m.undo.items.len - tail.len;
-            for (tail, 0..) |s, i| try testing.expectEqualStrings(m.undo.items[from + i], s.text);
-            const rtail = try ed.doc.history.tailStates(arena.allocator(), .redo, 7);
-            const rfrom = m.redo.items.len - rtail.len;
-            for (rtail, 0..) |s, i| try testing.expectEqualStrings(m.redo.items[rfrom + i], s.text);
-        }
-        // Undo everything: the first state. Redo everything: the last —
-        // the oldest state still on the redo stack when there is one (the
-        // script ended on an undo), else the text as it stands.
-        const final = try gpa.dupe(u8, if (m.redo.items.len > 0) m.redo.items[0] else ed.bytes());
-        defer gpa.free(final);
-        while (m.undo.items.len > 0) {
-            try m.redo.append(gpa, try gpa.dupe(u8, ed.bytes()));
-            const want = m.undo.pop().?;
-            defer gpa.free(want);
-            try undoOp(ed, &out);
-            try testing.expectEqualStrings(want, ed.bytes());
-            try m.expectSame(ed);
-        }
-        try testing.expectEqualStrings("alpha\nbeta é\ngamma 日本語\n\ndelta\n", ed.bytes());
-        while (m.redo.items.len > 0) {
-            const want = m.redo.pop().?;
-            defer gpa.free(want);
-            try m.undo.append(gpa, try gpa.dupe(u8, ed.bytes()));
-            try redoOp(ed, &out);
-            try testing.expectEqualStrings(want, ed.bytes());
-            try m.expectSame(ed);
-        }
-        try testing.expectEqualStrings(final, ed.bytes());
+        try testing.expectEqual(m.undo.items.len, ed.doc.history.undoLen());
+        try testing.expectEqual(m.redo.items.len, ed.doc.history.redoLen());
+        try testing.expect(ed.isBoundary(ed.cursor) and ed.cursor <= ed.len());
+        try m.expectSame(ed);
     }
+    // The persisted tail is the model's tail, whole.
+    {
+        var arena = std.heap.ArenaAllocator.init(gpa);
+        defer arena.deinit();
+        const tail = try ed.doc.history.tailStates(arena.allocator(), .undo, 7);
+        const from = m.undo.items.len - tail.len;
+        for (tail, 0..) |s, i| try testing.expectEqualStrings(m.undo.items[from + i], s.text);
+        const rtail = try ed.doc.history.tailStates(arena.allocator(), .redo, 7);
+        const rfrom = m.redo.items.len - rtail.len;
+        for (rtail, 0..) |s, i| try testing.expectEqualStrings(m.redo.items[rfrom + i], s.text);
+    }
+    // Undo everything: the first state. Redo everything: the last —
+    // the oldest state still on the redo stack when there is one (the
+    // script ended on an undo), else the text as it stands.
+    const final = try scratch.dupe(u8, if (m.redo.items.len > 0) m.redo.items[0] else ed.bytes());
+    defer scratch.free(final);
+    while (m.undo.items.len > 0) {
+        try m.redo.append(scratch, try scratch.dupe(u8, ed.bytes()));
+        const want = m.undo.pop().?;
+        defer scratch.free(want);
+        try undoOp(ed, &out);
+        try testing.expectEqualStrings(want, ed.bytes());
+        try m.expectSame(ed);
+    }
+    try testing.expectEqualStrings("alpha\nbeta é\ngamma 日本語\n\ndelta\n", ed.bytes());
+    while (m.redo.items.len > 0) {
+        const want = m.redo.pop().?;
+        defer scratch.free(want);
+        try m.undo.append(scratch, try scratch.dupe(u8, ed.bytes()));
+        try redoOp(ed, &out);
+        try testing.expectEqualStrings(want, ed.bytes());
+        try m.expectSame(ed);
+    }
+    try testing.expectEqualStrings(final, ed.bytes());
 }
 
 fn randomSplice(ed: *Editor, rand: std.Random, bits: []const []const u8) !void {

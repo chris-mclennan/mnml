@@ -328,7 +328,13 @@ deadline down to make a test faster; it is not the cost.
 ## Tests
 
 - Unit tests run on `std.testing.allocator` only; a leak is a failure.
-  `page_allocator` is for pty ring buffers and nothing else.
+  `page_allocator` is for pty ring buffers and nothing else. The one
+  exception is a property test's oracle: its copies and scratch views
+  may come from a local `DebugAllocator(.{ .stack_trace_frames = 0 })`
+  that the test checks for leaks itself (the undo property) — the code
+  under test stays on `testing.allocator`. In Debug the per-allocation
+  stack capture is a DWARF unwind on macOS, and an oracle that allocates
+  per entry per step spends minutes in it.
 - Test the shipped default, not values around it. `tests/e2e/defaults.test`
   and the `"defaults are the shipped values"` test in
   `src/config/Config.zig` pin `Config{}`; a default that changes on
@@ -420,10 +426,11 @@ A seeded test reads `std.testing.random_seed`. Under the default
 runner that is the build's `--seed` (`zig build unit --seed 0x6fc0c5a4`);
 the build never hands a seed to the trace runner, so there it is 0
 unless `MNML_TEST_SEED=<n>` names one, and the runner prints
-`seed 0x…` once per binary when it is set:
+`seed 0x…` once per binary when it is set. The undo property prints
+its round's seed and the run's seed when a round fails:
 
 ```sh
-MNML_TEST_SEED=0x6fc0c5a4 MNML_TEST_FILTER=<substring> zig build unit -Dtest-trace
+MNML_TEST_SEED=0x6fc0c5a4 MNML_TEST_FILTER="undo property" zig build unit -Dtest-trace
 ```
 
 ## Running it
