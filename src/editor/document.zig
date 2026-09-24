@@ -60,7 +60,9 @@ pub const Splice = struct {
         if (!pointLess(p, self.old_end_pt)) {
             const row: u32 = @intCast(@as(isize, @intCast(p.row)) + self.rowDelta());
             if (p.row != self.old_end_pt.row) return .{ .row = row, .col = p.col };
-            return .{ .row = row, .col = p.col - self.old_end_pt.col + self.new_end_pt.col };
+            // Saturating: a consumer may hold `maxInt(u32)` for "the end
+            // of the line" (a script's whole-line diagnostic).
+            return .{ .row = row, .col = (p.col - self.old_end_pt.col) +| self.new_end_pt.col };
         }
         return self.start_pt;
     }
@@ -259,6 +261,8 @@ pub const Document = struct {
     /// The edit-log seq this document's breakpoints were last moved
     /// across (`dap.followBreakpoints`); null until the first follow.
     bp_seen: ?u64 = null,
+    /// The same for its diagnostics (`lsp.followDiagnostics`).
+    diag_seen: ?u64 = null,
 
     // ─── views ───
 
@@ -878,4 +882,7 @@ test "Splice.shiftPoint: rows follow an edit above, an insertion at the point pu
     const typed = at(.{ .row = 0, .col = 2 }, .{ .row = 0, .col = 2 }, .{ .row = 0, .col = 5 });
     try std.testing.expectEqual(Point{ .row = 0, .col = 9 }, typed.shiftPoint(.{ .row = 0, .col = 6 }));
     try std.testing.expectEqual(Point{ .row = 0, .col = 1 }, typed.shiftPoint(.{ .row = 0, .col = 1 }));
+    // "The end of the line" as `maxInt(u32)` stays there, never overflows.
+    const eol = std.math.maxInt(u32);
+    try std.testing.expectEqual(Point{ .row = 0, .col = eol }, typed.shiftPoint(.{ .row = 0, .col = eol }));
 }

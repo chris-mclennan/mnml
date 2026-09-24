@@ -71,6 +71,7 @@ pub const Server = client.Server;
 pub const ReqKind = client.ReqKind;
 pub const Ctx = client.Ctx;
 const Value = jsonrpc.Value;
+const document = @import("../editor/document.zig");
 
 /// One file's diagnostics from four sources — the server's publish, an
 /// external linter's run, the script layer's own `init.lua` error and
@@ -1458,11 +1459,77 @@ pub fn applyDiagnostics(app: *App, path: []const u8, list: []const Value) Alloca
         d.raw = try jsonrpc.stringify(arena, v);
         try read.append(arena, d);
     };
+    // The other sources are brought up to the text as it is now first;
+    // the publish describes the text the server was last told about
+    // (`lsp_seen`), so it is carried across whatever was typed since.
+    const doc = openDoc(app, path);
+    if (doc) |d| followDiagnostics(app, d);
     const fd = try fileDiags(app, path);
     fd.arena.reset();
     fd.server_items = &.{};
     fd.server_items = try copyDiagnostics(fd.arena.allocator(), read.items);
+    if (doc) |d| if (d.lsp_seen) |told| if (recordsSince(d, told)) |recs| shiftDiagnostics(fd.server_items, recs);
     try finishDiagnostics(app, path, fd);
+}
+
+/// The document open on `path`, if an editor shows it.
+fn openDoc(app: *App, path: []const u8) ?*document.Document {
+    const id = app.panes.findPath(path) orelse return null;
+    const e = app.panes.editor(id) orelse return null;
+    return e.buf.doc;
+}
+
+/// A diagnostic belongs to the text it was published about, not to a
+/// line number: move `doc`'s diagnostics — every source's, and the
+/// merged list — across the edit log's records since they last moved
+/// (`Document.diag_seen`, `Splice.shiftPoint`), as Neovim's extmarks
+/// carry a sign and an underline. rust-analyzer republishes rustc's
+/// findings only on a save; until then the client owns their places,
+/// and the gutter mark, the squiggle, `]d`, the hover and a quickfix
+/// list built from them walked onto whatever moved into the old line.
+/// Runs where the other edit-log consumers follow before the frame
+/// trims the log (`render`), and before a publish lands. Columns shift
+/// by the edit's bytes on its own last row — exact for ASCII; the next
+/// publish puts any wide character right.
+pub fn followDiagnostics(app: *App, doc: *document.Document) void {
+    const head = doc.edits.head();
+    const seen = doc.diag_seen orelse head;
+    doc.diag_seen = head;
+    const recs = recordsSince(doc, seen) orelse return;
+    const path = doc.path orelse return;
+    const fd = app.lsp.diags.get(path) orelse return;
+    if (fd.items.len == 0) return;
+    for ([_][]types.Diagnostic{ fd.server_items, fd.lint_items, fd.script_items, fd.lua_items, fd.items }) |list| {
+        shiftDiagnostics(list, recs);
+    }
+    app.needs_render = true;
+}
+
+/// `followDiagnostics` for the document open on `path`, if one is.
+pub fn followDiagnosticsAt(app: *App, path: []const u8) void {
+    if (openDoc(app, path)) |d| followDiagnostics(app, d);
+}
+
+/// Every record `doc` logged after `seen` — null when there are none,
+/// or when the log no longer holds them all (lost, or trimmed).
+fn recordsSince(doc: *const document.Document, seen: u64) ?[]const document.Splice {
+    const head = doc.edits.head();
+    if (seen >= head or doc.edits.lostSince(seen)) return null;
+    const recs = doc.edits.since(seen);
+    if (recs.len != head - seen) return null;
+    return recs;
+}
+
+fn shiftDiagnostics(list: []types.Diagnostic, recs: []const document.Splice) void {
+    for (list) |*d| for (recs) |sp| {
+        d.range.start = shiftPos(sp, d.range.start);
+        d.range.end = shiftPos(sp, d.range.end);
+    };
+}
+
+fn shiftPos(sp: document.Splice, p: types.Position) types.Position {
+    const q = sp.shiftPoint(.{ .row = p.line, .col = p.character });
+    return .{ .line = q.row, .character = q.col };
 }
 
 /// An external linter's findings for `path`: its list replaced
