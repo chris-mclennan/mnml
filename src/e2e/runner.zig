@@ -38,6 +38,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const parser = @import("parser.zig");
 const mock = @import("../http/mock.zig");
+const child_os = @import("../core/child.zig");
 const driver_mod = @import("driver.zig");
 const key = @import("../core/key.zig");
 const screen_mod = @import("../ipc/screen.zig");
@@ -1265,7 +1266,9 @@ fn runIn(gpa: Allocator, io: Io, options: std.process.RunOptions, pgid: ?std.pos
         .stdout = .pipe,
         .stderr = .pipe,
     });
-    defer child.kill(io);
+    // Bounded: a step that timed out may have left a child that ignores
+    // SIGTERM, and `Child.kill` would wait on it forever.
+    defer child_os.terminate(io, &child, .{});
 
     var multi_reader_buffer: Io.File.MultiReader.Buffer(2) = undefined;
     var multi_reader: Io.File.MultiReader = undefined;

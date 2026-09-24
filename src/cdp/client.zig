@@ -199,13 +199,16 @@ pub const Launch = struct {
     /// Not thread-safe against itself: one owner calls it (the browser
     /// pane under its lock; the proxy on its own thread).
     ///
-    /// Zig 0.16's `Child.kill` sends SIGTERM, reaps and leaves
-    /// `id == null`; a `wait` after it would assert. The cancel comes
-    /// after the reap because a helper Chrome started can keep the
-    /// stderr pipe open past its parent, and then the read would never
-    /// see EOF.
+    /// `child_os.terminate` on Chrome's process group: SIGTERM, a
+    /// bounded grace, SIGKILL, reap — `Child.kill` alone waits for the
+    /// SIGTERM to be acted on, and a Chrome wedged on a keychain prompt
+    /// never does, which froze the pane's close and `App.deinit` for
+    /// good. The group (Chrome leads its own, `spawn`) takes its helpers
+    /// down with it. The cancel comes after the reap because a helper
+    /// Chrome started can keep the stderr pipe open past its parent, and
+    /// then the read would never see EOF.
     pub fn kill(self: *Launch, io: Io) void {
-        if (self.child.id != null) self.child.kill(io);
+        if (self.child.id != null) child_os.terminate(io, &self.child, .{ .group = own_group });
         self.reader.cancel(io);
         self.killed = true;
     }
@@ -322,6 +325,11 @@ pub fn chromeArgv(a: Allocator, bin: []const u8, opts: LaunchOptions) Allocator.
     return argv.items;
 }
 
+/// Chrome leads its own process group on POSIX, so `Launch.kill` can
+/// signal it and every helper it started (renderers, the GPU process,
+/// crashpad) at once.
+const own_group = builtin.os.tag != .windows;
+
 /// Spawn Chrome and start its stderr reader; the port comes later
 /// (`Launch.waitPort`). The caller owns the result from this return on
 /// and `destroy`s it.
@@ -333,21 +341,28 @@ pub fn spawn(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, opts: 
     for (list) |cand| {
         const bin = resolveBinary(a, io, env, cand) orelse continue;
         const argv = try chromeArgv(a, bin, opts);
-        var child = std.process.spawn(io, .{ .argv = argv, .stdin = .ignore, .stdout = .ignore, .stderr = .pipe, .environ_map = env }) catch continue;
+        var child = std.process.spawn(io, .{
+            .argv = argv,
+            .stdin = .ignore,
+            .stdout = .ignore,
+            .stderr = .pipe,
+            .environ_map = env,
+            .pgid = if (own_group) 0 else null,
+        }) catch continue;
         const stderr = child.stderr orelse {
-            child.kill(io);
+            child_os.terminate(io, &child, .{ .group = own_group });
             continue;
         };
         child.stderr = null;
         const self = gpa.create(Launch) catch |err| {
             stderr.close(io);
-            child.kill(io);
+            child_os.terminate(io, &child, .{ .group = own_group });
             return err;
         };
         self.* = .{ .gpa = gpa, .child = child, .stderr = stderr };
         self.reader.concurrent(io, readStderr, .{ self, io }) catch |err| {
             stderr.close(io);
-            self.child.kill(io);
+            child_os.terminate(io, &self.child, .{ .group = own_group });
             gpa.destroy(self);
             return err;
         };
@@ -736,6 +751,62 @@ test "Launch.kill kills and reaps a running child, and a second kill does nothin
     l.kill(io);
     try testing.expectEqual(@as(?std.process.Child.Id, null), l.child.id);
     try testing.expect(child_os.goneWithin(io, pid, .fromSeconds(10)));
+    l.destroy(io);
+}
+
+test "Launch.kill on a Chrome that ignores SIGTERM returns within the grace and takes it and its helpers down" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = try tmpRoot(&tmp, &pbuf);
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    // The keychain wedge: SIGTERM ignored (inherited by the helper and
+    // across the exec), no DevTools line, a helper in the group.
+    const body = try std.fmt.allocPrint(arena.allocator(), "trap '' TERM; /bin/sleep 86400 & echo $! > '{s}/helper.pid'; exec /bin/sleep 86400", .{root});
+    const bin = try standIn(arena.allocator(), io, tmp.dir, root, "chrome", body);
+    const l = try spawn(gpa, io, &std.process.Environ.Map.init(gpa), .{ .profile_dir = root, .binary = bin });
+    const pid = l.child.id.?;
+    var helper: std.posix.pid_t = 0;
+    var tries: usize = 0;
+    while (helper == 0 and tries < 300) : (tries += 1) {
+        var gbuf: [32]u8 = undefined;
+        if (tmp.dir.readFile(io, "helper.pid", &gbuf)) |txt| {
+            helper = std.fmt.parseInt(std.posix.pid_t, std.mem.trim(u8, txt, " \n"), 10) catch 0;
+        } else |_| {}
+        if (helper == 0) io.sleep(.fromMilliseconds(10), .awake) catch {};
+    }
+    try testing.expect(helper != 0);
+    defer std.posix.kill(helper, .KILL) catch {};
+    const Closer = struct {
+        l: *Launch,
+        done: std.atomic.Value(bool) = .init(false),
+        fn run(c: *@This(), cio: Io) void {
+            c.l.kill(cio);
+            c.done.store(true, .release);
+        }
+    };
+    var closer: Closer = .{ .l = l };
+    const th = try std.Thread.spawn(.{}, Closer.run, .{ &closer, io });
+    const start = Io.Timestamp.now(io, .awake);
+    // The grace is 2 s; past 8 s the close is wedged. Unwedge it (so the
+    // test run is not) and fail.
+    while (!closer.done.load(.acquire)) {
+        if (start.durationTo(Io.Timestamp.now(io, .awake)).nanoseconds >= std.time.ns_per_s * 8) {
+            std.posix.kill(pid, .KILL) catch {};
+            std.posix.kill(helper, .KILL) catch {};
+            th.join();
+            l.destroy(io);
+            return error.TestUnexpectedResult;
+        }
+        io.sleep(.fromMilliseconds(10), .awake) catch {};
+    }
+    th.join();
+    try testing.expect(child_os.gone(pid));
+    try testing.expect(child_os.goneWithin(io, helper, .fromSeconds(5)));
     l.destroy(io);
 }
 

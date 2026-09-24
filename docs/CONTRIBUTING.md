@@ -303,6 +303,13 @@ process every single time — that was the browser pane's tab-close crash
   (`integration_poll.zig`'s worker and `bridge/host.zig`'s reader are the
   models). `core/child.zig`'s `goneWithin(io, pid, deadline)` is how a
   test holds that a child was really taken down.
+- **A child you do not control is stopped with `core/child.zig`'s
+  `terminate`, not `kill`.** `kill` waits for the SIGTERM to be acted on;
+  a Chrome wedged on a keychain prompt never acts on it, and closing its
+  pane froze the app for good. `terminate` sends SIGTERM, gives it a
+  bounded grace (polling `waitpid(WNOHANG)`), then SIGKILLs and reaps;
+  with `.group = true` it signals the child's own process group (spawn
+  it with `.pgid = 0`), so the helpers it started go too.
 
 A cancelled task is still being signalled. `Io.Group.cancel` keeps
 sending SIGIO to a worker's thread until the task is seen to finish —
