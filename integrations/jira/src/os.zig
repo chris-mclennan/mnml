@@ -79,11 +79,9 @@ pub fn openArgv(arena: Allocator, configured: []const u8, url: []const u8) Alloc
         try argv.append(arena, url);
         return argv.toOwnedSlice(arena);
     }
-    return switch (@import("builtin").os.tag) {
-        .macos => try arena.dupe([]const u8, &.{ "open", url }),
-        .windows => try arena.dupe([]const u8, &.{ "cmd", "/c", "start", "", url }),
-        else => try arena.dupe([]const u8, &.{ "xdg-open", url }),
-    };
+    // The SDK's opener (`sdk.platform`): Windows's arm never goes
+    // through `cmd`, which would split the URL at its `&`.
+    return @import("mnml_sdk").platform.openUrlArgv(arena, url, @import("builtin").os.tag);
 }
 
 /// Open `url` in whatever the machine calls a browser. Detached: the
