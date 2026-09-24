@@ -1007,8 +1007,10 @@ Where the socket is, in the order the state file resolves:
 `<SERVICE>_BROKER_SOCKET`, else `<service>-broker.sock` beside the
 state file, else — when that DERIVED path is longer than
 `broker.max_path_len` (100 bytes, the same number on every platform so
-both ends pick the same branch) — `/tmp/mnml-broker-<service>.sock`,
-which both ends derive from the service name alone so they still meet.
+both ends pick the same branch) — `/tmp/mnml-broker-<service>-<hash>.sock`,
+where `<hash>` is the first six bytes of the SHA-256 of the long path in
+hex, so both ends derive the same name and two buckets in two
+directories never share a broker (`broker.fallbackPath`).
 `MNML_BROKER=0` turns the whole thing off for a child.
 
 **The limit, and what happens at it.** A `sockaddr_un`'s `sun_path`

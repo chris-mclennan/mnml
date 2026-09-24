@@ -505,8 +505,13 @@ fn sanitizeByte(c: u8) u8 {
 /// sits beside the bucket it fronts and every process resolves the
 /// same one. A path that will not fit a `sockaddr_un` (`sun_path` is
 /// 104 bytes on macOS, so 103 of them may be path) falls back to a
-/// short `/tmp` name derived from the service alone — deterministic,
-/// so two processes that both fall back still meet.
+/// short `/tmp` name — `fallbackPath` — derived from the service AND
+/// the path it stands in for: deterministic, so two processes that
+/// both fall back from the same bucket still meet, and distinct per
+/// bucket, so two buckets never share one broker. The service alone
+/// was the whole name once, and every deep bucket on the machine —
+/// every test's private one included — met on the same socket and the
+/// same election lock.
 ///
 /// **The fallback is the DERIVED path's only.** An explicit
 /// `<SERVICE>_BROKER_SOCKET` is returned exactly as it was set, long
@@ -532,14 +537,32 @@ pub fn socketPath(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, s
     // Leave the same headroom the mount sockets do: a path at the
     // limit is a bind that fails for a reason nobody can read.
     if (beside.len <= max_path_len) return beside;
-    gpa.free(beside);
+    defer gpa.free(beside);
     // Windows has no `/tmp` (it would be `\tmp` on the current drive,
     // which usually does not exist): `%TEMP%` is per user and the same
     // for every process of that user, so both sides still meet.
     if (@import("builtin").os.tag == .windows) {
-        if (env.get("TEMP") orelse env.get("TMP")) |tmp_dir| if (tmp_dir.len > 0) return std.fmt.allocPrint(gpa, "{s}\\mnml-broker-{s}.sock", .{ tmp_dir, svc });
+        if (env.get("TEMP") orelse env.get("TMP")) |tmp_dir| if (tmp_dir.len > 0) return fallbackIn(gpa, tmp_dir, '\\', svc, beside);
     }
-    return std.fmt.allocPrint(gpa, "/tmp/mnml-broker-{s}.sock", .{svc});
+    return fallbackPath(gpa, svc, beside);
+}
+
+/// `/tmp/mnml-broker-<service>-<12 hex>.sock`: the short name a derived
+/// path too long for a `sockaddr_un` is served at instead. The hex is
+/// the first six bytes of the SHA-256 of the long path, so it is a pure
+/// function of where the bucket is — the Python client
+/// (`sdk/clients/ratelimit_broker.py`) computes the same one with
+/// `hashlib` — and two buckets in two directories get two sockets and
+/// two election locks. (`%TEMP%` in place of `/tmp` on Windows.) Owned
+/// by the caller.
+pub fn fallbackPath(gpa: Allocator, service: []const u8, derived: []const u8) Allocator.Error![]u8 {
+    return fallbackIn(gpa, "/tmp", '/', service, derived);
+}
+
+fn fallbackIn(gpa: Allocator, dir: []const u8, sep: u8, service: []const u8, derived: []const u8) Allocator.Error![]u8 {
+    var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(derived, &digest, .{});
+    return std.fmt.allocPrint(gpa, "{s}{c}mnml-broker-{s}-{s}.sock", .{ dir, sep, service, &std.fmt.bytesToHex(digest[0..6].*, .lower) });
 }
 
 /// The election lock beside the socket: `<service>-broker.lock`, the
@@ -1400,8 +1423,55 @@ test "a path too long for a sockaddr_un falls back to a short name both sides de
     try env.put("TATTLE_ARTIFACTS_ROOT", deep.items);
     const p = try socketPath(t.allocator, t.io, &env, "bitbucket");
     defer t.allocator.free(p);
-    try t.expectEqualStrings("/tmp/mnml-broker-bitbucket.sock", p);
+    // The short name, derived from the service and the long path: the
+    // same long path always lands on the same socket…
+    const long = try std.fmt.allocPrint(t.allocator, "{s}/bitbucket-broker.sock", .{deep.items});
+    defer t.allocator.free(long);
+    const want = try fallbackPath(t.allocator, "bitbucket", long);
+    defer t.allocator.free(want);
+    try t.expectEqualStrings(want, p);
+    try t.expect(std.mem.startsWith(u8, p, "/tmp/mnml-broker-bitbucket-"));
     try t.expect(p.len < Io.net.UnixAddress.max_len);
+    try t.expect(!pathTooLong(p));
+    const again = try socketPath(t.allocator, t.io, &env, "bitbucket");
+    defer t.allocator.free(again);
+    try t.expectEqualStrings(p, again);
+    // The Python client hashes the same bytes: SHA-256 of the long path,
+    // the first six bytes in lower-case hex. Pinned, so the two ends
+    // cannot drift apart without this failing.
+    const pinned = try fallbackPath(t.allocator, "bitbucket", "/x/bitbucket-broker.sock");
+    defer t.allocator.free(pinned);
+    try t.expectEqualStrings("/tmp/mnml-broker-bitbucket-" ++ python_pin ++ ".sock", pinned);
+}
+
+/// `hashlib.sha256(b"/x/bitbucket-broker.sock").hexdigest()[:12]`.
+const python_pin = "667462315536";
+
+test "two deep buckets fall back to two sockets, so their brokers never meet" {
+    // Every test's private bucket is under a deep tmp dir, and the
+    // fallback used to be `/tmp/mnml-broker-<service>.sock` for all of
+    // them: two corpus runs — or a test and the developer's own deep
+    // bucket — met on one socket and one election lock, and whichever
+    // came second saw the other's broker.
+    var env_a = std.process.Environ.Map.init(t.allocator);
+    defer env_a.deinit();
+    var env_b = std.process.Environ.Map.init(t.allocator);
+    defer env_b.deinit();
+    const deep = "/very" ++ "/deep" ** 24;
+    try env_a.put("TATTLE_ARTIFACTS_ROOT", deep ++ "/a");
+    try env_b.put("TATTLE_ARTIFACTS_ROOT", deep ++ "/b");
+    const a = try socketPath(t.allocator, t.io, &env_a, "bitbucket");
+    defer t.allocator.free(a);
+    const b = try socketPath(t.allocator, t.io, &env_b, "bitbucket");
+    defer t.allocator.free(b);
+    try t.expect(std.mem.startsWith(u8, a, "/tmp/"));
+    try t.expect(std.mem.startsWith(u8, b, "/tmp/"));
+    try t.expect(!std.mem.eql(u8, a, b));
+    const la = try lockPath(t.allocator, a);
+    defer t.allocator.free(la);
+    const lb = try lockPath(t.allocator, b);
+    defer t.allocator.free(lb);
+    try t.expect(!std.mem.eql(u8, la, lb));
 }
 
 test "an explicit override past the sockaddr_un is kept, refused, and explained by length" {
@@ -1725,4 +1795,62 @@ test "a timeout of zero is a token or nothing: the caller never queues" {
     try t.expect(!first.ok);
     try t.expectEqual(Why.timeout, first.why.?);
     try t.expect(took < 400);
+}
+
+/// A bucket under `tmp` whose derived socket path is too long for a
+/// `sockaddr_un`, so its broker serves at the `/tmp` fallback — the
+/// shape every test's private bucket has on a machine whose checkout
+/// is a few directories deep. Returns the env to start a server with.
+fn deepBucketEnv(tmp: *std.testing.TmpDir, service: []const u8) !std.process.Environ.Map {
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const real = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    var dir: std.ArrayListUnmanaged(u8) = .empty;
+    defer dir.deinit(t.allocator);
+    try dir.appendSlice(t.allocator, real);
+    while (dir.items.len <= max_path_len) try dir.appendSlice(t.allocator, "/deep");
+    try Io.Dir.cwd().createDirPath(t.io, dir.items);
+    var env = std.process.Environ.Map.init(t.allocator);
+    errdefer env.deinit();
+    var name_buf: [64]u8 = undefined;
+    const state = try std.fmt.allocPrint(t.allocator, "{s}/{s}-ratelimit.json", .{ dir.items, service });
+    defer t.allocator.free(state);
+    try env.put(ratelimit.stateEnvName(&name_buf, service).?, state);
+    return env;
+}
+
+test "two brokers on two deep private buckets both serve, and stopping one leaves the other up" {
+    if (!supported) return error.SkipZigTest;
+    var tmp_a = t.tmpDir(.{});
+    defer tmp_a.cleanup();
+    var tmp_b = t.tmpDir(.{});
+    defer tmp_b.cleanup();
+    var env_a = try deepBucketEnv(&tmp_a, "bitbucket");
+    defer env_a.deinit();
+    var env_b = try deepBucketEnv(&tmp_b, "bitbucket");
+    defer env_b.deinit();
+
+    const a = try Server.start(t.allocator, t.io, &env_a, .{ .service = "bitbucket" });
+    defer a.destroy();
+    var a_stopped = false;
+    defer if (!a_stopped) a.stop();
+    const b = try Server.start(t.allocator, t.io, &env_b, .{ .service = "bitbucket" });
+    defer b.destroy();
+    var b_stopped = false;
+    defer if (!b_stopped) b.stop();
+
+    // Both are on the short fallback, and not the same one.
+    try t.expect(std.mem.startsWith(u8, a.path(), "/tmp/mnml-broker-bitbucket-"));
+    try t.expect(!std.mem.eql(u8, a.path(), b.path()));
+    try t.expect(askStatus(t.io, a.path(), "bitbucket") != null);
+    try t.expect(askStatus(t.io, b.path(), "bitbucket") != null);
+
+    // One of them goes away. On a shared fallback the second start had
+    // unlinked the first's socket and bound over it, so stopping the
+    // second took the first off the machine with it.
+    b.stop();
+    b_stopped = true;
+    try t.expect(askStatus(t.io, b.path(), "bitbucket") == null);
+    try t.expect(askStatus(t.io, a.path(), "bitbucket") != null);
+    a.stop();
+    a_stopped = true;
 }

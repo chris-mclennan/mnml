@@ -33,8 +33,8 @@ the back of the queue on purpose).
 Where the socket is, in the order the state file resolves:
 `<SERVICE>_BROKER_SOCKET`, else `<service>-broker.sock` beside the
 ratelimit state file -- and, when that path is too long for a
-`sockaddr_un`, `/tmp/mnml-broker-<service>.sock`, which both ends
-derive from the service alone so they still meet. `MNML_BROKER=0`
+`sockaddr_un`, `/tmp/mnml-broker-<service>-<hash>.sock`, which both
+ends derive from the service and the long path so they still meet. `MNML_BROKER=0`
 turns it off entirely.
 
 The `/tmp` fallback is the DERIVED path's only. A `<SERVICE>_BROKER_SOCKET`
@@ -45,6 +45,7 @@ callers below catch it, warn once and fall through to the file bucket,
 because a misconfigured broker must still not be a dependency.
 """
 
+import hashlib
 import json
 import os
 import socket
@@ -91,11 +92,16 @@ def broker_socket(service: str) -> str:
         "~/.tattle-claude-artifacts")
     path = os.path.join(root, f"{service}-broker.sock")
     # sun_path is 104 bytes on macOS and 108 on Linux, so a deep root
-    # cannot hold a socket. Both sides fall back to the same short name
-    # derived from the service alone -- drop this and the two ends
-    # silently stop meeting on any long path.
-    return (path if len(path) <= MAX_DERIVED_PATH_LEN
-            else f"/tmp/mnml-broker-{service}.sock")
+    # cannot hold a socket. Both sides fall back to the same short name,
+    # derived from the service and the long path (the Zig side's
+    # `broker.fallbackPath`: SHA-256 of the path, first six bytes in hex)
+    # -- drop this and the two ends silently stop meeting on any long
+    # path; hash the service alone and every deep bucket on the machine
+    # shares one broker.
+    if len(path) <= MAX_DERIVED_PATH_LEN:
+        return path
+    digest = hashlib.sha256(path.encode()).hexdigest()[:12]
+    return f"/tmp/mnml-broker-{service}-{digest}.sock"
 
 
 _warned: set = set()
