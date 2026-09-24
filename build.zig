@@ -1024,6 +1024,9 @@ pub fn build(b: *std.Build) void {
     gate_step.dependOn(&b.addInstallArtifact(fake_copilot, .{ .dest_dir = .{ .override = gate_dir }, .dest_sub_path = fake_copilot_exe_name }).step);
     // ── end sdk ──
 
+    // Last, so it reaches every unit-test binary `unit` runs, however it
+    // was added above.
+    hermeticUnitEnv(b, unit_step);
 }
 
 /// The shipped targets, Zig query on the left, the Rust triple the asset
@@ -1388,4 +1391,26 @@ fn emitQueryDecl(w: *std.Io.Writer, out: []const u8) void {
         w.writeByte(ident) catch @panic("OOM");
     }
     w.print(": []const u8 = @embedFile(\"{s}\");\n", .{out}) catch @panic("OOM");
+}
+
+/// Every unit-test binary under `unit` runs with a HOME of its own —
+/// `<cache>/unit-home`, per checkout — and without the variables that
+/// point a process at somebody's live state. The real HOME holds the
+/// developer's `~/.config/mnml` (a test reaching a `persist_*` path
+/// used to rewrite it), their Claude transcripts (the session scan) and
+/// the machine-wide rate-limit buckets (`~/.tattle-claude-artifacts`);
+/// `MNML_IPC_DIR` / `MNML_WORKSPACE` are the mnml whose terminal the
+/// build was started in. A test that means a HOME builds its own
+/// environment, as the ones that do already do.
+fn hermeticUnitEnv(b: *std.Build, unit_step: *std.Build.Step) void {
+    const rel = b.cache_root.join(b.allocator, &.{"unit-home"}) catch @panic("OOM");
+    const home = if (std.fs.path.isAbsolute(rel)) rel else b.pathFromRoot(rel);
+    for (unit_step.dependencies.items) |dep| {
+        const run = dep.cast(std.Build.Step.Run) orelse continue;
+        run.setEnvironmentVariable("HOME", home);
+        for ([_][]const u8{
+            "MNML_IPC_DIR",    "MNML_WORKSPACE", "MNML_DATA_ROOT", "MNML_BROKER",           "MNML_SESSIONS_HOME",
+            "XDG_CONFIG_HOME", "XDG_DATA_HOME",  "XDG_STATE_HOME", "TATTLE_ARTIFACTS_ROOT", "CLAUDECODE",
+        }) |name| run.removeEnvironmentVariable(name);
+    }
 }
