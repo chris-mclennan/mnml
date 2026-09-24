@@ -343,7 +343,15 @@ deadline down to make a test faster; it is not the cost.
   `-Doptimize=ReleaseSafe` (what ships). A test that passes in one and
   not the other is a bug in the code, not the test.
 - `zig build unit` runs every unit test binary and nothing else; `test`
-  is `unit` plus the e2e gate.
+  is `unit` plus the e2e gate. `zig build unit-debug` is `unit` in
+  Debug whatever `-Doptimize` says, and `tools/debug-suite-check.sh`
+  runs it with a last line a chain can stop on — `unit debug: ok (Ns)`
+  or `UNIT DEBUG FAILED (exit N, Ns)`; `./run.sh check` runs it beside
+  the ReleaseSafe suite. The Debug suite is sized to a few minutes and
+  no test in it should take 30 s: a test whose work explodes at -O0 or
+  under the testing allocator's per-allocation stack capture scales
+  its input for `builtin.mode == .Debug` (and says so) rather than
+  dropping the check, and the optimized run keeps the full size.
 - One test: `MNML_TEST_FILTER=<substring> zig build unit -Dtest-trace`
   — see "Running one test" below for why not `-Dtest-filter`.
 - `zig build test --summary all` prints one line per test binary and
