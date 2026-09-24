@@ -851,6 +851,7 @@ pub fn evalNeedsYou(app: *App, pid: app_mod.PaneId) bool {
 /// listing moved and the throttle allows; a rising edge announces
 /// itself (`announceNeedsYou`).
 pub fn trackNeedsYou(app: *App) Allocator.Error!void {
+    var flipped = false;
     var i: usize = 0;
     while (i < app.panes.slots.items.len) : (i += 1) {
         const pid: app_mod.PaneId = @intCast(i);
@@ -875,8 +876,18 @@ pub fn trackNeedsYou(app: *App) Allocator.Error!void {
         const was = p.needs_you;
         p.needs_you = evalNeedsYou(app, pid);
         if (p.needs_you and !was) try announceNeedsYou(app, pid);
-        if (p.needs_you != was) app.needs_render = true;
+        if (p.needs_you != was) {
+            app.needs_render = true;
+            flipped = true;
+        }
     }
+    // The card order reads `needsYou` (the State sort puts a waiting
+    // session first, the Waiting sort does too), and the order is
+    // computed in `refilter`, not per frame. Without this the mark was
+    // painted at once and the order followed at the next scan — a
+    // second or more on a loaded machine — so Enter on the top card
+    // opened the card that USED to be on top.
+    if (flipped and app.sessions.cards.items.len > 1) try refilter(app);
 }
 
 /// When a pane whose output moved inside the throttle is due a re-read.
@@ -3404,6 +3415,25 @@ test "needsYou: a pane whose screen asks is waiting, one that does not is not; a
     try testing.expect(try f.waitExit(gone, 5000));
     try testing.expect(try f.waitNeedsYou(gone, false, 1000));
     try testing.expect(!evalNeedsYou(app, gone));
+}
+
+test "the State sort re-sorts the moment a session starts to need you, not at the next scan" {
+    var f = try Fixture.init(100, 30);
+    defer f.deinit();
+    try f.fakeClaude();
+    const app = &f.app;
+    const st = &app.sessions;
+    // The quiet one first, so the order has to CHANGE for the asking
+    // one to lead.
+    const plain = try f.openCard("plain-9");
+    const ask = try f.openCard("ask-9");
+    try f.adopt(&.{});
+    try testing.expect(try f.waitGrid(plain, "Claude Code v9", 5000));
+    try testing.expect(try f.waitNeedsYou(ask, true, 5000));
+    try testing.expectEqual(SessionsSort.auto, st.sort);
+    // No scan in between: the flip itself put it on top.
+    try testing.expect(!st.scanning);
+    try testing.expectEqual(ask, st.cards.items[st.filtered.items[0]].pane);
 }
 
 test "the Waiting sort: the sessions that need you lead, the manual order under them; the card wears the mark before its name and the tab after; s cycles State → Manual → Waiting and the chip's menu ticks it" {
