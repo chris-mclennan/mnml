@@ -545,6 +545,15 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
             try env.put("MNML_LAUNCHERS", build_options.launchers_dir);
         } else |_| {}
     }
+    // `$MNML_REPO`: the checkout, for the `lua_example_*` scripts that
+    // copy a shipped example in. It used to come from the header's
+    // `MNML_REPO=${PWD}`, and `PWD` is a shell's — an `env -i` run, a
+    // CI step or a launcher that is not a shell has none.
+    if (env.get("MNML_REPO") == null) {
+        if (Io.Dir.cwd().access(io, build_options.repo_dir, .{})) |_| {
+            try env.put("MNML_REPO", build_options.repo_dir);
+        } else |_| {}
+    }
     // `$MNML_FAKE_LSP` the same way, for the `lsp_fake_*` scripts.
     if (env.get("MNML_FAKE_LSP") == null) {
         if (try fakeLspPath(gpa, io)) |p| {

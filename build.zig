@@ -955,6 +955,10 @@ pub fn build(b: *std.Build) void {
     // the folder as `$MNML_LAUNCHERS` so a `.test` can point
     // `MNML_MARKETPLACE_LOCAL` at it.
     build_options.addOption([]const u8, "launchers_dir", b.pathFromRoot("launchers"));
+    // The checkout itself: `mnml-zig test` exports it as `$MNML_REPO`, so
+    // a `.test` that copies a shipped file (`lua/<example>/init.lua`)
+    // finds it wherever — and in whatever environment — the runner runs.
+    build_options.addOption([]const u8, "repo_dir", b.pathFromRoot("."));
     // `tests/e2e/`: the corpus itself, so a unit test can read the
     // scripts as text. `src/e2e/corpus.zig` walks every `.test` file and
     // fails the build on a fake server started at a port somebody chose

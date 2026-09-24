@@ -1,6 +1,5 @@
 # Lua (D10): the shipped example `lua/surround-word/init.lua`,
 # run as it is written — an operator on both profiles' own seam.
-# env: MNML_REPO=${PWD}
 shell mkdir -p .mnml && cp "${MNML_REPO:?}/lua/surround-word/init.lua" .mnml/init.lua
 write words.txt "alpha beta\ngamma\n"
 command script.reload

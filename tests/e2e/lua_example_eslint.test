@@ -1,15 +1,13 @@
 # Lua (D10): the shipped example `lua/eslint/init.lua`,
 # run as it is written — the file is copied into the workspace's
 # init.lua, so a change to the example that breaks it fails here.
-# `MNML_REPO` is the runner's own cwd — the repo root, since that is
-# where the corpus is run from (the runner resolves `tests/e2e/…`
-# against it). A shell resets `PWD` to its own cwd, so the header has
-# to carry it in.
+# `MNML_REPO` is the checkout, exported by `mnml-zig test` itself —
+# not the header's `${PWD}` it used to be, which an `env -i` run or a
+# CI step without a shell does not have.
 #
 # `eslint` is a shim on PATH that prints two findings in the compact
 # format and exits 1, the way the real one does when it finds something.
 # env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
-# env: MNML_REPO=${PWD}
 shell mkdir -p bin && printf '#!/bin/sh\necho "app.js: line 1, col 7, Warning - '"'"'x'"'"' is assigned a value but never used (no-unused-vars)"\necho "app.js: line 3, col 7, Error - '"'"'z'"'"' is not defined (no-undef)"\nexit 1\n' > bin/eslint && chmod +x bin/eslint
 shell mkdir -p .mnml && cp "${MNML_REPO:?}/lua/eslint/init.lua" .mnml/init.lua
 write app.js "const x = 1;\nconst y = 2;\nconst z = 3;\n"

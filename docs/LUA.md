@@ -1463,11 +1463,10 @@ on it. Unit tests reach the state as `app.script()` and run chunks with
 `runString`.
 
 A test that drives a script **file** rather than an inline one copies it in
-with a `shell` step; the repo root reaches the step through the header,
-because a shell resets `PWD` to its own cwd:
+with a `shell` step; `mnml-zig test` exports the checkout as
+`$MNML_REPO` (unless it is already set), so the step names it directly:
 
 ```
-# env: MNML_REPO=${PWD}
 shell mkdir -p .mnml && cp "${MNML_REPO:?}/lua/eslint/init.lua" .mnml/init.lua
 ```
 

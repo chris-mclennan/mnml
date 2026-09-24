@@ -1,13 +1,12 @@
 # Lua (D10): the shipped example
 # `lua/git-blame-line/init.lua`, run as it is written —
 # the file is copied into the workspace's init.lua, so a change to the
-# example that breaks it fails here. `MNML_REPO` is the runner's own
-# cwd (a shell resets `PWD` to its own, so the header carries it in).
+# example that breaks it fails here. `MNML_REPO` is the checkout,
+# exported by `mnml-zig test` itself.
 #
 # The workspace is made a real repo with one commit, so `git blame`
 # has something to answer: the author's name and a relative date at
 # the end of the cursor's line, 300 ms after the cursor stops.
-# env: MNML_REPO=${PWD}
 # env: GIT_CONFIG_GLOBAL=/dev/null
 # env: GIT_CONFIG_SYSTEM=/dev/null
 shell printf 'alpha\nbeta\ngamma\n' > notes.txt
