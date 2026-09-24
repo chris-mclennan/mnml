@@ -1,0 +1,148 @@
+# `f` `F` `t` `T` `;` `,` move the cursor in Visual, V-LINE and V-BLOCK
+# the way they do in Normal, and the selection follows. Before, Visual
+# dropped the pending find: `vfd` stayed put and `vf)` ran the `)`
+# sentence motion onto the next line. Every expectation below is Neovim's
+# (nvchad-probe, `axbxcxd xe` / `next line.`, cursor at 1:1).
+write a.txt "axbxcxd xe\nnext line.\n"
+open a.txt
+command editor.use_vim
+
+# `vfd`: onto the `d`, still VISUAL.
+type vfd
+expect screen contains "VISUAL"
+expect status contains "\"cursor\":{\"line\":1,\"col\":7}"
+key esc
+type 0
+# `vf)`: no `)` on the line — the selection does not change, no sentence
+# motion onto line 2.
+type vf)
+expect screen contains "VISUAL"
+expect status contains "\"cursor\":{\"line\":1,\"col\":1}"
+key esc
+type 0
+# Counts: `v3fx` the third `x`; `v5fx` (four on the line) stays put.
+type v3fx
+expect status contains "\"cursor\":{\"line\":1,\"col\":6}"
+key esc
+type 0
+type v5fx
+expect status contains "\"cursor\":{\"line\":1,\"col\":1}"
+expect screen contains "VISUAL"
+key esc
+type 0
+# `t`: `vtx` is stuck before the adjacent `x`; `;` steps past it.
+type vtx
+expect status contains "\"cursor\":{\"line\":1,\"col\":1}"
+type ;
+expect status contains "\"cursor\":{\"line\":1,\"col\":3}"
+key esc
+type 0
+type v2tx
+expect status contains "\"cursor\":{\"line\":1,\"col\":3}"
+key esc
+type 0
+# `;` `;` `,`: forward twice, back once.
+type vfx;;,
+expect status contains "\"cursor\":{\"line\":1,\"col\":4}"
+key esc
+# Backward from the line end: `vFx` → 9, `vTx;` → 7.
+type $vFx
+expect status contains "\"cursor\":{\"line\":1,\"col\":9}"
+key esc
+type $vTx;
+expect status contains "\"cursor\":{\"line\":1,\"col\":7}"
+key esc
+# `;` / `,` after a Normal `f`, then `v`.
+type 0fxv;
+expect status contains "\"cursor\":{\"line\":1,\"col\":4}"
+key esc
+type 0fxv,
+expect status contains "\"cursor\":{\"line\":1,\"col\":2}"
+key esc
+type 0fx0v2;
+expect status contains "\"cursor\":{\"line\":1,\"col\":4}"
+key esc
+# A missed find is still the one `;` repeats.
+type 0fxvfz;
+expect status contains "\"cursor\":{\"line\":1,\"col\":2}"
+key esc
+type 0vfzfx
+expect status contains "\"cursor\":{\"line\":1,\"col\":2}"
+key esc
+# Esc cancels the pending `f`; Visual stays.
+type 0vf
+key esc
+expect screen contains "VISUAL"
+expect status contains "\"cursor\":{\"line\":1,\"col\":1}"
+key esc
+# V-LINE and V-BLOCK move too.
+type 0Vfx
+expect screen contains "V-LINE"
+expect status contains "\"cursor\":{\"line\":1,\"col\":2}"
+key esc
+type 0
+key ctrl+v
+type 2fx
+expect screen contains "V-BLOCK"
+expect status contains "\"cursor\":{\"line\":1,\"col\":4}"
+key esc
+expect screen contains "NORMAL"
+
+# Operators on a selection made by a find take the target in.
+type 0vfdd
+command file.save
+expect file a.txt contains " xe\nnext line.\n"
+expect file a.txt lacks "axbx"
+type u0
+type v3fxd
+command file.save
+expect file a.txt contains "d xe\nnext line.\n"
+expect file a.txt lacks "cxd"
+type u0
+# `v9fx` misses: `d` takes only the char under the cursor.
+type v9fxd
+command file.save
+expect file a.txt contains "xbxcxd xe\nnext line.\n"
+expect file a.txt lacks "axbx"
+type u0
+type fx0v;;d
+command file.save
+expect file a.txt contains "cxd xe\nnext line.\n"
+expect file a.txt lacks "bxcxd"
+type u0
+type $vFxd
+command file.save
+expect file a.txt contains "axbxcxd \nnext line.\n"
+type u0
+type Vfxd
+command file.save
+expect file a.txt contains "next line.\n"
+expect file a.txt lacks "axbx"
+type u0
+key ctrl+v
+type fxd
+command file.save
+expect file a.txt contains "bxcxd xe\nnext line.\n"
+expect file a.txt lacks "axb"
+type u0
+
+# Operator-pending `;` / `,` repeat the last find, inclusive like `f`.
+type fx0d;
+command file.save
+expect file a.txt contains "bxcxd xe\nnext line.\n"
+expect file a.txt lacks "axb"
+type u0
+type tx0d;
+command file.save
+expect file a.txt contains "xcxd xe\nnext line.\n"
+expect file a.txt lacks "bxcxd"
+type u0
+type fx0d2;
+command file.save
+expect file a.txt contains "cxd xe\nnext line.\n"
+expect file a.txt lacks "bxcxd"
+type u0
+# `d9fx` misses: nothing is deleted.
+type d9fx
+command file.save
+expect file a.txt contains "axbxcxd xe\nnext line.\n"
