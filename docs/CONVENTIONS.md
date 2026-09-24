@@ -490,6 +490,49 @@ branch, so there is nothing to pick and nothing to drift.
   the test fail, grep that the break really landed.
 - Test the shipped default, not values around it.
 
+## Verification on Linux — `tools/linux-verify.sh`
+
+The Mac is where the code is written, so the Mac is where a file that
+only passes on the Mac gets written. Before a change that touches the
+filesystem, processes, a pty, a shell step or a build file is called
+done, run the sequence on Linux too:
+
+```sh
+tools/linux-verify.sh                          # every step; logs in .verify/linux/
+tools/linux-verify.sh unit-safe corpus         # named steps only
+MNML_LINUX_ARCH=amd64 tools/linux-verify.sh    # the other arch (emulated on a Mac)
+```
+
+It builds a small image (a Debian base, the Zig 0.16.0 tarball pinned by
+sha256, the tools the corpus shells out to) and streams `git archive
+HEAD` into a fresh container — never a bind mount, so nothing the run
+does reaches the worktree, and what it tests is the commit, not the
+working tree. It runs, each with its exit code and log:
+`zig build -Dpartial=false`, `zig build unit` in ReleaseSafe and Debug,
+the ReleaseSafe build, the gate at 80x24,120x40,200x60, the full corpus
+with `MNML_E2E_ALLOW_SHELL=1`, `tools/run-sh-check.sh` and the
+integrations' and SDK's own `zig build test`. `summary.tsv` has a row a
+step: name, exit, seconds, the counts.
+
+- **Arch** is `MNML_LINUX_ARCH` (`amd64` | `arm64`), defaulting to the
+  engine's own, so Apple Silicon runs native arm64 — say which one a
+  result came from. CI can run it once per arch.
+- **Offline**: `MNML_LINUX_OFFLINE=1` gives the image build and the run
+  `--network none`; the Zig packages come from `MNML_LINUX_PKG_SEED`
+  (default: the local global cache's `p/`). A base that already has the
+  tools (`MNML_LINUX_BASE=node:20`) then needs no apt at all.
+- It runs as an unprivileged user, under a reaping init (`--init`): a
+  permission test run as root, or an orphan test under a PID 1 that
+  never reaps, fails or passes for a reason no user's machine has.
+- A shell step is `/bin/sh`, which is dash on Debian: no `printf '\x'`,
+  no `echo -e`. GNU coreutils: `mktemp` wants its X's, `dd` its `M`,
+  `sed -i` takes no `''`. What the Linux run found is in
+  `docs/PORTABILITY-linux.md`.
+
+`tools/linux/run.sh` is the interactive sibling (a read-only bind mount,
+a shell in the container, one phase at a time); `linux-verify.sh` is the
+whole sequence, unattended, on a commit.
+
 ## Hover help: every control ships with its entry; the audit enforces it
 
 The info view (`src/ui/info_view.zig`, the help box at the bottom of the

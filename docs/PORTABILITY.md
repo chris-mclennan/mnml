@@ -10,7 +10,10 @@ static half of closing that: every POSIX-ism in `src/`, `integrations/`
 and `sdk/` outside a platform guard, and what Windows does at each.
 
 `docs/WINDOWS.md` is the other half — what has been run where, and the
-checklist for a real Windows box.
+checklist for a real Windows box. For Linux the other half is
+`docs/PORTABILITY-linux.md`: the whole verification sequence *run* in a
+Linux container (`tools/linux-verify.sh`), what failed there and what
+still does.
 
 ## The gate
 
