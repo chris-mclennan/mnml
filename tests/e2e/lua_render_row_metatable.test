@@ -1,0 +1,11 @@
+# A script pane's render result is read inside the same protected call
+# that ran `render`. Reading a row's `text` goes through `__index`, which
+# is the script's own code: an error there is the pane's message, like
+# an error in `render` itself — never an unprotected error that takes
+# the process down.
+write .mnml/init.lua "mnml.command{ id = 'p', run = function() mnml.pane.open{ title = 'Meta', render = function(w, h) return { setmetatable({}, { __index = function() error('META-BOOM') end }) } end } end }\nmnml.command{ id = 'ok', run = function() mnml.toast('STILL-ALIVE') end }\n"
+command script.reload
+command user.p
+expect screen contains "META-BOOM"
+command user.ok
+expect screen contains "STILL-ALIVE"

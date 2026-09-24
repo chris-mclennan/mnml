@@ -8,7 +8,11 @@
 //! decoration hangs off: it fires once, `cursor_idle_ms` after the
 //! cursor last moved, and not again until it moves. `buffer_change`
 //! fires `buffer_change_ms` after the last edit — the hook
-//! `docs/LUA.md` has always documented.
+//! `docs/LUA.md` has always documented — for the pane whose document
+//! was edited, whichever pane has focus by then. Its debounce is kept
+//! per pane (`EditorPane.change_*`): one head compared against the
+//! ACTIVE pane's used to fire on every focus switch with no edit at
+//! all, and to report an edit against the pane focus moved to.
 
 const std = @import("std");
 const app_mod = @import("../app.zig");
@@ -29,22 +33,18 @@ pub const State = struct {
     moved_at_ms: i64 = 0,
     /// `cursor_idle` has fired for this resting place.
     cursor_fired: bool = true,
-    /// The edit-log head last seen, and when it changed.
-    seq: u64 = 0,
-    edited_at_ms: i64 = 0,
-    /// `buffer_change` has fired for this text.
-    change_fired: bool = true,
 };
 
 /// Both debounces, from `App.tick`.
 pub fn tick(app: *App, now: i64) void {
     const st = &app.idle;
+    changes(app, now);
+    // Read after: a `buffer_change` hook may have moved the focus.
     const pane = app.active;
     const e = if (pane) |p| app.panes.editor(p) else null;
     if (e == null or pane == null) {
         st.pane = null;
         st.cursor_fired = true;
-        st.change_fired = true;
         return;
     }
     const ed = e.?.buf.editor;
@@ -59,15 +59,48 @@ pub fn tick(app: *App, now: i64) void {
         app.hooks.emit(app, .{ .cursor_idle = .{ .pane = pane.?, .line = @intCast(ed.currentLine() + 1) } });
         line_blame.onCursorIdle(app, pane.?);
     }
-    const head = e.?.buf.doc.edits.head();
-    if (st.seq != head) {
-        st.seq = head;
-        st.edited_at_ms = now;
-        st.change_fired = false;
-        line_blame.dropStale(app, pane.?);
-    } else if (!st.change_fired and now - st.edited_at_ms >= buffer_change_ms) {
-        st.change_fired = true;
-        app.hooks.emit(app, .{ .buffer_change = .{ .pane = pane.?, .line_count = @intCast(ed.lineCount()) } });
+}
+
+/// `buffer_change`, pane by pane: a pane whose document's edit-log head
+/// moved is pending; `buffer_change_ms` after the last move it fires,
+/// naming that pane. Two panes on one document are one edit: it fires
+/// once, naming the focused one of them when one has focus, and the
+/// others are settled with it. By index, re-fetched: a hook may open or
+/// close panes.
+fn changes(app: *App, now: i64) void {
+    var i: usize = 0;
+    while (i < app.panes.slots.items.len) : (i += 1) {
+        const id: PaneId = @intCast(i);
+        const e = app.panes.editor(id) orelse continue;
+        const head = e.buf.doc.edits.head();
+        const seen = e.change_seen orelse {
+            e.change_seen = head;
+            continue;
+        };
+        if (seen != head) {
+            e.change_seen = head;
+            e.change_at_ms = now;
+            e.change_pending = true;
+            // What the current-line blame cached for this file answers
+            // for text that is gone.
+            line_blame.dropStale(app, id);
+            continue;
+        }
+        if (!e.change_pending or now - e.change_at_ms < buffer_change_ms) continue;
+        const doc = e.buf.doc;
+        var named = id;
+        if (app.active) |a| if (app.panes.editor(a)) |ae| if (ae.buf.doc == doc) {
+            named = a;
+        };
+        for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+            .editor => |*other| if (other.buf.doc == doc) {
+                other.change_pending = false;
+                other.change_seen = head;
+            },
+            else => {},
+        };
+        const lines: u32 = @intCast(app.panes.editor(named).?.buf.editor.lineCount());
+        app.hooks.emit(app, .{ .buffer_change = .{ .pane = named, .line_count = lines } });
     }
 }
 
@@ -76,7 +109,12 @@ pub fn nextDeadlineMs(app: *const App) ?i64 {
     const st = &app.idle;
     var next: ?i64 = null;
     if (!st.cursor_fired) next = st.moved_at_ms + cursor_idle_ms;
-    if (!st.change_fired) next = @min(next orelse std.math.maxInt(i64), st.edited_at_ms + buffer_change_ms);
+    for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+        .editor => |*e| if (e.change_pending) {
+            next = @min(next orelse std.math.maxInt(i64), e.change_at_ms + buffer_change_ms);
+        },
+        else => {},
+    };
     return next;
 }
 
@@ -127,4 +165,44 @@ test "cursor_idle fires once the cursor rests, again only after it moves; buffer
     now += 10 * buffer_change_ms;
     tick(&app, now);
     try lua.runString("assert(changes == 1)");
+}
+
+test "buffer_change is per pane: a focus switch is not an edit, and an edit is reported for the pane that was edited" {
+    // One edit-log head was compared against whichever pane was active:
+    // switching between two unedited panes fired the hook each time, and
+    // an edit followed by a switch inside the debounce was reported once,
+    // naming the pane focus moved to.
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    const lua = app.script();
+    const a = try app.openScratchWith("one\n");
+    const b = try app.openScratchWith("two\nlines\n");
+    try lua.runString(
+        \\LOG = {}
+        \\mnml.on("buffer_change", function(ev) LOG[#LOG + 1] = ev.pane .. ':' .. ev.line_count end)
+    );
+    var now = app.now_ms;
+    tick(&app, now);
+    // Focus back and forth, no edits: nothing.
+    for (0..4) |k| {
+        app.active = if (k % 2 == 0) a else b;
+        now += 2 * buffer_change_ms;
+        tick(&app, now);
+    }
+    try lua.runString("assert(#LOG == 0, table.concat(LOG, ','))");
+    // Edit a, move to b inside the debounce: reported once, for a.
+    app.active = a;
+    tick(&app, now);
+    _ = try app.applyOps(app.panes.editor(a).?, &.{.{ .insert_str = "x\n" }});
+    tick(&app, now);
+    app.active = b;
+    tick(&app, now + 10);
+    now += 2 * buffer_change_ms;
+    tick(&app, now);
+    const want = try std.fmt.allocPrint(testing.allocator, "assert(#LOG == 1 and LOG[1] == '{d}:2', table.concat(LOG, ','))", .{a});
+    defer testing.allocator.free(want);
+    try lua.runString(want);
+    now += 10 * buffer_change_ms;
+    tick(&app, now);
+    try lua.runString("assert(#LOG == 1, table.concat(LOG, ','))");
 }

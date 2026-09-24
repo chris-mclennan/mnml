@@ -111,6 +111,12 @@ pub const Driver = struct {
         pluginInvocations: *const fn (*anyopaque, Allocator) Error![]const []const u8,
         /// Set `quit`; the headless loop reads it back through `status`.
         requestQuit: *const fn (*anyopaque, restart: bool) void,
+        /// The session is ending (a quit or a restart): the app's last
+        /// words — the `exit` hook — run now, once, before the final
+        /// frame. The headless loop calls it; the terminal loop runs the
+        /// same function (`app/driver.zig` `endSession`). A `.test` file
+        /// never does, as it never runs the `startup` hook either.
+        shutdown: *const fn (*anyopaque) void,
         deinit: *const fn (*anyopaque) void,
     };
 
@@ -176,6 +182,9 @@ pub const Driver = struct {
     }
     pub fn requestQuit(d: Driver, restart: bool) void {
         d.vtable.requestQuit(d.ptr, restart);
+    }
+    pub fn shutdown(d: Driver) void {
+        d.vtable.shutdown(d.ptr);
     }
     pub fn deinit(d: Driver) void {
         d.vtable.deinit(d.ptr);
@@ -257,6 +266,8 @@ pub const Stub = struct {
     has_editor: bool = true,
     quit: bool = false,
     restart: bool = false,
+    /// `shutdown` was called.
+    shut_down: bool = false,
     /// `status` reports these.
     status_focus: screen_mod.Focus = .pane,
     plugin_pending: []const []const u8 = &.{},
@@ -371,6 +382,7 @@ pub const Stub = struct {
         .ipcCommand = vIpcCommand,
         .pluginInvocations = vPluginInvocations,
         .requestQuit = vRequestQuit,
+        .shutdown = vShutdown,
         .deinit = vDeinit,
     };
 
@@ -482,6 +494,9 @@ pub const Stub = struct {
         const self = cast(p);
         self.quit = true;
         self.restart = restart;
+    }
+    fn vShutdown(p: *anyopaque) void {
+        cast(p).shut_down = true;
     }
     fn vDeinit(p: *anyopaque) void {
         const self = cast(p);

@@ -96,6 +96,13 @@ pub const EditorPane = struct {
     /// The indent step the guides were drawn with and the edit-log seq
     /// it was read at (`render.guideStep`); null until the first frame.
     guide_step: ?struct { seq: u64, step: u8 } = null,
+    /// `buffer_change`'s debounce, per pane (`app/idle.zig`): the
+    /// document's edit-log head as this pane last saw it (null until the
+    /// first tick sees the pane — opening one is not an edit), when it
+    /// last moved, and whether the hook still owes this edit.
+    change_seen: ?u64 = null,
+    change_at_ms: i64 = 0,
+    change_pending: bool = false,
 
     pub fn deinit(self: *EditorPane) void {
         if (self.label) |l| self.buf.gpa.free(l);

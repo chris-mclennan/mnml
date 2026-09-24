@@ -19,13 +19,14 @@ expect screen contains "SCRIPTS"
 expect screen contains "spinner"
 # Nothing has run yet: no chip.
 expect screen lacks "⏱"
-# One runaway command is one toast and one chip.
-command user.spin
+# One runaway command is one toast and one chip — and a failed
+# command (`command!`: a script command that errors fails the step).
+command! user.spin
 expect screen contains "script budget exceeded"
 command view.activity_scripts
 expect screen contains "⏱ 1"
 # It counts up.
-command user.spin
+command! user.spin
 command view.activity_scripts
 expect screen contains "⏱ 2"
 # `script.doctor` still spells the count out, and names the folders a

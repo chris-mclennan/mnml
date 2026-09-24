@@ -96,7 +96,9 @@ pub fn run(gpa: Allocator, io: Io, driver: Driver, workspace: []const u8, opts: 
         if (!any) io.sleep(.fromMilliseconds(@intCast(opts.poll_ms)), .awake) catch {};
     }
 
-    // A final dump so the host sees the end state.
+    // The exit hook, as the terminal loop runs it — then a final dump
+    // so the host sees the end state, whatever the hook left.
+    driver.shutdown();
     _ = arena_state.reset(.retain_capacity);
     try loop.frame(arena_state.allocator());
     ch.appendEvent(if (loop.restart) "{\"event\":\"exit\",\"restart\":true}" else "{\"event\":\"exit\"}");
@@ -588,4 +590,65 @@ test "tier-2 golden: the Rust event shapes for segments, badges, notify and open
     const body = events[first_nl + 1 ..];
     const exit_at = std.mem.lastIndexOf(u8, body, "{\"event\":\"exit\"}").?;
     try t.expectEqualStrings(@embedFile("ipc/golden/tier2.events.jsonl"), body[0..exit_at]);
+}
+
+test "a quit runs the exit hook, as the terminal loop does" {
+    // The terminal loop emitted `exit` after its last frame; this loop
+    // never did, so a script's shutdown work silently did not happen
+    // under --headless, IPC or anything driven through them.
+    const app_driver = @import("app/driver.zig");
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const ws = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    const data_root = try std.fs.path.join(t.allocator, &.{ ws, "data" });
+    defer t.allocator.free(data_root);
+
+    const drv = try app_driver.AppDriver.create(t.allocator, t.io, .{ .workspace = ws, .data_root = data_root, .cols = 40, .rows = 6 }, null);
+    defer drv.driver().deinit();
+    try drv.app.script().runString("EXITS = 0; mnml.on('exit', function() EXITS = EXITS + 1 end)");
+
+    const cmd_path = try std.fs.path.join(t.allocator, &.{ ws, ".mnml", "ipc-zig", "command" });
+    defer t.allocator.free(cmd_path);
+    var feeder: Feeder = .{ .io = t.io, .path = cmd_path, .delay_ms = 120, .lines = "{\"cmd\":\"quit\"}\n" };
+    const th = try std.Thread.spawn(.{}, Feeder.run, .{&feeder});
+    const restart = try run(t.allocator, t.io, drv.driver(), ws, .{ .size = .{ .cols = 40, .rows = 6 }, .ipc = .{ .subdir = "ipc-zig" } });
+    th.join();
+    try t.expect(!restart);
+    try drv.app.script().runString("assert(EXITS == 1, 'exit hook ran ' .. EXITS .. ' times')");
+}
+
+test "an IPC run-command of a script command that errors acks ok:false" {
+    // The driver swallowed the script's error, so the host was told
+    // `ok:true` while the user saw an error toast.
+    const app_driver = @import("app/driver.zig");
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const ws = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    const data_root = try std.fs.path.join(t.allocator, &.{ ws, "data" });
+    defer t.allocator.free(data_root);
+
+    const drv = try app_driver.AppDriver.create(t.allocator, t.io, .{ .workspace = ws, .data_root = data_root, .cols = 40, .rows = 6 }, null);
+    defer drv.driver().deinit();
+    try drv.app.script().runString(
+        \\mnml.command{ id = 'err', run = function() error('BOOM') end }
+        \\mnml.command{ id = 'fine', run = function() end }
+    );
+
+    const cmd_path = try std.fs.path.join(t.allocator, &.{ ws, ".mnml", "ipc-zig", "command" });
+    defer t.allocator.free(cmd_path);
+    var feeder: Feeder = .{ .io = t.io, .path = cmd_path, .delay_ms = 120, .lines =
+        \\{"cmd":"run-command","id":"user.err"}
+        \\{"cmd":"run-command","id":"user.fine"}
+        \\{"cmd":"quit"}
+        \\
+    };
+    const th = try std.Thread.spawn(.{}, Feeder.run, .{&feeder});
+    _ = try run(t.allocator, t.io, drv.driver(), ws, .{ .size = .{ .cols = 40, .rows = 6 }, .ipc = .{ .subdir = "ipc-zig" } });
+    th.join();
+    const events = try tmp.dir.readFileAlloc(t.io, ".mnml/ipc-zig/events.jsonl", t.allocator, .unlimited);
+    defer t.allocator.free(events);
+    try t.expect(std.mem.indexOf(u8, events, "{\"event\":\"command_run\",\"id\":\"user.err\",\"ok\":\"false\"}") != null);
+    try t.expect(std.mem.indexOf(u8, events, "{\"event\":\"command_run\",\"id\":\"user.fine\",\"ok\":\"true\"}") != null);
 }

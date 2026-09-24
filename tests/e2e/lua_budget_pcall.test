@@ -1,0 +1,11 @@
+# The 20 ms budget cannot be caught by the script it cuts. A `pcall`
+# around a runaway loop used to swallow the abort, the loop around the
+# `pcall` asked again, and the UI thread never came back — no frame, no
+# key, 100% CPU. Now the script's `pcall` rethrows the trip: one toast,
+# and the next command runs.
+write .mnml/init.lua "mnml.command{ id = 'spin', run = function() while true do pcall(function() while true do end end) end end }\nmnml.command{ id = 'ok', run = function() mnml.toast('STILL-ALIVE') end }\n"
+command script.reload
+command! user.spin
+expect screen contains "script budget exceeded"
+command user.ok
+expect screen contains "STILL-ALIVE"

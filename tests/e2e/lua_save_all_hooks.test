@@ -1,0 +1,27 @@
+# `:wa` and `file.save_all` save through the same path as Ctrl+S and
+# `:w`, so `save_post` fires for each file they write. They used to
+# write the bytes in a loop of their own and fire no hook at all — a
+# script's on-save, the file watcher's note of mnml's own write and the
+# LSP's didSave all missed the vim user's everyday bulk save.
+write .mnml/init.lua "N = 0\nmnml.on('save_post', function(a) N = N + 1 end)\nmnml.command{ id = 'n', run = function() mnml.toast('SAVE_POST=' .. N) end }\n"
+write a.txt "one"
+command script.reload
+open a.txt
+type "x"
+key ctrl+s
+command user.n
+expect screen contains "SAVE_POST=1"
+type "y"
+ex wa
+expect file a.txt contains "xyone"
+command user.n
+expect screen contains "SAVE_POST=2"
+type "z"
+command file.save_all
+expect file a.txt contains "xyzone"
+command user.n
+expect screen contains "SAVE_POST=3"
+# The watcher heard the writes were mnml's own: no "reloaded" toast.
+wait 1000
+command messages.show
+expect screen lacks "a.txt reloaded"

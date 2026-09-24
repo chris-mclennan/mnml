@@ -10,9 +10,26 @@
 //! table is the whole surface.
 //!
 //! Budget: a count hook every 100 000 instructions checks the
-//! `budget_ms` deadline armed at the outermost entry; a trip raises
-//! `mnml: script budget exceeded`, which `pcall` catches like any other
-//! error.
+//! `budget_ms` deadline armed at the outermost entry. A trip is not an
+//! ordinary error a script can swallow: the state is marked `tripped`,
+//! the hook then fires on EVERY instruction and raises again, and the
+//! `pcall` / `xpcall` a script sees rethrow instead of returning false
+//! — so the raise climbs all the way out to the host's own `pcall`,
+//! however many protected calls the script stacked in its way.
+//!
+//! A hook only runs between VM instructions, and one call into a C
+//! function is one instruction however long it takes. The C function
+//! that can take long on a short input is the pattern matcher —
+//! `('a'):rep(1e5):find('.-b')` is quadratic, seconds of UI thread — so
+//! Lua's `lstrlib.c` is built from a patched copy
+//! (`vendor/lua54/lstrlib.c`) whose matcher asks `spent()` every few
+//! thousand steps. What a single C call can still cost past the budget
+//! is bounded by its input rather than cut: a `table.sort`, `concat`,
+//! `rep` or `utf8` walk is linear (or n log n) in data a budgeted loop
+//! had to build first, or in a size the script names (`string.rep('x',
+//! 1e9)` allocates and fills a gigabyte before the next instruction
+//! checks the clock). Host `mnml.*` functions are ours and do bounded
+//! work per call.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -31,11 +48,19 @@ const script_list = @import("../app/script_list.zig");
 const build_options = @import("build_options");
 
 pub const State = zlua.Lua;
+
+/// The patched `lstrlib.c`'s question to the host: is the budget of the
+/// call running on this state spent? Nonzero raises the budget error
+/// from inside the match. Set once per process; a state not inside a
+/// budgeted call answers no.
+extern var mnml_lstr_budget: ?*const fn (?*zlua.LuaState) callconv(.c) c_int;
 pub const LuaRef = command.LuaRef;
 pub const Segment = script_view.Segment;
 
 /// The count hook fires every this many VM instructions.
 pub const hook_count: i32 = 100_000;
+/// What a budget trip raises, and what the host reports it as.
+pub const budget_msg = "mnml: script budget exceeded";
 /// A frame's worth of work: what the budget protects in a SHIPPED
 /// build, where a script must not hold the UI thread longer than one.
 pub const frame_budget_ms: i64 = 20;
@@ -83,6 +108,10 @@ pub const StatusSegment = struct {
     /// The last string the function returned; null hides the segment.
     text: ?[]u8 = null,
     next_poll_ms: i64 = 0,
+    /// The function errored: the one toast has been shown, the segment
+    /// is hidden, and it is not asked again until the script reloads —
+    /// an erroring render paints in its pane once in the same spirit.
+    failed: bool = false,
 };
 
 /// `mnml.picker.source{ id, title, items, live?, preview?, multi?,
@@ -208,6 +237,10 @@ pub const Lua = struct {
     modules: ?LuaRef = null,
     /// Set by the outermost `enter`; the count hook compares against it.
     deadline_ms: ?i64 = null,
+    /// The budget ran out during the current outermost call. From then
+    /// until that call returns, every instruction raises and the
+    /// script's `pcall` / `xpcall` rethrow: the trip cannot be caught.
+    tripped: bool = false,
     depth: u32 = 0,
     /// The last error `pcall` caught, on the frame arena.
     last_error: ?[]const u8 = null,
@@ -281,6 +314,7 @@ pub const Lua = struct {
         const L = try State.init(self.gpa);
         self.L = L;
         attach(L, self);
+        mnml_lstr_budget = &strBudget;
         L.openBase();
         L.openString();
         L.openTable();
@@ -294,6 +328,22 @@ pub const Lua = struct {
         L.setGlobal("loadfile");
         L.pushFunction(zlua.wrap(api.print));
         L.setGlobal("print");
+        // A budget trip must reach the host: the script's own protected
+        // calls rethrow it (see `guardedPcall`).
+        _ = L.getGlobal("pcall");
+        L.pushClosure(zlua.wrap(guardedPcall), 1);
+        L.setGlobal("pcall");
+        _ = L.getGlobal("xpcall");
+        L.pushClosure(zlua.wrap(guardedXpcall), 1);
+        L.setGlobal("xpcall");
+        // Source text only: see `textLoad`.
+        _ = L.getGlobal("load");
+        L.pushClosure(zlua.wrap(textLoad), 1);
+        L.setGlobal("load");
+        // No finalizers: see `guardedSetmetatable`.
+        _ = L.getGlobal("setmetatable");
+        L.pushClosure(zlua.wrap(guardedSetmetatable), 1);
+        L.setGlobal("setmetatable");
         // An installed script — and only an installed script — may
         // `require` its own files. There is no `package`, so this is
         // the whole module system: a name resolves under the script's
@@ -500,11 +550,107 @@ pub const Lua = struct {
     fn countHook(state: ?*zlua.LuaState, _: DebugPtr) callconv(.c) void {
         const L: *State = @ptrCast(state.?);
         const self = of(L);
-        const deadline = self.deadline_ms orelse return;
-        if (App.nowMs(self.io) >= deadline) {
-            self.budget_hits += 1;
-            L.raiseErrorStr("mnml: script budget exceeded", .{});
+        if (self.tripped) L.raiseErrorStr(budget_msg, .{});
+        if (self.spent()) L.raiseErrorStr(budget_msg, .{});
+    }
+
+    fn strBudget(state: ?*zlua.LuaState) callconv(.c) c_int {
+        const L: *State = @ptrCast(state.?);
+        return @intFromBool(of(L).spent());
+    }
+
+    /// Whether the budget of the call running now is gone — and if it
+    /// just went, the trip: counted once, and the hook re-armed to fire
+    /// on every instruction so the script cannot run another one.
+    fn spent(self: *Lua) bool {
+        if (self.tripped) return true;
+        const deadline = self.deadline_ms orelse return false;
+        if (App.nowMs(self.io) < deadline) return false;
+        self.tripped = true;
+        self.budget_hits += 1;
+        self.L.setHook(&countHook, .{ .count = true }, 1);
+        return true;
+    }
+
+    /// The `pcall` and `xpcall` scripts see: the base library's own
+    /// (upvalue 1), called with the same arguments, except that a budget
+    /// trip is rethrown rather than returned as `false, msg`. Without
+    /// this, `while true do pcall(function() while true do end end) end`
+    /// swallowed each raise and ran forever.
+    fn guardedPcall(L: *State) i32 {
+        const n = L.getTop();
+        L.pushValue(State.upvalueIndex(1));
+        L.insert(1);
+        L.call(.{ .args = n, .results = zlua.mult_return });
+        if (of(L).tripped) L.raiseErrorStr(budget_msg, .{});
+        return L.getTop();
+    }
+
+    /// `xpcall(f, msgh, …)`: `guardedPcall`, with the message handler
+    /// wrapped too. A raise from the count hook reaches the handler
+    /// while Lua still has hooks switched off (it is running inside the
+    /// hook), so a handler that looped there would run with no budget
+    /// at all. After a trip the wrapper hands the message on without
+    /// calling the script's handler.
+    fn guardedXpcall(L: *State) i32 {
+        if (L.isFunction(2)) {
+            L.pushValue(2);
+            L.pushClosure(zlua.wrap(guardedHandler), 1);
+            L.replace(2);
         }
+        return guardedPcall(L);
+    }
+
+    /// `load(chunk, chunkname?, mode?, env?)` with the mode forced to
+    /// `"t"`: source text, never a precompiled chunk. Lua 5.4 does not
+    /// verify bytecode — a crafted binary chunk is a way out of the VM's
+    /// guarantees — so a script may compile text and nothing else. The
+    /// arguments are passed on as given otherwise (an absent `env` stays
+    /// absent: an explicit nil would be an `_ENV` of nil).
+    fn textLoad(L: *State) i32 {
+        const n = L.getTop();
+        if (n >= 3) {
+            _ = L.pushString("t");
+            L.replace(3);
+        } else {
+            while (L.getTop() < 2) L.pushNil();
+            _ = L.pushString("t");
+        }
+        L.pushValue(State.upvalueIndex(1));
+        L.insert(1);
+        L.call(.{ .args = L.getTop() - 1, .results = zlua.mult_return });
+        return L.getTop();
+    }
+
+    /// `setmetatable(t, mt)`, refusing a metatable with a `__gc` field.
+    /// A finalizer runs when the collector gets to it — on a reload or a
+    /// quit (closing the state runs every pending one), or at any
+    /// allocation — and Lua switches hooks off while it runs, so the
+    /// count hook cannot cut it: `__gc = function() while true do end
+    /// end` hung the UI thread on the next `script.reload`. Lua marks an
+    /// object for finalization only if its metatable has the field at
+    /// the moment it is set (any non-nil value, even one replaced by a
+    /// function later), so a raw look at `mt.__gc` here is the whole
+    /// gate. There is no `debug.setmetatable` to go around it.
+    fn guardedSetmetatable(L: *State) i32 {
+        if (L.typeOf(2) == .table) {
+            _ = L.pushString("__gc");
+            const has_gc = L.getTableRaw(2) != .nil;
+            L.pop(1);
+            if (has_gc) L.raiseErrorStr("setmetatable: `__gc` is not available to scripts — a finalizer runs where the script budget cannot reach it (a reload, a quit, any collection)", .{});
+        }
+        L.pushValue(State.upvalueIndex(1));
+        L.insert(1);
+        L.call(.{ .args = L.getTop() - 1, .results = 1 });
+        return 1;
+    }
+
+    fn guardedHandler(L: *State) i32 {
+        if (of(L).tripped) return 1;
+        L.pushValue(State.upvalueIndex(1));
+        L.insert(1);
+        L.call(.{ .args = L.getTop() - 1, .results = 1 });
+        return 1;
     }
 
     /// UI-thread assertion plus the budget for the outermost call. Pair
@@ -513,6 +659,7 @@ pub const Lua = struct {
         std.debug.assert(std.Thread.getCurrentId() == self.ui_thread);
         if (self.depth == 0) {
             self.deadline_ms = App.nowMs(self.io) + budget_ms;
+            self.tripped = false;
             self.L.setHook(&countHook, .{ .count = true }, hook_count);
         }
         self.depth += 1;
@@ -523,6 +670,7 @@ pub const Lua = struct {
         if (self.depth == 0) {
             self.L.setHook(&countHook, .{}, 0);
             self.deadline_ms = null;
+            self.tripped = false;
         }
     }
 
@@ -543,15 +691,55 @@ pub const Lua = struct {
         L.insert(base);
         self.enter();
         const result = L.protectedCall(.{ .args = nargs, .results = nresults, .msg_handler = base });
+        // Read before `leave` clears it: a trip is reported as a trip
+        // whatever the script's handlers made of the message on the way.
+        const tripped = self.tripped;
         self.leave();
         L.remove(base);
         result catch {
             // `toStringEx` pushes the string form; pop it and the error object.
             const msg = L.toStringEx(-1);
-            self.last_error = self.app.frame.allocator().dupe(u8, msg) catch "script error";
+            const arena = self.app.frame.allocator();
+            self.last_error = if (tripped and std.mem.indexOf(u8, msg, budget_msg) == null)
+                std.fmt.allocPrint(arena, "{s}\n{s}", .{ budget_msg, msg }) catch budget_msg
+            else
+                arena.dupe(u8, msg) catch "script error";
             L.pop(2);
             return error.Failed;
         };
+    }
+
+    /// `pcall`, and then read what the function returned INSIDE the same
+    /// protected call and the same budget.
+    ///
+    /// Reading a returned value is not passive: `lua_getfield` honours
+    /// `__index`, `luaL_tolstring` honours `__tostring`, and either runs
+    /// the script's own code. Run after `pcall` returned, that code is
+    /// outside every boundary — an `error()` in it has no `pcall` to land
+    /// in, and an unprotected Lua error aborts the process. So the call
+    /// and the decode are one protected call: a trampoline closure calls
+    /// the function, then hands its results to `ctx.decode(lua)` with the
+    /// results as the whole of its stack (index 1 up to the top).
+    ///
+    /// The decode can be cut short by a Lua error at any read. Whatever
+    /// it builds must therefore be owned by `ctx` (the caller frees it on
+    /// either outcome), never by a local an `errdefer` would free — a Lua
+    /// error unwinds by longjmp and runs no Zig `defer`.
+    pub fn pcallThen(self: *Lua, nargs: i32, comptime nresults: i32, ctx: anytype) error{Failed}!void {
+        const Ctx = @TypeOf(ctx.*);
+        const T = struct {
+            fn run(L: *State) i32 {
+                const c = L.toUserdata(Ctx, State.upvalueIndex(1)) catch unreachable;
+                L.call(.{ .args = L.getTop() - 1, .results = nresults });
+                c.decode(of(L));
+                return 0;
+            }
+        };
+        const L = self.L;
+        L.pushLightUserdata(ctx);
+        L.pushClosure(zlua.wrap(T.run), 1);
+        L.insert(-(nargs + 2));
+        return self.pcall(nargs + 1, 0);
     }
 
     /// The error `pcall` (or the loader) just caught: a diagnostic on
@@ -655,7 +843,6 @@ pub const Lua = struct {
         const L = self.L;
         const arena = self.app.frame.allocator();
         const as_expr = try std.fmt.allocPrint(arena, "return {s}", .{src});
-        const base = L.getTop();
         L.loadBuffer(as_expr, "=selection", .text) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             error.LuaSyntax => {
@@ -671,15 +858,35 @@ pub const Lua = struct {
                 };
             },
         };
-        try self.pcall(0, zlua.mult_return);
-        const n: usize = @intCast(L.getTop() - base);
-        defer L.setTop(base);
+        // The values' string forms are taken inside the protected call —
+        // a returned table's `__tostring` is the script's code.
+        const Ctx = struct {
+            arena: Allocator,
+            out: ?[]const u8 = null,
+            err: ?Allocator.Error = null,
+            pub fn decode(c: *@This(), lua: *Lua) void {
+                c.out = joinResults(lua.L, c.arena) catch |e| {
+                    c.err = e;
+                    return;
+                };
+            }
+        };
+        var ctx: Ctx = .{ .arena = arena };
+        try self.pcallThen(0, zlua.mult_return, &ctx);
+        if (ctx.err) |e| return e;
+        return ctx.out;
+    }
+
+    /// Every value on the stack, `tostring`ed and tab-joined; null when
+    /// there are none.
+    fn joinResults(L: *State, arena: Allocator) Allocator.Error!?[]const u8 {
+        const n = L.getTop();
         if (n == 0) return null;
         var out: std.ArrayListUnmanaged(u8) = .empty;
-        var i: usize = 0;
-        while (i < n) : (i += 1) {
-            if (i > 0) try out.append(arena, '\t');
-            try out.appendSlice(arena, L.toStringEx(base + 1 + @as(i32, @intCast(i))));
+        var i: i32 = 1;
+        while (i <= n) : (i += 1) {
+            if (i > 1) try out.append(arena, '\t');
+            try out.appendSlice(arena, L.toStringEx(i));
             L.pop(1);
         }
         return out.items;
@@ -722,14 +929,27 @@ pub const Lua = struct {
 
     /// `render(w, h)` → rows of segments on the frame arena. A failing
     /// render paints its message in the pane instead of toasting every
-    /// frame.
+    /// frame. The rows are decoded inside the protected call
+    /// (`pcallThen`): a row's `__index` is the script's code too.
     pub fn callRender(self: *Lua, r: LuaRef, w: u16, h: u16) Allocator.Error![]const []const Segment {
         const arena = self.app.frame.allocator();
         const L = self.L;
+        const Ctx = struct {
+            arena: Allocator,
+            rows: []const []const Segment = &.{},
+            err: ?Allocator.Error = null,
+            pub fn decode(c: *@This(), lua: *Lua) void {
+                c.rows = lua.decodeRows(c.arena, -1) catch |e| {
+                    c.err = e;
+                    return;
+                };
+            }
+        };
+        var ctx: Ctx = .{ .arena = arena };
         self.pushRef(r);
         L.pushInteger(w);
         L.pushInteger(h);
-        self.pcall(2, 1) catch {
+        self.pcallThen(2, 1, &ctx) catch {
             _ = diag.report(self, self.last_error orelse "") catch {};
             const row = try arena.alloc(Segment, 1);
             row[0] = .{ .text = self.last_error orelse "script error", .style = self.app.theme.error_fg };
@@ -737,8 +957,8 @@ pub const Lua = struct {
             rows[0] = row;
             return rows;
         };
-        defer L.pop(1);
-        return self.decodeRows(arena, -1);
+        if (ctx.err) |e| return e;
+        return ctx.rows;
     }
 
     fn decodeRows(self: *Lua, arena: Allocator, index: i32) Allocator.Error![]const []const Segment {
@@ -800,11 +1020,16 @@ pub const Lua = struct {
         return segs;
     }
 
+    /// `t[name]` when it is a string, copied onto the frame arena. The
+    /// read may run an `__index` (the callers are all inside a protected
+    /// call), and a string that metamethod made is anchored by nothing
+    /// once it is popped — so the slice handed back is never Lua's.
     fn stringField(L: *State, t: i32, name: [:0]const u8) ?[]const u8 {
         _ = L.getField(t, name);
         defer L.pop(1);
         if (L.typeOf(-1) != .string) return null;
-        return L.toString(-1) catch null;
+        const s = L.toString(-1) catch return null;
+        return of(L).app.frame.allocator().dupe(u8, s) catch L.raiseErrorStr("out of memory", .{});
     }
 
     fn boolField(L: *State, t: i32, name: [:0]const u8) bool {
@@ -852,19 +1077,27 @@ pub const Lua = struct {
     }
 
     /// A statusline segment's function → its text on the frame arena,
-    /// null to hide it.
-    fn callSegment(self: *Lua, r: LuaRef) ?[]const u8 {
-        const L = self.L;
-        self.pushRef(r);
-        self.pcall(0, 1) catch {
-            self.toastError("statusline segment");
-            return null;
+    /// null to hide it; `error.Failed` (toasted) when it errored. The
+    /// value's string form is taken inside the protected call: a
+    /// returned table's `__tostring` is script code.
+    fn callSegment(self: *Lua, r: LuaRef) error{Failed}!?[]const u8 {
+        const Ctx = struct {
+            text: ?[]const u8 = null,
+            pub fn decode(c: *@This(), lua: *Lua) void {
+                const L = lua.L;
+                if (L.isNoneOrNil(-1)) return;
+                const s = L.toStringEx(-1);
+                c.text = lua.app.frame.allocator().dupe(u8, s) catch null;
+                L.pop(1);
+            }
         };
-        defer L.pop(1);
-        if (L.isNoneOrNil(-1)) return null;
-        const s = L.toStringEx(-1);
-        defer L.pop(1);
-        return self.app.frame.allocator().dupe(u8, s) catch null;
+        var ctx: Ctx = .{};
+        self.pushRef(r);
+        self.pcallThen(0, 1, &ctx) catch {
+            self.toastError("statusline segment");
+            return error.Failed;
+        };
+        return ctx.text;
     }
 
     /// A picker source's `items(query)` → labels and details (gpa, the
@@ -873,14 +1106,35 @@ pub const Lua = struct {
     /// on_accept? }`.
     pub fn callItems(self: *Lua, r: LuaRef, query: []const u8, labels: *std.ArrayList([]u8), details: *std.ArrayList([]u8), icons: *std.ArrayList([]u8)) Allocator.Error!void {
         const L = self.L;
-        const gpa = self.gpa;
+        const Ctx = struct {
+            labels: *std.ArrayList([]u8),
+            details: *std.ArrayList([]u8),
+            icons: *std.ArrayList([]u8),
+            err: ?Allocator.Error = null,
+            pub fn decode(c: *@This(), lua: *Lua) void {
+                lua.decodeItems(c.labels, c.details, c.icons) catch |e| {
+                    c.err = e;
+                };
+            }
+        };
+        var ctx: Ctx = .{ .labels = labels, .details = details, .icons = icons };
         self.pushRef(r);
         _ = L.pushString(query);
-        self.pcall(1, 1) catch {
+        self.pcallThen(1, 1, &ctx) catch {
             self.toastError("picker items");
             return;
         };
-        defer L.pop(1);
+        if (ctx.err) |e| return e;
+    }
+
+    /// The items table at the top of the stack → the three lists and
+    /// `picker_items`. Runs inside `callItems`' protected call: every
+    /// read that can reach a metamethod happens before the row's strings
+    /// are duplicated, and each duplicate is owned by its list the moment
+    /// it exists, so an error mid-row leaks nothing.
+    fn decodeItems(self: *Lua, labels: *std.ArrayList([]u8), details: *std.ArrayList([]u8), icons: *std.ArrayList([]u8)) Allocator.Error!void {
+        const L = self.L;
+        const gpa = self.gpa;
         self.pickerClosed();
         if (!L.isTable(-1)) return;
         const n = L.lenRaw(-1);
@@ -904,22 +1158,25 @@ pub const Lua = struct {
             } else {
                 label = L.toString(-1) catch "";
             }
-            const l = try gpa.dupe(u8, label);
-            errdefer gpa.free(l);
-            const d = try gpa.dupe(u8, detail);
-            errdefer gpa.free(d);
-            const g = try gpa.dupe(u8, icon);
-            errdefer gpa.free(g);
             // The row table itself is kept, so `data` reaches `on_accept`
             // and `preview` exactly as the script wrote it.
             if (L.isTable(-1)) {
                 L.pushValue(-1);
                 row_ref = self.ref();
             }
-            try labels.append(gpa, l);
-            try details.append(gpa, d);
-            try icons.append(gpa, g);
-            try self.picker_items.append(gpa, .{ .on_accept = on_accept, .row = row_ref });
+            try self.picker_items.ensureUnusedCapacity(gpa, 1);
+            try labels.ensureUnusedCapacity(gpa, 1);
+            try details.ensureUnusedCapacity(gpa, 1);
+            try icons.ensureUnusedCapacity(gpa, 1);
+            const l = try gpa.dupe(u8, label);
+            errdefer gpa.free(l);
+            const d = try gpa.dupe(u8, detail);
+            errdefer gpa.free(d);
+            const g = try gpa.dupe(u8, icon);
+            labels.appendAssumeCapacity(l);
+            details.appendAssumeCapacity(d);
+            icons.appendAssumeCapacity(g);
+            self.picker_items.appendAssumeCapacity(.{ .on_accept = on_accept, .row = row_ref });
         }
     }
 
@@ -956,49 +1213,83 @@ pub const Lua = struct {
     pub fn callListRows(self: *Lua, r: LuaRef, sort: ?[]const u8) Allocator.Error!?[]script_list.Row {
         const L = self.L;
         const gpa = self.gpa;
+        // The rows are built inside the protected call and owned by the
+        // context, so a row whose read errors part-way leaves nothing
+        // behind: whatever was built is freed unless it is handed out.
+        const Ctx = struct {
+            gpa: Allocator,
+            out: std.ArrayListUnmanaged(script_list.Row) = .empty,
+            err: ?Allocator.Error = null,
+            pub fn decode(c: *@This(), lua: *Lua) void {
+                lua.decodeListRows(c.gpa, &c.out) catch |e| {
+                    c.err = e;
+                };
+            }
+        };
+        var ctx: Ctx = .{ .gpa = gpa };
+        defer {
+            for (ctx.out.items) |row| freeListRow(gpa, row);
+            ctx.out.deinit(gpa);
+        }
         self.pushRef(r);
         if (sort) |s| _ = L.pushString(s) else L.pushNil();
-        self.pcall(1, 1) catch {
+        self.pcallThen(1, 1, &ctx) catch {
             self.toastError("list rows");
             return null;
         };
-        defer L.pop(1);
-        if (!L.isTable(-1)) return try gpa.alloc(script_list.Row, 0);
+        if (ctx.err) |e| return e;
+        return try ctx.out.toOwnedSlice(gpa);
+    }
+
+    fn freeListRow(gpa: Allocator, row: script_list.Row) void {
+        gpa.free(row.label);
+        gpa.free(row.detail);
+        gpa.free(row.icon);
+        gpa.free(row.state);
+    }
+
+    /// The rows table at the top of the stack → `out`. Every read that
+    /// can reach a metamethod is done (onto the frame arena) before the
+    /// row's strings are duplicated onto the gpa and appended.
+    fn decodeListRows(self: *Lua, gpa: Allocator, out: *std.ArrayListUnmanaged(script_list.Row)) Allocator.Error!void {
+        const L = self.L;
+        if (!L.isTable(-1)) return;
         const n = L.lenRaw(-1);
-        var out: std.ArrayListUnmanaged(script_list.Row) = .empty;
-        errdefer {
-            @import("../app/script_list.zig").freeRows(gpa, out.items);
-            out = .empty;
-        }
         try out.ensureTotalCapacity(gpa, n);
         var i: usize = 1;
         while (i <= n) : (i += 1) {
             _ = L.getIndex(-1, @intCast(i));
             defer L.pop(1);
-            var row: script_list.Row = .{ .index = @intCast(i - 1) };
+            var header = false;
+            var label: []const u8 = "";
+            var detail: []const u8 = "";
+            var icon: []const u8 = "";
+            var state: []const u8 = "";
+            var count: u32 = 0;
             if (L.isTable(-1)) {
                 if (stringField(L, -1, "header")) |h| {
-                    row.header = true;
-                    row.label = try gpa.dupe(u8, h);
-                } else row.label = try gpa.dupe(u8, stringField(L, -1, "label") orelse "");
-                errdefer gpa.free(row.label);
-                row.detail = try gpa.dupe(u8, stringField(L, -1, "detail") orelse "");
-                errdefer gpa.free(row.detail);
-                row.icon = try gpa.dupe(u8, stringField(L, -1, "icon") orelse "");
-                errdefer gpa.free(row.icon);
-                row.state = try gpa.dupe(u8, stringField(L, -1, "state") orelse "");
+                    header = true;
+                    label = h;
+                } else label = stringField(L, -1, "label") orelse "";
+                detail = stringField(L, -1, "detail") orelse "";
+                icon = stringField(L, -1, "icon") orelse "";
+                state = stringField(L, -1, "state") orelse "";
                 _ = L.getField(-1, "count");
-                row.count = if (L.toInteger(-1)) |c| @intCast(@max(c, 0)) else |_| 0;
+                count = if (L.toInteger(-1)) |c| @intCast(std.math.clamp(c, 0, std.math.maxInt(u32))) else |_| 0;
                 L.pop(1);
             } else {
-                row.label = try gpa.dupe(u8, L.toString(-1) catch "");
-                row.detail = try gpa.dupe(u8, "");
-                row.icon = try gpa.dupe(u8, "");
-                row.state = try gpa.dupe(u8, "");
+                label = L.toString(-1) catch "";
             }
-            try out.append(gpa, row);
+            var row: script_list.Row = .{ .index = @intCast(i - 1), .header = header, .count = count };
+            row.label = try gpa.dupe(u8, label);
+            errdefer gpa.free(row.label);
+            row.detail = try gpa.dupe(u8, detail);
+            errdefer gpa.free(row.detail);
+            row.icon = try gpa.dupe(u8, icon);
+            errdefer gpa.free(row.icon);
+            row.state = try gpa.dupe(u8, state);
+            out.appendAssumeCapacity(row);
         }
-        return try out.toOwnedSlice(gpa);
     }
 
     /// Push row `index` of `l`'s last `rows()` answer as a table — what
@@ -1036,34 +1327,49 @@ pub const Lua = struct {
     /// `arena` (the menu's own); the `run` refs are kept until the next
     /// menu opens, so a click can reach them.
     pub fn callMenu(self: *Lua, r: LuaRef, l: *const script_list.List, index: u32, arena: Allocator) Allocator.Error![]const []const u8 {
-        const L = self.L;
+        const Ctx = struct {
+            arena: Allocator,
+            labels: std.ArrayListUnmanaged([]const u8) = .empty,
+            err: ?Allocator.Error = null,
+            pub fn decode(c: *@This(), lua: *Lua) void {
+                lua.decodeMenu(c.arena, &c.labels) catch |e| {
+                    c.err = e;
+                };
+            }
+        };
+        var ctx: Ctx = .{ .arena = arena };
         self.dropMenuItems();
         self.pushRef(r);
         self.pushListRow(l, index);
-        self.pcall(1, 1) catch {
+        self.pcallThen(1, 1, &ctx) catch {
             self.toastError("list on_menu");
             return &.{};
         };
-        defer L.pop(1);
-        if (!L.isTable(-1)) return &.{};
+        if (ctx.err) |e| return e;
+        return ctx.labels.items;
+    }
+
+    /// `{ { label, run }, … }` at the top of the stack → labels on
+    /// `arena`, the `run` refs into `menu_items` (one per label, in step).
+    fn decodeMenu(self: *Lua, arena: Allocator, labels: *std.ArrayListUnmanaged([]const u8)) Allocator.Error!void {
+        const L = self.L;
+        if (!L.isTable(-1)) return;
         const n = L.lenRaw(-1);
-        var labels: std.ArrayListUnmanaged([]const u8) = .empty;
         var i: usize = 1;
         while (i <= n) : (i += 1) {
             _ = L.getIndex(-1, @intCast(i));
             defer L.pop(1);
             if (!L.isTable(-1)) continue;
             const label = stringField(L, -1, "label") orelse continue;
-            const owned = try arena.dupe(u8, label);
             _ = L.getField(-1, "run");
             if (!L.isFunction(-1)) {
                 L.pop(1);
                 continue;
             }
-            try self.menu_items.append(self.gpa, self.ref());
-            try labels.append(arena, owned);
+            try self.menu_items.ensureUnusedCapacity(self.gpa, 1);
+            try labels.append(arena, label);
+            self.menu_items.appendAssumeCapacity(self.ref());
         }
-        return labels.items;
     }
 
     /// A row menu's entry was clicked: its `run()`.
@@ -1116,17 +1422,29 @@ pub const Lua = struct {
     /// preview column, gpa-owned (the overlay holds them across frames,
     /// and the frame arena does not survive one).
     pub fn callPreview(self: *Lua, r: LuaRef, i: usize, label: []const u8) Allocator.Error![][]Segment {
-        const L = self.L;
+        // The decode's scratch arena is the context's, so it is released
+        // whether the decode finished or a read inside it errored.
+        const Ctx = struct {
+            arena_state: std.heap.ArenaAllocator,
+            rows: []const []const Segment = &.{},
+            err: ?Allocator.Error = null,
+            pub fn decode(c: *@This(), lua: *Lua) void {
+                c.rows = lua.decodeRows(c.arena_state.allocator(), -1) catch |e| {
+                    c.err = e;
+                    return;
+                };
+            }
+        };
+        var ctx: Ctx = .{ .arena_state = std.heap.ArenaAllocator.init(self.gpa) };
+        defer ctx.arena_state.deinit();
         self.pushRef(r);
         self.pushRow(i, label);
-        self.pcall(1, 1) catch {
+        self.pcallThen(1, 1, &ctx) catch {
             self.toastError("picker preview");
             return &.{};
         };
-        defer L.pop(1);
-        var arena_state = std.heap.ArenaAllocator.init(self.gpa);
-        defer arena_state.deinit();
-        const rows = try self.decodeRows(arena_state.allocator(), -1);
+        if (ctx.err) |e| return e;
+        const rows = ctx.rows;
         // Onto the gpa: the preview outlives this frame.
         const out = try self.gpa.alloc([]Segment, rows.len);
         var made: usize = 0;
@@ -1165,9 +1483,14 @@ pub const Lua = struct {
     /// every task whose pane exited.
     pub fn tick(self: *Lua, now: i64) Allocator.Error!void {
         for (self.segments.items) |*s| {
-            if (now < s.next_poll_ms) continue;
+            if (s.failed or now < s.next_poll_ms) continue;
             s.next_poll_ms = now + segment_poll_ms;
-            const fresh = self.callSegment(s.func);
+            // An error is one toast, not one every 250 ms for the rest of
+            // the session: the segment latches off until a reload.
+            const fresh = self.callSegment(s.func) catch blk: {
+                s.failed = true;
+                break :blk null;
+            };
             const same = if (s.text) |old| (if (fresh) |f| std.mem.eql(u8, old, f) else false) else fresh == null;
             if (same) continue;
             if (s.text) |old| self.gpa.free(old);
@@ -1249,7 +1572,9 @@ pub const Lua = struct {
 
     pub fn nextDeadlineMs(self: *const Lua) ?i64 {
         var next: ?i64 = null;
-        for (self.segments.items) |s| next = @min(next orelse std.math.maxInt(i64), s.next_poll_ms);
+        for (self.segments.items) |s| if (!s.failed) {
+            next = @min(next orelse std.math.maxInt(i64), s.next_poll_ms);
+        };
         if (self.tasks.items.len > 0) next = @min(next orelse std.math.maxInt(i64), self.app.now_ms + 100);
         return next;
     }
@@ -1341,6 +1666,124 @@ test "budget: an infinite loop trips after the deadline and the app survives" {
     try testing.expect(std.mem.indexOf(u8, app.toasts.items[0].text, "budget") != null);
 }
 
+test "budget: a trip cannot be caught — pcall and xpcall rethrow it, loops around them end" {
+    // The trip used to be a plain `error()`. A script's own `pcall`
+    // caught it, the deadline stayed past, the hook raised again a
+    // hundred thousand instructions later, the `pcall` caught that too —
+    // forever, at 100% CPU, with the UI thread never coming back.
+    var app = try App.init(testing.allocator, testing.io);
+    defer app.deinit();
+    const lua = app.script();
+    const top = lua.L.getTop();
+    const cases = [_][]const u8{
+        "while true do pcall(function() while true do end end) end",
+        "while true do xpcall(function() while true do end end, function(m) return m end) end",
+        // A handler that itself loops, and one that rewrites the message.
+        "xpcall(function() while true do end end, function() while true do end end)",
+        "while true do xpcall(function() while true do end end, function() return 'swallowed' end) end",
+        // Protected calls stacked deep, each one retrying.
+        "local function f(n) if n == 0 then while true do end end; while true do pcall(f, n - 1) end end; f(5)",
+    };
+    for (cases, 1..) |src, n| {
+        try testing.expectError(error.Failed, lua.runString(src));
+        try testing.expect(std.mem.indexOf(u8, lua.last_error.?, budget_msg) != null);
+        try testing.expectEqual(@as(u32, @intCast(n)), lua.budget_hits);
+        try testing.expect(!lua.tripped);
+        try testing.expectEqual(@as(u32, 0), lua.depth);
+    }
+    // An ordinary error is still an ordinary error to `pcall`, and the
+    // state works afterwards.
+    try lua.runString("local ok, err = pcall(error, 'plain'); assert(not ok and err == 'plain')");
+    try lua.runString("local ok = xpcall(function() return 1 end, print); assert(ok)");
+    try testing.expectEqual(top, lua.L.getTop());
+}
+
+test "budget: a long pattern match is cut inside the C call, not after it" {
+    // The budget is a count hook, and a hook runs between VM
+    // instructions — one `string.find` is one instruction. A quadratic
+    // pattern over a long subject held the UI thread for seconds with
+    // the deadline long past and nothing looking at it.
+    var app = try App.init(testing.allocator, testing.io);
+    defer app.deinit();
+    const lua = app.script();
+    const cases = [_][]const u8{
+        "local s = string.rep('a', 100000); return s:find('.-b')",
+        "local s = string.rep('a', 100000); return (s:gsub('a-b', ''))",
+        "local s = string.rep('a', 100000); for _ in s:gmatch('a*b') do end",
+        "local s = string.rep('(', 100000); return s:find('%b()')",
+    };
+    for (cases, 1..) |src, n| {
+        try testing.expectError(error.Failed, lua.runString(src));
+        try testing.expect(std.mem.indexOf(u8, lua.last_error.?, budget_msg) != null);
+        try testing.expectEqual(@as(u32, @intCast(n)), lua.budget_hits);
+    }
+    // An honest match is untouched, and a match is not the budget's
+    // outside a budgeted call.
+    try lua.runString("assert(('hello world'):find('o w') == 5 and ('a,b'):gsub(',', ';') == 'a;b')");
+}
+
+test "a statusline segment that errors toasts once and is not polled again until a reload" {
+    // A segment was polled every 250 ms forever and each error was a
+    // fresh toast: 118 in the message log after half a minute.
+    var app = try App.init(testing.allocator, testing.io);
+    defer app.deinit();
+    const lua = app.script();
+    try lua.runString("N = 0; mnml.statusline.segment{ id = 'bad', fn = function() N = N + 1; error('SEGBOOM') end }");
+    const toasts_before = app.toasts.items.len;
+    var now: i64 = 1_000;
+    for (0..8) |_| {
+        try lua.tick(now);
+        now += segment_poll_ms;
+    }
+    try lua.runString("assert(N == 1, 'polled ' .. N .. ' times')");
+    try testing.expectEqual(toasts_before + 1, app.toasts.items.len);
+    try testing.expect(lua.nextDeadlineMs() == null);
+    // A reload is a fresh start: the new segment is asked again.
+    try lua.reset();
+    try lua.runString("N = 0; mnml.statusline.segment{ id = 'bad', fn = function() N = N + 1; return 'ok' end }");
+    try lua.tick(now);
+    try lua.tick(now + segment_poll_ms);
+    try lua.runString("assert(N == 2, 'polled ' .. N .. ' times')");
+}
+
+test "load compiles source text only: a precompiled chunk is refused, text and env work as before" {
+    var app = try App.init(testing.allocator, testing.io);
+    defer app.deinit();
+    const lua = app.script();
+    try lua.runString(
+        \\local f, err = load(string.dump(function() return 42 end))
+        \\assert(f == nil and err:find('binary'), tostring(err))
+        \\f, err = load(string.dump(function() return 42 end), 'x', 'b')
+        \\assert(f == nil and err:find('binary'), tostring(err))
+        \\assert(load('return 1 + 1')() == 2)
+        \\assert(load('return x', 'chunk', 'bt', { x = 7 })() == 7)
+        \\assert(load('return y', 'chunk')() == nil)
+    );
+}
+
+test "a metatable with __gc is refused, so no finalizer ever runs unbudgeted" {
+    // A finalizer runs with Lua's hooks switched off — on the state's
+    // close at a reload or a quit, or mid-collection — so the budget
+    // could never cut one that loops; `script.reload` hung for good.
+    var app = try App.init(testing.allocator, testing.io);
+    defer app.deinit();
+    const lua = app.script();
+    try testing.expectError(error.Failed, lua.runString("KEEP = setmetatable({}, { __gc = function() while true do end end })"));
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "__gc") != null);
+    // Any value marks the object, a later function would then run: refused too.
+    try testing.expectError(error.Failed, lua.runString("local mt = { __gc = false }; KEEP = setmetatable({}, mt); mt.__gc = function() while true do end end"));
+    // Every other metatable is untouched.
+    try lua.runString(
+        \\local t = setmetatable({}, { __index = function() return 7 end })
+        \\assert(t.x == 7 and getmetatable(t) ~= nil)
+        \\local mt = {}; local u = setmetatable({}, mt); mt.__gc = function() while true do end end
+        \\assert(getmetatable(setmetatable(u, nil)) == nil)
+    );
+    // The close a reload does runs no finalizer that could hang it.
+    try lua.reset();
+    try lua.runString("collectgarbage('collect')");
+}
+
 test "the frame budget is a shipped-build promise; Debug gets a runaway budget derived from the same slowdown" {
     // The regression this pins. `budget_ms` was a flat 20 ms of wall
     // clock, but most of what it bounds is HOST code — `mnml.commands()`
@@ -1375,6 +1818,61 @@ test "the frame budget is a shipped-build promise; Debug gets a runaway budget d
     // Runaway, not unbounded: `while true do end` still costs one toast
     // rather than the editor, so the figure stays inside a few seconds.
     try testing.expect(budget_ms > 0 and budget_ms <= 10_000);
+}
+
+fn globalRef(lua: *Lua, name: [:0]const u8) LuaRef {
+    _ = lua.L.getGlobal(name);
+    return lua.ref();
+}
+
+test "a returned value's metamethods run inside the protected call: an error there is a message, not an abort" {
+    // Reading what a script returned runs the script's code when the
+    // value has a metatable — `__index` on a row's field, `__tostring`
+    // on a segment's text. Those reads used to happen after `pcall` had
+    // returned, where a Lua error has nowhere to land and the process
+    // aborts; each call below would take the test runner down with it.
+    var app = try App.init(testing.allocator, testing.io);
+    defer app.deinit();
+    const lua = app.script();
+    const top = lua.L.getTop();
+    try lua.runString(
+        \\local boom = function(what) return setmetatable({}, { __index = function() error(what) end, __tostring = function() error(what) end }) end
+        \\function render() return { boom('ROW-BOOM') } end
+        \\function segment() return boom('SEG-BOOM') end
+        \\function rows() return { boom('LIST-BOOM') } end
+        \\function items() return { boom('ITEM-BOOM') } end
+        \\function preview() return { boom('PREVIEW-BOOM') } end
+    );
+    const rows = try lua.callRender(globalRef(lua, "render"), 20, 4);
+    try testing.expectEqual(@as(usize, 1), rows.len);
+    try testing.expect(std.mem.indexOf(u8, rows[0][0].text, "ROW-BOOM") != null);
+    try testing.expectError(error.Failed, lua.callSegment(globalRef(lua, "segment")));
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "SEG-BOOM") != null);
+    try testing.expect((try lua.callListRows(globalRef(lua, "rows"), null)) == null);
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "LIST-BOOM") != null);
+    var labels: std.ArrayList([]u8) = .empty;
+    var details: std.ArrayList([]u8) = .empty;
+    var icons: std.ArrayList([]u8) = .empty;
+    defer {
+        for (labels.items) |x| testing.allocator.free(x);
+        for (details.items) |x| testing.allocator.free(x);
+        for (icons.items) |x| testing.allocator.free(x);
+        labels.deinit(testing.allocator);
+        details.deinit(testing.allocator);
+        icons.deinit(testing.allocator);
+    }
+    try lua.callItems(globalRef(lua, "items"), "", &labels, &details, &icons);
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "ITEM-BOOM") != null);
+    try testing.expectEqual(@as(usize, 0), (try lua.callPreview(globalRef(lua, "preview"), 0, "x")).len);
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "PREVIEW-BOOM") != null);
+    try testing.expectError(error.Failed, lua.eval("setmetatable({}, { __tostring = function() error('EVAL-BOOM') end })"));
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "EVAL-BOOM") != null);
+    // A well-behaved metatable still reads: the decode is protected, not raw.
+    try lua.runString("function proxy() return { setmetatable({}, { __index = function(_, k) if k == 'text' then return 'VIA-INDEX' end end }) } end");
+    const via = try lua.callRender(globalRef(lua, "proxy"), 20, 4);
+    try testing.expectEqualStrings("VIA-INDEX", via[0][0].text);
+    try testing.expectEqual(top, lua.L.getTop());
+    try lua.runString("assert(1 + 1 == 2)");
 }
 
 test "a runtime error carries a traceback and leaves the stack level" {

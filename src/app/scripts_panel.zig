@@ -481,6 +481,21 @@ fn toggleTab(app: *App) CommandError!void {
     setTab(app, st.tab.next(showDev(app)));
 }
 
+/// What `i` installs: on the Marketplace tab with a shipped row focused,
+/// THAT row (its trust dialog) — the prompt for a git URL, an archive or
+/// a folder is the wrong question over a row that already names the
+/// script. Anywhere else, the prompt.
+fn installKey(app: *App) command.CommandId {
+    const st = &app.scripts_panel;
+    if (st.tab != .marketplace) return .@"script.install";
+    const list = rows(app, app.frame.allocator()) catch return .@"script.install";
+    if (st.panel.cursor >= list.len) return .@"script.install";
+    return switch (list[st.panel.cursor].kind) {
+        .market => .@"script.marketplace_install",
+        else => .@"script.install",
+    };
+}
+
 /// `script.marketplace_install`: the focused Marketplace row, staged and
 /// then put in front of the trust dialog like any other source.
 fn installFocusedMarket(app: *App) CommandError!void {
@@ -573,7 +588,7 @@ pub fn handleKey(app: *App, k: Key) Allocator.Error!bool {
                 st.sort = st.sort.next();
             },
             'n' => runToast(app, newInit(app)),
-            'i' => runToast(app, command.run(app, .{ .static = .@"script.install" })),
+            'i' => runToast(app, command.run(app, .{ .static = installKey(app) })),
             'e' => runToast(app, command.run(app, .{ .static = .@"script.toggle_enabled" })),
             'x' => runToast(app, command.run(app, .{ .static = .@"script.remove" })),
             'd' => runToast(app, command.run(app, .{ .static = .@"script.doctor" })),
@@ -998,6 +1013,42 @@ test "SCRIPTS: three tabs — Installed lists init.lua and each script, Marketpl
     try t.expectEqual(@as(usize, 1), mkt.len);
     try t.expect(mkt[0].entry.dim);
     try t.expectEqualStrings("installed", mkt[0].entry.source);
+}
+
+test "SCRIPTS: `i` on a Marketplace row installs that row; elsewhere it asks for a source" {
+    // `i` was `script.install` on every tab: over a shipped row it asked
+    // for a git URL, an archive or a folder instead of installing it.
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, "data");
+    try writeScript(tmp.dir, t.io, "index", "tidy",
+        \\.{ .name = "tidy", .api = 1, .version = "0.9.0", .description = "Tidies things", .source = .marketplace }
+    ,
+        \\mnml.command{ id = "tidy", run = function() end }
+    );
+    const data = try std.fs.path.join(t.allocator, &.{ root, "data" });
+    defer t.allocator.free(data);
+    var cfg: @import("../config/Config.zig") = .{};
+    cfg.scripts.marketplace_local = "index";
+    var app = try App.initWith(t.allocator, t.io, .{ .cfg = cfg, .workspace = root, .data_root = data, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"view.activity_scripts" });
+    focusPanel(&app);
+    // Installed tab: the source prompt.
+    try app.handle(.{ .key = Key.char('i') });
+    try t.expect(app.overlay == .prompt);
+    try app.handle(.{ .key = Key.named(.esc) });
+    focusPanel(&app);
+    // Marketplace tab, the shipped row focused: its trust dialog.
+    try app.handle(.{ .key = Key.char('2') });
+    try t.expectEqual(Tab.marketplace, app.scripts_panel.tab);
+    app.scripts_panel.panel.cursor = 0;
+    try app.handle(.{ .key = Key.char('i') });
+    try t.expect(app.overlay == .confirm);
+    try t.expect(std.mem.indexOf(u8, app.overlay.confirm.message, "tidy 0.9.0") != null);
 }
 
 test "SCRIPTS: a row's menu enables, disables, reloads and jumps to what the script registered" {

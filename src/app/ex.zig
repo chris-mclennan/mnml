@@ -523,16 +523,10 @@ fn writeToCommand(app: *App, e: *EditorPane, range: ?Range, cmd_in: []const u8) 
     } else app.toast(":w !{s} — killed", .{cmd});
 }
 
+/// `:wa` is `file.save_all`: every dirty editor through the one save
+/// path, so the save hooks and everything after a save run for each.
 fn saveAll(app: *App) CommandError!void {
-    var n: usize = 0;
-    for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-        .editor => |*e| if (e.buf.doc.dirty and e.buf.doc.path != null) {
-            e.buf.save(app.io) catch |err| return app.diag.fail(app.frame.allocator(), ":wa — {s}: {s}{s}", .{ app.relPath(e.buf.doc.path.?), @errorName(err), e.buf.saveFailNote() });
-            n += 1;
-        },
-        else => {},
-    };
-    app.toast("saved {d} file(s)", .{n});
+    return @import("cmd_file.zig").saveAll(app);
 }
 
 /// `:q` closes the window; the buffer stays when another window shows

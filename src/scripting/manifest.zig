@@ -83,6 +83,13 @@ pub const Manifest = struct {
 
 pub const ParseError = error{ BadManifest, OutOfMemory };
 
+/// The fields `text` names that `script.zon` has no place for — a typo
+/// or a later mnml's field, dropped by `parse` either way
+/// (`core/zon_fields.zig`).
+pub fn unknownFields(arena: Allocator, text: [:0]const u8) Allocator.Error![]const []const u8 {
+    return @import("../core/zon_fields.zig").unknown(Manifest, arena, text);
+}
+
 /// `script.zon`'s text as a `Manifest` on `arena`. Unknown fields are
 /// ignored so a manifest written for a later mnml still reads far
 /// enough to say so. A diagnostic lands in `why`.

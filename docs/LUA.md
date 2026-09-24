@@ -82,9 +82,20 @@ Lua state, and a `require` scoped to its own folder.
 Every call into Lua — a chunk, a command, a hook, a render, one line of a
 hidden task's output — runs under a count hook that fires every 100 000 VM
 instructions and checks a **20 ms deadline** armed at the outermost entry.
-Past it the call is aborted with `mnml: script budget exceeded`; the script
-sees it as an error, the user as a toast, and the editor keeps running.
-`while true do end` in an `init.lua` costs one toast.
+Past it the call is aborted with `mnml: script budget exceeded`; the user
+sees a toast, and the editor keeps running. `while true do end` in an
+`init.lua` costs one toast.
+
+The abort cannot be caught. A script's own `pcall` / `xpcall` rethrow it
+rather than returning `false`, and from the moment it trips every further
+instruction raises it again, so `while true do pcall(loop) end` ends the
+same way the bare loop does. An `xpcall` message handler is not run for it.
+
+A pattern match is covered too: the matcher behind `string.find`, `match`,
+`gmatch` and `gsub` checks the budget itself, so a quadratic pattern over
+a long string is cut inside the call rather than after it. Other library
+calls are cut at the next instruction after they return; their cost is
+linear (or n log n) in data the script built or a size it named.
 
 The 20 ms is the SHIPPED build's, and it is a frame budget. Most of what
 it bounds is host code — `mnml.commands()` walks eleven hundred command
@@ -801,7 +812,8 @@ mnml.inspect(v) takes one value — any type, nil included
 #### `mnml.statusline.segment{ id, side?, fn }`
 
 A segment of the script's own. `fn()` is polled every 250 ms; returning nil
-hides it. `side` is `"left"` or `"right"` — both sit in the right-hand
+hides it. A `fn` that errors is toasted once and the segment goes quiet —
+hidden, and not asked again until the script reloads. `side` is `"left"` or `"right"` — both sit in the right-hand
 cluster, `left` ones at its inner edge, `right` ones after the built-in chips
 (branch, diagnostics, AI meter). Registering an id again replaces its
 function.
@@ -1240,12 +1252,15 @@ local scripts = mnml.data_root() .. "/scripts"
 | `script.run_selection` | vim `<leader>sr`, standard `ctrl+alt+enter` | runs the selected lines — or the cursor line — in the script state |
 | `script.doctor` | `d` in the SCRIPTS section | the report: every state, its api, its source, whether it is enabled, its budget overruns this session, its hooks, its `require` root and its namespaces with live decoration counts — plus the three folders a script can be scanned from |
 | `script.install` | `i` in the SCRIPTS section | installs from a path, a git URL or an archive |
+| `script.marketplace_install` | `i` on a Marketplace row, the row's menu | installs the focused Marketplace row, through its trust dialog |
 | `script.new_init` | `n` in the SCRIPTS section | writes the workspace `init.lua` from the commented template |
 | `view.activity_scripts` | the rail's 󰢱 | opens the SCRIPTS section |
 
 The SCRIPTS section's own keys: `1` `2` `3` or `h` `l` / Tab pick a tab, `/`
 filters, `s` cycles the sort (its chip's right-click lists every mode with a
-✓), `r` refreshes, `i` installs, `e` enables or disables the focused row, `x`
+✓), `r` refreshes, `i` installs (the focused row, on the Marketplace tab;
+otherwise it asks for a path, git URL or archive), `e` enables or disables
+the focused row, `x`
 removes it, `d` opens `script.doctor`. Enter opens the focused script's
 README — the file itself, for `init.lua`.
 
@@ -1419,6 +1434,13 @@ once, which is what a unit test runs to prove they all still load together.
 - **No `os`, `io`, `package`, `debug`; no `dofile` or `loadfile`.** The two
   `init.lua` files are one file each; an installed script gets a `require`
   scoped to its own directory and nothing wider.
+- **No precompiled chunks.** `load` compiles source text only (its mode is
+  always `"t"`); Lua does not verify bytecode, so a binary chunk is never
+  run.
+- **No `__gc` finalizers.** `setmetatable` refuses a metatable with a
+  `__gc` field. A finalizer runs with Lua's hooks off — when a reload or a
+  quit closes the state, or mid-collection — so the budget could never cut
+  one, and a looping one hung the reload.
 - **No colour values.** Roles only, so a script looks right in every theme.
 - **No app handle, no raw buffer pointer.** Reads are copies; writes are
   `EditOp`s through the one chokepoint.
@@ -1435,7 +1457,9 @@ once, which is what a unit test runs to prove they all still load together.
 `tests/e2e/lua_init.test` shows the shape: `write .mnml/init.lua "…"`,
 `command script.reload`, then `command user.<id>` and `expect screen contains
 …`. The `.test` runner's temp workspace is trusted, so the workspace file
-runs. Unit tests reach the state as `app.script()` and run chunks with
+runs. A command that is MEANT to error runs as `command! user.<id>`: the
+step passes only when the command fails, where a plain `command` step fails
+on it. Unit tests reach the state as `app.script()` and run chunks with
 `runString`.
 
 A test that drives a script **file** rather than an inline one copies it in

@@ -768,6 +768,10 @@ fn bufApply(L: *State) !i32 {
     const arena = c.app.frame.allocator();
     const op = try decodeOp(L, arena, 1);
     const changed = try c.app.applyOps(e, &.{op});
+    // The change is the last change, as the same op from a key would
+    // be: `.` repeats it. (`App.applyOps` leaves dot to its caller —
+    // the key path records itself.)
+    if (changed) try e.buf.trackAppOps(&.{op}, arena);
     L.pushBoolean(changed);
     return 1;
 }
@@ -1805,11 +1809,21 @@ pub fn callHttpHook(self: *Lua, r: LuaRef, args: hooks.HookArgs) void {
             L.setField(-2, "headers");
             if (a.body) |b| setStrField(L, "body", b);
             if (a.env) |e| setStrField(L, "env", e);
-            self.pcall(1, 1) catch return toastHookError(self);
-            defer L.pop(1);
-            if (L.isTable(-1)) readRewrite(L, -1, a.rewrite) catch {
-                self.app.toastLevel(.err, "hook: out of memory reading the http_request result", .{}) catch {};
+            // The result is read inside the protected call: its fields
+            // may be behind an `__index`, its header values behind a
+            // `__tostring` — the script's own code either way.
+            const Ctx = struct {
+                rewrite: *hooks.HttpRewrite,
+                oom: bool = false,
+                pub fn decode(c: *@This(), lua: *Lua) void {
+                    if (lua.L.isTable(-1)) readRewrite(lua.L, -1, c.rewrite) catch {
+                        c.oom = true;
+                    };
+                }
             };
+            var rw_ctx: Ctx = .{ .rewrite = a.rewrite };
+            self.pcallThen(1, 1, &rw_ctx) catch return toastHookError(self);
+            if (rw_ctx.oom) self.app.toastLevel(.err, "hook: out of memory reading the http_request result", .{}) catch {};
         },
         .http_response => |a| {
             L.newTable();
@@ -2189,6 +2203,22 @@ test "mnml.command registers user.<id>, binds its keys, runs, and a reload unreg
     try testing.expect(app.dyn_commands.get("user.hello") == null);
     try testing.expect(app.keymap.resolveSeq(keymap.parseKeySeqBuf("ctrl+shift+h", &buf).?) == .none);
     try testing.expectEqual(@as(i32, 0), lua.L.getTop());
+}
+
+test "mnml.buf.apply's change is the last change: vim's `.` repeats it" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    const lua = app.script();
+    _ = try app.openScratchWith("abc");
+    try lua.runString("assert(mnml.buf.apply{ op = 'insert_str', text = 'X' })");
+    const e = app.activeEditor().?;
+    try testing.expectEqualStrings("Xabc", e.buf.editor.bytes());
+    try command.run(&app, .{ .static = .@"vim.dot_repeat" });
+    try testing.expectEqualStrings("XXabc", e.buf.editor.bytes());
+    // A move is not a change: `.` still repeats the insert.
+    try lua.runString("assert(not mnml.buf.apply{ op = 'move_to_line', line = 1 })");
+    try command.run(&app, .{ .static = .@"vim.dot_repeat" });
+    try testing.expectEqualStrings("XXXabc", e.buf.editor.bytes());
 }
 
 test "mnml.on fires with the marshalled args; mnml.buf.apply goes through EditOp and undo works" {
