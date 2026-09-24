@@ -105,7 +105,8 @@ remaining fixed `wait`s as a category.
 
 | Site | Shared | Fix |
 |---|---|---|
-| Every file's environment | the whole run environment: tokens, `CLAUDECODE`, `MNML_IPC_DIR` of the mnml whose terminal the run was started in (an integration under test wrote into that live channel), `XDG_CONFIG_HOME`, `SHELL` | `hermeticEnv`: `PATH`, temp dirs, user/locale, Windows' system variables, `ZIG_*`, `MNML_E2E_*` and the runner's own helper paths; nothing else |
+| Every file's environment | the whole run environment: tokens, `CLAUDECODE`, `MNML_IPC_DIR` of the mnml whose terminal the run was started in (an integration under test wrote into that live channel), `XDG_CONFIG_HOME` | `hermeticEnv`: `PATH`, temp dirs, user/locale, Windows' system variables, `ZIG_*`, `MNML_E2E_*` and the runner's own helper paths; nothing else |
+| `SHELL` (a terminal pane's shell, `pty.shellArgv`) | dropped with the rest, every pty file got `/bin/sh`: no bracketed paste, so a pasted block ran line by line (`pty_paste_sanitized` had to name zsh in its own `# env:`) | pinned: `/bin/zsh` on macOS — the platform's login shell, the one the corpus was written in, whatever the developer runs — and the host's `$SHELL` elsewhere; a file's `# env: SHELL=` wins (runner test `SHELL reaches a file's environment`) |
 | The real `HOME` (corpus) | git identity, `~/.config/mnml`, Claude transcripts, `~/.tattle-claude-artifacts` buckets | `HOME=<run root>/home` |
 | The real `HOME` (unit binaries) | the same; `persist_*` paths rewrote `~/.config/mnml`. The first run with a private HOME found the suite writing `.npm/`, `.rustup/settings.toml`, `.local/state/gh`, `.zsh_history`, `Library/Caches/node-gyp` and `Library/Application Support/vitest` into it — all of that used to land in the developer's own | `HOME=<cache>/unit-home`, live-state variables removed (`build.zig` `hermeticUnitEnv`) |
 | `app/tests_pane.zig` unit tests (`test.run_playwright …`, `test.run_all on a vitest project …`) | ran the machine's real `npx playwright` / `npx vitest`, which fetched both from the npm registry in the background — network, CPU and an npm cache write, for a run the test cancels | the App's `PATH` is an empty directory: the spawn fails at once, as the test already allowed |
@@ -141,6 +142,17 @@ long `TMPDIR` is: the pane clips it, the dialog wraps it.
 | `integrations_warmer_bitbucket_conditional` | the three `wait 4000`s → `expect within 20000–30000` on the screen and the wire log |
 | `session_restore_claude_resume`, `session_restore_codex_resume` | checked: both fakes keep their first session alive until the restore replaces it, and the assertions are on `argv.log`, polled; they passed in both concurrent runs |
 | The rest of the corpus: 348 files with a `wait` | every `expect` already polls for 3 s (`expect_budget_ms`); a `wait` before a key is the remaining risk. Not rewritten wholesale — the retry reports any that flake by name (`FLAKY`), which is where the next one to fix comes from |
+
+### Tools that read the real `HOME` (2 known, each with its workaround)
+
+A file's `HOME` is empty and the run's own. Two tools on a developer's
+machine resolve state from `HOME` and misbehave without it; neither is
+in the corpus, but a hunt repro that drives them meets both.
+
+| Tool | What breaks under the private `HOME` | The sanctioned workaround |
+|---|---|---|
+| Chrome (the browser pane, `http.proxy`) on macOS | Chrome creates its "Safe Storage" keychain item on first launch; with no login keychain under that `HOME` it wedges in `SecKeychainItemCreateFromContent → makeLoginAuthUI` — no DevTools line, and it ignores SIGTERM. (Closing such a pane used to hang the app for good; `Launch.kill` now SIGKILLs after a grace, so it only fails the file.) | `--use-mock-keychain`, and it belongs in the **test's Chrome wrapper**, never in `cdp.chromeArgv` — that argv launches the user's own Chrome, whose real keychain is the right one. A file that launches a real Chrome puts a `chrome-for-testing` wrapper first on its `PATH` (`# env: PATH=<dir>:${PATH}`) that runs `exec "<Chrome binary>" --headless=new --use-mock-keychain "$@"`. `chrome-for-testing` is the first bare name `cdp.candidates` tries, after the puppeteer cache under `HOME` (empty here) — but after the absolute `/Applications/Google Chrome for Testing.app` path, so on a machine with that app installed the wrapper is not reached. |
+| rustup's proxies (`cargo`, `rustc`, `rust-analyzer` in `~/.cargo/bin`) | a proxy finds its toolchains through `$RUSTUP_HOME`, by default `$HOME/.rustup`; under the run's `HOME` it has none and exits with "rustup could not choose a version … no default is configured" — an LSP file never sees its server start | the corpus uses the canned `tools/shims/cargo` (`# env: PATH=${MNML_SHIMS}:${PATH}`). A repro that needs the real toolchain names it through the pass-through prefix: run with `MNML_E2E_RUSTUP_HOME=$HOME/.rustup MNML_E2E_CARGO_HOME=$HOME/.cargo`, and the file says `# env: RUSTUP_HOME=${MNML_E2E_RUSTUP_HOME}` and `# env: CARGO_HOME=${MNML_E2E_CARGO_HOME}` — the developer's paths stay out of the file and out of every other file's environment. |
 
 ## Which tests walked up
 

@@ -909,6 +909,15 @@ pub fn repoAbove(app: *App, path: []const u8) Allocator.Error!?[]const u8 {
     }
 }
 
+/// The repository a git command run in the directory `dir` reaches, on
+/// the frame arena: `dir` itself when it holds a `.git`, else
+/// `repoAbove` — fenced by `GIT_CEILING_DIRECTORIES` exactly as git is.
+/// Null when there is none git would find.
+pub fn repoFor(app: *App, dir: []const u8) Allocator.Error!?[]const u8 {
+    if (hasDotGit(app.io, dir)) return try app.frame.allocator().dupe(u8, dir);
+    return repoAbove(app, dir);
+}
+
 /// Whether `dir` is one of `GIT_CEILING_DIRECTORIES`' entries (`:`
 /// separated, `;` on Windows; a trailing separator ignored).
 pub fn isCeiling(ceilings: []const u8, dir: []const u8) bool {
@@ -2527,6 +2536,10 @@ pub fn askDiscard(app: *App, id: PaneId, dp: *DiffPane) Allocator.Error!void {
     if (hunkAtCursor(dp) == null) return app.toast("diff: no hunk under the cursor", .{});
     const arena = app.frame.allocator();
     const sel = selectedLines(dp, arena) catch null;
+    // A selection of context rows only: the discard would refuse it
+    // (`verbPatch`), as stage does — say so now instead of asking to
+    // discard "this hunk", which the selection never meant.
+    if (sel != null and sel.?.count == 0) return app.toast("diff: the selection holds no changed line", .{});
     const msg: []const u8 = if (sel != null and sel.?.count > 0)
         try std.fmt.allocPrint(app.gpa, "Discard the {d} selected line{s} from the worktree? This cannot be undone.", .{ sel.?.count, if (sel.?.count == 1) "" else "s" })
     else
@@ -7510,7 +7523,7 @@ test "LogRing: the idle poll's repeats collapse onto one row each, so a user's c
     try std.testing.expectEqual(@as(usize, 5), ring.items.items.len);
 }
 
-test "repoAbove stops at GIT_CEILING_DIRECTORIES, as git does" {
+test "repoAbove and repoFor stop at GIT_CEILING_DIRECTORIES, as git does" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     var rbuf: [std.fs.max_path_bytes]u8 = undefined;
@@ -7533,6 +7546,13 @@ test "repoAbove stops at GIT_CEILING_DIRECTORIES, as git does" {
     defer testing.allocator.free(list);
     try a.env.put("GIT_CEILING_DIRECTORIES", list);
     try testing.expect((try repoAbove(&a, ws)) == null);
+    // `repoFor` — SEARCH's decision — is the same fenced walk, and a
+    // directory holding its own `.git` answers for itself.
+    try testing.expect((try repoFor(&a, ws)) == null);
+    try a.env.put("GIT_CEILING_DIRECTORIES", "");
+    try testing.expectEqualStrings(root, (try repoFor(&a, ws)).?);
+    try testing.expectEqualStrings(root, (try repoFor(&a, root)).?);
+    try a.env.put("GIT_CEILING_DIRECTORIES", list);
     try testing.expect(isCeiling("/a:/b/", "/b"));
     try testing.expect(!isCeiling("/a:/b", "/c"));
     try testing.expect(!isCeiling("", "/"));

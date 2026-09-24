@@ -37,6 +37,7 @@ const gitignore = @import("gitignore.zig");
 const text_field = @import("../ui/text_field.zig");
 const EditOp = @import("../editor/edit_op.zig").EditOp;
 const jobs = @import("jobs.zig");
+const child_os = @import("../core/child.zig");
 
 pub const table = .{
     .@"find.grep" = &grepCmd,
@@ -63,7 +64,10 @@ pub const batch_size: usize = 64;
 pub const Backend = enum {
     /// `git grep -n --column`: the tracked files only, so `.gitignore`
     /// and untracked scratch never answer. The SEARCH section's first
-    /// choice in a repo (Rust's `16 hits (git grep)`).
+    /// choice in a repo (Rust's `16 hits (git grep)`) — one git would
+    /// find (`git.repoFor`) that tracks files in the workspace
+    /// (`inRepo`); anywhere else it would answer 0 hits over files that
+    /// hold the word.
     git_grep,
     rg,
     walk,
@@ -869,22 +873,20 @@ fn runRg(c: *Ctx, root: []const u8, query: []const u8, flags: Flags, p: *Pattern
 
 const GitOutcome = enum { ran, no_git };
 
-/// Whether `root` is a repository `git grep` would search: a `.git`
-/// entry at the root (a directory, or a worktree's file), else — a
-/// directory inside a repository — one `git check-ignore` says it is
-/// not ignored (a scratch directory under an ignored `.zig-cache/`
-/// would otherwise "run" with nothing, and the next backend never
-/// answer). Exit 128 is no repository at all.
+/// Whether `git grep` in `root` answers for what is there:
+/// `git ls-files --error-unmatch .` says `root` holds tracked files.
+/// `git grep` reads the tracked files only, so a folder nobody added
+/// (untracked scratch, a project cloned inside another checkout, a
+/// directory under an ignored `.zig-cache/`) and a repository with
+/// nothing committed yet used to answer `0 hits (git grep)`; they go to
+/// `rg` / the walk, which read what is on disk, and the header names
+/// that backend. Exit 1 is nothing tracked; 128 no repository at all.
+/// The caller has already fenced the lookup (`git.repoFor`):
+/// `git_first` is false when there is no repository git may reach.
 fn inRepo(c: *Ctx, root: []const u8) WorkerError!bool {
     const io = c.io;
-    var dir = Io.Dir.cwd().openDir(io, root, .{}) catch |err| {
-        if (err == error.Canceled) return error.Canceled;
-        return false;
-    };
-    defer dir.close(io);
-    if (dir.statFile(io, ".git", .{})) |_| return true else |err| if (err == error.Canceled) return error.Canceled;
     var child = std.process.spawn(io, .{
-        .argv = &.{ c.git_bin, "check-ignore", "-q", "." },
+        .argv = &.{ c.git_bin, "ls-files", "--error-unmatch", "--", "." },
         .cwd = .{ .path = root },
         .stdin = .ignore,
         .stdout = .ignore,
@@ -894,11 +896,13 @@ fn inRepo(c: *Ctx, root: []const u8) WorkerError!bool {
         error.OutOfMemory => return error.OutOfMemory,
         else => return false,
     };
-    const term = child.wait(io) catch |err| switch (err) {
-        error.Canceled => return error.Canceled,
-        else => return false,
+    // A cancelled `wait` leaves git running with `id` cleared.
+    const pid = child.id;
+    const term = child.wait(io) catch |err| {
+        child_os.reapAbandoned(pid);
+        return if (err == error.Canceled) error.Canceled else false;
     };
-    return term == .exited and term.exited == 1;
+    return term == .exited and term.exited == 0;
 }
 
 /// Spawn `git grep -n --column -z` in `root`. `.no_git` when git is
@@ -1846,6 +1850,68 @@ test "the regex flag means one language — ERE as people type it — under git 
         errdefer std.debug.print("pattern {s}: git {d} lines, walk {d} matches ({d} lines)\n", .{ c.pat, gn, wn, wl });
         try t.expectEqual(c.n, wn);
         try t.expectEqualSlices(u32, wlines[0..wl], glines[0..gl]);
+    }
+}
+
+/// The SEARCH section's whole worker run (`git grep` first) in `root`,
+/// its batches merged; `backend` is the one that answered.
+fn sectionInto(f: *Fixture, root: []const u8, query: []const u8) !*Result {
+    var abort: Abort = .{};
+    abort.generation.store(1, .release);
+    var ctx: Ctx = .{ .events = f.app.events, .io = t.io, .gpa = t.allocator, .generation = 1, .pane = 0, .abort = &abort };
+    try runBackends(&ctx, root, query, .{}, true);
+    var buf: [8]event.AppEvent = undefined;
+    var merged = try Result.create(t.allocator, 1, 0, .walk);
+    errdefer merged.destroy(t.allocator);
+    while (true) {
+        const n = f.app.events.drain(t.io, &buf);
+        if (n == 0) break;
+        for (buf[0..n]) |ev| {
+            defer event.freeEvent(t.allocator, ev);
+            if (ev != .grep) continue;
+            const b = ev.grep;
+            const arena = merged.arena.allocator();
+            for (b.hits.items) |h| try merged.hits.append(arena, .{ .path = try arena.dupe(u8, h.path), .rel = try arena.dupe(u8, h.rel), .line = h.line, .col = h.col, .len = h.len, .text = try arena.dupe(u8, h.text), .text_off = h.text_off, .ccol = h.ccol });
+            merged.backend = b.backend;
+            merged.done = b.done;
+        }
+    }
+    return merged;
+}
+
+test "SEARCH in a folder of a repo that holds nothing tracked goes past git grep (tracked files only) to a backend that reads the disk" {
+    if (!hasGit()) return error.SkipZigTest;
+    var f = try Fixture.init();
+    defer f.deinit();
+    try gitIn(f.root, &.{ "init", "-q", "-b", "main" });
+    // Unborn: nothing is tracked yet, so git grep would answer 0 hits.
+    {
+        var r = try sectionInto(&f, f.root, "alpha");
+        defer r.destroy(t.allocator);
+        try t.expect(r.backend != .git_grep);
+        try t.expect(r.hits.items.len > 0);
+    }
+    try gitIn(f.root, &.{ "add", "." });
+    try gitIn(f.root, &.{ "commit", "-q", "-m", "seed" });
+    try f.tmp.dir.createDirPath(t.io, "scratch/inner");
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "scratch/inner/n.txt", .data = "alpha in an untracked folder\n" });
+    const scratch = try std.fs.path.join(t.allocator, &.{ f.root, "scratch" });
+    defer t.allocator.free(scratch);
+    // The untracked folder: git grep there answered "0 hits (git grep)".
+    {
+        var r = try sectionInto(&f, scratch, "alpha");
+        defer r.destroy(t.allocator);
+        try t.expect(r.backend != .git_grep);
+        try t.expectEqual(@as(usize, 1), r.hits.items.len);
+        try t.expectEqualStrings("inner/n.txt", r.hits.items[0].rel);
+    }
+    // The tracked root is still git grep's, tracked files only: the
+    // untracked note never answers there.
+    {
+        var r = try sectionInto(&f, f.root, "alpha");
+        defer r.destroy(t.allocator);
+        try t.expectEqual(Backend.git_grep, r.backend);
+        for (r.hits.items) |h| try t.expect(!std.mem.startsWith(u8, h.rel, "scratch/"));
     }
 }
 

@@ -1,0 +1,31 @@
+# SEARCH in a repository that tracks nothing where it looks: `git grep`
+# reads the tracked files only, so a fresh `git init` (or a folder
+# nobody added) answered "0 hits (git grep)" over files that plainly
+# hold the word. Such a workspace goes to the backend that reads the
+# disk, and the header names it; once the files are committed git grep
+# answers again, tracked files only.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write notes/todo.txt "alpha in an untracked folder\n"
+write .gitignore "*.log\n"
+write build/out.log "alpha ignored\n"
+command view.activity_search
+type alpha
+key enter
+wait 1500
+expect screen contains "1 hit (walk)"
+expect screen contains "notes/todo.txt"
+expect screen lacks "(git grep)"
+expect screen lacks "out.log"
+shell git add .gitignore notes
+shell git commit -q -m "seed"
+write scratch.txt "alpha untracked\n"
+key esc
+command view.activity_search
+type alpha
+key enter
+wait 1500
+expect screen contains "1 hit (git grep)"
+expect screen contains "notes/todo.txt"
+expect screen lacks "scratch.txt"

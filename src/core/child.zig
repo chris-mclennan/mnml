@@ -48,6 +48,75 @@ fn reap(pid: Child.Id) void {
     }
 }
 
+/// How long `terminate` gives a child between SIGTERM and SIGKILL.
+pub const default_grace: Io.Duration = .fromSeconds(2);
+
+pub const TerminateOptions = struct {
+    /// SIGTERM to SIGKILL.
+    grace: Io.Duration = default_grace,
+    /// The child leads its own process group (spawned with `.pgid = 0`):
+    /// signal the whole group, so whatever it started goes with it.
+    group: bool = false,
+};
+
+/// `Child.kill`, bounded: SIGTERM, up to `grace` for the child to act on
+/// it, then SIGKILL, then reap. `Child.kill` alone sends SIGTERM and
+/// blocks in `wait4` until the child exits — forever, for one that
+/// ignores SIGTERM or is wedged before it can act on it (a Chrome stuck
+/// on a keychain prompt froze `App.deinit` that way). Leaves the child
+/// as `Child.kill` does: reaped, pipes closed, `id == null`. Idempotent,
+/// uncancelable in effect (a cancel only cuts the grace short). On
+/// Windows `Child.kill` already terminates outright; it is that.
+pub fn terminate(io: Io, child: *Child, opts: TerminateOptions) void {
+    if (builtin.os.tag == .windows) return child.kill(io);
+    const pid = child.id orelse return child.kill(io);
+    const target: std.posix.pid_t = if (opts.group) -pid else pid;
+    std.posix.kill(target, .TERM) catch {};
+    if (reapedWithin(io, pid, opts.grace)) {
+        // Reaped here, so `Child.kill` must not run (its SIGTERM would
+        // find no such process). Finish what it would have done. The
+        // group's stragglers go too: a pid is not handed out again while
+        // a group of that id still has members, so `-pid` is still ours.
+        if (opts.group) std.posix.kill(-pid, .KILL) catch {};
+        closePipes(io, child);
+        return;
+    }
+    std.posix.kill(target, .KILL) catch {};
+    // A child that left its group is still ours to stop.
+    if (opts.group) std.posix.kill(pid, .KILL) catch {};
+    // SIGKILL cannot be ignored: this `wait4` returns. Never a `wait`
+    // after a kill (see the top of the file).
+    child.kill(io);
+}
+
+/// Poll `waitpid(WNOHANG)` every 10 ms until `pid` has exited (and is
+/// reaped by this call) or `limit` passed. `ECHILD` — somebody else
+/// reaped it — counts as exited.
+fn reapedWithin(io: Io, pid: Child.Id, limit: Io.Duration) bool {
+    const start = Io.Timestamp.now(io, .awake);
+    while (true) {
+        var status: c_int = undefined;
+        const rc = std.c.waitpid(pid, &status, std.c.W.NOHANG);
+        if (rc == pid) return true;
+        if (rc == -1) switch (std.c.errno(rc)) {
+            .INTR => continue,
+            else => return true,
+        };
+        if (start.durationTo(Io.Timestamp.now(io, .awake)).nanoseconds >= limit.nanoseconds) return false;
+        io.sleep(.fromMilliseconds(10), .awake) catch return false;
+    }
+}
+
+fn closePipes(io: Io, child: *Child) void {
+    if (child.stdin) |f| f.close(io);
+    if (child.stdout) |f| f.close(io);
+    if (child.stderr) |f| f.close(io);
+    child.stdin = null;
+    child.stdout = null;
+    child.stderr = null;
+    child.id = null;
+}
+
 /// False while `pid` names a live *or* unreaped (zombie) process; true
 /// once it is gone for good (`kill(pid, 0)` → ESRCH). On Windows, where
 /// there is no such probe, always true. Tests use it to hold a child
@@ -189,4 +258,112 @@ test "goneWithin: a live child is still there at the deadline; a killed one is g
     try std.testing.expect(!goneWithin(io, pid, .fromMilliseconds(50)));
     child.kill(io);
     try std.testing.expect(goneWithin(io, pid, .fromSeconds(10)));
+}
+
+/// Runs `terminate` on its own thread so a test can hold it to a
+/// deadline: a `terminate` that hangs (a SIGTERM-only kill waiting on a
+/// child that ignores it) fails the test instead of wedging the run.
+const Terminator = struct {
+    child: *Child,
+    opts: TerminateOptions,
+    done: std.atomic.Value(bool) = .init(false),
+    fn run(self: *Terminator, io: Io) void {
+        terminate(io, self.child, self.opts);
+        self.done.store(true, .release);
+    }
+    /// True when `terminate` returned within `limit`. Past it, the test
+    /// SIGKILLs `pids` itself — unblocking the stuck reap — and says no.
+    fn finishedWithin(self: *Terminator, io: Io, th: std.Thread, limit: Io.Duration, pids: []const Child.Id) bool {
+        const start = Io.Timestamp.now(io, .awake);
+        while (!self.done.load(.acquire)) {
+            if (start.durationTo(Io.Timestamp.now(io, .awake)).nanoseconds >= limit.nanoseconds) {
+                for (pids) |p| std.posix.kill(p, .KILL) catch {};
+                th.join();
+                return false;
+            }
+            io.sleep(.fromMilliseconds(10), .awake) catch {};
+        }
+        th.join();
+        return true;
+    }
+};
+
+test "terminate: a child that ignores SIGTERM is SIGKILLed after the grace and reaped — the close returns" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const io = std.testing.io;
+    // The wedged-Chrome shape: SIGTERM is ignored (and stays ignored
+    // across the exec), so `Child.kill` alone waits forever.
+    var child = try std.process.spawn(io, .{
+        .argv = &.{ "/bin/sh", "-c", "trap '' TERM; exec /bin/sleep 86400" },
+        .stdin = .ignore,
+        .stdout = .ignore,
+        .stderr = .pipe,
+    });
+    const pid = child.id.?;
+    // Let the shell install the trap and exec before the signal lands.
+    io.sleep(.fromMilliseconds(200), .awake) catch {};
+    var t: Terminator = .{ .child = &child, .opts = .{ .grace = .fromMilliseconds(200) } };
+    const th = try std.Thread.spawn(.{}, Terminator.run, .{ &t, io });
+    try std.testing.expect(t.finishedWithin(io, th, .fromSeconds(5), &.{pid}));
+    try std.testing.expect(gone(pid));
+    try std.testing.expectEqual(@as(?Child.Id, null), child.id);
+    try std.testing.expectEqual(@as(?Io.File, null), child.stderr);
+    // Idempotent.
+    terminate(io, &child, .{});
+}
+
+test "terminate: a group leader's SIGTERM-ignoring grandchild goes with it" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(io, &pbuf);
+    var abuf: [std.fs.max_path_bytes + 128]u8 = undefined;
+    const script = try std.fmt.bufPrint(&abuf, "trap '' TERM; /bin/sleep 86400 & echo $! > '{s}/gc.pid'; exec /bin/sleep 86400", .{pbuf[0..n]});
+    var child = try std.process.spawn(io, .{
+        .argv = &.{ "/bin/sh", "-c", script },
+        .pgid = 0,
+        .stdin = .ignore,
+        .stdout = .ignore,
+        .stderr = .ignore,
+    });
+    const pid = child.id.?;
+    var gc: Child.Id = 0;
+    var tries: usize = 0;
+    while (tries < 300) : (tries += 1) {
+        var gbuf: [32]u8 = undefined;
+        if (tmp.dir.readFile(io, "gc.pid", &gbuf)) |txt| {
+            if (std.fmt.parseInt(Child.Id, std.mem.trim(u8, txt, " \n"), 10)) |g| {
+                gc = g;
+                break;
+            } else |_| {}
+        } else |_| {}
+        io.sleep(.fromMilliseconds(10), .awake) catch {};
+    }
+    try std.testing.expect(gc != 0);
+    defer std.posix.kill(gc, .KILL) catch {};
+    var t: Terminator = .{ .child = &child, .opts = .{ .grace = .fromMilliseconds(200), .group = true } };
+    const th = try std.Thread.spawn(.{}, Terminator.run, .{ &t, io });
+    try std.testing.expect(t.finishedWithin(io, th, .fromSeconds(5), &.{ pid, gc }));
+    try std.testing.expect(gone(pid));
+    // Not our child — launchd / init reaps it — so poll.
+    try std.testing.expect(goneWithin(io, gc, .fromSeconds(5)));
+}
+
+test "terminate: a child that exits on SIGTERM is reaped at once, not held for the grace" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const io = std.testing.io;
+    var child = try std.process.spawn(io, .{
+        .argv = &.{ "/bin/sleep", "86400" },
+        .stdin = .ignore,
+        .stdout = .pipe,
+        .stderr = .ignore,
+    });
+    const pid = child.id.?;
+    const start = Io.Timestamp.now(io, .awake);
+    terminate(io, &child, .{ .grace = .fromSeconds(30) });
+    try std.testing.expect(start.durationTo(Io.Timestamp.now(io, .awake)).nanoseconds < std.time.ns_per_s * 10);
+    try std.testing.expect(gone(pid));
+    try std.testing.expectEqual(@as(?Io.File, null), child.stdout);
 }

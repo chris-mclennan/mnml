@@ -38,6 +38,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const parser = @import("parser.zig");
 const mock = @import("../http/mock.zig");
+const child_os = @import("../core/child.zig");
 const driver_mod = @import("driver.zig");
 const key = @import("../core/key.zig");
 const screen_mod = @import("../ipc/screen.zig");
@@ -1112,6 +1113,15 @@ pub fn hermeticEnv(gpa: Allocator, host: *const std.process.Environ.Map, home: [
         if (keep) try out.put(name, kv.value_ptr.*);
     }
     try out.put("HOME", home);
+    // The shell a terminal pane runs (`pty.shellArgv`). Without it every
+    // pty file got `/bin/sh` — no bracketed paste, so a pasted block ran
+    // line by line (`pty_paste_sanitized` had to name zsh itself). On
+    // macOS it is pinned to the platform's login shell, the one the
+    // corpus was written in, whatever the developer runs; elsewhere the
+    // host's passes through. A file's own `# env: SHELL=` still wins.
+    if (builtin.os.tag == .macos) {
+        try out.put("SHELL", "/bin/zsh");
+    } else if (host.get("SHELL")) |sh| try out.put("SHELL", sh);
     if (host.get("MNML_SHIMS")) |shims| {
         const sep: u8 = if (builtin.os.tag == .windows) ';' else ':';
         const ai = try std.fs.path.join(gpa, &.{ shims, "ai" });
@@ -1265,7 +1275,9 @@ fn runIn(gpa: Allocator, io: Io, options: std.process.RunOptions, pgid: ?std.pos
         .stdout = .pipe,
         .stderr = .pipe,
     });
-    defer child.kill(io);
+    // Bounded: a step that timed out may have left a child that ignores
+    // SIGTERM, and `Child.kill` would wait on it forever.
+    defer child_os.terminate(io, &child, .{});
 
     var multi_reader_buffer: Io.File.MultiReader.Buffer(2) = undefined;
     var multi_reader: Io.File.MultiReader = undefined;
@@ -2770,7 +2782,7 @@ test "hermeticEnv keeps what a file needs, drops the developer's, and gives it a
     try host.put("CLAUDECODE", "1");
     try host.put("MNML_IPC_DIR", "/Users/dev/proj/.mnml/ipc-zig");
     try host.put("XDG_CONFIG_HOME", "/Users/dev/.config");
-    try host.put("SHELL", "/bin/zsh");
+    try host.put("SHELL", "/opt/homebrew/bin/fish");
     var env = try hermeticEnv(t.allocator, &host, "/run/home");
     defer env.deinit();
     try t.expectEqualStrings("/run/home", env.get("HOME").?);
@@ -2778,12 +2790,41 @@ test "hermeticEnv keeps what a file needs, drops the developer's, and gives it a
     try t.expectEqualStrings("C.UTF-8", env.get("LC_ALL").?);
     try t.expectEqualStrings("300", env.get("MNML_E2E_FILE_TIMEOUT_SECS").?);
     try t.expectEqualStrings("/repo/tools/shims", env.get("MNML_SHIMS").?);
-    for ([_][]const u8{ "BITBUCKET_ACCESS_TOKEN", "CLAUDECODE", "MNML_IPC_DIR", "XDG_CONFIG_HOME", "SHELL" }) |gone| {
+    // A terminal pane's shell: macOS's own, else the host's.
+    try t.expectEqualStrings(if (builtin.os.tag == .macos) "/bin/zsh" else "/opt/homebrew/bin/fish", env.get("SHELL").?);
+    for ([_][]const u8{ "BITBUCKET_ACCESS_TOKEN", "CLAUDECODE", "MNML_IPC_DIR", "XDG_CONFIG_HOME" }) |gone| {
         if (env.get(gone) != null) {
             std.debug.print("{s} leaked into a file's environment\n", .{gone});
             return error.TestUnexpectedResult;
         }
     }
+}
+
+test "SHELL reaches a file's environment: a terminal pane gets a real shell, not /bin/sh" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var env = try TestEnv.init();
+    defer env.deinit();
+    var host = std.process.Environ.Map.init(t.allocator);
+    defer host.deinit();
+    try host.put("PATH", "/usr/bin:/bin");
+    try host.put("SHELL", "/usr/local/bin/some-shell");
+    // What `mnml-zig test` hands every file (`main.zig`).
+    var base = try hermeticEnv(t.allocator, &host, env.root);
+    defer base.deinit();
+    const want = if (builtin.os.tag == .macos) "/bin/zsh" else "/usr/local/bin/some-shell";
+    var opts = env.opts();
+    opts.allow_shell = true;
+    opts.env = &base;
+    var sf: StubFactory = .{};
+    // Read through `env`, not `$SHELL`: the step's `/bin/sh` is bash on
+    // macOS, which fills an unset SHELL from the account's login shell
+    // (without exporting it) — `$SHELL` would pass with nothing passed.
+    const body = try std.fmt.allocPrint(t.allocator, "shell /usr/bin/env | grep -qx 'SHELL={s}'\n", .{want});
+    defer t.allocator.free(body);
+    const file = try env.script("shell-var.test", body);
+    defer t.allocator.free(file);
+    var o = runFile(t.allocator, t.io, sf.factory(), file, content_size, opts);
+    try expectPassed(&o);
 }
 
 test "the git guard fails a file whose git reaches a repository outside the temp root, and passes one that stays inside" {
