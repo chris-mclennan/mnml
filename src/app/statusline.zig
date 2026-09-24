@@ -361,7 +361,7 @@ fn hostTag(p: remote.Provider) []const u8 {
 
 fn branchSeg(app: *App, ui: Ui) Allocator.Error!?Seg {
     const st = &app.git;
-    const branch = st.branchLabel() orelse return null;
+    const branch = st.headLabel() orelse return null;
     const s = st.status.?;
     const p = &ui.theme.palette;
     const nerd = !ui.ascii;
@@ -384,7 +384,7 @@ fn branchSeg(app: *App, ui: Ui) Allocator.Error!?Seg {
 
 /// The open PR on the current branch, when the branch rail has fetched one.
 pub fn currentPr(app: *const App) ?parse.Pr {
-    const branch = app.git.branchLabel() orelse return null;
+    const branch = app.git.branchName() orelse return null;
     for (app.git.rail_prs) |pr| if (std.mem.eql(u8, pr.branch, branch)) return pr;
     return null;
 }

@@ -288,7 +288,7 @@ pub fn draw(app: *App, ui: Ui, area: Rect) void {
         for (out, rows[0..out.len]) |*o, r| o.* = .{ .chord = r.chord, .label = r.label };
         return ui_welcome.draw(ui, area, .{
             .workspace = workspace,
-            .branch = app.git.branchLabel(),
+            .branch = app.git.headLabel(),
             .changed = changedFiles(app),
             .shortcuts = out,
             .version = update.current,
@@ -302,7 +302,7 @@ pub fn draw(app: *App, ui: Ui, area: Rect) void {
     if (!builtin.is_test and !st.scanned_once and !st.scanning) sessions.refresh(app) catch {};
     ui_welcome.drawStart(&app.welcome, ui, area, .{
         .workspace = workspace,
-        .branch = app.git.branchLabel(),
+        .branch = app.git.headLabel(),
         .changed = changedFiles(app),
         .workspaces = entries(app, ui, .workspaces) catch &.{},
         .recent = entries(app, ui, .recent) catch &.{},

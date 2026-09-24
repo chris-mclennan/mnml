@@ -53,11 +53,26 @@ pub const Entry = struct {
     orig: ?[]const u8 = null,
 };
 
+/// Where HEAD is: on a branch (its name — what a verb passes to git) or
+/// detached at a commit (its sha). What the UI paints is
+/// `Status.headLabel`, never this union's payload taken as a name.
+pub const HeadRef = union(enum) {
+    branch: []const u8,
+    detached: []const u8,
+};
+
 pub const Status = struct {
     /// The branch name; null when detached or before the first commit's
     /// branch line is known.
     branch: ?[]const u8 = null,
     detached: bool = false,
+    /// While detached: what git would say HEAD is detached at — a tag
+    /// pointing at the commit, else the short sha. The worker fills it
+    /// (`describe --tags --exact-match`); the parser leaves it null.
+    detached_at: ?[]const u8 = null,
+    /// `HEAD detached at <detached_at>`, git's own words, built by the
+    /// worker next to `detached_at` so a paint needs no allocation.
+    detached_label: ?[]const u8 = null,
     /// `(initial)` before the first commit.
     oid: ?[]const u8 = null,
     upstream: ?[]const u8 = null,
@@ -78,6 +93,30 @@ pub const Status = struct {
     /// Everything the rail lists.
     pub fn changeCount(s: Status) u32 {
         return s.staged + s.unstaged + s.untracked + s.conflicted;
+    }
+
+    /// HEAD as git names it: the branch, or the commit it is detached
+    /// at. Null on an unborn branch whose line did not come through.
+    pub fn head(s: Status) ?HeadRef {
+        if (s.branch) |b| return .{ .branch = b };
+        if (s.detached) return .{ .detached = s.oid orelse "HEAD" };
+        return null;
+    }
+
+    /// What a detached HEAD is at: the tag the worker found, else the
+    /// short sha.
+    pub fn detachedAt(s: Status) []const u8 {
+        if (s.detached_at) |d| return d;
+        if (s.oid) |o| return o[0..@min(o.len, 7)];
+        return "HEAD";
+    }
+
+    /// What to paint for HEAD: the branch name, or `HEAD detached at
+    /// v0.1` — never a string a git verb should take as a branch.
+    pub fn headLabel(s: Status) ?[]const u8 {
+        if (s.branch) |b| return b;
+        if (s.detached) return s.detached_label orelse "HEAD detached";
+        return null;
     }
 };
 
@@ -1489,6 +1528,22 @@ test "status v2: detached HEAD and an initial repo" {
     try testing.expectEqual(@as(u32, 0), st.changeCount());
     const empty = try parseStatus(arenaOf(&a), "");
     try testing.expect(empty.branch == null);
+}
+
+test "HeadRef: a branch is its name; a detached HEAD is its sha, painted as git words it — never a branch called `(detached)`" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const on = try parseStatus(arenaOf(&a), "# branch.oid 1a2b3c4d5e6f\n# branch.head main\n");
+    try testing.expectEqualStrings("main", on.head().?.branch);
+    try testing.expectEqualStrings("main", on.headLabel().?);
+    var off = try parseStatus(arenaOf(&a), "# branch.oid 1a2b3c4d5e6f\n# branch.head (detached)\n");
+    try testing.expectEqualStrings("1a2b3c4d5e6f", off.head().?.detached);
+    try testing.expectEqualStrings("1a2b3c4", off.detachedAt());
+    try testing.expectEqualStrings("HEAD detached", off.headLabel().?);
+    off.detached_at = "v0.1";
+    off.detached_label = "HEAD detached at v0.1";
+    try testing.expectEqualStrings("v0.1", off.detachedAt());
+    try testing.expectEqualStrings("HEAD detached at v0.1", off.headLabel().?);
 }
 
 test "unquote decodes octal + C escapes and passes plain paths through" {

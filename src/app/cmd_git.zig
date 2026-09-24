@@ -554,7 +554,7 @@ fn branchMenu(app: *App) CommandError!void {
 
 fn copyCurrentBranch(app: *App) CommandError!void {
     _ = try git.requireRepo(app);
-    const b = app.git.branchLabel() orelse return app.diag.fail(arena(app), "git: detached HEAD or not a repo", .{});
+    const b = app.git.branchName() orelse return noBranch(app, "copy branch name");
     try app.clipboard.setYank(b, false);
     app.toast("copied {s}", .{b});
 }
@@ -919,13 +919,22 @@ fn diffAgainstCurrent(app: *App) CommandError!void {
 
 // ─── branch verbs (git-more2) ───────────────────────────────────────────
 
+/// A verb that needs the checked-out branch, run with none: a detached
+/// HEAD names where it is (`HEAD detached at v0.1`) instead of handing
+/// git a label as if it were a branch.
+fn noBranch(app: *App, what: []const u8) CommandError {
+    if (app.git.status) |st| if (st.detached)
+        return app.diag.fail(arena(app), "{s}: HEAD is detached at {s} \u{2014} checkout a branch, or pick one in the branches panel", .{ what, st.detachedAt() });
+    return app.diag.fail(arena(app), "{s}: no branch checked out", .{what});
+}
+
 /// The branch a verb acts on: the branches panel's row when it has the
 /// focus, else the checked-out branch.
 fn verbBranch(app: *App, what: []const u8) CommandError![]const u8 {
     if (app.focus == .panel and app.focus.panel == .git) {
         if (try git_palette.cursorBranch(app)) |b| return b;
     }
-    return app.git.branchLabel() orelse app.diag.fail(arena(app), "{s}: detached HEAD \u{2014} pick a branch in the branches panel", .{what});
+    return app.git.branchName() orelse noBranch(app, what);
 }
 
 fn branchRename(app: *App) CommandError!void {

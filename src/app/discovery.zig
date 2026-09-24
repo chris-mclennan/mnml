@@ -405,7 +405,7 @@ fn describeSegment(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Tip {
             });
             const listed = capped(app, seg, rows.items, 0);
             break :blk .{
-                .title = try std.fmt.allocPrint(arena, "Branch {s}", .{app.git.branchLabel() orelse "?"}),
+                .title = try std.fmt.allocPrint(arena, "Branch {s}", .{app.git.headLabel() orelse "?"}),
                 .detail = detail.items,
                 .rows = listed.rows,
                 .more = listed.more,

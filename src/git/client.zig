@@ -971,6 +971,14 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             status.in_progress = prog.op;
             status.step = prog.step;
             status.total = prog.total;
+            // Detached: what at, as `git status` says it — a tag on the
+            // commit when there is one, else the short sha.
+            if (status.detached) {
+                const d = try git(repo, io, arena, &.{ "describe", "--tags", "--exact-match", "HEAD" }, null);
+                const tag = if (d.ok) trimmed(d.stdout) else "";
+                if (tag.len > 0) status.detached_at = tag;
+                status.detached_label = try std.fmt.allocPrint(arena, "HEAD detached at {s}", .{status.detachedAt()});
+            }
             // Signs against HEAD; an initial repo has no HEAD and no signs.
             var signs: []parse.FileDiff = &.{};
             if (status.oid != null) {

@@ -744,13 +744,30 @@ pub const State = struct {
         return null;
     }
 
-    /// The branch for the statusline: the name, `@sha` when detached,
+    /// Where HEAD is — a branch, or the commit it is detached at —
     /// null outside a repo or before the first status lands.
-    pub fn branchLabel(self: *const State) ?[]const u8 {
+    pub fn head(self: *const State) ?parse.HeadRef {
         const st = self.status orelse return null;
-        if (st.branch) |b| return b;
-        if (st.detached) return "(detached)";
-        return null;
+        return st.head();
+    }
+
+    /// The checked-out branch's name: what a verb hands git. Null when
+    /// HEAD is detached (there is no branch to name), outside a repo and
+    /// before the first status lands.
+    pub fn branchName(self: *const State) ?[]const u8 {
+        const h = self.head() orelse return null;
+        return switch (h) {
+            .branch => |b| b,
+            .detached => null,
+        };
+    }
+
+    /// What to paint for HEAD (the statusline, the status pane, the
+    /// dock): the branch name, or `HEAD detached at v0.1`. Display only
+    /// — `branchName` is what a verb passes to git.
+    pub fn headLabel(self: *const State) ?[]const u8 {
+        const st = self.status orelse return null;
+        return st.headLabel();
     }
 
     /// Changed files, for the activity badge.
@@ -1237,7 +1254,7 @@ pub fn explainBranch(app: *App, name: []const u8) CommandError!void {
     const arena = app.frame.allocator();
     const gpa = app.gpa;
     const repo = try requireRepo(app);
-    const head = app.git.branchLabel() orelse "";
+    const head = app.git.branchName() orelse "";
     var base: []const u8 = "";
     if (head.len > 0 and !std.mem.eql(u8, name, head)) {
         base = head;
@@ -3434,7 +3451,7 @@ pub fn pushStartPr(app: *App, name: []const u8) CommandError!void {
 /// says what a yes rewrites.
 pub fn pushForce(app: *App) CommandError!void {
     _ = try requireRepo(app);
-    const branch = app.git.branchLabel() orelse "HEAD";
+    const branch = app.git.branchName() orelse return app.diag.fail(app.frame.allocator(), "push: HEAD is detached \u{2014} checkout a branch first", .{});
     const upstream: []const u8 = if (app.git.status) |st| (st.upstream orelse "the remote branch") else "the remote branch";
     // What `--force-with-lease` does: the remote branch is made this
     // one, dropping the commits the last fetch saw there that this
@@ -4745,8 +4762,7 @@ pub fn diffAgainstBase(app: *App, g: *GraphPane) CommandError!void {
 /// detached) — what the branch has that the current one does not.
 pub fn diffAgainstCurrent(app: *App, repo: *client.Repo, branch: []const u8) CommandError!void {
     const arena = app.frame.allocator();
-    const cur: []const u8 = app.git.branchLabel() orelse "HEAD";
-    const from: []const u8 = if (std.mem.eql(u8, cur, "(detached)")) "HEAD" else cur;
+    const from: []const u8 = app.git.branchName() orelse "HEAD";
     if (std.mem.eql(u8, from, branch)) return app.diag.fail(arena, "diff: {s} is the current branch", .{branch});
     _ = try openDiff(app, repo, .range, null, try client.rangeRev(arena, from, branch), null);
 }
@@ -5100,6 +5116,7 @@ pub fn drawStatusPane(app: *App, ui: Ui, id: PaneId, sp: *StatusPane, full: Rect
     if (files.len() > 0) sp.cursor = @min(sp.cursor, files.len() - 1);
     status_view.draw(ui, id, area, .{
         .branch = if (st.status) |s| s.branch else null,
+        .detached_label = if (st.status) |s| (if (s.detached) s.headLabel() else null) else null,
         .unstaged = files.unstaged,
         .staged = files.staged,
         .cursor = sp.cursor,
@@ -5206,7 +5223,7 @@ pub fn drawGraphPane(app: *App, ui: Ui, id: PaneId, g: *GraphPane, full: Rect) v
         const sd = arena.alloc(graph_view.WipFile, files.staged.len) catch return;
         for (sd, files.staged) |*o, f| o.* = .{ .path = f.path, .letter = f.letter };
         wip = .{
-            .branch = st.branchLabel(),
+            .branch = st.headLabel(),
             .summary = if (st.status) |s| (wipSummary(arena, s) catch "") else "",
             .unstaged = un,
             .staged = sd,
@@ -5742,7 +5759,7 @@ test "handle adopts a status result for the active repo, drops one from an unkno
     st.status_pending = true;
     try handle(&f.app, r);
     try testing.expect(!st.status_pending);
-    try testing.expectEqualStrings("main", st.branchLabel().?);
+    try testing.expectEqualStrings("main", st.branchName().?);
     try testing.expectEqual(@as(u32, 2), st.badge());
     // The status pane's lists: a.zig then new.txt unstaged, nothing staged.
     const files = try statusFiles(&f.app, f.app.frame.allocator());
@@ -5763,7 +5780,7 @@ test "handle adopts a status result for the active repo, drops one from an unkno
     const stale = try client.Result.create(testing.allocator, 999);
     stale.payload = .{ .status = .{ .status = try parse.parseStatus(stale.arena.allocator(), "# branch.head other\n"), .signs = &.{} } };
     try handle(&f.app, stale);
-    try testing.expectEqualStrings("main", st.branchLabel().?);
+    try testing.expectEqualStrings("main", st.branchName().?);
 }
 
 test "the status TTL: tick asks again 3 s after the last snapshot, not before" {
