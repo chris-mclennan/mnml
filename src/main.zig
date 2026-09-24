@@ -87,7 +87,7 @@ pub fn main(init: std.process.Init) !u8 {
             try w.flush();
             return 0;
         }
-        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, "mnml-zig [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--no-session] [--headless] [--startup-picker] [--profile dev|stable] | profile seed [--from stable] [--force] | test [PATH…] [--gate] [--sizes ladder|WxH,…] [--filter NAME] [--skip NAME] | hover-audit [--strict] [--write-todo PATH] | run FILE | chain run FILE | discover SPEC | sync | sync-check | proxy --url URL | broker acquire|status|serve | --rebase-todo PLAN TODO | --commit-msg QUEUE FILE");
+        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, "mnml-zig [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--no-session] [--headless] [--startup-picker] [--profile dev|stable] | profile seed [--from stable] [--force] | test [PATH…] [--gate] [--sizes ladder|WxH,…] [--filter NAME] [--skip NAME] [--strict] | hover-audit [--strict] [--write-todo PATH] | run FILE | chain run FILE | discover SPEC | sync | sync-check | proxy --url URL | broker acquire|status|serve | --rebase-todo PLAN TODO | --commit-msg QUEUE FILE");
     }
     if (parseInputFlag(args[1..], w)) |style| {
         app_driver.default_factory.input_style = style;
@@ -428,15 +428,17 @@ fn fakeToolPath(gpa: Allocator, io: Io, base: []const u8, installed: []const u8)
     if (Io.Dir.cwd().access(io, installed, .{})) |_| return try gpa.dupe(u8, installed) else |_| return null;
 }
 
-/// `mnml-zig test [PATH…] [--gate] [--sizes 80x24,120x40] [--filter NAME] [--skip NAME] [--parse] [--stub]`
+/// `mnml-zig test [PATH…] [--gate] [--sizes 80x24,120x40] [--filter NAME] [--skip NAME] [--strict] [--parse] [--stub]`
 ///
 /// Runs `.test` scripts (default `tests/e2e`). `--gate` runs the Phase-0
 /// gate list from `tools/gate.txt`. `--filter` keeps the files whose
 /// name contains it (what `zig build test -Dtest-filter=…` passes);
 /// `--skip` (repeatable) leaves a file out and says so. `--parse` only
 /// parses. `--stub` drives the recording stub instead of the App —
-/// exercises the harness, proves nothing about the editor. Exit 1 on
-/// any failure.
+/// exercises the harness, proves nothing about the editor. A file that
+/// fails is retried once (`--retry-flaky`, the default); a pass on the
+/// retry is reported `FLAKY` by name in the trailer and does not fail
+/// the run. `--strict` retries nothing. Exit 1 on any failure.
 fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: []const [:0]const u8, w: *Io.Writer) !u8 {
     var paths: std.ArrayList([]const u8) = .empty;
     defer paths.deinit(gpa);
@@ -448,6 +450,10 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
     var gate = false;
     var parse_only = false;
     var use_stub = false;
+    // A failing file is run once more and a pass then is reported FLAKY
+    // (by name, in the trailer) rather than failing the run. `--strict`
+    // turns the retry off: every failure is a failure.
+    var retry_flaky = true;
     var i: usize = 0;
     while (i < argv.len) : (i += 1) {
         const a = argv[i];
@@ -465,6 +471,10 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
             try skips.append(gpa, argv[i]);
         } else if (std.mem.startsWith(u8, a, "--skip=")) {
             try skips.append(gpa, a["--skip=".len..]);
+        } else if (std.mem.eql(u8, a, "--strict") or std.mem.eql(u8, a, "--no-retry-flaky")) {
+            retry_flaky = false;
+        } else if (std.mem.eql(u8, a, "--retry-flaky")) {
+            retry_flaky = true;
         } else if (std.mem.eql(u8, a, "--parse")) {
             parse_only = true;
         } else if (std.mem.eql(u8, a, "--stub")) {
@@ -634,6 +644,7 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
         .name_filter = name_filter,
         .skip = skips.items,
         .env = &file_base,
+        .retry_flaky = retry_flaky,
     };
 
     var stub_factory: e2e.driver.StubFactory = .{};
@@ -647,10 +658,11 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
         };
     // A path that is not there is a hard error, never a green `0/0`:
     // the runner has already named it on `w`.
-    const stats = e2e.runner.runPaths(gpa, io, factory, paths.items, opts, w) catch |err| switch (err) {
+    var stats = e2e.runner.runPaths(gpa, io, factory, paths.items, opts, w) catch |err| switch (err) {
         error.PathNotFound => return 2,
         else => return err,
     };
+    defer stats.deinit(gpa);
     if (stats.failed != 0) try reportHarness(env, w);
     return if (stats.failed == 0) 0 else 1;
 }

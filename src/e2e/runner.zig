@@ -170,6 +170,12 @@ pub const Options = struct {
     /// File names (without `.test`) to skip, announced as such
     /// (`--skip`): what `zig build check` cuts by design.
     skip: []const []const u8 = &.{},
+    /// A file that fails is run once more; one that passes then is
+    /// reported `FLAKY` — on its own line as it happens and again in
+    /// the trailer — and does not fail the run. `mnml-zig test` turns
+    /// this on unless `--strict`; off here, so the library's own
+    /// callers see every failure as a failure.
+    retry_flaky: bool = false,
 };
 
 /// The file's name without its `.test`.
@@ -203,6 +209,23 @@ pub const Stats = struct {
     /// other than the file's own size). `total - structure_only` is how
     /// many runs actually checked what was on the screen.
     structure_only: usize = 0,
+    /// Runs that failed, were retried once (`Options.retry_flaky`) and
+    /// passed. Counted in `total` and NOT in `failed` — but never as a
+    /// plain pass: each is named in the trailer with what its first run
+    /// said, so a flake is a thing somebody reads rather than a green
+    /// run that hid it.
+    flaky: std.ArrayListUnmanaged(Flaky) = .empty,
+
+    pub const Flaky = struct {
+        /// `name — <the first run's message, first line>`. Owned.
+        line: []u8,
+    };
+
+    pub fn deinit(self: *Stats, gpa: Allocator) void {
+        for (self.flaky.items) |f| gpa.free(f.line);
+        self.flaky.deinit(gpa);
+        self.* = undefined;
+    }
 };
 
 // ─── one file ───────────────────────────────────────────────────────────
@@ -1381,6 +1404,7 @@ pub fn runPath(gpa: Allocator, io: Io, factory: Factory, root: []const u8, opts:
         try out.flush();
     }
     var stats: Stats = .{};
+    errdefer stats.deinit(gpa);
     for (files) |path| {
         const stem = stemOf(path);
         if (opts.name_filter) |f| if (std.mem.indexOf(u8, stem, f) == null) continue;
@@ -1436,6 +1460,28 @@ pub fn runPath(gpa: Allocator, io: Io, factory: Factory, root: []const u8, opts:
             defer o.deinit(gpa);
             stats.total += 1;
             if (!o.asserted) stats.structure_only += 1;
+            if (!o.passed and opts.retry_flaky) {
+                // Once more, from scratch. A pass now is a FLAKE — the
+                // file's verdict depends on something other than the
+                // code, which is a bug to go and find — so it is named
+                // with what the first run said, never folded into `ok`.
+                const first = firstLine(o.message orelse "");
+                try out.print("  ↻    {s} — failed; retrying once: {s}\n", .{ o.name, first });
+                try out.print("▶ e2e: {s} (retry)\n", .{std.fs.path.basename(path)});
+                try out.flush();
+                var again = runFileWithTimeout(gpa, io, factory, path, size, file_opts, out);
+                if (again.passed) {
+                    const line = try std.fmt.allocPrint(gpa, "{s} — first run: {s}", .{ o.name, first });
+                    errdefer gpa.free(line);
+                    try stats.flaky.append(gpa, .{ .line = line });
+                    try out.print("  FLAKY {s}\n", .{line});
+                    again.deinit(gpa);
+                    try out.flush();
+                    continue;
+                }
+                o.deinit(gpa);
+                o = again;
+            }
             if (o.passed) {
                 // `ok` is what a file that PASSED ITS CHECKS gets. A
                 // sweep rung that never evaluated them gets `ok*` and
@@ -1473,20 +1519,34 @@ fn readHeader(gpa: Allocator, io: Io, path: []const u8) parser.Header {
 /// and no leak and nothing else.
 pub fn runPaths(gpa: Allocator, io: Io, factory: Factory, roots: []const []const u8, opts: Options, out: *Io.Writer) !Stats {
     var total: Stats = .{};
+    errdefer total.deinit(gpa);
     for (roots) |root| {
-        const s = try runPath(gpa, io, factory, root, opts, out);
+        var s = try runPath(gpa, io, factory, root, opts, out);
+        defer s.flaky.deinit(gpa);
         total.total += s.total;
         total.failed += s.failed;
         total.structure_only += s.structure_only;
+        try total.flaky.appendSlice(gpa, s.flaky.items);
     }
-    try out.print("\n{d}/{d} passed ({d} content, {d} structure-only)\n", .{
+    try out.print("\n{d}/{d} passed ({d} content, {d} structure-only)", .{
         total.total - total.failed,
         total.total,
         total.total - total.structure_only,
         total.structure_only,
     });
+    // The flakes are in the count, and named right under it: a run that
+    // only passed because of the retry says so in its last lines.
+    if (total.flaky.items.len > 0) try out.print(", {d} FLAKY (passed only on a retry)", .{total.flaky.items.len});
+    try out.writeAll("\n");
+    for (total.flaky.items) |f| try out.print("FLAKY {s}\n", .{f.line});
     try out.flush();
     return total;
+}
+
+/// The first line of a failure message — the rest is a screen dump.
+fn firstLine(msg: []const u8) []const u8 {
+    const end = std.mem.indexOfScalar(u8, msg, '\n') orelse msg.len;
+    return msg[0..end];
 }
 
 /// `$NAME` / `${NAME}` in `text` from `env`; an unset name is empty. Owned.
@@ -2469,6 +2529,62 @@ test "temp dirs are created exclusively: a name that exists is somebody else's" 
     defer t.allocator.free(b);
     try t.expect(!std.mem.eql(u8, a, b));
     try t.expectError(error.PathAlreadyExists, createFresh(t.io, a));
+}
+
+test "retry_flaky: a file that fails then passes is FLAKY by name, never a plain ok; one that fails twice is a FAIL; off, the first failure stands" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var env = try TestEnv.init();
+    defer env.deinit();
+    var run_env = std.process.Environ.Map.init(t.allocator);
+    defer run_env.deinit();
+    try run_env.put("OUT", env.root);
+    var opts = env.opts();
+    opts.allow_shell = true;
+    opts.env = &run_env;
+    var sf: StubFactory = .{};
+    // Fails the first time it runs and passes every time after: the
+    // shape of a file whose verdict hangs on something outside the code.
+    const once = try env.script("once.test", "shell [ -e \"$OUT/ran\" ] || { : > \"$OUT/ran\"; echo first run lost the race >&2; exit 1; }\n");
+    defer t.allocator.free(once);
+    const always = try env.script("always.test", "shell exit 3\n");
+    defer t.allocator.free(always);
+
+    opts.retry_flaky = true;
+    {
+        var aw: Io.Writer.Allocating = .init(t.allocator);
+        defer aw.deinit();
+        var stats = try runPaths(t.allocator, t.io, sf.factory(), &.{ once, always }, opts, &aw.writer);
+        defer stats.deinit(t.allocator);
+        const text = aw.written();
+        try t.expectEqual(@as(usize, 2), stats.total);
+        try t.expectEqual(@as(usize, 1), stats.failed);
+        try t.expectEqual(@as(usize, 1), stats.flaky.items.len);
+        // Said as it happens…
+        try t.expect(std.mem.indexOf(u8, text, "  ↻    once.test — failed; retrying once: line 1: shell") != null);
+        try t.expect(std.mem.indexOf(u8, text, "  FLAKY once.test — first run: line 1: shell") != null);
+        try t.expect(std.mem.indexOf(u8, text, "  ok   once.test") == null);
+        // …failing twice is a failure…
+        try t.expect(std.mem.indexOf(u8, text, "  FAIL always.test — line 1: shell `exit 3` exited exit status: 3: ") != null);
+        // …and the trailer counts it and names it, last.
+        try t.expect(std.mem.indexOf(u8, text, "\n1/2 passed (2 content, 0 structure-only), 1 FLAKY (passed only on a retry)\nFLAKY once.test — first run: line 1: shell") != null);
+        try t.expect(std.mem.endsWith(u8, text, "first run lost the race\n"));
+    }
+
+    // Off (`--strict`): the first failure is the verdict.
+    const ran = try std.fs.path.join(t.allocator, &.{ env.root, "ran" });
+    defer t.allocator.free(ran);
+    try Io.Dir.cwd().deleteFile(t.io, ran);
+    opts.retry_flaky = false;
+    {
+        var aw: Io.Writer.Allocating = .init(t.allocator);
+        defer aw.deinit();
+        var stats = try runPaths(t.allocator, t.io, sf.factory(), &.{once}, opts, &aw.writer);
+        defer stats.deinit(t.allocator);
+        try t.expectEqual(@as(usize, 1), stats.failed);
+        try t.expectEqual(@as(usize, 0), stats.flaky.items.len);
+        try t.expect(std.mem.indexOf(u8, aw.written(), "FLAKY") == null);
+        try t.expect(std.mem.indexOf(u8, aw.written(), "\n0/1 passed (1 content, 0 structure-only)\n") != null);
+    }
 }
 
 test "a file's environment is pinned: the corpus's terminal whatever the host's, and git fenced at the temp root" {
