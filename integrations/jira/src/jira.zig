@@ -1073,53 +1073,70 @@ test "ADF: one paragraph per line, a bare one for a blank line" {
 pub const fake = @import("../tools/fake_jira/main.zig");
 
 /// A fake Jira behind a real socket, for the pane's tests too.
+///
+/// One connection at a time, answered by the binary's own
+/// `fake.serveOne`. A connection whose client hung up — a pane worker
+/// cancelled between its connect and its answer, which is what every
+/// test's teardown does to a fetch still on the wire — is dropped and
+/// the loop takes the next one. This loop used to END on one instead,
+/// and every request after it sat in the listen backlog with nobody to
+/// accept it: a unit suite hung for 53 minutes on a loaded machine.
 pub const Loopback = struct {
     store: *fake.Store,
     server: *Io.net.Server,
-    served: usize = 0,
+    /// Connections taken.
+    served: std.atomic.Value(u32) = .init(0),
+    /// Connections whose client hung up before its answer.
+    dropped: std.atomic.Value(u32) = .init(0),
+    /// Where the loop is, for a watchdog on another thread to name.
+    phase: std.atomic.Value(Phase) = .init(.accepting),
 
-    /// Serve until the client asks for `/__done`.
+    pub const Phase = enum(u8) {
+        /// Parked in `accept`, waiting for the next client.
+        accepting,
+        /// Reading a request or writing its answer.
+        answering,
+        /// Asked to stop (`/__done`): the loop is over, as it should be.
+        done,
+        /// Cancelled: the loop is over, as it should be.
+        canceled,
+    };
+
+    /// Serve until the client asks for `/__done` or the task is cancelled.
     pub fn serve(io: Io, lb: *Loopback) Io.Cancelable!void {
         while (true) {
-            lb.served += 1;
-            const stream = lb.server.accept(io) catch return;
+            lb.phase.store(.accepting, .release);
+            const stream = lb.server.accept(io) catch |err| switch (err) {
+                error.Canceled => {
+                    lb.phase.store(.canceled, .release);
+                    return error.Canceled;
+                },
+                // A connection given up on before it was taken, a
+                // moment out of descriptors: the next accept may be
+                // fine (the binary's loop does the same).
+                else => {
+                    io.sleep(.fromMilliseconds(10), .awake) catch {
+                        lb.phase.store(.canceled, .release);
+                        return error.Canceled;
+                    };
+                    continue;
+                },
+            };
             defer stream.close(io);
-            var arena_state = std.heap.ArenaAllocator.init(lb.store.gpa);
-            defer arena_state.deinit();
-            const arena = arena_state.allocator();
-            var rbuf: [4096]u8 = undefined;
-            var wbuf: [4096]u8 = undefined;
-            var reader = stream.reader(io, &rbuf);
-            var writer = stream.writer(io, &wbuf);
-            var http = std.http.Server.init(&reader.interface, &writer.interface);
-            var request = http.receiveHead() catch return;
-            var authorization: ?[]const u8 = null;
-            var it = request.iterateHeaders();
-            while (it.next()) |h| {
-                if (std.ascii.eqlIgnoreCase(h.name, "authorization")) authorization = arena.dupe(u8, h.value) catch null;
+            _ = lb.served.fetchAdd(1, .monotonic);
+            lb.phase.store(.answering, .release);
+            switch (fake.serveOne(lb.store.gpa, io, lb.store, stream, .{ .stop_path = "/__done", .stamp_clock = false })) {
+                .answered => {},
+                .dropped => _ = lb.dropped.fetchAdd(1, .monotonic),
+                .stop => {
+                    lb.phase.store(.done, .release);
+                    return;
+                },
+                .canceled => {
+                    lb.phase.store(.canceled, .release);
+                    return error.Canceled;
+                },
             }
-            const target = arena.dupe(u8, request.head.target) catch return;
-            var body_buf: [4096]u8 = undefined;
-            const body_reader = request.readerExpectNone(&body_buf);
-            const body_store = arena.alloc(u8, 64 * 1024) catch return;
-            // `readerExpectNone` hands back `Reader.ending` for a method
-            // with no body — a `@constCast` of a const global. Reading from
-            // it writes `seek` back through that const pointer: a segfault
-            // on Linux, silently tolerated on macOS. Only read a body the
-            // method can actually carry.
-            const got = if (request.head.method.requestHasBody())
-                body_reader.readSliceShort(body_store) catch 0
-            else
-                0;
-            const res = lb.store.handle(arena, request.head.method, target, authorization, body_store[0..got]) catch
-                fake.Response{ .status = 500, .body = "{}" };
-            var hbuf: [2]std.http.Header = undefined;
-            var nbuf: [12]u8 = undefined;
-            request.respond(res.body, .{
-                .status = @enumFromInt(res.status),
-                .extra_headers = res.headers(&hbuf, &nbuf),
-            }) catch return;
-            if (std.mem.startsWith(u8, target, "/__done")) return;
         }
     }
 

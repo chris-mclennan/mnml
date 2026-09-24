@@ -1195,14 +1195,43 @@ fn serveUntil(gpa: Allocator, io: Io, store: *Store, server: *Io.net.Server, rea
             stream.close(io);
             break;
         }
-        const stop = serveOne(gpa, io, store, stream);
+        const served = serveOne(gpa, io, store, stream, .{});
         stream.close(io);
-        if (stop) break;
+        if (served == .stop or served == .canceled) break;
     }
 }
 
-/// One request. True means the client asked us to stop.
-fn serveOne(gpa: Allocator, io: Io, store: *Store, stream: Io.net.Stream) bool {
+/// What became of one connection.
+pub const Served = enum {
+    /// A request came in and its answer went out.
+    answered,
+    /// The request was the stop path: answered, and the loop ends.
+    stop,
+    /// The client hung up before its request was whole, or before its
+    /// answer went out — a worker cancelled mid-request does exactly
+    /// that. Nothing to answer; the NEXT connection must still be
+    /// taken, so the loop goes on.
+    dropped,
+    /// This task was cancelled while it read or wrote. The cancel has
+    /// been acknowledged by the read that saw it, so it must go back up
+    /// as `error.Canceled`: a loop that swallowed it and went back to
+    /// `accept` would never be cancelled again.
+    canceled,
+};
+
+pub const ServeOptions = struct {
+    /// The path that answers and then ends the loop.
+    stop_path: []const u8 = "/__shutdown",
+    /// Stamp `store.now_secs` from the real clock before each request.
+    /// The binary does; an in-process test keeps the store's own.
+    stamp_clock: bool = true,
+};
+
+/// One connection, one request. The binary's loop and the in-process
+/// `jira.Loopback` both answer through this, so the two cannot drift
+/// on what a hung-up client means (the Loopback's own copy ended its
+/// whole loop on one, and every request after it parked for good).
+pub fn serveOne(gpa: Allocator, io: Io, store: *Store, stream: Io.net.Stream, opts: ServeOptions) Served {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -1210,41 +1239,49 @@ fn serveOne(gpa: Allocator, io: Io, store: *Store, stream: Io.net.Stream) bool {
     var wbuf: [8192]u8 = undefined;
     var reader = stream.reader(io, &rbuf);
     var writer = stream.writer(io, &wbuf);
-    var http = std.http.Server.init(&reader.interface, &writer.interface);
-    var request = http.receiveHead() catch return false;
-    // The forge corner writes its dates relative to now, so a build
-    // line's age is the same on every run rather than drifting with
-    // the day the fixture was written.
-    store.now_secs = Io.Timestamp.now(io, .real).toSeconds();
-    var authorization: ?[]const u8 = null;
-    var it = request.iterateHeaders();
-    while (it.next()) |h| {
-        if (std.ascii.eqlIgnoreCase(h.name, "authorization")) authorization = arena.dupe(u8, h.value) catch null;
-    }
-    const target = arena.dupe(u8, request.head.target) catch return false;
-    var body_buf: [8192]u8 = undefined;
-    const body_reader = request.readerExpectNone(&body_buf);
-    const body_store = arena.alloc(u8, 256 * 1024) catch return false;
-    // `readerExpectNone` hands back `Reader.ending` for a method
-    // with no body — a `@constCast` of a const global. Reading from
-    // it writes `seek` back through that const pointer: a segfault
-    // on Linux, silently tolerated on macOS. Only read a body the
-    // method can actually carry.
-    const n = if (request.head.method.requestHasBody())
-        body_reader.readSliceShort(body_store) catch 0
-    else
-        0;
-    const stop = std.mem.startsWith(u8, pathOf(target), "/__shutdown");
-    const res = store.handle(arena, request.head.method, target, authorization, body_store[0..n]) catch
-        Response{ .status = 500, .body = "{\"errorMessages\":[\"out of memory\"],\"errors\":{}}" };
-    logRequest(io, store, arena, request.head.method, target, res.status, res.body.len, body_store[0..n]);
-    var hbuf: [2]std.http.Header = undefined;
-    var nbuf: [12]u8 = undefined;
-    request.respond(res.body, .{
-        .status = @enumFromInt(res.status),
-        .extra_headers = res.headers(&hbuf, &nbuf),
-    }) catch {};
-    return stop;
+    const lost: Served = lost: {
+        var http = std.http.Server.init(&reader.interface, &writer.interface);
+        var request = http.receiveHead() catch break :lost .dropped;
+        // The forge corner writes its dates relative to now, so a build
+        // line's age is the same on every run rather than drifting with
+        // the day the fixture was written.
+        if (opts.stamp_clock) store.now_secs = Io.Timestamp.now(io, .real).toSeconds();
+        var authorization: ?[]const u8 = null;
+        var it = request.iterateHeaders();
+        while (it.next()) |h| {
+            if (std.ascii.eqlIgnoreCase(h.name, "authorization")) authorization = arena.dupe(u8, h.value) catch null;
+        }
+        const target = arena.dupe(u8, request.head.target) catch break :lost .dropped;
+        var body_buf: [8192]u8 = undefined;
+        const body_reader = request.readerExpectNone(&body_buf);
+        const body_store = arena.alloc(u8, 256 * 1024) catch break :lost .dropped;
+        // `readerExpectNone` hands back `Reader.ending` for a method
+        // with no body — a `@constCast` of a const global. Reading from
+        // it writes `seek` back through that const pointer: a segfault
+        // on Linux, silently tolerated on macOS. Only read a body the
+        // method can actually carry.
+        const n = if (request.head.method.requestHasBody())
+            body_reader.readSliceShort(body_store) catch 0
+        else
+            0;
+        const stop = std.mem.startsWith(u8, pathOf(target), opts.stop_path);
+        const res = store.handle(arena, request.head.method, target, authorization, body_store[0..n]) catch
+            Response{ .status = 500, .body = "{\"errorMessages\":[\"out of memory\"],\"errors\":{}}" };
+        logRequest(io, store, arena, request.head.method, target, res.status, res.body.len, body_store[0..n]);
+        var hbuf: [2]std.http.Header = undefined;
+        var nbuf: [12]u8 = undefined;
+        request.respond(res.body, .{
+            .status = @enumFromInt(res.status),
+            .extra_headers = res.headers(&hbuf, &nbuf),
+        }) catch break :lost if (stop) .stop else .dropped;
+        return if (stop) .stop else .answered;
+    };
+    // A failed read or write keeps its real reason on the stream: a
+    // cancel is this task's to hand on, anything else is the client's.
+    const read_canceled = if (reader.err) |e| e == error.Canceled else false;
+    const write_canceled = if (writer.err) |e| e == error.Canceled else false;
+    if (read_canceled or write_canceled) return .canceled;
+    return lost;
 }
 
 /// The `jql` a search body carries, verbatim; empty for anything else.
