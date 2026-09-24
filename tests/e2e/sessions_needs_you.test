@@ -8,10 +8,13 @@
 # notification (OSC 777 and OSC 9 — `$TERM_PROGRAM` names no terminal
 # mnml knows, so both), which headless records in status.json.
 # A fake `claude` on PATH stands in for the CLI: its first run is quiet,
-# its second asks after a second and a half. Both stay up for ten
+# its second asks after a second and a half. Which run is first is an
+# atomic `mkdir`: it was a read-increment-write counter file once, and
+# two launches racing on a loaded machine both read 0 — two quiet
+# sessions, and nothing ever asked. Both stay up for ten
 # minutes; the runner ends them with the file.
 
-write bin/claude #!/bin/bash\nmkdir -p "$HOME"\nn=$(cat "$HOME/runs" 2>/dev/null || echo 0)\nn=$((n+1))\necho $n > "$HOME/runs"\nif [ "$n" = 2 ]; then\n  printf '\\033]0;\\342\\234\\263 deploy the fix\\007'\n  printf 'Claude Code v9 (fake)\\n'\n  sleep 1.5\n  printf 'Bash command\\n  ./deploy.sh\\nDo you want to proceed?\\n\\342\\235\\257 1. Yes\\n  2. No\\n'\nelse\n  printf '\\033]0;\\342\\234\\263 write the docs\\007'\n  printf 'Claude Code v9 (fake)\\n'\nfi\nexec -a claude /bin/sh -c 'i=0; while [ $i -lt 600 ]; do sleep 1; i=$((i+1)); done'
+write bin/claude #!/bin/bash\nmkdir -p "$HOME"\nif ! mkdir "$HOME/first-run" 2>/dev/null; then\n  printf '\\033]0;\\342\\234\\263 deploy the fix\\007'\n  printf 'Claude Code v9 (fake)\\n'\n  sleep 1.5\n  printf 'Bash command\\n  ./deploy.sh\\nDo you want to proceed?\\n\\342\\235\\257 1. Yes\\n  2. No\\n'\nelse\n  printf '\\033]0;\\342\\234\\263 write the docs\\007'\n  printf 'Claude Code v9 (fake)\\n'\nfi\nexec -a claude /bin/sh -c 'i=0; while [ $i -lt 600 ]; do sleep 1; i=$((i+1)); done'
 shell chmod +x bin/claude
 command ai.claude_code_new
 wait 400
@@ -21,10 +24,10 @@ wait 200
 command view.focus_left
 expect status contains "\"activePane\":0"
 command view.activity_sessions
-wait 2500
-expect screen contains "session needs input: deploy the fix"
 # The tab (named by the child's title): the raised hand after its name.
-expect screen contains "deploy the fix 󰹇 "
+# Polled rather than waited for: the second fake asks a second and a
+# half after it starts, and on a loaded machine that start is late.
+expect within 20000 screen contains "deploy the fix 󰹇 "
 expect screen lacks "write the docs 󰹇"
 # The card: the same mark before the name; the quiet one has none.
 expect screen contains "▌ 󰹇 deploy the fix"
@@ -44,3 +47,9 @@ command sessions.next_waiting
 expect status contains "\"activePane\":1"
 command sessions.prev_waiting
 expect status contains "\"activePane\":1"
+# The toast said so too. Read back from `:messages`, which keeps it: the
+# toast itself is on screen for four seconds from the moment the prompt
+# was seen, and a loaded machine can spend those between two steps — the
+# file once failed on a toast that had come and gone.
+command messages.show
+expect screen contains "session needs input: deploy the fix"

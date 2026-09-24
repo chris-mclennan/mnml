@@ -48,6 +48,11 @@ wait 9000
 command view.toggle_tree
 command view.focus_pane
 wait 1000
+# The list is a separate process's search against the fake: polled for,
+# not waited out — under load the flat nine seconds above were not
+# always enough, and the thumb below (forty-three issues' worth) was
+# missing. The thumb is on screen only once the list is.
+expect within 30000 screen contains "█"
 expect screen contains "JIRA WORK"
 # The ladder: `?` flush at the right with a cell of air past it, the
 # refresh glyph four cells before it, both on the chip ground.
