@@ -3,8 +3,9 @@
 # binding window says so, a locked window says why, the extra-usage block
 # is one line, a top-level window this build does not name is drawn under
 # a title made from its key, a codename at 0 % with no clock stays quiet,
-# and `omelette_promotional` — the GUESS at where a limit-reset offer
-# lives (`usage.reset_offer_keys`) — reads as an offer with its expiry.
+# and `omelette_promotional` — a codename carrying two clocks, once
+# guessed to be a limit-reset offer — is only another unknown window:
+# the offer is not on this endpoint, so no codename paints one.
 # env: MNML_CLAUDE_USAGE_FIXTURE=${MNML_E2E_WORKSPACE}/fixture
 
 write fixture/accounts *personal
@@ -17,7 +18,8 @@ open placeholder.txt
 command ai.claude_usage
 wait 800
 expect pane "Claude Usage"
-expect screen contains "Limit reset available · expires 4am"
+expect screen lacks "Limit reset"
+expect screen lacks "reset available"
 expect screen contains "Current session · in force"
 expect screen contains "88% used"
 expect screen contains "Current week (all models)"
@@ -28,4 +30,6 @@ expect screen contains "12% used"
 expect screen lacks "Nimbus quill"
 expect screen lacks "Copper kite"
 key G
+expect screen contains "Omelette promotional"
+expect screen lacks "Limit reset"
 expect screen contains "Extra usage: off · Org level disabled until"

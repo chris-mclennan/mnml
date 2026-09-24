@@ -65,9 +65,6 @@ pub const gutter_ascii = "|";
 /// `claude_usage_pencils`, nf-fa-pencil).
 pub const pencil_glyph = "\u{F040}";
 pub const pencil_ascii = "e";
-/// The mark before a limit-reset offer (and on the chip's block).
-pub const offer_glyph = "↺";
-pub const offer_ascii = "@";
 
 /// A run of text; `hit` registers its cells as that `script_hit` id.
 const Span = struct { text: []const u8, style: Theme.Style, hit: ?u32 = null };
@@ -199,19 +196,6 @@ fn claudeRows(ui: Ui, rows: *std.ArrayListUnmanaged(Row), props: Props, focused:
         if (acc.org) |o| try identity.print(a, " · {s}", .{o});
         if (identity.items.len > 0) try head.append(a, .{ .text = identity.items, .style = muted });
         try rows.append(a, .{ .gutter = g, .body = .{ .spans = head.items } });
-        // A limit-reset offer, under the name (the key is a GUESS —
-        // `usage.reset_offer_keys`).
-        if (u.offer) |o| {
-            var green = colored(th, pal.green);
-            green.bold = true;
-            const text = if (o.expires_at == 0) "Limit reset available" else blk: {
-                var buf: [32]u8 = undefined;
-                const soon = o.expires_at > props.now and o.expires_at - props.now < 86_400;
-                const when = if (soon) usage.fmtShortTime(&buf, o.expires_at, props.tz.at(o.expires_at)) else usage.fmtLongTime(&buf, o.expires_at, props.tz.at(o.expires_at));
-                break :blk try std.fmt.allocPrint(a, "Limit reset available · expires {s}", .{when});
-            };
-            try rows.append(a, .{ .gutter = g, .body = .{ .spans = try a.dupe(Span, &.{ .{ .text = if (ui.ascii) offer_ascii ++ " " else offer_glyph ++ " ", .style = green }, .{ .text = text, .style = green } }) } });
-        }
         try rows.append(a, .{ .gutter = g, .body = .{ .spans = &.{} } });
         const ctx: WindowCtx = .{ .ui = ui, .rows = rows, .g = g, .bold = bold, .muted = muted, .tz = props.tz, .now = props.now };
         try window(ctx, "Current session", u.percent, u.severity, u.resets_at, false, u.session_active, u.locked_reason, true);

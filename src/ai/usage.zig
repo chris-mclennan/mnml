@@ -115,18 +115,28 @@ pub const ExtraUsage = struct {
     percent: ?u16 = null,
 };
 
-/// A limit-reset offer: which key carried it, when it lapses (unix
-/// seconds, zero when the object gave no time).
-pub const Offer = struct { key: []const u8, expires_at: u64 };
-
-/// GUESS — the top-level keys taken to carry a limit-reset offer. Claude
-/// added a reset button to its usage page in September 2026; no account
-/// with an offer has been read yet, so which of the endpoint's codenamed
-/// slots holds it is not known. `omelette_promotional` is the likeliest
-/// by name. Correct this table when a logged key (see `unknown_keys`)
-/// shows the real one; an object here is read for `expires_at`, else
-/// `resets_at`, and is never also drawn as a window.
-pub const reset_offer_keys = [_][]const u8{"omelette_promotional"};
+// The limit-reset offer is NOT on this endpoint, and nothing here reads
+// one. claude.ai's usage page gets its reset button from a separate call
+// that only a web session (the browser's cookie) can make; the OAuth
+// usage endpoint answers without it and ignores the query parameters
+// that select it, so no codenamed top-level slot of this body carries it
+// (an earlier build guessed `omelette_promotional` and was wrong). It is
+// deliberately not fetched: this reader holds an OAuth token, not a web
+// session. Its shape, read off the live service on 2026-09-24:
+//
+//   { eligible, ineligible_reason, at_limit, exhausted,
+//     grants: [{ id, label, resets_total, resets_left, starts_at, ends_at,
+//                clears: ["five_hour", "seven_day",
+//                         "seven_day_overage_included"],
+//                paused, usable_now, use_requires_limit,
+//                percent_used: {…}, blocking: [] }],
+//     next_grant_id, weekly_resets_at, cooldown_until }
+//
+// The day it appears in the OAuth body, it arrives under its own key:
+// add that key to `named_keys` and read `grants[]` (a grant with
+// `usable_now` and `resets_left > 0` is an offer open, `ends_at` when it
+// lapses). Until then any codename is an unknown slot like the others —
+// logged, and drawn as a window only when it carries a percent or a clock.
 
 /// The top-level keys the parser reads or deliberately ignores; any other
 /// non-null key is reported in `Usage.unknown_keys`.
@@ -164,7 +174,6 @@ pub const Usage = struct {
     /// Top-level windows the parser does not name, in the body's order.
     windows: []const ExtraWindow = &.{},
     extra_usage: ?ExtraUsage = null,
-    offer: ?Offer = null,
     /// Every non-null top-level key the parser neither reads nor names —
     /// logged once per account so a new field's name can be learned.
     unknown_keys: []const []const u8 = &.{},
@@ -396,13 +405,6 @@ pub fn parseUsage(arena: Allocator, json: []const u8, now: u64) ParseError!Usage
         const key = e.key_ptr.*;
         const val = e.value_ptr.*;
         if (val == .null or inList(&named_keys, key)) continue;
-        if (inList(&reset_offer_keys, key)) {
-            if (val == .object and out.offer == null) {
-                const when = strOf(val, "expires_at") orelse strOf(val, "resets_at");
-                out.offer = .{ .key = try arena.dupe(u8, key), .expires_at = if (when) |x| (parseIso8601(x) orelse 0) else 0 };
-            }
-            continue;
-        }
         try unknown.append(arena, try arena.dupe(u8, key));
         if (val != .object or (val.object.get("utilization") == null and val.object.get("resets_at") == null)) continue;
         const pct = pctOf(val, "utilization");
@@ -1173,7 +1175,7 @@ pub fn singleChip(arena: Allocator, u: *const Usage, letter: ?u8, o: ChipOpts) A
 
 pub const Compact = struct {
     text: []const u8,
-    /// `text` in its parts: the blocks (with any `↺`), and what follows
+    /// `text` in its parts: the blocks, and what follows
     /// them (the stale `!`, the arrow or the countdown, the last space).
     spark: []const u8 = "",
     rest: []const u8 = "",
@@ -1200,8 +1202,6 @@ pub fn compactChip(arena: Allocator, accounts: []const ChipAccount, o: ChipOpts)
         const u = &a.usage;
         if (u.fetched_at > 0) {
             try spark.appendSlice(arena, sparklineChar(u.percent));
-            // A limit-reset offer on this account, still open.
-            if (u.offer) |of| if (of.expires_at == 0 or of.expires_at > o.now) try spark.appendSlice(arena, offer_mark);
             out.tier = worseTier(out.tier, accountTier(u));
             out.worst = @max(out.worst, u.percent);
             out.any_fetched = true;
@@ -1239,9 +1239,6 @@ pub fn compactChip(arena: Allocator, accounts: []const ChipAccount, o: ChipOpts)
     out.text = try std.fmt.allocPrint(arena, " {s} {s}{s}", .{ o.glyph, out.spark, out.rest });
     return out;
 }
-
-/// The chip's mark for an account with a limit-reset offer open.
-pub const offer_mark = "↺";
 
 /// An account's worst window: the session or the week, by the endpoint's
 /// grade where it gave one.
@@ -1308,8 +1305,9 @@ pub const usage_limits_only_fixture =
 /// The 2026-09 shape, every field the parser reads plus the ones it only
 /// names (values invented): a weekly window per model at the top level,
 /// a live window under a codename at 0 %, a locked window, the extra
-/// usage block, the severities, and `omelette_promotional` carrying an
-/// offer — the GUESS `reset_offer_keys` names.
+/// usage block, the severities, and `omelette_promotional` carrying two
+/// clocks — a codename, read like any other: it is no limit-reset offer
+/// (see `Usage`'s note on the grants).
 pub const usage_wide_fixture =
     \\{"five_hour":{"utilization":88.0,"resets_at":"2026-09-12T22:00:00+00:00","limit_dollars":null,"used_dollars":null,"remaining_dollars":null,"locked_reason":null},
     \\ "seven_day":{"utilization":61.0,"resets_at":"2026-09-19T05:00:00+00:00","locked_reason":"weekly_limit_reached"},
@@ -1385,7 +1383,7 @@ test "parseUsage: the windows, the scoped row, the limits-only fallback, junk" {
     try t.expectError(error.BadJson, parseUsage(a, "[1]", 1));
 }
 
-test "parseUsage: the wire's newer fields — severity, is_active, locked_reason, extra usage, windows it does not name, the reset offer, the keys to learn" {
+test "parseUsage: the wire's newer fields — severity, is_active, locked_reason, extra usage, windows it does not name, the keys to learn; a codename is never a reset offer" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -1399,20 +1397,23 @@ test "parseUsage: the wire's newer fields — severity, is_active, locked_reason
     try t.expectEqual(Severity.normal, u.scoped[0].severity.?);
     // `seven_day_sonnet` is the scoped Sonnet row already; `seven_day_cowork`
     // is new — a window titled from its key; `nimbus_quill` at 0 % with no
-    // reset stays quiet; `copper_kite` is no window at all.
-    try t.expectEqual(@as(usize, 1), u.windows.len);
+    // reset stays quiet; `copper_kite` is no window at all. The codename
+    // `omelette_promotional` carries a clock, so it is a window like any
+    // other unknown slot — titled from its key, never "Limit reset".
+    try t.expectEqual(@as(usize, 2), u.windows.len);
     try t.expectEqualStrings("seven_day_cowork", u.windows[0].key);
     try t.expectEqualStrings("Current week (Cowork)", u.windows[0].title);
     try t.expectEqual(@as(u16, 12), u.windows[0].percent);
+    try t.expectEqualStrings("omelette_promotional", u.windows[1].key);
+    try t.expectEqualStrings("Omelette promotional", u.windows[1].title);
+    try t.expectEqual(@as(u16, 0), u.windows[1].percent);
     // Extra usage: off, and why.
     try t.expect(!u.extra_usage.?.enabled);
     try t.expectEqualStrings("org_level_disabled_until", u.extra_usage.?.reason.?);
     try t.expect(u.extra_usage.?.percent == null);
-    // The offer, keyed by the guess table.
-    try t.expectEqualStrings("omelette_promotional", u.offer.?.key);
-    try t.expectEqual(parseIso8601("2026-09-13T04:00:00+00:00").?, u.offer.?.expires_at);
-    // Every non-null top-level key the parser does not name, to be logged.
-    for ([_][]const u8{ "seven_day_sonnet", "seven_day_cowork", "nimbus_quill", "copper_kite" }) |k| {
+    // Every non-null top-level key the parser does not name, to be logged —
+    // the codename included: nothing here maps one to a reset offer.
+    for ([_][]const u8{ "seven_day_sonnet", "seven_day_cowork", "omelette_promotional", "nimbus_quill", "copper_kite" }) |k| {
         const found = for (u.unknown_keys) |x| {
             if (std.mem.eql(u8, x, k)) break true;
         } else false;
@@ -1421,11 +1422,10 @@ test "parseUsage: the wire's newer fields — severity, is_active, locked_reason
     for (u.unknown_keys) |x| {
         try t.expect(!std.mem.eql(u8, x, "tangelo")); // null
         try t.expect(!std.mem.eql(u8, x, "five_hour")); // named
-        try t.expect(!std.mem.eql(u8, x, "omelette_promotional")); // in the table
     }
     // The old shape has none of it.
     const old = try parseUsage(a, usage_limits_only_fixture, 1);
-    try t.expect(old.offer == null and old.extra_usage == null and old.windows.len == 0 and old.severity == null);
+    try t.expect(old.extra_usage == null and old.windows.len == 0 and old.severity == null);
     try t.expectEqualStrings("Nimbus quill", try humanKey(a, "nimbus_quill"));
     try t.expectEqualStrings("Current session (Burst)", try humanKey(a, "five_hour_burst"));
     try t.expectEqualStrings("Current week (Oauth apps)", try humanKey(a, "seven_day_oauth_apps"));

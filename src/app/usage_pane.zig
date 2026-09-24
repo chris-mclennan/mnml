@@ -570,7 +570,6 @@ fn dupeUsage(arena: Allocator, u: usage.Usage) Allocator.Error!usage.Usage {
     for (u.windows, 0..) |w, i| windows[i] = .{ .key = try arena.dupe(u8, w.key), .title = try arena.dupe(u8, w.title), .percent = w.percent, .resets_at = w.resets_at, .locked_reason = try dupeOpt(arena, w.locked_reason) };
     out.windows = windows;
     if (u.extra_usage) |e| out.extra_usage = .{ .enabled = e.enabled, .reason = try dupeOpt(arena, e.reason), .percent = e.percent };
-    if (u.offer) |o| out.offer = .{ .key = try arena.dupe(u8, o.key), .expires_at = o.expires_at };
     out.locked_reason = try dupeOpt(arena, u.locked_reason);
     out.weekly_locked_reason = try dupeOpt(arena, u.weekly_locked_reason);
     // Logged on arrival; the snapshot does not keep them.
@@ -587,7 +586,7 @@ const log = std.log.scoped(.usage);
 
 /// The names of the top-level keys the parser does not know, at debug
 /// level, once per account per key — how the field that carries a new
-/// window or a reset offer gets learned from an account that has one.
+/// window gets learned from an account that has one.
 fn logUnknownKeys(app: *App, name: []const u8, keys: []const []const u8) Allocator.Error!void {
     const s = st(app);
     for (keys) |k| {
@@ -1196,8 +1195,7 @@ pub fn claudeChipParts(app: *App, arena: Allocator, glyph: []const u8) Allocator
 }
 
 /// One account as the chip's hover lists it: its name (and whether it is
-/// the active one, or has a reset offer open), then its two percents and
-/// the next reset.
+/// the active one), then its two percents and the next reset.
 pub const TipLine = struct { text: []const u8, sub: []const u8 };
 
 pub fn chipTipLines(app: *App, arena: Allocator) Allocator.Error![]TipLine {
@@ -1206,8 +1204,7 @@ pub fn chipTipLines(app: *App, arena: Allocator) Allocator.Error![]TipLine {
     const out = try arena.alloc(TipLine, s.accounts.items.len);
     for (s.accounts.items, 0..) |*a, i| {
         const u = &a.usage;
-        const offer = if (u.offer) |o| o.expires_at == 0 or o.expires_at > now else false;
-        const text = try std.fmt.allocPrint(arena, "{s}{s}{s}", .{ a.name, if (a.is_active) " (active)" else "", if (offer) " " ++ usage.offer_mark ++ " reset available" else "" });
+        const text = try std.fmt.allocPrint(arena, "{s}{s}", .{ a.name, if (a.is_active) " (active)" else "" });
         const sub = if (u.fetched_at == 0)
             try std.fmt.allocPrint(arena, "{s}", .{if (u.last_error) |e| e else "not read yet"})
         else blk: {
@@ -1829,12 +1826,12 @@ test "the wire's severity colours the bar over the thresholds; unknown keys are 
     try settle(&app);
     const a = st(&app).find("personal").?;
     try t.expectEqual(usage.Severity.critical, a.usage.weekly_severity.?);
-    try t.expectEqualStrings("omelette_promotional", a.usage.offer.?.key);
-    // Four keys this build does not read: logged, once.
-    try t.expectEqual(@as(usize, 4), st(&app).unknown_logged);
+    // Five keys this build does not read — the codename that no longer
+    // passes for a reset offer among them: logged, once.
+    try t.expectEqual(@as(usize, 5), st(&app).unknown_logged);
     try refreshAll(&app);
     try settle(&app);
-    try t.expectEqual(@as(usize, 4), st(&app).unknown_logged);
+    try t.expectEqual(@as(usize, 5), st(&app).unknown_logged);
     // 61 % is yellow by the thresholds; the endpoint says critical: red.
     try app.render();
     const pal = &app.theme.palette;
@@ -1863,11 +1860,11 @@ test "the wire's severity colours the bar over the thresholds; unknown keys are 
     try t.expect(found);
 }
 
-test "the chip at a glance: the worst account's colour as a pill, a ↺ on the account with a reset offer; the hover lists every account" {
+test "the chip at a glance: the worst account's colour as a pill, no reset mark off a codename; the hover lists every account" {
     var fx = try Fixture.init();
     defer fx.deinit();
     try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "accounts", .data = "*personal\nwork\nspare\n" });
-    // `spare`: 88 % and 30 %, graded warning, with an offer open.
+    // `spare`: 88 % and 30 %, graded warning, and a codename with clocks.
     try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "spare.json", .data = usage.usage_wide_fixture });
     var app = try fx.app();
     defer app.deinit();
@@ -1880,8 +1877,8 @@ test "the chip at a glance: the worst account's colour as a pill, a ↺ on the a
     try settle(&app);
     const arena = app.frame.allocator();
     const parts = try claudeChipParts(&app, arena, "G");
-    // A block per account; `spare` carries the offer mark; personal's 95 % critical is the worst.
-    try t.expectEqualStrings("▇!▇↺", parts.accent);
+    // A block per account, no mark after `spare`; personal's 95 % critical is the worst.
+    try t.expectEqualStrings("▇!▇", parts.accent);
     try t.expectEqual(usage.Tier.hot, parts.tier.?);
     // Painted: the blocks as a dark pill in red inside the coral chip.
     app.tree.visible = false;
@@ -1894,7 +1891,8 @@ test "the chip at a glance: the worst account's colour as a pill, a ↺ on the a
     var seen = false;
     while (x < r.x + r.w) : (x += 1) {
         const c = app.screen.readCell(x, r.y) orelse continue;
-        if (!std.mem.eql(u8, c.char.grapheme, "↺")) continue;
+        try t.expect(!std.mem.eql(u8, c.char.grapheme, "↺"));
+        if (!std.mem.eql(u8, c.char.grapheme, "▇")) continue;
         try t.expect(@import("vaxis").Color.eql(c.style.fg, app.theme.palette.red));
         try t.expect(!@import("vaxis").Color.eql(c.style.bg, app.screen.readCell(r.x, r.y).?.style.bg));
         seen = true;
@@ -1907,7 +1905,7 @@ test "the chip at a glance: the worst account's colour as a pill, a ↺ on the a
     try t.expectEqualStrings("95% session · 52% week · resets 8:20pm", tip.rows[0].sub);
     try t.expectEqualStrings("work", tip.rows[1].text);
     try t.expect(std.mem.indexOf(u8, tip.rows[1].sub, "429") != null);
-    try t.expectEqualStrings("spare ↺ reset available", tip.rows[2].text);
+    try t.expectEqualStrings("spare", tip.rows[2].text);
     try t.expectEqualStrings("88% session · 61% week · resets 10pm", tip.rows[2].sub);
     // Nothing alarming: the chip is Rust's, ink on coral, no pill.
     try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "accounts", .data = "*calm\nquiet\n" });

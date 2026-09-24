@@ -492,7 +492,7 @@ fn usagePane(app: *App, arena: Allocator, id: u32) Allocator.Error!Entry {
         };
         return .{
             .title = try std.fmt.allocPrint(arena, "Claude account — {s}", .{name}),
-            .body = "One account's windows, as Claude Code's own usage screen shows them: the five-hour session, the week across models, a week per model, and any other window the endpoint reports under a key this build does not name, each bar coloured by the endpoint's own severity with its reset time. `Limit reset available` under the name is an offer to reset the limits, with when it lapses. Right-click is the account's menu — link a token, rename, remove. The green gutter and `(active)` mark the account the Claude Code CLI is logged in as.",
+            .body = "One account's windows, as Claude Code's own usage screen shows them: the five-hour session, the week across models, a week per model, and any other window the endpoint reports under a key this build does not name, each bar coloured by the endpoint's own severity with its reset time. Right-click is the account's menu — link a token, rename, remove. The green gutter and `(active)` mark the account the Claude Code CLI is logged in as.",
             .keys = &.{ .{ .chord = "Right-click", .label = "The account's menu" }, .{ .chord = "r", .label = "Refresh" } },
             .links = &.{ .{ .command = .{ .id = .@"ai.link_claude_token", .label = "Link a token" } }, .{ .command = .{ .id = .@"ai.refresh_usage", .label = "Refresh now" } } },
         };
