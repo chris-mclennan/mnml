@@ -1656,7 +1656,7 @@ fn openSplitChipMenu(app: *App, dir: enum { horizontal, vertical }, x: u16, y: u
 fn openMaximizeMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     const mode = app.cfg.ui.maximize_click;
     const rows = try items(app, &.{
-        .{ .label = "Zoom this pane / restore", .action = .{ .command = .@"view.toggle_zoom" }, .checked = mode == .zoom_pane },
+        .{ .label = "Zoom the split / restore", .action = .{ .command = .@"view.toggle_zoom" }, .checked = mode == .zoom_pane },
         .{ .label = "Full screen / restore", .action = .{ .command = .@"view.fullscreen" }, .checked = mode == .fullscreen },
         .{ .label = "Equalize splits", .action = .{ .command = .@"view.equalize_splits" }, .separator_before = true },
     });
@@ -1864,7 +1864,7 @@ test "right-click: the maximize chip lists its two modes and ticks the one a lef
     // Two modes and the equalize; there is no third zoom scope — a
     // leaf is the tab group (`app/zen.zig`).
     try t.expectEqual(@as(usize, 3), app.overlay.menu.items.len);
-    try t.expectEqualStrings("Zoom this pane / restore", app.overlay.menu.items[0].label);
+    try t.expectEqualStrings("Zoom the split / restore", app.overlay.menu.items[0].label);
     try t.expectEqualStrings("Full screen / restore", app.overlay.menu.items[1].label);
     try t.expectEqual(zen.commandFor(.zoom_pane), app.overlay.menu.items[0].action.command);
     try t.expectEqual(zen.commandFor(.fullscreen), app.overlay.menu.items[1].action.command);

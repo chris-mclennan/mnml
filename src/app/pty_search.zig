@@ -92,8 +92,14 @@ pub const Search = struct {
     /// The current match's cells, so a rescan can find it again.
     keep: ?Match = null,
     /// No match has been picked for this query yet: the scan's end
-    /// picks the one nearest the bottom of the view.
+    /// picks the first one past the view's bottom row in the search's
+    /// direction, wrapping (`firstInDirection`).
     pick_initial: bool = false,
+    /// The direction of the search, as Neovim keeps it: `/` searches
+    /// down (toward newer output) and `?` up (toward older); `n` repeats
+    /// it and `N` reverses it. The standard profile's search is VS
+    /// Code's terminal find, which starts at the bottom and goes up.
+    backward: bool = false,
     /// Paint the matches while the bar is closed (vim's terminal-normal
     /// after `/`…Enter or `n`); Esc on the bar turns it off.
     shown: bool = false,
@@ -396,21 +402,30 @@ fn settle(s: *Search, term: *vt.Terminal) void {
         s.current = if (i > 0) i - 1 else 0;
     }
     if (s.current == null and s.pick_initial) {
-        s.current = nearestToView(s, term);
+        s.current = firstInDirection(s, term);
         s.pick_initial = false;
         if (s.current) |c| reveal(s, term, c);
     }
     if (s.current) |c| s.keep = s.matches.items[c];
 }
 
-/// The last match starting at or above the view's bottom row — the
-/// newest one the user could be looking at — else the first.
-fn nearestToView(s: *const Search, term: *vt.Terminal) ?usize {
-    if (s.matches.items.len == 0) return null;
+/// Where a new search lands, from the view's bottom row — the terminal
+/// cursor's line, where Neovim's cursor sits in terminal-normal:
+/// searching down (`/`), the first match below it, wrapping to the
+/// oldest; searching up (`?`, and VS Code's find), the last match at or
+/// above it — the newest one the user could be looking at — wrapping to
+/// the newest overall.
+fn firstInDirection(s: *const Search, term: *vt.Terminal) ?usize {
+    const n = s.matches.items.len;
+    if (n == 0) return null;
     const bottom = viewTop(term) + term.rows -| 1;
-    var i: usize = s.matches.items.len;
+    if (!s.backward) {
+        for (s.matches.items, 0..) |m, i| if (m.y0 > bottom) return i;
+        return 0;
+    }
+    var i: usize = n;
     while (i > 0) : (i -= 1) if (s.matches.items[i - 1].y0 <= bottom) return i - 1;
-    return 0;
+    return n - 1;
 }
 
 /// The screen row at the top of the viewport.
@@ -485,6 +500,13 @@ fn open(app: *App) CommandError!void {
 }
 
 pub fn openOn(app: *App, id: PaneId, p: *PtyPane) Allocator.Error!void {
+    return openDir(app, id, p, app.input_style == .standard);
+}
+
+/// The bar, searching up (`backward`: vim's `?`, VS Code's find) or
+/// down (vim's `/`).
+pub fn openDir(app: *App, id: PaneId, p: *PtyPane, backward: bool) Allocator.Error!void {
+    p.search.backward = backward;
     if (app.find_bar) |*fb| {
         if (fb.pane == id) {
             fb.state.select_all = fb.state.query.items.len > 0;
@@ -493,7 +515,7 @@ pub fn openOn(app: *App, id: PaneId, p: *PtyPane) Allocator.Error!void {
         }
         app.closeFindBar(false);
     }
-    var fb: app_mod.FindBarState = .{ .pane = id, .snapshot = null, .snapshot_cursor = 0, .hist_cursor = app.find_history.items.len };
+    var fb: app_mod.FindBarState = .{ .pane = id, .snapshot = null, .snapshot_cursor = 0, .hist_cursor = app.find_history.items.len, .reverse = backward and app.input_style == .vim };
     fb.state.regex = p.search.regex;
     if (app.input_style == .standard and p.search.active()) {
         try fb.state.setQuery(app.gpa, p.search.query.items);
@@ -520,7 +542,10 @@ pub fn liveUpdate(app: *App, p: *PtyPane) Allocator.Error!void {
 }
 
 /// Enter on the bar: vim's lands and closes, leaving `n` / `N`; the
-/// standard profile's steps to the next match and keeps the bar.
+/// standard profile's keeps the bar and steps UP, toward older output —
+/// VS Code's terminal find binds Enter to Find Previous and Shift+Enter
+/// to Find Next (`barKey`), the reverse of its editor find, because the
+/// newest output is at the bottom.
 pub fn accept(app: *App, p: *PtyPane) Allocator.Error!void {
     const fb = &(app.find_bar orelse return);
     const q = fb.state.query.items;
@@ -537,11 +562,31 @@ pub fn accept(app: *App, p: *PtyPane) Allocator.Error!void {
         return;
     }
     if (app.input_style == .vim) {
-        if (s.current) |c| app.toast("match {d}/{d}", .{ c + 1, s.matches.items.len });
+        if (s.current) |c| app.toastReplace(toast_id, "match {d}/{d}", .{ c + 1, s.matches.items.len });
         app.closeFindBar(false);
         return;
     }
+    step(app, p, -1);
+}
+
+/// The one toast a search step keeps up: each step replaces it rather
+/// than stacking another under it.
+const toast_id = "term.search";
+
+/// A key on a terminal's bar that means something else there than on
+/// the editor's: under the standard profile Shift+Enter is VS Code's
+/// terminal Find Next — down, toward newer output — where the editor's
+/// bar reads it as previous. True when taken.
+pub fn barKey(app: *App, k: Key) Allocator.Error!bool {
+    const p = barPane(app) orelse return false;
+    if (app.input_style != .standard) return false;
+    if (k.code != .enter or !k.mods.shift or k.mods.ctrl or k.mods.alt) return false;
+    const fb = &(app.find_bar orelse return false);
+    if (fb.state.query.items.len == 0) return true;
+    try find_history.push(app, fb.state.query.items);
+    if (!p.search.active()) try liveUpdate(app, p);
     step(app, p, 1);
+    return true;
 }
 
 fn patternProblem(err: regex.Error) []const u8 {
@@ -572,8 +617,9 @@ fn selectMatch(p: *PtyPane, m: Match) Allocator.Error!void {
     try screen.select(vt.Selection.init(a, b, false));
 }
 
-/// Step `delta` matches, wrapping; the view follows. With the bar
-/// closed the selection moves with it.
+/// Step `delta` matches — +1 down toward newer output, -1 up — wrapping
+/// with Neovim's word for it; the view follows. With the bar closed the
+/// selection moves with it.
 pub fn step(app: *App, p: *PtyPane, delta: i32) void {
     const s = &p.search;
     if (!s.active()) {
@@ -587,7 +633,9 @@ pub fn step(app: *App, p: *PtyPane, delta: i32) void {
     }
     const term = termOf(p) orelse return;
     const cur: i64 = if (s.current) |c| @intCast(c) else if (delta > 0) -1 else @intCast(n);
-    const idx: usize = @intCast(@mod(cur + delta, @as(i64, @intCast(n))));
+    const raw = cur + delta;
+    const idx: usize = @intCast(@mod(raw, @as(i64, @intCast(n))));
+    const wrapped: ?[]const u8 = if (s.current == null) null else if (raw >= @as(i64, @intCast(n))) "search hit BOTTOM, continuing at TOP" else if (raw < 0) "search hit TOP, continuing at BOTTOM" else null;
     s.current = idx;
     s.keep = s.matches.items[idx];
     s.pick_initial = false;
@@ -597,8 +645,15 @@ pub fn step(app: *App, p: *PtyPane, delta: i32) void {
         s.shown = true;
         selectMatch(p, s.matches.items[idx]) catch {};
     }
-    app.toast("match {d}/{d}", .{ idx + 1, n });
+    if (wrapped) |w| app.toastReplace(toast_id, "{s} · match {d}/{d}", .{ w, idx + 1, n }) else app.toastReplace(toast_id, "match {d}/{d}", .{ idx + 1, n });
     app.needs_render = true;
+}
+
+/// `n` / `N` in terminal-normal: repeat the search's direction, or
+/// reverse it.
+fn stepDir(app: *App, p: *PtyPane, reverse: bool) void {
+    const down = p.search.backward == reverse;
+    step(app, p, if (down) 1 else -1);
 }
 
 fn next(app: *App) CommandError!void {
@@ -617,7 +672,8 @@ fn stepActive(app: *App, delta: i32) CommandError!void {
 
 // ─── keys ───────────────────────────────────────────────────────────────
 
-/// Terminal-normal's search keys: `/` opens the bar, `n` / `N` step.
+/// Terminal-normal's search keys, Neovim's: `/` searches down, `?` up,
+/// `n` repeats the direction and `N` reverses it.
 pub fn termNormalKey(app: *App, id: PaneId, p: *PtyPane, k: Key) Allocator.Error!bool {
     if (k.mods.ctrl or k.mods.alt or k.mods.super) return false;
     const c = switch (k.code) {
@@ -625,12 +681,12 @@ pub fn termNormalKey(app: *App, id: PaneId, p: *PtyPane, k: Key) Allocator.Error
         else => return false,
     };
     switch (c) {
-        '/' => {
+        '/', '?' => {
             if (p.session == null) return false;
-            try openOn(app, id, p);
+            try openDir(app, id, p, c == '?');
         },
-        'n' => step(app, p, 1),
-        'N' => step(app, p, -1),
+        'n' => stepDir(app, p, false),
+        'N' => stepDir(app, p, true),
         else => return false,
     }
     return true;
@@ -787,7 +843,7 @@ fn settleScan(app: *App, p: *PtyPane) !void {
     return error.TestUnexpectedResult;
 }
 
-test "scrollback search (vim): `/` in terminal-normal finds one line of 3000, highlights it, Enter selects it; a regex with two matches steps with n / N and wraps" {
+test "scrollback search (vim): `/` in terminal-normal finds one line of 3000, highlights it, Enter selects it; `/` searches down and `?` up, n repeats the direction, N reverses it, a wrap says so" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 16 });
     defer app.deinit();
@@ -828,21 +884,39 @@ test "scrollback search (vim): `/` in terminal-normal finds one line of 3000, hi
     try app.handle(.{ .key = Key.char('y') });
     try t.expectEqualStrings("2999", app.clipboard.text());
 
-    // A regex: two lines. The one nearer the bottom is current; `n`
-    // wraps to the first, `N` back.
+    // A regex: two lines. `/` searches down from the cursor's line
+    // (the bottom), so it wraps to the first; `n` goes on down, `N`
+    // back up.
     try app.handle(.{ .key = Key.char('/') });
     try app.handle(.{ .key = Key.ctrl('r') });
     try typeText(&app, "^299[89]$");
     try settleScan(&app, p);
     try t.expectEqual(@as(usize, 2), p.search.matches.items.len);
-    try t.expectEqual(@as(?usize, 1), p.search.current);
-    try app.handle(.{ .key = Key.named(.enter) });
-    try t.expect(app.find_bar == null);
-    try app.handle(.{ .key = Key.char('n') });
     try t.expectEqual(@as(?usize, 0), p.search.current);
     const first = try textOf(p, p.search.matches.items[0]);
     defer t.allocator.free(first);
     try t.expectEqualStrings("2998", first);
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expect(app.find_bar == null);
+    try app.handle(.{ .key = Key.char('n') });
+    try t.expectEqual(@as(?usize, 1), p.search.current);
+    // `n` past the last wraps, and says so in the one step toast.
+    try app.handle(.{ .key = Key.char('n') });
+    try t.expectEqual(@as(?usize, 0), p.search.current);
+    try t.expectEqualStrings("search hit BOTTOM, continuing at TOP · match 1/2", app.lastToast().?);
+    try app.handle(.{ .key = Key.char('N') });
+    try t.expectEqual(@as(?usize, 1), p.search.current);
+    try t.expectEqualStrings("search hit TOP, continuing at BOTTOM · match 2/2", app.lastToast().?);
+    // `?` searches up: the newest match above the cursor, and `n`
+    // keeps going up.
+    try app.handle(.{ .key = Key.char('?') });
+    try t.expect(app.find_bar != null);
+    try typeText(&app, "^299[89]$");
+    try settleScan(&app, p);
+    try t.expectEqual(@as(?usize, 1), p.search.current);
+    try app.handle(.{ .key = Key.named(.enter) });
+    try app.handle(.{ .key = Key.char('n') });
+    try t.expectEqual(@as(?usize, 0), p.search.current);
     try app.handle(.{ .key = Key.char('N') });
     try t.expectEqual(@as(?usize, 1), p.search.current);
     // Still painted in terminal-normal after the bar closed; `i` back
@@ -857,7 +931,7 @@ test "scrollback search (vim): `/` in terminal-normal finds one line of 3000, hi
     try t.expect(!Theme.Color.eql(app.screen.readCell(at3.x, at3.y).?.style.bg, app.theme.match.bg));
 }
 
-test "scrollback search (standard): Ctrl+F opens it, Enter / Shift+Enter step with wrap and scroll the match into view, Esc closes with the match selected" {
+test "scrollback search (standard): Ctrl+F opens it, Enter steps up and Shift+Enter down (VS Code's terminal find) with wrap and scroll the match into view, Esc closes with the match selected" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 16 });
     defer app.deinit();
@@ -874,16 +948,22 @@ test "scrollback search (standard): Ctrl+F opens it, Enter / Shift+Enter step wi
     try settleScan(&app, p);
     try t.expectEqual(@as(usize, 11), p.search.matches.items.len);
     try t.expectEqual(@as(?usize, 10), p.search.current);
-    // Enter: the next, wrapping to line 11, scrolled into view.
+    // VS Code's terminal find: Enter is Find Previous — up, toward
+    // older output — and Shift+Enter Find Next, down.
     try app.handle(.{ .key = Key.named(.enter) });
     try t.expect(app.find_bar != null);
+    try t.expectEqual(@as(?usize, 9), p.search.current);
+    try app.handle(.{ .key = .{ .code = .enter, .mods = .{ .shift = true } } });
+    try t.expectEqual(@as(?usize, 10), p.search.current);
+    // Down past the newest wraps to line 11, scrolled into view.
+    try app.handle(.{ .key = .{ .code = .enter, .mods = .{ .shift = true } } });
     try t.expectEqual(@as(?usize, 0), p.search.current);
     try app.render();
     const top = viewTop(termOf(p).?);
     const m = p.search.matches.items[0];
     try t.expect(m.y0 >= top and m.y0 < top + termOf(p).?.rows - 1);
-    // Shift+Enter: back to 119.
-    try app.handle(.{ .key = .{ .code = .enter, .mods = .{ .shift = true } } });
+    // Enter: up past the oldest wraps back to 119.
+    try app.handle(.{ .key = Key.named(.enter) });
     try t.expectEqual(@as(?usize, 10), p.search.current);
     // Esc: the bar goes, the matches stop painting, the selection is 11 of `119`.
     try app.handle(.{ .key = Key.named(.esc) });

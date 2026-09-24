@@ -125,12 +125,15 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
         return out;
     }
 
-    // The subtitle is droppable.
+    // The subtitle is droppable. The header owns the one cell between
+    // the label and it, so a caller passes `(2 running)` bare — a leading
+    // space it does pass is folded into that one cell, never two.
     var sub: ?[]const u8 = null;
     var sub_w: u16 = 0;
-    if (p.subtitle) |s| {
+    if (p.subtitle) |raw| {
+        const s = std.mem.trimStart(u8, raw, " ");
         if (s.len > 0) {
-            const sw = ui.width(s);
+            const sw = ui.width(s) + 1;
             if (w >= label_w + sw + refresh_w + 3) {
                 sub = s;
                 sub_w = sw;
@@ -193,7 +196,10 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
 
     var x = area.x + 1;
     x += ui.putStr(x, y, title_end -| x, p.label, label_style);
-    if (sub) |s| _ = ui.putStr(x, y, title_end -| x, s, subtitleStyle(t, p.bg));
+    if (sub) |s| {
+        x += ui.putStr(x, y, title_end -| x, " ", subtitleStyle(t, p.bg));
+        _ = ui.putStr(x, y, title_end -| x, s, subtitleStyle(t, p.bg));
+    }
 
     if (mode_text) |mt| {
         out.mode = chip.paintTarget(ui, mode_x, y, mode_w, mt, chip.modeStyle(t), hit.chipTarget(p.panel, p.mode_kind, p.pane));

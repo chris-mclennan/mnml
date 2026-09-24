@@ -123,7 +123,9 @@ pub fn place(screen: Rect, rows: usize) Rect {
 /// `(2 running · 12 finished)`.
 pub fn draw(ui: Ui, screen: Rect, st: *Panel.State, rows: []const Row, subtitle: []const u8) void {
     if (screen.w < 20 or screen.h < 6) return;
-    const inner = overlay.frameLook(ui, place(screen, rows.len), "Jobs", .modal);
+    // The caps header below names the list; a frame title would say it
+    // twice.
+    const inner = overlay.frameLook(ui, place(screen, rows.len), null, .modal);
     if (inner.isEmpty() or inner.h < 3) return;
     const parts = inner.splitBottom(1);
     _ = Panel.draw(st, ui, parts.top, .{
@@ -170,8 +172,10 @@ test "draw: the sections, a running row with its Cancel row, a finished failure,
         .{ .kind = .finished, .id = 2, .mark = failed_glyph, .tone = .failed, .what = "lint", .label = "shellcheck run.sh", .detail = "exit 2", .right = "0.4s" },
     };
     draw(ui, f.full(), &st, &rows, "(1 running · 1 finished)");
-    try f.expectContains("Jobs");
-    try f.expectContains("JOBS");
+    // One title: the caps header's, with the header's own gap before
+    // the count; the frame carries none.
+    try f.expectContains("JOBS (1 running · 1 finished)");
+    try f.expectLacks(" Jobs ");
     try f.expectContains("RUNNING (1)");
     try f.expectContains("⠋ git      fetch");
     try f.expectContains(cancel_glyph ++ " Cancel");

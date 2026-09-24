@@ -3,7 +3,7 @@
 //!
 //! **The start surface** (`full`, the default, `drawStart`): a compact
 //! word mark, the workspace line, then four lists drawn through
-//! `ListPanel` — RECENT WORKSPACES, RECENT FILES, SESSIONS (with its
+//! `ListPanel` — WORKSPACES, RECENT FILES, SESSIONS (with its
 //! `+ New Claude Code session here` row) and SHORTCUTS — and the
 //! version line at the foot. The lists sit in two columns when the
 //! pane is wide enough and one when it is not; `layout` decides, and
@@ -391,7 +391,9 @@ pub fn layout(area: Rect, n: Counts) Layout {
 
 fn listLabel(l: List) []const u8 {
     return switch (l) {
-        .workspaces => "RECENT WORKSPACES",
+        // The window's own roots (`tree.workspaceRows`), not a history
+        // of folders: the label says what the list holds.
+        .workspaces => "WORKSPACES",
         .recent => "RECENT FILES",
         .sessions => "SESSIONS",
         .shortcuts => "SHORTCUTS",
@@ -919,7 +921,7 @@ test "start surface: 89x36 paints the mark, the four lists and the version; ever
     drawSample(&f, &st, false);
     try f.expectContains(mark[1]);
     try f.expectContains("workspace · ws  on main");
-    try f.expectContains("RECENT WORKSPACES");
+    try f.expectContains("WORKSPACES");
     try f.expectContains("RECENT FILES");
     try f.expectContains("SESSIONS");
     try f.expectContains("SHORTCUTS");

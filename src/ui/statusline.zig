@@ -154,6 +154,11 @@ pub const Seg = struct {
     /// pill on `bg`.
     accent: ?Accent = null,
     tail: []const u8 = "",
+    /// A transient chip's short form (the jobs chip's ` ✗ tests `): what
+    /// it becomes, before anything on the left is clipped, when the two
+    /// lanes do not fit — the file name wins the width, not a status that
+    /// will be gone in ten seconds.
+    short: ?[]const u8 = null,
 
     /// `underline` marks the run (the ticker's active account letter).
     /// `bg` gives the run a ground of its own inside the pill.
@@ -263,7 +268,30 @@ fn rightWidth(ui: Ui, segs: []const Seg, ground: Color) u16 {
 const Fitted = struct { left: []const Seg, right: []const Seg };
 
 fn fit(ui: Ui, width: u16, info: Info, ground: Color) Fitted {
-    return .{ .left = clipLeft(ui, width, info.left, rightWidth(ui, info.right, ground), ground), .right = info.right };
+    const right = shortened(ui, width, info, ground);
+    return .{ .left = clipLeft(ui, width, info.left, rightWidth(ui, right, ground), ground), .right = right };
+}
+
+/// The right lane, its transient chips in their `short` form when the
+/// left lane would otherwise be clipped. A copy on the arena; OOM keeps
+/// the lane as given.
+fn shortened(ui: Ui, width: u16, info: Info, ground: Color) []const Seg {
+    var any = false;
+    for (info.right) |s| {
+        if (s.short != null) any = true;
+    }
+    if (!any) return info.right;
+    var left_cols: u16 = 0;
+    for (info.left) |s| left_cols += s.cols(ui);
+    if (left_cols + lane_gap + rightWidth(ui, info.right, ground) <= width) return info.right;
+    const copy = ui.arena.dupe(Seg, info.right) catch return info.right;
+    for (copy) |*s| if (s.short) |sh| {
+        s.text = sh;
+        s.accent = null;
+        s.tail = "";
+        s.short = null;
+    };
+    return copy;
 }
 
 /// Rust's rule: the longest left chip gives way to the right lane plus
@@ -483,6 +511,30 @@ test "at 80 columns the longest left chip is clipped to make room, as Rust clipp
 // start and lets the screen's edge cut it — the dump on the same
 // fixture ends `WRAP    09:36`, the workspace and the language gone.
 // Zig drops inner chips instead, so the far-right ones always show.
+test "a transient chip takes its short form before the left lane is clipped; with room, it stays whole" {
+    const left = [_]Seg{
+        Seg.init(" VIEW ", P.bg_darker, P.blue).strong(),
+        Seg.init(" CalcTests.cs ", P.fg, P.statusline),
+    };
+    var jobs = Seg.init(" ✗ tests: 1 failed, 1 passed ", P.comment, P.bg2);
+    jobs.short = " ✗ tests ";
+    const right = [_]Seg{ jobs, Seg.init(" 23:58 ", P.comment, P.bg2) };
+    // 50 columns: the whole chip would clip the file name — it shrinks.
+    var f = try Fixture.init(50, 1);
+    defer f.deinit();
+    draw(f.ui(), f.full(), .{ .left = &left, .right = &right });
+    var buf: [512]u8 = undefined;
+    const row = f.row(0, &buf);
+    try testing.expect(std.mem.indexOf(u8, row, " CalcTests.cs ") != null);
+    try testing.expect(std.mem.indexOf(u8, row, " ✗ tests ") != null);
+    try testing.expect(std.mem.indexOf(u8, row, "1 failed") == null);
+    // 120 columns: room for both, the words stay.
+    var g = try Fixture.init(120, 1);
+    defer g.deinit();
+    draw(g.ui(), g.full(), .{ .left = &left, .right = &right });
+    try testing.expect(std.mem.indexOf(u8, g.row(0, &buf), "✗ tests: 1 failed, 1 passed") != null);
+}
+
 test "at 60 columns the left lane is at its floor and the screen edge cuts the right lane, as the Rust row is cut" {
     var f = try Fixture.init(60, 1);
     defer f.deinit();

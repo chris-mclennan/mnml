@@ -1,0 +1,49 @@
+# width: 100
+# height: 40
+# The terminal's scrollback search has Neovim's directions in
+# terminal-normal: `/` searches down from the cursor's line (the bottom),
+# wrapping to the oldest match; `?` searches up; `n` repeats the
+# direction, `N` reverses it, and a wrap says so in the one toast a step
+# keeps up. Three matches (2997, 2998, 2999) in a 3000-line log.
+write a.txt "\n"
+command view.toggle_tree
+command editor.use_vim
+ex term seq 1 3000; sleep 300
+wait 1500
+expect screen contains "▌3000"
+key ctrl+x
+type "/"
+key ctrl+r
+type "^299[789]$"
+key enter
+expect screen contains "match 1/3"
+type "n"
+expect screen contains "match 2/3"
+expect screen lacks "match 1/3"
+type "N"
+expect screen contains "match 1/3"
+type "N"
+expect screen contains "search hit TOP, continuing at BOTTOM · match 3/3"
+type "n"
+expect screen contains "search hit BOTTOM, continuing at TOP · match 1/3"
+# `?` lands on the newest match above the cursor, and `n` keeps going up.
+# (The bar keeps the regex toggle on from the last search.)
+type "?"
+type "^299[789]$"
+key enter
+expect screen contains "match 3/3"
+type "n"
+expect screen contains "match 2/3"
+type "N"
+expect screen contains "match 3/3"
+# Under the standard profile the bar is VS Code's terminal find: Enter
+# goes up (Find Previous), Shift+Enter down (Find Next).
+key esc
+command editor.use_standard
+command term.search
+# The bar brings the last query back selected; typing replaces it.
+type "^299[789]$"
+key enter
+expect screen contains "match 2/3"
+key shift+enter
+expect screen contains "match 3/3"

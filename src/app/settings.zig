@@ -285,7 +285,7 @@ pub const rows = [_]RowSpec{
     // The width under which a docked column (`ui.sidebar`) reads as
     // `auto`; 0 is never. With the column's other geometry — its
     // width, its default side.
-    .{ .path = "ui.sidebar_auto_below", .label = "Auto-hide columns below", .section = .ui, .scope = .home, .number = .{ .min = 0, .max = 300, .step = 10 } },
+    .{ .path = "ui.sidebar_auto_below", .label = "Side columns auto-hide below", .section = .ui, .scope = .home, .number = .{ .min = 0, .max = 300, .step = 10 } },
     .{ .path = "ui.color_column", .label = "Colour column (0 = off)", .section = .ui, .scope = .workspace, .number = .{ .min = 0, .max = 240, .step = 4 } },
     .{ .path = "ui.wheel_lines", .label = "Lines per wheel notch", .section = .ui, .scope = .home, .number = .{ .min = 1, .max = 12, .step = 1 } },
     .{ .path = "ui.md_image_rows", .label = "Markdown image rows", .section = .ui, .scope = .home, .number = .{ .min = 3, .max = 40, .step = 1 } },

@@ -12,7 +12,7 @@
    │  󱸁 Codex (hidden)  first-│
  󰎒 │    not read yet          │                                workspace · ws  on main
    │                          │
-  │   HTTP (hidden)  first-p│   RECENT WORKSPACES                           SESSIONS
+  │   HTTP (hidden)  first-p│   WORKSPACES                                  SESSIONS
    │    view.activity_http    │    ws                                open
   │                          │                                                + New Claude Code session here
    │                          │   RECENT FILES

@@ -1254,7 +1254,7 @@ pub const WorkspaceRow = struct {
 };
 
 /// The workspaces `view.switch_workspace` lists, on `arena` — the
-/// picker's rows and the start surface's RECENT WORKSPACES
+/// picker's rows and the start surface's WORKSPACES
 /// (`app/welcome.zig`) read the same list. Borrowed slices: the names
 /// and paths are the tree's.
 pub fn workspaceRows(app: *App, arena: Allocator) Allocator.Error![]const WorkspaceRow {

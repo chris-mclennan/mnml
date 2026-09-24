@@ -348,11 +348,9 @@ pub const PromptPurpose = union(enum) {
     /// (`app/claude_mark.zig`). Its twin above; both are
     /// `app/mark_bake.zig`.
     claude_mark_svg,
-    /// `layout.save` / `layout.load` / `layout.delete`: the layout's
-    /// name (`app/named_layouts.zig`).
+    /// `layout.save`: the layout's name (`app/named_layouts.zig`). Load
+    /// and delete pick from the list instead (`layout.pick`).
     layout_save,
-    layout_load,
-    layout_delete,
 
     pub const BpTarget = struct { path: []u8, line: u32 };
     pub const AccountPrompt = struct { name: []u8, title: []u8 };
@@ -450,8 +448,15 @@ pub const ConfirmPurpose = union(enum) {
     /// A named layout's load over a page with unsaved panes: the name
     /// (owned). Load keeps them as background tabs (`named_layouts.zig`).
     layout_load: []u8,
+    /// A save over a layout that exists: the name (owned). Replace
+    /// writes it; the file may be committed and shared, so it asks.
+    layout_overwrite: []u8,
+    /// A named layout's delete (`named_layouts.zig`): the name (owned),
+    /// and whether the layouts picker opens again after it.
+    layout_delete: LayoutDelete,
 
     pub const DeletePaths = struct { paths: [][]u8, permanent_only: bool };
+    pub const LayoutDelete = struct { name: []u8, from_picker: bool };
     pub const ScriptInstall = struct { dir: []u8, name: []u8, url: []u8, source: @import("scripting/manifest.zig").Source };
     /// `stage`: the first confirm (`.tree`: Remove, or Keep the files /
     /// Remove anyway when `dirty` files are in the tree) or the one
@@ -466,7 +471,8 @@ pub const ConfirmPurpose = union(enum) {
 
     pub fn deinit(c: ConfirmPurpose, gpa: Allocator) void {
         switch (c) {
-            .delete_path, .remove_integration, .remove_claude_account, .delete_session, .session_worktree_merge, .remove_script, .layout_load => |s| gpa.free(s),
+            .delete_path, .remove_integration, .remove_claude_account, .delete_session, .session_worktree_merge, .remove_script, .layout_load, .layout_overwrite => |s| gpa.free(s),
+            .layout_delete => |d| gpa.free(d.name),
             .script_install => |i| {
                 gpa.free(i.dir);
                 gpa.free(i.name);
@@ -556,9 +562,9 @@ pub const PickerKind = enum {
 /// label (a frame copy — the overlay is already gone when this runs).
 pub const PickerAccept = *const fn (app: *App, idx: usize, label: []const u8) Allocator.Error!void;
 
-/// The on-demand read-only overlays: `view.welcome` / `view.about` /
+/// The on-demand read-only overlays: `view.about` /
 /// `view.discovery`. A click anywhere dismisses them.
-pub const InfoKind = enum { welcome, about };
+pub const InfoKind = enum { about };
 
 /// One row of the live-grep picker: where its hit is, so the preview
 /// column and the accept both know the file without re-parsing a label.
@@ -629,6 +635,10 @@ pub const Overlay = union(enum) {
         restore_theme: ?*const theme_mod = null,
         /// `.custom` only.
         on_accept: ?PickerAccept = null,
+        /// `.custom` only: Shift+Delete on a row asks this to remove
+        /// what the row names (the layouts picker's delete). It answers
+        /// through the shared confirm; the title says the key.
+        on_delete: ?PickerAccept = null,
         /// // changed (lua-plumbing): parallel to `labels` — the row's
         /// glyph, empty for none.
         icons: [][]u8 = &.{},
@@ -3528,6 +3538,8 @@ test {
     _ = @import("image/painter.zig");
     _ = @import("ui/tooltip.zig");
     _ = @import("ui/menu_glyph.zig");
+    _ = @import("ui/contrast.zig");
+    _ = @import("app/info_view_copy/panels.zig");
     _ = @import("app/snippets.zig");
     _ = @import("app/sticky.zig");
     _ = @import("ui/outline_view.zig");

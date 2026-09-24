@@ -341,8 +341,8 @@ pub const rows = [_]Row{
     } },
 
     // ── the split strip's maximize chip ──
-    .{ .label = "Zoom this pane / restore", .entry = .{
-        .title = "Zoom this pane / restore",
+    .{ .label = "Zoom the split / restore", .entry = .{
+        .title = "Zoom the split / restore",
         .body = "Gives the whole body to the active pane's leaf, and the same press hands it back; the chrome — tree, strips, statusline — stays, and the split tree underneath is untouched, so Ctrl+W and the dividers still address the real layout. The tick marks which command the chip's LEFT click runs, but picking here only runs it once: `ui.maximize_click` is what re-points the button.",
         .keys = &.{.{ .command = .@"view.toggle_zoom", .label = "Zoom the pane" }},
         .links = &.{ .{ .command = .{ .id = .@"view.toggle_zoom", .label = "Zoom it" } }, .{ .settings = .{ .row = copy.settingsRow("ui.maximize_click"), .label = "What the chip's click does" } }, .{ .command = .{ .id = .@"view.reset_layout", .label = "Reset the view" } } },

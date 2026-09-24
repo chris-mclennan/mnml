@@ -111,13 +111,13 @@ pub fn narrowAuto(app: *const App) bool {
 }
 
 /// Whether the columns are under the auto-hide regime at all: `.auto`
-/// / `.hidden`, or a screen narrower than `ui.auto_hide_narrow_width`,
-/// which drops both columns from the frame just the same — so a command
-/// that hands a column the keys reveals it over the editor here too,
-/// instead of focusing a column nobody can see.
+/// / `.hidden`, or a screen narrower than `ui.sidebar_auto_below`
+/// (`mode` reads a narrow `.always` as `.auto`) — so a command that
+/// hands a column the keys reveals it over the editor, instead of
+/// focusing a column nobody can see.
 pub fn autoHiding(app: *const App) bool {
     if (app.zen) return false;
-    return mode(app) != .always or @import("render.zig").narrowAutoHidden(app, app.screen.width);
+    return mode(app) != .always;
 }
 
 /// Whether `s` is being carried by the overlay this frame — the one
@@ -134,6 +134,45 @@ pub fn overlaid(app: *const App, s: ColumnSide) bool {
 /// toggle chip's lit state, the info view).
 pub fn suppressed(app: *const App, s: ColumnSide) bool {
     return autoHiding(app) and !overlaid(app, s);
+}
+
+/// The side column that holds `f` — the tree, or a panel's section —
+/// or null when `f` is not a column's (a pane, the start surface, an
+/// overlay, a section in the bottom dock).
+pub fn columnOf(app: *const App, f: app_mod.FocusId) ?ColumnSide {
+    for ([_]ColumnSide{ .left, .right }) |s| {
+        const section = side_mod.shown(app, sideOf(s)) orelse continue;
+        const held = side_mod.focusOf(section) orelse continue;
+        if (std.meta.eql(held, f)) return s;
+    }
+    return null;
+}
+
+/// Whether the keys at `f` land on something on screen: anything but a
+/// side column, or a column that is not auto-hidden this frame. The one
+/// question behind every "can this column have the keys" — the start
+/// surface's `takesKeys`, and `settleFocus` below.
+pub fn focusOnScreen(app: *const App, f: app_mod.FocusId) bool {
+    const s = columnOf(app, f) orelse return true;
+    return !suppressed(app, s);
+}
+
+/// The one focus rule for a column that is off screen: the keys never
+/// stay in a column nobody can see. A command that hands a column the
+/// keys reveals it first (`keyboardReach`), so this only moves them
+/// when the column went away under them — the launch on a terminal
+/// narrower than `ui.sidebar_auto_below` (the tree has the keys by
+/// default and the width rule hides it), or a resize down to one. They
+/// go to the active pane, else to the start surface; with neither
+/// there is nothing on screen to take them and they stay.
+pub fn settleFocus(app: *App) void {
+    if (focusOnScreen(app, app.focus)) return;
+    if (app.active) |a| {
+        app.focus = .{ .pane = a };
+        app.needs_render = true;
+    } else if (@import("welcome.zig").shown(app)) {
+        @import("welcome.zig").focus(app);
+    }
 }
 
 /// // changed (edge-grip): whether the `⋮` grip paints on `s`'s screen
@@ -210,6 +249,7 @@ fn filterFocused(app: *const App, section: side_mod.Section) bool {
 /// the frame, and from `render` so a `.test` script that only renders
 /// still advances.
 pub fn tick(app: *App, now: i64) void {
+    defer settleFocus(app);
     const st = &app.sidebar_auto;
     if (!autoHiding(app)) {
         // Pinned, or back to `always`: nothing is overlaid any more.
@@ -777,29 +817,29 @@ test "a narrow terminal's auto column pins like a configured one, and the pin ou
     try t.expectEqual(Config.Sidebar.auto, mode(&app));
 }
 
-test "under ui.auto_hide_narrow_width, focusing the tree brings it up over the editor instead of focusing a column nobody can see" {
+test "the keys never stay in a column nobody can see: at launch on a narrow terminal, and on a resize down to one" {
+    // Launch at 80x24, nothing open: the tree has the keys by default,
+    // `ui.sidebar_auto_below` hides it, so the start surface takes them.
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
     defer app.deinit();
-    _ = try app.openScratch();
     side_mod.place(&app, .explorer, false);
-    // Only the frame rule under test: `ui.sidebar_auto_below` (which
-    // reads a narrow `.always` as `.auto`) is off, so without the fix
-    // the column stays docked-but-dropped.
-    app.cfg.ui.sidebar_auto_below = 0;
-    app.cfg.ui.auto_hide_narrow_width = 100;
+    app.focus = .tree;
     try app.render();
-    // Narrow: no column is carved, and nothing is overlaid yet.
-    try t.expect(app.sidebar_auto.open == null);
-    try t.expect(suppressed(&app, .left));
+    try t.expect(app.focus == .welcome);
+    try t.expect(!focusOnScreen(&app, .tree));
+    // A command that asks for the tree brings it up and keeps the keys.
     try command.run(&app, .{ .static = .@"view.focus_tree" });
     try t.expect(app.focus == .tree);
-    // The keys went to the tree — so the tree is on screen, over the editor.
-    try t.expectEqual(@as(?ColumnSide, .left), app.sidebar_auto.open);
-    try t.expect(!suppressed(&app, .left));
     try app.render();
-    try t.expect(!app.sidebar_auto.rect.isEmpty());
-    // Wide again: the column docks, the overlay is gone.
+    try t.expect(app.focus == .tree);
+    // Wide, a pane open, the keys in the docked tree; then narrow.
     try app.resize(120, 40);
     tick(&app, 100);
-    try t.expect(app.sidebar_auto.open == null);
+    const id = try app.openScratch();
+    app.focus = .tree;
+    try app.render();
+    try t.expect(app.focus == .tree);
+    try app.resize(80, 24);
+    try app.render();
+    try t.expectEqual(app_mod.FocusId{ .pane = id }, app.focus);
 }

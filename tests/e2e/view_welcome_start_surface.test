@@ -1,0 +1,24 @@
+# width: 120
+# height: 34
+# Help → Welcome (`view.welcome`) shows the start surface — the one
+# welcome — on a fresh empty tab page, with the keys, and its SHORTCUTS
+# are the active profile's chords read off the spec table: NvChad's under
+# vim (Ctrl+N toggles the tree, never VS Code's Ctrl+B), VS Code's under
+# standard. There is no second, hard-coded chord box.
+command editor.use_vim
+write a.txt "alpha\n"
+open a.txt
+command view.welcome
+expect screen contains "SHORTCUTS"
+expect screen contains " START "
+expect screen contains "Ctrl+N     toggle the tree"
+expect screen lacks "Ctrl+B"
+expect screen lacks "The chords to start with"
+expect screen lacks "ctrl+f"
+# The file is still open on the first tab page.
+command tab.prev
+expect screen contains "1 alpha"
+command editor.use_standard
+command view.welcome
+expect screen contains "toggle the tree"
+expect screen contains "Ctrl+B  "

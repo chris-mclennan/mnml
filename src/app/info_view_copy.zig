@@ -225,15 +225,27 @@ pub fn materialize(app: *App, arena: Allocator, entry: Entry) Allocator.Error!Ma
 /// for prose: `g d` → `gd`, `f12` → `F12`, `ctrl+k ctrl+i` → `Ctrl+K
 /// Ctrl+I`. The vim profile's own chords come before the shared ones
 /// (`gd` over `F12`, the idiom a vim user knows); the standard profile
-/// reads the shared ones first (`Ctrl+P` over its own `Ctrl+O`).
+/// reads the shared ones first (`Ctrl+P` over its own `Ctrl+O`), but a
+/// which-key row (`space l h`) only when the command has no chord of
+/// its own — VS Code's `Ctrl+K Ctrl+I`, not the popup's path.
 pub fn chordOf(app: *const App, arena: Allocator, id: CommandId) Allocator.Error!?[]const u8 {
     const keys = command.spec(id).keys;
     const lists: [3][]const []const u8 = switch (App.profileOf(app.input_style)) {
         .vim => .{ keys.vim, keys.both, keys.vim_handler },
         .standard => .{ keys.both, keys.standard, &.{} },
     };
+    const standard = App.profileOf(app.input_style) == .standard;
+    for (lists) |list| for (list) |spec| {
+        if (standard and isLeaderChord(spec)) continue;
+        return try chordDisplay(arena, spec);
+    };
     for (lists) |list| if (list.len > 0) return try chordDisplay(arena, list[0]);
     return null;
+}
+
+/// `space …`: a which-key row, not a chord of its own.
+fn isLeaderChord(spec: []const u8) bool {
+    return std.mem.startsWith(u8, spec, "space ");
 }
 
 /// A key spec in the copy's spelling.

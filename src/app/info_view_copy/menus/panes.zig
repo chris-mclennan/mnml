@@ -455,7 +455,7 @@ pub const rows = [_]Row{
         .title = "Full screen",
         .body = "Gives the whole terminal window to the panes, hiding the tree, the bufferline, the menu bar and the statusline — the most rows a long build log will ever get. Esc Esc comes back, and while inside, the editor body's and a tab's menus grow an *Exit full screen* row because the chrome that usually offers it is gone; this pane's does not. The splits are untouched: this hides chrome, it does not zoom one pane.",
         .keys = &.{.{ .command = .@"view.fullscreen", .label = "Full screen" }},
-        .links = &.{ .{ .command = .{ .id = .@"view.fullscreen", .label = "Go full screen" } }, .{ .command = .{ .id = .@"view.toggle_zoom", .label = "Zoom this pane instead" } }, .{ .command = .{ .id = .@"view.reset_layout", .label = "Reset the view" } } },
+        .links = &.{ .{ .command = .{ .id = .@"view.fullscreen", .label = "Go full screen" } }, .{ .command = .{ .id = .@"view.toggle_zoom", .label = "Zoom the split instead" } }, .{ .command = .{ .id = .@"view.reset_layout", .label = "Reset the view" } } },
     } },
     .{ .label = "Close pane", .entry = .{
         .title = "Close pane",
@@ -633,7 +633,7 @@ fn maximizePane(comptime axis: []const u8, comptime unit: []const u8, comptime w
     return .{
         .title = "Maximize " ++ axis,
         .body = "Gives this pane as many " ++ unit ++ " as the layout will spare, squeezing its neighbours on that axis down to a sliver rather than closing them — the view for " ++ what_for ++ ", with everything else still on screen. The other axis is untouched. Equalize splits shares the room out evenly again, and the divider can be dragged instead.",
-        .links = &.{ .{ .command = .{ .id = id, .label = "Maximize the " ++ axis } }, .{ .command = .{ .id = .@"view.equalize_splits", .label = "Equalize the splits" } }, .{ .command = .{ .id = .@"view.toggle_zoom", .label = "Zoom this pane instead" } } },
+        .links = &.{ .{ .command = .{ .id = id, .label = "Maximize the " ++ axis } }, .{ .command = .{ .id = .@"view.equalize_splits", .label = "Equalize the splits" } }, .{ .command = .{ .id = .@"view.toggle_zoom", .label = "Zoom the split instead" } } },
     };
 }
 

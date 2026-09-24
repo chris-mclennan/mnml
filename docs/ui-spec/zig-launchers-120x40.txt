@@ -12,7 +12,7 @@
    │▌   Resource monitor (cpu…│
  󰎒 │                          │                                     workspace · ws
    │  󱴀  [launcher] htop  ✓ Of│
-  │    Interactive process v…│   RECENT WORKSPACES                           SESSIONS
+  │    Interactive process v…│   WORKSPACES                                  SESSIONS
    │                          │    ws                                open
   │  󰛳  [launc┌ Add to activity bar ───────────────────────────────────────────────────────────────────┐here
    │    Interac│                                                                                      1 │

@@ -160,6 +160,9 @@ pub fn parseRuns(arena: Allocator, text: []const u8, label: []const u8, now: i64
             .state = state,
             .pid = null,
             .last_activity_s = at,
+            // The ticket is what the run was started with — its first
+            // prompt, so `sessions.nameOf` names the row by it.
+            .first_user_msg = if (ticket.len > 0) try arena.dupe(u8, ticket) else null,
             .last_user_msg = if (ticket.len > 0) try arena.dupe(u8, ticket) else null,
             .last_assistant_msg = assistant,
             .pending_tool_uses = if (state == .waiting) 1 else 0,
@@ -214,7 +217,7 @@ fn optsOrFail(app: *App) CommandError!Opts {
 
 fn cloudRow(app: *App) CommandError!Item {
     const it = sessions.current(app) orelse return app.diag.fail(app.frame.allocator(), "sessions: nothing selected", .{});
-    if (it.where != .cloud) return app.diag.fail(app.frame.allocator(), "sessions: {s} is a local session", .{sessions.displayName(app, it)});
+    if (it.where != .cloud) return app.diag.fail(app.frame.allocator(), "sessions: {s} is a local session", .{sessions.itemName(app, it)});
     return it;
 }
 
@@ -330,7 +333,7 @@ pub fn cancelRun(app: *App, it: Item) CommandError!void {
     const arn = (if (it.cloud) |c| c.task_arn else null) orelse return app.diag.fail(arena, "sessions: run {s} has no task to stop (it may already be done)", .{it.session_id});
     const owned = try app.gpa.dupe(u8, arn);
     errdefer app.gpa.free(owned);
-    const msg = try std.fmt.allocPrint(app.gpa, "Stop cloud run {s}?", .{sessions.displayName(app, it)});
+    const msg = try std.fmt.allocPrint(app.gpa, "Stop cloud run {s}?", .{sessions.itemName(app, it)});
     errdefer app.gpa.free(msg);
     app.overlay.deinit(app.gpa);
     app.overlay = .{ .confirm = .{

@@ -1,0 +1,61 @@
+# width: 120
+# height: 30
+# The which-key tree is the spec table's leader chords (src/app/whichkey.zig
+# derives it at comptime), so a leader chord means the same thing typed fast
+# and walked in the popup. Each chord below is pressed AFTER the popup opens,
+# the way a user learning the chords types it.
+command editor.use_vim
+write a.txt "alpha\n"
+write b.txt "bravo\n"
+open a.txt
+open b.txt
+# NvChad's <leader>x closes the buffer.
+key space
+wait 700
+expect screen contains "x → close buffer"
+key x
+wait 300
+expect screen lacks "b.txt 󰅖"
+# NvChad's <leader>w is a prefix (wK = which-key), never a save.
+key space
+wait 700
+key w
+wait 300
+expect screen contains "+which-key"
+expect screen contains "K → all keymaps"
+key esc
+# The zoom has one leader spelling, beside the split verbs.
+command view.split_right
+key space
+wait 700
+key s
+wait 300
+expect screen contains "z → zoom the split / restore"
+key z
+wait 300
+expect screen contains " zoom "
+key space
+wait 700
+key s
+key z
+wait 300
+expect screen lacks " zoom "
+# The needs-you jumps live with the sessions, not the splits.
+key space
+wait 700
+key a
+wait 300
+expect screen contains "j → next session that needs you"
+key esc
+# NvChad's <leader>fw is the grep, in the popup too.
+key space
+wait 700
+key f
+wait 300
+expect screen contains "w → grep"
+key w
+wait 300
+type alpha
+key enter
+wait 500
+expect screen contains "1 match in 1 file"

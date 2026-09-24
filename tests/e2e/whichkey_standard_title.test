@@ -19,7 +19,7 @@ expect screen contains "┌ Ctrl+K "
 expect screen contains "f → +find"
 # A level inside a group carries that group's row after the same key.
 type f
-expect screen contains "┌ Ctrl+K f  +find (7) "
+expect screen contains "┌ Ctrl+K f  +find (4) "
 key esc
 
 # A dead end names the same key rather than a leader that is not there.

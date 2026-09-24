@@ -14,21 +14,21 @@ open a.txt
 command editor.use_standard
 command whichkey.leader
 # Group rows: the rail's SEARCH / GIT / INTEGRATIONS / SESSIONS faces.
-expect screen contains "󰍉 f → +find (7)"
-expect screen contains "󰊢 g → +git (22)"
+expect screen contains "󰍉 f → +find (4)"
+expect screen contains "󰊢 g → +git (17)"
 expect screen contains "󰐱 i → +integrations (5)"
-expect screen contains "󰎒 b → +buffer (6)"
+expect screen contains "󰎒 b → +buffer (5)"
 expect screen contains " L → +lang/run (19)"
 expect screen contains "󰓂 P → +pr (2)"
 expect screen contains "󰚩 a → +ai/term (14)"
 # A root leaf has no group of its own: the neutral mark.
 expect screen contains "󰘵 q → close buffer"
-expect screen contains "󰘵 w → write/save"
+expect screen contains "󰘵 p → command palette"
 
 # Inside a group the header carries that group's row, and every leaf
 # there wears the group's face rather than the neutral one.
 type f
-expect screen contains "┌ Ctrl+K f  +find (7) "
+expect screen contains "┌ Ctrl+K f  +find (4) "
 expect screen contains "󰍉 g → grep"
 expect screen contains "󰍉 f → files"
 expect screen lacks "󰘵 g → grep"

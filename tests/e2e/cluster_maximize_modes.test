@@ -28,7 +28,7 @@ expect screen contains "beta beta"
 # the tab group, so "this pane" and "this tab group" are one rect.
 rightclick 118 1
 expect screen contains "Maximize"
-expect screen contains "Zoom this pane / restore"
+expect screen contains "Zoom the split / restore"
 expect screen contains "Full screen / restore"
 expect screen contains "Equalize splits"
 key esc

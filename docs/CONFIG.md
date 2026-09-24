@@ -176,7 +176,7 @@ otherwise. Copy what you need; leave the rest out.
             .diagnostics = null, // null = the dock; `.right` is the pre-dock placement
             .outline = null,
         },
-        .auto_hide_narrow_width = 0, // a WIDTH rule: below this many columns both side columns are dropped for the frame (0 = never; a non-zero value is clamped to 40..300). Nothing is mutated — widening brings back what was open
+        .auto_hide_narrow_width = 0, // RENAMED: the old name of `.sidebar_auto_below` below. A non-zero value is read as that key (with a note at startup saying so) — one rule for a narrow terminal's columns, not two. Rename it in your config
         .sidebar = .always, // .always (docked) | .auto (hidden; the pointer at the column's screen edge reveals it as an overlay OVER the editor — no relayout, no pty resize) | .hidden (never on hover; a keyboard command still gives a one-shot overlay)
         .sidebar_auto_below = 100, // a narrow terminal's columns: below this many columns a `.always` column behaves as `.auto` (hidden; the screen edge or a section command brings it in over the editor) and it docks again once the terminal is this wide. An explicit `.auto` / `.hidden` is untouched (0 = never; a non-zero value is clamped to 40..300)
         .sidebar_reveal_ms = 250, // how long the pointer rests in the edge zone before the overlay slides in (0..5000)
@@ -350,7 +350,7 @@ otherwise. Copy what you need; leave the rest out.
         // What the editor area shows while no pane is open — at launch
         // with no session to restore, and after the last pane closes.
         //   .full     the start surface: a compact word mark, the
-        //             workspace line, then RECENT WORKSPACES (the
+        //             workspace line, then WORKSPACES (the
         //             Switch workspace list; Enter shows it in the
         //             tree), RECENT FILES (Enter opens), SESSIONS (this
         //             workspace's Claude Code / Codex sessions no
@@ -364,7 +364,7 @@ otherwise. Copy what you need; leave the rest out.
         //   .minimal  the logo and the shortcut list alone, centred
         //   .off      the bare ground
         .welcome = .full, // .full | .minimal | .off
-        .focus_cue = .both, // how the focused pane and section are marked: .dim (every pane WITHOUT the keys paints its tab name, and the tree its workspace path, in the dim colour) | .rail (only the focused pane's rail at full colour — the others stepped back toward the ground — and the focused section's caps header in the accent) | .both (the default)
+        .focus_cue = .both, // how the focused pane and section are marked: .dim (every pane WITHOUT the keys paints its tab name, and the tree its workspace path, in the dim colour) | .rail (only the focused pane's rail at full colour — the others stepped back toward the ground — and the focused section's caps header in the accent) | .both (the default). The dim colour and the step-back come from the theme's contrast: never under 2.0:1 on their ground, in the pane's own hue, so a light theme's cue stays visible
         // The colour the FIRST pane of a kind opens in. A plain
         // terminal opens in white (the theme's text colour), a Claude
         // session in Claude's orange (the chip's), a Codex session in
@@ -1345,7 +1345,7 @@ stays, and its grip goes with it. Closing the line asks for a fresh
 
 ## Split zoom
 
-`view.toggle_zoom` — vim `Ctrl-W z`, standard `Ctrl+K Ctrl+Z`, which-key
+`view.toggle_zoom` ("Zoom the split") — vim `Ctrl-W z`, standard `Ctrl+K Ctrl+M` (VS Code's Toggle Maximize Editor Group), which-key
 `space s z`, the tab strip's maximize button (with `ui.maximize_click =
 .zoom_pane`, the default) — gives the focused split the whole editor
 area. The other splits of the tab page are hidden, not closed: the tab
@@ -1385,15 +1385,15 @@ out; a page with nothing else is refused.
 
 | | |
 |---|---|
-| `:layout save <name>` · `layout.save` | write this tab page under `<name>` (letters, digits, `-` `_` `.`, not first; 64 at most); the same name overwrites |
-| `:layout load <name>` · `layout.load` | replace this tab page with the layout |
+| `:layout save <name>` · `layout.save` | write this tab page under `<name>` (letters, digits, `-` `_` `.`, not first; 64 at most); over an existing name the confirm box asks first (Cancel selected) — `:layout save! <name>` replaces without asking |
+| `:layout load <name>` | replace this tab page with the layout |
 | `:layout load! <name>` | the same without the unsaved-changes question |
-| `layout.pick` | a picker over the saved layouts, each with its pane / split count and what it holds; the pick loads |
-| `:layout delete <name>` · `layout.delete` | delete the file |
+| `layout.pick` · `layout.load` | a picker over the saved layouts, each with its pane / split count and what it holds; the pick loads, and Shift+Delete deletes the row after asking, then the picker comes back |
+| `:layout delete <name>` · `layout.delete` | delete the file, after the confirm box asks (`layout.delete` picks the name first); `:layout delete! <name>` does not ask |
 | `:layout list` (or a bare `:layout`) | toast the saved names |
 
 The View menu's *Layouts* submenu and which-key `space W` (`s` save,
-`l` pick, `n` load by name, `d` delete) carry the same four commands.
+`l` pick, `d` delete) carry the same commands.
 
 Loading replaces the current tab page. Its panes that no other page
 shows close; when any of them has unsaved changes the confirm box asks

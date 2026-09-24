@@ -1,8 +1,7 @@
-# A leader chord resolves on its second key however fast it is typed —
-# including the entries that exist only in the which-key menu, not in
-# the keymap: `space n` toggles line numbers (never runs `n` as
-# search-next), `space w` saves, and `space s v` splits right through
-# the `+split` group. Typed as one `type` step the keys arrive back to
+# A leader chord resolves on its second key however fast it is typed:
+# `space n` toggles line numbers (never runs `n` as search-next) and
+# `space s v` splits right through the `+split` group. (`space w` is
+# NvChad's `wK` prefix, not a save — `:w` saves.) Typed as one `type` step the keys arrive back to
 # back, with no tick between them.
 write b.zig "const std = @import(\"std\");\n"
 open b.zig
@@ -16,7 +15,7 @@ type " n"
 expect screen contains "▌  1 const"
 type x
 expect dirty true
-type " w"
+ex w
 expect dirty false
 expect file b.zig contains "onst std"
 type " sv"

@@ -12,7 +12,7 @@
    │▌   Bitbucket: pull reque…│
  󰎒 │                          │                                     workspace · ws
    │  󰌃  [app] Jira  0.2.0  ✓ │
-  │    Jira: work, boards an…│   RECENT WORKSPACES                           SESSIONS
+  │    Jira: work, boards an…│   WORKSPACES                                  SESSIONS
    │                          │    ws                                open
   │    [app] Sample  0.1.0  │                                                + New Claude Code session here
    │    The mnml-sdk sample: …│   RECENT FILES

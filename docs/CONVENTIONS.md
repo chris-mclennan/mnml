@@ -187,7 +187,11 @@ same colour twice and a column narrower for the sibling.
   moves that stripe into the rail's cell (the row's own colour wins
   the row) and blanks the cell it left, so no text moves. It runs in
   `drawPaneContent` for every inset pane; a pane never special-cases
-  the rail.
+  the rail. A pane whose body is a `ListPanel` (the sessions table)
+  keeps its first column for the list's selection marker, so its row
+  stripe is one cell further in: `pane_rail.absorbList` takes the row's
+  own stripe into the rail, else the selection marker, and blanks both
+  cells — never `▌ ▌`, never `▌▌`.
 - `ui.pane_rail` is `all` / `sessions` / `off`, read in one place
   (`pane_accent.railColorOf`). Nothing else branches on it.
 

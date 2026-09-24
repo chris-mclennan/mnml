@@ -513,13 +513,12 @@ pub const Ui = struct {
     /// then land in the dock (`side.configuredSide`).
     sidebar_side: ColumnSide = .left,
     section_side: SectionSide = .{},
-    /// // changed (sidebar-autohide): a WIDTH rule, and Rust's
-    /// (`ui/mod.rs`, task #891): below this many columns both side
-    /// columns are dropped FOR THE FRAME — `tree.visible` and the
-    /// column's own section are untouched, so widening brings back
-    /// whatever was open. 0 = never. It composes with `ui.sidebar`:
-    /// a narrow screen hides the column whatever the mode says, and
-    /// under `auto` the hover reveal is refused there too.
+    /// The old name of `sidebar_auto_below`, kept so a config that set
+    /// it still loads: `load.normalize` reads a non-zero value as that
+    /// key and says so. It was a second rule for the same question (the
+    /// columns on a narrow terminal) with a different behaviour — the
+    /// columns dropped outright, with a focus rule of their own — so the
+    /// two disagreed wherever both were set. Nothing else reads it.
     auto_hide_narrow_width: u16 = 0,
     /// // changed (sidebar-autohide): `always` | `auto` | `hidden` —
     /// see `Sidebar`. It governs BOTH columns; `ui.sidebar_side` still

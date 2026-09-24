@@ -27,18 +27,36 @@ expect pane tests
 # In flight: the spinner, then the count.
 expect screen contains " 1 job "
 wait 3000
-# Landed: one failed, so the job failed, and the chip holds its words.
+# Landed: one failed, so the job failed. The tests chip beside it
+# states the result in full, so the jobs chip names the kind and leaves
+# the words to it — one failure is not said three times.
 expect screen lacks " 1 job "
-expect screen contains "✗ tests: 1 failed, 1 passed"
+expect screen contains " ✗ tests "
+expect screen lacks "✗ tests: 1 failed"
 
 # The list: both jobs, newest first, with how each ended.
 command jobs.show
-expect screen contains "JOBS"
-expect screen contains "(0 running · 2 finished)"
+# The header owns the gap before its count, and the frame carries no
+# second title.
+expect screen contains "JOBS (0 running · 2 finished)"
+expect screen lacks " Jobs "
 expect screen contains "FINISHED (2)"
 expect screen contains "✗ tests    dotnet test · 1 failed, 1 passed"
 expect screen contains "✓ lsp      start fake · ready"
 # Opening the list is reading the failure: the chip lets it go.
-expect screen lacks "✗ tests: 1 failed"
 key esc
 expect screen lacks "FINISHED (2)"
+expect screen lacks " ✗ tests "
+# The list has a chord in both profiles: `space j` (the which-key row)
+# and, under standard, `Ctrl+K J`.
+command editor.use_standard
+key ctrl+k
+key j
+expect screen contains "FINISHED (2)"
+key esc
+command editor.use_vim
+key esc
+key space
+key j
+expect screen contains "FINISHED (2)"
+key esc

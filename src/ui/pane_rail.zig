@@ -104,6 +104,37 @@ pub fn absorb(ui: Ui, rect: Rect) void {
     }
 }
 
+/// `absorb` for a pane whose body is a `ListPanel` (the sessions
+/// table): the list keeps its first column for the selection marker, so
+/// a row's own stripe — a session's accent — sits one cell further in,
+/// and the rail, a blank and the stripe read `▌ ▌`. Either stripe moves
+/// into the rail's cell: the row's own when it has one (its colour is
+/// the row's fact; the selection still shows on the row's ground),
+/// else the selection marker's. The cells they leave go blank on their
+/// ground, so no text moves.
+pub fn absorbList(ui: Ui, rect: Rect) void {
+    if (rect.w < 4 or rect.h == 0) return;
+    const g = glyph(ui.ascii);
+    const marker_x = rect.x + width;
+    const row_x = marker_x + list_panel.marker_w;
+    var y: u16 = 0;
+    while (y < rect.h) : (y += 1) {
+        const marker = ui.canvas.screen.readCell(marker_x, rect.y + y) orelse continue;
+        const own = ui.canvas.screen.readCell(row_x, rect.y + y) orelse continue;
+        const marker_is = std.mem.eql(u8, marker.char.grapheme, g);
+        const marker_blank = marker.char.grapheme.len == 0 or std.mem.eql(u8, marker.char.grapheme, " ");
+        const own_is = std.mem.eql(u8, own.char.grapheme, g) and (marker_is or marker_blank);
+        if (own_is) {
+            _ = ui.putStr(rect.x, rect.y + y, width, g, own.style);
+            _ = ui.putStr(row_x, rect.y + y, width, " ", own.style);
+            if (marker_is) _ = ui.putStr(marker_x, rect.y + y, width, " ", marker.style);
+        } else if (marker_is) {
+            _ = ui.putStr(rect.x, rect.y + y, width, g, marker.style);
+            _ = ui.putStr(marker_x, rect.y + y, width, " ", marker.style);
+        }
+    }
+}
+
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
@@ -225,4 +256,38 @@ test "absorb under --ascii matches the ascii marker, and a pane too narrow to ho
     _ = g.ui().putStr(1, 0, 1, list_panel.marker_glyph, g.theme.bg);
     absorb(g.ui(), g.full());
     try testing.expectEqualStrings(list_panel.marker_glyph, g.cell(1, 0).char.grapheme);
+}
+
+test "absorbList: a list row's own stripe one cell in, or the selection marker, moves into the rail — never two bars on a row" {
+    var f = try Fixture.init(12, 4);
+    defer f.deinit();
+    const ui = f.ui();
+    const r = f.full();
+    draw(ui, r, f.theme.palette.blue);
+    const g = list_panel.marker_glyph;
+    // Row 0: unselected, the session's green accent in the row's first
+    // cell (x 2), the marker column (x 1) blank.
+    _ = ui.putStr(2, 0, 1, g, Theme.withFg(f.theme.bg, f.theme.palette.green));
+    _ = ui.putStr(4, 0, 3, "abc", f.theme.bg);
+    // Row 1: selected (cyan marker) with an orange accent.
+    _ = ui.putStr(1, 1, 1, g, Theme.withFg(f.theme.cursor_line, f.theme.palette.cyan));
+    _ = ui.putStr(2, 1, 1, g, Theme.withFg(f.theme.cursor_line, f.theme.palette.orange));
+    // Row 2: selected, no accent of its own.
+    _ = ui.putStr(1, 2, 1, g, Theme.withFg(f.theme.cursor_line, f.theme.palette.cyan));
+    _ = ui.putStr(3, 2, 3, "xyz", f.theme.cursor_line);
+    absorbList(ui, r);
+    for ([_]struct { y: u16, color: vaxis.Color }{
+        .{ .y = 0, .color = f.theme.palette.green },
+        .{ .y = 1, .color = f.theme.palette.orange },
+        .{ .y = 2, .color = f.theme.palette.cyan },
+    }) |row| {
+        try testing.expectEqualStrings(g, f.cell(0, row.y).char.grapheme);
+        try testing.expect(vaxis.Color.eql(f.cell(0, row.y).style.fg, row.color));
+        try testing.expect(!std.mem.eql(u8, g, f.cell(1, row.y).char.grapheme));
+        try testing.expect(!std.mem.eql(u8, g, f.cell(2, row.y).char.grapheme));
+    }
+    // No text moved; row 3 is the rail alone.
+    try testing.expectEqualStrings("a", f.cell(4, 0).char.grapheme);
+    try testing.expectEqualStrings("x", f.cell(3, 2).char.grapheme);
+    try testing.expect(vaxis.Color.eql(f.cell(0, 3).style.fg, f.theme.palette.blue));
 }

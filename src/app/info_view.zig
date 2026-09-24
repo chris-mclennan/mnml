@@ -38,6 +38,7 @@ const view = @import("../ui/info_view.zig");
 const tree_view = @import("../ui/tree_view.zig");
 const icons = @import("../ui/icons.zig");
 const discovery = @import("discovery.zig");
+const sessions = @import("../sessions.zig");
 const copy = @import("info_view_copy.zig");
 const settings_app = @import("settings.zig");
 const git_app = @import("git.zig");
@@ -195,11 +196,19 @@ fn activePaneCopy(app: *App, arena: Allocator) Allocator.Error!?Copy {
         // are the active profile's, read off the keymap. Rust's copy
         // named a detach and a kill chord; mnml binds neither, and
         // closing the tab is what ends the child.
-        .pty => .{ .title = p.title(), .body = try std.fmt.allocPrint(arena, "Terminal pane \u{2014} {s}.", .{try copy.chordLine(app, arena, &.{
-            .{ .command = .@"term.restart", .label = "Restart" },
-            .{ .command = .@"term.rename", .label = "Rename" },
-            .{ .command = .@"buffer.close", .label = "Close" },
-        })}) },
+        // A Claude / Codex pane is titled by its session's name — the
+        // one its tab and SESSIONS card read (`sessions.nameOf`).
+        .pty => blk: {
+            const session = sessions.paneName(app, id);
+            break :blk .{
+                .title = if (session) |n| try arena.dupe(u8, n.text) else p.title(),
+                .body = try std.fmt.allocPrint(arena, "{s} \u{2014} {s}.", .{ if (session != null) "Session pane" else "Terminal pane", try copy.chordLine(app, arena, &.{
+                    .{ .command = .@"term.restart", .label = "Restart" },
+                    .{ .command = .@"term.rename", .label = "Rename" },
+                    .{ .command = .@"buffer.close", .label = "Close" },
+                }) }),
+            };
+        },
         .md_preview => .{ .title = p.title(), .body = "Rendered markdown preview — click header chip to jump back to source." },
         // The ZON tree: the focused field's doc line (docs/CONFIG.md's
         // comment for a config key, else its type).

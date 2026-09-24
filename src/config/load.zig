@@ -292,7 +292,15 @@ pub fn normalize(arena: Allocator, cfg: *Config, diags: *Diagnostics, home: ?[]c
     // // changed (launcher-dock): the dock's dwells borrow the same ceiling.
     cfg.ui.dock.reveal_ms = @min(cfg.ui.dock.reveal_ms, Config.sidebar_dwell_ms_max);
     cfg.ui.dock.hide_ms = @min(cfg.ui.dock.hide_ms, Config.sidebar_dwell_ms_max);
-    if (cfg.ui.auto_hide_narrow_width != 0) cfg.ui.auto_hide_narrow_width = std.math.clamp(cfg.ui.auto_hide_narrow_width, 40, 300);
+    // `ui.auto_hide_narrow_width` is the old name of `sidebar_auto_below`:
+    // one rule for a narrow terminal's columns, not two that disagree.
+    // A non-zero value is read as the new key, and the startup note says
+    // to rename it.
+    if (cfg.ui.auto_hide_narrow_width != 0) {
+        cfg.ui.sidebar_auto_below = cfg.ui.auto_hide_narrow_width;
+        try diags.addFmt("config", 0, 0, "ui.auto_hide_narrow_width is now ui.sidebar_auto_below — {d} is read as that; rename the key", .{cfg.ui.auto_hide_narrow_width});
+        cfg.ui.auto_hide_narrow_width = 0;
+    }
     // The same range for the rule that makes a docked column auto-hide
     // on a narrow terminal, for the same reason: a stray `4` must not
     // mean "never", nor `4000` "always".
@@ -498,6 +506,27 @@ test "normalize clamps, expands ~, and drops broken layout entries" {
     try t.expectEqual(@as(usize, 2), cfg.startup.layout.len);
     try t.expectEqual(@as(?u8, 99), cfg.startup.layout[1].ratio);
     try t.expectEqual(@as(usize, 2), f.diags.count());
+}
+
+test "ui.auto_hide_narrow_width is the old name of ui.sidebar_auto_below: its value moves over, clamped, with a note to rename it" {
+    const f = try Fixture.init();
+    defer f.deinit();
+    var cfg: Config = .{};
+    cfg.ui.auto_hide_narrow_width = 120;
+    try normalize(f.arena(), &cfg, &f.diags, "/home/u");
+    try t.expectEqual(@as(u16, 120), cfg.ui.sidebar_auto_below);
+    try t.expectEqual(@as(u16, 0), cfg.ui.auto_hide_narrow_width);
+    try t.expectEqual(@as(usize, 1), f.diags.count());
+    try t.expect(std.mem.indexOf(u8, f.diags.items.items[0].msg, "rename the key") != null);
+    // A stray `4` is clamped like the new key's.
+    var c2: Config = .{};
+    c2.ui.auto_hide_narrow_width = 4;
+    try normalize(f.arena(), &c2, &f.diags, "/home/u");
+    try t.expectEqual(@as(u16, 40), c2.ui.sidebar_auto_below);
+    // Unset, the new key keeps its own value.
+    var c3: Config = .{};
+    try normalize(f.arena(), &c3, &f.diags, "/home/u");
+    try t.expectEqual(@as(u16, 100), c3.ui.sidebar_auto_below);
 }
 
 test "load: three layers in order, untrusted workspace stripped, bad file non-fatal" {

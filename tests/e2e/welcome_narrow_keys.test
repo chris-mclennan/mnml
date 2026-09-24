@@ -1,0 +1,25 @@
+# width: 80
+# height: 24
+# env: HOME=home
+# The start surface at the stock 80x24 terminal: `ui.sidebar_auto_below`
+# (default 100) auto-hides the tree, and the keys never stay in a column
+# nobody can see (`sidebar_auto.settleFocus`) — the mode chip reads START
+# and `j` / Enter walk RECENT FILES. (The resize half is sidebar_auto's
+# unit test "the keys never stay in a column nobody can see".)
+write a.txt "alpha\n"
+write b.txt "bravo\n"
+open a.txt
+command buffer.close
+open b.txt
+command buffer.close
+expect screen contains "RECENT FILES"
+expect screen lacks "󰙅"
+expect screen contains " START "
+expect screen lacks " TREE "
+# RECENT FILES is the active list: b.txt first, `j` is a.txt, Enter opens it.
+key j
+key enter
+expect screen contains "1 alpha"
+# Asking for the tree brings it up over the editor, and it has the keys.
+command view.focus_tree
+expect screen contains " TREE "

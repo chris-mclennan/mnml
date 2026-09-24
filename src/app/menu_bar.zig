@@ -227,7 +227,6 @@ const selection_rows = [_]MenuItem{
 const layouts_rows = [_]MenuItem{
     .{ .icon = "\u{F0193}", .icon_ascii = "s", .label = "Save this tab page as…", .action = .{ .command = .@"layout.save" } },
     .{ .icon = "\u{F115}", .icon_ascii = "/", .label = "Load layout…", .action = .{ .command = .@"layout.pick" } },
-    .{ .icon = "\u{F292}", .icon_ascii = "#", .label = "Load layout by name…", .action = .{ .command = .@"layout.load" } },
     sep(.{ .icon = "\u{F1F8}", .icon_ascii = "x", .label = "Delete layout…", .action = .{ .command = .@"layout.delete" } }),
 };
 
@@ -646,7 +645,9 @@ test "menu rows: ten menus with Rust's row counts; every row is a registered com
                 // The two parents of a submenu: File's recent files, View's layouts.
                 .none => if (m == .view) {
                     try t.expectEqualStrings("Layouts", row.label);
-                    try t.expectEqual(@as(usize, 4), row.submenu.len);
+                    // Save, Load, Delete — "Load layout by name…" was the
+                    // Load picker twice.
+                    try t.expectEqual(@as(usize, 3), row.submenu.len);
                 } else {
                     try t.expectEqual(Menu.file, m);
                     try t.expectEqualStrings("Open recent file", row.label);

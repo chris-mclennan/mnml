@@ -43,12 +43,6 @@ pub fn entry(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
             .links = &.{ .{ .command = .{ .id = .@"view.settings", .label = "Settings" } }, .{ .command = .{ .id = .@"first_launch.show", .label = "Run the wizard again" } } },
         },
         .info => |kind| switch (kind) {
-            .welcome => .{
-                .title = "Welcome",
-                .body = "The pane mnml opens on with no session to restore: the recent files, the shortcuts that matter first, and the workspace's name. A recent row opens the file; a shortcut row runs it. It closes itself when you open something. `view.welcome` brings it back.",
-                .keys = &.{.{ .command = .@"picker.recent", .label = "Recent files" }},
-                .links = &.{ .{ .command = .{ .id = .@"picker.files", .label = "Open a file" } }, .{ .command = .{ .id = .@"session.restore", .label = "Restore the session" } } },
-            },
             .about => .{
                 .title = "About mnml",
                 .body = "The version, the build's profile, the workspace and data root paths, and the terminal mnml is running in. Copy from here when filing an issue — the version line is what a bug report needs first. Esc closes it.",
@@ -68,8 +62,8 @@ fn termSearchBar(id: u32) ?Entry {
     return switch (id) {
         bar.hit_query => .{
             .title = "Search the terminal",
-            .body = "Searches everything the pane still holds — the scrollback and the screen — as you type; the count is `match k/N` and the view scrolls to the current one. Enter steps to the next (vim: lands and closes, then `n` / `N`), Shift+Enter the previous; Esc closes and leaves the terminal's selection on the match, so copying takes it. Output that lands while it is open is searched too.",
-            .keys = &.{ .{ .chord = "Enter", .label = "Next match (vim: land and close)" }, .{ .chord = "Shift+Enter", .label = "Previous match" }, .{ .chord = "n", .label = "Next, in terminal-normal" }, .{ .chord = "N", .label = "Previous, in terminal-normal" }, .{ .chord = "Esc", .label = "Close, the match selected" } },
+            .body = "Searches everything the pane still holds — the scrollback and the screen — as you type; the count is `match k/N` and the view scrolls to the current one. Vim, as Neovim's terminal: `/` searches down from the cursor's line and `?` up, Enter lands and closes, then `n` repeats the direction and `N` reverses it, saying so when it wraps. Standard, as VS Code's terminal find: it starts at the newest match, Enter steps up toward older output and Shift+Enter down. Esc closes and leaves the terminal's selection on the match, so copying takes it. Output that lands while it is open is searched too.",
+            .keys = &.{ .{ .chord = "Enter", .label = "Up, older (vim: land and close)" }, .{ .chord = "Shift+Enter", .label = "Down, newer" }, .{ .chord = "n", .label = "Again, in terminal-normal" }, .{ .chord = "N", .label = "Reverse, in terminal-normal" }, .{ .chord = "Esc", .label = "Close, the match selected" } },
             .links = &.{ .{ .command = .{ .id = .@"term.search_next", .label = "Next match" } }, .{ .command = .{ .id = .@"term.search_prev", .label = "Previous match" } }, ask },
         },
         bar.hit_regex => .{

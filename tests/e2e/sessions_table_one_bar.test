@@ -1,0 +1,28 @@
+# width: 140
+# height: 34
+# env: HOME=home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# One bar per row on the sessions table (`pane_rail.absorbList`): a live
+# session's row wears its accent IN the pane's rail, not a second `▌`
+# past the list's marker column (`│▌ ▌`), and the selected row's marker
+# goes into the rail as well (never `│▌▌`).
+write bin/claude #!/bin/bash\nprintf 'fake claude %s\\n' "$*"\nexec sleep 60
+shell chmod +x bin/claude
+shell ENC=$(printf '%s' "$MNML_E2E_WORKSPACE" | sed 's/[\/.]/-/g') && mkdir -p "home/.claude/projects/$ENC" && F="home/.claude/projects/$ENC/e2e00000-0000-4000-8000-000000000031.jsonl" && printf '{"type":"user","cwd":"%s","gitBranch":"main","message":{"role":"user","content":"first prompt alpha"}}\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}\n{"type":"user","cwd":"%s","gitBranch":"main","message":{"role":"user","content":"last prompt omega"}}\n' "$MNML_E2E_WORKSPACE" "$MNML_E2E_WORKSPACE" > "$F"
+command sessions.refresh
+wait 1500
+command view.focus_pane
+key tab
+key enter
+wait 1500
+command view.activity_sessions
+wait 1500
+command sessions.table
+wait 1500
+expect screen contains "│▌   󱸀 · done first prompt alpha"
+expect screen lacks "│▌ ▌ "
+expect screen lacks "│▌▌"
+command view.focus_pane
+key j
+expect screen lacks "│▌ ▌ "
+expect screen lacks "│▌▌"

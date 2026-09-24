@@ -260,22 +260,17 @@ pub const rows = [_]Row{
     } },
     .{ .menu = "View", .parent = "Layouts", .label = "Save this tab page as…", .entry = .{
         .title = "Save this tab page as…",
-        .body = "Asks for a name and writes this tab page to `.mnml/layouts/<name>.zon`, workspace paths relative so the file can be committed; the same name again overwrites it. Scratch buffers and list panes are left out — nothing reopens them. A layout with terminal commands is also recorded as this mnml's own, so it loads its commands even in an untrusted workspace.",
+        .body = "Asks for a name and writes this tab page to `.mnml/layouts/<name>.zon`, workspace paths relative so the file can be committed; the same name again asks before it replaces the file (`:layout save!` does not ask). Scratch buffers and list panes are left out — nothing reopens them. A layout with terminal commands is also recorded as this mnml's own, so it loads its commands even in an untrusted workspace.",
         .links = &.{ .{ .command = .{ .id = .@"layout.save", .label = "Save it" } }, copy.docsSection("Named layouts") },
     } },
     .{ .menu = "View", .parent = "Layouts", .label = "Load layout…", .entry = .{
         .title = "Load layout…",
-        .body = "A picker over the saved layouts, each row saying how many panes and splits it holds and what they are; Enter replaces this tab page with it. Panes with unsaved changes ask first and then stay open as background tabs, and a terminal command from a file this mnml did not write only runs in a trusted workspace — refused otherwise, with a toast.",
+        .body = "A picker over the saved layouts, each row saying how many panes and splits it holds and what they are; Enter replaces this tab page with it, and Shift+Delete deletes the row after asking. Panes with unsaved changes ask first and then stay open as background tabs, and a terminal command from a file this mnml did not write only runs in a trusted workspace — refused otherwise, with a toast.",
         .links = &.{ .{ .command = .{ .id = .@"layout.pick", .label = "Pick one" } }, .{ .command = .{ .id = .@"tab.reopen", .label = "Bring the replaced page back" } }, .{ .command = .{ .id = .@"workspace.review_trust", .label = "Workspace trust" } } },
-    } },
-    .{ .menu = "View", .parent = "Layouts", .label = "Load layout by name…", .entry = .{
-        .title = "Load layout by name…",
-        .body = "Asks for a layout's name and loads it over this tab page — the typed twin of Load layout…, for a name you already know; `:layout load <name>` is the same from the `:` line and `:layout load!` skips the unsaved-changes question. An unknown name says so and leaves the page alone.",
-        .links = &.{ .{ .command = .{ .id = .@"layout.load", .label = "Load by name" } }, .{ .command = .{ .id = .@"layout.pick", .label = "Pick from the list instead" } } },
     } },
     .{ .menu = "View", .parent = "Layouts", .label = "Delete layout…", .entry = .{
         .title = "Delete layout…",
-        .body = "Asks for a layout's name and deletes its file from `.mnml/layouts/`, along with this mnml's record of having written it — a later file under the same name is treated as someone else's. The panes on screen are untouched.",
+        .body = "Picks a saved layout and, after asking, deletes its file from `.mnml/layouts/` — a committed copy goes from the next commit too — along with this mnml's record of having written it, so a later file under the same name is treated as someone else's. The panes on screen are untouched. Shift+Delete in Load layout… does the same from that list.",
         .links = &.{ .{ .command = .{ .id = .@"layout.delete", .label = "Delete one" } }, .{ .command = .{ .id = .@"layout.pick", .label = "See the saved ones" } } },
     } },
     // ── Go ──
@@ -436,7 +431,7 @@ pub const rows = [_]Row{
     // ── Help ──
     .{ .menu = "Help", .label = "Welcome", .entry = .{
         .title = "Welcome",
-        .body = "Opens a small box with the eight chords worth knowing first — open a file, the palette, the tree, split, find, save, settings, quit. They are written as the standard profile's, so a vim user reads them as the commands rather than the keys. The recent files and workspaces are on the welcome pane an empty leaf paints, not here.",
+        .body = "Shows the start surface — the page mnml opens on with nothing open: this window's workspaces, the recent files, the sessions to resume, and the chords to start with in YOUR profile (NvChad's under vim, VS Code's under standard). With something open it comes up on a fresh empty tab page, with the keys. With `ui.welcome = off` the cheatsheet stands in.",
         .links = &.{ .{ .command = .{ .id = .@"view.welcome", .label = "Open it" } }, .{ .command = .{ .id = .@"first_launch.show", .label = "The setup wizard" } } },
     } },
     .{ .menu = "Help", .label = "Keybindings & help", .entry = .{
@@ -480,7 +475,7 @@ fn fullScreen(comptime label: []const u8) Entry {
         else
             "Brings the chrome back — the tree, the bufferline, the menu bar and the statusline — around the panes as they are; Esc Esc does the same. The row reads Enter full screen again once outside, and Reset view to default is the way back from any hiding at once.",
         .keys = &.{ .{ .command = .@"view.fullscreen", .label = "Full screen" }, .{ .command = .@"view.toggle_zoom", .label = "Zoom one pane" } },
-        .links = &.{ .{ .command = .{ .id = .@"view.fullscreen", .label = "Toggle full screen" } }, .{ .command = .{ .id = .@"view.toggle_zoom", .label = "Zoom this pane instead" } }, .{ .command = .{ .id = .@"view.reset_layout", .label = "Reset the view" } } },
+        .links = &.{ .{ .command = .{ .id = .@"view.fullscreen", .label = "Toggle full screen" } }, .{ .command = .{ .id = .@"view.toggle_zoom", .label = "Zoom the split instead" } }, .{ .command = .{ .id = .@"view.reset_layout", .label = "Reset the view" } } },
     };
 }
 

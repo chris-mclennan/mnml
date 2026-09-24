@@ -86,8 +86,11 @@ command picker.buffers
 expect screen contains "c.txt ●"
 key esc
 
-# Delete; a name that is not one is refused.
+# Delete asks first (the shared confirm, Cancel selected); a name that
+# is not one is refused.
 ex layout delete three
+expect screen contains "Delete layout?"
+key d
 expect screen contains "layout three deleted"
 ex layout save ../up
 expect screen contains "is not a name"

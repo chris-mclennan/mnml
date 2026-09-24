@@ -209,9 +209,10 @@ pub fn dupeItem(arena: Allocator, it: Item) Allocator.Error!Item {
     return out;
 }
 
-/// A bare local Claude row for tests (`transcript_path` `/t`).
+/// A bare local Claude row for tests (`transcript_path` `/t`): one
+/// prompt, so `msg` is both its first and its last.
 pub fn testItem(id: []const u8, state: AgentState, at: i64, ws: []const u8, msg: ?[]const u8) Item {
-    return .{ .source = .claude, .session_id = id, .workspace = ws, .cwd = null, .transcript_path = "/t", .state = state, .pid = null, .last_activity_s = at, .last_user_msg = msg, .last_assistant_msg = null };
+    return .{ .source = .claude, .session_id = id, .workspace = ws, .cwd = null, .transcript_path = "/t", .state = state, .pid = null, .last_activity_s = at, .first_user_msg = msg, .last_user_msg = msg, .last_assistant_msg = null };
 }
 
 /// What `paintRow` sees: the card's view of its pane, resolved on the
@@ -770,10 +771,10 @@ fn announceEdges(app: *App, edges: []const Edge) Allocator.Error!void {
         const it = findItem(app, e.session_id) orelse continue;
         switch (e.to) {
             .waiting => if (ptyPaneOf(app, e.session_id) == null) {
-                try app.toastLevel(.warn, "session needs input: {s}", .{displayName(app, it)});
+                try app.toastLevel(.warn, "session needs input: {s}", .{itemName(app, it)});
                 if (app.cfg.ui.session_bell) app.bell_pending = true;
             },
-            .failed => try app.toastLevel(.err, "session failed: {s}", .{displayName(app, it)}),
+            .failed => try app.toastLevel(.err, "session failed: {s}", .{itemName(app, it)}),
             else => {},
         }
         if (e.to.ended() and !e.from.ended()) try announceWorktreeEnded(app, it);
@@ -789,9 +790,9 @@ fn announceWorktreeEnded(app: *App, it: Item) Allocator.Error!void {
     const name = try arena.dupe(u8, e.name);
     const n = session_worktree.commitsAhead(app, arena, e.repo, e.branch) catch null;
     if (n) |count| {
-        try app.toastLevel(.warn, "session {s} ended — its worktree {s} has {d} commit{s}: merge / remove / keep (row menu)", .{ displayName(app, it), name, count, if (count == 1) "" else "s" });
+        try app.toastLevel(.warn, "session {s} ended — its worktree {s} has {d} commit{s}: merge / remove / keep (row menu)", .{ itemName(app, it), name, count, if (count == 1) "" else "s" });
     } else {
-        try app.toastLevel(.warn, "session {s} ended — its worktree {s} is still there: merge / remove / keep (row menu)", .{ displayName(app, it), name });
+        try app.toastLevel(.warn, "session {s} ended — its worktree {s} is still there: merge / remove / keep (row menu)", .{ itemName(app, it), name });
     }
 }
 
@@ -1194,39 +1195,75 @@ pub fn cardWorktree(app: *App, c: Card) ?*const session_worktree.Entry {
 }
 
 /// Where a session's name came from — the order `nameOf` looks.
-pub const NameSource = enum { rename, title, prompt, cli };
+pub const NameSource = enum { rename, title, prompt, cli, id };
 
 pub const SessionName = struct {
     /// Borrowed from storage that outlives the frame: the alias (gpa),
-    /// the terminal's title, the scan's snapshot or the pane's label.
+    /// the terminal's title, the scan's snapshot, the pane's label or
+    /// the session id.
     text: []const u8,
     from: NameSource,
 };
 
-/// The one name a session goes by — its SESSIONS card and its pane's
-/// tab both read it, so the two never disagree: the user's rename
-/// (`sessions.rename`, or `term.rename` on the pane), then the title
-/// the child set (OSC 0 / 2 — Claude Code titles its window with a
-/// summary of the conversation) with the spinner stripped off the
-/// front, then the session's first prompt, then the CLI's label.
-/// Rust's `tab_label_with_prefixes`, plus the prompt.
-pub fn nameOf(app: *App, p: *const pty_pane.PtyPane, key: []const u8, session_id: ?[]const u8) SessionName {
+/// The one name a session goes by, wherever it is drawn — its tab, its
+/// SESSIONS card, the start surface, the sessions table, the pickers,
+/// the confirms and toasts, the info view. Every one of them asks here,
+/// so a row clicked on one surface is called what the tab it opens is
+/// called. In order:
+///  1. the user's rename (`sessions.rename`, or `term.rename` on the
+///     pane) — the user chose it, so nothing outranks it;
+///  2. the title the live child set (OSC 0 / 2 — Claude Code titles its
+///     window with a summary of the conversation), the spinner stripped
+///     off the front — only while a pane holds the session, since a
+///     title belongs to a running terminal;
+///  3. the session's first prompt — it says what the session was
+///     started for, and unlike the last prompt it does not change under
+///     the user as the conversation moves on, so the name stays put and
+///     can be found again;
+///  4. a live pane's CLI label (a fresh session has nothing better, and
+///     the tab then says what runs in it), else the id's first eight
+///     characters.
+/// `key` is what the alias is kept under (the session id, or
+/// `pane:<n>`); `pane` is the pane when the caller has it, else one
+/// holding `session_id` is looked up.
+pub fn nameOf(app: *App, key: []const u8, pane: ?*const pty_pane.PtyPane, session_id: ?[]const u8) SessionName {
+    return nameWith(app, key, pane, session_id, null);
+}
+
+/// `nameOf` for a row the caller holds: `row` answers the first prompt
+/// when the scan has not listed the session (a transcript a picker
+/// parsed itself). The one chain either way.
+pub fn nameWith(app: *App, key: []const u8, pane: ?*const pty_pane.PtyPane, session_id: ?[]const u8, row: ?Item) SessionName {
     if (app.sessions.alias(key)) |a| return .{ .text = a, .from = .rename };
-    if (p.childTitle()) |t| {
+    const live: ?*const pty_pane.PtyPane = pane orelse if (session_id) |sid|
+        (if (ptyPaneOf(app, sid)) |pid| app.panes.pty(pid) else null)
+    else
+        null;
+    if (live) |p| if (p.childTitle()) |t| {
         const clean = std.mem.trimEnd(u8, stripLeadingSpinner(t), " \t");
         if (clean.len > 0) return .{ .text = clean, .from = .title };
-    }
-    if (session_id) |sid| if (app.sessions.itemOf(sid)) |it| if (it.first_user_msg) |m| {
-        const line = std.mem.trim(u8, m, " \t\r\n");
+    };
+    const listed: ?Item = if (session_id) |sid| app.sessions.itemOf(sid) else null;
+    if (listed orelse row) |it| if (it.first_user_msg) |m| {
+        // A name is one line: a multi-line prompt goes by its first.
+        const trimmed = std.mem.trim(u8, m, " \t\r\n");
+        const line = std.mem.trimEnd(u8, trimmed[0 .. std.mem.indexOfAny(u8, trimmed, "\r\n") orelse trimmed.len], " \t");
         if (line.len > 0) return .{ .text = line, .from = .prompt };
     };
-    return .{ .text = p.label, .from = .cli };
+    if (live) |p| return .{ .text = p.label, .from = .cli };
+    const id = session_id orelse key;
+    return .{ .text = id[0..@min(id.len, 8)], .from = .id };
+}
+
+/// A scan row's name (`nameOf`, keyed on its session id).
+pub fn itemName(app: *App, it: Item) []const u8 {
+    return nameWith(app, it.session_id, null, it.session_id, it).text;
 }
 
 /// The card's name (`nameOf`).
 pub fn cardName(app: *App, c: Card) []const u8 {
     const p = app.panes.pty(c.pane) orelse return c.key;
-    return nameOf(app, p, c.key, c.session_id).text;
+    return nameOf(app, c.key, p, c.session_id).text;
 }
 
 /// The key a pane's session is kept under — the card's: the session id,
@@ -1244,7 +1281,7 @@ pub fn paneName(app: *App, pid: app_mod.PaneId) ?SessionName {
     var buf: [32]u8 = undefined;
     const key = paneKey(app, pid, &buf) orelse return null;
     const p = app.panes.pty(pid).?;
-    return nameOf(app, p, key, p.sessionId());
+    return nameOf(app, key, p, p.sessionId());
 }
 
 /// The scan's row for the card, or a stand-in carrying what the pane
@@ -1299,16 +1336,6 @@ fn matches(app: *App, it: Item, q: []const u8) bool {
     return todos.containsIgnoreCase(it.session_id, q) or todos.containsIgnoreCase(it.workspace, q) or
         todos.containsIgnoreCase(it.source.label(), q) or todos.containsIgnoreCase(it.state.label(), q) or
         todos.containsIgnoreCase(it.where.label(), q);
-}
-
-/// The alias, else the last prompt, else the id's first eight characters.
-pub fn displayName(app: *App, it: Item) []const u8 {
-    if (app.sessions.alias(it.session_id)) |a| return a;
-    if (it.last_user_msg) |m| {
-        const line = std.mem.trim(u8, m, " \t\r\n");
-        if (line.len > 0) return line;
-    }
-    return it.session_id[0..@min(it.session_id.len, 8)];
 }
 
 pub fn setSort(app: *App, sort: SessionsSort) Allocator.Error!void {
@@ -1439,7 +1466,7 @@ fn pinCmd(app: *App) CommandError!void {
     const st = &app.sessions;
     const arena = app.frame.allocator();
     const it = try currentOrFail(app);
-    const name = try arena.dupe(u8, displayName(app, it));
+    const name = try arena.dupe(u8, itemName(app, it));
     const id = try arena.dupe(u8, currentKey(app) orelse it.session_id);
     const pinned = try st.togglePin(app.gpa, id);
     try refilter(app);
@@ -1601,7 +1628,7 @@ fn openTranscriptCmd(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     const it = try currentOrFail(app);
     if (it.where == .cloud) return cloud_agents.tailLog(app, it);
-    if (it.transcript_path.len == 0) return app.diag.fail(arena, "sessions: {s} has no transcript yet", .{displayName(app, it)});
+    if (it.transcript_path.len == 0) return app.diag.fail(arena, "sessions: {s} has no transcript yet", .{itemName(app, it)});
     const path = try arena.dupe(u8, it.transcript_path);
     _ = app.openPath(path) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
@@ -1657,7 +1684,7 @@ pub fn acceptRename(app: *App, id: []const u8, text: []const u8) Allocator.Error
 /// (`git_palette.openWorktree`).
 fn openWorktreeInTreeCmd(app: *App) CommandError!void {
     const it = try currentOrFail(app);
-    const e = worktreeOf(app, it) orelse return app.diag.fail(app.frame.allocator(), "sessions: {s} has no worktree", .{displayName(app, it)});
+    const e = worktreeOf(app, it) orelse return app.diag.fail(app.frame.allocator(), "sessions: {s} has no worktree", .{itemName(app, it)});
     const arena = app.frame.allocator();
     return @import("app/git_palette.zig").openWorktree(app, .{ .path = try arena.dupe(u8, e.path), .branch = try arena.dupe(u8, e.branch) });
 }
@@ -1665,7 +1692,7 @@ fn openWorktreeInTreeCmd(app: *App) CommandError!void {
 /// *Merge into <branch>…*: a named confirm, then `session_worktree.merge`.
 fn mergeWorktreeCmd(app: *App) CommandError!void {
     const it = try currentOrFail(app);
-    const e = worktreeOf(app, it) orelse return app.diag.fail(app.frame.allocator(), "sessions: {s} has no worktree", .{displayName(app, it)});
+    const e = worktreeOf(app, it) orelse return app.diag.fail(app.frame.allocator(), "sessions: {s} has no worktree", .{itemName(app, it)});
     return session_worktree.confirmMerge(app, e.*);
 }
 
@@ -1673,7 +1700,7 @@ fn mergeWorktreeCmd(app: *App) CommandError!void {
 /// (a second confirm forces past an unmerged branch).
 fn removeWorktreeCmd(app: *App) CommandError!void {
     const it = try currentOrFail(app);
-    const e = worktreeOf(app, it) orelse return app.diag.fail(app.frame.allocator(), "sessions: {s} has no worktree", .{displayName(app, it)});
+    const e = worktreeOf(app, it) orelse return app.diag.fail(app.frame.allocator(), "sessions: {s} has no worktree", .{itemName(app, it)});
     return session_worktree.confirmRemove(app, e.*);
 }
 
@@ -1700,7 +1727,7 @@ fn copyCwdCmd(app: *App) CommandError!void {
 fn exportCmd(app: *App) CommandError!void {
     const it = try currentOrFail(app);
     if (it.where == .cloud) return app.diag.fail(app.frame.allocator(), "sessions: a cloud run has no transcript to export — tail its log", .{});
-    if (it.transcript_path.len == 0) return app.diag.fail(app.frame.allocator(), "sessions: {s} has no transcript yet", .{displayName(app, it)});
+    if (it.transcript_path.len == 0) return app.diag.fail(app.frame.allocator(), "sessions: {s} has no transcript yet", .{itemName(app, it)});
     const gpa = app.gpa;
     const arena = app.frame.allocator();
     const text = Io.Dir.cwd().readFileAlloc(app.io, it.transcript_path, gpa, .limited(64 * 1024 * 1024)) catch |err| return app.diag.fail(arena, "read {s}: {s}", .{ it.transcript_path, @errorName(err) });
@@ -1771,12 +1798,12 @@ fn deleteCmd(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     const it = try currentOrFail(app);
     if (it.where == .cloud) return app.diag.fail(arena, "sessions: a cloud run has no transcript here — cancel it instead", .{});
-    if (it.transcript_path.len == 0) return app.diag.fail(arena, "sessions: {s} has no transcript yet", .{displayName(app, it)});
-    if (it.pid != null) return app.diag.fail(arena, "sessions: {s} is running — end it first", .{displayName(app, it)});
-    if (currentCard(app)) |c| if (app.panes.pty(c.pane)) |p| if (p.exit == null) return app.diag.fail(arena, "sessions: {s} is running — end it first", .{displayName(app, it)});
+    if (it.transcript_path.len == 0) return app.diag.fail(arena, "sessions: {s} has no transcript yet", .{itemName(app, it)});
+    if (it.pid != null) return app.diag.fail(arena, "sessions: {s} is running — end it first", .{itemName(app, it)});
+    if (currentCard(app)) |c| if (app.panes.pty(c.pane)) |p| if (p.exit == null) return app.diag.fail(arena, "sessions: {s} is running — end it first", .{itemName(app, it)});
     const path = try app.gpa.dupe(u8, it.transcript_path);
     errdefer app.gpa.free(path);
-    const msg = try std.fmt.allocPrint(app.gpa, "  Delete the transcript of {s}?", .{displayName(app, it)});
+    const msg = try std.fmt.allocPrint(app.gpa, "  Delete the transcript of {s}?", .{itemName(app, it)});
     errdefer app.gpa.free(msg);
     app.overlay.deinit(app.gpa);
     app.overlay = .{ .confirm = .{
@@ -2310,7 +2337,7 @@ fn drawFooter(app: *App, ui: Ui, area: Rect, y0: u16) Allocator.Error!void {
                 },
                 .item => |idx| blk: {
                     const it = st.items[idx];
-                    break :blk ui.fmt("  {s}  ({s})", .{ displayName(app, it), it.session_id[0..@min(8, it.session_id.len)] });
+                    break :blk ui.fmt("  {s}  ({s})", .{ itemName(app, it), it.session_id[0..@min(8, it.session_id.len)] });
                 },
             };
             _ = ui.putStr(area.x, y, area.w, ui.clipStr(label, area.w), grey);
@@ -3233,7 +3260,8 @@ test "the cards are this app's AI panes: a fresh one reads its banner off the gr
     app.diag.clear();
     // The tooltip: the name, the cwd, a blank, then what the card shows.
     const tip = (try hoverTip(app, app.frame.allocator(), 0)).?;
-    try testing.expectEqualStrings("claude", tip.title);
+    // Named by its first prompt's first line (`nameOf`).
+    try testing.expectEqualStrings("fix  the", tip.title);
     try testing.expect(tip.lines.len >= 4);
     try testing.expectEqualStrings("⎇ main", tip.lines[0]);
     try testing.expect(std.mem.startsWith(u8, tip.lines[1], "⌂ "));
@@ -3243,6 +3271,27 @@ test "the cards are this app's AI panes: a fresh one reads its banner off the gr
     try testing.expectEqualStrings("Claude Code v9 (fake)", tip_fresh.lines[2]);
     try testing.expectEqualStrings("exited", (try hoverTip(app, app.frame.allocator(), 2)).?.lines[2]);
     try testing.expect((try hoverTip(app, app.frame.allocator(), 9)) == null);
+}
+
+test "one name per session: a scan row with no pane is named by its first prompt, never its last, then its short id — the same name its tab would wear" {
+    var f = try Fixture.init(100, 30);
+    defer f.deinit();
+    const app = &f.app;
+    const now = Io.Timestamp.now(testing.io, .real).toSeconds();
+    var both = wsItem(&f, "e2e00000-first-last", .idle, now, "last prompt omega");
+    both.first_user_msg = "first prompt alpha";
+    var none = wsItem(&f, "abcdef0123456789", .idle, now, null);
+    none.first_user_msg = null;
+    try f.adopt(&.{ both, none });
+    try testing.expectEqualStrings("first prompt alpha", itemName(app, app.sessions.itemOf("e2e00000-first-last").?));
+    const n = nameOf(app, "e2e00000-first-last", null, "e2e00000-first-last");
+    try testing.expectEqual(NameSource.prompt, n.from);
+    const bare = nameOf(app, "abcdef0123456789", null, "abcdef0123456789");
+    try testing.expectEqualStrings("abcdef01", bare.text);
+    try testing.expectEqual(NameSource.id, bare.from);
+    // The rename outranks both.
+    try app.sessions.setAlias(app.gpa, "abcdef0123456789", "night run");
+    try testing.expectEqualStrings("night run", itemName(app, app.sessions.itemOf("abcdef0123456789").?));
 }
 
 test "one name per session: the tab and the card both read nameOf — the rename, the child's title, the first prompt, the CLI — and term.rename on the pane is the session's rename" {
@@ -4036,7 +4085,7 @@ test "headless: a card owning a scanned transcript reads it; w widens ENDED; J a
     const txt2 = try f.screen();
     defer testing.allocator.free(txt2);
     try testing.expect(std.mem.indexOf(u8, txt2, "nightly build") != null);
-    try testing.expectEqualStrings("nightly build", displayName(app, cardItem(app, f.cardAt(st.list.cursor))));
+    try testing.expectEqualStrings("nightly build", itemName(app, cardItem(app, f.cardAt(st.list.cursor))));
     // Delete is refused while the pane runs; once the child is gone the
     // confirm deletes the transcript and the rescan drops the row.
     selectKey(app, sid);
@@ -4561,7 +4610,7 @@ test "a session on one of the workspace's worktrees: the card and the table row 
     try command.run(app, .{ .static = .@"view.activity_sessions" });
     const txt = try f.screen();
     defer testing.allocator.free(txt);
-    try testing.expect(std.mem.indexOf(u8, txt, "claude \u{2442} feat") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "ship it \u{2442} feat") != null);
     // The table row too.
     try command.run(app, .{ .static = .@"sessions.table" });
     try sessions_table.onSnapshot(app);

@@ -185,17 +185,17 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
         .split_max => if (app.zen or app.zoomedPane() != null) .{
             .title = "Restore",
             .body = if (app.zen) "Full screen is on: the chrome — the rail, the columns, the bars — is hidden and the panes have the whole terminal. Click brings the frame back; so does Esc Esc, or the corner mark at the top right. Right-click lists the two maximize modes." else "This pane is zoomed: it has its leaf's whole area and the other splits are hidden, not closed. Click restores the splits; right-click lists the two maximize modes. The zoom is per tab page.",
-            .keys = &.{ .{ .command = .@"view.fullscreen", .label = "Full screen" }, .{ .command = .@"view.toggle_zoom", .label = "Zoom this pane" } },
+            .keys = &.{ .{ .command = .@"view.fullscreen", .label = "Full screen" }, .{ .command = .@"view.toggle_zoom", .label = "Zoom the split" } },
             .links = if (app.zen) &.{ .{ .command = .{ .id = .@"view.fullscreen", .label = "Bring the frame back" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.maximize_click"), .label = "Maximize button in Settings" } } } else &.{ .{ .command = .{ .id = .@"view.toggle_zoom", .label = "Bring the splits back" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.maximize_click"), .label = "Maximize button in Settings" } } },
         } else .{
             .title = try std.fmt.allocPrint(arena, "Maximize — {s}", .{zen.modeLabel(app.cfg.ui.maximize_click)}),
             .body = switch (app.cfg.ui.maximize_click) {
-                .zoom_pane => "One button, two modes; `ui.maximize_click` picks which a left click runs, and here it is *Zoom this pane*: the active pane takes its leaf's whole area and the other splits hide until you click again. Right-click lists both modes and runs the one you pick once, without re-pointing the button; Settings → UI re-points it. Full screen is the other mode — it hides the chrome as well.",
+                .zoom_pane => "One button, two modes; `ui.maximize_click` picks which a left click runs, and here it is *Zoom the split*: the active pane takes its leaf's whole area and the other splits hide until you click again. Right-click lists both modes and runs the one you pick once, without re-pointing the button; Settings → UI re-points it. Full screen is the other mode — it hides the chrome as well.",
                 .fullscreen => "One button, two modes; `ui.maximize_click` picks which a left click runs, and here it is *Full screen*: the rail, the columns and the bars hide and the panes take the whole terminal, Esc Esc or the corner mark to come back. Right-click lists both modes and runs the one you pick once, without re-pointing the button; Settings → UI re-points it. Zoom is the other mode — one pane over its splits, chrome kept.",
             },
-            .keys = &.{ .{ .command = .@"view.toggle_zoom", .label = "Zoom this pane" }, .{ .command = .@"view.fullscreen", .label = "Full screen" } },
+            .keys = &.{ .{ .command = .@"view.toggle_zoom", .label = "Zoom the split" }, .{ .command = .@"view.fullscreen", .label = "Full screen" } },
             .links = switch (app.cfg.ui.maximize_click) {
-                .zoom_pane => &.{ .{ .command = .{ .id = .@"view.toggle_zoom", .label = "Zoom this pane" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.maximize_click"), .label = "Maximize button in Settings" } } },
+                .zoom_pane => &.{ .{ .command = .{ .id = .@"view.toggle_zoom", .label = "Zoom the split" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.maximize_click"), .label = "Maximize button in Settings" } } },
                 .fullscreen => &.{ .{ .command = .{ .id = .@"view.fullscreen", .label = "Full screen" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.maximize_click"), .label = "Maximize button in Settings" } } },
             },
         },
@@ -635,7 +635,7 @@ test "every named button, every menu word and every pane kind has an entry" {
     inline for (comptime std.enums.values(std.meta.Tag(app_mod.Pane))) |k| try t.expect(paneKind(k).body.len >= 40);
     // The maximize button names the mode a click runs, and the way
     // back while something is maximized.
-    try t.expectEqualStrings("Maximize — Zoom this pane", (try button(&app, a, @intFromEnum(Button.split_max))).?.title);
+    try t.expectEqualStrings("Maximize — Zoom the split", (try button(&app, a, @intFromEnum(Button.split_max))).?.title);
     app.zen = true;
     try t.expectEqualStrings("Restore", (try button(&app, a, @intFromEnum(Button.split_max))).?.title);
 }

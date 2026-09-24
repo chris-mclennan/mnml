@@ -167,7 +167,7 @@ pub fn entry(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Entry {
         .zoom => .{
             .title = "Zoomed split",
             .body = "This tab page is zoomed: the focused split fills the body and the tab strip shows only its tabs, while the other splits are hidden rather than closed — their ratios, their tabs and the focus are kept exactly. Click puts the layout back as it was. A split, a close or a move un-zooms first, and each tab page keeps its own zoom across a restart.",
-            .keys = &.{.{ .command = .@"view.toggle_zoom", .label = "Zoom / restore" }},
+            .keys = &.{.{ .command = .@"view.toggle_zoom", .label = "Zoom the split / restore" }},
             .links = &.{ .{ .command = .{ .id = .@"view.toggle_zoom", .label = "Restore the layout" } }, .{ .command = .{ .id = .@"view.fullscreen", .label = "Full screen as well" } } },
         },
         .dev_profile => .{
@@ -246,7 +246,7 @@ fn jobsChip(app: *App, arena: Allocator) Allocator.Error!Entry {
     const tip = try @import("../jobs.zig").tip(app, arena);
     return .{
         .title = tip.title,
-        .body = "What mnml is doing in the background — a language server starting or indexing, a git fetch / pull / push, a test run, an HTTP send, chain or bench, a linter, a search walk, Chrome coming up, a session spawning. A spinner and a count while any runs; for ten seconds after one fails, its words, dimmed; nothing when idle. Either click opens the JOBS list: the running ones with a Cancel row where they can be stopped, the last fifty finished with how they ended.",
+        .body = "What mnml is doing in the background — a language server starting or indexing, a git fetch / pull / push, a test run, an HTTP send, chain or bench, a linter, a search walk, Chrome coming up, a session spawning. A spinner and a count while any runs; for ten seconds after one fails, its words, dimmed — only the kind (`✗ tests`) when another chip already states that failure, and on a row too narrow for the file name as well; nothing when idle. `space j` (vim) / `Ctrl+K J` (standard) or either click opens the JOBS list: the running ones with a Cancel row where they can be stopped, the last fifty finished with how they ended.",
         .links = &.{ .{ .command = .{ .id = .@"jobs.show", .label = "Open the jobs list" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.jobs_chip"), .label = "Jobs chip in Settings" } }, .{ .command = .{ .id = .@"messages.show", .label = "The messages log" } } },
     };
 }

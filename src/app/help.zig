@@ -158,7 +158,8 @@ test "the rows are Rust's build_help: modes, the stress meter, then every group 
     var seen_view = false;
     for (all) |r| switch (r) {
         .binding => |b| if (std.mem.eql(u8, b.title, command.title(.@"git.blame_toggle"))) {
-            try t.expectEqualStrings("ctrl+k b", b.keys);
+            // The standard profile's own chord, then its which-key row.
+            try t.expectEqualStrings("ctrl+k b · space g b", b.keys);
             seen_chain = true;
         },
         .section => |s| if (std.mem.eql(u8, s, "view")) {

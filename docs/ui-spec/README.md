@@ -110,6 +110,11 @@ a deliberate departure — the Rust columns dock at any width — so
 lines (22 rows beyond the rail) where it read 20 (4): the tree and the
 activity bar are not on the Zig screen. At 120x40 nothing grew, and
 `steps-esc` / `steps-graph2` / `steps-http` each lost a row (the `▌▌`).
+*// changed 2026-09-23:* the sessions table had NOT lost them — its row
+stripe sits past the list's marker column, where `absorb` does not look,
+so the dump read `▌ ▌` on every row and `▌▌` on the selected one.
+`pane_rail.absorbList` takes it now, and `zig-sessions-table-120x40.txt`
+was re-cut (it had also been cut over a second run's rows).
 
 `rust-git-120x40.txt` / `rust-git-80x24.txt` are git mode (`steps-graph2.jsonl`).
 
@@ -194,7 +199,9 @@ statusline's coverage-ticker phase flickers one more row in some runs).
 With no pane open the editor area is the start surface
 (`src/ui/welcome.zig`'s `drawStart`, `ui.welcome = full`, the default)
 where Rust paints its centred logo: a three-row word mark, the
-workspace line, RECENT WORKSPACES and RECENT FILES on the left, SESSIONS
+workspace line, WORKSPACES (it read RECENT WORKSPACES until 2026-09-23,
+for a list of this window's roots — the dumps were edited to the new
+label, column for column) and RECENT FILES on the left, SESSIONS
 (with `+ New Claude Code session here`) and SHORTCUTS on the right, the
 version line under them. Every `zig-*` dump that shows the empty
 layout was re-cut for it — `esc`, `status`, `menu-plus`, `whichkey`,
@@ -203,7 +210,7 @@ layout was re-cut for it — `esc`, `status`, `menu-plus`, `whichkey`,
 `tools/zig-spec.sh`, `search` through `tools/zig-spec-git.sh`, and
 `integrations` through `tools/ui-diff.sh` on a copy of the chrome
 fixture whose `zig-data/config.zon` has its `.workspaces` list taken
-out: RECENT WORKSPACES lists them, and the author's own workspace names
+out: WORKSPACES lists them, and the author's own workspace names
 do not belong in a dump. The rows outside the editor area moved only
 where main had moved since the last cut (the `⋯` grip on the `:` line,
 the marketplace sections, the clock). `ui.welcome = minimal` is the old
@@ -840,6 +847,12 @@ taken from the rail and the devicon table rather than re-picked
 (`src/ui/whichkey_glyph.zig`), each with its one-cell `--ascii` twin, so
 the popup agrees with the rest of the chrome and the column math does
 not move between glyph modes. See `docs/PARITY.md`, the which-key row.
+Since 2026-09-23 the tree is derived from the spec table's leader chords
+(`docs/KEYMAP_PROFILES.md`, "One leader table"), so the standard popup
+no longer lists the rows the spec binds for the vim profile alone
+(`+nvchad`, `e`, `E`, `/`, `f m` / `f o` / `f z`, the NvChad `g` rows),
+`w` is no longer a save, and `+http` sits under `R` — the dump was
+re-cut and differs from the Rust one in those rows too.
 
 `zig-themes-120x40.txt` is the theme browser mid-preview
 (`tools/zig-spec.sh themes` — `theme.pick`, then `gruv` typed). The

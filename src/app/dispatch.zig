@@ -1537,6 +1537,11 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
             // FIRST character of quick open's query are VS Code's four
             // modes, not a filename.
             if (k.typed()) |c| if (c < 0x80 and try cmd_picker.quickOpenPrefix(app, &[_]u8{@intCast(c)})) return;
+            // A row the picker can remove (`on_delete`): Shift+Delete.
+            if (p.on_delete != null and k.code == .delete and k.mods.shift and !k.mods.ctrl and !k.mods.alt) {
+                try cmd_picker.deleteRow(app);
+                return;
+            }
             switch (try Picker.handleKey(&p.state, gpa, k, p.filtered.items.len)) {
                 .consumed => cmd_picker.preview(app),
                 // The icon picker's Ctrl+C (the codepoint) before the keymap.
@@ -1731,8 +1736,6 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .http_description => try http_app.applyDescriptionPrompt(app, text),
         .http_tags => try http_app.applyTagsPrompt(app, text),
         .layout_save => try named_layouts.acceptSave(app, text),
-        .layout_load => try named_layouts.acceptLoad(app, text),
-        .layout_delete => try named_layouts.acceptDelete(app, text),
     }
 }
 
@@ -1752,6 +1755,8 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
         .script_install => |i| try @import("scripts.zig").answerInstall(app, i, choice),
         .remove_script => |n| try @import("scripts.zig").answerRemove(app, n, choice),
         .layout_load => |n| try named_layouts.answerLoad(app, n, choice),
+        .layout_overwrite => |n| try named_layouts.answerOverwrite(app, n, choice),
+        .layout_delete => |d| try named_layouts.answerDelete(app, d.name, d.from_picker, choice),
         .replace_confirm => try ex_verbs.answerConfirm(app, choice),
         .review_trust => try @import("workspace_trust.zig").answerReview(app, choice),
         .close_pane => |id| switch (choice) {
@@ -1856,6 +1861,8 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
 // ─── the find bar ───────────────────────────────────────────────────────
 
 fn findBarKey(app: *App, k: Key) Allocator.Error!void {
+    // A terminal's bar reads Shift+Enter as VS Code's terminal does.
+    if (try pty_search.barKey(app, k)) return;
     const fb = &app.find_bar.?;
     switch (try FindBar.handleKey(&fb.state, app.gpa, k)) {
         .consumed, .focus_toggle => {},

@@ -2,7 +2,7 @@
 # the ACTIVE profile's, so the default (standard) profile reads `Ctrl+K`
 # rather than a `<leader>` it has no key for — group labels with their
 # `+`, the keys typed so far in the title of a sub-popup (which since
-# 2026-09-14 carries that group's own row, `Ctrl+K f  +find (7)`), and
+# 2026-09-14 carries that group's own row, `Ctrl+K f  +find (4)`), and
 # `esc to cancel` at the bottom. The leader is bound on its own AND a
 # prefix, so the popup opens on the `timeoutlen` pause, not the press
 # (`tests/e2e/chord_ctrl_k_prefix.test`).
@@ -12,13 +12,15 @@
 command whichkey.leader
 expect screen contains "┌ Ctrl+K "
 expect screen contains "f → +find"
-expect screen contains "e → explorer"
+expect screen contains "n → line numbers"
 expect screen contains "q → close buffer"
-expect screen contains "w → write/save"
+# The rows the spec table binds for the vim profile alone are not here.
+expect screen lacks "e → explorer"
+expect screen lacks "w → write/save"
 expect screen contains "P → +pr"
 expect screen contains "esc to cancel"
 type f
-expect screen contains "┌ Ctrl+K f  +find (7) "
+expect screen contains "┌ Ctrl+K f  +find (4) "
 expect screen contains "f → files"
 expect screen contains "g → grep"
 key esc

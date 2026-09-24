@@ -12,7 +12,7 @@
    │                          │
  󰎒 │                          │                                     workspace · ws
    │                          │
-  │                          │   RECENT WORKSPACES                           SESSIONS
+  │                          │   WORKSPACES                                  SESSIONS
    │                          │    ws                                open
   │┌ Open file ───────────────────────────────────────────────────────────────────────────────────────────────────┐
    ││  main                                                                                                 1 of 3 │

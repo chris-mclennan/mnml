@@ -1,0 +1,44 @@
+# width: 120
+# height: 30
+# Named layouts never go silently: a save over an existing name and a
+# delete ask through the shared confirm (Cancel selected), and the layouts
+# picker deletes a row with Shift+Delete — asked the same way — then comes
+# back with what is left. `layout.delete` is the picker, not a blind name
+# prompt.
+write a.txt "alpha alpha\n"
+write b.txt "bravo bravo\n"
+open a.txt
+command view.split_right
+open b.txt
+ex layout save two
+expect file .mnml/layouts/two.zon contains "b.txt"
+command view.close_split
+ex layout save two
+expect screen contains "Replace layout?"
+# (The first save's "2 panes" toast may still be up; the replace would
+# have said "1 pane".)
+expect screen lacks "layout two saved · 1 pane"
+key c
+expect screen contains "layout two: kept as it was"
+expect file .mnml/layouts/two.zon contains "b.txt"
+ex layout save one
+command layout.delete
+expect screen contains "Delete layout"
+type two
+key enter
+expect screen contains "Delete layout?"
+key c
+expect file .mnml/layouts/two.zon contains "b.txt"
+key esc
+command layout.pick
+expect screen contains "Shift+Del deletes"
+type two
+key shift+delete
+expect screen contains "Delete layout?"
+key d
+expect screen contains "layout two deleted"
+expect screen contains "Load layout"
+expect screen contains "one"
+key esc
+ex layout list
+expect screen contains "layouts (1): one"
