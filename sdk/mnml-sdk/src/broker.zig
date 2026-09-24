@@ -533,6 +533,12 @@ pub fn socketPath(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, s
     // limit is a bind that fails for a reason nobody can read.
     if (beside.len <= max_path_len) return beside;
     gpa.free(beside);
+    // Windows has no `/tmp` (it would be `\tmp` on the current drive,
+    // which usually does not exist): `%TEMP%` is per user and the same
+    // for every process of that user, so both sides still meet.
+    if (@import("builtin").os.tag == .windows) {
+        if (env.get("TEMP") orelse env.get("TMP")) |tmp_dir| if (tmp_dir.len > 0) return std.fmt.allocPrint(gpa, "{s}\\mnml-broker-{s}.sock", .{ tmp_dir, svc });
+    }
     return std.fmt.allocPrint(gpa, "/tmp/mnml-broker-{s}.sock", .{svc});
 }
 

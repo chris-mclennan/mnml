@@ -229,7 +229,9 @@ pub const file_name = "config.zon";
 pub fn dataRoot(gpa: Allocator, env: *const std.process.Environ.Map) Allocator.Error!?[]u8 {
     if (nonEmpty(env.get("MNML_DATA_ROOT"))) |root| return try gpa.dupe(u8, root);
     if (nonEmpty(env.get("XDG_CONFIG_HOME"))) |xdg| return try std.fs.path.join(gpa, &.{ xdg, "mnml" });
-    if (nonEmpty(env.get("HOME"))) |home| return try std.fs.path.join(gpa, &.{ home, ".config", "mnml" });
+    // `HOME`, else `USERPROFILE` — the SDK's ladder (`manifest.dataRoot`);
+    // Windows sets no `HOME`.
+    if (nonEmpty(env.get("HOME")) orelse nonEmpty(env.get("USERPROFILE"))) |home| return try std.fs.path.join(gpa, &.{ home, ".config", "mnml" });
     return null;
 }
 
@@ -390,6 +392,25 @@ pub const template =
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const t = std.testing;
+
+test "dataRoot: MNML_DATA_ROOT, XDG_CONFIG_HOME, HOME, then USERPROFILE (Windows)" {
+    const gpa = std.testing.allocator;
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try std.testing.expect((try dataRoot(gpa, &env)) == null);
+    try env.put("USERPROFILE", "/profile");
+    const want = try std.fs.path.join(gpa, &.{ "/profile", ".config", "mnml" });
+    defer gpa.free(want);
+    const got = (try dataRoot(gpa, &env)) orelse return error.TestExpectedDataRoot;
+    defer gpa.free(got);
+    try std.testing.expectEqualStrings(want, got);
+    try env.put("HOME", "/home/u");
+    const want_home = try std.fs.path.join(gpa, &.{ "/home/u", ".config", "mnml" });
+    defer gpa.free(want_home);
+    const got_home = (try dataRoot(gpa, &env)) orelse return error.TestExpectedDataRoot;
+    defer gpa.free(got_home);
+    try std.testing.expectEqualStrings(want_home, got_home);
+}
 
 test "the scaffold parses and validates once the placeholders are real" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
