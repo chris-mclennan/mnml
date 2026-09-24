@@ -59,6 +59,13 @@ pub const rows = [_]Row{
         .body = "Pushes the current branch to its upstream, adding `--set-upstream` when it has none, and refreshes the status once it lands. A rejected push — the remote moved on, or the credentials are not there — comes back as a toast with a `log` link; nothing here ever force-pushes for you. Pull first when the remote is ahead.",
         .links = &.{ .{ .command = .{ .id = .@"git.push", .label = "Push now" } }, .{ .command = .{ .id = .@"git.pull", .label = "Pull first" } }, ask },
     } },
+    // The branch chip's menu and the branches panel's row menus offer
+    // it in place of Pull / Push on a branch that was never pushed.
+    .{ .label = "Publish branch (set upstream)", .entry = .{
+        .title = "Publish branch (set upstream)",
+        .body = "The branch has never been pushed: it has no upstream (or the one it had was deleted on the remote), so there is nothing to pull from and nothing on the remote to delete. This row pushes it with `push -u` to the remote, which makes that remote branch its upstream — after that the menu offers Pull, Push and the force push as for any tracking branch. A rejected push toasts the reason with a `log` link.",
+        .links = &.{ .{ .command = .{ .id = .@"git.push", .label = "Publish the current branch" } }, .{ .command = .{ .id = .@"git.set_upstream", .label = "Track an existing remote branch instead" } }, ask },
+    } },
     .{ .menu = "Git", .label = "Stash\u{2026}", .entry = .{
         .title = "Stash\u{2026}",
         .body = "Asks for an optional message and runs `git stash push -u`, so untracked files go with the tracked ones and the working tree comes back clean. The entry joins the stash list, newest first, and *Stash pop* takes that one back. With nothing to stash git says so and the list is unchanged.",
@@ -71,7 +78,7 @@ pub const rows = [_]Row{
     } },
     .{ .label = "Commit\u{2026}", .entry = .{
         .title = "Commit\u{2026}",
-        .body = "Opens the commit prompt and commits what is in the index when you accept — nothing unstaged is included, so stage first. With the commit graph's working-tree box already holding a message, the row commits from that box instead of asking. An empty message cancels, and a repo with nothing staged says so.",
+        .body = "Opens the commit prompt and commits what is in the index when you accept — nothing unstaged is included, so stage first. With the commit graph's working-tree box already holding a message, the row commits from that box instead of asking. An empty message cancels, and a repo with nothing staged says so. After a merge, a cherry-pick or a `merge --squash` the prompt starts from the message git has ready, as `git commit` does.",
         .keys = &.{.{ .command = .@"git.commit", .label = "Commit" }},
         .links = &.{ .{ .command = .{ .id = .@"git.commit", .label = "Write one" } }, .{ .command = .{ .id = .@"git.ai_commit", .label = "Let Claude write it" } }, .{ .command = .{ .id = .@"git.status_pane", .label = "Stage something first" } } },
     } },

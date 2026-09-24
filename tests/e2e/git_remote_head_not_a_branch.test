@@ -1,0 +1,32 @@
+# `origin/HEAD` is a pointer to one of origin's branches, not a branch:
+# git shortens `refs/remotes/origin/HEAD` to plain `origin`, and that
+# name was listed beside `origin/main` in the merge and diff pickers —
+# the same commit twice under two names — and counted in the rail's
+# REMOTE section (2 for one remote branch). The rail lists remote
+# branches under their remote, the pickers list each branch once.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write .gitignore ".mnml/\nremote.git/\n"
+write a.txt "one\n"
+shell git add .gitignore a.txt
+shell git commit -q -m "init"
+shell git init -q --bare remote.git
+shell git remote add origin ./remote.git
+shell git push -q -u origin main
+shell git remote set-head origin main
+shell test "$(git for-each-ref --format='%(refname:short)' refs/remotes | tr '\n' ' ')" = "origin origin/main "
+shell git checkout -q -b topic
+command view.activity_git
+wait 1500
+expect screen contains "REMOTE       1"
+expect screen contains "    󰘬 main"
+command git.merge
+wait 1000
+expect screen contains "│ origin/main"
+expect screen lacks "│ origin "
+key esc
+command git.diff_against_current
+wait 1000
+expect screen contains "│ origin/main"
+expect screen lacks "│ origin "

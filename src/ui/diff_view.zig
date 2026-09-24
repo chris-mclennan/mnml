@@ -47,6 +47,7 @@ const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const list_panel = @import("list_panel.zig");
+const overlay = @import("overlay.zig");
 const git_toolbar = @import("git_toolbar.zig");
 const parse = @import("../git/parse.zig");
 const intraline = @import("../git/intraline.zig");
@@ -538,11 +539,25 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, view: *State, doc: Doc) Painted {
     if (hunks == 0) {
         // A binary file has no hunks; `(no changes)` is what the pane
         // says about a clean file, and the status pane had just called
-        // this one modified. git's own line, with `--stat`'s sizes.
-        const msg: []const u8 = if (doc.pending) "  loading\u{2026}" else if (binaryFile(doc.files)) |f| (if (f.bin_sizes) |sz|
-            ui.fmt("  Binary file changed ({d} {s} {d} bytes)", .{ sz[0], if (ui.ascii) "->" else "\u{2192}", sz[1] })
-        else
-            "  Binary file changed") else "  (no changes)";
+        // this one modified. git's own words with `--stat`'s sizes,
+        // under the banner the text hunks get: the file's name and the
+        // scope's chips, which act on the whole file (`s` / `u` / `x`
+        // too) — a binary diff is not a dead end.
+        if (!doc.pending) if (binaryFile(doc.files)) |f| {
+            var rest = body;
+            if (doc.actions != .none) {
+                const s = rest.splitTop(1);
+                drawActionBanner(ui, pane, s.top, doc, ui.fmt(" Binary  {s}", .{f.path()}));
+                rest = s.rest;
+            }
+            const msg: []const u8 = if (f.bin_sizes) |sz|
+                overlay.hintText(ui, ui.fmt("  Binary files differ \u{B7} {d} bytes \u{2192} {d} bytes", .{ sz[0], sz[1] }))
+            else
+                "  Binary files differ";
+            if (!rest.isEmpty()) _ = ui.putStr(rest.x, rest.y, rest.w, msg, .{ .fg = p.comment, .bg = p.bg_dark });
+            return painted;
+        };
+        const msg: []const u8 = if (doc.pending) "  loading\u{2026}" else "  (no changes)";
         _ = ui.putStr(body.x, body.y, body.w, msg, .{ .fg = p.comment, .bg = p.bg_dark });
         return painted;
     }
@@ -744,12 +759,22 @@ fn paintListRow(ui: Ui, pane: PaneId, area: Rect, y: u16, list: List, i: usize, 
 /// ` Hunk N/M  file` with the scope's chips right-aligned — Rust's
 /// `active_hunk_chips_row`; the chips act on the cursor's hunk.
 fn drawBanner(ui: Ui, pane: PaneId, r: Rect, doc: Doc) void {
+    const at = cursorHunk(doc) orelse {
+        const p = ui.theme.palette;
+        ui.fill(r, .{ .bg = p.bg_darker });
+        ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = special_base } });
+        return;
+    };
+    const ord = hunkOrdinal(doc, at);
+    drawActionBanner(ui, pane, r, doc, ui.fmt(" Hunk {d}/{d}  {s}", .{ ord.n, ord.of, doc.files[at.file].path() }));
+}
+
+/// A banner row: `label` on the left, the scope's action chips
+/// right-aligned (the hunk banner's, and a binary file's).
+fn drawActionBanner(ui: Ui, pane: PaneId, r: Rect, doc: Doc, label: []const u8) void {
     const p = ui.theme.palette;
     ui.fill(r, .{ .bg = p.bg_darker });
     ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = special_base } });
-    const at = cursorHunk(doc) orelse return;
-    const ord = hunkOrdinal(doc, at);
-    const label = ui.fmt(" Hunk {d}/{d}  {s}", .{ ord.n, ord.of, doc.files[at.file].path() });
     const lw = ui.putStr(r.x, r.y, r.w, label, .{ .fg = p.cyan, .bg = p.bg_darker, .bold = true });
     const actions = actionsOf(doc.actions);
     var chips_w: u16 = 0;
@@ -1260,7 +1285,7 @@ fn binaryFile(files: []const parse.FileDiff) ?parse.FileDiff {
     return null;
 }
 
-test "no hunks on a binary file: `Binary file changed (old → new bytes)`, the sizes off --stat; without them the line alone; `->` in ascii" {
+test "no hunks on a binary file: the banner names it with the scope's chips, then `Binary files differ · old bytes → new bytes`, the sizes off --stat; without them the line alone; `->` in ascii; a commit's has no chips" {
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
     const arena = a.allocator();
@@ -1274,13 +1299,20 @@ test "no hunks on a binary file: `Binary file changed (old → new bytes)`, the 
         \\
     );
     _ = draw(f.ui(), 1, f.full(), &st, .{ .files = files, .rows = &.{}, .shown = &.{}, .cursor = 0, .focused = true });
-    try f.expectRow(2, "  Binary file changed");
+    try f.expectRow(2, try padTo(arena, " Binary  logo.png", 34, "Stage   Discard"));
+    try f.expectRow(3, "  Binary files differ");
+    // The chips are the hunk banner's: the same ids, so a click acts.
+    try testing.expectEqual(actionId(.stage), f.hits.at(34, 2).?.script_hit.id);
+    try testing.expectEqual(actionId(.discard), f.hits.at(42, 2).?.script_hit.id);
     files[0].bin_sizes = .{ 33, 40 };
     _ = draw(f.ui(), 1, f.full(), &st, .{ .files = files, .rows = &.{}, .shown = &.{}, .cursor = 0, .focused = true });
-    try f.expectRow(2, "  Binary file changed (33 \u{2192} 40 bytes)");
+    try f.expectRow(3, "  Binary files differ \u{B7} 33 bytes \u{2192} 40 bytes");
     f.ascii = true;
     _ = draw(f.ui(), 1, f.full(), &st, .{ .files = files, .rows = &.{}, .shown = &.{}, .cursor = 0, .focused = true });
-    try f.expectRow(2, "  Binary file changed (33 -> 40 bytes)");
+    try f.expectRow(3, "  Binary files differ - 33 bytes -> 40 bytes");
+    // A commit's diff acts on nothing: no banner, the line alone.
+    _ = draw(f.ui(), 1, f.full(), &st, .{ .files = files, .rows = &.{}, .shown = &.{}, .cursor = 0, .focused = true, .actions = .none });
+    try f.expectRow(2, "  Binary files differ - 33 bytes -> 40 bytes");
 }
 
 test "no hunks: `(no changes)`, or `loading…` while pending; a staged scope offers Unstage; a commit none" {

@@ -51,6 +51,7 @@ const cmd_picker = @import("cmd_picker.zig");
 const cmd_view = @import("cmd_view.zig");
 const context_menus = @import("context_menus.zig");
 const git_palette = @import("git_palette.zig");
+const tree_mod = @import("tree.zig");
 const conflicts = @import("conflicts.zig");
 const line_blame = @import("line_blame.zig");
 const clock = @import("clock.zig");
@@ -744,13 +745,30 @@ pub const State = struct {
         return null;
     }
 
-    /// The branch for the statusline: the name, `@sha` when detached,
+    /// Where HEAD is — a branch, or the commit it is detached at —
     /// null outside a repo or before the first status lands.
-    pub fn branchLabel(self: *const State) ?[]const u8 {
+    pub fn head(self: *const State) ?parse.HeadRef {
         const st = self.status orelse return null;
-        if (st.branch) |b| return b;
-        if (st.detached) return "(detached)";
-        return null;
+        return st.head();
+    }
+
+    /// The checked-out branch's name: what a verb hands git. Null when
+    /// HEAD is detached (there is no branch to name), outside a repo and
+    /// before the first status lands.
+    pub fn branchName(self: *const State) ?[]const u8 {
+        const h = self.head() orelse return null;
+        return switch (h) {
+            .branch => |b| b,
+            .detached => null,
+        };
+    }
+
+    /// What to paint for HEAD (the statusline, the status pane, the
+    /// dock): the branch name, or `HEAD detached at v0.1`. Display only
+    /// — `branchName` is what a verb passes to git.
+    pub fn headLabel(self: *const State) ?[]const u8 {
+        const st = self.status orelse return null;
+        return st.headLabel();
     }
 
     /// Changed files, for the activity badge.
@@ -1237,7 +1255,7 @@ pub fn explainBranch(app: *App, name: []const u8) CommandError!void {
     const arena = app.frame.allocator();
     const gpa = app.gpa;
     const repo = try requireRepo(app);
-    const head = app.git.branchLabel() orelse "";
+    const head = app.git.branchName() orelse "";
     var base: []const u8 = "";
     if (head.len > 0 and !std.mem.eql(u8, name, head)) {
         base = head;
@@ -1829,8 +1847,8 @@ fn collectFiles(app: *App, arena: Allocator, for_graph: bool) Allocator.Error!Fi
     if (app.git.status) |status| {
         if (!for_graph) for (status.entries) |e| if (e.group == .conflicted) try un.append(arena, .{ .path = e.path, .letter = 'U', .staged = false });
         for (status.entries) |e| switch (e.group) {
-            .staged => try st.append(arena, .{ .path = e.path, .letter = e.code, .staged = true }),
-            .unstaged => try un.append(arena, .{ .path = e.path, .letter = e.code, .staged = false }),
+            .staged => try st.append(arena, .{ .path = e.path, .letter = e.code, .staged = true, .submodule = e.submodule }),
+            .unstaged => try un.append(arena, .{ .path = e.path, .letter = e.code, .staged = false, .submodule = e.submodule }),
             .untracked => try un.append(arena, .{ .path = if (for_graph) std.mem.trimEnd(u8, e.path, "/") else e.path, .letter = '?', .staged = false }),
             .conflicted => if (for_graph) try un.append(arena, .{ .path = e.path, .letter = '!', .staged = false }),
         };
@@ -2344,11 +2362,40 @@ pub fn verbPatch(app: *App, dp: *const DiffPane, what: LineVerb, arena: Allocato
     return .{ .patch = try parse.patchForHunk(arena, f, at.hunk), .desc = try std.fmt.allocPrint(arena, "{s} hunk {d} of {s}", .{ past, at.hunk + 1, f.path() }), .file = at.file, .hunk = at.hunk };
 }
 
+/// The file a diff of a binary file shows: git gives it no hunks, so
+/// the pane's verbs take the whole file. Null for a diff with a hunk.
+pub fn binaryPath(dp: *const DiffPane) ?[]const u8 {
+    for (dp.files) |f| if (f.hunks.len > 0) return null;
+    for (dp.files) |f| if (f.binary) return f.path();
+    return null;
+}
+
 /// Stage / unstage / discard the selected lines, else the hunk under
-/// the cursor, with a synthesized patch.
+/// the cursor, with a synthesized patch. A binary file has no hunk: the
+/// verb takes the file (`add` / `restore --staged` / `checkout --`), as
+/// the status pane's row does.
 pub fn applyHunk(app: *App, dp: *DiffPane, what: LineVerb) CommandError!void {
     const arena = app.frame.allocator();
     const repo = app.git.repoById(dp.repo) orelse return error.NoRepo;
+    if (binaryPath(dp)) |path| {
+        const staged_scope = dp.scope == .staged;
+        const fits = switch (dp.scope) {
+            .file, .worktree, .head, .staged => (what == .unstage) == staged_scope,
+            .commit, .orig, .conflict, .range => false,
+        };
+        if (!fits) return app.diag.fail(arena, "diff: {s} cannot be {s} from this diff", .{ path, switch (what) {
+            .stage => "staged",
+            .unstage => "unstaged",
+            .discard => "discarded",
+        } });
+        const owned = try app.gpa.dupe(u8, path);
+        errdefer app.gpa.free(owned);
+        return submitOp(app, repo, switch (what) {
+            .stage => .{ .stage = owned },
+            .unstage => .{ .unstage = owned },
+            .discard => .{ .discard = owned },
+        });
+    }
     const vp = try verbPatch(app, dp, what, arena);
     const desc = try app.gpa.dupe(u8, vp.desc);
     errdefer app.gpa.free(desc);
@@ -2431,6 +2478,10 @@ fn extendDiffSelect(dp: *DiffPane, delta: isize) void {
 /// The discard confirm for the selection or the hunk (`x`, the chip,
 /// the menu).
 pub fn askDiscard(app: *App, id: PaneId, dp: *DiffPane) Allocator.Error!void {
+    if (binaryPath(dp)) |path| {
+        if (dp.scope != .file and dp.scope != .worktree and dp.scope != .head) return app.toast("diff: {s} cannot be discarded from this diff", .{path});
+        return openConfirm(app, .{ .discard_hunk = .{ .pane = id } }, try std.fmt.allocPrint(app.gpa, "  Discard the changes to {s} from the worktree? This cannot be undone.", .{path}));
+    }
     if (hunkAtCursor(dp) == null) return app.toast("diff: no hunk under the cursor", .{});
     const arena = app.frame.allocator();
     const sel = selectedLines(dp, arena) catch null;
@@ -2789,6 +2840,41 @@ pub fn openPrompt(app: *App, kind: PromptKind, title: []const u8) void {
     app.overlay = .{ .prompt = .{ .state = app_mod.Prompt.init(app.gpa, title), .purpose = .git } };
     app.focus = .overlay;
     app.needs_render = true;
+}
+
+/// The message git has ready for the next commit (a concluded merge's
+/// `MERGE_MSG`, a `merge --squash`'s `SQUASH_MSG`, comments stripped),
+/// or null — what `git commit` would open its editor on.
+pub fn readyMessage(app: *const App) ?[]const u8 {
+    const st = app.git.status orelse return null;
+    return st.merge_msg;
+}
+
+/// The commit prompt just opened starts from git's ready message, as
+/// `git commit` does: the subject on the line, a body attached to the
+/// accept (the AI body's route) and the title saying so.
+pub fn seedCommitPrompt(app: *App) Allocator.Error!void {
+    const msg = readyMessage(app) orelse return;
+    if (app.overlay != .prompt or app.git.prompt != .commit) return;
+    const m = cleanCommitMessage(msg);
+    if (m.subject.len == 0) return;
+    try app.overlay.prompt.state.setText(app.gpa, m.subject);
+    if (m.body.len > 0) {
+        if (app.git.ai_body) |b| app.gpa.free(b);
+        app.git.ai_body = try app.gpa.dupe(u8, m.body);
+        app.overlay.prompt.state.title = "Commit message (git's prepared message, body attached)";
+    }
+}
+
+/// The graph's commit box, focused by `git.commit` while it is empty,
+/// starts from git's ready message — the whole of it, the box is
+/// multi-line — with the cursor on the subject, as git's editor opens.
+pub fn seedCommitBox(app: *App, g: *GraphPane) Allocator.Error!void {
+    const msg = readyMessage(app) orelse return;
+    if (std.mem.trim(u8, g.wip_text.items, " \t\r\n").len > 0) return;
+    g.wip_text.clearRetainingCapacity();
+    try g.wip_text.appendSlice(app.gpa, msg);
+    g.wip_cursor = 0;
 }
 
 /// `openPrompt` with a title built for this open — the overlay owns it
@@ -3434,7 +3520,7 @@ pub fn pushStartPr(app: *App, name: []const u8) CommandError!void {
 /// says what a yes rewrites.
 pub fn pushForce(app: *App) CommandError!void {
     _ = try requireRepo(app);
-    const branch = app.git.branchLabel() orelse "HEAD";
+    const branch = app.git.branchName() orelse return app.diag.fail(app.frame.allocator(), "push: HEAD is detached \u{2014} checkout a branch first", .{});
     const upstream: []const u8 = if (app.git.status) |st| (st.upstream orelse "the remote branch") else "the remote branch";
     // What `--force-with-lease` does: the remote branch is made this
     // one, dropping the commits the last fetch saw there that this
@@ -3453,12 +3539,37 @@ pub fn actOnRow(app: *App, row: Row, what: RowAction) CommandError!void {
     const st = &app.git;
     const gpa = app.gpa;
     const repo = st.activeRepo() orelse return error.NoRepo;
+    // A submodule whose changes are all inside it: the superproject has
+    // no diff of its own to show and nothing to stage or discard (git
+    // records a submodule's commit, and that did not move) — the row
+    // opens the directory in the tree, and the verbs say where the
+    // changes are committed instead of toasting a stage that did nothing.
+    if (row.submodule) |sm| if (!row.staged and sm.innerOnly()) switch (what) {
+        .open => return openInTree(app, repo, row.path),
+        .stage, .discard => return app.diag.fail(app.frame.allocator(), "{s} is a submodule: its changes are inside it \u{2014} commit them there, then stage the new commit here (\u{23CE} opens it in the tree)", .{row.path}),
+        .unstage => {},
+    };
     switch (what) {
         .open => _ = try openDiff(app, repo, if (row.staged) .staged else .file, row.path, null, null),
         .stage => try submitOp(app, repo, .{ .stage = try gpa.dupe(u8, row.path) }),
         .unstage => try submitOp(app, repo, .{ .unstage = try gpa.dupe(u8, row.path) }),
         .discard => try openConfirm(app, .{ .discard = try gpa.dupe(u8, row.path) }, try std.fmt.allocPrint(gpa, "Discard changes to {s}? This cannot be undone.", .{row.path})),
     }
+}
+
+/// A directory of the repo (a submodule) shown and opened in the file
+/// tree, the keys there.
+fn openInTree(app: *App, repo: *client.Repo, rel: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    const abs = try std.fs.path.join(arena, &.{ repo.path, rel });
+    try app.tree.revealPath(app, abs);
+    if (tree_mod.underRoot(app.workspace, abs)) |wrel| {
+        try app.tree.setExpanded(wrel, true);
+        try app.tree.refresh(app);
+        if (app.tree.rowOf(wrel)) |r| app.tree.cursor = r;
+    }
+    app.focus = .tree;
+    app.needs_render = true;
 }
 
 /// Open the selected row's file in an editor (`git.open_file`).
@@ -4745,8 +4856,7 @@ pub fn diffAgainstBase(app: *App, g: *GraphPane) CommandError!void {
 /// detached) — what the branch has that the current one does not.
 pub fn diffAgainstCurrent(app: *App, repo: *client.Repo, branch: []const u8) CommandError!void {
     const arena = app.frame.allocator();
-    const cur: []const u8 = app.git.branchLabel() orelse "HEAD";
-    const from: []const u8 = if (std.mem.eql(u8, cur, "(detached)")) "HEAD" else cur;
+    const from: []const u8 = app.git.branchName() orelse "HEAD";
     if (std.mem.eql(u8, from, branch)) return app.diag.fail(arena, "diff: {s} is the current branch", .{branch});
     _ = try openDiff(app, repo, .range, null, try client.rangeRev(arena, from, branch), null);
 }
@@ -4993,7 +5103,8 @@ fn openGraphMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
         .{ .label = "Reset --mixed here", .action = .{ .command = .@"git.reset_mixed" } },
         .{ .label = "Reset --hard here\u{2026}", .action = .{ .command = .@"git.reset_hard" } },
         .{ .label = "Select the branch's commits (*)", .action = .{ .command = .@"git.select_branch" }, .separator_before = true },
-        .{ .label = "New branch from here\u{2026}", .action = .{ .command = .@"git.new_branch_from" }, .separator_before = true },
+        .{ .label = "Checkout this commit (detached HEAD)\u{2026}", .action = .{ .command = .@"git.checkout_commit" }, .separator_before = true },
+        .{ .label = "New branch from here\u{2026}", .action = .{ .command = .@"git.new_branch_from" } },
         .{ .label = "New worktree from here\u{2026}", .action = .{ .command = .@"git.worktree_add_from" } },
         .{ .label = "Browse commit on remote", .action = .{ .command = .@"git.browse_commit" }, .separator_before = true },
         .{ .label = "Sort by next column", .action = .{ .command = .@"git.graph_sort" }, .separator_before = true },
@@ -5100,6 +5211,7 @@ pub fn drawStatusPane(app: *App, ui: Ui, id: PaneId, sp: *StatusPane, full: Rect
     if (files.len() > 0) sp.cursor = @min(sp.cursor, files.len() - 1);
     status_view.draw(ui, id, area, .{
         .branch = if (st.status) |s| s.branch else null,
+        .detached_label = if (st.status) |s| (if (s.detached) s.headLabel() else null) else null,
         .unstaged = files.unstaged,
         .staged = files.staged,
         .cursor = sp.cursor,
@@ -5206,7 +5318,7 @@ pub fn drawGraphPane(app: *App, ui: Ui, id: PaneId, g: *GraphPane, full: Rect) v
         const sd = arena.alloc(graph_view.WipFile, files.staged.len) catch return;
         for (sd, files.staged) |*o, f| o.* = .{ .path = f.path, .letter = f.letter };
         wip = .{
-            .branch = st.branchLabel(),
+            .branch = st.headLabel(),
             .summary = if (st.status) |s| (wipSummary(arena, s) catch "") else "",
             .unstaged = un,
             .staged = sd,
@@ -5742,7 +5854,7 @@ test "handle adopts a status result for the active repo, drops one from an unkno
     st.status_pending = true;
     try handle(&f.app, r);
     try testing.expect(!st.status_pending);
-    try testing.expectEqualStrings("main", st.branchLabel().?);
+    try testing.expectEqualStrings("main", st.branchName().?);
     try testing.expectEqual(@as(u32, 2), st.badge());
     // The status pane's lists: a.zig then new.txt unstaged, nothing staged.
     const files = try statusFiles(&f.app, f.app.frame.allocator());
@@ -5763,7 +5875,7 @@ test "handle adopts a status result for the active repo, drops one from an unkno
     const stale = try client.Result.create(testing.allocator, 999);
     stale.payload = .{ .status = .{ .status = try parse.parseStatus(stale.arena.allocator(), "# branch.head other\n"), .signs = &.{} } };
     try handle(&f.app, stale);
-    try testing.expectEqualStrings("main", st.branchLabel().?);
+    try testing.expectEqualStrings("main", st.branchName().?);
 }
 
 test "the status TTL: tick asks again 3 s after the last snapshot, not before" {

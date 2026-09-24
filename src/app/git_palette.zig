@@ -1215,6 +1215,22 @@ const MenuBuilder = struct {
     }
 };
 
+/// The row a never-pushed branch has in place of Pull / Push: a
+/// `push -u` to the remote (VS Code's word for it).
+pub const publish_label = "Publish branch (set upstream)";
+
+/// Whether the remote has local branch `b`: it tracks a branch there
+/// that still exists, or a remote carries a branch of its name (what
+/// `Delete on the remote…` would delete).
+fn onRemote(v: RailView, b: parse.Branch) bool {
+    if (b.upstream.len > 0 and !b.gone) return true;
+    for (v.branches) |r| if (r.remote) {
+        const sl = std.mem.indexOfScalar(u8, r.name, '/') orelse continue;
+        if (std.mem.eql(u8, r.name[sl + 1 ..], b.name)) return true;
+    };
+    return false;
+}
+
 /// The checked-out branch of a rail, for the labels (`Merge x into
 /// main`); `HEAD` when detached or before the rail landed.
 fn headName(v: RailView) []const u8 {
@@ -1270,28 +1286,42 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
         // verbs, the copies, the tags. The checked-out branch keeps the
         // rows that apply to itself (no checkout, merge, cherry-pick or
         // reset onto itself) — its own kind.
+        //
+        // The sync rows follow the upstream: a branch that tracks one
+        // pulls and pushes; one that has never been pushed (no upstream,
+        // or one the remote has since deleted) is offered `Publish
+        // branch (set upstream)` — a `push -u` — and no pull, which would
+        // have nothing to pull from. `Delete on the remote…` is offered
+        // only for a branch the remote has.
         .branch => |br| blk: {
             const name = br.name;
             const head = headName(v);
+            const bb: ?parse.Branch = if (br.idx < v.branches.len) v.branches[br.idx] else null;
+            const published = if (bb) |rb| rb.upstream.len > 0 and !rb.gone else true;
+            const remote_has = if (bb) |rb| onRemote(v, rb) else true;
             if (br.current) {
-                try b.act("Pull (fast-forward if possible)", .pull, br.idx, false);
-                try b.act("Push", .push, br.idx, false);
-                try b.act("Push --force-with-lease\u{2026}", .push_force, br.idx, false);
+                if (published) {
+                    try b.act("Pull (fast-forward if possible)", .pull, br.idx, false);
+                    try b.act("Push", .push, br.idx, false);
+                    try b.act("Push --force-with-lease\u{2026}", .push_force, br.idx, false);
+                } else try b.act(publish_label, .push, br.idx, false);
                 try b.act("Push and start PR", .push_start_pr, br.idx, false);
                 try b.act("Set upstream\u{2026}", .set_upstream, br.idx, false);
                 try b.act(try b.fmt("Open worktree from {s}\u{2026}", .{name}), .branch_worktree, br.idx, true);
                 try b.act("Create branch here\u{2026}", .new_branch, br.idx, true);
                 try b.act("Revert commit", .revert, br.idx, false);
                 try b.act(try b.fmt("Rename {s}\u{2026}", .{name}), .rename, br.idx, true);
-                try b.act("Delete on the remote\u{2026}", .delete_remote, br.idx, false);
+                if (remote_has) try b.act("Delete on the remote\u{2026}", .delete_remote, br.idx, false);
                 try b.act("Explain branch changes (AI)", .explain_branch, br.idx, true);
                 try b.copies(br.idx);
                 try b.tags(br.idx);
                 break :blk try b.fmt("\u{25CF} {s}", .{name});
             }
             try b.act(try b.fmt("Checkout {s}", .{name}), .checkout, br.idx, false);
-            try b.act("Pull (fast-forward if possible)", .fast_forward, br.idx, true);
-            try b.act("Push", .push_branch, br.idx, false);
+            if (published) {
+                try b.act("Pull (fast-forward if possible)", .fast_forward, br.idx, true);
+                try b.act("Push", .push_branch, br.idx, false);
+            } else try b.act(publish_label, .push_branch, br.idx, true);
             try b.act("Push and start PR", .push_start_pr, br.idx, false);
             try b.act("Set upstream\u{2026}", .set_upstream, br.idx, false);
             try b.act(try b.fmt("Merge {s} into {s}", .{ name, head }), .merge, br.idx, true);
@@ -1304,7 +1334,7 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
             try b.act("Revert commit", .revert, br.idx, false);
             try b.act(try b.fmt("Rename {s}\u{2026}", .{name}), .rename, br.idx, true);
             try b.act(try b.fmt("Delete {s}\u{2026}", .{name}), .delete_branch, br.idx, false);
-            try b.act("Delete on the remote\u{2026}", .delete_remote, br.idx, false);
+            if (remote_has) try b.act("Delete on the remote\u{2026}", .delete_remote, br.idx, false);
             try b.act(try b.fmt("Force checkout {s}\u{2026}", .{name}), .checkout_force, br.idx, false);
             try b.act(try b.fmt("Diff against {s}", .{head}), .diff_current, br.idx, false);
             try b.act("Explain branch changes (AI)", .explain_branch, br.idx, false);
@@ -1885,8 +1915,8 @@ const TestApp = struct {
 /// workspace itself, and one locked and dirty), a stash, two tags — the
 /// seed every palette test reads.
 var seed_branches = [_]parse.Branch{
-    .{ .name = "main", .time = 0, .current = true, .remote = false, .sha = "aaaa111", .ahead = 1, .behind = 3 },
-    .{ .name = "feature", .time = 0, .current = false, .remote = false, .sha = "bbbb222" },
+    .{ .name = "main", .time = 0, .current = true, .remote = false, .upstream = "origin/main", .sha = "aaaa111", .ahead = 1, .behind = 3 },
+    .{ .name = "feature", .time = 0, .current = false, .remote = false, .upstream = "origin/feature", .sha = "bbbb222" },
     .{ .name = "origin/main", .time = 0, .current = false, .remote = true, .sha = "aaaa111" },
     .{ .name = "origin/feature", .time = 0, .current = false, .remote = true, .sha = "bbbb222" },
     .{ .name = "origin/hotfix", .time = 0, .current = false, .remote = true, .sha = "cccc333" },

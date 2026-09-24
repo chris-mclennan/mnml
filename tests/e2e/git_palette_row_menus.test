@@ -27,11 +27,13 @@ expect screen contains "Delete feat…"
 expect screen contains "Reset main to this commit"
 key esc
 expect screen contains "▌ 󰌢 LOCAL"
-# The checked-out branch: no checkout, the push and the upstream verbs.
+# The checked-out branch: no checkout, the push and the upstream verbs —
+# never pushed, so Publish in place of Pull / Push / the force push.
 rightclick 6 9
 expect screen contains "● main"
 expect screen lacks "Checkout main"
-expect screen contains "Push --force-with-lease…"
+expect screen contains "Publish branch (set upstream)"
+expect screen lacks "Push --force-with-lease…"
 expect screen contains "Set upstream…"
 key esc
 # The main tree keeps the Remove row; running it is refused by name.

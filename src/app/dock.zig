@@ -633,9 +633,9 @@ pub fn contentLines(app: *App, arena: Allocator, w: *const Widget) Allocator.Err
         },
         .git_branch => {
             const out = try arena.alloc([]const u8, 2);
-            out[0] = app.git.branchLabel() orelse "not a git repository";
+            out[0] = app.git.headLabel() orelse "not a git repository";
             const n = app.git.badge();
-            out[1] = if (app.git.branchLabel() == null) "" else if (n == 0) "clean" else try std.fmt.allocPrint(arena, "{d} changed", .{n});
+            out[1] = if (app.git.headLabel() == null) "" else if (n == 0) "clean" else try std.fmt.allocPrint(arena, "{d} changed", .{n});
             return out;
         },
     }

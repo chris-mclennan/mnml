@@ -28,6 +28,7 @@ const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const scrollbar = @import("scrollbar.zig");
 const ids = @import("../core/ids.zig");
+const parse = @import("../git/parse.zig");
 
 const Allocator = std.mem.Allocator;
 const Style = vaxis.Style;
@@ -37,11 +38,20 @@ const PaneId = ids.PaneId;
 /// A file the pane lists: its porcelain letter (`M A D R C U ?`) and
 /// which section it sits in. A file changed on both sides is one
 /// entry per section.
-pub const Entry = struct { path: []const u8, letter: u8, staged: bool };
+pub const Entry = struct {
+    path: []const u8,
+    letter: u8,
+    staged: bool,
+    /// The path is a submodule: the row reads `sub/  (submodule, …)`.
+    submodule: ?parse.Submodule = null,
+};
 
 pub const Doc = struct {
-    /// Null paints `(detached)`.
+    /// The checked-out branch; null when HEAD is on none.
     branch: ?[]const u8,
+    /// A detached HEAD in git's words (`HEAD detached at v0.1`), painted
+    /// in place of `on <branch>`.
+    detached_label: ?[]const u8 = null,
     unstaged: []const Entry,
     staged: []const Entry,
     /// Flat index: the unstaged entries, then the staged.
@@ -231,8 +241,13 @@ fn paintLine(ui: Ui, pane: PaneId, r: Rect, doc: Doc, l: Line) void {
     var x = r.x;
     switch (l) {
         .header => {
-            x += ui.putStr(x, r.y, end -| x, "  on ", comment);
-            x += ui.putStr(x, r.y, end -| x, doc.branch orelse "(detached)", .{ .fg = p.blue, .bg = p.bg_dark, .bold = true });
+            if (doc.branch) |b| {
+                x += ui.putStr(x, r.y, end -| x, "  on ", comment);
+                x += ui.putStr(x, r.y, end -| x, b, .{ .fg = p.blue, .bg = p.bg_dark, .bold = true });
+            } else {
+                x += ui.putStr(x, r.y, end -| x, "  ", comment);
+                x += ui.putStr(x, r.y, end -| x, doc.detached_label orelse "no branch", .{ .fg = p.blue, .bg = p.bg_dark, .bold = true });
+            }
             _ = ui.putStr(x, r.y, end -| x, ui.fmt("   {d} unstaged \u{B7} {d} staged", .{ doc.unstaged.len, doc.staged.len }), comment);
         },
         .hint => {
@@ -266,7 +281,14 @@ fn paintLine(ui: Ui, pane: PaneId, r: Rect, doc: Doc, l: Line) void {
             const marker: []const u8 = if (!sel) "    " else if (ui.ascii) "  > " else "  \u{25B6} ";
             x += ui.putStr(x, r.y, end -| x, marker, .{ .fg = p.yellow, .bg = bg });
             x += ui.putStr(x, r.y, end -| x, ui.fmt("{c} ", .{e.e.letter}), .{ .fg = letterColor(p, e.e.letter), .bg = bg, .bold = true });
-            _ = ui.putStr(x, r.y, end -| x, e.e.path, .{ .fg = p.fg, .bg = bg });
+            x += ui.putStr(x, r.y, end -| x, e.e.path, .{ .fg = p.fg, .bg = bg });
+            // A submodule is a directory with a repo of its own, not a
+            // file: its slash, and what changed in it.
+            if (e.e.submodule) |sm| {
+                x += ui.putStr(x, r.y, end -| x, "/", .{ .fg = p.fg, .bg = bg });
+                var buf: [64]u8 = undefined;
+                _ = ui.putStr(x, r.y, end -| x, ui.fmt("  (submodule, {s})", .{sm.note(&buf)}), .{ .fg = p.comment, .bg = bg });
+            }
         },
     }
 }
@@ -441,8 +463,8 @@ test "draw: the letter colours; a narrow pane has no scrollbar; ASCII twins" {
         .{ .path = "d.zig", .letter = 'D', .staged = false },
     };
     const staged = [_]Entry{.{ .path = "a.zig", .letter = 'A', .staged = true }};
-    draw(f.ui(), 1, f.full(), .{ .branch = null, .unstaged = &mixed, .staged = &staged, .cursor = 2 }, &scroll);
-    try f.expectRow(0, "  on (d");
+    draw(f.ui(), 1, f.full(), .{ .branch = null, .detached_label = "HEAD detached at v0.1", .unstaged = &mixed, .staged = &staged, .cursor = 2 }, &scroll);
+    try f.expectRow(0, "  HEAD");
     try f.expectRow(3, "    M m");
     try f.expectRow(7, "  \u{25B6} A a");
     try testing.expect(f.fgEql(4, 3, .{ .fg = f.theme.palette.yellow }));

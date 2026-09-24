@@ -143,6 +143,7 @@ pub const table = .{
     .@"git.checkout_force" = &checkoutForce,
     .@"git.delete_remote_branch" = &deleteRemoteBranch,
     .@"git.new_branch_from" = &newBranchFrom,
+    .@"git.checkout_commit" = &checkoutCommit,
     .@"git.worktree_add_from" = &worktreeAddFrom,
     .@"git.push_force" = &pushForce,
     .@"git.stash_staged" = &stashStaged,
@@ -193,6 +194,8 @@ fn commitFocus(app: *App) CommandError!void {
             g.cursor = 0;
             g.wip_focused = true;
             g.detail_focus = false;
+            // A concluded merge: the box starts from git's MERGE_MSG.
+            try git.seedCommitBox(app, g);
         },
         else => return error.NoActivePane,
     }
@@ -444,6 +447,7 @@ fn commit(app: *App) CommandError!void {
     if (git.activeGraph(app)) |g| if (g.wipSelected() and std.mem.trim(u8, g.wip_text.items, " \t\r\n").len > 0) return git.commitFromTextarea(app, g);
     if (app.git_palette.active and git.graphPaintsBox(app)) return commitFocus(app);
     git.openPrompt(app, .commit, git.commitPromptTitle(app));
+    try git.seedCommitPrompt(app);
 }
 
 // ─── AI commit messages ─────────────────────────────────────────────────
@@ -533,19 +537,32 @@ fn rebase(app: *App) CommandError!void {
     try git.askBranches(app, repo, .rebase);
 }
 
+/// The statusline branch chip's menu. The sync rows follow the
+/// upstream, as the branches panel's do: a branch that tracks one pulls
+/// and pushes, one that has never been pushed is offered `Publish
+/// branch (set upstream)` (`git.push` sets it on a first push) and no
+/// pull.
 fn branchMenu(app: *App) CommandError!void {
     _ = try git.requireRepo(app);
-    const items = try app.gpa.dupe(command.MenuItem, &.{
+    const published = if (app.git.status) |s| s.upstream != null or s.branch == null else true;
+    const sync: []const command.MenuItem = if (published) &.{
+        .{ .label = "Pull (ff-only)", .action = .{ .command = .@"git.pull" } },
+        .{ .label = "Push", .action = .{ .command = .@"git.push" } },
+    } else &.{
+        .{ .label = git_palette.publish_label, .action = .{ .command = .@"git.push" } },
+    };
+    const head = [_]command.MenuItem{
         .{ .label = "Checkout…", .action = .{ .command = .@"git.checkout" } },
         .{ .label = "Recent branches…", .action = .{ .command = .@"git.recent_branches" } },
         .{ .label = "New branch…", .action = .{ .command = .@"git.new_branch" } },
         .{ .label = "Delete branch…", .action = .{ .command = .@"git.delete_branch" } },
         .{ .label = "Fetch", .action = .{ .command = .@"git.fetch" }, .separator_before = true },
-        .{ .label = "Pull (ff-only)", .action = .{ .command = .@"git.pull" } },
-        .{ .label = "Push", .action = .{ .command = .@"git.push" } },
+    };
+    const tail = [_]command.MenuItem{
         .{ .label = "Commit graph", .action = .{ .command = .@"git.graph" }, .separator_before = true },
         .{ .label = "Copy branch name", .action = .{ .command = .@"git.copy_current_branch" } },
-    });
+    };
+    const items = try std.mem.concat(app.gpa, command.MenuItem, &.{ &head, sync, &tail });
     errdefer app.gpa.free(items);
     const x: u16 = 2;
     const y: u16 = @intCast(app.screen.height -| 3);
@@ -554,7 +571,7 @@ fn branchMenu(app: *App) CommandError!void {
 
 fn copyCurrentBranch(app: *App) CommandError!void {
     _ = try git.requireRepo(app);
-    const b = app.git.branchLabel() orelse return app.diag.fail(arena(app), "git: detached HEAD or not a repo", .{});
+    const b = app.git.branchName() orelse return noBranch(app, "copy branch name");
     try app.clipboard.setYank(b, false);
     app.toast("copied {s}", .{b});
 }
@@ -919,13 +936,22 @@ fn diffAgainstCurrent(app: *App) CommandError!void {
 
 // ─── branch verbs (git-more2) ───────────────────────────────────────────
 
+/// A verb that needs the checked-out branch, run with none: a detached
+/// HEAD names where it is (`HEAD detached at v0.1`) instead of handing
+/// git a label as if it were a branch.
+fn noBranch(app: *App, what: []const u8) CommandError {
+    if (app.git.status) |st| if (st.detached)
+        return app.diag.fail(arena(app), "{s}: HEAD is detached at {s} \u{2014} checkout a branch, or pick one in the branches panel", .{ what, st.detachedAt() });
+    return app.diag.fail(arena(app), "{s}: no branch checked out", .{what});
+}
+
 /// The branch a verb acts on: the branches panel's row when it has the
 /// focus, else the checked-out branch.
 fn verbBranch(app: *App, what: []const u8) CommandError![]const u8 {
     if (app.focus == .panel and app.focus.panel == .git) {
         if (try git_palette.cursorBranch(app)) |b| return b;
     }
-    return app.git.branchLabel() orelse app.diag.fail(arena(app), "{s}: detached HEAD \u{2014} pick a branch in the branches panel", .{what});
+    return app.git.branchName() orelse noBranch(app, what);
 }
 
 fn branchRename(app: *App) CommandError!void {
@@ -1050,6 +1076,19 @@ fn cherryPick(app: *App) CommandError!void {
         return app.diag.fail(arena(app), "cherry-pick: {s} is already in HEAD \u{2014} nothing to pick", .{sha[0..@min(7, sha.len)]});
     const repo = try git.requireRepo(app);
     try git.submitOp(app, repo, .{ .cherry_pick = try app.gpa.dupe(u8, sha) });
+}
+
+/// `git.checkout_commit`: the graph's selected commit checked out on
+/// no branch — `git checkout <sha>`, which detaches HEAD. The confirm
+/// says so, as the tag checkout's does: a commit made there belongs to
+/// no branch until one is created.
+fn checkoutCommit(app: *App) CommandError!void {
+    const sha = try selectedCommit(app);
+    _ = try git.requireRepo(app);
+    const short = sha[0..@min(7, sha.len)];
+    const owned = try app.gpa.dupe(u8, sha);
+    errdefer app.gpa.free(owned);
+    try git.openConfirm(app, .{ .checkout = owned }, try std.fmt.allocPrint(app.gpa, "Checkout {s}? (detached HEAD)\nHEAD will be on no branch: commits made there belong to none until you create one (New branch from here).", .{short}));
 }
 
 fn revert(app: *App) CommandError!void {

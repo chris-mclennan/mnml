@@ -20,4 +20,4 @@ key enter
 wait 1500
 expect screen contains "diff: logo.png"
 expect screen lacks "(no changes)"
-expect screen contains "Binary file changed (33 → 40 bytes)"
+expect screen contains "Binary files differ · 33 bytes → 40 bytes"

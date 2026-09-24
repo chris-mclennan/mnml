@@ -22,10 +22,10 @@ wait 1200
 expect screen contains "󰘬 base"
 # The branches panel's row: the menu offers the interactive rebase and
 # it plans `second`, `third` onto `base` — two commits, not the one
-# under the cursor.
+# under the cursor. (base was never pushed: one Publish row where Pull
+# and Push would be.)
 rightclick 6 8
 expect screen contains "Interactive rebase main onto base…"
-key down
 key down
 key down
 key down

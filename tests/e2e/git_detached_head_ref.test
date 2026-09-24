@@ -1,0 +1,36 @@
+# A detached HEAD is not a branch called `(detached)`. After `git
+# checkout v0.1` git says `HEAD detached at v0.1`; the status pane and
+# the statusline say the same, and a verb that needs the checked-out
+# branch (copy its name, rename it) refuses by name instead of handing
+# git the label as if it were one — the copy put `(detached)` on the
+# clipboard and the rename asked to rename it.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write .gitignore ".mnml/\n"
+write a.txt "one\n"
+shell git add .gitignore a.txt
+shell git commit -q -m "first"
+shell git tag v0.1
+write a.txt "two\n"
+shell git commit -q -am "second"
+shell git checkout -q v0.1
+shell git status | grep -q "HEAD detached at v0.1"
+command git.status_pane
+wait 1500
+expect screen contains "  HEAD detached at v0.1"
+expect screen lacks "(detached)"
+expect screen lacks "on (detached)"
+command git.copy_current_branch
+expect screen contains "HEAD is detached at v0.1"
+expect screen lacks "copied"
+command git.branch_rename
+expect screen contains "rename: HEAD is detached at v0.1"
+expect screen lacks "Rename branch"
+# A commit off the tag: no tag on it, so the short sha.
+write a.txt "three\n"
+shell git commit -q -am "third"
+command git.refresh
+wait 1500
+expect screen lacks "HEAD detached at v0.1"
+expect screen contains "  HEAD detached at "

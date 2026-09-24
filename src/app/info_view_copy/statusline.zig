@@ -180,9 +180,13 @@ pub fn entry(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Entry {
 }
 
 fn branch(app: *App, arena: Allocator) Allocator.Error!Entry {
-    const name = app.git.branchLabel() orelse "?";
+    const name = app.git.headLabel() orelse "?";
     var body: std.ArrayListUnmanaged(u8) = .empty;
-    try body.print(arena, "The branch checked out in the active repo — `{s}`", .{name});
+    if (app.git.branchName()) |b| {
+        try body.print(arena, "The branch checked out in the active repo — `{s}`", .{b});
+    } else if (app.git.status) |st| {
+        try body.print(arena, "HEAD in the active repo is on no branch — detached at `{s}`, as after checking out a tag or a commit. Commits made here belong to no branch until you create one", .{st.detachedAt()});
+    } else try body.appendSlice(arena, "The branch checked out in the active repo");
     if (app.git.status) |st| {
         const c = statusline_app.fileCounts(st);
         const dirty = c.added + c.changed + c.removed;

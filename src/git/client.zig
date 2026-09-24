@@ -971,6 +971,26 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             status.in_progress = prog.op;
             status.step = prog.step;
             status.total = prog.total;
+            // The message `git commit` would start from: MERGE_MSG while
+            // a merge / cherry-pick / revert waits, else SQUASH_MSG.
+            if (try gitDir(repo, io, arena)) |dir| {
+                const name: []const u8 = switch (prog.op) {
+                    .merge, .cherry_pick, .revert => "MERGE_MSG",
+                    else => "SQUASH_MSG",
+                };
+                if (try gitDirReadLimit(io, arena, dir, name, 64 * 1024)) |text| {
+                    const msg = try parse.cleanMessage(arena, text);
+                    if (msg.len > 0) status.merge_msg = msg;
+                }
+            }
+            // Detached: what at, as `git status` says it — a tag on the
+            // commit when there is one, else the short sha.
+            if (status.detached) {
+                const d = try git(repo, io, arena, &.{ "describe", "--tags", "--exact-match", "HEAD" }, null);
+                const tag = if (d.ok) trimmed(d.stdout) else "";
+                if (tag.len > 0) status.detached_at = tag;
+                status.detached_label = try std.fmt.allocPrint(arena, "HEAD detached at {s}", .{status.detachedAt()});
+            }
             // Signs against HEAD; an initial repo has no HEAD and no signs.
             var signs: []parse.FileDiff = &.{};
             if (status.oid != null) {
@@ -1706,8 +1726,12 @@ fn gitDirHas(io: Io, arena: Allocator, dir: []const u8, name: []const u8) JobErr
 }
 
 fn gitDirRead(io: Io, arena: Allocator, dir: []const u8, name: []const u8) JobError!?[]const u8 {
+    return gitDirReadLimit(io, arena, dir, name, 64);
+}
+
+fn gitDirReadLimit(io: Io, arena: Allocator, dir: []const u8, name: []const u8, limit: usize) JobError!?[]const u8 {
     const p = try std.fs.path.join(arena, &.{ dir, name });
-    return Io.Dir.cwd().readFileAlloc(io, p, arena, .limited(64)) catch |err| switch (err) {
+    return Io.Dir.cwd().readFileAlloc(io, p, arena, .limited(limit)) catch |err| switch (err) {
         error.Canceled => return error.Canceled,
         else => return null,
     };

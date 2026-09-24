@@ -43,6 +43,40 @@ pub const Group = enum {
     }
 };
 
+/// A submodule's state in the superproject's status — porcelain v2's
+/// `S<c><m><u>` field: new commits checked out in it, tracked changes
+/// inside it, untracked files inside it.
+pub const Submodule = struct {
+    commit: bool = false,
+    modified: bool = false,
+    untracked: bool = false,
+
+    /// `S.M.` → `{ .modified = true }`; `N...` (not a submodule) → null.
+    pub fn parse(field: []const u8) ?Submodule {
+        if (field.len != 4 or field[0] != 'S') return null;
+        return .{ .commit = field[1] == 'C', .modified = field[2] == 'M', .untracked = field[3] == 'U' };
+    }
+
+    /// Only changes inside it: the superproject has nothing to stage —
+    /// `git add` of the path records a commit, and the checked-out one
+    /// did not move. They are committed in the submodule.
+    pub fn innerOnly(s: Submodule) bool {
+        return !s.commit;
+    }
+
+    /// `modified` / `new commits, untracked files` — what the row says.
+    pub fn note(s: Submodule, buf: []u8) []const u8 {
+        var w: std.Io.Writer = .fixed(buf);
+        var first = true;
+        inline for (.{ .{ s.commit, "new commits" }, .{ s.modified, "modified" }, .{ s.untracked, "untracked files" } }) |part| if (part[0]) {
+            if (!first) w.writeAll(", ") catch {};
+            w.writeAll(part[1]) catch {};
+            first = false;
+        };
+        return w.buffered();
+    }
+};
+
 pub const Entry = struct {
     group: Group,
     /// The porcelain letter for this side: `M A D R C T U ?`.
@@ -51,6 +85,16 @@ pub const Entry = struct {
     path: []const u8,
     /// The old path of a rename / copy.
     orig: ?[]const u8 = null,
+    /// Set when the path is a submodule (a gitlink), with its state.
+    submodule: ?Submodule = null,
+};
+
+/// Where HEAD is: on a branch (its name — what a verb passes to git) or
+/// detached at a commit (its sha). What the UI paints is
+/// `Status.headLabel`, never this union's payload taken as a name.
+pub const HeadRef = union(enum) {
+    branch: []const u8,
+    detached: []const u8,
 };
 
 pub const Status = struct {
@@ -58,6 +102,18 @@ pub const Status = struct {
     /// branch line is known.
     branch: ?[]const u8 = null,
     detached: bool = false,
+    /// While detached: what git would say HEAD is detached at — a tag
+    /// pointing at the commit, else the short sha. The worker fills it
+    /// (`describe --tags --exact-match`); the parser leaves it null.
+    detached_at: ?[]const u8 = null,
+    /// `HEAD detached at <detached_at>`, git's own words, built by the
+    /// worker next to `detached_at` so a paint needs no allocation.
+    detached_label: ?[]const u8 = null,
+    /// The message git has ready for the next commit — `MERGE_MSG`
+    /// while a merge, cherry-pick or revert waits to be committed, else
+    /// `SQUASH_MSG` after `merge --squash` — with git's own cleanup
+    /// (`cleanMessage`). The worker reads it; null when there is none.
+    merge_msg: ?[]const u8 = null,
     /// `(initial)` before the first commit.
     oid: ?[]const u8 = null,
     upstream: ?[]const u8 = null,
@@ -78,6 +134,30 @@ pub const Status = struct {
     /// Everything the rail lists.
     pub fn changeCount(s: Status) u32 {
         return s.staged + s.unstaged + s.untracked + s.conflicted;
+    }
+
+    /// HEAD as git names it: the branch, or the commit it is detached
+    /// at. Null on an unborn branch whose line did not come through.
+    pub fn head(s: Status) ?HeadRef {
+        if (s.branch) |b| return .{ .branch = b };
+        if (s.detached) return .{ .detached = s.oid orelse "HEAD" };
+        return null;
+    }
+
+    /// What a detached HEAD is at: the tag the worker found, else the
+    /// short sha.
+    pub fn detachedAt(s: Status) []const u8 {
+        if (s.detached_at) |d| return d;
+        if (s.oid) |o| return o[0..@min(o.len, 7)];
+        return "HEAD";
+    }
+
+    /// What to paint for HEAD: the branch name, or `HEAD detached at
+    /// v0.1` — never a string a git verb should take as a branch.
+    pub fn headLabel(s: Status) ?[]const u8 {
+        if (s.branch) |b| return b;
+        if (s.detached) return s.detached_label orelse "HEAD detached";
+        return null;
     }
 };
 
@@ -219,6 +299,28 @@ pub fn parseTodo(arena: Allocator, text: []const u8) Allocator.Error![]TodoLine 
     return out.items;
 }
 
+/// A message file as `git commit` cleans it by default (`--cleanup=strip`):
+/// `#` comment lines dropped, trailing whitespace off every line, runs of
+/// blank lines made one, blank lines at either end gone. Borrows `arena`.
+pub fn cleanMessage(arena: Allocator, text: []const u8) Allocator.Error![]const u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var blank = false;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        if (raw.len > 0 and raw[0] == '#') continue;
+        const line = std.mem.trimEnd(u8, raw, " \t\r");
+        if (line.len == 0) {
+            blank = out.items.len > 0;
+            continue;
+        }
+        if (blank) try out.append(arena, '\n');
+        blank = false;
+        if (out.items.len > 0) try out.append(arena, '\n');
+        try out.appendSlice(arena, line);
+    }
+    return out.items;
+}
+
 /// `git status --porcelain=v2 -b` → `Status`. Every slice borrows `arena`.
 pub fn parseStatus(arena: Allocator, text: []const u8) Allocator.Error!Status {
     var st: Status = .{};
@@ -237,13 +339,16 @@ pub fn parseStatus(arena: Allocator, text: []const u8) Allocator.Error!Status {
                 const nfields: usize = if (line[0] == '1') 8 else 9;
                 var it = std.mem.tokenizeScalar(u8, line, ' ');
                 var xy: []const u8 = "..";
+                var sub: []const u8 = "N...";
                 var i: usize = 0;
                 var rest: []const u8 = "";
                 while (i < nfields) : (i += 1) {
                     const tok = it.next() orelse break;
                     if (i == 1) xy = tok;
+                    if (i == 2) sub = tok;
                     rest = it.rest();
                 }
+                const submodule = Submodule.parse(sub);
                 if (xy.len < 2 or rest.len == 0) continue;
                 var path = rest;
                 var orig: ?[]const u8 = null;
@@ -255,11 +360,11 @@ pub fn parseStatus(arena: Allocator, text: []const u8) Allocator.Error!Status {
                 }
                 const p = try unquote(arena, path);
                 if (xy[0] != '.') {
-                    try entries.append(arena, .{ .group = .staged, .code = xy[0], .path = p, .orig = orig });
+                    try entries.append(arena, .{ .group = .staged, .code = xy[0], .path = p, .orig = orig, .submodule = submodule });
                     st.staged += 1;
                 }
                 if (xy[1] != '.') {
-                    try entries.append(arena, .{ .group = .unstaged, .code = xy[1], .path = p, .orig = orig });
+                    try entries.append(arena, .{ .group = .unstaged, .code = xy[1], .path = p, .orig = orig, .submodule = submodule });
                     st.unstaged += 1;
                 }
             },
@@ -1055,7 +1160,10 @@ pub fn parseLog(arena: Allocator, text: []const u8) Allocator.Error![]Commit {
 
 /// `for-each-ref` spells a hex escape `%1f` (two digits right after the
 /// `%`); `%x1f` is `log`'s spelling and comes out literally here.
-pub const ref_format = "%(refname:short)%1f%(committerdate:unix)%1f%(HEAD)%1f%(upstream:short)%1f%(objectname:short)%1f%(upstream:track,nobracket)";
+/// The last field is `%(symref)`: a symbolic ref (`origin/HEAD`, whose
+/// short name git prints as plain `origin`) names another branch, and is
+/// not listed as one.
+pub const ref_format = "%(refname:short)%1f%(committerdate:unix)%1f%(HEAD)%1f%(upstream:short)%1f%(objectname:short)%1f%(upstream:track,nobracket)%1f%(symref)";
 
 pub const Branch = struct {
     name: []const u8,
@@ -1095,7 +1203,9 @@ pub fn parseTrack(track: []const u8) Track {
 }
 
 /// `git for-each-ref --format=<ref_format> refs/heads refs/remotes`.
-/// A remote's `HEAD` pointer (`origin/HEAD`) is dropped.
+/// A remote's `HEAD` pointer is dropped: git shortens
+/// `refs/remotes/origin/HEAD` to `origin`, the remote's own name, so it
+/// is known by its `%(symref)` (and by a `/HEAD` suffix in older output).
 pub fn parseBranches(arena: Allocator, text: []const u8) Allocator.Error![]Branch {
     var out: std.ArrayListUnmanaged(Branch) = .empty;
     var lines = std.mem.splitScalar(u8, text, '\n');
@@ -1109,7 +1219,8 @@ pub fn parseBranches(arena: Allocator, text: []const u8) Allocator.Error![]Branc
         const upstream = f.next() orelse "";
         const sha = f.next() orelse "";
         const track = parseTrack(f.next() orelse "");
-        if (std.mem.endsWith(u8, name, "/HEAD")) continue;
+        const symref = f.next() orelse "";
+        if (symref.len > 0 or std.mem.endsWith(u8, name, "/HEAD")) continue;
         try out.append(arena, .{
             .name = try arena.dupe(u8, name),
             .time = std.fmt.parseInt(i64, time_s, 10) catch 0,
@@ -1489,6 +1600,53 @@ test "status v2: detached HEAD and an initial repo" {
     try testing.expectEqual(@as(u32, 0), st.changeCount());
     const empty = try parseStatus(arenaOf(&a), "");
     try testing.expect(empty.branch == null);
+}
+
+test "status v2: a submodule's `S<c><m><u>` rides on its entries; a plain file's `N...` is none" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const st = try parseStatus(arenaOf(&a),
+        \\# branch.oid 1a2b3c4d5e6f
+        \\# branch.head main
+        \\1 .M S.M. 160000 160000 160000 35b686aa 35b686aa vendor/sub
+        \\1 .M SCMU 160000 160000 160000 35b686aa 35b686aa vendor/other
+        \\1 .M N... 100644 100644 100644 abc abc a.txt
+        \\
+    );
+    try testing.expectEqual(@as(usize, 3), st.entries.len);
+    const sub = st.entries[0].submodule.?;
+    try testing.expect(!sub.commit and sub.modified and !sub.untracked);
+    try testing.expect(sub.innerOnly());
+    var buf: [64]u8 = undefined;
+    try testing.expectEqualStrings("modified", sub.note(&buf));
+    const other = st.entries[1].submodule.?;
+    try testing.expect(!other.innerOnly());
+    try testing.expectEqualStrings("new commits, modified, untracked files", other.note(&buf));
+    try testing.expect(st.entries[2].submodule == null);
+}
+
+test "cleanMessage: git's strip cleanup — the Conflicts comment block and the blank edges go, a paragraph break stays" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    try testing.expectEqualStrings("Merge branch 'conflict'", try cleanMessage(arenaOf(&a), "Merge branch 'conflict'\n\n# Conflicts:\n#\tapp.txt\n"));
+    try testing.expectEqualStrings("Squashed commit of the following:\n\ncommit abc\nAuthor: A", try cleanMessage(arenaOf(&a), "\nSquashed commit of the following:  \n\n\n\ncommit abc\nAuthor: A\n\n"));
+    try testing.expectEqualStrings("", try cleanMessage(arenaOf(&a), "# only a comment\n\n"));
+}
+
+test "HeadRef: a branch is its name; a detached HEAD is its sha, painted as git words it — never a branch called `(detached)`" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const on = try parseStatus(arenaOf(&a), "# branch.oid 1a2b3c4d5e6f\n# branch.head main\n");
+    try testing.expectEqualStrings("main", on.head().?.branch);
+    try testing.expectEqualStrings("main", on.headLabel().?);
+    var off = try parseStatus(arenaOf(&a), "# branch.oid 1a2b3c4d5e6f\n# branch.head (detached)\n");
+    try testing.expectEqualStrings("1a2b3c4d5e6f", off.head().?.detached);
+    try testing.expectEqualStrings("1a2b3c4", off.detachedAt());
+    try testing.expectEqualStrings("HEAD detached", off.headLabel().?);
+    off.detached_at = "v0.1";
+    off.detached_label = "HEAD detached at v0.1";
+    try testing.expectEqualStrings("v0.1", off.detachedAt());
+    try testing.expectEqualStrings("HEAD detached at v0.1", off.headLabel().?);
 }
 
 test "unquote decodes octal + C escapes and passes plain paths through" {
@@ -1879,6 +2037,17 @@ test "parseBranches marks the current one, keeps upstream, drops origin/HEAD" {
     try testing.expect(!bs[1].current);
     try testing.expect(!bs[1].remote);
     try testing.expect(bs[2].remote);
+}
+
+test "parseBranches drops the remote's HEAD pointer that git shortens to the remote's own name" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    // `for-each-ref refs/remotes` as git 2.4x prints it: `origin/HEAD`
+    // comes out as `origin`, its `%(symref)` naming the branch it points at.
+    const text = "origin\x1f1700000000\x1f \x1f\x1fabc1234\x1f\x1frefs/remotes/origin/main\norigin/main\x1f1700000000\x1f \x1f\x1fabc1234\x1f\x1f\n";
+    const bs = try parseBranches(arenaOf(&a), text);
+    try testing.expectEqual(@as(usize, 1), bs.len);
+    try testing.expectEqualStrings("origin/main", bs[0].name);
 }
 
 test "relativeAge buckets" {

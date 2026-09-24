@@ -1,0 +1,59 @@
+# The branch menus follow the upstream. A branch that was never pushed
+# (no upstream, not on the remote) was offered Pull, Push and `Delete on
+# the remote…` — whose confirm read "Delete origin/topic on the remote?"
+# and git answered `remote ref does not exist`. It is offered `Publish
+# branch (set upstream)` instead, a `push -u`, and no pull and no
+# remote delete; once published, the tracking rows come back. Rows at
+# 120x40: LOCAL 7, main 8, topic 9.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write .gitignore ".mnml/\nremote.git/\n"
+write a.txt "one\n"
+shell git add .gitignore a.txt
+shell git commit -q -m "init"
+shell git init -q --bare remote.git
+shell git remote add origin ./remote.git
+shell git push -q -u origin main
+shell git checkout -q -b topic
+write b.txt "two\n"
+shell git add b.txt
+shell git commit -q -m "topic work"
+shell test -z "$(git for-each-ref --format='%(upstream)' refs/heads/topic)"
+command view.activity_git
+wait 1500
+expect screen contains "󱓏 topic"
+# The checked-out, never-pushed branch.
+rightclick 6 9
+expect screen contains "● topic"
+expect screen contains "Publish branch (set upstream)"
+expect screen lacks "Pull (fast-forward if possible)"
+expect screen lacks "Push --force-with-lease…"
+expect screen lacks "Delete on the remote…"
+key esc
+# main tracks origin/main: its rows are the tracking ones.
+rightclick 6 8
+expect screen contains "Checkout main"
+expect screen contains "Pull (fast-forward if possible)"
+expect screen contains "Delete on the remote…"
+expect screen lacks "Publish branch"
+key esc
+# The statusline's branch menu says the same.
+command git.branch_menu
+expect screen contains "Publish branch (set upstream)"
+expect screen lacks "Pull (ff-only)"
+key esc
+# Publish runs from the panel's row: the first on the menu.
+rightclick 6 9
+expect screen contains "Publish branch (set upstream)"
+key enter
+wait 2500
+shell test "$(git rev-parse --abbrev-ref topic@{upstream})" = "origin/topic"
+shell test "$(git --git-dir=remote.git rev-parse refs/heads/topic)" = "$(git rev-parse topic)"
+command git.refresh
+wait 1500
+rightclick 6 9
+expect screen contains "Pull (fast-forward if possible)"
+expect screen contains "Push --force-with-lease…"
+expect screen contains "Delete on the remote…"
+expect screen lacks "Publish branch"

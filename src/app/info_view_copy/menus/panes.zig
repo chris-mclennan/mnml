@@ -496,6 +496,13 @@ pub const rows = [_]Row{
         .body = "Writes this request back to its file so it is still there tomorrow; one that came from nowhere is asked for a name and lands under `http.collection_root`. The file is plain text — a `.http` or a `.curl` — so it belongs in the repo beside the code it calls. The response is not saved with it: the history pane is where past answers live.",
         .links = &.{ .{ .command = .{ .id = .@"http.save", .label = "Save it" } }, .{ .command = .{ .id = .@"http.new_request", .label = "A new request" } }, .{ .settings = .{ .row = copy.settingsRow("http.collection_root"), .label = "Collection root" } } },
     } },
+
+    // ── a commit row of the graph (`openGraphMenu`, titled `Commit`) ──
+    .{ .menu = "Commit", .label = "Checkout this commit (detached HEAD)\u{2026}", .entry = .{
+        .title = "Checkout this commit (detached HEAD)\u{2026}",
+        .body = "Asks first, then runs `git checkout <sha>` on the row's commit: the working tree becomes that commit and HEAD is on no branch — the statusline and the status pane then read `HEAD detached at …`. Commits made there belong to no branch until you create one, which *New branch from here…* does. Uncommitted changes the checkout would overwrite make git refuse, with a `log` link in the toast.",
+        .links = &.{ .{ .command = .{ .id = .@"git.checkout_commit", .label = "Checkout the selected commit" } }, .{ .command = .{ .id = .@"git.new_branch_from", .label = "New branch from it instead" } }, .{ .command = .{ .id = .@"git.checkout", .label = "Back onto a branch" } } },
+    } },
 };
 
 /// The pty body's four `Dock <edge>` rows: where the pane is moved to
