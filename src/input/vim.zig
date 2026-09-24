@@ -475,12 +475,15 @@ pub const Vim = struct {
     pub fn handleKey(self: *Vim, key: Key, ctx: EditCtx, arena: Allocator) Allocator.Error!InputResult {
         if (self.cmdline_open) return self.handleCmdline(key, arena);
         const before = self.vmode;
-        const result = switch (self.vmode) {
+        // The char after `f` `F` `t` `T` is read here, ahead of every
+        // mode's own table, so `vf)` finds `)` instead of running the
+        // `)` sentence motion.
+        const result = if (self.prefix == .find_char) try self.findCharTarget(self.prefix.find_char, key, ctx, arena) else switch (self.vmode) {
             .insert => try self.handleInsert(key, arena),
             .replace => try self.handleReplace(key, arena),
             .normal => try self.handleNormal(key, ctx, arena),
             .visual, .visual_line => try self.handleVisual(key, ctx, arena),
-            .visual_block => try self.handleVisualBlock(key, arena),
+            .visual_block => try self.handleVisualBlock(key, ctx, arena),
         };
         if (isVisual(before) and !isVisual(self.vmode)) self.last_visual = before;
         // `"+yG` / `"adgg`: the linewise-to-an-end ops run in the app, so
@@ -1077,20 +1080,7 @@ pub const Vim = struct {
                 if (ch == '.' and op == null) return .{ .app = if (exact) .{ .jump_to_mark_exact = '.' } else .{ .jump_to_mark_line = '.' } };
                 return .consumed;
             },
-            .find_char => |f| {
-                const op = self.op;
-                const n = self.count1();
-                self.resetPending();
-                const c = ch orelse return .consumed;
-                const inclusive = op != null;
-                self.last_find_char = .{ .ch = c, .forward = f.forward, .before = f.before };
-                var b = Builder.init(arena);
-                if (op != null) try b.push(.select_start);
-                try b.push(.{ .find_char_on_line = .{ .ch = c, .forward = f.forward, .before = f.before, .inclusive = inclusive, .repeat = false } });
-                for (1..n) |_| try b.push(.{ .find_char_on_line = .{ .ch = c, .forward = f.forward, .before = f.before, .inclusive = inclusive, .repeat = true } });
-                if (op) |o| return self.finishOperator(&b, o, ctx, false);
-                return b.finish();
-            },
+            .find_char => unreachable, // handleKey reads the target
             .text_object_inner, .text_object_around => {
                 const around = self.prefix == .text_object_around;
                 const op = self.op orelse {
@@ -1362,6 +1352,7 @@ pub const Vim = struct {
                 return repeated(arena, m, n);
             }
         }
+        if (try self.findCharKey(key, ctx, arena)) |r| return r;
 
         const n = self.count1();
         switch (key.code) {
@@ -1512,12 +1503,6 @@ pub const Vim = struct {
                         self.prefix = .macro_replay_target;
                         return .consumed;
                     },
-                    ';', ',' => {
-                        self.resetPending();
-                        const f = self.last_find_char orelse return .consumed;
-                        const forward = if (c == ';') f.forward else !f.forward;
-                        return repeated(arena, .{ .find_char_on_line = .{ .ch = f.ch, .forward = forward, .before = f.before, .inclusive = false, .repeat = true } }, n);
-                    },
                     '[' => {
                         self.prefix = .bracket_open;
                         return .consumed;
@@ -1638,10 +1623,6 @@ pub const Vim = struct {
                     'N' => {
                         self.resetPending();
                         return runCmd(if (self.last_search_backward) .@"find.next" else .@"find.prev");
-                    },
-                    'f', 'F', 't', 'T' => {
-                        self.prefix = .{ .find_char = .{ .forward = c == 'f' or c == 't', .before = c == 't' or c == 'T' } };
-                        return .consumed;
                     },
                     'm' => {
                         self.prefix = .mark_set;
@@ -1856,6 +1837,9 @@ pub const Vim = struct {
             .reflow, .comment, .fold => false,
             .script => c == self.script_letter,
         } else false;
+        if (!doubled) {
+            if (try self.findCharKey(key, ctx, arena)) |r| return r;
+        }
         const n = self.count1();
         self.resetPending();
         if (key.code == .esc) return .consumed;
@@ -1976,14 +1960,6 @@ pub const Vim = struct {
         if (ch == 'G' and (op == .delete or op == .yank)) {
             return .{ .app = .{ .operator_linewise_to = .{ .op = if (op == .delete) 'd' else 'y', .target = if (n > 1) n else null } } };
         }
-        if (ch) |c| {
-            if (c == 'f' or c == 'F' or c == 't' or c == 'T') {
-                self.op = op;
-                if (n > 1) self.count = n;
-                self.prefix = .{ .find_char = .{ .forward = c == 'f' or c == 't', .before = c == 't' or c == 'T' } };
-                return .consumed;
-            }
-        }
         // `cw` is `ce`-shaped (`:help cw`): the current word's end, even
         // when the cursor is already on it, then `e` for the rest of a
         // count — one op carrying the count so `{count}.` can replace it.
@@ -2064,6 +2040,67 @@ pub const Vim = struct {
             return self.finishOperator(&b, op, ctx, false);
         }
         return .consumed;
+    }
+
+    // ─── find-char motions ───
+
+    const FindChar = struct { ch: u21, forward: bool, before: bool, repeat: bool };
+
+    /// `f` `F` `t` `T` wait for a char; `;` `,` re-fire the last find.
+    /// Normal, operator-pending, Visual, V-LINE and V-BLOCK all route
+    /// these keys here, and `findCharTarget` reads the char after them,
+    /// so no mode can let one fall through to a same-glyph motion.
+    fn findCharKey(self: *Vim, key: Key, ctx: EditCtx, arena: Allocator) Allocator.Error!?InputResult {
+        if (key.mods.ctrl or key.mods.alt or key.mods.super) return null;
+        const c = charOf(key) orelse return null;
+        switch (c) {
+            'f', 'F', 't', 'T' => {
+                self.prefix = .{ .find_char = .{ .forward = c == 'f' or c == 't', .before = c == 't' or c == 'T' } };
+                return .consumed;
+            },
+            ';', ',' => {
+                const f = self.last_find_char orelse {
+                    self.resetPending();
+                    return .consumed;
+                };
+                const forward = if (c == ';') f.forward else !f.forward;
+                return try self.findCharMotion(.{ .ch = f.ch, .forward = forward, .before = f.before, .repeat = true }, ctx, arena);
+            },
+            else => return null,
+        }
+    }
+
+    /// The char after a pending `f` `F` `t` `T`, in any mode. A find
+    /// that misses is remembered all the same: Neovim's `;` after a
+    /// failed `fz` looks for `z` again.
+    fn findCharTarget(self: *Vim, f: @FieldType(Prefix, "find_char"), key: Key, ctx: EditCtx, arena: Allocator) Allocator.Error!InputResult {
+        const c = charOf(key) orelse {
+            self.resetPending();
+            return .consumed;
+        };
+        self.last_find_char = .{ .ch = c, .forward = f.forward, .before = f.before };
+        return self.findCharMotion(.{ .ch = c, .forward = f.forward, .before = f.before, .repeat = false }, ctx, arena);
+    }
+
+    /// One find, the pending count as its all-or-nothing count
+    /// (`v5fx` with four `x`s stays put): a plain move in Normal and
+    /// Visual — the selection follows the cursor — or the range of a
+    /// pending operator, which takes the target (`dfx`).
+    fn findCharMotion(self: *Vim, f: FindChar, ctx: EditCtx, arena: Allocator) Allocator.Error!InputResult {
+        const op = self.op;
+        const n = self.count1();
+        self.resetPending();
+        const m: EditOp = .{ .find_char_on_line = .{ .ch = f.ch, .forward = f.forward, .before = f.before, .inclusive = op != null, .repeat = f.repeat } };
+        var b = Builder.init(arena);
+        if (op) |o| {
+            try b.push(.select_start);
+            try b.pushRepeated(m, n);
+            return self.finishOperator(&b, o, ctx, false);
+        }
+        try b.pushRepeated(m, n);
+        // A horizontal motion drops V-BLOCK's ragged `$` edge.
+        if (self.vmode == .visual_block) try b.push(.{ .block_eol = false });
+        return b.finish();
     }
 
     // ─── visual ───
@@ -2203,6 +2240,7 @@ pub const Vim = struct {
             self.count = null;
             return repeated(arena, m, n);
         }
+        if (try self.findCharKey(key, ctx, arena)) |r| return r;
         self.count = null;
         if (key.code == .esc) {
             self.enterNormal();
@@ -2336,7 +2374,7 @@ pub const Vim = struct {
         }
     }
 
-    fn handleVisualBlock(self: *Vim, key: Key, arena: Allocator) Allocator.Error!InputResult {
+    fn handleVisualBlock(self: *Vim, key: Key, ctx: EditCtx, arena: Allocator) Allocator.Error!InputResult {
         const ch = charOf(key);
         if (self.prefix == .block_replace_char) {
             self.prefix = .none;
@@ -2362,6 +2400,7 @@ pub const Vim = struct {
             try b.push(.{ .block_eol = false });
             return b.finish();
         }
+        if (try self.findCharKey(key, ctx, arena)) |r| return r;
         const n = self.count1();
         self.count = null;
         if (key.code == .esc or isCtrlChar(key, 'v')) {
@@ -2742,6 +2781,68 @@ test "visual `:` opens the line on '<,'>, leaves Visual at once, and widens a li
     const bl = try v.handleKey(Key.char(':'), .{}, a);
     try testing.expectEqualSlices(EditOp, &.{ .remember_selection, .block_select_clear }, bl.ops);
     try testing.expectEqual(input.EditingMode.normal, v.mode());
+}
+
+fn expectFind(op: EditOp, ch: u21, forward: bool, before: bool, inclusive: bool, repeat: bool, count: u32) !void {
+    try testing.expect(op == .repeat);
+    try testing.expectEqual(count, op.repeat.count);
+    const f = op.repeat.inner.find_char_on_line;
+    try testing.expectEqual(ch, f.ch);
+    try testing.expectEqual(forward, f.forward);
+    try testing.expectEqual(before, f.before);
+    try testing.expectEqual(inclusive, f.inclusive);
+    try testing.expectEqual(repeat, f.repeat);
+}
+
+test "f F t T ; , read their char the same way in Normal, Visual, V-LINE, V-BLOCK and operator-pending" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var v = Vim.init(testing.allocator, .{});
+    defer v.deinit();
+    // Visual `f)`: a find for `)`, never the `)` sentence motion.
+    _ = try v.handleKey(Key.char('v'), .{}, a);
+    try testing.expect((try v.handleKey(Key.char('f'), .{}, a)) == .consumed);
+    const vf = try v.handleKey(Key.char(')'), .{}, a);
+    try testing.expectEqual(@as(usize, 1), vf.ops.len);
+    try expectFind(vf.ops[0], ')', true, false, false, false, 1);
+    try testing.expectEqual(VimMode.visual, v.vmode);
+    // A count is the find's own: `3tx`.
+    _ = try v.handleKey(Key.char('3'), .{}, a);
+    _ = try v.handleKey(Key.char('t'), .{}, a);
+    const vt = try v.handleKey(Key.char('x'), .{}, a);
+    try expectFind(vt.ops[0], 'x', true, true, false, false, 3);
+    // `;` / `,` repeat it, `,` the other way.
+    try expectFind((try v.handleKey(Key.char(';'), .{}, a)).ops[0], 'x', true, true, false, true, 1);
+    try expectFind((try v.handleKey(Key.char(','), .{}, a)).ops[0], 'x', false, true, false, true, 1);
+    // Esc drops the pending `F` and stays in Visual.
+    _ = try v.handleKey(Key.char('F'), .{}, a);
+    try testing.expect((try v.handleKey(Key.named(.esc), .{}, a)) == .consumed);
+    try testing.expectEqual(VimMode.visual, v.vmode);
+    try testing.expect(v.prefix == .none);
+    // V-LINE.
+    _ = try v.handleKey(Key.char('V'), .{}, a);
+    _ = try v.handleKey(Key.char('F'), .{}, a);
+    try expectFind((try v.handleKey(Key.char('('), .{}, a)).ops[0], '(', false, false, false, false, 1);
+    try testing.expectEqual(VimMode.visual_line, v.vmode);
+    _ = try v.handleKey(Key.named(.esc), .{}, a);
+    // V-BLOCK: the find, then the ragged `$` edge dropped.
+    _ = try v.handleKey(Key.ctrl('v'), .{}, a);
+    _ = try v.handleKey(Key.char('2'), .{}, a);
+    _ = try v.handleKey(Key.char('f'), .{}, a);
+    const bf = try v.handleKey(Key.char('x'), .{}, a);
+    try testing.expectEqual(@as(usize, 2), bf.ops.len);
+    try expectFind(bf.ops[0], 'x', true, false, false, false, 2);
+    try testing.expectEqual(EditOp{ .block_eol = false }, bf.ops[1]);
+    try testing.expectEqual(VimMode.visual_block, v.vmode);
+    _ = try v.handleKey(Key.named(.esc), .{}, a);
+    // Operator-pending: `d;` is inclusive, like `df`.
+    _ = try v.handleKey(Key.char('d'), .{}, a);
+    const d = try v.handleKey(Key.char(';'), .{}, a);
+    try testing.expectEqual(EditOp.select_start, d.ops[0]);
+    try expectFind(d.ops[1], 'x', true, false, true, true, 1);
+    try testing.expectEqual(EditOp.delete_selection, d.ops[2]);
+    try testing.expect(!v.isOpPending());
 }
 
 test "pending display shows register, count, operator and prefix" {
