@@ -826,11 +826,15 @@ otherwise. Copy what you need; leave the rest out.
     //   2. the builtin tool for the extension (prettier / rustfmt / ruff /
     //      stylua …) when the PROJECT carries its config — a `.prettierrc`
     //      (or a `prettier` key in package.json), `rustfmt.toml`,
-    //      `ruff.toml`, `stylua.toml` — and the tool is on PATH; the
+    //      `ruff.toml`, `stylua.toml` — and the tool is found; the
     //      project chose, whatever the language server would do.
     //   3. the language server, when it formats.
     //   4. the builtin tool, without a project config.
     // `editor.format_external` skips the list and always runs the tool.
+    // A tool given by a bare name (a builtin's, or one here or under
+    // `.linters`) is looked for in `node_modules/.bin` beside the file and
+    // in each directory above it up to the workspace root, then on PATH —
+    // npm's rule: a JS/TS project's own prettier and eslint run.
     .formatters = .{
         .rs = .{ .cmd = .{ "rustfmt", "--edition", "2024" } }, // stdin → stdout
         .zig = .{ .cmd = .{ "zig", "fmt", "--stdin" } },
