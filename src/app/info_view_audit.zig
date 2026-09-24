@@ -173,7 +173,63 @@ pub fn run(gpa: Allocator, io: Io, arena: Allocator, workspace: []const u8, data
     try walkUsagePane(&w);
     try walkOverlays(&w);
     try walkMenus(&w);
+    try walkGitGraph(&w);
+    try walkFileChipRows(&w);
     return tally(arena, w.results.items, w.lint.items, todo);
+}
+
+/// The git graph pane's controls (`info_view_copy/git_graph.zig`) and
+/// its detail column's file-row menus. The scratch workspace is not a
+/// repository, so the pane cannot be opened here; the ids and the menu
+/// rows are the ones `ui/git_graph_view.zig`, `ui/git_toolbar.zig` and
+/// `git.openDetailRowMenu` register, resolved the way the ladder does.
+fn walkGitGraph(w: *Walk) Allocator.Error!void {
+    const gg = copy.git_graph;
+    const gv = @import("../ui/git_graph_view.zig");
+    const tb = @import("../ui/git_toolbar.zig");
+    inline for (comptime std.enums.values(tb.Action)) |a| try w.probeEntry("git_graph:toolbar:" ++ @tagName(a), gg.entry(tb.hitId(a)));
+    inline for (comptime std.enums.values(gv.SortCol)) |c| try w.probeEntry("git_graph:column:" ++ @tagName(c), gg.entry(gv.sortId(c)));
+    inline for (comptime std.enums.values(gv.WipButton)) |b| try w.probeEntry("git_graph:wip:" ++ @tagName(b), gg.entry(gv.wipButtonId(b)));
+    try w.probeEntry("git_graph:file:unstaged", gg.entry(gv.wipFileId(.{ .idx = 0, .staged = false, .button = false })));
+    try w.probeEntry("git_graph:file:staged", gg.entry(gv.wipFileId(.{ .idx = 0, .staged = true, .button = false })));
+    try w.probeEntry("git_graph:file:stage_button", gg.entry(gv.wipFileId(.{ .idx = 0, .staged = false, .button = true })));
+    try w.probeEntry("git_graph:file:unstage_button", gg.entry(gv.wipFileId(.{ .idx = 0, .staged = true, .button = true })));
+    try w.probeEntry("git_graph:detail_row", gg.entry(gv.detailRowId(0)));
+    try w.probeEntry("git_graph:plan_row", gg.entry(gv.planRowId(0)));
+    try w.probeEntry("git_graph:divider", gg.entry(gv.divider_id));
+    // The detail rows' menus, titled with the file's name.
+    const Row = struct { label: []const u8, action: command.MenuAction };
+    const menu_rows = [_]Row{
+        .{ .label = "Open diff (Enter)", .action = .{ .command = .@"git.graph_detail_open" } },
+        .{ .label = "Open file", .action = .{ .command = .@"git.open_file" } },
+        .{ .label = "Stage", .action = .{ .command = .@"git.stage" } },
+        .{ .label = "Unstage", .action = .{ .command = .@"git.unstage" } },
+        .{ .label = "Discard changes\u{2026}", .action = .{ .command = .@"git.discard" } },
+        .{ .label = "Stash this file\u{2026}", .action = .{ .command = .@"git.stash_file" } },
+        .{ .label = "Copy path (a.txt)", .action = .{ .copy_text = "a.txt" } },
+        .{ .label = "Open the file's diff in this commit (Enter)", .action = .{ .command = .@"git.graph_detail_open" } },
+        .{ .label = "Open file at this revision", .action = .{ .command = .@"git.graph_file_at_rev" } },
+        .{ .label = "Copy commit hash (abc1234)", .action = .{ .copy_text = "abc1234" } },
+        .{ .label = "Browse commit on remote", .action = .{ .command = .@"git.browse_commit" } },
+    };
+    for (menu_rows) |r| try w.probeEntry(try w.fmtKey("menu:git_detail_row/{s}", .{r.label}), copy.menus.lookupItem("a.txt", null, r.label, r.action));
+}
+
+/// The statusline file chip's `Buffer` menu. The walk's menus family
+/// opens it on the active editor, which on the scratch app has no
+/// file, so it opens nothing there (`menuRows`); its rows are read
+/// here the way `context_menus.openFileChipMenu` builds them.
+fn walkFileChipRows(w: *Walk) Allocator.Error!void {
+    const Row = struct { label: []const u8, action: command.MenuAction };
+    const menu_rows = [_]Row{
+        .{ .label = "Reveal in tree", .action = .{ .command = .@"view.reveal_in_tree" } },
+        .{ .label = "Reveal in Finder", .action = .{ .command = .@"view.reveal_active" } },
+        .{ .label = "Copy path", .action = .{ .command = .@"file.copy_path" } },
+        .{ .label = "Copy absolute path", .action = .{ .copy_text = "/w/a.txt" } },
+        .{ .label = "Copy file name", .action = .{ .copy_text = "a.txt" } },
+        .{ .label = "Close buffer", .action = .{ .command = .@"buffer.close" } },
+    };
+    for (menu_rows) |r| try w.probeEntry(try w.fmtKey("menu:file_chip/{s}", .{r.label}), copy.menus.lookupItem("Buffer", null, r.label, r.action));
 }
 
 fn walkStatusline(w: *Walk) Allocator.Error!void {

@@ -64,7 +64,7 @@ pub const rows = [_]Row{
     .{ .label = "Move to end", .command = .@"view.dock_item_move_last", .entry = dockItemMove("to end", "to the foot of the run", .@"view.dock_item_move_last") },
     .{ .label = "Show the + button", .kind = .set_dock_plus, .entry = .{
         .title = "Show the + button",
-        .body = "Puts the `+` at the head of the strip — the same *Create…* menu the tab bar's `+` opens, one reach away from the dock. The row ticks while it is on and the press writes `ui.dock.plus` to the home config. Off, the strip starts straight at the first integration and the `+` is the tab bar's alone.",
+        .body = "Puts the `+` on the strip — the same *Create…* menu the tab bar's `+` opens, one reach away from the dock — at the end `ui.dock.plus_at` names, the far end out of the box. The row ticks while it is on and the press writes `ui.dock.plus` to the home config. Off, the strip ends at its last item and the `+` is the tab bar's alone.",
         .links = &.{ .{ .settings = .{ .row = copy.settingsRow("ui.dock.plus"), .label = "The dock's + in Settings" } }, copy.docsSection("The launcher dock") },
     } },
     .{ .menu = "Launcher dock", .label = "Settings…", .entry = .{

@@ -444,6 +444,9 @@ pub fn scriptHit(app: *App, arena: Allocator, pane: PaneId, id: u32) Allocator.E
         .links = &.{ .{ .command = .{ .id = .@"git.toggle_line_blame", .label = "Turn it off" } }, .{ .command = .{ .id = .@"git.blame_toggle", .label = "Blame every line in the gutter" } }, .{ .settings = .{ .row = comptime copy.settingsRow("editor.line_blame"), .label = "Current-line blame in Settings" } } },
     };
     if (p.* == .ai_usage) return try usagePane(app, arena, id);
+    // The git graph's controls live above `0xF000_0000`, which the list
+    // reading below would take for a kebab.
+    if (p.* == .git_graph) if (git_graph.entry(id)) |e| return e;
     if (hit.ListHit.chipOf(id)) |c| return chip(.script, c);
     if (id == hit.ListHit.filter_id) return filter(.script);
     if (id >= hit.ListHit.kebab_base) return kebab(.{ .panel = .script, .idx = id - hit.ListHit.kebab_base });
@@ -456,6 +459,7 @@ pub fn scriptHit(app: *App, arena: Allocator, pane: PaneId, id: u32) Allocator.E
 }
 
 const PaneId = app_mod.PaneId;
+const git_graph = @import("git_graph.zig");
 
 /// The Claude usage pane's parts (`app/usage_pane.zig`'s hit ids).
 fn usagePane(app: *App, arena: Allocator, id: u32) Allocator.Error!Entry {
@@ -558,4 +562,27 @@ test "every chip kind, every panel's row and kebab, every flag, every HTTP part,
     try t.expect(fontUpdate().body.len >= 40 and aiPlaceholder().body.len >= 40);
     try t.expect(welcome(.{ .kind = .recent, .idx = 0 }).body.len >= 40);
     try t.expect((try link(a, "https://x.y")).body.len >= 40);
+}
+
+test "a git graph pane's controls read their own entries through the pane-row reading, never the kebab's Row actions" {
+    const graph_view = @import("../../ui/git_graph_view.zig");
+    const git_toolbar = @import("../../ui/git_toolbar.zig");
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    const a = app.frame.allocator();
+    // The pane owns the graph from here; `app.deinit` frees it.
+    const pane = try app.panes.add(.{ .git_graph = .{ .gpa = t.allocator, .repo = 0, .name = try t.allocator.dupe(u8, "proj"), .arena = .init(t.allocator), .detail_arena = .init(t.allocator) } });
+    const ids = [_]u32{
+        git_toolbar.hitId(.push),
+        graph_view.sortId(.author),
+        graph_view.wipButtonId(.stage_all),
+        graph_view.wipButtonId(.textarea),
+        graph_view.wipFileId(.{ .idx = 0, .staged = false, .button = true }),
+        graph_view.wipFileId(.{ .idx = 1, .staged = true, .button = false }),
+    };
+    for (ids) |id| {
+        const e = (try scriptHit(&app, a, pane, id)).?;
+        try t.expect(!std.mem.eql(u8, e.title, "Row actions"));
+        try t.expectEqualStrings(git_graph.entry(id).?.title, e.title);
+    }
 }

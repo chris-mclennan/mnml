@@ -1,0 +1,23 @@
+# Standard profile: Ctrl+` opens the scratch terminal strip; Ctrl+P with
+# the strip focused opens b.txt in the EDITOR AREA (beside a.txt), never
+# as a tab of the strip — the strip hosts terminals only, as VS Code's
+# terminal panel does. Ctrl+` twice (focus, hide) then leaves one leaf
+# with b.txt active and a.txt a background tab: no stray split.
+# (hunt/findings-2026-09-23/std-scratch-strip-swallows-opened-files.md)
+write a.txt "AAA-top\n"
+write b.txt "BBB-picked\n"
+open a.txt
+key ctrl+`
+wait 1500
+expect status contains "scratch"
+key ctrl+p
+type b.txt
+key enter
+expect screen contains "BBB-picked"
+# Hide the strip: the first Ctrl+` refocuses the terminal tab, the second hides it.
+key ctrl+`
+wait 300
+key ctrl+`
+wait 300
+expect screen contains "BBB-picked"
+expect screen lacks "AAA-top"

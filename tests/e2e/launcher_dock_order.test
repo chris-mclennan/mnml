@@ -26,8 +26,8 @@ expect screen contains "Move right"
 expect screen contains "Move to start"
 expect screen contains "Move to end"
 expect screen lacks "Move up"
-# *Pin to dock* is row 0, *Move left* row 1, *Move right* row 2.
-key down
+# Browser is installed, so its menu offers no *Pin to dock*: *Move
+# left* is row 0, *Move right* row 1.
 key down
 key enter
 expect screen contains "dock: Browser moved"

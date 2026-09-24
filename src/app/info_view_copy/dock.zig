@@ -39,7 +39,7 @@ pub fn itemKind(kind: launcher_dock.Kind, label: ?[]const u8, running: bool) Ent
     return switch (kind) {
         .plus => .{
             .title = "+ New…",
-            .body = "The first item on the strip is the tab bar's own *Create…* menu, opened here where the click landed: a new file, a shell, a Claude or Codex session, a panel, a tool, an integration. Rows can be pinned to the top of that menu or hidden from it with their kebab. `ui.dock.plus` takes the button off the strip.",
+            .body = "The last item on the strip is the tab bar's own *Create…* menu, opened here where the click landed: a new file, a shell, a Claude or Codex session, a panel, a tool, an integration. Rows can be pinned to the top of that menu or hidden from it with their kebab. `ui.dock.plus_at` moves the button to the head of the strip; `ui.dock.plus` takes it off.",
             .keys = &.{.{ .command = .@"term.shell", .label = "New shell" }},
             .links = &.{ .{ .command = .{ .id = .@"file.new", .label = "New file…" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.dock.plus"), .label = "Show the + button" } } },
         },
@@ -49,14 +49,14 @@ pub fn itemKind(kind: launcher_dock.Kind, label: ?[]const u8, running: bool) Ent
             .links = &.{ .{ .command = .{ .id = .@"view.rail_show_sections", .label = "Hidden sections" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.dock.mode"), .label = "Launcher dock in Settings" } } },
         },
         .integration => .{
-            .title = "Integration on the dock",
-            .body = "An installed integration, on the strip because its manifest marks it for the dock or because you pinned it from its chip's menu. Click opens it — its pane, or its tool in a terminal split; right-click offers pin / unpin and its menu. The strip clips a long label; the tooltip carries the whole one. A disabled integration is dimmed and the click toasts.",
+            .title = "Installed surface on the dock",
+            .body = "One of mnml's own surfaces — Browser, Claude Code, Codex, HTTP — or an integration whose manifest puts it on the dock, on the strip because it is installed and not disabled; hiding its chip does not take it off. Click opens it — its pane, or its tool in a terminal split; right-click has the strip's move and mode rows. The strip clips a long label; the tooltip carries the whole one.",
             .keys = &.{.{ .command = .@"view.activity_integrations", .label = "Integrations" }},
-            .links = &.{ .{ .command = .{ .id = .@"integrations.unpin_from_dock", .label = "Take it off the dock" } }, .{ .command = .{ .id = .@"integrations.configure_picker", .label = "Configure it" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.dock.labels"), .label = "Icons or labels" } } },
+            .links = &.{ .{ .command = .{ .id = .@"view.activity_integrations", .label = "The integrations section" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.dock.labels"), .label = "Icons or labels" } } },
         },
         .launcher => .{
             .title = "Launcher",
-            .body = "A launcher from `launchers` in config.zon — a program mnml starts for you in a terminal pane, with its own glyph and colour. Click runs it (a second click focuses the pane already running it); right-click offers pin / unpin. `launcher.add_local` makes one from a binary on this machine.",
+            .body = "A launcher from `launchers` in config.zon — a program mnml starts for you in a terminal pane, with its own glyph and colour. Click runs it (a second click focuses the pane already running it); right-click has the strip's move and mode rows. `launcher.add_local` makes one from a binary on this machine.",
             .links = &.{ .{ .command = .{ .id = .@"launcher.add_local", .label = "Add a launcher" } }, .{ .command = .{ .id = .@"file.open_settings", .label = "Open config.zon" } }, comptime copy.docsSection("Launchers and integration manifests") },
         },
         .terminal_new => .{
@@ -145,4 +145,25 @@ test "every dock item kind, the pin chip and every widget part have entries" {
     };
     try t.expect(plus_seen);
     inline for (comptime std.enums.values(hit.DockPart)) |p| try t.expect((try widget(&app, a, 999, p)) != null);
+}
+
+test "the dock's help matches the strip: the + is the last item out of the box, and a first-party surface is installed, not an integration you pinned" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    const a = app.frame.allocator();
+    // The strip as shipped ends with the `+`, and its entry says so.
+    const list = try launcher_dock.items(&app, a);
+    try t.expectEqual(launcher_dock.Kind.plus, list[list.len - 1].kind);
+    const plus = itemKind(.plus, null, false).body;
+    try t.expect(std.mem.indexOf(u8, plus, "The last item on the strip") != null);
+    try t.expect(std.mem.indexOf(u8, plus, "first item") == null);
+    const row = copy.menus.lookupItem("Launcher dock", null, "Show the + button", .{ .set_dock_plus = true }).?.body;
+    try t.expect(std.mem.indexOf(u8, row, "head of the strip") == null);
+    // Browser / Claude Code / Codex / HTTP wear the integration kind; the
+    // entry names them as mnml's own and offers no unpin that does nothing.
+    try t.expectEqual(launcher_dock.Kind.integration, list[1].kind);
+    const e = itemKind(.integration, list[1].label, false);
+    try t.expect(std.mem.indexOf(u8, e.body, "Claude Code") != null);
+    try t.expect(std.mem.indexOf(u8, e.body, "you pinned it") == null);
+    for (e.links) |l| if (l == .command) try t.expect(l.command.id != .@"integrations.unpin_from_dock");
 }

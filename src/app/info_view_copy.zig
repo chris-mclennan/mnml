@@ -42,6 +42,7 @@ pub const menus = @import("info_view_copy/menus.zig");
 pub const overlays = @import("info_view_copy/overlays.zig");
 pub const panels = @import("info_view_copy/panels.zig");
 pub const editor = @import("info_view_copy/editor.zig");
+pub const git_graph = @import("info_view_copy/git_graph.zig");
 pub const tree = @import("info_view_copy/tree.zig");
 
 // ─── the shape of an entry ──────────────────────────────────────────────

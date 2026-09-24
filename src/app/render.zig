@@ -2452,6 +2452,37 @@ pub fn inflightNames(app: *App, arena: Allocator) Allocator.Error!?[]const u8 {
     return try std.mem.join(arena, ", ", parts.items);
 }
 
+/// The standard profile's `Ctrl+K` popup (`ChordChain.menu`): the
+/// keymap's own continuations of the pending chain — `w → Close other
+/// tabs`, `g → +2` — drawn by the which-key component. Never the vim
+/// leader tree: these rows are what the next key will run.
+fn drawChordMenu(app: *App, ui: Ui, screen: Rect) Allocator.Error!void {
+    const seq = app.chord.seq[0..app.chord.len];
+    const kids = try app.keymap.continuations(ui.arena, seq);
+    const entries = try ui.arena.alloc(which_key.Entry, kids.len);
+    for (kids, 0..) |k, i| {
+        var kb: std.Io.Writer.Allocating = .init(ui.arena);
+        k.next.format(&kb.writer) catch return error.OutOfMemory;
+        entries[i] = .{
+            .key = kb.written(),
+            .label = if (k.target) |tg| switch (tg) {
+                .static => |id| command.title(id),
+                .named => |n| n,
+            } else ui.fmt("+{d} chord{s}", .{ k.longer, if (k.longer == 1) "" else "s" }),
+            .is_group = k.target == null,
+        };
+    }
+    var title: std.Io.Writer.Allocating = .init(ui.arena);
+    for (seq, 0..) |c, i| {
+        if (i > 0) title.writer.writeAll(" ") catch return error.OutOfMemory;
+        var one: std.Io.Writer.Allocating = .init(ui.arena);
+        c.format(&one.writer) catch return error.OutOfMemory;
+        // The profile's own spelling for its leader chord.
+        title.writer.writeAll(if (i == 0 and std.mem.eql(u8, one.written(), "ctrl+k")) whichkey.leaderLabel(false) else one.written()) catch return error.OutOfMemory;
+    }
+    which_key.draw(ui, screen, title.written(), entries);
+}
+
 /// The prompt, the confirm, the picker and the which-key popup are
 /// placed on the whole screen, as Rust places them (`frame.area()`);
 /// `body` is the pane area the rest anchor to.
@@ -2470,7 +2501,7 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
                 entries[i] = .{ .key = try ui.arena.dupe(u8, buf[0..n]), .label = it.label, .is_group = it.group };
             }
             which_key.draw(ui, screen, ui.fmt("Vim: {s}", .{hint.prefix}), entries);
-        },
+        } else if (app.chord.menu) try drawChordMenu(app, ui, screen),
         .prompt => |*p| if (prompt_mod.draw(ui, screen, &p.state)) |c| {
             app.cursor_pos = .{ .x = c.x, .y = c.y };
         },

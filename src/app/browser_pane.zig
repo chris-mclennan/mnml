@@ -2210,6 +2210,7 @@ test "closing a browser pane while its Chrome runs takes the child with it — f
     };
     try testing.expect(spot != null);
     try app.handle(.{ .mouse = .{ .x = spot.?.x, .y = spot.?.y, .kind = .press, .button = .left } });
+    try app.handle(.{ .mouse = .{ .x = spot.?.x, .y = spot.?.y, .kind = .release, .button = .left } });
     try testing.expect(app.panes.get(id2) == null);
     try testing.expect(child_os.goneWithin(testing.io, pid2, .fromSeconds(10)));
 }

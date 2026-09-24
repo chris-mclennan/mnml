@@ -31,12 +31,16 @@ key t
 expect screen lacks "no leader mapping"
 expect screen contains "theme: "
 
-# A lone `ctrl+k` and a pause past the 500 ms timeout is still the popup.
+# A lone `ctrl+k` and a pause past the 500 ms timeout opens the popup of
+# the profile's own `Ctrl+K` chords (`standard_ctrl_k_pause_menu.test`),
+# never the vim leader tree; Esc cancels the chord.
 key ctrl+k
 wait 700
-expect screen contains "f → +find"
-key esc
+expect screen contains "┌ Ctrl+K "
+expect screen contains "z → "
 expect screen lacks "f → +find"
+key esc
+expect screen lacks "┌ Ctrl+K "
 
 # An armed leader still owns its whole chord at speed: an unbound tail
 # is dropped with a word, never handed on to the editor. (This used to

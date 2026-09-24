@@ -350,8 +350,13 @@ fn badgeOf(ui: Ui, tab: Tab, hovered: bool) Badge {
     const p = ui.theme.palette;
     const close: []const u8 = if (ui.ascii) close_ascii else close_glyph;
     if (tab.pinned) return .{ .text = if (ui.ascii) pin_ascii else pin_glyph, .fg = p.yellow, .closes = false };
-    if (tab.active) return .{ .text = close, .fg = p.red, .closes = true };
+    // The dirty dot wins over the active tab's ×, as over every other
+    // tab's: the tab under your hands is the one whose unsaved state
+    // matters most. The pointer on the chip turns the dot into the ×
+    // (orange, so it still reads unsaved) — the Rust bufferline's rule
+    // for a background tab, applied to the active one too.
     if (hovered and tab.dirty) return .{ .text = close, .fg = p.orange, .closes = true };
+    if (tab.active and !tab.dirty) return .{ .text = close, .fg = p.red, .closes = true };
     if (hovered) return .{ .text = close, .fg = p.grey_fg, .closes = true };
     if (tab.dirty) return .{ .text = dirty_dot, .fg = p.orange, .closes = true };
     return .{ .text = close, .fg = p.grey, .closes = true };
@@ -968,6 +973,29 @@ test "a tab whose child needs you wears the mark after its name, in the attentio
     g.ascii = true;
     _ = draw(g.ui(), g.full(), &tabs, .{});
     try testing.expect(std.mem.startsWith(u8, g.row(0, &buf), " x claude " ++ needs_you_ascii ++ " " ++ close_ascii));
+}
+
+test "the ACTIVE dirty tab shows the dot too, the pointer turns it into an orange ×, and a clean active tab keeps its red ×" {
+    var f = try Fixture.init(40, 1);
+    defer f.deinit();
+    const dirty = [_]Tab{.{ .id = 1, .title = "a.txt", .glyph = "x", .dirty = true, .active = true }};
+    _ = draw(f.ui(), f.full(), &dirty, .{});
+    try f.expectRow(0, " x a.txt " ++ dirty_dot);
+    try testing.expect(f.fgEql(9, 0, .{ .fg = f.theme.palette.orange }));
+    // The badge still closes (through the unsaved-changes box).
+    try testing.expect(f.hits.at(10, 0).? == .tab_close);
+    var ui = f.ui();
+    ui.hover = .{ .x = 4, .y = 0 };
+    _ = draw(ui, f.full(), &dirty, .{});
+    try f.expectRow(0, " x a.txt " ++ close_glyph);
+    try testing.expect(f.fgEql(9, 0, .{ .fg = f.theme.palette.orange }));
+    // Saved: the red × of the active tab.
+    var g = try Fixture.init(40, 1);
+    defer g.deinit();
+    const clean = [_]Tab{.{ .id = 1, .title = "a.txt", .glyph = "x", .active = true }};
+    _ = draw(g.ui(), g.full(), &clean, .{});
+    try g.expectRow(0, " x a.txt " ++ close_glyph);
+    try testing.expect(g.fgEql(9, 0, .{ .fg = g.theme.palette.red }));
 }
 
 test "a long name is cut to name_cap; a chip cut by the edge keeps its tab hit and loses its close" {

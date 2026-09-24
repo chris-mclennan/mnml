@@ -827,6 +827,11 @@ pub const ClosedTab = struct {
 
 /// A mouse gesture in flight: what the press landed on, until release.
 pub const Drag = union(enum) {
+    /// A left press on a button (`dispatch.firesOnRelease`): armed, not
+    /// fired. The release fires it when it lands on the same target —
+    /// a press the pointer slides off is taken back, as a GUI button's
+    /// is. A tab's close badge dragged off becomes that tab's drag.
+    button: struct { target: PressedButton, rect: Rect, x: u16, y: u16 },
     /// A split's divider, by the split node it belongs to.
     divider: struct { split: layout_mod.NodeId, dir: layout_mod.SplitDir },
     tree_divider,
@@ -900,15 +905,35 @@ pub const KeywordComplete = struct {
     }
 };
 
+/// The target a `Drag.button` armed; only payloads that outlive the
+/// frame (no slices into the frame's hit map).
+pub const PressedButton = union(enum) {
+    tab_close: hit.TabRef,
+    button: u32,
+
+    pub fn target(b: PressedButton) hit.HitTarget {
+        return switch (b) {
+            .tab_close => |t| .{ .tab_close = t },
+            .button => |id| .{ .button = id },
+        };
+    }
+};
+
 pub const ChordChain = struct {
     seq: [keymap.max_seq]key_mod.Chord = undefined,
     len: usize = 0,
     deadline_ms: ?i64 = null,
     fallback: ?keymap.Target = null,
+    /// The standard profile's `Ctrl+K` popup is up: the chain outlived
+    /// the chord timeout and waits for its next key with no deadline,
+    /// as VS Code waits after `Ctrl+K` (`dispatch.expireChords`); the
+    /// popup lists the keymap's continuations of `seq`.
+    menu: bool = false,
 
     pub fn clear(c: *ChordChain, gpa: Allocator) void {
         c.len = 0;
         c.deadline_ms = null;
+        c.menu = false;
         if (c.fallback) |f| switch (f) {
             .named => |s| gpa.free(s),
             .static => {},
@@ -1218,6 +1243,9 @@ pub const App = struct {
     activity_bar: activity_bar_mod.State = .{},
     /// The mouse gesture in flight, press to release.
     drag: ?Drag = null,
+    /// Set while `dispatch.mouse` replays an armed button's press on its
+    /// release, so the replay routes instead of arming again.
+    firing_button: ?PressedButton = null,
     last_click: ?LastClick = null,
     /// Wheel events folded until the next tick (`scroll.zig`).
     wheel: scroll_mod.Coalescer = .{},
@@ -2642,7 +2670,8 @@ pub const App = struct {
     /// SESSIONS card, the sessions table, the dock, a picker) lands
     /// here, so a session on another page is gone to, never pulled into
     /// this one; a file is shown here, as vim shows a buffer in the
-    /// current tab page.
+    /// current tab page. A new tab asked for from the scratch strip goes
+    /// to the editor area instead (the strip hosts terminals only).
     pub fn showPane(self: *App, id: PaneId) void {
         const ls = &self.layouts;
         const shared = self.sharedAcrossPages(id);
@@ -2655,11 +2684,50 @@ pub const App = struct {
             const layout = ls.current();
             layout.leaf(layout.leafOf(id).?).?.active = id;
         } else {
-            const where: ?layout_mod.NodeId = if (self.active) |a| here.leafOf(a) else null;
+            var where: ?layout_mod.NodeId = if (self.active) |a| here.leafOf(a) else null;
+            // The scratch strip (`term.scratch_toggle`) hosts terminals
+            // only: anything else opened while it has the focus goes to
+            // the editor area, as VS Code's Quick Open always opens into
+            // the editor group, never the terminal panel.
+            if (where) |w| if (self.scratchLeaf()) |strip| if (w == strip and !self.isTerminal(id)) {
+                where = self.editorAreaLeaf(strip) orelse {
+                    // The strip is all there is: the file takes the top,
+                    // the strip stays at the bottom edge.
+                    const scratch = self.scratch_pty.?;
+                    _ = here.split(scratch, .vertical, id) catch {};
+                    here.moveToEdge(scratch, .bottom) catch {};
+                    self.afterSplitChange();
+                    self.setActive(id);
+                    if (!shared) std.debug.assert(ls.holders(id) <= 1);
+                    return;
+                };
+            };
             _ = here.showIn(where, id) catch {};
         }
         self.setActive(id);
         if (!shared) std.debug.assert(ls.holders(id) <= 1);
+    }
+
+    /// The leaf that shows the scratch strip, when it is on screen.
+    fn scratchLeaf(self: *App) ?layout_mod.NodeId {
+        const id = self.scratch_pty orelse return null;
+        return self.layouts.current().leafOf(id);
+    }
+
+    fn isTerminal(self: *App, id: PaneId) bool {
+        const p = self.panes.get(id) orelse return false;
+        return p.* == .pty;
+    }
+
+    /// The editor area's leaf, from the strip's point of view: the leaf
+    /// of the most recently focused pane outside the strip, else any
+    /// other leaf; null when the strip is the only one.
+    fn editorAreaLeaf(self: *App, strip: layout_mod.NodeId) ?layout_mod.NodeId {
+        const layout = self.layouts.current();
+        for (self.pane_mru.items) |p| if (layout.leafOf(p)) |lid| if (lid != strip) return lid;
+        const all = layout.leaves(self.frame.allocator()) catch return null;
+        for (all) |lid| if (lid != strip) return lid;
+        return null;
     }
 
     /// Move `id` into leaf `lid` as its active tab and focus it. A pane
@@ -3304,6 +3372,7 @@ pub const App = struct {
         if (dock.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (clock.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (coverage.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
+        if (@import("app/lsp_format.zig").nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (self.click_echo) |e| next = @min(next orelse std.math.maxInt(i64), e.until_ms);
         if (ws_pane.nextDeadline(@constCast(self))) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (idle.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);

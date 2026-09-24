@@ -289,6 +289,41 @@ test "term.rename relabels the tab through the prompt and through :rename" {
     try t.expectError(error.Failed, command.run(&app, .{ .static = .@"term.rename" }));
 }
 
+test "a file opened while the scratch strip has the focus opens in the editor area; hiding the strip leaves no split behind" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 14 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const ed = try app.openScratch();
+    const layout = app.layouts.current();
+    try command.run(&app, .{ .static = .@"term.scratch_toggle" });
+    const sc = app.scratch_pty.?;
+    try t.expectEqual(sc, app.active.?);
+    // Ctrl+P from the strip: the file lands beside `ed`, not beside the shell.
+    const b = try app.openPath("/tmp/mnml-zig-strip-b.txt");
+    try t.expectEqual(b, app.active.?);
+    try t.expectEqual(layout.leafOf(ed).?, layout.leafOf(b).?);
+    try t.expectEqual(@as(usize, 1), layout.leaf(layout.leafOf(sc).?).?.tabs.items.len);
+    // Ctrl+` twice (focus the strip, then hide it): one leaf, both files in it.
+    try command.run(&app, .{ .static = .@"term.scratch_toggle" });
+    try command.run(&app, .{ .static = .@"term.scratch_toggle" });
+    try t.expectEqual(@as(usize, 1), (try layout.leaves(app.frame.allocator())).len);
+    try t.expect(layout.leafOf(sc) == null);
+    try t.expectEqual(b, app.active.?);
+    // A terminal opened from the strip may still share it.
+    try command.run(&app, .{ .static = .@"term.scratch_toggle" });
+    try t.expectEqual(sc, app.active.?);
+    // The strip alone on screen: the file takes a leaf above it.
+    try app.forceClosePane(ed);
+    try app.forceClosePane(b);
+    try t.expectEqual(@as(usize, 1), (try layout.leaves(app.frame.allocator())).len);
+    app.setActive(sc);
+    const c = try app.openPath("/tmp/mnml-zig-strip-c.txt");
+    try t.expectEqual(@as(usize, 2), (try layout.leaves(app.frame.allocator())).len);
+    try t.expect(layout.leafOf(c).? != layout.leafOf(sc).?);
+    try t.expectEqual(c, app.active.?);
+}
+
 test "term.scratch_toggle: open below, hide when focused, focus when visible, show again alive" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 14 });
