@@ -1038,9 +1038,15 @@ test "a window paints its bytes exactly as the whole file does: every grammar, i
     const rand = prng.random();
     var excused: std.ArrayListUnmanaged([]const u8) = .empty;
     defer excused.deinit(gpa);
+    // Long enough that the margin does not swallow the file: 128 KB, a
+    // window of at most 3 KB plus a margin either side being 19 KB. A
+    // Debug build halves it — tree-sitter's C at -O0 made the 42
+    // grammars at 128 KB 23-36 s — which still leaves the windows well
+    // inside the file; the 128 KB cap check runs in the optimized
+    // builds, the unit suite's ReleaseSafe run among them.
+    const text_len: usize = if (builtin.mode == .Debug) 8 * window_margin else 16 * window_margin;
     for (table.entries, 0..) |e, i| {
-        // Long enough that the margin does not swallow the file.
-        const text = try repeated(gpa, e.fixture, 16 * window_margin);
+        const text = try repeated(gpa, e.fixture, text_len);
         defer gpa.free(text);
         // The reference: every span of the file, from a highlighter that
         // has seen nothing else. It is a reference only while every query
