@@ -517,10 +517,12 @@ otherwise. Copy what you need; leave the rest out.
     .cloud_run = .{
         .defaults = .{ .agent_id = "", .env_id = "", .sandbox = "", .model = "" },
     },
-    .jira = .{
-        .domain = "", // MNML_JIRA_DOMAIN overrides
-        .ticket_prefix = "", // MNML_JIRA_TICKET_PREFIX overrides
-    },
+    // There is no `.jira` section: its `.domain` and `.ticket_prefix` (and
+    // MNML_JIRA_DOMAIN / MNML_JIRA_TICKET_PREFIX) were never read, and are
+    // gone. The Jira integration's site is its own config's `.jira_url`
+    // (integrations/jira/README.md); a session's ticket chip comes from
+    // `.ui.ticket_prefixes`. A `.jira` left in a config.zon is reported as
+    // an unknown section and ignored.
     .cloud_agents = .{
         .label = "",
         .short_id = "",
