@@ -12,7 +12,7 @@
    │                          │
  󰎒 │                          │                                workspace · ws  on main
    │                          │
-  │                          │   RECENT WORKSPACES                           SESSIONS
+  │                          │   WORKSPACES                                  SESSIONS
    │                          │    ws                                open
   │                          │                                                + New Claude Code session here
    │                          │   RECENT FILES

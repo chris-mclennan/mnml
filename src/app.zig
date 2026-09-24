@@ -3539,6 +3539,7 @@ test {
     _ = @import("ui/tooltip.zig");
     _ = @import("ui/menu_glyph.zig");
     _ = @import("ui/contrast.zig");
+    _ = @import("app/info_view_copy/panels.zig");
     _ = @import("app/snippets.zig");
     _ = @import("app/sticky.zig");
     _ = @import("ui/outline_view.zig");

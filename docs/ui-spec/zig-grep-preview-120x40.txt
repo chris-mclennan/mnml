@@ -12,7 +12,7 @@
    │                          │
  󰎒 │                          │                                     workspace · ws
    │                          │
-  │                          │   RECENT WORKSPACES                           SESSIONS
+  │                          │   WORKSPACES                                  SESSIONS
    │                          │    ws                                open
   │┌ Live grep ───────────────────────────────────────────────────────────────────────────────────────────────────┐
    ││  counts                                                                                                    3 │

@@ -2,7 +2,7 @@
 # env: HOME=home
 # env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
 # The start surface (src/app/welcome.zig, src/ui/welcome.zig): with no
-# pane open the editor area lists RECENT WORKSPACES, RECENT FILES,
+# pane open the editor area lists WORKSPACES, RECENT FILES,
 # SESSIONS and SHORTCUTS. Two files opened and closed are the recent
 # rows, newest first; a Claude transcript of this workspace that no
 # process holds is a session row; a fake `claude` on PATH answers the
@@ -19,7 +19,7 @@ open b.txt
 command buffer.close
 command sessions.refresh
 wait 1500
-expect screen contains "RECENT WORKSPACES"
+expect screen contains "WORKSPACES"
 expect screen contains "RECENT FILES"
 expect screen contains "SHORTCUTS"
 expect screen contains "+ New Claude Code session here"

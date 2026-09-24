@@ -1,0 +1,17 @@
+# width: 120
+# height: 40
+# Small start-surface and layout drift:
+# - the list of this window's roots is WORKSPACES, not RECENT WORKSPACES
+#   (it holds no history);
+# - a deep recent file keeps its name: the basename is the row, its
+#   directory the dim detail, so two deep files do not read the same.
+write src/deep/nested/path/with/a/very/long/name/first.txt "one\n"
+write src/deep/nested/path/with/a/very/long/name/second.txt "two\n"
+open src/deep/nested/path/with/a/very/long/name/first.txt
+command buffer.close
+open src/deep/nested/path/with/a/very/long/name/second.txt
+command buffer.close
+expect screen contains "WORKSPACES"
+expect screen lacks "RECENT WORKSPACES"
+expect screen contains "second.txt"
+expect screen contains "first.txt"

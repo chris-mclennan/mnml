@@ -350,7 +350,7 @@ otherwise. Copy what you need; leave the rest out.
         // What the editor area shows while no pane is open — at launch
         // with no session to restore, and after the last pane closes.
         //   .full     the start surface: a compact word mark, the
-        //             workspace line, then RECENT WORKSPACES (the
+        //             workspace line, then WORKSPACES (the
         //             Switch workspace list; Enter shows it in the
         //             tree), RECENT FILES (Enter opens), SESSIONS (this
         //             workspace's Claude Code / Codex sessions no

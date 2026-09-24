@@ -12,7 +12,7 @@
    │  recent-commands  1.0.0  │
  󰎒 │    A live picker over ev…│                                     workspace · ws
    │                          │
-  │  surround-word  1.0.0  ✓ │   RECENT WORKSPACES                           SESSIONS
+  │  surround-word  1.0.0  ✓ │   WORKSPACES                                  SESSIONS
    │    Surround a motion's t…│    ws                                open
   │                          │                                                + New Claude Code session here
    │  todo-list  1.0.0  ✓ Offi│   RECENT FILES

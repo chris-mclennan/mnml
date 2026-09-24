@@ -5,7 +5,7 @@
 //! own rows, read through the functions those surfaces list from —
 //! nothing here keeps a second copy:
 //!
-//! - RECENT WORKSPACES — `tree.workspaceRows`, `view.switch_workspace`'s
+//! - WORKSPACES — `tree.workspaceRows`, `view.switch_workspace`'s
 //!   rows; Enter is that picker's accept (`Tree.switchTo`).
 //! - RECENT FILES — `cmd_picker.recentFiles`, `picker.recent`'s rows;
 //!   Enter opens the file.
@@ -238,7 +238,14 @@ pub fn entries(app: *App, ui: Ui, l: List) Allocator.Error![]const Entry {
         .recent => {
             const paths = try cmd_picker.recentFiles(app, arena);
             const out = try arena.alloc(Entry, paths.len);
-            for (paths, out) |p, *o| o.* = .{ .text = app.relPath(p) };
+            // The name first, its directory as the dim detail — a deep
+            // path cut at the right edge left every such row reading the
+            // same (the picker does the same).
+            for (paths, out) |p, *o| {
+                const rel = app.relPath(p);
+                const dir = std.fs.path.dirname(rel) orelse "";
+                o.* = .{ .text = std.fs.path.basename(rel), .detail = dir };
+            }
             return out;
         },
         .sessions => {

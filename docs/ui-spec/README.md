@@ -199,7 +199,9 @@ statusline's coverage-ticker phase flickers one more row in some runs).
 With no pane open the editor area is the start surface
 (`src/ui/welcome.zig`'s `drawStart`, `ui.welcome = full`, the default)
 where Rust paints its centred logo: a three-row word mark, the
-workspace line, RECENT WORKSPACES and RECENT FILES on the left, SESSIONS
+workspace line, WORKSPACES (it read RECENT WORKSPACES until 2026-09-23,
+for a list of this window's roots — the dumps were edited to the new
+label, column for column) and RECENT FILES on the left, SESSIONS
 (with `+ New Claude Code session here`) and SHORTCUTS on the right, the
 version line under them. Every `zig-*` dump that shows the empty
 layout was re-cut for it — `esc`, `status`, `menu-plus`, `whichkey`,
@@ -208,7 +210,7 @@ layout was re-cut for it — `esc`, `status`, `menu-plus`, `whichkey`,
 `tools/zig-spec.sh`, `search` through `tools/zig-spec-git.sh`, and
 `integrations` through `tools/ui-diff.sh` on a copy of the chrome
 fixture whose `zig-data/config.zon` has its `.workspaces` list taken
-out: RECENT WORKSPACES lists them, and the author's own workspace names
+out: WORKSPACES lists them, and the author's own workspace names
 do not belong in a dump. The rows outside the editor area moved only
 where main had moved since the last cut (the `⋯` grip on the `:` line,
 the marketplace sections, the clock). `ui.welcome = minimal` is the old

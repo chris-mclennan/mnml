@@ -414,7 +414,7 @@ pub fn sessionChangesChip() Entry {
 pub fn welcome(w: hit.WelcomeRow) Entry {
     return switch (w.kind) {
         .workspace => .{
-            .title = "Recent workspace",
+            .title = "Workspace",
             .body = "A workspace this window has open — the one it started on, then the extra folders `workspaces` in config.zon and Add folder bring in — the same list Switch workspace offers. Enter or a click shows that workspace's files in the tree; `open` marks the one the tree is showing. On the start surface j / k walk the list and Tab moves to the next one.",
             .keys = &.{ .{ .chord = "Enter", .label = "Show it in the tree" }, .{ .command = .@"view.switch_workspace", .label = "Switch workspace" } },
             .links = &.{ .{ .command = .{ .id = .@"view.add_workspace", .label = "Add a folder" } }, .{ .command = .{ .id = .@"view.manage_workspaces", .label = "Manage workspaces" } } },
@@ -427,7 +427,7 @@ pub fn welcome(w: hit.WelcomeRow) Entry {
         },
         .session => .{
             .title = "Session to resume",
-            .body = "A Claude Code or Codex session of this workspace that no process is running any more, newest first, from the SESSIONS section's scan: its name (or last prompt), the tool and how long ago it last moved. Enter or a click resumes it in a terminal pane on the right, in the directory it ran in, where the conversation picks up.",
+            .body = "A Claude Code or Codex session of this workspace that no process is running any more, newest first, from the SESSIONS section's scan: its name — the one its tab and SESSIONS card go by: your rename, else its first prompt — the tool and how long ago it last moved. Enter or a click resumes it in a terminal pane (from here, with nothing else open, the whole editor area), in the directory it ran in, where the conversation picks up.",
             .keys = &.{ .{ .chord = "Enter", .label = "Resume it" }, .{ .command = .@"view.activity_sessions", .label = "The SESSIONS section" } },
             .links = &.{ .{ .command = .{ .id = .@"view.activity_sessions", .label = "Every session" } }, .{ .command = .{ .id = .@"sessions.refresh", .label = "Scan again" } } },
         },
@@ -678,4 +678,13 @@ test "a git graph pane's controls read their own entries through the pane-row re
         try t.expect(!std.mem.eql(u8, e.title, "Row actions"));
         try t.expectEqualStrings(git_graph.entry(id).?.title, e.title);
     }
+}
+
+test "the start surface's rows say what they are: the window's workspaces, and a session named as its tab is, resumed where there is room" {
+    try std.testing.expectEqualStrings("Workspace", welcome(.{ .kind = .workspace, .idx = 0 }).title);
+    const s = welcome(.{ .kind = .session, .idx = 0 });
+    // From the start surface a resumed session takes the whole editor
+    // area; it is not always "on the right".
+    try std.testing.expect(std.mem.indexOf(u8, s.body, "on the right") == null);
+    try std.testing.expect(std.mem.indexOf(u8, s.body, "first prompt") != null);
 }
