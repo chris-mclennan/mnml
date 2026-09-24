@@ -23,8 +23,9 @@ macOS (aarch64) and Linux are **verified**: the whole gate — the unit
 suite, the width sweep, the `.test` corpus, the pty mouse check and
 packaging — runs on both (`tools/linux/run.sh`, and see
 `docs/CONTRIBUTING.md` → *Running the gate on Linux*). Windows is
-**compiled, not yet run**: `zig build gate-build -Dtarget=x86_64-windows-gnu`
-builds the exe and every test binary on each merge, which is enough to
+**compiled, not yet run**: `zig build gate-targets` builds the exe and
+every test binary for all five shipped targets, `x86_64-windows-gnu`
+among them, on each merge, which is enough to
 catch a target-gated branch that does not compile and not enough to catch
 one that does not work. `docs/WINDOWS.md` is the honest ledger of that,
 and `docs/INSTALL-CHECKLIST.md` is what to walk on a clean guest of any
@@ -71,10 +72,11 @@ zig build test                              # the unit suite (leak = failure)
 zig build test -Doptimize=ReleaseSafe
 zig build gate-build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSafe
                                             # cross-compile exe + every test binary, no run
+zig build gate-targets                      # gate-build for all five shipped targets, in turn
 zig build check                             # fmt, tests in both modes, the gate, the sweep, the corpus
 zig build e2e                               # the .test corpus alone (`-- ARGS` reach `mnml-zig test`)
 zig build docs                              # regenerate docs/commands.md from the spec table
-zig build glyph-audit                       # every Nerd Font glyph in src/ has its --ascii twin
+zig build glyph-audit                       # every Nerd Font glyph in src/, the SDK and integrations/ has its --ascii twin
 zig build release                           # all five targets → zig-out/release/<triple>/
 zig build dist -Dversion=0.3.0              # + archives, sha256s, installers, manifest → zig-out/dist/
 ```
@@ -95,6 +97,7 @@ relaunches on exit 75 (the restart handshake):
 ./run.sh check              # the verification sequence below, in one line
 ./run.sh install [--dry-run]  # install this build as the mnml you live in (PREFIX=~/.local)
 ./run.sh installed-status   # what is installed, against this tree's HEAD
+./run.sh install-font [--dry-run]  # merge this build's MnmlSymbols font into the installed one
 ./run.sh build | release | test | stale | clean [incremental|all] | menu | help
 ```
 
@@ -123,7 +126,8 @@ ReleaseSafe build, the width sweep and the corpus on that build,
 cursor pty check and `tools/ui-diff.sh` when the change reaches them.
 `./run.sh check` is a subset in one line: fmt, the unit tests in Debug
 and ReleaseSafe, the ReleaseSafe build, the sweep, the corpus, the
-glyph, chrome and hover audits, `tools/run-sh-check.sh` and
+glyph, chrome and hover audits, `zig build gate-targets` (every
+shipped target compiled), `tools/run-sh-check.sh` and
 `tools/run-ps1-check.py`. `tools/linux/run.sh all` runs the build, the
 audits, the unit suite, the gate and the corpus inside a
 Linux container — do that for anything touching a process, a thread, a
@@ -192,7 +196,7 @@ The end-to-end suite is a line-based script format — `write`, `open`, `key`,
 `type`, then `expect screen | status | file | dirty | pane` — run headlessly against the
 same `App` the terminal drives. The corpus in `tests/e2e` is the Rust
 repo's suite, copied here when Rust froze, plus the scripts written for this
-codebase; it is the definition of parity: 825 `.test` files, every one
+codebase; it is the definition of parity: 1012 `.test` files, every one
 run at 120x40 but the `# requires: network` file. `zig build test
 --summary all` prints the unit suite's count.
 
@@ -205,8 +209,9 @@ run at 120x40 but the `# requires: network` file. `zig build test
 
 Every file runs on a `DebugAllocator` with safety on and asserts a clean
 `deinit`; at 80x24 and 200x60 the assertion is no panic, no leak, no rect
-outside its parent. `MNML_E2E_ALLOW_SHELL=1` lets the files that spawn a shell
-run. The debugger's scripts run against `mnml-fake-dap` (`tools/fake_dap/`,
+outside its parent. `mnml-zig test` runs the files that spawn a shell unless
+`MNML_E2E_ALLOW_SHELL` is set to something other than `1`, and the
+`# requires: network` file only with `MNML_E2E_NETWORK=1`. The debugger's scripts run against `mnml-fake-dap` (`tools/fake_dap/`,
 installed by `zig build`): a deterministic Debug Adapter the runner exports as
 `MNML_FAKE_DAP`, so the debug UI is tested for real on every platform with no
 toolchain. `tools/debug-demo.sh` opens the same setup on a real screen.
