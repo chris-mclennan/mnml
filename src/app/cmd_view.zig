@@ -893,8 +893,24 @@ fn openInfo(app: *App, kind: app_mod.InfoKind) void {
     app.needs_render = true;
 }
 
+/// `view.welcome` (Help → Welcome): the start surface — the one
+/// welcome, whose chords are read off the spec table for the active
+/// profile (`welcome.shortcuts`). On an empty tab page it takes the
+/// keys; with something open, a fresh empty page after this one shows
+/// it. `ui.welcome = .minimal` shows its compact form the same way.
+/// With it turned off there is no surface to show, so the cheatsheet —
+/// every chord of the profile — stands in, and says why.
 fn welcome(app: *App) CommandError!void {
-    openInfo(app, .welcome);
+    if (app.cfg.ui.welcome == .off) {
+        try command.run(app, .{ .static = .@"view.cheatsheet" });
+        app.toast("the start surface is off (ui.welcome = off) — the cheatsheet instead", .{});
+        return;
+    }
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    if (!app.layouts.current().isEmpty()) try @import("cmd_tab.zig").tabNewEmpty(app);
+    if (welcome_app.full(app)) welcome_app.focus(app) else app.focus = .tree;
+    app.needs_render = true;
 }
 
 fn about(app: *App) CommandError!void {
@@ -914,26 +930,13 @@ pub const panel_item: u32 = std.math.maxInt(u32);
 
 pub const version = "0.3.0-zig";
 
-const welcome_rows = [_][2][]const u8{
-    .{ "ctrl+p", "open a file" },
-    .{ "ctrl+shift+p", "command palette" },
-    .{ "ctrl+b", "toggle the file tree" },
-    .{ "ctrl+\\", "split right" },
-    .{ "ctrl+f", "find in file" },
-    .{ "ctrl+s", "save" },
-    .{ "ctrl+,", "settings" },
-    .{ "ctrl+q", "quit" },
-};
-
 pub fn drawInfo(app: *App, ui: Ui, screen: Rect, kind: app_mod.InfoKind) void {
     const th = ui.theme;
     const title: []const u8 = switch (kind) {
-        .welcome => "Welcome to mnml — Esc / click outside to dismiss",
         .about => "About mnml — Esc / click outside to dismiss",
     };
     const w: u16 = @min(@max(ui.width(title) + 4, 56), screen.w);
     const h: u16 = @min(switch (kind) {
-        .welcome => welcome_rows.len + 4,
         .about => 8,
     }, screen.h);
     const inner = overlay_mod.box(ui, screen, w, h, title, .center);
@@ -943,18 +946,6 @@ pub fn drawInfo(app: *App, ui: Ui, screen: Rect, kind: app_mod.InfoKind) void {
     const acc = Theme.onBg(th.accent, th.overlay_bg.bg);
     var row: u16 = 0;
     switch (kind) {
-        .welcome => {
-            _ = ui.putStr(inner.x + 2, inner.y, inner.w -| 2, "The chords to start with:", fg);
-            row = 2;
-            for (welcome_rows) |wr| {
-                if (row >= inner.h) break;
-                const r = inner.row(row);
-                const kw = ui.putStr(r.x + 2, r.y, 16, wr[0], acc);
-                _ = kw;
-                _ = ui.putStr(r.x + 18, r.y, r.w -| 18, wr[1], fg);
-                row += 1;
-            }
-        },
         .about => {
             const lines = [_][]const u8{
                 ui.fmt("mnml version {s}", .{version}),

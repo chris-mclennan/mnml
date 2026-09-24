@@ -60,7 +60,7 @@ pub const specs = [_]Spec{
     .{ .id = "view.toggle_tree", .title = "Toggle left panel (file tree · Git · Integrations · Agents · HTTP · Findings)", .group = "view", .short = "explorer", .keys = .{ .vim = &.{"ctrl+n"}, .standard = &.{"ctrl+b"}, .both = &.{"space t e"} } },
     .{ .id = "view.reset_tree_width", .title = "Reset file tree width to the config default", .group = "view" },
     .{ .id = "view.discovery", .title = "Click-discovery overlay (highlight what's clickable)", .group = "view" },
-    .{ .id = "view.welcome", .title = "Welcome overlay (shortcuts cheatsheet)", .group = "view" },
+    .{ .id = "view.welcome", .title = "Welcome: show the start surface (workspaces, recent files, sessions, the chords to start with)", .group = "view" },
     .{ .id = "view.about", .title = "About mnml (version + workspace metadata)", .group = "view" },
     .{ .id = "first_launch.show", .title = "First-launch setup wizard (reopen)", .group = "view" },
     .{ .id = "keys.doctor", .title = "Keyboard doctor (which modifier chords reach mnml?)", .group = "view" },

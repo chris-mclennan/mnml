@@ -423,8 +423,6 @@ fn walkOverlays(w: *Walk) Allocator.Error!void {
     // The other overlays' rows.
     app.overlay = .discovery;
     try w.probe("overlay_item:discovery", .{ .overlay_item = 0 });
-    app.overlay = .{ .info = .welcome };
-    try w.probe("overlay_item:welcome", .{ .overlay_item = 0 });
     app.overlay = .{ .info = .about };
     try w.probe("overlay_item:about", .{ .overlay_item = 0 });
     app.overlay = .{ .help = .{} };

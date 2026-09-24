@@ -556,9 +556,9 @@ pub const PickerKind = enum {
 /// label (a frame copy — the overlay is already gone when this runs).
 pub const PickerAccept = *const fn (app: *App, idx: usize, label: []const u8) Allocator.Error!void;
 
-/// The on-demand read-only overlays: `view.welcome` / `view.about` /
+/// The on-demand read-only overlays: `view.about` /
 /// `view.discovery`. A click anywhere dismisses them.
-pub const InfoKind = enum { welcome, about };
+pub const InfoKind = enum { about };
 
 /// One row of the live-grep picker: where its hit is, so the preview
 /// column and the accept both know the file without re-parsing a label.

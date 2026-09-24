@@ -1,13 +1,12 @@
 # width: 120
 # Help → Welcome (src/app/menu_bar.zig, `view.welcome`): Alt+H opens the
 # Help menu — folded behind the bar's ` » ` at 120 columns — with its
-# first row lit, and Enter on it shows the welcome overlay. The hunt read
-# status.json's pane list, which an overlay never changes.
+# first row lit, and Enter on it shows the start surface on a fresh tab
+# page, with the keys.
 key alt+h
 expect screen contains "Welcome"
 expect screen contains "Keybindings"
 key enter
-expect screen contains "Welcome to mnml"
-expect screen contains "The chords to start with:"
-key esc
-expect screen lacks "Welcome to mnml"
+expect screen contains "SHORTCUTS"
+expect screen contains " START "
+expect screen lacks "The chords to start with:"

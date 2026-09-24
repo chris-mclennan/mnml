@@ -436,7 +436,7 @@ pub const rows = [_]Row{
     // ── Help ──
     .{ .menu = "Help", .label = "Welcome", .entry = .{
         .title = "Welcome",
-        .body = "Opens a small box with the eight chords worth knowing first — open a file, the palette, the tree, split, find, save, settings, quit. They are written as the standard profile's, so a vim user reads them as the commands rather than the keys. The recent files and workspaces are on the welcome pane an empty leaf paints, not here.",
+        .body = "Shows the start surface — the page mnml opens on with nothing open: this window's workspaces, the recent files, the sessions to resume, and the chords to start with in YOUR profile (NvChad's under vim, VS Code's under standard). With something open it comes up on a fresh empty tab page, with the keys. With `ui.welcome = off` the cheatsheet stands in.",
         .links = &.{ .{ .command = .{ .id = .@"view.welcome", .label = "Open it" } }, .{ .command = .{ .id = .@"first_launch.show", .label = "The setup wizard" } } },
     } },
     .{ .menu = "Help", .label = "Keybindings & help", .entry = .{

@@ -1,13 +1,8 @@
-# The on-demand overlays — welcome / about / settings / discovery —
-# each open via their `view.*` command and dismiss on Esc.
+# The on-demand overlays — about / settings / discovery — each open via
+# their `view.*` command and dismiss on Esc. (`view.welcome` shows the
+# start surface, not an overlay: view_welcome_start_surface.test.)
 write a.txt hello
 open a.txt
-
-# Welcome overlay.
-command view.welcome
-expect screen contains "Welcome to mnml"
-key esc
-expect screen lacks "Welcome to mnml"
 
 # About overlay — shows build/workspace metadata.
 command view.about

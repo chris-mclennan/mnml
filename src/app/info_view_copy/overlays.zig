@@ -43,12 +43,6 @@ pub fn entry(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
             .links = &.{ .{ .command = .{ .id = .@"view.settings", .label = "Settings" } }, .{ .command = .{ .id = .@"first_launch.show", .label = "Run the wizard again" } } },
         },
         .info => |kind| switch (kind) {
-            .welcome => .{
-                .title = "Welcome",
-                .body = "The pane mnml opens on with no session to restore: the recent files, the shortcuts that matter first, and the workspace's name. A recent row opens the file; a shortcut row runs it. It closes itself when you open something. `view.welcome` brings it back.",
-                .keys = &.{.{ .command = .@"picker.recent", .label = "Recent files" }},
-                .links = &.{ .{ .command = .{ .id = .@"picker.files", .label = "Open a file" } }, .{ .command = .{ .id = .@"session.restore", .label = "Restore the session" } } },
-            },
             .about => .{
                 .title = "About mnml",
                 .body = "The version, the build's profile, the workspace and data root paths, and the terminal mnml is running in. Copy from here when filing an issue — the version line is what a bug report needs first. Esc closes it.",
