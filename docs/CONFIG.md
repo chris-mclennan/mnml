@@ -547,6 +547,10 @@ otherwise. Copy what you need; leave the rest out.
     // "<S-Tab>", "shift+backtab" and "backtab" are all `backtab`, and
     // "ctrl+shift+tab" is "ctrl+backtab" — that is what a terminal
     // sends, so a spec cannot name a key that never arrives.
+    // The which-key popups read the keymap, rebinds included: a
+    // `.standard` chord under `ctrl+k` is a row of the Ctrl+K popup
+    // (the standard profile's `whichkey.leader`), a `.vim` chord under
+    // `space` a row of the `<leader>` tree (docs/KEYMAP_PROFILES.md).
     .keys = .{
         .global = .{
             .@"ctrl+p" = "picker.files",

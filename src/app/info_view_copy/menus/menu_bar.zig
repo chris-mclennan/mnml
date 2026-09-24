@@ -204,7 +204,7 @@ pub const rows = [_]Row{
     .{ .menu = "View", .label = "Toggle right panel", .entry = .{
         .title = "Toggle right panel",
         .body = "Shows or hides the right column — the outline, the problems list and any rail section moved there with its menu's Move to right side. Its width is `ui.right_panel_width`; showing a section on that side opens the column by itself.",
-        .keys = &.{ .{ .command = .@"view.toggle_right_panel", .label = "Toggle the right column" }, .{ .command = .@"view.focus_right_panel", .label = "Focus it" } },
+        .keys = &.{.{ .command = .@"view.toggle_right_panel", .label = "Toggle the right column" }},
         .links = &.{ .{ .command = .{ .id = .@"view.toggle_right_panel", .label = "Toggle it" } }, .{ .command = .{ .id = .@"outline.show", .label = "Show the outline there" } }, .{ .settings = .{ .row = copy.settingsRow("ui.right_panel_width"), .label = "Right column width" } } },
     } },
     .{ .menu = "View", .label = "Toggle bottom panel", .entry = .{

@@ -26,7 +26,7 @@ pub fn entry(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
         },
         .which_key => .{
             .title = "Leader menu",
-            .body = "The chords that continue from the key you pressed — vim's leader menu, which-key style: each row is the next key and what the full chord runs, a `+` row a group that opens another page. Press the key, or click the row; Esc backs out. The rows come from the keymap, rebinds included.",
+            .body = "The chords that continue from the key you pressed — vim's leader menu, which-key style (the standard profile's popup is its own Ctrl+K chords): each row is the next key and what the full chord runs, a `+` row a group that opens another page. Press the key, or click the row; Esc backs out. The rows come from the keymap, rebinds included.",
             .keys = &.{ .{ .chord = "Esc", .label = "Back out" }, .{ .command = .@"whichkey.leader", .label = "The leader menu" } },
             .links = &.{ .{ .command = .{ .id = .@"view.cheatsheet", .label = "The cheatsheet" } }, .{ .command = .{ .id = .@"keys.edit", .label = "Rebind keys" } } },
         },

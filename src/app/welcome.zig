@@ -619,7 +619,8 @@ test "welcome: SHORTCUTS reads each profile's chords off the spec table — Spac
         .{ .id = .@"view.focus_tree", .vim = "Space e", .standard = "Ctrl+Shift+E" },
         .{ .id = .@"view.toggle_tree", .vim = "Ctrl+N", .standard = "Ctrl+B" },
         .{ .id = .@"whichkey.leader", .vim = "Space", .standard = "Ctrl+K" },
-        .{ .id = .@"view.cheatsheet", .vim = "Space c h", .standard = null },
+        // VS Code's Keyboard Shortcuts chord opens the list of every chord.
+        .{ .id = .@"view.cheatsheet", .vim = "Space c h", .standard = "Ctrl+K Ctrl+S" },
         .{ .id = .@"file.new", .vim = null, .standard = "Ctrl+N" },
         .{ .id = .@"app.quit", .vim = "Ctrl+Q", .standard = "Ctrl+Q" },
     };

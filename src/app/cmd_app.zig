@@ -235,11 +235,106 @@ fn restart(app: *App) CommandError!void {
     return openBox(app, "Restart mnml?", msg, &App.restart_choices, .restart);
 }
 
+/// The which-key popup. The vim profile's is the `<leader>` tree
+/// (`app/whichkey.zig`). The standard profile's IS its `Ctrl+K` chords:
+/// the chain armed with `Ctrl+K` and waiting, as after a pause past the
+/// chord timeout (`dispatch.expireChords`), so the rows are the keymap's
+/// continuations and a key in it runs exactly what `Ctrl+K <key>` typed
+/// fast runs. It used to open the leader tree there too, titled
+/// `Ctrl+K`, where `s` was `+split` while `Ctrl+K S` ran another command.
 fn leader(app: *App) CommandError!void {
     app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    if (app.input_style != .vim) {
+        app.chord.clear(app.gpa);
+        app.chord.seq[0] = @import("../core/key.zig").Chord.of(app_mod.Key.ctrl('k'));
+        app.chord.len = 1;
+        app.chord.menu = true;
+        if (app.focus == .overlay) app.focus = if (app.active) |a| .{ .pane = a } else .tree;
+        app.needs_render = true;
+        return;
+    }
     app.overlay = .{ .which_key = .{} };
     app.focus = .overlay;
     app.needs_render = true;
+}
+
+test "the standard profile's which-key popup is its Ctrl+K chords: every row is a spec `ctrl+k …` chord, id for id, and every such chord a row" {
+    const keymap = @import("../core/keymap.zig");
+    const Chord = @import("../core/key.zig").Chord;
+    const specs = @import("../commands/specs.zig");
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    try t.expect(app.input_style != .vim);
+    try command.run(&app, .{ .static = .@"whichkey.leader" });
+    // Not the leader tree: the `Ctrl+K` chain, armed and waiting for its
+    // next key with no deadline — the popup `render.drawChordMenu` draws.
+    try t.expect(app.overlay == .none);
+    try t.expect(app.chord.menu and app.chord.len == 1 and app.chord.deadline_ms == null);
+    const ctrl_k = Chord.of(app_mod.Key.ctrl('k'));
+    try t.expect(app.chord.seq[0].eql(ctrl_k));
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const rows = try app.keymap.continuations(arena, app.chord.seq[0..1]);
+
+    // An independent walk of the spec table: every chord the standard
+    // profile binds (`keys.standard` and `keys.both`) that starts
+    // `ctrl+k` — its second key, and the command when it ends there.
+    const Want = struct { next: Chord, id: ?command.CommandId, deeper: bool };
+    var want: std.ArrayList(Want) = .empty;
+    for (specs.specs) |s| {
+        for ([_][]const []const u8{ s.keys.standard, s.keys.both }) |list| for (list) |k| {
+            var buf: [keymap.max_seq]Chord = undefined;
+            const seq = keymap.parseKeySeqBuf(k, &buf) orelse continue;
+            if (seq.len < 2 or !seq[0].eql(ctrl_k)) continue;
+            const id = command.by_name.get(s.id).?;
+            const slot = for (want.items) |*w| {
+                if (w.next.eql(seq[1])) break w;
+            } else blk: {
+                try want.append(arena, .{ .next = seq[1], .id = null, .deeper = false });
+                break :blk &want.items[want.items.len - 1];
+            };
+            if (seq.len == 2) {
+                // One chord, one command: two specs on it would be a
+                // popup row naming one while the keymap runs the other.
+                try t.expect(slot.id == null);
+                slot.id = id;
+            } else slot.deeper = true;
+        };
+    }
+    try t.expect(want.items.len >= 30);
+    // Row for row: the same keys, and each leaf names the same command.
+    try t.expectEqual(want.items.len, rows.len);
+    for (want.items) |w| {
+        const row = for (rows) |r| {
+            if (r.next.eql(w.next)) break r;
+        } else return error.SpecChordNotARow;
+        if (w.id) |id| {
+            try t.expect(row.target != null);
+            try t.expectEqual(id, row.target.?.static);
+        } else try t.expect(row.target == null);
+        try t.expectEqual(w.deeper, row.longer > 0);
+    }
+    // VS Code's meanings where it defines the chord: Ctrl+K S is Save
+    // All (its Windows default), so the sessions moved to Ctrl+K A.
+    var sbuf: [keymap.max_seq]Chord = undefined;
+    try t.expectEqual(command.CommandId.@"file.save_all", app.keymap.resolveSeq(keymap.parseKeySeqBuf("ctrl+k s", &sbuf).?).run.static);
+    try t.expectEqual(command.CommandId.@"view.activity_sessions", app.keymap.resolveSeq(keymap.parseKeySeqBuf("ctrl+k a", &sbuf).?).run.static);
+    try t.expectEqual(command.CommandId.@"view.cheatsheet", app.keymap.resolveSeq(keymap.parseKeySeqBuf("ctrl+k ctrl+s", &sbuf).?).run.static);
+    try t.expectEqual(command.CommandId.@"theme.pick", app.keymap.resolveSeq(keymap.parseKeySeqBuf("ctrl+k ctrl+t", &sbuf).?).run.static);
+    // Esc takes the popup down and leaves nothing pending.
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+    try t.expect(app.chord.len == 0 and !app.chord.menu);
+}
+
+test "the vim profile's which-key popup is still the leader tree" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
+    try command.run(&app, .{ .static = .@"whichkey.leader" });
+    try t.expect(app.overlay == .which_key);
+    try t.expect(app.chord.len == 0 and !app.chord.menu);
 }
 
 test "app.quit asks first, clean or dirty" {

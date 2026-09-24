@@ -1,8 +1,11 @@
 # The which-key popup offers the NvChad groups — +http +test +lang/run
 # +integrations +insert +harpoon, the harpoon digits and the root
 # leaves — and descends into them.
+# (The leader tree is the vim profile's popup; the standard profile's is
+# its Ctrl+K chords — `whichkey_standard_ctrl_k.test`.)
 write a.txt alpha
 open a.txt
+command editor.use_vim
 command whichkey.leader
 expect screen contains "+test"
 expect screen contains "+http"

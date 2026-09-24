@@ -650,6 +650,9 @@ test "the popup: backspace goes up a level, a non-character key leaves it open, 
     var app = try app_mod.App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
     defer app.deinit();
     _ = try app.openScratch();
+    // The tree is the vim profile's popup; the standard profile's is its
+    // `Ctrl+K` chords (the end of this test).
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
     try command.run(&app, .{ .static = .@"whichkey.leader" });
     try t.expect(app.overlay == .which_key);
     // Down into `+find`.
@@ -668,16 +671,19 @@ test "the popup: backspace goes up a level, a non-character key leaves it open, 
     try app.handle(.{ .key = app_mod.Key.named(.backspace) });
     try t.expect(app.overlay == .none);
     // A key no row carries says so instead of vanishing silently — and
-    // names the key this profile actually opens the popup with. The app
-    // above is the default (standard) profile, so that is `Ctrl+K`.
+    // names the key this profile actually opens the popup with: vim's
+    // `<leader>`, and the standard profile's `Ctrl+K`, whose popup is its
+    // `Ctrl+K` chords.
     try command.run(&app, .{ .static = .@"whichkey.leader" });
     try app.handle(.{ .key = app_mod.Key.char('\\') });
     try t.expect(app.overlay == .none);
-    try t.expectEqualStrings("no leader mapping: Ctrl+K \\", app.lastToast().?);
-    try command.run(&app, .{ .static = .@"editor.use_vim" });
-    try command.run(&app, .{ .static = .@"whichkey.leader" });
-    try app.handle(.{ .key = app_mod.Key.char('\\') });
     try t.expectEqualStrings("no leader mapping: <leader>\\", app.lastToast().?);
+    try command.run(&app, .{ .static = .@"editor.use_standard" });
+    try command.run(&app, .{ .static = .@"whichkey.leader" });
+    try t.expect(app.overlay == .none and app.chord.menu);
+    try app.handle(.{ .key = app_mod.Key.char('\\') });
+    try t.expect(app.chord.len == 0);
+    try t.expectEqualStrings("no Ctrl+K chord: Ctrl+K \\", app.lastToast().?);
 }
 
 test "an installed integration's chord is a row under +integrations, and a built-in row still wins" {
@@ -735,6 +741,7 @@ test "an installed integration's chord is a row under +integrations, and a built
     try t.expectEqual(kids.len, (try kidsWith(arena, &app.dyn_commands, "i", true)).len);
 
     // And the popup walks to it: <leader> i b runs the command.
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
     try command.run(&app, .{ .static = .@"whichkey.leader" });
     try app.handle(.{ .key = app_mod.Key.char('i') });
     try t.expectEqualStrings("i", app.overlay.which_key.slice());

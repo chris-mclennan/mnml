@@ -890,6 +890,9 @@ fn chordChain(app: *App, k: Key) Allocator.Error!bool {
             const plain_tail = k.code == .char and !k.mods.ctrl and !k.mods.alt and !k.mods.super;
             const dead_leader = !was_first and plain_tail and menu == null and leaderArmed(app);
             const tail: []const u8 = if (dead_leader) leaderTail(app, app.chord.seq[1..app.chord.len]) else "";
+            // The standard `Ctrl+K` says what its popup says for the same
+            // key (`chordMenuKey`): fast or slow, one chord, one answer.
+            const ctrl_k_head = app.chord.seq[0].eql(Chord.of(Key.ctrl('k')));
             app.chord.clear(app.gpa);
             if (menu) |hit| {
                 if (fallback) |fb| freeTarget(app, fb);
@@ -905,7 +908,9 @@ fn chordChain(app: *App, k: Key) Allocator.Error!bool {
             if (dead_leader) {
                 if (fallback) |fb| freeTarget(app, fb);
                 const vim = app.input_style == .vim;
-                app.toast("no leader mapping: {s}{s}{s}", .{ whichkey.leaderLabel(vim), whichkey.leaderGap(vim), tail });
+                if (!vim and ctrl_k_head) {
+                    app.toast("no Ctrl+K chord: Ctrl+K {s}", .{tail});
+                } else app.toast("no leader mapping: {s}{s}{s}", .{ whichkey.leaderLabel(vim), whichkey.leaderGap(vim), tail });
                 return true;
             }
             var fired = false;
