@@ -6021,6 +6021,11 @@ test "line blame: the cursor's line gets its commit on the worker, nothing while
     defer testing.allocator.free(abs);
     const pane = try f.app.openPath(abs);
     const lb = &f.app.git.line_blame;
+    // The open asked for a status snapshot. Let it land first: a blame
+    // answered before it is cached against HEAD "", and the snapshot
+    // then asks again (the test below) — a second entry this test did
+    // not ask for. On Linux the blame usually won that race.
+    try f.settle(2000);
 
     // Off by default: nothing is asked.
     try line_blame.request(&f.app, pane);
