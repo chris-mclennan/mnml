@@ -133,6 +133,7 @@ pub fn lookup(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!?E
         .git_palette => |part| panels.gitPalette(part),
         .font_update => panels.fontUpdate(),
         .ai_placeholder => panels.aiPlaceholder(),
+        .session_changes => panels.sessionChangesChip(),
         .welcome => |w| panels.welcome(w),
         .script_hit => |sh| try panels.scriptHit(app, arena, sh.pane, sh.id),
         .link => |l| try panels.link(arena, l.url),

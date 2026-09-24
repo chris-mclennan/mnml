@@ -484,6 +484,12 @@ pub fn paneKind(kind: std.meta.Tag(app_mod.Pane)) Entry {
             .keys = &.{.{ .command = .@"git.commit", .label = "Commit" }},
             .links = &.{ .{ .command = .{ .id = .@"git.commit", .label = "Commit" } }, .{ .command = .{ .id = .@"git.ai_commit", .label = "Write the message with AI" } }, ask },
         },
+        .session_changes => .{
+            .title = "what this session changed",
+            .body = "The files one Claude or Codex session changed since it started: dirty now and not at the start, written after it (`ui.session_changes`), or in a commit since its HEAD — Unstaged and Staged are what is still uncommitted, Committed since start what it already committed. Enter opens the file's diff, `s` / `u` / space stage and unstage, `c` or the Commit… row commits with the session's title as the message. A name in orange after a path is another session that touched the same file.",
+            .keys = &.{ .{ .chord = "Enter", .label = "Open the diff" }, .{ .chord = "s", .label = "Stage the file" }, .{ .chord = "c", .label = "Commit with the session's title" }, .{ .chord = "r", .label = "Read git again" } },
+            .links = &.{ .{ .command = .{ .id = .@"sessions.refresh", .label = "Refresh the sessions" } }, .{ .command = .{ .id = .@"git.status_pane", .label = "The whole repo's status" } }, ask },
+        },
         .diff => .{
             .title = "diff",
             .body = "A diff — a file against the index or a base, side by side or unified (`git.diff_toggle_view`). Select lines and stage, unstage, discard or stash just those; Enter on a hunk opens the file at that line. `]c` / `[c` step hunks under vim. Conflict hunks have their own rows — ours, theirs, both.",

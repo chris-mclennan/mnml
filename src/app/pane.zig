@@ -40,6 +40,7 @@ const flaky = @import("flaky.zig");
 const requests_pane = @import("requests.zig");
 const files_pane = @import("files_pane.zig");
 const zon_pane = @import("zon_pane.zig");
+const session_changes = @import("session_changes.zig");
 const DocStore = @import("doc_store.zig").DocStore;
 const accent_color = @import("../ui/accent_color.zig");
 
@@ -258,6 +259,10 @@ pub const Pane = union(enum) {
     files: FilesPane,
     /// A `.zon` file as a tree of fields, edited in place (`zon.view`).
     zon: ZonPane,
+    /// // changed (sessiondiff): what one AI session changed since it
+    /// started — the git status pane's component, scoped
+    /// (`sessions.changes`, `app/session_changes.zig`).
+    session_changes: session_changes.ChangesPane,
 
     /// `io` cancels the workers a dashboard pane owns before its arena goes.
     pub fn deinit(self: *Pane, gpa: Allocator, io: std.Io) void {
@@ -274,6 +279,7 @@ pub const Pane = union(enum) {
             .requests => |*rp| rp.deinit(),
             .files => |*f| f.deinit(),
             .zon => |*z| z.deinit(),
+            .session_changes => |*v| v.deinit(gpa),
             .editor => |*e| e.deinit(),
             .outline => |*o| o.deinit(),
             .md_preview => |*m| m.deinit(),
@@ -326,6 +332,7 @@ pub const Pane = union(enum) {
             .requests => |*rp| return rp.title(),
             .files => |*f| return f.title(),
             .zon => |*z| return z.title(),
+            .session_changes => |*v| return v.title,
         }
     }
 
@@ -333,7 +340,7 @@ pub const Pane = union(enum) {
         return switch (self.*) {
             .editor => |*e| e.buf.doc.dirty,
             .zon => |*z| z.changed,
-            .outline, .md_preview, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .sessions_table, .spend_report, .ai_usage, .grep, .debug, .request, .websocket, .browser, .script, .mount, .integrations, .ai_apply, .tests, .flaky, .requests, .files => false,
+            .outline, .md_preview, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .sessions_table, .spend_report, .ai_usage, .grep, .debug, .request, .websocket, .browser, .script, .mount, .integrations, .ai_apply, .tests, .flaky, .requests, .files, .session_changes => false,
         };
     }
 

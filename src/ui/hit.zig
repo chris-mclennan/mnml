@@ -213,6 +213,9 @@ pub const HitTarget = union(enum) {
     /// One of the SEARCH section's header flags — `Aa` / `\b` / `.*`
     /// (`ui/search_section_view.zig`); a press toggles it and reruns.
     search_chip: search_section_view.Flag,
+    /// // changed (sessiondiff): a SESSIONS card's `N files` chip, by the
+    /// card's pane — a press opens what that session changed.
+    session_changes: PaneId,
 
     /// `@tagName` plus the payload, colon-separated: `row:todos:3`,
     /// `editor_cell:0:12:4`, `scrollbar:panel:notes:v`.
@@ -223,6 +226,7 @@ pub const HitTarget = union(enum) {
             .tree_root, .tree_empty => |n| try w.print(":{d}", .{n}),
             .hover_popup => {},
             .font_update, .ai_placeholder => |n| try w.print(":{d}", .{n}),
+            .session_changes => |n| try w.print(":{d}", .{n}),
             .search_chip => |f| try w.print(":{s}", .{@tagName(f)}),
             .tree_chip => |c| try w.print(":{s}", .{@tagName(c)}),
             .info_view => |p| switch (p) {

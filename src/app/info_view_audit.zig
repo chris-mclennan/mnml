@@ -69,6 +69,7 @@ const ghost_chip = @import("ghost_chip.zig");
 const clock_mod = @import("clock.zig");
 const coverage = @import("coverage.zig");
 const now_playing = @import("now_playing.zig");
+const git_status_view = @import("../ui/git_status_view.zig");
 
 /// The allow-list, embedded so the unit test and the CLI read the same
 /// file the repo carries.
@@ -312,6 +313,17 @@ fn walkPanels(w: *Walk) Allocator.Error!void {
     try w.probe("font_update", .{ .font_update = 0 });
     try w.probe("ai_placeholder", .{ .ai_placeholder = 0 });
     inline for (comptime std.enums.values(hit.WelcomeRow.Kind)) |k| try w.probe("welcome:" ++ @tagName(k), .{ .welcome = .{ .kind = k, .idx = 0 } });
+    try w.probe("session_changes", .{ .session_changes = 0 });
+    // sessiondiff: a changes view's hint words and a row. The view has
+    // no session behind it here, so the row is the generic one; the
+    // unit tests reach the four row kinds.
+    const title = try w.app.gpa.dupe(u8, "changes \u{B7} audit");
+    const vid = w.app.panes.add(.{ .session_changes = .{ .session = 0, .token = 0, .title = title } }) catch |err| {
+        w.app.gpa.free(title);
+        return err;
+    };
+    inline for (comptime std.enums.values(git_status_view.Action)) |a| try w.probe("script_hit:session_changes:hint:" ++ @tagName(a), .{ .script_hit = .{ .pane = vid, .id = git_status_view.hintId(a) } });
+    try w.probe("script_hit:session_changes:row", .{ .script_hit = .{ .pane = vid, .id = 0 } });
     try w.probe("link", .{ .link = .{ .url = "https://example.com/" } });
     try w.probe("info_view:body", .{ .info_view = .body });
     try w.probe("info_view:kebab", .{ .info_view = .kebab });
@@ -578,6 +590,9 @@ fn walkMenus(w: *Walk) Allocator.Error!void {
         fn usageAccount(a: *App) Allocator.Error!void {
             return usage_pane.openAccountMenu(a, "work", 5, 5);
         }
+        fn sessionChanges(a: *App) Allocator.Error!void {
+            return @import("session_changes.zig").openRowMenu(a, 5, 5);
+        }
     };
     const openers = [_]Opener{
         .{ .name = "editor", .open = &Fns.editor },
@@ -623,6 +638,7 @@ fn walkMenus(w: *Walk) Allocator.Error!void {
         .{ .name = "tree_row", .open = &Fns.tree },
         .{ .name = "usage_pane", .open = &Fns.usagePane },
         .{ .name = "usage_account", .open = &Fns.usageAccount },
+        .{ .name = "session_changes", .open = &Fns.sessionChanges },
     };
     for (openers) |o| {
         w.closeOverlay();

@@ -92,6 +92,7 @@ const sticky = @import("sticky.zig");
 const outline = @import("outline.zig");
 const md_preview = @import("md_preview.zig");
 const zon_pane = @import("zon_pane.zig");
+const session_changes = @import("session_changes.zig");
 const zon_view = @import("../ui/zon_view.zig");
 const layout_mod = @import("layout.zig");
 const cmd_view = @import("cmd_view.zig");
@@ -1239,6 +1240,7 @@ pub fn paneIcon(app: *App, pane: *const app_mod.Pane, ascii: bool) icons.Icon {
         .diff => kindIcon(ascii, "\u{B1}", "\u{F0E7E}", p.orange),
         .git_graph => kindIcon(ascii, "\u{2387}", "\u{F02A2}", p.orange),
         .git_status => kindIcon(ascii, "\u{B1}", "\u{F1D2}", p.green),
+        .session_changes => kindIcon(ascii, "\u{B1}", "\u{F1D2}", p.yellow),
         .request => |*r| .{ .glyph = "", .color = request_pane.methodColor(&app.theme, r.methodName()) },
         .pty => |*pty_p| ptyIcon(app, pty_p, ascii),
         .ai, .ai_apply => kindIcon(ascii, "\u{2726}", "\u{F0E0A}", p.purple),
@@ -1598,6 +1600,7 @@ pub fn drawPaneContent(app: *App, ui: Ui, id: PaneId, full_rect: Rect) Allocator
         .list => |*l| drawListPane(app, l, ui, id, rect),
         .pty => |*p| try drawPty(app, ui, id, p, rect),
         .git_status => |*s| try git_app.drawStatusPane(app, ui, id, s, rect),
+        .session_changes => |*v| try session_changes.draw(app, ui, id, v, rect),
         .diff => |*d| git_app.drawDiffPane(app, ui, id, d, rect),
         .git_graph => |*g| git_app.drawGraphPane(app, ui, id, g, rect),
         .ai => |*a| drawAi(app, ui, id, a, rect),

@@ -578,6 +578,43 @@ pub const rows = [_]Row{
         .title = "Copy the commit's hash",
         .body = "Copies the full hash of the selected commit to the clipboard; the short form is the one in brackets.",
     } },
+    // ── sessiondiff: a SESSIONS card's row menu (titled `Session`) ──
+    .{ .menu = "Session", .label = "What did this session change", .command = .@"sessions.changes", .entry = .{
+        .title = "What did this session change",
+        .body = "Opens the files this session changed since its pane started, as a git status pane scoped to them: what is still uncommitted (unstaged and staged) and what it committed since. Enter diffs a file, `s` / `u` stage it, the Commit… row commits with the session's title as the message. A file another session also touched names that session.",
+        .links = &.{ .{ .command = .{ .id = .@"sessions.changes", .label = "Open it" } }, .{ .command = .{ .id = .@"sessions.refresh", .label = "Read git again" } } },
+    } },
+    // ── sessiondiff: the changes view's row menu (`Session changes`) ──
+    .{ .menu = "Session changes", .label = "Open diff", .entry = .{
+        .title = "Open the file's diff",
+        .body = "The row's change as a diff pane: an unstaged file against the index, a staged one the index against HEAD, and a file the session committed from the session's starting HEAD to now. An untracked file has no diff yet — stage it first. The same as Enter on the row.",
+        .links = &.{ .{ .command = .{ .id = .@"git.diff_file", .label = "Open it" } }, .{ .command = .{ .id = .@"git.diff_toggle_view", .label = "Split / unified" } } },
+    } },
+    .{ .menu = "Session changes", .label = "Open file", .entry = .{
+        .title = "Open the file",
+        .body = "Opens the row's file in an editor, from the session's own checkout — a session in a worktree opens the worktree's copy, not the workspace's. Nothing is staged or changed by opening it.",
+        .links = &.{.{ .command = .{ .id = .@"git.open_file", .label = "Open it" } }},
+    } },
+    .{ .menu = "Session changes", .label = "Stage", .entry = .{
+        .title = "Stage the file",
+        .body = "Adds the row's file to the index of the session's repo, as `s` does; it moves from Unstaged to Staged when the worker answers. A committed row has nothing to stage — the view says so.",
+        .links = &.{ .{ .command = .{ .id = .@"git.stage", .label = "Stage it" } }, .{ .command = .{ .id = .@"git.unstage", .label = "Unstage it" } } },
+    } },
+    .{ .menu = "Session changes", .label = "Unstage", .entry = .{
+        .title = "Unstage the file",
+        .body = "Takes the row's file back out of the index of the session's repo, as `u` does; the edit stays in the working tree. A row that is not staged only says so.",
+        .links = &.{ .{ .command = .{ .id = .@"git.unstage", .label = "Unstage it" } }, .{ .command = .{ .id = .@"git.stage", .label = "Stage it" } } },
+    } },
+    .{ .menu = "Session changes", .label = "Commit\u{2026}", .entry = .{
+        .title = "Commit the session's work",
+        .body = "Opens the commit prompt for the session's repo with the session's title already in it — Enter keeps it, typing replaces it. It commits what is staged there, so stage the session's rows first; anything else staged in that repo goes in too.",
+        .links = &.{.{ .command = .{ .id = .@"git.commit", .label = "Commit" } }},
+    } },
+    .{ .menu = "Session changes", .label = "Refresh", .entry = .{
+        .title = "Read git again",
+        .body = "Recomputes what every session changed through the git worker — the status, the commits since each session's HEAD, the mtimes. The view also follows the repo's status on its own; this is for a change git's status cannot see, such as a file touched again while already dirty.",
+        .links = &.{.{ .command = .{ .id = .@"sessions.refresh", .label = "Refresh" } }},
+    } },
 };
 
 /// The pty body's four `Dock <edge>` rows: where the pane is moved to

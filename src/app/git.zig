@@ -56,6 +56,7 @@ const conflicts = @import("conflicts.zig");
 const line_blame = @import("line_blame.zig");
 const clock = @import("clock.zig");
 const jobs = @import("jobs.zig");
+const session_changes = @import("session_changes.zig");
 
 /// A file the status pane lists (`ui/git_status_view.zig`): its
 /// porcelain letter and which section it sits in.
@@ -824,7 +825,14 @@ pub fn discover(app: *App) Allocator.Error!void {
         errdefer if (kept == null) r.destroy(app.io);
         try fresh.append(gpa, r);
     }
-    for (st.repos.items) |gone| gone.destroy(app.io);
+    // A repo asked for by path (a session worktree) outlives the walk.
+    for (st.repos.items) |gone| {
+        if (gone.kept) {
+            try fresh.append(gpa, gone);
+            continue;
+        }
+        gone.destroy(app.io);
+    }
     st.repos.deinit(gpa);
     st.repos = fresh;
     st.discovered = true;
@@ -1512,6 +1520,8 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
                 else => {},
             };
             app.hooks.emit(app, .{ .git_status = .{ .branch = s.status.branch orelse "", .dirty = s.status.changeCount() } });
+            // sessiondiff: a status that moved is a session that may have.
+            session_changes.onStatus(app, repo.path, s.status);
             try runPendingJump(app);
             // A line-blame answer is keyed on the HEAD it was asked at,
             // and this snapshot is where HEAD comes from: one asked
@@ -1782,6 +1792,9 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
             try app.clipboard.setYank(sha, false);
             app.toast("copied {s}", .{sha});
         },
+        // sessiondiff: what a session changed (`app/session_changes.zig`).
+        .session_base => |b| try session_changes.onBase(app, b.token, b.ok, b.head, b.dirty),
+        .session_changes => session_changes.onChanges(app, result),
     }
 }
 
@@ -1815,6 +1828,7 @@ pub fn afterChange(app: *App, repo: *client.Repo) Allocator.Error!void {
         .git_graph => |*g| if (g.repo == repo.id) refreshGraph(app, g) catch {},
         else => {},
     };
+    session_changes.onRepoChanged(app, repo.path);
 }
 
 fn clearStatus(app: *App) void {
@@ -3564,9 +3578,14 @@ pub const RowAction = enum { open, stage, unstage, discard };
 /// Open the row's diff (the index side for a staged row), or stage /
 /// unstage / discard its file through the worker.
 pub fn actOnRow(app: *App, row: Row, what: RowAction) CommandError!void {
-    const st = &app.git;
+    const repo = app.git.activeRepo() orelse return error.NoRepo;
+    return actOnRowIn(app, repo, row, what);
+}
+
+/// `actOnRow` in a repo other than the active one — a session's
+/// worktree, off its changes view (`app/session_changes.zig`).
+pub fn actOnRowIn(app: *App, repo: *client.Repo, row: Row, what: RowAction) CommandError!void {
     const gpa = app.gpa;
-    const repo = st.activeRepo() orelse return error.NoRepo;
     // A submodule whose changes are all inside it: the superproject has
     // no diff of its own to show and nothing to stage or discard (git
     // records a submodule's commit, and that did not move) — the row

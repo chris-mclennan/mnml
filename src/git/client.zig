@@ -20,6 +20,7 @@ const Allocator = std.mem.Allocator;
 const parse = @import("parse.zig");
 const remote_mod = @import("remote.zig");
 const sequence_editor = @import("sequence_editor.zig");
+const changes = @import("changes.zig");
 const event = @import("../core/event.zig");
 
 pub const ResetMode = enum {
@@ -284,6 +285,13 @@ pub const Job = union(enum) {
     /// `reset --soft / --mixed / --hard <rev>`. Undoable: HEAD and, for
     /// mixed / hard, a `stash create` of the tree are recorded first.
     reset: struct { mode: ResetMode, rev: []u8 },
+    /// A session pane started (`app/session_changes.zig`): `HEAD` and the
+    /// dirty paths of the repo at `dir`, for its base. `token` names the
+    /// record the answer is for. Runs `git -C dir`, so any repo's worker
+    /// can take it — a session worktree needs no worker of its own.
+    session_base: struct { token: u32, dir: []u8 },
+    /// What that session changed since its base (`changes.compute`).
+    session_changes: SessionChanges,
     /// Test only (`void` outside a test build): the worker stores 1 in
     /// the gate on arrival, sleeps 2 s, and drops the sleep's error on the
     /// floor — a job that swallows its cancellation, the shape `gitDirHas`
@@ -393,6 +401,8 @@ pub const Job = union(enum) {
             .amend_noedit => {},
             .amend_to => |s| gpa.free(s),
             .reset => |r| gpa.free(r.rev),
+            .session_base => |b| gpa.free(b.dir),
+            .session_changes => |c| c.deinit(gpa),
             .status, .branches, .list, .stage_all, .unstage_all, .fetch, .pull, .push, .push_tags, .undo, .redo, .head_sha => {},
             .test_swallow => {},
             .stash_lines => |l| {
@@ -415,6 +425,26 @@ pub const Job = union(enum) {
                 if (b.text) |t| gpa.free(t);
             },
         }
+    }
+};
+
+/// The `session_changes` job: the base a record holds, every string
+/// the job's own.
+pub const SessionChanges = struct {
+    token: u32,
+    dir: []u8,
+    /// The base `HEAD`; null when the session started on an unborn branch.
+    base: ?[]u8,
+    since_ms: i64,
+    /// Sorted (`changes.dirtyPaths`).
+    dirty_at_start: [][]u8,
+    mode: changes.Mode,
+
+    pub fn deinit(c: SessionChanges, gpa: Allocator) void {
+        gpa.free(c.dir);
+        if (c.base) |b| gpa.free(b);
+        for (c.dirty_at_start) |d| gpa.free(d);
+        gpa.free(c.dirty_at_start);
     }
 };
 
@@ -473,6 +503,10 @@ pub const Result = struct {
             prs: []parse.Pr,
             gh: bool,
         },
+        /// `ok` false: `dir` is not a repository any more (the base is
+        /// not taken, and the record says so).
+        session_base: struct { token: u32, ok: bool, head: []const u8, dirty: []const []const u8 },
+        session_changes: struct { token: u32, ok: bool, msg: []const u8 = "", branch: []const u8 = "", head: []const u8 = "", set: changes.Set = .{} },
     };
 
     pub fn create(gpa: Allocator, repo: u32) Allocator.Error!*Result {
@@ -602,6 +636,10 @@ pub const Repo = struct {
     /// Unique for the process; results name it.
     id: u32,
     is_workspace_root: bool,
+    /// A repo the app was asked for by path rather than found by the
+    /// discovery walk — a session worktree beside the workspace
+    /// (`app/session_changes.zig`). A re-discovery keeps it.
+    kept: bool = false,
     jobs: Io.Queue(Job),
     jobs_buf: []Job,
     group: Io.Group = .init,
@@ -941,6 +979,95 @@ fn gitWithStdin(repo: *Repo, io: Io, arena: Allocator, argv: []const []const u8,
         .stdout = stdout,
         .stderr = stderr,
     };
+}
+
+// ─── what a session changed (app/session_changes.zig) ───────────────────
+
+/// `rev-parse HEAD` and `status --porcelain -z -uall` under `dir`.
+/// `--no-optional-locks`: a background look never takes `index.lock`
+/// from under the session it is looking at.
+pub fn sessionBase(repo: *Repo, io: Io, arena: Allocator, token: u32, dir: []const u8) JobError!Result.Payload {
+    const st = try git(repo, io, arena, &.{ "--no-optional-locks", "-C", dir, "status", "--porcelain", "-z", "-uall" }, null);
+    if (!st.ok) return .{ .session_base = .{ .token = token, .ok = false, .head = "", .dirty = &.{} } };
+    const head = try git(repo, io, arena, &.{ "-C", dir, "rev-parse", "--verify", "-q", "HEAD" }, null);
+    const entries = try changes.parsePorcelainZ(arena, st.stdout);
+    return .{ .session_base = .{ .token = token, .ok = true, .head = if (head.ok) trimmed(head.stdout) else "", .dirty = try changes.dirtyPaths(arena, entries) } };
+}
+
+/// The files under `dir` a `stat` finds, by mtime in milliseconds.
+const DirMtime = struct {
+    io: Io,
+    dir: []const u8,
+
+    fn of(ctx: *const anyopaque, path: []const u8) ?i64 {
+        const self: *const DirMtime = @ptrCast(@alignCast(ctx));
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        const abs = std.fmt.bufPrint(&buf, "{s}/{s}", .{ self.dir, path }) catch return null;
+        const st = Io.Dir.cwd().statFile(self.io, abs, .{}) catch return null;
+        return st.mtime.toMilliseconds();
+    }
+};
+
+/// Past this many files the numstat runs without a pathspec (an argv
+/// that long is the kernel's problem) and its lines are matched instead.
+const numstat_pathspec_max: usize = 512;
+/// An untracked file's lines are counted up to this size.
+const untracked_count_max: usize = 1024 * 1024;
+
+/// The set (`changes.compute`) with its `+a −d`: the status now, the
+/// commits since the base, one `stat` per candidate, one numstat.
+pub fn sessionChanges(repo: *Repo, io: Io, arena: Allocator, c: SessionChanges) JobError!Result.Payload {
+    const st = try git(repo, io, arena, &.{ "--no-optional-locks", "-C", c.dir, "status", "--porcelain", "-z", "-uall" }, null);
+    if (!st.ok) return .{ .session_changes = .{ .token = c.token, .ok = false, .msg = st.reason() } };
+    const entries = try changes.parsePorcelainZ(arena, st.stdout);
+    const branch_out = try git(repo, io, arena, &.{ "-C", c.dir, "symbolic-ref", "--short", "-q", "HEAD" }, null);
+    const head_out = try git(repo, io, arena, &.{ "-C", c.dir, "rev-parse", "--verify", "-q", "HEAD" }, null);
+    const head = if (head_out.ok) trimmed(head_out.stdout) else "";
+    var committed: []const changes.Named = &.{};
+    if (head.len > 0) {
+        // A base the history no longer holds (a reset past it, a gc)
+        // lists nothing rather than the whole log.
+        const range: []const u8 = if (c.base) |b| try std.fmt.allocPrint(arena, "{s}..HEAD", .{b}) else "HEAD";
+        const log = try git(repo, io, arena, &.{ "-C", c.dir, "log", "--no-renames", "--name-status", "--format=", range, "--" }, null);
+        if (log.ok) committed = try changes.parseNameStatus(arena, log.stdout);
+    }
+    const dirty0 = try arena.alloc([]const u8, c.dirty_at_start.len);
+    for (dirty0, c.dirty_at_start) |*d, s| d.* = s;
+    const mt: DirMtime = .{ .io = io, .dir = c.dir };
+    var set = try changes.compute(arena, .{
+        .mode = c.mode,
+        .since_ms = c.since_ms,
+        .dirty_at_start = dirty0,
+        .status = entries,
+        .committed = committed,
+        .mtime = .{ .ctx = &mt, .f = &DirMtime.of },
+    });
+    if (set.files.len > 0) {
+        var args: std.ArrayListUnmanaged([]const u8) = .empty;
+        try args.appendSlice(arena, &.{ "-C", c.dir, "diff", "--numstat", "--no-renames", c.base orelse changes.empty_tree, "--" });
+        if (set.files.len <= numstat_pathspec_max) for (set.files) |f| try args.append(arena, f.path);
+        const ns = try git(repo, io, arena, args.items, null);
+        const stats: []const changes.NumStat = if (ns.ok) try changes.parseNumstat(arena, ns.stdout) else &.{};
+        var extra: std.ArrayListUnmanaged(changes.NumStat) = .empty;
+        for (set.files) |f| if (f.x == '?') {
+            var buf: [std.fs.max_path_bytes]u8 = undefined;
+            const abs = std.fmt.bufPrint(&buf, "{s}/{s}", .{ c.dir, f.path }) catch continue;
+            const text = Io.Dir.cwd().readFileAlloc(io, abs, arena, .limited(untracked_count_max)) catch |err| switch (err) {
+                error.Canceled => return error.Canceled,
+                error.OutOfMemory => return error.OutOfMemory,
+                else => continue,
+            };
+            try extra.append(arena, .{ .path = f.path, .added = changes.lineCount(text), .deleted = 0 });
+        };
+        changes.applyNumstat(&set, stats, extra.items);
+    }
+    return .{ .session_changes = .{
+        .token = c.token,
+        .ok = true,
+        .branch = if (branch_out.ok) trimmed(branch_out.stdout) else "",
+        .head = head,
+        .set = set,
+    } };
 }
 
 fn trimmed(s: []const u8) []const u8 {
@@ -1630,6 +1757,8 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             const out = try git(repo, io, arena, &.{ "rev-parse", "HEAD" }, null);
             if (out.ok) r.payload = .{ .head_sha = trimmed(out.stdout) } else r.payload = .{ .op = .{ .desc = "no HEAD (not a git repo?)", .ok = false, .refresh = false } };
         },
+        .session_base => |b| r.payload = try sessionBase(repo, io, arena, b.token, b.dir),
+        .session_changes => |c| r.payload = try sessionChanges(repo, io, arena, c),
         .stash_lines => |l| try stashLines(repo, io, r, l.patch, l.reverse, l.msg, l.desc),
         .commit_lines => |l| try commitLines(repo, io, r, l.patch, l.msg),
         .conflict_text => |path| {
@@ -2259,4 +2388,103 @@ test "destroy returns when the worker swallowed its cancellation and parked on t
     if (!returned) repo.jobs.close(io);
     th.join();
     try testing.expect(returned);
+}
+
+/// `argv` in `dir`, for the session-changes test's fake repo.
+fn shIn(dir: []const u8, argv: []const []const u8) !void {
+    const res = try std.process.run(testing.allocator, testing.io, .{ .argv = argv, .cwd = .{ .path = dir } });
+    defer testing.allocator.free(res.stdout);
+    defer testing.allocator.free(res.stderr);
+    if (res.term != .exited or res.term.exited != 0) {
+        std.debug.print("{s} failed: {s}\n", .{ argv[0], res.stderr });
+        return error.CommandFailed;
+    }
+}
+
+test "what a session changed, over a fake repo: a file touched after the start is in, one dirty before it is out, a commit since it is in, a second session's overlap is marked" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const io = testing.io;
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(io, &buf);
+    const root = buf[0..n];
+    const g = [_][]const u8{ "git", "-c", "user.email=t@mnml.dev", "-c", "user.name=t", "-c", "commit.gpgsign=false" };
+    try shIn(root, &.{ "git", "init", "-q", "-b", "main" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "seed.txt", .data = "seed\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "old.txt", .data = "old\n" });
+    try shIn(root, &.{ "git", "add", "-A" });
+    try shIn(root, &(g ++ [_][]const u8{ "commit", "-q", "-m", "first" }));
+    // Dirty before the session: an edit and a new file, dated long ago.
+    try tmp.dir.writeFile(io, .{ .sub_path = "old.txt", .data = "old, edited before\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "pre.txt", .data = "pre\n" });
+    try shIn(root, &.{ "touch", "-t", "202001010000", "old.txt", "pre.txt" });
+
+    const repo = try Repo.create(gpa, root, "fake", 1, true);
+    defer repo.destroy(io);
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The base, as the pane's start takes it.
+    const base = (try sessionBase(repo, io, arena, 7, root)).session_base;
+    try testing.expect(base.ok);
+    try testing.expectEqual(@as(u32, 7), base.token);
+    try testing.expectEqual(@as(usize, 40), base.head.len);
+    try testing.expectEqual(@as(usize, 2), base.dirty.len);
+    try testing.expectEqualStrings("old.txt", base.dirty[0]);
+    try testing.expectEqualStrings("pre.txt", base.dirty[1]);
+    // A minute of slack: a filesystem that keeps whole seconds still
+    // dates the session's writes after the start.
+    const since_ms = Io.Timestamp.now(io, .real).toMilliseconds() - 60_000;
+
+    // The session: a new file, a commit, and pre.txt touched again.
+    try tmp.dir.writeFile(io, .{ .sub_path = "new.txt", .data = "one\ntwo\nthree\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "c.txt", .data = "committed\n" });
+    try shIn(root, &.{ "git", "add", "c.txt" });
+    try shIn(root, &(g ++ [_][]const u8{ "commit", "-q", "-m", "by the session" }));
+    try tmp.dir.writeFile(io, .{ .sub_path = "pre.txt", .data = "pre, and the session too\n" });
+
+    const job = struct {
+        fn make(dir: []const u8, head: []const u8, since: i64, dirty: []const []const u8, mode: changes.Mode) !SessionChanges {
+            const a = testing.allocator;
+            const d = try a.alloc([]u8, dirty.len);
+            for (d, dirty) |*o, s| o.* = try a.dupe(u8, s);
+            return .{ .token = 7, .dir = try a.dupe(u8, dir), .base = try a.dupe(u8, head), .since_ms = since, .dirty_at_start = d, .mode = mode };
+        }
+    };
+    const both_job = try job.make(root, base.head, since_ms, base.dirty, .both);
+    defer both_job.deinit(gpa);
+    const got = (try sessionChanges(repo, io, arena, both_job)).session_changes;
+    try testing.expect(got.ok);
+    try testing.expectEqualStrings("main", got.branch);
+    const set = got.set;
+    try testing.expectEqual(@as(usize, 3), set.count());
+    try testing.expect(set.find("old.txt") == null);
+    try testing.expect(set.find("seed.txt") == null);
+    try testing.expect(set.find("new.txt").?.unstaged());
+    try testing.expect(set.find("c.txt").?.committed);
+    try testing.expect(!set.find("c.txt").?.uncommitted);
+    try testing.expectEqual(@as(u8, 'A'), set.find("c.txt").?.c);
+    try testing.expect(set.find("pre.txt").?.uncommitted);
+    // +a −d: c.txt's one line, new.txt's three (untracked, counted),
+    // pre.txt against the base (`pre.txt` is untracked there too).
+    try testing.expectEqual(@as(u32, 3), set.find("new.txt").?.added);
+    try testing.expectEqual(@as(u32, 1), set.find("c.txt").?.added);
+    try testing.expectEqual(@as(u64, 5), set.added);
+
+    // git alone: pre.txt was dirty at the start, so it is out.
+    const git_job = try job.make(root, base.head, since_ms, base.dirty, .git);
+    defer git_job.deinit(gpa);
+    const g_set = (try sessionChanges(repo, io, arena, git_job)).session_changes.set;
+    try testing.expectEqual(@as(usize, 2), g_set.count());
+    try testing.expect(g_set.find("pre.txt") == null);
+
+    // A second session on the same repo that also committed c.txt.
+    var theirs_files = [_]changes.File{.{ .path = "c.txt", .committed = true }};
+    const marks = try changes.overlaps(arena, root, set, &.{.{ .root = root, .title = "the other one", .set = .{ .files = &theirs_files } }});
+    for (set.files, marks) |f, m| {
+        if (std.mem.eql(u8, f.path, "c.txt")) try testing.expectEqualStrings("the other one", m.?) else try testing.expect(m == null);
+    }
 }
