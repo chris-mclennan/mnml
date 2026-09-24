@@ -240,6 +240,12 @@ pub fn writeJsonEvent(w: *Io.Writer, pairs: []const Pair) Io.Writer.Error!void {
     try w.writeByte('}');
 }
 
+/// The line events.jsonl carries for an IPC-registered command that was
+/// invoked (`docs/BRIDGE.md`): `{"event":"plugin-command","id":…}`.
+pub fn pluginCommandEvent(gpa: Allocator, id: []const u8) Allocator.Error![]u8 {
+    return jsonEvent(gpa, &.{ .{ "event", "plugin-command" }, .{ "id", id } });
+}
+
 pub fn jsonEvent(gpa: Allocator, pairs: []const Pair) Allocator.Error![]u8 {
     var a: Io.Writer.Allocating = .init(gpa);
     errdefer a.deinit();

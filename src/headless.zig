@@ -156,7 +156,7 @@ const Loop = struct {
     /// since the last turn, so the integration that owns it can react.
     fn drainPluginEvents(self: *Loop, arena: Allocator) !void {
         for (try self.driver.pluginInvocations(arena)) |id| {
-            self.ch.appendEvent(try screen_mod.jsonEvent(arena, &.{ .{ "event", "plugin-command" }, .{ "id", id } }));
+            self.ch.appendEvent(try screen_mod.pluginCommandEvent(arena, id));
         }
     }
 

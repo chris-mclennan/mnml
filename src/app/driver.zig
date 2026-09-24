@@ -35,6 +35,31 @@ pub fn endSession(app: *App) void {
     app.hooks.emit(app, .exit);
 }
 
+/// The IPC-registered commands invoked since the last call, oldest
+/// first, copied onto `a` — and the App's list emptied. The one drain
+/// every loop goes through: the headless loop's (through the driver's
+/// `pluginInvocations`) and the terminal loop's (`emitPluginEvents`).
+pub fn takePluginInvocations(app: *App, a: Allocator) Allocator.Error![]const []const u8 {
+    const out = try a.alloc([]const u8, app.plugin_invocations.items.len);
+    for (app.plugin_invocations.items, 0..) |id, i| out[i] = try a.dupe(u8, id);
+    for (app.plugin_invocations.items) |id| app.gpa.free(id);
+    app.plugin_invocations.clearRetainingCapacity();
+    return out;
+}
+
+/// The terminal loop's turn: every invocation since the last one is a
+/// `plugin-command` line in events.jsonl (`docs/BRIDGE.md`), so the
+/// integration that registered the command can react — and with no
+/// channel open they are dropped, so the list never outgrows a turn.
+/// Only the headless loop wrote them before; under the real UI nothing
+/// was written and the list grew for the life of the process.
+pub fn emitPluginEvents(app: *App, ch: ?*ipc.Channel, arena: Allocator) Allocator.Error!void {
+    if (app.plugin_invocations.items.len == 0) return;
+    const ids = try takePluginInvocations(app, arena);
+    const c = ch orelse return;
+    for (ids) |id| c.appendEvent(try screen_mod.pluginCommandEvent(arena, id));
+}
+
 pub const AppDriver = struct {
     gpa: Allocator,
     app: App,
@@ -359,12 +384,7 @@ pub const AppDriver = struct {
     }
 
     fn vPluginInvocations(p: *anyopaque, a: Allocator) Error![]const []const u8 {
-        const app = &cast(p).app;
-        const out = try a.alloc([]const u8, app.plugin_invocations.items.len);
-        for (app.plugin_invocations.items, 0..) |id, i| out[i] = try a.dupe(u8, id);
-        for (app.plugin_invocations.items) |id| app.gpa.free(id);
-        app.plugin_invocations.clearRetainingCapacity();
-        return out;
+        return takePluginInvocations(&cast(p).app, a);
     }
 
     fn vRequestQuit(p: *anyopaque, restart: bool) void {
@@ -441,6 +461,55 @@ pub var default_factory: AppFactory = .{};
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+
+test "driver: the terminal loop's turn writes each IPC command invoked as a plugin-command line and empties the list; with no channel it only empties it" {
+    const gpa = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const ws = pbuf[0..try tmp.dir.realPath(std.testing.io, &pbuf)];
+    var app = try App.initWith(gpa, std.testing.io, .{ .workspace = ws, .cols = 80, .rows = 24 });
+    defer app.deinit();
+    var ch = try ipc.Channel.init(gpa, std.testing.io, ws, .{});
+    defer ch.deinit();
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    _ = try app.dyn_commands.register(.{ .id = "jira.pick", .runner = .ipc, .owner = .ipc });
+    try command.runNamed(&app, "jira.pick");
+    try command.runNamed(&app, "jira.pick");
+    try emitPluginEvents(&app, &ch, arena);
+    try std.testing.expectEqual(@as(usize, 0), app.plugin_invocations.items.len);
+    const events_path = try std.fs.path.join(arena, &.{ ch.dirPath(), "events.jsonl" });
+    const log = try Io.Dir.cwd().readFileAlloc(std.testing.io, events_path, arena, .limited(1 << 16));
+    try std.testing.expectEqual(@as(usize, 2), std.mem.count(u8, log, "{\"event\":\"plugin-command\",\"id\":\"jira.pick\"}"));
+    // A turn with nothing invoked writes nothing.
+    try emitPluginEvents(&app, &ch, arena);
+    const again = try Io.Dir.cwd().readFileAlloc(std.testing.io, events_path, arena, .limited(1 << 16));
+    try std.testing.expectEqual(log.len, again.len);
+    // No channel (IPC off): drained all the same.
+    try command.runNamed(&app, "jira.pick");
+    try emitPluginEvents(&app, null, arena);
+    try std.testing.expectEqual(@as(usize, 0), app.plugin_invocations.items.len);
+}
+
+test "the terminal loop drains the plugin invocations every turn, through the shared driver path" {
+    // `tui/loop.zig`'s `run` needs a terminal, so this reads its source:
+    // the call is what the headless loop has always made and the
+    // terminal loop never did.
+    const src = @embedFile("../tui/loop.zig");
+    try std.testing.expect(std.mem.indexOf(u8, src, "try app_driver.emitPluginEvents(&app, ") != null);
+}
+
+test "ackPluginCommand keeps at most plugin_invocations_max undrained, dropping the oldest" {
+    const gpa = std.testing.allocator;
+    var app = try App.initWith(gpa, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    defer app.deinit();
+    var buf: [16]u8 = undefined;
+    for (0..App.plugin_invocations_max + 10) |i| try app.ackPluginCommand(try std.fmt.bufPrint(&buf, "p.{d}", .{i}));
+    try std.testing.expectEqual(@as(usize, App.plugin_invocations_max), app.plugin_invocations.items.len);
+    try std.testing.expectEqualStrings("p.10", app.plugin_invocations.items[0]);
+}
 
 test "driver: a script command that errors fails the call, so an IPC ack and a .test step see it" {
     // `command.run` toasted the error and the driver swallowed it, so

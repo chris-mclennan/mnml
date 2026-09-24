@@ -2418,12 +2418,18 @@ pub const App = struct {
     }
 
     /// An IPC-registered command was invoked: the host learns about it
-    /// through events.jsonl (`pluginInvocations`).
+    /// through events.jsonl — each loop drains the list every turn
+    /// (`driver.takePluginInvocations`). Bounded all the same: past
+    /// `plugin_invocations_max` undrained the oldest goes, so nothing a
+    /// loop fails to drain can grow for the life of the process.
     pub fn ackPluginCommand(self: *App, id: []const u8) command.CommandError!void {
         const copy = try self.gpa.dupe(u8, id);
         errdefer self.gpa.free(copy);
+        if (self.plugin_invocations.items.len >= plugin_invocations_max) self.gpa.free(self.plugin_invocations.orderedRemove(0));
         try self.plugin_invocations.append(self.gpa, copy);
     }
+
+    pub const plugin_invocations_max = 256;
 
     // ─── panes ───
 

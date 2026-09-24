@@ -50,6 +50,11 @@ pub const Channel = struct {
     /// Set once an `"event":"exit"` line is written; `deinit` writes a
     /// death certificate otherwise.
     exit_event_written: bool = false,
+    /// events.jsonl is appended from two tasks under the terminal loop —
+    /// the command tail's acks and the loop's own `plugin-command`
+    /// lines — and an append is "read the length, write there": one
+    /// line at a time, or two land on the same offset.
+    append_lock: Io.Mutex = .init,
 
     pub const InitError = Allocator.Error || Io.Dir.CreateDirPathError || Io.File.OpenError || Io.File.Writer.Error;
 
@@ -198,6 +203,8 @@ pub const Channel = struct {
 
     /// Append one JSON line to events.jsonl.
     pub fn appendEvent(self: *Channel, json_line: []const u8) void {
+        self.append_lock.lockUncancelable(self.io);
+        defer self.append_lock.unlock(self.io);
         if (std.mem.indexOf(u8, json_line, "\"event\":\"exit\"") != null) self.exit_event_written = true;
         appendSecret(self.io, self.events_path, json_line) catch {};
     }
