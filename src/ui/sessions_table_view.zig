@@ -292,9 +292,15 @@ fn paintRow(ui: Ui, r: Rect, row: Row, selected: bool) void {
             if (cols.id) cx += ui.putStr(cx, r.y, col_id, ui.fmt("{s:>9}", .{it.session_id[0..@min(8, it.session_id.len)]}), num_style);
             if (cols.tokens) {
                 var tb: [16]u8 = undefined;
-                cx += ui.putStr(cx, r.y, col_tokens, ui.fmt("{s:>8}", .{transcript.fmtTokens(&tb, it.tokens)}), num_style);
+                // `+`: the transcript is longer than the totals read.
+                const plus = if (it.totals_capped) "+" else "";
+                cx += ui.putStr(cx, r.y, col_tokens, ui.fmt("{s:>8}", .{ui.fmt("{s}{s}", .{ transcript.fmtTokens(&tb, it.tokens), plus })}), num_style);
             }
-            if (cols.cost) cx += ui.putStr(cx, r.y, col_cost, ui.fmt("{s:>9}", .{ui.fmt("${d:.2}", .{it.cost_usd})}), num_style);
+            if (cols.cost) {
+                // A model with no price: `n/a`, never a $0.00 that reads as free.
+                const cost = if (!it.cost_known) "n/a" else ui.fmt("${d:.2}{s}", .{ it.cost_usd, if (it.totals_capped) "+" else "" });
+                cx += ui.putStr(cx, r.y, col_cost, ui.fmt("{s:>9}", .{cost}), num_style);
+            }
             if (cols.age) cx += ui.putStr(cx, r.y, col_age, ui.fmt("{s:>6}", .{list_panel.ageText(ui, ui_now_s, it.last_activity_s)}), num_style);
             if (cols.dirty) {
                 const d = if (it.dirty) |n| (if (n > 0) ui.fmt("{s}{d}", .{ if (ui.ascii) "*" else "●", n }) else "") else "";

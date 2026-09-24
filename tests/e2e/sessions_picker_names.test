@@ -1,0 +1,29 @@
+# env: HOME=${MNML_E2E_WORKSPACE}/home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# `ai.session_picker` names its rows for people: the session's name
+# (its card's and tab's — the first prompt here, not the last), and,
+# muted, a live mark for the one running in a pane, how long ago it last
+# moved, its branch and its short id — never the bare UUID and raw epoch
+# seconds.
+# Enter on the live one shows its pane rather than a second resume.
+write bin/claude #!/bin/bash\nsid=""\nwhile [ $# -gt 0 ]; do case "$1" in --session-id|--resume) sid=$2; shift 2;; *) shift;; esac; done\nprintf '%s\\n' "$sid" >> argv.log\nd="$HOME/.claude/projects/$(pwd | tr '/.' '--')"; mkdir -p "$d"\nprintf '{"type":"user","cwd":"%s","gitBranch":"main","message":{"role":"user","content":"live work in progress"}}\\n' "$(pwd)" > "$d/$sid.jsonl"\nprintf 'fake session up\\n'\nexec sleep 600
+shell chmod +x bin/claude
+shell d="home/.claude/projects/$(pwd | tr '/.' '--')"; mkdir -p "$d"; f="$d/e2e0000a-0000-4000-8000-0000000000b1.jsonl"; echo '{"type":"user","cwd":"'"$(pwd)"'","gitBranch":"feat-x","message":{"role":"user","content":"task 16: tidy module 16"}}' > "$f"; echo '{"type":"user","cwd":"'"$(pwd)"'","gitBranch":"feat-x","message":{"role":"user","content":"and the docs too"}}' >> "$f"; touch -t "$(date -v-2H +%Y%m%d%H%M.%S)" "$f"
+write a.txt "alpha\n"
+open a.txt
+command ai.claude_code_new
+wait 1000
+expect file argv.log contains "-"
+command ai.session_picker
+wait 300
+expect screen contains "task 16: tidy module 16"
+expect screen lacks "and the docs too"
+expect screen contains "2h ago · feat-x · e2e0000a"
+expect screen contains "live work in progress"
+expect screen contains "● live · just now · main"
+expect screen lacks "e2e0000a-0000-4000-8000-0000000000b1"
+# Newest first: the live session is the cursor row.
+key enter
+wait 500
+expect screen contains "already running"
+shell test $(wc -l < argv.log) -eq 1

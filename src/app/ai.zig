@@ -1504,14 +1504,39 @@ pub fn chipClick(app: *App, product: Product) CommandError!void {
     } });
 }
 
+/// `ai.claude_code` — `SPC a c`, the palette, the dock's Claude item: a
+/// NEW session every time, one already running or not (the user runs
+/// several at once). Going back to a running one is
+/// `ai.claude_code_focus`, the chip menu's "Toggle existing" row.
 fn claudeCode(app: *App) CommandError!void {
     _ = try openSession(app, .claude, null);
 }
 
-/// Focus the running session, or start one.
+/// The live session of `product` focused most recently (the pane MRU),
+/// else the first one open.
+fn lastSession(app: *App, product: Product) ?PaneId {
+    for (app.pane_mru.items) |id| {
+        const p = app.panes.pty(id) orelse continue;
+        if (p.exit == null and p.argv.len > 0 and launch_profiles.isProductArgv(app, p.argv[0], product)) return id;
+    }
+    return findSession(app, product);
+}
+
+/// `ai.claude_code_focus` — the chip menu's "Toggle existing Claude
+/// Code pane": the running session focused last, shown and focused on
+/// the tab page that holds it; when it already has the focus, back to
+/// the pane focused before it. Only with none running does one start.
 fn claudeCodeFocus(app: *App) CommandError!void {
-    if (findSession(app, .claude)) |id| return app.showPane(id);
-    _ = try openSession(app, .claude, null);
+    const id = lastSession(app, .claude) orelse {
+        _ = try openSession(app, .claude, null);
+        return;
+    };
+    if (app.active == id and app.focus == .pane) {
+        const prev = app.prev_active orelse return;
+        if (prev == id or app.panes.get(prev) == null or app.layouts.pageOf(prev) == null) return;
+        return app.showPane(prev);
+    }
+    app.showPane(id);
 }
 
 fn claudeCodeNew(app: *App) CommandError!void {
@@ -1579,22 +1604,55 @@ fn codexNewBottom(app: *App) CommandError!void {
 
 /// `ai.session_picker`: this workspace's transcripts, newest first;
 /// the pick resumes it.
+/// A picker row's name: the one its card and tab read. A live session's
+/// is `sessions.nameOf` (the rename, the child's title, the first
+/// prompt); one with no pane goes by the rename, else its first prompt,
+/// else the table's `displayName` (the last prompt, the short id).
+fn pickerName(app: *App, item: @import("../sessions.zig").Item, live: ?PaneId) []const u8 {
+    const sessions = @import("../sessions.zig");
+    if (live) |pid| if (sessions.paneName(app, pid)) |n| if (n.from != .cli) return n.text;
+    if (app.sessions.alias(item.session_id)) |a| return a;
+    if (item.first_user_msg) |m| {
+        const line = std.mem.trim(u8, m, " \t\r\n");
+        if (line.len > 0) return line;
+    }
+    return sessions.displayName(app, item);
+}
+
+/// Transcripts the picker parses for a name when the scan has not
+/// listed them — the newest this many; older rows go by their short id.
+/// Each read is the file's last `picker_tail` bytes, on the UI thread.
+const picker_parse_cap: usize = 40;
+const picker_tail: usize = 64 * 1024;
+
+/// `ai.session_picker`: this workspace's Claude transcripts, newest
+/// first. A row is the session's name — the one its card and tab give
+/// it (`pickerName`, `sessions.nameOf` for a live one) — and, muted,
+/// whether it is running in a pane
+/// now, how long ago it last moved, its branch and its short id. Enter
+/// resumes it, or shows its pane when it is live (`sessionAccept`).
 fn sessionPicker(app: *App) CommandError!void {
     const gpa = app.gpa;
-    const home = app.homeDir() orelse return app.diag.fail(app.frame.allocator(), "no home directory", .{});
+    const sessions = @import("../sessions.zig");
+    const home = sessions.envHome(app) orelse return app.diag.fail(app.frame.allocator(), "no home directory", .{});
     const arena = app.frame.allocator();
-    const enc = try encodeWorkspace(arena, app.workspace);
-    const dir_path = try std.fs.path.join(arena, &.{ home, ".claude", "projects", enc });
-    var dir = Io.Dir.cwd().openDir(app.io, dir_path, .{ .iterate = true }) catch return app.diag.fail(arena, "no Claude sessions for this workspace yet", .{});
+    // Claude names the directory for its own cwd, which the OS reports
+    // resolved (`/private/var/…` for a workspace opened as `/var/…`):
+    // the resolved spelling first, then the one in hand.
+    const spellings = [_][]const u8{ try @import("session.zig").canonicalWorkspace(app, arena), app.workspace };
+    var dir = for (spellings) |ws| {
+        const dir_path = try std.fs.path.join(arena, &.{ home, ".claude", "projects", try encodeWorkspace(arena, ws) });
+        break Io.Dir.cwd().openDir(app.io, dir_path, .{ .iterate = true }) catch continue;
+    } else return app.diag.fail(arena, "no Claude sessions for this workspace yet", .{});
     defer dir.close(app.io);
-    const Entry = struct { name: []u8, mtime: i64 };
+    const Entry = struct { name: []u8, file: []u8, mtime: i64 };
     var found: std.ArrayListUnmanaged(Entry) = .empty;
     defer found.deinit(arena);
     var it = dir.iterate();
     while (it.next(app.io) catch null) |entry| {
         if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".jsonl")) continue;
         const st = dir.statFile(app.io, entry.name, .{}) catch continue;
-        try found.append(arena, .{ .name = try arena.dupe(u8, entry.name[0 .. entry.name.len - ".jsonl".len]), .mtime = st.mtime.toSeconds() });
+        try found.append(arena, .{ .name = try arena.dupe(u8, entry.name[0 .. entry.name.len - ".jsonl".len]), .file = try arena.dupe(u8, entry.name), .mtime = st.mtime.toSeconds() });
     }
     if (found.items.len == 0) return app.diag.fail(arena, "no Claude sessions for this workspace yet", .{});
     std.mem.sort(Entry, found.items, {}, struct {
@@ -1604,21 +1662,74 @@ fn sessionPicker(app: *App) CommandError!void {
     }.lt);
     var labels: std.ArrayListUnmanaged([]u8) = .empty;
     var details: std.ArrayListUnmanaged([]u8) = .empty;
+    var values: std.ArrayListUnmanaged([]u8) = .empty;
     errdefer {
         for (labels.items) |l| gpa.free(l);
         labels.deinit(gpa);
         for (details.items) |d| gpa.free(d);
         details.deinit(gpa);
+        for (values.items) |v| gpa.free(v);
+        values.deinit(gpa);
     }
-    for (found.items) |f| {
-        try labels.append(gpa, try gpa.dupe(u8, f.name));
-        try details.append(gpa, try std.fmt.allocPrint(gpa, "{d}", .{f.mtime}));
+    const now = Io.Timestamp.now(app.io, .real).toSeconds();
+    for (found.items, 0..) |f, n| {
+        // The scan's row when it has one; else the transcript's tail,
+        // parsed by the scan's own parser, for the newest few.
+        var item: sessions.Item = app.sessions.itemOf(f.name) orelse .{
+            .source = .claude,
+            .session_id = f.name,
+            .workspace = std.fs.path.basename(app.workspace),
+            .cwd = null,
+            .transcript_path = "",
+            .state = .done,
+            .pid = null,
+            .last_activity_s = f.mtime,
+            .last_user_msg = null,
+            .last_assistant_msg = null,
+        };
+        if (app.sessions.itemOf(f.name) == null and n < picker_parse_cap) {
+            if (transcript.readTail(gpa, app.io, dir, f.file, picker_tail)) |tail| {
+                defer gpa.free(tail);
+                const stats = try transcript.parseClaude(arena, tail);
+                item.last_user_msg = stats.last_user_msg;
+                item.first_user_msg = stats.first_user_msg;
+                item.git_branch = stats.git_branch;
+            } else |err| if (err == error.OutOfMemory) return error.OutOfMemory;
+            // A transcript longer than the tail: its first prompt is the
+            // head's, as the scan reads it.
+            if (item.first_user_msg == null) item.first_user_msg = agents.firstPrompt(gpa, app.io, arena, dir, f.file, .claude) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => null,
+            };
+        }
+        const live_pane = pty_pane.liveSessionPane(app, f.name);
+        const live = live_pane != null;
+        const age = @import("../ui/files_view.zig").humanAge(arena, f.mtime, now);
+        const short = f.name[0..@min(f.name.len, 8)];
+        try labels.append(gpa, try gpa.dupe(u8, pickerName(app, item, live_pane)));
+        try details.append(gpa, if (item.git_branch) |b|
+            try std.fmt.allocPrint(gpa, "{s}{s} · {s} · {s}", .{ if (live) "● live · " else "", age, b, short })
+        else
+            try std.fmt.allocPrint(gpa, "{s}{s} · {s}", .{ if (live) "● live · " else "", age, short }));
+        try values.append(gpa, try gpa.dupe(u8, f.name));
     }
     try cmd_picker.openPickerWith(app, "Claude sessions (this workspace)", .ai_session, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0), try details.toOwnedSlice(gpa), &.{});
+    const owned = try values.toOwnedSlice(gpa);
+    if (app.overlay == .picker) app.overlay.picker.values = owned else {
+        for (owned) |v| gpa.free(v);
+        gpa.free(owned);
+    }
 }
 
-/// The session picker's accept: `claude --resume <id>`.
+/// The session picker's accept: `claude --resume <id>` — or, for a
+/// session already running in a pane, that pane: a second resume of a
+/// live session is two processes on one conversation.
 pub fn sessionAccept(app: *App, session_id: []const u8) CommandError!void {
+    if (pty_pane.liveSessionPane(app, session_id)) |live| {
+        app.showPane(live);
+        app.toast("session already running — showing its pane", .{});
+        return;
+    }
     const argv = try cli.claudeResumeArgv(app.frame.allocator(), session_id);
     _ = try pty_pane.open(app, .{ .argv = argv, .label = "claude", .placement = .right, .kind = .command });
 }
@@ -2154,6 +2265,22 @@ test "the setup picker lists the backends and Esc leaves the config alone; a pic
     try app.handle(.{ .key = Key.named(.down) });
     try app.handle(.{ .key = Key.named(.enter) });
     try t.expectEqualStrings(suggest.migration_note, app.lastToast().?);
+}
+
+test "the session picker's accept on a session already running shows its pane — no second `--resume` of a live id" {
+    // sess-resume-live-session-twice.
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const live = try pty_pane.open(&app, .{ .argv = &.{ "/bin/sh", "-c", "sleep 30", "--resume", "sid-live" }, .label = "claude", .kind = .command, .placement = .tab });
+    const other = try app.openScratch();
+    try t.expectEqual(other, app.active.?);
+    const before = app.panes.count();
+    try sessionAccept(&app, "sid-live");
+    try t.expectEqual(before, app.panes.count());
+    try t.expectEqual(live, app.active.?);
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "already running") != null);
 }
 
 test "every ai / agents / cloud_agents id has a runner" {

@@ -1682,7 +1682,7 @@ fn openAiLauncherMenu(app: *App, codex: bool, x: u16, y: u16) Allocator.Error!vo
         .{ .label = "Bake AI glyphs into MnmlSymbols", .action = .{ .command = .@"integrations.bake_ai_glyphs" }, .separator_before = true },
         .{ .label = "Edit Codex glyph…", .action = .{ .command = .@"integrations.edit_codex_glyph" } },
     } else &.{
-        .{ .label = "Toggle existing Claude Code pane", .action = .{ .command = .@"ai.claude_code" } },
+        .{ .label = "Toggle existing Claude Code pane", .action = .{ .command = .@"ai.claude_code_focus" } },
         .{ .label = "New Claude Code session in left half", .action = .{ .command = .@"ai.claude_code_new_left" }, .separator_before = true },
         .{ .label = "New Claude Code session in right half", .action = .{ .command = .@"ai.claude_code_new_right" } },
         .{ .label = "New Claude Code session in top half", .action = .{ .command = .@"ai.claude_code_new_top" } },

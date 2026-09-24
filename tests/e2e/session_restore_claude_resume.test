@@ -8,8 +8,9 @@
 # PATH stands in for the CLI and writes down what it was called with:
 # `new <id>` the first time, `resume <id>` after the restore, plus the
 # `resumed-the-same-session` line it only writes when the id it is
-# resuming is the one it was started under.
-write bin/claude #!/bin/bash\nsid=""\nmode="bare"\nwhile [ $# -gt 0 ]; do case "$1" in --session-id) sid=$2; mode=new; shift 2;; --resume) sid=$2; mode=resume; shift 2;; *) shift;; esac; done\nprintf '%s %s\\n' "$mode" "$sid" >> argv.log\nif [ "$mode" = new ]; then : > "started-$sid"; fi\nif [ "$mode" = resume ] && [ -f "started-$sid" ]; then printf 'resumed-the-same-session\\n' >> argv.log; fi\nprintf 'Claude Code (fake)\\n'\nexec -a claude /bin/sh -c 'i=0; while [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done'
+# resuming is the one it was started under. The new session's run ends
+# after two seconds, so the restore meets a session that is not live.
+write bin/claude #!/bin/bash\nsid=""\nmode="bare"\nwhile [ $# -gt 0 ]; do case "$1" in --session-id) sid=$2; mode=new; shift 2;; --resume) sid=$2; mode=resume; shift 2;; *) shift;; esac; done\nprintf '%s %s\\n' "$mode" "$sid" >> argv.log\nif [ "$mode" = new ]; then : > "started-$sid"; fi\nif [ "$mode" = resume ] && [ -f "started-$sid" ]; then printf 'resumed-the-same-session\\n' >> argv.log; fi\nprintf 'Claude Code (fake)\\n'\nn=60; [ "$mode" = new ] && n=2\nexec -a claude /bin/sh -c 'i=0; while [ $i -lt $0 ]; do sleep 1; i=$((i+1)); done' "$n"
 shell chmod +x bin/claude
 write notes.txt "alpha\n"
 open notes.txt
@@ -25,6 +26,11 @@ command session.save
 expect file .mnml/session.zon contains "--resume"
 expect file .mnml/session.zon lacks "--session-id"
 
+# The first run ends on its own (as after a quit): a session still
+# running is kept, not resumed a second time
+# (`sessions_restore_keeps_live_session.test`).
+wait 3000
+expect screen contains "[exited"
 command session.restore
 wait 2000
 expect screen contains "session restored"

@@ -1475,7 +1475,7 @@ pub fn menuAction(app: *App, a: MenuAct) Allocator.Error!void {
                     .worktree_unlock => break :blk git.unlockWorktree(app, wt.path),
                     .session_merge, .session_remove => {
                         const e = app.sessions.worktrees.byPath(wt.path) orelse break :blk app.diag.fail(arena, "{s} is no session worktree", .{wt.path});
-                        break :blk if (a.what == .session_merge) session_worktree.confirmMerge(app, e.*) else session_worktree.confirmRemove(app, e.*, false);
+                        break :blk if (a.what == .session_merge) session_worktree.confirmMerge(app, e.*) else session_worktree.confirmRemove(app, e.*);
                     },
                     .worktree_copy_path => {
                         try app.clipboard.setYank(wt.path, false);

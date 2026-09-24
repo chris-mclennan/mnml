@@ -270,6 +270,9 @@ pub const State = struct {
     last_save_ms: i64 = 0,
     /// The file came back on this launch.
     restored: bool = false,
+    /// Saved AI sessions the last restore found still running in a pane
+    /// and kept there instead of resuming a second time.
+    kept_live: u16 = 0,
 };
 
 pub fn onStartup(app: *App, _: hooks.HookArgs) void {
@@ -596,6 +599,7 @@ pub const RestoreError = Allocator.Error;
 /// Read the file and rebuild the app from it. A missing file is
 /// nothing; a foreign / stale / unreadable one is one toast.
 pub fn restore(app: *App) RestoreError!void {
+    app.session.kept_live = 0;
     var arena_state = std.heap.ArenaAllocator.init(app.gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -645,7 +649,7 @@ pub fn sameWorkspace(io: Io, saved: []const u8, actual: []const u8) bool {
 /// `app.workspace` as the file stores it: resolved, so a session written
 /// from an unresolved spelling is canonical the next time it is read.
 /// Falls back to the spelling in hand when the path does not resolve.
-fn canonicalWorkspace(app: *App, arena: Allocator) Allocator.Error![]const u8 {
+pub fn canonicalWorkspace(app: *App, arena: Allocator) Allocator.Error![]const u8 {
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const n = Io.Dir.cwd().realPathFile(app.io, app.workspace, &buf) catch return app.workspace;
     return arena.dupe(u8, buf[0..n]);
@@ -660,11 +664,25 @@ pub fn parse(arena: Allocator, src: [:0]const u8) error{ OutOfMemory, ParseZon }
 
 /// Close every open pane but a dirty editor — its unsaved work is not
 /// the restore's to throw away (it stays open, and a saved pane on the
-/// same file finds it). A terminal's child is hung up on and reaped.
-fn closeReplaced(app: *App, arena: Allocator) Allocator.Error!void {
+/// same file finds it) — and a live AI session the saved set resumes:
+/// that pane IS the session, kept in place rather than killed and
+/// resumed a second time (`openSaved`'s resume rule then hands it
+/// back). A terminal's child is hung up on and reaped.
+fn closeReplaced(app: *App, arena: Allocator, saved: Saved) Allocator.Error!void {
+    var keep: std.ArrayListUnmanaged(PaneId) = .empty;
+    for (saved.panes) |sp| {
+        if (sp.kind != .pty) continue;
+        const id = switch (terminalRestore(app, sp)) {
+            .resumed => |id| id,
+            else => continue,
+        };
+        if (pty_pane.liveSessionPane(app, id)) |live| try keep.append(arena, live);
+    }
     var ids: std.ArrayListUnmanaged(PaneId) = .empty;
     for (app.panes.slots.items, 0..) |*slot, i| if (slot.*) |*p| {
-        if (!p.dirty()) try ids.append(arena, @intCast(i));
+        const pid: PaneId = @intCast(i);
+        if (p.dirty() or std.mem.indexOfScalar(PaneId, keep.items, pid) != null) continue;
+        try ids.append(arena, pid);
     };
     for (ids.items) |id| try app.forceClosePane(id);
 }
@@ -678,7 +696,7 @@ pub fn apply(app: *App, arena: Allocator, saved: Saved) RestoreError!void {
     // are the ones this restore replaces: close them first. Left open
     // they were in no layout but still running — every restore in a live
     // instance added a hidden shell per terminal (21 children became 41).
-    if (saved.tabs.len > 0) try closeReplaced(app, arena);
+    if (saved.tabs.len > 0) try closeReplaced(app, arena, saved);
     // Panes → ids.
     const ids = try arena.alloc(?PaneId, saved.panes.len);
     for (saved.panes, 0..) |sp, i| ids[i] = openSaved(app, sp, ids[0..i]) catch |err| switch (err) {
@@ -694,6 +712,17 @@ pub fn apply(app: *App, arena: Allocator, saved: Saved) RestoreError!void {
             fresh.deinit(gpa);
         }
         for (saved.tabs) |tab| try fresh.append(gpa, try buildLayout(gpa, tab, ids));
+        // A pane other than an editor lives in one leaf of one page
+        // (`LayoutState.holders`): a file naming one on two pages (only a
+        // hand-edited one does) keeps it on the first. An editor — a
+        // buffer — may be on several, as vim's tab pages share one.
+        for (fresh.items, 0..) |*l, i| for (try l.allPanes(arena)) |pid| {
+            if (app.sharedAcrossPages(pid)) continue;
+            for (fresh.items[0..i]) |*prev| if (prev.leafOf(pid) != null) {
+                _ = l.removePane(pid);
+                break;
+            };
+        };
         app.setActive(null);
         const ls = &app.layouts;
         for (ls.layouts.items) |*l| l.deinit();
@@ -1012,6 +1041,17 @@ fn openSavedPane(app: *App, sp: Pane, opened: []const ?PaneId, opts: OpenOpts) O
                 .shell => &.{},
                 .dormant => sp.argv,
                 .resumed => |id| blk: {
+                    // A session still running in a pane is that pane,
+                    // not a second `--resume` of it beside the first:
+                    // two processes on one conversation append to one
+                    // transcript and double the spend. The saved tree
+                    // gets the live pane; a second saved copy of it
+                    // (only a hand-edited file has one) gets nothing.
+                    if (pty_pane.liveSessionPane(app, id)) |live| {
+                        for (opened) |o| if (o == live) return null;
+                        app.session.kept_live += 1;
+                        return live;
+                    }
                     // // changed (codex-resume): a Codex line is BUILT
                     // rather than patched — `codex` has no `--resume`
                     // flag to swap in, and its own prompt (a positional)
@@ -1084,7 +1124,13 @@ pub fn buildLayout(gpa: Allocator, tab: Tab, ids: []const ?PaneId) Allocator.Err
         .leaf => |lf| {
             var leaf: layout_mod.Leaf = .{ .active = sentinel, .tabs = .empty };
             errdefer leaf.tabs.deinit(gpa);
-            for (lf.tabs) |ti| try leaf.tabs.append(gpa, if (ti < ids.len) (ids[ti] orelse sentinel) else sentinel);
+            for (lf.tabs) |ti| {
+                const id: PaneId = if (ti < ids.len) (ids[ti] orelse sentinel) else sentinel;
+                // Named twice in one tree (a hand-edited file): the
+                // first leaf keeps it.
+                const twice = id != sentinel and (l.leafOf(id) != null or std.mem.indexOfScalar(PaneId, leaf.tabs.items, id) != null);
+                try leaf.tabs.append(gpa, if (twice) sentinel else id);
+            }
             if (leaf.tabs.items.len == 0) try leaf.tabs.append(gpa, sentinel);
             const want: PaneId = if (lf.active < ids.len) (ids[lf.active] orelse sentinel) else sentinel;
             leaf.active = if (std.mem.indexOfScalar(PaneId, leaf.tabs.items, want) != null) want else leaf.tabs.items[0];
@@ -1141,7 +1187,9 @@ pub fn restoreCmd(app: *App) command.CommandError!void {
     app.session.restored = false;
     try restore(app);
     if (!app.session.restored) return app.diag.fail(app.frame.allocator(), "session: nothing restored from {s}", .{relPath(app.profile())});
-    app.toast("session restored", .{});
+    const kept = app.session.kept_live;
+    if (kept == 0) return app.toast("session restored", .{});
+    app.toast("session restored · {d} AI session{s} already running, kept in {s} pane, not resumed again", .{ kept, if (kept == 1) "" else "s", if (kept == 1) "its" else "their" });
 }
 
 pub fn clearCmd(app: *App) command.CommandError!void {
@@ -1842,6 +1890,39 @@ test "session: a Claude pane's id rides in the file, and the restored line resum
         try t.expectEqualStrings("--resume", p.argv[1]);
         try t.expectEqualStrings("sid-9", p.argv[2]);
     }
+}
+
+test "session: restore over a session still running keeps its pane — no second `--resume` of a live id, and the toast says so" {
+    // sess-resume-live-session-twice.
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var f = try Fixture.init();
+    defer f.deinit();
+    try f.tmp.dir.createDirPath(t.io, "bin");
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "bin/claude", .data = "#!/bin/sh\nsleep 30\n" });
+    try f.tmp.dir.setFilePermissions(t.io, "bin/claude", .fromMode(0o755), .{});
+    const fake = try f.abs("bin/claude");
+    defer t.allocator.free(fake);
+    var app = try f.app();
+    defer app.deinit();
+    const live = try pty_pane.open(&app, .{ .argv = &.{ fake, "--session-id", "sid-live" }, .label = "claude", .kind = .command, .placement = .tab });
+    try t.expectEqual(live, pty_pane.liveSessionPane(&app, "sid-live").?);
+    try t.expect(pty_pane.liveSessionPane(&app, "sid-other") == null);
+    try save(&app);
+    try restoreCmd(&app);
+    // One pty in the store — the live one, shown by the restored tree.
+    var ptys: usize = 0;
+    for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+        .pty => ptys += 1,
+        else => {},
+    };
+    try t.expectEqual(@as(usize, 1), ptys);
+    try t.expectEqual(@as(u16, 1), app.session.kept_live);
+    try t.expect(app.layouts.current().leafOf(live) != null);
+    var said = false;
+    for (app.toasts.items) |ts| if (std.mem.indexOf(u8, ts.text, "already running") != null) {
+        said = true;
+    };
+    try t.expect(said);
 }
 
 /// `secs` as the UTC ISO-8601 stamp a rollout's first line carries —

@@ -213,7 +213,7 @@ fn claudeRows(ui: Ui, rows: *std.ArrayListUnmanaged(Row), props: Props, focused:
             try rows.append(a, .{ .gutter = g, .body = .{ .spans = try a.dupe(Span, &.{ .{ .text = if (ui.ascii) offer_ascii ++ " " else offer_glyph ++ " ", .style = green }, .{ .text = text, .style = green } }) } });
         }
         try rows.append(a, .{ .gutter = g, .body = .{ .spans = &.{} } });
-        const ctx: WindowCtx = .{ .ui = ui, .rows = rows, .g = g, .bold = bold, .muted = muted, .tz = props.tz };
+        const ctx: WindowCtx = .{ .ui = ui, .rows = rows, .g = g, .bold = bold, .muted = muted, .tz = props.tz, .now = props.now };
         try window(ctx, "Current session", u.percent, u.severity, u.resets_at, false, u.session_active, u.locked_reason, true);
         try window(ctx, "Current week (all models)", u.weekly_percent, u.weekly_severity, u.weekly_resets_at, true, u.weekly_active, u.weekly_locked_reason, true);
         // Per-model windows.
@@ -266,6 +266,8 @@ const WindowCtx = struct {
     bold: Theme.Style,
     muted: Theme.Style,
     tz: Tz,
+    /// The clock a reset is judged past or ahead by (`resetRow`).
+    now: u64,
 };
 
 /// One window as Claude Code's usage screen draws it: the title (with
@@ -280,15 +282,19 @@ fn window(c: WindowCtx, title: []const u8, percent: u16, severity: ?usage.Severi
         try a.dupe(Span, &.{.{ .text = title, .style = c.bold }});
     try c.rows.append(a, .{ .gutter = c.g, .body = .{ .spans = head } });
     try c.rows.append(a, .{ .gutter = c.g, .body = .{ .bar = .{ .percent = percent, .severity = severity } } });
-    if (resets_at > 0 or always_reset) try c.rows.append(a, .{ .gutter = c.g, .body = .{ .spans = try resetRow(a, resets_at, c.tz, long, c.muted) } });
+    if (resets_at > 0 or always_reset) try c.rows.append(a, .{ .gutter = c.g, .body = .{ .spans = try resetRow(a, resets_at, c.now, c.tz, long, c.muted) } });
     if (locked) |why| try c.rows.append(a, .{ .gutter = c.g, .body = .{ .spans = try a.dupe(Span, &.{.{ .text = try std.fmt.allocPrint(a, "  Locked: {s}", .{try usage.humanWords(a, why)}), .style = c.muted }}) } });
     try c.rows.append(a, .{ .gutter = c.g, .body = .{ .spans = &.{} } });
 }
 
-fn resetRow(a: std.mem.Allocator, resets_at: u64, tz: Tz, long: bool, style: Theme.Style) std.mem.Allocator.Error![]const Span {
+/// "Resets 8:20pm" — or, for a window whose reset has already passed
+/// (the fetch predates it), that it reset and the figure above is from
+/// before, rather than a past time read as a future one.
+fn resetRow(a: std.mem.Allocator, resets_at: u64, now: u64, tz: Tz, long: bool, style: Theme.Style) std.mem.Allocator.Error![]const Span {
     if (resets_at == 0) return a.dupe(Span, &.{.{ .text = "  (reset time not available)", .style = style }});
     var buf: [32]u8 = undefined;
     const when = if (long) usage.fmtLongTime(&buf, resets_at, tz.at(resets_at)) else usage.fmtShortTime(&buf, resets_at, tz.at(resets_at));
+    if (now > 0 and resets_at <= now) return a.dupe(Span, &.{.{ .text = try std.fmt.allocPrint(a, "  Reset {s} — the figure is from before it; next fetch updates it", .{when}), .style = style }});
     return a.dupe(Span, &.{.{ .text = try std.fmt.allocPrint(a, "  Resets {s}", .{when}), .style = style }});
 }
 

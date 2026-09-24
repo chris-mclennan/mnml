@@ -1,0 +1,27 @@
+# requires: macos
+# env: HOME=home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# `session.restore` while the saved Claude session is still running in
+# its pane keeps that pane: it never starts a second `claude --resume
+# <id>` beside the live one — two processes on one transcript, a forked
+# conversation and double the spend. The toast says the session was
+# kept. The fake `claude` writes down every launch and runs as
+# `claude … --resume <id>` and records its pid, so the file can count how
+# many of its launches are still alive.
+write bin/claude #!/bin/bash\nsid=""; mode=bare\nwhile [ $# -gt 0 ]; do case "$1" in --session-id) sid=$2; mode=new; shift 2;; --resume) sid=$2; mode=resume; shift 2;; *) shift;; esac; done\nprintf '%s %s\\n' "$mode" "$sid" >> argv.log\nprintf 'Claude Code (fake) %s\\n' "$mode"\nprintf '%s\\n' "$$" >> pids.log\nexec -a claude /bin/sh -c 'i=0; while [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done' --resume "$sid"
+shell chmod +x bin/claude
+write notes.txt "alpha\n"
+open notes.txt
+command ai.claude_code_new
+wait 1000
+expect file argv.log contains "new "
+command session.save
+command session.restore
+wait 1500
+expect screen contains "already running"
+command view.activity_sessions
+wait 500
+# One session was saved and it is still up: one card, one process, one launch.
+expect screen contains "SESSIONS (1)"
+expect file argv.log lacks "resume "
+shell n=0; for p in $(cat pids.log); do kill -0 "$p" 2>/dev/null && n=$((n+1)); done; echo "live fake claude processes: $n"; test "$n" -eq 1

@@ -184,6 +184,29 @@ pub fn suggestName(arena: Allocator, io: Io, root: []const u8, base: []const u8)
     return std.fmt.allocPrint(arena, "{s}-{d}", .{ base, n });
 }
 
+/// `suggestName`, past a local branch of that name as well: accepting a
+/// seed whose branch already exists fails, and a branch named
+/// `session-1` with the user's own commit on it is not a tree to reuse.
+/// Gives up asking git after a hundred taken names.
+pub fn freeName(app: *App, arena: Allocator, repo: []const u8, root: []const u8, base: []const u8) CommandError![]const u8 {
+    var name = try suggestName(arena, app.io, root, base);
+    var tries: u32 = 0;
+    while (tries < 100 and try branchExists(app, arena, repo, name)) : (tries += 1) {
+        const dash = std.mem.lastIndexOfScalar(u8, name, '-').?;
+        const n = std.fmt.parseInt(u32, name[dash + 1 ..], 10) catch break;
+        var next = n + 1;
+        // The next number whose directory is free too.
+        while (next < 10_000) : (next += 1) {
+            const cand = try std.fmt.allocPrint(arena, "{s}-{d}", .{ base, next });
+            if (!exists(app.io, try pathFor(arena, root, cand))) {
+                name = cand;
+                break;
+            }
+        } else break;
+    }
+    return name;
+}
+
 pub fn exists(io: Io, path: []const u8) bool {
     _ = Io.Dir.cwd().statFile(io, path, .{}) catch return false;
     return true;
@@ -363,25 +386,79 @@ pub fn merge(app: *App, arena: Allocator, e: Entry) CommandError!void {
     refreshRepo(app, e.repo);
 }
 
+/// What a remove may throw away: `branch` deletes an unmerged branch
+/// (`branch -D`), `tree` removes a tree that holds uncommitted or
+/// untracked files (`worktree remove --force`). The two are asked
+/// separately — a yes to one is never a yes to the other.
+pub const RemoveForce = struct { branch: bool = false, tree: bool = false };
+
+/// Changed, staged and untracked files in the tree at `path` (`git
+/// status --porcelain` lines); 0 when git cannot say.
+pub fn dirtyCount(app: *App, arena: Allocator, path: []const u8) CommandError!u32 {
+    const out = try run(app, arena, path, &.{ "status", "--porcelain" });
+    if (!out.ok) return 0;
+    var n: u32 = 0;
+    var it = std.mem.tokenizeScalar(u8, out.stdout, '\n');
+    while (it.next()) |line| if (std.mem.trim(u8, line, " \t\r").len > 0) {
+        n += 1;
+    };
+    return n;
+}
+
+/// The live pane whose child works in the session's tree — started in
+/// it (or under it), or running the session the row learned. Removing
+/// the tree would delete that child's working directory under it.
+pub fn livePaneIn(app: *App, e: Entry) ?app_mod.PaneId {
+    if (e.session_id) |sid| if (pty_pane.liveSessionPane(app, sid)) |pid| return pid;
+    const tree = std.mem.trimEnd(u8, e.path, "/");
+    var pid: app_mod.PaneId = 0;
+    while (pid < app.panes.capacity()) : (pid += 1) {
+        const p = app.panes.pty(pid) orelse continue;
+        if (p.exit != null) continue;
+        const cwd = p.cwd orelse continue;
+        if (!std.mem.startsWith(u8, cwd, tree)) continue;
+        if (cwd.len == tree.len or cwd[tree.len] == '/') return pid;
+    }
+    return null;
+}
+
+fn refuseLive(app: *App, arena: Allocator, e: Entry) CommandError!void {
+    if (livePaneIn(app, e) == null) return;
+    return app.diag.fail(arena, "remove {s}: a session is still running in it — end the session first", .{e.name});
+}
+
 /// `git worktree remove` then `git branch -d`. An unmerged branch is
-/// refused unless `force` (`-D`, `--force`); the registry row goes with
-/// the tree, and an emptied root directory too.
-pub fn remove(app: *App, arena: Allocator, e: Entry, force: bool) CommandError!void {
-    if (!force and exists(app.io, e.path) and !(try isMerged(app, arena, e.repo, e.branch))) {
+/// refused unless `force.branch` (`-D`); a tree with uncommitted or
+/// untracked files is refused by git itself unless `force.tree`
+/// (`--force`), which fails cleanly and keeps the files. A tree whose
+/// directory is already gone has its own entry dropped — never a
+/// repository-wide `git worktree prune`, which would take the user's
+/// own worktrees that are only away for a moment with it. Refused
+/// while a session runs in the tree. The registry row goes with the
+/// tree, and an emptied root directory too.
+pub fn remove(app: *App, arena: Allocator, e: Entry, force: RemoveForce) CommandError!void {
+    try refuseLive(app, arena, e);
+    if (!force.branch and exists(app.io, e.path) and !(try isMerged(app, arena, e.repo, e.branch))) {
         const n = (try commitsAhead(app, arena, e.repo, e.branch)) orelse 0;
         return app.diag.fail(arena, "remove {s}: branch `{s}` has {d} unmerged commit{s}", .{ e.name, e.branch, n, if (n == 1) "" else "s" });
     }
     if (exists(app.io, e.path)) {
-        const out = if (force)
+        const out = if (force.tree)
             try run(app, arena, e.repo, &.{ "worktree", "remove", "--force", e.path })
         else
             try run(app, arena, e.repo, &.{ "worktree", "remove", e.path });
-        if (!out.ok) return app.diag.fail(arena, "worktree remove {s}: {s}", .{ e.name, out.reason() });
+        if (!out.ok) {
+            if (!force.tree) return app.diag.fail(arena, "kept worktree {s} — nothing removed: {s}", .{ e.name, out.reason() });
+            return app.diag.fail(arena, "worktree remove {s}: {s}", .{ e.name, out.reason() });
+        }
     } else {
-        _ = try run(app, arena, e.repo, &.{ "worktree", "prune" });
+        // The directory is gone: `worktree remove` on its path drops
+        // this tree's own admin entry and nothing else. A path git no
+        // longer knows is already what we want.
+        _ = try run(app, arena, e.repo, &.{ "worktree", "remove", e.path });
     }
     if (try branchExists(app, arena, e.repo, e.branch)) {
-        const out = try run(app, arena, e.repo, &.{ "branch", if (force) "-D" else "-d", e.branch });
+        const out = try run(app, arena, e.repo, &.{ "branch", if (force.branch) "-D" else "-d", e.branch });
         if (!out.ok) return app.diag.fail(arena, "branch -d {s}: {s}", .{ e.branch, out.reason() });
     }
     const path = try arena.dupe(u8, e.path);
@@ -415,7 +492,7 @@ pub fn openNamePrompt(app: *App, product: Config.AiProduct, profile: []const u8)
     const repo = (try repoRoot(app, arena, app.workspace)) orelse return app.diag.fail(arena, "worktree: {s} is not in a git repository", .{app.workspace});
     const root = try rootOf(app, arena, repo);
     const base: []const u8 = if (std.mem.eql(u8, profile, launch_profiles.builtin_name)) "session" else profile;
-    const seed = try suggestName(arena, app.io, root, base);
+    const seed = try freeName(app, arena, repo, root, base);
     const owned = try app.gpa.dupe(u8, profile);
     errdefer app.gpa.free(owned);
     app.overlay.deinit(app.gpa);
@@ -462,6 +539,10 @@ pub fn acceptNameCmd(app: *App, product: Config.AiProduct, profile: []const u8, 
 
 pub const merge_choices = [_]app_mod.Confirm.Choice{ .{ .key = 'm', .label = "Merge" }, .{ .key = 'c', .label = "Cancel" } };
 pub const remove_choices = [_]app_mod.Confirm.Choice{ .{ .key = 'r', .label = "Remove" }, .{ .key = 'c', .label = "Cancel" } };
+/// A tree with uncommitted or untracked files: *Keep the files* tries
+/// the remove without `--force` (git refuses, nothing is lost), *Remove
+/// anyway* throws them away.
+pub const remove_dirty_choices = [_]app_mod.Confirm.Choice{ .{ .key = 'k', .label = "Keep the files" }, .{ .key = 'r', .label = "Remove anyway" }, .{ .key = 'c', .label = "Cancel" } };
 pub const force_choices = [_]app_mod.Confirm.Choice{ .{ .key = 'f', .label = "Force" }, .{ .key = 'c', .label = "Cancel" } };
 
 fn openConfirm(app: *App, title: []const u8, msg: []u8, choices: []const app_mod.Confirm.Choice, purpose: app_mod.ConfirmPurpose) void {
@@ -494,25 +575,72 @@ pub fn acceptMerge(app: *App, path: []const u8) CommandError!void {
     return merge(app, arena, e.*);
 }
 
-/// *Remove worktree…*: `Remove worktree feat and branch feat?`; with
-/// `force`, the second confirm past an unmerged branch.
-pub fn confirmRemove(app: *App, e: Entry, force: bool) CommandError!void {
+/// *Remove worktree…*: `Remove worktree feat and branch feat?`. A tree
+/// holding uncommitted or untracked files says how many and offers
+/// *Keep the files* / *Remove anyway*. Refused while a session runs in
+/// the tree.
+pub fn confirmRemove(app: *App, e: Entry) CommandError!void {
+    const arena = app.frame.allocator();
+    try refuseLive(app, arena, e);
+    const dirty: u32 = if (exists(app.io, e.path)) try dirtyCount(app, arena, e.path) else 0;
     const path = try app.gpa.dupe(u8, e.path);
     errdefer app.gpa.free(path);
-    const msg = if (force)
-        try std.fmt.allocPrint(app.gpa, "Branch {s} is not merged — remove worktree {s} and delete the branch anyway?", .{ e.branch, e.name })
+    const msg = if (dirty > 0)
+        try std.fmt.allocPrint(app.gpa, "Remove worktree {s} and branch {s}? {d} uncommitted file{s} in it — Remove anyway throws {s} away.", .{ e.name, e.branch, dirty, if (dirty == 1) "" else "s", if (dirty == 1) "it" else "them" })
     else
         try std.fmt.allocPrint(app.gpa, "Remove worktree {s} and branch {s}?", .{ e.name, e.branch });
     errdefer app.gpa.free(msg);
-    openConfirm(app, if (force) "Remove unmerged worktree" else "Remove worktree", msg, if (force) &force_choices else &remove_choices, .{ .session_worktree_remove = .{ .path = path, .force = force } });
+    openConfirm(app, "Remove worktree", msg, if (dirty > 0) &remove_dirty_choices else &remove_choices, .{ .session_worktree_remove = .{ .path = path, .stage = .tree, .dirty = dirty } });
 }
 
-/// The confirm's yes. An unmerged branch on the plain remove asks
-/// once more, with force.
-pub fn acceptRemove(app: *App, path: []const u8, force: bool) CommandError!void {
+/// The second confirm, past an unmerged branch. It names what its yes
+/// throws away: the branch's commits, and the tree's files when the
+/// first confirm's answer was *Remove anyway*.
+fn confirmRemoveBranch(app: *App, e: Entry, force_tree: bool, dirty: u32) CommandError!void {
+    const arena = app.frame.allocator();
+    const n = (try commitsAhead(app, arena, e.repo, e.branch)) orelse 0;
+    const path = try app.gpa.dupe(u8, e.path);
+    errdefer app.gpa.free(path);
+    const msg = if (force_tree and dirty > 0)
+        try std.fmt.allocPrint(app.gpa, "Branch {s} is not merged ({d} commit{s}) and worktree {s} has {d} uncommitted file{s} — throw both away?", .{ e.branch, n, if (n == 1) "" else "s", e.name, dirty, if (dirty == 1) "" else "s" })
+    else
+        try std.fmt.allocPrint(app.gpa, "Branch {s} is not merged ({d} commit{s}) — remove worktree {s} and delete the branch anyway?", .{ e.branch, n, if (n == 1) "" else "s", e.name });
+    errdefer app.gpa.free(msg);
+    openConfirm(app, "Remove unmerged worktree", msg, &force_choices, .{ .session_worktree_remove = .{ .path = path, .stage = .branch, .force_tree = force_tree, .dirty = dirty } });
+}
+
+/// A remove confirm's answer, by stage: the first confirm's (Remove,
+/// or Keep the files / Remove anyway), then the unmerged branch's.
+pub fn acceptRemoveChoice(app: *App, r: app_mod.ConfirmPurpose.SessionWorktreeRemove, choice: usize) CommandError!void {
+    switch (r.stage) {
+        .tree => {
+            const force_tree = if (r.dirty > 0) switch (choice) {
+                0 => false,
+                1 => true,
+                else => return,
+            } else if (choice == 0) false else return;
+            return acceptRemove(app, r.path, .{ .tree = force_tree });
+        },
+        .branch => if (choice == 0) return acceptRemove(app, r.path, .{ .branch = true, .tree = r.force_tree }),
+    }
+}
+
+/// Past the first confirm. A dirty tree the user keeps is removed
+/// without `--force` straight away — git refuses and nothing is asked
+/// about the branch; an unmerged branch asks once more.
+pub fn acceptRemove(app: *App, path: []const u8, force: RemoveForce) CommandError!void {
     const arena = app.frame.allocator();
     const e = app.sessions.worktrees.byPath(path) orelse return app.diag.fail(arena, "remove: {s} is no session worktree any more", .{path});
-    if (!force and exists(app.io, e.path) and !(try isMerged(app, arena, e.repo, e.branch))) return confirmRemove(app, e.*, true);
+    try refuseLive(app, arena, e.*);
+    const here = exists(app.io, e.path);
+    const dirty: u32 = if (here) try dirtyCount(app, arena, e.path) else 0;
+    if (!force.tree and dirty > 0) {
+        // No `--force`: git refuses a tree with changes, and says so.
+        const out = try run(app, arena, e.repo, &.{ "worktree", "remove", e.path });
+        if (!out.ok) return app.diag.fail(arena, "kept worktree {s} and its {d} uncommitted file{s} — nothing removed ({s})", .{ e.name, dirty, if (dirty == 1) "" else "s", out.reason() });
+        // The files went meanwhile and git took the tree: the branch next.
+    }
+    if (!force.branch and here and !(try isMerged(app, arena, e.repo, e.branch))) return confirmRemoveBranch(app, e.*, force.tree, dirty);
     return remove(app, arena, e.*, force);
 }
 
@@ -699,7 +827,7 @@ test "merge refuses a dirty main tree, then lands the worktree's commit on main;
     try t.expect(std.mem.indexOf(u8, app.diag.msg.?, "uncommitted changes") != null);
     try t.expect(!try isMerged(app, a, f.repo, "feat"));
     // An unmerged branch is not removed without force.
-    try t.expectError(error.Failed, remove(app, a, e, false));
+    try t.expectError(error.Failed, remove(app, a, e, .{}));
     try t.expect(std.mem.indexOf(u8, app.diag.msg.?, "1 unmerged commit") != null);
     try t.expect(exists(t.io, path));
     // Clean, the merge lands: main has the commit, the toast says so.
@@ -710,7 +838,7 @@ test "merge refuses a dirty main tree, then lands the worktree's commit on main;
     const log = try run(app, a, f.repo, &.{ "log", "--oneline", "main" });
     try t.expect(std.mem.indexOf(u8, log.stdout, "from the worktree") != null);
     // Merged: the plain remove takes the tree, the branch and the row.
-    try remove(app, a, e, false);
+    try remove(app, a, e, .{});
     try t.expect(!exists(t.io, path));
     try t.expect(!try branchExists(app, a, f.repo, "feat"));
     try t.expect(app.sessions.worktrees.byPath(path) == null);
@@ -723,8 +851,8 @@ test "merge refuses a dirty main tree, then lands the worktree's commit on main;
     try f.sh(p2, &.{ "add", "x.txt" });
     try f.sh(p2, &.{ "commit", "-q", "-m", "dropped" });
     const e2 = app.sessions.worktrees.byPath(p2).?.*;
-    try t.expectError(error.Failed, remove(app, a, e2, false));
-    try remove(app, a, e2, true);
+    try t.expectError(error.Failed, remove(app, a, e2, .{}));
+    try remove(app, a, e2, .{ .branch = true, .tree = true });
     try t.expect(!exists(t.io, p2));
     try t.expect(!try branchExists(app, a, f.repo, "drop"));
     // A failed merge: a conflicting change on main opens the command log.
@@ -834,15 +962,17 @@ test "merge / remove go through a named confirm; an unmerged branch asks a secon
     try f.sh(path, &.{ "commit", "-q", "-m", "one" });
     const e = app.sessions.worktrees.byPath(path).?.*;
     // Remove, unmerged: the first confirm, then the Force one.
-    try confirmRemove(app, e, false);
+    try confirmRemove(app, e);
     try t.expect(app.overlay == .confirm);
     try t.expectEqualStrings("Remove worktree", app.overlay.confirm.state.title);
     try t.expectEqualStrings("Remove worktree feat and branch feat?", app.overlay.confirm.message);
-    try t.expect(!app.overlay.confirm.purpose.session_worktree_remove.force);
-    try acceptRemove(app, path, false);
+    try t.expect(app.overlay.confirm.purpose.session_worktree_remove.stage == .tree);
+    try acceptRemove(app, path, .{});
     try t.expect(app.overlay == .confirm);
     try t.expectEqualStrings("Remove unmerged worktree", app.overlay.confirm.state.title);
-    try t.expect(app.overlay.confirm.purpose.session_worktree_remove.force);
+    try t.expect(app.overlay.confirm.purpose.session_worktree_remove.stage == .branch);
+    try t.expect(!app.overlay.confirm.purpose.session_worktree_remove.force_tree);
+    try t.expectEqualStrings("Branch feat is not merged (1 commit) — remove worktree feat and delete the branch anyway?", app.overlay.confirm.message);
     try t.expectEqualStrings("Force", app.overlay.confirm.state.choices[0].label);
     try t.expect(exists(t.io, path));
     app.overlay.deinit(app.gpa);
@@ -858,11 +988,93 @@ test "merge / remove go through a named confirm; an unmerged branch asks a secon
     try t.expectEqualStrings("merged feat into main", app.lastToast().?);
     try t.expect(try isMerged(app, a, f.repo, "feat"));
     // Merged: the plain remove goes straight through.
-    try acceptRemove(app, path, false);
+    try acceptRemove(app, path, .{});
     try t.expect(app.overlay != .confirm);
     try t.expect(!exists(t.io, path));
     try t.expect(app.sessions.worktrees.byPath(path) == null);
     try t.expectError(error.Failed, acceptMerge(app, path));
+}
+
+test "remove: a dirty tree's confirm counts its files and offers Keep the files / Remove anyway; keeping fails cleanly, removing anyway names them again past an unmerged branch; a live session refuses it" {
+    // sess-worktree-remove-destroys-uncommitted.
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var f = try RepoFixture.init();
+    defer f.deinit();
+    const app = &f.app;
+    const a = app.frame.allocator();
+    const path = try create(app, a, f.repo, "feat");
+    try app.sessions.worktrees.add(app.gpa, path, "feat", "feat", f.repo, null);
+    try Io.Dir.cwd().writeFile(t.io, .{ .sub_path = try std.fs.path.join(a, &.{ path, "wt.txt" }), .data = "x\n" });
+    try f.sh(path, &.{ "add", "wt.txt" });
+    try f.sh(path, &.{ "commit", "-q", "-m", "one" });
+    // Mid-task: an untracked draft and an edit to a tracked file.
+    const draft = try std.fs.path.join(a, &.{ path, "draft.txt" });
+    try Io.Dir.cwd().writeFile(t.io, .{ .sub_path = draft, .data = "half\n" });
+    try Io.Dir.cwd().writeFile(t.io, .{ .sub_path = try std.fs.path.join(a, &.{ path, "a.txt" }), .data = "edit\n" });
+    try t.expectEqual(@as(u32, 2), try dirtyCount(app, a, path));
+    const e = app.sessions.worktrees.byPath(path).?.*;
+    try confirmRemove(app, e);
+    try t.expect(app.overlay == .confirm);
+    try t.expectEqualStrings("Remove worktree feat and branch feat? 2 uncommitted files in it — Remove anyway throws them away.", app.overlay.confirm.message);
+    try t.expectEqualStrings("Keep the files", app.overlay.confirm.state.choices[0].label);
+    try t.expectEqualStrings("Remove anyway", app.overlay.confirm.state.choices[1].label);
+    const r = app.overlay.confirm.purpose.session_worktree_remove;
+    try t.expectEqual(@as(u32, 2), r.dirty);
+    // Keep the files: no `--force`, git refuses, everything is still there.
+    try t.expectError(error.Failed, acceptRemoveChoice(app, r, 0));
+    try t.expect(std.mem.indexOf(u8, app.diag.msg.?, "kept worktree feat and its 2 uncommitted files") != null);
+    try t.expect(exists(t.io, draft));
+    try t.expect(try branchExists(app, a, f.repo, "feat"));
+    try t.expect(app.sessions.worktrees.byPath(path) != null);
+    for (app.git.log.items.items) |le| try t.expect(std.mem.indexOf(u8, le.argv, "--force") == null);
+    // Remove anyway: the branch is unmerged, so the second confirm, and
+    // it says the files go as well.
+    try acceptRemoveChoice(app, r, 1);
+    try t.expect(app.overlay == .confirm);
+    try t.expectEqualStrings("Branch feat is not merged (1 commit) and worktree feat has 2 uncommitted files — throw both away?", app.overlay.confirm.message);
+    const r2 = app.overlay.confirm.purpose.session_worktree_remove;
+    try t.expect(r2.stage == .branch and r2.force_tree);
+    try t.expect(exists(t.io, draft));
+    // Cancel changes nothing; Force takes both.
+    try acceptRemoveChoice(app, r2, 1);
+    try t.expect(exists(t.io, draft));
+    try acceptRemoveChoice(app, r2, 0);
+    try t.expect(!exists(t.io, path));
+    try t.expect(!try branchExists(app, a, f.repo, "feat"));
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    // A session running in the tree: the remove is refused, before any confirm.
+    const p2 = try create(app, a, f.repo, "busy");
+    try app.sessions.worktrees.add(app.gpa, p2, "busy", "busy", f.repo, null);
+    const pid = try pty_pane.open(app, .{ .argv = &.{ "/bin/sh", "-c", "sleep 30" }, .cwd = p2, .label = "claude", .kind = .command, .placement = .tab });
+    const e2 = app.sessions.worktrees.byPath(p2).?.*;
+    try t.expectEqual(pid, livePaneIn(app, e2).?);
+    try t.expectError(error.Failed, confirmRemove(app, e2));
+    try t.expect(std.mem.indexOf(u8, app.diag.msg.?, "still running") != null);
+    try t.expect(app.overlay != .confirm);
+    try t.expectError(error.Failed, remove(app, a, e2, .{ .branch = true, .tree = true }));
+    try t.expect(exists(t.io, p2));
+}
+
+test "remove: a session tree whose directory is gone drops its own entry — the user's worktree that is only away for a moment survives" {
+    // sess-worktree-remove-prunes-user-worktrees.
+    var f = try RepoFixture.init();
+    defer f.deinit();
+    const app = &f.app;
+    const a = app.frame.allocator();
+    const mine = try std.fs.path.join(a, &.{ f.root, "mine" });
+    try f.sh(f.repo, &.{ "worktree", "add", "-q", "-b", "mine", mine });
+    const path = try create(app, a, f.repo, "session-1");
+    try app.sessions.worktrees.add(app.gpa, path, "session-1", "session-1", f.repo, null);
+    try Io.Dir.cwd().deleteTree(t.io, path);
+    const away = try std.fs.path.join(a, &.{ f.root, "mine-away" });
+    try Io.Dir.cwd().rename(mine, Io.Dir.cwd(), away, t.io);
+    try remove(app, a, app.sessions.worktrees.byPath(path).?.*, .{});
+    try t.expectEqualStrings("removed worktree session-1", app.lastToast().?);
+    const list = try run(app, a, f.repo, &.{ "worktree", "list", "--porcelain" });
+    try t.expect(std.mem.indexOf(u8, list.stdout, "branch refs/heads/mine") != null);
+    try t.expect(std.mem.indexOf(u8, list.stdout, "session-1") == null);
+    for (app.git.log.items.items) |le| try t.expect(std.mem.indexOf(u8, le.argv, "prune") == null);
 }
 
 test "a session that ends with its worktree still there toasts once with the commit count; a tree that is gone, or a live session, toasts nothing" {
@@ -907,9 +1119,29 @@ test "a session that ends with its worktree still there toasts once with the com
     try t.expectEqual(before + 3, msgs.items.len); // the failed toast, then the worktree's
     try t.expect(std.mem.indexOf(u8, msgs.items[msgs.items.len - 1].text, "its worktree feat") != null);
     // The tree removed: an ended session says nothing about it.
-    try remove(app, a, app.sessions.worktrees.byPath(path).?.*, true);
+    try remove(app, a, app.sessions.worktrees.byPath(path).?.*, .{ .branch = true, .tree = true });
     const after_remove = msgs.items.len;
     try listing.post(&f, path, .streaming, 7);
     try listing.post(&f, path, .done, 8);
     try t.expectEqual(after_remove, msgs.items.len);
+}
+
+test "the name seed skips a local branch that already has the name, as it skips a directory" {
+    // sess-small-drift (3).
+    var f = try RepoFixture.init();
+    defer f.deinit();
+    const app = &f.app;
+    const a = app.frame.allocator();
+    const root = try rootOf(app, a, f.repo);
+    try t.expectEqualStrings("session-1", try freeName(app, a, f.repo, root, "session"));
+    // The user's own `session-1` branch, no tree: the seed moves past it.
+    try f.sh(f.repo, &.{ "branch", "session-1" });
+    try t.expectEqualStrings("session-2", try freeName(app, a, f.repo, root, "session"));
+    // A tree at session-2 and a branch session-3: the next free is 4.
+    _ = try create(app, a, f.repo, "session-2");
+    try f.sh(f.repo, &.{ "branch", "session-3" });
+    try t.expectEqualStrings("session-4", try freeName(app, a, f.repo, root, "session"));
+    // The prompt is seeded with it.
+    try openNamePrompt(app, .claude, launch_profiles.builtin_name);
+    try t.expectEqualStrings("session-4", app.overlay.prompt.state.buf.items);
 }

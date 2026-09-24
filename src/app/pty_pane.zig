@@ -654,6 +654,25 @@ pub fn restart(app: *App, id: PaneId) CommandError!void {
 // ─── the event side ─────────────────────────────────────────────────────
 
 /// `.pty_readable{id}` landed: pump that pane.
+/// The live pane already running AI session `id`: a Claude pane whose
+/// command line names it (`--session-id` / `--resume`), or a Codex
+/// pane that resumed it or whose rollout was found to be it. Null when
+/// no child that is still running holds it. A resume of an id this
+/// answers for would be a SECOND process on one conversation — two
+/// writers on one transcript, the spend doubled — so every resume path
+/// (`session.restore`, the session picker) asks here first.
+pub fn liveSessionPane(app: *App, id: []const u8) ?PaneId {
+    if (id.len == 0) return null;
+    var pid: PaneId = 0;
+    while (pid < app.panes.capacity()) : (pid += 1) {
+        const p = app.panes.pty(pid) orelse continue;
+        if (p.exit != null) continue;
+        const held = p.sessionId() orelse codexSessionIdOfArgv(p.argv) orelse p.codex_session_id orelse continue;
+        if (std.mem.eql(u8, held, id)) return pid;
+    }
+    return null;
+}
+
 /// `--session-id <id>` / `--resume <id>` in a command line, if either.
 pub fn sessionIdOfArgv(argv: []const []const u8) ?[]const u8 {
     var i: usize = 0;

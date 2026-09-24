@@ -835,6 +835,28 @@ pub const LayoutState = struct {
     pub fn current(self: *LayoutState) *Layout {
         return &self.layouts.items[self.active];
     }
+
+    /// The page whose split tree shows `pane`, if any.
+    pub fn pageOf(self: *LayoutState, pane: PaneId) ?usize {
+        for (self.layouts.items, 0..) |*l, i| if (l.leafOf(pane) != null) return i;
+        return null;
+    }
+
+    /// How many leaves, over every page, show `pane` as a tab. The
+    /// layout's invariant is that this is never more than one: a pane
+    /// lives in one leaf of one page. Two would be one pty or buffer
+    /// drawn in two places, and closing either copy would take the
+    /// other's pane away from under it.
+    pub fn holders(self: *LayoutState, pane: PaneId) usize {
+        var n: usize = 0;
+        for (self.layouts.items) |*l| for (l.nodes.items) |node| switch (node) {
+            .leaf => |lf| for (lf.tabs.items) |tab| {
+                if (tab == pane) n += 1;
+            },
+            else => {},
+        };
+        return n;
+    }
 };
 
 test "layout: leaf tabs, close falls to the right neighbour then left, split + collapse, rects" {

@@ -187,7 +187,7 @@ pub const root: Node = .{
             group('a', "+ai/term", &.{
                 cmd('a', .@"ai.ask", "ask claude…"),
                 cmd('b', .@"ai.toggle_backend", "toggle backend (cli ↔ api)"),
-                cmd('d', .@"ai.dashboard", "agents dashboard"),
+                cmd('d', .@"ai.dashboard", "sessions table"),
                 cmd('e', .@"ai.explain", "explain selection"),
                 cmd('f', .@"ai.fix", "fix bugs"),
                 cmd('r', .@"ai.refactor", "refactor"),

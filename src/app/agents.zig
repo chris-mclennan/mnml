@@ -30,6 +30,122 @@ pub const tail_cap: usize = 256 * 1024;
 pub const head_cap: usize = 64 * 1024;
 /// Transcripts past this are skipped outright.
 pub const max_file_bytes: u64 = 256 * 1024 * 1024;
+/// Bytes of a Claude transcript the tokens and cost are summed over,
+/// from its start (`totalsOf`). A longer one's totals are its first
+/// `totals_cap` bytes' and the row says so (`Item.totals_capped`).
+pub const totals_cap: u64 = 64 * 1024 * 1024;
+/// A single JSONL line longer than this is skipped by the totals.
+const line_cap: usize = 16 * 1024 * 1024;
+const totals_chunk: usize = 1024 * 1024;
+
+/// What the scan has already summed of each Claude transcript, by path:
+/// a transcript only grows, so a rescan reads from where the last one
+/// stopped rather than the whole file every `refresh_ms`. Owned by
+/// `sessions.State` and touched only by the one scan worker in flight
+/// (`sessions.refresh` cancels the last before starting the next).
+pub const TotalsCache = struct {
+    map: std.StringHashMapUnmanaged(Entry) = .empty,
+    pass: u32 = 0,
+
+    pub const Entry = struct {
+        /// Bytes summed so far, always at a line's end.
+        offset: u64 = 0,
+        usage: transcript.Usage = .{},
+        /// A line past `line_cap` is being skipped at `offset`.
+        skipping: bool = false,
+        pass: u32 = 0,
+    };
+
+    pub fn deinit(self: *TotalsCache, gpa: Allocator) void {
+        var it = self.map.keyIterator();
+        while (it.next()) |k| gpa.free(k.*);
+        self.map.deinit(gpa);
+    }
+
+    /// Drop the transcripts this pass did not list (deleted, aged out).
+    fn sweep(self: *TotalsCache, gpa: Allocator) void {
+        var again = true;
+        while (again) {
+            again = false;
+            var it = self.map.iterator();
+            while (it.next()) |e| if (e.value_ptr.pass != self.pass) {
+                const key = e.key_ptr.*;
+                _ = self.map.remove(key);
+                gpa.free(key);
+                again = true;
+                break;
+            };
+        }
+    }
+};
+
+pub const Totals = struct { usage: transcript.Usage, capped: bool };
+
+/// The usage of the whole transcript `name` in `dir` (up to `cap`
+/// bytes — the scan passes `totals_cap`), every message once, each at
+/// its own model's price — read on from `cache`'s entry for `path` when
+/// there is one.
+pub fn totalsOf(io: Io, gpa: Allocator, dir: Io.Dir, name: []const u8, path: []const u8, size: u64, cap: u64, cache: ?*TotalsCache) ScanError!Totals {
+    var fresh: TotalsCache.Entry = .{};
+    const e: *TotalsCache.Entry = if (cache) |c| blk: {
+        const gop = try c.map.getOrPut(gpa, path);
+        if (!gop.found_existing) {
+            gop.key_ptr.* = gpa.dupe(u8, path) catch |err| {
+                _ = c.map.remove(path);
+                return err;
+            };
+            gop.value_ptr.* = .{};
+        }
+        break :blk gop.value_ptr;
+    } else &fresh;
+    if (cache) |c| e.pass = c.pass;
+    // Shorter than what was summed: rewritten, not appended to.
+    if (size < e.offset) e.* = .{ .pass = e.pass };
+    const end = @min(size, cap);
+    if (e.offset < end) {
+        var file = dir.openFile(io, name, .{}) catch |err| switch (err) {
+            error.Canceled => return error.Canceled,
+            else => return .{ .usage = e.usage, .capped = size > cap },
+        };
+        defer file.close(io);
+        var buf = try gpa.alloc(u8, totals_chunk);
+        defer gpa.free(buf);
+        while (e.offset < end) {
+            try io.checkCancel();
+            const want: usize = @intCast(@min(@as(u64, buf.len), end - e.offset));
+            const n = file.readPositionalAll(io, buf[0..want], e.offset) catch |err| switch (err) {
+                error.Canceled => return error.Canceled,
+                else => break,
+            };
+            if (n == 0) break;
+            const got = buf[0..n];
+            if (e.skipping) {
+                // Past the rest of an overlong line.
+                const nl = std.mem.indexOfScalar(u8, got, '\n') orelse {
+                    e.offset += n;
+                    continue;
+                };
+                e.offset += nl + 1;
+                e.skipping = false;
+                continue;
+            }
+            const nl = std.mem.lastIndexOfScalar(u8, got, '\n') orelse {
+                // No line end in the buffer: the line is still being
+                // written (at the end), longer than the buffer (grow
+                // it), or longer than any line worth parsing (skip).
+                if (e.offset + n >= size) break;
+                if (buf.len >= line_cap) {
+                    e.offset += n;
+                    e.skipping = true;
+                } else buf = try gpa.realloc(buf, buf.len * 4);
+                continue;
+            };
+            e.usage.addText(gpa, got[0 .. nl + 1]);
+            e.offset += nl + 1;
+        }
+    }
+    return .{ .usage = e.usage, .capped = size > cap };
+}
 /// A session whose file moved within this many seconds is `streaming`.
 pub const fresh_s: i64 = 60;
 /// A tool use without its result, and the file quiet this long: the
@@ -244,7 +360,8 @@ pub fn deriveState(has_pid: bool, age_s: i64, last_was_tool_call: bool, pending_
 
 /// Walk both roots and append this machine's sessions to `rows`, every
 /// slice on `arena`.
-pub fn scanInto(io: Io, gpa: Allocator, arena: Allocator, home: []const u8, scope: Scope, rows: *std.ArrayListUnmanaged(Item)) ScanError!void {
+pub fn scanInto(io: Io, gpa: Allocator, arena: Allocator, home: []const u8, scope: Scope, rows: *std.ArrayListUnmanaged(Item), totals: ?*TotalsCache) ScanError!void {
+    if (totals) |c| c.pass +%= 1;
     const pids = try runningPids(io, gpa, arena, scope);
     const now = Io.Timestamp.now(io, .real).toSeconds();
     // Claude: <home>/.claude/projects/<encoded>/<sid>.jsonl
@@ -274,6 +391,10 @@ pub fn scanInto(io: Io, gpa: Allocator, arena: Allocator, home: []const u8, scop
                 defer gpa.free(tail);
                 const stats = try transcript.parseClaude(arena, tail);
                 const first = if (st.size > tail_cap) try firstPrompt(gpa, io, arena, sub, f.name, .claude) else stats.first_user_msg;
+                const path = try std.fs.path.join(arena, &.{ projects, d.name, f.name });
+                // The tail names the state; the tokens and cost are the
+                // whole transcript's.
+                const sum: Totals = if (st.size <= tail_cap) .{ .usage = stats.usage.?, .capped = false } else try totalsOf(io, gpa, sub, f.name, path, st.size, totals_cap, totals);
                 const sid = try arena.dupe(u8, f.name[0 .. f.name.len - ".jsonl".len]);
                 var pid: ?u32 = null;
                 for (pids) |p| if (p.session_id) |s| if (std.mem.eql(u8, s, sid)) {
@@ -285,11 +406,13 @@ pub fn scanInto(io: Io, gpa: Allocator, arena: Allocator, home: []const u8, scop
                     .workspace = ws_label,
                     .cwd = stats.cwd,
                     .model = stats.model,
-                    .transcript_path = try std.fs.path.join(arena, &.{ projects, d.name, f.name }),
+                    .transcript_path = path,
                     .state = deriveState(pid != null, now - mtime, stats.last_was_tool_call, stats.pending_tool_uses, stats.last_error),
                     .pid = pid,
-                    .tokens = stats.tokens,
-                    .cost_usd = stats.costUsd(),
+                    .tokens = sum.usage.tokens,
+                    .cost_usd = sum.usage.cost_usd,
+                    .cost_known = !sum.usage.unpriced,
+                    .totals_capped = sum.capped,
                     .last_activity_s = mtime,
                     .first_user_msg = first,
                     .last_user_msg = stats.last_user_msg,
@@ -347,6 +470,7 @@ pub fn scanInto(io: Io, gpa: Allocator, arena: Allocator, home: []const u8, scop
                 .pid = pid,
                 .tokens = stats.tokens,
                 .cost_usd = stats.costUsd(),
+                .cost_known = stats.priced(),
                 .last_activity_s = mtime,
                 .first_user_msg = first,
                 .last_user_msg = stats.last_user_msg,
@@ -357,11 +481,14 @@ pub fn scanInto(io: Io, gpa: Allocator, arena: Allocator, home: []const u8, scop
             });
         }
     } else |_| {}
+    // A whole pass: what it did not list is gone (a cancelled pass
+    // sweeps nothing).
+    if (totals) |c| c.sweep(gpa);
 }
 
 /// The first prompt of a transcript too long for its tail to hold it:
 /// the head's, on `arena`. A head that cannot be read has none.
-fn firstPrompt(gpa: Allocator, io: Io, arena: Allocator, dir: Io.Dir, name: []const u8, kind: Source) ScanError!?[]const u8 {
+pub fn firstPrompt(gpa: Allocator, io: Io, arena: Allocator, dir: Io.Dir, name: []const u8, kind: Source) ScanError!?[]const u8 {
     const head = transcript.readHead(gpa, io, dir, name, head_cap) catch |err| switch (err) {
         error.Canceled => return error.Canceled,
         error.OutOfMemory => return error.OutOfMemory,
@@ -563,6 +690,63 @@ test "deriveState: done / failed without a process; waiting on a quiet pending t
     try t.expectEqual(@as(usize, 6), n);
 }
 
+test "the totals: a transcript past the tail is summed whole, each split message once; a rescan reads only what was appended; a cap is said" {
+    // sess-table-tokens-cost-wrong.
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const home = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    try tmp.dir.createDirPath(t.io, ".claude/projects/-tmp-p-long");
+    const rel = ".claude/projects/-tmp-p-long/e2e0000a-0000-4000-8000-00000000a002.jsonl";
+    // 300 turns of 1000 in / 200 out, each written as two lines that
+    // repeat the id and the usage — ~600 KB, past `tail_cap`.
+    var text: std.ArrayListUnmanaged(u8) = .empty;
+    defer text.deinit(t.allocator);
+    try text.appendSlice(t.allocator, "{\"type\":\"user\",\"cwd\":\"/tmp/p-long\",\"message\":{\"role\":\"user\",\"content\":\"long session\"}}\n");
+    const pad = "x" ** 900;
+    var i: usize = 0;
+    while (i < 300) : (i += 1) for (0..2) |_| try text.print(t.allocator, "{{\"type\":\"assistant\",\"message\":{{\"id\":\"msg_l{d}\",\"model\":\"claude-opus-4-7\",\"usage\":{{\"input_tokens\":1000,\"output_tokens\":200}},\"content\":[{{\"type\":\"text\",\"text\":\"{s}\"}}]}}}}\n", .{ i, pad });
+    try t.expect(text.items.len > tail_cap);
+    try tmp.dir.writeFile(t.io, .{ .sub_path = rel, .data = text.items });
+    var cache: TotalsCache = .{};
+    defer cache.deinit(t.allocator);
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    var rows: std.ArrayListUnmanaged(Item) = .empty;
+    try scanInto(t.io, t.allocator, arena.allocator(), home, nobody, &rows, &cache);
+    try t.expectEqual(@as(usize, 1), rows.items.len);
+    try t.expectEqual(@as(u64, 360_000), rows.items[0].tokens);
+    // 300 × (1000 × $5 + 200 × $25) per MT.
+    try t.expectApproxEqAbs(@as(f64, 3.0), rows.items[0].cost_usd, 1e-9);
+    try t.expect(rows.items[0].cost_known and !rows.items[0].totals_capped);
+    try t.expectEqual(@as(usize, 1), cache.map.count());
+    var vi = cache.map.valueIterator();
+    const summed = vi.next().?.offset;
+    try t.expectEqual(@as(u64, text.items.len), summed);
+    // One more turn, in the unknown model: the rescan reads just it.
+    var f = try tmp.dir.openFile(t.io, rel, .{ .mode = .read_write });
+    const more = "{\"type\":\"assistant\",\"message\":{\"id\":\"msg_n\",\"model\":\"claude-next-9\",\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n";
+    try f.writePositionalAll(t.io, more, text.items.len);
+    f.close(t.io);
+    rows = .empty;
+    try scanInto(t.io, t.allocator, arena.allocator(), home, nobody, &rows, &cache);
+    try t.expectEqual(@as(u64, 360_010), rows.items[0].tokens);
+    try t.expect(!rows.items[0].cost_known);
+    vi = cache.map.valueIterator();
+    try t.expectEqual(summed + more.len, vi.next().?.offset);
+    // A cap under the file's size: a floor, and said.
+    var dir = try tmp.dir.openDir(t.io, ".claude/projects/-tmp-p-long", .{});
+    defer dir.close(t.io);
+    const capped = try totalsOf(t.io, t.allocator, dir, std.fs.path.basename(rel), rel, text.items.len, 64 * 1024, null);
+    try t.expect(capped.capped);
+    try t.expect(capped.usage.tokens > 0 and capped.usage.tokens < 360_000);
+    // The file gone: the next pass drops its entry.
+    try tmp.dir.deleteFile(t.io, rel);
+    rows = .empty;
+    try scanInto(t.io, t.allocator, arena.allocator(), home, nobody, &rows, &cache);
+    try t.expectEqual(@as(usize, 0), cache.map.count());
+}
+
 test "scanInto reads a fixture home: claude and codex sessions, the tail stats, done without a pid, the branch kept" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
@@ -576,7 +760,7 @@ test "scanInto reads a fixture home: claude and codex sessions, the tail stats, 
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     var rows: std.ArrayListUnmanaged(Item) = .empty;
-    try scanInto(t.io, t.allocator, arena.allocator(), home, nobody, &rows);
+    try scanInto(t.io, t.allocator, arena.allocator(), home, nobody, &rows, null);
     try t.expectEqual(@as(usize, 2), rows.items.len);
     var claude_seen = false;
     var codex_seen = false;

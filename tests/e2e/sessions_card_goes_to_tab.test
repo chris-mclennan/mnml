@@ -1,0 +1,34 @@
+# env: HOME=home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# Enter on a SESSIONS card whose pane lives on ANOTHER tab page takes
+# you to that page (`App.showPane`); the pty is never pulled into the
+# current page's leaf, where one session would be shown on two pages
+# and closing either copy would take the other away.
+write bin/claude #!/bin/bash\nn=$(cat .n 2>/dev/null || echo 0); n=$((n+1)); echo $n > .n\nprintf '\\033]0;job %s\\007' $n\nprintf 'fake session %s\\n' $n\nexec sleep 60
+shell chmod +x bin/claude
+write notes.txt "alpha\n"
+open notes.txt
+command ai.claude_code_new
+wait 500
+command tab.new
+command ai.claude_code_new
+wait 500
+expect screen contains "│▌fake session 2"
+command tab.first
+wait 300
+expect screen lacks "│▌fake session 2"
+command view.activity_sessions
+key /
+type job 2
+key enter
+wait 300
+key enter
+wait 500
+# Where did job 2 go? Its own tab (2) should be the active one.
+expect screen contains "│▌fake session 2"
+expect screen contains "TABS  1  2 󰅖"
+# Page 1 is untouched: the notes are still its only pane.
+command tab.first
+wait 300
+expect screen lacks "│▌fake session 2"
+expect screen contains "alpha"

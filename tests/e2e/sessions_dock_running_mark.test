@@ -1,0 +1,26 @@
+# env: HOME=home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# The launcher dock's running mark says what runs. Three Claude
+# sessions, the second one's CLI exiting at once (code 3): the two live
+# ones wear the dot and the exited one does not, and the Claude Code
+# item — which stands for every Claude session — is lit while any is.
+write bin/claude #!/bin/bash\nn=$(cat .n 2>/dev/null || echo 0); n=$((n+1)); echo $n > .n\nprintf '\\033]0;job %s\\007' $n\nprintf 'fake session %s\\n' $n\nif [ $n = 2 ]; then exit 3; fi\nexec sleep 600
+shell chmod +x bin/claude
+write a.txt "alpha\n"
+open a.txt
+ex dock always
+ex dock mark dot
+expect screen contains " 󱸀 Claude Code"
+expect screen lacks "󱸀• Claude Code"
+command ai.claude_code_new
+wait 500
+command ai.claude_code_new
+wait 800
+command ai.claude_code_new
+wait 500
+expect screen contains "[exited 3]"
+expect screen contains "󱸀• Claude Code"
+expect screen contains "󲀀• job 1"
+expect screen contains "󲀀 job 2"
+expect screen lacks "󲀀• job 2"
+expect screen contains "󲀀• job 3"

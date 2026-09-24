@@ -1,0 +1,23 @@
+# env: HOME=home
+# The sessions table's tokens / cost columns are what the transcripts hold:
+#  - split: Claude Code writes ONE assistant message as several JSONL
+#    lines (one per content block), every line repeating the same
+#    message.id and the same usage: counted once — 1.2k tokens, $0.01
+#    (claude-opus-4-7 at $5 / $25 per MT, 1000 in / 200 out).
+#  - long: 300 turns of 1000 in / 200 out, ~390 KB on disk, past the
+#    tail the state is read from: summed whole — 360.0k tokens, $3.00.
+#  - five: claude-opus-5 is priced ($0.01); a model with no price
+#    reads n/a, never $0.00.
+shell mkdir -p home/.claude/projects/-tmp-p-split home/.claude/projects/-tmp-p-long home/.claude/projects/-tmp-p-five
+shell f=home/.claude/projects/-tmp-p-split/e2e0000a-0000-4000-8000-00000000a001.jsonl; U='"usage":{"input_tokens":1000,"output_tokens":200,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}'; { echo '{"type":"user","cwd":"/tmp/p-split","message":{"role":"user","content":"split turn"}}'; echo '{"type":"assistant","cwd":"/tmp/p-split","message":{"id":"msg_a1","model":"claude-opus-4-7",'"$U"',"content":[{"type":"thinking","thinking":"hm"}]}}'; echo '{"type":"assistant","cwd":"/tmp/p-split","message":{"id":"msg_a1","model":"claude-opus-4-7",'"$U"',"content":[{"type":"text","text":"Looking."}]}}'; echo '{"type":"assistant","cwd":"/tmp/p-split","message":{"id":"msg_a1","model":"claude-opus-4-7",'"$U"',"content":[{"type":"text","text":"Split reply."}]}}'; } > $f
+shell f=home/.claude/projects/-tmp-p-long/e2e0000a-0000-4000-8000-00000000a002.jsonl; pad=$(printf 'x%.0s' $(seq 1 1000)); { echo '{"type":"user","cwd":"/tmp/p-long","message":{"role":"user","content":"long session"}}'; for i in $(seq 1 300); do echo '{"type":"assistant","cwd":"/tmp/p-long","message":{"id":"msg_l'$i'","model":"claude-opus-4-7","usage":{"input_tokens":1000,"output_tokens":200},"content":[{"type":"text","text":"turn '$i' '$pad'"}]}}'; done; echo '{"type":"assistant","cwd":"/tmp/p-long","message":{"id":"msg_lz","model":"claude-opus-4-7","usage":{"input_tokens":0,"output_tokens":0},"content":[{"type":"text","text":"Long reply."}]}}'; } > $f; test $(wc -c < $f) -gt 300000
+shell mkdir -p home/.claude/projects/-tmp-p-next; f=home/.claude/projects/-tmp-p-next/e2e0000a-0000-4000-8000-00000000a004.jsonl; { echo '{"type":"user","cwd":"/tmp/p-next","message":{"role":"user","content":"next model"}}'; echo '{"type":"assistant","cwd":"/tmp/p-next","message":{"id":"msg_n1","model":"claude-next-9","usage":{"input_tokens":1000,"output_tokens":200},"content":[{"type":"text","text":"Next reply."}]}}'; } > $f
+shell f=home/.claude/projects/-tmp-p-five/e2e0000a-0000-4000-8000-00000000a003.jsonl; { echo '{"type":"user","cwd":"/tmp/p-five","message":{"role":"user","content":"opus five"}}'; echo '{"type":"assistant","cwd":"/tmp/p-five","message":{"id":"msg_f1","model":"claude-opus-5","usage":{"input_tokens":1000,"output_tokens":200},"content":[{"type":"text","text":"Five reply."}]}}'; } > $f
+command view.toggle_tree
+command sessions.table
+wait 1500
+expect screen lacks "  3.6k"
+expect screen contains "1.2k    $0.01"
+expect screen contains "360.0k    $3.00"
+expect screen contains "1.2k      n/a"
+expect screen lacks "$0.00"
