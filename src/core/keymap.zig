@@ -650,6 +650,58 @@ test "the needs-you jumps: space a j / space a k in vim, ctrl+alt+n / ctrl+alt+s
     try std.testing.expect(vim.resolveSeq(casn) == .none);
 }
 
+test "the parity additions (docs/KEYMAP_PARITY.md): each oracle chord runs its command in its own profile and nothing in the other" {
+    const gpa = std.testing.allocator;
+    var vim = try Keymap.build(gpa, .vim, .{});
+    defer vim.deinit();
+    var standard = try Keymap.build(gpa, .standard, .{});
+    defer standard.deinit();
+    const Case = struct { spec: []const u8, id: command.CommandId };
+    // NvChad (nvchad-probe): `<leader>D` LSP type definition (its
+    // on_attach), `<A-h>` the toggleable horizontal terminal.
+    const vim_cases = [_]Case{
+        .{ .spec = "space D", .id = .@"lsp.goto_type_definition" },
+        .{ .spec = "alt+h", .id = .@"term.scratch_toggle" },
+    };
+    // VS Code 1.138's defaults (workbench.desktop.main.js, the Linux
+    // chord): marker next / previous, go to implementation, call
+    // hierarchy, word wrap, last edit location, change all occurrences,
+    // go back, the secondary side bar, replace in files, quick open's
+    // second chord, the application menu, copy path, peek definition.
+    const std_cases = [_]Case{
+        .{ .spec = "alt+f8", .id = .@"lsp.next_diagnostic" },
+        .{ .spec = "shift+alt+f8", .id = .@"lsp.prev_diagnostic" },
+        .{ .spec = "ctrl+f12", .id = .@"lsp.goto_implementation" },
+        .{ .spec = "shift+alt+h", .id = .@"lsp.incoming_calls" },
+        .{ .spec = "alt+z", .id = .@"view.toggle_wrap" },
+        .{ .spec = "ctrl+k ctrl+q", .id = .@"editor.jump_prev_edit" },
+        .{ .spec = "ctrl+f2", .id = .@"editor.select_all_occurrences" },
+        .{ .spec = "ctrl+alt+minus", .id = .@"nav.back" },
+        .{ .spec = "ctrl+alt+b", .id = .@"view.toggle_right_panel" },
+        .{ .spec = "ctrl+shift+h", .id = .@"find.grep_replace" },
+        .{ .spec = "ctrl+e", .id = .@"picker.files" },
+        .{ .spec = "alt+f10", .id = .@"view.menu_bar_open" },
+        .{ .spec = "ctrl+alt+c", .id = .@"file.copy_path" },
+        .{ .spec = "ctrl+k ctrl+alt+c", .id = .@"file.copy_path" },
+        .{ .spec = "ctrl+shift+f10", .id = .@"lsp.peek_definition_overlay" },
+    };
+    var buf: [max_seq]Chord = undefined;
+    for (vim_cases) |c| {
+        const seq = parseKeySeqBuf(c.spec, &buf).?;
+        const r = vim.resolveSeq(seq);
+        try std.testing.expect(r == .run);
+        try std.testing.expectEqual(c.id, r.run.static);
+        try std.testing.expect(standard.resolveSeq(seq) == .none);
+    }
+    for (std_cases) |c| {
+        const seq = parseKeySeqBuf(c.spec, &buf).?;
+        const r = standard.resolveSeq(seq);
+        try std.testing.expect(r == .run);
+        try std.testing.expectEqual(c.id, r.run.static);
+        try std.testing.expect(vim.resolveSeq(seq) == .none);
+    }
+}
+
 test "continuations: the keys that follow a prefix, the binding each completes, the longer ones through it" {
     var km = Keymap.init(std.testing.allocator);
     defer km.deinit();

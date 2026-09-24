@@ -1157,6 +1157,8 @@ pub const Vim = struct {
                     '[' => runCmd(.@"editor.section_prev_start"),
                     ']' => runCmd(.@"editor.section_prev_end"),
                     'm' => runCmd(.@"editor.method_prev"),
+                    // Neovim's default `[b` (`:bprevious`, `:help [b`).
+                    'b' => runCmd(.@"buffer.prev"),
                     // `[p` / `[P` / `]P` all put BEFORE with the indent
                     // adjusted (`:help [p`); a count repeats the put.
                     'p', 'P' => repeated(arena, .paste_before_indent, n),
@@ -1180,6 +1182,8 @@ pub const Vim = struct {
                     ']' => runCmd(.@"editor.section_next_start"),
                     '[' => runCmd(.@"editor.section_next_end"),
                     'm' => runCmd(.@"editor.method_next"),
+                    // Neovim's default `]b` (`:bnext`, `:help ]b`).
+                    'b' => runCmd(.@"buffer.next"),
                     // `]p` puts AFTER with the indent adjusted; `]P` is
                     // vim's synonym for `[P` (`:help ]p`).
                     'p' => repeated(arena, .paste_after_indent, n),
@@ -2691,6 +2695,22 @@ test "gt / gT run tab.next / tab.prev; with a count they name the page (3gt) or 
     _ = try v.handleKey(Key.char('g'), .{}, a);
     r = try v.handleKey(Key.char('t'), .{}, a);
     try testing.expectEqual(CommandId.@"tab.next", r.app.run_command);
+}
+
+test "[b / ]b are Neovim's :bprevious / :bnext" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var v = Vim.init(testing.allocator, .{});
+    defer v.deinit();
+    _ = try v.handleKey(Key.char('['), .{}, a);
+    var r = try v.handleKey(Key.char('b'), .{}, a);
+    try testing.expect(r == .app);
+    try testing.expectEqual(CommandId.@"buffer.prev", r.app.run_command);
+    _ = try v.handleKey(Key.char(']'), .{}, a);
+    r = try v.handleKey(Key.char('b'), .{}, a);
+    try testing.expect(r == .app);
+    try testing.expectEqual(CommandId.@"buffer.next", r.app.run_command);
 }
 
 test "visual `:` opens the line on '<,'>, leaves Visual at once, and widens a linewise range before remembering it" {

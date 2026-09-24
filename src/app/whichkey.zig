@@ -425,8 +425,8 @@ test "leader tree: root groups, descend, leaves, dead ends" {
     const std_root = continuations(arena_state.allocator(), "", false);
     for (std_root) |e| try std.testing.expect(e.key != 'd' and e.key != 'r');
     // The vim profile's root adds `+debug`, `+lsp` on `r`, `+nvchad`,
-    // `+which-key` and NvChad's `x` / `h` / `v` / `e` / `E` / `/` / `b`.
-    try std.testing.expectEqual(continuations(arena_state.allocator(), "", true).len - 11, std_root.len);
+    // `+which-key` and NvChad's `x` / `h` / `v` / `e` / `E` / `/` / `b` / `D`.
+    try std.testing.expectEqual(continuations(arena_state.allocator(), "", true).len - 12, std_root.len);
     // NvChad's `<leader>b` is `:enew`, a leaf — the `+buffer` group is gone.
     try std.testing.expectEqual(CommandId.@"scratch.new", lookupIn("b", true).?.cmd.id);
     try std.testing.expect(lookupIn("b", false) == null);
@@ -542,7 +542,7 @@ test "every group in both profiles has a glyph with an ascii twin, and the count
     for (leaves) |l| {
         if (l.vim_only) vim_only += 1;
     }
-    try t.expectEqual(@as(u16, 43), vim_only);
+    try t.expectEqual(@as(u16, 44), vim_only);
     try t.expectEqual(chordCount(&root, false) + vim_only, chordCount(&root, true));
     // NvChad's `<leader>ds` / `<leader>rn`, vim-only like their groups.
     try t.expectEqual(CommandId.@"lsp.diagnostics", lookup("ds").?.cmd.id);
