@@ -219,8 +219,10 @@ fn gotoLine(app: *App) CommandError!void {
     // Rust's title names the line the cursor is on.
     const title = try std.fmt.allocPrint(app.gpa, "Go to line  (currently {d})", .{e.buf.editor.rowCol().row + 1});
     errdefer app.gpa.free(title);
+    // Esc goes back where Ctrl+G came from (the tree); Enter to the line.
+    const back = app.overlayReturnFocus();
     app.overlay.deinit(app.gpa);
-    app.overlay = .{ .prompt = .{ .state = Prompt.init(app.gpa, title), .purpose = .goto_line, .title_owned = title } };
+    app.overlay = .{ .prompt = .{ .state = Prompt.init(app.gpa, title), .purpose = .goto_line, .title_owned = title, .return_focus = back } };
     app.focus = .overlay;
     app.needs_render = true;
 }
@@ -1163,6 +1165,34 @@ test "goto_line opens the prompt titled exactly `Go to line`" {
     try t.expect(app.overlay == .prompt);
     try t.expectEqualStrings("Go to line  (currently 1)", app.overlay.prompt.state.title);
     try t.expect(app.focus == .overlay);
+}
+
+test "goto_line reads VS Code's forms: `-1` is the last line, `2,4` line 2 column 4; Esc goes back to the tree it came from, Enter to the line" {
+    var app = try appWith("a\nbbbbbb\nc\nd");
+    defer app.deinit();
+    const e = app.activeEditor().?;
+    const Case = struct { in: []const u8, row: usize, col: usize };
+    for ([_]Case{ .{ .in = "-1", .row = 3, .col = 0 }, .{ .in = "2,4", .row = 1, .col = 3 }, .{ .in = "2:5", .row = 1, .col = 4 }, .{ .in = "-9", .row = 0, .col = 0 }, .{ .in = "99", .row = 3, .col = 0 } }) |c| {
+        try command.run(&app, .{ .static = .@"editor.goto_line" });
+        for (c.in) |ch| try dispatch.key(&app, Key.char(ch));
+        try dispatch.key(&app, Key.named(.enter));
+        try t.expectEqual(c.row, e.buf.editor.rowCol().row);
+        try t.expectEqual(c.col, e.buf.editor.rowCol().col);
+    }
+    app.focus = .tree;
+    try command.run(&app, .{ .static = .@"editor.goto_line" });
+    try dispatch.key(&app, Key.named(.esc));
+    try t.expect(app.focus == .tree);
+    try command.run(&app, .{ .static = .@"editor.goto_line" });
+    try dispatch.key(&app, Key.char('2'));
+    try dispatch.key(&app, Key.named(.enter));
+    try t.expect(app.focus == .pane);
+    // A picker opened from the tree goes back there on Esc too.
+    app.focus = .tree;
+    try command.run(&app, .{ .static = .palette });
+    try t.expect(app.overlay == .picker);
+    try dispatch.key(&app, Key.named(.esc));
+    try t.expect(app.focus == .tree);
 }
 
 const buffer_mod = @import("../editor/buffer.zig");

@@ -643,6 +643,11 @@ pub const Overlay = union(enum) {
         lua_source: []u8 = &.{},
         lua_state: u16 = 0,
         requery_at_ms: ?i64 = null,
+        /// Where Esc sends focus: the tree or a panel the picker was
+        /// opened from (VS Code's Esc from Quick Open goes back to the
+        /// Explorer); null is the active pane. An accept goes to what
+        /// it opened.
+        return_focus: ?FocusId = null,
     },
     /// A context menu (a panel row's kebab, a chip's right-click).
     menu: MenuState,
@@ -3038,6 +3043,21 @@ pub const App = struct {
     }
 
     /// Close the find bar; `restore` puts the pre-open find state back.
+    /// Where a picker or prompt opened now sends focus back on Esc: the
+    /// tree or a panel it was opened from, or what the overlay it
+    /// replaces would have gone back to; null is the active pane.
+    pub fn overlayReturnFocus(self: *const App) ?FocusId {
+        return switch (self.focus) {
+            .tree, .panel => self.focus,
+            .overlay => switch (self.overlay) {
+                .picker => |p| p.return_focus,
+                .prompt => |p| p.return_focus,
+                else => null,
+            },
+            else => null,
+        };
+    }
+
     pub fn closeFindBar(self: *App, restore: bool) void {
         const fb = &(self.find_bar orelse return);
         // A terminal's bar leaves its selection on the current match.
