@@ -42,11 +42,13 @@ cursor blink. Render only when an event arrived or a deadline fired.
 
 ## 3. Pty: a ring buffer plus one "readable" flag
 
-**Proof.** `src/pty/session.zig:2` — a reader thread moves the child's
-output into a `Ring` (`src/pty/ring.zig`; capacity at `session.zig:119`),
-and notifies once on the empty→readable edge (`:77`), not once per read.
-The UI thread feeds the ghostty-vt `Terminal` from the ring on its own
-schedule; `held` (`:133`) is the one atomic.
+**Proof.** `src/pty/session_posix.zig` (`session_windows.zig` is the
+ConPTY twin) — a reader thread moves the child's output into a `Ring`
+(`src/pty/ring.zig`; `Ring.default_capacity`, 256 KiB), and notifies
+once on the empty→readable edge (`Ring.commit` returns true only on
+that flip, and the reader calls `callNotify` only then), not once per
+read. The UI thread feeds the ghostty-vt `Terminal` from the ring on
+its own schedule.
 
 **In Rust.** Replace the `Sender<Vec<u8>>` per 8 KiB read with a
 `ringbuf::HeapRb<u8>` (producer on the reader thread, consumer on the UI
@@ -98,9 +100,11 @@ module; the editor view last.
 type) type` with `Props` (`:110`) and `draw` (`:138`): header with the
 live count, the `/` filter row, the focused-row accent, the scrollbar,
 the kebab and the sort chip are all inside it; the caller supplies a
-`paintRow` and the chip labels. `src/todos.zig:706` is the one instance
-so far; the NOTES / FINDINGS panels are on the Remaining list because
-the widget makes them a re-skin.
+`paintRow` and the chip labels. `src/todos.zig` was the first instance;
+NOTES (`src/notes.zig`), FINDINGS (`src/findings.zig`), SESSIONS
+(`src/sessions.zig`), the jobs list (`src/ui/jobs_view.zig`) and the
+debug panel (`src/ui/debug_panel.zig`) are the same widget with their
+own `Row`.
 
 **In Rust.** `struct ListPanel<R> { state: ListState, _row: PhantomData<R> }`
 with `fn draw(&mut self, ui: &mut Ui, area, props: ListProps<'_, R>,
@@ -137,7 +141,7 @@ stops being a runtime discovery.
 `NoActivePane`, `NotAnEditor`, `OutOfMemory`, ..) and `:39` `Diag{ msg }`
 with `fail` (`:48`): a runner writes the user-facing reason into the
 frame arena and returns `error.Failed`; the dispatcher toasts it once.
-`src/app/cmd_app.zig` `qfGo` is a small example — four reasons, one
+`src/app/quickfix.zig` `go` is a small example — four reasons, one
 return type. The `.test` runner asserts on the toast, so a wrong reason
 is a failing test.
 
