@@ -12,29 +12,29 @@
    │                          │▌                                                              52% used
  󰎒 │                          │▌   Resets Sep 19 at 5am
    │                          │▌
-  │                          │▌ Current week (Fable)
+  │                          │▌ This week by surface · as of 7:55pm
+   │                          │▌   Claude Code                      38%
+  │                          │▌   Chat                             9%
+   │                          │▌   Cowork                           4%
+  │                          │▌   Other                            1%
+   │                          │▌
+ 󱘣 │                          │▌ Current week (Fable)
    │                          │▌                                                              55% used
-  │                          │▌   Resets Sep 19 at 5am
+ 󰢱 │                          │▌   Resets Sep 19 at 5am
    │                          │▌
-  │                          │▌   Extra usage: off
+   │                          │▌   Extra usage: off
    │                          │▌
- 󱘣 │                          │▌
+   │                          │▌
    │                          │▌ work  · sam@work.example · Example Co
- 󰢱 │                          │▌
+   │                          │▌
    │                          │▌ Current session
-   │                          │▌                                                              24% used
-   │                          │▌   Resets 11:05pm
+   │──────────────────────────│▌                                                              24% used
+   │ Claude Usage           ⋮ │▌   Resets 11:05pm
    │                          │▌
    │                          │▌ Current week (all models)
    │                          │▌                                                              71% used
    │                          │▌   Resets Sep 16 at 9am
-   │──────────────────────────│▌
-   │ Claude Usage           ⋮ │▌
-   │                          │▌ consulting 
+  │                          │▌
    │                          │▌
-   │                          │▌ Current session
-   │                          │▌                                                              0% used
-  │                          │▌   (reset time not available)
-   │                          │▌
- VIEW  [no file]                                                                            󱼀 󰐎    18:23  ws   —
+ VIEW  [no file]                                                                            󱼀 󰐎    03:08  ws   —
                                                            ⋯

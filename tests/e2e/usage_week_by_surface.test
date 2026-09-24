@@ -1,0 +1,40 @@
+# `seven_day_breakdown` — where an account's week went, per surface — as
+# `This week by surface` under the weekly window: one row per surface
+# (its name, a short bar, `NN%` of the week) and the time the endpoint
+# took it, muted. An account whose endpoint sends `null` has no such
+# block at all, and an `extra_usage` whose currency, decimal places and
+# reason are all null still reads as one plain line. Values invented.
+# env: MNML_CLAUDE_USAGE_FIXTURE=${MNML_E2E_WORKSPACE}/fixture
+
+write fixture/accounts *personal\nwork
+write fixture/now 1789243232
+write fixture/tz_offset 0
+write fixture/personal.json {"five_hour":{"utilization":20.0,"resets_at":"2026-09-12T22:00:00+00:00"},"seven_day":{"utilization":47.0,"resets_at":"2026-09-19T05:00:00+00:00"},"extra_usage":{"is_enabled":null,"monthly_limit":null,"used_credits":null,"utilization":null,"currency":null,"decimal_places":null,"disabled_reason":null},"seven_day_breakdown":{"as_of":"2026-09-12T19:55:00+00:00","window_started_at":"2026-09-12T05:00:00+00:00","rows":[{"key":"claude_code","display_name":"Claude Code","percent":31.4},{"key":"chat","display_name":"Chat","percent":9},{"key":"cowork","display_name":"Cowork","percent":5.0},{"key":"other","display_name":"Other","percent":2}]}}
+write fixture/work.json {"five_hour":{"utilization":24.0,"resets_at":"2026-09-12T23:05:00+00:00"},"seven_day":{"utilization":71.0,"resets_at":"2026-09-16T09:00:00+00:00"},"extra_usage":{"is_enabled":false,"currency":null,"decimal_places":null,"disabled_reason":null},"seven_day_breakdown":null}
+write placeholder.txt x
+open placeholder.txt
+
+command ai.claude_usage
+wait 800
+expect pane "Claude Usage"
+expect screen contains "Current week (all models)"
+expect screen contains "47% used"
+expect screen contains "This week by surface · as of 7:55pm"
+expect screen contains "Claude Code"
+expect screen contains "31%"
+expect screen contains "Chat"
+expect screen contains "9%"
+expect screen contains "Cowork"
+expect screen contains "Other"
+expect screen lacks "seven_day_breakdown"
+expect screen lacks "Seven day breakdown"
+# The pointer on a surface row (`Claude Code`, row 15 at 120x40): the
+# info view carries its curated entry, not the account's.
+hover 40 15
+expect screen contains "This week by surface —"
+expect screen contains "Where this account's"
+expect screen lacks "no help written yet"
+key G
+expect screen contains "71% used"
+expect screen contains "Extra usage: off"
+expect screen lacks "Extra usage: off ·"

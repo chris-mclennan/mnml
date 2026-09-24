@@ -570,7 +570,11 @@ fn dupeUsage(arena: Allocator, u: usage.Usage) Allocator.Error!usage.Usage {
     for (u.windows, 0..) |w, i| windows[i] = .{ .key = try arena.dupe(u8, w.key), .title = try arena.dupe(u8, w.title), .percent = w.percent, .resets_at = w.resets_at, .locked_reason = try dupeOpt(arena, w.locked_reason) };
     out.windows = windows;
     if (u.extra_usage) |e| out.extra_usage = .{ .enabled = e.enabled, .reason = try dupeOpt(arena, e.reason), .percent = e.percent };
-    if (u.offer) |o| out.offer = .{ .key = try arena.dupe(u8, o.key), .expires_at = o.expires_at };
+    if (u.breakdown) |b| {
+        const rows = try arena.alloc(usage.SurfaceShare, b.rows.len);
+        for (b.rows, 0..) |r, i| rows[i] = .{ .key = try arena.dupe(u8, r.key), .name = try arena.dupe(u8, r.name), .percent = r.percent };
+        out.breakdown = .{ .as_of = b.as_of, .window_started_at = b.window_started_at, .rows = rows };
+    }
     out.locked_reason = try dupeOpt(arena, u.locked_reason);
     out.weekly_locked_reason = try dupeOpt(arena, u.weekly_locked_reason);
     // Logged on arrival; the snapshot does not keep them.
@@ -587,7 +591,7 @@ const log = std.log.scoped(.usage);
 
 /// The names of the top-level keys the parser does not know, at debug
 /// level, once per account per key — how the field that carries a new
-/// window or a reset offer gets learned from an account that has one.
+/// window gets learned from an account that has one.
 fn logUnknownKeys(app: *App, name: []const u8, keys: []const []const u8) Allocator.Error!void {
     const s = st(app);
     for (keys) |k| {
@@ -1037,15 +1041,26 @@ pub fn handleKey(app: *App, id: PaneId, p: *UsagePane, k: Key) Allocator.Error!b
 // ─── the mouse ──────────────────────────────────────────────────────────
 
 /// The Claude pane's `script_hit` ids: the header's kebab, a row outside
-/// any account, a row of account `i`'s block, account `i`'s pencil.
+/// any account, a row of account `i`'s block, account `i`'s pencil, a row
+/// of account `i`'s `This week by surface` rows.
 pub const hit_kebab: u32 = 1;
 pub const hit_body: u32 = 2;
 pub const hit_account_base: u32 = 0x100;
 pub const hit_pencil_base: u32 = 0x1000;
+pub const hit_breakdown_base: u32 = 0x2000;
 
-/// The account a block or pencil id names, in the order the pane lists them.
+pub fn isPencilHit(id: u32) bool {
+    return id >= hit_pencil_base and id < hit_breakdown_base;
+}
+
+pub fn isBreakdownHit(id: u32) bool {
+    return id >= hit_breakdown_base;
+}
+
+/// The account a block, pencil or breakdown id names, in the order the
+/// pane lists them.
 pub fn accountOfHit(app: *App, id: u32) ?[]const u8 {
-    const base: u32 = if (id >= hit_pencil_base) hit_pencil_base else if (id >= hit_account_base) hit_account_base else return null;
+    const base: u32 = if (id >= hit_breakdown_base) hit_breakdown_base else if (id >= hit_pencil_base) hit_pencil_base else if (id >= hit_account_base) hit_account_base else return null;
     const i = id - base;
     const s = st(app);
     return if (i < s.accounts.items.len) s.accounts.items[i].name else null;
@@ -1059,7 +1074,7 @@ pub fn click(app: *App, p: *UsagePane, hit_id: u32, m: @import("../core/key.zig"
     const right = m.button == .right;
     if (hit_id == hit_kebab) return openPaneMenu(app, m.x, m.y);
     if (accountOfHit(app, hit_id)) |name| {
-        if (hit_id >= hit_pencil_base and !right) return toastFail(app, openRenamePrompt(app, name));
+        if (isPencilHit(hit_id) and !right) return toastFail(app, openRenamePrompt(app, name));
         if (right) return openAccountMenu(app, name, m.x, m.y);
         return;
     }
@@ -1196,8 +1211,7 @@ pub fn claudeChipParts(app: *App, arena: Allocator, glyph: []const u8) Allocator
 }
 
 /// One account as the chip's hover lists it: its name (and whether it is
-/// the active one, or has a reset offer open), then its two percents and
-/// the next reset.
+/// the active one), then its two percents and the next reset.
 pub const TipLine = struct { text: []const u8, sub: []const u8 };
 
 pub fn chipTipLines(app: *App, arena: Allocator) Allocator.Error![]TipLine {
@@ -1206,8 +1220,7 @@ pub fn chipTipLines(app: *App, arena: Allocator) Allocator.Error![]TipLine {
     const out = try arena.alloc(TipLine, s.accounts.items.len);
     for (s.accounts.items, 0..) |*a, i| {
         const u = &a.usage;
-        const offer = if (u.offer) |o| o.expires_at == 0 or o.expires_at > now else false;
-        const text = try std.fmt.allocPrint(arena, "{s}{s}{s}", .{ a.name, if (a.is_active) " (active)" else "", if (offer) " " ++ usage.offer_mark ++ " reset available" else "" });
+        const text = try std.fmt.allocPrint(arena, "{s}{s}", .{ a.name, if (a.is_active) " (active)" else "" });
         const sub = if (u.fetched_at == 0)
             try std.fmt.allocPrint(arena, "{s}", .{if (u.last_error) |e| e else "not read yet"})
         else blk: {
@@ -1829,12 +1842,12 @@ test "the wire's severity colours the bar over the thresholds; unknown keys are 
     try settle(&app);
     const a = st(&app).find("personal").?;
     try t.expectEqual(usage.Severity.critical, a.usage.weekly_severity.?);
-    try t.expectEqualStrings("omelette_promotional", a.usage.offer.?.key);
-    // Four keys this build does not read: logged, once.
-    try t.expectEqual(@as(usize, 4), st(&app).unknown_logged);
+    // Five keys this build does not read — the codename that no longer
+    // passes for a reset offer among them: logged, once.
+    try t.expectEqual(@as(usize, 5), st(&app).unknown_logged);
     try refreshAll(&app);
     try settle(&app);
-    try t.expectEqual(@as(usize, 4), st(&app).unknown_logged);
+    try t.expectEqual(@as(usize, 5), st(&app).unknown_logged);
     // 61 % is yellow by the thresholds; the endpoint says critical: red.
     try app.render();
     const pal = &app.theme.palette;
@@ -1863,11 +1876,11 @@ test "the wire's severity colours the bar over the thresholds; unknown keys are 
     try t.expect(found);
 }
 
-test "the chip at a glance: the worst account's colour as a pill, a ↺ on the account with a reset offer; the hover lists every account" {
+test "the chip at a glance: the worst account's colour as a pill, no reset mark off a codename; the hover lists every account" {
     var fx = try Fixture.init();
     defer fx.deinit();
     try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "accounts", .data = "*personal\nwork\nspare\n" });
-    // `spare`: 88 % and 30 %, graded warning, with an offer open.
+    // `spare`: 88 % and 30 %, graded warning, and a codename with clocks.
     try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "spare.json", .data = usage.usage_wide_fixture });
     var app = try fx.app();
     defer app.deinit();
@@ -1880,8 +1893,8 @@ test "the chip at a glance: the worst account's colour as a pill, a ↺ on the a
     try settle(&app);
     const arena = app.frame.allocator();
     const parts = try claudeChipParts(&app, arena, "G");
-    // A block per account; `spare` carries the offer mark; personal's 95 % critical is the worst.
-    try t.expectEqualStrings("▇!▇↺", parts.accent);
+    // A block per account, no mark after `spare`; personal's 95 % critical is the worst.
+    try t.expectEqualStrings("▇!▇", parts.accent);
     try t.expectEqual(usage.Tier.hot, parts.tier.?);
     // Painted: the blocks as a dark pill in red inside the coral chip.
     app.tree.visible = false;
@@ -1894,7 +1907,8 @@ test "the chip at a glance: the worst account's colour as a pill, a ↺ on the a
     var seen = false;
     while (x < r.x + r.w) : (x += 1) {
         const c = app.screen.readCell(x, r.y) orelse continue;
-        if (!std.mem.eql(u8, c.char.grapheme, "↺")) continue;
+        try t.expect(!std.mem.eql(u8, c.char.grapheme, "↺"));
+        if (!std.mem.eql(u8, c.char.grapheme, "▇")) continue;
         try t.expect(@import("vaxis").Color.eql(c.style.fg, app.theme.palette.red));
         try t.expect(!@import("vaxis").Color.eql(c.style.bg, app.screen.readCell(r.x, r.y).?.style.bg));
         seen = true;
@@ -1907,7 +1921,7 @@ test "the chip at a glance: the worst account's colour as a pill, a ↺ on the a
     try t.expectEqualStrings("95% session · 52% week · resets 8:20pm", tip.rows[0].sub);
     try t.expectEqualStrings("work", tip.rows[1].text);
     try t.expect(std.mem.indexOf(u8, tip.rows[1].sub, "429") != null);
-    try t.expectEqualStrings("spare ↺ reset available", tip.rows[2].text);
+    try t.expectEqualStrings("spare", tip.rows[2].text);
     try t.expectEqualStrings("88% session · 61% week · resets 10pm", tip.rows[2].sub);
     // Nothing alarming: the chip is Rust's, ink on coral, no pill.
     try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "accounts", .data = "*calm\nquiet\n" });
@@ -1916,4 +1930,75 @@ test "the chip at a glance: the worst account's colour as a pill, a ↺ on the a
     try refreshAll(&app);
     try settle(&app);
     try t.expect((try claudeChipParts(&app, arena, "G")).tier == null);
+}
+
+test "This week by surface: under the week, a row per surface with its bar and percent, the time muted; none for an account that sends none; its rows hover and right-click as the account's" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "personal.json", .data = usage.usage_breakdown_fixture });
+    try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "work.json", .data = usage.usage_fixture });
+    try fx.tmp.dir.deleteFile(t.io, "work.error");
+    var app = try fx.app();
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    try command.run(&app, .{ .static = .@"ai.claude_usage" });
+    try settle(&app);
+    try app.render();
+    const txt = try screen_mod.toTestText(t.allocator, &app.screen);
+    defer t.allocator.free(txt);
+    const title = "This week by surface · as of 7:55pm";
+    const at = std.mem.indexOf(u8, txt, title) orelse return error.NoBreakdown;
+    // Under personal's week, before the next account.
+    try t.expect(at > std.mem.indexOf(u8, txt, "Current week (all models)").?);
+    try t.expect(at < std.mem.indexOf(u8, txt, "work " ++ usage_view.pencil_glyph).?);
+    // Once: `work` sends none.
+    try t.expect(std.mem.indexOf(u8, txt[at + title.len ..], "This week by surface") == null);
+    // Extra usage with every sub-field null: off, and nothing after it.
+    const eu = std.mem.indexOf(u8, txt, "Extra usage: off") orelse return error.NoExtraUsage;
+    const eol = std.mem.indexOfScalarPos(u8, txt, eu, '\n') orelse txt.len;
+    try t.expect(std.mem.indexOf(u8, txt[eu..eol], "·") == null);
+    const id = findPane(&app, .claude).?;
+    const pal = &app.theme.palette;
+    // Each surface: its name, a 20-cell bar filled to its share, `NN%`.
+    const Want = struct { name: []const u8, pct: []const u8, filled: usize };
+    for ([_]Want{ .{ .name = "Claude Code", .pct = "31%", .filled = 6 }, .{ .name = "Chat", .pct = "9%", .filled = 1 }, .{ .name = "Cowork", .pct = "5%", .filled = 1 }, .{ .name = "Other", .pct = "2%", .filled = 0 } }) |w| {
+        var y: u16 = 0;
+        const found = while (y < app.screen.height) : (y += 1) {
+            var row: std.ArrayListUnmanaged(u8) = .empty;
+            defer row.deinit(t.allocator);
+            var filled: usize = 0;
+            var empty: usize = 0;
+            var x: u16 = 0;
+            while (x < app.screen.width) : (x += 1) if (app.screen.readCell(x, y)) |c| {
+                try row.appendSlice(t.allocator, c.char.grapheme);
+                if (@import("vaxis").Color.eql(c.style.bg, pal.purple)) filled += 1;
+                if (@import("vaxis").Color.eql(c.style.bg, pal.bg2)) empty += 1;
+            };
+            const trimmed = std.mem.trim(u8, row.items, " ▌|");
+            if (!std.mem.startsWith(u8, trimmed, w.name) or !std.mem.endsWith(u8, trimmed, w.pct)) continue;
+            try t.expectEqual(w.filled, filled);
+            try t.expectEqual(@as(usize, usage_view.share_bar_w), filled + empty);
+            break true;
+        } else false;
+        try t.expect(found);
+    }
+    // Its rows are the breakdown's hit: the hover names it, a
+    // right-click is the account's menu.
+    var rect: ?Rect = null;
+    var others: usize = 0;
+    for (app.hits.items.items) |h| if (h.target == .script_hit and h.target.script_hit.pane == id) {
+        if (h.target.script_hit.id == hit_breakdown_base and rect == null) rect = h.rect;
+        if (h.target.script_hit.id > hit_breakdown_base) others += 1;
+    };
+    try t.expectEqual(@as(usize, 0), others);
+    const entry = (try @import("info_view_copy.zig").lookup(&app, app.frame.allocator(), .{ .script_hit = .{ .pane = id, .id = hit_breakdown_base } })).?;
+    try t.expectEqualStrings("This week by surface — personal", entry.title);
+    try app.handle(.{ .mouse = .{ .x = rect.?.x + 2, .y = rect.?.y, .kind = .press, .button = .right } });
+    try t.expect(app.overlay == .menu);
+    try t.expectEqualStrings("personal", app.overlay.menu.title);
+    try app.handle(.{ .key = Key.named(.esc) });
+    // A left press on it renames nothing.
+    try app.handle(.{ .mouse = .{ .x = rect.?.x + 2, .y = rect.?.y, .kind = .press, .button = .left } });
+    try t.expect(app.overlay != .prompt);
 }

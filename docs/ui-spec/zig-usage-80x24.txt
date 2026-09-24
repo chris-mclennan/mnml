@@ -12,13 +12,13 @@
 ⋮                                                              52% used        ⋮
     Resets Sep 19 at 5am
 ▌
+▌ This week by surface · as of 7:55pm
+▌   Claude Code                      38%
+▌   Chat                             9%
+▌   Cowork                           4%
+▌   Other                            1%
+▌
 ▌ Current week (Fable)
 ▌                                                              55% used
-▌   Resets Sep 19 at 5am
-▌
-▌   Extra usage: off
-▌
-▌
-▌ work  · sam@work.example · Example Co
- VIEW  [no file]                                    󱼀 󰐎    18:23  ws   —
+ VIEW  [no file]                                    󱼀 󰐎    03:08  ws   —
                                        ⋯
