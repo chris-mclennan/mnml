@@ -8,6 +8,7 @@
 
 const std = @import("std");
 const vaxis = @import("vaxis");
+const utf8 = @import("../core/utf8.zig");
 
 const Allocator = std.mem.Allocator;
 const Method = vaxis.gwidth.Method;
@@ -59,7 +60,7 @@ pub const Options = struct {
 /// Cell width of one grapheme. The ASCII fast path skips the table walk.
 pub fn graphemeWidth(g: []const u8, method: Method) u16 {
     if (g.len == 1 and g[0] >= 0x20 and g[0] < 0x7f) return 1;
-    return vaxis.gwidth.gwidth(g, method);
+    return utf8.width(g, method);
 }
 
 /// Cell width of `s`, saturating at 65535. vaxis' `gwidth` sums into a
@@ -67,7 +68,7 @@ pub fn graphemeWidth(g: []const u8, method: Method) u16 {
 /// through the grep pane — so the sum is ours, one grapheme at a time.
 pub fn width(s: []const u8, method: Method) u16 {
     var total: u16 = 0;
-    var it = vaxis.unicode.graphemeIterator(s);
+    var it = utf8.graphemeIterator(s);
     while (it.next()) |g| total +|= graphemeWidth(g.bytes(s), method);
     return total;
 }
@@ -78,7 +79,7 @@ pub fn width(s: []const u8, method: Method) u16 {
 pub fn fits(s: []const u8, max_cells: u16, method: Method) bool {
     if (s.len <= max_cells) return true; // a byte is at most one cell
     var used: u32 = 0;
-    var it = vaxis.unicode.graphemeIterator(s);
+    var it = utf8.graphemeIterator(s);
     while (it.next()) |g| {
         used += graphemeWidth(g.bytes(s), method);
         if (used > max_cells) return false;
@@ -104,7 +105,7 @@ pub fn clipCells(alloc: Allocator, s: []const u8, max_cells: u16, opts: Options)
     const budget = max_cells - ell_w;
     var used: u16 = 0;
     var end: usize = 0;
-    var it = vaxis.unicode.graphemeIterator(s);
+    var it = utf8.graphemeIterator(s);
     while (it.next()) |g| {
         const bytes = g.bytes(s);
         const w = width(bytes, opts.method);
@@ -127,7 +128,7 @@ pub fn clipCells(alloc: Allocator, s: []const u8, max_cells: u16, opts: Options)
 pub fn fitCells(s: []const u8, max_cells: u16, method: Method) usize {
     var used: u16 = 0;
     var end: usize = 0;
-    var it = vaxis.unicode.graphemeIterator(s);
+    var it = utf8.graphemeIterator(s);
     while (it.next()) |g| {
         const bytes = g.bytes(s);
         const w = width(bytes, method);

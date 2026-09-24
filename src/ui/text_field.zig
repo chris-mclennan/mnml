@@ -12,6 +12,7 @@
 
 const std = @import("std");
 const vaxis = @import("vaxis");
+const utf8 = @import("../core/utf8.zig");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
@@ -227,7 +228,7 @@ pub fn draw(ui: Ui, r: Rect, text: []const u8, caret: usize, opts: DrawOptions) 
     // Layout: one entry per grapheme with its byte start and width.
     const Cell = struct { start: usize, end: usize, w: u16 };
     var cells: std.ArrayListUnmanaged(Cell) = .empty;
-    var it = vaxis.unicode.graphemeIterator(text);
+    var it = utf8.graphemeIterator(text);
     while (it.next()) |g| {
         const bytes = g.bytes(text);
         const cw: u16 = if (opts.secret) 1 else ui.canvas.cellWidth(bytes);

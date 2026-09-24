@@ -16,6 +16,7 @@ const text_field = @import("text_field.zig");
 const scrollbar = @import("scrollbar.zig");
 const expander = @import("expander.zig");
 const vaxis = @import("vaxis");
+const utf8 = @import("../core/utf8.zig");
 
 pub const PaneId = ids.PaneId;
 
@@ -177,7 +178,7 @@ fn tailWindow(ui: Ui, s_in: []const u8, keep: u16) Tail {
     }
     var total = ui.width(s);
     if (total <= keep) return .{ .text = s, .cut = cut };
-    var it = vaxis.unicode.graphemeIterator(s);
+    var it = utf8.graphemeIterator(s);
     while (it.next()) |g| {
         total -= ui.canvas.cellWidth(g.bytes(s));
         if (total <= keep) return .{ .text = s[g.start + g.len ..], .cut = true };

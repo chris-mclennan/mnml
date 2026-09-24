@@ -1953,6 +1953,40 @@ pub const SpanLineRanges = struct {
     }
 };
 
+/// Bytes of text the editor frames asked the highlighter for since the
+/// process started — what a test reads to show a long line's frame asks
+/// for a window of it.
+pub var span_bytes_requested: usize = 0;
+
+/// Styled spans for bytes `[lo, hi)` with the server's tokens over them,
+/// appended to `acc` (pieces come in ascending, disjoint order).
+fn spanPiece(app: *App, arena: Allocator, e: *EditorPane, ed: anytype, acc: []const editor_view.Span, lo: usize, hi: usize, lo_line: usize, hi_line: usize) Allocator.Error![]const editor_view.Span {
+    span_bytes_requested += hi - lo;
+    const base_spans = try e.syntax.styledSpans(ed, arena, &app.theme, lo, hi);
+    const with_server = try semantic_app.layer(app, arena, e, &app.theme, base_spans, lo_line, hi_line);
+    return if (acc.len == 0) with_server else try std.mem.concat(arena, editor_view.Span, &.{ acc, with_server });
+}
+
+/// The bytes of long line `line` that can be on screen this frame: the
+/// columns around where the view will scroll to (it follows the cursor
+/// on the cursor's line, and every row shares the one scroll column),
+/// with a screen's width of slack on each side.
+fn longLineSpanWindow(app: *App, e: *EditorPane, ed: anytype, line: usize, width: u16) [2]usize {
+    const text = ed.bytes()[ed.lineStart(line)..ed.lineEnd(line)];
+    const tw: u8 = @intCast(@min(app.cfg.editor.tab_width, 255));
+    const method = app.screen.width_method;
+    const w: u32 = @max(width, 1);
+    // `keepCursorVisible`'s horizontal rule, on the cursor's column.
+    var sc: u32 = e.view.scroll_col;
+    const cur_line = ed.currentLine();
+    const cl = ed.bytes()[ed.lineStart(cur_line)..ed.lineEnd(cur_line)];
+    const cx = editor_view.colOfOffM(cl, tw, @intCast(ed.cursor - ed.lineStart(cur_line)), method);
+    if (cx < sc) sc = cx else if (cx >= sc + w) sc = cx - w + 1;
+    const from = editor_view.byteAtColM(text, tw, sc -| w, method);
+    const to = editor_view.byteAtColM(text, tw, sc +| 2 * w, method);
+    return .{ from, @min(to + 64, text.len) };
+}
+
 pub fn spanLineRanges(scroll_line: usize, cur_line: usize, rows: usize, line_count: usize) SpanLineRanges {
     const last = line_count -| 1;
     const view: [2]usize = .{ @min(scroll_line -| rows, last), @min(scroll_line + 2 * rows, last) };
@@ -2034,6 +2068,33 @@ test "a frame over a large document walks none of its text: no line index rebuil
     // and only the edited lines looked at for a marker.
     try std.testing.expectEqual(lines_before, editor_view.line_index_bytes_scanned);
     try std.testing.expect(conflict_cache.bytes_scanned - marker_before < 4096);
+}
+
+test "a frame over a long unwrapped line asks the highlighter for the columns on screen, not the line" {
+    const gpa = std.testing.allocator;
+    var app = try App.initWith(gpa, std.testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 20 });
+    defer app.deinit();
+    try @import("../core/command.zig").run(&app, .{ .static = .@"editor.use_vim" });
+    app.tree.visible = false;
+    app.cfg.ui.wrap = false;
+    _ = try app.openScratch();
+    const e = app.activeEditor().?;
+    var text: std.ArrayListUnmanaged(u8) = .empty;
+    defer text.deinit(gpa);
+    try text.appendSlice(gpa, "short line above\n");
+    while (text.items.len < 300_000) try text.appendSlice(gpa, "var a=[0,1,2],b={c:3};");
+    try text.appendSlice(gpa, "\nshort line below\n");
+    try e.buf.editor.setText(text.items);
+    app.now_ms = 1000;
+    for ([_][]const u8{ "j", "$", "0", "w" }) |spec| {
+        try app.handle(.{ .key = keymap.parseKeySpec(spec).? });
+        app.now_ms += 5;
+        try app.tick(app.now_ms);
+        const before = span_bytes_requested;
+        try app.render();
+        try std.testing.expect(span_bytes_requested - before < 4096);
+    }
+    try std.testing.expectEqual(@as(usize, 1), e.buf.editor.currentLine());
 }
 
 fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allocator.Error!void {
@@ -2128,11 +2189,29 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
     const last_vis: u32 = @intCast(@min(e.view.scroll_line + rows, line_count) -| 1);
     try decor.onFrame(app, id, e, first_vis, last_vis);
     var layered: []const editor_view.Span = &.{};
+    // A long line that does not wrap shows a column window of itself
+    // (`editor_view.layoutWindow`), so it gets spans for that window, not
+    // for its megabyte: a minified bundle's spans were built, styled and
+    // sorted whole every frame.
+    const wraps = e.wrap orelse app.cfg.ui.wrap;
+    const md = app.cfg.ui.render_markdown and e.buf.doc.path != null and md_preview.isMarkdownPath(e.buf.doc.path.?);
     for (ranges.slice()) |r| {
-        const base_spans = try e.syntax.styledSpans(ed, arena, &app.theme, ed.lineStart(r[0]), ed.lineEnd(r[1]));
-        const with_server = try semantic_app.layer(app, arena, e, &app.theme, base_spans, r[0], r[1]);
-        // Ascending and disjoint, so one after the other stays sorted.
-        layered = if (layered.len == 0) with_server else try std.mem.concat(arena, editor_view.Span, &.{ layered, with_server });
+        // The stretch of ordinary lines not yet taken: bytes from `lo`,
+        // lines from `lo_line`.
+        var lo = ed.lineStart(r[0]);
+        var lo_line = r[0];
+        var line = r[0];
+        while (line <= r[1]) : (line += 1) {
+            const ls = ed.lineStart(line);
+            const le = ed.lineEnd(line);
+            if (wraps or md or le - ls <= editor_view.window_min_bytes) continue;
+            if (line > lo_line) layered = try spanPiece(app, arena, e, ed, layered, lo, ls, lo_line, line - 1);
+            const w = longLineSpanWindow(app, e, ed, line, rect.w);
+            layered = try spanPiece(app, arena, e, ed, layered, ls + w[0], ls + w[1], line, line);
+            lo = le;
+            lo_line = line + 1;
+        }
+        if (lo_line <= r[1]) layered = try spanPiece(app, arena, e, ed, layered, lo, ed.lineEnd(r[1]), lo_line, r[1]);
     }
     const tinted = try conflicts.tintSpans(app, arena, e, layered, &app.theme);
     // A script's `mnml.decor.highlight` goes over everything the

@@ -13,6 +13,7 @@
 
 const std = @import("std");
 const vaxis = @import("vaxis");
+const utf8 = @import("../core/utf8.zig");
 const Rect = @import("rect.zig");
 const Canvas = @import("canvas.zig");
 
@@ -70,7 +71,7 @@ pub const Stream = struct {
     segs: []const Segment,
     method: Method,
     pos: Pos,
-    it: ?vaxis.unicode.GraphemeIterator = null,
+    it: ?utf8.GraphemeIterator = null,
     base: u32 = 0,
 
     pub fn init(segs: []const Segment, method: Method, pos: Pos) Stream {
@@ -92,7 +93,7 @@ pub const Stream = struct {
                     continue;
                 }
                 s.base = s.pos.off;
-                s.it = vaxis.unicode.graphemeIterator(text[s.pos.off..]);
+                s.it = utf8.graphemeIterator(text[s.pos.off..]);
             }
             const g = s.it.?.next() orelse {
                 s.it = null;

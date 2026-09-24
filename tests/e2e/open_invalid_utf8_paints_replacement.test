@@ -1,0 +1,14 @@
+# A line holding bytes that are not UTF-8 -- a stray continuation byte
+# (0x91) followed by a combining mark (U+0360) -- opens and paints the
+# stray byte as U+FFFD. It used to panic the renderer on the first frame.
+write bad.txt "a\n‘Í z\nÿq\n"
+open bad.txt
+wait 100
+expect screen contains "bad.txt"
+expect screen contains "ï¿½"
+key j
+key l
+key l
+key j
+key l
+expect screen contains "bad.txt"

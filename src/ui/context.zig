@@ -13,6 +13,7 @@
 
 const std = @import("std");
 const vaxis = @import("vaxis");
+const utf8 = @import("../core/utf8.zig");
 const Rect = @import("rect.zig");
 const Canvas = @import("canvas.zig");
 const Theme = @import("theme.zig");
@@ -77,7 +78,7 @@ pub fn hovered(ui: Ui, r: Rect) bool {
 /// used. A glyph that would cross `max_w` is not painted.
 pub fn putStr(ui: Ui, x: u16, y: u16, max_w: u16, s: []const u8, style: Style) u16 {
     var used: u16 = 0;
-    var it = vaxis.unicode.graphemeIterator(s);
+    var it = utf8.graphemeIterator(s);
     while (it.next()) |g| {
         const bytes = g.bytes(s);
         const w = ui.canvas.cellWidth(bytes);
@@ -101,7 +102,7 @@ pub fn putStrRight(ui: Ui, right_x: u16, y: u16, max_w: u16, s: []const u8, styl
 /// Cell width of `s` under the screen's width method.
 pub fn width(ui: Ui, s: []const u8) u16 {
     var total: u16 = 0;
-    var it = vaxis.unicode.graphemeIterator(s);
+    var it = utf8.graphemeIterator(s);
     while (it.next()) |g| total +|= ui.canvas.cellWidth(g.bytes(s));
     return total;
 }

@@ -1,0 +1,33 @@
+# A file whose first byte is a UTF-8 continuation byte (0x98): every
+# motion steps over it as one unit, in vim and in standard. It used to
+# reach unreachable on the first Ctrl+F, x, j or arrow key.
+write bad.txt "˜\nabc\n"
+write one.txt "˜"
+command editor.use_vim
+open bad.txt
+key ctrl+f
+key ctrl+b
+key ctrl+d
+key ctrl+u
+key j
+key k
+key l
+key h
+key x
+expect screen contains "bad.txt"
+open one.txt
+key l
+key h
+key x
+key u
+command editor.use_standard
+open bad.txt
+key right
+key left
+key down
+key up
+key pagedown
+key ctrl+end
+key ctrl+home
+key delete
+expect screen contains "bad.txt"

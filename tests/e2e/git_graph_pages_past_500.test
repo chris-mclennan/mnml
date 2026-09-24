@@ -1,0 +1,18 @@
+# The graph asked git for 500 commits and stopped there: in a longer
+# history `G` landed on the 500th and nothing said there was more. Now
+# the log asks one past the page; `G` / End load the whole history and
+# land on the first commit, and walking onto a page's last row fetches
+# the next page. 1100 commits made by `git fast-import`, fixed dates.
+shell git init -q -b main
+write gen.sh "i=1\nwhile [ $i -le 1100 ]; do\n  printf 'commit refs/heads/main\\ncommitter t <t@t.dev> %d +0000\\ndata <<EOM\\nnumber %04d\\nEOM\\n\\n' $((1700000000 + i)) $i\n  i=$((i + 1))\ndone | git fast-import --quiet\ngit reset -q --hard main\n"
+shell sh gen.sh
+command git.graph
+wait 1500
+expect screen contains "number 1100"
+expect screen lacks "number 0001"
+key G
+wait 2500
+expect screen contains "number 0001"
+key g
+wait 300
+expect screen contains "number 1100"

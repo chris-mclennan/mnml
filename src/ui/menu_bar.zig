@@ -22,6 +22,7 @@
 
 const std = @import("std");
 const vaxis = @import("vaxis");
+const utf8 = @import("../core/utf8.zig");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
@@ -167,7 +168,7 @@ fn drawWords(ui: Ui, area: Rect, p: Props, ids: Ids, out: *Layout) []const ?u16 
         const brand = label.len > 0 and !std.ascii.isAlphabetic(label[0]) and label[0] != ' ';
         var cx = mx + 1;
         var underlined = false;
-        var it = vaxis.unicode.graphemeIterator(label);
+        var it = utf8.graphemeIterator(label);
         while (it.next()) |g| {
             const bytes = g.bytes(label);
             var cs = style;

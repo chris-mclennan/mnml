@@ -42,6 +42,7 @@
 
 const std = @import("std");
 const vaxis = @import("vaxis");
+const utf8 = @import("../core/utf8.zig");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
@@ -859,7 +860,7 @@ fn drawUnifiedRow(ui: Ui, pane: PaneId, area: Rect, y0: u16, ri: u32, doc: Doc) 
 /// The byte length of the longest prefix of `s` that fits `w` cells.
 fn cutAt(ui: Ui, s: []const u8, w: u16) usize {
     var used: u16 = 0;
-    var it = vaxis.unicode.graphemeIterator(s);
+    var it = utf8.graphemeIterator(s);
     while (it.next()) |g| {
         const cw: u16 = @intCast(ui.canvas.cellWidth(g.bytes(s)));
         if (used + cw > w) return if (g.start == 0) g.len else g.start;
@@ -912,7 +913,7 @@ fn drawHunkHeader(ui: Ui, pane: PaneId, r: Rect, ri: u32, h: HunkRef, doc: Doc, 
 fn paintLine(ui: Ui, x: u16, y: u16, max_w: u16, text: []const u8, base: Style, ranges: []const intraline.Range, doc: Doc, dim: bool) void {
     const p = ui.theme.palette;
     var used: u16 = 0;
-    var it = vaxis.unicode.graphemeIterator(text);
+    var it = utf8.graphemeIterator(text);
     while (it.next()) |g| {
         const bytes = g.bytes(text);
         var style = base;

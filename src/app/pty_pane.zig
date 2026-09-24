@@ -245,7 +245,9 @@ pub const PtyPane = struct {
             app.clipboard.setPendingRegister('+');
             app.clipboard.setYank(text, false) catch {};
         }
-        if (self.exit == null) {
+        // A bounded pump can leave bytes behind; the exit waits until the
+        // last of the child's output is in the terminal.
+        if (self.exit == null and !session.backlog()) {
             self.exit = exitOf(session.exited());
             if (self.exit != null) {
                 self.exited_at_ms = app.now_ms;
@@ -748,6 +750,18 @@ pub fn tickAll(app: *App) void {
         },
         else => {},
     };
+}
+
+/// A pane has output its last pump left in the ring (`Session.pump`
+/// takes a bounded bite): the loop owes it another pass now, not after
+/// the next wakeup — the reader posts only when it adds bytes, and a
+/// child that has finished writing never does.
+pub fn backlog(app: *const App) bool {
+    for (app.panes.slots.items) |*slot| if (slot.*) |*pane| switch (pane.*) {
+        .pty => |*p| if (p.session) |session| if (session.backlog()) return true,
+        else => {},
+    };
+    return false;
 }
 
 /// Focus reports (DEC 1004): a child that asked hears `ESC [ I` when its

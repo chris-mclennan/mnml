@@ -11,8 +11,7 @@
 const std = @import("std");
 const detect = @import("highlight").detect;
 // Extended grapheme clusters and their cell widths (uucode, through vaxis).
-const graphemes = @import("vaxis").unicode;
-const gwidth = @import("vaxis").gwidth;
+const graphemes = @import("../core/utf8.zig");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const editor_mod = @import("editor.zig");
@@ -374,7 +373,7 @@ pub const Document = struct {
     }
 
     fn boundaryIn(t: []const u8, b: usize) bool {
-        return b >= t.len or (t[b] & 0xC0) != 0x80;
+        return graphemes.isBoundary(t, b);
     }
 
     /// Mark `letter`'s (row, char col), or null when it is not set.
@@ -489,9 +488,11 @@ pub const Document = struct {
     /// are a few dozen bytes; the cap keeps a pathological run linear.
     const cluster_window = 1024;
 
+    /// A unit starts here: a char, or a byte that does not belong to a
+    /// well-formed UTF-8 sequence (those step one at a time, see
+    /// `core/utf8.zig`).
     pub fn isBoundary(self: *const Document, b: usize) bool {
-        if (b >= self.text.items.len) return true;
-        return (self.text.items[b] & 0xC0) != 0x80;
+        return graphemes.isBoundary(self.text.items, b);
     }
 
     /// The start of the character before `b` — the extended grapheme
@@ -632,7 +633,7 @@ pub const Document = struct {
             return tw - vcol % tw;
         }
         if (t[b] >= 0x20 and t[b] < 0x7f) return 1;
-        return @min(gwidth.gwidth(t[b..self.nextBoundary(b)], .unicode), 2);
+        return @min(graphemes.width(t[b..self.nextBoundary(b)], .unicode), 2);
     }
 
     /// The display column the character at `b` starts on (`b` clamped).

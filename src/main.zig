@@ -809,6 +809,7 @@ test {
     _ = @import("config/root.zig");
     _ = @import("core/alloc.zig");
     _ = @import("core/zon_fields.zig");
+    _ = @import("core/utf8.zig");
     _ = @import("core/log_sink.zig");
     _ = @import("core/key.zig");
     _ = @import("core/event.zig");

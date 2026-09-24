@@ -658,11 +658,27 @@ pub fn parse(arena: Allocator, src: [:0]const u8) error{ OutOfMemory, ParseZon }
     return std.zon.parse.fromSliceAlloc(Saved, arena, src, null, .{ .ignore_unknown_fields = true, .free_on_error = false });
 }
 
+/// Close every open pane but a dirty editor — its unsaved work is not
+/// the restore's to throw away (it stays open, and a saved pane on the
+/// same file finds it). A terminal's child is hung up on and reaped.
+fn closeReplaced(app: *App, arena: Allocator) Allocator.Error!void {
+    var ids: std.ArrayListUnmanaged(PaneId) = .empty;
+    for (app.panes.slots.items, 0..) |*slot, i| if (slot.*) |*p| {
+        if (!p.dirty()) try ids.append(arena, @intCast(i));
+    };
+    for (ids.items) |id| try app.forceClosePane(id);
+}
+
 /// Rebuild the app from `saved`. Panes are opened first (each lands in
 /// whatever leaf the openers pick), then the layouts are replaced
 /// wholesale with the saved trees, then the chrome and the lists.
 pub fn apply(app: *App, arena: Allocator, saved: Saved) RestoreError!void {
     const gpa = app.gpa;
+    // The saved tabs replace the layouts wholesale, so the panes open now
+    // are the ones this restore replaces: close them first. Left open
+    // they were in no layout but still running — every restore in a live
+    // instance added a hidden shell per terminal (21 children became 41).
+    if (saved.tabs.len > 0) try closeReplaced(app, arena);
     // Panes → ids.
     const ids = try arena.alloc(?PaneId, saved.panes.len);
     for (saved.panes, 0..) |sp, i| ids[i] = openSaved(app, sp, ids[0..i]) catch |err| switch (err) {
@@ -1743,6 +1759,51 @@ test "session: a restored shell pane comes back RUNNING, and `.dormant` is the s
         try t.expect(p.session == null);
         try t.expect(p.exit != null);
     }
+}
+
+test "session: a restore in a running instance closes the panes it replaces — the shell count stays put" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var f = try Fixture.init();
+    defer f.deinit();
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "a.txt", .data = "a\n" });
+    const a = try f.abs("a.txt");
+    defer t.allocator.free(a);
+    var app = try f.app();
+    defer app.deinit();
+    _ = try app.openPath(a);
+    _ = try pty_pane.open(&app, .{ .argv = &.{}, .label = "sh", .kind = .shell, .placement = .tab });
+    try save(&app);
+    const Count = struct {
+        fn of(ap: *App) [2]usize {
+            var n: [2]usize = .{ 0, 0 };
+            for (ap.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+                .pty => |*pp| if (pp.session != null) {
+                    n[0] += 1;
+                },
+                .editor => n[1] += 1,
+                else => {},
+            };
+            return n;
+        }
+    };
+    try t.expectEqual([2]usize{ 1, 1 }, Count.of(&app));
+    for (0..3) |_| {
+        try restore(&app);
+        // One live shell and one editor, as saved — not one more a time.
+        try t.expectEqual([2]usize{ 1, 1 }, Count.of(&app));
+    }
+    // A dirty editor is not the restore's to close: its pane survives.
+    var dirty_id: ?PaneId = null;
+    for (app.panes.slots.items, 0..) |*slot, i| if (slot.*) |*p| if (p.* == .editor) {
+        dirty_id = @intCast(i);
+    };
+    const de = app.panes.editor(dirty_id.?).?;
+    try de.buf.editor.splice(0, 0, "x");
+    de.buf.doc.dirty = true;
+    try t.expect(app.panes.get(dirty_id.?).?.dirty());
+    try restore(&app);
+    try t.expect(app.panes.get(dirty_id.?) != null);
+    try t.expect(app.panes.get(dirty_id.?).?.dirty());
 }
 
 test "session: a Claude pane's id rides in the file, and the restored line resumes it rather than starting a second one" {

@@ -14,6 +14,7 @@
 
 const std = @import("std");
 const vaxis = @import("vaxis");
+const utf8 = @import("../core/utf8.zig");
 const Rect = @import("rect.zig");
 const color = @import("color.zig");
 const clip_mod = @import("clip.zig");
@@ -70,7 +71,7 @@ pub fn cellWidth(c: Canvas, grapheme: []const u8) u16 {
 
 pub fn measureWidth(grapheme: []const u8, method: vaxis.gwidth.Method) u16 {
     if (grapheme.len == 1 and grapheme[0] >= 0x20 and grapheme[0] < 0x7f) return 1;
-    return vaxis.gwidth.gwidth(grapheme, method);
+    return utf8.width(grapheme, method);
 }
 
 /// Truncates `s` to `max_cells` under this canvas's width method, with an
@@ -107,6 +108,9 @@ pub fn blank(style: Style) Cell {
 pub fn put(c: Canvas, x: u16, y: u16, cell_in: Cell) void {
     if (!c.clip.contains(x, y)) return;
     var cell = cell_in;
+    // A byte that is not UTF-8 (a binary file, a legacy encoding) paints
+    // as U+FFFD rather than going to the terminal raw.
+    if (utf8.isInvalidUnit(cell.char.grapheme)) cell.char.grapheme = utf8.replacement;
     const measured: u16 = if (cell.char.width != 0) cell.char.width else c.cellWidth(cell.char.grapheme);
     if (measured == 0) return;
     const w: u16 = @min(measured, 2);

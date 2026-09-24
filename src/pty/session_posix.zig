@@ -377,23 +377,34 @@ pub const Session = struct {
         gpa.destroy(self);
     }
 
-    /// Feed everything the reader has ringed into the terminal (its query
-    /// replies go onto the outbox as they are parsed). Call from the UI
-    /// thread on every `.pty_readable` and once per frame. Returns true
-    /// when the terminal state changed (something to render).
+    /// Feed what the reader has ringed into the terminal (its query
+    /// replies go onto the outbox as they are parsed): the bytes there
+    /// when the pump starts, at most `common.pump_budget` of them — never
+    /// what the child writes while it runs (see `pump_budget`). Call from
+    /// the UI thread on every `.pty_readable` and once per frame; while
+    /// `backlog` is true the loop calls again without sleeping. Returns
+    /// true when the terminal state changed (something to render).
     pub fn pump(self: *Session) bool {
         const ring = &self.shared.ring;
         ring.beginDrain();
+        var left = @min(ring.len(), common.pump_budget);
         var fed = false;
-        while (true) {
+        while (left > 0) {
             const chunk = ring.readableSlice();
             if (chunk.len == 0) break;
-            self.stream.nextSlice(chunk);
-            ring.consume(chunk.len);
+            const n = @min(chunk.len, left);
+            self.stream.nextSlice(chunk[0..n]);
+            ring.consume(n);
+            left -= n;
             fed = true;
         }
         self.reap(false);
         return fed;
+    }
+
+    /// Bytes are ringed that no pump has fed yet.
+    pub fn backlog(self: *const Session) bool {
+        return self.shared.ring.len() > 0;
     }
 
     /// Bytes from the user (keystrokes, paste) to the child. Queued, never
@@ -761,7 +772,7 @@ fn pumpUntilExit(s: *Session, ms: u32) ?Exit {
     while (waited < ms) {
         _ = s.pump();
         if (s.eof()) {
-            _ = s.pump(); // whatever landed between the last drain and EOF
+            while (s.pump()) {} // whatever landed between the last drain and EOF
             s.reap(true);
             return s.exit;
         }
@@ -776,6 +787,34 @@ fn testEnv() !std.process.Environ.Map {
     try env.put("PATH", "/usr/bin:/bin");
     try env.put("HOME", "/tmp");
     return env;
+}
+
+test "a pump feeds at most its budget and leaves the rest for the next pass" {
+    // A child that floods faster than the terminal parses kept one pump
+    // running for seconds, and the UI thread with it. 200 000 bytes fit
+    // the 256 KiB ring whole, so the count is deterministic.
+    var env = try testEnv();
+    defer env.deinit();
+    const total: usize = 200_000;
+    const s = try Session.spawn(testing.allocator, testing.io, .{
+        .cols = 40,
+        .rows = 4,
+        .env = &env,
+        .argv = &.{ "/bin/sh", "-c", "stty -onlcr; yes | head -c 200000; sleep 5" },
+        .poll_interval_ms = 20,
+    });
+    defer s.deinit();
+    var waited: u32 = 0;
+    while (s.shared.ring.len() < total and waited < 5000) : (waited += 5) sleepMs(5);
+    try testing.expectEqual(total, s.shared.ring.len());
+    try testing.expect(s.backlog());
+    try testing.expect(s.pump());
+    try testing.expectEqual(total - common.pump_budget, s.shared.ring.len());
+    try testing.expect(s.backlog());
+    var passes: usize = 1;
+    while (s.pump()) passes += 1;
+    try testing.expect(!s.backlog());
+    try testing.expectEqual(std.math.divCeil(usize, total, common.pump_budget) catch unreachable, passes);
 }
 
 test "a short command's output reaches the terminal and its exit is reaped" {
