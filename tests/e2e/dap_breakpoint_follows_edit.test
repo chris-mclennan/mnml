@@ -1,0 +1,45 @@
+# A breakpoint belongs to its line's text, not to a line number. A line
+# opened above it takes it down with the text (Neovim's signs, VS Code's
+# breakpoints); the list says so before any save, and the session a save
+# is followed by stops on `x = x + 1`, now line 5 — it used to stop on
+# `print "hello"`, the line that moved into line 4. Deleting a line above
+# brings it back up.
+write prog.dbg "let x = 1\nlet name = \"mnml\"\nprint \"hello\"\nx = x + 1\nprint x\n"
+write .mnml/config.zon .{ .dap = .{ .dbg = .{ .cmd = "$MNML_FAKE_DAP" } } }
+open prog.dbg
+command editor.use_vim
+key j
+key j
+key j
+command dap.toggle_breakpoint
+expect screen contains "breakpoint set: line 4"
+
+# One line opened at the top: the breakpoint is on line 5 before a save.
+key g
+key g
+key O
+type "let y = 0"
+key esc
+command dap.list_breakpoints
+expect screen contains "1 breakpoint(s) — prog.dbg: 5"
+# The gutter's dot went down with the text.
+expect screen contains "●  5 x = x + 1"
+
+# `dd` on the new line: back to 4. Open it again and save.
+key g
+key g
+key d
+key d
+command dap.list_breakpoints
+expect screen contains "1 breakpoint(s) — prog.dbg: 4"
+key O
+type "let y = 0"
+key esc
+command file.save
+wait 300
+command dap.run
+expect within 5000 screen contains "dap: stopped (breakpoint)"
+command dap.show
+expect screen contains "prog.dbg:5  main"
+command dap.terminate
+expect screen contains "dap: terminated"

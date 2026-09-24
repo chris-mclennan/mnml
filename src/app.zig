@@ -1606,6 +1606,8 @@ pub const App = struct {
         try app.hooks.subscribe(.open, .{ .zig = &lsp.onOpen });
         try app.hooks.subscribe(.save_pre, .{ .zig = &lsp.onSavePre });
         try app.hooks.subscribe(.save_post, .{ .zig = &lsp.onSavePost });
+        // Breakpoints that followed an edit reach a live adapter on save.
+        try app.hooks.subscribe(.save_post, .{ .zig = &dap.onSavePost });
         // A saved `init.lua` reloads the scripts (`cmd_script.zig`);
         // a save under a dev root reloads that one script.
         try app.hooks.subscribe(.save_post, .{ .zig = &cmd_script.onSavePost });
