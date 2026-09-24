@@ -64,6 +64,7 @@ const toast_mod = @import("../ui/toast.zig");
 const md_preview = @import("md_preview.zig");
 const zon_pane = @import("zon_pane.zig");
 const command = @import("../core/command.zig");
+const os_path = @import("../core/os_path.zig");
 const ghost_chip = @import("ghost_chip.zig");
 const clock_mod = @import("clock.zig");
 const coverage = @import("coverage.zig");
@@ -732,8 +733,10 @@ const Scratch = struct { root: []const u8, workspace: []const u8, data_root: []c
 /// A throwaway workspace under TMPDIR with the files the walk expects,
 /// and a data root beside it so nothing reaches the real config.
 fn scratchWorkspace(arena: Allocator, io: Io, env: *std.process.Environ.Map) !Scratch {
-    const tmp = env.get("TMPDIR") orelse "/tmp";
-    const root = try std.fmt.allocPrint(arena, "{s}/mnml-hover-audit-{d}", .{ std.mem.trimEnd(u8, tmp, "/"), Io.Timestamp.now(io, .awake).toMilliseconds() });
+    // `TMPDIR`, else Windows's `TEMP` / `TMP` — `/tmp` is no directory there.
+    const tmp = os_path.tempDir(env, .native);
+    const leaf = try std.fmt.allocPrint(arena, "mnml-hover-audit-{d}", .{Io.Timestamp.now(io, .awake).toMilliseconds()});
+    const root = try std.fs.path.join(arena, &.{ tmp, leaf });
     const ws = try std.fs.path.join(arena, &.{ root, "ws" });
     const data_root = try std.fs.path.join(arena, &.{ root, "data" });
     try Io.Dir.cwd().createDirPath(io, ws);

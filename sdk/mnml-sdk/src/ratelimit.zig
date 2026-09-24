@@ -841,8 +841,10 @@ pub fn statePath(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, se
     const own_name = try std.fmt.allocPrint(gpa, "{s}.json", .{svc});
     defer gpa.free(own_name);
 
+    // `HOME`, else `USERPROFILE` (Windows sets no `HOME`).
+    const home_dir = nonEmpty(env.get("HOME")) orelse nonEmpty(env.get("USERPROFILE"));
     if (nonEmpty(env.get("TATTLE_ARTIFACTS_ROOT"))) |root| return std.fs.path.join(gpa, &.{ root, shared_name });
-    if (nonEmpty(env.get("HOME"))) |home| {
+    if (home_dir) |home| {
         const shared = try std.fs.path.join(gpa, &.{ home, ".tattle-claude-artifacts" });
         defer gpa.free(shared);
         if (Io.Dir.cwd().access(io, shared, .{})) |_| {
@@ -850,7 +852,7 @@ pub fn statePath(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, se
         } else |_| {}
     }
     if (nonEmpty(env.get("MNML_DATA_ROOT"))) |root| return std.fs.path.join(gpa, &.{ root, "ratelimit", own_name });
-    if (nonEmpty(env.get("HOME"))) |home| return std.fs.path.join(gpa, &.{ home, ".config", "mnml", "ratelimit", own_name });
+    if (home_dir) |home| return std.fs.path.join(gpa, &.{ home, ".config", "mnml", "ratelimit", own_name });
     return std.fs.path.join(gpa, &.{ "ratelimit", own_name });
 }
 
@@ -1200,6 +1202,22 @@ test "acquire says what it waited on: nothing, an empty bucket, then a 429's coo
     try t.expectEqual(Wait.gave_up, gave_up.waited_for);
     // `acquire` is still the boolean every existing caller reads.
     try t.expect(!impatient.acquire());
+}
+
+test "the state path falls back to USERPROFILE where there is no HOME (Windows)" {
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    try env.put("USERPROFILE", "/nonexistent-profile");
+    const want = try std.fs.path.join(t.allocator, &.{ "/nonexistent-profile", ".config", "mnml", "ratelimit", "jira.json" });
+    defer t.allocator.free(want);
+    const p = try statePath(t.allocator, t.io, &env, "jira");
+    defer t.allocator.free(p);
+    try t.expectEqualStrings(want, p);
+    // An empty HOME is no home: USERPROFILE still answers.
+    try env.put("HOME", "");
+    const q = try statePath(t.allocator, t.io, &env, "jira");
+    defer t.allocator.free(q);
+    try t.expectEqualStrings(want, q);
 }
 
 test "the state path follows the Rust crate's resolution order, per service" {

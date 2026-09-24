@@ -592,10 +592,13 @@ exactly these steps, one after the other, before every merge:
    test as it runs so a hang names its test (only the exit code is
    evidence; `-Doptimize=Debug` is worth a run too — a test that passes
    in one mode and not the other is a bug in the code);
-6. the Windows compile: `zig build -Dtarget=x86_64-windows-gnu` — Zig's
-   lazy analysis only checks target-gated code when that target is
-   built. `zig build gate-build -Dtarget=x86_64-windows-gnu` compiles
-   every test binary for it as well;
+6. every shipped target's compile: `zig build gate-targets` —
+   `gate-build` (the exe, every test binary, the integrations) for all
+   five targets, one after another. Zig's lazy analysis only checks
+   target-gated code when that target is built: a Windows arm, a
+   Windows-skipped test, or a libc call Linux needs spelled out is
+   invisible to a native build (`docs/PORTABILITY.md`). One target:
+   `zig build gate-build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSafe`;
 7. `zig build glyph-audit` — every Nerd Font literal in `src/`, the SDK
    and `integrations/` against `data/nerd-glyphnames.json`, with its
    `--ascii` twin;

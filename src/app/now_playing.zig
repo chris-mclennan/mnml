@@ -41,6 +41,7 @@ const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const command = @import("../core/command.zig");
+const os_path = @import("../core/os_path.zig");
 const CommandError = command.CommandError;
 const Config = @import("../config/Config.zig");
 const settings = @import("settings.zig");
@@ -255,7 +256,8 @@ fn merge(st: *State, new: ?Track, now: i64) ?Track {
 fn start(app: *App) void {
     const st = &app.now_playing;
     st.group.cancel(app.io);
-    const home = app.env.get("HOME") orelse "";
+    // `HOME`, else `USERPROFILE`: mixr's `~/.mixr/quick.txt` on Windows too.
+    const home = os_path.home(&app.env) orelse "";
     st.group.concurrent(app.io, worker, .{ st, app.events, app.io, app.cfg.ui.now_playing_source, home }) catch {};
 }
 

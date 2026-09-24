@@ -163,6 +163,8 @@ jobs:
   # until someone builds Windows. ReleaseSafe, not Debug — Zig 0.16.0's Debug
   # codegen hits a `writeToPackedMemory` TODO when cross-compiling the test
   # binaries for x86_64, and ReleaseSafe is the mode that ships anyway.
+  # `zig build gate-targets` is the local twin (all five, in sequence;
+  # `./run.sh check` runs it).
   cross:
     name: gate-build (${{ matrix.target }})
     runs-on: ubuntu-latest

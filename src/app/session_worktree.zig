@@ -329,7 +329,7 @@ pub fn isMerged(app: *App, arena: Allocator, repo: []const u8, branch: []const u
 
 /// Where a new tree for `repo` goes, under the config's override.
 pub fn rootOf(app: *App, arena: Allocator, repo: []const u8) Allocator.Error![]const u8 {
-    return rootFor(arena, repo, app.cfg.ai.default_worktree_root, app.homeDir() orelse app.env.get("HOME"));
+    return rootFor(arena, repo, app.cfg.ai.default_worktree_root, app.userHome());
 }
 
 /// `git worktree add -b <name> <root>/<name> HEAD` in `repo`; the path.

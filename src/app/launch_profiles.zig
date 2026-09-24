@@ -185,7 +185,7 @@ pub fn launch(app: *App, arena: Allocator, product: Product, name: []const u8) C
     };
     const cwd: ?[]const u8 = switch (p.cwd_mode) {
         .workspace => null,
-        .home => app.homeDir() orelse app.env.get("HOME"),
+        .home => app.userHome(),
         .file_dir => blk: {
             const id = app.last_editor orelse break :blk null;
             const e = app.panes.editor(id) orelse break :blk null;

@@ -889,7 +889,8 @@ test "lintFailed: a non-zero exit with words and no finding is a failure; findin
     try testing.expect(lintFailed(two, 3, "", "noise") == null);
     try testing.expect(lintFailed(.{ .exited = 0 }, 0, "", "warning: cache") == null);
     try testing.expect(lintFailed(.{ .exited = 1 }, 0, "", "") == null);
-    try testing.expect(lintFailed(.{ .signal = .KILL }, 0, "", "") != null);
+    // TERM, not KILL: Windows's `SIG` has no KILL, and this test runs there.
+    try testing.expect(lintFailed(.{ .signal = .TERM }, 0, "", "") != null);
 }
 
 test "summarize joins a tool's first non-blank lines and fits its buffer" {

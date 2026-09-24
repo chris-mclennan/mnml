@@ -4080,8 +4080,9 @@ fn filterThroughShell(app: *App, cmd: []const u8) Allocator.Error!void {
     const start = ed.lineStart(@min(rows[0], ed.lineCount() - 1));
     const end = ed.lineEnd(@min(rows[1], ed.lineCount() - 1));
     const gpa = app.gpa;
-    const shell = "/bin/sh";
-    var child = std.process.spawn(app.io, .{ .argv = &.{ shell, "-c", cmd }, .stdin = .pipe, .stdout = .pipe, .stderr = .pipe }) catch |err| {
+    // The platform's shell: `sh -c`, or `%COMSPEC% /d /c` on Windows.
+    var shell_buf: [4][]const u8 = undefined;
+    var child = std.process.spawn(app.io, .{ .argv = @import("pty").shellArgv(&shell_buf, &app.env, cmd), .stdin = .pipe, .stdout = .pipe, .stderr = .pipe }) catch |err| {
         app.toast("!{s}: {s}", .{ cmd, @errorName(err) });
         return;
     };

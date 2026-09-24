@@ -869,7 +869,7 @@ fn destinationsCmd(app: *App) CommandError!void {
     }
     const arena = app.frame.allocator();
     try addDestination(app, &labels, &details, app.workspace, "workspace");
-    if (app.homeDir() orelse app.env.get("HOME")) |home| {
+    if (app.userHome()) |home| {
         try addDestination(app, &labels, &details, home, "home");
         for ([_][]const u8{ "Downloads", "Desktop", "Documents", "Projects" }) |sub| {
             try addDestination(app, &labels, &details, try std.fs.path.join(arena, &.{ home, sub }), sub);

@@ -4,6 +4,13 @@
 //! read here (`src/config/trust.zig`), so a repo cannot pick your
 //! browser for you. macOS opens by app name (`open -a`), Windows
 //! through `start`, elsewhere the name is the program on PATH.
+//!
+//! Windows's default goes through `rundll32 url.dll,FileProtocolHandler`,
+//! not `cmd /c start`: `cmd` re-parses its command line, so the `&` in
+//! `?a=1&b=2` ended the command there — and a URL out of a ticket or a
+//! pull request could name a second command to run. A named browser
+//! still needs `start` (it resolves `msedge` / `chrome` through App
+//! Paths), so its URL has every `cmd` metacharacter caret-escaped.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -20,15 +27,44 @@ pub fn argvFor(arena: Allocator, browser: []const u8, url: []const u8, os: std.T
     if (browser.len == 0) {
         return switch (os) {
             .macos => try arena.dupe([]const u8, &.{ "open", url }),
-            .windows => try arena.dupe([]const u8, &.{ "cmd", "/c", "start", "", url }),
+            .windows => try arena.dupe([]const u8, &.{ "rundll32", "url.dll,FileProtocolHandler", try windowsUrlArg(arena, url) }),
             else => try arena.dupe([]const u8, &.{ "xdg-open", url }),
         };
     }
     return switch (os) {
         .macos => try arena.dupe([]const u8, &.{ "open", "-a", browser, url }),
-        .windows => try arena.dupe([]const u8, &.{ "cmd", "/c", "start", "", browser, url }),
+        .windows => try arena.dupe([]const u8, &.{ "cmd", "/c", "start", "", browser, try cmdEscape(arena, try windowsUrlArg(arena, url)) }),
         else => try arena.dupe([]const u8, &.{ browser, url }),
     };
+}
+
+/// `url` with space, tab and `"` percent-encoded, so the argv-to-command
+/// line step never wraps it in quotes: `cmd` and `rundll32` both take a
+/// quoted argument's quotes literally.
+pub fn windowsUrlArg(arena: Allocator, url: []const u8) Allocator.Error![]const u8 {
+    if (std.mem.indexOfAny(u8, url, " \t\"") == null) return url;
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    for (url) |c| switch (c) {
+        ' ' => try out.appendSlice(arena, "%20"),
+        '\t' => try out.appendSlice(arena, "%09"),
+        '"' => try out.appendSlice(arena, "%22"),
+        else => try out.append(arena, c),
+    };
+    return out.items;
+}
+
+/// `s` with each character `cmd.exe` treats specially outside quotes
+/// preceded by `^`, so `cmd /c start "" browser <s>` hands `s` on as
+/// one literal argument. `%` too: `^%` stops `%VAR%` expansion.
+pub fn cmdEscape(arena: Allocator, s: []const u8) Allocator.Error![]const u8 {
+    const meta = "^&|<>()%!";
+    if (std.mem.indexOfAny(u8, s, meta) == null) return s;
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    for (s) |c| {
+        if (std.mem.indexOfScalar(u8, meta, c) != null) try out.append(arena, '^');
+        try out.append(arena, c);
+    }
+    return out.items;
 }
 
 test "external_browser picks the application; empty is the OS default" {
@@ -47,10 +83,33 @@ test "external_browser picks the application; empty is the OS default" {
     const win = try argvFor(a, "msedge", "https://x.test/", .windows);
     try std.testing.expectEqualStrings("start", win[2]);
     try std.testing.expectEqualStrings("msedge", win[4]);
+    const win_default = try argvFor(a, "", "https://x.test/", .windows);
+    try std.testing.expectEqualStrings("rundll32", win_default[0]);
+    try std.testing.expectEqualStrings("https://x.test/", win_default[2]);
     // Through the app: the config field drives it.
     var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp" });
     defer app.deinit();
     app.cfg.ui.external_browser = "Firefox";
     const via = try argv(&app, a, "https://y.test/");
     try std.testing.expect(std.mem.indexOf(u8, via[via.len - 2], "Firefox") != null or std.mem.eql(u8, via[0], "Firefox"));
+}
+
+test "a Windows URL reaches the browser whole: no cmd metacharacter survives unescaped, no space forces quotes" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const url = "https://x.test/a b?q=\"1\"&r=%41|(x)";
+    // The default never goes through cmd: only the quoting-forcing
+    // characters change.
+    const dflt = try argvFor(a, "", url, .windows);
+    try std.testing.expectEqualStrings("https://x.test/a%20b?q=%221%22&r=%41|(x)", dflt[2]);
+    // A named browser does: every metacharacter is caret-escaped.
+    const named = try argvFor(a, "msedge", url, .windows);
+    try std.testing.expectEqualStrings("https://x.test/a^%20b?q=^%221^%22^&r=^%41^|^(x^)", named[5]);
+    // Nothing to escape: the URL itself, unchanged and unallocated.
+    const plain = "https://x.test/p";
+    try std.testing.expect((try cmdEscape(a, plain)).ptr == plain.ptr);
+    try std.testing.expect((try windowsUrlArg(a, plain)).ptr == plain.ptr);
+    // Other platforms never see the escaping.
+    try std.testing.expectEqualStrings(url, (try argvFor(a, "", url, .linux))[1]);
 }

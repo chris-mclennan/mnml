@@ -26,6 +26,9 @@
 //!   zon_edit  saving a hand-written ZON file without losing its
 //!             comments — the splice the host's settings and an
 //!             integration's own config both write through
+//!   platform  the platform's URL opener (`xdg-open`, `open`, and on
+//!             Windows `rundll32 url.dll,FileProtocolHandler` — never
+//!             `cmd`, which splits a URL at its `&`)
 //!   testing   test allocators an integration's suite borrows —
 //!             `Scribble`, which poisons what it frees so a slice into
 //!             a let-go arena reads as `0xAA` rather than as luck
@@ -49,6 +52,7 @@ pub const store = @import("store.zig");
 pub const warm = @import("warm.zig");
 pub const pane = @import("pane.zig");
 pub const zon_edit = @import("zon_edit.zig");
+pub const platform = @import("platform.zig");
 pub const testing = @import("testing.zig");
 
 pub const Mount = client.Mount;
@@ -90,5 +94,6 @@ test {
     _ = warm;
     _ = pane;
     _ = zon_edit;
+    _ = platform;
     _ = testing;
 }

@@ -10,12 +10,9 @@ const Io = std.Io;
 const builtin = @import("builtin");
 
 /// The argv that opens a URL on this platform, with the URL appended.
+/// The SDK's (`sdk.platform`): Windows's arm never goes through `cmd`.
 pub fn openArgv(arena: Allocator, url: []const u8) Allocator.Error![]const []const u8 {
-    return switch (builtin.os.tag) {
-        .macos => try arena.dupe([]const u8, &.{ "open", url }),
-        .windows => try arena.dupe([]const u8, &.{ "cmd", "/c", "start", "", url }),
-        else => try arena.dupe([]const u8, &.{ "xdg-open", url }),
-    };
+    return @import("mnml_sdk").platform.openUrlArgv(arena, url, builtin.os.tag);
 }
 
 /// The argv that reads the clipboard text from stdin.

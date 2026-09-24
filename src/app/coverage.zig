@@ -182,7 +182,7 @@ fn civilFromDays(z_in: i64) struct { y: i64, m: i64, d: i64 } {
 fn artifactsHome(app: *App) ?[]const u8 {
     if (app.env.get("MNML_ARTIFACTS_HOME")) |v| return if (v.len == 0) null else v;
     if (builtin.is_test) return null;
-    return app.homeDir() orelse app.env.get("HOME");
+    return app.userHome();
 }
 
 fn readJson(comptime T: type, app: *App, arena: Allocator, rel: []const u8) ?T {

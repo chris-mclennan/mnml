@@ -26,7 +26,9 @@
 #                                 docs/CONTRIBUTING.md: fmt, the unit tests in
 #                                 Debug and ReleaseSafe, a ReleaseSafe build,
 #                                 the gate at three sizes, the corpus, the
-#                                 glyph audit, the hover-help audit,
+#                                 glyph audit, the hover-help audit, the
+#                                 cross-compile of all five shipped targets
+#                                 (`zig build gate-targets`),
 #                                 tools/run-sh-check.sh and
 #                                 tools/run-ps1-check.py (run.ps1's structure
 #                                 — the real ps1 check needs a PowerShell).
@@ -528,6 +530,10 @@ case "${1:-start}" in
     step "zig build glyph-audit"                          "$ZIG" build glyph-audit
     step "zig build chrome-audit"                         "$ZIG" build chrome-audit
     step "zig build hover-audit"                          "$ZIG" build hover-audit
+    # Every shipped target compiled (exe, test binaries, integrations):
+    # target-gated code is analysed only when its target is built, so a
+    # native-green tree can still not compile for Windows or Linux.
+    step "zig build gate-targets (all five shipped targets)" "$ZIG" build gate-targets
     step "tools/run-sh-check.sh"                          bash tools/run-sh-check.sh
     # run.ps1's structure: balance, quoting, the 5.1-incompatible
     # spellings, every verb reachable, the refusals and plan phrases

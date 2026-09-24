@@ -77,6 +77,27 @@ pub fn goneWithin(io: Io, pid: Child.Id, deadline: Io.Duration) bool {
     return true;
 }
 
+test "a waited child is gone, on every platform: the Windows arm answers too" {
+    // The POSIX tests below script `/bin/sleep` and skip on Windows;
+    // this one runs the platform's own shell (`sh -c`, `cmd.exe /d /c`)
+    // so the Windows build of this file has a test that executes.
+    const io = std.testing.io;
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    var buf: [4][]const u8 = undefined;
+    var child = try std.process.spawn(io, .{
+        .argv = @import("pty").shellArgv(&buf, &env, "exit 3"),
+        .stdin = .ignore,
+        .stdout = .ignore,
+        .stderr = .ignore,
+    });
+    const pid = child.id.?;
+    try std.testing.expectEqual(Child.Term{ .exited = 3 }, try child.wait(io));
+    try std.testing.expect(goneWithin(io, pid, .fromSeconds(10)));
+    // Nothing to reap is a no-op, not a crash.
+    reapAbandoned(null);
+}
+
 test "gone: a reaped child is gone, a live one is not" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const io = std.testing.io;

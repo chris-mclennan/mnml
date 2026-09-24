@@ -1044,7 +1044,7 @@ pub fn chipClick(app: *App, c: tree_view.Chip) Allocator.Error!void {
 /// and a trailing slash (neo-tree's root row).
 pub fn wsLabel(app: *App, arena: Allocator) Allocator.Error![]const u8 {
     const full = app.workspace;
-    const home = app.homeDir() orelse app.env.get("HOME");
+    const home = app.userHome();
     if (home) |h| if (h.len > 0 and std.mem.startsWith(u8, full, h)) return std.fmt.allocPrint(arena, "~{s}/", .{full[h.len..]});
     return std.fmt.allocPrint(arena, "{s}/", .{full});
 }

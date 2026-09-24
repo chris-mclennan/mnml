@@ -716,6 +716,46 @@ pub fn build(b: *std.Build) void {
         release_step.dependOn(&nested.step);
     }
 
+    // `gate-targets`: `gate-build` — the exe, every test binary and the
+    // integrations — for each of the five shipped targets, one nested
+    // `zig build` per target, ReleaseSafe as CI's `cross` matrix runs
+    // it. Zig analyses target-gated code only when that target is
+    // built, so this is the one local command that fails on a Windows
+    // arm that does not compile (a pid formatted with `{d}` where
+    // `pid_t` is a HANDLE) or a Linux-only libc dependency nobody
+    // spelled out — both of which shipped red for a day while every
+    // native check was green. The nested builds run one after another
+    // (five in parallel is five compiler processes of the test binary's
+    // size at once) and each installs under its own prefix,
+    // zig-out/gate-targets/<zig triple>/, so the two macOS and two Linux
+    // triples do not overwrite each other's `.exe`-less names.
+    const gate_targets_step = b.step("gate-targets", "`gate-build` for each of the five shipped targets (ReleaseSafe), one after another — the local twin of CI's cross matrix");
+    var prev_gate: ?*std.Build.Step = null;
+    for (release_targets) |rt| {
+        const nested = b.addSystemCommand(&.{
+            b.graph.zig_exe,
+            "build",
+            "gate-build",
+            b.fmt("-Dtarget={s}", .{rt.zig}),
+            "-Doptimize=ReleaseSafe",
+            "--summary",
+            "failures",
+            "--prefix",
+            b.fmt("{s}/gate-targets/{s}", .{ b.install_path, rt.zig }),
+            "--cache-dir",
+            b.cache_root.path orelse ".zig-cache",
+            "--global-cache-dir",
+            b.graph.global_cache_root.path orelse ".",
+        });
+        nested.setCwd(b.path("."));
+        nested.setName(b.fmt("zig build gate-build -Dtarget={s}", .{rt.zig}));
+        // Its outputs land under the prefix, not in the cache — always run it.
+        nested.has_side_effects = true;
+        if (prev_gate) |p| nested.step.dependOn(p);
+        prev_gate = &nested.step;
+        gate_targets_step.dependOn(&nested.step);
+    }
+
     const dist_step = b.step("dist", "`release`, then package zig-out/release/ into zig-out/dist/ (archives, sha256s, installers, manifest)");
     const pack = b.addSystemCommand(&.{
         "sh",
@@ -744,6 +784,12 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("sdk/mnml-sdk/src/root.zig"),
         .target = target,
         .optimize = optimize,
+        // `warm.zig` probes a pid with `std.c.kill` / `std.c.getpid`.
+        // macOS always links libc, so that compiles there without
+        // asking; on Linux it is a compile error unless the dependency
+        // is spelled out — and every integration importing the SDK
+        // inherits it from here.
+        .link_libc = true,
     });
     root_module.addImport("mnml_sdk", sdk_mod);
     // The SDK's own tests — `ratelimit.zig`'s shared bucket among them,
@@ -825,6 +871,9 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("integrations/bitbucket/tools/fake_bitbucket/main.zig"),
         .target = target,
         .optimize = optimize,
+        // The orphan probe is `std.c.kill(parent, 0)`: libc, spelled out
+        // for every target but macOS (as `mnml-fake-jira` does).
+        .link_libc = true,
     });
     const fake_bitbucket = b.addExecutable(.{ .name = "mnml-fake-bitbucket", .root_module = fake_bitbucket_mod });
     const fake_bitbucket_install = b.addInstallArtifact(fake_bitbucket, .{});

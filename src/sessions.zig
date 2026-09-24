@@ -627,7 +627,7 @@ pub fn refresh(app: *App) CommandError!void {
 /// `$HOME` as the config loader saw it, else as the children see it (a
 /// `.test` file's `# env:` lines land there; the runner loads no file).
 pub fn envHome(app: *const App) ?[]const u8 {
-    return app.homeDir() orelse app.env.get("HOME");
+    return app.userHome();
 }
 
 /// The test override, else `$HOME`. A relative HOME — a `.test` file's

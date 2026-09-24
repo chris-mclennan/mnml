@@ -3,6 +3,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const build_options = @import("build_options");
 const mem_report = @import("core/mem_report.zig");
+const os_path = @import("core/os_path.zig");
 const e2e = @import("e2e/root.zig");
 const headless = @import("headless.zig");
 const app_driver = @import("app/driver.zig");
@@ -514,7 +515,7 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
     const timeout: u64 = if (env.get("MNML_E2E_FILE_TIMEOUT_SECS")) |v| std.fmt.parseInt(u64, v, 10) catch default_timeout else default_timeout;
     const heartbeat: u64 = if (env.get("MNML_E2E_HEARTBEAT_SECS")) |v| std.fmt.parseInt(u64, v, 10) catch 60 else 60;
     // `TMPDIR` is the POSIX spelling, `TEMP` / `TMP` Windows's.
-    const tmp_root = env.get("TMPDIR") orelse env.get("TEMP") orelse env.get("TMP") orelse "/tmp";
+    const tmp_root = os_path.tempDir(env, .native);
     const data_root = try e2e.runner.makeTempDir(gpa, io, tmp_root);
     defer {
         Io.Dir.cwd().deleteTree(io, data_root) catch {};
@@ -821,6 +822,7 @@ test {
     _ = @import("core/hooks.zig");
     _ = @import("core/clipboard_os.zig");
     _ = @import("core/child.zig");
+    _ = @import("core/os_path.zig");
     _ = @import("app.zig");
     _ = @import("regex/regex.zig");
     _ = @import("ipc/root.zig");
