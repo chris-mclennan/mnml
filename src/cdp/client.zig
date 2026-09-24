@@ -284,7 +284,7 @@ pub fn candidates(arena: Allocator, io: Io, home: ?[]const u8) Allocator.Error![
 pub fn available(gpa: Allocator, io: Io, env: *const std.process.Environ.Map) bool {
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    const list = candidates(arena.allocator(), io, env.get("HOME")) catch return false;
+    const list = candidates(arena.allocator(), io, os_path.home(env)) catch return false;
     for (list) |c| if (resolveBinary(arena.allocator(), io, env, c) != null) return true;
     return false;
 }
@@ -329,7 +329,7 @@ pub fn spawn(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, opts: 
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     const a = arena.allocator();
-    const list: []const []const u8 = if (opts.binary) |b| &.{b} else try candidates(a, io, env.get("HOME"));
+    const list: []const []const u8 = if (opts.binary) |b| &.{b} else try candidates(a, io, os_path.home(env));
     for (list) |cand| {
         const bin = resolveBinary(a, io, env, cand) orelse continue;
         const argv = try chromeArgv(a, bin, opts);
