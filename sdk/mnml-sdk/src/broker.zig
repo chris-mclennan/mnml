@@ -1113,6 +1113,12 @@ pub const Line = struct {
 
 fn talk(io: Io, path: []const u8, req: Request) ?Line {
     if (path.len == 0 or pathTooLong(path)) return null;
+    // A path that exists but is not a socket — a stale file where the
+    // broker used to listen — is "no broker", the same as a missing one.
+    // Asked to connect to it the kernel answers ENOTSOCK, which a Debug
+    // build's `Io.Threaded` treats as a programmer bug and aborts on.
+    const st = Io.Dir.cwd().statFile(io, path, .{}) catch return null;
+    if (st.kind != .unix_domain_socket) return null;
     const addr = Io.net.UnixAddress.init(path) catch return null;
     const stream = addr.connect(io) catch return null;
     defer stream.close(io);
