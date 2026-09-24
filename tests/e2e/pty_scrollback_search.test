@@ -29,27 +29,25 @@ expect screen lacks " Find "
 key esc
 expect screen lacks "match 1/1"
 
-# A regex with two matches — 2998 and 2999. The one nearer the bottom
-# is current; `n` wraps to the first, `N` comes back.
+# A regex with two matches — 2998 and 2999. `/` searches down from the
+# cursor's line (the bottom), Neovim's way, so it wraps to the first,
+# 2998; `n` goes on down to 2999, `N` comes back.
 type "/"
 key ctrl+r
 type "^299[89]$"
-expect screen contains "match 2/2"
-expect color 1 34 bg #42464e
-expect color 1 35 bg #e7c787
-key enter
-expect screen lacks " Find "
-type "n"
 expect screen contains "match 1/2"
 expect color 1 34 bg #e7c787
 expect color 1 35 bg #42464e
-type "N"
+key enter
+expect screen lacks " Find "
+type "n"
+expect screen contains "match 2/2"
 expect color 1 34 bg #42464e
 expect color 1 35 bg #e7c787
 # With the bar closed, `n` / `N` carry the terminal's selection with the
-# current match: `n` once more to 2998, then `y` yanks it (the
-# terminal's copy) and `p` in an editor puts it.
-type "n"
+# current match: `N` back to 2998, then `y` yanks it (the terminal's
+# copy) and `p` in an editor puts it.
+type "N"
 expect color 1 34 bg #e7c787
 key y
 expect screen contains "copied the selection"

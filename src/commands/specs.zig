@@ -905,9 +905,9 @@ pub const specs = [_]Spec{
     // The scrollback search. No keymap chord: the terminal pane's own key
     // handler reads `/` (vim, terminal-normal) and the standard profile's
     // `find.find` chord as `term.search`, and `n` / `N` as the steps.
-    .{ .id = "term.search", .title = "Terminal: search the scrollback (/ in terminal-normal, Ctrl+F)", .group = "terminal" },
-    .{ .id = "term.search_next", .title = "Terminal: next scrollback match (n in terminal-normal)", .group = "terminal" },
-    .{ .id = "term.search_prev", .title = "Terminal: previous scrollback match (N in terminal-normal)", .group = "terminal" },
+    .{ .id = "term.search", .title = "Terminal: search the scrollback (/ down and ? up in terminal-normal, Ctrl+F)", .group = "terminal" },
+    .{ .id = "term.search_next", .title = "Terminal: next scrollback match, down toward newer output", .group = "terminal" },
+    .{ .id = "term.search_prev", .title = "Terminal: previous scrollback match, up toward older output", .group = "terminal" },
     .{ .id = "dock.new_text", .title = "Dock: new text widget (bottom-left)", .group = "dock" },
     .{ .id = "dock.new_text_br", .title = "Dock: new text widget (bottom-right)", .group = "dock" },
     .{ .id = "dock.new_text_tl", .title = "Dock: new text widget (top-left)", .group = "dock" },

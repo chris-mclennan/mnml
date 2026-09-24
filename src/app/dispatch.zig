@@ -1856,6 +1856,8 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
 // ─── the find bar ───────────────────────────────────────────────────────
 
 fn findBarKey(app: *App, k: Key) Allocator.Error!void {
+    // A terminal's bar reads Shift+Enter as VS Code's terminal does.
+    if (try pty_search.barKey(app, k)) return;
     const fb = &app.find_bar.?;
     switch (try FindBar.handleKey(&fb.state, app.gpa, k)) {
         .consumed, .focus_toggle => {},
