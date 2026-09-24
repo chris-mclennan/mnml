@@ -1,0 +1,36 @@
+# A quickfix list `qf.from_diagnostics` filled keeps pointing at its
+# diagnostics' text: two lines added above the TODO, and `:cfirst` lands
+# on line 5, where it now is — it used to land on line 3, the old
+# number. Neovim adjusts a loaded buffer's quickfix entries the same way
+# (qf_mark_adjust). The server publishes on open and save only, so the
+# entry has to follow the edit itself; after a save the fresh publish
+# agrees.
+write src/main.fk "fn foo() {\n  let x = 1;\n  foo(x); // TODO later\n}\nfn bar() { foo(); }\n"
+write .fkroot ""
+write .mnml/config.zon .{ .lsp = .{ .fake = .{ .cmd = "$MNML_FAKE_LSP", .args = .{ "--publish", "open-save" }, .extensions = .{ "fk" }, .root_markers = .{ ".fkroot" } } } }
+open src/main.fk
+command editor.use_vim
+expect screen contains "LSP 1"
+expect screen contains "●  3 │ foo(x); // TODO later"
+command qf.from_diagnostics
+expect screen contains "quickfix: 1 diagnostic"
+key esc
+key g
+key g
+key O
+type "// one"
+key esc
+key esc
+key O
+type "// two"
+# The first Esc closes the completion popup, the second leaves Insert.
+key esc
+key esc
+command qf.first
+expect screen contains "(1 of 1)"
+expect status contains "\"line\":5"
+command file.save
+wait 300
+command qf.from_diagnostics
+command qf.first
+expect status contains "\"line\":5"

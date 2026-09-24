@@ -1497,6 +1497,9 @@ pub fn followDiagnostics(app: *App, doc: *document.Document) void {
     doc.diag_seen = head;
     const recs = recordsSince(doc, seen) orelse return;
     const path = doc.path orelse return;
+    // A quickfix list filled from these diagnostics holds their places
+    // too (Neovim's qf_mark_adjust): it moves with them.
+    @import("quickfix.zig").followDiagnosticEdits(app, path, recs);
     const fd = app.lsp.diags.get(path) orelse return;
     if (fd.items.len == 0) return;
     for ([_][]types.Diagnostic{ fd.server_items, fd.lint_items, fd.script_items, fd.lua_items, fd.items }) |list| {

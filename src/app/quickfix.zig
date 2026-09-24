@@ -29,6 +29,7 @@ const CommandError = command.CommandError;
 const cmd_view = @import("cmd_view.zig");
 const grep = @import("grep.zig");
 const os_path = @import("../core/os_path.zig");
+const document = @import("../editor/document.zig");
 
 pub const State = struct {
     entries: std.ArrayListUnmanaged(Entry) = .empty,
@@ -40,6 +41,9 @@ pub const State = struct {
     /// `:grep`: the run this grep pane is doing jumps to its first hit
     /// once it finishes (Neovim's `:grep` without `!`).
     jump_when_done: ?PaneId = null,
+    /// The list is `qf.from_diagnostics`': its entries move with the
+    /// diagnostics they were made from (`followDiagnosticEdits`).
+    from_diagnostics: bool = false,
 
     pub fn deinit(self: *State, gpa: Allocator) void {
         ListPane.freeEntries(gpa, self.entries.items);
@@ -101,6 +105,7 @@ pub const Origin = struct {
     /// entry 1; a grep has visited nothing yet).
     idx: ?usize = null,
     grep_pane: ?PaneId = null,
+    from_diagnostics: bool = false,
 };
 
 /// Replace the list with `entries` (owned, taken even on error). An
@@ -113,6 +118,7 @@ pub fn set(app: *App, entries: []Entry, origin: Origin) Allocator.Error!void {
     q.entries = .fromOwnedSlice(entries);
     q.idx = if (origin.idx) |i| (if (i < entries.len) i else null) else null;
     q.grep_pane = origin.grep_pane;
+    q.from_diagnostics = origin.from_diagnostics;
     if (listPane(app)) |lp| {
         const fresh = try copies(gpa, q.entries.items);
         // The rows only: `ListPane.deinit` would leave the filter undefined.
@@ -373,6 +379,9 @@ pub fn fromDiagnostics(app: *App) CommandError!void {
     }
     for (paths.items) |path| {
         const rel = app.relPath(path);
+        // The places as the text reads now: a diagnostic behind an edit
+        // not yet drawn is carried across it first.
+        @import("lsp.zig").followDiagnosticsAt(app, path);
         for (app.lsp.diags.get(path).?.items) |d| {
             const sev: []const u8 = switch (d.severity) {
                 .err => "error",
@@ -392,8 +401,34 @@ pub fn fromDiagnostics(app: *App) CommandError!void {
         return app.diag.fail(arena, "no diagnostics in the workspace", .{});
     }
     const n = entries.items.len;
-    try setAndOpen(app, try entries.toOwnedSlice(gpa), .{});
+    try setAndOpen(app, try entries.toOwnedSlice(gpa), .{ .from_diagnostics = true });
     app.toast("quickfix: {d} diagnostic{s}", .{ n, if (n == 1) "" else "s" });
+}
+
+/// The edits `recs` made to the file at `abs`, applied to the entries of
+/// a list `qf.from_diagnostics` filled — and to the open list pane's
+/// rows — as `lsp.followDiagnostics` applies them to the diagnostics:
+/// an entry keeps pointing at its diagnostic's text (Neovim adjusts a
+/// loaded buffer's quickfix entries the same way). A grep's entries are
+/// found again by their line's text when opened instead (`go`).
+pub fn followDiagnosticEdits(app: *App, abs: []const u8, recs: []const document.Splice) void {
+    const q = &app.quickfix;
+    if (!q.from_diagnostics or q.entries.items.len == 0) return;
+    const rel = app.relPath(abs);
+    shiftEntries(q.entries.items, rel, recs);
+    if (listPane(app)) |lp| shiftEntries(lp.list.entries.items, rel, recs);
+}
+
+fn shiftEntries(entries: []Entry, rel: []const u8, recs: []const document.Splice) void {
+    for (entries) |*e| {
+        const p = e.path orelse continue;
+        if (!std.mem.eql(u8, p, rel) or e.line == 0) continue;
+        for (recs) |sp| {
+            const at = sp.shiftPoint(.{ .row = e.line - 1, .col = e.col -| 1 });
+            e.line = at.row + 1;
+            e.col = at.col + 1;
+        }
+    }
 }
 
 /// A finished test run with failures fills the list with them, as
