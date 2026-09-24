@@ -16,6 +16,7 @@ const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const EditorPane = app_mod.EditorPane;
 const command = @import("../core/command.zig");
+const os_path = @import("../core/os_path.zig");
 const side = @import("side.zig");
 const launcher_dock = @import("launcher_dock.zig");
 const marks_store = @import("marks_store.zig");
@@ -361,8 +362,11 @@ fn cexpr(app: *App, args: []const u8) CommandError!void {
     while (lines.next()) |raw| {
         const line = std.mem.trim(u8, raw, " \t\r");
         if (line.len == 0) continue;
-        var parts = std.mem.splitScalar(u8, line, ':');
-        const path = parts.next() orelse continue;
+        // The path ends at its first colon — after a drive letter on
+        // Windows (`C:\src\a.zig:12:3: msg`).
+        const loc = os_path.splitLocation(line, .native);
+        const path = loc.path;
+        var parts = std.mem.splitScalar(u8, loc.rest, ':');
         const ln = std.fmt.parseInt(u32, parts.next() orelse "1", 10) catch 1;
         const col = std.fmt.parseInt(u32, parts.next() orelse "1", 10) catch 1;
         const text = parts.rest();
