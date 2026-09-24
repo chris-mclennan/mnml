@@ -2,7 +2,7 @@
 # so before the choice and offers only the permanent form — `d` (the
 # trash) is not on offer, so pressing it deletes nothing.
 write keep.txt "k"
-shell mkdir data && dd if=/dev/zero of=data/big.bin bs=1 count=0 seek=300m 2>/dev/null && echo x > data/notes.txt
+shell mkdir data && dd if=/dev/zero of=data/big.bin bs=1048576 count=0 seek=300 2>/dev/null && echo x > data/notes.txt
 command view.focus_tree
 key r
 key home

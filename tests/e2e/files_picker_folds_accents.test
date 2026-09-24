@@ -1,6 +1,8 @@
 # A name Finder wrote decomposed (e + U+0301) is found by the composed
 # "é" the keyboard types, and by a plain "ecole".
-shell echo x > "$(printf 'e\xcc\x81cole-notes.txt')" && echo y > other.txt
+# Octal escapes, not \x: dash's printf (Linux's /bin/sh) has no \x and
+# writes the backslash through.
+shell echo x > "$(printf 'e\314\201cole-notes.txt')" && echo y > other.txt
 key ctrl+p
 type école
 wait 300
