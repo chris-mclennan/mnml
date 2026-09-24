@@ -89,11 +89,13 @@ example.
 | `board_id = 200` | `.board_id = 200` | the Agile board a kanban tab reads |
 | `filter_id = 10` | `.filter_id = 10` | a saved filter for `.kind = .filter` |
 | — | `.token_file = "~/…"` | port only: a file holding the token |
-| — | `.token_env = "JIRA_API_TOKEN"` | port only: the variable (this is the default) |
+| — | `.token_env = "JIRA_API_TOKEN"` | port only: the variable (empty, the default, means `JIRA_API_TOKEN`) |
 | — | `.api = .v3` | port only: `.v2` for a site that answers `410` |
 | — | `.rate = .{ .per_sec = 0.33, .burst = 60, .cooldown_secs = 45, .max_block_secs = 120 }` | port only: the shared bucket's numbers (the reference's). The bucket is one file — `<root>/jira-ratelimit.json` — so every pane, the statusline poller and the Rust tracker take turns on one allowance and one 429 parks them all — for the `Retry-After` the site sent (then the request asks again, up to three tries, the SDK's `ratelimit.Retry` the Bitbucket pane uses too), or `cooldown_secs` when it sent none |
-| — | `.bitbucket_api_url`, `.bitbucket_token_env` | port only: the forge for post-merge pipelines (`BITBUCKET_ACCESS_TOKEN`) |
-| — | `.open_command = "open"` | port only: the browser command |
+| — | `.intervals = .{ .listing_secs = 300, .builds_secs = 90, .readiness_secs = 0 }` | port only: how often each kind of thing is kept fresh (`sdk.warm.Intervals`, the defaults shown); `readiness_secs = 0` is on demand only |
+| — | `.bitbucket_api_url`, `.bitbucket_token_env` | port only: the forge for post-merge pipelines (`https://api.bitbucket.org/2.0`, `BITBUCKET_ACCESS_TOKEN`) |
+| — | `.required_approvals = 1` | port only: approvals a linked pull request needs before its `[ Merge ]` stops being dim |
+| — | `.open_command = "open"` | port only: the browser command; empty (the default) picks the platform's — `open`, `xdg-open`, or `rundll32 url.dll,FileProtocolHandler` on Windows |
 
 The token is never in the config. It comes, in order, from
 `.token_file`, `$JIRA_API_TOKEN` (or `.token_env`),
@@ -141,7 +143,9 @@ the wheel scrolls the column under the pointer.
 
 **The detail pane** (`d`): the key and summary, the field table, the
 watcher line, the description, the comments. **The comment box** (`c`
-with the pane open): `Ctrl+S` sends. **The detail modal** (`D`, or a
+with the pane open): `Enter` is a newline, and `Enter` on an empty last
+line sends — as does `Ctrl+S`, which a mounted pane cannot count on
+seeing, since it is the host's save chord. **The detail modal** (`D`, or a
 card click): 80 % × 80 %, the field table (`detail_modal.fields`) left,
 the description right, `×` closes.
 
@@ -222,7 +226,7 @@ carries a trailing row below the last group:
 ⋯  Show older (2 weeks → 30 days)
 ```
 
-`⏎` or a click widens one step — 14 days → 30 → 90 → all time — and the
+`Enter` or a click widens one step — 14 days → 30 → 90 → all time — and the
 row's words move on to name the next step. Each press is one ordinary
 refetch at the wider window, through the same broker and the same token
 bucket as `r`: no count query, and nothing extra to be rate-limited for.
@@ -232,7 +236,7 @@ is the session's, not the file's: a restart opens the tab back on
 
 An editable tab wears its vars as header chips (`project: ENG`,
 `versions: 1.2.0 +1`). **`J`**, or a click on any of them, opens a small
-editor: `↑↓` move, `⏎` types into the focused value, `a` adds one, `d`
+editor: `↑↓` move, `Enter` types into the focused value, `a` adds one, `d`
 removes one, `s` (or `Ctrl+S`) saves, `Esc` cancels. `s` as well as
 `Ctrl+S` because `Ctrl+S` is the host's own save chord and a mounted
 pane cannot count on seeing it. A save splices each var back into
