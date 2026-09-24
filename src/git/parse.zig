@@ -1094,7 +1094,10 @@ pub fn parseLog(arena: Allocator, text: []const u8) Allocator.Error![]Commit {
 
 /// `for-each-ref` spells a hex escape `%1f` (two digits right after the
 /// `%`); `%x1f` is `log`'s spelling and comes out literally here.
-pub const ref_format = "%(refname:short)%1f%(committerdate:unix)%1f%(HEAD)%1f%(upstream:short)%1f%(objectname:short)%1f%(upstream:track,nobracket)";
+/// The last field is `%(symref)`: a symbolic ref (`origin/HEAD`, whose
+/// short name git prints as plain `origin`) names another branch, and is
+/// not listed as one.
+pub const ref_format = "%(refname:short)%1f%(committerdate:unix)%1f%(HEAD)%1f%(upstream:short)%1f%(objectname:short)%1f%(upstream:track,nobracket)%1f%(symref)";
 
 pub const Branch = struct {
     name: []const u8,
@@ -1134,7 +1137,9 @@ pub fn parseTrack(track: []const u8) Track {
 }
 
 /// `git for-each-ref --format=<ref_format> refs/heads refs/remotes`.
-/// A remote's `HEAD` pointer (`origin/HEAD`) is dropped.
+/// A remote's `HEAD` pointer is dropped: git shortens
+/// `refs/remotes/origin/HEAD` to `origin`, the remote's own name, so it
+/// is known by its `%(symref)` (and by a `/HEAD` suffix in older output).
 pub fn parseBranches(arena: Allocator, text: []const u8) Allocator.Error![]Branch {
     var out: std.ArrayListUnmanaged(Branch) = .empty;
     var lines = std.mem.splitScalar(u8, text, '\n');
@@ -1148,7 +1153,8 @@ pub fn parseBranches(arena: Allocator, text: []const u8) Allocator.Error![]Branc
         const upstream = f.next() orelse "";
         const sha = f.next() orelse "";
         const track = parseTrack(f.next() orelse "");
-        if (std.mem.endsWith(u8, name, "/HEAD")) continue;
+        const symref = f.next() orelse "";
+        if (symref.len > 0 or std.mem.endsWith(u8, name, "/HEAD")) continue;
         try out.append(arena, .{
             .name = try arena.dupe(u8, name),
             .time = std.fmt.parseInt(i64, time_s, 10) catch 0,
@@ -1934,6 +1940,17 @@ test "parseBranches marks the current one, keeps upstream, drops origin/HEAD" {
     try testing.expect(!bs[1].current);
     try testing.expect(!bs[1].remote);
     try testing.expect(bs[2].remote);
+}
+
+test "parseBranches drops the remote's HEAD pointer that git shortens to the remote's own name" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    // `for-each-ref refs/remotes` as git 2.4x prints it: `origin/HEAD`
+    // comes out as `origin`, its `%(symref)` naming the branch it points at.
+    const text = "origin\x1f1700000000\x1f \x1f\x1fabc1234\x1f\x1frefs/remotes/origin/main\norigin/main\x1f1700000000\x1f \x1f\x1fabc1234\x1f\x1f\n";
+    const bs = try parseBranches(arenaOf(&a), text);
+    try testing.expectEqual(@as(usize, 1), bs.len);
+    try testing.expectEqualStrings("origin/main", bs[0].name);
 }
 
 test "relativeAge buckets" {
