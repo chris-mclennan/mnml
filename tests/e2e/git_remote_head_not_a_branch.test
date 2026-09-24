@@ -15,7 +15,10 @@ shell git init -q --bare remote.git
 shell git remote add origin ./remote.git
 shell git push -q -u origin main
 shell git remote set-head origin main
-shell test "$(git for-each-ref --format='%(refname:short)' refs/remotes | tr '\n' ' ')" = "origin origin/main "
+# The pointer is there: git 2.4x lists it as `origin`, older git (2.39,
+# Debian 12) as `origin/HEAD` — the parser drops both.
+shell test "$(git symbolic-ref refs/remotes/origin/HEAD)" = refs/remotes/origin/main
+shell case "$(git for-each-ref --format='%(refname:short)' refs/remotes | tr '\n' ' ')" in "origin origin/main "|"origin/HEAD origin/main ") ;; *) exit 1 ;; esac
 shell git checkout -q -b topic
 command view.activity_git
 wait 1500
