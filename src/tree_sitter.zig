@@ -423,6 +423,12 @@ pub const QueryCursor = opaque {
     pub fn didExceedMatchLimit(c: *const QueryCursor) bool {
         return ts_query_cursor_did_exceed_match_limit(c);
     }
+    pub fn matchLimit(c: *const QueryCursor) u32 {
+        return ts_query_cursor_match_limit(c);
+    }
+    pub fn setMatchLimit(c: *QueryCursor, limit: u32) void {
+        ts_query_cursor_set_match_limit(c, limit);
+    }
     pub fn deinit(c: *QueryCursor) void {
         ts_query_cursor_delete(c);
     }
@@ -504,6 +510,7 @@ pub extern fn ts_query_cursor_delete(self: *QueryCursor) void;
 pub extern fn ts_query_cursor_exec(self: *QueryCursor, query: *const Query, node: Node) void;
 pub extern fn ts_query_cursor_set_match_limit(self: *QueryCursor, limit: u32) void;
 pub extern fn ts_query_cursor_did_exceed_match_limit(self: *const QueryCursor) bool;
+pub extern fn ts_query_cursor_match_limit(self: *const QueryCursor) u32;
 pub extern fn ts_query_cursor_set_byte_range(self: *QueryCursor, start_byte: u32, end_byte: u32) bool;
 pub extern fn ts_query_cursor_next_match(self: *QueryCursor, match: *QueryMatch) bool;
 pub extern fn ts_query_cursor_next_capture(self: *QueryCursor, match: *QueryMatch, capture_index: *u32) bool;

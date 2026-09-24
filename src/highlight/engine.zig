@@ -1215,10 +1215,21 @@ test "the match cap is a crash guard: a query that fans out past the cursor's 16
     // as a third, unanchored sibling keeps a match in progress per
     // signature - more than the cursor's 16-bit ids can name. Without a
     // cap that reads a freed capture list; at 65535 it runs for minutes.
+    //
+    // The work before the cap trips grows with the cube of the input
+    // (measured in Debug: 14 s at 32 KB, 111 s at 64 KB, 383 s at the
+    // full 128 KB — tree-sitter's C at -O0). The shipped cap trips
+    // between 32 and 64 KB, so a Debug build runs the same query on a
+    // sixteenth of the text against a sixteenth of the cap: 8 KB and 64,
+    // which trips in well under a second (4 KB already does). The
+    // cursor still comes from `QueryCursor.init`, and the cap it sets is
+    // asserted first, so the shipped figure stays under test in both
+    // modes; optimized builds run the full text against it.
+    const scale: u32 = if (builtin.mode == .Debug) 16 else 1;
     const e = table.entries[table.find("hs").?];
     var text: std.ArrayListUnmanaged(u8) = .empty;
     defer text.deinit(gpa);
-    while (text.items.len < 128 * 1024) try text.appendSlice(gpa, e.fixture);
+    while (text.items.len < 128 * 1024 / scale) try text.appendSlice(gpa, e.fixture);
     const parser = try ts.Parser.init();
     defer parser.deinit();
     try parser.setLanguage(e.language());
@@ -1233,13 +1244,17 @@ test "the match cap is a crash guard: a query that fans out past the cursor's 16
     defer q.deinit();
     const cursor = try ts.QueryCursor.init();
     defer cursor.deinit();
+    try testing.expectEqual(ts.QueryCursor.max_match_limit, cursor.matchLimit());
+    cursor.setMatchLimit(ts.QueryCursor.max_match_limit / scale);
     cursor.exec(q, tree.rootNode());
     var ci: u32 = 0;
     var n: usize = 0;
     while (cursor.nextCapture(&ci)) |_| n += 1;
     try testing.expect(cursor.didExceedMatchLimit());
-    // And the query as shipped, corrected, over the same text: every
-    // match kept.
+    // And the query as shipped, corrected, over the full 128 KB (cheap
+    // in any mode — the corrected query never fans out): every match
+    // kept.
+    while (text.items.len < 128 * 1024) try text.appendSlice(gpa, e.fixture);
     var h = Highlighter.init(gpa);
     defer h.deinit();
     h.setLanguage(table.find("hs").?);
