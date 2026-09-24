@@ -3,10 +3,13 @@
 //! key descends; a leaf runs its command. A binding is a leaf *or* a
 //! group, never both, so the state is just the path typed so far.
 //!
-//! Every leaf names a `CommandId` — a typo is a compile error — except
-//! a `dead` leaf, which is a row the Rust popup shows for a command
-//! that no longer exists there either (the `+pr` pair went with the
-//! SCM split); pressing it says so.
+//! The tree is DERIVED at comptime from the spec table's leader chords
+//! (`commands/specs.zig`, every `space …` key): a chord typed fast (the
+//! keymap reads the spec) and the same chord walked in the popup (this
+//! tree) are one entry. What the spec table does not carry stays here
+//! in two small side tables: the group labels by prefix (`groups`) and
+//! the `dead` rows the Rust popup shows for commands that no longer
+//! exist there either (the `+pr` pair went with the SCM split).
 
 const std = @import("std");
 const command = @import("../core/command.zig");
@@ -39,277 +42,187 @@ pub const Node = union(enum) {
 /// `vim_only`: shown and reachable in the vim profile only.
 pub const Entry = struct { key: u8, node: Node, vim_only: bool = false };
 
-fn cmd(key: u8, id: CommandId, label: []const u8) Entry {
-    return .{ .key = key, .node = .{ .cmd = .{ .id = id, .label = label } } };
-}
+// ─── the tree, derived from the spec table ──────────────────────────────
 
-fn dead(key: u8, id: []const u8, label: []const u8) Entry {
-    return .{ .key = key, .node = .{ .dead = .{ .id = id, .label = label } } };
-}
+/// A group's row: the prefix it sits at (`"f"`, `"Lc"`) and its label.
+/// The only thing the tree says that the spec table does not — every
+/// leaf under it is a `space …` chord in `commands/specs.zig`.
+pub const Group = struct { prefix: []const u8, label: []const u8 };
 
-fn group(key: u8, label: []const u8, kids: []const Entry) Entry {
-    return .{ .key = key, .node = .{ .group = .{ .label = label, .kids = kids } } };
-}
-
-/// A leaf the vim profile alone shows — its standard twin is a chord
-/// of its own, not a row in the `Ctrl+K` popup.
-fn cmdVim(key: u8, id: CommandId, label: []const u8) Entry {
-    return .{ .key = key, .vim_only = true, .node = .{ .cmd = .{ .id = id, .label = label } } };
-}
-
-/// A group the vim profile alone shows — nvim-dap's `<leader>d` is a
-/// Neovim door; the standard profile's `Ctrl+K` popup keeps Rust's rows.
-fn groupVim(key: u8, label: []const u8, kids: []const Entry) Entry {
-    return .{ .key = key, .vim_only = true, .node = .{ .group = .{ .label = label, .kids = kids } } };
-}
-
-pub const root: Node = .{
-    .group = .{
-        .label = "<leader>",
-        .kids = &.{
-            group('f', "+find", &.{
-                cmd('f', .@"picker.files", "files"),
-                cmd('b', .@"picker.buffers", "buffers"),
-                cmd('g', .@"find.grep", "grep"),
-                cmd('m', .@"lsp.format", "format buffer"),
-                cmd('r', .@"picker.recent", "recent"),
-                cmd('o', .@"picker.recent", "oldfiles"),
-                cmd('z', .@"find.find", "find in current buffer"),
-            }),
-            cmd('/', .@"editor.toggle_line_comment", "toggle comment"),
-            cmd('n', .@"view.toggle_line_numbers", "line numbers"),
-            cmd('e', .@"view.focus_tree", "explorer"),
-            // // changed (sidebar-autohide): the pin sits beside the
-            // explorer it docks, in both profiles.
-            cmd('E', .@"view.sidebar_pin", "pin/unpin the sidebar"),
-            cmd('w', .@"file.save", "write/save"),
-            cmd('q', .@"buffer.close", "close buffer"),
-            group('c', "+nvchad", &.{
-                cmd('h', .@"view.cheatsheet", "cheatsheet (all chords)"),
-                cmd('a', .@"lsp.code_action", "code action"),
-                cmd('m', .@"git.graph", "git commits"),
-            }),
-            // NvChad's `<leader>ra`, which the reference editor's own
-            // popup does not carry: vim-only, as `+debug` is, so the
-            // standard profile's Ctrl+K popup keeps the reference rows.
-            groupVim('r', "+lsp", &.{
-                cmd('a', .@"lsp.rename", "rename symbol"),
-                // NvChad's `<leader>rn` ("toggle relative number").
-                cmd('n', .@"view.toggle_relative_numbers", "relative numbers"),
-            }),
-            group('b', "+buffer", &.{
-                cmd('n', .@"buffer.next", "next"),
-                cmd('p', .@"buffer.prev", "previous"),
-                cmd('d', .@"buffer.close", "delete"),
-                cmd('r', .@"buffer.reopen", "reopen closed"),
-                cmd('b', .@"picker.buffers", "switch"),
-                cmd('k', .@"view.keep_tab", "keep preview tab"),
-            }),
-            group('s', "+split", &.{
-                cmd('v', .@"view.split_right", "split right"),
-                cmd('s', .@"view.split_down", "split down"),
-                cmd('h', .@"view.focus_left", "focus left"),
-                cmd('j', .@"view.focus_down", "focus down"),
-                cmd('k', .@"view.focus_up", "focus up"),
-                cmd('l', .@"view.focus_right", "focus right"),
-                cmd('w', .@"view.focus_next_split", "focus next"),
-                cmd('W', .@"view.focus_prev_split", "focus previous"),
-                cmd('c', .@"view.close_split", "close split"),
-                cmd('o', .@"view.close_others", "close others"),
-                cmd('z', .@"view.toggle_zoom", "zoom / restore"),
-                cmd('H', .@"view.move_section_left", "section → left side"),
-                cmd('L', .@"view.move_section_right", "section → right side"),
-                cmd('r', .@"script.run_selection", "run Lua selection"),
-                // The sessions that need you (`sessions.needsYou`); the
-                // standard profile has Ctrl+Alt+N / Ctrl+Alt+Shift+N.
-                cmdVim('n', .@"sessions.next_waiting", "next session needing you"),
-                cmdVim('N', .@"sessions.prev_waiting", "previous session needing you"),
-            }),
-            // nvim-dap's leader chords (`docs/KEYMAP_PROFILES.md` → Debugger).
-            groupVim('d', "+debug", &.{
-                cmd('b', .@"dap.toggle_breakpoint", "toggle breakpoint"),
-                cmd('B', .@"dap.toggle_breakpoint_conditional", "conditional breakpoint"),
-                cmd('l', .@"dap.set_breakpoint_log_message", "log point"),
-                cmd('c', .@"dap.continue", "continue / start"),
-                cmd('o', .@"dap.next", "step over"),
-                cmd('i', .@"dap.step_in", "step into"),
-                cmd('O', .@"dap.step_out", "step out"),
-                cmd('p', .@"dap.pause", "pause"),
-                cmd('R', .@"dap.restart", "restart"),
-                cmd('t', .@"dap.terminate", "terminate"),
-                cmd('r', .@"dap.repl", "debug console"),
-                cmd('w', .@"dap.add_watch", "add watch"),
-                cmd('u', .@"dap.toggle_panel", "toggle DEBUG section"),
-                cmd('h', .@"dap.evaluate_hover", "evaluate word (hover)"),
-                cmd('e', .@"dap.exceptions", "exception breakpoints"),
-                // NvChad's `<leader>ds` ("LSP diagnostic loclist").
-                cmd('s', .@"lsp.diagnostics", "diagnostics list"),
-            }),
-            group('l', "+lsp", &.{
-                cmd('a', .@"lsp.code_action", "code actions"),
-                cmd('c', .@"lsp.completion", "complete at cursor"),
-                cmd('s', .@"lsp.symbols", "symbols in this file"),
-                cmd('S', .@"lsp.workspace_symbols", "workspace symbols…"),
-                cmd('o', .@"outline.show", "outline pane"),
-                cmd('d', .@"lsp.goto_definition", "go to definition"),
-                cmd('h', .@"lsp.hover", "hover docs"),
-                cmd('r', .@"lsp.references", "find references"),
-                cmd('R', .@"lsp.rename", "rename symbol"),
-                cmd('e', .@"lsp.diagnostics", "diagnostics list"),
-                cmd('n', .@"lsp.next_diagnostic", "next diagnostic"),
-                cmd('p', .@"lsp.prev_diagnostic", "prev diagnostic"),
-            }),
-            group('g', "+git", &.{
-                cmd('c', .@"git.commit", "commit"),
-                cmd('d', .@"git.diff", "diff"),
-                cmd('f', .@"git.diff_file", "diff file"),
-                cmd('n', .@"git.jump_next_change", "next change"),
-                cmd('p', .@"git.jump_prev_change", "prev change"),
-                cmd('D', .@"git.diff", "diff worktree"),
-                cmd('A', .@"git.diff_all", "diff all vs HEAD (multi-file)"),
-                cmd('b', .@"git.blame_toggle", "blame toggle"),
-                cmd('l', .@"git.graph", "commit graph"),
-                cmd('i', .@"git.rebase_interactive_onto", "interactive rebase onto…"),
-                cmd('e', .@"git.explain_branch", "explain branch changes (ai)"),
-                cmd('r', .@"git.push_start_pr", "push + start a PR"),
-                cmd('s', .@"git.status_pane", "status / staging"),
-                cmd('t', .@"git.status_pane", "git status"),
-                cmd('m', .@"git.ai_commit", "ai (Claude) commit message"),
-                cmd('M', .@"git.ai_recompose", "ai rewrite HEAD msg"),
-                cmd('x', .@"git.codex_commit", "codex commit message"),
-                cmd('o', .@"git.checkout", "checkout branch"),
-                cmd('w', .@"git.worktrees", "worktrees → shell"),
-                cmd('W', .@"git.worktree_open_tab", "worktree → its own tab"),
-                cmd('S', .@"git.stash", "stash (with optional msg)"),
-                cmd('P', .@"git.stash_pop", "stash pop"),
-            }),
-            // `a M` (mixr) is cut with the audio transport (docs/PARITY.md, Cuts).
-            group('a', "+ai/term", &.{
-                cmd('a', .@"ai.ask", "ask claude…"),
-                cmd('b', .@"ai.toggle_backend", "toggle backend (cli ↔ api)"),
-                cmd('d', .@"ai.dashboard", "sessions table"),
-                cmd('e', .@"ai.explain", "explain selection"),
-                cmd('f', .@"ai.fix", "fix bugs"),
-                cmd('r', .@"ai.refactor", "refactor"),
-                cmd('w', .@"ai.write_tests", "write tests"),
-                cmd('m', .@"ai.session_view", "mirror session"),
-                cmd('t', .@"term.shell", "shell"),
-                cmd('c', .@"ai.claude_code", "claude code"),
-                cmd('n', .@"ai.claude_code_new", "new claude session"),
-                cmd('C', .@"ai.chat", "claude chat (context)"),
-                cmd('x', .@"ai.codex", "codex"),
-                cmd('X', .@"ai.codex_new", "new codex session"),
-            }),
-            group('t', "+toggle", &.{
-                cmd('e', .@"view.toggle_tree", "explorer"),
-                cmd('r', .@"view.toggle_right_panel", "right panel"),
-                cmd(']', .@"view.right_panel_next_tab", "right panel: next"),
-                cmd('[', .@"view.right_panel_prev_tab", "right panel: prev"),
-                cmd('x', .@"view.right_panel_close_tab", "right panel: close tab"),
-                cmd('k', .@"editor.toggle_keymap", "vim ⇄ standard"),
-                cmd('t', .@"theme.pick", "theme…"),
-                cmd('h', .@"view.toggle_hidden", "hidden files (focused)"),
-                cmd('H', .@"view.toggle_hidden_all", "hidden files (all)"),
-                cmd('w', .@"view.toggle_wrap", "wrap"),
-                cmd('n', .@"view.toggle_line_numbers", "line numbers"),
-                cmd('f', .@"view.fullscreen", "full screen (Esc Esc leaves)"),
-                cmd('z', .@"view.toggle_zoom", "zoom this pane / restore"),
-                cmd('0', .@"view.reset_layout", "reset view to default"),
-            }),
-            group('h', "+http", &.{
-                cmd('s', .@"http.send", "send request"),
-                cmd('r', .@"http.find_request", "find request…"),
-                cmd('y', .@"http.copy_curl", "copy as curl"),
-                cmd('d', .@"http.ai_debug", "ask Claude (debug)"),
-                cmd(']', .@"http.next_block", "next ### block"),
-                cmd('[', .@"http.prev_block", "previous ### block"),
-            }),
-            group('T', "+test", &.{
-                cmd('a', .@"test.run_all", "run all"),
-                cmd('f', .@"test.run_file", "run this file"),
-                cmd('t', .@"test.run_at_cursor", "run test at cursor"),
-                cmd('l', .@"test.rerun_failed", "re-run last-failed"),
-                cmd('h', .@"test.heal", "heal failing test (Claude)"),
-                cmd('w', .@"flaky.show", "flaky/wobbly dashboard"),
-            }),
-            // `L c r` (cargo run) is not an id in this build — `cargo.*` runs
-            // the checks; `go.run` / `npm.run` cover the run verbs.
-            group('L', "+lang/run", &.{
-                group('c', "+cargo", &.{
-                    cmd('t', .@"cargo.test", "cargo test"),
-                    cmd('b', .@"cargo.build", "cargo build"),
-                    cmd('c', .@"cargo.check", "cargo check"),
-                    cmd('l', .@"cargo.clippy", "cargo clippy"),
-                    cmd('f', .@"cargo.fmt", "cargo fmt"),
-                }),
-                group('n', "+npm", &.{
-                    cmd('t', .@"npm.test", "npm test"),
-                    cmd('b', .@"npm.build", "npm run build"),
-                    cmd('r', .@"npm.run", "npm run dev"),
-                    cmd('s', .@"npm.start", "npm start"),
-                    cmd('i', .@"npm.install", "npm install"),
-                    cmd('l', .@"npm.lint", "npm run lint"),
-                    cmd('x', .@"npm.run_script", "run an npm script (prompt)"),
-                }),
-                group('p', "+pytest", &.{
-                    cmd('t', .@"pytest.run", "pytest"),
-                    cmd('l', .@"pytest.failed", "pytest --lf"),
-                }),
-                group('g', "+go", &.{
-                    cmd('t', .@"go.test", "go test ./..."),
-                    cmd('b', .@"go.build", "go build"),
-                    cmd('r', .@"go.run", "go run ."),
-                    cmd('v', .@"go.vet", "go vet ./..."),
-                    cmd('p', .@"go.run_path", "go run <path> (prompt)"),
-                }),
-            }),
-            // Rust's `+pr` leaves name `pr.picker` / `pr.refresh`, commands
-            // that no longer exist in Rust either (the SCM split): the rows
-            // paint, the press explains.
-            group('P', "+pr", &.{
-                dead('p', "pr.picker", "PRs: cross-host picker (Enter URL / Tab pipeline)"),
-                dead('r', "pr.refresh", "PRs: refresh cross-host cache (background)"),
-            }),
-            // `i p` (`integrations.icon_picker`) waits on the icon-rail track.
-            group('i', "+integrations", &.{
-                cmd('d', .@"integrations.show_details", "detail pane (description / buttons / links)"),
-                cmd('h', .@"tools.htop", "htop — interactive process viewer"),
-                cmd('I', .@"tools.iftop", "iftop — interactive bandwidth monitor"),
-                cmd('r', .@"tools.btop", "btop — resource monitor"),
-                cmd('E', .@"integrations.toggle_enabled", "enable/disable a chip"),
-            }),
-            group('I', "+insert", &.{
-                cmd('s', .@"snippet.pick", "snippet…"),
-                cmd('x', .@"snippet.expand", "expand snippet at cursor"),
-            }),
-            // Named layouts — the tab page under a name (`app/named_layouts.zig`).
-            group('W', "+layouts", &.{
-                cmd('s', .@"layout.save", "save this tab page as…"),
-                cmd('l', .@"layout.pick", "load a layout…"),
-                cmd('n', .@"layout.load", "load by name…"),
-                cmd('d', .@"layout.delete", "delete a layout…"),
-            }),
-            group('H', "+harpoon", &.{
-                cmd('a', .@"harpoon.add", "pin active file"),
-                cmd('m', .@"harpoon.menu", "menu / picker"),
-            }),
-            cmd('1', .@"harpoon.goto_1", "harpoon 1"),
-            cmd('2', .@"harpoon.goto_2", "harpoon 2"),
-            cmd('3', .@"harpoon.goto_3", "harpoon 3"),
-            cmd('4', .@"harpoon.goto_4", "harpoon 4"),
-            cmd('5', .@"harpoon.goto_5", "harpoon 5"),
-            cmd('6', .@"harpoon.goto_6", "harpoon 6"),
-            cmd('7', .@"harpoon.goto_7", "harpoon 7"),
-            cmd('8', .@"harpoon.goto_8", "harpoon 8"),
-            cmd('9', .@"harpoon.goto_9", "harpoon 9"),
-            cmd('?', .@"view.cheatsheet", "cheatsheet (all chords)"),
-            cmd('B', .@"browser.open", "open browser (Chrome/CDP)"),
-            cmd('m', .@"markdown.preview", "markdown preview"),
-            cmd('p', .palette, "command palette"),
-            cmd('o', .@"task.run", "run task…"),
-        },
-    },
+/// Every group, keyed by prefix. A spec chord under a prefix no row
+/// here names is a compile error, so a chord cannot be bound without a
+/// place in the popup. The glyphs are `ui/whichkey_glyph.zig`'s,
+/// keyed by these labels.
+pub const groups = [_]Group{
+    .{ .prefix = "f", .label = "+find" },
+    .{ .prefix = "c", .label = "+nvchad" },
+    // NvChad's `<leader>ra` (vim only: the leaf under it is).
+    .{ .prefix = "r", .label = "+lsp" },
+    .{ .prefix = "b", .label = "+buffer" },
+    .{ .prefix = "s", .label = "+split" },
+    // nvim-dap's leader chords (`docs/KEYMAP_PROFILES.md` → Debugger).
+    .{ .prefix = "d", .label = "+debug" },
+    .{ .prefix = "l", .label = "+lsp" },
+    .{ .prefix = "g", .label = "+git" },
+    .{ .prefix = "a", .label = "+ai/term" },
+    .{ .prefix = "t", .label = "+toggle" },
+    // NvChad's `<leader>h` is the horizontal terminal, so the requests
+    // sit under `R`.
+    .{ .prefix = "R", .label = "+http" },
+    .{ .prefix = "T", .label = "+test" },
+    .{ .prefix = "L", .label = "+lang/run" },
+    .{ .prefix = "Lc", .label = "+cargo" },
+    .{ .prefix = "Ln", .label = "+npm" },
+    .{ .prefix = "Lp", .label = "+pytest" },
+    .{ .prefix = "Lg", .label = "+go" },
+    .{ .prefix = "P", .label = "+pr" },
+    .{ .prefix = "i", .label = "+integrations" },
+    .{ .prefix = "I", .label = "+insert" },
+    // Named layouts — the tab page under a name (`app/named_layouts.zig`).
+    .{ .prefix = "W", .label = "+layouts" },
+    .{ .prefix = "H", .label = "+harpoon" },
+    // NvChad's `<leader>wK`: `<leader>w` is a prefix, never a save.
+    .{ .prefix = "w", .label = "+which-key" },
 };
+
+/// A row the Rust popup shows for a command that no longer exists there
+/// either (the `+pr` pair went with the SCM split): it paints, and the
+/// press explains. Not a command, so not in the spec table.
+pub const Dead = struct { path: []const u8, id: []const u8, label: []const u8 };
+
+pub const dead_rows = [_]Dead{
+    .{ .path = "Pp", .id = "pr.picker", .label = "PRs: cross-host picker (Enter URL / Tab pipeline)" },
+    .{ .path = "Pr", .id = "pr.refresh", .label = "PRs: refresh cross-host cache (background)" },
+};
+
+/// A leader chord from the spec table: `space f f` in `keys.both` is
+/// the leaf `ff` in both profiles; in `keys.vim` it is the vim
+/// profile's alone.
+pub const Leaf = struct { path: []const u8, id: CommandId, label: []const u8, vim_only: bool };
+
+/// `space f f` → `"ff"`; null for a chord that is not a leader chain
+/// of plain characters (and for the bare leader, `space`).
+pub fn leaderPath(comptime spec: []const u8) ?[]const u8 {
+    comptime {
+        var it = std.mem.splitScalar(u8, spec, ' ');
+        const head = it.next() orelse return null;
+        if (!std.mem.eql(u8, head, "space")) return null;
+        var path: []const u8 = "";
+        while (it.next()) |tok| {
+            if (tok.len != 1 or tok[0] < 0x21 or tok[0] > 0x7e) return null;
+            path = path ++ tok;
+        }
+        if (path.len == 0) return null;
+        return path;
+    }
+}
+
+/// Every leader chord of the spec table, in table order.
+pub const leaves: []const Leaf = blk: {
+    @setEvalBranchQuota(4_000_000);
+    const specs = @import("../commands/specs.zig");
+    var out: []const Leaf = &.{};
+    for (specs.specs) |s| {
+        const label = if (s.short.len > 0) s.short else s.title;
+        const id = @field(CommandId, s.id);
+        for (s.keys.both) |k| if (leaderPath(k)) |p| {
+            out = out ++ &[_]Leaf{.{ .path = p, .id = id, .label = label, .vim_only = false }};
+        };
+        for (s.keys.vim) |k| if (leaderPath(k)) |p| {
+            out = out ++ &[_]Leaf{.{ .path = p, .id = id, .label = label, .vim_only = true }};
+        };
+        // The standard profile's popup is the same tree less the vim
+        // rows; a leader chord for it alone has nowhere to go.
+        for (s.keys.standard) |k| if (leaderPath(k) != null)
+            @compileError("leader chord `" ++ k ++ "` of " ++ s.id ++ " is in keys.standard: a which-key row is keys.both (both profiles) or keys.vim");
+    }
+    break :blk out;
+};
+
+fn groupLabel(comptime prefix: []const u8) ?[]const u8 {
+    for (groups) |g| if (std.mem.eql(u8, g.prefix, prefix)) return g.label;
+    return null;
+}
+
+/// The entry at `path`: a leaf (one command, whichever profiles bind
+/// it), a dead row, or a group with its kids.
+fn entryAt(comptime path: []const u8) Entry {
+    comptime {
+        const key = path[path.len - 1];
+        var leaf: ?Leaf = null;
+        var deeper = false;
+        for (leaves) |l| {
+            if (std.mem.eql(u8, l.path, path)) {
+                if (leaf) |o| {
+                    if (o.id != l.id) @compileError("leader chord `space " ++ path ++ "` names two commands: " ++ @tagName(o.id) ++ " and " ++ @tagName(l.id));
+                    leaf = .{ .path = path, .id = o.id, .label = o.label, .vim_only = o.vim_only and l.vim_only };
+                } else leaf = l;
+            } else if (std.mem.startsWith(u8, l.path, path)) deeper = true;
+        }
+        for (dead_rows) |d| {
+            if (std.mem.eql(u8, d.path, path)) {
+                if (leaf != null) @compileError("dead row `" ++ path ++ "` is also a command's chord");
+                return .{ .key = key, .node = .{ .dead = .{ .id = d.id, .label = d.label } } };
+            }
+            if (std.mem.startsWith(u8, d.path, path)) deeper = true;
+        }
+        if (leaf) |l| {
+            if (deeper) @compileError("leader chord `space " ++ path ++ "` (" ++ @tagName(l.id) ++ ") is also the prefix of a longer chord: a row is a leaf or a group, never both");
+            return .{ .key = key, .vim_only = l.vim_only, .node = .{ .cmd = .{ .id = l.id, .label = l.label } } };
+        }
+        const label = groupLabel(path) orelse
+            @compileError("leader chords under `space " ++ path ++ "` have no group: add a row to `whichkey.groups`");
+        const kids = kidsAt(path);
+        var vim_only = true;
+        for (kids) |k| {
+            if (!k.vim_only) vim_only = false;
+        }
+        return .{ .key = key, .vim_only = vim_only, .node = .{ .group = .{ .label = label, .kids = kids } } };
+    }
+}
+
+/// The distinct next keys under `prefix`, each as its entry.
+fn kidsAt(comptime prefix: []const u8) []const Entry {
+    comptime {
+        var seen: []const u8 = "";
+        var out: []const Entry = &.{};
+        for (leaves) |l| {
+            if (l.path.len > prefix.len and std.mem.startsWith(u8, l.path, prefix) and std.mem.indexOfScalar(u8, seen, l.path[prefix.len]) == null) {
+                seen = seen ++ l.path[prefix.len .. prefix.len + 1];
+                out = out ++ &[_]Entry{entryAt(l.path[0 .. prefix.len + 1])};
+            }
+        }
+        for (dead_rows) |d| {
+            if (d.path.len > prefix.len and std.mem.startsWith(u8, d.path, prefix) and std.mem.indexOfScalar(u8, seen, d.path[prefix.len]) == null) {
+                seen = seen ++ d.path[prefix.len .. prefix.len + 1];
+                out = out ++ &[_]Entry{entryAt(d.path[0 .. prefix.len + 1])};
+            }
+        }
+        // A group row that no chord reaches is a label with nothing
+        // under it — the table has drifted from the specs.
+        if (prefix.len == 0) for (groups) |g| {
+            var used = false;
+            for (leaves) |l| {
+                if (std.mem.startsWith(u8, l.path, g.prefix) and l.path.len > g.prefix.len) used = true;
+            }
+            for (dead_rows) |d| {
+                if (std.mem.startsWith(u8, d.path, g.prefix) and d.path.len > g.prefix.len) used = true;
+            }
+            if (!used) @compileError("which-key group `" ++ g.prefix ++ "` (" ++ g.label ++ ") has no chord under it");
+        };
+        return out;
+    }
+}
+
+/// The popup's tree. Every leaf is a `space …` chord of the spec table
+/// (`keys.both`, or `keys.vim` for the vim profile's alone), so a chord
+/// typed fast and the same chord walked in the popup can never name two
+/// different things, and a chord can never be in one and not the other.
+pub const root: Node = .{ .group = .{ .label = "<leader>", .kids = blk: {
+    @setEvalBranchQuota(4_000_000);
+    const kids = kidsAt("");
+    break :blk kids;
+} } };
 
 pub const max_depth = 8;
 
@@ -491,10 +404,13 @@ test "leader tree: root groups, descend, leaves, dead ends" {
     try std.testing.expectEqual(CommandId.@"view.split_right", lookup("sv").?.cmd.id);
     try std.testing.expect(lookup("zz") == null);
     try std.testing.expect(lookup("svx") == null);
-    try std.testing.expect(continuations(std.testing.allocator, "s", true).len == 16);
-    try std.testing.expectEqual(CommandId.@"sessions.next_waiting", lookupIn("sn", true).?.cmd.id);
-    try std.testing.expectEqual(CommandId.@"sessions.prev_waiting", lookupIn("sN", true).?.cmd.id);
-    try std.testing.expect(lookupIn("sn", false) == null);
+    try std.testing.expect(continuations(std.testing.allocator, "s", true).len == 13);
+    // The needs-you jumps sit with the sessions (`+ai/term`), vim only:
+    // the standard profile has Ctrl+Alt+N / Ctrl+Alt+Shift+N.
+    try std.testing.expectEqual(CommandId.@"sessions.next_waiting", lookupIn("aj", true).?.cmd.id);
+    try std.testing.expectEqual(CommandId.@"sessions.prev_waiting", lookupIn("ak", true).?.cmd.id);
+    try std.testing.expect(lookupIn("aj", false) == null);
+    try std.testing.expect(lookupIn("sn", true) == null);
     try std.testing.expect(continuations(std.testing.allocator, "sv", true).len == 0);
     // `+debug` and `+lsp` on `r` are the vim profile's — nvim-dap's
     // door and NvChad's `<leader>ra`; the standard popup keeps the
@@ -509,16 +425,18 @@ test "leader tree: root groups, descend, leaves, dead ends" {
     defer arena_state.deinit();
     const std_root = continuations(arena_state.allocator(), "", false);
     for (std_root) |e| try std.testing.expect(e.key != 'd' and e.key != 'r');
-    try std.testing.expectEqual(continuations(arena_state.allocator(), "", true).len - 2, std_root.len);
+    // The vim profile's root adds `+debug`, `+lsp` on `r`, `+nvchad`,
+    // `+which-key` and NvChad's `x` / `h` / `v` / `e` / `E` / `/`.
+    try std.testing.expectEqual(continuations(arena_state.allocator(), "", true).len - 10, std_root.len);
 }
 
-test "leader tree: the NvChad groups h T L P i I H, the digits, the root leaves ? B m p o, tr, iE and the t leaves" {
+test "leader tree: the groups R T L P i I H, the digits, the root leaves ? B m p o, tr, iE and the t leaves" {
     const t = std.testing;
-    for ([_][]const u8{ "h", "T", "L", "i", "I", "H" }) |g| try t.expect(lookup(g).?.* == .group);
+    for ([_][]const u8{ "R", "T", "L", "i", "I", "H" }) |g| try t.expect(lookup(g).?.* == .group);
     try t.expectEqualStrings("+cargo", lookup("Lc").?.label());
     try t.expectEqual(CommandId.@"cargo.test", lookup("Lct").?.cmd.id);
     try t.expectEqual(CommandId.@"go.run", lookup("Lgr").?.cmd.id);
-    try t.expectEqual(CommandId.@"http.send", lookup("hs").?.cmd.id);
+    try t.expectEqual(CommandId.@"http.send", lookup("Rs").?.cmd.id);
     try t.expectEqual(CommandId.@"test.run_at_cursor", lookup("Tt").?.cmd.id);
     try t.expectEqual(CommandId.@"integrations.toggle_enabled", lookup("iE").?.cmd.id);
     try t.expectEqual(CommandId.@"snippet.pick", lookup("Is").?.cmd.id);
@@ -536,13 +454,20 @@ test "leader tree: the NvChad groups h T L P i I H, the digits, the root leaves 
     try t.expectEqual(CommandId.@"editor.toggle_keymap", lookup("tk").?.cmd.id);
     try t.expectEqual(CommandId.@"theme.pick", lookup("tt").?.cmd.id);
     try t.expectEqual(CommandId.@"view.fullscreen", lookup("tf").?.cmd.id);
-    try t.expectEqual(CommandId.@"view.toggle_zoom", lookup("tz").?.cmd.id);
+    // One zoom spelling, beside the split verbs.
+    try t.expectEqual(CommandId.@"view.toggle_zoom", lookup("sz").?.cmd.id);
+    try t.expect(lookup("tz") == null);
+    try t.expect(lookup("zz") == null);
     try t.expectEqual(CommandId.@"view.reset_layout", lookup("t0").?.cmd.id);
-    // Rust's root leaves: e / q / w read as its popup does; x is not one.
+    // NvChad's root: `x` closes the buffer, `h` / `v` open terminals,
+    // and `w` is the `wK` prefix — never a save.
     try t.expectEqual(CommandId.@"buffer.close", lookup("q").?.cmd.id);
+    try t.expectEqual(CommandId.@"buffer.close", lookup("x").?.cmd.id);
+    try t.expectEqual(CommandId.@"term.shell_bottom", lookup("h").?.cmd.id);
+    try t.expectEqual(CommandId.@"term.shell_right", lookup("v").?.cmd.id);
     try t.expectEqualStrings("explorer", lookup("e").?.label());
-    try t.expectEqualStrings("write/save", lookup("w").?.label());
-    try t.expect(lookup("x") == null);
+    try t.expectEqualStrings("+which-key", lookup("w").?.label());
+    try t.expectEqual(CommandId.@"whichkey.leader", lookup("wK").?.cmd.id);
     // The +pr group paints with its two dead leaves; the cut ones are not offered.
     try t.expectEqualStrings("+pr", lookup("P").?.label());
     try t.expectEqualStrings("pr.picker", lookup("Pp").?.dead.id);
@@ -590,7 +515,7 @@ test "every group in both profiles has a glyph with an ascii twin, and the count
     }
     // The count is a walk of the tree, not a literal: an iterative
     // sweep of every leaf beneath a node agrees with `chordCount`.
-    for ([_][]const u8{ "", "f", "s", "g", "L", "Lc", "t", "a", "l", "d", "T", "h", "i", "H", "I", "P", "b", "c", "r", "W" }) |path| {
+    for ([_][]const u8{ "", "f", "s", "g", "L", "Lc", "t", "a", "l", "d", "T", "R", "i", "H", "I", "P", "b", "c", "r", "W", "w" }) |path| {
         for ([_]bool{ true, false }) |vim| {
             const n = lookupIn(path, vim) orelse continue;
             try t.expectEqual(leavesUnder(n, vim), chordCount(n, vim));
@@ -598,21 +523,88 @@ test "every group in both profiles has a glyph with an ascii twin, and the count
     }
     // The numbers the popup paints today, so a chord added or dropped
     // shows up here rather than silently on screen.
-    try t.expectEqual(@as(u16, 7), chordCount(lookup("f").?, true));
-    try t.expectEqual(@as(u16, 16), chordCount(lookup("s").?, true));
-    try t.expectEqual(@as(u16, 14), chordCount(lookup("s").?, false));
+    try t.expectEqual(@as(u16, 8), chordCount(lookup("f").?, true));
+    try t.expectEqual(@as(u16, 4), chordCount(lookup("f").?, false));
+    try t.expectEqual(@as(u16, 13), chordCount(lookup("s").?, true));
+    try t.expectEqual(@as(u16, 12), chordCount(lookup("s").?, false));
     try t.expectEqual(@as(u16, 5), chordCount(lookup("Lc").?, true));
-    try t.expectEqual(@as(u16, 19), chordCount(lookup("L").?, true));
+    try t.expectEqual(@as(u16, 20), chordCount(lookup("L").?, true));
     try t.expectEqual(@as(u16, 16), chordCount(lookup("d").?, true));
     try t.expectEqual(@as(u16, 1), chordCount(lookup("Pp").?, true));
-    // The root: the vim profile carries `+debug`'s fifteen, `<leader>ra`,
-    // `<leader>sn` / `sN`, and `<leader>ds` / `<leader>rn` more than the
-    // standard one.
-    try t.expectEqual(chordCount(&root, false) + 20, chordCount(&root, true));
+    // The root: every chord the spec table binds in `keys.vim` alone
+    // is a row the standard popup does not show.
+    var vim_only: u16 = 0;
+    for (leaves) |l| {
+        if (l.vim_only) vim_only += 1;
+    }
+    try t.expectEqual(@as(u16, 43), vim_only);
+    try t.expectEqual(chordCount(&root, false) + vim_only, chordCount(&root, true));
     // NvChad's `<leader>ds` / `<leader>rn`, vim-only like their groups.
     try t.expectEqual(CommandId.@"lsp.diagnostics", lookup("ds").?.cmd.id);
     try t.expectEqual(CommandId.@"view.toggle_relative_numbers", lookup("rn").?.cmd.id);
     try t.expect(lookupIn("rn", false) == null);
+}
+
+test "one leader table: every spec leader chord is the tree's row at the same path in each profile, and every tree row is a spec chord" {
+    const t = std.testing;
+    const specs = @import("../commands/specs.zig");
+    var from_specs: usize = 0;
+    for (specs.specs) |s| {
+        const id = command.by_name.get(s.id).?;
+        for ([_]struct { list: []const []const u8, vim: bool, standard: bool }{
+            .{ .list = s.keys.both, .vim = true, .standard = true },
+            .{ .list = s.keys.vim, .vim = true, .standard = false },
+        }) |side| for (side.list) |k| {
+            const path = runtimeLeaderPath(k) orelse continue;
+            from_specs += 1;
+            // Present at that path, naming that command, in every
+            // profile that binds it ...
+            for ([_]bool{ true, false }) |vim| {
+                const bound = if (vim) side.vim else side.standard;
+                const n = lookupIn(path.slice(), vim);
+                if (bound) {
+                    if (n == null or n.?.* != .cmd or n.?.cmd.id != id) {
+                        std.debug.print("spec chord `{s}` ({s}) is not the tree's row in the {s} profile\n", .{ k, s.id, if (vim) "vim" else "standard" });
+                        return error.LeaderTablesDisagree;
+                    }
+                } else if (n != null and n.?.* == .cmd and n.?.cmd.id == id and !isBoth(s, path.slice())) {
+                    std.debug.print("vim chord `{s}` ({s}) shows in the standard popup\n", .{ k, s.id });
+                    return error.LeaderTablesDisagree;
+                }
+            }
+        };
+        for (s.keys.standard) |k| try t.expect(runtimeLeaderPath(k) == null);
+    }
+    // ... and the tree has no row the specs do not (the dead rows aside).
+    try t.expectEqual(from_specs + dead_rows.len, leavesUnder(&root, true));
+    try t.expectEqual(leaves.len, from_specs);
+}
+
+fn isBoth(s: anytype, path: []const u8) bool {
+    for (s.keys.both) |k| if (runtimeLeaderPath(k)) |p| if (std.mem.eql(u8, p.slice(), path)) return true;
+    return false;
+}
+
+const RtPath = struct {
+    buf: [max_depth]u8 = undefined,
+    len: usize = 0,
+    fn slice(p: *const RtPath) []const u8 {
+        return p.buf[0..p.len];
+    }
+};
+
+/// `leaderPath` at run time, written again so the test does not read
+/// the derivation it checks.
+fn runtimeLeaderPath(spec: []const u8) ?RtPath {
+    var it = std.mem.splitScalar(u8, spec, ' ');
+    if (!std.mem.eql(u8, it.next() orelse return null, "space")) return null;
+    var p: RtPath = .{};
+    while (it.next()) |tok| {
+        if (tok.len != 1 or p.len == max_depth) return null;
+        p.buf[p.len] = tok[0];
+        p.len += 1;
+    }
+    return if (p.len == 0) null else p;
 }
 
 /// An independent counter for the test: every leaf beneath `n`, found
@@ -621,12 +613,12 @@ fn leavesUnder(n: *const Node, vim: bool) u16 {
     var stack: [256]*const Node = undefined;
     var n_stack: usize = 1;
     stack[0] = n;
-    var leaves: u16 = 0;
+    var n_leaves: u16 = 0;
     while (n_stack > 0) {
         n_stack -= 1;
         const node = stack[n_stack];
         switch (node.*) {
-            .cmd, .dead, .dyn, .dyn_group => leaves += 1,
+            .cmd, .dead, .dyn, .dyn_group => n_leaves += 1,
             .group => |g| for (g.kids) |*k| {
                 if (!vim and k.vim_only) continue;
                 stack[n_stack] = &k.node;
@@ -634,7 +626,7 @@ fn leavesUnder(n: *const Node, vim: bool) u16 {
             },
         }
     }
-    return leaves;
+    return n_leaves;
 }
 
 fn expectUniqueKeys(n: *const Node) !void {

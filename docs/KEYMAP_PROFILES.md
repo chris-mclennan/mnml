@@ -118,7 +118,7 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 | `file.cut` / `file.copy` / `file.paste` / `file.duplicate` | `ctrl+x` / `ctrl+c` / `ctrl+v` / `ctrl+d` | (new) | both, tree and Files pane focus only | handled by the tree / Files pane key handlers, not the keymap: neither edits text, so the editor's insert-mode meanings cannot want them there (Rust parity). Under vim the Files pane's `ctrl+d` / `ctrl+u` stay half-page scroll and the ctrl chords fall through — see the next row |
 | `file.copy` / `file.paste` | `y y` / `P` | (new) | vim, tree and Files pane focus only | ranger's vocabulary: two keys so a stray press cannot copy a file; a stray key between the two cancels. `D` duplicates in both profiles |
 | `file.new` / `file.rename` / `file.delete` / `file.cut` / `tree.refresh` / `tree.expand_all` / `tree.collapse_all` | `a` / `r` / `d` / `x` / `R` / `E` / `W` | (new) | vim, tree focus only | nvim-tree's default `on_attach` verbs (create, rename, delete — a confirm box — cut, refresh, expand all, collapse all); `d d` cut gave way to `d` delete. The standard profile keeps `r` = refresh and none of the others |
-| `sessions.next_waiting` / `sessions.prev_waiting` | `space s n` / `space s N` (vim) · `ctrl+alt+n` / `ctrl+alt+shift+n` (standard) | (new) | vim / standard | Focus the next / previous pane whose child is blocked on a question (`sessions.needsYou`), in pane order, wrapping. The vim pair sits in the `+split` group, whose `n` / `N` were free — Neovim's own `n` / `N` is "the next / previous match", the same reading; `<leader>s n` / `s N` are vim-only rows, so the standard `Ctrl+K` popup keeps the rows it had. The standard pair collides with nothing in `specs.zig` (`ctrl+alt+` holds only the cursor adders, the buffer and split-walk arrows, `w` and `enter`), and a focused terminal hands it to the app: a modified chord the keymap binds reaches the chord chain before the child (`dispatch.ptyKey`) |
+| `sessions.next_waiting` / `sessions.prev_waiting` | `space a j` / `space a k` (vim, under `+ai/term`) · `ctrl+alt+n` / `ctrl+alt+shift+n` (standard) | (new) | vim / standard | Focus the next / previous pane whose child is blocked on a question (`sessions.needsYou`), in pane order, wrapping. The vim pair sits with the sessions in `+ai/term`, as `j` / `k` (down / up, the list's own keys); they are vim-only rows, so the standard `Ctrl+K` popup keeps the rows it had. The standard pair collides with nothing in `specs.zig` (`ctrl+alt+` holds only the cursor adders, the buffer and split-walk arrows, `w` and `enter`), and a focused terminal hands it to the app: a modified chord the keymap binds reaches the chord chain before the child (`dispatch.ptyKey`) |
 | `term.search` / `term.search_next` / `term.search_prev` | `/` / `n` / `N` | (new) | vim, a terminal pane in terminal-normal only | handled by the terminal pane's key handler (`pty_search.termNormalKey`), not the keymap: in terminal mode every plain key is the child's, and in an editor `/` `n` `N` are vim's own search. Neovim's terminal buffer answers `/` in terminal-normal the same way. In the bar Enter lands and closes, as vim's `/` does |
 | `term.search` | `ctrl+f` (whatever `find.find` is bound to) | (new) | standard, a terminal pane only | the pane's key handler reads the editor's find chord as the terminal's (`pty_search.findChord`), as VS Code's terminal takes `Ctrl+F`; `find.find` itself is untouched, so a rebind of it moves both. Under vim `ctrl+f` stays the child's (readline's forward-char). In the bar Enter / Shift+Enter step, wrapping; Esc closes with the match selected |
 | `whichkey.leader` | `space` in the tree, the git status pane and every other window | tree: open the row; git status: stage toggle | vim | NvChad's `<leader>` maps are global (nvchad-probe: in the NvimTree buffer `maparg("<Space>ff")` is Telescope; nvim-tree maps no `<Space>`), so `Space f f` / `Space g c` reach the which-key menu from any window. The standard profile keeps Space as the pane's own key |
@@ -201,6 +201,23 @@ which-key groups are `vim_only` (`src/app/whichkey.zig`): the standard
 profile's `Ctrl+K` popup keeps the reference editor's rows. `r` carries
 NvChad's `<leader>ra` (LSP rename), which that popup does not list, so
 the vim profile shows the row and the standard one does not.
+
+**One leader table.** The which-key tree is derived at comptime from
+the spec table's `space …` chords (`src/app/whichkey.zig` `leaves`): a
+chord in `keys.both` is a row in both profiles' popups, a chord in
+`keys.vim` the vim profile's alone, and the row's label is the spec's
+`short`. So a chord typed fast (the keymap) and walked after the popup
+opens (the tree) are the same entry — before this, `space x`, `space h`,
+`space v`, `space f w` and `space w K` worked only typed fast. The only
+side tables are the group labels by prefix (`whichkey.groups`) and the
+Rust popup's two dead `+pr` rows; a spec chord under a prefix with no
+group, or a chord that is both a leaf and a prefix, is a compile error.
+Following NvChad: `<leader>h` / `<leader>v` are the terminals and `+http`
+moved to `<leader>R`; `<leader>w` is the `wK` prefix, not a save;
+`<leader>x` closes the buffer. The needs-you jumps are `<leader>aj` /
+`ak` under `+ai/term`, the Lua line runner `<leader>Ll` under
+`+lang/run`, and the split zoom has one leader spelling, `<leader>sz`.
+`tests/e2e/whichkey_one_table.test`.
 
 The popup's header names the key that opened it in the ACTIVE profile —
 `<leader>` in vim, `Ctrl+K` in standard (`whichkey.leaderLabel` /

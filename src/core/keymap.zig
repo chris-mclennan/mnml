@@ -631,16 +631,16 @@ test "config overlays: global applies to both, profile overlays its own, none un
     try std.testing.expectEqual(command.CommandId.@"picker.files", standard.resolveSeq(parseKeySeqBuf("ctrl+p", &buf).?).run.static);
 }
 
-test "the needs-you jumps: space s n / space s N in vim, ctrl+alt+n / ctrl+alt+shift+n in standard, neither in the other profile" {
+test "the needs-you jumps: space a j / space a k in vim, ctrl+alt+n / ctrl+alt+shift+n in standard, neither in the other profile" {
     const gpa = std.testing.allocator;
     var vim = try Keymap.build(gpa, .vim, .{});
     defer vim.deinit();
     var standard = try Keymap.build(gpa, .standard, .{});
     defer standard.deinit();
     var buf: [max_seq]Chord = undefined;
-    const sn = parseKeySeqBuf("space s n", &buf).?;
+    const sn = parseKeySeqBuf("space a j", &buf).?;
     try std.testing.expectEqual(command.CommandId.@"sessions.next_waiting", vim.resolveSeq(sn).run.static);
-    const sN = parseKeySeqBuf("space s N", &buf).?;
+    const sN = parseKeySeqBuf("space a k", &buf).?;
     try std.testing.expectEqual(command.CommandId.@"sessions.prev_waiting", vim.resolveSeq(sN).run.static);
     const can = parseKeySeqBuf("ctrl+alt+n", &buf).?;
     try std.testing.expectEqual(command.CommandId.@"sessions.next_waiting", standard.resolveSeq(can).run.static);

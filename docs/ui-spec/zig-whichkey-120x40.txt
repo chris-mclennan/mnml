@@ -5,36 +5,36 @@
  󰍉 │      prog.dbg           │
    │                          │
  󰊢 │         󰐙 Add workspace  │
-   │                          │
-  │                          │                                _ __    _ _    _ __    _
-   │                          │                               | '  \  | ' \  | '  \  | |
- 󰐱 │                          │                               |_|_|_| |_||_| |_|_|_| |_|
-   │                          │
- 󰎒 │                          │                                     workspace · ws
-   │                          │
-  │                          │   RECENT WORKSPACES                           SESSIONS
-   │                          │    ws                                open
-  │                          │                                                + New Claude Code session here
-   │                          │   RECENT FILES
-  │                          │    No recent files yet                         No session to resume
-   │                          │
- 󱘣 │                          │                                               SHORTCUTS
-   │                          │                                                Ctrl+P        find a file
- 󰢱 │                          │                                                Ctrl+R        recent files
-   │                          │                                                Ctrl+Shift+E  the file tree
+   │                          │                                _ __    _ _    _ __    _
+  │                          │                               | '  \  | ' \  | '  \  | |
+   │                          │                               |_|_|_| |_||_| |_|_|_| |_|
+ 󰐱 │                          │
+   │                          │                                     workspace · ws
+ 󰎒 │                          │
+   │                          │   RECENT WORKSPACES                           SESSIONS
+  │                          │    ws                                open
+   │                          │                                                + New Claude Code session here
+  │                          │   RECENT FILES
+   │                          │    No recent files yet                         No session to resume
+  │                          │
+   │                          │                                               SHORTCUTS
+ 󱘣 │                          │                                                Ctrl+P        find a file
+   │                          │                                                Ctrl+R        recent files
+ 󰢱 │                          │                                                Ctrl+Shift+E  the file tree
+   │                          │                                                Ctrl+B        toggle the tree
+   │                          │                                                Ctrl+Shift+P  command palette
  ┌ Ctrl+K ────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
- │󰘵 / → toggle comment             󰘵 E → pin/unpin the sidebar       h → +http (6)                                   │
  │󰘵 1 → harpoon 1                   H → +harpoon (2)               󰐱 i → +integrations (5)                           │
  │󰘵 2 → harpoon 2                   I → +insert (2)                 l → +lsp (12)                                   │
  │󰘵 3 → harpoon 3                   L → +lang/run (19)             󰘵 m → markdown preview                            │
  │󰘵 4 → harpoon 4                  󰓂 P → +pr (2)                    󰘵 n → line numbers                                │
- │󰘵 5 → harpoon 5                   T → +test (6)                  󰘵 o → run task…                                   │
- │󰘵 6 → harpoon 6                  󰚩 a → +ai/term (14)              󰘵 p → command palette                             │
- │󰘵 7 → harpoon 7                  󰎒 b → +buffer (6)                󰘵 q → close buffer                                │
- │󰘵 8 → harpoon 8                   c → +nvchad (3)                 s → +split (12)                                 │
- │󰘵 9 → harpoon 9                  󰘵 e → explorer                    t → +toggle (14)                                │
- │󰘵 ? → cheatsheet (all chords)    󰍉 f → +find (7)                  󰘵 w → write/save                                  │
- │󰘵 B → open browser (Chrome/CDP)  󰊢 g → +git (22)                                                                    │
+ │󰘵 5 → harpoon 5                   R → +http (5)                  󰘵 o → run task…                                   │
+ │󰘵 6 → harpoon 6                   T → +test (6)                  󰘵 p → command palette                             │
+ │󰘵 7 → harpoon 7                   W → +layouts (4)               󰘵 q → close buffer                                │
+ │󰘵 8 → harpoon 8                  󰚩 a → +ai/term (14)               s → +split (12)                                 │
+ │󰘵 9 → harpoon 9                  󰎒 b → +buffer (5)                 t → +toggle (13)                                │
+ │󰘵 ? → cheatsheet (all chords)    󰍉 f → +find (4)                                                                    │
+ │󰘵 B → open browser (Chrome/CDP)  󰊢 g → +git (17)                                                                    │
  │  esc to cancel                                                                                                     │
  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
                                                            ⋯

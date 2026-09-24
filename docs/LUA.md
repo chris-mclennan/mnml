@@ -158,7 +158,7 @@ key specs one token at a time; inside `fg = "` / `bg = "` the theme roles.
 its doc line, on a hook name its fields. `lua-language-server`, when
 installed, keeps the rest of the file — it is in the default server table.
 
-**Run a line.** `script.run_selection` (vim `<leader>sr`, standard
+**Run a line.** `script.run_selection` (vim `<leader>Ll`, standard
 `ctrl+alt+enter`) runs the selected lines — or the cursor line — in the
 script state: an expression first (`x + 1` answers its value), a statement
 chunk otherwise. What comes back is the toast. With
@@ -1249,7 +1249,7 @@ local scripts = mnml.data_root() .. "/scripts"
 |---|---|---|
 | `script.reload` | the palette, the SCRIPTS header's `⟳` | drops everything script-owned, reopens the states, runs every `init.lua` and every installed script again |
 | `script.edit_init` | the palette | opens the data root's `init.lua` in an editor, creating it on save |
-| `script.run_selection` | vim `<leader>sr`, standard `ctrl+alt+enter` | runs the selected lines — or the cursor line — in the script state |
+| `script.run_selection` | vim `<leader>Ll`, standard `ctrl+alt+enter` | runs the selected lines — or the cursor line — in the script state |
 | `script.doctor` | `d` in the SCRIPTS section | the report: every state, its api, its source, whether it is enabled, its budget overruns this session, its hooks, its `require` root and its namespaces with live decoration counts — plus the three folders a script can be scanned from |
 | `script.install` | `i` in the SCRIPTS section | installs from a path, a git URL or an archive |
 | `script.marketplace_install` | `i` on a Marketplace row, the row's menu | installs the focused Marketplace row, through its trust dialog |

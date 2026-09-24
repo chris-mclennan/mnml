@@ -33,7 +33,7 @@ expect screen contains "d → +debug"
 
 # A group descends, and Backspace comes back up a level.
 key f
-expect screen contains "┌ <leader>f  +find (7) "
+expect screen contains "┌ <leader>f  +find (8) "
 expect screen contains "grep"
 key backspace
 expect screen contains "┌ <leader> "

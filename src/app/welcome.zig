@@ -139,15 +139,16 @@ pub fn shortcuts(app: *App, arena: Allocator) Allocator.Error![]const Shortcut {
 /// The chord the start surface shows for `keys` under the active
 /// profile, in the copy's spelling (`info_view_copy.chordDisplay`:
 /// `Ctrl+P`, `Space f f`). Under vim the profile's own chords come
-/// before the shared ones, and under the standard profile the shared
-/// ones first (`Ctrl+P` over its own `Ctrl+O`), as the info view's
-/// `chordOf` reads them. Under vim a leader chord wins (the fewer keys the
-/// better — `Space` over `Space w K`), then a single modified chord,
-/// then anything else: NvChad's `Space f f`, not the shared `Ctrl+P`.
-/// Under the standard profile a single modified chord wins, then a
-/// single key, then a sequence, and a leader chord only when nothing
-/// else is bound: VS Code's `Ctrl+P`. Null when the profile binds
-/// nothing.
+/// before the shared ones — NvChad's `Ctrl+N` over the shared which-key
+/// row `Space t e` — and within a list a leader chord wins (the fewer
+/// keys the better), then a single modified chord, then anything else:
+/// NvChad's `Space f f`, not the shared `Ctrl+P`. The bare leader beats
+/// everything (`Space` over `Space w K`). Under the standard profile the
+/// shared ones come first (`Ctrl+P` over its own `Ctrl+O`), as the info
+/// view's `chordOf` reads them; a single modified chord wins, then a
+/// single key, then a sequence: VS Code's `Ctrl+P`. A which-key row
+/// (`space ?`) is not offered there — that profile opens the popup on
+/// `Ctrl+K`, not on a leader. Null when the profile binds nothing else.
 pub fn startChord(app: *App, arena: Allocator, keys: command.Keys) Allocator.Error!?[]const u8 {
     const vim = App.profileOf(app.input_style) == .vim;
     const lists = if (vim) [_][]const []const u8{ keys.vim, keys.both } else [_][]const []const u8{ keys.both, keys.standard };
@@ -160,12 +161,12 @@ pub fn startChord(app: *App, arena: Allocator, keys: command.Keys) Allocator.Err
         const first = norm[0 .. std.mem.indexOfScalar(u8, norm, ' ') orelse norm.len];
         const leader = std.mem.eql(u8, first, "space");
         const modified = std.mem.indexOfScalar(u8, first, '+') != null;
-        const rank: u32 = if (vim)
-            (if (leader) tokens else if (modified and tokens == 1) 10 else 20 + tokens)
+        if (!vim and leader) continue;
+        const ranked: u32 = if (vim)
+            (if (leader and tokens == 1) 0 else @as(u32, @intCast(li)) * 100 + (if (leader) tokens else if (modified and tokens == 1) 10 else 20 + tokens))
         else
-            (if (leader) 100 + tokens else if (modified and tokens == 1) 0 else if (tokens == 1) 10 else 20 + tokens);
-        // The first list wins a tie.
-        const ranked = rank * 2 + @as(u32, @intCast(li));
+            // The first list wins a tie.
+            (if (modified and tokens == 1) 0 else if (tokens == 1) 10 else 20 + tokens) * 2 + @as(u32, @intCast(li));
         if (ranked < best_rank) {
             best_rank = ranked;
             best = try info_copy.chordDisplay(arena, norm);

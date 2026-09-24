@@ -840,6 +840,12 @@ taken from the rail and the devicon table rather than re-picked
 (`src/ui/whichkey_glyph.zig`), each with its one-cell `--ascii` twin, so
 the popup agrees with the rest of the chrome and the column math does
 not move between glyph modes. See `docs/PARITY.md`, the which-key row.
+Since 2026-09-23 the tree is derived from the spec table's leader chords
+(`docs/KEYMAP_PROFILES.md`, "One leader table"), so the standard popup
+no longer lists the rows the spec binds for the vim profile alone
+(`+nvchad`, `e`, `E`, `/`, `f m` / `f o` / `f z`, the NvChad `g` rows),
+`w` is no longer a save, and `+http` sits under `R` — the dump was
+re-cut and differs from the Rust one in those rows too.
 
 `zig-themes-120x40.txt` is the theme browser mid-preview
 (`tools/zig-spec.sh themes` — `theme.pick`, then `gruv` typed). The
