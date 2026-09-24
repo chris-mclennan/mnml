@@ -6,10 +6,12 @@
 //! the next message. The pane and its worker are `app/browser_pane.zig`.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const ws = @import("../http/ws.zig");
 const child_os = @import("../core/child.zig");
+const os_path = @import("../core/os_path.zig");
 
 /// Binaries and well-known paths tried in order by `launch`.
 pub const chrome_bins = [_][]const u8{
@@ -23,6 +25,17 @@ pub const chrome_bins = [_][]const u8{
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "/Applications/Chromium.app/Contents/MacOS/Chromium",
     "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+};
+
+/// Where Chrome, Chromium and Edge (a Chromium: the same DevTools
+/// protocol) install on Windows. None of them is on `PATH` there, so the
+/// bare names above only ever find a user's own shim.
+pub const windows_chrome_bins = [_][]const u8{
+    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files\\Chromium\\Application\\chrome.exe",
+    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+    "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
 };
 
 /// `{"id":N,"method":"…","params":<params_json>}` (+ `sessionId`).
@@ -262,6 +275,7 @@ pub fn candidates(arena: Allocator, io: Io, home: ?[]const u8) Allocator.Error![
         }
     }
     for (chrome_bins) |b| try out.append(arena, b);
+    if (builtin.os.tag == .windows) for (windows_chrome_bins) |b| try out.append(arena, b);
     return out.items;
 }
 
@@ -282,15 +296,11 @@ pub fn resolveBinary(arena: Allocator, io: Io, env: *const std.process.Environ.M
         Io.Dir.cwd().access(io, name, .{}) catch return null;
         return name;
     }
-    const path = env.get("PATH") orelse return null;
-    var it = std.mem.splitScalar(u8, path, ':');
-    while (it.next()) |dir| {
-        if (dir.len == 0) continue;
-        const full = std.fs.path.join(arena, &.{ dir, name }) catch return null;
-        Io.Dir.cwd().access(io, full, .{}) catch continue;
-        return full;
-    }
-    return null;
+    // The platform's PATH rules: `;` and `PATHEXT` on Windows, where
+    // `chrome` is `chrome.exe`.
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const found = os_path.which(io, env, &buf, name) orelse return null;
+    return arena.dupe(u8, found) catch null;
 }
 
 /// The argv `spawn` runs for `bin`.

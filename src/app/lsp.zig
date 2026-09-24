@@ -22,6 +22,7 @@ const App = app_mod.App;
 const PaneId = app_mod.PaneId;
 const EditorPane = app_mod.EditorPane;
 const command = @import("../core/command.zig");
+const os_path = @import("../core/os_path.zig");
 const CommandError = command.CommandError;
 const event = @import("../core/event.zig");
 const hooks = @import("../core/hooks.zig");
@@ -511,20 +512,20 @@ fn dirHasMarker(io: Io, dir_path: []const u8, marker: []const u8) bool {
 }
 
 /// Is `cmd` runnable: an absolute path that exists, or a name on PATH.
+/// `PATH` splits on the platform's delimiter and, on Windows, a bare
+/// name also matches with each `PATHEXT` suffix — a language server
+/// installed by npm is `typescript-language-server.cmd` there.
 pub fn onPath(app: *App, arena: Allocator, cmd: []const u8) Allocator.Error!bool {
-    if (std.fs.path.isAbsolute(cmd) or std.mem.indexOfScalar(u8, cmd, '/') != null) {
-        return if (Io.Dir.cwd().statFile(app.io, cmd, .{})) |_| true else |_| false;
+    return (try resolved(app, arena, cmd)) != null;
+}
+
+fn resolved(app: *App, arena: Allocator, cmd: []const u8) Allocator.Error!?[]const u8 {
+    if (std.fs.path.isAbsolute(cmd) or os_path.Rules.native.hasDirPart(cmd)) {
+        return if (Io.Dir.cwd().statFile(app.io, cmd, .{})) |_| cmd else |_| null;
     }
-    const path_var = app.env.get("PATH") orelse return false;
-    var it = std.mem.splitScalar(u8, path_var, ':');
-    while (it.next()) |d| {
-        if (d.len == 0) continue;
-        const p = try std.fs.path.join(arena, &.{ d, cmd });
-        if (Io.Dir.cwd().statFile(app.io, p, .{})) |st| {
-            if (st.kind != .directory) return true;
-        } else |_| {}
-    }
-    return false;
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const found = os_path.which(app.io, &app.env, &buf, cmd) orelse return null;
+    return try arena.dupe(u8, found);
 }
 
 /// `cmd` as the OS will find it under the App's OWN `PATH` (`app.env`
@@ -534,17 +535,8 @@ pub fn onPath(app: *App, arena: Allocator, cmd: []const u8) Allocator.Error!bool
 /// was `FileNotFound` at the spawn — `onPath` had just said it was
 /// there. A name with a slash, or one on neither, comes back as is.
 pub fn resolveOnPath(app: *App, arena: Allocator, cmd: []const u8) Allocator.Error![]const u8 {
-    if (std.fs.path.isAbsolute(cmd) or std.mem.indexOfScalar(u8, cmd, '/') != null) return cmd;
-    const path_var = app.env.get("PATH") orelse return cmd;
-    var it = std.mem.splitScalar(u8, path_var, ':');
-    while (it.next()) |d| {
-        if (d.len == 0) continue;
-        const p = try std.fs.path.join(arena, &.{ d, cmd });
-        if (Io.Dir.cwd().statFile(app.io, p, .{})) |st| {
-            if (st.kind != .directory) return p;
-        } else |_| {}
-    }
-    return cmd;
+    if (std.fs.path.isAbsolute(cmd) or os_path.Rules.native.hasDirPart(cmd)) return cmd;
+    return (try resolved(app, arena, cmd)) orelse cmd;
 }
 
 fn markDead(app: *App, name: []const u8) Allocator.Error!void {

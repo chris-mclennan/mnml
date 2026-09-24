@@ -14,6 +14,7 @@ const App = app_mod.App;
 const PaneId = app_mod.PaneId;
 const EditorPane = app_mod.EditorPane;
 const command = @import("../core/command.zig");
+const os_path = @import("../core/os_path.zig");
 const CommandError = command.CommandError;
 const CommandFn = command.CommandFn;
 const cmd_picker = @import("cmd_picker.zig");
@@ -987,16 +988,8 @@ pub fn installHintPrefix() []const u8 {
 
 /// Whether `bin` resolves through `$PATH`.
 pub fn onPath(app: *App, bin: []const u8) bool {
-    const path = app.env.get("PATH") orelse return false;
-    var it = std.mem.splitScalar(u8, path, if (builtin.os.tag == .windows) ';' else ':');
     var buf: [std.fs.max_path_bytes]u8 = undefined;
-    while (it.next()) |dir| {
-        if (dir.len == 0) continue;
-        const full = std.fmt.bufPrint(&buf, "{s}{c}{s}", .{ dir, std.fs.path.sep, bin }) catch continue;
-        std.Io.Dir.cwd().access(app.io, full, .{}) catch continue;
-        return true;
-    }
-    return false;
+    return os_path.which(app.io, &app.env, &buf, bin) != null;
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────

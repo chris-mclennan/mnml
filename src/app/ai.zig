@@ -33,6 +33,7 @@ const EditorPane = app_mod.EditorPane;
 const Key = app_mod.Key;
 const Config = app_mod.Config;
 const command = @import("../core/command.zig");
+const os_path = @import("../core/os_path.zig");
 const CommandError = command.CommandError;
 const event = @import("../core/event.zig");
 const suggest = @import("../ai/suggest.zig");
@@ -274,16 +275,8 @@ pub fn route(app: *App, product: enum { claude, codex }) Route {
 }
 
 fn binaryOnPath(app: *App, name: []const u8) bool {
-    const path = app.env.get("PATH") orelse return false;
-    var it = std.mem.splitScalar(u8, path, ':');
     var buf: [std.fs.max_path_bytes]u8 = undefined;
-    while (it.next()) |dir| {
-        if (dir.len == 0 or dir.len + 1 + name.len >= buf.len) continue;
-        const full = std.fmt.bufPrint(&buf, "{s}/{s}", .{ dir, name }) catch continue;
-        Io.Dir.cwd().access(app.io, full, .{}) catch continue;
-        return true;
-    }
-    return false;
+    return os_path.which(app.io, &app.env, &buf, name) != null;
 }
 
 /// `[ai] suggest_backend`, or the runtime pick from the setup picker.
