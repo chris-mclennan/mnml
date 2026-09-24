@@ -20,13 +20,11 @@ shell git commit -q -m "add the widget"
 command view.activity_git
 wait 1200
 expect screen contains "󱓏 feature"
-# The checked-out branch's own row: Push and start PR sits under the
-# two pushes, never replacing them.
+# The checked-out branch's own row, never pushed: Publish branch sits
+# where the pushes would, and Push and start PR under it.
 rightclick 6 8
-expect screen contains "Push --force-with-lease…"
+expect screen contains "Publish branch (set upstream)"
 expect screen contains "Push and start PR"
-key down
-key down
 key down
 key enter
 wait 2500

@@ -533,19 +533,32 @@ fn rebase(app: *App) CommandError!void {
     try git.askBranches(app, repo, .rebase);
 }
 
+/// The statusline branch chip's menu. The sync rows follow the
+/// upstream, as the branches panel's do: a branch that tracks one pulls
+/// and pushes, one that has never been pushed is offered `Publish
+/// branch (set upstream)` (`git.push` sets it on a first push) and no
+/// pull.
 fn branchMenu(app: *App) CommandError!void {
     _ = try git.requireRepo(app);
-    const items = try app.gpa.dupe(command.MenuItem, &.{
+    const published = if (app.git.status) |s| s.upstream != null or s.branch == null else true;
+    const sync: []const command.MenuItem = if (published) &.{
+        .{ .label = "Pull (ff-only)", .action = .{ .command = .@"git.pull" } },
+        .{ .label = "Push", .action = .{ .command = .@"git.push" } },
+    } else &.{
+        .{ .label = git_palette.publish_label, .action = .{ .command = .@"git.push" } },
+    };
+    const head = [_]command.MenuItem{
         .{ .label = "Checkout…", .action = .{ .command = .@"git.checkout" } },
         .{ .label = "Recent branches…", .action = .{ .command = .@"git.recent_branches" } },
         .{ .label = "New branch…", .action = .{ .command = .@"git.new_branch" } },
         .{ .label = "Delete branch…", .action = .{ .command = .@"git.delete_branch" } },
         .{ .label = "Fetch", .action = .{ .command = .@"git.fetch" }, .separator_before = true },
-        .{ .label = "Pull (ff-only)", .action = .{ .command = .@"git.pull" } },
-        .{ .label = "Push", .action = .{ .command = .@"git.push" } },
+    };
+    const tail = [_]command.MenuItem{
         .{ .label = "Commit graph", .action = .{ .command = .@"git.graph" }, .separator_before = true },
         .{ .label = "Copy branch name", .action = .{ .command = .@"git.copy_current_branch" } },
-    });
+    };
+    const items = try std.mem.concat(app.gpa, command.MenuItem, &.{ &head, sync, &tail });
     errdefer app.gpa.free(items);
     const x: u16 = 2;
     const y: u16 = @intCast(app.screen.height -| 3);
