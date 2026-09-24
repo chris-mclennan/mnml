@@ -26,6 +26,9 @@ parsed events into the queue and into vaxis, key naming),
 `src/main.zig` no longer returns early on Windows: `mnml-zig [WS]`
 runs the interactive loop there, `test` and `--headless` as before.
 
+`docs/PORTABILITY.md` is the static audit beside this ledger: every
+POSIX-ism outside a platform guard, and what Windows does at each.
+
 ## What has been proven
 
 On macOS, for every commit:
@@ -234,10 +237,12 @@ variable at `0` they are refused rather than run through `cmd`.
   (`terminalHint` in `first_launch_install.zig` says so). And there is
   still no MSI step for the font — the installer drops it under the
   prefix and leaves the font directory alone, like every other package.
-- **No Windows CI job runs the tests.** `ci.yml`'s matrix should add
-  `windows-latest` running `zig build test` (Debug and ReleaseSafe)
-  once the checklist above has passed by hand; the cross-compile gate
-  on ubuntu already builds the six `.exe`s.
+- **CI runs the unit suite on `windows-latest`** (`ci.yml`'s `check`
+  matrix: `zig build test` in Debug and ReleaseSafe, the gate at three
+  sizes) — the POSIX-scripted tests skip there. Nothing in CI runs the
+  interactive loop or a ConPTY child; the checklist above is still the
+  only way to see those. `docs/PORTABILITY.md` lists the Windows-skipped
+  tests and what, if anything, runs in their place.
 - **No job object.** `Session.deinit` terminates the direct child only;
   a shell's own children survive. `CreateJobObjectW` +
   `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` is the fix.
@@ -248,14 +253,12 @@ variable at `0` they are refused rather than run through `cmd`.
   `sh -c`; `mnml-zig test`'s default shell is `$SHELL` or `/bin/sh`.
   Windows runs `.test` files fine as long as they have no `shell`
   step.
-- **`~` expansion and the projects dir** (`src/config/load.zig`) and
-  the startup picker's home (`src/app.zig`) read `HOME` directly, not
-  `USERPROFILE`; `data_root.zig` does the right thing, these two do
-  not yet (outside this pass's file list).
-- **`App.processEnv`** (`src/app.zig`) returns an empty map on Windows
-  when no environment is handed in — only tests and `App.init` without
-  `opts.env` hit it; the real entry points pass `init.environ_map`.
-  `std.process.Environ{ .block = .global }` + `createMap` is the fix.
+- **`~` expansion, the projects dir, the startup picker's home and
+  `App.processEnv`** — closed by the portability pass
+  (`docs/PORTABILITY.md`): `USERPROFILE` is a home everywhere the app
+  asks for one (`src/core/os_path.zig`), `~\` expands, and
+  `processEnv` reads the PEB block on Windows instead of returning an
+  empty map.
 - **Tool install hints** (`runners.zig` `Tool.install`) show the
   Homebrew line on Windows.
 - **Bridge v2 mounts** (Unix domain sockets, `has_unix_sockets`) do
