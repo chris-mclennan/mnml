@@ -197,7 +197,9 @@ pub const PtyPane = struct {
     /// itself lives on the terminal's screen, where the grid reads it.
     select: ?Select = null,
     /// What the child was last told about its focus (or would have
-    /// been, had it asked): `tickAll` reports the edges.
+    /// been, had it asked): `tickAll` reports the edges. A child is
+    /// born into the focus its pane has at the spawn (`bornFocused`),
+    /// so only a change after it is an edge.
     has_focus: bool = false,
     /// Restored from a saved session and never started: `session` is
     /// null, `exit` is set so every live-pane path already skips it, and
@@ -457,6 +459,7 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
         app.panes.remove(id);
         return err;
     };
+    bornFocused(app, id);
     app.needs_render = true;
     return id;
 }
@@ -638,6 +641,7 @@ pub fn restart(app: *App, id: PaneId) CommandError!void {
     p.exit = null;
     p.exited_at_ms = null;
     p.dormant = false;
+    bornFocused(app, id);
     // // changed (codex-resume): a fresh child is a fresh window to
     // match a Codex rollout in, and the id the last one was found under
     // is not this one's unless the command line says `resume <id>`.
@@ -771,12 +775,26 @@ pub fn backlog(app: *const App) bool {
 /// vim's FocusGained / FocusLost (`autoread`), neovim, helix and lazygit
 /// rely on it.
 fn reportFocus(app: *App, p: *PtyPane, id: PaneId) void {
-    const focused = app.host_focused and app.active == id and app.focus == .pane;
+    const focused = focusedNow(app, id);
     if (focused == p.has_focus) return;
     p.has_focus = focused;
     const session = p.session orelse return;
     if (!session.terminal().modes.get(.focus_event)) return;
     session.write(if (focused) "\x1b[I" else "\x1b[O");
+}
+
+fn focusedNow(app: *const App, id: PaneId) bool {
+    return app.host_focused and app.active == id and app.focus == .pane;
+}
+
+/// A fresh child starts out knowing its pane's focus: no report is owed
+/// for a focus it was spawned into. Left at the default `false`, the
+/// first `tickAll` saw a focus-in edge on every pane opened focused, and
+/// sent `ESC [ I` or not depending on whether the child's `ESC [?1004h`
+/// had been pumped yet — a race the child lost a spurious report to.
+fn bornFocused(app: *App, id: PaneId) void {
+    const p = app.panes.pty(id) orelse return;
+    p.has_focus = focusedNow(app, id);
 }
 
 // ─── input ──────────────────────────────────────────────────────────────
@@ -1746,6 +1764,16 @@ test "focus reports: a child that enabled DEC 1004 hears ESC [ O when its pane l
     app.tree.visible = false;
     const ed = try app.openScratch();
     const id = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "stty raw -echo; printf '\\033[?1004h'; echo ready; dd bs=1 count=6 2>/dev/null | od -An -c; sleep 30" }, .label = "focus" });
+    // The child's `ESC [?1004h` is pumped BEFORE the first tick — the
+    // order a slow first frame gives. The pane was focused from the
+    // spawn, so that tick owes the child nothing: a phantom `ESC [ I`
+    // would eat half of what `dd` reads.
+    var waited: u32 = 0;
+    while (!app.panes.pty(id).?.session.?.terminal().modes.get(.focus_event)) : (waited += 10) {
+        if (waited > 5000) return error.TestUnexpectedResult;
+        onReadable(&app, id);
+        app.io.sleep(.fromMilliseconds(10), .awake) catch {};
+    }
     try t.expect(try tickUntilScreen(&app, "ready", 5000));
     app.showPane(ed);
     try app.tick(App.nowMs(app.io));
