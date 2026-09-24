@@ -445,7 +445,10 @@ fn longOverride(gpa: Allocator, dir: []const u8) ![]u8 {
 
 test "serve refuses a socket path the OS cannot hold, by length, before it binds anything" {
     if (!sdk.broker.supported) return error.SkipZigTest;
-    var tmp = t.tmpDir(.{});
+    // `.iterate`: the emptiness check below lists the dir, and on Linux a
+    // handle opened without it is O_PATH — `getdents` on it is EBADF,
+    // which a Debug build panics on.
+    var tmp = t.tmpDir(.{ .iterate = true });
     defer tmp.cleanup();
     var pbuf: [std.fs.max_path_bytes]u8 = undefined;
     const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
