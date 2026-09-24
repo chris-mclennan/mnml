@@ -10,6 +10,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const config = @import("config.zig");
+const sdk = @import("mnml_sdk");
 
 pub const Action = enum {
     quit,
@@ -47,6 +48,10 @@ pub const Action = enum {
     tree_activate,
     tree_expand,
     tree_collapse,
+    /// `E` / `C`: every group of the tree open / shut — the integration
+    /// tree convention's keys, the same pair the Bitbucket pane binds.
+    tree_expand_all,
+    tree_collapse_all,
     dispatch_implement,
     dispatch_fix,
     dispatch_triage,
@@ -114,6 +119,8 @@ pub const bindings = [_]Binding{
     .{ .keys = &.{ "enter", "space" }, .action = .tree_activate, .label = "fold a group · expand a ticket · open a PR", .section = .rows, .where = .tree },
     .{ .keys = &.{ "right", "l" }, .action = .tree_expand, .label = "expand", .section = .rows, .where = .tree },
     .{ .keys = &.{ "left", "h" }, .action = .tree_collapse, .label = "collapse", .section = .rows, .where = .tree },
+    .{ .keys = &.{"shift+e"}, .action = .tree_expand_all, .label = "expand every group", .section = .rows, .where = .tree },
+    .{ .keys = &.{"shift+c"}, .action = .tree_collapse_all, .label = "collapse every group", .section = .rows, .where = .tree },
     .{ .keys = &.{"shift+."}, .action = .card_expand, .label = "expand the card", .section = .rows, .where = .kanban, .hint = 6 },
     .{ .keys = &.{ "enter", "o" }, .action = .open_browser, .label = "open in the browser", .section = .rows, .where = .flat },
     .{ .keys = &.{"o"}, .action = .open_browser, .label = "open in the browser", .section = .rows, .where = .tree },
@@ -136,8 +143,10 @@ pub const bindings = [_]Binding{
     .{ .keys = &.{"shift+v"}, .action = .dispatch_review, .label = "dispatch: review the PR", .section = .dispatch, .where = .fix_versions },
     .{ .keys = &.{"shift+m"}, .action = .merge_pr, .label = "merge the PR (through Claude Code)", .section = .dispatch, .where = .fix_versions },
     .{ .keys = &.{"/"}, .action = .filter, .label = "filter", .section = .filters, .hint = 8 },
-    .{ .keys = &.{"shift+e"}, .action = .vars_editor, .label = "edit the tab's vars", .section = .filters, .where = .editable_jql },
-    .{ .keys = &.{"shift+e"}, .action = .jql_editor, .label = "edit the JQL", .section = .filters, .where = .fixed_jql },
+    // `J` — the JQL. `E` / `C` are the tree convention's expand /
+    // collapse every group, on both integration panes.
+    .{ .keys = &.{"shift+j"}, .action = .vars_editor, .label = "edit the tab's vars", .section = .filters, .where = .editable_jql },
+    .{ .keys = &.{"shift+j"}, .action = .jql_editor, .label = "edit the JQL", .section = .filters, .where = .fixed_jql },
     .{ .keys = &.{"f"}, .action = .tab_fix_version, .label = "switch the release", .section = .filters, .where = .fix_versions, .hint = 4 },
     .{ .keys = &.{"shift+v"}, .action = .tab_fix_version, .label = "switch the fix version", .section = .filters, .where = .work_or_boards },
     .{ .keys = &.{"shift+t"}, .action = .team, .label = "team", .section = .filters, .where = .work_or_boards },
@@ -210,31 +219,12 @@ pub fn hints(arena: Allocator, ctx: Context) Allocator.Error![]const Binding {
     return out.toOwnedSlice(arena);
 }
 
-/// The chord as the sheet prints it: `D` for `shift+d`, `Space`, `⇧⇥`.
+/// The chord as the sheet and the hint row print it: `D` for
+/// `shift+d`, `Space`, `Shift+Tab` — the family's one spelling
+/// (`sdk.pane.keysheet.chord`). `buf` is kept for the callers.
 pub fn displayKey(buf: []u8, key: []const u8) []const u8 {
-    if (std.mem.startsWith(u8, key, "shift+") and key.len == 7) {
-        buf[0] = std.ascii.toUpper(key[6]);
-        if (key[6] == '.') return ">";
-        return buf[0..1];
-    }
-    if (std.mem.eql(u8, key, "space")) return "Space";
-    if (std.mem.eql(u8, key, "enter")) return "Enter";
-    if (std.mem.eql(u8, key, "esc")) return "Esc";
-    if (std.mem.eql(u8, key, "tab")) return "Tab";
-    if (std.mem.eql(u8, key, "backtab")) return "Shift+Tab";
-    if (std.mem.eql(u8, key, "up")) return "↑";
-    if (std.mem.eql(u8, key, "down")) return "↓";
-    if (std.mem.eql(u8, key, "left")) return "←";
-    if (std.mem.eql(u8, key, "right")) return "→";
-    if (std.mem.eql(u8, key, "pageup")) return "PgUp";
-    if (std.mem.eql(u8, key, "pagedown")) return "PgDn";
-    if (std.mem.eql(u8, key, "home")) return "Home";
-    if (std.mem.eql(u8, key, "end")) return "End";
-    if (std.mem.eql(u8, key, "f1")) return "F1";
-    if (std.mem.eql(u8, key, "ctrl+c")) return "Ctrl+C";
-    if (std.mem.eql(u8, key, "ctrl+u")) return "Ctrl+U";
-    if (std.mem.eql(u8, key, "ctrl+d")) return "Ctrl+D";
-    return key;
+    _ = buf;
+    return sdk.pane.keysheet.chord(key);
 }
 
 /// `t transition · a assignee · …` from the hint rank, on `arena`.
@@ -297,10 +287,16 @@ test "the reference's chords resolve per context: f / F / V / T / space / > / c"
     try testing.expectEqual(Action.help, resolve("?", kanban_ctx).?);
     try testing.expectEqual(Action.quit, resolve("ctrl+c", kanban_ctx).?);
     try testing.expect(resolve("z", kanban_ctx) == null);
-    // E is the JQL editor everywhere but a jql_editable tab, where the
+    // J is the JQL editor everywhere but a jql_editable tab, where the
     // JQL is the user's own text and the vars are the part worth typing.
-    try testing.expectEqual(Action.jql_editor, resolve("shift+e", tree_ctx).?);
-    try testing.expectEqual(Action.vars_editor, resolve("shift+e", editable_ctx).?);
+    try testing.expectEqual(Action.jql_editor, resolve("shift+j", tree_ctx).?);
+    try testing.expectEqual(Action.vars_editor, resolve("shift+j", editable_ctx).?);
+    try testing.expectEqual(Action.jql_editor, resolve("shift+j", kanban_ctx).?);
+    // E / C: the tree convention's expand / collapse every group
+    // (hunt/findings-2026-09-23/integ-tree-nav-convention.md).
+    try testing.expectEqual(Action.tree_expand_all, resolve("shift+e", tree_ctx).?);
+    try testing.expectEqual(Action.tree_collapse_all, resolve("shift+c", tree_ctx).?);
+    try testing.expect(resolve("shift+e", kanban_ctx) == null);
     var saw_jql = false;
     for (bindings) |b| if (b.action == .jql_editor and applies(b, editable_ctx)) {
         saw_jql = true;

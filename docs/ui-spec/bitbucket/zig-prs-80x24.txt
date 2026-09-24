@@ -4,10 +4,10 @@
 ▌ status: Open + Draft   author: all   target: any   show: all
 ▌ 󰍉 / filter
 ▌ REPO / #PR                   STATE      UPDATED      TITLE
-▌  api                        2 PRs      2026-09-21   #1234 · Fix the login re
-▌    #1234                    OPEN       2026-09-21   Fix the login redirec 󰏌 󰘭
-▌  web                        1 PRs      2026-09-21   #820 · Redesign the empt
-▌    #820                     OPEN       2026-09-21   Redesign the empty st 󰏌 󰘭
+▌  api                        2 PRs      2026-09-23   #1234 · Fix the login re
+▌    #1234                    OPEN       2026-09-23   Fix the login redirec 󰏌 󰘭
+▌  web                        1 PR       2026-09-23   #820 · Redesign the empt
+▌    #820                     OPEN       2026-09-23   Redesign the empty st 󰏌 󰘭
 ▌                                                      ⋯  Show more (1)
 ▌
 ▌

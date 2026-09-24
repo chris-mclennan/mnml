@@ -4,10 +4,10 @@
 ▌ status: Open + Draft   author: all   target: any   show: all
 ▌ 󰍉 / filter                                         ┌───────────────┐
 ▌ REPO / #PR                   STATE      UPDATED    │ ✓ all         │
-▌  api                        2 PRs      2026-09-21 │   reviewing   │ login re
-▌    #1234                    OPEN       2026-09-21 │   awaiting me │edirec 󰏌 󰘭
-▌  web                        1 PRs      2026-09-21 └───────────────┘ the empt
-▌    #820                     OPEN       2026-09-21   Redesign the empty st 󰏌 󰘭
+▌  api                        2 PRs      2026-09-23 │   reviewing   │ login re
+▌    #1234                    OPEN       2026-09-23 │   awaiting me │edirec 󰏌 󰘭
+▌  web                        1 PR       2026-09-23 └───────────────┘ the empt
+▌    #820                     OPEN       2026-09-23   Redesign the empty st 󰏌 󰘭
 ▌                                                      ⋯  Show more (1)
 ▌
 ▌
@@ -21,4 +21,4 @@
 ▌
 ▌
 ▌
- Open + Draft · 2 repos, 3 PRs                  ↑↓ / jk move · ⏎ run · esc close
+ Open + Draft · 2 repos, 3 PRs             ↑↓ / j k move · Enter run · Esc close

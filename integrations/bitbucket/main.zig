@@ -353,12 +353,16 @@ const Session = struct {
     }
 };
 
-const SessionError = error{ NoConfig, NoToken } || Allocator.Error;
+const SessionError = error{ NoConfig, NoToken, BaseUrl } || Allocator.Error;
 
 /// Load everything a command needs; `why` explains a refusal.
 fn openSession(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, why: *[]const u8) SessionError!Session {
     var loaded = cfg.load(gpa, io, env, why) catch return error.NoConfig;
     errdefer loaded.deinit();
+    // First, before a token is even looked for: a broken override is
+    // the one failure that must stop everything that follows.
+    const base_url = try resolveBaseUrl(gpa, io, env, loaded.config, why);
+    errdefer gpa.free(base_url);
     const config_dir = std.fs.path.dirname(loaded.path) orelse ".";
     var tokens = try auth.resolve(gpa, io, env, config_dir);
     errdefer tokens.deinit();
@@ -366,8 +370,6 @@ fn openSession(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, why:
         why.* = no_token_text;
         return error.NoToken;
     }
-    const base_url = try resolveBaseUrl(gpa, io, env, loaded.config);
-    errdefer gpa.free(base_url);
     const state_path = if (loaded.config.rate.state_path.len > 0) try gpa.dupe(u8, loaded.config.rate.state_path) else try ratelimit.statePath(gpa, io, env);
     defer gpa.free(state_path);
     var limiter = try ratelimit.Limiter.init(gpa, io, state_path, .{ .rate = loaded.config.rate.rate_per_sec, .capacity = loaded.config.rate.capacity });
@@ -396,29 +398,35 @@ fn openEtagStore(gpa: Allocator, io: Io, env: *const std.process.Environ.Map) Al
     return sdk.Store.open(gpa, io, root, ratelimit.service, "etags");
 }
 
-fn resolveBaseUrl(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, c: cfg.Config) Allocator.Error![]u8 {
-    if (cfg.nonEmpty(env.get("BITBUCKET_BASE_URL"))) |v| {
-        if (v[0] == '@') {
-            var attempts: u32 = 0;
-            while (attempts < 50) : (attempts += 1) {
-                if (Io.Dir.cwd().readFileAlloc(io, v[1..], gpa, .limited(4096))) |text| {
-                    const trimmed = std.mem.trim(u8, text, " \r\n\t");
-                    if (trimmed.len > 0) {
-                        const out = try gpa.dupe(u8, trimmed);
-                        gpa.free(text);
-                        return out;
-                    }
-                    gpa.free(text);
-                } else |_| {}
-                io.sleep(.fromMilliseconds(100), .awake) catch {};
-            }
-            return gpa.dupe(u8, api.default_base_url);
-        }
-        return gpa.dupe(u8, v);
+/// `$BITBUCKET_BASE_URL` (`sdk.base_url`: literally, or `@<path>`
+/// naming the file the fake server writes its port to), then the
+/// config's, then the real API. An `@<path>` whose file never arrives
+/// is `error.BaseUrl` with the reason in `why` — the fake did not start,
+/// and the answer to that is no server, never api.bitbucket.org.
+fn resolveBaseUrl(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, c: cfg.Config, why: *[]const u8) (error{BaseUrl} || Allocator.Error)![]u8 {
+    switch (try sdk.base_url.fromEnv(gpa, io, env, base_url_env, .{ .wait_ms = url_file_wait_ms })) {
+        .url => |u| return u,
+        .unreadable => |msg| {
+            // `why` outlives this call on every path that reads it (the
+            // setup screen, `--check`'s one line), so it is copied out
+            // to a buffer the process owns.
+            defer gpa.free(msg);
+            const n = @min(msg.len, base_url_why.len);
+            @memcpy(base_url_why[0..n], msg[0..n]);
+            why.* = base_url_why[0..n];
+            return error.BaseUrl;
+        },
+        .unset => {},
     }
     if (c.base_url.len > 0) return gpa.dupe(u8, c.base_url);
     return gpa.dupe(u8, api.default_base_url);
 }
+
+const base_url_env = "BITBUCKET_BASE_URL";
+var base_url_why: [1024]u8 = undefined;
+/// How long a missing `@<path>` is waited for: the fake writes it once
+/// it listens. A test that proves the refusal does not sit out 5 s.
+const url_file_wait_ms: u32 = if (@import("builtin").is_test) 50 else 5000;
 
 const no_token_text = "no Bitbucket token: set BITBUCKET_ACCESS_TOKEN, or write it to <config dir>/token (BITBUCKET_API_TOKEN / BITBUCKET_APP_PASSWORD / BITBUCKET_PERSONAL_TOKEN also resolve, in that order, between the two)";
 
@@ -1437,7 +1445,14 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
                 // A drag along the detail panel's scrollbar: the same
                 // jump a press there makes, once per move.
                 .drag => |d| try app.drag(d.col, d.row),
-                .hover => |hv| app.hover(hv.col, hv.row),
+                .hover => |hv| {
+                    app.hover(hv.col, hv.row);
+                    // The host's info view, told what is under the
+                    // pointer (sent only when it changed).
+                    var hb: [96]u8 = undefined;
+                    const help = app.helpAt(hv.col, hv.row, &hb);
+                    mount.hover(help.title, help.body) catch {};
+                },
                 .session_state => |ss| {
                     defer gpa.free(ss.key);
                     defer gpa.free(ss.session_id);
@@ -1962,4 +1977,48 @@ test "the three chips keep what they list: every segment and every hover row sur
     // 4. And what a hover row hands back is still a pull request the
     //    pane can be told to focus — the `--focus` argv on the wire.
     try t.expect(std.mem.indexOf(u8, third, "\"args\":[\"--focus\",\"api#") != null);
+}
+
+test "a $BITBUCKET_BASE_URL=@file that never arrives refuses to start — no fallback to api.bitbucket.org, no request" {
+    // hunt/findings-2026-09-23/integ-bb-base-url-falls-back-to-production.md:
+    // the fake did not start, so the override's file never appeared,
+    // and the pane quietly asked the real Bitbucket with whatever token
+    // the shell exported.
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "bb.zon", .data = ".{ .email = \"me@example.com\", .workspace = \"acme\", .repos = .{\"api\"}, .tabs = .{ .{ .name = \"Open\", .kind = .workspace_open_prs } } }" });
+    const cfg_path = try std.fs.path.join(t.allocator, &.{ root, "bb.zon" });
+    defer t.allocator.free(cfg_path);
+    const data = try std.fs.path.join(t.allocator, &.{ root, "data" });
+    defer t.allocator.free(data);
+    const at = try std.fmt.allocPrint(t.allocator, "@{s}/never.url", .{root});
+    defer t.allocator.free(at);
+
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    try env.put("MNML_DATA_ROOT", data);
+    try env.put("MNML_BITBUCKET_CONFIG", cfg_path);
+    try env.put("BITBUCKET_API_TOKEN", "fixture-token");
+    const bucket = try std.fs.path.join(t.allocator, &.{ root, "bucket.json" });
+    defer t.allocator.free(bucket);
+    try env.put("BITBUCKET_RATELIMIT_STATE", bucket);
+    try env.put(base_url_env, at);
+
+    var why: []const u8 = "";
+    try t.expectError(error.BaseUrl, openSession(t.allocator, t.io, &env, &why));
+    // The setup screen names the variable and the file.
+    try t.expect(std.mem.indexOf(u8, why, "BITBUCKET_BASE_URL") != null);
+    try t.expect(std.mem.indexOf(u8, why, "never.url") != null);
+    // Nothing was asked: the request log was never even opened.
+    const log_path = try std.fs.path.join(t.allocator, &.{ data, "requests", "bitbucket.jsonl" });
+    defer t.allocator.free(log_path);
+    try t.expectError(error.FileNotFound, Io.Dir.cwd().access(t.io, log_path, .{}));
+
+    // The same override, once the file is there, is the fake.
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "never.url", .data = "http://127.0.0.1:9\n" });
+    var s = try openSession(t.allocator, t.io, &env, &why);
+    defer s.deinit(t.allocator);
+    try t.expectEqualStrings("http://127.0.0.1:9", s.base_url);
 }

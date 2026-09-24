@@ -150,6 +150,11 @@ pub const Picker = struct {
 pub const MenuItem = union(enum) {
     action: Action,
     pick: struct { kind: FilterKind, idx: usize },
+    /// A page that is about to open in the browser, asked first: the
+    /// words, and the URL (both on the menu's arena).
+    open_url: struct { label: []const u8, url: []const u8 },
+    /// Close the menu, do nothing.
+    cancel,
 };
 
 /// What one readiness look found, and the `updated_on` it was true at.
@@ -167,6 +172,61 @@ pub const MergeConfirm = struct {
         c.* = undefined;
     }
 };
+
+/// What `carryFailedRepos` hands back: the tree to show, the PR count
+/// when it changed, and the header's reason ("" when nothing failed).
+const Carried = struct { data: tabs.TabData, items: ?usize = null, why: []const u8 = "" };
+
+/// A refetch of a repo tree where some repos failed: each failed repo
+/// that had rows last time gets them back (copied onto `a`, the new
+/// result's arena), its error label dropped — the failure is said once,
+/// in the header, rather than clipped into a STATE cell. A repo that
+/// never answered keeps its error row. `why_buf` backs `why`.
+fn carryFailedRepos(a: Allocator, old: tabs.TabData, fresh: tabs.TabData, why_buf: []u8) Allocator.Error!Carried {
+    switch (fresh) {
+        .repo_pr_tree => |rows| {
+            const prev: []const model.RepoPrs = if (old == .repo_pr_tree) old.repo_pr_tree else &.{};
+            var failed: usize = 0;
+            var first: model.RepoPrs = .{ .slug = "" };
+            for (rows) |r| if (r.error_label.len > 0) {
+                if (failed == 0) first = r;
+                failed += 1;
+            };
+            if (failed == 0) return .{ .data = fresh };
+            const out = try a.alloc(model.RepoPrs, rows.len);
+            var items: usize = 0;
+            for (rows, out) |r, *o| {
+                o.* = r;
+                if (r.error_label.len > 0) for (prev) |pr| if (pr.error_label.len == 0 and std.mem.eql(u8, pr.slug, r.slug)) {
+                    o.* = try sdk.pane.work.dupeDeep(model.RepoPrs, a, pr);
+                    break;
+                };
+                items += o.prs.len;
+            }
+            return .{ .data = .{ .repo_pr_tree = out }, .items = items, .why = sdk.pane.work.partialFailureText(why_buf, failed, rows.len, "repos", first.slug, first.error_label) };
+        },
+        .repo_tree => |rows| {
+            const prev: []const model.RepoPipelines = if (old == .repo_tree) old.repo_tree else &.{};
+            var failed: usize = 0;
+            var first: model.RepoPipelines = .{ .slug = "" };
+            for (rows) |r| if (r.error_label.len > 0) {
+                if (failed == 0) first = r;
+                failed += 1;
+            };
+            if (failed == 0) return .{ .data = fresh };
+            const out = try a.alloc(model.RepoPipelines, rows.len);
+            for (rows, out) |r, *o| {
+                o.* = r;
+                if (r.error_label.len > 0) for (prev) |pr| if (pr.error_label.len == 0 and std.mem.eql(u8, pr.slug, r.slug)) {
+                    o.* = try sdk.pane.work.dupeDeep(model.RepoPipelines, a, pr);
+                    break;
+                };
+            }
+            return .{ .data = .{ .repo_tree = out }, .why = sdk.pane.work.partialFailureText(why_buf, failed, rows.len, "repos", first.slug, first.error_label) };
+        },
+        else => return .{ .data = fresh },
+    }
+}
 
 pub const TabState = struct {
     spec: tabs.TabSpec,
@@ -1029,11 +1089,10 @@ pub const App = struct {
                 return true;
             },
             .help => {
-                if (std.mem.eql(u8, spec, "j") or std.mem.eql(u8, spec, "down")) {
-                    app.help_scroll += 1;
-                } else if (std.mem.eql(u8, spec, "k") or std.mem.eql(u8, spec, "up")) {
-                    app.help_scroll -|= 1;
-                } else {
+                // The family's one sheet grammar (`sdk.pane.keysheet.key`):
+                // Esc / ? / q close, j / k and the page keys scroll, and
+                // any other key is ignored rather than closing the sheet.
+                if (sdk.pane.keysheet.scroll(&app.help_scroll, sdk.pane.keysheet.key(spec))) {
                     app.mode = .list;
                     app.help_scroll = 0;
                 }
@@ -1268,6 +1327,57 @@ pub const App = struct {
     /// for one pass.
     pub fn hoverNote(app: *const App) []const u8 {
         return app.hover_buf[0..app.hover_len];
+    }
+
+    /// What the element under the pointer is and does — for the host's
+    /// info view (`Mount.hover`). The toolkit's chrome reads the same as
+    /// in every pane (`sdk.pane.help.common`); the forge's own chips and
+    /// pages say their own words. `buf` backs a title that names a key.
+    pub fn helpAt(app: *App, col: u16, row: u16, buf: []u8) sdk.pane.help.Help {
+        const H = sdk.pane.help;
+        const target = app.hits.at(col, row) orelse return .{ .title = "" };
+        return switch (target) {
+            .tab => H.common(.tab),
+            .chip => |c| switch (c) {
+                .refresh => H.common(.refresh),
+                .help => H.common(.keys_chip),
+                .filter => H.common(.filter),
+                .status => .{ .title = "status:", .body = "Which pull requests show — Open, Draft, Merged, Declined; pick several. Right-click lists them with the live ones ticked. Key: S." },
+                .author => .{ .title = "author:", .body = "Whose pull requests show — everyone, me, or one person seen on the tab. Key: U." },
+                .target => .{ .title = "target:", .body = "Only the pull requests into one branch. Key: T." },
+                .show => .{ .title = "show:", .body = "all → reviewing (I am a reviewer) → awaiting me (my review is still due). A click cycles; nothing is fetched. Key: A." },
+                .run_by => .{ .title = "run by:", .body = "Only the pipelines one person started. Key: U." },
+                .branch => .{ .title = "branch:", .body = "Only one branch's pipelines. Key: B." },
+                .ptype => .{ .title = "type:", .body = "Which kind of pipeline — branch, pull request, custom, tag. Key: P." },
+                .pstatus => .{ .title = "status:", .body = "Which results show — successful, failed, in progress, stopped. Key: S." },
+                .trigger => .{ .title = "trigger:", .body = "How a run was started — a push, a schedule, by hand. Key: T." },
+                .run_pipeline => .{ .title = "run pipeline", .body = "Opens the pipelines page of the repo under the cursor, where a run is started, in the browser." },
+                .schedules => .{ .title = "schedules", .body = "Opens the pipeline schedules of the repo under the cursor in the browser." },
+                .caches => .{ .title = "caches", .body = "Opens the pipeline caches of the repo under the cursor in the browser." },
+                .usage => .{ .title = "usage", .body = "The workspace's pipeline-minutes page. Asks before it opens the browser." },
+            },
+            .row => H.common(if (app.activeTab().spec.isTree()) .tree_row else .list_row),
+            .build_line => H.common(.build_line),
+            .chevron => H.common(.chevron),
+            .pr_button => |b| switch (b.which) {
+                .open => H.common(.open_button),
+                .merge => H.common(.merge_button),
+            },
+            .merge_blocked => .{ .title = H.common(.merge_blocked).title, .body = if (app.hover_len > 0) app.hoverNote() else H.common(.merge_blocked).body },
+            .confirm_ok => H.common(.confirm_ok),
+            .confirm_cancel => H.common(.confirm_cancel),
+            .confirm_body => .{ .title = "Merge confirm", .body = "The pull request, its source and target, and the strategy. Enter merges through Claude Code; Esc cancels." },
+            .hint, .sheet_row => |which| blk: {
+                const b = keymap.bindingOf(which) orelse break :blk H.common(.key_sheet);
+                break :blk H.key(buf, keymap.keyLabel(b.keys[0]), b.title);
+            },
+            .menu_item => H.common(.menu_item),
+            .picker_row, .picker_body => H.common(.picker_row),
+            .detail => H.common(.detail),
+            .detail_close => H.common(.detail_close),
+            .detail_bar => H.common(.scrollbar),
+            .sheet => H.common(.key_sheet),
+        };
     }
 
     pub fn hover(app: *App, col: u16, row: u16) void {
@@ -2310,20 +2420,37 @@ pub const App = struct {
                 const ts = &app.tabs[r.tab];
                 ts.loading = false;
                 app.refreshes_landed += 1;
-                if (r.data) |data| {
+                if (r.data) |fresh| {
+                    // A repo whose fetch failed this time keeps the rows
+                    // it had: they are still the last thing the server
+                    // said about it, and an empty list would read as "no
+                    // PRs". Copied onto the new arena — the old one goes.
+                    var why_buf: [160]u8 = undefined;
+                    const carried = try carryFailedRepos(res.arena.allocator(), ts.data, fresh, &why_buf);
+                    const data = carried.data;
                     if (ts.data_arena) |*old| old.deinit();
                     ts.data_arena = res.arena;
                     keep_arena = true;
                     ts.data = data;
                     ts.fetched = true;
-                    ts.fetched_at = app.now_secs;
+                    // `as of` is the last time EVERY repo answered; a
+                    // partial failure does not make the rows fresh.
+                    if (r.errored == 0 or ts.fetched_at == 0) ts.fetched_at = app.now_secs;
                     ts.show_all = false;
                     ts.repos = r.repos;
-                    ts.items = r.items;
+                    ts.items = if (carried.items) |n| n else r.items;
                     ts.errored = r.errored;
                     ts.loaded_states = r.states;
-                    try TabState.setText(app.gpa, &ts.error_text, "");
-                    try TabState.setText(app.gpa, &ts.status, r.status);
+                    // Any repo that failed is a failed fetch, in the
+                    // header, in the toolkit's words — the pane beside
+                    // this one says `fetch failed: …` for the same thing.
+                    var some_buf: [48]u8 = undefined;
+                    const why = if (carried.why.len > 0) carried.why else if (r.errored > 0) (std.fmt.bufPrint(&some_buf, "{d} repo{s} did not answer", .{ r.errored, if (r.errored == 1) "" else "s" }) catch "some repos did not answer") else "";
+                    try TabState.setText(app.gpa, &ts.error_text, why);
+                    // The status line follows: the fetch's own count
+                    // would say `0 PRs` over rows that are on screen.
+                    const status = if (why.len > 0) try std.fmt.allocPrint(app.frame_arena.allocator(), "{s} · fetch failed: {s}", .{ ts.spec.name, why }) else r.status;
+                    try TabState.setText(app.gpa, &ts.status, status);
                     // The trees open every repo on their first fetch and
                     // keep the user's choices after that.
                     switch (data) {
@@ -2341,14 +2468,14 @@ pub const App = struct {
                     }
                     // A message set after the refresh was queued (`hid api`)
                     // outlives it, as it does in the reference.
-                    if (r.tab == app.active and (app.status.items.len == 0 or std.mem.startsWith(u8, app.status.items, "refreshing "))) app.setStatus("{s}", .{r.status});
+                    if (r.tab == app.active and (app.status.items.len == 0 or std.mem.startsWith(u8, app.status.items, "refreshing "))) app.setStatus("{s}", .{ts.status});
                     // A refresh that came back with every repo errored
                     // and nothing to show is a failed refresh, whatever
                     // the shape of the answer: the list on screen is
                     // stale and nothing on it says so. It gets the same
                     // offer as one that failed outright.
                     if (r.errored > 0 and r.items == 0) {
-                        app.toastWithAction(.err, retry_action, "error: {s}", .{r.status});
+                        app.toastWithAction(.err, retry_action, "error: {s}", .{ts.status});
                     }
                 } else {
                     try TabState.setText(app.gpa, &ts.error_text, r.error_text);
@@ -2630,7 +2757,7 @@ pub const App = struct {
         var out: std.ArrayList(Action) = .empty;
         for (m.items) |it| switch (it) {
             .action => |act| try out.append(a, act),
-            .pick => {},
+            .pick, .open_url, .cancel => {},
         };
         return out.toOwnedSlice(a);
     }
@@ -2670,6 +2797,13 @@ pub const App = struct {
                 try app.applyPick(pk.kind, pk.idx);
                 return true;
             },
+            .open_url => |o| {
+                const url = try app.effect_arena.allocator().dupe(u8, o.url);
+                app.effect(.{ .open_url = url });
+                app.say(.info, "opened {s}", .{url});
+                return true;
+            },
+            .cancel => return true,
         }
     }
 
@@ -2753,7 +2887,7 @@ pub const App = struct {
                     app.mode = .filter;
                     app.filter_caret = app.filter.items.len;
                 },
-                .run_pipeline, .schedules, .caches, .usage => try app.openPipelinesPage(c),
+                .run_pipeline, .schedules, .caches, .usage => try app.openPipelinesPage(c, col, row),
             },
             // A dim `[ Merge ]` registers only `merge_blocked`, so a
             // click that lands on one says why rather than doing
@@ -2882,28 +3016,60 @@ pub const App = struct {
         if (app.detail_visible) try app.ensureDetail((try app.visible(a)).rows);
     }
 
-    /// The pipelines family's chips open Bitbucket's pages.
-    fn openPipelinesPage(app: *App, c: hit.Chip) Allocator.Error!void {
+    /// The repo a pipelines chip acts on: the tab's own, or the one
+    /// under the cursor on the workspace tree (its header or any branch
+    /// under it). Null when neither names one — the chips are not
+    /// offered then (`screen.zig`).
+    pub fn pipelinesRepo(app: *App, rows: []const tabs.VisibleRow) ?[]const u8 {
+        const ts = app.activeTab();
+        if (ts.spec.repo.len > 0) return ts.spec.repo;
+        if (ts.data != .repo_tree or ts.selected >= rows.len) return null;
+        const i = switch (rows[ts.selected]) {
+            .repo_header => |h| h.repo,
+            .branch => |b| b.repo,
+            else => return null,
+        };
+        const repos = ts.data.repo_tree;
+        return if (i < repos.len) repos[i].slug else null;
+    }
+
+    /// The pipelines family's chips open Bitbucket's pages: the three
+    /// repo pages on the repo the cursor is on, and the workspace's
+    /// usage page after asking — a click on a header chip should not
+    /// be enough to throw a browser window up unasked.
+    fn openPipelinesPage(app: *App, c: hit.Chip, col: u16, y: u16) Allocator.Error!void {
         const ts = app.activeTab();
         const ws = ts.spec.workspace;
         const a = app.effect_arena.allocator();
-        const url: []const u8 = switch (c) {
-            .usage => try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/workspace/settings/plans-billing/pipelines-minutes", .{ws}),
-            .run_pipeline, .schedules, .caches => blk: {
-                if (ts.spec.repo.len == 0) {
-                    app.say(.warn, "repo-scoped action — switch to a repo tab first", .{});
-                    return;
-                }
-                break :blk switch (c) {
-                    .run_pipeline => try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/pipelines", .{ ws, ts.spec.repo }),
-                    .schedules => try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/admin/addon/admin/pipelines/schedules", .{ ws, ts.spec.repo }),
-                    else => try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/admin/addon/admin/pipelines/caches", .{ ws, ts.spec.repo }),
-                };
+        switch (c) {
+            .usage => {
+                _ = app.menu_arena.reset(.retain_capacity);
+                const ma = app.menu_arena.allocator();
+                const url = try std.fmt.allocPrint(ma, "https://bitbucket.org/{s}/workspace/settings/plans-billing/pipelines-minutes", .{ws});
+                const items = try ma.alloc(MenuItem, 2);
+                items[0] = .{ .open_url = .{ .label = "open the pipeline-minutes usage page in the browser", .url = url } };
+                items[1] = .cancel;
+                app.menu = .{ .col = col, .y = y, .items = items };
+                app.mode = .menu;
+                return;
             },
-            else => return,
-        };
-        app.effect(.{ .open_url = url });
-        app.say(.info, "opened {s}", .{url});
+            .run_pipeline, .schedules, .caches => {
+                _ = app.frame_arena.reset(.retain_capacity);
+                const rows = (try app.visible(app.frame_arena.allocator())).rows;
+                const repo = app.pipelinesRepo(rows) orelse {
+                    app.say(.warn, "put the cursor on a repo (or one of its branches) first", .{});
+                    return;
+                };
+                const url = switch (c) {
+                    .run_pipeline => try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/pipelines", .{ ws, repo }),
+                    .schedules => try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/admin/addon/admin/pipelines/schedules", .{ ws, repo }),
+                    else => try std.fmt.allocPrint(a, "https://bitbucket.org/{s}/{s}/admin/addon/admin/pipelines/caches", .{ ws, repo }),
+                };
+                app.effect(.{ .open_url = url });
+                app.say(.info, "opened {s}", .{url});
+            },
+            else => {},
+        }
     }
 };
 
@@ -3128,6 +3294,101 @@ test "a refetch keeps the old rows on screen and puts the cursor back on the PR 
     // And the remembered key is cleared, so the next refetch reads the
     // cursor fresh.
     try t.expectEqual(@as(usize, 0), ts.keep_key_len);
+}
+
+test "a refetch that fails keeps the rows it had, says `fetch failed`, and keeps `as of` on the last success" {
+    // hunt/findings-2026-09-23/integ-bb-refresh-failure-wipes-rows.md: a
+    // 5xx (or the server gone) replaced every PR with nothing, `(0)`,
+    // a clipped `network er` per repo and a fresh `as of`.
+    const r = try Rig.init(acme, .{});
+    defer r.deinit();
+    const ts = &r.app.tabs[0];
+    const Probe = struct {
+        fn prsOf(tab: *const TabState, slug: []const u8) usize {
+            for (tab.data.repo_pr_tree) |rp| if (std.mem.eql(u8, rp.slug, slug)) return rp.prs.len;
+            return 0;
+        }
+    };
+    const api_prs = Probe.prsOf(ts, "api");
+    const web_prs = Probe.prsOf(ts, "web");
+    try t.expect(api_prs > 0 and web_prs > 0);
+    const items = ts.items;
+    const stamp = ts.fetched_at;
+
+    // Every repo 500s.
+    r.app.now_secs += 600;
+    r.srv.failPaths("");
+    try r.app.refreshTab(0);
+    try r.drain();
+    try t.expectEqual(api_prs, Probe.prsOf(ts, "api"));
+    try t.expectEqual(web_prs, Probe.prsOf(ts, "web"));
+    try t.expectEqual(items, ts.items);
+    try t.expectEqual(stamp, ts.fetched_at);
+    for (ts.data.repo_pr_tree) |rp| try t.expectEqualStrings("", rp.error_label);
+    var buf: [128]u8 = undefined;
+    try t.expectEqualStrings("fetch failed: HTTP 500", sdk.pane.chrome.fetchText(&buf, r.app.fetchState(), false));
+
+    // One repo 500s: the other is fresh, the failed one keeps its rows,
+    // and the header names it.
+    r.srv.failPaths("/web/");
+    try r.app.refreshTab(0);
+    try r.drain();
+    try t.expectEqual(web_prs, Probe.prsOf(ts, "web"));
+    try t.expectEqualStrings("fetch failed: web: HTTP 500", sdk.pane.chrome.fetchText(&buf, r.app.fetchState(), false));
+    try t.expectEqual(stamp, ts.fetched_at);
+
+    // Back up: the failure clears and the stamp moves.
+    r.srv.failPaths(null);
+    try r.app.refreshTab(0);
+    try r.drain();
+    try t.expect(r.app.fetchState() == .idle);
+    try t.expectEqual(r.app.now_secs, ts.fetched_at);
+}
+
+test "the pipelines chips act on the cursor's repo, and `usage` asks before it opens the browser" {
+    // hunt/findings-2026-09-23/integ-bb-pipelines-dead-actions.md: `run
+    // pipeline`, `schedules` and `caches` said "switch to a repo tab
+    // first" on the workspace tree (a pane with no other tab), and
+    // `usage` opened the browser on one click.
+    const r = try Rig.init(acme, .{});
+    defer r.deinit();
+    _ = try r.key("3");
+    try t.expectEqual(cfg.Family.pipelines, r.app.family());
+    const Urls = struct {
+        fn opened(app: *App, out: []u8) []const u8 {
+            const fx = app.takeEffects();
+            defer app.freeEffects(fx);
+            for (fx) |e| if (e == .open_url) {
+                const n = @min(out.len, e.open_url.len);
+                @memcpy(out[0..n], e.open_url[0..n]);
+                return out[0..n];
+            };
+            return "";
+        }
+    };
+    var buf: [256]u8 = undefined;
+    // The cursor on `api`'s header: every repo page is api's.
+    r.app.tabs[r.app.active].selected = 0;
+    try r.app.openPipelinesPage(.run_pipeline, 0, 0);
+    try t.expectEqualStrings("https://bitbucket.org/acme/api/pipelines", Urls.opened(&r.app, &buf));
+    // On one of api's branches: still api.
+    r.app.tabs[r.app.active].selected = 1;
+    try r.app.openPipelinesPage(.schedules, 0, 0);
+    try t.expectEqualStrings("https://bitbucket.org/acme/api/admin/addon/admin/pipelines/schedules", Urls.opened(&r.app, &buf));
+    try r.app.openPipelinesPage(.caches, 0, 0);
+    try t.expectEqualStrings("https://bitbucket.org/acme/api/admin/addon/admin/pipelines/caches", Urls.opened(&r.app, &buf));
+
+    // `usage` asks: a menu, nothing opened yet.
+    try r.app.openPipelinesPage(.usage, 10, 2);
+    try t.expectEqual(Mode.menu, r.app.mode);
+    try t.expectEqualStrings("", Urls.opened(&r.app, &buf));
+    // Cancel opens nothing.
+    _ = try r.app.runMenuItem(r.arena.allocator(), 1);
+    try t.expectEqualStrings("", Urls.opened(&r.app, &buf));
+    // Asked again and confirmed: the page.
+    try r.app.openPipelinesPage(.usage, 10, 2);
+    _ = try r.app.runMenuItem(r.arena.allocator(), 0);
+    try t.expectEqualStrings("https://bitbucket.org/acme/workspace/settings/plans-billing/pipelines-minutes", Urls.opened(&r.app, &buf));
 }
 
 test "the detail follows the cursor, and `a` approves then withdraws on the fake server" {

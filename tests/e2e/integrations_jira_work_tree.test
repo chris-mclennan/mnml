@@ -106,7 +106,7 @@ key 1
 expect screen contains "JIRA WORK (3)"
 # ? opens the key sheet the built-in sections use; Esc closes it.
 type ?
-expect screen contains "KEYS"
+expect screen contains " Keys "
 expect screen contains "── rows ── "
 expect screen contains "fold a group · expand a ticket · open a PR"
 key esc

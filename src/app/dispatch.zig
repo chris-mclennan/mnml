@@ -1975,6 +1975,15 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         // `ui.focus_follows_mouse`: the hover branch — off, an overlay
         // up or a button held, it does nothing (`focus_follow.zig`).
         focus_follow.onMotion(app, m);
+        // A mounted integration hears the pointer: it names what is
+        // under it for the info view (`wire.SiblingMessage.hover`), and
+        // a dim button says why it is dim. Before this, only a drag
+        // reached one, so every cell of the pane read one host blurb.
+        // An overlay over the pane has its own hits on top, so a cell
+        // that still resolves to the pane is the pane's.
+        if (app.hits.at(m.x, m.y)) |under| if (under == .script_hit) {
+            if (app.panes.get(under.script_hit.pane)) |pp| if (pp.asMount()) |mp| mount_pane.hover(mp, under.script_hit.id, m, hitRect(app, m.x, m.y));
+        };
         return;
     }
     // A press anywhere puts flash's labels away.

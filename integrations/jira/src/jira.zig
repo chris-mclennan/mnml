@@ -70,6 +70,12 @@ pub const Raw = struct {
     retry_after_secs: ?f64,
 };
 
+/// How a 429 is retried: the SDK's policy. A 429 with no
+/// `Retry-After` parks the bucket for Jira's cooldown (45 s), longer
+/// than any request should sleep — so only a site that says how long
+/// is waited out and asked again.
+pub const retry_policy: sdk.ratelimit.Retry = .{ .default_backoff_secs = 45 };
+
 pub const Client = struct {
     gpa: Allocator,
     io: Io,
@@ -118,6 +124,24 @@ pub const Client = struct {
     /// where it is the difference between "the tab asked for forty
     /// things" and "the poller did".
     pub fn request(c: *Client, arena: Allocator, method: std.http.Method, url: []const u8, body: ?[]const u8, reason: Reason) CallError!Raw {
+        // A 429 is answered the SDK's way, the way the Bitbucket pane
+        // answers it: the bucket parks for what the site asked, the
+        // request waits that long and asks again, a bounded number of
+        // times; a park longer than the policy's ceiling goes back to
+        // the caller rather than being slept through.
+        var attempt: u32 = 0;
+        while (true) {
+            attempt += 1;
+            const raw = try c.once(arena, method, url, body, reason);
+            if (raw.status != 429) return raw;
+            const ra: ?u32 = if (raw.retry_after_secs) |x| @intFromFloat(x) else null;
+            const wait = retry_policy.next(attempt, ra) orelse return raw;
+            c.io.sleep(.fromMilliseconds(@as(i64, wait) * 1000), .awake) catch return raw;
+        }
+    }
+
+    /// One try: the gate, the bucket, the wire.
+    fn once(c: *Client, arena: Allocator, method: std.http.Method, url: []const u8, body: ?[]const u8, reason: Reason) CallError!Raw {
         // The bucket is shared, so this waits on every other process
         // too — and fails open rather than leaving the pane hung.
         // The bucket's own draw line carries the reason too, so the
@@ -152,39 +176,67 @@ pub const Client = struct {
         const started = Io.Timestamp.now(c.io, .real);
         var client: std.http.Client = .{ .allocator = c.gpa, .io = c.io };
         defer client.deinit();
-        var out: Io.Writer.Allocating = .init(arena);
-        // `std.http.Client.fetch` hands back a status and a body, not the
-        // response headers, so a `Retry-After` cannot be read here: a 429
-        // takes `rate.cooldown_secs` instead (the Rust tracker parses the
-        // header nowhere either — its 429 path is unreached).
-        const retry_after: ?f64 = null;
-        const headers = [_]std.http.Header{
+        const uri = std.Uri.parse(url) catch {
+            c.note(arena, method, url, null, 0, started, gate, reason);
+            return error.Transport;
+        };
+        var extra: [5]std.http.Header = .{
             .{ .name = "authorization", .value = c.authorization },
             .{ .name = "accept", .value = "application/json" },
-            .{ .name = "user-agent", .value = c.user_agent },
             .{ .name = "x-atlassian-force-account-id", .value = "true" },
+            .{ .name = "content-type", .value = "application/json" },
+            undefined,
         };
-        const res = client.fetch(.{
-            .location = .{ .url = url },
-            .method = method,
-            .payload = body,
-            .response_writer = &out.writer,
-            .extra_headers = &headers,
-            .headers = .{ .content_type = if (body == null) .default else .{ .override = "application/json" } },
+        const n_extra: usize = if (body == null) 3 else 4;
+        const transport = struct {
+            fn fail(cl: *Client, ar: Allocator, m: std.http.Method, u: []const u8, st: Io.Timestamp, g: ratelimit.Acquired, r: Reason) CallError {
+                // A request that never reached a status is still a line
+                // in the log: a wedged socket and a throttled bucket
+                // look the same on screen and must not look the same
+                // here.
+                cl.note(ar, m, u, null, 0, st, g, r);
+                return error.Transport;
+            }
+        }.fail;
+        var req = client.request(method, uri, .{
+            .headers = .{ .user_agent = .{ .override = c.user_agent } },
+            .extra_headers = extra[0..n_extra],
             .keep_alive = false,
         }) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
-            // A request that never reached a status is still a line in
-            // the log: a wedged socket and a throttled bucket look the
-            // same on screen and must not look the same here.
-            else => {
-                c.note(arena, method, url, null, 0, started, gate, reason);
-                return error.Transport;
-            },
+            else => return transport(c, arena, method, url, started, gate, reason),
         };
-        const status: u16 = @intFromEnum(res.status);
+        defer req.deinit();
+        if (body) |p| {
+            req.transfer_encoding = .{ .content_length = p.len };
+            var bw = req.sendBodyUnflushed(&.{}) catch return transport(c, arena, method, url, started, gate, reason);
+            bw.writer.writeAll(p) catch return transport(c, arena, method, url, started, gate, reason);
+            bw.end() catch return transport(c, arena, method, url, started, gate, reason);
+            if (req.connection) |conn| conn.flush() catch return transport(c, arena, method, url, started, gate, reason);
+        } else {
+            req.sendBodiless() catch return transport(c, arena, method, url, started, gate, reason);
+        }
+        var response = req.receiveHead(&.{}) catch return transport(c, arena, method, url, started, gate, reason);
+        const status: u16 = @intFromEnum(response.head.status);
+        // `Retry-After`, read off the head before the body so a body
+        // that fails to read cannot swallow the hint.
+        var retry_after: ?f64 = null;
+        var hit = response.head.iterateHeaders();
+        while (hit.next()) |h| {
+            if (std.ascii.eqlIgnoreCase(h.name, "retry-after")) {
+                if (sdk.ratelimit.parseRetryAfter(h.value)) |secs| retry_after = @floatFromInt(secs);
+            }
+        }
+        var out: Io.Writer.Allocating = .init(arena);
+        var transfer: [4096]u8 = undefined;
+        const reader = response.reader(&transfer);
+        _ = reader.streamRemaining(&out.writer) catch |err| switch (err) {
+            error.WriteFailed => return error.OutOfMemory,
+            // A truncated body still leaves a usable status.
+            else => {},
+        };
         // A 429 or a 5xx parks every process on the bucket, not just
-        // this one.
+        // this one — for as long as the site said, when it said.
         if (ratelimit.shouldPenalise(status)) {
             if (c.limiter) |l| l.penalize(retry_after);
         }
@@ -1061,9 +1113,11 @@ pub const Loopback = struct {
                 0;
             const res = lb.store.handle(arena, request.head.method, target, authorization, body_store[0..got]) catch
                 fake.Response{ .status = 500, .body = "{}" };
+            var hbuf: [2]std.http.Header = undefined;
+            var nbuf: [12]u8 = undefined;
             request.respond(res.body, .{
                 .status = @enumFromInt(res.status),
-                .extra_headers = &.{.{ .name = "content-type", .value = "application/json" }},
+                .extra_headers = res.headers(&hbuf, &nbuf),
             }) catch return;
             if (std.mem.startsWith(u8, target, "/__done")) return;
         }
@@ -1255,6 +1309,53 @@ test "a refusal comes back as Jira's own sentence, and a 429 parks the shared bu
     defer other.deinit();
     try testing.expect(!other.acquire());
     store.fail_with = null;
+    try lb.finish(&c, arena);
+    try group.await(io);
+}
+
+test "a 429 with Retry-After parks the bucket for what the site asked, then the request asks again" {
+    // hunt/findings-2026-09-23/integ-jira-429-ignores-retry-after.md: the
+    // header was never read (`fetch` hides it), the bucket parked for
+    // 45 s when the site asked for 2, and nothing asked again.
+    const io = testing.io;
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var store = try fake.Store.init(testing.allocator);
+    defer store.deinit();
+    var addr: Io.net.IpAddress = .{ .ip4 = .loopback(0) };
+    var server = try addr.listen(io, .{ .reuse_address = true });
+    defer server.deinit(io);
+    var lb: Loopback = .{ .store = &store, .server = &server };
+    var group: Io.Group = .init;
+    try group.concurrent(io, Loopback.serve, .{ io, &lb });
+    defer group.cancel(io);
+    const base = try std.fmt.allocPrint(arena, "http://127.0.0.1:{d}", .{server.socket.address.getPort()});
+    var c = Client.init(testing.allocator, io, base, "Basic bm9wZQ==", .v3);
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+    const bucket_path = try std.fs.path.join(arena, &.{ dir, "jira-ratelimit.json" });
+    var bucket = try ratelimit.Limiter.init(testing.allocator, io, bucket_path, .{ .max_block_secs = 0.1 });
+    defer bucket.deinit();
+    c.limiter = &bucket;
+    store.require_auth = false;
+    store.rate_limit_next = 1;
+    store.rate_limit_retry_after = 1;
+    const before = store.requests;
+    const t0 = Io.Timestamp.now(io, .real).toMilliseconds();
+    switch (try search(&c, arena, "project = ENG", &.{}, .refresh)) {
+        .ok => |issues| try testing.expect(issues.len > 0),
+        .failed => return error.TestUnexpectedResult,
+    }
+    // Asked twice — the 429, then the answer — about a second apart.
+    try testing.expectEqual(@as(usize, 2), store.requests - before);
+    try testing.expect(Io.Timestamp.now(io, .real).toMilliseconds() - t0 >= 900);
+    // The park was the site's second, not the 45 s default.
+    const st = bucket.status().?;
+    try testing.expectEqual(@as(u32, 1), st.throttles);
+    try testing.expect(st.cooldown_remaining_secs < 2.0);
     try lb.finish(&c, arena);
     try group.await(io);
 }

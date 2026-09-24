@@ -61,7 +61,7 @@ expect screen contains "schedules"
 expect screen contains "caches"
 expect screen contains "usage"
 expect screen contains "Pipelines · 2 repos"
-expect screen contains "⏎ expand"
+expect screen contains "Enter expand"
 # l on a header steps into its first child; h on a branch steps back up
 # and closes the repo.
 key l

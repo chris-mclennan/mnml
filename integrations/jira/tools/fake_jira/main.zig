@@ -81,6 +81,19 @@ pub const Response = struct {
     status: u16,
     body: []const u8,
     content_type: []const u8 = "application/json",
+    /// Sent as `Retry-After: <n>` when set — a 429's hint.
+    retry_after_secs: ?u32 = null,
+
+    /// The response's headers, into `buf`: the content type, and the
+    /// `Retry-After` a 429 carries.
+    pub fn headers(r: *const Response, buf: *[2]std.http.Header, num: *[12]u8) []const std.http.Header {
+        buf[0] = .{ .name = "content-type", .value = r.content_type };
+        if (r.retry_after_secs) |ra| {
+            buf[1] = .{ .name = "retry-after", .value = std.fmt.bufPrint(num, "{d}", .{ra}) catch "1" };
+            return buf[0..2];
+        }
+        return buf[0..1];
+    }
 };
 
 pub const Issue = struct {
@@ -152,6 +165,11 @@ pub const Store = struct {
     require_auth: bool = true,
     /// When set, every route answers this status with a Jira error body.
     fail_with: ?u16 = null,
+    /// Answer the next N Jira requests `429` with `Retry-After:
+    /// rate_limit_retry_after` — how a test proves the pane waits what
+    /// the site asked, then asks again.
+    rate_limit_next: u32 = 0,
+    rate_limit_retry_after: u32 = 1,
     requests: usize = 0,
     /// Where `--log-file` appends its JSON line per request; null is no
     /// log. The socket loop writes it, not `handle`, so a unit test
@@ -270,6 +288,12 @@ pub const Store = struct {
             if (!std.mem.eql(u8, a, expected_auth)) return err(arena, 401, "Client must be authenticated to access this resource.");
         }
         if (s.fail_with) |st| return err(arena, st, "the fake server was told to fail");
+        if (s.rate_limit_next > 0) {
+            s.rate_limit_next -= 1;
+            var r = try err(arena, 429, "Rate limit exceeded");
+            r.retry_after_secs = s.rate_limit_retry_after;
+            return r;
+        }
 
         if (std.mem.startsWith(u8, path, "/rest/dev-status/latest/issue/detail")) return s.devStatus(arena, query);
         if (std.mem.startsWith(u8, path, "/rest/agile/1.0/")) return s.agile(arena, path["/rest/agile/1.0/".len..], query);
@@ -339,6 +363,19 @@ pub const Store = struct {
     }
 
     fn searchAnswer(s: *Store, arena: Allocator, jql: []const u8, v3: bool, only_sprint: ?u64) Allocator.Error!Response {
+        // Jira refuses a `key in (…)` naming a ticket that does not
+        // exist (deleted, or moved to a project the account cannot see)
+        // rather than ignoring it.
+        if (findList(jql, "key in (")) |list| {
+            var rest = list;
+            while (std.mem.indexOfScalar(u8, rest, '"')) |open| {
+                const after = rest[open + 1 ..];
+                const close = std.mem.indexOfScalar(u8, after, '"') orelse break;
+                const k = after[0..close];
+                if (s.find(k) == null) return err(arena, 400, try std.fmt.allocPrint(arena, "An issue with key '{s}' does not exist for field 'key'.", .{k}));
+                rest = after[close + 1 ..];
+            }
+        }
         var out: Io.Writer.Allocating = .init(arena);
         var w = &out.writer;
         var n: usize = 0;
@@ -781,6 +818,9 @@ fn matches(i: *const Issue, jql: []const u8) bool {
     // The delta window: only what this run has moved.
     if (std.mem.indexOf(u8, jql, "updated >= -") != null and !i.moved) return false;
     if (std.mem.indexOf(u8, jql, "issuekey = ''") != null) return false;
+    // `key in ("ENG-1", "ENG-2")` — a delta's question about the rows
+    // already on screen.
+    if (findList(jql, "key in (")) |list| if (!inQuotedList(list, i.key)) return false;
     if (std.mem.indexOf(u8, jql, "assignee = currentUser()") != null and !std.mem.eql(u8, i.assignee, account_me)) return false;
     if (std.mem.indexOf(u8, jql, "reporter = currentUser()") != null and !std.mem.eql(u8, i.reporter, account_me)) return false;
     if (std.mem.indexOf(u8, jql, "resolution = Unresolved") != null and std.mem.eql(u8, i.category, "done")) return false;
@@ -1198,9 +1238,11 @@ fn serveOne(gpa: Allocator, io: Io, store: *Store, stream: Io.net.Stream) bool {
     const res = store.handle(arena, request.head.method, target, authorization, body_store[0..n]) catch
         Response{ .status = 500, .body = "{\"errorMessages\":[\"out of memory\"],\"errors\":{}}" };
     logRequest(io, store, arena, request.head.method, target, res.status, res.body.len, body_store[0..n]);
+    var hbuf: [2]std.http.Header = undefined;
+    var nbuf: [12]u8 = undefined;
     request.respond(res.body, .{
         .status = @enumFromInt(res.status),
-        .extra_headers = &.{.{ .name = "content-type", .value = res.content_type }},
+        .extra_headers = res.headers(&hbuf, &nbuf),
     }) catch {};
     return stop;
 }

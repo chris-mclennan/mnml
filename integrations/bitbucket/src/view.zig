@@ -102,37 +102,20 @@ pub fn colsOf(table: Table) []const Col {
 pub const gap: u16 = 1;
 
 /// The columns that fit `width`, with the `rest` column widened to the
-/// remainder. Dropped whole, highest `drop` rank last.
+/// remainder. Dropped whole, highest `drop` rank last — the toolkit's
+/// one rule for a narrow table (`sdk.pane.columns`), so this pane and
+/// the tracker pane beside it give way the same way.
 pub fn fit(a: Allocator, table: Table, width: u16) Allocator.Error![]Col {
     const all = colsOf(table);
-    var keep = try a.alloc(bool, all.len);
-    @memset(keep, true);
-    while (true) {
-        var need: u16 = 0;
-        var n: u16 = 0;
-        for (all, 0..) |c, i| if (keep[i]) {
-            need += c.w;
-            n += 1;
-        };
-        if (n > 0) need += (n - 1) * gap;
-        if (need <= width) break;
-        // Drop the lowest-ranked droppable column still kept.
-        var best: ?usize = null;
-        for (all, 0..) |c, i| if (keep[i] and c.drop > 0) {
-            if (best == null or c.drop < all[best.?].drop) best = i;
-        };
-        const victim = best orelse break;
-        keep[victim] = false;
-    }
+    var specs: [16]sdk.pane.columns.Spec = undefined;
+    var widths: [16]u16 = undefined;
+    for (all, specs[0..all.len]) |c, *sp| sp.* = .{ .w = c.w, .drop = c.drop, .rest = c.rest };
+    sdk.pane.columns.fit(widths[0..all.len], specs[0..all.len], width, gap);
     var out: std.ArrayList(Col) = .empty;
-    var used: u16 = 0;
-    for (all, 0..) |c, i| if (keep[i]) {
-        try out.append(a, c);
-        used += c.w + gap;
-    };
-    used -|= gap;
-    for (out.items) |*c| if (c.rest and width > used) {
-        c.w += width - used;
+    for (all, widths[0..all.len]) |c, w| if (w > 0 or c.rest) {
+        var kept = c;
+        kept.w = w;
+        try out.append(a, kept);
     };
     return out.toOwnedSlice(a);
 }
@@ -207,7 +190,7 @@ pub fn rowSpans(a: Allocator, c: RowCtx) Allocator.Error![]Span {
                     n = 6;
                 } else {
                     const p: ?model.PullRequest = if (r.prs.len > 0) r.prs[0] else null;
-                    cells[1] = try std.fmt.allocPrint(a, "{d} PRs", .{r.prs.len});
+                    cells[1] = try std.fmt.allocPrint(a, "{d} {s}", .{ r.prs.len, sdk.pane.text.noun(r.prs.len, "PR", "PRs") });
                     cells[2] = if (p) |pr| pr.author else "";
                     cells[3] = if (p) |pr| pr.source_branch else "";
                     cells[4] = if (p) |pr| pr.updatedDate() else "";
@@ -221,7 +204,7 @@ pub fn rowSpans(a: Allocator, c: RowCtx) Allocator.Error![]Span {
                 const open = ts.expanded.hasRepo(r.slug);
                 cells[0] = try std.fmt.allocPrint(a, "{s} {s}", .{ expander(open, c.ascii), r.slug });
                 styles[0] = cellStyle(c, if (r.error_label.len > 0) th.bad() else th.accentText());
-                cells[1] = if (r.error_label.len > 0) r.error_label else try std.fmt.allocPrint(a, "{d} branches", .{r.branches.len});
+                cells[1] = if (r.error_label.len > 0) r.error_label else try std.fmt.allocPrint(a, "{d} {s}", .{ r.branches.len, sdk.pane.text.noun(r.branches.len, "branch", "branches") });
                 styles[1] = cellStyle(c, if (r.error_label.len > 0) th.bad() else th.mutedText());
                 cells[2] = "";
                 cells[3] = "";

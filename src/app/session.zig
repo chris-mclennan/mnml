@@ -49,6 +49,8 @@ const Config = app_mod.Config;
 const layout_mod = @import("layout.zig");
 const Layout = layout_mod.Layout;
 const pty_pane = @import("pty_pane.zig");
+const mount_pane = @import("mount_pane.zig");
+const integrations_app = @import("integrations.zig");
 const launch_profiles = @import("launch_profiles.zig");
 const cli = @import("../ai/cli.zig");
 const codex_rollout = @import("../ai/codex_rollout.zig");
@@ -111,7 +113,10 @@ pub const Fold = struct { start: usize, end: usize };
 /// layouts, which write them; the session itself never does
 /// (`CaptureOpts.extra_kinds`), so a session file stays readable by a
 /// build that does not know them.
-pub const PaneKind = enum { editor, md_preview, pty, git_status, grep, git_graph, diff, image, request, browser };
+/// // changed (session-mount): `mount` — an integration pane (Jira,
+/// Bitbucket) — is one the session writes; a file that holds one does
+/// not parse on a build without it, and gets the toast.
+pub const PaneKind = enum { editor, md_preview, pty, git_status, grep, git_graph, diff, image, request, browser, mount };
 
 pub const Pane = struct {
     kind: PaneKind = .editor,
@@ -177,6 +182,12 @@ pub const Pane = struct {
     block_index: ?u32 = null,
     /// browser: the page it was on.
     url: ?[]const u8 = null,
+    /// mount: the manifest id of the integration the pane runs
+    /// (`jira_work`). With `argv` (the command line it was opened with,
+    /// deep link cut off) and `label`, what reopens it: the binary is
+    /// resolved through today's manifest, its settings re-read, and a
+    /// manifest that is gone is skipped.
+    integration: ?[]const u8 = null,
 };
 
 /// The split tree as the node pool it is in memory: leaves name pane
@@ -457,6 +468,14 @@ pub fn capturePane(app: *App, arena: Allocator, i: PaneId, p: *app_mod.Pane, opt
             break :blk .{ .kind = .request, .path = file, .block = rp.block_name, .block_index = rp.block_index, .accent = app.panes.accent(i) };
         },
         .browser => |*b| if (opts.extra_kinds) .{ .kind = .browser, .url = b.url, .accent = app.panes.accent(i) } else null,
+        // An integration pane: what opened it, not what it showed —
+        // the child fetches today's rows. One showing its exit
+        // banner, or a bare `mount.open` of a binary, is not kept.
+        .mount => |*mp| blk: {
+            const id = mp.integration orelse break :blk null;
+            if (mp.exit != null or mp.argv.len == 0) break :blk null;
+            break :blk .{ .kind = .mount, .integration = id, .argv = mp.argv, .label = mp.label };
+        },
         else => null,
     };
 }
@@ -1029,6 +1048,25 @@ fn openSavedPane(app: *App, sp: Pane, opened: []const ?PaneId, opts: OpenOpts) O
         .browser => {
             const url = sp.url orelse return null;
             return browser_pane.open(app, url) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return null,
+            };
+        },
+        .mount => {
+            if (!mount_pane.supported) return null;
+            const id = sp.integration orelse return null;
+            if (sp.argv.len == 0) return null;
+            // The session restores before the startup scan: read the
+            // manifests now, so the pane's own is there to resolve.
+            if (app.integrations.generation == 0) integrations_app.refresh(app) catch return null;
+            const idx = app.integrations.find(id) orelse return null;
+            const m = app.integrations.list[idx].manifest;
+            return integrations_app.openMount(app, .{
+                .id = id,
+                .binary = m.binary,
+                .args = sp.argv[1..],
+                .label = sp.label orelse m.label,
+            }) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => return null,
             };
@@ -2251,4 +2289,30 @@ test "session: a file from the old field set still loads; an unknown pane kind i
     const extra = try std.fmt.allocPrintSentinel(arena, ".{{ .version = 1, .workspace = \"{s}\", .panes = .{{ .{{ .kind = .editor, .path = \"{s}\", .telepathy = true }} }} }}", .{ f.root, a }, 0);
     const ok = try parse(arena, extra);
     try t.expectEqual(@as(usize, 1), ok.panes.len);
+}
+
+test "session: an integration pane is written as its manifest and command line, and one whose manifest is gone is skipped" {
+    // hunt/findings-2026-09-23/integ-panes-lost-on-restart.md
+    var a_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer a_state.deinit();
+    const arena = a_state.allocator();
+    const text = try render(arena, .{
+        .workspace = "/w",
+        .panes = &.{.{ .kind = .mount, .integration = "jira_work", .argv = &.{ "/bin/mnml-jira", "--only", "work" }, .label = "Jira Work" }},
+    });
+    try t.expect(std.mem.indexOf(u8, text, ".kind = .mount") != null);
+    const back = try parse(arena, try arena.dupeZ(u8, text));
+    try t.expectEqual(PaneKind.mount, back.panes[0].kind);
+    try t.expectEqualStrings("jira_work", back.panes[0].integration.?);
+    try t.expectEqualStrings("--only", back.panes[0].argv[1]);
+    // No manifest by that id on this machine: nothing to reopen it
+    // with, so no pane — and no guess at a binary.
+    var f = try Fixture.init();
+    defer f.deinit();
+    var app = try f.app();
+    defer app.deinit();
+    // As if the scan had run and found nothing — the test must never
+    // read (let alone spawn from) the machine's own manifests.
+    app.integrations.generation = 1;
+    try t.expect((try openSavedPane(&app, back.panes[0], &.{}, .{})) == null);
 }

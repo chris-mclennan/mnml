@@ -1217,6 +1217,12 @@ fn openAsTabCmd(app: *App) CommandError!void {
 
 /// A manifest command's runner: the binary as a mount (or a pty).
 pub fn runMount(app: *App, r: Run) CommandError!void {
+    _ = try openMount(app, r);
+}
+
+/// `runMount`, handing back the mount pane it opened or focused (null
+/// for a pty). What a session restore reopens an integration pane with.
+pub fn openMount(app: *App, r: Run) CommandError!?PaneId {
     const arena = app.frame.allocator();
     const id = r.id;
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
@@ -1225,13 +1231,13 @@ pub fn runMount(app: *App, r: Run) CommandError!void {
     if (r.pty) {
         if (!pty_pane.supported) return app.diag.fail(arena, "{s}: a pty pane is not available on this platform", .{r.label});
         _ = try pty_pane.open(app, .{ .argv = argv.items, .label = r.label, .placement = .tab, .kind = .command });
-        return;
+        return null;
     }
     const extra = try settingsEnv(app, arena, id);
     // The deep link rides on the argv but is not part of the pane's
     // identity: `findOpen` matches on what is left when it is cut off.
     const identity = argv.items[0 .. argv.items.len - @min(r.deep_link, argv.items.len - 1)];
-    _ = try mount_pane.open(app, .{
+    return try mount_pane.open(app, .{
         .argv = argv.items,
         .identity = identity,
         .focus = r.focus,

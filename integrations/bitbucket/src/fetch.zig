@@ -437,7 +437,7 @@ pub const Worker = struct {
                     .ok => |body| blk: {
                         const v = std.json.parseFromSliceLeaky(j.Value, a, body.bytes, .{}) catch break :blk failed(a, tab, spec.name, "the reply is not JSON");
                         const list = try model.parsePipelines(a, v);
-                        break :blk .{ .tab = tab, .data = .{ .pipelines = list }, .items = list.len, .status = try std.fmt.allocPrint(a, "{s} · {d} pipelines", .{ spec.name, list.len }) };
+                        break :blk .{ .tab = tab, .data = .{ .pipelines = list }, .items = list.len, .status = try std.fmt.allocPrint(a, "{s} · {d} {s}", .{ spec.name, list.len, sdk.pane.text.noun(list.len, "pipeline", "pipelines") }) };
                     },
                     .failed => |f| blk: {
                         var buf: [256]u8 = undefined;
@@ -452,7 +452,7 @@ pub const Worker = struct {
                     .ok => |body| blk: {
                         const v = std.json.parseFromSliceLeaky(j.Value, a, body.bytes, .{}) catch break :blk failed(a, tab, spec.name, "the reply is not JSON");
                         const list = try model.parseBranches(a, v);
-                        break :blk .{ .tab = tab, .data = .{ .branches = list }, .items = list.len, .status = try std.fmt.allocPrint(a, "{s} · {d} branches", .{ spec.name, list.len }) };
+                        break :blk .{ .tab = tab, .data = .{ .branches = list }, .items = list.len, .status = try std.fmt.allocPrint(a, "{s} · {d} {s}", .{ spec.name, list.len, sdk.pane.text.noun(list.len, "branch", "branches") }) };
                     },
                     .failed => |f| blk: {
                         var buf: [256]u8 = undefined;
@@ -503,9 +503,9 @@ pub const Worker = struct {
                     errored += @intFromBool(r.error_label.len > 0);
                 }
                 const status = if (errored > 0)
-                    try std.fmt.allocPrint(a, "{s} · {d} repos, {d} PRs ({d} errored)", .{ spec.name, rows.len, total, errored })
+                    try std.fmt.allocPrint(a, "{s} · {d} {s}, {d} {s} ({d} errored)", .{ spec.name, rows.len, sdk.pane.text.noun(rows.len, "repo", "repos"), total, sdk.pane.text.noun(total, "PR", "PRs"), errored })
                 else
-                    try std.fmt.allocPrint(a, "{s} · {d} repos, {d} PRs", .{ spec.name, rows.len, total });
+                    try std.fmt.allocPrint(a, "{s} · {d} {s}, {d} {s}", .{ spec.name, rows.len, sdk.pane.text.noun(rows.len, "repo", "repos"), total, sdk.pane.text.noun(total, "PR", "PRs") });
                 return .{ .tab = tab, .data = .{ .repo_pr_tree = rows }, .repos = rows.len, .items = total, .errored = errored, .status = status, .scope_repos = try dupeList(a, repos), .states = api_states };
             },
             .workspace_pipelines => {
@@ -516,7 +516,7 @@ pub const Worker = struct {
                 const rows = try w.pipelinesTree(a, spec.workspace, repos, now_secs);
                 var errored: usize = 0;
                 for (rows) |r| errored += @intFromBool(r.error_label.len > 0);
-                return .{ .tab = tab, .data = .{ .repo_tree = rows }, .repos = rows.len, .errored = errored, .status = try std.fmt.allocPrint(a, "{s} · {d} repos", .{ spec.name, rows.len }), .scope_repos = try dupeList(a, repos) };
+                return .{ .tab = tab, .data = .{ .repo_tree = rows }, .repos = rows.len, .errored = errored, .status = try std.fmt.allocPrint(a, "{s} · {d} {s}", .{ spec.name, rows.len, sdk.pane.text.noun(rows.len, "repo", "repos") }), .scope_repos = try dupeList(a, repos) };
             },
         }
     }
@@ -551,7 +551,7 @@ pub const Worker = struct {
                 .ok => |body| blk: {
                     const v = std.json.parseFromSliceLeaky(j.Value, a, body.bytes, .{}) catch break :blk failed(a, tab, spec.name, "the reply is not JSON");
                     const list = try model.parsePullRequests(a, v);
-                    break :blk .{ .tab = tab, .data = .{ .pull_requests = list }, .items = list.len, .status = try std.fmt.allocPrint(a, "{s} · {d} PRs", .{ spec.name, list.len }), .states = api_states };
+                    break :blk .{ .tab = tab, .data = .{ .pull_requests = list }, .items = list.len, .status = try std.fmt.allocPrint(a, "{s} · {d} {s}", .{ spec.name, list.len, sdk.pane.text.noun(list.len, "PR", "PRs") }), .states = api_states };
                 },
                 .failed => |f| blk: {
                     var buf: [256]u8 = undefined;
@@ -603,7 +603,7 @@ pub const Worker = struct {
         if (errors > 0 and errors == repos.len) return failed(a, tab, spec.name, try std.fmt.allocPrint(a, "all {d} repo requests failed", .{errors}));
         std.mem.sort(model.PullRequest, all.items, {}, newestFirst);
         const list = try all.toOwnedSlice(a);
-        return .{ .tab = tab, .data = .{ .pull_requests = list }, .items = list.len, .errored = errors, .status = try std.fmt.allocPrint(a, "{s} · {d} PRs", .{ spec.name, list.len }), .states = api_states };
+        return .{ .tab = tab, .data = .{ .pull_requests = list }, .items = list.len, .errored = errors, .status = try std.fmt.allocPrint(a, "{s} · {d} {s}", .{ spec.name, list.len, sdk.pane.text.noun(list.len, "PR", "PRs") }), .states = api_states };
     }
 
     fn newestFirst(_: void, x: model.PullRequest, y: model.PullRequest) bool {

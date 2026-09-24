@@ -18,7 +18,7 @@ is the inventory), painted in mnml-zig's own chrome.
 ▌      #1198                   OPEN       Dana R         dana/timeout       2026-08-31   Bump the client timeout to 30s
 ▌  web                        1 PR       Chris M        chris/empty-state  2026-09-01   #820 · Redesign the empty state
 ▌                                                                                        ⋯  Show more (1)
- Open + Draft · 2 repos, 5 PRs   ↓ move · ⏎ expand · o open on web · d detail · m open↔merged · r refresh · ? keys · q quit
+ Open + Draft · 2 repos, 5 PRs   ↓ move · Enter expand · o open on web · d detail · m open↔merged · r refresh · ? keys · q quit
 ```
 
 The row under the strip is Bitbucket Cloud's own filter bar — see
@@ -79,7 +79,8 @@ by name, so a TOML converts line for line:
 `state` `.OPEN` / `.MERGED` / `.DECLINED` / `.SUPERSEDED`; `mode`
 `.mine` / `.reviewing` on a `pull_requests` tab. Two keys have no TOML
 twin: `.base_url` (a test double; `$BITBUCKET_BASE_URL` wins, `@<path>`
-reads a file) and `.rate` (`rate_per_sec`, `capacity`, `max_attempts`,
+reads a file — one still missing after 5 s is the setup screen and a
+failing `--check`, never a fall back to `api.bitbucket.org`) and `.rate` (`rate_per_sec`, `capacity`, `max_attempts`,
 `default_backoff_secs`, `max_backoff_secs`, `state_path`).
 
 The keys that change the config at runtime — `x` hide, `H` un-hide,
@@ -143,26 +144,35 @@ approve token: BITBUCKET_ACCESS_TOKEN (192 chars, not shown) · Bearer <token>
 
 ## Keys
 
-`?` in the pane is the sheet; it and the hint row are generated from
-the one table in `src/keymap.zig`, so neither can drift from what a key
-does. The keys are the reference's:
+`?` in the pane is the sheet — the family's one component
+(`sdk.pane.chrome.Painter.keySheet`, the Jira pane's too), listing the
+keys that apply where the cursor is; `Esc` closes it. It and the hint
+row are generated from the one table in `src/keymap.zig`, so neither
+can drift from what a key does. The keys are the reference's:
 
 | | |
 |---|---|
-| `j` `k` `↑` `↓` · `⇞` `⇟` · `g` `G` `⇱` `⇲` | move |
-| `⏎` `␣` | expand / collapse a repo; fold a pull request out to its builds; open a build's page; lift the `Show more (N)` footer |
+| `j` `k` `↑` `↓` · `PgUp` `PgDn` · `g` `G` `Home` `End` | move |
+| `Enter` `Space` | expand / collapse a repo; fold a pull request out to its builds; open a build's page; lift the `Show more (N)` footer |
 | `→` `l` · `←` `h` | expand or step in · collapse or step up |
-| `e` `c` | expand / collapse every repo |
-| `x` `H` `s` `⌥↑` `⌥↓` | hide this repo · un-hide all · cycle the scope · reorder (all persist) |
+| `E` `C` (or `e` `c`) | expand / collapse every repo — the integration tree convention, the same pair the Jira pane binds |
+| `x` `H` `s` `Alt+↑` `Alt+↓` | hide this repo · un-hide all · cycle the scope · reorder (all persist) |
 | `o` · `y` | open on the web · copy the URL |
-| `d` · `^d` `^u` | the detail · scroll it |
-| `a` | approve / withdraw (with the detail open) |
+| `d` · `^d` `^u` | the pull request's detail · scroll it (PR tabs) |
+| `a` | approve / withdraw (a PR tab, with the detail open) |
 | `M` · `[ Open ]` `[ Merge ]` | merge this PR through Claude Code (only when it may) · the same two on the cursor's row, when it is wide enough |
 | `S` `U` `T` `A` | on a PR tab: the Status picker · the Author picker · the Target-branch picker · show: all → reviewing → awaiting me |
 | `U` `B` `P` `S` `T` | on a pipelines tab: Run by · Branch · Pipeline type · Status · Trigger type — each a picker |
-| `m` · `⇥` `⇤` · `1`–`9` | open ↔ merged · next / previous tab · a tab |
+| `m` · `⇥` `⇤` · `1`–`9` | open ↔ merged (PR tabs) · next / previous tab · a tab |
 | `/` `esc` | filter · clear |
 | `r` `?` `q` | refresh · keys · quit |
+
+The pipelines header's `run pipeline`, `schedules` and `caches` open
+that page for the repo under the cursor (its header or any of its
+branches), and are not offered when no repo is; `usage` asks before
+it opens the workspace's pipeline-minutes page in the browser. On a
+pipelines tab the PR-only keys (`d`, `a`, `m`, `M`) are unbound and
+off the hint row.
 
 Mouse: every row, tab, chip and hint word is a hit target sized to what
 it paints — a click on a row selects that row (and toggles a repo
@@ -184,7 +194,7 @@ before you merge it. One row per run:
 
 State first, then the branch it ran on, then how long ago, then the
 run's number — the same line the Jira pane paints, out of the same
-toolkit code (`sdk.pane.build`). `⏎` on one opens that run's page; `h`
+toolkit code (`sdk.pane.build`). `Enter` on one opens that run's page; `h`
 folds the pull request back up.
 
 It costs **one** request per pull request, keyed by the PR's
@@ -251,7 +261,7 @@ geometry (the tracker pane's), with its key beside it:
 
 | PR tab | | |
 |---|---|---|
-| `status:` | `S` | **multi-select** — Open · Draft · Merged · Declined; `␣` toggles a box, `⏎` closes. Open + Draft is the open tree's default, Merged the merged tree's |
+| `status:` | `S` | **multi-select** — Open · Draft · Merged · Declined; `Space` toggles a box, `Enter` closes. Open + Draft is the open tree's default, Merged the merged tree's |
 | `author:` | `U` | `all`, `me`, then everyone the loaded set names, sorted |
 | `target:` | `T` | the destination branch, from the set |
 | `show:` | `A` | `all` → `reviewing` (you are a REVIEWER, voted or not) → `awaiting me (N)` (a reviewer who has not voted — the pane's older `awaiting:` chip, folded in). The web's third value, *watching*, needs a watcher list Bitbucket's API does not expose, so it is not offered |
@@ -265,7 +275,7 @@ geometry (the tracker pane's), with its key beside it:
 | `trigger:` | `T` | `push` · `manual` · `schedule` |
 
 A left click opens the chip's picker (a typed filter over its rows,
-`↑↓`, `⏎`; `show:` has three values and a click cycles it, the way
+`↑↓`, `Enter`; `show:` has three values and a click cycles it, the way
 the host's `sort:` chip does); a **right click** lists every value
 with a `✓` on the live one, and a row of that menu applies it. A chip
 off its default wears the active ink and the header reads `N of M`;
@@ -308,8 +318,13 @@ and the refresh chip turns the host's own spinner ring:
 | `(2 repos · 3 PRs)  ⠋ fetching…` | a refetch: the rows and their count stay on screen |
 | `⠋ queued behind 3 requests` | held in the local broker's queue, that many ahead |
 | `⠋ waiting for the API budget` | held on the shared file bucket (no broker) |
-| `fetch failed: <why>` | the last fetch failed, and this is why |
+| `(2 repos · 3 PRs)  fetch failed: <why>` | the last fetch failed, and this is why — for every repo (`network error`), one (`web: HTTP 500`) or some (`2 of 5 repos: …`) |
 | `(2 repos · 3 PRs)  as of 4m ago` | done; the age the family already says |
+
+A failed refetch never empties the list: a repo that did not answer
+keeps the rows it had (the same rule the Jira pane follows), and `as
+of` stays on the last time every repo answered. Only a tab with
+nothing to show paints the reason in place of the list.
 | `no pull requests match` | the chips or the `/` query hid every row |
 
 ## The statusline chips
@@ -413,7 +428,7 @@ Python scripts on this machine already take turns on —
 `~/.tattle-claude-artifacts/bitbucket-ratelimit.json` (or
 `$TATTLE_ARTIFACTS_ROOT`, `$BITBUCKET_RATELIMIT_STATE`, `<MNML_DATA_ROOT>/ratelimit/`),
 0.22 requests/s, a burst of 40. A 429 is retried up to three times
-honouring `Retry-After` (clamped to 30 s) and parks every process on
+honouring `Retry-After` (a park longer than 30 s is not slept through; the SDK's `ratelimit.Retry`, the Jira pane's too) and parks every process on
 the bucket; nothing else is retried. A repo that fails keeps its row,
 labelled `429 · retry in 30s` / `auth failed` / `no such repo`.
 

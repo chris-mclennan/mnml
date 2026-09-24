@@ -85,7 +85,10 @@ version whose features you actually need.
 `capabilities.rgb=false` means the terminal has no truecolor — mnml
 folds rgb onto the 256-cube for you either way, but an integration that
 cares can pick indices itself. `nerd_font=false` / `ascii=true` say to
-use plain glyphs.
+use plain glyphs. `hover_help=true` says the host shows a `hover`
+(below) in its info view; a host that predates the message sends no
+such field, it reads as `false`, and an integration then sends none —
+which is why the message needed no protocol bump.
 
 `geometry` is the pane's **body** in cells: the tab strip is not yours.
 
@@ -203,6 +206,7 @@ are mnml's — the same rule as a terminal pane.
 | `command` | `{id}` | run an mnml command by id (a built-in, or one you registered) |
 | `toast` | `{level, text, action?}` | `level` ∈ `info`, `warn`, `error`; `action` since protocol 3 |
 | `watch_session` | `{key, selector}` | "I started this session; tell me what it does" |
+| `hover` | `{title, body}` | what the element under the pointer is and does, for the info view; `title:""` clears. Only to a host with `capabilities.hover_help` |
 | `bye` | `{}` | a clean exit |
 
 ```json
@@ -212,6 +216,7 @@ are mnml's — the same rule as a terminal pane.
 {"toast":{"level":"warn","text":"token expires in 2 days"}}
 {"toast":{"level":"info","text":"merged #1234","action":{"label":"Open PR","url":"https://bitbucket.org/acme/api/pull-requests/1234"}}}
 {"toast":{"level":"error","text":"refresh failed: 503","action":{"label":"Retry","command":"integrations.retry_refresh"}}}
+{"hover":{"title":"assignee:","body":"Whose tickets show. Click opens a picker of the people on the tab."}}
 {"watch_session":{"key":"ENG-2\u001ftriage",
                   "selector":{"cwd":"/Users/me/proj","prompt_line":"/agents:developer ENG-2"}}}
 ```

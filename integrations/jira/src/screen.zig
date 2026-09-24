@@ -547,8 +547,6 @@ pub const Painter = struct {
 
     const ColX = struct { col: config.Column, x: u16, w: u16 };
 
-    /// Where each column starts at this width: the fixed ones from the
-    /// config, shrunk together when they would eat the summary.
     /// Whether the active tab's rows outrun a body `h` rows tall.
     fn listOverflows(p: *Painter, h: u16) Allocator.Error!bool {
         if (h == 0) return false;
@@ -556,22 +554,35 @@ pub const Painter = struct {
         return r.rows.len > h;
     }
 
+    /// Where each column starts at this width — the toolkit's rule for
+    /// a narrow table (`sdk.pane.columns`), the one the forge pane's
+    /// table follows: the columns give up cells together down to what
+    /// still reads, then go whole (ACTIONS first, STATUS last). KEY is
+    /// never dropped and never narrower than the longest key on the
+    /// tab, so every row keeps the thing it is known by; the summary is
+    /// what gets elided.
     fn columnLayout(p: *Painter) Allocator.Error![]const ColX {
-        const set = p.a.tab().cfg.columnSet();
-        var fixed: u32 = 0;
-        for (set) |c| fixed += c.width() orelse 0;
-        const avail: u32 = p.lay.list_w -| 2;
-        // The summary keeps at least 20 cells; the fixed columns shrink
-        // together for it, the date column no further than a date.
-        const budget: u32 = avail -| 20;
-        const scale_num: u32 = if (fixed > budget and fixed > 0) budget else fixed;
+        const t = p.a.tab();
+        const set = t.cfg.columnSet();
+        var specs: [16]sdk.pane.columns.Spec = undefined;
+        var widths: [16]u16 = undefined;
+        const n = @min(set.len, specs.len);
+        // The key cell: chevron and indent (4), the key, a space and
+        // the bump star (2) — `paintTree`'s own arithmetic.
+        var longest: usize = 0;
+        for (t.issues) |iss| longest = @max(longest, sdk.pane.width(iss.key));
+        const key_floor: u16 = @intCast(@min(@as(usize, 40), @max(@as(usize, config.Column.key.minWidth()), longest + 7)));
+        for (set[0..n], specs[0..n]) |c, *sp| sp.* = switch (c) {
+            .summary => .{ .w = c.minWidth(), .rest = true },
+            .key => .{ .w = @max(c.width().?, key_floor), .min = key_floor },
+            else => .{ .w = c.width().?, .min = c.minWidth(), .drop = c.dropRank() },
+        };
+        const avail: u16 = p.lay.list_w -| 2;
+        sdk.pane.columns.fit(widths[0..n], specs[0..n], avail, 0);
         var out: std.ArrayList(ColX) = .empty;
         var x: u16 = 2;
-        for (set) |c| {
-            const w: u16 = if (c.width()) |cw| blk: {
-                const scaled: u32 = if (fixed > 0) cw * scale_num / fixed else cw;
-                break :blk @intCast(@max(if (c == .updated) @as(u32, 11) else 6, scaled));
-            } else @intCast(@max(1, avail -| (x - 2)));
+        for (set[0..n], widths[0..n]) |c, w| {
+            if (w == 0 and c != .summary) continue;
             try out.append(p.arena, .{ .col = c, .x = x, .w = w });
             x += w;
         }
@@ -1046,6 +1057,11 @@ pub const Painter = struct {
         for (fields) |f| try out.append(arena, .{ .s = try std.fmt.allocPrint(arena, "{s:>10}: {s}", .{ f.label, f.value }), .style = p.s.plain });
         try out.append(arena, .{ .s = "" });
         const d = a.detailOf(iss.key);
+        if (d == null and a.detailFetching(iss.key)) {
+            // On the wire: the toolkit's spinner and words, so a slow
+            // site reads as busy, not as a key that was not heard.
+            try out.append(arena, .{ .s = std.mem.trimStart(u8, p.c.fetchSub(.{ .fetching = .{} }, a.nowMs()), " "), .style = p.s.muted });
+        }
         if (d) |det| {
             if (det.error_text.len > 0) {
                 try out.append(arena, .{ .s = try std.fmt.allocPrint(arena, "detail fetch failed: {s}", .{det.error_text}), .style = p.s.err_style });
@@ -1430,65 +1446,27 @@ pub const Painter = struct {
         _ = p.putFit(r.x + 1, r.bottom() - 1, iw, if (c.posting) " sending… " else " Enter newline · Enter on an empty line or Ctrl+S sends · Esc cancel ", p.s.muted);
     }
 
-    /// The key sheet, the built-in sections' way: `▾ ── name ── (n)`
-    /// headers and `  chord  title` rows, from the bindings that apply.
+    /// The key sheet: the family's one component
+    /// (`sdk.pane.chrome.Painter.keySheet`), fed the bindings that
+    /// apply here by section, then the overlays' own keys to read.
     fn paintHelp(p: *Painter) Allocator.Error!void {
-        const r = p.centred(84, 32);
-        try p.box(r, " KEYS ", p.s.border);
-        try p.hitAdd(r, .help_body);
-        const ix = r.x + 1;
-        const iw = r.w -| 2;
-        const HelpRow = struct { header: []const u8 = "", chord: []const u8 = "", label: []const u8 = "", action: ?keymap.Action = null };
-        var lines: std.ArrayList(HelpRow) = .empty;
-        const ctx = p.a.context();
-        const active = try keymap.active(p.arena, ctx);
-        var chord_w: u16 = 8;
-        for (active) |b| {
-            var buf: [64]u8 = undefined;
-            chord_w = @max(chord_w, @min(text.width(chordText(&buf, b)), 20));
-        }
-        for (keymap.modal_rows) |m| chord_w = @max(chord_w, @min(text.width(m.keys), 20));
-        const fold = if (p.ui.ascii) "v" else "▾";
+        const Row = sdk.pane.chrome.SheetRow(hit.Target);
+        var sheet: std.ArrayList(Row) = .empty;
+        const active = try keymap.active(p.arena, p.a.context());
         inline for (@typeInfo(keymap.Section).@"enum".fields) |sf| {
             const section: keymap.Section = @enumFromInt(sf.value);
-            var n: usize = 0;
+            var any = false;
             for (active) |b| if (b.section == section) {
-                n += 1;
-            };
-            if (n > 0) {
-                try lines.append(p.arena, .{ .header = try std.fmt.allocPrint(p.arena, "{s} ── {s} ── ({d})", .{ fold, section.title(), n }) });
-                for (active) |b| if (b.section == section) {
-                    var buf: [64]u8 = undefined;
-                    try lines.append(p.arena, .{ .chord = try p.arena.dupe(u8, chordText(&buf, b)), .label = b.label, .action = b.action });
-                };
-                try lines.append(p.arena, .{});
-            }
-        }
-        try lines.append(p.arena, .{ .header = try std.fmt.allocPrint(p.arena, "{s} ── overlays ── ({d})", .{ fold, keymap.modal_rows.len }) });
-        for (keymap.modal_rows) |m| try lines.append(p.arena, .{ .chord = m.keys, .label = m.label });
-        const body_h: usize = r.h -| 3;
-        var start = p.a.help_scroll;
-        if (start > lines.items.len -| body_h) start = lines.items.len -| body_h;
-        p.a.help_scroll = start;
-        var i = start;
-        var y = r.y + 1;
-        while (i < lines.items.len and y < r.bottom() - 2) : ({
-            i += 1;
-            y += 1;
-        }) {
-            const l = lines.items[i];
-            if (l.header.len > 0) {
-                _ = p.putFit(ix + 1, y, iw -| 1, l.header, p.s.bold);
-            } else if (l.chord.len > 0) {
-                // The chord in the accent, padded to the column; the title plain.
-                _ = p.putFit(ix + 3, y, chord_w, l.chord, p.s.accent_plain);
-                _ = p.putFit(ix + 3 + chord_w + 2, y, iw -| (chord_w + 6), l.label, p.s.plain);
+                if (!any) try sheet.append(p.arena, .{ .section = section.title() });
+                any = true;
                 // A row of the sheet runs what its chord runs: reading
                 // the keys and using them are the same gesture.
-                if (l.action) |act| try p.hitAdd(.{ .x = ix + 1, .y = y, .w = iw -| 1, .h = 1 }, .{ .help_row = act });
-            }
+                try sheet.append(p.arena, .{ .chord = try sdk.pane.keysheet.chords(p.arena, b.keys), .label = b.label, .target = .{ .help_row = b.action } });
+            };
         }
-        _ = p.putFit(ix + 1, r.bottom() - 2, iw -| 1, "j/k scroll · Esc close", p.s.muted);
+        try sheet.append(p.arena, .{ .section = "overlays" });
+        for (keymap.modal_rows) |m| try sheet.append(p.arena, .{ .chord = m.keys, .label = m.label });
+        try p.c.keySheet(sheet.items, &p.a.help_scroll, .help_body);
     }
 };
 
@@ -1557,24 +1535,6 @@ pub fn initials(buf: []u8, name: []const u8) []const u8 {
     if (n == 0) {
         buf[0] = '?';
         return buf[0..1];
-    }
-    return buf[0..n];
-}
-
-/// The chords of a binding as the sheet prints them: `↑ / k`.
-fn chordText(buf: []u8, b: keymap.Binding) []const u8 {
-    var n: usize = 0;
-    for (b.keys, 0..) |k, i| {
-        var kb: [16]u8 = undefined;
-        const d = keymap.displayKey(&kb, k);
-        if (i > 0) {
-            if (n + 3 > buf.len) break;
-            @memcpy(buf[n .. n + 3], " / ");
-            n += 3;
-        }
-        if (n + d.len > buf.len) break;
-        @memcpy(buf[n .. n + d.len], d);
-        n += d.len;
     }
     return buf[0..n];
 }
@@ -1931,7 +1891,7 @@ test "Fix Versions: the pill, the bump star, the transition picker's rows, and t
     _ = try a.onKey("esc");
     _ = try a.onKey("?");
     try paint(ar, &f, a, .{});
-    try testing.expect((try findRow(ar, &f, " KEYS ")) != null);
+    try testing.expect((try findRow(ar, &f, " Keys ")) != null);
     try testing.expect((try findRow(ar, &f, "▾ ── rows ──")) != null);
     // The dispatch section is below the fold at 32 rows: scroll to it.
     a.help_scroll = 14;
@@ -2216,6 +2176,55 @@ test "the narrow pane: 80x24 keeps the chips whole by wrapping, the columns shri
     try testing.expect(a.tab().selected > 0);
 }
 
+test "a half-width pane keeps every key whole: the columns go before the key loses a cell" {
+    // hunt/findings-2026-09-23/integ-jira-narrow-key-truncated.md: at 60
+    // columns every key read `ENG…`; at ~43 the key cell was empty and
+    // the header ran together (`STATUSASSIGNUPDATED`).
+    const h = try app_mod.Harness.start(.{ .tabs = &app_mod.work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    for ([_]u16{ 60, 43, 34 }) |cols| {
+        a.resize(cols, 24);
+        var f = try Frame.init(testing.allocator, cols, 24);
+        defer f.deinit();
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        const ar = arena.allocator();
+        try paint(ar, &f, a, .{});
+        // Every ticket on the tab has its whole key on screen, with no
+        // ellipsis eating it.
+        for (a.tab().issues) |iss| {
+            const y = (try findRow(ar, &f, iss.key)) orelse {
+                // A folded group hides its tickets; only the unfolded
+                // ones are the point here.
+                continue;
+            };
+            const row = try rowText(ar, &f, y);
+            const at = std.mem.indexOf(u8, row, iss.key).?;
+            const after = row[at + iss.key.len ..];
+            try testing.expect(!std.mem.startsWith(u8, after, "\u{2026}"));
+        }
+        // The header's labels are words with air between them, never
+        // two run together.
+        const hy = (try findRow(ar, &f, "KEY")).?;
+        const head = try rowText(ar, &f, hy);
+        try testing.expect(std.mem.indexOf(u8, head, "STATUSASSIGN") == null);
+        try testing.expect(std.mem.indexOf(u8, head, "ASSIGNEEUPDATED") == null);
+        try testing.expect(std.mem.indexOf(u8, head, "SUMMARY") != null);
+    }
+    // At 60 the assignee went whole; the key and the summary are there.
+    a.resize(60, 24);
+    var f = try Frame.init(testing.allocator, 60, 24);
+    defer f.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    try paint(arena.allocator(), &f, a, .{});
+    const head = try rowText(arena.allocator(), &f, (try findRow(arena.allocator(), &f, "KEY")).?);
+    try testing.expect(std.mem.indexOf(u8, head, "ASSIGNEE") == null);
+    try testing.expect((try findRow(arena.allocator(), &f, "ENG-2")) != null);
+}
+
 test "the JQL editor paints its box with the caret and a click places it" {
     const h = try app_mod.Harness.start(.{ .tabs = &app_mod.work_tabs }, .work);
     defer h.stop();
@@ -2226,7 +2235,7 @@ test "the JQL editor paints its box with the caret and a click places it" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const ar = arena.allocator();
-    _ = try a.onKey("shift+e");
+    _ = try a.onKey("shift+j");
     try paint(ar, &f, a, .{});
     const title_y = (try findRow(ar, &f, " JQL — type to edit")).?;
     const line = try rowText(ar, &f, title_y + 1);
@@ -2515,4 +2524,29 @@ test "the hint row says `? keys` once: the entry it reserves room for, not that 
     const keys = a.hits.rectOf(hit.Target{ .hint = .help }) orelse return error.NoKeysHint;
     try a.click(keys.x, keys.y, false);
     try testing.expect(a.help);
+}
+
+test "hover help names each element: the assignee chip, a row, a hint entry — never one generic blurb" {
+    // hunt/findings-2026-09-23/integ-hover-help-generic.md
+    const h = try app_mod.Harness.start(.{ .tabs = &app_mod.work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    a.resize(120, 40);
+    var f = try Frame.init(testing.allocator, 120, 40);
+    defer f.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    try paint(arena.allocator(), &f, a, .{});
+    var buf: [96]u8 = undefined;
+    const Probe = struct {
+        fn at(app: *app_mod.App, t_: hit.Target, b: []u8) ![]const u8 {
+            const r = app.hits.rectOf(t_) orelse return error.NotPainted;
+            return app.helpAt(r.x, r.y, b).title;
+        }
+    };
+    try testing.expectEqualStrings("assignee:", try Probe.at(a, .{ .chip = .assignee }, &buf));
+    try testing.expectEqualStrings("Refresh", try Probe.at(a, .{ .chip = .refresh }, &buf));
+    try testing.expectEqualStrings("Row", try Probe.at(a, .{ .row = 1 }, &buf));
+    try testing.expectEqualStrings("r — refresh", try Probe.at(a, .{ .hint = .refresh }, &buf));
 }

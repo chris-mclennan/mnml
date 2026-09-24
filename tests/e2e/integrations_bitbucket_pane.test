@@ -71,7 +71,7 @@ expect screen contains " author: all "
 expect screen contains " target: any "
 expect screen contains " show: all"
 expect screen contains "Open + Draft · 2 repos, 3 PRs"
-expect screen contains "⏎ expand"
+expect screen contains "Enter expand"
 expect screen contains "q quit"
 
 # The footer lifts the 24-hour window: the day-old #1198 appears.
@@ -152,12 +152,17 @@ key shift+a
 wait 400
 expect screen contains "Fix the login redir"
 
-# The key sheet is the one keymap table; any other key closes it.
+# The key sheet is the one keymap table, in the family's one sheet
+# (the Jira pane opens the same): the keys that apply here, Esc closes
+# it and a stray key does not.
 type ?
 expect screen contains " Keys "
 expect screen contains "hide this repo (persists)"
 expect screen contains "cycle the scope"
-expect screen contains "approve / withdraw the approval"
+expect screen contains "the pull request's detail"
+expect screen contains "j/k scroll · Esc close"
+key z
+expect screen contains " Keys "
 key esc
 expect screen lacks " Keys "
 

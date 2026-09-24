@@ -66,6 +66,13 @@ pub const State = struct {
     /// **Account: Read** does. Everything else still works — which is
     /// exactly the case a `mine` tab's fallback exists for.
     deny_user: bool = false,
+    /// While set, every request whose path contains `fail_path`
+    /// (all of them when it is empty) answers `500` with an HTML body —
+    /// a proxy's error page, the way a Bitbucket outage looks from a
+    /// client. How a test proves a failed refetch keeps its rows.
+    failing: bool = false,
+    fail_path_buf: [64]u8 = undefined,
+    fail_path_len: u8 = 0,
     /// Requests served, 429s included.
     served: u32 = 0,
     /// Of those, the ones answered `304 Not Modified` — what a test
@@ -439,6 +446,9 @@ fn route(arena: Allocator, st: *State, req: Request) Allocator.Error!Reply {
     const q_at = std.mem.indexOfScalar(u8, req.target, '?');
     const path = if (q_at) |i| req.target[0..i] else req.target;
     const query = if (q_at) |i| req.target[i + 1 ..] else "";
+    if (st.failing and std.mem.indexOf(u8, path, st.fail_path_buf[0..st.fail_path_len]) != null) {
+        return .{ .status = 500, .body = "<html>oops</html>" };
+    }
 
     if (std.mem.eql(u8, path, "/2.0/user")) {
         // An access token belongs to a repository, a project or a

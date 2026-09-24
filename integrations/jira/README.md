@@ -75,7 +75,7 @@ example.
 | `[detail_modal.field_alias] Severity = "customfield_1"` | `.detail_modal = .{ .field_alias = .{ .{ .name = "Severity", .id = "customfield_1" } } }` | |
 | `[[tabs]] name` | `.tabs = .{ .{ .name = "…", … } }` | |
 | `kind = "work_assigned"` | `.kind = .work_assigned` | `work_open` · `work_reported` · `work_assigned` · `work_recently_done` · `work_recent` · `work_unified` · `jql_editable` · `filter` · `fix_version_tree` · `board_active_sprint` · `board_backlog` |
-| — | `.vars = .{ .{ .name = "project", .value = "ENG" }, .{ .name = "versions", .values = .{ "1.2.0" } } }` | a `jql_editable` tab's `{name}` holes. ZON has no string-keyed map, so this is a list of small structs — the shape `bumps.release_cut` and `field_alias` already use. `E` on the tab edits these and writes them back here |
+| — | `.vars = .{ .{ .name = "project", .value = "ENG" }, .{ .name = "versions", .values = .{ "1.2.0" } } }` | a `jql_editable` tab's `{name}` holes. ZON has no string-keyed map, so this is a list of small structs — the shape `bumps.release_cut` and `field_alias` already use. `J` on the tab edits these and writes them back here |
 | `mode = "current_release"` | `.mode = .current_release` | or `.next_release`; needs `.project` |
 | `jql = "…"` | `.jql = "…"` | a custom query |
 | `project`, `component` | `.project`, `.component` | |
@@ -91,7 +91,7 @@ example.
 | — | `.token_file = "~/…"` | port only: a file holding the token |
 | — | `.token_env = "JIRA_API_TOKEN"` | port only: the variable (this is the default) |
 | — | `.api = .v3` | port only: `.v2` for a site that answers `410` |
-| — | `.rate = .{ .per_sec = 0.33, .burst = 60, .cooldown_secs = 45, .max_block_secs = 120 }` | port only: the shared bucket's numbers (the reference's). The bucket is one file — `<root>/jira-ratelimit.json` — so every pane, the statusline poller and the Rust tracker take turns on one allowance and one 429 parks them all |
+| — | `.rate = .{ .per_sec = 0.33, .burst = 60, .cooldown_secs = 45, .max_block_secs = 120 }` | port only: the shared bucket's numbers (the reference's). The bucket is one file — `<root>/jira-ratelimit.json` — so every pane, the statusline poller and the Rust tracker take turns on one allowance and one 429 parks them all — for the `Retry-After` the site sent (then the request asks again, up to three tries, the SDK's `ratelimit.Retry` the Bitbucket pane uses too), or `cooldown_secs` when it sent none |
 | — | `.bitbucket_api_url`, `.bitbucket_token_env` | port only: the forge for post-merge pipelines (`BITBUCKET_ACCESS_TOKEN`) |
 | — | `.open_command = "open"` | port only: the browser command |
 
@@ -106,7 +106,12 @@ over `.jira_url`, either literally or as `@<path>` naming a file that
 holds the URL. It is there for the test double — `mnml-fake-jira
 --port 0 --url-file jira.url` writes the port it was actually given, so
 a script never picks a number and two runs never collide. Bitbucket's
-`$BITBUCKET_BASE_URL` is the same shape.
+`$BITBUCKET_BASE_URL` is the same shape, and wins over
+`.bitbucket_api_url` (where a ticket's linked pull requests are asked
+about). An `@<path>` whose file is still missing after 5 s is the
+setup screen ("The base URL override points nowhere.") and `--check`
+exits 1 naming it: the fake did not start, and no server — not the
+config's site — is asked instead.
 
 ## The screens
 
@@ -153,12 +158,14 @@ kanban) carries into `t`, `a` and `f`: the transition matches by name
 on every selected ticket and reports the ones skipped.
 
 **The filter** (`/`) narrows the tree and the kanban as it is typed; the
-**JQL editor** (`E`) is a box at the bottom with the tab's resolved
+**JQL editor** (`J`) is a box at the bottom with the tab's resolved
 query, every text-field affordance (arrows, Home/End, `Ctrl+A/E`,
 `Alt+←/→`, `Ctrl+W/U/K`, paste, a click places the caret), `Enter`
-runs it. The **key sheet** (`?`) is the built-in sections' —
-`▾ ── name ── (n)` headers, the chords in the accent — from the
-bindings that apply, so it cannot drift.
+runs it. The **key sheet** (`?`) is the family's one component
+(`sdk.pane.chrome.Painter.keySheet`, the Bitbucket pane's too) —
+`▾ ── name ── (n)` headers, the chords in the accent, a long label
+wrapped, `Esc` closes — from the bindings that apply, so it cannot
+drift.
 
 **Setup screens.** No config, a config that does not parse, one that
 cannot work, a scope with no tabs, no token: each names the file and
@@ -170,11 +177,13 @@ the next step and waits for `r`.
 |---|---|---|
 | any | `q`, `Ctrl+C` | quit |
 | any | `Esc` | clear the selection → clear the filter → close the detail pane → quit |
-| any | `r` | refresh (the cursor stays on its ticket) |
+| any | `r` | refresh (the cursor stays on its ticket) — after the first whole listing, a window onto what moved since, plus one search for which rows on screen moved OUT of the query (closed, reassigned away), which are dropped |
+| any | `R` | full refresh: the whole listing again |
 | any | `↑` `k` / `↓` `j`, PageUp / PageDown, `g` / `G`, Home / End | move |
 | detail open | `Ctrl+U` / `Ctrl+D` | scroll the detail pane |
 | tree | `Enter`, `Space` | fold a group · expand a ticket · open a PR · uncap a show-all row |
 | tree | `→` `l` / `←` `h` | expand / collapse (every PR row expands to its builds) |
+| tree | `E` / `C` | expand / collapse every group — the integration tree convention, the same pair the Bitbucket pane binds |
 | tree | `S` | select for a bulk action |
 | kanban | `Space` | select for a bulk action |
 | kanban | `>` | expand the card |
@@ -186,7 +195,7 @@ the next step and waits for `r`.
 | Fix Versions | `I` `X` `T` `V` `M` | dispatch implement / fix / triage / review · merge the PR through Claude Code (`V` / `M` on a PR row) |
 | detail open | `c` | comment |
 | any | `d` / `D` | detail pane / detail modal |
-| any | `/` · `E` · `?` | filter · JQL editor · keys |
+| any | `/` · `J` · `?` | filter · JQL editor (the vars editor on a `jql_editable` tab) · keys |
 
 Every row, chip, tab, picker entry and button is a click target sized
 to what it paints (`src/hit.zig`); a right click on a ticket row
@@ -222,7 +231,7 @@ is the session's, not the file's: a restart opens the tab back on
 `reported_window_days`.
 
 An editable tab wears its vars as header chips (`project: ENG`,
-`versions: 1.2.0 +1`). **`E`**, or a click on any of them, opens a small
+`versions: 1.2.0 +1`). **`J`**, or a click on any of them, opens a small
 editor: `↑↓` move, `⏎` types into the focused value, `a` adds one, `d`
 removes one, `s` (or `Ctrl+S`) saves, `Esc` cancels. `s` as well as
 `Ctrl+S` because `Ctrl+S` is the host's own save chord and a mounted

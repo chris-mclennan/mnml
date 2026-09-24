@@ -1,0 +1,38 @@
+# width: 120
+# height: 40
+# env: MNML_MARKETPLACE_LOCAL=market
+# env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/bitbucket.zon
+# env: BITBUCKET_BASE_URL=@${MNML_E2E_WORKSPACE}/bb.url
+# env: BITBUCKET_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/bucket.json
+# env: BITBUCKET_API_TOKEN=corpus-read-token
+# E / C open and shut every repo — the integration tree convention's
+# pair, the one the Jira pane binds too; the reference's e / c still
+# work. hunt/findings-2026-09-23/integ-tree-nav-convention.md (the
+# hunter's repro).
+shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --lifetime-secs 180 --log-file wire.jsonl >/dev/null 2>&1 & echo $! > fake-bb.pid
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 0, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs }, .{ .name = \"Merged\", .kind = .workspace_merged_prs }, .{ .name = \"Pipelines\", .kind = .workspace_pipelines } } }"
+write market/bitbucket_prs.zon ".{ .id = \"bitbucket_prs\", .label = \"Bitbucket PRs\", .version = \"0.2.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .args = .{ \"--only\", \"prs\" }, .description = \"Bitbucket PRs\", .commands = .{ .{ .id = \"bitbucket_prs.open\", .title = \"Bitbucket PRs: open\" } } }"
+command integrations.show_marketplace
+key i
+expect screen contains "installed bitbucket_prs"
+command integrations.open_as_tab
+command bitbucket_prs.open
+command view.toggle_tree
+command view.focus_pane
+expect within 15000 screen contains "(2 repos · 3 PRs)"
+# A PR row says OPEN in its STATE column; a folded repo header only
+# previews its first PR's number and title.
+expect screen contains "OPEN"
+key shift+c
+wait 500
+expect screen lacks "OPEN"
+key shift+e
+wait 500
+expect screen contains "OPEN"
+key c
+wait 500
+expect screen lacks "OPEN"
+key e
+wait 500
+expect screen contains "OPEN"
+shell kill "$(cat fake-bb.pid)" 2>/dev/null || true

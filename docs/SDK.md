@@ -245,6 +245,10 @@ the next backfill has to come back for.
 | Whether a pull request may merge, and why not | `pane.merge` |
 | A named confirm | `Painter.confirmBox` |
 | The hint row, every `key label` a hit | `Painter.hintRow` |
+| The `?` key sheet — ` Keys ` box on the overlay ground, `▾ ── name ── (n)` headers, chords padded to the widest, a long label wrapped under itself, `j/k scroll · Esc close`; Esc / `?` / `q` close it and a stray key is ignored; a row runs its key | `Painter.keySheet`, `pane.keysheet.key` / `scroll` |
+| A chord spelled the family's one way — `Enter`, `Space`, `PgDn`, `Home`, `Shift+Tab`, `Ctrl+D`, `Alt+↑`, `D` for `shift+d` — on the sheet, the hint row and a mode's help line | `pane.keysheet.chord` / `chords` |
+| A count's noun — `1 PR`, `3 PRs` | `pane.text.noun` |
+| The tree keys: `→`/`←` expand / collapse, `Enter`/`Space` toggle, `E`/`C` every node open / shut | (the convention; both first-party panes bind it) |
 | State colours | `Theme.prState` / `pipelineState` / `ticketStatus` |
 | A chevron that folds under the mouse | `Painter.chevron` |
 
@@ -665,6 +669,23 @@ if (try sdk.Ipc.fromEnv(gpa, io, env)) |ipc_const| {
 }
 ```
 
+### Hover help — `Mount.hover` and `sdk.pane.help`
+
+mnml's info view explains whatever the pointer rests on. A mounted pane
+paints every cell itself, so only the pane knows that the cell under
+the pointer is an `assignee:` chip rather than a row: on every pointer
+move (`input` → `hover`), look the cell up in your hit map and call
+`mount.hover(title, body)`. The SDK sends it only to a host that shows
+it (`hello.capabilities.hover_help`) and only when it changed, so
+calling it on every move is free; `""` clears it. The toolkit's own
+chrome has one entry each in `sdk.pane.help.common` — the refresh and
+`?` chips, a tab, the filter pill, a tree or list row, a chevron, a
+build line, the PR row's Open / Review / Merge, the detail panel, the
+scrollbar, a picker row, the key sheet — and `help.key` spells a
+hint-row entry, so the same element reads the same in every pane; your
+own chips and pages get your own words. Both first-party integrations
+do this (`App.helpAt`).
+
 ### A figure's hover lists what it counts
 
 **The design-language rule: a statusline figure's hover lists what the
@@ -864,6 +885,16 @@ still says it was sent. `splitUrl` also drops a `user:password@`
 authority outright.
 
 mnml's own REQUESTS pane (`integrations.requests`) reads these files.
+
+### A 429 — `ratelimit.Retry`
+
+Read `Retry-After` with `ratelimit.parseRetryAfter`, park the shared
+bucket with `Limiter.penalize(retry_after)` (the service's default
+cooldown when the server sent none), and ask `Retry.next(attempt,
+retry_after)` how long to wait before the next try — null means give
+up now: out of attempts, or a park longer than `max_backoff_secs`,
+which is not slept through inside a request. Both first-party
+integrations answer a 429 through it.
 
 ## The warmer — pacing, one warmer per service, windows
 
@@ -1194,6 +1225,23 @@ frames back with `sdk.wire.receive(sdk.SiblingMessage, …)`. mnml's own
 test does exactly this against the sample
 (`src/app/mount_pane.zig`, "a mounted sample integration paints…").
 
+### Pointing an integration at a fake — `sdk.base_url`
+
+A test points an integration at its fake server with
+`$<SERVICE>_BASE_URL`: a URL, or `@<path>` naming the file the fake
+writes once it listens (`--port 0 --url-file <path>`), so no script
+ever picks a port. Read it with
+`sdk.base_url.fromEnv(gpa, io, env, "JIRA_BASE_URL", .{})`: `.unset`
+leaves the config's URL standing, `.url` is the override, and
+`.unreadable` — an `@<path>` whose file is still missing or empty
+after the wait (5 s) — is a sentence for the setup screen. On
+`.unreadable` the integration builds **no client and asks no server**:
+the fake did not start, and neither the config's URL nor the
+service's production API is a fallback for it. Both first-party
+integrations read their overrides here (Jira reads
+`$JIRA_BASE_URL` and, for a ticket's linked pull requests,
+`$BITBUCKET_BASE_URL`).
+
 ### Proving a result outlives its job — `sdk.testing.Scribble`
 
 A test for the rule above passes whatever the code does unless the
@@ -1238,6 +1286,8 @@ sdk/mnml-sdk/src/
                  the splice the host's settings write through too
   warm.zig       the warmer: pacing with priority, one warmer per
                  service, delta windows, intervals, the budget floor
+  base_url.zig   the `$<SERVICE>_BASE_URL` override — a URL or `@<file>`;
+                 a file that never arrives is an error, never a fallback
   testing.zig    test allocators a suite borrows — Scribble, which
                  poisons what it frees so a slice into a let-go arena
                  reads as 0xAA rather than as luck
@@ -1253,6 +1303,8 @@ sdk/mnml-sdk/src/
   pane/work.zig    a pane's slow work off its event loop
   pane/expect.zig  the assertions your own tests make about the chrome
   pane/consistency_test.zig  the toolkit painted from both panes' vocabularies, cell for cell
+  pane/columns.zig how a table gives way when narrow: shrink to floors,
+                   then drop whole by rank; the key column never clips
 sdk/clients/ratelimit_broker.py   the broker's twenty-line Python client
 sdk/examples/hello/   the small list the host's mount test spawns (`zig build sdk-example`)
 integrations/sample/  the official sample (`zig build sample-integration`, or its own build.zig)

@@ -188,6 +188,10 @@ pub const TransitionPicker = struct {
     selected: usize = 0,
     error_text: []const u8 = "",
     targets: usize = 1,
+    /// Typed while the list was still on the wire: a `1`–`9` jump, and
+    /// an Enter — played when it lands.
+    pending_jump: ?usize = null,
+    pending_commit: bool = false,
 
     pub fn init(gpa: Allocator, key: []const u8) Allocator.Error!TransitionPicker {
         var owned = std.heap.ArenaAllocator.init(gpa);

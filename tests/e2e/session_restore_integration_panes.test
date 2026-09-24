@@ -1,0 +1,57 @@
+# width: 160
+# height: 40
+# env: MNML_MARKETPLACE_LOCAL=market
+# env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/bitbucket.zon
+# env: BITBUCKET_BASE_URL=@${MNML_E2E_WORKSPACE}/bb.url
+# env: BITBUCKET_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/bucket.json
+# env: BITBUCKET_API_TOKEN=corpus-read-token
+# env: JIRA_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/jira-bucket.json
+# env: JIRA_API_TOKEN=fake-token
+# env: JIRA_BASE_URL=@${MNML_E2E_WORKSPACE}/jira.url
+# The Jira and Bitbucket panes someone keeps open all day come back
+# after a restart. A mounted integration is a session kind: the file
+# names the manifest and the command line that opened it, and a restore
+# reopens it through today's manifest — the child fetches today's rows.
+# hunt/findings-2026-09-23/integ-panes-lost-on-restart.md
+shell "$MNML_FAKE_JIRA" --port 0 --url-file jira.url --life-secs 180 --quiet --pid-file fake-jira.pid >/dev/null 2>&1 &
+shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --lifetime-secs 180 >/dev/null 2>&1 & echo $! > fake-bb.pid
+wait 500
+write sdk/mnml-sdk/build.zig ""
+write integrations/jira/build.zig ""
+write integrations/jira/manifest.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } } }"
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"https://jira.invalid\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .rate = .{ .per_sec = 1000, .burst = 1000 }, .tabs = .{ .{ .name = \"My open work items\", .kind = .work_open } } }"
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 0, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs } } }"
+write market/bitbucket_prs.zon ".{ .id = \"bitbucket_prs\", .label = \"Bitbucket PRs\", .version = \"0.2.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .args = .{ \"--only\", \"prs\" }, .description = \"Bitbucket PRs\", .commands = .{ .{ .id = \"bitbucket_prs.open\", .title = \"Bitbucket PRs: open\" } } }"
+write notes.txt "notes\n"
+command integrations.show_in_dev
+expect screen contains "INTEGRATIONS"
+drag 30 5 60 5
+key i
+expect within 10000 screen contains "installed jira_work from"
+expect within 10000 screen lacks "installed jira_work from"
+command integrations.show_marketplace
+key i
+expect screen contains "installed bitbucket_prs"
+command view.toggle_tree
+open notes.txt
+command jira_work.open
+command bitbucket_prs.open
+expect within 30000 screen contains "JIRA WORK ("
+expect within 30000 screen contains "(2 repos"
+
+command session.save
+expect file .mnml/session.zon contains ".mount"
+expect file .mnml/session.zon contains "jira_work"
+expect file .mnml/session.zon contains "bitbucket_prs"
+
+# Close both panes, so the restore has to bring them back rather than
+# find them already open.
+open notes.txt
+command view.close_others
+expect screen lacks "JIRA WORK"
+expect screen lacks "BITBUCKET PRS"
+
+command session.restore
+expect within 30000 screen contains "JIRA WORK ("
+expect within 30000 screen contains "(2 repos"
+shell kill "$(cat fake-jira.pid)" "$(cat fake-bb.pid)" 2>/dev/null || true

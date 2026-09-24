@@ -7,7 +7,7 @@
 //! `j`/`k` and the arrows move, `enter`/`space` toggle a tree row,
 //! `o` opens on the web, `y` copies the URL, `d` the detail, `a` the
 //! approval, `m` open↔merged, `tab` the next tab, `1`–`9` a tab by
-//! number, `e`/`c` open / close every repo, `x` hides one, `H` un-hides
+//! number, `E`/`C` (and the reference's `e`/`c`) open / close every repo, `x` hides one, `H` un-hides
 //! them all, `s` cycles the scope, `alt+↑`/`alt+↓` reorder, `ctrl+u` /
 //! `ctrl+d` scroll the detail. Added here: `?` for this sheet, `/`
 //! for the filter, `esc` to leave either, and the toolbar's chips —
@@ -18,6 +18,7 @@
 
 const std = @import("std");
 const cfg = @import("config.zig");
+const sdk = @import("mnml_sdk");
 
 pub const Action = enum {
     quit,
@@ -101,6 +102,11 @@ pub const Scope = enum {
     prs,
     /// A pipelines tab.
     pipelines,
+    /// A row, on a pull-request tab — what only a pull request has
+    /// (its merge).
+    pr_row,
+    /// The detail open, on a pull-request tab.
+    pr_detail,
 };
 
 pub const Binding = struct {
@@ -114,7 +120,7 @@ pub const Binding = struct {
     /// Painted on the hint row (in table order) when it applies.
     hint: bool = false,
     /// The sheet's section.
-    section: []const u8 = "navigate",
+    section: []const u8 = "navigation",
 };
 
 pub const table = [_]Binding{
@@ -127,8 +133,8 @@ pub const table = [_]Binding{
     .{ .keys = &.{ "enter", "space" }, .action = .activate, .title = "expand / collapse the row", .scope = .tree, .hint = true, .section = "tree" },
     .{ .keys = &.{ "right", "l" }, .action = .expand, .title = "expand, or step into the first child", .scope = .tree, .section = "tree" },
     .{ .keys = &.{ "left", "h" }, .action = .collapse, .title = "collapse, or step up to the repo", .scope = .tree, .section = "tree" },
-    .{ .keys = &.{"e"}, .action = .expand_all, .title = "expand every repo", .scope = .tree, .section = "tree" },
-    .{ .keys = &.{"c"}, .action = .collapse_all, .title = "collapse every repo", .scope = .tree, .section = "tree" },
+    .{ .keys = &.{ "shift+e", "e" }, .action = .expand_all, .title = "expand every repo", .scope = .tree, .section = "tree" },
+    .{ .keys = &.{ "shift+c", "c" }, .action = .collapse_all, .title = "collapse every repo", .scope = .tree, .section = "tree" },
     .{ .keys = &.{"x"}, .action = .hide_repo, .title = "hide this repo (persists)", .scope = .tree, .section = "tree" },
     .{ .keys = &.{"shift+h"}, .action = .unhide_all, .title = "un-hide every repo (persists)", .scope = .tree, .section = "tree" },
     .{ .keys = &.{"s"}, .action = .cycle_scope, .title = "cycle the scope: all → recent → explicit (persists)", .scope = .tree, .section = "tree" },
@@ -136,11 +142,11 @@ pub const table = [_]Binding{
     .{ .keys = &.{"alt+down"}, .action = .reorder_down, .title = "move this repo down (persists)", .scope = .tree, .section = "tree" },
     .{ .keys = &.{"o"}, .action = .open_web, .title = "open on the web", .scope = .row, .hint = true, .section = "row" },
     .{ .keys = &.{"y"}, .action = .yank_url, .title = "copy the URL", .scope = .row, .section = "row" },
-    .{ .keys = &.{"d"}, .action = .toggle_detail, .title = "the pull request's detail", .hint = true, .section = "row" },
-    .{ .keys = &.{"a"}, .action = .toggle_approval, .title = "approve / withdraw the approval", .scope = .detail, .hint = true, .section = "row" },
+    .{ .keys = &.{"d"}, .action = .toggle_detail, .title = "the pull request's detail", .scope = .prs, .hint = true, .section = "row" },
+    .{ .keys = &.{"a"}, .action = .toggle_approval, .title = "approve / withdraw the approval", .scope = .pr_detail, .hint = true, .section = "row" },
     .{ .keys = &.{"ctrl+d"}, .action = .detail_down, .title = "scroll the detail down", .scope = .detail, .section = "row" },
     .{ .keys = &.{"ctrl+u"}, .action = .detail_up, .title = "scroll the detail up", .scope = .detail, .section = "row" },
-    .{ .keys = &.{"shift+m"}, .action = .merge_pr, .title = "merge (through Claude Code)", .scope = .row, .section = "row" },
+    .{ .keys = &.{"shift+m"}, .action = .merge_pr, .title = "merge (through Claude Code)", .scope = .pr_row, .section = "row" },
     .{ .keys = &.{"shift+s"}, .action = .filter_status, .title = "status: Open / Draft / Merged / Declined", .scope = .prs, .section = "filters" },
     .{ .keys = &.{"shift+u"}, .action = .filter_author, .title = "author: all / me / one seen", .scope = .prs, .section = "filters" },
     .{ .keys = &.{"shift+t"}, .action = .filter_target, .title = "target branch", .scope = .prs, .section = "filters" },
@@ -150,7 +156,7 @@ pub const table = [_]Binding{
     .{ .keys = &.{"shift+p"}, .action = .filter_type, .title = "pipeline type", .scope = .pipelines, .section = "filters" },
     .{ .keys = &.{"shift+s"}, .action = .filter_pstatus, .title = "status: successful / failed / …", .scope = .pipelines, .section = "filters" },
     .{ .keys = &.{"shift+t"}, .action = .filter_trigger, .title = "trigger type", .scope = .pipelines, .section = "filters" },
-    .{ .keys = &.{"m"}, .action = .toggle_merged, .title = "open ↔ merged", .hint = true, .section = "tabs" },
+    .{ .keys = &.{"m"}, .action = .toggle_merged, .title = "open ↔ merged", .scope = .prs, .hint = true, .section = "tabs" },
     .{ .keys = &.{"tab"}, .action = .next_tab, .title = "next tab", .section = "tabs" },
     .{ .keys = &.{ "backtab", "shift+tab" }, .action = .prev_tab, .title = "previous tab", .section = "tabs" },
     .{ .keys = &.{"1"}, .action = .tab_1, .title = "tab 1", .section = "tabs" },
@@ -170,7 +176,7 @@ pub const table = [_]Binding{
     .{ .keys = &.{ "q", "ctrl+c" }, .action = .quit, .title = "quit", .hint = true, .section = "pane" },
 };
 
-pub const sections = [_][]const u8{ "navigate", "tree", "row", "filters", "tabs", "pane" };
+pub const sections = [_][]const u8{ "navigation", "tree", "row", "filters", "tabs", "pane" };
 
 /// What is true of the focused row, for scope checks.
 pub const Context = struct {
@@ -189,6 +195,8 @@ pub const Context = struct {
             .detail => c.detail_open,
             .prs => c.family == .prs,
             .pipelines => c.family == .pipelines,
+            .pr_row => c.family == .prs and c.on_row,
+            .pr_detail => c.family == .prs and c.detail_open,
         };
     }
 };
@@ -209,42 +217,11 @@ pub fn bindingOf(action: Action) ?Binding {
     return null;
 }
 
-/// The key a hint shows for a spec: `↑`, `⏎`, `⇥`, `⌥↑`, `^d`, or
-/// the letter.
+/// The key a hint or the sheet shows for a spec: `↑`, `Enter`,
+/// `Tab`, `Alt+↑`, `Ctrl+D`, or the letter — the family's one spelling
+/// (`sdk.pane.keysheet.chord`), the words the Jira pane uses too.
 pub fn keyLabel(spec: []const u8) []const u8 {
-    const pairs = [_][2][]const u8{
-        .{ "enter", "⏎" },
-        .{ "space", "␣" },
-        .{ "up", "↑" },
-        .{ "down", "↓" },
-        .{ "left", "←" },
-        .{ "right", "→" },
-        .{ "tab", "⇥" },
-        .{ "backtab", "⇤" },
-        .{ "esc", "esc" },
-        .{ "pageup", "⇞" },
-        .{ "pagedown", "⇟" },
-        .{ "home", "⇱" },
-        .{ "end", "⇲" },
-        .{ "alt+up", "⌥↑" },
-        .{ "alt+down", "⌥↓" },
-        .{ "ctrl+d", "^d" },
-        .{ "ctrl+u", "^u" },
-        .{ "ctrl+c", "^c" },
-        .{ "shift+g", "G" },
-        .{ "shift+h", "H" },
-        .{ "shift+s", "S" },
-        .{ "shift+u", "U" },
-        .{ "shift+t", "T" },
-        .{ "shift+a", "A" },
-        .{ "shift+b", "B" },
-        .{ "shift+p", "P" },
-        .{ "shift+m", "M" },
-        .{ "shift+r", "R" },
-        .{ "shift+tab", "⇤" },
-    };
-    for (pairs) |p| if (std.mem.eql(u8, p[0], spec)) return p[1];
-    return spec;
+    return sdk.pane.keysheet.chord(spec);
 }
 
 /// The bindings the hint row paints, in table order, for the context.
@@ -270,6 +247,13 @@ test "the reference's keys dispatch to their actions, scoped to where they apply
     try t.expectEqual(Action.down, lookup("j", .{}).?);
     try t.expectEqual(Action.end, lookup("shift+g", .{}).?);
     try t.expectEqual(Action.unhide_all, lookup("shift+h", tree).?);
+    // E / C: the integration tree convention's pair, the one the Jira
+    // pane binds; the reference's e / c still work
+    // (hunt/findings-2026-09-23/integ-tree-nav-convention.md).
+    try t.expectEqual(Action.expand_all, lookup("shift+e", tree).?);
+    try t.expectEqual(Action.collapse_all, lookup("shift+c", tree).?);
+    try t.expectEqual(Action.expand_all, lookup("e", tree).?);
+    try t.expectEqual(Action.collapse_all, lookup("c", tree).?);
     try t.expectEqual(Action.activate, lookup("enter", tree).?);
     try t.expectEqual(Action.expand, lookup("right", tree).?);
     try t.expectEqual(Action.reorder_up, lookup("alt+up", tree).?);
@@ -303,6 +287,25 @@ test "the reference's keys dispatch to their actions, scoped to where they apply
     try t.expect(lookup("z", tree) == null);
 }
 
+test "a pipelines tab binds and offers only what does something there" {
+    // hunt/findings-2026-09-23/integ-bb-pipelines-dead-actions.md: the
+    // hint row offered `d detail` (a `(no PR focused)` panel), `m
+    // open↔merged` (no merged view) and then `a approve`.
+    const pipes: Context = .{ .on_tree = true, .on_row = true, .detail_open = true, .family = .pipelines };
+    for ([_][]const u8{ "d", "a", "m", "shift+m" }) |k| try t.expect(lookup(k, pipes) == null);
+    var buf: [table.len]Binding = undefined;
+    for (hints(pipes, &buf)) |b| switch (b.action) {
+        .toggle_detail, .toggle_approval, .toggle_merged, .merge_pr => return error.TestUnexpectedResult,
+        else => {},
+    };
+    // The PR family keeps all four.
+    const prs: Context = .{ .on_tree = true, .on_row = true, .detail_open = true, .family = .prs };
+    try t.expectEqual(Action.toggle_detail, lookup("d", prs).?);
+    try t.expectEqual(Action.toggle_approval, lookup("a", prs).?);
+    try t.expectEqual(Action.toggle_merged, lookup("m", prs).?);
+    try t.expectEqual(Action.merge_pr, lookup("shift+m", prs).?);
+}
+
 test "every action in the table is reachable and the hint row is a subset of it" {
     var seen = std.enums.EnumSet(Action).initEmpty();
     for (&table) |b| seen.insert(b.action);
@@ -317,8 +320,9 @@ test "every action in the table is reachable and the hint row is a subset of it"
     for (hs) |b| try t.expect(bindingOf(b.action) != null);
     // On a flat list without a detail the tree-only and detail-only hints are gone.
     const flat = hints(.{}, &buf);
-    for (flat) |b| try t.expect(b.scope == .any);
-    try t.expectEqualStrings("⏎", keyLabel("enter"));
-    try t.expectEqualStrings("⌥↑", keyLabel("alt+up"));
+    for (flat) |b| try t.expect(b.scope == .any or b.scope == .prs);
+    try t.expectEqualStrings("Enter", keyLabel("enter"));
+    try t.expectEqualStrings("Alt+↑", keyLabel("alt+up"));
+    try t.expectEqualStrings("E", keyLabel("shift+e"));
     try t.expectEqualStrings("q", keyLabel("q"));
 }

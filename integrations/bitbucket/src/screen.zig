@@ -191,11 +191,11 @@ fn paintHeader(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
             sub = try std.fmt.allocPrint(arena, "  ({d} of {d})", .{ app.filter_shown, app.filter_total });
         } else if (ts.fetched) {
             sub = switch (ts.data) {
-                .repo_pr_tree => try std.fmt.allocPrint(arena, "  ({d} repos · {d} PRs{s})", .{ ts.repos, ts.items, if (ts.errored > 0) " · some errored" else "" }),
-                .repo_tree => try std.fmt.allocPrint(arena, "  ({d} repos)", .{ts.repos}),
-                .pull_requests => try std.fmt.allocPrint(arena, "  ({d} PRs)", .{ts.items}),
-                .pipelines => try std.fmt.allocPrint(arena, "  ({d} pipelines)", .{ts.items}),
-                .branches => try std.fmt.allocPrint(arena, "  ({d} branches)", .{ts.items}),
+                .repo_pr_tree => try std.fmt.allocPrint(arena, "  ({d} {s} · {d} {s})", .{ ts.repos, sdk.pane.text.noun(ts.repos, "repo", "repos"), ts.items, sdk.pane.text.noun(ts.items, "PR", "PRs") }),
+                .repo_tree => try std.fmt.allocPrint(arena, "  ({d} {s})", .{ ts.repos, sdk.pane.text.noun(ts.repos, "repo", "repos") }),
+                .pull_requests => try std.fmt.allocPrint(arena, "  ({d} {s})", .{ ts.items, sdk.pane.text.noun(ts.items, "PR", "PRs") }),
+                .pipelines => try std.fmt.allocPrint(arena, "  ({d} {s})", .{ ts.items, sdk.pane.text.noun(ts.items, "pipeline", "pipelines") }),
+                .branches => try std.fmt.allocPrint(arena, "  ({d} {s})", .{ ts.items, sdk.pane.text.noun(ts.items, "branch", "branches") }),
             };
         }
         // A refetch over rows that are already there keeps the count
@@ -225,6 +225,12 @@ fn paintHeader(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
             const nerd = p.nerd;
             chips[n] = .{ .text = " usage ", .target = .{ .chip = .usage }, .active = false, .icon = if (nerd) " " ++ usage_nerd ++ " " else " " ++ usage_ascii ++ " " };
             n += 1;
+            // The three repo pages act on the repo under the cursor (or
+            // the tab's own); with none, they are not offered at all.
+            if (app.pipelinesRepo((try app.visible(arena)).rows) == null) {
+                _ = try p.c.capsHeader(1, y, label, sub, ts.fetched_at, app.now_secs, chips[0..n]);
+                return;
+            }
             chips[n] = .{ .text = " caches ", .target = .{ .chip = .caches }, .active = false, .icon = if (nerd) " " ++ caches_nerd ++ " " else " " ++ caches_ascii ++ " " };
             n += 1;
             chips[n] = .{ .text = " schedules ", .target = .{ .chip = .schedules }, .active = false, .icon = if (nerd) " " ++ schedules_nerd ++ " " else " " ++ schedules_ascii ++ " " };
@@ -327,13 +333,31 @@ fn paintBody(arena: Allocator, p: *Painter, body: Box) Allocator.Error!void {
     }
 }
 
+/// No row on the tab carries anything the server said: never fetched,
+/// an empty list, or a tree whose every repo is an error row.
+fn nothingToShow(ts: *const app_mod.TabState) bool {
+    if (!ts.fetched) return true;
+    return switch (ts.data) {
+        .repo_pr_tree => |repos| for (repos) |r| {
+            if (r.error_label.len == 0) break false;
+        } else true,
+        .repo_tree => |repos| for (repos) |r| {
+            if (r.error_label.len == 0) break false;
+        } else true,
+        else => ts.data.len() == 0,
+    };
+}
+
 fn paintList(arena: Allocator, p: *Painter, box: Box) Allocator.Error!void {
     const app = p.app;
     const th = p.th;
     const ts = app.activeTab();
     if (box.h == 0 or box.w < 4) return;
-    // A tab that failed paints the reason instead of an empty list.
-    if (ts.error_text.len > 0) {
+    // A tab that failed with nothing to show paints the reason instead
+    // of an empty list. One that failed over rows it already had keeps
+    // them: the header says `fetch failed: …`, and the rows are still
+    // the last thing the server said.
+    if (ts.error_text.len > 0 and nothingToShow(ts)) {
         _ = p.text(box.x + 2, box.y, box.w -| 2, ts.spec.name, th.label());
         if (box.h > 2) _ = p.text(box.x + 2, box.y + 2, box.w -| 2, ts.error_text, th.bad());
         if (box.h > 4) _ = p.text(box.x + 2, box.y + 4, box.w -| 2, "r retries · see the README's Auth section", th.mutedText());
@@ -639,11 +663,11 @@ fn paintDetail(arena: Allocator, p: *Painter, box: Box) Allocator.Error!void {
 fn modeHint(app: *App) ?[]const u8 {
     return switch (app.mode) {
         .list => null,
-        .filter => "type to filter · ⏎ commit · esc clear · ^u wipe · ↑↓ leave",
-        .menu => "↑↓ / jk move · ⏎ run · esc close",
-        .picker => if (app.picker) |pk| (if (pk.kind.multi()) "type to filter · ↑↓ move · ␣ toggle · ⏎ close · esc cancel" else "type to filter · ↑↓ move · ⏎ pick · esc cancel") else null,
-        .help => "j k scroll · any other key closes",
-        .confirm => "⏎ merge through Claude Code · ←→ strategy · esc cancel",
+        .filter => "type to filter · Enter commit · Esc clear · Ctrl+U wipe · ↑↓ leave",
+        .menu => "↑↓ / j k move · Enter run · Esc close",
+        .picker => if (app.picker) |pk| (if (pk.kind.multi()) "type to filter · ↑↓ move · Space toggle · Enter close · Esc cancel" else "type to filter · ↑↓ move · Enter pick · Esc cancel") else null,
+        .help => sdk.pane.keysheet.footer,
+        .confirm => "Enter merge through Claude Code · ←→ strategy · Esc cancel",
     };
 }
 
@@ -700,6 +724,8 @@ fn paintMenu(arena: Allocator, p: *Painter) Allocator.Error!void {
             w = @max(w, Painter.width(b.title) + Painter.width(keymap.keyLabel(b.keys[0])) + 5);
         },
         .pick => w = @max(w, Painter.width(if (i < m.values.len) m.values[i].label else "") + 4),
+        .open_url => |o| w = @max(w, Painter.width(o.label) + 2),
+        .cancel => w = @max(w, Painter.width("cancel") + 2),
     };
     const h: u16 = @intCast(m.items.len + 2);
     const x: u16 = if (m.col + w + 2 <= p.f.cols) m.col else p.f.cols -| (w + 2);
@@ -727,6 +753,8 @@ fn paintMenu(arena: Allocator, p: *Painter) Allocator.Error!void {
                 const line = try std.fmt.allocPrint(arena, " {s} {s}", .{ if (v.checked) tick else " ", v.label });
                 _ = p.text(x + 1, row_y, w, line, style);
             },
+            .open_url => |o| _ = p.text(x + 1, row_y, w, try std.fmt.allocPrint(arena, " {s}", .{o.label}), style),
+            .cancel => _ = p.text(x + 1, row_y, w, " cancel", style),
         }
         p.app.hits.add(.{ .x = x, .y = row_y, .w = w + 2, .h = 1 }, .{ .menu_item = i });
     }
@@ -797,64 +825,34 @@ fn paintFrame(p: *Painter, b: Box, style: Style) void {
     p.c.frameBox(.{ .x = b.x, .y = b.y, .w = b.w, .h = b.h }, style);
 }
 
-/// The key sheet: mnml's help shape — a centred box, a section
-/// header per group, `key  title` rows, the hint at the bottom.
+/// The key sheet: the family's one component
+/// (`sdk.pane.chrome.Painter.keySheet`), fed the bindings that apply
+/// here, by section — the same sheet the Jira pane opens.
 fn paintSheet(arena: Allocator, p: *Painter) Allocator.Error!void {
     const app = p.app;
-    const th = p.th;
-    const w: u16 = @min(p.f.cols -| 4, 70);
-    const h: u16 = @min(p.f.rows -| 2, 40);
-    if (w < 20 or h < 6) return;
-    const x = (p.f.cols - w) / 2;
-    const y = (p.f.rows - h) / 2;
-    const box: Box = .{ .x = x, .y = y, .w = w, .h = h };
-    p.fill(box, .{ .fg = th.fg, .bg = th.cursor_line });
-    paintFrame(p, box, th.overlayBorder());
-    _ = p.text(x + 2, y, 10, " Keys ", .{ .fg = th.accent, .bg = th.cursor_line, .mods = .{ .bold = true } });
-    p.app.hits.add(.{ .x = x, .y = y, .w = w, .h = h }, .sheet);
-    // The rows: a header per section, then its bindings.
-    const Row = union(enum) { section: []const u8, binding: keymap.Binding };
-    var rows: std.ArrayList(Row) = .empty;
+    const shown = try app.visible(arena);
+    const ctx = app.keyContext(shown.rows);
+    var rows: std.ArrayList(Chrome.SheetRowSpec) = .empty;
     for (keymap.sections) |sec| {
-        try rows.append(arena, .{ .section = sec });
-        for (&keymap.table) |b| if (std.mem.eql(u8, b.section, sec)) try rows.append(arena, .{ .binding = b });
-    }
-    const body_h = h -| 3;
-    const max_scroll = rows.items.len -| body_h;
-    if (app.help_scroll > max_scroll) app.help_scroll = max_scroll;
-    var ry = y + 1;
-    var i = app.help_scroll;
-    while (i < rows.items.len and ry < y + 1 + body_h) : (i += 1) {
-        switch (rows.items[i]) {
-            .section => |name| {
-                const line = try std.fmt.allocPrint(arena, "── {s} ──", .{name});
-                _ = p.text(x + 2, ry, w -| 4, line, .{ .fg = th.accent, .bg = th.cursor_line, .mods = .{ .bold = true } });
-            },
-            .binding => |b| {
-                var keys: std.ArrayList(u8) = .empty;
-                for (b.keys, 0..) |k, ki| {
-                    if (ki > 0) try keys.appendSlice(arena, " ");
-                    try keys.appendSlice(arena, keymap.keyLabel(k));
-                }
-                _ = p.text(x + 4, ry, 14, keys.items, .{ .fg = th.accent, .bg = th.cursor_line });
-                const scope: []const u8 = switch (b.scope) {
-                    .any => "",
-                    .tree => "  (tree)",
-                    .row => "  (row)",
-                    .detail => "  (detail open)",
-                    .prs => "  (PR tab)",
-                    .pipelines => "  (pipelines tab)",
-                };
-                const line = try std.fmt.allocPrint(arena, "{s}{s}", .{ b.title, scope });
-                _ = p.text(x + 19, ry, w -| 21, line, .{ .fg = th.fg, .bg = th.cursor_line });
-                // A row of the sheet runs what its chord runs: reading
-                // the keys and using them are the same gesture.
-                p.app.hits.add(.{ .x = x + 1, .y = ry, .w = w -| 2, .h = 1 }, .{ .sheet_row = b.action });
-            },
+        var any = false;
+        var tabs_row = false;
+        for (&keymap.table) |b| {
+            if (!std.mem.eql(u8, b.section, sec) or !ctx.allows(b.scope)) continue;
+            if (!any) try rows.append(arena, .{ .section = sec });
+            any = true;
+            // `1`…`9` is one row, as the Jira sheet has it.
+            if (b.action.tabNumber() != null) {
+                if (tabs_row) continue;
+                tabs_row = true;
+                try rows.append(arena, .{ .chord = "1-9", .label = "tab by number" });
+                continue;
+            }
+            // A row of the sheet runs what its chord runs: reading
+            // the keys and using them are the same gesture.
+            try rows.append(arena, .{ .chord = try sdk.pane.keysheet.chords(arena, b.keys), .label = b.title, .target = .{ .sheet_row = b.action } });
         }
-        ry += 1;
     }
-    _ = p.text(x + 2, y + h - 2, w -| 4, "j/k scroll · any other key closes", .{ .fg = th.muted, .bg = th.cursor_line });
+    try p.c.keySheet(rows.items, &app.help_scroll, .sheet);
 }
 
 // ─── the text of a frame, for the tests ──────────────────────────────────
@@ -964,6 +962,10 @@ test "the pane paints the header, the strip, the pill, the reference's columns, 
     try t.expect(!has(scr, "▾"));
     try t.expect(!has(scr, "▸"));
     try t.expect(has(scr, "2 PRs"));
+    // `web` has one: the noun agrees with it
+    // (hunt/findings-2026-09-23/integ-bb-one-prs.md).
+    try t.expect(has(scr, "1 PR "));
+    try t.expect(!has(scr, "1 PRs"));
     try t.expect(has(scr, "#1234"));
     try t.expect(has(scr, "Fix the login redir"));
     try t.expect(has(scr, "chris/fix-login"));
@@ -988,7 +990,7 @@ test "the pane paints the header, the strip, the pill, the reference's columns, 
     try sdk.pane.expect.gutterFullHeight(&s.frame, s.rig.app.theme, 0, 0, s.frame.rows - 1, false);
     try sdk.pane.expect.headerLadderTail(&s.frame, s.rig.app.theme, 0, true, false);
     try t.expect(has(scr, "Open + Draft · 2 repos, 3 PRs"));
-    try t.expect(has(scr, "⏎ expand"));
+    try t.expect(has(scr, "Enter expand"));
     try t.expect(has(scr, "q quit"));
     // The reference painted four chips that did nothing when clicked
     // (`filter not wired yet (round-1 visual)`); the pane cut them.
@@ -1353,6 +1355,13 @@ test "the pipelines tree paints the reference's columns and glyphs; the pipeline
     try t.expect(has(scr, "run pipeline"));
     try t.expect(has(scr, "usage"));
     try t.expect(s.rig.app.hits.rectOf(.{ .chip = .usage }) != null);
+    // The hint row offers only what does something here: no PR detail,
+    // no approve, no open↔merged (integ-bb-pipelines-dead-actions).
+    const hint = try rowText(s.arena.allocator(), &s.frame, 39);
+    try t.expect(!has(hint, "d detail"));
+    try t.expect(!has(hint, "approve"));
+    try t.expect(!has(hint, "merged"));
+    try t.expect(has(hint, "r refresh"));
 }
 
 test "the pipelines header at 80x24: the chips drop to their icons and the repo count stays whole; at 120x40 they say their words" {
@@ -1409,8 +1418,14 @@ test "the key sheet, the row menu and the filter paint as overlays that take the
     try t.expect(has(scr, " Keys "));
     try t.expect(has(scr, "── tree ──"));
     try t.expect(has(scr, "hide this repo (persists)"));
-    try t.expect(has(scr, "approve / withdraw the approval"));
-    try s.click(60, 20, .left);
+    try t.expect(has(scr, "the pull request's detail"));
+    // Only the keys that apply here: `a` wants the detail open.
+    try t.expect(!has(scr, "approve / withdraw the approval"));
+    try t.expect(has(scr, "j/k scroll · Esc close"));
+    // A press on the sheet off its rows (its top edge) closes it and
+    // runs nothing; a press on a row runs that row's key.
+    const sheet = s.rig.app.hits.inner.rectOf(.sheet).?;
+    try s.click(sheet.x + 1, sheet.y, .left);
     try t.expectEqual(app_mod.Mode.list, s.rig.app.mode);
     _ = try s.draw();
     const y_1234 = try s.rowOf("OPEN       Chris M");
@@ -1494,6 +1509,10 @@ test "the header says what a fetch is doing: queued behind N, waiting, fetching,
     scr = try s.draw();
     try t.expect(has(scr, "fetch failed: 401 auth failed"));
     try t.expect(!has(scr, "\u{2839}"));
+    // …over the rows it had, which stay: the failure is the header's,
+    // not a panel painted where the list was.
+    try t.expect(has(scr, "#1234"));
+    try t.expect(!has(scr, "r retries"));
     try app_mod.TabState.setText(app.gpa, &app.tabs[0].error_text, "");
     // The chips hid every row: the header names that rather than
     // counting to zero.
@@ -1547,8 +1566,8 @@ test "the `/` filter: the header reads N of M while narrowed and the hint row ch
     try s.key("/");
     scr = try s.draw();
     try t.expect(has(scr, "type to filter"));
-    try t.expect(has(scr, "⏎ commit"));
-    try t.expect(has(scr, "esc clear"));
+    try t.expect(has(scr, "Enter commit"));
+    try t.expect(has(scr, "Esc clear"));
     try t.expect(!has(scr, "q quit"));
 
     // Typing narrows live — before Enter commits anything.
@@ -1580,7 +1599,7 @@ test "the `/` filter: the header reads N of M while narrowed and the hint row ch
     try s.key("j");
     try s.click(6, try s.rowOf("#1234"), .right);
     scr = try s.draw();
-    try t.expect(has(scr, "⏎ run"));
+    try t.expect(has(scr, "Enter run"));
     try s.key("esc");
     try s.key("?");
     scr = try s.draw();
@@ -1736,4 +1755,26 @@ test "the cursor row is a filled band across the whole row, and no row at rest i
     try expectNoBand(&s.frame, first.y, first.x, first.x + first.w, band);
     const now = s.rig.app.hits.inner.rectOf(hit.Target{ .row = 1 }).?;
     try expectBand(&s.frame, now.y, now.x, now.x + now.w, band, &chip_grounds);
+}
+
+test "hover help names each element: a chip, a row, a hint entry, the refresh chip — never one generic blurb" {
+    // hunt/findings-2026-09-23/integ-hover-help-generic.md
+    const s = try Screen.init(120, 40, acme, .{});
+    defer s.deinit();
+    _ = try s.draw();
+    const app = &s.rig.app;
+    var buf: [96]u8 = undefined;
+    const Probe = struct {
+        fn at(a: *App, t_: hit.Target, b: []u8) ![]const u8 {
+            const r = a.hits.rectOf(t_) orelse return error.NotPainted;
+            return a.helpAt(r.x, r.y, b).title;
+        }
+    };
+    try t.expectEqualStrings("status:", try Probe.at(app, .{ .chip = .status }, &buf));
+    try t.expectEqualStrings("author:", try Probe.at(app, .{ .chip = .author }, &buf));
+    try t.expectEqualStrings("Refresh", try Probe.at(app, .{ .chip = .refresh }, &buf));
+    try t.expectEqualStrings("Row", try Probe.at(app, .{ .row = 1 }, &buf));
+    try t.expectEqualStrings("r — refresh this tab", try Probe.at(app, .{ .hint = .refresh }, &buf));
+    // Nothing under the pointer: an empty title, which clears the view.
+    try t.expectEqualStrings("", app.helpAt(0, 60, &buf).title);
 }

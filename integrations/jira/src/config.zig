@@ -36,7 +36,10 @@
 //! wins over `.jira_url`, literally or as `@<path>` naming a file that
 //! holds it. That is how a test points the pane at a server on a port
 //! nobody chose — `mnml-fake-jira --port 0 --url-file jira.url` — the
-//! same shape as Bitbucket's `$BITBUCKET_BASE_URL`.
+//! same shape as Bitbucket's `$BITBUCKET_BASE_URL`, which in turn wins
+//! over `.bitbucket_api_url` (the linked pull requests' server). Both
+//! are read by `sdk.base_url`: an `@<path>` whose file never arrives is
+//! `Loaded.base_url_error`, and nothing is asked of any server.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -48,6 +51,11 @@ pub const dir_name = "jira";
 pub const env_path = "MNML_JIRA_CONFIG";
 /// The base URL override — see `envBaseUrl`.
 pub const base_url_env = "JIRA_BASE_URL";
+/// The linked pull requests' server, overridden the same way.
+pub const forge_base_url_env = "BITBUCKET_BASE_URL";
+/// How long a missing `@<path>` is waited for: the fake writes it once
+/// it listens. A test that proves the refusal does not sit out 5 s.
+pub const url_file_wait_ms: u32 = if (@import("builtin").is_test) 50 else 5000;
 pub const max_file_bytes = 1 << 20;
 
 pub const ApiVersion = enum { v3, v2 };
@@ -292,6 +300,39 @@ pub const Column = enum {
             .fix_version => 14,
             .actions => 11,
             .summary => null,
+        };
+    }
+
+    /// The narrowest the column still reads at — a date's ten cells
+    /// and a space, a name's first word. KEY's is the longest key on
+    /// the tab (`screen.zig` works it out); SUMMARY takes what is left.
+    pub fn minWidth(c: Column) u16 {
+        return switch (c) {
+            .key => 12,
+            .status => 8,
+            .assignee, .reporter => 10,
+            .priority, .type => 7,
+            .updated => 11,
+            .fix_version => 9,
+            .actions => 11,
+            .summary => 20,
+        };
+    }
+
+    /// When a narrow pane runs out of width, the columns go whole in
+    /// this order (1 first); KEY and SUMMARY never do — the key is what
+    /// a row is known by, and the summary is what is elided instead.
+    pub fn dropRank(c: Column) u8 {
+        return switch (c) {
+            .actions => 1,
+            .fix_version => 2,
+            .type => 3,
+            .priority => 4,
+            .reporter => 5,
+            .assignee => 6,
+            .updated => 7,
+            .status => 8,
+            .key, .summary => 0,
         };
     }
 
@@ -570,6 +611,10 @@ pub const Loaded = struct {
     path: []const u8,
     missing: bool,
     parse_error: ?[]const u8 = null,
+    /// A `$JIRA_BASE_URL` / `$BITBUCKET_BASE_URL` of `@<path>` whose
+    /// file never arrived — the sentence to show. Set: no client is
+    /// built and no request goes out.
+    base_url_error: ?[]const u8 = null,
 };
 
 pub const LoadOpts = struct {
@@ -604,37 +649,38 @@ fn exists(io: Io, path: []const u8) bool {
 /// as `@<path>` naming a file that holds it. The fake server writes the
 /// port it was actually given to `--url-file`, so a test script names
 /// the server without ever picking a number and two runs of the corpus
-/// never collide. Bitbucket's `$BITBUCKET_BASE_URL` is the same shape.
+/// never collide. Bitbucket's `$BITBUCKET_BASE_URL` is the same shape
+/// (`sdk.base_url` reads both).
 ///
 /// The file is written once the socket is listening, and a script may
 /// start the server and the pane in either order, so a missing or
-/// empty file is waited out rather than failed on. Nothing set: the
-/// config stands.
-pub fn envBaseUrl(arena: Allocator, io: Io, env: *const std.process.Environ.Map) Allocator.Error!?[]const u8 {
-    const raw = env.get(base_url_env) orelse return null;
-    const v = std.mem.trim(u8, raw, " \t\r\n");
-    if (v.len == 0) return null;
-    if (v[0] != '@') return try arena.dupe(u8, v);
-    var attempts: u32 = 0;
-    while (attempts < 50) : (attempts += 1) {
-        if (Io.Dir.cwd().readFileAlloc(io, v[1..], arena, .limited(4096))) |text| {
-            const trimmed = std.mem.trim(u8, text, " \t\r\n");
-            if (trimmed.len > 0) return try arena.dupe(u8, trimmed);
-        } else |_| {}
-        io.sleep(.fromMilliseconds(100), .awake) catch {};
-    }
-    return null;
+/// empty file is waited out rather than failed on — for a while. One
+/// that never arrives is `.unreadable`: the fake did not start, and the
+/// config's URL (a real site, as often as not) is NOT the fallback.
+pub fn envBaseUrl(arena: Allocator, io: Io, env: *const std.process.Environ.Map, name: []const u8) Allocator.Error!sdk.base_url.Override {
+    return sdk.base_url.fromEnv(arena, io, env, name, .{ .wait_ms = url_file_wait_ms });
 }
 
-/// `load`, then `$JIRA_BASE_URL` over the top. Every entry point that
-/// reaches the network goes through this rather than `load`, so the
-/// pane, `--values`, `--check` and `--prefetch` all answer about the
-/// same server.
+/// `load`, then `$JIRA_BASE_URL` and `$BITBUCKET_BASE_URL` over the
+/// top. Every entry point that reaches the network goes through this
+/// rather than `load`, so the pane, `--values`, `--check` and
+/// `--prefetch` all answer about the same server — and every one of
+/// them refuses when `base_url_error` is set.
 pub fn loadWithEnv(arena: Allocator, io: Io, env: *const std.process.Environ.Map, path: []const u8) Allocator.Error!Loaded {
     var loaded = try load(arena, io, path);
     if (loaded.missing or loaded.parse_error != null) return loaded;
-    if (try envBaseUrl(arena, io, env)) |u| {
-        loaded.config.jira_url = std.mem.trimEnd(u8, u, "/");
+    switch (try envBaseUrl(arena, io, env, base_url_env)) {
+        .url => |u| loaded.config.jira_url = std.mem.trimEnd(u8, u, "/"),
+        .unreadable => |why| {
+            loaded.base_url_error = why;
+            return loaded;
+        },
+        .unset => {},
+    }
+    switch (try envBaseUrl(arena, io, env, forge_base_url_env)) {
+        .url => |u| loaded.config.bitbucket_api_url = std.mem.trimEnd(u8, u, "/"),
+        .unreadable => |why| loaded.base_url_error = why,
+        .unset => {},
     }
     return loaded;
 }
@@ -976,4 +1022,39 @@ test "$JIRA_BASE_URL wins over .jira_url, literally or as @<file>" {
     const at = try std.fmt.allocPrint(arena, "@{s}/jira.url", .{root});
     try env.put(base_url_env, at);
     try testing.expectEqualStrings("http://127.0.0.1:54321", (try loadWithEnv(arena, testing.io, &env, cfg_path)).config.jira_url);
+    try testing.expect((try loadWithEnv(arena, testing.io, &env, cfg_path)).base_url_error == null);
+
+    // `$BITBUCKET_BASE_URL` points the linked pull requests at the
+    // forge's fake the same way.
+    try env.put(forge_base_url_env, "http://127.0.0.1:777/");
+    try testing.expectEqualStrings("http://127.0.0.1:777", (try loadWithEnv(arena, testing.io, &env, cfg_path)).config.bitbucket_api_url);
+}
+
+test "an @<path> override whose file never arrives is an error — never the config's site" {
+    // hunt/findings-2026-09-23/integ-bb-base-url-falls-back-to-production.md:
+    // the fake did not start; the answer is no server, not the real one.
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = a.allocator();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    const cfg_path = try std.fs.path.join(arena, &.{ root, "config.zon" });
+    try tmp.dir.writeFile(testing.io, .{
+        .sub_path = "config.zon",
+        .data = ".{ .jira_url = \"https://acme.atlassian.net\", .email = \"me@acme.com\", .tabs = .{ .{ .name = \"Assigned\", .kind = .work_assigned } } }",
+    });
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+
+    for ([_][]const u8{ base_url_env, forge_base_url_env }) |name| {
+        _ = env.swapRemove(base_url_env);
+        _ = env.swapRemove(forge_base_url_env);
+        try env.put(name, try std.fmt.allocPrint(arena, "@{s}/never.url", .{root}));
+        const l = try loadWithEnv(arena, testing.io, &env, cfg_path);
+        const why = l.base_url_error orelse return error.TestExpectedError;
+        try testing.expect(std.mem.indexOf(u8, why, name) != null);
+        try testing.expect(std.mem.indexOf(u8, why, "never.url") != null);
+    }
 }

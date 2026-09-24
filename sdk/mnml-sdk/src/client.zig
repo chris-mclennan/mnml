@@ -44,6 +44,10 @@ pub const Mount = struct {
     /// Owns the strings in `hello`.
     hello_arena: std.heap.ArenaAllocator,
     hello: Hello,
+    /// What `hover` last sent, so a pointer move over the same element
+    /// costs nothing.
+    hover_sig: u64 = 0,
+    hover_sent: bool = false,
     /// The current pane size — the last `hello` or `resize`.
     geometry: Geometry,
     write_lock: Io.Mutex = .init,
@@ -213,6 +217,23 @@ pub const Mount = struct {
     }
 
     /// Ask the host to run a command by id.
+    /// Name the element under the pointer for the host's info view:
+    /// its title and what it does. Sent only to a host that shows it
+    /// (`hello.capabilities.hover_help`), and only when it changed, so
+    /// a pane may call this on every pointer move. `""` clears it.
+    pub fn hover(m: *Mount, title: []const u8, body: []const u8) SendError!void {
+        if (!m.hello.capabilities.hover_help) return;
+        var h = std.hash.Wyhash.init(0);
+        h.update(title);
+        h.update("\x00");
+        h.update(body);
+        const sig = h.final();
+        if (m.hover_sent and sig == m.hover_sig) return;
+        m.hover_sig = sig;
+        m.hover_sent = true;
+        try m.sendMessage(.{ .hover = .{ .title = title, .body = body } });
+    }
+
     pub fn command(m: *Mount, id: []const u8) SendError!void {
         return m.sendMessage(.{ .command = .{ .id = id } });
     }

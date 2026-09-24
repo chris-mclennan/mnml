@@ -450,9 +450,23 @@ pub fn scriptHit(app: *App, arena: Allocator, pane: PaneId, id: u32) Allocator.E
     if (hit.ListHit.chipOf(id)) |c| return chip(.script, c);
     if (id == hit.ListHit.filter_id) return filter(.script);
     if (id >= hit.ListHit.kebab_base) return kebab(.{ .panel = .script, .idx = id - hit.ListHit.kebab_base });
+    // A mounted integration paints and owns every cell, so only it can
+    // say what is under the pointer: it names the element in a `hover`
+    // message (`wire.SiblingMessage.hover`), and that is the entry.
+    if (p.asMount()) |mp| {
+        if (mp.hover_title.len > 0) return .{
+            .title = try arena.dupe(u8, mp.hover_title),
+            .body = try arena.dupe(u8, mp.hover_body),
+        };
+        return .{
+            .title = try std.fmt.allocPrint(arena, "{s} pane", .{mp.title()}),
+            .body = "A mounted integration: it paints every cell of this pane and takes its keys and clicks. Point at one of its chips, rows or buttons and it says what that one does; `?` in the pane lists its keys.",
+            .links = &.{.{ .command = .{ .id = .@"focus.cycle", .label = "Cycle focus" } }},
+        };
+    }
     return .{
         .title = try std.fmt.allocPrint(arena, "{s} pane row", .{kind}),
-        .body = "A row of a list hosted in a pane — the sessions table, a script's pane, a mount. Click selects it; click again, or Enter, acts on it; right-click is the row's menu. The header chips above are the same sort, refresh and filter the sections have.",
+        .body = "A row of a list hosted in a pane — the sessions table, a script's pane. Click selects it; click again, or Enter, acts on it; right-click is the row's menu. The header chips above are the same sort, refresh and filter the sections have.",
         .keys = &.{ .{ .chord = "Enter", .label = "Act on the row" }, .{ .chord = "Right-click", .label = "The row's menu" } },
         .links = &.{.{ .command = .{ .id = .@"focus.cycle", .label = "Cycle focus" } }},
     };

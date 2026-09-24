@@ -92,6 +92,75 @@ pub fn Slot(comptime T: type) type {
     };
 }
 
+// ─── a failed refetch keeps what it had ─────────────────────────────────
+
+/// Copy `v` and everything it points at onto `a`: slices, single
+/// pointers, optionals, tagged unions and structs are followed; plain
+/// values are copied. What a pane uses to carry last time's rows into
+/// a refetch whose answer for them failed — the rows live on the old
+/// result's arena, which is about to be freed.
+///
+/// A failed refetch keeps the rows it had and says so in the header
+/// (`chrome.fetchText`'s `fetch failed: <why>`), and the `as of` stamp
+/// stays on the last success: a Wi-Fi blip must never read as "nothing
+/// here, and it is fresh". Both first-party panes follow that; a pane
+/// whose fetch answers per group (Bitbucket's per-repo tree) carries
+/// each failed group's last-good entry with this.
+pub fn dupeDeep(comptime T: type, a: Allocator, v: T) Allocator.Error!T {
+    switch (@typeInfo(T)) {
+        .pointer => |p| switch (p.size) {
+            .slice => {
+                if (p.child == u8) {
+                    if (p.sentinel() != null) return a.dupeZ(u8, v);
+                    return a.dupe(u8, v);
+                }
+                if (p.sentinel() != null) @compileError("dupeDeep: a sentinel slice of " ++ @typeName(p.child));
+                const out = try a.alloc(p.child, v.len);
+                for (v, out) |x, *o| o.* = try dupeDeep(p.child, a, x);
+                return out;
+            },
+            .one => {
+                const o = try a.create(p.child);
+                o.* = try dupeDeep(p.child, a, v.*);
+                return o;
+            },
+            else => @compileError("dupeDeep: a many- or C-pointer in " ++ @typeName(T)),
+        },
+        .@"struct" => |s| {
+            var out: T = v;
+            inline for (s.fields) |f| {
+                if (!f.is_comptime) @field(out, f.name) = try dupeDeep(f.type, a, @field(v, f.name));
+            }
+            return out;
+        },
+        .optional => |o| return if (v) |x| try dupeDeep(o.child, a, x) else null,
+        .array => |arr| {
+            var out: T = undefined;
+            for (v, &out) |x, *o| o.* = try dupeDeep(arr.child, a, x);
+            return out;
+        },
+        .@"union" => |u| {
+            if (u.tag_type == null) @compileError("dupeDeep: an untagged union " ++ @typeName(T));
+            switch (v) {
+                inline else => |payload, tag| return @unionInit(T, @tagName(tag), try dupeDeep(@TypeOf(payload), a, payload)),
+            }
+        },
+        else => return v,
+    }
+}
+
+/// The header's reason for a refetch that failed for `failed` of
+/// `total` groups (repos, projects) — `network error` when every one
+/// did, `web: HTTP 500` when one of several did, `2 of 5 repos: HTTP
+/// 500` otherwise. `first` names the first failed group, `why` its
+/// reason. Goes after `fetch failed: ` (`chrome.fetchText`).
+pub fn partialFailureText(buf: []u8, failed: usize, total: usize, noun: []const u8, first: []const u8, why: []const u8) []const u8 {
+    if (failed == 0) return "";
+    if (failed >= total) return std.fmt.bufPrint(buf, "{s}", .{why}) catch why;
+    if (failed == 1) return std.fmt.bufPrint(buf, "{s}: {s}", .{ first, why }) catch why;
+    return std.fmt.bufPrint(buf, "{d} of {d} {s}: {s}", .{ failed, total, noun, why }) catch why;
+}
+
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const testing = std.testing;
@@ -144,4 +213,36 @@ test "deinit drains a result nobody collected, so its arena can be freed" {
     try s.finish(testing.io, .{ .n = 3 });
     s.deinit(testing.io, Sink.drop);
     try testing.expectEqual(@as(usize, 3), seen);
+}
+
+test "dupeDeep carries a value off an arena that is about to go" {
+    const Inner = struct { name: []const u8, tags: []const []const u8 };
+    const Row = struct { id: i64, inner: []const Inner, maybe: ?Inner = null, kind: union(enum) { none, one: []const u8 } = .none };
+    var src_arena = std.heap.ArenaAllocator.init(testing.allocator);
+    const sa = src_arena.allocator();
+    const tags = try sa.alloc([]const u8, 1);
+    tags[0] = try sa.dupe(u8, "draft");
+    const inner = try sa.alloc(Inner, 1);
+    inner[0] = .{ .name = try sa.dupe(u8, "api"), .tags = tags };
+    const row: Row = .{ .id = 7, .inner = inner, .maybe = inner[0], .kind = .{ .one = try sa.dupe(u8, "x") } };
+
+    var dst_arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer dst_arena.deinit();
+    const copy = try dupeDeep(Row, dst_arena.allocator(), row);
+    // Poison the source the way a freed arena reads, then free it.
+    @memset(@constCast(inner[0].name), 0xAA);
+    src_arena.deinit();
+    try testing.expectEqual(@as(i64, 7), copy.id);
+    try testing.expectEqualStrings("api", copy.inner[0].name);
+    try testing.expectEqualStrings("draft", copy.inner[0].tags[0]);
+    try testing.expectEqualStrings("api", copy.maybe.?.name);
+    try testing.expectEqualStrings("x", copy.kind.one);
+}
+
+test "partialFailureText: every group, one of several, some of several" {
+    var buf: [64]u8 = undefined;
+    try testing.expectEqualStrings("", partialFailureText(&buf, 0, 2, "repos", "api", "HTTP 500"));
+    try testing.expectEqualStrings("network error", partialFailureText(&buf, 2, 2, "repos", "api", "network error"));
+    try testing.expectEqualStrings("web: HTTP 500", partialFailureText(&buf, 1, 3, "repos", "web", "HTTP 500"));
+    try testing.expectEqualStrings("2 of 5 repos: HTTP 500", partialFailureText(&buf, 2, 5, "repos", "web", "HTTP 500"));
 }

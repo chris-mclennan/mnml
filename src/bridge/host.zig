@@ -179,6 +179,9 @@ pub const Event = struct {
         /// does next. One `key` per button; a second watch under a key
         /// replaces the first.
         watch_session: struct { key: []u8, id: []u8, cwd: []u8, prompt_line: []u8 },
+        /// The element under the pointer, named by the pane for the
+        /// info view. Owned.
+        hover: struct { title: []u8, body: []u8 },
         /// The sibling said goodbye.
         bye,
         /// The stream ended without one; the reason is for the banner.
@@ -213,6 +216,10 @@ pub const Event = struct {
                 gpa.free(w.id);
                 gpa.free(w.cwd);
                 gpa.free(w.prompt_line);
+            },
+            .hover => |h| {
+                gpa.free(h.title);
+                gpa.free(h.body);
             },
             .connected, .frame, .cursor, .bye => {},
         }
@@ -532,6 +539,16 @@ fn readLoop(events: *event.EventQueue, io: Io, gpa: Allocator, shared: *Shared, 
                     continue;
                 };
                 post(events, io, gpa, .{ .pane = pane, .generation = generation, .kind = .{ .watch_session = .{ .key = key, .id = id, .cwd = cwd, .prompt_line = line } } });
+            },
+            .hover => |h| {
+                // A pane names what is under the pointer; bounded, so a
+                // chatty sibling cannot fill the info view with a book.
+                const title = gpa.dupe(u8, h.title[0..@min(h.title.len, 120)]) catch continue;
+                const body = gpa.dupe(u8, h.body[0..@min(h.body.len, 600)]) catch {
+                    gpa.free(title);
+                    continue;
+                };
+                post(events, io, gpa, .{ .pane = pane, .generation = generation, .kind = .{ .hover = .{ .title = title, .body = body } } });
             },
             .bye => {
                 post(events, io, gpa, .{ .pane = pane, .generation = generation, .kind = .bye });
