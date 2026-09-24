@@ -3750,14 +3750,23 @@ pub const TestRig = struct {
             var buf: [96]u8 = undefined;
             var len: usize = 0;
         };
-        if (S.len == 0) {
-            const pid: i64 = if (builtin.os.tag == .windows) 0 else @intCast(std.c.getpid());
-            var dbuf: [64]u8 = undefined;
-            const d = std.fmt.bufPrintZ(&dbuf, "/tmp/mnml-zig-lsp-{d}", .{pid}) catch unreachable;
-            if (builtin.os.tag != .windows) _ = std.c.mkdir(d.ptr, 0o755);
-            S.len = (std.fmt.bufPrint(&S.buf, "{s}/" ++ name, .{d}) catch unreachable).len;
-        }
+        const pid: i64 = if (builtin.os.tag == .windows) 0 else @intCast(std.c.getpid());
+        var dbuf: [64]u8 = undefined;
+        const d = std.fmt.bufPrintZ(&dbuf, "/tmp/mnml-zig-lsp-{d}", .{pid}) catch unreachable;
+        // Every call, not once: `stop` takes the directory away when the
+        // test is done with it, and the next test asks again.
+        if (builtin.os.tag != .windows) _ = std.c.mkdir(d.ptr, 0o755);
+        if (S.len == 0) S.len = (std.fmt.bufPrint(&S.buf, "{s}/" ++ name, .{d}) catch unreachable).len;
         return S.buf[0..S.len];
+    }
+
+    /// Take the directory away if the test left nothing in it, so a run
+    /// does not leave one `/tmp/mnml-zig-lsp-<pid>` per process behind.
+    fn removeDirIfEmpty() void {
+        if (builtin.os.tag == .windows) return;
+        var b: [80]u8 = undefined;
+        const z = std.fmt.bufPrintZ(&b, "{s}", .{dir()}) catch return;
+        _ = std.c.rmdir(z.ptr);
     }
 
     pub const text = "let x = 1;\nconst foo = 2;\nfoo.\n";
@@ -3783,6 +3792,7 @@ pub const TestRig = struct {
         try self.group.await(app.io);
         self.in_r.close(app.io);
         self.out_w.close(app.io);
+        removeDirIfEmpty();
     }
 
     /// A scratch editor given `path` and `text_in`, attached to the server.
@@ -4863,4 +4873,5 @@ test "the scripted server's files are this process's own: one directory per pid,
     try testing.expectEqualStrings(want_dir, std.fs.path.dirname(TestRig.scratch("x.ts")).?);
     // The directory is there to be written in.
     try Io.Dir.cwd().access(testing.io, TestRig.dir(), .{});
+    TestRig.removeDirIfEmpty();
 }
