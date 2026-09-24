@@ -178,7 +178,7 @@ fn linkCheck(app: *App) CommandError!void {
         return;
     }
     const n = entries.items.len;
-    try cmd_view.openListPane(app, .quickfix, try entries.toOwnedSlice(gpa));
+    try @import("quickfix.zig").setAndOpen(app, try entries.toOwnedSlice(gpa), .{});
     app.toast("broken markdown links ({d} across {d} file(s))", .{ n, n_md });
 }
 

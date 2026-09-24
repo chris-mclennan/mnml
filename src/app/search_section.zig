@@ -298,6 +298,8 @@ pub fn handle(app: *App, result: *grep.Result) Allocator.Error!void {
     if (first_batch and st.rows.items.len > 1) st.list.cursor = 1;
     if (result.done) {
         st.loading = false;
+        // Every finished search is the quickfix list (`:cnext` walks it).
+        if (st.err == null) try @import("quickfix.zig").fromGrepHits(app, st.hits.items, grep.section_target);
         const n = st.hits.items.len;
         const words = try std.fmt.allocPrint(app.frame.allocator(), "{d} match{s}{s}", .{ n, if (n == 1) "" else "es", if (st.truncated) " (capped)" else "" });
         jobs.endKeyed(app, .search, grep.section_target, if (st.err) |e| jobs.Outcome.fail(e) else jobs.Outcome.done(words));
@@ -364,7 +366,10 @@ fn activateRow(app: *App, beside: bool) CommandError!void {
     if (st.list.cursor >= st.rows.items.len) return app.diag.fail(app.frame.allocator(), "search: nothing selected", .{});
     switch (st.rows.items[st.list.cursor]) {
         .file => |g| try toggleGroup(app, g),
-        .hit => |h| try openHit(app, st.hits.items[h], beside),
+        .hit => |h| {
+            @import("quickfix.zig").noteGrepHit(app, grep.section_target, h);
+            try openHit(app, st.hits.items[h], beside);
+        },
     }
 }
 
@@ -376,6 +381,7 @@ pub fn openHit(app: *App, h: grep.Hit, beside: bool) CommandError!void {
     // The hit borrows the snapshot; hold frame copies past the open.
     const path = try arena.dupe(u8, h.path);
     const rel = try arena.dupe(u8, h.rel);
+    const text = try arena.dupe(u8, h.text);
     const line = h.line;
     const col = h.col;
     try app.noteRecent(path);
@@ -391,8 +397,11 @@ pub fn openHit(app: *App, h: grep.Hit, beside: bool) CommandError!void {
     if (app.panes.editor(eid)) |e| {
         const ed = e.buf.editor;
         ed.anchor = null;
-        ed.placeCursorByte(@min(@as(usize, line) -| 1, ed.lineCount() -| 1), col);
+        // Found again by its text: an edit since the search moves it.
+        const w = grep.relocate(ed, line, text, h.text_off, false);
+        ed.placeCursorByte(w.row, col);
         ed.goal_col = null;
+        grep.noteRelocation(app, w, line);
         e.view.scroll_line = @intCast(ed.currentLine() -| app.pane_rows / 2);
     }
     app.showPane(eid);

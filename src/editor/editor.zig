@@ -444,6 +444,7 @@ pub const Editor = struct {
 
     pub fn pushUndo(self: *Editor) Allocator.Error!void {
         try self.doc.history.pushUndo(self.snapshot());
+        try self.doc.history.saveMarks(&self.doc.marks);
     }
 
     /// Drop the most recent checkpoint — a "mutation" that turned out to be

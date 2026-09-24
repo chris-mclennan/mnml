@@ -1,0 +1,50 @@
+# A grep hit is found again by its line's text when it is opened: add a
+# line above it (saved), go back to the Search pane, Enter — the cursor
+# lands on the hit, now line 2, and a toast says it moved. (VS Code's
+# results follow the edit.) It used to open line 1 column 7, inside the
+# new comment. The quickfix walk over the same hits follows it too, and a
+# hit whose own line was rewritten says so instead of guessing.
+write src/a.zig "const alpha = 1;\n"
+write docs/b.txt "nothing\n"
+open docs/b.txt
+command editor.use_vim
+command find.grep
+type alpha
+key enter
+wait 800
+expect screen contains "1 match in 1 file"
+open src/a.zig
+key O
+type "// new top line"
+key esc
+type ":w"
+key enter
+click 81 1
+expect pane "Search"
+key G
+key enter
+expect pane "a.zig"
+expect status contains "\"line\":2"
+expect screen contains "the hit moved to line 2 since the search (was 1)"
+
+# The quickfix list the grep filled follows the same edit.
+key :
+type "cfirst"
+key enter
+expect pane "a.zig"
+expect status contains "\"line\":2"
+expect status contains "\"col\":7"
+
+# A rewritten line cannot be found again: the old line, and a toast.
+key 2
+key G
+key c
+key c
+type "const beta = 1;"
+key esc
+type ":w"
+key enter
+key :
+type "cfirst"
+key enter
+expect screen contains "line 1 changed since the search"

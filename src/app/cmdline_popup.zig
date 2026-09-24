@@ -11,10 +11,14 @@
 //! is open, so the popup behaves the same over each.
 //!
 //! What the keys do while the popup is showing (two or more
-//! candidates, not dismissed): Tab / Down move the selection forward
-//! and write it into the line, Shift+Tab / Up move it back, Enter runs
-//! the line (which already holds the selection), and typing narrows
-//! the list. Esc takes back the last thing: while the line is still
+//! candidates, not dismissed): Tab moves the selection forward and
+//! writes it into the line, Shift+Tab moves it back — and once a
+//! candidate is in the line Down / Up do the same; over the typed text
+//! Up / Down stay the history walk (vim's `c_<Up>`, prefix-filtered),
+//! since the popup came up on its own (the app's own line keeps no
+//! history, so there the arrows always walk the popup). Enter runs the
+//! line (which already holds the selection), and typing narrows the
+//! list. Esc takes back the last thing: while the line is still
 //! the typed text it puts the popup — which came up on its own — away
 //! and leaves the line, and a second Esc closes the line; once a
 //! candidate has been written into the line (Tab, an arrow, a click)
@@ -171,8 +175,9 @@ pub fn click(app: *App, idx: usize) Allocator.Error!void {
 pub fn interceptKey(app: *App, k: Key) Allocator.Error!bool {
     if (!showing(app)) return false;
     switch (k.code) {
-        .down => try cycle(app, 1),
-        .up => try cycle(app, -1),
+        // Over the typed text the arrows are the line's history walk.
+        .down => if (onCandidate(app)) try cycle(app, 1) else return false,
+        .up => if (onCandidate(app)) try cycle(app, -1) else return false,
         .esc => {
             if (onCandidate(app)) return false;
             dismiss(app);
@@ -186,6 +191,18 @@ pub fn interceptKey(app: *App, k: Key) Allocator.Error!bool {
 /// while it shows, and Tab / Shift+Tab completion at any time (the
 /// vim line's handler does this itself).
 pub fn appLineKey(app: *App, k: Key) Allocator.Error!bool {
+    // The app's line keeps no history: the arrows are the popup's.
+    if (showing(app)) switch (k.code) {
+        .down => {
+            try cycle(app, 1);
+            return true;
+        },
+        .up => {
+            try cycle(app, -1);
+            return true;
+        },
+        else => {},
+    };
     if (try interceptKey(app, k)) return true;
     switch (k.code) {
         .tab => try cycle(app, 1),
@@ -301,7 +318,7 @@ test "Tab on the app's : line cycles the same list the popup shows, and a click 
     try t.expect(app.cmd_complete == null or !std.mem.eql(u8, app.cmd_complete.?.prefix, "ta"));
 }
 
-test "the vim : line: Up walks the popup while it shows and history when it does not; one Esc abandons it" {
+test "the vim : line: Up over the typed text is the history walk, prefix-filtered; after Tab it walks the popup; one Esc abandons it" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
     defer app.deinit();
     _ = try app.openScratch();
@@ -311,13 +328,22 @@ test "the vim : line: Up walks the popup while it shows and history when it does
     try dispatch.key(&app, Key.char(':'));
     try typeInto(&app, "noh");
     try dispatch.key(&app, Key.named(.enter));
-    // Up on `do` walks the list, not the history.
+    // Up on `do` is the history walk: no entry starts with `do`, so the
+    // line stays (vim's `c_<Up>`) — the auto popup does not take it.
     try dispatch.key(&app, Key.char(':'));
     try typeInto(&app, "do");
     try t.expect(showing(&app));
     try dispatch.key(&app, Key.named(.up));
+    try t.expectEqualStrings("do", e.buf.input.cmdlineGet().?);
+    // Tab engages the popup; then Up walks it.
+    try dispatch.key(&app, Key.named(.tab));
+    const first = try t.allocator.dupe(u8, e.buf.input.cmdlineGet().?);
+    defer t.allocator.free(first);
+    try dispatch.key(&app, Key.named(.down));
+    try dispatch.key(&app, Key.named(.up));
     const last = try t.allocator.dupe(u8, e.buf.input.cmdlineGet().?);
     defer t.allocator.free(last);
+    try t.expectEqualStrings(first, last);
     try t.expect(!std.mem.eql(u8, last, "noh"));
     try t.expect(showing(&app));
     // On the written candidate Esc closes the line, as vim's does.
@@ -338,6 +364,15 @@ test "the vim : line: Up walks the popup while it shows and history when it does
     try typeInto(&app, "do");
     dismiss(&app);
     try t.expect(!showing(&app));
+    try dispatch.key(&app, Key.named(.up));
+    try t.expectEqualStrings("do", e.buf.input.cmdlineGet().?);
+    // An empty line matches every entry: Up is the newest.
+    try dispatch.key(&app, Key.ctrl('u'));
+    try dispatch.key(&app, Key.named(.up));
+    try t.expectEqualStrings("noh", e.buf.input.cmdlineGet().?);
+    // A prefix that one entry has: `n` finds `noh`.
+    try dispatch.key(&app, Key.ctrl('u'));
+    try dispatch.key(&app, Key.char('n'));
     try dispatch.key(&app, Key.named(.up));
     try t.expectEqualStrings("noh", e.buf.input.cmdlineGet().?);
     try dispatch.key(&app, Key.named(.esc));

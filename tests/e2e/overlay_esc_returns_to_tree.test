@@ -1,0 +1,36 @@
+# Esc from a picker or the go-to-line box goes back to where it was
+# opened: from the file tree, the tree (VS Code's Esc from Quick Open
+# returns to the Explorer). It used to land on the editor every time.
+write b.txt "other\n"
+write a.txt "one\ntwo\nthree\nfour\n"
+open b.txt
+open a.txt
+command editor.use_standard
+key ctrl+shift+e
+expect status contains "\"focus\":\"tree\""
+key ctrl+p
+type zz
+key esc
+expect status contains "\"focus\":\"tree\""
+key ctrl+shift+p
+key esc
+expect status contains "\"focus\":\"tree\""
+key ctrl+r
+expect screen contains "b.txt"
+key esc
+expect status contains "\"focus\":\"tree\""
+key ctrl+g
+key esc
+expect status contains "\"focus\":\"tree\""
+# Go to line's other forms: `-1` is the last line, `2,3` line 2 column 3;
+# Enter lands in the editor.
+key ctrl+g
+type "-1"
+key enter
+expect status contains "\"focus\":\"pane\""
+expect status contains "\"line\":4"
+key ctrl+g
+type "2,3"
+key enter
+expect status contains "\"line\":2"
+expect status contains "\"col\":3"

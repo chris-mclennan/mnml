@@ -125,7 +125,7 @@ pub const ListPane = struct {
     /// // changed (git-more2): `stash_files` (a stash's files, Enter
     /// diffs one) and `git_log` (the worker's command log, Enter
     /// re-runs a read-only command) — both take a `/` filter.
-    pub const Kind = enum { cmdline_history, quickfix, location, stash_files, git_log };
+    pub const Kind = enum { cmdline_history, search_history, quickfix, location, stash_files, git_log };
     pub const Entry = struct {
         /// Owned display text.
         text: []u8,
@@ -145,6 +145,8 @@ pub const ListPane = struct {
     /// the text; `filter_mode` while keys go to it.
     filter: std.ArrayListUnmanaged(u8) = .empty,
     filter_mode: bool = false,
+    /// `search_history` from `q?`: Enter searches backward.
+    reverse: bool = false,
 
     pub fn deinit(self: *ListPane) void {
         freeEntries(self.gpa, self.entries.items);
@@ -192,6 +194,7 @@ pub const ListPane = struct {
     pub fn title(self: *const ListPane) []const u8 {
         return switch (self.kind) {
             .cmdline_history => "cmdline history",
+            .search_history => "search history",
             .quickfix => "Quickfix",
             .location => "Location",
             .stash_files => "stash files",

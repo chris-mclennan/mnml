@@ -92,7 +92,8 @@ pub const FindState = struct {
     /// Null: just found against the current text by someone else.
     seen_edit: ?u64 = null,
     /// vim's `*` / `#`: only a match that is a whole keyword counts —
-    /// the pattern `\<word\>` (`:help star`). `setQuery` clears it.
+    /// the pattern `\<word\>` (`:help star`) — and the standard bar's
+    /// Alt+W. `setQuery` clears it.
     whole_word: bool = false,
 
     pub fn init(gpa: Allocator) FindState {
@@ -138,7 +139,7 @@ pub const FindState = struct {
     pub fn setQuery(self: *FindState, query: []const u8, text: []const u8, force_case: ?bool) Allocator.Error!void {
         self.query.clearRetainingCapacity();
         try self.query.appendSlice(self.gpa, query);
-        self.case_sensitive = force_case orelse hasUpper(query);
+        self.case_sensitive = force_case orelse if (self.regex and self.dialect == .vim) patternHasUpper(query) else hasUpper(query);
         self.whole_word = false;
         try self.recompute(text);
     }
@@ -217,6 +218,24 @@ pub const FindState = struct {
 
 pub fn hasUpper(s: []const u8) bool {
     for (s) |c| if (std.ascii.isUpper(c)) return true;
+    return false;
+}
+
+/// Smart case over a vim pattern (Neovim's `pat_has_uppercase`): an
+/// uppercase letter counts only outside an escape, so `\S`, `\A` and
+/// `\%V` leave the search case-insensitive and `\cFoo` is decided by
+/// its `\c`.
+pub fn patternHasUpper(p: []const u8) bool {
+    var i: usize = 0;
+    while (i < p.len) {
+        if (p[i] == '\\') {
+            if (i + 2 < p.len and (p[i + 1] == '_' or p[i + 1] == '%')) {
+                i += 3;
+            } else i += 2;
+        } else if (std.ascii.isUpper(p[i])) {
+            return true;
+        } else i += 1;
+    }
     return false;
 }
 
@@ -321,4 +340,12 @@ test "find: regex mode compiles a vim pattern; a bad one reports and matches not
     f.regex = false;
     try f.setQuery("\\(x", "(x", null);
     try std.testing.expectEqual(@as(usize, 1), f.matches.items.len);
+}
+
+test "find: smart case over a vim pattern skips escaped letters" {
+    try std.testing.expect(!patternHasUpper("\\Soo"));
+    try std.testing.expect(!patternHasUpper("\\%Vx\\_Sy"));
+    try std.testing.expect(patternHasUpper("\\SOO"));
+    try std.testing.expect(patternHasUpper("\\cFoo"));
+    try std.testing.expect(!patternHasUpper("abc\\"));
 }

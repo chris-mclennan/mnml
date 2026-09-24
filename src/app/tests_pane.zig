@@ -2118,6 +2118,8 @@ pub fn handle(app: *App, result: *Result) Allocator.Error!void {
         const s = p.run.count(.skipped);
         const arena = app.frame.allocator();
         if (f > 0) {
+            // The failures are the quickfix list, as `:make`'s errors are.
+            try @import("quickfix.zig").fromTestFailures(app, p.run);
             const note: []const u8 = if (s > 0) try std.fmt.allocPrint(arena, ", {d} skipped", .{s}) else "";
             app.toast("tests: {d} failed, {d} passed{s}", .{ f, ok, note });
         } else {

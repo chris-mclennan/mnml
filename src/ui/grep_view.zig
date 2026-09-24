@@ -144,8 +144,11 @@ pub fn paintHitWith(ui: Ui, r: Rect, h: grep.Hit, disabled: bool, bg: anytype, m
     const pos = ui.fmt("{d}:{d}  ", .{ h.line, h.ccol + 1 });
     x += ui.putStr(x, r.y, r.right() -| x, pos, dim);
     // Leading blanks go only when the text starts the line: a window
-    // that begins mid-line keeps its bytes as they are.
-    const text = if (h.text_off == 0) std.mem.trimStart(u8, h.text, " \t") else h.text;
+    // that begins mid-line keeps its bytes as they are. A tab inside the
+    // line paints as a space, byte for byte, so the columns hold (the
+    // cell painter drops control bytes, which glued `a<Tab>b` into `ab`).
+    const text0 = if (h.text_off == 0) std.mem.trimStart(u8, h.text, " \t") else h.text;
+    const text = tabsAsSpaces(ui, text0);
     const trimmed_off = h.text.len - text.len;
     const col: usize = h.textCol() -| trimmed_off;
     const avail: u16 = r.right() -| x;
@@ -159,6 +162,15 @@ pub fn paintHitWith(ui: Ui, r: Rect, h: grep.Hit, disabled: bool, bg: anytype, m
     if (w < avail) w += ui.putStr(x + w, r.y, avail - w, win.text, fg);
     if (w < avail) w += ui.putStr(x + w, r.y, avail - w, ui.clipStr(matched, avail - w), if (disabled) dim else Theme.onBg(th.match, bg));
     if (w < avail) _ = ui.putStr(x + w, r.y, avail - w, ui.clipStr(after, avail - w), fg);
+}
+
+/// `s` with every tab a space, on the frame arena; `s` itself when it
+/// has none (or the arena is out).
+fn tabsAsSpaces(ui: Ui, s: []const u8) []const u8 {
+    if (std.mem.indexOfScalar(u8, s, '\t') == null) return s;
+    const out = ui.arena.dupe(u8, s) catch return s;
+    std.mem.replaceScalar(u8, out, '\t', ' ');
+    return out;
 }
 
 const Tail = struct { text: []const u8, cut: bool };
@@ -226,4 +238,11 @@ test "a short hit paints whole: no ellipsis, leading blanks trimmed" {
     defer f.deinit();
     paintHit(f.ui(), f.full(), .{ .path = "/x", .rel = "x", .line = 3, .col = 8, .ccol = 8, .len = 4, .text = "    let name = 1;" }, false, f.theme.bg.bg);
     try f.expectRow(0, "   3:9  let name = 1;");
+}
+
+test "a tab in a hit paints as a space, and the match stays on its bytes" {
+    var f = try Fixture.init(40, 1);
+    defer f.deinit();
+    paintHit(f.ui(), f.full(), .{ .path = "/x", .rel = "x", .line = 1, .col = 4, .ccol = 4, .len = 5, .text = "tab\talpha" }, false, f.theme.bg.bg);
+    try f.expectRow(0, "   1:5  tab alpha");
 }

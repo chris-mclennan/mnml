@@ -16,7 +16,6 @@ const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const EditorPane = app_mod.EditorPane;
 const command = @import("../core/command.zig");
-const os_path = @import("../core/os_path.zig");
 const side = @import("side.zig");
 const launcher_dock = @import("launcher_dock.zig");
 const marks_store = @import("marks_store.zig");
@@ -34,6 +33,7 @@ const ex_fname = @import("ex_fname.zig");
 const cmd_app = @import("cmd_app.zig");
 const cmd_file = @import("cmd_file.zig");
 const loclist = @import("loclist.zig");
+const quickfix = @import("quickfix.zig");
 
 /// 0-based inclusive rows.
 pub const Range = struct { first: usize, last: usize };
@@ -192,10 +192,22 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
         if (bang) return @import("messages.zig").dump(app);
         return command.run(app, .{ .static = .@"messages.show" });
     }
-    if (eqAny(verb, &.{ "cn", "cnext" })) return command.run(app, .{ .static = .@"qf.next" });
-    if (eqAny(verb, &.{ "cp", "cprev", "cprevious", "cN", "cNext" })) return command.run(app, .{ .static = .@"qf.prev" });
-    if (eqAny(verb, &.{ "cfir", "cfirst", "cr", "crewind" })) return command.run(app, .{ .static = .@"qf.first" });
-    if (eqAny(verb, &.{ "cla", "clast" })) return command.run(app, .{ .static = .@"qf.last" });
+    if (eqAny(verb, &.{ "cn", "cne", "cnext" })) return quickfix.go(app, .next);
+    if (eqAny(verb, &.{ "cp", "cprev", "cprevious", "cN", "cNext" })) return quickfix.go(app, .prev);
+    if (eqAny(verb, &.{ "cfir", "cfirst", "cr", "crewind" })) return quickfix.go(app, .first);
+    if (eqAny(verb, &.{ "cla", "clast" })) return quickfix.go(app, .last);
+    if (eqAny(verb, &.{"cc"})) {
+        const a = std.mem.trim(u8, args, " \t");
+        if (a.len == 0 and range == null) return quickfix.go(app, .current);
+        const nth = if (a.len > 0) std.fmt.parseInt(usize, a, 10) catch return app.diag.fail(arena, "E488: Trailing characters: {s}", .{a}) else range.?.last + 1;
+        return quickfix.go(app, .{ .nth = nth });
+    }
+    if (eqAny(verb, &.{ "cope", "copen" })) return quickfix.open(app);
+    if (eqAny(verb, &.{ "cw", "cwindow" })) return quickfix.window(app);
+    if (eqAny(verb, &.{ "ccl", "cclose" })) return quickfix.close(app);
+    if (eqAny(verb, &.{ "cl", "clist" })) return quickfix.list(app);
+    if (eqAny(verb, &.{ "gr", "grep" })) return quickfix.grepEx(app, args, bang);
+    if (eqAny(verb, &.{ "vim", "vimgrep" })) return quickfix.vimgrepEx(app, args, bang);
     if (eqAny(verb, &.{ "lex", "lexpr", "lgetexpr" })) return loclist.lexpr(app, args);
     if (eqAny(verb, &.{ "lop", "lopen", "lw", "lwindow" })) return loclist.open(app);
     if (eqAny(verb, &.{ "lcl", "lclose" })) return loclist.close(app);
@@ -214,7 +226,8 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     }
     if (eqAny(verb, &.{ "sp", "split" })) return splitOpen(app, .vertical, args);
     if (eqAny(verb, &.{ "vs", "vsplit" })) return splitOpen(app, .horizontal, args);
-    if (eqAny(verb, &.{ "cex", "cexpr", "cgetexpr" })) return cexpr(app, args);
+    if (eqAny(verb, &.{ "cex", "cexpr" })) return quickfix.cexpr(app, args, true);
+    if (eqAny(verb, &.{ "cgete", "cgetexpr" })) return quickfix.cexpr(app, args, false);
     if (eqAny(verb, &.{ "on", "only" })) return command.run(app, .{ .static = .@"view.only" });
     if (eqAny(verb, &.{ "tabnew", "tabe", "tabedit" })) return command.run(app, .{ .static = .@"tab.new" });
     if (eqAny(verb, &.{ "tabn", "tabnext" })) return command.run(app, .{ .static = .@"tab.next" });
@@ -345,41 +358,6 @@ fn splitOpen(app: *App, dir: @import("layout.zig").SplitDir, args: []const u8) C
     return cmd_view.splitWith(app, dir, id);
 }
 
-/// `:cexpr path:line:col:text` (one entry per line of the argument):
-/// fills the quickfix pane.
-fn cexpr(app: *App, args: []const u8) CommandError!void {
-    const cmd_view = @import("cmd_view.zig");
-    var entries: std.ArrayListUnmanaged(app_mod.ListPane.Entry) = .empty;
-    const gpa = app.gpa;
-    errdefer {
-        for (entries.items) |e| {
-            gpa.free(e.text);
-            if (e.path) |p| gpa.free(p);
-        }
-        entries.deinit(gpa);
-    }
-    var lines = std.mem.splitScalar(u8, args, '\n');
-    while (lines.next()) |raw| {
-        const line = std.mem.trim(u8, raw, " \t\r");
-        if (line.len == 0) continue;
-        // The path ends at its first colon — after a drive letter on
-        // Windows (`C:\src\a.zig:12:3: msg`).
-        const loc = os_path.splitLocation(line, .native);
-        const path = loc.path;
-        var parts = std.mem.splitScalar(u8, loc.rest, ':');
-        const ln = std.fmt.parseInt(u32, parts.next() orelse "1", 10) catch 1;
-        const col = std.fmt.parseInt(u32, parts.next() orelse "1", 10) catch 1;
-        const text = parts.rest();
-        try entries.append(gpa, .{
-            .text = try gpa.dupe(u8, if (text.len > 0) text else line),
-            .path = try gpa.dupe(u8, path),
-            .line = ln,
-            .col = col,
-        });
-    }
-    try cmd_view.openListPane(app, .quickfix, try entries.toOwnedSlice(gpa));
-}
-
 fn eqAny(s: []const u8, list: []const []const u8) bool {
     for (list) |l| if (std.mem.eql(u8, s, l)) return true;
     return false;
@@ -397,6 +375,9 @@ const Parser = struct {
     s: []const u8,
     i: usize = 0,
     saw_percent: bool = false,
+    /// `a;b`: the line `a` named, which `.`, `+n` and `/pat/` in `b`
+    /// count from instead of the cursor (`:help :;`).
+    cur: ?usize = null,
 
     fn rest(p: *const Parser) []const u8 {
         return p.s[p.i..];
@@ -422,6 +403,7 @@ const Parser = struct {
         const a = try p.parseAddr(app) orelse return null;
         p.skipWs();
         if (p.peek() == ',' or p.peek() == ';') {
+            if (p.peek() == ';') p.cur = a;
             p.i += 1;
             p.skipWs();
             const b = try p.parseAddr(app) orelse a;
@@ -430,12 +412,13 @@ const Parser = struct {
         return .{ .first = a, .last = a };
     }
 
-    /// One address: a line number (1-based), `.`, `$`, `'x`, with an
-    /// optional `+n` / `-n`. 0-based row out.
+    /// One address: a line number (1-based), `.`, `$`, `'x`, `/pat/`,
+    /// `?pat?`, with optional `+n` / `-n`. 0-based row out.
     fn parseAddr(p: *Parser, app: *App) CommandError!?usize {
         const arena = app.frame.allocator();
         const e = app.activeEditor();
         const count: usize = if (e) |ed| ed.buf.editor.lineCount() else 1;
+        const here: usize = p.cur orelse if (e) |ed| ed.buf.editor.currentLine() else 0;
         var base: ?usize = null;
         const c = p.peek() orelse return null;
         if (std.ascii.isDigit(c)) {
@@ -446,7 +429,24 @@ const Parser = struct {
             base = n -| 1;
         } else if (c == '.') {
             p.i += 1;
-            base = if (e) |ed| ed.buf.editor.currentLine() else 0;
+            base = here;
+        } else if (c == '/' or c == '?') {
+            // `/pat/` — the next line below that matches, `?pat?` the one
+            // above, wrapping round the buffer (`:help :/`); an empty
+            // pattern is the last search.
+            var j = p.i + 1;
+            while (j < p.s.len and p.s[j] != c) : (j += 1) {
+                if (p.s[j] == '\\' and j + 1 < p.s.len) j += 1;
+            }
+            const raw = p.s[p.i + 1 .. j];
+            p.i = if (j < p.s.len) j + 1 else j;
+            const ed = e orelse return app.diag.fail(arena, "no active editor", .{});
+            const pat0 = try unescapeDelim(arena, raw, c);
+            const pat = if (pat0.len > 0) pat0 else app.last_search_pattern orelse return app.diag.fail(arena, "E35: No previous regular expression", .{});
+            try app.noteSearchPattern(pat);
+            var re = try compilePattern(app, ":/", pat, app.search_case orelse find_mod.patternHasUpper(pat));
+            defer re.deinit();
+            base = searchLine(ed.buf.editor, &re, here, c == '/') orelse return app.diag.fail(arena, "E486: Pattern not found: {s}", .{pat});
         } else if (c == '$') {
             p.i += 1;
             base = count - 1;
@@ -468,7 +468,7 @@ const Parser = struct {
                 else => if (ed.buf.doc.markPos(m)) |pos| pos.row else return app.diag.fail(arena, "E20: mark '{c} not set", .{m}),
             };
         } else if (c == '+' or c == '-') {
-            base = if (e) |ed| ed.buf.editor.currentLine() else 0;
+            base = here;
         } else return null;
         // Offsets.
         while (p.peek()) |o| {
@@ -483,6 +483,18 @@ const Parser = struct {
         return @min(base.?, count -| 1);
     }
 };
+
+/// The first line after (`forward`) or before `from` that `re` matches,
+/// wrapping round the buffer and ending on `from` itself.
+fn searchLine(ed: *const Editor, re: *regex.Regex, from: usize, forward: bool) ?usize {
+    const n = ed.lineCount();
+    var k: usize = 1;
+    while (k <= n) : (k += 1) {
+        const row = if (forward) (from + k) % n else (from + n - (k % n)) % n;
+        if (re.find(ed.lineSlice(row), 0) != null) return row;
+    }
+    return null;
+}
 
 // ─── files ──────────────────────────────────────────────────────────────
 
@@ -694,13 +706,14 @@ pub fn substitute(app: *App, range: ?Range, spec: []const u8, whole: bool) Comma
         'I' => case = true,
         else => {},
     };
-    const case_sensitive = case orelse app.search_case orelse find_mod.hasUpper(pattern);
+    const case_sensitive = case orelse app.search_case orelse find_mod.patternHasUpper(pattern);
     var re = try compilePattern(app, label, pattern, case_sensitive);
     defer re.deinit();
 
     const r = range orelse Range{ .first = ed.currentLine(), .last = ed.currentLine() };
     const first = @min(r.first, ed.lineCount() - 1);
     const last = @min(r.last, ed.lineCount() - 1);
+    if (spansLines(pattern)) return substituteAcrossLines(app, e, &re, label, pattern, replacement, first, last, global);
     var out: std.ArrayListUnmanaged(u8) = .empty;
     var count: usize = 0;
     var row = first;
@@ -748,6 +761,58 @@ pub fn compilePattern(app: *App, label: []const u8, pattern: []const u8, case_se
         error.Unsupported => return app.diag.fail(arena, "{s} — pattern item not supported in this build: \"{s}\"", .{ label, pattern }),
         error.TooLong => return app.diag.fail(arena, "{s} — pattern too long", .{label}),
     };
+}
+
+/// A pattern that can match a line break — `\\n`, or a `\\_x` class —
+/// is matched against the range as one text rather than line by line.
+fn spansLines(pattern: []const u8) bool {
+    var i: usize = 0;
+    while (i + 1 < pattern.len) : (i += 1) {
+        if (pattern[i] != '\\') continue;
+        if (pattern[i + 1] == 'n' or pattern[i + 1] == '_') return true;
+        i += 1;
+    }
+    return false;
+}
+
+/// `:s` with a pattern that crosses lines (`:%s/\\n/,/` joins them): the
+/// range's lines — the last one's line break included — are one text;
+/// without `g` only the first match that starts on each line is
+/// replaced. One splice, one undo step.
+fn substituteAcrossLines(app: *App, e: *EditorPane, re: *regex.Regex, label: []const u8, pattern: []const u8, replacement: []const u8, first: usize, last: usize, global: bool) CommandError!void {
+    const arena = app.frame.allocator();
+    const ed = e.buf.editor;
+    const text = ed.bytes();
+    const lo = ed.lineStart(first);
+    const hi = @min(ed.lineEnd(last) + 1, text.len);
+    const region = text[lo..hi];
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var count: usize = 0;
+    var copied: usize = 0;
+    var from: usize = 0;
+    var last_row: ?usize = null;
+    while (from <= region.len) {
+        const m = re.find(region, from) orelse break;
+        const row = ed.lineOfByte(lo + m.start);
+        const take = global or last_row == null or last_row.? != row;
+        if (take) {
+            try out.appendSlice(arena, region[copied..m.start]);
+            try regex.expandReplacement(arena, &out, replacement, region, m);
+            copied = m.end;
+            count += 1;
+            last_row = row;
+        }
+        from = if (m.end > m.start) m.end else m.end + 1;
+    }
+    if (count == 0) {
+        app.toast("{s} — no match for \"{s}\"", .{ label, pattern });
+        return;
+    }
+    try out.appendSlice(arena, region[@min(copied, region.len)..]);
+    try app.splice(e, lo, hi, out.items);
+    ed.setCursor(ed.firstNonWs(@min(first, ed.lineCount() - 1)));
+    ed.goal_col = null;
+    app.toast("{s} — {d} replacement(s)", .{ label, count });
 }
 
 /// `\\/` → `/` (for whatever the delimiter is); everything else stays.
@@ -1943,7 +2008,7 @@ test "ex: :messages opens the picker, :messages! dumps, :cn/:cp walk the quickfi
     try f.ex("messages!");
     try testing.expect(std.mem.indexOf(u8, f.app.activeEditor().?.buf.editor.bytes(), "hello there") != null);
     try testing.expectError(error.Failed, f.ex("cn"));
-    try testing.expect(std.mem.indexOf(u8, f.app.diag.msg.?, "no quickfix list") != null);
+    try testing.expect(std.mem.indexOf(u8, f.app.diag.msg.?, "E42: No Errors") != null);
 }
 
 test "ex: q refuses a dirty buffer, q! discards, the last close quits" {
@@ -1978,4 +2043,34 @@ fn realRoot(tmp: *std.testing.TmpDir, gpa: std.mem.Allocator) ![]u8 {
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const n = try tmp.dir.realPath(std.testing.io, &buf);
     return gpa.dupe(u8, buf[0..n]);
+}
+
+test "ex: :s forms Neovim reads — a line break in the pattern, /pat/ and ?pat? addresses, `;`, `~`, a count" {
+    const Case = struct { src: []const u8, cmds: []const []const u8, want: []const u8, row: ?usize = null };
+    const cases = [_]Case{
+        .{ .src = "a\nb\nc\n", .cmds = &.{"%s/\\n/,/"}, .want = "a,b,c," },
+        .{ .src = "a\nb\nc\nd", .cmds = &.{"1,2s/\\n/,/"}, .want = "a,b,c\nd" },
+        .{ .src = "a x\nb x\nc x\n", .cmds = &.{"%s/x\\n/-/"}, .want = "a -b -c -" },
+        .{ .src = "l1 x\nl2 x\nl3 x\nl4 x\nl5 x", .cmds = &.{"/l3/,$s/x/Y/"}, .want = "l1 x\nl2 x\nl3 Y\nl4 Y\nl5 Y", .row = 4 },
+        .{ .src = "l1 x\nl2 x\nl3 x\nl4 x", .cmds = &.{"?l3?s/x/Y/"}, .want = "l1 x\nl2 x\nl3 Y\nl4 x" },
+        .{ .src = "l1 x\nl2 x\nl3 x\nl4 x", .cmds = &.{"2;+1s/x/Y/"}, .want = "l1 x\nl2 Y\nl3 Y\nl4 x", .row = 2 },
+        .{ .src = "ab ab\nab ab", .cmds = &.{ "s/a/X/", "2", "s/b/~/" }, .want = "Xb ab\naX ab" },
+        .{ .src = "ab ab\naX ab", .cmds = &.{ "2", "s/X/\\~/" }, .want = "ab ab\na~ ab" },
+        .{ .src = "l1 x\nl2 x\nl3 x", .cmds = &.{"s/x/Y/ 2"}, .want = "l1 Y\nl2 Y\nl3 x", .row = 1 },
+    };
+    for (cases) |c| {
+        var f = try Fixture.init(c.src);
+        defer f.deinit();
+        for (c.cmds) |cmd| try f.ex(cmd);
+        testing.expectEqualStrings(c.want, f.text()) catch |err| {
+            std.debug.print("case {s}\n", .{c.cmds[c.cmds.len - 1]});
+            return err;
+        };
+        if (c.row) |row| try testing.expectEqual(row, f.app.activeEditor().?.buf.editor.currentLine());
+    }
+    // A pattern address that matches nothing is E486.
+    var f = try Fixture.init("a\nb");
+    defer f.deinit();
+    try testing.expectError(error.Failed, f.ex("/zz/s/a/b/"));
+    try testing.expect(std.mem.indexOf(u8, f.app.diag.msg.?, "E486") != null);
 }

@@ -1,0 +1,61 @@
+# Five `:s` forms, each against Neovim 0.12.5 (nvchad-probe):
+#   :%s/\n/,/        a line break in the pattern joins the lines -> a,b,c,
+#   :/l3/,$s/x/Y/    a pattern address starts the range           -> lines 3-5
+#   :2;+1s/x/Y/      `;` makes +1 count from line 2              -> lines 2-3
+#   :s/b/~/          `~` is the previous replacement string       -> aX ab
+#   :s/x/Y/ 2        a count: two lines from the cursor's         -> lines 1-2
+write a.txt "a\nb\nc\n"
+open a.txt
+command editor.use_vim
+key :
+type "%s/\\n/,/"
+key enter
+key :
+type "w"
+key enter
+expect file a.txt contains "a,b,c,"
+
+write b.txt "l1 x\nl2 x\nl3 x\nl4 x\nl5 x\n"
+open b.txt
+key :
+type "/l3/,$s/x/Y/"
+key enter
+key :
+type "w"
+key enter
+expect file b.txt contains "l1 x\nl2 x\nl3 Y\nl4 Y\nl5 Y"
+expect status contains "\"line\":5"
+
+write c.txt "l1 x\nl2 x\nl3 x\nl4 x\n"
+open c.txt
+key :
+type "2;+1s/x/Y/"
+key enter
+key :
+type "w"
+key enter
+expect file c.txt contains "l1 x\nl2 Y\nl3 Y\nl4 x"
+
+write d.txt "ab ab\nab ab\n"
+open d.txt
+key :
+type "s/a/X/"
+key enter
+key j
+key :
+type "s/b/~/"
+key enter
+key :
+type "w"
+key enter
+expect file d.txt contains "Xb ab\naX ab"
+
+write e.txt "l1 x\nl2 x\nl3 x\n"
+open e.txt
+key :
+type "s/x/Y/ 2"
+key enter
+key :
+type "w"
+key enter
+expect file e.txt contains "l1 Y\nl2 Y\nl3 x"

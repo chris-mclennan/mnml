@@ -557,11 +557,13 @@ pub const Vim = struct {
             while (start > 0 and !std.ascii.isWhitespace(line.items[start - 1])) start -= 1;
             line.replaceRangeAssumeCapacity(start, cur - start, &.{});
             self.cmdline_cursor = start;
+            self.stopHistoryWalk();
             return .consumed;
         }
         if (isCtrlChar(key, 'u')) {
             line.clearRetainingCapacity();
             self.cmdline_cursor = 0;
+            self.stopHistoryWalk();
             return .consumed;
         }
         if (isCtrlChar(key, 'a') or isCtrlChar(key, 'b')) {
@@ -593,31 +595,39 @@ pub const Vim = struct {
                 self.closeCmdline();
                 return .{ .app = .{ .ex_command = text } };
             },
+            // `:help c_<Up>`: the older entry that starts with what was
+            // typed before the walk began; none older leaves the line.
             .up => {
-                if (self.ex_history.items.len == 0) return .{ .app = .{ .cmdline_popup_move = -1 } };
+                if (self.ex_history.items.len == 0) return .consumed;
                 if (self.ex_history_cursor == null) {
                     if (self.ex_history_typing) |t| gpa.free(t);
                     self.ex_history_typing = try gpa.dupe(u8, line.items);
                     self.ex_history_cursor = self.ex_history.items.len;
                 }
-                const idx = self.ex_history_cursor.? -| 1;
-                self.ex_history_cursor = idx;
-                try self.setLine(self.ex_history.items[idx]);
+                const prefix = self.ex_history_typing orelse "";
+                var i = self.ex_history_cursor.?;
+                while (i > 0) {
+                    i -= 1;
+                    if (!std.mem.startsWith(u8, self.ex_history.items[i], prefix)) continue;
+                    self.ex_history_cursor = i;
+                    try self.setLine(self.ex_history.items[i]);
+                    break;
+                }
                 return .consumed;
             },
             .down => {
-                const curh = self.ex_history_cursor orelse return .{ .app = .{ .cmdline_popup_move = 1 } };
-                const next = curh + 1;
-                if (next >= self.ex_history.items.len) {
-                    const typing = self.ex_history_typing orelse "";
-                    try self.setLine(typing);
-                    if (self.ex_history_typing) |t| gpa.free(t);
-                    self.ex_history_typing = null;
-                    self.ex_history_cursor = null;
-                } else {
-                    self.ex_history_cursor = next;
-                    try self.setLine(self.ex_history.items[next]);
+                const curh = self.ex_history_cursor orelse return .consumed;
+                const prefix = self.ex_history_typing orelse "";
+                var i = curh + 1;
+                while (i < self.ex_history.items.len) : (i += 1) {
+                    if (!std.mem.startsWith(u8, self.ex_history.items[i], prefix)) continue;
+                    self.ex_history_cursor = i;
+                    try self.setLine(self.ex_history.items[i]);
+                    return .consumed;
                 }
+                // Past the newest match: the typed text again.
+                try self.setLine(prefix);
+                self.stopHistoryWalk();
                 return .consumed;
             },
             .left => {
@@ -1190,6 +1200,8 @@ pub const Vim = struct {
                 self.prefix = .none;
                 const c = ch orelse return .consumed;
                 if (c == ':') return runCmd(.@"view.cmdline_history");
+                if (c == '/') return runCmd(.@"view.search_history");
+                if (c == '?') return runCmd(.@"view.search_history_backward");
                 // `qq` is register q like any other letter (`:help q`).
                 // `qA` appends to `a` (`:help q`); the buffer folds the case.
                 if ((c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9')) {
@@ -2555,12 +2567,18 @@ test "cmdline: typing, caret edits, history walk, enter emits ex_command" {
     try testing.expectEqualStrings("wq", r.app.ex_command);
     try testing.expect(!v.isCmdlineOpen());
     try testing.expectEqual(@as(usize, 1), v.exHistory().len);
-    // Walk history: Up recalls, Down restores what was typed.
+    // Walk history: Up recalls the entries that start with what was
+    // typed (`:help c_<Up>`), Down restores what was typed.
     _ = try v.handleKey(Key.char(':'), .{}, a);
-    _ = try v.handleKey(Key.char('e'), .{}, a);
+    _ = try v.handleKey(Key.char('w'), .{}, a);
     _ = try v.handleKey(Key.named(.up), .{}, a);
     try testing.expectEqualStrings("wq", v.cmdlineGet().?);
     _ = try v.handleKey(Key.named(.down), .{}, a);
+    try testing.expectEqualStrings("w", v.cmdlineGet().?);
+    // `e` starts no entry: Up leaves the line alone.
+    _ = try v.handleKey(Key.named(.backspace), .{}, a);
+    _ = try v.handleKey(Key.char('e'), .{}, a);
+    _ = try v.handleKey(Key.named(.up), .{}, a);
     try testing.expectEqualStrings("e", v.cmdlineGet().?);
     _ = try v.handleKey(Key.named(.esc), .{}, a);
     try testing.expect(!v.isCmdlineOpen());

@@ -1,0 +1,49 @@
+# An undo puts marks back where they were before the change (Neovim 0.12.5
+# keeps them in the undo state): `ma` on line 4, a change that deletes the
+# marked line, `u`, `'a` -> 4:1. The mark used to stay where the deletion
+# had pushed it — line 6 after `dG`, 5 after `dd`.
+write a.txt "l1\nl2\nl3\nl4\nl5\nl6\n"
+open a.txt
+command editor.use_vim
+key j
+key j
+key j
+key m
+key a
+key g
+key g
+key d
+key G
+key u
+key '
+key a
+expect status contains "\"line\":4"
+
+# `dd` on the marked line itself.
+key d
+key d
+key u
+key g
+key g
+key '
+key a
+expect status contains "\"line\":4"
+
+# `:1,5d`, then `u`; redo takes the lines away again and `u` brings the
+# mark back once more.
+key :
+type "1,5d"
+key enter
+key u
+key g
+key g
+key '
+key a
+expect status contains "\"line\":4"
+key ctrl+r
+key u
+key g
+key g
+key '
+key a
+expect status contains "\"line\":4"

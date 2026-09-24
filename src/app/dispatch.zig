@@ -1107,7 +1107,13 @@ fn closeOverlay(app: *App) void {
     http_app.overlayClosing(app);
     // Esc on a `:s///c` box keeps what was replaced and stops.
     if (app.overlay == .confirm and app.overlay.confirm.purpose == .replace_confirm) ex_verbs.cancelConfirm(app);
-    const back: ?app_mod.FocusId = if (app.overlay == .menu) app.overlay.menu.return_focus else if (app.overlay == .prompt) app.overlay.prompt.return_focus else if (app.overlay == .confirm) app.overlay.confirm.return_focus else null;
+    const back: ?app_mod.FocusId = switch (app.overlay) {
+        .menu => |m| m.return_focus,
+        .prompt => |p| p.return_focus,
+        .confirm => |c| c.return_focus,
+        .picker => |p| p.return_focus,
+        else => null,
+    };
     app.overlay.deinit(app.gpa);
     if (back) |f| {
         app.focus = f;
@@ -1642,17 +1648,22 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
             if (line.len > 0) try runExLine(app, std.mem.trimStart(u8, line, ":"));
         },
         .goto_line => {
-            const t = std.mem.trim(u8, text, " \t");
+            // VS Code's forms: `12`, `12:5` or `12,5` (line, column), and
+            // a negative line counting from the end (`-1` is the last).
+            const t = std.mem.trimStart(u8, std.mem.trim(u8, text, " \t"), ":");
             if (t.len == 0) return;
-            const colon = std.mem.indexOfScalar(u8, t, ':');
-            const line_s = if (colon) |i| t[0..i] else t;
-            const n = std.fmt.parseInt(usize, std.mem.trim(u8, line_s, " "), 10) catch {
+            const sep = std.mem.indexOfAny(u8, t, ":,");
+            const line_s = if (sep) |i| t[0..i] else t;
+            const want = std.fmt.parseInt(i64, std.mem.trim(u8, line_s, " "), 10) catch {
                 app.toast("not a number: \"{s}\"", .{t});
                 return;
             };
-            const col: usize = if (colon) |i| (std.fmt.parseInt(usize, std.mem.trim(u8, t[i + 1 ..], " "), 10) catch 1) -| 1 else 0;
+            const col: usize = if (sep) |i| (std.fmt.parseInt(usize, std.mem.trim(u8, t[i + 1 ..], " "), 10) catch 1) -| 1 else 0;
             const e = app.activeEditor() orelse return;
-            e.buf.editor.placeCursor(@min(n -| 1, e.buf.editor.lineCount() - 1), col);
+            const lines: i64 = @intCast(e.buf.editor.lineCount());
+            const n: usize = @intCast(std.math.clamp(if (want < 0) lines + want + 1 else want, 1, lines));
+            e.buf.editor.placeCursor(n - 1, col);
+            app.focus = .{ .pane = app.active.? };
         },
         .tab_width => try context_menus.acceptTabWidth(app, text),
         .image_open => try image_pane.acceptOpen(app, text),
@@ -1842,9 +1853,12 @@ fn findBarKey(app: *App, k: Key) Allocator.Error!void {
     switch (try FindBar.handleKey(&fb.state, app.gpa, k)) {
         .consumed, .focus_toggle => {},
         .ignored => try widgetFallthrough(app, k),
-        .toggle_regex, .toggle_case => try cmd_find.liveUpdate(app),
+        .toggle_regex, .toggle_case, .toggle_word => try cmd_find.liveUpdate(app),
         .cancel => app.closeFindBar(true),
-        .changed => try cmd_find.liveUpdate(app),
+        .changed => {
+            if (app.input_style == .vim) find_history.endWalk(app);
+            try cmd_find.liveUpdate(app);
+        },
         .submit => try cmd_find.acceptFromBar(app),
         .next => try cmd_find.stepFromBar(app, 1),
         .prev => try cmd_find.stepFromBar(app, -1),
@@ -3780,10 +3794,18 @@ pub fn listPaneEnter(app: *App, pane: PaneId, l: *app_mod.ListPane) Allocator.Er
             try app.forceClosePane(pane);
             try runExLine(app, line);
         },
+        // `q/` / `q?`: the row is searched again, as if typed after `/`.
+        .search_history => {
+            const q = try app.frame.allocator().dupe(u8, e.text);
+            const reverse = l.reverse;
+            try app.forceClosePane(pane);
+            try cmd_find.searchFor(app, q, reverse);
+        },
         .quickfix, .location => {
             // changed: the location list shares the quickfix row action; the
             // owning editor's index follows the row so `:lnext` continues from it.
             if (l.kind == .location) @import("loclist.zig").noteEnter(app, l.cursor);
+            if (l.kind == .quickfix) @import("quickfix.zig").noteEnter(app, l.cursor);
             const rel = try app.frame.allocator().dupe(u8, e.path orelse return);
             const abs = try app.absPath(rel);
             const line = e.line;

@@ -23,6 +23,7 @@ const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const PaneId = app_mod.PaneId;
 const EditorPane = app_mod.EditorPane;
+const Editor = @import("../editor/editor.zig").Editor;
 const Key = app_mod.Key;
 const key_mod = @import("../core/key.zig");
 const Mouse = key_mod.Mouse;
@@ -463,8 +464,15 @@ pub fn acceptQuery(app: *App, text: []const u8) Allocator.Error!void {
 /// beside the active pane. Scoped to the primary workspace, as VS
 /// Code's Ctrl+Shift+F is.
 pub fn runGrep(app: *App, query: []const u8) CommandError!void {
+    return runGrepWith(app, query, null);
+}
+
+/// `runGrep` with the regex flag set for this run (`:grep`, `:vimgrep`
+/// read their query as a pattern); null keeps the pane's own.
+pub fn runGrepWith(app: *App, query: []const u8, regex_on: ?bool) CommandError!void {
     if (find(app)) |id| {
         const p = &app.panes.get(id).?.grep;
+        if (regex_on) |on| p.flags.regex = on;
         if (!std.mem.eql(u8, p.query, query)) {
             // The worker reads `query`: stop it before the swap.
             p.abort.generation.store(std.math.maxInt(u32), .release);
@@ -480,7 +488,12 @@ pub fn runGrep(app: *App, query: []const u8) CommandError!void {
     }
     var pane = try GrepPane.init(app.gpa, app.workspace, query);
     errdefer pane.deinit(app.io);
-    if (app.activeEditor()) |e| pane.flags.regex = e.find.regex;
+    // The standard bar's sticky `.*` chip carries over; vim's `/` is a
+    // pattern whatever the chip, so it says nothing about the grep.
+    if (app.input_style == .standard) if (app.activeEditor()) |e| {
+        pane.flags.regex = e.find.regex;
+    };
+    if (regex_on) |on| pane.flags.regex = on;
     const id = try app.panes.add(.{ .grep = pane });
     pane = undefined; // moved into the store
     const layout = app.layouts.current();
@@ -1019,6 +1032,10 @@ fn runWalk(c: *Ctx, root: []const u8, p: *Pattern) WorkerError!void {
                 try loadIgnore(&ignores, io, gpa, sub, entry.path);
             },
             .file => {
+                // Hidden files are skipped as hidden directories are —
+                // rg's default — so `.env` is not read while `.github/`
+                // is passed over.
+                if (entry.basename.len > 0 and entry.basename[0] == '.') continue;
                 if (ignores.ignored(entry.path, false)) continue;
                 try io.checkCancel();
                 path_buf.clearRetainingCapacity();
@@ -1108,6 +1125,8 @@ pub fn handle(app: *App, result: *Result) Allocator.Error!void {
     if (!result.done) jobs.progress(app, .search, result.pane, try std.fmt.allocPrint(app.frame.allocator(), "{d} so far", .{p.hits.items.len}));
     if (result.done) {
         p.loading = false;
+        // Every finished grep is the quickfix list (`:cnext` walks it).
+        if (p.err == null) try @import("quickfix.zig").fromGrepHits(app, p.hits.items, result.pane);
         {
             const n = p.hits.items.len;
             const words = try std.fmt.allocPrint(app.frame.allocator(), "{d} match{s} in {d} file{s}", .{ n, if (n == 1) "" else "es", p.groups.items.len, if (p.groups.items.len == 1) "" else "s" });
@@ -1169,24 +1188,72 @@ fn stepHit(app: *App, id: PaneId, p: *GrepPane, delta: i32) Allocator.Error!void
     try openHit(app, id, p, hit);
 }
 
+/// Where a hit is in the text as it is now (`relocate`).
+pub const Where = struct { row: usize, moved: bool = false, lost: bool = false };
+
+/// Where the hit found on 1-based `line`, reading `text` from byte
+/// `text_off` of that line, is now: its own line while it still reads
+/// the same; else the nearest line that does — an edit above it moved
+/// it, and the row still shows the old number; else its old line,
+/// `lost`. `trimmed`: `text` is the line with its blanks trimmed (a
+/// quickfix entry). Open and closed files alike: the text in the editor
+/// is what is compared.
+pub fn relocate(ed: *const Editor, line: u32, text: []const u8, text_off: u32, trimmed: bool) Where {
+    const n = ed.lineCount();
+    const old = @min(@as(usize, line) -| 1, n -| 1);
+    if (lineReads(ed, old, text, text_off, trimmed)) return .{ .row = old };
+    var d: usize = 1;
+    while (d < n) : (d += 1) {
+        if (old + d < n and lineReads(ed, old + d, text, text_off, trimmed)) return .{ .row = old + d, .moved = true };
+        if (d <= old and lineReads(ed, old - d, text, text_off, trimmed)) return .{ .row = old - d, .moved = true };
+        if (old + d >= n and d > old) break;
+    }
+    return .{ .row = old, .lost = true };
+}
+
+fn lineReads(ed: *const Editor, row: usize, text: []const u8, off: u32, trimmed: bool) bool {
+    var l = ed.lineSlice(row);
+    if (l.len > 0 and l[l.len - 1] == '\r') l = l[0 .. l.len - 1];
+    if (trimmed) return std.mem.eql(u8, std.mem.trim(u8, l, " \t"), text);
+    if (off + text.len > l.len) return false;
+    if (!std.mem.eql(u8, l[off .. off + text.len], text)) return false;
+    // A whole line must be the whole line; a window of a long one only
+    // has to read the same where it was cut.
+    return off > 0 or text.len == l.len or text.len >= window_after;
+}
+
 /// Open the hit's file in an editor at its line and column (an editor
 /// even for markdown — a rendered preview has no cursor to place); the
-/// grep pane stays.
+/// grep pane stays. The file may have changed since the search: the
+/// hit's line is found again by its text (`relocate`), and a line that
+/// no longer reads the same says so.
 pub fn openHit(app: *App, id: PaneId, p: *GrepPane, hit: u32) Allocator.Error!void {
     if (hit >= p.hits.items.len) return;
+    // `:cnext` goes on from the hit the user opened.
+    @import("quickfix.zig").noteGrepHit(app, id, hit);
+    const arena = app.frame.allocator();
     const h = p.hits.items[hit];
-    const path = try app.frame.allocator().dupe(u8, h.path);
+    const path = try arena.dupe(u8, h.path);
+    const text = try arena.dupe(u8, h.text);
     try app.noteRecent(path);
     const eid = app.openEditor(path) catch |err| {
         app.toast("open {s}: {s}", .{ h.rel, @errorName(err) });
         return;
     };
     if (app.panes.editor(eid)) |e| {
-        e.buf.editor.placeCursorByte(@min(@as(usize, h.line) -| 1, e.buf.editor.lineCount() - 1), h.col);
+        const w = relocate(e.buf.editor, h.line, text, h.text_off, false);
+        e.buf.editor.placeCursorByte(w.row, h.col);
         e.buf.editor.goal_col = null;
+        noteRelocation(app, w, h.line);
     }
-    _ = id;
     app.needs_render = true;
+}
+
+/// A hit that moved, or whose line changed, says so — the row still
+/// shows what the search found.
+pub fn noteRelocation(app: *App, w: Where, line: u32) void {
+    if (w.moved) app.toast("the hit moved to line {d} since the search (was {d})", .{ w.row + 1, line });
+    if (w.lost) app.toast("line {d} changed since the search — the hit may have moved (r searches again)", .{line});
 }
 
 fn copySelected(app: *App, p: *GrepPane) Allocator.Error!void {
@@ -1796,7 +1863,9 @@ test "a hit after non-ASCII text carries its byte column and its character colum
 test "walk backend: literal + smart case, .gitignore honoured, whole word, a regex and a vim pattern, a bad one" {
     var f = try Fixture.init();
     defer f.deinit();
-    // Literal, smart case off: 3 hits in src/a.zig, 1 in b.txt (Alpha), 1 in notes.md; build/out.log is ignored.
+    // Literal, smart case off: 3 hits in src/a.zig, 1 in b.txt (Alpha), 1 in notes.md; build/out.log is ignored,
+    // and a hidden file is skipped as rg skips it.
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = ".env", .data = "SECRET=alpha\n" });
     var r = try walkInto(&f, "alpha", .{});
     defer r.destroy(t.allocator);
     try t.expectEqual(@as(usize, 5), r.hits.items.len);
@@ -2124,4 +2193,24 @@ test "grep: a stale batch is dropped; the pane's deinit cancels a worker mid-run
     // Closing the pane while the worker may still be running must not leak or crash.
     try app.forceClosePane(id);
     try t.expect(find(app) == null);
+}
+
+test "relocate: a hit keeps its line while it reads the same, follows an edit to the nearest line that does, else says it is lost" {
+    const ed = try Editor.init(std.testing.allocator, "// top\nconst alpha = 1;\nx\nconst alpha = 1;\n  indented alpha\n");
+    defer ed.deinit();
+    // Found on line 1 before `// top` went in: now the nearest copy, line 2.
+    const w = relocate(ed, 1, "const alpha = 1;", 0, false);
+    try std.testing.expectEqual(@as(usize, 1), w.row);
+    try std.testing.expect(w.moved and !w.lost);
+    // Still where it was.
+    try std.testing.expect(!relocate(ed, 4, "const alpha = 1;", 0, false).moved);
+    // Nearest wins: from line 5, the copy on line 4, not line 2.
+    try std.testing.expectEqual(@as(usize, 3), relocate(ed, 5, "const alpha = 1;", 0, false).row);
+    // A prefix of a longer line is not the line.
+    try std.testing.expect(relocate(ed, 3, "const", 0, false).lost);
+    // A quickfix entry's text is the trimmed line.
+    try std.testing.expectEqual(@as(usize, 4), relocate(ed, 3, "indented alpha", 0, true).row);
+    const lost = relocate(ed, 2, "gone", 0, false);
+    try std.testing.expect(lost.lost);
+    try std.testing.expectEqual(@as(usize, 1), lost.row);
 }

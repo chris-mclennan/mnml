@@ -298,9 +298,10 @@ pub fn openPicker(app: *App, title: []const u8, kind: app_mod.PickerKind, labels
 /// As `openPicker`, with the muted detail and the chord hint per row
 /// (both owned; empty slices when the picker has none).
 pub fn openPickerWith(app: *App, title: []const u8, kind: app_mod.PickerKind, labels: [][]u8, panes: []PaneId, details: [][]u8, hints: [][]u8) CommandError!void {
+    const back = app.overlayReturnFocus();
     app.overlay.deinit(app.gpa);
     const anchor: @import("../ui/overlay.zig").Anchor = if (app.cfg.ui.picker_position == .top) .top else .center;
-    app.overlay = .{ .picker = .{ .state = .{ .title = title, .anchor = anchor }, .kind = kind, .labels = labels, .panes = panes, .details = details, .hints = hints, .filtered = .empty } };
+    app.overlay = .{ .picker = .{ .state = .{ .title = title, .anchor = anchor }, .kind = kind, .labels = labels, .panes = panes, .details = details, .hints = hints, .filtered = .empty, .return_focus = back } };
     try dispatch.refilterPicker(app);
     app.focus = .overlay;
     app.needs_render = true;

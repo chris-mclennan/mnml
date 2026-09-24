@@ -72,10 +72,6 @@ pub const table = .{
     .@"vim.replay_last_ex" = &replayLastEx,
     .@"buffer.next_dirty" = &nextDirty,
     .@"buffer.prev_dirty" = &prevDirty,
-    .@"qf.first" = &qfFirst,
-    .@"qf.last" = &qfLast,
-    .@"qf.next" = &qfNext,
-    .@"qf.prev" = &qfPrev,
     .@"picker.marks" = &pickMarks,
     .@"picker.clipboard" = &pickRegisters,
     .@"picker.recent_commands" = &pickRecentCommands,
@@ -725,13 +721,13 @@ fn openAtCursor(app: *App) CommandError!void {
 /// `ctrl+shift+l`: a cursor on every occurrence of the word.
 fn selectAllOccurrences(app: *App) CommandError!void {
     const e = try app.requireEditor();
-    var rounds: usize = 0;
-    while (rounds < 4096) : (rounds += 1) {
-        const before = e.buf.editor.extra_cursors.items.len;
-        _ = try app.applyOps(e, &.{.add_cursor_at_next_word});
-        if (e.buf.editor.extra_cursors.items.len == before) break;
+    _ = try app.applyOps(e, &.{.select_all_word_occurrences});
+    const ed = e.buf.editor;
+    if (ed.anchor == null or ed.anchor.? == ed.cursor) {
+        app.toast("no word under the cursor to select", .{});
+        return;
     }
-    app.toast("{d} cursor(s)", .{e.buf.editor.extra_cursors.items.len + 1});
+    app.toast("{d} cursor(s)", .{ed.extra_cursors.items.len + 1});
 }
 
 /// `@:` — the last `:` line again.
@@ -769,46 +765,6 @@ fn dirtyStep(app: *App, forward: bool) CommandError!void {
         }
     }
     return app.diag.fail(app.frame.allocator(), "no dirty buffers", .{});
-}
-
-// ─── quickfix ────────────────────────────────────────────────────────────
-
-fn quickfixPane(app: *App) ?struct { id: PaneId, list: *app_mod.ListPane } {
-    for (app.panes.slots.items, 0..) |*slot, i| if (slot.*) |*p| switch (p.*) {
-        .list => |*l| if (l.kind == .quickfix) return .{ .id = @intCast(i), .list = l },
-        else => {},
-    };
-    return null;
-}
-
-fn qfFirst(app: *App) CommandError!void {
-    return qfGo(app, .first);
-}
-fn qfLast(app: *App) CommandError!void {
-    return qfGo(app, .last);
-}
-fn qfNext(app: *App) CommandError!void {
-    return qfGo(app, .next);
-}
-fn qfPrev(app: *App) CommandError!void {
-    return qfGo(app, .prev);
-}
-
-/// `:cfirst` / `:clast` / `:cnext` / `:cprev` over the quickfix pane
-/// (`:cexpr` fills it); the entry opens the way Enter on its row does.
-fn qfGo(app: *App, where: enum { first, last, next, prev }) CommandError!void {
-    const arena = app.frame.allocator();
-    const qf = quickfixPane(app) orelse return app.diag.fail(arena, "no quickfix list (:cexpr fills one)", .{});
-    const n = qf.list.entries.items.len;
-    if (n == 0) return app.diag.fail(arena, "quickfix list is empty", .{});
-    qf.list.cursor = switch (where) {
-        .first => 0,
-        .last => n - 1,
-        .next => if (qf.list.cursor + 1 < n) qf.list.cursor + 1 else return app.diag.fail(arena, "quickfix: at the last entry", .{}),
-        .prev => if (qf.list.cursor > 0) qf.list.cursor - 1 else return app.diag.fail(arena, "quickfix: at the first entry", .{}),
-    };
-    try dispatch.listPaneEnter(app, qf.id, qf.list);
-    app.toast("({d} of {d}) {s}", .{ qf.list.cursor + 1, n, qf.list.entries.items[qf.list.cursor].text });
 }
 
 // ─── pickers over what the app already holds ─────────────────────────────

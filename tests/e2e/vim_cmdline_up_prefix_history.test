@@ -1,0 +1,34 @@
+# `:s<Up>` recalls the newest `:` line that starts with `s` (vim's c_<Up>,
+# NvChad and Neovim 0.12.5 agree): here `s/a/A/`, which re-runs on line 2
+# and finds nothing (E486), so the file is unchanged. The completion popup
+# that comes up as `s` is typed used to own <Up>: two <Up>s wrote `:sort`
+# and Enter sorted the file.
+write a.txt "c\nb\na\n"
+open a.txt
+command editor.use_vim
+key :
+type "s/a/A/"
+key enter
+key :
+type "2"
+key enter
+key :
+type "s"
+key up
+key up
+key enter
+key :
+type "w"
+key enter
+# Neovim: `:s/a/A/` re-run on line 2 finds no `a` (E486); the file is unchanged.
+expect file a.txt contains "c\nb\na"
+
+# A second walk: <Up> skips the entries that do not start with `s`,
+# <Down> past the newest match puts the typed text back.
+key :
+type "s"
+key up
+expect screen contains ":s/a/A/"
+key down
+expect screen lacks ":s/a/A/"
+key esc

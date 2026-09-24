@@ -55,7 +55,7 @@ fn editor(app: *App, label: []const u8) CommandError!*EditorPane {
 
 /// `app.search_case`, else smart case on the pattern.
 fn caseFor(app: *App, needle: []const u8) bool {
-    return app.search_case orelse find_mod.hasUpper(needle);
+    return app.search_case orelse find_mod.patternHasUpper(needle);
 }
 
 fn lineHas(line: []const u8, re: *regex.Regex) bool {
@@ -717,13 +717,49 @@ pub fn substituteEntry(app: *App, range: ?Range, spec: []const u8, whole: bool) 
         const last = app.last_search_pattern orelse return app.diag.fail(arena, "{s} — E35: no previous regular expression", .{label});
         parts.pattern = try arena.dupe(u8, last);
     }
+    // `~` is the previous replacement string (`:help s~`), `\~` a tilde;
+    // what is remembered is the expanded string, as in Neovim.
+    parts.replacement = try expandTilde(arena, parts.replacement, if (app.last_substitute) |l| l.replacement else "");
+    // `:s/x/y/ 3` — a count: that many lines from the range's last one.
+    var r = range;
+    var flag_letters: std.ArrayListUnmanaged(u8) = .empty;
+    var count: usize = 0;
+    for (parts.flags) |f| {
+        if (std.ascii.isDigit(f)) {
+            count = count * 10 + (f - '0');
+        } else if (f != ' ' and f != '\t') try flag_letters.append(arena, f);
+    }
+    parts.flags = flag_letters.items;
+    if (count > 0) {
+        const e = try editor(app, label);
+        const lines = e.buf.editor.lineCount();
+        const from = if (r) |rr| rr.last else e.buf.editor.currentLine();
+        r = .{ .first = @min(from, lines - 1), .last = @min(from + count - 1, lines - 1) };
+    }
     try remember(app, parts);
     // `remember` freed the previous spec — an empty pattern borrowed from it.
     parts.pattern = app.last_substitute.?.pattern;
-    if (std.mem.indexOfScalar(u8, parts.flags, 'n') != null) return substituteCount(app, range, parts, whole);
-    if (std.mem.indexOfScalar(u8, parts.flags, 'c') != null) return substituteConfirm(app, range, parts, whole);
+    parts.replacement = app.last_substitute.?.replacement;
+    if (std.mem.indexOfScalar(u8, parts.flags, 'n') != null) return substituteCount(app, r, parts, whole);
+    if (std.mem.indexOfScalar(u8, parts.flags, 'c') != null) return substituteConfirm(app, r, parts, whole);
     const rebuilt = try std.fmt.allocPrint(arena, "{c}{s}{c}{s}{c}{s}", .{ parts.delim, parts.pattern, parts.delim, parts.replacement, parts.delim, parts.flags });
-    return ex.substitute(app, range, rebuilt, whole);
+    return ex.substitute(app, r, rebuilt, whole);
+}
+
+/// `~` → `prev`; `\~` and every other escape stay for the expansion.
+fn expandTilde(arena: Allocator, rep: []const u8, prev: []const u8) Allocator.Error![]const u8 {
+    if (std.mem.indexOfScalar(u8, rep, '~') == null) return rep;
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var i: usize = 0;
+    while (i < rep.len) : (i += 1) {
+        if (rep[i] == '\\' and i + 1 < rep.len) {
+            try out.appendSlice(arena, rep[i .. i + 2]);
+            i += 1;
+        } else if (rep[i] == '~') {
+            try out.appendSlice(arena, prev);
+        } else try out.append(arena, rep[i]);
+    }
+    return out.items;
 }
 
 fn remember(app: *App, parts: SubParts) Allocator.Error!void {
@@ -777,6 +813,9 @@ pub const ReplaceConfirm = struct {
     idx: usize = 0,
     applied: usize = 0,
     delta: isize = 0,
+    /// The undo stack's depth before the first replacement: the ones
+    /// confirmed collapse into one undo step when the run ends (Neovim).
+    undo_base: usize = 0,
 
     pub fn deinit(c: ReplaceConfirm, gpa: Allocator) void {
         gpa.free(c.needle);
@@ -841,7 +880,7 @@ fn substituteConfirm(app: *App, range: ?Range, parts: SubParts, whole: bool) Com
     errdefer app.gpa.free(rep_owned);
     const matches_owned = try matches.toOwnedSlice(app.gpa);
     errdefer app.gpa.free(matches_owned);
-    app.replace_confirm = .{ .pane = pane_id, .needle = needle_owned, .replacement = rep_owned, .matches = matches_owned, .expansions = try expansions.toOwnedSlice(app.gpa) };
+    app.replace_confirm = .{ .pane = pane_id, .needle = needle_owned, .replacement = rep_owned, .matches = matches_owned, .expansions = try expansions.toOwnedSlice(app.gpa), .undo_base = ed.doc.history.undoLen() };
     try showNext(app);
 }
 
@@ -973,6 +1012,8 @@ fn finishConfirm(app: *App) void {
     if (app.panes.editor(c.pane)) |e| {
         e.buf.editor.anchor = null;
         e.buf.editor.goal_col = null;
+        // Every confirmed replacement is one undo step, as in Neovim.
+        if (c.applied > 1) e.buf.editor.endAtomic(.{ .target_len = c.undo_base + 1 });
     }
     app.toast(":s — {d} replacement(s)", .{c.applied});
     c.deinit(app.gpa);
@@ -1246,6 +1287,30 @@ test "ex: :g, :s///n and :s///c take vim patterns — word bounds, a group refer
     try testing.expectError(error.Failed, f.ex("g/\\(x/d"));
     try testing.expectError(error.Failed, f.ex("%s/\\(x/-/c"));
     try testing.expectEqualStrings("foobar\n12-ab 34-cd", f.text());
+}
+
+test "ex: :s///c — the confirmed replacements undo as one step, whether answered a, y y y or y then Esc" {
+    const Case = struct { keys: []const Key };
+    const cases = [_]Case{
+        .{ .keys = &.{Key.char('a')} },
+        .{ .keys = &.{ Key.char('y'), Key.char('y'), Key.char('y') } },
+        .{ .keys = &.{ Key.char('y'), Key.char('y'), Key.named(.esc) } },
+        .{ .keys = &.{ Key.char('y'), Key.char('n'), Key.char('y') } },
+    };
+    for (cases) |c| {
+        var f = try Fixture.init("l1 x\nl2 x\nl3 x\n");
+        defer f.deinit();
+        const e = f.app.activeEditor().?;
+        try f.ex("%s/x/Y/gc");
+        for (c.keys) |k| try f.key(k);
+        try testing.expect(f.app.replace_confirm == null);
+        try testing.expect(!std.mem.eql(u8, "l1 x\nl2 x\nl3 x\n", f.text()));
+        _ = try f.app.applyOps(e, &.{.undo});
+        try testing.expectEqualStrings("l1 x\nl2 x\nl3 x\n", f.text());
+        // And redo brings the whole run back.
+        _ = try f.app.applyOps(e, &.{.redo});
+        try testing.expect(std.mem.count(u8, f.text(), "Y") >= 2);
+    }
 }
 
 test "ex: :s///c asks per match — y/n/a/q/l and Esc" {

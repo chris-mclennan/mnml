@@ -46,9 +46,7 @@ pub fn push(app: *App, query: []const u8) Allocator.Error!void {
     // The bar stays open across Enter in the standard profile, so the
     // recall position moves to "past the newest" on every push, not
     // only when the bar opens.
-    defer if (app.find_bar) |*fb| {
-        fb.hist_cursor = app.find_history.items.len;
-    };
+    defer endWalk(app);
     if (query.len == 0) return;
     const gpa = app.gpa;
     const items = app.find_history.items;
@@ -62,10 +60,14 @@ pub fn push(app: *App, query: []const u8) Allocator.Error!void {
 
 /// `↑` (`dir = -1`) / `↓` (`dir = 1`) on the open bar: the neighbouring
 /// entry replaces the query, and the matches follow. Older than the
-/// oldest stays; newer than the newest is the empty query.
+/// oldest stays; newer than the newest is the empty query. The vim
+/// profile's `/` recalls only the entries that start with what was
+/// typed before the walk began, and past the newest gives it back
+/// (`:help c_<Up>`); the standard bar walks every entry (VS Code).
 pub fn recall(app: *App, dir: i8) Allocator.Error!void {
     const fb = &(app.find_bar orelse return);
     const n = app.find_history.items.len;
+    if (app.input_style == .vim) return recallPrefixed(app, fb, dir);
     if (dir < 0) {
         if (fb.hist_cursor == 0 or n == 0) return;
         fb.hist_cursor -= 1;
@@ -76,6 +78,54 @@ pub fn recall(app: *App, dir: i8) Allocator.Error!void {
     const q: []const u8 = if (fb.hist_cursor >= n) "" else app.find_history.items[fb.hist_cursor];
     try fb.state.setQuery(app.gpa, q);
     try cmd_find.liveUpdate(app);
+}
+
+fn recallPrefixed(app: *App, fb: *app_mod.FindBarState, dir: i8) Allocator.Error!void {
+    const n = app.find_history.items.len;
+    if (fb.hist_cursor > n) fb.hist_cursor = n;
+    if (fb.hist_prefix == null) {
+        if (dir > 0) return;
+        fb.hist_prefix = try app.gpa.dupe(u8, fb.state.queryText());
+        fb.hist_cursor = n;
+    }
+    const prefix = fb.hist_prefix.?;
+    var found: ?usize = null;
+    if (dir < 0) {
+        var i = fb.hist_cursor;
+        while (i > 0) {
+            i -= 1;
+            if (std.mem.startsWith(u8, app.find_history.items[i], prefix)) {
+                found = i;
+                break;
+            }
+        }
+        const at = found orelse return;
+        fb.hist_cursor = at;
+        try fb.state.setQuery(app.gpa, app.find_history.items[at]);
+    } else {
+        var i = fb.hist_cursor + 1;
+        while (i < n) : (i += 1) if (std.mem.startsWith(u8, app.find_history.items[i], prefix)) {
+            found = i;
+            break;
+        };
+        if (found) |at| {
+            fb.hist_cursor = at;
+            try fb.state.setQuery(app.gpa, app.find_history.items[at]);
+        } else {
+            // Past the newest match: the typed text again.
+            try fb.state.setQuery(app.gpa, prefix);
+            endWalk(app);
+        }
+    }
+    try cmd_find.liveUpdate(app);
+}
+
+/// The query was edited: the next `↑` starts a walk from it.
+pub fn endWalk(app: *App) void {
+    const fb = &(app.find_bar orelse return);
+    if (fb.hist_prefix) |pfx| app.gpa.free(pfx);
+    fb.hist_prefix = null;
+    fb.hist_cursor = app.find_history.items.len;
 }
 
 // ─── store / load ────────────────────────────────────────────────────────
@@ -203,4 +253,33 @@ test "find history: Enter remembers the query (de-duped, a miss too); ↑ / ↓ 
         try t.expectEqual(@as(usize, 1), app.find_history.items.len);
         try t.expectError(error.FileNotFound, tmp.dir.access(t.io, file_name, .{}));
     }
+}
+
+test "find history: vim's / recalls only the entries that start with the typed text; Down past the newest gives it back" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    defer app.deinit();
+    _ = try app.openScratch();
+    try app.activeEditor().?.buf.editor.setText("foo bar\nbaz\nqux\nbar\n");
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
+    try typeQuery(&app, "baz");
+    try typeQuery(&app, "bar");
+    try typeQuery(&app, "qux");
+    try command.run(&app, .{ .static = .@"find.find" });
+    try app.handle(.{ .key = Key.char('b') });
+    try app.handle(.{ .key = Key.named(.up) });
+    try t.expectEqualStrings("bar", app.find_bar.?.state.queryText());
+    try app.handle(.{ .key = Key.named(.up) });
+    try t.expectEqualStrings("baz", app.find_bar.?.state.queryText());
+    try app.handle(.{ .key = Key.named(.up) }); // nothing older starts with `b`
+    try t.expectEqualStrings("baz", app.find_bar.?.state.queryText());
+    try app.handle(.{ .key = Key.named(.down) });
+    try t.expectEqualStrings("bar", app.find_bar.?.state.queryText());
+    try app.handle(.{ .key = Key.named(.down) });
+    try t.expectEqualStrings("b", app.find_bar.?.state.queryText());
+    // Typing starts a new walk from the new text.
+    try app.handle(.{ .key = Key.named(.backspace) });
+    try app.handle(.{ .key = Key.char('q') });
+    try app.handle(.{ .key = Key.named(.up) });
+    try t.expectEqualStrings("qux", app.find_bar.?.state.queryText());
+    try app.handle(.{ .key = Key.named(.esc) });
 }

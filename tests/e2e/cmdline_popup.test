@@ -2,10 +2,11 @@
 # shows the candidates for the token in a framed list DIRECTLY ABOVE
 # the line, its left edge on the first typed cell (column 1, after the
 # `:`), growing upward: at 120x40 the `:` line is row 39, so the frame's
-# bottom border is row 38 and its rows climb from there. Down / Up walk
-# the list and write the selection into the line, Enter runs it; Esc
-# abandons the line, popup and all, as vim's does; one candidate is no
-# popup, and Tab still completes it.
+# bottom border is row 38 and its rows climb from there. Tab writes the
+# first row into the line, and from there Down / Up walk the list (over
+# the typed text they are the `:` history, vim's c_<Up>); Enter runs it;
+# Esc abandons the line, popup and all, as vim's does; one candidate is
+# no popup, and Tab still completes it.
 
 write data.txt "alpha"
 open data.txt
@@ -22,9 +23,9 @@ expect screen contains "│ dock.add_preset"
 expect screen contains "│ dock.close_all"
 expect screen contains "more — Tab to cycle)"
 
-# Down writes the first row into the line; the popup stays up on the
+# Tab writes the first row into the line; the popup stays up on the
 # same list. Up from there wraps to the last row — `dock`.
-key down
+key tab
 expect screen contains ":dock.add_preset▏"
 expect screen contains "│ dock.close_all"
 key up

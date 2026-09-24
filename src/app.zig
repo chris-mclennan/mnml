@@ -643,6 +643,11 @@ pub const Overlay = union(enum) {
         lua_source: []u8 = &.{},
         lua_state: u16 = 0,
         requery_at_ms: ?i64 = null,
+        /// Where Esc sends focus: the tree or a panel the picker was
+        /// opened from (VS Code's Esc from Quick Open goes back to the
+        /// Explorer); null is the active pane. An accept goes to what
+        /// it opened.
+        return_focus: ?FocusId = null,
     },
     /// A context menu (a panel row's kebab, a chip's right-click).
     menu: MenuState,
@@ -792,6 +797,10 @@ pub const FindBarState = struct {
     landed: bool = false,
     /// Where `↑` / `↓` are in `App.find_history`; `len` is the live query.
     hist_cursor: usize = 0,
+    /// vim's `/b<Up>`: the query typed before the walk began — only the
+    /// entries that start with it are recalled (`:help c_<Up>`).
+    /// gpa-owned; null outside a walk.
+    hist_prefix: ?[]u8 = null,
 };
 
 /// Visual-block `I` / `A` / `c` in flight: the typed run on the first
@@ -1373,6 +1382,8 @@ pub const App = struct {
     /// until when (`discovery.flashRow`).
     discovery_flash: ?discovery_app.Flash = null,
     find_bar: ?FindBarState = null,
+    /// Vim's one quickfix list (`app/quickfix.zig`).
+    quickfix: @import("app/quickfix.zig").State = .{},
     /// The find bar's accepted queries, oldest first (`app/find_history.zig`).
     find_history: std.ArrayListUnmanaged([]u8) = .empty,
     closed: std.ArrayListUnmanaged(ClosedBuffer) = .empty,
@@ -1940,6 +1951,7 @@ pub const App = struct {
         self.jumplist.deinit(gpa);
         for (self.closed.items) |c| gpa.free(c.path);
         self.closed.deinit(gpa);
+        self.quickfix.deinit(gpa);
         for (self.find_history.items) |q| gpa.free(q);
         self.find_history.deinit(gpa);
         self.pane_mru.deinit(gpa);
@@ -3035,6 +3047,21 @@ pub const App = struct {
     }
 
     /// Close the find bar; `restore` puts the pre-open find state back.
+    /// Where a picker or prompt opened now sends focus back on Esc: the
+    /// tree or a panel it was opened from, or what the overlay it
+    /// replaces would have gone back to; null is the active pane.
+    pub fn overlayReturnFocus(self: *const App) ?FocusId {
+        return switch (self.focus) {
+            .tree, .panel => self.focus,
+            .overlay => switch (self.overlay) {
+                .picker => |p| p.return_focus,
+                .prompt => |p| p.return_focus,
+                else => null,
+            },
+            else => null,
+        };
+    }
+
     pub fn closeFindBar(self: *App, restore: bool) void {
         const fb = &(self.find_bar orelse return);
         // A terminal's bar leaves its selection on the current match.
@@ -3058,6 +3085,7 @@ pub const App = struct {
             if (fb.snapshot) |*s| s.deinit();
         }
         fb.state.deinit(self.gpa);
+        if (fb.hist_prefix) |pfx| self.gpa.free(pfx);
         self.find_bar = null;
         if (self.focus == .overlay) self.focus = if (self.active) |a| .{ .pane = a } else .tree;
         self.needs_render = true;
