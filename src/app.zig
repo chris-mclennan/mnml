@@ -3528,6 +3528,7 @@ test {
     _ = @import("image/painter.zig");
     _ = @import("ui/tooltip.zig");
     _ = @import("ui/menu_glyph.zig");
+    _ = @import("ui/contrast.zig");
     _ = @import("app/snippets.zig");
     _ = @import("app/sticky.zig");
     _ = @import("ui/outline_view.zig");

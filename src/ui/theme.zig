@@ -19,6 +19,7 @@
 const std = @import("std");
 const vaxis = @import("vaxis");
 const themes = @import("themes");
+const contrast = @import("contrast.zig");
 
 pub const Style = vaxis.Style;
 pub const Color = vaxis.Color;
@@ -82,7 +83,9 @@ warn_fg: Style,
 /// Something is blocked on the user — a session that needs you: its
 /// tab's mark, its SESSIONS card's, the dock's running mark for its
 /// kind. A role of its own so the three stay one colour whatever a
-/// theme does to warnings.
+/// theme does to warnings. Picked per theme (`attentionOf`): the mark
+/// is a single glyph with no other channel, so it has to clear
+/// `attention_floor` on every ground it sits on.
 attention_fg: Style,
 info_fg: Style,
 /// The `⋯ folded · N lines hidden` marker.
@@ -243,6 +246,37 @@ fn fgOnly(fg: Color) Style {
     return .{ .fg = fg };
 }
 
+/// The least contrast the needs-you mark keeps on the grounds it sits on.
+pub const attention_floor: f64 = 3.0;
+
+/// The grounds the needs-you mark is painted on: the active tab chip
+/// (`one_bg`), a SESSIONS card and the dock (`darker_black`), the
+/// sessions table and the editor body (`black`).
+pub fn attentionGrounds(p: Palette) [3]Color {
+    return .{ p.bg, p.bg_darker, p.bg_dark };
+}
+
+/// The needs-you mark's colour: the first of yellow → orange → red that
+/// clears `attention_floor` on every ground it sits on — yellow wherever
+/// it reads, which is every dark theme. A light theme where none does
+/// takes the closest and deepens it toward the theme's text colour until
+/// it clears, keeping its hue family.
+pub fn attentionOf(p: Palette) Color {
+    const grounds = attentionGrounds(p);
+    const hue = contrast.firstClearing(&.{ p.yellow, p.orange, p.red }, &grounds, attention_floor);
+    const have = contrast.worst(hue, &grounds) orelse return hue;
+    if (have >= attention_floor) return hue;
+    // The theme's text colour: `white`, or base16 `05` where that one
+    // stands out more on these grounds.
+    const text = if ((contrast.worst(p.base16[5], &grounds) orelse 0) > (contrast.worst(p.fg, &grounds) orelse 0)) p.base16[5] else p.fg;
+    var a: u16 = 0;
+    while (a <= 255) : (a += 5) {
+        const c = contrast.blend(text, hue, a) orelse return hue;
+        if ((contrast.worst(c, &grounds) orelse 0) >= attention_floor) return c;
+    }
+    return hue;
+}
+
 /// A palette → the roles. Pure, so it runs at comptime for the bundled
 /// table and at runtime for a `--theme-dir` file alike.
 pub fn derive(src: Source) Theme {
@@ -284,7 +318,7 @@ pub fn derive(src: Source) Theme {
         .overlay_title = bold(p.comment, p.bg2),
         .error_fg = on(p.red, p.bg_dark),
         .warn_fg = on(p.yellow, p.bg_dark),
-        .attention_fg = bold(p.yellow, p.bg_dark),
+        .attention_fg = bold(attentionOf(p), p.bg_dark),
         .info_fg = on(p.blue, p.bg_dark),
         .fold = .{ .fg = p.comment, .bg = p.bg_dark, .italic = true },
         .whitespace = on(p.grey, p.bg_dark),
@@ -323,7 +357,8 @@ pub fn derive(src: Source) Theme {
 /// Every bundled theme, derived at comptime, in `themes/root.zig` order
 /// (alphabetical by file).
 pub const all: [themes.all.len]Theme = blk: {
-    @setEvalBranchQuota(200_000);
+    // `attentionOf` measures each palette's contrast at comptime.
+    @setEvalBranchQuota(20_000_000);
     var out: [themes.all.len]Theme = undefined;
     for (themes.all, 0..) |src, i| out[i] = derive(src);
     break :blk out;
@@ -520,25 +555,6 @@ test "no bundled palette leans on onedark's base_16: every slot is its own" {
     try testing.expect(!Color.eql(byName("catppuccin-latte").?.palette.vibrant_green, byName("catppuccin-latte").?.palette.green));
 }
 
-/// WCAG 2 relative luminance of an sRGB colour.
-fn luminance(c: Color) f64 {
-    var out: f64 = 0;
-    const weights = [3]f64{ 0.2126, 0.7152, 0.0722 };
-    for (c.rgb, weights) |ch, w| {
-        const v = @as(f64, @floatFromInt(ch)) / 255.0;
-        const lin = if (v <= 0.03928) v / 12.92 else std.math.pow(f64, (v + 0.055) / 1.055, 2.4);
-        out += w * lin;
-    }
-    return out;
-}
-
-/// WCAG 2 contrast ratio, 1.0 (none) to 21.0.
-fn contrast(a: Color, b: Color) f64 {
-    const la = luminance(a);
-    const lb = luminance(b);
-    return (@max(la, lb) + 0.05) / (@min(la, lb) + 0.05);
-}
-
 test "every bundled theme keeps comments, line numbers and selected text readable" {
     // The floors, and why:
     //   comment    2.0:1 — dim by design (NvChad's light_grey), but text
@@ -554,9 +570,9 @@ test "every bundled theme keeps comments, line numbers and selected text readabl
     for (&all) |*t| {
         const ground = t.fg.bg;
         const checks = [_]struct { what: []const u8, ratio: f64, floor: f64 }{
-            .{ .what = "comment", .ratio = contrast(t.syntax.comment.fg, ground), .floor = 2.0 },
-            .{ .what = "selection", .ratio = contrast(t.selection.fg, t.selection.bg), .floor = 2.0 },
-            .{ .what = "line number", .ratio = contrast(t.gutter.fg, t.gutter.bg), .floor = 1.5 },
+            .{ .what = "comment", .ratio = contrast.ratio(t.syntax.comment.fg, ground).?, .floor = 2.0 },
+            .{ .what = "selection", .ratio = contrast.ratio(t.selection.fg, t.selection.bg).?, .floor = 2.0 },
+            .{ .what = "line number", .ratio = contrast.ratio(t.gutter.fg, t.gutter.bg).?, .floor = 1.5 },
         };
         for (checks) |c| if (c.ratio < c.floor) {
             std.debug.print("theme {s}: {s} contrast {d:.2}:1 is under {d:.1}:1\n", .{ t.name, c.what, c.ratio, c.floor });
@@ -581,4 +597,62 @@ test "onBg and withFg replace one channel" {
     const t = withFg(default.chip, onedark.red);
     try testing.expect(Color.eql(t.fg, onedark.red));
     try testing.expect(Color.eql(t.bg, default.chip.bg));
+}
+
+test "every bundled theme keeps the focus cue and the needs-you mark visible" {
+    // The floors, and why (`focus_cue.zig`, `attentionOf`):
+    //   dimmed words   ≥ focus_cue.floor (2.0):1 on the ground — a light
+    //                  theme's unfocused tab name fell to 1.8:1 — and at
+    //                  least 1.4:1 from the words while they have the
+    //                  keys, or the dim says nothing (catppuccin-latte
+    //                  was 1.09:1);
+    //   stepped rail   ≥ 2.0:1 on the ground (1.4–1.5:1 in the light
+    //                  themes), in the accent's own hue — every channel
+    //                  between the accent's and the ground's;
+    //   needs-you mark ≥ attention_floor (3.0):1 on every ground it sits
+    //                  on (1.5–2.3:1 was yellow in most light themes).
+    const cue = @import("focus_cue.zig");
+    var failures: usize = 0;
+    for (&all) |*t| {
+        const p = t.palette;
+        for ([_]Color{ p.bg, p.bg_darker }) |ground| {
+            const s: Style = .{ .fg = p.fg, .bg = ground, .bold = true };
+            const lit = cue.words(t, .both, true, s).fg;
+            const dim = cue.words(t, .both, false, s).fg;
+            const on_ground = contrast.ratio(dim, ground).?;
+            const from_lit = contrast.ratio(dim, lit).?;
+            if (on_ground < cue.floor - 0.01 or from_lit < 1.4) {
+                std.debug.print("theme {s}: dimmed words {d:.2}:1 on the ground, {d:.2}:1 from the lit ones\n", .{ t.name, on_ground, from_lit });
+                failures += 1;
+            }
+        }
+        const ground = t.bg.bg;
+        for ([_]Color{ p.red, p.pink, p.green, p.vibrant_green, p.yellow, p.sun, p.orange, p.blue, p.nord_blue, p.teal, p.cyan, p.purple, p.dark_purple }) |accent| {
+            const back = cue.rail(t, .both, false, accent, ground);
+            const want = @min(cue.floor, contrast.ratio(accent, ground).?);
+            if (contrast.ratio(back, ground).? < want - 0.01) {
+                std.debug.print("theme {s}: a stepped-back rail is {d:.2}:1 on the ground\n", .{ t.name, contrast.ratio(back, ground).? });
+                failures += 1;
+            }
+            for (0..3) |i| {
+                const lo = @min(accent.rgb[i], ground.rgb[i]);
+                const hi = @max(accent.rgb[i], ground.rgb[i]);
+                if (back.rgb[i] < lo or back.rgb[i] > hi) {
+                    std.debug.print("theme {s}: a stepped-back rail left its accent's hue\n", .{t.name});
+                    failures += 1;
+                    break;
+                }
+            }
+        }
+        const mark = t.attention_fg.fg;
+        const grounds = attentionGrounds(p);
+        const low = contrast.worst(mark, &grounds).?;
+        if (low < attention_floor - 0.01) {
+            std.debug.print("theme {s}: the needs-you mark is {d:.2}:1 on its ground\n", .{ t.name, low });
+            failures += 1;
+        }
+    }
+    try testing.expectEqual(@as(usize, 0), failures);
+    // Dark themes keep yellow; the default is unchanged.
+    try testing.expect(Color.eql(byName("onedark").?.attention_fg.fg, byName("onedark").?.palette.yellow));
 }

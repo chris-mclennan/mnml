@@ -1,0 +1,28 @@
+# width: 120
+# height: 40
+# The focus cue in a light theme (`ui/focus_cue.zig`): the dim role and
+# the rail's step-back are derived from the theme's contrast — never
+# under 2.0:1 on the ground, the pane's hue kept. catppuccin-latte's
+# palette dim (#8b97b9) sat 1.09:1 from its focused name (#7287fd) and
+# its stepped-back green rail (#add2a8) 1.48:1 on the ground. Every
+# theme's floors are the unit test "every bundled theme keeps the focus
+# cue and the needs-you mark visible" (`ui/theme.zig`).
+write a.txt "alpha\n"
+open a.txt
+ex colorscheme catppuccin-latte
+expect screen contains "alpha"
+command view.focus_pane
+# The focused name steps up from the pale lavender to 3:1.
+expect color 34 1 fg #6372c5
+expect color 31 5 fg #40a02b
+command view.focus_tree
+expect color 34 1 fg not #8b97b9
+expect color 34 1 fg #8994cf
+expect color 31 5 fg not #add2a8
+expect color 31 5 fg #7cbb70
+ex colorscheme one_light
+command view.focus_tree
+expect color 31 5 fg not #bad8b9
+expect color 31 5 fg #8cc08c
+expect color 34 1 fg not #a2a2a3
+expect color 34 1 fg #9a9a9e
