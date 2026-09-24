@@ -325,7 +325,7 @@ fn buildJob(
     var env = try app.env.clone(gpa);
     errdefer env.deinit();
     try env.put("MNML_WORKSPACE", app.workspace);
-    try env.put("MNML_IPC_DIR", try mount_pane.ipcDir(app));
+    try env.put("MNML_IPC_DIR", try mount_pane.preparedIpcDir(app));
     try env.put("MNML_THEME", app.theme.name);
     // The chip this child publishes is painted on the same statusline
     // the pane's is, so it has to choose the same glyph twin. A pane
