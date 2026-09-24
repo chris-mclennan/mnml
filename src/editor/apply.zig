@@ -34,6 +34,8 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
             switch (r.inner.*) {
                 .select_inner_bracket => |b| return select.bracketCount(ed, b, false, r.count),
                 .select_around_bracket => |b| return select.bracketCount(ed, b, true, r.count),
+                // `5fx`: the fifth `x` or nowhere, never the last one found.
+                .find_char_on_line => |f| return motion.findCharOnLine(ed, f.ch, f.forward, f.before, f.inclusive, f.repeat, r.count),
                 else => {},
             }
             // `{count}dd` past the end takes what is there (`:help dd`),
@@ -132,7 +134,7 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .move_to_line_keep_col => |n| motion.toLineKeepCol(ed, n),
         .move_to_col => |n| motion.toCol(ed, n),
         .set_cursor_byte => |b| motion.setCursorByte(ed, b),
-        .find_char_on_line => |f| motion.findCharOnLine(ed, f.ch, f.forward, f.before, f.inclusive, f.repeat),
+        .find_char_on_line => |f| motion.findCharOnLine(ed, f.ch, f.forward, f.before, f.inclusive, f.repeat, 1),
 
         // ── selection ──
         .select_start => select.selectStart(ed),

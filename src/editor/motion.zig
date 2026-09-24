@@ -473,23 +473,30 @@ pub fn setCursorByte(ed: *Editor, b: usize) void {
 }
 
 /// `f` `F` `t` `T` `;` `,`. `inclusive` (operator-pending) bumps the
-/// landing spot one cell forward so the range covers the target.
-pub fn findCharOnLine(ed: *Editor, ch: u21, forward: bool, before: bool, inclusive: bool, repeat: bool) void {
-    const line = ed.currentLine();
+/// landing spot one cell forward so the range covers the target. A
+/// count is the count-th match, all or nothing: `5fx` on a line with
+/// four `x`s stays put (`:help f`), it never stops on the fourth.
+pub fn findCharOnLine(ed: *Editor, ch: u21, forward: bool, before: bool, inclusive: bool, repeat: bool, count: u32) void {
+    var at = ed.cursor;
+    for (0..@max(count, 1)) |i| {
+        // Past the first, a `t` / `T` steps over the char it stopped
+        // short of, the way `;` does.
+        at = findCharFrom(ed, at, ch, forward, before, repeat or i > 0) orelse return;
+    }
+    ed.cursor = if (inclusive and forward) ed.nextBoundary(at) else at;
+    ed.goal_col = null;
+}
+
+fn findCharFrom(ed: *Editor, cur: usize, ch: u21, forward: bool, before: bool, repeat: bool) ?usize {
+    const line = ed.lineOfByte(cur);
     const ls = ed.lineStart(line);
     const le = ed.lineEnd(line);
-    const cur = ed.cursor;
     if (forward) {
         var after = @min(ed.nextBoundary(cur), le);
         if (repeat and before) after = @min(ed.nextBoundary(after), le);
         var i = after;
         while (i < le) : (i = ed.nextBoundary(i)) {
-            if (ed.charAt(i) == ch) {
-                const base = if (before) ed.prevBoundary(i) else i;
-                ed.cursor = if (inclusive) ed.nextBoundary(base) else base;
-                ed.goal_col = null;
-                return;
-            }
+            if (ed.charAt(i) == ch) return if (before) ed.prevBoundary(i) else i;
         }
     } else {
         var before_cur = @min(cur, le);
@@ -497,13 +504,10 @@ pub fn findCharOnLine(ed: *Editor, ch: u21, forward: bool, before: bool, inclusi
         var i = before_cur;
         while (i > ls) {
             i = ed.prevBoundary(i);
-            if (ed.charAt(i) == ch) {
-                ed.cursor = if (before) ed.nextBoundary(i) else i;
-                ed.goal_col = null;
-                return;
-            }
+            if (ed.charAt(i) == ch) return if (before) ed.nextBoundary(i) else i;
         }
     }
+    return null;
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
@@ -604,14 +608,38 @@ test "paragraph, buffer end, goto line/col, find char" {
     try std.testing.expectEqual(@as(usize, 10), ed.cursor);
     const ed2 = try mk("a-b-c-d", 0);
     defer ed2.deinit();
-    findCharOnLine(ed2, '-', true, false, false, false);
+    findCharOnLine(ed2, '-', true, false, false, false, 1);
     try std.testing.expectEqual(@as(usize, 1), ed2.cursor);
-    findCharOnLine(ed2, '-', true, true, false, true); // `;` after a t: skips adjacent
+    findCharOnLine(ed2, '-', true, true, false, true, 1); // `;` after a t: skips adjacent
     try std.testing.expectEqual(@as(usize, 2), ed2.cursor);
-    findCharOnLine(ed2, 'a', false, false, false, false);
+    findCharOnLine(ed2, 'a', false, false, false, false, 1);
     try std.testing.expectEqual(@as(usize, 0), ed2.cursor);
     toCol(ed2, 5);
     try std.testing.expectEqual(@as(usize, 4), ed2.cursor);
     sentence(ed2, true);
     try std.testing.expectEqual(@as(usize, 7), ed2.cursor);
+}
+
+test "findCharOnLine: a count is the count-th match or no move at all" {
+    // Neovim on `axbxcxd xe` from column 0: `3fx` → 5, `4fx` → 8,
+    // `5fx` stays on 0; `2tx` → 2; `d3fx` takes `axbxcx`.
+    const ed = try mk("axbxcxd xe", 0);
+    defer ed.deinit();
+    findCharOnLine(ed, 'x', true, false, false, false, 3);
+    try std.testing.expectEqual(@as(usize, 5), ed.cursor);
+    ed.cursor = 0;
+    findCharOnLine(ed, 'x', true, false, false, false, 4);
+    try std.testing.expectEqual(@as(usize, 8), ed.cursor);
+    ed.cursor = 0;
+    findCharOnLine(ed, 'x', true, false, false, false, 5);
+    try std.testing.expectEqual(@as(usize, 0), ed.cursor);
+    findCharOnLine(ed, 'x', true, true, false, false, 2);
+    try std.testing.expectEqual(@as(usize, 2), ed.cursor);
+    ed.cursor = 0;
+    findCharOnLine(ed, 'x', true, false, true, false, 3);
+    try std.testing.expectEqual(@as(usize, 6), ed.cursor);
+    // Backward: `$2Fx` → 5.
+    ed.cursor = 9;
+    findCharOnLine(ed, 'x', false, false, false, false, 2);
+    try std.testing.expectEqual(@as(usize, 5), ed.cursor);
 }
