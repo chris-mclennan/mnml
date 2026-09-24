@@ -22,6 +22,7 @@ const diag_mod = @import("diag.zig");
 const trust_mod = @import("trust.zig");
 const trusted = @import("trusted.zig");
 const data_root = @import("data_root.zig");
+const os_path = @import("../core/os_path.zig");
 
 pub const Patch = patch_mod.Patch;
 pub const apply = patch_mod.apply;
@@ -220,7 +221,7 @@ pub fn load(gpa: Allocator, io: Io, opts: Options) Allocator.Error!Loaded {
         if (try readLayer(arena, io, &loaded.diagnostics, p)) |patch| try apply(arena, &loaded.config, patch);
     }
 
-    try normalize(arena, &loaded.config, &loaded.diagnostics, opts.env.vars.get("HOME"));
+    try normalize(arena, &loaded.config, &loaded.diagnostics, os_path.home(opts.env.vars));
     return loaded;
 }
 
@@ -320,11 +321,11 @@ pub fn normalize(arena: Allocator, cfg: *Config, diags: *Diagnostics, home: ?[]c
     if (kept.items.len != cfg.startup.layout.len) cfg.startup.layout = try kept.toOwnedSlice(arena);
 }
 
+/// `~`, `~/…` (and `~\…` on Windows) against `home`; the result never
+/// borrows `home` — the environment map does not outlive the config.
 fn expandTilde(arena: Allocator, path: []const u8, home: ?[]const u8) Allocator.Error![]const u8 {
-    const h = home orelse return path;
-    if (std.mem.eql(u8, path, "~")) return arena.dupe(u8, h);
-    if (std.mem.startsWith(u8, path, "~/")) return std.fs.path.join(arena, &.{ h, path[2..] });
-    return path;
+    const out = try os_path.expandTilde(arena, path, home, .native);
+    return if (home != null and out.ptr == home.?.ptr) arena.dupe(u8, out) else out;
 }
 
 // ─── tests ───────────────────────────────────────────────────────────────

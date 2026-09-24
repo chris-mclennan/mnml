@@ -19,6 +19,7 @@ const PaneId = app_mod.PaneId;
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const hooks = @import("../core/hooks.zig");
+const os_path = @import("../core/os_path.zig");
 const cmd_picker = @import("cmd_picker.zig");
 
 pub const table = .{
@@ -39,8 +40,10 @@ pub fn onStartup(app: *App, _: hooks.HookArgs) void {
 
 fn wanted(app: *App) bool {
     if (app.env.get("MNML_STARTUP_PICKER")) |v| if (std.mem.eql(u8, v, "1")) return true;
-    const home = app.env.get("HOME") orelse return false;
-    return home.len > 0 and std.mem.eql(u8, std.mem.trimEnd(u8, home, "/"), std.mem.trimEnd(u8, app.workspace, "/"));
+    // `HOME`, else `USERPROFILE`: launched from the Windows home too.
+    const home = os_path.home(&app.env) orelse return false;
+    const seps = if (os_path.Rules.native.drives) "/\\" else "/";
+    return std.mem.eql(u8, std.mem.trimEnd(u8, home, seps), std.mem.trimEnd(u8, app.workspace, seps));
 }
 
 pub fn show(app: *App) CommandError!void {

@@ -18,6 +18,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const vaxis = @import("vaxis");
 const alloc = @import("core/alloc.zig");
+const os_path = @import("core/os_path.zig");
 const command = @import("core/command.zig");
 const event = @import("core/event.zig");
 const keymap = @import("core/keymap.zig");
@@ -1771,12 +1772,19 @@ pub const App = struct {
         }
     }
 
-    /// `$HOME` as the loader saw it; null without a loaded config or a
-    /// home (the `.test` runner's apps have neither).
+    /// The home the loader saw (`$HOME`, else `%USERPROFILE%` —
+    /// `os_path.home`); null without a loaded config or a home (the
+    /// `.test` runner's apps have neither).
     pub fn homeDir(self: *const App) ?[]const u8 {
         const l = self.loaded orelse return null;
-        const v = l.opts.env.vars.get("HOME") orelse return null;
-        return if (v.len == 0) null else v;
+        return os_path.home(l.opts.env.vars);
+    }
+
+    /// `homeDir`, else the App's own environment's home: what a feature
+    /// that wants *a* home (tilde display, `~` expansion, per-user
+    /// caches) asks. Windows has no `HOME`; `USERPROFILE` answers there.
+    pub fn userHome(self: *const App) ?[]const u8 {
+        return self.homeDir() orelse os_path.home(&self.env);
     }
 
     /// The input layer's scalar config, read off `cfg.editor`.
@@ -1945,12 +1953,14 @@ pub const App = struct {
         if (self.loaded) |*l| l.deinit();
     }
 
-    /// The process environment as a map. Empty where libc's `environ`
-    /// is not available (Windows: no pty there yet anyway).
+    /// The process environment as a map: libc's `environ` on POSIX,
+    /// the PEB's block on Windows (where `Environ.Block` is the global
+    /// switch, not a pointer).
     fn processEnv(gpa: Allocator) Allocator.Error!std.process.Environ.Map {
-        if (builtin.os.tag == .windows) return .init(gpa);
-        const raw: [*:null]const ?[*:0]const u8 = @ptrCast(std.c.environ);
-        const environ: std.process.Environ = .{ .block = .{ .slice = std.mem.span(raw) } };
+        const environ: std.process.Environ = if (builtin.os.tag == .windows) .{ .block = .global } else blk: {
+            const raw: [*:null]const ?[*:0]const u8 = @ptrCast(std.c.environ);
+            break :blk .{ .block = .{ .slice = std.mem.span(raw) } };
+        };
         return std.process.Environ.createMap(environ, gpa) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => return .init(gpa),
@@ -2873,13 +2883,10 @@ pub const App = struct {
         if (self.cfg.ui.auto_equalize_splits) self.layouts.current().equalize();
     }
 
-    /// `~` / `~/…` → the home directory (the config's `HOME`, else the
-    /// process's); anything else unchanged. Frame arena.
+    /// `~` / `~/…` (and `~\…` on Windows) → the home directory (the
+    /// config's, else the process's); anything else unchanged. Frame arena.
     pub fn expandTilde(self: *App, text: []const u8) Allocator.Error![]const u8 {
-        if (text.len == 0 or text[0] != '~' or (text.len > 1 and text[1] != '/')) return text;
-        const home = self.homeDir() orelse self.env.get("HOME") orelse return text;
-        if (text.len == 1) return home;
-        return std.fs.path.join(self.frame.allocator(), &.{ home, text[2..] });
+        return os_path.expandTilde(self.frame.allocator(), text, self.userHome(), .native);
     }
 
     // ─── text mutation helpers every subsystem goes through ───
