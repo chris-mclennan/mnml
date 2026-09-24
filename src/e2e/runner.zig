@@ -270,6 +270,10 @@ const Run = struct {
     /// answers live on `serve_arena`.
     servers: std.ArrayListUnmanaged(*mock.Server) = .empty,
     serve_arena: ?std.heap.ArenaAllocator = null,
+    /// `serve 0` servers, bound when the file starts (`prebind`) and
+    /// handed their answer by their step, in file order.
+    prebound: std.ArrayListUnmanaged(*mock.Server) = .empty,
+    next_prebound: usize = 0,
     /// The App has asked to quit. From there the runner stops stepping
     /// it: a quit app that keeps being ticked and drawn paints a live
     /// session, so a failure AFTER the quit showed a screen that no
@@ -288,8 +292,15 @@ const Run = struct {
         const gpa = self.gpa;
         const io = self.io;
 
-        const text = Io.Dir.cwd().readFileAlloc(io, self.path, gpa, .unlimited) catch |e| return self.fail("can't read: {s}", .{@errorName(e)});
-        defer gpa.free(text);
+        const raw_text = Io.Dir.cwd().readFileAlloc(io, self.path, gpa, .unlimited) catch |e| return self.fail("can't read: {s}", .{@errorName(e)});
+        defer gpa.free(raw_text);
+        // `serve 0`: every such server is bound now, before the App and
+        // before the header is read, so `${SERVE_PORT}` can be spelled
+        // anywhere in the file — a `# env:` line included — and no file
+        // ever picks a port another run might hold.
+        defer self.stopServers();
+        const text = self.prebind(raw_text) catch |e| return self.fail("serve 0: {s}", .{@errorName(e)});
+        defer if (text.ptr != raw_text.ptr) gpa.free(text);
         var diag: parser.Diagnostic = .{};
         var script = parser.parse(gpa, text, &diag) catch |e| switch (e) {
             error.Syntax => return self.fail("{s}", .{diag.message()}),
@@ -333,6 +344,13 @@ const Run = struct {
         var file_env: std.process.Environ.Map = (if (self.opts.env) |e| e.clone(gpa) else std.process.Environ.Map.init(gpa)) catch return self.fail("out of memory", .{});
         defer file_env.deinit();
         file_env.put("MNML_E2E_WORKSPACE", self.workspace) catch return self.fail("out of memory", .{});
+        for (self.prebound.items, 1..) |srv, i| {
+            var nbuf: [32]u8 = undefined;
+            var vbuf: [8]u8 = undefined;
+            const name = portVarName(&nbuf, i);
+            const value = std.fmt.bufPrint(&vbuf, "{d}", .{srv.port}) catch unreachable;
+            file_env.put(name, value) catch return self.fail("out of memory", .{});
+        }
         // The same root the driver persists into, so a `shell` step and
         // any child can name it — and so a child that resolves its own
         // data root from the environment lands in this file's, not the
@@ -651,6 +669,14 @@ const Run = struct {
         const chunks: ?[]const []const u8 = if (sv.delay_ms > 0) (a.dupe([]const u8, &.{body}) catch return null) else null;
         const echo = std.mem.eql(u8, std.mem.trim(u8, sv.text, " \t\r\n"), "@echo");
         const canned: mock.Canned = .{ .status = sv.status, .status_text = statusText(sv.status), .headers = hs, .body = body, .chunks = chunks, .chunk_delay_ms = sv.delay_ms, .echo = echo };
+        if (sv.port == 0) {
+            // Bound when the file started; `${SERVE_PORT}` already names it.
+            if (self.next_prebound >= self.prebound.items.len) return gpa.dupe(u8, "serve 0: no server was bound for this step") catch null;
+            const srv = self.prebound.items[self.next_prebound];
+            self.next_prebound += 1;
+            srv.serve(canned) catch |e| return std.fmt.allocPrint(gpa, "serve 127.0.0.1:{d}: {s}", .{ srv.port, @errorName(e) }) catch null;
+            return null;
+        }
         const server = mock.Server.startOn(gpa, self.io, sv.port, canned) catch |e| return std.fmt.allocPrint(gpa, "serve 127.0.0.1:{d}: {s}", .{ sv.port, @errorName(e) }) catch null;
         self.servers.append(gpa, server) catch {
             server.stop(self.io);
@@ -682,8 +708,34 @@ const Run = struct {
         for (self.servers.items) |s| s.stop(self.io);
         self.servers.deinit(self.gpa);
         self.servers = .empty;
+        for (self.prebound.items) |s| s.stop(self.io);
+        self.prebound.deinit(self.gpa);
+        self.prebound = .empty;
+        self.next_prebound = 0;
         if (self.serve_arena) |*ar| ar.deinit();
         self.serve_arena = null;
+    }
+
+    /// Bind one loopback listener per `serve 0` line and return `text`
+    /// with `${SERVE_PORT}` (the first) and `${SERVE_PORT_<n>}` (the
+    /// n-th) replaced by the ports they got — `text` itself when the
+    /// file has none. Owned otherwise.
+    fn prebind(self: *Run, text: []const u8) ![]const u8 {
+        var lines = std.mem.splitScalar(u8, text, '\n');
+        while (lines.next()) |raw| {
+            const l = std.mem.trimStart(u8, raw, " \t");
+            if (!std.mem.startsWith(u8, l, "serve 0 ")) continue;
+            const srv = try mock.Server.listenOn(self.gpa, self.io, 0);
+            self.prebound.append(self.gpa, srv) catch |e| {
+                srv.stop(self.io);
+                return e;
+            };
+        }
+        if (self.prebound.items.len == 0) return text;
+        var ports: [16]u16 = undefined;
+        const n = @min(self.prebound.items.len, ports.len);
+        for (self.prebound.items[0..n], 0..) |srv, i| ports[i] = srv.port;
+        return substitutePorts(self.gpa, text, ports[0..n]);
     }
 
     /// Start the file's process group (`group_leader`). Returns its id.
@@ -905,6 +957,47 @@ fn rejectUnsafePath(gpa: Allocator, rel: []const u8, kw: []const u8) ?[]u8 {
         }
     }
     return null;
+}
+
+/// `SERVE_PORT` for the first `serve 0`, `SERVE_PORT_<n>` after it.
+fn portVarName(buf: []u8, n: usize) []const u8 {
+    if (n == 1) return "SERVE_PORT";
+    return std.fmt.bufPrint(buf, "SERVE_PORT_{d}", .{n}) catch "SERVE_PORT_X";
+}
+
+/// `text` with every `${SERVE_PORT}` / `${SERVE_PORT_<n>}` whose server
+/// exists replaced by its port. A name past the servers is left as
+/// written, so the failure it causes names it. Owned.
+pub fn substitutePorts(gpa: Allocator, text: []const u8, ports: []const u16) Allocator.Error![]u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(gpa);
+    const open = "${SERVE_PORT";
+    var i: usize = 0;
+    while (std.mem.indexOfPos(u8, text, i, open)) |at| {
+        try out.appendSlice(gpa, text[i..at]);
+        const rest = text[at + open.len ..];
+        var n: usize = 0;
+        var used: usize = 0;
+        if (std.mem.startsWith(u8, rest, "}")) {
+            n = 1;
+            used = 1;
+        } else if (std.mem.startsWith(u8, rest, "_")) {
+            const close = std.mem.indexOfScalar(u8, rest, '}') orelse 0;
+            if (close > 1) {
+                n = std.fmt.parseInt(usize, rest[1..close], 10) catch 0;
+                used = close + 1;
+            }
+        }
+        if (n >= 1 and n <= ports.len) {
+            try out.print(gpa, "{d}", .{ports[n - 1]});
+            i = at + open.len + used;
+        } else {
+            try out.appendSlice(gpa, open);
+            i = at + open.len;
+        }
+    }
+    try out.appendSlice(gpa, text[i..]);
+    return out.toOwnedSlice(gpa);
 }
 
 /// What the App's session scan reads for its process-group scope
@@ -2182,6 +2275,35 @@ test "expect within <ms> polls past the runner's budget and answers the moment t
     defer o3.deinit(t.allocator);
     try t.expect(!o3.passed);
     try t.expect(std.mem.startsWith(u8, o3.message.?, "line 2: screen does not contain \"late\""));
+}
+
+test "substitutePorts: the first and the n-th, a name past the servers left as written" {
+    const out = try substitutePorts(t.allocator, "a ${SERVE_PORT} b ${SERVE_PORT_2} c ${SERVE_PORT_3} d ${SERVE_PORTX} ${SERVE_PORT", &.{ 4101, 4102 });
+    defer t.allocator.free(out);
+    try t.expectEqualStrings("a 4101 b 4102 c ${SERVE_PORT_3} d ${SERVE_PORTX} ${SERVE_PORT", out);
+}
+
+test "serve 0 binds a port of its own before the file runs, and ${SERVE_PORT} names it everywhere" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var env = try TestEnv.init();
+    defer env.deinit();
+    var opts = env.opts();
+    opts.allow_shell = true;
+    var sf: StubFactory = .{};
+    // A fixed port is the corpus's old shape: two runs of one file at
+    // once, and the second failed `serve` with AddressInUse. Here the
+    // header, a `write` and a shell step all see the port the OS gave.
+    const path = try env.script("serve0.test",
+        \\# env: WHERE=http://127.0.0.1:${SERVE_PORT}/x
+        \\serve 0 200 hello
+        \\write port.txt "${SERVE_PORT}"
+        \\shell read p < port.txt; [ "$p" -gt 0 ] && [ "$p" -eq "$SERVE_PORT" ] && [ "$WHERE" = "http://127.0.0.1:$p/x" ]
+        \\shell /bin/bash -c 'exec 3<>/dev/tcp/127.0.0.1/'"$SERVE_PORT"'; printf "GET / HTTP/1.0\r\n\r\n" >&3; read -r line <&3; case "$line" in *200*) exit 0;; esac; exit 1'
+        \\
+    );
+    defer t.allocator.free(path);
+    var o = runFile(t.allocator, t.io, sf.factory(), path, content_size, opts);
+    try expectPassed(&o);
 }
 
 test "a process a shell step leaves behind is in the file's own group, and dies with the file" {
