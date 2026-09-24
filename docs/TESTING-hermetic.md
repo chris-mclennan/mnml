@@ -20,7 +20,9 @@ twice at once from two worktrees beside a live broker and a stray fake
 The mechanical parts are guarded: `src/e2e/corpus.zig` fails the unit
 suite on a fixed `--port`/`serve` port, a `# env:` value under `/tmp`, a
 header built from `$PWD`, and a `shell` step that looks at or kills
-processes machine-wide.
+processes machine-wide; and at run time the **git guard** fails any file
+whose `git` — the App's or a `shell` step's — acts on a repository
+outside the run's temp root.
 
 ## The rules
 
@@ -43,6 +45,13 @@ processes machine-wide.
 - **Time**: wait for a condition, not a clock. `expect within <ms> …`
   polls; a `wait` is for letting a clock-driven thing happen, never for
   "long enough for the machine to catch up".
+- **Git**: the run's own cwd is its temp root, `GIT_CEILING_DIRECTORIES`
+  is the temp root in the process environment and every file's, and the
+  App's repository and root-marker walks honour it. A `git` shim first on
+  `PATH` (`GitGuard`) follows `-C` to where git will act and, when that
+  is a repository outside the temp root, writes it down; the file fails
+  with `git ran against a repository outside the run's temp root (<root>):
+  git <args>`.
 - **Flakes are reported, not hidden**: `mnml-zig test` retries a failing
   file once and names a pass on the retry as `FLAKY` — as it happens and
   in the trailer (`N/M passed (…), K FLAKY (passed only on a retry)` then
@@ -51,7 +60,7 @@ processes machine-wide.
 
 ## The sites
 
-Counts: **38 sites fixed** (among them 11 fixed-port files, 7 terminal-name
+Counts: **39 sites fixed** (among them 11 fixed-port files, 7 terminal-name
 files, 5 `$PWD` files, 3 temp-path-length files and five app bugs the
 work surfaced), and **kept, each with its reason**: the mount-socket
 fallback, 15 files that name a port nothing listens on, two tool `pkill`s
@@ -91,7 +100,7 @@ remaining fixed `wait`s as a category.
 | `tools/compare.sh` `pkill -f -- "--headless --input $INPUT $COPY_DIR"` | — | kept: `$COPY_DIR` is a private copy; a dev tool outside the suite |
 | runner heartbeat `pgrep -lP <self>`, `files_tree_preview_skips_heavy_file` `ps -o rss= -p $PPID` | — | already scoped |
 
-### Environment (10 fixed, 1 kept)
+### Environment (11 fixed, 1 kept)
 
 | Site | Shared | Fix |
 |---|---|---|
@@ -104,6 +113,7 @@ remaining fixed `wait`s as a category.
 | `# env: MNML_REPO=${PWD}` (`lua_example_eslint`, `_git_blame_line`, `_recent_commands`, `_surround_word`, `_todo_list`) | `PWD` is a shell's; `env -i` and CI steps have none | `mnml-zig test` exports `MNML_REPO` (the checkout, `build_options.repo_dir`) |
 | `TMPDIR` inside a git checkout | `repoAbove` and the LSP root walk climbed out of the workspace into the checkout: `git_commands_no_repo` saw its branches; `lsp_zsh_builtin_server`'s server was rooted at the checkout and wrote `lsp.log` into it | the runner sets `GIT_CEILING_DIRECTORIES=<temp root>`; `app/git.zig` `repoAbove` and `app/lsp.zig` `walkUp` honour it as git does |
 | `shell` steps' interpreter | the developer's login shell (`$SHELL`) | `/bin/sh` (`MNML_E2E_SHELL` overrides) |
+| The runner's own cwd and environment | the App runs in-process, so a child it spawns with neither a cwd nor an environment inherits the runner's: the checkout as cwd, no git fence — a stale `index.lock` in a worktree's git dir, and main's twice in a day, came from runs like this | the cwd is the run's temp root (test paths made absolute first); the git fence, the guard's `PATH` and its variables are set in the process environment too (`fenceProcess`) |
 | `format_external_zig_fmt` | needs `zig` on `PATH` | kept on `PATH` (the allowlist keeps `PATH`); a runner without zig cannot build the suite either |
 
 ### `TMPDIR` length (3 fixed)
@@ -129,6 +139,29 @@ long `TMPDIR` is: the pane clips it, the dialog wraps it.
 | `integrations_warmer_bitbucket_conditional` | the three `wait 4000`s → `expect within 20000–30000` on the screen and the wire log |
 | `session_restore_claude_resume`, `session_restore_codex_resume` | checked: both fakes keep their first session alive until the restore replaces it, and the assertions are on `argv.log`, polled; they passed in both concurrent runs |
 | The rest of the corpus: 348 files with a `wait` | every `expect` already polls for 3 s (`expect_budget_ms`); a `wait` before a key is the remaining risk. Not rewritten wholesale — the retry reports any that flake by name (`FLAKY`), which is where the next one to fix comes from |
+
+## Which tests walked up
+
+Found with the guard itself: a probe build with the fixes that fence git
+turned OFF (the ceiling in `repoAbove`, `walkUp`, the runner's env and
+the process env; the cwd move) — main's behaviour — ran the whole corpus
+from the checkout's root with `TMPDIR` inside the checkout. The guard
+wrote down six `git` calls against the checkout, all from ONE file:
+
+- `git_commands_no_repo.test` — `git.recent_branches` found no repository
+  in its workspace, `requireRepo` → `repoAbove` climbed into the
+  enclosing checkout and adopted it: `for-each-ref` (×2), then the status
+  poll on that repo — `status --porcelain=v2 -b` (which refreshes the
+  index under `index.lock`), `rev-parse --absolute-git-dir`,
+  `diff -U0 HEAD`, `config remote.origin.url`. A run killed while that
+  `status` held the lock leaves it stale: the `.git/index.lock` in main
+  and in a worktree's git dir.
+
+No `git` was spawned with an inherited cwd in that run; the cwd move
+makes sure one never can. One more file climbed out, for an LSP root
+rather than git: `lsp_zsh_builtin_server.test` (its `.git` root marker)
+— it wrote `lsp.log` into the checkout's root. Both pass with the fence
+on, and the guard stays on for every run.
 
 ## Proving it
 
