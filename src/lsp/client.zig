@@ -543,7 +543,7 @@ pub const Server = struct {
         try js.objectField("capabilities");
         try js.write(.{
             .general = .{ .positionEncodings = &[_][]const u8{ "utf-8", "utf-16" } },
-            .workspace = .{ .applyEdit = true, .workspaceEdit = .{ .documentChanges = true }, .configuration = true, .workspaceFolders = true, .didChangeConfiguration = .{ .dynamicRegistration = false }, .didChangeWatchedFiles = .{ .dynamicRegistration = true, .relativePatternSupport = false } },
+            .workspace = .{ .applyEdit = true, .workspaceEdit = .{ .documentChanges = true }, .configuration = true, .workspaceFolders = true, .didChangeConfiguration = .{ .dynamicRegistration = false }, .didChangeWatchedFiles = .{ .dynamicRegistration = true, .relativePatternSupport = false }, .inlayHint = .{ .refreshSupport = true }, .semanticTokens = .{ .refreshSupport = true }, .codeLens = .{ .refreshSupport = true } },
             .window = .{ .workDoneProgress = true },
             .textDocument = .{
                 .synchronization = .{ .didSave = true, .willSave = false, .willSaveWaitUntil = true },

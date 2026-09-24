@@ -1228,6 +1228,12 @@ fn handleNotification(app: *App, s: *Server, method: []const u8, params: ?Value)
         } else if (std.mem.eql(u8, kind, "end")) {
             s.progress_open -|= 1;
             if (s.progress_open == 0) jobs.endKeyed(app, .lsp, indexKey(s.id), .{});
+            // Loading done: what the decorations asked for on open was
+            // answered from the half-loaded snapshot (rust-analyzer says
+            // `[]` to a hint request before its crate graph is built), and
+            // a server that sends no refresh would leave it so until the
+            // first edit. They are asked for once more.
+            if (s.progress_open == 0 and s.ready) decor.onServerReady(app, s);
             if (s.progress_open == 0 and s.ready) try runDeferred(app, s);
         }
     }
@@ -1315,6 +1321,13 @@ fn handleServerRequest(app: *App, s: *Server, id: jsonrpc.Id, method: []const u8
             app.toast("LSP: applied {d} edit(s)", .{n});
         };
         s.respond(id, "{\"applied\":true}") catch {};
+    } else if (isRefresh(method)) {
+        // The server's view changed under what it answered before — a
+        // hint or token asked while rust-analyzer was still loading its
+        // workspace came back empty — and it says so: every set of the
+        // decorations for its files is asked for again.
+        s.respond(id, "null") catch {};
+        decor.onServerReady(app, s);
     } else if (std.mem.eql(u8, method, "client/registerCapability")) {
         // The one registration mnml honours: a file watcher. The globs
         // are not kept — every change under the workspace is reported.
@@ -1327,6 +1340,15 @@ fn handleServerRequest(app: *App, s: *Server, id: jsonrpc.Id, method: []const u8
         // `window/workDoneProgress/create`…
         s.respond(id, "null") catch {};
     }
+}
+
+/// `workspace/{inlayHint,semanticTokens,codeLens}/refresh` — the three
+/// the client advertises `refreshSupport` for (`client.zig`).
+fn isRefresh(method: []const u8) bool {
+    for ([_][]const u8{ "workspace/inlayHint/refresh", "workspace/semanticTokens/refresh", "workspace/codeLens/refresh" }) |m| {
+        if (std.mem.eql(u8, method, m)) return true;
+    }
+    return false;
 }
 
 /// A file mnml itself wrote, created, moved or deleted: every ready
@@ -3803,6 +3825,119 @@ fn stringIdServer(io: Io, gpa: Allocator, in: Io.File, out: Io.File) Io.Cancelab
             else => {},
         }
     }
+}
+
+/// rust-analyzer's shape before its workspace has loaded: the first
+/// `inlayHint` is answered `[]` and `semanticTokens/full` with no
+/// tokens. Answering that first hint request is when loading finishes;
+/// then `.refresh` sends `workspace/inlayHint/refresh` and
+/// `workspace/semanticTokens/refresh` — only when the client advertised
+/// `refreshSupport`, as the real server does — and `.progress` ends the
+/// `$/progress` it began at `initialized`, sending no refresh. Loaded,
+/// a hint `: u32` after `x` and one keyword token on line 0.
+const Unloaded = enum { refresh, progress };
+fn unloadedServer(io: Io, gpa: Allocator, in: Io.File, out: Io.File, mode: Unloaded) Io.Cancelable!void {
+    var buf: [16384]u8 = undefined;
+    var fr = in.readerStreaming(io, &buf);
+    var loaded = false;
+    var refresh_ok = false;
+    while (true) {
+        const body = jsonrpc.readBody(gpa, &fr.interface) catch return;
+        defer gpa.free(body);
+        var parsed = std.json.parseFromSlice(Value, gpa, body, .{}) catch return;
+        defer parsed.deinit();
+        switch (jsonrpc.classify(parsed.value)) {
+            .request => |rq| {
+                const m = rq.method;
+                if (std.mem.eql(u8, m, "initialize")) {
+                    const ws = jsonrpc.getObj(jsonrpc.getObj(rq.params.?, "capabilities") orelse return, "workspace");
+                    const hint = if (ws) |w| jsonrpc.getObj(w, "inlayHint") else null;
+                    refresh_ok = if (hint) |h| (jsonrpc.getBool(h, "refreshSupport") orelse false) else false;
+                    lspReply(io, gpa, out, rq.id, "{\"capabilities\":{\"textDocumentSync\":1,\"inlayHintProvider\":true,\"semanticTokensProvider\":{\"legend\":{\"tokenTypes\":[\"keyword\"],\"tokenModifiers\":[]},\"full\":true}}}");
+                } else if (std.mem.eql(u8, m, "textDocument/inlayHint")) {
+                    if (loaded) {
+                        lspReply(io, gpa, out, rq.id, "[{\"position\":{\"line\":0,\"character\":5},\"label\":\": u32\",\"kind\":1}]");
+                        continue;
+                    }
+                    lspReply(io, gpa, out, rq.id, "[]");
+                    loaded = true;
+                    switch (mode) {
+                        .refresh => if (refresh_ok) {
+                            jsonrpc.writeFrame(io, out, "{\"jsonrpc\":\"2.0\",\"id\":\"hint-refresh\",\"method\":\"workspace/inlayHint/refresh\"}") catch return;
+                            jsonrpc.writeFrame(io, out, "{\"jsonrpc\":\"2.0\",\"id\":\"token-refresh\",\"method\":\"workspace/semanticTokens/refresh\"}") catch return;
+                        },
+                        .progress => jsonrpc.writeFrame(io, out, "{\"jsonrpc\":\"2.0\",\"method\":\"$/progress\",\"params\":{\"token\":\"rustAnalyzer/Indexing\",\"value\":{\"kind\":\"end\"}}}") catch return,
+                    }
+                } else if (std.mem.eql(u8, m, "textDocument/semanticTokens/full")) {
+                    lspReply(io, gpa, out, rq.id, if (loaded) "{\"data\":[0,0,3,0,0]}" else "{\"data\":[]}");
+                } else {
+                    lspReply(io, gpa, out, rq.id, "null");
+                }
+            },
+            .notification => |n| {
+                if (std.mem.eql(u8, n.method, "exit")) return;
+                if (mode == .progress and std.mem.eql(u8, n.method, "initialized")) {
+                    jsonrpc.writeFrame(io, out, "{\"jsonrpc\":\"2.0\",\"method\":\"$/progress\",\"params\":{\"token\":\"rustAnalyzer/Indexing\",\"value\":{\"kind\":\"begin\",\"title\":\"Indexing\"}}}") catch return;
+                }
+            },
+            else => {},
+        }
+    }
+}
+
+/// Open a file on an `unloadedServer` and wait until the loaded hint
+/// paints and the file holds the loaded token — with no edit, ever.
+fn unloadedRun(mode: Unloaded, comptime name: []const u8) !void {
+    const gpa = testing.allocator;
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const io = app.io;
+    const c2s = try Io.Threaded.pipe2(.{});
+    const s2c = try Io.Threaded.pipe2(.{});
+    const F = Io.File;
+    const flags: F.Flags = .{ .nonblocking = false };
+    const in_r = F{ .handle = c2s[0], .flags = flags };
+    const out_w = F{ .handle = s2c[1], .flags = flags };
+    var group: Io.Group = .init;
+    try group.concurrent(io, unloadedServer, .{ io, gpa, in_r, out_w, mode });
+    const s = try Server.initFiles(gpa, io, app.events, app.lsp.next_id, F{ .handle = c2s[1], .flags = flags }, F{ .handle = s2c[0], .flags = flags }, .{ .name = "typescript", .argv = &.{"fake-ra"}, .root = "/tmp" });
+    app.lsp.next_id += 1;
+    try app.lsp.servers.append(gpa, s);
+    try s.initialize();
+    const path = TestRig.scratch(name);
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = TestRig.text });
+    defer Io.Dir.cwd().deleteFile(io, path) catch {};
+    const pane = try app.openPath(path);
+    const e = app.panes.editor(pane).?;
+    const Probe = struct {
+        app: *App,
+        path: []const u8,
+        fn loaded(p: @This()) bool {
+            const f = p.app.lsp.semantic.get(p.path) orelse return false;
+            if (f.tokens.len != 1) return false;
+            const txt = TestRig.screenText(p.app, p.app.gpa) catch return false;
+            defer p.app.gpa.free(txt);
+            return std.mem.indexOf(u8, txt, "let x: u32 = 1;") != null;
+        }
+    };
+    try TestRig.pump(&app, Probe{ .app = &app, .path = path }, Probe.loaded, 5000);
+    try testing.expectEqual(@as(u64, 0), e.buf.doc.edits.head());
+    retireServer(&app, s);
+    try group.await(io);
+    in_r.close(io);
+    out_w.close(io);
+    TestRig.removeDirIfEmpty();
+}
+
+test "lsp refresh: hints and tokens answered empty before the workspace loaded are asked again on the server's refresh request" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    try unloadedRun(.refresh, "mnml-zig-fake-lsp-refresh.ts");
+}
+
+test "lsp refresh: a server that sends no refresh is asked again when its $/progress ends" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    try unloadedRun(.progress, "mnml-zig-fake-lsp-progress.ts");
 }
 
 test "a server's string-id `workspace/configuration` (zls's) is answered under the same id, with the configured settings" {
