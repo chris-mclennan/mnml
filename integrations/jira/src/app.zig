@@ -4157,6 +4157,9 @@ pub const Harness = struct {
     store: *jira.fake.Store,
     server: *Io.net.Server,
     group: Io.Group = .init,
+    /// Set by `stop` before it cancels, so the watchdog does not read
+    /// the accept loop's cancel as the fake giving up.
+    stopping: std.atomic.Value(bool) = .init(false),
     client: *jira.Client,
     app: App,
     base: []const u8,
@@ -4183,6 +4186,7 @@ pub const Harness = struct {
         h.server.* = try addr.listen(io, .{ .reuse_address = true });
         h.lb = .{ .store = h.store, .server = h.server };
         h.group = .init;
+        h.stopping = .init(false);
         try h.group.concurrent(io, jira.Loopback.serve, .{ io, &h.lb });
         h.base = try std.fmt.allocPrint(testing.allocator, "http://127.0.0.1:{d}", .{h.server.socket.address.getPort()});
         // The forge lives under `/2.0` on Bitbucket and on the fake, so
@@ -4201,14 +4205,38 @@ pub const Harness = struct {
         cfg.bitbucket_api_url = h.forge_base;
         h.app = try App.init(gpa, io, cfg, family, h.client, .{ .gpa = gpa, .io = io, .base_url = h.forge_base, .token = "fake-forge" });
         h.app.resize(120, 40);
+        try h.group.concurrent(io, watch, .{ io, h });
         return h;
     }
 
+    /// What is on the wire, for the watchdog's message. Read from the
+    /// watchdog's thread while the test runs: a best-effort picture.
+    fn parked(h: *Harness) Parked {
+        return .{ .h = h };
+    }
+
+    const Parked = struct {
+        h: *Harness,
+        pub fn format(p: Parked, w: *std.Io.Writer) std.Io.Writer.Error!void {
+            const lb = &p.h.lb;
+            const a = &p.h.app;
+            try w.print("fake Jira: {t}, {d} connections taken, {d} dropped by a client that hung up; pane workers in flight: detail/transitions look {}, refetch {}, PR fetch {}", .{
+                lb.phase.load(.acquire),
+                lb.served.load(.monotonic),
+                lb.dropped.load(.monotonic),
+                @atomicLoad(bool, &a.looks.running, .monotonic),
+                @atomicLoad(bool, &a.refresh.running, .monotonic),
+                @atomicLoad(bool, &a.prs.running, .monotonic),
+            });
+        }
+    };
+
     pub fn stop(h: *Harness) void {
-        var scratch = std.heap.ArenaAllocator.init(testing.allocator);
-        h.lb.finish(h.client, scratch.allocator()) catch {};
-        scratch.deinit();
-        h.group.await(testing.io) catch {};
+        // Cancelled, not asked over the wire: a `/__done` request is one
+        // more read that parks forever if the fake is not answering, and
+        // a teardown must not depend on the thing it is tearing down.
+        h.stopping.store(true, .release);
+        h.group.cancel(testing.io);
         h.app.deinit();
         testing.allocator.free(h.client.authorization);
         testing.allocator.destroy(h.client);
@@ -4221,6 +4249,30 @@ pub const Harness = struct {
         testing.allocator.destroy(h);
     }
 };
+
+/// How long one Harness may live before its watchdog calls the test a
+/// hang. A Harness test is milliseconds; a loaded CI box a few seconds.
+pub const harness_deadline_ms: u32 = 120_000;
+
+/// The Harness's watchdog. Every request a Harness test makes — the
+/// test thread's own and every pane worker's — blocks on a read with
+/// no deadline, so a fake that stops answering is a hang, not a
+/// failure: 53 minutes of one, once. This turns both shapes of it into
+/// a red test that names what is parked: the accept loop ending while
+/// the test still runs (at once — every later request would park), and
+/// the test outliving `harness_deadline_ms`.
+fn watch(io: Io, h: *Harness) Io.Cancelable!void {
+    var waited: u32 = 0;
+    while (true) : (waited += 20) {
+        try io.sleep(.fromMilliseconds(20), .awake);
+        if (h.stopping.load(.acquire)) return;
+        const phase = h.lb.phase.load(.acquire);
+        if (phase == .done or phase == .canceled)
+            std.debug.panic("jira Harness: the fake Jira's accept loop ended ({t}) with the test still running — every request from here parks forever in the listen backlog. {f}", .{ phase, h.parked() });
+        if (waited >= harness_deadline_ms)
+            std.debug.panic("jira Harness: the test is still running after {d} s — something is parked on a request. {f}", .{ harness_deadline_ms / 1000, h.parked() });
+    }
+}
 
 pub const work_tabs = [_]config.Tab{
     .{ .name = "Assigned", .kind = .work_assigned },
@@ -5075,6 +5127,65 @@ test "`d` and `t` fetch off the loop: the keys answer at once, the detail and th
     }
     try testing.expect(a.transition == null);
     try testing.expect(h.store.requests - moves_before >= 2);
+}
+
+test "a client that hangs up mid-request does not stop the fake: the next request is still answered" {
+    // What a test's teardown does to a pane worker still on the wire:
+    // `group.cancel` lands between its connect and its answer, and the
+    // socket closes with the request unsent or half sent. The Loopback
+    // ended its whole accept loop on that, the test's next request sat
+    // unaccepted in the backlog, and a ReleaseSafe suite hung for 53
+    // minutes. With the old loop this is the Harness watchdog's panic
+    // (the accept loop ended with the test still running), not a hang.
+    const h = try Harness.start(.{ .tabs = &work_tabs }, .work);
+    defer h.stop();
+    const io = testing.io;
+    const addr: Io.net.IpAddress = .{ .ip4 = .loopback(h.server.socket.address.getPort()) };
+    // Nothing sent at all.
+    (try addr.connect(io, .{ .mode = .stream })).close(io);
+    // Half a request line.
+    {
+        const s = try addr.connect(io, .{ .mode = .stream });
+        defer s.close(io);
+        var wbuf: [64]u8 = undefined;
+        var w = s.writer(io, &wbuf);
+        try w.interface.writeAll("GET /rest/api/3/my");
+        try w.interface.flush();
+    }
+    try h.app.ensureLoaded();
+    try testing.expect(h.app.tab().issues.len > 0);
+    try testing.expectEqual(@as(u32, 2), h.lb.dropped.load(.monotonic));
+}
+
+test "a look cancelled at every point of its request, 400 times over, leaves the fake answering" {
+    // The teardown shape that hung the suite, made to happen on purpose:
+    // each round starts a detail look and cancels it a few microseconds
+    // later than the last, so across the rounds the cancel lands before
+    // the connect, in it, mid-request and mid-answer. Some of those
+    // leave the fake a connection that hangs up (`lb.dropped`); every
+    // one of them must leave it taking the next.
+    const h = try Harness.start(.{ .tabs = &work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    a.looks.deinit(a.io, LookResult.drop);
+    var i: usize = 0;
+    while (i < 400) : (i += 1) {
+        a.looks = try LookSlot.init(a.gpa);
+        var group: Io.Group = .init;
+        a.setGroup(&group);
+        a.detail_fetching_len = 0;
+        try a.startLook(.detail, "ENG-2");
+        testing.io.sleep(.fromMicroseconds(@intCast(i * 5)), .awake) catch {};
+        a.closeRefresh();
+        group.cancel(testing.io);
+        a.looks.deinit(a.io, LookResult.drop);
+        a.group = null;
+    }
+    a.looks = try LookSlot.init(a.gpa);
+    // Inline now (no group): the test thread's own request, answered.
+    try a.refreshActive();
+    try testing.expect(a.tab().issues.len > 0);
 }
 
 test "the Work family's three kinds: open work counts for the chip, reported is the reporter query, the editable tab interpolates its vars" {
