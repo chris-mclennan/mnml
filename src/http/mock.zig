@@ -183,6 +183,8 @@ pub const Server = struct {
     canned: Canned,
     thread: std.Thread,
     stopping: std.atomic.Value(bool) = .init(false),
+    /// `serve` has started the accept loop (`thread` is live).
+    serving: bool = false,
     /// Requests served so far.
     served: std.atomic.Value(u32) = .init(0),
     last: std.ArrayListUnmanaged(u8) = .empty,
@@ -194,23 +196,43 @@ pub const Server = struct {
     }
 
     pub fn startOn(gpa: Allocator, io: Io, port: u16, canned: Canned) !*Server {
+        const self = try listenOn(gpa, io, port);
+        errdefer self.stop(io);
+        try self.serve(canned);
+        return self;
+    }
+
+    /// Bind 127.0.0.1:`port` (0 = any free port) without answering yet:
+    /// `port` is known from here, so a caller can hand it out before it
+    /// knows what to serve. A connection before `serve` waits in the
+    /// backlog. `stop` frees a server that never served.
+    pub fn listenOn(gpa: Allocator, io: Io, port: u16) !*Server {
         const self = try gpa.create(Server);
         errdefer gpa.destroy(self);
         const addr: Io.net.IpAddress = .{ .ip4 = .loopback(port) };
         var server = try addr.listen(io, .{ .reuse_address = true });
         errdefer server.deinit(io);
-        self.* = .{ .gpa = gpa, .io = io, .port = server.socket.address.getPort(), .server = server, .canned = canned, .thread = undefined };
-        self.thread = try std.Thread.spawn(.{}, loop, .{ self, io });
+        self.* = .{ .gpa = gpa, .io = io, .port = server.socket.address.getPort(), .server = server, .canned = .{}, .thread = undefined };
         return self;
+    }
+
+    /// Start answering every connection with `canned`. Once.
+    pub fn serve(self: *Server, canned: Canned) !void {
+        std.debug.assert(!self.serving);
+        self.canned = canned;
+        self.thread = try std.Thread.spawn(.{}, loop, .{ self, self.io });
+        self.serving = true;
     }
 
     /// Stop accepting, wake the loop, join, free.
     pub fn stop(self: *Server, io: Io) void {
         self.stopping.store(true, .release);
-        // A connection of our own unblocks `accept`.
-        const addr: Io.net.IpAddress = .{ .ip4 = .loopback(self.port) };
-        if (addr.connect(io, .{ .mode = .stream })) |s| s.close(io) else |_| {}
-        self.thread.join();
+        if (self.serving) {
+            // A connection of our own unblocks `accept`.
+            const addr: Io.net.IpAddress = .{ .ip4 = .loopback(self.port) };
+            if (addr.connect(io, .{ .mode = .stream })) |s| s.close(io) else |_| {}
+            self.thread.join();
+        }
         self.server.deinit(io);
         self.last.deinit(self.gpa);
         self.gpa.destroy(self);
@@ -226,7 +248,14 @@ pub const Server = struct {
 
     fn loop(self: *Server, io: Io) void {
         while (!self.stopping.load(.acquire)) {
-            const stream = self.server.accept(io) catch break;
+            // A transient accept failure (a client that gave up first,
+            // a moment out of descriptors) is not the end of the mock:
+            // breaking stopped it for the rest of the file.
+            const stream = self.server.accept(io) catch {
+                if (self.stopping.load(.acquire)) break;
+                io.sleep(.fromMilliseconds(10), .awake) catch {};
+                continue;
+            };
             if (self.stopping.load(.acquire)) {
                 stream.close(io);
                 break;

@@ -1,6 +1,4 @@
 # env: MNML_BROKER=1
-# env: JIRA_BROKER_SOCKET=/tmp/mnml-e2e-broker-jira.sock
-# env: BITBUCKET_BROKER_SOCKET=/tmp/mnml-e2e-broker-bitbucket.sock
 # The broker line in the REQUESTS header (`app/broker.zig` →
 # `ui/requests_view.zig`): who is handing the API tokens out, how many
 # callers are queued for one, and how much of the shared budget is
@@ -9,12 +7,14 @@
 #
 # A corpus run hosts no broker unless it says so — binding a socket
 # beside the developer's own bucket would put a test in front of their
-# panes — so this file opts in with `MNML_BROKER=1` and names two
-# short socket paths of its own. Short because `sockaddr_un` holds
-# about a hundred bytes and the runner's per-file data root is deeper
-# than that; named because the default would be the machine-wide one.
-# The buckets are already this file's own (`*_RATELIMIT_STATE`, which
-# the runner sets per file), so nothing here spends the real budget.
+# panes — so this file opts in with `MNML_BROKER=1`. The buckets are
+# this file's own (`*_RATELIMIT_STATE`, which the runner sets per file
+# under its data root), so nothing here spends the real budget, and the
+# sockets derive from beside them — or, where that root is deeper than
+# a `sockaddr_un` holds, on the short `/tmp` fallback, which is named
+# after the bucket's own path and so is this file's alone. It
+# used to name two fixed `/tmp/mnml-e2e-broker-*.sock` paths, and two
+# runs of the corpus at once took each other's election.
 command view.toggle_tree
 command integrations.requests
 expect screen contains "REQUESTS (0)"

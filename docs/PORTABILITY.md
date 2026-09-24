@@ -80,7 +80,7 @@ The SDK's URL opener is `sdk/mnml-sdk/src/platform.zig`.
 | `src/app/now_playing.zig` | fixed | mixr's `~/.mixr/quick.txt` under `USERPROFILE` (the osascript half is macOS's) |
 | `sdk/mnml-sdk/src/ratelimit.zig` `statePath` | fixed | `USERPROFILE` rung (it went `HOME` → cwd) |
 | `integrations/bitbucket/src/config.zig` `dataRoot` | fixed | `USERPROFILE` rung, matching the SDK |
-| `sdk/mnml-sdk/src/broker.zig` `socketPath` fallback | fixed | `%TEMP%\mnml-broker-<svc>.sock`, not `\tmp\…` on the current drive |
+| `sdk/mnml-sdk/src/broker.zig` `socketPath` fallback | fixed | `%TEMP%\mnml-broker-<svc>-<hash>.sock`, not `\tmp\…` on the current drive |
 | `src/main.zig` `test` temp root | fixed | `os_path.tempDir` — `C:\Windows\Temp` rather than `/tmp` when nothing is set |
 | `src/app/info_view_audit.zig` scratch workspace | fixed | read `TMPDIR` only → `os_path.tempDir` |
 | `src/tui/marker.zig` | guarded | `TMPDIR`, `TEMP`, `TMP`, `USER`, `USERNAME` |

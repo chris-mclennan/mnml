@@ -2721,7 +2721,15 @@ test "test.run_playwright needs a package.json; a result lands in the pane and t
     defer tmp.cleanup();
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 100, .rows = 30 });
+    // No `npx` on the App's PATH: the worker's spawn fails at once. With
+    // the machine's PATH it ran the real `npx`, which fetched the
+    // runner from the npm registry in the background — network, CPU and
+    // a write into HOME's npm cache, from a unit test that throws the
+    // run away anyway.
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    try env.put("PATH", root);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 100, .rows = 30, .env = &env });
     defer app.deinit();
     app.tree.visible = false;
     try t.expectError(error.Failed, runAll(&app));
@@ -3388,7 +3396,15 @@ test "test.run_all on a vitest project opens the pane; a vitest result lands and
     defer tmp.cleanup();
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 100, .rows = 30 });
+    // No `npx` on the App's PATH: the worker's spawn fails at once. With
+    // the machine's PATH it ran the real `npx`, which fetched the
+    // runner from the npm registry in the background — network, CPU and
+    // a write into HOME's npm cache, from a unit test that throws the
+    // run away anyway.
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    try env.put("PATH", root);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 100, .rows = 30, .env = &env });
     defer app.deinit();
     app.tree.visible = false;
     // A package.json without vitest is not a vitest project; one naming it is.

@@ -618,7 +618,7 @@ pub fn refresh(app: *App) CommandError!void {
     // The cloud settings the worker reads, renewed while no worker runs.
     if (st.cloud) |*c| c.deinit(app.gpa);
     st.cloud = try cloud_agents.Opts.fromConfig(app.gpa, &app.cfg.cloud_agents, &app.env);
-    st.group.concurrent(app.io, scanWorker, .{ app.events, app.io, app.gpa, home, app.workspace, st.cloud, st.generation }) catch |err| {
+    st.group.concurrent(app.io, scanWorker, .{ app.events, app.io, app.gpa, home, app.workspace, st.cloud, agents.scopeFrom(&app.env), st.generation }) catch |err| {
         st.scanning = false;
         return app.diag.fail(app.frame.allocator(), "sessions: could not start the scan: {s}", .{@errorName(err)});
     };
@@ -651,13 +651,13 @@ pub fn homeFor(app: *App) Allocator.Error!?[]const u8 {
     return st.home.?;
 }
 
-fn scanWorker(events: *event.EventQueue, io: Io, gpa: Allocator, home: []const u8, workspace: []const u8, cloud: ?cloud_agents.Opts, generation: u32) Io.Cancelable!void {
+fn scanWorker(events: *event.EventQueue, io: Io, gpa: Allocator, home: []const u8, workspace: []const u8, cloud: ?cloud_agents.Opts, scope: agents.Scope, generation: u32) Io.Cancelable!void {
     const result = ScanResult.create(gpa, generation) catch {
         postErr(events, io, gpa, "out of memory starting the scan");
         return;
     };
     errdefer result.destroy(gpa);
-    scanInto(io, gpa, home, workspace, cloud, result) catch |err| switch (err) {
+    scanInto(io, gpa, home, workspace, cloud, scope, result) catch |err| switch (err) {
         error.Canceled => return error.Canceled,
         error.OutOfMemory => {
             postErr(events, io, gpa, "out of memory during the scan");
@@ -678,11 +678,11 @@ const ScanError = Io.Cancelable || Allocator.Error;
 /// transcripts, the cloud runs when configured, then one `git status`
 /// per distinct cwd. Every session is kept; `refilter` narrows to the
 /// workspace, so the toggle needs no rescan.
-pub fn scanInto(io: Io, gpa: Allocator, home: []const u8, workspace: []const u8, cloud: ?cloud_agents.Opts, r: *ScanResult) ScanError!void {
+pub fn scanInto(io: Io, gpa: Allocator, home: []const u8, workspace: []const u8, cloud: ?cloud_agents.Opts, scope: agents.Scope, r: *ScanResult) ScanError!void {
     _ = workspace;
     const arena = r.arena.allocator();
     var rows: std.ArrayListUnmanaged(Item) = .empty;
-    try agents.scanInto(io, gpa, arena, home, &rows);
+    try agents.scanInto(io, gpa, arena, home, scope, &rows);
     if (cloud) |c| try cloud_agents.scanInto(io, gpa, arena, c, &rows);
     const now = Io.Timestamp.now(io, .real).toSeconds();
     try agents.dirtyScan(io, gpa, arena, rows.items, now);
@@ -851,6 +851,7 @@ pub fn evalNeedsYou(app: *App, pid: app_mod.PaneId) bool {
 /// listing moved and the throttle allows; a rising edge announces
 /// itself (`announceNeedsYou`).
 pub fn trackNeedsYou(app: *App) Allocator.Error!void {
+    var flipped = false;
     var i: usize = 0;
     while (i < app.panes.slots.items.len) : (i += 1) {
         const pid: app_mod.PaneId = @intCast(i);
@@ -875,8 +876,18 @@ pub fn trackNeedsYou(app: *App) Allocator.Error!void {
         const was = p.needs_you;
         p.needs_you = evalNeedsYou(app, pid);
         if (p.needs_you and !was) try announceNeedsYou(app, pid);
-        if (p.needs_you != was) app.needs_render = true;
+        if (p.needs_you != was) {
+            app.needs_render = true;
+            flipped = true;
+        }
     }
+    // The card order reads `needsYou` (the State sort puts a waiting
+    // session first, the Waiting sort does too), and the order is
+    // computed in `refilter`, not per frame. Without this the mark was
+    // painted at once and the order followed at the next scan — a
+    // second or more on a loaded machine — so Enter on the top card
+    // opened the card that USED to be on top.
+    if (flipped and app.sessions.cards.items.len > 1) try refilter(app);
 }
 
 /// When a pane whose output moved inside the throttle is due a re-read.
@@ -3406,6 +3417,25 @@ test "needsYou: a pane whose screen asks is waiting, one that does not is not; a
     try testing.expect(!evalNeedsYou(app, gone));
 }
 
+test "the State sort re-sorts the moment a session starts to need you, not at the next scan" {
+    var f = try Fixture.init(100, 30);
+    defer f.deinit();
+    try f.fakeClaude();
+    const app = &f.app;
+    const st = &app.sessions;
+    // The quiet one first, so the order has to CHANGE for the asking
+    // one to lead.
+    const plain = try f.openCard("plain-9");
+    const ask = try f.openCard("ask-9");
+    try f.adopt(&.{});
+    try testing.expect(try f.waitGrid(plain, "Claude Code v9", 5000));
+    try testing.expect(try f.waitNeedsYou(ask, true, 5000));
+    try testing.expectEqual(SessionsSort.auto, st.sort);
+    // No scan in between: the flip itself put it on top.
+    try testing.expect(!st.scanning);
+    try testing.expectEqual(ask, st.cards.items[st.filtered.items[0]].pane);
+}
+
 test "the Waiting sort: the sessions that need you lead, the manual order under them; the card wears the mark before its name and the tab after; s cycles State → Manual → Waiting and the chip's menu ticks it" {
     var f = try Fixture.init(120, 30);
     defer f.deinit();
@@ -3865,7 +3895,7 @@ test "scanInto over a fixture home lists the dashboard's sessions in this module
     try f.seedHome();
     const r = try ScanResult.create(testing.allocator, 1);
     defer r.destroy(testing.allocator);
-    try scanInto(testing.io, testing.allocator, f.app.sessions.home.?, f.root, null, r);
+    try scanInto(testing.io, testing.allocator, f.app.sessions.home.?, f.root, null, .{ .pgid = -1, .self_pid = 0 }, r);
     try testing.expectEqual(@as(usize, 2), r.items.len);
     var claude_seen = false;
     for (r.items) |it| if (it.source == .claude) {

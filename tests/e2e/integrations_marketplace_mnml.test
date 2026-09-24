@@ -44,10 +44,13 @@ key down
 key down
 command integrations.pin_to_activity_bar
 expect screen contains "sample: added to the activity bar"
-# Uninstall takes the manifest AND the link — the confirm says so.
+# Uninstall takes the manifest AND the link — the confirm says so, and
+# the toast after it. The confirm names both by absolute path, which the
+# box clips at a TMPDIR's length; the link's name at the end of it was
+# the assertion once, and a deep TMPDIR clipped it off. The words that
+# say "and the link" are the toast's, and the files are checked below.
 key x
-expect screen contains "Remove Sample?"
-expect screen contains "bin/mnml-sample"
+expect screen contains "Remove Sample? Its manifest "
 key r
 expect screen contains "the manifest and the link"
 shell test ! -e "$MNML_DATA_ROOT/bin/mnml-sample"

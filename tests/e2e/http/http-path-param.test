@@ -2,8 +2,11 @@
 # server shows the request line); the URL keeps `:id`, `::` is a colon;
 # the Params tab lists the Path group and Enter sets a value.
 
-serve 19890 200 @echo
-write users.http "# @path id=42\nGET http://127.0.0.1:19890/users/:id/x::y\n"
+# `serve 0`: the runner binds a free port before the file starts and
+# `${SERVE_PORT}` names it — a fixed port collided when two runs of the
+# corpus shared a machine.
+serve 0 200 @echo
+write users.http "# @path id=42\nGET http://127.0.0.1:${SERVE_PORT}/users/:id/x::y\n"
 open users.http
 expect screen contains "/users/:id/x::y"
 

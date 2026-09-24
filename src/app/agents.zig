@@ -110,45 +110,124 @@ pub const AgentState = enum {
 
 pub const ScanError = Io.Cancelable || Allocator.Error;
 
-pub const Pid = struct { pid: u32, session_id: ?[]const u8, exe: Source };
+pub const Pid = struct { pid: u32, session_id: ?[]const u8, exe: Source, pgid: i32 = 0 };
 
-/// `ps -axo pid=,command=` → the claude / codex processes, with the
-/// `--session-id <uuid>` a Claude line carries.
-pub fn parsePs(arena: Allocator, text: []const u8) Allocator.Error![]Pid {
+/// `MNML_AGENTS_PGID`: a process group the process scan is limited to.
+///
+/// The scan is `ps` over the whole machine, which is right for a person
+/// — every Claude on the machine is theirs — and wrong for a test: two
+/// copies of one `.test` file running at once start fake `claude`
+/// processes with the SAME session ids, and each run found (and batch
+/// killed) the other's. The `.test` runner starts every `shell` step of
+/// a file in one process group of its own and names it here, so a run
+/// sees the processes its own file started and nothing else. Processes
+/// descended from this one — a session a pane of this App spawned —
+/// are always in scope.
+pub const scope_env = "MNML_AGENTS_PGID";
+
+/// Which processes the scan may attribute: null is the whole machine.
+pub const Scope = ?Filter;
+
+pub const Filter = struct {
+    /// Only processes in this process group…
+    pgid: i32,
+    /// …or descended from this pid (the App's own process).
+    self_pid: i32,
+};
+
+/// `MNML_AGENTS_PGID` from an environment, with this process as the
+/// ancestor that is always in scope. Null when unset or not a number.
+pub fn scopeFrom(env: *const std.process.Environ.Map) Scope {
+    const v = env.get(scope_env) orelse return null;
+    const pgid = std.fmt.parseInt(i32, std.mem.trim(u8, v, " \t"), 10) catch return null;
+    return .{ .pgid = pgid, .self_pid = selfPid() };
+}
+
+fn selfPid() i32 {
+    if (@import("builtin").os.tag == .windows) return 0;
+    return @intCast(std.c.getpid());
+}
+
+/// `ps -axo pid=,ppid=,pgid=,command=` → the claude / codex processes,
+/// with the `--session-id <uuid>` a Claude line carries. With a scope,
+/// only the processes it admits (`Filter`).
+pub fn parsePs(arena: Allocator, text: []const u8, scope: Scope) Allocator.Error![]Pid {
+    const Row = struct { pid: u32, ppid: u32 };
+    // Every process's parent, for the "descended from this App" rule.
+    var parents: std.ArrayListUnmanaged(Row) = .empty;
     var out: std.ArrayListUnmanaged(Pid) = .empty;
     var lines = std.mem.splitScalar(u8, text, '\n');
     while (lines.next()) |raw| {
-        const line = std.mem.trimStart(u8, raw, " \t");
-        const sp = std.mem.indexOfScalar(u8, line, ' ') orelse continue;
-        const pid = std.fmt.parseInt(u32, line[0..sp], 10) catch continue;
-        const cmd = std.mem.trimStart(u8, line[sp + 1 ..], " ");
+        var rest = std.mem.trimStart(u8, raw, " \t");
+        var nums: [3]u32 = undefined;
+        var ok = true;
+        for (&nums) |*n| {
+            const sp = std.mem.indexOfAny(u8, rest, " \t") orelse {
+                ok = false;
+                break;
+            };
+            n.* = std.fmt.parseInt(u32, rest[0..sp], 10) catch {
+                ok = false;
+                break;
+            };
+            rest = std.mem.trimStart(u8, rest[sp + 1 ..], " \t");
+        }
+        if (!ok) continue;
+        const pid = nums[0];
+        if (scope != null) try parents.append(arena, .{ .pid = pid, .ppid = nums[1] });
+        const cmd = rest;
         const exe_end = std.mem.indexOfScalar(u8, cmd, ' ') orelse cmd.len;
         const exe = std.fs.path.basename(cmd[0..exe_end]);
         const source: Source = if (std.mem.eql(u8, exe, "claude")) .claude else if (std.mem.eql(u8, exe, "codex")) .codex else continue;
         var sid: ?[]const u8 = null;
         if (std.mem.indexOf(u8, cmd, "--session-id ")) |at| {
-            const rest = cmd[at + "--session-id ".len ..];
-            const end = std.mem.indexOfScalar(u8, rest, ' ') orelse rest.len;
-            if (end == 36) sid = try arena.dupe(u8, rest[0..end]);
+            const r = cmd[at + "--session-id ".len ..];
+            const end = std.mem.indexOfScalar(u8, r, ' ') orelse r.len;
+            if (end == 36) sid = try arena.dupe(u8, r[0..end]);
         } else if (std.mem.indexOf(u8, cmd, "--resume ")) |at| {
-            const rest = cmd[at + "--resume ".len ..];
-            const end = std.mem.indexOfScalar(u8, rest, ' ') orelse rest.len;
-            if (end == 36) sid = try arena.dupe(u8, rest[0..end]);
+            const r = cmd[at + "--resume ".len ..];
+            const end = std.mem.indexOfScalar(u8, r, ' ') orelse r.len;
+            if (end == 36) sid = try arena.dupe(u8, r[0..end]);
         }
-        try out.append(arena, .{ .pid = pid, .session_id = sid, .exe = source });
+        try out.append(arena, .{ .pid = pid, .session_id = sid, .exe = source, .pgid = @intCast(nums[2]) });
     }
-    return out.items;
+    const f = scope orelse return out.items;
+    var kept: usize = 0;
+    for (out.items) |p| {
+        if (p.pgid == f.pgid or descends(parents.items, p.pid, f.self_pid)) {
+            out.items[kept] = p;
+            kept += 1;
+        }
+    }
+    return out.items[0..kept];
 }
 
-fn runningPids(io: Io, gpa: Allocator, arena: Allocator) ScanError![]Pid {
-    const result = std.process.run(gpa, io, .{ .argv = &.{ "ps", "-axo", "pid=,command=" }, .stdout_limit = .limited(4 * 1024 * 1024) }) catch |err| switch (err) {
+/// Whether `pid`'s ancestry reaches `ancestor`, through `rows`. Bounded,
+/// so a table read mid-fork with a cycle in it cannot spin.
+fn descends(rows: anytype, pid: u32, ancestor: i32) bool {
+    if (ancestor <= 0) return false;
+    var cur = pid;
+    var hops: usize = 0;
+    while (hops < 64) : (hops += 1) {
+        const parent = for (rows) |r| {
+            if (r.pid == cur) break r.ppid;
+        } else return false;
+        if (parent == @as(u32, @intCast(ancestor))) return true;
+        if (parent <= 1) return false;
+        cur = parent;
+    }
+    return false;
+}
+
+fn runningPids(io: Io, gpa: Allocator, arena: Allocator, scope: Scope) ScanError![]Pid {
+    const result = std.process.run(gpa, io, .{ .argv = &.{ "ps", "-axo", "pid=,ppid=,pgid=,command=" }, .stdout_limit = .limited(4 * 1024 * 1024) }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.Canceled => return error.Canceled,
         else => return &.{},
     };
     defer gpa.free(result.stdout);
     defer gpa.free(result.stderr);
-    return parsePs(arena, result.stdout);
+    return parsePs(arena, result.stdout, scope);
 }
 
 /// The state from what the scan can see: no process is `done` (or
@@ -165,8 +244,8 @@ pub fn deriveState(has_pid: bool, age_s: i64, last_was_tool_call: bool, pending_
 
 /// Walk both roots and append this machine's sessions to `rows`, every
 /// slice on `arena`.
-pub fn scanInto(io: Io, gpa: Allocator, arena: Allocator, home: []const u8, rows: *std.ArrayListUnmanaged(Item)) ScanError!void {
-    const pids = try runningPids(io, gpa, arena);
+pub fn scanInto(io: Io, gpa: Allocator, arena: Allocator, home: []const u8, scope: Scope, rows: *std.ArrayListUnmanaged(Item)) ScanError!void {
+    const pids = try runningPids(io, gpa, arena, scope);
     const now = Io.Timestamp.now(io, .real).toSeconds();
     // Claude: <home>/.claude/projects/<encoded>/<sid>.jsonl
     const projects = try std.fs.path.join(arena, &.{ home, ".claude", "projects" });
@@ -406,19 +485,60 @@ test "parsePs picks claude / codex processes and the --session-id they carry" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const ps =
-        \\  123 /usr/bin/zsh -l
-        \\  456 claude --session-id 11111111-2222-3333-4444-555555555555 -p hi
-        \\  789 /opt/homebrew/bin/codex exec fix
-        \\  790 node /x/claude-thing
-        \\  791 claude --resume aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+        \\  123     1   123 /usr/bin/zsh -l
+        \\  456   123   456 claude --session-id 11111111-2222-3333-4444-555555555555 -p hi
+        \\  789   123   789 /opt/homebrew/bin/codex exec fix
+        \\  790   123   790 node /x/claude-thing
+        \\  791     1   791 claude --resume aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
     ;
-    const pids = try parsePs(arena.allocator(), ps);
+    const pids = try parsePs(arena.allocator(), ps, null);
     try t.expectEqual(@as(usize, 3), pids.len);
     try t.expectEqual(@as(u32, 456), pids[0].pid);
     try t.expectEqualStrings("11111111-2222-3333-4444-555555555555", pids[0].session_id.?);
     try t.expectEqual(Source.codex, pids[1].exe);
     try t.expect(pids[1].session_id == null);
     try t.expectEqualStrings("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", pids[2].session_id.?);
+}
+
+/// A scope no process is in: a unit test's fixture sessions must read
+/// as ended whatever `claude` / `codex` the machine happens to be
+/// running.
+const nobody: Scope = .{ .pgid = -1, .self_pid = 0 };
+
+test "parsePs with a scope keeps its own process group and this App's descendants, and nobody else's" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    // 100 is this App. 200 is another run's fake claude with the SAME
+    // session id as ours (the same `.test` file, run twice at once);
+    // 201 is ours, in the group the runner made; 301 is a codex a pane
+    // of this App started, two hops down.
+    const ps =
+        \\  100     1   100 /x/mnml-zig test
+        \\  200     1   555 claude --resume aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+        \\  201     1   777 claude --resume aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+        \\  300   100   300 /bin/bash -l
+        \\  301   300   301 codex exec fix
+    ;
+    const all = try parsePs(arena.allocator(), ps, null);
+    try t.expectEqual(@as(usize, 3), all.len);
+    const ours = try parsePs(arena.allocator(), ps, .{ .pgid = 777, .self_pid = 100 });
+    try t.expectEqual(@as(usize, 2), ours.len);
+    try t.expectEqual(@as(u32, 201), ours[0].pid);
+    try t.expectEqual(@as(u32, 301), ours[1].pid);
+    try t.expectEqual(Source.codex, ours[1].exe);
+    // Nobody's scope: nothing, however many there are.
+    try t.expectEqual(@as(usize, 0), (try parsePs(arena.allocator(), ps, nobody)).len);
+}
+
+test "the scope is read from MNML_AGENTS_PGID, and absent or garbled is the whole machine" {
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    try t.expect(scopeFrom(&env) == null);
+    try env.put(scope_env, "4242");
+    const s = scopeFrom(&env).?;
+    try t.expectEqual(@as(i32, 4242), s.pgid);
+    try env.put(scope_env, "soon");
+    try t.expect(scopeFrom(&env) == null);
 }
 
 test "deriveState: done / failed without a process; waiting on a quiet pending tool; tool, live, idle with one" {
@@ -456,7 +576,7 @@ test "scanInto reads a fixture home: claude and codex sessions, the tail stats, 
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     var rows: std.ArrayListUnmanaged(Item) = .empty;
-    try scanInto(t.io, t.allocator, arena.allocator(), home, &rows);
+    try scanInto(t.io, t.allocator, arena.allocator(), home, nobody, &rows);
     try t.expectEqual(@as(usize, 2), rows.items.len);
     var claude_seen = false;
     var codex_seen = false;

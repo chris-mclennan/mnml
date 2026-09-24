@@ -14,7 +14,9 @@ wait 400
 expect screen lacks "Ada Lovelace"
 command git.toggle_line_blame
 expect screen contains "line blame on"
-expect screen contains "alpha  Ada Lovelace · "
+# The answer is a `git blame` on the worker, behind whatever else the
+# worker has queued: polled for as long as a loaded machine takes.
+expect within 15000 screen contains "alpha  Ada Lovelace · "
 expect screen contains " ago · the first three lines"
 # It follows the cursor, one line at a time.
 key down

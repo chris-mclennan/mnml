@@ -198,6 +198,21 @@ pub fn ipcDir(app: *App) Allocator.Error![]const u8 {
     return std.fs.path.join(app.frame.allocator(), &.{ app.workspace, ".mnml", profile.ipcSubdir(app.profile()) });
 }
 
+/// `ipcDir`, made to exist: it is the directory an integration is told
+/// (`MNML_IPC_DIR`) to append its Tier-2 lines to — the statusline
+/// chip, a toast, a `term` dispatch — and it is only worth telling if
+/// it is there. It used to come into being only as the parent of the
+/// mount's socket, `<ipc_dir>/mounts/<pid>-<id>.sock`; a workspace too
+/// deep for a `sockaddr_un` puts the socket under `/tmp` instead, so on
+/// a deep workspace the channel never existed and every integration's
+/// chip, toast and dispatch went nowhere. (The corpus met it the day
+/// its `TMPDIR` was a checkout's `.verify/tmp`.)
+pub fn preparedIpcDir(app: *App) Allocator.Error![]const u8 {
+    const dir = try ipcDir(app);
+    Io.Dir.cwd().createDirPath(app.io, dir) catch {};
+    return dir;
+}
+
 /// The live mount pane spawned from exactly this command line, if
 /// there is one.
 /// // changed (integration-split): clicking a chip a second time is
@@ -262,7 +277,7 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
 
     next_id += 1;
     const id = app.panes.peekId();
-    const ipc_dir = try ipcDir(app);
+    const ipc_dir = try preparedIpcDir(app);
     const sock = try host.socketPath(gpa, ipc_dir, next_id);
     defer gpa.free(sock);
     var env = try host.envFor(gpa, &app.env, .{
@@ -1029,4 +1044,27 @@ test "an integration inherits the profile's data root, so its caches and sync ma
     // exist at all.
     try testing.expectEqualStrings("/home/x/.config/mnml-dev", child.get("MNML_DATA_ROOT").?);
     try testing.expectEqualStrings("dev", child.get("MNML_PROFILE").?);
+}
+
+test "the IPC channel an integration is told about exists even when the workspace is too deep for its socket" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var rbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = rbuf[0..try tmp.dir.realPath(testing.io, &rbuf)];
+    var deep: std.ArrayListUnmanaged(u8) = .empty;
+    defer deep.deinit(testing.allocator);
+    try deep.appendSlice(testing.allocator, root);
+    while (deep.items.len < 110) try deep.appendSlice(testing.allocator, "/deep");
+    try Io.Dir.cwd().createDirPath(testing.io, deep.items);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = deep.items, .data_root = deep.items, .cols = 80, .rows = 24 });
+    defer app.deinit();
+    _ = app.env.swapRemove("MNML_IPC_DIR");
+    const dir = try preparedIpcDir(&app);
+    // The socket leaves the workspace for `/tmp`…
+    const sock = try host.socketPath(testing.allocator, dir, 1);
+    defer testing.allocator.free(sock);
+    try testing.expect(std.mem.startsWith(u8, sock, "/tmp/"));
+    // …and the channel is there anyway.
+    try Io.Dir.cwd().access(testing.io, dir, .{});
+    try testing.expect(std.mem.startsWith(u8, dir, deep.items));
 }

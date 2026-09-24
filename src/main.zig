@@ -87,7 +87,7 @@ pub fn main(init: std.process.Init) !u8 {
             try w.flush();
             return 0;
         }
-        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, "mnml-zig [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--no-session] [--headless] [--startup-picker] [--profile dev|stable] | profile seed [--from stable] [--force] | test [PATH…] [--gate] [--sizes ladder|WxH,…] [--filter NAME] [--skip NAME] | hover-audit [--strict] [--write-todo PATH] | run FILE | chain run FILE | discover SPEC | sync | sync-check | proxy --url URL | broker acquire|status|serve | --rebase-todo PLAN TODO | --commit-msg QUEUE FILE");
+        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, "mnml-zig [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--no-session] [--headless] [--startup-picker] [--profile dev|stable] | profile seed [--from stable] [--force] | test [PATH…] [--gate] [--sizes ladder|WxH,…] [--filter NAME] [--skip NAME] [--strict] | hover-audit [--strict] [--write-todo PATH] | run FILE | chain run FILE | discover SPEC | sync | sync-check | proxy --url URL | broker acquire|status|serve | --rebase-todo PLAN TODO | --commit-msg QUEUE FILE");
     }
     if (parseInputFlag(args[1..], w)) |style| {
         app_driver.default_factory.input_style = style;
@@ -428,15 +428,17 @@ fn fakeToolPath(gpa: Allocator, io: Io, base: []const u8, installed: []const u8)
     if (Io.Dir.cwd().access(io, installed, .{})) |_| return try gpa.dupe(u8, installed) else |_| return null;
 }
 
-/// `mnml-zig test [PATH…] [--gate] [--sizes 80x24,120x40] [--filter NAME] [--skip NAME] [--parse] [--stub]`
+/// `mnml-zig test [PATH…] [--gate] [--sizes 80x24,120x40] [--filter NAME] [--skip NAME] [--strict] [--parse] [--stub]`
 ///
 /// Runs `.test` scripts (default `tests/e2e`). `--gate` runs the Phase-0
 /// gate list from `tools/gate.txt`. `--filter` keeps the files whose
 /// name contains it (what `zig build test -Dtest-filter=…` passes);
 /// `--skip` (repeatable) leaves a file out and says so. `--parse` only
 /// parses. `--stub` drives the recording stub instead of the App —
-/// exercises the harness, proves nothing about the editor. Exit 1 on
-/// any failure.
+/// exercises the harness, proves nothing about the editor. A file that
+/// fails is retried once (`--retry-flaky`, the default); a pass on the
+/// retry is reported `FLAKY` by name in the trailer and does not fail
+/// the run. `--strict` retries nothing. Exit 1 on any failure.
 fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: []const [:0]const u8, w: *Io.Writer) !u8 {
     var paths: std.ArrayList([]const u8) = .empty;
     defer paths.deinit(gpa);
@@ -448,6 +450,10 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
     var gate = false;
     var parse_only = false;
     var use_stub = false;
+    // A failing file is run once more and a pass then is reported FLAKY
+    // (by name, in the trailer) rather than failing the run. `--strict`
+    // turns the retry off: every failure is a failure.
+    var retry_flaky = true;
     var i: usize = 0;
     while (i < argv.len) : (i += 1) {
         const a = argv[i];
@@ -465,6 +471,10 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
             try skips.append(gpa, argv[i]);
         } else if (std.mem.startsWith(u8, a, "--skip=")) {
             try skips.append(gpa, a["--skip=".len..]);
+        } else if (std.mem.eql(u8, a, "--strict") or std.mem.eql(u8, a, "--no-retry-flaky")) {
+            retry_flaky = false;
+        } else if (std.mem.eql(u8, a, "--retry-flaky")) {
+            retry_flaky = true;
         } else if (std.mem.eql(u8, a, "--parse")) {
             parse_only = true;
         } else if (std.mem.eql(u8, a, "--stub")) {
@@ -545,6 +555,15 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
             try env.put("MNML_LAUNCHERS", build_options.launchers_dir);
         } else |_| {}
     }
+    // `$MNML_REPO`: the checkout, for the `lua_example_*` scripts that
+    // copy a shipped example in. It used to come from the header's
+    // `MNML_REPO=${PWD}`, and `PWD` is a shell's — an `env -i` run, a
+    // CI step or a launcher that is not a shell has none.
+    if (env.get("MNML_REPO") == null) {
+        if (Io.Dir.cwd().access(io, build_options.repo_dir, .{})) |_| {
+            try env.put("MNML_REPO", build_options.repo_dir);
+        } else |_| {}
+    }
     // `$MNML_FAKE_LSP` the same way, for the `lsp_fake_*` scripts.
     if (env.get("MNML_FAKE_LSP") == null) {
         if (try fakeLspPath(gpa, io)) |p| {
@@ -603,18 +622,42 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
         }
     }
     try reportHarness(env, w);
+    // The git guard (`e2e.runner.GitGuard`): a `git` shim first on PATH
+    // that fails any file whose git reaches a repository outside the
+    // temp root — the checkout this run was started in, above all.
+    const guard = try e2e.runner.installGitGuard(gpa, io, data_root, tmp_root, env.get("PATH"));
+    defer if (guard) |g| e2e.runner.deinitGitGuard(gpa, g);
+    if (guard) |g| try g.putEnv(gpa, env);
+    // This process's own environment and working directory are what a
+    // child the App spawns WITHOUT an environment or a cwd of its own
+    // inherits. They pointed at the developer's shell and the checkout,
+    // so such a `git` ran in the checkout. Now: the guard and the git
+    // fence in the environment, and the run's own temp root as the cwd
+    // (every path the run still needs made absolute first).
+    try fenceProcess(gpa, io, env, tmp_root, data_root, &paths);
+    // What every file starts from: the kept names of this environment,
+    // a HOME of the run's own (`e2e.runner.hermeticEnv`) — never the
+    // developer's.
+    const run_home = try std.fs.path.join(gpa, &.{ data_root, "home" });
+    defer gpa.free(run_home);
+    try Io.Dir.cwd().createDirPath(io, run_home);
+    var file_base = try e2e.runner.hermeticEnv(gpa, env, run_home);
+    defer file_base.deinit();
     const opts: e2e.Options = .{
         .allow_shell = allow_shell,
         .network = network,
         .file_timeout_secs = timeout,
         .heartbeat_secs = heartbeat,
         .sizes = if (sizes.items.len > 0) sizes.items else &.{e2e.runner.content_size},
-        .shell = env.get("SHELL") orelse "/bin/sh",
+        // `/bin/sh` on every machine, not the developer's login shell:
+        // a step's quoting and builtins are the file's, not the host's.
+        .shell = env.get("MNML_E2E_SHELL") orelse "/bin/sh",
         .tmp_root = tmp_root,
         .data_root = data_root,
         .name_filter = name_filter,
         .skip = skips.items,
-        .env = env,
+        .env = &file_base,
+        .retry_flaky = retry_flaky,
     };
 
     var stub_factory: e2e.driver.StubFactory = .{};
@@ -628,12 +671,49 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
         };
     // A path that is not there is a hard error, never a green `0/0`:
     // the runner has already named it on `w`.
-    const stats = e2e.runner.runPaths(gpa, io, factory, paths.items, opts, w) catch |err| switch (err) {
+    var stats = e2e.runner.runPaths(gpa, io, factory, paths.items, opts, w) catch |err| switch (err) {
         error.PathNotFound => return 2,
         else => return err,
     };
+    defer stats.deinit(gpa);
     if (stats.failed != 0) try reportHarness(env, w);
     return if (stats.failed == 0) 0 else 1;
+}
+
+/// `setenv`, for the variables a child spawned without an environment
+/// of its own must see (`fenceProcess`). libc's; not on Windows.
+extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+
+/// `mnml-zig test` runs the App in-process, and a child it spawns with
+/// neither an environment nor a cwd inherits this process's. Put the
+/// git guard's PATH, its log, the temp root and `GIT_CEILING_DIRECTORIES`
+/// into the real environment, make every test path absolute, and move
+/// the cwd into the run's own temp root — never the checkout.
+fn fenceProcess(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, tmp_root: []const u8, run_root: []const u8, paths: *std.ArrayList([]const u8)) !void {
+    if (@import("builtin").os.tag == .windows) return;
+    for (paths.items) |*p| {
+        if (std.fs.path.isAbsolute(p.*)) continue;
+        // page_allocator: `paths` does not own its items, and these live
+        // until the process ends.
+        const abs = Io.Dir.cwd().realPathFileAlloc(io, p.*, std.heap.page_allocator) catch continue;
+        p.* = abs;
+    }
+    for ([_][]const u8{ "PATH", "MNML_E2E_GIT_LOG", "MNML_E2E_TMP_ROOT" }) |name| {
+        const v = env.get(name) orelse continue;
+        try setenvOwned(gpa, name, v);
+    }
+    try setenvOwned(gpa, "GIT_CEILING_DIRECTORIES", std.mem.trimEnd(u8, tmp_root, "/"));
+    var dir = try Io.Dir.cwd().openDir(io, run_root, .{});
+    defer dir.close(io);
+    try std.process.setCurrentDir(io, dir);
+}
+
+fn setenvOwned(gpa: Allocator, name: []const u8, value: []const u8) !void {
+    const n = try gpa.dupeZ(u8, name);
+    defer gpa.free(n);
+    const v = try gpa.dupeZ(u8, value);
+    defer gpa.free(v);
+    if (setenv(n.ptr, v.ptr, 1) != 0) return error.SetEnvFailed;
 }
 
 /// The two things about the HARNESS that turn a `.test` failure into a

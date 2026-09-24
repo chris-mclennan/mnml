@@ -10,7 +10,7 @@
 # The task still runs, in the workspace; the file then ends, and the
 # runner's teardown is the quit under test: a hang is this file's
 # timeout.
-# env: MNML_SCRIPTS_DEV_ROOTS=${PWD}/tests/e2e/fixtures/init_task
+# env: MNML_SCRIPTS_DEV_ROOTS=${MNML_REPO}/tests/e2e/fixtures/init_task
 write a.txt "alpha\n"
 open a.txt
 wait 300

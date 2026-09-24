@@ -170,6 +170,16 @@ pub const Options = struct {
     /// File names (without `.test`) to skip, announced as such
     /// (`--skip`): what `zig build check` cuts by design.
     skip: []const []const u8 = &.{},
+    /// A file that fails is run once more; one that passes then is
+    /// reported `FLAKY` — on its own line as it happens and again in
+    /// the trailer — and does not fail the run. `mnml-zig test` turns
+    /// this on unless `--strict`; off here, so the library's own
+    /// callers see every failure as a failure.
+    retry_flaky: bool = false,
+    /// `mnml-zig test`'s `git` guard (`installGitGuard`): every `git` a
+    /// file's App or `shell` steps run goes through it, and one whose
+    /// repository is outside the run's temp root fails the file.
+    git_guard: ?GitGuard = null,
 };
 
 /// The file's name without its `.test`.
@@ -203,6 +213,23 @@ pub const Stats = struct {
     /// other than the file's own size). `total - structure_only` is how
     /// many runs actually checked what was on the screen.
     structure_only: usize = 0,
+    /// Runs that failed, were retried once (`Options.retry_flaky`) and
+    /// passed. Counted in `total` and NOT in `failed` — but never as a
+    /// plain pass: each is named in the trailer with what its first run
+    /// said, so a flake is a thing somebody reads rather than a green
+    /// run that hid it.
+    flaky: std.ArrayListUnmanaged(Flaky) = .empty,
+
+    pub const Flaky = struct {
+        /// `name — <the first run's message, first line>`. Owned.
+        line: []u8,
+    };
+
+    pub fn deinit(self: *Stats, gpa: Allocator) void {
+        for (self.flaky.items) |f| gpa.free(f.line);
+        self.flaky.deinit(gpa);
+        self.* = undefined;
+    }
 };
 
 // ─── one file ───────────────────────────────────────────────────────────
@@ -258,10 +285,24 @@ const Run = struct {
     /// `shell` steps too, so a step can name the workspace the App sees
     /// (`$MNML_E2E_WORKSPACE`, the path a transcript's `cwd` must match).
     shell_env: ?*const std.process.Environ.Map = null,
+    /// The file's process group: a `sleep` the runner starts as its
+    /// leader before the App, so the group exists for the whole file.
+    /// Every `shell` step joins it, the App's session scan is limited
+    /// to it (`MNML_AGENTS_PGID`), and the file's end kills it — so
+    /// nothing a file starts (a fake `claude`, a fake server left in
+    /// the background) outlives the file or is seen by another run's.
+    /// Null on Windows and when shell steps are refused.
+    group_leader: ?std.process.Child = null,
+    /// Where the git guard's log stood when the file started.
+    git_log_start: u64 = 0,
     /// `serve` steps' servers, stopped after the script; their canned
     /// answers live on `serve_arena`.
     servers: std.ArrayListUnmanaged(*mock.Server) = .empty,
     serve_arena: ?std.heap.ArenaAllocator = null,
+    /// `serve 0` servers, bound when the file starts (`prebind`) and
+    /// handed their answer by their step, in file order.
+    prebound: std.ArrayListUnmanaged(*mock.Server) = .empty,
+    next_prebound: usize = 0,
     /// The App has asked to quit. From there the runner stops stepping
     /// it: a quit app that keeps being ticked and drawn paints a live
     /// session, so a failure AFTER the quit showed a screen that no
@@ -280,8 +321,15 @@ const Run = struct {
         const gpa = self.gpa;
         const io = self.io;
 
-        const text = Io.Dir.cwd().readFileAlloc(io, self.path, gpa, .unlimited) catch |e| return self.fail("can't read: {s}", .{@errorName(e)});
-        defer gpa.free(text);
+        const raw_text = Io.Dir.cwd().readFileAlloc(io, self.path, gpa, .unlimited) catch |e| return self.fail("can't read: {s}", .{@errorName(e)});
+        defer gpa.free(raw_text);
+        // `serve 0`: every such server is bound now, before the App and
+        // before the header is read, so `${SERVE_PORT}` can be spelled
+        // anywhere in the file — a `# env:` line included — and no file
+        // ever picks a port another run might hold.
+        defer self.stopServers();
+        const text = self.prebind(raw_text) catch |e| return self.fail("serve 0: {s}", .{@errorName(e)});
+        defer if (text.ptr != raw_text.ptr) gpa.free(text);
         var diag: parser.Diagnostic = .{};
         var script = parser.parse(gpa, text, &diag) catch |e| switch (e) {
             error.Syntax => return self.fail("{s}", .{diag.message()}),
@@ -325,6 +373,31 @@ const Run = struct {
         var file_env: std.process.Environ.Map = (if (self.opts.env) |e| e.clone(gpa) else std.process.Environ.Map.init(gpa)) catch return self.fail("out of memory", .{});
         defer file_env.deinit();
         file_env.put("MNML_E2E_WORKSPACE", self.workspace) catch return self.fail("out of memory", .{});
+        // The workspace is a fresh directory under `TMPDIR`, and `TMPDIR`
+        // is wherever the person running the corpus put it — inside a
+        // checkout, often. Git must not walk up out of the workspace into
+        // that repository: a file written against "not a git repo" would
+        // find the checkout's branches, and one that `git init`s its own
+        // is unaffected.
+        file_env.put("GIT_CEILING_DIRECTORIES", std.mem.trimEnd(u8, self.opts.tmp_root, "/")) catch return self.fail("out of memory", .{});
+        // The terminal the corpus was written in, whatever terminal (or
+        // none — CI, `env -i`) the run happens in. A shell pane is named
+        // after `$TERM_PROGRAM` (`Terminal (sh)`, `ghostty (sh)`), so a
+        // file that says `expect pane Terminal` passed in one emulator
+        // and failed in every other. A file that means another terminal
+        // says so in its own `# env:` lines, which come after these.
+        pinTerminal(&file_env) catch return self.fail("out of memory", .{});
+        if (self.opts.git_guard) |g| {
+            g.putEnv(gpa, &file_env) catch return self.fail("out of memory", .{});
+            self.git_log_start = fileSize(io, g.log);
+        }
+        for (self.prebound.items, 1..) |srv, i| {
+            var nbuf: [32]u8 = undefined;
+            var vbuf: [8]u8 = undefined;
+            const name = portVarName(&nbuf, i);
+            const value = std.fmt.bufPrint(&vbuf, "{d}", .{srv.port}) catch unreachable;
+            file_env.put(name, value) catch return self.fail("out of memory", .{});
+        }
         // The same root the driver persists into, so a `shell` step and
         // any child can name it — and so a child that resolves its own
         // data root from the environment lands in this file's, not the
@@ -352,6 +425,14 @@ const Run = struct {
             names_home = true;
         };
         if (!names_home) file_env.put("MNML_SESSIONS_HOME", data_root) catch return self.fail("out of memory", .{});
+        // Before the header's own lines, so a file can still name a
+        // scope of its own.
+        if (self.startGroup()) |pgid| {
+            var pbuf: [16]u8 = undefined;
+            const text_pgid = std.fmt.bufPrint(&pbuf, "{d}", .{pgid}) catch unreachable;
+            file_env.put(agents_scope_env, text_pgid) catch return self.fail("out of memory", .{});
+        }
+        defer self.endGroup();
         for (header.envPairs()) |pair| {
             const value = expandEnv(gpa, pair.value, &file_env) catch return self.fail("out of memory", .{});
             defer gpa.free(value);
@@ -374,9 +455,12 @@ const Run = struct {
                 .env = &file_env,
             }) catch |e| break :blk self.fail("App::new: {s}", .{@errorName(e)});
             self.driver = d;
-            const result = self.runScript(&script);
+            var result = self.runScript(&script);
             d.deinit();
             self.stopServers();
+            if (result.passed) if (self.gitGuardViolation()) |msg| {
+                result = .{ .name = self.name, .passed = false, .message = msg };
+            };
             break :blk result;
         };
         const leaked = if (self.opts.quiet_leak_report) blk: {
@@ -635,6 +719,14 @@ const Run = struct {
         const chunks: ?[]const []const u8 = if (sv.delay_ms > 0) (a.dupe([]const u8, &.{body}) catch return null) else null;
         const echo = std.mem.eql(u8, std.mem.trim(u8, sv.text, " \t\r\n"), "@echo");
         const canned: mock.Canned = .{ .status = sv.status, .status_text = statusText(sv.status), .headers = hs, .body = body, .chunks = chunks, .chunk_delay_ms = sv.delay_ms, .echo = echo };
+        if (sv.port == 0) {
+            // Bound when the file started; `${SERVE_PORT}` already names it.
+            if (self.next_prebound >= self.prebound.items.len) return gpa.dupe(u8, "serve 0: no server was bound for this step") catch null;
+            const srv = self.prebound.items[self.next_prebound];
+            self.next_prebound += 1;
+            srv.serve(canned) catch |e| return std.fmt.allocPrint(gpa, "serve 127.0.0.1:{d}: {s}", .{ srv.port, @errorName(e) }) catch null;
+            return null;
+        }
         const server = mock.Server.startOn(gpa, self.io, sv.port, canned) catch |e| return std.fmt.allocPrint(gpa, "serve 127.0.0.1:{d}: {s}", .{ sv.port, @errorName(e) }) catch null;
         self.servers.append(gpa, server) catch {
             server.stop(self.io);
@@ -666,8 +758,86 @@ const Run = struct {
         for (self.servers.items) |s| s.stop(self.io);
         self.servers.deinit(self.gpa);
         self.servers = .empty;
+        for (self.prebound.items) |s| s.stop(self.io);
+        self.prebound.deinit(self.gpa);
+        self.prebound = .empty;
+        self.next_prebound = 0;
         if (self.serve_arena) |*ar| ar.deinit();
         self.serve_arena = null;
+    }
+
+    /// Bind one loopback listener per `serve 0` line and return `text`
+    /// with `${SERVE_PORT}` (the first) and `${SERVE_PORT_<n>}` (the
+    /// n-th) replaced by the ports they got — `text` itself when the
+    /// file has none. Owned otherwise.
+    fn prebind(self: *Run, text: []const u8) ![]const u8 {
+        var lines = std.mem.splitScalar(u8, text, '\n');
+        while (lines.next()) |raw| {
+            const l = std.mem.trimStart(u8, raw, " \t");
+            if (!std.mem.startsWith(u8, l, "serve 0 ")) continue;
+            const srv = try mock.Server.listenOn(self.gpa, self.io, 0);
+            self.prebound.append(self.gpa, srv) catch |e| {
+                srv.stop(self.io);
+                return e;
+            };
+        }
+        if (self.prebound.items.len == 0) return text;
+        var ports: [16]u16 = undefined;
+        const n = @min(self.prebound.items.len, ports.len);
+        for (self.prebound.items[0..n], 0..) |srv, i| ports[i] = srv.port;
+        return substitutePorts(self.gpa, text, ports[0..n]);
+    }
+
+    /// The first `git` this file ran against a repository outside the
+    /// run's temp root, as the guard wrote it down — an owned message —
+    /// or null.
+    fn gitGuardViolation(self: *Run) ?[]u8 {
+        const g = self.opts.git_guard orelse return null;
+        const file = Io.Dir.cwd().openFile(self.io, g.log, .{}) catch return null;
+        defer file.close(self.io);
+        const len = file.length(self.io) catch return null;
+        if (len <= self.git_log_start) return null;
+        var buf: [1024]u8 = undefined;
+        const n = file.readPositionalAll(self.io, buf[0..@min(buf.len, len - self.git_log_start)], self.git_log_start) catch return null;
+        const text = buf[0..n];
+        const line = text[0 .. std.mem.indexOfScalar(u8, text, '\n') orelse text.len];
+        const tab = std.mem.indexOfScalar(u8, line, '\t') orelse line.len;
+        return std.fmt.allocPrint(self.gpa, "git ran against a repository outside the run's temp root ({s}): {s} — a test must never reach the checkout it runs in", .{ line[0..tab], if (tab < line.len) line[tab + 1 ..] else "" }) catch null;
+    }
+
+    /// Start the file's process group (`group_leader`). Returns its id.
+    fn startGroup(self: *Run) ?i32 {
+        if (builtin.os.tag == .windows or !self.opts.allow_shell) return null;
+        var child = std.process.spawn(self.io, .{
+            .argv = &.{ "/bin/sh", "-c", "exec sleep 86400" },
+            .pgid = 0,
+            .stdin = .ignore,
+            .stdout = .ignore,
+            .stderr = .ignore,
+        }) catch return null;
+        const pid = child.id orelse {
+            child.kill(self.io);
+            return null;
+        };
+        self.group_leader = child;
+        return @intCast(pid);
+    }
+
+    /// Kill everything in the file's group, the leader last, and reap
+    /// the leader. A background process a `shell` step left running —
+    /// `( nohup fake &)` — is in the group too, reparented or not.
+    fn endGroup(self: *Run) void {
+        if (builtin.os.tag == .windows) return;
+        const leader = if (self.group_leader) |*l| l else return;
+        if (leader.id) |pid| std.posix.kill(-pid, .KILL) catch {};
+        leader.kill(self.io);
+        self.group_leader = null;
+    }
+
+    fn groupId(self: *const Run) ?std.posix.pid_t {
+        if (builtin.os.tag == .windows) return null;
+        const leader = self.group_leader orelse return null;
+        return leader.id;
     }
 
     /// `shell <cmd>` runs unsandboxed in the user's account, so it is
@@ -678,11 +848,11 @@ const Run = struct {
         if (!self.opts.allow_shell) {
             return std.fmt.allocPrint(gpa, "shell `{s}`: refused. .test `shell` steps run unsandboxed; set MNML_E2E_ALLOW_SHELL=1 to opt in (only for trusted repos).", .{cmd}) catch null;
         }
-        const result = std.process.run(gpa, self.io, .{
+        const result = runIn(gpa, self.io, .{
             .argv = &.{ self.opts.shell, "-c", cmd },
             .cwd = .{ .path = self.workspace },
             .environ_map = self.shell_env,
-        }) catch |e| return std.fmt.allocPrint(gpa, "shell spawn: {s}", .{@errorName(e)}) catch null;
+        }, self.groupId()) catch |e| return std.fmt.allocPrint(gpa, "shell spawn: {s}", .{@errorName(e)}) catch null;
         defer gpa.free(result.stdout);
         defer gpa.free(result.stderr);
         const ok = switch (result.term) {
@@ -858,6 +1028,261 @@ fn rejectUnsafePath(gpa: Allocator, rel: []const u8, kw: []const u8) ?[]u8 {
     return null;
 }
 
+/// `SERVE_PORT` for the first `serve 0`, `SERVE_PORT_<n>` after it.
+fn portVarName(buf: []u8, n: usize) []const u8 {
+    if (n == 1) return "SERVE_PORT";
+    return std.fmt.bufPrint(buf, "SERVE_PORT_{d}", .{n}) catch "SERVE_PORT_X";
+}
+
+/// `text` with every `${SERVE_PORT}` / `${SERVE_PORT_<n>}` whose server
+/// exists replaced by its port. A name past the servers is left as
+/// written, so the failure it causes names it. Owned.
+pub fn substitutePorts(gpa: Allocator, text: []const u8, ports: []const u16) Allocator.Error![]u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(gpa);
+    const open = "${SERVE_PORT";
+    var i: usize = 0;
+    while (std.mem.indexOfPos(u8, text, i, open)) |at| {
+        try out.appendSlice(gpa, text[i..at]);
+        const rest = text[at + open.len ..];
+        var n: usize = 0;
+        var used: usize = 0;
+        if (std.mem.startsWith(u8, rest, "}")) {
+            n = 1;
+            used = 1;
+        } else if (std.mem.startsWith(u8, rest, "_")) {
+            const close = std.mem.indexOfScalar(u8, rest, '}') orelse 0;
+            if (close > 1) {
+                n = std.fmt.parseInt(usize, rest[1..close], 10) catch 0;
+                used = close + 1;
+            }
+        }
+        if (n >= 1 and n <= ports.len) {
+            try out.print(gpa, "{d}", .{ports[n - 1]});
+            i = at + open.len + used;
+        } else {
+            try out.appendSlice(gpa, open);
+            i = at + open.len;
+        }
+    }
+    try out.appendSlice(gpa, text[i..]);
+    return out.toOwnedSlice(gpa);
+}
+
+/// Names a file's environment keeps from the environment `mnml-zig test`
+/// was started in. Everything else — a developer's tokens, a
+/// `CLAUDECODE` from the agent that launched the run, the `MNML_IPC_DIR`
+/// of the mnml whose terminal pane it runs in (an integration under test
+/// would have written into that live instance's channel), an
+/// `XDG_CONFIG_HOME` pointing at the real config — stays out, so a file
+/// sees the same environment on every machine: a developer's shell, a
+/// CI runner, `env -i`.
+const kept_vars = [_][]const u8{
+    "PATH",                "TMPDIR",                  "TEMP",                       "TMP",                 "USER",                   "LOGNAME",
+    "USERNAME",            "LANG",                    "TZ",                         "SYSTEMROOT",          "SystemRoot",             "WINDIR",
+    "COMSPEC",             "PATHEXT",                 "USERPROFILE",                "APPDATA",             "LOCALAPPDATA",           "PROGRAMDATA",
+    "HOMEDRIVE",           "HOMEPATH",                "ProgramFiles",               "OS",                  "PROCESSOR_ARCHITECTURE", "ZIG_GLOBAL_CACHE_DIR",
+    "ZIG_LOCAL_CACHE_DIR",
+    // What `mnml-zig test` itself exports for the scripts (an operator's
+    // own value of any of them wins, so they pass through by name).
+    "MNML_SHIMS",              "MNML_LAUNCHERS",             "MNML_REPO",           "MNML_FAKE_DAP",          "MNML_FAKE_LSP",
+    "MNML_FAKE_COPILOT",   "MNML_SAMPLE_INTEGRATION", "MNML_BITBUCKET_INTEGRATION", "MNML_FAKE_BITBUCKET", "MNML_JIRA",              "MNML_FAKE_JIRA",
+};
+
+/// A file's base environment, built from the one the run was started in
+/// (`kept_vars`, `LC_*`, `MNML_E2E_*`) with `HOME` set to `home` — a
+/// directory of the run's own, never the developer's: the real one
+/// carries their git identity, their `~/.config/mnml`, their Claude
+/// transcripts and their shared rate-limit buckets. `PATH` gets
+/// `$MNML_SHIMS/ai` in front, so the `claude` and `codex` a file finds
+/// are the sleeping stand-ins on every machine: the tab bar's AI chip
+/// shows only when one is on `PATH`, the corpus was written where both
+/// were, and a runner with neither laid its strips out differently — and
+/// no file ever starts a real session. A file that means another `PATH`
+/// says so in its `# env:` lines.
+pub fn hermeticEnv(gpa: Allocator, host: *const std.process.Environ.Map, home: []const u8) Allocator.Error!std.process.Environ.Map {
+    var out = std.process.Environ.Map.init(gpa);
+    errdefer out.deinit();
+    var it = host.iterator();
+    while (it.next()) |kv| {
+        const name = kv.key_ptr.*;
+        const keep = for (kept_vars) |k| {
+            if (std.mem.eql(u8, k, name)) break true;
+        } else std.mem.startsWith(u8, name, "LC_") or std.mem.startsWith(u8, name, "MNML_E2E_");
+        if (keep) try out.put(name, kv.value_ptr.*);
+    }
+    try out.put("HOME", home);
+    if (host.get("MNML_SHIMS")) |shims| {
+        const sep: u8 = if (builtin.os.tag == .windows) ';' else ':';
+        const ai = try std.fs.path.join(gpa, &.{ shims, "ai" });
+        defer gpa.free(ai);
+        const path = if (host.get("PATH")) |p| try std.fmt.allocPrint(gpa, "{s}{c}{s}", .{ ai, sep, p }) else try gpa.dupe(u8, ai);
+        defer gpa.free(path);
+        try out.put("PATH", path);
+    }
+    return out;
+}
+
+/// The host terminal's fingerprints, removed from a file's environment
+/// so none of them reaches the App (`pinTerminal`).
+const host_terminal_vars = [_][]const u8{
+    "TERM_PROGRAM_VERSION", "TERM_SESSION_ID",   "LC_TERMINAL",                 "LC_TERMINAL_VERSION",
+    "WT_SESSION",           "KITTY_WINDOW_ID",   "KITTY_PID",                   "GHOSTTY_RESOURCES_DIR",
+    "GHOSTTY_BIN_DIR",      "ITERM_SESSION_ID",  "WEZTERM_PANE",                "WEZTERM_EXECUTABLE",
+    "VTE_VERSION",          "KONSOLE_VERSION",   "TMUX",                        "TMUX_PANE",
+    "ALACRITTY_WINDOW_ID",  "TERMINAL_EMULATOR", "WARP_IS_LOCAL_SHELL_SESSION",
+};
+
+/// A file's terminal: the one the corpus was written in (Apple's
+/// Terminal, 256 colours, truecolor), with every other emulator's marks
+/// taken off. Deterministic on every host — a developer's ghostty, a CI
+/// runner with no terminal at all, an `env -i` run.
+pub fn pinTerminal(env: *std.process.Environ.Map) Allocator.Error!void {
+    for (host_terminal_vars) |name| _ = env.swapRemove(name);
+    try env.put("TERM_PROGRAM", "Apple_Terminal");
+    try env.put("TERM", "xterm-256color");
+    try env.put("COLORTERM", "truecolor");
+}
+
+/// `mnml-zig test`'s `git` guard. A shim named `git`, first on every
+/// file's PATH (and the runner's own, for the App's spawns that inherit
+/// it), hands every call to the real git and writes down — to `log` —
+/// any whose repository is outside `tmp_root`: the checkout the run
+/// was started in, above all. A test that reached it was how the
+/// checkout's `index.lock` went stale under a killed run. The file that
+/// did it fails, naming the command.
+pub const GitGuard = struct {
+    /// The directory holding the shim.
+    shim_dir: []const u8,
+    /// Where the shim writes `<repo root>\tgit <args>` lines.
+    log: []const u8,
+    /// Everything a test may touch is under here.
+    tmp_root: []const u8,
+
+    /// The shim first on `env`'s PATH, and the two variables it reads.
+    pub fn putEnv(g: GitGuard, gpa: Allocator, env: *std.process.Environ.Map) Allocator.Error!void {
+        const sep: u8 = if (builtin.os.tag == .windows) ';' else ':';
+        const path = if (env.get("PATH")) |p| try std.fmt.allocPrint(gpa, "{s}{c}{s}", .{ g.shim_dir, sep, p }) else try gpa.dupe(u8, g.shim_dir);
+        defer gpa.free(path);
+        try env.put("PATH", path);
+        try env.put("MNML_E2E_GIT_LOG", g.log);
+        try env.put("MNML_E2E_TMP_ROOT", std.mem.trimEnd(u8, g.tmp_root, "/"));
+    }
+};
+
+/// The shim, with the real git's path in place of `@REAL@`. POSIX sh:
+/// the leading options that move git elsewhere (`-C dir`) are followed
+/// to the directory git will act in; one outside the temp root that
+/// resolves to a repository is written down; the call then runs as it
+/// was made.
+const git_shim_template =
+    \\#!/bin/sh
+    \\# mnml-zig test's git guard (src/e2e/runner.zig, GitGuard).
+    \\real='@REAL@'
+    \\dir=$PWD
+    \\n=$#
+    \\i=1
+    \\while [ $i -le $n ]; do
+    \\  eval "a=\${$i}"
+    \\  case "$a" in
+    \\    -C) [ $i -lt $n ] || break; i=$((i+1)); eval "b=\${$i}"; case "$b" in /*) dir=$b ;; *) dir=$dir/$b ;; esac ;;
+    \\    -c) i=$((i+1)) ;;
+    \\    --*) ;;
+    \\    *) break ;;
+    \\  esac
+    \\  i=$((i+1))
+    \\done
+    \\case "$dir/" in
+    \\  "${MNML_E2E_TMP_ROOT:-}"/*) ;;
+    \\  *)
+    \\    top=$(cd "$dir" 2>/dev/null && "$real" rev-parse --show-toplevel 2>/dev/null)
+    \\    if [ -n "$top" ] && [ -n "${MNML_E2E_GIT_LOG:-}" ]; then
+    \\      printf '%s\tgit %s\n' "$top" "$*" >> "$MNML_E2E_GIT_LOG"
+    \\    fi ;;
+    \\esac
+    \\exec "$real" "$@"
+    \\
+;
+
+/// Write the guard's shim under `run_root` and name its log there.
+/// Null on Windows and when no `git` is on `path` (nothing to guard).
+/// The returned strings are owned (`deinitGitGuard`).
+pub fn installGitGuard(gpa: Allocator, io: Io, run_root: []const u8, tmp_root: []const u8, path: ?[]const u8) !?GitGuard {
+    if (builtin.os.tag == .windows) return null;
+    const real = (try findOnPath(gpa, io, path orelse return null, "git")) orelse return null;
+    defer gpa.free(real);
+    const dir = try std.fs.path.join(gpa, &.{ run_root, "git-guard" });
+    errdefer gpa.free(dir);
+    try Io.Dir.cwd().createDirPath(io, dir);
+    const script = try std.mem.replaceOwned(u8, gpa, git_shim_template, "@REAL@", real);
+    defer gpa.free(script);
+    const shim = try std.fs.path.join(gpa, &.{ dir, "git" });
+    defer gpa.free(shim);
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = shim, .data = script });
+    try Io.Dir.cwd().setFilePermissions(io, shim, .fromMode(0o755), .{});
+    const log = try std.fs.path.join(gpa, &.{ run_root, "git-guard.log" });
+    errdefer gpa.free(log);
+    return .{ .shim_dir = dir, .log = log, .tmp_root = try gpa.dupe(u8, tmp_root) };
+}
+
+pub fn deinitGitGuard(gpa: Allocator, g: GitGuard) void {
+    gpa.free(g.shim_dir);
+    gpa.free(g.log);
+    gpa.free(g.tmp_root);
+}
+
+/// The first `<dir>/<name>` on `path` that exists. Owned.
+fn findOnPath(gpa: Allocator, io: Io, path: []const u8, name: []const u8) Allocator.Error!?[]u8 {
+    var it = std.mem.splitScalar(u8, path, ':');
+    while (it.next()) |d| {
+        if (d.len == 0) continue;
+        const p = try std.fs.path.join(gpa, &.{ d, name });
+        if (Io.Dir.cwd().access(io, p, .{})) |_| return p else |_| gpa.free(p);
+    }
+    return null;
+}
+
+fn fileSize(io: Io, path: []const u8) u64 {
+    const f = Io.Dir.cwd().openFile(io, path, .{}) catch return 0;
+    defer f.close(io);
+    return f.length(io) catch 0;
+}
+
+/// What the App's session scan reads for its process-group scope
+/// (`app/agents.zig`'s `scope_env`; the runner cannot import the App).
+pub const agents_scope_env = "MNML_AGENTS_PGID";
+
+/// `std.process.run`, with the child put in process group `pgid` when
+/// one is given — the file's group, so whatever the step leaves running
+/// in the background is the file's to kill.
+fn runIn(gpa: Allocator, io: Io, options: std.process.RunOptions, pgid: ?std.posix.pid_t) std.process.RunError!std.process.RunResult {
+    var child = try std.process.spawn(io, .{
+        .argv = options.argv,
+        .cwd = options.cwd,
+        .environ_map = options.environ_map,
+        .pgid = pgid,
+        .stdin = .ignore,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
+    defer child.kill(io);
+
+    var multi_reader_buffer: Io.File.MultiReader.Buffer(2) = undefined;
+    var multi_reader: Io.File.MultiReader = undefined;
+    multi_reader.init(gpa, io, multi_reader_buffer.toStreams(), &.{ child.stdout.?, child.stderr.? });
+    defer multi_reader.deinit();
+    while (multi_reader.fill(options.reserve_amount, options.timeout)) |_| {} else |err| switch (err) {
+        error.EndOfStream => {},
+        else => |e| return e,
+    }
+    try multi_reader.checkAnyError();
+    const term = try child.wait(io);
+    const stdout_slice = try multi_reader.toOwnedSlice(0);
+    errdefer gpa.free(stdout_slice);
+    const stderr_slice = try multi_reader.toOwnedSlice(1);
+    return .{ .stdout = stdout_slice, .stderr = stderr_slice, .term = term };
+}
+
 /// `<tmp_root>/mnml-e2e-<random>`, created.
 /// `mnml-e2e-` and six hex digits: fifteen characters, near the ten of
 /// Rust's `tempfile::tempdir()` (`.tmpXXXXXX`) the corpus was written
@@ -865,13 +1290,30 @@ fn rejectUnsafePath(gpa: Allocator, rel: []const u8, kw: []const u8) ?[]u8 {
 /// one was 45 cells of every 120-column row, and with the now-playing
 /// cluster beside it the row overflowed and clipped the mode chip
 /// (`vim_gv_mode.test` read `V-LI…`) where Rust's runner never does.
+///
+/// Made with an EXCLUSIVE create, retried on a name that is taken. Six
+/// hex digits are sixteen million names, and `TMPDIR` is shared by
+/// every run on the machine — ten corpus runs at once, and the dirs of
+/// any file a timeout abandoned — so a name that already exists is
+/// somebody else's workspace, never one to move into.
 pub fn makeTempDir(gpa: Allocator, io: Io, tmp_root: []const u8) ![]u8 {
-    var bytes: [3]u8 = undefined;
-    io.random(&bytes);
-    const name = try std.fmt.allocPrint(gpa, "{s}/mnml-e2e-{s}", .{ std.mem.trimEnd(u8, tmp_root, "/"), &std.fmt.bytesToHex(bytes, .lower) });
-    errdefer gpa.free(name);
-    try Io.Dir.cwd().createDirPath(io, name);
-    return name;
+    const root = std.mem.trimEnd(u8, tmp_root, "/");
+    Io.Dir.cwd().createDirPath(io, root) catch {};
+    var tries: usize = 0;
+    while (true) : (tries += 1) {
+        var bytes: [3]u8 = undefined;
+        io.random(&bytes);
+        const name = try std.fmt.allocPrint(gpa, "{s}/mnml-e2e-{s}", .{ root, &std.fmt.bytesToHex(bytes, .lower) });
+        if (createFresh(io, name)) |_| return name else |err| {
+            gpa.free(name);
+            if (err != error.PathAlreadyExists or tries >= 64) return err;
+        }
+    }
+}
+
+/// `mkdir`, failing when the directory is already there.
+fn createFresh(io: Io, path: []const u8) !void {
+    try Io.Dir.cwd().createDir(io, path, .default_dir);
 }
 
 /// `<run_root>/<stem>-<random>`, created. One file's private
@@ -879,12 +1321,17 @@ pub fn makeTempDir(gpa: Allocator, io: Io, tmp_root: []const u8) ![]u8 {
 /// creates and removes exactly one tree, and the name says which file
 /// owns it when a run is inspected after the fact.
 fn makeDataRoot(gpa: Allocator, io: Io, run_root: []const u8, stem: []const u8) ![]u8 {
-    var bytes: [4]u8 = undefined;
-    io.random(&bytes);
-    const name = try std.fmt.allocPrint(gpa, "{s}/{s}-{s}", .{ std.mem.trimEnd(u8, run_root, "/"), stem, &std.fmt.bytesToHex(bytes, .lower) });
-    errdefer gpa.free(name);
-    try Io.Dir.cwd().createDirPath(io, name);
-    return name;
+    Io.Dir.cwd().createDirPath(io, run_root) catch {};
+    var tries: usize = 0;
+    while (true) : (tries += 1) {
+        var bytes: [4]u8 = undefined;
+        io.random(&bytes);
+        const name = try std.fmt.allocPrint(gpa, "{s}/{s}-{s}", .{ std.mem.trimEnd(u8, run_root, "/"), stem, &std.fmt.bytesToHex(bytes, .lower) });
+        if (createFresh(io, name)) |_| return name else |err| {
+            gpa.free(name);
+            if (err != error.PathAlreadyExists or tries >= 64) return err;
+        }
+    }
 }
 
 /// Rust `{:?}` for a string: quoted, with `" \ \n \r \t` escaped and other
@@ -1093,6 +1540,7 @@ pub fn runPath(gpa: Allocator, io: Io, factory: Factory, root: []const u8, opts:
         try out.flush();
     }
     var stats: Stats = .{};
+    errdefer stats.deinit(gpa);
     for (files) |path| {
         const stem = stemOf(path);
         if (opts.name_filter) |f| if (std.mem.indexOf(u8, stem, f) == null) continue;
@@ -1148,6 +1596,28 @@ pub fn runPath(gpa: Allocator, io: Io, factory: Factory, root: []const u8, opts:
             defer o.deinit(gpa);
             stats.total += 1;
             if (!o.asserted) stats.structure_only += 1;
+            if (!o.passed and opts.retry_flaky) {
+                // Once more, from scratch. A pass now is a FLAKE — the
+                // file's verdict depends on something other than the
+                // code, which is a bug to go and find — so it is named
+                // with what the first run said, never folded into `ok`.
+                const first = firstLine(o.message orelse "");
+                try out.print("  ↻    {s} — failed; retrying once: {s}\n", .{ o.name, first });
+                try out.print("▶ e2e: {s} (retry)\n", .{std.fs.path.basename(path)});
+                try out.flush();
+                var again = runFileWithTimeout(gpa, io, factory, path, size, file_opts, out);
+                if (again.passed) {
+                    const line = try std.fmt.allocPrint(gpa, "{s} — first run: {s}", .{ o.name, first });
+                    errdefer gpa.free(line);
+                    try stats.flaky.append(gpa, .{ .line = line });
+                    try out.print("  FLAKY {s}\n", .{line});
+                    again.deinit(gpa);
+                    try out.flush();
+                    continue;
+                }
+                o.deinit(gpa);
+                o = again;
+            }
             if (o.passed) {
                 // `ok` is what a file that PASSED ITS CHECKS gets. A
                 // sweep rung that never evaluated them gets `ok*` and
@@ -1185,20 +1655,34 @@ fn readHeader(gpa: Allocator, io: Io, path: []const u8) parser.Header {
 /// and no leak and nothing else.
 pub fn runPaths(gpa: Allocator, io: Io, factory: Factory, roots: []const []const u8, opts: Options, out: *Io.Writer) !Stats {
     var total: Stats = .{};
+    errdefer total.deinit(gpa);
     for (roots) |root| {
-        const s = try runPath(gpa, io, factory, root, opts, out);
+        var s = try runPath(gpa, io, factory, root, opts, out);
+        defer s.flaky.deinit(gpa);
         total.total += s.total;
         total.failed += s.failed;
         total.structure_only += s.structure_only;
+        try total.flaky.appendSlice(gpa, s.flaky.items);
     }
-    try out.print("\n{d}/{d} passed ({d} content, {d} structure-only)\n", .{
+    try out.print("\n{d}/{d} passed ({d} content, {d} structure-only)", .{
         total.total - total.failed,
         total.total,
         total.total - total.structure_only,
         total.structure_only,
     });
+    // The flakes are in the count, and named right under it: a run that
+    // only passed because of the retry says so in its last lines.
+    if (total.flaky.items.len > 0) try out.print(", {d} FLAKY (passed only on a retry)", .{total.flaky.items.len});
+    try out.writeAll("\n");
+    for (total.flaky.items) |f| try out.print("FLAKY {s}\n", .{f.line});
     try out.flush();
     return total;
+}
+
+/// The first line of a failure message — the rest is a screen dump.
+fn firstLine(msg: []const u8) []const u8 {
+    const end = std.mem.indexOfScalar(u8, msg, '\n') orelse msg.len;
+    return msg[0..end];
 }
 
 /// `$NAME` / `${NAME}` in `text` from `env`; an unset name is empty. Owned.
@@ -2098,4 +2582,250 @@ test "expect within <ms> polls past the runner's budget and answers the moment t
     defer o3.deinit(t.allocator);
     try t.expect(!o3.passed);
     try t.expect(std.mem.startsWith(u8, o3.message.?, "line 2: screen does not contain \"late\""));
+}
+
+test "substitutePorts: the first and the n-th, a name past the servers left as written" {
+    const out = try substitutePorts(t.allocator, "a ${SERVE_PORT} b ${SERVE_PORT_2} c ${SERVE_PORT_3} d ${SERVE_PORTX} ${SERVE_PORT", &.{ 4101, 4102 });
+    defer t.allocator.free(out);
+    try t.expectEqualStrings("a 4101 b 4102 c ${SERVE_PORT_3} d ${SERVE_PORTX} ${SERVE_PORT", out);
+}
+
+test "serve 0 binds a port of its own before the file runs, and ${SERVE_PORT} names it everywhere" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var env = try TestEnv.init();
+    defer env.deinit();
+    var opts = env.opts();
+    opts.allow_shell = true;
+    var sf: StubFactory = .{};
+    // A fixed port is the corpus's old shape: two runs of one file at
+    // once, and the second failed `serve` with AddressInUse. Here the
+    // header, a `write` and a shell step all see the port the OS gave.
+    const path = try env.script("serve0.test",
+        \\# env: WHERE=http://127.0.0.1:${SERVE_PORT}/x
+        \\serve 0 200 hello
+        \\write port.txt "${SERVE_PORT}"
+        \\shell read p < port.txt; [ "$p" -gt 0 ] && [ "$p" -eq "$SERVE_PORT" ] && [ "$WHERE" = "http://127.0.0.1:$p/x" ]
+        \\shell /bin/bash -c 'exec 3<>/dev/tcp/127.0.0.1/'"$SERVE_PORT"'; printf "GET / HTTP/1.0\r\n\r\n" >&3; read -r line <&3; case "$line" in *200*) exit 0;; esac; exit 1'
+        \\
+    );
+    defer t.allocator.free(path);
+    var o = runFile(t.allocator, t.io, sf.factory(), path, content_size, opts);
+    try expectPassed(&o);
+}
+
+test "a process a shell step leaves behind is in the file's own group, and dies with the file" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var env = try TestEnv.init();
+    defer env.deinit();
+    var run_env = std.process.Environ.Map.init(t.allocator);
+    defer run_env.deinit();
+    try run_env.put("OUT", env.root);
+    var opts = env.opts();
+    opts.allow_shell = true;
+    opts.env = &run_env;
+    var sf: StubFactory = .{};
+    // The shape of `sessions_table_batch_kill.test`: a detached fake
+    // left running. It is in the group the App's session scan is
+    // scoped to, and the file's end takes it down — it used to live
+    // on for a minute, where the next run of the same file found it.
+    const path = try env.script("group.test",
+        \\shell ( /bin/sleep 30 >/dev/null 2>&1 & echo $! > "$OUT/bg.pid" )
+        \\shell [ "$MNML_AGENTS_PGID" -gt 1 ] && [ "$MNML_AGENTS_PGID" -eq $(/bin/ps -o pgid= -p $$) ]
+        \\shell read p < "$OUT/bg.pid"; [ "$MNML_AGENTS_PGID" -eq $(/bin/ps -o pgid= -p "$p") ]
+        \\
+    );
+    defer t.allocator.free(path);
+    var o = runFile(t.allocator, t.io, sf.factory(), path, content_size, opts);
+    try expectPassed(&o);
+    const pid_path = try std.fs.path.join(t.allocator, &.{ env.root, "bg.pid" });
+    defer t.allocator.free(pid_path);
+    const pid_text = try Io.Dir.cwd().readFileAlloc(t.io, pid_path, t.allocator, .limited(64));
+    defer t.allocator.free(pid_text);
+    const pid = try std.fmt.parseInt(std.posix.pid_t, std.mem.trim(u8, pid_text, " \n"), 10);
+    // Gone — reaped by init once the group was killed. Polled: the
+    // reaping is init's, not ours.
+    var alive = true;
+    for (0..100) |_| {
+        std.posix.kill(pid, @enumFromInt(0)) catch {
+            alive = false;
+            break;
+        };
+        t.io.sleep(.fromMilliseconds(50), .awake) catch {};
+    }
+    if (alive) std.posix.kill(pid, .KILL) catch {};
+    try t.expect(!alive);
+}
+
+test "temp dirs are created exclusively: a name that exists is somebody else's" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+    const a = try makeTempDir(t.allocator, t.io, env.root);
+    defer t.allocator.free(a);
+    const b = try makeTempDir(t.allocator, t.io, env.root);
+    defer t.allocator.free(b);
+    try t.expect(!std.mem.eql(u8, a, b));
+    try t.expectError(error.PathAlreadyExists, createFresh(t.io, a));
+}
+
+test "retry_flaky: a file that fails then passes is FLAKY by name, never a plain ok; one that fails twice is a FAIL; off, the first failure stands" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var env = try TestEnv.init();
+    defer env.deinit();
+    var run_env = std.process.Environ.Map.init(t.allocator);
+    defer run_env.deinit();
+    try run_env.put("OUT", env.root);
+    var opts = env.opts();
+    opts.allow_shell = true;
+    opts.env = &run_env;
+    var sf: StubFactory = .{};
+    // Fails the first time it runs and passes every time after: the
+    // shape of a file whose verdict hangs on something outside the code.
+    const once = try env.script("once.test", "shell [ -e \"$OUT/ran\" ] || { : > \"$OUT/ran\"; echo first run lost the race >&2; exit 1; }\n");
+    defer t.allocator.free(once);
+    const always = try env.script("always.test", "shell exit 3\n");
+    defer t.allocator.free(always);
+
+    opts.retry_flaky = true;
+    {
+        var aw: Io.Writer.Allocating = .init(t.allocator);
+        defer aw.deinit();
+        var stats = try runPaths(t.allocator, t.io, sf.factory(), &.{ once, always }, opts, &aw.writer);
+        defer stats.deinit(t.allocator);
+        const text = aw.written();
+        try t.expectEqual(@as(usize, 2), stats.total);
+        try t.expectEqual(@as(usize, 1), stats.failed);
+        try t.expectEqual(@as(usize, 1), stats.flaky.items.len);
+        // Said as it happens…
+        try t.expect(std.mem.indexOf(u8, text, "  ↻    once.test — failed; retrying once: line 1: shell") != null);
+        try t.expect(std.mem.indexOf(u8, text, "  FLAKY once.test — first run: line 1: shell") != null);
+        try t.expect(std.mem.indexOf(u8, text, "  ok   once.test") == null);
+        // …failing twice is a failure…
+        try t.expect(std.mem.indexOf(u8, text, "  FAIL always.test — line 1: shell `exit 3` exited exit status: 3: ") != null);
+        // …and the trailer counts it and names it, last.
+        try t.expect(std.mem.indexOf(u8, text, "\n1/2 passed (2 content, 0 structure-only), 1 FLAKY (passed only on a retry)\nFLAKY once.test — first run: line 1: shell") != null);
+        try t.expect(std.mem.endsWith(u8, text, "first run lost the race\n"));
+    }
+
+    // Off (`--strict`): the first failure is the verdict.
+    const ran = try std.fs.path.join(t.allocator, &.{ env.root, "ran" });
+    defer t.allocator.free(ran);
+    try Io.Dir.cwd().deleteFile(t.io, ran);
+    opts.retry_flaky = false;
+    {
+        var aw: Io.Writer.Allocating = .init(t.allocator);
+        defer aw.deinit();
+        var stats = try runPaths(t.allocator, t.io, sf.factory(), &.{once}, opts, &aw.writer);
+        defer stats.deinit(t.allocator);
+        try t.expectEqual(@as(usize, 1), stats.failed);
+        try t.expectEqual(@as(usize, 0), stats.flaky.items.len);
+        try t.expect(std.mem.indexOf(u8, aw.written(), "FLAKY") == null);
+        try t.expect(std.mem.indexOf(u8, aw.written(), "\n0/1 passed (1 content, 0 structure-only)\n") != null);
+    }
+}
+
+test "a file's environment is pinned: the corpus's terminal whatever the host's, and git fenced at the temp root" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var env = try TestEnv.init();
+    defer env.deinit();
+    // The host is some other terminal, and says so several ways.
+    var run_env = std.process.Environ.Map.init(t.allocator);
+    defer run_env.deinit();
+    try run_env.put("TERM_PROGRAM", "ghostty");
+    try run_env.put("KITTY_WINDOW_ID", "7");
+    try run_env.put("TERM", "dumb");
+    try run_env.put("ROOT", env.root);
+    var opts = env.opts();
+    opts.allow_shell = true;
+    opts.env = &run_env;
+    var sf: StubFactory = .{};
+    const path = try env.script("pinned.test",
+        \\shell [ "$TERM_PROGRAM" = Apple_Terminal ] && [ "$TERM" = xterm-256color ] && [ "$COLORTERM" = truecolor ] && [ -z "${KITTY_WINDOW_ID+x}" ]
+        \\shell [ "$GIT_CEILING_DIRECTORIES" = "$ROOT" ]
+        \\
+    );
+    defer t.allocator.free(path);
+    var o = runFile(t.allocator, t.io, sf.factory(), path, content_size, opts);
+    try expectPassed(&o);
+    // A file that means another terminal still says so, and wins.
+    const own = try env.script("own.test",
+        \\# env: TERM_PROGRAM=ghostty
+        \\shell [ "$TERM_PROGRAM" = ghostty ]
+        \\
+    );
+    defer t.allocator.free(own);
+    var o2 = runFile(t.allocator, t.io, sf.factory(), own, content_size, opts);
+    try expectPassed(&o2);
+}
+
+test "hermeticEnv keeps what a file needs, drops the developer's, and gives it a HOME and AI stand-ins of the run's own" {
+    var host = std.process.Environ.Map.init(t.allocator);
+    defer host.deinit();
+    try host.put("PATH", "/usr/bin:/bin");
+    try host.put("HOME", "/Users/dev");
+    try host.put("LC_ALL", "C.UTF-8");
+    try host.put("MNML_SHIMS", "/repo/tools/shims");
+    try host.put("MNML_E2E_FILE_TIMEOUT_SECS", "300");
+    // The ones a file must never see.
+    try host.put("BITBUCKET_ACCESS_TOKEN", "t");
+    try host.put("CLAUDECODE", "1");
+    try host.put("MNML_IPC_DIR", "/Users/dev/proj/.mnml/ipc-zig");
+    try host.put("XDG_CONFIG_HOME", "/Users/dev/.config");
+    try host.put("SHELL", "/bin/zsh");
+    var env = try hermeticEnv(t.allocator, &host, "/run/home");
+    defer env.deinit();
+    try t.expectEqualStrings("/run/home", env.get("HOME").?);
+    try t.expectEqualStrings("/repo/tools/shims/ai:/usr/bin:/bin", env.get("PATH").?);
+    try t.expectEqualStrings("C.UTF-8", env.get("LC_ALL").?);
+    try t.expectEqualStrings("300", env.get("MNML_E2E_FILE_TIMEOUT_SECS").?);
+    try t.expectEqualStrings("/repo/tools/shims", env.get("MNML_SHIMS").?);
+    for ([_][]const u8{ "BITBUCKET_ACCESS_TOKEN", "CLAUDECODE", "MNML_IPC_DIR", "XDG_CONFIG_HOME", "SHELL" }) |gone| {
+        if (env.get(gone) != null) {
+            std.debug.print("{s} leaked into a file's environment\n", .{gone});
+            return error.TestUnexpectedResult;
+        }
+    }
+}
+
+test "the git guard fails a file whose git reaches a repository outside the temp root, and passes one that stays inside" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var env = try TestEnv.init();
+    defer env.deinit();
+    // The temp root is a directory of its own; beside it, "the checkout".
+    const tmp_root = try std.fs.path.join(t.allocator, &.{ env.root, "runs" });
+    defer t.allocator.free(tmp_root);
+    try Io.Dir.cwd().createDirPath(t.io, tmp_root);
+    const outside = try std.fs.path.join(t.allocator, &.{ env.root, "checkout" });
+    defer t.allocator.free(outside);
+    try Io.Dir.cwd().createDirPath(t.io, outside);
+    var host = std.process.Environ.Map.init(t.allocator);
+    defer host.deinit();
+    try host.put("PATH", "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin");
+    const guard = (try installGitGuard(t.allocator, t.io, env.root, tmp_root, host.get("PATH"))) orelse return error.SkipZigTest;
+    defer deinitGitGuard(t.allocator, guard);
+    {
+        const r = try std.process.run(t.allocator, t.io, .{ .argv = &.{ "git", "-C", outside, "init", "-q" } });
+        t.allocator.free(r.stdout);
+        t.allocator.free(r.stderr);
+    }
+    try host.put("OUT", outside);
+    var opts = env.opts();
+    opts.tmp_root = tmp_root;
+    opts.allow_shell = true;
+    opts.env = &host;
+    opts.git_guard = guard;
+    var sf: StubFactory = .{};
+    // Reaching the checkout: `git -C` into it, as a command the App ran
+    // with the wrong cwd would.
+    const bad = try env.script("reach.test", "shell git -C \"$OUT\" status --porcelain >/dev/null\n");
+    defer t.allocator.free(bad);
+    var o = runFile(t.allocator, t.io, sf.factory(), bad, content_size, opts);
+    defer o.deinit(t.allocator);
+    try t.expect(!o.passed);
+    try t.expect(std.mem.startsWith(u8, o.message.?, "git ran against a repository outside the run's temp root ("));
+    try t.expect(std.mem.indexOf(u8, o.message.?, "git -C ") != null);
+    // A repository of the file's own, in its workspace: nothing to say.
+    const good = try env.script("own.test", "shell git init -q . && git status --porcelain >/dev/null && git -C . log -1 >/dev/null 2>&1; true\n");
+    defer t.allocator.free(good);
+    var o2 = runFile(t.allocator, t.io, sf.factory(), good, content_size, opts);
+    try expectPassed(&o2);
 }

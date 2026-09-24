@@ -464,10 +464,16 @@ fn markedRoot(app: *App, arena: Allocator, path: []const u8, markers: []const []
     return try walkUp(app, arena, start, markers);
 }
 
-/// The first directory from `start` up holding any of `markers`.
+/// The first directory from `start` up holding any of `markers`. The
+/// walk never climbs into a `GIT_CEILING_DIRECTORIES` entry, as git's
+/// own search does not: the commonest marker is `.git`, and a workspace
+/// under a `TMPDIR` inside a checkout otherwise rooted its server at the
+/// checkout — where the `.test` corpus's servers then wrote their logs.
 fn walkUp(app: *App, arena: Allocator, start: []const u8, markers: []const []const u8) Allocator.Error!?[]const u8 {
+    const ceilings = app.env.get("GIT_CEILING_DIRECTORIES") orelse "";
     var dir: ?[]const u8 = start;
     while (dir) |d| : (dir = std.fs.path.dirname(d)) {
+        if (d.len != start.len and @import("git.zig").isCeiling(ceilings, d)) break;
         for (markers) |m| {
             // // changed (lsp-defaults): `*.sln` scans the directory, as
             // Rust's `marker_matches`; a literal is one stat.
@@ -3508,9 +3514,9 @@ fn fakeLanguageServer(io: Io, gpa: Allocator, in: Io.File, out: Io.File) Io.Canc
                     const uri = jsonrpc.getStr(jsonrpc.getObj(rq.params.?, "textDocument").?, "uri").?;
                     const name = jsonrpc.getStr(rq.params.?, "newName").?;
                     // A name starting `multi` also renames line 1 of a
-                    // second file, `/tmp/mnml-zig-fake-lsp-other.ts`.
+                    // second file, `TestRig.other()`.
                     const r = if (std.mem.startsWith(u8, name, "multi"))
-                        std.fmt.allocPrint(gpa, "{{\"changes\":{{\"{s}\":[{{\"range\":{{\"start\":{{\"line\":1,\"character\":6}},\"end\":{{\"line\":1,\"character\":9}}}},\"newText\":\"{s}\"}}],\"file:///tmp/mnml-zig-fake-lsp-other.ts\":[{{\"range\":{{\"start\":{{\"line\":1,\"character\":0}},\"end\":{{\"line\":1,\"character\":3}}}},\"newText\":\"{s}\"}}]}}}}", .{ uri, name, name }) catch return
+                        std.fmt.allocPrint(gpa, "{{\"changes\":{{\"{s}\":[{{\"range\":{{\"start\":{{\"line\":1,\"character\":6}},\"end\":{{\"line\":1,\"character\":9}}}},\"newText\":\"{s}\"}}],\"file://{s}\":[{{\"range\":{{\"start\":{{\"line\":1,\"character\":0}},\"end\":{{\"line\":1,\"character\":3}}}},\"newText\":\"{s}\"}}]}}}}", .{ uri, name, TestRig.other(), name }) catch return
                     else
                         std.fmt.allocPrint(gpa, "{{\"changes\":{{\"{s}\":[{{\"range\":{{\"start\":{{\"line\":1,\"character\":6}},\"end\":{{\"line\":1,\"character\":9}}}},\"newText\":\"{s}\"}}]}}}}", .{ uri, name }) catch return;
                     defer gpa.free(r);
@@ -3715,8 +3721,54 @@ pub const TestRig = struct {
     out_w: Io.File = undefined,
     server: *Server = undefined,
 
-    pub const file = "/tmp/mnml-zig-fake-lsp.ts";
-    pub const other = "/tmp/mnml-zig-fake-lsp-other.ts";
+    /// The scripted server's files, on disk where a test writes them.
+    /// Under `/tmp` (the server's root) but in a directory of this
+    /// process's own: they were fixed `/tmp/mnml-zig-fake-lsp*.ts` names
+    /// once, and two unit runs at once — two worktrees, two agents —
+    /// wrote, chmod-ed and deleted each other's files mid-test.
+    pub fn file() []const u8 {
+        return scratch("mnml-zig-fake-lsp.ts");
+    }
+    pub fn other() []const u8 {
+        return scratch("mnml-zig-fake-lsp-other.ts");
+    }
+
+    /// The directory `file()` and `other()` are in: the workspace for a
+    /// test whose labels are workspace-relative (`name.ts:2:7`).
+    pub fn dir() []const u8 {
+        return std.fs.path.dirname(file()).?;
+    }
+
+    /// `/tmp/mnml-zig-lsp-<pid>/<name>`, the directory made on first use.
+    /// One buffer per name, so a returned slice stays valid.
+    pub fn scratch(comptime name: []const u8) []const u8 {
+        // `name` is captured on purpose: a container that captures
+        // nothing is one type for every instantiation, and every name
+        // would share the first one's buffer.
+        const S = struct {
+            const for_name = name;
+            var buf: [96]u8 = undefined;
+            var len: usize = 0;
+        };
+        const pid: i64 = if (builtin.os.tag == .windows) 0 else @intCast(std.c.getpid());
+        var dbuf: [64]u8 = undefined;
+        const d = std.fmt.bufPrintZ(&dbuf, "/tmp/mnml-zig-lsp-{d}", .{pid}) catch unreachable;
+        // Every call, not once: `stop` takes the directory away when the
+        // test is done with it, and the next test asks again.
+        if (builtin.os.tag != .windows) _ = std.c.mkdir(d.ptr, 0o755);
+        if (S.len == 0) S.len = (std.fmt.bufPrint(&S.buf, "{s}/" ++ name, .{d}) catch unreachable).len;
+        return S.buf[0..S.len];
+    }
+
+    /// Take the directory away if the test left nothing in it, so a run
+    /// does not leave one `/tmp/mnml-zig-lsp-<pid>` per process behind.
+    fn removeDirIfEmpty() void {
+        if (builtin.os.tag == .windows) return;
+        var b: [80]u8 = undefined;
+        const z = std.fmt.bufPrintZ(&b, "{s}", .{dir()}) catch return;
+        _ = std.c.rmdir(z.ptr);
+    }
+
     pub const text = "let x = 1;\nconst foo = 2;\nfoo.\n";
 
     pub fn start(self: *TestRig, app: *App) !void {
@@ -3740,6 +3792,7 @@ pub const TestRig = struct {
         try self.group.await(app.io);
         self.in_r.close(app.io);
         self.out_w.close(app.io);
+        removeDirIfEmpty();
     }
 
     /// A scratch editor given `path` and `text_in`, attached to the server.
@@ -4344,12 +4397,12 @@ test "the completion auto-trigger: typing in INSERT opens the popup; `u` and `x`
     app.tree.visible = false;
     var rig: TestRig = .{};
     try rig.start(&app);
-    const e = try TestRig.openFile(&app, TestRig.file, "let x = 1;\nconst foo = 2;\nfoo.\n");
+    const e = try TestRig.openFile(&app, TestRig.file(), "let x = 1;\nconst foo = 2;\nfoo.\n");
     try command.run(&app, .{ .static = .@"editor.use_vim" });
     const Cond = struct {
         fn ready(a: *App) bool {
             const s = a.lsp.servers.items[0];
-            return s.ready and s.isOpen(TestRig.file);
+            return s.ready and s.isOpen(TestRig.file());
         }
         fn comp(a: *App) bool {
             return a.lsp.completion != null;
@@ -4399,7 +4452,7 @@ test "a scripted server through the app: attach + diagnostics, completion (a sni
     var app = try App.initWith(gpa, io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
-    const file = "/tmp/mnml-zig-fake-lsp.ts";
+    const file = TestRig.file();
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const c2s = try Io.Threaded.pipe2(.{});
     const s2c = try Io.Threaded.pipe2(.{});
@@ -4424,7 +4477,7 @@ test "a scripted server through the app: attach + diagnostics, completion (a sni
 
     const Cond = struct {
         fn diag(a: *App) bool {
-            return diagnosticsFor(a, file).len > 0 and a.lsp.symbols.contains(file);
+            return diagnosticsFor(a, TestRig.file()).len > 0 and a.lsp.symbols.contains(TestRig.file());
         }
         fn comp(a: *App) bool {
             return a.lsp.completion != null;
@@ -4501,12 +4554,12 @@ test "a scripted server through the app: attach + diagnostics, completion (a sni
 test "a scripted server: references and symbols asked for while the server starts run when it is ready; the pickers list every row, in both symbol shapes" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const gpa = testing.allocator;
-    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = TestRig.dir(), .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     var rig: TestRig = .{};
     try rig.start(&app);
-    const e = try TestRig.openFile(&app, TestRig.file, TestRig.text);
+    const e = try TestRig.openFile(&app, TestRig.file(), TestRig.text);
     // `initialize` is on the wire and its answer waits for a tick: the
     // server is what tsserver is for its first second — not ready.
     try testing.expect(!rig.server.ready);
@@ -4546,7 +4599,7 @@ test "a scripted server: references and symbols asked for while the server start
     try app.handle(.{ .key = Key.named(.esc) });
 
     // `SymbolInformation[]`, flat: the other file's answer, the same picker.
-    _ = try TestRig.openFile(&app, TestRig.other, "const a = 1;\nconst b = 2;\n");
+    _ = try TestRig.openFile(&app, TestRig.other(), "const a = 1;\nconst b = 2;\n");
     try command.run(&app, .{ .static = .@"lsp.symbols" });
     try pumpUntil(&app, &app, Cond.picker, 5000);
     try testing.expectEqualStrings("Symbols", app.overlay.picker.state.title);
@@ -4566,10 +4619,10 @@ test "a held command waits out the server's $/progress: sent at the last end, at
     app.tree.visible = false;
     var rig: TestRig = .{};
     try rig.start(&app);
-    const e = try TestRig.openFile(&app, TestRig.file, TestRig.text);
+    const e = try TestRig.openFile(&app, TestRig.file(), TestRig.text);
     const Cond = struct {
         fn ready(a: *App) bool {
-            return a.lsp.servers.items[0].ready and a.lsp.servers.items[0].progress_open == 0 and a.lsp.symbols.contains(TestRig.file);
+            return a.lsp.servers.items[0].ready and a.lsp.servers.items[0].progress_open == 0 and a.lsp.symbols.contains(TestRig.file());
         }
     };
     try pumpUntil(&app, &app, Cond.ready, 5000);
@@ -4748,7 +4801,7 @@ test "over the highlight ceiling no documentSymbol is asked and the outline says
     var rig: TestRig = .{};
     try rig.start(&app);
     defer rig.stop(&app) catch {};
-    const e = try TestRig.openFile(&app, TestRig.file, "let x = 1;\nconst foo = 2;\nconst bar = 3;\nconst baz = 4;\nconst qux = 5;\nconst quux = 6;\n");
+    const e = try TestRig.openFile(&app, TestRig.file(), "let x = 1;\nconst foo = 2;\nconst bar = 3;\nconst baz = 4;\nconst qux = 5;\nconst quux = 6;\n");
     // The rig sets the text by hand; `openPath` applies the ceiling on open.
     e.syntax.applyLimit(e.buf.editor.len(), app.cfg.editor.highlight_max_bytes);
     try testing.expect(e.syntax.overCeiling());
@@ -4760,7 +4813,7 @@ test "over the highlight ceiling no documentSymbol is asked and the outline says
             return servers.len == 1 and servers[0].ready and servers[0].docs.count() == 1;
         }
         fn symbols(c: Probe) bool {
-            return symbolsFor(c.app, TestRig.file) != null;
+            return symbolsFor(c.app, TestRig.file()) != null;
         }
     };
     try TestRig.pump(&app, ctx, Cond.attached, 30_000);
@@ -4775,8 +4828,50 @@ test "over the highlight ceiling no documentSymbol is asked and the outline says
     try testing.expect(std.mem.indexOf(u8, screen, "(outline off · 87 B)") != null);
     try testing.expect(std.mem.indexOf(u8, screen, "(no symbols)") == null);
     // Turned back on by hand: the symbols are asked for and land.
-    app.showPane(app.panes.findPath(TestRig.file).?);
+    app.showPane(app.panes.findPath(TestRig.file()).?);
     try command.run(&app, .{ .static = .@"editor.highlight_this_file" });
     try testing.expect(!e.syntax.overCeiling());
     try TestRig.pump(&app, ctx, Cond.symbols, 30_000);
+}
+
+test "a root-marker walk does not climb into GIT_CEILING_DIRECTORIES" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var rbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = rbuf[0..try tmp.dir.realPath(testing.io, &rbuf)];
+    // A checkout at <root>, and a workspace under a TMPDIR inside it.
+    try tmp.dir.createDirPath(testing.io, ".git");
+    try tmp.dir.createDirPath(testing.io, "tmp/ws");
+    const ws = try std.fs.path.join(testing.allocator, &.{ root, "tmp", "ws" });
+    defer testing.allocator.free(ws);
+    const file = try std.fs.path.join(testing.allocator, &.{ ws, "report.zsh" });
+    defer testing.allocator.free(file);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = ws, .data_root = ws, .cols = 80, .rows = 24 });
+    defer app.deinit();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    _ = app.env.swapRemove("GIT_CEILING_DIRECTORIES");
+    try testing.expectEqualStrings(root, (try markedRoot(&app, arena, file, &.{".git"}, false)).?);
+    const fence = try std.fs.path.join(testing.allocator, &.{ root, "tmp" });
+    defer testing.allocator.free(fence);
+    try app.env.put("GIT_CEILING_DIRECTORIES", fence);
+    try testing.expect((try markedRoot(&app, arena, file, &.{".git"}, false)) == null);
+    // The file's own directory is still looked in, as git looks in its cwd.
+    try tmp.dir.createDirPath(testing.io, "tmp/ws/.git");
+    try testing.expectEqualStrings(ws, (try markedRoot(&app, arena, file, &.{".git"}, false)).?);
+}
+
+test "the scripted server's files are this process's own: one directory per pid, one path per name" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var buf: [48]u8 = undefined;
+    const want_dir = try std.fmt.bufPrint(&buf, "/tmp/mnml-zig-lsp-{d}", .{std.c.getpid()});
+    try testing.expectEqualStrings(want_dir, TestRig.dir());
+    try testing.expect(!std.mem.eql(u8, TestRig.file(), TestRig.other()));
+    try testing.expectEqualStrings("mnml-zig-fake-lsp.ts", std.fs.path.basename(TestRig.file()));
+    try testing.expectEqualStrings("mnml-zig-fake-lsp-other.ts", std.fs.path.basename(TestRig.other()));
+    try testing.expectEqualStrings(want_dir, std.fs.path.dirname(TestRig.scratch("x.ts")).?);
+    // The directory is there to be written in.
+    try Io.Dir.cwd().access(testing.io, TestRig.dir(), .{});
+    TestRig.removeDirIfEmpty();
 }

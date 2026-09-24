@@ -34,13 +34,12 @@ command jira_work.open
 # The pane is a separate process whose first search is synchronous:
 # it spawns, is handed its geometry, searches, and fetches each
 # unresolved ticket's linked PRs before it can paint a count. On a
-# loaded machine that outlasts an expect's own 3 s budget, so the
-# wait is what covers the startup and the expects below only cover
-# the jitter.
-wait 8000
+# loaded machine that outlasts an expect's own 3 s budget — a flat
+# `wait 8000` here failed under load — so the count is polled for as
+# long as a slow start can take.
 command view.toggle_tree
 command view.focus_pane
-expect screen contains "JIRA WORK (3)"
+expect within 30000 screen contains "JIRA WORK (3)"
 # /: the search pill takes the text and the tree narrows as it is typed.
 type /
 # The caret sits BEFORE the placeholder, not on its first cell: the
@@ -68,7 +67,8 @@ key ctrl+e
 type  AND issuetype = Bug
 key enter
 expect screen lacks "JQL — type to edit"
-expect screen contains "JIRA WORK (1)"
+# The edit re-runs the search against the fake: a round trip.
+expect within 15000 screen contains "JIRA WORK (1)"
 expect screen contains "ENG-5"
 expect screen lacks "ENG-2"
 # The scope chip and the assignee chip are on the toolbar as mode chips.

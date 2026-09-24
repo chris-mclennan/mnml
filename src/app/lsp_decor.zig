@@ -621,15 +621,15 @@ test "through the fake server: hints and swatches paint as virtual text, lenses 
     app.tree.visible = false;
     var rig: lsp.TestRig = .{};
     try rig.start(&app);
-    const file = lsp.TestRig.file;
+    const file = lsp.TestRig.file();
     const e = try lsp.TestRig.openFile(&app, file, lsp.TestRig.text);
     const Cond = struct {
         fn decorated(a: *App) bool {
-            const fd = a.lsp.decor.get(lsp.TestRig.file) orelse return false;
+            const fd = a.lsp.decor.get(lsp.TestRig.file()) orelse return false;
             return fd.hints.seq != null and fd.lenses.seq != null and fd.colors.seq != null and fd.links.seq != null;
         }
         fn hintsFresh(a: *App) bool {
-            const fd = a.lsp.decor.get(lsp.TestRig.file) orelse return false;
+            const fd = a.lsp.decor.get(lsp.TestRig.file()) orelse return false;
             return fd.hints.seq != null and fd.hints.seq.? == a.activeEditor().?.buf.doc.edits.head();
         }
         fn ranOne(a: *App) bool {
@@ -639,7 +639,7 @@ test "through the fake server: hints and swatches paint as virtual text, lenses 
             return std.mem.indexOf(u8, a.lastToast() orelse return false, "ran refs #0") != null;
         }
         fn lensTitled(a: *App) bool {
-            const fd = a.lsp.decor.get(lsp.TestRig.file) orelse return false;
+            const fd = a.lsp.decor.get(lsp.TestRig.file()) orelse return false;
             return fd.lenses.items.len > 0 and fd.lenses.items[0].title != null;
         }
     };
@@ -730,7 +730,7 @@ test "hints answering the request sent on OPEN paint on an untouched document (i
     // From disk, through the open hook: nothing has edited the buffer,
     // so the edit log's head is 0 — the value the old `0 = never
     // landed` sentinel could not tell from "stale".
-    const path = "/tmp/mnml-zig-fake-lsp-open.ts";
+    const path = lsp.TestRig.scratch("mnml-zig-fake-lsp-open.ts");
     try std.Io.Dir.cwd().writeFile(testing.io, .{ .sub_path = path, .data = lsp.TestRig.text });
     defer std.Io.Dir.cwd().deleteFile(testing.io, path) catch {};
     const pane = try app.openPath(path);
@@ -781,7 +781,9 @@ test "mergeUnderlines: the prime list wins where it overlaps the other" {
 
 /// A `.ts` under the rig's `/tmp` root that `openPath` reads from disk,
 /// so its edit-log head is 0 — the state a file has when it is only read.
-const readonly_file = "/tmp/mnml-zig-fake-lsp-readonly.ts";
+fn readonlyFile() []const u8 {
+    return lsp.TestRig.scratch("mnml-zig-fake-lsp-readonly.ts");
+}
 
 test "a file only READ (edit-log head 0) has its lenses and tokens asked for on open and painted with no edit; a server that comes up again asks afresh" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
@@ -791,15 +793,15 @@ test "a file only READ (edit-log head 0) has its lenses and tokens asked for on 
     app.tree.visible = false;
     var rig: lsp.TestRig = .{};
     try rig.start(&app);
-    try std.Io.Dir.cwd().writeFile(testing.io, .{ .sub_path = readonly_file, .data = lsp.TestRig.text });
-    defer std.Io.Dir.cwd().deleteFile(testing.io, readonly_file) catch {};
-    const pane = try app.openPath(readonly_file);
+    try std.Io.Dir.cwd().writeFile(testing.io, .{ .sub_path = readonlyFile(), .data = lsp.TestRig.text });
+    defer std.Io.Dir.cwd().deleteFile(testing.io, readonlyFile()) catch {};
+    const pane = try app.openPath(readonlyFile());
     const e = app.panes.editor(pane).?;
     try testing.expectEqual(@as(u64, 0), e.buf.doc.edits.head());
     const Cond = struct {
         fn painted(a: *App) bool {
-            const fd = a.lsp.decor.get(readonly_file) orelse return false;
-            const sf = a.lsp.semantic.get(readonly_file) orelse return false;
+            const fd = a.lsp.decor.get(readonlyFile()) orelse return false;
+            const sf = a.lsp.semantic.get(readonlyFile()) orelse return false;
             return setFresh(types.InlayHint, &fd.hints, 0) and setFresh(types.CodeLens, &fd.lenses, 0) and sf.seq != null and sf.seq.? == 0;
         }
         fn asked(a: *App) bool {
@@ -825,16 +827,16 @@ test "a file only READ (edit-log head 0) has its lenses and tokens asked for on 
 test "through the fake server: a lens command the server did not offer runs client-side — `textDocument/references` asks for the references and opens the picker, `editor.action.showReferences` opens its locations, anything else is named and never sent" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const gpa = testing.allocator;
-    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = lsp.TestRig.dir(), .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     var rig: lsp.TestRig = .{};
     try rig.start(&app);
-    _ = try lsp.TestRig.openFile(&app, lsp.TestRig.file, lsp.TestRig.text);
+    _ = try lsp.TestRig.openFile(&app, lsp.TestRig.file(), lsp.TestRig.text);
     const Cond = struct {
         fn ready(a: *App) bool {
             const sv = a.lsp.servers.items[0];
-            return sv.ready and sv.isOpen(lsp.TestRig.file);
+            return sv.ready and sv.isOpen(lsp.TestRig.file());
         }
         fn picker(a: *App) bool {
             return a.overlay == .picker;
@@ -849,7 +851,7 @@ test "through the fake server: a lens command the server did not offer runs clie
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     const a = arena.allocator();
-    const uri = try types.uriFromPath(a, lsp.TestRig.file);
+    const uri = try types.uriFromPath(a, lsp.TestRig.file());
 
     // csharp-ls's resolved lens: the request name, `ReferenceParams` as
     // its one argument (`foo` on line 1).

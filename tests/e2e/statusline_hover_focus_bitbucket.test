@@ -26,7 +26,8 @@ wait 300
 expect screen contains "Redesign the empty state"
 click 62 36
 wait 2500
-expect screen contains "Part of ENG-4300"
+# The detail is the pane's own fetch from the fake: polled for.
+expect within 20000 screen contains "Part of ENG-4300"
 
 # No second `--values` run: the pane republishes all three chips for
 # itself as its own values land, rows and all, so the list is still
@@ -44,7 +45,7 @@ click 62 35
 wait 2000
 # The cursor moved onto the other pull request: the detail is
 # api#1234's own description, and web#820's is gone.
-expect screen contains "The redirect dropped the query string"
+expect within 20000 screen contains "The redirect dropped the query string"
 expect screen lacks "Part of ENG-4300"
 # And no second pane: a fresh one would have listed every repo again.
 shell test "$(grep -c 'pullrequests"' wire.jsonl)" -eq "$(cat listings.txt)"

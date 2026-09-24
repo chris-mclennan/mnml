@@ -1,7 +1,6 @@
 # Lua (D10): the shipped example `lua/recent-commands/init.lua`,
 # run as it is written — the file is copied into the workspace's
 # init.lua, so a change to the example that breaks it fails here.
-# env: MNML_REPO=${PWD}
 shell mkdir -p .mnml && cp "${MNML_REPO:?}/lua/recent-commands/init.lua" .mnml/init.lua
 command script.reload
 expect screen contains "scripts: reloaded"

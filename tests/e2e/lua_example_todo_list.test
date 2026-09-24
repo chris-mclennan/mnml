@@ -1,7 +1,6 @@
 # Lua (D10): the shipped example `lua/todo-list/init.lua`,
 # run as it is written — a rail section of the script's own, fed by a
 # hidden `grep` task.
-# env: MNML_REPO=${PWD}
 shell mkdir -p .mnml && cp "${MNML_REPO:?}/lua/todo-list/init.lua" .mnml/init.lua
 write src/one.zig "const a = 1;\n// TODO: widen\nconst b = 2;\n"
 write src/two.zig "// TODO: unclamp\n"

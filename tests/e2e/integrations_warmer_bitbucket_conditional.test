@@ -22,9 +22,11 @@ command integrations.open_as_tab
 command bitbucket_prs.open
 command view.toggle_tree
 command view.focus_pane
-wait 4000
-expect screen contains "BITBUCKET PRS"
-expect screen contains "(2 repos · 3 PRs)"
+# Polled, not waited out: the pane is a separate process and its first
+# listing is two repos of round trips, which a loaded machine can push
+# well past a flat four seconds.
+expect within 30000 screen contains "BITBUCKET PRS"
+expect within 30000 screen contains "(2 repos · 3 PRs)"
 # The listing says how old it is, in the same words the tracker pane
 # uses.
 expect screen contains "as of "
@@ -37,16 +39,14 @@ expect file wire.jsonl lacks "\"status\":304"
 # a token and no bytes.
 shell : > wire.jsonl
 key r
-wait 4000
-expect file wire.jsonl contains "\"status\":304"
+expect within 20000 file wire.jsonl contains "\"status\":304"
 expect screen contains "BITBUCKET PRS"
 
 # `R` asks outright, so a tag that has somehow gone wrong is always one
 # keypress from being replaced. The listing comes back whole.
 shell : > wire.jsonl
 key shift+r
-wait 4000
-expect file wire.jsonl contains "\"status\":200"
+expect within 20000 file wire.jsonl contains "\"status\":200"
 
 key q
 wait 500

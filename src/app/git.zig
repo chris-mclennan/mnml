@@ -883,14 +883,35 @@ fn hasDotGit(io: Io, dir: []const u8) bool {
 
 /// The nearest ancestor of `path` (a file or directory) that is a repo
 /// root, on the frame arena.
+///
+/// `GIT_CEILING_DIRECTORIES` is honoured exactly as git honours it: the
+/// walk does not go up into a listed directory. Without it mnml found a
+/// repository git itself had been told not to — the `.test` runner
+/// lists its `TMPDIR` there, and a `TMPDIR` inside a checkout made every
+/// "not a git repo" file see the checkout's branches.
 pub fn repoAbove(app: *App, path: []const u8) Allocator.Error!?[]const u8 {
     var dir: []const u8 = if (std.fs.path.dirname(path)) |d| d else path;
+    const ceilings = app.env.get("GIT_CEILING_DIRECTORIES") orelse "";
     while (true) {
+        if (isCeiling(ceilings, dir)) return null;
         if (hasDotGit(app.io, dir)) return try app.frame.allocator().dupe(u8, dir);
         const parent = std.fs.path.dirname(dir) orelse return null;
         if (parent.len == dir.len) return null;
         dir = parent;
     }
+}
+
+/// Whether `dir` is one of `GIT_CEILING_DIRECTORIES`' entries (`:`
+/// separated, `;` on Windows; a trailing separator ignored).
+pub fn isCeiling(ceilings: []const u8, dir: []const u8) bool {
+    const sep: u8 = if (@import("builtin").os.tag == .windows) ';' else ':';
+    const want = std.mem.trimEnd(u8, dir, "/\\");
+    var it = std.mem.splitScalar(u8, ceilings, sep);
+    while (it.next()) |raw| {
+        const c = std.mem.trimEnd(u8, raw, "/\\");
+        if (c.len > 0 and std.mem.eql(u8, c, want)) return true;
+    }
+    return false;
 }
 
 /// The active repo, discovering on first use and — when the workspace
@@ -1492,6 +1513,13 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
             };
             app.hooks.emit(app, .{ .git_status = .{ .branch = s.status.branch orelse "", .dirty = s.status.changeCount() } });
             try runPendingJump(app);
+            // A line-blame answer is keyed on the HEAD it was asked at,
+            // and this snapshot is where HEAD comes from: one asked
+            // before the first snapshot landed (HEAD "") never matched
+            // again, so the blame never showed until the cursor moved.
+            // Ask for the cursor line now — a cache hit when the HEAD
+            // did not change.
+            if (app.active) |a| line_blame.request(app, a) catch {};
         },
         .diff => |d| {
             for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
@@ -6012,6 +6040,64 @@ test "line blame: the cursor's line gets its commit on the worker, nothing while
     try testing.expectEqual(@as(usize, 0), lb.entries.items.len);
 }
 
+test "line blame: an answer given before the first status snapshot is asked again once HEAD is known" {
+    var f = try Fixture.init(100, 12);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q" });
+    try f.write("a.txt", "one\ntwo\n");
+    try f.sh(&.{ "add", "a.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "first two lines" });
+    f.app.tree.visible = false;
+    const abs = try std.fs.path.join(testing.allocator, &.{ f.root, "a.txt" });
+    defer testing.allocator.free(abs);
+    const pane = try f.app.openPath(abs);
+    const lb = &f.app.git.line_blame;
+    // Whatever snapshot the open asked for lands first; then the state
+    // the race produces is made on purpose — no snapshot, and one "on
+    // its way" so nothing asks for another while the blame runs.
+    try f.settle(2000);
+    f.app.cfg.editor.line_blame = true;
+    f.app.git.status = null;
+    f.app.git.status_pending = true;
+    // The ask goes out before any snapshot: its HEAD is "".
+    try line_blame.request(&f.app, pane);
+    try testing.expect(lb.pending != null);
+    try testing.expectEqualStrings("", lb.pending.?.head);
+    var i: usize = 0;
+    while (lb.pending != null and i < 2000) : (i += 1) {
+        try f.app.tick(App.nowMs(testing.io));
+        testing.io.sleep(.fromMilliseconds(5), .awake) catch {};
+    }
+    try testing.expect(lb.pending == null);
+    try testing.expectEqualStrings("", lb.entries.items[lb.entries.items.len - 1].head);
+    // The cursor's rest has been announced (and asked, a cache hit): the
+    // idle tick will not ask again, so only the snapshot's landing can.
+    i = 0;
+    while (!f.app.idle.cursor_fired and i < 2000) : (i += 1) {
+        try f.app.tick(App.nowMs(testing.io));
+        testing.io.sleep(.fromMilliseconds(5), .awake) catch {};
+    }
+    try testing.expect(f.app.idle.cursor_fired);
+    try testing.expect(lb.pending == null);
+    // The snapshot lands, naming HEAD; the cached answer is keyed on
+    // "" and no longer matches. The landing asks again.
+    f.app.git.status_pending = false;
+    try requestStatus(&f.app);
+    try f.settle(2000);
+    try testing.expect(f.app.git.status != null);
+    i = 0;
+    while (i < 2000) : (i += 1) {
+        try f.app.tick(App.nowMs(testing.io));
+        const txt = try f.screen();
+        defer testing.allocator.free(txt);
+        if (std.mem.indexOf(u8, txt, "one  tester · ") != null) break;
+        testing.io.sleep(.fromMilliseconds(5), .awake) catch {};
+    }
+    const txt = try f.screen();
+    defer testing.allocator.free(txt);
+    try testing.expect(std.mem.indexOf(u8, txt, "one  tester · ") != null);
+}
+
 test "git.status_pane opens beside the graph — Rust's split to the right, the graph's tabs kept on the left — a second call reveals it there, a pane too narrow for two makes it a tab, and with nothing open it is the only leaf; git.diff_file from an editor splits the same way and the worktree diff stays a tab" {
     var f = try Fixture.init(140, 30);
     defer f.deinit();
@@ -7398,4 +7484,32 @@ test "LogRing: the idle poll's repeats collapse onto one row each, so a user's c
     // The same command run by the user is its own row.
     try ring.push(gpa, try mk.entry(gpa, seq, "git status --porcelain=v2 -b", false));
     try std.testing.expectEqual(@as(usize, 5), ring.items.items.len);
+}
+
+test "repoAbove stops at GIT_CEILING_DIRECTORIES, as git does" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var rbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = rbuf[0..try tmp.dir.realPath(testing.io, &rbuf)];
+    // <root>/.git is a checkout; <root>/tmp/ws is a workspace under a
+    // TMPDIR that lives inside it.
+    try tmp.dir.createDirPath(testing.io, ".git");
+    try tmp.dir.createDirPath(testing.io, "tmp/ws");
+    const ws = try std.fs.path.join(testing.allocator, &.{ root, "tmp", "ws" });
+    defer testing.allocator.free(ws);
+    var a = try App.initWith(testing.allocator, testing.io, .{ .workspace = ws, .data_root = ws, .cols = 80, .rows = 24 });
+    defer a.deinit();
+    _ = a.env.swapRemove("GIT_CEILING_DIRECTORIES");
+    // Unfenced, the walk finds the checkout above.
+    try testing.expectEqualStrings(root, (try repoAbove(&a, ws)).?);
+    // Fenced at the tmp dir it never goes up into it.
+    const fence = try std.fs.path.join(testing.allocator, &.{ root, "tmp" });
+    defer testing.allocator.free(fence);
+    const list = try std.fmt.allocPrint(testing.allocator, "/nowhere:{s}/", .{fence});
+    defer testing.allocator.free(list);
+    try a.env.put("GIT_CEILING_DIRECTORIES", list);
+    try testing.expect((try repoAbove(&a, ws)) == null);
+    try testing.expect(isCeiling("/a:/b/", "/b"));
+    try testing.expect(!isCeiling("/a:/b", "/c"));
+    try testing.expect(!isCeiling("", "/"));
 }
