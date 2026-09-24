@@ -1,0 +1,27 @@
+# `x` over a selection of context rows only: the discard has no line to
+# take, so it says so, as `s` does — it used to ask "Discard this hunk
+# from the worktree?", a question about something the selection never
+# covered. Without a selection `x` still offers the hunk.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write code.txt "one\ntwo\nthree\nfour\nfive\n"
+shell git add code.txt
+shell git commit -q -m "initial"
+shell printf "one\ntwo-x\nthree\nfour\nfive\n" > code.txt
+open code.txt
+command git.diff_file
+wait 800
+expect screen contains "+ two-x"
+# Inline: the cursor rests on ` one`, a context row.
+key g
+key v
+key x
+wait 300
+expect screen contains "the selection holds no changed line"
+expect screen lacks "Discard this hunk"
+key esc
+key x
+expect screen contains "Discard this hunk from the worktree?"
+key n
+expect file code.txt contains "two-x"

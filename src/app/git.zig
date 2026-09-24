@@ -2536,6 +2536,10 @@ pub fn askDiscard(app: *App, id: PaneId, dp: *DiffPane) Allocator.Error!void {
     if (hunkAtCursor(dp) == null) return app.toast("diff: no hunk under the cursor", .{});
     const arena = app.frame.allocator();
     const sel = selectedLines(dp, arena) catch null;
+    // A selection of context rows only: the discard would refuse it
+    // (`verbPatch`), as stage does — say so now instead of asking to
+    // discard "this hunk", which the selection never meant.
+    if (sel != null and sel.?.count == 0) return app.toast("diff: the selection holds no changed line", .{});
     const msg: []const u8 = if (sel != null and sel.?.count > 0)
         try std.fmt.allocPrint(app.gpa, "Discard the {d} selected line{s} from the worktree? This cannot be undone.", .{ sel.?.count, if (sel.?.count == 1) "" else "s" })
     else
