@@ -664,11 +664,25 @@ pub fn parse(arena: Allocator, src: [:0]const u8) error{ OutOfMemory, ParseZon }
 
 /// Close every open pane but a dirty editor — its unsaved work is not
 /// the restore's to throw away (it stays open, and a saved pane on the
-/// same file finds it). A terminal's child is hung up on and reaped.
-fn closeReplaced(app: *App, arena: Allocator) Allocator.Error!void {
+/// same file finds it) — and a live AI session the saved set resumes:
+/// that pane IS the session, kept in place rather than killed and
+/// resumed a second time (`openSaved`'s resume rule then hands it
+/// back). A terminal's child is hung up on and reaped.
+fn closeReplaced(app: *App, arena: Allocator, saved: Saved) Allocator.Error!void {
+    var keep: std.ArrayListUnmanaged(PaneId) = .empty;
+    for (saved.panes) |sp| {
+        if (sp.kind != .pty) continue;
+        const id = switch (terminalRestore(app, sp)) {
+            .resumed => |id| id,
+            else => continue,
+        };
+        if (pty_pane.liveSessionPane(app, id)) |live| try keep.append(arena, live);
+    }
     var ids: std.ArrayListUnmanaged(PaneId) = .empty;
     for (app.panes.slots.items, 0..) |*slot, i| if (slot.*) |*p| {
-        if (!p.dirty()) try ids.append(arena, @intCast(i));
+        const pid: PaneId = @intCast(i);
+        if (p.dirty() or std.mem.indexOfScalar(PaneId, keep.items, pid) != null) continue;
+        try ids.append(arena, pid);
     };
     for (ids.items) |id| try app.forceClosePane(id);
 }
@@ -682,7 +696,7 @@ pub fn apply(app: *App, arena: Allocator, saved: Saved) RestoreError!void {
     // are the ones this restore replaces: close them first. Left open
     // they were in no layout but still running — every restore in a live
     // instance added a hidden shell per terminal (21 children became 41).
-    if (saved.tabs.len > 0) try closeReplaced(app, arena);
+    if (saved.tabs.len > 0) try closeReplaced(app, arena, saved);
     // Panes → ids.
     const ids = try arena.alloc(?PaneId, saved.panes.len);
     for (saved.panes, 0..) |sp, i| ids[i] = openSaved(app, sp, ids[0..i]) catch |err| switch (err) {
