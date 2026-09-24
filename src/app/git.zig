@@ -883,14 +883,35 @@ fn hasDotGit(io: Io, dir: []const u8) bool {
 
 /// The nearest ancestor of `path` (a file or directory) that is a repo
 /// root, on the frame arena.
+///
+/// `GIT_CEILING_DIRECTORIES` is honoured exactly as git honours it: the
+/// walk does not go up into a listed directory. Without it mnml found a
+/// repository git itself had been told not to — the `.test` runner
+/// lists its `TMPDIR` there, and a `TMPDIR` inside a checkout made every
+/// "not a git repo" file see the checkout's branches.
 pub fn repoAbove(app: *App, path: []const u8) Allocator.Error!?[]const u8 {
     var dir: []const u8 = if (std.fs.path.dirname(path)) |d| d else path;
+    const ceilings = app.env.get("GIT_CEILING_DIRECTORIES") orelse "";
     while (true) {
+        if (isCeiling(ceilings, dir)) return null;
         if (hasDotGit(app.io, dir)) return try app.frame.allocator().dupe(u8, dir);
         const parent = std.fs.path.dirname(dir) orelse return null;
         if (parent.len == dir.len) return null;
         dir = parent;
     }
+}
+
+/// Whether `dir` is one of `GIT_CEILING_DIRECTORIES`' entries (`:`
+/// separated, `;` on Windows; a trailing separator ignored).
+pub fn isCeiling(ceilings: []const u8, dir: []const u8) bool {
+    const sep: u8 = if (@import("builtin").os.tag == .windows) ';' else ':';
+    const want = std.mem.trimEnd(u8, dir, "/\\");
+    var it = std.mem.splitScalar(u8, ceilings, sep);
+    while (it.next()) |raw| {
+        const c = std.mem.trimEnd(u8, raw, "/\\");
+        if (c.len > 0 and std.mem.eql(u8, c, want)) return true;
+    }
+    return false;
 }
 
 /// The active repo, discovering on first use and — when the workspace
@@ -7398,4 +7419,32 @@ test "LogRing: the idle poll's repeats collapse onto one row each, so a user's c
     // The same command run by the user is its own row.
     try ring.push(gpa, try mk.entry(gpa, seq, "git status --porcelain=v2 -b", false));
     try std.testing.expectEqual(@as(usize, 5), ring.items.items.len);
+}
+
+test "repoAbove stops at GIT_CEILING_DIRECTORIES, as git does" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var rbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = rbuf[0..try tmp.dir.realPath(testing.io, &rbuf)];
+    // <root>/.git is a checkout; <root>/tmp/ws is a workspace under a
+    // TMPDIR that lives inside it.
+    try tmp.dir.createDirPath(testing.io, ".git");
+    try tmp.dir.createDirPath(testing.io, "tmp/ws");
+    const ws = try std.fs.path.join(testing.allocator, &.{ root, "tmp", "ws" });
+    defer testing.allocator.free(ws);
+    var a = try App.initWith(testing.allocator, testing.io, .{ .workspace = ws, .data_root = ws, .cols = 80, .rows = 24 });
+    defer a.deinit();
+    _ = a.env.swapRemove("GIT_CEILING_DIRECTORIES");
+    // Unfenced, the walk finds the checkout above.
+    try testing.expectEqualStrings(root, (try repoAbove(&a, ws)).?);
+    // Fenced at the tmp dir it never goes up into it.
+    const fence = try std.fs.path.join(testing.allocator, &.{ root, "tmp" });
+    defer testing.allocator.free(fence);
+    const list = try std.fmt.allocPrint(testing.allocator, "/nowhere:{s}/", .{fence});
+    defer testing.allocator.free(list);
+    try a.env.put("GIT_CEILING_DIRECTORIES", list);
+    try testing.expect((try repoAbove(&a, ws)) == null);
+    try testing.expect(isCeiling("/a:/b/", "/b"));
+    try testing.expect(!isCeiling("/a:/b", "/c"));
+    try testing.expect(!isCeiling("", "/"));
 }

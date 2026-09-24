@@ -464,10 +464,16 @@ fn markedRoot(app: *App, arena: Allocator, path: []const u8, markers: []const []
     return try walkUp(app, arena, start, markers);
 }
 
-/// The first directory from `start` up holding any of `markers`.
+/// The first directory from `start` up holding any of `markers`. The
+/// walk never climbs into a `GIT_CEILING_DIRECTORIES` entry, as git's
+/// own search does not: the commonest marker is `.git`, and a workspace
+/// under a `TMPDIR` inside a checkout otherwise rooted its server at the
+/// checkout — where the `.test` corpus's servers then wrote their logs.
 fn walkUp(app: *App, arena: Allocator, start: []const u8, markers: []const []const u8) Allocator.Error!?[]const u8 {
+    const ceilings = app.env.get("GIT_CEILING_DIRECTORIES") orelse "";
     var dir: ?[]const u8 = start;
     while (dir) |d| : (dir = std.fs.path.dirname(d)) {
+        if (d.len != start.len and @import("git.zig").isCeiling(ceilings, d)) break;
         for (markers) |m| {
             // // changed (lsp-defaults): `*.sln` scans the directory, as
             // Rust's `marker_matches`; a literal is one stat.
@@ -4779,4 +4785,32 @@ test "over the highlight ceiling no documentSymbol is asked and the outline says
     try command.run(&app, .{ .static = .@"editor.highlight_this_file" });
     try testing.expect(!e.syntax.overCeiling());
     try TestRig.pump(&app, ctx, Cond.symbols, 30_000);
+}
+
+test "a root-marker walk does not climb into GIT_CEILING_DIRECTORIES" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var rbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = rbuf[0..try tmp.dir.realPath(testing.io, &rbuf)];
+    // A checkout at <root>, and a workspace under a TMPDIR inside it.
+    try tmp.dir.createDirPath(testing.io, ".git");
+    try tmp.dir.createDirPath(testing.io, "tmp/ws");
+    const ws = try std.fs.path.join(testing.allocator, &.{ root, "tmp", "ws" });
+    defer testing.allocator.free(ws);
+    const file = try std.fs.path.join(testing.allocator, &.{ ws, "report.zsh" });
+    defer testing.allocator.free(file);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = ws, .data_root = ws, .cols = 80, .rows = 24 });
+    defer app.deinit();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    _ = app.env.swapRemove("GIT_CEILING_DIRECTORIES");
+    try testing.expectEqualStrings(root, (try markedRoot(&app, arena, file, &.{".git"}, false)).?);
+    const fence = try std.fs.path.join(testing.allocator, &.{ root, "tmp" });
+    defer testing.allocator.free(fence);
+    try app.env.put("GIT_CEILING_DIRECTORIES", fence);
+    try testing.expect((try markedRoot(&app, arena, file, &.{".git"}, false)) == null);
+    // The file's own directory is still looked in, as git looks in its cwd.
+    try tmp.dir.createDirPath(testing.io, "tmp/ws/.git");
+    try testing.expectEqualStrings(ws, (try markedRoot(&app, arena, file, &.{".git"}, false)).?);
 }

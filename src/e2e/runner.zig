@@ -344,6 +344,13 @@ const Run = struct {
         var file_env: std.process.Environ.Map = (if (self.opts.env) |e| e.clone(gpa) else std.process.Environ.Map.init(gpa)) catch return self.fail("out of memory", .{});
         defer file_env.deinit();
         file_env.put("MNML_E2E_WORKSPACE", self.workspace) catch return self.fail("out of memory", .{});
+        // The workspace is a fresh directory under `TMPDIR`, and `TMPDIR`
+        // is wherever the person running the corpus put it — inside a
+        // checkout, often. Git must not walk up out of the workspace into
+        // that repository: a file written against "not a git repo" would
+        // find the checkout's branches, and one that `git init`s its own
+        // is unaffected.
+        file_env.put("GIT_CEILING_DIRECTORIES", std.mem.trimEnd(u8, self.opts.tmp_root, "/")) catch return self.fail("out of memory", .{});
         for (self.prebound.items, 1..) |srv, i| {
             var nbuf: [32]u8 = undefined;
             var vbuf: [8]u8 = undefined;
