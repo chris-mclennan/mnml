@@ -1,0 +1,32 @@
+# width: 140
+# height: 34
+# One session, one name: a transcript whose first prompt is "first prompt
+# alpha" and whose last is "last prompt omega" (the fake CLI sets no
+# title) is called "first prompt alpha" on the start surface's SESSIONS
+# row, on the tab its resume opens, and on the sessions table's row —
+# every surface asks `sessions.nameOf`. The last prompt shows only as the
+# table's detail line ("you: …").
+# env: HOME=home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+write a.txt "alpha\n"
+write bin/claude #!/bin/bash\nprintf 'fake claude %s\\n' "$*"\nexec sleep 60
+shell chmod +x bin/claude
+shell ENC=$(printf '%s' "$MNML_E2E_WORKSPACE" | sed 's/[\/.]/-/g') && mkdir -p "home/.claude/projects/$ENC" && F="home/.claude/projects/$ENC/e2e00000-0000-4000-8000-000000000031.jsonl" && printf '{"type":"user","cwd":"%s","gitBranch":"main","message":{"role":"user","content":"first prompt alpha"}}\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}\n{"type":"user","cwd":"%s","gitBranch":"main","message":{"role":"user","content":"last prompt omega"}}\n' "$MNML_E2E_WORKSPACE" "$MNML_E2E_WORKSPACE" > "$F"
+command sessions.refresh
+wait 1500
+# The start surface's row.
+expect screen contains "first prompt alpha"
+expect screen lacks "last prompt omega"
+command view.focus_pane
+key tab
+key enter
+wait 1500
+# The tab and the card agree with each other ...
+expect screen contains "first prompt alpha 󰅖"
+command sessions.table
+wait 1500
+# ... and the table's row agrees with them; the last prompt is only the
+# detail pane's "you:" line.
+expect screen contains "· done first prompt alpha"
+expect screen lacks "· done last prompt omega"
+expect screen contains "you: last prompt omega"

@@ -243,7 +243,7 @@ pub fn entries(app: *App, ui: Ui, l: List) Allocator.Error![]const Entry {
             const out = try arena.alloc(Entry, items.len);
             const now_s = sessions.wallNowS(app);
             for (items, out) |it, *o| o.* = .{
-                .text = sessions.displayName(app, it),
+                .text = sessions.itemName(app, it),
                 .detail = ui.fmt("{s} · {s}", .{ it.source.label(), list_panel.ageText(ui, now_s, it.last_activity_s) }),
             };
             return out;

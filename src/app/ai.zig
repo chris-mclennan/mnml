@@ -1604,19 +1604,13 @@ fn codexNewBottom(app: *App) CommandError!void {
 
 /// `ai.session_picker`: this workspace's transcripts, newest first;
 /// the pick resumes it.
-/// A picker row's name: the one its card and tab read. A live session's
-/// is `sessions.nameOf` (the rename, the child's title, the first
-/// prompt); one with no pane goes by the rename, else its first prompt,
-/// else the table's `displayName` (the last prompt, the short id).
+/// A picker row's name: the one its card and tab read — the one namer,
+/// `sessions.nameOf` (the rename, the live child's title, the first
+/// prompt, then the CLI label or the short id).
 fn pickerName(app: *App, item: @import("../sessions.zig").Item, live: ?PaneId) []const u8 {
     const sessions = @import("../sessions.zig");
-    if (live) |pid| if (sessions.paneName(app, pid)) |n| if (n.from != .cli) return n.text;
-    if (app.sessions.alias(item.session_id)) |a| return a;
-    if (item.first_user_msg) |m| {
-        const line = std.mem.trim(u8, m, " \t\r\n");
-        if (line.len > 0) return line;
-    }
-    return sessions.displayName(app, item);
+    const pane = if (live) |pid| app.panes.pty(pid) else null;
+    return sessions.nameWith(app, item.session_id, pane, item.session_id, item).text;
 }
 
 /// Transcripts the picker parses for a name when the scan has not

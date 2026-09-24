@@ -842,7 +842,7 @@ fn itemView(app: *App, it: Item) Allocator.Error!ItemView {
     const tp_multi = if (find(app)) |id| get(app, id) else null;
     return .{
         .it = it,
-        .name = sessions.displayName(app, it),
+        .name = sessions.itemName(app, it),
         .ticked = if (tp_multi) |tp| tp.multi.contains(it.session_id) else false,
         .active = if (sessions.ptyPaneOf(app, it.session_id)) |pid| app.active == pid else false,
         .pinned = app.sessions.isPinned(it.session_id),
