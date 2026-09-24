@@ -313,6 +313,10 @@ pub const State = struct {
     servers_loaded: ?config.Loaded = null,
     /// One re-read per session: a miss stays a miss.
     servers_refreshed: bool = false,
+    /// The server whose answer a jump is following (`jumpTo`), for the
+    /// length of the open it makes: the file it lands in is served by
+    /// that server (`ensureServer`), whatever marker sits above it.
+    lender: ?u32 = null,
 
     pub fn deinit(self: *State, gpa: Allocator, io: Io) void {
         self.lint_group.cancel(io);
@@ -496,6 +500,40 @@ fn walkUp(app: *App, arena: Allocator, start: []const u8, markers: []const []con
 fn pathUnder(path: []const u8, dir: []const u8) bool {
     if (!std.mem.startsWith(u8, path, dir)) return false;
     return path.len == dir.len or path[dir.len] == '/' or (dir.len > 0 and dir[dir.len - 1] == '/');
+}
+
+/// Is `path` inside a toolchain's, a package manager's or an
+/// interpreter's own tree — the Rust sysroot, a cargo registry, Zig's
+/// `lib/zig`, `node_modules`, `site-packages`, Go's module cache? A
+/// marker there (std's own `Cargo.toml`, `lib/zig/std/build.zig`, a
+/// package's `package.json`) is the library's, not a project the user
+/// opened: a file under one is lent to a running server rather than
+/// rooting a second one that loads the library as a workspace.
+pub fn isLibraryPath(path: []const u8) bool {
+    const pairs = [_][2][]const u8{
+        .{ "lib", "rustlib" }, .{ ".rustup", "toolchains" }, .{ ".cargo", "registry" },
+        .{ ".cargo", "git" },  .{ "lib", "zig" },            .{ "zig", "p" },
+        .{ "pkg", "mod" },
+    };
+    const singles = [_][]const u8{ "node_modules", "site-packages", "dist-packages" };
+    var it = std.mem.tokenizeAny(u8, path, "/\\");
+    var prev: []const u8 = "";
+    while (it.next()) |c| {
+        for (singles) |x| if (std.mem.eql(u8, c, x)) return true;
+        for (pairs) |pr| if (std.mem.eql(u8, prev, pr[0]) and std.mem.eql(u8, c, pr[1])) return true;
+        prev = c;
+    }
+    return false;
+}
+
+/// The server a jump is following (`State.lender`), when it is alive
+/// and speaks `name`.
+fn lentByJump(app: *App, name: []const u8) ?*Server {
+    const id = app.lsp.lender orelse return null;
+    for (app.lsp.servers.items) |s| {
+        if (s.id == id and !s.transport.isDead() and std.mem.eql(u8, s.name, name)) return s;
+    }
+    return null;
 }
 
 /// A live server of `name` to lend a file that has no project of its
@@ -702,6 +740,12 @@ pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
         try refreshServers(app);
         spec = specFor(app, path) orelse return null;
     }
+    // A jump the running server answered (`gd` into std, a reference in
+    // a registry crate) lands in a file that server already reaches: it
+    // serves it, as a plain open document. The file's own marker —
+    // library/std's `Cargo.toml`, zig std's `build.zig` — must not root a
+    // second server that loads the library as a workspace.
+    if (lentByJump(app, spec.name)) |s| return s;
     if (app.lsp.dead.contains(spec.name)) return null;
     const arena = app.frame.allocator();
     // `$NAME` in the command or an argument comes from the environment,
@@ -760,7 +804,11 @@ pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
     // opened it): it joins that server as a plain open document instead
     // of rooting a second one at its own directory. Only a file under a
     // different project's marker gets a server of its own.
-    if (marked == null and !pathUnder(path, app.workspace)) if (serverToLend(app, spec.name)) |s| return s;
+    // A file opened by hand under a marker inside a toolchain or package
+    // tree (`isLibraryPath`) is the same case: the marker is the
+    // library's, so a running server is lent before a new root starts.
+    const lendable = if (marked) |m| isLibraryPath(m) else !pathUnder(path, app.workspace);
+    if (lendable) if (serverToLend(app, spec.name)) |s| return s;
     const root = marked orelse std.fs.path.dirname(path) orelse app.workspace;
     for (app.lsp.servers.items) |s| if (std.mem.eql(u8, s.name, spec.name) and std.mem.eql(u8, s.root, root) and !s.transport.isDead()) return s;
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
@@ -1895,15 +1943,23 @@ fn gotoResult(app: *App, kind: ReqKind, ctx: Ctx, result: ?Value) Allocator.Erro
         return;
     }
     if (overlay) return openPeek(app, ctx.pane, locs[0]);
-    if (locs.len == 1) return jumpTo(app, locs[0], ctx.extra == goto_split);
+    if (locs.len == 1) return jumpTo(app, locs[0], ctx.extra == goto_split, ctx.pane);
     try locationsPicker(app, "Definitions", locs, "no definition");
 }
 
 /// Open `loc`'s file with the cursor on its range; `split` puts it in
-/// a new leaf below instead of the current leaf.
-fn jumpTo(app: *App, loc: types.Location, split: bool) Allocator.Error!void {
+/// a new leaf below instead of the current leaf. `from` is the pane the
+/// jump started in (null: the active one): its server answered, so the
+/// file it lands in is lent to that server (`State.lender`).
+fn jumpTo(app: *App, loc: types.Location, split: bool, from: ?PaneId) Allocator.Error!void {
     const path = try app.frame.allocator().dupe(u8, loc.path);
     const cur = app.active;
+    app.lsp.lender = lender: {
+        const e = app.panes.editor(from orelse cur orelse break :lender null) orelse break :lender null;
+        const s = serverFor(app, e.buf.doc.path orelse break :lender null) orelse break :lender null;
+        break :lender s.id;
+    };
+    defer app.lsp.lender = null;
     const id = app.openPath(path) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => {
@@ -2947,7 +3003,7 @@ pub fn pickerAccept(app: *App, kind: app_mod.PickerKind, idx: usize) Allocator.E
     switch (kind) {
         .lsp_locations => {
             const set = app.lsp.picker_locs orelse return;
-            if (idx < set.items.len) try jumpTo(app, set.items[idx], false);
+            if (idx < set.items.len) try jumpTo(app, set.items[idx], false, null);
             dropLocs(app);
         },
         .lsp_code_actions => try runAction(app, idx),
@@ -2956,7 +3012,7 @@ pub fn pickerAccept(app: *App, kind: app_mod.PickerKind, idx: usize) Allocator.E
             if (idx >= pick.items.len) return;
             const s = pick.items[idx];
             const path: []const u8 = s.path orelse (if (app.panes.editor(pick.pane)) |e| (e.buf.doc.path orelse return) else return);
-            try jumpTo(app, .{ .path = path, .range = .{ .start = .{ .line = s.line, .character = s.character }, .end = .{ .line = s.line, .character = s.character } } }, false);
+            try jumpTo(app, .{ .path = path, .range = .{ .start = .{ .line = s.line, .character = s.character }, .end = .{ .line = s.line, .character = s.character } } }, false, null);
             dropSymbolPick(app);
         },
         else => {},
@@ -4084,6 +4140,127 @@ test "a file outside the workspace under no project marker joins the workspace's
     try pumpUntil(&app, Probe{ .app = &app, .path = c }, Cond.open, 30_000);
     try testing.expectEqual(@as(usize, 2), app.lsp.servers.items.len);
     try testing.expectEqualStrings(other_root, serverFor(&app, c).?.root);
+}
+
+/// A tree for the lending tests: `ws/` (the workspace, a project) and
+/// `extra` directories each holding a `.fkroot` marker and one file.
+fn lendFixture(tmp: *testing.TmpDir, marked: []const []const u8) !void {
+    const io = testing.io;
+    try tmp.dir.createDirPath(io, "ws/.mnml");
+    try tmp.dir.writeFile(io, .{ .sub_path = "ws/.fkroot", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "ws/a.fk", .data = "fn a() {}\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "ws/.mnml/config.zon", .data = ".{ .lsp = .{ .fake = .{ .cmd = \"$MNML_FAKE_LSP\", .extensions = .{ \"fk\" }, .root_markers = .{ \".fkroot\" } } } }" });
+    var buf: [512]u8 = undefined;
+    for (marked) |dir| {
+        try tmp.dir.createDirPath(io, dir);
+        try tmp.dir.writeFile(io, .{ .sub_path = try std.fmt.bufPrint(&buf, "{s}/.fkroot", .{dir}), .data = "" });
+        try tmp.dir.writeFile(io, .{ .sub_path = try std.fmt.bufPrint(&buf, "{s}/m.fk", .{dir}), .data = "fn m() {}\n" });
+    }
+}
+
+const LendProbe = struct {
+    app: *App,
+    path: []const u8,
+    fn open(p: LendProbe) bool {
+        for (p.app.lsp.servers.items) |x| if (x.ready and x.isOpen(p.path)) return true;
+        return false;
+    }
+};
+
+test "lsp lend: a jump the running server answered is served by that server, whatever marker sits above the file it lands in (rust-analyzer into std, a path dependency)" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    const exe = build_options.fake_lsp_exe;
+    Io.Dir.cwd().access(io, exe, .{}) catch return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const top = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+    // The sysroot's library/std has its own Cargo.toml; so has a path
+    // dependency beside the workspace — neither is a library path for
+    // the second one.
+    const std_dir = ".rustup/toolchains/stable/lib/rustlib/src/rust/library/std";
+    try lendFixture(&tmp, &.{ std_dir, "deps/serde" });
+    const ws = try std.fs.path.join(gpa, &.{ top, "ws" });
+    defer gpa.free(ws);
+    const a = try std.fs.path.join(gpa, &.{ ws, "a.fk" });
+    defer gpa.free(a);
+    const in_std = try std.fs.path.join(gpa, &.{ top, std_dir, "m.fk" });
+    defer gpa.free(in_std);
+    const in_dep = try std.fs.path.join(gpa, &.{ top, "deps", "serde", "m.fk" });
+    defer gpa.free(in_dep);
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try env.put("MNML_FAKE_LSP", exe);
+    var app = try App.initWith(gpa, io, .{ .workspace = ws, .cols = 100, .rows = 30, .env = &env, .workspace_trusted = true });
+    defer app.deinit();
+    app.tree.visible = false;
+    const from = try app.openPath(a);
+    try pumpUntil(&app, LendProbe{ .app = &app, .path = a }, LendProbe.open, 30_000);
+    const first = app.lsp.servers.items[0];
+    const zero: types.Range = .{ .start = .{ .line = 0, .character = 0 }, .end = .{ .line = 0, .character = 0 } };
+    try jumpTo(&app, .{ .path = in_dep, .range = zero }, false, from);
+    try pumpUntil(&app, LendProbe{ .app = &app, .path = in_dep }, LendProbe.open, 30_000);
+    try testing.expectEqual(@as(usize, 1), app.lsp.servers.items.len);
+    try testing.expect(first.isOpen(in_dep));
+    try testing.expectEqual(first, serverFor(&app, in_dep).?);
+    try jumpTo(&app, .{ .path = in_std, .range = zero }, false, from);
+    try pumpUntil(&app, LendProbe{ .app = &app, .path = in_std }, LendProbe.open, 30_000);
+    try testing.expectEqual(@as(usize, 1), app.lsp.servers.items.len);
+    try testing.expect(first.isOpen(in_std));
+    // The lend lasts only for the jump's own open.
+    try testing.expectEqual(@as(?u32, null), app.lsp.lender);
+}
+
+test "lsp lend: a file opened by hand under a toolchain's own marker (zls into lib/zig/std) is lent; another project's marker still roots its own server" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    const exe = build_options.fake_lsp_exe;
+    Io.Dir.cwd().access(io, exe, .{}) catch return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const top = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+    try lendFixture(&tmp, &.{ "Cellar/zig/0.16.0/lib/zig/std", "other" });
+    const ws = try std.fs.path.join(gpa, &.{ top, "ws" });
+    defer gpa.free(ws);
+    const a = try std.fs.path.join(gpa, &.{ ws, "a.fk" });
+    defer gpa.free(a);
+    const in_std = try std.fs.path.join(gpa, &.{ top, "Cellar/zig/0.16.0/lib/zig/std", "m.fk" });
+    defer gpa.free(in_std);
+    const other_root = try std.fs.path.join(gpa, &.{ top, "other" });
+    defer gpa.free(other_root);
+    const in_other = try std.fs.path.join(gpa, &.{ other_root, "m.fk" });
+    defer gpa.free(in_other);
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try env.put("MNML_FAKE_LSP", exe);
+    var app = try App.initWith(gpa, io, .{ .workspace = ws, .cols = 100, .rows = 30, .env = &env, .workspace_trusted = true });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openPath(a);
+    try pumpUntil(&app, LendProbe{ .app = &app, .path = a }, LendProbe.open, 30_000);
+    const first = app.lsp.servers.items[0];
+    _ = try app.openPath(in_std);
+    try pumpUntil(&app, LendProbe{ .app = &app, .path = in_std }, LendProbe.open, 30_000);
+    try testing.expectEqual(@as(usize, 1), app.lsp.servers.items.len);
+    try testing.expect(first.isOpen(in_std));
+    _ = try app.openPath(in_other);
+    try pumpUntil(&app, LendProbe{ .app = &app, .path = in_other }, LendProbe.open, 30_000);
+    try testing.expectEqual(@as(usize, 2), app.lsp.servers.items.len);
+    try testing.expectEqualStrings(other_root, serverFor(&app, in_other).?.root);
+}
+
+test "isLibraryPath: toolchain, registry and package trees by path component, not by substring" {
+    try testing.expect(isLibraryPath("/Users/u/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/std"));
+    try testing.expect(isLibraryPath("/Users/u/.cargo/registry/src/index.crates.io-1/serde-1.0.0"));
+    try testing.expect(isLibraryPath("/opt/homebrew/Cellar/zig/0.16.0/lib/zig/std"));
+    try testing.expect(isLibraryPath("/p/web/node_modules/left-pad"));
+    try testing.expect(isLibraryPath("/p/.venv/lib/python3.12/site-packages/requests"));
+    try testing.expect(isLibraryPath("C:\\Users\\u\\go\\pkg\\mod\\x"));
+    try testing.expect(!isLibraryPath("/Users/u/Projects/app"));
+    try testing.expect(!isLibraryPath("/Users/u/Projects/my_node_modules_tool"));
+    try testing.expect(!isLibraryPath("/Users/u/Projects/zig/src"));
 }
 
 test "withPythonPath adds python.pythonPath unless the config already names an interpreter or a venv" {
