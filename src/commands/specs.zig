@@ -1088,9 +1088,9 @@ pub const specs = [_]Spec{
     // name in `.mnml/layouts/<name>.zon`. Palette, `:layout`, View →
     // Layouts and which-key `space W`; no chord of their own.
     .{ .id = "layout.save", .title = "Layout: save this tab page as a named layout…", .group = "view", .short = "save this tab page as…", .keys = .{ .both = &.{"space W s"} } },
-    .{ .id = "layout.load", .title = "Layout: load a named layout by name (replaces this tab page)…", .group = "view", .short = "load by name…", .keys = .{ .both = &.{"space W n"} } },
-    .{ .id = "layout.delete", .title = "Layout: delete a named layout…", .group = "view", .short = "delete a layout…", .keys = .{ .both = &.{"space W d"} } },
-    .{ .id = "layout.pick", .title = "Layout: pick a saved layout to load…", .group = "view", .short = "load a layout…", .keys = .{ .both = &.{"space W l"} } },
+    .{ .id = "layout.load", .title = "Layout: load a named layout (replaces this tab page) — the layouts picker; `:layout load <name>` by name", .group = "view" },
+    .{ .id = "layout.delete", .title = "Layout: delete a named layout… (pick it, then confirm)", .group = "view", .short = "delete a layout…", .keys = .{ .both = &.{"space W d"} } },
+    .{ .id = "layout.pick", .title = "Layout: pick a saved layout to load… (Shift+Delete deletes the row)", .group = "view", .short = "load a layout…", .keys = .{ .both = &.{"space W l"} } },
     .{ .id = "editor.input_mode_menu", .title = "Open mode menu (vim / standard)", .group = "editor" },
     // The `editor.highlight_max_bytes` override, per buffer: turn this
     // file's highlighting on after the limit skipped it, or switch any

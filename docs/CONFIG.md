@@ -1385,15 +1385,15 @@ out; a page with nothing else is refused.
 
 | | |
 |---|---|
-| `:layout save <name>` · `layout.save` | write this tab page under `<name>` (letters, digits, `-` `_` `.`, not first; 64 at most); the same name overwrites |
-| `:layout load <name>` · `layout.load` | replace this tab page with the layout |
+| `:layout save <name>` · `layout.save` | write this tab page under `<name>` (letters, digits, `-` `_` `.`, not first; 64 at most); over an existing name the confirm box asks first (Cancel selected) — `:layout save! <name>` replaces without asking |
+| `:layout load <name>` | replace this tab page with the layout |
 | `:layout load! <name>` | the same without the unsaved-changes question |
-| `layout.pick` | a picker over the saved layouts, each with its pane / split count and what it holds; the pick loads |
-| `:layout delete <name>` · `layout.delete` | delete the file |
+| `layout.pick` · `layout.load` | a picker over the saved layouts, each with its pane / split count and what it holds; the pick loads, and Shift+Delete deletes the row after asking, then the picker comes back |
+| `:layout delete <name>` · `layout.delete` | delete the file, after the confirm box asks (`layout.delete` picks the name first); `:layout delete! <name>` does not ask |
 | `:layout list` (or a bare `:layout`) | toast the saved names |
 
 The View menu's *Layouts* submenu and which-key `space W` (`s` save,
-`l` pick, `n` load by name, `d` delete) carry the same four commands.
+`l` pick, `d` delete) carry the same commands.
 
 Loading replaces the current tab page. Its panes that no other page
 shows close; when any of them has unsaved changes the confirm box asks

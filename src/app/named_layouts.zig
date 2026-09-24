@@ -235,13 +235,20 @@ pub fn parse(arena: Allocator, src: [:0]const u8) error{ OutOfMemory, ParseZon }
     return std.zon.parse.fromSliceAlloc(File, arena, src, null, .{ .ignore_unknown_fields = true, .free_on_error = false });
 }
 
-pub fn save(app: *App, raw_name: []const u8) CommandError!void {
+/// Save this tab page as `raw_name`. Over a layout that exists it asks
+/// first (a layout can be committed and used from another clone, so a
+/// silent replace can lose someone's work); `force` — the confirm's
+/// Replace, or `:layout save!` — writes it.
+pub fn save(app: *App, raw_name: []const u8, force: bool) CommandError!void {
     const arena = app.frame.allocator();
     const name = try needName(app, raw_name);
     const file = (try capture(app, arena)) orelse return app.diag.fail(arena, "layout: nothing on this tab page can be saved — scratch buffers and lists do not come back", .{});
     const text = try render(arena, file);
     const abs = try filePath(app, arena, name);
     const cwd = Io.Dir.cwd();
+    if (!force) if (cwd.access(app.io, abs, .{})) |_| {
+        return askName(app, name, .overwrite, false);
+    } else |_| {};
     cwd.createDirPath(app.io, std.fs.path.dirname(abs).?) catch |err| return app.diag.fail(arena, "layout: cannot create {s}: {s}", .{ rel_dir, @errorName(err) });
     cwd.writeFile(app.io, .{ .sub_path = abs, .data = text }) catch |err| return app.diag.fail(arena, "layout: cannot write {s}: {s}", .{ app.relPath(abs), @errorName(err) });
     // The file's command lines are this mnml's own from here on.
@@ -414,10 +421,17 @@ fn toastOnFail(app: *App, result: CommandError!void) Allocator.Error!void {
 
 // ─── delete ──────────────────────────────────────────────────────────────
 
-pub fn delete(app: *App, raw_name: []const u8) CommandError!void {
+/// Delete the layout `raw_name`. It asks first — the file may be
+/// committed and shared — unless `force` (the confirm's Delete, or
+/// `:layout delete!`).
+pub fn delete(app: *App, raw_name: []const u8, force: bool) CommandError!void {
     const arena = app.frame.allocator();
     const name = try needName(app, raw_name);
     const abs = try filePath(app, arena, name);
+    if (!force) {
+        Io.Dir.cwd().access(app.io, abs, .{}) catch return app.diag.fail(arena, "layout: no layout named {s}", .{name});
+        return askName(app, name, .delete, false);
+    }
     Io.Dir.cwd().deleteFile(app.io, abs) catch |err| switch (err) {
         error.FileNotFound => return app.diag.fail(arena, "layout: no layout named {s}", .{name}),
         else => return app.diag.fail(arena, "layout: cannot delete {s}: {s}", .{ app.relPath(abs), @errorName(err) }),
@@ -430,14 +444,17 @@ pub fn delete(app: *App, raw_name: []const u8) CommandError!void {
 // ─── the `:` line ────────────────────────────────────────────────────────
 
 /// `:layout save|load|delete|list [name]`; `:layout load! <name>` skips
-/// the unsaved-changes question; a bare `:layout` lists.
+/// the unsaved-changes question, `save!` / `delete!` the replace /
+/// delete one; a bare `:layout` lists.
 pub fn ex(app: *App, args: []const u8) CommandError!void {
     const verb, const rest = splitWord(args);
     if (verb.len == 0 or std.mem.eql(u8, verb, "list") or std.mem.eql(u8, verb, "ls")) return listCmd(app);
-    if (std.mem.eql(u8, verb, "save")) return save(app, rest);
+    if (std.mem.eql(u8, verb, "save")) return save(app, rest, false);
+    if (std.mem.eql(u8, verb, "save!")) return save(app, rest, true);
     if (std.mem.eql(u8, verb, "load")) return load(app, rest, false);
     if (std.mem.eql(u8, verb, "load!")) return load(app, rest, true);
-    if (std.mem.eql(u8, verb, "delete") or std.mem.eql(u8, verb, "del") or std.mem.eql(u8, verb, "rm")) return delete(app, rest);
+    if (std.mem.eql(u8, verb, "delete") or std.mem.eql(u8, verb, "del") or std.mem.eql(u8, verb, "rm")) return delete(app, rest, false);
+    if (std.mem.eql(u8, verb, "delete!") or std.mem.eql(u8, verb, "del!") or std.mem.eql(u8, verb, "rm!")) return delete(app, rest, true);
     return app.diag.fail(app.frame.allocator(), ":layout {s}? — save | load | delete | list <name>", .{verb});
 }
 
@@ -471,17 +488,27 @@ fn saveCmd(app: *App) CommandError!void {
     openPrompt(app, "Save this tab page as layout", .layout_save);
 }
 
+/// `layout.load`: the layouts picker — typing filters it down to the name
+/// (a blind name prompt beside a list of the names was the same command
+/// twice). `:layout load <name>` takes a name outright.
 fn loadCmd(app: *App) CommandError!void {
-    openPrompt(app, "Load layout (replaces this tab page)", .layout_load);
+    return openPicker(app, .load);
 }
 
+/// `layout.delete`: the layouts picker, the pick asks before it deletes.
 fn deleteCmd(app: *App) CommandError!void {
-    openPrompt(app, "Delete layout", .layout_delete);
+    return openPicker(app, .delete);
 }
 
 /// `layout.pick`: a picker over the saved names, each with what it
-/// holds; the pick loads.
+/// holds; the pick loads, and Shift+Delete on a row deletes it (asked).
 fn pickCmd(app: *App) CommandError!void {
+    return openPicker(app, .load);
+}
+
+const PickFor = enum { load, delete };
+
+fn openPicker(app: *App, pick_for: PickFor) CommandError!void {
     const arena = app.frame.allocator();
     const gpa = app.gpa;
     const names = try list(app, arena);
@@ -505,8 +532,16 @@ fn pickCmd(app: *App) CommandError!void {
     }
     const labels_owned = try labels.toOwnedSlice(gpa);
     const details_owned = try details.toOwnedSlice(gpa);
-    try cmd_picker.openPickerWith(app, "Load layout", .custom, labels_owned, try gpa.alloc(PaneId, 0), details_owned, &.{});
-    app.overlay.picker.on_accept = &acceptPick;
+    const title = switch (pick_for) {
+        .load => "Load layout · Shift+Del deletes",
+        .delete => "Delete layout",
+    };
+    try cmd_picker.openPickerWith(app, title, .custom, labels_owned, try gpa.alloc(PaneId, 0), details_owned, &.{});
+    app.overlay.picker.on_accept = switch (pick_for) {
+        .load => &acceptPick,
+        .delete => &deletePick,
+    };
+    app.overlay.picker.on_delete = &deletePick;
 }
 
 /// The picker row's detail: `3 panes · 2 splits · a.txt, b.txt` — or why
@@ -550,17 +585,70 @@ fn acceptPick(app: *App, _: usize, label: []const u8) Allocator.Error!void {
     try toastOnFail(app, load(app, label, false));
 }
 
+/// A picker row's delete: the confirm, then the picker again.
+fn deletePick(app: *App, _: usize, label: []const u8) Allocator.Error!void {
+    askName(app, label, .delete, true) catch |err| return toastOnFail(app, err);
+}
+
+const Ask = enum { overwrite, delete };
+
+pub const overwrite_choices = [_]Confirm.Choice{ .{ .key = 'r', .label = "Replace" }, .{ .key = 'c', .label = "Cancel" } };
+pub const delete_choices = [_]Confirm.Choice{ .{ .key = 'd', .label = "Delete" }, .{ .key = 'c', .label = "Cancel" } };
+
+/// The shared confirm box in front of a replace or a delete, Cancel
+/// selected: the file may be committed and shared.
+fn askName(app: *App, name: []const u8, what: Ask, from_picker: bool) CommandError!void {
+    const gpa = app.gpa;
+    const owned_name = try gpa.dupe(u8, name);
+    errdefer gpa.free(owned_name);
+    const msg = try switch (what) {
+        .overwrite => std.fmt.allocPrint(gpa, "Layout {s} exists ({s}/{s}.zon). Replace it with this tab page?", .{ name, rel_dir, name }),
+        .delete => std.fmt.allocPrint(gpa, "Delete layout {s} ({s}/{s}.zon)? A committed copy goes from the next commit too.", .{ name, rel_dir, name }),
+    };
+    errdefer gpa.free(msg);
+    const choices: []const Confirm.Choice = switch (what) {
+        .overwrite => &overwrite_choices,
+        .delete => &delete_choices,
+    };
+    app.overlay.deinit(gpa);
+    app.overlay = .{ .confirm = .{
+        .state = .{ .title = switch (what) {
+            .overwrite => "Replace layout?",
+            .delete => "Delete layout?",
+        }, .message = msg, .choices = choices, .selected = choices.len - 1 },
+        .purpose = switch (what) {
+            .overwrite => .{ .layout_overwrite = owned_name },
+            .delete => .{ .layout_delete = .{ .name = owned_name, .from_picker = from_picker } },
+        },
+        .message = msg,
+    } };
+    app.focus = .overlay;
+    app.needs_render = true;
+}
+
+/// The replace box's answer: index 0 is Replace.
+pub fn answerOverwrite(app: *App, name: []const u8, choice: usize) Allocator.Error!void {
+    if (choice != 0) {
+        app.toast("layout {s}: kept as it was", .{name});
+        return;
+    }
+    const owned = try app.frame.allocator().dupe(u8, name);
+    try toastOnFail(app, save(app, owned, true));
+}
+
+/// The delete box's answer: index 0 is Delete. From the picker, the
+/// picker comes back with what is left.
+pub fn answerDelete(app: *App, name: []const u8, from_picker: bool, choice: usize) Allocator.Error!void {
+    const owned = try app.frame.allocator().dupe(u8, name);
+    if (choice == 0) try toastOnFail(app, delete(app, owned, true)) else app.toast("layout {s}: not deleted", .{owned});
+    if (!from_picker) return;
+    if ((try list(app, app.frame.allocator())).len == 0) return;
+    openPicker(app, .load) catch |err| try toastOnFail(app, err);
+}
+
 /// The prompts' answers (`dispatch.acceptPrompt`).
 pub fn acceptSave(app: *App, text: []const u8) Allocator.Error!void {
-    try toastOnFail(app, save(app, text));
-}
-
-pub fn acceptLoad(app: *App, text: []const u8) Allocator.Error!void {
-    try toastOnFail(app, load(app, text, false));
-}
-
-pub fn acceptDelete(app: *App, text: []const u8) Allocator.Error!void {
-    try toastOnFail(app, delete(app, text));
+    try toastOnFail(app, save(app, text, false));
 }
 
 // ─── tests ───────────────────────────────────────────────────────────────
@@ -568,6 +656,7 @@ pub fn acceptDelete(app: *App, text: []const u8) Allocator.Error!void {
 const t = std.testing;
 const builtin = @import("builtin");
 const pty_pane = @import("pty_pane.zig");
+const Key = app_mod.Key;
 const git_app = @import("git.zig");
 const grep = @import("grep.zig");
 const image_pane = @import("image_pane.zig");
@@ -667,7 +756,8 @@ test "named layouts: names are file names; save / list / delete through the `:` 
     try t.expect(std.mem.indexOf(u8, app.diag.msg.?, "nothing on this tab page") != null);
     _ = try app.openPath(a);
     try ex(&app, "save dev");
-    try ex(&app, "save dev.zon"); // the extension is the name's
+    // The extension is the name's; `save!` replaces without asking.
+    try ex(&app, "save! dev.zon");
     try ex(&app, "save b");
     const names = try list(&app, app.frame.allocator());
     try t.expectEqual(@as(usize, 2), names.len);
@@ -678,7 +768,7 @@ test "named layouts: names are file names; save / list / delete through the `:` 
     try t.expectError(error.Failed, ex(&app, "save ../evil"));
     try t.expectError(error.Failed, ex(&app, "save"));
     try t.expectError(error.Failed, ex(&app, "frobnicate x"));
-    try ex(&app, "delete b");
+    try ex(&app, "delete! b");
     try t.expectEqual(@as(usize, 1), (try list(&app, app.frame.allocator())).len);
     try t.expectError(error.Failed, ex(&app, "delete b"));
     try t.expectError(error.Failed, ex(&app, "load nope"));
@@ -977,7 +1067,7 @@ test "named layouts: a browser pane rides in the file by URL; with no Chrome the
     try t.expectEqual(@as(usize, 1), (try app.layouts.current().leaves(app.frame.allocator())).len);
 }
 
-test "named layouts: layout.save / load / delete prompt through the one prompt, layout.pick lists what each holds and loads the pick" {
+test "named layouts: layout.save prompts, layout.pick / load / delete are the one picker; a save over a name and a delete ask through the confirm; Shift+Delete on a row deletes it" {
     var f = try Fixture.init();
     defer f.deinit();
     try f.tmp.dir.writeFile(t.io, .{ .sub_path = "a.txt", .data = "alpha\n" });
@@ -1002,14 +1092,50 @@ test "named layouts: layout.save / load / delete prompt through the one prompt, 
     try t.expect(std.mem.indexOf(u8, app.overlay.picker.details[0], "2 panes · 2 splits · a.txt, a.txt") != null);
     try cmd_picker.accept(&app, 0);
     try t.expect(toasted(&app, "layout two loaded · 2 panes"));
+    // layout.load is the same picker, not a blind name prompt.
     try command.run(&app, .{ .static = .@"layout.load" });
-    try t.expect(app.overlay.prompt.purpose == .layout_load);
-    try command.run(&app, .{ .static = .@"layout.delete" });
-    try t.expect(app.overlay.prompt.purpose == .layout_delete);
+    try t.expect(app.overlay == .picker);
     app.overlay.deinit(app.gpa);
     app.overlay = .none;
-    try acceptDelete(&app, "two");
+    // A save over "two" asks; Cancel keeps the file as it was.
+    try command.run(&app, .{ .static = .@"view.close_split" });
+    try ex(&app, "save two");
+    try t.expect(app.overlay == .confirm);
+    try t.expect(app.overlay.confirm.purpose == .layout_overwrite);
+    try t.expectEqual(overwrite_choices.len - 1, app.overlay.confirm.state.selected);
+    try app.handle(.{ .key = Key.char('c') });
+    try t.expect(toasted(&app, "layout two: kept as it was"));
+    const two = try f.abs(".mnml/layouts/two.zon");
+    defer t.allocator.free(two);
+    const kept = try Io.Dir.cwd().readFileAlloc(t.io, two, t.allocator, .limited(1 << 16));
+    defer t.allocator.free(kept);
+    try t.expect(std.mem.indexOf(u8, kept, ".split") != null);
+    // Replace writes it; `save!` would not have asked.
+    try ex(&app, "save two");
+    try app.handle(.{ .key = Key.char('r') });
+    try t.expect(toasted(&app, "layout two saved · 1 pane, 1 split"));
+    // layout.delete: the picker, then the confirm; Cancel keeps it.
+    try command.run(&app, .{ .static = .@"layout.delete" });
+    try t.expect(app.overlay == .picker);
+    try cmd_picker.accept(&app, 0);
+    try t.expect(app.overlay == .confirm);
+    try t.expect(app.overlay.confirm.purpose == .layout_delete);
+    try app.handle(.{ .key = Key.char('c') });
+    try t.expect(toasted(&app, "layout two: not deleted"));
+    // From the delete picker, the picker comes back after the answer.
+    try t.expect(app.overlay == .picker);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    // From the load picker, Shift+Delete on the row asks, Delete deletes.
+    try command.run(&app, .{ .static = .@"layout.pick" });
+    try app.handle(.{ .key = .{ .code = .delete, .mods = .{ .shift = true } } });
+    try t.expect(app.overlay == .confirm);
+    try app.handle(.{ .key = Key.char('d') });
     try t.expect(toasted(&app, "layout two deleted"));
+    try t.expectError(error.FileNotFound, Io.Dir.cwd().access(t.io, two, .{}));
+    // `:layout delete` of a name that is not there says so, no box.
+    try t.expectError(error.Failed, ex(&app, "delete two"));
+    try t.expect(app.overlay != .confirm);
 }
 
 test "named layouts: an integration pane's arguments are the file's, so it is a trust question like a terminal command" {

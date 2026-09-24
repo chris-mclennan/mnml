@@ -483,6 +483,20 @@ pub fn openRowMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
 }
 
 /// The pick at `idx` (an index into the filtered order) is chosen.
+/// Shift+Delete on a `.custom` picker that can remove its rows: the
+/// cursor row goes to `on_delete`, which asks through the shared confirm
+/// (so the picker closes for the box).
+pub fn deleteRow(app: *App) Allocator.Error!void {
+    const p = &app.overlay.picker;
+    const f = p.on_delete orelse return;
+    if (p.state.cursor >= p.filtered.items.len) return;
+    const i = p.filtered.items[p.state.cursor];
+    const label = try app.frame.allocator().dupe(u8, p.labels[i]);
+    app.overlay.deinit(app.gpa);
+    app.focus = if (app.active) |a| .{ .pane = a } else .tree;
+    try f(app, i, label);
+}
+
 pub fn accept(app: *App, idx: usize) Allocator.Error!void {
     const p = &app.overlay.picker;
     if (idx >= p.filtered.items.len) return;

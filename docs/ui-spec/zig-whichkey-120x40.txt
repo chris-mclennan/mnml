@@ -5,24 +5,24 @@
  󰍉 │      prog.dbg           │
    │                          │
  󰊢 │         󰐙 Add workspace  │
-   │                          │                                _ __    _ _    _ __    _
-  │                          │                               | '  \  | ' \  | '  \  | |
-   │                          │                               |_|_|_| |_||_| |_|_|_| |_|
- 󰐱 │                          │
-   │                          │                                     workspace · ws
- 󰎒 │                          │
-   │                          │   RECENT WORKSPACES                           SESSIONS
-  │                          │    ws                                open
-   │                          │                                                + New Claude Code session here
-  │                          │   RECENT FILES
-   │                          │    No recent files yet                         No session to resume
-  │                          │
-   │                          │                                               SHORTCUTS
- 󱘣 │                          │                                                Ctrl+P        find a file
-   │                          │                                                Ctrl+R        recent files
- 󰢱 │                          │                                                Ctrl+Shift+E  the file tree
+   │                          │
+  │                          │                                _ __    _ _    _ __    _
+   │                          │                               | '  \  | ' \  | '  \  | |
+ 󰐱 │                          │                               |_|_|_| |_||_| |_|_|_| |_|
+   │                          │
+ 󰎒 │                          │                                     workspace · ws
+   │                          │
+  │                          │   RECENT WORKSPACES                           SESSIONS
+   │                          │    ws                                open
+  │                          │                                                + New Claude Code session here
+   │                          │   RECENT FILES
+  │                          │    No recent files yet                         No session to resume
+   │                          │
+ 󱘣 │                          │                                               SHORTCUTS
+   │                          │                                                Ctrl+P        find a file
+ 󰢱 │                          │                                                Ctrl+R        recent files
+   │                          │                                                Ctrl+Shift+E  the file tree
    │                          │                                                Ctrl+B        toggle the tree
-   │                          │                                                Ctrl+Shift+P  command palette
  ┌ Ctrl+K ────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
  │󰘵 1 → harpoon 1                   H → +harpoon (2)               󰐱 i → +integrations (5)                           │
  │󰘵 2 → harpoon 2                   I → +insert (2)                 l → +lsp (12)                                   │
@@ -30,7 +30,7 @@
  │󰘵 4 → harpoon 4                  󰓂 P → +pr (2)                    󰘵 n → line numbers                                │
  │󰘵 5 → harpoon 5                   R → +http (5)                  󰘵 o → run task…                                   │
  │󰘵 6 → harpoon 6                   T → +test (6)                  󰘵 p → command palette                             │
- │󰘵 7 → harpoon 7                   W → +layouts (4)               󰘵 q → close buffer                                │
+ │󰘵 7 → harpoon 7                   W → +layouts (3)               󰘵 q → close buffer                                │
  │󰘵 8 → harpoon 8                  󰚩 a → +ai/term (14)               s → +split (12)                                 │
  │󰘵 9 → harpoon 9                  󰎒 b → +buffer (5)                 t → +toggle (13)                                │
  │󰘵 ? → cheatsheet (all chords)    󰍉 f → +find (4)                                                                    │

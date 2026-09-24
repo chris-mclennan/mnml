@@ -260,22 +260,17 @@ pub const rows = [_]Row{
     } },
     .{ .menu = "View", .parent = "Layouts", .label = "Save this tab page as…", .entry = .{
         .title = "Save this tab page as…",
-        .body = "Asks for a name and writes this tab page to `.mnml/layouts/<name>.zon`, workspace paths relative so the file can be committed; the same name again overwrites it. Scratch buffers and list panes are left out — nothing reopens them. A layout with terminal commands is also recorded as this mnml's own, so it loads its commands even in an untrusted workspace.",
+        .body = "Asks for a name and writes this tab page to `.mnml/layouts/<name>.zon`, workspace paths relative so the file can be committed; the same name again asks before it replaces the file (`:layout save!` does not ask). Scratch buffers and list panes are left out — nothing reopens them. A layout with terminal commands is also recorded as this mnml's own, so it loads its commands even in an untrusted workspace.",
         .links = &.{ .{ .command = .{ .id = .@"layout.save", .label = "Save it" } }, copy.docsSection("Named layouts") },
     } },
     .{ .menu = "View", .parent = "Layouts", .label = "Load layout…", .entry = .{
         .title = "Load layout…",
-        .body = "A picker over the saved layouts, each row saying how many panes and splits it holds and what they are; Enter replaces this tab page with it. Panes with unsaved changes ask first and then stay open as background tabs, and a terminal command from a file this mnml did not write only runs in a trusted workspace — refused otherwise, with a toast.",
+        .body = "A picker over the saved layouts, each row saying how many panes and splits it holds and what they are; Enter replaces this tab page with it, and Shift+Delete deletes the row after asking. Panes with unsaved changes ask first and then stay open as background tabs, and a terminal command from a file this mnml did not write only runs in a trusted workspace — refused otherwise, with a toast.",
         .links = &.{ .{ .command = .{ .id = .@"layout.pick", .label = "Pick one" } }, .{ .command = .{ .id = .@"tab.reopen", .label = "Bring the replaced page back" } }, .{ .command = .{ .id = .@"workspace.review_trust", .label = "Workspace trust" } } },
-    } },
-    .{ .menu = "View", .parent = "Layouts", .label = "Load layout by name…", .entry = .{
-        .title = "Load layout by name…",
-        .body = "Asks for a layout's name and loads it over this tab page — the typed twin of Load layout…, for a name you already know; `:layout load <name>` is the same from the `:` line and `:layout load!` skips the unsaved-changes question. An unknown name says so and leaves the page alone.",
-        .links = &.{ .{ .command = .{ .id = .@"layout.load", .label = "Load by name" } }, .{ .command = .{ .id = .@"layout.pick", .label = "Pick from the list instead" } } },
     } },
     .{ .menu = "View", .parent = "Layouts", .label = "Delete layout…", .entry = .{
         .title = "Delete layout…",
-        .body = "Asks for a layout's name and deletes its file from `.mnml/layouts/`, along with this mnml's record of having written it — a later file under the same name is treated as someone else's. The panes on screen are untouched.",
+        .body = "Picks a saved layout and, after asking, deletes its file from `.mnml/layouts/` — a committed copy goes from the next commit too — along with this mnml's record of having written it, so a later file under the same name is treated as someone else's. The panes on screen are untouched. Shift+Delete in Load layout… does the same from that list.",
         .links = &.{ .{ .command = .{ .id = .@"layout.delete", .label = "Delete one" } }, .{ .command = .{ .id = .@"layout.pick", .label = "See the saved ones" } } },
     } },
     // ── Go ──
