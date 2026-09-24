@@ -40,8 +40,10 @@ if [ "${1:-}" = stop ]; then
   H=$2
   [ -f "$H/pids" ] && while read -r p; do kill "$p" 2>/dev/null || true; done <"$H/pids"
   rm -f "$H/pids"
-  # The copies Rust spawned outlive its headless run: end those too.
-  pkill -f -- "--resume 5e551011-0000-4000-8000-00000000000" 2>/dev/null || true
+  # The copies Rust spawned outlive its headless run: they wrote their
+  # pids into the same file (the fake `claude` below), so they end with
+  # the rest. A `pkill -f` on the session ids ended another run's copies
+  # too — two dumps at once share the ids.
   exit 0
 fi
 H=$1; WS=$2
@@ -76,7 +78,9 @@ $S4 run the release build
 EOF
 cat >"$H/bin/claude" <<'EOF'
 #!/bin/bash
-# The fake `claude` of tools/seed-sessions-home.sh (see there).
+# The fake `claude` of tools/seed-sessions-home.sh (see there). Its pid
+# goes where `stop` reads, whoever started it; `exec` keeps it.
+echo $$ >> "$HOME/pids"
 sid=""
 while [ $# -gt 0 ]; do case "$1" in --resume|--session-id) sid=$2; shift 2;; *) shift;; esac; done
 title=$(grep "^$sid " "$HOME/.fake-claude/titles" | cut -d' ' -f2-)
