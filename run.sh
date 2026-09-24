@@ -522,7 +522,11 @@ case "${1:-start}" in
     CHECK_SUMMARY=""
     export MNML_E2E_ALLOW_SHELL="${MNML_E2E_ALLOW_SHELL:-1}"
     step "zig fmt --check src build.zig tools"            "$ZIG" fmt --check src build.zig tools
-    step "zig build test -Doptimize=Debug"                "$ZIG" build test -Doptimize=Debug
+    # Debug: the unit suite through tools/debug-suite-check.sh (the one
+    # verdict line, UNIT DEBUG FAILED, a chain stops on), then the e2e
+    # gate — together what `zig build test -Doptimize=Debug` ran.
+    step "tools/debug-suite-check.sh (the unit suite in Debug)" env MNML_ZIG="$ZIG" bash tools/debug-suite-check.sh
+    step "zig build e2e -Doptimize=Debug -- --gate"       "$ZIG" build e2e -Doptimize=Debug -- --gate
     step "zig build test -Doptimize=ReleaseSafe"          "$ZIG" build test -Doptimize=ReleaseSafe
     step "zig build -Doptimize=ReleaseSafe"               "$ZIG" build -Doptimize=ReleaseSafe
     step "mnml-zig test --gate --sizes 80x24,120x40,200x60" ./zig-out/bin/mnml-zig test --gate --sizes 80x24,120x40,200x60

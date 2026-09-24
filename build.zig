@@ -207,6 +207,18 @@ pub fn build(b: *std.Build) void {
     // `MNML_TEST_FILTER=<substring>` filters at run time on the built binary.
     const test_trace = b.option(bool, "test-trace", "Print each unit test's name as it runs; MNML_TEST_FILTER filters at run time") orelse false;
     const test_runner: ?std.Build.Step.Compile.TestRunner = if (test_trace) .{ .path = b.path("tools/test_runner.zig"), .mode = .simple } else null;
+    // `zig build unit-debug`: `unit` in Debug whatever `-Doptimize` this
+    // invocation carries — a nested build, as `check` runs its two modes.
+    // Debug is where the testing allocator's stack capture and the
+    // unoptimized C show, and where a race or a slow test hides from a
+    // ReleaseSafe-only chain; `tools/debug-suite-check.sh` runs it and
+    // says UNIT DEBUG FAILED. `-Dtest-trace` is passed down.
+    const unit_debug = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "unit", "-Doptimize=Debug" });
+    unit_debug.setName("zig build unit -Doptimize=Debug");
+    if (test_trace) unit_debug.addArg("-Dtest-trace=true");
+    unit_debug.has_side_effects = true;
+    const unit_debug_step = b.step("unit-debug", "Run the unit tests in Debug, whatever -Doptimize says (a nested `zig build unit -Doptimize=Debug`)");
+    unit_debug_step.dependOn(&unit_debug.step);
     const tests = b.addTest(.{ .root_module = exe.root_module, .filters = test_filters, .test_runner = test_runner });
     const tests_run = b.addRunArtifact(tests);
     unit_step.dependOn(&tests_run.step);

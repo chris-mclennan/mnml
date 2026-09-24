@@ -1038,9 +1038,15 @@ test "a window paints its bytes exactly as the whole file does: every grammar, i
     const rand = prng.random();
     var excused: std.ArrayListUnmanaged([]const u8) = .empty;
     defer excused.deinit(gpa);
+    // Long enough that the margin does not swallow the file: 128 KB, a
+    // window of at most 3 KB plus a margin either side being 19 KB. A
+    // Debug build halves it — tree-sitter's C at -O0 made the 42
+    // grammars at 128 KB 23-36 s — which still leaves the windows well
+    // inside the file; the 128 KB cap check runs in the optimized
+    // builds, the unit suite's ReleaseSafe run among them.
+    const text_len: usize = if (builtin.mode == .Debug) 8 * window_margin else 16 * window_margin;
     for (table.entries, 0..) |e, i| {
-        // Long enough that the margin does not swallow the file.
-        const text = try repeated(gpa, e.fixture, 16 * window_margin);
+        const text = try repeated(gpa, e.fixture, text_len);
         defer gpa.free(text);
         // The reference: every span of the file, from a highlighter that
         // has seen nothing else. It is a reference only while every query
@@ -1137,6 +1143,14 @@ test "incremental property: after every random edit the kept tree's windows pain
         h.setLanguage(entry);
         h.parse(text.items);
         _ = try h.spansIn(text.items, 0, 400);
+        // The reference, one per case: `invalidate` before each step drops
+        // its tree, windows and injected trees, so every step's answer is
+        // a from-scratch parse of the text as it stands; only the
+        // compiled queries carry over. A fresh highlighter per step
+        // compiled them 180 times, half of this test's 24-31 s in Debug.
+        var ref = Highlighter.init(gpa);
+        defer ref.deinit();
+        ref.setLanguage(entry);
         var step: usize = 0;
         while (step < 60) : (step += 1) {
             // One to three edits between parses, as a burst of typing is.
@@ -1163,7 +1177,8 @@ test "incremental property: after every random edit the kept tree's windows pain
                 });
             }
             h.parse(text.items);
-            const all = try scratchSpans(gpa, entry, text.items);
+            ref.invalidate();
+            const all = try gpa.dupe(Span, try ref.highlightAll(text.items));
             defer gpa.free(all);
             var probe: usize = 0;
             while (probe < 4) : (probe += 1) {
@@ -1215,10 +1230,21 @@ test "the match cap is a crash guard: a query that fans out past the cursor's 16
     // as a third, unanchored sibling keeps a match in progress per
     // signature - more than the cursor's 16-bit ids can name. Without a
     // cap that reads a freed capture list; at 65535 it runs for minutes.
+    //
+    // The work before the cap trips grows with the cube of the input
+    // (measured in Debug: 14 s at 32 KB, 111 s at 64 KB, 383 s at the
+    // full 128 KB — tree-sitter's C at -O0). The shipped cap trips
+    // between 32 and 64 KB, so a Debug build runs the same query on a
+    // sixteenth of the text against a sixteenth of the cap: 8 KB and 64,
+    // which trips in well under a second (4 KB already does). The
+    // cursor still comes from `QueryCursor.init`, and the cap it sets is
+    // asserted first, so the shipped figure stays under test in both
+    // modes; optimized builds run the full text against it.
+    const scale: u32 = if (builtin.mode == .Debug) 16 else 1;
     const e = table.entries[table.find("hs").?];
     var text: std.ArrayListUnmanaged(u8) = .empty;
     defer text.deinit(gpa);
-    while (text.items.len < 128 * 1024) try text.appendSlice(gpa, e.fixture);
+    while (text.items.len < 128 * 1024 / scale) try text.appendSlice(gpa, e.fixture);
     const parser = try ts.Parser.init();
     defer parser.deinit();
     try parser.setLanguage(e.language());
@@ -1233,13 +1259,17 @@ test "the match cap is a crash guard: a query that fans out past the cursor's 16
     defer q.deinit();
     const cursor = try ts.QueryCursor.init();
     defer cursor.deinit();
+    try testing.expectEqual(ts.QueryCursor.max_match_limit, cursor.matchLimit());
+    cursor.setMatchLimit(ts.QueryCursor.max_match_limit / scale);
     cursor.exec(q, tree.rootNode());
     var ci: u32 = 0;
     var n: usize = 0;
     while (cursor.nextCapture(&ci)) |_| n += 1;
     try testing.expect(cursor.didExceedMatchLimit());
-    // And the query as shipped, corrected, over the same text: every
-    // match kept.
+    // And the query as shipped, corrected, over the full 128 KB (cheap
+    // in any mode — the corrected query never fans out): every match
+    // kept.
+    while (text.items.len < 128 * 1024) try text.appendSlice(gpa, e.fixture);
     var h = Highlighter.init(gpa);
     defer h.deinit();
     h.setLanguage(table.find("hs").?);

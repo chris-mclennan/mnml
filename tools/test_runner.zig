@@ -5,7 +5,9 @@
 //! name *before* it runs (and its outcome + wall time after), and honours
 //! a runtime substring filter — `MNML_TEST_FILTER=<substring>` — so one
 //! test can be looped on the built binary without a rebuild (the build-time
-//! `-Dtest-filter` has reported "passed" while running nothing).
+//! `-Dtest-filter` has reported "passed" while running nothing), and a
+//! runtime seed — `MNML_TEST_SEED=<n>`, what `--seed` sets under the
+//! default runner — for the tests seeded from `std.testing.random_seed`.
 //!
 //! The verdict lines carry the test's name, not just its outcome. The
 //! suite is read through `grep -E "FAIL|passed;"` far more often than in
@@ -50,6 +52,17 @@ pub fn main(init: std.process.Init.Minimal) void {
         // Anything else (`--listen=-`, `--cache-dir=`) is the build runner's; ignored.
     }
     const filter: ?[]const u8 = if (builtin.os.tag == .windows) null else init.environ.getPosix("MNML_TEST_FILTER");
+    // The build runner hands `--seed=` only to a runner in its protocol
+    // mode, never to this one, so `testing.random_seed` is 0 here unless
+    // `MNML_TEST_SEED=<n>` names one: how a seed a seeded test printed
+    // (the undo property's rounds) is rerun under the trace.
+    if (builtin.os.tag != .windows) if (init.environ.getPosix("MNML_TEST_SEED")) |text| {
+        testing.random_seed = std.fmt.parseUnsigned(u32, text, 0) catch
+            @panic("unable to parse MNML_TEST_SEED");
+    };
+    // Named up front, so a test that panics — no error to catch and
+    // print — still leaves the seed it ran under in the log.
+    if (testing.random_seed != 0) std.debug.print("seed 0x{x}\n", .{testing.random_seed});
 
     const test_fns = builtin.test_functions;
     var ok_count: usize = 0;

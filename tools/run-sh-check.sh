@@ -113,6 +113,17 @@ check "stale: says so" 'echo "$out" | grep -q "is current"' "$out"
 check "check: the sequence runs the glyph audit" 'grep -q "\"\$ZIG\" build glyph-audit" "$ROOT/run.sh"'
 check "check: the sequence runs the hover-help audit" 'grep -q "\"\$ZIG\" build hover-audit" "$ROOT/run.sh"'
 check "check: the sequence cross-compiles every shipped target" 'grep -q "\"\$ZIG\" build gate-targets" "$ROOT/run.sh"'
+check "check: the sequence runs the Debug unit suite" 'grep -q "bash tools/debug-suite-check.sh" "$ROOT/run.sh"'
+check "check: the sequence still runs the ReleaseSafe suite" 'grep -q "\"\$ZIG\" build test -Doptimize=ReleaseSafe" "$ROOT/run.sh"'
+# tools/debug-suite-check.sh builds `unit-debug` and ends on a verdict a
+# chain can read: the fake zig (logs, exits 0) and one that exits 1.
+out=$(MNML_ZIG="$MNML_ZIG" bash "$ROOT/tools/debug-suite-check.sh" 2>&1); rc=$?
+check "debug-suite-check: a green build says ok (exit 0)" '[ $rc -eq 0 ] && echo "$out" | tail -1 | grep -q "^unit debug: ok"' "$out"
+check "debug-suite-check: it builds unit-debug" 'grep -q "^build unit-debug" "$ZIG_LOG"' "$(cat "$ZIG_LOG" 2>/dev/null)"
+printf '#!/bin/sh\nexit 1\n' > "$TMP/failzig"; chmod +x "$TMP/failzig"
+out=$(MNML_ZIG="$TMP/failzig" bash "$ROOT/tools/debug-suite-check.sh" 2>&1); rc=$?
+check "debug-suite-check: a red build says UNIT DEBUG FAILED and keeps the exit" '[ $rc -eq 1 ] && echo "$out" | tail -1 | grep -q "^UNIT DEBUG FAILED"' "$out"
+: > "$ZIG_LOG"
 
 # ── 2. nothing running ─────────────────────────────────────────────────
 rm -f "$MARKER"

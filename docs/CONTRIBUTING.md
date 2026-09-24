@@ -328,7 +328,13 @@ deadline down to make a test faster; it is not the cost.
 ## Tests
 
 - Unit tests run on `std.testing.allocator` only; a leak is a failure.
-  `page_allocator` is for pty ring buffers and nothing else.
+  `page_allocator` is for pty ring buffers and nothing else. The one
+  exception is a property test's oracle: its copies and scratch views
+  may come from a local `DebugAllocator(.{ .stack_trace_frames = 0 })`
+  that the test checks for leaks itself (the undo property) — the code
+  under test stays on `testing.allocator`. In Debug the per-allocation
+  stack capture is a DWARF unwind on macOS, and an oracle that allocates
+  per entry per step spends minutes in it.
 - Test the shipped default, not values around it. `tests/e2e/defaults.test`
   and the `"defaults are the shipped values"` test in
   `src/config/Config.zig` pin `Config{}`; a default that changes on
@@ -337,7 +343,15 @@ deadline down to make a test faster; it is not the cost.
   `-Doptimize=ReleaseSafe` (what ships). A test that passes in one and
   not the other is a bug in the code, not the test.
 - `zig build unit` runs every unit test binary and nothing else; `test`
-  is `unit` plus the e2e gate.
+  is `unit` plus the e2e gate. `zig build unit-debug` is `unit` in
+  Debug whatever `-Doptimize` says, and `tools/debug-suite-check.sh`
+  runs it with a last line a chain can stop on — `unit debug: ok (Ns)`
+  or `UNIT DEBUG FAILED (exit N, Ns)`; `./run.sh check` runs it beside
+  the ReleaseSafe suite. The Debug suite is sized to a few minutes and
+  no test in it should take 30 s: a test whose work explodes at -O0 or
+  under the testing allocator's per-allocation stack capture scales
+  its input for `builtin.mode == .Debug` (and says so) rather than
+  dropping the check, and the optimized run keeps the full size.
 - One test: `MNML_TEST_FILTER=<substring> zig build unit -Dtest-trace`
   — see "Running one test" below for why not `-Dtest-filter`.
 - `zig build test --summary all` prints one line per test binary and
@@ -415,6 +429,17 @@ blocks alone as passing. That is why `-Dtest-filter="colors on screen"`
 ran nothing while `-Dtest-filter=colors` found the same test: other
 matching tests happened to pull its file in. `-Dtest-filter` still
 narrows the e2e corpus by file name, which is what it is for.
+
+A seeded test reads `std.testing.random_seed`. Under the default
+runner that is the build's `--seed` (`zig build unit --seed 0x6fc0c5a4`);
+the build never hands a seed to the trace runner, so there it is 0
+unless `MNML_TEST_SEED=<n>` names one, and the runner prints
+`seed 0x…` once per binary when it is set. The undo property prints
+its round's seed and the run's seed when a round fails:
+
+```sh
+MNML_TEST_SEED=0x6fc0c5a4 MNML_TEST_FILTER="undo property" zig build unit -Dtest-trace
+```
 
 ## Running it
 

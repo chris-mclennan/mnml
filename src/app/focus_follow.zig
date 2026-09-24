@@ -264,7 +264,16 @@ test "focus follows mouse: `panes` — hovering across three splits focuses each
 }
 
 test "focus follows mouse: a held button, a drag gesture, an open picker, the which-key popup and a pending chord all keep the focus" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    // The picker opened below is the file picker, which walks the
+    // workspace as it opens: a workspace of its own, two files deep,
+    // not `/tmp` — the shared /tmp walked in 99 s in Debug.
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "a.txt", .data = "a" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "b.txt", .data = "b" });
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = root_buf[0..try tmp.dir.realPath(t.io, &root_buf)];
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 120, .rows = 40 });
     defer app.deinit();
     app.cfg.ui.focus_follows_mouse = .panes;
     const ids = try threeSplits(&app);
@@ -286,6 +295,7 @@ test "focus follows mouse: a held button, a drag gesture, an open picker, the wh
     // An open picker keeps it.
     try command.run(&app, .{ .static = .@"picker.files" });
     try t.expect(app.overlay == .picker);
+    try t.expect(app.overlay.picker.labels.len >= 2);
     try app.render();
     try motion(&app, xOf(&app, ids[2]) + 20, 3);
     try motion(&app, 2, 20);
