@@ -302,7 +302,7 @@ end)
 | `startup` | — | once, after every `init.lua` and the startup tasks |
 | `exit` | — | on quit |
 | `open` | `path`, `pane` | a file opened in an editor pane |
-| `save_pre` | `path`, `pane`, `auto` (true when an autosave is writing it, not a save you asked for) | before the bytes are written |
+| `save_pre` | `path`, `pane`, `auto` (true when an autosave is writing it, not a save you asked for), `may_hold` (true when the save can wait for the language server's format edits — `file.save` and `:w`; false for a save-all, a close prompt's Save, an autosave and replace-in-files) | before the bytes are written |
 | `save_post` | `path`, `pane`, `bytes` | after |
 | `buffer_change` | `pane`, `line_count` | 150 ms after the last edit |
 | `cursor_idle` | `pane`, `line` (1-based) | 300 ms after the cursor last moved, once per resting place *(api 1, added)* |
@@ -1483,6 +1483,7 @@ section has `scripts_doctor.test`, `scripts_install_dir.test`,
 set, with no environment at all), `scripts_marketplace_local.test` (the
 override), `scripts_dev_root_reload.test` and `scripts_budget_chip.test`.
 
-A test that installs a script sets `MNML_SCRIPTS_ROOT` in its header: the
-corpus shares one data root across every file, and a script installed by one
-would otherwise load in all the rest.
+Every file gets a data root of its own (unless its header says
+`# shared-data-root`), so a script one file installs never loads in
+another. A test that wants the installs somewhere it names sets
+`MNML_SCRIPTS_ROOT` in its header.
