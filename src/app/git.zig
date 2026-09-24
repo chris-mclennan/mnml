@@ -51,6 +51,7 @@ const cmd_picker = @import("cmd_picker.zig");
 const cmd_view = @import("cmd_view.zig");
 const context_menus = @import("context_menus.zig");
 const git_palette = @import("git_palette.zig");
+const tree_mod = @import("tree.zig");
 const conflicts = @import("conflicts.zig");
 const line_blame = @import("line_blame.zig");
 const clock = @import("clock.zig");
@@ -1846,8 +1847,8 @@ fn collectFiles(app: *App, arena: Allocator, for_graph: bool) Allocator.Error!Fi
     if (app.git.status) |status| {
         if (!for_graph) for (status.entries) |e| if (e.group == .conflicted) try un.append(arena, .{ .path = e.path, .letter = 'U', .staged = false });
         for (status.entries) |e| switch (e.group) {
-            .staged => try st.append(arena, .{ .path = e.path, .letter = e.code, .staged = true }),
-            .unstaged => try un.append(arena, .{ .path = e.path, .letter = e.code, .staged = false }),
+            .staged => try st.append(arena, .{ .path = e.path, .letter = e.code, .staged = true, .submodule = e.submodule }),
+            .unstaged => try un.append(arena, .{ .path = e.path, .letter = e.code, .staged = false, .submodule = e.submodule }),
             .untracked => try un.append(arena, .{ .path = if (for_graph) std.mem.trimEnd(u8, e.path, "/") else e.path, .letter = '?', .staged = false }),
             .conflicted => if (for_graph) try un.append(arena, .{ .path = e.path, .letter = '!', .staged = false }),
         };
@@ -3503,12 +3504,37 @@ pub fn actOnRow(app: *App, row: Row, what: RowAction) CommandError!void {
     const st = &app.git;
     const gpa = app.gpa;
     const repo = st.activeRepo() orelse return error.NoRepo;
+    // A submodule whose changes are all inside it: the superproject has
+    // no diff of its own to show and nothing to stage or discard (git
+    // records a submodule's commit, and that did not move) — the row
+    // opens the directory in the tree, and the verbs say where the
+    // changes are committed instead of toasting a stage that did nothing.
+    if (row.submodule) |sm| if (!row.staged and sm.innerOnly()) switch (what) {
+        .open => return openInTree(app, repo, row.path),
+        .stage, .discard => return app.diag.fail(app.frame.allocator(), "{s} is a submodule: its changes are inside it \u{2014} commit them there, then stage the new commit here (\u{23CE} opens it in the tree)", .{row.path}),
+        .unstage => {},
+    };
     switch (what) {
         .open => _ = try openDiff(app, repo, if (row.staged) .staged else .file, row.path, null, null),
         .stage => try submitOp(app, repo, .{ .stage = try gpa.dupe(u8, row.path) }),
         .unstage => try submitOp(app, repo, .{ .unstage = try gpa.dupe(u8, row.path) }),
         .discard => try openConfirm(app, .{ .discard = try gpa.dupe(u8, row.path) }, try std.fmt.allocPrint(gpa, "Discard changes to {s}? This cannot be undone.", .{row.path})),
     }
+}
+
+/// A directory of the repo (a submodule) shown and opened in the file
+/// tree, the keys there.
+fn openInTree(app: *App, repo: *client.Repo, rel: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    const abs = try std.fs.path.join(arena, &.{ repo.path, rel });
+    try app.tree.revealPath(app, abs);
+    if (tree_mod.underRoot(app.workspace, abs)) |wrel| {
+        try app.tree.setExpanded(wrel, true);
+        try app.tree.refresh(app);
+        if (app.tree.rowOf(wrel)) |r| app.tree.cursor = r;
+    }
+    app.focus = .tree;
+    app.needs_render = true;
 }
 
 /// Open the selected row's file in an editor (`git.open_file`).

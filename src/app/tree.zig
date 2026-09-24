@@ -1146,7 +1146,8 @@ pub fn previewTooHeavy(app: *App, abs: []const u8) Allocator.Error!?[]const u8 {
     return null;
 }
 
-fn underRoot(base: []const u8, path: []const u8) ?[]const u8 {
+/// `path` below `base`, relative to it; null when it is not under it.
+pub fn underRoot(base: []const u8, path: []const u8) ?[]const u8 {
     if (path.len > base.len + 1 and std.mem.startsWith(u8, path, base) and path[base.len] == '/') return path[base.len + 1 ..];
     return null;
 }

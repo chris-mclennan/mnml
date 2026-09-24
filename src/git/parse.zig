@@ -43,6 +43,40 @@ pub const Group = enum {
     }
 };
 
+/// A submodule's state in the superproject's status — porcelain v2's
+/// `S<c><m><u>` field: new commits checked out in it, tracked changes
+/// inside it, untracked files inside it.
+pub const Submodule = struct {
+    commit: bool = false,
+    modified: bool = false,
+    untracked: bool = false,
+
+    /// `S.M.` → `{ .modified = true }`; `N...` (not a submodule) → null.
+    pub fn parse(field: []const u8) ?Submodule {
+        if (field.len != 4 or field[0] != 'S') return null;
+        return .{ .commit = field[1] == 'C', .modified = field[2] == 'M', .untracked = field[3] == 'U' };
+    }
+
+    /// Only changes inside it: the superproject has nothing to stage —
+    /// `git add` of the path records a commit, and the checked-out one
+    /// did not move. They are committed in the submodule.
+    pub fn innerOnly(s: Submodule) bool {
+        return !s.commit;
+    }
+
+    /// `modified` / `new commits, untracked files` — what the row says.
+    pub fn note(s: Submodule, buf: []u8) []const u8 {
+        var w: std.Io.Writer = .fixed(buf);
+        var first = true;
+        inline for (.{ .{ s.commit, "new commits" }, .{ s.modified, "modified" }, .{ s.untracked, "untracked files" } }) |part| if (part[0]) {
+            if (!first) w.writeAll(", ") catch {};
+            w.writeAll(part[1]) catch {};
+            first = false;
+        };
+        return w.buffered();
+    }
+};
+
 pub const Entry = struct {
     group: Group,
     /// The porcelain letter for this side: `M A D R C T U ?`.
@@ -51,6 +85,8 @@ pub const Entry = struct {
     path: []const u8,
     /// The old path of a rename / copy.
     orig: ?[]const u8 = null,
+    /// Set when the path is a submodule (a gitlink), with its state.
+    submodule: ?Submodule = null,
 };
 
 /// Where HEAD is: on a branch (its name — what a verb passes to git) or
@@ -276,13 +312,16 @@ pub fn parseStatus(arena: Allocator, text: []const u8) Allocator.Error!Status {
                 const nfields: usize = if (line[0] == '1') 8 else 9;
                 var it = std.mem.tokenizeScalar(u8, line, ' ');
                 var xy: []const u8 = "..";
+                var sub: []const u8 = "N...";
                 var i: usize = 0;
                 var rest: []const u8 = "";
                 while (i < nfields) : (i += 1) {
                     const tok = it.next() orelse break;
                     if (i == 1) xy = tok;
+                    if (i == 2) sub = tok;
                     rest = it.rest();
                 }
+                const submodule = Submodule.parse(sub);
                 if (xy.len < 2 or rest.len == 0) continue;
                 var path = rest;
                 var orig: ?[]const u8 = null;
@@ -294,11 +333,11 @@ pub fn parseStatus(arena: Allocator, text: []const u8) Allocator.Error!Status {
                 }
                 const p = try unquote(arena, path);
                 if (xy[0] != '.') {
-                    try entries.append(arena, .{ .group = .staged, .code = xy[0], .path = p, .orig = orig });
+                    try entries.append(arena, .{ .group = .staged, .code = xy[0], .path = p, .orig = orig, .submodule = submodule });
                     st.staged += 1;
                 }
                 if (xy[1] != '.') {
-                    try entries.append(arena, .{ .group = .unstaged, .code = xy[1], .path = p, .orig = orig });
+                    try entries.append(arena, .{ .group = .unstaged, .code = xy[1], .path = p, .orig = orig, .submodule = submodule });
                     st.unstaged += 1;
                 }
             },
@@ -1534,6 +1573,29 @@ test "status v2: detached HEAD and an initial repo" {
     try testing.expectEqual(@as(u32, 0), st.changeCount());
     const empty = try parseStatus(arenaOf(&a), "");
     try testing.expect(empty.branch == null);
+}
+
+test "status v2: a submodule's `S<c><m><u>` rides on its entries; a plain file's `N...` is none" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const st = try parseStatus(arenaOf(&a),
+        \\# branch.oid 1a2b3c4d5e6f
+        \\# branch.head main
+        \\1 .M S.M. 160000 160000 160000 35b686aa 35b686aa vendor/sub
+        \\1 .M SCMU 160000 160000 160000 35b686aa 35b686aa vendor/other
+        \\1 .M N... 100644 100644 100644 abc abc a.txt
+        \\
+    );
+    try testing.expectEqual(@as(usize, 3), st.entries.len);
+    const sub = st.entries[0].submodule.?;
+    try testing.expect(!sub.commit and sub.modified and !sub.untracked);
+    try testing.expect(sub.innerOnly());
+    var buf: [64]u8 = undefined;
+    try testing.expectEqualStrings("modified", sub.note(&buf));
+    const other = st.entries[1].submodule.?;
+    try testing.expect(!other.innerOnly());
+    try testing.expectEqualStrings("new commits, modified, untracked files", other.note(&buf));
+    try testing.expect(st.entries[2].submodule == null);
 }
 
 test "HeadRef: a branch is its name; a detached HEAD is its sha, painted as git words it — never a branch called `(detached)`" {

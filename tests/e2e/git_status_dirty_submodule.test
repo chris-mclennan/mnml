@@ -1,0 +1,40 @@
+# A submodule with an edit inside it (`1 .M S.M.`) is a directory with a
+# repo of its own, not a changed file. The status pane listed it as
+# `M vendor/sub`; Enter opened a diff whose two sides were the same
+# `Subproject commit` line, and `s` toasted "staged vendor/sub" while
+# nothing changed (git records a submodule's commit, and it had not
+# moved). The row reads `vendor/sub/  (submodule, modified)`, Enter opens
+# the directory in the file tree, and `s` / `x` say the changes are
+# committed inside it.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write .gitignore ".mnml/\nsubsrc/\n"
+write a.txt "one\n"
+shell git add .gitignore a.txt
+shell git commit -q -m "init"
+shell git init -q -b main subsrc
+write subsrc/s.txt "x\n"
+shell git -C subsrc add s.txt
+shell git -C subsrc -c user.email=t@mnml.dev -c user.name=t commit -q -m "s1"
+shell git -c protocol.file.allow=always submodule -q add ./subsrc vendor/sub
+shell git commit -q -m "add the submodule"
+shell printf 'y\n' >> vendor/sub/s.txt
+shell git status --porcelain=v2 | grep -q '^1 .M S.M. .* vendor/sub$'
+command git.status_pane
+wait 1500
+expect screen contains "▶ M vendor/sub/  (submodule, modified)"
+key s
+wait 800
+expect screen contains "vendor/sub is a submodule: its changes are inside it"
+expect screen lacks "staged vendor/sub"
+shell test -z "$(git diff --cached --name-only)"
+key x
+expect screen lacks "Discard changes to vendor/sub?"
+expect screen contains "commit them there"
+key enter
+wait 800
+expect screen lacks "diff: vendor/sub"
+expect screen lacks "Subproject commit"
+expect status contains "\"focus\":\"tree\""
+expect screen contains "s.txt"

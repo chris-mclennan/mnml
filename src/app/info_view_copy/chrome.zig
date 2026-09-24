@@ -480,7 +480,7 @@ pub fn paneKind(kind: std.meta.Tag(app_mod.Pane)) Entry {
         },
         .git_status => .{
             .title = "git status",
-            .body = "The working tree's changes, staged above unstaged: Enter opens the diff, `s` / `u` stage and unstage a file, `a` stages all, `c` commits, `d` discards after a confirm. Right-click on a row is the file's git menu. Conflicts are listed first with their own rows — ours, theirs, both, split.",
+            .body = "The working tree's changes, staged above unstaged: Enter opens the diff, `s` / `u` stage and unstage a file, `a` stages all, `c` commits, `d` discards after a confirm. Right-click on a row is the file's git menu. Conflicts are listed first with their own rows — ours, theirs, both, split. A submodule reads `sub/  (submodule, modified)`: its changes are committed inside it, so Enter opens it in the file tree rather than a diff.",
             .keys = &.{.{ .command = .@"git.commit", .label = "Commit" }},
             .links = &.{ .{ .command = .{ .id = .@"git.commit", .label = "Commit" } }, .{ .command = .{ .id = .@"git.ai_commit", .label = "Write the message with AI" } }, ask },
         },

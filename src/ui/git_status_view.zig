@@ -28,6 +28,7 @@ const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const scrollbar = @import("scrollbar.zig");
 const ids = @import("../core/ids.zig");
+const parse = @import("../git/parse.zig");
 
 const Allocator = std.mem.Allocator;
 const Style = vaxis.Style;
@@ -37,7 +38,13 @@ const PaneId = ids.PaneId;
 /// A file the pane lists: its porcelain letter (`M A D R C U ?`) and
 /// which section it sits in. A file changed on both sides is one
 /// entry per section.
-pub const Entry = struct { path: []const u8, letter: u8, staged: bool };
+pub const Entry = struct {
+    path: []const u8,
+    letter: u8,
+    staged: bool,
+    /// The path is a submodule: the row reads `sub/  (submodule, …)`.
+    submodule: ?parse.Submodule = null,
+};
 
 pub const Doc = struct {
     /// The checked-out branch; null when HEAD is on none.
@@ -274,7 +281,14 @@ fn paintLine(ui: Ui, pane: PaneId, r: Rect, doc: Doc, l: Line) void {
             const marker: []const u8 = if (!sel) "    " else if (ui.ascii) "  > " else "  \u{25B6} ";
             x += ui.putStr(x, r.y, end -| x, marker, .{ .fg = p.yellow, .bg = bg });
             x += ui.putStr(x, r.y, end -| x, ui.fmt("{c} ", .{e.e.letter}), .{ .fg = letterColor(p, e.e.letter), .bg = bg, .bold = true });
-            _ = ui.putStr(x, r.y, end -| x, e.e.path, .{ .fg = p.fg, .bg = bg });
+            x += ui.putStr(x, r.y, end -| x, e.e.path, .{ .fg = p.fg, .bg = bg });
+            // A submodule is a directory with a repo of its own, not a
+            // file: its slash, and what changed in it.
+            if (e.e.submodule) |sm| {
+                x += ui.putStr(x, r.y, end -| x, "/", .{ .fg = p.fg, .bg = bg });
+                var buf: [64]u8 = undefined;
+                _ = ui.putStr(x, r.y, end -| x, ui.fmt("  (submodule, {s})", .{sm.note(&buf)}), .{ .fg = p.comment, .bg = bg });
+            }
         },
     }
 }
