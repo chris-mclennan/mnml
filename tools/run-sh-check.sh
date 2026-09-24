@@ -112,6 +112,7 @@ check "stale: says so" 'echo "$out" | grep -q "is current"' "$out"
 # with no other caller.
 check "check: the sequence runs the glyph audit" 'grep -q "\"\$ZIG\" build glyph-audit" "$ROOT/run.sh"'
 check "check: the sequence runs the hover-help audit" 'grep -q "\"\$ZIG\" build hover-audit" "$ROOT/run.sh"'
+check "check: the sequence cross-compiles every shipped target" 'grep -q "\"\$ZIG\" build gate-targets" "$ROOT/run.sh"'
 
 # ── 2. nothing running ─────────────────────────────────────────────────
 rm -f "$MARKER"
