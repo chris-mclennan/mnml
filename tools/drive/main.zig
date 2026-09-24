@@ -36,8 +36,9 @@ const harness = @import("harness.zig");
 const usage_text =
     \\mnml-drive — drive a real mnml in a real ghostty window (dev-only, macOS + ghostty)
     \\
-    \\  launch --workspace DIR --data-root DIR [--cols N] [--rows N] [--exe PATH]
-    \\                                         [--ghostty PATH] [--size PT] [--timeout MS]
+    \\  launch --workspace DIR --data-root DIR [--size small|corpus|full]
+    \\         [--cols N] [--rows N] [--font-size PT] [--exe PATH] [--ghostty PATH]
+    \\         [--timeout MS]
     \\  key <spec>              one chord or a chain: ctrl+p, "space f f", enter
     \\  type <text>             literal text, any codepoint
     \\  click|rightclick|doubleclick|hover X Y      cell coordinates
@@ -1013,6 +1014,16 @@ fn sleepMs(io: Io, ms: u64) void {
 test {
     _ = keys;
     _ = harness;
+}
+
+test "the usage text names every flag launch reads, and --size by the words it takes" {
+    // It said `[--size PT]`: `--size` takes a name and the point size is
+    // `--font-size`, so the one line meant to save a trip to DRIVE.md
+    // sent the reader to the wrong flag.
+    for ([_][]const u8{ "--workspace", "--data-root", "--cols", "--rows", "--exe", "--ghostty", "--timeout", "--font-size PT", "--size small|corpus|full" }) |flag| {
+        try std.testing.expect(std.mem.indexOf(u8, usage_text, flag) != null);
+    }
+    try std.testing.expect(std.mem.indexOf(u8, usage_text, "--size PT") == null);
 }
 
 /// What a `full` launch should fill: the user's own largest ghostty
