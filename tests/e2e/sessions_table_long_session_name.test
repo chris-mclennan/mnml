@@ -1,0 +1,13 @@
+# env: HOME=home
+# A session whose transcript is longer than the scan's tail (256 KiB)
+# is named on the sessions table by its first prompt — the one namer,
+# `sessions.nameOf`, asks the head of the file for it — not by the id
+# the table fell back to while its namer read the last prompt, which
+# the tail also lacked. (Needs the uxfix namer, merged as 8b40299b.)
+shell mkdir -p home/.claude/projects/-tmp-p-long
+shell f=home/.claude/projects/-tmp-p-long/e2e0000a-0000-4000-8000-00000000a002.jsonl; pad=$(printf 'x%.0s' $(seq 1 1000)); { echo '{"type":"user","cwd":"/tmp/p-long","message":{"role":"user","content":"the long session"}}'; for i in $(seq 1 300); do echo '{"type":"assistant","cwd":"/tmp/p-long","message":{"id":"msg_l'$i'","model":"claude-opus-4-7","usage":{"input_tokens":1000,"output_tokens":200},"content":[{"type":"text","text":"turn '$i' '$pad'"}]}}'; done; echo '{"type":"assistant","cwd":"/tmp/p-long","message":{"id":"msg_lz","model":"claude-opus-4-7","usage":{"input_tokens":0,"output_tokens":0},"content":[{"type":"text","text":"Long reply."}]}}'; } > $f; test $(wc -c < $f) -gt 300000
+command view.toggle_tree
+command sessions.table
+wait 1500
+# The row's name (its id stays in the id column).
+expect screen contains "· done the long session"
