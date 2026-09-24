@@ -1286,7 +1286,7 @@ pub fn askAi(app: *App, what: client.AiContext, product: ai_app.Product) Command
     const repo = try requireRepo(app);
     // Fail fast on a route that cannot run, before any git runs.
     switch (ai_app.route(app, if (product == .claude) .claude else .codex)) {
-        .off => return app.diag.fail(app.frame.allocator(), "AI is routed off ([ai.routing.{s}] backend = \"off\")", .{@tagName(product)}),
+        .off => return app.diag.fail(app.frame.allocator(), "AI is routed off (.ai.routing.{s}.backend = .off)", .{@tagName(product)}),
         .api => if (product == .codex) return app.diag.fail(app.frame.allocator(), "Codex has no API backend in this build", .{}),
         .cli => {},
     }
@@ -1321,7 +1321,7 @@ pub fn explainBranch(app: *App, name: []const u8) CommandError!void {
     if (base.len == 0) return app.diag.fail(arena, "explain {s}: it is the checked-out branch and has no upstream \u{2014} nothing to compare it against", .{name});
     // Fail on a route that cannot run before any git does.
     switch (ai_app.route(app, .claude)) {
-        .off => return app.diag.fail(arena, "AI is routed off ([ai.routing.claude] backend = \"off\")", .{}),
+        .off => return app.diag.fail(arena, "AI is routed off (.ai.routing.claude.backend = .off)", .{}),
         .api => if (app.env.get(api.env_key) == null) return app.diag.fail(arena, "AI: ${s} not set (the API backend needs it)", .{api.env_key}),
         .cli => {},
     }

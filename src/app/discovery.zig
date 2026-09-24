@@ -495,7 +495,7 @@ fn describeSegment(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Tip {
             };
         },
         .wrap => .{ .title = "WRAP — long lines wrap", .detail = "click turns wrapping off" },
-        .autosave => .{ .title = try std.fmt.allocPrint(arena, "Autosave every {d}s", .{app.cfg.editor.autosave_secs}), .detail = "`[editor] autosave_secs` sets it" },
+        .autosave => .{ .title = try std.fmt.allocPrint(arena, "Autosave every {d}s", .{app.cfg.editor.autosave_secs}), .detail = "`.editor.autosave_secs` sets it" },
         .highlight => blk: {
             const e = app.activeEditor() orelse break :blk null;
             var size_buf: [24]u8 = undefined;

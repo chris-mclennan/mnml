@@ -795,12 +795,12 @@ pub fn askProduct(app: *App, product: Product, title: []const u8, prompt: []cons
         .claude => switch (route(app, .claude)) {
             .cli => .claude_cli,
             .api => .claude_api,
-            .off => return app.diag.fail(app.frame.allocator(), "AI is routed off ([ai.routing.claude] backend = \"off\")", .{}),
+            .off => return app.diag.fail(app.frame.allocator(), "AI is routed off (.ai.routing.claude.backend = .off)", .{}),
         },
         .codex => switch (route(app, .codex)) {
             .cli => .codex_cli,
-            .api => return app.diag.fail(app.frame.allocator(), "Codex has no API backend in this build ([ai.routing.codex] backend = \"api\")", .{}),
-            .off => return app.diag.fail(app.frame.allocator(), "AI is routed off ([ai.routing.codex] backend = \"off\")", .{}),
+            .api => return app.diag.fail(app.frame.allocator(), "Codex has no API backend in this build (.ai.routing.codex.backend = .api)", .{}),
+            .off => return app.diag.fail(app.frame.allocator(), "AI is routed off (.ai.routing.codex.backend = .off)", .{}),
         },
     };
     const key: []const u8 = if (mode == .claude_api) (app.env.get(api.env_key) orelse return app.diag.fail(app.frame.allocator(), "AI: ${s} not set (the API backend needs it)", .{api.env_key})) else "";
@@ -899,7 +899,7 @@ fn jobWorker(events: *event.EventQueue, io: Io, gpa: Allocator, j: *Job, mode: J
                     return;
                 },
                 error.TimedOut => {
-                    const why = std.fmt.allocPrint(gpa, "`{s}` gave no answer within {d} s and was stopped ([ai] cli_timeout_ms)", .{ binary, std.math.divCeil(u32, timeout_ms, 1000) catch 0 }) catch return;
+                    const why = std.fmt.allocPrint(gpa, "`{s}` gave no answer within {d} s and was stopped (.ai.cli_timeout_ms)", .{ binary, std.math.divCeil(u32, timeout_ms, 1000) catch 0 }) catch return;
                     events.post(io, .{ .ai = .{ .job = j.id, .msg = .{ .timed_out = why } } });
                     return;
                 },
@@ -988,7 +988,7 @@ fn agentLoop(events: *event.EventQueue, io: Io, gpa: Allocator, j: *Job, prompt:
                 return;
             },
             error.TimedOut => {
-                const why = std.fmt.allocPrint(gpa, "the API gave no answer within {d} s and the request was stopped ([ai] cli_timeout_ms)", .{std.math.divCeil(u32, timeout_ms, 1000) catch 0}) catch return;
+                const why = std.fmt.allocPrint(gpa, "the API gave no answer within {d} s and the request was stopped (.ai.cli_timeout_ms)", .{std.math.divCeil(u32, timeout_ms, 1000) catch 0}) catch return;
                 events.post(io, .{ .ai = .{ .job = j.id, .msg = .{ .timed_out = why } } });
                 return;
             },
@@ -1142,7 +1142,7 @@ fn executeTool(arena: Allocator, io: Io, gpa: Allocator, events: *event.EventQue
         return .{ .text = if (hits.len == 0) "(no matches)" else hits, .note = std.fmt.allocPrint(arena, "grep {s}", .{pattern}) catch "grep" };
     }
     if (std.mem.eql(u8, name, "write_file")) {
-        if (!write_tools) return fail.f(arena, "write_file: disabled (set [ai] api_write_tools = true to enable it)", .{});
+        if (!write_tools) return fail.f(arena, "write_file: disabled (set .ai.api_write_tools = true to enable it)", .{});
         const rel = safeRel(api.inputStr(input, "path") orelse "") orelse return fail.f(arena, "write_file: bad path", .{});
         const content = api.inputStr(input, "content") orelse "";
         const detail = std.fmt.allocPrint(gpa, "write {s} ({d} bytes)?", .{ rel, content.len }) catch return fail.f(arena, "write_file: out of memory", .{});
@@ -1450,7 +1450,7 @@ pub const Product = launch_profiles.Product;
 /// in a worktree, and the name prompt opened instead
 /// (`session_worktree.zig`).
 fn openSession(app: *App, product: Product, placement: ?pty_pane.Placement) CommandError!?PaneId {
-    if (route(app, if (product == .claude) .claude else .codex) == .off) return app.diag.fail(app.frame.allocator(), "{s} is routed off in [ai.routing]", .{@tagName(product)});
+    if (route(app, if (product == .claude) .claude else .codex) == .off) return app.diag.fail(app.frame.allocator(), "{s} is routed off in .ai.routing", .{@tagName(product)});
     showSessionsSection(app);
     if (placement == null and product == .claude and !tabsMode(app)) return ai_grid.open(app);
     const where: pty_pane.Placement = placement orelse (if (tabsMode(app)) .tab else .right);
@@ -1546,14 +1546,14 @@ fn claudeCodeNew(app: *App) CommandError!void {
 /// `ai.new_session_worktree`: the default profile's session in a
 /// worktree of its own — the name prompt first.
 fn newSessionWorktree(app: *App) CommandError!void {
-    if (route(app, .claude) == .off) return app.diag.fail(app.frame.allocator(), "claude is routed off in [ai.routing]", .{});
+    if (route(app, .claude) == .off) return app.diag.fail(app.frame.allocator(), "claude is routed off in .ai.routing", .{});
     try @import("session_worktree.zig").openNamePrompt(app, .claude, launch_profiles.defaultName(app, .claude));
 }
 
 /// N Claude sessions: N tabs in tabs mode, else the grid — with a new
 /// page every eight (`ai_grid.openBatch`).
 fn openBatch(app: *App, n: usize) CommandError!void {
-    if (route(app, .claude) == .off) return app.diag.fail(app.frame.allocator(), "claude is routed off in [ai.routing]", .{});
+    if (route(app, .claude) == .off) return app.diag.fail(app.frame.allocator(), "claude is routed off in .ai.routing", .{});
     showSessionsSection(app);
     if (!tabsMode(app)) return ai_grid.openBatch(app, n);
     var i: usize = 0;
@@ -2511,7 +2511,7 @@ test "ghost text: typing through a request kills the claude child, not just our 
     try t.expectEqualStrings("ghost-text: claude-code · 0.4s · cancelled (typed)", lastMessage(&app));
 }
 
-test "an AI job's CLI child past [ai] cli_timeout_ms is killed and reaped, the pane says why and a toast names the key" {
+test "an AI job's CLI child past .ai.cli_timeout_ms is killed and reaped, the pane says why and a toast names the key" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -2540,8 +2540,9 @@ test "an AI job's CLI child past [ai] cli_timeout_ms is killed and reaped, the p
         try t.io.sleep(.fromMilliseconds(10), .awake);
         try app.tick(App.nowMs(app.io));
     }
-    try t.expect(std.mem.indexOf(u8, p.err.?, "cli_timeout_ms") != null);
-    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "cli_timeout_ms") != null);
+    // The key as the config spells it (ZON), not as a TOML table.
+    try t.expect(std.mem.indexOf(u8, p.err.?, "(.ai.cli_timeout_ms)") != null);
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "(.ai.cli_timeout_ms)") != null);
     const pid_text = try tmp.dir.readFileAlloc(t.io, "pid", t.allocator, .limited(64));
     defer t.allocator.free(pid_text);
     const pid = try std.fmt.parseInt(std.posix.pid_t, std.mem.trim(u8, pid_text, " \n"), 10);
@@ -2634,4 +2635,34 @@ test "an API failure says its status, the API's words and, on a 429, when to ret
     const m500 = try httpFailure(t.allocator, arena.allocator(), .{ .status = 500, .body = &junk });
     defer t.allocator.free(m500);
     try t.expectEqualStrings("HTTP 500", m500);
+}
+
+test "user-facing messages name config keys the way config.zon spells them, never as a TOML table" {
+    // The config is ZON (`docs/CONFIG.md`); a toast that says
+    // `[ai] cli_timeout_ms` sends the reader looking for a table that
+    // does not exist. Every message-building line in these files is
+    // checked; comments may keep the old spelling.
+    const files = [_][]const u8{
+        @embedFile("ai.zig"),                        @embedFile("git.zig"),       @embedFile("cloud_agents.zig"),
+        @embedFile("dispatch.zig"),                  @embedFile("discovery.zig"), @embedFile("info_view_copy/menus/plus.zig"),
+        @embedFile("info_view_copy/menus/rail.zig"),
+    };
+    const tables = [_][]const u8{ "[" ++ "ai]", "[" ++ "ai.", "[" ++ "cloud_agents]", "[" ++ "editor]", "[" ++ "ui]" };
+    const speakers = [_][]const u8{ "diag.fail(", "toast(", "allocPrint(", ".detail =", ".body =", "fail.f(" };
+    for (files) |src| {
+        var lines = std.mem.splitScalar(u8, src, '\n');
+        while (lines.next()) |line| {
+            const code = std.mem.trimStart(u8, line, " ");
+            if (std.mem.startsWith(u8, code, "//")) continue;
+            var speaks = false;
+            for (speakers) |sp| if (std.mem.indexOf(u8, code, sp) != null) {
+                speaks = true;
+            };
+            if (!speaks) continue;
+            for (tables) |tb| if (std.mem.indexOf(u8, code, tb) != null) {
+                std.debug.print("TOML spelling in a message: {s}\n", .{code});
+                return error.TestUnexpectedResult;
+            };
+        }
+    }
 }

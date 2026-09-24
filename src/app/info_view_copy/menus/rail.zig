@@ -80,7 +80,7 @@ pub const rows = [_]Row{
     // ── Sessions ──
     .{ .label = "+ New Claude Code session", .entry = .{
         .title = "+ New Claude Code session",
-        .body = "Starts another Claude Code session — the `claude` CLI in a terminal pane — and shows the SESSIONS section with its new card: under the default `ui.ai_layout_mode = grid` the first two split to the right of the active leaf and later ones fill a grid that grows, a new page every eight; under `tabs` they stack as tabs in one leaf. Each session has its own card, rail colour and transcript. Claude routed off in `[ai.routing]` refuses with a toast.",
+        .body = "Starts another Claude Code session — the `claude` CLI in a terminal pane — and shows the SESSIONS section with its new card: under the default `ui.ai_layout_mode = grid` the first two split to the right of the active leaf and later ones fill a grid that grows, a new page every eight; under `tabs` they stack as tabs in one leaf. Each session has its own card, rail colour and transcript. Claude routed off in `ai.routing` refuses with a toast.",
         .links = &.{ .{ .command = .{ .id = .@"ai.claude_code_new", .label = "Start one" } }, .{ .command = .{ .id = .@"ai.new_session_worktree", .label = "In a worktree instead" } }, .{ .settings = .{ .row = copy.settingsRow("ai.routing.claude.backend"), .label = "Claude routing in Settings" } } },
     } },
     .{ .label = "+ New session in a worktree…", .entry = .{
@@ -90,12 +90,12 @@ pub const rows = [_]Row{
     } },
     .{ .label = "+ New Codex session", .entry = .{
         .title = "+ New Codex session",
-        .body = "Starts another Codex session — the `codex` CLI in a terminal pane — beside the active pane and shows the SESSIONS section with its card; under `ui.ai_layout_mode = tabs` it stacks as a tab. Codex has no API route in this build, so the CLI must be on PATH, and Codex routed off in `[ai.routing]` refuses with a toast.",
+        .body = "Starts another Codex session — the `codex` CLI in a terminal pane — beside the active pane and shows the SESSIONS section with its card; under `ui.ai_layout_mode = tabs` it stacks as a tab. Codex has no API route in this build, so the CLI must be on PATH, and Codex routed off in `ai.routing` refuses with a toast.",
         .links = &.{ .{ .command = .{ .id = .@"ai.codex_new", .label = "Start one" } }, .{ .settings = .{ .row = copy.settingsRow("ai.routing.codex.backend"), .label = "Codex routing in Settings" } } },
     } },
     .{ .label = "+ New cloud run…", .entry = .{
         .title = "+ New cloud run…",
-        .body = "Asks for a Jira ticket key (or a free prompt) and fires a cloud agent run for it on ECS — a Claude session on a machine that is not this one — then lists it under the section's CLOUD AGENTS rows, where its state and log can be followed. It needs `[cloud_agents]` `runs_table` and a region (or `MNML_CLOUD_AGENTS_REGION`); without them the row toasts what is missing.",
+        .body = "Asks for a Jira ticket key (or a free prompt) and fires a cloud agent run for it on ECS — a Claude session on a machine that is not this one — then lists it under the section's CLOUD AGENTS rows, where its state and log can be followed. It needs `cloud_agents.runs_table` and a region (or `MNML_CLOUD_AGENTS_REGION`); without them the row toasts what is missing.",
         .links = &.{ .{ .command = .{ .id = .@"cloud_agents.new_run", .label = "Fire a run" } }, .{ .command = .{ .id = .@"view.activity_sessions", .label = "The sessions section" } }, ask },
     } },
     .{ .label = "Open as a table", .entry = .{
