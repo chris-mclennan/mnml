@@ -2361,11 +2361,40 @@ pub fn verbPatch(app: *App, dp: *const DiffPane, what: LineVerb, arena: Allocato
     return .{ .patch = try parse.patchForHunk(arena, f, at.hunk), .desc = try std.fmt.allocPrint(arena, "{s} hunk {d} of {s}", .{ past, at.hunk + 1, f.path() }), .file = at.file, .hunk = at.hunk };
 }
 
+/// The file a diff of a binary file shows: git gives it no hunks, so
+/// the pane's verbs take the whole file. Null for a diff with a hunk.
+pub fn binaryPath(dp: *const DiffPane) ?[]const u8 {
+    for (dp.files) |f| if (f.hunks.len > 0) return null;
+    for (dp.files) |f| if (f.binary) return f.path();
+    return null;
+}
+
 /// Stage / unstage / discard the selected lines, else the hunk under
-/// the cursor, with a synthesized patch.
+/// the cursor, with a synthesized patch. A binary file has no hunk: the
+/// verb takes the file (`add` / `restore --staged` / `checkout --`), as
+/// the status pane's row does.
 pub fn applyHunk(app: *App, dp: *DiffPane, what: LineVerb) CommandError!void {
     const arena = app.frame.allocator();
     const repo = app.git.repoById(dp.repo) orelse return error.NoRepo;
+    if (binaryPath(dp)) |path| {
+        const staged_scope = dp.scope == .staged;
+        const fits = switch (dp.scope) {
+            .file, .worktree, .head, .staged => (what == .unstage) == staged_scope,
+            .commit, .orig, .conflict, .range => false,
+        };
+        if (!fits) return app.diag.fail(arena, "diff: {s} cannot be {s} from this diff", .{ path, switch (what) {
+            .stage => "staged",
+            .unstage => "unstaged",
+            .discard => "discarded",
+        } });
+        const owned = try app.gpa.dupe(u8, path);
+        errdefer app.gpa.free(owned);
+        return submitOp(app, repo, switch (what) {
+            .stage => .{ .stage = owned },
+            .unstage => .{ .unstage = owned },
+            .discard => .{ .discard = owned },
+        });
+    }
     const vp = try verbPatch(app, dp, what, arena);
     const desc = try app.gpa.dupe(u8, vp.desc);
     errdefer app.gpa.free(desc);
@@ -2448,6 +2477,10 @@ fn extendDiffSelect(dp: *DiffPane, delta: isize) void {
 /// The discard confirm for the selection or the hunk (`x`, the chip,
 /// the menu).
 pub fn askDiscard(app: *App, id: PaneId, dp: *DiffPane) Allocator.Error!void {
+    if (binaryPath(dp)) |path| {
+        if (dp.scope != .file and dp.scope != .worktree and dp.scope != .head) return app.toast("diff: {s} cannot be discarded from this diff", .{path});
+        return openConfirm(app, .{ .discard_hunk = .{ .pane = id } }, try std.fmt.allocPrint(app.gpa, "  Discard the changes to {s} from the worktree? This cannot be undone.", .{path}));
+    }
     if (hunkAtCursor(dp) == null) return app.toast("diff: no hunk under the cursor", .{});
     const arena = app.frame.allocator();
     const sel = selectedLines(dp, arena) catch null;

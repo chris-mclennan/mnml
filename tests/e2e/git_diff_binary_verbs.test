@@ -1,0 +1,52 @@
+# A binary file's diff is not a dead end. It had git's line and its
+# sizes but no Stage / Discard chip, and `s` answered "no hunk under the
+# cursor" — back to the status pane to do anything. The pane now puts
+# the banner a hunk gets over it — the file's name and the scope's
+# chips — and `s` / `u` / `x` (and the chips) take the whole file:
+# `add`, `restore --staged`, `checkout --` after a confirm.
+shell git init -q -b main
+shell git config user.email "ada@example.test"
+shell git config user.name "Ada Example"
+write .gitignore ".mnml/\n"
+shell printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89' > logo.png
+shell git add .gitignore logo.png
+shell git commit -q -m "initial"
+shell printf 'garbage' >> logo.png
+command git.status_pane
+wait 1500
+expect screen contains "▶ M logo.png"
+key enter
+wait 1500
+expect screen contains "diff: logo.png"
+expect screen contains " Binary  logo.png"
+expect screen contains " Stage "
+expect screen contains " Discard "
+expect screen contains "Binary files differ · 33 bytes → 40 bytes"
+key s
+wait 1500
+expect screen lacks "no hunk under the cursor"
+shell test "$(git diff --cached --name-only)" = logo.png
+shell git diff --quiet -- logo.png
+# The staged side: Unstage takes it back out of the index.
+command git.status_pane
+wait 1000
+expect screen contains "▶ M logo.png"
+key enter
+wait 1500
+expect screen contains " Unstage "
+key u
+wait 1500
+shell test -z "$(git diff --cached --name-only)"
+shell ! git diff --quiet -- logo.png
+# Discard asks first, then puts HEAD's bytes back.
+command git.status_pane
+wait 1000
+key enter
+wait 1500
+expect screen contains " Discard "
+key x
+expect screen contains "Discard the changes to logo.png"
+key y
+wait 1500
+shell git diff --quiet -- logo.png
+shell test "$(wc -c < logo.png | tr -d ' ')" = 33
