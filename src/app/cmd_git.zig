@@ -194,6 +194,8 @@ fn commitFocus(app: *App) CommandError!void {
             g.cursor = 0;
             g.wip_focused = true;
             g.detail_focus = false;
+            // A concluded merge: the box starts from git's MERGE_MSG.
+            try git.seedCommitBox(app, g);
         },
         else => return error.NoActivePane,
     }
@@ -445,6 +447,7 @@ fn commit(app: *App) CommandError!void {
     if (git.activeGraph(app)) |g| if (g.wipSelected() and std.mem.trim(u8, g.wip_text.items, " \t\r\n").len > 0) return git.commitFromTextarea(app, g);
     if (app.git_palette.active and git.graphPaintsBox(app)) return commitFocus(app);
     git.openPrompt(app, .commit, git.commitPromptTitle(app));
+    try git.seedCommitPrompt(app);
 }
 
 // ─── AI commit messages ─────────────────────────────────────────────────

@@ -78,7 +78,7 @@ pub const rows = [_]Row{
     } },
     .{ .label = "Commit\u{2026}", .entry = .{
         .title = "Commit\u{2026}",
-        .body = "Opens the commit prompt and commits what is in the index when you accept — nothing unstaged is included, so stage first. With the commit graph's working-tree box already holding a message, the row commits from that box instead of asking. An empty message cancels, and a repo with nothing staged says so.",
+        .body = "Opens the commit prompt and commits what is in the index when you accept — nothing unstaged is included, so stage first. With the commit graph's working-tree box already holding a message, the row commits from that box instead of asking. An empty message cancels, and a repo with nothing staged says so. After a merge, a cherry-pick or a `merge --squash` the prompt starts from the message git has ready, as `git commit` does.",
         .keys = &.{.{ .command = .@"git.commit", .label = "Commit" }},
         .links = &.{ .{ .command = .{ .id = .@"git.commit", .label = "Write one" } }, .{ .command = .{ .id = .@"git.ai_commit", .label = "Let Claude write it" } }, .{ .command = .{ .id = .@"git.status_pane", .label = "Stage something first" } } },
     } },

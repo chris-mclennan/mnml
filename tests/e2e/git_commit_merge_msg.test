@@ -1,0 +1,53 @@
+# The commit box starts from the message git has ready. With a merge's
+# conflict resolved and staged, the commit prompt opened empty and Enter
+# said "commit: empty message", while git had `Merge branch 'feature'` in
+# .git/MERGE_MSG. The prompt now opens on it (comments stripped, as
+# `git commit` strips them), and a `merge --squash`'s SQUASH_MSG seeds
+# the graph's commit box the same way.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write .gitignore ".mnml/\n"
+write c.txt "one\ntwo\nthree\n"
+shell git add .gitignore c.txt
+shell git commit -q -m "initial"
+shell git checkout -q -b feature
+write c.txt "one\ntwo-theirs\nthree\n"
+shell git commit -q -am "theirs"
+shell git checkout -q main
+write c.txt "one\ntwo-ours\nthree\n"
+shell git commit -q -am "ours"
+shell git merge -q feature || true
+write c.txt "one\ntwo-both\nthree\n"
+shell git add c.txt
+shell grep -q "^Merge branch 'feature'" .git/MERGE_MSG
+shell grep -q "^# Conflicts:" .git/MERGE_MSG
+command git.status_pane
+wait 1500
+command git.commit
+expect screen contains "Commit message"
+expect screen contains "Merge branch 'feature'"
+expect screen lacks "Conflicts:"
+key enter
+wait 2000
+expect screen lacks "empty message"
+shell test "$(git log -1 --format=%s)" = "Merge branch 'feature'"
+shell test "$(git log -1 --format=%p | wc -w | tr -d ' ')" = 2
+# A squash merge: SQUASH_MSG, into the graph's box in git mode.
+shell git checkout -q -b side
+write d.txt "side\n"
+shell git add d.txt
+shell git commit -q -m "side work"
+shell git checkout -q main
+shell git merge -q --squash side
+shell grep -q "^Squashed commit of the following:" .git/SQUASH_MSG
+command git.graph
+wait 1500
+command git.commit
+wait 800
+expect screen contains "▾ Commit"
+expect screen contains "Squashed commit of the foll"
+key ctrl+enter
+wait 2000
+shell test "$(git log -1 --format=%s)" = "Squashed commit of the following:"
+shell git log -1 --format=%b | grep -q "side work"

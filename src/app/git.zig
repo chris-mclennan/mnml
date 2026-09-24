@@ -2842,6 +2842,41 @@ pub fn openPrompt(app: *App, kind: PromptKind, title: []const u8) void {
     app.needs_render = true;
 }
 
+/// The message git has ready for the next commit (a concluded merge's
+/// `MERGE_MSG`, a `merge --squash`'s `SQUASH_MSG`, comments stripped),
+/// or null — what `git commit` would open its editor on.
+pub fn readyMessage(app: *const App) ?[]const u8 {
+    const st = app.git.status orelse return null;
+    return st.merge_msg;
+}
+
+/// The commit prompt just opened starts from git's ready message, as
+/// `git commit` does: the subject on the line, a body attached to the
+/// accept (the AI body's route) and the title saying so.
+pub fn seedCommitPrompt(app: *App) Allocator.Error!void {
+    const msg = readyMessage(app) orelse return;
+    if (app.overlay != .prompt or app.git.prompt != .commit) return;
+    const m = cleanCommitMessage(msg);
+    if (m.subject.len == 0) return;
+    try app.overlay.prompt.state.setText(app.gpa, m.subject);
+    if (m.body.len > 0) {
+        if (app.git.ai_body) |b| app.gpa.free(b);
+        app.git.ai_body = try app.gpa.dupe(u8, m.body);
+        app.overlay.prompt.state.title = "Commit message (git's prepared message, body attached)";
+    }
+}
+
+/// The graph's commit box, focused by `git.commit` while it is empty,
+/// starts from git's ready message — the whole of it, the box is
+/// multi-line — with the cursor on the subject, as git's editor opens.
+pub fn seedCommitBox(app: *App, g: *GraphPane) Allocator.Error!void {
+    const msg = readyMessage(app) orelse return;
+    if (std.mem.trim(u8, g.wip_text.items, " \t\r\n").len > 0) return;
+    g.wip_text.clearRetainingCapacity();
+    try g.wip_text.appendSlice(app.gpa, msg);
+    g.wip_cursor = 0;
+}
+
 /// `openPrompt` with a title built for this open — the overlay owns it
 /// and frees it on close. A title on the frame arena would read as
 /// garbage on the next frame (the prompt outlives it).

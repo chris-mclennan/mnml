@@ -109,6 +109,11 @@ pub const Status = struct {
     /// `HEAD detached at <detached_at>`, git's own words, built by the
     /// worker next to `detached_at` so a paint needs no allocation.
     detached_label: ?[]const u8 = null,
+    /// The message git has ready for the next commit — `MERGE_MSG`
+    /// while a merge, cherry-pick or revert waits to be committed, else
+    /// `SQUASH_MSG` after `merge --squash` — with git's own cleanup
+    /// (`cleanMessage`). The worker reads it; null when there is none.
+    merge_msg: ?[]const u8 = null,
     /// `(initial)` before the first commit.
     oid: ?[]const u8 = null,
     upstream: ?[]const u8 = null,
@@ -290,6 +295,28 @@ pub fn parseTodo(arena: Allocator, text: []const u8) Allocator.Error![]TodoLine 
         const action: TodoAction = if (w.len == 1) (TodoAction.fromLetter(w[0]) orelse continue) else (std.meta.stringToEnum(TodoAction, w) orelse continue);
         const sha = it.next() orelse continue;
         try out.append(arena, .{ .action = action, .sha = try arena.dupe(u8, sha), .rest = try arena.dupe(u8, std.mem.trim(u8, it.rest(), " \t")) });
+    }
+    return out.items;
+}
+
+/// A message file as `git commit` cleans it by default (`--cleanup=strip`):
+/// `#` comment lines dropped, trailing whitespace off every line, runs of
+/// blank lines made one, blank lines at either end gone. Borrows `arena`.
+pub fn cleanMessage(arena: Allocator, text: []const u8) Allocator.Error![]const u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var blank = false;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        if (raw.len > 0 and raw[0] == '#') continue;
+        const line = std.mem.trimEnd(u8, raw, " \t\r");
+        if (line.len == 0) {
+            blank = out.items.len > 0;
+            continue;
+        }
+        if (blank) try out.append(arena, '\n');
+        blank = false;
+        if (out.items.len > 0) try out.append(arena, '\n');
+        try out.appendSlice(arena, line);
     }
     return out.items;
 }
@@ -1596,6 +1623,14 @@ test "status v2: a submodule's `S<c><m><u>` rides on its entries; a plain file's
     try testing.expect(!other.innerOnly());
     try testing.expectEqualStrings("new commits, modified, untracked files", other.note(&buf));
     try testing.expect(st.entries[2].submodule == null);
+}
+
+test "cleanMessage: git's strip cleanup — the Conflicts comment block and the blank edges go, a paragraph break stays" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    try testing.expectEqualStrings("Merge branch 'conflict'", try cleanMessage(arenaOf(&a), "Merge branch 'conflict'\n\n# Conflicts:\n#\tapp.txt\n"));
+    try testing.expectEqualStrings("Squashed commit of the following:\n\ncommit abc\nAuthor: A", try cleanMessage(arenaOf(&a), "\nSquashed commit of the following:  \n\n\n\ncommit abc\nAuthor: A\n\n"));
+    try testing.expectEqualStrings("", try cleanMessage(arenaOf(&a), "# only a comment\n\n"));
 }
 
 test "HeadRef: a branch is its name; a detached HEAD is its sha, painted as git words it — never a branch called `(detached)`" {
