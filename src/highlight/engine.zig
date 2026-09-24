@@ -1137,6 +1137,14 @@ test "incremental property: after every random edit the kept tree's windows pain
         h.setLanguage(entry);
         h.parse(text.items);
         _ = try h.spansIn(text.items, 0, 400);
+        // The reference, one per case: `invalidate` before each step drops
+        // its tree, windows and injected trees, so every step's answer is
+        // a from-scratch parse of the text as it stands; only the
+        // compiled queries carry over. A fresh highlighter per step
+        // compiled them 180 times, half of this test's 24-31 s in Debug.
+        var ref = Highlighter.init(gpa);
+        defer ref.deinit();
+        ref.setLanguage(entry);
         var step: usize = 0;
         while (step < 60) : (step += 1) {
             // One to three edits between parses, as a burst of typing is.
@@ -1163,7 +1171,8 @@ test "incremental property: after every random edit the kept tree's windows pain
                 });
             }
             h.parse(text.items);
-            const all = try scratchSpans(gpa, entry, text.items);
+            ref.invalidate();
+            const all = try gpa.dupe(Span, try ref.highlightAll(text.items));
             defer gpa.free(all);
             var probe: usize = 0;
             while (probe < 4) : (probe += 1) {
