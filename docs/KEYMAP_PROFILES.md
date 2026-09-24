@@ -18,12 +18,12 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 2. **`ctrl+k …` menus are the standard leader.** NvChad uses `ctrl+k` for
    window-up; the vim profile keeps `space` as its only which-key leader.
    A bare `ctrl+k` is therefore bound on its own (`whichkey.leader`) AND
-   is the prefix of eighteen `ctrl+k …` chords. **Chord resolution wins:**
+   is the prefix of twenty `ctrl+k …` chords. **Chord resolution wins:**
    `keymap.resolveSeq` answers `pending_with_fallback`, the tail key
    completes the chord, and the popup is only the `timeoutlen` fallback
    for a `ctrl+k` nothing followed. Anything that expires a pending chain
    without reading the deadline turns that on its head — the popup opens
-   on the `ctrl+k` and eats the tail, and none of the eighteen can fire.
+   on the `ctrl+k` and eats the tail, and none of the twenty can fire.
    That is what the `.test` runner and the headless loop used to do, so
    `Ctrl+K Ctrl+I` (hover, which the Info panel advertises) could not be
    driven at all; `app/driver.zig`'s `expireChords` hook reads the same
@@ -32,7 +32,7 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
    fallback at all: a pause after `Ctrl+K` (or `Ctrl+K g`) is the pause
    before the chord's next key, as in VS Code. The chain stays pending
    with no deadline and a popup lists the profile's own continuations —
-   `w → Close all other panes`, `g → +2 chords` — read off the keymap,
+   `w → Close all other panes`, `g → +1 chord` — read off the keymap,
    config overrides included (`Keymap.continuations`); the next key runs
    through the keymap exactly as it would have before the pause, Esc
    cancels, and a key no chord carries toasts `no Ctrl+K chord: …`. The
@@ -108,7 +108,7 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 | `view.focus_next_split` / `view.focus_prev_split` | `ctrl+w w` / `ctrl+w W` | (new) | vim, through the handler's `Ctrl-W` prefix | `:help CTRL-W_w` / `CTRL-W_W` — the split walk both ways; the spec lists them in `Keys.vim_handler`, which the cheatsheet, palette and `docs/commands.md` show and the keymap never binds |
 | `view.focus_next_split` / `view.focus_prev_split` | `ctrl+alt+shift+right` / `ctrl+alt+shift+left` | (new) | standard | Terminal.app's `Shift+Cmd+→/←` between tabs; the two-modifier arrows are taken (`ctrl+shift` / `alt+shift` extend a selection by a word, `ctrl+alt` is `buffer.next` / `buffer.prev`). `docs/CONFIG.md` → *Walking the splits* has the ghostty line that puts it on `Shift+Cmd+→/←` |
 | `view.move_to_new_tab` | `ctrl+w T` | (new) | vim, through the handler's `Ctrl-W` prefix | `:help CTRL-W_T` — the focused split leaves the page for one of its own, the partner of `Ctrl-W s` / `v`. A pane alone on its page is refused out loud |
-| `view.toggle_zoom` | `ctrl+w z` and `space s z` / `ctrl+k ctrl+m` | (new) | vim, through the handler's `Ctrl-W` prefix and the leader's `+split` group / standard, VS Code's "View: Toggle Maximize Editor Group" (`KeyChord(CtrlCmd+K, CtrlCmd+M)` in the 1.138 bundle) | tmux's zoom letter — the focused split has the page, again restores; the spec lists `ctrl+w z` in `Keys.vim_handler`. Neovim's own `Ctrl-W z` closes the preview window, which mnml does not have; `Ctrl-W o` is left as Neovim's `:only`, which closes the others. Standard: VS Code's zen chord `ctrl+k z` is `view.fullscreen` here, so the zoom takes `ctrl+k ctrl+z` |
+| `view.toggle_zoom` | `ctrl+w z` and `space s z` / `ctrl+k ctrl+m` | (new) | vim, through the handler's `Ctrl-W` prefix and the leader's `+split` group / standard, VS Code's "View: Toggle Maximize Editor Group" (`KeyChord(CtrlCmd+K, CtrlCmd+M)` in the 1.138 bundle) | tmux's zoom letter — the focused split has the page, again restores; the spec lists `ctrl+w z` in `Keys.vim_handler`. Neovim's own `Ctrl-W z` closes the preview window, which mnml does not have; `Ctrl-W o` is left as Neovim's `:only`, which closes the others. Standard: VS Code's own maximize chord, `ctrl+k ctrl+m` (`ctrl+k z`, its zen chord, is `view.fullscreen` here); without the kitty keyboard protocol `Ctrl+M` arrives as Enter, the limit `ctrl+k ctrl+i` already has |
 | `lsp.goto_definition` | `g d` | (new) | vim | Neovim gd |
 | `lsp.goto_declaration` | `g D` | (new) | vim | Neovim gD |
 | `lsp.references` | `g r` | (new) | vim | Neovim gr |
@@ -118,7 +118,7 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 | `file.cut` / `file.copy` / `file.paste` / `file.duplicate` | `ctrl+x` / `ctrl+c` / `ctrl+v` / `ctrl+d` | (new) | both, tree and Files pane focus only | handled by the tree / Files pane key handlers, not the keymap: neither edits text, so the editor's insert-mode meanings cannot want them there (Rust parity). Under vim the Files pane's `ctrl+d` / `ctrl+u` stay half-page scroll and the ctrl chords fall through — see the next row |
 | `file.copy` / `file.paste` | `y y` / `P` | (new) | vim, tree and Files pane focus only | ranger's vocabulary: two keys so a stray press cannot copy a file; a stray key between the two cancels. `D` duplicates in both profiles |
 | `file.new` / `file.rename` / `file.delete` / `file.cut` / `tree.refresh` / `tree.expand_all` / `tree.collapse_all` | `a` / `r` / `d` / `x` / `R` / `E` / `W` | (new) | vim, tree focus only | nvim-tree's default `on_attach` verbs (create, rename, delete — a confirm box — cut, refresh, expand all, collapse all); `d d` cut gave way to `d` delete. The standard profile keeps `r` = refresh and none of the others |
-| `sessions.next_waiting` / `sessions.prev_waiting` | `space a j` / `space a k` (vim, under `+ai/term`) · `ctrl+alt+n` / `ctrl+alt+shift+n` (standard) | (new) | vim / standard | Focus the next / previous pane whose child is blocked on a question (`sessions.needsYou`), in pane order, wrapping. The vim pair sits with the sessions in `+ai/term`, as `j` / `k` (down / up, the list's own keys); they are vim-only rows, so the standard `Ctrl+K` popup keeps the rows it had. The standard pair collides with nothing in `specs.zig` (`ctrl+alt+` holds only the cursor adders, the buffer and split-walk arrows, `w` and `enter`), and a focused terminal hands it to the app: a modified chord the keymap binds reaches the chord chain before the child (`dispatch.ptyKey`) |
+| `sessions.next_waiting` / `sessions.prev_waiting` | `space a j` / `space a k` (vim, under `+ai/term`) · `ctrl+alt+n` / `ctrl+alt+shift+n` (standard) | (new) | vim / standard | Focus the next / previous pane whose child is blocked on a question (`sessions.needsYou`), in pane order, wrapping. The vim pair sits with the sessions in `+ai/term`, as `j` / `k` (down / up, the list's own keys); they are vim-only rows, so the standard profile's leader popup (`whichkey.leader`) keeps the rows it had. The standard pair collides with nothing in `specs.zig` (`ctrl+alt+` holds only the cursor adders, the buffer and split-walk arrows, `w` and `enter`), and a focused terminal hands it to the app: a modified chord the keymap binds reaches the chord chain before the child (`dispatch.ptyKey`) |
 | `term.search` / `term.search_next` / `term.search_prev` | `/` / `?` / `n` / `N` | (new) | vim, a terminal pane in terminal-normal only | handled by the terminal pane's key handler (`pty_search.termNormalKey`), not the keymap: in terminal mode every plain key is the child's, and in an editor `/` `n` `N` are vim's own search. Neovim's terminal buffer answers them the same way: `/` searches down from the cursor's line (the bottom, so it wraps to the oldest match) and `?` up, `n` repeats the direction and `N` reverses it, and a wrap says `search hit BOTTOM, continuing at TOP` in the one step toast. In the bar Enter lands and closes, as vim's `/` does |
 | `term.search` | `ctrl+f` (whatever `find.find` is bound to) | (new) | standard, a terminal pane only | the pane's key handler reads the editor's find chord as the terminal's (`pty_search.findChord`), as VS Code's terminal takes `Ctrl+F`; `find.find` itself is untouched, so a rebind of it moves both. Under vim `ctrl+f` stays the child's (readline's forward-char). The search starts at the newest match; in the bar Enter is VS Code's terminal Find Previous (up, toward older output) and Shift+Enter Find Next (down) — the reverse of its editor find, verified in the 1.138 bundle (`workbench.action.terminal.findPrevious`: Enter with the find input focused, `findNext`: Shift+Enter); both wrap; Esc closes with the match selected |
 | `whichkey.leader` | `space` in the tree, the git status pane and every other window | tree: open the row; git status: stage toggle | vim | NvChad's `<leader>` maps are global (nvchad-probe: in the NvimTree buffer `maparg("<Space>ff")` is Telescope; nvim-tree maps no `<Space>`), so `Space f f` / `Space g c` reach the which-key menu from any window. The standard profile keeps Space as the pane's own key |
@@ -190,15 +190,17 @@ function keys. The F-keys are `both`, so a vim user keeps them too.
 | `dap.terminate` | `<leader>dt` | `Shift+F5` |
 | `dap.repl` (focus the debug console) | `<leader>dr` | — |
 | `dap.add_watch` | `<leader>dw` | — |
+| `dap.exceptions` (exception breakpoints, a picker) | `<leader>de` | — |
 | `dap.toggle_panel` (the DEBUG section) | `<leader>du` | `Ctrl+Shift+D` (`view.activity_debug`) |
 | `dap.evaluate_hover` | `<leader>dh`, and `K` while stopped | — |
 | `dap.show` (the section and the console) | — | — (palette) |
 
-Every chord above is checked against `src/commands/specs.zig` by the
-`both key profiles` test in `src/app/cmd_dap.zig`, which also asserts
+Every chord above but `dap.exceptions`'s is checked against
+`src/commands/specs.zig` by the `both key profiles` test in `src/app/cmd_dap.zig`, which also asserts
 that no `dap.*` chord is standard-only. The `+debug` and `+lsp`-on-`r`
 which-key groups are `vim_only` (`src/app/whichkey.zig`): the standard
-profile's `Ctrl+K` popup keeps the reference editor's rows. `r` carries
+profile's leader popup (`whichkey.leader`, headed `Ctrl+K`) keeps the
+reference editor's rows. `r` carries
 NvChad's `<leader>ra` (LSP rename), which that popup does not list, so
 the vim profile shows the row and the standard one does not.
 
@@ -239,9 +241,10 @@ motions rather than groups.
 
 Since 2026-09-14 the popup reads the reference plugin's way in both
 profiles: a glyph before every row and the chord count after every
-group label — `󰍉 f → +find (7)`, a leaf wearing its group's face
+group label — `󰍉 f → +find (8)`, a leaf wearing its group's face
 dimmed, and a sub-level's header carrying that group's own row
-(`<leader>f  +find (7)`). The count is read off the tree
+(`<leader>f  +find (8)`; the standard profile's reads
+`Ctrl+K f  +find (4)`). The count is read off the tree
 (`whichkey.chordCount`), so a chord added under a group moves it; the
 faces come from `src/ui/whichkey_glyph.zig`, which takes the rail's and
 the devicon table's glyphs rather than picking new ones. Each has a
