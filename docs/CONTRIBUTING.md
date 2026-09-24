@@ -58,9 +58,10 @@ wrote the change.
 
 `tests/e2e` is the `.test` corpus: the scripts inherited from the Rust
 repo and the ones written here, one real folder (a copy, not a symlink):
-825 `.test` files at the time of writing, every one of which runs at
-120×40 but `http/http-bench-running-toast.test` (`# requires: network`),
-plus three parked `.test.*-skip` beside them. The corpus is a regression net,
+1012 `.test` files at the time of writing, every one of which runs at
+120×40 but `http/http-bench-running-toast.test` (`# requires: network`)
+and, off macOS, the seven that say `# requires: macos`, plus three
+parked `.test.*-skip` beside them. The corpus is a regression net,
 not a pixel oracle: `expect screen contains`
 is substring-tolerant, so a re-skin survives it, and a script that
 breaks on a deliberate cosmetic change is updated as normal maintenance
@@ -680,8 +681,8 @@ Beyond the chain, run these when the change reaches what they check:
 `./run.sh check` is a one-line subset on this machine: `zig fmt --check
 src build.zig tools`, the unit suite in Debug and in ReleaseSafe, the
 ReleaseSafe build, the sweep, the corpus (with `MNML_E2E_ALLOW_SHELL=1`),
-glyph-audit, chrome-audit, hover-audit, `tools/run-sh-check.sh` and
-`tools/run-ps1-check.py`. `zig build check` is the older one-step form
+glyph-audit, chrome-audit, hover-audit, `zig build gate-targets`,
+`tools/run-sh-check.sh` and `tools/run-ps1-check.py`. `zig build check` is the older one-step form
 (fmt, Debug + ReleaseSafe unit tests, the gate, the sweep,
 `tests/e2e/defaults.test` and the whole corpus on the exe of that
 invocation).
@@ -702,7 +703,7 @@ Linux:
 ```sh
 tools/linux/run.sh all        # build · -Dpartial=false · glyph-audit · arena-audit · chrome-audit
                               #   · ReleaseSafe · the unit suite · the gate · the corpus
-tools/linux/run.sh build      # the four builds
+tools/linux/run.sh build      # the builds (debug, -Dpartial=false, ReleaseSafe) and the three audits
 tools/linux/run.sh unit       # zig build test -Doptimize=ReleaseSafe
 tools/linux/run.sh gate       # the sweep at 80x24,120x40,200x60
 tools/linux/run.sh corpus     # the whole .test corpus (~12 min)
