@@ -1,0 +1,49 @@
+# git.undo undoes a step only while HEAD is where the step left it, on
+# the same branch. Commit on main through mnml, switch to `feature`
+# outside mnml (a terminal), then git.undo: it refuses and names both
+# places — feature keeps its own commit. Back on main the same undo is
+# right again and takes main's commit off. git decides every step.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write seed.txt "seed\n"
+shell git add seed.txt
+shell git commit -q -m "initial"
+shell git branch feature
+shell git checkout -q feature
+write feat.txt "feature work\n"
+shell git add feat.txt
+shell git commit -q -m "feature commit"
+shell git checkout -q main
+write main.txt "main work\n"
+shell git add main.txt
+command git.refresh
+wait 1000
+command git.commit
+type main commit
+key enter
+wait 1500
+shell git log --format=%s -1 main > m.out
+expect file m.out contains "main commit"
+shell git checkout -q feature
+command git.refresh
+wait 1500
+command git.undo
+expect screen contains "undo refused"
+expect screen contains "HEAD is now feature"
+wait 500
+shell git log --format=%s -1 feature > f.out
+expect file f.out contains "feature commit"
+shell git status --porcelain > st.out
+expect file st.out lacks "feat.txt"
+# Back where the commit left HEAD: the undo runs.
+shell git checkout -q main
+command git.refresh
+wait 1000
+command git.undo
+expect screen contains "undid: commit main commit"
+wait 500
+shell git log --format=%s -1 main > m2.out
+expect file m2.out contains "initial"
+shell git log --format=%s -1 feature > f2.out
+expect file f2.out contains "feature commit"

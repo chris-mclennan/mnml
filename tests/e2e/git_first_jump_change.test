@@ -1,0 +1,16 @@
+# The first ]c of a session (git.jump_next_change) lands on the change:
+# when the repo's status has not been read yet, the jump waits for it
+# instead of answering "no changes in this file (vs HEAD)".
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write g.txt "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\n"
+shell git add g.txt
+shell git commit -q -m "initial"
+write g.txt "l1\nl2\nl3\nl4\nCHANGED\nl6\nl7\nl8\nl9\nl10\n"
+open g.txt
+command editor.use_vim
+wait 500
+command git.jump_next_change
+expect status contains "\"line\":5"
+expect screen lacks "no changes in this file"

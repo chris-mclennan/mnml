@@ -29,6 +29,7 @@ const dispatch = @import("dispatch.zig");
 const Config = app_mod.Config;
 const ex_verbs = @import("ex_verbs.zig");
 const cmd_app = @import("cmd_app.zig");
+const cmd_file = @import("cmd_file.zig");
 const loclist = @import("loclist.zig");
 
 /// 0-based inclusive rows.
@@ -491,14 +492,12 @@ fn write(app: *App, range: ?Range, path_arg: []const u8, then_close: bool) Comma
         e.syntax.setLanguage(abs, e.buf.editor.bytes());
         e.syntax.dirty = true;
     }
-    const path = e.buf.doc.path orelse return app.diag.fail(arena, ":w — no file name (use :w <path>)", .{});
-    const rel = app.relPath(path);
-    app.hooks.emit(app, .{ .save_pre = .{ .path = rel, .pane = app.active.? } });
-    e.buf.save(app.io) catch |err| return app.diag.fail(arena, ":w — {s}: {s}{s}", .{ rel, @errorName(err), e.buf.saveFailNote() });
-    app.hooks.emit(app, .{ .save_post = .{ .path = rel, .pane = app.active.?, .bytes = e.buf.editor.len() } });
-    app.toast("saved {s}", .{rel});
+    if (e.buf.doc.path == null) return app.diag.fail(arena, ":w — no file name (use :w <path>)", .{});
+    // The one save path: the hooks, and a resolved conflict staged.
+    const id = app.active.?;
+    try cmd_file.savePane(app, id, e, .{ .fail_prefix = ":w —" });
     if (then_close) {
-        try app.forceClosePane(app.active.?);
+        try app.forceClosePane(id);
         if (app.panes.count() == 0) app.quit = true;
     }
 }
@@ -526,7 +525,7 @@ fn writeToCommand(app: *App, e: *EditorPane, range: ?Range, cmd_in: []const u8) 
 /// `:wa` is `file.save_all`: every dirty editor through the one save
 /// path, so the save hooks and everything after a save run for each.
 fn saveAll(app: *App) CommandError!void {
-    return @import("cmd_file.zig").saveAll(app);
+    return cmd_file.saveAllWith(app, ":wa —");
 }
 
 /// `:q` closes the window; the buffer stays when another window shows

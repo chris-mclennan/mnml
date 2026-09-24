@@ -33,4 +33,6 @@ wait 1200
 expect screen contains "rebase aborted"
 expect screen lacks "REBASE"
 expect screen contains "Pull"
-expect screen contains "topic change"
+# HEAD is back on topic's own commit (its refs lead the subject at
+# this width, so the subject is cut: `HEAD topic topic cha…`).
+expect screen contains "HEAD topic topic cha"

@@ -1621,9 +1621,13 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
                     app.toast("can't save a scratch buffer — pick Discard or Cancel", .{});
                     return;
                 }
-                e.buf.save(app.io) catch |err| {
-                    app.toast("save failed: {s}{s}", .{ @errorName(err), e.buf.saveFailNote() });
-                    return;
+                // The one save path: the hooks, and a resolved conflict staged.
+                cmd_file.savePane(app, id, e, .{}) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => {
+                        if (app.diag.msg) |msg| app.toast("{s}", .{msg});
+                        return;
+                    },
                 };
                 try app.forceClosePane(id);
             },
@@ -2236,7 +2240,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 // Otherwise the wheel scrolls the scrollback.
                 if (m.kind == .press) {
                     if (app.overlay != .none) closeOverlay(app);
-                    if (app.active != id or app.focus != .pane) app.showPane(id);
+                    focusOnPress(app, id);
                 }
                 // Shift overrides a child's mouse tracking for selecting,
                 // as in ghostty and xterm.
@@ -2296,7 +2300,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             if (m.kind != .press) return;
             if (m.button != .left and m.button != .right) return;
             if (app.overlay != .none) closeOverlay(app);
-            if (app.active != sh.pane) app.showPane(sh.pane);
+            focusOnPress(app, sh.pane);
             const pane = app.panes.get(sh.pane) orelse return;
             switch (pane.*) {
                 .cheatsheet => |*c| if (m.button == .left) try cheatsheet.click(app, c, sh.id),
@@ -2708,6 +2712,16 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
     }
 }
 
+/// A press in pane `id` gives it the keys: shown, active, focused. The
+/// pane-body presses focused only a pane that was not already the
+/// active one — and the active pane with the keys in the tree (`Esc`
+/// from the status pane, `Space e`, a tree click) is exactly the case
+/// a click on it is for: the click moved the cursor there and the next
+/// key still went to the tree.
+fn focusOnPress(app: *App, id: PaneId) void {
+    if (app.active != id or app.focus != .pane) app.showPane(id);
+}
+
 /// A press in an editor's gutter — the sign cell and the line number
 /// alike. Shared by `.gutter` and the fold chevron's `.fold_arrow`,
 /// which falls back to it for everything but its own left press.
@@ -2715,7 +2729,7 @@ fn gutterMouse(app: *App, g: hit_mod.GutterRef, m: Mouse, count: u16, wheel: boo
     if (m.kind == .press and (m.button == .right or m.button == .left)) {
         if (app.panes.editor(g.pane)) |e| {
             if (app.overlay != .none) closeOverlay(app);
-            if (app.active != g.pane) app.showPane(g.pane);
+            focusOnPress(app, g.pane);
             const ed = e.buf.editor;
             const line = @min(g.line, ed.lineCount() -| 1);
             if (m.button == .right or try dap.gutterToggles(app, e)) {
@@ -2755,7 +2769,7 @@ fn gutterMouse(app: *App, g: hit_mod.GutterRef, m: Mouse, count: u16, wheel: boo
 fn foldArrowPress(app: *App, f: hit_mod.GutterRef) Allocator.Error!void {
     const e = app.panes.editor(f.pane) orelse return;
     if (app.overlay != .none) closeOverlay(app);
-    if (app.active != f.pane) app.showPane(f.pane);
+    focusOnPress(app, f.pane);
     const ed = e.buf.editor;
     ed.anchor = null;
     ed.placeCursor(@min(f.line, ed.lineCount() -| 1), 0);
@@ -3180,7 +3194,7 @@ fn paneBarJump(app: *App, id: PaneId, track: Rect, y: u16) Allocator.Error!void 
         },
         else => {},
     }
-    if (app.active != id) app.showPane(id);
+    focusOnPress(app, id);
     app.needs_render = true;
 }
 
@@ -3244,7 +3258,7 @@ fn beginScrollbarDrag(app: *App, id: PaneId, track: Rect, y: u16) Allocator.Erro
     const rel = y -| track.y;
     const grab: u16 = if (th) |tt| (if (rel >= tt.start and rel < tt.start + tt.len) rel - tt.start else tt.len / 2) else 0;
     app.drag = .{ .scrollbar = .{ .pane = id, .grab = grab } };
-    if (app.active != id) app.showPane(id);
+    focusOnPress(app, id);
     try dragScrollbar(app, id, grab, y);
 }
 
@@ -3518,7 +3532,7 @@ fn editorCellMouse(app: *App, cell: CellHit, m: Mouse, count: u16, wheel: bool) 
         else => {},
     };
     if (app.overlay != .none) closeOverlay(app);
-    if (app.active != cell.pane) app.showPane(cell.pane);
+    focusOnPress(app, cell.pane);
     const e = app.panes.editor(cell.pane) orelse return;
     const ed = e.buf.editor;
     const line = @min(cell.line, ed.lineCount() - 1);

@@ -600,6 +600,86 @@ fn closeFile(arena: Allocator, files: *std.ArrayListUnmanaged(FileDiff), hunks: 
     cur.* = null;
 }
 
+/// A full-context diff (Inline / Split ask git for `-U999999`, so each
+/// file is ONE hunk) cut at `real`'s hunks — the same diff at git's
+/// default context. "This hunk" means what `git diff` calls a hunk: the
+/// view may paint the whole file, but the banner counts, `n` / `]c`
+/// walk, and stage / unstage / discard patch git's hunks, never the
+/// file. A file whose real diff has one hunk (or none) is left whole.
+///
+/// Hunk k (k ≥ 1) starts at the first line of real hunk k's range; the
+/// lines before real hunk 0 go with it, the lines after the last with
+/// the last. Every piece keeps its context, so `patchForHunk` of one
+/// piece carries exactly one real hunk's changes.
+pub fn cutAtRealHunks(arena: Allocator, full: []FileDiff, real: []const FileDiff) Allocator.Error!void {
+    for (full) |*f| {
+        if (f.hunks.len != 1) continue;
+        const r = realFor(real, f.*) orelse continue;
+        if (r.hunks.len < 2) continue;
+        const whole = f.hunks[0];
+        var cuts: std.ArrayListUnmanaged(usize) = .empty;
+        try cuts.append(arena, 0);
+        var from: usize = 1;
+        for (r.hunks[1..]) |rh| {
+            // The first line of the full hunk at or past the real
+            // hunk's start on either side.
+            var i = from;
+            while (i < whole.lines.len) : (i += 1) {
+                const l = whole.lines[i];
+                if (l.old_no) |o| if (o >= rh.old_start) break;
+                if (l.new_no) |n| if (n >= rh.new_start) break;
+            }
+            if (i >= whole.lines.len) break;
+            try cuts.append(arena, i);
+            from = i + 1;
+        }
+        if (cuts.items.len < 2) continue;
+        const pieces = try arena.alloc(Hunk, cuts.items.len);
+        var old_at = whole.old_start;
+        var new_at = whole.new_start;
+        for (cuts.items, 0..) |lo, k| {
+            const hi = if (k + 1 < cuts.items.len) cuts.items[k + 1] else whole.lines.len;
+            const lines = whole.lines[lo..hi];
+            var oc: u32 = 0;
+            var nc: u32 = 0;
+            for (lines) |l| switch (l.kind) {
+                .context => {
+                    oc += 1;
+                    nc += 1;
+                },
+                .add => nc += 1,
+                .del => oc += 1,
+                .meta => {},
+            };
+            // git's trailing function context, off the real header.
+            const rh = r.hunks[@min(k, r.hunks.len - 1)].header;
+            const tail = if (std.mem.indexOf(u8, rh[2..], "@@")) |e| rh[2 + e + 2 ..] else "";
+            pieces[k] = .{
+                .header = try std.fmt.allocPrint(arena, "@@ -{d},{d} +{d},{d} @@{s}", .{ old_at, oc, new_at, nc, tail }),
+                .old_start = old_at,
+                .old_count = oc,
+                .new_start = new_at,
+                .new_count = nc,
+                .lines = lines,
+            };
+            old_at += oc;
+            new_at += nc;
+        }
+        f.hunks = pieces;
+    }
+}
+
+/// The file of `real` that is `f`, by both paths.
+fn realFor(real: []const FileDiff, f: FileDiff) ?FileDiff {
+    for (real) |r| if (optEql(r.new_path, f.new_path) and optEql(r.old_path, f.old_path)) return r;
+    return null;
+}
+
+fn optEql(a: ?[]const u8, b: ?[]const u8) bool {
+    if (a == null or b == null) return a == null and b == null;
+    return std.mem.eql(u8, a.?, b.?);
+}
+
 /// The patch `git apply` takes for one hunk of `f` on its own: the two
 /// path lines and the hunk verbatim. `--cached` stages it, `--cached -R`
 /// unstages it, a bare `-R` discards it from the worktree. Context lines
@@ -1516,6 +1596,80 @@ test "parseDiff: files, hunks, line kinds and side numbers; a new file has no ol
     try testing.expectEqual(LineKind.meta, n.hunks[0].lines[1].kind);
     try testing.expect(parseHunkHeader("@@ -1 +1,2 @@").?.old_count == 1);
     try testing.expect(parseHunkHeader("not a header") == null);
+}
+
+test "cutAtRealHunks: a full-context diff is cut at git's three hunks; each piece's patch carries its own change and no other" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const ar = arenaOf(&a);
+    // `row 1..row 60`, rows 5 / 30 / 55 changed: the -U999999 diff.
+    var full: std.ArrayListUnmanaged(u8) = .empty;
+    try full.appendSlice(ar, "diff --git a/big.txt b/big.txt\n--- a/big.txt\n+++ b/big.txt\n@@ -1,60 +1,60 @@\n");
+    for (1..61) |i| {
+        if (i == 5 or i == 30 or i == 55) {
+            try full.print(ar, "-row {d}\n+row {d} CHANGED\n", .{ i, i });
+        } else try full.print(ar, " row {d}\n", .{i});
+    }
+    // The same diff at git's default context: `git diff big.txt`.
+    const real_text =
+        \\diff --git a/big.txt b/big.txt
+        \\--- a/big.txt
+        \\+++ b/big.txt
+        \\@@ -2,7 +2,7 @@
+        \\ row 2
+        \\ row 3
+        \\ row 4
+        \\-row 5
+        \\+row 5 CHANGED
+        \\ row 6
+        \\ row 7
+        \\ row 8
+        \\@@ -27,7 +27,7 @@ row 26
+        \\ row 27
+        \\ row 28
+        \\ row 29
+        \\-row 30
+        \\+row 30 CHANGED
+        \\ row 31
+        \\ row 32
+        \\ row 33
+        \\@@ -52,7 +52,7 @@ row 51
+        \\ row 52
+        \\ row 53
+        \\ row 54
+        \\-row 55
+        \\+row 55 CHANGED
+        \\ row 56
+        \\ row 57
+        \\ row 58
+        \\
+    ;
+    const files = try parseDiff(ar, full.items);
+    const real = try parseDiff(ar, real_text);
+    try testing.expectEqual(@as(usize, 1), files[0].hunks.len);
+    try cutAtRealHunks(ar, files, real);
+    const hs = files[0].hunks;
+    try testing.expectEqual(@as(usize, 3), hs.len);
+    // Every line of the file is still painted, in order.
+    var total: usize = 0;
+    for (hs) |h| total += h.lines.len;
+    try testing.expectEqual(@as(usize, 63), total);
+    try testing.expectEqual(@as(u32, 1), hs[0].old_start);
+    try testing.expectEqual(@as(u32, 27), hs[1].old_start);
+    try testing.expectEqual(@as(u32, 52), hs[2].old_start);
+    try testing.expectEqual(@as(u32, 60), hs[0].old_count + hs[1].old_count + hs[2].old_count);
+    try testing.expectEqualStrings("@@ -27,25 +27,25 @@ row 26", hs[1].header);
+    for (hs, 0..) |_, k| {
+        const p = try patchForHunk(ar, files[0], k);
+        const want = [_][]const u8{ "+row 5 CHANGED", "+row 30 CHANGED", "+row 55 CHANGED" };
+        for (want, 0..) |w, j| try testing.expectEqual(j == k, std.mem.indexOf(u8, p, w) != null);
+        try testing.expectEqual(@as(u32, 1), hs[k].changed() / 2);
+    }
+    // A file git gives one hunk is left whole.
+    const one = try parseDiff(ar, "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n-a\n+b\n c\n");
+    const one_real = try parseDiff(ar, "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n-a\n+b\n c\n");
+    try cutAtRealHunks(ar, one, one_real);
+    try testing.expectEqual(@as(usize, 1), one[0].hunks.len);
 }
 
 test "patchForHunk writes one hunk with recounted ranges and the /dev/null side" {

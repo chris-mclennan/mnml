@@ -1,0 +1,24 @@
+# git.push_force's confirm names the risk of --force-with-lease, and all
+# of it is on screen at 120 columns: the box wraps the sentence rather
+# than cutting it at its edge. It says what git does — commits the last
+# fetch saw on the remote and you never merged are dropped; a remote
+# that moved since that fetch is refused.
+# width: 120
+
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+shell git init -q --bare -b main .git/fp-remote.git && git remote add origin "$PWD/.git/fp-remote.git"
+write a.txt "a\n"
+shell git add a.txt
+shell git commit -q -m "first"
+shell git push -q -u origin main
+command git.refresh
+wait 1500
+command git.push_force
+expect screen contains "Push main with --force-with-lease?"
+expect screen contains "never merged are dropped."
+expect screen contains "git refuses the push."
+expect screen contains "origin/main is rewritten"
+key n
+expect screen lacks "force-with-lease?"

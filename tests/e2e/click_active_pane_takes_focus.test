@@ -1,0 +1,27 @@
+# A left click on the ACTIVE pane takes the keys back from the tree, as
+# a click on any other pane does: the diff pane opened from the status
+# pane, then `view.focus_tree` (what Esc in the status pane, Space e or
+# a tree click leave you with), then a click on a diff row — the next
+# key goes to the diff. The same for an editor pane.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+shell seq 1 60 | sed 's/^/row /' > big.txt
+shell git add big.txt
+shell git commit -q -m "initial"
+shell sed -i.bak -e 's/^row 5$/row 5 CHANGED/' big.txt && rm big.txt.bak
+command git.status_pane
+wait 1500
+key enter
+wait 1500
+command view.focus_tree
+expect status contains "\"focus\":\"tree\""
+click 70 12
+expect status contains "\"focus\":\"pane\""
+command view.only
+open big.txt
+command view.only
+command view.focus_tree
+expect status contains "\"focus\":\"tree\""
+click 60 10
+expect status contains "\"focus\":\"pane\""

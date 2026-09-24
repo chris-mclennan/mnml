@@ -26,6 +26,7 @@ const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const overlay = @import("overlay.zig");
+const info_view = @import("info_view.zig");
 const key_mod = @import("../core/key.zig");
 
 const Style = vaxis.Style;
@@ -49,8 +50,23 @@ pub const Outcome = union(enum) { consumed, cancel, choose: usize };
 pub const height: u16 = 6;
 pub const min_inner_width: u16 = 28;
 
-fn lineCount(s: []const u8) u16 {
-    return @intCast(std.mem.count(u8, s, "\n") + 1);
+/// The message as painted: one row per `\n`-line, a line wider than
+/// the box can be at `screen_w` word-wrapped onto more rows — the one
+/// sentence a confirm exists to show was cut at the box's edge.
+fn messageLines(ui: Ui, message: []const u8, screen_w: u16) []const []const u8 {
+    // The box stays two cells in from each side; its text is inset two.
+    const wrap_w: u16 = @max(screen_w -| 8, 10);
+    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    var it = std.mem.splitScalar(u8, message, '\n');
+    while (it.next()) |line| {
+        if (ui.width(line) <= wrap_w) {
+            out.append(ui.arena, line) catch return &.{message};
+            continue;
+        }
+        const rows = info_view.wrapWords(ui.arena, line, wrap_w) catch return &.{message};
+        out.appendSlice(ui.arena, rows) catch return &.{message};
+    }
+    return out.items;
 }
 
 /// The choice's letter (either case), ←/→ + enter, esc → cancel.
@@ -107,19 +123,19 @@ pub fn draw(ui: Ui, area: Rect, s: *const State) void {
     const gap: u16 = 2;
     var buttons_w: u16 = 0;
     for (s.choices) |c| buttons_w += ui.width(buttonText(ui, c)) + gap;
+    const lines = messageLines(ui, s.message, area.w);
     var msg_w: u16 = 0;
-    var lines = std.mem.splitScalar(u8, s.message, '\n');
-    while (lines.next()) |line| msg_w = @max(msg_w, ui.width(line) + 2);
+    for (lines) |line| msg_w = @max(msg_w, ui.width(line) + 2);
     const floor: u16 = @max(min_inner_width, ui.width(s.title) + 4);
     const inner_w = @max(@max(msg_w, buttons_w + 2), floor);
     const w = @min(inner_w + 2, area.w -| 2);
-    const h = height + lineCount(s.message) - 1;
+    const h = height + @as(u16, @intCast(@min(lines.len, 64))) - 1;
     const inner = overlay.boxLook(ui, area, @max(w, @min(area.w, 8)), h, s.title, .third, .menu);
     if (inner.isEmpty() or inner.h < 2) return;
 
-    lines = std.mem.splitScalar(u8, s.message, '\n');
     var row: u16 = 0;
-    while (lines.next()) |line| : (row += 1) {
+    for (lines) |line| {
+        defer row += 1;
         if (row + 1 >= inner.h) break;
         const msg_row = inner.row(row);
         const text = ui.fmt("  {s}", .{line});
@@ -188,6 +204,17 @@ test "the close prompt: title, message, three bracketed choices with hits" {
     draw(f.ui(), f.full(), &s);
     try testing.expect(f.bgEql(sx, 5, f.theme.chip));
     try testing.expect(f.bgEql(discard_rect.x, 5, f.theme.chip_active));
+}
+
+test "a message line wider than the box can be is word-wrapped onto more rows, every word painted" {
+    var f = try Fixture.init(48, 16);
+    defer f.deinit();
+    var s: State = .{ .title = "Git", .message = "Push main with --force-with-lease?\norigin/main is rewritten to match main: commits on it that you fetched but never merged are dropped.", .choices = &close_choices };
+    draw(f.ui(), f.full(), &s);
+    try f.expectContains("--force-with-lease?");
+    try f.expectContains("origin/main is rewritten");
+    try f.expectContains("merged are dropped.");
+    try f.expectContains("[S]ave");
 }
 
 test "keys: letters fire, arrows and tab move with wrap, enter fires the focus, esc cancels" {

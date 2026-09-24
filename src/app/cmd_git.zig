@@ -351,34 +351,10 @@ fn peekChange(app: *App) CommandError!void {
     };
 }
 
-/// `]c` / `[c` in the editor: the next / previous gutter mark.
+/// `]c` / `[c` in the editor: `git.jumpChange`.
 fn jumpChange(app: *App, forward: bool) CommandError!void {
-    const e = app.activeEditor() orelse return app.diag.fail(arena(app), "git: not an editor", .{});
-    const p = e.buf.doc.path orelse return app.diag.fail(arena(app), "git: the buffer has no file", .{});
-    _ = try git.requireRepo(app);
-    const marks = git.marksFor(app, p);
-    if (marks.len == 0) return app.diag.fail(arena(app), "no changes in this file (vs HEAD)", .{});
-    const cur: u32 = @intCast(e.buf.editor.currentLine());
-    var target: ?u32 = null;
-    if (forward) {
-        for (marks) |m| if (m.line > cur) {
-            target = m.line;
-            break;
-        };
-    } else {
-        var i = marks.len;
-        while (i > 0) {
-            i -= 1;
-            if (marks[i].line < cur) {
-                target = marks[i].line;
-                break;
-            }
-        }
-    }
-    const line = target orelse return app.diag.fail(arena(app), "no {s} change", .{if (forward) "next" else "previous"});
-    e.buf.editor.anchor = null;
-    e.buf.editor.placeCursor(@min(line, e.buf.editor.lineCount() -| 1), 0);
-    app.needs_render = true;
+    const id = app.active orelse return app.diag.fail(arena(app), "git: not an editor", .{});
+    return git.jumpChange(app, id, forward);
 }
 
 fn jumpNextChange(app: *App) CommandError!void {
@@ -1067,6 +1043,11 @@ fn selectedCommit(app: *App) CommandError![]const u8 {
 
 fn cherryPick(app: *App) CommandError!void {
     const sha = try selectedCommit(app);
+    // HEAD's own history: the pick would be empty, and git would leave a
+    // cherry-pick in progress for the user to find `op_skip` for.
+    const g = try requireGraph(app);
+    if (g.selectedIndex()) |ci| if (try git.inHead(app, g, ci))
+        return app.diag.fail(arena(app), "cherry-pick: {s} is already in HEAD \u{2014} nothing to pick", .{sha[0..@min(7, sha.len)]});
     const repo = try git.requireRepo(app);
     try git.submitOp(app, repo, .{ .cherry_pick = try app.gpa.dupe(u8, sha) });
 }

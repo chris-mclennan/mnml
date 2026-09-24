@@ -1,0 +1,46 @@
+# The Inline view paints the whole file, but "this hunk" is git's hunk:
+# three changes 25 lines apart are three hunks to `git diff`, so the
+# banner counts three, `s` on the first change stages that change
+# alone, `n` steps to the next hunk, and `x` then `y` discards only the
+# hunk under the cursor. git decides afterwards.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+shell seq 1 60 | sed 's/^/row /' > big.txt
+shell git add big.txt
+shell git commit -q -m "initial"
+shell sed -i.bak -e 's/^row 5$/row 5 CHANGED/' -e 's/^row 30$/row 30 CHANGED/' -e 's/^row 55$/row 55 CHANGED/' big.txt && rm big.txt.bak
+shell git diff big.txt | grep -c '^@@' > hunks.out
+expect file hunks.out contains "3"
+open big.txt
+command git.diff_file
+command view.only
+expect screen contains "Hunk 1/3  big.txt"
+# The Inline view still shows lines far from any change.
+expect screen contains "row 17"
+key j
+key j
+key j
+key j
+key j
+key s
+wait 1500
+shell git diff --cached > staged.out
+expect file staged.out contains "+row 5 CHANGED"
+expect file staged.out lacks "+row 30 CHANGED"
+expect file staged.out lacks "+row 55 CHANGED"
+# What is left unstaged: the other two hunks. `n` steps a hunk at a
+# time — the change on row 30, then the one on row 55 (the banner
+# scrolls away with the rows, so git says where the cursor was).
+expect screen contains "Hunk 1/2  big.txt"
+key n
+key n
+key x
+expect screen contains "Discard this hunk"
+key y
+wait 1500
+shell git diff > worktree.out
+expect file worktree.out contains "+row 30 CHANGED"
+expect file worktree.out lacks "+row 55 CHANGED"
+shell git diff --cached > staged2.out
+expect file staged2.out contains "+row 5 CHANGED"
