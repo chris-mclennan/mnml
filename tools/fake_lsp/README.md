@@ -71,11 +71,12 @@ as for a debug adapter.
   `didOpen` and `didChange`.
 - `--version`, `--help`.
 
-Two more lines go into `--log` under the method that carried them,
+Three more lines go into `--log` under the method that carried them,
 whatever the flags: `didOpen languageId=<id>` (what the client called
-the file — `shellscript` for a `bin/run-all` under a bash shebang) and
+the file — `shellscript` for a `bin/run-all` under a bash shebang),
 `formatting tabSize=<n> insertSpaces=<bool>` (the options a formatting
-request carried).
+request carried) and `codeAction range L:C-L:C` (the range a code
+action asked about, zero-based, end exclusive).
 
 ## The contract
 

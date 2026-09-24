@@ -315,6 +315,7 @@ pub const Server = struct {
             const range = getObj(params, "range") orelse return self.respondRaw(id, "[]");
             const start = getObj(range, "start") orelse return self.respondRaw(id, "[]");
             const first: u32 = @intCast(@max(getInt(start, "line") orelse 0, 0));
+            if (getObj(range, "end")) |e| try self.logLine("codeAction range {d}:{d}-{d}:{d}", .{ first, getInt(start, "character") orelse 0, getInt(e, "line") orelse 0, getInt(e, "character") orelse 0 });
             // The range is what the client asked about — a selection
             // spans lines — so the first TODO anywhere in it answers.
             const last: u32 = if (getObj(range, "end")) |e| @intCast(@max(getInt(e, "line") orelse first, first)) else first;

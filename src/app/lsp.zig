@@ -2773,9 +2773,10 @@ fn requestActions(app: *App, t: Target, only: ?[]const u8, mode: u32) CommandErr
     // The range is what the server judges the assists by — a fill-match-
     // arms fix is offered when the range spans the match, an extract
     // refactor works on the span the user marked. A selection is sent as
-    // it stands (a linewise one already covers whole lines); without one
-    // the cursor's line, as before.
-    const span: [2]usize = ed.selection() orelse .{ ed.lineStart(ed.currentLine()), ed.lineEnd(ed.currentLine()) };
+    // the user sees it (`selectedSpan`: charwise VISUAL takes the
+    // character under the cursor, as `y` does — the extract refactors
+    // need the whole expression); without one the cursor's line.
+    const span: [2]usize = t.e.buf.selectedSpan() orelse .{ ed.lineStart(ed.currentLine()), ed.lineEnd(ed.currentLine()) };
     const start = types.positionOf(text, span[0], t.server.encoding);
     const end = types.positionOf(text, span[1], t.server.encoding);
     // The diagnostics on those lines give the server its context — each

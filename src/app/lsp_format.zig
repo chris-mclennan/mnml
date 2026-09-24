@@ -433,7 +433,8 @@ pub fn formatSelection(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     if (!t.server.caps.range_formatting) return app.diag.fail(arena, "{s} does not format ranges", .{t.server.name});
     const ed = t.e.buf.editor;
-    const sel = ed.selection() orelse return app.diag.fail(arena, "select a range first", .{});
+    // As the user sees it: charwise VISUAL takes the cursor's character.
+    const sel = t.e.buf.selectedSpan() orelse return app.diag.fail(arena, "select a range first", .{});
     const text = ed.bytes();
     const uri = try types.uriFromPath(arena, t.path);
     const range: types.Range = .{ .start = types.positionOf(text, sel[0], t.server.encoding), .end = types.positionOf(text, sel[1], t.server.encoding) };
